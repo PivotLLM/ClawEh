@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=ClawEh Web
+Comment=Web-based configuration and management UI for ClawEh
+Exec=claw-web
+Icon=claw-web
+Terminal=true
+Type=Application
+Categories=Utility;Network;
+Keywords=clawei;ai;agent;bot;

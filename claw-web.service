@@ -1,0 +1,17 @@
+[Unit]
+Description=Claw AI Agent Web Console
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=YOUR_USERNAME
+ExecStart=/home/YOUR_USERNAME/.local/bin/claw-web -no-browser
+Restart=on-failure
+RestartSec=5
+KillMode=control-group
+TimeoutStopSec=30
+Environment=PATH=/home/YOUR_USERNAME/.local/bin:/usr/local/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=multi-user.target

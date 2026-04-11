@@ -1,0 +1,89 @@
+package cron
+
+import (
+	"fmt"
+	"time"
+
+	"github.com/PivotLLM/ClawEh/pkg/cron"
+)
+
+const maxMessageDisplay = 80
+
+func cronListCmd(storePath string) {
+	cs := cron.NewCronService(storePath, nil)
+	jobs := cs.ListJobs(true) // Show all jobs, including disabled
+
+	if len(jobs) == 0 {
+		fmt.Println("No scheduled jobs.")
+		return
+	}
+
+	fmt.Println("Scheduled Jobs:")
+	fmt.Println()
+	for _, job := range jobs {
+		var schedule string
+		if job.Schedule.Kind == "every" && job.Schedule.EveryMS != nil {
+			schedule = fmt.Sprintf("every %ds", *job.Schedule.EveryMS/1000)
+		} else if job.Schedule.Kind == "cron" {
+			schedule = job.Schedule.Expr
+		} else {
+			schedule = "one-time"
+		}
+
+		nextRun := "scheduled"
+		if job.State.NextRunAtMS != nil {
+			nextTime := time.UnixMilli(*job.State.NextRunAtMS)
+			nextRun = nextTime.Format("2006-01-02 15:04")
+		}
+
+		status := "enabled"
+		if !job.Enabled {
+			status = "disabled"
+		}
+
+		fmt.Printf("  %s (%s)\n", job.Name, job.ID)
+		fmt.Printf("    Schedule: %s\n", schedule)
+		fmt.Printf("    Status:   %s\n", status)
+		fmt.Printf("    Next run: %s\n", nextRun)
+		fmt.Printf("    Mode:     %s\n", job.Payload.Mode)
+		fmt.Printf("    Channel:  %s\n", job.Payload.Channel)
+		fmt.Printf("    To:       %s\n", job.Payload.To)
+		if job.Payload.PeerKind == "direct" {
+			fmt.Printf("    PeerKind: direct\n")
+		}
+		if job.Payload.Command != "" {
+			fmt.Printf("    Command:  %s\n", job.Payload.Command)
+		} else {
+			msg := job.Payload.Message
+			if len(msg) > maxMessageDisplay {
+				msg = msg[:maxMessageDisplay] + "..."
+			}
+			fmt.Printf("    Message:  %s\n", msg)
+		}
+		fmt.Printf("\n")
+	}
+}
+
+func cronRemoveCmd(storePath, jobID string) {
+	cs := cron.NewCronService(storePath, nil)
+	removed, err := cs.RemoveJob(jobID)
+	if err != nil {
+		fmt.Printf("✗ Failed to remove job %s: %v\n", jobID, err)
+	} else if removed {
+		fmt.Printf("✓ Removed job %s\n", jobID)
+	} else {
+		fmt.Printf("✗ Job %s not found\n", jobID)
+	}
+}
+
+func cronSetJobEnabled(storePath, jobID string, enabled bool) {
+	cs := cron.NewCronService(storePath, nil)
+	job, err := cs.EnableJob(jobID, enabled)
+	if err != nil {
+		fmt.Printf("✗ Failed to update job %s: %v\n", jobID, err)
+	} else if job != nil {
+		fmt.Printf("✓ Job '%s' enabled\n", job.Name)
+	} else {
+		fmt.Printf("✗ Job %s not found\n", jobID)
+	}
+}

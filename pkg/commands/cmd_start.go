@@ -1,0 +1,20 @@
+package commands
+
+import (
+	"context"
+	"fmt"
+)
+
+func startCommand() Definition {
+	return Definition{
+		Name:        "start",
+		Description: "Start the bot",
+		Usage:       "/start",
+		Handler: func(_ context.Context, req Request, rt *Runtime) error {
+			if rt != nil && rt.AgentName != "" {
+				return req.Reply(fmt.Sprintf("Hello! I am %s.", rt.AgentName))
+			}
+			return req.Reply("Hello!")
+		},
+	}
+}
