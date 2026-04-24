@@ -7,6 +7,10 @@
 #   ./test.sh             Full suite: race detector + coverage (default)
 #   ./test.sh -f          Fast mode: no race detector, no coverage
 #   ./test.sh -c          Coverage only (no race detector)
+#   ./test.sh -i          Also run MCP server integration tests (probe-driven).
+#                         Self-contained: builds claw, starts a fresh gateway
+#                         in a temp CLAW_HOME, runs the test, tears it down.
+#                         Requires the 'probe' binary on PATH.
 #   ./test.sh -n          Disable colour output
 #   ./test.sh -x          Preserve test artifacts after completion
 #   ./test.sh -h          Show help
@@ -37,24 +41,27 @@ FAST_MODE=false
 COVERAGE_ONLY=false
 NO_COLOR=false
 PRESERVE_ARTIFACTS=false
+INTEGRATION=false
 
-while getopts "fcnxh" opt; do
+while getopts "fcinxh" opt; do
     case $opt in
         f) FAST_MODE=true ;;
         c) COVERAGE_ONLY=true ;;
+        i) INTEGRATION=true ;;
         n) NO_COLOR=true ;;
         x) PRESERVE_ARTIFACTS=true ;;
         h)
-            echo "Usage: $0 [-f] [-c] [-n] [-x] [-h]"
+            echo "Usage: $0 [-f] [-c] [-i] [-n] [-x] [-h]"
             echo "  -f  Fast mode: no race detector, no coverage (quickest feedback)"
             echo "  -c  Coverage mode: coverage measurement only, no race detector"
+            echo "  -i  Also run MCP server integration tests (probe-driven, self-contained)"
             echo "  -n  Disable colour output"
             echo "  -x  Preserve test artifacts after completion (for debugging)"
             echo "  -h  Show this help"
             exit 0
             ;;
         *)
-            echo "Usage: $0 [-f] [-c] [-n] [-x] [-h]"
+            echo "Usage: $0 [-f] [-c] [-i] [-n] [-x] [-h]"
             exit 1
             ;;
     esac
@@ -268,6 +275,169 @@ if $RUN_COVERAGE && [ -f "$COVERAGE_FILE" ]; then
 fi
 
 #===============================================================================
+# Optional: MCP Server Integration Tests
+#
+# Fully self-contained: builds claw, starts a fresh gateway in a temporary
+# CLAW_HOME with mcp_host enabled, runs the probe-driven test, then tears
+# everything down. No assumptions about an already-running claw.
+#===============================================================================
+
+INTEGRATION_RAN=false
+INTEGRATION_PASSED=true
+
+if $INTEGRATION; then
+    echo ""
+    echo "${BOLD}============================================${NC}"
+    echo "${BOLD}   MCP SERVER INTEGRATION TESTS${NC}"
+    echo "${BOLD}============================================${NC}"
+    echo ""
+
+    INTEGRATION_SCRIPT="$SCRIPT_DIR/tests/test_mcpserver.sh"
+    if [ ! -x "$INTEGRATION_SCRIPT" ]; then
+        echo "${RED}ERROR: $INTEGRATION_SCRIPT not found or not executable${NC}"
+        INTEGRATION_PASSED=false
+    else
+        # Need a probe binary to drive the test.
+        PROBE_BIN="${PROBE_PATH:-probe}"
+        if ! command -v "$PROBE_BIN" >/dev/null 2>&1; then
+            echo "${RED}ERROR: 'probe' not found on PATH (set PROBE_PATH to override)${NC}"
+            INTEGRATION_PASSED=false
+        else
+            INTEGRATION_RAN=true
+
+            # ---- Pick free ports so we don't collide with a running claw. ----
+            pick_free_port() {
+                python3 - <<'PY'
+import socket
+s = socket.socket()
+s.bind(('127.0.0.1', 0))
+print(s.getsockname()[1])
+s.close()
+PY
+            }
+
+            MCP_PORT=$(pick_free_port)
+            GATEWAY_PORT=$(pick_free_port)
+
+            # ---- Workspace + binary in a per-run tempdir. ----
+            INTEG_TMP=$(mktemp -d -t claw-integ.XXXXXX)
+            INTEG_HOME="$INTEG_TMP/home"
+            INTEG_BIN="$INTEG_TMP/claw"
+            INTEG_LOG="$INTEG_TMP/gateway.log"
+            mkdir -p "$INTEG_HOME"
+
+            cleanup_integration() {
+                if [ -n "${INTEG_PID:-}" ] && kill -0 "$INTEG_PID" 2>/dev/null; then
+                    kill -TERM "$INTEG_PID" 2>/dev/null || true
+                    # Give the gateway a moment to release its lock + shut down cleanly.
+                    for _ in 1 2 3 4 5 6 7 8 9 10; do
+                        kill -0 "$INTEG_PID" 2>/dev/null || break
+                        sleep 0.5
+                    done
+                    kill -KILL "$INTEG_PID" 2>/dev/null || true
+                fi
+                if $PRESERVE_ARTIFACTS; then
+                    echo "${DIM}Integration artifacts preserved at: $INTEG_TMP${NC}"
+                else
+                    rm -rf "$INTEG_TMP"
+                fi
+                # Preserve the earlier EXIT trap's cleanup of TMPOUT/COVERAGE_FILE.
+                if $PRESERVE_ARTIFACTS; then
+                    rm -f "$TMPOUT"
+                else
+                    rm -f "$TMPOUT" "$COVERAGE_FILE"
+                fi
+            }
+            trap cleanup_integration EXIT
+
+            echo "${DIM}Building claw binary...${NC}"
+            if ! go build -o "$INTEG_BIN" ./cmd/claw 2>&1; then
+                echo "${RED}ERROR: failed to build claw${NC}"
+                INTEGRATION_PASSED=false
+            else
+                # ---- Minimal config: enable MCP host on the chosen ports. ----
+                cat > "$INTEG_HOME/config.json" <<EOF
+{
+  "agents": {
+    "list": [
+      {
+        "id": "main",
+        "name": "main",
+        "default": true,
+        "tools": ["*"]
+      }
+    ]
+  },
+  "channels": {
+    "webui": {
+      "enabled": true,
+      "token": "integration-test-token"
+    }
+  },
+  "gateway": {
+    "host": "127.0.0.1",
+    "port": $GATEWAY_PORT
+  },
+  "mcp_host": {
+    "enabled": true,
+    "listen": "127.0.0.1:$MCP_PORT",
+    "endpoint_path": "/mcp",
+    "tools": [
+      "read_file",
+      "write_file",
+      "edit_file",
+      "append_file",
+      "list_dir"
+    ]
+  }
+}
+EOF
+
+                echo "${DIM}Starting gateway (CLAW_HOME=$INTEG_HOME, MCP=127.0.0.1:$MCP_PORT)...${NC}"
+                CLAW_HOME="$INTEG_HOME" "$INTEG_BIN" gateway >"$INTEG_LOG" 2>&1 &
+                INTEG_PID=$!
+
+                # ---- Wait for the MCP port to accept connections. ----
+                READY=false
+                for _ in $(seq 1 40); do
+                    if ! kill -0 "$INTEG_PID" 2>/dev/null; then
+                        break  # gateway died — fall through to failure path
+                    fi
+                    if (echo > "/dev/tcp/127.0.0.1/$MCP_PORT") 2>/dev/null; then
+                        READY=true
+                        break
+                    fi
+                    sleep 0.25
+                done
+
+                if ! $READY; then
+                    echo "${RED}ERROR: MCP server did not start on 127.0.0.1:$MCP_PORT within 10s${NC}"
+                    echo "${DIM}--- gateway log (tail) ---${NC}"
+                    tail -n 40 "$INTEG_LOG" | sed 's/^/    /'
+                    INTEGRATION_PASSED=false
+                else
+                    echo "${GREEN}Gateway ready on 127.0.0.1:$MCP_PORT/mcp${NC}"
+                    echo ""
+
+                    # Run the probe-driven test against this ephemeral instance.
+                    if SERVER_URL="http://127.0.0.1:$MCP_PORT" \
+                       ENDPOINT="/mcp" \
+                       PROBE_PATH="$PROBE_BIN" \
+                       bash "$INTEGRATION_SCRIPT"; then
+                        echo "${GREEN}MCP server integration tests passed.${NC}"
+                    else
+                        echo "${RED}MCP server integration tests failed.${NC}"
+                        echo "${DIM}--- gateway log (tail) ---${NC}"
+                        tail -n 40 "$INTEG_LOG" | sed 's/^/    /'
+                        INTEGRATION_PASSED=false
+                    fi
+                fi
+            fi
+        fi
+    fi
+fi
+
+#===============================================================================
 # Final Summary
 #===============================================================================
 
@@ -300,6 +470,15 @@ fi
 
 if $RUN_RACE; then
     echo "Race:        ${GREEN}enabled${NC}"
+fi
+
+if $INTEGRATION_RAN; then
+    if $INTEGRATION_PASSED; then
+        echo "MCP integ:   ${GREEN}passed${NC}"
+    else
+        echo "MCP integ:   ${RED}failed${NC}"
+        OVERALL_PASS=false
+    fi
 fi
 
 echo ""

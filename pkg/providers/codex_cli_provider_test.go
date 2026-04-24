@@ -47,47 +47,12 @@ func TestParseJSONLEvents_AgentMessage(t *testing.T) {
 	}
 }
 
-func TestParseJSONLEvents_ToolCallExtraction(t *testing.T) {
+func TestParseJSONLEvents_PassesThroughToolCallText(t *testing.T) {
+	// CLI providers no longer extract tool calls from response text.
+	// The text passes through verbatim.
 	p := &CodexCliProvider{}
 	toolCallText := `Let me read that file.
-{"tool_calls":[{"id":"call_1","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"/tmp/test.txt\"}"}}]}`
-	// Build valid JSONL by marshaling the event
-	item := codexEvent{
-		Type: "item.completed",
-		Item: &codexEventItem{ID: "item_1", Type: "agent_message", Text: toolCallText},
-	}
-	itemJSON, _ := json.Marshal(item)
-	usageEvt := `{"type":"turn.completed","usage":{"input_tokens":50,"cached_input_tokens":0,"output_tokens":20}}`
-	events := `{"type":"turn.started"}` + "\n" + string(itemJSON) + "\n" + usageEvt
-
-	resp, err := p.parseJSONLEvents(events)
-	if err != nil {
-		t.Fatalf("parseJSONLEvents() error: %v", err)
-	}
-	if resp.FinishReason != "tool_calls" {
-		t.Errorf("FinishReason = %q, want %q", resp.FinishReason, "tool_calls")
-	}
-	if len(resp.ToolCalls) != 1 {
-		t.Fatalf("ToolCalls count = %d, want 1", len(resp.ToolCalls))
-	}
-	if resp.ToolCalls[0].Name != "read_file" {
-		t.Errorf("ToolCalls[0].Name = %q, want %q", resp.ToolCalls[0].Name, "read_file")
-	}
-	if resp.ToolCalls[0].ID != "call_1" {
-		t.Errorf("ToolCalls[0].ID = %q, want %q", resp.ToolCalls[0].ID, "call_1")
-	}
-	if resp.ToolCalls[0].Function.Arguments != `{"path":"/tmp/test.txt"}` {
-		t.Errorf("ToolCalls[0].Function.Arguments = %q", resp.ToolCalls[0].Function.Arguments)
-	}
-	// Content should have the tool call JSON stripped
-	if strings.Contains(resp.Content, "tool_calls") {
-		t.Errorf("Content should not contain tool_calls JSON, got: %q", resp.Content)
-	}
-}
-
-func TestParseJSONLEvents_MultipleToolCalls(t *testing.T) {
-	p := &CodexCliProvider{}
-	toolCallText := `{"tool_calls":[{"id":"call_1","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"a.txt\"}"}},{"id":"call_2","type":"function","function":{"name":"write_file","arguments":"{\"path\":\"b.txt\",\"content\":\"hello\"}"}}]}`
+{"tool_calls":[{"id":"call_1"}]}`
 	item := codexEvent{
 		Type: "item.completed",
 		Item: &codexEventItem{ID: "item_1", Type: "agent_message", Text: toolCallText},
@@ -99,17 +64,14 @@ func TestParseJSONLEvents_MultipleToolCalls(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseJSONLEvents() error: %v", err)
 	}
-	if len(resp.ToolCalls) != 2 {
-		t.Fatalf("ToolCalls count = %d, want 2", len(resp.ToolCalls))
+	if resp.FinishReason != "stop" {
+		t.Errorf("FinishReason = %q, want %q", resp.FinishReason, "stop")
 	}
-	if resp.ToolCalls[0].Name != "read_file" {
-		t.Errorf("ToolCalls[0].Name = %q, want %q", resp.ToolCalls[0].Name, "read_file")
+	if len(resp.ToolCalls) != 0 {
+		t.Errorf("ToolCalls = %d, want 0 (CLI is single-turn; no extraction)", len(resp.ToolCalls))
 	}
-	if resp.ToolCalls[1].Name != "write_file" {
-		t.Errorf("ToolCalls[1].Name = %q, want %q", resp.ToolCalls[1].Name, "write_file")
-	}
-	if resp.FinishReason != "tool_calls" {
-		t.Errorf("FinishReason = %q, want %q", resp.FinishReason, "tool_calls")
+	if !strings.Contains(resp.Content, "tool_calls") {
+		t.Errorf("Content should pass through verbatim, got %q", resp.Content)
 	}
 }
 
@@ -249,7 +211,7 @@ func TestBuildPrompt_SystemAsInstructions(t *testing.T) {
 		{Role: "user", Content: "Hi there"},
 	}
 
-	prompt := p.buildPrompt(messages, nil)
+	prompt := p.buildPrompt(messages)
 
 	if !strings.Contains(prompt, "## System Instructions") {
 		t.Error("prompt should contain '## System Instructions'")
@@ -271,47 +233,13 @@ func TestBuildPrompt_NoSystem(t *testing.T) {
 		{Role: "user", Content: "Just a question"},
 	}
 
-	prompt := p.buildPrompt(messages, nil)
+	prompt := p.buildPrompt(messages)
 
 	if strings.Contains(prompt, "## System Instructions") {
 		t.Error("prompt should not contain system instructions header")
 	}
 	if prompt != "Just a question" {
 		t.Errorf("prompt = %q, want %q", prompt, "Just a question")
-	}
-}
-
-func TestBuildPrompt_WithTools(t *testing.T) {
-	p := &CodexCliProvider{}
-	messages := []Message{
-		{Role: "user", Content: "Get weather"},
-	}
-	tools := []ToolDefinition{
-		{
-			Type: "function",
-			Function: ToolFunctionDefinition{
-				Name:        "get_weather",
-				Description: "Get current weather",
-				Parameters: map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"city": map[string]any{"type": "string"},
-					},
-				},
-			},
-		},
-	}
-
-	prompt := p.buildPrompt(messages, tools)
-
-	if !strings.Contains(prompt, "## Available Tools") {
-		t.Error("prompt should contain tools section")
-	}
-	if !strings.Contains(prompt, "get_weather") {
-		t.Error("prompt should contain tool name")
-	}
-	if !strings.Contains(prompt, "Get current weather") {
-		t.Error("prompt should contain tool description")
 	}
 }
 
@@ -323,7 +251,7 @@ func TestBuildPrompt_MultipleMessages(t *testing.T) {
 		{Role: "user", Content: "Tell me about Go"},
 	}
 
-	prompt := p.buildPrompt(messages, nil)
+	prompt := p.buildPrompt(messages)
 
 	if !strings.Contains(prompt, "Hello") {
 		t.Error("prompt should contain first user message")
@@ -343,7 +271,7 @@ func TestBuildPrompt_ToolResults(t *testing.T) {
 		{Role: "tool", Content: `{"temp": 72}`, ToolCallID: "call_1"},
 	}
 
-	prompt := p.buildPrompt(messages, nil)
+	prompt := p.buildPrompt(messages)
 
 	if !strings.Contains(prompt, "[Tool Result for call_1]") {
 		t.Error("prompt should contain tool result")
@@ -353,44 +281,10 @@ func TestBuildPrompt_ToolResults(t *testing.T) {
 	}
 }
 
-func TestBuildPrompt_SystemAndTools(t *testing.T) {
-	p := &CodexCliProvider{}
-	messages := []Message{
-		{Role: "system", Content: "Be concise."},
-		{Role: "user", Content: "Do something"},
-	}
-	tools := []ToolDefinition{
-		{
-			Type: "function",
-			Function: ToolFunctionDefinition{
-				Name:        "my_tool",
-				Description: "A tool",
-			},
-		},
-	}
-
-	prompt := p.buildPrompt(messages, tools)
-
-	// System instructions should come first
-	sysIdx := strings.Index(prompt, "## System Instructions")
-	toolIdx := strings.Index(prompt, "## Available Tools")
-	taskIdx := strings.Index(prompt, "## Task")
-
-	if sysIdx == -1 || toolIdx == -1 || taskIdx == -1 {
-		t.Fatal("prompt should contain all sections")
-	}
-	if sysIdx >= taskIdx {
-		t.Error("system instructions should come before task")
-	}
-	if taskIdx >= toolIdx {
-		t.Error("task section should come before tools in the output")
-	}
-}
-
 // --- CLI Argument Tests ---
 
 func TestCodexCliProvider_GetDefaultModel(t *testing.T) {
-	p := NewCodexCliProvider("", nil)
+	p := NewCodexCliProvider("", nil, nil)
 	if got := p.GetDefaultModel(); got != "codex-cli" {
 		t.Errorf("GetDefaultModel() = %q, want %q", got, "codex-cli")
 	}

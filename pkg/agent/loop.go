@@ -75,11 +75,12 @@ const (
 	defaultResponse        = "I've completed processing but have no response to give. Increase `max_tool_iterations` in config.json."
 	emptyProviderResponse  = "The AI provider returned an empty response. Check provider logs for details."
 	sessionKeyAgentPrefix     = "agent:"
-	metadataKeyAccountID      = "account_id"
-	metadataKeyGuildID        = "guild_id"
-	metadataKeyTeamID         = "team_id"
-	metadataKeyParentPeerKind = "parent_peer_kind"
-	metadataKeyParentPeerID   = "parent_peer_id"
+	metadataKeyAccountID           = "account_id"
+	metadataKeyGuildID             = "guild_id"
+	metadataKeyTeamID              = "team_id"
+	metadataKeyParentPeerKind      = "parent_peer_kind"
+	metadataKeyParentPeerID        = "parent_peer_id"
+	metadataKeyPreresolvedAgentID  = "preresolved_agent_id"
 )
 
 func NewAgentLoop(
@@ -489,7 +490,10 @@ func (al *AgentLoop) HandleCallbackMessage(ctx context.Context, agentID, body st
 			CanonicalID: "callback:" + agentID,
 			DisplayName: "Callback",
 		},
-		Peer: bus.Peer{Kind: "direct", ID: agentID},
+		SessionKey: routing.BuildAgentMainSessionKey(agentID),
+		Metadata: map[string]string{
+			metadataKeyPreresolvedAgentID: agentID,
+		},
 	}
 	return al.bus.PublishInbound(ctx, msg)
 }
@@ -962,6 +966,28 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 
 func (al *AgentLoop) resolveMessageRoute(msg bus.InboundMessage) (routing.ResolvedRoute, *AgentInstance, error) {
 	registry := al.GetRegistry()
+
+	// Honor an explicit preresolved agent ID (set by trusted internal callers
+	// such as the callback HTTP handler). This bypasses binding-based routing
+	// so the message is delivered to the named agent regardless of which
+	// bindings would otherwise match the channel/peer/account cascade.
+	if preresolved := inboundMetadata(msg, metadataKeyPreresolvedAgentID); preresolved != "" {
+		normalized := routing.NormalizeAgentID(preresolved)
+		if agent, ok := registry.GetAgent(normalized); ok {
+			route := routing.ResolvedRoute{
+				AgentID:        normalized,
+				Channel:        msg.Channel,
+				AccountID:      routing.NormalizeAccountID(inboundMetadata(msg, metadataKeyAccountID)),
+				SessionKey:     routing.BuildAgentMainSessionKey(normalized),
+				MainSessionKey: routing.BuildAgentMainSessionKey(normalized),
+				MatchedBy:      "preresolved",
+			}
+			return route, agent, nil
+		}
+		logger.WarnCF("agent", "preresolved_agent_id not registered; falling back to binding routing",
+			map[string]any{"preresolved_agent_id": preresolved})
+	}
+
 	route := registry.ResolveRoute(routing.RouteInput{
 		Channel:        msg.Channel,
 		AccountID:      inboundMetadata(msg, metadataKeyAccountID),

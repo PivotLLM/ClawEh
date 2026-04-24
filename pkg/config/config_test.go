@@ -163,7 +163,7 @@ func TestAgentConfig_FullParse(t *testing.T) {
 	}
 }
 
-func TestConfig_BackwardCompat_NoAgentsList(t *testing.T) {
+func TestConfig_NoAgentsListInheritsDefault(t *testing.T) {
 	jsonData := `{
 		"agents": {
 			"defaults": {
@@ -180,8 +180,10 @@ func TestConfig_BackwardCompat_NoAgentsList(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 
-	if len(cfg.Agents.List) != 0 {
-		t.Errorf("agents.list should be empty for backward compat, got %d", len(cfg.Agents.List))
+	// A config that omits agents.list should still have the default "main"
+	// agent baked in by DefaultConfig(), so the gateway can start cleanly.
+	if len(cfg.Agents.List) != 1 || cfg.Agents.List[0].ID != "main" {
+		t.Errorf("expected default main agent to be preserved, got %+v", cfg.Agents.List)
 	}
 	if len(cfg.Bindings) != 0 {
 		t.Errorf("bindings should be empty, got %d", len(cfg.Bindings))
@@ -597,4 +599,98 @@ func TestFlexibleStringSlice_UnmarshalText_EmptySliceConsistency(t *testing.T) {
 			t.Errorf("Expected empty slice, got %v", f)
 		}
 	})
+}
+
+func TestMCPHost_DefaultAutoEnable(t *testing.T) {
+	cfg := DefaultConfig()
+	if !cfg.MCPHost.AutoEnable {
+		t.Error("expected MCPHost.AutoEnable to default to true")
+	}
+	if cfg.MCPHost.Enabled {
+		t.Error("expected MCPHost.Enabled to default to false")
+	}
+}
+
+func TestMCPHostEffectivelyEnabled(t *testing.T) {
+	tests := []struct {
+		name       string
+		enabled    bool
+		autoEnable bool
+		models     []ModelConfig
+		want       bool
+	}{
+		{
+			name:    "explicit enabled always starts",
+			enabled: true,
+			want:    true,
+		},
+		{
+			name:       "auto with claude-cli model starts",
+			autoEnable: true,
+			models: []ModelConfig{
+				{ModelName: "sonnet", Model: "claude-cli/claude-sonnet-4.6", Enabled: true},
+			},
+			want: true,
+		},
+		{
+			name:       "auto with codex-cli model starts",
+			autoEnable: true,
+			models: []ModelConfig{
+				{ModelName: "codex", Model: "codex-cli/gpt-5-codex", Enabled: true},
+			},
+			want: true,
+		},
+		{
+			name:       "auto with gemini-cli model starts",
+			autoEnable: true,
+			models: []ModelConfig{
+				{ModelName: "gemini", Model: "gemini-cli/gemini-2.5", Enabled: true},
+			},
+			want: true,
+		},
+		{
+			name:       "auto with only HTTP models does not start",
+			autoEnable: true,
+			models: []ModelConfig{
+				{ModelName: "gpt", Model: "openai/gpt-4o", Enabled: true},
+				{ModelName: "claude", Model: "anthropic/claude-sonnet-4.6", Enabled: true},
+			},
+			want: false,
+		},
+		{
+			name:       "auto disabled with cli model does not start",
+			autoEnable: false,
+			models: []ModelConfig{
+				{ModelName: "sonnet", Model: "claude-cli/claude-sonnet-4.6", Enabled: true},
+			},
+			want: false,
+		},
+		{
+			name:       "disabled cli model does not trigger auto-start",
+			autoEnable: true,
+			models: []ModelConfig{
+				{ModelName: "sonnet", Model: "claude-cli/claude-sonnet-4.6", Enabled: false},
+			},
+			want: false,
+		},
+		{
+			name: "all defaults off with no models",
+			want: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &Config{
+				MCPHost: MCPHostConfig{
+					Enabled:    tc.enabled,
+					AutoEnable: tc.autoEnable,
+				},
+				ModelList: tc.models,
+			}
+			if got := cfg.MCPHostEffectivelyEnabled(); got != tc.want {
+				t.Errorf("MCPHostEffectivelyEnabled()=%v, want %v", got, tc.want)
+			}
+		})
+	}
 }

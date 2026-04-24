@@ -97,7 +97,7 @@ EOFMOCK
 // --- Constructor tests ---
 
 func TestNewClaudeCliProvider(t *testing.T) {
-	p := NewClaudeCliProvider("/test/workspace", nil)
+	p := NewClaudeCliProvider("/test/workspace", nil, nil)
 	if p == nil {
 		t.Fatal("NewClaudeCliProvider returned nil")
 	}
@@ -110,7 +110,7 @@ func TestNewClaudeCliProvider(t *testing.T) {
 }
 
 func TestNewClaudeCliProvider_EmptyWorkspace(t *testing.T) {
-	p := NewClaudeCliProvider("", nil)
+	p := NewClaudeCliProvider("", nil, nil)
 	if p.workspace != "" {
 		t.Errorf("workspace = %q, want empty", p.workspace)
 	}
@@ -119,7 +119,7 @@ func TestNewClaudeCliProvider_EmptyWorkspace(t *testing.T) {
 // --- GetDefaultModel tests ---
 
 func TestClaudeCliProvider_GetDefaultModel(t *testing.T) {
-	p := NewClaudeCliProvider("/workspace", nil)
+	p := NewClaudeCliProvider("/workspace", nil, nil)
 	if got := p.GetDefaultModel(); got != "claude-code" {
 		t.Errorf("GetDefaultModel() = %q, want %q", got, "claude-code")
 	}
@@ -131,7 +131,7 @@ func TestChat_Success(t *testing.T) {
 	mockJSON := `{"type":"result","subtype":"success","is_error":false,"result":"Hello from mock!","session_id":"sess_123","total_cost_usd":0.005,"duration_ms":200,"duration_api_ms":150,"num_turns":1,"usage":{"input_tokens":10,"output_tokens":5,"cache_creation_input_tokens":100,"cache_read_input_tokens":0}}`
 	script := createMockCLI(t, mockJSON, "", 0)
 
-	p := NewClaudeCliProvider(t.TempDir(), nil)
+	p := NewClaudeCliProvider(t.TempDir(), nil, nil)
 	p.command = script
 
 	resp, err := p.Chat(context.Background(), []Message{
@@ -167,7 +167,7 @@ func TestChat_IsErrorResponse(t *testing.T) {
 	mockJSON := `{"type":"result","subtype":"error","is_error":true,"result":"Rate limit exceeded","session_id":"s1","total_cost_usd":0}`
 	script := createMockCLI(t, mockJSON, "", 0)
 
-	p := NewClaudeCliProvider(t.TempDir(), nil)
+	p := NewClaudeCliProvider(t.TempDir(), nil, nil)
 	p.command = script
 
 	_, err := p.Chat(context.Background(), []Message{
@@ -182,11 +182,14 @@ func TestChat_IsErrorResponse(t *testing.T) {
 	}
 }
 
-func TestChat_WithToolCallsInResponse(t *testing.T) {
+func TestChat_PassesThroughToolCallText(t *testing.T) {
+	// CLI output that previously would have been parsed as a tool call must now
+	// pass through verbatim — the CLI is the agent and we treat its response
+	// as final assistant prose for the round.
 	mockJSON := `{"type":"result","subtype":"success","is_error":false,"result":"Checking weather.\n{\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"arguments\":\"{\\\"location\\\":\\\"NYC\\\"}\"}}]}","session_id":"s1","total_cost_usd":0.01,"usage":{"input_tokens":5,"output_tokens":20,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}`
 	script := createMockCLI(t, mockJSON, "", 0)
 
-	p := NewClaudeCliProvider(t.TempDir(), nil)
+	p := NewClaudeCliProvider(t.TempDir(), nil, nil)
 	p.command = script
 
 	resp, err := p.Chat(context.Background(), []Message{
@@ -195,24 +198,21 @@ func TestChat_WithToolCallsInResponse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Chat() error = %v", err)
 	}
-	if resp.FinishReason != "tool_calls" {
-		t.Errorf("FinishReason = %q, want %q", resp.FinishReason, "tool_calls")
+	if resp.FinishReason != "stop" {
+		t.Errorf("FinishReason = %q, want %q", resp.FinishReason, "stop")
 	}
-	if len(resp.ToolCalls) != 1 {
-		t.Fatalf("ToolCalls len = %d, want 1", len(resp.ToolCalls))
+	if len(resp.ToolCalls) != 0 {
+		t.Errorf("ToolCalls len = %d, want 0", len(resp.ToolCalls))
 	}
-	if resp.ToolCalls[0].Name != "get_weather" {
-		t.Errorf("ToolCalls[0].Name = %q, want %q", resp.ToolCalls[0].Name, "get_weather")
-	}
-	if resp.ToolCalls[0].Arguments["location"] != "NYC" {
-		t.Errorf("ToolCalls[0].Arguments[location] = %v, want NYC", resp.ToolCalls[0].Arguments["location"])
+	if !strings.Contains(resp.Content, "tool_calls") {
+		t.Errorf("Content should pass through tool_calls JSON verbatim, got %q", resp.Content)
 	}
 }
 
 func TestChat_StderrError(t *testing.T) {
 	script := createMockCLI(t, "", "Error: rate limited", 1)
 
-	p := NewClaudeCliProvider(t.TempDir(), nil)
+	p := NewClaudeCliProvider(t.TempDir(), nil, nil)
 	p.command = script
 
 	_, err := p.Chat(context.Background(), []Message{
@@ -230,7 +230,7 @@ func TestChat_StderrError(t *testing.T) {
 func TestChat_NonZeroExitNoStderr(t *testing.T) {
 	script := createMockCLI(t, "", "", 1)
 
-	p := NewClaudeCliProvider(t.TempDir(), nil)
+	p := NewClaudeCliProvider(t.TempDir(), nil, nil)
 	p.command = script
 
 	_, err := p.Chat(context.Background(), []Message{
@@ -246,7 +246,7 @@ func TestChat_NonZeroExitNoStderr(t *testing.T) {
 }
 
 func TestChat_CommandNotFound(t *testing.T) {
-	p := NewClaudeCliProvider(t.TempDir(), nil)
+	p := NewClaudeCliProvider(t.TempDir(), nil, nil)
 	p.command = "/nonexistent/claude-binary-that-does-not-exist"
 
 	_, err := p.Chat(context.Background(), []Message{
@@ -261,7 +261,7 @@ func TestChat_CommandNotFound(t *testing.T) {
 func TestChat_InvalidResponseJSON(t *testing.T) {
 	script := createMockCLI(t, "not valid json at all", "", 0)
 
-	p := NewClaudeCliProvider(t.TempDir(), nil)
+	p := NewClaudeCliProvider(t.TempDir(), nil, nil)
 	p.command = script
 
 	_, err := p.Chat(context.Background(), []Message{
@@ -279,7 +279,7 @@ func TestChat_InvalidResponseJSON(t *testing.T) {
 func TestChat_ContextCancellation(t *testing.T) {
 	script := createSlowMockCLI(t, 2) // sleep 2s
 
-	p := NewClaudeCliProvider(t.TempDir(), nil)
+	p := NewClaudeCliProvider(t.TempDir(), nil, nil)
 	p.command = script
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
@@ -322,7 +322,7 @@ EOFMOCK
 		t.Fatal(err)
 	}
 
-	p := NewClaudeCliProvider(t.TempDir(), nil)
+	p := NewClaudeCliProvider(t.TempDir(), nil, nil)
 	p.command = script
 
 	_, err := p.Chat(context.Background(), []Message{
@@ -359,7 +359,7 @@ func TestChat_PassesModelFlag(t *testing.T) {
 	argsFile := filepath.Join(t.TempDir(), "args.txt")
 	script := createArgCaptureCLI(t, argsFile)
 
-	p := NewClaudeCliProvider(t.TempDir(), nil)
+	p := NewClaudeCliProvider(t.TempDir(), nil, nil)
 	p.command = script
 
 	_, err := p.Chat(context.Background(), []Message{
@@ -383,7 +383,7 @@ func TestChat_SkipsModelFlagForClaudeCode(t *testing.T) {
 	argsFile := filepath.Join(t.TempDir(), "args.txt")
 	script := createArgCaptureCLI(t, argsFile)
 
-	p := NewClaudeCliProvider(t.TempDir(), nil)
+	p := NewClaudeCliProvider(t.TempDir(), nil, nil)
 	p.command = script
 
 	_, err := p.Chat(context.Background(), []Message{
@@ -404,7 +404,7 @@ func TestChat_SkipsModelFlagForEmptyModel(t *testing.T) {
 	argsFile := filepath.Join(t.TempDir(), "args.txt")
 	script := createArgCaptureCLI(t, argsFile)
 
-	p := NewClaudeCliProvider(t.TempDir(), nil)
+	p := NewClaudeCliProvider(t.TempDir(), nil, nil)
 	p.command = script
 
 	_, err := p.Chat(context.Background(), []Message{
@@ -425,7 +425,7 @@ func TestChat_EmptyWorkspaceDoesNotSetDir(t *testing.T) {
 	mockJSON := `{"type":"result","result":"ok","session_id":"s"}`
 	script := createMockCLI(t, mockJSON, "", 0)
 
-	p := NewClaudeCliProvider("", nil)
+	p := NewClaudeCliProvider("", nil, nil)
 	p.command = script
 
 	resp, err := p.Chat(context.Background(), []Message{
@@ -519,7 +519,7 @@ func TestCreateProvider_ClaudeCliDefaultWorkspace(t *testing.T) {
 // --- messagesToPrompt tests ---
 
 func TestMessagesToPrompt_SingleUser(t *testing.T) {
-	p := NewClaudeCliProvider("/workspace", nil)
+	p := NewClaudeCliProvider("/workspace", nil, nil)
 	messages := []Message{
 		{Role: "user", Content: "Hello"},
 	}
@@ -531,7 +531,7 @@ func TestMessagesToPrompt_SingleUser(t *testing.T) {
 }
 
 func TestMessagesToPrompt_Conversation(t *testing.T) {
-	p := NewClaudeCliProvider("/workspace", nil)
+	p := NewClaudeCliProvider("/workspace", nil, nil)
 	messages := []Message{
 		{Role: "user", Content: "Hi"},
 		{Role: "assistant", Content: "Hello!"},
@@ -545,7 +545,7 @@ func TestMessagesToPrompt_Conversation(t *testing.T) {
 }
 
 func TestMessagesToPrompt_WithSystemMessage(t *testing.T) {
-	p := NewClaudeCliProvider("/workspace", nil)
+	p := NewClaudeCliProvider("/workspace", nil, nil)
 	messages := []Message{
 		{Role: "system", Content: "You are helpful."},
 		{Role: "user", Content: "Hello"},
@@ -558,7 +558,7 @@ func TestMessagesToPrompt_WithSystemMessage(t *testing.T) {
 }
 
 func TestMessagesToPrompt_WithToolResults(t *testing.T) {
-	p := NewClaudeCliProvider("/workspace", nil)
+	p := NewClaudeCliProvider("/workspace", nil, nil)
 	messages := []Message{
 		{Role: "user", Content: "What's the weather?"},
 		{Role: "tool", Content: `{"temp": 72}`, ToolCallID: "call_123"},
@@ -573,7 +573,7 @@ func TestMessagesToPrompt_WithToolResults(t *testing.T) {
 }
 
 func TestMessagesToPrompt_EmptyMessages(t *testing.T) {
-	p := NewClaudeCliProvider("/workspace", nil)
+	p := NewClaudeCliProvider("/workspace", nil, nil)
 	got := p.messagesToPrompt(nil)
 	if got != "" {
 		t.Errorf("messagesToPrompt(nil) = %q, want empty", got)
@@ -581,7 +581,7 @@ func TestMessagesToPrompt_EmptyMessages(t *testing.T) {
 }
 
 func TestMessagesToPrompt_OnlySystemMessages(t *testing.T) {
-	p := NewClaudeCliProvider("/workspace", nil)
+	p := NewClaudeCliProvider("/workspace", nil, nil)
 	messages := []Message{
 		{Role: "system", Content: "System 1"},
 		{Role: "system", Content: "System 2"},
@@ -594,37 +594,37 @@ func TestMessagesToPrompt_OnlySystemMessages(t *testing.T) {
 
 // --- buildSystemPrompt tests ---
 
-func TestBuildSystemPrompt_NoSystemNoTools(t *testing.T) {
-	p := NewClaudeCliProvider("/workspace", nil)
+func TestBuildSystemPrompt_NoSystem(t *testing.T) {
+	p := NewClaudeCliProvider("/workspace", nil, nil)
 	messages := []Message{
 		{Role: "user", Content: "Hi"},
 	}
-	got := p.buildSystemPrompt(messages, nil)
+	got := p.buildSystemPrompt(messages)
 	if got != "" {
 		t.Errorf("buildSystemPrompt() = %q, want empty", got)
 	}
 }
 
 func TestBuildSystemPrompt_SystemOnly(t *testing.T) {
-	p := NewClaudeCliProvider("/workspace", nil)
+	p := NewClaudeCliProvider("/workspace", nil, nil)
 	messages := []Message{
 		{Role: "system", Content: "You are helpful."},
 		{Role: "user", Content: "Hi"},
 	}
-	got := p.buildSystemPrompt(messages, nil)
+	got := p.buildSystemPrompt(messages)
 	if got != "You are helpful." {
 		t.Errorf("buildSystemPrompt() = %q, want %q", got, "You are helpful.")
 	}
 }
 
 func TestBuildSystemPrompt_MultipleSystemMessages(t *testing.T) {
-	p := NewClaudeCliProvider("/workspace", nil)
+	p := NewClaudeCliProvider("/workspace", nil, nil)
 	messages := []Message{
 		{Role: "system", Content: "You are helpful."},
 		{Role: "system", Content: "Be concise."},
 		{Role: "user", Content: "Hi"},
 	}
-	got := p.buildSystemPrompt(messages, nil)
+	got := p.buildSystemPrompt(messages)
 	if !strings.Contains(got, "You are helpful.") {
 		t.Error("missing first system message")
 	}
@@ -638,73 +638,24 @@ func TestBuildSystemPrompt_MultipleSystemMessages(t *testing.T) {
 	}
 }
 
-func TestBuildSystemPrompt_WithTools(t *testing.T) {
-	p := NewClaudeCliProvider("/workspace", nil)
-	messages := []Message{
-		{Role: "system", Content: "You are helpful."},
-	}
-	tools := []ToolDefinition{
-		{
-			Type: "function",
-			Function: ToolFunctionDefinition{
-				Name:        "get_weather",
-				Description: "Get weather for a location",
-				Parameters: map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"location": map[string]any{"type": "string"},
-					},
-				},
-			},
-		},
-	}
-	got := p.buildSystemPrompt(messages, tools)
-	if !strings.Contains(got, "You are helpful.") {
-		t.Error("buildSystemPrompt() missing system message")
-	}
-	if !strings.Contains(got, "get_weather") {
-		t.Error("buildSystemPrompt() missing tool definition")
-	}
-	if !strings.Contains(got, "Available Tools") {
-		t.Error("buildSystemPrompt() missing tools header")
-	}
-}
-
-func TestBuildSystemPrompt_ToolsOnlyNoSystem(t *testing.T) {
-	p := NewClaudeCliProvider("/workspace", nil)
-	tools := []ToolDefinition{
-		{
-			Type: "function",
-			Function: ToolFunctionDefinition{
-				Name:        "test_tool",
-				Description: "A test tool",
-			},
-		},
-	}
-	got := p.buildSystemPrompt(nil, tools)
-	if !strings.Contains(got, "test_tool") {
-		t.Error("should include tool definitions even without system messages")
-	}
-}
-
 // --- buildStdinPrompt tests ---
 
 func TestBuildStdinPrompt_NoSystem(t *testing.T) {
-	p := NewClaudeCliProvider("/workspace", nil)
+	p := NewClaudeCliProvider("/workspace", nil, nil)
 	messages := []Message{{Role: "user", Content: "Hello"}}
-	got := p.buildStdinPrompt(messages, nil)
+	got := p.buildStdinPrompt(messages)
 	if got != "Hello" {
 		t.Errorf("buildStdinPrompt() without system = %q, want %q", got, "Hello")
 	}
 }
 
 func TestBuildStdinPrompt_WithSystem(t *testing.T) {
-	p := NewClaudeCliProvider("/workspace", nil)
+	p := NewClaudeCliProvider("/workspace", nil, nil)
 	messages := []Message{
 		{Role: "system", Content: "Be concise."},
 		{Role: "user", Content: "Hello"},
 	}
-	got := p.buildStdinPrompt(messages, nil)
+	got := p.buildStdinPrompt(messages)
 	if !strings.Contains(got, "Be concise.") {
 		t.Error("buildStdinPrompt() must include system content")
 	}
@@ -717,52 +668,10 @@ func TestBuildStdinPrompt_WithSystem(t *testing.T) {
 	}
 }
 
-// --- buildToolsPrompt tests ---
-
-func TestBuildToolsPrompt_SkipsNonFunction(t *testing.T) {
-	tools := []ToolDefinition{
-		{Type: "other", Function: ToolFunctionDefinition{Name: "skip_me"}},
-		{Type: "function", Function: ToolFunctionDefinition{Name: "include_me", Description: "Included"}},
-	}
-	got := buildCLIToolsPrompt(tools)
-	if strings.Contains(got, "skip_me") {
-		t.Error("buildToolsPrompt() should skip non-function tools")
-	}
-	if !strings.Contains(got, "include_me") {
-		t.Error("buildToolsPrompt() should include function tools")
-	}
-}
-
-func TestBuildToolsPrompt_NoDescription(t *testing.T) {
-	tools := []ToolDefinition{
-		{Type: "function", Function: ToolFunctionDefinition{Name: "bare_tool"}},
-	}
-	got := buildCLIToolsPrompt(tools)
-	if !strings.Contains(got, "bare_tool") {
-		t.Error("should include tool name")
-	}
-	if strings.Contains(got, "Description:") {
-		t.Error("should not include Description: line when empty")
-	}
-}
-
-func TestBuildToolsPrompt_NoParameters(t *testing.T) {
-	tools := []ToolDefinition{
-		{Type: "function", Function: ToolFunctionDefinition{
-			Name:        "no_params_tool",
-			Description: "A tool with no parameters",
-		}},
-	}
-	got := buildCLIToolsPrompt(tools)
-	if strings.Contains(got, "Parameters:") {
-		t.Error("should not include Parameters: section when nil")
-	}
-}
-
 // --- parseClaudeCliResponse tests ---
 
 func TestParseClaudeCliResponse_TextOnly(t *testing.T) {
-	p := NewClaudeCliProvider("/workspace", nil)
+	p := NewClaudeCliProvider("/workspace", nil, nil)
 	output := `{"type":"result","subtype":"success","is_error":false,"result":"Hello, world!","session_id":"abc123","total_cost_usd":0.01,"duration_ms":500,"usage":{"input_tokens":10,"output_tokens":20,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}`
 
 	resp, err := p.parseClaudeCliResponse(output)
@@ -790,7 +699,7 @@ func TestParseClaudeCliResponse_TextOnly(t *testing.T) {
 }
 
 func TestParseClaudeCliResponse_EmptyResult(t *testing.T) {
-	p := NewClaudeCliProvider("/workspace", nil)
+	p := NewClaudeCliProvider("/workspace", nil, nil)
 	output := `{"type":"result","subtype":"success","is_error":false,"result":"","session_id":"abc"}`
 
 	resp, err := p.parseClaudeCliResponse(output)
@@ -806,7 +715,7 @@ func TestParseClaudeCliResponse_EmptyResult(t *testing.T) {
 }
 
 func TestParseClaudeCliResponse_IsError(t *testing.T) {
-	p := NewClaudeCliProvider("/workspace", nil)
+	p := NewClaudeCliProvider("/workspace", nil, nil)
 	output := `{"type":"result","subtype":"error","is_error":true,"result":"Something went wrong","session_id":"abc"}`
 
 	_, err := p.parseClaudeCliResponse(output)
@@ -819,7 +728,7 @@ func TestParseClaudeCliResponse_IsError(t *testing.T) {
 }
 
 func TestParseClaudeCliResponse_NoUsage(t *testing.T) {
-	p := NewClaudeCliProvider("/workspace", nil)
+	p := NewClaudeCliProvider("/workspace", nil, nil)
 	output := `{"type":"result","subtype":"success","is_error":false,"result":"hi","session_id":"s"}`
 
 	resp, err := p.parseClaudeCliResponse(output)
@@ -832,7 +741,7 @@ func TestParseClaudeCliResponse_NoUsage(t *testing.T) {
 }
 
 func TestParseClaudeCliResponse_InvalidJSON(t *testing.T) {
-	p := NewClaudeCliProvider("/workspace", nil)
+	p := NewClaudeCliProvider("/workspace", nil, nil)
 	_, err := p.parseClaudeCliResponse("not json")
 	if err == nil {
 		t.Fatal("expected error for invalid JSON")
@@ -842,43 +751,29 @@ func TestParseClaudeCliResponse_InvalidJSON(t *testing.T) {
 	}
 }
 
-func TestParseClaudeCliResponse_WithToolCalls(t *testing.T) {
-	p := NewClaudeCliProvider("/workspace", nil)
-	output := `{"type":"result","subtype":"success","is_error":false,"result":"Let me check.\n{\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"arguments\":\"{\\\"location\\\":\\\"Tokyo\\\"}\"}}]}","session_id":"abc123","total_cost_usd":0.01}`
+func TestParseClaudeCliResponse_PassesThroughToolCallText(t *testing.T) {
+	// CLI providers no longer extract tool calls from response text.
+	// Anything in result is returned verbatim as Content with FinishReason=stop.
+	p := NewClaudeCliProvider("/workspace", nil, nil)
+	output := `{"type":"result","subtype":"success","is_error":false,"result":"Let me check.\n{\"tool_calls\":[{\"id\":\"call_1\"}]}","session_id":"s"}`
 
 	resp, err := p.parseClaudeCliResponse(output)
 	if err != nil {
 		t.Fatalf("error = %v", err)
 	}
-	if resp.FinishReason != "tool_calls" {
-		t.Errorf("FinishReason = %q, want %q", resp.FinishReason, "tool_calls")
+	if resp.FinishReason != "stop" {
+		t.Errorf("FinishReason = %q, want %q", resp.FinishReason, "stop")
 	}
-	if len(resp.ToolCalls) != 1 {
-		t.Fatalf("ToolCalls = %d, want 1", len(resp.ToolCalls))
+	if len(resp.ToolCalls) != 0 {
+		t.Errorf("ToolCalls = %d, want 0 (CLI is single-turn; no extraction)", len(resp.ToolCalls))
 	}
-	tc := resp.ToolCalls[0]
-	if tc.Name != "get_weather" {
-		t.Errorf("Name = %q, want %q", tc.Name, "get_weather")
-	}
-	if tc.Function == nil {
-		t.Fatal("Function is nil")
-	}
-	if tc.Function.Name != "get_weather" {
-		t.Errorf("Function.Name = %q, want %q", tc.Function.Name, "get_weather")
-	}
-	if tc.Arguments["location"] != "Tokyo" {
-		t.Errorf("Arguments[location] = %v, want Tokyo", tc.Arguments["location"])
-	}
-	if strings.Contains(resp.Content, "tool_calls") {
-		t.Errorf("Content should not contain tool_calls JSON, got %q", resp.Content)
-	}
-	if resp.Content != "Let me check." {
-		t.Errorf("Content = %q, want %q", resp.Content, "Let me check.")
+	if !strings.Contains(resp.Content, "tool_calls") {
+		t.Errorf("Content should pass through verbatim, got %q", resp.Content)
 	}
 }
 
 func TestParseClaudeCliResponse_WhitespaceResult(t *testing.T) {
-	p := NewClaudeCliProvider("/workspace", nil)
+	p := NewClaudeCliProvider("/workspace", nil, nil)
 	output := `{"type":"result","subtype":"success","is_error":false,"result":"  hello  \n  ","session_id":"s"}`
 
 	resp, err := p.parseClaudeCliResponse(output)
@@ -890,133 +785,3 @@ func TestParseClaudeCliResponse_WhitespaceResult(t *testing.T) {
 	}
 }
 
-// --- extractToolCalls tests ---
-
-func TestExtractToolCalls_NoToolCalls(t *testing.T) {
-	p := NewClaudeCliProvider("/workspace", nil)
-	got := p.extractToolCalls("Just a regular response.")
-	if len(got) != 0 {
-		t.Errorf("extractToolCalls() = %d, want 0", len(got))
-	}
-}
-
-func TestExtractToolCalls_WithToolCalls(t *testing.T) {
-	p := NewClaudeCliProvider("/workspace", nil)
-	text := `Here's the result:
-{"tool_calls":[{"id":"call_1","type":"function","function":{"name":"test","arguments":"{}"}}]}`
-
-	got := p.extractToolCalls(text)
-	if len(got) != 1 {
-		t.Fatalf("extractToolCalls() = %d, want 1", len(got))
-	}
-	if got[0].ID != "call_1" {
-		t.Errorf("ID = %q, want %q", got[0].ID, "call_1")
-	}
-	if got[0].Name != "test" {
-		t.Errorf("Name = %q, want %q", got[0].Name, "test")
-	}
-	if got[0].Type != "function" {
-		t.Errorf("Type = %q, want %q", got[0].Type, "function")
-	}
-}
-
-func TestExtractToolCalls_InvalidJSON(t *testing.T) {
-	p := NewClaudeCliProvider("/workspace", nil)
-	got := p.extractToolCalls(`{"tool_calls":invalid}`)
-	if len(got) != 0 {
-		t.Errorf("extractToolCalls() with invalid JSON = %d, want 0", len(got))
-	}
-}
-
-func TestExtractToolCalls_MultipleToolCalls(t *testing.T) {
-	p := NewClaudeCliProvider("/workspace", nil)
-	text := `{"tool_calls":[{"id":"call_1","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"/tmp/test\"}"}},{"id":"call_2","type":"function","function":{"name":"write_file","arguments":"{\"path\":\"/tmp/out\",\"content\":\"hello\"}"}}]}`
-
-	got := p.extractToolCalls(text)
-	if len(got) != 2 {
-		t.Fatalf("extractToolCalls() = %d, want 2", len(got))
-	}
-	if got[0].Name != "read_file" {
-		t.Errorf("[0].Name = %q, want %q", got[0].Name, "read_file")
-	}
-	if got[1].Name != "write_file" {
-		t.Errorf("[1].Name = %q, want %q", got[1].Name, "write_file")
-	}
-	// Verify arguments were parsed
-	if got[0].Arguments["path"] != "/tmp/test" {
-		t.Errorf("[0].Arguments[path] = %v, want /tmp/test", got[0].Arguments["path"])
-	}
-	if got[1].Arguments["content"] != "hello" {
-		t.Errorf("[1].Arguments[content] = %v, want hello", got[1].Arguments["content"])
-	}
-}
-
-func TestExtractToolCalls_UnmatchedBrace(t *testing.T) {
-	p := NewClaudeCliProvider("/workspace", nil)
-	got := p.extractToolCalls(`{"tool_calls":[{"id":"call_1"`)
-	if len(got) != 0 {
-		t.Errorf("extractToolCalls() with unmatched brace = %d, want 0", len(got))
-	}
-}
-
-func TestExtractToolCalls_ToolCallArgumentsParsing(t *testing.T) {
-	p := NewClaudeCliProvider("/workspace", nil)
-	text := `{"tool_calls":[{"id":"c1","type":"function","function":{"name":"fn","arguments":"{\"num\":42,\"flag\":true,\"name\":\"test\"}"}}]}`
-
-	got := p.extractToolCalls(text)
-	if len(got) != 1 {
-		t.Fatalf("len = %d, want 1", len(got))
-	}
-	// Verify different argument types
-	if got[0].Arguments["num"] != float64(42) {
-		t.Errorf("Arguments[num] = %v (%T), want 42", got[0].Arguments["num"], got[0].Arguments["num"])
-	}
-	if got[0].Arguments["flag"] != true {
-		t.Errorf("Arguments[flag] = %v, want true", got[0].Arguments["flag"])
-	}
-	if got[0].Arguments["name"] != "test" {
-		t.Errorf("Arguments[name] = %v, want test", got[0].Arguments["name"])
-	}
-	// Verify raw arguments string is preserved in FunctionCall
-	if got[0].Function.Arguments == "" {
-		t.Error("Function.Arguments should contain raw JSON string")
-	}
-}
-
-// --- stripToolCallsJSON tests ---
-
-func TestStripToolCallsJSON(t *testing.T) {
-	p := NewClaudeCliProvider("/workspace", nil)
-	text := `Let me check the weather.
-{"tool_calls":[{"id":"call_1","type":"function","function":{"name":"test","arguments":"{}"}}]}
-Done.`
-
-	got := p.stripToolCallsJSON(text)
-	if strings.Contains(got, "tool_calls") {
-		t.Errorf("should remove tool_calls JSON, got %q", got)
-	}
-	if !strings.Contains(got, "Let me check the weather.") {
-		t.Errorf("should keep text before, got %q", got)
-	}
-	if !strings.Contains(got, "Done.") {
-		t.Errorf("should keep text after, got %q", got)
-	}
-}
-
-func TestStripToolCallsJSON_NoToolCalls(t *testing.T) {
-	p := NewClaudeCliProvider("/workspace", nil)
-	text := "Just regular text."
-	got := p.stripToolCallsJSON(text)
-	if got != text {
-		t.Errorf("stripToolCallsJSON() = %q, want %q", got, text)
-	}
-}
-
-func TestStripToolCallsJSON_OnlyToolCalls(t *testing.T) {
-	p := NewClaudeCliProvider("/workspace", nil)
-	text := `{"tool_calls":[{"id":"c1","type":"function","function":{"name":"fn","arguments":"{}"}}]}`
-	got := p.stripToolCallsJSON(text)
-	if got != "" {
-		t.Errorf("stripToolCallsJSON() = %q, want empty", got)
-	}
-}
