@@ -7,6 +7,7 @@ import {
   IconKey,
   IconListDetails,
   IconMessageCircle,
+  IconPlugConnected,
   IconRobot,
   IconSettings,
   IconSparkles,
@@ -155,6 +156,12 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             title: "navigation.config",
             url: "/config",
             icon: IconSettings,
+            translateTitle: true,
+          },
+          {
+            title: "navigation.mcp",
+            url: "/mcp",
+            icon: IconPlugConnected,
             translateTitle: true,
           },
           {
