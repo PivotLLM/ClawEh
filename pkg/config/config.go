@@ -7,10 +7,12 @@ import (
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/caarlos0/env/v11"
 
 	"github.com/PivotLLM/ClawEh/pkg/fileutil"
+	"github.com/PivotLLM/ClawEh/pkg/global"
 )
 
 // rrCounter is a global counter for round-robin load balancing across models.
@@ -105,6 +107,11 @@ type Config struct {
 	Logging       LoggingConfig      `json:"logging"`
 	Security      SecurityConfig     `json:"security,omitempty"`
 	MCPHost       MCPHostConfig      `json:"mcp_host,omitempty"`
+	// ConfigReloadIntervalSeconds controls how often the daemon polls the config
+	// file for changes and triggers a reload. Defaults to
+	// global.DefaultConfigReloadIntervalSeconds; floored at
+	// global.MinConfigReloadIntervalSeconds.
+	ConfigReloadIntervalSeconds int `json:"config_reload_interval_seconds,omitempty" env:"CLAW_CONFIG_RELOAD_INTERVAL_SECONDS"`
 	dataDir string // runtime-only: base data directory, not serialized
 }
 
@@ -900,6 +907,20 @@ func (c *Config) MCPHostEffectivelyEnabled() bool {
 		return true
 	}
 	return c.MCPHost.AutoEnable && c.HasCLIProvider()
+}
+
+// ConfigReloadInterval returns the effective config-file polling interval as a
+// time.Duration. Falls back to global.DefaultConfigReloadIntervalSeconds when
+// unset or negative, and clamps to global.MinConfigReloadIntervalSeconds.
+func (c *Config) ConfigReloadInterval() time.Duration {
+	secs := c.ConfigReloadIntervalSeconds
+	if secs <= 0 {
+		secs = global.DefaultConfigReloadIntervalSeconds
+	}
+	if secs < global.MinConfigReloadIntervalSeconds {
+		secs = global.MinConfigReloadIntervalSeconds
+	}
+	return time.Duration(secs) * time.Second
 }
 
 func (c *Config) WorkspacePath() string {

@@ -522,5 +522,6 @@
       "web_search",
       "send_file"
     ]
-  }
+  },
+  "config_reload_interval_seconds": 5
 }

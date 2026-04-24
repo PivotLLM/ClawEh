@@ -495,6 +495,7 @@ func DefaultConfig() *Config {
 				"send_file",
 			},
 		},
+		ConfigReloadIntervalSeconds: global.DefaultConfigReloadIntervalSeconds,
 	}
 	cfg.dataDir = homePath
 	// Ensure agents/default directory exists on startup

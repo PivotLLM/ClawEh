@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
+
+	"github.com/PivotLLM/ClawEh/pkg/global"
 )
 
 func TestAgentModelConfig_UnmarshalString(t *testing.T) {
@@ -692,5 +695,37 @@ func TestMCPHostEffectivelyEnabled(t *testing.T) {
 				t.Errorf("MCPHostEffectivelyEnabled()=%v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestConfigReloadInterval(t *testing.T) {
+	defaultSecs := global.DefaultConfigReloadIntervalSeconds
+	minSecs := global.MinConfigReloadIntervalSeconds
+
+	tests := []struct {
+		name    string
+		seconds int
+		want    time.Duration
+	}{
+		{"unset falls back to default", 0, time.Duration(defaultSecs) * time.Second},
+		{"negative falls back to default", -3, time.Duration(defaultSecs) * time.Second},
+		{"honours explicit value at floor", minSecs, time.Duration(minSecs) * time.Second},
+		{"honours explicit value", 12, 12 * time.Second},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &Config{ConfigReloadIntervalSeconds: tc.seconds}
+			if got := cfg.ConfigReloadInterval(); got != tc.want {
+				t.Errorf("ConfigReloadInterval()=%v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestDefaultConfig_ConfigReloadInterval(t *testing.T) {
+	cfg := DefaultConfig()
+	want := time.Duration(global.DefaultConfigReloadIntervalSeconds) * time.Second
+	if got := cfg.ConfigReloadInterval(); got != want {
+		t.Errorf("default ConfigReloadInterval()=%v, want %v", got, want)
 	}
 }

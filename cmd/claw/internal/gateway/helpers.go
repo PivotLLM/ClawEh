@@ -170,7 +170,9 @@ func gatewayCmd(debug bool) error {
 	go agentLoop.Run(ctx)
 
 	// Setup config file watcher for hot reload
-	configReloadChan, stopWatch := setupConfigWatcherPolling(configPath, debug)
+	reloadInterval := cfg.ConfigReloadInterval()
+	logger.InfoF("Config reload watcher", map[string]any{"interval": reloadInterval.String()})
+	configReloadChan, stopWatch := setupConfigWatcherPolling(configPath, reloadInterval, debug)
 	defer stopWatch()
 
 	sigChan := make(chan os.Signal, 1)
@@ -539,9 +541,12 @@ func restartServices(
 	return nil
 }
 
-// setupConfigWatcherPolling sets up a simple polling-based config file watcher
-// Returns a channel for config updates and a stop function
-func setupConfigWatcherPolling(configPath string, debug bool) (chan *config.Config, func()) {
+// setupConfigWatcherPolling sets up a simple polling-based config file watcher.
+// interval controls how often the file is polled; callers should pass
+// cfg.ConfigReloadInterval() so the value honours the config override and
+// MinConfigReloadIntervalSeconds floor. Returns a channel for config updates
+// and a stop function.
+func setupConfigWatcherPolling(configPath string, interval time.Duration, debug bool) (chan *config.Config, func()) {
 	configChan := make(chan *config.Config, 1)
 	stop := make(chan struct{})
 	var wg sync.WaitGroup
@@ -554,7 +559,7 @@ func setupConfigWatcherPolling(configPath string, debug bool) (chan *config.Conf
 		lastModTime := getFileModTime(configPath)
 		lastSize := getFileSize(configPath)
 
-		ticker := time.NewTicker(2 * time.Second) // Check every 2 seconds
+		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 
 		for {
