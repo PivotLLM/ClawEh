@@ -14,6 +14,7 @@
     "show_more_channels": "More",
     "show_less_channels": "Less",
     "config": "Config",
+    "mcp": "MCP Server",
     "logs": "Logs"
   },
   "chat": {
@@ -76,6 +77,7 @@
     "save": "Save",
     "saving": "Saving...",
     "reset": "Reset",
+    "remove": "Remove",
     "confirm": "Confirm"
   },
   "labels": {
@@ -449,6 +451,36 @@
     "logs": {
       "clear": "Clear logs",
       "empty": "Waiting for logs..."
+    },
+    "mcp": {
+      "load_error": "Failed to load configuration. Please refresh and try again.",
+      "unsaved_changes": "You have unsaved changes.",
+      "save_success": "MCP host configuration saved.",
+      "save_error": "Failed to save MCP host configuration.",
+      "reset_success": "Changes have been reset to the last saved state.",
+      "sections": {
+        "enable": "Enable",
+        "transport": "Transport",
+        "tools": "Tool Allowlist"
+      },
+      "enable_desc": "Controls whether claw runs an MCP server so CLI-based providers (claude-cli, codex-cli, gemini-cli) can call claw's host-side tools natively.",
+      "enabled": "Enabled",
+      "enabled_hint": "When true, the MCP server always starts at daemon launch.",
+      "auto_enable": "Auto-enable",
+      "auto_enable_hint": "When Enabled=false, still start the MCP server automatically if any enabled model uses a *-cli protocol. Explicit Enabled=true always wins.",
+      "transport_desc": "Network address and endpoint path for the MCP Streamable HTTP listener.",
+      "listen": "Listen Address",
+      "listen_hint": "host:port the MCP server binds to. Use 127.0.0.1 for local-only access.",
+      "endpoint_path": "Endpoint Path",
+      "endpoint_path_hint": "HTTP path the MCP handler is mounted under. Must start with '/'.",
+      "tools_desc": "Patterns determining which host-side tools are exposed to MCP clients. Fail-closed: an empty list exposes nothing.",
+      "tools_pattern_hint": "One pattern per row. Supports '*' (all), 'prefix*' (prefix match, case-insensitive), or exact tool names.",
+      "tools_pattern_placeholder": "e.g. *, read_*, web_fetch",
+      "tools_empty_warning": "No patterns configured — no tools will be exposed.",
+      "tools_add_pattern": "Add pattern",
+      "tools_preview_title": "Matches ({{matched}} of {{total}})",
+      "tools_always_excluded": "Always excluded: {{tools}}",
+      "tools_none_registered": "No tools registered yet."
     }
   }
 }

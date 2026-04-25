@@ -31,6 +31,7 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/devices"
 	"github.com/PivotLLM/ClawEh/pkg/health"
 	"github.com/PivotLLM/ClawEh/pkg/logger"
+	"github.com/PivotLLM/ClawEh/pkg/mcpserver"
 	"github.com/PivotLLM/ClawEh/pkg/media"
 	"github.com/PivotLLM/ClawEh/pkg/providers"
 	"github.com/PivotLLM/ClawEh/pkg/state"
@@ -53,6 +54,7 @@ type gatewayServices struct {
 	ChannelManager *channels.Manager
 	DeviceService  *devices.Service
 	HealthServer   *health.Server
+	MCPServer      *mcpserver.MCPServer
 }
 
 func gatewayCmd(debug bool) error {
@@ -106,8 +108,11 @@ func gatewayCmd(debug bool) error {
 	agentLoop := agent.NewAgentLoop(cfg, msgBus, provider, dispatcher)
 
 	startupInfo := agentLoop.GetStartupInfo()
-	toolsInfo := startupInfo["tools"].(map[string]any)
-	skillsInfo := startupInfo["skills"].(map[string]any)
+	if len(startupInfo) == 0 {
+		return fmt.Errorf("no default agent configured — add at least one entry to agents.list in your config")
+	}
+	toolsInfo, _ := startupInfo["tools"].(map[string]any)
+	skillsInfo, _ := startupInfo["skills"].(map[string]any)
 	logger.InfoCF("agent", "Agent initialized",
 		map[string]any{
 			"tools_count":      toolsInfo["count"],
@@ -138,9 +143,14 @@ func gatewayCmd(debug bool) error {
 
 		agentID, ok := agentLoop.ValidateCallbackToken(token)
 		if !ok {
+			logger.WarnCF("callback", "Rejected callback with invalid or expired token",
+				map[string]any{"remote_addr": r.RemoteAddr, "body_len": len(content)})
 			http.Error(w, "invalid or expired token", http.StatusUnauthorized)
 			return
 		}
+
+		logger.InfoCF("callback", "Accepted callback",
+			map[string]any{"agent": agentID, "remote_addr": r.RemoteAddr, "body_len": len(content)})
 
 		if err := agentLoop.HandleCallbackMessage(r.Context(), agentID, content); err != nil {
 			logger.WarnCF("callback", "Failed to deliver callback message",
@@ -160,7 +170,9 @@ func gatewayCmd(debug bool) error {
 	go agentLoop.Run(ctx)
 
 	// Setup config file watcher for hot reload
-	configReloadChan, stopWatch := setupConfigWatcherPolling(configPath, debug)
+	reloadInterval := cfg.ConfigReloadInterval()
+	logger.InfoF("Config reload watcher", map[string]any{"interval": reloadInterval.String()})
+	configReloadChan, stopWatch := setupConfigWatcherPolling(configPath, reloadInterval, debug)
 	defer stopWatch()
 
 	sigChan := make(chan os.Signal, 1)
@@ -273,6 +285,37 @@ func setupAndStartServices(
 		logger.InfoC("device", "Device event service started")
 	}
 
+	// Start the MCP server so CLI providers (claude-cli/codex-cli/gemini-cli)
+	// can call claw's host-side tools natively over MCP. Uses the default
+	// agent's tool registry so the tools have a workspace bound.
+	if cfg.MCPHostEffectivelyEnabled() {
+		autoStarted := !cfg.MCPHost.Enabled
+		defaultAgent := agentLoop.GetRegistry().GetDefaultAgent()
+		if defaultAgent == nil || defaultAgent.Tools == nil {
+			logger.WarnC("mcpserver", "MCP host enabled but no default agent registry available — skipping start")
+		} else {
+			srv, err := mcpserver.New(
+				mcpserver.WithRegistry(defaultAgent.Tools),
+				mcpserver.WithListen(cfg.MCPHost.Listen),
+				mcpserver.WithEndpointPath(cfg.MCPHost.EndpointPath),
+				mcpserver.WithAllowlist(cfg.MCPHost.Tools),
+			)
+			if err != nil {
+				return nil, fmt.Errorf("error creating MCP server: %w", err)
+			}
+			if err := srv.Start(); err != nil {
+				return nil, fmt.Errorf("error starting MCP server: %w", err)
+			}
+			services.MCPServer = srv
+			logger.InfoCF("mcpserver", "MCP host started",
+				map[string]any{
+					"listen":       srv.Listen(),
+					"endpoint":     srv.EndpointPath(),
+					"auto_enabled": autoStarted,
+				})
+		}
+	}
+
 	return services, nil
 }
 
@@ -284,6 +327,11 @@ func stopAndCleanupServices(
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer shutdownCancel()
 
+	if services.MCPServer != nil {
+		if err := services.MCPServer.Shutdown(shutdownCtx); err != nil {
+			logger.WarnCF("mcpserver", "MCP server shutdown error", map[string]any{"error": err.Error()})
+		}
+	}
 	if services.ChannelManager != nil {
 		services.ChannelManager.StopAll(shutdownCtx)
 	}
@@ -493,9 +541,12 @@ func restartServices(
 	return nil
 }
 
-// setupConfigWatcherPolling sets up a simple polling-based config file watcher
-// Returns a channel for config updates and a stop function
-func setupConfigWatcherPolling(configPath string, debug bool) (chan *config.Config, func()) {
+// setupConfigWatcherPolling sets up a simple polling-based config file watcher.
+// interval controls how often the file is polled; callers should pass
+// cfg.ConfigReloadInterval() so the value honours the config override and
+// MinConfigReloadIntervalSeconds floor. Returns a channel for config updates
+// and a stop function.
+func setupConfigWatcherPolling(configPath string, interval time.Duration, debug bool) (chan *config.Config, func()) {
 	configChan := make(chan *config.Config, 1)
 	stop := make(chan struct{})
 	var wg sync.WaitGroup
@@ -508,7 +559,7 @@ func setupConfigWatcherPolling(configPath string, debug bool) (chan *config.Conf
 		lastModTime := getFileModTime(configPath)
 		lastSize := getFileSize(configPath)
 
-		ticker := time.NewTicker(2 * time.Second) // Check every 2 seconds
+		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 
 		for {

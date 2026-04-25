@@ -14,7 +14,7 @@ var _ LLMProvider = (*GeminiCliProvider)(nil)
 // --- Constructor tests ---
 
 func TestNewGeminiCliProvider(t *testing.T) {
-	p := NewGeminiCliProvider("/test/workspace", nil)
+	p := NewGeminiCliProvider("/test/workspace", nil, nil)
 	if p == nil {
 		t.Fatal("NewGeminiCliProvider returned nil")
 	}
@@ -29,7 +29,7 @@ func TestNewGeminiCliProvider(t *testing.T) {
 // --- GetDefaultModel tests ---
 
 func TestGeminiCliProvider_GetDefaultModel(t *testing.T) {
-	p := NewGeminiCliProvider("/workspace", nil)
+	p := NewGeminiCliProvider("/workspace", nil, nil)
 	if got := p.GetDefaultModel(); got != "gemini-cli" {
 		t.Errorf("GetDefaultModel() = %q, want %q", got, "gemini-cli")
 	}
@@ -38,11 +38,11 @@ func TestGeminiCliProvider_GetDefaultModel(t *testing.T) {
 // --- buildPrompt tests ---
 
 func TestGeminiCliProvider_BuildPrompt_SingleUser(t *testing.T) {
-	p := NewGeminiCliProvider("/workspace", nil)
+	p := NewGeminiCliProvider("/workspace", nil, nil)
 	messages := []Message{
 		{Role: "user", Content: "Hello"},
 	}
-	got := p.buildPrompt(messages, nil)
+	got := p.buildPrompt(messages)
 	// Single user message with no system or tools should be simplified (no prefix)
 	want := "Hello"
 	if got != want {
@@ -51,12 +51,12 @@ func TestGeminiCliProvider_BuildPrompt_SingleUser(t *testing.T) {
 }
 
 func TestGeminiCliProvider_BuildPrompt_WithSystem(t *testing.T) {
-	p := NewGeminiCliProvider("/workspace", nil)
+	p := NewGeminiCliProvider("/workspace", nil, nil)
 	messages := []Message{
 		{Role: "system", Content: "You are a helpful assistant."},
 		{Role: "user", Content: "What is Go?"},
 	}
-	got := p.buildPrompt(messages, nil)
+	got := p.buildPrompt(messages)
 	if !strings.Contains(got, "## System Instructions") {
 		t.Errorf("buildPrompt() missing ## System Instructions header, got %q", got)
 	}
@@ -71,42 +71,10 @@ func TestGeminiCliProvider_BuildPrompt_WithSystem(t *testing.T) {
 	}
 }
 
-func TestGeminiCliProvider_BuildPrompt_WithTools(t *testing.T) {
-	p := NewGeminiCliProvider("/workspace", nil)
-	messages := []Message{
-		{Role: "user", Content: "What is the weather?"},
-	}
-	tools := []ToolDefinition{
-		{
-			Type: "function",
-			Function: ToolFunctionDefinition{
-				Name:        "get_weather",
-				Description: "Get weather for a location",
-				Parameters: map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"location": map[string]any{"type": "string"},
-					},
-				},
-			},
-		},
-	}
-	got := p.buildPrompt(messages, tools)
-	if !strings.Contains(got, "get_weather") {
-		t.Errorf("buildPrompt() missing tool definition, got %q", got)
-	}
-	if !strings.Contains(got, "Available Tools") {
-		t.Errorf("buildPrompt() missing Available Tools header, got %q", got)
-	}
-	if !strings.Contains(got, "What is the weather?") {
-		t.Errorf("buildPrompt() missing user message, got %q", got)
-	}
-}
-
 // --- parseGeminiCliResponse tests ---
 
 func TestGeminiCliProvider_ParseResponse_Basic(t *testing.T) {
-	p := NewGeminiCliProvider("/workspace", nil)
+	p := NewGeminiCliProvider("/workspace", nil, nil)
 	output := `{
 		"session_id": "abc123",
 		"response": "Hello! How can I assist you?",
@@ -160,33 +128,30 @@ func TestGeminiCliProvider_ParseResponse_Basic(t *testing.T) {
 	}
 }
 
-func TestGeminiCliProvider_ParseResponse_WithToolCalls(t *testing.T) {
-	p := NewGeminiCliProvider("/workspace", nil)
+func TestGeminiCliProvider_ParseResponse_PassesThroughToolCallText(t *testing.T) {
+	p := NewGeminiCliProvider("/workspace", nil, nil)
+	// CLI output that previously would have been parsed as a tool call must now
+	// pass through verbatim — the CLI is the agent and we treat its response
+	// as final assistant prose for the round.
 	output := `{"session_id":"s1","response":"Checking weather.\n{\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"arguments\":\"{\\\"location\\\":\\\"NYC\\\"}\"}}]}","stats":{}}`
 
 	resp, err := p.parseGeminiCliResponse(output)
 	if err != nil {
 		t.Fatalf("parseGeminiCliResponse() error = %v", err)
 	}
-	if resp.FinishReason != "tool_calls" {
-		t.Errorf("FinishReason = %q, want %q", resp.FinishReason, "tool_calls")
+	if resp.FinishReason != "stop" {
+		t.Errorf("FinishReason = %q, want %q", resp.FinishReason, "stop")
 	}
-	if len(resp.ToolCalls) != 1 {
-		t.Fatalf("ToolCalls len = %d, want 1", len(resp.ToolCalls))
+	if len(resp.ToolCalls) != 0 {
+		t.Errorf("ToolCalls len = %d, want 0", len(resp.ToolCalls))
 	}
-	if resp.ToolCalls[0].Name != "get_weather" {
-		t.Errorf("ToolCalls[0].Name = %q, want %q", resp.ToolCalls[0].Name, "get_weather")
-	}
-	if resp.ToolCalls[0].Arguments["location"] != "NYC" {
-		t.Errorf("ToolCalls[0].Arguments[location] = %v, want NYC", resp.ToolCalls[0].Arguments["location"])
-	}
-	if strings.Contains(resp.Content, "tool_calls") {
-		t.Errorf("Content should not contain tool_calls JSON, got %q", resp.Content)
+	if !strings.Contains(resp.Content, "tool_calls") {
+		t.Errorf("Content should pass through tool_calls JSON verbatim, got %q", resp.Content)
 	}
 }
 
 func TestGeminiCliProvider_ParseResponse_InvalidJSON(t *testing.T) {
-	p := NewGeminiCliProvider("/workspace", nil)
+	p := NewGeminiCliProvider("/workspace", nil, nil)
 	_, err := p.parseGeminiCliResponse("not valid json")
 	if err == nil {
 		t.Fatal("expected error for invalid JSON")
@@ -197,7 +162,7 @@ func TestGeminiCliProvider_ParseResponse_InvalidJSON(t *testing.T) {
 }
 
 func TestGeminiCliProvider_ParseResponse_NoStats(t *testing.T) {
-	p := NewGeminiCliProvider("/workspace", nil)
+	p := NewGeminiCliProvider("/workspace", nil, nil)
 	output := `{"session_id":"s","response":"hello"}`
 
 	resp, err := p.parseGeminiCliResponse(output)

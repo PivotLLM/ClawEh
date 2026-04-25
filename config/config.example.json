@@ -100,12 +100,15 @@
       "extra_args": ["--dangerously-skip-permissions", "--no-chrome"]
     },
     {
-      "_comment": "Codex CLI - uses local codex CLI subprocess",
+      "_comment": "Codex CLI - uses local codex CLI subprocess. `env` sets variables for the subprocess (e.g. OPENAI_API_KEY for bearer auth).",
       "enabled": false,
       "model_name": "codex",
       "model": "codex-cli/codex",
       "workspace": "~/.claw/workspace",
-      "extra_args": ["--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check"]
+      "extra_args": ["--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check"],
+      "env": {
+        "OPENAI_API_KEY": "sk-..."
+      }
     },
     {
       "_comment": "Gemini CLI - uses local gemini CLI subprocess",
@@ -503,5 +506,22 @@
   "gateway": {
     "host": "127.0.0.1",
     "port": 18790
-  }
+  },
+  "mcp_host": {
+    "enabled": false,
+    "auto_enable": true,
+    "listen": "127.0.0.1:5911",
+    "endpoint_path": "/mcp",
+    "tools": [
+      "read_file",
+      "write_file",
+      "edit_file",
+      "append_file",
+      "list_dir",
+      "web_fetch",
+      "web_search",
+      "send_file"
+    ]
+  },
+  "config_reload_interval_seconds": 5
 }

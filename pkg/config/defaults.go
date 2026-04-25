@@ -41,6 +41,14 @@ func DefaultConfig() *Config {
 				SummarizeTokenPercent:     75,
 				ContextWindow:             128000,
 			},
+			List: []AgentConfig{
+				{
+					ID:      "main",
+					Name:    "main",
+					Default: true,
+					Tools:   []string{"*"},
+				},
+			},
 		},
 		Bindings: []AgentBinding{},
 		Session: SessionConfig{
@@ -471,6 +479,23 @@ func DefaultConfig() *Config {
 			Level:   global.DefaultLogLevel,
 			JSON:    global.DefaultLogJSON,
 		},
+		MCPHost: MCPHostConfig{
+			Enabled:      false,
+			AutoEnable:   true,
+			Listen:       "127.0.0.1:5911",
+			EndpointPath: "/mcp",
+			Tools: []string{
+				"read_file",
+				"write_file",
+				"edit_file",
+				"append_file",
+				"list_dir",
+				"web_fetch",
+				"web_search",
+				"send_file",
+			},
+		},
+		ConfigReloadIntervalSeconds: global.DefaultConfigReloadIntervalSeconds,
 	}
 	cfg.dataDir = homePath
 	// Ensure agents/default directory exists on startup

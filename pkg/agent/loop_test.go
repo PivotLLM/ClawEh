@@ -2557,3 +2557,85 @@ func TestMapCommandError_WithoutCommandName(t *testing.T) {
 		t.Errorf("expected generic error format, got %q", got)
 	}
 }
+
+// TestResolveMessageRoute_PreresolvedAgentID verifies that a message carrying
+// metadataKeyPreresolvedAgentID is delivered to the named agent, bypassing the
+// binding cascade. Regression test for FIX-2: callbacks intended for one agent
+// were being routed to a different agent that owned a Slack catch-all binding.
+func TestResolveMessageRoute_PreresolvedAgentID(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "agent-preresolve-*")
+	if err != nil {
+		t.Fatalf("mkdir temp: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	cfg := &config.Config{
+		Agents: config.AgentsConfig{
+			Defaults: config.AgentDefaults{
+				Workspace:         tmpDir,
+				Model:             &config.AgentModelConfig{Primary: "test-model"},
+				MaxTokens:         4096,
+				MaxToolIterations: 10,
+			},
+			List: []config.AgentConfig{
+				{ID: "dawn", Name: "Dawn"},
+				{ID: "penny", Name: "Penny", Default: true},
+			},
+		},
+		Bindings: []config.AgentBinding{
+			// Dawn owns a specific Slack channel.
+			{AgentID: "dawn", Match: config.BindingMatch{
+				Channel: "slack",
+				Peer:    &config.PeerMatch{Kind: "channel", ID: "C0AN5SN702V"},
+			}},
+			// Penny is the Slack-wide catch-all (binding.account match).
+			{AgentID: "penny", Match: config.BindingMatch{Channel: "slack"}},
+		},
+	}
+
+	al := NewAgentLoop(cfg, bus.NewMessageBus(), &mockProvider{}, nil)
+
+	// Baseline: without preresolved metadata, a direct peer with ID "dawn"
+	// falls through to Penny's account-level binding. This is the old bug.
+	msg := bus.InboundMessage{
+		Channel: "slack",
+		ChatID:  "C0AN5SN702V",
+		Peer:    bus.Peer{Kind: "direct", ID: "dawn"},
+	}
+	route, agent, err := al.resolveMessageRoute(msg)
+	if err != nil {
+		t.Fatalf("baseline resolveMessageRoute: %v", err)
+	}
+	if agent.ID != "penny" {
+		t.Fatalf("baseline: expected fallthrough to penny (the bug), got %q", agent.ID)
+	}
+	if route.MatchedBy != "binding.account" {
+		t.Errorf("baseline: expected matched_by=binding.account, got %q", route.MatchedBy)
+	}
+
+	// With preresolved metadata: must route to Dawn regardless of bindings.
+	msg.Metadata = map[string]string{metadataKeyPreresolvedAgentID: "dawn"}
+	route, agent, err = al.resolveMessageRoute(msg)
+	if err != nil {
+		t.Fatalf("preresolved resolveMessageRoute: %v", err)
+	}
+	if agent.ID != "dawn" {
+		t.Errorf("expected routing to dawn, got %q", agent.ID)
+	}
+	if route.MatchedBy != "preresolved" {
+		t.Errorf("expected matched_by=preresolved, got %q", route.MatchedBy)
+	}
+	if want := routing.BuildAgentMainSessionKey("dawn"); route.SessionKey != want {
+		t.Errorf("expected session key %q, got %q", want, route.SessionKey)
+	}
+
+	// Unknown preresolved ID falls back to binding resolution without error.
+	msg.Metadata = map[string]string{metadataKeyPreresolvedAgentID: "nobody"}
+	_, agent, err = al.resolveMessageRoute(msg)
+	if err != nil {
+		t.Fatalf("unknown-preresolved resolveMessageRoute: %v", err)
+	}
+	if agent.ID != "penny" {
+		t.Errorf("expected fallback to binding resolution (penny), got %q", agent.ID)
+	}
+}

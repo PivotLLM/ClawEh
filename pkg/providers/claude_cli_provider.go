@@ -19,24 +19,27 @@ type ClaudeCliProvider struct {
 	workspace string
 	timeout   time.Duration
 	extraArgs []string
+	env       map[string]string
 }
 
 // NewClaudeCliProvider creates a new Claude CLI provider.
-func NewClaudeCliProvider(workspace string, extraArgs []string) *ClaudeCliProvider {
+func NewClaudeCliProvider(workspace string, extraArgs []string, env map[string]string) *ClaudeCliProvider {
 	return &ClaudeCliProvider{
 		command:   "claude",
 		workspace: workspace,
 		extraArgs: extraArgs,
+		env:       env,
 	}
 }
 
 // NewClaudeCliProviderWithTimeout creates a new Claude CLI provider with a request timeout.
-func NewClaudeCliProviderWithTimeout(workspace string, timeout time.Duration, extraArgs []string) *ClaudeCliProvider {
+func NewClaudeCliProviderWithTimeout(workspace string, timeout time.Duration, extraArgs []string, env map[string]string) *ClaudeCliProvider {
 	return &ClaudeCliProvider{
 		command:   "claude",
 		workspace: workspace,
 		timeout:   timeout,
 		extraArgs: extraArgs,
+		env:       env,
 	}
 }
 
@@ -50,7 +53,13 @@ func (p *ClaudeCliProvider) Chat(
 		defer cancel()
 	}
 
-	prompt := p.buildStdinPrompt(messages, tools)
+	// CLI providers run their own internal agentic loop and return one final
+	// answer per invocation. The `tools` parameter is intentionally ignored:
+	// the CLI cannot use claw's host-side tools by writing JSON in its prose
+	// (that pattern caused infinite outer loops). Use the MCP server in
+	// pkg/mcpserver to expose claw tools to the CLI natively.
+	_ = tools
+	prompt := p.buildStdinPrompt(messages)
 
 	args := []string{"-p", "--output-format", "json"}
 	args = append(args, p.extraArgs...)
@@ -64,6 +73,7 @@ func (p *ClaudeCliProvider) Chat(
 		cmd.Dir = p.workspace
 	}
 	cmd.Stdin = bytes.NewReader([]byte(prompt))
+	cmd.Env = applyProviderEnv(p.env)
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -77,7 +87,7 @@ func (p *ClaudeCliProvider) Chat(
 		// Attempt to parse stdout before treating as error — claude CLI may exit non-zero
 		// but still write a valid JSON response to stdout.
 		if stdoutStr := strings.TrimSpace(stdout.String()); stdoutStr != "" {
-			if resp, parseErr := p.parseClaudeCliResponse(stdoutStr); parseErr == nil && (resp.Content != "" || len(resp.ToolCalls) > 0) {
+			if resp, parseErr := p.parseClaudeCliResponse(stdoutStr); parseErr == nil && resp.Content != "" {
 				exitCode := -1
 				var exitErr *exec.ExitError
 				if errors.As(err, &exitErr) {
@@ -125,7 +135,7 @@ func (p *ClaudeCliProvider) Chat(
 	if err != nil {
 		return nil, err
 	}
-	if resp.Content == "" && len(resp.ToolCalls) == 0 {
+	if resp.Content == "" {
 		logger.WarnCF("provider", "claude-cli returned empty content",
 			map[string]any{"raw_stdout": strings.TrimSpace(stdout.String())})
 	}
@@ -144,8 +154,8 @@ func (p *ClaudeCliProvider) IsCLI() bool { return true }
 // buildStdinPrompt combines the system context and conversation into a single stdin payload.
 // Passing system instructions via stdin avoids exposing them in the process argument list and
 // sidesteps operating-system ARG_MAX limits when many tools are registered.
-func (p *ClaudeCliProvider) buildStdinPrompt(messages []Message, tools []ToolDefinition) string {
-	system := p.buildSystemPrompt(messages, tools)
+func (p *ClaudeCliProvider) buildStdinPrompt(messages []Message) string {
+	system := p.buildSystemPrompt(messages)
 	conversation := p.messagesToPrompt(messages)
 	if system == "" {
 		return conversation
@@ -178,18 +188,15 @@ func (p *ClaudeCliProvider) messagesToPrompt(messages []Message) string {
 	return strings.Join(parts, "\n")
 }
 
-// buildSystemPrompt combines system messages and tool definitions.
-func (p *ClaudeCliProvider) buildSystemPrompt(messages []Message, tools []ToolDefinition) string {
+// buildSystemPrompt concatenates system messages.
+// Tool definitions are intentionally not included — see Chat().
+func (p *ClaudeCliProvider) buildSystemPrompt(messages []Message) string {
 	var parts []string
 
 	for _, msg := range messages {
 		if msg.Role == "system" {
 			parts = append(parts, msg.Content)
 		}
-	}
-
-	if len(tools) > 0 {
-		parts = append(parts, buildCLIToolsPrompt(tools))
 	}
 
 	return strings.Join(parts, "\n\n")
@@ -206,14 +213,11 @@ func (p *ClaudeCliProvider) parseClaudeCliResponse(output string) (*LLMResponse,
 		return nil, fmt.Errorf("claude cli returned error: %s", resp.Result)
 	}
 
-	toolCalls := p.extractToolCalls(resp.Result)
-
-	finishReason := "stop"
+	// CLI is itself agentic — its `result` is the final assistant text.
+	// We do NOT extract tool calls from this text: the agent loop must
+	// treat each CLI invocation as one complete round.
 	content := resp.Result
-	if len(toolCalls) > 0 {
-		finishReason = "tool_calls"
-		content = p.stripToolCallsJSON(resp.Result)
-	}
+	finishReason := "stop"
 
 	var usage *UsageInfo
 	if resp.Usage.InputTokens > 0 || resp.Usage.OutputTokens > 0 {
@@ -226,7 +230,6 @@ func (p *ClaudeCliProvider) parseClaudeCliResponse(output string) (*LLMResponse,
 
 	result := &LLMResponse{
 		Content:      strings.TrimSpace(content),
-		ToolCalls:    toolCalls,
 		FinishReason: finishReason,
 		Usage:        usage,
 	}
@@ -238,20 +241,9 @@ func (p *ClaudeCliProvider) parseClaudeCliResponse(output string) (*LLMResponse,
 			"cost_usd":      resp.TotalCostUSD,
 			"duration_ms":   resp.DurationMS,
 			"content_chars": len(strings.TrimSpace(content)),
-			"tool_calls":    len(toolCalls),
 		})
 
 	return result, nil
-}
-
-// extractToolCalls delegates to the shared extractToolCallsFromText function.
-func (p *ClaudeCliProvider) extractToolCalls(text string) []ToolCall {
-	return extractToolCallsFromText(text)
-}
-
-// stripToolCallsJSON delegates to the shared stripToolCallsFromText function.
-func (p *ClaudeCliProvider) stripToolCallsJSON(text string) string {
-	return stripToolCallsFromText(text)
 }
 
 // claudeCliJSONResponse represents the JSON output from the claude CLI.

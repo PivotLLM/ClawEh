@@ -141,6 +141,125 @@ When enabled, the current token is injected into the agent's system prompt (mark
 
 See [docs/callback.md](docs/callback.md) for configuration reference, token rotation, routing behaviour, and troubleshooting.
 
+## MCP server (claw as an MCP host)
+
+ClawEh can expose a subset of its host-side tools to MCP-compatible clients over a Streamable HTTP transport. This is primarily intended for CLI providers (Claude Code, Codex CLI, Gemini CLI) so they can call claw's tools natively instead of printing tool-call JSON in their prose — which historically caused runaway outer loops, since those CLIs are themselves agentic and return a single final answer per invocation.
+
+> **Important:** CLI providers (`claude-cli`, `codex-cli`, `gemini-cli`) no longer receive tool descriptions in their prompt. Each invocation runs as a single agentic turn, and the CLI reaches claw's tools only via MCP. **You must register claw as an MCP server in each CLI you intend to use** — see [Client configuration](#client-configuration) below. Without that step, the CLI will still answer prompts, but it will have no access to claw's filesystem, web, or other host-side tools.
+
+The server auto-starts whenever any enabled model in `model_list` uses a `*-cli` protocol (`claude-cli`, `codex-cli`, `gemini-cli`), since those CLIs depend on MCP for native tool calls. Set `enabled: true` to force it on regardless, or `auto_enable: false` to opt out of the auto-start. Full config shape with defaults:
+
+```json
+{
+  "mcp_host": {
+    "enabled": false,
+    "auto_enable": true,
+    "listen": "127.0.0.1:5911",
+    "endpoint_path": "/mcp",
+    "tools": [
+      "read_file",
+      "write_file",
+      "edit_file",
+      "append_file",
+      "list_dir",
+      "web_fetch",
+      "web_search",
+      "send_file"
+    ]
+  }
+}
+```
+
+The `tools` list is a single global allowlist applied to all MCP clients (not per-LLM). Supports `"*"` (all tools), prefix globs like `"read_*"`, and exact names. The agent's internal `message` tool is never exposed regardless of the allowlist. Tools inherit the default agent's workspace and sandboxing rules.
+
+### Client configuration
+
+The server speaks the Streamable HTTP transport at `http://127.0.0.1:5911/mcp`.
+
+No authentication is performed: the listener is bound to loopback only and is intended for local CLI clients. Do not expose it externally.
+
+#### Claude Code
+
+To register claw as an MCP server scoped to the user (all projects):
+
+```bash
+claude mcp add --transport http claw --scope user http://127.0.0.1:5911/mcp
+```
+
+To list configured MCP servers:
+
+```bash
+claude mcp list
+```
+
+For further information:
+
+```bash
+claude mcp -h
+```
+
+#### Codex CLI
+
+Register claw with the `codex mcp add` command:
+
+```bash
+codex mcp add claw --url http://127.0.0.1:5911/mcp
+```
+
+This writes the entry to `~/.codex/config.toml`. You can also edit the file directly:
+
+```toml
+[mcp_servers.claw]
+url = "http://127.0.0.1:5911/mcp"
+```
+
+#### Gemini CLI
+
+[Gemini CLI](https://github.com/google-gemini/gemini-cli) supports MCP servers via the `gemini mcp add` command or by editing `~/.gemini/settings.json` directly.
+
+```bash
+gemini mcp add claw http://127.0.0.1:5911/mcp --scope user --transport http
+```
+
+Omit `--scope user` to configure claw at the project level instead.
+
+> **Warning:** The `--trust` flag grants Gemini CLI unrestricted access to all MCP tools without prompting for permission. Only use `--trust` in controlled environments where you fully trust the MCP server and its tools.
+
+To grant access to all tools without prompting (use with caution — see warning above):
+
+```bash
+gemini mcp add claw http://127.0.0.1:5911/mcp --scope user --transport http --trust
+```
+
+Alternatively, add the following to `~/.gemini/settings.json`:
+
+```json
+{
+  "mcpServers": {
+    "claw": {
+      "url": "http://127.0.0.1:5911/mcp",
+      "type": "http"
+    }
+  }
+}
+```
+
+#### Clients without HTTP transport support
+
+For clients limited to stdio MCP transport (e.g., Claude Desktop), bridge to claw's network-based server using <https://github.com/PivotLLM/MCPRelay>.
+
+### Testing
+
+A `probe`-driven integration test lives at `tests/test_mcpserver.sh`. Start claw with `mcp_host.enabled=true`, then run:
+
+```bash
+./test.sh -i          # run unit tests + MCP server integration
+# or directly:
+./tests/test_mcpserver.sh
+```
+
+Override `SERVER_URL`, `ENDPOINT`, or `PROBE_PATH` via a `tests/.env` file if needed.
+
 ## Third-party integrations
 
 ClawEh takes a deliberately narrow approach to third-party integrations. In keeping with its focus on security, privacy, and maintainability, a number of integrations present in the upstream project have been removed or disabled by default. This includes messaging platforms, external registries, and service integrations that were not aligned with the project's goals or present unjustifiable security risks. The integrations that remain are ones we consider broadly useful and consistent with the project's goals of a small footprint, reliability, and long-term maintainability.

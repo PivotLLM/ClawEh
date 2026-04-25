@@ -7,10 +7,12 @@ import (
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/caarlos0/env/v11"
 
 	"github.com/PivotLLM/ClawEh/pkg/fileutil"
+	"github.com/PivotLLM/ClawEh/pkg/global"
 )
 
 // rrCounter is a global counter for round-robin load balancing across models.
@@ -104,6 +106,12 @@ type Config struct {
 	Voice         VoiceConfig        `json:"voice"`
 	Logging       LoggingConfig      `json:"logging"`
 	Security      SecurityConfig     `json:"security,omitempty"`
+	MCPHost       MCPHostConfig      `json:"mcp_host,omitempty"`
+	// ConfigReloadIntervalSeconds controls how often the daemon polls the config
+	// file for changes and triggers a reload. Defaults to
+	// global.DefaultConfigReloadIntervalSeconds; floored at
+	// global.MinConfigReloadIntervalSeconds.
+	ConfigReloadIntervalSeconds int `json:"config_reload_interval_seconds,omitempty" env:"CLAW_CONFIG_RELOAD_INTERVAL_SECONDS"`
 	dataDir string // runtime-only: base data directory, not serialized
 }
 
@@ -195,16 +203,16 @@ func (a *AgentConfig) IsEnabled() bool {
 	return a.Enabled == nil || *a.Enabled
 }
 
-// IsToolAllowed returns true if the named tool is permitted for this agent.
-// A nil or empty Tools list denies all tools. Use ["*"] to allow all tools.
-// Entries ending in "*" are treated as case-insensitive prefix matches.
-// Exact entries are matched as-is.
-func (a *AgentConfig) IsToolAllowed(name string) bool {
-	if a == nil || len(a.Tools) == 0 {
+// MatchToolPattern returns true if name matches any entry in patterns.
+// "*" matches anything. Entries ending in "*" are case-insensitive prefix
+// matches. Other entries are case-insensitive exact matches. An empty
+// patterns slice matches nothing.
+func MatchToolPattern(patterns []string, name string) bool {
+	if len(patterns) == 0 {
 		return false
 	}
 	lowerName := strings.ToLower(name)
-	for _, entry := range a.Tools {
+	for _, entry := range patterns {
 		if entry == "*" {
 			return true
 		}
@@ -218,6 +226,17 @@ func (a *AgentConfig) IsToolAllowed(name string) bool {
 		}
 	}
 	return false
+}
+
+// IsToolAllowed returns true if the named tool is permitted for this agent.
+// A nil or empty Tools list denies all tools. Use ["*"] to allow all tools.
+// Entries ending in "*" are treated as case-insensitive prefix matches.
+// Exact entries are matched as-is.
+func (a *AgentConfig) IsToolAllowed(name string) bool {
+	if a == nil {
+		return false
+	}
+	return MatchToolPattern(a.Tools, name)
 }
 
 type SubagentsConfig struct {
@@ -569,6 +588,7 @@ type ModelConfig struct {
 	ThinkingLevel  string   `json:"thinking_level,omitempty"` // Extended thinking: off|low|medium|high|xhigh|adaptive
 	NoTools        bool     `json:"no_tools,omitempty"`       // When true, tools are not passed to this model
 	ExtraArgs      []string `json:"extra_args,omitempty"`     // Additional CLI arguments appended after required flags
+	Env            map[string]string `json:"env,omitempty"` // Environment variables for CLI-based providers (merged with os.Environ)
 	Enabled        bool     `json:"enabled,omitempty"`        // If false, model is skipped in all operations
 }
 
@@ -770,6 +790,26 @@ type MCPConfig struct {
 	Servers map[string]MCPServerConfig `json:"servers,omitempty"`
 }
 
+// MCPHostConfig defines configuration for the MCP server claw exposes
+// (claw acting as an MCP server), used by CLI providers (claude-cli,
+// codex-cli, gemini-cli) so they can call claw's host-side tools natively
+// instead of emitting tool-call JSON in their prose. The allowlist is
+// global — applied once for all CLI clients, not per-LLM.
+type MCPHostConfig struct {
+	Enabled bool `json:"enabled"                     env:"CLAW_MCP_HOST_ENABLED"`
+	// AutoEnable, when true, starts the MCP host automatically whenever any
+	// enabled model in ModelList uses a *-cli protocol (claude-cli, codex-cli,
+	// gemini-cli). Those CLIs depend on MCP to call claw's host-side tools.
+	// Explicit Enabled=true always wins.
+	AutoEnable   bool   `json:"auto_enable"             env:"CLAW_MCP_HOST_AUTO_ENABLE"`
+	Listen       string `json:"listen,omitempty"        env:"CLAW_MCP_HOST_LISTEN"`
+	EndpointPath string `json:"endpoint_path,omitempty" env:"CLAW_MCP_HOST_ENDPOINT_PATH"`
+	// Tools is the global allowlist of tool names exposed to MCP clients.
+	// Supports "*" (all), prefix globs like "read_*", and exact names.
+	// The agent's outbound "message" tool is never exposed.
+	Tools []string `json:"tools,omitempty"`
+}
+
 func LoadConfig(path string) (*Config, error) {
 	cfg := DefaultConfig()
 
@@ -834,6 +874,53 @@ func SaveConfig(path string, cfg *Config) error {
 
 	// Use unified atomic write utility with explicit sync for flash storage reliability.
 	return fileutil.WriteFileAtomic(path, data, 0o600)
+}
+
+// HasCLIProvider reports whether any enabled model in ModelList uses a
+// *-cli protocol (claude-cli, codex-cli, gemini-cli). Those CLIs rely on
+// the MCP host to call claw's tools natively.
+func (c *Config) HasCLIProvider() bool {
+	for i := range c.ModelList {
+		if !c.ModelList[i].Enabled {
+			continue
+		}
+		model := strings.TrimSpace(c.ModelList[i].Model)
+		protocol, _, found := strings.Cut(model, "/")
+		if !found {
+			continue
+		}
+		switch protocol {
+		case "claude-cli", "claudecli",
+			"codex-cli", "codexcli",
+			"gemini-cli", "geminicli":
+			return true
+		}
+	}
+	return false
+}
+
+// MCPHostEffectivelyEnabled returns true when the MCP host should run.
+// Explicit Enabled=true always starts it. When Enabled=false but
+// AutoEnable=true, it starts iff a CLI provider is configured.
+func (c *Config) MCPHostEffectivelyEnabled() bool {
+	if c.MCPHost.Enabled {
+		return true
+	}
+	return c.MCPHost.AutoEnable && c.HasCLIProvider()
+}
+
+// ConfigReloadInterval returns the effective config-file polling interval as a
+// time.Duration. Falls back to global.DefaultConfigReloadIntervalSeconds when
+// unset or negative, and clamps to global.MinConfigReloadIntervalSeconds.
+func (c *Config) ConfigReloadInterval() time.Duration {
+	secs := c.ConfigReloadIntervalSeconds
+	if secs <= 0 {
+		secs = global.DefaultConfigReloadIntervalSeconds
+	}
+	if secs < global.MinConfigReloadIntervalSeconds {
+		secs = global.MinConfigReloadIntervalSeconds
+	}
+	return time.Duration(secs) * time.Second
 }
 
 func (c *Config) WorkspacePath() string {

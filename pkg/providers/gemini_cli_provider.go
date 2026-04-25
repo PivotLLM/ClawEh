@@ -19,24 +19,27 @@ type GeminiCliProvider struct {
 	workspace string
 	timeout   time.Duration
 	extraArgs []string
+	env       map[string]string
 }
 
 // NewGeminiCliProvider creates a new Gemini CLI provider.
-func NewGeminiCliProvider(workspace string, extraArgs []string) *GeminiCliProvider {
+func NewGeminiCliProvider(workspace string, extraArgs []string, env map[string]string) *GeminiCliProvider {
 	return &GeminiCliProvider{
 		command:   "gemini",
 		workspace: workspace,
 		extraArgs: extraArgs,
+		env:       env,
 	}
 }
 
 // NewGeminiCliProviderWithTimeout creates a new Gemini CLI provider with a request timeout.
-func NewGeminiCliProviderWithTimeout(workspace string, timeout time.Duration, extraArgs []string) *GeminiCliProvider {
+func NewGeminiCliProviderWithTimeout(workspace string, timeout time.Duration, extraArgs []string, env map[string]string) *GeminiCliProvider {
 	return &GeminiCliProvider{
 		command:   "gemini",
 		workspace: workspace,
 		timeout:   timeout,
 		extraArgs: extraArgs,
+		env:       env,
 	}
 }
 
@@ -50,7 +53,13 @@ func (p *GeminiCliProvider) Chat(
 		defer cancel()
 	}
 
-	prompt := p.buildPrompt(messages, tools)
+	// CLI providers run their own internal agentic loop and return one final
+	// answer per invocation. The `tools` parameter is intentionally ignored:
+	// the CLI cannot use claw's host-side tools by writing JSON in its prose
+	// (that pattern caused infinite outer loops). Use the MCP server in
+	// pkg/mcpserver to expose claw tools to the CLI natively.
+	_ = tools
+	prompt := p.buildPrompt(messages)
 
 	// --prompt "" triggers non-interactive stdin mode; the empty string is appended to stdin input.
 	args := []string{"--output-format", "json", "--prompt", ""}
@@ -64,6 +73,7 @@ func (p *GeminiCliProvider) Chat(
 		cmd.Dir = p.workspace
 	}
 	cmd.Stdin = bytes.NewReader([]byte(prompt))
+	cmd.Env = applyProviderEnv(p.env)
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -77,7 +87,7 @@ func (p *GeminiCliProvider) Chat(
 		// Attempt to parse stdout before treating as error — gemini CLI may exit non-zero
 		// but still write a valid JSON response to stdout.
 		if stdoutStr := strings.TrimSpace(stdout.String()); stdoutStr != "" {
-			if resp, parseErr := p.parseGeminiCliResponse(stdoutStr); parseErr == nil && (resp.Content != "" || len(resp.ToolCalls) > 0) {
+			if resp, parseErr := p.parseGeminiCliResponse(stdoutStr); parseErr == nil && resp.Content != "" {
 				exitCode := -1
 				var exitErr *exec.ExitError
 				if errors.As(err, &exitErr) {
@@ -125,7 +135,7 @@ func (p *GeminiCliProvider) Chat(
 	if err != nil {
 		return nil, err
 	}
-	if resp.Content == "" && len(resp.ToolCalls) == 0 {
+	if resp.Content == "" {
 		logger.WarnCF("provider", "gemini-cli returned empty content",
 			map[string]any{"raw_stdout": strings.TrimSpace(stdout.String())})
 	}
@@ -143,7 +153,8 @@ func (p *GeminiCliProvider) IsCLI() bool { return true }
 
 // buildPrompt converts messages to a prompt string for the Gemini CLI.
 // System messages are prepended as instructions since Gemini CLI has no --system-prompt flag.
-func (p *GeminiCliProvider) buildPrompt(messages []Message, tools []ToolDefinition) string {
+// Tool definitions are intentionally not included — see Chat().
+func (p *GeminiCliProvider) buildPrompt(messages []Message) string {
 	var systemParts []string
 	var conversationParts []string
 
@@ -169,13 +180,8 @@ func (p *GeminiCliProvider) buildPrompt(messages []Message, tools []ToolDefiniti
 		sb.WriteString("\n\n## Task\n\n")
 	}
 
-	if len(tools) > 0 {
-		sb.WriteString(buildCLIToolsPrompt(tools))
-		sb.WriteString("\n\n")
-	}
-
-	// Simplify single user message (no prefix) when there is no system or tools context
-	if len(conversationParts) == 1 && len(systemParts) == 0 && len(tools) == 0 {
+	// Simplify single user message (no prefix) when there is no system context
+	if len(conversationParts) == 1 && len(systemParts) == 0 {
 		return strings.TrimPrefix(conversationParts[0], "User: ")
 	}
 
@@ -190,14 +196,10 @@ func (p *GeminiCliProvider) parseGeminiCliResponse(output string) (*LLMResponse,
 		return nil, fmt.Errorf("failed to parse gemini cli response: %w", err)
 	}
 
-	toolCalls := extractToolCallsFromText(resp.Response)
-
-	finishReason := "stop"
+	// CLI is itself agentic — its `response` is the final assistant text.
+	// We do NOT extract tool calls: the agent loop must treat each CLI
+	// invocation as one complete round.
 	content := resp.Response
-	if len(toolCalls) > 0 {
-		finishReason = "tool_calls"
-		content = stripToolCallsFromText(resp.Response)
-	}
 
 	var usage *UsageInfo
 	if resp.Stats.Models != nil {
@@ -218,8 +220,7 @@ func (p *GeminiCliProvider) parseGeminiCliResponse(output string) (*LLMResponse,
 
 	return &LLMResponse{
 		Content:      strings.TrimSpace(content),
-		ToolCalls:    toolCalls,
-		FinishReason: finishReason,
+		FinishReason: "stop",
 		Usage:        usage,
 	}, nil
 }

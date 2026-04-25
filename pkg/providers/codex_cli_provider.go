@@ -20,24 +20,27 @@ type CodexCliProvider struct {
 	workspace string
 	timeout   time.Duration
 	extraArgs []string
+	env       map[string]string
 }
 
 // NewCodexCliProvider creates a new Codex CLI provider.
-func NewCodexCliProvider(workspace string, extraArgs []string) *CodexCliProvider {
+func NewCodexCliProvider(workspace string, extraArgs []string, env map[string]string) *CodexCliProvider {
 	return &CodexCliProvider{
 		command:   "codex",
 		workspace: workspace,
 		extraArgs: extraArgs,
+		env:       env,
 	}
 }
 
 // NewCodexCliProviderWithTimeout creates a new Codex CLI provider with a request timeout.
-func NewCodexCliProviderWithTimeout(workspace string, timeout time.Duration, extraArgs []string) *CodexCliProvider {
+func NewCodexCliProviderWithTimeout(workspace string, timeout time.Duration, extraArgs []string, env map[string]string) *CodexCliProvider {
 	return &CodexCliProvider{
 		command:   "codex",
 		workspace: workspace,
 		timeout:   timeout,
 		extraArgs: extraArgs,
+		env:       env,
 	}
 }
 
@@ -55,7 +58,13 @@ func (p *CodexCliProvider) Chat(
 		defer cancel()
 	}
 
-	prompt := p.buildPrompt(messages, tools)
+	// CLI providers run their own internal agentic loop and return one final
+	// answer per invocation. The `tools` parameter is intentionally ignored:
+	// the CLI cannot use claw's host-side tools by writing JSON in its prose
+	// (that pattern caused infinite outer loops). Use the MCP server in
+	// pkg/mcpserver to expose claw tools to the CLI natively.
+	_ = tools
+	prompt := p.buildPrompt(messages)
 
 	args := []string{"exec", "--json", "--color", "never"}
 	args = append(args, p.extraArgs...)
@@ -69,6 +78,7 @@ func (p *CodexCliProvider) Chat(
 
 	cmd := exec.CommandContext(ctx, p.command, args...)
 	cmd.Stdin = bytes.NewReader([]byte(prompt))
+	cmd.Env = applyProviderEnv(p.env)
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -81,7 +91,7 @@ func (p *CodexCliProvider) Chat(
 	// but still produces valid JSONL output.
 	if stdoutStr := stdout.String(); stdoutStr != "" {
 		resp, parseErr := p.parseJSONLEvents(stdoutStr)
-		if parseErr == nil && resp != nil && (resp.Content != "" || len(resp.ToolCalls) > 0) {
+		if parseErr == nil && resp != nil && resp.Content != "" {
 			return resp, nil
 		}
 	}
@@ -125,7 +135,8 @@ func (p *CodexCliProvider) IsCLI() bool { return true }
 
 // buildPrompt converts messages to a prompt string for the Codex CLI.
 // System messages are prepended as instructions since Codex CLI has no --system-prompt flag.
-func (p *CodexCliProvider) buildPrompt(messages []Message, tools []ToolDefinition) string {
+// Tool definitions are intentionally not included — see Chat().
+func (p *CodexCliProvider) buildPrompt(messages []Message) string {
 	var systemParts []string
 	var conversationParts []string
 
@@ -151,13 +162,8 @@ func (p *CodexCliProvider) buildPrompt(messages []Message, tools []ToolDefinitio
 		sb.WriteString("\n\n## Task\n\n")
 	}
 
-	if len(tools) > 0 {
-		sb.WriteString(buildCLIToolsPrompt(tools))
-		sb.WriteString("\n\n")
-	}
-
 	// Simplify single user message (no prefix)
-	if len(conversationParts) == 1 && len(systemParts) == 0 && len(tools) == 0 {
+	if len(conversationParts) == 1 && len(systemParts) == 0 {
 		return conversationParts[0]
 	}
 
@@ -240,21 +246,14 @@ func (p *CodexCliProvider) parseJSONLEvents(output string) (*LLMResponse, error)
 		return nil, fmt.Errorf("codex cli: %s", lastError)
 	}
 
+	// CLI is itself agentic — its output is the final assistant text.
+	// We do NOT extract tool calls: the agent loop must treat each CLI
+	// invocation as one complete round.
 	content := strings.Join(contentParts, "\n")
-
-	// Extract tool calls from response text (same pattern as ClaudeCliProvider)
-	toolCalls := extractToolCallsFromText(content)
-
-	finishReason := "stop"
-	if len(toolCalls) > 0 {
-		finishReason = "tool_calls"
-		content = stripToolCallsFromText(content)
-	}
 
 	return &LLMResponse{
 		Content:      strings.TrimSpace(content),
-		ToolCalls:    toolCalls,
-		FinishReason: finishReason,
+		FinishReason: "stop",
 		Usage:        usage,
 	}, nil
 }

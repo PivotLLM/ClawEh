@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as ModelsRouteImport } from './routes/models'
+import { Route as McpRouteImport } from './routes/mcp'
 import { Route as LogsRouteImport } from './routes/logs'
 import { Route as CredentialsRouteImport } from './routes/credentials'
 import { Route as ConfigRouteImport } from './routes/config'
@@ -26,6 +27,11 @@ import { Route as AgentBindingsRouteImport } from './routes/agent/bindings'
 const ModelsRoute = ModelsRouteImport.update({
   id: '/models',
   path: '/models',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const McpRoute = McpRouteImport.update({
+  id: '/mcp',
+  path: '/mcp',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LogsRoute = LogsRouteImport.update({
@@ -97,6 +103,7 @@ export interface FileRoutesByFullPath {
   '/config': typeof ConfigRouteWithChildren
   '/credentials': typeof CredentialsRoute
   '/logs': typeof LogsRoute
+  '/mcp': typeof McpRoute
   '/models': typeof ModelsRoute
   '/agent/bindings': typeof AgentBindingsRoute
   '/agent/skills': typeof AgentSkillsRoute
@@ -112,6 +119,7 @@ export interface FileRoutesByTo {
   '/config': typeof ConfigRouteWithChildren
   '/credentials': typeof CredentialsRoute
   '/logs': typeof LogsRoute
+  '/mcp': typeof McpRoute
   '/models': typeof ModelsRoute
   '/agent/bindings': typeof AgentBindingsRoute
   '/agent/skills': typeof AgentSkillsRoute
@@ -128,6 +136,7 @@ export interface FileRoutesById {
   '/config': typeof ConfigRouteWithChildren
   '/credentials': typeof CredentialsRoute
   '/logs': typeof LogsRoute
+  '/mcp': typeof McpRoute
   '/models': typeof ModelsRoute
   '/agent/bindings': typeof AgentBindingsRoute
   '/agent/skills': typeof AgentSkillsRoute
@@ -145,6 +154,7 @@ export interface FileRouteTypes {
     | '/config'
     | '/credentials'
     | '/logs'
+    | '/mcp'
     | '/models'
     | '/agent/bindings'
     | '/agent/skills'
@@ -160,6 +170,7 @@ export interface FileRouteTypes {
     | '/config'
     | '/credentials'
     | '/logs'
+    | '/mcp'
     | '/models'
     | '/agent/bindings'
     | '/agent/skills'
@@ -175,6 +186,7 @@ export interface FileRouteTypes {
     | '/config'
     | '/credentials'
     | '/logs'
+    | '/mcp'
     | '/models'
     | '/agent/bindings'
     | '/agent/skills'
@@ -191,6 +203,7 @@ export interface RootRouteChildren {
   ConfigRoute: typeof ConfigRouteWithChildren
   CredentialsRoute: typeof CredentialsRoute
   LogsRoute: typeof LogsRoute
+  McpRoute: typeof McpRoute
   ModelsRoute: typeof ModelsRoute
 }
 
@@ -201,6 +214,13 @@ declare module '@tanstack/react-router' {
       path: '/models'
       fullPath: '/models'
       preLoaderRoute: typeof ModelsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/mcp': {
+      id: '/mcp'
+      path: '/mcp'
+      fullPath: '/mcp'
+      preLoaderRoute: typeof McpRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/logs': {
@@ -335,6 +355,7 @@ const rootRouteChildren: RootRouteChildren = {
   ConfigRoute: ConfigRouteWithChildren,
   CredentialsRoute: CredentialsRoute,
   LogsRoute: LogsRoute,
+  McpRoute: McpRoute,
   ModelsRoute: ModelsRoute,
 }
 export const routeTree = rootRouteImport

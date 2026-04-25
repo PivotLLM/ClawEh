@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/PivotLLM/ClawEh/pkg/config"
 )
@@ -195,7 +197,34 @@ func validateConfig(cfg *config.Config) []string {
 		errs = append(errs, "channels.discord.token is required when discord channel is enabled")
 	}
 
+	// MCP host: listen and endpoint_path well-formed
+	if listen := strings.TrimSpace(cfg.MCPHost.Listen); listen != "" {
+		if err := validateListenAddr(listen); err != nil {
+			errs = append(errs, "mcp_host.listen: "+err.Error())
+		}
+	}
+	if ep := strings.TrimSpace(cfg.MCPHost.EndpointPath); ep != "" && !strings.HasPrefix(ep, "/") {
+		errs = append(errs, "mcp_host.endpoint_path must start with '/'")
+	}
+
 	return errs
+}
+
+// validateListenAddr checks that s is a host:port with port in 1-65535.
+func validateListenAddr(s string) error {
+	lastColon := strings.LastIndex(s, ":")
+	if lastColon <= 0 || lastColon == len(s)-1 {
+		return fmt.Errorf("must be host:port (e.g. 127.0.0.1:5911)")
+	}
+	portStr := s[lastColon+1:]
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return fmt.Errorf("port %q is not an integer", portStr)
+	}
+	if port < 1 || port > 65535 {
+		return fmt.Errorf("port %d is out of valid range (1-65535)", port)
+	}
+	return nil
 }
 
 // mergeMap recursively merges src into dst (JSON Merge Patch semantics).
