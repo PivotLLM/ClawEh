@@ -145,6 +145,8 @@ See [docs/callback.md](docs/callback.md) for configuration reference, token rota
 
 ClawEh can expose a subset of its host-side tools to MCP-compatible clients over a Streamable HTTP transport. This is primarily intended for CLI providers (Claude Code, Codex CLI, Gemini CLI) so they can call claw's tools natively instead of printing tool-call JSON in their prose — which historically caused runaway outer loops, since those CLIs are themselves agentic and return a single final answer per invocation.
 
+> **Important:** CLI providers (`claude-cli`, `codex-cli`, `gemini-cli`) no longer receive tool descriptions in their prompt. Each invocation runs as a single agentic turn, and the CLI reaches claw's tools only via MCP. **You must register claw as an MCP server in each CLI you intend to use** — see [Client configuration](#client-configuration) below. Without that step, the CLI will still answer prompts, but it will have no access to claw's filesystem, web, or other host-side tools.
+
 The server auto-starts whenever any enabled model in `model_list` uses a `*-cli` protocol (`claude-cli`, `codex-cli`, `gemini-cli`), since those CLIs depend on MCP for native tool calls. Set `enabled: true` to force it on regardless, or `auto_enable: false` to opt out of the auto-start. Full config shape with defaults:
 
 ```json
@@ -196,13 +198,15 @@ For further information:
 claude mcp -h
 ```
 
-#### Codex
+#### Codex CLI
 
-[Codex] reads MCP server definitions from `~/.codex/config.toml`:
+Register claw with the `codex mcp add` command:
 
 ```bash
-vi ~/.codex/config.toml
+codex mcp add claw --url http://127.0.0.1:5911/mcp
 ```
+
+This writes the entry to `~/.codex/config.toml`. You can also edit the file directly:
 
 ```toml
 [mcp_servers.claw]
