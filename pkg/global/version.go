@@ -16,4 +16,4 @@ const AppTagLine = "Personal AI Assistant"
 const AppCopyright = "Copyright (c) 2026 PicoClaw contributors\nCopyright (c) 2026 Tenebris Technologies Inc."
 
 // Version is the current release version of ClawEh.
-const Version = "0.0.5"
+const Version = "0.0.6"

@@ -14,7 +14,7 @@ var _ LLMProvider = (*GeminiCliProvider)(nil)
 // --- Constructor tests ---
 
 func TestNewGeminiCliProvider(t *testing.T) {
-	p := NewGeminiCliProvider("/test/workspace", nil, nil)
+	p := NewGeminiCliProvider("", "/test/workspace", nil, nil)
 	if p == nil {
 		t.Fatal("NewGeminiCliProvider returned nil")
 	}
@@ -29,7 +29,7 @@ func TestNewGeminiCliProvider(t *testing.T) {
 // --- GetDefaultModel tests ---
 
 func TestGeminiCliProvider_GetDefaultModel(t *testing.T) {
-	p := NewGeminiCliProvider("/workspace", nil, nil)
+	p := NewGeminiCliProvider("", "/workspace", nil, nil)
 	if got := p.GetDefaultModel(); got != "gemini-cli" {
 		t.Errorf("GetDefaultModel() = %q, want %q", got, "gemini-cli")
 	}
@@ -38,7 +38,7 @@ func TestGeminiCliProvider_GetDefaultModel(t *testing.T) {
 // --- buildPrompt tests ---
 
 func TestGeminiCliProvider_BuildPrompt_SingleUser(t *testing.T) {
-	p := NewGeminiCliProvider("/workspace", nil, nil)
+	p := NewGeminiCliProvider("", "/workspace", nil, nil)
 	messages := []Message{
 		{Role: "user", Content: "Hello"},
 	}
@@ -51,7 +51,7 @@ func TestGeminiCliProvider_BuildPrompt_SingleUser(t *testing.T) {
 }
 
 func TestGeminiCliProvider_BuildPrompt_WithSystem(t *testing.T) {
-	p := NewGeminiCliProvider("/workspace", nil, nil)
+	p := NewGeminiCliProvider("", "/workspace", nil, nil)
 	messages := []Message{
 		{Role: "system", Content: "You are a helpful assistant."},
 		{Role: "user", Content: "What is Go?"},
@@ -74,7 +74,7 @@ func TestGeminiCliProvider_BuildPrompt_WithSystem(t *testing.T) {
 // --- parseGeminiCliResponse tests ---
 
 func TestGeminiCliProvider_ParseResponse_Basic(t *testing.T) {
-	p := NewGeminiCliProvider("/workspace", nil, nil)
+	p := NewGeminiCliProvider("", "/workspace", nil, nil)
 	output := `{
 		"session_id": "abc123",
 		"response": "Hello! How can I assist you?",
@@ -129,7 +129,7 @@ func TestGeminiCliProvider_ParseResponse_Basic(t *testing.T) {
 }
 
 func TestGeminiCliProvider_ParseResponse_PassesThroughToolCallText(t *testing.T) {
-	p := NewGeminiCliProvider("/workspace", nil, nil)
+	p := NewGeminiCliProvider("", "/workspace", nil, nil)
 	// CLI output that previously would have been parsed as a tool call must now
 	// pass through verbatim — the CLI is the agent and we treat its response
 	// as final assistant prose for the round.
@@ -151,7 +151,7 @@ func TestGeminiCliProvider_ParseResponse_PassesThroughToolCallText(t *testing.T)
 }
 
 func TestGeminiCliProvider_ParseResponse_InvalidJSON(t *testing.T) {
-	p := NewGeminiCliProvider("/workspace", nil, nil)
+	p := NewGeminiCliProvider("", "/workspace", nil, nil)
 	_, err := p.parseGeminiCliResponse("not valid json")
 	if err == nil {
 		t.Fatal("expected error for invalid JSON")
@@ -162,7 +162,7 @@ func TestGeminiCliProvider_ParseResponse_InvalidJSON(t *testing.T) {
 }
 
 func TestGeminiCliProvider_ParseResponse_NoStats(t *testing.T) {
-	p := NewGeminiCliProvider("/workspace", nil, nil)
+	p := NewGeminiCliProvider("", "/workspace", nil, nil)
 	output := `{"session_id":"s","response":"hello"}`
 
 	resp, err := p.parseGeminiCliResponse(output)

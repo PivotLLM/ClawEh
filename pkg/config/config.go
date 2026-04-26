@@ -577,6 +577,7 @@ type ModelConfig struct {
 	AuthMethod  string `json:"auth_method,omitempty"`  // Authentication method: oauth, token
 	ConnectMode string `json:"connect_mode,omitempty"` // Connection mode: stdio, grpc
 	Workspace   string `json:"workspace,omitempty"`    // Workspace path for CLI-based providers
+	Command     string `json:"command,omitempty"`      // Override binary path for CLI providers (e.g., /home/user/.local/bin/claude)
 
 	// Optional optimizations
 	RPM            int    `json:"rpm,omitempty"`              // Requests per minute limit

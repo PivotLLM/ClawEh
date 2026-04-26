@@ -19,7 +19,7 @@ func TestIntegration_RealCodexCLI(t *testing.T) {
 	}
 	t.Logf("Using codex CLI at: %s", path)
 
-	p := NewCodexCliProvider(t.TempDir(), nil, nil)
+	p := NewCodexCliProvider("", t.TempDir(), nil, nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
@@ -54,7 +54,7 @@ func TestIntegration_RealCodexCLI_WithSystemPrompt(t *testing.T) {
 		t.Skip("codex CLI not found in PATH")
 	}
 
-	p := NewCodexCliProvider(t.TempDir(), nil, nil)
+	p := NewCodexCliProvider("", t.TempDir(), nil, nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
@@ -100,7 +100,7 @@ func TestIntegration_RealCodexCLI_ParsesRealJSONL(t *testing.T) {
 	t.Logf("Raw CLI output (first 500 chars): %s", string(output[:min(len(output), 500)]))
 
 	// Verify our parser can handle real output
-	p := NewCodexCliProvider("", nil, nil)
+	p := NewCodexCliProvider("", "", nil, nil)
 	resp, err := p.parseJSONLEvents(string(output))
 	if err != nil {
 		t.Fatalf("parseJSONLEvents() failed on real CLI output: %v", err)

@@ -123,6 +123,7 @@ The `model` field uses a protocol prefix format: `[protocol/]model-identifier`
 | `auth_method` | No | Authentication method: `oauth`, `token` |
 | `connect_mode` | No | Connection mode for CLI providers: `stdio`, `grpc` |
 | `workspace` | No | Working directory for CLI-based providers (`claude-cli`, `codex-cli`, `gemini-cli`) |
+| `command` | No | Override the binary path for CLI-based providers (e.g., `/home/user/.local/bin/claude`) |
 | `rpm` | No | Requests per minute limit |
 | `max_tokens_field` | No | Override the max tokens field name (e.g., `max_completion_tokens` for o1/GLM models) |
 | `request_timeout` | No | HTTP request timeout in seconds; `<=0` uses default `120s` |
@@ -152,6 +153,7 @@ The `model` field uses a protocol prefix format: `[protocol/]model-identifier`
 
 #### `claude-cli/`, `codex-cli/`, `gemini-cli/`
 - **`workspace`**: Directory where the CLI subprocess runs. Defaults to `.`
+- **`command`**: Absolute path to the CLI binary. Omit to resolve via `PATH` (e.g., `/home/user/.local/bin/claude`). Useful in systemd services where the user's PATH is not inherited.
 - **`request_timeout`**: Recommended to set high (e.g., `3600`) as these can run long tasks.
 - No `api_key` or `api_base` needed — credentials are managed by the underlying CLI tool.
 

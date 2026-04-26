@@ -209,9 +209,9 @@ func CreateProviderFromConfig(cfg *config.ModelConfig) (LLMProvider, string, err
 			workspace = "."
 		}
 		if cfg.RequestTimeout > 0 {
-			return NewClaudeCliProviderWithTimeout(workspace, time.Duration(cfg.RequestTimeout)*time.Second, cfg.ExtraArgs, cfg.Env), modelID, nil
+			return NewClaudeCliProviderWithTimeout(cfg.Command, workspace, time.Duration(cfg.RequestTimeout)*time.Second, cfg.ExtraArgs, cfg.Env), modelID, nil
 		}
-		return NewClaudeCliProvider(workspace, cfg.ExtraArgs, cfg.Env), modelID, nil
+		return NewClaudeCliProvider(cfg.Command, workspace, cfg.ExtraArgs, cfg.Env), modelID, nil
 
 	case "codex-cli", "codexcli":
 		workspace := cfg.Workspace
@@ -219,9 +219,9 @@ func CreateProviderFromConfig(cfg *config.ModelConfig) (LLMProvider, string, err
 			workspace = "."
 		}
 		if cfg.RequestTimeout > 0 {
-			return NewCodexCliProviderWithTimeout(workspace, time.Duration(cfg.RequestTimeout)*time.Second, cfg.ExtraArgs, cfg.Env), modelID, nil
+			return NewCodexCliProviderWithTimeout(cfg.Command, workspace, time.Duration(cfg.RequestTimeout)*time.Second, cfg.ExtraArgs, cfg.Env), modelID, nil
 		}
-		return NewCodexCliProvider(workspace, cfg.ExtraArgs, cfg.Env), modelID, nil
+		return NewCodexCliProvider(cfg.Command, workspace, cfg.ExtraArgs, cfg.Env), modelID, nil
 
 	case "gemini-cli", "geminicli":
 		workspace := cfg.Workspace
@@ -229,9 +229,9 @@ func CreateProviderFromConfig(cfg *config.ModelConfig) (LLMProvider, string, err
 			workspace = "."
 		}
 		if cfg.RequestTimeout > 0 {
-			return NewGeminiCliProviderWithTimeout(workspace, time.Duration(cfg.RequestTimeout)*time.Second, cfg.ExtraArgs, cfg.Env), modelID, nil
+			return NewGeminiCliProviderWithTimeout(cfg.Command, workspace, time.Duration(cfg.RequestTimeout)*time.Second, cfg.ExtraArgs, cfg.Env), modelID, nil
 		}
-		return NewGeminiCliProvider(workspace, cfg.ExtraArgs, cfg.Env), modelID, nil
+		return NewGeminiCliProvider(cfg.Command, workspace, cfg.ExtraArgs, cfg.Env), modelID, nil
 
 	default:
 		return nil, "", fmt.Errorf("unknown protocol %q in model %q", protocol, cfg.Model)

@@ -23,9 +23,13 @@ type ClaudeCliProvider struct {
 }
 
 // NewClaudeCliProvider creates a new Claude CLI provider.
-func NewClaudeCliProvider(workspace string, extraArgs []string, env map[string]string) *ClaudeCliProvider {
+// When command is empty, it defaults to "claude".
+func NewClaudeCliProvider(command, workspace string, extraArgs []string, env map[string]string) *ClaudeCliProvider {
+	if command == "" {
+		command = "claude"
+	}
 	return &ClaudeCliProvider{
-		command:   "claude",
+		command:   command,
 		workspace: workspace,
 		extraArgs: extraArgs,
 		env:       env,
@@ -33,9 +37,13 @@ func NewClaudeCliProvider(workspace string, extraArgs []string, env map[string]s
 }
 
 // NewClaudeCliProviderWithTimeout creates a new Claude CLI provider with a request timeout.
-func NewClaudeCliProviderWithTimeout(workspace string, timeout time.Duration, extraArgs []string, env map[string]string) *ClaudeCliProvider {
+// When command is empty, it defaults to "claude".
+func NewClaudeCliProviderWithTimeout(command, workspace string, timeout time.Duration, extraArgs []string, env map[string]string) *ClaudeCliProvider {
+	if command == "" {
+		command = "claude"
+	}
 	return &ClaudeCliProvider{
-		command:   "claude",
+		command:   command,
 		workspace: workspace,
 		timeout:   timeout,
 		extraArgs: extraArgs,

@@ -23,9 +23,13 @@ type GeminiCliProvider struct {
 }
 
 // NewGeminiCliProvider creates a new Gemini CLI provider.
-func NewGeminiCliProvider(workspace string, extraArgs []string, env map[string]string) *GeminiCliProvider {
+// When command is empty, it defaults to "gemini".
+func NewGeminiCliProvider(command, workspace string, extraArgs []string, env map[string]string) *GeminiCliProvider {
+	if command == "" {
+		command = "gemini"
+	}
 	return &GeminiCliProvider{
-		command:   "gemini",
+		command:   command,
 		workspace: workspace,
 		extraArgs: extraArgs,
 		env:       env,
@@ -33,9 +37,13 @@ func NewGeminiCliProvider(workspace string, extraArgs []string, env map[string]s
 }
 
 // NewGeminiCliProviderWithTimeout creates a new Gemini CLI provider with a request timeout.
-func NewGeminiCliProviderWithTimeout(workspace string, timeout time.Duration, extraArgs []string, env map[string]string) *GeminiCliProvider {
+// When command is empty, it defaults to "gemini".
+func NewGeminiCliProviderWithTimeout(command, workspace string, timeout time.Duration, extraArgs []string, env map[string]string) *GeminiCliProvider {
+	if command == "" {
+		command = "gemini"
+	}
 	return &GeminiCliProvider{
-		command:   "gemini",
+		command:   command,
 		workspace: workspace,
 		timeout:   timeout,
 		extraArgs: extraArgs,

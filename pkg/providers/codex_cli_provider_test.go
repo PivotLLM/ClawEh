@@ -284,7 +284,7 @@ func TestBuildPrompt_ToolResults(t *testing.T) {
 // --- CLI Argument Tests ---
 
 func TestCodexCliProvider_GetDefaultModel(t *testing.T) {
-	p := NewCodexCliProvider("", nil, nil)
+	p := NewCodexCliProvider("", "", nil, nil)
 	if got := p.GetDefaultModel(); got != "codex-cli" {
 		t.Errorf("GetDefaultModel() = %q, want %q", got, "codex-cli")
 	}

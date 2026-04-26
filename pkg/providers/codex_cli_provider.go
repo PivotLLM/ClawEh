@@ -24,9 +24,13 @@ type CodexCliProvider struct {
 }
 
 // NewCodexCliProvider creates a new Codex CLI provider.
-func NewCodexCliProvider(workspace string, extraArgs []string, env map[string]string) *CodexCliProvider {
+// When command is empty, it defaults to "codex".
+func NewCodexCliProvider(command, workspace string, extraArgs []string, env map[string]string) *CodexCliProvider {
+	if command == "" {
+		command = "codex"
+	}
 	return &CodexCliProvider{
-		command:   "codex",
+		command:   command,
 		workspace: workspace,
 		extraArgs: extraArgs,
 		env:       env,
@@ -34,9 +38,13 @@ func NewCodexCliProvider(workspace string, extraArgs []string, env map[string]st
 }
 
 // NewCodexCliProviderWithTimeout creates a new Codex CLI provider with a request timeout.
-func NewCodexCliProviderWithTimeout(workspace string, timeout time.Duration, extraArgs []string, env map[string]string) *CodexCliProvider {
+// When command is empty, it defaults to "codex".
+func NewCodexCliProviderWithTimeout(command, workspace string, timeout time.Duration, extraArgs []string, env map[string]string) *CodexCliProvider {
+	if command == "" {
+		command = "codex"
+	}
 	return &CodexCliProvider{
-		command:   "codex",
+		command:   command,
 		workspace: workspace,
 		timeout:   timeout,
 		extraArgs: extraArgs,

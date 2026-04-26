@@ -20,7 +20,7 @@ func TestIntegration_RealClaudeCLI(t *testing.T) {
 	}
 	t.Logf("Using claude CLI at: %s", path)
 
-	p := NewClaudeCliProvider(t.TempDir(), nil, nil)
+	p := NewClaudeCliProvider("", t.TempDir(), nil, nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -65,7 +65,7 @@ func TestIntegration_RealClaudeCLI_WithSystemPrompt(t *testing.T) {
 		t.Skip("claude CLI not found in PATH")
 	}
 
-	p := NewClaudeCliProvider(t.TempDir(), nil, nil)
+	p := NewClaudeCliProvider("", t.TempDir(), nil, nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -104,7 +104,7 @@ func TestIntegration_RealClaudeCLI_ParsesRealJSON(t *testing.T) {
 	t.Logf("Raw CLI output: %s", string(output))
 
 	// Verify our parser can handle real output
-	p := NewClaudeCliProvider("", nil, nil)
+	p := NewClaudeCliProvider("", "", nil, nil)
 	resp, err := p.parseClaudeCliResponse(string(output))
 	if err != nil {
 		t.Fatalf("parseClaudeCliResponse() failed on real CLI output: %v", err)
