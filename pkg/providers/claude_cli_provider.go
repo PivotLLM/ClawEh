@@ -91,6 +91,9 @@ func (p *ClaudeCliProvider) Chat(
 		if ctx.Err() == context.DeadlineExceeded {
 			return nil, fmt.Errorf("claude cli timed out after %s: %w", p.timeout, context.DeadlineExceeded)
 		}
+		if ctx.Err() == context.Canceled {
+			return nil, ctx.Err()
+		}
 
 		// Attempt to parse stdout before treating as error — claude CLI may exit non-zero
 		// but still write a valid JSON response to stdout.
@@ -114,13 +117,15 @@ func (p *ClaudeCliProvider) Chat(
 		}
 		stderrStr := strings.TrimSpace(stderr.String())
 		stdoutStr := strings.TrimSpace(stdout.String())
-		logger.ErrorCF("provider", "claude-cli subprocess failed",
-			map[string]any{
-				"agent_id":  AgentIDFromContext(ctx),
-				"exit_code": exitCode,
-				"stderr":    stderrStr,
-				"stdout":    stdoutStr,
-			})
+		fields := map[string]any{
+			"agent_id":  AgentIDFromContext(ctx),
+			"exit_code": exitCode,
+		}
+		if logger.GetLogMessageContent() {
+			fields["stderr"] = stderrStr
+			fields["stdout"] = stdoutStr
+		}
+		logger.ErrorCF("provider", "claude-cli subprocess failed", fields)
 		switch {
 		case stderrStr != "" && stdoutStr != "":
 			return nil, fmt.Errorf("claude cli error: %w\nstderr: %s\nstdout: %s", err, stderrStr, stdoutStr)
@@ -144,8 +149,11 @@ func (p *ClaudeCliProvider) Chat(
 		return nil, err
 	}
 	if resp.Content == "" {
-		logger.WarnCF("provider", "claude-cli returned empty content",
-			map[string]any{"raw_stdout": strings.TrimSpace(stdout.String())})
+		warnFields := map[string]any{}
+		if logger.GetLogMessageContent() {
+			warnFields["raw_stdout"] = strings.TrimSpace(stdout.String())
+		}
+		logger.WarnCF("provider", "claude-cli returned empty content", warnFields)
 	}
 	return resp, nil
 }

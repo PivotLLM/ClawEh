@@ -302,6 +302,7 @@ func DefaultConfig() *Config {
 				Model:          "claude-cli/claude-cli",
 				Workspace:      ".",
 				RequestTimeout: 3600,
+				ExtraArgs:      []string{"--bare", "--dangerously-skip-permissions", "--no-chrome"},
 				Enabled:        false,
 			},
 

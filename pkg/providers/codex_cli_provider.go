@@ -85,6 +85,9 @@ func (p *CodexCliProvider) Chat(
 	args = append(args, "-") // read prompt from stdin
 
 	cmd := exec.CommandContext(ctx, p.command, args...)
+	if p.workspace != "" {
+		cmd.Dir = p.workspace
+	}
 	cmd.Stdin = bytes.NewReader([]byte(prompt))
 	cmd.Env = applyProviderEnv(p.env)
 
@@ -117,16 +120,26 @@ func (p *CodexCliProvider) Chat(
 			exitCode = exitErr.ExitCode()
 		}
 		stderrStr := strings.TrimSpace(stderr.String())
-		logger.ErrorCF("provider", "codex-cli subprocess failed",
-			map[string]any{
-				"agent_id":  AgentIDFromContext(ctx),
-				"exit_code": exitCode,
-				"stderr":    stderrStr,
-			})
+		stdoutStr := strings.TrimSpace(stdout.String())
+		fields := map[string]any{
+			"agent_id":  AgentIDFromContext(ctx),
+			"exit_code": exitCode,
+		}
+		if logger.GetLogMessageContent() {
+			fields["stderr"] = stderrStr
+			fields["stdout"] = stdoutStr
+		}
+		logger.ErrorCF("provider", "codex-cli subprocess failed", fields)
 		if stderrStr != "" {
 			return nil, fmt.Errorf("codex cli error: %s", stderrStr)
 		}
 		return nil, fmt.Errorf("codex cli error: %w", err)
+	}
+
+	// Log non-empty stderr on successful exit.
+	if stderrStr := strings.TrimSpace(stderr.String()); stderrStr != "" {
+		logger.WarnCF("provider", "codex-cli wrote to stderr on successful exit",
+			map[string]any{"stderr": stderrStr})
 	}
 
 	return p.parseJSONLEvents(stdout.String())
@@ -153,7 +166,7 @@ func (p *CodexCliProvider) buildPrompt(messages []Message) string {
 		case "system":
 			systemParts = append(systemParts, msg.Content)
 		case "user":
-			conversationParts = append(conversationParts, msg.Content)
+			conversationParts = append(conversationParts, "User: "+msg.Content)
 		case "assistant":
 			conversationParts = append(conversationParts, "Assistant: "+msg.Content)
 		case "tool":
@@ -170,9 +183,9 @@ func (p *CodexCliProvider) buildPrompt(messages []Message) string {
 		sb.WriteString("\n\n## Task\n\n")
 	}
 
-	// Simplify single user message (no prefix)
+	// Simplify single user message (no prefix) when there is no system context
 	if len(conversationParts) == 1 && len(systemParts) == 0 {
-		return conversationParts[0]
+		return strings.TrimPrefix(conversationParts[0], "User: ")
 	}
 
 	sb.WriteString(strings.Join(conversationParts, "\n"))
@@ -216,6 +229,7 @@ func (p *CodexCliProvider) parseJSONLEvents(output string) (*LLMResponse, error)
 	var lastError string
 
 	scanner := bufio.NewScanner(strings.NewReader(output))
+	scanner.Buffer(make([]byte, 0, 256*1024), 1024*1024)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
@@ -224,7 +238,9 @@ func (p *CodexCliProvider) parseJSONLEvents(output string) (*LLMResponse, error)
 
 		var event codexEvent
 		if err := json.Unmarshal([]byte(line), &event); err != nil {
-			continue // skip malformed lines
+			logger.DebugCF("provider", "codex-cli: skipping malformed JSONL line",
+				map[string]any{"line_preview": truncateString(line, 120)})
+			continue
 		}
 
 		switch event.Type {
@@ -250,6 +266,14 @@ func (p *CodexCliProvider) parseJSONLEvents(output string) (*LLMResponse, error)
 		}
 	}
 
+	if err := scanner.Err(); err != nil {
+		logger.WarnCF("provider", "codex-cli: JSONL scanner error",
+			map[string]any{"error": err.Error()})
+		if len(contentParts) == 0 {
+			return nil, fmt.Errorf("codex cli: scanner error: %w", err)
+		}
+	}
+
 	if lastError != "" && len(contentParts) == 0 {
 		return nil, fmt.Errorf("codex cli: %s", lastError)
 	}
@@ -259,9 +283,39 @@ func (p *CodexCliProvider) parseJSONLEvents(output string) (*LLMResponse, error)
 	// invocation as one complete round.
 	content := strings.Join(contentParts, "\n")
 
-	return &LLMResponse{
+	result := &LLMResponse{
 		Content:      strings.TrimSpace(content),
 		FinishReason: "stop",
 		Usage:        usage,
-	}, nil
+	}
+
+	hasError := lastError != "" && len(contentParts) > 0
+	logger.InfoCF("provider", "codex-cli response",
+		map[string]any{
+			"content_chars": len(strings.TrimSpace(content)),
+			"num_turns":     len(contentParts),
+			"has_error":     hasError,
+		})
+
+	if result.Content == "" {
+		rawPreview := output
+		if len(rawPreview) > 500 {
+			rawPreview = rawPreview[:500]
+		}
+		fields := map[string]any{}
+		if logger.GetLogMessageContent() {
+			fields["raw_stdout"] = rawPreview
+		}
+		logger.WarnCF("provider", "codex-cli returned empty content", fields)
+	}
+
+	return result, nil
+}
+
+// truncateString returns s truncated to at most n characters.
+func truncateString(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n]
 }
