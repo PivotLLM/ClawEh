@@ -28,6 +28,61 @@ From a security practitioner’s perspective, expanding AI agents by packing an 
 - Cron-based scheduling for all periodic and time-based task execution — to reduce unnecessary duplication and complexity, all scheduling and periodic execution is consolidated in cron (see [docs/cron.md](docs/cron.md))
 - MIT-licensed, with a strong emphasis on openness, reuse, and maintainability
 
+## Prerequisites
+
+- [Go](https://golang.org/dl/) 1.21 or later
+- [Node.js](https://nodejs.org/) 20.19+ or 22.12+ (for building the web frontend)
+- [pnpm](https://pnpm.io/installation) — install via `npm install -g pnpm`
+
+**Do not install Node.js via `apt`** — the packaged version is too old. Use the [NodeSource repository](https://github.com/nodesource/distributions) for a system-wide install:
+
+```bash
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+sudo apt install -y nodejs
+npm install -g pnpm
+```
+
+Alternatively, use [nvm](https://github.com/nvm-sh/nvm) for a per-user install (run as your regular user, not root):
+
+```bash
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
+# open a new shell, then:
+nvm install 22
+nvm alias default 22
+npm install -g pnpm
+```
+
+## Building
+
+Clone the repository and build both binaries:
+
+```bash
+git clone https://github.com/PivotLLM/ClawEh.git
+cd ClawEh
+make install
+```
+
+This builds `claw` and `claw-launcher` and installs them to `~/.local/bin`.
+
+**Agent only (no web frontend):** Node.js and pnpm are not required if you skip the launcher:
+
+```bash
+make install-agent
+```
+
+**Available make targets:**
+
+| Target | Description |
+|---|---|
+| `make build` | Build both binaries |
+| `make install` | Build and install both to `~/.local/bin` |
+| `make build-agent` | Build `claw` only |
+| `make install-agent` | Build and install `claw` only |
+| `make build-launcher` | Build `claw-launcher` only |
+| `make install-launcher` | Build and install `claw-launcher` only |
+| `make test` | Run tests |
+| `make clean` | Remove build artifacts |
+
 ## Terms of Use and Compliance
 ClawEh supports a wide range of LLM providers. It is your responsibility to ensure that your use of any provider, API, service, or model is consistent with the applicable terms of service, acceptable use policies, contracts, and legal requirements. This includes use-case restrictions, data handling obligations, and any prohibition on accessing non-public or undocumented APIs. We have removed support for some providers where we determined the implementation could not reasonably be used without violating the provider's terms. We welcome feedback from any LLM providers on this topic.
 
