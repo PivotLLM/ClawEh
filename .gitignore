@@ -38,8 +38,6 @@ tasks/
 # Plans
 docs/plans/
 
-# Agent workspace (personal data — not part of the codebase)
-workspace/
 
 # Frontend dependencies (managed by pnpm)
 web/frontend/node_modules/
