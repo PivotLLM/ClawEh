@@ -97,7 +97,8 @@
       "model_name": "claude-code",
       "model": "claude-cli/claude-code",
       "workspace": "~/.claw/workspace",
-      "extra_args": ["--dangerously-skip-permissions", "--no-chrome"]
+      "extra_args": ["--dangerously-skip-permissions", "--no-chrome"],
+      "env": { "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1" }
     },
     {
       "_comment": "Codex CLI - uses local codex CLI subprocess. `env` sets variables for the subprocess (e.g. OPENAI_API_KEY for bearer auth).",

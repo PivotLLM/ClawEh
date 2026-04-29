@@ -62,7 +62,7 @@ func (sm *SessionManager) GetOrCreate(key string) *Session {
 func (sm *SessionManager) AddMessage(sessionKey, role, content string) {
 	sm.AddFullMessage(sessionKey, providers.Message{
 		Role:    role,
-		Content: content,
+		Content: SanitizeContent(content),
 	})
 }
 
@@ -71,6 +71,8 @@ func (sm *SessionManager) AddMessage(sessionKey, role, content string) {
 func (sm *SessionManager) AddFullMessage(sessionKey string, msg providers.Message) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
+
+	msg.Content = SanitizeContent(msg.Content)
 
 	session, ok := sm.sessions[sessionKey]
 	if !ok {

@@ -302,6 +302,8 @@ func DefaultConfig() *Config {
 				Model:          "claude-cli/claude-cli",
 				Workspace:      ".",
 				RequestTimeout: 3600,
+				ExtraArgs:      []string{"--dangerously-skip-permissions", "--no-chrome"},
+				Env:            map[string]string{"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"},
 				Enabled:        false,
 			},
 
