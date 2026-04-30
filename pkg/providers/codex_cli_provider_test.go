@@ -378,9 +378,10 @@ echo '{"type":"turn.completed"}'`
 		t.Fatal(err)
 	}
 
+	workspaceDir := t.TempDir()
 	p := &CodexCliProvider{
 		command:   scriptPath,
-		workspace: "/tmp/test-workspace",
+		workspace: workspaceDir,
 		extraArgs: []string{"--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check"},
 	}
 
@@ -400,7 +401,7 @@ echo '{"type":"turn.completed"}'`
 	if !strings.Contains(args, "-m gpt-5.3-codex") {
 		t.Errorf("args should contain model flag, got: %s", args)
 	}
-	if !strings.Contains(args, "-C /tmp/test-workspace") {
+	if !strings.Contains(args, "-C "+workspaceDir) {
 		t.Errorf("args should contain workspace flag, got: %s", args)
 	}
 	if !strings.Contains(args, "--json") {

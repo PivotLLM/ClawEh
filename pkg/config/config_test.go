@@ -47,8 +47,12 @@ func TestAgentModelConfig_MarshalString(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	if string(data) != `"gpt-4"` {
-		t.Errorf("marshal = %s, want '\"gpt-4\"'", string(data))
+	var result map[string]any
+	if err := json.Unmarshal(data, &result); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if result["primary"] != "gpt-4" {
+		t.Errorf("primary = %v, want gpt-4", result["primary"])
 	}
 }
 
@@ -202,15 +206,18 @@ func TestDefaultConfig_WorkspacePath(t *testing.T) {
 	}
 }
 
-// TestDefaultConfig_Model verifies no default model is set (user must configure one)
+// TestDefaultConfig_Model verifies the default model is set with primary and fallback
 func TestDefaultConfig_Model(t *testing.T) {
 	cfg := DefaultConfig()
 
-	if cfg.Agents.Defaults.Model != nil {
-		t.Error("Model should be nil in default config (user must configure a model)")
+	if cfg.Agents.Defaults.Model == nil {
+		t.Fatal("Model should not be nil in default config")
 	}
-	if cfg.Agents.Defaults.DefaultModelName() != "" {
-		t.Error("DefaultModelName() should be empty in default config")
+	if cfg.Agents.Defaults.Model.Primary != "claude-cli" {
+		t.Errorf("Primary = %q, want claude-cli", cfg.Agents.Defaults.Model.Primary)
+	}
+	if len(cfg.Agents.Defaults.Model.Fallbacks) == 0 || cfg.Agents.Defaults.Model.Fallbacks[0] != "codex-cli" {
+		t.Errorf("Fallbacks = %v, want [codex-cli]", cfg.Agents.Defaults.Model.Fallbacks)
 	}
 }
 
@@ -336,11 +343,8 @@ func TestConfig_Complete(t *testing.T) {
 	if cfg.Agents.Defaults.Workspace == "" {
 		t.Error("Workspace should not be empty")
 	}
-	if cfg.Agents.Defaults.Model != nil {
-		t.Error("Model should be nil in default config (user must configure a model)")
-	}
-	if cfg.Agents.Defaults.DefaultModelName() != "" {
-		t.Error("DefaultModelName() should be empty in default config")
+	if cfg.Agents.Defaults.Model == nil || cfg.Agents.Defaults.Model.Primary == "" {
+		t.Error("Model should be set in default config")
 	}
 	if cfg.Agents.Defaults.Temperature != nil {
 		t.Error("Temperature should be nil when not provided")
