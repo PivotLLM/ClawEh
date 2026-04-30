@@ -70,7 +70,18 @@ You need two tokens:
 
 ---
 
-## 5. (Optional) Add a Slash Command
+## 5. Enable Direct Messages
+
+1. In the left sidebar, under **Features**, click **App Home**.
+2. Scroll down to the **Show Tabs** section.
+3. Toggle **Messages Tab** to on.
+4. Check **Allow users to send Slash commands and messages from the messages tab**.
+
+Without this, users will see "Sending messages to this app has been turned off" when trying to DM the bot.
+
+---
+
+## 6. (Optional) Add a Slash Command
 
 If you want users to trigger the bot with a `/` command:
 
@@ -86,7 +97,7 @@ Slash command text is routed through the same message pipeline as regular messag
 
 ---
 
-## 6. Configure ClawEh
+## 7. Configure ClawEh
 
 Add the following to your ClawEh configuration:
 
@@ -115,7 +126,7 @@ CLAW_CHANNELS_SLACK_APP_TOKEN=xapp-...
 
 ---
 
-## 7. Group Channel Behaviour
+## 8. Group Channel Behaviour
 
 By default in public/private channels (non-DM), the bot responds to all messages. To restrict it to @mentions or keyword prefixes only, set `group_trigger` in your config:
 
