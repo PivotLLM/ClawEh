@@ -2578,11 +2578,16 @@ func (al *AgentLoop) dumpRefusal(
 	inputBytes, _ := json.Marshal(messages)
 	outputBytes, _ := json.Marshal(response)
 
-	metadata := fmt.Sprintf("Agent: %s\nModel: %s\nSession: %s\nChannel: %s\nIteration: %d\nTimestamp: %s",
-		agent.ID, model, opts.SessionKey, opts.Channel, iteration,
-		time.Now().Format(time.RFC3339))
+	meta := map[string]any{
+		"agent":     agent.ID,
+		"model":     model,
+		"session":   opts.SessionKey,
+		"channel":   opts.Channel,
+		"iteration": iteration,
+		"timestamp": time.Now().Format(time.RFC3339),
+	}
 
-	filename, err := dump.Write(al.dumpsDir, "refusal", metadata, string(inputBytes), string(outputBytes))
+	basename, err := dump.Write(al.dumpsDir, "refusal", meta, json.RawMessage(inputBytes), json.RawMessage(outputBytes))
 	if err != nil {
 		logger.WarnCF("agent", "Failed to write refusal dump",
 			map[string]any{"agent_id": agent.ID, "error": err.Error()})
@@ -2595,7 +2600,7 @@ func (al *AgentLoop) dumpRefusal(
 			"session_key": opts.SessionKey,
 			"channel":     opts.Channel,
 			"iteration":   iteration,
-			"dump_file":   filename,
+			"dump_base":   basename,
 		})
 }
 
@@ -2612,11 +2617,17 @@ func (al *AgentLoop) dumpAll(
 	inputBytes, _ := json.Marshal(messages)
 	outputBytes, _ := json.Marshal(response)
 
-	metadata := fmt.Sprintf("Agent: %s\nModel: %s\nSession: %s\nChannel: %s\nIteration: %d\nFinishReason: %s\nTimestamp: %s",
-		agent.ID, model, opts.SessionKey, opts.Channel, iteration,
-		response.FinishReason, time.Now().Format(time.RFC3339))
+	meta := map[string]any{
+		"agent":         agent.ID,
+		"model":         model,
+		"session":       opts.SessionKey,
+		"channel":       opts.Channel,
+		"iteration":     iteration,
+		"finish_reason": response.FinishReason,
+		"timestamp":     time.Now().Format(time.RFC3339),
+	}
 
-	filename, err := dump.Write(al.dumpsDir, "dump_all", metadata, string(inputBytes), string(outputBytes))
+	basename, err := dump.Write(al.dumpsDir, "dump_all", meta, json.RawMessage(inputBytes), json.RawMessage(outputBytes))
 	if err != nil {
 		logger.WarnCF("agent", "Failed to write dump_all file",
 			map[string]any{"agent_id": agent.ID, "error": err.Error()})
@@ -2624,11 +2635,11 @@ func (al *AgentLoop) dumpAll(
 	}
 	logger.DebugCF("agent", "LLM response dump written (dump_all)",
 		map[string]any{
-			"agent_id":     agent.ID,
-			"model":        model,
-			"session_key":  opts.SessionKey,
+			"agent_id":      agent.ID,
+			"model":         model,
+			"session_key":   opts.SessionKey,
 			"finish_reason": response.FinishReason,
-			"iteration":    iteration,
-			"dump_file":    filename,
+			"iteration":     iteration,
+			"dump_base":     basename,
 		})
 }

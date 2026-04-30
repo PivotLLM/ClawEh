@@ -1,7 +1,12 @@
-// Package dump writes diagnostic snapshots for unusual LLM responses.
+// Package dump writes diagnostic snapshots for unusual or inspected LLM responses.
+// Each dump produces two files with a shared base name:
+//   - YYYYMMDD-HHMMSS-<id>.json  — structured JSON for programmatic parsing
+//   - YYYYMMDD-HHMMSS-<id>.txt   — human-readable pretty-printed version
 package dump
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"math/rand"
 	"os"
@@ -10,15 +15,20 @@ import (
 	"time"
 )
 
-// Write creates a dump file in dumpsDir and returns the filename (not full path).
-// The file contains four sections separated by "-----" lines:
-//  1. Metadata (reason + caller-supplied metadata string)
-//  2. Input
-//  3. Output
-//
-// Returns ("", nil) if dumpsDir is empty (feature disabled).
+// dumpDoc is the top-level structure written to the .json file.
+type dumpDoc struct {
+	Metadata map[string]any  `json:"metadata"`
+	Input    json.RawMessage `json:"input"`
+	Output   json.RawMessage `json:"output"`
+}
+
+// Write creates a .json and .txt dump file pair in dumpsDir and returns the
+// base filename (without extension). Returns ("", nil) if dumpsDir is empty.
 // The dumps directory is created if it does not exist.
-func Write(dumpsDir, reason, metadata, input, output string) (string, error) {
+//
+// metadata must not include a "reason" key — reason is added automatically.
+// input and output must be valid JSON (typically from json.Marshal).
+func Write(dumpsDir, reason string, metadata map[string]any, input, output json.RawMessage) (string, error) {
 	if dumpsDir == "" {
 		return "", nil
 	}
@@ -29,32 +39,89 @@ func Write(dumpsDir, reason, metadata, input, output string) (string, error) {
 
 	ts := time.Now().Format("20060102-150405")
 	id := randID(6)
-	filename := fmt.Sprintf("%s-%s.txt", ts, id)
-	fullPath := filepath.Join(dumpsDir, filename)
+	basename := fmt.Sprintf("%s-%s", ts, id)
 
+	// Merge reason into metadata for the JSON doc.
+	meta := make(map[string]any, len(metadata)+1)
+	meta["reason"] = reason
+	for k, v := range metadata {
+		meta[k] = v
+	}
+
+	doc := dumpDoc{
+		Metadata: meta,
+		Input:    input,
+		Output:   output,
+	}
+
+	// --- .json file ---
+	jsonBytes, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("dump: marshal json: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(dumpsDir, basename+".json"), jsonBytes, 0o644); err != nil {
+		return "", fmt.Errorf("dump: write json: %w", err)
+	}
+
+	// --- .txt file ---
+	txt := buildTxt(reason, meta, input, output)
+	if err := os.WriteFile(filepath.Join(dumpsDir, basename+".txt"), []byte(txt), 0o644); err != nil {
+		return "", fmt.Errorf("dump: write txt: %w", err)
+	}
+
+	return basename, nil
+}
+
+// buildTxt produces a human-readable dump with three sections separated by
+// "-----" markers. JSON blocks are pretty-printed and escaped \n sequences
+// within string values are converted to real newlines for readability.
+func buildTxt(reason string, meta map[string]any, input, output json.RawMessage) string {
 	var sb strings.Builder
+
+	// Section 1: metadata
 	sb.WriteString("REASON: " + reason + "\n")
-	if metadata != "" {
-		sb.WriteString(metadata)
-		if !strings.HasSuffix(metadata, "\n") {
-			sb.WriteString("\n")
+	// Write remaining metadata keys in a stable order, reason already shown.
+	orderedKeys := []string{"agent", "model", "session", "channel", "iteration", "finish_reason", "timestamp"}
+	written := map[string]bool{"reason": true}
+	for _, k := range orderedKeys {
+		if v, ok := meta[k]; ok {
+			sb.WriteString(fmt.Sprintf("%s: %v\n", k, v))
+			written[k] = true
 		}
 	}
-	sb.WriteString("\n-----\n\nINPUT\n\n-----\n\n")
-	sb.WriteString(input)
-	if !strings.HasSuffix(input, "\n") {
-		sb.WriteString("\n")
-	}
-	sb.WriteString("\n-----\n\nOUTPUT\n\n-----\n\n")
-	sb.WriteString(output)
-	if !strings.HasSuffix(output, "\n") {
-		sb.WriteString("\n")
+	// Any remaining keys not in the ordered list.
+	for k, v := range meta {
+		if !written[k] {
+			sb.WriteString(fmt.Sprintf("%s: %v\n", k, v))
+		}
 	}
 
-	if err := os.WriteFile(fullPath, []byte(sb.String()), 0o644); err != nil {
-		return "", fmt.Errorf("dump: write file: %w", err)
+	// Section 2: input
+	sb.WriteString("\n-----\n\nINPUT\n\n-----\n\n")
+	sb.WriteString(prettyJSON(input))
+	sb.WriteString("\n")
+
+	// Section 3: output
+	sb.WriteString("\n-----\n\nOUTPUT\n\n-----\n\n")
+	sb.WriteString(prettyJSON(output))
+	sb.WriteString("\n")
+
+	return sb.String()
+}
+
+// prettyJSON returns indented JSON with escaped \n sequences inside string
+// values replaced with real newlines, for human readability.
+func prettyJSON(raw json.RawMessage) string {
+	var buf bytes.Buffer
+	if err := json.Indent(&buf, raw, "", "  "); err != nil {
+		// Not valid JSON — return as-is.
+		return string(raw)
 	}
-	return filename, nil
+	// Replace the two-character sequence backslash-n that appears inside JSON
+	// string values with a real newline. This makes multi-line content (e.g.
+	// system prompts, message bodies) readable without breaking the overall
+	// structure of the txt file.
+	return strings.ReplaceAll(buf.String(), `\n`, "\n")
 }
 
 func randID(n int) string {
