@@ -94,6 +94,9 @@ func (t *MessageTool) Execute(ctx context.Context, args map[string]any) *ToolRes
 	}
 
 	t.sentInRound.Store(true)
+	if flag := roundSentFlagFromCtx(ctx); flag != nil {
+		flag.Store(true)
+	}
 	// Silent: user already received the message directly
 	return &ToolResult{
 		ForLLM: fmt.Sprintf("Message sent to %s:%s", channel, chatID),

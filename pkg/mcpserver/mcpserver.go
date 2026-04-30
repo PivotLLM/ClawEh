@@ -13,6 +13,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
+	"strings"
 	"time"
 
 	"github.com/PivotLLM/ClawEh/pkg/global"
@@ -29,13 +31,19 @@ const DefaultEndpointPath = "/mcp"
 
 // MCPServer wraps the mcp-go streamable HTTP server and registers claw tools.
 type MCPServer struct {
-	registry      *tools.ToolRegistry
-	allowPatterns []string
-	listen        string
-	endpointPath  string
+	registry        *tools.ToolRegistry            // default
+	agentRegistries map[string]*tools.ToolRegistry // agentID → registry
+	allowPatterns   []string
+	listen          string
+	endpointPath    string // base path, e.g. "/mcp"
 
-	srv        *server.MCPServer
-	httpServer *server.StreamableHTTPServer
+	// internal
+	httpServer *http.Server
+	agentSrvs  map[string]*server.StreamableHTTPServer // agentID → server
+	defaultSrv *server.StreamableHTTPServer
+
+	// srv is kept for test introspection of the default endpoint's MCPServer.
+	srv *server.MCPServer
 }
 
 // Option configures an MCPServer.
@@ -44,6 +52,19 @@ type Option func(*MCPServer)
 // WithRegistry sets the tool registry that the MCP server exposes.
 func WithRegistry(r *tools.ToolRegistry) Option {
 	return func(m *MCPServer) { m.registry = r }
+}
+
+// WithAgentRegistries sets per-agent tool registries.
+// Each agent is served at endpointPath+"/"+agentID (e.g., /mcp/karen).
+func WithAgentRegistries(registries map[string]*tools.ToolRegistry) Option {
+	return func(m *MCPServer) {
+		if len(registries) > 0 {
+			m.agentRegistries = make(map[string]*tools.ToolRegistry, len(registries))
+			for k, v := range registries {
+				m.agentRegistries[k] = v
+			}
+		}
+	}
 }
 
 // WithListen sets the listen address (default: 127.0.0.1:5911).
@@ -79,6 +100,20 @@ func WithAllowlist(names []string) Option {
 	}
 }
 
+// buildEndpoint creates a StreamableHTTPServer for a given registry and path.
+func buildEndpoint(registry *tools.ToolRegistry, allowPatterns []string, endpointPath string) (*server.MCPServer, *server.StreamableHTTPServer) {
+	mcpSrv := server.NewMCPServer(global.AppName, global.Version,
+		server.WithToolCapabilities(false),
+		server.WithRecovery(),
+	)
+	addToolsToServer(mcpSrv, registry, allowPatterns)
+	httpSrv := server.NewStreamableHTTPServer(mcpSrv,
+		server.WithEndpointPath(endpointPath),
+		server.WithStateLess(true),
+	)
+	return mcpSrv, httpSrv
+}
+
 // New constructs an MCPServer. The registry option is required.
 func New(opts ...Option) (*MCPServer, error) {
 	m := &MCPServer{
@@ -93,17 +128,27 @@ func New(opts ...Option) (*MCPServer, error) {
 		return nil, errors.New("mcpserver: registry is required")
 	}
 
-	m.srv = server.NewMCPServer(global.AppName, global.Version,
-		server.WithToolCapabilities(false),
-		server.WithRecovery(),
-	)
+	mux := http.NewServeMux()
 
-	m.addTools()
+	// Default endpoint
+	m.srv, m.defaultSrv = buildEndpoint(m.registry, m.allowPatterns, m.endpointPath)
+	mux.Handle(m.endpointPath, m.defaultSrv)
 
-	m.httpServer = server.NewStreamableHTTPServer(m.srv,
-		server.WithEndpointPath(m.endpointPath),
-		server.WithStateLess(true),
-	)
+	// Per-agent endpoints
+	m.agentSrvs = make(map[string]*server.StreamableHTTPServer)
+	for agentID, reg := range m.agentRegistries {
+		if strings.Contains(agentID, "/") {
+			logger.WarnCF("mcpserver", "skipping agent endpoint: ID contains '/'",
+				map[string]any{"agent_id": agentID})
+			continue
+		}
+		agentPath := m.endpointPath + "/" + agentID
+		_, agentSrv := buildEndpoint(reg, m.allowPatterns, agentPath)
+		m.agentSrvs[agentID] = agentSrv
+		mux.Handle(agentPath, agentSrv)
+	}
+
+	m.httpServer = &http.Server{Handler: mux}
 
 	return m, nil
 }
@@ -115,22 +160,26 @@ func (m *MCPServer) Listen() string { return m.listen }
 func (m *MCPServer) EndpointPath() string { return m.endpointPath }
 
 // Start begins serving in a background goroutine. It returns after the
-// listener is bound (or immediately on bind failure), so callers can rely
-// on the server being ready once Start returns nil.
+// listener is bound (binding failures are returned immediately), so callers
+// can rely on the server being ready once Start returns nil.
 func (m *MCPServer) Start() error {
 	ln, err := net.Listen("tcp", m.listen)
 	if err != nil {
 		return fmt.Errorf("mcpserver: bind %s: %w", m.listen, err)
 	}
-	// Close the probe listener; the real server binds its own.
-	_ = ln.Close()
 
 	logger.InfoCF("mcpserver", "MCP server starting",
-		map[string]any{"listen": m.listen, "endpoint": m.endpointPath})
+		map[string]any{
+			"listen":          m.listen,
+			"endpoint":        m.endpointPath,
+			"agent_endpoints": len(m.agentSrvs),
+		})
 
+	// Use Serve(ln) rather than ListenAndServe so the port is held from the
+	// moment Start returns — no TOCTOU gap between binding and serving.
 	errCh := make(chan error, 1)
 	go func() {
-		if err := m.httpServer.Start(m.listen); err != nil {
+		if err := m.httpServer.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.ErrorCF("mcpserver", "MCP server exited",
 				map[string]any{"error": err.Error()})
 			errCh <- err
@@ -139,8 +188,7 @@ func (m *MCPServer) Start() error {
 		errCh <- nil
 	}()
 
-	// Give the server a brief window to fail fast (e.g., port already bound
-	// by a parallel process).
+	// Give the server a brief window to fail fast.
 	select {
 	case err := <-errCh:
 		if err != nil {
@@ -155,5 +203,35 @@ func (m *MCPServer) Start() error {
 // Shutdown gracefully stops the HTTP server.
 func (m *MCPServer) Shutdown(ctx context.Context) error {
 	logger.InfoCF("mcpserver", "MCP server shutting down", nil)
-	return m.httpServer.Shutdown(ctx)
+	// Shutdown per-agent servers (best-effort; they don't own the http.Server).
+	for _, srv := range m.agentSrvs {
+		_ = srv.Shutdown(ctx)
+	}
+	if m.defaultSrv != nil {
+		_ = m.defaultSrv.Shutdown(ctx)
+	}
+	if m.httpServer != nil {
+		return m.httpServer.Shutdown(ctx)
+	}
+	return nil
+}
+
+// WriteWorkspaceConfigs writes per-agent .claude.json files mapping each agent's
+// workspace to its MCP endpoint path. baseURL is the server's base URL (e.g.
+// "http://127.0.0.1:5911"). workspaces maps agentID → workspace path.
+func (m *MCPServer) WriteWorkspaceConfigs(baseURL string, workspaces map[string]string) {
+	for agentID := range m.agentRegistries {
+		workspace, ok := workspaces[agentID]
+		if !ok || workspace == "" {
+			continue
+		}
+		agentURL := baseURL + m.endpointPath + "/" + agentID
+		if err := WriteAgentWorkspaceConfig(workspace, agentURL); err != nil {
+			logger.WarnCF("mcpserver", "Failed to write workspace MCP config",
+				map[string]any{"agent": agentID, "workspace": workspace, "error": err.Error()})
+		} else {
+			logger.DebugCF("mcpserver", "Wrote workspace MCP config",
+				map[string]any{"agent": agentID, "path": workspace + "/.claude.json"})
+		}
+	}
 }
