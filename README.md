@@ -170,6 +170,28 @@ sudo systemctl enable --now claw
 
 ClawEh writes logs to `~/.claw/logs/claw.log` and the web console to `~/.claw/logs/claw-launcher.log`. No log redirection is required in the service file.
 
+## Diagnostic dumps
+
+ClawEh can write full LLM request/response snapshots to disk for debugging. Files are written to `$CLAW_HOME/logs/dumps/` (e.g. `~/.claw/logs/dumps/`) and named `YYYYMMDD-HHMMSS-<id>.txt`. Each file contains three sections separated by `-----` markers: metadata (reason, agent, model, session), the full input sent to the LLM (JSON), and the full response received.
+
+Two options are available in the `logging` config block:
+
+```json
+{
+  "logging": {
+    "dump_refusals": true,
+    "dump_all": false
+  }
+}
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `dump_refusals` | `true` | Write a dump whenever the LLM returns `finish_reason: "refusal"`. A `WARNING` log entry is emitted with the filename and correlation fields (agent, model, session key, channel). |
+| `dump_all` | `false` | Write a dump for every LLM response regardless of finish reason. Logged at `DEBUG` level. Useful for deep debugging; generates significant disk output under normal load. |
+
+When `dump_refusals` is `true` and the response is a refusal, only the refusal dump is written — `dump_all` does not also fire for the same response.
+
 ## Callback endpoint
 
 ClawEh provides an optional per-agent HTTP endpoint that allows external processes — MCP servers, scripts, spawned subprocesses — to deliver messages to an agent without a persistent channel connection. The agent receives the message on its last active channel and responds normally.
