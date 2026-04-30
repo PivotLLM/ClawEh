@@ -55,11 +55,14 @@ func Write(dumpsDir, reason string, metadata map[string]any, input, output json.
 	}
 
 	// --- .json file ---
-	jsonBytes, err := json.MarshalIndent(doc, "", "  ")
-	if err != nil {
+	var jsonBuf bytes.Buffer
+	enc := json.NewEncoder(&jsonBuf)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(doc); err != nil {
 		return "", fmt.Errorf("dump: marshal json: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(dumpsDir, basename+".json"), jsonBytes, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dumpsDir, basename+".json"), jsonBuf.Bytes(), 0o644); err != nil {
 		return "", fmt.Errorf("dump: write json: %w", err)
 	}
 
@@ -109,19 +112,25 @@ func buildTxt(reason string, meta map[string]any, input, output json.RawMessage)
 	return sb.String()
 }
 
-// prettyJSON returns indented JSON with escaped \n sequences inside string
-// values replaced with real newlines, for human readability.
+// prettyJSON returns indented JSON with HTML escaping disabled and \n sequences
+// inside string values replaced with real newlines, for human readability.
 func prettyJSON(raw json.RawMessage) string {
-	var buf bytes.Buffer
-	if err := json.Indent(&buf, raw, "", "  "); err != nil {
-		// Not valid JSON — return as-is.
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil {
 		return string(raw)
 	}
-	// Replace the two-character sequence backslash-n that appears inside JSON
-	// string values with a real newline. This makes multi-line content (e.g.
-	// system prompts, message bodies) readable without breaking the overall
-	// structure of the txt file.
-	return strings.ReplaceAll(buf.String(), `\n`, "\n")
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(v); err != nil {
+		return string(raw)
+	}
+	// Encoder.Encode appends a trailing newline; strip it — callers add their own.
+	result := strings.TrimRight(buf.String(), "\n")
+	// Replace escaped \n in string values with real newlines so multi-line
+	// content (system prompts, message bodies) is legible in the txt file.
+	return strings.ReplaceAll(result, `\n`, "\n")
 }
 
 func randID(n int) string {
