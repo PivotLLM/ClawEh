@@ -109,6 +109,9 @@ func gatewayCmd(debug bool) error {
 	msgBus := bus.NewMessageBus()
 	agentLoop := agent.NewAgentLoop(cfg, msgBus, provider, dispatcher)
 
+	dumpsDir := filepath.Join(internal.GetPicoclawHome(), "logs", "dumps")
+	agentLoop.SetDumpsDir(dumpsDir)
+
 	startupInfo := agentLoop.GetStartupInfo()
 	if len(startupInfo) == 0 {
 		return fmt.Errorf("no default agent configured — add at least one entry to agents.list in your config")

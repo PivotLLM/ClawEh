@@ -25,6 +25,7 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/commands"
 	"github.com/PivotLLM/ClawEh/pkg/config"
 	"github.com/PivotLLM/ClawEh/pkg/constants"
+	"github.com/PivotLLM/ClawEh/pkg/dump"
 	"github.com/PivotLLM/ClawEh/pkg/global"
 	"github.com/PivotLLM/ClawEh/pkg/logger"
 	"github.com/PivotLLM/ClawEh/pkg/media"
@@ -56,10 +57,14 @@ type AgentLoop struct {
 	dispatcher       *providers.ProviderDispatcher
 	callbackManagers map[string]*callback.Manager // agentID -> manager (nil entry means disabled)
 	agentStates      map[string]*state.Manager    // agentID -> per-agent state manager
-	// sessionMus serializes messages within a session (channel:chatID key → *sync.Mutex).
-	// Entries are never evicted; for typical deployments with a bounded number of
-	// active sessions the cost is negligible (one *sync.Mutex per session key).
+	// sessionMus serializes messages within a session (session scope key → *sync.Mutex).
+	// The scope key is resolved via resolveMessageRoute before locking so that
+	// multiple channel:chatID pairs that map to the same agent session share one
+	// mutex and never process concurrently. Entries are never evicted; for typical
+	// deployments with a bounded number of active sessions the cost is negligible
+	// (one *sync.Mutex per session key).
 	sessionMus sync.Map
+	dumpsDir   string
 }
 
 // processOptions configures how a message is processed
@@ -358,13 +363,31 @@ func (al *AgentLoop) getOrCreateSessionMu(key string) *sync.Mutex {
 }
 
 // processSessionMessage dispatches a single inbound message within its session's
-// serialized goroutine. Messages sharing the same channel+chatID are ordered via
-// a per-session mutex so concurrent sessions never block each other.
+// serialized goroutine. Messages sharing the same session scope key (resolved via
+// resolveMessageRoute) are ordered via a per-session mutex so concurrent sessions
+// never block each other, and so that multiple channel:chatID pairs that map to
+// the same agent session are properly serialized.
 func (al *AgentLoop) processSessionMessage(ctx context.Context, msg bus.InboundMessage) {
 	defer al.activeRequests.Done()
 
-	sessionKey := msg.Channel + ":" + msg.ChatID
-	mu := al.getOrCreateSessionMu(sessionKey)
+	// Resolve the route before acquiring the mutex so that all channel:chatID
+	// pairs that share the same agent session use the same mutex key. This
+	// prevents concurrent LLM history reads/writes across unified sessions.
+	var dispatchKey string
+	route, _, routeErr := al.resolveMessageRoute(msg)
+	if routeErr != nil {
+		// Fall back to channel:chatID if routing fails; processMessage will
+		// return the same error and report it to the user.
+		dispatchKey = msg.Channel + ":" + msg.ChatID
+	} else {
+		scopeKey := resolveScopeKey(route, msg.SessionKey)
+		dispatchKey = scopeKey
+		// Pre-stamp the session key so processMessage's internal call to
+		// resolveScopeKey returns the same value without re-doing routing.
+		msg.SessionKey = scopeKey
+	}
+
+	mu := al.getOrCreateSessionMu(dispatchKey)
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -670,6 +693,10 @@ func (al *AgentLoop) SetMediaStore(s media.MediaStore) {
 func (al *AgentLoop) SetTranscriber(t voice.Transcriber) {
 	al.transcriber = t
 }
+
+// SetDumpsDir configures the directory where diagnostic dump files are written.
+// An empty string disables dumping.
+func (al *AgentLoop) SetDumpsDir(dir string) { al.dumpsDir = dir }
 
 var audioAnnotationRe = regexp.MustCompile(`\[(voice|audio)(?::[^\]]*)?\]`)
 
@@ -1544,6 +1571,11 @@ func (al *AgentLoop) runLLMIteration(
 					"error":     err.Error(),
 				})
 			return "", iteration, fmt.Errorf("LLM call failed after retries: %w", err)
+		}
+
+		// Dump refusal responses when enabled.
+		if response.FinishReason == "refusal" && al.cfg.Logging.DumpRefusals && al.dumpsDir != "" {
+			al.dumpRefusal(agent, messages, response, opts, activeModel, iteration)
 		}
 
 		go al.handleReasoning(
@@ -2525,4 +2557,39 @@ func extractProvider(registry *AgentRegistry) (providers.LLMProvider, bool) {
 		return nil, false
 	}
 	return defaultAgent.Provider, true
+}
+
+// dumpRefusal writes a diagnostic file capturing the full LLM input and output
+// when the provider returns finish_reason "refusal". Called only when
+// cfg.Logging.DumpRefusals is true and dumpsDir is set.
+func (al *AgentLoop) dumpRefusal(
+	agent *AgentInstance,
+	messages []providers.Message,
+	response *providers.LLMResponse,
+	opts processOptions,
+	model string,
+	iteration int,
+) {
+	inputBytes, _ := json.Marshal(messages)
+	outputBytes, _ := json.Marshal(response)
+
+	metadata := fmt.Sprintf("Agent: %s\nModel: %s\nSession: %s\nChannel: %s\nIteration: %d\nTimestamp: %s",
+		agent.ID, model, opts.SessionKey, opts.Channel, iteration,
+		time.Now().Format(time.RFC3339))
+
+	filename, err := dump.Write(al.dumpsDir, "refusal", metadata, string(inputBytes), string(outputBytes))
+	if err != nil {
+		logger.WarnCF("agent", "Failed to write refusal dump",
+			map[string]any{"agent_id": agent.ID, "error": err.Error()})
+		return
+	}
+	logger.WarnCF("agent", "LLM refusal detected — dump written",
+		map[string]any{
+			"agent_id":    agent.ID,
+			"model":       model,
+			"session_key": opts.SessionKey,
+			"channel":     opts.Channel,
+			"iteration":   iteration,
+			"dump_file":   filename,
+		})
 }
