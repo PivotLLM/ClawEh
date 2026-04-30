@@ -292,6 +292,13 @@ func DefaultConfig() *Config {
 				APIKey:    "",
 				Enabled:   false,
 			},
+			{
+				ModelName: "bedrock-deepseek-3",
+				Model:     "bedrock/deepseek.v3.2",
+				APIBase:   "us-east-1",
+				APIKey:    "",
+				Enabled:   false,
+			},
 
 			// Claude CLI (local) - https://claude.ai/download
 			{
