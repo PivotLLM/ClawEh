@@ -95,7 +95,9 @@ func gatewayCmd(debug bool) error {
 
 	provider, modelID, err := providers.CreateProvider(cfg)
 	if err != nil {
-		return fmt.Errorf("error creating provider: %w", err)
+		logger.WarnCF("gateway", "No model configured, starting in unconfigured state", map[string]any{"detail": err.Error()})
+		provider = providers.NewUnconfiguredProvider()
+		modelID = ""
 	}
 
 	// Use the resolved model ID from provider creation
@@ -392,13 +394,9 @@ func handleConfigReload(
 	// This will use the correct API key and settings from newCfg.ModelList
 	newProvider, newModelID, err := providers.CreateProvider(newCfg)
 	if err != nil {
-		logger.Errorf("  ⚠ Error creating new provider: %v", err)
-		logger.Warn("  Attempting to restart services with old provider and config...")
-		// Try to restart services with old configuration
-		if restartErr := restartServices(ctx, al, services, msgBus); restartErr != nil {
-			logger.Errorf("  ⚠ Failed to restart services: %v", restartErr)
-		}
-		return fmt.Errorf("error creating new provider: %w", err)
+		logger.WarnCF("gateway", "No model configured after reload, running in unconfigured state", map[string]any{"detail": err.Error()})
+		newProvider = providers.NewUnconfiguredProvider()
+		newModelID = ""
 	}
 
 	if newModelID != "" {

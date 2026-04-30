@@ -161,6 +161,7 @@ func TestHandleGatewayStart_StartFailsWhenBinaryInvalid(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Agents.Defaults.SetDefaultModel(cfg.ModelList[0].ModelName)
 	cfg.ModelList[0].APIKey = "test-key"
+	cfg.ModelList[0].Enabled = true
 	if err := config.SaveConfig(configPath, cfg); err != nil {
 		t.Fatalf("SaveConfig() error = %v", err)
 	}

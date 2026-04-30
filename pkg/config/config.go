@@ -590,7 +590,7 @@ type ModelConfig struct {
 	NoTools        bool     `json:"no_tools,omitempty"`       // When true, tools are not passed to this model
 	ExtraArgs      []string `json:"extra_args,omitempty"`     // Additional CLI arguments appended after required flags
 	Env            map[string]string `json:"env,omitempty"` // Environment variables for CLI-based providers (merged with os.Environ)
-	Enabled        bool     `json:"enabled,omitempty"`        // If false, model is skipped in all operations
+	Enabled        bool     `json:"enabled"`                  // If false, model is skipped in all operations
 }
 
 // Validate checks if the ModelConfig has all required fields.
