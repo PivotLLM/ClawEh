@@ -143,6 +143,11 @@ func main() {
 	apiHandler.SetServerOptions(portNum, effectivePublic, explicitPublic, launcherCfg.AllowedCIDRs)
 	apiHandler.RegisterRoutes(mux)
 
+	// Ensure WebUI channel is configured so the chat UI works regardless of how the gateway is started.
+	if _, err := apiHandler.EnsureWebUIChannel(); err != nil {
+		logger.WarnCF("web", "Failed to ensure webui channel", map[string]any{"error": err.Error()})
+	}
+
 	// Frontend Embedded Assets
 	registerEmbedRoutes(mux)
 
