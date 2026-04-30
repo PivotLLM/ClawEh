@@ -96,6 +96,12 @@ func (h *Handler) ensureWebUIChannel() (bool, error) {
 		changed = true
 	}
 
+	// Without allow_from, IsAllowedSender returns false and silently drops every message.
+	if len(cfg.Channels.WebUI.AllowFrom) == 0 {
+		cfg.Channels.WebUI.AllowFrom = config.FlexibleStringSlice{"*"}
+		changed = true
+	}
+
 	if changed {
 		if err := config.SaveConfig(h.configPath, cfg); err != nil {
 			return false, fmt.Errorf("failed to save config: %w", err)
