@@ -497,6 +497,9 @@ type LoggingConfig struct {
 	// DumpRefusals, when true, writes the full LLM input and output to a file
 	// in logs/dumps/ whenever the provider returns finish_reason "refusal".
 	DumpRefusals bool `json:"dump_refusals" env:"CLAW_LOGGING_DUMP_REFUSALS"`
+	// DumpAll, when true, writes the full LLM input and output to a file
+	// in logs/dumps/ for every LLM response, regardless of finish reason.
+	DumpAll bool `json:"dump_all" env:"CLAW_LOGGING_DUMP_ALL"`
 }
 
 type ProvidersConfig struct {

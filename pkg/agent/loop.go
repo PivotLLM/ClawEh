@@ -1573,9 +1573,14 @@ func (al *AgentLoop) runLLMIteration(
 			return "", iteration, fmt.Errorf("LLM call failed after retries: %w", err)
 		}
 
-		// Dump refusal responses when enabled.
-		if response.FinishReason == "refusal" && al.cfg.Logging.DumpRefusals && al.dumpsDir != "" {
-			al.dumpRefusal(agent, messages, response, opts, activeModel, iteration)
+		// Dump responses when enabled.
+		if al.dumpsDir != "" {
+			isRefusal := response.FinishReason == "refusal"
+			if isRefusal && al.cfg.Logging.DumpRefusals {
+				al.dumpRefusal(agent, messages, response, opts, activeModel, iteration)
+			} else if al.cfg.Logging.DumpAll {
+				al.dumpAll(agent, messages, response, opts, activeModel, iteration)
+			}
 		}
 
 		go al.handleReasoning(
@@ -2591,5 +2596,39 @@ func (al *AgentLoop) dumpRefusal(
 			"channel":     opts.Channel,
 			"iteration":   iteration,
 			"dump_file":   filename,
+		})
+}
+
+// dumpAll writes a diagnostic file capturing the full LLM input and output
+// for every response when cfg.Logging.DumpAll is true and dumpsDir is set.
+func (al *AgentLoop) dumpAll(
+	agent *AgentInstance,
+	messages []providers.Message,
+	response *providers.LLMResponse,
+	opts processOptions,
+	model string,
+	iteration int,
+) {
+	inputBytes, _ := json.Marshal(messages)
+	outputBytes, _ := json.Marshal(response)
+
+	metadata := fmt.Sprintf("Agent: %s\nModel: %s\nSession: %s\nChannel: %s\nIteration: %d\nFinishReason: %s\nTimestamp: %s",
+		agent.ID, model, opts.SessionKey, opts.Channel, iteration,
+		response.FinishReason, time.Now().Format(time.RFC3339))
+
+	filename, err := dump.Write(al.dumpsDir, "dump_all", metadata, string(inputBytes), string(outputBytes))
+	if err != nil {
+		logger.WarnCF("agent", "Failed to write dump_all file",
+			map[string]any{"agent_id": agent.ID, "error": err.Error()})
+		return
+	}
+	logger.DebugCF("agent", "LLM response dump written (dump_all)",
+		map[string]any{
+			"agent_id":     agent.ID,
+			"model":        model,
+			"session_key":  opts.SessionKey,
+			"finish_reason": response.FinishReason,
+			"iteration":    iteration,
+			"dump_file":    filename,
 		})
 }

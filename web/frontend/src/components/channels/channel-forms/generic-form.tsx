@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react"
 import { useTranslation } from "react-i18next"
 
 import type { ChannelConfig } from "@/api/channels"
@@ -87,6 +88,13 @@ export function GenericForm({
   fieldErrors = {},
 }: GenericFormProps) {
   const { t } = useTranslation()
+  const [allowFromDraft, setAllowFromDraft] = useState(() =>
+    asStringArray(config.allow_from).join(", "),
+  )
+  useEffect(() => {
+    setAllowFromDraft(asStringArray(config.allow_from).join(", "))
+  }, [config.allow_from])
+
   const hiddenFieldSet = new Set(hiddenKeys)
   const requiredFieldSet = new Set(requiredKeys)
   const groupTriggerConfig = asRecord(config.group_trigger)
@@ -243,11 +251,12 @@ export function GenericForm({
           hint={t("channels.form.desc.allowFrom")}
         >
           <Input
-            value={asStringArray(config.allow_from).join(", ")}
-            onChange={(e) =>
+            value={allowFromDraft}
+            onChange={(e) => setAllowFromDraft(e.target.value)}
+            onBlur={() =>
               onChange(
                 "allow_from",
-                e.target.value
+                allowFromDraft
                   .split(",")
                   .map((s: string) => s.trim())
                   .filter(Boolean),

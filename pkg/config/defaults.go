@@ -473,10 +473,12 @@ func DefaultConfig() *Config {
 			EchoTranscription: false,
 		},
 		Logging: LoggingConfig{
-			File:    global.DefaultLogFile,
-			Console: global.DefaultLogConsole,
-			Level:   global.DefaultLogLevel,
-			JSON:    global.DefaultLogJSON,
+			File:         global.DefaultLogFile,
+			Console:      global.DefaultLogConsole,
+			Level:        global.DefaultLogLevel,
+			JSON:         global.DefaultLogJSON,
+			DumpRefusals: true,
+			DumpAll:      false,
 		},
 		MCPHost: MCPHostConfig{
 			Enabled:      false,

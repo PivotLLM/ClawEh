@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react"
 import { useTranslation } from "react-i18next"
 
 import type { ChannelConfig } from "@/api/channels"
@@ -28,6 +29,13 @@ export function SlackForm({
   fieldErrors = {},
 }: SlackFormProps) {
   const { t } = useTranslation()
+  const [allowFromDraft, setAllowFromDraft] = useState(() =>
+    asStringArray(config.allow_from).join(", "),
+  )
+  useEffect(() => {
+    setAllowFromDraft(asStringArray(config.allow_from).join(", "))
+  }, [config.allow_from])
+
   const botTokenExtraHint =
     isEdit && asString(config.bot_token)
       ? ` ${t("channels.field.secretHintSet")}`
@@ -68,11 +76,12 @@ export function SlackForm({
         hint={t("channels.form.desc.allowFrom")}
       >
         <Input
-          value={asStringArray(config.allow_from).join(", ")}
-          onChange={(e) =>
+          value={allowFromDraft}
+          onChange={(e) => setAllowFromDraft(e.target.value)}
+          onBlur={() =>
             onChange(
               "allow_from",
-              e.target.value
+              allowFromDraft
                 .split(",")
                 .map((s: string) => s.trim())
                 .filter(Boolean),
