@@ -330,7 +330,7 @@ func (h *Handler) startGatewayLocked(initialStatus string) (int, error) {
 	gateway.logs.Reset()
 
 	// Ensure WebUI Channel is configured before starting gateway
-	if _, err := h.ensureWebUIChannel(); err != nil {
+	if _, err := h.EnsureWebUIChannel(); err != nil {
 		logger.WarnCF("web", "Failed to ensure webui channel", map[string]any{"error": err.Error()})
 		// Non-fatal: gateway can still start without webui channel
 	}

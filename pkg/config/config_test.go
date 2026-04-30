@@ -183,10 +183,10 @@ func TestConfig_NoAgentsListInheritsDefault(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 
-	// A config that omits agents.list should still have the default "main"
+	// A config that omits agents.list should still have the default "claw"
 	// agent baked in by DefaultConfig(), so the gateway can start cleanly.
-	if len(cfg.Agents.List) != 1 || cfg.Agents.List[0].ID != "main" {
-		t.Errorf("expected default main agent to be preserved, got %+v", cfg.Agents.List)
+	if len(cfg.Agents.List) != 1 || cfg.Agents.List[0].ID != "claw" {
+		t.Errorf("expected default claw agent to be preserved, got %+v", cfg.Agents.List)
 	}
 	if len(cfg.Bindings) != 0 {
 		t.Errorf("bindings should be empty, got %d", len(cfg.Bindings))
@@ -202,15 +202,15 @@ func TestDefaultConfig_WorkspacePath(t *testing.T) {
 	}
 }
 
-// TestDefaultConfig_Model verifies model is set
+// TestDefaultConfig_Model verifies no default model is set (user must configure one)
 func TestDefaultConfig_Model(t *testing.T) {
 	cfg := DefaultConfig()
 
-	if cfg.Agents.Defaults.Model == nil {
-		t.Error("Model should not be nil")
+	if cfg.Agents.Defaults.Model != nil {
+		t.Error("Model should be nil in default config (user must configure a model)")
 	}
-	if cfg.Agents.Defaults.DefaultModelName() == "" {
-		t.Error("DefaultModelName() should not be empty")
+	if cfg.Agents.Defaults.DefaultModelName() != "" {
+		t.Error("DefaultModelName() should be empty in default config")
 	}
 }
 
@@ -336,11 +336,11 @@ func TestConfig_Complete(t *testing.T) {
 	if cfg.Agents.Defaults.Workspace == "" {
 		t.Error("Workspace should not be empty")
 	}
-	if cfg.Agents.Defaults.Model == nil {
-		t.Error("Model should not be nil")
+	if cfg.Agents.Defaults.Model != nil {
+		t.Error("Model should be nil in default config (user must configure a model)")
 	}
-	if cfg.Agents.Defaults.DefaultModelName() == "" {
-		t.Error("DefaultModelName() should not be empty")
+	if cfg.Agents.Defaults.DefaultModelName() != "" {
+		t.Error("DefaultModelName() should be empty in default config")
 	}
 	if cfg.Agents.Defaults.Temperature != nil {
 		t.Error("Temperature should be nil when not provided")

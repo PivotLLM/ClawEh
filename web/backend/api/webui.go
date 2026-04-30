@@ -65,9 +65,9 @@ func (h *Handler) handleRegenWebUIToken(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-// ensureWebUIChannel checks if the WebUI Channel is properly configured and
+// EnsureWebUIChannel checks if the WebUI Channel is properly configured and
 // enables it with sensible defaults if not. Returns true if config was changed.
-func (h *Handler) ensureWebUIChannel() (bool, error) {
+func (h *Handler) EnsureWebUIChannel() (bool, error) {
 	cfg, err := config.LoadConfig(h.configPath)
 	if err != nil {
 		return false, fmt.Errorf("failed to load config: %w", err)
@@ -96,6 +96,12 @@ func (h *Handler) ensureWebUIChannel() (bool, error) {
 		changed = true
 	}
 
+	// Without allow_from, IsAllowedSender returns false and silently drops every message.
+	if len(cfg.Channels.WebUI.AllowFrom) == 0 {
+		cfg.Channels.WebUI.AllowFrom = config.FlexibleStringSlice{"*"}
+		changed = true
+	}
+
 	if changed {
 		if err := config.SaveConfig(h.configPath, cfg); err != nil {
 			return false, fmt.Errorf("failed to save config: %w", err)
@@ -109,7 +115,7 @@ func (h *Handler) ensureWebUIChannel() (bool, error) {
 //
 //	POST /api/webui/setup
 func (h *Handler) handleWebUISetup(w http.ResponseWriter, r *http.Request) {
-	changed, err := h.ensureWebUIChannel()
+	changed, err := h.EnsureWebUIChannel()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

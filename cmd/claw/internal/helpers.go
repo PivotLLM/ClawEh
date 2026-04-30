@@ -25,7 +25,14 @@ func GetConfigPath() string {
 }
 
 func LoadConfig() (*config.Config, error) {
-	return config.LoadConfig(GetConfigPath())
+	path := GetConfigPath()
+	if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
+		if mkdirErr := os.MkdirAll(filepath.Dir(path), 0o755); mkdirErr == nil {
+			defaultCfg := config.DefaultConfig()
+			_ = config.SaveConfig(path, defaultCfg) // best-effort
+		}
+	}
+	return config.LoadConfig(path)
 }
 
 // FormatVersion returns the version string with optional git commit

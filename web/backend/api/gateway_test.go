@@ -121,6 +121,7 @@ func TestGatewayStartReady_ValidDefaultModel(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Agents.Defaults.SetDefaultModel(cfg.ModelList[0].ModelName)
 	cfg.ModelList[0].APIKey = "test-key"
+	cfg.ModelList[0].Enabled = true
 	err := config.SaveConfig(configPath, cfg)
 	if err != nil {
 		t.Fatalf("SaveConfig() error = %v", err)
@@ -142,6 +143,7 @@ func TestGatewayStartReady_DefaultModelWithoutCredential(t *testing.T) {
 	cfg.Agents.Defaults.SetDefaultModel(cfg.ModelList[0].ModelName)
 	cfg.ModelList[0].APIKey = ""
 	cfg.ModelList[0].AuthMethod = ""
+	cfg.ModelList[0].Enabled = true
 	err := config.SaveConfig(configPath, cfg)
 	if err != nil {
 		t.Fatalf("SaveConfig() error = %v", err)
@@ -512,6 +514,7 @@ func TestGatewayStatusIncludesRestartRequiredWhenModelsDiffer(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Agents.Defaults.SetDefaultModel(cfg.ModelList[0].ModelName)
 	cfg.ModelList[0].APIKey = "test-key"
+	cfg.ModelList[0].Enabled = true
 	if err := config.SaveConfig(configPath, cfg); err != nil {
 		t.Fatalf("SaveConfig() error = %v", err)
 	}
@@ -565,6 +568,7 @@ func TestGatewayRestartKeepsRunningProcessWhenPreconditionsFail(t *testing.T) {
 	cfg.Agents.Defaults.SetDefaultModel(cfg.ModelList[0].ModelName)
 	cfg.ModelList[0].APIKey = ""
 	cfg.ModelList[0].AuthMethod = ""
+	cfg.ModelList[0].Enabled = true
 	if err := config.SaveConfig(configPath, cfg); err != nil {
 		t.Fatalf("SaveConfig() error = %v", err)
 	}
@@ -617,6 +621,7 @@ func TestGatewayRestartKeepsOldProcessWhenItDoesNotExitInTime(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Agents.Defaults.SetDefaultModel(cfg.ModelList[0].ModelName)
 	cfg.ModelList[0].APIKey = "test-key"
+	cfg.ModelList[0].Enabled = true
 	if err := config.SaveConfig(configPath, cfg); err != nil {
 		t.Fatalf("SaveConfig() error = %v", err)
 	}
@@ -678,6 +683,7 @@ func TestGatewayRestartReturnsErrorStatusWhenReplacementFailsToStart(t *testing.
 	cfg := config.DefaultConfig()
 	cfg.Agents.Defaults.SetDefaultModel(cfg.ModelList[0].ModelName)
 	cfg.ModelList[0].APIKey = "test-key"
+	cfg.ModelList[0].Enabled = true
 	if err := config.SaveConfig(configPath, cfg); err != nil {
 		t.Fatalf("SaveConfig() error = %v", err)
 	}

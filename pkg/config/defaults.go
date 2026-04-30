@@ -28,12 +28,8 @@ func DefaultConfig() *Config {
 	cfg := &Config{
 		Agents: AgentsConfig{
 			Defaults: AgentDefaults{
-				Workspace:           workspacePath,
-				RestrictToWorkspace: true,
-				Model: &AgentModelConfig{
-					Primary:   "openrouter-gpt-5.4",
-					Fallbacks: []string{"claude-cli"},
-				},
+				Workspace:                 workspacePath,
+				RestrictToWorkspace:       true,
 				MaxTokens:                 32768,
 				Temperature:               nil, // nil means use provider default
 				MaxToolIterations:         50,
@@ -43,10 +39,11 @@ func DefaultConfig() *Config {
 			},
 			List: []AgentConfig{
 				{
-					ID:      "main",
-					Name:    "main",
-					Default: true,
-					Tools:   []string{"*"},
+					ID:        "claw",
+					Name:      "Claw",
+					Default:   true,
+					Workspace: workspacePath,
+					Tools:     []string{"*"},
 				},
 			},
 		},
@@ -137,7 +134,7 @@ func DefaultConfig() *Config {
 				Model:     "openai/gpt-5.4",
 				APIBase:   "https://api.openai.com/v1",
 				APIKey:    "",
-				Enabled:   true,
+				Enabled:   false,
 			},
 
 			// Anthropic Claude - https://console.anthropic.com/settings/keys
@@ -146,7 +143,7 @@ func DefaultConfig() *Config {
 				Model:     "anthropic/claude-sonnet-4.6",
 				APIBase:   "https://api.anthropic.com/v1",
 				APIKey:    "",
-				Enabled:   true,
+				Enabled:   false,
 			},
 
 			// DeepSeek - https://platform.deepseek.com/
@@ -155,7 +152,7 @@ func DefaultConfig() *Config {
 				Model:     "deepseek/deepseek-chat",
 				APIBase:   "https://api.deepseek.com/v1",
 				APIKey:    "",
-				Enabled:   true,
+				Enabled:   false,
 			},
 
 			// Google Gemini - https://ai.google.dev/
@@ -164,7 +161,7 @@ func DefaultConfig() *Config {
 				Model:     "gemini/gemini-2.0-flash-exp",
 				APIBase:   "https://generativelanguage.googleapis.com/v1beta",
 				APIKey:    "",
-				Enabled:   true,
+				Enabled:   false,
 			},
 
 			// Qwen (通义千问) - https://dashscope.console.aliyun.com/apiKey
@@ -173,7 +170,7 @@ func DefaultConfig() *Config {
 				Model:     "qwen/qwen-plus",
 				APIBase:   "https://dashscope.aliyuncs.com/compatible-mode/v1",
 				APIKey:    "",
-				Enabled:   true,
+				Enabled:   false,
 			},
 
 			// Moonshot (月之暗面) - https://platform.moonshot.cn/console/api-keys
@@ -182,7 +179,7 @@ func DefaultConfig() *Config {
 				Model:     "moonshot/moonshot-v1-8k",
 				APIBase:   "https://api.moonshot.cn/v1",
 				APIKey:    "",
-				Enabled:   true,
+				Enabled:   false,
 			},
 
 			// Groq - https://console.groq.com/keys
@@ -191,7 +188,7 @@ func DefaultConfig() *Config {
 				Model:     "groq/llama-3.3-70b-versatile",
 				APIBase:   "https://api.groq.com/openai/v1",
 				APIKey:    "",
-				Enabled:   true,
+				Enabled:   false,
 			},
 
 			// OpenRouter (100+ models) - https://openrouter.ai/keys
@@ -200,14 +197,14 @@ func DefaultConfig() *Config {
 				Model:     "openrouter/auto",
 				APIBase:   "https://openrouter.ai/api/v1",
 				APIKey:    "",
-				Enabled:   true,
+				Enabled:   false,
 			},
 			{
 				ModelName: "openrouter-gpt-5.4",
 				Model:     "openrouter/openai/gpt-5.4",
 				APIBase:   "https://openrouter.ai/api/v1",
 				APIKey:    "",
-				Enabled:   true,
+				Enabled:   false,
 			},
 
 			// NVIDIA - https://build.nvidia.com/
@@ -216,7 +213,7 @@ func DefaultConfig() *Config {
 				Model:     "nvidia/nemotron-4-340b-instruct",
 				APIBase:   "https://integrate.api.nvidia.com/v1",
 				APIKey:    "",
-				Enabled:   true,
+				Enabled:   false,
 			},
 
 			// Cerebras - https://inference.cerebras.ai/
@@ -225,7 +222,7 @@ func DefaultConfig() *Config {
 				Model:     "cerebras/llama-3.3-70b",
 				APIBase:   "https://api.cerebras.ai/v1",
 				APIKey:    "",
-				Enabled:   true,
+				Enabled:   false,
 			},
 
 			// Ollama (local) - https://ollama.com
@@ -234,7 +231,7 @@ func DefaultConfig() *Config {
 				Model:     "ollama/llama3",
 				APIBase:   "http://localhost:11434/v1",
 				APIKey:    "ollama",
-				Enabled:   true,
+				Enabled:   false,
 			},
 
 			// Mistral AI - https://console.mistral.ai/api-keys
@@ -243,7 +240,7 @@ func DefaultConfig() *Config {
 				Model:     "mistral/mistral-small-latest",
 				APIBase:   "https://api.mistral.ai/v1",
 				APIKey:    "",
-				Enabled:   true,
+				Enabled:   false,
 			},
 
 			// Avian - https://avian.io
@@ -252,14 +249,14 @@ func DefaultConfig() *Config {
 				Model:     "avian/deepseek/deepseek-v3.2",
 				APIBase:   "https://api.avian.io/v1",
 				APIKey:    "",
-				Enabled:   true,
+				Enabled:   false,
 			},
 			{
 				ModelName: "kimi-k2.5",
 				Model:     "avian/moonshotai/kimi-k2.5",
 				APIBase:   "https://api.avian.io/v1",
 				APIKey:    "",
-				Enabled:   true,
+				Enabled:   false,
 			},
 
 			// VLLM (local) - http://localhost:8000
@@ -268,7 +265,7 @@ func DefaultConfig() *Config {
 				Model:     "vllm/custom-model",
 				APIBase:   "http://localhost:8000/v1",
 				APIKey:    "",
-				Enabled:   true,
+				Enabled:   false,
 			},
 
 			// Azure OpenAI - https://portal.azure.com
@@ -278,7 +275,7 @@ func DefaultConfig() *Config {
 				Model:     "azure/my-gpt5-deployment",
 				APIBase:   "https://your-resource.openai.azure.com",
 				APIKey:    "",
-				Enabled:   true,
+				Enabled:   false,
 			},
 
 			// AWS Bedrock - https://aws.amazon.com/bedrock/
@@ -293,7 +290,7 @@ func DefaultConfig() *Config {
 				Model:     "bedrock/us.anthropic.claude-sonnet-4-20250514-v1:0",
 				APIBase:   "us-east-1",
 				APIKey:    "",
-				Enabled:   true,
+				Enabled:   false,
 			},
 
 			// Claude CLI (local) - https://claude.ai/download
