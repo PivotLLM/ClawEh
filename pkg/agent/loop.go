@@ -25,6 +25,7 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/commands"
 	"github.com/PivotLLM/ClawEh/pkg/config"
 	"github.com/PivotLLM/ClawEh/pkg/constants"
+	"github.com/PivotLLM/ClawEh/pkg/dump"
 	"github.com/PivotLLM/ClawEh/pkg/global"
 	"github.com/PivotLLM/ClawEh/pkg/logger"
 	"github.com/PivotLLM/ClawEh/pkg/media"
@@ -56,6 +57,14 @@ type AgentLoop struct {
 	dispatcher       *providers.ProviderDispatcher
 	callbackManagers map[string]*callback.Manager // agentID -> manager (nil entry means disabled)
 	agentStates      map[string]*state.Manager    // agentID -> per-agent state manager
+	// sessionMus serializes messages within a session (session scope key → *sync.Mutex).
+	// The scope key is resolved via resolveMessageRoute before locking so that
+	// multiple channel:chatID pairs that map to the same agent session share one
+	// mutex and never process concurrently. Entries are never evicted; for typical
+	// deployments with a bounded number of active sessions the cost is negligible
+	// (one *sync.Mutex per session key).
+	sessionMus sync.Map
+	dumpsDir   string
 }
 
 // processOptions configures how a message is processed
@@ -337,62 +346,84 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 			if !ok {
 				continue
 			}
-
-			// Process message
-			func() {
-				response, err := al.processMessage(ctx, msg)
-				if err != nil {
-					response = fmt.Sprintf("Error processing message: %v", err)
-				}
-
-				if response != "" {
-					// Check if the message tool already sent a response during this round.
-					// If so, skip publishing to avoid duplicate messages to the user.
-					// Use default agent's tools to check (message tool is shared).
-					alreadySent := false
-					defaultAgent := al.GetRegistry().GetDefaultAgent()
-					if defaultAgent != nil {
-						if tool, ok := defaultAgent.Tools.Get("message"); ok {
-							if mt, ok := tool.(*tools.MessageTool); ok {
-								alreadySent = mt.HasSentInRound()
-							}
-						}
-					}
-
-					if !alreadySent {
-						if err := al.bus.PublishOutbound(ctx, bus.OutboundMessage{
-							Channel:           msg.Channel,
-							ChatID:            msg.ChatID,
-							Content:           response,
-							OriginalMessageID: msg.MessageID,
-						}); err != nil {
-							logger.WarnCF("agent", "Failed to publish outbound response",
-								map[string]any{
-									"channel": msg.Channel,
-									"chat_id": msg.ChatID,
-									"error":   err.Error(),
-								})
-						} else {
-							logger.InfoCF("agent", "Published outbound response",
-								map[string]any{
-									"channel":     msg.Channel,
-									"chat_id":     msg.ChatID,
-									"content_len": len(response),
-								})
-						}
-					} else {
-						logger.DebugCF(
-							"agent",
-							"Skipped outbound (message tool already sent)",
-							map[string]any{"channel": msg.Channel},
-						)
-					}
-				}
-			}()
+			al.activeRequests.Add(1)
+			go al.processSessionMessage(ctx, msg)
 		}
 	}
 
 	return nil
+}
+
+// getOrCreateSessionMu returns the per-session mutex for the given key,
+// creating one if it does not already exist. This is safe for concurrent use.
+func (al *AgentLoop) getOrCreateSessionMu(key string) *sync.Mutex {
+	mu := &sync.Mutex{}
+	actual, _ := al.sessionMus.LoadOrStore(key, mu)
+	return actual.(*sync.Mutex)
+}
+
+// processSessionMessage dispatches a single inbound message within its session's
+// serialized goroutine. Messages sharing the same session scope key (resolved via
+// resolveMessageRoute) are ordered via a per-session mutex so concurrent sessions
+// never block each other, and so that multiple channel:chatID pairs that map to
+// the same agent session are properly serialized.
+func (al *AgentLoop) processSessionMessage(ctx context.Context, msg bus.InboundMessage) {
+	defer al.activeRequests.Done()
+
+	// Resolve the route before acquiring the mutex so that all channel:chatID
+	// pairs that share the same agent session use the same mutex key. This
+	// prevents concurrent LLM history reads/writes across unified sessions.
+	var dispatchKey string
+	route, _, routeErr := al.resolveMessageRoute(msg)
+	if routeErr != nil {
+		// Fall back to channel:chatID if routing fails; processMessage will
+		// return the same error and report it to the user.
+		dispatchKey = msg.Channel + ":" + msg.ChatID
+	} else {
+		scopeKey := resolveScopeKey(route, msg.SessionKey)
+		dispatchKey = scopeKey
+		// Pre-stamp the session key so processMessage's internal call to
+		// resolveScopeKey returns the same value without re-doing routing.
+		msg.SessionKey = scopeKey
+	}
+
+	mu := al.getOrCreateSessionMu(dispatchKey)
+	mu.Lock()
+	defer mu.Unlock()
+
+	var roundSent atomic.Bool
+	msgCtx := tools.WithRoundSentFlag(ctx, &roundSent)
+
+	response, err := al.processMessage(msgCtx, msg)
+	if err != nil {
+		response = fmt.Sprintf("Error processing message: %v", err)
+	}
+
+	if response != "" && !roundSent.Load() {
+		if err := al.bus.PublishOutbound(ctx, bus.OutboundMessage{
+			Channel:           msg.Channel,
+			ChatID:            msg.ChatID,
+			Content:           response,
+			OriginalMessageID: msg.MessageID,
+		}); err != nil {
+			logger.WarnCF("agent", "Failed to publish outbound response",
+				map[string]any{
+					"channel": msg.Channel,
+					"chat_id": msg.ChatID,
+					"error":   err.Error(),
+				})
+		} else {
+			logger.InfoCF("agent", "Published outbound response",
+				map[string]any{
+					"channel":     msg.Channel,
+					"chat_id":     msg.ChatID,
+					"content_len": len(response),
+				})
+		}
+	} else if roundSent.Load() && response != "" {
+		logger.DebugCF("agent", "Skipped outbound (message tool already sent)",
+			map[string]any{"channel": msg.Channel})
+	}
 }
 
 func (al *AgentLoop) Stop() {
@@ -663,6 +694,10 @@ func (al *AgentLoop) SetTranscriber(t voice.Transcriber) {
 	al.transcriber = t
 }
 
+// SetDumpsDir configures the directory where diagnostic dump files are written.
+// An empty string disables dumping.
+func (al *AgentLoop) SetDumpsDir(dir string) { al.dumpsDir = dir }
+
 var audioAnnotationRe = regexp.MustCompile(`\[(voice|audio)(?::[^\]]*)?\]`)
 
 // transcribeAudioInMessage resolves audio media refs, transcribes them, and
@@ -909,7 +944,8 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 	mentionedAgent := inboundMetadata(msg, "mentioned_agent")
 	mentionHonored := mentionedAgent != "" && strings.EqualFold(route.AgentID, mentionedAgent)
 
-	// Reset message-tool state for this round so we don't skip publishing due to a previous round.
+	// Legacy: reset the shared sentInRound flag on the message tool. The concurrent
+	// dispatch path uses per-round context flags instead, so this is a no-op there.
 	if tool, ok := agent.Tools.Get("message"); ok {
 		if resetter, ok := tool.(interface{ ResetSentInRound() }); ok {
 			resetter.ResetSentInRound()
@@ -1535,6 +1571,16 @@ func (al *AgentLoop) runLLMIteration(
 					"error":     err.Error(),
 				})
 			return "", iteration, fmt.Errorf("LLM call failed after retries: %w", err)
+		}
+
+		// Dump responses when enabled.
+		if al.dumpsDir != "" {
+			isRefusal := response.FinishReason == "refusal"
+			if isRefusal && al.cfg.Logging.DumpRefusals {
+				al.dumpRefusal(agent, messages, response, opts, activeModel, iteration)
+			} else if al.cfg.Logging.DumpAll {
+				al.dumpAll(agent, messages, response, opts, activeModel, iteration)
+			}
 		}
 
 		go al.handleReasoning(
@@ -2516,4 +2562,84 @@ func extractProvider(registry *AgentRegistry) (providers.LLMProvider, bool) {
 		return nil, false
 	}
 	return defaultAgent.Provider, true
+}
+
+// dumpRefusal writes a diagnostic file capturing the full LLM input and output
+// when the provider returns finish_reason "refusal". Called only when
+// cfg.Logging.DumpRefusals is true and dumpsDir is set.
+func (al *AgentLoop) dumpRefusal(
+	agent *AgentInstance,
+	messages []providers.Message,
+	response *providers.LLMResponse,
+	opts processOptions,
+	model string,
+	iteration int,
+) {
+	inputBytes, _ := json.Marshal(messages)
+	outputBytes, _ := json.Marshal(response)
+
+	meta := map[string]any{
+		"agent":     agent.ID,
+		"model":     model,
+		"session":   opts.SessionKey,
+		"channel":   opts.Channel,
+		"iteration": iteration,
+		"timestamp": time.Now().Format(time.RFC3339),
+	}
+
+	basename, err := dump.Write(al.dumpsDir, "refusal", meta, json.RawMessage(inputBytes), json.RawMessage(outputBytes))
+	if err != nil {
+		logger.WarnCF("agent", "Failed to write refusal dump",
+			map[string]any{"agent_id": agent.ID, "error": err.Error()})
+		return
+	}
+	logger.WarnCF("agent", "LLM refusal detected — dump written",
+		map[string]any{
+			"agent_id":    agent.ID,
+			"model":       model,
+			"session_key": opts.SessionKey,
+			"channel":     opts.Channel,
+			"iteration":   iteration,
+			"dump_base":   basename,
+		})
+}
+
+// dumpAll writes a diagnostic file capturing the full LLM input and output
+// for every response when cfg.Logging.DumpAll is true and dumpsDir is set.
+func (al *AgentLoop) dumpAll(
+	agent *AgentInstance,
+	messages []providers.Message,
+	response *providers.LLMResponse,
+	opts processOptions,
+	model string,
+	iteration int,
+) {
+	inputBytes, _ := json.Marshal(messages)
+	outputBytes, _ := json.Marshal(response)
+
+	meta := map[string]any{
+		"agent":         agent.ID,
+		"model":         model,
+		"session":       opts.SessionKey,
+		"channel":       opts.Channel,
+		"iteration":     iteration,
+		"finish_reason": response.FinishReason,
+		"timestamp":     time.Now().Format(time.RFC3339),
+	}
+
+	basename, err := dump.Write(al.dumpsDir, "dump_all", meta, json.RawMessage(inputBytes), json.RawMessage(outputBytes))
+	if err != nil {
+		logger.WarnCF("agent", "Failed to write dump_all file",
+			map[string]any{"agent_id": agent.ID, "error": err.Error()})
+		return
+	}
+	logger.DebugCF("agent", "LLM response dump written (dump_all)",
+		map[string]any{
+			"agent_id":      agent.ID,
+			"model":         model,
+			"session_key":   opts.SessionKey,
+			"finish_reason": response.FinishReason,
+			"iteration":     iteration,
+			"dump_base":     basename,
+		})
 }

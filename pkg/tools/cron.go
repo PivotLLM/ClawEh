@@ -54,7 +54,7 @@ func (t *CronTool) Name() string {
 
 // Description returns the tool description
 func (t *CronTool) Description() string {
-	return "Schedule reminders, tasks, or system commands. IMPORTANT: When user asks to be reminded or scheduled, you MUST call this tool. Use 'at_seconds' for one-time reminders (e.g., 'remind me in 10 minutes' → at_seconds=600). Use 'every_seconds' ONLY for recurring tasks (e.g., 'every 2 hours' → every_seconds=7200). Use 'cron_expr' for complex recurring schedules. Use 'command' to execute shell commands directly. Use mode='agent' (default) so the agent remembers the conversation; use mode='isolated' for fire-and-forget tasks with no persistent context."
+	return "Schedule reminders, tasks, or system commands. IMPORTANT: When user asks to be reminded or scheduled, you MUST call this tool. Use 'at_seconds' for one-time reminders (e.g., 'remind me in 10 minutes' → at_seconds=600). Use 'every_seconds' ONLY for recurring tasks (e.g., 'every 2 hours' → every_seconds=7200). Use 'cron_expr' for complex recurring schedules. Use 'command' to execute shell commands directly. Use mode='agent' (default) so the agent remembers the conversation; use mode='isolated' for fire-and-forget tasks with no persistent context. When using via MCP, explicitly pass channel and chat_id from your Current Session context."
 }
 
 // Parameters returns the tool parameters schema
@@ -105,6 +105,14 @@ func (t *CronTool) Parameters() map[string]any {
 				"enum":        []string{"channel", "direct"},
 				"description": "Set to 'direct' when 'to' is a DM user ID rather than a channel ID. Ensures replies land in the same session. Default: 'channel'.",
 			},
+			"channel": map[string]any{
+				"type":        "string",
+				"description": "Channel identifier for the current session (e.g. 'slack', 'telegram'). Required when scheduling via MCP — read from '## Current Session' in your context.",
+			},
+			"chat_id": map[string]any{
+				"type":        "string",
+				"description": "Chat/user ID for the current session. Required when scheduling via MCP — read from '## Current Session' in your context.",
+			},
 		},
 		"required": []string{"action"},
 	}
@@ -136,6 +144,14 @@ func (t *CronTool) Execute(ctx context.Context, args map[string]any) *ToolResult
 func (t *CronTool) addJob(ctx context.Context, args map[string]any) *ToolResult {
 	channel := ToolChannel(ctx)
 	chatID := ToolChatID(ctx)
+
+	// When called via MCP the context has no session info; accept explicit args.
+	if channel == "" {
+		channel, _ = args["channel"].(string)
+	}
+	if chatID == "" {
+		chatID, _ = args["chat_id"].(string)
+	}
 
 	if channel == "" || chatID == "" {
 		return ErrorResult("no session context (channel/chat_id not set). Use this tool in an active conversation.")

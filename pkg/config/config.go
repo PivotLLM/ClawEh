@@ -490,7 +490,13 @@ type LoggingConfig struct {
 	JSON              bool   `json:"json"                env:"CLAW_LOGGING_JSON"`
 	// LogMessageContent controls whether inbound message text and API request/response
 	// bodies are included in log entries. Defaults to false to protect user privacy.
-	LogMessageContent bool   `json:"log_message_content" env:"CLAW_LOGGING_MESSAGE_CONTENT"`
+	LogMessageContent bool `json:"log_message_content" env:"CLAW_LOGGING_MESSAGE_CONTENT"`
+	// DumpRefusals, when true, writes the full LLM input and output to a file
+	// in logs/dumps/ whenever the provider returns finish_reason "refusal".
+	DumpRefusals bool `json:"dump_refusals" env:"CLAW_LOGGING_DUMP_REFUSALS"`
+	// DumpAll, when true, writes the full LLM input and output to a file
+	// in logs/dumps/ for every LLM response, regardless of finish reason.
+	DumpAll bool `json:"dump_all" env:"CLAW_LOGGING_DUMP_ALL"`
 }
 
 type ProvidersConfig struct {

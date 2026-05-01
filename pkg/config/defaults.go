@@ -293,6 +293,13 @@ func DefaultConfig() *Config {
 				APIKey:    "",
 				Enabled:   false,
 			},
+			{
+				ModelName: "bedrock-deepseek-3",
+				Model:     "bedrock/deepseek.v3.2",
+				APIBase:   "us-east-1",
+				APIKey:    "",
+				Enabled:   false,
+			},
 
 			// Claude CLI (local) - https://claude.ai/download
 			{
@@ -474,10 +481,12 @@ func DefaultConfig() *Config {
 			EchoTranscription: false,
 		},
 		Logging: LoggingConfig{
-			File:    global.DefaultLogFile,
-			Console: global.DefaultLogConsole,
-			Level:   global.DefaultLogLevel,
-			JSON:    global.DefaultLogJSON,
+			File:         global.DefaultLogFile,
+			Console:      global.DefaultLogConsole,
+			Level:        global.DefaultLogLevel,
+			JSON:         global.DefaultLogJSON,
+			DumpRefusals: true,
+			DumpAll:      false,
 		},
 		MCPHost: MCPHostConfig{
 			Enabled:      false,

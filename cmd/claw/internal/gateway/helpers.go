@@ -109,6 +109,9 @@ func gatewayCmd(debug bool) error {
 	msgBus := bus.NewMessageBus()
 	agentLoop := agent.NewAgentLoop(cfg, msgBus, provider, dispatcher)
 
+	dumpsDir := filepath.Join(internal.GetPicoclawHome(), "logs", "dumps")
+	agentLoop.SetDumpsDir(dumpsDir)
+
 	startupInfo := agentLoop.GetStartupInfo()
 	if len(startupInfo) == 0 {
 		return fmt.Errorf("no default agent configured — add at least one entry to agents.list in your config")
@@ -296,8 +299,23 @@ func setupAndStartServices(
 		if defaultAgent == nil || defaultAgent.Tools == nil {
 			logger.WarnC("mcpserver", "MCP host enabled but no default agent registry available — skipping start")
 		} else {
+			// Collect per-agent registries (skip the default agent to avoid double-registration).
+			agentRegistries := make(map[string]*tools.ToolRegistry)
+			for _, agentID := range agentLoop.GetRegistry().ListAgentIDs() {
+				a, ok := agentLoop.GetRegistry().GetAgent(agentID)
+				if !ok || a.Tools == nil {
+					continue
+				}
+				// Skip if this is the same registry as the default agent's.
+				if a.Tools == defaultAgent.Tools {
+					continue
+				}
+				agentRegistries[agentID] = a.Tools
+			}
+
 			srv, err := mcpserver.New(
 				mcpserver.WithRegistry(defaultAgent.Tools),
+				mcpserver.WithAgentRegistries(agentRegistries),
 				mcpserver.WithListen(cfg.MCPHost.Listen),
 				mcpserver.WithEndpointPath(cfg.MCPHost.EndpointPath),
 				mcpserver.WithAllowlist(cfg.MCPHost.Tools),
@@ -315,6 +333,17 @@ func setupAndStartServices(
 					"endpoint":     srv.EndpointPath(),
 					"auto_enabled": autoStarted,
 				})
+
+			// Write per-agent .claude.json files so each agent's claude subprocess
+			// uses the correct workspace-scoped MCP endpoint.
+			agentWorkspaces := make(map[string]string)
+			for agentID := range agentRegistries {
+				if a, ok := agentLoop.GetRegistry().GetAgent(agentID); ok {
+					agentWorkspaces[agentID] = a.Workspace
+				}
+			}
+			baseURL := "http://" + srv.Listen()
+			srv.WriteWorkspaceConfigs(baseURL, agentWorkspaces)
 		}
 	}
 

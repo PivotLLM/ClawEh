@@ -9,27 +9,29 @@ import (
 
 	"github.com/PivotLLM/ClawEh/pkg/config"
 	"github.com/PivotLLM/ClawEh/pkg/logger"
+	"github.com/PivotLLM/ClawEh/pkg/tools"
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/server"
 )
 
 // messageToolName is the agent-internal outbound-publish tool, never exposed
 // to MCP clients (it has no meaningful semantics outside the agent loop).
 const messageToolName = "message"
 
-// addTools registers each allowed claw tool with the MCP server.
+// addToolsToServer registers each allowed claw tool with the given MCP server.
 // Tools are exposed iff they pass the allowlist AND are not the agent's
 // internal "message" tool. The registry's existing schema (Parameters())
 // is forwarded verbatim as the MCP input schema.
-func (m *MCPServer) addTools() {
-	for _, name := range m.registry.List() {
+func addToolsToServer(srv *server.MCPServer, registry *tools.ToolRegistry, allowPatterns []string) {
+	for _, name := range registry.List() {
 		if name == messageToolName {
 			continue
 		}
-		if !config.MatchToolPattern(m.allowPatterns, name) {
+		if !config.MatchToolPattern(allowPatterns, name) {
 			continue
 		}
 
-		tool, ok := m.registry.Get(name)
+		tool, ok := registry.Get(name)
 		if !ok {
 			continue
 		}
@@ -51,13 +53,14 @@ func (m *MCPServer) addTools() {
 		mcpTool := mcp.NewToolWithRawSchema(name, tool.Description(), schemaBytes)
 
 		toolName := name // capture
-		m.srv.AddTool(mcpTool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		reg := registry   // capture registry for closure
+		srv.AddTool(mcpTool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			args := req.GetArguments()
 			if args == nil {
 				args = map[string]any{}
 			}
 
-			result := m.registry.Execute(ctx, toolName, args)
+			result := reg.Execute(ctx, toolName, args)
 			if result == nil {
 				return mcp.NewToolResultError("tool returned nil result"), nil
 			}

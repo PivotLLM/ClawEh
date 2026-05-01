@@ -1,6 +1,9 @@
 package tools
 
-import "context"
+import (
+	"context"
+	"sync/atomic"
+)
 
 // Tool is the interface that all tools must implement.
 type Tool interface {
@@ -31,6 +34,7 @@ var (
 	ctxKeyChannel      = &toolCtxKey{"channel"}
 	ctxKeyChatID       = &toolCtxKey{"chatID"}
 	ctxKeyAllowChecker = &toolCtxKey{"allowChecker"}
+	ctxKeyRoundSent    = &toolCtxKey{"roundSent"}
 )
 
 // WithToolContext returns a child context carrying channel and chatID.
@@ -61,6 +65,18 @@ func WithToolAllowChecker(ctx context.Context, checker ToolAllowChecker) context
 // ToolAllowCheckerFromCtx extracts the ToolAllowChecker from ctx, or nil if unset.
 func ToolAllowCheckerFromCtx(ctx context.Context) ToolAllowChecker {
 	v, _ := ctx.Value(ctxKeyAllowChecker).(ToolAllowChecker)
+	return v
+}
+
+// WithRoundSentFlag returns a child context carrying a per-round sent flag.
+// Used by the concurrent agent loop to track whether the message tool fired.
+func WithRoundSentFlag(ctx context.Context, flag *atomic.Bool) context.Context {
+	return context.WithValue(ctx, ctxKeyRoundSent, flag)
+}
+
+// roundSentFlagFromCtx extracts the per-round sent flag, or nil if not set.
+func roundSentFlagFromCtx(ctx context.Context) *atomic.Bool {
+	v, _ := ctx.Value(ctxKeyRoundSent).(*atomic.Bool)
 	return v
 }
 
