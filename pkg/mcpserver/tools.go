@@ -71,6 +71,16 @@ func (t *firstCallTracker) record(agentName string) {
 		})
 }
 
+// workspace returns the recorded workspace for agentName, or "" if none was
+// supplied at construction. Safe for concurrent use; the known map is
+// effectively read-only after newFirstCallTracker.
+func (t *firstCallTracker) workspace(agentName string) string {
+	if t == nil {
+		return ""
+	}
+	return t.known[agentName]
+}
+
 // addToolsToServer registers each allowed claw tool with the given MCP
 // server. Each registered tool has the required `agent_token` parameter
 // added to its published schema. On every call:
@@ -154,18 +164,27 @@ func dispatchToolCall(
 	delete(args, agentTokenParam)
 
 	if agenttoken.IsSubagentSentinel(rawTok) {
+		logger.WarnCF("mcpserver", "MCP token rejected: subagent sentinel",
+			map[string]any{"tool": toolName, "reason": "subagent_sentinel"})
 		return subagentMessage, true
 	}
 
 	agentName, ok := tokens.Resolve(rawTok)
 	if !ok {
+		logger.WarnCF("mcpserver", "MCP token rejected",
+			map[string]any{"tool": toolName, "reason": "invalid_token", "token_len": len(rawTok)})
 		return invalidTokenMessage, true
 	}
 
 	reg, ok := resolver(agentName)
 	if !ok || reg == nil {
+		logger.WarnCF("mcpserver", "MCP token rejected: no registry for agent",
+			map[string]any{"tool": toolName, "agent": agentName, "reason": "no_registry"})
 		return fmt.Sprintf("agent %q has no registered tool registry", agentName), true
 	}
+
+	logger.InfoCF("mcpserver", "MCP tool authorized",
+		map[string]any{"agent": agentName, "tool": toolName, "workspace": tracker.workspace(agentName)})
 
 	if tracker != nil {
 		tracker.record(agentName)
@@ -173,6 +192,8 @@ func dispatchToolCall(
 
 	result := reg.Execute(ctx, toolName, args)
 	if result == nil {
+		logger.WarnCF("mcpserver", "tool returned nil result",
+			map[string]any{"tool": toolName, "agent": agentName})
 		return agenttoken.Redact("tool returned nil result"), true
 	}
 
