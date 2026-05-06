@@ -76,8 +76,8 @@ func TestDispatch_EmptyTokenRejected(t *testing.T) {
 	if !isErr {
 		t.Fatal("expected error for missing token")
 	}
-	if !strings.Contains(out, "invalid agent_token") {
-		t.Errorf("error should mention invalid agent_token, got: %s", out)
+	if out != invalidTokenMessage {
+		t.Errorf("expected %q, got: %s", invalidTokenMessage, out)
 	}
 }
 
@@ -90,8 +90,8 @@ func TestDispatch_UnknownTokenRejected(t *testing.T) {
 	if !isErr {
 		t.Fatal("expected error for unknown token")
 	}
-	if !strings.Contains(out, "invalid agent_token") {
-		t.Errorf("expected invalid agent_token message, got: %s", out)
+	if out != invalidTokenMessage {
+		t.Errorf("expected %q, got: %s", invalidTokenMessage, out)
 	}
 }
 
@@ -111,8 +111,8 @@ func TestDispatch_MalformedTokenRejected(t *testing.T) {
 			t.Errorf("token %q expected to be rejected", c)
 			continue
 		}
-		if !strings.Contains(out, "invalid agent_token") {
-			t.Errorf("token %q: expected invalid agent_token message, got: %s", c, out)
+		if out != invalidTokenMessage {
+			t.Errorf("token %q: expected %q, got: %s", c, invalidTokenMessage, out)
 		}
 	}
 }

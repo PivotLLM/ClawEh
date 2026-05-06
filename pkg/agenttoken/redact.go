@@ -9,10 +9,11 @@ import "regexp"
 var redactPattern = regexp.MustCompile(`AGT[0-9a-f]{64}`)
 
 // Redaction is the placeholder substituted for redacted tokens.
-const Redaction = "[REDACTED-AGT]"
+const Redaction = "AGT[REDACTED]"
 
-// Redact replaces every `AGT[0-9a-f]{64}` substring with [REDACTED-AGT],
-// except for the sub-agent sentinel which is left intact (it is not secret).
+// Redact replaces every `AGT[0-9a-f]{64}` substring with the Redaction
+// placeholder, except for the sub-agent sentinel which is left intact (it
+// is not secret).
 func Redact(s string) string {
 	if s == "" {
 		return s

@@ -29,7 +29,7 @@ const agentTokenParam = "agent_token"
 // invalidTokenMessage is what we return when the supplied agent_token is
 // missing, malformed, or unknown. The wording is intentionally instructive
 // so a confused LLM can self-correct on the next call.
-const invalidTokenMessage = "invalid agent_token; supply your assigned agent_token (format: 'AGT<64 hex>') as a parameter to every mcp__claw__* tool call."
+const invalidTokenMessage = "invalid or missing agent_token; supply your assigned token (format: AGT<64 hex>)"
 
 // subagentMessage is returned when the literal sub-agent sentinel is used.
 const subagentMessage = "sub-agents are not granted claw MCP access; use the harness filesystem tools against your assigned working directory."
