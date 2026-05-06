@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/PivotLLM/ClawEh/pkg/agenttoken"
 	"github.com/PivotLLM/ClawEh/pkg/tools"
 )
 
@@ -39,10 +40,23 @@ func newRegistryWith(toolList ...tools.Tool) *tools.ToolRegistry {
 	return r
 }
 
+// minimalOpts returns the option set required for any New() call to succeed:
+// a registry, a token manager, and at least one agent registry.
+func minimalOpts(reg *tools.ToolRegistry) []Option {
+	tm := agenttoken.NewManager()
+	tm.Issue("alice")
+	return []Option{
+		WithRegistry(reg),
+		WithAgentRegistries(map[string]*tools.ToolRegistry{"alice": reg}),
+		WithAgentTokens(tm),
+	}
+}
+
 // --- New() validation ---
 
 func TestNew_RequiresRegistry(t *testing.T) {
-	_, err := New()
+	tm := agenttoken.NewManager()
+	_, err := New(WithAgentTokens(tm), WithAgentRegistries(map[string]*tools.ToolRegistry{"alice": newRegistryWith()}))
 	if err == nil {
 		t.Fatal("expected error when registry is missing")
 	}
@@ -51,9 +65,32 @@ func TestNew_RequiresRegistry(t *testing.T) {
 	}
 }
 
+func TestNew_RequiresAgentTokens(t *testing.T) {
+	r := newRegistryWith()
+	_, err := New(WithRegistry(r), WithAgentRegistries(map[string]*tools.ToolRegistry{"alice": r}))
+	if err == nil {
+		t.Fatal("expected error when agent-token manager is missing")
+	}
+	if !strings.Contains(err.Error(), "agent-token") {
+		t.Errorf("expected error to mention agent-token manager, got %q", err.Error())
+	}
+}
+
+func TestNew_RequiresAgentRegistries(t *testing.T) {
+	r := newRegistryWith()
+	tm := agenttoken.NewManager()
+	_, err := New(WithRegistry(r), WithAgentTokens(tm))
+	if err == nil {
+		t.Fatal("expected error when agent registries are missing")
+	}
+	if !strings.Contains(err.Error(), "agent registry") {
+		t.Errorf("expected error to mention agent registries, got %q", err.Error())
+	}
+}
+
 func TestNew_AppliesDefaults(t *testing.T) {
 	r := newRegistryWith()
-	srv, err := New(WithRegistry(r))
+	srv, err := New(minimalOpts(r)...)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -67,11 +104,11 @@ func TestNew_AppliesDefaults(t *testing.T) {
 
 func TestNew_OptionsOverrideDefaults(t *testing.T) {
 	r := newRegistryWith()
-	srv, err := New(
-		WithRegistry(r),
+	opts := append(minimalOpts(r),
 		WithListen("127.0.0.1:9999"),
 		WithEndpointPath("/custom"),
 	)
+	srv, err := New(opts...)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -85,7 +122,8 @@ func TestNew_OptionsOverrideDefaults(t *testing.T) {
 
 func TestWithListen_EmptyKeepsDefault(t *testing.T) {
 	r := newRegistryWith()
-	srv, err := New(WithRegistry(r), WithListen(""))
+	opts := append(minimalOpts(r), WithListen(""))
+	srv, err := New(opts...)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -101,7 +139,8 @@ func TestAddTools_AllowlistFiltersTools(t *testing.T) {
 	denied := &mockTool{name: "exec_shell", desc: "dangerous", params: map[string]any{"type": "object"}, result: tools.SilentResult("ok")}
 	r := newRegistryWith(allowed, denied)
 
-	srv, err := New(WithRegistry(r), WithAllowlist([]string{"read_file"}))
+	opts := append(minimalOpts(r), WithAllowlist([]string{"read_file"}))
+	srv, err := New(opts...)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -121,7 +160,8 @@ func TestAddTools_WildcardAllowlistExposesAll(t *testing.T) {
 	c := &mockTool{name: "message", params: map[string]any{}, result: tools.SilentResult("ok")}
 	r := newRegistryWith(a, b, c)
 
-	srv, err := New(WithRegistry(r), WithAllowlist([]string{"*"}))
+	opts := append(minimalOpts(r), WithAllowlist([]string{"*"}))
+	srv, err := New(opts...)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -143,7 +183,8 @@ func TestAddTools_PrefixWildcardAllowlist(t *testing.T) {
 	wf := &mockTool{name: "write_file", params: map[string]any{}, result: tools.SilentResult("ok")}
 	r := newRegistryWith(rf, rd, wf)
 
-	srv, err := New(WithRegistry(r), WithAllowlist([]string{"read_*"}))
+	opts := append(minimalOpts(r), WithAllowlist([]string{"read_*"}))
+	srv, err := New(opts...)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -164,7 +205,7 @@ func TestAddTools_EmptyAllowlistRegistersNothing(t *testing.T) {
 		&mockTool{name: "a", params: map[string]any{}, result: tools.SilentResult("ok")},
 		&mockTool{name: "b", params: map[string]any{}, result: tools.SilentResult("ok")},
 	)
-	srv, err := New(WithRegistry(r))
+	srv, err := New(minimalOpts(r)...)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -177,7 +218,8 @@ func TestAddTools_MessageToolNeverRegistered(t *testing.T) {
 	msg := &mockTool{name: "message", desc: "agent-internal", params: map[string]any{"type": "object"}, result: tools.SilentResult("ok")}
 	r := newRegistryWith(msg)
 
-	srv, err := New(WithRegistry(r), WithAllowlist([]string{"message"}))
+	opts := append(minimalOpts(r), WithAllowlist([]string{"message"}))
+	srv, err := New(opts...)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -190,7 +232,8 @@ func TestAddTools_NilParametersStillRegisters(t *testing.T) {
 	t1 := &mockTool{name: "noparams", desc: "no schema", params: nil, result: tools.SilentResult("ok")}
 	r := newRegistryWith(t1)
 
-	srv, err := New(WithRegistry(r), WithAllowlist([]string{"noparams"}))
+	opts := append(minimalOpts(r), WithAllowlist([]string{"noparams"}))
+	srv, err := New(opts...)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

@@ -6,6 +6,12 @@
 // codex-cli, gemini-cli) natively call claw tools via MCP — the correct
 // alternative to having the CLI emit tool-call JSON in its prose (which
 // created infinite outer loops, since CLIs are themselves agentic).
+//
+// Tool calls carry an `agent_token` parameter (snake_case) which the
+// server resolves against the agent-token manager to root path resolution
+// at the calling agent's own workspace. There is no fallback to a shared
+// root: if the token is missing, malformed, unknown, or the sub-agent
+// sentinel, the call fails closed with a clear error.
 package mcpserver
 
 import (
@@ -14,9 +20,9 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"strings"
 	"time"
 
+	"github.com/PivotLLM/ClawEh/pkg/agenttoken"
 	"github.com/PivotLLM/ClawEh/pkg/global"
 	"github.com/PivotLLM/ClawEh/pkg/logger"
 	"github.com/PivotLLM/ClawEh/pkg/tools"
@@ -30,39 +36,69 @@ const DefaultListen = "127.0.0.1:5911"
 const DefaultEndpointPath = "/mcp"
 
 // MCPServer wraps the mcp-go streamable HTTP server and registers claw tools.
+// All tool calls dispatch through the agent-token manager: the token in the
+// call body determines which per-agent tool registry executes the call.
 type MCPServer struct {
-	registry        *tools.ToolRegistry            // default
-	agentRegistries map[string]*tools.ToolRegistry // agentID → registry
+	schemaRegistry  *tools.ToolRegistry            // tool list/schema source
+	agentRegistries map[string]*tools.ToolRegistry // agentID → registry (dispatch target)
 	allowPatterns   []string
 	listen          string
-	endpointPath    string // base path, e.g. "/mcp"
+	endpointPath    string
 
-	// internal
+	tokens     *agenttoken.Manager
+	workspaces map[string]string // agentID → workspace (for boot/first-call logging)
+
 	httpServer *http.Server
-	agentSrvs  map[string]*server.StreamableHTTPServer // agentID → server
-	defaultSrv *server.StreamableHTTPServer
+	streamable *server.StreamableHTTPServer
 
-	// srv is kept for test introspection of the default endpoint's MCPServer.
+	// srv is kept for test introspection.
 	srv *server.MCPServer
 }
 
 // Option configures an MCPServer.
 type Option func(*MCPServer)
 
-// WithRegistry sets the tool registry that the MCP server exposes.
+// WithRegistry sets the tool registry whose List/Get/Description is used
+// to publish tool schemas. Tool calls themselves dispatch via the agent
+// registries (set with WithAgentRegistries) keyed by the resolved
+// agent_token, never via this registry.
 func WithRegistry(r *tools.ToolRegistry) Option {
-	return func(m *MCPServer) { m.registry = r }
+	return func(m *MCPServer) { m.schemaRegistry = r }
 }
 
-// WithAgentRegistries sets per-agent tool registries.
-// Each agent is served at endpointPath+"/"+agentID (e.g., /mcp/karen).
+// WithAgentRegistries sets the per-agent tool registries that execute
+// resolved calls. Keys are agent IDs (matching what the token manager
+// returns from Resolve).
 func WithAgentRegistries(registries map[string]*tools.ToolRegistry) Option {
 	return func(m *MCPServer) {
-		if len(registries) > 0 {
-			m.agentRegistries = make(map[string]*tools.ToolRegistry, len(registries))
-			for k, v := range registries {
-				m.agentRegistries[k] = v
-			}
+		if len(registries) == 0 {
+			m.agentRegistries = nil
+			return
+		}
+		m.agentRegistries = make(map[string]*tools.ToolRegistry, len(registries))
+		for k, v := range registries {
+			m.agentRegistries[k] = v
+		}
+	}
+}
+
+// WithAgentTokens supplies the token manager that resolves the
+// `agent_token` call parameter to an agent ID. Required.
+func WithAgentTokens(t *agenttoken.Manager) Option {
+	return func(m *MCPServer) { m.tokens = t }
+}
+
+// WithAgentWorkspaces supplies the agentID → workspace map. Used only
+// for boot-log assertions and the first-MCP-call-per-agent log entry.
+func WithAgentWorkspaces(ws map[string]string) Option {
+	return func(m *MCPServer) {
+		if len(ws) == 0 {
+			m.workspaces = nil
+			return
+		}
+		m.workspaces = make(map[string]string, len(ws))
+		for k, v := range ws {
+			m.workspaces[k] = v
 		}
 	}
 }
@@ -100,21 +136,8 @@ func WithAllowlist(names []string) Option {
 	}
 }
 
-// buildEndpoint creates a StreamableHTTPServer for a given registry and path.
-func buildEndpoint(registry *tools.ToolRegistry, allowPatterns []string, endpointPath string) (*server.MCPServer, *server.StreamableHTTPServer) {
-	mcpSrv := server.NewMCPServer(global.AppName, global.Version,
-		server.WithToolCapabilities(false),
-		server.WithRecovery(),
-	)
-	addToolsToServer(mcpSrv, registry, allowPatterns)
-	httpSrv := server.NewStreamableHTTPServer(mcpSrv,
-		server.WithEndpointPath(endpointPath),
-		server.WithStateLess(true),
-	)
-	return mcpSrv, httpSrv
-}
-
-// New constructs an MCPServer. The registry option is required.
+// New constructs an MCPServer. The schema registry, agent-token manager,
+// and at least one agent registry are required.
 func New(opts ...Option) (*MCPServer, error) {
 	m := &MCPServer{
 		listen:       DefaultListen,
@@ -124,30 +147,50 @@ func New(opts ...Option) (*MCPServer, error) {
 		opt(m)
 	}
 
-	if m.registry == nil {
+	if m.schemaRegistry == nil {
 		return nil, errors.New("mcpserver: registry is required")
 	}
-
-	mux := http.NewServeMux()
-
-	// Default endpoint
-	m.srv, m.defaultSrv = buildEndpoint(m.registry, m.allowPatterns, m.endpointPath)
-	mux.Handle(m.endpointPath, m.defaultSrv)
-
-	// Per-agent endpoints
-	m.agentSrvs = make(map[string]*server.StreamableHTTPServer)
-	for agentID, reg := range m.agentRegistries {
-		if strings.Contains(agentID, "/") {
-			logger.WarnCF("mcpserver", "skipping agent endpoint: ID contains '/'",
-				map[string]any{"agent_id": agentID})
-			continue
-		}
-		agentPath := m.endpointPath + "/" + agentID
-		_, agentSrv := buildEndpoint(reg, m.allowPatterns, agentPath)
-		m.agentSrvs[agentID] = agentSrv
-		mux.Handle(agentPath, agentSrv)
+	if m.tokens == nil {
+		return nil, errors.New("mcpserver: agent-token manager is required")
+	}
+	if len(m.agentRegistries) == 0 {
+		return nil, errors.New("mcpserver: at least one agent registry is required")
 	}
 
+	// Boot-log assertion: emit one line per registered agent so any
+	// mis-bindings are visible at startup.
+	for agentID, reg := range m.agentRegistries {
+		ws := m.workspaces[agentID]
+		logger.InfoCF("mcpserver", "Agent registry bound",
+			map[string]any{
+				"agent":     agentID,
+				"workspace": ws,
+				"tools":     reg.Count(),
+			})
+	}
+
+	tracker := newFirstCallTracker(m.workspaces)
+
+	resolver := func(agentName string) (*tools.ToolRegistry, bool) {
+		reg, ok := m.agentRegistries[agentName]
+		return reg, ok
+	}
+
+	mcpSrv := server.NewMCPServer(global.AppName, global.Version,
+		server.WithToolCapabilities(false),
+		server.WithRecovery(),
+	)
+	addToolsToServer(mcpSrv, m.schemaRegistry, m.allowPatterns, m.tokens, resolver, tracker)
+
+	httpSrv := server.NewStreamableHTTPServer(mcpSrv,
+		server.WithEndpointPath(m.endpointPath),
+		server.WithStateLess(true),
+	)
+	m.srv = mcpSrv
+	m.streamable = httpSrv
+
+	mux := http.NewServeMux()
+	mux.Handle(m.endpointPath, httpSrv)
 	m.httpServer = &http.Server{Handler: mux}
 
 	return m, nil
@@ -170,13 +213,11 @@ func (m *MCPServer) Start() error {
 
 	logger.InfoCF("mcpserver", "MCP server starting",
 		map[string]any{
-			"listen":          m.listen,
-			"endpoint":        m.endpointPath,
-			"agent_endpoints": len(m.agentSrvs),
+			"listen":   m.listen,
+			"endpoint": m.endpointPath,
+			"agents":   len(m.agentRegistries),
 		})
 
-	// Use Serve(ln) rather than ListenAndServe so the port is held from the
-	// moment Start returns — no TOCTOU gap between binding and serving.
 	errCh := make(chan error, 1)
 	go func() {
 		if err := m.httpServer.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -203,12 +244,8 @@ func (m *MCPServer) Start() error {
 // Shutdown gracefully stops the HTTP server.
 func (m *MCPServer) Shutdown(ctx context.Context) error {
 	logger.InfoCF("mcpserver", "MCP server shutting down", nil)
-	// Shutdown per-agent servers (best-effort; they don't own the http.Server).
-	for _, srv := range m.agentSrvs {
-		_ = srv.Shutdown(ctx)
-	}
-	if m.defaultSrv != nil {
-		_ = m.defaultSrv.Shutdown(ctx)
+	if m.streamable != nil {
+		_ = m.streamable.Shutdown(ctx)
 	}
 	if m.httpServer != nil {
 		return m.httpServer.Shutdown(ctx)
@@ -216,17 +253,18 @@ func (m *MCPServer) Shutdown(ctx context.Context) error {
 	return nil
 }
 
-// WriteWorkspaceConfigs writes per-agent .claude.json files mapping each agent's
-// workspace to its MCP endpoint path. baseURL is the server's base URL (e.g.
+// WriteWorkspaceConfigs writes per-agent .claude.json files mapping each
+// agent's workspace to the (single) MCP endpoint URL. With token-based
+// isolation the URL is the same for every agent — routing happens in the
+// call body via `agent_token`. baseURL is the server's base URL (e.g.
 // "http://127.0.0.1:5911"). workspaces maps agentID → workspace path.
 func (m *MCPServer) WriteWorkspaceConfigs(baseURL string, workspaces map[string]string) {
-	for agentID := range m.agentRegistries {
-		workspace, ok := workspaces[agentID]
-		if !ok || workspace == "" {
+	url := baseURL + m.endpointPath
+	for agentID, workspace := range workspaces {
+		if workspace == "" {
 			continue
 		}
-		agentURL := baseURL + m.endpointPath + "/" + agentID
-		if err := WriteAgentWorkspaceConfig(workspace, agentURL); err != nil {
+		if err := WriteAgentWorkspaceConfig(workspace, url); err != nil {
 			logger.WarnCF("mcpserver", "Failed to write workspace MCP config",
 				map[string]any{"agent": agentID, "workspace": workspace, "error": err.Error()})
 		} else {
