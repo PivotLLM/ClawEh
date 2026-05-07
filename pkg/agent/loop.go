@@ -65,8 +65,18 @@ type AgentLoop struct {
 	// mutex and never process concurrently. Entries are never evicted; for typical
 	// deployments with a bounded number of active sessions the cost is negligible
 	// (one *sync.Mutex per session key).
-	sessionMus sync.Map
-	dumpsDir   string
+	sessionMus          sync.Map
+	sessionCancelStates sync.Map // scope key → *sessionCancelState
+	dumpsDir            string
+}
+
+// sessionCancelState tracks a pending cancel request for a session. When
+// pending is set, goroutines waiting for the session mutex will skip themselves
+// rather than process, incrementing skipCount. The /cancel command reads and
+// resets both fields.
+type sessionCancelState struct {
+	pending   atomic.Bool
+	skipCount atomic.Int32
 }
 
 // processOptions configures how a message is processed
@@ -367,6 +377,20 @@ func (al *AgentLoop) getOrCreateSessionMu(key string) *sync.Mutex {
 	return actual.(*sync.Mutex)
 }
 
+// getOrCreateCancelState returns the per-session cancel state for the given key,
+// creating one if it does not already exist.
+func (al *AgentLoop) getOrCreateCancelState(key string) *sessionCancelState {
+	cs := &sessionCancelState{}
+	actual, _ := al.sessionCancelStates.LoadOrStore(key, cs)
+	return actual.(*sessionCancelState)
+}
+
+// isCancelCommand returns true if the message content is a /cancel command.
+func (al *AgentLoop) isCancelCommand(content string) bool {
+	name, ok := commands.ParseCommandName(content)
+	return ok && name == "cancel"
+}
+
 // processSessionMessage dispatches a single inbound message within its session's
 // serialized goroutine. Messages sharing the same session scope key (resolved via
 // resolveMessageRoute) are ordered via a per-session mutex so concurrent sessions
@@ -392,9 +416,20 @@ func (al *AgentLoop) processSessionMessage(ctx context.Context, msg bus.InboundM
 		msg.SessionKey = scopeKey
 	}
 
+	isCancelCmd := al.isCancelCommand(msg.Content)
+	if isCancelCmd {
+		al.getOrCreateCancelState(dispatchKey).pending.Store(true)
+	}
+
 	mu := al.getOrCreateSessionMu(dispatchKey)
 	mu.Lock()
 	defer mu.Unlock()
+
+	cs := al.getOrCreateCancelState(dispatchKey)
+	if cs.pending.Load() && !isCancelCmd {
+		cs.skipCount.Add(1)
+		return
+	}
 
 	var roundSent atomic.Bool
 	msgCtx := tools.WithRoundSentFlag(ctx, &roundSent)
@@ -2519,6 +2554,14 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 		rt.ResetCooldown = func() {
 			if al.fallback != nil {
 				al.fallback.Reset()
+			}
+		}
+		if opts != nil {
+			sessionKey := opts.SessionKey
+			rt.CancelPending = func() int {
+				cs := al.getOrCreateCancelState(sessionKey)
+				cs.pending.Store(false)
+				return int(cs.skipCount.Swap(0))
 			}
 		}
 		rt.RetriggerLastMessage = func(ctx context.Context) error {
