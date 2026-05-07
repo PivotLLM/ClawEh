@@ -291,31 +291,33 @@ func setupAndStartServices(
 	}
 
 	// Start the MCP server so CLI providers (claude-cli/codex-cli/gemini-cli)
-	// can call claw's host-side tools natively over MCP. Uses the default
-	// agent's tool registry so the tools have a workspace bound.
+	// can call claw's host-side tools natively over MCP. Each agent's calls
+	// route via the `agent_token` parameter to that agent's own workspace —
+	// see pkg/agenttoken and pkg/mcpserver.
 	if cfg.MCPHostEffectivelyEnabled() {
 		autoStarted := !cfg.MCPHost.Enabled
 		defaultAgent := agentLoop.GetRegistry().GetDefaultAgent()
 		if defaultAgent == nil || defaultAgent.Tools == nil {
 			logger.WarnC("mcpserver", "MCP host enabled but no default agent registry available — skipping start")
 		} else {
-			// Collect per-agent registries (skip the default agent to avoid double-registration).
+			// Collect per-agent registries — every registered agent contributes
+			// its own registry; the token-based dispatcher uses these as the
+			// execution targets keyed by agent ID.
 			agentRegistries := make(map[string]*tools.ToolRegistry)
+			agentWorkspaces := make(map[string]string)
 			for _, agentID := range agentLoop.GetRegistry().ListAgentIDs() {
 				a, ok := agentLoop.GetRegistry().GetAgent(agentID)
 				if !ok || a.Tools == nil {
 					continue
 				}
-				// Skip if this is the same registry as the default agent's.
-				if a.Tools == defaultAgent.Tools {
-					continue
-				}
 				agentRegistries[agentID] = a.Tools
+				agentWorkspaces[agentID] = a.Workspace
 			}
 
 			srv, err := mcpserver.New(
-				mcpserver.WithRegistry(defaultAgent.Tools),
 				mcpserver.WithAgentRegistries(agentRegistries),
+				mcpserver.WithAgentTokens(agentLoop.AgentTokens()),
+				mcpserver.WithAgentWorkspaces(agentWorkspaces),
 				mcpserver.WithListen(cfg.MCPHost.Listen),
 				mcpserver.WithEndpointPath(cfg.MCPHost.EndpointPath),
 				mcpserver.WithAllowlist(cfg.MCPHost.Tools),
@@ -334,14 +336,9 @@ func setupAndStartServices(
 					"auto_enabled": autoStarted,
 				})
 
-			// Write per-agent .claude.json files so each agent's claude subprocess
-			// uses the correct workspace-scoped MCP endpoint.
-			agentWorkspaces := make(map[string]string)
-			for agentID := range agentRegistries {
-				if a, ok := agentLoop.GetRegistry().GetAgent(agentID); ok {
-					agentWorkspaces[agentID] = a.Workspace
-				}
-			}
+			// Write per-agent .claude.json files. With token-based routing
+			// every agent points at the same endpoint URL; the agent_token
+			// in each call selects the workspace.
 			baseURL := "http://" + srv.Listen()
 			srv.WriteWorkspaceConfigs(baseURL, agentWorkspaces)
 		}

@@ -7,8 +7,27 @@ import (
 	"sync"
 	"time"
 
+	"github.com/PivotLLM/ClawEh/pkg/agenttoken"
 	"github.com/PivotLLM/ClawEh/pkg/providers"
 )
+
+// subagentSystemPrompt returns the system prompt installed in every
+// sub-agent. The agenttoken.SubagentSentinel is injected as the agent_token
+// for defense-in-depth: if the sub-agent attempts to invoke any mcp__claw__*
+// tool, the MCP server recognizes the sentinel and refuses the call.
+func subagentSystemPrompt() string {
+	return fmt.Sprintf(`You are a subagent. Complete the given task independently and report the result.
+You have access to tools - use them as needed to complete your task.
+After completing the task, provide a clear summary of what was done.
+
+---
+
+# Agent Token
+
+The following token is the sub-agent sentinel. Every `+"`mcp__claw__*`"+` tool call MUST include the literal string below as the `+"`agent_token`"+` parameter. The MCP server will refuse those calls — sub-agents are not granted claw MCP access; use the harness filesystem tools against your assigned working directory.
+
+agent_token: %s`, agenttoken.SubagentSentinel)
+}
 
 // attributedContent prepends "AgentName: " to content when agentID is non-empty.
 func attributedContent(agentID, content string) string {
@@ -196,15 +215,10 @@ func (sm *SubagentManager) runTask(ctx context.Context, task *SubagentTask, call
 	task.Status = "running"
 	task.Created = time.Now().UnixMilli()
 
-	// Build system prompt for subagent
-	systemPrompt := `You are a subagent. Complete the given task independently and report the result.
-You have access to tools - use them as needed to complete your task.
-After completing the task, provide a clear summary of what was done.`
-
 	messages := []providers.Message{
 		{
 			Role:    "system",
-			Content: systemPrompt,
+			Content: subagentSystemPrompt(),
 		},
 		{
 			Role:    "user",
@@ -342,11 +356,10 @@ func (t *SubagentTool) Execute(ctx context.Context, args map[string]any) *ToolRe
 		return ErrorResult("Subagent manager not configured").WithError(fmt.Errorf("manager is nil"))
 	}
 
-	// Build messages for subagent
 	messages := []providers.Message{
 		{
 			Role:    "system",
-			Content: "You are a subagent. Complete the given task independently and provide a clear, concise result.",
+			Content: subagentSystemPrompt(),
 		},
 		{
 			Role:    "user",

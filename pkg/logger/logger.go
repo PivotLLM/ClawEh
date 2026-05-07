@@ -161,6 +161,26 @@ func DisableConsole() {
 	logger = zerolog.Nop()
 }
 
+// RedirectForTest replaces the console logger with one that writes to w
+// (JSON-encoded events) and returns a function that restores the prior
+// logger. Intended for tests that need to assert on log output.
+func RedirectForTest(w interface{ Write(p []byte) (int, error) }) func() {
+	mu.Lock()
+	prev := logger
+	prevLevel := currentLevel
+	logger = zerolog.New(w).With().Timestamp().Logger()
+	currentLevel = DEBUG
+	zerolog.SetGlobalLevel(DEBUG)
+	mu.Unlock()
+	return func() {
+		mu.Lock()
+		logger = prev
+		currentLevel = prevLevel
+		zerolog.SetGlobalLevel(prevLevel)
+		mu.Unlock()
+	}
+}
+
 // ParseLevel converts a level string ("debug","info","warn","error") to a LogLevel.
 // Returns INFO for unrecognised values.
 func ParseLevel(s string) LogLevel {

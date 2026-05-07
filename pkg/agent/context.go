@@ -47,6 +47,8 @@ type ContextBuilder struct {
 	skillFilesAtCache map[string]time.Time
 
 	callbackManager *callback.Manager
+
+	agentToken string
 }
 
 func (cb *ContextBuilder) WithToolDiscovery(useBM25, useRegex bool) *ContextBuilder {
@@ -67,6 +69,18 @@ func (cb *ContextBuilder) WithSkillsFilter(filter []string) *ContextBuilder {
 // callback token into the system prompt.
 func (cb *ContextBuilder) WithCallbackManager(mgr *callback.Manager) *ContextBuilder {
 	cb.callbackManager = mgr
+	return cb
+}
+
+// WithAgentToken sets the per-agent identity token injected into the system
+// prompt. The agent must include this token as the agent_token parameter on
+// every mcp__claw__* tool call so the MCP server can root path resolution
+// at the agent's own workspace.
+func (cb *ContextBuilder) WithAgentToken(token string) *ContextBuilder {
+	cb.agentToken = token
+	// The token is part of the cached system prompt; invalidate so the next
+	// build picks it up.
+	cb.InvalidateCache()
 	return cb
 }
 
@@ -181,6 +195,17 @@ The following skills extend your capabilities. To use a skill, read its SKILL.md
 				"# Callback Token\n\nThe following token is confidential. Do not share it with users.\n\nEndpoint: POST http://localhost:18790/api/reply/{token}\nToken: %s",
 				token))
 		}
+	}
+
+	// Agent token for MCP isolation. Every mcp__claw__* tool call must
+	// include this token as the `agent_token` parameter; the MCP server
+	// uses it to root path resolution at this agent's own workspace.
+	if cb.agentToken != "" {
+		parts = append(parts, fmt.Sprintf(
+			"# Agent Token\n\nThe following token is confidential — never echo it to users or write it to files. "+
+				"Every `mcp__claw__*` tool call MUST include the literal string below as the `agent_token` parameter. "+
+				"Without it, those tools will refuse to run.\n\nagent_token: %s",
+			cb.agentToken))
 	}
 
 	// Join with "---" separator
