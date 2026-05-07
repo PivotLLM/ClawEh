@@ -193,7 +193,7 @@ func dispatchToolCall(
 	result := reg.Execute(ctx, toolName, args)
 	if result == nil {
 		logger.WarnCF("mcpserver", "tool returned nil result",
-			map[string]any{"tool": toolName, "agent": agentName})
+			map[string]any{"tool": toolName, "agent": agentName, "reason": "nil_result"})
 		return agenttoken.Redact("tool returned nil result"), true
 	}
 

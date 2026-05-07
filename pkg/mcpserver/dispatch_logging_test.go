@@ -185,7 +185,8 @@ func TestRegistry_PanicsOnNilToolResult(t *testing.T) {
 	defer func() {
 		if r := recover(); r == nil {
 			t.Fatal("expected registry.Execute to panic on nil tool result; if it now returns nil, " +
-				"replace this test with one that exercises dispatchToolCall's nil-result WARN path")
+				"replace this test with one that exercises dispatchToolCall's nil-result WARN path " +
+				`and asserts reason="nil_result" alongside tool/agent fields`)
 		}
 	}()
 
