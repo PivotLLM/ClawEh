@@ -7,11 +7,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"sync"
 
 	"github.com/PivotLLM/ClawEh/pkg/agenttoken"
 	"github.com/PivotLLM/ClawEh/pkg/config"
 	"github.com/PivotLLM/ClawEh/pkg/logger"
+	"github.com/PivotLLM/ClawEh/pkg/mcpserver/acl"
 	"github.com/PivotLLM/ClawEh/pkg/tools"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -33,6 +35,11 @@ const invalidTokenMessage = "invalid or missing agent_token; supply your assigne
 
 // subagentMessage is returned when the literal sub-agent sentinel is used.
 const subagentMessage = "sub-agents are not granted claw MCP access; use the harness filesystem tools against your assigned working directory."
+
+// aclDeniedMessage is returned when the per-agent ACL refuses a tool call
+// for an otherwise-valid token. The wording avoids leaking why a specific
+// (agent, tool) pair was denied.
+const aclDeniedMessage = "agent not authorized for this tool"
 
 // AgentResolver returns the per-agent tool registry for a given agent name,
 // or (nil, false) when the agent is unknown.
@@ -85,20 +92,28 @@ func (t *firstCallTracker) workspace(agentName string) string {
 // server. Each registered tool has the required `agent_token` parameter
 // added to its published schema. On every call:
 //   - the token is extracted, validated, and resolved to an agent name;
+//   - the per-agent ACL policy is consulted;
 //   - the call is dispatched to that agent's tool registry;
 //   - the result is scrubbed of any leaked AGT tokens before return.
 //
-// `defaultRegistry` is used only as the source of which tools to publish
-// (names, descriptions, schemas). It is never used to execute tool calls.
+// Tool enumeration via tools/list is intentionally global — the catalogue
+// is built from the union of every per-agent registry (deduped by name).
+// tools/list never inspects the agent_token. Per-agent restrictions are
+// enforced at tools/call via the supplied acl.Policy.
 func addToolsToServer(
 	srv *server.MCPServer,
-	defaultRegistry *tools.ToolRegistry,
+	agentRegistries map[string]*tools.ToolRegistry,
 	allowPatterns []string,
 	tokens *agenttoken.Manager,
 	resolver AgentResolver,
 	tracker *firstCallTracker,
+	policy acl.Policy,
 ) {
-	for _, name := range defaultRegistry.List() {
+	if policy == nil {
+		policy = acl.Default
+	}
+
+	for _, name := range catalogueToolNames(agentRegistries) {
 		if name == messageToolName {
 			continue
 		}
@@ -106,7 +121,7 @@ func addToolsToServer(
 			continue
 		}
 
-		tool, ok := defaultRegistry.Get(name)
+		tool, ok := firstToolNamed(agentRegistries, name)
 		if !ok {
 			continue
 		}
@@ -135,7 +150,7 @@ func addToolsToServer(
 			if args == nil {
 				args = map[string]any{}
 			}
-			out, isErr := dispatchToolCall(ctx, toolName, args, tokens, resolver, tracker)
+			out, isErr := dispatchToolCall(ctx, toolName, args, tokens, resolver, tracker, policy)
 			if isErr {
 				return mcp.NewToolResultError(out), nil
 			}
@@ -147,11 +162,52 @@ func addToolsToServer(
 	}
 }
 
-// dispatchToolCall validates the token in args, routes to the resolved
-// agent's registry, executes the tool, and returns the (possibly redacted)
-// LLM-facing output along with an error flag. Extracted so the dispatch
-// logic can be exercised directly by tests without going through the
-// streamable HTTP layer.
+// catalogueToolNames returns the sorted union of tool names across every
+// agent registry. Sorting keeps the boot log + tools/list output stable.
+func catalogueToolNames(agentRegistries map[string]*tools.ToolRegistry) []string {
+	seen := make(map[string]struct{})
+	for _, reg := range agentRegistries {
+		if reg == nil {
+			continue
+		}
+		for _, name := range reg.List() {
+			seen[name] = struct{}{}
+		}
+	}
+	names := make([]string, 0, len(seen))
+	for name := range seen {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// firstToolNamed returns any agent registry's instance of the named tool,
+// used as the schema source for tools/list. Tool schemas are agnostic to
+// the workspace they're bound to, so any instance is sufficient.
+func firstToolNamed(agentRegistries map[string]*tools.ToolRegistry, name string) (tools.Tool, bool) {
+	keys := make([]string, 0, len(agentRegistries))
+	for k := range agentRegistries {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		reg := agentRegistries[k]
+		if reg == nil {
+			continue
+		}
+		if t, ok := reg.Get(name); ok {
+			return t, true
+		}
+	}
+	return nil, false
+}
+
+// dispatchToolCall validates the token in args, consults the per-agent ACL
+// policy, routes to the resolved agent's registry, executes the tool, and
+// returns the (possibly redacted) LLM-facing output along with an error
+// flag. Extracted so the dispatch logic can be exercised directly by tests
+// without going through the streamable HTTP layer.
 func dispatchToolCall(
 	ctx context.Context,
 	toolName string,
@@ -159,6 +215,7 @@ func dispatchToolCall(
 	tokens *agenttoken.Manager,
 	resolver AgentResolver,
 	tracker *firstCallTracker,
+	policy acl.Policy,
 ) (string, bool) {
 	rawTok, _ := args[agentTokenParam].(string)
 	delete(args, agentTokenParam)
@@ -181,6 +238,15 @@ func dispatchToolCall(
 		logger.WarnCF("mcpserver", "MCP token rejected: no registry for agent",
 			map[string]any{"tool": toolName, "agent": agentName, "reason": "no_registry"})
 		return fmt.Sprintf("agent %q has no registered tool registry", agentName), true
+	}
+
+	if policy == nil {
+		policy = acl.Default
+	}
+	if !policy.IsAllowed(agentName, toolName) {
+		logger.WarnCF("mcpserver", "MCP tool denied",
+			map[string]any{"agent": agentName, "tool": toolName, "reason": "acl_denied"})
+		return aclDeniedMessage, true
 	}
 
 	logger.InfoCF("mcpserver", "MCP tool authorized",

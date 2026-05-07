@@ -25,6 +25,7 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/agenttoken"
 	"github.com/PivotLLM/ClawEh/pkg/global"
 	"github.com/PivotLLM/ClawEh/pkg/logger"
+	"github.com/PivotLLM/ClawEh/pkg/mcpserver/acl"
 	"github.com/PivotLLM/ClawEh/pkg/tools"
 	"github.com/mark3labs/mcp-go/server"
 )
@@ -36,17 +37,20 @@ const DefaultListen = "127.0.0.1:5911"
 const DefaultEndpointPath = "/mcp"
 
 // MCPServer wraps the mcp-go streamable HTTP server and registers claw tools.
-// All tool calls dispatch through the agent-token manager: the token in the
-// call body determines which per-agent tool registry executes the call.
+// Tool enumeration via tools/list is global — the catalogue published is the
+// union of every agent registry, since tool names/schemas are not sensitive.
+// Tool execution via tools/call dispatches through the agent-token manager:
+// the token in the call body resolves to an agent identity, the per-agent
+// ACL gates the (agent, tool) pair, and the per-agent registry executes.
 type MCPServer struct {
-	schemaRegistry  *tools.ToolRegistry            // tool list/schema source
-	agentRegistries map[string]*tools.ToolRegistry // agentID → registry (dispatch target)
+	agentRegistries map[string]*tools.ToolRegistry // agentID → registry (dispatch target + schema source)
 	allowPatterns   []string
 	listen          string
 	endpointPath    string
 
 	tokens     *agenttoken.Manager
 	workspaces map[string]string // agentID → workspace (for boot/first-call logging)
+	policy     acl.Policy        // per-agent tools/call ACL; defaults to acl.Default
 
 	httpServer *http.Server
 	streamable *server.StreamableHTTPServer
@@ -58,17 +62,10 @@ type MCPServer struct {
 // Option configures an MCPServer.
 type Option func(*MCPServer)
 
-// WithRegistry sets the tool registry whose List/Get/Description is used
-// to publish tool schemas. Tool calls themselves dispatch via the agent
-// registries (set with WithAgentRegistries) keyed by the resolved
-// agent_token, never via this registry.
-func WithRegistry(r *tools.ToolRegistry) Option {
-	return func(m *MCPServer) { m.schemaRegistry = r }
-}
-
-// WithAgentRegistries sets the per-agent tool registries that execute
-// resolved calls. Keys are agent IDs (matching what the token manager
-// returns from Resolve).
+// WithAgentRegistries sets the per-agent tool registries. The same map
+// drives both the global tools/list catalogue (union of all registries,
+// deduped by name) and the tools/call dispatch target (keyed by the
+// agent ID that the token manager resolves to).
 func WithAgentRegistries(registries map[string]*tools.ToolRegistry) Option {
 	return func(m *MCPServer) {
 		if len(registries) == 0 {
@@ -136,8 +133,16 @@ func WithAllowlist(names []string) Option {
 	}
 }
 
-// New constructs an MCPServer. The schema registry, agent-token manager,
-// and at least one agent registry are required.
+// WithACLPolicy installs a per-agent ACL policy consulted on every
+// tools/call after token validation. tools/list is never gated by this.
+// A nil argument is treated as acl.Default (open by default).
+func WithACLPolicy(p acl.Policy) Option {
+	return func(m *MCPServer) { m.policy = p }
+}
+
+// New constructs an MCPServer. An agent-token manager and at least one
+// agent registry are required; the agent registries double as the schema
+// source for tools/list (union of all of them, deduped by name).
 func New(opts ...Option) (*MCPServer, error) {
 	m := &MCPServer{
 		listen:       DefaultListen,
@@ -147,14 +152,14 @@ func New(opts ...Option) (*MCPServer, error) {
 		opt(m)
 	}
 
-	if m.schemaRegistry == nil {
-		return nil, errors.New("mcpserver: registry is required")
-	}
 	if m.tokens == nil {
 		return nil, errors.New("mcpserver: agent-token manager is required")
 	}
 	if len(m.agentRegistries) == 0 {
 		return nil, errors.New("mcpserver: at least one agent registry is required")
+	}
+	if m.policy == nil {
+		m.policy = acl.Default
 	}
 
 	// Boot-log assertion: emit one line per registered agent so any
@@ -180,7 +185,7 @@ func New(opts ...Option) (*MCPServer, error) {
 		server.WithToolCapabilities(false),
 		server.WithRecovery(),
 	)
-	addToolsToServer(mcpSrv, m.schemaRegistry, m.allowPatterns, m.tokens, resolver, tracker)
+	addToolsToServer(mcpSrv, m.agentRegistries, m.allowPatterns, m.tokens, resolver, tracker, m.policy)
 
 	httpSrv := server.NewStreamableHTTPServer(mcpSrv,
 		server.WithEndpointPath(m.endpointPath),

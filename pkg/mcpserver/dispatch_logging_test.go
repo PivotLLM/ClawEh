@@ -36,7 +36,7 @@ func TestDispatch_SuccessEmitsAuthorizedInfoPerCall(t *testing.T) {
 
 	for i := 0; i < 2; i++ {
 		out, isErr := dispatchToolCall(context.Background(), "read_file",
-			map[string]any{"agent_token": tok, "path": "x"}, tm, resolverFor(regs), tracker)
+			map[string]any{"agent_token": tok, "path": "x"}, tm, resolverFor(regs), tracker, nil)
 		if isErr {
 			t.Fatalf("call %d unexpected error: %s", i, out)
 		}
@@ -73,7 +73,7 @@ func TestDispatch_SubagentSentinelEmitsWarn(t *testing.T) {
 	tm.Issue("alice")
 
 	out, isErr := dispatchToolCall(context.Background(), "read_file",
-		map[string]any{"agent_token": agenttoken.SubagentSentinel}, tm, resolverFor(nil), nil)
+		map[string]any{"agent_token": agenttoken.SubagentSentinel}, tm, resolverFor(nil), nil, nil)
 	if !isErr {
 		t.Fatalf("expected rejection, got: %s", out)
 	}
@@ -113,7 +113,7 @@ func TestDispatch_InvalidTokenEmitsWarn(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			buf.Reset()
 			out, isErr := dispatchToolCall(context.Background(), "read_file",
-				map[string]any{"agent_token": c.tok}, tm, resolverFor(nil), nil)
+				map[string]any{"agent_token": c.tok}, tm, resolverFor(nil), nil, nil)
 			if !isErr {
 				t.Fatalf("expected rejection, got: %s", out)
 			}
@@ -152,7 +152,7 @@ func TestDispatch_NoRegistryEmitsWarn(t *testing.T) {
 	tok := tm.Issue("alice")
 	// resolverFor(nil) returns ok=false for every name -> no_registry path.
 	out, isErr := dispatchToolCall(context.Background(), "read_file",
-		map[string]any{"agent_token": tok}, tm, resolverFor(nil), nil)
+		map[string]any{"agent_token": tok}, tm, resolverFor(nil), nil, nil)
 	if !isErr {
 		t.Fatalf("expected rejection, got: %s", out)
 	}

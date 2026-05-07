@@ -315,7 +315,6 @@ func setupAndStartServices(
 			}
 
 			srv, err := mcpserver.New(
-				mcpserver.WithRegistry(defaultAgent.Tools),
 				mcpserver.WithAgentRegistries(agentRegistries),
 				mcpserver.WithAgentTokens(agentLoop.AgentTokens()),
 				mcpserver.WithAgentWorkspaces(agentWorkspaces),

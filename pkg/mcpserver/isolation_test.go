@@ -41,7 +41,7 @@ func TestDispatch_ValidTokenRoutesToAgentRegistry(t *testing.T) {
 	bobTok := tm.Issue("bob")
 
 	out, isErr := dispatchToolCall(context.Background(), "read_file",
-		map[string]any{"agent_token": aliceTok, "path": "x"}, tm, resolverFor(regs), nil)
+		map[string]any{"agent_token": aliceTok, "path": "x"}, tm, resolverFor(regs), nil, nil)
 	if isErr {
 		t.Fatalf("unexpected error: %s", out)
 	}
@@ -56,7 +56,7 @@ func TestDispatch_ValidTokenRoutesToAgentRegistry(t *testing.T) {
 	}
 
 	out, isErr = dispatchToolCall(context.Background(), "read_file",
-		map[string]any{"agent_token": bobTok, "path": "x"}, tm, resolverFor(regs), nil)
+		map[string]any{"agent_token": bobTok, "path": "x"}, tm, resolverFor(regs), nil, nil)
 	if isErr {
 		t.Fatalf("unexpected error: %s", out)
 	}
@@ -72,7 +72,7 @@ func TestDispatch_EmptyTokenRejected(t *testing.T) {
 	tm := agenttoken.NewManager()
 	tm.Issue("alice")
 	out, isErr := dispatchToolCall(context.Background(), "read_file",
-		map[string]any{}, tm, resolverFor(nil), nil)
+		map[string]any{}, tm, resolverFor(nil), nil, nil)
 	if !isErr {
 		t.Fatal("expected error for missing token")
 	}
@@ -86,7 +86,7 @@ func TestDispatch_UnknownTokenRejected(t *testing.T) {
 	tm.Issue("alice")
 	bogus := agenttoken.Prefix + strings.Repeat("a", 64)
 	out, isErr := dispatchToolCall(context.Background(), "read_file",
-		map[string]any{"agent_token": bogus}, tm, resolverFor(nil), nil)
+		map[string]any{"agent_token": bogus}, tm, resolverFor(nil), nil, nil)
 	if !isErr {
 		t.Fatal("expected error for unknown token")
 	}
@@ -106,7 +106,7 @@ func TestDispatch_MalformedTokenRejected(t *testing.T) {
 	}
 	for _, c := range cases {
 		out, isErr := dispatchToolCall(context.Background(), "read_file",
-			map[string]any{"agent_token": c}, tm, resolverFor(nil), nil)
+			map[string]any{"agent_token": c}, tm, resolverFor(nil), nil, nil)
 		if !isErr {
 			t.Errorf("token %q expected to be rejected", c)
 			continue
@@ -121,7 +121,7 @@ func TestDispatch_SubagentSentinelReturnsHelpfulError(t *testing.T) {
 	tm := agenttoken.NewManager()
 	tm.Issue("alice")
 	out, isErr := dispatchToolCall(context.Background(), "read_file",
-		map[string]any{"agent_token": agenttoken.SubagentSentinel}, tm, resolverFor(nil), nil)
+		map[string]any{"agent_token": agenttoken.SubagentSentinel}, tm, resolverFor(nil), nil, nil)
 	if !isErr {
 		t.Fatal("expected error for sentinel token")
 	}
@@ -142,7 +142,7 @@ func TestDispatch_RedactsTokensInOutput(t *testing.T) {
 	regs := map[string]*tools.ToolRegistry{"alice": newRegistryWith(leaky)}
 
 	out, isErr := dispatchToolCall(context.Background(), "read_file",
-		map[string]any{"agent_token": tok}, tm, resolverFor(regs), nil)
+		map[string]any{"agent_token": tok}, tm, resolverFor(regs), nil, nil)
 	if isErr {
 		t.Fatalf("unexpected error: %s", out)
 	}
@@ -173,7 +173,7 @@ func TestDispatch_RelativePathOutsideWorkspaceRejected(t *testing.T) {
 
 	out, isErr := dispatchToolCall(context.Background(), "read_file",
 		map[string]any{"agent_token": tok, "path": "../etc/passwd"},
-		tm, resolverFor(map[string]*tools.ToolRegistry{"alice": reg}), nil)
+		tm, resolverFor(map[string]*tools.ToolRegistry{"alice": reg}), nil, nil)
 	if !isErr {
 		t.Fatalf("expected workspace-escape rejection, got success: %s", out)
 	}
@@ -226,7 +226,6 @@ func TestNew_BootLogEmitsAgentBindings(t *testing.T) {
 	tm.Issue("bob")
 
 	_, err := New(
-		WithRegistry(r),
 		WithAgentRegistries(map[string]*tools.ToolRegistry{
 			"alice": r,
 			"bob":   r,
