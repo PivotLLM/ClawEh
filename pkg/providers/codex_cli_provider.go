@@ -286,6 +286,7 @@ func (p *CodexCliProvider) parseJSONLEvents(output string) (*LLMResponse, error)
 	result := &LLMResponse{
 		Content:      strings.TrimSpace(content),
 		FinishReason: "stop",
+		Normal:       true,
 		Usage:        usage,
 	}
 

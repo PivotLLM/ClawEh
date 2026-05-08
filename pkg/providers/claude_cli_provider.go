@@ -247,6 +247,7 @@ func (p *ClaudeCliProvider) parseClaudeCliResponse(output string) (*LLMResponse,
 	result := &LLMResponse{
 		Content:      strings.TrimSpace(content),
 		FinishReason: finishReason,
+		Normal:       true,
 		Usage:        usage,
 	}
 

@@ -1481,7 +1481,7 @@ func TestRunLLMIteration_ContextCancelDuringBackoff(t *testing.T) {
 	done := make(chan result, 1)
 
 	go func() {
-		_, _, err := al.runLLMIteration(ctx, agent, messages, opts)
+		_, _, _, _, err := al.runLLMIteration(ctx, agent, messages, opts)
 		done <- result{err: err}
 	}()
 
@@ -1550,8 +1550,8 @@ func (m *mockEchoTool) Execute(_ context.Context, args map[string]any) *tools.To
 }
 
 // TestRunAgentLoop_EmptyResponse_FirstIteration verifies that when the provider
-// returns an empty response on the very first iteration, runAgentLoop returns
-// the emptyProviderResponse constant.
+// returns a non-normal empty response on the first iteration, runAgentLoop returns
+// a message describing the abnormal finish reason.
 func TestRunAgentLoop_EmptyResponse_FirstIteration(t *testing.T) {
 	al, _, _, _, cleanup := newTestAgentLoop(t)
 	defer cleanup()
@@ -1561,10 +1561,10 @@ func TestRunAgentLoop_EmptyResponse_FirstIteration(t *testing.T) {
 		t.Fatal("no default agent")
 	}
 
-	// Provider returns empty content, no tool calls — first iteration only.
+	// Provider returns empty content with an abnormal (non-normal) finish — Normal: false (zero value).
 	agent.Provider = &sequenceProvider{
 		responses: []*providers.LLMResponse{
-			{Content: "", ToolCalls: []providers.ToolCall{}},
+			{Content: "", FinishReason: "stop", Normal: false, ToolCalls: []providers.ToolCall{}},
 		},
 		errors: []error{nil},
 	}
@@ -1583,14 +1583,17 @@ func TestRunAgentLoop_EmptyResponse_FirstIteration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got != emptyProviderResponse {
-		t.Errorf("expected emptyProviderResponse %q, got %q", emptyProviderResponse, got)
+	if got == "" {
+		t.Error("expected non-empty error message for abnormal empty response, got empty string")
+	}
+	if !strings.Contains(got, "stop") {
+		t.Errorf("expected message to contain finish reason %q, got %q", "stop", got)
 	}
 }
 
 // TestRunAgentLoop_EmptyResponse_AfterToolCalls verifies that when the provider
-// returns tool calls first and then an empty response, runAgentLoop returns the
-// DefaultResponse constant (not emptyProviderResponse) because iteration > 1.
+// returns tool calls first and then a non-normal empty response, runAgentLoop
+// returns a message describing the abnormal finish reason.
 func TestRunAgentLoop_EmptyResponse_AfterToolCalls(t *testing.T) {
 	al, _, _, _, cleanup := newTestAgentLoop(t)
 	defer cleanup()
@@ -1639,8 +1642,8 @@ func TestRunAgentLoop_EmptyResponse_AfterToolCalls(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got != defaultResponse {
-		t.Errorf("expected defaultResponse %q, got %q", defaultResponse, got)
+	if got == "" {
+		t.Error("expected non-empty error message for abnormal empty response after tool calls, got empty string")
 	}
 }
 
@@ -1689,7 +1692,7 @@ func TestRunLLMIteration_ToolCalls_ThenFinalResponse(t *testing.T) {
 		SendResponse: false,
 	}
 
-	content, iterations, err := al.runLLMIteration(context.Background(), agent, messages, opts)
+	content, _, _, iterations, err := al.runLLMIteration(context.Background(), agent, messages, opts)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1748,7 +1751,7 @@ func TestRunLLMIteration_MaxIterations(t *testing.T) {
 		SendResponse: false,
 	}
 
-	content, iterations, err := al.runLLMIteration(context.Background(), agent, messages, opts)
+	content, _, _, iterations, err := al.runLLMIteration(context.Background(), agent, messages, opts)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -2046,7 +2049,7 @@ func TestRunLLMIteration_ContextWindowError_Retry(t *testing.T) {
 		SendResponse: false,
 	}
 
-	content, _, err := al.runLLMIteration(context.Background(), agent, messages, opts)
+	content, _, _, _, err := al.runLLMIteration(context.Background(), agent, messages, opts)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
