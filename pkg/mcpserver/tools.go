@@ -240,6 +240,12 @@ func dispatchToolCall(
 		return fmt.Sprintf("agent %q has no registered tool registry", agentName), true
 	}
 
+	if _, toolOK := reg.Get(toolName); !toolOK {
+		logger.WarnCF("mcpserver", "MCP tool not in agent registry",
+			map[string]any{"agent": agentName, "tool": toolName, "reason": "tool_not_in_registry"})
+		return aclDeniedMessage, true
+	}
+
 	if policy == nil {
 		policy = acl.Default
 	}

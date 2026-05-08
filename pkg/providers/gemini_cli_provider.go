@@ -234,9 +234,22 @@ func (p *GeminiCliProvider) parseGeminiCliResponse(output string) (*LLMResponse,
 		}
 	}
 
+	totalErrors := 0
+	for _, m := range resp.Stats.Models {
+		totalErrors += m.API.TotalErrors
+	}
+
+	finishReason := "stop"
+	normal := true
+	if totalErrors > 0 {
+		finishReason = "error"
+		normal = false
+	}
+
 	result := &LLMResponse{
 		Content:      strings.TrimSpace(content),
-		FinishReason: "stop",
+		FinishReason: finishReason,
+		Normal:       normal,
 		Usage:        usage,
 	}
 
@@ -247,6 +260,9 @@ func (p *GeminiCliProvider) parseGeminiCliResponse(output string) (*LLMResponse,
 		logFields["prompt_tokens"] = usage.PromptTokens
 		logFields["completion_tokens"] = usage.CompletionTokens
 		logFields["total_tokens"] = usage.TotalTokens
+	}
+	if totalErrors > 0 {
+		logFields["total_errors"] = totalErrors
 	}
 	logger.InfoCF("provider", "gemini-cli response", logFields)
 
@@ -265,9 +281,17 @@ type geminiCliStatsBlock struct {
 	Models map[string]geminiCliModelStats `json:"models"`
 }
 
-// geminiCliModelStats holds token usage for a single model in the stats block.
+// geminiCliModelStats holds token usage and API stats for a single model in the stats block.
 type geminiCliModelStats struct {
-	Tokens geminiCliTokens `json:"tokens"`
+	API    geminiCliAPIStats `json:"api"`
+	Tokens geminiCliTokens   `json:"tokens"`
+}
+
+// geminiCliAPIStats holds API call counts for a single model.
+type geminiCliAPIStats struct {
+	TotalRequests  int `json:"totalRequests"`
+	TotalErrors    int `json:"totalErrors"`
+	TotalLatencyMs int `json:"totalLatencyMs"`
 }
 
 // geminiCliTokens holds the token counts for a model.

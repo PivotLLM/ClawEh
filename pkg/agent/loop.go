@@ -65,8 +65,18 @@ type AgentLoop struct {
 	// mutex and never process concurrently. Entries are never evicted; for typical
 	// deployments with a bounded number of active sessions the cost is negligible
 	// (one *sync.Mutex per session key).
-	sessionMus sync.Map
-	dumpsDir   string
+	sessionMus          sync.Map
+	sessionCancelStates sync.Map // scope key → *sessionCancelState
+	dumpsDir            string
+}
+
+// sessionCancelState tracks a pending cancel request for a session. When
+// pending is set, goroutines waiting for the session mutex will skip themselves
+// rather than process, incrementing skipCount. The /cancel command reads and
+// resets both fields.
+type sessionCancelState struct {
+	pending   atomic.Bool
+	skipCount atomic.Int32
 }
 
 // processOptions configures how a message is processed
@@ -83,9 +93,8 @@ type processOptions struct {
 }
 
 const (
-	defaultResponse        = "I've completed processing but have no response to give. Increase `max_tool_iterations` in config.json."
-	emptyProviderResponse  = "The AI provider returned an empty response. Check provider logs for details."
-	sessionKeyAgentPrefix     = "agent:"
+	defaultResponse       = "I've completed processing but have no response to give. Increase `max_tool_iterations` in config.json."
+	sessionKeyAgentPrefix = "agent:"
 	metadataKeyAccountID           = "account_id"
 	metadataKeyGuildID             = "guild_id"
 	metadataKeyTeamID              = "team_id"
@@ -367,6 +376,20 @@ func (al *AgentLoop) getOrCreateSessionMu(key string) *sync.Mutex {
 	return actual.(*sync.Mutex)
 }
 
+// getOrCreateCancelState returns the per-session cancel state for the given key,
+// creating one if it does not already exist.
+func (al *AgentLoop) getOrCreateCancelState(key string) *sessionCancelState {
+	cs := &sessionCancelState{}
+	actual, _ := al.sessionCancelStates.LoadOrStore(key, cs)
+	return actual.(*sessionCancelState)
+}
+
+// isCancelCommand returns true if the message content is a /cancel command.
+func (al *AgentLoop) isCancelCommand(content string) bool {
+	name, ok := commands.ParseCommandName(content)
+	return ok && name == "cancel"
+}
+
 // processSessionMessage dispatches a single inbound message within its session's
 // serialized goroutine. Messages sharing the same session scope key (resolved via
 // resolveMessageRoute) are ordered via a per-session mutex so concurrent sessions
@@ -392,9 +415,20 @@ func (al *AgentLoop) processSessionMessage(ctx context.Context, msg bus.InboundM
 		msg.SessionKey = scopeKey
 	}
 
+	isCancelCmd := al.isCancelCommand(msg.Content)
+	if isCancelCmd {
+		al.getOrCreateCancelState(dispatchKey).pending.Store(true)
+	}
+
 	mu := al.getOrCreateSessionMu(dispatchKey)
 	mu.Lock()
 	defer mu.Unlock()
+
+	cs := al.getOrCreateCancelState(dispatchKey)
+	if cs.pending.Load() && !isCancelCmd {
+		cs.skipCount.Add(1)
+		return
+	}
 
 	var roundSent atomic.Bool
 	msgCtx := tools.WithRoundSentFlag(ctx, &roundSent)
@@ -1220,7 +1254,7 @@ func (al *AgentLoop) runAgentLoop(
 	}
 
 	// 3. Run LLM iteration loop
-	finalContent, iteration, err := al.runLLMIteration(ctx, agent, messages, opts)
+	finalContent, normal, finishReason, iteration, err := al.runLLMIteration(ctx, agent, messages, opts)
 	if err != nil {
 		return "", err
 	}
@@ -1228,16 +1262,22 @@ func (al *AgentLoop) runAgentLoop(
 	// If last tool had ForUser content and we already sent it, we might not need to send final response
 	// This is controlled by the tool's Silent flag and ForUser content
 
-	// 4. Handle empty response — system error messages are sent to the user but
-	// NOT saved to the LLM message history so the LLM does not regurgitate them.
+	// 4. Handle empty response.
+	// Normal termination with no content means the LLM has nothing to say (e.g., message
+	// was @-directed at another agent). Non-normal termination means something went wrong.
 	isSystemError := false
 	if finalContent == "" {
-		isSystemError = true
-		if iteration <= 1 {
-			finalContent = emptyProviderResponse
-		} else {
-			finalContent = opts.DefaultResponse
+		if normal {
+			logger.DebugCF("agent", "LLM returned empty response with normal termination",
+				map[string]any{
+					"agent_id":      agent.ID,
+					"session_key":   opts.SessionKey,
+					"finish_reason": finishReason,
+				})
+			return "", nil
 		}
+		isSystemError = true
+		finalContent = fmt.Sprintf("The AI provider returned an empty response (finish reason: %s). Check provider logs for details.", finishReason)
 	}
 
 	// 5. Save final assistant message to session (skip system error strings)
@@ -1339,9 +1379,11 @@ func (al *AgentLoop) runLLMIteration(
 	agent *AgentInstance,
 	messages []providers.Message,
 	opts processOptions,
-) (string, int, error) {
+) (string, bool, string, int, error) {
 	iteration := 0
 	var finalContent string
+	lastNormal := false
+	lastFinishReason := "max_iterations"
 
 	// Inject agent ID into context so provider error log entries can attribute
 	// failures to the specific agent without correlating timestamps.
@@ -1554,7 +1596,7 @@ func (al *AgentLoop) runLLMIteration(
 				})
 				select {
 				case <-ctx.Done():
-					return "", 0, ctx.Err()
+					return "", false, "", 0, ctx.Err()
 				case <-time.After(backoff):
 				}
 				continue
@@ -1617,7 +1659,7 @@ func (al *AgentLoop) runLLMIteration(
 					"model":     activeModel,
 					"error":     err.Error(),
 				})
-			return "", iteration, fmt.Errorf("LLM call failed after retries: %w", err)
+			return "", false, "", iteration, fmt.Errorf("LLM call failed after retries: %w", err)
 		}
 
 		// Dump responses when enabled.
@@ -1653,6 +1695,8 @@ func (al *AgentLoop) runLLMIteration(
 			if finalContent == "" && response.ReasoningContent != "" {
 				finalContent = response.ReasoningContent
 			}
+			lastNormal = response.Normal
+			lastFinishReason = response.FinishReason
 			logger.InfoCF("agent", "LLM response without tool calls (direct answer)",
 				map[string]any{
 					"agent_id":      agent.ID,
@@ -1901,7 +1945,7 @@ func (al *AgentLoop) runLLMIteration(
 		})
 	}
 
-	return finalContent, iteration, nil
+	return finalContent, lastNormal, lastFinishReason, iteration, nil
 }
 
 // selectCandidates returns the model candidates and resolved model name to use
@@ -2519,6 +2563,14 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 		rt.ResetCooldown = func() {
 			if al.fallback != nil {
 				al.fallback.Reset()
+			}
+		}
+		if opts != nil {
+			sessionKey := opts.SessionKey
+			rt.CancelPending = func() int {
+				cs := al.getOrCreateCancelState(sessionKey)
+				cs.pending.Store(false)
+				return int(cs.skipCount.Swap(0))
 			}
 		}
 		rt.RetriggerLastMessage = func(ctx context.Context) error {

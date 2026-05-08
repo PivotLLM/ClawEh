@@ -619,6 +619,7 @@ func parseResponse(output *bedrockruntime.ConverseOutput) (*LLMResponse, error) 
 		Content:      content.String(),
 		ToolCalls:    toolCalls,
 		FinishReason: finishReason,
+		Normal:       finishReason == "stop" || finishReason == "tool_calls",
 		Usage:        usage,
 	}, nil
 }

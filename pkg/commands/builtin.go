@@ -12,7 +12,9 @@ func BuiltinDefinitions() []Definition {
 		listCommand(),
 		switchCommand(),
 		checkCommand(),
+		cancelCommand(),
 		clearCommand(),
 		retryCommand(),
+		versionCommand(),
 	}
 }

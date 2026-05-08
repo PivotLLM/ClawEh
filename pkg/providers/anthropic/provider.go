@@ -374,6 +374,7 @@ func parseResponse(resp *anthropic.Message) *LLMResponse {
 		Reasoning:    reasoning.String(),
 		ToolCalls:    toolCalls,
 		FinishReason: finishReason,
+		Normal:       finishReason == "stop" || finishReason == "tool_calls",
 		Usage: &UsageInfo{
 			PromptTokens:     int(resp.Usage.InputTokens),
 			CompletionTokens: int(resp.Usage.OutputTokens),

@@ -18,30 +18,25 @@ func TestSpawnTool_Execute_NilManagerExtra(t *testing.T) {
 	}
 }
 
-func TestSpawnTool_Execute_AllowlistCallerAgentID(t *testing.T) {
+func TestSpawnTool_Execute_SelfSpawnSkipsAllowlist(t *testing.T) {
 	sm := NewSubagentManager(SubagentManagerConfig{})
 	sm.callerAgentID = "parent-agent"
 	tool := NewSpawnTool(sm)
 
-	// Allowlist check uses callerAgentID when agentID arg is "".
-	denied := false
+	// Self-spawns (no agent_id) must not consult the allowlist at all —
+	// authorization comes from the tool being registered in the agent's registry.
+	checkerCalled := false
 	tool.SetAllowlistChecker(func(targetAgentID string) bool {
-		if targetAgentID == "parent-agent" {
-			denied = true
-			return false
-		}
-		return true
+		checkerCalled = true
+		return false
 	})
 
-	result := tool.Execute(t.Context(), map[string]any{
+	// No "agent_id" — self-spawn path.
+	tool.Execute(t.Context(), map[string]any{
 		"task": "do something",
-		// No "agent_id" — will use callerAgentID from manager.
 	})
-	if !denied {
-		t.Error("expected allowlist checker to be called with callerAgentID")
-	}
-	if !result.IsError {
-		t.Error("Execute() should error when allowlist denies")
+	if checkerCalled {
+		t.Error("allowlist checker must not be called for self-spawns (no agent_id)")
 	}
 }
 

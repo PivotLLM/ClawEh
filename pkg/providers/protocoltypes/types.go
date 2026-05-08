@@ -29,6 +29,7 @@ type LLMResponse struct {
 	ReasoningContent string            `json:"reasoning_content,omitempty"`
 	ToolCalls        []ToolCall        `json:"tool_calls,omitempty"`
 	FinishReason     string            `json:"finish_reason"`
+	Normal           bool              `json:"normal"`
 	Usage            *UsageInfo        `json:"usage,omitempty"`
 	Reasoning        string            `json:"reasoning"`
 	ReasoningDetails []ReasoningDetail `json:"reasoning_details"`

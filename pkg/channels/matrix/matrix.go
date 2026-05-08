@@ -1105,7 +1105,8 @@ func (c *MatrixChannel) stripSelfMention(text string) string {
 }
 
 func matrixMediaTempDir() (string, error) {
-	mediaDir := filepath.Join(os.TempDir(), matrixMediaTempDirName)
+	dirName := fmt.Sprintf("%s_%d", matrixMediaTempDirName, os.Getuid())
+	mediaDir := filepath.Join(os.TempDir(), dirName)
 	if err := os.MkdirAll(mediaDir, 0o700); err != nil {
 		return "", err
 	}

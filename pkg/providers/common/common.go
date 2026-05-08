@@ -170,6 +170,7 @@ func ParseResponse(body io.Reader) (*LLMResponse, error) {
 		return &LLMResponse{
 			Content:      "",
 			FinishReason: "stop",
+			Normal:       false,
 		}, nil
 	}
 
@@ -215,6 +216,7 @@ func ParseResponse(body io.Reader) (*LLMResponse, error) {
 		ReasoningDetails: choice.Message.ReasoningDetails,
 		ToolCalls:        toolCalls,
 		FinishReason:     choice.FinishReason,
+		Normal:           choice.FinishReason == "stop" || choice.FinishReason == "tool_calls",
 		Usage:            apiResponse.Usage,
 	}, nil
 }
