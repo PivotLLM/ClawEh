@@ -298,21 +298,22 @@ func (p *ClaudeCliProvider) parseClaudeCliResponse(output string) (*LLMResponse,
 }
 
 // buildClaudeCliStatus constructs a DispatchStatus from the parsed claude CLI response.
-// The Model field is pulled from the first key of modelUsage (the exact dated id,
-// e.g. "claude-haiku-4-5-20251001"). BytesSent / BytesReceived are filled in by Chat().
+// BytesSent / BytesReceived are filled in by Chat().
+//
+// The Model field is resolved from the envelope's per-model usage breakdown:
+// the CLI's top-level `model` is the *last* model it spoke to (often a helper
+// tier such as a haiku) and is misleading when a higher-tier model did the
+// bulk of the work. resolveClaudeCliPrimaryModel picks the modelUsage entry
+// with the largest token total instead, and falls back to the headline
+// `model` field when that breakdown is missing or unusable.
 func buildClaudeCliStatus(resp *claudeCliJSONResponse) *DispatchStatus {
 	stopReason := resp.StopReason
 	if resp.IsError && stopReason == "" {
 		stopReason = "error"
 	}
-	var model string
-	for k := range resp.ModelUsage {
-		model = k
-		break
-	}
 	return &DispatchStatus{
 		Success:             !resp.IsError,
-		Model:               model,
+		Model:               resolveClaudeCliPrimaryModel(resp),
 		NumTurns:            resp.NumTurns,
 		InputTokens:         resp.Usage.InputTokens,
 		OutputTokens:        resp.Usage.OutputTokens,
@@ -322,6 +323,53 @@ func buildClaudeCliStatus(resp *claudeCliJSONResponse) *DispatchStatus {
 		CostUSD:             resp.TotalCostUSD,
 		DurationMs:          int64(resp.DurationMS),
 	}
+}
+
+// resolveClaudeCliPrimaryModel picks the "primary" model for a claude CLI
+// response envelope.
+//
+// Rule: among the entries in modelUsage, choose the one whose total token
+// count (input + output + cache_read + cache_creation) is largest. Ties are
+// broken by lexicographically smallest key so the result is deterministic.
+// Any trailing context-window suffix (e.g. "[1m]") is stripped so the
+// reported value is a bare model id.
+//
+// Fallback: if modelUsage is missing, empty, or every entry sums to zero
+// tokens, return the envelope's headline `model` field unchanged. A blank
+// fallback is preserved as blank rather than substituted.
+func resolveClaudeCliPrimaryModel(resp *claudeCliJSONResponse) string {
+	bestKey := ""
+	bestTotal := 0
+	for k, row := range resp.ModelUsage {
+		total := row.InputTokens + row.OutputTokens +
+			row.CacheReadInputTokens + row.CacheCreationInputTokens
+		if total <= 0 {
+			continue
+		}
+		if bestKey == "" || total > bestTotal || (total == bestTotal && k < bestKey) {
+			bestKey = k
+			bestTotal = total
+		}
+	}
+	if bestKey == "" {
+		return resp.Model
+	}
+	return stripModelContextSuffix(bestKey)
+}
+
+// stripModelContextSuffix removes a trailing context-window marker like
+// "[1m]" (or any "[...]" run at the end) from a model id so DispatchStatus
+// records a bare model identifier. Whitespace between the id and the suffix
+// is also trimmed.
+func stripModelContextSuffix(model string) string {
+	model = strings.TrimSpace(model)
+	if !strings.HasSuffix(model, "]") {
+		return model
+	}
+	if i := strings.LastIndex(model, "["); i > 0 {
+		return strings.TrimSpace(model[:i])
+	}
+	return model
 }
 
 // claudeCliJSONResponse represents the JSON output from the claude CLI.
@@ -337,6 +385,7 @@ type claudeCliJSONResponse struct {
 	DurationAPI  int                               `json:"duration_api_ms"`
 	NumTurns     int                               `json:"num_turns"`
 	StopReason   string                            `json:"stop_reason"`
+	Model        string                            `json:"model"`
 	Usage        claudeCliUsageInfo                `json:"usage"`
 	ModelUsage   map[string]claudeCliModelUsageRow `json:"modelUsage"`
 }

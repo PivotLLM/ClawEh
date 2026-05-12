@@ -2,6 +2,7 @@ package providers
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -861,7 +862,10 @@ func TestParseClaudeCliResponse_DispatchStatusFromFixture(t *testing.T) {
 // the error return.
 func TestParseClaudeCliResponse_DispatchStatusOnError(t *testing.T) {
 	p := NewClaudeCliProvider("", "/workspace", nil, nil)
-	output := `{"type":"result","subtype":"error","is_error":true,"result":"rate limited","duration_ms":100,"num_turns":0,"modelUsage":{"claude-haiku-4-5-20251001":{}}}`
+	// All-zero modelUsage entries force resolveClaudeCliPrimaryModel to fall
+	// back to the headline `model` field, which is what the CLI emits when it
+	// errored before any model dispatched real tokens.
+	output := `{"type":"result","subtype":"error","is_error":true,"result":"rate limited","duration_ms":100,"num_turns":0,"model":"claude-haiku-4-5-20251001","modelUsage":{"claude-haiku-4-5-20251001":{}}}`
 
 	resp, err := p.parseClaudeCliResponse(output)
 	if err == nil {
@@ -878,5 +882,143 @@ func TestParseClaudeCliResponse_DispatchStatusOnError(t *testing.T) {
 	}
 	if resp.Status.StopReason != "error" {
 		t.Errorf("StopReason = %q, want error", resp.Status.StopReason)
+	}
+}
+
+// --- Primary model resolution tests ---
+
+// TestResolveClaudeCliPrimaryModel exercises the resolveClaudeCliPrimaryModel
+// rule: pick the modelUsage entry with the highest total token count (input
+// + output + cache_read + cache_creation), break ties by lexicographically
+// smallest key, strip any trailing context-window suffix like "[1m]", and
+// fall back to the envelope's headline `model` field when modelUsage is
+// missing, empty, or every entry totals zero.
+func TestResolveClaudeCliPrimaryModel(t *testing.T) {
+	tests := []struct {
+		name string
+		json string
+		want string
+	}{
+		{
+			name: "opus dominant with haiku helper picks opus bare id",
+			json: `{
+				"model":"claude-haiku-4-5-20251001",
+				"modelUsage":{
+					"claude-opus-4-7-20260115":{"inputTokens":1000,"outputTokens":2000,"cacheReadInputTokens":50000,"cacheCreationInputTokens":10000},
+					"claude-haiku-4-5-20251001":{"inputTokens":100,"outputTokens":50,"cacheReadInputTokens":0,"cacheCreationInputTokens":0}
+				}
+			}`,
+			want: "claude-opus-4-7-20260115",
+		},
+		{
+			name: "context-window suffix [1m] stripped from primary id",
+			json: `{
+				"model":"claude-haiku-4-5-20251001",
+				"modelUsage":{
+					"claude-opus-4-7[1m]":{"inputTokens":1000,"outputTokens":2000,"cacheReadInputTokens":0,"cacheCreationInputTokens":0},
+					"claude-haiku-4-5-20251001":{"inputTokens":10,"outputTokens":5,"cacheReadInputTokens":0,"cacheCreationInputTokens":0}
+				}
+			}`,
+			want: "claude-opus-4-7",
+		},
+		{
+			name: "missing modelUsage falls back to headline model",
+			json: `{"model":"claude-haiku-4-5-20251001"}`,
+			want: "claude-haiku-4-5-20251001",
+		},
+		{
+			name: "empty modelUsage map falls back to headline model",
+			json: `{"model":"claude-haiku-4-5-20251001","modelUsage":{}}`,
+			want: "claude-haiku-4-5-20251001",
+		},
+		{
+			name: "all-zero modelUsage entries fall back to headline model",
+			json: `{
+				"model":"claude-haiku-4-5-20251001",
+				"modelUsage":{
+					"claude-opus-4-7-20260115":{"inputTokens":0,"outputTokens":0,"cacheReadInputTokens":0,"cacheCreationInputTokens":0},
+					"claude-haiku-4-5-20251001":{"inputTokens":0,"outputTokens":0,"cacheReadInputTokens":0,"cacheCreationInputTokens":0}
+				}
+			}`,
+			want: "claude-haiku-4-5-20251001",
+		},
+		{
+			name: "tie on total tokens broken by lexicographically smallest key",
+			json: `{
+				"model":"claude-zzz",
+				"modelUsage":{
+					"claude-sonnet-4-6":{"inputTokens":100,"outputTokens":100,"cacheReadInputTokens":0,"cacheCreationInputTokens":0},
+					"claude-opus-4-7":{"inputTokens":100,"outputTokens":100,"cacheReadInputTokens":0,"cacheCreationInputTokens":0}
+				}
+			}`,
+			want: "claude-opus-4-7",
+		},
+		{
+			name: "missing token fields treated as zero; non-zero entry wins",
+			json: `{
+				"model":"claude-haiku-4-5-20251001",
+				"modelUsage":{
+					"claude-opus-4-7-20260115":{"outputTokens":42},
+					"claude-haiku-4-5-20251001":{}
+				}
+			}`,
+			want: "claude-opus-4-7-20260115",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var resp claudeCliJSONResponse
+			if err := json.Unmarshal([]byte(tc.json), &resp); err != nil {
+				t.Fatalf("setup: failed to unmarshal envelope: %v", err)
+			}
+			got := resolveClaudeCliPrimaryModel(&resp)
+			if got != tc.want {
+				t.Errorf("resolveClaudeCliPrimaryModel() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestResolveClaudeCliPrimaryModel_UnparseableUsesFallback verifies that when
+// the envelope cannot be decoded into the modelUsage shape (e.g. modelUsage
+// is the wrong JSON type), parsing fails before resolution runs — and that
+// when the modelUsage block is simply absent we fall back to the headline
+// model rather than panicking on a nil map.
+func TestResolveClaudeCliPrimaryModel_UnparseableUsesFallback(t *testing.T) {
+	// Wrong-type modelUsage: a JSON array where a map is expected. Parsing
+	// must fail (not panic) before resolveClaudeCliPrimaryModel ever runs.
+	var resp claudeCliJSONResponse
+	err := json.Unmarshal([]byte(`{"model":"claude-haiku-4-5-20251001","modelUsage":[1,2,3]}`), &resp)
+	if err == nil {
+		t.Fatal("expected json.Unmarshal to fail on array modelUsage, got nil")
+	}
+
+	// Nil-map case: a perfectly valid envelope with no modelUsage key at all
+	// must not panic and must fall back to the headline model.
+	resp = claudeCliJSONResponse{Model: "claude-haiku-4-5-20251001"}
+	if got := resolveClaudeCliPrimaryModel(&resp); got != "claude-haiku-4-5-20251001" {
+		t.Errorf("nil-map fallback = %q, want %q", got, "claude-haiku-4-5-20251001")
+	}
+}
+
+// TestStripModelContextSuffix covers the suffix-stripping helper directly so
+// regressions in the matching rule are easy to localise.
+func TestStripModelContextSuffix(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{"claude-opus-4-7", "claude-opus-4-7"},
+		{"claude-opus-4-7[1m]", "claude-opus-4-7"},
+		{"claude-opus-4-7 [1m]", "claude-opus-4-7"},
+		{"claude-opus-4-7[200k]", "claude-opus-4-7"},
+		{"", ""},
+		{"[1m]", "[1m]"}, // no model id before the suffix: leave untouched
+	}
+	for _, tc := range tests {
+		if got := stripModelContextSuffix(tc.in); got != tc.want {
+			t.Errorf("stripModelContextSuffix(%q) = %q, want %q", tc.in, got, tc.want)
+		}
 	}
 }
