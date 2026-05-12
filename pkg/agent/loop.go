@@ -93,14 +93,14 @@ type processOptions struct {
 }
 
 const (
-	defaultResponse       = "I've completed processing but have no response to give. Increase `max_tool_iterations` in config.json."
-	sessionKeyAgentPrefix = "agent:"
-	metadataKeyAccountID           = "account_id"
-	metadataKeyGuildID             = "guild_id"
-	metadataKeyTeamID              = "team_id"
-	metadataKeyParentPeerKind      = "parent_peer_kind"
-	metadataKeyParentPeerID        = "parent_peer_id"
-	metadataKeyPreresolvedAgentID  = "preresolved_agent_id"
+	defaultResponse               = "I've completed processing but have no response to give. Increase `max_tool_iterations` in config.json."
+	sessionKeyAgentPrefix         = "agent:"
+	metadataKeyAccountID          = "account_id"
+	metadataKeyGuildID            = "guild_id"
+	metadataKeyTeamID             = "team_id"
+	metadataKeyParentPeerKind     = "parent_peer_kind"
+	metadataKeyParentPeerID       = "parent_peer_id"
+	metadataKeyPreresolvedAgentID = "preresolved_agent_id"
 )
 
 func NewAgentLoop(
@@ -1441,13 +1441,13 @@ func (al *AgentLoop) runLLMIteration(
 		// Log LLM request details
 		logger.DebugCF("agent", "LLM request",
 			map[string]any{
-				"agent_id":          agent.ID,
-				"iteration":         iteration,
-				"model":             activeModel,
-				"messages_count":    len(messages),
-				"tools_count":       len(providerToolDefs),
-				"max_tokens":        agent.MaxTokens,
-				"temperature":       agent.Temperature,
+				"agent_id":       agent.ID,
+				"iteration":      iteration,
+				"model":          activeModel,
+				"messages_count": len(messages),
+				"tools_count":    len(providerToolDefs),
+				"max_tokens":     agent.MaxTokens,
+				"temperature":    agent.Temperature,
 				"system_prompt_len": func() int {
 					if len(messages) > 0 {
 						return len(messages[0].Content)
@@ -1490,6 +1490,12 @@ func (al *AgentLoop) runLLMIteration(
 			}
 		}
 
+		// activeProvider tracks the protocol name surfaced in the finish event.
+		activeProvider := ""
+		if len(activeCandidates) > 0 {
+			activeProvider = activeCandidates[0].Provider
+		}
+
 		callLLM := func() (*providers.LLMResponse, error) {
 			al.activeRequests.Add(1)
 			defer al.activeRequests.Done()
@@ -1511,15 +1517,8 @@ func (al *AgentLoop) runLLMIteration(
 					return nil, fbErr
 				}
 				if fbResult.Provider != "" {
-					if len(fbResult.Attempts) == 0 {
-						logger.InfoCF("agent", "LLM call succeeded",
-							map[string]any{
-								"agent_id":  agent.ID,
-								"provider":  fbResult.Provider,
-								"model":     fbResult.Model,
-								"iteration": iteration,
-							})
-					} else {
+					activeProvider = fbResult.Provider
+					if len(fbResult.Attempts) > 0 {
 						logger.InfoCF(
 							"agent",
 							fmt.Sprintf("Fallback: succeeded with %s/%s after %d attempts",
@@ -1557,7 +1556,18 @@ func (al *AgentLoop) runLLMIteration(
 		// Retry loop for context/token errors
 		maxRetries := 2
 		for retry := 0; retry <= maxRetries; retry++ {
+			logger.InfoCF("agent", "LLM dispatch", map[string]any{
+				"agent_id":     agent.ID,
+				"iteration":    iteration,
+				"provider":     activeProvider,
+				"model":        activeModel,
+				"num_messages": len(messages),
+				"num_tools":    len(providerToolDefs),
+				"max_tokens":   agent.MaxTokens,
+			})
+			dispatchStart := time.Now()
 			response, err = callLLM()
+			emitLLMFinishEvent(agent.ID, iteration, activeProvider, activeModel, dispatchStart, response, err)
 			if err == nil {
 				break
 			}
@@ -2309,10 +2319,10 @@ func (al *AgentLoop) summarizeSession(agent *AgentInstance, sessionKey string) {
 		agent.Sessions.Save(sessionKey)
 		logger.WarnCF("agent", "Post-summarization context still over threshold; applied aggressive truncation",
 			map[string]any{
-				"session_key":     sessionKey,
-				"token_estimate":  tokenEstimate,
-				"threshold":       threshold,
-				"history_after":   2,
+				"session_key":    sessionKey,
+				"token_estimate": tokenEstimate,
+				"threshold":      threshold,
+				"history_after":  2,
 			})
 	}
 }

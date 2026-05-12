@@ -87,12 +87,19 @@ func (p *ClaudeCliProvider) Chat(
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	if err := cmd.Run(); err != nil {
+	bytesSent := int64(len(prompt))
+	started := time.Now()
+	runErr := cmd.Run()
+	elapsed := time.Since(started)
+	bytesReceived := int64(stdout.Len())
+
+	if runErr != nil {
 		if ctx.Err() == context.DeadlineExceeded {
-			return nil, fmt.Errorf("claude cli timed out after %s: %w", p.timeout, context.DeadlineExceeded)
+			return cliErrorResponse(model, "timeout", elapsed, bytesSent, bytesReceived),
+				fmt.Errorf("claude cli timed out after %s: %w", p.timeout, context.DeadlineExceeded)
 		}
 		if ctx.Err() == context.Canceled {
-			return nil, ctx.Err()
+			return cliErrorResponse(model, "canceled", elapsed, bytesSent, bytesReceived), ctx.Err()
 		}
 
 		// Attempt to parse stdout before treating as error — claude CLI may exit non-zero
@@ -101,8 +108,12 @@ func (p *ClaudeCliProvider) Chat(
 			if resp, parseErr := p.parseClaudeCliResponse(stdoutStr); parseErr == nil && resp.Content != "" {
 				exitCode := -1
 				var exitErr *exec.ExitError
-				if errors.As(err, &exitErr) {
+				if errors.As(runErr, &exitErr) {
 					exitCode = exitErr.ExitCode()
+				}
+				if resp.Status != nil {
+					resp.Status.BytesSent = bytesSent
+					resp.Status.BytesReceived = bytesReceived
 				}
 				logger.WarnCF("provider", "claude-cli exited non-zero but returned valid content",
 					map[string]any{"exit_code": exitCode})
@@ -112,7 +123,7 @@ func (p *ClaudeCliProvider) Chat(
 
 		exitCode := -1
 		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
+		if errors.As(runErr, &exitErr) {
 			exitCode = exitErr.ExitCode()
 		}
 		stderrStr := strings.TrimSpace(stderr.String())
@@ -126,15 +137,16 @@ func (p *ClaudeCliProvider) Chat(
 			fields["stdout"] = stdoutStr
 		}
 		logger.ErrorCF("provider", "claude-cli subprocess failed", fields)
+		errResp := cliErrorResponse(model, "error", elapsed, bytesSent, bytesReceived)
 		switch {
 		case stderrStr != "" && stdoutStr != "":
-			return nil, fmt.Errorf("claude cli error: %w\nstderr: %s\nstdout: %s", err, stderrStr, stdoutStr)
+			return errResp, fmt.Errorf("claude cli error: %w\nstderr: %s\nstdout: %s", runErr, stderrStr, stdoutStr)
 		case stderrStr != "":
-			return nil, fmt.Errorf("claude cli error: %s", stderrStr)
+			return errResp, fmt.Errorf("claude cli error: %s", stderrStr)
 		case stdoutStr != "":
-			return nil, fmt.Errorf("claude cli error: %w\noutput: %s", err, stdoutStr)
+			return errResp, fmt.Errorf("claude cli error: %w\noutput: %s", runErr, stdoutStr)
 		default:
-			return nil, fmt.Errorf("claude cli error: %w", err)
+			return errResp, fmt.Errorf("claude cli error: %w", runErr)
 		}
 	}
 
@@ -144,9 +156,13 @@ func (p *ClaudeCliProvider) Chat(
 			map[string]any{"stderr": stderrStr})
 	}
 
-	resp, err := p.parseClaudeCliResponse(stdout.String())
-	if err != nil {
-		return nil, err
+	resp, parseErr := p.parseClaudeCliResponse(stdout.String())
+	if parseErr != nil {
+		return cliErrorResponse(model, "parse_error", elapsed, bytesSent, bytesReceived), parseErr
+	}
+	if resp.Status != nil {
+		resp.Status.BytesSent = bytesSent
+		resp.Status.BytesReceived = bytesReceived
 	}
 	if resp.Content == "" {
 		warnFields := map[string]any{}
@@ -156,6 +172,21 @@ func (p *ClaudeCliProvider) Chat(
 		logger.WarnCF("provider", "claude-cli returned empty content", warnFields)
 	}
 	return resp, nil
+}
+
+// cliErrorResponse builds an LLMResponse whose Status records a failed CLI dispatch
+// with best-effort byte counts and elapsed time.
+func cliErrorResponse(model, stopReason string, elapsed time.Duration, bytesSent, bytesReceived int64) *LLMResponse {
+	return &LLMResponse{
+		Status: &DispatchStatus{
+			Success:       false,
+			Model:         model,
+			StopReason:    stopReason,
+			DurationMs:    elapsed.Milliseconds(),
+			BytesSent:     bytesSent,
+			BytesReceived: bytesReceived,
+		},
+	}
 }
 
 // GetDefaultModel returns the default model identifier.
@@ -225,8 +256,10 @@ func (p *ClaudeCliProvider) parseClaudeCliResponse(output string) (*LLMResponse,
 		return nil, fmt.Errorf("failed to parse claude cli response: %w", err)
 	}
 
+	status := buildClaudeCliStatus(&resp)
+
 	if resp.IsError {
-		return nil, fmt.Errorf("claude cli returned error: %s", resp.Result)
+		return &LLMResponse{Status: status}, fmt.Errorf("claude cli returned error: %s", resp.Result)
 	}
 
 	// CLI is itself agentic — its `result` is the final assistant text.
@@ -249,9 +282,10 @@ func (p *ClaudeCliProvider) parseClaudeCliResponse(output string) (*LLMResponse,
 		FinishReason: finishReason,
 		Normal:       true,
 		Usage:        usage,
+		Status:       status,
 	}
 
-	logger.InfoCF("provider", "claude-cli response",
+	logger.DebugCF("provider", "claude-cli response",
 		map[string]any{
 			"subtype":       resp.Subtype,
 			"num_turns":     resp.NumTurns,
@@ -263,19 +297,57 @@ func (p *ClaudeCliProvider) parseClaudeCliResponse(output string) (*LLMResponse,
 	return result, nil
 }
 
+// buildClaudeCliStatus constructs a DispatchStatus from the parsed claude CLI response.
+// The Model field is pulled from the first key of modelUsage (the exact dated id,
+// e.g. "claude-haiku-4-5-20251001"). BytesSent / BytesReceived are filled in by Chat().
+func buildClaudeCliStatus(resp *claudeCliJSONResponse) *DispatchStatus {
+	stopReason := resp.StopReason
+	if resp.IsError && stopReason == "" {
+		stopReason = "error"
+	}
+	var model string
+	for k := range resp.ModelUsage {
+		model = k
+		break
+	}
+	return &DispatchStatus{
+		Success:             !resp.IsError,
+		Model:               model,
+		NumTurns:            resp.NumTurns,
+		InputTokens:         resp.Usage.InputTokens,
+		OutputTokens:        resp.Usage.OutputTokens,
+		CacheReadTokens:     resp.Usage.CacheReadInputTokens,
+		CacheCreationTokens: resp.Usage.CacheCreationInputTokens,
+		StopReason:          stopReason,
+		CostUSD:             resp.TotalCostUSD,
+		DurationMs:          int64(resp.DurationMS),
+	}
+}
+
 // claudeCliJSONResponse represents the JSON output from the claude CLI.
 // Matches the real claude CLI v2.x output format.
 type claudeCliJSONResponse struct {
-	Type         string             `json:"type"`
-	Subtype      string             `json:"subtype"`
-	IsError      bool               `json:"is_error"`
-	Result       string             `json:"result"`
-	SessionID    string             `json:"session_id"`
-	TotalCostUSD float64            `json:"total_cost_usd"`
-	DurationMS   int                `json:"duration_ms"`
-	DurationAPI  int                `json:"duration_api_ms"`
-	NumTurns     int                `json:"num_turns"`
-	Usage        claudeCliUsageInfo `json:"usage"`
+	Type         string                            `json:"type"`
+	Subtype      string                            `json:"subtype"`
+	IsError      bool                              `json:"is_error"`
+	Result       string                            `json:"result"`
+	SessionID    string                            `json:"session_id"`
+	TotalCostUSD float64                           `json:"total_cost_usd"`
+	DurationMS   int                               `json:"duration_ms"`
+	DurationAPI  int                               `json:"duration_api_ms"`
+	NumTurns     int                               `json:"num_turns"`
+	StopReason   string                            `json:"stop_reason"`
+	Usage        claudeCliUsageInfo                `json:"usage"`
+	ModelUsage   map[string]claudeCliModelUsageRow `json:"modelUsage"`
+}
+
+// claudeCliModelUsageRow captures one entry of the modelUsage map.
+type claudeCliModelUsageRow struct {
+	InputTokens              int     `json:"inputTokens"`
+	OutputTokens             int     `json:"outputTokens"`
+	CacheReadInputTokens     int     `json:"cacheReadInputTokens"`
+	CacheCreationInputTokens int     `json:"cacheCreationInputTokens"`
+	CostUSD                  float64 `json:"costUSD"`
 }
 
 // claudeCliUsageInfo represents token usage from the claude CLI response.

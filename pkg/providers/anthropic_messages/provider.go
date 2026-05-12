@@ -24,6 +24,7 @@ type (
 	FunctionCall           = protocoltypes.FunctionCall
 	LLMResponse            = protocoltypes.LLMResponse
 	UsageInfo              = protocoltypes.UsageInfo
+	DispatchStatus         = protocoltypes.DispatchStatus
 	Message                = protocoltypes.Message
 	ToolDefinition         = protocoltypes.ToolDefinition
 	ToolFunctionDefinition = protocoltypes.ToolFunctionDefinition
@@ -106,41 +107,72 @@ func (p *Provider) Chat(
 	req.Header.Set("X-API-Key", p.apiKey) //nolint:canonicalheader // Anthropic API requires exact header name
 	req.Header.Set("Anthropic-Version", defaultAPIVersion)
 
+	bytesSent := int64(len(jsonBody))
+
 	// Execute request
+	start := time.Now()
 	resp, err := p.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("executing HTTP request: %w", err)
+		elapsed := time.Since(start).Milliseconds()
+		return httpErrorResponse(model, "error", elapsed, bytesSent, 0),
+			fmt.Errorf("executing HTTP request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	// Read response body
 	body, err := io.ReadAll(resp.Body)
+	durationMs := time.Since(start).Milliseconds()
+	bytesReceived := int64(len(body))
 	if err != nil {
-		return nil, fmt.Errorf("reading response body: %w", err)
+		return httpErrorResponse(model, "error", durationMs, bytesSent, bytesReceived),
+			fmt.Errorf("reading response body: %w", err)
 	}
 
-	// Check for HTTP errors with detailed messages
-	switch resp.StatusCode {
-	case http.StatusUnauthorized:
-		return nil, fmt.Errorf("authentication failed (401): check your API key")
-	case http.StatusTooManyRequests:
-		return nil, fmt.Errorf("rate limited (429): %s", string(body))
-	case http.StatusBadRequest:
-		return nil, fmt.Errorf("bad request (400): %s", string(body))
-	case http.StatusNotFound:
-		return nil, fmt.Errorf("endpoint not found (404): %s", string(body))
-	case http.StatusInternalServerError:
-		return nil, fmt.Errorf("internal server error (500): %s", string(body))
-	case http.StatusServiceUnavailable:
-		return nil, fmt.Errorf("service unavailable (503): %s", string(body))
-	default:
-		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(body))
+	if resp.StatusCode != http.StatusOK {
+		errResp := httpErrorResponse(model, "error", durationMs, bytesSent, bytesReceived)
+		switch resp.StatusCode {
+		case http.StatusUnauthorized:
+			return errResp, fmt.Errorf("authentication failed (401): check your API key")
+		case http.StatusTooManyRequests:
+			return errResp, fmt.Errorf("rate limited (429): %s", string(body))
+		case http.StatusBadRequest:
+			return errResp, fmt.Errorf("bad request (400): %s", string(body))
+		case http.StatusNotFound:
+			return errResp, fmt.Errorf("endpoint not found (404): %s", string(body))
+		case http.StatusInternalServerError:
+			return errResp, fmt.Errorf("internal server error (500): %s", string(body))
+		case http.StatusServiceUnavailable:
+			return errResp, fmt.Errorf("service unavailable (503): %s", string(body))
+		default:
+			return errResp, fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(body))
 		}
 	}
 
-	// Parse response
-	return parseResponseBody(body)
+	out, err := parseResponseBody(body)
+	if err != nil {
+		return httpErrorResponse(model, "parse_error", durationMs, bytesSent, bytesReceived), err
+	}
+	if out.Status != nil {
+		out.Status.DurationMs = durationMs
+		out.Status.BytesSent = bytesSent
+		out.Status.BytesReceived = bytesReceived
+	}
+	return out, nil
+}
+
+// httpErrorResponse builds an LLMResponse with a partial DispatchStatus capturing
+// whatever byte counts and elapsed time were known when the error fired.
+func httpErrorResponse(model, stopReason string, durationMs, bytesSent, bytesReceived int64) *LLMResponse {
+	return &LLMResponse{
+		Status: &DispatchStatus{
+			Success:       false,
+			Model:         model,
+			StopReason:    stopReason,
+			DurationMs:    durationMs,
+			BytesSent:     bytesSent,
+			BytesReceived: bytesReceived,
+		},
+	}
 }
 
 // GetDefaultModel returns the default model for this provider.
@@ -322,6 +354,17 @@ func parseResponseBody(body []byte) (*LLMResponse, error) {
 		finishReason = "stop"
 	}
 
+	status := &DispatchStatus{
+		Success:             true,
+		Model:               resp.Model,
+		NumTurns:            1,
+		InputTokens:         int(resp.Usage.InputTokens),
+		OutputTokens:        int(resp.Usage.OutputTokens),
+		CacheReadTokens:     int(resp.Usage.CacheReadInputTokens),
+		CacheCreationTokens: int(resp.Usage.CacheCreationInputTokens),
+		StopReason:          resp.StopReason,
+	}
+
 	return &LLMResponse{
 		Content:      content.String(),
 		ToolCalls:    toolCalls,
@@ -332,6 +375,7 @@ func parseResponseBody(body []byte) (*LLMResponse, error) {
 			CompletionTokens: int(resp.Usage.OutputTokens),
 			TotalTokens:      int(resp.Usage.InputTokens + resp.Usage.OutputTokens),
 		},
+		Status: status,
 	}, nil
 }
 
@@ -411,6 +455,8 @@ type contentBlock struct {
 }
 
 type usageInfo struct {
-	InputTokens  int64 `json:"input_tokens"`
-	OutputTokens int64 `json:"output_tokens"`
+	InputTokens              int64 `json:"input_tokens"`
+	OutputTokens             int64 `json:"output_tokens"`
+	CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
 }

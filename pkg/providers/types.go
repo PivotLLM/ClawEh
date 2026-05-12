@@ -12,6 +12,7 @@ type (
 	FunctionCall           = protocoltypes.FunctionCall
 	LLMResponse            = protocoltypes.LLMResponse
 	UsageInfo              = protocoltypes.UsageInfo
+	DispatchStatus         = protocoltypes.DispatchStatus
 	Message                = protocoltypes.Message
 	ToolDefinition         = protocoltypes.ToolDefinition
 	ToolFunctionDefinition = protocoltypes.ToolFunctionDefinition

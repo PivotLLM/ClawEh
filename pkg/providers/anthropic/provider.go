@@ -4,8 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -18,6 +22,7 @@ type (
 	FunctionCall           = protocoltypes.FunctionCall
 	LLMResponse            = protocoltypes.LLMResponse
 	UsageInfo              = protocoltypes.UsageInfo
+	DispatchStatus         = protocoltypes.DispatchStatus
 	Message                = protocoltypes.Message
 	ToolDefinition         = protocoltypes.ToolDefinition
 	ToolFunctionDefinition = protocoltypes.ToolFunctionDefinition
@@ -94,24 +99,47 @@ func (p *Provider) Chat(
 		return nil, err
 	}
 
+	counter := &byteCounter{}
+	opts = append(opts, option.WithMiddleware(counter.middleware))
+
 	// OAuth/setup-tokens require streaming; API keys use non-streaming.
 	if p.tokenSource != nil {
-		return p.chatStreaming(ctx, params, opts)
+		return p.chatStreaming(ctx, params, opts, counter, model)
 	}
 
+	start := time.Now()
 	resp, err := p.client.Messages.New(ctx, params, opts...)
+	elapsed := time.Since(start).Milliseconds()
 	if err != nil {
-		return nil, fmt.Errorf("claude API call: %w", err)
+		return &LLMResponse{
+			Status: &DispatchStatus{
+				Success:       false,
+				Model:         model,
+				StopReason:    "error",
+				DurationMs:    elapsed,
+				BytesSent:     counter.sent(),
+				BytesReceived: counter.received(),
+			},
+		}, fmt.Errorf("claude API call: %w", err)
 	}
 
-	return parseResponse(resp), nil
+	out := parseResponse(resp)
+	if out.Status != nil {
+		out.Status.DurationMs = elapsed
+		out.Status.BytesSent = counter.sent()
+		out.Status.BytesReceived = counter.received()
+	}
+	return out, nil
 }
 
 func (p *Provider) chatStreaming(
 	ctx context.Context,
 	params anthropic.MessageNewParams,
 	opts []option.RequestOption,
+	counter *byteCounter,
+	model string,
 ) (*LLMResponse, error) {
+	start := time.Now()
 	stream := p.client.Messages.NewStreaming(ctx, params, opts...)
 	defer stream.Close()
 
@@ -119,15 +147,85 @@ func (p *Provider) chatStreaming(
 	for stream.Next() {
 		event := stream.Current()
 		if err := msg.Accumulate(event); err != nil {
-			return nil, fmt.Errorf("claude streaming accumulate: %w", err)
+			return &LLMResponse{
+				Status: &DispatchStatus{
+					Success:       false,
+					Model:         model,
+					StopReason:    "error",
+					DurationMs:    time.Since(start).Milliseconds(),
+					BytesSent:     counter.sent(),
+					BytesReceived: counter.received(),
+				},
+			}, fmt.Errorf("claude streaming accumulate: %w", err)
 		}
 	}
 	if err := stream.Err(); err != nil {
-		return nil, fmt.Errorf("claude API call: %w", err)
+		return &LLMResponse{
+			Status: &DispatchStatus{
+				Success:       false,
+				Model:         model,
+				StopReason:    "error",
+				DurationMs:    time.Since(start).Milliseconds(),
+				BytesSent:     counter.sent(),
+				BytesReceived: counter.received(),
+			},
+		}, fmt.Errorf("claude API call: %w", err)
 	}
 
-	return parseResponse(&msg), nil
+	out := parseResponse(&msg)
+	if out.Status != nil {
+		out.Status.DurationMs = time.Since(start).Milliseconds()
+		out.Status.BytesSent = counter.sent()
+		out.Status.BytesReceived = counter.received()
+	}
+	return out, nil
 }
+
+// byteCounter tracks the bytes written to the request body and read from the
+// response body across one Chat() call. It is safe for the SDK's retry path
+// which calls the middleware once per attempt.
+type byteCounter struct {
+	bytesSent     atomic.Int64
+	bytesReceived atomic.Int64
+}
+
+func (c *byteCounter) sent() int64     { return c.bytesSent.Load() }
+func (c *byteCounter) received() int64 { return c.bytesReceived.Load() }
+
+func (c *byteCounter) middleware(req *http.Request, next option.MiddlewareNext) (*http.Response, error) {
+	if req.Body != nil && req.GetBody != nil {
+		if body, err := req.GetBody(); err == nil {
+			if n, copyErr := io.Copy(io.Discard, body); copyErr == nil {
+				c.bytesSent.Add(n)
+			}
+			body.Close()
+		}
+	} else if req.ContentLength > 0 {
+		c.bytesSent.Add(req.ContentLength)
+	}
+	resp, err := next(req)
+	if err != nil || resp == nil {
+		return resp, err
+	}
+	resp.Body = &countingReadCloser{rc: resp.Body, counter: &c.bytesReceived}
+	return resp, nil
+}
+
+// countingReadCloser wraps an io.ReadCloser and atomically tracks bytes read.
+type countingReadCloser struct {
+	rc      io.ReadCloser
+	counter *atomic.Int64
+}
+
+func (c *countingReadCloser) Read(p []byte) (int, error) {
+	n, err := c.rc.Read(p)
+	if n > 0 {
+		c.counter.Add(int64(n))
+	}
+	return n, err
+}
+
+func (c *countingReadCloser) Close() error { return c.rc.Close() }
 
 func (p *Provider) GetDefaultModel() string {
 	return "claude-sonnet-4.6"
@@ -369,6 +467,17 @@ func parseResponse(resp *anthropic.Message) *LLMResponse {
 		finishReason = "stop"
 	}
 
+	status := &DispatchStatus{
+		Success:             true,
+		Model:               string(resp.Model),
+		NumTurns:            1,
+		InputTokens:         int(resp.Usage.InputTokens),
+		OutputTokens:        int(resp.Usage.OutputTokens),
+		CacheReadTokens:     int(resp.Usage.CacheReadInputTokens),
+		CacheCreationTokens: int(resp.Usage.CacheCreationInputTokens),
+		StopReason:          string(resp.StopReason),
+	}
+
 	return &LLMResponse{
 		Content:      content.String(),
 		Reasoning:    reasoning.String(),
@@ -380,6 +489,7 @@ func parseResponse(resp *anthropic.Message) *LLMResponse {
 			CompletionTokens: int(resp.Usage.OutputTokens),
 			TotalTokens:      int(resp.Usage.InputTokens + resp.Usage.OutputTokens),
 		},
+		Status: status,
 	}
 }
 

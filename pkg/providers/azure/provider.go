@@ -18,6 +18,7 @@ type (
 	LLMResponse    = protocoltypes.LLMResponse
 	Message        = protocoltypes.Message
 	ToolDefinition = protocoltypes.ToolDefinition
+	DispatchStatus = protocoltypes.DispatchStatus
 )
 
 const (
@@ -131,17 +132,49 @@ func (p *Provider) Chat(
 		req.Header.Set("Api-Key", p.apiKey)
 	}
 
+	bytesSent := int64(len(jsonData))
+	start := time.Now()
 	resp, err := p.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to send request: %w", err)
+		return azureErrorStatus(model, "error", time.Since(start).Milliseconds(), bytesSent, 0),
+			fmt.Errorf("failed to send request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, common.HandleErrorResponse(resp, p.apiBase)
+		respErr := common.HandleErrorResponse(resp, p.apiBase)
+		return azureErrorStatus(model, "error", time.Since(start).Milliseconds(), bytesSent, 0), respErr
 	}
 
-	return common.ReadAndParseResponse(resp, p.apiBase)
+	out, bytesReceived, err := common.ReadParseAndMeasure(resp, p.apiBase)
+	durationMs := time.Since(start).Milliseconds()
+	if err != nil {
+		return azureErrorStatus(model, "parse_error", durationMs, bytesSent, bytesReceived), err
+	}
+	if out.Status != nil {
+		out.Status.Success = true
+		out.Status.DurationMs = durationMs
+		out.Status.BytesSent = bytesSent
+		out.Status.BytesReceived = bytesReceived
+		if out.Status.Model == "" {
+			out.Status.Model = model
+		}
+	}
+	return out, nil
+}
+
+// azureErrorStatus builds an LLMResponse whose Status records a failed HTTP dispatch.
+func azureErrorStatus(model, stopReason string, durationMs, bytesSent, bytesReceived int64) *LLMResponse {
+	return &LLMResponse{
+		Status: &DispatchStatus{
+			Success:       false,
+			Model:         model,
+			StopReason:    stopReason,
+			DurationMs:    durationMs,
+			BytesSent:     bytesSent,
+			BytesReceived: bytesReceived,
+		},
+	}
 }
 
 // GetDefaultModel returns an empty string as Azure deployments are user-configured.

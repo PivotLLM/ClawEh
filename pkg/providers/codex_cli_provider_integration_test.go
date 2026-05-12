@@ -101,7 +101,7 @@ func TestIntegration_RealCodexCLI_ParsesRealJSONL(t *testing.T) {
 
 	// Verify our parser can handle real output
 	p := NewCodexCliProvider("", "", nil, nil)
-	resp, err := p.parseJSONLEvents(string(output))
+	resp, err := p.parseJSONLEvents(string(output), "test-model", 0)
 	if err != nil {
 		t.Fatalf("parseJSONLEvents() failed on real CLI output: %v", err)
 	}

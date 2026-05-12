@@ -87,12 +87,18 @@ func (p *GeminiCliProvider) Chat(
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	if err := cmd.Run(); err != nil {
+	bytesSent := int64(len(prompt))
+	started := time.Now()
+	runErr := cmd.Run()
+	elapsed := time.Since(started)
+	bytesReceived := int64(stdout.Len())
+	if runErr != nil {
 		if ctx.Err() == context.DeadlineExceeded {
-			return nil, fmt.Errorf("gemini cli timed out after %s: %w", p.timeout, context.DeadlineExceeded)
+			return cliErrorResponse(model, "timeout", elapsed, bytesSent, bytesReceived),
+				fmt.Errorf("gemini cli timed out after %s: %w", p.timeout, context.DeadlineExceeded)
 		}
 		if ctx.Err() == context.Canceled {
-			return nil, ctx.Err()
+			return cliErrorResponse(model, "canceled", elapsed, bytesSent, bytesReceived), ctx.Err()
 		}
 
 		// Attempt to parse stdout before treating as error — gemini CLI may exit non-zero
@@ -101,8 +107,12 @@ func (p *GeminiCliProvider) Chat(
 			if resp, parseErr := p.parseGeminiCliResponse(stdoutStr); parseErr == nil && resp.Content != "" {
 				exitCode := -1
 				var exitErr *exec.ExitError
-				if errors.As(err, &exitErr) {
+				if errors.As(runErr, &exitErr) {
 					exitCode = exitErr.ExitCode()
+				}
+				if resp.Status != nil {
+					resp.Status.BytesSent = bytesSent
+					resp.Status.BytesReceived = bytesReceived
 				}
 				logger.WarnCF("provider", "gemini-cli exited non-zero but returned valid content",
 					map[string]any{"exit_code": exitCode})
@@ -112,7 +122,7 @@ func (p *GeminiCliProvider) Chat(
 
 		exitCode := -1
 		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
+		if errors.As(runErr, &exitErr) {
 			exitCode = exitErr.ExitCode()
 		}
 		stderrStr := strings.TrimSpace(stderr.String())
@@ -126,15 +136,16 @@ func (p *GeminiCliProvider) Chat(
 			fields["stdout"] = stdoutStr
 		}
 		logger.ErrorCF("provider", "gemini-cli subprocess failed", fields)
+		errResp := cliErrorResponse(model, "error", elapsed, bytesSent, bytesReceived)
 		switch {
 		case stderrStr != "" && stdoutStr != "":
-			return nil, fmt.Errorf("gemini cli error: %w\nstderr: %s\nstdout: %s", err, stderrStr, stdoutStr)
+			return errResp, fmt.Errorf("gemini cli error: %w\nstderr: %s\nstdout: %s", runErr, stderrStr, stdoutStr)
 		case stderrStr != "":
-			return nil, fmt.Errorf("gemini cli error: %s", stderrStr)
+			return errResp, fmt.Errorf("gemini cli error: %s", stderrStr)
 		case stdoutStr != "":
-			return nil, fmt.Errorf("gemini cli error: %w\noutput: %s", err, stdoutStr)
+			return errResp, fmt.Errorf("gemini cli error: %w\noutput: %s", runErr, stdoutStr)
 		default:
-			return nil, fmt.Errorf("gemini cli error: %w", err)
+			return errResp, fmt.Errorf("gemini cli error: %w", runErr)
 		}
 	}
 
@@ -144,9 +155,16 @@ func (p *GeminiCliProvider) Chat(
 			map[string]any{"stderr": stderrStr})
 	}
 
-	resp, err := p.parseGeminiCliResponse(stdout.String())
-	if err != nil {
-		return nil, err
+	resp, parseErr := p.parseGeminiCliResponse(stdout.String())
+	if parseErr != nil {
+		return cliErrorResponse(model, "parse_error", elapsed, bytesSent, bytesReceived), parseErr
+	}
+	if resp.Status != nil {
+		if resp.Status.DurationMs == 0 {
+			resp.Status.DurationMs = elapsed.Milliseconds()
+		}
+		resp.Status.BytesSent = bytesSent
+		resp.Status.BytesReceived = bytesReceived
 	}
 	if resp.Content == "" {
 		warnFields := map[string]any{}
@@ -246,11 +264,14 @@ func (p *GeminiCliProvider) parseGeminiCliResponse(output string) (*LLMResponse,
 		normal = false
 	}
 
+	status := buildGeminiCliStatus(&resp)
+
 	result := &LLMResponse{
 		Content:      strings.TrimSpace(content),
 		FinishReason: finishReason,
 		Normal:       normal,
 		Usage:        usage,
+		Status:       status,
 	}
 
 	logFields := map[string]any{
@@ -264,9 +285,68 @@ func (p *GeminiCliProvider) parseGeminiCliResponse(output string) (*LLMResponse,
 	if totalErrors > 0 {
 		logFields["total_errors"] = totalErrors
 	}
-	logger.InfoCF("provider", "gemini-cli response", logFields)
+	logger.DebugCF("provider", "gemini-cli response", logFields)
 
 	return result, nil
+}
+
+// buildGeminiCliStatus constructs a DispatchStatus from the parsed gemini CLI response.
+// The "main" role identifies the user's primary model; auxiliary models such as
+// utility_router are ignored. If no model carries a "main" role, the largest-token
+// model is used as a fallback. BytesSent / BytesReceived are filled in by Chat().
+func buildGeminiCliStatus(resp *geminiCliJSONResponse) *DispatchStatus {
+	if len(resp.Stats.Models) == 0 {
+		return &DispatchStatus{Success: true, StopReason: "success"}
+	}
+
+	mainName, mainStats, ok := pickGeminiMainModel(resp.Stats.Models)
+	if !ok {
+		return &DispatchStatus{Success: true, StopReason: "success"}
+	}
+
+	success := mainStats.API.TotalErrors == 0
+	stopReason := "success"
+	if !success {
+		stopReason = "error"
+	}
+	return &DispatchStatus{
+		Success:         success,
+		Model:           mainName,
+		NumTurns:        mainStats.API.TotalRequests,
+		InputTokens:     mainStats.Tokens.Prompt,
+		OutputTokens:    mainStats.Tokens.Candidates,
+		CacheReadTokens: mainStats.Tokens.Cached,
+		StopReason:      stopReason,
+		DurationMs:      int64(mainStats.API.TotalLatencyMs),
+	}
+}
+
+// pickGeminiMainModel picks the model entry whose roles map contains "main".
+// Falls back to the largest-token model when no "main" role is present.
+func pickGeminiMainModel(models map[string]geminiCliModelStats) (string, geminiCliModelStats, bool) {
+	for name, m := range models {
+		if _, hasMain := m.Roles["main"]; hasMain {
+			return name, m, true
+		}
+	}
+	var bestName string
+	var bestStats geminiCliModelStats
+	bestTokens := -1
+	for name, m := range models {
+		total := m.Tokens.Total
+		if total == 0 {
+			total = m.Tokens.Prompt + m.Tokens.Candidates
+		}
+		if total > bestTokens {
+			bestTokens = total
+			bestName = name
+			bestStats = m
+		}
+	}
+	if bestTokens < 0 {
+		return "", geminiCliModelStats{}, false
+	}
+	return bestName, bestStats, true
 }
 
 // geminiCliJSONResponse represents the JSON output from the gemini CLI.
@@ -283,8 +363,9 @@ type geminiCliStatsBlock struct {
 
 // geminiCliModelStats holds token usage and API stats for a single model in the stats block.
 type geminiCliModelStats struct {
-	API    geminiCliAPIStats `json:"api"`
-	Tokens geminiCliTokens   `json:"tokens"`
+	API    geminiCliAPIStats          `json:"api"`
+	Tokens geminiCliTokens            `json:"tokens"`
+	Roles  map[string]json.RawMessage `json:"roles,omitempty"`
 }
 
 // geminiCliAPIStats holds API call counts for a single model.
@@ -297,6 +378,10 @@ type geminiCliAPIStats struct {
 // geminiCliTokens holds the token counts for a model.
 type geminiCliTokens struct {
 	Input      int `json:"input"`
+	Prompt     int `json:"prompt"`
 	Candidates int `json:"candidates"`
 	Total      int `json:"total"`
+	Cached     int `json:"cached"`
+	Thoughts   int `json:"thoughts"`
+	Tool       int `json:"tool"`
 }

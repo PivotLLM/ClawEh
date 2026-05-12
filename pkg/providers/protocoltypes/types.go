@@ -33,6 +33,25 @@ type LLMResponse struct {
 	Usage            *UsageInfo        `json:"usage,omitempty"`
 	Reasoning        string            `json:"reasoning"`
 	ReasoningDetails []ReasoningDetail `json:"reasoning_details"`
+	Status           *DispatchStatus   `json:"status,omitempty"`
+}
+
+// DispatchStatus is populated by each provider on every Chat() return
+// (success or error) and surfaced in the LLMResponse so the agent loop
+// can write a uniform finish event.
+type DispatchStatus struct {
+	Success             bool    `json:"success"`
+	Model               string  `json:"model"`
+	NumTurns            int     `json:"num_turns"`
+	InputTokens         int     `json:"input_tokens"`
+	OutputTokens        int     `json:"output_tokens"`
+	CacheReadTokens     int     `json:"cache_read_tokens"`
+	CacheCreationTokens int     `json:"cache_creation_tokens"`
+	StopReason          string  `json:"stop_reason"`
+	CostUSD             float64 `json:"cost_usd"`
+	DurationMs          int64   `json:"duration_ms"`
+	BytesSent           int64   `json:"bytes_sent"`
+	BytesReceived       int64   `json:"bytes_received"`
 }
 
 type ReasoningDetail struct {

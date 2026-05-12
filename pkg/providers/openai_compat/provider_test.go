@@ -996,3 +996,99 @@ func TestSerializeMessages_NoStrictCompat_PreservesFields(t *testing.T) {
 		t.Fatalf("thought_signature value in extra_content should be preserved when strictCompat=false, got: %s", raw)
 	}
 }
+
+func TestProviderChat_PopulatesDispatchStatus(t *testing.T) {
+	respBody := `{
+		"model": "gpt-4o-2024-11-20",
+		"choices": [
+			{
+				"message": {"content": "hi"},
+				"finish_reason": "stop"
+			}
+		],
+		"usage": {
+			"prompt_tokens": 12,
+			"completion_tokens": 4,
+			"total_tokens": 16,
+			"prompt_tokens_details": {"cached_tokens": 8}
+		}
+	}`
+
+	var receivedRequestBody []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedRequestBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(respBody))
+	}))
+	defer server.Close()
+
+	p := NewProvider("key", server.URL, "")
+	out, err := p.Chat(
+		t.Context(),
+		[]Message{{Role: "user", Content: "hi from Alice"}},
+		nil,
+		"gpt-4o",
+		map[string]any{"max_tokens": 64},
+	)
+	if err != nil {
+		t.Fatalf("Chat() error = %v", err)
+	}
+	if out.Status == nil {
+		t.Fatal("expected non-nil Status")
+	}
+	if !out.Status.Success {
+		t.Fatalf("expected Success=true, got %+v", out.Status)
+	}
+	if out.Status.Model != "gpt-4o-2024-11-20" {
+		t.Fatalf("Model = %q, want %q", out.Status.Model, "gpt-4o-2024-11-20")
+	}
+	if out.Status.InputTokens != 12 || out.Status.OutputTokens != 4 {
+		t.Fatalf("tokens = (%d,%d), want (12,4)", out.Status.InputTokens, out.Status.OutputTokens)
+	}
+	if out.Status.CacheReadTokens != 8 {
+		t.Fatalf("CacheReadTokens = %d, want 8", out.Status.CacheReadTokens)
+	}
+	if out.Status.StopReason != "stop" {
+		t.Fatalf("StopReason = %q, want stop", out.Status.StopReason)
+	}
+	if out.Status.BytesSent != int64(len(receivedRequestBody)) {
+		t.Fatalf("BytesSent = %d, want %d", out.Status.BytesSent, len(receivedRequestBody))
+	}
+	if out.Status.BytesReceived != int64(len(respBody)) {
+		t.Fatalf("BytesReceived = %d, want %d", out.Status.BytesReceived, len(respBody))
+	}
+	if out.Status.DurationMs < 0 {
+		t.Fatalf("DurationMs must be non-negative, got %d", out.Status.DurationMs)
+	}
+}
+
+func TestProviderChat_HTTPErrorPopulatesStatus(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "bad request", http.StatusBadRequest)
+	}))
+	defer server.Close()
+
+	p := NewProvider("key", server.URL, "")
+	out, err := p.Chat(
+		t.Context(),
+		[]Message{{Role: "user", Content: "hi from Bob"}},
+		nil,
+		"gpt-4o",
+		map[string]any{"max_tokens": 64},
+	)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if out == nil || out.Status == nil {
+		t.Fatalf("expected non-nil response+status on HTTP error, got out=%v", out)
+	}
+	if out.Status.Success {
+		t.Fatalf("expected Success=false")
+	}
+	if out.Status.BytesSent == 0 {
+		t.Fatal("BytesSent should be non-zero even on HTTP error")
+	}
+}
+
+// ensure protocoltypes import is used in this file
+var _ = protocoltypes.DispatchStatus{}
