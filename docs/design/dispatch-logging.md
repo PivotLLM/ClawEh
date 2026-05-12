@@ -32,6 +32,8 @@ type DispatchStatus struct {
     StopReason           string  `json:"stop_reason"`            // "success" / "error" / "max_turns" / native API stop_reason / "" if unknown
     CostUSD              float64 `json:"cost_usd"`               // 0 when unreported
     DurationMs           int64   `json:"duration_ms"`            // wall-clock for this dispatch
+    BytesSent            int64   `json:"bytes_sent"`             // raw bytes written to wire/stdin after marshalling
+    BytesReceived        int64   `json:"bytes_received"`         // raw bytes read from wire/stdout before unmarshalling
 }
 ```
 
@@ -44,6 +46,29 @@ providers return `(response, err)` where `response.Status` is set with
 `Success: false` and best-effort fields. The agent-loop call-site wrapper
 synthesizes a fallback `DispatchStatus` if a provider returns `nil` on error,
 so the finish event always fires.
+
+### Byte counting rules
+
+`BytesSent` and `BytesReceived` are **raw transport bytes**, captured around
+the wire format — i.e. after the request is marshalled and before the
+response is unmarshalled. They are never derived from token counts.
+
+- HTTP providers (`anthropic`, `anthropic_messages`, `openai_compat`, `azure`,
+  `http_provider`, `legacy_provider`): `BytesSent = len(requestBodyBytes)`
+  written to the HTTP request; `BytesReceived = len(responseBodyBytes)`
+  read off the response, summed across all chunks for streaming.
+- CLI providers (`claude_cli`, `codex_cli`, `gemini_cli`): `BytesSent` is the
+  total bytes written to the child process's stdin (after JSON marshalling
+  any structured input); `BytesReceived` is the total bytes read from the
+  child's stdout. stderr is not counted.
+- Bedrock: AWS SDK Converse abstracts the wire format; instrument via a
+  smithy HTTP middleware (`stack.Finalize.Add`) that wraps the response body
+  in a counting reader and captures the request body length from
+  `request.GetBody()`. If middleware instrumentation is not feasible in this
+  pass, set both fields to 0 and document the gap — do not synthesise from
+  token counts.
+- On error, populate whatever was successfully measured (e.g. `BytesSent`
+  may be set even when the response never arrived).
 
 ## CLI provider mapping (validated)
 
@@ -94,6 +119,8 @@ Mapping:
 | `StopReason`           | `stop_reason` ("end_turn", "tool_use", …)           |
 | `CostUSD`              | `total_cost_usd`                                    |
 | `DurationMs`           | `duration_ms` (CLI-reported wall time)              |
+| `BytesSent`            | bytes written to claude-cli stdin                   |
+| `BytesReceived`        | bytes read from claude-cli stdout                   |
 
 ### codex-cli
 
@@ -122,6 +149,8 @@ Mapping:
 | `StopReason`           | `"success"` on completion, `"error"` on failure     |
 | `CostUSD`              | 0 (not reported)                                    |
 | `DurationMs`           | wall-clock measured by the provider wrapper         |
+| `BytesSent`            | bytes written to codex-cli stdin                    |
+| `BytesReceived`        | bytes read from codex-cli stdout (full JSONL stream)|
 
 ### gemini-cli
 
@@ -163,6 +192,8 @@ Mapping:
 | `StopReason`           | `"success"` or `"error"`                            |
 | `CostUSD`              | 0 (not reported)                                    |
 | `DurationMs`           | `stats.models[main].api.totalLatencyMs`             |
+| `BytesSent`            | bytes written to gemini-cli stdin                   |
+| `BytesReceived`        | bytes read from gemini-cli stdout                   |
 
 ## API provider mapping
 
@@ -187,6 +218,8 @@ Mapping:
 | `StopReason`           | `stop_reason` ("end_turn", "tool_use", "max_tokens", "stop_sequence", "refusal") |
 | `CostUSD`              | 0 (Anthropic API does not return cost)              |
 | `DurationMs`           | wall-clock measured in the provider                 |
+| `BytesSent`            | HTTP request body length                            |
+| `BytesReceived`        | HTTP response body length (sum across SSE chunks for streaming) |
 
 The existing `usageInfo` struct in `anthropic_messages/provider.go` must be
 extended with `CacheCreationInputTokens` and `CacheReadInputTokens` fields.
@@ -207,6 +240,8 @@ Mapping:
 | `StopReason`           | `choices[0].finish_reason` ("stop", "length", "tool_calls", "content_filter") |
 | `CostUSD`              | 0 (not in API)                                      |
 | `DurationMs`           | wall-clock measured in the provider                 |
+| `BytesSent`            | HTTP request body length                            |
+| `BytesReceived`        | HTTP response body length                           |
 
 `ParseResponse` will be amended to also parse `model` and (where present)
 `usage.prompt_tokens_details.cached_tokens` and to attach a `DispatchStatus`
@@ -263,6 +298,8 @@ Fields:
 - `stop_reason`
 - `cost_usd`
 - `duration_ms`
+- `bytes_sent`
+- `bytes_received`
 - `error` — present only on failure, truncated to 500 chars
 
 ### Existing log removal
