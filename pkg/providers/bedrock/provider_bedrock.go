@@ -22,9 +22,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
-	"github.com/aws/smithy-go/auth/bearer"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime/document"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
+	"github.com/aws/smithy-go/auth/bearer"
 
 	"github.com/PivotLLM/ClawEh/pkg/providers/common"
 	"github.com/PivotLLM/ClawEh/pkg/providers/protocoltypes"
@@ -35,6 +35,7 @@ type (
 	FunctionCall           = protocoltypes.FunctionCall
 	LLMResponse            = protocoltypes.LLMResponse
 	UsageInfo              = protocoltypes.UsageInfo
+	DispatchStatus         = protocoltypes.DispatchStatus
 	Message                = protocoltypes.Message
 	ToolDefinition         = protocoltypes.ToolDefinition
 	ToolFunctionDefinition = protocoltypes.ToolFunctionDefinition
@@ -245,14 +246,40 @@ func (p *Provider) Chat(
 		}
 	}
 
-	// Call Bedrock Converse API
+	// Call Bedrock Converse API. BytesSent/BytesReceived would require a smithy
+	// HTTP middleware to wrap the response body and capture request body length;
+	// that path is deferred and both counters are left at zero for now.
+	start := time.Now()
 	output, err := p.client.Converse(ctx, input)
+	elapsed := time.Since(start).Milliseconds()
 	if err != nil {
-		return nil, fmt.Errorf("bedrock converse: %w", err)
+		return &LLMResponse{
+			Status: &DispatchStatus{
+				Success:    false,
+				Model:      model,
+				StopReason: "error",
+				DurationMs: elapsed,
+			},
+		}, fmt.Errorf("bedrock converse: %w", err)
 	}
 
 	// Parse the response
-	return parseResponse(output)
+	out, perr := parseResponse(output)
+	if perr != nil {
+		return &LLMResponse{
+			Status: &DispatchStatus{
+				Success:    false,
+				Model:      model,
+				StopReason: "parse_error",
+				DurationMs: elapsed,
+			},
+		}, perr
+	}
+	if out.Status != nil {
+		out.Status.Model = model
+		out.Status.DurationMs = elapsed
+	}
+	return out, nil
 }
 
 // GetDefaultModel returns an empty string as Bedrock models are user-configured.
@@ -607,12 +634,23 @@ func parseResponse(output *bedrockruntime.ConverseOutput) (*LLMResponse, error) 
 
 	// Build usage info
 	var usage *UsageInfo
+	status := &DispatchStatus{
+		Success:    true,
+		NumTurns:   1,
+		StopReason: string(output.StopReason),
+	}
 	if output.Usage != nil {
+		input := int(aws.ToInt32(output.Usage.InputTokens))
+		out := int(aws.ToInt32(output.Usage.OutputTokens))
 		usage = &UsageInfo{
-			PromptTokens:     int(aws.ToInt32(output.Usage.InputTokens)),
-			CompletionTokens: int(aws.ToInt32(output.Usage.OutputTokens)),
-			TotalTokens:      int(aws.ToInt32(output.Usage.InputTokens)) + int(aws.ToInt32(output.Usage.OutputTokens)),
+			PromptTokens:     input,
+			CompletionTokens: out,
+			TotalTokens:      input + out,
 		}
+		status.InputTokens = input
+		status.OutputTokens = out
+		status.CacheReadTokens = int(aws.ToInt32(output.Usage.CacheReadInputTokens))
+		status.CacheCreationTokens = int(aws.ToInt32(output.Usage.CacheWriteInputTokens))
 	}
 
 	return &LLMResponse{
@@ -621,5 +659,6 @@ func parseResponse(output *bedrockruntime.ConverseOutput) (*LLMResponse, error) 
 		FinishReason: finishReason,
 		Normal:       finishReason == "stop" || finishReason == "tool_calls",
 		Usage:        usage,
+		Status:       status,
 	}, nil
 }

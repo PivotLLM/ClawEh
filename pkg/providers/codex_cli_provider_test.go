@@ -20,7 +20,7 @@ func TestParseJSONLEvents_AgentMessage(t *testing.T) {
 {"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"Hello from Codex!"}}
 {"type":"turn.completed","usage":{"input_tokens":100,"cached_input_tokens":50,"output_tokens":20}}`
 
-	resp, err := p.parseJSONLEvents(events)
+	resp, err := p.parseJSONLEvents(events, "test-model", 100)
 	if err != nil {
 		t.Fatalf("parseJSONLEvents() error: %v", err)
 	}
@@ -60,7 +60,7 @@ func TestParseJSONLEvents_PassesThroughToolCallText(t *testing.T) {
 	itemJSON, _ := json.Marshal(item)
 	events := `{"type":"turn.started"}` + "\n" + string(itemJSON) + "\n" + `{"type":"turn.completed"}`
 
-	resp, err := p.parseJSONLEvents(events)
+	resp, err := p.parseJSONLEvents(events, "test-model", 100)
 	if err != nil {
 		t.Fatalf("parseJSONLEvents() error: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestParseJSONLEvents_MultipleMessages(t *testing.T) {
 {"type":"item.completed","item":{"id":"item_3","type":"agent_message","text":"Second part."}}
 {"type":"turn.completed"}`
 
-	resp, err := p.parseJSONLEvents(events)
+	resp, err := p.parseJSONLEvents(events, "test-model", 100)
 	if err != nil {
 		t.Fatalf("parseJSONLEvents() error: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestParseJSONLEvents_ErrorEvent(t *testing.T) {
 {"type":"error","message":"token expired"}
 {"type":"turn.failed","error":{"message":"token expired"}}`
 
-	_, err := p.parseJSONLEvents(events)
+	_, err := p.parseJSONLEvents(events, "test-model", 100)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -113,7 +113,7 @@ func TestParseJSONLEvents_TurnFailed(t *testing.T) {
 	events := `{"type":"turn.started"}
 {"type":"turn.failed","error":{"message":"rate limit exceeded"}}`
 
-	_, err := p.parseJSONLEvents(events)
+	_, err := p.parseJSONLEvents(events, "test-model", 100)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -130,7 +130,7 @@ func TestParseJSONLEvents_ErrorWithContent(t *testing.T) {
 {"type":"error","message":"connection reset"}
 {"type":"turn.failed","error":{"message":"connection reset"}}`
 
-	resp, err := p.parseJSONLEvents(events)
+	resp, err := p.parseJSONLEvents(events, "test-model", 100)
 	if err != nil {
 		t.Fatalf("should not error when content exists: %v", err)
 	}
@@ -141,7 +141,7 @@ func TestParseJSONLEvents_ErrorWithContent(t *testing.T) {
 
 func TestParseJSONLEvents_EmptyOutput(t *testing.T) {
 	p := &CodexCliProvider{}
-	resp, err := p.parseJSONLEvents("")
+	resp, err := p.parseJSONLEvents("", "test-model", 100)
 	if err != nil {
 		t.Fatalf("empty output should not error: %v", err)
 	}
@@ -157,7 +157,7 @@ func TestParseJSONLEvents_MalformedLines(t *testing.T) {
 another bad line
 {"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":5}}`
 
-	resp, err := p.parseJSONLEvents(events)
+	resp, err := p.parseJSONLEvents(events, "test-model", 100)
 	if err != nil {
 		t.Fatalf("should skip malformed lines: %v", err)
 	}
@@ -177,7 +177,7 @@ func TestParseJSONLEvents_CommandExecution(t *testing.T) {
 {"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"Found 2 files."}}
 {"type":"turn.completed"}`
 
-	resp, err := p.parseJSONLEvents(events)
+	resp, err := p.parseJSONLEvents(events, "test-model", 100)
 	if err != nil {
 		t.Fatalf("parseJSONLEvents() error: %v", err)
 	}
@@ -193,12 +193,85 @@ func TestParseJSONLEvents_NoUsage(t *testing.T) {
 {"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"No usage info."}}
 {"type":"turn.completed"}`
 
-	resp, err := p.parseJSONLEvents(events)
+	resp, err := p.parseJSONLEvents(events, "test-model", 100)
 	if err != nil {
 		t.Fatalf("parseJSONLEvents() error: %v", err)
 	}
 	if resp.Usage != nil {
 		t.Errorf("Usage should be nil when turn.completed has no usage, got %+v", resp.Usage)
+	}
+}
+
+// --- DispatchStatus tests ---
+
+// TestParseJSONLEvents_DispatchStatusFromFixture exercises Alice's prompt with
+// the captured JSONL stream from the design doc.
+func TestParseJSONLEvents_DispatchStatusFromFixture(t *testing.T) {
+	p := &CodexCliProvider{}
+	events := `{"type":"thread.started","thread_id":"019e1d91-alice"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"hi"}}
+{"type":"turn.completed","usage":{"input_tokens":13707,"cached_input_tokens":7552,"output_tokens":5,"reasoning_output_tokens":0}}`
+
+	resp, err := p.parseJSONLEvents(events, "gpt-5-codex", 1500)
+	if err != nil {
+		t.Fatalf("parseJSONLEvents() error: %v", err)
+	}
+	if resp.Status == nil {
+		t.Fatal("Status must be populated")
+	}
+	s := resp.Status
+	if !s.Success {
+		t.Error("Success must be true on completed turn")
+	}
+	if s.Model != "gpt-5-codex" {
+		t.Errorf("Model = %q, want gpt-5-codex", s.Model)
+	}
+	if s.NumTurns < 1 {
+		t.Errorf("NumTurns = %d, want >= 1", s.NumTurns)
+	}
+	if s.InputTokens != 13707 {
+		t.Errorf("InputTokens = %d, want 13707", s.InputTokens)
+	}
+	if s.OutputTokens != 5 {
+		t.Errorf("OutputTokens = %d, want 5", s.OutputTokens)
+	}
+	if s.CacheReadTokens != 7552 {
+		t.Errorf("CacheReadTokens = %d, want 7552 (from cached_input_tokens)", s.CacheReadTokens)
+	}
+	if s.CacheCreationTokens != 0 {
+		t.Errorf("CacheCreationTokens = %d, want 0 (codex does not report)", s.CacheCreationTokens)
+	}
+	if s.StopReason != "success" {
+		t.Errorf("StopReason = %q, want success", s.StopReason)
+	}
+	if s.DurationMs != 1500 {
+		t.Errorf("DurationMs = %d, want 1500", s.DurationMs)
+	}
+}
+
+// TestParseJSONLEvents_DispatchStatusOnTurnFailed verifies the error-path
+// DispatchStatus when a turn.failed event arrives without preceding content.
+func TestParseJSONLEvents_DispatchStatusOnTurnFailed(t *testing.T) {
+	p := &CodexCliProvider{}
+	events := `{"type":"turn.started"}
+{"type":"turn.failed","error":{"message":"upstream timeout"}}`
+
+	resp, err := p.parseJSONLEvents(events, "gpt-5-codex", 250)
+	if err == nil {
+		t.Fatal("expected error on turn.failed")
+	}
+	if resp == nil || resp.Status == nil {
+		t.Fatal("Status must be populated on error")
+	}
+	if resp.Status.Success {
+		t.Error("Success must be false")
+	}
+	if resp.Status.StopReason != "error" {
+		t.Errorf("StopReason = %q, want error", resp.Status.StopReason)
+	}
+	if resp.Status.Model != "gpt-5-codex" {
+		t.Errorf("Model = %q, want gpt-5-codex", resp.Status.Model)
 	}
 }
 

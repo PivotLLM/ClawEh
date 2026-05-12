@@ -19,6 +19,7 @@ type (
 	FunctionCall           = protocoltypes.FunctionCall
 	LLMResponse            = protocoltypes.LLMResponse
 	UsageInfo              = protocoltypes.UsageInfo
+	DispatchStatus         = protocoltypes.DispatchStatus
 	Message                = protocoltypes.Message
 	ToolDefinition         = protocoltypes.ToolDefinition
 	ToolFunctionDefinition = protocoltypes.ToolFunctionDefinition
@@ -179,17 +180,49 @@ func (p *Provider) Chat(
 		req.Header.Set("Authorization", "Bearer "+p.apiKey)
 	}
 
+	bytesSent := int64(len(jsonData))
+	start := time.Now()
 	resp, err := p.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to send request: %w", err)
+		return httpErrorStatus(model, "error", time.Since(start).Milliseconds(), bytesSent, 0),
+			fmt.Errorf("failed to send request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, common.HandleErrorResponse(resp, p.apiBase)
+		respErr := common.HandleErrorResponse(resp, p.apiBase)
+		return httpErrorStatus(model, "error", time.Since(start).Milliseconds(), bytesSent, 0), respErr
 	}
 
-	return common.ReadAndParseResponse(resp, p.apiBase)
+	out, bytesReceived, err := common.ReadParseAndMeasure(resp, p.apiBase)
+	durationMs := time.Since(start).Milliseconds()
+	if err != nil {
+		return httpErrorStatus(model, "parse_error", durationMs, bytesSent, bytesReceived), err
+	}
+	if out.Status != nil {
+		out.Status.Success = true
+		out.Status.DurationMs = durationMs
+		out.Status.BytesSent = bytesSent
+		out.Status.BytesReceived = bytesReceived
+		if out.Status.Model == "" {
+			out.Status.Model = model
+		}
+	}
+	return out, nil
+}
+
+// httpErrorStatus builds an LLMResponse whose Status records a failed HTTP dispatch.
+func httpErrorStatus(model, stopReason string, durationMs, bytesSent, bytesReceived int64) *LLMResponse {
+	return &LLMResponse{
+		Status: &DispatchStatus{
+			Success:       false,
+			Model:         model,
+			StopReason:    stopReason,
+			DurationMs:    durationMs,
+			BytesSent:     bytesSent,
+			BytesReceived: bytesReceived,
+		},
+	}
 }
 
 // openaiMessage is the wire-format message for OpenAI-compatible APIs.
@@ -216,11 +249,11 @@ func msgContent(content string, toolCalls []ToolCall) *string {
 }
 
 // serializeMessages converts internal Message structs to the OpenAI wire format.
-// - Strips SystemParts (unknown to third-party endpoints)
-// - Converts messages with Media to multipart content format (text + image_url parts)
-// - Preserves ToolCallID, ToolCalls, and ReasoningContent for all messages
-// - When strictCompat is true, strips non-standard fields (reasoning_content, extra_content,
-//   thought_signature) that some strict OpenAI-compatible providers reject
+//   - Strips SystemParts (unknown to third-party endpoints)
+//   - Converts messages with Media to multipart content format (text + image_url parts)
+//   - Preserves ToolCallID, ToolCalls, and ReasoningContent for all messages
+//   - When strictCompat is true, strips non-standard fields (reasoning_content, extra_content,
+//     thought_signature) that some strict OpenAI-compatible providers reject
 func serializeMessages(messages []Message, strictCompat bool) []any {
 	out := make([]any, 0, len(messages))
 	for _, m := range messages {

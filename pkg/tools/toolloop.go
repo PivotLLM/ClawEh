@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/PivotLLM/ClawEh/pkg/logger"
 	"github.com/PivotLLM/ClawEh/pkg/providers"
@@ -94,6 +95,24 @@ func RunToolLoop(
 		// to the plain Provider/Model pair.
 		var response *providers.LLMResponse
 		var err error
+
+		dispatchProvider := ""
+		dispatchModel := config.Model
+		if len(config.Candidates) > 0 {
+			dispatchProvider = config.Candidates[0].Provider
+			dispatchModel = config.Candidates[0].Model
+		}
+
+		logger.InfoCF("toolloop", "LLM dispatch", map[string]any{
+			"agent_id":     channel,
+			"iteration":    iteration,
+			"provider":     dispatchProvider,
+			"model":        dispatchModel,
+			"num_messages": len(messages),
+			"num_tools":    len(providerToolDefs),
+		})
+		dispatchStart := time.Now()
+
 		if config.Dispatcher != nil && len(config.Candidates) > 0 {
 			if config.Fallback != nil && len(config.Candidates) > 1 {
 				fbResult, fbErr := config.Fallback.Execute(
@@ -110,6 +129,9 @@ func RunToolLoop(
 					err = fbErr
 				} else {
 					response = fbResult.Response
+					if fbResult.Provider != "" {
+						dispatchProvider = fbResult.Provider
+					}
 				}
 			} else {
 				first := config.Candidates[0]
@@ -122,6 +144,9 @@ func RunToolLoop(
 		} else {
 			response, err = config.Provider.Chat(ctx, messages, providerToolDefs, config.Model, filterOptsForProvider(config.Provider, llmOpts))
 		}
+
+		emitToolLoopFinishEvent(channel, iteration, dispatchProvider, dispatchModel, dispatchStart, response, err)
+
 		if err != nil {
 			logger.ErrorCF("toolloop", "LLM call failed",
 				map[string]any{
@@ -233,4 +258,68 @@ func RunToolLoop(
 		Content:    finalContent,
 		Iterations: iteration,
 	}, nil
+}
+
+// emitToolLoopFinishEvent writes the INFO "LLM finish" log paired with the dispatch event
+// for the tool loop. Mirrors emitLLMFinishEvent in the agent loop.
+func emitToolLoopFinishEvent(
+	agentID string,
+	iteration int,
+	provider, requestModel string,
+	dispatchStart time.Time,
+	response *providers.LLMResponse,
+	callErr error,
+) {
+	elapsed := time.Since(dispatchStart).Milliseconds()
+
+	var status *providers.DispatchStatus
+	if response != nil {
+		status = response.Status
+	}
+	if status == nil {
+		stopReason := "success"
+		if callErr != nil {
+			stopReason = "error"
+		}
+		status = &providers.DispatchStatus{
+			Success:    callErr == nil,
+			Model:      requestModel,
+			StopReason: stopReason,
+			DurationMs: elapsed,
+		}
+	}
+
+	model := status.Model
+	if model == "" {
+		model = requestModel
+	}
+
+	fields := map[string]any{
+		"agent_id":              agentID,
+		"iteration":             iteration,
+		"provider":              provider,
+		"model":                 model,
+		"success":               status.Success && callErr == nil,
+		"num_turns":             status.NumTurns,
+		"input_tokens":          status.InputTokens,
+		"output_tokens":         status.OutputTokens,
+		"cache_read_tokens":     status.CacheReadTokens,
+		"cache_creation_tokens": status.CacheCreationTokens,
+		"stop_reason":           status.StopReason,
+		"cost_usd":              status.CostUSD,
+		"duration_ms":           status.DurationMs,
+		"bytes_sent":            status.BytesSent,
+		"bytes_received":        status.BytesReceived,
+	}
+	if callErr != nil {
+		fields["error"] = truncateErrorString(callErr.Error(), 500)
+	}
+	logger.InfoCF("toolloop", "LLM finish", fields)
+}
+
+func truncateErrorString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen]
 }

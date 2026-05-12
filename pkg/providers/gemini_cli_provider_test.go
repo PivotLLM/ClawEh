@@ -244,3 +244,123 @@ func TestCreateProvider_GeminiCliDefaultWorkspace(t *testing.T) {
 		t.Errorf("workspace = %q, want %q (default)", geminiProvider.workspace, ".")
 	}
 }
+
+// --- DispatchStatus tests ---
+
+// TestParseGeminiCliResponse_DispatchStatus_PrefersMainRole verifies that when
+// multiple models share the stats block, the one whose roles map contains
+// "main" wins — auxiliary models like utility_router are ignored.
+func TestParseGeminiCliResponse_DispatchStatus_PrefersMainRole(t *testing.T) {
+	p := NewGeminiCliProvider("", "/workspace", nil, nil)
+	output := `{
+		"session_id":"alice-bob-session","response":"hi",
+		"stats":{
+			"models":{
+				"gemini-3-flash-preview":{
+					"api":{"totalRequests":1,"totalErrors":0,"totalLatencyMs":3205},
+					"tokens":{"input":2470,"prompt":64881,"candidates":1,"total":65054,"cached":62411,"thoughts":172,"tool":0},
+					"roles":{"main":{"totalRequests":1,"totalErrors":0,"totalLatencyMs":3205}}
+				},
+				"gemini-2.5-flash-lite":{
+					"api":{"totalRequests":2,"totalErrors":0,"totalLatencyMs":200},
+					"tokens":{"input":50,"prompt":50,"candidates":5,"total":55,"cached":0,"thoughts":0,"tool":0},
+					"roles":{"utility_router":{"totalRequests":2}}
+				}
+			}
+		}
+	}`
+	resp, err := p.parseGeminiCliResponse(output)
+	if err != nil {
+		t.Fatalf("parseGeminiCliResponse() error = %v", err)
+	}
+	if resp.Status == nil {
+		t.Fatal("Status must be populated")
+	}
+	s := resp.Status
+	if s.Model != "gemini-3-flash-preview" {
+		t.Errorf("Model = %q, want gemini-3-flash-preview (the main role)", s.Model)
+	}
+	if !s.Success {
+		t.Error("Success must be true with no errors")
+	}
+	if s.InputTokens != 64881 {
+		t.Errorf("InputTokens = %d, want 64881 (tokens.prompt of main)", s.InputTokens)
+	}
+	if s.OutputTokens != 1 {
+		t.Errorf("OutputTokens = %d, want 1 (tokens.candidates of main)", s.OutputTokens)
+	}
+	if s.CacheReadTokens != 62411 {
+		t.Errorf("CacheReadTokens = %d, want 62411 (tokens.cached of main)", s.CacheReadTokens)
+	}
+	if s.NumTurns != 1 {
+		t.Errorf("NumTurns = %d, want 1 (totalRequests of main)", s.NumTurns)
+	}
+	if s.DurationMs != 3205 {
+		t.Errorf("DurationMs = %d, want 3205 (totalLatencyMs of main)", s.DurationMs)
+	}
+	if s.StopReason != "success" {
+		t.Errorf("StopReason = %q, want success", s.StopReason)
+	}
+}
+
+// TestParseGeminiCliResponse_DispatchStatus_FallbackToLargest covers older CLI
+// output that omits the roles map: the largest-token model wins.
+func TestParseGeminiCliResponse_DispatchStatus_FallbackToLargest(t *testing.T) {
+	p := NewGeminiCliProvider("", "/workspace", nil, nil)
+	output := `{
+		"session_id":"sess","response":"hi",
+		"stats":{
+			"models":{
+				"gemini-3-pro":{
+					"api":{"totalRequests":1,"totalErrors":0,"totalLatencyMs":4000},
+					"tokens":{"input":1000,"prompt":1200,"candidates":3,"total":1203,"cached":0}
+				},
+				"gemini-2.5-flash-lite":{
+					"api":{"totalRequests":2,"totalErrors":0,"totalLatencyMs":200},
+					"tokens":{"input":50,"prompt":50,"candidates":5,"total":55,"cached":0}
+				}
+			}
+		}
+	}`
+	resp, err := p.parseGeminiCliResponse(output)
+	if err != nil {
+		t.Fatalf("parseGeminiCliResponse() error = %v", err)
+	}
+	if resp.Status == nil {
+		t.Fatal("Status must be populated")
+	}
+	if resp.Status.Model != "gemini-3-pro" {
+		t.Errorf("Model = %q, want gemini-3-pro (largest-token fallback)", resp.Status.Model)
+	}
+}
+
+// TestParseGeminiCliResponse_DispatchStatus_ErrorsFlipSuccess verifies that
+// totalErrors > 0 produces Success=false and StopReason="error".
+func TestParseGeminiCliResponse_DispatchStatus_ErrorsFlipSuccess(t *testing.T) {
+	p := NewGeminiCliProvider("", "/workspace", nil, nil)
+	output := `{
+		"session_id":"sess","response":"",
+		"stats":{
+			"models":{
+				"gemini-3-flash-preview":{
+					"api":{"totalRequests":1,"totalErrors":1,"totalLatencyMs":1500},
+					"tokens":{"input":0,"prompt":0,"candidates":0,"total":0,"cached":0},
+					"roles":{"main":{"totalRequests":1}}
+				}
+			}
+		}
+	}`
+	resp, err := p.parseGeminiCliResponse(output)
+	if err != nil {
+		t.Fatalf("parseGeminiCliResponse() error = %v", err)
+	}
+	if resp.Status == nil {
+		t.Fatal("Status must be populated")
+	}
+	if resp.Status.Success {
+		t.Error("Success must be false when totalErrors > 0")
+	}
+	if resp.Status.StopReason != "error" {
+		t.Errorf("StopReason = %q, want error", resp.Status.StopReason)
+	}
+}

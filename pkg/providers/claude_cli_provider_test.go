@@ -785,3 +785,98 @@ func TestParseClaudeCliResponse_WhitespaceResult(t *testing.T) {
 	}
 }
 
+// --- DispatchStatus tests ---
+
+// TestParseClaudeCliResponse_DispatchStatusFromFixture asserts that the captured
+// design-doc fixture produces a DispatchStatus populated with the exact model id,
+// num_turns, token counts (including cache fields), stop reason, and cost.
+func TestParseClaudeCliResponse_DispatchStatusFromFixture(t *testing.T) {
+	p := NewClaudeCliProvider("", "/workspace", nil, nil)
+	// Alice and Bob exercise it as a single-turn dispatch.
+	output := `{
+		"type":"result","subtype":"success","is_error":false,
+		"duration_ms":2753,"duration_api_ms":4206,
+		"num_turns":1,
+		"result":"hi",
+		"stop_reason":"end_turn",
+		"session_id":"alice-bob-session",
+		"total_cost_usd":0.104551,
+		"usage":{
+			"input_tokens":10,
+			"cache_creation_input_tokens":83112,
+			"cache_read_input_tokens":0,
+			"output_tokens":47
+		},
+		"modelUsage":{
+			"claude-haiku-4-5-20251001":{
+				"inputTokens":356,"outputTokens":61,
+				"cacheReadInputTokens":0,"cacheCreationInputTokens":83112,
+				"costUSD":0.104551
+			}
+		}
+	}`
+
+	resp, err := p.parseClaudeCliResponse(output)
+	if err != nil {
+		t.Fatalf("parseClaudeCliResponse() error = %v", err)
+	}
+	if resp.Status == nil {
+		t.Fatal("Status must be populated")
+	}
+	s := resp.Status
+	if !s.Success {
+		t.Error("Success must be true for is_error=false")
+	}
+	if s.Model != "claude-haiku-4-5-20251001" {
+		t.Errorf("Model = %q, want %q", s.Model, "claude-haiku-4-5-20251001")
+	}
+	if s.NumTurns != 1 {
+		t.Errorf("NumTurns = %d, want 1", s.NumTurns)
+	}
+	if s.InputTokens != 10 {
+		t.Errorf("InputTokens = %d, want 10", s.InputTokens)
+	}
+	if s.OutputTokens != 47 {
+		t.Errorf("OutputTokens = %d, want 47", s.OutputTokens)
+	}
+	if s.CacheCreationTokens != 83112 {
+		t.Errorf("CacheCreationTokens = %d, want 83112", s.CacheCreationTokens)
+	}
+	if s.CacheReadTokens != 0 {
+		t.Errorf("CacheReadTokens = %d, want 0", s.CacheReadTokens)
+	}
+	if s.StopReason != "end_turn" {
+		t.Errorf("StopReason = %q, want end_turn", s.StopReason)
+	}
+	if s.CostUSD != 0.104551 {
+		t.Errorf("CostUSD = %f, want 0.104551", s.CostUSD)
+	}
+	if s.DurationMs != 2753 {
+		t.Errorf("DurationMs = %d, want 2753", s.DurationMs)
+	}
+}
+
+// TestParseClaudeCliResponse_DispatchStatusOnError verifies that a payload with
+// is_error=true still produces a DispatchStatus carrying Success=false alongside
+// the error return.
+func TestParseClaudeCliResponse_DispatchStatusOnError(t *testing.T) {
+	p := NewClaudeCliProvider("", "/workspace", nil, nil)
+	output := `{"type":"result","subtype":"error","is_error":true,"result":"rate limited","duration_ms":100,"num_turns":0,"modelUsage":{"claude-haiku-4-5-20251001":{}}}`
+
+	resp, err := p.parseClaudeCliResponse(output)
+	if err == nil {
+		t.Fatal("expected error for is_error=true")
+	}
+	if resp == nil || resp.Status == nil {
+		t.Fatal("Status must be populated on error return")
+	}
+	if resp.Status.Success {
+		t.Error("Success must be false on error")
+	}
+	if resp.Status.Model != "claude-haiku-4-5-20251001" {
+		t.Errorf("Model = %q, want claude-haiku-4-5-20251001", resp.Status.Model)
+	}
+	if resp.Status.StopReason != "error" {
+		t.Errorf("StopReason = %q, want error", resp.Status.StopReason)
+	}
+}

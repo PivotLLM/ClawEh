@@ -95,28 +95,38 @@ func (p *CodexCliProvider) Chat(
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	err := cmd.Run()
+	bytesSent := int64(len(prompt))
+	start := time.Now()
+	runErr := cmd.Run()
+	elapsed := time.Since(start)
+	durationMs := elapsed.Milliseconds()
+	bytesReceived := int64(stdout.Len())
 
 	// Parse JSONL from stdout even if exit code is non-zero,
 	// because codex writes diagnostic noise to stderr (e.g. rollout errors)
 	// but still produces valid JSONL output.
 	if stdoutStr := stdout.String(); stdoutStr != "" {
-		resp, parseErr := p.parseJSONLEvents(stdoutStr)
+		resp, parseErr := p.parseJSONLEvents(stdoutStr, model, durationMs)
 		if parseErr == nil && resp != nil && resp.Content != "" {
+			if resp.Status != nil {
+				resp.Status.BytesSent = bytesSent
+				resp.Status.BytesReceived = bytesReceived
+			}
 			return resp, nil
 		}
 	}
 
-	if err != nil {
+	if runErr != nil {
 		if ctx.Err() == context.DeadlineExceeded {
-			return nil, fmt.Errorf("codex cli timed out after %s: %w", p.timeout, context.DeadlineExceeded)
+			return cliErrorResponse(model, "timeout", elapsed, bytesSent, bytesReceived),
+				fmt.Errorf("codex cli timed out after %s: %w", p.timeout, context.DeadlineExceeded)
 		}
 		if ctx.Err() == context.Canceled {
-			return nil, ctx.Err()
+			return cliErrorResponse(model, "canceled", elapsed, bytesSent, bytesReceived), ctx.Err()
 		}
 		exitCode := -1
 		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
+		if errors.As(runErr, &exitErr) {
 			exitCode = exitErr.ExitCode()
 		}
 		stderrStr := strings.TrimSpace(stderr.String())
@@ -130,10 +140,11 @@ func (p *CodexCliProvider) Chat(
 			fields["stdout"] = stdoutStr
 		}
 		logger.ErrorCF("provider", "codex-cli subprocess failed", fields)
+		errResp := cliErrorResponse(model, "error", elapsed, bytesSent, bytesReceived)
 		if stderrStr != "" {
-			return nil, fmt.Errorf("codex cli error: %s", stderrStr)
+			return errResp, fmt.Errorf("codex cli error: %s", stderrStr)
 		}
-		return nil, fmt.Errorf("codex cli error: %w", err)
+		return errResp, fmt.Errorf("codex cli error: %w", runErr)
 	}
 
 	// Log non-empty stderr on successful exit.
@@ -142,7 +153,21 @@ func (p *CodexCliProvider) Chat(
 			map[string]any{"stderr": stderrStr})
 	}
 
-	return p.parseJSONLEvents(stdout.String())
+	resp, parseErr := p.parseJSONLEvents(stdout.String(), model, durationMs)
+	if parseErr != nil {
+		if resp != nil && resp.Status != nil {
+			resp.Status.BytesSent = bytesSent
+			resp.Status.BytesReceived = bytesReceived
+		} else {
+			resp = cliErrorResponse(model, "parse_error", elapsed, bytesSent, bytesReceived)
+		}
+		return resp, parseErr
+	}
+	if resp.Status != nil {
+		resp.Status.BytesSent = bytesSent
+		resp.Status.BytesReceived = bytesReceived
+	}
+	return resp, nil
 }
 
 // GetDefaultModel returns the default model identifier.
@@ -223,10 +248,12 @@ type codexEventErr struct {
 }
 
 // parseJSONLEvents processes the JSONL output from codex exec --json.
-func (p *CodexCliProvider) parseJSONLEvents(output string) (*LLMResponse, error) {
+func (p *CodexCliProvider) parseJSONLEvents(output, model string, durationMs int64) (*LLMResponse, error) {
 	var contentParts []string
 	var usage *UsageInfo
+	var finalUsage *codexUsage
 	var lastError string
+	turnCompletedCount := 0
 
 	scanner := bufio.NewScanner(strings.NewReader(output))
 	scanner.Buffer(make([]byte, 0, 256*1024), 1024*1024)
@@ -249,7 +276,9 @@ func (p *CodexCliProvider) parseJSONLEvents(output string) (*LLMResponse, error)
 				contentParts = append(contentParts, event.Item.Text)
 			}
 		case "turn.completed":
+			turnCompletedCount++
 			if event.Usage != nil {
+				finalUsage = event.Usage
 				promptTokens := event.Usage.InputTokens + event.Usage.CachedInputTokens
 				usage = &UsageInfo{
 					PromptTokens:     promptTokens,
@@ -274,8 +303,10 @@ func (p *CodexCliProvider) parseJSONLEvents(output string) (*LLMResponse, error)
 		}
 	}
 
+	status := buildCodexCliStatus(model, finalUsage, turnCompletedCount, lastError, durationMs)
+
 	if lastError != "" && len(contentParts) == 0 {
-		return nil, fmt.Errorf("codex cli: %s", lastError)
+		return &LLMResponse{Status: status}, fmt.Errorf("codex cli: %s", lastError)
 	}
 
 	// CLI is itself agentic — its output is the final assistant text.
@@ -288,13 +319,14 @@ func (p *CodexCliProvider) parseJSONLEvents(output string) (*LLMResponse, error)
 		FinishReason: "stop",
 		Normal:       true,
 		Usage:        usage,
+		Status:       status,
 	}
 
 	hasError := lastError != "" && len(contentParts) > 0
-	logger.InfoCF("provider", "codex-cli response",
+	logger.DebugCF("provider", "codex-cli response",
 		map[string]any{
 			"content_chars": len(strings.TrimSpace(content)),
-			"num_turns":     len(contentParts),
+			"num_turns":     turnCompletedCount,
 			"has_error":     hasError,
 		})
 
@@ -311,6 +343,30 @@ func (p *CodexCliProvider) parseJSONLEvents(output string) (*LLMResponse, error)
 	}
 
 	return result, nil
+}
+
+// buildCodexCliStatus constructs a DispatchStatus from the parsed codex JSONL stream.
+// BytesSent / BytesReceived are filled in by Chat().
+func buildCodexCliStatus(model string, usage *codexUsage, numTurns int, lastError string, durationMs int64) *DispatchStatus {
+	stopReason := "success"
+	success := true
+	if lastError != "" {
+		stopReason = "error"
+		success = false
+	}
+	status := &DispatchStatus{
+		Success:    success,
+		Model:      model,
+		NumTurns:   numTurns,
+		StopReason: stopReason,
+		DurationMs: durationMs,
+	}
+	if usage != nil {
+		status.InputTokens = usage.InputTokens
+		status.OutputTokens = usage.OutputTokens
+		status.CacheReadTokens = usage.CachedInputTokens
+	}
+	return status
 }
 
 // truncateString returns s truncated to at most n characters.

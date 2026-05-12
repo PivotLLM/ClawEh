@@ -28,6 +28,7 @@ type (
 	FunctionCall           = protocoltypes.FunctionCall
 	LLMResponse            = protocoltypes.LLMResponse
 	UsageInfo              = protocoltypes.UsageInfo
+	DispatchStatus         = protocoltypes.DispatchStatus
 	Message                = protocoltypes.Message
 	ToolDefinition         = protocoltypes.ToolDefinition
 	ToolFunctionDefinition = protocoltypes.ToolFunctionDefinition
@@ -135,8 +136,11 @@ func SerializeMessages(messages []Message) []any {
 // --- Response parsing ---
 
 // ParseResponse parses a JSON chat completion response body into an LLMResponse.
+// The returned LLMResponse carries a partial DispatchStatus (Success and DurationMs
+// are intentionally left for the caller, which knows the HTTP outcome and wall-clock).
 func ParseResponse(body io.Reader) (*LLMResponse, error) {
 	var apiResponse struct {
+		Model   string `json:"model"`
 		Choices []struct {
 			Message struct {
 				Content          string            `json:"content"`
@@ -159,7 +163,14 @@ func ParseResponse(body io.Reader) (*LLMResponse, error) {
 			} `json:"message"`
 			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
-		Usage *UsageInfo `json:"usage"`
+		Usage *struct {
+			PromptTokens        int `json:"prompt_tokens"`
+			CompletionTokens    int `json:"completion_tokens"`
+			TotalTokens         int `json:"total_tokens"`
+			PromptTokensDetails *struct {
+				CachedTokens int `json:"cached_tokens"`
+			} `json:"prompt_tokens_details"`
+		} `json:"usage"`
 	}
 
 	if err := json.NewDecoder(body).Decode(&apiResponse); err != nil {
@@ -171,6 +182,10 @@ func ParseResponse(body io.Reader) (*LLMResponse, error) {
 			Content:      "",
 			FinishReason: "stop",
 			Normal:       false,
+			Status: &DispatchStatus{
+				Model:    apiResponse.Model,
+				NumTurns: 1,
+			},
 		}, nil
 	}
 
@@ -209,6 +224,25 @@ func ParseResponse(body io.Reader) (*LLMResponse, error) {
 		toolCalls = append(toolCalls, toolCall)
 	}
 
+	var usage *UsageInfo
+	status := &DispatchStatus{
+		Model:      apiResponse.Model,
+		NumTurns:   1,
+		StopReason: choice.FinishReason,
+	}
+	if apiResponse.Usage != nil {
+		usage = &UsageInfo{
+			PromptTokens:     apiResponse.Usage.PromptTokens,
+			CompletionTokens: apiResponse.Usage.CompletionTokens,
+			TotalTokens:      apiResponse.Usage.TotalTokens,
+		}
+		status.InputTokens = apiResponse.Usage.PromptTokens
+		status.OutputTokens = apiResponse.Usage.CompletionTokens
+		if apiResponse.Usage.PromptTokensDetails != nil {
+			status.CacheReadTokens = apiResponse.Usage.PromptTokensDetails.CachedTokens
+		}
+	}
+
 	return &LLMResponse{
 		Content:          choice.Message.Content,
 		ReasoningContent: choice.Message.ReasoningContent,
@@ -217,7 +251,8 @@ func ParseResponse(body io.Reader) (*LLMResponse, error) {
 		ToolCalls:        toolCalls,
 		FinishReason:     choice.FinishReason,
 		Normal:           choice.FinishReason == "stop" || choice.FinishReason == "tool_calls",
-		Usage:            apiResponse.Usage,
+		Usage:            usage,
+		Status:           status,
 	}, nil
 }
 
@@ -277,20 +312,43 @@ func HandleErrorResponse(resp *http.Response, apiBase string) error {
 // ReadAndParseResponse peeks at the response body to detect HTML errors,
 // then parses the JSON response into an LLMResponse.
 func ReadAndParseResponse(resp *http.Response, apiBase string) (*LLMResponse, error) {
+	out, _, err := ReadParseAndMeasure(resp, apiBase)
+	return out, err
+}
+
+// ReadParseAndMeasure is like ReadAndParseResponse but also returns the raw
+// response-body length so callers can fill DispatchStatus.BytesReceived. The
+// underlying reader is streamed (mirroring ReadAndParseResponse's prior
+// behaviour) so endpoints that close mid-trailer after a complete JSON object
+// still parse successfully.
+func ReadParseAndMeasure(resp *http.Response, apiBase string) (*LLMResponse, int64, error) {
 	contentType := resp.Header.Get("Content-Type")
-	reader := bufio.NewReader(resp.Body)
+	counter := &readCounter{r: resp.Body}
+	reader := bufio.NewReader(counter)
 	prefix, err := reader.Peek(256)
 	if err != nil && err != io.EOF && err != bufio.ErrBufferFull {
-		return nil, fmt.Errorf("failed to inspect response: %w", err)
+		return nil, counter.n, fmt.Errorf("failed to inspect response: %w", err)
 	}
 	if LooksLikeHTML(prefix, contentType) {
-		return nil, WrapHTMLResponseError(resp.StatusCode, prefix, contentType, apiBase)
+		return nil, counter.n, WrapHTMLResponseError(resp.StatusCode, prefix, contentType, apiBase)
 	}
 	out, err := ParseResponse(reader)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse JSON response: %w", err)
+		return nil, counter.n, fmt.Errorf("failed to parse JSON response: %w", err)
 	}
-	return out, nil
+	return out, counter.n, nil
+}
+
+// readCounter wraps an io.Reader and tracks the cumulative byte count read.
+type readCounter struct {
+	r io.Reader
+	n int64
+}
+
+func (c *readCounter) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n += int64(n)
+	return n, err
 }
 
 // LooksLikeHTML checks if the response body appears to be HTML.

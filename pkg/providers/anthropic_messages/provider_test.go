@@ -620,3 +620,45 @@ func TestProviderChatErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestParseResponseBody_PopulatesDispatchStatus(t *testing.T) {
+	body := []byte(`{
+		"id": "msg-status",
+		"type": "message",
+		"role": "assistant",
+		"content": [{"type": "text", "text": "ok"}],
+		"stop_reason": "end_turn",
+		"model": "claude-haiku-4-5-20251001",
+		"usage": {
+			"input_tokens": 10,
+			"output_tokens": 5,
+			"cache_creation_input_tokens": 83112,
+			"cache_read_input_tokens": 1024
+		}
+	}`)
+	got, err := parseResponseBody(body)
+	if err != nil {
+		t.Fatalf("parseResponseBody() error = %v", err)
+	}
+	if got.Status == nil {
+		t.Fatal("expected non-nil Status")
+	}
+	if got.Status.Model != "claude-haiku-4-5-20251001" {
+		t.Errorf("Status.Model = %q, want claude-haiku-4-5-20251001", got.Status.Model)
+	}
+	if got.Status.InputTokens != 10 || got.Status.OutputTokens != 5 {
+		t.Errorf("Status tokens = (%d,%d), want (10,5)", got.Status.InputTokens, got.Status.OutputTokens)
+	}
+	if got.Status.CacheCreationTokens != 83112 {
+		t.Errorf("CacheCreationTokens = %d, want 83112", got.Status.CacheCreationTokens)
+	}
+	if got.Status.CacheReadTokens != 1024 {
+		t.Errorf("CacheReadTokens = %d, want 1024", got.Status.CacheReadTokens)
+	}
+	if got.Status.StopReason != "end_turn" {
+		t.Errorf("StopReason = %q, want end_turn", got.Status.StopReason)
+	}
+	if got.Status.NumTurns != 1 {
+		t.Errorf("NumTurns = %d, want 1", got.Status.NumTurns)
+	}
+}
