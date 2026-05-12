@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"time"
 
 	"github.com/PivotLLM/ClawEh/pkg/config"
 )
@@ -22,4 +23,7 @@ type Runtime struct {
 	ResetCooldown        func()
 	RetriggerLastMessage func(ctx context.Context) error
 	CancelPending        func() int // drains pending queued messages; returns skip count
+
+	Uptime          func() time.Duration
+	GetSessionStats func() (msgCount int, estTokens int, summaryChars int)
 }

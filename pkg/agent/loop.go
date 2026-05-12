@@ -68,6 +68,7 @@ type AgentLoop struct {
 	sessionMus          sync.Map
 	sessionCancelStates sync.Map // scope key → *sessionCancelState
 	dumpsDir            string
+	startedAt           time.Time
 }
 
 // sessionCancelState tracks a pending cancel request for a session. When
@@ -177,6 +178,7 @@ func NewAgentLoop(
 		agentStates:      agentStates,
 		callbackManagers: callbackManagers,
 		agentTokens:      agentTokens,
+		startedAt:        time.Now(),
 	}
 
 	return al
@@ -2539,6 +2541,15 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 				return fmt.Errorf("channel '%s' not found or not enabled", value)
 			}
 			return nil
+		},
+		Uptime: func() time.Duration { return time.Since(al.startedAt) },
+		GetSessionStats: func() (int, int, int) {
+			if agent == nil || agent.Sessions == nil || opts == nil {
+				return 0, 0, 0
+			}
+			history := agent.Sessions.GetHistory(opts.SessionKey)
+			summary := agent.Sessions.GetSummary(opts.SessionKey)
+			return len(history), al.estimateTokens(history), len(summary)
 		},
 	}
 	if agent != nil {
