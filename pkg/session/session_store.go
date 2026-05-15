@@ -1,6 +1,10 @@
 package session
 
-import "github.com/PivotLLM/ClawEh/pkg/providers"
+import (
+	"time"
+
+	"github.com/PivotLLM/ClawEh/pkg/providers"
+)
 
 // SessionStore defines the persistence operations used by the agent loop.
 // Both SessionManager (legacy JSON backend) and JSONLBackend satisfy this
@@ -25,6 +29,13 @@ type SessionStore interface {
 	SetHistory(key string, history []providers.Message)
 	// TruncateHistory keeps only the last keepLast messages.
 	TruncateHistory(key string, keepLast int)
+	// SetPendingTurn marks a session as having an LLM turn in flight.
+	SetPendingTurn(sessionKey string, at time.Time) error
+	// ClearPendingTurn marks a session's turn as complete.
+	ClearPendingTurn(sessionKey string) error
+	// GetArchiveBounds returns the inclusive seq range of messages stored in
+	// the session archive. Returns (0, 0) if no archive exists yet.
+	GetArchiveBounds(sessionKey string) (minSeq, maxSeq int)
 	// Save persists any pending state to durable storage.
 	Save(key string) error
 	// Close releases resources held by the store.

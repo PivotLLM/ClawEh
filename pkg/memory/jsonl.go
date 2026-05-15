@@ -30,7 +30,20 @@ const (
 	// we set a generous limit. The scanner starts at 64 KB and grows
 	// only as needed up to this cap.
 	maxLineSize = 10 * 1024 * 1024 // 10 MB
+
+	// cronWrapperPrefix is the prefix injected by pkg/tools/cron.go when
+	// wrapping cron job output as a user message. Used by the noise
+	// classifier to detect duplicate cron payloads.
+	cronWrapperPrefix = "The following message is from a cron job that fired at "
 )
+
+// StoredMessage is a providers.Message decorated with a monotonically increasing
+// sequence number assigned at write time. Seq is storage-layer-only and is never
+// part of providers.Message.
+type StoredMessage struct {
+	Seq int `json:"seq"`
+	providers.Message
+}
 
 // sessionMeta holds per-session metadata stored in a .meta.json file.
 type sessionMeta struct {
@@ -40,22 +53,88 @@ type sessionMeta struct {
 	Count     int       `json:"count"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+
+	// Phase 2 fields
+	NextSeq                     int       `json:"next_seq,omitempty"`
+	MeaningfulCount             int       `json:"meaningful_count,omitempty"`
+	CompressedAtMeaningfulCount int       `json:"compressed_at_meaningful_count,omitempty"`
+	ArchiveMinSeq               int       `json:"archive_min_seq,omitempty"`
+	ArchiveMaxSeq               int       `json:"archive_max_seq,omitempty"`
+	SummaryGeneratedAt          time.Time `json:"summary_generated_at,omitempty"`
+	SummaryModel                string    `json:"summary_model,omitempty"`
+	CompressionCooling          bool      `json:"compression_cooling,omitempty"`
+	CoolingSinceCount           int       `json:"cooling_since_count,omitempty"`
+
+	// PendingTurnAt is non-zero while an LLM turn is in flight for this session.
+	// Set before the LLM call; cleared when the final response is persisted.
+	// A non-zero value on startup indicates the process was interrupted mid-turn.
+	PendingTurnAt time.Time `json:"pending_turn_at,omitempty"`
+}
+
+// noiseCache tracks the last written message per role and the last cron
+// payload so that duplicate messages can be classified as noise.
+type noiseCache struct {
+	lastByRole      map[string]string // role -> last written Content
+	lastCronPayload string
+}
+
+func newNoiseCache() *noiseCache {
+	return &noiseCache{lastByRole: make(map[string]string)}
+}
+
+// extractCronPayload returns the payload after the timestamp header, or ("", false).
+// Format: "...fired at <timestamp>:\n\n<payload>"
+func extractCronPayload(content string) (string, bool) {
+	if !strings.HasPrefix(content, cronWrapperPrefix) {
+		return "", false
+	}
+	idx := strings.Index(content, ":\n\n")
+	if idx < 0 {
+		return "", false
+	}
+	return content[idx+3:], true
+}
+
+// isNoise returns true if msg is a duplicate that contributes no new information.
+func isNoise(msg StoredMessage, cache *noiseCache) bool {
+	if cache == nil {
+		return false
+	}
+	if payload, ok := extractCronPayload(msg.Content); ok {
+		return cache.lastCronPayload == payload
+	}
+	return cache.lastByRole[msg.Role] == msg.Content && msg.Content != ""
+}
+
+// updateNoiseCache records msg in the cache for future noise checks.
+func updateNoiseCache(msg StoredMessage, cache *noiseCache) {
+	if cache == nil {
+		return
+	}
+	if payload, ok := extractCronPayload(msg.Content); ok {
+		cache.lastCronPayload = payload
+		return
+	}
+	cache.lastByRole[msg.Role] = msg.Content
 }
 
 // JSONLStore implements Store using append-only JSONL files.
 //
 // Each session is stored as two files:
 //
-//	{sanitized_key}.jsonl      — one JSON-encoded message per line, append-only
-//	{sanitized_key}.meta.json  — session metadata (summary, logical truncation offset)
+//	{sanitized_key}.jsonl          — one JSON-encoded StoredMessage per line, append-only
+//	{sanitized_key}.meta.json      — session metadata (summary, logical truncation offset)
+//	{sanitized_key}.archive.jsonl  — all-time archive of every written StoredMessage
 //
 // Messages are never physically deleted from the JSONL file. Instead,
 // TruncateHistory records a "skip" offset in the metadata file and
 // GetHistory ignores lines before that offset. This keeps all writes
 // append-only, which is both fast and crash-safe.
 type JSONLStore struct {
-	dir   string
-	locks [numLockShards]sync.Mutex
+	dir         string
+	locks       [numLockShards]sync.Mutex
+	noiseMu     sync.Mutex // protects noiseCaches map
+	noiseCaches map[string]*noiseCache
 }
 
 // NewJSONLStore creates a new JSONL-backed store rooted at dir.
@@ -64,7 +143,10 @@ func NewJSONLStore(dir string) (*JSONLStore, error) {
 	if err != nil {
 		return nil, fmt.Errorf("memory: create directory: %w", err)
 	}
-	return &JSONLStore{dir: dir}, nil
+	return &JSONLStore{
+		dir:         dir,
+		noiseCaches: make(map[string]*noiseCache),
+	}, nil
 }
 
 // sessionLock returns a mutex for the given session key.
@@ -84,6 +166,10 @@ func (s *JSONLStore) metaPath(key string) string {
 	return filepath.Join(s.dir, sanitizeKey(key)+".meta.json")
 }
 
+func (s *JSONLStore) archivePath(key string) string {
+	return filepath.Join(s.dir, sanitizeKey(key)+".archive.jsonl")
+}
+
 // sanitizeKey converts a session key to a safe filename component.
 // Mirrors pkg/session.sanitizeFilename so that migration paths match.
 // Replaces ':' with '_' (session key separator) and '/' and '\' with '_'
@@ -94,6 +180,20 @@ func sanitizeKey(key string) string {
 	s = strings.ReplaceAll(s, "/", "_")
 	s = strings.ReplaceAll(s, "\\", "_")
 	return s
+}
+
+// getNoiseCache returns the noise cache for the given session key, creating
+// one if it does not exist. The noise cache contents are only accessed while
+// holding the per-session lock; noiseMu protects the map itself.
+func (s *JSONLStore) getNoiseCache(key string) *noiseCache {
+	s.noiseMu.Lock()
+	defer s.noiseMu.Unlock()
+	if c, ok := s.noiseCaches[key]; ok {
+		return c
+	}
+	c := newNoiseCache()
+	s.noiseCaches[key] = c
+	return c
 }
 
 // readMeta loads the metadata file for a session.
@@ -124,21 +224,21 @@ func (s *JSONLStore) writeMeta(key string, meta sessionMeta) error {
 	return fileutil.WriteFileAtomic(s.metaPath(key), data, 0o644)
 }
 
-// readMessages reads valid JSON lines from a .jsonl file, skipping
-// the first `skip` lines without unmarshaling them. This avoids the
-// cost of json.Unmarshal on logically truncated messages.
-// Malformed trailing lines (e.g. from a crash) are silently skipped.
-func readMessages(path string, skip int) ([]providers.Message, error) {
+// readStoredMessages reads valid JSON lines from a .jsonl file, skipping
+// the first `skip` lines without unmarshaling them, and returns StoredMessages
+// with seq numbers. Legacy lines (seq == 0) are assigned approximate seq
+// numbers of (skip + lineNum).
+func readStoredMessages(path string, skip int) ([]StoredMessage, error) {
 	f, err := os.Open(path)
 	if os.IsNotExist(err) {
-		return []providers.Message{}, nil
+		return []StoredMessage{}, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("memory: open jsonl: %w", err)
 	}
 	defer f.Close()
 
-	var msgs []providers.Message
+	var msgs []StoredMessage
 	scanner := bufio.NewScanner(f)
 	// Allow large lines for tool results (read_file, web search, etc.).
 	scanner.Buffer(make([]byte, 0, 64*1024), maxLineSize)
@@ -153,24 +253,42 @@ func readMessages(path string, skip int) ([]providers.Message, error) {
 		if lineNum <= skip {
 			continue
 		}
-		var msg providers.Message
-		if err := json.Unmarshal(line, &msg); err != nil {
+		var stored StoredMessage
+		if err := json.Unmarshal(line, &stored); err != nil {
 			// Corrupt line — likely a partial write from a crash.
-			// Log so operators know data was skipped, but don't
-			// fail the entire read; this is the standard JSONL
-			// recovery pattern.
 			log.Printf("memory: skipping corrupt line %d in %s: %v",
 				lineNum, filepath.Base(path), err)
 			continue
 		}
-		msgs = append(msgs, msg)
+		// Migration: legacy lines written before Phase 2 have seq == 0.
+		// Assign an approximate seq based on position.
+		if stored.Seq == 0 {
+			stored.Seq = skip + lineNum
+		}
+		msgs = append(msgs, stored)
 	}
 	if scanner.Err() != nil {
 		return nil, fmt.Errorf("memory: scan jsonl: %w", scanner.Err())
 	}
 
 	if msgs == nil {
-		msgs = []providers.Message{}
+		msgs = []StoredMessage{}
+	}
+	return msgs, nil
+}
+
+// readMessages reads valid JSON lines from a .jsonl file, skipping
+// the first `skip` lines without unmarshaling them. This avoids the
+// cost of json.Unmarshal on logically truncated messages.
+// Malformed trailing lines (e.g. from a crash) are silently skipped.
+func readMessages(path string, skip int) ([]providers.Message, error) {
+	stored, err := readStoredMessages(path, skip)
+	if err != nil {
+		return nil, err
+	}
+	msgs := make([]providers.Message, len(stored))
+	for i, sm := range stored {
+		msgs[i] = sm.Message
 	}
 	return msgs, nil
 }
@@ -220,8 +338,21 @@ func (s *JSONLStore) addMsg(sessionKey string, msg providers.Message) error {
 	l.Lock()
 	defer l.Unlock()
 
-	// Append the message as a single JSON line.
-	line, err := json.Marshal(msg)
+	// Read meta first so we can assign the next seq number.
+	meta, err := s.readMeta(sessionKey)
+	if err != nil {
+		return err
+	}
+
+	// Assign monotonically increasing sequence number.
+	seq := meta.NextSeq + 1
+	if seq <= 0 {
+		seq = 1
+	}
+	stored := StoredMessage{Seq: seq, Message: msg}
+
+	// Serialize as StoredMessage (includes seq field).
+	line, err := json.Marshal(stored)
 	if err != nil {
 		return fmt.Errorf("memory: marshal message: %w", err)
 	}
@@ -241,7 +372,7 @@ func (s *JSONLStore) addMsg(sessionKey string, msg providers.Message) error {
 		return fmt.Errorf("memory: append message: %w", writeErr)
 	}
 	// Flush to physical storage before closing. This matches the
-	// durability guarantee of writeMeta and rewriteJSONL (which use
+	// durability guarantee of writeMeta and rewriteStoredJSONL (which use
 	// WriteFileAtomic with fsync). Without Sync, a power loss could
 	// leave the append in the kernel page cache only — lost on reboot.
 	if syncErr := f.Sync(); syncErr != nil {
@@ -252,17 +383,44 @@ func (s *JSONLStore) addMsg(sessionKey string, msg providers.Message) error {
 		return fmt.Errorf("memory: close jsonl: %w", closeErr)
 	}
 
+	// Determine if this message is noise (no new information).
+	cache := s.getNoiseCache(sessionKey)
+	isNoisy := isNoise(stored, cache)
+
 	// Update metadata.
-	meta, err := s.readMeta(sessionKey)
-	if err != nil {
-		return err
-	}
 	now := time.Now()
 	if meta.Count == 0 && meta.CreatedAt.IsZero() {
 		meta.CreatedAt = now
 	}
+	meta.NextSeq = seq
 	meta.Count++
+	if !isNoisy {
+		meta.MeaningfulCount++
+	}
 	meta.UpdatedAt = now
+
+	// Update noise cache after computing isNoisy.
+	updateNoiseCache(stored, cache)
+
+	log.Printf("memory: message_stored seq=%d length=%d counted=%v role=%q session=%q",
+		seq, len(msg.Content), !isNoisy, msg.Role, sessionKey)
+
+	// Append to archive (best-effort; errors are logged but not fatal).
+	archiveLine, _ := json.Marshal(stored)
+	archiveLine = append(archiveLine, '\n')
+	af, archErr := os.OpenFile(s.archivePath(sessionKey), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if archErr == nil {
+		af.Write(archiveLine) //nolint:errcheck // best-effort archive write
+		af.Sync()             //nolint:errcheck
+		af.Close()            //nolint:errcheck
+		// Update archive seq range in meta.
+		if meta.ArchiveMinSeq == 0 {
+			meta.ArchiveMinSeq = seq
+		}
+		meta.ArchiveMaxSeq = seq
+	} else {
+		log.Printf("memory: warn: could not open archive for session %q: %v", sessionKey, archErr)
+	}
 
 	return s.writeMeta(sessionKey, meta)
 }
@@ -277,6 +435,24 @@ func (s *JSONLStore) GetHistory(
 	meta, err := s.readMeta(sessionKey)
 	if err != nil {
 		return nil, err
+	}
+
+	// Migrate legacy files: if NextSeq is 0 and the file exists with
+	// content, set NextSeq to the line count so future writes have
+	// correct sequence numbers.
+	if meta.NextSeq == 0 {
+		n, countErr := countLines(s.jsonlPath(sessionKey))
+		if countErr != nil {
+			return nil, countErr
+		}
+		if n > 0 {
+			meta.NextSeq = n
+			if saveErr := s.writeMeta(sessionKey, meta); saveErr != nil {
+				// Non-fatal: log and continue; seq will be approximate.
+				log.Printf("memory: warn: could not save migrated NextSeq for session %q: %v",
+					sessionKey, saveErr)
+			}
+		}
 	}
 
 	// Pass meta.Skip so readMessages skips those lines without
@@ -349,6 +525,13 @@ func (s *JSONLStore) TruncateHistory(
 
 	if keepLast <= 0 {
 		meta.Skip = meta.Count
+		// Full reset: clear archive and tracking fields.
+		_ = os.Remove(s.archivePath(sessionKey)) // ignore if not exists
+		meta.ArchiveMinSeq = 0
+		meta.ArchiveMaxSeq = 0
+		meta.MeaningfulCount = 0
+		meta.CompressedAtMeaningfulCount = 0
+		meta.CompressionCooling = false
 	} else {
 		effective := meta.Count - meta.Skip
 		if keepLast < effective {
@@ -390,7 +573,22 @@ func (s *JSONLStore) SetHistory(
 		return err
 	}
 
-	return s.rewriteJSONL(sessionKey, history)
+	// Assign new seq numbers starting from current NextSeq + 1 so that
+	// the seq numbers remain monotonically increasing across rewrites.
+	startSeq := meta.NextSeq
+	stored := make([]StoredMessage, len(history))
+	for i, msg := range history {
+		startSeq++
+		stored[i] = StoredMessage{Seq: startSeq, Message: msg}
+	}
+
+	if err := s.rewriteStoredJSONL(sessionKey, stored); err != nil {
+		return err
+	}
+
+	// Update NextSeq now that we have written new seq numbers.
+	meta.NextSeq = startSeq
+	return s.writeMeta(sessionKey, meta)
 }
 
 // Compact physically rewrites the JSONL file, dropping all logically
@@ -414,9 +612,8 @@ func (s *JSONLStore) Compact(
 		return nil
 	}
 
-	// Read only the active messages, skipping truncated lines
-	// without unmarshaling them.
-	active, err := readMessages(s.jsonlPath(sessionKey), meta.Skip)
+	// Read only the active StoredMessages, preserving their seq numbers.
+	active, err := readStoredMessages(s.jsonlPath(sessionKey), meta.Skip)
 	if err != nil {
 		return err
 	}
@@ -435,13 +632,13 @@ func (s *JSONLStore) Compact(
 		return err
 	}
 
-	return s.rewriteJSONL(sessionKey, active)
+	return s.rewriteStoredJSONL(sessionKey, active)
 }
 
-// rewriteJSONL atomically replaces the JSONL file with the given messages
-// using the project's standard WriteFileAtomic (temp + fsync + rename).
-func (s *JSONLStore) rewriteJSONL(
-	sessionKey string, msgs []providers.Message,
+// rewriteStoredJSONL atomically replaces the JSONL file with the given
+// StoredMessages using the project's standard WriteFileAtomic (temp + fsync + rename).
+func (s *JSONLStore) rewriteStoredJSONL(
+	sessionKey string, msgs []StoredMessage,
 ) error {
 	var buf bytes.Buffer
 	for i, msg := range msgs {
@@ -453,6 +650,41 @@ func (s *JSONLStore) rewriteJSONL(
 		buf.WriteByte('\n')
 	}
 	return fileutil.WriteFileAtomic(s.jsonlPath(sessionKey), buf.Bytes(), 0o644)
+}
+
+func (s *JSONLStore) SetPendingTurn(ctx context.Context, sessionKey string, at time.Time) error {
+	l := s.sessionLock(sessionKey)
+	l.Lock()
+	defer l.Unlock()
+	meta, err := s.readMeta(sessionKey)
+	if err != nil {
+		return err
+	}
+	meta.PendingTurnAt = at
+	return s.writeMeta(sessionKey, meta)
+}
+
+func (s *JSONLStore) ClearPendingTurn(ctx context.Context, sessionKey string) error {
+	l := s.sessionLock(sessionKey)
+	l.Lock()
+	defer l.Unlock()
+	meta, err := s.readMeta(sessionKey)
+	if err != nil {
+		return err
+	}
+	meta.PendingTurnAt = time.Time{}
+	return s.writeMeta(sessionKey, meta)
+}
+
+func (s *JSONLStore) GetArchiveBounds(_ context.Context, sessionKey string) (minSeq, maxSeq int, err error) {
+	l := s.sessionLock(sessionKey)
+	l.Lock()
+	defer l.Unlock()
+	meta, err := s.readMeta(sessionKey)
+	if err != nil {
+		return 0, 0, err
+	}
+	return meta.ArchiveMinSeq, meta.ArchiveMaxSeq, nil
 }
 
 func (s *JSONLStore) Close() error {

@@ -14,6 +14,7 @@ func BuiltinDefinitions() []Definition {
 		checkCommand(),
 		cancelCommand(),
 		clearCommand(),
+		compactCommand(),
 		retryCommand(),
 		statusCommand(),
 		versionCommand(),

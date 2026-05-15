@@ -149,15 +149,40 @@ export function ConfigPage() {
           "Max tool iterations",
           { min: 1 },
         )
-        const summarizeMessageThreshold = parseIntField(
-          form.summarizeMessageThreshold,
-          "Summarize message threshold",
-          { min: 1 },
+        const compressNormalPercent = parseIntField(
+          form.compressNormalPercent,
+          "Compress normal percent",
+          { min: 0, max: 100 },
         )
-        const summarizeTokenPercent = parseIntField(
-          form.summarizeTokenPercent,
-          "Summarize token percent",
-          { min: 1, max: 100 },
+        const compressSafetyPercent = parseIntField(
+          form.compressSafetyPercent,
+          "Compress safety percent",
+          { min: 0, max: 100 },
+        )
+        const compressMinPercent = parseIntField(
+          form.compressMinPercent,
+          "Compress min percent",
+          { min: 0, max: 100 },
+        )
+        const compressMessageThreshold = parseIntField(
+          form.compressMessageThreshold,
+          "Compress message threshold",
+          { min: 0 },
+        )
+        const compressRetainTokenPercent = parseIntField(
+          form.compressRetainTokenPercent,
+          "Compress retain token percent",
+          { min: 0, max: 100 },
+        )
+        const compressRetainMinMessages = parseIntField(
+          form.compressRetainMinMessages,
+          "Compress retain min messages",
+          { min: 0 },
+        )
+        const archiveMessageCount = parseIntField(
+          form.archiveMessageCount,
+          "Archive message count",
+          { min: 0 },
         )
         await patchAppConfig({
           agents: {
@@ -166,8 +191,13 @@ export function ConfigPage() {
               restrict_to_workspace: form.restrictToWorkspace,
               max_tokens: maxTokens,
               max_tool_iterations: maxToolIterations,
-              summarize_message_threshold: summarizeMessageThreshold,
-              summarize_token_percent: summarizeTokenPercent,
+              compress_normal_percent: compressNormalPercent,
+              compress_safety_percent: compressSafetyPercent,
+              compress_min_percent: compressMinPercent,
+              compress_message_threshold: compressMessageThreshold,
+              compress_retain_token_percent: compressRetainTokenPercent,
+              compress_retain_min_messages: compressRetainMinMessages,
+              archive_message_count: archiveMessageCount,
             },
           },
           session: {

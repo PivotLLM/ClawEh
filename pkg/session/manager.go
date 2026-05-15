@@ -269,6 +269,25 @@ func (sm *SessionManager) loadSessions() error {
 	return nil
 }
 
+// SetPendingTurn is a no-op for the in-memory SessionManager; it satisfies
+// the SessionStore interface. SessionManager has no persistent backing, so
+// there is nothing to mark on disk.
+func (sm *SessionManager) SetPendingTurn(_ string, _ time.Time) error {
+	return nil
+}
+
+// ClearPendingTurn is a no-op for the in-memory SessionManager; it satisfies
+// the SessionStore interface.
+func (sm *SessionManager) ClearPendingTurn(_ string) error {
+	return nil
+}
+
+// GetArchiveBounds is a no-op for the in-memory SessionManager; it satisfies
+// the SessionStore interface.
+func (sm *SessionManager) GetArchiveBounds(_ string) (int, int) {
+	return 0, 0
+}
+
 // Close is a no-op for the in-memory SessionManager; it satisfies the
 // SessionStore interface so callers can release resources uniformly.
 func (sm *SessionManager) Close() error {

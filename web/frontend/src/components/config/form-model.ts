@@ -6,8 +6,13 @@ export interface CoreConfigForm {
   allowRemote: boolean
   maxTokens: string
   maxToolIterations: string
-  summarizeMessageThreshold: string
-  summarizeTokenPercent: string
+  compressNormalPercent: string
+  compressSafetyPercent: string
+  compressMinPercent: string
+  compressMessageThreshold: string
+  compressRetainTokenPercent: string
+  compressRetainMinMessages: string
+  archiveMessageCount: string
   sessionMode: string
   devicesEnabled: boolean
   monitorUSB: boolean
@@ -56,8 +61,13 @@ export const EMPTY_FORM: CoreConfigForm = {
   allowRemote: true,
   maxTokens: "32768",
   maxToolIterations: "50",
-  summarizeMessageThreshold: "20",
-  summarizeTokenPercent: "75",
+  compressNormalPercent: "0",
+  compressSafetyPercent: "0",
+  compressMinPercent: "0",
+  compressMessageThreshold: "0",
+  compressRetainTokenPercent: "0",
+  compressRetainMinMessages: "0",
+  archiveMessageCount: "0",
   sessionMode: "unified",
   devicesEnabled: false,
   monitorUSB: true,
@@ -118,13 +128,33 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
       defaults.max_tool_iterations,
       EMPTY_FORM.maxToolIterations,
     ),
-    summarizeMessageThreshold: asNumberString(
-      defaults.summarize_message_threshold,
-      EMPTY_FORM.summarizeMessageThreshold,
+    compressNormalPercent: asNumberString(
+      defaults.compress_normal_percent,
+      EMPTY_FORM.compressNormalPercent,
     ),
-    summarizeTokenPercent: asNumberString(
-      defaults.summarize_token_percent,
-      EMPTY_FORM.summarizeTokenPercent,
+    compressSafetyPercent: asNumberString(
+      defaults.compress_safety_percent,
+      EMPTY_FORM.compressSafetyPercent,
+    ),
+    compressMinPercent: asNumberString(
+      defaults.compress_min_percent,
+      EMPTY_FORM.compressMinPercent,
+    ),
+    compressMessageThreshold: asNumberString(
+      defaults.compress_message_threshold,
+      EMPTY_FORM.compressMessageThreshold,
+    ),
+    compressRetainTokenPercent: asNumberString(
+      defaults.compress_retain_token_percent,
+      EMPTY_FORM.compressRetainTokenPercent,
+    ),
+    compressRetainMinMessages: asNumberString(
+      defaults.compress_retain_min_messages,
+      EMPTY_FORM.compressRetainMinMessages,
+    ),
+    archiveMessageCount: asNumberString(
+      defaults.archive_message_count,
+      EMPTY_FORM.archiveMessageCount,
     ),
     sessionMode: asString(session.mode) || EMPTY_FORM.sessionMode,
     devicesEnabled:

@@ -193,6 +193,15 @@ type AgentConfig struct {
 	Subagents   *SubagentsConfig  `json:"subagents,omitempty"`
 	Callback    *CallbackConfig   `json:"callback,omitempty"`
 	Temperature *float64          `json:"temperature,omitempty"`
+
+	CompressMinPercent         *int              `json:"compress_min_percent,omitempty"`
+	CompressNormalPercent      *int              `json:"compress_normal_percent,omitempty"`
+	CompressSafetyPercent      *int              `json:"compress_safety_percent,omitempty"`
+	CompressMessageThreshold   *int              `json:"compress_message_threshold,omitempty"`
+	CompressRetainTokenPercent *int              `json:"compress_retain_token_percent,omitempty"`
+	CompressRetainMinMessages  *int              `json:"compress_retain_min_messages,omitempty"`
+	CompressModel              *AgentModelConfig `json:"compress_model,omitempty"`
+	ArchiveMessageCount        *int              `json:"archive_message_count,omitempty"`
 }
 
 // IsEnabled returns true if the agent is enabled (nil means enabled by default).
@@ -285,21 +294,27 @@ type RoutingConfig struct {
 }
 
 type AgentDefaults struct {
-	Workspace                 string           `json:"workspace,omitempty"             env:"CLAW_AGENTS_DEFAULTS_WORKSPACE"`
-	RestrictToWorkspace       bool             `json:"restrict_to_workspace"           env:"CLAW_AGENTS_DEFAULTS_RESTRICT_TO_WORKSPACE"`
-	AllowReadOutsideWorkspace bool             `json:"allow_read_outside_workspace"    env:"CLAW_AGENTS_DEFAULTS_ALLOW_READ_OUTSIDE_WORKSPACE"`
+	Workspace                 string            `json:"workspace,omitempty"             env:"CLAW_AGENTS_DEFAULTS_WORKSPACE"`
+	RestrictToWorkspace       bool              `json:"restrict_to_workspace"           env:"CLAW_AGENTS_DEFAULTS_RESTRICT_TO_WORKSPACE"`
+	AllowReadOutsideWorkspace bool              `json:"allow_read_outside_workspace"    env:"CLAW_AGENTS_DEFAULTS_ALLOW_READ_OUTSIDE_WORKSPACE"`
 	Model                     *AgentModelConfig `json:"model,omitempty"`
-	ImageModel                string           `json:"image_model,omitempty"           env:"CLAW_AGENTS_DEFAULTS_IMAGE_MODEL"`
-	ImageModelFallbacks       []string         `json:"image_model_fallbacks,omitempty"`
-	RequestTimeout            int              `json:"request_timeout,omitempty"       env:"CLAW_AGENTS_DEFAULTS_REQUEST_TIMEOUT"`
-	MaxTokens                 int              `json:"max_tokens"                      env:"CLAW_AGENTS_DEFAULTS_MAX_TOKENS"`
-	Temperature               *float64         `json:"temperature,omitempty"           env:"CLAW_AGENTS_DEFAULTS_TEMPERATURE"`
-	MaxToolIterations         int              `json:"max_tool_iterations"             env:"CLAW_AGENTS_DEFAULTS_MAX_TOOL_ITERATIONS"`
-	SummarizeMessageThreshold int              `json:"summarize_message_threshold"     env:"CLAW_AGENTS_DEFAULTS_SUMMARIZE_MESSAGE_THRESHOLD"`
-	SummarizeTokenPercent     int              `json:"summarize_token_percent"         env:"CLAW_AGENTS_DEFAULTS_SUMMARIZE_TOKEN_PERCENT"`
-	ContextWindow             int              `json:"context_window,omitempty"        env:"CLAW_AGENTS_DEFAULTS_CONTEXT_WINDOW"`
-	MaxMediaSize              int              `json:"max_media_size,omitempty"        env:"CLAW_AGENTS_DEFAULTS_MAX_MEDIA_SIZE"`
-	Routing                   *RoutingConfig   `json:"routing,omitempty"`
+	ImageModel                string            `json:"image_model,omitempty"           env:"CLAW_AGENTS_DEFAULTS_IMAGE_MODEL"`
+	ImageModelFallbacks       []string          `json:"image_model_fallbacks,omitempty"`
+	RequestTimeout            int               `json:"request_timeout,omitempty"       env:"CLAW_AGENTS_DEFAULTS_REQUEST_TIMEOUT"`
+	MaxTokens                 int               `json:"max_tokens"                      env:"CLAW_AGENTS_DEFAULTS_MAX_TOKENS"`
+	Temperature               *float64          `json:"temperature,omitempty"           env:"CLAW_AGENTS_DEFAULTS_TEMPERATURE"`
+	MaxToolIterations         int               `json:"max_tool_iterations"             env:"CLAW_AGENTS_DEFAULTS_MAX_TOOL_ITERATIONS"`
+	ContextWindow             int               `json:"context_window,omitempty"        env:"CLAW_AGENTS_DEFAULTS_CONTEXT_WINDOW"`
+	MaxMediaSize              int               `json:"max_media_size,omitempty"        env:"CLAW_AGENTS_DEFAULTS_MAX_MEDIA_SIZE"`
+	CompressMinPercent         int               `json:"compress_min_percent,omitempty"          env:"CLAW_AGENTS_DEFAULTS_COMPRESS_MIN_PERCENT"`
+	CompressNormalPercent      int               `json:"compress_normal_percent,omitempty"       env:"CLAW_AGENTS_DEFAULTS_COMPRESS_NORMAL_PERCENT"`
+	CompressSafetyPercent      int               `json:"compress_safety_percent,omitempty"       env:"CLAW_AGENTS_DEFAULTS_COMPRESS_SAFETY_PERCENT"`
+	CompressMessageThreshold   int               `json:"compress_message_threshold,omitempty"    env:"CLAW_AGENTS_DEFAULTS_COMPRESS_MESSAGE_THRESHOLD"`
+	CompressRetainTokenPercent int               `json:"compress_retain_token_percent,omitempty" env:"CLAW_AGENTS_DEFAULTS_COMPRESS_RETAIN_TOKEN_PERCENT"`
+	CompressRetainMinMessages  int               `json:"compress_retain_min_messages,omitempty"  env:"CLAW_AGENTS_DEFAULTS_COMPRESS_RETAIN_MIN_MESSAGES"`
+	CompressModel              AgentModelConfig  `json:"compress_model,omitempty"`
+	ArchiveMessageCount        int               `json:"archive_message_count,omitempty"         env:"CLAW_AGENTS_DEFAULTS_ARCHIVE_MESSAGE_COUNT"`
+	Routing                    *RoutingConfig    `json:"routing,omitempty"`
 }
 
 const DefaultMaxMediaSize = 20 * 1024 * 1024 // 20 MB

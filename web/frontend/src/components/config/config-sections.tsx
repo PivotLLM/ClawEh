@@ -128,32 +128,110 @@ export function AgentDefaultsSection({
       </Field>
 
       <Field
-        label={t("pages.config.summarize_threshold")}
-        hint={t("pages.config.summarize_threshold_hint")}
+        label={t("pages.config.compress_normal_percent")}
+        hint={t("pages.config.compress_normal_percent_hint")}
         layout="setting-row"
       >
         <Input
           type="number"
-          min={1}
-          value={form.summarizeMessageThreshold}
+          min={0}
+          max={100}
+          value={form.compressNormalPercent}
           onChange={(e) =>
-            onFieldChange("summarizeMessageThreshold", e.target.value)
+            onFieldChange("compressNormalPercent", e.target.value)
           }
         />
       </Field>
 
       <Field
-        label={t("pages.config.summarize_token_percent")}
-        hint={t("pages.config.summarize_token_percent_hint")}
+        label={t("pages.config.compress_safety_percent")}
+        hint={t("pages.config.compress_safety_percent_hint")}
         layout="setting-row"
       >
         <Input
           type="number"
-          min={1}
+          min={0}
           max={100}
-          value={form.summarizeTokenPercent}
+          value={form.compressSafetyPercent}
           onChange={(e) =>
-            onFieldChange("summarizeTokenPercent", e.target.value)
+            onFieldChange("compressSafetyPercent", e.target.value)
+          }
+        />
+      </Field>
+
+      <Field
+        label={t("pages.config.compress_min_percent")}
+        hint={t("pages.config.compress_min_percent_hint")}
+        layout="setting-row"
+      >
+        <Input
+          type="number"
+          min={0}
+          max={100}
+          value={form.compressMinPercent}
+          onChange={(e) =>
+            onFieldChange("compressMinPercent", e.target.value)
+          }
+        />
+      </Field>
+
+      <Field
+        label={t("pages.config.compress_message_threshold")}
+        hint={t("pages.config.compress_message_threshold_hint")}
+        layout="setting-row"
+      >
+        <Input
+          type="number"
+          min={0}
+          value={form.compressMessageThreshold}
+          onChange={(e) =>
+            onFieldChange("compressMessageThreshold", e.target.value)
+          }
+        />
+      </Field>
+
+      <Field
+        label={t("pages.config.compress_retain_token_percent")}
+        hint={t("pages.config.compress_retain_token_percent_hint")}
+        layout="setting-row"
+      >
+        <Input
+          type="number"
+          min={0}
+          max={100}
+          value={form.compressRetainTokenPercent}
+          onChange={(e) =>
+            onFieldChange("compressRetainTokenPercent", e.target.value)
+          }
+        />
+      </Field>
+
+      <Field
+        label={t("pages.config.compress_retain_min_messages")}
+        hint={t("pages.config.compress_retain_min_messages_hint")}
+        layout="setting-row"
+      >
+        <Input
+          type="number"
+          min={0}
+          value={form.compressRetainMinMessages}
+          onChange={(e) =>
+            onFieldChange("compressRetainMinMessages", e.target.value)
+          }
+        />
+      </Field>
+
+      <Field
+        label={t("pages.config.archive_message_count")}
+        hint={t("pages.config.archive_message_count_hint")}
+        layout="setting-row"
+      >
+        <Input
+          type="number"
+          min={0}
+          value={form.archiveMessageCount}
+          onChange={(e) =>
+            onFieldChange("archiveMessageCount", e.target.value)
           }
         />
       </Field>

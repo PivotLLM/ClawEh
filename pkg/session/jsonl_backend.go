@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"log"
+	"time"
 
 	"github.com/PivotLLM/ClawEh/pkg/memory"
 	"github.com/PivotLLM/ClawEh/pkg/providers"
@@ -66,6 +67,23 @@ func (b *JSONLBackend) TruncateHistory(key string, keepLast int) {
 	if err := b.store.TruncateHistory(context.Background(), key, keepLast); err != nil {
 		log.Printf("session: truncate history: %v", err)
 	}
+}
+
+func (b *JSONLBackend) SetPendingTurn(sessionKey string, at time.Time) error {
+	return b.store.SetPendingTurn(context.Background(), sessionKey, at)
+}
+
+func (b *JSONLBackend) ClearPendingTurn(sessionKey string) error {
+	return b.store.ClearPendingTurn(context.Background(), sessionKey)
+}
+
+func (b *JSONLBackend) GetArchiveBounds(sessionKey string) (minSeq, maxSeq int) {
+	min, max, err := b.store.GetArchiveBounds(context.Background(), sessionKey)
+	if err != nil {
+		log.Printf("session: get archive bounds: %v", err)
+		return 0, 0
+	}
+	return min, max
 }
 
 // Save persists session state. Since the JSONL store fsyncs every write
