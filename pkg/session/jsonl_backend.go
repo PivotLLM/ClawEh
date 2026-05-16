@@ -76,6 +76,10 @@ func (b *JSONLBackend) ClearPendingTurn(sessionKey string) error {
 	return b.store.ClearPendingTurn(context.Background(), sessionKey)
 }
 
+func (b *JSONLBackend) ListPendingSessions() ([]string, error) {
+	return b.store.ListPendingSessions(context.Background())
+}
+
 func (b *JSONLBackend) GetArchiveBounds(sessionKey string) (minSeq, maxSeq int) {
 	min, max, err := b.store.GetArchiveBounds(context.Background(), sessionKey)
 	if err != nil {

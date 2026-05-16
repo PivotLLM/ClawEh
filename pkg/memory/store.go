@@ -48,6 +48,9 @@ type Store interface {
 	// session archive. Returns (0, 0) if no archive exists yet.
 	GetArchiveBounds(ctx context.Context, sessionKey string) (minSeq, maxSeq int, err error)
 
+	// ListPendingSessions returns session keys for all sessions where PendingTurn is true.
+	ListPendingSessions(ctx context.Context) ([]string, error)
+
 	// Close releases any resources held by the store.
 	Close() error
 }

@@ -288,6 +288,11 @@ func (sm *SessionManager) GetArchiveBounds(_ string) (int, int) {
 	return 0, 0
 }
 
+// ListPendingSessions is a no-op for the in-memory SessionManager.
+func (sm *SessionManager) ListPendingSessions() ([]string, error) {
+	return nil, nil
+}
+
 // Close is a no-op for the in-memory SessionManager; it satisfies the
 // SessionStore interface so callers can release resources uniformly.
 func (sm *SessionManager) Close() error {

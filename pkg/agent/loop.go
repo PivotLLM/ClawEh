@@ -351,6 +351,8 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 		return err
 	}
 
+	al.recoverPendingTurns(ctx)
+
 	for al.running.Load() {
 		select {
 		case <-ctx.Done():

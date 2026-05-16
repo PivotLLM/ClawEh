@@ -40,6 +40,7 @@ func (s *compressTestStore) TruncateHistory(_ string, _ int)               {}
 func (s *compressTestStore) SetPendingTurn(_ string) error                 { return nil }
 func (s *compressTestStore) ClearPendingTurn(_ string) error               { return nil }
 func (s *compressTestStore) GetArchiveBounds(_ string) (int, int)          { return 0, 0 }
+func (s *compressTestStore) ListPendingSessions() ([]string, error)        { return nil, nil }
 func (s *compressTestStore) Close() error                                  { return nil }
 
 // mockLLM is a sequence-based LLM client for testing.

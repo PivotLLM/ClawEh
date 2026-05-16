@@ -34,6 +34,8 @@ type SessionStore interface {
 	// GetArchiveBounds returns the inclusive seq range of messages stored in
 	// the session archive. Returns (0, 0) if no archive exists yet.
 	GetArchiveBounds(sessionKey string) (minSeq, maxSeq int)
+	// ListPendingSessions returns session keys where PendingTurn is true.
+	ListPendingSessions() ([]string, error)
 	// Save persists any pending state to durable storage.
 	Save(key string) error
 	// Close releases resources held by the store.

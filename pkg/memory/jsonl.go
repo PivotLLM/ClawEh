@@ -676,6 +676,44 @@ func (s *JSONLStore) ClearPendingTurn(ctx context.Context, sessionKey string) er
 	return s.writeMeta(sessionKey, meta)
 }
 
+// ListPendingSessions scans the store directory for .meta.json files and
+// returns the session key of every session where PendingTurn is true.
+// Files that cannot be read or parsed are silently skipped.
+// Returns nil, nil if the directory does not exist.
+func (s *JSONLStore) ListPendingSessions(_ context.Context) ([]string, error) {
+	entries, err := os.ReadDir(s.dir)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("memory: list pending sessions: %w", err)
+	}
+
+	var keys []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".meta.json") {
+			continue
+		}
+		path := filepath.Join(s.dir, name)
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			continue
+		}
+		var meta sessionMeta
+		if json.Unmarshal(data, &meta) != nil {
+			continue
+		}
+		if meta.PendingTurn && meta.Key != "" {
+			keys = append(keys, meta.Key)
+		}
+	}
+	return keys, nil
+}
+
 func (s *JSONLStore) GetArchiveBounds(_ context.Context, sessionKey string) (minSeq, maxSeq int, err error) {
 	l := s.sessionLock(sessionKey)
 	l.Lock()
