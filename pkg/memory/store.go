@@ -2,7 +2,6 @@ package memory
 
 import (
 	"context"
-	"time"
 
 	"github.com/PivotLLM/ClawEh/pkg/providers"
 )
@@ -39,9 +38,8 @@ type Store interface {
 	Compact(ctx context.Context, sessionKey string) error
 
 	// SetPendingTurn marks a session as having an LLM turn in flight.
-	// The timestamp records when the turn started. A non-zero PendingTurnAt
-	// on startup indicates the process was interrupted mid-turn.
-	SetPendingTurn(ctx context.Context, sessionKey string, at time.Time) error
+	// A true value on startup indicates the process was interrupted mid-turn.
+	SetPendingTurn(ctx context.Context, sessionKey string) error
 
 	// ClearPendingTurn marks a session's turn as complete.
 	ClearPendingTurn(ctx context.Context, sessionKey string) error

@@ -309,6 +309,8 @@ func (h *Handler) handleListSessions(w http.ResponseWriter, r *http.Request) {
 		)
 
 		switch {
+		case strings.HasSuffix(name, ".archive.jsonl"):
+			continue
 		case strings.HasSuffix(name, ".jsonl"):
 			sessionID, ok = extractWebUISessionIDFromSanitizedKey(strings.TrimSuffix(name, ".jsonl"))
 			if !ok {

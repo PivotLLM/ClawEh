@@ -65,10 +65,10 @@ type sessionMeta struct {
 	CompressionCooling          bool      `json:"compression_cooling,omitempty"`
 	CoolingSinceCount           int       `json:"cooling_since_count,omitempty"`
 
-	// PendingTurnAt is non-zero while an LLM turn is in flight for this session.
+	// PendingTurn is true while an LLM turn is in flight for this session.
 	// Set before the LLM call; cleared when the final response is persisted.
-	// A non-zero value on startup indicates the process was interrupted mid-turn.
-	PendingTurnAt time.Time `json:"pending_turn_at,omitempty"`
+	// A true value on startup indicates the process was interrupted mid-turn.
+	PendingTurn bool `json:"pending_turn,omitempty"`
 }
 
 // noiseCache tracks the last written message per role and the last cron
@@ -652,7 +652,7 @@ func (s *JSONLStore) rewriteStoredJSONL(
 	return fileutil.WriteFileAtomic(s.jsonlPath(sessionKey), buf.Bytes(), 0o644)
 }
 
-func (s *JSONLStore) SetPendingTurn(ctx context.Context, sessionKey string, at time.Time) error {
+func (s *JSONLStore) SetPendingTurn(ctx context.Context, sessionKey string) error {
 	l := s.sessionLock(sessionKey)
 	l.Lock()
 	defer l.Unlock()
@@ -660,7 +660,7 @@ func (s *JSONLStore) SetPendingTurn(ctx context.Context, sessionKey string, at t
 	if err != nil {
 		return err
 	}
-	meta.PendingTurnAt = at
+	meta.PendingTurn = true
 	return s.writeMeta(sessionKey, meta)
 }
 
@@ -672,7 +672,7 @@ func (s *JSONLStore) ClearPendingTurn(ctx context.Context, sessionKey string) er
 	if err != nil {
 		return err
 	}
-	meta.PendingTurnAt = time.Time{}
+	meta.PendingTurn = false
 	return s.writeMeta(sessionKey, meta)
 }
 

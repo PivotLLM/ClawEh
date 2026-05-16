@@ -1251,7 +1251,7 @@ func (al *AgentLoop) runAgentLoop(
 	messages = resolveMediaRefs(messages, al.mediaStore, maxMediaSize)
 
 	// Mark the turn as in-flight so a restart can detect an interrupted LLM call.
-	if setErr := agent.Sessions.SetPendingTurn(opts.SessionKey, time.Now()); setErr != nil {
+	if setErr := agent.Sessions.SetPendingTurn(opts.SessionKey); setErr != nil {
 		logger.WarnCF("agent", "Failed to set pending turn flag",
 			map[string]any{"error": setErr.Error(), "session": opts.SessionKey})
 	}

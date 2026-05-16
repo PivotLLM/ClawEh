@@ -272,7 +272,7 @@ func (sm *SessionManager) loadSessions() error {
 // SetPendingTurn is a no-op for the in-memory SessionManager; it satisfies
 // the SessionStore interface. SessionManager has no persistent backing, so
 // there is nothing to mark on disk.
-func (sm *SessionManager) SetPendingTurn(_ string, _ time.Time) error {
+func (sm *SessionManager) SetPendingTurn(_ string) error {
 	return nil
 }
 

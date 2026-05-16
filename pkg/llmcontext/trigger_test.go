@@ -7,7 +7,6 @@ import (
 	"context"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/PivotLLM/ClawEh/pkg/providers"
 )
@@ -61,7 +60,7 @@ func (s *mockStore) TruncateHistory(key string, keepLast int) {
 	}
 	s.history[key] = h[len(h)-keepLast:]
 }
-func (s *mockStore) SetPendingTurn(_ string, _ time.Time) error { return nil }
+func (s *mockStore) SetPendingTurn(_ string) error { return nil }
 func (s *mockStore) ClearPendingTurn(_ string) error            { return nil }
 func (s *mockStore) GetArchiveBounds(_ string) (int, int)       { return 0, 0 }
 func (s *mockStore) Save(_ string) error                        { return nil }

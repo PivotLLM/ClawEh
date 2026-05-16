@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/PivotLLM/ClawEh/pkg/providers"
 )
@@ -38,7 +37,7 @@ func (s *compressTestStore) Save(_ string) error                           { ret
 func (s *compressTestStore) AddMessage(_, _, _ string)                     {}
 func (s *compressTestStore) AddFullMessage(_ string, _ providers.Message)  {}
 func (s *compressTestStore) TruncateHistory(_ string, _ int)               {}
-func (s *compressTestStore) SetPendingTurn(_ string, _ time.Time) error    { return nil }
+func (s *compressTestStore) SetPendingTurn(_ string) error                 { return nil }
 func (s *compressTestStore) ClearPendingTurn(_ string) error               { return nil }
 func (s *compressTestStore) GetArchiveBounds(_ string) (int, int)          { return 0, 0 }
 func (s *compressTestStore) Close() error                                  { return nil }

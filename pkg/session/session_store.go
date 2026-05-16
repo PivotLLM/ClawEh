@@ -1,8 +1,6 @@
 package session
 
 import (
-	"time"
-
 	"github.com/PivotLLM/ClawEh/pkg/providers"
 )
 
@@ -30,7 +28,7 @@ type SessionStore interface {
 	// TruncateHistory keeps only the last keepLast messages.
 	TruncateHistory(key string, keepLast int)
 	// SetPendingTurn marks a session as having an LLM turn in flight.
-	SetPendingTurn(sessionKey string, at time.Time) error
+	SetPendingTurn(sessionKey string) error
 	// ClearPendingTurn marks a session's turn as complete.
 	ClearPendingTurn(sessionKey string) error
 	// GetArchiveBounds returns the inclusive seq range of messages stored in

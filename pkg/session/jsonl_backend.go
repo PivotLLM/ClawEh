@@ -3,7 +3,6 @@ package session
 import (
 	"context"
 	"log"
-	"time"
 
 	"github.com/PivotLLM/ClawEh/pkg/memory"
 	"github.com/PivotLLM/ClawEh/pkg/providers"
@@ -69,8 +68,8 @@ func (b *JSONLBackend) TruncateHistory(key string, keepLast int) {
 	}
 }
 
-func (b *JSONLBackend) SetPendingTurn(sessionKey string, at time.Time) error {
-	return b.store.SetPendingTurn(context.Background(), sessionKey, at)
+func (b *JSONLBackend) SetPendingTurn(sessionKey string) error {
+	return b.store.SetPendingTurn(context.Background(), sessionKey)
 }
 
 func (b *JSONLBackend) ClearPendingTurn(sessionKey string) error {
