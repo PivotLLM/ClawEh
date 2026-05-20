@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/PivotLLM/ClawEh/pkg/agenttoken"
 	"github.com/PivotLLM/ClawEh/pkg/tools"
 )
 
@@ -152,8 +151,6 @@ func (m *sessionToolMock) Execute(ctx context.Context, args map[string]any) *too
 
 func TestDispatch_SessionScopedToolValidToken(t *testing.T) {
 	st := newSessionTokenStore()
-	tm := agenttoken.NewManager()
-	agentTok := tm.Issue("alice")
 	sessTok := st.Issue("alice", "agent:alice:main", "/ws/alice/sessions")
 
 	sessionTool := &sessionToolMock{
@@ -168,11 +165,10 @@ func TestDispatch_SessionScopedToolValidToken(t *testing.T) {
 
 	out, isErr := dispatchToolCall(context.Background(), "get_session_messages",
 		map[string]any{
-			"agent_token":   agentTok,
 			"session_token": sessTok,
 			"seq":           float64(1),
 		},
-		tm, st, resolverFor(regs), nil, nil)
+		st, resolverFor(regs), nil, nil)
 	if isErr {
 		t.Fatalf("expected success, got error: %s", out)
 	}
@@ -184,10 +180,6 @@ func TestDispatch_SessionScopedToolValidToken(t *testing.T) {
 	if _, present := sessionTool.gotArg["session_token"]; present {
 		t.Error("session_token leaked through to the tool's args")
 	}
-	// agent_token must be stripped from args before reaching the tool.
-	if _, present := sessionTool.gotArg["agent_token"]; present {
-		t.Error("agent_token leaked through to the tool's args")
-	}
 
 	// The tool's execution context must carry the session key.
 	if got := tools.ToolSessionKey(sessionTool.capturedCtx); got != "agent:alice:main" {
@@ -197,8 +189,6 @@ func TestDispatch_SessionScopedToolValidToken(t *testing.T) {
 
 func TestDispatch_SessionScopedToolMissingToken(t *testing.T) {
 	st := newSessionTokenStore()
-	tm := agenttoken.NewManager()
-	agentTok := tm.Issue("alice")
 
 	sessionTool := &sessionToolMock{
 		mockTool: mockTool{
@@ -210,14 +200,15 @@ func TestDispatch_SessionScopedToolMissingToken(t *testing.T) {
 	reg := newRegistryWith(sessionTool)
 	regs := map[string]*tools.ToolRegistry{"alice": reg}
 
+	// Missing session_token — dispatch must reject.
 	out, isErr := dispatchToolCall(context.Background(), "get_session_messages",
-		map[string]any{"agent_token": agentTok},
-		tm, st, resolverFor(regs), nil, nil)
+		map[string]any{},
+		st, resolverFor(regs), nil, nil)
 	if !isErr {
 		t.Fatalf("expected rejection for missing session_token, got: %s", out)
 	}
-	if out != invalidSessionTokenMessage {
-		t.Errorf("expected %q, got: %s", invalidSessionTokenMessage, out)
+	if out != invalidTokenMessage {
+		t.Errorf("expected %q, got: %s", invalidTokenMessage, out)
 	}
 	if sessionTool.calls != 0 {
 		t.Errorf("tool must not execute when session_token is missing, calls=%d", sessionTool.calls)
@@ -226,8 +217,6 @@ func TestDispatch_SessionScopedToolMissingToken(t *testing.T) {
 
 func TestDispatch_SessionScopedToolInvalidToken(t *testing.T) {
 	st := newSessionTokenStore()
-	tm := agenttoken.NewManager()
-	agentTok := tm.Issue("alice")
 
 	sessionTool := &sessionToolMock{
 		mockTool: mockTool{
@@ -241,81 +230,100 @@ func TestDispatch_SessionScopedToolInvalidToken(t *testing.T) {
 
 	bogus := sessionTokenPrefix + strings.Repeat("a", 64)
 	out, isErr := dispatchToolCall(context.Background(), "get_session_messages",
-		map[string]any{"agent_token": agentTok, "session_token": bogus},
-		tm, st, resolverFor(regs), nil, nil)
+		map[string]any{"session_token": bogus},
+		st, resolverFor(regs), nil, nil)
 	if !isErr {
 		t.Fatalf("expected rejection for invalid session_token, got: %s", out)
 	}
-	if out != invalidSessionTokenMessage {
-		t.Errorf("expected %q, got: %s", invalidSessionTokenMessage, out)
+	if out != invalidTokenMessage {
+		t.Errorf("expected %q, got: %s", invalidTokenMessage, out)
 	}
 }
 
-func TestDispatch_SessionScopedToolCrossAgentRejected(t *testing.T) {
+// TestDispatch_SessionTokenRoutesToCorrectAgent confirms that the session_token
+// alone correctly identifies and dispatches to the owning agent's registry.
+func TestDispatch_SessionTokenRoutesToCorrectAgent(t *testing.T) {
 	st := newSessionTokenStore()
-	tm := agenttoken.NewManager()
-	aliceTok := tm.Issue("alice")
-	bobTok := tm.Issue("bob")
-
-	// Issue a session token for bob.
 	bobSessTok := st.Issue("bob", "agent:bob:main", "/ws/bob/sessions")
+	aliceSessTok := st.Issue("alice", "agent:alice:main", "/ws/alice/sessions")
 
-	sessionTool := &sessionToolMock{
+	aliceTool := &sessionToolMock{
 		mockTool: mockTool{
 			name:   "get_session_messages",
 			params: map[string]any{},
-			result: tools.NewToolResult("messages"),
+			result: tools.NewToolResult("alice-messages"),
 		},
 	}
-	reg := newRegistryWith(sessionTool)
+	bobTool := &sessionToolMock{
+		mockTool: mockTool{
+			name:   "get_session_messages",
+			params: map[string]any{},
+			result: tools.NewToolResult("bob-messages"),
+		},
+	}
 	regs := map[string]*tools.ToolRegistry{
-		"alice": reg,
-		"bob":   reg,
+		"alice": newRegistryWith(aliceTool),
+		"bob":   newRegistryWith(bobTool),
 	}
 
-	// Alice uses bob's session token — must be rejected.
+	// Bob's token dispatches to bob's registry.
 	out, isErr := dispatchToolCall(context.Background(), "get_session_messages",
-		map[string]any{"agent_token": aliceTok, "session_token": bobSessTok},
-		tm, st, resolverFor(regs), nil, nil)
-	if !isErr {
-		t.Fatalf("expected cross-agent rejection, got: %s", out)
+		map[string]any{"session_token": bobSessTok},
+		st, resolverFor(regs), nil, nil)
+	if isErr {
+		t.Fatalf("expected success for bob, got: %s", out)
 	}
-	if out != sessionTokenCrossAgentMessage {
-		t.Errorf("expected %q, got: %s", sessionTokenCrossAgentMessage, out)
+	if bobTool.calls != 1 || aliceTool.calls != 0 {
+		t.Errorf("expected bob's registry, got alice=%d bob=%d", aliceTool.calls, bobTool.calls)
 	}
-	if sessionTool.calls != 0 {
-		t.Errorf("tool must not execute on cross-agent token, calls=%d", sessionTool.calls)
+	if got := tools.ToolSessionKey(bobTool.capturedCtx); got != "agent:bob:main" {
+		t.Errorf("expected bob's session key in ctx, got %q", got)
 	}
 
-	// Bob using his own token must succeed.
-	st.Issue("bob", "agent:bob:main", "/ws/bob/sessions") // re-issue for bob
-	bobSessTok2 := st.Issue("bob", "agent:bob:main", "/ws/bob/sessions")
+	// Alice's token dispatches to alice's registry.
 	out, isErr = dispatchToolCall(context.Background(), "get_session_messages",
-		map[string]any{"agent_token": bobTok, "session_token": bobSessTok2},
-		tm, st, resolverFor(regs), nil, nil)
+		map[string]any{"session_token": aliceSessTok},
+		st, resolverFor(regs), nil, nil)
 	if isErr {
-		t.Fatalf("expected success for bob with own token, got: %s", out)
+		t.Fatalf("expected success for alice, got: %s", out)
 	}
-	_ = bobTok // used in the call above
+	if aliceTool.calls != 1 {
+		t.Errorf("alice's registry was not called, calls=%d", aliceTool.calls)
+	}
 }
 
-func TestDispatch_NonSessionScopedToolNoSessionTokenNeeded(t *testing.T) {
+// TestDispatch_AllToolsRequireSessionToken confirms that even non-session-scoped
+// tools now require a valid session_token for dispatch.
+func TestDispatch_AllToolsRequireSessionToken(t *testing.T) {
 	st := newSessionTokenStore()
-	tm := agenttoken.NewManager()
-	agentTok := tm.Issue("alice")
+	tok := st.Issue("alice", "test:alice:main", "/tmp/archive/alice")
 
 	rf := &mockTool{name: "read_file", params: map[string]any{}, result: tools.NewToolResult("content")}
 	reg := newRegistryWith(rf)
 	regs := map[string]*tools.ToolRegistry{"alice": reg}
 
-	// No session_token supplied — non-session-scoped tool should succeed.
+	// With valid session_token — must succeed.
 	out, isErr := dispatchToolCall(context.Background(), "read_file",
-		map[string]any{"agent_token": agentTok, "path": "file.txt"},
-		tm, st, resolverFor(regs), nil, nil)
+		map[string]any{"session_token": tok, "path": "file.txt"},
+		st, resolverFor(regs), nil, nil)
 	if isErr {
-		t.Fatalf("expected success for non-session-scoped tool, got error: %s", out)
+		t.Fatalf("expected success with valid session_token, got error: %s", out)
 	}
 	if rf.calls != 1 {
 		t.Errorf("expected read_file to be called once, got %d", rf.calls)
+	}
+
+	// Without session_token — must be rejected.
+	out, isErr = dispatchToolCall(context.Background(), "read_file",
+		map[string]any{"path": "file.txt"},
+		st, resolverFor(regs), nil, nil)
+	if !isErr {
+		t.Fatalf("expected rejection without session_token, got success: %s", out)
+	}
+	if out != invalidTokenMessage {
+		t.Errorf("expected %q, got: %s", invalidTokenMessage, out)
+	}
+	if rf.calls != 1 {
+		t.Errorf("tool must not execute on missing token, calls=%d", rf.calls)
 	}
 }

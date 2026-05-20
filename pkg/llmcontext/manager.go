@@ -141,6 +141,7 @@ func (m *Manager) SetCallContext(channel, chatID string) {
 
 func (m *Manager) AddUserMessage(ctx context.Context, msg providers.Message) error {
 	m.store.AddFullMessage(m.sessionKey, msg)
+	m.archiveAppend(msg)
 	m.msgCount++
 	if err := m.triggerCheck(ctx); err != nil {
 		// Automatic triggers log and continue — do not block the LLM call.
@@ -154,6 +155,7 @@ func (m *Manager) AddUserMessage(ctx context.Context, msg providers.Message) err
 
 func (m *Manager) AddAssistantMessage(ctx context.Context, msg providers.Message) error {
 	m.store.AddFullMessage(m.sessionKey, msg)
+	m.archiveAppend(msg)
 	m.msgCount++
 	if err := m.triggerCheck(ctx); err != nil {
 		// Automatic triggers log and continue — do not block the LLM call.
@@ -505,12 +507,12 @@ func (m *Manager) Build(_ context.Context) ([]providers.Message, error) {
 	msgs := m.builder.BuildMessages(history, rendered, "", nil, m.channel, m.chatID)
 
 	// Inject the session token into the system message so the LLM can call
-	// session-scoped mcp__claw__* tools. The token is appended after the
-	// static+dynamic prompt so it is always present regardless of caching.
+	// mcp__claw__* tools. The token is appended after the static+dynamic
+	// prompt so it is always present regardless of caching.
 	if m.sessionToken != "" && len(msgs) > 0 && msgs[0].Role == "system" {
 		sessionTokenSection := fmt.Sprintf(
 			"# Session Token\n\nThe following token is confidential — never echo it to users or write it to files. "+
-				"Session-scoped `mcp__claw__*` tool calls (get_session_messages, search_session_messages) MUST include "+
+				"ALL `mcp__claw__*` tool calls MUST include "+
 				"the literal string below as the `session_token` parameter.\n\nsession_token: %s",
 			m.sessionToken)
 		msgs[0].Content += "\n\n---\n\n" + sessionTokenSection

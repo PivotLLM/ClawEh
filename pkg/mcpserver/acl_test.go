@@ -14,6 +14,14 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/tools"
 )
 
+// seedSessionToken is a test helper that issues a session token for the given
+// agent and registers it in a fresh sessionTokenStore.
+func seedSessionToken(agentID string) (*sessionTokenStore, string) {
+	st := newSessionTokenStore()
+	tok := st.Issue(agentID, "test:"+agentID+":main", "/tmp/archive/"+agentID)
+	return st, tok
+}
+
 // TestDispatch_ACLAllowExecutesAndLogsAuthorized confirms the success path
 // when the policy returns true: the tool runs, the INFO authorized log
 // fires, and no rejection WARN is emitted.
@@ -32,11 +40,10 @@ func TestDispatch_ACLAllowExecutesAndLogsAuthorized(t *testing.T) {
 
 	rf := &mockTool{name: "read_file", params: map[string]any{}, result: tools.NewToolResult("ok")}
 	regs := map[string]*tools.ToolRegistry{"alice": newRegistryWith(rf)}
-	tm := agenttoken.NewManager()
-	tok := tm.Issue("alice")
+	st, tok := seedSessionToken("alice")
 
 	out, isErr := dispatchToolCall(context.Background(), "read_file",
-		map[string]any{"agent_token": tok}, tm, nil, resolverFor(regs), nil, policy)
+		map[string]any{"session_token": tok}, st, resolverFor(regs), nil, policy)
 	if isErr {
 		t.Fatalf("expected success, got error: %s", out)
 	}
@@ -59,7 +66,7 @@ func TestDispatch_ACLAllowExecutesAndLogsAuthorized(t *testing.T) {
 // TestDispatch_ACLDenyBlocksAndEmitsWarn confirms the deny path: the tool
 // is NOT executed, a clear JSON-RPC error message is returned, the new
 // "MCP tool denied" WARN is logged with reason="acl_denied", and no
-// agent token leaks into the log line.
+// session token leaks into the log line.
 func TestDispatch_ACLDenyBlocksAndEmitsWarn(t *testing.T) {
 	buf, restore := captureLogs(t)
 	defer restore()
@@ -68,11 +75,10 @@ func TestDispatch_ACLDenyBlocksAndEmitsWarn(t *testing.T) {
 
 	rf := &mockTool{name: "read_file", params: map[string]any{}, result: tools.NewToolResult("ok")}
 	regs := map[string]*tools.ToolRegistry{"alice": newRegistryWith(rf)}
-	tm := agenttoken.NewManager()
-	tok := tm.Issue("alice")
+	st, tok := seedSessionToken("alice")
 
 	out, isErr := dispatchToolCall(context.Background(), "read_file",
-		map[string]any{"agent_token": tok}, tm, nil, resolverFor(regs), nil, denyAll)
+		map[string]any{"session_token": tok}, st, resolverFor(regs), nil, denyAll)
 	if !isErr {
 		t.Fatalf("expected ACL deny, got success: %s", out)
 	}
@@ -112,11 +118,10 @@ func TestDispatch_ACLDenyBlocksAndEmitsWarn(t *testing.T) {
 func TestDispatch_NilPolicyDefaultsToAllow(t *testing.T) {
 	rf := &mockTool{name: "read_file", params: map[string]any{}, result: tools.NewToolResult("ok")}
 	regs := map[string]*tools.ToolRegistry{"alice": newRegistryWith(rf)}
-	tm := agenttoken.NewManager()
-	tok := tm.Issue("alice")
+	st, tok := seedSessionToken("alice")
 
 	out, isErr := dispatchToolCall(context.Background(), "read_file",
-		map[string]any{"agent_token": tok}, tm, nil, resolverFor(regs), nil, nil)
+		map[string]any{"session_token": tok}, st, resolverFor(regs), nil, nil)
 	if isErr {
 		t.Fatalf("nil policy should default to allow, got error: %s", out)
 	}
@@ -163,7 +168,7 @@ func TestNew_WithACLPolicyInjectsCustomPolicy(t *testing.T) {
 	r := newRegistryWith(rf)
 
 	tm := agenttoken.NewManager()
-	tok := tm.Issue("alice")
+	tm.Issue("alice")
 
 	srv, err := New(
 		WithAgentRegistries(map[string]*tools.ToolRegistry{"alice": r}),
@@ -175,8 +180,9 @@ func TestNew_WithACLPolicyInjectsCustomPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	st, tok := seedSessionToken("alice")
 	out, isErr := dispatchToolCall(context.Background(), "read_file",
-		map[string]any{"agent_token": tok}, tm, nil, resolverFor(map[string]*tools.ToolRegistry{"alice": r}), nil, srv.policy)
+		map[string]any{"session_token": tok}, st, resolverFor(map[string]*tools.ToolRegistry{"alice": r}), nil, srv.policy)
 	if !isErr {
 		t.Fatalf("expected ACL deny via injected policy, got success: %s", out)
 	}

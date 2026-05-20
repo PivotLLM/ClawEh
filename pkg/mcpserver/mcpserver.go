@@ -7,11 +7,11 @@
 // alternative to having the CLI emit tool-call JSON in its prose (which
 // created infinite outer loops, since CLIs are themselves agentic).
 //
-// Tool calls carry an `agent_token` parameter (snake_case) which the
-// server resolves against the agent-token manager to root path resolution
-// at the calling agent's own workspace. There is no fallback to a shared
-// root: if the token is missing, malformed, unknown, or the sub-agent
-// sentinel, the call fails closed with a clear error.
+// Every tool call must carry a `session_token` parameter (SST<64hex>) which
+// the server resolves to an (agentID, sessionKey) pair. This single token
+// is the sole auth mechanism for all mcp__claw__* calls: it identifies both
+// the calling agent and the active session. If the token is missing,
+// malformed, unknown, or the sub-agent sentinel, the call fails closed.
 package mcpserver
 
 import (
@@ -187,7 +187,7 @@ func New(opts ...Option) (*MCPServer, error) {
 		server.WithToolCapabilities(false),
 		server.WithRecovery(),
 	)
-	addToolsToServer(mcpSrv, m.agentRegistries, m.allowPatterns, m.tokens, m.sessionTokens, resolver, tracker, m.policy)
+	addToolsToServer(mcpSrv, m.agentRegistries, m.allowPatterns, m.sessionTokens, resolver, tracker, m.policy)
 
 	httpSrv := server.NewStreamableHTTPServer(mcpSrv,
 		server.WithEndpointPath(m.endpointPath),
