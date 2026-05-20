@@ -993,7 +993,9 @@ func TestMeaningfulCount_IncrementedForNonNoise(t *testing.T) {
 	}
 }
 
-func TestArchiveFile_Created(t *testing.T) {
+// TestJSONLStore_NoArchiveJSONL verifies that JSONLStore no longer creates
+// .archive.jsonl files. Archive writes are now owned by ArchiveStore (SQLite).
+func TestJSONLStore_NoArchiveJSONL(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
 
@@ -1002,54 +1004,18 @@ func TestArchiveFile_Created(t *testing.T) {
 		t.Fatalf("AddMessage: %v", err)
 	}
 
-	archPath := store.archivePath("arch")
-	if _, err := os.Stat(archPath); err != nil {
-		t.Fatalf("archive file should exist after AddMessage: %v", err)
-	}
-
-	// Archive should contain the StoredMessage with seq=1.
-	stored, err := readStoredMessages(archPath, 0)
-	if err != nil {
-		t.Fatalf("readStoredMessages archive: %v", err)
-	}
-	if len(stored) != 1 {
-		t.Fatalf("archive: expected 1 entry, got %d", len(stored))
-	}
-	if stored[0].Seq != 1 {
-		t.Errorf("archive[0].Seq = %d, want 1", stored[0].Seq)
-	}
-	if stored[0].Content != "hello" {
-		t.Errorf("archive[0].Content = %q, want 'hello'", stored[0].Content)
-	}
-
-	// Write another message — archive should accumulate.
-	err = store.AddMessage(ctx, "arch", "assistant", "world")
-	if err != nil {
-		t.Fatalf("AddMessage 2: %v", err)
-	}
-
-	stored, err = readStoredMessages(archPath, 0)
-	if err != nil {
-		t.Fatalf("readStoredMessages archive 2: %v", err)
-	}
-	if len(stored) != 2 {
-		t.Fatalf("archive: expected 2 entries, got %d", len(stored))
-	}
-
-	// Verify ArchiveMinSeq/ArchiveMaxSeq in meta.
-	meta, err := store.readMeta("arch")
-	if err != nil {
-		t.Fatalf("readMeta: %v", err)
-	}
-	if meta.ArchiveMinSeq != 1 {
-		t.Errorf("ArchiveMinSeq = %d, want 1", meta.ArchiveMinSeq)
-	}
-	if meta.ArchiveMaxSeq != 2 {
-		t.Errorf("ArchiveMaxSeq = %d, want 2", meta.ArchiveMaxSeq)
+	// The .archive.jsonl file must not be created.
+	archJSONL := filepath.Join(store.dir, "arch.archive.jsonl")
+	if _, err := os.Stat(archJSONL); !os.IsNotExist(err) {
+		t.Errorf(".archive.jsonl should not be created, got err=%v", err)
 	}
 }
 
-func TestTruncateHistory_ResetsArchive(t *testing.T) {
+// TestTruncateHistory_ResetsTrackingFields verifies that a full reset (keepLast=0)
+// clears MeaningfulCount and CompressionCooling in meta.
+// Archive deletion is now handled by ContextManager.Reset() via ArchiveStore.Delete();
+// JSONLStore no longer manages the archive file.
+func TestTruncateHistory_ResetsTrackingFields(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
 
@@ -1060,30 +1026,14 @@ func TestTruncateHistory_ResetsArchive(t *testing.T) {
 		}
 	}
 
-	// Archive should exist.
-	archPath := store.archivePath("ar")
-	if _, err := os.Stat(archPath); err != nil {
-		t.Fatalf("archive should exist: %v", err)
-	}
-
-	// Full reset (keepLast=0) should delete the archive.
 	err := store.TruncateHistory(ctx, "ar", 0)
 	if err != nil {
 		t.Fatalf("TruncateHistory: %v", err)
 	}
 
-	if _, err := os.Stat(archPath); !os.IsNotExist(err) {
-		t.Errorf("archive should be deleted after full reset, got err=%v", err)
-	}
-
-	// Meta archive fields should be reset.
 	meta, err := store.readMeta("ar")
 	if err != nil {
 		t.Fatalf("readMeta: %v", err)
-	}
-	if meta.ArchiveMinSeq != 0 || meta.ArchiveMaxSeq != 0 {
-		t.Errorf("ArchiveMinSeq=%d ArchiveMaxSeq=%d, want both 0",
-			meta.ArchiveMinSeq, meta.ArchiveMaxSeq)
 	}
 	if meta.MeaningfulCount != 0 {
 		t.Errorf("MeaningfulCount = %d, want 0", meta.MeaningfulCount)

@@ -20,6 +20,7 @@ const (
 	defaultCompressTargetFactor  = 0.5
 	defaultMinLoopGain           = 0.10
 	defaultMaxCompressIterations = 3
+	defaultOverheadTokens        = 4000
 )
 
 // managerConfig holds resolved configuration for a Manager.
@@ -33,7 +34,10 @@ type managerConfig struct {
 	compressModel       ModelChain
 	compressClients     []LLMClient
 	archiveMessageCount int
+	archiveDir          string
 	contextWindow       int
+	overheadTokens      int
+	maxSummaryTokens    int // 0 = use 20% of contextWindow at truncation time
 	notifyCallback      func(msg string)
 }
 
@@ -47,6 +51,7 @@ func defaultManagerConfig() managerConfig {
 		retainMinMessages:   defaultRetainMinMessages,
 		archiveMessageCount: defaultArchiveMessageCount,
 		contextWindow:       128000,
+		overheadTokens:      defaultOverheadTokens,
 	}
 }
 
@@ -92,6 +97,29 @@ func WithArchiveMessageCount(n int) Option {
 
 func WithContextWindow(tokens int) Option {
 	return func(c *managerConfig) { c.contextWindow = tokens }
+}
+
+// WithArchiveDir sets the directory used to store per-session SQLite archive
+// databases. The ContextManager derives the archive path as
+// filepath.Join(dir, sanitizedKey+".archive.db") on first write.
+// If dir is empty, archive writes are silently skipped.
+func WithArchiveDir(dir string) Option {
+	return func(c *managerConfig) { c.archiveDir = dir }
+}
+
+// WithOverheadTokens sets the fixed token overhead added to the post-Build token
+// estimate in CheckAndCompress. This accounts for the system prompt, rendered
+// summary, tool definitions, and completion budget combined. Default: 4000.
+func WithOverheadTokens(n int) Option {
+	return func(c *managerConfig) { c.overheadTokens = n }
+}
+
+// WithMaxSummaryTokens sets the maximum token budget for the serialized summary.
+// If n == 0 (the default), the effective limit is 20% of contextWindow, computed
+// at truncation time. After successful summarization the summary is truncated by
+// removing the oldest key_moments and retrievable_history entries until it fits.
+func WithMaxSummaryTokens(n int) Option {
+	return func(c *managerConfig) { c.maxSummaryTokens = n }
 }
 
 func WithNotifyCallback(fn func(msg string)) Option {

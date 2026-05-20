@@ -5,29 +5,28 @@ package tools
 
 import (
 	"context"
-	"encoding/json"
-	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/PivotLLM/ClawEh/pkg/memory"
 	"github.com/PivotLLM/ClawEh/pkg/providers"
 )
 
-// writeArchive creates an archive.jsonl file in dir with the given StoredMessages.
+// writeArchive creates a .archive.db file in dir and populates it with msgs.
 func writeArchive(t *testing.T, dir, sessionKey string, msgs []memory.StoredMessage) string {
 	t.Helper()
-	filename := archiveSanitizeKey(sessionKey) + ".archive.jsonl"
+	filename := archiveSanitizeKey(sessionKey) + ".archive.db"
 	path := filepath.Join(dir, filename)
-	f, err := os.Create(path)
+	a, err := memory.Open(path)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("writeArchive Open: %v", err)
 	}
-	defer f.Close()
-	enc := json.NewEncoder(f)
+	defer a.Close()
+	now := time.Now()
 	for _, m := range msgs {
-		if err := enc.Encode(m); err != nil {
-			t.Fatal(err)
+		if err := a.Append(m.Seq, m.Message, now); err != nil {
+			t.Fatalf("writeArchive Append seq=%d: %v", m.Seq, err)
 		}
 	}
 	return path
@@ -145,8 +144,9 @@ func TestSessionHistory_NoArchive(t *testing.T) {
 	if result.IsError {
 		t.Fatalf("unexpected error: %s", result.ForLLM)
 	}
-	if !containsStr(result.ForLLM, "not available") {
-		t.Errorf("expected 'not available', got: %s", result.ForLLM)
+	// Missing archive returns "archive unavailable" message (file doesn't exist).
+	if !containsStr(result.ForLLM, "unavailable") {
+		t.Errorf("expected 'unavailable', got: %s", result.ForLLM)
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/PivotLLM/ClawEh/pkg/memory"
 	"github.com/PivotLLM/ClawEh/pkg/providers"
 )
 
@@ -42,6 +43,13 @@ func (s *compressTestStore) ClearPendingTurn(_ string) error               { ret
 func (s *compressTestStore) GetArchiveBounds(_ string) (int, int)          { return 0, 0 }
 func (s *compressTestStore) ListPendingSessions() ([]string, error)        { return nil, nil }
 func (s *compressTestStore) Close() error                                  { return nil }
+func (s *compressTestStore) GetHistoryWithSeqs(_ string) []memory.StoredMessage {
+	stored := make([]memory.StoredMessage, len(s.history))
+	for i, msg := range s.history {
+		stored[i] = memory.StoredMessage{Seq: i + 1, Message: msg}
+	}
+	return stored
+}
 
 // mockLLM is a sequence-based LLM client for testing.
 type mockLLM struct {
@@ -163,7 +171,7 @@ func TestCompress_FallbackSuccess(t *testing.T) {
 }
 
 // TestCompress_AllFail_Normal verifies that when all clients fail on a normal
-// (non-safety-net) compression, nil is returned and history is unchanged.
+// (non-safety-net) compression, ErrCompressionFailed is returned and history is unchanged.
 func TestCompress_AllFail_Normal(t *testing.T) {
 	origHistory := makeConversation(10, 200)
 	store := &compressTestStore{history: origHistory}
@@ -183,8 +191,8 @@ func TestCompress_AllFail_Normal(t *testing.T) {
 	mgr.msgCount = len(store.history)
 
 	err := mgr.doCompress(context.Background(), false)
-	if err != nil {
-		t.Fatalf("doCompress returned error: %v", err)
+	if !errors.Is(err, ErrCompressionFailed) {
+		t.Fatalf("expected ErrCompressionFailed; got %v", err)
 	}
 
 	if len(store.history) != len(origHistory) {

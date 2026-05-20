@@ -19,6 +19,12 @@ type Store interface {
 	// Returns an empty slice (not nil) if the session does not exist.
 	GetHistory(ctx context.Context, sessionKey string) ([]providers.Message, error)
 
+	// GetHistoryWithSeqs returns the active history window with seq numbers
+	// intact. Each StoredMessage has the monotonically increasing seq number
+	// assigned at write time. Seq numbers are preserved for seq-aware
+	// summarization. Returns an empty slice if the session does not exist.
+	GetHistoryWithSeqs(ctx context.Context, sessionKey string) ([]StoredMessage, error)
+
 	// GetSummary returns the conversation summary for a session.
 	// Returns an empty string if no summary exists.
 	GetSummary(ctx context.Context, sessionKey string) (string, error)

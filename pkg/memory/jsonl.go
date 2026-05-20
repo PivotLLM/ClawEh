@@ -37,14 +37,6 @@ const (
 	cronWrapperPrefix = "The following message is from a cron job that fired at "
 )
 
-// StoredMessage is a providers.Message decorated with a monotonically increasing
-// sequence number assigned at write time. Seq is storage-layer-only and is never
-// part of providers.Message.
-type StoredMessage struct {
-	Seq int `json:"seq"`
-	providers.Message
-}
-
 // sessionMeta holds per-session metadata stored in a .meta.json file.
 type sessionMeta struct {
 	Key       string    `json:"key"`
@@ -122,9 +114,12 @@ func updateNoiseCache(msg StoredMessage, cache *noiseCache) {
 //
 // Each session is stored as two files:
 //
-//	{sanitized_key}.jsonl          — one JSON-encoded StoredMessage per line, append-only
-//	{sanitized_key}.meta.json      — session metadata (summary, logical truncation offset)
-//	{sanitized_key}.archive.jsonl  — all-time archive of every written StoredMessage
+//	{sanitized_key}.jsonl      — one JSON-encoded StoredMessage per line, append-only
+//	{sanitized_key}.meta.json  — session metadata (summary, logical truncation offset)
+//
+// The all-time message archive is now stored as a SQLite database
+// ({sanitized_key}.archive.db) managed by the ContextManager via ArchiveStore.
+// JSONLStore does not write to the archive.
 //
 // Messages are never physically deleted from the JSONL file. Instead,
 // TruncateHistory records a "skip" offset in the metadata file and
@@ -164,10 +159,6 @@ func (s *JSONLStore) jsonlPath(key string) string {
 
 func (s *JSONLStore) metaPath(key string) string {
 	return filepath.Join(s.dir, sanitizeKey(key)+".meta.json")
-}
-
-func (s *JSONLStore) archivePath(key string) string {
-	return filepath.Join(s.dir, sanitizeKey(key)+".archive.jsonl")
 }
 
 // sanitizeKey converts a session key to a safe filename component.
@@ -405,24 +396,39 @@ func (s *JSONLStore) addMsg(sessionKey string, msg providers.Message) error {
 	log.Printf("memory: message_stored seq=%d length=%d counted=%v role=%q session=%q",
 		seq, len(msg.Content), !isNoisy, msg.Role, sessionKey)
 
-	// Append to archive (best-effort; errors are logged but not fatal).
-	archiveLine, _ := json.Marshal(stored)
-	archiveLine = append(archiveLine, '\n')
-	af, archErr := os.OpenFile(s.archivePath(sessionKey), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	if archErr == nil {
-		af.Write(archiveLine) //nolint:errcheck // best-effort archive write
-		af.Sync()             //nolint:errcheck
-		af.Close()            //nolint:errcheck
-		// Update archive seq range in meta.
-		if meta.ArchiveMinSeq == 0 {
-			meta.ArchiveMinSeq = seq
-		}
-		meta.ArchiveMaxSeq = seq
-	} else {
-		log.Printf("memory: warn: could not open archive for session %q: %v", sessionKey, archErr)
+	return s.writeMeta(sessionKey, meta)
+}
+
+// GetHistoryWithSeqs returns the active history window for sessionKey with seq
+// numbers intact. It mirrors GetHistory but returns []StoredMessage instead of
+// stripping the seq field.
+func (s *JSONLStore) GetHistoryWithSeqs(
+	_ context.Context, sessionKey string,
+) ([]StoredMessage, error) {
+	l := s.sessionLock(sessionKey)
+	l.Lock()
+	defer l.Unlock()
+
+	meta, err := s.readMeta(sessionKey)
+	if err != nil {
+		return nil, err
 	}
 
-	return s.writeMeta(sessionKey, meta)
+	if meta.NextSeq == 0 {
+		n, countErr := countLines(s.jsonlPath(sessionKey))
+		if countErr != nil {
+			return nil, countErr
+		}
+		if n > 0 {
+			meta.NextSeq = n
+			if saveErr := s.writeMeta(sessionKey, meta); saveErr != nil {
+				log.Printf("memory: warn: could not save migrated NextSeq for session %q: %v",
+					sessionKey, saveErr)
+			}
+		}
+	}
+
+	return readStoredMessages(s.jsonlPath(sessionKey), meta.Skip)
 }
 
 func (s *JSONLStore) GetHistory(
@@ -525,10 +531,8 @@ func (s *JSONLStore) TruncateHistory(
 
 	if keepLast <= 0 {
 		meta.Skip = meta.Count
-		// Full reset: clear archive and tracking fields.
-		_ = os.Remove(s.archivePath(sessionKey)) // ignore if not exists
-		meta.ArchiveMinSeq = 0
-		meta.ArchiveMaxSeq = 0
+		// Full reset: clear tracking fields.
+		// Archive deletion is handled by ContextManager.Reset() via ArchiveStore.Delete().
 		meta.MeaningfulCount = 0
 		meta.CompressedAtMeaningfulCount = 0
 		meta.CompressionCooling = false
@@ -714,15 +718,62 @@ func (s *JSONLStore) ListPendingSessions(_ context.Context) ([]string, error) {
 	return keys, nil
 }
 
-func (s *JSONLStore) GetArchiveBounds(_ context.Context, sessionKey string) (minSeq, maxSeq int, err error) {
+// GetArchiveBounds returns (0, 0, nil). Archive bounds are now owned by
+// ContextManager via ArchiveStore.Bounds(); the JSONLStore no longer tracks them.
+func (s *JSONLStore) GetArchiveBounds(_ context.Context, _ string) (minSeq, maxSeq int, err error) {
+	return 0, 0, nil
+}
+
+// CompactionState holds the durable compression counters for a session.
+// Defined here so JSONLStore can return it without importing pkg/llmcontext
+// (which would create a circular import).
+type CompactionState struct {
+	MeaningfulCount             int       `json:"meaningful_count"`
+	CompressedAtMeaningfulCount int       `json:"compressed_at_meaningful_count"`
+	Cooling                     bool      `json:"cooling"`
+	CoolingSinceCount           int       `json:"cooling_since_count"`
+	SummaryGeneratedAt          time.Time `json:"summary_generated_at,omitempty"`
+	SummaryModel                string    `json:"summary_model,omitempty"`
+}
+
+// GetCompactionState reads the compaction counters from the session meta file.
+func (s *JSONLStore) GetCompactionState(sessionKey string) (CompactionState, error) {
 	l := s.sessionLock(sessionKey)
 	l.Lock()
 	defer l.Unlock()
+
 	meta, err := s.readMeta(sessionKey)
 	if err != nil {
-		return 0, 0, err
+		return CompactionState{}, err
 	}
-	return meta.ArchiveMinSeq, meta.ArchiveMaxSeq, nil
+	return CompactionState{
+		MeaningfulCount:             meta.MeaningfulCount,
+		CompressedAtMeaningfulCount: meta.CompressedAtMeaningfulCount,
+		Cooling:                     meta.CompressionCooling,
+		CoolingSinceCount:           meta.CoolingSinceCount,
+		SummaryGeneratedAt:          meta.SummaryGeneratedAt,
+		SummaryModel:                meta.SummaryModel,
+	}, nil
+}
+
+// SetCompactionState writes the compaction counters back to the session meta file.
+func (s *JSONLStore) SetCompactionState(sessionKey string, state CompactionState) error {
+	l := s.sessionLock(sessionKey)
+	l.Lock()
+	defer l.Unlock()
+
+	meta, err := s.readMeta(sessionKey)
+	if err != nil {
+		return err
+	}
+	meta.MeaningfulCount = state.MeaningfulCount
+	meta.CompressedAtMeaningfulCount = state.CompressedAtMeaningfulCount
+	meta.CompressionCooling = state.Cooling
+	meta.CoolingSinceCount = state.CoolingSinceCount
+	meta.SummaryGeneratedAt = state.SummaryGeneratedAt
+	meta.SummaryModel = state.SummaryModel
+	meta.UpdatedAt = time.Now()
+	return s.writeMeta(sessionKey, meta)
 }
 
 func (s *JSONLStore) Close() error {

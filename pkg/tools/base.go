@@ -82,6 +82,14 @@ func roundSentFlagFromCtx(ctx context.Context) *atomic.Bool {
 }
 
 // WithSessionKey returns a child context carrying the active session key.
+// In the MCP dispatch path, mcpserver.dispatchToolCall injects the session key
+// after validating the session_token parameter (see pkg/mcpserver/tools.go).
+// In the direct agent loop path, the context carries the session key via
+// the tool execution plumbing.
+//
+// Session-scoped tools (tools that call ToolSessionKey): get_session_messages,
+// search_session_messages. If you add a new session-scoped tool, also update
+// isSessionScopedTool in pkg/mcpserver/session_tokens.go.
 func WithSessionKey(ctx context.Context, key string) context.Context {
 	return context.WithValue(ctx, ctxKeySessionKey, key)
 }

@@ -36,7 +36,7 @@ func TestDispatch_ACLAllowExecutesAndLogsAuthorized(t *testing.T) {
 	tok := tm.Issue("alice")
 
 	out, isErr := dispatchToolCall(context.Background(), "read_file",
-		map[string]any{"agent_token": tok}, tm, resolverFor(regs), nil, policy)
+		map[string]any{"agent_token": tok}, tm, nil, resolverFor(regs), nil, policy)
 	if isErr {
 		t.Fatalf("expected success, got error: %s", out)
 	}
@@ -72,7 +72,7 @@ func TestDispatch_ACLDenyBlocksAndEmitsWarn(t *testing.T) {
 	tok := tm.Issue("alice")
 
 	out, isErr := dispatchToolCall(context.Background(), "read_file",
-		map[string]any{"agent_token": tok}, tm, resolverFor(regs), nil, denyAll)
+		map[string]any{"agent_token": tok}, tm, nil, resolverFor(regs), nil, denyAll)
 	if !isErr {
 		t.Fatalf("expected ACL deny, got success: %s", out)
 	}
@@ -116,7 +116,7 @@ func TestDispatch_NilPolicyDefaultsToAllow(t *testing.T) {
 	tok := tm.Issue("alice")
 
 	out, isErr := dispatchToolCall(context.Background(), "read_file",
-		map[string]any{"agent_token": tok}, tm, resolverFor(regs), nil, nil)
+		map[string]any{"agent_token": tok}, tm, nil, resolverFor(regs), nil, nil)
 	if isErr {
 		t.Fatalf("nil policy should default to allow, got error: %s", out)
 	}
@@ -176,7 +176,7 @@ func TestNew_WithACLPolicyInjectsCustomPolicy(t *testing.T) {
 	}
 
 	out, isErr := dispatchToolCall(context.Background(), "read_file",
-		map[string]any{"agent_token": tok}, tm, resolverFor(map[string]*tools.ToolRegistry{"alice": r}), nil, srv.policy)
+		map[string]any{"agent_token": tok}, tm, nil, resolverFor(map[string]*tools.ToolRegistry{"alice": r}), nil, srv.policy)
 	if !isErr {
 		t.Fatalf("expected ACL deny via injected policy, got success: %s", out)
 	}

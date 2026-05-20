@@ -31,6 +31,9 @@ type ContextStats struct {
 	LastCompressionGain float64
 	CompressionCooling  bool
 	CoolingSinceCount   int
+	// SummaryTokens is the estimated token count of the stored summary (runes/4).
+	// Zero when no summary has been generated.
+	SummaryTokens int
 }
 
 // MessageBuilder builds the full message slice sent to an LLM, including the

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/PivotLLM/ClawEh/pkg/bus"
+	"github.com/PivotLLM/ClawEh/pkg/memory"
 	"github.com/PivotLLM/ClawEh/pkg/providers"
 )
 
@@ -38,6 +39,13 @@ func (s *recoveryTestStore) ClearPendingTurn(key string) error {
 	return nil
 }
 func (s *recoveryTestStore) GetArchiveBounds(_ string) (int, int) { return 0, 0 }
+func (s *recoveryTestStore) GetHistoryWithSeqs(_ string) []memory.StoredMessage {
+	stored := make([]memory.StoredMessage, len(s.history))
+	for i, msg := range s.history {
+		stored[i] = memory.StoredMessage{Seq: i + 1, Message: msg}
+	}
+	return stored
+}
 func (s *recoveryTestStore) ListPendingSessions() ([]string, error) {
 	return nil, nil
 }

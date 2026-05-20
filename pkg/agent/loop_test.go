@@ -1356,8 +1356,10 @@ func TestResolveMediaRefs_MixedImageAndFile(t *testing.T) {
 	}
 }
 
-// TestForceCompression_WithSystemPrompt verifies that forceCompression keeps
-// the system message at index 0 and reduces total history length.
+// TestForceCompression_WithSystemPrompt verifies that ForceCompress keeps the
+// system message at index 0, reduces total history, and preserves the most
+// recent turn group (last user message). Messages are padded so that two or
+// more conversation groups exceed the safety threshold, forcing a drop.
 func TestForceCompression_WithSystemPrompt(t *testing.T) {
 	al, _, _, _, cleanup := newTestAgentLoop(t)
 	defer cleanup()
@@ -1367,18 +1369,27 @@ func TestForceCompression_WithSystemPrompt(t *testing.T) {
 		t.Fatal("no default agent")
 	}
 
+	// contextWindow=400 tokens, safetyPercent=80 → threshold = 320 tokens.
+	// Each padded message is ~160 tokens (640 chars / 4). The current turn
+	// group (user3, 160 tokens) fits. Adding ass2 (160 tokens) would hit 320
+	// tokens = 80%, which is NOT < 80%, so only user3 is kept. That gives us
+	// sys + user3 = 2 messages, down from 6.
+	pad := strings.Repeat("x", 640)
 	sessionKey := "test-compress-sys"
 	history := []providers.Message{
 		{Role: "system", Content: "You are helpful."},
-		{Role: "user", Content: "user msg 1"},
-		{Role: "assistant", Content: "assistant msg 1"},
-		{Role: "user", Content: "user msg 2"},
-		{Role: "assistant", Content: "assistant msg 2"},
+		{Role: "user", Content: "user msg 1 " + pad},
+		{Role: "assistant", Content: "assistant msg 1 " + pad},
+		{Role: "user", Content: "user msg 2 " + pad},
+		{Role: "assistant", Content: "assistant msg 2 " + pad},
 		{Role: "user", Content: "user msg 3"},
 	}
 	agent.Sessions.SetHistory(sessionKey, history)
 
-	mgr := llmcontext.New(sessionKey, agent.Sessions, agent.ContextBuilder, nil)
+	mgr := llmcontext.New(sessionKey, agent.Sessions, agent.ContextBuilder, nil,
+		llmcontext.WithContextWindow(400),
+		llmcontext.WithSafetyPercent(80),
+	)
 	if err := mgr.ForceCompress(context.Background()); err != nil {
 		t.Fatalf("ForceCompress returned unexpected error: %v", err)
 	}
@@ -1393,15 +1404,15 @@ func TestForceCompression_WithSystemPrompt(t *testing.T) {
 	if got[0].Role != "system" {
 		t.Fatalf("expected first message to be system, got role=%q", got[0].Role)
 	}
-	// Last user message must still be present
+	// Most recent turn group (user3) must still be present.
 	last := got[len(got)-1]
 	if last.Content != "user msg 3" {
 		t.Fatalf("expected last user message to be preserved, got %q", last.Content)
 	}
 }
 
-// TestForceCompression_NoSystemPrompt verifies that forceCompression handles
-// histories without a system prompt: the first message is retained (not dropped).
+// TestForceCompression_NoSystemPrompt verifies that ForceCompress handles
+// histories without a system prompt: no system message is injected in the result.
 func TestForceCompression_NoSystemPrompt(t *testing.T) {
 	al, _, _, _, cleanup := newTestAgentLoop(t)
 	defer cleanup()
@@ -1411,17 +1422,22 @@ func TestForceCompression_NoSystemPrompt(t *testing.T) {
 		t.Fatal("no default agent")
 	}
 
+	// Same window/padding as the system-prompt test; force a drop.
+	pad := strings.Repeat("x", 640)
 	sessionKey := "test-compress-nosys"
 	history := []providers.Message{
-		{Role: "user", Content: "user msg 1"},
-		{Role: "assistant", Content: "assistant msg 1"},
-		{Role: "user", Content: "user msg 2"},
-		{Role: "assistant", Content: "assistant msg 2"},
+		{Role: "user", Content: "user msg 1 " + pad},
+		{Role: "assistant", Content: "assistant msg 1 " + pad},
+		{Role: "user", Content: "user msg 2 " + pad},
+		{Role: "assistant", Content: "assistant msg 2 " + pad},
 		{Role: "user", Content: "user msg 3"},
 	}
 	agent.Sessions.SetHistory(sessionKey, history)
 
-	mgr := llmcontext.New(sessionKey, agent.Sessions, agent.ContextBuilder, nil)
+	mgr := llmcontext.New(sessionKey, agent.Sessions, agent.ContextBuilder, nil,
+		llmcontext.WithContextWindow(400),
+		llmcontext.WithSafetyPercent(80),
+	)
 	if err := mgr.ForceCompress(context.Background()); err != nil {
 		t.Fatalf("ForceCompress returned unexpected error: %v", err)
 	}
@@ -1433,7 +1449,7 @@ func TestForceCompression_NoSystemPrompt(t *testing.T) {
 	if len(got) == 0 {
 		t.Fatal("history must not be empty after compression")
 	}
-	// Without a system prompt, the first message should be a user or assistant message (not system).
+	// Without a system prompt, the first message should not be a system message.
 	if got[0].Role == "system" {
 		t.Fatalf("expected first message not to be system when no system prompt was set, got role=%q", got[0].Role)
 	}
@@ -1488,7 +1504,9 @@ func TestRunLLMIteration_ContextCancelDuringBackoff(t *testing.T) {
 	done := make(chan result, 1)
 
 	go func() {
-		_, _, _, _, err := al.runLLMIteration(ctx, agent, messages, opts)
+		cm, releaseTestCM := al.getContextManager(agent, opts.SessionKey)
+		defer releaseTestCM()
+		_, _, _, _, err := al.runLLMIteration(ctx, agent, messages, opts, cm)
 		done <- result{err: err}
 	}()
 
@@ -1697,7 +1715,9 @@ func TestRunLLMIteration_ToolCalls_ThenFinalResponse(t *testing.T) {
 		SendResponse: false,
 	}
 
-	content, _, _, iterations, err := al.runLLMIteration(context.Background(), agent, messages, opts)
+	cm, releaseTestCM := al.getContextManager(agent, opts.SessionKey)
+	defer releaseTestCM()
+	content, _, _, iterations, err := al.runLLMIteration(context.Background(), agent, messages, opts, cm)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1756,7 +1776,9 @@ func TestRunLLMIteration_MaxIterations(t *testing.T) {
 		SendResponse: false,
 	}
 
-	content, _, _, iterations, err := al.runLLMIteration(context.Background(), agent, messages, opts)
+	cm, releaseTestCM := al.getContextManager(agent, opts.SessionKey)
+	defer releaseTestCM()
+	content, _, _, iterations, err := al.runLLMIteration(context.Background(), agent, messages, opts, cm)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1973,7 +1995,9 @@ func TestRunLLMIteration_ContextWindowError_Retry(t *testing.T) {
 		SendResponse: false,
 	}
 
-	content, _, _, _, err := al.runLLMIteration(context.Background(), agent, messages, opts)
+	cm, releaseTestCM := al.getContextManager(agent, opts.SessionKey)
+	defer releaseTestCM()
+	content, _, _, _, err := al.runLLMIteration(context.Background(), agent, messages, opts, cm)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

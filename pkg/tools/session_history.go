@@ -4,11 +4,10 @@
 package tools
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -31,8 +30,9 @@ func (t *SessionHistoryTool) Name() string { return "get_session_messages" }
 
 func (t *SessionHistoryTool) Description() string {
 	return "Retrieve historical messages from the current session archive by sequence number. " +
-		"Use when the context summary references a message you need to see in full. " +
-		"Provide seq (single message) or seq_start + seq_end (inclusive range)."
+		"Returns messages in the requested seq range, capped to the most recent 250. " +
+		"Request smaller ranges for efficiency. " +
+		"Use when the context summary references a seq number and you need the full message content."
 }
 
 func (t *SessionHistoryTool) Parameters() map[string]any {
@@ -66,9 +66,44 @@ func (t *SessionHistoryTool) Execute(ctx context.Context, args map[string]any) *
 		return ErrorResult(err.Error())
 	}
 
-	archivePath := filepath.Join(t.sessionsDir, archiveSanitizeKey(sessionKey)+".archive.jsonl")
-	msgs, readErr := readArchiveRange(archivePath, seqStart, seqEnd)
+	archivePath := filepath.Join(t.sessionsDir, archiveSanitizeKey(sessionKey)+".archive.db")
+	a, openErr := memory.OpenReadOnly(archivePath)
+	if openErr != nil {
+		if errors.Is(openErr, memory.ErrArchiveUnavailable) {
+			return &ToolResult{ForLLM: "archive unavailable — see server logs"}
+		}
+		return ErrorResult(fmt.Sprintf("archive open error: %v", openErr))
+	}
+	defer a.Close()
+
+	// Clamp the requested range to the most recent 250 messages.
+	const windowSize = 250
+	_, maxSeq, boundsErr := a.Bounds()
+	if boundsErr != nil {
+		if errors.Is(boundsErr, memory.ErrArchiveUnavailable) {
+			return &ToolResult{ForLLM: "archive unavailable — see server logs"}
+		}
+		return ErrorResult(fmt.Sprintf("archive bounds error: %v", boundsErr))
+	}
+
+	if maxSeq == 0 {
+		return &ToolResult{ForLLM: "not available — message has aged out of the archive"}
+	}
+
+	effectiveMin := seqStart
+	if floor := maxSeq - windowSize + 1; floor > effectiveMin {
+		effectiveMin = floor
+	}
+	effectiveMax := seqEnd
+	if maxSeq < effectiveMax {
+		effectiveMax = maxSeq
+	}
+
+	msgs, readErr := a.QueryRange(effectiveMin, effectiveMax)
 	if readErr != nil {
+		if errors.Is(readErr, memory.ErrArchiveUnavailable) {
+			return &ToolResult{ForLLM: "archive unavailable — see server logs"}
+		}
 		return ErrorResult(fmt.Sprintf("archive read error: %v", readErr))
 	}
 
@@ -77,8 +112,10 @@ func (t *SessionHistoryTool) Execute(ctx context.Context, args map[string]any) *
 	}
 
 	var sb strings.Builder
-	for _, m := range msgs {
-		fmt.Fprintf(&sb, "[#%d] %s:\n%s\n\n", m.Seq, m.Role, m.Content)
+	for i, m := range msgs {
+		// Seq is inferred from position within the effective range.
+		seq := effectiveMin + i
+		fmt.Fprintf(&sb, "[#%d] %s:\n%s\n\n", seq, m.Role, m.Content)
 	}
 	return &ToolResult{ForLLM: strings.TrimRight(sb.String(), "\n")}
 }
@@ -126,34 +163,4 @@ func archiveSanitizeKey(key string) string {
 	s = strings.ReplaceAll(s, "/", "_")
 	s = strings.ReplaceAll(s, "\\", "_")
 	return s
-}
-
-// readArchiveRange reads StoredMessages from the archive whose Seq falls in [seqStart, seqEnd].
-func readArchiveRange(path string, seqStart, seqEnd int) ([]memory.StoredMessage, error) {
-	f, err := os.Open(path)
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-
-	var result []memory.StoredMessage
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		if len(line) == 0 {
-			continue
-		}
-		var msg memory.StoredMessage
-		if err := json.Unmarshal(line, &msg); err != nil {
-			continue
-		}
-		if msg.Seq >= seqStart && msg.Seq <= seqEnd {
-			result = append(result, msg)
-		}
-	}
-	return result, scanner.Err()
 }

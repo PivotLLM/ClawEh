@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/PivotLLM/ClawEh/pkg/memory"
 	"github.com/PivotLLM/ClawEh/pkg/providers"
 )
 
@@ -66,6 +67,14 @@ func (s *mockStore) GetArchiveBounds(_ string) (int, int)       { return 0, 0 }
 func (s *mockStore) ListPendingSessions() ([]string, error)     { return nil, nil }
 func (s *mockStore) Save(_ string) error                        { return nil }
 func (s *mockStore) Close() error                               { return nil }
+func (s *mockStore) GetHistoryWithSeqs(key string) []memory.StoredMessage {
+	src := s.history[key]
+	stored := make([]memory.StoredMessage, len(src))
+	for i, msg := range src {
+		stored[i] = memory.StoredMessage{Seq: i + 1, Message: msg}
+	}
+	return stored
+}
 
 // newTestManager creates a Manager with the given options and returns the
 // concrete *Manager so tests can call SetTestCompressHook.

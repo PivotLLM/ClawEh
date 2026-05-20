@@ -113,6 +113,7 @@ func NewAgentInstance(
 	sessions := initSessionStore(sessionsDir)
 
 	toolsRegistry.Register(tools.NewSessionHistoryTool(sessionsDir))
+	toolsRegistry.Register(tools.NewSessionHistorySearchTool(sessionsDir))
 
 	mcpDiscoveryActive := cfg.Tools.MCP.Enabled && cfg.Tools.MCP.Discovery.Enabled
 	contextBuilder := NewContextBuilder(workspace).WithToolDiscovery(
@@ -248,9 +249,6 @@ func NewAgentInstance(
 	}(), defaults.ArchiveMessageCount); ok {
 		compressOpts = append(compressOpts, llmcontext.WithArchiveMessageCount(v))
 	}
-	// Note: CompressModel/WithCompressLLM resolution is deferred to Phase 6
-	// (requires provider factory lookup).
-
 	// Resolve fallback candidates
 	modelCfg := providers.ModelConfig{
 		Primary:   model,

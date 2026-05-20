@@ -28,6 +28,7 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/constants"
 	"github.com/PivotLLM/ClawEh/pkg/dump"
 	"github.com/PivotLLM/ClawEh/pkg/global"
+	"github.com/PivotLLM/ClawEh/pkg/llmcontext"
 	"github.com/PivotLLM/ClawEh/pkg/logger"
 	"github.com/PivotLLM/ClawEh/pkg/media"
 	"github.com/PivotLLM/ClawEh/pkg/providers"
@@ -69,6 +70,32 @@ type AgentLoop struct {
 	sessionCancelStates sync.Map // scope key → *sessionCancelState
 	dumpsDir            string
 	startedAt           time.Time
+
+	// sessionTokenIssuer issues and revokes per-session MCP tokens. Wired in
+	// from the MCP server at startup via SetSessionTokenIssuer; nil when the
+	// MCP host is not configured.
+	sessionTokenIssuer SessionTokenIssuer
+
+	// Context manager idle eviction.
+	// evictStop is closed by Close() to signal the eviction goroutine to exit.
+	// evictTTL is the idle TTL after which an unused context manager is evicted.
+	// evictInterval is how often the eviction pass runs.
+	evictStop     chan struct{}
+	evictTTL      time.Duration
+	evictInterval time.Duration
+}
+
+// SessionTokenIssuer issues and revokes SST-prefixed session tokens used by
+// session-scoped MCP tools (get_session_messages, search_session_messages).
+// pkg/mcpserver.sessionTokenStore satisfies this interface.
+type SessionTokenIssuer interface {
+	// Issue generates and stores a new token for the given session. Returns
+	// the SST<64hex> token, or "" on failure.
+	Issue(agentID, sessionKey, archiveDir string) string
+	// Revoke removes the token for a given session key.
+	Revoke(sessionKey string)
+	// RevokeAgent removes all tokens for a given agent.
+	RevokeAgent(agentID string)
 }
 
 // sessionCancelState tracks a pending cancel request for a session. When
@@ -177,6 +204,9 @@ func NewAgentLoop(
 		callbackManagers: callbackManagers,
 		agentTokens:      agentTokens,
 		startedAt:        time.Now(),
+		evictStop:        make(chan struct{}),
+		evictTTL:         defaultEvictTTL,
+		evictInterval:    defaultEvictInterval,
 	}
 
 	return al
@@ -351,6 +381,9 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 		return err
 	}
 
+	// Start the background context-manager eviction goroutine.
+	go al.evictContextManagers()
+
 	al.recoverPendingTurns(ctx)
 
 	for al.running.Load() {
@@ -473,6 +506,16 @@ func (al *AgentLoop) Stop() {
 
 // Close releases resources held by agent session stores. Call after Stop.
 func (al *AgentLoop) Close() {
+	// Signal the eviction goroutine to stop and drain all remaining managers.
+	// Use a non-blocking close in case Close() is called before Run().
+	select {
+	case <-al.evictStop:
+		// already closed
+	default:
+		close(al.evictStop)
+	}
+	al.drainContextManagers()
+
 	mcpManager := al.mcp.takeManager()
 
 	if mcpManager != nil {
@@ -499,6 +542,15 @@ func (al *AgentLoop) Close() {
 // tokens. Used by the MCP server to resolve the calling agent.
 func (al *AgentLoop) AgentTokens() *agenttoken.Manager {
 	return al.agentTokens
+}
+
+// SetSessionTokenIssuer wires the MCP server's session token store into the
+// agent loop so that session tokens are issued when a new ContextManager is
+// created and revoked on eviction or session clear.
+func (al *AgentLoop) SetSessionTokenIssuer(sti SessionTokenIssuer) {
+	al.mu.Lock()
+	defer al.mu.Unlock()
+	al.sessionTokenIssuer = sti
 }
 
 // issueAgentTokens issues (or re-issues) MCP isolation tokens for every
@@ -1226,7 +1278,8 @@ func (al *AgentLoop) runAgentLoop(
 	}
 
 	// 1. Get or create the ContextManager for this session.
-	cm := al.getContextManager(agent, opts.SessionKey)
+	cm, releaseCtxMgr := al.getContextManager(agent, opts.SessionKey)
+	defer releaseCtxMgr()
 	cm.SetCallContext(opts.Channel, opts.ChatID)
 
 	// 2. Save user message and trigger compression check (skip on retry — already in history).
@@ -1247,6 +1300,15 @@ func (al *AgentLoop) runAgentLoop(
 		return "", fmt.Errorf("context manager build: %w", buildErr)
 	}
 
+	// Post-Build token check: include overhead (system prompt, tool defs, completion
+	// budget) to catch cases where stored history is within threshold but the full
+	// request exceeds the context window. Cooldown prevents double-firing if
+	// PreDispatchCheck already compressed on this turn.
+	if messages, buildErr = cm.CheckAndCompress(ctx, messages); buildErr != nil {
+		logger.WarnCF("agent", "CheckAndCompress failed (continuing with current slice)",
+			map[string]any{"error": buildErr.Error(), "session": opts.SessionKey})
+	}
+
 	// Resolve media:// refs: images→base64 data URLs, non-images→local paths in content
 	cfg := al.GetConfig()
 	maxMediaSize := cfg.Agents.Defaults.GetMaxMediaSize()
@@ -1265,7 +1327,7 @@ func (al *AgentLoop) runAgentLoop(
 	}()
 
 	// 4. Run LLM iteration loop
-	finalContent, normal, finishReason, iteration, err := al.runLLMIteration(ctx, agent, messages, opts)
+	finalContent, normal, finishReason, iteration, err := al.runLLMIteration(ctx, agent, messages, opts, cm)
 	if err != nil {
 		return "", err
 	}
@@ -1388,6 +1450,7 @@ func (al *AgentLoop) runLLMIteration(
 	agent *AgentInstance,
 	messages []providers.Message,
 	opts processOptions,
+	cm llmcontext.ContextManager,
 ) (string, bool, string, int, error) {
 	iteration := 0
 	var finalContent string
@@ -1433,6 +1496,20 @@ func (al *AgentLoop) runLLMIteration(
 		providerToolDefs := agent.Tools.ToProviderDefs()
 		if agent.NoTools {
 			providerToolDefs = nil
+		}
+
+		// Run pre-dispatch compression check. If tool-call messages or tool results
+		// pushed the context over the threshold, compress now and use the rebuilt
+		// slice so the provider never receives a stale pre-compression slice.
+		{
+			var preErr error
+			messages, preErr = cm.PreDispatchCheck(ctx, messages)
+			if preErr != nil && !errors.Is(preErr, llmcontext.ErrCompressionFailed) {
+				logger.WarnCF("agent", "PreDispatchCheck unexpected error", map[string]any{
+					"agent_id": agent.ID,
+					"error":    preErr.Error(),
+				})
+			}
 		}
 
 		// Log session status at INFO level for operational visibility
@@ -1640,7 +1717,8 @@ func (al *AgentLoop) runLLMIteration(
 				}
 
 				prevMsgCount := len(messages)
-				comprMgr := al.getContextManager(agent, opts.SessionKey)
+				comprMgr, releaseComprMgr := al.getContextManager(agent, opts.SessionKey)
+				defer releaseComprMgr()
 				if ferr := comprMgr.ForceCompress(ctx); ferr != nil {
 					logger.WarnCF("agent", "force compression failed",
 						map[string]any{"error": ferr.Error(), "session": opts.SessionKey})
@@ -1796,8 +1874,14 @@ func (al *AgentLoop) runLLMIteration(
 		}
 		messages = append(messages, assistantMsg)
 
-		// Save assistant message with tool calls to session
-		agent.Sessions.AddFullMessage(opts.SessionKey, assistantMsg)
+		// Save assistant message with tool calls through the context manager so
+		// that msgCount is incremented and the message is written to the archive.
+		if err := cm.AddToolCallMessage(ctx, assistantMsg); err != nil {
+			logger.WarnCF("agent", "AddToolCallMessage failed", map[string]any{
+				"agent_id": agent.ID,
+				"error":    err.Error(),
+			})
+		}
 
 		// Execute tool calls in parallel
 		type indexedAgentResult struct {
@@ -1951,8 +2035,14 @@ func (al *AgentLoop) runLLMIteration(
 			}
 			messages = append(messages, toolResultMsg)
 
-			// Save tool result message to session
-			agent.Sessions.AddFullMessage(opts.SessionKey, toolResultMsg)
+			// Save tool result message through the context manager so that
+			// msgCount is incremented and the message is written to the archive.
+			if err := cm.AddToolResult(ctx, toolResultMsg); err != nil {
+				logger.WarnCF("agent", "AddToolResult failed", map[string]any{
+					"agent_id": agent.ID,
+					"error":    err.Error(),
+				})
+			}
 		}
 
 		// Tick down TTL of discovered tools after processing tool results.
@@ -2206,17 +2296,35 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 			if agent.Sessions == nil {
 				return fmt.Errorf("sessions not initialized for agent")
 			}
-
-			agent.Sessions.SetHistory(opts.SessionKey, make([]providers.Message, 0))
-			agent.Sessions.SetSummary(opts.SessionKey, "")
-			agent.Sessions.Save(opts.SessionKey)
+			cm, releaseCM := al.getContextManager(agent, opts.SessionKey)
+			defer releaseCM()
+			if err := cm.Reset(context.Background()); err != nil {
+				logger.WarnCF("agent", "clear: Reset failed", map[string]any{
+					"session_key": opts.SessionKey,
+					"error":       err.Error(),
+				})
+				return err
+			}
+			// Revoke the old session token and issue a fresh one. The LLM will
+			// receive the new token in the next Build() call.
+			al.mu.RLock()
+			sti := al.sessionTokenIssuer
+			al.mu.RUnlock()
+			if sti != nil {
+				archiveDir := filepath.Join(agent.Workspace, "sessions")
+				tok := sti.Issue(agent.ID, opts.SessionKey, archiveDir)
+				if tok != "" {
+					cm.SetSessionToken(tok)
+				}
+			}
 			return nil
 		}
 		rt.CompactHistory = func(ctx context.Context) error {
 			if opts == nil {
 				return fmt.Errorf("process options not available")
 			}
-			cm := al.getContextManager(agent, opts.SessionKey)
+			cm, releaseCM := al.getContextManager(agent, opts.SessionKey)
+			defer releaseCM()
 			cm.SetCallContext(opts.Channel, opts.ChatID)
 			return cm.Compact(ctx)
 		}

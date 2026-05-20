@@ -90,8 +90,10 @@ func (t *firstCallTracker) workspace(agentName string) string {
 
 // addToolsToServer registers each allowed claw tool with the given MCP
 // server. Each registered tool has the required `agent_token` parameter
-// added to its published schema. On every call:
-//   - the token is extracted, validated, and resolved to an agent name;
+// added to its published schema. Session-scoped tools also have
+// `session_token` injected. On every call:
+//   - the agent_token is extracted, validated, and resolved to an agent name;
+//   - for session-scoped tools, session_token is validated against sessionTokens;
 //   - the per-agent ACL policy is consulted;
 //   - the call is dispatched to that agent's tool registry;
 //   - the result is scrubbed of any leaked AGT tokens before return.
@@ -105,6 +107,7 @@ func addToolsToServer(
 	agentRegistries map[string]*tools.ToolRegistry,
 	allowPatterns []string,
 	tokens *agenttoken.Manager,
+	sessionTokens *sessionTokenStore,
 	resolver AgentResolver,
 	tracker *firstCallTracker,
 	policy acl.Policy,
@@ -131,6 +134,9 @@ func addToolsToServer(
 			params = map[string]any{"type": "object", "properties": map[string]any{}}
 		}
 		augmented := injectAgentTokenParam(params)
+		if isSessionScopedTool(name) {
+			augmented = injectSessionTokenParam(augmented)
+		}
 
 		schemaBytes, err := json.Marshal(augmented)
 		if err != nil {
@@ -150,7 +156,7 @@ func addToolsToServer(
 			if args == nil {
 				args = map[string]any{}
 			}
-			out, isErr := dispatchToolCall(ctx, toolName, args, tokens, resolver, tracker, policy)
+			out, isErr := dispatchToolCall(ctx, toolName, args, tokens, sessionTokens, resolver, tracker, policy)
 			if isErr {
 				return mcp.NewToolResultError(out), nil
 			}
@@ -203,16 +209,19 @@ func firstToolNamed(agentRegistries map[string]*tools.ToolRegistry, name string)
 	return nil, false
 }
 
-// dispatchToolCall validates the token in args, consults the per-agent ACL
-// policy, routes to the resolved agent's registry, executes the tool, and
-// returns the (possibly redacted) LLM-facing output along with an error
-// flag. Extracted so the dispatch logic can be exercised directly by tests
-// without going through the streamable HTTP layer.
+// dispatchToolCall validates the agent_token in args, consults the per-agent
+// ACL policy, routes to the resolved agent's registry, executes the tool, and
+// returns the (possibly redacted) LLM-facing output along with an error flag.
+// For session-scoped tools, it additionally validates session_token and injects
+// the resolved session key into the execution context.
+// Extracted so the dispatch logic can be exercised directly by tests without
+// going through the streamable HTTP layer.
 func dispatchToolCall(
 	ctx context.Context,
 	toolName string,
 	args map[string]any,
 	tokens *agenttoken.Manager,
+	sessionTokens *sessionTokenStore,
 	resolver AgentResolver,
 	tracker *firstCallTracker,
 	policy acl.Policy,
@@ -253,6 +262,40 @@ func dispatchToolCall(
 		logger.WarnCF("mcpserver", "MCP tool denied",
 			map[string]any{"agent": agentName, "tool": toolName, "reason": "acl_denied"})
 		return aclDeniedMessage, true
+	}
+
+	// Session-scoped tools require a session_token. Validate it and inject the
+	// session key into ctx so tools.ToolSessionKey(ctx) returns the correct value.
+	if isSessionScopedTool(toolName) {
+		rawSessTok, _ := args[sessionTokenParam].(string)
+		delete(args, sessionTokenParam)
+
+		if rawSessTok == "" {
+			logger.WarnCF("mcpserver", "MCP session token missing",
+				map[string]any{"tool": toolName, "agent": agentName, "reason": "missing_session_token"})
+			return invalidSessionTokenMessage, true
+		}
+
+		if sessionTokens == nil {
+			logger.WarnCF("mcpserver", "MCP session token store unavailable",
+				map[string]any{"tool": toolName, "agent": agentName, "reason": "no_session_token_store"})
+			return invalidSessionTokenMessage, true
+		}
+
+		rec, found := sessionTokens.Resolve(rawSessTok)
+		if !found {
+			logger.WarnCF("mcpserver", "MCP session token rejected",
+				map[string]any{"tool": toolName, "agent": agentName, "reason": "invalid_session_token"})
+			return invalidSessionTokenMessage, true
+		}
+
+		if rec.agentID != agentName {
+			logger.WarnCF("mcpserver", "MCP session token cross-agent",
+				map[string]any{"tool": toolName, "agent": agentName, "token_agent": rec.agentID, "reason": "cross_agent_session_token"})
+			return sessionTokenCrossAgentMessage, true
+		}
+
+		ctx = tools.WithSessionKey(ctx, rec.sessionKey)
 	}
 
 	logger.InfoCF("mcpserver", "MCP tool authorized",
@@ -299,6 +342,39 @@ func injectAgentTokenParam(params map[string]any) map[string]any {
 	required := stringSliceFromAny(clone["required"])
 	if !containsString(required, agentTokenParam) {
 		required = append(required, agentTokenParam)
+	}
+	clone["required"] = required
+
+	return clone
+}
+
+// injectSessionTokenParam returns a deep-copied schema with `session_token` added
+// to properties and required. Called only for session-scoped tools. The original
+// schema map is left untouched.
+func injectSessionTokenParam(params map[string]any) map[string]any {
+	clone := cloneMap(params)
+	if clone == nil {
+		clone = map[string]any{}
+	}
+	if _, ok := clone["type"]; !ok {
+		clone["type"] = "object"
+	}
+
+	props, _ := clone["properties"].(map[string]any)
+	if props == nil {
+		props = map[string]any{}
+	} else {
+		props = cloneMap(props)
+	}
+	props[sessionTokenParam] = map[string]any{
+		"type":        "string",
+		"description": "Your session_token (format: 'SST<64 hex>'). Required for session-scoped tools. Supplied verbatim from the agent's system prompt.",
+	}
+	clone["properties"] = props
+
+	required := stringSliceFromAny(clone["required"])
+	if !containsString(required, sessionTokenParam) {
+		required = append(required, sessionTokenParam)
 	}
 	clone["required"] = required
 

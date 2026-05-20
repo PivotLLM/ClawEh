@@ -66,6 +66,86 @@ func (s *Summary) Validate() error {
 	return nil
 }
 
+// TruncateToFit removes the oldest key_moments and retrievable_history (MessageIndex)
+// entries until the JSON-serialized summary fits within tokenLimit tokens (using the
+// runes/4 heuristic). Returns true if any truncation was performed.
+//
+// "Oldest" is defined as lowest index position within each slice (index 0 first),
+// which corresponds to the oldest events since both slices are appended in
+// chronological order by the summarizer.
+func (s *Summary) TruncateToFit(tokenLimit int) bool {
+	if s == nil || tokenLimit <= 0 {
+		return false
+	}
+	truncated := false
+	for {
+		data, err := json.Marshal(s)
+		if err != nil {
+			break
+		}
+		if len([]rune(string(data)))/4 <= tokenLimit {
+			break
+		}
+		// Drop the oldest entry from whichever slice is larger to reduce size
+		// while retaining as much recent history as possible.
+		if len(s.KeyMoments) == 0 && len(s.MessageIndex) == 0 {
+			break // nothing left to drop; caller will handle residual oversize
+		}
+		if len(s.KeyMoments) >= len(s.MessageIndex) && len(s.KeyMoments) > 0 {
+			s.KeyMoments = s.KeyMoments[1:]
+		} else if len(s.MessageIndex) > 0 {
+			s.MessageIndex = s.MessageIndex[1:]
+		} else {
+			s.KeyMoments = s.KeyMoments[1:]
+		}
+		truncated = true
+	}
+	return truncated
+}
+
+// StripOutOfRangeSeqRefs removes KeyMoments and MessageIndex entries whose seq
+// references fall outside [coveredSeqStart, archiveMaxSeq]. This prevents
+// hallucinated or stale seq values emitted by the summarizer from appearing in
+// the rendered summary.
+//
+// coveredSeqStart is the start of the range covered by this summary.
+// archiveMaxSeq is the highest seq currently in the archive (0 means unknown:
+// only the coveredSeqStart floor is enforced in that case).
+func (s *Summary) StripOutOfRangeSeqRefs(coveredSeqStart, archiveMaxSeq int) {
+	if s == nil {
+		return
+	}
+
+	inRange := func(seq int) bool {
+		if seq < coveredSeqStart {
+			return false
+		}
+		if archiveMaxSeq > 0 && seq > archiveMaxSeq {
+			return false
+		}
+		return true
+	}
+
+	// Filter KeyMoments.
+	valid := s.KeyMoments[:0]
+	for _, km := range s.KeyMoments {
+		if inRange(km.Seq) {
+			valid = append(valid, km)
+		}
+	}
+	s.KeyMoments = valid
+
+	// Filter MessageIndex (retrievable_history). An entry is valid if both
+	// SeqStart and SeqEnd are within the allowed range.
+	validIdx := s.MessageIndex[:0]
+	for _, e := range s.MessageIndex {
+		if inRange(e.SeqStart) && inRange(e.SeqEnd) {
+			validIdx = append(validIdx, e)
+		}
+	}
+	s.MessageIndex = validIdx
+}
+
 // Render produces the Markdown block injected at the CONTEXT_SUMMARY position.
 func (s *Summary) Render(archiveMinSeq, archiveMaxSeq int) string {
 	var sb strings.Builder

@@ -329,6 +329,10 @@ func setupAndStartServices(
 				return nil, fmt.Errorf("error starting MCP server: %w", err)
 			}
 			services.MCPServer = srv
+			// Wire the session token store into the agent loop so it can issue
+			// and revoke per-session tokens when context managers are created,
+			// evicted, or cleared.
+			agentLoop.SetSessionTokenIssuer(srv.SessionTokens())
 			logger.InfoCF("mcpserver", "MCP host started",
 				map[string]any{
 					"listen":       srv.Listen(),

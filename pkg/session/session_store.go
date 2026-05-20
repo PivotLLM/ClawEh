@@ -1,6 +1,7 @@
 package session
 
 import (
+	"github.com/PivotLLM/ClawEh/pkg/memory"
 	"github.com/PivotLLM/ClawEh/pkg/providers"
 )
 
@@ -19,6 +20,10 @@ type SessionStore interface {
 	AddFullMessage(sessionKey string, msg providers.Message)
 	// GetHistory returns the full message history for the session.
 	GetHistory(key string) []providers.Message
+	// GetHistoryWithSeqs returns the full message history with seq numbers intact.
+	// Implementations that have no durable seq counter (e.g. in-memory SessionManager)
+	// synthesize seq as i+1 for the i-th message.
+	GetHistoryWithSeqs(key string) []memory.StoredMessage
 	// GetSummary returns the conversation summary, or "" if none.
 	GetSummary(key string) string
 	// SetSummary replaces the conversation summary.
