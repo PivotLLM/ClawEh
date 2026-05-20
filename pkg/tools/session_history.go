@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/PivotLLM/ClawEh/pkg/memory"
 )
@@ -112,18 +113,20 @@ func (t *SessionHistoryTool) Execute(ctx context.Context, args map[string]any) *
 	}
 
 	type msgEntry struct {
-		Seq     int    `json:"seq"`
-		Role    string `json:"role"`
-		Source  string `json:"source,omitempty"`
-		Content string `json:"content"`
+		Seq       int       `json:"seq"`
+		Role      string    `json:"role"`
+		Source    string    `json:"source,omitempty"`
+		Content   string    `json:"content"`
+		CreatedAt time.Time `json:"created_at"`
 	}
 	entries := make([]msgEntry, len(msgs))
 	for i, m := range msgs {
 		entries[i] = msgEntry{
-			Seq:     effectiveMin + i,
-			Role:    m.Role,
-			Source:  m.Source,
-			Content: m.Content,
+			Seq:       m.Seq,
+			Role:      m.Role,
+			Source:    m.Source,
+			Content:   m.Content,
+			CreatedAt: m.CreatedAt,
 		}
 	}
 	out, _ := json.Marshal(entries)

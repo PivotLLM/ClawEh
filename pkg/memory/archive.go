@@ -40,10 +40,11 @@ END;
 `
 
 // SearchResult holds one result from an ArchiveStore.Search call.
-// It pairs the archive sequence number with the deserialized message.
+// It pairs the archive sequence number and timestamp with the deserialized message.
 type SearchResult struct {
-	Seq     int
-	Message providers.Message
+	Seq       int
+	CreatedAt time.Time
+	Message   providers.Message
 }
 
 // ArchiveStore is an append-only SQLite store for session message archives.
@@ -164,7 +165,7 @@ func (a *ArchiveStore) MaxSeq() int {
 // QueryRange returns messages with seq in [minSeq, maxSeq] inclusive.
 // Uses a read-only connection opened and closed per call.
 // Returns (nil, ErrArchiveUnavailable) if the store is unavailable.
-func (a *ArchiveStore) QueryRange(minSeq, maxSeq int) ([]providers.Message, error) {
+func (a *ArchiveStore) QueryRange(minSeq, maxSeq int) ([]StoredMessage, error) {
 	if a.unavailable {
 		return nil, ErrArchiveUnavailable
 	}
@@ -176,7 +177,7 @@ func (a *ArchiveStore) QueryRange(minSeq, maxSeq int) ([]providers.Message, erro
 	defer db.Close()
 
 	rows, err := db.QueryContext(context.Background(),
-		`SELECT payload FROM messages WHERE seq BETWEEN ? AND ? ORDER BY seq`,
+		`SELECT seq, payload, created_at FROM messages WHERE seq BETWEEN ? AND ? ORDER BY seq`,
 		minSeq, maxSeq,
 	)
 	if err != nil {
@@ -184,7 +185,7 @@ func (a *ArchiveStore) QueryRange(minSeq, maxSeq int) ([]providers.Message, erro
 	}
 	defer rows.Close()
 
-	return scanMessages(rows)
+	return scanStoredMessages(rows)
 }
 
 // Search runs an FTS5 full-text query and returns matching messages with their
@@ -217,7 +218,7 @@ func (a *ArchiveStore) Search(ctx context.Context, query, role string, limit int
 	defer db.Close()
 
 	rows, err := db.QueryContext(ctx,
-		`SELECT m.seq, m.payload
+		`SELECT m.seq, m.payload, m.created_at
 		 FROM   messages_fts
 		 JOIN   messages m ON m.seq = messages_fts.rowid
 		 WHERE  messages_fts MATCH ?
@@ -320,19 +321,25 @@ func deriveArchiveText(msg providers.Message) string {
 	return text
 }
 
-// scanMessages reads payload column rows and deserializes each into a providers.Message.
-func scanMessages(rows *sql.Rows) ([]providers.Message, error) {
-	var msgs []providers.Message
+// scanStoredMessages reads (seq, payload, created_at) rows and deserializes each into a StoredMessage.
+func scanStoredMessages(rows *sql.Rows) ([]StoredMessage, error) {
+	var msgs []StoredMessage
 	for rows.Next() {
+		var seq int
 		var payload string
-		if err := rows.Scan(&payload); err != nil {
+		var createdAtUnix int64
+		if err := rows.Scan(&seq, &payload, &createdAtUnix); err != nil {
 			return nil, err
 		}
 		var msg providers.Message
 		if err := json.Unmarshal([]byte(payload), &msg); err != nil {
 			return nil, err
 		}
-		msgs = append(msgs, msg)
+		msgs = append(msgs, StoredMessage{
+			Seq:       seq,
+			CreatedAt: time.Unix(createdAtUnix, 0).UTC(),
+			Message:   msg,
+		})
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -340,20 +347,25 @@ func scanMessages(rows *sql.Rows) ([]providers.Message, error) {
 	return msgs, nil
 }
 
-// scanSearchResults reads (seq, payload) rows and deserializes each into a SearchResult.
+// scanSearchResults reads (seq, payload, created_at) rows and deserializes each into a SearchResult.
 func scanSearchResults(rows *sql.Rows) ([]SearchResult, error) {
 	var results []SearchResult
 	for rows.Next() {
 		var seq int
 		var payload string
-		if err := rows.Scan(&seq, &payload); err != nil {
+		var createdAtUnix int64
+		if err := rows.Scan(&seq, &payload, &createdAtUnix); err != nil {
 			return nil, err
 		}
 		var msg providers.Message
 		if err := json.Unmarshal([]byte(payload), &msg); err != nil {
 			return nil, err
 		}
-		results = append(results, SearchResult{Seq: seq, Message: msg})
+		results = append(results, SearchResult{
+			Seq:       seq,
+			CreatedAt: time.Unix(createdAtUnix, 0).UTC(),
+			Message:   msg,
+		})
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

@@ -70,18 +70,18 @@ func TestArchiveStore_AppendAndQueryRange(t *testing.T) {
 	if len(got) != 3 {
 		t.Fatalf("got %d messages, want 3", len(got))
 	}
-	if got[0].Role != "user" || got[0].Content != "hello" {
+	if got[0].Message.Role != "user" || got[0].Message.Content != "hello" {
 		t.Errorf("msg[0] = %+v", got[0])
 	}
-	if got[1].Content != "world" {
-		t.Errorf("msg[1].Content = %q", got[1].Content)
+	if got[1].Message.Content != "world" {
+		t.Errorf("msg[1].Content = %q", got[1].Message.Content)
 	}
 	// ToolCalls must survive the round-trip.
-	if len(got[2].ToolCalls) != 1 {
-		t.Fatalf("msg[2] ToolCalls len = %d, want 1", len(got[2].ToolCalls))
+	if len(got[2].Message.ToolCalls) != 1 {
+		t.Fatalf("msg[2] ToolCalls len = %d, want 1", len(got[2].Message.ToolCalls))
 	}
-	if got[2].ToolCalls[0].ID != "tc1" {
-		t.Errorf("ToolCall ID = %q, want tc1", got[2].ToolCalls[0].ID)
+	if got[2].Message.ToolCalls[0].ID != "tc1" {
+		t.Errorf("ToolCall ID = %q, want tc1", got[2].Message.ToolCalls[0].ID)
 	}
 }
 
@@ -104,11 +104,11 @@ func TestArchiveStore_QueryRange_SubRange(t *testing.T) {
 	if len(got) != 5 {
 		t.Fatalf("got %d, want 5", len(got))
 	}
-	if got[0].Content != "msg3" {
-		t.Errorf("first = %q, want msg3", got[0].Content)
+	if got[0].Message.Content != "msg3" {
+		t.Errorf("first = %q, want msg3", got[0].Message.Content)
 	}
-	if got[4].Content != "msg7" {
-		t.Errorf("last = %q, want msg7", got[4].Content)
+	if got[4].Message.Content != "msg7" {
+		t.Errorf("last = %q, want msg7", got[4].Message.Content)
 	}
 }
 
@@ -190,11 +190,11 @@ func TestArchiveStore_RetrievalWindowClamping(t *testing.T) {
 	if len(got) != 250 {
 		t.Fatalf("got %d messages, want 250", len(got))
 	}
-	if got[0].Content != "msg51" {
-		t.Errorf("first = %q, want msg51", got[0].Content)
+	if got[0].Message.Content != "msg51" {
+		t.Errorf("first = %q, want msg51", got[0].Message.Content)
 	}
-	if got[249].Content != "msg300" {
-		t.Errorf("last = %q, want msg300", got[249].Content)
+	if got[249].Message.Content != "msg300" {
+		t.Errorf("last = %q, want msg300", got[249].Message.Content)
 	}
 }
 
@@ -363,20 +363,20 @@ func TestArchiveStore_JSONRoundTrip(t *testing.T) {
 		t.Fatalf("got %d, want 1", len(got))
 	}
 	r := got[0]
-	if r.Role != "tool" {
-		t.Errorf("Role = %q, want tool", r.Role)
+	if r.Message.Role != "tool" {
+		t.Errorf("Role = %q, want tool", r.Message.Role)
 	}
-	if r.ToolCallID != "call-abc-123" {
-		t.Errorf("ToolCallID = %q, want call-abc-123", r.ToolCallID)
+	if r.Message.ToolCallID != "call-abc-123" {
+		t.Errorf("ToolCallID = %q, want call-abc-123", r.Message.ToolCallID)
 	}
-	if len(r.ToolCalls) != 1 || r.ToolCalls[0].ID != "tc-nested" {
-		t.Errorf("ToolCalls = %+v", r.ToolCalls)
+	if len(r.Message.ToolCalls) != 1 || r.Message.ToolCalls[0].ID != "tc-nested" {
+		t.Errorf("ToolCalls = %+v", r.Message.ToolCalls)
 	}
-	if r.ToolCalls[0].Function.Arguments != `{"cmd":"ls","args":["-la"]}` {
-		t.Errorf("Arguments = %q", r.ToolCalls[0].Function.Arguments)
+	if r.Message.ToolCalls[0].Function.Arguments != `{"cmd":"ls","args":["-la"]}` {
+		t.Errorf("Arguments = %q", r.Message.ToolCalls[0].Function.Arguments)
 	}
-	if r.ReasoningContent != "some reasoning" {
-		t.Errorf("ReasoningContent = %q", r.ReasoningContent)
+	if r.Message.ReasoningContent != "some reasoning" {
+		t.Errorf("ReasoningContent = %q", r.Message.ReasoningContent)
 	}
 }
 

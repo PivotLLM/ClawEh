@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
@@ -93,7 +94,26 @@ func DownloadFile(urlStr, filename string, opts DownloadOptions) string {
 		req.Header.Set(key, value)
 	}
 
-	client := &http.Client{Timeout: opts.Timeout}
+	// checkRedirect re-applies the original request headers when redirecting
+	// within the same host. This preserves the Authorization header that
+	// Go's default redirect policy strips on cross-host redirects.
+	origReq := req
+	checkRedirect := func(r *http.Request, via []*http.Request) error {
+		if len(via) >= 10 {
+			return errors.New("stopped after 10 redirects")
+		}
+		if r.URL.Host == origReq.URL.Host {
+			for key, vals := range origReq.Header {
+				r.Header[key] = vals
+			}
+		}
+		return nil
+	}
+
+	client := &http.Client{
+		Timeout:       opts.Timeout,
+		CheckRedirect: checkRedirect,
+	}
 	if opts.ProxyURL != "" {
 		proxyURL, parseErr := url.Parse(opts.ProxyURL)
 		if parseErr != nil {
@@ -121,6 +141,15 @@ func DownloadFile(urlStr, filename string, opts DownloadOptions) string {
 		logger.ErrorCF(opts.LoggerPrefix, "File download returned non-200 status", map[string]any{
 			"status": resp.StatusCode,
 			"url":    urlStr,
+		})
+		return ""
+	}
+
+	// Reject HTML responses — these are Slack error/auth pages, not the actual file.
+	if ct := resp.Header.Get("Content-Type"); strings.HasPrefix(ct, "text/html") {
+		logger.ErrorCF(opts.LoggerPrefix, "File download returned HTML — possible auth failure or redirect issue", map[string]any{
+			"url":          urlStr,
+			"content_type": ct,
 		})
 		return ""
 	}
