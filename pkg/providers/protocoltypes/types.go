@@ -85,6 +85,7 @@ type ContentBlock struct {
 type Message struct {
 	Role             string         `json:"role"`
 	Content          string         `json:"content"`
+	Source           string         `json:"source,omitempty"`
 	Media            []string       `json:"media,omitempty"`
 	ReasoningContent string         `json:"reasoning_content,omitempty"`
 	SystemParts      []ContentBlock `json:"system_parts,omitempty"` // structured system blocks for cache-aware adapters

@@ -137,10 +137,28 @@ func (a *ArchiveStore) Append(seq int, msg providers.Message, createdAt time.Tim
 	defer a.mu.Unlock()
 
 	_, err = a.db.Exec(
-		`INSERT OR IGNORE INTO messages (seq, role, payload, text, created_at) VALUES (?, ?, ?, ?, ?)`,
+		`INSERT OR REPLACE INTO messages (seq, role, payload, text, created_at) VALUES (?, ?, ?, ?, ?)`,
 		seq, msg.Role, string(payload), text, createdAt.Unix(),
 	)
 	return err
+}
+
+// MaxSeq returns the current maximum sequence number using the write connection.
+// Called by ContextManager to seed archiveSeq; avoids the WAL visibility gap
+// that affects read-only connections opened with a separate URI.
+// Returns 0 if no messages exist or the store is unavailable.
+func (a *ArchiveStore) MaxSeq() int {
+	if a.unavailable || a.db == nil {
+		return 0
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	var maxSeq int
+	row := a.db.QueryRowContext(context.Background(), `SELECT COALESCE(MAX(seq), 0) FROM messages`)
+	if err := row.Scan(&maxSeq); err != nil {
+		return 0
+	}
+	return maxSeq
 }
 
 // QueryRange returns messages with seq in [minSeq, maxSeq] inclusive.

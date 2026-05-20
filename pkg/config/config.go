@@ -243,6 +243,11 @@ func (a *AgentConfig) IsToolAllowed(name string) bool {
 	if a == nil {
 		return false
 	}
+	// nil Tools (key absent in config) → use install defaults.
+	// Empty Tools (tools: [] in config) → deny all intentionally.
+	if a.Tools == nil {
+		return MatchToolPattern(DefaultAgentTools, name)
+	}
 	return MatchToolPattern(a.Tools, name)
 }
 
@@ -316,6 +321,7 @@ type AgentDefaults struct {
 	CompressModel              AgentModelConfig  `json:"compress_model,omitempty"`
 	ArchiveMessageCount        int               `json:"archive_message_count,omitempty"         env:"CLAW_AGENTS_DEFAULTS_ARCHIVE_MESSAGE_COUNT"`
 	ArchiveDays                int               `json:"archive_days,omitempty"                  env:"CLAW_AGENTS_DEFAULTS_ARCHIVE_DAYS"`
+	DefaultTools               []string          `json:"default_tools,omitempty"`
 	Routing                    *RoutingConfig    `json:"routing,omitempty"`
 }
 
@@ -842,18 +848,22 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, err
 	}
 
-	// Pre-scan the JSON to check how many model_list entries the user provided.
-	// Go's JSON decoder reuses existing slice backing-array elements rather than
-	// zero-initializing them, so fields absent from the user's JSON (e.g. api_base)
-	// would silently inherit values from the DefaultConfig template at the same
-	// index position. We only reset cfg.ModelList when the user actually provides
-	// entries; when count is 0 we keep DefaultConfig's built-in list as fallback.
+	// Pre-scan the JSON to check how many model_list / agents.list entries the
+	// user provided. Go's JSON decoder reuses existing slice backing-array
+	// elements rather than zero-initializing them, so fields absent from the
+	// user's JSON (e.g. workspace) would silently inherit values from the
+	// DefaultConfig template at the same index position. Zero out each slice
+	// before the real unmarshal when the user provides their own entries; keep
+	// the built-in defaults only when the user provides none.
 	var tmp Config
 	if err := json.Unmarshal(data, &tmp); err != nil {
 		return nil, err
 	}
 	if len(tmp.ModelList) > 0 {
 		cfg.ModelList = nil
+	}
+	if len(tmp.Agents.List) > 0 {
+		cfg.Agents.List = nil
 	}
 
 	if err := json.Unmarshal(data, cfg); err != nil {
@@ -949,6 +959,47 @@ func (c *Config) WorkspacePath() string {
 		return expandHome(c.Agents.Defaults.Workspace)
 	}
 	return filepath.Join(c.dataDir, "agents", "default")
+}
+
+// AgentSessionDirs returns the sessions subdirectory for every configured
+// agent, deduped. This mirrors the workspace resolution logic in
+// pkg/agent/instance.go:resolveAgentWorkspace. The result is used by the
+// WebUI to enumerate sessions across all agents, not just the defaults workspace.
+func (c *Config) AgentSessionDirs() []string {
+	defaultWS := c.WorkspacePath() // agents/default (or custom)
+	agentsDir := filepath.Dir(defaultWS)
+
+	seen := make(map[string]struct{})
+	var dirs []string
+	add := func(ws string) {
+		d := filepath.Join(ws, "sessions")
+		if _, dup := seen[d]; !dup {
+			seen[d] = struct{}{}
+			dirs = append(dirs, d)
+		}
+	}
+
+	for _, ac := range c.Agents.List {
+		if !ac.IsEnabled() {
+			continue
+		}
+		if ws := strings.TrimSpace(ac.Workspace); ws != "" {
+			add(expandHome(ws))
+			continue
+		}
+		id := strings.ToLower(strings.TrimSpace(ac.ID))
+		if id == "" || id == "main" {
+			add(defaultWS)
+		} else {
+			add(filepath.Join(agentsDir, id))
+		}
+	}
+
+	// Always include the defaults workspace — covers agents that were removed
+	// from config but left files on disk.
+	add(defaultWS)
+
+	return dirs
 }
 
 // DataDir returns the base data directory (~/.claw or $CLAW_HOME).

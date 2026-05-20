@@ -365,13 +365,13 @@ func (m *Manager) archiveAppend(msg providers.Message) {
 	if a == nil {
 		return
 	}
-	// Seed the seq counter lazily from the archive's durable state so that
-	// restarts and partial writes produce a gapless, monotonically increasing
-	// sequence across the archive's lifetime.
+	// Seed the seq counter lazily from the write connection's MAX(seq) so that
+	// restarts and new ContextManagers continue from where the last one left off.
+	// Using the write connection (MaxSeq) avoids the WAL visibility gap that
+	// can affect a fresh read-only connection opened with a separate URI.
 	if m.archiveSeq == 0 {
-		_, maxSeq, err := a.Bounds()
-		if err == nil && maxSeq > 0 {
-			m.archiveSeq = maxSeq
+		if max := a.MaxSeq(); max > 0 {
+			m.archiveSeq = max
 		}
 	}
 	m.archiveSeq++
@@ -510,6 +510,18 @@ func (m *Manager) Build(_ context.Context) ([]providers.Message, error) {
 	rawSummary := m.store.GetSummary(m.sessionKey)
 	archiveMin, archiveMax := m.archiveWindow()
 	rendered := renderSummaryFromRaw(rawSummary, archiveMin, archiveMax)
+
+	// When there is no summary yet the rendered block is empty, so the LLM
+	// has no knowledge of the archive. Inject a minimal bounds note so the
+	// agent always knows the archive exists and which seq range is queryable.
+	if rendered == "" && archiveMax > 0 {
+		rendered = fmt.Sprintf(
+			"## Session Archive\n\nMessages #%d–#%d are stored in the archive. "+
+				"Use `mcp__claw__get_session_messages` with `seq_start`/`seq_end` to retrieve them, "+
+				"or `mcp__claw__search_session_messages` to search by keyword.",
+			archiveMin, archiveMax)
+	}
+
 	msgs := m.builder.BuildMessages(history, rendered, "", nil, m.channel, m.chatID)
 
 	// Inject the session token into the system message so the LLM can call

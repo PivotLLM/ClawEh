@@ -247,126 +247,110 @@ func truncateRunes(s string, maxLen int) string {
 	return string(runes[:maxLen]) + "..."
 }
 
-// sessionsDir resolves the path to the gateway's session storage directory.
-// It reads the workspace from config, falling back to ~/.claw/workspace.
-func (h *Handler) sessionsDir() (string, error) {
+// sessionsDirs returns the sessions directories for every configured agent.
+// Multiple agents may have distinct workspaces; the WebUI must search all of
+// them to enumerate or locate sessions. The defaults workspace is always
+// included as a fallback for agents removed from config but with files on disk.
+func (h *Handler) sessionsDirs() ([]string, error) {
 	cfg, err := config.LoadConfig(h.configPath)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-
-	workspace := cfg.Agents.Defaults.Workspace
-	if workspace == "" {
-		home, _ := os.UserHomeDir()
-		workspace = filepath.Join(home, ".claw", "workspace")
-	}
-
-	// Expand ~ prefix
-	if len(workspace) > 0 && workspace[0] == '~' {
-		home, _ := os.UserHomeDir()
-		if len(workspace) > 1 && workspace[1] == '/' {
-			workspace = home + workspace[1:]
-		} else {
-			workspace = home
-		}
-	}
-
-	return filepath.Join(workspace, "sessions"), nil
+	return cfg.AgentSessionDirs(), nil
 }
 
 // handleListSessions returns a list of WebUI session summaries.
 //
 //	GET /api/sessions
 func (h *Handler) handleListSessions(w http.ResponseWriter, r *http.Request) {
-	dir, err := h.sessionsDir()
+	dirs, err := h.sessionsDirs()
 	if err != nil {
 		http.Error(w, "failed to resolve sessions directory", http.StatusInternalServerError)
-		return
-	}
-
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		// Directory doesn't exist yet = no sessions
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode([]sessionListItem{})
 		return
 	}
 
 	items := []sessionListItem{}
 	seen := make(map[string]struct{})
 
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
+	for _, dir := range dirs {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue // directory doesn't exist yet — skip
 		}
 
-		name := entry.Name()
-		var (
-			sessionID string
-			sess      sessionFile
-			loadErr   error
-			ok        bool
-		)
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
 
-		switch {
-		case strings.HasSuffix(name, ".archive.jsonl"):
-			continue
-		case strings.HasSuffix(name, ".archive.db"):
-			continue
-		case strings.HasSuffix(name, ".jsonl"):
-			sessionID, ok = extractWebUISessionIDFromSanitizedKey(strings.TrimSuffix(name, ".jsonl"))
-			if !ok {
+			name := entry.Name()
+			var (
+				sessionID string
+				sess      sessionFile
+				loadErr   error
+				ok        bool
+			)
+
+			switch {
+			case strings.HasSuffix(name, ".archive.jsonl"):
 				continue
-			}
-			sess, loadErr = h.readJSONLSession(dir, sessionID)
-			if loadErr == nil && isEmptySession(sess) {
+			case strings.HasSuffix(name, ".archive.db"):
 				continue
-			}
-		case strings.HasSuffix(name, ".meta.json"):
-			continue
-		case filepath.Ext(name) == ".json":
-			base := strings.TrimSuffix(name, ".json")
-			if _, statErr := os.Stat(filepath.Join(dir, base+".jsonl")); statErr == nil {
-				if jsonlSessionID, found := extractWebUISessionIDFromSanitizedKey(base); found {
-					if jsonlSess, jsonlErr := h.readJSONLSession(
-						dir,
-						jsonlSessionID,
-					); jsonlErr == nil &&
-						!isEmptySession(jsonlSess) {
-						continue
+			case strings.HasSuffix(name, ".jsonl"):
+				sessionID, ok = extractWebUISessionIDFromSanitizedKey(strings.TrimSuffix(name, ".jsonl"))
+				if !ok {
+					continue
+				}
+				sess, loadErr = h.readJSONLSession(dir, sessionID)
+				if loadErr == nil && isEmptySession(sess) {
+					continue
+				}
+			case strings.HasSuffix(name, ".meta.json"):
+				continue
+			case filepath.Ext(name) == ".json":
+				base := strings.TrimSuffix(name, ".json")
+				if _, statErr := os.Stat(filepath.Join(dir, base+".jsonl")); statErr == nil {
+					if jsonlSessionID, found := extractWebUISessionIDFromSanitizedKey(base); found {
+						if jsonlSess, jsonlErr := h.readJSONLSession(
+							dir,
+							jsonlSessionID,
+						); jsonlErr == nil &&
+							!isEmptySession(jsonlSess) {
+							continue
+						}
 					}
 				}
-			}
-			data, err := os.ReadFile(filepath.Join(dir, name))
-			if err != nil {
+				data, err := os.ReadFile(filepath.Join(dir, name))
+				if err != nil {
+					continue
+				}
+				if err := json.Unmarshal(data, &sess); err != nil {
+					continue
+				}
+				if isEmptySession(sess) {
+					continue
+				}
+				sessionID, ok = extractWebUISessionID(sess.Key)
+				if !ok {
+					continue
+				}
+				if _, exists := seen[sessionID]; exists {
+					continue
+				}
+			default:
 				continue
 			}
-			if err := json.Unmarshal(data, &sess); err != nil {
-				continue
-			}
-			if isEmptySession(sess) {
-				continue
-			}
-			sessionID, ok = extractWebUISessionID(sess.Key)
-			if !ok {
+
+			if loadErr != nil {
 				continue
 			}
 			if _, exists := seen[sessionID]; exists {
 				continue
 			}
-		default:
-			continue
-		}
 
-		if loadErr != nil {
-			continue
+			seen[sessionID] = struct{}{}
+			items = append(items, buildSessionListItem(sessionID, sess))
 		}
-		if _, exists := seen[sessionID]; exists {
-			continue
-		}
-
-		seen[sessionID] = struct{}{}
-		items = append(items, buildSessionListItem(sessionID, sess))
 	}
 
 	// Sort by updated descending (most recent first)
@@ -414,31 +398,31 @@ func (h *Handler) handleGetSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	dir, err := h.sessionsDir()
+	dirs, err := h.sessionsDirs()
 	if err != nil {
 		http.Error(w, "failed to resolve sessions directory", http.StatusInternalServerError)
 		return
 	}
 
-	sess, err := h.readJSONLSession(dir, sessionID)
-	if err == nil && isEmptySession(sess) {
-		err = os.ErrNotExist
+	var sess sessionFile
+	var found bool
+	for _, dir := range dirs {
+		s, e := h.readJSONLSession(dir, sessionID)
+		if e == nil && !isEmptySession(s) {
+			sess, found = s, true
+			break
+		}
+		if e == nil || errors.Is(e, os.ErrNotExist) {
+			s, e = h.readLegacySession(dir, sessionID)
+			if e == nil && !isEmptySession(s) {
+				sess, found = s, true
+				break
+			}
+		}
 	}
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			sess, err = h.readLegacySession(dir, sessionID)
-			if err == nil && isEmptySession(sess) {
-				err = os.ErrNotExist
-			}
-		}
-		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				http.Error(w, "session not found", http.StatusNotFound)
-			} else {
-				http.Error(w, "failed to parse session", http.StatusInternalServerError)
-			}
-			return
-		}
+	if !found {
+		http.Error(w, "session not found", http.StatusNotFound)
+		return
 	}
 
 	// Convert to a simpler format for the frontend
@@ -478,27 +462,25 @@ func (h *Handler) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	dir, err := h.sessionsDir()
+	dirs, err := h.sessionsDirs()
 	if err != nil {
 		http.Error(w, "failed to resolve sessions directory", http.StatusInternalServerError)
 		return
 	}
 
-	base := filepath.Join(dir, sanitizeSessionKey(webuiSessionPrefix+sessionID))
-	jsonlPath := base + ".jsonl"
-	metaPath := base + ".meta.json"
-	legacyPath := base + ".json"
-
 	removed := false
-	for _, path := range []string{jsonlPath, metaPath, legacyPath} {
-		if err := os.Remove(path); err != nil {
-			if os.IsNotExist(err) {
-				continue
+	for _, dir := range dirs {
+		base := filepath.Join(dir, sanitizeSessionKey(webuiSessionPrefix+sessionID))
+		for _, path := range []string{base + ".jsonl", base + ".meta.json", base + ".json"} {
+			if err := os.Remove(path); err != nil {
+				if os.IsNotExist(err) {
+					continue
+				}
+				http.Error(w, "failed to delete session", http.StatusInternalServerError)
+				return
 			}
-			http.Error(w, "failed to delete session", http.StatusInternalServerError)
-			return
+			removed = true
 		}
-		removed = true
 	}
 
 	if !removed {

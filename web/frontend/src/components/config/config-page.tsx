@@ -14,6 +14,7 @@ import {
 } from "@/api/system"
 import {
   AgentDefaultsSection,
+  ContextManagementSection,
   DevicesSection,
   LauncherSection,
   RuntimeSection,
@@ -149,34 +150,35 @@ export function ConfigPage() {
           "Max tool iterations",
           { min: 1 },
         )
+        const compressModel = form.compressModel.trim()
         const compressNormalPercent = parseIntField(
           form.compressNormalPercent,
-          "Compress normal percent",
+          "Normal compression threshold",
           { min: 0, max: 100 },
         )
         const compressSafetyPercent = parseIntField(
           form.compressSafetyPercent,
-          "Compress safety percent",
+          "Emergency compression threshold",
           { min: 0, max: 100 },
         )
         const compressMinPercent = parseIntField(
           form.compressMinPercent,
-          "Compress min percent",
+          "Minimum context threshold",
           { min: 0, max: 100 },
         )
         const compressMessageThreshold = parseIntField(
           form.compressMessageThreshold,
-          "Compress message threshold",
+          "Message count threshold",
           { min: 0 },
         )
         const compressRetainTokenPercent = parseIntField(
           form.compressRetainTokenPercent,
-          "Compress retain token percent",
+          "Tail window size",
           { min: 0, max: 100 },
         )
         const compressRetainMinMessages = parseIntField(
           form.compressRetainMinMessages,
-          "Compress retain min messages",
+          "Minimum tail messages",
           { min: 0 },
         )
         const archiveMessageCount = parseIntField(
@@ -194,6 +196,7 @@ export function ConfigPage() {
               restrict_to_workspace: form.restrictToWorkspace,
               max_tokens: maxTokens,
               max_tool_iterations: maxToolIterations,
+              compress_model: compressModel,
               compress_normal_percent: compressNormalPercent,
               compress_safety_percent: compressSafetyPercent,
               compress_min_percent: compressMinPercent,
@@ -300,6 +303,8 @@ export function ConfigPage() {
               )}
 
               <AgentDefaultsSection form={form} onFieldChange={updateField} />
+
+              <ContextManagementSection form={form} onFieldChange={updateField} />
 
               <RuntimeSection form={form} onFieldChange={updateField} />
 

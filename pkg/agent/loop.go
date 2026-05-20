@@ -117,6 +117,7 @@ type processOptions struct {
 	DefaultResponse string   // Response when LLM returns empty
 	SendResponse    bool     // Whether to send response via bus
 	IsRetry         bool     // True when message is a /retry retrigger (skip AddMessage)
+	SenderID        string   // Originating sender identifier for source attribution
 }
 
 const (
@@ -1110,6 +1111,7 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 		DefaultResponse: defaultResponse,
 		SendResponse:    false,
 		IsRetry:         msg.IsRetry,
+		SenderID:        msg.SenderID,
 	}
 
 	// context-dependent commands check their own Runtime fields and report
@@ -1285,6 +1287,9 @@ func (al *AgentLoop) runAgentLoop(
 	// 2. Save user message and trigger compression check (skip on retry — already in history).
 	if !opts.IsRetry {
 		userMsg := providers.Message{Role: "user", Content: opts.UserMessage}
+		if opts.SenderID != "" {
+			userMsg.Source = opts.SenderID
+		}
 		if len(opts.Media) > 0 {
 			userMsg.Media = opts.Media
 		}

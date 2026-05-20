@@ -6,6 +6,7 @@ export interface CoreConfigForm {
   allowRemote: boolean
   maxTokens: string
   maxToolIterations: string
+  compressModel: string
   compressNormalPercent: string
   compressSafetyPercent: string
   compressMinPercent: string
@@ -62,6 +63,7 @@ export const EMPTY_FORM: CoreConfigForm = {
   allowRemote: true,
   maxTokens: "32768",
   maxToolIterations: "50",
+  compressModel: "",
   compressNormalPercent: "0",
   compressSafetyPercent: "0",
   compressMinPercent: "0",
@@ -130,6 +132,7 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
       defaults.max_tool_iterations,
       EMPTY_FORM.maxToolIterations,
     ),
+    compressModel: asString(defaults.compress_model) || EMPTY_FORM.compressModel,
     compressNormalPercent: asNumberString(
       defaults.compress_normal_percent,
       EMPTY_FORM.compressNormalPercent,

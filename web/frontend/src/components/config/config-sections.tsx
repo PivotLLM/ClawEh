@@ -127,6 +127,38 @@ export function AgentDefaultsSection({
         />
       </Field>
 
+    </ConfigSectionCard>
+  )
+}
+
+interface ContextManagementSectionProps {
+  form: CoreConfigForm
+  onFieldChange: UpdateCoreField
+}
+
+export function ContextManagementSection({
+  form,
+  onFieldChange,
+}: ContextManagementSectionProps) {
+  const { t } = useTranslation()
+
+  return (
+    <ConfigSectionCard
+      title={t("pages.config.sections.context_management")}
+      description={t("pages.config.sections.context_management_desc")}
+    >
+      <Field
+        label={t("pages.config.compress_model")}
+        hint={t("pages.config.compress_model_hint")}
+        layout="setting-row"
+      >
+        <Input
+          value={form.compressModel}
+          placeholder="e.g. claude-haiku-4-5"
+          onChange={(e) => onFieldChange("compressModel", e.target.value)}
+        />
+      </Field>
+
       <Field
         label={t("pages.config.compress_normal_percent")}
         hint={t("pages.config.compress_normal_percent_hint")}
