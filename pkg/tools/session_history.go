@@ -111,17 +111,23 @@ func (t *SessionHistoryTool) Execute(ctx context.Context, args map[string]any) *
 		return &ToolResult{ForLLM: "not available — message has aged out of the archive"}
 	}
 
-	var sb strings.Builder
-	for i, m := range msgs {
-		// Seq is inferred from position within the effective range.
-		seq := effectiveMin + i
-		role := m.Role
-		if m.Source != "" {
-			role = m.Role + " [" + m.Source + "]"
-		}
-		fmt.Fprintf(&sb, "[#%d] %s:\n%s\n\n", seq, role, m.Content)
+	type msgEntry struct {
+		Seq     int    `json:"seq"`
+		Role    string `json:"role"`
+		Source  string `json:"source,omitempty"`
+		Content string `json:"content"`
 	}
-	return &ToolResult{ForLLM: strings.TrimRight(sb.String(), "\n")}
+	entries := make([]msgEntry, len(msgs))
+	for i, m := range msgs {
+		entries[i] = msgEntry{
+			Seq:     effectiveMin + i,
+			Role:    m.Role,
+			Source:  m.Source,
+			Content: m.Content,
+		}
+	}
+	out, _ := json.Marshal(entries)
+	return &ToolResult{ForLLM: string(out)}
 }
 
 // parseSeqArgs returns the seq range from args.

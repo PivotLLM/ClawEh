@@ -5,6 +5,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -106,13 +107,21 @@ func (t *SessionHistorySearchTool) Execute(ctx context.Context, args map[string]
 		return &ToolResult{ForLLM: "no matching messages found"}
 	}
 
-	var sb strings.Builder
-	for _, r := range results {
-		msgRole := r.Message.Role
-		if r.Message.Source != "" {
-			msgRole = r.Message.Role + " [" + r.Message.Source + "]"
-		}
-		fmt.Fprintf(&sb, "[#%d] %s:\n%s\n\n", r.Seq, msgRole, r.Message.Content)
+	type msgEntry struct {
+		Seq     int    `json:"seq"`
+		Role    string `json:"role"`
+		Source  string `json:"source,omitempty"`
+		Content string `json:"content"`
 	}
-	return &ToolResult{ForLLM: strings.TrimRight(sb.String(), "\n")}
+	entries := make([]msgEntry, len(results))
+	for i, r := range results {
+		entries[i] = msgEntry{
+			Seq:     r.Seq,
+			Role:    r.Message.Role,
+			Source:  r.Message.Source,
+			Content: r.Message.Content,
+		}
+	}
+	out, _ := json.Marshal(entries)
+	return &ToolResult{ForLLM: string(out)}
 }
