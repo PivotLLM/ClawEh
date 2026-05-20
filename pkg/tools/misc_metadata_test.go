@@ -39,8 +39,8 @@ func TestMessageTool_HasSentInRound_Initial(t *testing.T) {
 func TestRegexSearchTool_Metadata(t *testing.T) {
 	registry := NewToolRegistry()
 	tool := NewRegexSearchTool(registry, 3, 10)
-	if tool.Name() != "tool_search_tool_regex" {
-		t.Errorf("Name() = %q, want tool_search_tool_regex", tool.Name())
+	if tool.Name() != "find_tools_regex" {
+		t.Errorf("Name() = %q, want find_tools_regex", tool.Name())
 	}
 	if tool.Description() == "" {
 		t.Error("Description() should not be empty")
@@ -54,8 +54,8 @@ func TestRegexSearchTool_Metadata(t *testing.T) {
 func TestBM25SearchTool_Metadata(t *testing.T) {
 	registry := NewToolRegistry()
 	tool := NewBM25SearchTool(registry, 3, 10)
-	if tool.Name() != "tool_search_tool_bm25" {
-		t.Errorf("Name() = %q, want tool_search_tool_bm25", tool.Name())
+	if tool.Name() != "find_tools_bm25" {
+		t.Errorf("Name() = %q, want find_tools_bm25", tool.Name())
 	}
 	if tool.Description() == "" {
 		t.Error("Description() should not be empty")

@@ -148,10 +148,10 @@ func (cb *ContextBuilder) getDiscoveryRule() string {
 
 	var toolNames []string
 	if cb.toolDiscoveryBM25 {
-		toolNames = append(toolNames, `"tool_search_tool_bm25"`)
+		toolNames = append(toolNames, `"find_tools_bm25"`)
 	}
 	if cb.toolDiscoveryRegex {
-		toolNames = append(toolNames, `"tool_search_tool_regex"`)
+		toolNames = append(toolNames, `"find_tools_regex"`)
 	}
 
 	return fmt.Sprintf(

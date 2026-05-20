@@ -376,7 +376,8 @@
           "skills": "Skills",
           "agents": "Agents",
           "hardware": "Hardware",
-          "discovery": "Discovery"
+          "discovery": "Discovery",
+          "context": "Context"
         },
         "reasons": {
           "requires_linux": "This tool only works on Linux hosts with the required device files exposed.",
@@ -411,7 +412,9 @@
       "compress_retain_min_messages": "Retain Min Messages",
       "compress_retain_min_messages_hint": "Minimum meaningful messages always kept in tail. 0 = use default (2).",
       "archive_message_count": "Archive Message Count",
-      "archive_message_count_hint": "Max messages in the retrievable archive. 0 = use default (100).",
+      "archive_message_count_hint": "Max messages in the retrievable archive window. 0 = use default (1000).",
+      "archive_days": "Archive Days",
+      "archive_days_hint": "Limit the retrievable archive to the last N days. 0 = no time limit.",
       "session_mode": "Session Mode",
       "session_mode_hint": "Controls how the agent's memory is divided across users and platforms.",
       "session_mode_unified": "Unified",

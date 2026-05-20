@@ -184,6 +184,9 @@ export function ConfigPage() {
           "Archive message count",
           { min: 0 },
         )
+        const archiveDays = parseIntField(form.archiveDays, "Archive days", {
+          min: 0,
+        })
         await patchAppConfig({
           agents: {
             defaults: {
@@ -198,6 +201,7 @@ export function ConfigPage() {
               compress_retain_token_percent: compressRetainTokenPercent,
               compress_retain_min_messages: compressRetainMinMessages,
               archive_message_count: archiveMessageCount,
+              archive_days: archiveDays,
             },
           },
           session: {

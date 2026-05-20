@@ -249,6 +249,14 @@ func NewAgentInstance(
 	}(), defaults.ArchiveMessageCount); ok {
 		compressOpts = append(compressOpts, llmcontext.WithArchiveMessageCount(v))
 	}
+	if v, ok := resolveIntOpt(func() *int {
+		if agentCfg != nil {
+			return agentCfg.ArchiveDays
+		}
+		return nil
+	}(), defaults.ArchiveDays); ok {
+		compressOpts = append(compressOpts, llmcontext.WithArchiveDays(v))
+	}
 	// Resolve fallback candidates
 	modelCfg := providers.ModelConfig{
 		Primary:   model,

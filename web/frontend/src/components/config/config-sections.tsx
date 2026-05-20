@@ -235,6 +235,19 @@ export function AgentDefaultsSection({
           }
         />
       </Field>
+
+      <Field
+        label={t("pages.config.archive_days")}
+        hint={t("pages.config.archive_days_hint")}
+        layout="setting-row"
+      >
+        <Input
+          type="number"
+          min={0}
+          value={form.archiveDays}
+          onChange={(e) => onFieldChange("archiveDays", e.target.value)}
+        />
+      </Field>
     </ConfigSectionCard>
   )
 }

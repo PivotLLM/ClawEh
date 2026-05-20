@@ -202,6 +202,7 @@ type AgentConfig struct {
 	CompressRetainMinMessages  *int              `json:"compress_retain_min_messages,omitempty"`
 	CompressModel              *AgentModelConfig `json:"compress_model,omitempty"`
 	ArchiveMessageCount        *int              `json:"archive_message_count,omitempty"`
+	ArchiveDays                *int              `json:"archive_days,omitempty"`
 }
 
 // IsEnabled returns true if the agent is enabled (nil means enabled by default).
@@ -314,6 +315,7 @@ type AgentDefaults struct {
 	CompressRetainMinMessages  int               `json:"compress_retain_min_messages,omitempty"  env:"CLAW_AGENTS_DEFAULTS_COMPRESS_RETAIN_MIN_MESSAGES"`
 	CompressModel              AgentModelConfig  `json:"compress_model,omitempty"`
 	ArchiveMessageCount        int               `json:"archive_message_count,omitempty"         env:"CLAW_AGENTS_DEFAULTS_ARCHIVE_MESSAGE_COUNT"`
+	ArchiveDays                int               `json:"archive_days,omitempty"                  env:"CLAW_AGENTS_DEFAULTS_ARCHIVE_DAYS"`
 	Routing                    *RoutingConfig    `json:"routing,omitempty"`
 }
 

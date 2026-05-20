@@ -16,7 +16,7 @@ const (
 	defaultMinCompressionGain    = 0.05
 	defaultCooldownMessages      = 5
 	defaultLargeMsgOffset        = 20
-	defaultArchiveMessageCount   = 250
+	defaultArchiveMessageCount   = 1000
 	defaultCompressTargetFactor  = 0.5
 	defaultMinLoopGain           = 0.10
 	defaultMaxCompressIterations = 3
@@ -34,6 +34,7 @@ type managerConfig struct {
 	compressModel       ModelChain
 	compressClients     []LLMClient
 	archiveMessageCount int
+	archiveDays         int
 	archiveDir          string
 	contextWindow       int
 	overheadTokens      int
@@ -93,6 +94,12 @@ func WithCompressLLM(clients ...LLMClient) Option {
 
 func WithArchiveMessageCount(n int) Option {
 	return func(c *managerConfig) { c.archiveMessageCount = n }
+}
+
+// WithArchiveDays limits the retrievable archive window to the last n days.
+// 0 (the default) means no time-based limit.
+func WithArchiveDays(n int) Option {
+	return func(c *managerConfig) { c.archiveDays = n }
 }
 
 func WithContextWindow(tokens int) Option {

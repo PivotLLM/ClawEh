@@ -237,6 +237,31 @@ func (a *ArchiveStore) Bounds() (minSeq, maxSeq int, err error) {
 	return minSeq, maxSeq, err
 }
 
+// MinSeqAfter returns the smallest seq with created_at >= t.Unix().
+// Returns (0, nil) if no messages exist at or after that time or the store is unavailable.
+// Uses a read-only connection opened and closed per call.
+func (a *ArchiveStore) MinSeqAfter(t time.Time) (int, error) {
+	if a.unavailable {
+		return 0, ErrArchiveUnavailable
+	}
+
+	db, err := sql.Open("sqlite", "file:"+a.path+"?mode=ro")
+	if err != nil {
+		return 0, err
+	}
+	defer db.Close()
+
+	var minSeq int
+	row := db.QueryRowContext(context.Background(),
+		`SELECT COALESCE(MIN(seq), 0) FROM messages WHERE created_at >= ?`,
+		t.Unix(),
+	)
+	if err := row.Scan(&minSeq); err != nil {
+		return 0, err
+	}
+	return minSeq, nil
+}
+
 // Close closes the write connection. Safe to call multiple times.
 func (a *ArchiveStore) Close() error {
 	if a.unavailable || a.db == nil {

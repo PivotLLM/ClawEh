@@ -415,6 +415,12 @@ func (m *Manager) archiveWindow() (minSeq, maxSeq int) {
 			minSeq = floor
 		}
 	}
+	if m.cfg.archiveDays > 0 && m.archive != nil {
+		cutoff := time.Now().AddDate(0, 0, -m.cfg.archiveDays)
+		if dayFloor, err := m.archive.MinSeqAfter(cutoff); err == nil && dayFloor > minSeq {
+			minSeq = dayFloor
+		}
+	}
 	return
 }
 
