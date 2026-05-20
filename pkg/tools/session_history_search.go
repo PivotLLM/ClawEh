@@ -108,7 +108,11 @@ func (t *SessionHistorySearchTool) Execute(ctx context.Context, args map[string]
 
 	var sb strings.Builder
 	for _, r := range results {
-		fmt.Fprintf(&sb, "[#%d] %s:\n%s\n\n", r.Seq, r.Message.Role, r.Message.Content)
+		msgRole := r.Message.Role
+		if r.Message.Source != "" {
+			msgRole = r.Message.Role + " [" + r.Message.Source + "]"
+		}
+		fmt.Fprintf(&sb, "[#%d] %s:\n%s\n\n", r.Seq, msgRole, r.Message.Content)
 	}
 	return &ToolResult{ForLLM: strings.TrimRight(sb.String(), "\n")}
 }

@@ -115,7 +115,11 @@ func (t *SessionHistoryTool) Execute(ctx context.Context, args map[string]any) *
 	for i, m := range msgs {
 		// Seq is inferred from position within the effective range.
 		seq := effectiveMin + i
-		fmt.Fprintf(&sb, "[#%d] %s:\n%s\n\n", seq, m.Role, m.Content)
+		role := m.Role
+		if m.Source != "" {
+			role = m.Role + " [" + m.Source + "]"
+		}
+		fmt.Fprintf(&sb, "[#%d] %s:\n%s\n\n", seq, role, m.Content)
 	}
 	return &ToolResult{ForLLM: strings.TrimRight(sb.String(), "\n")}
 }
