@@ -96,8 +96,11 @@ func DownloadFile(urlStr, filename string, opts DownloadOptions) string {
 	}
 
 	// checkRedirect re-applies the original request headers when redirecting
-	// within the same host. This preserves the Authorization header that
-	// Go's default redirect policy strips on cross-host redirects.
+	// within the same registered domain (e.g. files.slack.com → tenant.slack.com).
+	// Go's default policy strips Authorization on cross-host redirects; preserving
+	// it within the same domain (last two hostname labels) is safe and required for
+	// Slack's file download flow, which redirects from files.slack.com to the
+	// workspace subdomain before serving the file.
 	// redirects records each hop for diagnostic logging.
 	origReq := req
 	var redirects []string
@@ -106,7 +109,7 @@ func DownloadFile(urlStr, filename string, opts DownloadOptions) string {
 			return errors.New("stopped after 10 redirects")
 		}
 		redirects = append(redirects, fmt.Sprintf("%s → %s", via[len(via)-1].URL.String(), r.URL.String()))
-		if r.URL.Host == origReq.URL.Host {
+		if registeredDomain(r.URL.Hostname()) == registeredDomain(origReq.URL.Hostname()) {
 			for key, vals := range origReq.Header {
 				r.Header[key] = vals
 			}
@@ -149,13 +152,14 @@ func DownloadFile(urlStr, filename string, opts DownloadOptions) string {
 		return ""
 	}
 
-	// Reject HTML responses — these are Slack error/auth pages, not the actual file.
+	// Reject HTML responses — these are error/auth pages, not the actual file.
 	if ct := resp.Header.Get("Content-Type"); strings.HasPrefix(ct, "text/html") {
-		// Read a snippet of the body so logs reveal exactly what page Slack returned.
+		// Read a snippet of the body so logs reveal exactly what page was returned.
 		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		logger.ErrorCF(opts.LoggerPrefix, "File download returned HTML — possible auth failure or redirect issue", map[string]any{
 			"url":          urlStr,
 			"final_url":    resp.Request.URL.String(),
+			"status":       resp.StatusCode,
 			"content_type": ct,
 			"redirects":    redirects,
 			"body_snippet": strings.TrimSpace(string(snippet)),
@@ -193,4 +197,15 @@ func DownloadFileSimple(url, filename string) string {
 	return DownloadFile(url, filename, DownloadOptions{
 		LoggerPrefix: "media",
 	})
+}
+
+// registeredDomain returns the registered domain (last two labels) of a hostname.
+// Used by CheckRedirect to decide whether to forward auth headers across a redirect.
+// Examples: "files.slack.com" → "slack.com", "example.com" → "example.com".
+func registeredDomain(hostname string) string {
+	parts := strings.Split(hostname, ".")
+	if len(parts) <= 2 {
+		return hostname
+	}
+	return strings.Join(parts[len(parts)-2:], ".")
 }
