@@ -13,7 +13,7 @@ import (
 type Runtime struct {
 	Config             *config.Config
 	AgentName          string
-	GetModelInfo       func() (name, provider string)
+	GetModelInfo       func() (name, provider, apiBase string)
 	ListAgentIDs       func() []string
 	ListDefinitions    func() []Definition
 	GetEnabledChannels func() []string

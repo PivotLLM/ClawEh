@@ -210,6 +210,11 @@ func NewAgentLoop(
 		evictInterval:    defaultEvictInterval,
 	}
 
+	// Register session-management tools that require a closure over the agent loop.
+	// These tools need access to the context manager and archive, so they are wired
+	// here after al is constructed rather than in NewAgentInstance.
+	al.registerSessionManagementTools(registry)
+
 	return al
 }
 
@@ -1290,6 +1295,9 @@ func (al *AgentLoop) runAgentLoop(
 		if opts.SenderID != "" {
 			userMsg.Source = opts.SenderID
 		}
+		if strings.HasPrefix(opts.SenderID, "callback") {
+			userMsg.Type = "callback"
+		}
 		if len(opts.Media) > 0 {
 			userMsg.Media = opts.Media
 		}
@@ -2214,7 +2222,11 @@ func (al *AgentLoop) handleCommand(
 	}
 
 	if al.cmdRegistry == nil {
-		return "", false
+		cmdName, _ := commands.ParseCommandName(msg.Content)
+		if cmdName != "" {
+			return fmt.Sprintf("Unknown command: /%s", cmdName), true
+		}
+		return "Unknown command.", true
 	}
 
 	rt := al.buildCommandsRuntime(agent, opts, msg)
@@ -2241,8 +2253,11 @@ func (al *AgentLoop) handleCommand(
 			return commandReply, true
 		}
 		return "", true
-	default: // OutcomePassthrough — let the message fall through to LLM
-		return "", false
+	default:
+		if result.Command != "" {
+			return fmt.Sprintf("Unknown command: /%s. Type /help for available commands.", result.Command), true
+		}
+		return "Unknown command. Type /help for available commands.", true
 	}
 }
 
@@ -2284,9 +2299,17 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 		} else {
 			rt.AgentName = agent.ID
 		}
-		rt.GetModelInfo = func() (string, string) {
-			protocol, _ := providers.ExtractProtocol(agent.Model)
-			return agent.Model, protocol
+		rt.GetModelInfo = func() (string, string, string) {
+			protocol, modelID := providers.ExtractProtocol(agent.Model)
+			name := modelID
+			apiBase := ""
+			if mc, err := cfg.GetModelConfig(agent.Model); err == nil && mc != nil {
+				if mc.ModelName != "" {
+					name = mc.ModelName
+				}
+				apiBase = mc.APIBase
+			}
+			return name, protocol, apiBase
 		}
 		rt.SwitchModel = func(value string) (string, error) {
 			oldModel := agent.Model

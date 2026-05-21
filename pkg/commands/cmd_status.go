@@ -31,10 +31,14 @@ func statusCommand() Definition {
 				fmt.Fprintf(&b, "Agent:            %s\n", rt.AgentName)
 			}
 
-			// Model (provider)
+			// Model, Provider, API
 			if rt != nil && rt.GetModelInfo != nil {
-				name, provider := rt.GetModelInfo()
-				fmt.Fprintf(&b, "Model:            %s  (%s)\n", name, provider)
+				name, provider, apiBase := rt.GetModelInfo()
+				fmt.Fprintf(&b, "Model:            %s\n", name)
+				fmt.Fprintf(&b, "Provider:         %s\n", provider)
+				if apiBase != "" {
+					fmt.Fprintf(&b, "API:              %s\n", apiBase)
+				}
 			}
 
 			// Channel from request

@@ -15,14 +15,16 @@ const summaryVersion = 1
 // Summary is the structured session summary stored in meta.json and rendered
 // into the system prompt. Stored as JSON; rendered as Markdown for injection.
 type Summary struct {
-	Version         int          `json:"version"`
-	State           SummaryState `json:"state"`
-	KeyMoments      []KeyMoment  `json:"key_moments,omitempty"`
-	MessageIndex    []IndexEntry `json:"message_index,omitempty"`
-	CoveredSeqStart int          `json:"covered_seq_start"`
-	CoveredSeqEnd   int          `json:"covered_seq_end"`
-	GeneratedAt     time.Time    `json:"generated_at"`
-	Model           string       `json:"model,omitempty"`
+	Version              int          `json:"version"`
+	State                SummaryState `json:"state"`
+	KeyMoments           []KeyMoment  `json:"key_moments,omitempty"`
+	MessageIndex         []IndexEntry `json:"message_index,omitempty"`
+	CoveredSeqStart      int          `json:"covered_seq_start"`
+	CoveredSeqEnd        int          `json:"covered_seq_end"`
+	CoveredSeqStartAt    time.Time    `json:"covered_seq_start_at,omitempty"`
+	CoveredSeqEndAt      time.Time    `json:"covered_seq_end_at,omitempty"`
+	GeneratedAt          time.Time    `json:"generated_at"`
+	Model                string       `json:"model,omitempty"`
 }
 
 // SummaryState holds the four dynamic sections of the current state.
@@ -149,6 +151,18 @@ func (s *Summary) StripOutOfRangeSeqRefs(coveredSeqStart, archiveMaxSeq int) {
 // Render produces the Markdown block injected at the CONTEXT_SUMMARY position.
 func (s *Summary) Render(archiveMinSeq, archiveMaxSeq int) string {
 	var sb strings.Builder
+
+	if s.CoveredSeqStart > 0 {
+		if !s.CoveredSeqStartAt.IsZero() && !s.CoveredSeqEndAt.IsZero() {
+			startStr := s.CoveredSeqStartAt.UTC().Format("2006-01-02 15:04 UTC")
+			endStr := s.CoveredSeqEndAt.UTC().Format("2006-01-02 15:04 UTC")
+			fmt.Fprintf(&sb, "Context summary: messages #%d (%s) – #%d (%s). Full messages retrievable via get_session_messages.\n\n",
+				s.CoveredSeqStart, startStr, s.CoveredSeqEnd, endStr)
+		} else {
+			fmt.Fprintf(&sb, "Context summary: messages #%d – #%d. Full messages retrievable via get_session_messages.\n\n",
+				s.CoveredSeqStart, s.CoveredSeqEnd)
+		}
+	}
 
 	sb.WriteString("## Current State\n")
 	if s.State.Goals != "" {

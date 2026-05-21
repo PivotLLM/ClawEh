@@ -342,6 +342,10 @@ func callLLMChain(
 		// Do NOT use any seq values emitted by the LLM itself.
 		summary.CoveredSeqStart = coveredStart
 		summary.CoveredSeqEnd = coveredEnd
+		if len(toSummarize) > 0 {
+			summary.CoveredSeqStartAt = toSummarize[0].CreatedAt
+			summary.CoveredSeqEndAt = toSummarize[len(toSummarize)-1].CreatedAt
+		}
 		summary.GeneratedAt = time.Now()
 		return summary, true
 	}

@@ -14,6 +14,7 @@ type (
 	UsageInfo              = protocoltypes.UsageInfo
 	DispatchStatus         = protocoltypes.DispatchStatus
 	Message                = protocoltypes.Message
+	MessageAttachment      = protocoltypes.MessageAttachment
 	ToolDefinition         = protocoltypes.ToolDefinition
 	ToolFunctionDefinition = protocoltypes.ToolFunctionDefinition
 	ExtraContent           = protocoltypes.ExtraContent

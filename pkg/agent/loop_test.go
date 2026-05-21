@@ -524,6 +524,7 @@ func TestProcessMessage_CommandOutcomes(t *testing.T) {
 		t.Fatalf("LLM should not be called for handled command, calls=%d", provider.calls)
 	}
 
+	// Unknown commands must never reach the LLM — they return an error reply instead.
 	fooResp := helper.executeAndGetResponse(t, context.Background(), bus.InboundMessage{
 		Channel:  baseMsg.Channel,
 		SenderID: baseMsg.SenderID,
@@ -531,11 +532,11 @@ func TestProcessMessage_CommandOutcomes(t *testing.T) {
 		Content:  "/foo",
 		Peer:     baseMsg.Peer,
 	})
-	if fooResp != "LLM reply" {
-		t.Fatalf("unexpected /foo reply: %q", fooResp)
+	if !strings.Contains(fooResp, "Unknown command") {
+		t.Fatalf("unexpected /foo reply: %q (expected unknown command message)", fooResp)
 	}
-	if provider.calls != 1 {
-		t.Fatalf("LLM should be called exactly once after /foo passthrough, calls=%d", provider.calls)
+	if provider.calls != 0 {
+		t.Fatalf("LLM must not be called for unknown command /foo, calls=%d", provider.calls)
 	}
 
 	newResp := helper.executeAndGetResponse(t, context.Background(), bus.InboundMessage{
@@ -545,11 +546,11 @@ func TestProcessMessage_CommandOutcomes(t *testing.T) {
 		Content:  "/new",
 		Peer:     baseMsg.Peer,
 	})
-	if newResp != "LLM reply" {
-		t.Fatalf("unexpected /new reply: %q", newResp)
+	if !strings.Contains(newResp, "Unknown command") {
+		t.Fatalf("unexpected /new reply: %q (expected unknown command message)", newResp)
 	}
-	if provider.calls != 2 {
-		t.Fatalf("LLM should be called for passthrough /new command, calls=%d", provider.calls)
+	if provider.calls != 0 {
+		t.Fatalf("LLM must not be called for unknown command /new, calls=%d", provider.calls)
 	}
 }
 
@@ -603,7 +604,7 @@ func TestProcessMessage_SwitchModelShowModelConsistency(t *testing.T) {
 			ID:   "user1",
 		},
 	})
-	if !strings.Contains(showResp, "Current Model: openai/after-switch (Provider: openai)") {
+	if !strings.Contains(showResp, "Current Model: after-switch (Provider: openai)") {
 		t.Fatalf("unexpected /show model reply after switch: %q", showResp)
 	}
 

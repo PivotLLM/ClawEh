@@ -112,22 +112,64 @@ func (t *SessionHistoryTool) Execute(ctx context.Context, args map[string]any) *
 		return &ToolResult{ForLLM: "not available — message has aged out of the archive"}
 	}
 
+	// Build ToolCallID → result index map for pairing.
+	type toolResultEntry struct {
+		seq     int
+		content string
+		status  string // "success" or "error"
+	}
+	toolResults := make(map[string]toolResultEntry) // keyed by ToolCallID
+	for _, m := range msgs {
+		if m.Role == "tool" && m.ToolCallID != "" {
+			toolResults[m.ToolCallID] = toolResultEntry{
+				seq:     m.Seq,
+				content: m.Content,
+				status:  "success",
+			}
+		}
+	}
+
+	type toolCallEntry struct {
+		Name   string `json:"name"`
+		Input  string `json:"input"`
+		Output string `json:"output,omitempty"`
+		Status string `json:"status"` // "success", "error", or "pending"
+		Seq    int    `json:"result_seq,omitempty"`
+	}
 	type msgEntry struct {
-		Seq       int       `json:"seq"`
-		Role      string    `json:"role"`
-		Source    string    `json:"source,omitempty"`
-		Content   string    `json:"content"`
-		CreatedAt time.Time `json:"created_at"`
+		Seq       int            `json:"seq"`
+		Role      string         `json:"role"`
+		Source    string         `json:"source,omitempty"`
+		Content   string         `json:"content"`
+		CreatedAt time.Time      `json:"created_at"`
+		ToolCalls []toolCallEntry `json:"tool_calls,omitempty"`
 	}
 	entries := make([]msgEntry, len(msgs))
 	for i, m := range msgs {
-		entries[i] = msgEntry{
+		e := msgEntry{
 			Seq:       m.Seq,
 			Role:      m.Role,
 			Source:    m.Source,
 			Content:   m.Content,
 			CreatedAt: m.CreatedAt,
 		}
+		for _, tc := range m.ToolCalls {
+			tce := toolCallEntry{
+				Name:   tc.Name,
+				Input:  "",
+				Status: "pending",
+			}
+			if tc.Function != nil {
+				tce.Input = tc.Function.Arguments
+			}
+			if res, ok := toolResults[tc.ID]; ok {
+				tce.Output = res.content
+				tce.Status = res.status
+				tce.Seq = res.seq
+			}
+			e.ToolCalls = append(e.ToolCalls, tce)
+		}
+		entries[i] = e
 	}
 	out, _ := json.Marshal(entries)
 	return &ToolResult{ForLLM: string(out)}
