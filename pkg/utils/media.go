@@ -2,6 +2,7 @@ package utils
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -97,11 +98,14 @@ func DownloadFile(urlStr, filename string, opts DownloadOptions) string {
 	// checkRedirect re-applies the original request headers when redirecting
 	// within the same host. This preserves the Authorization header that
 	// Go's default redirect policy strips on cross-host redirects.
+	// redirects records each hop for diagnostic logging.
 	origReq := req
+	var redirects []string
 	checkRedirect := func(r *http.Request, via []*http.Request) error {
 		if len(via) >= 10 {
 			return errors.New("stopped after 10 redirects")
 		}
+		redirects = append(redirects, fmt.Sprintf("%s → %s", via[len(via)-1].URL.String(), r.URL.String()))
 		if r.URL.Host == origReq.URL.Host {
 			for key, vals := range origReq.Header {
 				r.Header[key] = vals
@@ -147,9 +151,14 @@ func DownloadFile(urlStr, filename string, opts DownloadOptions) string {
 
 	// Reject HTML responses — these are Slack error/auth pages, not the actual file.
 	if ct := resp.Header.Get("Content-Type"); strings.HasPrefix(ct, "text/html") {
+		// Read a snippet of the body so logs reveal exactly what page Slack returned.
+		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		logger.ErrorCF(opts.LoggerPrefix, "File download returned HTML — possible auth failure or redirect issue", map[string]any{
 			"url":          urlStr,
+			"final_url":    resp.Request.URL.String(),
 			"content_type": ct,
+			"redirects":    redirects,
+			"body_snippet": strings.TrimSpace(string(snippet)),
 		})
 		return ""
 	}

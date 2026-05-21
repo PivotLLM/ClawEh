@@ -376,6 +376,7 @@ func (m *Manager) archiveAppend(msg providers.Message) {
 	}
 	m.archiveSeq++
 	seq := m.archiveSeq
+	msg = archiveTruncateContent(msg)
 	if err := a.Append(seq, msg, time.Now()); err != nil {
 		logger.WarnCF("llmcontext", "archive append failed", map[string]any{
 			"session_key": m.sessionKey,
@@ -385,6 +386,26 @@ func (m *Manager) archiveAppend(msg providers.Message) {
 		// Roll back the counter so the next successful append does not skip a seq.
 		m.archiveSeq--
 	}
+}
+
+// archiveContentMaxBytes is the maximum number of content bytes stored per
+// message in the archive. Messages whose Content exceeds this limit are
+// truncated before writing; the LLM already saw the full content in the
+// active context window, so only a compact summary is needed for history.
+// Tool results that contain large file payloads are the primary use-case.
+const archiveContentMaxBytes = 4096
+
+// archiveTruncateContent returns a shallow copy of msg with Content truncated
+// to archiveContentMaxBytes if it exceeds that limit. The original msg is not
+// mutated.
+func archiveTruncateContent(msg providers.Message) providers.Message {
+	if len(msg.Content) <= archiveContentMaxBytes {
+		return msg
+	}
+	original := len(msg.Content)
+	msg.Content = msg.Content[:archiveContentMaxBytes] +
+		fmt.Sprintf("\n[content truncated: %d bytes total, first %d shown]", original, archiveContentMaxBytes)
+	return msg
 }
 
 // sanitizeSessionKey converts a session key to a safe filename component,
