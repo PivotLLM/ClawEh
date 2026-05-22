@@ -223,9 +223,87 @@ When enabled, the current token is injected into the agent's system prompt (mark
 
 See [docs/callback.md](docs/callback.md) for configuration reference, token rotation, routing behaviour, and troubleshooting.
 
+## Context management
+
+Each agent session maintains a persistent SQLite archive of every message it sends and receives. When the context window fills, claw compresses older messages into a structured summary and moves them out of the active window, keeping the conversation continuous across long sessions.
+
+### How it works
+
+1. **Archive** — every message is written to a per-session SQLite database (WAL mode, FTS5 index) with a sequence number and timestamp. Tool result content larger than 4 096 bytes is truncated before archiving so that large file reads don't produce unbounded blobs.
+
+2. **Compression trigger** — after each LLM turn, claw estimates the token usage of the current context window. Compression is triggered when usage crosses configurable thresholds (default: compress at 50 %, safety compress at 80 %). A minimum message count (default: 20) prevents compressing very short conversations.
+
+3. **Summarisation** — the oldest messages above a retained tail are sent to a summarisation model (defaults to the agent's primary model). The summary is structured JSON covering topics, decisions, key moments, and a retrievable history index. The rendered summary is injected at the top of the context window on every subsequent turn, and begins with the date range and message numbers it covers so the LLM can orient itself after compaction.
+
+4. **Retrieval** — the full archive is always available via the session tools (see [Session tools](#session-tools) below). The LLM can query any archived message by sequence number or full-text search, so nothing is permanently lost.
+
+### Configuration
+
+Context management options live in the agent config block (or `agents.defaults`):
+
+| Field | Default | Description |
+|---|---|---|
+| `context_window` | `128000` | Model context window in tokens. Used to compute compression thresholds. |
+| `archive_message_count` | `1000` | Maximum number of messages to retain in the retrievable archive per session. |
+| `archive_days` | `0` (unlimited) | Limit archive retrieval to messages within the last *n* days. |
+| `compress_model` | agent's primary model | Model used for summarisation. Can be a cheaper or faster model. |
+
+Example (per-agent override):
+
+```json
+{
+  "id": "alice",
+  "model": "claude-opus-4-7",
+  "context_window": 200000,
+  "archive_message_count": 2000,
+  "compress_model": {
+    "model": "claude-haiku-4-5",
+    "provider": "anthropic"
+  }
+}
+```
+
+### Session tools
+
+The LLM has access to four session management tools:
+
+| Tool | Description |
+|---|---|
+| `get_session_info` | Returns session metadata: key, start time, channel, context message count, archive bounds, current summary coverage, and last compaction time. Use to orient after a context compression. |
+| `compact_session` | Triggers an immediate context compaction. The LLM can call this after completing a major task to free context window space before starting the next one. |
+| `get_session_messages` | Returns archived messages in a sequence range. Assistant messages include paired tool call inputs and results. Each message carries a timestamp and sequence number. |
+| `search_session_messages` | Full-text search over the archived message history. Returns matching messages with sequence numbers and timestamps. |
+
+These tools are available to the LLM in both access paths described in the next section.
+
+---
+
 ## MCP server (claw as an MCP host)
 
 ClawEh can expose a subset of its host-side tools to MCP-compatible clients over a Streamable HTTP transport. This is primarily intended for CLI providers (Claude Code, Codex CLI, Gemini CLI) so they can call claw's tools natively instead of printing tool-call JSON in their prose — which historically caused runaway outer loops, since those CLIs are themselves agentic and return a single final answer per invocation.
+
+### Tool access paths
+
+There are two ways an LLM running inside claw can call tools, depending on the provider type:
+
+**Path 1 — LLM API tool calls (direct API providers)**
+
+For providers that use the direct LLM API (`anthropic`, `openai`, `openai-compat`, `gemini`), tool calls are returned as structured blocks in the API response (`tool_use` / `function_call`). The agent loop intercepts these, executes the tool, and feeds the result back to the LLM. No `session_token` is required — the session context is implicit in the agent loop.
+
+All tools are available on this path, including `compact_session`, `get_session_info`, `get_session_messages`, and `search_session_messages`.
+
+**Path 2 — MCP HTTP server (CLI providers)**
+
+For CLI providers (`claude-cli`, `codex-cli`, `gemini-cli`), the CLI subprocess has no access to claw's internal session state. Tools are called via the MCP HTTP server at `http://127.0.0.1:5911/mcp`. Every tool call on this path carries a `session_token` parameter — a short-lived `SST<64hex>` token injected into the agent's system prompt at session start. The MCP server resolves this token to the correct agent and session, then executes the tool.
+
+For session-scoped tools (`get_session_messages`, `search_session_messages`), the MCP server additionally uses the session token to inject the session's archive path into the execution context, enabling those tools to query the correct database.
+
+| | Direct API providers | CLI providers |
+|---|---|---|
+| Tool call mechanism | API response (`tool_use` blocks) | MCP HTTP at `:5911/mcp` |
+| Session context | Implicit (agent loop) | `session_token` parameter |
+| Session tools available | All four | `get_session_messages`, `search_session_messages` |
+| `compact_session` / `get_session_info` | ✓ | ✗ (agent loop only) |
 
 > **Important:** CLI providers (`claude-cli`, `codex-cli`, `gemini-cli`) no longer receive tool descriptions in their prompt. Each invocation runs as a single agentic turn, and the CLI reaches claw's tools only via MCP. **You must register claw as an MCP server in each CLI you intend to use** — see [Client configuration](#client-configuration) below. Without that step, the CLI will still answer prompts, but it will have no access to claw's filesystem, web, or other host-side tools.
 
