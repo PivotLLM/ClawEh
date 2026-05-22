@@ -87,9 +87,8 @@ func roundSentFlagFromCtx(ctx context.Context) *atomic.Bool {
 // In the direct agent loop path, the context carries the session key via
 // the tool execution plumbing.
 //
-// Session-scoped tools (tools that call ToolSessionKey): get_session_messages,
-// search_session_messages. If you add a new session-scoped tool, also update
-// isSessionScopedTool in pkg/mcpserver/session_tokens.go.
+// Tools that call ToolSessionKey must implement the SessionScoped interface
+// so the MCP dispatcher knows to inject the key. See SessionScoped below.
 func WithSessionKey(ctx context.Context, key string) context.Context {
 	return context.WithValue(ctx, ctxKeySessionKey, key)
 }
@@ -135,6 +134,18 @@ type AsyncExecutor interface {
 	// invoked (possibly from another goroutine) when the async operation
 	// completes. cb is guaranteed to be non-nil by the caller (registry).
 	ExecuteAsync(ctx context.Context, args map[string]any, cb AsyncCallback) *ToolResult
+}
+
+// SessionScoped is an optional interface for tools that require a session key
+// to be injected into their execution context. When a tool implementing this
+// interface is called via the MCP HTTP server, the dispatcher injects the
+// resolved session key via WithSessionKey before Execute is called.
+//
+// Any tool that calls ToolSessionKey(ctx) must implement this interface.
+// The MCP server checks for this interface at dispatch time instead of using
+// a hardcoded list, so new session-scoped tools are handled automatically.
+type SessionScoped interface {
+	IsSessionScoped() bool
 }
 
 func ToolToSchema(tool Tool) map[string]any {

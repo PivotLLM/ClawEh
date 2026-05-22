@@ -117,15 +117,3 @@ func generateSessionToken() (string, error) {
 	return sessionTokenPrefix + hex.EncodeToString(raw), nil
 }
 
-// isSessionScopedTool reports whether the named tool requires a session_token.
-// Only tools that call tools.ToolSessionKey(ctx) need this parameter.
-// Currently: get_session_messages and search_session_messages.
-//
-// If new session-scoped tools are added to pkg/tools, add their names here.
-func isSessionScopedTool(name string) bool {
-	switch name {
-	case "get_session_messages", "search_session_messages":
-		return true
-	}
-	return false
-}

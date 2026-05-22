@@ -27,7 +27,8 @@ func NewSessionHistoryTool(sessionsDir string) *SessionHistoryTool {
 	return &SessionHistoryTool{sessionsDir: sessionsDir}
 }
 
-func (t *SessionHistoryTool) Name() string { return "get_session_messages" }
+func (t *SessionHistoryTool) Name() string           { return "get_session_messages" }
+func (t *SessionHistoryTool) IsSessionScoped() bool  { return true }
 
 func (t *SessionHistoryTool) Description() string {
 	return "Retrieve historical messages from the current session archive by sequence number. " +

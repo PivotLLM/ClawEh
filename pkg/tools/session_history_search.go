@@ -27,7 +27,8 @@ func NewSessionHistorySearchTool(sessionsDir string) *SessionHistorySearchTool {
 	return &SessionHistorySearchTool{sessionsDir: sessionsDir}
 }
 
-func (t *SessionHistorySearchTool) Name() string { return "search_session_messages" }
+func (t *SessionHistorySearchTool) Name() string           { return "search_session_messages" }
+func (t *SessionHistorySearchTool) IsSessionScoped() bool  { return true }
 
 func (t *SessionHistorySearchTool) Description() string {
 	return "Search archived session messages using FTS5 full-text search. " +

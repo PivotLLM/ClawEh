@@ -251,7 +251,8 @@ func dispatchToolCall(
 		return fmt.Sprintf("agent %q has no registered tool registry", agentName), true
 	}
 
-	if _, toolOK := reg.Get(toolName); !toolOK {
+	toolInstance, toolOK := reg.Get(toolName)
+	if !toolOK {
 		logger.WarnCF("mcpserver", "MCP tool not in agent registry",
 			map[string]any{"agent": agentName, "tool": toolName, "reason": "tool_not_in_registry"})
 		return aclDeniedMessage, true
@@ -268,7 +269,7 @@ func dispatchToolCall(
 
 	// Session-scoped tools call tools.ToolSessionKey(ctx); inject the resolved
 	// session key so they retrieve the correct session regardless of HTTP state.
-	if isSessionScopedTool(toolName) {
+	if t, ok := toolInstance.(tools.SessionScoped); ok && t.IsSessionScoped() {
 		ctx = tools.WithSessionKey(ctx, rec.sessionKey)
 	}
 
