@@ -8,9 +8,12 @@ package agent
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/base64"
+	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/h2non/filetype"
@@ -76,6 +79,9 @@ func resolveMediaRefs(messages []providers.Message, store media.MediaStore, maxS
 			}
 
 			pathTags = append(pathTags, buildPathTag(mime, localPath))
+			// Collect attachment metadata for archive storage.
+			att := buildAttachment(meta.Filename, localPath, info)
+			result[i].Attachments = append(result[i].Attachments, att)
 		}
 
 		result[i].Media = resolved
@@ -152,6 +158,27 @@ func buildPathTag(mime, localPath string) string {
 	default:
 		return "[file:" + localPath + "]"
 	}
+}
+
+// buildAttachment creates a MessageAttachment from file metadata.
+func buildAttachment(filename, localPath string, info os.FileInfo) providers.MessageAttachment {
+	att := providers.MessageAttachment{
+		Filename:  filename,
+		Size:      info.Size(),
+		LocalPath: localPath,
+	}
+	if att.Filename == "" {
+		att.Filename = filepath.Base(localPath)
+	}
+	// Compute SHA256 of file content.
+	if f, err := os.Open(localPath); err == nil {
+		defer f.Close()
+		h := sha256.New()
+		if _, err := io.Copy(h, f); err == nil {
+			att.SHA256 = fmt.Sprintf("%x", h.Sum(nil))
+		}
+	}
+	return att
 }
 
 // injectPathTags replaces generic media tags in content with path-bearing versions,

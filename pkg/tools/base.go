@@ -35,6 +35,7 @@ var (
 	ctxKeyChatID       = &toolCtxKey{"chatID"}
 	ctxKeyAllowChecker = &toolCtxKey{"allowChecker"}
 	ctxKeyRoundSent    = &toolCtxKey{"roundSent"}
+	ctxKeySessionKey   = &toolCtxKey{"sessionKey"}
 )
 
 // WithToolContext returns a child context carrying channel and chatID.
@@ -77,6 +78,25 @@ func WithRoundSentFlag(ctx context.Context, flag *atomic.Bool) context.Context {
 // roundSentFlagFromCtx extracts the per-round sent flag, or nil if not set.
 func roundSentFlagFromCtx(ctx context.Context) *atomic.Bool {
 	v, _ := ctx.Value(ctxKeyRoundSent).(*atomic.Bool)
+	return v
+}
+
+// WithSessionKey returns a child context carrying the active session key.
+// In the MCP dispatch path, mcpserver.dispatchToolCall injects the session key
+// after validating the session_token parameter (see pkg/mcpserver/tools.go).
+// In the direct agent loop path, the context carries the session key via
+// the tool execution plumbing.
+//
+// Session-scoped tools (tools that call ToolSessionKey): get_session_messages,
+// search_session_messages. If you add a new session-scoped tool, also update
+// isSessionScopedTool in pkg/mcpserver/session_tokens.go.
+func WithSessionKey(ctx context.Context, key string) context.Context {
+	return context.WithValue(ctx, ctxKeySessionKey, key)
+}
+
+// ToolSessionKey extracts the session key from ctx, or "" if unset.
+func ToolSessionKey(ctx context.Context) string {
+	v, _ := ctx.Value(ctxKeySessionKey).(string)
 	return v
 }
 

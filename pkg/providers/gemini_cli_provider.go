@@ -197,9 +197,9 @@ func (p *GeminiCliProvider) buildPrompt(messages []Message) string {
 		case "system":
 			systemParts = append(systemParts, msg.Content)
 		case "user":
-			conversationParts = append(conversationParts, "User: "+msg.Content)
+			conversationParts = append(conversationParts, "User: "+escapeConvMarkers(msg.Content))
 		case "assistant":
-			conversationParts = append(conversationParts, "Assistant: "+msg.Content)
+			conversationParts = append(conversationParts, "Assistant: "+escapeConvMarkers(msg.Content))
 		case "tool":
 			conversationParts = append(conversationParts,
 				fmt.Sprintf("[Tool Result for %s]: %s", msg.ToolCallID, msg.Content))

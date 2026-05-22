@@ -1,6 +1,8 @@
 package utils
 
 import (
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -93,7 +95,32 @@ func DownloadFile(urlStr, filename string, opts DownloadOptions) string {
 		req.Header.Set(key, value)
 	}
 
-	client := &http.Client{Timeout: opts.Timeout}
+	// checkRedirect re-applies the original request headers when redirecting
+	// within the same registered domain (e.g. files.slack.com → tenant.slack.com).
+	// Go's default policy strips Authorization on cross-host redirects; preserving
+	// it within the same domain (last two hostname labels) is safe and required for
+	// Slack's file download flow, which redirects from files.slack.com to the
+	// workspace subdomain before serving the file.
+	// redirects records each hop for diagnostic logging.
+	origReq := req
+	var redirects []string
+	checkRedirect := func(r *http.Request, via []*http.Request) error {
+		if len(via) >= 10 {
+			return errors.New("stopped after 10 redirects")
+		}
+		redirects = append(redirects, fmt.Sprintf("%s → %s", via[len(via)-1].URL.String(), r.URL.String()))
+		if registeredDomain(r.URL.Hostname()) == registeredDomain(origReq.URL.Hostname()) {
+			for key, vals := range origReq.Header {
+				r.Header[key] = vals
+			}
+		}
+		return nil
+	}
+
+	client := &http.Client{
+		Timeout:       opts.Timeout,
+		CheckRedirect: checkRedirect,
+	}
 	if opts.ProxyURL != "" {
 		proxyURL, parseErr := url.Parse(opts.ProxyURL)
 		if parseErr != nil {
@@ -121,6 +148,33 @@ func DownloadFile(urlStr, filename string, opts DownloadOptions) string {
 		logger.ErrorCF(opts.LoggerPrefix, "File download returned non-200 status", map[string]any{
 			"status": resp.StatusCode,
 			"url":    urlStr,
+		})
+		return ""
+	}
+
+	// Reject HTML responses — these are error/auth pages, not the actual file.
+	if ct := resp.Header.Get("Content-Type"); strings.HasPrefix(ct, "text/html") {
+		// Read a snippet of the body so logs reveal exactly what page was returned.
+		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		// Detect Slack's web login redirect: files.slack.com → workspace.slack.com/?redir=...
+		// This happens when the bot token lacks the files:read OAuth scope.
+		finalURL := resp.Request.URL.String()
+		if strings.Contains(finalURL, "slack.com") && strings.Contains(finalURL, "redir=") {
+			logger.ErrorCF(opts.LoggerPrefix, "Slack redirected to login page — bot token is missing 'files:read' OAuth scope. Add it in Slack App settings → OAuth & Permissions → Bot Token Scopes, then reinstall the app.", map[string]any{
+				"url":       urlStr,
+				"final_url": finalURL,
+				"status":    resp.StatusCode,
+				"redirects": redirects,
+			})
+			return ""
+		}
+		logger.ErrorCF(opts.LoggerPrefix, "File download returned HTML — possible auth failure or redirect issue", map[string]any{
+			"url":          urlStr,
+			"final_url":    finalURL,
+			"status":       resp.StatusCode,
+			"content_type": ct,
+			"redirects":    redirects,
+			"body_snippet": strings.TrimSpace(string(snippet)),
 		})
 		return ""
 	}
@@ -155,4 +209,15 @@ func DownloadFileSimple(url, filename string) string {
 	return DownloadFile(url, filename, DownloadOptions{
 		LoggerPrefix: "media",
 	})
+}
+
+// registeredDomain returns the registered domain (last two labels) of a hostname.
+// Used by CheckRedirect to decide whether to forward auth headers across a redirect.
+// Examples: "files.slack.com" → "slack.com", "example.com" → "example.com".
+func registeredDomain(hostname string) string {
+	parts := strings.Split(hostname, ".")
+	if len(parts) <= 2 {
+		return hostname
+	}
+	return strings.Join(parts[len(parts)-2:], ".")
 }

@@ -131,16 +131,28 @@ var toolCatalog = []toolCatalogEntry{
 		ConfigKey:   "spi",
 	},
 	{
-		Name:        "tool_search_tool_regex",
+		Name:        "find_tools_regex",
 		Description: "Discover hidden MCP tools by regex search when tool discovery is enabled.",
 		Category:    "discovery",
 		ConfigKey:   "mcp.discovery.use_regex",
 	},
 	{
-		Name:        "tool_search_tool_bm25",
+		Name:        "find_tools_bm25",
 		Description: "Discover hidden MCP tools by semantic ranking when tool discovery is enabled.",
 		Category:    "discovery",
 		ConfigKey:   "mcp.discovery.use_bm25",
+	},
+	{
+		Name:        "get_session_messages",
+		Description: "Retrieve archived session messages by sequence number range.",
+		Category:    "context",
+		ConfigKey:   "get_session_messages",
+	},
+	{
+		Name:        "search_session_messages",
+		Description: "Full-text search over archived session messages.",
+		Category:    "context",
+		ConfigKey:   "search_session_messages",
 	},
 }
 
@@ -214,10 +226,12 @@ func buildToolSupport(cfg *config.Config) []toolSupportItem {
 					reasonCode = "requires_subagent"
 				}
 			}
-		case "tool_search_tool_regex":
+		case "find_tools_regex":
 			status, reasonCode = resolveDiscoveryToolSupport(cfg, cfg.Tools.MCP.Discovery.UseRegex)
-		case "tool_search_tool_bm25":
+		case "find_tools_bm25":
 			status, reasonCode = resolveDiscoveryToolSupport(cfg, cfg.Tools.MCP.Discovery.UseBM25)
+		case "get_session_messages", "search_session_messages":
+			status = "enabled"
 		case "i2c", "spi":
 			status, reasonCode = resolveHardwareToolSupport(cfg.Tools.IsToolEnabled(entry.ConfigKey))
 		default:
@@ -304,13 +318,13 @@ func applyToolState(cfg *config.Config, toolName string, enabled bool) error {
 		cfg.Tools.I2C.Enabled = enabled
 	case "spi":
 		cfg.Tools.SPI.Enabled = enabled
-	case "tool_search_tool_regex":
+	case "find_tools_regex":
 		cfg.Tools.MCP.Discovery.UseRegex = enabled
 		if enabled {
 			cfg.Tools.MCP.Enabled = true
 			cfg.Tools.MCP.Discovery.Enabled = true
 		}
-	case "tool_search_tool_bm25":
+	case "find_tools_bm25":
 		cfg.Tools.MCP.Discovery.UseBM25 = enabled
 		if enabled {
 			cfg.Tools.MCP.Enabled = true

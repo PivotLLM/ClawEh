@@ -446,16 +446,15 @@ func TestLoadConfig_WebToolsProxy(t *testing.T) {
 	}
 }
 
-// TestDefaultConfig_SessionMode verifies the default session mode value
-// TestDefaultConfig_SummarizationThresholds verifies summarization defaults
+// TestDefaultConfig_SummarizationThresholds verifies compress field defaults
 func TestDefaultConfig_SummarizationThresholds(t *testing.T) {
 	cfg := DefaultConfig()
-
-	if cfg.Agents.Defaults.SummarizeMessageThreshold != 20 {
-		t.Errorf("SummarizeMessageThreshold = %d, want 20", cfg.Agents.Defaults.SummarizeMessageThreshold)
+	// New compress fields default to 0 (= use llmcontext defaults).
+	if cfg.Agents.Defaults.CompressNormalPercent != 0 {
+		t.Errorf("CompressNormalPercent = %d, want 0 (use llmcontext default)", cfg.Agents.Defaults.CompressNormalPercent)
 	}
-	if cfg.Agents.Defaults.SummarizeTokenPercent != 75 {
-		t.Errorf("SummarizeTokenPercent = %d, want 75", cfg.Agents.Defaults.SummarizeTokenPercent)
+	if cfg.Agents.Defaults.CompressMessageThreshold != 0 {
+		t.Errorf("CompressMessageThreshold = %d, want 0 (use llmcontext default)", cfg.Agents.Defaults.CompressMessageThreshold)
 	}
 }
 

@@ -70,23 +70,29 @@ func TestHandleListTools(t *testing.T) {
 	if gotTools["find_skills"].Status != "enabled" {
 		t.Fatalf("find_skills status = %q, want enabled", gotTools["find_skills"].Status)
 	}
-	if gotTools["tool_search_tool_regex"].Status != "enabled" {
-		t.Fatalf("tool_search_tool_regex status = %q, want enabled", gotTools["tool_search_tool_regex"].Status)
+	if gotTools["find_tools_regex"].Status != "enabled" {
+		t.Fatalf("find_tools_regex status = %q, want enabled", gotTools["find_tools_regex"].Status)
 	}
-	if gotTools["tool_search_tool_regex"].ConfigKey != "mcp.discovery.use_regex" {
+	if gotTools["find_tools_regex"].ConfigKey != "mcp.discovery.use_regex" {
 		t.Fatalf(
-			"tool_search_tool_regex config_key = %q, want mcp.discovery.use_regex",
-			gotTools["tool_search_tool_regex"].ConfigKey,
+			"find_tools_regex config_key = %q, want mcp.discovery.use_regex",
+			gotTools["find_tools_regex"].ConfigKey,
 		)
 	}
-	if gotTools["tool_search_tool_bm25"].Status != "disabled" {
-		t.Fatalf("tool_search_tool_bm25 status = %q, want disabled", gotTools["tool_search_tool_bm25"].Status)
+	if gotTools["find_tools_bm25"].Status != "disabled" {
+		t.Fatalf("find_tools_bm25 status = %q, want disabled", gotTools["find_tools_bm25"].Status)
 	}
-	if gotTools["tool_search_tool_bm25"].ConfigKey != "mcp.discovery.use_bm25" {
+	if gotTools["find_tools_bm25"].ConfigKey != "mcp.discovery.use_bm25" {
 		t.Fatalf(
-			"tool_search_tool_bm25 config_key = %q, want mcp.discovery.use_bm25",
-			gotTools["tool_search_tool_bm25"].ConfigKey,
+			"find_tools_bm25 config_key = %q, want mcp.discovery.use_bm25",
+			gotTools["find_tools_bm25"].ConfigKey,
 		)
+	}
+	if gotTools["get_session_messages"].Status != "enabled" {
+		t.Fatalf("get_session_messages status = %q, want enabled", gotTools["get_session_messages"].Status)
+	}
+	if gotTools["search_session_messages"].Status != "enabled" {
+		t.Fatalf("search_session_messages status = %q, want enabled", gotTools["search_session_messages"].Status)
 	}
 	if runtime.GOOS == "linux" {
 		if gotTools["i2c"].Status != "disabled" {
@@ -161,7 +167,7 @@ func TestHandleUpdateToolState(t *testing.T) {
 	rec2 := httptest.NewRecorder()
 	req2 := httptest.NewRequest(
 		http.MethodPut,
-		"/api/tools/tool_search_tool_regex/state",
+		"/api/tools/find_tools_regex/state",
 		bytes.NewBufferString(`{"enabled":true}`),
 	)
 	req2.Header.Set("Content-Type", "application/json")

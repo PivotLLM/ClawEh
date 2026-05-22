@@ -5,15 +5,16 @@ package agenttoken
 
 import "regexp"
 
-// redactPattern matches any agent-token-shaped substring anywhere in text.
-var redactPattern = regexp.MustCompile(`AGT[0-9a-f]{64}`)
+// redactPattern matches any token-shaped substring in text: AGT or SST
+// followed by exactly 64 lowercase hex characters.
+var redactPattern = regexp.MustCompile(`(?:AGT|SST)[0-9a-f]{64}`)
 
 // Redaction is the placeholder substituted for redacted tokens.
 const Redaction = "AGT[REDACTED]"
 
-// Redact replaces every `AGT[0-9a-f]{64}` substring with the Redaction
-// placeholder, except for the sub-agent sentinel which is left intact (it
-// is not secret).
+// Redact replaces every token-shaped substring (AGT or SST followed by 64
+// hex chars) with the Redaction placeholder, except for the sub-agent
+// sentinel which is left intact (it is not secret).
 func Redact(s string) string {
 	if s == "" {
 		return s

@@ -12,6 +12,29 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/global"
 )
 
+// DefaultAgentTools is the baseline tool allowlist for new agents when no
+// explicit tools list is configured. Excludes hardware (i2c, spi) and advanced
+// MCP discovery tools, which require deliberate opt-in.
+// The list can be overridden per-installation via agents.defaults.default_tools.
+var DefaultAgentTools = []string{
+	"read_file",
+	"write_file",
+	"edit_file",
+	"append_file",
+	"list_dir",
+	"exec",
+	"web_search",
+	"web_fetch",
+	"message",
+	"send_file",
+	"find_skills",
+	"install_skill",
+	"spawn",
+	"cron",
+	"get_session_messages",
+	"search_session_messages",
+}
+
 // DefaultConfig returns the default configuration for ClawEh.
 func DefaultConfig() *Config {
 	// Determine the base path for the workspace.
@@ -31,12 +54,10 @@ func DefaultConfig() *Config {
 				Workspace:                 workspacePath,
 				RestrictToWorkspace:       true,
 				Model:                     &AgentModelConfig{Primary: "claude-cli", Fallbacks: []string{"codex-cli"}},
-				MaxTokens:                 32768,
-				Temperature:               nil, // nil means use provider default
-				MaxToolIterations:         50,
-				SummarizeMessageThreshold: 20,
-				SummarizeTokenPercent:     75,
-				ContextWindow:             128000,
+				MaxTokens:         32768,
+				Temperature:       nil, // nil means use provider default
+				MaxToolIterations: 50,
+				ContextWindow:     128000,
 			},
 			List: []AgentConfig{
 				{

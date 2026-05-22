@@ -19,6 +19,12 @@ type Store interface {
 	// Returns an empty slice (not nil) if the session does not exist.
 	GetHistory(ctx context.Context, sessionKey string) ([]providers.Message, error)
 
+	// GetHistoryWithSeqs returns the active history window with seq numbers
+	// intact. Each StoredMessage has the monotonically increasing seq number
+	// assigned at write time. Seq numbers are preserved for seq-aware
+	// summarization. Returns an empty slice if the session does not exist.
+	GetHistoryWithSeqs(ctx context.Context, sessionKey string) ([]StoredMessage, error)
+
 	// GetSummary returns the conversation summary for a session.
 	// Returns an empty string if no summary exists.
 	GetSummary(ctx context.Context, sessionKey string) (string, error)
@@ -36,6 +42,20 @@ type Store interface {
 	// Compact reclaims storage by physically removing logically truncated
 	// data. Backends that do not accumulate dead data may return nil.
 	Compact(ctx context.Context, sessionKey string) error
+
+	// SetPendingTurn marks a session as having an LLM turn in flight.
+	// A true value on startup indicates the process was interrupted mid-turn.
+	SetPendingTurn(ctx context.Context, sessionKey string) error
+
+	// ClearPendingTurn marks a session's turn as complete.
+	ClearPendingTurn(ctx context.Context, sessionKey string) error
+
+	// GetArchiveBounds returns the inclusive seq range of messages stored in the
+	// session archive. Returns (0, 0) if no archive exists yet.
+	GetArchiveBounds(ctx context.Context, sessionKey string) (minSeq, maxSeq int, err error)
+
+	// ListPendingSessions returns session keys for all sessions where PendingTurn is true.
+	ListPendingSessions(ctx context.Context) ([]string, error)
 
 	// Close releases any resources held by the store.
 	Close() error

@@ -14,6 +14,7 @@ import {
 } from "@/api/system"
 import {
   AgentDefaultsSection,
+  ContextManagementSection,
   DevicesSection,
   LauncherSection,
   RuntimeSection,
@@ -149,16 +150,45 @@ export function ConfigPage() {
           "Max tool iterations",
           { min: 1 },
         )
-        const summarizeMessageThreshold = parseIntField(
-          form.summarizeMessageThreshold,
-          "Summarize message threshold",
-          { min: 1 },
+        const compressModel = form.compressModel.trim()
+        const compressNormalPercent = parseIntField(
+          form.compressNormalPercent,
+          "Normal compression threshold",
+          { min: 0, max: 100 },
         )
-        const summarizeTokenPercent = parseIntField(
-          form.summarizeTokenPercent,
-          "Summarize token percent",
-          { min: 1, max: 100 },
+        const compressSafetyPercent = parseIntField(
+          form.compressSafetyPercent,
+          "Emergency compression threshold",
+          { min: 0, max: 100 },
         )
+        const compressMinPercent = parseIntField(
+          form.compressMinPercent,
+          "Minimum context threshold",
+          { min: 0, max: 100 },
+        )
+        const compressMessageThreshold = parseIntField(
+          form.compressMessageThreshold,
+          "Message count threshold",
+          { min: 0 },
+        )
+        const compressRetainTokenPercent = parseIntField(
+          form.compressRetainTokenPercent,
+          "Tail window size",
+          { min: 0, max: 100 },
+        )
+        const compressRetainMinMessages = parseIntField(
+          form.compressRetainMinMessages,
+          "Minimum tail messages",
+          { min: 0 },
+        )
+        const archiveMessageCount = parseIntField(
+          form.archiveMessageCount,
+          "Archive message count",
+          { min: 0 },
+        )
+        const archiveDays = parseIntField(form.archiveDays, "Archive days", {
+          min: 0,
+        })
         await patchAppConfig({
           agents: {
             defaults: {
@@ -166,8 +196,15 @@ export function ConfigPage() {
               restrict_to_workspace: form.restrictToWorkspace,
               max_tokens: maxTokens,
               max_tool_iterations: maxToolIterations,
-              summarize_message_threshold: summarizeMessageThreshold,
-              summarize_token_percent: summarizeTokenPercent,
+              compress_model: compressModel,
+              compress_normal_percent: compressNormalPercent,
+              compress_safety_percent: compressSafetyPercent,
+              compress_min_percent: compressMinPercent,
+              compress_message_threshold: compressMessageThreshold,
+              compress_retain_token_percent: compressRetainTokenPercent,
+              compress_retain_min_messages: compressRetainMinMessages,
+              archive_message_count: archiveMessageCount,
+              archive_days: archiveDays,
             },
           },
           session: {
@@ -266,6 +303,8 @@ export function ConfigPage() {
               )}
 
               <AgentDefaultsSection form={form} onFieldChange={updateField} />
+
+              <ContextManagementSection form={form} onFieldChange={updateField} />
 
               <RuntimeSection form={form} onFieldChange={updateField} />
 

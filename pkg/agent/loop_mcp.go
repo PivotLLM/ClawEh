@@ -189,12 +189,12 @@ func (al *AgentLoop) ensureMCPInitialized(ctx context.Context) error {
 				}
 
 				if useRegex {
-					if agent.Config.IsToolAllowed("tool_search_tool_regex") {
+					if agent.Config.IsToolAllowed("find_tools_regex") {
 						agent.Tools.Register(tools.NewRegexSearchTool(agent.Tools, ttl, maxSearchResults))
 					}
 				}
 				if useBM25 {
-					if agent.Config.IsToolAllowed("tool_search_tool_bm25") {
+					if agent.Config.IsToolAllowed("find_tools_bm25") {
 						agent.Tools.Register(tools.NewBM25SearchTool(agent.Tools, ttl, maxSearchResults))
 					}
 				}

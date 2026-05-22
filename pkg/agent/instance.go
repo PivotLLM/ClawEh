@@ -11,6 +11,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/pkg/config"
 	"github.com/PivotLLM/ClawEh/pkg/global"
+	"github.com/PivotLLM/ClawEh/pkg/llmcontext"
 	"github.com/PivotLLM/ClawEh/pkg/memory"
 	"github.com/PivotLLM/ClawEh/pkg/providers"
 	"github.com/PivotLLM/ClawEh/pkg/routing"
@@ -21,26 +22,25 @@ import (
 // AgentInstance represents a fully configured agent with its own workspace,
 // session manager, context builder, and tool registry.
 type AgentInstance struct {
-	ID                        string
-	Name                      string
-	Model                     string
-	Fallbacks                 []string
-	Workspace                 string
-	MaxIterations             int
-	MaxTokens                 int
-	Temperature               float64
-	ThinkingLevel             ThinkingLevel
-	NoTools                   bool
-	ContextWindow             int
-	SummarizeMessageThreshold int
-	SummarizeTokenPercent     int
-	Provider                  providers.LLMProvider
-	Sessions                  session.SessionStore
-	ContextBuilder            *ContextBuilder
-	Tools                     *tools.ToolRegistry
-	Subagents                 *config.SubagentsConfig
-	SkillsFilter              []string
-	Candidates                []providers.FallbackCandidate
+	ID                       string
+	Name                     string
+	Model                    string
+	Fallbacks                []string
+	Workspace                string
+	MaxIterations            int
+	MaxTokens                int
+	Temperature              float64
+	ThinkingLevel            ThinkingLevel
+	NoTools                  bool
+	ContextWindow int
+	CompressOpts  []llmcontext.Option
+	Provider                 providers.LLMProvider
+	Sessions                 session.SessionStore
+	ContextBuilder           *ContextBuilder
+	Tools                    *tools.ToolRegistry
+	Subagents                *config.SubagentsConfig
+	SkillsFilter             []string
+	Candidates               []providers.FallbackCandidate
 
 	// Router is non-nil when model routing is configured and the light model
 	// was successfully resolved. It scores each incoming message and decides
@@ -112,6 +112,9 @@ func NewAgentInstance(
 	sessionsDir := filepath.Join(workspace, "sessions")
 	sessions := initSessionStore(sessionsDir)
 
+	toolsRegistry.Register(tools.NewSessionHistoryTool(sessionsDir))
+	toolsRegistry.Register(tools.NewSessionHistorySearchTool(sessionsDir))
+
 	mcpDiscoveryActive := cfg.Tools.MCP.Enabled && cfg.Tools.MCP.Discovery.Enabled
 	contextBuilder := NewContextBuilder(workspace).WithToolDiscovery(
 		mcpDiscoveryActive && cfg.Tools.MCP.Discovery.UseBM25,
@@ -175,16 +178,85 @@ func NewAgentInstance(
 	}
 	thinkingLevel := parseThinkingLevel(thinkingLevelStr)
 
-	summarizeMessageThreshold := defaults.SummarizeMessageThreshold
-	if summarizeMessageThreshold == 0 {
-		summarizeMessageThreshold = 20
+	// Helper: resolve per-agent pointer or defaults int value.
+	// For percent fields: 0 = not configured (use llmcontext default).
+	// For count fields: 0 = explicitly disabled (valid to pass).
+	resolveIntOpt := func(agentPtr *int, defaultsVal int) (int, bool) {
+		if agentPtr != nil {
+			return *agentPtr, true
+		}
+		if defaultsVal != 0 {
+			return defaultsVal, true
+		}
+		return 0, false
 	}
 
-	summarizeTokenPercent := defaults.SummarizeTokenPercent
-	if summarizeTokenPercent == 0 {
-		summarizeTokenPercent = 75
-	}
+	var compressOpts []llmcontext.Option
 
+	if v, ok := resolveIntOpt(func() *int {
+		if agentCfg != nil {
+			return agentCfg.CompressMinPercent
+		}
+		return nil
+	}(), defaults.CompressMinPercent); ok {
+		compressOpts = append(compressOpts, llmcontext.WithMinPercent(v))
+	}
+	if v, ok := resolveIntOpt(func() *int {
+		if agentCfg != nil {
+			return agentCfg.CompressNormalPercent
+		}
+		return nil
+	}(), defaults.CompressNormalPercent); ok {
+		compressOpts = append(compressOpts, llmcontext.WithNormalPercent(v))
+	}
+	if v, ok := resolveIntOpt(func() *int {
+		if agentCfg != nil {
+			return agentCfg.CompressSafetyPercent
+		}
+		return nil
+	}(), defaults.CompressSafetyPercent); ok {
+		compressOpts = append(compressOpts, llmcontext.WithSafetyPercent(v))
+	}
+	if v, ok := resolveIntOpt(func() *int {
+		if agentCfg != nil {
+			return agentCfg.CompressMessageThreshold
+		}
+		return nil
+	}(), defaults.CompressMessageThreshold); ok {
+		compressOpts = append(compressOpts, llmcontext.WithMessageThreshold(v))
+	}
+	if v, ok := resolveIntOpt(func() *int {
+		if agentCfg != nil {
+			return agentCfg.CompressRetainTokenPercent
+		}
+		return nil
+	}(), defaults.CompressRetainTokenPercent); ok {
+		compressOpts = append(compressOpts, llmcontext.WithRetainTokenPercent(v))
+	}
+	if v, ok := resolveIntOpt(func() *int {
+		if agentCfg != nil {
+			return agentCfg.CompressRetainMinMessages
+		}
+		return nil
+	}(), defaults.CompressRetainMinMessages); ok {
+		compressOpts = append(compressOpts, llmcontext.WithRetainMinMessages(v))
+	}
+	if v, ok := resolveIntOpt(func() *int {
+		if agentCfg != nil {
+			return agentCfg.ArchiveMessageCount
+		}
+		return nil
+	}(), defaults.ArchiveMessageCount); ok {
+		compressOpts = append(compressOpts, llmcontext.WithArchiveMessageCount(v))
+	}
+	if v, ok := resolveIntOpt(func() *int {
+		if agentCfg != nil {
+			return agentCfg.ArchiveDays
+		}
+		return nil
+	}(), defaults.ArchiveDays); ok {
+		compressOpts = append(compressOpts, llmcontext.WithArchiveDays(v))
+	}
 	// Resolve fallback candidates
 	modelCfg := providers.ModelConfig{
 		Primary:   model,
@@ -262,29 +334,28 @@ func NewAgentInstance(
 	}
 
 	return &AgentInstance{
-		ID:                        agentID,
-		Name:                      agentName,
-		Model:                     model,
-		Fallbacks:                 fallbacks,
-		Workspace:                 workspace,
-		MaxIterations:             maxIter,
-		MaxTokens:                 maxTokens,
-		Temperature:               temperature,
-		ThinkingLevel:             thinkingLevel,
-		NoTools:                   noTools,
-		ContextWindow:             contextWindow,
-		SummarizeMessageThreshold: summarizeMessageThreshold,
-		SummarizeTokenPercent:     summarizeTokenPercent,
-		Provider:                  provider,
-		Sessions:                  sessions,
-		ContextBuilder:            contextBuilder,
-		Tools:                     toolsRegistry,
-		Subagents:                 subagents,
-		SkillsFilter:              skillsFilter,
-		Candidates:                candidates,
-		Router:                    router,
-		LightCandidates:           lightCandidates,
-		Config:                    agentCfg,
+		ID:                       agentID,
+		Name:                     agentName,
+		Model:                    model,
+		Fallbacks:                fallbacks,
+		Workspace:                workspace,
+		MaxIterations:            maxIter,
+		MaxTokens:                maxTokens,
+		Temperature:              temperature,
+		ThinkingLevel:            thinkingLevel,
+		NoTools:                  noTools,
+		ContextWindow: contextWindow,
+		CompressOpts:  compressOpts,
+		Provider:                 provider,
+		Sessions:                 sessions,
+		ContextBuilder:           contextBuilder,
+		Tools:                    toolsRegistry,
+		Subagents:                subagents,
+		SkillsFilter:             skillsFilter,
+		Candidates:               candidates,
+		Router:                   router,
+		LightCandidates:          lightCandidates,
+		Config:                   agentCfg,
 	}
 }
 

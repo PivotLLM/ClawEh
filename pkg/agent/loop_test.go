@@ -17,6 +17,7 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/config"
 	"github.com/PivotLLM/ClawEh/pkg/media"
 	"github.com/PivotLLM/ClawEh/pkg/providers"
+	"github.com/PivotLLM/ClawEh/pkg/llmcontext"
 	"github.com/PivotLLM/ClawEh/pkg/routing"
 	"github.com/PivotLLM/ClawEh/pkg/tools"
 )
@@ -523,6 +524,7 @@ func TestProcessMessage_CommandOutcomes(t *testing.T) {
 		t.Fatalf("LLM should not be called for handled command, calls=%d", provider.calls)
 	}
 
+	// Unknown commands must never reach the LLM — they return an error reply instead.
 	fooResp := helper.executeAndGetResponse(t, context.Background(), bus.InboundMessage{
 		Channel:  baseMsg.Channel,
 		SenderID: baseMsg.SenderID,
@@ -530,11 +532,11 @@ func TestProcessMessage_CommandOutcomes(t *testing.T) {
 		Content:  "/foo",
 		Peer:     baseMsg.Peer,
 	})
-	if fooResp != "LLM reply" {
-		t.Fatalf("unexpected /foo reply: %q", fooResp)
+	if !strings.Contains(fooResp, "Unknown command") {
+		t.Fatalf("unexpected /foo reply: %q (expected unknown command message)", fooResp)
 	}
-	if provider.calls != 1 {
-		t.Fatalf("LLM should be called exactly once after /foo passthrough, calls=%d", provider.calls)
+	if provider.calls != 0 {
+		t.Fatalf("LLM must not be called for unknown command /foo, calls=%d", provider.calls)
 	}
 
 	newResp := helper.executeAndGetResponse(t, context.Background(), bus.InboundMessage{
@@ -544,11 +546,11 @@ func TestProcessMessage_CommandOutcomes(t *testing.T) {
 		Content:  "/new",
 		Peer:     baseMsg.Peer,
 	})
-	if newResp != "LLM reply" {
-		t.Fatalf("unexpected /new reply: %q", newResp)
+	if !strings.Contains(newResp, "Unknown command") {
+		t.Fatalf("unexpected /new reply: %q (expected unknown command message)", newResp)
 	}
-	if provider.calls != 2 {
-		t.Fatalf("LLM should be called for passthrough /new command, calls=%d", provider.calls)
+	if provider.calls != 0 {
+		t.Fatalf("LLM must not be called for unknown command /new, calls=%d", provider.calls)
 	}
 }
 
@@ -602,7 +604,7 @@ func TestProcessMessage_SwitchModelShowModelConsistency(t *testing.T) {
 			ID:   "user1",
 		},
 	})
-	if !strings.Contains(showResp, "Current Model: openai/after-switch (Provider: openai)") {
+	if !strings.Contains(showResp, "Current Model: after-switch (Provider: openai)") {
 		t.Fatalf("unexpected /show model reply after switch: %q", showResp)
 	}
 
@@ -1355,8 +1357,10 @@ func TestResolveMediaRefs_MixedImageAndFile(t *testing.T) {
 	}
 }
 
-// TestForceCompression_WithSystemPrompt verifies that forceCompression keeps
-// the system message at index 0 and reduces total history length.
+// TestForceCompression_WithSystemPrompt verifies that ForceCompress keeps the
+// system message at index 0, reduces total history, and preserves the most
+// recent turn group (last user message). Messages are padded so that two or
+// more conversation groups exceed the safety threshold, forcing a drop.
 func TestForceCompression_WithSystemPrompt(t *testing.T) {
 	al, _, _, _, cleanup := newTestAgentLoop(t)
 	defer cleanup()
@@ -1366,18 +1370,30 @@ func TestForceCompression_WithSystemPrompt(t *testing.T) {
 		t.Fatal("no default agent")
 	}
 
+	// contextWindow=400 tokens, safetyPercent=80 → threshold = 320 tokens.
+	// Each padded message is ~160 tokens (640 chars / 4). The current turn
+	// group (user3, 160 tokens) fits. Adding ass2 (160 tokens) would hit 320
+	// tokens = 80%, which is NOT < 80%, so only user3 is kept. That gives us
+	// sys + user3 = 2 messages, down from 6.
+	pad := strings.Repeat("x", 640)
 	sessionKey := "test-compress-sys"
 	history := []providers.Message{
 		{Role: "system", Content: "You are helpful."},
-		{Role: "user", Content: "user msg 1"},
-		{Role: "assistant", Content: "assistant msg 1"},
-		{Role: "user", Content: "user msg 2"},
-		{Role: "assistant", Content: "assistant msg 2"},
+		{Role: "user", Content: "user msg 1 " + pad},
+		{Role: "assistant", Content: "assistant msg 1 " + pad},
+		{Role: "user", Content: "user msg 2 " + pad},
+		{Role: "assistant", Content: "assistant msg 2 " + pad},
 		{Role: "user", Content: "user msg 3"},
 	}
 	agent.Sessions.SetHistory(sessionKey, history)
 
-	al.forceCompression(agent, sessionKey)
+	mgr := llmcontext.New(sessionKey, agent.Sessions, agent.ContextBuilder, nil,
+		llmcontext.WithContextWindow(400),
+		llmcontext.WithSafetyPercent(80),
+	)
+	if err := mgr.ForceCompress(context.Background()); err != nil {
+		t.Fatalf("ForceCompress returned unexpected error: %v", err)
+	}
 
 	got := agent.Sessions.GetHistory(sessionKey)
 	if len(got) >= len(history) {
@@ -1389,15 +1405,15 @@ func TestForceCompression_WithSystemPrompt(t *testing.T) {
 	if got[0].Role != "system" {
 		t.Fatalf("expected first message to be system, got role=%q", got[0].Role)
 	}
-	// Last user message must still be present
+	// Most recent turn group (user3) must still be present.
 	last := got[len(got)-1]
 	if last.Content != "user msg 3" {
 		t.Fatalf("expected last user message to be preserved, got %q", last.Content)
 	}
 }
 
-// TestForceCompression_NoSystemPrompt verifies that forceCompression handles
-// histories without a system prompt: the first message is retained (not dropped).
+// TestForceCompression_NoSystemPrompt verifies that ForceCompress handles
+// histories without a system prompt: no system message is injected in the result.
 func TestForceCompression_NoSystemPrompt(t *testing.T) {
 	al, _, _, _, cleanup := newTestAgentLoop(t)
 	defer cleanup()
@@ -1407,17 +1423,25 @@ func TestForceCompression_NoSystemPrompt(t *testing.T) {
 		t.Fatal("no default agent")
 	}
 
+	// Same window/padding as the system-prompt test; force a drop.
+	pad := strings.Repeat("x", 640)
 	sessionKey := "test-compress-nosys"
 	history := []providers.Message{
-		{Role: "user", Content: "user msg 1"},
-		{Role: "assistant", Content: "assistant msg 1"},
-		{Role: "user", Content: "user msg 2"},
-		{Role: "assistant", Content: "assistant msg 2"},
+		{Role: "user", Content: "user msg 1 " + pad},
+		{Role: "assistant", Content: "assistant msg 1 " + pad},
+		{Role: "user", Content: "user msg 2 " + pad},
+		{Role: "assistant", Content: "assistant msg 2 " + pad},
 		{Role: "user", Content: "user msg 3"},
 	}
 	agent.Sessions.SetHistory(sessionKey, history)
 
-	al.forceCompression(agent, sessionKey)
+	mgr := llmcontext.New(sessionKey, agent.Sessions, agent.ContextBuilder, nil,
+		llmcontext.WithContextWindow(400),
+		llmcontext.WithSafetyPercent(80),
+	)
+	if err := mgr.ForceCompress(context.Background()); err != nil {
+		t.Fatalf("ForceCompress returned unexpected error: %v", err)
+	}
 
 	got := agent.Sessions.GetHistory(sessionKey)
 	if len(got) >= len(history) {
@@ -1426,7 +1450,7 @@ func TestForceCompression_NoSystemPrompt(t *testing.T) {
 	if len(got) == 0 {
 		t.Fatal("history must not be empty after compression")
 	}
-	// Without a system prompt, the first message should be a user or assistant message (not system).
+	// Without a system prompt, the first message should not be a system message.
 	if got[0].Role == "system" {
 		t.Fatalf("expected first message not to be system when no system prompt was set, got role=%q", got[0].Role)
 	}
@@ -1481,7 +1505,9 @@ func TestRunLLMIteration_ContextCancelDuringBackoff(t *testing.T) {
 	done := make(chan result, 1)
 
 	go func() {
-		_, _, _, _, err := al.runLLMIteration(ctx, agent, messages, opts)
+		cm, releaseTestCM := al.getContextManager(agent, opts.SessionKey)
+		defer releaseTestCM()
+		_, _, _, _, err := al.runLLMIteration(ctx, agent, messages, opts, cm)
 		done <- result{err: err}
 	}()
 
@@ -1575,7 +1601,6 @@ func TestRunAgentLoop_EmptyResponse_FirstIteration(t *testing.T) {
 		ChatID:          "direct",
 		UserMessage:     "hello",
 		DefaultResponse: defaultResponse,
-		EnableSummary:   false,
 		SendResponse:    false,
 	}
 
@@ -1634,7 +1659,6 @@ func TestRunAgentLoop_EmptyResponse_AfterToolCalls(t *testing.T) {
 		ChatID:          "direct",
 		UserMessage:     "use a tool",
 		DefaultResponse: defaultResponse,
-		EnableSummary:   false,
 		SendResponse:    false,
 	}
 
@@ -1692,7 +1716,9 @@ func TestRunLLMIteration_ToolCalls_ThenFinalResponse(t *testing.T) {
 		SendResponse: false,
 	}
 
-	content, _, _, iterations, err := al.runLLMIteration(context.Background(), agent, messages, opts)
+	cm, releaseTestCM := al.getContextManager(agent, opts.SessionKey)
+	defer releaseTestCM()
+	content, _, _, iterations, err := al.runLLMIteration(context.Background(), agent, messages, opts, cm)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1751,7 +1777,9 @@ func TestRunLLMIteration_MaxIterations(t *testing.T) {
 		SendResponse: false,
 	}
 
-	content, _, _, iterations, err := al.runLLMIteration(context.Background(), agent, messages, opts)
+	cm, releaseTestCM := al.getContextManager(agent, opts.SessionKey)
+	defer releaseTestCM()
+	content, _, _, iterations, err := al.runLLMIteration(context.Background(), agent, messages, opts, cm)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1886,87 +1914,6 @@ func TestSelectCandidates_WithRouter_LightSelected(t *testing.T) {
 	}
 }
 
-// TestMaybeSummarize_ThresholdNotReached verifies that when the session history
-// is short (below the threshold), maybeSummarize does not start a goroutine and
-// the summarizing sync.Map remains empty.
-func TestMaybeSummarize_ThresholdNotReached(t *testing.T) {
-	al, _, _, _, cleanup := newTestAgentLoop(t)
-	defer cleanup()
-
-	agent := al.registry.GetDefaultAgent()
-	if agent == nil {
-		t.Fatal("no default agent")
-	}
-
-	// Force a high threshold so our short history never triggers summarization.
-	agent.SummarizeMessageThreshold = 1000
-	agent.SummarizeTokenPercent = 100
-
-	const sessionKey = "no-summarize"
-	agent.Sessions.AddMessage(sessionKey, "user", "hello")
-	agent.Sessions.AddMessage(sessionKey, "assistant", "hi")
-
-	al.maybeSummarize(agent, sessionKey, "cli", "direct")
-
-	// Allow a moment for any goroutine that shouldn't start.
-	time.Sleep(20 * time.Millisecond)
-
-	summarizeKey := agent.ID + ":" + sessionKey
-	if _, found := al.summarizing.Load(summarizeKey); found {
-		t.Error("expected summarizing map to be empty, but key was present")
-	}
-}
-
-// TestMaybeSummarize_ThresholdReached verifies that when the session history
-// exceeds SummarizeMessageThreshold, maybeSummarize starts a background
-// goroutine and the summarizing sync.Map briefly contains the key.
-func TestMaybeSummarize_ThresholdReached(t *testing.T) {
-	al, _, _, _, cleanup := newTestAgentLoop(t)
-	defer cleanup()
-
-	agent := al.registry.GetDefaultAgent()
-	if agent == nil {
-		t.Fatal("no default agent")
-	}
-
-	// Use a low threshold (1 message) to guarantee it triggers.
-	agent.SummarizeMessageThreshold = 1
-	agent.SummarizeTokenPercent = 100
-
-	// Build a history with enough messages to exceed the threshold.
-	const sessionKey = "do-summarize"
-	for i := 0; i < 10; i++ {
-		agent.Sessions.AddMessage(sessionKey, "user", "message")
-		agent.Sessions.AddMessage(sessionKey, "assistant", "response")
-	}
-
-	summarizeKey := agent.ID + ":" + sessionKey
-
-	al.maybeSummarize(agent, sessionKey, "cli", "direct")
-
-	// The goroutine should have stored the key by now or will very shortly.
-	found := false
-	deadline := time.Now().Add(500 * time.Millisecond)
-	for time.Now().Before(deadline) {
-		if _, ok := al.summarizing.Load(summarizeKey); ok {
-			found = true
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-
-	if !found {
-		// The goroutine may have already completed and deleted the key — that is
-		// also valid behaviour. Check the session summary was written instead.
-		summary := agent.Sessions.GetSummary(sessionKey)
-		if summary == "" {
-			t.Log("summarizing key was not observed and no summary was written; goroutine may have run too fast")
-		}
-		// Either the key was observed or the summary was written — both indicate
-		// the summarization path was entered. We accept both.
-	}
-}
-
 // TestProcessSystemMessage_InternalChannel verifies that processSystemMessage
 // returns empty string and nil error for internal-channel system messages
 // (e.g. when the origin channel in ChatID is "cli" or "subagent").
@@ -2049,159 +1996,14 @@ func TestRunLLMIteration_ContextWindowError_Retry(t *testing.T) {
 		SendResponse: false,
 	}
 
-	content, _, _, _, err := al.runLLMIteration(context.Background(), agent, messages, opts)
+	cm, releaseTestCM := al.getContextManager(agent, opts.SessionKey)
+	defer releaseTestCM()
+	content, _, _, _, err := al.runLLMIteration(context.Background(), agent, messages, opts, cm)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if content != successContent {
 		t.Errorf("expected %q, got %q", successContent, content)
-	}
-}
-
-// TestRetryLLMCall_SucceedsOnFirstAttempt verifies retryLLMCall returns the
-// first non-empty successful response.
-func TestRetryLLMCall_SucceedsOnFirstAttempt(t *testing.T) {
-	al, _, _, _, cleanup := newTestAgentLoop(t)
-	defer cleanup()
-
-	agent := al.registry.GetDefaultAgent()
-	if agent == nil {
-		t.Fatal("no default agent")
-	}
-
-	const expected = "summarized content"
-	agent.Provider = &simpleMockProvider{response: expected}
-
-	resp, err := al.retryLLMCall(context.Background(), agent, "summarize this", 3)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if resp == nil || resp.Content != expected {
-		t.Errorf("expected %q, got %v", expected, resp)
-	}
-}
-
-// TestRetryLLMCall_RetriesOnEmpty verifies retryLLMCall retries when the
-// provider returns an empty response.
-func TestRetryLLMCall_RetriesOnEmpty(t *testing.T) {
-	al, _, _, _, cleanup := newTestAgentLoop(t)
-	defer cleanup()
-
-	agent := al.registry.GetDefaultAgent()
-	if agent == nil {
-		t.Fatal("no default agent")
-	}
-
-	// First call empty, second call has content.
-	agent.Provider = &sequenceProvider{
-		responses: []*providers.LLMResponse{
-			{Content: ""},
-			{Content: "retry success"},
-		},
-		errors: []error{nil, nil},
-	}
-
-	resp, err := al.retryLLMCall(context.Background(), agent, "prompt", 3)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if resp == nil || resp.Content != "retry success" {
-		t.Errorf("expected 'retry success', got %v", resp)
-	}
-}
-
-// TestSummarizeBatch_WithProvider verifies summarizeBatch returns the LLM response.
-func TestSummarizeBatch_WithProvider(t *testing.T) {
-	al, _, _, _, cleanup := newTestAgentLoop(t)
-	defer cleanup()
-
-	agent := al.registry.GetDefaultAgent()
-	if agent == nil {
-		t.Fatal("no default agent")
-	}
-
-	const summaryContent = "this is the summary"
-	agent.Provider = &simpleMockProvider{response: summaryContent}
-
-	batch := []providers.Message{
-		{Role: "user", Content: "hello"},
-		{Role: "assistant", Content: "hi there"},
-	}
-
-	result, err := al.summarizeBatch(context.Background(), agent, batch, "")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result != summaryContent {
-		t.Errorf("expected %q, got %q", summaryContent, result)
-	}
-}
-
-// TestSummarizeBatch_FallbackOnEmptyResponse verifies summarizeBatch falls back
-// to a concatenated summary when the provider returns empty content.
-func TestSummarizeBatch_FallbackOnEmptyResponse(t *testing.T) {
-	al, _, _, _, cleanup := newTestAgentLoop(t)
-	defer cleanup()
-
-	agent := al.registry.GetDefaultAgent()
-	if agent == nil {
-		t.Fatal("no default agent")
-	}
-
-	// Provider always returns empty content — triggers fallback.
-	agent.Provider = &simpleMockProvider{response: ""}
-
-	batch := []providers.Message{
-		{Role: "user", Content: "first message"},
-		{Role: "assistant", Content: "first reply"},
-	}
-
-	result, err := al.summarizeBatch(context.Background(), agent, batch, "")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result == "" {
-		t.Error("expected non-empty fallback summary")
-	}
-	if !strings.Contains(result, "Conversation summary:") {
-		t.Errorf("expected fallback to contain 'Conversation summary:', got %q", result)
-	}
-}
-
-// TestFindNearestUserMessage_ExactMid verifies that findNearestUserMessage
-// returns mid when messages[mid] is already a user message.
-func TestFindNearestUserMessage_ExactMid(t *testing.T) {
-	al, _, _, _, cleanup := newTestAgentLoop(t)
-	defer cleanup()
-
-	messages := []providers.Message{
-		{Role: "assistant", Content: "a"},
-		{Role: "user", Content: "u"},
-		{Role: "assistant", Content: "a2"},
-	}
-
-	got := al.findNearestUserMessage(messages, 1)
-	if got != 1 {
-		t.Errorf("expected index 1, got %d", got)
-	}
-}
-
-// TestFindNearestUserMessage_SearchBackward verifies that when messages[mid]
-// is not a user message, the function searches backward to find one.
-func TestFindNearestUserMessage_SearchBackward(t *testing.T) {
-	al, _, _, _, cleanup := newTestAgentLoop(t)
-	defer cleanup()
-
-	messages := []providers.Message{
-		{Role: "user", Content: "u1"},
-		{Role: "assistant", Content: "a1"},
-		{Role: "assistant", Content: "a2"}, // mid=2, not user
-	}
-
-	got := al.findNearestUserMessage(messages, 2)
-	// Should walk back to index 0 (the user message).
-	if messages[got].Role != "user" {
-		t.Errorf("expected user role at returned index %d, got %q", got, messages[got].Role)
 	}
 }
 
@@ -2369,95 +2171,6 @@ func TestProcessDirect_ReturnsResponse(t *testing.T) {
 	}
 	if got != "direct response" {
 		t.Errorf("expected 'direct response', got %q", got)
-	}
-}
-
-// TestSummarizeSession_ShortHistory verifies summarizeSession exits early when
-// history is too short (≤ 4 messages).
-func TestSummarizeSession_ShortHistory(t *testing.T) {
-	al, _, _, _, cleanup := newTestAgentLoop(t)
-	defer cleanup()
-
-	agent := al.registry.GetDefaultAgent()
-	if agent == nil {
-		t.Fatal("no default agent")
-	}
-	agent.Provider = &simpleMockProvider{response: "should not be called"}
-
-	const sessionKey = "short-history"
-	agent.Sessions.AddMessage(sessionKey, "user", "hi")
-	agent.Sessions.AddMessage(sessionKey, "assistant", "hello")
-
-	// summarizeSession returns early — no panic, summary stays empty.
-	al.summarizeSession(agent, sessionKey)
-
-	if got := agent.Sessions.GetSummary(sessionKey); got != "" {
-		t.Errorf("expected empty summary for short history, got %q", got)
-	}
-}
-
-// TestSummarizeSession_LongHistory verifies that summarizeSession writes a
-// summary to the session store when history is long enough.
-func TestSummarizeSession_LongHistory(t *testing.T) {
-	al, _, _, _, cleanup := newTestAgentLoop(t)
-	defer cleanup()
-
-	agent := al.registry.GetDefaultAgent()
-	if agent == nil {
-		t.Fatal("no default agent")
-	}
-	agent.Provider = &simpleMockProvider{response: "this is the summary"}
-	agent.ContextWindow = 10000
-
-	const sessionKey = "long-history"
-	for i := 0; i < 10; i++ {
-		agent.Sessions.AddMessage(sessionKey, "user", "user message content here")
-		agent.Sessions.AddMessage(sessionKey, "assistant", "assistant response here")
-	}
-
-	al.summarizeSession(agent, sessionKey)
-
-	summary := agent.Sessions.GetSummary(sessionKey)
-	if summary == "" {
-		t.Error("expected summary to be written after summarizeSession with long history")
-	}
-}
-
-// TestFindNearestUserMessage_SearchForward verifies that when no user message
-// is found to the left of mid, the function searches forward.
-func TestFindNearestUserMessage_SearchForward(t *testing.T) {
-	al, _, _, _, cleanup := newTestAgentLoop(t)
-	defer cleanup()
-
-	// All messages before mid are assistant; user message only appears after.
-	messages := []providers.Message{
-		{Role: "assistant", Content: "a0"},
-		{Role: "assistant", Content: "a1"}, // mid=1
-		{Role: "user", Content: "u0"},
-	}
-
-	got := al.findNearestUserMessage(messages, 1)
-	if messages[got].Role != "user" {
-		t.Errorf("expected user role, got %q at index %d", messages[got].Role, got)
-	}
-}
-
-// TestFindNearestUserMessage_NoUserMessage verifies fallback to originalMid
-// when no user message exists at all.
-func TestFindNearestUserMessage_NoUserMessage(t *testing.T) {
-	al, _, _, _, cleanup := newTestAgentLoop(t)
-	defer cleanup()
-
-	messages := []providers.Message{
-		{Role: "assistant", Content: "a0"},
-		{Role: "assistant", Content: "a1"},
-		{Role: "assistant", Content: "a2"},
-	}
-
-	const mid = 1
-	got := al.findNearestUserMessage(messages, mid)
-	if got != mid {
-		t.Errorf("expected originalMid=%d as fallback, got %d", mid, got)
 	}
 }
 

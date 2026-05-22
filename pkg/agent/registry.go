@@ -12,9 +12,10 @@ import (
 
 // AgentRegistry manages multiple agent instances and routes messages to them.
 type AgentRegistry struct {
-	agents   map[string]*AgentInstance
-	resolver *routing.RouteResolver
-	mu       sync.RWMutex
+	agents         map[string]*AgentInstance
+	defaultAgentID string // normalized ID of the agent marked Default:true (or first enabled)
+	resolver       *routing.RouteResolver
+	mu             sync.RWMutex
 }
 
 // NewAgentRegistry creates a registry from config, instantiating all agents.
@@ -27,6 +28,7 @@ func NewAgentRegistry(
 		resolver: routing.NewRouteResolver(cfg),
 	}
 
+	hasExplicitDefault := false
 	for i := range cfg.Agents.List {
 		ac := &cfg.Agents.List[i]
 		if !ac.IsEnabled() {
@@ -43,6 +45,14 @@ func NewAgentRegistry(
 				"workspace": instance.Workspace,
 				"model":     instance.Model,
 			})
+		// First enabled agent is the fallback; first Default:true agent wins.
+		if registry.defaultAgentID == "" {
+			registry.defaultAgentID = id
+		}
+		if ac.Default && !hasExplicitDefault {
+			registry.defaultAgentID = id
+			hasExplicitDefault = true
+		}
 	}
 
 	return registry
@@ -119,15 +129,16 @@ func (r *AgentRegistry) Close() {
 	}
 }
 
-// GetDefaultAgent returns the default agent instance.
+// GetDefaultAgent returns the agent marked Default:true in config, or the
+// first enabled agent if none is explicitly marked. Never uses map iteration
+// order, which is non-deterministic in Go.
 func (r *AgentRegistry) GetDefaultAgent() *AgentInstance {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	if agent, ok := r.agents["main"]; ok {
-		return agent
-	}
-	for _, agent := range r.agents {
-		return agent
+	if r.defaultAgentID != "" {
+		if agent, ok := r.agents[r.defaultAgentID]; ok {
+			return agent
+		}
 	}
 	return nil
 }

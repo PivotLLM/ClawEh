@@ -7,11 +7,11 @@
 // alternative to having the CLI emit tool-call JSON in its prose (which
 // created infinite outer loops, since CLIs are themselves agentic).
 //
-// Tool calls carry an `agent_token` parameter (snake_case) which the
-// server resolves against the agent-token manager to root path resolution
-// at the calling agent's own workspace. There is no fallback to a shared
-// root: if the token is missing, malformed, unknown, or the sub-agent
-// sentinel, the call fails closed with a clear error.
+// Every tool call must carry a `session_token` parameter (SST<64hex>) which
+// the server resolves to an (agentID, sessionKey) pair. This single token
+// is the sole auth mechanism for all mcp__claw__* calls: it identifies both
+// the calling agent and the active session. If the token is missing,
+// malformed, unknown, or the sub-agent sentinel, the call fails closed.
 package mcpserver
 
 import (
@@ -48,9 +48,10 @@ type MCPServer struct {
 	listen          string
 	endpointPath    string
 
-	tokens     *agenttoken.Manager
-	workspaces map[string]string // agentID → workspace (for boot/first-call logging)
-	policy     acl.Policy        // per-agent tools/call ACL; defaults to acl.Default
+	tokens        *agenttoken.Manager
+	sessionTokens *sessionTokenStore // SST-prefixed per-session tokens for session-scoped tools
+	workspaces    map[string]string  // agentID → workspace (for boot/first-call logging)
+	policy        acl.Policy         // per-agent tools/call ACL; defaults to acl.Default
 
 	httpServer *http.Server
 	streamable *server.StreamableHTTPServer
@@ -145,8 +146,9 @@ func WithACLPolicy(p acl.Policy) Option {
 // source for tools/list (union of all of them, deduped by name).
 func New(opts ...Option) (*MCPServer, error) {
 	m := &MCPServer{
-		listen:       DefaultListen,
-		endpointPath: DefaultEndpointPath,
+		listen:        DefaultListen,
+		endpointPath:  DefaultEndpointPath,
+		sessionTokens: newSessionTokenStore(),
 	}
 	for _, opt := range opts {
 		opt(m)
@@ -185,7 +187,7 @@ func New(opts ...Option) (*MCPServer, error) {
 		server.WithToolCapabilities(false),
 		server.WithRecovery(),
 	)
-	addToolsToServer(mcpSrv, m.agentRegistries, m.allowPatterns, m.tokens, resolver, tracker, m.policy)
+	addToolsToServer(mcpSrv, m.agentRegistries, m.allowPatterns, m.sessionTokens, resolver, tracker, m.policy)
 
 	httpSrv := server.NewStreamableHTTPServer(mcpSrv,
 		server.WithEndpointPath(m.endpointPath),
@@ -206,6 +208,11 @@ func (m *MCPServer) Listen() string { return m.listen }
 
 // EndpointPath returns the configured endpoint path.
 func (m *MCPServer) EndpointPath() string { return m.endpointPath }
+
+// SessionTokens returns the session token store. Callers (e.g. the AgentLoop)
+// use it to issue tokens when a new session context manager is created and to
+// revoke tokens on session clear or eviction.
+func (m *MCPServer) SessionTokens() *sessionTokenStore { return m.sessionTokens }
 
 // Start begins serving in a background goroutine. It returns after the
 // listener is bound (binding failures are returned immediately), so callers

@@ -421,7 +421,7 @@ function AgentCard({
               className={`size-3.5 text-muted-foreground opacity-60 transition-transform duration-200 ${toolsExpanded ? "rotate-90" : ""}`}
             />
             <span className={`text-xs font-medium ${tools.length === 0 ? "text-amber-400" : "text-muted-foreground"}`}>
-              Tools ({tools.length === 0 ? "none — no tool access" : tools.includes("*") ? "all" : `${tools.length} granted`})
+              Tools ({tools.length === 0 ? "none — no tool access" : `${tools.includes("*") ? "all" : tools.length} granted`})
             </span>
           </button>
           {toolsExpanded && (
@@ -505,7 +505,7 @@ export function AgentsPage() {
   const [fetchError, setFetchError] = useState("")
   const [models, setModels] = useState<ModelInfo[]>([])
   const [availableSkills, setAvailableSkills] = useState<SkillInfo[]>([])
-  const [availableTools, setAvailableTools] = useState<AgentToolCatalogResponse>({ tools: [] })
+  const [availableTools, setAvailableTools] = useState<AgentToolCatalogResponse>({ tools: [], default_tools: [] })
   const [agentsCfg, setAgentsCfg] = useState<AgentsConfig>({
     defaults: {},
     list: [],
@@ -741,7 +741,10 @@ export function AgentsPage() {
         <Button
           size="sm"
           variant="outline"
-          onClick={() => setShowAdd(true)}
+          onClick={() => {
+            setAddingTools([...availableTools.default_tools])
+            setShowAdd(true)
+          }}
           disabled={showAdd}
         >
           <IconPlus className="size-4" />
@@ -797,7 +800,7 @@ export function AgentsPage() {
                 skills={[]}
                 tools={[]}
                 availableSkills={[]}
-                availableTools={{ tools: [] }}
+                availableTools={{ tools: [], default_tools: [] }}
                 models={models}
                 temperature={defaultTemperatureEdit}
                 onModelChange={setDefaultModelEdit}
@@ -945,7 +948,7 @@ export function AgentsPage() {
                             className={`size-3.5 text-muted-foreground opacity-60 transition-transform duration-200 ${addingToolsExpanded ? "rotate-90" : ""}`}
                           />
                           <span className={`text-xs font-medium ${addingTools.length === 0 ? "text-amber-400" : "text-muted-foreground"}`}>
-                            Tools ({addingTools.length === 0 ? "none — no tool access" : addingTools.includes("*") ? "all" : `${addingTools.length} granted`})
+                            Tools ({addingTools.length === 0 ? "none — no tool access" : `${addingTools.includes("*") ? "all" : addingTools.length} granted`})
                           </span>
                         </button>
                         {addingToolsExpanded && (

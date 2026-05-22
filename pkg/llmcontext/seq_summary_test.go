@@ -1,0 +1,281 @@
+// ClawEh
+// License: MIT
+
+package llmcontext
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"strings"
+	"testing"
+
+	"github.com/PivotLLM/ClawEh/pkg/memory"
+	"github.com/PivotLLM/ClawEh/pkg/providers"
+)
+
+// seqTrackingLLM captures the messages sent to the LLM for inspection.
+type seqTrackingLLM struct {
+	capturedMessages []providers.Message
+	response         string
+	err              error
+}
+
+func (l *seqTrackingLLM) Complete(_ context.Context, messages []providers.Message) (providers.Message, error) {
+	l.capturedMessages = messages
+	if l.err != nil {
+		return providers.Message{}, l.err
+	}
+	return providers.Message{Role: "assistant", Content: l.response}, nil
+}
+
+// seqStore is a SessionStore that returns StoredMessages with explicit seq numbers.
+type seqStore struct {
+	stored  []memory.StoredMessage
+	summary string
+}
+
+func newSeqStore(msgs []memory.StoredMessage) *seqStore {
+	return &seqStore{stored: msgs}
+}
+
+func (s *seqStore) GetHistory(_ string) []providers.Message {
+	msgs := make([]providers.Message, len(s.stored))
+	for i, sm := range s.stored {
+		msgs[i] = sm.Message
+	}
+	return msgs
+}
+
+func (s *seqStore) GetHistoryWithSeqs(_ string) []memory.StoredMessage {
+	cp := make([]memory.StoredMessage, len(s.stored))
+	copy(cp, s.stored)
+	return cp
+}
+
+func (s *seqStore) GetSummary(_ string) string        { return s.summary }
+func (s *seqStore) SetSummary(_, v string)            { s.summary = v }
+func (s *seqStore) SetHistory(_ string, h []providers.Message) {
+	stored := make([]memory.StoredMessage, len(h))
+	for i, msg := range h {
+		stored[i] = memory.StoredMessage{Seq: i + 1, Message: msg}
+	}
+	s.stored = stored
+}
+func (s *seqStore) Save(_ string) error                          { return nil }
+func (s *seqStore) AddMessage(_, _, _ string)                    {}
+func (s *seqStore) AddFullMessage(_ string, _ providers.Message) {}
+func (s *seqStore) TruncateHistory(_ string, _ int)              {}
+func (s *seqStore) SetPendingTurn(_ string) error                { return nil }
+func (s *seqStore) ClearPendingTurn(_ string) error              { return nil }
+func (s *seqStore) GetArchiveBounds(_ string) (int, int)         { return 0, 0 }
+func (s *seqStore) ListPendingSessions() ([]string, error)       { return nil, nil }
+func (s *seqStore) Close() error                                 { return nil }
+
+// buildSeqSummaryJSON builds a valid summary JSON with the given coverage fields.
+func buildSeqSummaryJSON(goals string, coveredStart, coveredEnd int) string {
+	return fmt.Sprintf(
+		`{"version":1,"state":{"goals":%q},"covered_seq_start":%d,"covered_seq_end":%d}`,
+		goals, coveredStart, coveredEnd,
+	)
+}
+
+// TestSeqAware_CoveredRangeSetFromActualSeqs verifies that after compression,
+// CoveredSeqStart and CoveredSeqEnd in the stored summary reflect the actual
+// seq numbers of the messages passed to the LLM, not any values the LLM emitted.
+func TestSeqAware_CoveredRangeSetFromActualSeqs(t *testing.T) {
+	// Create 10 stored messages with seq numbers 11–20 (simulating a session
+	// that has been truncated; the first 10 were skipped).
+	const startSeq = 11
+	stored := make([]memory.StoredMessage, 10)
+	for i := range stored {
+		stored[i] = memory.StoredMessage{
+			Seq:     startSeq + i,
+			Message: providers.Message{Role: "user", Content: strings.Repeat("a", 200)},
+		}
+	}
+	if len(stored)%2 != 0 {
+		stored = append(stored, memory.StoredMessage{
+			Seq:     startSeq + len(stored),
+			Message: providers.Message{Role: "assistant", Content: strings.Repeat("b", 200)},
+		})
+	}
+
+	store := newSeqStore(stored)
+
+	// The LLM emits a summary that claims to cover seq 1–5 (wrong — the actual
+	// range is 11–18 for the summarized portion). callLLMChain must override these
+	// with the actual min/max seq from the passed slice.
+	fakeSummary := buildSeqSummaryJSON("fake goal", 1, 5)
+	llm := &seqTrackingLLM{response: fakeSummary}
+
+	mgr := New("sess", store, nil, nil,
+		WithContextWindow(2000),
+		WithNormalPercent(50),
+		WithSafetyPercent(80),
+		WithRetainTokenPercent(20),
+		WithRetainMinMessages(2),
+		WithCompressLLM(llm),
+	).(*Manager)
+	mgr.msgCount = len(stored)
+
+	err := mgr.doCompress(context.Background(), false)
+	if err != nil {
+		t.Fatalf("doCompress returned error: %v", err)
+	}
+
+	if store.summary == "" {
+		t.Fatal("expected summary to be stored")
+	}
+
+	var s Summary
+	if err := json.Unmarshal([]byte(store.summary), &s); err != nil {
+		t.Fatalf("stored summary is not valid JSON: %v", err)
+	}
+
+	// CoveredSeqStart must match the actual min seq of the summarized slice.
+	if s.CoveredSeqStart < startSeq {
+		t.Errorf("CoveredSeqStart %d is less than the minimum actual seq %d",
+			s.CoveredSeqStart, startSeq)
+	}
+	// CoveredSeqEnd must match the actual max seq of the summarized portion
+	// (at most maxSeq of the slice, not the LLM-emitted 5).
+	if s.CoveredSeqEnd < s.CoveredSeqStart {
+		t.Errorf("CoveredSeqEnd %d < CoveredSeqStart %d", s.CoveredSeqEnd, s.CoveredSeqStart)
+	}
+	// CoveredSeqEnd must not be the LLM-fabricated value of 5.
+	if s.CoveredSeqEnd == 5 {
+		t.Error("CoveredSeqEnd appears to be the LLM-emitted value (5), not the actual max seq")
+	}
+}
+
+// TestSeqAware_PromptContainsSeqPrefixes verifies that messages sent to the
+// summarizer LLM include [#N] prefixes with the actual stored sequence numbers.
+func TestSeqAware_PromptContainsSeqPrefixes(t *testing.T) {
+	stored := []memory.StoredMessage{
+		{Seq: 42, Message: providers.Message{Role: "user", Content: strings.Repeat("x", 500)}},
+		{Seq: 43, Message: providers.Message{Role: "assistant", Content: strings.Repeat("y", 500)}},
+		{Seq: 44, Message: providers.Message{Role: "user", Content: strings.Repeat("z", 500)}},
+		{Seq: 45, Message: providers.Message{Role: "assistant", Content: strings.Repeat("w", 500)}},
+	}
+
+	store := newSeqStore(stored)
+	llm := &seqTrackingLLM{
+		response: buildSeqSummaryJSON("prompt test", 42, 44),
+	}
+
+	mgr := New("sess", store, nil, nil,
+		WithContextWindow(1000),
+		WithNormalPercent(50),
+		WithSafetyPercent(80),
+		WithRetainTokenPercent(20),
+		WithRetainMinMessages(2),
+		WithCompressLLM(llm),
+	).(*Manager)
+	mgr.msgCount = len(stored)
+
+	if err := mgr.doCompress(context.Background(), false); err != nil {
+		t.Fatalf("doCompress returned error: %v", err)
+	}
+
+	if len(llm.capturedMessages) == 0 {
+		t.Fatal("no messages captured by LLM — compression may not have fired")
+	}
+
+	// The user message sent to the LLM contains the formatted conversation.
+	// At least one message must contain a [#N] prefix.
+	found := false
+	for _, msg := range llm.capturedMessages {
+		if strings.Contains(msg.Content, "[#42]") || strings.Contains(msg.Content, "[#43]") ||
+			strings.Contains(msg.Content, "[#44]") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected LLM prompt to contain [#N] seq prefixes; prompt: %q",
+			llm.capturedMessages[0].Content[:min(200, len(llm.capturedMessages[0].Content))])
+	}
+}
+
+// TestSeqAware_OutOfRangeRetrievableHistoryStripped verifies that
+// retrievable_history entries whose seq references fall outside the valid range
+// are stripped from the summary before it is accepted.
+func TestSeqAware_OutOfRangeRetrievableHistoryStripped(t *testing.T) {
+	// Summary emitted by the LLM with three message_index entries:
+	//   - seq 10–12: within range (covered is 10–20, archive max is 20)
+	//   - seq 5–7: below coveredStart (10) → out of range
+	//   - seq 25–27: above archiveMax (20) → out of range
+	summaryWithBadEntries := `{
+		"version": 1,
+		"state": {"goals": "test"},
+		"key_moments": [
+			{"seq": 10, "role": "user", "summary": "valid moment"},
+			{"seq": 3,  "role": "user", "summary": "too old"},
+			{"seq": 25, "role": "user", "summary": "future seq"}
+		],
+		"message_index": [
+			{"seq_start": 10, "seq_end": 12, "role": "user", "label": "valid entry"},
+			{"seq_start": 5,  "seq_end": 7,  "role": "user", "label": "before covered start"},
+			{"seq_start": 25, "seq_end": 27, "role": "user", "label": "beyond archive max"}
+		],
+		"covered_seq_start": 10,
+		"covered_seq_end": 20
+	}`
+
+	s, err := validateAndUnmarshalLLMResponse(summaryWithBadEntries)
+	if err != nil {
+		t.Fatalf("validateAndUnmarshalLLMResponse failed: %v", err)
+	}
+
+	// Apply the validation with archiveMax = 20.
+	s.StripOutOfRangeSeqRefs(10, 20)
+
+	// Only the entry with seq 10–12 should survive in MessageIndex.
+	if len(s.MessageIndex) != 1 {
+		t.Errorf("expected 1 message_index entry after stripping; got %d", len(s.MessageIndex))
+	} else if s.MessageIndex[0].SeqStart != 10 {
+		t.Errorf("expected surviving entry SeqStart=10; got %d", s.MessageIndex[0].SeqStart)
+	}
+
+	// Only the key_moment with seq 10 should survive.
+	if len(s.KeyMoments) != 1 {
+		t.Errorf("expected 1 key_moment after stripping; got %d", len(s.KeyMoments))
+	} else if s.KeyMoments[0].Seq != 10 {
+		t.Errorf("expected surviving key_moment Seq=10; got %d", s.KeyMoments[0].Seq)
+	}
+}
+
+// TestSeqAware_AllKeyMomentsInRangeKept verifies that valid key_moments (within
+// range) are not stripped.
+func TestSeqAware_AllKeyMomentsInRangeKept(t *testing.T) {
+	s := &Summary{
+		Version: summaryVersion,
+		KeyMoments: []KeyMoment{
+			{Seq: 5, Role: "user", Summary: "moment at 5"},
+			{Seq: 10, Role: "assistant", Summary: "moment at 10"},
+			{Seq: 15, Role: "user", Summary: "moment at 15"},
+		},
+		MessageIndex: []IndexEntry{
+			{SeqStart: 5, SeqEnd: 8, Role: "user", Label: "block A"},
+		},
+		CoveredSeqStart: 5,
+		CoveredSeqEnd:   15,
+	}
+
+	s.StripOutOfRangeSeqRefs(5, 20)
+
+	if len(s.KeyMoments) != 3 {
+		t.Errorf("expected all 3 key_moments to be kept; got %d", len(s.KeyMoments))
+	}
+	if len(s.MessageIndex) != 1 {
+		t.Errorf("expected 1 message_index entry to be kept; got %d", len(s.MessageIndex))
+	}
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}

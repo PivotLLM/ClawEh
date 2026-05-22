@@ -30,13 +30,13 @@ func TestDispatch_SuccessEmitsAuthorizedInfoPerCall(t *testing.T) {
 
 	rf := &mockTool{name: "read_file", params: map[string]any{}, result: tools.NewToolResult("ok")}
 	regs := map[string]*tools.ToolRegistry{"alice": newRegistryWith(rf)}
-	tm := agenttoken.NewManager()
-	tok := tm.Issue("alice")
+	st := newSessionTokenStore()
+	tok := st.Issue("alice", "test:alice:main", "/tmp/archive/alice")
 	tracker := newFirstCallTracker(map[string]string{"alice": "/ws/alice"})
 
 	for i := 0; i < 2; i++ {
 		out, isErr := dispatchToolCall(context.Background(), "read_file",
-			map[string]any{"agent_token": tok, "path": "x"}, tm, resolverFor(regs), tracker, nil)
+			map[string]any{"session_token": tok, "path": "x"}, st, resolverFor(regs), tracker, nil)
 		if isErr {
 			t.Fatalf("call %d unexpected error: %s", i, out)
 		}
@@ -69,11 +69,11 @@ func TestDispatch_SubagentSentinelEmitsWarn(t *testing.T) {
 	buf, restore := captureLogs(t)
 	defer restore()
 
-	tm := agenttoken.NewManager()
-	tm.Issue("alice")
+	st := newSessionTokenStore()
+	st.Issue("alice", "test:alice:main", "/tmp/archive/alice")
 
 	out, isErr := dispatchToolCall(context.Background(), "read_file",
-		map[string]any{"agent_token": agenttoken.SubagentSentinel}, tm, resolverFor(nil), nil, nil)
+		map[string]any{"session_token": agenttoken.SubagentSentinel}, st, resolverFor(nil), nil, nil)
 	if !isErr {
 		t.Fatalf("expected rejection, got: %s", out)
 	}
@@ -97,8 +97,8 @@ func TestDispatch_InvalidTokenEmitsWarn(t *testing.T) {
 	buf, restore := captureLogs(t)
 	defer restore()
 
-	tm := agenttoken.NewManager()
-	realTok := tm.Issue("alice")
+	st := newSessionTokenStore()
+	realTok := st.Issue("alice", "test:alice:main", "/tmp/archive/alice")
 
 	cases := []struct {
 		name string
@@ -106,14 +106,14 @@ func TestDispatch_InvalidTokenEmitsWarn(t *testing.T) {
 	}{
 		{"empty", ""},
 		{"malformed", "not-a-token"},
-		{"unknown", agenttoken.Prefix + strings.Repeat("a", 64)},
+		{"unknown", sessionTokenPrefix + strings.Repeat("a", 64)},
 	}
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			buf.Reset()
 			out, isErr := dispatchToolCall(context.Background(), "read_file",
-				map[string]any{"agent_token": c.tok}, tm, resolverFor(nil), nil, nil)
+				map[string]any{"session_token": c.tok}, st, resolverFor(nil), nil, nil)
 			if !isErr {
 				t.Fatalf("expected rejection, got: %s", out)
 			}
@@ -148,11 +148,10 @@ func TestDispatch_NoRegistryEmitsWarn(t *testing.T) {
 	buf, restore := captureLogs(t)
 	defer restore()
 
-	tm := agenttoken.NewManager()
-	tok := tm.Issue("alice")
+	st, tok := seedSessionToken("alice")
 	// resolverFor(nil) returns ok=false for every name -> no_registry path.
 	out, isErr := dispatchToolCall(context.Background(), "read_file",
-		map[string]any{"agent_token": tok}, tm, resolverFor(nil), nil, nil)
+		map[string]any{"session_token": tok}, st, resolverFor(nil), nil, nil)
 	if !isErr {
 		t.Fatalf("expected rejection, got: %s", out)
 	}

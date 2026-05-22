@@ -82,14 +82,26 @@ type ContentBlock struct {
 	CacheControl *CacheControl `json:"cache_control,omitempty"`
 }
 
+// MessageAttachment describes a file attached to a message.
+// Stored in the archive alongside the message; NOT sent to the LLM.
+type MessageAttachment struct {
+	Filename  string `json:"filename"`
+	SHA256    string `json:"sha256,omitempty"`
+	Size      int64  `json:"size"`
+	LocalPath string `json:"local_path,omitempty"`
+}
+
 type Message struct {
-	Role             string         `json:"role"`
-	Content          string         `json:"content"`
-	Media            []string       `json:"media,omitempty"`
-	ReasoningContent string         `json:"reasoning_content,omitempty"`
-	SystemParts      []ContentBlock `json:"system_parts,omitempty"` // structured system blocks for cache-aware adapters
-	ToolCalls        []ToolCall     `json:"tool_calls,omitempty"`
-	ToolCallID       string         `json:"tool_call_id,omitempty"`
+	Role             string              `json:"role"`
+	Content          string              `json:"content"`
+	Source           string              `json:"source,omitempty"`
+	Type             string              `json:"type,omitempty"`
+	Media            []string            `json:"media,omitempty"`
+	Attachments      []MessageAttachment `json:"attachments,omitempty"`
+	ReasoningContent string              `json:"reasoning_content,omitempty"`
+	SystemParts      []ContentBlock      `json:"system_parts,omitempty"` // structured system blocks for cache-aware adapters
+	ToolCalls        []ToolCall          `json:"tool_calls,omitempty"`
+	ToolCallID       string              `json:"tool_call_id,omitempty"`
 }
 
 type ToolDefinition struct {

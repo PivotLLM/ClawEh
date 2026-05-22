@@ -20,8 +20,9 @@ type agentMCPServer struct {
 }
 
 type agentToolCatalogResponse struct {
-	Tools      []agentToolEntry `json:"tools"`
-	MCPServers []agentMCPServer `json:"mcp_servers,omitempty"`
+	Tools        []agentToolEntry `json:"tools"`
+	MCPServers   []agentMCPServer `json:"mcp_servers,omitempty"`
+	DefaultTools []string         `json:"default_tools"`
 }
 
 func (h *Handler) registerAgentRoutes(mux *http.ServeMux) {
@@ -52,9 +53,17 @@ func (h *Handler) handleListAgentTools(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	effectiveDefaults := config.DefaultAgentTools
+	if cfg, cfgErr := config.LoadConfig(h.configPath); cfgErr == nil {
+		if len(cfg.Agents.Defaults.DefaultTools) > 0 {
+			effectiveDefaults = cfg.Agents.Defaults.DefaultTools
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(agentToolCatalogResponse{
-		Tools:      builtinTools,
-		MCPServers: mcpServers,
+		Tools:        builtinTools,
+		MCPServers:   mcpServers,
+		DefaultTools: effectiveDefaults,
 	})
 }

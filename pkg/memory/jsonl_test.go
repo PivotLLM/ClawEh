@@ -833,3 +833,256 @@ func BenchmarkGetHistory_1000(b *testing.B) {
 		_, _ = store.GetHistory(ctx, "bench")
 	}
 }
+
+// --- Phase 2 tests ---
+
+func TestStoredMessage_SeqAssignment(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	for i := 0; i < 5; i++ {
+		err := store.AddMessage(ctx, "seq", "user", "msg")
+		if err != nil {
+			t.Fatalf("AddMessage(%d): %v", i, err)
+		}
+	}
+
+	// Read raw StoredMessages from disk to verify seq numbers.
+	stored, err := readStoredMessages(store.jsonlPath("seq"), 0)
+	if err != nil {
+		t.Fatalf("readStoredMessages: %v", err)
+	}
+	if len(stored) != 5 {
+		t.Fatalf("expected 5 stored messages, got %d", len(stored))
+	}
+	for i, sm := range stored {
+		want := i + 1
+		if sm.Seq != want {
+			t.Errorf("stored[%d].Seq = %d, want %d", i, sm.Seq, want)
+		}
+	}
+
+	// After Compact, seq numbers should be preserved (not reset).
+	err = store.TruncateHistory(ctx, "seq", 3)
+	if err != nil {
+		t.Fatalf("TruncateHistory: %v", err)
+	}
+	err = store.Compact(ctx, "seq")
+	if err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+
+	stored, err = readStoredMessages(store.jsonlPath("seq"), 0)
+	if err != nil {
+		t.Fatalf("readStoredMessages after compact: %v", err)
+	}
+	if len(stored) != 3 {
+		t.Fatalf("after compact: expected 3, got %d", len(stored))
+	}
+	// seq numbers 3, 4, 5 should be preserved.
+	for i, sm := range stored {
+		want := i + 3
+		if sm.Seq != want {
+			t.Errorf("after compact stored[%d].Seq = %d, want %d", i, sm.Seq, want)
+		}
+	}
+
+	// AddMessage after compact should continue with seq=6.
+	err = store.AddMessage(ctx, "seq", "user", "after compact")
+	if err != nil {
+		t.Fatalf("AddMessage after compact: %v", err)
+	}
+	stored, err = readStoredMessages(store.jsonlPath("seq"), 0)
+	if err != nil {
+		t.Fatalf("readStoredMessages final: %v", err)
+	}
+	last := stored[len(stored)-1]
+	if last.Seq != 6 {
+		t.Errorf("last.Seq = %d, want 6", last.Seq)
+	}
+}
+
+func TestNoiseClassifier_CronNoise(t *testing.T) {
+	cache := newNoiseCache()
+
+	// First cron message with a given payload — not noise.
+	payload := "check disk space: 42% used"
+	content1 := cronWrapperPrefix + "2026-01-01T00:00:00Z:\n\n" + payload
+	msg1 := StoredMessage{Seq: 1, Message: providers.Message{Role: "user", Content: content1}}
+	if isNoise(msg1, cache) {
+		t.Error("first cron message should not be noise")
+	}
+	updateNoiseCache(msg1, cache)
+
+	// Same payload at a different timestamp — noise.
+	content2 := cronWrapperPrefix + "2026-01-01T01:00:00Z:\n\n" + payload
+	msg2 := StoredMessage{Seq: 2, Message: providers.Message{Role: "user", Content: content2}}
+	if !isNoise(msg2, cache) {
+		t.Error("duplicate cron payload should be noise")
+	}
+	updateNoiseCache(msg2, cache)
+
+	// Different payload — not noise.
+	content3 := cronWrapperPrefix + "2026-01-01T02:00:00Z:\n\n" + "check disk space: 80% used"
+	msg3 := StoredMessage{Seq: 3, Message: providers.Message{Role: "user", Content: content3}}
+	if isNoise(msg3, cache) {
+		t.Error("different cron payload should not be noise")
+	}
+}
+
+func TestNoiseClassifier_SameRole(t *testing.T) {
+	cache := newNoiseCache()
+
+	msg1 := StoredMessage{Seq: 1, Message: providers.Message{Role: "user", Content: "hello"}}
+	if isNoise(msg1, cache) {
+		t.Error("first message should not be noise")
+	}
+	updateNoiseCache(msg1, cache)
+
+	// Same role and content — noise.
+	msg2 := StoredMessage{Seq: 2, Message: providers.Message{Role: "user", Content: "hello"}}
+	if !isNoise(msg2, cache) {
+		t.Error("duplicate same-role content should be noise")
+	}
+}
+
+func TestNoiseClassifier_DifferentContent(t *testing.T) {
+	cache := newNoiseCache()
+
+	msg1 := StoredMessage{Seq: 1, Message: providers.Message{Role: "user", Content: "hello"}}
+	updateNoiseCache(msg1, cache)
+
+	msg2 := StoredMessage{Seq: 2, Message: providers.Message{Role: "user", Content: "world"}}
+	if isNoise(msg2, cache) {
+		t.Error("different content should not be noise")
+	}
+}
+
+func TestMeaningfulCount_IncrementedForNonNoise(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	// Write 3 distinct messages.
+	for i := 0; i < 3; i++ {
+		content := string(rune('a' + i))
+		err := store.AddMessage(ctx, "mc", "user", content)
+		if err != nil {
+			t.Fatalf("AddMessage(%d): %v", i, err)
+		}
+	}
+
+	// Write 2 duplicate messages (same role+content as the last one).
+	for i := 0; i < 2; i++ {
+		err := store.AddMessage(ctx, "mc", "user", "c")
+		if err != nil {
+			t.Fatalf("AddMessage(dup %d): %v", i, err)
+		}
+	}
+
+	meta, err := store.readMeta("mc")
+	if err != nil {
+		t.Fatalf("readMeta: %v", err)
+	}
+
+	if meta.Count != 5 {
+		t.Errorf("Count = %d, want 5", meta.Count)
+	}
+	// Only the 3 distinct messages should be meaningful.
+	if meta.MeaningfulCount != 3 {
+		t.Errorf("MeaningfulCount = %d, want 3", meta.MeaningfulCount)
+	}
+}
+
+// TestJSONLStore_NoArchiveJSONL verifies that JSONLStore no longer creates
+// .archive.jsonl files. Archive writes are now owned by ArchiveStore (SQLite).
+func TestJSONLStore_NoArchiveJSONL(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	err := store.AddMessage(ctx, "arch", "user", "hello")
+	if err != nil {
+		t.Fatalf("AddMessage: %v", err)
+	}
+
+	// The .archive.jsonl file must not be created.
+	archJSONL := filepath.Join(store.dir, "arch.archive.jsonl")
+	if _, err := os.Stat(archJSONL); !os.IsNotExist(err) {
+		t.Errorf(".archive.jsonl should not be created, got err=%v", err)
+	}
+}
+
+// TestTruncateHistory_ResetsTrackingFields verifies that a full reset (keepLast=0)
+// clears MeaningfulCount and CompressionCooling in meta.
+// Archive deletion is now handled by ContextManager.Reset() via ArchiveStore.Delete();
+// JSONLStore no longer manages the archive file.
+func TestTruncateHistory_ResetsTrackingFields(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	for i := 0; i < 5; i++ {
+		err := store.AddMessage(ctx, "ar", "user", "msg")
+		if err != nil {
+			t.Fatalf("AddMessage: %v", err)
+		}
+	}
+
+	err := store.TruncateHistory(ctx, "ar", 0)
+	if err != nil {
+		t.Fatalf("TruncateHistory: %v", err)
+	}
+
+	meta, err := store.readMeta("ar")
+	if err != nil {
+		t.Fatalf("readMeta: %v", err)
+	}
+	if meta.MeaningfulCount != 0 {
+		t.Errorf("MeaningfulCount = %d, want 0", meta.MeaningfulCount)
+	}
+	if meta.CompressionCooling {
+		t.Error("CompressionCooling should be false after reset")
+	}
+}
+
+func TestExtractCronPayload(t *testing.T) {
+	tests := []struct {
+		name        string
+		content     string
+		wantPayload string
+		wantOk      bool
+	}{
+		{
+			name:        "valid cron message",
+			content:     cronWrapperPrefix + "2026-01-01T00:00:00Z:\n\ndo the thing",
+			wantPayload: "do the thing",
+			wantOk:      true,
+		},
+		{
+			name:    "not a cron message",
+			content: "just a regular message",
+			wantOk:  false,
+		},
+		{
+			name:    "cron prefix but no separator",
+			content: cronWrapperPrefix + "2026-01-01T00:00:00Z",
+			wantOk:  false,
+		},
+		{
+			name:        "cron with multiline payload",
+			content:     cronWrapperPrefix + "2026-01-01T00:00:00Z:\n\nline1\nline2\nline3",
+			wantPayload: "line1\nline2\nline3",
+			wantOk:      true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			payload, ok := extractCronPayload(tt.content)
+			if ok != tt.wantOk {
+				t.Errorf("ok = %v, want %v", ok, tt.wantOk)
+			}
+			if ok && payload != tt.wantPayload {
+				t.Errorf("payload = %q, want %q", payload, tt.wantPayload)
+			}
+		})
+	}
+}

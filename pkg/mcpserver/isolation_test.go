@@ -25,8 +25,8 @@ func resolverFor(m map[string]*tools.ToolRegistry) AgentResolver {
 }
 
 // TestDispatch_ValidTokenRoutesToAgentRegistry confirms that a call with
-// the correct agent_token executes against the matching agent's registry,
-// and that the agent_token is stripped from args before reaching the tool.
+// the correct session_token executes against the matching agent's registry,
+// and that the session_token is stripped from args before reaching the tool.
 func TestDispatch_ValidTokenRoutesToAgentRegistry(t *testing.T) {
 	aliceReadFile := &mockTool{name: "read_file", params: map[string]any{}, result: tools.NewToolResult("alice-content")}
 	bobReadFile := &mockTool{name: "read_file", params: map[string]any{}, result: tools.NewToolResult("bob-content")}
@@ -36,12 +36,12 @@ func TestDispatch_ValidTokenRoutesToAgentRegistry(t *testing.T) {
 		"bob":   newRegistryWith(bobReadFile),
 	}
 
-	tm := agenttoken.NewManager()
-	aliceTok := tm.Issue("alice")
-	bobTok := tm.Issue("bob")
+	st := newSessionTokenStore()
+	aliceTok := st.Issue("alice", "test:alice:main", "/tmp/archive/alice")
+	bobTok := st.Issue("bob", "test:bob:main", "/tmp/archive/bob")
 
 	out, isErr := dispatchToolCall(context.Background(), "read_file",
-		map[string]any{"agent_token": aliceTok, "path": "x"}, tm, resolverFor(regs), nil, nil)
+		map[string]any{"session_token": aliceTok, "path": "x"}, st, resolverFor(regs), nil, nil)
 	if isErr {
 		t.Fatalf("unexpected error: %s", out)
 	}
@@ -51,12 +51,12 @@ func TestDispatch_ValidTokenRoutesToAgentRegistry(t *testing.T) {
 	if aliceReadFile.calls != 1 || bobReadFile.calls != 0 {
 		t.Errorf("dispatch called wrong registry: alice=%d bob=%d", aliceReadFile.calls, bobReadFile.calls)
 	}
-	if _, present := aliceReadFile.gotArg["agent_token"]; present {
-		t.Error("agent_token leaked through to the tool's args")
+	if _, present := aliceReadFile.gotArg["session_token"]; present {
+		t.Error("session_token leaked through to the tool's args")
 	}
 
 	out, isErr = dispatchToolCall(context.Background(), "read_file",
-		map[string]any{"agent_token": bobTok, "path": "x"}, tm, resolverFor(regs), nil, nil)
+		map[string]any{"session_token": bobTok, "path": "x"}, st, resolverFor(regs), nil, nil)
 	if isErr {
 		t.Fatalf("unexpected error: %s", out)
 	}
@@ -69,10 +69,10 @@ func TestDispatch_ValidTokenRoutesToAgentRegistry(t *testing.T) {
 }
 
 func TestDispatch_EmptyTokenRejected(t *testing.T) {
-	tm := agenttoken.NewManager()
-	tm.Issue("alice")
+	st := newSessionTokenStore()
+	st.Issue("alice", "test:alice:main", "/tmp/archive/alice")
 	out, isErr := dispatchToolCall(context.Background(), "read_file",
-		map[string]any{}, tm, resolverFor(nil), nil, nil)
+		map[string]any{}, st, resolverFor(nil), nil, nil)
 	if !isErr {
 		t.Fatal("expected error for missing token")
 	}
@@ -82,11 +82,11 @@ func TestDispatch_EmptyTokenRejected(t *testing.T) {
 }
 
 func TestDispatch_UnknownTokenRejected(t *testing.T) {
-	tm := agenttoken.NewManager()
-	tm.Issue("alice")
-	bogus := agenttoken.Prefix + strings.Repeat("a", 64)
+	st := newSessionTokenStore()
+	st.Issue("alice", "test:alice:main", "/tmp/archive/alice")
+	bogus := sessionTokenPrefix + strings.Repeat("a", 64)
 	out, isErr := dispatchToolCall(context.Background(), "read_file",
-		map[string]any{"agent_token": bogus}, tm, resolverFor(nil), nil, nil)
+		map[string]any{"session_token": bogus}, st, resolverFor(nil), nil, nil)
 	if !isErr {
 		t.Fatal("expected error for unknown token")
 	}
@@ -96,17 +96,17 @@ func TestDispatch_UnknownTokenRejected(t *testing.T) {
 }
 
 func TestDispatch_MalformedTokenRejected(t *testing.T) {
-	tm := agenttoken.NewManager()
-	tm.Issue("alice")
+	st := newSessionTokenStore()
+	st.Issue("alice", "test:alice:main", "/tmp/archive/alice")
 
 	cases := []string{
 		"not-a-token",
-		"AGTzzzz",
-		"agt" + strings.Repeat("0", 64),
+		"SSTzzzz",
+		"sst" + strings.Repeat("0", 64),
 	}
 	for _, c := range cases {
 		out, isErr := dispatchToolCall(context.Background(), "read_file",
-			map[string]any{"agent_token": c}, tm, resolverFor(nil), nil, nil)
+			map[string]any{"session_token": c}, st, resolverFor(nil), nil, nil)
 		if !isErr {
 			t.Errorf("token %q expected to be rejected", c)
 			continue
@@ -118,10 +118,10 @@ func TestDispatch_MalformedTokenRejected(t *testing.T) {
 }
 
 func TestDispatch_SubagentSentinelReturnsHelpfulError(t *testing.T) {
-	tm := agenttoken.NewManager()
-	tm.Issue("alice")
+	st := newSessionTokenStore()
+	st.Issue("alice", "test:alice:main", "/tmp/archive/alice")
 	out, isErr := dispatchToolCall(context.Background(), "read_file",
-		map[string]any{"agent_token": agenttoken.SubagentSentinel}, tm, resolverFor(nil), nil, nil)
+		map[string]any{"session_token": agenttoken.SubagentSentinel}, st, resolverFor(nil), nil, nil)
 	if !isErr {
 		t.Fatal("expected error for sentinel token")
 	}
@@ -131,8 +131,8 @@ func TestDispatch_SubagentSentinelReturnsHelpfulError(t *testing.T) {
 }
 
 func TestDispatch_RedactsTokensInOutput(t *testing.T) {
-	tm := agenttoken.NewManager()
-	tok := tm.Issue("alice")
+	st := newSessionTokenStore()
+	tok := st.Issue("alice", "test:alice:main", "/tmp/archive/alice")
 
 	leaky := &mockTool{
 		name:   "read_file",
@@ -142,7 +142,7 @@ func TestDispatch_RedactsTokensInOutput(t *testing.T) {
 	regs := map[string]*tools.ToolRegistry{"alice": newRegistryWith(leaky)}
 
 	out, isErr := dispatchToolCall(context.Background(), "read_file",
-		map[string]any{"agent_token": tok}, tm, resolverFor(regs), nil, nil)
+		map[string]any{"session_token": tok}, st, resolverFor(regs), nil, nil)
 	if isErr {
 		t.Fatalf("unexpected error: %s", out)
 	}
@@ -168,12 +168,11 @@ func TestDispatch_RelativePathOutsideWorkspaceRejected(t *testing.T) {
 	reg := tools.NewToolRegistry()
 	reg.Register(rf)
 
-	tm := agenttoken.NewManager()
-	tok := tm.Issue("alice")
+	st, tok := seedSessionToken("alice")
 
 	out, isErr := dispatchToolCall(context.Background(), "read_file",
-		map[string]any{"agent_token": tok, "path": "../etc/passwd"},
-		tm, resolverFor(map[string]*tools.ToolRegistry{"alice": reg}), nil, nil)
+		map[string]any{"session_token": tok, "path": "../etc/passwd"},
+		st, resolverFor(map[string]*tools.ToolRegistry{"alice": reg}), nil, nil)
 	if !isErr {
 		t.Fatalf("expected workspace-escape rejection, got success: %s", out)
 	}
@@ -249,7 +248,7 @@ func TestNew_BootLogEmitsAgentBindings(t *testing.T) {
 	}
 }
 
-func TestInjectAgentTokenParam_AddsRequiredField(t *testing.T) {
+func TestInjectSessionTokenParam_AddsRequiredField(t *testing.T) {
 	in := map[string]any{
 		"type": "object",
 		"properties": map[string]any{
@@ -257,19 +256,19 @@ func TestInjectAgentTokenParam_AddsRequiredField(t *testing.T) {
 		},
 		"required": []string{"path"},
 	}
-	out := injectAgentTokenParam(in)
+	out := injectSessionTokenParam(in)
 
 	props, _ := out["properties"].(map[string]any)
-	if _, ok := props["agent_token"]; !ok {
-		t.Error("agent_token not added to properties")
+	if _, ok := props["session_token"]; !ok {
+		t.Error("session_token not added to properties")
 	}
 	if _, ok := props["path"]; !ok {
 		t.Error("existing path property dropped")
 	}
 
 	required := stringSliceFromAny(out["required"])
-	if !containsString(required, "agent_token") {
-		t.Error("agent_token not added to required")
+	if !containsString(required, "session_token") {
+		t.Error("session_token not added to required")
 	}
 	if !containsString(required, "path") {
 		t.Error("existing required field dropped")
@@ -277,33 +276,33 @@ func TestInjectAgentTokenParam_AddsRequiredField(t *testing.T) {
 
 	// Original schema map must remain untouched.
 	origReq := stringSliceFromAny(in["required"])
-	if containsString(origReq, "agent_token") {
-		t.Error("injectAgentTokenParam mutated input schema's required slice")
+	if containsString(origReq, "session_token") {
+		t.Error("injectSessionTokenParam mutated input schema's required slice")
 	}
 	origProps, _ := in["properties"].(map[string]any)
-	if _, ok := origProps["agent_token"]; ok {
-		t.Error("injectAgentTokenParam mutated input schema's properties")
+	if _, ok := origProps["session_token"]; ok {
+		t.Error("injectSessionTokenParam mutated input schema's properties")
 	}
 }
 
-func TestInjectAgentTokenParam_HandlesNilSchema(t *testing.T) {
-	out := injectAgentTokenParam(nil)
+func TestInjectSessionTokenParam_HandlesNilSchema(t *testing.T) {
+	out := injectSessionTokenParam(nil)
 	if out["type"] != "object" {
 		t.Errorf("expected synthetic type=object, got %v", out["type"])
 	}
 	props, _ := out["properties"].(map[string]any)
-	if _, ok := props["agent_token"]; !ok {
-		t.Error("agent_token not added in nil-input case")
+	if _, ok := props["session_token"]; !ok {
+		t.Error("session_token not added in nil-input case")
 	}
 }
 
-func TestInjectAgentTokenParam_HandlesAnyRequiredSlice(t *testing.T) {
+func TestInjectSessionTokenParam_HandlesAnyRequiredSlice(t *testing.T) {
 	in := map[string]any{
 		"required": []any{"path", "content"},
 	}
-	out := injectAgentTokenParam(in)
+	out := injectSessionTokenParam(in)
 	required := stringSliceFromAny(out["required"])
-	if !containsString(required, "agent_token") || !containsString(required, "path") || !containsString(required, "content") {
+	if !containsString(required, "session_token") || !containsString(required, "path") || !containsString(required, "content") {
 		t.Errorf("unexpected required slice: %v", required)
 	}
 }

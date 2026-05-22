@@ -22,7 +22,11 @@ func sessionsTestDir(t *testing.T, configPath string) string {
 		t.Fatalf("LoadConfig() error = %v", err)
 	}
 
-	dir := filepath.Join(cfg.Agents.Defaults.Workspace, "sessions")
+	dirs := cfg.AgentSessionDirs()
+	if len(dirs) == 0 {
+		t.Fatal("AgentSessionDirs() returned empty slice")
+	}
+	dir := dirs[0]
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("MkdirAll() error = %v", err)
 	}

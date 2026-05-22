@@ -13,13 +13,14 @@ import (
 type Runtime struct {
 	Config             *config.Config
 	AgentName          string
-	GetModelInfo       func() (name, provider string)
+	GetModelInfo       func() (name, provider, apiBase string)
 	ListAgentIDs       func() []string
 	ListDefinitions    func() []Definition
 	GetEnabledChannels func() []string
 	SwitchModel        func(value string) (oldModel string, err error)
 	SwitchChannel      func(value string) error
 	ClearHistory         func() error
+	CompactHistory       func(ctx context.Context) error
 	ResetCooldown        func()
 	RetriggerLastMessage func(ctx context.Context) error
 	CancelPending        func() int // drains pending queued messages; returns skip count

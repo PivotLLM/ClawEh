@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/PivotLLM/ClawEh/pkg/memory"
 	"github.com/PivotLLM/ClawEh/pkg/providers"
 )
 
@@ -100,6 +101,25 @@ func (sm *SessionManager) GetHistory(key string) []providers.Message {
 	history := make([]providers.Message, len(session.Messages))
 	copy(history, session.Messages)
 	return history
+}
+
+// GetHistoryWithSeqs returns the message history with synthesized seq numbers.
+// The in-memory SessionManager has no durable seq counter, so seq is i+1 for
+// the i-th message in the slice.
+func (sm *SessionManager) GetHistoryWithSeqs(key string) []memory.StoredMessage {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	session, ok := sm.sessions[key]
+	if !ok {
+		return []memory.StoredMessage{}
+	}
+
+	stored := make([]memory.StoredMessage, len(session.Messages))
+	for i, msg := range session.Messages {
+		stored[i] = memory.StoredMessage{Seq: i + 1, Message: msg}
+	}
+	return stored
 }
 
 func (sm *SessionManager) GetSummary(key string) string {
@@ -267,6 +287,30 @@ func (sm *SessionManager) loadSessions() error {
 	}
 
 	return nil
+}
+
+// SetPendingTurn is a no-op for the in-memory SessionManager; it satisfies
+// the SessionStore interface. SessionManager has no persistent backing, so
+// there is nothing to mark on disk.
+func (sm *SessionManager) SetPendingTurn(_ string) error {
+	return nil
+}
+
+// ClearPendingTurn is a no-op for the in-memory SessionManager; it satisfies
+// the SessionStore interface.
+func (sm *SessionManager) ClearPendingTurn(_ string) error {
+	return nil
+}
+
+// GetArchiveBounds is a no-op for the in-memory SessionManager; it satisfies
+// the SessionStore interface.
+func (sm *SessionManager) GetArchiveBounds(_ string) (int, int) {
+	return 0, 0
+}
+
+// ListPendingSessions is a no-op for the in-memory SessionManager.
+func (sm *SessionManager) ListPendingSessions() ([]string, error) {
+	return nil, nil
 }
 
 // Close is a no-op for the in-memory SessionManager; it satisfies the

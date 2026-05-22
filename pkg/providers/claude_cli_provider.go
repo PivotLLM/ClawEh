@@ -219,9 +219,9 @@ func (p *ClaudeCliProvider) messagesToPrompt(messages []Message) string {
 		case "system":
 			// included in system context block; see buildStdinPrompt
 		case "user":
-			parts = append(parts, "User: "+msg.Content)
+			parts = append(parts, "User: "+escapeConvMarkers(msg.Content))
 		case "assistant":
-			parts = append(parts, "Assistant: "+msg.Content)
+			parts = append(parts, "Assistant: "+escapeConvMarkers(msg.Content))
 		case "tool":
 			parts = append(parts, fmt.Sprintf("[Tool Result for %s]: %s", msg.ToolCallID, msg.Content))
 		}
@@ -247,6 +247,15 @@ func (p *ClaudeCliProvider) buildSystemPrompt(messages []Message) string {
 	}
 
 	return strings.Join(parts, "\n\n")
+}
+
+// escapeConvMarkers replaces conversation-format delimiters inside message
+// content so they cannot be misinterpreted as new turns when the text is
+// re-embedded in a future prompt.
+func escapeConvMarkers(s string) string {
+	s = strings.ReplaceAll(s, "\nUser: ", "\n[User]: ")
+	s = strings.ReplaceAll(s, "\nAssistant: ", "\n[Assistant]: ")
+	return s
 }
 
 // parseClaudeCliResponse parses the JSON output from the claude CLI.

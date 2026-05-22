@@ -75,6 +75,7 @@ export interface AgentMCPServer {
 export interface AgentToolCatalogResponse {
   tools: AgentToolEntry[]
   mcp_servers?: AgentMCPServer[]
+  default_tools: string[]
 }
 
 export async function getAgentTools(): Promise<AgentToolCatalogResponse> {

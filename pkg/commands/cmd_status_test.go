@@ -12,8 +12,8 @@ import (
 func TestStatus_BasicFields(t *testing.T) {
 	rt := &Runtime{
 		AgentName: "Alice",
-		GetModelInfo: func() (string, string) {
-			return "gpt-4", "openai"
+		GetModelInfo: func() (string, string, string) {
+			return "gpt-4", "openai", ""
 		},
 		Uptime: func() time.Duration {
 			return 2*time.Hour + 13*time.Minute
@@ -69,8 +69,8 @@ func TestStatus_BasicFields(t *testing.T) {
 func TestStatus_SessionStatsReflected(t *testing.T) {
 	rt := &Runtime{
 		AgentName: "Bob",
-		GetModelInfo: func() (string, string) {
-			return "claude-opus-4-7", "anthropic"
+		GetModelInfo: func() (string, string, string) {
+			return "claude-opus-4-7", "anthropic", ""
 		},
 		Uptime: func() time.Duration { return 5 * time.Second },
 		GetSessionStats: func() (int, int, int) {

@@ -17,7 +17,7 @@ func showCommand() Definition {
 					if rt == nil || rt.GetModelInfo == nil {
 						return req.Reply(unavailableMsg)
 					}
-					name, provider := rt.GetModelInfo()
+					name, provider, _ := rt.GetModelInfo()
 					return req.Reply(fmt.Sprintf("Current Model: %s (Provider: %s)", name, provider))
 				},
 			},

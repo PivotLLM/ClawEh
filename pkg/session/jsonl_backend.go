@@ -41,6 +41,15 @@ func (b *JSONLBackend) GetHistory(key string) []providers.Message {
 	return msgs
 }
 
+func (b *JSONLBackend) GetHistoryWithSeqs(key string) []memory.StoredMessage {
+	stored, err := b.store.GetHistoryWithSeqs(context.Background(), key)
+	if err != nil {
+		log.Printf("session: get history with seqs: %v", err)
+		return []memory.StoredMessage{}
+	}
+	return stored
+}
+
 func (b *JSONLBackend) GetSummary(key string) string {
 	summary, err := b.store.GetSummary(context.Background(), key)
 	if err != nil {
@@ -68,11 +77,58 @@ func (b *JSONLBackend) TruncateHistory(key string, keepLast int) {
 	}
 }
 
+func (b *JSONLBackend) SetPendingTurn(sessionKey string) error {
+	return b.store.SetPendingTurn(context.Background(), sessionKey)
+}
+
+func (b *JSONLBackend) ClearPendingTurn(sessionKey string) error {
+	return b.store.ClearPendingTurn(context.Background(), sessionKey)
+}
+
+func (b *JSONLBackend) ListPendingSessions() ([]string, error) {
+	return b.store.ListPendingSessions(context.Background())
+}
+
+func (b *JSONLBackend) GetArchiveBounds(sessionKey string) (minSeq, maxSeq int) {
+	min, max, err := b.store.GetArchiveBounds(context.Background(), sessionKey)
+	if err != nil {
+		log.Printf("session: get archive bounds: %v", err)
+		return 0, 0
+	}
+	return min, max
+}
+
 // Save persists session state. Since the JSONL store fsyncs every write
 // immediately, the data is already durable. Save runs compaction to reclaim
 // space from logically truncated messages (no-op when there are none).
 func (b *JSONLBackend) Save(key string) error {
 	return b.store.Compact(context.Background(), key)
+}
+
+// GetCompactionState retrieves the durable compression state for sessionKey.
+// Implements the llmcontext.CompactionStateStore interface via structural typing.
+// Returns a zero CompactionState if the underlying store does not support it.
+func (b *JSONLBackend) GetCompactionState(sessionKey string) (memory.CompactionState, error) {
+	type compactionGetter interface {
+		GetCompactionState(sessionKey string) (memory.CompactionState, error)
+	}
+	if g, ok := b.store.(compactionGetter); ok {
+		return g.GetCompactionState(sessionKey)
+	}
+	return memory.CompactionState{}, nil
+}
+
+// SetCompactionState persists the compression state for sessionKey.
+// Implements the llmcontext.CompactionStateStore interface via structural typing.
+// No-ops if the underlying store does not support persistent compaction state.
+func (b *JSONLBackend) SetCompactionState(sessionKey string, state memory.CompactionState) error {
+	type compactionSetter interface {
+		SetCompactionState(sessionKey string, state memory.CompactionState) error
+	}
+	if s, ok := b.store.(compactionSetter); ok {
+		return s.SetCompactionState(sessionKey, state)
+	}
+	return nil
 }
 
 // Close releases resources held by the underlying store.

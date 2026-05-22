@@ -161,5 +161,9 @@ In direct messages (DMs), the bot always responds without any trigger requiremen
 **`missing_scope` error**
 - A required OAuth scope is missing. Return to **OAuth & Permissions** and add the missing scope, then reinstall the app to the workspace.
 
+**File downloads fail / "Slack redirected to login page" in logs**
+- The bot token is missing the `files:read` scope. Slack redirects unauthenticated file requests to the workspace login page (`workspace.slack.com/?redir=...`) rather than serving the file.
+- Go to **OAuth & Permissions** → **Bot Token Scopes**, add `files:read`, then click **Reinstall to Workspace** and update the token in your config.
+
 **App Token is missing or wrong**
 - The App Token must start with `xapp-`. If it starts with `xoxb-` you have the Bot Token in the wrong field.
