@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 ################################################################################
 # ClawEh Comprehensive Test Suite
 # Runs all Go tests with race detector and coverage measurement.
@@ -387,7 +387,11 @@ PY
       "write_file",
       "edit_file",
       "append_file",
-      "list_dir"
+      "list_dir",
+      "get_session_messages",
+      "search_session_messages",
+      "compact_session",
+      "get_session_info"
     ]
   }
 }
