@@ -156,9 +156,21 @@ func DownloadFile(urlStr, filename string, opts DownloadOptions) string {
 	if ct := resp.Header.Get("Content-Type"); strings.HasPrefix(ct, "text/html") {
 		// Read a snippet of the body so logs reveal exactly what page was returned.
 		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		// Detect Slack's web login redirect: files.slack.com → workspace.slack.com/?redir=...
+		// This happens when the bot token lacks the files:read OAuth scope.
+		finalURL := resp.Request.URL.String()
+		if strings.Contains(finalURL, "slack.com") && strings.Contains(finalURL, "redir=") {
+			logger.ErrorCF(opts.LoggerPrefix, "Slack redirected to login page — bot token is missing 'files:read' OAuth scope. Add it in Slack App settings → OAuth & Permissions → Bot Token Scopes, then reinstall the app.", map[string]any{
+				"url":       urlStr,
+				"final_url": finalURL,
+				"status":    resp.StatusCode,
+				"redirects": redirects,
+			})
+			return ""
+		}
 		logger.ErrorCF(opts.LoggerPrefix, "File download returned HTML — possible auth failure or redirect issue", map[string]any{
 			"url":          urlStr,
-			"final_url":    resp.Request.URL.String(),
+			"final_url":    finalURL,
 			"status":       resp.StatusCode,
 			"content_type": ct,
 			"redirects":    redirects,
