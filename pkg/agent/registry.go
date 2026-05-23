@@ -129,6 +129,12 @@ func (r *AgentRegistry) Close() {
 	}
 }
 
+// GetDefaultAgentID returns the normalized ID of the default agent,
+// or empty string if none is registered.
+func (r *AgentRegistry) GetDefaultAgentID() string {
+	return r.defaultAgentID
+}
+
 // GetDefaultAgent returns the agent marked Default:true in config, or the
 // first enabled agent if none is explicitly marked. Never uses map iteration
 // order, which is non-deterministic in Go.

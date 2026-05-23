@@ -333,6 +333,24 @@ func setupAndStartServices(
 			// and revoke per-session tokens when context managers are created,
 			// evicted, or cleared.
 			agentLoop.SetSessionTokenIssuer(srv.SessionTokens())
+
+			// If a test session token is configured, pre-register it for the default
+			// agent so integration tests can authenticate without an active LLM session.
+			if cfg.MCPHost.TestSessionToken != "" {
+				defaultAgentID := agentLoop.GetRegistry().GetDefaultAgentID()
+				if defaultAgentID == "" {
+					logger.WarnC("mcpserver", "test_session_token configured but no default agent found — skipping registration")
+				} else {
+					defaultAgent, ok := agentLoop.GetRegistry().GetAgent(defaultAgentID)
+					if ok && defaultAgent != nil {
+						archiveDir := filepath.Join(defaultAgent.Workspace, "sessions")
+						srv.SessionTokens().Register(cfg.MCPHost.TestSessionToken, defaultAgentID, "test-session", archiveDir)
+						logger.InfoCF("mcpserver", "Test session token registered",
+							map[string]any{"agent": defaultAgentID})
+					}
+				}
+			}
+
 			logger.InfoCF("mcpserver", "MCP host started",
 				map[string]any{
 					"listen":       srv.Listen(),

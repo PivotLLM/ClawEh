@@ -78,6 +78,25 @@ func (s *sessionTokenStore) Issue(agentID, sessionKey, archiveDir string) string
 	return tok
 }
 
+// Register stores a pre-specified token → session mapping. Unlike Issue,
+// it does not generate a new token — the caller supplies the exact token
+// string. If a token already exists for this sessionKey, it is revoked first.
+// Intended for test setups where a known token must be registered before
+// any LLM session has started.
+func (s *sessionTokenStore) Register(token, agentID, sessionKey, archiveDir string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Revoke any existing token for this session key.
+	if old, ok := s.bySess[sessionKey]; ok {
+		delete(s.tokens, old)
+	}
+
+	rec := sessionRecord{agentID: agentID, sessionKey: sessionKey, archiveDir: archiveDir}
+	s.tokens[token] = rec
+	s.bySess[sessionKey] = token
+}
+
 // Resolve looks up a token. Returns the record and true if found.
 func (s *sessionTokenStore) Resolve(token string) (sessionRecord, bool) {
 	s.mu.RLock()

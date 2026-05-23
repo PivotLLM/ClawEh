@@ -355,6 +355,9 @@ PY
                 echo "${RED}ERROR: failed to build claw${NC}"
                 INTEGRATION_PASSED=false
             else
+                # Generate a random session token for Tier 2 integration tests.
+                TEST_SESSION_TOKEN="SST$(openssl rand -hex 32)"
+
                 # ---- Minimal config: enable MCP host on the chosen ports. ----
                 cat > "$INTEG_HOME/config.json" <<EOF
 {
@@ -382,6 +385,7 @@ PY
     "enabled": true,
     "listen": "127.0.0.1:$MCP_PORT",
     "endpoint_path": "/mcp",
+    "test_session_token": "$TEST_SESSION_TOKEN",
     "tools": [
       "read_file",
       "write_file",
@@ -427,6 +431,7 @@ EOF
                     if SERVER_URL="http://127.0.0.1:$MCP_PORT" \
                        ENDPOINT="/mcp" \
                        PROBE_PATH="$PROBE_BIN" \
+                       SESSION_TOKEN="$TEST_SESSION_TOKEN" \
                        bash "$INTEGRATION_SCRIPT"; then
                         echo "${GREEN}MCP server integration tests passed.${NC}"
                     else

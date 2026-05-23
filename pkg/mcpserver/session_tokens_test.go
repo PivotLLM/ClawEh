@@ -134,6 +134,44 @@ func TestSessionTokenStore_RevokeAgentRemovesAllTokensForAgent(t *testing.T) {
 	}
 }
 
+func TestRegister_PrespecifiedToken(t *testing.T) {
+	s := newSessionTokenStore()
+
+	token := sessionTokenPrefix + strings.Repeat("a", 64)
+
+	s.Register(token, "agent1", "sess1", "/tmp/archive")
+
+	rec, ok := s.Resolve(token)
+	if !ok {
+		t.Fatal("expected registered token to resolve")
+	}
+	if rec.agentID != "agent1" {
+		t.Errorf("expected agentID=agent1, got %q", rec.agentID)
+	}
+	if rec.sessionKey != "sess1" {
+		t.Errorf("expected sessionKey=sess1, got %q", rec.sessionKey)
+	}
+	if rec.archiveDir != "/tmp/archive" {
+		t.Errorf("expected archiveDir=/tmp/archive, got %q", rec.archiveDir)
+	}
+
+	// Register a different token for the same session key — old token must be gone.
+	token2 := sessionTokenPrefix + strings.Repeat("b", 64)
+	s.Register(token2, "agent1", "sess1", "/tmp/archive")
+
+	if _, ok := s.Resolve(token); ok {
+		t.Error("old token should not resolve after re-registration for same session key")
+	}
+
+	rec2, ok := s.Resolve(token2)
+	if !ok {
+		t.Fatal("new token should resolve after re-registration")
+	}
+	if rec2.agentID != "agent1" || rec2.sessionKey != "sess1" {
+		t.Errorf("unexpected record after re-registration: %+v", rec2)
+	}
+}
+
 // --- dispatchToolCall session token tests ---
 
 // sessionToolMock is a mock tool that captures the context passed to Execute

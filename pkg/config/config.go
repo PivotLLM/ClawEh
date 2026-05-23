@@ -835,6 +835,11 @@ type MCPHostConfig struct {
 	// Supports "*" (all), prefix globs like "read_*", and exact names.
 	// The agent's outbound "message" tool is never exposed.
 	Tools []string `json:"tools,omitempty"`
+	// TestSessionToken, if non-empty, pre-registers a session token for the
+	// default agent at startup. Intended for integration testing only — it
+	// allows probe-driven tests to authenticate without a running LLM session.
+	// Use a random SST<64hex> value; never reuse tokens across environments.
+	TestSessionToken string `json:"test_session_token,omitempty"`
 }
 
 func LoadConfig(path string) (*Config, error) {
