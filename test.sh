@@ -382,6 +382,14 @@ PY
     "host": "127.0.0.1",
     "port": $GATEWAY_PORT
   },
+  "tools": {
+    "web": {
+      "duckduckgo": {
+        "enabled": true,
+        "max_results": 5
+      }
+    }
+  },
   "mcp_host": {
     "enabled": true,
     "listen": "127.0.0.1:$MCP_PORT",
@@ -392,6 +400,9 @@ PY
       "edit_file",
       "append_file",
       "list_dir",
+      "web_fetch",
+      "web_search",
+      "send_file",
       "get_session_messages",
       "search_session_messages",
       "compact_session",
