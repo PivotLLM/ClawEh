@@ -29,9 +29,10 @@ const sessionTokenCrossAgentMessage = "session_token does not belong to the call
 
 // sessionRecord holds the mapping from a session token to its session.
 type sessionRecord struct {
-	agentID    string
-	sessionKey string
-	archiveDir string
+	agentID     string
+	sessionKey  string
+	archiveDir  string
+	isTestToken bool // true for tokens registered via Register(); never rotated by Issue()
 }
 
 // sessionTokenStore maps SST<64hex> tokens to session records.
@@ -67,8 +68,14 @@ func (s *sessionTokenStore) Issue(agentID, sessionKey, archiveDir string) string
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Remove the old token for this session key, if any.
+	// If a test token is already registered for this session key, preserve it —
+	// test tokens are pinned for the lifetime of the test run and must not be
+	// rotated by normal session activity. Return the existing token so the caller
+	// (getContextManager) can store it in the system prompt if needed.
 	if old, ok := s.bySess[sessionKey]; ok {
+		if s.tokens[old].isTestToken {
+			return old
+		}
 		delete(s.tokens, old)
 	}
 
@@ -92,7 +99,7 @@ func (s *sessionTokenStore) Register(token, agentID, sessionKey, archiveDir stri
 		delete(s.tokens, old)
 	}
 
-	rec := sessionRecord{agentID: agentID, sessionKey: sessionKey, archiveDir: archiveDir}
+	rec := sessionRecord{agentID: agentID, sessionKey: sessionKey, archiveDir: archiveDir, isTestToken: true}
 	s.tokens[token] = rec
 	s.bySess[sessionKey] = token
 }

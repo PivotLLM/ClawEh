@@ -154,6 +154,9 @@ func TestRegister_PrespecifiedToken(t *testing.T) {
 	if rec.archiveDir != "/tmp/archive" {
 		t.Errorf("expected archiveDir=/tmp/archive, got %q", rec.archiveDir)
 	}
+	if !rec.isTestToken {
+		t.Error("expected isTestToken=true on registered token")
+	}
 
 	// Register a different token for the same session key — old token must be gone.
 	token2 := sessionTokenPrefix + strings.Repeat("b", 64)
@@ -169,6 +172,50 @@ func TestRegister_PrespecifiedToken(t *testing.T) {
 	}
 	if rec2.agentID != "agent1" || rec2.sessionKey != "sess1" {
 		t.Errorf("unexpected record after re-registration: %+v", rec2)
+	}
+}
+
+func TestIssue_PreservesTestToken(t *testing.T) {
+	s := newSessionTokenStore()
+
+	testTok := sessionTokenPrefix + strings.Repeat("c", 64)
+	s.Register(testTok, "agent1", "sess1", "/tmp/archive")
+
+	// Issue() for the same session key must NOT revoke the test token.
+	returned := s.Issue("agent1", "sess1", "/tmp/archive")
+
+	if returned != testTok {
+		t.Errorf("Issue() should return the existing test token, got %q", returned)
+	}
+
+	rec, ok := s.Resolve(testTok)
+	if !ok {
+		t.Fatal("test token must still resolve after Issue() for the same session key")
+	}
+	if !rec.isTestToken {
+		t.Error("isTestToken flag must be preserved")
+	}
+}
+
+func TestIssue_RotatesNormalToken(t *testing.T) {
+	s := newSessionTokenStore()
+
+	// Issue a normal token first.
+	first := s.Issue("agent1", "sess2", "/tmp/archive")
+	if first == "" {
+		t.Fatal("expected non-empty token")
+	}
+
+	// Issue again for the same session key — must rotate.
+	second := s.Issue("agent1", "sess2", "/tmp/archive")
+	if second == first {
+		t.Error("Issue() should generate a new token for a normal session")
+	}
+	if _, ok := s.Resolve(first); ok {
+		t.Error("old normal token must not resolve after rotation")
+	}
+	if _, ok := s.Resolve(second); !ok {
+		t.Error("new token must resolve after rotation")
 	}
 }
 

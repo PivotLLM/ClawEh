@@ -356,6 +356,7 @@ PY
                 INTEGRATION_PASSED=false
             else
                 # Generate a random session token for Tier 2 integration tests.
+                # Passed only via environment — never written to a config file.
                 TEST_SESSION_TOKEN="SST$(openssl rand -hex 32)"
 
                 # ---- Minimal config: enable MCP host on the chosen ports. ----
@@ -385,7 +386,6 @@ PY
     "enabled": true,
     "listen": "127.0.0.1:$MCP_PORT",
     "endpoint_path": "/mcp",
-    "test_session_token": "$TEST_SESSION_TOKEN",
     "tools": [
       "read_file",
       "write_file",
@@ -402,7 +402,7 @@ PY
 EOF
 
                 echo "${DIM}Starting gateway (CLAW_HOME=$INTEG_HOME, MCP=127.0.0.1:$MCP_PORT)...${NC}"
-                CLAW_HOME="$INTEG_HOME" "$INTEG_BIN" gateway >"$INTEG_LOG" 2>&1 &
+                CLAW_HOME="$INTEG_HOME" CLAW_MCP_TEST_TOKEN="$TEST_SESSION_TOKEN" "$INTEG_BIN" gateway >"$INTEG_LOG" 2>&1 &
                 INTEG_PID=$!
 
                 # ---- Wait for the MCP port to accept connections. ----
