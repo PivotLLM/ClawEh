@@ -296,14 +296,13 @@ All tools are available on this path, including `compact_session`, `get_session_
 
 For CLI providers (`claude-cli`, `codex-cli`, `gemini-cli`), the CLI subprocess has no access to claw's internal session state. Tools are called via the MCP HTTP server at `http://127.0.0.1:5911/mcp`. Every tool call on this path carries a `session_token` parameter — a short-lived `SST<64hex>` token injected into the agent's system prompt at session start. The MCP server resolves this token to the correct agent and session, then executes the tool.
 
-For session-scoped tools (`get_session_messages`, `search_session_messages`), the MCP server additionally uses the session token to inject the session's archive path into the execution context, enabling those tools to query the correct database.
+For session-scoped tools, the MCP server uses the session token to inject the session key into the execution context. All four session tools implement the `SessionScoped` interface, so the dispatcher injects the key automatically — no hardcoded list to maintain.
 
 | | Direct API providers | CLI providers |
 |---|---|---|
 | Tool call mechanism | API response (`tool_use` blocks) | MCP HTTP at `:5911/mcp` |
 | Session context | Implicit (agent loop) | `session_token` parameter |
-| Session tools available | All four | `get_session_messages`, `search_session_messages` |
-| `compact_session` / `get_session_info` | ✓ | ✗ (agent loop only) |
+| Session tools available | All four | All four |
 
 > **Important:** CLI providers (`claude-cli`, `codex-cli`, `gemini-cli`) no longer receive tool descriptions in their prompt. Each invocation runs as a single agentic turn, and the CLI reaches claw's tools only via MCP. **You must register claw as an MCP server in each CLI you intend to use** — see [Client configuration](#client-configuration) below. Without that step, the CLI will still answer prompts, but it will have no access to claw's filesystem, web, or other host-side tools.
 
@@ -410,15 +409,25 @@ For clients limited to stdio MCP transport (e.g., Claude Desktop), bridge to cla
 
 ### Testing
 
-A `probe`-driven integration test lives at `tests/test_mcpserver.sh`. Start claw with `mcp_host.enabled=true`, then run:
+The MCP server integration tests are fully self-contained. `./test.sh -i` builds a fresh claw binary, starts an ephemeral gateway in a temporary `CLAW_HOME`, runs the probe-driven test suite, then tears everything down.
 
 ```bash
-./test.sh -i          # run unit tests + MCP server integration
-# or directly:
-./tests/test_mcpserver.sh
+./test.sh -i          # unit tests + MCP integration (self-contained)
+./test.sh -i -x       # same, but preserve artifacts for debugging
 ```
 
-Override `SERVER_URL`, `ENDPOINT`, or `PROBE_PATH` via a `tests/.env` file if needed.
+Requires [`probe`](https://github.com/PivotLLM/MCPProbe) on `PATH`.
+
+The test suite runs in two tiers:
+
+- **Tier 1** — always runs: tool catalogue checks (all expected tools present) and unauthenticated rejection (verifies `session_token` is enforced on every call).
+- **Tier 2** — automatically enabled by `./test.sh -i`: file operation round-trips and session tool smoke tests using a per-run `CLAW_MCP_TEST_TOKEN` generated at startup and passed to the gateway via environment variable. The token is never written to a config file.
+
+To run Tier 2 against an already-running claw instance, set `SESSION_TOKEN` to the `SST<64hex>` token from an active session's system prompt:
+
+```bash
+SESSION_TOKEN=SST... ./tests/test_mcpserver.sh
+```
 
 ## Third-party integrations
 

@@ -134,9 +134,95 @@ func TestSessionTokenStore_RevokeAgentRemovesAllTokensForAgent(t *testing.T) {
 	}
 }
 
+func TestRegister_PrespecifiedToken(t *testing.T) {
+	s := newSessionTokenStore()
+
+	token := sessionTokenPrefix + strings.Repeat("a", 64)
+
+	s.Register(token, "agent1", "sess1", "/tmp/archive")
+
+	rec, ok := s.Resolve(token)
+	if !ok {
+		t.Fatal("expected registered token to resolve")
+	}
+	if rec.agentID != "agent1" {
+		t.Errorf("expected agentID=agent1, got %q", rec.agentID)
+	}
+	if rec.sessionKey != "sess1" {
+		t.Errorf("expected sessionKey=sess1, got %q", rec.sessionKey)
+	}
+	if rec.archiveDir != "/tmp/archive" {
+		t.Errorf("expected archiveDir=/tmp/archive, got %q", rec.archiveDir)
+	}
+	if !rec.isTestToken {
+		t.Error("expected isTestToken=true on registered token")
+	}
+
+	// Register a different token for the same session key — old token must be gone.
+	token2 := sessionTokenPrefix + strings.Repeat("b", 64)
+	s.Register(token2, "agent1", "sess1", "/tmp/archive")
+
+	if _, ok := s.Resolve(token); ok {
+		t.Error("old token should not resolve after re-registration for same session key")
+	}
+
+	rec2, ok := s.Resolve(token2)
+	if !ok {
+		t.Fatal("new token should resolve after re-registration")
+	}
+	if rec2.agentID != "agent1" || rec2.sessionKey != "sess1" {
+		t.Errorf("unexpected record after re-registration: %+v", rec2)
+	}
+}
+
+func TestIssue_PreservesTestToken(t *testing.T) {
+	s := newSessionTokenStore()
+
+	testTok := sessionTokenPrefix + strings.Repeat("c", 64)
+	s.Register(testTok, "agent1", "sess1", "/tmp/archive")
+
+	// Issue() for the same session key must NOT revoke the test token.
+	returned := s.Issue("agent1", "sess1", "/tmp/archive")
+
+	if returned != testTok {
+		t.Errorf("Issue() should return the existing test token, got %q", returned)
+	}
+
+	rec, ok := s.Resolve(testTok)
+	if !ok {
+		t.Fatal("test token must still resolve after Issue() for the same session key")
+	}
+	if !rec.isTestToken {
+		t.Error("isTestToken flag must be preserved")
+	}
+}
+
+func TestIssue_RotatesNormalToken(t *testing.T) {
+	s := newSessionTokenStore()
+
+	// Issue a normal token first.
+	first := s.Issue("agent1", "sess2", "/tmp/archive")
+	if first == "" {
+		t.Fatal("expected non-empty token")
+	}
+
+	// Issue again for the same session key — must rotate.
+	second := s.Issue("agent1", "sess2", "/tmp/archive")
+	if second == first {
+		t.Error("Issue() should generate a new token for a normal session")
+	}
+	if _, ok := s.Resolve(first); ok {
+		t.Error("old normal token must not resolve after rotation")
+	}
+	if _, ok := s.Resolve(second); !ok {
+		t.Error("new token must resolve after rotation")
+	}
+}
+
 // --- dispatchToolCall session token tests ---
 
-// sessionToolMockWithCtx is a mock tool that captures the context passed to Execute.
+// sessionToolMock is a mock tool that captures the context passed to Execute
+// and implements SessionScoped so dispatchToolCall injects the session key.
 type sessionToolMock struct {
 	mockTool
 	capturedCtx context.Context
@@ -148,6 +234,8 @@ func (m *sessionToolMock) Execute(ctx context.Context, args map[string]any) *too
 	m.gotArg = args
 	return m.result
 }
+
+func (m *sessionToolMock) IsSessionScoped() bool { return true }
 
 func TestDispatch_SessionScopedToolValidToken(t *testing.T) {
 	st := newSessionTokenStore()
@@ -290,6 +378,94 @@ func TestDispatch_SessionTokenRoutesToCorrectAgent(t *testing.T) {
 	if aliceTool.calls != 1 {
 		t.Errorf("alice's registry was not called, calls=%d", aliceTool.calls)
 	}
+}
+
+// TestDispatch_SessionScopedInterfaceInjectsKey verifies that dispatchToolCall
+// injects the session key for every tool that implements tools.SessionScoped,
+// regardless of the tool name. This replaces the old hardcoded name check.
+func TestDispatch_SessionScopedInterfaceInjectsKey(t *testing.T) {
+	st := newSessionTokenStore()
+	tok := st.Issue("alice", "agent:alice:main", "/ws/alice/sessions")
+
+	// Use all four real session tool names to confirm interface dispatch works.
+	toolNames := []string{
+		"get_session_messages",
+		"search_session_messages",
+		"compact_session",
+		"get_session_info",
+	}
+
+	for _, name := range toolNames {
+		t.Run(name, func(t *testing.T) {
+			tool := &sessionToolMock{
+				mockTool: mockTool{
+					name:   name,
+					params: map[string]any{},
+					result: tools.NewToolResult("ok"),
+				},
+			}
+			reg := newRegistryWith(tool)
+			regs := map[string]*tools.ToolRegistry{"alice": reg}
+
+			out, isErr := dispatchToolCall(context.Background(), name,
+				map[string]any{"session_token": tok},
+				st, resolverFor(regs), nil, nil)
+			if isErr {
+				t.Fatalf("expected success, got error: %s", out)
+			}
+			if tool.calls != 1 {
+				t.Fatalf("expected tool to be called once, got %d", tool.calls)
+			}
+			if got := tools.ToolSessionKey(tool.capturedCtx); got != "agent:alice:main" {
+				t.Errorf("%s: expected session key %q in ctx, got %q", name, "agent:alice:main", got)
+			}
+		})
+	}
+}
+
+// TestDispatch_NonSessionScopedToolDoesNotGetSessionKey verifies that a tool
+// that does not implement tools.SessionScoped does NOT get a session key
+// injected into its execution context, even though it receives a valid token.
+func TestDispatch_NonSessionScopedToolDoesNotGetSessionKey(t *testing.T) {
+	st := newSessionTokenStore()
+	tok := st.Issue("alice", "agent:alice:main", "/ws/alice/sessions")
+
+	// nonScopedCaptureMock captures ctx but does NOT implement SessionScoped.
+	tool := &nonScopedCaptureMock{
+		mockTool: mockTool{
+			name:   "read_file",
+			params: map[string]any{},
+			result: tools.NewToolResult("content"),
+		},
+	}
+	reg := newRegistryWith(tool)
+	regs := map[string]*tools.ToolRegistry{"alice": reg}
+
+	out, isErr := dispatchToolCall(context.Background(), "read_file",
+		map[string]any{"session_token": tok, "path": "x"},
+		st, resolverFor(regs), nil, nil)
+	if isErr {
+		t.Fatalf("expected success, got error: %s", out)
+	}
+	if tool.calls != 1 {
+		t.Fatalf("expected tool to be called once, got %d", tool.calls)
+	}
+	if got := tools.ToolSessionKey(tool.capturedCtx); got != "" {
+		t.Errorf("non-session-scoped tool must not receive session key, got %q", got)
+	}
+}
+
+// nonScopedCaptureMock is a context-capturing mock that does NOT implement SessionScoped.
+type nonScopedCaptureMock struct {
+	mockTool
+	capturedCtx context.Context
+}
+
+func (m *nonScopedCaptureMock) Execute(ctx context.Context, args map[string]any) *tools.ToolResult {
+	m.capturedCtx = ctx
+	m.calls++
+	m.gotArg = args
+	return m.result
 }
 
 // TestDispatch_AllToolsRequireSessionToken confirms that even non-session-scoped

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 ################################################################################
 # ClawEh Comprehensive Test Suite
 # Runs all Go tests with race detector and coverage measurement.
@@ -355,6 +355,10 @@ PY
                 echo "${RED}ERROR: failed to build claw${NC}"
                 INTEGRATION_PASSED=false
             else
+                # Generate a random session token for Tier 2 integration tests.
+                # Passed only via environment — never written to a config file.
+                TEST_SESSION_TOKEN="SST$(openssl rand -hex 32)"
+
                 # ---- Minimal config: enable MCP host on the chosen ports. ----
                 cat > "$INTEG_HOME/config.json" <<EOF
 {
@@ -378,6 +382,14 @@ PY
     "host": "127.0.0.1",
     "port": $GATEWAY_PORT
   },
+  "tools": {
+    "web": {
+      "duckduckgo": {
+        "enabled": true,
+        "max_results": 5
+      }
+    }
+  },
   "mcp_host": {
     "enabled": true,
     "listen": "127.0.0.1:$MCP_PORT",
@@ -387,14 +399,21 @@ PY
       "write_file",
       "edit_file",
       "append_file",
-      "list_dir"
+      "list_dir",
+      "web_fetch",
+      "web_search",
+      "send_file",
+      "get_session_messages",
+      "search_session_messages",
+      "compact_session",
+      "get_session_info"
     ]
   }
 }
 EOF
 
                 echo "${DIM}Starting gateway (CLAW_HOME=$INTEG_HOME, MCP=127.0.0.1:$MCP_PORT)...${NC}"
-                CLAW_HOME="$INTEG_HOME" "$INTEG_BIN" gateway >"$INTEG_LOG" 2>&1 &
+                CLAW_HOME="$INTEG_HOME" CLAW_MCP_TEST_TOKEN="$TEST_SESSION_TOKEN" "$INTEG_BIN" gateway >"$INTEG_LOG" 2>&1 &
                 INTEG_PID=$!
 
                 # ---- Wait for the MCP port to accept connections. ----
@@ -423,6 +442,7 @@ EOF
                     if SERVER_URL="http://127.0.0.1:$MCP_PORT" \
                        ENDPOINT="/mcp" \
                        PROBE_PATH="$PROBE_BIN" \
+                       SESSION_TOKEN="$TEST_SESSION_TOKEN" \
                        bash "$INTEGRATION_SCRIPT"; then
                         echo "${GREEN}MCP server integration tests passed.${NC}"
                     else

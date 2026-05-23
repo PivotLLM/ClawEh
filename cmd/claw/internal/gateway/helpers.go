@@ -333,6 +333,26 @@ func setupAndStartServices(
 			// and revoke per-session tokens when context managers are created,
 			// evicted, or cleared.
 			agentLoop.SetSessionTokenIssuer(srv.SessionTokens())
+
+			// CLAW_MCP_TEST_TOKEN: if set, pre-register a pinned session token for
+			// the default agent so integration tests can authenticate without an
+			// active LLM session. The token is never written to config or disk —
+			// it lives only in the environment and in memory.
+			if testTok := os.Getenv("CLAW_MCP_TEST_TOKEN"); testTok != "" {
+				defaultAgentID := agentLoop.GetRegistry().GetDefaultAgentID()
+				if defaultAgentID == "" {
+					logger.WarnC("mcpserver", "CLAW_MCP_TEST_TOKEN set but no default agent found — skipping registration")
+				} else {
+					defaultAgent, ok := agentLoop.GetRegistry().GetAgent(defaultAgentID)
+					if ok && defaultAgent != nil {
+						archiveDir := filepath.Join(defaultAgent.Workspace, "sessions")
+						srv.SessionTokens().Register(testTok, defaultAgentID, "test-session", archiveDir)
+						logger.InfoCF("mcpserver", "Test session token registered",
+							map[string]any{"agent": defaultAgentID})
+					}
+				}
+			}
+
 			logger.InfoCF("mcpserver", "MCP host started",
 				map[string]any{
 					"listen":       srv.Listen(),

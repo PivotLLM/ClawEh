@@ -29,9 +29,10 @@ const sessionTokenCrossAgentMessage = "session_token does not belong to the call
 
 // sessionRecord holds the mapping from a session token to its session.
 type sessionRecord struct {
-	agentID    string
-	sessionKey string
-	archiveDir string
+	agentID     string
+	sessionKey  string
+	archiveDir  string
+	isTestToken bool // true for tokens registered via Register(); never rotated by Issue()
 }
 
 // sessionTokenStore maps SST<64hex> tokens to session records.
@@ -67,8 +68,14 @@ func (s *sessionTokenStore) Issue(agentID, sessionKey, archiveDir string) string
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Remove the old token for this session key, if any.
+	// If a test token is already registered for this session key, preserve it —
+	// test tokens are pinned for the lifetime of the test run and must not be
+	// rotated by normal session activity. Return the existing token so the caller
+	// (getContextManager) can store it in the system prompt if needed.
 	if old, ok := s.bySess[sessionKey]; ok {
+		if s.tokens[old].isTestToken {
+			return old
+		}
 		delete(s.tokens, old)
 	}
 
@@ -76,6 +83,25 @@ func (s *sessionTokenStore) Issue(agentID, sessionKey, archiveDir string) string
 	s.tokens[tok] = rec
 	s.bySess[sessionKey] = tok
 	return tok
+}
+
+// Register stores a pre-specified token → session mapping. Unlike Issue,
+// it does not generate a new token — the caller supplies the exact token
+// string. If a token already exists for this sessionKey, it is revoked first.
+// Intended for test setups where a known token must be registered before
+// any LLM session has started.
+func (s *sessionTokenStore) Register(token, agentID, sessionKey, archiveDir string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Revoke any existing token for this session key.
+	if old, ok := s.bySess[sessionKey]; ok {
+		delete(s.tokens, old)
+	}
+
+	rec := sessionRecord{agentID: agentID, sessionKey: sessionKey, archiveDir: archiveDir, isTestToken: true}
+	s.tokens[token] = rec
+	s.bySess[sessionKey] = token
 }
 
 // Resolve looks up a token. Returns the record and true if found.
@@ -117,15 +143,3 @@ func generateSessionToken() (string, error) {
 	return sessionTokenPrefix + hex.EncodeToString(raw), nil
 }
 
-// isSessionScopedTool reports whether the named tool requires a session_token.
-// Only tools that call tools.ToolSessionKey(ctx) need this parameter.
-// Currently: get_session_messages and search_session_messages.
-//
-// If new session-scoped tools are added to pkg/tools, add their names here.
-func isSessionScopedTool(name string) bool {
-	switch name {
-	case "get_session_messages", "search_session_messages":
-		return true
-	}
-	return false
-}

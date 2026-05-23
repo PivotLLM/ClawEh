@@ -43,7 +43,8 @@ func NewSessionInfoTool(infoFn SessionInfoFunc) *SessionInfoTool {
 	return &SessionInfoTool{infoFn: infoFn}
 }
 
-func (t *SessionInfoTool) Name() string { return "get_session_info" }
+func (t *SessionInfoTool) Name() string           { return "get_session_info" }
+func (t *SessionInfoTool) IsSessionScoped() bool  { return true }
 
 func (t *SessionInfoTool) Description() string {
 	return "Return metadata about the current session: session key, start time, channel, " +

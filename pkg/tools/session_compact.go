@@ -21,7 +21,8 @@ func NewSessionCompactTool(compact func(ctx context.Context, sessionKey string) 
 	return &SessionCompactTool{compact: compact}
 }
 
-func (t *SessionCompactTool) Name() string { return "compact_session" }
+func (t *SessionCompactTool) Name() string           { return "compact_session" }
+func (t *SessionCompactTool) IsSessionScoped() bool  { return true }
 
 func (t *SessionCompactTool) Description() string {
 	return "Trigger an immediate context compaction for the current session. " +
