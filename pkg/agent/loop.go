@@ -1299,12 +1299,17 @@ func (al *AgentLoop) runAgentLoop(
 	// back to the originating user. Done after getContextManager so the token
 	// for this session is guaranteed to exist. Unified-mode sessions overwrite
 	// on each turn to follow the user across channels; non-unified sessions
-	// only ever see one channel so the field is stable.
-	al.mu.RLock()
-	stiSource := al.sessionTokenIssuer
-	al.mu.RUnlock()
-	if stiSource != nil {
-		stiSource.SetSource(opts.SessionKey, opts.Channel, opts.ChatID)
+	// only ever see one channel so the field is stable. Internal channels
+	// (cli/subagent/recovery/system) have no real channel handler, so skip
+	// the record entirely — the MCP ForUser publish path drops on the empty
+	// channel/chatID guard rather than dispatching to a nonexistent handler.
+	if !constants.IsInternalChannel(opts.Channel) {
+		al.mu.RLock()
+		stiSource := al.sessionTokenIssuer
+		al.mu.RUnlock()
+		if stiSource != nil {
+			stiSource.SetSource(opts.SessionKey, opts.Channel, opts.ChatID)
+		}
 	}
 
 	// 2. Save user message and trigger compression check (skip on retry — already in history).

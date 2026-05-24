@@ -157,3 +157,93 @@ func TestRunAgentLoop_SourceOverwritesAcrossTurns(t *testing.T) {
 			sawSlack, sawTelegram, calls)
 	}
 }
+
+// TestRunAgentLoop_SkipsSetSourceForInternalChannels verifies that runAgentLoop
+// does NOT record the inbound source for internal channels (cli, subagent,
+// recovery). Those channels have no user-facing channel handler, so recording
+// them on the session record would cause the MCP-loopback ForUser publish path
+// to dispatch to a nonexistent handler instead of silently dropping at the
+// empty-channel guard. The control case (slack) confirms SetSource still fires
+// for real external channels.
+func TestRunAgentLoop_SkipsSetSourceForInternalChannels(t *testing.T) {
+	internalChannels := []string{"cli", "subagent", "recovery"}
+	for _, channel := range internalChannels {
+		t.Run(channel, func(t *testing.T) {
+			al, _, _, _, cleanup := newTestAgentLoop(t)
+			defer cleanup()
+
+			agentInstance := al.registry.GetDefaultAgent()
+			if agentInstance == nil {
+				t.Fatal("no default agent")
+			}
+
+			rec := &recordingSTI{}
+			al.SetSessionTokenIssuer(rec)
+
+			agentInstance.Provider = &sequenceProvider{
+				responses: []*providers.LLMResponse{{Content: "done"}},
+				errors:    []error{nil},
+			}
+
+			opts := processOptions{
+				SessionKey:  "agent:main:internal-" + channel,
+				Channel:     channel,
+				ChatID:      "chat-" + channel,
+				UserMessage: "hello",
+			}
+
+			if _, err := al.runAgentLoop(context.Background(), agentInstance, opts); err != nil {
+				t.Fatalf("runAgentLoop returned error: %v", err)
+			}
+
+			calls := rec.calls()
+			if len(calls) != 0 {
+				t.Fatalf("expected no SetSource calls for internal channel %q; got %+v",
+					channel, calls)
+			}
+		})
+	}
+
+	// Control: external channel must still record source.
+	t.Run("slack_control", func(t *testing.T) {
+		al, _, _, _, cleanup := newTestAgentLoop(t)
+		defer cleanup()
+
+		agentInstance := al.registry.GetDefaultAgent()
+		if agentInstance == nil {
+			t.Fatal("no default agent")
+		}
+
+		rec := &recordingSTI{}
+		al.SetSessionTokenIssuer(rec)
+
+		agentInstance.Provider = &sequenceProvider{
+			responses: []*providers.LLMResponse{{Content: "done"}},
+			errors:    []error{nil},
+		}
+
+		opts := processOptions{
+			SessionKey:  "agent:main:external-slack",
+			Channel:     "slack",
+			ChatID:      "C-external",
+			UserMessage: "hello",
+		}
+
+		if _, err := al.runAgentLoop(context.Background(), agentInstance, opts); err != nil {
+			t.Fatalf("runAgentLoop returned error: %v", err)
+		}
+
+		calls := rec.calls()
+		var found bool
+		for _, c := range calls {
+			if c.sessionKey == opts.SessionKey && c.channel == "slack" && c.chatID == "C-external" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("expected SetSource(%q, slack, C-external) to be called for control case; got %+v",
+				opts.SessionKey, calls)
+		}
+	})
+}
