@@ -81,16 +81,32 @@ func TestMarkdownToMrkdwn(t *testing.T) {
 			input: "## Title\nSome body text.",
 			want:  "*Title*\nSome body text.",
 		},
-		// Horizontal rules
+		// Horizontal rules — substituted with a box-drawing line so the
+		// CommonMark thematic break stays visible in Slack.
 		{
 			name:  "horizontal rule dashes",
 			input: "Above\n---\nBelow",
-			want:  "Above\n\nBelow",
+			want:  "Above\n" + hRuleSubstitute + "\nBelow",
 		},
 		{
 			name:  "horizontal rule asterisks",
 			input: "Above\n***\nBelow",
-			want:  "Above\n\nBelow",
+			want:  "Above\n" + hRuleSubstitute + "\nBelow",
+		},
+		{
+			name:  "horizontal rule underscores",
+			input: "Above\n___\nBelow",
+			want:  "Above\n" + hRuleSubstitute + "\nBelow",
+		},
+		{
+			name:  "horizontal rule with surrounding blank lines (display payload fence)",
+			input: "hello\n\n---\n\nworld",
+			want:  "hello\n\n" + hRuleSubstitute + "\n\nworld",
+		},
+		{
+			name:  "inline triple-dash is not a thematic break",
+			input: "hello --- world",
+			want:  "hello --- world",
 		},
 		// Code spans preserved
 		{

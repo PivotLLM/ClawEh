@@ -38,6 +38,11 @@ var (
 // does not match the single `*` delimiters produced by bold or header conversion.
 const boldPlaceholder = "\x01BOLD\x01"
 
+// hRuleSubstitute renders a CommonMark thematic break (---, ***, ___ alone on
+// a line) as a visible horizontal-rule-like line in Slack, which has no native
+// horizontal-rule primitive. Used to fence display payloads emitted by tools.
+const hRuleSubstitute = "──────────────────────────────"
+
 // markdownToMrkdwn converts standard Markdown to Slack mrkdwn format.
 //
 // Conversion rules applied:
@@ -46,7 +51,8 @@ const boldPlaceholder = "\x01BOLD\x01"
 //   - Strikethrough ~~text~~ → ~text~
 //   - Links [text](url) → <url|text>
 //   - Headers (# H1, ## H2, …) → *Header* (Slack has no native headers)
-//   - Horizontal rules (---, ***) are removed
+//   - Horizontal rules (---, ***, ___) → a line of box-drawing characters
+//     (Slack has no horizontal-rule primitive)
 //
 // Elements that Slack renders natively and are left unchanged:
 //   - Backtick code spans and fenced code blocks
@@ -66,8 +72,11 @@ func markdownToMrkdwn(text string) string {
 	text = reFencedCode.ReplaceAllStringFunc(text, save)
 	text = reInlineCode.ReplaceAllStringFunc(text, save)
 
-	// Horizontal rules → empty line
-	text = reHRule.ReplaceAllString(text, "")
+	// Horizontal rules → a visible em-dash-style line. Slack has no native
+	// horizontal-rule primitive, but `display:true` payloads use --- as a
+	// CommonMark thematic break to fence the payload, so stripping the line
+	// erases the fence; substitute a box-drawing line instead.
+	text = reHRule.ReplaceAllString(text, hRuleSubstitute)
 
 	// Strikethrough: ~~text~~ → ~text~
 	text = reStrikethrough.ReplaceAllString(text, "~${1}~")
