@@ -506,6 +506,11 @@ type fileSystem interface {
 	ReadFile(path string) ([]byte, error)
 	WriteFile(path string, data []byte) error
 	WriteFileMode(path string, data []byte, mode os.FileMode) error
+	// WriteFileExclMode writes data to path only if path does not already
+	// exist. On collision it returns an error wrapping fs.ErrExist. This is
+	// in-process exclusive; cross-process atomicity is best-effort and
+	// depends on the underlying filesystem honouring O_EXCL.
+	WriteFileExclMode(path string, data []byte, mode os.FileMode) error
 	ReadDir(path string) ([]os.DirEntry, error)
 	Open(path string) (fs.File, error)
 	Stat(path string) (os.FileInfo, error)
@@ -540,6 +545,35 @@ func (h *hostFs) WriteFile(path string, data []byte) error {
 
 func (h *hostFs) WriteFileMode(path string, data []byte, mode os.FileMode) error {
 	return fileutil.WriteFileAtomic(path, data, mode)
+}
+
+func (h *hostFs) WriteFileExclMode(path string, data []byte, mode os.FileMode) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		os.Remove(path)
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		os.Remove(path)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(path)
+		return err
+	}
+	if err := os.Chmod(path, mode); err != nil {
+		os.Remove(path)
+		return err
+	}
+	return nil
 }
 
 func (h *hostFs) Stat(path string) (os.FileInfo, error) {
@@ -664,6 +698,40 @@ func (r *sandboxFs) WriteFileMode(path string, data []byte, mode os.FileMode) er
 	})
 }
 
+func (r *sandboxFs) WriteFileExclMode(path string, data []byte, mode os.FileMode) error {
+	return r.execute(path, func(root *os.Root, relPath string) error {
+		dir := filepath.Dir(relPath)
+		if dir != "." && dir != "/" {
+			if err := root.MkdirAll(dir, 0o755); err != nil {
+				return fmt.Errorf("failed to create parent directories: %w", err)
+			}
+		}
+		f, err := root.OpenFile(relPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+		if err != nil {
+			return err
+		}
+		if _, err := f.Write(data); err != nil {
+			f.Close()
+			root.Remove(relPath)
+			return err
+		}
+		if err := f.Sync(); err != nil {
+			f.Close()
+			root.Remove(relPath)
+			return err
+		}
+		if err := f.Close(); err != nil {
+			root.Remove(relPath)
+			return err
+		}
+		if err := root.Chmod(relPath, mode); err != nil {
+			root.Remove(relPath)
+			return err
+		}
+		return nil
+	})
+}
+
 func (r *sandboxFs) Stat(path string) (os.FileInfo, error) {
 	var info os.FileInfo
 	err := r.execute(path, func(root *os.Root, relPath string) error {
@@ -746,6 +814,13 @@ func (w *whitelistFs) WriteFileMode(path string, data []byte, mode os.FileMode) 
 		return w.host.WriteFileMode(path, data, mode)
 	}
 	return w.sandbox.WriteFileMode(path, data, mode)
+}
+
+func (w *whitelistFs) WriteFileExclMode(path string, data []byte, mode os.FileMode) error {
+	if w.matches(path) {
+		return w.host.WriteFileExclMode(path, data, mode)
+	}
+	return w.sandbox.WriteFileExclMode(path, data, mode)
 }
 
 func (w *whitelistFs) Stat(path string) (os.FileInfo, error) {
@@ -849,6 +924,11 @@ func (r *redirectFs) WriteFile(path string, data []byte) error {
 func (r *redirectFs) WriteFileMode(path string, data []byte, mode os.FileMode) error {
 	fs, p := r.rewrite(path)
 	return fs.WriteFileMode(p, data, mode)
+}
+
+func (r *redirectFs) WriteFileExclMode(path string, data []byte, mode os.FileMode) error {
+	fs, p := r.rewrite(path)
+	return fs.WriteFileExclMode(p, data, mode)
 }
 
 func (r *redirectFs) Stat(path string) (os.FileInfo, error) {

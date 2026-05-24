@@ -2,9 +2,11 @@ package tools
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"testing"
 )
 
@@ -471,6 +473,199 @@ func TestWriteFile_Backup_FailureAbortsModification(t *testing.T) {
 	}
 	if string(got) != "original" {
 		t.Errorf("target should be unchanged after backup failure; got %q", got)
+	}
+}
+
+// --- F3: backup must not be created when edit validation fails --------------
+
+func TestEditFile_Backup_OldTextMissing_NoBackup(t *testing.T) {
+	ws := t.TempDir()
+	target := filepath.Join(ws, "e.txt")
+	if err := os.WriteFile(target, []byte("hello world"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tool := NewEditFileTool(ws, true)
+	res := tool.Execute(context.Background(), map[string]any{
+		"path":     "e.txt",
+		"old_text": "absent",
+		"new_text": "x",
+		"backup":   true,
+	})
+	if !res.IsError {
+		t.Fatal("expected edit to fail when old_text is missing")
+	}
+	matches, _ := filepath.Glob(filepath.Join(ws, "e.txt.*"))
+	if len(matches) != 0 {
+		t.Errorf("expected no orphan backup when validation fails; got: %v", matches)
+	}
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "hello world" {
+		t.Errorf("target should be unchanged; got %q", got)
+	}
+}
+
+func TestEditFile_Backup_OldTextDuplicate_NoBackup(t *testing.T) {
+	ws := t.TempDir()
+	target := filepath.Join(ws, "e.txt")
+	if err := os.WriteFile(target, []byte("ab ab"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tool := NewEditFileTool(ws, true)
+	res := tool.Execute(context.Background(), map[string]any{
+		"path":     "e.txt",
+		"old_text": "ab",
+		"new_text": "z",
+		"backup":   true,
+	})
+	if !res.IsError {
+		t.Fatal("expected edit to fail when old_text is ambiguous")
+	}
+	matches, _ := filepath.Glob(filepath.Join(ws, "e.txt.*"))
+	if len(matches) != 0 {
+		t.Errorf("expected no orphan backup when validation fails; got: %v", matches)
+	}
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "ab ab" {
+		t.Errorf("target should be unchanged; got %q", got)
+	}
+}
+
+func TestEditFile_Backup_SuccessStillCreatesBackup(t *testing.T) {
+	ws := t.TempDir()
+	target := filepath.Join(ws, "e.txt")
+	if err := os.WriteFile(target, []byte("hello world"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tool := NewEditFileTool(ws, true)
+	res := tool.Execute(context.Background(), map[string]any{
+		"path":     "e.txt",
+		"old_text": "world",
+		"new_text": "there",
+		"backup":   true,
+	})
+	if res.IsError {
+		t.Fatalf("edit failed: %s", res.ForLLM)
+	}
+	b, err := os.ReadFile(filepath.Join(ws, "e.txt.0001"))
+	if err != nil {
+		t.Fatalf(".0001 missing: %v", err)
+	}
+	if string(b) != "hello world" {
+		t.Errorf(".0001 = %q want %q", b, "hello world")
+	}
+}
+
+// --- F4: concurrent backup under race detector -------------------------------
+
+func TestWriteFile_Backup_Concurrent_DistinctSuffixes(t *testing.T) {
+	ws := t.TempDir()
+	target := filepath.Join(ws, "shared.txt")
+	if err := os.WriteFile(target, []byte("v0"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	const N = 8
+	tool := NewWriteFileTool(ws, true)
+	var wg sync.WaitGroup
+	errs := make([]string, N)
+	for i := 0; i < N; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			res := tool.Execute(context.Background(), map[string]any{
+				"path":    "shared.txt",
+				"content": fmt.Sprintf("v%d", i+1),
+				"backup":  true,
+			})
+			if res.IsError {
+				errs[i] = res.ForLLM
+			}
+		}(i)
+	}
+	wg.Wait()
+	for i, e := range errs {
+		if e != "" {
+			t.Errorf("worker %d: %s", i, e)
+		}
+	}
+
+	matches, err := filepath.Glob(filepath.Join(ws, "shared.txt.*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != N {
+		t.Fatalf("expected %d distinct backups, got %d: %v", N, len(matches), matches)
+	}
+	// All backups must hold a valid pre-image — one of the values the file
+	// held at some point ("v0".."v8") — and never be empty.
+	valid := map[string]bool{"v0": true}
+	for i := 1; i <= N; i++ {
+		valid[fmt.Sprintf("v%d", i)] = true
+	}
+	seenSuffixes := map[string]bool{}
+	for _, m := range matches {
+		body, err := os.ReadFile(m)
+		if err != nil {
+			t.Fatalf("read backup %s: %v", m, err)
+		}
+		if !valid[string(body)] {
+			t.Errorf("backup %s holds unexpected pre-image %q", m, body)
+		}
+		if seenSuffixes[m] {
+			t.Errorf("duplicate suffix observed: %s", m)
+		}
+		seenSuffixes[m] = true
+	}
+}
+
+// --- N1: backup + memory redirect lands inside the memory sandbox ------------
+
+func TestWriteFile_Backup_MemoryRedirect_BackupLandsInMemoryRoot(t *testing.T) {
+	ws := t.TempDir()
+	memRoot := t.TempDir()
+	// Pre-create the target inside memRoot so write_file with memory/foo.md
+	// is overwriting an existing file (and therefore triggers a backup).
+	if err := os.WriteFile(filepath.Join(memRoot, "foo.md"), []byte("pre-image"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := NewWriteFileToolWithMemoryRedirect(ws, true, nil, memRoot)
+	res := tool.Execute(context.Background(), map[string]any{
+		"path":    "memory/foo.md",
+		"content": "post-image",
+		"backup":  true,
+	})
+	if res.IsError {
+		t.Fatalf("write failed: %s", res.ForLLM)
+	}
+
+	// Modification lands in memRoot, not workspace.
+	got, err := os.ReadFile(filepath.Join(memRoot, "foo.md"))
+	if err != nil {
+		t.Fatalf("memRoot file missing: %v", err)
+	}
+	if string(got) != "post-image" {
+		t.Errorf("memRoot file = %q want %q", got, "post-image")
+	}
+
+	// Backup lands in memRoot, not workspace.
+	backup, err := os.ReadFile(filepath.Join(memRoot, "foo.md.0001"))
+	if err != nil {
+		t.Fatalf("memRoot backup missing: %v", err)
+	}
+	if string(backup) != "pre-image" {
+		t.Errorf("backup = %q want %q", backup, "pre-image")
+	}
+
+	// Nothing should have been written under the workspace memory/ subtree.
+	if _, err := os.Stat(filepath.Join(ws, "memory")); !os.IsNotExist(err) {
+		t.Errorf("workspace memory/ should not exist; got err=%v", err)
 	}
 }
 

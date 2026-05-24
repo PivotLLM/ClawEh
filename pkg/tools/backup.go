@@ -40,17 +40,33 @@ func backupExistingFile(fsys fileSystem, path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	backupName := fmt.Sprintf("%s.%04d", base, next)
-	backupPath := filepath.Join(dir, backupName)
 
 	data, err := fsys.ReadFile(path)
 	if err != nil {
 		return "", fmt.Errorf("backup: failed to read target: %w", err)
 	}
-	if err := fsys.WriteFileMode(backupPath, data, info.Mode().Perm()); err != nil {
+
+	// Exclusive-create loop: under concurrent backup the directory scan may
+	// race, so probe O_EXCL and bump the suffix on collision. Cross-process
+	// atomicity depends on the underlying filesystem honouring O_EXCL.
+	const maxAttempts = 100
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		suffix := next + attempt
+		if suffix > 9999 {
+			return "", fmt.Errorf("backup: suffix range exhausted for %q (max .9999 in use)", base)
+		}
+		backupName := fmt.Sprintf("%s.%04d", base, suffix)
+		backupPath := filepath.Join(dir, backupName)
+		err := fsys.WriteFileExclMode(backupPath, data, info.Mode().Perm())
+		if err == nil {
+			return backupPath, nil
+		}
+		if errors.Is(err, fs.ErrExist) || os.IsExist(err) {
+			continue
+		}
 		return "", fmt.Errorf("backup: failed to write %s: %w", backupPath, err)
 	}
-	return backupPath, nil
+	return "", fmt.Errorf("backup: exhausted %d attempts to find unused suffix for %q", maxAttempts, base)
 }
 
 // nextBackupSuffix returns the next 4-digit suffix to use for base. It scans

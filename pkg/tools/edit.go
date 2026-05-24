@@ -89,13 +89,22 @@ func (t *EditFileTool) Execute(ctx context.Context, args map[string]any) *ToolRe
 		return ErrorResult("new_text is required")
 	}
 
+	content, err := t.fs.ReadFile(path)
+	if err != nil {
+		return ErrorResult(err.Error())
+	}
+	newContent, err := replaceEditContent(content, oldText, newText)
+	if err != nil {
+		return ErrorResult(err.Error())
+	}
+
 	if getBoolArg(args, "backup", false) {
 		if _, err := backupExistingFile(t.fs, path); err != nil {
 			return ErrorResult(err.Error())
 		}
 	}
 
-	if err := editFile(t.fs, path, oldText, newText); err != nil {
+	if err := t.fs.WriteFile(path, newContent); err != nil {
 		return ErrorResult(err.Error())
 	}
 	forLLM := fmt.Sprintf("File edited: %s", path)
@@ -193,22 +202,6 @@ func (t *AppendFileTool) Execute(ctx context.Context, args map[string]any) *Tool
 		}
 	}
 	return SilentResult(forLLM)
-}
-
-// editFile reads the file via sysFs, performs the replacement, and writes back.
-// It uses a fileSystem interface, allowing the same logic for both restricted and unrestricted modes.
-func editFile(sysFs fileSystem, path, oldText, newText string) error {
-	content, err := sysFs.ReadFile(path)
-	if err != nil {
-		return err
-	}
-
-	newContent, err := replaceEditContent(content, oldText, newText)
-	if err != nil {
-		return err
-	}
-
-	return sysFs.WriteFile(path, newContent)
 }
 
 // appendFile reads the existing content (if any) via sysFs, appends new content, and writes back.

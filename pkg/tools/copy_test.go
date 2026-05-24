@@ -297,6 +297,77 @@ func TestCopyFileTool_MemoryRedirect_CrossSandbox(t *testing.T) {
 	}
 }
 
+func TestCopyFileTool_SameSourceDestination_OverwriteFalse(t *testing.T) {
+	ws := t.TempDir()
+	if err := os.WriteFile(filepath.Join(ws, "f.txt"), []byte("original"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tool := NewCopyFileTool(ws, true)
+	res := tool.Execute(context.Background(), map[string]any{
+		"source_path":      "f.txt",
+		"destination_path": "f.txt",
+	})
+	if !res.IsError {
+		t.Fatal("expected error when source and destination resolve to the same file")
+	}
+	if !strings.Contains(res.ForLLM, "same file") {
+		t.Errorf("error should mention same file; got: %s", res.ForLLM)
+	}
+	got, err := os.ReadFile(filepath.Join(ws, "f.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "original" {
+		t.Errorf("file should be unchanged; got %q", got)
+	}
+}
+
+func TestCopyFileTool_SameSourceDestination_OverwriteTrue(t *testing.T) {
+	ws := t.TempDir()
+	if err := os.WriteFile(filepath.Join(ws, "f.txt"), []byte("original"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tool := NewCopyFileTool(ws, true)
+	res := tool.Execute(context.Background(), map[string]any{
+		"source_path":      "f.txt",
+		"destination_path": "f.txt",
+		"overwrite":        true,
+	})
+	if !res.IsError {
+		t.Fatal("expected error when source and destination resolve to the same file even with overwrite=true")
+	}
+	if !strings.Contains(res.ForLLM, "same file") {
+		t.Errorf("error should mention same file; got: %s", res.ForLLM)
+	}
+	got, err := os.ReadFile(filepath.Join(ws, "f.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "original" {
+		t.Errorf("file should be unchanged; got %q", got)
+	}
+}
+
+func TestCopyFileTool_SameSourceDestination_PathClean(t *testing.T) {
+	// Differs textually but resolves to the same path via filepath.Clean.
+	ws := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(ws, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ws, "sub", "f.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tool := NewCopyFileTool(ws, true)
+	res := tool.Execute(context.Background(), map[string]any{
+		"source_path":      "sub/f.txt",
+		"destination_path": "sub/./f.txt",
+		"overwrite":        true,
+	})
+	if !res.IsError {
+		t.Fatal("expected error when source and destination resolve to the same file via clean")
+	}
+}
+
 func TestCopyFileTool_MissingArgs(t *testing.T) {
 	tool := NewCopyFileTool(t.TempDir(), false)
 	cases := []map[string]any{

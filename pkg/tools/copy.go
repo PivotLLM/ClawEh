@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"regexp"
 )
 
@@ -94,6 +95,10 @@ func (t *CopyFileTool) Execute(ctx context.Context, args map[string]any) *ToolRe
 // copyFileViaFs copies src to dst through fsys, preserving source mode bits.
 // Returns the source content on success so callers can surface it via display.
 func copyFileViaFs(fsys fileSystem, src, dst string, overwrite bool) ([]byte, error) {
+	if filepath.Clean(src) == filepath.Clean(dst) {
+		return nil, fmt.Errorf("source and destination resolve to the same file: %s", filepath.Clean(src))
+	}
+
 	srcInfo, err := fsys.Stat(src)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) || os.IsNotExist(err) {
