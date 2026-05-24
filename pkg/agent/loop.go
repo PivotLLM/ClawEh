@@ -1986,7 +1986,7 @@ func (al *AgentLoop) runLLMIteration(
 		// Process results in original order (send to user, save to session)
 		for _, r := range agentResults {
 			// Send ForUser content to user immediately if not Silent
-			if !r.result.Silent && r.result.ForUser != "" && opts.SendResponse {
+			if !r.result.Silent && r.result.ForUser != "" {
 				if err := al.bus.PublishOutbound(ctx, bus.OutboundMessage{
 					Channel: opts.Channel,
 					ChatID:  opts.ChatID,
