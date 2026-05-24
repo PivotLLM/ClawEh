@@ -391,6 +391,11 @@ func (t *WriteFileTool) Parameters() map[string]any {
 				"description": "If true, after the operation, send the written/edited/appended content to the user as a fenced block separated by `---` markers.",
 				"default":     false,
 			},
+			"backup": map[string]any{
+				"type":        "boolean",
+				"description": "If true and the target file exists, copy it to <file>.NNNN (next unused 4-digit suffix, starting at 0001) before modification. Silently skipped when the target does not exist.",
+				"default":     false,
+			},
 		},
 		"required": []string{"path", "content"},
 	}
@@ -405,6 +410,12 @@ func (t *WriteFileTool) Execute(ctx context.Context, args map[string]any) *ToolR
 	content, ok := args["content"].(string)
 	if !ok {
 		return ErrorResult("content is required")
+	}
+
+	if getBoolArg(args, "backup", false) {
+		if _, err := backupExistingFile(t.fs, path); err != nil {
+			return ErrorResult(err.Error())
+		}
 	}
 
 	if err := t.fs.WriteFile(path, []byte(content)); err != nil {

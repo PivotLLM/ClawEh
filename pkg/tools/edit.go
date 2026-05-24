@@ -63,6 +63,11 @@ func (t *EditFileTool) Parameters() map[string]any {
 				"description": "If true, after the operation, send the written/edited/appended content to the user as a fenced block separated by `---` markers.",
 				"default":     false,
 			},
+			"backup": map[string]any{
+				"type":        "boolean",
+				"description": "If true and the target file exists, copy it to <file>.NNNN (next unused 4-digit suffix, starting at 0001) before modification. Silently skipped when the target does not exist.",
+				"default":     false,
+			},
 		},
 		"required": []string{"path", "old_text", "new_text"},
 	}
@@ -82,6 +87,12 @@ func (t *EditFileTool) Execute(ctx context.Context, args map[string]any) *ToolRe
 	newText, ok := args["new_text"].(string)
 	if !ok {
 		return ErrorResult("new_text is required")
+	}
+
+	if getBoolArg(args, "backup", false) {
+		if _, err := backupExistingFile(t.fs, path); err != nil {
+			return ErrorResult(err.Error())
+		}
 	}
 
 	if err := editFile(t.fs, path, oldText, newText); err != nil {
@@ -144,6 +155,11 @@ func (t *AppendFileTool) Parameters() map[string]any {
 				"description": "If true, after the operation, send the written/edited/appended content to the user as a fenced block separated by `---` markers.",
 				"default":     false,
 			},
+			"backup": map[string]any{
+				"type":        "boolean",
+				"description": "If true and the target file exists, copy it to <file>.NNNN (next unused 4-digit suffix, starting at 0001) before modification. Silently skipped when the target does not exist.",
+				"default":     false,
+			},
 		},
 		"required": []string{"path", "content"},
 	}
@@ -158,6 +174,12 @@ func (t *AppendFileTool) Execute(ctx context.Context, args map[string]any) *Tool
 	content, ok := args["content"].(string)
 	if !ok {
 		return ErrorResult("content is required")
+	}
+
+	if getBoolArg(args, "backup", false) {
+		if _, err := backupExistingFile(t.fs, path); err != nil {
+			return ErrorResult(err.Error())
+		}
 	}
 
 	if err := appendFile(t.fs, path, content); err != nil {
