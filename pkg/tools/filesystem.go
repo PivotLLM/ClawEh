@@ -354,6 +354,11 @@ func (t *WriteFileTool) Parameters() map[string]any {
 				"type":        "string",
 				"description": "Content to write to the file",
 			},
+			"display": map[string]any{
+				"type":        "boolean",
+				"description": "If true, after the operation, send the written/edited/appended content to the user as a fenced block separated by `---` markers.",
+				"default":     false,
+			},
 		},
 		"required": []string{"path", "content"},
 	}
@@ -374,7 +379,14 @@ func (t *WriteFileTool) Execute(ctx context.Context, args map[string]any) *ToolR
 		return ErrorResult(err.Error())
 	}
 
-	return SilentResult(fmt.Sprintf("File written: %s", path))
+	forLLM := fmt.Sprintf("File written: %s", path)
+	if getBoolArg(args, "display", false) {
+		return &ToolResult{
+			ForLLM:  forLLM,
+			ForUser: displayBody(content),
+		}
+	}
+	return SilentResult(forLLM)
 }
 
 type ListDirTool struct {

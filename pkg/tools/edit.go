@@ -48,6 +48,11 @@ func (t *EditFileTool) Parameters() map[string]any {
 				"type":        "string",
 				"description": "The text to replace with",
 			},
+			"display": map[string]any{
+				"type":        "boolean",
+				"description": "If true, after the operation, send the written/edited/appended content to the user as a fenced block separated by `---` markers.",
+				"default":     false,
+			},
 		},
 		"required": []string{"path", "old_text", "new_text"},
 	}
@@ -72,7 +77,14 @@ func (t *EditFileTool) Execute(ctx context.Context, args map[string]any) *ToolRe
 	if err := editFile(t.fs, path, oldText, newText); err != nil {
 		return ErrorResult(err.Error())
 	}
-	return SilentResult(fmt.Sprintf("File edited: %s", path))
+	forLLM := fmt.Sprintf("File edited: %s", path)
+	if getBoolArg(args, "display", false) {
+		return &ToolResult{
+			ForLLM:  forLLM,
+			ForUser: displayBody(newText),
+		}
+	}
+	return SilentResult(forLLM)
 }
 
 type AppendFileTool struct {
@@ -107,6 +119,11 @@ func (t *AppendFileTool) Parameters() map[string]any {
 				"type":        "string",
 				"description": "The content to append",
 			},
+			"display": map[string]any{
+				"type":        "boolean",
+				"description": "If true, after the operation, send the written/edited/appended content to the user as a fenced block separated by `---` markers.",
+				"default":     false,
+			},
 		},
 		"required": []string{"path", "content"},
 	}
@@ -126,7 +143,14 @@ func (t *AppendFileTool) Execute(ctx context.Context, args map[string]any) *Tool
 	if err := appendFile(t.fs, path, content); err != nil {
 		return ErrorResult(err.Error())
 	}
-	return SilentResult(fmt.Sprintf("Appended to %s", path))
+	forLLM := fmt.Sprintf("Appended to %s", path)
+	if getBoolArg(args, "display", false) {
+		return &ToolResult{
+			ForLLM:  forLLM,
+			ForUser: displayBody(content),
+		}
+	}
+	return SilentResult(forLLM)
 }
 
 // editFile reads the file via sysFs, performs the replacement, and writes back.
