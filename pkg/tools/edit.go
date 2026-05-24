@@ -24,6 +24,16 @@ func NewEditFileTool(workspace string, restrict bool, allowPaths ...[]*regexp.Re
 	return &EditFileTool{fs: buildFs(workspace, restrict, patterns)}
 }
 
+// NewEditFileToolWithMemoryRedirect mirrors NewEditFileTool with redirect support.
+func NewEditFileToolWithMemoryRedirect(
+	workspace string,
+	restrict bool,
+	patterns []*regexp.Regexp,
+	memoryRoot string,
+) *EditFileTool {
+	return &EditFileTool{fs: buildFsWithMemoryRedirect(workspace, restrict, patterns, memoryRoot)}
+}
+
 func (t *EditFileTool) Name() string {
 	return "edit_file"
 }
@@ -97,6 +107,16 @@ func NewAppendFileTool(workspace string, restrict bool, allowPaths ...[]*regexp.
 		patterns = allowPaths[0]
 	}
 	return &AppendFileTool{fs: buildFs(workspace, restrict, patterns)}
+}
+
+// NewAppendFileToolWithMemoryRedirect mirrors NewAppendFileTool with redirect support.
+func NewAppendFileToolWithMemoryRedirect(
+	workspace string,
+	restrict bool,
+	patterns []*regexp.Regexp,
+	memoryRoot string,
+) *AppendFileTool {
+	return &AppendFileTool{fs: buildFsWithMemoryRedirect(workspace, restrict, patterns, memoryRoot)}
 }
 
 func (t *AppendFileTool) Name() string {

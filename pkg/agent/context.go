@@ -96,6 +96,13 @@ func getGlobalConfigDir() string {
 }
 
 func NewContextBuilder(workspace string) *ContextBuilder {
+	return NewContextBuilderWithMemory(workspace, "")
+}
+
+// NewContextBuilderWithMemory creates a ContextBuilder with an optional
+// memory-directory override. An empty memoryDir preserves the legacy
+// <workspace>/memory layout.
+func NewContextBuilderWithMemory(workspace, memoryDir string) *ContextBuilder {
 	// builtin skills: skills directory in current project
 	// Use the skills/ directory under the current working directory
 	builtinSkillsDir := strings.TrimSpace(os.Getenv("CLAW_BUILTIN_SKILLS"))
@@ -108,7 +115,7 @@ func NewContextBuilder(workspace string) *ContextBuilder {
 	return &ContextBuilder{
 		workspace:    workspace,
 		skillsLoader: skills.NewSkillsLoader(workspace, globalSkillsDir, builtinSkillsDir),
-		memory:       NewMemoryStore(workspace),
+		memory:       NewMemoryStore(workspace, memoryDir),
 	}
 }
 
@@ -117,6 +124,11 @@ func (cb *ContextBuilder) getIdentity() string {
 	toolDiscovery := cb.getDiscoveryRule()
 	version := config.FormatVersion()
 
+	// Memory paths are advertised relative to the workspace even when the
+	// memory directory has been relocated via the agent's memory_dir config:
+	// the read/write/list/edit/append tools transparently redirect any
+	// "<workspace>/memory/..." access to the real on-disk path, so the agent
+	// never needs to see (or leak) the override.
 	return fmt.Sprintf(
 		`# claw (%s)
 
@@ -274,12 +286,20 @@ func (cb *ContextBuilder) InvalidateCache() {
 // invalidation (bootstrap files + memory). Skill roots are handled separately
 // because they require both directory-level and recursive file-level checks.
 func (cb *ContextBuilder) sourcePaths() []string {
+	// Resolve MEMORY.md against the actual memory root (which may have been
+	// relocated off the workspace via the agent's memory_dir setting). Using
+	// cb.memory.Dir() ensures cache invalidation tracks the live on-disk file
+	// rather than a stale workspace-relative path.
+	memoryRoot := filepath.Join(cb.workspace, "memory")
+	if cb.memory != nil {
+		memoryRoot = cb.memory.Dir()
+	}
 	return []string{
 		filepath.Join(cb.workspace, "AGENTS.md"),
 		filepath.Join(cb.workspace, "SOUL.md"),
 		filepath.Join(cb.workspace, "USER.md"),
 		filepath.Join(cb.workspace, "IDENTITY.md"),
-		filepath.Join(cb.workspace, "memory", "MEMORY.md"),
+		filepath.Join(memoryRoot, "MEMORY.md"),
 		filepath.Join(cb.workspace, "state", "callback.json"),
 	}
 }

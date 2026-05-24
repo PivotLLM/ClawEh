@@ -118,6 +118,27 @@ func NewReadFileTool(
 	}
 }
 
+// NewReadFileToolWithMemoryRedirect is like NewReadFileTool but also redirects
+// any access under the workspace-relative "memory/" subtree to memoryRoot.
+// An empty memoryRoot (or one equal to <workspace>/memory) behaves identically
+// to NewReadFileTool.
+func NewReadFileToolWithMemoryRedirect(
+	workspace string,
+	restrict bool,
+	maxReadFileSize int,
+	patterns []*regexp.Regexp,
+	memoryRoot string,
+) *ReadFileTool {
+	maxSize := int64(maxReadFileSize)
+	if maxSize <= 0 {
+		maxSize = MaxReadFileSize
+	}
+	return &ReadFileTool{
+		fs:      buildFsWithMemoryRedirect(workspace, restrict, patterns, memoryRoot),
+		maxSize: maxSize,
+	}
+}
+
 func (t *ReadFileTool) Name() string {
 	return "read_file"
 }
@@ -334,6 +355,17 @@ func NewWriteFileTool(workspace string, restrict bool, allowPaths ...[]*regexp.R
 	return &WriteFileTool{fs: buildFs(workspace, restrict, patterns)}
 }
 
+// NewWriteFileToolWithMemoryRedirect mirrors NewWriteFileTool but additionally
+// redirects "memory/" subtree writes to memoryRoot. See buildFsWithMemoryRedirect.
+func NewWriteFileToolWithMemoryRedirect(
+	workspace string,
+	restrict bool,
+	patterns []*regexp.Regexp,
+	memoryRoot string,
+) *WriteFileTool {
+	return &WriteFileTool{fs: buildFsWithMemoryRedirect(workspace, restrict, patterns, memoryRoot)}
+}
+
 func (t *WriteFileTool) Name() string {
 	return "write_file"
 }
@@ -399,6 +431,16 @@ func NewListDirTool(workspace string, restrict bool, allowPaths ...[]*regexp.Reg
 		patterns = allowPaths[0]
 	}
 	return &ListDirTool{fs: buildFs(workspace, restrict, patterns)}
+}
+
+// NewListDirToolWithMemoryRedirect mirrors NewListDirTool with redirect support.
+func NewListDirToolWithMemoryRedirect(
+	workspace string,
+	restrict bool,
+	patterns []*regexp.Regexp,
+	memoryRoot string,
+) *ListDirTool {
+	return &ListDirTool{fs: buildFsWithMemoryRedirect(workspace, restrict, patterns, memoryRoot)}
 }
 
 func (t *ListDirTool) Name() string {
@@ -684,6 +726,111 @@ func buildFs(workspace string, restrict bool, patterns []*regexp.Regexp) fileSys
 		return &whitelistFs{sandbox: sandbox, patterns: patterns}
 	}
 	return sandbox
+}
+
+// redirectFs transparently rewrites any access whose path is workspace-relative
+// "memory" (or starts with "memory/") so it lands under memoryRoot instead of
+// <workspace>/memory. All other paths fall through to base. Both base and mem
+// are sandbox-backed (each opens its own os.Root per call), so existing
+// os.Root symlink and `..` traversal guarantees apply to both sides.
+type redirectFs struct {
+	base       fileSystem // sandboxFs rooted at workspace (or whitelistFs wrapping one)
+	mem        fileSystem // sandboxFs rooted at memoryRoot
+	workspace  string     // resolved abs path of the workspace
+	memoryRoot string     // resolved abs path of the memory root (non-empty)
+}
+
+// rewrite returns (target fileSystem, path) for the given input. When the
+// input refers to the "memory" subtree, it returns the mem fs and the
+// path relative to memoryRoot. Otherwise it returns (base, original path).
+func (r *redirectFs) rewrite(path string) (fileSystem, string) {
+	if r.memoryRoot == "" {
+		return r.base, path
+	}
+
+	// Compute the workspace-relative form of the input path. Inputs may be
+	// either workspace-relative ("memory/MEMORY.md") or absolute. We use
+	// filepath.ToSlash so the prefix test below works the same on Windows.
+	var rel string
+	if filepath.IsAbs(path) {
+		cleaned := filepath.Clean(path)
+		rr, err := filepath.Rel(r.workspace, cleaned)
+		if err != nil || !filepath.IsLocal(rr) {
+			return r.base, path
+		}
+		rel = rr
+	} else {
+		rel = filepath.Clean(path)
+		if !filepath.IsLocal(rel) {
+			return r.base, path
+		}
+	}
+
+	slashed := filepath.ToSlash(rel)
+	if slashed == "memory" {
+		// Listing/opening the memory dir itself: target memoryRoot root ".".
+		return r.mem, "."
+	}
+	if strings.HasPrefix(slashed, "memory/") {
+		sub := strings.TrimPrefix(slashed, "memory/")
+		if sub == "" {
+			return r.mem, "."
+		}
+		// Convert back to os-native separators for the mem sandbox.
+		return r.mem, filepath.FromSlash(sub)
+	}
+	return r.base, path
+}
+
+func (r *redirectFs) ReadFile(path string) ([]byte, error) {
+	fs, p := r.rewrite(path)
+	return fs.ReadFile(p)
+}
+
+func (r *redirectFs) WriteFile(path string, data []byte) error {
+	fs, p := r.rewrite(path)
+	return fs.WriteFile(p, data)
+}
+
+func (r *redirectFs) ReadDir(path string) ([]os.DirEntry, error) {
+	fs, p := r.rewrite(path)
+	return fs.ReadDir(p)
+}
+
+func (r *redirectFs) Open(path string) (fs.File, error) {
+	fs, p := r.rewrite(path)
+	return fs.Open(p)
+}
+
+// buildFsWithMemoryRedirect mirrors buildFs but additionally redirects any
+// "memory" subtree access to memoryRoot. When restrict is false or memoryRoot
+// is empty (or equals <workspace>/memory), behaviour is byte-identical to
+// buildFs so existing call sites are unaffected.
+func buildFsWithMemoryRedirect(workspace string, restrict bool, patterns []*regexp.Regexp, memoryRoot string) fileSystem {
+	base := buildFs(workspace, restrict, patterns)
+	if !restrict || strings.TrimSpace(memoryRoot) == "" {
+		return base
+	}
+
+	absWS, err := filepath.Abs(workspace)
+	if err != nil {
+		return base
+	}
+	absMem, err := filepath.Abs(memoryRoot)
+	if err != nil {
+		return base
+	}
+	// Default-location memory (<workspace>/memory): no redirect needed.
+	if absMem == filepath.Join(absWS, "memory") {
+		return base
+	}
+
+	return &redirectFs{
+		base:       base,
+		mem:        &sandboxFs{workspace: absMem},
+		workspace:  absWS,
+		memoryRoot: absMem,
+	}
 }
 
 // Helper to get a safe relative path for os.Root usage

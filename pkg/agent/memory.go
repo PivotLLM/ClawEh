@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/PivotLLM/ClawEh/pkg/fileutil"
+	"github.com/PivotLLM/ClawEh/pkg/logger"
 )
 
 // MemoryStore manages persistent memory for the agent.
@@ -25,20 +26,37 @@ type MemoryStore struct {
 	memoryFile string
 }
 
-// NewMemoryStore creates a new MemoryStore with the given workspace path.
-// It ensures the memory directory exists.
-func NewMemoryStore(workspace string) *MemoryStore {
-	memoryDir := filepath.Join(workspace, "memory")
+// NewMemoryStore creates a new MemoryStore.
+// If memoryDirOverride is empty, the standard <workspace>/memory layout is used.
+// Otherwise the override (with ~ expansion) is used as the memory root.
+// It ensures the memory directory exists; if MkdirAll fails the error is
+// logged but the store is still returned so callers can decide what to do.
+func NewMemoryStore(workspace, memoryDirOverride string) *MemoryStore {
+	var memoryDir string
+	if strings.TrimSpace(memoryDirOverride) != "" {
+		memoryDir = expandHome(strings.TrimSpace(memoryDirOverride))
+	} else {
+		memoryDir = filepath.Join(workspace, "memory")
+	}
 	memoryFile := filepath.Join(memoryDir, "MEMORY.md")
 
-	// Ensure memory directory exists
-	os.MkdirAll(memoryDir, 0o755)
+	if err := os.MkdirAll(memoryDir, 0o700); err != nil {
+		logger.WarnCF("agent", "memory: failed to create memory directory",
+			map[string]any{"dir": memoryDir, "error": err.Error()})
+	}
 
 	return &MemoryStore{
 		workspace:  workspace,
 		memoryDir:  memoryDir,
 		memoryFile: memoryFile,
 	}
+}
+
+// Dir returns the resolved on-disk memory root directory. The context builder
+// uses this for cache-invalidation file stat checks; agents and tools see only
+// the canonical <workspace>/memory virtual path.
+func (ms *MemoryStore) Dir() string {
+	return ms.memoryDir
 }
 
 // getTodayFile returns the path to today's daily note file (memory/YYYYMM/YYYYMMDD.md).
@@ -52,8 +70,13 @@ func (ms *MemoryStore) getTodayFile() string {
 // ReadLongTerm reads the long-term memory (MEMORY.md).
 // Returns empty string if the file doesn't exist.
 func (ms *MemoryStore) ReadLongTerm() string {
-	if data, err := os.ReadFile(ms.memoryFile); err == nil {
+	data, err := os.ReadFile(ms.memoryFile)
+	if err == nil {
 		return string(data)
+	}
+	if !os.IsNotExist(err) {
+		logger.WarnCF("agent", "memory: failed to read long-term memory",
+			map[string]any{"path": ms.memoryFile, "error": err.Error()})
 	}
 	return ""
 }
@@ -69,8 +92,13 @@ func (ms *MemoryStore) WriteLongTerm(content string) error {
 // Returns empty string if the file doesn't exist.
 func (ms *MemoryStore) ReadToday() string {
 	todayFile := ms.getTodayFile()
-	if data, err := os.ReadFile(todayFile); err == nil {
+	data, err := os.ReadFile(todayFile)
+	if err == nil {
 		return string(data)
+	}
+	if !os.IsNotExist(err) {
+		logger.WarnCF("agent", "memory: failed to read daily note",
+			map[string]any{"path": todayFile, "error": err.Error()})
 	}
 	return ""
 }
@@ -89,6 +117,9 @@ func (ms *MemoryStore) AppendToday(content string) error {
 	var existingContent string
 	if data, err := os.ReadFile(todayFile); err == nil {
 		existingContent = string(data)
+	} else if !os.IsNotExist(err) {
+		logger.WarnCF("agent", "memory: failed to read existing daily note for append",
+			map[string]any{"path": todayFile, "error": err.Error()})
 	}
 
 	var newContent string
@@ -123,6 +154,9 @@ func (ms *MemoryStore) GetRecentDailyNotes(days int) string {
 			}
 			sb.Write(data)
 			first = false
+		} else if !os.IsNotExist(err) {
+			logger.WarnCF("agent", "memory: failed to read daily note",
+				map[string]any{"path": filePath, "error": err.Error()})
 		}
 	}
 

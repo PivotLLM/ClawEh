@@ -38,6 +38,7 @@ interface AgentEntry {
   tools?: string[]
   callback?: CallbackConfig | null
   temperature?: number
+  memory_dir?: string
 }
 
 interface AgentsConfig {
@@ -100,6 +101,7 @@ function parseAgent(value: unknown): AgentEntry {
     tools: asArray(r.tools).map(asString).filter(Boolean),
     callback: cbMins > 0 ? { window_minutes: cbMins, window_count: asNumber(cbRaw.window_count) || 2 } : null,
     temperature: typeof r.temperature === "number" ? r.temperature : undefined,
+    memory_dir: asString(r.memory_dir) || undefined,
   }
 }
 
@@ -304,6 +306,7 @@ interface AgentCardProps {
   callbackWindowMinutes?: number
   callbackWindowCount?: number
   temperature?: number
+  memoryDir?: string
   onToggleEnabled?: () => void
   onModelChange: (v: string) => void
   onFallbacksChange: (fallbacks: string[]) => void
@@ -311,6 +314,7 @@ interface AgentCardProps {
   onToolsChange: (tools: string[]) => void
   onCallbackChange?: (mins: number, count: number) => void
   onTemperatureChange?: (t: number | undefined) => void
+  onMemoryDirChange?: (v: string | undefined) => void
   onDelete?: () => void
   saving: boolean
   onSave: () => void
@@ -330,6 +334,7 @@ function AgentCard({
   callbackWindowMinutes = 0,
   callbackWindowCount = 2,
   temperature = undefined,
+  memoryDir = undefined,
   onToggleEnabled,
   onModelChange,
   onFallbacksChange,
@@ -337,10 +342,12 @@ function AgentCard({
   onToolsChange,
   onCallbackChange,
   onTemperatureChange = undefined,
+  onMemoryDirChange = undefined,
   onDelete,
   saving,
   onSave,
 }: AgentCardProps) {
+  const { t } = useTranslation()
   const [toolsExpanded, setToolsExpanded] = useState(false)
 
   return (
@@ -490,6 +497,22 @@ function AgentCard({
         </div>
       )}
 
+      {onMemoryDirChange !== undefined && (
+        <div className="space-y-1.5">
+          <p className="text-muted-foreground text-xs font-medium">{t("agents.memoryDir")}</p>
+          <Input
+            value={memoryDir ?? ""}
+            onChange={(e) => {
+              const v = e.target.value
+              onMemoryDirChange(v.trim() === "" ? undefined : v)
+            }}
+            className="h-7 text-xs font-mono"
+            placeholder="/path/to/private/memory"
+          />
+          <p className="text-muted-foreground text-xs">{t("agents.memoryDirHint")}</p>
+        </div>
+      )}
+
       <div className="flex justify-end">
         <Button size="sm" onClick={onSave} disabled={saving}>
           {saving ? "Saving..." : "Save"}
@@ -574,6 +597,7 @@ export function AgentsPage() {
           ? { window_minutes: a.callback.window_minutes, window_count: a.callback.window_count }
           : null,
         ...(a.temperature !== undefined ? { temperature: a.temperature } : {}),
+        ...(a.memory_dir ? { memory_dir: a.memory_dir } : {}),
       })),
     },
   })
@@ -617,7 +641,7 @@ export function AgentsPage() {
     }
   }
 
-  const handleSaveAgent = async (index: number, modelName: string, fallbacks: string[], skills: string[], tools: string[], callbackMins: number, callbackCount: number, temperature: number | undefined) => {
+  const handleSaveAgent = async (index: number, modelName: string, fallbacks: string[], skills: string[], tools: string[], callbackMins: number, callbackCount: number, temperature: number | undefined, memoryDir: string | undefined) => {
     setSaving(`agent-${index}`)
     const list = [...(agentsCfg.list ?? [])]
     list[index] = {
@@ -627,6 +651,7 @@ export function AgentsPage() {
       tools: tools,
       callback: callbackMins > 0 ? { window_minutes: callbackMins, window_count: callbackCount } : null,
       temperature,
+      memory_dir: memoryDir,
     }
     const next: AgentsConfig = { ...agentsCfg, list }
     try {
@@ -723,6 +748,7 @@ export function AgentsPage() {
   const [agentToolsEdits, setAgentToolsEdits] = useState<string[][]>([])
   const [agentCallbackEdits, setAgentCallbackEdits] = useState<Array<{ mins: number; count: number }>>([])
   const [agentTemperatureEdits, setAgentTemperatureEdits] = useState<Array<number | undefined>>([])
+  const [agentMemoryDirEdits, setAgentMemoryDirEdits] = useState<Array<string | undefined>>([])
   useEffect(() => {
     setAgentModelEdits((agentsCfg.list ?? []).map((a) => a.model?.primary ?? ""))
     setAgentFallbacksEdits((agentsCfg.list ?? []).map((a) => a.model?.fallbacks ?? []))
@@ -733,6 +759,7 @@ export function AgentsPage() {
       count: a.callback?.window_count ?? 2,
     })))
     setAgentTemperatureEdits((agentsCfg.list ?? []).map((a) => a.temperature))
+    setAgentMemoryDirEdits((agentsCfg.list ?? []).map((a) => a.memory_dir))
   }, [agentsCfg.list])
 
   return (
@@ -829,6 +856,7 @@ export function AgentsPage() {
                   callbackWindowMinutes={agentCallbackEdits[i]?.mins ?? 0}
                   callbackWindowCount={agentCallbackEdits[i]?.count ?? 2}
                   temperature={agentTemperatureEdits[i]}
+                  memoryDir={agentMemoryDirEdits[i]}
                   onToggleEnabled={() => handleToggleAgent(i)}
                   onModelChange={(v) =>
                     setAgentModelEdits((prev) => {
@@ -865,10 +893,17 @@ export function AgentsPage() {
                       return next
                     })
                   }
-                  onTemperatureChange={(t) =>
+                  onTemperatureChange={(tp) =>
                     setAgentTemperatureEdits((prev) => {
                       const next = [...prev]
-                      next[i] = t
+                      next[i] = tp
+                      return next
+                    })
+                  }
+                  onMemoryDirChange={(md) =>
+                    setAgentMemoryDirEdits((prev) => {
+                      const next = [...prev]
+                      next[i] = md
                       return next
                     })
                   }
@@ -884,6 +919,7 @@ export function AgentsPage() {
                       agentCallbackEdits[i]?.mins ?? 0,
                       agentCallbackEdits[i]?.count ?? 2,
                       agentTemperatureEdits[i],
+                      agentMemoryDirEdits[i],
                     )
                   }
                 />

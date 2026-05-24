@@ -9,7 +9,14 @@
       "compress_normal_percent": 50,
       "compress_safety_percent": 80,
       "compress_message_threshold": 20
-    }
+    },
+    "list": [
+      {
+        "_comment": "Optional: relocate this agent's memory folder off the default <workspace>/memory location. The path must be absolute (~ is expanded), unique across agents, and outside every agent workspace. The agent still sees the canonical <workspace>/memory/MEMORY.md paths — read/write/list/edit/append tools transparently redirect to the on-disk folder set here. Existing memory files are NOT auto-migrated when this is changed.",
+        "id": "alice",
+        "memory_dir": "/path/to/private/memory"
+      }
+    ]
   },
   "bindings": [
     {

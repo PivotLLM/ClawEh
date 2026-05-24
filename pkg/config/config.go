@@ -111,8 +111,8 @@ type Config struct {
 	// file for changes and triggers a reload. Defaults to
 	// global.DefaultConfigReloadIntervalSeconds; floored at
 	// global.MinConfigReloadIntervalSeconds.
-	ConfigReloadIntervalSeconds int `json:"config_reload_interval_seconds,omitempty" env:"CLAW_CONFIG_RELOAD_INTERVAL_SECONDS"`
-	dataDir string // runtime-only: base data directory, not serialized
+	ConfigReloadIntervalSeconds int    `json:"config_reload_interval_seconds,omitempty" env:"CLAW_CONFIG_RELOAD_INTERVAL_SECONDS"`
+	dataDir                     string // runtime-only: base data directory, not serialized
 }
 
 // MarshalJSON implements custom JSON marshaling for Config
@@ -182,11 +182,18 @@ func (m AgentModelConfig) MarshalJSON() ([]byte, error) {
 }
 
 type AgentConfig struct {
-	ID          string            `json:"id"`
-	Enabled     *bool             `json:"enabled,omitempty"`
-	Default     bool              `json:"default,omitempty"`
-	Name        string            `json:"name,omitempty"`
-	Workspace   string            `json:"workspace,omitempty"`
+	ID        string `json:"id"`
+	Enabled   *bool  `json:"enabled,omitempty"`
+	Default   bool   `json:"default,omitempty"`
+	Name      string `json:"name,omitempty"`
+	Workspace string `json:"workspace,omitempty"`
+	// MemoryDir relocates this agent's memory folder off the default
+	// <workspace>/memory location. Empty preserves the default. Non-empty
+	// must be an absolute path (may contain ~). The on-disk path is hidden
+	// from the agent; the system prompt continues to advertise the canonical
+	// <workspace>/memory/... paths and the read/write/list/edit/append tools
+	// transparently redirect "memory/..." accesses to this folder.
+	MemoryDir   string            `json:"memory_dir,omitempty"`
 	Model       *AgentModelConfig `json:"model,omitempty"`
 	Skills      []string          `json:"skills,omitempty"`
 	Tools       []string          `json:"tools,omitempty"`
@@ -300,18 +307,18 @@ type RoutingConfig struct {
 }
 
 type AgentDefaults struct {
-	Workspace                 string            `json:"workspace,omitempty"             env:"CLAW_AGENTS_DEFAULTS_WORKSPACE"`
-	RestrictToWorkspace       bool              `json:"restrict_to_workspace"           env:"CLAW_AGENTS_DEFAULTS_RESTRICT_TO_WORKSPACE"`
-	AllowReadOutsideWorkspace bool              `json:"allow_read_outside_workspace"    env:"CLAW_AGENTS_DEFAULTS_ALLOW_READ_OUTSIDE_WORKSPACE"`
-	Model                     *AgentModelConfig `json:"model,omitempty"`
-	ImageModel                string            `json:"image_model,omitempty"           env:"CLAW_AGENTS_DEFAULTS_IMAGE_MODEL"`
-	ImageModelFallbacks       []string          `json:"image_model_fallbacks,omitempty"`
-	RequestTimeout            int               `json:"request_timeout,omitempty"       env:"CLAW_AGENTS_DEFAULTS_REQUEST_TIMEOUT"`
-	MaxTokens                 int               `json:"max_tokens"                      env:"CLAW_AGENTS_DEFAULTS_MAX_TOKENS"`
-	Temperature               *float64          `json:"temperature,omitempty"           env:"CLAW_AGENTS_DEFAULTS_TEMPERATURE"`
-	MaxToolIterations         int               `json:"max_tool_iterations"             env:"CLAW_AGENTS_DEFAULTS_MAX_TOOL_ITERATIONS"`
-	ContextWindow             int               `json:"context_window,omitempty"        env:"CLAW_AGENTS_DEFAULTS_CONTEXT_WINDOW"`
-	MaxMediaSize              int               `json:"max_media_size,omitempty"        env:"CLAW_AGENTS_DEFAULTS_MAX_MEDIA_SIZE"`
+	Workspace                  string            `json:"workspace,omitempty"             env:"CLAW_AGENTS_DEFAULTS_WORKSPACE"`
+	RestrictToWorkspace        bool              `json:"restrict_to_workspace"           env:"CLAW_AGENTS_DEFAULTS_RESTRICT_TO_WORKSPACE"`
+	AllowReadOutsideWorkspace  bool              `json:"allow_read_outside_workspace"    env:"CLAW_AGENTS_DEFAULTS_ALLOW_READ_OUTSIDE_WORKSPACE"`
+	Model                      *AgentModelConfig `json:"model,omitempty"`
+	ImageModel                 string            `json:"image_model,omitempty"           env:"CLAW_AGENTS_DEFAULTS_IMAGE_MODEL"`
+	ImageModelFallbacks        []string          `json:"image_model_fallbacks,omitempty"`
+	RequestTimeout             int               `json:"request_timeout,omitempty"       env:"CLAW_AGENTS_DEFAULTS_REQUEST_TIMEOUT"`
+	MaxTokens                  int               `json:"max_tokens"                      env:"CLAW_AGENTS_DEFAULTS_MAX_TOKENS"`
+	Temperature                *float64          `json:"temperature,omitempty"           env:"CLAW_AGENTS_DEFAULTS_TEMPERATURE"`
+	MaxToolIterations          int               `json:"max_tool_iterations"             env:"CLAW_AGENTS_DEFAULTS_MAX_TOOL_ITERATIONS"`
+	ContextWindow              int               `json:"context_window,omitempty"        env:"CLAW_AGENTS_DEFAULTS_CONTEXT_WINDOW"`
+	MaxMediaSize               int               `json:"max_media_size,omitempty"        env:"CLAW_AGENTS_DEFAULTS_MAX_MEDIA_SIZE"`
 	CompressMinPercent         int               `json:"compress_min_percent,omitempty"          env:"CLAW_AGENTS_DEFAULTS_COMPRESS_MIN_PERCENT"`
 	CompressNormalPercent      int               `json:"compress_normal_percent,omitempty"       env:"CLAW_AGENTS_DEFAULTS_COMPRESS_NORMAL_PERCENT"`
 	CompressSafetyPercent      int               `json:"compress_safety_percent,omitempty"       env:"CLAW_AGENTS_DEFAULTS_COMPRESS_SAFETY_PERCENT"`
@@ -507,10 +514,10 @@ type VoiceConfig struct {
 }
 
 type LoggingConfig struct {
-	File              bool   `json:"file"                env:"CLAW_LOGGING_FILE"`
-	Console           bool   `json:"console"             env:"CLAW_LOGGING_CONSOLE"`
-	Level             string `json:"level"               env:"CLAW_LOGGING_LEVEL"`
-	JSON              bool   `json:"json"                env:"CLAW_LOGGING_JSON"`
+	File    bool   `json:"file"                env:"CLAW_LOGGING_FILE"`
+	Console bool   `json:"console"             env:"CLAW_LOGGING_CONSOLE"`
+	Level   string `json:"level"               env:"CLAW_LOGGING_LEVEL"`
+	JSON    bool   `json:"json"                env:"CLAW_LOGGING_JSON"`
 	// LogMessageContent controls whether inbound message text and API request/response
 	// bodies are included in log entries. Defaults to false to protect user privacy.
 	LogMessageContent bool `json:"log_message_content" env:"CLAW_LOGGING_MESSAGE_CONTENT"`
@@ -523,21 +530,21 @@ type LoggingConfig struct {
 }
 
 type ProvidersConfig struct {
-	Anthropic     ProviderConfig       `json:"anthropic"`
-	OpenAI        OpenAIProviderConfig `json:"openai"`
-	LiteLLM       ProviderConfig       `json:"litellm"`
-	OpenRouter    ProviderConfig       `json:"openrouter"`
-	Groq          ProviderConfig       `json:"groq"`
-	VLLM          ProviderConfig       `json:"vllm"`
-	Gemini        ProviderConfig       `json:"gemini"`
-	Nvidia        ProviderConfig       `json:"nvidia"`
-	Ollama        ProviderConfig       `json:"ollama"`
-	Moonshot      ProviderConfig       `json:"moonshot"`
-	DeepSeek      ProviderConfig       `json:"deepseek"`
-	Cerebras      ProviderConfig       `json:"cerebras"`
-	Qwen          ProviderConfig       `json:"qwen"`
-	Mistral       ProviderConfig       `json:"mistral"`
-	Avian         ProviderConfig       `json:"avian"`
+	Anthropic  ProviderConfig       `json:"anthropic"`
+	OpenAI     OpenAIProviderConfig `json:"openai"`
+	LiteLLM    ProviderConfig       `json:"litellm"`
+	OpenRouter ProviderConfig       `json:"openrouter"`
+	Groq       ProviderConfig       `json:"groq"`
+	VLLM       ProviderConfig       `json:"vllm"`
+	Gemini     ProviderConfig       `json:"gemini"`
+	Nvidia     ProviderConfig       `json:"nvidia"`
+	Ollama     ProviderConfig       `json:"ollama"`
+	Moonshot   ProviderConfig       `json:"moonshot"`
+	DeepSeek   ProviderConfig       `json:"deepseek"`
+	Cerebras   ProviderConfig       `json:"cerebras"`
+	Qwen       ProviderConfig       `json:"qwen"`
+	Mistral    ProviderConfig       `json:"mistral"`
+	Avian      ProviderConfig       `json:"avian"`
 }
 
 // IsEmpty checks if all provider configs are empty (no API keys or API bases set)
@@ -606,17 +613,17 @@ type ModelConfig struct {
 	Command     string `json:"command,omitempty"`      // Override binary path for CLI providers (e.g., /home/user/.local/bin/claude)
 
 	// Optional optimizations
-	RPM            int    `json:"rpm,omitempty"`              // Requests per minute limit
-	MaxTokens      int    `json:"max_tokens,omitempty"`       // Maximum tokens per response; overrides agent defaults
-	ContextWindow  int    `json:"context_window,omitempty"`   // Actual model context window size in tokens
-	MaxTokensField string `json:"max_tokens_field,omitempty"` // Field name for max tokens (e.g., "max_completion_tokens")
-	RequestTimeout int    `json:"request_timeout,omitempty"`
-	StrictCompat   bool   `json:"strict_compat,omitempty"` // Strip non-standard fields for strict OpenAI-compatible endpoints
-	ThinkingLevel  string   `json:"thinking_level,omitempty"` // Extended thinking: off|low|medium|high|xhigh|adaptive
-	NoTools        bool     `json:"no_tools,omitempty"`       // When true, tools are not passed to this model
-	ExtraArgs      []string `json:"extra_args,omitempty"`     // Additional CLI arguments appended after required flags
-	Env            map[string]string `json:"env,omitempty"` // Environment variables for CLI-based providers (merged with os.Environ)
-	Enabled        bool     `json:"enabled"`                  // If false, model is skipped in all operations
+	RPM            int               `json:"rpm,omitempty"`              // Requests per minute limit
+	MaxTokens      int               `json:"max_tokens,omitempty"`       // Maximum tokens per response; overrides agent defaults
+	ContextWindow  int               `json:"context_window,omitempty"`   // Actual model context window size in tokens
+	MaxTokensField string            `json:"max_tokens_field,omitempty"` // Field name for max tokens (e.g., "max_completion_tokens")
+	RequestTimeout int               `json:"request_timeout,omitempty"`
+	StrictCompat   bool              `json:"strict_compat,omitempty"`  // Strip non-standard fields for strict OpenAI-compatible endpoints
+	ThinkingLevel  string            `json:"thinking_level,omitempty"` // Extended thinking: off|low|medium|high|xhigh|adaptive
+	NoTools        bool              `json:"no_tools,omitempty"`       // When true, tools are not passed to this model
+	ExtraArgs      []string          `json:"extra_args,omitempty"`     // Additional CLI arguments appended after required flags
+	Env            map[string]string `json:"env,omitempty"`            // Environment variables for CLI-based providers (merged with os.Environ)
+	Enabled        bool              `json:"enabled"`                  // If false, model is skipped in all operations
 }
 
 // Validate checks if the ModelConfig has all required fields.

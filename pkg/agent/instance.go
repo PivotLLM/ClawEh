@@ -22,25 +22,25 @@ import (
 // AgentInstance represents a fully configured agent with its own workspace,
 // session manager, context builder, and tool registry.
 type AgentInstance struct {
-	ID                       string
-	Name                     string
-	Model                    string
-	Fallbacks                []string
-	Workspace                string
-	MaxIterations            int
-	MaxTokens                int
-	Temperature              float64
-	ThinkingLevel            ThinkingLevel
-	NoTools                  bool
-	ContextWindow int
-	CompressOpts  []llmcontext.Option
-	Provider                 providers.LLMProvider
-	Sessions                 session.SessionStore
-	ContextBuilder           *ContextBuilder
-	Tools                    *tools.ToolRegistry
-	Subagents                *config.SubagentsConfig
-	SkillsFilter             []string
-	Candidates               []providers.FallbackCandidate
+	ID             string
+	Name           string
+	Model          string
+	Fallbacks      []string
+	Workspace      string
+	MaxIterations  int
+	MaxTokens      int
+	Temperature    float64
+	ThinkingLevel  ThinkingLevel
+	NoTools        bool
+	ContextWindow  int
+	CompressOpts   []llmcontext.Option
+	Provider       providers.LLMProvider
+	Sessions       session.SessionStore
+	ContextBuilder *ContextBuilder
+	Tools          *tools.ToolRegistry
+	Subagents      *config.SubagentsConfig
+	SkillsFilter   []string
+	Candidates     []providers.FallbackCandidate
 
 	// Router is non-nil when model routing is configured and the light model
 	// was successfully resolved. It scores each incoming message and decides
@@ -64,6 +64,29 @@ func NewAgentInstance(
 	workspace := resolveAgentWorkspace(agentCfg, defaults)
 	os.MkdirAll(workspace, 0o755)
 
+	// Resolve the memory directory: empty = legacy <workspace>/memory layout.
+	// When non-empty (and non-default), eagerly create it; failure is a hard
+	// startup error so we never silently fall back to workspace memory and
+	// leak private notes into the wrong directory.
+	memoryDir := resolveAgentMemoryDir(agentCfg)
+	memoryRedirectActive := ""
+	if memoryDir != "" {
+		defaultMem := filepath.Join(workspace, "memory")
+		if memoryDir != defaultMem {
+			if err := os.MkdirAll(memoryDir, 0o700); err != nil {
+				log.Fatalf("agent %q: failed to create memory_dir %q: %v",
+					func() string {
+						if agentCfg != nil {
+							return agentCfg.ID
+						}
+						return ""
+					}(),
+					memoryDir, err)
+			}
+			memoryRedirectActive = memoryDir
+		}
+	}
+
 	model := resolveAgentModel(agentCfg, defaults)
 	fallbacks := resolveAgentFallbacks(agentCfg, defaults)
 
@@ -86,13 +109,25 @@ func NewAgentInstance(
 
 	if cfg.Tools.IsToolEnabled("read_file") && agentCfg.IsToolAllowed("read_file") {
 		maxReadFileSize := cfg.Tools.ReadFile.MaxReadFileSize
-		toolsRegistry.Register(tools.NewReadFileTool(workspace, readRestrict, maxReadFileSize, allowReadPaths))
+		if memoryRedirectActive != "" {
+			toolsRegistry.Register(tools.NewReadFileToolWithMemoryRedirect(workspace, readRestrict, maxReadFileSize, allowReadPaths, memoryRedirectActive))
+		} else {
+			toolsRegistry.Register(tools.NewReadFileTool(workspace, readRestrict, maxReadFileSize, allowReadPaths))
+		}
 	}
 	if cfg.Tools.IsToolEnabled("write_file") && agentCfg.IsToolAllowed("write_file") {
-		toolsRegistry.Register(tools.NewWriteFileTool(workspace, restrict, allowWritePaths))
+		if memoryRedirectActive != "" {
+			toolsRegistry.Register(tools.NewWriteFileToolWithMemoryRedirect(workspace, restrict, allowWritePaths, memoryRedirectActive))
+		} else {
+			toolsRegistry.Register(tools.NewWriteFileTool(workspace, restrict, allowWritePaths))
+		}
 	}
 	if cfg.Tools.IsToolEnabled("list_dir") && agentCfg.IsToolAllowed("list_dir") {
-		toolsRegistry.Register(tools.NewListDirTool(workspace, readRestrict, allowReadPaths))
+		if memoryRedirectActive != "" {
+			toolsRegistry.Register(tools.NewListDirToolWithMemoryRedirect(workspace, readRestrict, allowReadPaths, memoryRedirectActive))
+		} else {
+			toolsRegistry.Register(tools.NewListDirTool(workspace, readRestrict, allowReadPaths))
+		}
 	}
 	if cfg.Tools.IsToolEnabled("exec") && agentCfg.IsToolAllowed("exec") {
 		execTool, err := tools.NewExecToolWithConfig(workspace, restrict, cfg)
@@ -103,10 +138,18 @@ func NewAgentInstance(
 	}
 
 	if cfg.Tools.IsToolEnabled("edit_file") && agentCfg.IsToolAllowed("edit_file") {
-		toolsRegistry.Register(tools.NewEditFileTool(workspace, restrict, allowWritePaths))
+		if memoryRedirectActive != "" {
+			toolsRegistry.Register(tools.NewEditFileToolWithMemoryRedirect(workspace, restrict, allowWritePaths, memoryRedirectActive))
+		} else {
+			toolsRegistry.Register(tools.NewEditFileTool(workspace, restrict, allowWritePaths))
+		}
 	}
 	if cfg.Tools.IsToolEnabled("append_file") && agentCfg.IsToolAllowed("append_file") {
-		toolsRegistry.Register(tools.NewAppendFileTool(workspace, restrict, allowWritePaths))
+		if memoryRedirectActive != "" {
+			toolsRegistry.Register(tools.NewAppendFileToolWithMemoryRedirect(workspace, restrict, allowWritePaths, memoryRedirectActive))
+		} else {
+			toolsRegistry.Register(tools.NewAppendFileTool(workspace, restrict, allowWritePaths))
+		}
 	}
 
 	sessionsDir := filepath.Join(workspace, "sessions")
@@ -116,7 +159,7 @@ func NewAgentInstance(
 	toolsRegistry.Register(tools.NewSessionHistorySearchTool(sessionsDir))
 
 	mcpDiscoveryActive := cfg.Tools.MCP.Enabled && cfg.Tools.MCP.Discovery.Enabled
-	contextBuilder := NewContextBuilder(workspace).WithToolDiscovery(
+	contextBuilder := NewContextBuilderWithMemory(workspace, memoryDir).WithToolDiscovery(
 		mcpDiscoveryActive && cfg.Tools.MCP.Discovery.UseBM25,
 		mcpDiscoveryActive && cfg.Tools.MCP.Discovery.UseRegex,
 	)
@@ -334,29 +377,46 @@ func NewAgentInstance(
 	}
 
 	return &AgentInstance{
-		ID:                       agentID,
-		Name:                     agentName,
-		Model:                    model,
-		Fallbacks:                fallbacks,
-		Workspace:                workspace,
-		MaxIterations:            maxIter,
-		MaxTokens:                maxTokens,
-		Temperature:              temperature,
-		ThinkingLevel:            thinkingLevel,
-		NoTools:                  noTools,
-		ContextWindow: contextWindow,
-		CompressOpts:  compressOpts,
-		Provider:                 provider,
-		Sessions:                 sessions,
-		ContextBuilder:           contextBuilder,
-		Tools:                    toolsRegistry,
-		Subagents:                subagents,
-		SkillsFilter:             skillsFilter,
-		Candidates:               candidates,
-		Router:                   router,
-		LightCandidates:          lightCandidates,
-		Config:                   agentCfg,
+		ID:              agentID,
+		Name:            agentName,
+		Model:           model,
+		Fallbacks:       fallbacks,
+		Workspace:       workspace,
+		MaxIterations:   maxIter,
+		MaxTokens:       maxTokens,
+		Temperature:     temperature,
+		ThinkingLevel:   thinkingLevel,
+		NoTools:         noTools,
+		ContextWindow:   contextWindow,
+		CompressOpts:    compressOpts,
+		Provider:        provider,
+		Sessions:        sessions,
+		ContextBuilder:  contextBuilder,
+		Tools:           toolsRegistry,
+		Subagents:       subagents,
+		SkillsFilter:    skillsFilter,
+		Candidates:      candidates,
+		Router:          router,
+		LightCandidates: lightCandidates,
+		Config:          agentCfg,
 	}
+}
+
+// resolveAgentMemoryDir returns the absolute on-disk memory directory override
+// for an agent, or "" when the legacy <workspace>/memory layout should be used.
+//
+// Note on migration: relocating memory_dir does NOT auto-copy any files that
+// already live under <workspace>/memory. Operators must move existing
+// MEMORY.md and daily-note files manually; otherwise they become orphaned.
+func resolveAgentMemoryDir(agentCfg *config.AgentConfig) string {
+	if agentCfg == nil {
+		return ""
+	}
+	md := strings.TrimSpace(agentCfg.MemoryDir)
+	if md == "" {
+		return ""
+	}
+	return expandHome(md)
 }
 
 // resolveAgentWorkspace determines the workspace directory for an agent.
