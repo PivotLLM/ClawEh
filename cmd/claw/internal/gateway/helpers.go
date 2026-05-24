@@ -14,21 +14,21 @@ import (
 
 	"github.com/PivotLLM/ClawEh/cmd/claw/internal"
 	"github.com/PivotLLM/ClawEh/pkg/agent"
-	"github.com/PivotLLM/ClawEh/pkg/global"
 	"github.com/PivotLLM/ClawEh/pkg/bus"
 	"github.com/PivotLLM/ClawEh/pkg/channels"
 	_ "github.com/PivotLLM/ClawEh/pkg/channels/discord"
 	_ "github.com/PivotLLM/ClawEh/pkg/channels/irc"
 	_ "github.com/PivotLLM/ClawEh/pkg/channels/line"
 	_ "github.com/PivotLLM/ClawEh/pkg/channels/matrix"
-	_ "github.com/PivotLLM/ClawEh/pkg/channels/webui"
 	_ "github.com/PivotLLM/ClawEh/pkg/channels/slack"
 	_ "github.com/PivotLLM/ClawEh/pkg/channels/telegram"
+	_ "github.com/PivotLLM/ClawEh/pkg/channels/webui"
 	_ "github.com/PivotLLM/ClawEh/pkg/channels/whatsapp"
 	_ "github.com/PivotLLM/ClawEh/pkg/channels/whatsapp_native"
 	"github.com/PivotLLM/ClawEh/pkg/config"
 	"github.com/PivotLLM/ClawEh/pkg/cron"
 	"github.com/PivotLLM/ClawEh/pkg/devices"
+	"github.com/PivotLLM/ClawEh/pkg/global"
 	"github.com/PivotLLM/ClawEh/pkg/health"
 	"github.com/PivotLLM/ClawEh/pkg/logger"
 	"github.com/PivotLLM/ClawEh/pkg/mcpserver"
@@ -321,6 +321,7 @@ func setupAndStartServices(
 				mcpserver.WithListen(cfg.MCPHost.Listen),
 				mcpserver.WithEndpointPath(cfg.MCPHost.EndpointPath),
 				mcpserver.WithAllowlist(cfg.MCPHost.Tools),
+				mcpserver.WithMessageBus(msgBus),
 			)
 			if err != nil {
 				return nil, fmt.Errorf("error creating MCP server: %w", err)

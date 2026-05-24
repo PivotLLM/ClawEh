@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/PivotLLM/ClawEh/pkg/agenttoken"
+	"github.com/PivotLLM/ClawEh/pkg/bus"
 	"github.com/PivotLLM/ClawEh/pkg/global"
 	"github.com/PivotLLM/ClawEh/pkg/logger"
 	"github.com/PivotLLM/ClawEh/pkg/mcpserver/acl"
@@ -52,6 +53,7 @@ type MCPServer struct {
 	sessionTokens *sessionTokenStore // SST-prefixed per-session tokens for session-scoped tools
 	workspaces    map[string]string  // agentID → workspace (for boot/first-call logging)
 	policy        acl.Policy         // per-agent tools/call ACL; defaults to acl.Default
+	msgBus        *bus.MessageBus    // outbound publish target for tool ForUser payloads (optional)
 
 	httpServer *http.Server
 	streamable *server.StreamableHTTPServer
@@ -134,6 +136,15 @@ func WithAllowlist(names []string) Option {
 	}
 }
 
+// WithMessageBus supplies the outbound message bus. When set, MCP-routed tool
+// dispatch publishes any non-Silent ForUser payload from a tool result to the
+// originating user's channel/chatID (looked up from the session record). When
+// nil or unset, ForUser content from MCP-routed tool calls is silently dropped
+// with a log line; the MCP response envelope is unaffected.
+func WithMessageBus(b *bus.MessageBus) Option {
+	return func(m *MCPServer) { m.msgBus = b }
+}
+
 // WithACLPolicy installs a per-agent ACL policy consulted on every
 // tools/call after token validation. tools/list is never gated by this.
 // A nil argument is treated as acl.Default (open by default).
@@ -187,7 +198,7 @@ func New(opts ...Option) (*MCPServer, error) {
 		server.WithToolCapabilities(false),
 		server.WithRecovery(),
 	)
-	addToolsToServer(mcpSrv, m.agentRegistries, m.allowPatterns, m.sessionTokens, resolver, tracker, m.policy)
+	addToolsToServer(mcpSrv, m.agentRegistries, m.allowPatterns, m.sessionTokens, resolver, tracker, m.policy, m.msgBus)
 
 	httpSrv := server.NewStreamableHTTPServer(mcpSrv,
 		server.WithEndpointPath(m.endpointPath),

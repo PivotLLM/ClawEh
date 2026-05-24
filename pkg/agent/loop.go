@@ -48,12 +48,12 @@ type AgentLoop struct {
 	running         atomic.Bool
 	contextManagers sync.Map
 	fallback        *providers.FallbackChain
-	channelManager *channels.Manager
-	mediaStore     media.MediaStore
-	transcriber    voice.Transcriber
-	cmdRegistry    *commands.Registry
-	mcp            mcpRuntime
-	mu             sync.RWMutex
+	channelManager  *channels.Manager
+	mediaStore      media.MediaStore
+	transcriber     voice.Transcriber
+	cmdRegistry     *commands.Registry
+	mcp             mcpRuntime
+	mu              sync.RWMutex
 	// Track active requests for safe provider cleanup
 	activeRequests   sync.WaitGroup
 	dispatcher       *providers.ProviderDispatcher
@@ -96,6 +96,11 @@ type SessionTokenIssuer interface {
 	Revoke(sessionKey string)
 	// RevokeAgent removes all tokens for a given agent.
 	RevokeAgent(agentID string)
+	// SetSource records the most recent inbound user-message source (channel +
+	// chatID) on the session record so MCP-routed tool dispatch can publish a
+	// tool's ForUser payload back to the originating user. No-op when the
+	// sessionKey is unknown.
+	SetSource(sessionKey, channel, chatID string)
 }
 
 // sessionCancelState tracks a pending cancel request for a session. When
@@ -194,11 +199,11 @@ func NewAgentLoop(
 	}
 
 	al := &AgentLoop{
-		bus:      msgBus,
-		cfg:      cfg,
-		registry: registry,
-		state:    stateManager,
-		fallback: fallbackChain,
+		bus:              msgBus,
+		cfg:              cfg,
+		registry:         registry,
+		state:            stateManager,
+		fallback:         fallbackChain,
 		cmdRegistry:      commands.NewRegistry(commands.BuiltinDefinitions()),
 		dispatcher:       dispatcher,
 		agentStates:      agentStates,
@@ -1288,6 +1293,19 @@ func (al *AgentLoop) runAgentLoop(
 	cm, releaseCtxMgr := al.getContextManager(agent, opts.SessionKey)
 	defer releaseCtxMgr()
 	cm.SetCallContext(opts.Channel, opts.ChatID)
+
+	// Record the inbound source on the session token record so MCP-routed tool
+	// calls (which bypass the agent loop) can publish their ForUser payloads
+	// back to the originating user. Done after getContextManager so the token
+	// for this session is guaranteed to exist. Unified-mode sessions overwrite
+	// on each turn to follow the user across channels; non-unified sessions
+	// only ever see one channel so the field is stable.
+	al.mu.RLock()
+	stiSource := al.sessionTokenIssuer
+	al.mu.RUnlock()
+	if stiSource != nil {
+		stiSource.SetSource(opts.SessionKey, opts.Channel, opts.ChatID)
+	}
 
 	// 2. Save user message and trigger compression check (skip on retry — already in history).
 	if !opts.IsRetry {
