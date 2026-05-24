@@ -86,7 +86,7 @@ func (t *CopyFileTool) Execute(ctx context.Context, args map[string]any) *ToolRe
 	if getBoolArg(args, "display", false) {
 		return &ToolResult{
 			ForLLM:  forLLM,
-			ForUser: displayBody(string(data)),
+			ForUser: displayBody("", string(data)),
 		}
 	}
 	return SilentResult(forLLM)

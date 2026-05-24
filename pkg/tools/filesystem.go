@@ -426,7 +426,7 @@ func (t *WriteFileTool) Execute(ctx context.Context, args map[string]any) *ToolR
 	if getBoolArg(args, "display", false) {
 		return &ToolResult{
 			ForLLM:  forLLM,
-			ForUser: displayBody(content),
+			ForUser: displayBody(displayHeader("Wrote", path), content),
 		}
 	}
 	return SilentResult(forLLM)

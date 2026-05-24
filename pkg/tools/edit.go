@@ -111,7 +111,7 @@ func (t *EditFileTool) Execute(ctx context.Context, args map[string]any) *ToolRe
 	if getBoolArg(args, "display", false) {
 		return &ToolResult{
 			ForLLM:  forLLM,
-			ForUser: displayBody(newText),
+			ForUser: displayBody(displayHeader("Edited", path), newText),
 		}
 	}
 	return SilentResult(forLLM)
@@ -198,7 +198,7 @@ func (t *AppendFileTool) Execute(ctx context.Context, args map[string]any) *Tool
 	if getBoolArg(args, "display", false) {
 		return &ToolResult{
 			ForLLM:  forLLM,
-			ForUser: displayBody(content),
+			ForUser: displayBody(displayHeader("Appended", path), content),
 		}
 	}
 	return SilentResult(forLLM)

@@ -442,7 +442,7 @@ func TestEditTool_EditFile_Display_True(t *testing.T) {
 
 	assert.False(t, result.IsError, "Expected success, got: %s", result.ForLLM)
 	assert.False(t, result.Silent, "Expected Silent=false when display=true")
-	assert.Equal(t, "---\n"+newText+"\n---", result.ForUser)
+	assert.Equal(t, "---\nEdited: "+testFile+"\n\n"+newText+"\n---", result.ForUser)
 	assert.Contains(t, result.ForLLM, "File edited:")
 
 	// ForUser must NOT contain the unchanged surrounding content nor a diff.
@@ -528,7 +528,7 @@ func TestEditTool_AppendFile_Display_True(t *testing.T) {
 
 	assert.False(t, result.IsError, "Expected success, got: %s", result.ForLLM)
 	assert.False(t, result.Silent, "Expected Silent=false when display=true")
-	assert.Equal(t, "---\n"+appended+"\n---", result.ForUser)
+	assert.Equal(t, "---\nAppended: "+testFile+"\n\n"+appended+"\n---", result.ForUser)
 	assert.Contains(t, result.ForLLM, "Appended to")
 
 	// ForUser must NOT contain the prior file content.
