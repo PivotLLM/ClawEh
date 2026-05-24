@@ -494,8 +494,10 @@ func formatDirEntries(entries []os.DirEntry) *ToolResult {
 type fileSystem interface {
 	ReadFile(path string) ([]byte, error)
 	WriteFile(path string, data []byte) error
+	WriteFileMode(path string, data []byte, mode os.FileMode) error
 	ReadDir(path string) ([]os.DirEntry, error)
 	Open(path string) (fs.File, error)
+	Stat(path string) (os.FileInfo, error)
 }
 
 // hostFs is an unrestricted fileReadWriter that operates directly on the host filesystem.
@@ -523,6 +525,14 @@ func (h *hostFs) WriteFile(path string, data []byte) error {
 	// Use unified atomic write utility with explicit sync for flash storage reliability.
 	// Using 0o600 (owner read/write only) for secure default permissions.
 	return fileutil.WriteFileAtomic(path, data, 0o600)
+}
+
+func (h *hostFs) WriteFileMode(path string, data []byte, mode os.FileMode) error {
+	return fileutil.WriteFileAtomic(path, data, mode)
+}
+
+func (h *hostFs) Stat(path string) (os.FileInfo, error) {
+	return os.Stat(path)
 }
 
 func (h *hostFs) Open(path string) (fs.File, error) {
@@ -585,6 +595,10 @@ func (r *sandboxFs) ReadFile(path string) ([]byte, error) {
 }
 
 func (r *sandboxFs) WriteFile(path string, data []byte) error {
+	return r.WriteFileMode(path, data, 0o600)
+}
+
+func (r *sandboxFs) WriteFileMode(path string, data []byte, mode os.FileMode) error {
 	return r.execute(path, func(root *os.Root, relPath string) error {
 		dir := filepath.Dir(relPath)
 		if dir != "." && dir != "/" {
@@ -593,11 +607,10 @@ func (r *sandboxFs) WriteFile(path string, data []byte) error {
 			}
 		}
 
-		// Use atomic write pattern with explicit sync for flash storage reliability.
-		// Using 0o600 (owner read/write only) for secure default permissions.
+		// Atomic write: write to a temp file, sync, rename over the target.
 		tmpRelPath := fmt.Sprintf(".tmp-%d-%d", os.Getpid(), time.Now().UnixNano())
 
-		tmpFile, err := root.OpenFile(tmpRelPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		tmpFile, err := root.OpenFile(tmpRelPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
 		if err != nil {
 			root.Remove(tmpRelPath)
 			return fmt.Errorf("failed to open temp file: %w", err)
@@ -609,8 +622,6 @@ func (r *sandboxFs) WriteFile(path string, data []byte) error {
 			return fmt.Errorf("failed to write temp file: %w", err)
 		}
 
-		// CRITICAL: Force sync to storage medium before rename.
-		// This ensures data is physically written to disk, not just cached.
 		if err := tmpFile.Sync(); err != nil {
 			tmpFile.Close()
 			root.Remove(tmpRelPath)
@@ -622,12 +633,17 @@ func (r *sandboxFs) WriteFile(path string, data []byte) error {
 			return fmt.Errorf("failed to close temp file: %w", err)
 		}
 
+		// Ensure the destination has the requested mode regardless of umask.
+		if err := root.Chmod(tmpRelPath, mode); err != nil {
+			root.Remove(tmpRelPath)
+			return fmt.Errorf("failed to set file mode: %w", err)
+		}
+
 		if err := root.Rename(tmpRelPath, relPath); err != nil {
 			root.Remove(tmpRelPath)
 			return fmt.Errorf("failed to rename temp file over target: %w", err)
 		}
 
-		// Sync directory to ensure rename is durable
 		if dirFile, err := root.Open("."); err == nil {
 			_ = dirFile.Sync()
 			dirFile.Close()
@@ -635,6 +651,19 @@ func (r *sandboxFs) WriteFile(path string, data []byte) error {
 
 		return nil
 	})
+}
+
+func (r *sandboxFs) Stat(path string) (os.FileInfo, error) {
+	var info os.FileInfo
+	err := r.execute(path, func(root *os.Root, relPath string) error {
+		fi, err := root.Stat(relPath)
+		if err != nil {
+			return err
+		}
+		info = fi
+		return nil
+	})
+	return info, err
 }
 
 func (r *sandboxFs) ReadDir(path string) ([]os.DirEntry, error) {
@@ -699,6 +728,20 @@ func (w *whitelistFs) WriteFile(path string, data []byte) error {
 		return w.host.WriteFile(path, data)
 	}
 	return w.sandbox.WriteFile(path, data)
+}
+
+func (w *whitelistFs) WriteFileMode(path string, data []byte, mode os.FileMode) error {
+	if w.matches(path) {
+		return w.host.WriteFileMode(path, data, mode)
+	}
+	return w.sandbox.WriteFileMode(path, data, mode)
+}
+
+func (w *whitelistFs) Stat(path string) (os.FileInfo, error) {
+	if w.matches(path) {
+		return w.host.Stat(path)
+	}
+	return w.sandbox.Stat(path)
 }
 
 func (w *whitelistFs) ReadDir(path string) ([]os.DirEntry, error) {
@@ -790,6 +833,16 @@ func (r *redirectFs) ReadFile(path string) ([]byte, error) {
 func (r *redirectFs) WriteFile(path string, data []byte) error {
 	fs, p := r.rewrite(path)
 	return fs.WriteFile(p, data)
+}
+
+func (r *redirectFs) WriteFileMode(path string, data []byte, mode os.FileMode) error {
+	fs, p := r.rewrite(path)
+	return fs.WriteFileMode(p, data, mode)
+}
+
+func (r *redirectFs) Stat(path string) (os.FileInfo, error) {
+	fs, p := r.rewrite(path)
+	return fs.Stat(p)
 }
 
 func (r *redirectFs) ReadDir(path string) ([]os.DirEntry, error) {

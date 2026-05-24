@@ -462,6 +462,9 @@
     "append_file": {
       "enabled": true
     },
+    "copy_file": {
+      "enabled": true
+    },
     "edit_file": {
       "enabled": true
     },
@@ -526,6 +529,7 @@
       "write_file",
       "edit_file",
       "append_file",
+      "copy_file",
       "list_dir",
       "web_fetch",
       "web_search",

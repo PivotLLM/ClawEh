@@ -755,6 +755,7 @@ type ToolsConfig struct {
 	MediaCleanup    MediaCleanupConfig `json:"media_cleanup"`
 	MCP             MCPConfig          `json:"mcp"`
 	AppendFile      ToolConfig         `json:"append_file"                                              envPrefix:"CLAW_TOOLS_APPEND_FILE_"`
+	CopyFile        ToolConfig         `json:"copy_file"                                                envPrefix:"CLAW_TOOLS_COPY_FILE_"`
 	EditFile        ToolConfig         `json:"edit_file"                                                envPrefix:"CLAW_TOOLS_EDIT_FILE_"`
 	FindSkills      ToolConfig         `json:"find_skills"                                              envPrefix:"CLAW_TOOLS_FIND_SKILLS_"`
 	I2C             ToolConfig         `json:"i2c"                                                      envPrefix:"CLAW_TOOLS_I2C_"`
@@ -1158,6 +1159,8 @@ func (t *ToolsConfig) IsToolEnabled(name string) bool {
 		return t.MediaCleanup.Enabled
 	case "append_file":
 		return t.AppendFile.Enabled
+	case "copy_file":
+		return t.CopyFile.Enabled
 	case "edit_file":
 		return t.EditFile.Enabled
 	case "find_skills":

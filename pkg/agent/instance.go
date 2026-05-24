@@ -151,6 +151,13 @@ func NewAgentInstance(
 			toolsRegistry.Register(tools.NewAppendFileTool(workspace, restrict, allowWritePaths))
 		}
 	}
+	if cfg.Tools.IsToolEnabled("copy_file") && agentCfg.IsToolAllowed("copy_file") {
+		if memoryRedirectActive != "" {
+			toolsRegistry.Register(tools.NewCopyFileToolWithMemoryRedirect(workspace, restrict, allowWritePaths, memoryRedirectActive))
+		} else {
+			toolsRegistry.Register(tools.NewCopyFileTool(workspace, restrict, allowWritePaths))
+		}
+	}
 
 	sessionsDir := filepath.Join(workspace, "sessions")
 	sessions := initSessionStore(sessionsDir)
