@@ -48,7 +48,7 @@ func TestBuiltinShowChannel_PreservesUserVisibleBehavior(t *testing.T) {
 	defs := BuiltinDefinitions()
 	ex := NewExecutor(NewRegistry(defs), nil)
 
-	cases := []string{"telegram", "whatsapp"}
+	cases := []string{"telegram", "slack"}
 	for _, channel := range cases {
 		var reply string
 		res := ex.Execute(context.Background(), Request{

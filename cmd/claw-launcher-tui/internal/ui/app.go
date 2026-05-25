@@ -136,7 +136,6 @@ func (s *appState) countChannels() (enabled int, total int) {
 	entries := []bool{
 		s.telegramEnabled(),
 		c.Discord.Enabled,
-		c.WhatsApp.Enabled,
 		c.Slack.Enabled,
 		c.Matrix.Enabled,
 		c.LINE.Enabled,
@@ -431,7 +430,7 @@ func (s *appState) isActiveModelValid() bool {
 
 func (s *appState) hasEnabledChannel() bool {
 	c := s.config.Channels
-	return s.telegramEnabled() || c.Discord.Enabled || c.WhatsApp.Enabled ||
+	return s.telegramEnabled() || c.Discord.Enabled ||
 		c.Slack.Enabled || c.Matrix.Enabled || c.LINE.Enabled
 }
 

@@ -69,7 +69,6 @@ var channelRateConfig = map[string]float64{
 	"slack":    1,
 	"matrix":   2,
 	"line":     10,
-	"irc":      2,
 }
 
 type channelWorker struct {
@@ -304,16 +303,6 @@ func (m *Manager) initChannels() error {
 		}
 	}
 
-	if m.config.Channels.WhatsApp.Enabled {
-		waCfg := m.config.Channels.WhatsApp
-		warnEmptyAllowFrom("WhatsApp", waCfg.AllowFrom)
-		if waCfg.UseNative {
-			m.initChannel("whatsapp_native", "WhatsApp Native")
-		} else if waCfg.BridgeURL != "" {
-			m.initChannel("whatsapp", "WhatsApp")
-		}
-	}
-
 	if m.config.Channels.Discord.Enabled && m.config.Channels.Discord.Token != "" {
 		warnEmptyAllowFrom("Discord", m.config.Channels.Discord.AllowFrom)
 		m.initChannel("discord", "Discord")
@@ -340,11 +329,6 @@ func (m *Manager) initChannels() error {
 	if m.config.Channels.WebUI.Enabled && m.config.Channels.WebUI.Token != "" {
 		warnEmptyAllowFrom("WebUI", m.config.Channels.WebUI.AllowFrom)
 		m.initChannel("webui", "WebUI")
-	}
-
-	if m.config.Channels.IRC.Enabled && m.config.Channels.IRC.Server != "" {
-		warnEmptyAllowFrom("IRC", m.config.Channels.IRC.AllowFrom)
-		m.initChannel("irc", "IRC")
 	}
 
 	logger.InfoCF("channels", "Channel initialization completed", map[string]any{

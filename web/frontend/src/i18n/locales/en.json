@@ -239,11 +239,8 @@
       "discord": "Discord",
       "slack": "Slack",
       "line": "LINE",
-      "whatsapp": "WhatsApp",
-      "whatsapp_native": "WhatsApp Native",
       "webui": "Web",
-      "matrix": "Matrix",
-      "irc": "IRC"
+      "matrix": "Matrix"
     },
     "field": {
       "token": "Bot Token",
@@ -297,9 +294,6 @@
         "allowOrigins": "Allowed origin domains, separated by commas.",
         "wsUrl": "WebSocket service URL.",
         "reconnectInterval": "Reconnect interval after disconnection (seconds).",
-        "bridgeUrl": "Bridge service URL.",
-        "sessionStorePath": "Local path for session storage.",
-        "useNative": "Whether to use native client mode.",
         "host": "Service host address.",
         "port": "Service port.",
         "homeserver": "Matrix homeserver URL.",
@@ -321,13 +315,6 @@
         "readTimeout": "Read timeout in seconds.",
         "writeTimeout": "Write timeout in seconds.",
         "maxConnections": "Maximum number of concurrent connections.",
-        "server": "IRC server address.",
-        "tls": "Whether to enable TLS.",
-        "nick": "Bot nickname.",
-        "user": "IRC username.",
-        "realName": "Displayed real name.",
-        "channels": "IRC channels to join.",
-        "requestCaps": "IRC capability list requested on connect.",
         "genericField": "Used to configure {{field}}."
       }
     },

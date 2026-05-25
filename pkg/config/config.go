@@ -359,14 +359,12 @@ func (d *AgentDefaults) SetDefaultModel(modelName string) {
 }
 
 type ChannelsConfig struct {
-	WhatsApp WhatsAppConfig      `json:"whatsapp"`
 	Telegram []TelegramBotConfig `json:"telegram"`
 	Discord  DiscordConfig       `json:"discord"`
 	Slack    SlackConfig         `json:"slack"`
 	Matrix   MatrixConfig        `json:"matrix"`
 	LINE     LINEConfig          `json:"line"`
 	WebUI    WebUIConfig         `json:"webui"`
-	IRC      IRCConfig           `json:"irc"`
 }
 
 // GroupTriggerConfig controls when the bot responds in group chats.
@@ -384,15 +382,6 @@ type TypingConfig struct {
 type PlaceholderConfig struct {
 	Enabled bool   `json:"enabled,omitempty"`
 	Text    string `json:"text,omitempty"`
-}
-
-type WhatsAppConfig struct {
-	Enabled            bool                `json:"enabled"              env:"CLAW_CHANNELS_WHATSAPP_ENABLED"`
-	BridgeURL          string              `json:"bridge_url"           env:"CLAW_CHANNELS_WHATSAPP_BRIDGE_URL"`
-	UseNative          bool                `json:"use_native"           env:"CLAW_CHANNELS_WHATSAPP_USE_NATIVE"`
-	SessionStorePath   string              `json:"session_store_path"   env:"CLAW_CHANNELS_WHATSAPP_SESSION_STORE_PATH"`
-	AllowFrom          FlexibleStringSlice `json:"allow_from"           env:"CLAW_CHANNELS_WHATSAPP_ALLOW_FROM"`
-	ReasoningChannelID string              `json:"reasoning_channel_id" env:"CLAW_CHANNELS_WHATSAPP_REASONING_CHANNEL_ID"`
 }
 
 // TelegramBotConfig defines a single named Telegram bot.
@@ -483,25 +472,6 @@ type WebUIConfig struct {
 	MaxConnections  int                 `json:"max_connections,omitempty"`
 	AllowFrom       FlexibleStringSlice `json:"allow_from"                  env:"CLAW_CHANNELS_WEBUI_ALLOW_FROM"`
 	Placeholder     PlaceholderConfig   `json:"placeholder,omitempty"`
-}
-
-type IRCConfig struct {
-	Enabled            bool                `json:"enabled"                 env:"CLAW_CHANNELS_IRC_ENABLED"`
-	Server             string              `json:"server"                  env:"CLAW_CHANNELS_IRC_SERVER"`
-	TLS                bool                `json:"tls"                     env:"CLAW_CHANNELS_IRC_TLS"`
-	Nick               string              `json:"nick"                    env:"CLAW_CHANNELS_IRC_NICK"`
-	User               string              `json:"user,omitempty"          env:"CLAW_CHANNELS_IRC_USER"`
-	RealName           string              `json:"real_name,omitempty"     env:"CLAW_CHANNELS_IRC_REAL_NAME"`
-	Password           string              `json:"password"                env:"CLAW_CHANNELS_IRC_PASSWORD"`
-	NickServPassword   string              `json:"nickserv_password"       env:"CLAW_CHANNELS_IRC_NICKSERV_PASSWORD"`
-	SASLUser           string              `json:"sasl_user"               env:"CLAW_CHANNELS_IRC_SASL_USER"`
-	SASLPassword       string              `json:"sasl_password"           env:"CLAW_CHANNELS_IRC_SASL_PASSWORD"`
-	Channels           FlexibleStringSlice `json:"channels"                env:"CLAW_CHANNELS_IRC_CHANNELS"`
-	RequestCaps        FlexibleStringSlice `json:"request_caps,omitempty"  env:"CLAW_CHANNELS_IRC_REQUEST_CAPS"`
-	AllowFrom          FlexibleStringSlice `json:"allow_from"              env:"CLAW_CHANNELS_IRC_ALLOW_FROM"`
-	GroupTrigger       GroupTriggerConfig  `json:"group_trigger,omitempty"`
-	Typing             TypingConfig        `json:"typing,omitempty"`
-	ReasoningChannelID string              `json:"reasoning_channel_id"    env:"CLAW_CHANNELS_IRC_REASONING_CHANNEL_ID"`
 }
 
 type DevicesConfig struct {

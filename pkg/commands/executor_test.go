@@ -11,7 +11,7 @@ func TestExecutor_RegisteredWithoutHandler_ReturnsPassthrough(t *testing.T) {
 	defs := []Definition{{Name: "show"}}
 	ex := NewExecutor(NewRegistry(defs), nil)
 
-	res := ex.Execute(context.Background(), Request{Channel: "whatsapp", Text: "/show"})
+	res := ex.Execute(context.Background(), Request{Channel: "slack", Text: "/show"})
 	if res.Outcome != OutcomePassthrough {
 		t.Fatalf("outcome=%v, want=%v", res.Outcome, OutcomePassthrough)
 	}
@@ -58,7 +58,7 @@ func TestExecutor_AliasWithoutHandler_ReturnsPassthrough(t *testing.T) {
 	}
 	ex := NewExecutor(NewRegistry(defs), nil)
 
-	res := ex.Execute(context.Background(), Request{Channel: "whatsapp", Text: "/display"})
+	res := ex.Execute(context.Background(), Request{Channel: "slack", Text: "/display"})
 	if res.Outcome != OutcomePassthrough {
 		t.Fatalf("outcome=%v, want=%v", res.Outcome, OutcomePassthrough)
 	}

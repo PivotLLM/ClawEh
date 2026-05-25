@@ -39,8 +39,6 @@ const SECRET_FIELD_MAP: Record<string, string> = {
   encrypt_key: "_encrypt_key",
   verification_token: "_verification_token",
   password: "_password",
-  nickserv_password: "_nickserv_password",
-  sasl_password: "_sasl_password",
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -68,22 +66,11 @@ function buildEditConfig(config: ChannelConfig): ChannelConfig {
   return edit
 }
 
-function normalizeConfig(
-  channel: SupportedChannel,
-  rawConfig: ChannelConfig,
-): ChannelConfig {
-  const config = { ...rawConfig }
-  if (channel.name === "whatsapp_native") {
-    config.use_native = true
-  }
-  if (channel.name === "whatsapp") {
-    config.use_native = false
-  }
-  return config
+function normalizeConfig(rawConfig: ChannelConfig): ChannelConfig {
+  return { ...rawConfig }
 }
 
 function buildSavePayload(
-  channel: SupportedChannel,
   editConfig: ChannelConfig,
   enabled: boolean,
 ): ChannelConfig {
@@ -103,13 +90,6 @@ function buildSavePayload(
     payload[key] = value
   }
 
-  if (channel.name === "whatsapp_native") {
-    payload.use_native = true
-  }
-  if (channel.name === "whatsapp") {
-    payload.use_native = false
-  }
-
   return payload
 }
 
@@ -126,10 +106,6 @@ function isConfigured(
       return asString(config.bot_token) !== ""
     case "line":
       return asString(config.channel_access_token) !== ""
-    case "whatsapp":
-      return asString(config.bridge_url) !== ""
-    case "whatsapp_native":
-      return asBool(config.use_native)
     case "webui":
       return asString(config.token) !== ""
     case "matrix":
@@ -138,8 +114,6 @@ function isConfigured(
         asString(config.user_id) !== "" &&
         asString(config.access_token) !== ""
       )
-    case "irc":
-      return asString(config.server) !== ""
     default:
       return false
   }
@@ -155,14 +129,10 @@ function getRequiredFieldKeys(channelName: string): string[] {
       return ["bot_token"]
     case "line":
       return ["channel_secret", "channel_access_token"]
-    case "whatsapp":
-      return ["bridge_url"]
     case "webui":
       return ["token"]
     case "matrix":
       return ["homeserver", "user_id", "access_token"]
-    case "irc":
-      return ["server"]
     default:
       return []
   }
@@ -186,9 +156,6 @@ const CHANNELS_WITHOUT_DOCS = new Set([
   "webui",
   "wecom",
   "matrix",
-  "irc",
-  "whatsapp",
-  "whatsapp_native",
 ])
 
 export function ChannelConfigPage({ channelName }: ChannelConfigPageProps) {
@@ -228,7 +195,7 @@ export function ChannelConfigPage({ channelName }: ChannelConfigPageProps) {
 
       const channelsConfig = asRecord(asRecord(appConfig).channels)
       const raw = asRecord(channelsConfig[matched.config_key])
-      const normalized = normalizeConfig(matched, raw)
+      const normalized = normalizeConfig(raw)
 
       setChannel(matched)
       setBaseConfig(normalized)
@@ -259,7 +226,7 @@ export function ChannelConfigPage({ channelName }: ChannelConfigPageProps) {
 
   const savePayload = useMemo(() => {
     if (!channel) return null
-    return buildSavePayload(channel, editConfig, enabled)
+    return buildSavePayload(editConfig, enabled)
   }, [channel, editConfig, enabled])
 
   const configured = useMemo(() => {
@@ -278,16 +245,7 @@ export function ChannelConfigPage({ channelName }: ChannelConfigPageProps) {
     return getChannelDisplayName(channel, t)
   }, [channel, channelName, t])
 
-  const hiddenKeys = useMemo(() => {
-    if (!channel) return []
-    if (channel.name === "whatsapp") {
-      return ["use_native"]
-    }
-    if (channel.name === "whatsapp_native") {
-      return ["use_native", "bridge_url"]
-    }
-    return []
-  }, [channel])
+  const hiddenKeys = useMemo<string[]>(() => [], [])
   const requiredKeys = useMemo(
     () => getRequiredFieldKeys(channelName),
     [channelName],

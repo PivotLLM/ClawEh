@@ -34,12 +34,6 @@ func (s *appState) buildChannelMenuItems() []MenuItem {
 			func() { s.push("channel-discord", s.discordForm()) },
 		),
 		channelItem(
-			"WhatsApp",
-			"WhatsApp bridge",
-			s.config.Channels.WhatsApp.Enabled,
-			func() { s.push("channel-whatsapp", s.whatsappForm()) },
-		),
-		channelItem(
 			"Slack",
 			"Slack bot settings",
 			s.config.Channels.Slack.Enabled,
@@ -101,16 +95,6 @@ func (s *appState) discordForm() tview.Primitive {
 	})
 	form.AddCheckbox("Mention Only", cfg.MentionOnly, func(checked bool) {
 		cfg.MentionOnly = checked
-	})
-	addAllowFromField(form, &cfg.AllowFrom)
-	return wrapWithBack(form, s)
-}
-
-func (s *appState) whatsappForm() tview.Primitive {
-	cfg := &s.config.Channels.WhatsApp
-	form := baseChannelForm("WhatsApp", cfg.Enabled, s.makeChannelOnEnabled(&cfg.Enabled))
-	form.AddInputField("Bridge URL", cfg.BridgeURL, 128, nil, func(text string) {
-		cfg.BridgeURL = strings.TrimSpace(text)
 	})
 	addAllowFromField(form, &cfg.AllowFrom)
 	return wrapWithBack(form, s)

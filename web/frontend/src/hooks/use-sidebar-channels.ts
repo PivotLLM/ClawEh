@@ -5,8 +5,6 @@ import {
   IconBrandMatrix,
   IconBrandSlack,
   IconBrandTelegram,
-  IconBrandWhatsapp,
-  IconMessages,
   IconPlug,
 } from "@tabler/icons-react"
 import type { TFunction } from "i18next"
@@ -30,9 +28,6 @@ const CHANNEL_IMPORTANCE_ORDER = [
   "line",
   "matrix",
   "webui",
-  "irc",
-  "whatsapp",
-  "whatsapp_native",
 ]
 const CHANNEL_IMPORTANCE_INDEX = new Map(
   CHANNEL_IMPORTANCE_ORDER.map((name, index) => [name, index]),
@@ -46,11 +41,8 @@ const CHANNEL_ICON_MAP: Record<
   discord: IconBrandDiscord,
   slack: IconBrandSlack,
   line: IconBrandLine,
-  whatsapp: IconBrandWhatsapp,
-  whatsapp_native: IconBrandWhatsapp,
   matrix: IconBrandMatrix,
   webui: IconBrandChrome,
-  irc: IconMessages,
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -65,19 +57,7 @@ function isChannelEnabled(
   channelsConfig: Record<string, unknown>,
 ): boolean {
   const channelConfig = asRecord(channelsConfig[channel.config_key])
-  if (channelConfig.enabled !== true) {
-    return false
-  }
-
-  // whatsapp / whatsapp_native share one config block and are split by use_native.
-  if (channel.name === "whatsapp_native") {
-    return channelConfig.use_native === true
-  }
-  if (channel.name === "whatsapp") {
-    return channelConfig.use_native !== true
-  }
-
-  return true
+  return channelConfig.enabled === true
 }
 
 function buildChannelEnabledMap(

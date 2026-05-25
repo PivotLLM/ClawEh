@@ -16,11 +16,8 @@ var channelCatalog = []channelCatalogItem{
 	{Name: "discord", ConfigKey: "discord"},
 	{Name: "slack", ConfigKey: "slack"},
 	{Name: "line", ConfigKey: "line"},
-	{Name: "whatsapp", ConfigKey: "whatsapp", Variant: "bridge"},
-	{Name: "whatsapp_native", ConfigKey: "whatsapp", Variant: "native"},
 	{Name: "webui", ConfigKey: "webui"},
 	{Name: "matrix", ConfigKey: "matrix"},
-	{Name: "irc", ConfigKey: "irc"},
 }
 
 // registerChannelRoutes binds read-only channel catalog endpoints to the ServeMux.
