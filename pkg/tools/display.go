@@ -25,11 +25,12 @@ func displayHeader(verb, path string) string {
 
 // displayBody wraps a payload in the `---` fenced block used by tools that
 // expose an optional `display` parameter. When header is non-empty it is
-// emitted as the first line inside the block, followed by a blank line and
-// then the payload.
+// emitted as a bold line followed by a separator rule (using the same `---`
+// glyph as the outer fences so downstream HR-collapse logic continues to
+// dedupe adjacent rules), a blank line, and then the payload.
 func displayBody(header, payload string) string {
 	if header == "" {
 		return "---\n" + payload + "\n---"
 	}
-	return "---\n" + header + "\n\n" + payload + "\n---"
+	return "---\n**" + header + "**\n---\n\n" + payload + "\n---"
 }

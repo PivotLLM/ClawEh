@@ -4,23 +4,45 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 )
 
-// TestDisplayBody_WithHeader verifies the header line and blank separator are
-// inserted before the payload inside the fenced block.
+// TestDisplayBody_WithHeader verifies the header is bolded and a separator
+// rule (same glyph as the outer fences) is inserted between the header and
+// the payload inside the fenced block.
 func TestDisplayBody_WithHeader(t *testing.T) {
 	got := displayBody("Wrote: /tmp/x.txt", "payload")
-	assert.Equal(t, "---\nWrote: /tmp/x.txt\n\npayload\n---", got)
+	assert.Equal(t, "---\n**Wrote: /tmp/x.txt**\n---\n\npayload\n---", got)
 }
 
 // TestDisplayBody_EmptyHeader verifies that an empty header omits the header
-// line entirely (no leading blank line, no trailing space).
+// line AND the separator rule entirely — only the outer fences and payload
+// remain. This preserves the existing copy_file no-header behaviour.
 func TestDisplayBody_EmptyHeader(t *testing.T) {
 	got := displayBody("", "payload")
 	assert.Equal(t, "---\npayload\n---", got)
+	assert.NotContains(t, got, "**")
+}
+
+// TestDisplayBody_HeaderShapeExact pins the exact non-empty header shape
+// requested by the tool-ergonomics spec: outer fence, bold header, separator
+// rule using the same glyph as the fences, blank line, payload, closing fence.
+func TestDisplayBody_HeaderShapeExact(t *testing.T) {
+	got := displayBody("Wrote: memory/notes.md", "<payload>")
+	want := "---\n**Wrote: memory/notes.md**\n---\n\n<payload>\n---"
+	assert.Equal(t, want, got)
+}
+
+// TestDisplayBody_EmptyHeaderNoSeparator verifies the empty-header (copy_file)
+// path emits neither a header line nor a separator rule between fences.
+func TestDisplayBody_EmptyHeaderNoSeparator(t *testing.T) {
+	got := displayBody("", "binary-or-copy-payload")
+	// Exactly two `---` lines (the outer fences) — no extra rule.
+	assert.Equal(t, 2, strings.Count(got, "---"))
+	assert.Equal(t, "---\nbinary-or-copy-payload\n---", got)
 }
 
 // TestDisplayHeader_EmptyPath verifies displayHeader returns an empty string
@@ -49,7 +71,7 @@ func TestWriteFileTool_Display_HeaderVerb(t *testing.T) {
 	})
 
 	assert.False(t, result.IsError)
-	assert.Equal(t, "---\nWrote: "+testFile+"\n\nbody\n---", result.ForUser)
+	assert.Equal(t, "---\n**Wrote: "+testFile+"**\n---\n\nbody\n---", result.ForUser)
 }
 
 // TestEditFileTool_Display_HeaderVerb verifies edit_file uses the "Edited:" verb.
@@ -68,7 +90,7 @@ func TestEditFileTool_Display_HeaderVerb(t *testing.T) {
 	})
 
 	assert.False(t, result.IsError)
-	assert.Equal(t, "---\nEdited: "+testFile+"\n\nBBB\n---", result.ForUser)
+	assert.Equal(t, "---\n**Edited: "+testFile+"**\n---\n\nBBB\n---", result.ForUser)
 }
 
 // TestAppendFileTool_Display_HeaderVerb verifies append_file uses the "Appended:" verb.
@@ -86,7 +108,7 @@ func TestAppendFileTool_Display_HeaderVerb(t *testing.T) {
 	})
 
 	assert.False(t, result.IsError)
-	assert.Equal(t, "---\nAppended: "+testFile+"\n\nmore\n---", result.ForUser)
+	assert.Equal(t, "---\n**Appended: "+testFile+"**\n---\n\nmore\n---", result.ForUser)
 }
 
 // TestWriteFileTool_Display_EmptyPath verifies the defensive branch: when the
