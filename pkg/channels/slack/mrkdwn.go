@@ -27,6 +27,12 @@ var (
 	// Horizontal rules: ---, ***, or ___ alone on a line.
 	reHRule = regexp.MustCompile(`(?m)^[ \t]*[-*_]{3,}[ \t]*$`)
 
+	// Runs of consecutive hRuleSubstitute lines separated only by blank lines.
+	// Used to collapse stacked rules (e.g. when a display payload itself ends
+	// with a thematic break and displayBody adds its own closing fence) down
+	// to a single visible rule.
+	reHRuleRun = regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(hRuleSubstitute) + `(?:\n[ \t]*)+` + regexp.QuoteMeta(hRuleSubstitute) + `(?:(?:\n[ \t]*)+` + regexp.QuoteMeta(hRuleSubstitute) + `)*$`)
+
 	// Fenced code blocks: ``` ... ```
 	reFencedCode = regexp.MustCompile("(?s)```.*?```")
 
@@ -77,6 +83,12 @@ func markdownToMrkdwn(text string) string {
 	// CommonMark thematic break to fence the payload, so stripping the line
 	// erases the fence; substitute a box-drawing line instead.
 	text = reHRule.ReplaceAllString(text, hRuleSubstitute)
+
+	// Collapse runs of adjacent rules (separated only by blank lines) down to
+	// a single rule. Display payloads that themselves end with a thematic
+	// break would otherwise stack against the closing fence emitted by
+	// displayBody.
+	text = reHRuleRun.ReplaceAllString(text, hRuleSubstitute)
 
 	// Strikethrough: ~~text~~ → ~text~
 	text = reStrikethrough.ReplaceAllString(text, "~${1}~")

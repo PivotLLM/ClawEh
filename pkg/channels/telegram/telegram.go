@@ -26,16 +26,22 @@ import (
 )
 
 var (
-	reHeading    = regexp.MustCompile(`^#{1,6}\s+(.+)$`)
-	reBlockquote = regexp.MustCompile(`^>\s*(.*)$`)
+	reHeading    = regexp.MustCompile(`(?m)^#{1,6}\s+(.+)$`)
+	reBlockquote = regexp.MustCompile(`(?m)^>\s*(.*)$`)
 	reLink       = regexp.MustCompile(`\[([^\]]+)\]\(([^)]+)\)`)
 	reBoldStar   = regexp.MustCompile(`\*\*(.+?)\*\*`)
 	reBoldUnder  = regexp.MustCompile(`__(.+?)__`)
 	reItalic     = regexp.MustCompile(`_([^_]+)_`)
 	reStrike     = regexp.MustCompile(`~~(.+?)~~`)
-	reListItem   = regexp.MustCompile(`^[-*]\s+`)
+	reListItem   = regexp.MustCompile(`(?m)^[-*]\s+`)
 	reCodeBlock  = regexp.MustCompile("```[\\w]*\\n?([\\s\\S]*?)```")
 	reInlineCode = regexp.MustCompile("`([^`]+)`")
+
+	// Runs of consecutive thematic-break lines (---, ***, ___, possibly mixed)
+	// separated only by blank lines. Telegram has no horizontal-rule primitive
+	// and passes the markers through as-is, so a display payload that ends in
+	// a thematic break would stack with the displayBody closing fence.
+	reHRuleRun = regexp.MustCompile(`(?m)^[ \t]*[-*_]{3,}[ \t]*(?:\n[ \t]*)+[-*_]{3,}[ \t]*(?:(?:\n[ \t]*)+[-*_]{3,}[ \t]*)*$`)
 )
 
 type TelegramChannel struct {
@@ -830,6 +836,12 @@ func markdownToTelegramHTML(text string) string {
 
 	inlineCodes := extractInlineCodes(text)
 	text = inlineCodes.text
+
+	// Collapse runs of adjacent thematic-break lines (---, ***, ___) separated
+	// only by blank lines down to a single ---. Telegram passes these markers
+	// through as-is, so a display payload that itself ends with a thematic
+	// break would otherwise stack against the displayBody closing fence.
+	text = reHRuleRun.ReplaceAllString(text, "---")
 
 	text = reHeading.ReplaceAllString(text, "$1")
 

@@ -108,6 +108,27 @@ func TestMarkdownToMrkdwn(t *testing.T) {
 			input: "hello --- world",
 			want:  "hello --- world",
 		},
+		// Collapse adjacent thematic-break runs (Fix A).
+		{
+			name:  "adjacent dash rules with blank line collapse to single rule",
+			input: "hello\n\n---\n\n---\n\nworld",
+			want:  "hello\n\n" + hRuleSubstitute + "\n\nworld",
+		},
+		{
+			name:  "mixed thematic markers collapse to single rule",
+			input: "hello\n\n***\n---\n___\n\nworld",
+			want:  "hello\n\n" + hRuleSubstitute + "\n\nworld",
+		},
+		{
+			name:  "single thematic break is not collapsed",
+			input: "Above\n---\nBelow",
+			want:  "Above\n" + hRuleSubstitute + "\nBelow",
+		},
+		{
+			name:  "rules with text between are not collapsed",
+			input: "---\nsome text\n---",
+			want:  hRuleSubstitute + "\nsome text\n" + hRuleSubstitute,
+		},
 		// Code spans preserved
 		{
 			name:  "inline code preserved",
