@@ -22,20 +22,22 @@ func statusCommand() Definition {
 
 // buildStatusReply renders the /status output in a channel-agnostic shape:
 //
-//	ClawEh <version>
-//
 //	```
-//	field: value
+//	ClawEh Status
+//
+//	Version: <version>
 //	field: value
 //	...
 //	```
 //
-// The title is plain text; the body is wrapped in a fenced code block so that
-// every channel renderer (Slack mrkdwn, Telegram markdown, webui ReactMarkdown)
-// preserves the per-line breaks. Without the fence, webui's Markdown renderer
-// collapses single \n into spaces and the body renders as one long blob.
+// The entire block is wrapped in a fenced code block so that every channel
+// renderer (Slack mrkdwn, Telegram markdown, webui ReactMarkdown) preserves
+// the per-line breaks. Without the fence, webui's Markdown renderer collapses
+// single \n into spaces and the body renders as one long blob.
 func buildStatusReply(req Request, rt *Runtime) string {
 	var body strings.Builder
+
+	fmt.Fprintf(&body, "Version: %s\n", global.Version)
 
 	if rt != nil && rt.Uptime != nil {
 		d := rt.Uptime().Truncate(time.Second)
@@ -69,11 +71,10 @@ func buildStatusReply(req Request, rt *Runtime) string {
 	bodyText := strings.TrimRight(body.String(), "\n")
 
 	var out strings.Builder
-	fmt.Fprintf(&out, "%s %s\n", global.AppName, global.Version)
-	if bodyText != "" {
-		out.WriteString("\n```\n")
-		out.WriteString(bodyText)
-		out.WriteString("\n```")
-	}
+	out.WriteString("```\n")
+	fmt.Fprintf(&out, "%s Status\n", global.AppName)
+	out.WriteString("\n")
+	out.WriteString(bodyText)
+	out.WriteString("\n```")
 	return out.String()
 }

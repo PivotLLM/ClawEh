@@ -40,10 +40,14 @@ func TestStatus_BasicFields(t *testing.T) {
 		t.Fatalf("outcome=%v, want=%v", res.Outcome, OutcomeHandled)
 	}
 
-	// Header includes app name and version
-	wantHeader := global.AppName + " " + global.Version
+	// Header is "<AppName> Status"
+	wantHeader := global.AppName + " Status"
 	if !strings.Contains(reply, wantHeader) {
 		t.Errorf("reply missing header %q\n%s", wantHeader, reply)
+	}
+	// Version appears on its own labelled line
+	if !strings.Contains(reply, "Version: "+global.Version) {
+		t.Errorf("reply missing 'Version: %s'\n%s", global.Version, reply)
 	}
 	// Uptime — Truncate to seconds, value as "2h13m0s"
 	if !strings.Contains(reply, "Uptime: 2h13m0s") {
@@ -140,9 +144,10 @@ func TestStatus_GracefulDegradation(t *testing.T) {
 }
 
 // TestStatus_ExactShape verifies the rendered shape end-to-end:
-//   - line 1: "ClawEh <version>"
-//   - line 2: blank
-//   - line 3: opening code fence "```"
+//   - line 1: opening code fence "```"
+//   - line 2: "<AppName> Status"
+//   - line 3: blank
+//   - line 4: "Version: <version>"
 //   - subsequent lines: "field: value" with NO leading whitespace and NO
 //     internal padding between the colon and the value
 //   - final line: closing code fence "```"
@@ -173,21 +178,33 @@ func TestStatus_ExactShape(t *testing.T) {
 	reply := buildStatusReply(Request{Channel: "webui"}, rt)
 	lines := strings.Split(reply, "\n")
 
-	wantHeader := global.AppName + " " + global.Version
-	if lines[0] != wantHeader {
-		t.Errorf("line 1 = %q, want %q", lines[0], wantHeader)
+	if lines[0] != "```" {
+		t.Errorf("line 1 = %q, want opening code fence ```", lines[0])
 	}
-	if lines[1] != "" {
-		t.Errorf("line 2 = %q, want empty (separator)", lines[1])
+	wantHeader := global.AppName + " Status"
+	if lines[1] != wantHeader {
+		t.Errorf("line 2 = %q, want %q", lines[1], wantHeader)
 	}
-	if lines[2] != "```" {
-		t.Errorf("line 3 = %q, want opening code fence ```", lines[2])
+	if lines[2] != "" {
+		t.Errorf("line 3 = %q, want empty (separator)", lines[2])
 	}
 	if lines[len(lines)-1] != "```" {
 		t.Errorf("last line = %q, want closing code fence ```", lines[len(lines)-1])
 	}
 
+	// Exactly one opening and one closing fence in total.
+	fenceCount := 0
+	for _, l := range lines {
+		if l == "```" {
+			fenceCount++
+		}
+	}
+	if fenceCount != 2 {
+		t.Errorf("got %d fence lines, want exactly 2", fenceCount)
+	}
+
 	wantBody := []string{
+		"Version: " + global.Version,
 		"Uptime: 59m38s",
 		"Agent: Amber",
 		"Model: DeepSeek-V4-Flash",
