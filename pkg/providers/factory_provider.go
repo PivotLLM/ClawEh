@@ -75,6 +75,7 @@ func CreateProviderFromConfig(cfg *config.ModelConfig) (LLMProvider, string, err
 			openai_compat.WithMaxTokensField(cfg.MaxTokensField),
 			openai_compat.WithRequestTimeout(time.Duration(cfg.RequestTimeout) * time.Second),
 			openai_compat.WithStrictCompat(cfg.StrictCompat),
+			openai_compat.WithResponseLogFile(cfg.ResponseLogFile),
 		}
 		return NewHTTPProviderWithOptions(cfg.APIKey, apiBase, cfg.Proxy, opts...), modelID, nil
 
@@ -159,6 +160,7 @@ func CreateProviderFromConfig(cfg *config.ModelConfig) (LLMProvider, string, err
 			openai_compat.WithMaxTokensField(cfg.MaxTokensField),
 			openai_compat.WithRequestTimeout(time.Duration(cfg.RequestTimeout) * time.Second),
 			openai_compat.WithStrictCompat(cfg.StrictCompat),
+			openai_compat.WithResponseLogFile(cfg.ResponseLogFile),
 			// Groq's Llama models fail tool calls when parallel_tool_calls is enabled.
 			openai_compat.WithNoParallelToolCalls(protocol == "groq"),
 		}
@@ -185,6 +187,7 @@ func CreateProviderFromConfig(cfg *config.ModelConfig) (LLMProvider, string, err
 			openai_compat.WithMaxTokensField(cfg.MaxTokensField),
 			openai_compat.WithRequestTimeout(time.Duration(cfg.RequestTimeout) * time.Second),
 			openai_compat.WithStrictCompat(cfg.StrictCompat),
+			openai_compat.WithResponseLogFile(cfg.ResponseLogFile),
 		}
 		return NewHTTPProviderWithOptions(cfg.APIKey, apiBase, cfg.Proxy, opts...), modelID, nil
 

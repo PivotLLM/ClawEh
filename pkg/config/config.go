@@ -624,6 +624,12 @@ type ModelConfig struct {
 	ExtraArgs      []string          `json:"extra_args,omitempty"`     // Additional CLI arguments appended after required flags
 	Env            map[string]string `json:"env,omitempty"`            // Environment variables for CLI-based providers (merged with os.Environ)
 	Enabled        bool              `json:"enabled"`                  // If false, model is skipped in all operations
+
+	// ResponseLogFile, when non-empty, causes every raw HTTP response body from
+	// the openai_compat provider to be appended to the given path. Diagnostic
+	// feature only; no rotation, no expansion of ~ or env vars. Ignored by
+	// providers other than openai_compat.
+	ResponseLogFile string `json:"response_log_file,omitempty"`
 }
 
 // Validate checks if the ModelConfig has all required fields.
