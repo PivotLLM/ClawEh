@@ -46,23 +46,23 @@ func TestStatus_BasicFields(t *testing.T) {
 		t.Errorf("reply missing header %q\n%s", wantHeader, reply)
 	}
 	// Uptime — Truncate to seconds, value as "2h13m0s"
-	if !strings.Contains(reply, "Uptime:") {
-		t.Errorf("reply missing Uptime line\n%s", reply)
-	}
-	if !strings.Contains(reply, "2h13m0s") {
-		t.Errorf("reply missing expected uptime value 2h13m0s\n%s", reply)
+	if !strings.Contains(reply, "Uptime: 2h13m0s") {
+		t.Errorf("reply missing 'Uptime: 2h13m0s'\n%s", reply)
 	}
 	// Agent
-	if !strings.Contains(reply, "Agent:") || !strings.Contains(reply, "Alice") {
-		t.Errorf("reply missing Agent line or name\n%s", reply)
+	if !strings.Contains(reply, "Agent: Alice") {
+		t.Errorf("reply missing 'Agent: Alice'\n%s", reply)
 	}
 	// Model
-	if !strings.Contains(reply, "Model:") || !strings.Contains(reply, "gpt-4") || !strings.Contains(reply, "openai") {
-		t.Errorf("reply missing Model line or values\n%s", reply)
+	if !strings.Contains(reply, "Model: gpt-4") {
+		t.Errorf("reply missing 'Model: gpt-4'\n%s", reply)
+	}
+	if !strings.Contains(reply, "Provider: openai") {
+		t.Errorf("reply missing 'Provider: openai'\n%s", reply)
 	}
 	// Channel
-	if !strings.Contains(reply, "Channel:") || !strings.Contains(reply, "telegram") {
-		t.Errorf("reply missing Channel line\n%s", reply)
+	if !strings.Contains(reply, "Channel: telegram") {
+		t.Errorf("reply missing 'Channel: telegram'\n%s", reply)
 	}
 }
 
@@ -93,13 +93,13 @@ func TestStatus_SessionStatsReflected(t *testing.T) {
 	}
 
 	if !strings.Contains(reply, "Session messages: 42") {
-		t.Errorf("missing session messages 42\n%s", reply)
+		t.Errorf("missing 'Session messages: 42'\n%s", reply)
 	}
-	if !strings.Contains(reply, "~9876") {
-		t.Errorf("missing estimated tokens ~9876\n%s", reply)
+	if !strings.Contains(reply, "Context tokens: ~9876 (estimated)") {
+		t.Errorf("missing 'Context tokens: ~9876 (estimated)'\n%s", reply)
 	}
-	if !strings.Contains(reply, "Summary chars:    1500") {
-		t.Errorf("missing summary chars 1500\n%s", reply)
+	if !strings.Contains(reply, "Summary chars: 1500") {
+		t.Errorf("missing 'Summary chars: 1500'\n%s", reply)
 	}
 }
 
@@ -128,13 +128,102 @@ func TestStatus_GracefulDegradation(t *testing.T) {
 		t.Errorf("reply missing app name when sources nil\n%s", reply)
 	}
 	// Channel comes from req.Channel directly, not from rt.
-	if !strings.Contains(reply, "Channel:") || !strings.Contains(reply, "cli") {
-		t.Errorf("reply missing channel line\n%s", reply)
+	if !strings.Contains(reply, "Channel: cli") {
+		t.Errorf("reply missing 'Channel: cli'\n%s", reply)
 	}
 	// Absent sources must not appear.
 	for _, missing := range []string{"Uptime:", "Agent:", "Model:", "Session messages:", "Context tokens:", "Summary chars:", "Enabled channels:"} {
 		if strings.Contains(reply, missing) {
 			t.Errorf("reply unexpectedly contains %q when source nil\n%s", missing, reply)
+		}
+	}
+}
+
+// TestStatus_ExactShape verifies the rendered shape end-to-end:
+//   - line 1: "ClawEh <version>"
+//   - line 2: blank
+//   - line 3: opening code fence "```"
+//   - subsequent lines: "field: value" with NO leading whitespace and NO
+//     internal padding between the colon and the value
+//   - final line: closing code fence "```"
+//
+// The fence wrapping guarantees newlines survive every channel renderer
+// (notably webui's Markdown renderer, which would otherwise collapse single
+// newlines into spaces).
+func TestStatus_ExactShape(t *testing.T) {
+	rt := &Runtime{
+		AgentName: "Amber",
+		GetModelInfo: func() (string, string, string) {
+			return "DeepSeek-V4-Flash", "openai", ""
+		},
+		Uptime: func() time.Duration {
+			return 59*time.Minute + 38*time.Second
+		},
+		GetSessionStats: func() (int, int, int) {
+			return 4, 148, 0
+		},
+		GetEnabledChannels: func() []string {
+			return []string{
+				"telegram-Amber", "telegram-Dawn", "telegram-Karen",
+				"telegram-Penny", "telegram-Wendy", "slack", "webui",
+			}
+		},
+	}
+
+	reply := buildStatusReply(Request{Channel: "webui"}, rt)
+	lines := strings.Split(reply, "\n")
+
+	wantHeader := global.AppName + " " + global.Version
+	if lines[0] != wantHeader {
+		t.Errorf("line 1 = %q, want %q", lines[0], wantHeader)
+	}
+	if lines[1] != "" {
+		t.Errorf("line 2 = %q, want empty (separator)", lines[1])
+	}
+	if lines[2] != "```" {
+		t.Errorf("line 3 = %q, want opening code fence ```", lines[2])
+	}
+	if lines[len(lines)-1] != "```" {
+		t.Errorf("last line = %q, want closing code fence ```", lines[len(lines)-1])
+	}
+
+	wantBody := []string{
+		"Uptime: 59m38s",
+		"Agent: Amber",
+		"Model: DeepSeek-V4-Flash",
+		"Provider: openai",
+		"Channel: webui",
+		"Session messages: 4",
+		"Context tokens: ~148 (estimated)",
+		"Summary chars: 0",
+		"Enabled channels: 7 (telegram-Amber, telegram-Dawn, telegram-Karen, telegram-Penny, telegram-Wendy, slack, webui)",
+	}
+	body := lines[3 : len(lines)-1]
+	if len(body) != len(wantBody) {
+		t.Fatalf("body has %d lines, want %d:\n%s", len(body), len(wantBody), reply)
+	}
+	for i, want := range wantBody {
+		if body[i] != want {
+			t.Errorf("body line %d = %q, want %q", i, body[i], want)
+		}
+	}
+
+	// No tab characters anywhere.
+	if strings.ContainsRune(reply, '\t') {
+		t.Errorf("reply contains tab character:\n%s", reply)
+	}
+	// No leading whitespace on field lines (everything between the fences).
+	for i, line := range body {
+		if line != strings.TrimLeft(line, " \t") {
+			t.Errorf("field line %d has leading whitespace: %q", i, line)
+		}
+	}
+	// No run of 2+ internal spaces (catches old padding/right-alignment style).
+	for _, line := range body {
+		if strings.Contains(line, "  ") {
+			// Allow it only inside parenthesised tails like the enabled-channels list,
+			// which we know has no double-space in the test data above.
+			t.Errorf("field line contains double space (padding artifact): %q", line)
 		}
 	}
 }
