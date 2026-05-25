@@ -24,6 +24,9 @@ func TestStatus_BasicFields(t *testing.T) {
 		GetEnabledChannels: func() []string {
 			return []string{"telegram", "discord"}
 		},
+		GetSessionChannels: func() []string {
+			return []string{"telegram"}
+		},
 	}
 	ex := NewExecutor(NewRegistry(BuiltinDefinitions()), rt)
 
@@ -136,7 +139,7 @@ func TestStatus_GracefulDegradation(t *testing.T) {
 		t.Errorf("reply missing 'Channel: cli'\n%s", reply)
 	}
 	// Absent sources must not appear.
-	for _, missing := range []string{"Uptime:", "Agent:", "Model:", "Session messages:", "Context tokens:", "Summary chars:", "Enabled channels:"} {
+	for _, missing := range []string{"Uptime:", "Agent:", "Model:", "Session messages:", "Context tokens:", "Summary chars:", "Enabled channels:", "Agent channels:", "Archive messages:"} {
 		if strings.Contains(reply, missing) {
 			t.Errorf("reply unexpectedly contains %q when source nil\n%s", missing, reply)
 		}
@@ -168,10 +171,19 @@ func TestStatus_ExactShape(t *testing.T) {
 			return 4, 148, 0
 		},
 		GetEnabledChannels: func() []string {
+			// Globally enabled — must NOT appear in /status output.
 			return []string{
 				"telegram-Amber", "telegram-Dawn", "telegram-Karen",
 				"telegram-Penny", "telegram-Wendy", "slack", "webui",
 			}
+		},
+		GetSessionChannels: func() []string {
+			// Only the channels Amber is bound to in config.
+			return []string{"telegram-Amber"}
+		},
+		GetArchiveStats: func() (int, time.Time, time.Time) {
+			// Count present, timestamps absent → archive date lines omitted.
+			return 12, time.Time{}, time.Time{}
 		},
 	}
 
@@ -211,9 +223,10 @@ func TestStatus_ExactShape(t *testing.T) {
 		"Provider: openai",
 		"Channel: webui",
 		"Session messages: 4",
+		"Archive messages: 12",
 		"Context tokens: ~148 (estimated)",
 		"Summary chars: 0",
-		"Enabled channels: 7 (telegram-Amber, telegram-Dawn, telegram-Karen, telegram-Penny, telegram-Wendy, slack, webui)",
+		"Agent channels: 1 (telegram-Amber)",
 	}
 	body := lines[3 : len(lines)-1]
 	if len(body) != len(wantBody) {
@@ -242,5 +255,128 @@ func TestStatus_ExactShape(t *testing.T) {
 			// which we know has no double-space in the test data above.
 			t.Errorf("field line contains double space (padding artifact): %q", line)
 		}
+	}
+}
+
+// TestStatus_ChannelScopingDoesNotLeakGlobalChannels verifies that /status
+// renders only the channels reachable by the current agent's bindings, and
+// does NOT enumerate every channel the daemon has configured. Previously the
+// handler called GetEnabledChannels and exposed the full daemon-wide list to
+// any caller — a Slack user could see what Telegram channels were configured.
+// The fix is to scope the list via GetSessionChannels, which the runtime
+// derives from cfg.Bindings filtered by the current agent ID.
+func TestStatus_ChannelScopingDoesNotLeakGlobalChannels(t *testing.T) {
+	rt := &Runtime{
+		AgentName: "SlackOnlyAgent",
+		// Global registry — must NOT appear in the reply.
+		GetEnabledChannels: func() []string {
+			return []string{
+				"telegram-Amber", "telegram-Dawn", "telegram-Karen",
+				"telegram-Penny", "telegram-Wendy", "slack", "webui",
+			}
+		},
+		// Per-agent scope — single channel.
+		GetSessionChannels: func() []string {
+			return []string{"slack"}
+		},
+		GetSessionStats: func() (int, int, int) { return 1, 10, 0 },
+		Uptime:          func() time.Duration { return time.Second },
+	}
+
+	reply := buildStatusReply(Request{Channel: "slack"}, rt)
+
+	// Old global-only channel names must not appear anywhere in the reply.
+	for _, leaked := range []string{
+		"telegram-Amber", "telegram-Dawn", "telegram-Karen",
+		"telegram-Penny", "telegram-Wendy", "webui",
+	} {
+		if strings.Contains(reply, leaked) {
+			t.Errorf("reply leaked globally-enabled channel %q:\n%s", leaked, reply)
+		}
+	}
+	// The pre-fix label must not be present.
+	if strings.Contains(reply, "Enabled channels:") {
+		t.Errorf("reply still uses pre-fix 'Enabled channels:' label:\n%s", reply)
+	}
+	// The scoped, single-channel line must be present.
+	if !strings.Contains(reply, "Agent channels: 1 (slack)") {
+		t.Errorf("missing scoped 'Agent channels: 1 (slack)':\n%s", reply)
+	}
+}
+
+// TestStatus_ChannelScopingFallbackToRequestChannel verifies that when the
+// agent has no bindings registered (GetSessionChannels returns empty) the
+// status reply falls back to listing the channel the request came from —
+// the minimum we can prove the agent is reachable on — instead of
+// emitting nothing or, worse, the global list.
+func TestStatus_ChannelScopingFallbackToRequestChannel(t *testing.T) {
+	rt := &Runtime{
+		AgentName:          "DefaultAgent",
+		GetSessionChannels: func() []string { return nil },
+		GetEnabledChannels: func() []string {
+			return []string{"telegram-Amber", "slack", "webui"}
+		},
+		Uptime: func() time.Duration { return time.Second },
+	}
+	reply := buildStatusReply(Request{Channel: "webui"}, rt)
+	if !strings.Contains(reply, "Agent channels: 1 (webui)") {
+		t.Errorf("missing fallback 'Agent channels: 1 (webui)':\n%s", reply)
+	}
+	if strings.Contains(reply, "telegram-Amber") || strings.Contains(reply, "slack") {
+		t.Errorf("reply leaked other channels in fallback case:\n%s", reply)
+	}
+}
+
+// TestStatus_ArchiveCount verifies the new 'Archive messages: <N>' line is
+// emitted from GetArchiveStats and sits directly after 'Session messages:'.
+// Zero-valued timestamps must suppress the optional 'Archive first/last' lines.
+func TestStatus_ArchiveCount(t *testing.T) {
+	rt := &Runtime{
+		GetSessionStats: func() (int, int, int) { return 3, 100, 0 },
+		GetArchiveStats: func() (int, time.Time, time.Time) {
+			return 42, time.Time{}, time.Time{}
+		},
+	}
+	reply := buildStatusReply(Request{Channel: "cli"}, rt)
+	if !strings.Contains(reply, "Archive messages: 42") {
+		t.Errorf("missing 'Archive messages: 42':\n%s", reply)
+	}
+	// Date lines must be absent when timestamps are zero.
+	for _, absent := range []string{"Archive first:", "Archive last:"} {
+		if strings.Contains(reply, absent) {
+			t.Errorf("unexpected %q for zero timestamps:\n%s", absent, reply)
+		}
+	}
+	// Archive line must appear immediately after Session messages.
+	lines := strings.Split(reply, "\n")
+	for i, l := range lines {
+		if l == "Session messages: 3" {
+			if i+1 >= len(lines) || lines[i+1] != "Archive messages: 42" {
+				t.Errorf("Archive line not adjacent to Session messages:\n%s", reply)
+			}
+			return
+		}
+	}
+	t.Errorf("Session messages line not found:\n%s", reply)
+}
+
+// TestStatus_ArchiveDateRange verifies that when GetArchiveStats returns
+// non-zero first/last timestamps, the optional Archive first/last lines
+// are emitted in RFC3339 UTC form.
+func TestStatus_ArchiveDateRange(t *testing.T) {
+	first := time.Date(2026, 4, 1, 12, 30, 0, 0, time.UTC)
+	last := time.Date(2026, 5, 25, 9, 15, 0, 0, time.UTC)
+	rt := &Runtime{
+		GetSessionStats: func() (int, int, int) { return 2, 50, 0 },
+		GetArchiveStats: func() (int, time.Time, time.Time) {
+			return 99, first, last
+		},
+	}
+	reply := buildStatusReply(Request{Channel: "cli"}, rt)
+	if !strings.Contains(reply, "Archive first: 2026-04-01T12:30:00Z") {
+		t.Errorf("missing 'Archive first: 2026-04-01T12:30:00Z':\n%s", reply)
+	}
+	if !strings.Contains(reply, "Archive last: 2026-05-25T09:15:00Z") {
+		t.Errorf("missing 'Archive last: 2026-05-25T09:15:00Z':\n%s", reply)
 	}
 }

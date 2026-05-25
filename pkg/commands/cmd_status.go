@@ -60,12 +60,27 @@ func buildStatusReply(req Request, rt *Runtime) string {
 	if rt != nil && rt.GetSessionStats != nil {
 		msgCount, estTokens, summaryChars := rt.GetSessionStats()
 		fmt.Fprintf(&body, "Session messages: %d\n", msgCount)
+		if rt.GetArchiveStats != nil {
+			archCount, first, last := rt.GetArchiveStats()
+			fmt.Fprintf(&body, "Archive messages: %d\n", archCount)
+			if !first.IsZero() {
+				fmt.Fprintf(&body, "Archive first: %s\n", first.UTC().Format(time.RFC3339))
+			}
+			if !last.IsZero() {
+				fmt.Fprintf(&body, "Archive last: %s\n", last.UTC().Format(time.RFC3339))
+			}
+		}
 		fmt.Fprintf(&body, "Context tokens: ~%d (estimated)\n", estTokens)
 		fmt.Fprintf(&body, "Summary chars: %d\n", summaryChars)
 	}
-	if rt != nil && rt.GetEnabledChannels != nil {
-		names := rt.GetEnabledChannels()
-		fmt.Fprintf(&body, "Enabled channels: %d (%s)\n", len(names), strings.Join(names, ", "))
+	if rt != nil && rt.GetSessionChannels != nil {
+		names := rt.GetSessionChannels()
+		if len(names) == 0 && req.Channel != "" {
+			names = []string{req.Channel}
+		}
+		if len(names) > 0 {
+			fmt.Fprintf(&body, "Agent channels: %d (%s)\n", len(names), strings.Join(names, ", "))
+		}
 	}
 
 	bodyText := strings.TrimRight(body.String(), "\n")

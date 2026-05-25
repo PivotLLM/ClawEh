@@ -31,6 +31,7 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/llmcontext"
 	"github.com/PivotLLM/ClawEh/pkg/logger"
 	"github.com/PivotLLM/ClawEh/pkg/media"
+	"github.com/PivotLLM/ClawEh/pkg/memory"
 	"github.com/PivotLLM/ClawEh/pkg/providers"
 	"github.com/PivotLLM/ClawEh/pkg/routing"
 	"github.com/PivotLLM/ClawEh/pkg/skills"
@@ -2297,6 +2298,25 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 			}
 			return al.channelManager.GetEnabledChannels()
 		},
+		GetSessionChannels: func() []string {
+			if cfg == nil || agent == nil {
+				return nil
+			}
+			return sessionChannelsForAgent(cfg.Bindings, agent.ID)
+		},
+		GetArchiveStats: func() (int, time.Time, time.Time) {
+			if agent == nil || opts == nil {
+				return 0, time.Time{}, time.Time{}
+			}
+			path := archiveDBPath(agent.Workspace, opts.SessionKey)
+			store, err := memory.OpenReadOnly(path)
+			if err != nil {
+				return 0, time.Time{}, time.Time{}
+			}
+			defer store.Close()
+			count, first, last, _ := store.Stats()
+			return count, first, last
+		},
 		SwitchChannel: func(value string) error {
 			if al.channelManager == nil {
 				return fmt.Errorf("channel manager not initialized")
@@ -2427,6 +2447,44 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 		}
 	}
 	return rt
+}
+
+// sessionChannelsForAgent returns the distinct channel names that route to
+// agentID via the supplied bindings. The result is the per-agent channel
+// surface area — used by /status to avoid leaking the full daemon-wide
+// channel list to callers on unrelated channels. Channel names are returned
+// in the order they first appear in bindings; comparisons are case-insensitive
+// for dedup but original casing is preserved in the output.
+func sessionChannelsForAgent(bindings []config.AgentBinding, agentID string) []string {
+	target := routing.NormalizeAgentID(agentID)
+	seen := make(map[string]struct{})
+	var out []string
+	for _, b := range bindings {
+		if routing.NormalizeAgentID(b.AgentID) != target {
+			continue
+		}
+		ch := strings.TrimSpace(b.Match.Channel)
+		if ch == "" {
+			continue
+		}
+		key := strings.ToLower(ch)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, ch)
+	}
+	return out
+}
+
+// archiveDBPath returns the on-disk path of the SQLite archive for a session.
+// Must stay in sync with pkg/llmcontext.sanitizeSessionKey and the
+// archive-open path in pkg/llmcontext/Manager.getOrOpenArchive.
+func archiveDBPath(workspace, sessionKey string) string {
+	sanitized := strings.ReplaceAll(sessionKey, ":", "_")
+	sanitized = strings.ReplaceAll(sanitized, "/", "_")
+	sanitized = strings.ReplaceAll(sanitized, "\\", "_")
+	return filepath.Join(workspace, "sessions", sanitized+".archive.db")
 }
 
 func mapCommandError(result commands.ExecuteResult) string {
