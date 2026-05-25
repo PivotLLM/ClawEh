@@ -124,6 +124,16 @@ func (p *Provider) Chat(
 		if p.noParallelToolCalls {
 			requestBody["parallel_tool_calls"] = false
 		}
+		// OpenRouter routing hint: require an upstream that supports the
+		// `parameters` field on tool definitions, i.e. one that can actually
+		// honour function calling. Without this, OpenRouter silently down-
+		// routes tools-enabled requests to upstreams that drop the tools and
+		// produce text-only replies (sometimes with the tool descriptor
+		// echoed back inside the content). Non-OpenRouter upstreams ignore
+		// unknown top-level fields, so this is safe for every endpoint.
+		requestBody["provider"] = map[string]any{
+			"require_parameters": true,
+		}
 	}
 
 	if maxTokens, ok := common.AsInt(options["max_tokens"]); ok {
@@ -194,7 +204,7 @@ func (p *Provider) Chat(
 		return httpErrorStatus(model, "error", time.Since(start).Milliseconds(), bytesSent, 0), respErr
 	}
 
-	out, bytesReceived, err := common.ReadParseAndMeasure(resp, p.apiBase)
+	out, bytesReceived, err := common.ReadParseAndMeasure(resp, p.apiBase, common.ToolNameSet(tools))
 	durationMs := time.Since(start).Milliseconds()
 	if err != nil {
 		return httpErrorStatus(model, "parse_error", durationMs, bytesSent, bytesReceived), err

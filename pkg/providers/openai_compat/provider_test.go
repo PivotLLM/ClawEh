@@ -1090,5 +1090,84 @@ func TestProviderChat_HTTPErrorPopulatesStatus(t *testing.T) {
 	}
 }
 
+func TestProviderChat_SetsRequireParametersWhenToolsAdvertised(t *testing.T) {
+	var requestBody map[string]any
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		resp := map[string]any{
+			"choices": []map[string]any{
+				{
+					"message":       map[string]any{"content": "ok"},
+					"finish_reason": "stop",
+				},
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	tools := []protocoltypes.ToolDefinition{
+		{
+			Type: "function",
+			Function: protocoltypes.ToolFunctionDefinition{
+				Name:        "get_weather",
+				Description: "Get weather",
+				Parameters:  map[string]any{"type": "object"},
+			},
+		},
+	}
+
+	p := NewProvider("key", server.URL, "")
+	_, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, tools, "gpt-4o", nil)
+	if err != nil {
+		t.Fatalf("Chat() error = %v", err)
+	}
+
+	provider, ok := requestBody["provider"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected provider object in request, got %T", requestBody["provider"])
+	}
+	if provider["require_parameters"] != true {
+		t.Fatalf("provider.require_parameters = %v, want true", provider["require_parameters"])
+	}
+}
+
+func TestProviderChat_OmitsProviderObjectWhenNoTools(t *testing.T) {
+	var requestBody map[string]any
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		resp := map[string]any{
+			"choices": []map[string]any{
+				{
+					"message":       map[string]any{"content": "ok"},
+					"finish_reason": "stop",
+				},
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	p := NewProvider("key", server.URL, "")
+	_, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "gpt-4o", nil)
+	if err != nil {
+		t.Fatalf("Chat() error = %v", err)
+	}
+
+	if _, ok := requestBody["provider"]; ok {
+		t.Fatalf("provider key should be omitted when no tools advertised")
+	}
+}
+
 // ensure protocoltypes import is used in this file
 var _ = protocoltypes.DispatchStatus{}

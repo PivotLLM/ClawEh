@@ -138,7 +138,12 @@ func SerializeMessages(messages []Message) []any {
 // ParseResponse parses a JSON chat completion response body into an LLMResponse.
 // The returned LLMResponse carries a partial DispatchStatus (Success and DurationMs
 // are intentionally left for the caller, which knows the HTTP outcome and wall-clock).
-func ParseResponse(body io.Reader) (*LLMResponse, error) {
+//
+// toolNames is the set of tool names advertised on the request. It is used to
+// cross-check candidate tool calls recovered from non-standard response shapes
+// (notably content-embedded JSON descriptors emitted by some upstream routes).
+// A nil or empty set disables the content-sniff promotion.
+func ParseResponse(body io.Reader, toolNames map[string]struct{}) (*LLMResponse, error) {
 	var apiResponse struct {
 		Model   string `json:"model"`
 		Choices []struct {
@@ -160,6 +165,12 @@ func ParseResponse(body io.Reader) (*LLMResponse, error) {
 						} `json:"google"`
 					} `json:"extra_content"`
 				} `json:"tool_calls"`
+				// Legacy OpenAI v0 singular function_call. Still emitted by some
+				// upstream routes via OpenRouter. Synthesised into tool_calls below.
+				FunctionCall *struct {
+					Name      string `json:"name"`
+					Arguments string `json:"arguments"`
+				} `json:"function_call"`
 			} `json:"message"`
 			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
@@ -189,46 +200,110 @@ func ParseResponse(body io.Reader) (*LLMResponse, error) {
 		}, nil
 	}
 
-	choice := apiResponse.Choices[0]
-	toolCalls := make([]ToolCall, 0, len(choice.Message.ToolCalls))
-	for _, tc := range choice.Message.ToolCalls {
-		arguments := make(map[string]any)
-		name := ""
+	// Walk every choice. We don't currently request n>1, but accumulating across
+	// all choices is cheap defence-in-depth: dropping choices[1..] silently has
+	// burned us with OpenRouter routes that emit tool calls there.
+	//
+	// Content handling across multiple choices: take the first non-empty value
+	// per field. This matches the prior single-choice semantics exactly when
+	// only choices[0] is populated (the common case) and avoids inventing a
+	// concatenation policy that downstream may not expect.
+	var aggToolCalls []ToolCall
+	var aggContent string
+	var aggReasoningContent string
+	var aggReasoning string
+	var aggReasoningDetails []ReasoningDetail
 
-		// Extract thought_signature from Gemini/Google-specific extra content
-		thoughtSignature := ""
-		if tc.ExtraContent != nil && tc.ExtraContent.Google != nil {
-			thoughtSignature = tc.ExtraContent.Google.ThoughtSignature
+	for idx, choice := range apiResponse.Choices {
+		toolCalls := make([]ToolCall, 0, len(choice.Message.ToolCalls))
+		for _, tc := range choice.Message.ToolCalls {
+			arguments := make(map[string]any)
+			name := ""
+
+			// Extract thought_signature from Gemini/Google-specific extra content
+			thoughtSignature := ""
+			if tc.ExtraContent != nil && tc.ExtraContent.Google != nil {
+				thoughtSignature = tc.ExtraContent.Google.ThoughtSignature
+			}
+
+			if tc.Function != nil {
+				name = tc.Function.Name
+				arguments = DecodeToolCallArguments(tc.Function.Arguments, name)
+			}
+
+			toolCall := ToolCall{
+				ID:               tc.ID,
+				Name:             name,
+				Arguments:        arguments,
+				ThoughtSignature: thoughtSignature,
+			}
+
+			if thoughtSignature != "" {
+				toolCall.ExtraContent = &ExtraContent{
+					Google: &GoogleExtra{
+						ThoughtSignature: thoughtSignature,
+					},
+				}
+			}
+
+			toolCalls = append(toolCalls, toolCall)
 		}
 
-		if tc.Function != nil {
-			name = tc.Function.Name
-			arguments = DecodeToolCallArguments(tc.Function.Arguments, name)
+		// Fix A: synthesise a tool call from legacy singular function_call.
+		// Only fires when tool_calls is empty AND function_call is present.
+		// Downstream must not be able to distinguish this from a real
+		// tool_calls[0] entry, so Name/Arguments are populated identically.
+		if len(toolCalls) == 0 && choice.Message.FunctionCall != nil &&
+			choice.Message.FunctionCall.Name != "" {
+			fc := choice.Message.FunctionCall
+			args := make(map[string]any)
+			if strings.TrimSpace(fc.Arguments) != "" {
+				if err := json.Unmarshal([]byte(fc.Arguments), &args); err != nil {
+					log.Printf("common: function_call arguments decode failed for %q: %v", fc.Name, err)
+					args = map[string]any{"raw": fc.Arguments}
+				}
+			}
+			toolCalls = append(toolCalls, ToolCall{
+				ID:        fmt.Sprintf("call_func_%d", idx),
+				Name:      fc.Name,
+				Arguments: args,
+			})
 		}
 
-		toolCall := ToolCall{
-			ID:               tc.ID,
-			Name:             name,
-			Arguments:        arguments,
-			ThoughtSignature: thoughtSignature,
-		}
-
-		if thoughtSignature != "" {
-			toolCall.ExtraContent = &ExtraContent{
-				Google: &GoogleExtra{
-					ThoughtSignature: thoughtSignature,
-				},
+		// Fix B: strict content-sniff fallback. Only fires when both tool_calls
+		// and function_call are empty AND content is non-empty. The candidate
+		// tool name MUST appear in toolNames; any miss rejects the entire batch.
+		// On success, clear content (the inline JSON IS the content).
+		content := choice.Message.Content
+		if len(toolCalls) == 0 && choice.Message.FunctionCall == nil && content != "" {
+			if sniffed, ok := sniffContentToolCalls(content, toolNames, idx); ok {
+				toolCalls = sniffed
+				content = ""
 			}
 		}
 
-		toolCalls = append(toolCalls, toolCall)
+		aggToolCalls = append(aggToolCalls, toolCalls...)
+		if aggContent == "" {
+			aggContent = content
+		}
+		if aggReasoningContent == "" {
+			aggReasoningContent = choice.Message.ReasoningContent
+		}
+		if aggReasoning == "" {
+			aggReasoning = choice.Message.Reasoning
+		}
+		if len(aggReasoningDetails) == 0 {
+			aggReasoningDetails = choice.Message.ReasoningDetails
+		}
 	}
+
+	choice0 := apiResponse.Choices[0]
 
 	var usage *UsageInfo
 	status := &DispatchStatus{
 		Model:      apiResponse.Model,
 		NumTurns:   1,
-		StopReason: choice.FinishReason,
+		StopReason: choice0.FinishReason,
 	}
 	if apiResponse.Usage != nil {
 		usage = &UsageInfo{
@@ -244,16 +319,121 @@ func ParseResponse(body io.Reader) (*LLMResponse, error) {
 	}
 
 	return &LLMResponse{
-		Content:          choice.Message.Content,
-		ReasoningContent: choice.Message.ReasoningContent,
-		Reasoning:        choice.Message.Reasoning,
-		ReasoningDetails: choice.Message.ReasoningDetails,
-		ToolCalls:        toolCalls,
-		FinishReason:     choice.FinishReason,
-		Normal:           choice.FinishReason == "stop" || choice.FinishReason == "tool_calls",
+		Content:          aggContent,
+		ReasoningContent: aggReasoningContent,
+		Reasoning:        aggReasoning,
+		ReasoningDetails: aggReasoningDetails,
+		ToolCalls:        aggToolCalls,
+		FinishReason:     choice0.FinishReason,
+		Normal:           choice0.FinishReason == "stop" || choice0.FinishReason == "tool_calls",
 		Usage:            usage,
 		Status:           status,
 	}, nil
+}
+
+// sniffContentToolCalls attempts to recover tool calls from a response whose
+// upstream emitted them as a JSON descriptor inside the assistant message
+// content (observed with Llama-derived routes via OpenRouter). The sniff is
+// strict: every candidate's name must appear in toolNames; any miss rejects
+// the entire batch so partial recoveries cannot promote one call and leak the
+// rest as text. A nil/empty toolNames disables the sniff entirely.
+//
+// Accepted shapes:
+//   - {"type":"function","name":"<str>","parameters":<obj>}
+//   - {"type":"function","name":"<str>","arguments":<obj-or-string>}
+//   - [<obj>, <obj>, ...] of the above
+//
+// Trailing junk after the JSON value is tolerated (json.Decoder stops at the
+// first complete value), because some upstreams append framing tokens like
+// `<|header_start|>assistant<|header_end|>`. Trade-off: a stray well-formed
+// descriptor inside otherwise-plain text *could* misfire, but the name cross-
+// check is the load-bearing guard against that.
+func sniffContentToolCalls(content string, toolNames map[string]struct{}, choiceIdx int) ([]ToolCall, bool) {
+	if len(toolNames) == 0 {
+		return nil, false
+	}
+	trimmed := strings.TrimLeft(content, " \t\r\n")
+	if trimmed == "" {
+		return nil, false
+	}
+	// Require a JSON value at the start; otherwise plain prose with embedded
+	// JSON wouldn't be confused for a tool call.
+	if trimmed[0] != '{' && trimmed[0] != '[' {
+		return nil, false
+	}
+
+	dec := json.NewDecoder(strings.NewReader(trimmed))
+	var raw any
+	if err := dec.Decode(&raw); err != nil {
+		return nil, false
+	}
+
+	var candidates []map[string]any
+	switch v := raw.(type) {
+	case map[string]any:
+		candidates = []map[string]any{v}
+	case []any:
+		if len(v) == 0 {
+			return nil, false
+		}
+		candidates = make([]map[string]any, 0, len(v))
+		for _, item := range v {
+			m, ok := item.(map[string]any)
+			if !ok {
+				return nil, false
+			}
+			candidates = append(candidates, m)
+		}
+	default:
+		return nil, false
+	}
+
+	out := make([]ToolCall, 0, len(candidates))
+	for i, c := range candidates {
+		typ, _ := c["type"].(string)
+		if typ != "function" {
+			return nil, false
+		}
+		name, _ := c["name"].(string)
+		if name == "" {
+			return nil, false
+		}
+		if _, ok := toolNames[name]; !ok {
+			return nil, false
+		}
+		var args map[string]any
+		if p, ok := c["parameters"]; ok {
+			args = coerceSniffArgs(p)
+		} else if a, ok := c["arguments"]; ok {
+			args = coerceSniffArgs(a)
+		} else {
+			args = map[string]any{}
+		}
+		out = append(out, ToolCall{
+			ID:        fmt.Sprintf("call_sniff_%d_%d", choiceIdx, i),
+			Name:      name,
+			Arguments: args,
+		})
+	}
+	return out, true
+}
+
+func coerceSniffArgs(v any) map[string]any {
+	switch val := v.(type) {
+	case map[string]any:
+		return val
+	case string:
+		m := map[string]any{}
+		if strings.TrimSpace(val) == "" {
+			return m
+		}
+		if err := json.Unmarshal([]byte(val), &m); err != nil {
+			return map[string]any{"raw": val}
+		}
+		return m
+	default:
+		return map[string]any{}
+	}
 }
 
 // DecodeToolCallArguments decodes a tool call's arguments from raw JSON.
@@ -310,9 +490,10 @@ func HandleErrorResponse(resp *http.Response, apiBase string) error {
 }
 
 // ReadAndParseResponse peeks at the response body to detect HTML errors,
-// then parses the JSON response into an LLMResponse.
-func ReadAndParseResponse(resp *http.Response, apiBase string) (*LLMResponse, error) {
-	out, _, err := ReadParseAndMeasure(resp, apiBase)
+// then parses the JSON response into an LLMResponse. toolNames is forwarded
+// to ParseResponse for the content-sniff cross-check.
+func ReadAndParseResponse(resp *http.Response, apiBase string, toolNames map[string]struct{}) (*LLMResponse, error) {
+	out, _, err := ReadParseAndMeasure(resp, apiBase, toolNames)
 	return out, err
 }
 
@@ -321,7 +502,7 @@ func ReadAndParseResponse(resp *http.Response, apiBase string) (*LLMResponse, er
 // underlying reader is streamed (mirroring ReadAndParseResponse's prior
 // behaviour) so endpoints that close mid-trailer after a complete JSON object
 // still parse successfully.
-func ReadParseAndMeasure(resp *http.Response, apiBase string) (*LLMResponse, int64, error) {
+func ReadParseAndMeasure(resp *http.Response, apiBase string, toolNames map[string]struct{}) (*LLMResponse, int64, error) {
 	contentType := resp.Header.Get("Content-Type")
 	counter := &readCounter{r: resp.Body}
 	reader := bufio.NewReader(counter)
@@ -332,11 +513,27 @@ func ReadParseAndMeasure(resp *http.Response, apiBase string) (*LLMResponse, int
 	if LooksLikeHTML(prefix, contentType) {
 		return nil, counter.n, WrapHTMLResponseError(resp.StatusCode, prefix, contentType, apiBase)
 	}
-	out, err := ParseResponse(reader)
+	out, err := ParseResponse(reader, toolNames)
 	if err != nil {
 		return nil, counter.n, fmt.Errorf("failed to parse JSON response: %w", err)
 	}
 	return out, counter.n, nil
+}
+
+// ToolNameSet returns a name set built from a list of tool definitions,
+// suitable for passing to ParseResponse/ReadAndParseResponse for the strict
+// content-sniff cross-check.
+func ToolNameSet(tools []ToolDefinition) map[string]struct{} {
+	if len(tools) == 0 {
+		return nil
+	}
+	set := make(map[string]struct{}, len(tools))
+	for _, t := range tools {
+		if t.Function.Name != "" {
+			set[t.Function.Name] = struct{}{}
+		}
+	}
+	return set
 }
 
 // readCounter wraps an io.Reader and tracks the cumulative byte count read.

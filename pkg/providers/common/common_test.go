@@ -128,7 +128,7 @@ func TestSerializeMessages_StripsSystemParts(t *testing.T) {
 
 func TestParseResponse_BasicContent(t *testing.T) {
 	body := `{"choices":[{"message":{"content":"hello world"},"finish_reason":"stop"}]}`
-	out, err := ParseResponse(strings.NewReader(body))
+	out, err := ParseResponse(strings.NewReader(body), nil)
 	if err != nil {
 		t.Fatalf("ParseResponse() error = %v", err)
 	}
@@ -142,7 +142,7 @@ func TestParseResponse_BasicContent(t *testing.T) {
 
 func TestParseResponse_EmptyChoices(t *testing.T) {
 	body := `{"choices":[]}`
-	out, err := ParseResponse(strings.NewReader(body))
+	out, err := ParseResponse(strings.NewReader(body), nil)
 	if err != nil {
 		t.Fatalf("ParseResponse() error = %v", err)
 	}
@@ -156,7 +156,7 @@ func TestParseResponse_EmptyChoices(t *testing.T) {
 
 func TestParseResponse_WithToolCalls(t *testing.T) {
 	body := `{"choices":[{"message":{"content":"","tool_calls":[{"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{\"city\":\"SF\"}"}}]},"finish_reason":"tool_calls"}]}`
-	out, err := ParseResponse(strings.NewReader(body))
+	out, err := ParseResponse(strings.NewReader(body), nil)
 	if err != nil {
 		t.Fatalf("ParseResponse() error = %v", err)
 	}
@@ -173,7 +173,7 @@ func TestParseResponse_WithToolCalls(t *testing.T) {
 
 func TestParseResponse_WithUsage(t *testing.T) {
 	body := `{"choices":[{"message":{"content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}`
-	out, err := ParseResponse(strings.NewReader(body))
+	out, err := ParseResponse(strings.NewReader(body), nil)
 	if err != nil {
 		t.Fatalf("ParseResponse() error = %v", err)
 	}
@@ -187,7 +187,7 @@ func TestParseResponse_WithUsage(t *testing.T) {
 
 func TestParseResponse_WithReasoningContent(t *testing.T) {
 	body := `{"choices":[{"message":{"content":"2","reasoning_content":"Let me think... 1+1=2"},"finish_reason":"stop"}]}`
-	out, err := ParseResponse(strings.NewReader(body))
+	out, err := ParseResponse(strings.NewReader(body), nil)
 	if err != nil {
 		t.Fatalf("ParseResponse() error = %v", err)
 	}
@@ -197,7 +197,7 @@ func TestParseResponse_WithReasoningContent(t *testing.T) {
 }
 
 func TestParseResponse_InvalidJSON(t *testing.T) {
-	_, err := ParseResponse(strings.NewReader("not json"))
+	_, err := ParseResponse(strings.NewReader("not json"), nil)
 	if err == nil {
 		t.Fatal("expected error for invalid JSON")
 	}
@@ -315,7 +315,7 @@ func TestReadAndParseResponse_ValidJSON(t *testing.T) {
 		t.Fatalf("http.Get() error = %v", err)
 	}
 	defer resp.Body.Close()
-	out, err := ReadAndParseResponse(resp, server.URL)
+	out, err := ReadAndParseResponse(resp, server.URL, nil)
 	if err != nil {
 		t.Fatalf("ReadAndParseResponse() error = %v", err)
 	}
@@ -336,7 +336,7 @@ func TestReadAndParseResponse_HTMLResponse(t *testing.T) {
 		t.Fatalf("http.Get() error = %v", err)
 	}
 	defer resp.Body.Close()
-	_, err = ReadAndParseResponse(resp, server.URL)
+	_, err = ReadAndParseResponse(resp, server.URL, nil)
 	if err == nil {
 		t.Fatal("expected error for HTML response")
 	}
@@ -528,9 +528,354 @@ func TestReadAndParseResponse_InvalidJSON(t *testing.T) {
 		t.Fatalf("http.Get() error = %v", err)
 	}
 	defer resp.Body.Close()
-	_, err = ReadAndParseResponse(resp, server.URL)
+	_, err = ReadAndParseResponse(resp, server.URL, nil)
 	if err == nil {
 		t.Fatal("expected error for invalid JSON")
+	}
+}
+
+// --- ParseResponse fix A: legacy function_call synthesis ---
+
+func TestParseResponse_LegacyFunctionCall_Synthesized(t *testing.T) {
+	body := `{
+		"choices": [
+			{
+				"message": {
+					"content": "",
+					"function_call": {
+						"name": "get_weather",
+						"arguments": "{\"city\":\"SF\",\"units\":\"metric\"}"
+					}
+				},
+				"finish_reason": "function_call"
+			}
+		]
+	}`
+	out, err := ParseResponse(strings.NewReader(body), nil)
+	if err != nil {
+		t.Fatalf("ParseResponse() error = %v", err)
+	}
+	if len(out.ToolCalls) != 1 {
+		t.Fatalf("len(ToolCalls) = %d, want 1", len(out.ToolCalls))
+	}
+	tc := out.ToolCalls[0]
+	if tc.Name != "get_weather" {
+		t.Errorf("Name = %q, want get_weather", tc.Name)
+	}
+	if tc.Arguments["city"] != "SF" {
+		t.Errorf("Arguments[city] = %v, want SF", tc.Arguments["city"])
+	}
+	if tc.Arguments["units"] != "metric" {
+		t.Errorf("Arguments[units] = %v, want metric", tc.Arguments["units"])
+	}
+	if tc.ID == "" {
+		t.Error("synthesized tool call must have a deterministic ID")
+	}
+}
+
+func TestParseResponse_LegacyFunctionCall_RealToolCallsTakePrecedence(t *testing.T) {
+	body := `{
+		"choices": [
+			{
+				"message": {
+					"content": "",
+					"function_call": {"name": "fn_legacy", "arguments": "{}"},
+					"tool_calls": [
+						{"id": "call_1", "type": "function",
+						 "function": {"name": "fn_real", "arguments": "{}"}}
+					]
+				},
+				"finish_reason": "tool_calls"
+			}
+		]
+	}`
+	out, err := ParseResponse(strings.NewReader(body), nil)
+	if err != nil {
+		t.Fatalf("ParseResponse() error = %v", err)
+	}
+	if len(out.ToolCalls) != 1 {
+		t.Fatalf("len(ToolCalls) = %d, want 1 (legacy must not duplicate real)", len(out.ToolCalls))
+	}
+	if out.ToolCalls[0].Name != "fn_real" {
+		t.Errorf("Name = %q, want fn_real", out.ToolCalls[0].Name)
+	}
+}
+
+// --- ParseResponse fix B: strict content-sniff ---
+
+func TestParseResponse_ContentSniff_HappyPath_Parameters(t *testing.T) {
+	body := `{
+		"choices": [
+			{
+				"message": {
+					"content": "[{\"type\":\"function\",\"name\":\"get_weather\",\"parameters\":{\"city\":\"SF\"}}]",
+					"tool_calls": null
+				},
+				"finish_reason": "stop"
+			}
+		]
+	}`
+	names := map[string]struct{}{"get_weather": {}}
+	out, err := ParseResponse(strings.NewReader(body), names)
+	if err != nil {
+		t.Fatalf("ParseResponse() error = %v", err)
+	}
+	if len(out.ToolCalls) != 1 {
+		t.Fatalf("len(ToolCalls) = %d, want 1", len(out.ToolCalls))
+	}
+	if out.ToolCalls[0].Name != "get_weather" {
+		t.Errorf("Name = %q, want get_weather", out.ToolCalls[0].Name)
+	}
+	if out.ToolCalls[0].Arguments["city"] != "SF" {
+		t.Errorf("Arguments[city] = %v, want SF", out.ToolCalls[0].Arguments["city"])
+	}
+	if out.Content != "" {
+		t.Errorf("Content should be cleared after sniff promotion, got %q", out.Content)
+	}
+}
+
+func TestParseResponse_ContentSniff_HappyPath_Arguments(t *testing.T) {
+	body := `{
+		"choices": [
+			{
+				"message": {
+					"content": "{\"type\":\"function\",\"name\":\"do_thing\",\"arguments\":{\"k\":\"v\"}}"
+				},
+				"finish_reason": "stop"
+			}
+		]
+	}`
+	names := map[string]struct{}{"do_thing": {}}
+	out, err := ParseResponse(strings.NewReader(body), names)
+	if err != nil {
+		t.Fatalf("ParseResponse() error = %v", err)
+	}
+	if len(out.ToolCalls) != 1 {
+		t.Fatalf("len(ToolCalls) = %d, want 1", len(out.ToolCalls))
+	}
+	if out.ToolCalls[0].Arguments["k"] != "v" {
+		t.Errorf("Arguments[k] = %v, want v", out.ToolCalls[0].Arguments["k"])
+	}
+}
+
+func TestParseResponse_ContentSniff_ArgumentsAsString(t *testing.T) {
+	body := `{
+		"choices": [
+			{
+				"message": {
+					"content": "{\"type\":\"function\",\"name\":\"do_thing\",\"arguments\":\"{\\\"k\\\":\\\"v\\\"}\"}"
+				},
+				"finish_reason": "stop"
+			}
+		]
+	}`
+	names := map[string]struct{}{"do_thing": {}}
+	out, err := ParseResponse(strings.NewReader(body), names)
+	if err != nil {
+		t.Fatalf("ParseResponse() error = %v", err)
+	}
+	if len(out.ToolCalls) != 1 {
+		t.Fatalf("len(ToolCalls) = %d, want 1", len(out.ToolCalls))
+	}
+	if out.ToolCalls[0].Arguments["k"] != "v" {
+		t.Errorf("Arguments[k] = %v, want v", out.ToolCalls[0].Arguments["k"])
+	}
+}
+
+func TestParseResponse_ContentSniff_Reject_NameNotAdvertised(t *testing.T) {
+	body := `{
+		"choices": [
+			{
+				"message": {
+					"content": "[{\"type\":\"function\",\"name\":\"unknown_fn\",\"parameters\":{}}]"
+				},
+				"finish_reason": "stop"
+			}
+		]
+	}`
+	names := map[string]struct{}{"get_weather": {}}
+	out, err := ParseResponse(strings.NewReader(body), names)
+	if err != nil {
+		t.Fatalf("ParseResponse() error = %v", err)
+	}
+	if len(out.ToolCalls) != 0 {
+		t.Fatalf("len(ToolCalls) = %d, want 0 (unadvertised name must reject)", len(out.ToolCalls))
+	}
+	if !strings.Contains(out.Content, "unknown_fn") {
+		t.Errorf("Content should be preserved verbatim, got %q", out.Content)
+	}
+}
+
+func TestParseResponse_ContentSniff_Reject_WrongShape(t *testing.T) {
+	cases := map[string]string{
+		"bare object":        `{"foo":"bar"}`,
+		"array of non-funcs": `[{"foo":"bar"}]`,
+		"plain prose":        `Here is some text.`,
+		"missing name":       `{"type":"function","parameters":{}}`,
+		"missing type":       `{"name":"get_weather","parameters":{}}`,
+		"empty array":        `[]`,
+	}
+	for name, content := range cases {
+		t.Run(name, func(t *testing.T) {
+			payload := map[string]any{
+				"choices": []map[string]any{
+					{
+						"message":       map[string]any{"content": content},
+						"finish_reason": "stop",
+					},
+				},
+			}
+			raw, _ := json.Marshal(payload)
+			names := map[string]struct{}{"get_weather": {}}
+			out, err := ParseResponse(strings.NewReader(string(raw)), names)
+			if err != nil {
+				t.Fatalf("ParseResponse() error = %v", err)
+			}
+			if len(out.ToolCalls) != 0 {
+				t.Fatalf("len(ToolCalls) = %d, want 0", len(out.ToolCalls))
+			}
+			if out.Content != content {
+				t.Errorf("Content should pass through unchanged, got %q want %q", out.Content, content)
+			}
+		})
+	}
+}
+
+func TestParseResponse_ContentSniff_Reject_PartialSet(t *testing.T) {
+	body := `{
+		"choices": [
+			{
+				"message": {
+					"content": "[{\"type\":\"function\",\"name\":\"known_fn\",\"parameters\":{}},{\"type\":\"function\",\"name\":\"unknown_fn\",\"parameters\":{}}]"
+				},
+				"finish_reason": "stop"
+			}
+		]
+	}`
+	names := map[string]struct{}{"known_fn": {}}
+	out, err := ParseResponse(strings.NewReader(body), names)
+	if err != nil {
+		t.Fatalf("ParseResponse() error = %v", err)
+	}
+	if len(out.ToolCalls) != 0 {
+		t.Fatalf("len(ToolCalls) = %d, want 0 (partial sets must reject the whole batch)", len(out.ToolCalls))
+	}
+	if !strings.Contains(out.Content, "unknown_fn") {
+		t.Errorf("Content should be preserved verbatim, got %q", out.Content)
+	}
+}
+
+func TestParseResponse_ContentSniff_ScoutFixtureWithFramingTokens(t *testing.T) {
+	// Real-world Scout/Llama payload via OpenRouter: a JSON descriptor in
+	// content followed by trailing framing tokens the model leaks verbatim.
+	inner := `[{"type":"function","name":"mcp__claw__get_session_messages","parameters":{"session_id":"abc123","limit":50}}]`
+	contentWithTrailingJunk := inner + `<|header_start|>assistant<|header_end|>`
+	payload := map[string]any{
+		"choices": []map[string]any{
+			{
+				"message":       map[string]any{"content": contentWithTrailingJunk},
+				"finish_reason": "stop",
+			},
+		},
+	}
+	raw, _ := json.Marshal(payload)
+	names := map[string]struct{}{"mcp__claw__get_session_messages": {}}
+	out, err := ParseResponse(strings.NewReader(string(raw)), names)
+	if err != nil {
+		t.Fatalf("ParseResponse() error = %v", err)
+	}
+	if len(out.ToolCalls) != 1 {
+		t.Fatalf("len(ToolCalls) = %d, want 1", len(out.ToolCalls))
+	}
+	if out.ToolCalls[0].Name != "mcp__claw__get_session_messages" {
+		t.Errorf("Name = %q", out.ToolCalls[0].Name)
+	}
+	if out.ToolCalls[0].Arguments["session_id"] != "abc123" {
+		t.Errorf("Arguments[session_id] = %v, want abc123", out.ToolCalls[0].Arguments["session_id"])
+	}
+	if out.Content != "" {
+		t.Errorf("Content should be cleared after sniff promotion, got %q", out.Content)
+	}
+}
+
+func TestParseResponse_ContentSniff_NoToolsAdvertised_NoSniff(t *testing.T) {
+	body := `{
+		"choices": [
+			{
+				"message": {
+					"content": "[{\"type\":\"function\",\"name\":\"foo\",\"parameters\":{}}]"
+				},
+				"finish_reason": "stop"
+			}
+		]
+	}`
+	out, err := ParseResponse(strings.NewReader(body), nil)
+	if err != nil {
+		t.Fatalf("ParseResponse() error = %v", err)
+	}
+	if len(out.ToolCalls) != 0 {
+		t.Fatalf("len(ToolCalls) = %d, want 0 (sniff must be disabled when no tools advertised)", len(out.ToolCalls))
+	}
+}
+
+// --- ParseResponse fix E: multi-choice traversal ---
+
+func TestParseResponse_MultiChoice_ToolCallsAggregated(t *testing.T) {
+	body := `{
+		"choices": [
+			{
+				"message": {
+					"content": "",
+					"tool_calls": [
+						{"id":"call_a","type":"function","function":{"name":"fn_a","arguments":"{\"x\":1}"}}
+					]
+				},
+				"finish_reason": "tool_calls"
+			},
+			{
+				"message": {
+					"content": "",
+					"tool_calls": [
+						{"id":"call_b","type":"function","function":{"name":"fn_b","arguments":"{\"y\":2}"}}
+					]
+				},
+				"finish_reason": "tool_calls"
+			}
+		]
+	}`
+	out, err := ParseResponse(strings.NewReader(body), nil)
+	if err != nil {
+		t.Fatalf("ParseResponse() error = %v", err)
+	}
+	if len(out.ToolCalls) != 2 {
+		t.Fatalf("len(ToolCalls) = %d, want 2", len(out.ToolCalls))
+	}
+	names := []string{out.ToolCalls[0].Name, out.ToolCalls[1].Name}
+	if names[0] != "fn_a" || names[1] != "fn_b" {
+		t.Errorf("ToolCall names = %v, want [fn_a fn_b]", names)
+	}
+}
+
+// --- ToolNameSet ---
+
+func TestToolNameSet(t *testing.T) {
+	tools := []ToolDefinition{
+		{Type: "function", Function: ToolFunctionDefinition{Name: "alpha"}},
+		{Type: "function", Function: ToolFunctionDefinition{Name: "beta"}},
+		{Type: "function", Function: ToolFunctionDefinition{Name: ""}},
+	}
+	set := ToolNameSet(tools)
+	if _, ok := set["alpha"]; !ok {
+		t.Error("alpha should be in set")
+	}
+	if _, ok := set["beta"]; !ok {
+		t.Error("beta should be in set")
+	}
+	if len(set) != 2 {
+		t.Errorf("len(set) = %d, want 2", len(set))
+	}
+	if ToolNameSet(nil) != nil {
+		t.Error("nil input should return nil")
 	}
 }
 
@@ -538,7 +883,7 @@ func TestReadAndParseResponse_InvalidJSON(t *testing.T) {
 
 func TestParseResponse_WithThoughtSignature(t *testing.T) {
 	body := `{"choices":[{"message":{"content":"","tool_calls":[{"id":"call_1","type":"function","function":{"name":"test_tool","arguments":"{}"},"extra_content":{"google":{"thought_signature":"sig123"}}}]},"finish_reason":"tool_calls"}]}`
-	out, err := ParseResponse(strings.NewReader(body))
+	out, err := ParseResponse(strings.NewReader(body), nil)
 	if err != nil {
 		t.Fatalf("ParseResponse() error = %v", err)
 	}
