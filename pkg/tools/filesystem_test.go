@@ -630,7 +630,7 @@ func TestFilesystemTool_WriteFile_Display_True(t *testing.T) {
 
 	assert.False(t, result.IsError, "Expected success, got: %s", result.ForLLM)
 	assert.False(t, result.Silent, "Expected Silent=false when display=true")
-	assert.Equal(t, "---\n**Wrote: "+testFile+"**\n---\n\n"+content+"\n---", result.ForUser)
+	assert.Equal(t, "---\n**Wrote:** "+testFile+"\n---\n\n"+content+"\n---", result.ForUser)
 	assert.Contains(t, result.ForLLM, "File written:")
 
 	// Verify file content unchanged on disk

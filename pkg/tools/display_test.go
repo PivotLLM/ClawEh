@@ -10,12 +10,13 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// TestDisplayBody_WithHeader verifies the header is bolded and a separator
-// rule (same glyph as the outer fences) is inserted between the header and
-// the payload inside the fenced block.
+// TestDisplayBody_WithHeader verifies the header line is emitted verbatim
+// (callers wrap the verb prefix in bold themselves via displayHeader) and a
+// separator rule (same glyph as the outer fences) is inserted between the
+// header and the payload inside the fenced block.
 func TestDisplayBody_WithHeader(t *testing.T) {
-	got := displayBody("Wrote: /tmp/x.txt", "payload")
-	assert.Equal(t, "---\n**Wrote: /tmp/x.txt**\n---\n\npayload\n---", got)
+	got := displayBody("**Wrote:** /tmp/x.txt", "payload")
+	assert.Equal(t, "---\n**Wrote:** /tmp/x.txt\n---\n\npayload\n---", got)
 }
 
 // TestDisplayBody_EmptyHeader verifies that an empty header omits the header
@@ -28,11 +29,12 @@ func TestDisplayBody_EmptyHeader(t *testing.T) {
 }
 
 // TestDisplayBody_HeaderShapeExact pins the exact non-empty header shape
-// requested by the tool-ergonomics spec: outer fence, bold header, separator
-// rule using the same glyph as the fences, blank line, payload, closing fence.
+// requested by the tool-ergonomics spec: outer fence, header line with the
+// verb prefix bolded, separator rule using the same glyph as the fences,
+// blank line, payload, closing fence.
 func TestDisplayBody_HeaderShapeExact(t *testing.T) {
-	got := displayBody("Wrote: memory/notes.md", "<payload>")
-	want := "---\n**Wrote: memory/notes.md**\n---\n\n<payload>\n---"
+	got := displayBody(displayHeader("Wrote", "memory/notes.md"), "<payload>")
+	want := "---\n**Wrote:** memory/notes.md\n---\n\n<payload>\n---"
 	assert.Equal(t, want, got)
 }
 
@@ -52,10 +54,12 @@ func TestDisplayHeader_EmptyPath(t *testing.T) {
 }
 
 // TestDisplayHeader_NonEmpty verifies header construction for each verb.
+// The verb prefix (verb + colon) is wrapped in bold markers; the path is
+// left unbolded so a long path doesn't render as one giant bold run.
 func TestDisplayHeader_NonEmpty(t *testing.T) {
-	assert.Equal(t, "Wrote: /a/b", displayHeader("Wrote", "/a/b"))
-	assert.Equal(t, "Edited: /a/b", displayHeader("Edited", "/a/b"))
-	assert.Equal(t, "Appended: /a/b", displayHeader("Appended", "/a/b"))
+	assert.Equal(t, "**Wrote:** /a/b", displayHeader("Wrote", "/a/b"))
+	assert.Equal(t, "**Edited:** /a/b", displayHeader("Edited", "/a/b"))
+	assert.Equal(t, "**Appended:** /a/b", displayHeader("Appended", "/a/b"))
 }
 
 // TestWriteFileTool_Display_HeaderVerb verifies write_file uses the "Wrote:" verb.
@@ -71,7 +75,7 @@ func TestWriteFileTool_Display_HeaderVerb(t *testing.T) {
 	})
 
 	assert.False(t, result.IsError)
-	assert.Equal(t, "---\n**Wrote: "+testFile+"**\n---\n\nbody\n---", result.ForUser)
+	assert.Equal(t, "---\n**Wrote:** "+testFile+"\n---\n\nbody\n---", result.ForUser)
 }
 
 // TestEditFileTool_Display_HeaderVerb verifies edit_file uses the "Edited:" verb.
@@ -90,7 +94,7 @@ func TestEditFileTool_Display_HeaderVerb(t *testing.T) {
 	})
 
 	assert.False(t, result.IsError)
-	assert.Equal(t, "---\n**Edited: "+testFile+"**\n---\n\nBBB\n---", result.ForUser)
+	assert.Equal(t, "---\n**Edited:** "+testFile+"\n---\n\nBBB\n---", result.ForUser)
 }
 
 // TestAppendFileTool_Display_HeaderVerb verifies append_file uses the "Appended:" verb.
@@ -108,7 +112,7 @@ func TestAppendFileTool_Display_HeaderVerb(t *testing.T) {
 	})
 
 	assert.False(t, result.IsError)
-	assert.Equal(t, "---\n**Appended: "+testFile+"**\n---\n\nmore\n---", result.ForUser)
+	assert.Equal(t, "---\n**Appended:** "+testFile+"\n---\n\nmore\n---", result.ForUser)
 }
 
 // TestWriteFileTool_Display_EmptyPath verifies the defensive branch: when the
