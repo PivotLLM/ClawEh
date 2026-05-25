@@ -520,14 +520,9 @@ func restartServices(
 		logger.WarnC("channels", "No channels enabled")
 	}
 
-	// Setup HTTP server with new config
-	addr := fmt.Sprintf("%s:%d", cfg.Gateway.Host, cfg.Gateway.Port)
-	services.HealthServer = health.NewServer(cfg.Gateway.Host, cfg.Gateway.Port)
-	services.ChannelManager.SetupHTTPServer(addr, services.HealthServer)
-
-	// The shared mux was just rebuilt — re-register the callback reply route
-	// or every Maestro→claw callback will 404 until the next full restart.
-	RegisterCallbackRoute(services.HealthServer, al)
+	// Rebuild the shared HTTP server and re-register the callback route in
+	// one place so the registration cannot be silently dropped on reload.
+	rebuildSharedHTTPServer(services, cfg.Gateway.Host, cfg.Gateway.Port, services.ChannelManager, al)
 
 	if err := services.ChannelManager.StartAll(runCtx); err != nil {
 		return fmt.Errorf("error restarting channels: %w", err)

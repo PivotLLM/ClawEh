@@ -71,3 +71,42 @@ func TestCallbackRouteSurvivesServerRebuild(t *testing.T) {
 		t.Fatalf("reloaded server with registration: got status %d, want %d", got, http.StatusBadRequest)
 	}
 }
+
+// fakeChannelManager captures the mux that the reload-path seam rebuilds, so
+// the test can assert that the callback route survived the rebuild without
+// standing up a real channels.Manager. Mirrors what channels.Manager.SetupHTTPServer
+// does to the shared mux: create a fresh ServeMux and register the health
+// server on it (which also stores it as externalMux so subsequent Handle calls
+// register here).
+type fakeChannelManager struct {
+	mux *http.ServeMux
+}
+
+func (f *fakeChannelManager) SetupHTTPServer(_ string, hs *health.Server) {
+	f.mux = http.NewServeMux()
+	hs.RegisterOnMux(f.mux)
+}
+
+// TestRebuildSharedHTTPServer_RegistersCallbackRoute hardens the regression
+// guard against the e32731eb mutation: directly exercises the seam that
+// restartServices uses to rebuild the shared HTTP server, and asserts that
+// the callback route is reachable on the rebuilt mux. If the
+// RegisterCallbackRoute call is removed from rebuildSharedHTTPServer (or any
+// future refactor stops calling it from the reload path), this test fails
+// because POST /api/reply/{token} returns 404 instead of 400.
+func TestRebuildSharedHTTPServer_RegistersCallbackRoute(t *testing.T) {
+	services := &gatewayServices{}
+	fake := &fakeChannelManager{}
+
+	rebuildSharedHTTPServer(services, "127.0.0.1", 0, fake, nil)
+
+	if services.HealthServer == nil {
+		t.Fatal("rebuildSharedHTTPServer did not assign services.HealthServer")
+	}
+	if fake.mux == nil {
+		t.Fatal("rebuildSharedHTTPServer did not invoke SetupHTTPServer on the channel manager")
+	}
+	if got := hitCallback(t, fake.mux); got != http.StatusBadRequest {
+		t.Fatalf("after rebuildSharedHTTPServer: got %d, want %d (404 means the callback route was dropped on reload — the production bug fixed in e32731eb)", got, http.StatusBadRequest)
+	}
+}
