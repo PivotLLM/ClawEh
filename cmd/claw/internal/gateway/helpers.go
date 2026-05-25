@@ -3,32 +3,29 @@ package gateway
 import (
 	"context"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/PivotLLM/ClawEh/cmd/claw/internal"
 	"github.com/PivotLLM/ClawEh/pkg/agent"
-	"github.com/PivotLLM/ClawEh/pkg/global"
 	"github.com/PivotLLM/ClawEh/pkg/bus"
 	"github.com/PivotLLM/ClawEh/pkg/channels"
 	_ "github.com/PivotLLM/ClawEh/pkg/channels/discord"
 	_ "github.com/PivotLLM/ClawEh/pkg/channels/irc"
 	_ "github.com/PivotLLM/ClawEh/pkg/channels/line"
 	_ "github.com/PivotLLM/ClawEh/pkg/channels/matrix"
-	_ "github.com/PivotLLM/ClawEh/pkg/channels/webui"
 	_ "github.com/PivotLLM/ClawEh/pkg/channels/slack"
 	_ "github.com/PivotLLM/ClawEh/pkg/channels/telegram"
+	_ "github.com/PivotLLM/ClawEh/pkg/channels/webui"
 	_ "github.com/PivotLLM/ClawEh/pkg/channels/whatsapp"
 	_ "github.com/PivotLLM/ClawEh/pkg/channels/whatsapp_native"
 	"github.com/PivotLLM/ClawEh/pkg/config"
 	"github.com/PivotLLM/ClawEh/pkg/cron"
 	"github.com/PivotLLM/ClawEh/pkg/devices"
+	"github.com/PivotLLM/ClawEh/pkg/global"
 	"github.com/PivotLLM/ClawEh/pkg/health"
 	"github.com/PivotLLM/ClawEh/pkg/logger"
 	"github.com/PivotLLM/ClawEh/pkg/mcpserver"
@@ -131,41 +128,9 @@ func gatewayCmd(debug bool) error {
 		return err
 	}
 
-	// Register callback reply endpoint. Returns 401 when no valid token is found.
-	services.HealthServer.Handle("POST /api/reply/{token}", func(w http.ResponseWriter, r *http.Request) {
-		token := r.PathValue("token")
-
-		body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
-		if err != nil {
-			http.Error(w, "failed to read body", http.StatusBadRequest)
-			return
-		}
-		content := strings.TrimSpace(string(body))
-		if content == "" {
-			http.Error(w, "empty body", http.StatusBadRequest)
-			return
-		}
-
-		agentID, ok := agentLoop.ValidateCallbackToken(token)
-		if !ok {
-			logger.WarnCF("callback", "Rejected callback with invalid or expired token",
-				map[string]any{"remote_addr": r.RemoteAddr, "body_len": len(content)})
-			http.Error(w, "invalid or expired token", http.StatusUnauthorized)
-			return
-		}
-
-		logger.InfoCF("callback", "Accepted callback",
-			map[string]any{"agent": agentID, "remote_addr": r.RemoteAddr, "body_len": len(content)})
-
-		if err := agentLoop.HandleCallbackMessage(r.Context(), agentID, content); err != nil {
-			logger.WarnCF("callback", "Failed to deliver callback message",
-				map[string]any{"agent": agentID, "error": err.Error()})
-			http.Error(w, "failed to deliver message", http.StatusInternalServerError)
-			return
-		}
-
-		w.WriteHeader(http.StatusAccepted)
-	})
+	// Register callback reply endpoint. Must be re-registered on every shared
+	// HTTP server (boot and config reload) so callbacks survive restartServices.
+	RegisterCallbackRoute(services.HealthServer, agentLoop)
 
 	logger.InfoF("Gateway started", map[string]any{"addr": fmt.Sprintf("%s:%d", cfg.Gateway.Host, cfg.Gateway.Port)})
 
@@ -321,6 +286,7 @@ func setupAndStartServices(
 				mcpserver.WithListen(cfg.MCPHost.Listen),
 				mcpserver.WithEndpointPath(cfg.MCPHost.EndpointPath),
 				mcpserver.WithAllowlist(cfg.MCPHost.Tools),
+				mcpserver.WithMessageBus(msgBus),
 			)
 			if err != nil {
 				return nil, fmt.Errorf("error creating MCP server: %w", err)
@@ -554,10 +520,9 @@ func restartServices(
 		logger.WarnC("channels", "No channels enabled")
 	}
 
-	// Setup HTTP server with new config
-	addr := fmt.Sprintf("%s:%d", cfg.Gateway.Host, cfg.Gateway.Port)
-	services.HealthServer = health.NewServer(cfg.Gateway.Host, cfg.Gateway.Port)
-	services.ChannelManager.SetupHTTPServer(addr, services.HealthServer)
+	// Rebuild the shared HTTP server and re-register the callback route in
+	// one place so the registration cannot be silently dropped on reload.
+	rebuildSharedHTTPServer(services, cfg.Gateway.Host, cfg.Gateway.Port, services.ChannelManager, al)
 
 	if err := services.ChannelManager.StartAll(runCtx); err != nil {
 		return fmt.Errorf("error restarting channels: %w", err)

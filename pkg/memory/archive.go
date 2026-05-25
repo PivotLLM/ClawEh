@@ -256,6 +256,37 @@ func (a *ArchiveStore) Bounds() (minSeq, maxSeq int, err error) {
 	return minSeq, maxSeq, err
 }
 
+// Stats returns the total message count and the first/last created_at
+// timestamps stored in the archive in one round-trip.
+// Returns (0, zero, zero, nil) if no messages exist.
+// Uses a read-only connection opened and closed per call.
+func (a *ArchiveStore) Stats() (count int, first, last time.Time, err error) {
+	if a.unavailable {
+		return 0, time.Time{}, time.Time{}, ErrArchiveUnavailable
+	}
+
+	db, err := sql.Open("sqlite", "file:"+a.path+"?mode=ro")
+	if err != nil {
+		return 0, time.Time{}, time.Time{}, err
+	}
+	defer db.Close()
+
+	var firstUnix, lastUnix int64
+	row := db.QueryRowContext(context.Background(),
+		`SELECT COUNT(*), COALESCE(MIN(created_at), 0), COALESCE(MAX(created_at), 0) FROM messages`,
+	)
+	if err = row.Scan(&count, &firstUnix, &lastUnix); err != nil {
+		return 0, time.Time{}, time.Time{}, err
+	}
+	if firstUnix > 0 {
+		first = time.Unix(firstUnix, 0)
+	}
+	if lastUnix > 0 {
+		last = time.Unix(lastUnix, 0)
+	}
+	return
+}
+
 // MinSeqAfter returns the smallest seq with created_at >= t.Unix().
 // Returns (0, nil) if no messages exist at or after that time or the store is unavailable.
 // Uses a read-only connection opened and closed per call.

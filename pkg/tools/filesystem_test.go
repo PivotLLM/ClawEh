@@ -611,6 +611,84 @@ func TestReadFileTool_ChunkedReading(t *testing.T) {
 	}
 }
 
+// TestFilesystemTool_WriteFile_Display_True verifies that when display=true,
+// the tool returns ForUser containing the full new content wrapped in `---` markers.
+func TestFilesystemTool_WriteFile_Display_True(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "displayed.txt")
+
+	tool := NewWriteFileTool("", false)
+	ctx := context.Background()
+	content := "hello display"
+	args := map[string]any{
+		"path":    testFile,
+		"content": content,
+		"display": true,
+	}
+
+	result := tool.Execute(ctx, args)
+
+	assert.False(t, result.IsError, "Expected success, got: %s", result.ForLLM)
+	assert.False(t, result.Silent, "Expected Silent=false when display=true")
+	assert.Equal(t, "---\n**Wrote:** "+testFile+"\n---\n\n"+content+"\n---", result.ForUser)
+	assert.Contains(t, result.ForLLM, "File written:")
+
+	// Verify file content unchanged on disk
+	written, err := os.ReadFile(testFile)
+	assert.NoError(t, err)
+	assert.Equal(t, content, string(written))
+}
+
+// TestFilesystemTool_WriteFile_Display_False verifies display=false matches today's behavior.
+func TestFilesystemTool_WriteFile_Display_False(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "silent.txt")
+
+	tool := NewWriteFileTool("", false)
+	result := tool.Execute(context.Background(), map[string]any{
+		"path":    testFile,
+		"content": "quiet",
+		"display": false,
+	})
+
+	assert.False(t, result.IsError)
+	assert.True(t, result.Silent)
+	assert.Equal(t, "", result.ForUser)
+}
+
+// TestFilesystemTool_WriteFile_Display_Absent verifies omitting display matches today's behavior.
+func TestFilesystemTool_WriteFile_Display_Absent(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "absent.txt")
+
+	tool := NewWriteFileTool("", false)
+	result := tool.Execute(context.Background(), map[string]any{
+		"path":    testFile,
+		"content": "no display arg",
+	})
+
+	assert.False(t, result.IsError)
+	assert.True(t, result.Silent)
+	assert.Equal(t, "", result.ForUser)
+}
+
+// TestFilesystemTool_WriteFile_Display_TrueOnFailure verifies that a failed write
+// with display=true does NOT emit ForUser — the error short-circuits first.
+func TestFilesystemTool_WriteFile_Display_TrueOnFailure(t *testing.T) {
+	workspace := t.TempDir()
+	tool := NewWriteFileTool(workspace, true)
+
+	// Path escaping the workspace is rejected by the sandbox.
+	result := tool.Execute(context.Background(), map[string]any{
+		"path":    "../escape.txt",
+		"content": "should never display",
+		"display": true,
+	})
+
+	assert.True(t, result.IsError, "Expected error for path escaping workspace")
+	assert.Equal(t, "", result.ForUser, "Failed writes must never emit ForUser")
+}
+
 // TestReadFileTool_OffsetBeyondEOF checks the behavior when requesting
 // An offset that exceeds the total file size.
 func TestReadFileTool_OffsetBeyondEOF(t *testing.T) {

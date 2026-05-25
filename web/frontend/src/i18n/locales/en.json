@@ -1,4 +1,8 @@
 {
+  "agents": {
+    "memoryDir": "Memory Directory",
+    "memoryDirHint": "Absolute path that relocates this agent's memory folder off the default workspace location. Leave blank to keep the standard <workspace>/memory layout. Each agent's memory_dir must be unique and outside every workspace."
+  },
   "navigation": {
     "chat": "Chat",
     "model_group": "Models",

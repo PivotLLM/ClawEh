@@ -419,6 +419,180 @@ func TestEditFileTool_Restricted_InPlaceEdit(t *testing.T) {
 	assert.Equal(t, "Hello Go", string(data))
 }
 
+// TestEditTool_EditFile_Display_True verifies that when display=true on a successful
+// edit, ForUser contains only new_text (not a diff, not the full updated file) wrapped
+// in `---` markers.
+func TestEditTool_EditFile_Display_True(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "edit_display.txt")
+	original := "before MARKER after"
+	err := os.WriteFile(testFile, []byte(original), 0o644)
+	assert.NoError(t, err)
+
+	tool := NewEditFileTool(tmpDir, true)
+	newText := "REPLACED"
+	args := map[string]any{
+		"path":     testFile,
+		"old_text": "MARKER",
+		"new_text": newText,
+		"display":  true,
+	}
+
+	result := tool.Execute(context.Background(), args)
+
+	assert.False(t, result.IsError, "Expected success, got: %s", result.ForLLM)
+	assert.False(t, result.Silent, "Expected Silent=false when display=true")
+	assert.Equal(t, "---\n**Edited:** "+testFile+"\n---\n\n"+newText+"\n---", result.ForUser)
+	assert.Contains(t, result.ForLLM, "File edited:")
+
+	// ForUser must NOT contain the unchanged surrounding content nor a diff.
+	assert.NotContains(t, result.ForUser, "before")
+	assert.NotContains(t, result.ForUser, "after")
+}
+
+// TestEditTool_EditFile_Display_False verifies display=false matches today's behavior.
+func TestEditTool_EditFile_Display_False(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "edit_silent.txt")
+	err := os.WriteFile(testFile, []byte("hello world"), 0o644)
+	assert.NoError(t, err)
+
+	tool := NewEditFileTool(tmpDir, true)
+	result := tool.Execute(context.Background(), map[string]any{
+		"path":     testFile,
+		"old_text": "world",
+		"new_text": "go",
+		"display":  false,
+	})
+
+	assert.False(t, result.IsError)
+	assert.True(t, result.Silent)
+	assert.Equal(t, "", result.ForUser)
+}
+
+// TestEditTool_EditFile_Display_Absent verifies omitting display matches today's behavior.
+func TestEditTool_EditFile_Display_Absent(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "edit_absent.txt")
+	err := os.WriteFile(testFile, []byte("hello world"), 0o644)
+	assert.NoError(t, err)
+
+	tool := NewEditFileTool(tmpDir, true)
+	result := tool.Execute(context.Background(), map[string]any{
+		"path":     testFile,
+		"old_text": "world",
+		"new_text": "go",
+	})
+
+	assert.False(t, result.IsError)
+	assert.True(t, result.Silent)
+	assert.Equal(t, "", result.ForUser)
+}
+
+// TestEditTool_EditFile_Display_TrueOnFailure verifies that a failed edit with display=true
+// does NOT emit ForUser.
+func TestEditTool_EditFile_Display_TrueOnFailure(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "edit_fail.txt")
+	err := os.WriteFile(testFile, []byte("hello world"), 0o644)
+	assert.NoError(t, err)
+
+	tool := NewEditFileTool(tmpDir, true)
+	result := tool.Execute(context.Background(), map[string]any{
+		"path":     testFile,
+		"old_text": "MISSING",
+		"new_text": "should not display",
+		"display":  true,
+	})
+
+	assert.True(t, result.IsError, "Expected error when old_text not found")
+	assert.Equal(t, "", result.ForUser, "Failed edits must never emit ForUser")
+}
+
+// TestEditTool_AppendFile_Display_True verifies that when display=true on a successful
+// append, ForUser contains only the appended bytes (not the prior file content).
+func TestEditTool_AppendFile_Display_True(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "append_display.txt")
+	prior := "PRIOR_CONTENT"
+	err := os.WriteFile(testFile, []byte(prior), 0o644)
+	assert.NoError(t, err)
+
+	tool := NewAppendFileTool("", false)
+	appended := "ADDED_BYTES"
+	result := tool.Execute(context.Background(), map[string]any{
+		"path":    testFile,
+		"content": appended,
+		"display": true,
+	})
+
+	assert.False(t, result.IsError, "Expected success, got: %s", result.ForLLM)
+	assert.False(t, result.Silent, "Expected Silent=false when display=true")
+	assert.Equal(t, "---\n**Appended:** "+testFile+"\n---\n\n"+appended+"\n---", result.ForUser)
+	assert.Contains(t, result.ForLLM, "Appended to")
+
+	// ForUser must NOT contain the prior file content.
+	assert.NotContains(t, result.ForUser, prior)
+
+	// File on disk should have both prior + appended.
+	got, err := os.ReadFile(testFile)
+	assert.NoError(t, err)
+	assert.Equal(t, prior+appended, string(got))
+}
+
+// TestEditTool_AppendFile_Display_False verifies display=false matches today's behavior.
+func TestEditTool_AppendFile_Display_False(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "append_silent.txt")
+	err := os.WriteFile(testFile, []byte("x"), 0o644)
+	assert.NoError(t, err)
+
+	tool := NewAppendFileTool("", false)
+	result := tool.Execute(context.Background(), map[string]any{
+		"path":    testFile,
+		"content": "y",
+		"display": false,
+	})
+
+	assert.False(t, result.IsError)
+	assert.True(t, result.Silent)
+	assert.Equal(t, "", result.ForUser)
+}
+
+// TestEditTool_AppendFile_Display_Absent verifies omitting display matches today's behavior.
+func TestEditTool_AppendFile_Display_Absent(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "append_absent.txt")
+	err := os.WriteFile(testFile, []byte("x"), 0o644)
+	assert.NoError(t, err)
+
+	tool := NewAppendFileTool("", false)
+	result := tool.Execute(context.Background(), map[string]any{
+		"path":    testFile,
+		"content": "y",
+	})
+
+	assert.False(t, result.IsError)
+	assert.True(t, result.Silent)
+	assert.Equal(t, "", result.ForUser)
+}
+
+// TestEditTool_AppendFile_Display_TrueOnFailure verifies a failed append with display=true
+// does NOT emit ForUser.
+func TestEditTool_AppendFile_Display_TrueOnFailure(t *testing.T) {
+	workspace := t.TempDir()
+	tool := NewAppendFileTool(workspace, true)
+
+	result := tool.Execute(context.Background(), map[string]any{
+		"path":    "../escape.txt",
+		"content": "should never display",
+		"display": true,
+	})
+
+	assert.True(t, result.IsError, "Expected error for path escaping workspace")
+	assert.Equal(t, "", result.ForUser, "Failed appends must never emit ForUser")
+}
+
 // TestEditFileTool_Restricted_FileNotFound verifies that editFileInRoot returns a proper
 // error message when the target file does not exist.
 func TestEditFileTool_Restricted_FileNotFound(t *testing.T) {

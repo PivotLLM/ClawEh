@@ -9,8 +9,10 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/PivotLLM/ClawEh/pkg/agenttoken"
+	"github.com/PivotLLM/ClawEh/pkg/bus"
 	"github.com/PivotLLM/ClawEh/pkg/config"
 	"github.com/PivotLLM/ClawEh/pkg/logger"
 	"github.com/PivotLLM/ClawEh/pkg/mcpserver/acl"
@@ -104,6 +106,7 @@ func addToolsToServer(
 	resolver AgentResolver,
 	tracker *firstCallTracker,
 	policy acl.Policy,
+	msgBus *bus.MessageBus,
 ) {
 	if policy == nil {
 		policy = acl.Default
@@ -147,7 +150,7 @@ func addToolsToServer(
 			if args == nil {
 				args = map[string]any{}
 			}
-			out, isErr := dispatchToolCall(ctx, toolName, args, sessionTokens, resolver, tracker, policy)
+			out, isErr := dispatchToolCall(ctx, toolName, args, sessionTokens, resolver, tracker, policy, msgBus)
 			if isErr {
 				return mcp.NewToolResultError(out), nil
 			}
@@ -219,6 +222,7 @@ func dispatchToolCall(
 	resolver AgentResolver,
 	tracker *firstCallTracker,
 	policy acl.Policy,
+	msgBus *bus.MessageBus,
 ) (string, bool) {
 	rawSessTok, _ := args[sessionTokenParam].(string)
 	delete(args, sessionTokenParam)
@@ -287,8 +291,75 @@ func dispatchToolCall(
 		return agenttoken.Redact("tool returned nil result"), true
 	}
 
+	// Side-channel publish of ForUser to the originating user. The MCP response
+	// envelope to the caller (the LLM client) carries only ForLLM — ForUser is
+	// the tool's "display this back to the human" payload and is delivered out-
+	// of-band over the message bus to the session's recorded inbound source.
+	//
+	// Mirrors the inbound-user-message publish at pkg/agent/loop.go (after
+	// runLLMIteration). These two publish sites are mutually exclusive: the
+	// agent-loop publish only fires for tools dispatched by the agent loop;
+	// MCP-routed tool calls do not go through pkg/agent/loop.go.
+	//
+	// Out of scope: Media propagation and Async callbacks. A follow-up worker
+	// can pick those up — ForUser-only is the agreed scope for this commit.
+	publishMCPForUser(ctx, msgBus, rec, toolName, result)
+
 	out := agenttoken.Redact(result.ForLLM)
 	return out, result.IsError
+}
+
+// publishMCPForUser sends a tool's ForUser payload to the originating user's
+// channel/chatID via the outbound message bus, when a payload exists, the
+// result is not Silent, and the session has a recorded source. Silent drop in
+// every other case — the MCP caller's ForLLM response is unaffected.
+func publishMCPForUser(
+	ctx context.Context,
+	msgBus *bus.MessageBus,
+	rec sessionRecord,
+	toolName string,
+	result *tools.ToolResult,
+) {
+	if result == nil || result.Silent || result.ForUser == "" {
+		return
+	}
+	if msgBus == nil {
+		logger.DebugCF("mcpserver", "mcp.foruser.dropped",
+			map[string]any{
+				"tool":        toolName,
+				"agent":       rec.agentID,
+				"session_key": rec.sessionKey,
+				"reason":      "no_bus",
+			})
+		return
+	}
+	if rec.channel == "" || rec.chatID == "" {
+		logger.InfoCF("mcpserver", "mcp.foruser.dropped",
+			map[string]any{
+				"tool":        toolName,
+				"agent":       rec.agentID,
+				"session_key": rec.sessionKey,
+				"reason":      "no_active_channel",
+			})
+		return
+	}
+
+	pubCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := msgBus.PublishOutbound(pubCtx, bus.OutboundMessage{
+		Channel: rec.channel,
+		ChatID:  rec.chatID,
+		Content: result.ForUser,
+	}); err != nil {
+		logger.WarnCF("mcpserver", "mcp.foruser.publish_failed",
+			map[string]any{
+				"tool":        toolName,
+				"agent":       rec.agentID,
+				"session_key": rec.sessionKey,
+				"channel":     rec.channel,
+				"error":       err.Error(),
+			})
+	}
 }
 
 // injectSessionTokenParam returns a deep-copied schema with `session_token` added

@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+const testModel = "m"
+
 func newTestTracker(now time.Time) (*CooldownTracker, *time.Time) {
 	current := now
 	ct := NewCooldownTracker()
@@ -15,11 +17,11 @@ func newTestTracker(now time.Time) (*CooldownTracker, *time.Time) {
 
 func TestCooldown_InitiallyAvailable(t *testing.T) {
 	ct := NewCooldownTracker()
-	if !ct.IsAvailable("openai") {
-		t.Error("new provider should be available")
+	if !ct.IsAvailable("openai", testModel) {
+		t.Error("new model should be available")
 	}
-	if ct.ErrorCount("openai") != 0 {
-		t.Error("new provider should have 0 errors")
+	if ct.ErrorCount("openai", testModel) != 0 {
+		t.Error("new model should have 0 errors")
 	}
 }
 
@@ -28,25 +30,25 @@ func TestCooldown_StandardEscalation(t *testing.T) {
 	ct, current := newTestTracker(now)
 
 	// 1st error → 1 min cooldown
-	ct.MarkFailure("openai", FailoverRateLimit)
-	if ct.IsAvailable("openai") {
+	ct.MarkFailure("openai", testModel, FailoverRateLimit, 0)
+	if ct.IsAvailable("openai", testModel) {
 		t.Error("should be in cooldown after 1st error")
 	}
 
 	// Advance 61 seconds → available
 	*current = now.Add(61 * time.Second)
-	if !ct.IsAvailable("openai") {
+	if !ct.IsAvailable("openai", testModel) {
 		t.Error("should be available after 1 min cooldown")
 	}
 
 	// 2nd error → 5 min cooldown
-	ct.MarkFailure("openai", FailoverRateLimit)
+	ct.MarkFailure("openai", testModel, FailoverRateLimit, 0)
 	*current = now.Add(61*time.Second + 4*time.Minute)
-	if ct.IsAvailable("openai") {
+	if ct.IsAvailable("openai", testModel) {
 		t.Error("should be in cooldown (5 min) after 2nd error")
 	}
 	*current = now.Add(61*time.Second + 6*time.Minute)
-	if !ct.IsAvailable("openai") {
+	if !ct.IsAvailable("openai", testModel) {
 		t.Error("should be available after 5 min cooldown")
 	}
 }
@@ -74,20 +76,20 @@ func TestCooldown_BillingEscalation(t *testing.T) {
 	ct, current := newTestTracker(now)
 
 	// 1st billing error → 5h cooldown
-	ct.MarkFailure("openai", FailoverBilling)
-	if ct.IsAvailable("openai") {
+	ct.MarkFailure("openai", testModel, FailoverBilling, 0)
+	if ct.IsAvailable("openai", testModel) {
 		t.Error("should be disabled after billing error")
 	}
 
 	// Advance 4h → still disabled
 	*current = now.Add(4 * time.Hour)
-	if ct.IsAvailable("openai") {
+	if ct.IsAvailable("openai", testModel) {
 		t.Error("should still be disabled (5h cooldown)")
 	}
 
 	// Advance 5h + 1s → available
 	*current = now.Add(5*time.Hour + 1*time.Second)
-	if !ct.IsAvailable("openai") {
+	if !ct.IsAvailable("openai", testModel) {
 		t.Error("should be available after 5h billing cooldown")
 	}
 }
@@ -112,23 +114,23 @@ func TestCooldown_BillingCap(t *testing.T) {
 func TestCooldown_SuccessReset(t *testing.T) {
 	ct := NewCooldownTracker()
 
-	ct.MarkFailure("openai", FailoverRateLimit)
-	ct.MarkFailure("openai", FailoverBilling)
-	if ct.ErrorCount("openai") != 2 {
-		t.Errorf("error count = %d, want 2", ct.ErrorCount("openai"))
+	ct.MarkFailure("openai", testModel, FailoverRateLimit, 0)
+	ct.MarkFailure("openai", testModel, FailoverBilling, 0)
+	if ct.ErrorCount("openai", testModel) != 2 {
+		t.Errorf("error count = %d, want 2", ct.ErrorCount("openai", testModel))
 	}
 
-	ct.MarkSuccess("openai")
-	if ct.ErrorCount("openai") != 0 {
-		t.Errorf("error count after success = %d, want 0", ct.ErrorCount("openai"))
+	ct.MarkSuccess("openai", testModel)
+	if ct.ErrorCount("openai", testModel) != 0 {
+		t.Errorf("error count after success = %d, want 0", ct.ErrorCount("openai", testModel))
 	}
-	if !ct.IsAvailable("openai") {
+	if !ct.IsAvailable("openai", testModel) {
 		t.Error("should be available after success")
 	}
-	if ct.FailureCount("openai", FailoverRateLimit) != 0 {
+	if ct.FailureCount("openai", testModel, FailoverRateLimit) != 0 {
 		t.Error("failure counts should be reset after success")
 	}
-	if ct.FailureCount("openai", FailoverBilling) != 0 {
+	if ct.FailureCount("openai", testModel, FailoverBilling) != 0 {
 		t.Error("billing failure count should be reset after success")
 	}
 }
@@ -139,42 +141,42 @@ func TestCooldown_FailureWindowReset(t *testing.T) {
 
 	// 4 errors → 1h cooldown
 	for range 4 {
-		ct.MarkFailure("openai", FailoverRateLimit)
+		ct.MarkFailure("openai", testModel, FailoverRateLimit, 0)
 		*current = current.Add(2 * time.Second) // small advance between errors
 	}
-	if ct.ErrorCount("openai") != 4 {
-		t.Errorf("error count = %d, want 4", ct.ErrorCount("openai"))
+	if ct.ErrorCount("openai", testModel) != 4 {
+		t.Errorf("error count = %d, want 4", ct.ErrorCount("openai", testModel))
 	}
 
 	// Advance 25 hours (past 24h failure window)
 	*current = now.Add(25 * time.Hour)
 
 	// Next error should reset counters first, then increment to 1
-	ct.MarkFailure("openai", FailoverRateLimit)
-	if ct.ErrorCount("openai") != 1 {
-		t.Errorf("error count after window reset = %d, want 1 (reset + 1)", ct.ErrorCount("openai"))
+	ct.MarkFailure("openai", testModel, FailoverRateLimit, 0)
+	if ct.ErrorCount("openai", testModel) != 1 {
+		t.Errorf("error count after window reset = %d, want 1 (reset + 1)", ct.ErrorCount("openai", testModel))
 	}
 }
 
 func TestCooldown_PerReasonTracking(t *testing.T) {
 	ct := NewCooldownTracker()
 
-	ct.MarkFailure("openai", FailoverRateLimit)
-	ct.MarkFailure("openai", FailoverRateLimit)
-	ct.MarkFailure("openai", FailoverBilling)
-	ct.MarkFailure("openai", FailoverAuth)
+	ct.MarkFailure("openai", testModel, FailoverRateLimit, 0)
+	ct.MarkFailure("openai", testModel, FailoverRateLimit, 0)
+	ct.MarkFailure("openai", testModel, FailoverBilling, 0)
+	ct.MarkFailure("openai", testModel, FailoverAuth, 0)
 
-	if ct.FailureCount("openai", FailoverRateLimit) != 2 {
-		t.Errorf("rate_limit count = %d, want 2", ct.FailureCount("openai", FailoverRateLimit))
+	if ct.FailureCount("openai", testModel, FailoverRateLimit) != 2 {
+		t.Errorf("rate_limit count = %d, want 2", ct.FailureCount("openai", testModel, FailoverRateLimit))
 	}
-	if ct.FailureCount("openai", FailoverBilling) != 1 {
-		t.Errorf("billing count = %d, want 1", ct.FailureCount("openai", FailoverBilling))
+	if ct.FailureCount("openai", testModel, FailoverBilling) != 1 {
+		t.Errorf("billing count = %d, want 1", ct.FailureCount("openai", testModel, FailoverBilling))
 	}
-	if ct.FailureCount("openai", FailoverAuth) != 1 {
-		t.Errorf("auth count = %d, want 1", ct.FailureCount("openai", FailoverAuth))
+	if ct.FailureCount("openai", testModel, FailoverAuth) != 1 {
+		t.Errorf("auth count = %d, want 1", ct.FailureCount("openai", testModel, FailoverAuth))
 	}
-	if ct.ErrorCount("openai") != 4 {
-		t.Errorf("total error count = %d, want 4", ct.ErrorCount("openai"))
+	if ct.ErrorCount("openai", testModel) != 4 {
+		t.Errorf("total error count = %d, want 4", ct.ErrorCount("openai", testModel))
 	}
 }
 
@@ -183,18 +185,18 @@ func TestCooldown_BillingTakesPrecedence(t *testing.T) {
 	ct, current := newTestTracker(now)
 
 	// Standard cooldown (1 min) + billing disable (5h)
-	ct.MarkFailure("openai", FailoverRateLimit) // 1 min cooldown
-	ct.MarkFailure("openai", FailoverBilling)   // 5h disable
+	ct.MarkFailure("openai", testModel, FailoverRateLimit, 0) // 1 min cooldown
+	ct.MarkFailure("openai", testModel, FailoverBilling, 0)   // 5h disable
 
 	// After 2 min: standard cooldown expired but billing still active
 	*current = now.Add(2 * time.Minute)
-	if ct.IsAvailable("openai") {
+	if ct.IsAvailable("openai", testModel) {
 		t.Error("billing disable should take precedence over standard cooldown")
 	}
 
 	// After 5h + 1s: both expired
 	*current = now.Add(5*time.Hour + 1*time.Second)
-	if !ct.IsAvailable("openai") {
+	if !ct.IsAvailable("openai", testModel) {
 		t.Error("should be available after all cooldowns expire")
 	}
 }
@@ -204,14 +206,14 @@ func TestCooldown_CooldownRemaining(t *testing.T) {
 	ct, current := newTestTracker(now)
 
 	// No failures → 0 remaining
-	if ct.CooldownRemaining("openai") != 0 {
-		t.Error("expected 0 remaining for new provider")
+	if ct.CooldownRemaining("openai", testModel) != 0 {
+		t.Error("expected 0 remaining for new model")
 	}
 
-	ct.MarkFailure("openai", FailoverRateLimit)
+	ct.MarkFailure("openai", testModel, FailoverRateLimit, 0)
 
 	*current = now.Add(30 * time.Second)
-	remaining := ct.CooldownRemaining("openai")
+	remaining := ct.CooldownRemaining("openai", testModel)
 	if remaining <= 0 || remaining > 1*time.Minute {
 		t.Errorf("remaining = %v, expected ~30s", remaining)
 	}
@@ -220,9 +222,9 @@ func TestCooldown_CooldownRemaining(t *testing.T) {
 func TestCooldown_SuccessOnUnknownProvider(t *testing.T) {
 	ct := NewCooldownTracker()
 	// Should not panic
-	ct.MarkSuccess("nonexistent")
-	if !ct.IsAvailable("nonexistent") {
-		t.Error("nonexistent provider should be available")
+	ct.MarkSuccess("nonexistent", testModel)
+	if !ct.IsAvailable("nonexistent", testModel) {
+		t.Error("nonexistent model should be available")
 	}
 }
 
@@ -234,15 +236,15 @@ func TestCooldown_ConcurrentAccess(t *testing.T) {
 		wg.Add(3)
 		go func() {
 			defer wg.Done()
-			ct.MarkFailure("openai", FailoverRateLimit)
+			ct.MarkFailure("openai", testModel, FailoverRateLimit, 0)
 		}()
 		go func() {
 			defer wg.Done()
-			ct.IsAvailable("openai")
+			ct.IsAvailable("openai", testModel)
 		}()
 		go func() {
 			defer wg.Done()
-			ct.MarkSuccess("openai")
+			ct.MarkSuccess("openai", testModel)
 		}()
 	}
 
@@ -250,20 +252,23 @@ func TestCooldown_ConcurrentAccess(t *testing.T) {
 	// If we got here without panic, concurrent access is safe
 }
 
-func TestCooldown_MultipleProviders(t *testing.T) {
+func TestCooldown_MultipleModels(t *testing.T) {
 	ct := NewCooldownTracker()
 
-	ct.MarkFailure("openai", FailoverRateLimit)
-	ct.MarkFailure("anthropic", FailoverBilling)
+	ct.MarkFailure("openai", "gpt-4", FailoverRateLimit, 0)
+	ct.MarkFailure("anthropic", "claude-opus", FailoverBilling, 0)
 
-	if ct.IsAvailable("openai") {
-		t.Error("openai should be in cooldown")
+	if ct.IsAvailable("openai", "gpt-4") {
+		t.Error("openai/gpt-4 should be in cooldown")
 	}
-	if ct.IsAvailable("anthropic") {
-		t.Error("anthropic should be in cooldown")
+	if ct.IsAvailable("anthropic", "claude-opus") {
+		t.Error("anthropic/claude-opus should be in cooldown")
 	}
-	// groq was never touched
-	if !ct.IsAvailable("groq") {
-		t.Error("groq should be available")
+	// untouched models on the same providers stay available
+	if !ct.IsAvailable("openai", "gpt-3.5") {
+		t.Error("openai/gpt-3.5 should be available (per-model cooldown)")
+	}
+	if !ct.IsAvailable("groq", testModel) {
+		t.Error("groq/m should be available")
 	}
 }

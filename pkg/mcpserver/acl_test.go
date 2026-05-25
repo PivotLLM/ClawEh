@@ -43,7 +43,7 @@ func TestDispatch_ACLAllowExecutesAndLogsAuthorized(t *testing.T) {
 	st, tok := seedSessionToken("alice")
 
 	out, isErr := dispatchToolCall(context.Background(), "read_file",
-		map[string]any{"session_token": tok}, st, resolverFor(regs), nil, policy)
+		map[string]any{"session_token": tok}, st, resolverFor(regs), nil, policy, nil)
 	if isErr {
 		t.Fatalf("expected success, got error: %s", out)
 	}
@@ -78,7 +78,7 @@ func TestDispatch_ACLDenyBlocksAndEmitsWarn(t *testing.T) {
 	st, tok := seedSessionToken("alice")
 
 	out, isErr := dispatchToolCall(context.Background(), "read_file",
-		map[string]any{"session_token": tok}, st, resolverFor(regs), nil, denyAll)
+		map[string]any{"session_token": tok}, st, resolverFor(regs), nil, denyAll, nil)
 	if !isErr {
 		t.Fatalf("expected ACL deny, got success: %s", out)
 	}
@@ -121,7 +121,7 @@ func TestDispatch_NilPolicyDefaultsToAllow(t *testing.T) {
 	st, tok := seedSessionToken("alice")
 
 	out, isErr := dispatchToolCall(context.Background(), "read_file",
-		map[string]any{"session_token": tok}, st, resolverFor(regs), nil, nil)
+		map[string]any{"session_token": tok}, st, resolverFor(regs), nil, nil, nil)
 	if isErr {
 		t.Fatalf("nil policy should default to allow, got error: %s", out)
 	}
@@ -182,7 +182,7 @@ func TestNew_WithACLPolicyInjectsCustomPolicy(t *testing.T) {
 
 	st, tok := seedSessionToken("alice")
 	out, isErr := dispatchToolCall(context.Background(), "read_file",
-		map[string]any{"session_token": tok}, st, resolverFor(map[string]*tools.ToolRegistry{"alice": r}), nil, srv.policy)
+		map[string]any{"session_token": tok}, st, resolverFor(map[string]*tools.ToolRegistry{"alice": r}), nil, srv.policy, nil)
 	if !isErr {
 		t.Fatalf("expected ACL deny via injected policy, got success: %s", out)
 	}

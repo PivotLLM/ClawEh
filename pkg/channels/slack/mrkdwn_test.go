@@ -81,16 +81,53 @@ func TestMarkdownToMrkdwn(t *testing.T) {
 			input: "## Title\nSome body text.",
 			want:  "*Title*\nSome body text.",
 		},
-		// Horizontal rules
+		// Horizontal rules — substituted with a box-drawing line so the
+		// CommonMark thematic break stays visible in Slack.
 		{
 			name:  "horizontal rule dashes",
 			input: "Above\n---\nBelow",
-			want:  "Above\n\nBelow",
+			want:  "Above\n" + hRuleSubstitute + "\nBelow",
 		},
 		{
 			name:  "horizontal rule asterisks",
 			input: "Above\n***\nBelow",
-			want:  "Above\n\nBelow",
+			want:  "Above\n" + hRuleSubstitute + "\nBelow",
+		},
+		{
+			name:  "horizontal rule underscores",
+			input: "Above\n___\nBelow",
+			want:  "Above\n" + hRuleSubstitute + "\nBelow",
+		},
+		{
+			name:  "horizontal rule with surrounding blank lines (display payload fence)",
+			input: "hello\n\n---\n\nworld",
+			want:  "hello\n\n" + hRuleSubstitute + "\n\nworld",
+		},
+		{
+			name:  "inline triple-dash is not a thematic break",
+			input: "hello --- world",
+			want:  "hello --- world",
+		},
+		// Collapse adjacent thematic-break runs (Fix A).
+		{
+			name:  "adjacent dash rules with blank line collapse to single rule",
+			input: "hello\n\n---\n\n---\n\nworld",
+			want:  "hello\n\n" + hRuleSubstitute + "\n\nworld",
+		},
+		{
+			name:  "mixed thematic markers collapse to single rule",
+			input: "hello\n\n***\n---\n___\n\nworld",
+			want:  "hello\n\n" + hRuleSubstitute + "\n\nworld",
+		},
+		{
+			name:  "single thematic break is not collapsed",
+			input: "Above\n---\nBelow",
+			want:  "Above\n" + hRuleSubstitute + "\nBelow",
+		},
+		{
+			name:  "rules with text between are not collapsed",
+			input: "---\nsome text\n---",
+			want:  hRuleSubstitute + "\nsome text\n" + hRuleSubstitute,
 		},
 		// Code spans preserved
 		{

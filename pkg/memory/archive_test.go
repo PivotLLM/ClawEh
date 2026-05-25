@@ -140,6 +140,54 @@ func TestArchiveStore_Bounds(t *testing.T) {
 	}
 }
 
+// TestArchiveStore_Stats verifies Stats() returns the message count plus the
+// first/last created_at timestamps in a single round-trip. This is the
+// primitive the /status command uses to cheaply surface archive size and date
+// range without loading any payload bytes.
+func TestArchiveStore_Stats(t *testing.T) {
+	a := openTestArchive(t)
+
+	// Empty archive — count zero, timestamps zero.
+	count, first, last, err := a.Stats()
+	if err != nil {
+		t.Fatalf("Stats (empty): %v", err)
+	}
+	if count != 0 || !first.IsZero() || !last.IsZero() {
+		t.Errorf("empty Stats = (%d, %v, %v), want (0, zero, zero)", count, first, last)
+	}
+
+	// Populate with known timestamps; insert out of order to confirm SQL aggregates.
+	t1 := time.Unix(1_700_000_000, 0)
+	t2 := time.Unix(1_700_005_000, 0)
+	t3 := time.Unix(1_700_010_000, 0)
+	for _, e := range []struct {
+		seq int
+		at  time.Time
+	}{
+		{seq: 2, at: t2},
+		{seq: 1, at: t1},
+		{seq: 3, at: t3},
+	} {
+		if err := a.Append(e.seq, sampleMsg("user", "x"), e.at); err != nil {
+			t.Fatalf("Append seq=%d: %v", e.seq, err)
+		}
+	}
+
+	count, first, last, err = a.Stats()
+	if err != nil {
+		t.Fatalf("Stats: %v", err)
+	}
+	if count != 3 {
+		t.Errorf("Stats count = %d, want 3", count)
+	}
+	if !first.Equal(t1) {
+		t.Errorf("Stats first = %v, want %v", first, t1)
+	}
+	if !last.Equal(t3) {
+		t.Errorf("Stats last = %v, want %v", last, t3)
+	}
+}
+
 // TestArchiveStore_RetrievalWindowClamping verifies that the caller-computed
 // window clamping logic (as used by the tool layer) correctly restricts results.
 // Archive has maxSeq=300; window=250; request is seq 1-1000.

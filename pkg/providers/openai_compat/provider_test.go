@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -1090,5 +1092,195 @@ func TestProviderChat_HTTPErrorPopulatesStatus(t *testing.T) {
 	}
 }
 
+func TestProviderChat_SetsRequireParametersWhenToolsAdvertised(t *testing.T) {
+	var requestBody map[string]any
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		resp := map[string]any{
+			"choices": []map[string]any{
+				{
+					"message":       map[string]any{"content": "ok"},
+					"finish_reason": "stop",
+				},
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	tools := []protocoltypes.ToolDefinition{
+		{
+			Type: "function",
+			Function: protocoltypes.ToolFunctionDefinition{
+				Name:        "get_weather",
+				Description: "Get weather",
+				Parameters:  map[string]any{"type": "object"},
+			},
+		},
+	}
+
+	p := NewProvider("key", server.URL, "")
+	_, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, tools, "gpt-4o", nil)
+	if err != nil {
+		t.Fatalf("Chat() error = %v", err)
+	}
+
+	provider, ok := requestBody["provider"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected provider object in request, got %T", requestBody["provider"])
+	}
+	if provider["require_parameters"] != true {
+		t.Fatalf("provider.require_parameters = %v, want true", provider["require_parameters"])
+	}
+}
+
+func TestProviderChat_OmitsProviderObjectWhenNoTools(t *testing.T) {
+	var requestBody map[string]any
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		resp := map[string]any{
+			"choices": []map[string]any{
+				{
+					"message":       map[string]any{"content": "ok"},
+					"finish_reason": "stop",
+				},
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	p := NewProvider("key", server.URL, "")
+	_, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "gpt-4o", nil)
+	if err != nil {
+		t.Fatalf("Chat() error = %v", err)
+	}
+
+	if _, ok := requestBody["provider"]; ok {
+		t.Fatalf("provider key should be omitted when no tools advertised")
+	}
+}
+
 // ensure protocoltypes import is used in this file
 var _ = protocoltypes.DispatchStatus{}
+
+func TestResponseLogFile_AppendsRecord(t *testing.T) {
+	respBody := `{"choices":[{"message":{"content":"hi"},"finish_reason":"stop"}]}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, respBody)
+	}))
+	defer server.Close()
+
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "responses.log")
+
+	p := NewProvider("key", server.URL, "", WithResponseLogFile(logPath))
+	if _, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "test-model", nil); err != nil {
+		t.Fatalf("Chat() error = %v", err)
+	}
+	if _, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "test-model", nil); err != nil {
+		t.Fatalf("Chat() error = %v", err)
+	}
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log file: %v", err)
+	}
+	contents := string(data)
+
+	if !strings.Contains(contents, respBody) {
+		t.Errorf("log missing raw body; got:\n%s", contents)
+	}
+	if !strings.Contains(contents, "status=200") {
+		t.Errorf("log missing status; got:\n%s", contents)
+	}
+	if !strings.Contains(contents, "model=test-model") {
+		t.Errorf("log missing model; got:\n%s", contents)
+	}
+	if !strings.Contains(contents, "url="+server.URL+"/chat/completions") {
+		t.Errorf("log missing url; got:\n%s", contents)
+	}
+	if got := strings.Count(contents, "---END---"); got != 2 {
+		t.Errorf("expected 2 ---END--- separators, got %d; contents:\n%s", got, contents)
+	}
+}
+
+func TestResponseLogFile_LogsErrorResponses(t *testing.T) {
+	errBody := `{"error":{"message":"boom"}}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		io.WriteString(w, errBody)
+	}))
+	defer server.Close()
+
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "responses.log")
+
+	p := NewProvider("key", server.URL, "", WithResponseLogFile(logPath))
+	if _, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "test-model", nil); err == nil {
+		t.Fatalf("expected error from 500 response")
+	}
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log file: %v", err)
+	}
+	contents := string(data)
+	if !strings.Contains(contents, errBody) {
+		t.Errorf("log missing error body; got:\n%s", contents)
+	}
+	if !strings.Contains(contents, "status=500") {
+		t.Errorf("log missing status=500; got:\n%s", contents)
+	}
+}
+
+func TestResponseLogFile_UnsetDoesNotCreateFile(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"choices":[{"message":{"content":"hi"},"finish_reason":"stop"}]}`)
+	}))
+	defer server.Close()
+
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "responses.log")
+
+	p := NewProvider("key", server.URL, "") // no WithResponseLogFile
+	if _, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "test-model", nil); err != nil {
+		t.Fatalf("Chat() error = %v", err)
+	}
+
+	if _, err := os.Stat(logPath); !os.IsNotExist(err) {
+		t.Errorf("expected log file to not exist; stat err=%v", err)
+	}
+}
+
+func TestResponseLogFile_OpenFailureDoesNotPropagate(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"choices":[{"message":{"content":"ok"},"finish_reason":"stop"}]}`)
+	}))
+	defer server.Close()
+
+	dir := t.TempDir()
+	// Point response_log_file at a directory — os.OpenFile will fail.
+	p := NewProvider("key", server.URL, "", WithResponseLogFile(dir))
+	out, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "test-model", nil)
+	if err != nil {
+		t.Fatalf("Chat() must not propagate log-file errors, got: %v", err)
+	}
+	if out == nil || len(out.Content) == 0 {
+		t.Fatalf("expected parsed response despite log failure, got: %+v", out)
+	}
+}

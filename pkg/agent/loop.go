@@ -31,6 +31,7 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/llmcontext"
 	"github.com/PivotLLM/ClawEh/pkg/logger"
 	"github.com/PivotLLM/ClawEh/pkg/media"
+	"github.com/PivotLLM/ClawEh/pkg/memory"
 	"github.com/PivotLLM/ClawEh/pkg/providers"
 	"github.com/PivotLLM/ClawEh/pkg/routing"
 	"github.com/PivotLLM/ClawEh/pkg/skills"
@@ -48,12 +49,12 @@ type AgentLoop struct {
 	running         atomic.Bool
 	contextManagers sync.Map
 	fallback        *providers.FallbackChain
-	channelManager *channels.Manager
-	mediaStore     media.MediaStore
-	transcriber    voice.Transcriber
-	cmdRegistry    *commands.Registry
-	mcp            mcpRuntime
-	mu             sync.RWMutex
+	channelManager  *channels.Manager
+	mediaStore      media.MediaStore
+	transcriber     voice.Transcriber
+	cmdRegistry     *commands.Registry
+	mcp             mcpRuntime
+	mu              sync.RWMutex
 	// Track active requests for safe provider cleanup
 	activeRequests   sync.WaitGroup
 	dispatcher       *providers.ProviderDispatcher
@@ -96,6 +97,11 @@ type SessionTokenIssuer interface {
 	Revoke(sessionKey string)
 	// RevokeAgent removes all tokens for a given agent.
 	RevokeAgent(agentID string)
+	// SetSource records the most recent inbound user-message source (channel +
+	// chatID) on the session record so MCP-routed tool dispatch can publish a
+	// tool's ForUser payload back to the originating user. No-op when the
+	// sessionKey is unknown.
+	SetSource(sessionKey, channel, chatID string)
 }
 
 // sessionCancelState tracks a pending cancel request for a session. When
@@ -194,11 +200,11 @@ func NewAgentLoop(
 	}
 
 	al := &AgentLoop{
-		bus:      msgBus,
-		cfg:      cfg,
-		registry: registry,
-		state:    stateManager,
-		fallback: fallbackChain,
+		bus:              msgBus,
+		cfg:              cfg,
+		registry:         registry,
+		state:            stateManager,
+		fallback:         fallbackChain,
 		cmdRegistry:      commands.NewRegistry(commands.BuiltinDefinitions()),
 		dispatcher:       dispatcher,
 		agentStates:      agentStates,
@@ -1289,6 +1295,24 @@ func (al *AgentLoop) runAgentLoop(
 	defer releaseCtxMgr()
 	cm.SetCallContext(opts.Channel, opts.ChatID)
 
+	// Record the inbound source on the session token record so MCP-routed tool
+	// calls (which bypass the agent loop) can publish their ForUser payloads
+	// back to the originating user. Done after getContextManager so the token
+	// for this session is guaranteed to exist. Unified-mode sessions overwrite
+	// on each turn to follow the user across channels; non-unified sessions
+	// only ever see one channel so the field is stable. Internal channels
+	// (cli/subagent/recovery/system) have no real channel handler, so skip
+	// the record entirely — the MCP ForUser publish path drops on the empty
+	// channel/chatID guard rather than dispatching to a nonexistent handler.
+	if !constants.IsInternalChannel(opts.Channel) {
+		al.mu.RLock()
+		stiSource := al.sessionTokenIssuer
+		al.mu.RUnlock()
+		if stiSource != nil {
+			stiSource.SetSource(opts.SessionKey, opts.Channel, opts.ChatID)
+		}
+	}
+
 	// 2. Save user message and trigger compression check (skip on retry — already in history).
 	if !opts.IsRetry {
 		userMsg := providers.Message{Role: "user", Content: opts.UserMessage}
@@ -1986,7 +2010,7 @@ func (al *AgentLoop) runLLMIteration(
 		// Process results in original order (send to user, save to session)
 		for _, r := range agentResults {
 			// Send ForUser content to user immediately if not Silent
-			if !r.result.Silent && r.result.ForUser != "" && opts.SendResponse {
+			if !r.result.Silent && r.result.ForUser != "" {
 				if err := al.bus.PublishOutbound(ctx, bus.OutboundMessage{
 					Channel: opts.Channel,
 					ChatID:  opts.ChatID,
@@ -2274,6 +2298,25 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 			}
 			return al.channelManager.GetEnabledChannels()
 		},
+		GetSessionChannels: func() []string {
+			if cfg == nil || agent == nil {
+				return nil
+			}
+			return sessionChannelsForAgent(cfg.Bindings, agent.ID)
+		},
+		GetArchiveStats: func() (int, time.Time, time.Time) {
+			if agent == nil || opts == nil {
+				return 0, time.Time{}, time.Time{}
+			}
+			path := archiveDBPath(agent.Workspace, opts.SessionKey)
+			store, err := memory.OpenReadOnly(path)
+			if err != nil {
+				return 0, time.Time{}, time.Time{}
+			}
+			defer store.Close()
+			count, first, last, _ := store.Stats()
+			return count, first, last
+		},
 		SwitchChannel: func(value string) error {
 			if al.channelManager == nil {
 				return fmt.Errorf("channel manager not initialized")
@@ -2404,6 +2447,44 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 		}
 	}
 	return rt
+}
+
+// sessionChannelsForAgent returns the distinct channel names that route to
+// agentID via the supplied bindings. The result is the per-agent channel
+// surface area — used by /status to avoid leaking the full daemon-wide
+// channel list to callers on unrelated channels. Channel names are returned
+// in the order they first appear in bindings; comparisons are case-insensitive
+// for dedup but original casing is preserved in the output.
+func sessionChannelsForAgent(bindings []config.AgentBinding, agentID string) []string {
+	target := routing.NormalizeAgentID(agentID)
+	seen := make(map[string]struct{})
+	var out []string
+	for _, b := range bindings {
+		if routing.NormalizeAgentID(b.AgentID) != target {
+			continue
+		}
+		ch := strings.TrimSpace(b.Match.Channel)
+		if ch == "" {
+			continue
+		}
+		key := strings.ToLower(ch)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, ch)
+	}
+	return out
+}
+
+// archiveDBPath returns the on-disk path of the SQLite archive for a session.
+// Must stay in sync with pkg/llmcontext.sanitizeSessionKey and the
+// archive-open path in pkg/llmcontext/Manager.getOrOpenArchive.
+func archiveDBPath(workspace, sessionKey string) string {
+	sanitized := strings.ReplaceAll(sessionKey, ":", "_")
+	sanitized = strings.ReplaceAll(sanitized, "/", "_")
+	sanitized = strings.ReplaceAll(sanitized, "\\", "_")
+	return filepath.Join(workspace, "sessions", sanitized+".archive.db")
 }
 
 func mapCommandError(result commands.ExecuteResult) string {

@@ -21,6 +21,7 @@ var DefaultAgentTools = []string{
 	"write_file",
 	"edit_file",
 	"append_file",
+	"copy_file",
 	"list_dir",
 	"exec",
 	"web_search",
@@ -456,6 +457,9 @@ func DefaultConfig() *Config {
 			AppendFile: ToolConfig{
 				Enabled: true,
 			},
+			CopyFile: ToolConfig{
+				Enabled: true,
+			},
 			EditFile: ToolConfig{
 				Enabled: true,
 			},
@@ -519,6 +523,7 @@ func DefaultConfig() *Config {
 				"write_file",
 				"edit_file",
 				"append_file",
+				"copy_file",
 				"list_dir",
 				"web_fetch",
 				"web_search",

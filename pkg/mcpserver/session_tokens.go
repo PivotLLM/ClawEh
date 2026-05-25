@@ -28,10 +28,18 @@ const invalidSessionTokenMessage = "invalid or missing session_token; supply you
 const sessionTokenCrossAgentMessage = "session_token does not belong to the calling agent"
 
 // sessionRecord holds the mapping from a session token to its session.
+//
+// channel/chatID are the "most recent inbound source for this session" used by
+// MCP-routed tool dispatch to publish a tool's ForUser payload back to the
+// originating user. They are populated by the agent loop on every inbound user
+// message via SetSource. Empty values mean no user channel is bound — the
+// MCP publish step silently drops in that case.
 type sessionRecord struct {
 	agentID     string
 	sessionKey  string
 	archiveDir  string
+	channel     string
+	chatID      string
 	isTestToken bool // true for tokens registered via Register(); never rotated by Issue()
 }
 
@@ -104,6 +112,31 @@ func (s *sessionTokenStore) Register(token, agentID, sessionKey, archiveDir stri
 	s.bySess[sessionKey] = token
 }
 
+// SetSource records the most recent inbound user-message source (channel +
+// chatID) on the session record identified by sessionKey. Called from the
+// agent loop on every inbound user message so MCP-routed tool dispatch can
+// publish a tool's ForUser payload back to the originating user. No-op if
+// the sessionKey is unknown — Issue() may not yet have been called for this
+// session, which is normal during early startup.
+func (s *sessionTokenStore) SetSource(sessionKey, channel, chatID string) {
+	if sessionKey == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tok, ok := s.bySess[sessionKey]
+	if !ok {
+		return
+	}
+	rec, ok := s.tokens[tok]
+	if !ok {
+		return
+	}
+	rec.channel = channel
+	rec.chatID = chatID
+	s.tokens[tok] = rec
+}
+
 // Resolve looks up a token. Returns the record and true if found.
 func (s *sessionTokenStore) Resolve(token string) (sessionRecord, bool) {
 	s.mu.RLock()
@@ -142,4 +175,3 @@ func generateSessionToken() (string, error) {
 	}
 	return sessionTokenPrefix + hex.EncodeToString(raw), nil
 }
-

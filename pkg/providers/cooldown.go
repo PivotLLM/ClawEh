@@ -8,9 +8,17 @@ import (
 
 const (
 	defaultFailureWindow = 24 * time.Hour
+
+	// maxRetryAfterCooldown caps the duration we will honour from a server-
+	// supplied Retry-After header before falling back to default exponential
+	// backoff. A misconfigured upstream could otherwise pin a model for hours.
+	maxRetryAfterCooldown = 5 * time.Minute
 )
 
-// CooldownTracker manages per-provider cooldown state for the fallback chain.
+// CooldownTracker manages per-model cooldown state for the fallback chain.
+// Entries are keyed by ModelKey(provider, model) so that a rate-limit on one
+// model does not block sibling models hosted by the same provider — notably
+// important for OpenRouter, where each model has its own upstream quota.
 // Thread-safe via sync.RWMutex. In-memory only (resets on restart).
 type CooldownTracker struct {
 	mu            sync.RWMutex
@@ -37,14 +45,17 @@ func NewCooldownTracker() *CooldownTracker {
 	}
 }
 
-// MarkFailure records a failure for a provider and sets appropriate cooldown.
-// Resets error counts if last failure was more than failureWindow ago.
-func (ct *CooldownTracker) MarkFailure(provider string, reason FailoverReason) {
+// MarkFailure records a failure for a model and sets the appropriate cooldown.
+// When retryAfter > 0 (i.e. the server returned a Retry-After header) the
+// caller's hint is used as the cooldown duration, capped at maxRetryAfterCooldown.
+// Otherwise the standard exponential backoff applies.
+func (ct *CooldownTracker) MarkFailure(provider, model string, reason FailoverReason, retryAfter time.Duration) {
 	ct.mu.Lock()
 	defer ct.mu.Unlock()
 
 	now := ct.nowFunc()
-	entry := ct.getOrCreate(provider)
+	key := ModelKey(provider, model)
+	entry := ct.getOrCreate(key)
 
 	// 24h failure window reset: if no failure in failureWindow, reset counters.
 	if !entry.LastFailure.IsZero() && now.Sub(entry.LastFailure) > ct.failureWindow {
@@ -60,17 +71,25 @@ func (ct *CooldownTracker) MarkFailure(provider string, reason FailoverReason) {
 		billingCount := entry.FailureCounts[FailoverBilling]
 		entry.DisabledUntil = now.Add(calculateBillingCooldown(billingCount))
 		entry.DisabledReason = FailoverBilling
-	} else {
-		entry.CooldownEnd = now.Add(calculateStandardCooldown(entry.ErrorCount))
+		return
 	}
+
+	cooldown := calculateStandardCooldown(entry.ErrorCount)
+	if retryAfter > 0 {
+		if retryAfter > maxRetryAfterCooldown {
+			retryAfter = maxRetryAfterCooldown
+		}
+		cooldown = retryAfter
+	}
+	entry.CooldownEnd = now.Add(cooldown)
 }
 
-// MarkSuccess resets all counters and cooldowns for a provider.
-func (ct *CooldownTracker) MarkSuccess(provider string) {
+// MarkSuccess resets all counters and cooldowns for a model.
+func (ct *CooldownTracker) MarkSuccess(provider, model string) {
 	ct.mu.Lock()
 	defer ct.mu.Unlock()
 
-	entry := ct.entries[provider]
+	entry := ct.entries[ModelKey(provider, model)]
 	if entry == nil {
 		return
 	}
@@ -82,12 +101,12 @@ func (ct *CooldownTracker) MarkSuccess(provider string) {
 	entry.DisabledReason = ""
 }
 
-// IsAvailable returns true if the provider is not in cooldown or disabled.
-func (ct *CooldownTracker) IsAvailable(provider string) bool {
+// IsAvailable returns true if the model is not in cooldown or disabled.
+func (ct *CooldownTracker) IsAvailable(provider, model string) bool {
 	ct.mu.RLock()
 	defer ct.mu.RUnlock()
 
-	entry := ct.entries[provider]
+	entry := ct.entries[ModelKey(provider, model)]
 	if entry == nil {
 		return true
 	}
@@ -107,13 +126,13 @@ func (ct *CooldownTracker) IsAvailable(provider string) bool {
 	return true
 }
 
-// CooldownRemaining returns how long until the provider becomes available.
+// CooldownRemaining returns how long until the model becomes available.
 // Returns 0 if already available.
-func (ct *CooldownTracker) CooldownRemaining(provider string) time.Duration {
+func (ct *CooldownTracker) CooldownRemaining(provider, model string) time.Duration {
 	ct.mu.RLock()
 	defer ct.mu.RUnlock()
 
-	entry := ct.entries[provider]
+	entry := ct.entries[ModelKey(provider, model)]
 	if entry == nil {
 		return 0
 	}
@@ -138,24 +157,24 @@ func (ct *CooldownTracker) CooldownRemaining(provider string) time.Duration {
 	return remaining
 }
 
-// ErrorCount returns the current error count for a provider.
-func (ct *CooldownTracker) ErrorCount(provider string) int {
+// ErrorCount returns the current error count for a model.
+func (ct *CooldownTracker) ErrorCount(provider, model string) int {
 	ct.mu.RLock()
 	defer ct.mu.RUnlock()
 
-	entry := ct.entries[provider]
+	entry := ct.entries[ModelKey(provider, model)]
 	if entry == nil {
 		return 0
 	}
 	return entry.ErrorCount
 }
 
-// FailureCount returns the failure count for a specific reason.
-func (ct *CooldownTracker) FailureCount(provider string, reason FailoverReason) int {
+// FailureCount returns the failure count for a specific reason on a model.
+func (ct *CooldownTracker) FailureCount(provider, model string, reason FailoverReason) int {
 	ct.mu.RLock()
 	defer ct.mu.RUnlock()
 
-	entry := ct.entries[provider]
+	entry := ct.entries[ModelKey(provider, model)]
 	if entry == nil {
 		return 0
 	}
@@ -168,13 +187,13 @@ func (ct *CooldownTracker) Reset() {
 	ct.entries = make(map[string]*cooldownEntry)
 }
 
-func (ct *CooldownTracker) getOrCreate(provider string) *cooldownEntry {
-	entry := ct.entries[provider]
+func (ct *CooldownTracker) getOrCreate(key string) *cooldownEntry {
+	entry := ct.entries[key]
 	if entry == nil {
 		entry = &cooldownEntry{
 			FailureCounts: make(map[FailoverReason]int),
 		}
-		ct.entries[provider] = entry
+		ct.entries[key] = entry
 	}
 	return entry
 }

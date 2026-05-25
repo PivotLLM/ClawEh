@@ -24,6 +24,16 @@ func NewEditFileTool(workspace string, restrict bool, allowPaths ...[]*regexp.Re
 	return &EditFileTool{fs: buildFs(workspace, restrict, patterns)}
 }
 
+// NewEditFileToolWithMemoryRedirect mirrors NewEditFileTool with redirect support.
+func NewEditFileToolWithMemoryRedirect(
+	workspace string,
+	restrict bool,
+	patterns []*regexp.Regexp,
+	memoryRoot string,
+) *EditFileTool {
+	return &EditFileTool{fs: buildFsWithMemoryRedirect(workspace, restrict, patterns, memoryRoot)}
+}
+
 func (t *EditFileTool) Name() string {
 	return "edit_file"
 }
@@ -48,6 +58,16 @@ func (t *EditFileTool) Parameters() map[string]any {
 				"type":        "string",
 				"description": "The text to replace with",
 			},
+			"display": map[string]any{
+				"type":        "boolean",
+				"description": "If true, after the operation, send the written/edited/appended content to the user as a fenced block separated by `---` markers.",
+				"default":     false,
+			},
+			"backup": map[string]any{
+				"type":        "boolean",
+				"description": "If true and the target file exists, copy it to <file>.NNNN (next unused 4-digit suffix, starting at 0001) before modification. Silently skipped when the target does not exist.",
+				"default":     false,
+			},
 		},
 		"required": []string{"path", "old_text", "new_text"},
 	}
@@ -69,10 +89,32 @@ func (t *EditFileTool) Execute(ctx context.Context, args map[string]any) *ToolRe
 		return ErrorResult("new_text is required")
 	}
 
-	if err := editFile(t.fs, path, oldText, newText); err != nil {
+	content, err := t.fs.ReadFile(path)
+	if err != nil {
 		return ErrorResult(err.Error())
 	}
-	return SilentResult(fmt.Sprintf("File edited: %s", path))
+	newContent, err := replaceEditContent(content, oldText, newText)
+	if err != nil {
+		return ErrorResult(err.Error())
+	}
+
+	if getBoolArg(args, "backup", false) {
+		if _, err := backupExistingFile(t.fs, path); err != nil {
+			return ErrorResult(err.Error())
+		}
+	}
+
+	if err := t.fs.WriteFile(path, newContent); err != nil {
+		return ErrorResult(err.Error())
+	}
+	forLLM := fmt.Sprintf("File edited: %s", path)
+	if getBoolArg(args, "display", false) {
+		return &ToolResult{
+			ForLLM:  forLLM,
+			ForUser: displayBody(displayHeader("Edited", path), newText),
+		}
+	}
+	return SilentResult(forLLM)
 }
 
 type AppendFileTool struct {
@@ -85,6 +127,16 @@ func NewAppendFileTool(workspace string, restrict bool, allowPaths ...[]*regexp.
 		patterns = allowPaths[0]
 	}
 	return &AppendFileTool{fs: buildFs(workspace, restrict, patterns)}
+}
+
+// NewAppendFileToolWithMemoryRedirect mirrors NewAppendFileTool with redirect support.
+func NewAppendFileToolWithMemoryRedirect(
+	workspace string,
+	restrict bool,
+	patterns []*regexp.Regexp,
+	memoryRoot string,
+) *AppendFileTool {
+	return &AppendFileTool{fs: buildFsWithMemoryRedirect(workspace, restrict, patterns, memoryRoot)}
 }
 
 func (t *AppendFileTool) Name() string {
@@ -107,6 +159,16 @@ func (t *AppendFileTool) Parameters() map[string]any {
 				"type":        "string",
 				"description": "The content to append",
 			},
+			"display": map[string]any{
+				"type":        "boolean",
+				"description": "If true, after the operation, send the written/edited/appended content to the user as a fenced block separated by `---` markers.",
+				"default":     false,
+			},
+			"backup": map[string]any{
+				"type":        "boolean",
+				"description": "If true and the target file exists, copy it to <file>.NNNN (next unused 4-digit suffix, starting at 0001) before modification. Silently skipped when the target does not exist.",
+				"default":     false,
+			},
 		},
 		"required": []string{"path", "content"},
 	}
@@ -123,26 +185,23 @@ func (t *AppendFileTool) Execute(ctx context.Context, args map[string]any) *Tool
 		return ErrorResult("content is required")
 	}
 
+	if getBoolArg(args, "backup", false) {
+		if _, err := backupExistingFile(t.fs, path); err != nil {
+			return ErrorResult(err.Error())
+		}
+	}
+
 	if err := appendFile(t.fs, path, content); err != nil {
 		return ErrorResult(err.Error())
 	}
-	return SilentResult(fmt.Sprintf("Appended to %s", path))
-}
-
-// editFile reads the file via sysFs, performs the replacement, and writes back.
-// It uses a fileSystem interface, allowing the same logic for both restricted and unrestricted modes.
-func editFile(sysFs fileSystem, path, oldText, newText string) error {
-	content, err := sysFs.ReadFile(path)
-	if err != nil {
-		return err
+	forLLM := fmt.Sprintf("Appended to %s", path)
+	if getBoolArg(args, "display", false) {
+		return &ToolResult{
+			ForLLM:  forLLM,
+			ForUser: displayBody(displayHeader("Appended", path), content),
+		}
 	}
-
-	newContent, err := replaceEditContent(content, oldText, newText)
-	if err != nil {
-		return err
-	}
-
-	return sysFs.WriteFile(path, newContent)
+	return SilentResult(forLLM)
 }
 
 // appendFile reads the existing content (if any) via sysFs, appends new content, and writes back.

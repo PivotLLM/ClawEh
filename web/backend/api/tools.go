@@ -65,6 +65,12 @@ var toolCatalog = []toolCatalogEntry{
 		ConfigKey:   "append_file",
 	},
 	{
+		Name:        "copy_file",
+		Description: "Copy a file from a source path to a destination path within the workspace.",
+		Category:    "filesystem",
+		ConfigKey:   "copy_file",
+	},
+	{
 		Name:        "exec",
 		Description: "Run shell commands inside the configured workspace sandbox.",
 		Category:    "automation",
@@ -287,6 +293,8 @@ func applyToolState(cfg *config.Config, toolName string, enabled bool) error {
 		cfg.Tools.EditFile.Enabled = enabled
 	case "append_file":
 		cfg.Tools.AppendFile.Enabled = enabled
+	case "copy_file":
+		cfg.Tools.CopyFile.Enabled = enabled
 	case "exec":
 		cfg.Tools.Exec.Enabled = enabled
 	case "cron":

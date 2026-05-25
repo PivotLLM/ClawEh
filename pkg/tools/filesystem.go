@@ -118,6 +118,27 @@ func NewReadFileTool(
 	}
 }
 
+// NewReadFileToolWithMemoryRedirect is like NewReadFileTool but also redirects
+// any access under the workspace-relative "memory/" subtree to memoryRoot.
+// An empty memoryRoot (or one equal to <workspace>/memory) behaves identically
+// to NewReadFileTool.
+func NewReadFileToolWithMemoryRedirect(
+	workspace string,
+	restrict bool,
+	maxReadFileSize int,
+	patterns []*regexp.Regexp,
+	memoryRoot string,
+) *ReadFileTool {
+	maxSize := int64(maxReadFileSize)
+	if maxSize <= 0 {
+		maxSize = MaxReadFileSize
+	}
+	return &ReadFileTool{
+		fs:      buildFsWithMemoryRedirect(workspace, restrict, patterns, memoryRoot),
+		maxSize: maxSize,
+	}
+}
+
 func (t *ReadFileTool) Name() string {
 	return "read_file"
 }
@@ -334,6 +355,17 @@ func NewWriteFileTool(workspace string, restrict bool, allowPaths ...[]*regexp.R
 	return &WriteFileTool{fs: buildFs(workspace, restrict, patterns)}
 }
 
+// NewWriteFileToolWithMemoryRedirect mirrors NewWriteFileTool but additionally
+// redirects "memory/" subtree writes to memoryRoot. See buildFsWithMemoryRedirect.
+func NewWriteFileToolWithMemoryRedirect(
+	workspace string,
+	restrict bool,
+	patterns []*regexp.Regexp,
+	memoryRoot string,
+) *WriteFileTool {
+	return &WriteFileTool{fs: buildFsWithMemoryRedirect(workspace, restrict, patterns, memoryRoot)}
+}
+
 func (t *WriteFileTool) Name() string {
 	return "write_file"
 }
@@ -354,6 +386,16 @@ func (t *WriteFileTool) Parameters() map[string]any {
 				"type":        "string",
 				"description": "Content to write to the file",
 			},
+			"display": map[string]any{
+				"type":        "boolean",
+				"description": "If true, after the operation, send the written/edited/appended content to the user as a fenced block separated by `---` markers.",
+				"default":     false,
+			},
+			"backup": map[string]any{
+				"type":        "boolean",
+				"description": "If true and the target file exists, copy it to <file>.NNNN (next unused 4-digit suffix, starting at 0001) before modification. Silently skipped when the target does not exist.",
+				"default":     false,
+			},
 		},
 		"required": []string{"path", "content"},
 	}
@@ -370,11 +412,24 @@ func (t *WriteFileTool) Execute(ctx context.Context, args map[string]any) *ToolR
 		return ErrorResult("content is required")
 	}
 
+	if getBoolArg(args, "backup", false) {
+		if _, err := backupExistingFile(t.fs, path); err != nil {
+			return ErrorResult(err.Error())
+		}
+	}
+
 	if err := t.fs.WriteFile(path, []byte(content)); err != nil {
 		return ErrorResult(err.Error())
 	}
 
-	return SilentResult(fmt.Sprintf("File written: %s", path))
+	forLLM := fmt.Sprintf("File written: %s", path)
+	if getBoolArg(args, "display", false) {
+		return &ToolResult{
+			ForLLM:  forLLM,
+			ForUser: displayBody(displayHeader("Wrote", path), content),
+		}
+	}
+	return SilentResult(forLLM)
 }
 
 type ListDirTool struct {
@@ -387,6 +442,16 @@ func NewListDirTool(workspace string, restrict bool, allowPaths ...[]*regexp.Reg
 		patterns = allowPaths[0]
 	}
 	return &ListDirTool{fs: buildFs(workspace, restrict, patterns)}
+}
+
+// NewListDirToolWithMemoryRedirect mirrors NewListDirTool with redirect support.
+func NewListDirToolWithMemoryRedirect(
+	workspace string,
+	restrict bool,
+	patterns []*regexp.Regexp,
+	memoryRoot string,
+) *ListDirTool {
+	return &ListDirTool{fs: buildFsWithMemoryRedirect(workspace, restrict, patterns, memoryRoot)}
 }
 
 func (t *ListDirTool) Name() string {
@@ -440,8 +505,15 @@ func formatDirEntries(entries []os.DirEntry) *ToolResult {
 type fileSystem interface {
 	ReadFile(path string) ([]byte, error)
 	WriteFile(path string, data []byte) error
+	WriteFileMode(path string, data []byte, mode os.FileMode) error
+	// WriteFileExclMode writes data to path only if path does not already
+	// exist. On collision it returns an error wrapping fs.ErrExist. This is
+	// in-process exclusive; cross-process atomicity is best-effort and
+	// depends on the underlying filesystem honouring O_EXCL.
+	WriteFileExclMode(path string, data []byte, mode os.FileMode) error
 	ReadDir(path string) ([]os.DirEntry, error)
 	Open(path string) (fs.File, error)
+	Stat(path string) (os.FileInfo, error)
 }
 
 // hostFs is an unrestricted fileReadWriter that operates directly on the host filesystem.
@@ -469,6 +541,43 @@ func (h *hostFs) WriteFile(path string, data []byte) error {
 	// Use unified atomic write utility with explicit sync for flash storage reliability.
 	// Using 0o600 (owner read/write only) for secure default permissions.
 	return fileutil.WriteFileAtomic(path, data, 0o600)
+}
+
+func (h *hostFs) WriteFileMode(path string, data []byte, mode os.FileMode) error {
+	return fileutil.WriteFileAtomic(path, data, mode)
+}
+
+func (h *hostFs) WriteFileExclMode(path string, data []byte, mode os.FileMode) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		os.Remove(path)
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		os.Remove(path)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(path)
+		return err
+	}
+	if err := os.Chmod(path, mode); err != nil {
+		os.Remove(path)
+		return err
+	}
+	return nil
+}
+
+func (h *hostFs) Stat(path string) (os.FileInfo, error) {
+	return os.Stat(path)
 }
 
 func (h *hostFs) Open(path string) (fs.File, error) {
@@ -531,6 +640,10 @@ func (r *sandboxFs) ReadFile(path string) ([]byte, error) {
 }
 
 func (r *sandboxFs) WriteFile(path string, data []byte) error {
+	return r.WriteFileMode(path, data, 0o600)
+}
+
+func (r *sandboxFs) WriteFileMode(path string, data []byte, mode os.FileMode) error {
 	return r.execute(path, func(root *os.Root, relPath string) error {
 		dir := filepath.Dir(relPath)
 		if dir != "." && dir != "/" {
@@ -539,11 +652,10 @@ func (r *sandboxFs) WriteFile(path string, data []byte) error {
 			}
 		}
 
-		// Use atomic write pattern with explicit sync for flash storage reliability.
-		// Using 0o600 (owner read/write only) for secure default permissions.
+		// Atomic write: write to a temp file, sync, rename over the target.
 		tmpRelPath := fmt.Sprintf(".tmp-%d-%d", os.Getpid(), time.Now().UnixNano())
 
-		tmpFile, err := root.OpenFile(tmpRelPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		tmpFile, err := root.OpenFile(tmpRelPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
 		if err != nil {
 			root.Remove(tmpRelPath)
 			return fmt.Errorf("failed to open temp file: %w", err)
@@ -555,8 +667,6 @@ func (r *sandboxFs) WriteFile(path string, data []byte) error {
 			return fmt.Errorf("failed to write temp file: %w", err)
 		}
 
-		// CRITICAL: Force sync to storage medium before rename.
-		// This ensures data is physically written to disk, not just cached.
 		if err := tmpFile.Sync(); err != nil {
 			tmpFile.Close()
 			root.Remove(tmpRelPath)
@@ -568,12 +678,17 @@ func (r *sandboxFs) WriteFile(path string, data []byte) error {
 			return fmt.Errorf("failed to close temp file: %w", err)
 		}
 
+		// Ensure the destination has the requested mode regardless of umask.
+		if err := root.Chmod(tmpRelPath, mode); err != nil {
+			root.Remove(tmpRelPath)
+			return fmt.Errorf("failed to set file mode: %w", err)
+		}
+
 		if err := root.Rename(tmpRelPath, relPath); err != nil {
 			root.Remove(tmpRelPath)
 			return fmt.Errorf("failed to rename temp file over target: %w", err)
 		}
 
-		// Sync directory to ensure rename is durable
 		if dirFile, err := root.Open("."); err == nil {
 			_ = dirFile.Sync()
 			dirFile.Close()
@@ -581,6 +696,53 @@ func (r *sandboxFs) WriteFile(path string, data []byte) error {
 
 		return nil
 	})
+}
+
+func (r *sandboxFs) WriteFileExclMode(path string, data []byte, mode os.FileMode) error {
+	return r.execute(path, func(root *os.Root, relPath string) error {
+		dir := filepath.Dir(relPath)
+		if dir != "." && dir != "/" {
+			if err := root.MkdirAll(dir, 0o755); err != nil {
+				return fmt.Errorf("failed to create parent directories: %w", err)
+			}
+		}
+		f, err := root.OpenFile(relPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+		if err != nil {
+			return err
+		}
+		if _, err := f.Write(data); err != nil {
+			f.Close()
+			root.Remove(relPath)
+			return err
+		}
+		if err := f.Sync(); err != nil {
+			f.Close()
+			root.Remove(relPath)
+			return err
+		}
+		if err := f.Close(); err != nil {
+			root.Remove(relPath)
+			return err
+		}
+		if err := root.Chmod(relPath, mode); err != nil {
+			root.Remove(relPath)
+			return err
+		}
+		return nil
+	})
+}
+
+func (r *sandboxFs) Stat(path string) (os.FileInfo, error) {
+	var info os.FileInfo
+	err := r.execute(path, func(root *os.Root, relPath string) error {
+		fi, err := root.Stat(relPath)
+		if err != nil {
+			return err
+		}
+		info = fi
+		return nil
+	})
+	return info, err
 }
 
 func (r *sandboxFs) ReadDir(path string) ([]os.DirEntry, error) {
@@ -647,6 +809,27 @@ func (w *whitelistFs) WriteFile(path string, data []byte) error {
 	return w.sandbox.WriteFile(path, data)
 }
 
+func (w *whitelistFs) WriteFileMode(path string, data []byte, mode os.FileMode) error {
+	if w.matches(path) {
+		return w.host.WriteFileMode(path, data, mode)
+	}
+	return w.sandbox.WriteFileMode(path, data, mode)
+}
+
+func (w *whitelistFs) WriteFileExclMode(path string, data []byte, mode os.FileMode) error {
+	if w.matches(path) {
+		return w.host.WriteFileExclMode(path, data, mode)
+	}
+	return w.sandbox.WriteFileExclMode(path, data, mode)
+}
+
+func (w *whitelistFs) Stat(path string) (os.FileInfo, error) {
+	if w.matches(path) {
+		return w.host.Stat(path)
+	}
+	return w.sandbox.Stat(path)
+}
+
 func (w *whitelistFs) ReadDir(path string) ([]os.DirEntry, error) {
 	if w.matches(path) {
 		return w.host.ReadDir(path)
@@ -672,6 +855,126 @@ func buildFs(workspace string, restrict bool, patterns []*regexp.Regexp) fileSys
 		return &whitelistFs{sandbox: sandbox, patterns: patterns}
 	}
 	return sandbox
+}
+
+// redirectFs transparently rewrites any access whose path is workspace-relative
+// "memory" (or starts with "memory/") so it lands under memoryRoot instead of
+// <workspace>/memory. All other paths fall through to base. Both base and mem
+// are sandbox-backed (each opens its own os.Root per call), so existing
+// os.Root symlink and `..` traversal guarantees apply to both sides.
+type redirectFs struct {
+	base       fileSystem // sandboxFs rooted at workspace (or whitelistFs wrapping one)
+	mem        fileSystem // sandboxFs rooted at memoryRoot
+	workspace  string     // resolved abs path of the workspace
+	memoryRoot string     // resolved abs path of the memory root (non-empty)
+}
+
+// rewrite returns (target fileSystem, path) for the given input. When the
+// input refers to the "memory" subtree, it returns the mem fs and the
+// path relative to memoryRoot. Otherwise it returns (base, original path).
+func (r *redirectFs) rewrite(path string) (fileSystem, string) {
+	if r.memoryRoot == "" {
+		return r.base, path
+	}
+
+	// Compute the workspace-relative form of the input path. Inputs may be
+	// either workspace-relative ("memory/MEMORY.md") or absolute. We use
+	// filepath.ToSlash so the prefix test below works the same on Windows.
+	var rel string
+	if filepath.IsAbs(path) {
+		cleaned := filepath.Clean(path)
+		rr, err := filepath.Rel(r.workspace, cleaned)
+		if err != nil || !filepath.IsLocal(rr) {
+			return r.base, path
+		}
+		rel = rr
+	} else {
+		rel = filepath.Clean(path)
+		if !filepath.IsLocal(rel) {
+			return r.base, path
+		}
+	}
+
+	slashed := filepath.ToSlash(rel)
+	if slashed == "memory" {
+		// Listing/opening the memory dir itself: target memoryRoot root ".".
+		return r.mem, "."
+	}
+	if strings.HasPrefix(slashed, "memory/") {
+		sub := strings.TrimPrefix(slashed, "memory/")
+		if sub == "" {
+			return r.mem, "."
+		}
+		// Convert back to os-native separators for the mem sandbox.
+		return r.mem, filepath.FromSlash(sub)
+	}
+	return r.base, path
+}
+
+func (r *redirectFs) ReadFile(path string) ([]byte, error) {
+	fs, p := r.rewrite(path)
+	return fs.ReadFile(p)
+}
+
+func (r *redirectFs) WriteFile(path string, data []byte) error {
+	fs, p := r.rewrite(path)
+	return fs.WriteFile(p, data)
+}
+
+func (r *redirectFs) WriteFileMode(path string, data []byte, mode os.FileMode) error {
+	fs, p := r.rewrite(path)
+	return fs.WriteFileMode(p, data, mode)
+}
+
+func (r *redirectFs) WriteFileExclMode(path string, data []byte, mode os.FileMode) error {
+	fs, p := r.rewrite(path)
+	return fs.WriteFileExclMode(p, data, mode)
+}
+
+func (r *redirectFs) Stat(path string) (os.FileInfo, error) {
+	fs, p := r.rewrite(path)
+	return fs.Stat(p)
+}
+
+func (r *redirectFs) ReadDir(path string) ([]os.DirEntry, error) {
+	fs, p := r.rewrite(path)
+	return fs.ReadDir(p)
+}
+
+func (r *redirectFs) Open(path string) (fs.File, error) {
+	fs, p := r.rewrite(path)
+	return fs.Open(p)
+}
+
+// buildFsWithMemoryRedirect mirrors buildFs but additionally redirects any
+// "memory" subtree access to memoryRoot. When restrict is false or memoryRoot
+// is empty (or equals <workspace>/memory), behaviour is byte-identical to
+// buildFs so existing call sites are unaffected.
+func buildFsWithMemoryRedirect(workspace string, restrict bool, patterns []*regexp.Regexp, memoryRoot string) fileSystem {
+	base := buildFs(workspace, restrict, patterns)
+	if !restrict || strings.TrimSpace(memoryRoot) == "" {
+		return base
+	}
+
+	absWS, err := filepath.Abs(workspace)
+	if err != nil {
+		return base
+	}
+	absMem, err := filepath.Abs(memoryRoot)
+	if err != nil {
+		return base
+	}
+	// Default-location memory (<workspace>/memory): no redirect needed.
+	if absMem == filepath.Join(absWS, "memory") {
+		return base
+	}
+
+	return &redirectFs{
+		base:       base,
+		mem:        &sandboxFs{workspace: absMem},
+		workspace:  absWS,
+		memoryRoot: absMem,
+	}
 }
 
 // Helper to get a safe relative path for os.Root usage

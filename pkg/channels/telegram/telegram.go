@@ -26,17 +26,34 @@ import (
 )
 
 var (
-	reHeading    = regexp.MustCompile(`^#{1,6}\s+(.+)$`)
-	reBlockquote = regexp.MustCompile(`^>\s*(.*)$`)
+	reHeading    = regexp.MustCompile(`(?m)^#{1,6}\s+(.+)$`)
+	reBlockquote = regexp.MustCompile(`(?m)^>\s*(.*)$`)
 	reLink       = regexp.MustCompile(`\[([^\]]+)\]\(([^)]+)\)`)
 	reBoldStar   = regexp.MustCompile(`\*\*(.+?)\*\*`)
 	reBoldUnder  = regexp.MustCompile(`__(.+?)__`)
 	reItalic     = regexp.MustCompile(`_([^_]+)_`)
 	reStrike     = regexp.MustCompile(`~~(.+?)~~`)
-	reListItem   = regexp.MustCompile(`^[-*]\s+`)
+	reListItem   = regexp.MustCompile(`(?m)^[-*]\s+`)
 	reCodeBlock  = regexp.MustCompile("```[\\w]*\\n?([\\s\\S]*?)```")
 	reInlineCode = regexp.MustCompile("`([^`]+)`")
+
+	// Horizontal rules: ---, ***, or ___ alone on a line. Telegram has no
+	// horizontal-rule primitive, so we substitute these with a visible
+	// box-drawing line to match what Slack does (see pkg/channels/slack/mrkdwn.go).
+	reHRule = regexp.MustCompile(`(?m)^[ \t]*[-*_]{3,}[ \t]*$`)
+
+	// Runs of consecutive hRuleSubstitute lines separated only by blank lines.
+	// Used to collapse stacked rules (e.g. when a display payload itself ends
+	// with a thematic break and displayBody adds its own closing fence) down
+	// to a single visible rule.
+	reHRuleRun = regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(hRuleSubstitute) + `(?:\n[ \t]*)+` + regexp.QuoteMeta(hRuleSubstitute) + `(?:(?:\n[ \t]*)+` + regexp.QuoteMeta(hRuleSubstitute) + `)*$`)
 )
+
+// hRuleSubstitute renders a CommonMark thematic break (---, ***, ___ alone on
+// a line) as a visible horizontal-rule-like line in Telegram, which has no
+// native horizontal-rule primitive. Matches the glyph and length used by the
+// Slack channel (see pkg/channels/slack/mrkdwn.go).
+const hRuleSubstitute = "──────────────────────────────"
 
 type TelegramChannel struct {
 	*channels.BaseChannel
@@ -830,6 +847,19 @@ func markdownToTelegramHTML(text string) string {
 
 	inlineCodes := extractInlineCodes(text)
 	text = inlineCodes.text
+
+	// Horizontal rules → a visible box-drawing line. Telegram has no native
+	// horizontal-rule primitive, but display:true payloads use --- as a
+	// CommonMark thematic break to fence the payload, so passing the line
+	// through erases the fence visually; substitute a box-drawing line
+	// instead (matching Slack).
+	text = reHRule.ReplaceAllString(text, hRuleSubstitute)
+
+	// Collapse runs of adjacent rules (separated only by blank lines) down to
+	// a single rule. Display payloads that themselves end with a thematic
+	// break would otherwise stack against the closing fence emitted by
+	// displayBody.
+	text = reHRuleRun.ReplaceAllString(text, hRuleSubstitute)
 
 	text = reHeading.ReplaceAllString(text, "$1")
 

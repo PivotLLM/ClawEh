@@ -5,9 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/PivotLLM/ClawEh/pkg/providers/common"
@@ -34,7 +38,11 @@ type Provider struct {
 	maxTokensField      string // Field name for max tokens (e.g., "max_completion_tokens" for o1/glm models)
 	strictCompat        bool   // Strip non-standard fields for strict OpenAI-compatible endpoints
 	noParallelToolCalls bool   // Send parallel_tool_calls=false (required by Groq/some Llama providers)
+	responseLogFile     string // Append raw response bodies here when non-empty (diagnostic only)
 	httpClient          *http.Client
+
+	logMu      sync.Mutex // serialises appends to responseLogFile across goroutines sharing this Provider
+	logErrOnce sync.Once  // emits at most one stderr warning per Provider lifetime on log write failure
 }
 
 type Option func(*Provider)
@@ -64,6 +72,15 @@ func WithStrictCompat(v bool) Option {
 func WithNoParallelToolCalls(v bool) Option {
 	return func(p *Provider) {
 		p.noParallelToolCalls = v
+	}
+}
+
+// WithResponseLogFile enables append-only raw response capture to the given
+// path. Empty disables it (the default). Diagnostic feature; see
+// (*Provider).appendResponseLog for the record format.
+func WithResponseLogFile(path string) Option {
+	return func(p *Provider) {
+		p.responseLogFile = path
 	}
 }
 
@@ -123,6 +140,16 @@ func (p *Provider) Chat(
 		requestBody["tool_choice"] = "auto"
 		if p.noParallelToolCalls {
 			requestBody["parallel_tool_calls"] = false
+		}
+		// OpenRouter routing hint: require an upstream that supports the
+		// `parameters` field on tool definitions, i.e. one that can actually
+		// honour function calling. Without this, OpenRouter silently down-
+		// routes tools-enabled requests to upstreams that drop the tools and
+		// produce text-only replies (sometimes with the tool descriptor
+		// echoed back inside the content). Non-OpenRouter upstreams ignore
+		// unknown top-level fields, so this is safe for every endpoint.
+		requestBody["provider"] = map[string]any{
+			"require_parameters": true,
 		}
 	}
 
@@ -189,12 +216,26 @@ func (p *Provider) Chat(
 	}
 	defer resp.Body.Close()
 
+	// When response logging is enabled, slurp the full body up front so we can
+	// append it to the diagnostic file before handing it off to the existing
+	// error/parse helpers. The body is then replaced with an in-memory reader
+	// so downstream code is unchanged.
+	if p.responseLogFile != "" {
+		raw, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return httpErrorStatus(model, "error", time.Since(start).Milliseconds(), bytesSent, int64(len(raw))),
+				fmt.Errorf("failed to read response body: %w", readErr)
+		}
+		p.appendResponseLog(req.URL.String(), model, resp.StatusCode, raw)
+		resp.Body = io.NopCloser(bytes.NewReader(raw))
+	}
+
 	if resp.StatusCode != http.StatusOK {
 		respErr := common.HandleErrorResponse(resp, p.apiBase)
 		return httpErrorStatus(model, "error", time.Since(start).Milliseconds(), bytesSent, 0), respErr
 	}
 
-	out, bytesReceived, err := common.ReadParseAndMeasure(resp, p.apiBase)
+	out, bytesReceived, err := common.ReadParseAndMeasure(resp, p.apiBase, common.ToolNameSet(tools))
 	durationMs := time.Since(start).Milliseconds()
 	if err != nil {
 		return httpErrorStatus(model, "parse_error", durationMs, bytesSent, bytesReceived), err
@@ -342,6 +383,55 @@ func normalizeModel(model, apiBase string) string {
 		return after
 	default:
 		return model
+	}
+}
+
+// appendResponseLog writes one record describing an HTTP response to the
+// configured response_log_file. Each record is:
+//
+//	=== <ISO-8601 ts> status=<code> model=<model> url=<url> ===\n
+//	<raw body — exact bytes received, no trimming>
+//	\n---END---\n
+//
+// A trailing newline is inserted before the separator only when the body does
+// not already end in '\n', so single-line JSON responses stay readable and the
+// separator always sits on its own line.
+//
+// Failures are swallowed: the request must complete regardless of whether the
+// diagnostic file is writable. One stderr warning is emitted per Provider
+// lifetime (via sync.Once) to surface persistent misconfiguration without
+// flooding the log under sustained failure.
+func (p *Provider) appendResponseLog(reqURL, model string, status int, body []byte) {
+	if p.responseLogFile == "" {
+		return
+	}
+
+	var buf bytes.Buffer
+	fmt.Fprintf(&buf, "=== %s status=%d model=%s url=%s ===\n",
+		time.Now().Format(time.RFC3339), status, model, reqURL)
+	buf.Write(body)
+	if len(body) == 0 || body[len(body)-1] != '\n' {
+		buf.WriteByte('\n')
+	}
+	buf.WriteString("---END---\n")
+
+	p.logMu.Lock()
+	defer p.logMu.Unlock()
+
+	f, err := os.OpenFile(p.responseLogFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		p.logErrOnce.Do(func() {
+			log.Printf("openai_compat: response_log_file %q open failed: %v (further failures suppressed)",
+				p.responseLogFile, err)
+		})
+		return
+	}
+	defer f.Close()
+	if _, err := f.Write(buf.Bytes()); err != nil {
+		p.logErrOnce.Do(func() {
+			log.Printf("openai_compat: response_log_file %q write failed: %v (further failures suppressed)",
+				p.responseLogFile, err)
+		})
 	}
 }
 

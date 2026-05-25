@@ -146,7 +146,7 @@ func (p *Provider) Chat(
 		return azureErrorStatus(model, "error", time.Since(start).Milliseconds(), bytesSent, 0), respErr
 	}
 
-	out, bytesReceived, err := common.ReadParseAndMeasure(resp, p.apiBase)
+	out, bytesReceived, err := common.ReadParseAndMeasure(resp, p.apiBase, common.ToolNameSet(tools))
 	durationMs := time.Since(start).Milliseconds()
 	if err != nil {
 		return azureErrorStatus(model, "parse_error", durationMs, bytesSent, bytesReceived), err

@@ -3,6 +3,7 @@ package providers
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/PivotLLM/ClawEh/pkg/providers/protocoltypes"
 )
@@ -68,12 +69,15 @@ const (
 )
 
 // FailoverError wraps an LLM provider error with classification metadata.
+// RetryAfter, when non-zero, is the server-supplied hint (parsed from the
+// Retry-After header) telling callers how long to wait before retrying.
 type FailoverError struct {
-	Reason   FailoverReason
-	Provider string
-	Model    string
-	Status   int
-	Wrapped  error
+	Reason     FailoverReason
+	Provider   string
+	Model      string
+	Status     int
+	RetryAfter time.Duration
+	Wrapped    error
 }
 
 func (e *FailoverError) Error() string {

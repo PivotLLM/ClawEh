@@ -7,6 +7,12 @@ import (
 	"time"
 )
 
+// maxSameModelRetryWait bounds how long a same-model retry is allowed to
+// sleep on a server-supplied Retry-After hint. Longer hints fall through to
+// the next candidate immediately (the cooldown still records the hint so the
+// model is skipped on later attempts until it elapses).
+const maxSameModelRetryWait = 3 * time.Second
+
 // FallbackChain orchestrates model fallback across multiple candidates.
 type FallbackChain struct {
 	cooldown *CooldownTracker
@@ -123,83 +129,106 @@ func (fc *FallbackChain) Execute(
 			return nil, context.Canceled
 		}
 
-		// Check cooldown.
-		if !fc.cooldown.IsAvailable(candidate.Provider) {
-			remaining := fc.cooldown.CooldownRemaining(candidate.Provider)
+		// Check cooldown (per provider+model).
+		if !fc.cooldown.IsAvailable(candidate.Provider, candidate.Model) {
+			remaining := fc.cooldown.CooldownRemaining(candidate.Provider, candidate.Model)
 			result.Attempts = append(result.Attempts, FallbackAttempt{
 				Provider: candidate.Provider,
 				Model:    candidate.Model,
 				Skipped:  true,
 				Reason:   FailoverRateLimit,
 				Error: fmt.Errorf(
-					"provider %s in cooldown (%s remaining)",
+					"%s/%s in cooldown (%s remaining)",
 					candidate.Provider,
+					candidate.Model,
 					remaining.Round(time.Second),
 				),
 			})
 			continue
 		}
 
-		// Execute the run function.
-		start := time.Now()
-		resp, err := run(ctx, candidate.Provider, candidate.Model)
-		elapsed := time.Since(start)
+		// Execute the run function with one bounded same-model retry on a
+		// short Retry-After hint.
+		var (
+			resp     *LLMResponse
+			err      error
+			failErr  *FailoverError
+			elapsed  time.Duration
+			attempts int
+		)
+		for {
+			attempts++
+			start := time.Now()
+			resp, err = run(ctx, candidate.Provider, candidate.Model)
+			elapsed = time.Since(start)
 
-		if err == nil {
-			// Success.
-			fc.cooldown.MarkSuccess(candidate.Provider)
-			result.Response = resp
-			result.Provider = candidate.Provider
-			result.Model = candidate.Model
-			return result, nil
-		}
+			if err == nil {
+				fc.cooldown.MarkSuccess(candidate.Provider, candidate.Model)
+				result.Response = resp
+				result.Provider = candidate.Provider
+				result.Model = candidate.Model
+				return result, nil
+			}
 
-		// Context cancellation: abort immediately, no fallback.
-		if ctx.Err() == context.Canceled {
-			result.Attempts = append(result.Attempts, FallbackAttempt{
-				Provider: candidate.Provider,
-				Model:    candidate.Model,
-				Error:    err,
-				Duration: elapsed,
-			})
-			return nil, context.Canceled
-		}
+			if ctx.Err() == context.Canceled {
+				result.Attempts = append(result.Attempts, FallbackAttempt{
+					Provider: candidate.Provider,
+					Model:    candidate.Model,
+					Error:    err,
+					Duration: elapsed,
+				})
+				return nil, context.Canceled
+			}
 
-		// Classify the error.
-		failErr := ClassifyError(err, candidate.Provider, candidate.Model)
+			failErr = ClassifyError(err, candidate.Provider, candidate.Model)
 
-		if failErr == nil {
-			// Unclassifiable error: do not fallback, return immediately.
-			result.Attempts = append(result.Attempts, FallbackAttempt{
-				Provider: candidate.Provider,
-				Model:    candidate.Model,
-				Error:    err,
-				Duration: elapsed,
-			})
-			return nil, fmt.Errorf("fallback: unclassified error from %s/%s: %w",
-				candidate.Provider, candidate.Model, err)
-		}
+			if failErr == nil {
+				// Unclassifiable error: do not fallback, return immediately.
+				result.Attempts = append(result.Attempts, FallbackAttempt{
+					Provider: candidate.Provider,
+					Model:    candidate.Model,
+					Error:    err,
+					Duration: elapsed,
+				})
+				return nil, fmt.Errorf("fallback: unclassified error from %s/%s: %w",
+					candidate.Provider, candidate.Model, err)
+			}
 
-		// Non-retriable error: abort immediately.
-		if !failErr.IsRetriable() {
-			result.Attempts = append(result.Attempts, FallbackAttempt{
-				Provider: candidate.Provider,
-				Model:    candidate.Model,
-				Error:    failErr,
-				Reason:   failErr.Reason,
-				Duration: elapsed,
-			})
-			return nil, failErr
+			if !failErr.IsRetriable() {
+				result.Attempts = append(result.Attempts, FallbackAttempt{
+					Provider: candidate.Provider,
+					Model:    candidate.Model,
+					Error:    failErr,
+					Reason:   failErr.Reason,
+					Duration: elapsed,
+				})
+				return nil, failErr
+			}
+
+			// Same-model retry: only once, and only when the server explicitly
+			// told us how long to wait via Retry-After. The wait is capped at
+			// maxSameModelRetryWait so a misbehaving upstream cannot stall the
+			// agent. Longer hints fall through to the next candidate (and the
+			// cooldown still records the hint for subsequent calls).
+			if attempts == 1 && failErr.RetryAfter > 0 && failErr.RetryAfter <= maxSameModelRetryWait {
+				select {
+				case <-time.After(failErr.RetryAfter):
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				}
+				continue
+			}
+			break
 		}
 
 		// Retriable error: mark failure and continue to next candidate.
 		// Context-limit, billing, and auth errors are user-fixable without a restart;
-		// skip cooldown so the provider is retried immediately once the issue is resolved.
+		// skip cooldown so the model is retried immediately once the issue is resolved.
 		noCooldown := failErr.Reason == FailoverContextLimit ||
 			failErr.Reason == FailoverBilling ||
 			failErr.Reason == FailoverAuth
 		if !noCooldown {
-			fc.cooldown.MarkFailure(candidate.Provider, failErr.Reason)
+			fc.cooldown.MarkFailure(candidate.Provider, candidate.Model, failErr.Reason, failErr.RetryAfter)
 		}
 		result.Attempts = append(result.Attempts, FallbackAttempt{
 			Provider: candidate.Provider,
