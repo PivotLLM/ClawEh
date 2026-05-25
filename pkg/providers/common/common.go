@@ -16,6 +16,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -472,7 +473,29 @@ func DecodeToolCallArguments(raw json.RawMessage, name string) map[string]any {
 
 // --- HTTP response helpers ---
 
+// HTTPStatusError wraps a non-2xx HTTP response so the fallback classifier can
+// extract the status code and any Retry-After hint without re-parsing the
+// formatted error string. Error() preserves the historical message shape (used
+// in logs and existing tests).
+type HTTPStatusError struct {
+	StatusCode  int
+	APIBase     string
+	BodyPreview string
+	RetryAfter  time.Duration // 0 if absent or unparsable
+}
+
+func (e *HTTPStatusError) Error() string {
+	return fmt.Sprintf(
+		"API request failed:\n  Status: %d\n  Body:   %s",
+		e.StatusCode,
+		e.BodyPreview,
+	)
+}
+
 // HandleErrorResponse reads a non-200 response body and returns an appropriate error.
+// Status errors are returned as *HTTPStatusError so the classifier can read the
+// status code and Retry-After header structurally; HTML responses use the
+// existing HTML wrapper.
 func HandleErrorResponse(resp *http.Response, apiBase string) error {
 	contentType := resp.Header.Get("Content-Type")
 	body, readErr := io.ReadAll(io.LimitReader(resp.Body, 256))
@@ -482,11 +505,36 @@ func HandleErrorResponse(resp *http.Response, apiBase string) error {
 	if LooksLikeHTML(body, contentType) {
 		return WrapHTMLResponseError(resp.StatusCode, body, contentType, apiBase)
 	}
-	return fmt.Errorf(
-		"API request failed:\n  Status: %d\n  Body:   %s",
-		resp.StatusCode,
-		ResponsePreview(body, 128),
-	)
+	return &HTTPStatusError{
+		StatusCode:  resp.StatusCode,
+		APIBase:     apiBase,
+		BodyPreview: ResponsePreview(body, 128),
+		RetryAfter:  ParseRetryAfter(resp.Header.Get("Retry-After"), time.Now()),
+	}
+}
+
+// ParseRetryAfter parses an HTTP Retry-After header per RFC 7231:
+// either a number of seconds (delta-seconds) or an HTTP-date. Returns 0
+// when the value is empty, unparsable, or non-positive.
+func ParseRetryAfter(raw string, now time.Time) time.Duration {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0
+	}
+	// delta-seconds (may be a float for some servers).
+	if secs, err := strconv.ParseFloat(raw, 64); err == nil {
+		if secs <= 0 {
+			return 0
+		}
+		return time.Duration(secs * float64(time.Second))
+	}
+	// HTTP-date.
+	if t, err := http.ParseTime(raw); err == nil {
+		if d := t.Sub(now); d > 0 {
+			return d
+		}
+	}
+	return 0
 }
 
 // ReadAndParseResponse peeks at the response body to detect HTML errors,

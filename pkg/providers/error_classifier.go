@@ -5,6 +5,8 @@ import (
 	"errors"
 	"regexp"
 	"strings"
+
+	"github.com/PivotLLM/ClawEh/pkg/providers/common"
 )
 
 // Common patterns in Go HTTP error messages
@@ -86,6 +88,16 @@ var (
 		substr("invalid request format"),
 	}
 
+	// Parse-error patterns: a malformed upstream response should not stop the
+	// fallback chain. Classifying them as a transient (timeout-like) failure
+	// makes the next configured candidate take over instead of bubbling a raw
+	// JSON decode error to the agent.
+	parseErrorPatterns = []errorPattern{
+		substr("failed to parse json response"),
+		substr("failed to decode response"),
+		substr("failed to inspect response"),
+	}
+
 	contextLimitPatterns = []errorPattern{
 		substr("request too large"),
 		substr("payload too large"),
@@ -105,10 +117,13 @@ var (
 	}
 
 	// Transient HTTP status codes that map to timeout (server-side failures).
+	// Includes the Cloudflare 52x family plus OpenRouter's commonly-seen
+	// 504/520/525-528 transient set so a brief upstream blip falls through
+	// to the configured fallbacks instead of stopping the chain.
 	transientStatusCodes = map[int]bool{
-		500: true, 502: true, 503: true,
-		521: true, 522: true, 523: true, 524: true,
-		529: true,
+		500: true, 502: true, 503: true, 504: true,
+		520: true, 521: true, 522: true, 523: true, 524: true,
+		525: true, 526: true, 527: true, 528: true, 529: true,
 	}
 )
 
@@ -131,6 +146,23 @@ func ClassifyError(err error, provider, model string) *FailoverError {
 			Provider: provider,
 			Model:    model,
 			Wrapped:  err,
+		}
+	}
+
+	// Structured HTTP status error from common.HandleErrorResponse. Carries
+	// the Retry-After hint so the fallback chain can size its cooldown to
+	// the server's suggestion instead of the default exponential backoff.
+	var statusErr *common.HTTPStatusError
+	if errors.As(err, &statusErr) {
+		if reason := classifyByStatus(statusErr.StatusCode); reason != "" {
+			return &FailoverError{
+				Reason:     reason,
+				Provider:   provider,
+				Model:      model,
+				Status:     statusErr.StatusCode,
+				RetryAfter: statusErr.RetryAfter,
+				Wrapped:    err,
+			}
 		}
 	}
 
@@ -213,6 +245,12 @@ func classifyByMessage(msg string) FailoverReason {
 	}
 	if matchesAny(msg, authPatterns) {
 		return FailoverAuth
+	}
+	if matchesAny(msg, parseErrorPatterns) {
+		// A malformed upstream response is transient from the caller's
+		// perspective — treat as timeout so the configured fallback chain
+		// gets the next candidate instead of surfacing a parse error.
+		return FailoverTimeout
 	}
 	if matchesAny(msg, formatPatterns) {
 		return FailoverFormat
