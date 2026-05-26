@@ -3,8 +3,8 @@
 # Binary names
 BINARY_NAME=claw
 BUILD_DIR=build
-CMD_DIR=cmd/$(BINARY_NAME)
-MAIN_GO=$(CMD_DIR)/main.go
+CMD_DIR=.
+MAIN_GO=main.go
 
 # Version
 VERSION?=$(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -161,7 +161,7 @@ uninstall-all:
 ## generate: Run go generate (refreshes embedded onboard workspace)
 generate:
 	@echo "Run generate..."
-	@rm -r ./$(CMD_DIR)/workspace 2>/dev/null || true
+	@rm -r ./internal/onboard/workspace 2>/dev/null || true
 	@$(GO) generate ./...
 	@echo "Run generate complete"
 
@@ -274,7 +274,7 @@ lint:
 fix:
 	@$(GOLANGCI_LINT) run --fix
 
-## deps: Download dependencies
+## deps: Download and verify dependencies (optional; only needed for offline-build prep or after go.mod changes — normal builds and tests fetch implicitly)
 deps:
 	@$(GO) mod download
 	@$(GO) mod verify
@@ -284,8 +284,8 @@ update-deps:
 	@$(GO) get -u ./...
 	@$(GO) mod tidy
 
-## check: Run vet, fmt, and verify dependencies
-check: deps fmt vet test
+## check: Run fmt, vet, and tests
+check: fmt vet test
 
 ## run: Build and run claw
 run: build

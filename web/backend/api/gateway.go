@@ -19,7 +19,7 @@ import (
 )
 
 // gatewayEvents holds the in-process broadcaster for status SSE updates.
-// It is package-level so that the gateway code (which lives in cmd/claw) can
+// It is package-level so that the gateway code (which lives in internal/gateway) can
 // publish events without taking a reference to a Handler.
 var gatewayEvents = NewEventBroadcaster()
 

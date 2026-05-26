@@ -2,7 +2,7 @@
 
 # This Makefile is a thin convenience wrapper around the frontend dev loop.
 # Since the WebUI is now embedded into the single `claw` binary, the
-# "backend" lives at cmd/claw — there is no separate claw-web binary.
+# "backend" main lives at the repo root — there is no separate claw-web binary.
 
 # Run frontend dev server alongside the merged claw binary.
 dev:
@@ -15,7 +15,7 @@ dev-frontend:
 
 # Start the merged claw binary in dev mode.
 dev-backend:
-	cd .. && go run ./cmd/claw
+	cd .. && go run .
 
 # Build the frontend bundle into web/backend/dist so that the Go embed in the
 # merged claw binary picks it up on the next `go build`.

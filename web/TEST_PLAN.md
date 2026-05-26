@@ -6,7 +6,7 @@ This test plan covers manual and automated verification of the ClawEh web fronte
 
 ## Prerequisites
 
-- `claw` is running (`update-claw.sh`, `make install && claw`, or `go run ./cmd/claw`)
+- `claw` is running (`update-claw.sh`, `make install && claw`, or `go run .`)
 - A browser or Playwright session pointed at `http://127.0.0.1:18790`
 - Because the gateway and the WebUI now run in the same process, the gateway
   is always available whenever the WebUI is reachable.

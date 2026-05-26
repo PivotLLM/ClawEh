@@ -6,7 +6,7 @@
 ## What This Is
 ClawEh is an independent Go project forked from sipeed/picoclaw on 2026-03-20.
 - Module: `github.com/PivotLLM/ClawEh`
-- Binary: `claw` (cmd/claw) — the gateway, the WebUI HTTP layer, the session
+- Binary: `claw` (main.go at repo root) — the gateway, the WebUI HTTP layer, the session
   API, and the embedded frontend all share one process and one HTTP mux on
   `cfg.Gateway.Port` (default `18790`). There is no longer a separate
   `claw-launcher` / `claw-web` binary.

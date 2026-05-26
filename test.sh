@@ -351,7 +351,7 @@ PY
             trap cleanup_integration EXIT
 
             echo "${DIM}Building claw binary...${NC}"
-            if ! go build -o "$INTEG_BIN" ./cmd/claw 2>&1; then
+            if ! go build -o "$INTEG_BIN" . 2>&1; then
                 echo "${RED}ERROR: failed to build claw${NC}"
                 INTEGRATION_PASSED=false
             else
