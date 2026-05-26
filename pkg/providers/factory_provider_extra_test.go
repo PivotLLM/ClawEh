@@ -264,3 +264,48 @@ func TestCreateProviderFromConfig_AnthropicWithCustomBase(t *testing.T) {
 	}
 	_ = provider
 }
+
+func TestCreateProviderFromConfig_XAI_NoAPIBase(t *testing.T) {
+	cfg := &config.ModelConfig{
+		ModelName: "test-xai",
+		Model:     "xai/grok-4",
+		APIKey:    "xai-test-key",
+	}
+
+	provider, modelID, err := CreateProviderFromConfig(cfg)
+	if err != nil {
+		t.Fatalf("CreateProviderFromConfig() error = %v", err)
+	}
+	if modelID != "grok-4" {
+		t.Errorf("modelID = %q, want grok-4", modelID)
+	}
+	if _, ok := provider.(*HTTPProvider); !ok {
+		t.Fatalf("expected *HTTPProvider for xai protocol, got %T", provider)
+	}
+}
+
+func TestCreateProviderFromConfig_XAI_ExplicitAPIBase(t *testing.T) {
+	cfg := &config.ModelConfig{
+		ModelName: "test-xai-explicit",
+		Model:     "xai/grok-4-fast",
+		APIKey:    "xai-test-key",
+		APIBase:   "https://gateway.example.com/xai/v1",
+	}
+
+	provider, modelID, err := CreateProviderFromConfig(cfg)
+	if err != nil {
+		t.Fatalf("CreateProviderFromConfig() error = %v", err)
+	}
+	if modelID != "grok-4-fast" {
+		t.Errorf("modelID = %q, want grok-4-fast", modelID)
+	}
+	if _, ok := provider.(*HTTPProvider); !ok {
+		t.Fatalf("expected *HTTPProvider for xai protocol, got %T", provider)
+	}
+}
+
+func TestGetDefaultAPIBase_XAI(t *testing.T) {
+	if got := getDefaultAPIBase("xai"); got != "https://api.x.ai/v1" {
+		t.Fatalf("getDefaultAPIBase(%q) = %q, want %q", "xai", got, "https://api.x.ai/v1")
+	}
+}
