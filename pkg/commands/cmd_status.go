@@ -83,6 +83,23 @@ func buildStatusReply(req Request, rt *Runtime) string {
 		}
 	}
 
+	// Blocked providers (process-wide): only emitted when the runtime exposes
+	// a snapshot. Label is explicit so the reader understands the scope —
+	// cooldowns are tracked per-process, not per-session.
+	if rt != nil && rt.ListCooldowns != nil {
+		entries := rt.ListCooldowns()
+		body.WriteString("\n")
+		if len(entries) == 0 {
+			body.WriteString("Blocked providers (process-wide): none\n")
+		} else {
+			body.WriteString("Blocked providers (process-wide):\n")
+			now := time.Now()
+			for _, e := range entries {
+				fmt.Fprintf(&body, "  %s\n", formatCooldownLine(e, now))
+			}
+		}
+	}
+
 	bodyText := strings.TrimRight(body.String(), "\n")
 
 	var out strings.Builder

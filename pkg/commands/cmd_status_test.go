@@ -380,3 +380,54 @@ func TestStatus_ArchiveDateRange(t *testing.T) {
 		t.Errorf("missing 'Archive last: 2026-05-25T09:15:00Z':\n%s", reply)
 	}
 }
+
+// TestStatus_BlockedProvidersNone verifies the "none" path of the blocked-
+// providers section: when the runtime exposes ListCooldowns but the snapshot
+// is empty, /status emits a single-line "Blocked providers (process-wide):
+// none" entry.
+func TestStatus_BlockedProvidersNone(t *testing.T) {
+	rt := &Runtime{
+		ListCooldowns: func() []CooldownEntry { return nil },
+	}
+	reply := buildStatusReply(Request{Channel: "cli"}, rt)
+	if !strings.Contains(reply, "Blocked providers (process-wide): none") {
+		t.Errorf("missing 'Blocked providers (process-wide): none':\n%s", reply)
+	}
+}
+
+// TestStatus_BlockedProvidersWithEntries verifies the populated path: each
+// CooldownEntry renders as one indented line under the section header.
+func TestStatus_BlockedProvidersWithEntries(t *testing.T) {
+	now := time.Now()
+	rt := &Runtime{
+		ListCooldowns: func() []CooldownEntry {
+			return []CooldownEntry{
+				{
+					Provider: "openai",
+					Model:    "gpt-4",
+					Reason:   "billing",
+					Since:    now.Add(-90 * time.Second),
+					Until:    now.Add(210 * time.Second),
+				},
+			}
+		},
+	}
+	reply := buildStatusReply(Request{Channel: "cli"}, rt)
+	if !strings.Contains(reply, "Blocked providers (process-wide):") {
+		t.Errorf("missing section header:\n%s", reply)
+	}
+	if !strings.Contains(reply, "openai/gpt-4 — billing") {
+		t.Errorf("missing entry line:\n%s", reply)
+	}
+}
+
+// TestStatus_BlockedProvidersAbsentWhenNoCallback verifies the section is
+// omitted entirely when the runtime does not expose ListCooldowns — old
+// callers must keep their original layout.
+func TestStatus_BlockedProvidersAbsentWhenNoCallback(t *testing.T) {
+	rt := &Runtime{}
+	reply := buildStatusReply(Request{Channel: "cli"}, rt)
+	if strings.Contains(reply, "Blocked providers") {
+		t.Errorf("unexpected 'Blocked providers' section when ListCooldowns nil:\n%s", reply)
+	}
+}
