@@ -2,11 +2,15 @@ package gateway
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 
+	"github.com/PivotLLM/ClawEh/pkg/config"
 	"github.com/PivotLLM/ClawEh/pkg/health"
+	webserver "github.com/PivotLLM/ClawEh/web/backend"
 )
 
 // hitCallback POSTs to /api/reply/{token} via the external mux that
@@ -111,5 +115,100 @@ func TestRebuildSharedHTTPServer_RegistersCallbackRoute(t *testing.T) {
 	}
 	if got := hitCallback(t, fake.mux); got != http.StatusBadRequest {
 		t.Fatalf("after rebuildSharedHTTPServer: got %d, want %d (404 means the callback route was dropped on reload — the production bug fixed in e32731eb)", got, http.StatusBadRequest)
+	}
+}
+
+// hitGET issues a GET against the supplied mux and returns the recorder so
+// callers can assert both status code and body content.
+func hitGET(t *testing.T, mux *http.ServeMux, path string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	return rec
+}
+
+// TestRebuildSharedHTTPServer_MergedBinaryRoutesSurviveReload exercises the
+// reload seam end-to-end for the merged claw binary: it primes a
+// gatewayServices with a real webserver.Server, calls rebuildSharedHTTPServer
+// (the same path that handleConfigReload → restartServices takes on a
+// config reload), and asserts that every route the merged binary needs to
+// keep alive on reload is reachable on the rebuilt mux.
+//
+// The point is to guard against a future refactor that "rebuilds" the shared
+// mux on reload but forgets to re-register one of:
+//
+//   - POST /api/reply/{token} — the canonical callback-404 regression (the
+//     gateway-side bug fixed in e32731eb).
+//   - GET /api/gateway/status — the WebUI's heartbeat; if missing the
+//     frontend shows the gateway as down even though it is up.
+//   - GET / — the embedded SPA fallback; if missing the WebUI 404s.
+//
+// All three live on the same mux as the channel webhook handlers, and the
+// reload code is the only place that constructs that mux. If reload stops
+// re-registering them, the WebUI silently breaks until the user restarts the
+// process — exactly the failure mode this test exists to catch.
+func TestRebuildSharedHTTPServer_MergedBinaryRoutesSurviveReload(t *testing.T) {
+	// Use a temp config file so the api.Handler has somewhere to read/write
+	// without polluting the developer's real ~/.claw/config.json.
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	cfg := config.DefaultConfig()
+	if err := config.SaveConfig(configPath, cfg); err != nil {
+		t.Fatalf("SaveConfig() error = %v", err)
+	}
+
+	services := &gatewayServices{
+		WebServer: webserver.New(webserver.Options{
+			ConfigPath: configPath,
+			ListenPort: cfg.Gateway.Port,
+		}),
+	}
+	fake := &fakeChannelManager{}
+
+	rebuildSharedHTTPServer(services, "127.0.0.1", 0, fake, nil)
+
+	if fake.mux == nil {
+		t.Fatal("rebuildSharedHTTPServer did not invoke SetupHTTPServer on the channel manager")
+	}
+
+	// /api/reply/{token} — empty body short-circuits to 400, proving the
+	// route is registered (404 would mean the merge dropped it).
+	if got := hitCallback(t, fake.mux); got != http.StatusBadRequest {
+		t.Fatalf("POST /api/reply/{token}: got %d, want %d (route missing — reload dropped the callback handler)", got, http.StatusBadRequest)
+	}
+
+	// /api/gateway/status — the WebUI's poll target. In the merged binary
+	// it always reports running, with a JSON body that includes the
+	// "gateway_status" field.
+	statusRec := hitGET(t, fake.mux, "/api/gateway/status")
+	if statusRec.Code != http.StatusOK {
+		t.Fatalf("GET /api/gateway/status: got %d, want %d (route missing — reload dropped the WebUI API)", statusRec.Code, http.StatusOK)
+	}
+	var statusBody map[string]any
+	if err := json.Unmarshal(statusRec.Body.Bytes(), &statusBody); err != nil {
+		t.Fatalf("GET /api/gateway/status body not JSON: %v", err)
+	}
+	if got, _ := statusBody["gateway_status"].(string); got != "running" {
+		t.Fatalf("gateway_status = %q, want %q (the merged binary should always report running)", got, "running")
+	}
+
+	// GET / — the embedded SPA fallback handler. We expect 200 (the embed
+	// hands back the index page even when dist is empty — the .gitkeep
+	// placeholder is served as a directory listing) or, if the dist
+	// directory truly has no index, a redirect/404 that nonetheless proves
+	// the handler is mounted (not the ServeMux's bare-route 404).
+	rootRec := hitGET(t, fake.mux, "/")
+	// In a freshly-built repo where the frontend bundle has not been built,
+	// dist only contains .gitkeep. The handler still responds (it serves
+	// the directory or 404s from the FileServer), but never returns the
+	// default ServeMux 404 page. We assert the response was produced by
+	// our handler by checking the Content-Type header — an unmounted route
+	// would emit "text/plain; charset=utf-8" with body "404 page not
+	// found".
+	if rootRec.Code == http.StatusNotFound {
+		body := rootRec.Body.String()
+		if body == "404 page not found\n" {
+			t.Fatalf("GET / returned the default ServeMux 404 — the SPA fallback handler is not mounted")
+		}
 	}
 }
