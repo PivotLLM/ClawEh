@@ -1,4 +1,4 @@
-.PHONY: all build install uninstall uninstall-all clean help test test-race test-coverage test-cover-html test-regression
+.PHONY: all build install uninstall uninstall-all clean help test test-race test-coverage test-cover-html test-regression generate vet fmt lint fix deps update-deps check run frontend frontend-deps build-linux-arm build-linux-arm64 build-linux-mipsle build-pi-zero build-all
 
 # Binary names
 BINARY_NAME=claw
@@ -92,25 +92,48 @@ endif
 
 BINARY_PATH=$(BUILD_DIR)/$(BINARY_NAME)-$(PLATFORM)-$(ARCH)
 
+# Frontend / embedded SPA
+FRONTEND_DIR=web/frontend
+FRONTEND_NODE_MODULES=$(FRONTEND_DIR)/node_modules
+EMBED_DIR=web/backend/dist
+EMBED_INDEX=$(EMBED_DIR)/index.html
+# Source files that, when changed, should retrigger the frontend build.
+FRONTEND_SOURCES=$(shell find $(FRONTEND_DIR)/src $(FRONTEND_DIR)/public 2>/dev/null) \
+	$(FRONTEND_DIR)/index.html \
+	$(FRONTEND_DIR)/package.json \
+	$(FRONTEND_DIR)/pnpm-lock.yaml \
+	$(FRONTEND_DIR)/vite.config.ts \
+	$(FRONTEND_DIR)/tsconfig.json \
+	$(FRONTEND_DIR)/tsconfig.app.json \
+	$(FRONTEND_DIR)/tsconfig.node.json
+
 # Default target
 all: build
 
-## build: Build the claw binary for current platform.
-##
-## The frontend (web/frontend) is built and embedded into the same binary,
-## so a single `claw gateway` invocation serves the WebUI on port 18790.
-build: generate
+## build: Build the claw binary (frontend SPA embedded) for current platform.
+build: $(EMBED_INDEX) generate
 	@echo "Building $(BINARY_NAME) for $(PLATFORM)/$(ARCH)..."
 	@mkdir -p $(BUILD_DIR)
-	@if [ ! -f web/backend/dist/index.html ]; then \
-		echo "Building frontend..."; \
-		cd web/frontend && pnpm install && pnpm build:backend; \
-	fi
 	@$(GO) build $(GOFLAGS) $(LDFLAGS) -o $(BINARY_PATH) ./$(CMD_DIR)
 	@echo "Build complete: $(BINARY_PATH)"
 	@ln -sf $(BINARY_NAME)-$(PLATFORM)-$(ARCH) $(BUILD_DIR)/$(BINARY_NAME)
 
-## install: Build and install claw
+## frontend: Build the SPA into the Go embed source (web/backend/dist).
+frontend: $(EMBED_INDEX)
+
+## frontend-deps: Install frontend npm dependencies.
+frontend-deps: $(FRONTEND_NODE_MODULES)
+
+$(FRONTEND_NODE_MODULES): $(FRONTEND_DIR)/package.json $(FRONTEND_DIR)/pnpm-lock.yaml
+	@echo "Installing frontend dependencies (pnpm install)..."
+	@cd $(FRONTEND_DIR) && pnpm install
+	@touch $(FRONTEND_NODE_MODULES)
+
+$(EMBED_INDEX): $(FRONTEND_SOURCES) | $(FRONTEND_NODE_MODULES)
+	@echo "Building frontend SPA into $(EMBED_DIR)..."
+	@cd $(FRONTEND_DIR) && pnpm run build:backend
+
+## install: Build and install claw to $(INSTALL_BIN_DIR)
 install: build
 	@echo "Installing $(BINARY_NAME)..."
 	@mkdir -p $(INSTALL_BIN_DIR)
@@ -118,7 +141,6 @@ install: build
 	@chmod +x $(INSTALL_BIN_DIR)/$(BINARY_NAME)$(INSTALL_TMP_SUFFIX)
 	@mv -f $(INSTALL_BIN_DIR)/$(BINARY_NAME)$(INSTALL_TMP_SUFFIX) $(INSTALL_BIN_DIR)/$(BINARY_NAME)
 	@echo "Installed: $(INSTALL_BIN_DIR)/$(BINARY_NAME)"
-	@echo "Installation complete!"
 
 ## uninstall: Remove claw from system
 uninstall:
@@ -136,7 +158,7 @@ uninstall-all:
 	@echo "Removed: $(CLAW_HOME)"
 	@echo "Complete uninstallation done!"
 
-## generate: Run generate
+## generate: Run go generate (refreshes embedded onboard workspace)
 generate:
 	@echo "Run generate..."
 	@rm -r ./$(CMD_DIR)/workspace 2>/dev/null || true
@@ -144,21 +166,21 @@ generate:
 	@echo "Run generate complete"
 
 ## build-linux-arm: Build for Linux ARMv7 (e.g. Raspberry Pi Zero 2 W 32-bit)
-build-linux-arm: generate
+build-linux-arm: $(EMBED_INDEX) generate
 	@echo "Building for linux/arm (GOARM=7)..."
 	@mkdir -p $(BUILD_DIR)
 	GOOS=linux GOARCH=arm GOARM=7 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-arm ./$(CMD_DIR)
 	@echo "Build complete: $(BUILD_DIR)/$(BINARY_NAME)-linux-arm"
 
 ## build-linux-arm64: Build for Linux ARM64 (e.g. Raspberry Pi Zero 2 W 64-bit)
-build-linux-arm64: generate
+build-linux-arm64: $(EMBED_INDEX) generate
 	@echo "Building for linux/arm64..."
 	@mkdir -p $(BUILD_DIR)
 	GOOS=linux GOARCH=arm64 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-arm64 ./$(CMD_DIR)
 	@echo "Build complete: $(BUILD_DIR)/$(BINARY_NAME)-linux-arm64"
 
 ## build-linux-mipsle: Build for Linux MIPS32 LE
-build-linux-mipsle: generate
+build-linux-mipsle: $(EMBED_INDEX) generate
 	@echo "Building for linux/mipsle (softfloat)..."
 	@mkdir -p $(BUILD_DIR)
 	GOOS=linux GOARCH=mipsle GOMIPS=softfloat $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-mipsle ./$(CMD_DIR)
@@ -170,7 +192,7 @@ build-pi-zero: build-linux-arm build-linux-arm64
 	@echo "Pi Zero 2 W builds: $(BUILD_DIR)/$(BINARY_NAME)-linux-arm (32-bit), $(BUILD_DIR)/$(BINARY_NAME)-linux-arm64 (64-bit)"
 
 ## build-all: Build claw for all platforms
-build-all: generate
+build-all: $(EMBED_INDEX) generate
 	@echo "Building for multiple platforms..."
 	@mkdir -p $(BUILD_DIR)
 	GOOS=linux GOARCH=amd64 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 ./$(CMD_DIR)
@@ -187,11 +209,13 @@ build-all: generate
 	GOOS=netbsd GOARCH=arm64 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-netbsd-arm64 ./$(CMD_DIR)
 	@echo "All builds complete"
 
-## clean: Remove build artifacts
+## clean: Remove all build artifacts (Go binaries, frontend dist, embedded SPA)
 clean:
 	@echo "Cleaning build artifacts..."
 	@rm -rf $(BUILD_DIR)
-	@echo "Clean complete"
+	@rm -rf $(EMBED_DIR)
+	@rm -rf $(FRONTEND_DIR)/dist
+	@echo "Clean complete (node_modules left in place)"
 
 ## vet: Run go vet for static analysis
 vet: generate
@@ -267,44 +291,6 @@ check: deps fmt vet test
 run: build
 	@$(BUILD_DIR)/$(BINARY_NAME) $(ARGS)
 
-## docker-build: Build Docker image (minimal Alpine-based)
-docker-build:
-	@echo "Building minimal Docker image (Alpine-based)..."
-	docker compose -f docker/docker-compose.yml build claw-agent claw-gateway
-
-## docker-build-full: Build Docker image with full MCP support (Node.js 24)
-docker-build-full:
-	@echo "Building full-featured Docker image (Node.js 24)..."
-	docker compose -f docker/docker-compose.full.yml build claw-agent claw-gateway
-
-## docker-test: Test MCP tools in Docker container
-docker-test:
-	@echo "Testing MCP tools in Docker..."
-	@chmod +x scripts/test-docker-mcp.sh
-	@./scripts/test-docker-mcp.sh
-
-## docker-run: Run claw gateway in Docker (Alpine-based)
-docker-run:
-	docker compose -f docker/docker-compose.yml --profile gateway up
-
-## docker-run-full: Run claw gateway in Docker (full-featured)
-docker-run-full:
-	docker compose -f docker/docker-compose.full.yml --profile gateway up
-
-## docker-run-agent: Run claw agent in Docker (interactive, Alpine-based)
-docker-run-agent:
-	docker compose -f docker/docker-compose.yml run --rm claw-agent
-
-## docker-run-agent-full: Run claw agent in Docker (interactive, full-featured)
-docker-run-agent-full:
-	docker compose -f docker/docker-compose.full.yml run --rm claw-agent
-
-## docker-clean: Clean Docker images and volumes
-docker-clean:
-	docker compose -f docker/docker-compose.yml down -v
-	docker compose -f docker/docker-compose.full.yml down -v
-	docker rmi claw:latest claw:full 2>/dev/null || true
-
 ## help: Show this help message
 help:
 	@echo "ClawEh Makefile"
@@ -316,8 +302,10 @@ help:
 	@grep -E '^## ' $(MAKEFILE_LIST) | sort | awk -F': ' '{printf "  %-20s %s\n", substr($$1, 4), $$2}'
 	@echo ""
 	@echo "Examples:"
-	@echo "  make build              # Build claw (with embedded WebUI) for current platform"
-	@echo "  make install            # Install to $(INSTALL_BIN_DIR)"
+	@echo "  make                    # Same as 'make build'"
+	@echo "  make build              # Build claw (frontend SPA embedded) for current platform"
+	@echo "  make install            # Build and install to $(INSTALL_BIN_DIR)"
+	@echo "  make clean              # Remove all build artifacts (keeps node_modules)"
 	@echo "  make uninstall          # Remove binaries"
 	@echo "  make uninstall-all      # Remove binaries and data directory"
 	@echo ""
