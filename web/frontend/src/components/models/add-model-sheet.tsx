@@ -1,9 +1,13 @@
 import { IconLoader2 } from "@tabler/icons-react"
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useTranslation } from "react-i18next"
 
 import { addModel, setDefaultModel } from "@/api/models"
 import { maskedSecretPlaceholder } from "@/components/secret-placeholder"
+import {
+  REASONING_EFFORT_OPTIONS,
+  parseExtraBody,
+} from "@/components/models/model-config-fields"
 import {
   AdvancedSection,
   Field,
@@ -13,6 +17,13 @@ import {
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import {
   Sheet,
   SheetContent,
   SheetDescription,
@@ -20,6 +31,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet"
+import { Textarea } from "@/components/ui/textarea"
 
 interface AddForm {
   modelName: string
@@ -34,6 +46,8 @@ interface AddForm {
   maxTokensField: string
   requestTimeout: string
   thinkingLevel: string
+  reasoningEffort: string
+  extraBody: string
 }
 
 const EMPTY_ADD_FORM: AddForm = {
@@ -49,6 +63,8 @@ const EMPTY_ADD_FORM: AddForm = {
   maxTokensField: "",
   requestTimeout: "",
   thinkingLevel: "",
+  reasoningEffort: "",
+  extraBody: "",
 }
 
 interface AddModelSheetProps {
@@ -107,8 +123,14 @@ export function AddModelSheet({
       }
     }
 
+  const extraBodyParsed = useMemo(
+    () => parseExtraBody(form.extraBody, t),
+    [form.extraBody, t],
+  )
+
   const handleSave = async () => {
     if (!validate()) return
+    if (extraBodyParsed.error) return
     setSaving(true)
     setServerError("")
     try {
@@ -129,6 +151,8 @@ export function AddModelSheet({
           ? Number(form.requestTimeout)
           : undefined,
         thinking_level: form.thinkingLevel.trim() || undefined,
+        reasoning_effort: form.reasoningEffort || undefined,
+        extra_body: extraBodyParsed.value,
       })
       if (setAsDefault) {
         await setDefaultModel(modelName)
@@ -296,6 +320,54 @@ export function AddModelSheet({
               </Field>
 
               <Field
+                label={t("models.field.reasoningEffort")}
+                hint={t("models.field.reasoningEffortHint")}
+              >
+                <Select
+                  value={
+                    form.reasoningEffort === "" ? "__unset__" : form.reasoningEffort
+                  }
+                  onValueChange={(v) =>
+                    setForm((f) => ({
+                      ...f,
+                      reasoningEffort: v === "__unset__" ? "" : v,
+                    }))
+                  }
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__unset__">
+                      {t("models.field.reasoningEffortUnset")}
+                    </SelectItem>
+                    {REASONING_EFFORT_OPTIONS.map((opt) => (
+                      <SelectItem key={opt} value={opt}>
+                        {opt}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
+
+              <Field
+                label={t("models.field.extraBody")}
+                hint={t("models.field.extraBodyHint")}
+                error={extraBodyParsed.error}
+              >
+                <Textarea
+                  value={form.extraBody}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, extraBody: e.target.value }))
+                  }
+                  placeholder={t("models.field.extraBodyPlaceholder")}
+                  className="font-mono text-xs"
+                  rows={6}
+                  aria-invalid={!!extraBodyParsed.error}
+                />
+              </Field>
+
+              <Field
                 label={t("models.field.maxTokensField")}
                 hint={t("models.field.maxTokensFieldHint")}
               >
@@ -319,7 +391,10 @@ export function AddModelSheet({
           <Button variant="ghost" onClick={onClose} disabled={saving}>
             {t("common.cancel")}
           </Button>
-          <Button onClick={handleSave} disabled={saving}>
+          <Button
+            onClick={handleSave}
+            disabled={saving || !!extraBodyParsed.error}
+          >
             {saving && <IconLoader2 className="size-4 animate-spin" />}
             {t("models.add.confirm")}
           </Button>

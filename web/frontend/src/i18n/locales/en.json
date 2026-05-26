@@ -195,7 +195,16 @@
       "maxTokens": "Max Output Tokens",
       "maxTokensHint": "Maximum tokens the model may generate per response. Overrides the global default for this model only.",
       "maxTokensField": "Max Tokens Field",
-      "maxTokensFieldHint": "Override the request field name for max tokens, e.g. max_completion_tokens."
+      "maxTokensFieldHint": "Override the request field name for max tokens, e.g. max_completion_tokens.",
+      "reasoningEffort": "Reasoning Effort",
+      "reasoningEffortHint": "Sets the OpenAI-style reasoning_effort request field on supported models (xAI Grok, OpenAI o-series). Accepted values: low, medium, high. Leave unset to omit.",
+      "reasoningEffortUnset": "(unset)",
+      "extraBody": "Extra Request Body",
+      "extraBodyHint": "Free-form JSON merged into the OpenAI-compatible request body for per-provider knobs not modelled natively. Must be a JSON object. Reserved keys claimed by claw are rejected.",
+      "extraBodyPlaceholder": "{\n  \"search_parameters\": { \"mode\": \"on\" }\n}",
+      "extraBodyInvalidJSON": "Must be a valid JSON object.",
+      "extraBodyNotObject": "Top-level value must be a JSON object.",
+      "extraBodyReservedKey": "Key \"{{key}}\" is claimed by claw and cannot be overridden via extra_body."
     },
     "edit": {
       "title": "Configure {{name}}",

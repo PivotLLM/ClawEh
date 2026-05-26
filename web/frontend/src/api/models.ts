@@ -17,6 +17,9 @@ export interface ModelInfo {
   request_timeout?: number
   thinking_level?: string
   no_tools?: boolean
+  // Shape 3 per-LLM custom fields.
+  reasoning_effort?: string
+  extra_body?: Record<string, unknown>
   enabled: boolean
   // Meta
   configured: boolean
