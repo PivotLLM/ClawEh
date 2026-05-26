@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/PivotLLM/ClawEh/pkg/logger"
 )
 
 const summaryVersion = 1
@@ -319,6 +321,11 @@ func buildSummarizationPrompt(existing *Summary, archiveMin, archiveMax int, agg
 }
 
 // validateAndUnmarshalLLMResponse parses and validates an LLM-produced Summary JSON.
+// It tolerates a leading code fence and a prose preamble/suffix wrapped around
+// a JSON object: after stripping the fence, it searches for the first balanced
+// {...} object (respecting string literals and \-escaped quotes) and parses
+// that. If no balanced object is found, the original buffer's unmarshal error
+// is returned unchanged so genuinely broken responses still fail loudly.
 func validateAndUnmarshalLLMResponse(response string) (*Summary, error) {
 	// Strip markdown fences if present (some providers add them despite instructions).
 	cleaned := strings.TrimSpace(response)
@@ -329,12 +336,82 @@ func validateAndUnmarshalLLMResponse(response string) (*Summary, error) {
 		cleaned = strings.TrimSuffix(strings.TrimSpace(cleaned), "```")
 		cleaned = strings.TrimSpace(cleaned)
 	}
+
 	var s Summary
-	if err := json.Unmarshal([]byte(cleaned), &s); err != nil {
-		return nil, fmt.Errorf("unmarshal: %w", err)
+	directErr := json.Unmarshal([]byte(cleaned), &s)
+	if directErr == nil {
+		if err := s.Validate(); err != nil {
+			return nil, fmt.Errorf("validate: %w", err)
+		}
+		return &s, nil
 	}
-	if err := s.Validate(); err != nil {
+
+	// Direct unmarshal failed. Try to recover by extracting the first balanced
+	// JSON object from anywhere in the buffer (handles prose preamble/suffix).
+	start, end, ok := findBalancedJSONObject(cleaned)
+	if !ok {
+		return nil, fmt.Errorf("unmarshal: %w", directErr)
+	}
+	extracted := cleaned[start : end+1]
+	var s2 Summary
+	if err := json.Unmarshal([]byte(extracted), &s2); err != nil {
+		// Extraction located braces but the inner content is still invalid;
+		// surface the original error so we don't mask the real failure.
+		return nil, fmt.Errorf("unmarshal: %w", directErr)
+	}
+	logger.DebugCF("llmcontext", "recovered JSON from prose-wrapped LLM response",
+		map[string]any{
+			"prefix_len": start,
+			"suffix_len": len(cleaned) - (end + 1),
+		})
+	if err := s2.Validate(); err != nil {
 		return nil, fmt.Errorf("validate: %w", err)
 	}
-	return &s, nil
+	return &s2, nil
+}
+
+// findBalancedJSONObject locates the first balanced {...} in s, respecting
+// double-quoted string literals and \-escaped quotes inside them. Returns the
+// byte offsets of the opening '{' and matching closing '}', or ok=false when
+// no balanced object exists.
+func findBalancedJSONObject(s string) (start, end int, ok bool) {
+	start = -1
+	depth := 0
+	inString := false
+	escape := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if inString {
+			if escape {
+				escape = false
+				continue
+			}
+			if c == '\\' {
+				escape = true
+				continue
+			}
+			if c == '"' {
+				inString = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inString = true
+		case '{':
+			if depth == 0 {
+				start = i
+			}
+			depth++
+		case '}':
+			if depth == 0 {
+				continue
+			}
+			depth--
+			if depth == 0 {
+				return start, i, true
+			}
+		}
+	}
+	return -1, -1, false
 }

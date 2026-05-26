@@ -186,6 +186,111 @@ func TestValidateAndUnmarshalLLMResponse_MarkdownFenced(t *testing.T) {
 	}
 }
 
+// TestValidateAndUnmarshalLLMResponse_ProsePreamble — prose preceding a JSON
+// object is stripped and the inner object is parsed (recovery path).
+func TestValidateAndUnmarshalLLMResponse_ProsePreamble(t *testing.T) {
+	raw := "Quick summary follows.\n\n" +
+		`{"version":1,"state":{"goals":"build feature"},"covered_seq_start":0,"covered_seq_end":0,"generated_at":"2026-01-01T00:00:00Z"}`
+	s, err := validateAndUnmarshalLLMResponse(raw)
+	if err != nil {
+		t.Fatalf("expected nil error, got: %v", err)
+	}
+	if s.State.Goals != "build feature" {
+		t.Errorf("expected goals 'build feature', got: %q", s.State.Goals)
+	}
+}
+
+// TestValidateAndUnmarshalLLMResponse_ProsePreambleWithFence — prose, then a
+// code-fenced JSON block. The code fence is stripped first, then the prose
+// preamble is removed by the recovery path.
+func TestValidateAndUnmarshalLLMResponse_ProsePreambleWithFence(t *testing.T) {
+	raw := "Here is the summary:\n```json\nthis is leading prose inside the fence\n" +
+		`{"version":1,"state":{"goals":"fenced+prose"},"covered_seq_start":0,"covered_seq_end":0,"generated_at":"2026-01-01T00:00:00Z"}` +
+		"\nand some trailing prose\n```"
+	s, err := validateAndUnmarshalLLMResponse(raw)
+	if err != nil {
+		t.Fatalf("expected nil error, got: %v", err)
+	}
+	if s.State.Goals != "fenced+prose" {
+		t.Errorf("expected goals 'fenced+prose', got: %q", s.State.Goals)
+	}
+}
+
+// TestValidateAndUnmarshalLLMResponse_BracesInsideString — braces appearing
+// inside a JSON string literal must not throw off the brace-matching scanner.
+// The inner string contains both '{' and '}' as well as an escaped quote.
+func TestValidateAndUnmarshalLLMResponse_BracesInsideString(t *testing.T) {
+	// goals contains: "text}with}braces and an escaped \" quote
+	raw := "preamble " +
+		`{"version":1,"state":{"goals":"\"text}with}braces\""},"covered_seq_start":0,"covered_seq_end":0,"generated_at":"2026-01-01T00:00:00Z"}`
+	s, err := validateAndUnmarshalLLMResponse(raw)
+	if err != nil {
+		t.Fatalf("expected nil error, got: %v", err)
+	}
+	if !strings.Contains(s.State.Goals, "text}with}braces") {
+		t.Errorf("expected goals to contain literal braces, got: %q", s.State.Goals)
+	}
+}
+
+// TestValidateAndUnmarshalLLMResponse_TruncatedJSON — an open brace with no
+// matching close returns the original unmarshal error (recovery fails).
+func TestValidateAndUnmarshalLLMResponse_TruncatedJSON(t *testing.T) {
+	raw := `{"version":1,"state":{"goals":"truncated`
+	_, err := validateAndUnmarshalLLMResponse(raw)
+	if err == nil {
+		t.Fatal("expected unmarshal error for truncated JSON, got nil")
+	}
+	if !strings.HasPrefix(err.Error(), "unmarshal:") {
+		t.Errorf("expected original unmarshal error, got: %v", err)
+	}
+}
+
+// TestValidateAndUnmarshalLLMResponse_EmptyAndWhitespace — empty and
+// whitespace-only inputs return the original unmarshal error unchanged.
+func TestValidateAndUnmarshalLLMResponse_EmptyAndWhitespace(t *testing.T) {
+	cases := []string{"", "   ", "\n\t  \n"}
+	for _, raw := range cases {
+		if _, err := validateAndUnmarshalLLMResponse(raw); err == nil {
+			t.Errorf("expected error for empty/whitespace input %q, got nil", raw)
+		}
+	}
+}
+
+// TestFindBalancedJSONObject — unit-tests the brace scanner directly so
+// edge cases stay covered even when validate-level paths change.
+func TestFindBalancedJSONObject(t *testing.T) {
+	tests := []struct {
+		name  string
+		in    string
+		ok    bool
+		start int
+		end   int
+	}{
+		{"plain object", `{"a":1}`, true, 0, 6},
+		{"with preamble", `hi {"a":1}`, true, 3, 9},
+		{"nested", `pre {"a":{"b":2}}`, true, 4, 16},
+		{"braces in string", `pre {"k":"a}b{c"}`, true, 4, 16},
+		{"escaped quote in string", `pre {"k":"a\"}b"}`, true, 4, 16},
+		{"no opening brace", "hello world", false, -1, -1},
+		{"unbalanced", `pre {"a":1`, false, -1, -1},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			start, end, ok := findBalancedJSONObject(tc.in)
+			if ok != tc.ok {
+				t.Fatalf("ok = %v, want %v", ok, tc.ok)
+			}
+			if !ok {
+				return
+			}
+			if start != tc.start || end != tc.end {
+				t.Errorf("got (%d, %d), want (%d, %d); slice=%q",
+					start, end, tc.start, tc.end, tc.in[start:end+1])
+			}
+		})
+	}
+}
+
 // TestBuildSummarizationPrompt_ContainsArchiveRange — prompt includes archive min/max.
 func TestBuildSummarizationPrompt_ContainsArchiveRange(t *testing.T) {
 	prompt := buildSummarizationPrompt(nil, 10, 50, false)
