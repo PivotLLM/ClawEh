@@ -12,8 +12,11 @@ import (
 const (
 	// FileName is the launcher-specific settings file name.
 	FileName = "launcher-config.json"
-	// DefaultPort is the default port for the web launcher.
-	DefaultPort = 18800
+	// DefaultPort is the default port for the merged claw HTTP server (gateway
+	// + WebUI on a single mux). It matches pkg/config.DefaultConfig's
+	// Gateway.Port so the launcher-config UI shows the right value when no
+	// override has been saved.
+	DefaultPort = 18790
 )
 
 // Config stores launch parameters for the web backend service.

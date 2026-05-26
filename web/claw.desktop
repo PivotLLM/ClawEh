@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=ClawEh
+Comment=ClawEh agent gateway and WebUI (merged into one binary on port 18790)
+Exec=claw
+Icon=claw
+Terminal=true
+Type=Application
+Categories=Utility;Network;
+Keywords=clawei;ai;agent;bot;
