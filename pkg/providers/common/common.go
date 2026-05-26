@@ -496,9 +496,14 @@ func (e *HTTPStatusError) Error() string {
 // Status errors are returned as *HTTPStatusError so the classifier can read the
 // status code and Retry-After header structurally; HTML responses use the
 // existing HTML wrapper.
+//
+// The read cap is 1024 bytes (was 256) so we can capture the JSON billing
+// envelope intact — OpenRouter's billing_url field and OpenAI's
+// error.code/error.type fields would otherwise truncate mid-value, leaving
+// the classifier unable to distinguish credits-exhausted from rate-limit.
 func HandleErrorResponse(resp *http.Response, apiBase string) error {
 	contentType := resp.Header.Get("Content-Type")
-	body, readErr := io.ReadAll(io.LimitReader(resp.Body, 256))
+	body, readErr := io.ReadAll(io.LimitReader(resp.Body, 1024))
 	if readErr != nil {
 		return fmt.Errorf("failed to read response: %w", readErr)
 	}
@@ -508,7 +513,7 @@ func HandleErrorResponse(resp *http.Response, apiBase string) error {
 	return &HTTPStatusError{
 		StatusCode:  resp.StatusCode,
 		APIBase:     apiBase,
-		BodyPreview: ResponsePreview(body, 128),
+		BodyPreview: ResponsePreview(body, 1024),
 		RetryAfter:  ParseRetryAfter(resp.Header.Get("Retry-After"), time.Now()),
 	}
 }

@@ -482,7 +482,11 @@ func (al *AgentLoop) processSessionMessage(ctx context.Context, msg bus.InboundM
 
 	response, err := al.processMessage(msgCtx, msg)
 	if err != nil {
-		response = fmt.Sprintf("Error processing message: %v", err)
+		if friendly := renderBillingError(err); friendly != "" {
+			response = friendly
+		} else {
+			response = fmt.Sprintf("Error processing message: %v", err)
+		}
 	}
 
 	if response != "" && !roundSent.Load() {
