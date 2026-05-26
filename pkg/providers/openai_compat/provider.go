@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -14,13 +13,16 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/PivotLLM/ClawEh/pkg/logger"
 	"github.com/PivotLLM/ClawEh/pkg/providers/common"
 	"github.com/PivotLLM/ClawEh/pkg/providers/protocoltypes"
 )
 
 // warnFn is the logger hook the provider uses for non-fatal warnings (e.g.
-// extra_body merge collisions). Tests swap this for a capturing function.
+// extra_body merge collisions, diagnostic log open/write failures). Tests
+// swap this for a capturing function.
 var warnFn = logger.WarnCF
 
 type (
@@ -43,7 +45,7 @@ type Provider struct {
 	maxTokensField      string         // Field name for max tokens (e.g., "max_completion_tokens" for o1/glm models)
 	strictCompat        bool           // Strip non-standard fields for strict OpenAI-compatible endpoints
 	noParallelToolCalls bool           // Send parallel_tool_calls=false (required by Groq/some Llama providers)
-	responseLogFile     string         // Append raw response bodies here when non-empty (diagnostic only)
+	responseLogFile     string         // Append JSONL request+response records here when non-empty (diagnostic only)
 	reasoningEffort     string         // OpenAI/Grok `reasoning_effort` request field; empty omits it
 	extraBody           map[string]any // Free-form passthrough merged into the request body before marshal
 	modelLabel          string         // User-facing model name used in WarnCF for merge collisions; empty falls back to wire model
@@ -52,7 +54,9 @@ type Provider struct {
 	httpClient          *http.Client
 
 	logMu      sync.Mutex // serialises appends to responseLogFile across goroutines sharing this Provider
-	logErrOnce sync.Once  // emits at most one stderr warning per Provider lifetime on log write failure
+	logFile    *os.File   // lazily opened on first use; held for Provider lifetime so the file is opened at most once
+	logOpenErr error      // sticky open error; once set, the file is never re-opened
+	logErrOnce sync.Once  // emits at most one WRN per Provider lifetime on log open/write failure
 }
 
 type Option func(*Provider)
@@ -85,9 +89,10 @@ func WithNoParallelToolCalls(v bool) Option {
 	}
 }
 
-// WithResponseLogFile enables append-only raw response capture to the given
-// path. Empty disables it (the default). Diagnostic feature; see
-// (*Provider).appendResponseLog for the record format.
+// WithResponseLogFile enables append-only JSONL capture of outgoing request
+// bodies and incoming response bodies to the given path. Empty disables it
+// (the default). Diagnostic feature; see (*Provider).writeLogEntry for the
+// record format and pairing semantics.
 func WithResponseLogFile(path string) Option {
 	return func(p *Provider) {
 		p.responseLogFile = path
@@ -315,6 +320,15 @@ func (p *Provider) Chat(
 		req.Header.Set("Authorization", "Bearer "+p.apiKey)
 	}
 
+	// Pair the outgoing request body with its eventual response in the
+	// diagnostic log via a single corr_id. The UUID is generated only when
+	// logging is enabled so the disabled path stays cheap.
+	var corrID string
+	if p.responseLogFile != "" {
+		corrID = uuid.New().String()
+		p.appendRequestLog(corrID, model, jsonData)
+	}
+
 	bytesSent := int64(len(jsonData))
 	start := time.Now()
 	resp, err := p.httpClient.Do(req)
@@ -334,7 +348,7 @@ func (p *Provider) Chat(
 			return httpErrorStatus(model, "error", time.Since(start).Milliseconds(), bytesSent, int64(len(raw))),
 				fmt.Errorf("failed to read response body: %w", readErr)
 		}
-		p.appendResponseLog(req.URL.String(), model, resp.StatusCode, raw)
+		p.appendResponseLog(corrID, model, resp.StatusCode, time.Since(start).Milliseconds(), raw)
 		resp.Body = io.NopCloser(bytes.NewReader(raw))
 	}
 
@@ -494,53 +508,122 @@ func normalizeModel(model, apiBase string) string {
 	}
 }
 
-// appendResponseLog writes one record describing an HTTP response to the
-// configured response_log_file. Each record is:
-//
-//	=== <ISO-8601 ts> status=<code> model=<model> url=<url> ===\n
-//	<raw body — exact bytes received, no trimming>
-//	\n---END---\n
-//
-// A trailing newline is inserted before the separator only when the body does
-// not already end in '\n', so single-line JSON responses stay readable and the
-// separator always sits on its own line.
-//
-// Failures are swallowed: the request must complete regardless of whether the
-// diagnostic file is writable. One stderr warning is emitted per Provider
-// lifetime (via sync.Once) to surface persistent misconfiguration without
-// flooding the log under sustained failure.
-func (p *Provider) appendResponseLog(reqURL, model string, status int, body []byte) {
+// logEntry is one JSONL record written to response_log_file. A request entry
+// and its paired response entry share the same CorrID; readers can group them
+// by that field. Status and DurationMs are populated only on response entries.
+type logEntry struct {
+	Ts         string          `json:"ts"`
+	CorrID     string          `json:"corr_id"`
+	Dir        string          `json:"dir"`
+	Model      string          `json:"model"`
+	Body       json.RawMessage `json:"body"`
+	Status     int             `json:"status,omitempty"`
+	DurationMs int64           `json:"duration_ms,omitempty"`
+}
+
+// appendRequestLog writes the outgoing request body to the diagnostic log
+// before the HTTP round-trip starts. The body is parsed to redact a top-level
+// "api_key" field (rare, but defensive — claw never sets one, but extra_body
+// passthrough could). Request headers (including Authorization) are never
+// logged.
+func (p *Provider) appendRequestLog(corrID, wireModel string, body []byte) {
+	p.writeLogEntry(logEntry{
+		Ts:     time.Now().Format(time.RFC3339Nano),
+		CorrID: corrID,
+		Dir:    "request",
+		Model:  p.modelLabelOr(wireModel),
+		Body:   safeRawMessage(redactAPIKey(body)),
+	})
+}
+
+// appendResponseLog writes one JSONL record describing an HTTP response,
+// paired with the matching request entry via corrID. The raw body is embedded
+// as json.RawMessage when it parses as JSON; otherwise it is quoted as a
+// string so the surrounding entry remains valid JSON (e.g. HTML error pages
+// from misconfigured proxies).
+func (p *Provider) appendResponseLog(corrID, wireModel string, status int, durationMs int64, body []byte) {
+	p.writeLogEntry(logEntry{
+		Ts:         time.Now().Format(time.RFC3339Nano),
+		CorrID:     corrID,
+		Dir:        "response",
+		Model:      p.modelLabelOr(wireModel),
+		Body:       safeRawMessage(body),
+		Status:     status,
+		DurationMs: durationMs,
+	})
+}
+
+// writeLogEntry serialises a logEntry to JSONL and appends it to the configured
+// response_log_file. The file handle is opened lazily on first use and reused
+// for the Provider's lifetime; mode 0640 keeps the file readable by group but
+// not world. Failure to open or write must NOT block or fail the actual
+// request — at most one WRN is emitted per Provider lifetime via sync.Once.
+func (p *Provider) writeLogEntry(e logEntry) {
 	if p.responseLogFile == "" {
 		return
 	}
-
-	var buf bytes.Buffer
-	fmt.Fprintf(&buf, "=== %s status=%d model=%s url=%s ===\n",
-		time.Now().Format(time.RFC3339), status, model, reqURL)
-	buf.Write(body)
-	if len(body) == 0 || body[len(body)-1] != '\n' {
-		buf.WriteByte('\n')
+	line, err := json.Marshal(e)
+	if err != nil {
+		return
 	}
-	buf.WriteString("---END---\n")
+	line = append(line, '\n')
 
 	p.logMu.Lock()
 	defer p.logMu.Unlock()
 
-	f, err := os.OpenFile(p.responseLogFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
-	if err != nil {
-		p.logErrOnce.Do(func() {
-			log.Printf("openai_compat: response_log_file %q open failed: %v (further failures suppressed)",
-				p.responseLogFile, err)
-		})
+	if p.logFile == nil && p.logOpenErr == nil {
+		f, err := os.OpenFile(p.responseLogFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o640)
+		if err != nil {
+			p.logOpenErr = err
+			p.logErrOnce.Do(func() {
+				warnFn("openai_compat", "response_log_file open failed; further failures suppressed",
+					map[string]any{"path": p.responseLogFile, "err": err.Error()})
+			})
+			return
+		}
+		p.logFile = f
+	}
+	if p.logFile == nil {
 		return
 	}
-	defer f.Close()
-	if _, err := f.Write(buf.Bytes()); err != nil {
+	if _, err := p.logFile.Write(line); err != nil {
 		p.logErrOnce.Do(func() {
-			log.Printf("openai_compat: response_log_file %q write failed: %v (further failures suppressed)",
-				p.responseLogFile, err)
+			warnFn("openai_compat", "response_log_file write failed; further failures suppressed",
+				map[string]any{"path": p.responseLogFile, "err": err.Error()})
 		})
 	}
+}
+
+// redactAPIKey returns body with any top-level "api_key" field replaced by
+// "[REDACTED]". Non-JSON-object bodies are returned unchanged.
+func redactAPIKey(body []byte) []byte {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(body, &m); err != nil {
+		return body
+	}
+	if _, has := m["api_key"]; !has {
+		return body
+	}
+	m["api_key"] = json.RawMessage(`"[REDACTED]"`)
+	redacted, err := json.Marshal(m)
+	if err != nil {
+		return body
+	}
+	return redacted
+}
+
+// safeRawMessage returns body as json.RawMessage when it parses as JSON;
+// otherwise it returns the body encoded as a JSON string so the surrounding
+// entry stays valid JSON even when an upstream returns HTML or plain text.
+func safeRawMessage(body []byte) json.RawMessage {
+	if len(body) > 0 && json.Valid(body) {
+		return json.RawMessage(body)
+	}
+	quoted, err := json.Marshal(string(body))
+	if err != nil {
+		return json.RawMessage(`""`)
+	}
+	return json.RawMessage(quoted)
 }
 
 // modelLabelOr returns the configured user-facing model label, or fallback
