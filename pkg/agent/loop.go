@@ -1294,6 +1294,14 @@ func (al *AgentLoop) runAgentLoop(
 		}
 	}
 
+	// Attach the agent ID to the context so every downstream provider call —
+	// including compression-time invocations through PreDispatchCheck,
+	// CheckAndCompress, AddUserMessage's trigger check, and the compact_session
+	// MCP tool — surfaces the agent in error logs. runLLMIteration also wraps
+	// ctx for its own scope, but compression paths fan out from runAgentLoop
+	// before reaching that point, so we set it once here at the top.
+	ctx = providers.WithAgentID(ctx, agent.ID)
+
 	// 1. Get or create the ContextManager for this session.
 	cm, releaseCtxMgr := al.getContextManager(agent, opts.SessionKey)
 	defer releaseCtxMgr()
