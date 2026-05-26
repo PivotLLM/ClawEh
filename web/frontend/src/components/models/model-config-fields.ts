@@ -25,7 +25,7 @@ export type ExtraBodyParseResult =
 // formatExtraBody renders a saved extra_body map as pretty-printed JSON for the
 // textarea. An empty / absent map collapses to "" so the field renders blank.
 export function formatExtraBody(
-  extra: Record<string, unknown> | undefined,
+  extra: Record<string, unknown> | null | undefined,
 ): string {
   if (!extra || Object.keys(extra).length === 0) return ""
   return JSON.stringify(extra, null, 2)

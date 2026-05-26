@@ -141,8 +141,12 @@ export function EditModelSheet({
           ? Number(form.requestTimeout)
           : undefined,
         thinking_level: form.thinkingLevel || undefined,
-        reasoning_effort: form.reasoningEffort || undefined,
-        extra_body: extraBodyParsed.value,
+        // Always send reasoning_effort and extra_body, even when empty:
+        // handleUpdateModel merge-unmarshals into the existing entry, so an
+        // absent field preserves the old value. "" / null tell the backend to
+        // clear, which then drops the field via omitempty on save.
+        reasoning_effort: form.reasoningEffort,
+        extra_body: extraBodyParsed.value ?? null,
         no_tools: form.noTools,
       })
       if (setAsDefault && !model.is_default) {

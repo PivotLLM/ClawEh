@@ -17,9 +17,12 @@ export interface ModelInfo {
   request_timeout?: number
   thinking_level?: string
   no_tools?: boolean
-  // Shape 3 per-LLM custom fields.
+  // Shape 3 per-LLM custom fields. extra_body accepts an explicit `null` on
+  // save to clear a previously-stored value; the backend handler merge-loads
+  // the request JSON into the existing entry, so an absent field would
+  // otherwise preserve the old value rather than removing it.
   reasoning_effort?: string
-  extra_body?: Record<string, unknown>
+  extra_body?: Record<string, unknown> | null
   enabled: boolean
   // Meta
   configured: boolean
