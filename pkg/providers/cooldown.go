@@ -2,6 +2,7 @@ package providers
 
 import (
 	"math"
+	"sort"
 	"sync"
 	"time"
 )
@@ -13,6 +14,15 @@ const (
 	// supplied Retry-After header before falling back to default exponential
 	// backoff. A misconfigured upstream could otherwise pin a model for hours.
 	maxRetryAfterCooldown = 5 * time.Minute
+
+	// billingInitialCooldown is the duration a billing-marked provider is
+	// skipped after its first credits-exhausted signal. Picked short (5 min)
+	// rather than the 5-24h schedule used by the original OpenClaw billing
+	// backoff: ClawEh is a single-user dev tool and the operator typically
+	// tops up within minutes, so a multi-hour cooldown is more disruptive
+	// than the repeated 402s it prevents. Use /cooldowns clear (or /retry)
+	// for an immediate escape.
+	billingInitialCooldown = 5 * time.Minute
 )
 
 // CooldownTracker manages per-model cooldown state for the fallback chain.
@@ -68,8 +78,7 @@ func (ct *CooldownTracker) MarkFailure(provider, model string, reason FailoverRe
 	entry.LastFailure = now
 
 	if reason == FailoverBilling {
-		billingCount := entry.FailureCounts[FailoverBilling]
-		entry.DisabledUntil = now.Add(calculateBillingCooldown(billingCount))
+		entry.DisabledUntil = now.Add(billingInitialCooldown)
 		entry.DisabledReason = FailoverBilling
 		return
 	}
@@ -187,6 +196,94 @@ func (ct *CooldownTracker) Reset() {
 	ct.entries = make(map[string]*cooldownEntry)
 }
 
+// Clear removes any cooldown/disabled state for a single provider+model.
+// Used as the per-model escape hatch after the operator tops up billing
+// or otherwise resolves the upstream condition.
+func (ct *CooldownTracker) Clear(provider, model string) {
+	ct.mu.Lock()
+	defer ct.mu.Unlock()
+	delete(ct.entries, ModelKey(provider, model))
+}
+
+// ClearAll wipes every cooldown entry. Equivalent to Reset; kept as a named
+// alias because the command surface ("/cooldowns clear") reads more clearly.
+func (ct *CooldownTracker) ClearAll() {
+	ct.Reset()
+}
+
+// CooldownStatus is a snapshot of a single model's cooldown state. Returned
+// by Snapshot in stable (provider/model) order so callers can render it.
+type CooldownStatus struct {
+	Provider    string
+	Model       string
+	Reason      FailoverReason
+	Since       time.Time
+	Until       time.Time
+}
+
+// Snapshot returns the list of models that are currently NOT available
+// (either in standard cooldown or billing-disabled). Stable order by
+// provider/model key. The tracker is process-global by design — callers
+// should label the output accordingly.
+func (ct *CooldownTracker) Snapshot() []CooldownStatus {
+	ct.mu.RLock()
+	defer ct.mu.RUnlock()
+
+	now := ct.nowFunc()
+	keys := make([]string, 0, len(ct.entries))
+	for k := range ct.entries {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	out := make([]CooldownStatus, 0, len(keys))
+	for _, k := range keys {
+		entry := ct.entries[k]
+		if entry == nil {
+			continue
+		}
+		var until time.Time
+		var reason FailoverReason
+		if !entry.DisabledUntil.IsZero() && now.Before(entry.DisabledUntil) {
+			until = entry.DisabledUntil
+			reason = entry.DisabledReason
+		}
+		if !entry.CooldownEnd.IsZero() && now.Before(entry.CooldownEnd) {
+			if entry.CooldownEnd.After(until) {
+				until = entry.CooldownEnd
+			}
+			if reason == "" {
+				// Best-effort reason: the most common failure recorded.
+				reason = dominantReason(entry.FailureCounts)
+			}
+		}
+		if until.IsZero() {
+			continue
+		}
+		provider, model := splitModelKey(k)
+		out = append(out, CooldownStatus{
+			Provider: provider,
+			Model:    model,
+			Reason:   reason,
+			Since:    entry.LastFailure,
+			Until:    until,
+		})
+	}
+	return out
+}
+
+func dominantReason(counts map[FailoverReason]int) FailoverReason {
+	var top FailoverReason
+	max := 0
+	for r, n := range counts {
+		if n > max {
+			max = n
+			top = r
+		}
+	}
+	return top
+}
+
 func (ct *CooldownTracker) getOrCreate(key string) *cooldownEntry {
 	entry := ct.entries[key]
 	if entry == nil {
@@ -213,20 +310,3 @@ func calculateStandardCooldown(errorCount int) time.Duration {
 	return time.Duration(ms) * time.Millisecond
 }
 
-// calculateBillingCooldown computes billing-specific exponential backoff.
-// Formula from OpenClaw: min(24h, 5h * 2^min(n-1, 10))
-//
-//	1 error  → 5 hours
-//	2 errors → 10 hours
-//	3 errors → 20 hours
-//	4+ errors → 24 hours (cap)
-func calculateBillingCooldown(billingErrorCount int) time.Duration {
-	const baseMs = 5 * 60 * 60 * 1000 // 5 hours
-	const maxMs = 24 * 60 * 60 * 1000 // 24 hours
-
-	n := max(1, billingErrorCount)
-	exp := min(n-1, 10)
-	raw := float64(baseMs) * math.Pow(2, float64(exp))
-	ms := int(math.Min(float64(maxMs), raw))
-	return time.Duration(ms) * time.Millisecond
-}

@@ -2404,6 +2404,23 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 				al.fallback.Reset()
 			}
 		}
+		rt.ListCooldowns = func() []commands.CooldownEntry {
+			if al.fallback == nil {
+				return nil
+			}
+			snap := al.fallback.CooldownSnapshot()
+			out := make([]commands.CooldownEntry, 0, len(snap))
+			for _, s := range snap {
+				out = append(out, commands.CooldownEntry{
+					Provider: s.Provider,
+					Model:    s.Model,
+					Reason:   string(s.Reason),
+					Since:    s.Since,
+					Until:    s.Until,
+				})
+			}
+			return out
+		}
 		if opts != nil {
 			sessionKey := opts.SessionKey
 			rt.CancelPending = func() int {

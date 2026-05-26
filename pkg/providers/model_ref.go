@@ -60,3 +60,13 @@ func NormalizeProvider(provider string) string {
 func ModelKey(provider, model string) string {
 	return NormalizeProvider(provider) + "/" + strings.ToLower(strings.TrimSpace(model))
 }
+
+// splitModelKey splits a "provider/model" key back into its parts. Inverse of
+// ModelKey; the model side may itself contain slashes (e.g. openrouter
+// upstream IDs like stepfun/step-3.5-flash:free) so we split on the first /.
+func splitModelKey(key string) (provider, model string) {
+	if i := strings.Index(key, "/"); i >= 0 {
+		return key[:i], key[i+1:]
+	}
+	return key, ""
+}

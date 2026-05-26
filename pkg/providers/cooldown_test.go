@@ -71,43 +71,78 @@ func TestCooldown_StandardCap(t *testing.T) {
 	}
 }
 
-func TestCooldown_BillingEscalation(t *testing.T) {
+func TestCooldown_BillingTerminalForSession(t *testing.T) {
 	now := time.Now()
 	ct, current := newTestTracker(now)
 
-	// 1st billing error → 5h cooldown
+	// A billing error disables the model for billingInitialCooldown (5m).
 	ct.MarkFailure("openai", testModel, FailoverBilling, 0)
 	if ct.IsAvailable("openai", testModel) {
 		t.Error("should be disabled after billing error")
 	}
 
-	// Advance 4h → still disabled
-	*current = now.Add(4 * time.Hour)
+	// Halfway through the cooldown — still disabled.
+	*current = now.Add(2 * time.Minute)
 	if ct.IsAvailable("openai", testModel) {
-		t.Error("should still be disabled (5h cooldown)")
+		t.Error("should still be disabled within billingInitialCooldown")
 	}
 
-	// Advance 5h + 1s → available
-	*current = now.Add(5*time.Hour + 1*time.Second)
+	// Past the cooldown — available again.
+	*current = now.Add(billingInitialCooldown + 1*time.Second)
 	if !ct.IsAvailable("openai", testModel) {
-		t.Error("should be available after 5h billing cooldown")
+		t.Error("should be available after billingInitialCooldown elapses")
 	}
 }
 
-func TestCooldown_BillingCap(t *testing.T) {
-	expected := []time.Duration{
-		5 * time.Hour,
-		10 * time.Hour,
-		20 * time.Hour,
-		24 * time.Hour,
-		24 * time.Hour,
+func TestCooldown_ClearPerModel(t *testing.T) {
+	ct := NewCooldownTracker()
+	ct.MarkFailure("openai", testModel, FailoverBilling, 0)
+	ct.MarkFailure("anthropic", "claude", FailoverRateLimit, 0)
+
+	if ct.IsAvailable("openai", testModel) {
+		t.Fatal("openai expected disabled")
+	}
+	ct.Clear("openai", testModel)
+	if !ct.IsAvailable("openai", testModel) {
+		t.Error("openai should be available after Clear")
+	}
+	// Anthropic still disabled.
+	if ct.IsAvailable("anthropic", "claude") {
+		t.Error("anthropic/claude should still be in cooldown")
+	}
+}
+
+func TestCooldown_ClearAll(t *testing.T) {
+	ct := NewCooldownTracker()
+	ct.MarkFailure("openai", testModel, FailoverBilling, 0)
+	ct.MarkFailure("anthropic", "claude", FailoverRateLimit, 0)
+	ct.ClearAll()
+	if !ct.IsAvailable("openai", testModel) || !ct.IsAvailable("anthropic", "claude") {
+		t.Error("all models should be available after ClearAll")
+	}
+}
+
+func TestCooldown_Snapshot(t *testing.T) {
+	now := time.Now()
+	ct, _ := newTestTracker(now)
+
+	if got := ct.Snapshot(); len(got) != 0 {
+		t.Fatalf("empty tracker: got %d entries, want 0", len(got))
 	}
 
-	for i, want := range expected {
-		got := calculateBillingCooldown(i + 1)
-		if got != want {
-			t.Errorf("calculateBillingCooldown(%d) = %v, want %v", i+1, got, want)
-		}
+	ct.MarkFailure("openai", "gpt-4", FailoverBilling, 0)
+	ct.MarkFailure("anthropic", "claude", FailoverRateLimit, 0)
+
+	snap := ct.Snapshot()
+	if len(snap) != 2 {
+		t.Fatalf("snapshot len = %d, want 2", len(snap))
+	}
+	// Stable sort by provider/model key — anthropic/claude < openai/gpt-4.
+	if snap[0].Provider != "anthropic" || snap[0].Reason != FailoverRateLimit {
+		t.Errorf("snap[0] = %+v", snap[0])
+	}
+	if snap[1].Provider != "openai" || snap[1].Reason != FailoverBilling {
+		t.Errorf("snap[1] = %+v", snap[1])
 	}
 }
 
@@ -184,18 +219,19 @@ func TestCooldown_BillingTakesPrecedence(t *testing.T) {
 	now := time.Now()
 	ct, current := newTestTracker(now)
 
-	// Standard cooldown (1 min) + billing disable (5h)
-	ct.MarkFailure("openai", testModel, FailoverRateLimit, 0) // 1 min cooldown
-	ct.MarkFailure("openai", testModel, FailoverBilling, 0)   // 5h disable
+	// Standard rate-limit cooldown is 1 min on first failure; billing disable
+	// is billingInitialCooldown (5 min). Billing should outlast it.
+	ct.MarkFailure("openai", testModel, FailoverRateLimit, 0)
+	ct.MarkFailure("openai", testModel, FailoverBilling, 0)
 
-	// After 2 min: standard cooldown expired but billing still active
-	*current = now.Add(2 * time.Minute)
+	// After 90 sec: standard cooldown expired but billing still active.
+	*current = now.Add(90 * time.Second)
 	if ct.IsAvailable("openai", testModel) {
 		t.Error("billing disable should take precedence over standard cooldown")
 	}
 
-	// After 5h + 1s: both expired
-	*current = now.Add(5*time.Hour + 1*time.Second)
+	// After billingInitialCooldown + 1s: both expired.
+	*current = now.Add(billingInitialCooldown + 1*time.Second)
 	if !ct.IsAvailable("openai", testModel) {
 		t.Error("should be available after all cooldowns expire")
 	}

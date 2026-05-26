@@ -55,6 +55,16 @@ func (fc *FallbackChain) Reset() {
 	}
 }
 
+// CooldownSnapshot returns the cooldown tracker's current view of blocked
+// models. Surfaced via /cooldowns and /status; the slice is empty when no
+// model is in cooldown or when the chain has no tracker.
+func (fc *FallbackChain) CooldownSnapshot() []CooldownStatus {
+	if fc.cooldown == nil {
+		return nil
+	}
+	return fc.cooldown.Snapshot()
+}
+
 // ResolveCandidates parses model config into a deduplicated candidate list.
 func ResolveCandidates(cfg ModelConfig, defaultProvider string) []FallbackCandidate {
 	return ResolveCandidatesWithLookup(cfg, defaultProvider, nil)
@@ -240,10 +250,12 @@ func (fc *FallbackChain) Execute(
 		}
 
 		// Retriable error: mark failure and continue to next candidate.
-		// Context-limit, billing, and auth errors are user-fixable without a restart;
-		// skip cooldown so the model is retried immediately once the issue is resolved.
+		// Context-limit and auth are user-fixable without a restart and skip
+		// cooldown so the model is retried immediately once the issue is
+		// resolved. Billing DOES get a (short) cooldown so a credits-exhausted
+		// model is skipped within the same session — see billingInitialCooldown
+		// in cooldown.go. Use /cooldowns clear or /retry to override.
 		noCooldown := failErr.Reason == FailoverContextLimit ||
-			failErr.Reason == FailoverBilling ||
 			failErr.Reason == FailoverAuth
 		if !noCooldown {
 			fc.cooldown.MarkFailure(candidate.Provider, candidate.Model, failErr.Reason, failErr.RetryAfter)

@@ -25,6 +25,11 @@ type Runtime struct {
 	RetriggerLastMessage func(ctx context.Context) error
 	CancelPending        func() int // drains pending queued messages; returns skip count
 
+	// ListCooldowns returns the process-wide snapshot of models that are
+	// currently in cooldown or billing-disabled. Returns nil on no
+	// implementation; the renderer must handle that as "feature unavailable".
+	ListCooldowns func() []CooldownEntry
+
 	Uptime          func() time.Duration
 	GetSessionStats func() (msgCount int, estTokens int, summaryChars int)
 
@@ -40,4 +45,15 @@ type Runtime struct {
 	// archive exists. Implementations must be cheap (single SQL aggregate or
 	// equivalent) and must not load message bodies.
 	GetArchiveStats func() (count int, first, last time.Time)
+}
+
+// CooldownEntry is a single row of the process-wide cooldown snapshot
+// surfaced in /status and /cooldowns. Decoupled from the providers package
+// so the commands package doesn't import providers.
+type CooldownEntry struct {
+	Provider string
+	Model    string
+	Reason   string
+	Since    time.Time
+	Until    time.Time
 }
