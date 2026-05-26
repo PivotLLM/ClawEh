@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/PivotLLM/ClawEh/pkg/providers"
 )
@@ -1084,5 +1085,86 @@ func TestExtractCronPayload(t *testing.T) {
 				t.Errorf("payload = %q, want %q", payload, tt.wantPayload)
 			}
 		})
+	}
+}
+
+// TestAddMessage_StampsCreatedAt is the regression test for the bug where
+// the JSONL append path constructed StoredMessage literals without setting
+// CreatedAt, persisting every message with "created_at":"0001-01-01T00:00:00Z"
+// on disk and corrupting downstream covered_seq_*_at metadata on context
+// summaries. The fix is the NewStoredMessage constructor; if the stamping
+// is removed from that constructor (or a future caller bypasses it via a
+// raw struct literal on the append path), this test must fail.
+func TestAddMessage_StampsCreatedAt(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	before := time.Now().UTC()
+	if err := store.AddMessage(ctx, "stamp-sess", "user", "hello"); err != nil {
+		t.Fatalf("AddMessage: %v", err)
+	}
+	if err := store.AddFullMessage(ctx, "stamp-sess", providers.Message{
+		Role:    "assistant",
+		Content: "hi",
+	}); err != nil {
+		t.Fatalf("AddFullMessage: %v", err)
+	}
+	after := time.Now().UTC()
+
+	stored, err := store.GetHistoryWithSeqs(ctx, "stamp-sess")
+	if err != nil {
+		t.Fatalf("GetHistoryWithSeqs: %v", err)
+	}
+	if len(stored) != 2 {
+		t.Fatalf("expected 2 stored messages, got %d", len(stored))
+	}
+
+	for i, m := range stored {
+		if m.CreatedAt.IsZero() {
+			t.Errorf("stored[%d].CreatedAt is zero — bug regression (jsonl append did not stamp)", i)
+			continue
+		}
+		// The persisted value round-trips through json.Marshal, so the
+		// monotonic clock reading is stripped. Compare with wall-clock
+		// bounds.
+		if m.CreatedAt.Before(before) || m.CreatedAt.After(after) {
+			t.Errorf("stored[%d].CreatedAt = %v, want in [%v, %v]",
+				i, m.CreatedAt, before, after)
+		}
+	}
+}
+
+// TestSetHistory_StampsCreatedAt covers the SetHistory rewrite path, which
+// previously also constructed StoredMessage literals without CreatedAt.
+func TestSetHistory_StampsCreatedAt(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	before := time.Now().UTC()
+	err := store.SetHistory(ctx, "rewrite-sess", []providers.Message{
+		{Role: "user", Content: "a"},
+		{Role: "assistant", Content: "b"},
+	})
+	if err != nil {
+		t.Fatalf("SetHistory: %v", err)
+	}
+	after := time.Now().UTC()
+
+	stored, err := store.GetHistoryWithSeqs(ctx, "rewrite-sess")
+	if err != nil {
+		t.Fatalf("GetHistoryWithSeqs: %v", err)
+	}
+	if len(stored) != 2 {
+		t.Fatalf("expected 2 stored messages, got %d", len(stored))
+	}
+	for i, m := range stored {
+		if m.CreatedAt.IsZero() {
+			t.Errorf("stored[%d].CreatedAt is zero — SetHistory did not stamp", i)
+			continue
+		}
+		if m.CreatedAt.Before(before) || m.CreatedAt.After(after) {
+			t.Errorf("stored[%d].CreatedAt = %v, want in [%v, %v]",
+				i, m.CreatedAt, before, after)
+		}
 	}
 }

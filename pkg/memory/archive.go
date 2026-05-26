@@ -366,11 +366,7 @@ func scanStoredMessages(rows *sql.Rows) ([]StoredMessage, error) {
 		if err := json.Unmarshal([]byte(payload), &msg); err != nil {
 			return nil, err
 		}
-		msgs = append(msgs, StoredMessage{
-			Seq:       seq,
-			CreatedAt: time.Unix(createdAtUnix, 0).UTC(),
-			Message:   msg,
-		})
+		msgs = append(msgs, NewStoredMessageAt(seq, msg, time.Unix(createdAtUnix, 0).UTC()))
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

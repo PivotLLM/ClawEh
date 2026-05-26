@@ -340,7 +340,7 @@ func (s *JSONLStore) addMsg(sessionKey string, msg providers.Message) error {
 	if seq <= 0 {
 		seq = 1
 	}
-	stored := StoredMessage{Seq: seq, Message: msg}
+	stored := NewStoredMessage(seq, msg)
 
 	// Serialize as StoredMessage (includes seq field).
 	line, err := json.Marshal(stored)
@@ -583,7 +583,11 @@ func (s *JSONLStore) SetHistory(
 	stored := make([]StoredMessage, len(history))
 	for i, msg := range history {
 		startSeq++
-		stored[i] = StoredMessage{Seq: startSeq, Message: msg}
+		// SetHistory takes []providers.Message — no prior CreatedAt to carry
+		// over, so NewStoredMessage stamps time.Now(). This loses the original
+		// per-message timestamps, which is a known limitation of the rewrite
+		// path; before the constructor existed, the field was simply zero.
+		stored[i] = NewStoredMessage(startSeq, msg)
 	}
 
 	if err := s.rewriteStoredJSONL(sessionKey, stored); err != nil {

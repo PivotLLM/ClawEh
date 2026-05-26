@@ -117,7 +117,7 @@ func (sm *SessionManager) GetHistoryWithSeqs(key string) []memory.StoredMessage 
 
 	stored := make([]memory.StoredMessage, len(session.Messages))
 	for i, msg := range session.Messages {
-		stored[i] = memory.StoredMessage{Seq: i + 1, Message: msg}
+		stored[i] = memory.NewStoredMessage(i+1, msg)
 	}
 	return stored
 }
