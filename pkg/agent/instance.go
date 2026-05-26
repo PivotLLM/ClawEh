@@ -12,6 +12,7 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/config"
 	"github.com/PivotLLM/ClawEh/pkg/global"
 	"github.com/PivotLLM/ClawEh/pkg/llmcontext"
+	"github.com/PivotLLM/ClawEh/pkg/logger"
 	"github.com/PivotLLM/ClawEh/pkg/memory"
 	"github.com/PivotLLM/ClawEh/pkg/providers"
 	"github.com/PivotLLM/ClawEh/pkg/routing"
@@ -356,6 +357,14 @@ func NewAgentInstance(
 	}
 
 	candidates := providers.ResolveCandidatesWithLookup(modelCfg, "", resolveFromModelList)
+	if len(candidates) == 0 {
+		logger.ErrorCF("agent", "agent fallback chain is empty after resolving aliases",
+			map[string]any{
+				"agent_id":  agentID,
+				"primary":   model,
+				"fallbacks": fallbacks,
+			})
+	}
 
 	// Model routing setup: pre-resolve light model candidates at creation time
 	// to avoid repeated model_list lookups on every incoming message.

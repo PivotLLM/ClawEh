@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+
+	"github.com/PivotLLM/ClawEh/pkg/providers/common"
 )
 
 func TestClassifyError_Nil(t *testing.T) {
@@ -334,5 +336,90 @@ func TestIsImageSizeError(t *testing.T) {
 	}
 	if IsImageSizeError("normal error message") {
 		t.Error("should not match normal error")
+	}
+}
+
+// TestClassifyError_BillingBodyMarkers verifies that structured billing markers
+// (insufficient_quota, credits_exhausted, billing_url) classify as billing even
+// when the HTTP status would otherwise resolve to rate_limit. Without this the
+// classifier cooldown-cycles a permanently-broken model that OpenAI signals
+// with HTTP 429 + body.error.code=insufficient_quota.
+func TestClassifyError_BillingBodyMarkers(t *testing.T) {
+	tests := []struct {
+		name   string
+		status int
+		body   string
+		want   FailoverReason
+	}{
+		{
+			name:   "429 + insufficient_quota code → billing",
+			status: 429,
+			body:   `{"error":{"code":"insufficient_quota","message":"You exceeded your current quota"}}`,
+			want:   FailoverBilling,
+		},
+		{
+			name:   "429 + insufficient_quota type → billing",
+			status: 429,
+			body:   `{"error":{"type":"insufficient_quota"}}`,
+			want:   FailoverBilling,
+		},
+		{
+			name:   "402 + credits_exhausted → billing",
+			status: 402,
+			body:   `{"error":{"code":"credits_exhausted","message":"out of credits"}}`,
+			want:   FailoverBilling,
+		},
+		{
+			name:   "200 with billing_url somehow → billing",
+			status: 200,
+			body:   `{"error":{"message":"too low","billing_url":"https://example.com/billing"}}`,
+			want:   FailoverBilling,
+		},
+		{
+			name:   "429 plain → rate_limit",
+			status: 429,
+			body:   `{"error":{"message":"too many requests"}}`,
+			want:   FailoverRateLimit,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := &common.HTTPStatusError{
+				StatusCode:  tt.status,
+				BodyPreview: tt.body,
+			}
+			result := ClassifyError(err, "openai", "gpt-4")
+			if result == nil {
+				t.Fatalf("expected non-nil failover error")
+			}
+			if result.Reason != tt.want {
+				t.Errorf("reason = %q, want %q (body=%s)", result.Reason, tt.want, tt.body)
+			}
+		})
+	}
+}
+
+func TestClassifyError_BillingBodyMarkers_MessagePath(t *testing.T) {
+	// When the error is a plain string (not an HTTPStatusError), the body
+	// markers must still be picked up via classifyByMessage.
+	cases := []struct {
+		name string
+		msg  string
+	}{
+		{"insufficient_quota in body", `oops: {"code":"insufficient_quota"}`},
+		{"credits_exhausted in body", `boom {"code":"credits_exhausted"}`},
+		{"billing_url field", `{"billing_url":"https://x"}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := ClassifyError(errors.New(tc.msg), "openai", "gpt-4")
+			if result == nil {
+				t.Fatal("expected non-nil")
+			}
+			if result.Reason != FailoverBilling {
+				t.Errorf("reason=%q, want billing", result.Reason)
+			}
+		})
 	}
 }

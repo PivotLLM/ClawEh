@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/PivotLLM/ClawEh/pkg/logger"
 )
 
 // maxSameModelRetryWait bounds how long a same-model retry is allowed to
@@ -67,15 +69,31 @@ func ResolveCandidatesWithLookup(
 	var candidates []FallbackCandidate
 
 	addCandidate := func(raw string) {
-		candidateRaw := strings.TrimSpace(raw)
+		original := strings.TrimSpace(raw)
+		if original == "" {
+			return
+		}
+		candidateRaw := original
+		resolvedByLookup := false
 		if lookup != nil {
 			if resolved, ok := lookup(candidateRaw); ok {
 				candidateRaw = resolved
+				resolvedByLookup = true
 			}
 		}
 
 		ref := ParseModelRef(candidateRaw, defaultProvider)
 		if ref == nil {
+			// Drop the candidate silently in the return value but log it: a
+			// non-empty alias that fails to resolve usually means it isn't
+			// enabled in model_list, and the operator otherwise sees a
+			// shortened fallback chain with no explanation.
+			logger.WarnCF("providers", "fallback alias dropped (not enabled in model_list)",
+				map[string]any{
+					"alias":             original,
+					"resolved_by_lookup": resolvedByLookup,
+					"resolved":          candidateRaw,
+				})
 			return
 		}
 		key := ModelKey(ref.Provider, ref.Model)

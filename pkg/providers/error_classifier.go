@@ -60,6 +60,20 @@ var (
 		substr("credit balance"),
 		substr("plans & billing"),
 		substr("insufficient balance"),
+		substr("out of credits"),
+		substr("account balance is too low"),
+	}
+
+	// billingBodyPatterns are structured markers that a provider returns to
+	// signal credits-exhausted regardless of HTTP status. OpenAI returns
+	// insufficient_quota with a 429 status; treating that as rate_limit causes
+	// cooldown cycling against a permanently-broken model. These markers must
+	// match BEFORE rateLimitPatterns and BEFORE status-only classification.
+	billingBodyPatterns = []errorPattern{
+		rxp(`"code"\s*:\s*"insufficient_quota"`),
+		rxp(`"type"\s*:\s*"insufficient_quota"`),
+		rxp(`"code"\s*:\s*"credits_exhausted"`),
+		rxp(`"billing_url"\s*:`),
 	}
 
 	authPatterns = []errorPattern{
@@ -154,6 +168,21 @@ func ClassifyError(err error, provider, model string) *FailoverError {
 	// the server's suggestion instead of the default exponential backoff.
 	var statusErr *common.HTTPStatusError
 	if errors.As(err, &statusErr) {
+		// Structured billing markers in the body override status-based
+		// classification. OpenAI returns insufficient_quota with HTTP 429
+		// — without this check, the request would be treated as a transient
+		// rate limit and cooldown-cycled against a model that is permanently
+		// out of credits.
+		if matchesAny(strings.ToLower(statusErr.BodyPreview), billingBodyPatterns) {
+			return &FailoverError{
+				Reason:     FailoverBilling,
+				Provider:   provider,
+				Model:      model,
+				Status:     statusErr.StatusCode,
+				RetryAfter: statusErr.RetryAfter,
+				Wrapped:    err,
+			}
+		}
 		if reason := classifyByStatus(statusErr.StatusCode); reason != "" {
 			return &FailoverError{
 				Reason:     reason,
@@ -228,6 +257,12 @@ func classifyByStatus(status int) FailoverReason {
 // classifyByMessage matches error messages against patterns.
 // Priority order matters (from OpenClaw classifyFailoverReason).
 func classifyByMessage(msg string) FailoverReason {
+	// Structured billing markers run first: "insufficient_quota" appears with
+	// a 429 status from OpenAI and otherwise gets eaten by rateLimitPatterns
+	// (the substring "exceeded your current quota" travels with it).
+	if matchesAny(msg, billingBodyPatterns) {
+		return FailoverBilling
+	}
 	if matchesAny(msg, rateLimitPatterns) {
 		return FailoverRateLimit
 	}
