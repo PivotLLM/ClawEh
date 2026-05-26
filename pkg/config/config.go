@@ -121,6 +121,16 @@ type Config struct {
 	// any protocol owned by a hardcoded provider (see reservedProtocolNames).
 	OpenAICompatProtocols map[string]string `json:"openai_compat_protocols,omitempty"`
 
+	// OpenAICompatResponseFormat overrides the per-protocol default for
+	// emitting `response_format={"type":"json_object"}` on outbound requests
+	// when the caller asks for JSON-mode output. Built-in defaults: openai
+	// and xai are capable; everything else is off. Operators can flip a
+	// configurable protocol on (e.g. openrouter, groq, litellm) without
+	// touching code by setting `openai_compat_response_format: {openrouter:
+	// true}` here. Protocols not present in the map fall back to the
+	// hardcoded default.
+	OpenAICompatResponseFormat map[string]bool `json:"openai_compat_response_format,omitempty"`
+
 	dataDir string // runtime-only: base data directory, not serialized
 }
 
@@ -627,6 +637,14 @@ type ModelConfig struct {
 	// Config.OpenAICompatProtocols. Unexported so JSON ignores them.
 	openaiCompatExtra bool
 	openaiCompatBase  string
+
+	// Runtime-only: set during config resolution from
+	// Config.OpenAICompatResponseFormat. When true, the openai-compat
+	// provider built from this ModelConfig is allowed to emit
+	// response_format=json_object on outbound requests (the built-in
+	// per-protocol default is OR'd in by the provider itself). Unexported
+	// so JSON ignores it.
+	responseFormatJSON bool
 }
 
 // IsOpenAICompatExtra reports whether this model's protocol prefix was
@@ -658,6 +676,26 @@ func (c *ModelConfig) OpenAICompatBase() string {
 func (c *ModelConfig) MarkOpenAICompatExtra(base string) {
 	c.openaiCompatExtra = true
 	c.openaiCompatBase = base
+}
+
+// ResponseFormatJSONCapable reports whether this ModelConfig has been
+// resolved as capable of receiving response_format=json_object via the
+// Config.OpenAICompatResponseFormat override. The built-in per-protocol
+// defaults are applied separately inside the openai-compat provider; this
+// flag only conveys the operator-supplied override.
+func (c *ModelConfig) ResponseFormatJSONCapable() bool {
+	if c == nil {
+		return false
+	}
+	return c.responseFormatJSON
+}
+
+// SetResponseFormatJSONCapable records the operator-supplied override that
+// the openai-compat provider should be permitted to emit response_format=
+// json_object for this model. Called by config resolution; exposed so tests
+// can build ModelConfigs directly without round-tripping through LoadConfig.
+func (c *ModelConfig) SetResponseFormatJSONCapable(v bool) {
+	c.responseFormatJSON = v
 }
 
 // reservedRequestBodyKeys lists the JSON request fields owned by claw's own
@@ -1272,15 +1310,20 @@ func (c *Config) ValidateOpenAICompatProtocols() error {
 // resolveOpenAICompatProtocols walks ModelList and tags any entry whose
 // protocol prefix appears in OpenAICompatProtocols, recording the registered
 // default api_base on the entry so the providers factory can route it through
-// the openai-compat HTTP provider without a hardcoded switch entry.
+// the openai-compat HTTP provider without a hardcoded switch entry. It also
+// applies any per-protocol overrides from OpenAICompatResponseFormat so the
+// openai-compat provider knows whether it may emit response_format=json_object
+// when a caller asks for JSON-mode output.
 func (c *Config) resolveOpenAICompatProtocols() {
-	if len(c.OpenAICompatProtocols) == 0 {
-		return
-	}
 	for i := range c.ModelList {
 		proto := extractProtocolStatic(c.ModelList[i].Model)
-		if base, ok := c.OpenAICompatProtocols[proto]; ok {
-			c.ModelList[i].MarkOpenAICompatExtra(base)
+		if len(c.OpenAICompatProtocols) > 0 {
+			if base, ok := c.OpenAICompatProtocols[proto]; ok {
+				c.ModelList[i].MarkOpenAICompatExtra(base)
+			}
+		}
+		if enabled, ok := c.OpenAICompatResponseFormat[proto]; ok {
+			c.ModelList[i].SetResponseFormatJSONCapable(enabled)
 		}
 	}
 }

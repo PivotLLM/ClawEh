@@ -14,18 +14,31 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/llmcontext"
 	"github.com/PivotLLM/ClawEh/pkg/logger"
 	"github.com/PivotLLM/ClawEh/pkg/providers"
+	"github.com/PivotLLM/ClawEh/pkg/providers/openai_compat"
 )
 
 // providerLLMClient adapts providers.LLMProvider to llmcontext.LLMClient so
 // the ContextManager can use the agent's configured provider for compression
 // LLM calls without depending on the concrete provider type.
+//
+// requestJSONObject, when true, asks the underlying provider to honour
+// response_format={"type":"json_object"} on the outbound request. The
+// provider gates emission on protocol capability (see openai_compat.Provider);
+// non-capable providers silently drop the request and log DBG.
 type providerLLMClient struct {
-	provider providers.LLMProvider
-	model    string
+	provider          providers.LLMProvider
+	model             string
+	requestJSONObject bool
 }
 
 func (c *providerLLMClient) Complete(ctx context.Context, messages []providers.Message) (providers.Message, error) {
-	resp, err := c.provider.Chat(ctx, messages, nil, c.model, nil)
+	var opts map[string]any
+	if c.requestJSONObject {
+		opts = map[string]any{
+			openai_compat.ResponseFormatJSONObjectOption: true,
+		}
+	}
+	resp, err := c.provider.Chat(ctx, messages, nil, c.model, opts)
 	if err != nil {
 		return providers.Message{}, err
 	}
@@ -120,7 +133,7 @@ func (al *AgentLoop) buildCompressLLMClient(agent *AgentInstance, compressModelN
 		if p, err := al.dispatcher.Get(key); err == nil {
 			log.Printf("agent: compress_model %q dispatched via alias=%q (protocol=%q model=%q) for agent %q session %q",
 				compressModelName, alias, protocol, modelID, agent.ID, sessionKey)
-			return &providerLLMClient{provider: p, model: modelID}
+			return &providerLLMClient{provider: p, model: modelID, requestJSONObject: true}
 		} else {
 			log.Printf("agent: dispatcher could not build compress provider for %q (alias=%q %q/%q): %v; falling back to agent.Provider",
 				compressModelName, alias, protocol, modelID, err)
@@ -133,7 +146,7 @@ func (al *AgentLoop) buildCompressLLMClient(agent *AgentInstance, compressModelN
 	// compress_model string so the existing single-provider configurations
 	// (e.g. all-anthropic, all-openai deployments) keep working without a
 	// model_list entry.
-	return &providerLLMClient{provider: agent.Provider, model: compressModelName}
+	return &providerLLMClient{provider: agent.Provider, model: compressModelName, requestJSONObject: true}
 }
 
 // buildDefaultCompressLLMClient returns the compression LLM client used when
@@ -164,7 +177,7 @@ func (al *AgentLoop) buildDefaultCompressLLMClient(agent *AgentInstance, session
 					"protocol": protocol,
 					"session":  sessionKey,
 				})
-				return &providerLLMClient{provider: p, model: modelID}
+				return &providerLLMClient{provider: p, model: modelID, requestJSONObject: true}
 			} else {
 				log.Printf("agent: dispatcher could not build default compress provider for primary %q (alias=%q %q/%q): %v; falling back to agent.Provider",
 					primary, alias, protocol, modelID, err)
@@ -172,7 +185,7 @@ func (al *AgentLoop) buildDefaultCompressLLMClient(agent *AgentInstance, session
 		}
 	}
 	// Last-resort fallback: use the agent's primary provider directly.
-	return &providerLLMClient{provider: agent.Provider, model: primary}
+	return &providerLLMClient{provider: agent.Provider, model: primary, requestJSONObject: true}
 }
 
 // getContextManager returns the ContextManager for the given agent+session pair,

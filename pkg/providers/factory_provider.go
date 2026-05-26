@@ -84,6 +84,8 @@ func CreateProviderFromConfig(cfg *config.ModelConfig) (LLMProvider, string, err
 			openai_compat.WithReasoningEffort(cfg.ReasoningEffort),
 			openai_compat.WithExtraBody(cfg.ExtraBody),
 			openai_compat.WithModelLabel(cfg.ModelName),
+			openai_compat.WithProtocol(protocol),
+			openai_compat.WithResponseFormatJSONCapable(cfg.ResponseFormatJSONCapable()),
 		}
 		return NewHTTPProviderWithOptions(cfg.APIKey, apiBase, cfg.Proxy, opts...), modelID, nil
 
@@ -172,6 +174,8 @@ func CreateProviderFromConfig(cfg *config.ModelConfig) (LLMProvider, string, err
 			openai_compat.WithReasoningEffort(cfg.ReasoningEffort),
 			openai_compat.WithExtraBody(cfg.ExtraBody),
 			openai_compat.WithModelLabel(cfg.ModelName),
+			openai_compat.WithProtocol(protocol),
+			openai_compat.WithResponseFormatJSONCapable(cfg.ResponseFormatJSONCapable()),
 			// Groq's Llama models fail tool calls when parallel_tool_calls is enabled.
 			openai_compat.WithNoParallelToolCalls(protocol == "groq"),
 		}
@@ -202,6 +206,8 @@ func CreateProviderFromConfig(cfg *config.ModelConfig) (LLMProvider, string, err
 			openai_compat.WithReasoningEffort(cfg.ReasoningEffort),
 			openai_compat.WithExtraBody(cfg.ExtraBody),
 			openai_compat.WithModelLabel(cfg.ModelName),
+			openai_compat.WithProtocol(protocol),
+			openai_compat.WithResponseFormatJSONCapable(cfg.ResponseFormatJSONCapable()),
 		}
 		return NewHTTPProviderWithOptions(cfg.APIKey, apiBase, cfg.Proxy, opts...), modelID, nil
 
@@ -281,6 +287,8 @@ func CreateProviderFromConfig(cfg *config.ModelConfig) (LLMProvider, string, err
 			openai_compat.WithReasoningEffort(cfg.ReasoningEffort),
 			openai_compat.WithExtraBody(cfg.ExtraBody),
 			openai_compat.WithModelLabel(cfg.ModelName),
+			openai_compat.WithProtocol(protocol),
+			openai_compat.WithResponseFormatJSONCapable(cfg.ResponseFormatJSONCapable()),
 		}
 		return NewHTTPProviderWithOptions(cfg.APIKey, apiBase, cfg.Proxy, opts...), modelID, nil
 	}
