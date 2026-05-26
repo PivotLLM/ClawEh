@@ -1605,19 +1605,26 @@ func (al *AgentLoop) runLLMIteration(
 		var response *providers.LLMResponse
 		var err error
 
+		// Resolve the provider that will actually serve this turn's request so
+		// the type assertions below reflect that provider's capabilities rather
+		// than the shared agent.Provider (which on the default config is
+		// claude-cli for every agent, including those whose primary is a
+		// non-CLI / non-Anthropic protocol).
+		runProvider, runModel := al.resolveRunProvider(agent, activeCandidates, activeModel)
+
 		llmOpts := map[string]any{
 			"max_tokens":       agent.MaxTokens,
 			"prompt_cache_key": agent.ID,
 		}
 		// CLI providers (claude-cli, codex-cli, gemini-cli) invoke a subprocess and
 		// do not accept HTTP request parameters. Skip temperature for those providers.
-		if _, isCLI := agent.Provider.(providers.CLIProvider); !isCLI {
+		if _, isCLI := runProvider.(providers.CLIProvider); !isCLI {
 			llmOpts["temperature"] = agent.Temperature
 		}
 		// parseThinkingLevel guarantees ThinkingOff for empty/unknown values,
 		// so checking != ThinkingOff is sufficient.
 		if agent.ThinkingLevel != ThinkingOff {
-			if tc, ok := agent.Provider.(providers.ThinkingCapable); ok && tc.SupportsThinking() {
+			if tc, ok := runProvider.(providers.ThinkingCapable); ok && tc.SupportsThinking() {
 				llmOpts["thinking_level"] = string(agent.ThinkingLevel)
 			} else {
 				logger.WarnCF("agent", "thinking_level is set but current provider does not support it, ignoring",
@@ -1685,7 +1692,14 @@ func (al *AgentLoop) runLLMIteration(
 				}
 				return fbResult.Response, nil
 			}
-			return agent.Provider.Chat(ctx, messages, providerToolDefs, activeModel, llmOpts)
+			// No active fallback chain (no candidates, or fallback disabled):
+			// route through the dispatcher-resolved provider for the agent's
+			// primary model so non-default protocols don't get silently routed
+			// through the shared agent.Provider (the default-config claude-cli).
+			// resolveRunProvider returns agent.Provider + activeModel as the
+			// last-resort safety net when dispatcher resolution cannot satisfy
+			// the request.
+			return runProvider.Chat(ctx, messages, providerToolDefs, runModel, llmOpts)
 		}
 
 		// Retry loop for context/token errors
@@ -2107,6 +2121,39 @@ func (al *AgentLoop) runLLMIteration(
 	}
 
 	return finalContent, lastNormal, lastFinishReason, iteration, nil
+}
+
+// resolveRunProvider returns the LLMProvider (and matching model id) that will
+// serve this turn's primary chat dispatch. When activeCandidates has at least
+// one entry the first candidate's (protocol, model) pair is resolved through
+// the per-model dispatcher; otherwise the agent's primary model is resolved
+// through the dispatcher in the same way buildDefaultCompressLLMClient does.
+//
+// Falls back to (agent.Provider, activeModel) only when the dispatcher cannot
+// satisfy the request — mirroring the compress-empty-fallback safety net in
+// context_manager.go. This prevents the type-assertion + dispatch sites from
+// silently consulting the shared agent.Provider (which on the shipped default
+// config is claude-cli for every agent) for non-claude-cli primaries.
+func (al *AgentLoop) resolveRunProvider(
+	agent *AgentInstance,
+	activeCandidates []providers.FallbackCandidate,
+	activeModel string,
+) (providers.LLMProvider, string) {
+	if al.dispatcher != nil {
+		var protocol, modelID string
+		if len(activeCandidates) > 0 {
+			protocol = strings.TrimSpace(activeCandidates[0].Provider)
+			modelID = strings.TrimSpace(activeCandidates[0].Model)
+		} else if p, m, ok := resolveCompressModelTarget(al.GetConfig(), strings.TrimSpace(agent.Model)); ok {
+			protocol, modelID = p, m
+		}
+		if protocol != "" && modelID != "" {
+			if p, err := al.dispatcher.Get(protocol, modelID); err == nil {
+				return p, modelID
+			}
+		}
+	}
+	return agent.Provider, activeModel
 }
 
 // selectCandidates returns the model candidates and resolved model name to use
