@@ -12,6 +12,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/pkg/config"
 	"github.com/PivotLLM/ClawEh/pkg/llmcontext"
+	"github.com/PivotLLM/ClawEh/pkg/logger"
 	"github.com/PivotLLM/ClawEh/pkg/providers"
 )
 
@@ -120,6 +121,40 @@ func (al *AgentLoop) buildCompressLLMClient(agent *AgentInstance, compressModelN
 	return &providerLLMClient{provider: agent.Provider, model: compressModelName}
 }
 
+// buildDefaultCompressLLMClient returns the compression LLM client used when
+// compress_model is not configured. It defaults to the agent's primary model
+// and resolves it through the per-model dispatcher, mirroring the explicit
+// compress_model path. This prevents compression from silently routing
+// through the shared agent.Provider — which on a "claude-cli" default would
+// shell out to claude-cli for every compression call regardless of the
+// agent's actual primary protocol (e.g. an agent with model.primary =
+// "openai/grok-4.3" would otherwise see compression dispatched to
+// claude-cli and 404 because grok-4.3 isn't a Claude model). Falls back to
+// agent.Provider only when the dispatcher cannot satisfy the agent's
+// primary model.
+func (al *AgentLoop) buildDefaultCompressLLMClient(agent *AgentInstance, sessionKey string) llmcontext.LLMClient {
+	cfg := al.GetConfig()
+	primary := strings.TrimSpace(agent.Model)
+	if primary != "" && al.dispatcher != nil {
+		if protocol, modelID, ok := resolveCompressModelTarget(cfg, primary); ok {
+			if p, err := al.dispatcher.Get(protocol, modelID); err == nil {
+				logger.DebugCF("llmcontext", "compress_model unset; defaulting to agent primary via dispatcher", map[string]any{
+					"agent_id": agent.ID,
+					"model":    modelID,
+					"protocol": protocol,
+					"session":  sessionKey,
+				})
+				return &providerLLMClient{provider: p, model: modelID}
+			} else {
+				log.Printf("agent: dispatcher could not build default compress provider for primary %q (%q/%q): %v; falling back to agent.Provider",
+					primary, protocol, modelID, err)
+			}
+		}
+	}
+	// Last-resort fallback: use the agent's primary provider directly.
+	return &providerLLMClient{provider: agent.Provider, model: primary}
+}
+
 // getContextManager returns the ContextManager for the given agent+session pair,
 // creating and caching it on first access. The returned manager is shared across
 // all calls for the same (agentID, sessionKey) tuple.
@@ -171,8 +206,12 @@ func (al *AgentLoop) getContextManager(agent *AgentInstance, sessionKey string) 
 		// compress client is tried first; primary model is the fallback.
 		compressClients = []llmcontext.LLMClient{compressClient, llmClient}
 	} else {
-		// No compress_model configured: use the primary client only.
-		compressClients = []llmcontext.LLMClient{llmClient}
+		// No compress_model configured: default to the agent's primary model
+		// resolved through the dispatcher, so compression runs against the
+		// agent's actual primary protocol instead of the shared agent.Provider
+		// (which on a "claude-cli" default would mis-route compression for
+		// any non-Claude primary). See buildDefaultCompressLLMClient.
+		compressClients = []llmcontext.LLMClient{al.buildDefaultCompressLLMClient(agent, sessionKey)}
 	}
 
 	// The archive directory is the sessions directory within the agent workspace.

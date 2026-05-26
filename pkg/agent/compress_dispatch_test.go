@@ -151,6 +151,97 @@ func TestBuildCompressLLMClient_FallbackToAgentProvider(t *testing.T) {
 	}
 }
 
+// TestBuildDefaultCompressLLMClient_UsesDispatcherForPrimary is the
+// regression test for the wendy compress-routing defect: when no
+// compress_model is configured, the compression LLM client must be built
+// against the agent's primary model via the per-model dispatcher, not the
+// shared agent.Provider. Before this fix, an agent with
+// model.primary = "openai/<x>" and an empty compress_model would still
+// have compression dispatched to the shared agent.Provider (built from
+// agents.defaults.model.primary = "claude-cli" in the shipped default
+// config), causing claude-cli to be invoked with a non-Claude model and
+// 404. If someone reverts to "shared provider when compress_model empty",
+// this test fails on the dispatcher-bypass assertion below.
+func TestBuildDefaultCompressLLMClient_UsesDispatcherForPrimary(t *testing.T) {
+	cfg := &config.Config{
+		ModelList: []config.ModelConfig{
+			{
+				ModelName: "primary-target",
+				Model:     "openai/some-model",
+				APIBase:   "http://127.0.0.1:0/v1",
+				APIKey:    "dummy",
+				Enabled:   true,
+			},
+		},
+	}
+	dispatcher := providers.NewProviderDispatcher(cfg)
+
+	primary := &mockProvider{}
+	al := &AgentLoop{
+		cfg:        cfg,
+		dispatcher: dispatcher,
+	}
+	agent := &AgentInstance{
+		ID:       "default-compress-test",
+		Provider: primary,
+		Model:    "openai/some-model",
+		Config: &config.AgentConfig{
+			ID:    "default-compress-test",
+			Model: &config.AgentModelConfig{Primary: "openai/some-model"},
+			// CompressModel intentionally nil to exercise the default-to-primary path.
+		},
+	}
+
+	client := al.buildDefaultCompressLLMClient(agent, "sess-default")
+	plc, ok := client.(*providerLLMClient)
+	if !ok {
+		t.Fatalf("expected *providerLLMClient, got %T", client)
+	}
+	if plc.provider == nil {
+		t.Fatal("provider is nil")
+	}
+	if plc.provider == providers.LLMProvider(primary) {
+		t.Fatal("default compress provider equals agent.Provider — dispatcher was bypassed for the agent primary")
+	}
+	if plc.model != "some-model" {
+		t.Fatalf("model = %q; want %q", plc.model, "some-model")
+	}
+}
+
+// TestBuildDefaultCompressLLMClient_FallbackWhenPrimaryUnresolved confirms
+// that when the agent's primary model cannot be resolved through the
+// dispatcher (no matching enabled model_list entry), the default-compress
+// path falls back to agent.Provider rather than failing.
+func TestBuildDefaultCompressLLMClient_FallbackWhenPrimaryUnresolved(t *testing.T) {
+	cfg := &config.Config{
+		ModelList: []config.ModelConfig{},
+	}
+	dispatcher := providers.NewProviderDispatcher(cfg)
+
+	primary := &mockProvider{}
+	al := &AgentLoop{
+		cfg:        cfg,
+		dispatcher: dispatcher,
+	}
+	agent := &AgentInstance{
+		ID:       "default-fallback-test",
+		Provider: primary,
+		Model:    "no-such-model",
+	}
+
+	client := al.buildDefaultCompressLLMClient(agent, "sess-default-fallback")
+	plc, ok := client.(*providerLLMClient)
+	if !ok {
+		t.Fatalf("expected *providerLLMClient, got %T", client)
+	}
+	if plc.provider != providers.LLMProvider(primary) {
+		t.Fatal("expected fallback to agent.Provider when dispatcher cannot resolve the primary model")
+	}
+	if plc.model != "no-such-model" {
+		t.Fatalf("model = %q; want %q", plc.model, "no-such-model")
+	}
+}
+
 // TestBuildCompressLLMClient_NilDispatcher protects the path where the loop
 // was constructed without a dispatcher (older test setups, smoke tests):
 // fallback to agent.Provider rather than panic.
