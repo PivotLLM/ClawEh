@@ -24,13 +24,33 @@ func cooldownsCommand() Definition {
 			},
 			{
 				Name:        "clear",
-				Description: "Clear all provider cooldowns",
+				Description: "Clear all cooldowns, or one entry with <provider>/<model>",
+				ArgsUsage:   "[<provider>/<model>]",
 				Handler: func(_ context.Context, req Request, rt *Runtime) error {
-					if rt == nil || rt.ResetCooldown == nil {
+					if rt == nil {
 						return req.Reply(unavailableMsg)
 					}
-					rt.ResetCooldown()
-					return req.Reply("Cleared all provider cooldowns.")
+					arg := nthToken(req.Text, 2) // tokens: [/cooldowns, clear, <arg>]
+					if arg == "" {
+						if rt.ResetCooldown == nil {
+							return req.Reply(unavailableMsg)
+						}
+						rt.ResetCooldown()
+						return req.Reply("Cleared all provider cooldowns.")
+					}
+					provider, model, ok := strings.Cut(arg, "/")
+					if !ok || provider == "" || model == "" {
+						return req.Reply(
+							"Invalid argument. Usage: /cooldowns clear [<provider>/<model>]",
+						)
+					}
+					if rt.ClearCooldown == nil {
+						return req.Reply(unavailableMsg)
+					}
+					if rt.ClearCooldown(provider, model) {
+						return req.Reply(fmt.Sprintf("Cleared cooldown for %s/%s.", provider, model))
+					}
+					return req.Reply(fmt.Sprintf("No cooldown found for %s/%s.", provider, model))
 				},
 			},
 		},

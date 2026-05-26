@@ -55,6 +55,15 @@ func (fc *FallbackChain) Reset() {
 	}
 }
 
+// Clear removes the cooldown entry for a single provider/model. Returns true
+// when an entry actually existed. The per-model counterpart to Reset.
+func (fc *FallbackChain) Clear(provider, model string) bool {
+	if fc.cooldown == nil {
+		return false
+	}
+	return fc.cooldown.Clear(provider, model)
+}
+
 // CooldownSnapshot returns the cooldown tracker's current view of blocked
 // models. Surfaced via /cooldowns and /status; the slice is empty when no
 // model is in cooldown or when the chain has no tracker.
@@ -100,9 +109,9 @@ func ResolveCandidatesWithLookup(
 			// shortened fallback chain with no explanation.
 			logger.WarnCF("providers", "fallback alias dropped (not enabled in model_list)",
 				map[string]any{
-					"alias":             original,
+					"alias":              original,
 					"resolved_by_lookup": resolvedByLookup,
-					"resolved":          candidateRaw,
+					"resolved":           candidateRaw,
 				})
 			return
 		}

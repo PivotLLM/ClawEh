@@ -2408,6 +2408,12 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 				al.fallback.Reset()
 			}
 		}
+		rt.ClearCooldown = func(provider, model string) bool {
+			if al.fallback == nil {
+				return false
+			}
+			return al.fallback.Clear(provider, model)
+		}
 		rt.ListCooldowns = func() []commands.CooldownEntry {
 			if al.fallback == nil {
 				return nil

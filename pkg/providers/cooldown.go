@@ -198,11 +198,18 @@ func (ct *CooldownTracker) Reset() {
 
 // Clear removes any cooldown/disabled state for a single provider+model.
 // Used as the per-model escape hatch after the operator tops up billing
-// or otherwise resolves the upstream condition.
-func (ct *CooldownTracker) Clear(provider, model string) {
+// or otherwise resolves the upstream condition. Returns true when an entry
+// existed and was removed so the caller can report "no cooldown found"
+// informationally.
+func (ct *CooldownTracker) Clear(provider, model string) bool {
 	ct.mu.Lock()
 	defer ct.mu.Unlock()
-	delete(ct.entries, ModelKey(provider, model))
+	key := ModelKey(provider, model)
+	if _, ok := ct.entries[key]; !ok {
+		return false
+	}
+	delete(ct.entries, key)
+	return true
 }
 
 // ClearAll wipes every cooldown entry. Equivalent to Reset; kept as a named
@@ -214,11 +221,11 @@ func (ct *CooldownTracker) ClearAll() {
 // CooldownStatus is a snapshot of a single model's cooldown state. Returned
 // by Snapshot in stable (provider/model) order so callers can render it.
 type CooldownStatus struct {
-	Provider    string
-	Model       string
-	Reason      FailoverReason
-	Since       time.Time
-	Until       time.Time
+	Provider string
+	Model    string
+	Reason   FailoverReason
+	Since    time.Time
+	Until    time.Time
 }
 
 // Snapshot returns the list of models that are currently NOT available
@@ -309,4 +316,3 @@ func calculateStandardCooldown(errorCount int) time.Duration {
 	ms = min(3_600_000, ms) // cap at 1 hour
 	return time.Duration(ms) * time.Millisecond
 }
-

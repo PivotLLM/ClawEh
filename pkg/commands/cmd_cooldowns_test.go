@@ -98,3 +98,112 @@ func TestCooldowns_ClearCallsResetCooldown(t *testing.T) {
 		t.Errorf("missing confirmation:\n%s", reply)
 	}
 }
+
+func TestCooldowns_ClearPerEntry_CallsClearWithSplit(t *testing.T) {
+	var (
+		gotProvider string
+		gotModel    string
+	)
+	rt := &Runtime{
+		ClearCooldown: func(provider, model string) bool {
+			gotProvider = provider
+			gotModel = model
+			return true
+		},
+	}
+	ex := NewExecutor(NewRegistry(BuiltinDefinitions()), rt)
+
+	var reply string
+	ex.Execute(context.Background(), Request{
+		Channel: "cli",
+		Text:    "/cooldowns clear openai/gpt-4o",
+		Reply: func(text string) error {
+			reply = text
+			return nil
+		},
+	})
+	if gotProvider != "openai" {
+		t.Errorf("provider = %q, want openai", gotProvider)
+	}
+	if gotModel != "gpt-4o" {
+		t.Errorf("model = %q, want gpt-4o", gotModel)
+	}
+	if !strings.Contains(reply, "Cleared cooldown for openai/gpt-4o") {
+		t.Errorf("missing per-entry confirmation:\n%s", reply)
+	}
+}
+
+func TestCooldowns_ClearPerEntry_FirstSlashSplit(t *testing.T) {
+	// Model names may contain additional slashes; only the FIRST slash separates
+	// provider from model.
+	var (
+		gotProvider string
+		gotModel    string
+	)
+	rt := &Runtime{
+		ClearCooldown: func(provider, model string) bool {
+			gotProvider = provider
+			gotModel = model
+			return true
+		},
+	}
+	ex := NewExecutor(NewRegistry(BuiltinDefinitions()), rt)
+
+	ex.Execute(context.Background(), Request{
+		Channel: "cli",
+		Text:    "/cooldowns clear openrouter/meta-llama/llama-4-scout",
+		Reply:   func(string) error { return nil },
+	})
+	if gotProvider != "openrouter" {
+		t.Errorf("provider = %q, want openrouter", gotProvider)
+	}
+	if gotModel != "meta-llama/llama-4-scout" {
+		t.Errorf("model = %q, want meta-llama/llama-4-scout", gotModel)
+	}
+}
+
+func TestCooldowns_ClearPerEntry_NoEntryReportsInformational(t *testing.T) {
+	rt := &Runtime{
+		ClearCooldown: func(provider, model string) bool { return false },
+	}
+	ex := NewExecutor(NewRegistry(BuiltinDefinitions()), rt)
+
+	var reply string
+	ex.Execute(context.Background(), Request{
+		Channel: "cli",
+		Text:    "/cooldowns clear openai/gpt-4o",
+		Reply: func(text string) error {
+			reply = text
+			return nil
+		},
+	})
+	if !strings.Contains(reply, "No cooldown found for openai/gpt-4o") {
+		t.Errorf("missing informational message:\n%s", reply)
+	}
+}
+
+func TestCooldowns_ClearPerEntry_MalformedRejected(t *testing.T) {
+	rt := &Runtime{
+		ClearCooldown: func(string, string) bool {
+			t.Fatal("ClearCooldown should not be invoked on malformed argument")
+			return false
+		},
+		ResetCooldown: func() {
+			t.Fatal("ResetCooldown should not be invoked on malformed argument")
+		},
+	}
+	ex := NewExecutor(NewRegistry(BuiltinDefinitions()), rt)
+
+	var reply string
+	ex.Execute(context.Background(), Request{
+		Channel: "cli",
+		Text:    "/cooldowns clear noslash",
+		Reply: func(text string) error {
+			reply = text
+			return nil
+		},
+	})
+	if !strings.Contains(reply, "Usage:") {
+		t.Errorf("missing usage hint:\n%s", reply)
+	}
+}

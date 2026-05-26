@@ -11,17 +11,22 @@ import (
 // per-request by the agent loop so that per-request state (like session scope)
 // can coexist with long-lived callbacks (like GetModelInfo).
 type Runtime struct {
-	Config               *config.Config
-	AgentName            string
-	GetModelInfo         func() (name, provider, apiBase string)
-	ListAgentIDs         func() []string
-	ListDefinitions      func() []Definition
-	GetEnabledChannels   func() []string
-	SwitchModel          func(value string) (oldModel string, err error)
-	SwitchChannel        func(value string) error
-	ClearHistory         func() error
-	CompactHistory       func(ctx context.Context) error
-	ResetCooldown        func()
+	Config             *config.Config
+	AgentName          string
+	GetModelInfo       func() (name, provider, apiBase string)
+	ListAgentIDs       func() []string
+	ListDefinitions    func() []Definition
+	GetEnabledChannels func() []string
+	SwitchModel        func(value string) (oldModel string, err error)
+	SwitchChannel      func(value string) error
+	ClearHistory       func() error
+	CompactHistory     func(ctx context.Context) error
+	ResetCooldown      func()
+	// ClearCooldown clears the cooldown for a single provider/model and
+	// returns true when an entry existed. Used by `/cooldowns clear <p/m>`
+	// to surface a "no cooldown found" message when the entry was already
+	// clear (informational, not an error).
+	ClearCooldown        func(provider, model string) bool
 	RetriggerLastMessage func(ctx context.Context) error
 	CancelPending        func() int // drains pending queued messages; returns skip count
 
