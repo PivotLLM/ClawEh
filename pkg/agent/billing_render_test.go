@@ -168,3 +168,77 @@ func TestRenderBillingError_PlainError(t *testing.T) {
 		t.Errorf("expected empty for plain error, got %q", got)
 	}
 }
+
+// TestRenderBillingError_LabelUsesFailureRecordProvider is the regression
+// test for the billing_render.go defect flagged by QA worker 721b2394: the
+// rendered row must reflect the provider recorded on the failure record we
+// have in hand (FailoverError.Provider / FallbackAttempt.Provider), not a
+// hardcoded or shared value. Mutation evidence: change the
+// `Provider: a.Provider` / `Provider: fe.Provider` assignments in
+// billing_render.go to a hardcoded string (e.g. "claude-cli", representing
+// the shared agent.Provider's protocol on the default config) and this test
+// fails because the rendered label no longer matches the per-row record.
+func TestRenderBillingError_LabelUsesFailureRecordProvider(t *testing.T) {
+	// Use a deliberately distinctive provider name so a mutation to a
+	// hardcoded label is obvious. The shared-provider concern QA raised would
+	// have surfaced as e.g. "claude-cli" appearing in the rendered text
+	// regardless of which actual provider returned the 402.
+	const sentinelProvider = "openrouter-distinctive-9c4f"
+
+	// Single-attempt FailoverError path.
+	{
+		wrapped := &common.HTTPStatusError{
+			StatusCode:  402,
+			BodyPreview: `{"error":{"code":"credits_exhausted"}}`,
+		}
+		err := &providers.FailoverError{
+			Reason:   providers.FailoverBilling,
+			Provider: sentinelProvider,
+			Model:    "auto",
+			Wrapped:  wrapped,
+		}
+		got := renderBillingError(err)
+		if !strings.Contains(got, sentinelProvider) {
+			t.Errorf("FailoverError path: rendered label %q does not contain failure-record provider %q",
+				got, sentinelProvider)
+		}
+	}
+
+	// Multi-attempt FallbackExhaustedError path: each row must carry its
+	// own attempt-recorded provider, not a shared label.
+	{
+		attemptProviderA := sentinelProvider + "-A"
+		attemptProviderB := sentinelProvider + "-B"
+		exhausted := &providers.FallbackExhaustedError{
+			Attempts: []providers.FallbackAttempt{
+				{
+					Provider: attemptProviderA,
+					Model:    "model-a",
+					Reason:   providers.FailoverBilling,
+					Error: &providers.FailoverError{
+						Reason:  providers.FailoverBilling,
+						Wrapped: &common.HTTPStatusError{StatusCode: 402, BodyPreview: "{}"},
+					},
+				},
+				{
+					Provider: attemptProviderB,
+					Model:    "model-b",
+					Reason:   providers.FailoverBilling,
+					Error: &providers.FailoverError{
+						Reason:  providers.FailoverBilling,
+						Wrapped: &common.HTTPStatusError{StatusCode: 402, BodyPreview: "{}"},
+					},
+				},
+			},
+		}
+		got := renderBillingError(exhausted)
+		if !strings.Contains(got, attemptProviderA) {
+			t.Errorf("FallbackExhaustedError: missing per-attempt provider %q in %q",
+				attemptProviderA, got)
+		}
+		if !strings.Contains(got, attemptProviderB) {
+			t.Errorf("FallbackExhaustedError: missing per-attempt provider %q in %q",
+				attemptProviderB, got)
+		}
+	}
+}
