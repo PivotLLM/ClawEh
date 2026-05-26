@@ -2,7 +2,6 @@ package gateway
 
 import (
 	"bytes"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -140,8 +139,8 @@ func hitGET(t *testing.T, mux *http.ServeMux, path string) *httptest.ResponseRec
 //
 //   - POST /api/reply/{token} — the canonical callback-404 regression (the
 //     gateway-side bug fixed in e32731eb).
-//   - GET /api/gateway/status — the WebUI's heartbeat; if missing the
-//     frontend shows the gateway as down even though it is up.
+//   - GET /api/gateway/logs — a representative WebUI API route; if missing
+//     the WebUI loses backend connectivity for log streaming.
 //   - GET / — the embedded SPA fallback; if missing the WebUI 404s.
 //
 // All three live on the same mux as the channel webhook handlers, and the
@@ -177,19 +176,10 @@ func TestRebuildSharedHTTPServer_MergedBinaryRoutesSurviveReload(t *testing.T) {
 		t.Fatalf("POST /api/reply/{token}: got %d, want %d (route missing — reload dropped the callback handler)", got, http.StatusBadRequest)
 	}
 
-	// /api/gateway/status — the WebUI's poll target. In the merged binary
-	// it always reports running, with a JSON body that includes the
-	// "gateway_status" field.
-	statusRec := hitGET(t, fake.mux, "/api/gateway/status")
-	if statusRec.Code != http.StatusOK {
-		t.Fatalf("GET /api/gateway/status: got %d, want %d (route missing — reload dropped the WebUI API)", statusRec.Code, http.StatusOK)
-	}
-	var statusBody map[string]any
-	if err := json.Unmarshal(statusRec.Body.Bytes(), &statusBody); err != nil {
-		t.Fatalf("GET /api/gateway/status body not JSON: %v", err)
-	}
-	if got, _ := statusBody["gateway_status"].(string); got != "running" {
-		t.Fatalf("gateway_status = %q, want %q (the merged binary should always report running)", got, "running")
+	// /api/gateway/logs — a representative WebUI API route surviving reload.
+	logsRec := hitGET(t, fake.mux, "/api/gateway/logs")
+	if logsRec.Code != http.StatusOK {
+		t.Fatalf("GET /api/gateway/logs: got %d, want %d (route missing — reload dropped the WebUI API)", logsRec.Code, http.StatusOK)
 	}
 
 	// GET / — the embedded SPA fallback handler. We expect 200 (the embed

@@ -24,7 +24,6 @@
     "welcomeDesc": "Ask me about weather, settings, or any other tasks. I'm here to assist you.",
     "placeholder": "Start a new message...",
     "newChat": "New Chat",
-    "notConnected": "Gateway is not running. Start it to chat.",
     "thinking": {
       "step1": "Thinking...",
       "step2": "Analyzing your request...",
@@ -44,33 +43,12 @@
       "noConfiguredModelDescription": "You need to configure at least one AI model with an API key before you can start chatting.",
       "goToModels": "Go to Models",
       "noSelectedModel": "No Model Selected",
-      "noSelectedModelDescription": "You have configured models, but none is set as default. Select a model before starting chat.",
-      "notRunning": "Gateway Not Running",
-      "notRunningDescription": "Start the gateway service to begin chatting. Use the Start Gateway button in the top bar."
+      "noSelectedModelDescription": "You have configured models, but none is set as default. Select a model before starting chat."
     },
     "modelGroup": {
       "apikey": "API Key",
       "oauth": "OAuth",
       "local": "Local"
-    }
-  },
-  "header": {
-    "gateway": {
-      "stopDialog": {
-        "title": "Stop Gateway Service?",
-        "description": "Are you sure you want to stop the gateway? This will disconnect your active chat sessions and halt inference.",
-        "confirm": "Stop Gateway"
-      },
-      "action": {
-        "start": "Start Gateway",
-        "stop": "Stop Gateway",
-        "restart": "Restart Gateway"
-      },
-      "status": {
-        "starting": "Starting Gateway...",
-        "restarting": "Restarting Gateway..."
-      },
-      "restartRequired": "Model changes require a gateway restart to take effect."
     }
   },
   "common": {

@@ -10,7 +10,6 @@ interface ChatComposerProps {
   input: string
   onInputChange: (value: string) => void
   onSend: () => void
-  isConnected: boolean
   hasDefaultModel: boolean
 }
 
@@ -18,11 +17,9 @@ export function ChatComposer({
   input,
   onInputChange,
   onSend,
-  isConnected,
   hasDefaultModel,
 }: ChatComposerProps) {
   const { t } = useTranslation()
-  const canInput = isConnected && hasDefaultModel
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.nativeEvent.isComposing) return
@@ -40,10 +37,10 @@ export function ChatComposer({
           onChange={(e) => onInputChange(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder={t("chat.placeholder")}
-          disabled={!canInput}
+          disabled={!hasDefaultModel}
           className={cn(
             "max-h-[200px] min-h-[60px] resize-none border-0 bg-transparent px-2 py-1 text-[15px] shadow-none transition-colors focus-visible:ring-0 focus-visible:outline-none dark:bg-transparent",
-            !canInput && "cursor-not-allowed",
+            !hasDefaultModel && "cursor-not-allowed",
           )}
           minRows={1}
           maxRows={8}
@@ -56,7 +53,7 @@ export function ChatComposer({
             size="icon"
             className="size-8 rounded-full bg-violet-500 text-white transition-transform hover:bg-violet-600 active:scale-95"
             onClick={onSend}
-            disabled={!input.trim() || !isConnected}
+            disabled={!input.trim() || !hasDefaultModel}
           >
             <IconArrowUp className="size-4" />
           </Button>

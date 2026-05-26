@@ -2,10 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
 import { type ModelInfo, getModels, setDefaultModel } from "@/api/models"
 
-interface UseChatModelsOptions {
-  isConnected: boolean
-}
-
 function isLocalModel(model: ModelInfo): boolean {
   const isLocalHostBase = Boolean(
     model.api_base?.includes("localhost") ||
@@ -17,7 +13,7 @@ function isLocalModel(model: ModelInfo): boolean {
   )
 }
 
-export function useChatModels({ isConnected }: UseChatModelsOptions) {
+export function useChatModels() {
   const [modelList, setModelList] = useState<ModelInfo[]>([])
   const [defaultModelName, setDefaultModelName] = useState("")
   const setDefaultRequestIdRef = useRef(0)
@@ -40,7 +36,7 @@ export function useChatModels({ isConnected }: UseChatModelsOptions) {
     }, 0)
 
     return () => clearTimeout(timerId)
-  }, [isConnected, loadModels])
+  }, [loadModels])
 
   const handleSetDefault = useCallback(
     async (modelName: string) => {

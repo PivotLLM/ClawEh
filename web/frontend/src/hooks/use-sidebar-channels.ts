@@ -8,7 +8,6 @@ import {
   IconPlug,
 } from "@tabler/icons-react"
 import type { TFunction } from "i18next"
-import { useAtomValue } from "jotai"
 import * as React from "react"
 
 import {
@@ -18,7 +17,6 @@ import {
   getChannelsCatalog,
 } from "@/api/channels"
 import { getChannelDisplayName } from "@/components/channels/channel-display-name"
-import { gatewayAtom } from "@/store/gateway"
 
 const CHANNEL_IMPORTANCE_ORDER = [
   "discord",
@@ -83,7 +81,6 @@ interface UseSidebarChannelsOptions {
 }
 
 export function useSidebarChannels({ t }: UseSidebarChannelsOptions) {
-  const gateway = useAtomValue(gatewayAtom)
   const [channels, setChannels] = React.useState<SupportedChannel[]>([])
   const [enabledMap, setEnabledMap] = React.useState<Record<string, boolean>>(
     {},
@@ -117,15 +114,6 @@ export function useSidebarChannels({ t }: UseSidebarChannelsOptions) {
       active = false
     }
   }, [reloadChannels])
-
-  const previousGatewayStatusRef = React.useRef(gateway.status)
-  React.useEffect(() => {
-    const previousStatus = previousGatewayStatusRef.current
-    if (previousStatus !== "running" && gateway.status === "running") {
-      reloadChannels()
-    }
-    previousGatewayStatusRef.current = gateway.status
-  }, [gateway.status, reloadChannels])
 
   const sortedChannels = React.useMemo(() => {
     const list = [...channels]

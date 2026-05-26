@@ -11,7 +11,6 @@ import { UserMessage } from "@/components/chat/user-message"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 import { useChatModels } from "@/hooks/use-chat-models"
-import { useGateway } from "@/hooks/use-gateway"
 import { useClawChat } from "@/hooks/use-claw-chat"
 import { useSessionHistory } from "@/hooks/use-session-history"
 import { hydrateActiveSession } from "@/lib/claw-chat-controller"
@@ -32,10 +31,7 @@ export function ChatPage() {
     newChat,
   } = useClawChat()
 
-  const { state: gwState } = useGateway()
-  const isConnected = gwState === "running"
-
-  const { hasConfiguredModels, defaultModelName } = useChatModels({ isConnected })
+  const { hasConfiguredModels, defaultModelName } = useChatModels()
 
   const {
     sessions,
@@ -74,7 +70,7 @@ export function ChatPage() {
   }, [messages, isTyping, isAtBottom])
 
   const handleSend = () => {
-    if (!input.trim() || !isConnected) return
+    if (!input.trim()) return
     sendMessage(input.trim())
     setInput("")
   }
@@ -125,7 +121,6 @@ export function ChatPage() {
             <ChatEmptyState
               hasConfiguredModels={hasConfiguredModels}
               defaultModelName={defaultModelName}
-              isConnected={isConnected}
             />
           )}
 
@@ -150,7 +145,6 @@ export function ChatPage() {
         input={input}
         onInputChange={setInput}
         onSend={handleSend}
-        isConnected={isConnected}
         hasDefaultModel={Boolean(defaultModelName)}
       />
     </div>

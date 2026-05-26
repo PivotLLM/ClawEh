@@ -1,6 +1,5 @@
 import { IconLoader2 } from "@tabler/icons-react"
-import { useAtomValue } from "jotai"
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 
@@ -19,7 +18,6 @@ import { TelegramForm } from "@/components/channels/channel-forms/telegram-form"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
-import { gatewayAtom } from "@/store/gateway"
 
 interface ChannelConfigPageProps {
   channelName: string
@@ -160,7 +158,6 @@ const CHANNELS_WITHOUT_DOCS = new Set([
 
 export function ChannelConfigPage({ channelName }: ChannelConfigPageProps) {
   const { t } = useTranslation()
-  const gateway = useAtomValue(gatewayAtom)
 
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -214,15 +211,6 @@ export function ChannelConfigPage({ channelName }: ChannelConfigPageProps) {
   useEffect(() => {
     loadData()
   }, [loadData])
-
-  const previousGatewayStatusRef = useRef(gateway.status)
-  useEffect(() => {
-    const previousStatus = previousGatewayStatusRef.current
-    if (previousStatus !== "running" && gateway.status === "running") {
-      void loadData()
-    }
-    previousGatewayStatusRef.current = gateway.status
-  }, [gateway.status, loadData])
 
   const savePayload = useMemo(() => {
     if (!channel) return null
