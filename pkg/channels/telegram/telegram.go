@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mymmrac/telego"
@@ -55,6 +56,10 @@ var (
 // Slack channel (see pkg/channels/slack/mrkdwn.go).
 const hRuleSubstitute = "──────────────────────────────"
 
+// pollExitTimeout bounds how long Stop() will block waiting for telego's
+// long-poll goroutine to exit. var (not const) so tests can shorten it.
+var pollExitTimeout = 10 * time.Second
+
 type TelegramChannel struct {
 	*channels.BaseChannel
 	bot            *telego.Bot
@@ -63,6 +68,14 @@ type TelegramChannel struct {
 	chatIDs        map[string]int64
 	ctx            context.Context
 	cancel         context.CancelFunc
+
+	// pollDone is closed when the goroutine wrapping telego's long-poll
+	// updates channel returns, which only happens after telego's internal
+	// doLongPolling goroutine has exited and closed the upstream channel.
+	// Stop() waits on this to avoid the next Start() racing into a 409
+	// "terminated by other getUpdates request" against an in-flight poll.
+	pollDone chan struct{}
+	stopOnce sync.Once
 
 	registerFunc     func(context.Context, []commands.Definition) error
 	commandRegCancel context.CancelFunc
@@ -127,14 +140,18 @@ func (c *TelegramChannel) Start(ctx context.Context) error {
 	logger.InfoC("telegram", "Starting Telegram bot (polling mode)...")
 
 	c.ctx, c.cancel = context.WithCancel(ctx)
+	c.stopOnce = sync.Once{}
 
-	updates, err := c.bot.UpdatesViaLongPolling(c.ctx, &telego.GetUpdatesParams{
+	rawUpdates, err := c.bot.UpdatesViaLongPolling(c.ctx, &telego.GetUpdatesParams{
 		Timeout: 30,
 	})
 	if err != nil {
 		c.cancel()
 		return fmt.Errorf("failed to start long polling: %w", err)
 	}
+
+	updates, pollDone := watchLongPoll(c.ctx, rawUpdates)
+	c.pollDone = pollDone
 
 	bh, err := th.NewBotHandler(c.bot, updates)
 	if err != nil {
@@ -166,23 +183,72 @@ func (c *TelegramChannel) Start(ctx context.Context) error {
 }
 
 func (c *TelegramChannel) Stop(ctx context.Context) error {
-	logger.InfoC("telegram", "Stopping Telegram bot...")
-	c.SetRunning(false)
+	c.stopOnce.Do(func() {
+		logger.InfoC("telegram", "Stopping Telegram bot...")
+		c.SetRunning(false)
 
-	// Stop the bot handler
-	if c.bh != nil {
-		_ = c.bh.StopWithContext(ctx)
-	}
+		// Cancel first so any in-flight getUpdates / handler context unblocks.
+		if c.cancel != nil {
+			c.cancel()
+		}
+		if c.commandRegCancel != nil {
+			c.commandRegCancel()
+		}
+		if c.bh != nil {
+			_ = c.bh.StopWithContext(ctx)
+		}
 
-	// Cancel our context (stops long polling)
-	if c.cancel != nil {
-		c.cancel()
-	}
-	if c.commandRegCancel != nil {
-		c.commandRegCancel()
-	}
+		// Block until telego's long-poll goroutine has actually exited.
+		// Without this, the next Start() (e.g. during config reload) races
+		// into a 409 "terminated by other getUpdates request" against an
+		// in-flight HTTP poll on Telegram's side.
+		if c.pollDone != nil {
+			select {
+			case <-c.pollDone:
+			case <-time.After(pollExitTimeout):
+				logger.WarnCF("telegram", "Timed out waiting for long-poll goroutine to exit", map[string]any{
+					"timeout": pollExitTimeout.String(),
+				})
+			}
+		}
+	})
 
 	return nil
+}
+
+// watchLongPoll relays telego's long-poll updates channel through a goroutine
+// we own. The returned done channel is closed only after the upstream channel
+// is closed — which telego does from a defer inside doLongPolling — giving
+// Stop() a reliable signal that the long-poll goroutine has exited. Once ctx
+// is cancelled the relay drains the upstream so doLongPolling isn't blocked
+// on send.
+func watchLongPoll(ctx context.Context, src <-chan telego.Update) (<-chan telego.Update, chan struct{}) {
+	dst := make(chan telego.Update, 1)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer close(dst)
+		for {
+			select {
+			case <-ctx.Done():
+				for range src {
+				}
+				return
+			case u, ok := <-src:
+				if !ok {
+					return
+				}
+				select {
+				case dst <- u:
+				case <-ctx.Done():
+					for range src {
+					}
+					return
+				}
+			}
+		}
+	}()
+	return dst, done
 }
 
 func (c *TelegramChannel) Send(ctx context.Context, msg bus.OutboundMessage) error {
