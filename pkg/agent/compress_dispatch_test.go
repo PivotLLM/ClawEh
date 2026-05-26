@@ -39,25 +39,26 @@ func TestResolveCompressModelTarget(t *testing.T) {
 	cases := []struct {
 		name      string
 		raw       string
+		wantAlias string
 		wantProto string
 		wantModel string
 		wantOK    bool
 	}{
-		{"alias_lookup_by_model_name", "haiku", "anthropic", "claude-haiku-4-5", true},
-		{"alias_lookup_by_model_id", "gpt-4o-mini", "openai", "gpt-4o-mini", true},
-		{"fully_qualified_match", "anthropic/claude-haiku-4-5", "anthropic", "claude-haiku-4-5", true},
-		{"fully_qualified_without_match_keeps_prefix", "openrouter/xai-grok-3", "openrouter", "xai-grok-3", true},
-		{"unknown_bare_returns_not_found", "nope-no-match", "", "", false},
-		{"disabled_model_id_is_ignored", "gpt-3.5-turbo", "", "", false},
-		{"empty_string_returns_not_found", "", "", "", false},
+		{"alias_lookup_by_model_name", "haiku", "haiku", "anthropic", "claude-haiku-4-5", true},
+		{"alias_lookup_by_model_id", "gpt-4o-mini", "fast", "openai", "gpt-4o-mini", true},
+		{"fully_qualified_match", "anthropic/claude-haiku-4-5", "haiku", "anthropic", "claude-haiku-4-5", true},
+		{"fully_qualified_without_match_keeps_prefix", "openrouter/xai-grok-3", "", "openrouter", "xai-grok-3", true},
+		{"unknown_bare_returns_not_found", "nope-no-match", "", "", "", false},
+		{"disabled_model_id_is_ignored", "gpt-3.5-turbo", "", "", "", false},
+		{"empty_string_returns_not_found", "", "", "", "", false},
 	}
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			p, m, ok := resolveCompressModelTarget(cfg, tc.raw)
-			if ok != tc.wantOK || p != tc.wantProto || m != tc.wantModel {
-				t.Fatalf("resolveCompressModelTarget(%q) = (%q,%q,%v); want (%q,%q,%v)",
-					tc.raw, p, m, ok, tc.wantProto, tc.wantModel, tc.wantOK)
+			a, p, m, ok := resolveCompressModelTarget(cfg, tc.raw)
+			if ok != tc.wantOK || a != tc.wantAlias || p != tc.wantProto || m != tc.wantModel {
+				t.Fatalf("resolveCompressModelTarget(%q) = (%q,%q,%q,%v); want (%q,%q,%q,%v)",
+					tc.raw, a, p, m, ok, tc.wantAlias, tc.wantProto, tc.wantModel, tc.wantOK)
 			}
 		})
 	}
@@ -66,7 +67,7 @@ func TestResolveCompressModelTarget(t *testing.T) {
 // TestResolveCompressModelTarget_NilConfig defends against the unlikely case
 // where the loop has no config snapshot yet.
 func TestResolveCompressModelTarget_NilConfig(t *testing.T) {
-	_, _, ok := resolveCompressModelTarget(nil, "haiku")
+	_, _, _, ok := resolveCompressModelTarget(nil, "haiku")
 	if ok {
 		t.Fatalf("expected not-found on nil cfg")
 	}

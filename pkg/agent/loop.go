@@ -1646,13 +1646,17 @@ func (al *AgentLoop) runLLMIteration(
 				fbResult, fbErr := al.fallback.Execute(
 					ctx,
 					activeCandidates,
-					func(ctx context.Context, providerName, model string) (*providers.LLMResponse, error) {
+					func(ctx context.Context, c providers.FallbackCandidate) (*providers.LLMResponse, error) {
 						if al.dispatcher != nil {
-							if p, err := al.dispatcher.Get(providerName, model); err == nil {
-								return p.Chat(ctx, messages, providerToolDefs, model, llmOpts)
+							key := c.Alias
+							if key == "" {
+								key = c.Provider + "/" + c.Model
+							}
+							if p, err := al.dispatcher.Get(key); err == nil {
+								return p.Chat(ctx, messages, providerToolDefs, c.Model, llmOpts)
 							}
 						}
-						return agent.Provider.Chat(ctx, messages, providerToolDefs, model, llmOpts)
+						return agent.Provider.Chat(ctx, messages, providerToolDefs, c.Model, llmOpts)
 					},
 				)
 				if fbErr != nil {
@@ -2140,15 +2144,20 @@ func (al *AgentLoop) resolveRunProvider(
 	activeModel string,
 ) (providers.LLMProvider, string) {
 	if al.dispatcher != nil {
-		var protocol, modelID string
+		var alias, protocol, modelID string
 		if len(activeCandidates) > 0 {
+			alias = strings.TrimSpace(activeCandidates[0].Alias)
 			protocol = strings.TrimSpace(activeCandidates[0].Provider)
 			modelID = strings.TrimSpace(activeCandidates[0].Model)
-		} else if p, m, ok := resolveCompressModelTarget(al.GetConfig(), strings.TrimSpace(agent.Model)); ok {
-			protocol, modelID = p, m
+		} else if a, p, m, ok := resolveCompressModelTarget(al.GetConfig(), strings.TrimSpace(agent.Model)); ok {
+			alias, protocol, modelID = a, p, m
 		}
 		if protocol != "" && modelID != "" {
-			if p, err := al.dispatcher.Get(protocol, modelID); err == nil {
+			key := alias
+			if key == "" {
+				key = protocol + "/" + modelID
+			}
+			if p, err := al.dispatcher.Get(key); err == nil {
 				return p, modelID
 			}
 		}

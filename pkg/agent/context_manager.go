@@ -33,19 +33,25 @@ func (c *providerLLMClient) Complete(ctx context.Context, messages []providers.M
 }
 
 // resolveCompressModelTarget resolves a configured compress_model reference into
-// the fully-qualified (protocol, modelID) pair that can be handed to the
-// provider dispatcher. Bare aliases and shorthand model IDs are looked up
-// against the loaded model_list, mirroring resolveFromModelList in instance.go.
-// Returns ("", "", false) when the reference cannot be resolved against the
+// the (alias, protocol, modelID) triple that can be handed to the provider
+// dispatcher. Bare aliases and shorthand model IDs are looked up against the
+// loaded model_list, mirroring resolveFromModelList in instance.go.
+//
+// The returned alias is the resolved entry's model_name; the dispatcher uses
+// it as the cache/lookup key so per-entry openai_compat state
+// (response_log_file, reasoning_effort, extra_body, …) is honoured when
+// multiple entries share the same wire model.
+//
+// Returns ("", "", "", false) when the reference cannot be resolved against the
 // configured model_list — callers should then fall back to the agent's default
 // provider rather than guess a protocol.
-func resolveCompressModelTarget(cfg *config.Config, raw string) (protocol, modelID string, ok bool) {
+func resolveCompressModelTarget(cfg *config.Config, raw string) (alias, protocol, modelID string, ok bool) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return "", "", false
+		return "", "", "", false
 	}
 	if cfg == nil {
-		return "", "", false
+		return "", "", "", false
 	}
 
 	// Direct alias / ModelName lookup wins: this lets users say
@@ -55,7 +61,7 @@ func resolveCompressModelTarget(cfg *config.Config, raw string) (protocol, model
 		full := strings.TrimSpace(mc.Model)
 		if full != "" {
 			p, m := providers.ExtractProtocol(full)
-			return p, m, true
+			return mc.ModelName, p, m, true
 		}
 	}
 
@@ -71,23 +77,25 @@ func resolveCompressModelTarget(cfg *config.Config, raw string) (protocol, model
 		}
 		if full == raw {
 			p, m := providers.ExtractProtocol(full)
-			return p, m, true
+			return cfg.ModelList[i].ModelName, p, m, true
 		}
 		p, m := providers.ExtractProtocol(full)
 		if m == raw {
-			return p, m, true
+			return cfg.ModelList[i].ModelName, p, m, true
 		}
 	}
 
 	// If raw already carries a protocol prefix, use it verbatim. Dispatcher
 	// will still need a matching enabled model_list entry, but accepting the
-	// prefix here makes the failure message in the dispatcher useful.
+	// prefix here makes the failure message in the dispatcher useful. No
+	// alias is known in this branch, so dispatcher falls back to wire-model
+	// matching.
 	if strings.Contains(raw, "/") {
 		p, m := providers.ExtractProtocol(raw)
-		return p, m, true
+		return "", p, m, true
 	}
 
-	return "", "", false
+	return "", "", "", false
 }
 
 // buildCompressLLMClient returns the LLMClient used to drive context-window
@@ -100,15 +108,22 @@ func resolveCompressModelTarget(cfg *config.Config, raw string) (protocol, model
 // only when the dispatcher cannot satisfy the request.
 func (al *AgentLoop) buildCompressLLMClient(agent *AgentInstance, compressModelName, sessionKey string) llmcontext.LLMClient {
 	cfg := al.GetConfig()
-	protocol, modelID, ok := resolveCompressModelTarget(cfg, compressModelName)
+	alias, protocol, modelID, ok := resolveCompressModelTarget(cfg, compressModelName)
 	if ok && al.dispatcher != nil {
-		if p, err := al.dispatcher.Get(protocol, modelID); err == nil {
-			log.Printf("agent: compress_model %q dispatched to protocol=%q model=%q for agent %q session %q",
-				compressModelName, protocol, modelID, agent.ID, sessionKey)
+		// Prefer the resolved alias as the dispatcher key so per-entry
+		// openai_compat state is honoured. Fall back to the wire model when
+		// no alias is known (raw protocol/modelID inputs).
+		key := alias
+		if key == "" {
+			key = protocol + "/" + modelID
+		}
+		if p, err := al.dispatcher.Get(key); err == nil {
+			log.Printf("agent: compress_model %q dispatched via alias=%q (protocol=%q model=%q) for agent %q session %q",
+				compressModelName, alias, protocol, modelID, agent.ID, sessionKey)
 			return &providerLLMClient{provider: p, model: modelID}
 		} else {
-			log.Printf("agent: dispatcher could not build compress provider for %q (%q/%q): %v; falling back to agent.Provider",
-				compressModelName, protocol, modelID, err)
+			log.Printf("agent: dispatcher could not build compress provider for %q (alias=%q %q/%q): %v; falling back to agent.Provider",
+				compressModelName, alias, protocol, modelID, err)
 		}
 	} else if !ok {
 		log.Printf("agent: compress_model %q did not match any enabled model_list entry; falling back to agent.Provider",
@@ -136,18 +151,23 @@ func (al *AgentLoop) buildDefaultCompressLLMClient(agent *AgentInstance, session
 	cfg := al.GetConfig()
 	primary := strings.TrimSpace(agent.Model)
 	if primary != "" && al.dispatcher != nil {
-		if protocol, modelID, ok := resolveCompressModelTarget(cfg, primary); ok {
-			if p, err := al.dispatcher.Get(protocol, modelID); err == nil {
+		if alias, protocol, modelID, ok := resolveCompressModelTarget(cfg, primary); ok {
+			key := alias
+			if key == "" {
+				key = protocol + "/" + modelID
+			}
+			if p, err := al.dispatcher.Get(key); err == nil {
 				logger.DebugCF("llmcontext", "compress_model unset; defaulting to agent primary via dispatcher", map[string]any{
 					"agent_id": agent.ID,
+					"alias":    alias,
 					"model":    modelID,
 					"protocol": protocol,
 					"session":  sessionKey,
 				})
 				return &providerLLMClient{provider: p, model: modelID}
 			} else {
-				log.Printf("agent: dispatcher could not build default compress provider for primary %q (%q/%q): %v; falling back to agent.Provider",
-					primary, protocol, modelID, err)
+				log.Printf("agent: dispatcher could not build default compress provider for primary %q (alias=%q %q/%q): %v; falling back to agent.Provider",
+					primary, alias, protocol, modelID, err)
 			}
 		}
 	}

@@ -120,6 +120,15 @@ func WithModelLabel(label string) Option {
 	}
 }
 
+// ResponseLogFile returns the configured per-provider response log file path.
+// Exposed primarily for tests that need to assert per-entry openai_compat
+// state was correctly attached to this Provider instance.
+func (p *Provider) ResponseLogFile() string { return p.responseLogFile }
+
+// ReasoningEffort returns the configured reasoning_effort. See ResponseLogFile
+// for the same caveat about intended use.
+func (p *Provider) ReasoningEffort() string { return p.reasoningEffort }
+
 func NewProvider(apiKey, apiBase, proxy string, opts ...Option) *Provider {
 	p := &Provider{
 		apiKey:     apiKey,
