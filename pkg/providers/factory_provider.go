@@ -50,6 +50,10 @@ func ExtractProtocol(model string) (protocol, modelID string) {
 // Supported protocols: openai, anthropic, anthropic-messages, azure, bedrock,
 // litellm, openrouter, groq, gemini, nvidia, ollama, moonshot, deepseek,
 // cerebras, vllm, qwen, mistral, avian, xai, claude-cli, codex-cli, gemini-cli.
+// Additional openai-compatible protocols can be registered via
+// Config.OpenAICompatProtocols — those are surfaced on the ModelConfig by
+// LoadConfig (see MarkOpenAICompatExtra) and routed through the openai-compat
+// HTTP provider here.
 // Returns the provider, the model ID (without protocol prefix), and any error.
 func CreateProviderFromConfig(cfg *config.ModelConfig) (LLMProvider, string, error) {
 	if cfg == nil {
@@ -247,7 +251,38 @@ func CreateProviderFromConfig(cfg *config.ModelConfig) (LLMProvider, string, err
 		return NewGeminiCliProvider(cfg.Command, workspace, cfg.ExtraArgs, cfg.Env), modelID, nil
 
 	default:
-		return nil, "", fmt.Errorf("unknown protocol %q in model %q", protocol, cfg.Model)
+		// Config-driven OpenAI-compatible protocol: an entry in
+		// Config.OpenAICompatProtocols tagged this ModelConfig during
+		// LoadConfig. The hardcoded switch entries above keep working
+		// unchanged; this branch only handles protocols registered via
+		// config.
+		if !cfg.IsOpenAICompatExtra() {
+			return nil, "", fmt.Errorf("unknown protocol %q in model %q", protocol, cfg.Model)
+		}
+		apiBase := cfg.APIBase
+		if apiBase == "" {
+			apiBase = cfg.OpenAICompatBase()
+		}
+		// Unlike the hardcoded openai-compat protocols (which all have a
+		// built-in default), an extra protocol may be registered with an
+		// empty default — in that case the per-model api_base is required,
+		// otherwise the HTTP client has nowhere to send the request.
+		if apiBase == "" {
+			return nil, "", fmt.Errorf(
+				"api_base is required for protocol %q: set openai_compat_protocols[%q] or the model's api_base",
+				protocol, protocol,
+			)
+		}
+		opts := []openai_compat.Option{
+			openai_compat.WithMaxTokensField(cfg.MaxTokensField),
+			openai_compat.WithRequestTimeout(time.Duration(cfg.RequestTimeout) * time.Second),
+			openai_compat.WithStrictCompat(cfg.StrictCompat),
+			openai_compat.WithResponseLogFile(cfg.ResponseLogFile),
+			openai_compat.WithReasoningEffort(cfg.ReasoningEffort),
+			openai_compat.WithExtraBody(cfg.ExtraBody),
+			openai_compat.WithModelLabel(cfg.ModelName),
+		}
+		return NewHTTPProviderWithOptions(cfg.APIKey, apiBase, cfg.Proxy, opts...), modelID, nil
 	}
 }
 

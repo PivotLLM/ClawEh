@@ -111,8 +111,17 @@ type Config struct {
 	// file for changes and triggers a reload. Defaults to
 	// global.DefaultConfigReloadIntervalSeconds; floored at
 	// global.MinConfigReloadIntervalSeconds.
-	ConfigReloadIntervalSeconds int    `json:"config_reload_interval_seconds,omitempty" env:"CLAW_CONFIG_RELOAD_INTERVAL_SECONDS"`
-	dataDir                     string // runtime-only: base data directory, not serialized
+	ConfigReloadIntervalSeconds int `json:"config_reload_interval_seconds,omitempty" env:"CLAW_CONFIG_RELOAD_INTERVAL_SECONDS"`
+
+	// OpenAICompatProtocols registers additional protocol prefixes that should
+	// be served by the openai-compatible HTTP provider. Keys are the protocol
+	// identifier (the part before "/" in a ModelConfig.Model string); values
+	// are the default api_base for that protocol — empty means "no default,
+	// each model must set api_base explicitly". Keys must not collide with
+	// any protocol owned by a hardcoded provider (see reservedProtocolNames).
+	OpenAICompatProtocols map[string]string `json:"openai_compat_protocols,omitempty"`
+
+	dataDir string // runtime-only: base data directory, not serialized
 }
 
 // MarshalJSON implements custom JSON marshaling for Config
@@ -612,6 +621,43 @@ type ModelConfig struct {
 	// claw does not model natively. Keys colliding with claw-managed fields
 	// (see reservedRequestBodyKeys) are rejected at config load.
 	ExtraBody map[string]any `json:"extra_body,omitempty" yaml:"extra_body,omitempty"`
+
+	// Runtime-only: set by Config.resolveOpenAICompatProtocols when the
+	// model's protocol prefix matches an entry in
+	// Config.OpenAICompatProtocols. Unexported so JSON ignores them.
+	openaiCompatExtra bool
+	openaiCompatBase  string
+}
+
+// IsOpenAICompatExtra reports whether this model's protocol prefix was
+// registered via Config.OpenAICompatProtocols. The providers factory uses
+// this to route an otherwise-unknown protocol through the openai-compat
+// HTTP provider.
+func (c *ModelConfig) IsOpenAICompatExtra() bool {
+	if c == nil {
+		return false
+	}
+	return c.openaiCompatExtra
+}
+
+// OpenAICompatBase returns the default api_base registered for this model's
+// protocol via Config.OpenAICompatProtocols. Empty when the protocol was not
+// registered, or when it was registered with an empty default.
+func (c *ModelConfig) OpenAICompatBase() string {
+	if c == nil {
+		return ""
+	}
+	return c.openaiCompatBase
+}
+
+// MarkOpenAICompatExtra tags this ModelConfig as resolved via
+// Config.OpenAICompatProtocols. base is the registered default api_base
+// (may be empty). Called by Config.resolveOpenAICompatProtocols; also useful
+// in tests that construct a ModelConfig directly without going through
+// LoadConfig.
+func (c *ModelConfig) MarkOpenAICompatExtra(base string) {
+	c.openaiCompatExtra = true
+	c.openaiCompatBase = base
 }
 
 // reservedRequestBodyKeys lists the JSON request fields owned by claw's own
@@ -919,6 +965,14 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, err
 	}
 
+	// Reject openai_compat_protocols entries that collide with hardcoded
+	// providers, then tag matching model_list entries so the providers
+	// factory can route them via the openai-compat HTTP provider.
+	if err := cfg.ValidateOpenAICompatProtocols(); err != nil {
+		return nil, err
+	}
+	cfg.resolveOpenAICompatProtocols()
+
 	return cfg, nil
 }
 
@@ -1144,6 +1198,102 @@ func (c *Config) ValidateModelList() error {
 		}
 	}
 	return nil
+}
+
+// reservedProtocolNames is the set of protocol identifiers owned by a
+// hardcoded case branch in pkg/providers/factory_provider.go. Entries in
+// Config.OpenAICompatProtocols may not use these names — operators should
+// rely on the built-in behavior for these protocols, or pick a different
+// identifier.
+//
+// Keep this list in sync with the switch in
+// pkg/providers/factory_provider.go:CreateProviderFromConfig.
+var reservedProtocolNames = map[string]struct{}{
+	"openai":             {},
+	"azure":              {},
+	"azure-openai":       {},
+	"bedrock":            {},
+	"litellm":            {},
+	"openrouter":         {},
+	"groq":               {},
+	"gemini":             {},
+	"nvidia":             {},
+	"ollama":             {},
+	"moonshot":           {},
+	"deepseek":           {},
+	"cerebras":           {},
+	"vllm":               {},
+	"qwen":               {},
+	"mistral":            {},
+	"avian":              {},
+	"xai":                {},
+	"anthropic":          {},
+	"anthropic-messages": {},
+	"claude-cli":         {},
+	"claudecli":          {},
+	"codex-cli":          {},
+	"codexcli":           {},
+	"gemini-cli":         {},
+	"geminicli":          {},
+}
+
+// IsReservedProtocol reports whether name collides with a protocol owned by
+// a hardcoded provider in pkg/providers/factory_provider.go.
+func IsReservedProtocol(name string) bool {
+	_, ok := reservedProtocolNames[strings.ToLower(strings.TrimSpace(name))]
+	return ok
+}
+
+// ValidateOpenAICompatProtocols checks that no entry in OpenAICompatProtocols
+// collides with a hardcoded provider protocol or is otherwise malformed.
+// An entry duplicating a hardcoded openai-compat protocol (e.g. "xai") is
+// rejected — those protocols already ship with the right defaults, and
+// allowing operators to silently override them would mask drift between the
+// config-driven default and the hardcoded one.
+func (c *Config) ValidateOpenAICompatProtocols() error {
+	for proto := range c.OpenAICompatProtocols {
+		p := strings.TrimSpace(proto)
+		if p == "" {
+			return fmt.Errorf("openai_compat_protocols: empty protocol name")
+		}
+		if strings.ContainsAny(p, "/ \t") {
+			return fmt.Errorf("openai_compat_protocols: protocol name %q must not contain '/' or whitespace", proto)
+		}
+		if IsReservedProtocol(p) {
+			return fmt.Errorf(
+				"openai_compat_protocols: protocol %q is reserved by a built-in provider; remove the entry or pick a different name",
+				proto,
+			)
+		}
+	}
+	return nil
+}
+
+// resolveOpenAICompatProtocols walks ModelList and tags any entry whose
+// protocol prefix appears in OpenAICompatProtocols, recording the registered
+// default api_base on the entry so the providers factory can route it through
+// the openai-compat HTTP provider without a hardcoded switch entry.
+func (c *Config) resolveOpenAICompatProtocols() {
+	if len(c.OpenAICompatProtocols) == 0 {
+		return
+	}
+	for i := range c.ModelList {
+		proto := extractProtocolStatic(c.ModelList[i].Model)
+		if base, ok := c.OpenAICompatProtocols[proto]; ok {
+			c.ModelList[i].MarkOpenAICompatExtra(base)
+		}
+	}
+}
+
+// extractProtocolStatic mirrors providers.ExtractProtocol; duplicated here to
+// avoid an import cycle (providers imports config).
+func extractProtocolStatic(model string) string {
+	model = strings.TrimSpace(model)
+	protocol, _, found := strings.Cut(model, "/")
+	if !found {
+		return "openai"
+	}
+	return protocol
 }
 
 func MergeAPIKeys(apiKey string, apiKeys []string) []string {
