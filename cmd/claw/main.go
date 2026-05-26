@@ -27,16 +27,26 @@ import (
 )
 
 func NewPicoclawCommand(binaryName string) *cobra.Command {
+	// Default subcommand: run the merged gateway + WebUI + session API on the
+	// single port from cfg.Gateway. `claw` with no arguments is the supported
+	// way to launch the server; the `claw gateway` alias is preserved for
+	// existing systemd units and muscle memory during the transition.
+	defaultCmd := gateway.NewGatewayCommand()
 	cmd := &cobra.Command{
-		Use:   binaryName,
-		Short: global.AppTagLine,
+		Use:          binaryName,
+		Short:        global.AppTagLine,
+		Args:         defaultCmd.Args,
+		SilenceUsage: true,
+		PreRunE:      defaultCmd.PreRunE,
+		RunE:         defaultCmd.RunE,
 	}
+	cmd.Flags().AddFlagSet(defaultCmd.Flags())
 
 	cmd.AddCommand(
 		onboard.NewOnboardCommand(),
 		agent.NewAgentCommand(),
 		auth.NewAuthCommand(),
-		gateway.NewGatewayCommand(),
+		defaultCmd,
 		status.NewStatusCommand(),
 		cron.NewCronCommand(),
 		skills.NewSkillsCommand(),

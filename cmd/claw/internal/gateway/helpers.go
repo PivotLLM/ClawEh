@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -31,6 +32,8 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/state"
 	"github.com/PivotLLM/ClawEh/pkg/tools"
 	"github.com/PivotLLM/ClawEh/pkg/voice"
+	webserver "github.com/PivotLLM/ClawEh/web/backend"
+	"github.com/PivotLLM/ClawEh/web/backend/launcherconfig"
 )
 
 // Timeout constants for service operations
@@ -41,6 +44,43 @@ const (
 	gracefulShutdownTimeout = 15 * time.Second
 )
 
+// newMergedWebServer constructs the in-process WebUI server bundle (API
+// handler + embedded SPA) configured against the active config file and the
+// merged binary's actual listen settings. The gateway host/port from
+// cfg.Gateway are the source of truth — the launcher process and its
+// config-as-IPC channel are gone in the merged binary.
+func newMergedWebServer(configPath string, cfg *config.Config) *webserver.Server {
+	publicBind := cfg != nil && cfg.Gateway.Host == "0.0.0.0"
+	port := 0
+	if cfg != nil {
+		port = cfg.Gateway.Port
+	}
+	if port == 0 {
+		port = launcherconfig.DefaultPort
+	}
+	srv := webserver.New(webserver.Options{
+		ConfigPath: configPath,
+		ListenPort: port,
+		Public:     publicBind,
+	})
+	if _, err := srv.APIHandler().EnsureWebUIChannel(); err != nil {
+		logger.WarnCF("gateway", "Failed to ensure webui channel", map[string]any{"error": err.Error()})
+	}
+	return srv
+}
+
+// buildMergedMux constructs the shared mux that the gateway HTTP server backs.
+// Order matters only for the catch-all "/" (embedded frontend) vs. specific
+// API paths: Go's ServeMux picks the longest-prefix match, so registering the
+// SPA fallback alongside more-specific /api/* and /webui/ws handlers is safe.
+func buildMergedMux(srv *webserver.Server) *http.ServeMux {
+	mux := http.NewServeMux()
+	if srv != nil {
+		srv.RegisterRoutes(mux)
+	}
+	return mux
+}
+
 // gatewayServices holds references to all running services
 type gatewayServices struct {
 	CronService    *cron.CronService
@@ -49,6 +89,7 @@ type gatewayServices struct {
 	DeviceService  *devices.Service
 	HealthServer   *health.Server
 	MCPServer      *mcpserver.MCPServer
+	WebServer      *webserver.Server
 }
 
 func gatewayCmd(debug bool) error {
@@ -120,7 +161,7 @@ func gatewayCmd(debug bool) error {
 		})
 
 	// Setup and start all services
-	services, err := setupAndStartServices(cfg, agentLoop, msgBus)
+	services, err := setupAndStartServices(cfg, agentLoop, msgBus, configPath)
 	if err != nil {
 		return err
 	}
@@ -167,6 +208,7 @@ func setupAndStartServices(
 	cfg *config.Config,
 	agentLoop *agent.AgentLoop,
 	msgBus *bus.MessageBus,
+	configPath string,
 ) (*gatewayServices, error) {
 	services := &gatewayServices{}
 
@@ -228,10 +270,14 @@ func setupAndStartServices(
 		logger.WarnC("channels", "No channels enabled")
 	}
 
-	// Setup shared HTTP server with health endpoints and webhook handlers
+	// Setup shared HTTP server with health endpoints and webhook handlers.
+	// In the merged claw binary the same mux also hosts the WebUI API and the
+	// embedded frontend assets — see rebuildSharedHTTPServer for the seam that
+	// is exercised on every config reload.
 	addr := fmt.Sprintf("%s:%d", cfg.Gateway.Host, cfg.Gateway.Port)
 	services.HealthServer = health.NewServer(cfg.Gateway.Host, cfg.Gateway.Port)
-	services.ChannelManager.SetupHTTPServer(addr, services.HealthServer)
+	services.WebServer = newMergedWebServer(configPath, cfg)
+	services.ChannelManager.SetupHTTPServer(addr, services.HealthServer, buildMergedMux(services.WebServer))
 
 	if err := services.ChannelManager.StartAll(context.Background()); err != nil {
 		return nil, fmt.Errorf("error starting channels: %w", err)

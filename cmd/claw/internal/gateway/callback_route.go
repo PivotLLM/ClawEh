@@ -15,20 +15,21 @@ import (
 // shared HTTP server on config reload. Defined as an interface here only so a
 // test can substitute a fake that captures the rebuilt mux.
 type httpServerInstaller interface {
-	SetupHTTPServer(addr string, healthServer *health.Server)
+	SetupHTTPServer(addr string, healthServer *health.Server, mux *http.ServeMux)
 }
 
 // rebuildSharedHTTPServer builds a new shared health.Server, wires it into the
-// channel manager's mux, and re-registers the callback route. Both
-// setupAndStartServices (boot, indirectly via gatewayCmd) and restartServices
-// (config reload) go through this seam so the callback route cannot disappear
-// after a config reload — that bug was the production 404 fixed in e32731eb,
-// and a regression test exercises this seam directly so the registration line
-// stays load-bearing.
+// channel manager's mux, and re-registers the callback route and the merged
+// WebUI routes. Both setupAndStartServices (boot, indirectly via gatewayCmd)
+// and restartServices (config reload) go through this seam so neither the
+// callback route nor the WebUI's /api/* routes can disappear after a config
+// reload — the callback-404 bug fixed in e32731eb is the canonical regression,
+// and the merged-binary work in this branch makes the same seam load-bearing
+// for the WebUI API surface.
 func rebuildSharedHTTPServer(services *gatewayServices, host string, port int, cm httpServerInstaller, al *agent.AgentLoop) {
 	addr := fmt.Sprintf("%s:%d", host, port)
 	services.HealthServer = health.NewServer(host, port)
-	cm.SetupHTTPServer(addr, services.HealthServer)
+	cm.SetupHTTPServer(addr, services.HealthServer, buildMergedMux(services.WebServer))
 	RegisterCallbackRoute(services.HealthServer, al)
 }
 

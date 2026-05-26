@@ -341,8 +341,16 @@ func (m *Manager) initChannels() error {
 // SetupHTTPServer creates a shared HTTP server with the given listen address.
 // It registers health endpoints from the health server and discovers channels
 // that implement WebhookHandler and/or HealthChecker to register their handlers.
-func (m *Manager) SetupHTTPServer(addr string, healthServer *health.Server) {
-	m.mux = http.NewServeMux()
+//
+// If mux is non-nil, it is used as the shared mux (so callers may pre-register
+// additional routes — e.g. the WebUI API and embedded frontend assets — on the
+// same mux that backs the gateway HTTP server). If mux is nil, a fresh
+// http.ServeMux is created.
+func (m *Manager) SetupHTTPServer(addr string, healthServer *health.Server, mux *http.ServeMux) {
+	if mux == nil {
+		mux = http.NewServeMux()
+	}
+	m.mux = mux
 
 	// Register health endpoints
 	if healthServer != nil {
@@ -373,6 +381,17 @@ func (m *Manager) SetupHTTPServer(addr string, healthServer *health.Server) {
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 30 * time.Second,
 	}
+}
+
+// Mux returns the shared HTTP ServeMux backing the gateway HTTP server.
+// Callers may register additional routes on the returned mux as long as
+// SetupHTTPServer has already been called. The merged claw binary uses this
+// (or its prebuilt-mux equivalent passed to SetupHTTPServer) to mount the
+// WebUI API and embedded frontend on the same port as channel webhooks.
+//
+// Returns nil before SetupHTTPServer has been called.
+func (m *Manager) Mux() *http.ServeMux {
+	return m.mux
 }
 
 func (m *Manager) StartAll(ctx context.Context) error {

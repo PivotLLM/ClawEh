@@ -1,11 +1,9 @@
-.PHONY: all build build-agent build-launcher install install-agent install-launcher uninstall uninstall-all clean help test test-race test-coverage test-cover-html test-regression
+.PHONY: all build install uninstall uninstall-all clean help test test-race test-coverage test-cover-html test-regression
 
 # Binary names
 BINARY_NAME=claw
-LAUNCHER_NAME=claw-launcher
 BUILD_DIR=build
 CMD_DIR=cmd/$(BINARY_NAME)
-LAUNCHER_WEB_DIR=web/backend
 MAIN_GO=$(CMD_DIR)/main.go
 
 # Version
@@ -93,35 +91,26 @@ else
 endif
 
 BINARY_PATH=$(BUILD_DIR)/$(BINARY_NAME)-$(PLATFORM)-$(ARCH)
-LAUNCHER_PATH=$(BUILD_DIR)/$(LAUNCHER_NAME)-$(PLATFORM)-$(ARCH)
 
 # Default target
 all: build
 
-## build: Build claw and claw-launcher for current platform
-build: build-agent build-launcher
-
-## build-agent: Build the claw binary for current platform
-build-agent: generate
+## build: Build the claw binary for current platform.
+##
+## The frontend (web/frontend) is built and embedded into the same binary,
+## so a single `claw gateway` invocation serves the WebUI on port 18790.
+build: generate
 	@echo "Building $(BINARY_NAME) for $(PLATFORM)/$(ARCH)..."
-	@mkdir -p $(BUILD_DIR)
-	@$(GO) build $(GOFLAGS) $(LDFLAGS) -o $(BINARY_PATH) ./$(CMD_DIR)
-	@echo "Build complete: $(BINARY_PATH)"
-	@ln -sf $(BINARY_NAME)-$(PLATFORM)-$(ARCH) $(BUILD_DIR)/$(BINARY_NAME)
-
-## build-launcher: Build the claw-launcher (web console) binary
-build-launcher:
-	@echo "Building $(LAUNCHER_NAME) for $(PLATFORM)/$(ARCH)..."
 	@mkdir -p $(BUILD_DIR)
 	@if [ ! -f web/backend/dist/index.html ]; then \
 		echo "Building frontend..."; \
 		cd web/frontend && pnpm install && pnpm build:backend; \
 	fi
-	@$(GO) build $(GOFLAGS) -o $(LAUNCHER_PATH) ./$(LAUNCHER_WEB_DIR)
-	@ln -sf $(LAUNCHER_NAME)-$(PLATFORM)-$(ARCH) $(BUILD_DIR)/$(LAUNCHER_NAME)
-	@echo "Build complete: $(LAUNCHER_PATH)"
+	@$(GO) build $(GOFLAGS) $(LDFLAGS) -o $(BINARY_PATH) ./$(CMD_DIR)
+	@echo "Build complete: $(BINARY_PATH)"
+	@ln -sf $(BINARY_NAME)-$(PLATFORM)-$(ARCH) $(BUILD_DIR)/$(BINARY_NAME)
 
-## install: Build and install claw and claw-launcher
+## install: Build and install claw
 install: build
 	@echo "Installing $(BINARY_NAME)..."
 	@mkdir -p $(INSTALL_BIN_DIR)
@@ -129,43 +118,19 @@ install: build
 	@chmod +x $(INSTALL_BIN_DIR)/$(BINARY_NAME)$(INSTALL_TMP_SUFFIX)
 	@mv -f $(INSTALL_BIN_DIR)/$(BINARY_NAME)$(INSTALL_TMP_SUFFIX) $(INSTALL_BIN_DIR)/$(BINARY_NAME)
 	@echo "Installed: $(INSTALL_BIN_DIR)/$(BINARY_NAME)"
-	@cp $(LAUNCHER_PATH) $(INSTALL_BIN_DIR)/$(LAUNCHER_NAME)$(INSTALL_TMP_SUFFIX)
-	@chmod +x $(INSTALL_BIN_DIR)/$(LAUNCHER_NAME)$(INSTALL_TMP_SUFFIX)
-	@mv -f $(INSTALL_BIN_DIR)/$(LAUNCHER_NAME)$(INSTALL_TMP_SUFFIX) $(INSTALL_BIN_DIR)/$(LAUNCHER_NAME)
-	@echo "Installed: $(INSTALL_BIN_DIR)/$(LAUNCHER_NAME)"
 	@echo "Installation complete!"
 
-## install-agent: Build and install the claw binary only
-install-agent: build-agent
-	@echo "Installing $(BINARY_NAME)..."
-	@mkdir -p $(INSTALL_BIN_DIR)
-	@cp $(BINARY_PATH) $(INSTALL_BIN_DIR)/$(BINARY_NAME)$(INSTALL_TMP_SUFFIX)
-	@chmod +x $(INSTALL_BIN_DIR)/$(BINARY_NAME)$(INSTALL_TMP_SUFFIX)
-	@mv -f $(INSTALL_BIN_DIR)/$(BINARY_NAME)$(INSTALL_TMP_SUFFIX) $(INSTALL_BIN_DIR)/$(BINARY_NAME)
-	@echo "Installed: $(INSTALL_BIN_DIR)/$(BINARY_NAME)"
-
-## install-launcher: Build and install claw-launcher only
-install-launcher: build-launcher
-	@echo "Installing $(LAUNCHER_NAME)..."
-	@mkdir -p $(INSTALL_BIN_DIR)
-	@cp $(LAUNCHER_PATH) $(INSTALL_BIN_DIR)/$(LAUNCHER_NAME)$(INSTALL_TMP_SUFFIX)
-	@chmod +x $(INSTALL_BIN_DIR)/$(LAUNCHER_NAME)$(INSTALL_TMP_SUFFIX)
-	@mv -f $(INSTALL_BIN_DIR)/$(LAUNCHER_NAME)$(INSTALL_TMP_SUFFIX) $(INSTALL_BIN_DIR)/$(LAUNCHER_NAME)
-	@echo "Installed: $(INSTALL_BIN_DIR)/$(LAUNCHER_NAME)"
-
-## uninstall: Remove claw and claw-launcher from system
+## uninstall: Remove claw from system
 uninstall:
-	@echo "Uninstalling $(BINARY_NAME) and $(LAUNCHER_NAME)..."
+	@echo "Uninstalling $(BINARY_NAME)..."
 	@rm -f $(INSTALL_BIN_DIR)/$(BINARY_NAME)
-	@rm -f $(INSTALL_BIN_DIR)/$(LAUNCHER_NAME)
 	@echo "Removed binaries from $(INSTALL_BIN_DIR)"
 	@echo "Note: Data directory $(CLAW_HOME) was not removed. Run 'make uninstall-all' to remove everything."
 
-## uninstall-all: Remove claw, claw-launcher, and all data
+## uninstall-all: Remove claw and all data
 uninstall-all:
 	@echo "Removing binaries..."
 	@rm -f $(INSTALL_BIN_DIR)/$(BINARY_NAME)
-	@rm -f $(INSTALL_BIN_DIR)/$(LAUNCHER_NAME)
 	@echo "Removing data directory..."
 	@rm -rf $(CLAW_HOME)
 	@echo "Removed: $(CLAW_HOME)"
@@ -299,7 +264,7 @@ update-deps:
 check: deps fmt vet test
 
 ## run: Build and run claw
-run: build-agent
+run: build
 	@$(BUILD_DIR)/$(BINARY_NAME) $(ARGS)
 
 ## docker-build: Build Docker image (minimal Alpine-based)
@@ -351,12 +316,8 @@ help:
 	@grep -E '^## ' $(MAKEFILE_LIST) | sort | awk -F': ' '{printf "  %-20s %s\n", substr($$1, 4), $$2}'
 	@echo ""
 	@echo "Examples:"
-	@echo "  make build              # Build claw and claw-launcher for current platform"
-	@echo "  make build-agent        # Build claw only"
-	@echo "  make build-launcher     # Build claw-launcher only"
-	@echo "  make install            # Install both to $(INSTALL_BIN_DIR)"
-	@echo "  make install-agent      # Install claw only"
-	@echo "  make install-launcher   # Install claw-launcher only"
+	@echo "  make build              # Build claw (with embedded WebUI) for current platform"
+	@echo "  make install            # Install to $(INSTALL_BIN_DIR)"
 	@echo "  make uninstall          # Remove binaries"
 	@echo "  make uninstall-all      # Remove binaries and data directory"
 	@echo ""
@@ -368,6 +329,5 @@ help:
 	@echo "Current Configuration:"
 	@echo "  Platform: $(PLATFORM)/$(ARCH)"
 	@echo "  Binary:   $(BINARY_PATH)"
-	@echo "  Launcher: $(LAUNCHER_PATH)"
 	@echo "  Install:  $(INSTALL_BIN_DIR)"
 	@echo "  Data:     $(CLAW_HOME)"

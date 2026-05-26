@@ -82,8 +82,11 @@ type fakeChannelManager struct {
 	mux *http.ServeMux
 }
 
-func (f *fakeChannelManager) SetupHTTPServer(_ string, hs *health.Server) {
-	f.mux = http.NewServeMux()
+func (f *fakeChannelManager) SetupHTTPServer(_ string, hs *health.Server, mux *http.ServeMux) {
+	if mux == nil {
+		mux = http.NewServeMux()
+	}
+	f.mux = mux
 	hs.RegisterOnMux(f.mux)
 }
 
