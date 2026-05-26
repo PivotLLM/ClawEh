@@ -1,12 +1,15 @@
 # ClawEh — Project Instructions for Claude Code
 
 ## Project Status
-**Unreleased** — no backwards compatibility required. Remove deprecated code rather than retaining it. Use caution to ensure that claw-launcher remains aligned with changes in claw
+**Unreleased** — no backwards compatibility required. Remove deprecated code rather than retaining it.
 
 ## What This Is
 ClawEh is an independent Go project forked from sipeed/picoclaw on 2026-03-20.
 - Module: `github.com/PivotLLM/ClawEh`
-- Binaries: `claw` (cmd/claw) and `claw-launcher` (web/backend)
+- Binary: `claw` (cmd/claw) — the gateway, the WebUI HTTP layer, the session
+  API, and the embedded frontend all share one process and one HTTP mux on
+  `cfg.Gateway.Port` (default `18790`). There is no longer a separate
+  `claw-launcher` / `claw-web` binary.
 - Data dir constant: `global.DefaultDataDir` = `.claw` (pkg/global/defaults.go)
 - Env override constant: `global.EnvVarHome` = `CLAW_HOME`
 - Version/name constants: pkg/global/version.go
@@ -18,7 +21,7 @@ Upstream picoclaw docs are archived in `historical/`.
 ```
 make test        # runs tests
 ```
-To build and deploy: run `update-claw.sh` (on PATH). It builds both binaries, stops claw, installs, and restarts. Do not run build/install commands directly.
+To build and deploy: run `update-claw.sh` (on PATH). It builds the binary, stops claw, installs, and restarts. Do not run build/install commands directly.
 
 ## Key Architecture Notes
 - **Providers**: claude-cli, codex-cli, gemini-cli use subprocess execution. Timeout via `request_timeout` per-model config → `WithTimeout` constructors in factory.
@@ -31,7 +34,7 @@ To build and deploy: run `update-claw.sh` (on PATH). It builds both binaries, st
 ## Workflow Rules
 - Never commit or push without explicit user instruction.
 - Never push directly to main — use feature branches + PRs.
-- Always compile after edits before declaring done: `go build ./...` for Go changes, and `cd web/frontend && pnpm run build:backend` for frontend/TypeScript changes. Both must pass clean.
+- Always compile after edits before declaring done: `go build ./...` for Go changes, and `cd web/frontend && pnpm run build:backend` for frontend/TypeScript changes. The frontend bundle lands in `web/backend/dist`, which is embedded by `web/backend/embed.go` into the merged claw binary.
 - When investigating a problem, report findings and wait for approval before implementing.
 - Keep responses short and direct — no preamble or summaries.
 - Use Alice and Bob as example agent names in all docs/examples (never other names without asking the user first)

@@ -54,7 +54,7 @@ npm install -g pnpm
 
 ## Building
 
-Clone the repository and build both binaries:
+Clone the repository and build the single `claw` binary (the WebUI is embedded):
 
 ```bash
 git clone https://github.com/PivotLLM/ClawEh.git
@@ -62,24 +62,23 @@ cd ClawEh
 make install
 ```
 
-This builds `claw` and `claw-launcher` and installs them to `~/.local/bin`.
+This builds `claw` (gateway + WebUI + session API in one binary) and installs
+it to `~/.local/bin`. The frontend bundle in `web/frontend` is built and
+embedded into the same binary, so a single `claw` invocation serves
+everything — the chat agent, the WebSocket WebUI, and the JSON config API —
+on `cfg.Gateway.Port` (default `18790`).
 
-**Agent only (no web frontend):** Node.js and pnpm are not required if you skip the launcher:
-
-```bash
-make install-agent
-```
+If you do not have Node.js and pnpm installed, you can still build the agent
+side as long as `web/backend/dist/index.html` is already present (the
+embedded asset directory is committed empty with a `.gitkeep`, so missing
+frontend assets just mean the WebUI 404s, the gateway still runs).
 
 **Available make targets:**
 
 | Target | Description |
 |---|---|
-| `make build` | Build both binaries |
-| `make install` | Build and install both to `~/.local/bin` |
-| `make build-agent` | Build `claw` only |
-| `make install-agent` | Build and install `claw` only |
-| `make build-launcher` | Build `claw-launcher` only |
-| `make install-launcher` | Build and install `claw-launcher` only |
+| `make build` | Build `claw` (with embedded WebUI) for the current platform |
+| `make install` | Build and install `claw` to `~/.local/bin` |
 | `make test` | Run tests |
 | `make clean` | Remove build artifacts |
 
@@ -160,7 +159,11 @@ To reduce the risk of financial surprises, we strongly recommend using prepaid A
 
 ## Running as a service (Linux)
 
-`claw.service` and `claw-web.service` in the project root are systemd unit files for running ClawEh as a background service on Linux. Replace `YOUR_USERNAME` with the user account the service should run under, then install with:
+`claw.service` in the project root is a systemd unit file for running ClawEh
+as a background service on Linux. The merged binary handles the gateway, the
+WebUI HTTP layer, and the session API in one process — there is no longer a
+separate `claw-web` service. Replace `YOUR_USERNAME` with the user account
+the service should run under, then install with:
 
 ```
 sudo cp claw.service /etc/systemd/system/
@@ -168,7 +171,8 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now claw
 ```
 
-ClawEh writes logs to `~/.claw/logs/claw.log` and the web console to `~/.claw/logs/claw-launcher.log`. No log redirection is required in the service file.
+ClawEh writes logs to `~/.claw/logs/claw.log`. No log redirection is required
+in the service file.
 
 ## Diagnostic dumps
 
