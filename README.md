@@ -82,6 +82,18 @@ frontend assets just mean the WebUI 404s, the gateway still runs).
 | `make test` | Run tests |
 | `make clean` | Remove build artifacts |
 
+## Running
+
+Start claw with the bare command (no subcommand):
+
+```bash
+claw
+```
+
+The WebUI is served on `http://localhost:18790` — open that URL in a browser
+to reach the chat interface and configuration console. The port is
+configurable via `gateway.port` in `~/.claw/config.json`.
+
 ## Terms of Use and Compliance
 ClawEh supports a wide range of LLM providers. It is your responsibility to ensure that your use of any provider, API, service, or model is consistent with the applicable terms of service, acceptable use policies, contracts, and legal requirements. This includes use-case restrictions, data handling obligations, and any prohibition on accessing non-public or undocumented APIs. We have removed support for some providers where we determined the implementation could not reasonably be used without violating the provider's terms. We welcome feedback from any LLM providers on this topic.
 

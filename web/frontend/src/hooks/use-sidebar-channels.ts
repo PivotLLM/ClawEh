@@ -20,7 +20,6 @@ import {
 import { getChannelDisplayName } from "@/components/channels/channel-display-name"
 import { gatewayAtom } from "@/store/gateway"
 
-const DEFAULT_VISIBLE_CHANNELS = 4
 const CHANNEL_IMPORTANCE_ORDER = [
   "discord",
   "telegram",
@@ -89,7 +88,6 @@ export function useSidebarChannels({ t }: UseSidebarChannelsOptions) {
   const [enabledMap, setEnabledMap] = React.useState<Record<string, boolean>>(
     {},
   )
-  const [showAllChannels, setShowAllChannels] = React.useState(false)
 
   const reloadChannels = React.useCallback((shouldApply?: () => boolean) => {
     Promise.all([
@@ -153,30 +151,18 @@ export function useSidebarChannels({ t }: UseSidebarChannelsOptions) {
     return list
   }, [channels, enabledMap, t])
 
-  const hasMoreChannels = sortedChannels.length > DEFAULT_VISIBLE_CHANNELS
-  const visibleChannels = showAllChannels
-    ? sortedChannels
-    : sortedChannels.slice(0, DEFAULT_VISIBLE_CHANNELS)
-
   const channelItems = React.useMemo<SidebarChannelNavItem[]>(
     () =>
-      visibleChannels.map((channel) => ({
+      sortedChannels.map((channel) => ({
         key: channel.name,
         title: getChannelDisplayName(channel, t),
         url: `/channels/${channel.name}`,
         icon: CHANNEL_ICON_MAP[channel.name] ?? IconPlug,
       })),
-    [t, visibleChannels],
+    [sortedChannels, t],
   )
-
-  const toggleShowAllChannels = React.useCallback(() => {
-    setShowAllChannels((prev) => !prev)
-  }, [])
 
   return {
     channelItems,
-    hasMoreChannels,
-    showAllChannels,
-    toggleShowAllChannels,
   }
 }
