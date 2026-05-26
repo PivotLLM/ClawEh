@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestGetModelConfig_Found(t *testing.T) {
@@ -331,6 +333,133 @@ func TestConfig_ValidateModelList(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestModelConfig_ReasoningEffort_Validate(t *testing.T) {
+	for _, level := range []string{"", "low", "medium", "high"} {
+		cfg := ModelConfig{ModelName: "m", Model: "openai/gpt", ReasoningEffort: level}
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("Validate(%q) returned error: %v", level, err)
+		}
+	}
+
+	cfg := ModelConfig{ModelName: "grok-3", Model: "openai/grok-3", ReasoningEffort: "extreme"}
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("Validate() expected error for invalid reasoning_effort")
+	}
+	if !strings.Contains(err.Error(), "grok-3") {
+		t.Errorf("error should name the model: %v", err)
+	}
+	if !strings.Contains(err.Error(), "extreme") {
+		t.Errorf("error should name the bad value: %v", err)
+	}
+}
+
+func TestModelConfig_ExtraBody_CollisionRejected(t *testing.T) {
+	cases := []string{
+		"model", "messages", "stream", "tools", "tool_choice",
+		"parallel_tool_calls", "reasoning_effort", "temperature",
+		"max_tokens", "max_completion_tokens", "top_p", "n",
+	}
+	for _, key := range cases {
+		cfg := ModelConfig{
+			ModelName: "the-model",
+			Model:     "openai/whatever",
+			ExtraBody: map[string]any{key: 1},
+		}
+		err := cfg.Validate()
+		if err == nil {
+			t.Errorf("extra_body key %q: expected validation error", key)
+			continue
+		}
+		if !strings.Contains(err.Error(), "the-model") {
+			t.Errorf("key %q: error should name the model: %v", key, err)
+		}
+		if !strings.Contains(err.Error(), key) {
+			t.Errorf("key %q: error should name the offending key: %v", key, err)
+		}
+	}
+}
+
+func TestModelConfig_ExtraBody_AllowedKeysPass(t *testing.T) {
+	cfg := ModelConfig{
+		ModelName: "m",
+		Model:     "openai/gpt",
+		ExtraBody: map[string]any{
+			"custom_xai_thinking": map[string]any{"budget": 1024},
+			"safety_settings":     []any{"strict"},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("unexpected validation error: %v", err)
+	}
+}
+
+func TestModelConfig_ReasoningEffort_ExtraBody_JSONRoundTrip(t *testing.T) {
+	original := ModelConfig{
+		ModelName:       "grok",
+		Model:           "openai/grok-3",
+		APIKey:          "k",
+		ReasoningEffort: "high",
+		ExtraBody: map[string]any{
+			"search_parameters": map[string]any{"mode": "auto"},
+		},
+		Enabled: true,
+	}
+	data, err := json.Marshal(original)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if !strings.Contains(string(data), `"reasoning_effort":"high"`) {
+		t.Errorf("missing reasoning_effort in JSON: %s", data)
+	}
+	if !strings.Contains(string(data), `"extra_body":`) {
+		t.Errorf("missing extra_body in JSON: %s", data)
+	}
+	var got ModelConfig
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if got.ReasoningEffort != "high" {
+		t.Errorf("ReasoningEffort = %q, want high", got.ReasoningEffort)
+	}
+	if got.ExtraBody["search_parameters"] == nil {
+		t.Errorf("extra_body lost in round-trip: %+v", got.ExtraBody)
+	}
+}
+
+func TestModelConfig_ReasoningEffort_ExtraBody_YAMLRoundTrip(t *testing.T) {
+	original := ModelConfig{
+		ModelName:       "grok",
+		Model:           "openai/grok-3",
+		APIKey:          "k",
+		ReasoningEffort: "medium",
+		ExtraBody: map[string]any{
+			"search_parameters": map[string]any{"mode": "auto"},
+		},
+		Enabled: true,
+	}
+	data, err := yaml.Marshal(original)
+	if err != nil {
+		t.Fatalf("yaml.Marshal: %v", err)
+	}
+	if !strings.Contains(string(data), "reasoning_effort: medium") {
+		t.Errorf("missing reasoning_effort in YAML:\n%s", data)
+	}
+	if !strings.Contains(string(data), "extra_body:") {
+		t.Errorf("missing extra_body in YAML:\n%s", data)
+	}
+	var got ModelConfig
+	if err := yaml.Unmarshal(data, &got); err != nil {
+		t.Fatalf("yaml.Unmarshal: %v", err)
+	}
+	if got.ReasoningEffort != "medium" {
+		t.Errorf("ReasoningEffort = %q, want medium", got.ReasoningEffort)
+	}
+	if got.ExtraBody["search_parameters"] == nil {
+		t.Errorf("extra_body lost in YAML round-trip: %+v", got.ExtraBody)
 	}
 }
 

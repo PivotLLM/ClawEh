@@ -600,6 +600,37 @@ type ModelConfig struct {
 	// feature only; no rotation, no expansion of ~ or env vars. Ignored by
 	// providers other than openai_compat.
 	ResponseLogFile string `json:"response_log_file,omitempty"`
+
+	// ReasoningEffort sets the OpenAI-style reasoning_effort request field for
+	// models that natively accept it (notably Grok). Valid values are "low",
+	// "medium", "high", or empty (the field is omitted). Providers that don't
+	// understand the field will silently ignore it.
+	ReasoningEffort string `json:"reasoning_effort,omitempty" yaml:"reasoning_effort,omitempty"`
+
+	// ExtraBody is a free-form passthrough map merged into the JSON request
+	// body for OpenAI-compatible providers. Use it for per-provider knobs that
+	// claw does not model natively. Keys colliding with claw-managed fields
+	// (see reservedRequestBodyKeys) are rejected at config load.
+	ExtraBody map[string]any `json:"extra_body,omitempty" yaml:"extra_body,omitempty"`
+}
+
+// reservedRequestBodyKeys lists the JSON request fields owned by claw's own
+// request builder. ExtraBody entries colliding with these keys are rejected at
+// config load — the collision guard there is what guarantees the merge step in
+// the request builder cannot overwrite a claw-managed field.
+var reservedRequestBodyKeys = map[string]struct{}{
+	"model":                 {},
+	"messages":              {},
+	"stream":                {},
+	"tools":                 {},
+	"tool_choice":           {},
+	"parallel_tool_calls":   {},
+	"reasoning_effort":      {},
+	"temperature":           {},
+	"max_tokens":            {},
+	"max_completion_tokens": {},
+	"top_p":                 {},
+	"n":                     {},
 }
 
 // Validate checks if the ModelConfig has all required fields.
@@ -609,6 +640,23 @@ func (c *ModelConfig) Validate() error {
 	}
 	if c.Model == "" {
 		return fmt.Errorf("model is required")
+	}
+	switch c.ReasoningEffort {
+	case "", "low", "medium", "high":
+		// ok
+	default:
+		return fmt.Errorf(
+			"model %q: invalid reasoning_effort %q (valid: low, medium, high, or omit)",
+			c.ModelName, c.ReasoningEffort,
+		)
+	}
+	for k := range c.ExtraBody {
+		if _, reserved := reservedRequestBodyKeys[k]; reserved {
+			return fmt.Errorf(
+				"model %q: extra_body key %q collides with claw-managed request field",
+				c.ModelName, k,
+			)
+		}
 	}
 	return nil
 }

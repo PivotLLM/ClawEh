@@ -1266,6 +1266,145 @@ func TestResponseLogFile_UnsetDoesNotCreateFile(t *testing.T) {
 	}
 }
 
+func TestReasoningEffort_AddedToRequestBody(t *testing.T) {
+	var captured map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]any{"content": "ok"}, "finish_reason": "stop"}},
+		})
+	}))
+	defer server.Close()
+
+	p := NewProvider("key", server.URL, "", WithReasoningEffort("high"))
+	if _, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "grok-3", nil); err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	if got, _ := captured["reasoning_effort"].(string); got != "high" {
+		t.Errorf("reasoning_effort = %v, want high; body=%v", captured["reasoning_effort"], captured)
+	}
+}
+
+func TestReasoningEffort_OmittedWhenEmpty(t *testing.T) {
+	var captured map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&captured)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]any{"content": "ok"}, "finish_reason": "stop"}},
+		})
+	}))
+	defer server.Close()
+
+	p := NewProvider("key", server.URL, "")
+	if _, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "gpt-4o", nil); err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	if _, ok := captured["reasoning_effort"]; ok {
+		t.Errorf("reasoning_effort should be omitted; body=%v", captured)
+	}
+}
+
+func TestExtraBody_MergedIntoRequest(t *testing.T) {
+	var captured map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&captured)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]any{"content": "ok"}, "finish_reason": "stop"}},
+		})
+	}))
+	defer server.Close()
+
+	extra := map[string]any{
+		"search_parameters": map[string]any{"mode": "auto"},
+		"custom_flag":       true,
+	}
+	p := NewProvider("key", server.URL, "", WithExtraBody(extra))
+	if _, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "gpt-4o", nil); err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	sp, ok := captured["search_parameters"].(map[string]any)
+	if !ok {
+		t.Fatalf("search_parameters missing or wrong type: %v", captured)
+	}
+	if sp["mode"] != "auto" {
+		t.Errorf("search_parameters.mode = %v, want auto", sp["mode"])
+	}
+	if captured["custom_flag"] != true {
+		t.Errorf("custom_flag = %v, want true", captured["custom_flag"])
+	}
+}
+
+// TestExtraBody_CollisionLogsAndDoesNotOverwrite exercises the defensive merge
+// guard. We force a clash by stuffing a reserved key into extra_body — the
+// config validator normally rejects this at load, but bypassing the validator
+// here lets us verify the provider's defensive log+skip path.
+func TestExtraBody_CollisionLogsAndDoesNotOverwrite(t *testing.T) {
+	var captured map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&captured)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]any{"content": "ok"}, "finish_reason": "stop"}},
+		})
+	}))
+	defer server.Close()
+
+	type warnRecord struct {
+		component string
+		message   string
+		fields    map[string]any
+	}
+	var warns []warnRecord
+	prev := warnFn
+	warnFn = func(component, message string, fields map[string]any) {
+		copied := make(map[string]any, len(fields))
+		for k, v := range fields {
+			copied[k] = v
+		}
+		warns = append(warns, warnRecord{component, message, copied})
+	}
+	t.Cleanup(func() { warnFn = prev })
+
+	extra := map[string]any{
+		"model":       "should-not-overwrite", // collides with the wire model
+		"extra_field": "kept",
+	}
+	p := NewProvider(
+		"key", server.URL, "",
+		WithExtraBody(extra),
+		WithModelLabel("grok-3-config-label"),
+	)
+	if _, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "grok-real-wire", nil); err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+
+	if got := captured["model"]; got != "grok-real-wire" {
+		t.Errorf("model overwritten: got %v, want grok-real-wire", got)
+	}
+	if got := captured["extra_field"]; got != "kept" {
+		t.Errorf("extra_field lost: got %v", got)
+	}
+	if len(warns) != 1 {
+		t.Fatalf("expected 1 warn call, got %d: %+v", len(warns), warns)
+	}
+	w := warns[0]
+	if w.component != "openai_compat" {
+		t.Errorf("warn component = %q, want openai_compat", w.component)
+	}
+	if w.fields["key"] != "model" {
+		t.Errorf("warn fields.key = %v, want %q", w.fields["key"], "model")
+	}
+	if w.fields["model"] != "grok-3-config-label" {
+		t.Errorf("warn fields.model = %v, want %q (label fallback)", w.fields["model"], "grok-3-config-label")
+	}
+}
+
 func TestResponseLogFile_OpenFailureDoesNotPropagate(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

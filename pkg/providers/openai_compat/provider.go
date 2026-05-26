@@ -14,9 +14,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/PivotLLM/ClawEh/pkg/logger"
 	"github.com/PivotLLM/ClawEh/pkg/providers/common"
 	"github.com/PivotLLM/ClawEh/pkg/providers/protocoltypes"
 )
+
+// warnFn is the logger hook the provider uses for non-fatal warnings (e.g.
+// extra_body merge collisions). Tests swap this for a capturing function.
+var warnFn = logger.WarnCF
 
 type (
 	ToolCall               = protocoltypes.ToolCall
@@ -35,10 +40,13 @@ type (
 type Provider struct {
 	apiKey              string
 	apiBase             string
-	maxTokensField      string // Field name for max tokens (e.g., "max_completion_tokens" for o1/glm models)
-	strictCompat        bool   // Strip non-standard fields for strict OpenAI-compatible endpoints
-	noParallelToolCalls bool   // Send parallel_tool_calls=false (required by Groq/some Llama providers)
-	responseLogFile     string // Append raw response bodies here when non-empty (diagnostic only)
+	maxTokensField      string         // Field name for max tokens (e.g., "max_completion_tokens" for o1/glm models)
+	strictCompat        bool           // Strip non-standard fields for strict OpenAI-compatible endpoints
+	noParallelToolCalls bool           // Send parallel_tool_calls=false (required by Groq/some Llama providers)
+	responseLogFile     string         // Append raw response bodies here when non-empty (diagnostic only)
+	reasoningEffort     string         // OpenAI/Grok `reasoning_effort` request field; empty omits it
+	extraBody           map[string]any // Free-form passthrough merged into the request body before marshal
+	modelLabel          string         // User-facing model name used in WarnCF for merge collisions; empty falls back to wire model
 	httpClient          *http.Client
 
 	logMu      sync.Mutex // serialises appends to responseLogFile across goroutines sharing this Provider
@@ -81,6 +89,34 @@ func WithNoParallelToolCalls(v bool) Option {
 func WithResponseLogFile(path string) Option {
 	return func(p *Provider) {
 		p.responseLogFile = path
+	}
+}
+
+// WithReasoningEffort sets the `reasoning_effort` request field that some
+// providers (notably xAI Grok and OpenAI o-series) honour. Empty omits the
+// field. Validated upstream in pkg/config; the provider trusts what it gets.
+func WithReasoningEffort(level string) Option {
+	return func(p *Provider) {
+		p.reasoningEffort = level
+	}
+}
+
+// WithExtraBody supplies a free-form map merged into the JSON request body
+// just before marshal. Used as the per-model passthrough for provider-specific
+// knobs claw does not model natively. Collisions with claw-managed fields are
+// rejected at config load; the merge step here is purely defensive.
+func WithExtraBody(extra map[string]any) Option {
+	return func(p *Provider) {
+		p.extraBody = extra
+	}
+}
+
+// WithModelLabel records the user-facing model name (ModelConfig.ModelName)
+// so log lines about this provider can identify the offending entry. Optional;
+// when unset, logs fall back to the wire-format model identifier.
+func WithModelLabel(label string) Option {
+	return func(p *Provider) {
+		p.modelLabel = label
 	}
 }
 
@@ -190,6 +226,27 @@ func (p *Provider) Chat(
 		if supportsPromptCacheKey(p.apiBase) {
 			requestBody["prompt_cache_key"] = cacheKey
 		}
+	}
+
+	if p.reasoningEffort != "" {
+		requestBody["reasoning_effort"] = p.reasoningEffort
+	}
+
+	// Merge extra_body last so any forgotten claw-managed field still wins.
+	// The config-load collision guard ensures this loop should be a no-op for
+	// reserved keys; the defensive check below logs and skips if one slips
+	// through (e.g. a key claw added after the config validator was last
+	// updated).
+	for k, v := range p.extraBody {
+		if _, clash := requestBody[k]; clash {
+			warnFn("openai_compat", "extra_body key collides with claw-managed request field; skipping",
+				map[string]any{
+					"model": p.modelLabelOr(model),
+					"key":   k,
+				})
+			continue
+		}
+		requestBody[k] = v
 	}
 
 	jsonData, err := json.Marshal(requestBody)
@@ -433,6 +490,16 @@ func (p *Provider) appendResponseLog(reqURL, model string, status int, body []by
 				p.responseLogFile, err)
 		})
 	}
+}
+
+// modelLabelOr returns the configured user-facing model label, or fallback
+// when the label is empty. Keeps WarnCF messages identifying the offending
+// model_list entry rather than the bare wire identifier.
+func (p *Provider) modelLabelOr(fallback string) string {
+	if p.modelLabel != "" {
+		return p.modelLabel
+	}
+	return fallback
 }
 
 // supportsPromptCacheKey reports whether the given API base is known to
