@@ -1966,13 +1966,20 @@ func (al *AgentLoop) runLLMIteration(
 			go func(idx int, tc providers.ToolCall) {
 				defer wg.Done()
 
-				argsJSON, _ := json.Marshal(tc.Arguments)
-				argsPreview := utils.Truncate(string(argsJSON), 200)
-				logger.InfoCF("agent", fmt.Sprintf("Tool call: %s(%s)", tc.Name, argsPreview),
+				redacted := tools.RedactArgs(tc.Name, tc.Arguments)
+				logger.InfoCF("agent", "Tool call dispatched",
 					map[string]any{
 						"agent_id":  agent.ID,
 						"tool":      tc.Name,
 						"iteration": iteration,
+						"args":      redacted,
+					})
+				logger.DebugCF("agent", "Tool call dispatched (raw args)",
+					map[string]any{
+						"agent_id":  agent.ID,
+						"tool":      tc.Name,
+						"iteration": iteration,
+						"args":      tc.Arguments,
 					})
 
 				// Create async callback for tools that implement AsyncExecutor.

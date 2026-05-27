@@ -6,6 +6,19 @@ import (
 	"strings"
 )
 
+// RedactArgs is the exported entry point for log-redacting tool arguments
+// from callers outside this package (pkg/agent loop, pkg/tools toolloop).
+// It delegates to the package-internal redactArgs implementation so that
+// the registry.go INF redaction (locked in by QA d18c6da6) and external
+// log sites share a single source of truth.
+//
+// The fallback path for unknown tools bounds output via JSON marshal +
+// rune-counted truncation. It deliberately does not consult utils.Truncate
+// so the global --no-truncate flag cannot uncap INF redaction.
+func RedactArgs(toolName string, args map[string]any) any {
+	return redactArgs(toolName, args)
+}
+
 // redactArgs returns a log-safe summary of a tool's arguments. Sensitive
 // payloads (file contents, edit text, HTTP bodies) are replaced with byte
 // counts so INF-level logs never persist user-supplied content.

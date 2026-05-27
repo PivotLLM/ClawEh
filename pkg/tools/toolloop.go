@@ -15,7 +15,6 @@ import (
 
 	"github.com/PivotLLM/ClawEh/pkg/logger"
 	"github.com/PivotLLM/ClawEh/pkg/providers"
-	"github.com/PivotLLM/ClawEh/pkg/utils"
 )
 
 // ToolLoopConfig configures the tool execution loop.
@@ -228,12 +227,18 @@ func RunToolLoop(
 			go func(idx int, tc providers.ToolCall) {
 				defer wg.Done()
 
-				argsJSON, _ := json.Marshal(tc.Arguments)
-				argsPreview := utils.Truncate(string(argsJSON), 200)
-				logger.InfoCF("toolloop", fmt.Sprintf("Tool call: %s(%s)", tc.Name, argsPreview),
+				redacted := RedactArgs(tc.Name, tc.Arguments)
+				logger.InfoCF("toolloop", "Tool call dispatched",
 					map[string]any{
 						"tool":      tc.Name,
 						"iteration": iteration,
+						"args":      redacted,
+					})
+				logger.DebugCF("toolloop", "Tool call dispatched (raw args)",
+					map[string]any{
+						"tool":      tc.Name,
+						"iteration": iteration,
+						"args":      tc.Arguments,
 					})
 
 				var toolResult *ToolResult
