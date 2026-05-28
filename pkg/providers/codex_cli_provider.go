@@ -72,7 +72,9 @@ func (p *CodexCliProvider) Chat(
 	// (that pattern caused infinite outer loops). Use the MCP server in
 	// pkg/mcpserver to expose claw tools to the CLI natively.
 	_ = tools
-	prompt := p.buildPrompt(messages)
+	// Fortify the stdin payload at the tail so JSON-only directives are the
+	// last thing the CLI reads before generating its reply.
+	prompt := applyCLIOptions("codex-cli", p.buildPrompt(messages), options)
 
 	args := []string{"exec", "--json", "--color", "never"}
 	args = append(args, p.extraArgs...)

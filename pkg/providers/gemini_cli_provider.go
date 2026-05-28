@@ -67,7 +67,9 @@ func (p *GeminiCliProvider) Chat(
 	// (that pattern caused infinite outer loops). Use the MCP server in
 	// pkg/mcpserver to expose claw tools to the CLI natively.
 	_ = tools
-	prompt := p.buildPrompt(messages)
+	// Fortify the stdin payload at the tail so JSON-only directives are the
+	// last thing the CLI reads before generating its reply.
+	prompt := applyCLIOptions("gemini-cli", p.buildPrompt(messages), options)
 
 	// --prompt "" triggers non-interactive stdin mode; the empty string is appended to stdin input.
 	args := []string{"--output-format", "json", "--prompt", ""}

@@ -67,7 +67,9 @@ func (p *ClaudeCliProvider) Chat(
 	// (that pattern caused infinite outer loops). Use the MCP server in
 	// pkg/mcpserver to expose claw tools to the CLI natively.
 	_ = tools
-	prompt := p.buildStdinPrompt(messages)
+	// Fortify the stdin payload at the tail so JSON-only directives are the
+	// last thing the CLI reads before generating its reply.
+	prompt := applyCLIOptions("claude-cli", p.buildStdinPrompt(messages), options)
 
 	args := []string{"-p", "--output-format", "json"}
 	args = append(args, p.extraArgs...)
