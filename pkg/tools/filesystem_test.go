@@ -189,6 +189,124 @@ func TestFilesystemTool_WriteFile_MissingContent(t *testing.T) {
 	}
 }
 
+// TestFilesystemTool_WriteFile_NoOverwrite_NonExistentSucceeds verifies that
+// write_file without overwrite=true succeeds when the target does not yet exist.
+func TestFilesystemTool_WriteFile_NoOverwrite_NonExistentSucceeds(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "fresh.txt")
+
+	tool := NewWriteFileTool("", false)
+	result := tool.Execute(context.Background(), map[string]any{
+		"path":    testFile,
+		"content": "hello",
+	})
+	if result.IsError {
+		t.Fatalf("expected success on non-existent target, got error: %s", result.ForLLM)
+	}
+	got, err := os.ReadFile(testFile)
+	if err != nil {
+		t.Fatalf("failed to read written file: %v", err)
+	}
+	if string(got) != "hello" {
+		t.Errorf("file content = %q, want %q", got, "hello")
+	}
+}
+
+// TestFilesystemTool_WriteFile_ExistingNoOverwrite_Refuses verifies that
+// write_file refuses to replace an existing file when overwrite is not true,
+// and that the on-disk content is left untouched.
+func TestFilesystemTool_WriteFile_ExistingNoOverwrite_Refuses(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "existing.txt")
+	if err := os.WriteFile(testFile, []byte("original"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := NewWriteFileTool("", false)
+	result := tool.Execute(context.Background(), map[string]any{
+		"path":    testFile,
+		"content": "replaced",
+	})
+	if !result.IsError {
+		t.Fatalf("expected error when overwrite omitted on existing file, got success")
+	}
+	if !strings.Contains(result.ForLLM, "already exists") || !strings.Contains(result.ForLLM, "overwrite: true") {
+		t.Errorf("error message should mention 'already exists' and 'overwrite: true'; got: %s", result.ForLLM)
+	}
+
+	got, err := os.ReadFile(testFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "original" {
+		t.Errorf("file content must be unchanged on refuse; got %q want %q", got, "original")
+	}
+}
+
+// TestFilesystemTool_WriteFile_ExistingOverwriteTrue_Replaces verifies that
+// passing overwrite=true allows write_file to replace an existing file.
+func TestFilesystemTool_WriteFile_ExistingOverwriteTrue_Replaces(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "existing.txt")
+	if err := os.WriteFile(testFile, []byte("original"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := NewWriteFileTool("", false)
+	result := tool.Execute(context.Background(), map[string]any{
+		"path":      testFile,
+		"content":   "replaced",
+		"overwrite": true,
+	})
+	if result.IsError {
+		t.Fatalf("expected success with overwrite=true, got error: %s", result.ForLLM)
+	}
+	got, err := os.ReadFile(testFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "replaced" {
+		t.Errorf("file content = %q, want %q", got, "replaced")
+	}
+}
+
+// TestFilesystemTool_WriteFile_ExistingOverwriteTrue_WithBackup verifies that
+// overwrite=true combined with backup=true creates the .NNNN sibling before
+// replacing the target.
+func TestFilesystemTool_WriteFile_ExistingOverwriteTrue_WithBackup(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "existing.txt")
+	if err := os.WriteFile(testFile, []byte("original"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := NewWriteFileTool(tmpDir, true)
+	result := tool.Execute(context.Background(), map[string]any{
+		"path":      "existing.txt",
+		"content":   "replaced",
+		"overwrite": true,
+		"backup":    true,
+	})
+	if result.IsError {
+		t.Fatalf("expected success with overwrite+backup, got error: %s", result.ForLLM)
+	}
+
+	backup, err := os.ReadFile(filepath.Join(tmpDir, "existing.txt.0001"))
+	if err != nil {
+		t.Fatalf("backup .0001 missing: %v", err)
+	}
+	if string(backup) != "original" {
+		t.Errorf("backup content = %q, want %q", backup, "original")
+	}
+	got, err := os.ReadFile(testFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "replaced" {
+		t.Errorf("target content = %q, want %q", got, "replaced")
+	}
+}
+
 // TestFilesystemTool_ListDir_Success verifies successful directory listing
 func TestFilesystemTool_ListDir_Success(t *testing.T) {
 	tmpDir := t.TempDir()
