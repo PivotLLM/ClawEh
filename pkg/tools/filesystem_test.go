@@ -244,9 +244,9 @@ func TestFilesystemTool_WriteFile_ExistingOverwriteFalse_Refuses(t *testing.T) {
 	}
 }
 
-// TestFilesystemTool_WriteFile_ExistingDefaultOverwrites verifies the new
-// default behaviour: omitting overwrite replaces an existing file.
-func TestFilesystemTool_WriteFile_ExistingDefaultOverwrites(t *testing.T) {
+// TestFilesystemTool_WriteFile_ExistingDefaultRefuses verifies the default
+// behaviour: omitting overwrite refuses to replace an existing file.
+func TestFilesystemTool_WriteFile_ExistingDefaultRefuses(t *testing.T) {
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "existing.txt")
 	if err := os.WriteFile(testFile, []byte("original"), 0o644); err != nil {
@@ -258,15 +258,18 @@ func TestFilesystemTool_WriteFile_ExistingDefaultOverwrites(t *testing.T) {
 		"path":    testFile,
 		"content": "replaced",
 	})
-	if result.IsError {
-		t.Fatalf("expected success with default overwrite, got error: %s", result.ForLLM)
+	if !result.IsError {
+		t.Fatalf("expected error when overwrite omitted on existing file, got success")
+	}
+	if !strings.Contains(result.ForLLM, "already exists") || !strings.Contains(result.ForLLM, "overwrite: true") {
+		t.Errorf("error message should mention 'already exists' and 'overwrite: true'; got: %s", result.ForLLM)
 	}
 	got, err := os.ReadFile(testFile)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(got) != "replaced" {
-		t.Errorf("file content = %q, want %q", got, "replaced")
+	if string(got) != "original" {
+		t.Errorf("file content must be unchanged on refuse; got %q want %q", got, "original")
 	}
 }
 
