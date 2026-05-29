@@ -77,21 +77,27 @@ func TestCallbackRouteSurvivesServerRebuild(t *testing.T) {
 
 // fakeChannelManager captures the mux that the reload-path seam rebuilds, so
 // the test can assert that the callback route survived the rebuild without
-// standing up a real channels.Manager. Mirrors what channels.Manager.SetupHTTPServer
-// does to the shared mux: create a fresh ServeMux and register the health
-// server on it (which also stores it as externalMux so subsequent Handle calls
-// register here).
+// standing up a real channels.Manager. Mirrors what channels.Manager.RegisterHandlers
+// does to the shared mux: register the health server on it (which also stores
+// it as externalMux so subsequent Handle calls register there too).
 type fakeChannelManager struct {
 	mux *http.ServeMux
 }
 
-func (f *fakeChannelManager) SetupHTTPServer(_ string, hs *health.Server, mux *http.ServeMux) {
-	if mux == nil {
-		mux = http.NewServeMux()
-	}
+func (f *fakeChannelManager) RegisterHandlers(mux *http.ServeMux, hs *health.Server) {
 	f.mux = mux
-	hs.RegisterOnMux(f.mux)
+	if hs != nil {
+		hs.RegisterOnMux(mux)
+	}
 }
+
+// fakeMuxSwapper captures the mux passed to SetMux so tests can assert that
+// rebuildSharedHTTPServer installed the freshly-built mux on the httpHost.
+type fakeMuxSwapper struct {
+	mux *http.ServeMux
+}
+
+func (f *fakeMuxSwapper) SetMux(mux *http.ServeMux) { f.mux = mux }
 
 // TestRebuildSharedHTTPServer_RegistersCallbackRoute hardens the regression
 // guard against the e32731eb mutation: directly exercises the seam that
@@ -103,14 +109,21 @@ func (f *fakeChannelManager) SetupHTTPServer(_ string, hs *health.Server, mux *h
 func TestRebuildSharedHTTPServer_RegistersCallbackRoute(t *testing.T) {
 	services := &gatewayServices{}
 	fake := &fakeChannelManager{}
+	swap := &fakeMuxSwapper{}
 
-	rebuildSharedHTTPServer(services, "127.0.0.1", 0, fake, nil)
+	rebuildSharedHTTPServer(services, "127.0.0.1", 0, fake, swap, nil)
 
 	if services.HealthServer == nil {
 		t.Fatal("rebuildSharedHTTPServer did not assign services.HealthServer")
 	}
 	if fake.mux == nil {
-		t.Fatal("rebuildSharedHTTPServer did not invoke SetupHTTPServer on the channel manager")
+		t.Fatal("rebuildSharedHTTPServer did not invoke RegisterHandlers on the channel manager")
+	}
+	if swap.mux == nil {
+		t.Fatal("rebuildSharedHTTPServer did not swap the rebuilt mux into the httpHost")
+	}
+	if swap.mux != fake.mux {
+		t.Fatal("rebuildSharedHTTPServer installed a different mux on the httpHost than the one passed to RegisterHandlers")
 	}
 	if got := hitCallback(t, fake.mux); got != http.StatusBadRequest {
 		t.Fatalf("after rebuildSharedHTTPServer: got %d, want %d (404 means the callback route was dropped on reload — the production bug fixed in e32731eb)", got, http.StatusBadRequest)
@@ -163,11 +176,12 @@ func TestRebuildSharedHTTPServer_MergedBinaryRoutesSurviveReload(t *testing.T) {
 		}),
 	}
 	fake := &fakeChannelManager{}
+	swap := &fakeMuxSwapper{}
 
-	rebuildSharedHTTPServer(services, "127.0.0.1", 0, fake, nil)
+	rebuildSharedHTTPServer(services, "127.0.0.1", 0, fake, swap, nil)
 
 	if fake.mux == nil {
-		t.Fatal("rebuildSharedHTTPServer did not invoke SetupHTTPServer on the channel manager")
+		t.Fatal("rebuildSharedHTTPServer did not invoke RegisterHandlers on the channel manager")
 	}
 
 	// /api/reply/{token} — empty body short-circuits to 400, proving the

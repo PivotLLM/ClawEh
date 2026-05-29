@@ -90,6 +90,7 @@ type gatewayServices struct {
 	HealthServer   *health.Server
 	MCPServer      *mcpserver.MCPServer
 	WebServer      *webserver.Server
+	HTTPHost       *httpHost
 }
 
 func gatewayCmd(debug bool) error {
@@ -165,10 +166,6 @@ func gatewayCmd(debug bool) error {
 	if err != nil {
 		return err
 	}
-
-	// Register callback reply endpoint. Must be re-registered on every shared
-	// HTTP server (boot and config reload) so callbacks survive restartServices.
-	RegisterCallbackRoute(services.HealthServer, agentLoop)
 
 	logger.InfoF("Gateway started", map[string]any{"addr": fmt.Sprintf("%s:%d", cfg.Gateway.Host, cfg.Gateway.Port)})
 
@@ -270,14 +267,15 @@ func setupAndStartServices(
 		logger.WarnC("channels", "No channels enabled")
 	}
 
-	// Setup shared HTTP server with health endpoints and webhook handlers.
-	// In the merged claw binary the same mux also hosts the WebUI API and the
-	// embedded frontend assets — see rebuildSharedHTTPServer for the seam that
-	// is exercised on every config reload.
+	// Setup shared HTTP listener. The listener is owned by httpHost and stays
+	// up across config reloads; only the handler mux is swapped on reload, so
+	// WebUI WebSocket connections and channel webhooks survive a Manager
+	// rebuild. See rebuildSharedHTTPServer for the swap seam.
 	addr := fmt.Sprintf("%s:%d", cfg.Gateway.Host, cfg.Gateway.Port)
-	services.HealthServer = health.NewServer(cfg.Gateway.Host, cfg.Gateway.Port)
 	services.WebServer = newMergedWebServer(configPath, cfg)
-	services.ChannelManager.SetupHTTPServer(addr, services.HealthServer, buildMergedMux(services.WebServer))
+	services.HTTPHost = newHTTPHost(addr)
+	rebuildSharedHTTPServer(services, cfg.Gateway.Host, cfg.Gateway.Port, services.ChannelManager, services.HTTPHost, agentLoop)
+	services.HTTPHost.Start()
 
 	if err := services.ChannelManager.StartAll(context.Background()); err != nil {
 		return nil, fmt.Errorf("error starting channels: %w", err)
@@ -423,6 +421,14 @@ func shutdownGateway(
 
 	stopAndCleanupServices(services, gracefulShutdownTimeout)
 
+	if services.HTTPHost != nil {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), gracefulShutdownTimeout)
+		if err := services.HTTPHost.Stop(shutdownCtx); err != nil {
+			logger.WarnCF("gateway", "Shared HTTP listener shutdown error", map[string]any{"error": err.Error()})
+		}
+		cancel()
+	}
+
 	agentLoop.Stop()
 	agentLoop.Close()
 
@@ -563,9 +569,11 @@ func restartServices(
 		logger.WarnC("channels", "No channels enabled")
 	}
 
-	// Rebuild the shared HTTP server and re-register the callback route in
-	// one place so the registration cannot be silently dropped on reload.
-	rebuildSharedHTTPServer(services, cfg.Gateway.Host, cfg.Gateway.Port, services.ChannelManager, al)
+	// Rebuild the shared mux (channel webhooks, WebUI routes, callback route)
+	// and swap it into the long-lived httpHost. The listener is NOT recreated
+	// — keeping it alive is what lets WebUI WebSocket connections survive a
+	// config reload (investigation 7a5377d9, option #1).
+	rebuildSharedHTTPServer(services, cfg.Gateway.Host, cfg.Gateway.Port, services.ChannelManager, services.HTTPHost, al)
 
 	if err := services.ChannelManager.StartAll(runCtx); err != nil {
 		return fmt.Errorf("error restarting channels: %w", err)

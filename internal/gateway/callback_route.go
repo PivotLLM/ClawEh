@@ -1,7 +1,6 @@
 package gateway
 
 import (
-	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -11,26 +10,36 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/logger"
 )
 
-// httpServerInstaller is the channel-manager surface needed to rebuild the
-// shared HTTP server on config reload. Defined as an interface here only so a
-// test can substitute a fake that captures the rebuilt mux.
-type httpServerInstaller interface {
-	SetupHTTPServer(addr string, healthServer *health.Server, mux *http.ServeMux)
+// handlerRegistrar is the channel-manager surface needed to populate the
+// shared mux on boot and on config reload. Defined as an interface here only
+// so a test can substitute a fake that captures the rebuilt mux.
+type handlerRegistrar interface {
+	RegisterHandlers(mux *http.ServeMux, healthServer *health.Server)
 }
 
-// rebuildSharedHTTPServer builds a new shared health.Server, wires it into the
-// channel manager's mux, and re-registers the callback route and the merged
-// WebUI routes. Both setupAndStartServices (boot, indirectly via gatewayCmd)
-// and restartServices (config reload) go through this seam so neither the
-// callback route nor the WebUI's /api/* routes can disappear after a config
-// reload — the callback-404 bug fixed in e32731eb is the canonical regression,
-// and the merged-binary work in this branch makes the same seam load-bearing
-// for the WebUI API surface.
-func rebuildSharedHTTPServer(services *gatewayServices, host string, port int, cm httpServerInstaller, al *agent.AgentLoop) {
-	addr := fmt.Sprintf("%s:%d", host, port)
+// muxSwapper is the gateway-level surface used to install a freshly-built mux
+// without touching the underlying listener. Real callers pass *httpHost; tests
+// substitute a fake that captures the mux for assertion.
+type muxSwapper interface {
+	SetMux(mux *http.ServeMux)
+}
+
+// rebuildSharedHTTPServer builds a new shared health.Server, populates a fresh
+// mux with the merged WebUI routes, channel webhook handlers, and the callback
+// route, then atomically swaps it into the gateway's httpHost. The listener
+// itself is NEVER recreated here — that lives in httpHost across reloads, so
+// in-flight WebUI WebSocket connections survive a config reload.
+//
+// Both setupAndStartServices (boot) and restartServices (config reload) go
+// through this seam so neither the callback route nor the WebUI's /api/*
+// routes can disappear after a reload — the callback-404 bug fixed in
+// e32731eb is the canonical regression.
+func rebuildSharedHTTPServer(services *gatewayServices, host string, port int, cm handlerRegistrar, swapper muxSwapper, al *agent.AgentLoop) {
 	services.HealthServer = health.NewServer(host, port)
-	cm.SetupHTTPServer(addr, services.HealthServer, buildMergedMux(services.WebServer))
+	mux := buildMergedMux(services.WebServer)
+	cm.RegisterHandlers(mux, services.HealthServer)
 	RegisterCallbackRoute(services.HealthServer, al)
+	swapper.SetMux(mux)
 }
 
 // RegisterCallbackRoute registers POST /api/reply/{token} on the shared HTTP

@@ -87,13 +87,15 @@ type Manager struct {
 	config        *config.Config
 	mediaStore    media.MediaStore
 	dispatchTask  *asyncTask
-	mux           *http.ServeMux
-	httpServer    *http.Server
 	mu            sync.RWMutex
 	placeholders  sync.Map // "channel:chatID" → placeholderID (string)
 	typingStops   sync.Map // "channel:chatID" → func()
 	reactionUndos sync.Map // "channel:chatID" → reactionEntry
 }
+
+// stopAllTimeout bounds how long StopAll will wait for channels to stop.
+// It is a var so tests can override it.
+var stopAllTimeout = 15 * time.Second
 
 type asyncTask struct {
 	cancel context.CancelFunc
@@ -338,60 +340,33 @@ func (m *Manager) initChannels() error {
 	return nil
 }
 
-// SetupHTTPServer creates a shared HTTP server with the given listen address.
-// It registers health endpoints from the health server and discovers channels
-// that implement WebhookHandler and/or HealthChecker to register their handlers.
-//
-// If mux is non-nil, it is used as the shared mux (so callers may pre-register
-// additional routes — e.g. the WebUI API and embedded frontend assets — on the
-// same mux that backs the gateway HTTP server). If mux is nil, a fresh
-// http.ServeMux is created.
-func (m *Manager) SetupHTTPServer(addr string, healthServer *health.Server, mux *http.ServeMux) {
-	if mux == nil {
-		mux = http.NewServeMux()
-	}
-	m.mux = mux
-
-	// Register health endpoints
+// RegisterHandlers registers channel webhook handlers, channel health
+// endpoints, and the supplied health.Server's /health and /ready endpoints on
+// the given mux. The Manager does NOT own the listener: the gateway-level
+// httpHost owns the listener and swaps mux instances across config reloads, so
+// in-flight WebUI WebSocket connections and other long-lived HTTP traffic
+// survive a Manager rebuild.
+func (m *Manager) RegisterHandlers(mux *http.ServeMux, healthServer *health.Server) {
 	if healthServer != nil {
-		healthServer.RegisterOnMux(m.mux)
+		healthServer.RegisterOnMux(mux)
 	}
 
-	// Discover and register webhook handlers and health checkers
 	for name, ch := range m.channels {
 		if wh, ok := ch.(WebhookHandler); ok {
-			m.mux.Handle(wh.WebhookPath(), wh)
+			mux.Handle(wh.WebhookPath(), wh)
 			logger.InfoCF("channels", "Webhook handler registered", map[string]any{
 				"channel": name,
 				"path":    wh.WebhookPath(),
 			})
 		}
 		if hc, ok := ch.(HealthChecker); ok {
-			m.mux.HandleFunc(hc.HealthPath(), hc.HealthHandler)
+			mux.HandleFunc(hc.HealthPath(), hc.HealthHandler)
 			logger.InfoCF("channels", "Health endpoint registered", map[string]any{
 				"channel": name,
 				"path":    hc.HealthPath(),
 			})
 		}
 	}
-
-	m.httpServer = &http.Server{
-		Addr:         addr,
-		Handler:      m.mux,
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 30 * time.Second,
-	}
-}
-
-// Mux returns the shared HTTP ServeMux backing the gateway HTTP server.
-// Callers may register additional routes on the returned mux as long as
-// SetupHTTPServer has already been called. The merged claw binary uses this
-// (or its prebuilt-mux equivalent passed to SetupHTTPServer) to mount the
-// WebUI API and embedded frontend on the same port as channel webhooks.
-//
-// Returns nil before SetupHTTPServer has been called.
-func (m *Manager) Mux() *http.ServeMux {
-	return m.mux
 }
 
 func (m *Manager) StartAll(ctx context.Context) error {
@@ -433,20 +408,6 @@ func (m *Manager) StartAll(ctx context.Context) error {
 
 	// Start the TTL janitor that cleans up stale typing/placeholder entries
 	go m.runTTLJanitor(dispatchCtx)
-
-	// Start shared HTTP server if configured
-	if m.httpServer != nil {
-		go func() {
-			logger.InfoCF("channels", "Shared HTTP server listening", map[string]any{
-				"addr": m.httpServer.Addr,
-			})
-			if err := m.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				logger.ErrorCF("channels", "Shared HTTP server error", map[string]any{
-					"error": err.Error(),
-				})
-			}
-		}()
-	}
 
 	logger.InfoC("channels", "All channels started")
 	return nil
@@ -512,18 +473,6 @@ func (m *Manager) StopAll(ctx context.Context) error {
 
 	logger.InfoC("channels", "Stopping all channels")
 
-	// Shutdown shared HTTP server first
-	if m.httpServer != nil {
-		shutdownCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		defer cancel()
-		if err := m.httpServer.Shutdown(shutdownCtx); err != nil {
-			logger.ErrorCF("channels", "Shared HTTP server shutdown error", map[string]any{
-				"error": err.Error(),
-			})
-		}
-		m.httpServer = nil
-	}
-
 	// Cancel dispatcher
 	if m.dispatchTask != nil {
 		m.dispatchTask.cancel()
@@ -553,20 +502,40 @@ func (m *Manager) StopAll(ctx context.Context) error {
 		}
 	}
 
-	// Stop all channels
+	// Stop all channels in parallel under a single deadline. Telegram's Stop
+	// can block up to its pollExitTimeout; running stops sequentially would
+	// make total elapsed time the sum of every channel's worst case, which
+	// stalls config reloads (see investigation 7a5377d9).
+	stopCtx, cancel := context.WithTimeout(ctx, stopAllTimeout)
+	defer cancel()
+
+	var wg sync.WaitGroup
+	var errMu sync.Mutex
+	var stopErrs []error
 	for name, channel := range m.channels {
-		logger.InfoCF("channels", "Stopping channel", map[string]any{
-			"channel": name,
-		})
-		if err := channel.Stop(ctx); err != nil {
-			logger.ErrorCF("channels", "Error stopping channel", map[string]any{
+		wg.Add(1)
+		go func(name string, channel Channel) {
+			defer wg.Done()
+			logger.InfoCF("channels", "Stopping channel", map[string]any{
 				"channel": name,
-				"error":   err.Error(),
 			})
-		}
+			if err := channel.Stop(stopCtx); err != nil {
+				logger.ErrorCF("channels", "Error stopping channel", map[string]any{
+					"channel": name,
+					"error":   err.Error(),
+				})
+				errMu.Lock()
+				stopErrs = append(stopErrs, fmt.Errorf("%s: %w", name, err))
+				errMu.Unlock()
+			}
+		}(name, channel)
 	}
+	wg.Wait()
 
 	logger.InfoC("channels", "All channels stopped")
+	if len(stopErrs) > 0 {
+		return errors.Join(stopErrs...)
+	}
 	return nil
 }
 
