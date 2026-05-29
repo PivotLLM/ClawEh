@@ -53,14 +53,19 @@ func (s *seqStore) GetHistoryWithSeqs(_ string) []memory.StoredMessage {
 	return cp
 }
 
-func (s *seqStore) GetSummary(_ string) string        { return s.summary }
-func (s *seqStore) SetSummary(_, v string)            { s.summary = v }
+func (s *seqStore) GetSummary(_ string) string { return s.summary }
+func (s *seqStore) SetSummary(_, v string)     { s.summary = v }
 func (s *seqStore) SetHistory(_ string, h []providers.Message) {
 	stored := make([]memory.StoredMessage, len(h))
 	for i, msg := range h {
 		stored[i] = memory.StoredMessage{Seq: i + 1, Message: msg}
 	}
 	s.stored = stored
+}
+func (s *seqStore) SetHistoryWithSeqs(_ string, h []memory.StoredMessage) {
+	cp := make([]memory.StoredMessage, len(h))
+	copy(cp, h)
+	s.stored = cp
 }
 func (s *seqStore) Save(_ string) error                          { return nil }
 func (s *seqStore) AddMessage(_, _, _ string)                    {}
@@ -75,8 +80,8 @@ func (s *seqStore) Close() error                                 { return nil }
 // buildSeqSummaryJSON builds a valid summary JSON with the given coverage fields.
 func buildSeqSummaryJSON(goals string, coveredStart, coveredEnd int) string {
 	return fmt.Sprintf(
-		`{"version":1,"state":{"goals":%q},"covered_seq_start":%d,"covered_seq_end":%d}`,
-		goals, coveredStart, coveredEnd,
+		`{"version":2,"state":{"goals":[{"text":%q,"refs":[{"seq_start":%d}]}]},"covered_seq_start":%d,"covered_seq_end":%d}`,
+		goals, coveredStart, coveredStart, coveredEnd,
 	)
 }
 
@@ -198,6 +203,59 @@ func TestSeqAware_PromptContainsSeqPrefixes(t *testing.T) {
 	}
 }
 
+func TestSeqAware_PromptContainsToolMetadata(t *testing.T) {
+	stored := []memory.StoredMessage{
+		{
+			Seq: 50,
+			Message: providers.Message{
+				Role:    "assistant",
+				Content: "I will inspect the file.",
+				ToolCalls: []providers.ToolCall{
+					{
+						ID: "call_123",
+						Function: &providers.FunctionCall{
+							Name:      "read_file",
+							Arguments: `{"path":"pkg/llmcontext/compress.go"}`,
+						},
+					},
+				},
+			},
+		},
+		{
+			Seq: 51,
+			Message: providers.Message{
+				Role:       "tool",
+				ToolCallID: "call_123",
+				Content:    "file contents",
+			},
+		},
+	}
+	llm := &seqTrackingLLM{
+		response: buildSeqSummaryJSON("tool metadata", 50, 51),
+	}
+
+	if _, ok := callLLMChain(context.Background(), []LLMClient{llm}, nil, stored, 1, 100, false); !ok {
+		t.Fatal("expected callLLMChain to accept fake summary")
+	}
+	if len(llm.capturedMessages) != 2 {
+		t.Fatalf("capturedMessages len = %d, want 2", len(llm.capturedMessages))
+	}
+	userPrompt := llm.capturedMessages[1].Content
+	for _, want := range []string{
+		"[#50] [assistant]",
+		"tool_calls:",
+		"id: call_123",
+		"name: read_file",
+		`arguments: {"path":"pkg/llmcontext/compress.go"}`,
+		"[#51] [tool]",
+		"tool_call_id: call_123",
+	} {
+		if !strings.Contains(userPrompt, want) {
+			t.Fatalf("summarization prompt missing %q; prompt:\n%s", want, userPrompt)
+		}
+	}
+}
+
 // TestSeqAware_OutOfRangeRetrievableHistoryStripped verifies that
 // retrievable_history entries whose seq references fall outside the valid range
 // are stripped from the summary before it is accepted.
@@ -207,13 +265,13 @@ func TestSeqAware_OutOfRangeRetrievableHistoryStripped(t *testing.T) {
 	//   - seq 5–7: below coveredStart (10) → out of range
 	//   - seq 25–27: above archiveMax (20) → out of range
 	summaryWithBadEntries := `{
-		"version": 1,
-		"state": {"goals": "test"},
-		"key_moments": [
-			{"seq": 10, "role": "user", "summary": "valid moment"},
-			{"seq": 3,  "role": "user", "summary": "too old"},
-			{"seq": 25, "role": "user", "summary": "future seq"}
-		],
+			"version": 2,
+			"state": {"goals": [{"text": "test", "refs": [{"seq_start": 10}]}]},
+			"key_moments": [
+				{"refs": [{"seq_start": 10}], "role": "user", "summary": "valid moment"},
+				{"refs": [{"seq_start": 3}],  "role": "user", "summary": "too old"},
+				{"refs": [{"seq_start": 25}], "role": "user", "summary": "future seq"}
+			],
 		"message_index": [
 			{"seq_start": 10, "seq_end": 12, "role": "user", "label": "valid entry"},
 			{"seq_start": 5,  "seq_end": 7,  "role": "user", "label": "before covered start"},
@@ -252,9 +310,9 @@ func TestSeqAware_AllKeyMomentsInRangeKept(t *testing.T) {
 	s := &Summary{
 		Version: summaryVersion,
 		KeyMoments: []KeyMoment{
-			{Seq: 5, Role: "user", Summary: "moment at 5"},
-			{Seq: 10, Role: "assistant", Summary: "moment at 10"},
-			{Seq: 15, Role: "user", Summary: "moment at 15"},
+			{Refs: []SeqRange{{SeqStart: 5}}, Role: "user", Summary: "moment at 5"},
+			{Refs: []SeqRange{{SeqStart: 10}}, Role: "assistant", Summary: "moment at 10"},
+			{Refs: []SeqRange{{SeqStart: 15}}, Role: "user", Summary: "moment at 15"},
 		},
 		MessageIndex: []IndexEntry{
 			{SeqStart: 5, SeqEnd: 8, Role: "user", Label: "block A"},
@@ -270,6 +328,78 @@ func TestSeqAware_AllKeyMomentsInRangeKept(t *testing.T) {
 	}
 	if len(s.MessageIndex) != 1 {
 		t.Errorf("expected 1 message_index entry to be kept; got %d", len(s.MessageIndex))
+	}
+}
+
+func TestSeqAware_ExistingSummaryCoverageAndRefsSurviveNextCompaction(t *testing.T) {
+	stored := make([]memory.StoredMessage, 10)
+	for i := range stored {
+		stored[i] = memory.StoredMessage{
+			Seq:     11 + i,
+			Message: providers.Message{Role: "user", Content: strings.Repeat("x", 500)},
+		}
+	}
+	store := newSeqStore(stored)
+	existing := &Summary{
+		Version:             summaryVersion,
+		State:               SummaryState{Goals: []SummaryItem{{Text: "old goal", Refs: []SeqRange{{SeqStart: 5}}}}},
+		KeyMoments:          []KeyMoment{{Refs: []SeqRange{{SeqStart: 5}}, Role: "user", Summary: "old decision"}},
+		CoveredSeqStart:     1,
+		CoveredSeqEnd:       10,
+		CoveredRanges:       []SeqRange{{SeqStart: 1, SeqEnd: 10}},
+		LastSummarizedSeq:   10,
+		LastSummarizedRange: SeqRange{SeqStart: 1, SeqEnd: 10},
+	}
+	data, err := json.Marshal(existing)
+	if err != nil {
+		t.Fatalf("marshal existing: %v", err)
+	}
+	store.summary = string(data)
+
+	response := `{
+		"version": 2,
+		"state": {"goals": [
+			{"text": "old goal", "refs": [{"seq_start": 5}]},
+			{"text": "new goal", "refs": [{"seq_start": 11}]}
+		]},
+		"key_moments": [
+			{"refs": [{"seq_start": 5}], "role": "user", "summary": "old decision"},
+			{"refs": [{"seq_start": 11}], "role": "user", "summary": "new decision"}
+		],
+		"message_index": [
+			{"seq_start": 11, "seq_end": 12, "role": "user", "label": "new work"}
+		]
+	}`
+	llm := &seqTrackingLLM{response: response}
+	mgr := New("sess", store, nil, nil,
+		WithContextWindow(1000),
+		WithNormalPercent(50),
+		WithSafetyPercent(80),
+		WithRetainTokenPercent(20),
+		WithRetainMinMessages(2),
+		WithCompressLLM(llm),
+	).(*Manager)
+	mgr.msgCount = len(stored)
+
+	if err := mgr.doCompress(context.Background(), false); err != nil {
+		t.Fatalf("doCompress returned error: %v", err)
+	}
+
+	var got Summary
+	if err := json.Unmarshal([]byte(store.summary), &got); err != nil {
+		t.Fatalf("stored summary is not valid JSON: %v", err)
+	}
+	if got.CoveredSeqStart != 1 {
+		t.Fatalf("CoveredSeqStart = %d, want cumulative start 1", got.CoveredSeqStart)
+	}
+	foundOld := false
+	for _, km := range got.KeyMoments {
+		if len(km.Refs) > 0 && km.Refs[0].SeqStart == 5 {
+			foundOld = true
+		}
+	}
+	if !foundOld {
+		t.Fatalf("old key moment ref #5 was not preserved: %+v", got.KeyMoments)
 	}
 }
 

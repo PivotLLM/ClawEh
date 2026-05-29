@@ -16,7 +16,7 @@ const (
 	defaultMinCompressionGain    = 0.05
 	defaultCooldownMessages      = 5
 	defaultLargeMsgOffset        = 20
-	defaultArchiveMessageCount   = 1000
+	defaultArchiveMessageCount   = 5000
 	defaultCompressTargetFactor  = 0.5
 	defaultMinLoopGain           = 0.10
 	defaultMaxCompressIterations = 3

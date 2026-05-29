@@ -133,7 +133,7 @@ const (
     defaultMinCompressionGain     = 0.05 // 5% — overall gain below this enters cooldown
     defaultCooldownMessages       = 5    // messages to wait after ineffective compression
     defaultLargeMsgOffset         = 20   // safety% - this% = individual message size threshold
-    defaultArchiveMessageCount    = 100
+    defaultArchiveMessageCount    = 5000
     defaultCompressTargetFactor   = 0.5  // target = normalPercent * this (default: 25%)
     defaultMinLoopGain            = 0.10 // 10% — per-iteration gain below this stops the loop
     defaultMaxCompressIterations  = 3    // maximum loop iterations per compression pass
@@ -511,7 +511,7 @@ cycle the archive is rewritten to retain only the most recent N messages. Sessio
 trigger compression accumulate the archive without bound; this is intentional since such sessions
 have low data volume.
 
-- Default cap: `defaultArchiveMessageCount = 100` (constant in `pkg/llmcontext`)
+- Default cap: `defaultArchiveMessageCount = 5000` (constant in `pkg/llmcontext`)
 - Configurable via `WithArchiveMessageCount` option
 - Cap is enforced at compression time only
 - `meta.json` tracks `archive_min_seq` and `archive_max_seq`
@@ -525,7 +525,7 @@ all other claw MCP tools. Session scope is a known gap addressed in a follow-on 
 **Parameters:** `agent_token` (required); `seq` (int) or `seq_start`/`seq_end` (int range).
 
 **Returns:** full message content. Out-of-window seqs return
-`"not available — message has aged out of the archive"`.
+`"not available in the current archive window"`.
 
 **Design note:** retrieval is optional. State and Key Moments must be self-sufficient. Agents
 with restricted tool sets must operate without this tool.

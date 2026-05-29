@@ -260,7 +260,7 @@ Context management options live in the agent config block (or `agents.defaults`)
 | Field | Default | Description |
 |---|---|---|
 | `context_window` | `128000` | Model context window in tokens. Used to compute compression thresholds. |
-| `archive_message_count` | `1000` | Maximum number of messages to retain in the retrievable archive per session. |
+| `archive_message_count` | `5000` | Maximum number of messages to retain in the retrievable archive per session. |
 | `archive_days` | `0` (unlimited) | Limit archive retrieval to messages within the last *n* days. |
 | `compress_model` | agent's primary model | Model used for summarisation. Can be a cheaper or faster model. |
 

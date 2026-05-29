@@ -27,12 +27,12 @@ func NewSessionHistoryTool(sessionsDir string) *SessionHistoryTool {
 	return &SessionHistoryTool{sessionsDir: sessionsDir}
 }
 
-func (t *SessionHistoryTool) Name() string           { return "get_session_messages" }
-func (t *SessionHistoryTool) IsSessionScoped() bool  { return true }
+func (t *SessionHistoryTool) Name() string          { return "get_session_messages" }
+func (t *SessionHistoryTool) IsSessionScoped() bool { return true }
 
 func (t *SessionHistoryTool) Description() string {
 	return "Retrieve historical messages from the current session archive by sequence number. " +
-		"Returns messages in the requested seq range, capped to the most recent 250. " +
+		"Returns messages in the requested seq range, capped to the most recent 5000. " +
 		"Request smaller ranges for efficiency. " +
 		"Use when the context summary references a seq number and you need the full message content."
 }
@@ -78,8 +78,8 @@ func (t *SessionHistoryTool) Execute(ctx context.Context, args map[string]any) *
 	}
 	defer a.Close()
 
-	// Clamp the requested range to the most recent 250 messages.
-	const windowSize = 250
+	// Clamp the requested range to the most recent archive window.
+	const windowSize = 5000
 	_, maxSeq, boundsErr := a.Bounds()
 	if boundsErr != nil {
 		if errors.Is(boundsErr, memory.ErrArchiveUnavailable) {
@@ -89,7 +89,7 @@ func (t *SessionHistoryTool) Execute(ctx context.Context, args map[string]any) *
 	}
 
 	if maxSeq == 0 {
-		return &ToolResult{ForLLM: "not available — message has aged out of the archive"}
+		return &ToolResult{ForLLM: "not available in the current archive window"}
 	}
 
 	effectiveMin := seqStart
@@ -110,7 +110,7 @@ func (t *SessionHistoryTool) Execute(ctx context.Context, args map[string]any) *
 	}
 
 	if len(msgs) == 0 {
-		return &ToolResult{ForLLM: "not available — message has aged out of the archive"}
+		return &ToolResult{ForLLM: "not available in the current archive window"}
 	}
 
 	// Build ToolCallID → result index map for pairing.
@@ -138,11 +138,11 @@ func (t *SessionHistoryTool) Execute(ctx context.Context, args map[string]any) *
 		Seq    int    `json:"result_seq,omitempty"`
 	}
 	type msgEntry struct {
-		Seq       int            `json:"seq"`
-		Role      string         `json:"role"`
-		Source    string         `json:"source,omitempty"`
-		Content   string         `json:"content"`
-		CreatedAt time.Time      `json:"created_at"`
+		Seq       int             `json:"seq"`
+		Role      string          `json:"role"`
+		Source    string          `json:"source,omitempty"`
+		Content   string          `json:"content"`
+		CreatedAt time.Time       `json:"created_at"`
 		ToolCalls []toolCallEntry `json:"tool_calls,omitempty"`
 	}
 	entries := make([]msgEntry, len(msgs))

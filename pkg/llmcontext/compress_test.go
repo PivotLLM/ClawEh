@@ -32,17 +32,17 @@ func (s *compressTestStore) SetHistory(_ string, h []providers.Message) {
 	s.history = cp
 }
 
-func (s *compressTestStore) GetSummary(_ string) string        { return s.summary }
-func (s *compressTestStore) SetSummary(_, v string)            { s.summary = v }
-func (s *compressTestStore) Save(_ string) error                           { return nil }
-func (s *compressTestStore) AddMessage(_, _, _ string)                     {}
-func (s *compressTestStore) AddFullMessage(_ string, _ providers.Message)  {}
-func (s *compressTestStore) TruncateHistory(_ string, _ int)               {}
-func (s *compressTestStore) SetPendingTurn(_ string) error                 { return nil }
-func (s *compressTestStore) ClearPendingTurn(_ string) error               { return nil }
-func (s *compressTestStore) GetArchiveBounds(_ string) (int, int)          { return 0, 0 }
-func (s *compressTestStore) ListPendingSessions() ([]string, error)        { return nil, nil }
-func (s *compressTestStore) Close() error                                  { return nil }
+func (s *compressTestStore) GetSummary(_ string) string                   { return s.summary }
+func (s *compressTestStore) SetSummary(_, v string)                       { s.summary = v }
+func (s *compressTestStore) Save(_ string) error                          { return nil }
+func (s *compressTestStore) AddMessage(_, _, _ string)                    {}
+func (s *compressTestStore) AddFullMessage(_ string, _ providers.Message) {}
+func (s *compressTestStore) TruncateHistory(_ string, _ int)              {}
+func (s *compressTestStore) SetPendingTurn(_ string) error                { return nil }
+func (s *compressTestStore) ClearPendingTurn(_ string) error              { return nil }
+func (s *compressTestStore) GetArchiveBounds(_ string) (int, int)         { return 0, 0 }
+func (s *compressTestStore) ListPendingSessions() ([]string, error)       { return nil, nil }
+func (s *compressTestStore) Close() error                                 { return nil }
 func (s *compressTestStore) GetHistoryWithSeqs(_ string) []memory.StoredMessage {
 	stored := make([]memory.StoredMessage, len(s.history))
 	for i, msg := range s.history {
@@ -73,7 +73,7 @@ func (m *mockLLM) Complete(_ context.Context, _ []providers.Message) (providers.
 
 // validSummaryJSON produces minimal valid Summary JSON.
 func validSummaryJSON(goals string) string {
-	return fmt.Sprintf(`{"version":1,"state":{"goals":%q},"covered_seq_start":0,"covered_seq_end":0}`, goals)
+	return fmt.Sprintf(`{"version":2,"state":{"goals":[{"text":%q,"refs":[{"seq_start":1}]}]},"covered_seq_start":0,"covered_seq_end":0}`, goals)
 }
 
 // makeConversation builds a slice of alternating user/assistant messages.

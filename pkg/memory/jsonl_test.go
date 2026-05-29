@@ -2,8 +2,10 @@ package memory
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -397,6 +399,101 @@ func TestSetHistory_ResetsSkip(t *testing.T) {
 	}
 	if history[0].Content != "fresh" {
 		t.Errorf("content = %q", history[0].Content)
+	}
+}
+
+func TestSetHistoryWithSeqs_PreservesStableSeqs(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	for i := 0; i < 5; i++ {
+		if err := store.AddMessage(ctx, "preserve-seq", "user", string(rune('a'+i))); err != nil {
+			t.Fatalf("AddMessage: %v", err)
+		}
+	}
+
+	active, err := store.GetHistoryWithSeqs(ctx, "preserve-seq")
+	if err != nil {
+		t.Fatalf("GetHistoryWithSeqs: %v", err)
+	}
+	tail := active[3:]
+	if err := store.SetHistoryWithSeqs(ctx, "preserve-seq", tail); err != nil {
+		t.Fatalf("SetHistoryWithSeqs: %v", err)
+	}
+
+	stored, err := store.GetHistoryWithSeqs(ctx, "preserve-seq")
+	if err != nil {
+		t.Fatalf("GetHistoryWithSeqs after rewrite: %v", err)
+	}
+	if len(stored) != 2 {
+		t.Fatalf("expected 2 retained messages, got %d", len(stored))
+	}
+	if stored[0].Seq != 4 || stored[1].Seq != 5 {
+		t.Fatalf("seqs not preserved: got %d,%d want 4,5", stored[0].Seq, stored[1].Seq)
+	}
+
+	if err := store.AddMessage(ctx, "preserve-seq", "assistant", "next"); err != nil {
+		t.Fatalf("AddMessage after rewrite: %v", err)
+	}
+	stored, err = store.GetHistoryWithSeqs(ctx, "preserve-seq")
+	if err != nil {
+		t.Fatalf("GetHistoryWithSeqs final: %v", err)
+	}
+	if got := stored[len(stored)-1].Seq; got != 6 {
+		t.Fatalf("next seq = %d, want 6", got)
+	}
+}
+
+func TestAppendSummaryCheckpoint_WritesHashChain(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	first := SummaryCheckpoint{
+		Model:           "model-a",
+		SourceSeqStart:  1,
+		SourceSeqEnd:    10,
+		CoveredSeqStart: 1,
+		CoveredSeqEnd:   10,
+		Summary:         `{"version":2,"state":{}}`,
+	}
+	second := SummaryCheckpoint{
+		Model:           "model-b",
+		SourceSeqStart:  11,
+		SourceSeqEnd:    20,
+		CoveredSeqStart: 1,
+		CoveredSeqEnd:   20,
+		Summary:         `{"version":2,"state":{"goals":[]}}`,
+	}
+	if err := store.AppendSummaryCheckpoint(ctx, "summary-chain", first); err != nil {
+		t.Fatalf("AppendSummaryCheckpoint first: %v", err)
+	}
+	if err := store.AppendSummaryCheckpoint(ctx, "summary-chain", second); err != nil {
+		t.Fatalf("AppendSummaryCheckpoint second: %v", err)
+	}
+
+	data, err := os.ReadFile(store.summaryHistoryPath("summary-chain"))
+	if err != nil {
+		t.Fatalf("ReadFile summary history: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 checkpoint lines, got %d: %q", len(lines), string(data))
+	}
+	var gotFirst, gotSecond SummaryCheckpoint
+	if err := json.Unmarshal([]byte(lines[0]), &gotFirst); err != nil {
+		t.Fatalf("unmarshal first checkpoint: %v", err)
+	}
+	if err := json.Unmarshal([]byte(lines[1]), &gotSecond); err != nil {
+		t.Fatalf("unmarshal second checkpoint: %v", err)
+	}
+	if gotFirst.ID != 1 || gotSecond.ID != 2 {
+		t.Fatalf("checkpoint IDs = %d,%d; want 1,2", gotFirst.ID, gotSecond.ID)
+	}
+	if gotFirst.SummaryHash == "" || gotSecond.SummaryHash == "" {
+		t.Fatalf("expected non-empty summary hashes: %#v %#v", gotFirst, gotSecond)
+	}
+	if gotSecond.PrevHash != gotFirst.SummaryHash {
+		t.Fatalf("second PrevHash = %q, want first SummaryHash %q", gotSecond.PrevHash, gotFirst.SummaryHash)
 	}
 }
 

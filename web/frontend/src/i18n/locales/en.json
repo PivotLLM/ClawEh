@@ -390,7 +390,7 @@
       "compress_retain_min_messages": "Minimum Tail Messages",
       "compress_retain_min_messages_hint": "Minimum messages always kept in the uncompressed tail, regardless of token budget. 0 = use default (2).",
       "archive_message_count": "Archive Window Size",
-      "archive_message_count_hint": "Maximum messages retained in the searchable archive. 0 = use default (1000).",
+      "archive_message_count_hint": "Maximum messages retained in the searchable archive. 0 = use default (5000).",
       "archive_days": "Archive Retention (Days)",
       "archive_days_hint": "Limit the archive to messages from the last N days. 0 = no time limit.",
       "session_mode": "Session Mode",

@@ -34,7 +34,7 @@ func TestCompress_E2E_ClaudeCLIReceivesFortification(t *testing.T) {
 	body := fmt.Sprintf(`#!/bin/sh
 cat - > '%s'
 cat <<'EOFMOCK'
-{"type":"result","result":"{\"version\":1,\"state\":{\"goals\":\"ok\"}}","session_id":"t"}
+{"type":"result","result":"{\"version\":2,\"state\":{\"goals\":[{\"text\":\"ok\",\"refs\":[{\"seq_start\":1}]}]}}","session_id":"t"}
 EOFMOCK
 `, stdinFile)
 	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {

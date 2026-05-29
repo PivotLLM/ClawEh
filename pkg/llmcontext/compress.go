@@ -39,10 +39,10 @@ func (m *Manager) doCompress(ctx context.Context, safetyNet bool) error {
 	// Separate system message from conversation.
 	// Use GetHistoryWithSeqs to preserve seq numbers for the summarizer.
 	storedHistory := m.store.GetHistoryWithSeqs(m.sessionKey)
-	var sysMsg *providers.Message
+	var sysMsg *memory.StoredMessage
 	storedConversation := storedHistory
 	if len(storedHistory) > 0 && storedHistory[0].Role == "system" {
-		sys := storedHistory[0].Message
+		sys := storedHistory[0]
 		sysMsg = &sys
 		storedConversation = storedHistory[1:]
 	}
@@ -51,17 +51,7 @@ func (m *Manager) doCompress(ctx context.Context, safetyNet bool) error {
 		return nil
 	}
 
-	// Derive plain providers.Message slices for token estimation, tail selection,
-	// and history manipulation — these do not need seq numbers.
-	toPlain := func(stored []memory.StoredMessage) []providers.Message {
-		msgs := make([]providers.Message, len(stored))
-		for i, sm := range stored {
-			msgs[i] = sm.Message
-		}
-		return msgs
-	}
-
-	conversation := toPlain(storedConversation)
+	conversation := storedToPlain(storedConversation)
 	tokensBeforeCompress := estimateTokens(conversation)
 	targetPct := float64(m.cfg.normalPercent) * defaultCompressTargetFactor
 	budget := m.cfg.contextWindow * m.cfg.retainTokenPercent / 100
@@ -103,9 +93,19 @@ func (m *Manager) doCompress(ctx context.Context, safetyNet bool) error {
 			iterCount++
 			continue
 		}
+		if newSummary.Model == "" {
+			newSummary.Model = m.cfg.compressModel.Primary
+		}
 
 		// Strip any seq references outside the valid range before accepting the summary.
-		newSummary.StripOutOfRangeSeqRefs(newSummary.CoveredSeqStart, archiveMax)
+		newSummary.StripOutOfRangeSeqRefs(archiveMin, archiveMax)
+		if !newSummary.HasMaterial() || !newSummary.HasEvidence() {
+			logger.WarnCF("llmcontext", "LLM compression summary lacked cited material", map[string]any{
+				"session_key": m.sessionKey,
+			})
+			iterCount++
+			continue
+		}
 
 		// Item 13: enforce the max summary token budget.
 		summaryTokenLimit := m.cfg.maxSummaryTokens
@@ -166,23 +166,23 @@ func (m *Manager) doCompress(ctx context.Context, safetyNet bool) error {
 	}
 
 	if !safetyNet {
-		return m.handleNormalPostLoop(ctx, sysMsg, conversation, currentConversation, latestSummary, llmSucceeded, tokensBeforeCompress, targetPct)
+		return m.handleNormalPostLoop(ctx, sysMsg, currentStored, latestSummary, llmSucceeded, tokensBeforeCompress, targetPct)
 	}
-	return m.handleSafetyNetPostLoop(ctx, sysMsg, conversation, currentConversation, latestSummary, existingSummary, llmSucceeded)
+	return m.handleSafetyNetPostLoop(ctx, sysMsg, storedConversation, currentStored, latestSummary, existingSummary, llmSucceeded)
 }
 
 // handleNormalPostLoop handles post-loop logic for the normal (non-safety-net) path.
 func (m *Manager) handleNormalPostLoop(
 	ctx context.Context,
-	sysMsg *providers.Message,
-	originalConversation []providers.Message,
-	currentConversation []providers.Message,
+	sysMsg *memory.StoredMessage,
+	currentStored []memory.StoredMessage,
 	latestSummary *Summary,
 	llmSucceeded bool,
 	tokensBeforeCompress int,
 	targetPct float64,
 ) error {
 	_ = ctx // reserved for future use
+	currentConversation := storedToPlain(currentStored)
 	if !llmSucceeded {
 		logger.WarnCF("llmcontext", "compression failed: no LLM client succeeded", map[string]any{
 			"session_key": m.sessionKey,
@@ -190,7 +190,7 @@ func (m *Manager) handleNormalPostLoop(
 		return ErrCompressionFailed
 	}
 
-	if err := m.persistResult(sysMsg, currentConversation, latestSummary); err != nil {
+	if err := m.persistStoredResult(sysMsg, currentStored, latestSummary); err != nil {
 		return err
 	}
 
@@ -217,15 +217,15 @@ func (m *Manager) handleNormalPostLoop(
 // handleSafetyNetPostLoop handles post-loop logic for the safety-net path.
 func (m *Manager) handleSafetyNetPostLoop(
 	ctx context.Context,
-	sysMsg *providers.Message,
-	originalConversation []providers.Message,
-	currentConversation []providers.Message,
+	sysMsg *memory.StoredMessage,
+	originalStored []memory.StoredMessage,
+	currentStored []memory.StoredMessage,
 	latestSummary *Summary,
 	existingSummary *Summary,
 	llmSucceeded bool,
 ) error {
 	if llmSucceeded {
-		if err := m.persistResult(sysMsg, currentConversation, latestSummary); err != nil {
+		if err := m.persistStoredResult(sysMsg, currentStored, latestSummary); err != nil {
 			return err
 		}
 	} else if existingSummary != nil {
@@ -233,15 +233,16 @@ func (m *Manager) handleSafetyNetPostLoop(
 			"session_key":   m.sessionKey,
 			"stale_summary": true,
 		})
-		currentConversation = originalConversation
+		currentStored = originalStored
 	} else {
 		logger.WarnCF("llmcontext", "safety-net compression: all LLM clients failed; no summary available", map[string]any{
 			"session_key": m.sessionKey,
 			"no_summary":  true,
 		})
-		currentConversation = originalConversation
+		currentStored = originalStored
 	}
 
+	currentConversation := storedToPlain(currentStored)
 	tokensFinal := estimateTokens(currentConversation)
 	finalPct := 0.0
 	if m.cfg.contextWindow > 0 {
@@ -257,15 +258,16 @@ func (m *Manager) handleSafetyNetPostLoop(
 	}
 
 	// Still at or above safety threshold — drop oldest groups, then apply large
-	// message checks, then persist. Order: group-drop → applyLargeMsgChecks →
-	// persistResult → compute finalPct.
-	currentConversation = m.dropOldestGroups(ctx, currentConversation)
-	m.applyLargeMsgChecks(currentConversation)
-	if err := m.persistResult(sysMsg, currentConversation, latestSummary); err != nil {
+	// message checks, then persist. Order: group-drop -> applyLargeMsgChecks ->
+	// persistStoredResult -> compute finalPct.
+	currentStored = m.dropOldestStoredGroups(ctx, currentStored)
+	m.applyLargeMsgChecksStored(currentStored)
+	if err := m.persistStoredResult(sysMsg, currentStored, latestSummary); err != nil {
 		return err
 	}
 
 	// Recheck after drops.
+	currentConversation = storedToPlain(currentStored)
 	tokensFinal = estimateTokens(currentConversation)
 	if m.cfg.contextWindow > 0 {
 		finalPct = float64(tokensFinal) * 100 / float64(m.cfg.contextWindow)
@@ -310,15 +312,11 @@ func callLLMChain(
 	}
 
 	prompt := buildSummarizationPrompt(existing, archiveMin, archiveMax, aggressive)
-
-	var sb strings.Builder
-	for _, sm := range toSummarize {
-		fmt.Fprintf(&sb, "[#%d] [%s]: %s\n\n", sm.Seq, sm.Role, sm.Content)
-	}
-	formatted := sb.String()
+	formatted := formatStoredMessagesForSummary(toSummarize)
 
 	messages := []providers.Message{
-		{Role: "user", Content: prompt + "\n\n---\n\n" + formatted},
+		{Role: "system", Content: prompt},
+		{Role: "user", Content: "Messages to summarize:\n\n" + formatted},
 	}
 
 	for _, client := range clients {
@@ -338,14 +336,9 @@ func callLLMChain(
 			continue
 		}
 
-		// Set coverage from the actual seq range of messages passed to the LLM.
-		// Do NOT use any seq values emitted by the LLM itself.
-		summary.CoveredSeqStart = coveredStart
-		summary.CoveredSeqEnd = coveredEnd
-		if len(toSummarize) > 0 {
-			summary.CoveredSeqStartAt = toSummarize[0].CreatedAt
-			summary.CoveredSeqEndAt = toSummarize[len(toSummarize)-1].CreatedAt
-		}
+		// Set coverage from actual seq ranges. Do NOT use coverage values
+		// emitted by the LLM itself.
+		applySummaryCoverage(summary, existing, coveredStart, coveredEnd, toSummarize)
 		summary.GeneratedAt = time.Now()
 		return summary, true
 	}
@@ -353,24 +346,168 @@ func callLLMChain(
 	return nil, false
 }
 
-// persistResult writes the compressed history and summary to the store and saves.
+func storedToPlain(stored []memory.StoredMessage) []providers.Message {
+	msgs := make([]providers.Message, len(stored))
+	for i, sm := range stored {
+		msgs[i] = sm.Message
+	}
+	return msgs
+}
+
+func formatStoredMessagesForSummary(stored []memory.StoredMessage) string {
+	var sb strings.Builder
+	for _, sm := range stored {
+		fmt.Fprintf(&sb, "[#%d] [%s]\n", sm.Seq, sm.Role)
+		if sm.Source != "" {
+			fmt.Fprintf(&sb, "source: %s\n", sm.Source)
+		}
+		if sm.ToolCallID != "" {
+			fmt.Fprintf(&sb, "tool_call_id: %s\n", sm.ToolCallID)
+		}
+		if strings.TrimSpace(sm.Content) != "" {
+			fmt.Fprintf(&sb, "content:\n%s\n", sm.Content)
+		} else {
+			sb.WriteString("content: <empty>\n")
+		}
+		if len(sm.ToolCalls) > 0 {
+			sb.WriteString("tool_calls:\n")
+			for _, tc := range sm.ToolCalls {
+				name := tc.Name
+				args := ""
+				if tc.Function != nil {
+					if tc.Function.Name != "" {
+						name = tc.Function.Name
+					}
+					args = tc.Function.Arguments
+				}
+				if args == "" && len(tc.Arguments) > 0 {
+					if data, err := json.Marshal(tc.Arguments); err == nil {
+						args = string(data)
+					}
+				}
+				fmt.Fprintf(&sb, "- id: %s\n  name: %s\n", tc.ID, name)
+				if args != "" {
+					fmt.Fprintf(&sb, "  arguments: %s\n", args)
+				}
+			}
+		}
+		sb.WriteString("\n")
+	}
+	return sb.String()
+}
+
+func applySummaryCoverage(summary, existing *Summary, coveredStart, coveredEnd int, summarized []memory.StoredMessage) {
+	if summary == nil {
+		return
+	}
+	summary.CoveredSeqStart = coveredStart
+	summary.CoveredSeqEnd = coveredEnd
+	if existing != nil {
+		if existing.CoveredSeqStart > 0 && (summary.CoveredSeqStart == 0 || existing.CoveredSeqStart < summary.CoveredSeqStart) {
+			summary.CoveredSeqStart = existing.CoveredSeqStart
+		}
+		if existing.CoveredSeqEnd > summary.CoveredSeqEnd {
+			summary.CoveredSeqEnd = existing.CoveredSeqEnd
+		}
+	}
+	ranges := make([]SeqRange, 0, len(summary.CoveredRanges)+len(summarized)+1)
+	if existing != nil {
+		if len(existing.CoveredRanges) > 0 {
+			ranges = append(ranges, existing.CoveredRanges...)
+		} else if existing.CoveredSeqStart > 0 && existing.CoveredSeqEnd >= existing.CoveredSeqStart {
+			ranges = append(ranges, SeqRange{SeqStart: existing.CoveredSeqStart, SeqEnd: existing.CoveredSeqEnd})
+		}
+	}
+	ranges = append(ranges, SeqRange{SeqStart: coveredStart, SeqEnd: coveredEnd})
+	summary.CoveredRanges = mergeSeqRanges(ranges)
+	summary.LastSummarizedSeq = coveredEnd
+	summary.LastSummarizedRange = SeqRange{SeqStart: coveredStart, SeqEnd: coveredEnd}
+	if len(summarized) > 0 {
+		startAt := summarized[0].CreatedAt
+		endAt := summarized[len(summarized)-1].CreatedAt
+		if existing != nil && !existing.CoveredSeqStartAt.IsZero() && existing.CoveredSeqStart <= coveredStart {
+			startAt = existing.CoveredSeqStartAt
+		}
+		summary.CoveredSeqStartAt = startAt
+		summary.CoveredSeqEndAt = endAt
+	}
+}
+
+func mergeSeqRanges(ranges []SeqRange) []SeqRange {
+	out := make([]SeqRange, 0, len(ranges))
+	for _, r := range ranges {
+		if r.SeqStart <= 0 {
+			continue
+		}
+		if r.SeqEnd == 0 {
+			r.SeqEnd = r.SeqStart
+		}
+		if r.SeqEnd < r.SeqStart {
+			continue
+		}
+		if len(out) == 0 {
+			out = append(out, r)
+			continue
+		}
+		last := &out[len(out)-1]
+		if r.SeqStart <= last.SeqEnd+1 {
+			if r.SeqEnd > last.SeqEnd {
+				last.SeqEnd = r.SeqEnd
+			}
+			continue
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
+// persistStoredResult writes the compressed history and summary to the store and saves.
 // It returns ErrCompressionFailed if Save() fails.
 // After a successful save it persists compaction state if the store supports it.
-func (m *Manager) persistResult(sysMsg *providers.Message, conv []providers.Message, summary *Summary) error {
-	newHistory := make([]providers.Message, 0, len(conv)+1)
+func (m *Manager) persistStoredResult(sysMsg *memory.StoredMessage, conv []memory.StoredMessage, summary *Summary) error {
+	newStored := make([]memory.StoredMessage, 0, len(conv)+1)
 	if sysMsg != nil {
-		newHistory = append(newHistory, *sysMsg)
+		newStored = append(newStored, *sysMsg)
 	}
-	newHistory = append(newHistory, conv...)
+	newStored = append(newStored, conv...)
 
-	m.store.SetHistory(m.sessionKey, newHistory)
+	if sh, ok := m.store.(interface {
+		SetHistoryWithSeqs(string, []memory.StoredMessage)
+	}); ok {
+		sh.SetHistoryWithSeqs(m.sessionKey, newStored)
+	} else {
+		m.store.SetHistory(m.sessionKey, storedToPlain(newStored))
+	}
 
 	summaryModel := ""
+	summaryGeneratedAt := m.lastCompressedAt
 	if summary != nil {
 		if data, err := json.Marshal(summary); err == nil {
-			m.store.SetSummary(m.sessionKey, string(data))
+			raw := string(data)
+			m.store.SetSummary(m.sessionKey, raw)
+			if hs, ok := m.store.(interface {
+				AppendSummaryCheckpoint(string, memory.SummaryCheckpoint) error
+			}); ok {
+				if appendErr := hs.AppendSummaryCheckpoint(m.sessionKey, memory.SummaryCheckpoint{
+					GeneratedAt:     summary.GeneratedAt,
+					Model:           summary.Model,
+					SourceSeqStart:  summary.LastSummarizedSeqRange().SeqStart,
+					SourceSeqEnd:    summary.LastSummarizedSeqRange().SeqEnd,
+					CoveredSeqStart: summary.CoveredSeqStart,
+					CoveredSeqEnd:   summary.CoveredSeqEnd,
+					Summary:         raw,
+				}); appendErr != nil {
+					logger.WarnCF("llmcontext", "compression: failed to append summary checkpoint", map[string]any{
+						"session_key": m.sessionKey,
+						"error":       appendErr.Error(),
+					})
+				}
+			}
 		}
 		summaryModel = summary.Model
+		if !summary.GeneratedAt.IsZero() {
+			summaryGeneratedAt = summary.GeneratedAt
+		}
 	}
 
 	if err := m.store.Save(m.sessionKey); err != nil {
@@ -390,7 +527,7 @@ func (m *Manager) persistResult(sysMsg *providers.Message, conv []providers.Mess
 			CompressedAtMeaningfulCount: m.msgCount,
 			Cooling:                     m.cooling,
 			CoolingSinceCount:           m.coolingSinceCount,
-			SummaryGeneratedAt:          m.lastCompressedAt,
+			SummaryGeneratedAt:          summaryGeneratedAt,
 			SummaryModel:                summaryModel,
 		}
 		if setErr := cs.SetCompactionState(m.sessionKey, state); setErr != nil {
@@ -435,6 +572,34 @@ func (m *Manager) dropOldestGroups(_ context.Context, conv []providers.Message) 
 	return conv
 }
 
+// dropOldestStoredGroups is the seq-preserving equivalent of dropOldestGroups.
+func (m *Manager) dropOldestStoredGroups(_ context.Context, conv []memory.StoredMessage) []memory.StoredMessage {
+	for {
+		if len(conv) <= m.cfg.retainMinMessages {
+			break
+		}
+		plain := storedToPlain(conv)
+		tokens := estimateTokens(plain)
+		pct := 0.0
+		if m.cfg.contextWindow > 0 {
+			pct = float64(tokens) * 100 / float64(m.cfg.contextWindow)
+		}
+		if pct < float64(m.cfg.safetyPercent) {
+			break
+		}
+
+		groupEnd := resolveGroup(plain, 0).end
+		logger.WarnCF("llmcontext", "safety-net: dropping oldest turn group", map[string]any{
+			"session_key": m.sessionKey,
+			"group_end":   groupEnd,
+			"tokens":      tokens,
+			"pct":         pct,
+		})
+		conv = conv[groupEnd+1:]
+	}
+	return conv
+}
+
 // applyLargeMsgChecks truncates individual messages that exceed the per-message
 // size threshold. The last message is never truncated if it is a user message,
 // since it is the current trigger.
@@ -466,5 +631,16 @@ func (m *Manager) applyLargeMsgChecks(conv []providers.Message) {
 				conv[i].Content = string(runes[:maxRunes]) + " [**TRUNCATED DUE TO SIZE**]"
 			}
 		}
+	}
+}
+
+func (m *Manager) applyLargeMsgChecksStored(conv []memory.StoredMessage) {
+	if m.cfg.contextWindow <= 0 {
+		return
+	}
+	plain := storedToPlain(conv)
+	m.applyLargeMsgChecks(plain)
+	for i := range conv {
+		conv[i].Message = plain[i]
 	}
 }

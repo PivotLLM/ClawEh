@@ -39,6 +39,12 @@ type Store interface {
 	// SetHistory replaces all messages in a session with the provided history.
 	SetHistory(ctx context.Context, sessionKey string, history []providers.Message) error
 
+	// SetHistoryWithSeqs replaces all messages in a session while preserving the
+	// caller-supplied stable sequence numbers. This is used by context compaction:
+	// retained tail messages must keep the same IDs that were written to the
+	// archive so summaries can cite retrievable messages reliably.
+	SetHistoryWithSeqs(ctx context.Context, sessionKey string, history []StoredMessage) error
+
 	// Compact reclaims storage by physically removing logically truncated
 	// data. Backends that do not accumulate dead data may return nil.
 	Compact(ctx context.Context, sessionKey string) error
