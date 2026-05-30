@@ -451,6 +451,7 @@ EOF
                        PROBE_PATH="$PROBE_BIN" \
                        SESSION_TOKEN="$TEST_SESSION_TOKEN" \
                        CONFIG_FILE="$INTEG_HOME/config.json" \
+                       GATEWAY_URL="http://127.0.0.1:$GATEWAY_PORT" \
                        bash "$INTEGRATION_SCRIPT"; then
                         echo "${GREEN}MCP server integration tests passed.${NC}"
                     else

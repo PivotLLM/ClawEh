@@ -43,8 +43,19 @@ SERVER_URL="${SERVER_URL:-http://127.0.0.1:5911}"
 ENDPOINT="${ENDPOINT:-/mcp}"
 PROBE_PATH="${PROBE_PATH:-probe}"
 SESSION_TOKEN="${SESSION_TOKEN:-}"
-CONFIG_FILE="${CONFIG_FILE:-}"   # optional: path to config file for reload test
+CONFIG_FILE="${CONFIG_FILE:-}"     # optional: path to config file for reload test
+GATEWAY_URL="${GATEWAY_URL:-}"     # optional: gateway base URL for /health and /ready checks
 FULL_URL="${SERVER_URL}${ENDPOINT}"
+
+# All tools the test config exposes — the source of truth for count/catalogue checks.
+# Note: find_tools_regex and find_tools_bm25 are omitted here because they only register
+# when tools.mcp.discovery.enabled=true, which the test config does not set.
+EXPECTED_TOOLS="files_read files_write files_edit files_append files_list web_fetch web_search msg_send_file session_messages session_search session_compact session_info"
+EXPECTED_TOOL_COUNT=12
+
+# Namespace prefixes that must have at least one tool in the catalogue.
+# Covers every provider-owned namespace that is in the test config.
+EXPECTED_NAMESPACES="files_ web_ session_ msg_"
 
 # Unique scratch file inside the agent workspace so repeated runs do not collide.
 SCRATCH_REL="claw_mcp_test_$$.txt"
@@ -297,9 +308,9 @@ echo "${BOLD}--- TIER 1: Discovery and auth validation ---${NC}"
 # Section 0: Reachability
 #-------------------------------------------------------------------------------
 
-print_section "0. Reachability"
+print_section "0. Reachability and service health"
 
-echo "  0.1 List tools"
+echo "  0.1 MCP server reachable — list tools"
 LIST_OUT=$("$PROBE_PATH" -url "$FULL_URL" -transport http -list 2>&1)
 if [ $? -ne 0 ]; then
     echo "${RED}FAIL: probe could not connect to $FULL_URL${NC}"
@@ -311,6 +322,58 @@ fi
 echo "$LIST_OUT" | sed 's/^/      /'
 echo "    ${GREEN}PASS${NC}: server reachable, returned tool list"
 PASS_COUNT=$((PASS_COUNT + 1))
+
+if [ -n "$GATEWAY_URL" ]; then
+    echo "  0.2 Gateway /health returns 200"
+    HEALTH_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$GATEWAY_URL/health" 2>/dev/null)
+    if [ "$HEALTH_CODE" = "200" ]; then
+        echo "    ${GREEN}PASS${NC}: /health returned 200"
+        PASS_COUNT=$((PASS_COUNT + 1))
+    else
+        echo "    ${RED}FAIL${NC}: /health returned $HEALTH_CODE"
+        FAIL_COUNT=$((FAIL_COUNT + 1))
+    fi
+
+    echo "  0.3 Gateway /ready responds"
+    READY_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$GATEWAY_URL/ready" 2>/dev/null)
+    # 200 = ready, 503 = endpoint reachable but not ready (e.g. no model configured).
+    # Both are valid responses from a running gateway; a connection failure would
+    # produce an empty string or non-numeric code.
+    if [ "$READY_CODE" = "200" ] || [ "$READY_CODE" = "503" ]; then
+        echo "    ${GREEN}PASS${NC}: /ready responded with $READY_CODE (endpoint reachable)"
+        PASS_COUNT=$((PASS_COUNT + 1))
+    else
+        echo "    ${RED}FAIL${NC}: /ready did not respond (got '$READY_CODE')"
+        FAIL_COUNT=$((FAIL_COUNT + 1))
+    fi
+fi
+
+echo "  0.4 Minimum tool count (expected: $EXPECTED_TOOL_COUNT)"
+# probe lists tools as "      NN: tool_name" — count those lines
+TOOL_COUNT=$(echo "$LIST_OUT" | grep -cE "^[0-9]+:" || true)
+if [ "$TOOL_COUNT" -ge "$EXPECTED_TOOL_COUNT" ]; then
+    echo "    ${GREEN}PASS${NC}: found $TOOL_COUNT tools (minimum: $EXPECTED_TOOL_COUNT)"
+    PASS_COUNT=$((PASS_COUNT + 1))
+else
+    echo "    ${RED}FAIL${NC}: found $TOOL_COUNT tools, expected at least $EXPECTED_TOOL_COUNT"
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+fi
+
+echo "  0.5 At least one tool present per namespace"
+NS_OK=true
+for ns in $EXPECTED_NAMESPACES; do
+    if echo "$LIST_OUT" | grep -qF "$ns"; then
+        echo "    OK: namespace '${ns%_}'"
+    else
+        echo "    ${RED}FAIL${NC}: no tool found for namespace '${ns%_}' (expected a tool starting with '$ns')"
+        FAIL_COUNT=$((FAIL_COUNT + 1))
+        NS_OK=false
+    fi
+done
+if $NS_OK; then
+    echo "    ${GREEN}PASS${NC}: all expected namespaces represented"
+    PASS_COUNT=$((PASS_COUNT + 1))
+fi
 
 #-------------------------------------------------------------------------------
 # Section 1: Tool catalogue
@@ -343,6 +406,8 @@ check_tool "1.9"  "session_messages"
 check_tool "1.10" "session_search"
 check_tool "1.11" "session_compact"
 check_tool "1.12" "session_info"
+# find_tools_regex and find_tools_bm25 are only registered when
+# tools.mcp.discovery.enabled=true — not set in the standard test config.
 
 #-------------------------------------------------------------------------------
 # Section 2: Unauthenticated rejection
@@ -442,17 +507,34 @@ fi  # end SESSION_TOKEN block
 if [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
     print_section "5. Config reload (MCP server restart)"
 
+    # 5.0 — Establish baseline before triggering reload.
+    echo "  5.0 Baseline: tool count and namespace coverage before reload"
+    BASELINE_COUNT=$(echo "$LIST_OUT" | grep -cE "^[0-9]+:" || true)
+    BASELINE_NS_OK=true
+    for ns in $EXPECTED_NAMESPACES; do
+        if ! echo "$LIST_OUT" | grep -qF "$ns"; then
+            echo "    ${RED}FAIL${NC}: namespace '${ns%_}' missing before reload — baseline invalid"
+            FAIL_COUNT=$((FAIL_COUNT + 1))
+            BASELINE_NS_OK=false
+        fi
+    done
+    if $BASELINE_NS_OK; then
+        echo "    ${GREEN}PASS${NC}: baseline established — $BASELINE_COUNT tools, all namespaces present"
+        PASS_COUNT=$((PASS_COUNT + 1))
+    fi
+
+    # 5.1 — Touch config to trigger the watcher.
     echo "  5.1 Touch config file to trigger reload"
     touch "$CONFIG_FILE"
     echo "    ${GREEN}PASS${NC}: config file touched (mtime updated)"
     PASS_COUNT=$((PASS_COUNT + 1))
 
-    echo ""
+    # 5.2 — Poll until MCP server responds again (config watcher polls every 5 s).
     echo "  5.2 MCP server recovers after reload"
-    # Poll until the server responds again or 30 s elapses.
-    # The config watcher polls every 5 s; add ~5 s for service restart.
     RELOAD_DEADLINE=$(($(date +%s) + 30))
     RELOAD_OK=false
+    # First wait briefly for the server to go away (reload shuts it down).
+    sleep 2
     while [ "$(date +%s)" -lt "$RELOAD_DEADLINE" ]; do
         if "$PROBE_PATH" -url "$FULL_URL" -transport http -list >/dev/null 2>&1; then
             RELOAD_OK=true
@@ -469,21 +551,47 @@ if [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
         FAIL_COUNT=$((FAIL_COUNT + 1))
     fi
 
-    # Re-check tool catalogue to confirm server is fully functional post-reload.
     if $RELOAD_OK; then
-        echo ""
-        echo "  5.3 Tool catalogue intact after reload"
         LIST_RELOAD=$("$PROBE_PATH" -url "$FULL_URL" -transport http -list 2>&1)
-        TOOLS_OK=true
-        for tool in files_read files_write files_list session_messages session_compact; do
+
+        # 5.3 — Full tool catalogue check — every expected tool must be present.
+        echo "  5.3 Full tool catalogue intact after reload"
+        RELOAD_TOOLS_OK=true
+        for tool in $EXPECTED_TOOLS; do
             if ! echo "$LIST_RELOAD" | grep -qF "$tool"; then
-                echo "    ${RED}FAIL${NC}: '$tool' missing from catalogue after reload"
+                echo "    ${RED}FAIL${NC}: '$tool' missing after reload"
                 FAIL_COUNT=$((FAIL_COUNT + 1))
-                TOOLS_OK=false
+                RELOAD_TOOLS_OK=false
             fi
         done
-        if $TOOLS_OK; then
-            echo "    ${GREEN}PASS${NC}: expected tools present after reload"
+        if $RELOAD_TOOLS_OK; then
+            echo "    ${GREEN}PASS${NC}: all $EXPECTED_TOOL_COUNT expected tools present after reload"
+            PASS_COUNT=$((PASS_COUNT + 1))
+        fi
+
+        # 5.4 — Tool count matches baseline (no silent additions or drops).
+        echo "  5.4 Tool count matches pre-reload baseline"
+        RELOAD_COUNT=$(echo "$LIST_RELOAD" | grep -cE "^[0-9]+:" || true)
+        if [ "$RELOAD_COUNT" -eq "$BASELINE_COUNT" ]; then
+            echo "    ${GREEN}PASS${NC}: tool count unchanged ($RELOAD_COUNT tools)"
+            PASS_COUNT=$((PASS_COUNT + 1))
+        else
+            echo "    ${RED}FAIL${NC}: tool count changed — was $BASELINE_COUNT, now $RELOAD_COUNT"
+            FAIL_COUNT=$((FAIL_COUNT + 1))
+        fi
+
+        # 5.5 — All namespaces still present after reload.
+        echo "  5.5 All namespaces present after reload"
+        RELOAD_NS_OK=true
+        for ns in $EXPECTED_NAMESPACES; do
+            if ! echo "$LIST_RELOAD" | grep -qF "$ns"; then
+                echo "    ${RED}FAIL${NC}: namespace '${ns%_}' missing after reload"
+                FAIL_COUNT=$((FAIL_COUNT + 1))
+                RELOAD_NS_OK=false
+            fi
+        done
+        if $RELOAD_NS_OK; then
+            echo "    ${GREEN}PASS${NC}: all namespaces present after reload"
             PASS_COUNT=$((PASS_COUNT + 1))
         fi
     fi
