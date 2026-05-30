@@ -395,18 +395,18 @@ PY
     "listen": "127.0.0.1:$MCP_PORT",
     "endpoint_path": "/mcp",
     "tools": [
-      "read_file",
-      "write_file",
-      "edit_file",
-      "append_file",
-      "list_dir",
+      "files_read",
+      "files_write",
+      "files_edit",
+      "files_append",
+      "files_list",
       "web_fetch",
       "web_search",
-      "send_file",
-      "get_session_messages",
-      "search_session_messages",
-      "compact_session",
-      "get_session_info"
+      "msg_send_file",
+      "session_messages",
+      "session_search",
+      "session_compact",
+      "session_info"
     ]
   }
 }

@@ -34,9 +34,9 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/memory"
 	"github.com/PivotLLM/ClawEh/pkg/providers"
 	"github.com/PivotLLM/ClawEh/pkg/routing"
-	"github.com/PivotLLM/ClawEh/pkg/skills"
 	"github.com/PivotLLM/ClawEh/pkg/state"
 	"github.com/PivotLLM/ClawEh/pkg/tools"
+	toolsmsg "github.com/PivotLLM/ClawEh/pkg/tools/msg"
 	"github.com/PivotLLM/ClawEh/pkg/utils"
 	"github.com/PivotLLM/ClawEh/pkg/voice"
 )
@@ -150,9 +150,6 @@ func NewAgentLoop(
 	cooldown := providers.NewCooldownTracker()
 	fallbackChain := providers.NewFallbackChain(cooldown)
 
-	// Register shared tools to all agents
-	registerSharedTools(cfg, msgBus, registry, provider, dispatcher, fallbackChain)
-
 	// Create state manager using default agent's workspace for channel recording
 	defaultAgent := registry.GetDefaultAgent()
 	var stateManager *state.Manager
@@ -217,175 +214,13 @@ func NewAgentLoop(
 		evictInterval:    defaultEvictInterval,
 	}
 
-	// Register session-management tools that require a closure over the agent loop.
-	// These tools need access to the context manager and archive, so they are wired
-	// here after al is constructed rather than in NewAgentInstance.
-	al.registerSessionManagementTools(registry)
+	// Register runtime-dependent tools via providers (session closures,
+	// spawn/subagent, msg with shared MessageTool).
+	al.registerRuntimeTools(registry, provider, dispatcher, fallbackChain)
 
 	return al
 }
 
-// registerSharedTools registers tools that are shared across all agents (web, message, spawn).
-func registerSharedTools(
-	cfg *config.Config,
-	msgBus *bus.MessageBus,
-	registry *AgentRegistry,
-	provider providers.LLMProvider,
-	dispatcher *providers.ProviderDispatcher,
-	fallbackChain *providers.FallbackChain,
-) {
-	// Message tool is shared across all agents so HasSentInRound() is consistent
-	// regardless of which agent handles a given message.
-	var sharedMessageTool *tools.MessageTool
-	if cfg.Tools.IsToolEnabled("message") {
-		sharedMessageTool = tools.NewMessageTool()
-		sharedMessageTool.SetSendCallback(func(channel, chatID, content string) error {
-			pubCtx, pubCancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer pubCancel()
-			return msgBus.PublishOutbound(pubCtx, bus.OutboundMessage{
-				Channel: channel,
-				ChatID:  chatID,
-				Content: content,
-			})
-		})
-	}
-
-	for _, agentID := range registry.ListAgentIDs() {
-		agent, ok := registry.GetAgent(agentID)
-		if !ok {
-			continue
-		}
-
-		agentCfg := agent.Config
-
-		if cfg.Tools.IsToolEnabled("web") && agentCfg.IsToolAllowed("web_search") {
-			searchTool, err := tools.NewWebSearchTool(tools.WebSearchToolOptions{
-				BraveAPIKeys:         config.MergeAPIKeys(cfg.Tools.Web.Brave.APIKey, cfg.Tools.Web.Brave.APIKeys),
-				BraveMaxResults:      cfg.Tools.Web.Brave.MaxResults,
-				BraveEnabled:         cfg.Tools.Web.Brave.Enabled,
-				TavilyAPIKeys:        config.MergeAPIKeys(cfg.Tools.Web.Tavily.APIKey, cfg.Tools.Web.Tavily.APIKeys),
-				TavilyBaseURL:        cfg.Tools.Web.Tavily.BaseURL,
-				TavilyMaxResults:     cfg.Tools.Web.Tavily.MaxResults,
-				TavilyEnabled:        cfg.Tools.Web.Tavily.Enabled,
-				DuckDuckGoMaxResults: cfg.Tools.Web.DuckDuckGo.MaxResults,
-				DuckDuckGoEnabled:    cfg.Tools.Web.DuckDuckGo.Enabled,
-				PerplexityAPIKeys: config.MergeAPIKeys(
-					cfg.Tools.Web.Perplexity.APIKey,
-					cfg.Tools.Web.Perplexity.APIKeys,
-				),
-				PerplexityMaxResults: cfg.Tools.Web.Perplexity.MaxResults,
-				PerplexityEnabled:    cfg.Tools.Web.Perplexity.Enabled,
-				SearXNGBaseURL:       cfg.Tools.Web.SearXNG.BaseURL,
-				SearXNGMaxResults:    cfg.Tools.Web.SearXNG.MaxResults,
-				SearXNGEnabled:       cfg.Tools.Web.SearXNG.Enabled,
-				GLMSearchAPIKey:      cfg.Tools.Web.GLMSearch.APIKey,
-				GLMSearchBaseURL:     cfg.Tools.Web.GLMSearch.BaseURL,
-				GLMSearchEngine:      cfg.Tools.Web.GLMSearch.SearchEngine,
-				GLMSearchMaxResults:  cfg.Tools.Web.GLMSearch.MaxResults,
-				GLMSearchEnabled:     cfg.Tools.Web.GLMSearch.Enabled,
-				Proxy:                cfg.Tools.Web.Proxy,
-			})
-			if err != nil {
-				logger.ErrorCF("agent", "Failed to create web search tool", map[string]any{"agent_id": agentID, "error": err.Error()})
-			} else if searchTool != nil {
-				agent.Tools.Register(searchTool)
-			}
-		}
-		if cfg.Tools.IsToolEnabled("web_fetch") && agentCfg.IsToolAllowed("web_fetch") {
-			fetchTool, err := tools.NewWebFetchToolWithProxy(50000, cfg.Tools.Web.Proxy, cfg.Tools.Web.FetchLimitBytes)
-			if err != nil {
-				logger.ErrorCF("agent", "Failed to create web fetch tool", map[string]any{"agent_id": agentID, "error": err.Error()})
-			} else {
-				agent.Tools.Register(fetchTool)
-			}
-		}
-
-		// Hardware tools (I2C, SPI) - Linux only, returns error on other platforms
-		if cfg.Tools.IsToolEnabled("i2c") && agentCfg.IsToolAllowed("i2c") {
-			agent.Tools.Register(tools.NewI2CTool())
-		}
-		if cfg.Tools.IsToolEnabled("spi") && agentCfg.IsToolAllowed("spi") {
-			agent.Tools.Register(tools.NewSPITool())
-		}
-
-		// Message tool (shared instance registered to every agent — HasSentInRound
-		// must reflect any send regardless of which agent processed the message)
-		if sharedMessageTool != nil && agentCfg.IsToolAllowed("message") {
-			agent.Tools.Register(sharedMessageTool)
-		}
-
-		// Send file tool (outbound media via MediaStore — store injected later by SetMediaStore)
-		if cfg.Tools.IsToolEnabled("send_file") && agentCfg.IsToolAllowed("send_file") {
-			sendFileTool := tools.NewSendFileTool(
-				agent.Workspace,
-				cfg.Agents.Defaults.RestrictToWorkspace,
-				cfg.Agents.Defaults.GetMaxMediaSize(),
-				nil,
-			)
-			agent.Tools.Register(sendFileTool)
-		}
-
-		// Skill discovery and installation tools
-		registry_enabled := cfg.Tools.Skills.Registry.Enabled
-		find_skills_enable := cfg.Tools.IsToolEnabled("find_skills") && agentCfg.IsToolAllowed("find_skills")
-		install_skills_enable := cfg.Tools.IsToolEnabled("install_skill") && agentCfg.IsToolAllowed("install_skill")
-		if registry_enabled && (find_skills_enable || install_skills_enable) {
-			registryMgr := skills.NewRegistryManagerFromConfig(skills.RegistryConfig{
-				MaxConcurrentSearches: cfg.Tools.Skills.MaxConcurrentSearches,
-				ClawHub:               skills.ClawHubConfig(cfg.Tools.Skills.Registries.ClawHub),
-			})
-
-			if find_skills_enable {
-				searchCache := skills.NewSearchCache(
-					cfg.Tools.Skills.SearchCache.MaxSize,
-					time.Duration(cfg.Tools.Skills.SearchCache.TTLSeconds)*time.Second,
-				)
-				agent.Tools.Register(tools.NewFindSkillsTool(registryMgr, searchCache))
-			}
-
-			if install_skills_enable {
-				agent.Tools.Register(tools.NewInstallSkillTool(registryMgr, agent.Workspace))
-			}
-		}
-
-		// Spawn tool with allowlist checker
-		if cfg.Tools.IsToolEnabled("spawn") && agentCfg.IsToolAllowed("spawn") {
-			if cfg.Tools.IsToolEnabled("subagent") {
-				currentAgentID := agentID
-				// Build a resolver so the subagent manager can look up any target
-				// agent's candidates without importing the agent package from tools.
-				candidateResolver := func(targetAgentID string) ([]providers.FallbackCandidate, bool) {
-					target, ok := registry.GetAgent(targetAgentID)
-					if !ok {
-						return nil, false
-					}
-					if len(target.Candidates) == 0 {
-						return nil, false
-					}
-					return target.Candidates, true
-				}
-				subagentManager := tools.NewSubagentManager(tools.SubagentManagerConfig{
-					Provider:          provider,
-					DefaultModel:      agent.Model,
-					Workspace:         agent.Workspace,
-					Dispatcher:        dispatcher,
-					Fallback:          fallbackChain,
-					SelfCandidates:    agent.Candidates,
-					CallerAgentID:     currentAgentID,
-					CandidateResolver: candidateResolver,
-				})
-				subagentManager.SetLLMOptions(agent.MaxTokens, agent.Temperature)
-				spawnTool := tools.NewSpawnTool(subagentManager)
-				spawnTool.SetAllowlistChecker(func(targetAgentID string) bool {
-					return registry.CanSpawnSubagent(currentAgentID, targetAgentID)
-				})
-				agent.Tools.Register(spawnTool)
-			} else {
-				logger.WarnCF("agent", "spawn tool requires subagent to be enabled", nil)
-			}
-		}
-	}
-}
 
 func (al *AgentLoop) Run(ctx context.Context) error {
 	al.running.Store(true)
@@ -672,6 +507,102 @@ func (al *AgentLoop) HandleCallbackMessage(ctx context.Context, agentID, body st
 	return al.bus.PublishInbound(ctx, msg)
 }
 
+// registerRuntimeTools registers tools that require runtime dependencies (session closures,
+// spawn providers, shared message tool) via the ToolProvider system.
+// Called from NewAgentLoop after the AgentLoop is constructed so closures can capture al.
+func (al *AgentLoop) registerRuntimeTools(
+	registry *AgentRegistry,
+	provider providers.LLMProvider,
+	dispatcher *providers.ProviderDispatcher,
+	fallbackChain *providers.FallbackChain,
+) {
+	cfg := al.GetConfig()
+
+	// Build shared message tool for all agents.
+	var sharedMessageTool tools.Tool
+	if cfg.Tools.IsToolEnabled("msg_send") {
+		mt := toolsmsg.NewMessageTool()
+		mt.SetSendCallback(func(channel, chatID, content string) error {
+			pubCtx, pubCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer pubCancel()
+			return al.bus.PublishOutbound(pubCtx, bus.OutboundMessage{
+				Channel: channel,
+				ChatID:  chatID,
+				Content: content,
+			})
+		})
+		sharedMessageTool = mt
+	}
+
+	for _, agentID := range registry.ListAgentIDs() {
+		agentInst, ok := registry.GetAgent(agentID)
+		if !ok {
+			continue
+		}
+		currentAgent := agentInst
+		agentCfg := currentAgent.Config
+
+		// Build candidate resolver for spawn.
+		candidateResolver := func(targetAgentID string) ([]providers.FallbackCandidate, bool) {
+			target, ok := registry.GetAgent(targetAgentID)
+			if !ok {
+				return nil, false
+			}
+			if len(target.Candidates) == 0 {
+				return nil, false
+			}
+			return target.Candidates, true
+		}
+
+		// Build compact closure.
+		compactFn := func(ctx context.Context, sessionKey string) error {
+			ctx = providers.WithAgentID(ctx, currentAgent.ID)
+			cm, release := al.getContextManager(currentAgent, sessionKey)
+			defer release()
+			return cm.Compact(ctx)
+		}
+
+		// Build session info closure.
+		infoFn := func(ctx context.Context, sessionKey string) (*tools.SessionInfo, error) {
+			return buildSessionInfo(al, currentAgent, sessionKey)
+		}
+
+		// Determine spawn allowlist.
+		currentAgentID := agentID
+		spawnAllowlist := func(callerID, targetID string) bool {
+			return registry.CanSpawnSubagent(currentAgentID, targetID)
+		}
+
+		deps := tools.ToolDeps{
+			Cfg:               cfg,
+			AgentCfg:          agentCfg,
+			AgentID:           agentID,
+			Workspace:         currentAgent.Workspace,
+			Provider:          provider,
+			Dispatcher:        dispatcher,
+			Fallback:          fallbackChain,
+			Candidates:        currentAgent.Candidates,
+			SpawnAllowlist:    spawnAllowlist,
+			CandidateResolver: candidateResolver,
+			CompactFn:         compactFn,
+			SessionInfoFn:     infoFn,
+			MessageTool:       sharedMessageTool,
+		}
+
+		for _, p := range tools.GetProviders() {
+			if ok, _ := p.Available(cfg); !ok {
+				continue
+			}
+			builtTools := p.Build(deps)
+			for _, t := range builtTools {
+				if agentCfg == nil || agentCfg.IsToolAllowed(t.Name()) {
+					currentAgent.Tools.Register(t)
+				}
+			}
+		}
+	}
+}
+
 func (al *AgentLoop) RegisterTool(tool tools.Tool) {
 	registry := al.GetRegistry()
 	for _, agentID := range registry.ListAgentIDs() {
@@ -753,11 +684,6 @@ func (al *AgentLoop) ReloadProviderAndConfig(
 		return fmt.Errorf("context canceled after registry creation: %w", err)
 	}
 
-	// Ensure shared tools are re-registered on the new registry.
-	// Build a fresh fallback chain for the new registry's subagent managers.
-	newFallbackChain := providers.NewFallbackChain(providers.NewCooldownTracker())
-	registerSharedTools(cfg, al.bus, registry, provider, al.dispatcher, newFallbackChain)
-
 	// Re-issue MCP isolation tokens for the new registry so the new
 	// agents' context builders carry fresh tokens. Old tokens are
 	// implicitly replaced by Issue(); agents removed from config are
@@ -832,13 +758,18 @@ func (al *AgentLoop) GetConfig() *config.Config {
 func (al *AgentLoop) SetMediaStore(s media.MediaStore) {
 	al.mediaStore = s
 
-	// Propagate store to send_file tools in all agents.
+	// Propagate store to send_file / msg_send_file tools in all agents.
 	registry := al.GetRegistry()
-	registry.ForEachTool("send_file", func(t tools.Tool) {
-		if sf, ok := t.(*tools.SendFileTool); ok {
-			sf.SetMediaStore(s)
-		}
-	})
+	type mediaStoreSetter interface {
+		SetMediaStore(media.MediaStore)
+	}
+	for _, toolName := range []string{"send_file", "msg_send_file"} {
+		registry.ForEachTool(toolName, func(t tools.Tool) {
+			if sf, ok := t.(mediaStoreSetter); ok {
+				sf.SetMediaStore(s)
+			}
+		})
+	}
 }
 
 // SetTranscriber injects a voice transcriber for agent-level audio transcription.
@@ -1098,7 +1029,12 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 
 	// Legacy: reset the shared sentInRound flag on the message tool. The concurrent
 	// dispatch path uses per-round context flags instead, so this is a no-op there.
-	if tool, ok := agent.Tools.Get("message"); ok {
+	messageTool, hasMsg := agent.Tools.Get("message")
+	if !hasMsg {
+		messageTool, hasMsg = agent.Tools.Get("msg_send")
+	}
+	if hasMsg {
+		tool := messageTool
 		if resetter, ok := tool.(interface{ ResetSentInRound() }); ok {
 			resetter.ResetSentInRound()
 		}

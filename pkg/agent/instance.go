@@ -70,7 +70,6 @@ func NewAgentInstance(
 	// startup error so we never silently fall back to workspace memory and
 	// leak private notes into the wrong directory.
 	memoryDir := resolveAgentMemoryDir(agentCfg)
-	memoryRedirectActive := ""
 	if memoryDir != "" {
 		defaultMem := filepath.Join(workspace, "memory")
 		if memoryDir != defaultMem {
@@ -84,7 +83,6 @@ func NewAgentInstance(
 					}(),
 					memoryDir, err)
 			}
-			memoryRedirectActive = memoryDir
 		}
 	}
 
@@ -92,79 +90,38 @@ func NewAgentInstance(
 	fallbacks := resolveAgentFallbacks(agentCfg, defaults)
 
 	restrict := defaults.RestrictToWorkspace
-	readRestrict := restrict && !defaults.AllowReadOutsideWorkspace
-
-	// Compile path whitelist patterns from config.
-	allowReadPaths := compilePatterns(cfg.Tools.AllowReadPaths)
-	allowWritePaths := compilePatterns(cfg.Tools.AllowWritePaths)
-
-	// Always allow reading from the global skills directory so agents can
-	// access SKILL.md and supporting files when executing skills.
-	if skillsPath := cfg.SkillsPath(); skillsPath != "" {
-		if re, err := regexp.Compile("^" + regexp.QuoteMeta(skillsPath) + "/"); err == nil {
-			allowReadPaths = append(allowReadPaths, re)
-		}
-	}
+	_ = restrict // restrict is available to providers via cfg and defaults
 
 	toolsRegistry := tools.NewToolRegistry()
-
-	if cfg.Tools.IsToolEnabled("read_file") && agentCfg.IsToolAllowed("read_file") {
-		maxReadFileSize := cfg.Tools.ReadFile.MaxReadFileSize
-		if memoryRedirectActive != "" {
-			toolsRegistry.Register(tools.NewReadFileToolWithMemoryRedirect(workspace, readRestrict, maxReadFileSize, allowReadPaths, memoryRedirectActive))
-		} else {
-			toolsRegistry.Register(tools.NewReadFileTool(workspace, readRestrict, maxReadFileSize, allowReadPaths))
-		}
-	}
-	if cfg.Tools.IsToolEnabled("write_file") && agentCfg.IsToolAllowed("write_file") {
-		if memoryRedirectActive != "" {
-			toolsRegistry.Register(tools.NewWriteFileToolWithMemoryRedirect(workspace, restrict, allowWritePaths, memoryRedirectActive))
-		} else {
-			toolsRegistry.Register(tools.NewWriteFileTool(workspace, restrict, allowWritePaths))
-		}
-	}
-	if cfg.Tools.IsToolEnabled("list_dir") && agentCfg.IsToolAllowed("list_dir") {
-		if memoryRedirectActive != "" {
-			toolsRegistry.Register(tools.NewListDirToolWithMemoryRedirect(workspace, readRestrict, allowReadPaths, memoryRedirectActive))
-		} else {
-			toolsRegistry.Register(tools.NewListDirTool(workspace, readRestrict, allowReadPaths))
-		}
-	}
-	if cfg.Tools.IsToolEnabled("exec") && agentCfg.IsToolAllowed("exec") {
-		execTool, err := tools.NewExecToolWithConfig(workspace, restrict, cfg)
-		if err != nil {
-			log.Fatalf("Critical error: unable to initialize exec tool: %v", err)
-		}
-		toolsRegistry.Register(execTool)
-	}
-
-	if cfg.Tools.IsToolEnabled("edit_file") && agentCfg.IsToolAllowed("edit_file") {
-		if memoryRedirectActive != "" {
-			toolsRegistry.Register(tools.NewEditFileToolWithMemoryRedirect(workspace, restrict, allowWritePaths, memoryRedirectActive))
-		} else {
-			toolsRegistry.Register(tools.NewEditFileTool(workspace, restrict, allowWritePaths))
-		}
-	}
-	if cfg.Tools.IsToolEnabled("append_file") && agentCfg.IsToolAllowed("append_file") {
-		if memoryRedirectActive != "" {
-			toolsRegistry.Register(tools.NewAppendFileToolWithMemoryRedirect(workspace, restrict, allowWritePaths, memoryRedirectActive))
-		} else {
-			toolsRegistry.Register(tools.NewAppendFileTool(workspace, restrict, allowWritePaths))
-		}
-	}
-	if cfg.Tools.IsToolEnabled("copy_file") && agentCfg.IsToolAllowed("copy_file") {
-		if memoryRedirectActive != "" {
-			toolsRegistry.Register(tools.NewCopyFileToolWithMemoryRedirect(workspace, restrict, allowWritePaths, memoryRedirectActive))
-		} else {
-			toolsRegistry.Register(tools.NewCopyFileTool(workspace, restrict, allowWritePaths))
-		}
-	}
 
 	sessionsDir := filepath.Join(workspace, "sessions")
 	sessions := initSessionStore(sessionsDir)
 
-	toolsRegistry.Register(tools.NewSessionHistoryTool(sessionsDir))
-	toolsRegistry.Register(tools.NewSessionHistorySearchTool(sessionsDir))
+	// Phase 1: register tools via providers (files, shell, hardware, session history).
+	// Runtime-dependent providers (session closures, spawn, msg) are registered
+	// by the AgentLoop after construction via registerRuntimeTools().
+	phase1Deps := tools.ToolDeps{
+		Cfg:       cfg,
+		AgentCfg:  agentCfg,
+		AgentID:   func() string {
+			if agentCfg != nil {
+				return routing.NormalizeAgentID(agentCfg.ID)
+			}
+			return routing.DefaultAgentID
+		}(),
+		Workspace: workspace,
+	}
+	for _, p := range tools.GetProviders() {
+		if ok, _ := p.Available(cfg); !ok {
+			continue
+		}
+		builtTools := p.Build(phase1Deps)
+		for _, t := range builtTools {
+			if agentCfg == nil || agentCfg.IsToolAllowed(t.Name()) {
+				toolsRegistry.Register(t)
+			}
+		}
+	}
 
 	mcpDiscoveryActive := cfg.Tools.MCP.Enabled && cfg.Tools.MCP.Discovery.Enabled
 	contextBuilder := NewContextBuilderWithMemory(workspace, memoryDir).WithToolDiscovery(

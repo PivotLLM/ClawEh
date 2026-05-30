@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/PivotLLM/ClawEh/pkg/tools"
+	toolsfiles "github.com/PivotLLM/ClawEh/pkg/tools/files"
+	toolssession "github.com/PivotLLM/ClawEh/pkg/tools/session"
 )
 
 // TestSessionScopedInterface verifies that all four session tools implement
@@ -18,10 +20,10 @@ func TestSessionScopedInterface(t *testing.T) {
 		name string
 		tool tools.Tool
 	}{
-		{"get_session_messages", tools.NewSessionHistoryTool("")},
-		{"search_session_messages", tools.NewSessionHistorySearchTool("")},
-		{"compact_session", tools.NewSessionCompactTool(nil)},
-		{"get_session_info", tools.NewSessionInfoTool(nil)},
+		{"session_history", toolssession.NewSessionHistoryTool("")},
+		{"session_history_search", toolssession.NewSessionHistorySearchTool("")},
+		{"session_compact", toolssession.NewSessionCompactTool(nil)},
+		{"session_info", toolssession.NewSessionInfoTool(nil)},
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -43,7 +45,7 @@ func TestSessionScopedInterface(t *testing.T) {
 func TestNonSessionToolDoesNotImplementSessionScoped(t *testing.T) {
 	// ReadFileTool is a typical non-session tool. It must not accidentally
 	// satisfy SessionScoped; if it does, that is an implementation mistake.
-	var tool tools.Tool = tools.NewReadFileTool("", false, 0)
+	var tool tools.Tool = toolsfiles.NewReadFileTool("", false, 0)
 	if _, ok := tool.(tools.SessionScoped); ok {
 		t.Errorf("ReadFileTool must not implement SessionScoped")
 	}

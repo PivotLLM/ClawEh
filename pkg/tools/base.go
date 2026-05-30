@@ -81,6 +81,12 @@ func roundSentFlagFromCtx(ctx context.Context) *atomic.Bool {
 	return v
 }
 
+// RoundSentFlagFromCtx is the exported form of roundSentFlagFromCtx,
+// available to sub-packages (e.g. pkg/tools/msg).
+func RoundSentFlagFromCtx(ctx context.Context) *atomic.Bool {
+	return roundSentFlagFromCtx(ctx)
+}
+
 // WithSessionKey returns a child context carrying the active session key.
 // In the MCP dispatch path, mcpserver.dispatchToolCall injects the session key
 // after validating the session_token parameter (see pkg/mcpserver/tools.go).

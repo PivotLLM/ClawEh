@@ -23,7 +23,7 @@ import (
 
 // messageToolName is the agent-internal outbound-publish tool, never exposed
 // to MCP clients (it has no meaningful semantics outside the agent loop).
-const messageToolName = "message"
+const messageToolName = "msg_send"
 
 // invalidTokenMessage is what we return when the supplied session_token is
 // missing, malformed, or unknown. The wording is intentionally instructive
@@ -113,7 +113,8 @@ func addToolsToServer(
 	}
 
 	for _, name := range catalogueToolNames(agentRegistries) {
-		if name == messageToolName {
+		// Never expose the agent-internal message tools.
+		if name == messageToolName || name == "message" {
 			continue
 		}
 		if !config.MatchToolPattern(allowPatterns, name) {

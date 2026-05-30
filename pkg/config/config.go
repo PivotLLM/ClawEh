@@ -1370,6 +1370,44 @@ func MergeAPIKeys(apiKey string, apiKeys []string) []string {
 
 func (t *ToolsConfig) IsToolEnabled(name string) bool {
 	switch name {
+	// Namespaced names
+	case "files_read":
+		return t.ReadFile.Enabled
+	case "files_write":
+		return t.WriteFile.Enabled
+	case "files_list":
+		return t.ListDir.Enabled
+	case "files_edit":
+		return t.EditFile.Enabled
+	case "files_append":
+		return t.AppendFile.Enabled
+	case "files_copy":
+		return t.CopyFile.Enabled
+	case "shell_exec":
+		return t.Exec.Enabled
+	case "web_search":
+		return t.Web.Enabled
+	case "web_fetch":
+		return t.WebFetch.Enabled
+	case "session_messages", "session_search", "session_compact", "session_info":
+		return true
+	case "msg_send":
+		return t.Message.Enabled
+	case "msg_send_file":
+		return t.SendFile.Enabled
+	case "skills_find":
+		return t.FindSkills.Enabled
+	case "skills_install":
+		return t.InstallSkill.Enabled
+	case "agents_spawn":
+		return t.Spawn.Enabled
+	case "hw_i2c":
+		return t.I2C.Enabled
+	case "hw_spi":
+		return t.SPI.Enabled
+	case "schedule_cron":
+		return t.Cron.Enabled
+	// Legacy names kept for backward compatibility
 	case "web":
 		return t.Web.Enabled
 	case "cron":
@@ -1404,8 +1442,6 @@ func (t *ToolsConfig) IsToolEnabled(name string) bool {
 		return t.SPI.Enabled
 	case "subagent":
 		return t.Subagent.Enabled
-	case "web_fetch":
-		return t.WebFetch.Enabled
 	case "send_file":
 		return t.SendFile.Enabled
 	case "write_file":

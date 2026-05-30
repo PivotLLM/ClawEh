@@ -1,6 +1,9 @@
 package tools
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 type Message struct {
 	Role       string     `json:"role"`
@@ -55,4 +58,24 @@ type ToolFunctionDefinition struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description"`
 	Parameters  map[string]any `json:"parameters"`
+}
+
+// SessionInfo holds the structured data returned by the session_info tool.
+type SessionInfo struct {
+	SessionKey          string           `json:"session_key"`
+	StartedAt           *time.Time       `json:"started_at,omitempty"`
+	Channel             string           `json:"channel,omitempty"`
+	ContextMessageCount int              `json:"context_message_count"`
+	ArchiveMinSeq       int              `json:"archive_min_seq"`
+	ArchiveMaxSeq       int              `json:"archive_max_seq"`
+	TotalArchived       int              `json:"total_archived"`
+	SummaryCovers       *SummaryCoverage `json:"summary_covers,omitempty"`
+	LastCompressedAt    *time.Time       `json:"last_compressed_at,omitempty"`
+}
+
+// SummaryCoverage describes the seq range covered by the current summary.
+type SummaryCoverage struct {
+	SeqStart    int        `json:"seq_start"`
+	SeqEnd      int        `json:"seq_end"`
+	GeneratedAt *time.Time `json:"generated_at,omitempty"`
 }

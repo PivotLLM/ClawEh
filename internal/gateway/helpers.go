@@ -31,6 +31,7 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/providers"
 	"github.com/PivotLLM/ClawEh/pkg/state"
 	"github.com/PivotLLM/ClawEh/pkg/tools"
+	toolschedule "github.com/PivotLLM/ClawEh/pkg/tools/schedule"
 	"github.com/PivotLLM/ClawEh/pkg/voice"
 	webserver "github.com/PivotLLM/ClawEh/web/backend"
 	"github.com/PivotLLM/ClawEh/web/backend/launcherconfig"
@@ -141,6 +142,8 @@ func gatewayCmd(debug bool) error {
 		cfg.Agents.Defaults.SetDefaultModel(modelID)
 	}
 
+	registerToolProviders()
+
 	dispatcher := providers.NewProviderDispatcher(cfg)
 	msgBus := bus.NewMessageBus()
 	agentLoop := agent.NewAgentLoop(cfg, msgBus, provider, dispatcher)
@@ -211,7 +214,7 @@ func setupAndStartServices(
 
 	// Setup cron tool and service
 	execTimeout := time.Duration(cfg.Tools.Cron.ExecTimeoutMinutes) * time.Minute
-	var cronTool *tools.CronTool
+	var cronTool *toolschedule.CronTool
 	services.CronService, cronTool = setupCronTool(
 		agentLoop,
 		msgBus,
@@ -516,7 +519,7 @@ func restartServices(
 	// Re-create and start cron service with new config, then re-register the
 	// cron tool with all agents so it is available after the registry is rebuilt.
 	execTimeout := time.Duration(cfg.Tools.Cron.ExecTimeoutMinutes) * time.Minute
-	var cronTool *tools.CronTool
+	var cronTool *toolschedule.CronTool
 	services.CronService, cronTool = setupCronTool(
 		al,
 		msgBus,
@@ -714,17 +717,17 @@ func setupCronTool(
 	restrict bool,
 	execTimeout time.Duration,
 	cfg *config.Config,
-) (*cron.CronService, *tools.CronTool) {
+) (*cron.CronService, *toolschedule.CronTool) {
 	cronStorePath := filepath.Join(cfg.CronPath(), "jobs.json")
 
 	// Create cron service
 	cronService := cron.NewCronService(cronStorePath, nil)
 
 	// Create CronTool if enabled
-	var cronTool *tools.CronTool
-	if cfg.Tools.IsToolEnabled("cron") {
+	var cronTool *toolschedule.CronTool
+	if cfg.Tools.IsToolEnabled("schedule_cron") {
 		var err error
-		cronTool, err = tools.NewCronTool(cronService, agentLoop, msgBus, workspace, restrict, execTimeout, cfg)
+		cronTool, err = toolschedule.NewCronTool(cronService, agentLoop, msgBus, workspace, restrict, execTimeout, cfg)
 		if err != nil {
 			logger.Fatalf("Critical error during CronTool initialization: %v", err)
 		}

@@ -330,18 +330,18 @@ check_tool() {
     fi
 }
 
-check_tool "1.1"  "read_file"
-check_tool "1.2"  "write_file"
-check_tool "1.3"  "edit_file"
-check_tool "1.4"  "append_file"
-check_tool "1.5"  "list_dir"
+check_tool "1.1"  "files_read"
+check_tool "1.2"  "files_write"
+check_tool "1.3"  "files_edit"
+check_tool "1.4"  "files_append"
+check_tool "1.5"  "files_list"
 check_tool "1.6"  "web_fetch"
 check_tool "1.7"  "web_search"
-check_tool "1.8"  "send_file"
-check_tool "1.9"  "get_session_messages"
-check_tool "1.10" "search_session_messages"
-check_tool "1.11" "compact_session"
-check_tool "1.12" "get_session_info"
+check_tool "1.8"  "msg_send_file"
+check_tool "1.9"  "session_messages"
+check_tool "1.10" "session_search"
+check_tool "1.11" "session_compact"
+check_tool "1.12" "session_info"
 
 #-------------------------------------------------------------------------------
 # Section 2: Unauthenticated rejection
@@ -349,14 +349,14 @@ check_tool "1.12" "get_session_info"
 
 print_section "2. Unauthenticated rejection"
 
-run_test_err_contains "2.1 list_dir without session_token returns session_token error" \
-    "list_dir" '{"path":"."}' "session_token"
+run_test_err_contains "2.1 files_list without session_token returns session_token error" \
+    "files_list" '{"path":"."}' "session_token"
 
-run_test_err_contains "2.2 read_file without session_token returns session_token error" \
-    "read_file" '{"path":"test.txt"}' "session_token"
+run_test_err_contains "2.2 files_read without session_token returns session_token error" \
+    "files_read" '{"path":"test.txt"}' "session_token"
 
-run_test_err_contains "2.3 get_session_info without session_token returns session_token error" \
-    "get_session_info" '{}' "session_token"
+run_test_err_contains "2.3 session_info without session_token returns session_token error" \
+    "session_info" '{}' "session_token"
 
 ################################################################################
 # TIER 2 — Authenticated tests (SESSION_TOKEN required)
@@ -384,31 +384,31 @@ else
 
     print_section "3. File operations (authenticated)"
 
-    run_test_ok_auth "3.1 list_dir workspace root" \
-        "list_dir" '{"path":"."}'
+    run_test_ok_auth "3.1 files_list workspace root" \
+        "files_list" '{"path":"."}'
 
-    run_test_ok_auth "3.2 write_file creates a scratch file" \
-        "write_file" "{\"path\":\"$SCRATCH_REL\",\"content\":\"$PAYLOAD\"}"
+    run_test_ok_auth "3.2 files_write creates a scratch file" \
+        "files_write" "{\"path\":\"$SCRATCH_REL\",\"content\":\"$PAYLOAD\"}"
 
-    run_test_ok_auth "3.3 read_file returns the written payload" \
-        "read_file" "{\"path\":\"$SCRATCH_REL\"}" "$PAYLOAD"
+    run_test_ok_auth "3.3 files_read returns the written payload" \
+        "files_read" "{\"path\":\"$SCRATCH_REL\"}" "$PAYLOAD"
 
     APPENDED="appended-line-$$"
 
-    run_test_ok_auth "3.4 append_file adds a new line" \
-        "append_file" "{\"path\":\"$SCRATCH_REL\",\"content\":\"\n$APPENDED\"}"
+    run_test_ok_auth "3.4 files_append adds a new line" \
+        "files_append" "{\"path\":\"$SCRATCH_REL\",\"content\":\"\n$APPENDED\"}"
 
-    run_test_ok_auth "3.5 read_file shows appended content" \
-        "read_file" "{\"path\":\"$SCRATCH_REL\"}" "$APPENDED"
+    run_test_ok_auth "3.5 files_read shows appended content" \
+        "files_read" "{\"path\":\"$SCRATCH_REL\"}" "$APPENDED"
 
-    run_test_ok_auth "3.6 edit_file replaces a substring" \
-        "edit_file" "{\"path\":\"$SCRATCH_REL\",\"old_text\":\"$PAYLOAD\",\"new_text\":\"replaced-$$\"}"
+    run_test_ok_auth "3.6 files_edit replaces a substring" \
+        "files_edit" "{\"path\":\"$SCRATCH_REL\",\"old_text\":\"$PAYLOAD\",\"new_text\":\"replaced-$$\"}"
 
-    run_test_ok_auth "3.7 read_file confirms replacement" \
-        "read_file" "{\"path\":\"$SCRATCH_REL\"}" "replaced-$$"
+    run_test_ok_auth "3.7 files_read confirms replacement" \
+        "files_read" "{\"path\":\"$SCRATCH_REL\"}" "replaced-$$"
 
-    run_test_err_auth "3.8 read_file on missing path returns an error" \
-        "read_file" '{"path":"definitely_not_a_real_file_'$$'_xyz.txt"}'
+    run_test_err_auth "3.8 files_read on missing path returns an error" \
+        "files_read" '{"path":"definitely_not_a_real_file_'$$'_xyz.txt"}'
 
     run_test_err_auth "3.9 unknown tool is rejected" \
         "definitely_not_a_real_tool_$$" '{}'
@@ -419,17 +419,17 @@ else
 
     print_section "4. Session tool smoke tests (authenticated)"
 
-    run_test_not_auth_err "4.1 get_session_info — token accepted" \
-        "get_session_info" '{}'
+    run_test_not_auth_err "4.1 session_info — token accepted" \
+        "session_info" '{}'
 
-    run_test_not_auth_err "4.2 compact_session — token accepted" \
-        "compact_session" '{}'
+    run_test_not_auth_err "4.2 session_compact — token accepted" \
+        "session_compact" '{}'
 
-    run_test_not_auth_err "4.3 get_session_messages — token accepted" \
-        "get_session_messages" '{"seq_start":1,"seq_end":10}'
+    run_test_not_auth_err "4.3 session_messages — token accepted" \
+        "session_messages" '{"seq_start":1,"seq_end":10}'
 
-    run_test_not_auth_err "4.4 search_session_messages — token accepted" \
-        "search_session_messages" '{"query":"test"}'
+    run_test_not_auth_err "4.4 session_search — token accepted" \
+        "session_search" '{"query":"test"}'
 
 fi  # end SESSION_TOKEN block
 

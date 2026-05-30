@@ -28,7 +28,7 @@ func redactArgs(toolName string, args map[string]any) any {
 	}
 
 	switch toolName {
-	case "write_file":
+	case "write_file", "files_write":
 		out := map[string]any{
 			"path":          args["path"],
 			"content_bytes": byteLen(args["content"]),
@@ -37,12 +37,12 @@ func redactArgs(toolName string, args map[string]any) any {
 			out["overwrite"] = v
 		}
 		return out
-	case "append_file":
+	case "append_file", "files_append":
 		return map[string]any{
 			"path":          args["path"],
 			"content_bytes": byteLen(args["content"]),
 		}
-	case "read_file":
+	case "read_file", "files_read":
 		out := map[string]any{"path": args["path"]}
 		if v, ok := args["offset"]; ok && v != nil {
 			out["offset"] = v
@@ -51,7 +51,7 @@ func redactArgs(toolName string, args map[string]any) any {
 			out["length"] = v
 		}
 		return out
-	case "edit_file":
+	case "edit_file", "files_edit":
 		return map[string]any{
 			"path":           args["path"],
 			"old_text_bytes": byteLen(args["old_text"]),
