@@ -1,19 +1,21 @@
 #!/usr/bin/env bash
 ################################################################################
 # ClawEh Comprehensive Test Suite
-# Runs all Go tests with race detector and coverage measurement.
+# Runs all Go tests with race detector and coverage measurement, followed by
+# MCP server integration tests (probe-driven, self-contained).
 #
 # Usage:
-#   ./test.sh             Full suite: race detector + coverage (default)
+#   ./test.sh             Full suite: unit tests + MCP integration (default)
 #   ./test.sh -f          Fast mode: no race detector, no coverage
 #   ./test.sh -c          Coverage only (no race detector)
-#   ./test.sh -i          Also run MCP server integration tests (probe-driven).
-#                         Self-contained: builds claw, starts a fresh gateway
-#                         in a temp CLAW_HOME, runs the test, tears it down.
-#                         Requires the 'probe' binary on PATH.
+#   ./test.sh -s          Skip MCP integration tests
 #   ./test.sh -n          Disable colour output
 #   ./test.sh -x          Preserve test artifacts after completion
 #   ./test.sh -h          Show help
+#
+# MCP integration tests require the 'probe' binary on PATH. If probe is not
+# found, the integration section is skipped with a warning (not a failure).
+# Set PROBE_PATH to override the binary location.
 #
 # Exit codes:
 #   0  All tests passed and coverage gate met
@@ -41,27 +43,28 @@ FAST_MODE=false
 COVERAGE_ONLY=false
 NO_COLOR=false
 PRESERVE_ARTIFACTS=false
-INTEGRATION=false
+SKIP_INTEGRATION=false
 
-while getopts "fcinxh" opt; do
+while getopts "fcsinxh" opt; do
     case $opt in
         f) FAST_MODE=true ;;
         c) COVERAGE_ONLY=true ;;
-        i) INTEGRATION=true ;;
+        s) SKIP_INTEGRATION=true ;;
+        i) ;;  # kept for backward compat — integration now runs by default
         n) NO_COLOR=true ;;
         x) PRESERVE_ARTIFACTS=true ;;
         h)
-            echo "Usage: $0 [-f] [-c] [-i] [-n] [-x] [-h]"
+            echo "Usage: $0 [-f] [-c] [-s] [-n] [-x] [-h]"
             echo "  -f  Fast mode: no race detector, no coverage (quickest feedback)"
             echo "  -c  Coverage mode: coverage measurement only, no race detector"
-            echo "  -i  Also run MCP server integration tests (probe-driven, self-contained)"
+            echo "  -s  Skip MCP integration tests"
             echo "  -n  Disable colour output"
             echo "  -x  Preserve test artifacts after completion (for debugging)"
             echo "  -h  Show this help"
             exit 0
             ;;
         *)
-            echo "Usage: $0 [-f] [-c] [-i] [-n] [-x] [-h]"
+            echo "Usage: $0 [-f] [-c] [-s] [-n] [-x] [-h]"
             exit 1
             ;;
     esac
@@ -98,6 +101,9 @@ elif $COVERAGE_ONLY; then
     echo "${BOLD}   Mode: Coverage (no race detector)${NC}"
 else
     echo "${BOLD}   Mode: Full (race detector + coverage)${NC}"
+fi
+if $SKIP_INTEGRATION; then
+    echo "${BOLD}   Integration: skipped (-s)${NC}"
 fi
 echo "${BOLD}============================================${NC}"
 echo ""
@@ -285,7 +291,7 @@ fi
 INTEGRATION_RAN=false
 INTEGRATION_PASSED=true
 
-if $INTEGRATION; then
+if ! $SKIP_INTEGRATION; then
     echo ""
     echo "${BOLD}============================================${NC}"
     echo "${BOLD}   MCP SERVER INTEGRATION TESTS${NC}"
@@ -297,11 +303,11 @@ if $INTEGRATION; then
         echo "${RED}ERROR: $INTEGRATION_SCRIPT not found or not executable${NC}"
         INTEGRATION_PASSED=false
     else
-        # Need a probe binary to drive the test.
+        # Need a probe binary to drive the test. Skip (warn, don't fail) if absent.
         PROBE_BIN="${PROBE_PATH:-probe}"
         if ! command -v "$PROBE_BIN" >/dev/null 2>&1; then
-            echo "${RED}ERROR: 'probe' not found on PATH (set PROBE_PATH to override)${NC}"
-            INTEGRATION_PASSED=false
+            echo "${YELLOW}WARNING: 'probe' not found on PATH — MCP integration tests skipped.${NC}"
+            echo "${DIM}Set PROBE_PATH or install probe to run these tests.${NC}"
         else
             INTEGRATION_RAN=true
 
@@ -443,6 +449,7 @@ EOF
                        ENDPOINT="/mcp" \
                        PROBE_PATH="$PROBE_BIN" \
                        SESSION_TOKEN="$TEST_SESSION_TOKEN" \
+                       CONFIG_FILE="$INTEG_HOME/config.json" \
                        bash "$INTEGRATION_SCRIPT"; then
                         echo "${GREEN}MCP server integration tests passed.${NC}"
                     else
@@ -492,13 +499,17 @@ if $RUN_RACE; then
     echo "Race:        ${GREEN}enabled${NC}"
 fi
 
-if $INTEGRATION_RAN; then
+if $SKIP_INTEGRATION; then
+    echo "MCP integ:   ${DIM}skipped (-s)${NC}"
+elif $INTEGRATION_RAN; then
     if $INTEGRATION_PASSED; then
         echo "MCP integ:   ${GREEN}passed${NC}"
     else
         echo "MCP integ:   ${RED}failed${NC}"
         OVERALL_PASS=false
     fi
+else
+    echo "MCP integ:   ${YELLOW}skipped (probe not found)${NC}"
 fi
 
 echo ""

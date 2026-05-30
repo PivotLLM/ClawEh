@@ -43,6 +43,7 @@ SERVER_URL="${SERVER_URL:-http://127.0.0.1:5911}"
 ENDPOINT="${ENDPOINT:-/mcp}"
 PROBE_PATH="${PROBE_PATH:-probe}"
 SESSION_TOKEN="${SESSION_TOKEN:-}"
+CONFIG_FILE="${CONFIG_FILE:-}"   # optional: path to config file for reload test
 FULL_URL="${SERVER_URL}${ENDPOINT}"
 
 # Unique scratch file inside the agent workspace so repeated runs do not collide.
@@ -432,6 +433,61 @@ else
         "session_search" '{"query":"test"}'
 
 fi  # end SESSION_TOKEN block
+
+################################################################################
+# SECTION 5 — Config reload: MCP server recovers after config file change
+# Requires CONFIG_FILE env var (set automatically by test.sh).
+################################################################################
+
+if [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
+    print_section "5. Config reload (MCP server restart)"
+
+    echo "  5.1 Touch config file to trigger reload"
+    touch "$CONFIG_FILE"
+    echo "    ${GREEN}PASS${NC}: config file touched (mtime updated)"
+    PASS_COUNT=$((PASS_COUNT + 1))
+
+    echo ""
+    echo "  5.2 MCP server recovers after reload"
+    # Poll until the server responds again or 30 s elapses.
+    # The config watcher polls every 5 s; add ~5 s for service restart.
+    RELOAD_DEADLINE=$(($(date +%s) + 30))
+    RELOAD_OK=false
+    while [ "$(date +%s)" -lt "$RELOAD_DEADLINE" ]; do
+        if "$PROBE_PATH" -url "$FULL_URL" -transport http -list >/dev/null 2>&1; then
+            RELOAD_OK=true
+            break
+        fi
+        sleep 1
+    done
+
+    if $RELOAD_OK; then
+        echo "    ${GREEN}PASS${NC}: MCP server reachable after reload"
+        PASS_COUNT=$((PASS_COUNT + 1))
+    else
+        echo "    ${RED}FAIL${NC}: MCP server did not recover within 30s after reload"
+        FAIL_COUNT=$((FAIL_COUNT + 1))
+    fi
+
+    # Re-check tool catalogue to confirm server is fully functional post-reload.
+    if $RELOAD_OK; then
+        echo ""
+        echo "  5.3 Tool catalogue intact after reload"
+        LIST_RELOAD=$("$PROBE_PATH" -url "$FULL_URL" -transport http -list 2>&1)
+        TOOLS_OK=true
+        for tool in files_read files_write files_list session_messages session_compact; do
+            if ! echo "$LIST_RELOAD" | grep -qF "$tool"; then
+                echo "    ${RED}FAIL${NC}: '$tool' missing from catalogue after reload"
+                FAIL_COUNT=$((FAIL_COUNT + 1))
+                TOOLS_OK=false
+            fi
+        done
+        if $TOOLS_OK; then
+            echo "    ${GREEN}PASS${NC}: expected tools present after reload"
+            PASS_COUNT=$((PASS_COUNT + 1))
+        fi
+    fi
+fi
 
 ################################################################################
 # Summary
