@@ -1,3 +1,6 @@
+# Claude Code local tooling state
+.claude/
+
 # Binaries and build artifacts
 bin/
 build/
