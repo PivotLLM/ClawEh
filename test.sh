@@ -303,11 +303,12 @@ if ! $SKIP_INTEGRATION; then
         echo "${RED}ERROR: $INTEGRATION_SCRIPT not found or not executable${NC}"
         INTEGRATION_PASSED=false
     else
-        # Need a probe binary to drive the test. Skip (warn, don't fail) if absent.
+        # probe is a required external prerequisite for integration tests.
         PROBE_BIN="${PROBE_PATH:-probe}"
         if ! command -v "$PROBE_BIN" >/dev/null 2>&1; then
-            echo "${YELLOW}WARNING: 'probe' not found on PATH — MCP integration tests skipped.${NC}"
-            echo "${DIM}Set PROBE_PATH or install probe to run these tests.${NC}"
+            echo "${RED}ERROR: 'probe' not found on PATH — MCP integration tests cannot run.${NC}"
+            echo "${DIM}Set PROBE_PATH or install probe to run the full test suite.${NC}"
+            INTEGRATION_PASSED=false
         else
             INTEGRATION_RAN=true
 
@@ -509,7 +510,9 @@ elif $INTEGRATION_RAN; then
         OVERALL_PASS=false
     fi
 else
-    echo "MCP integ:   ${YELLOW}skipped (probe not found)${NC}"
+    # probe was not found — counts as a failure per test suite contract
+    echo "MCP integ:   ${RED}failed (probe not found)${NC}"
+    OVERALL_PASS=false
 fi
 
 echo ""
