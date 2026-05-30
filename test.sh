@@ -290,6 +290,8 @@ fi
 
 INTEGRATION_RAN=false
 INTEGRATION_PASSED=true
+INTEGRATION_PASS_COUNT=0
+INTEGRATION_FAIL_COUNT=0
 
 if ! $SKIP_INTEGRATION; then
     echo ""
@@ -376,6 +378,11 @@ PY
         "name": "main",
         "default": true,
         "tools": ["*"]
+      },
+      {
+        "id": "alice",
+        "name": "alice",
+        "tools": ["*"]
       }
     ]
   },
@@ -445,6 +452,28 @@ EOF
                     echo "${GREEN}Gateway ready on 127.0.0.1:$MCP_PORT/mcp${NC}"
                     echo ""
 
+                    # ---- Workspace population: initial startup ----
+                    echo "${BOLD}--- Workspace population (initial startup) ---${NC}"
+                    echo ""
+                    WORKSPACE_PASS=true
+                    WORKSPACE_TEMPLATES="AGENTS.md SOUL.md USER.md IDENTITY.md memory/MEMORY.md"
+                    # The default agent (id=main) uses agents/default; named agents use agents/{id}
+                    for agent_ws in "main:$INTEG_HOME/agents/default" "alice:$INTEG_HOME/agents/alice"; do
+                        agent="${agent_ws%%:*}"
+                        WS="${agent_ws#*:}"
+                        for tpl in $WORKSPACE_TEMPLATES; do
+                            if [ -f "$WS/$tpl" ]; then
+                                echo "  ${GREEN}PASS${NC}: $agent/$tpl populated at startup"
+                                INTEGRATION_PASS_COUNT=$((INTEGRATION_PASS_COUNT + 1))
+                            else
+                                echo "  ${RED}FAIL${NC}: $agent/$tpl missing after startup"
+                                INTEGRATION_FAIL_COUNT=$((INTEGRATION_FAIL_COUNT + 1))
+                                WORKSPACE_PASS=false
+                            fi
+                        done
+                    done
+                    echo ""
+
                     # Run the probe-driven test against this ephemeral instance.
                     if SERVER_URL="http://127.0.0.1:$MCP_PORT" \
                        ENDPOINT="/mcp" \
@@ -459,6 +488,60 @@ EOF
                         echo "${DIM}--- gateway log (tail) ---${NC}"
                         tail -n 40 "$INTEG_LOG" | sed 's/^/    /'
                         INTEGRATION_PASSED=false
+                    fi
+
+                    # ---- Workspace re-population: delete alice's dir and restart ----
+                    echo ""
+                    echo "${BOLD}--- Workspace population (restart after deletion) ---${NC}"
+                    echo ""
+
+                    # Stop the current gateway.
+                    kill -TERM "$INTEG_PID" 2>/dev/null
+                    for _ in $(seq 1 20); do
+                        kill -0 "$INTEG_PID" 2>/dev/null || break
+                        sleep 0.25
+                    done
+                    kill -KILL "$INTEG_PID" 2>/dev/null || true
+
+                    # Delete alice's workspace — simulates adding a fresh agent.
+                    rm -rf "$INTEG_HOME/agents/alice"
+                    echo "  ${DIM}Deleted alice's workspace directory${NC}"
+
+                    # Restart the gateway.
+                    CLAW_HOME="$INTEG_HOME" CLAW_MCP_TEST_TOKEN="$TEST_SESSION_TOKEN" \
+                        "$INTEG_BIN" gateway >>"$INTEG_LOG" 2>&1 &
+                    INTEG_PID=$!
+
+                    # Wait for MCP port — workspace population happens before the server
+                    # starts listening, so once the port is up the files are on disk.
+                    RESTART_READY=false
+                    for _ in $(seq 1 40); do
+                        if ! kill -0 "$INTEG_PID" 2>/dev/null; then
+                            break
+                        fi
+                        if (echo > "/dev/tcp/127.0.0.1/$MCP_PORT") 2>/dev/null; then
+                            RESTART_READY=true
+                            break
+                        fi
+                        sleep 0.25
+                    done
+
+                    ALICE_WS="$INTEG_HOME/agents/alice"
+                    if ! $RESTART_READY; then
+                        echo "  ${RED}FAIL${NC}: gateway did not restart within 10s"
+                        INTEGRATION_FAIL_COUNT=$((INTEGRATION_FAIL_COUNT + 1))
+                        INTEGRATION_PASSED=false
+                    else
+                        for tpl in $WORKSPACE_TEMPLATES; do
+                            if [ -f "$ALICE_WS/$tpl" ]; then
+                                echo "  ${GREEN}PASS${NC}: alice/$tpl re-populated after restart"
+                                INTEGRATION_PASS_COUNT=$((INTEGRATION_PASS_COUNT + 1))
+                            else
+                                echo "  ${RED}FAIL${NC}: alice/$tpl missing after restart"
+                                INTEGRATION_FAIL_COUNT=$((INTEGRATION_FAIL_COUNT + 1))
+                                INTEGRATION_PASSED=false
+                            fi
+                        done
                     fi
                 fi
             fi
@@ -505,9 +588,9 @@ if $SKIP_INTEGRATION; then
     echo "MCP integ:   ${DIM}skipped (-s)${NC}"
 elif $INTEGRATION_RAN; then
     if $INTEGRATION_PASSED; then
-        echo "MCP integ:   ${GREEN}passed${NC}"
+        echo "MCP integ:   ${GREEN}passed${NC} (workspace: ${INTEGRATION_PASS_COUNT}/${INTEGRATION_PASS_COUNT} checks)"
     else
-        echo "MCP integ:   ${RED}failed${NC}"
+        echo "MCP integ:   ${RED}failed${NC} (workspace: ${INTEGRATION_FAIL_COUNT} failure(s))"
         OVERALL_PASS=false
     fi
 else
