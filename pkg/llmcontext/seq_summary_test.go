@@ -234,7 +234,7 @@ func TestSeqAware_PromptContainsToolMetadata(t *testing.T) {
 		response: buildSeqSummaryJSON("tool metadata", 50, 51),
 	}
 
-	if _, ok := callLLMChain(context.Background(), []LLMClient{llm}, nil, stored, 1, 100, false); !ok {
+	if _, ok := callLLMChain(context.Background(), []LLMClient{llm}, nil, stored, 1, 100, false, ""); !ok {
 		t.Fatal("expected callLLMChain to accept fake summary")
 	}
 	if len(llm.capturedMessages) != 2 {

@@ -311,12 +311,23 @@ func (s *Summary) Render(archiveMinSeq, archiveMaxSeq int) string {
 		if !s.CoveredSeqStartAt.IsZero() && !s.CoveredSeqEndAt.IsZero() {
 			startStr := s.CoveredSeqStartAt.UTC().Format("2006-01-02 15:04 UTC")
 			endStr := s.CoveredSeqEndAt.UTC().Format("2006-01-02 15:04 UTC")
-			fmt.Fprintf(&sb, "Context summary: messages #%d (%s) - #%d (%s). Full messages retrievable via get_session_messages.\n\n",
+			fmt.Fprintf(&sb, "Context summary: messages #%d (%s) - #%d (%s). Full messages retrievable via get_session_messages.\n",
 				s.CoveredSeqStart, startStr, s.CoveredSeqEnd, endStr)
 		} else {
-			fmt.Fprintf(&sb, "Context summary: messages #%d - #%d. Full messages retrievable via get_session_messages.\n\n",
+			fmt.Fprintf(&sb, "Context summary: messages #%d - #%d. Full messages retrievable via get_session_messages.\n",
 				s.CoveredSeqStart, s.CoveredSeqEnd)
 		}
+		// Stamp generation metadata so agents can identify when and by what model
+		// this summary was produced — useful for debugging compression quality.
+		if !s.GeneratedAt.IsZero() {
+			stamp := s.GeneratedAt.UTC().Format("2006-01-02 15:04 UTC")
+			if s.Model != "" {
+				fmt.Fprintf(&sb, "Generated: %s by %s\n", stamp, s.Model)
+			} else {
+				fmt.Fprintf(&sb, "Generated: %s\n", stamp)
+			}
+		}
+		sb.WriteString("\n")
 	}
 
 	sb.WriteString("## Current State\n")
@@ -487,13 +498,18 @@ Rules:
 - Respond with valid JSON only. No markdown fences, no prose.`
 
 // buildSummarizationPrompt returns the prompt for a summarization call.
-// existing may be nil on the first cycle.
-func buildSummarizationPrompt(existing *Summary, archiveMin, archiveMax int, aggressive bool) string {
+// existing may be nil on the first cycle. compressionProfile is the content of
+// the agent's compression.md file; it is appended after the base prompt when
+// non-empty so agents can declare role-specific summarization rules.
+func buildSummarizationPrompt(existing *Summary, archiveMin, archiveMax int, aggressive bool, compressionProfile string) string {
 	var base string
 	if aggressive {
 		base = fmt.Sprintf(promptAggressive, archiveMin, archiveMax)
 	} else {
 		base = fmt.Sprintf(promptStandard, archiveMin, archiveMax)
+	}
+	if compressionProfile != "" {
+		base += "\n\n## Agent compression profile (follow these instructions when summarizing):\n" + compressionProfile
 	}
 	if existing == nil {
 		return base

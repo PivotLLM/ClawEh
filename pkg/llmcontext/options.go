@@ -53,6 +53,10 @@ type managerConfig struct {
 	// 0 (the default) resolves to archiveContentMaxBytes at write time.
 	archiveContentMaxBytes int
 	notifyCallback         func(msg string)
+	// compressionProfileDir is the agent workspace directory. If non-empty and
+	// a file named "compression.md" exists there, its content is appended to the
+	// summarization prompt so agents can declare role-specific compression rules.
+	compressionProfileDir string
 }
 
 func defaultManagerConfig() managerConfig {
@@ -180,4 +184,11 @@ func WithArchiveContentMaxBytes(n int) Option {
 			c.archiveContentMaxBytes = n
 		}
 	}
+}
+
+// WithCompressionProfileDir sets the agent workspace directory. If the file
+// "compression.md" exists there it is appended verbatim to every summarization
+// prompt, letting agents declare role-specific compression rules and structure.
+func WithCompressionProfileDir(dir string) Option {
+	return func(c *managerConfig) { c.compressionProfileDir = dir }
 }

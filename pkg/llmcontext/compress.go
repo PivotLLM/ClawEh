@@ -7,6 +7,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -59,6 +61,9 @@ func (m *Manager) doCompress(ctx context.Context, safetyNet bool) error {
 	archiveMin, archiveMax := m.archiveWindow()
 	existingSummary, _ := unmarshalSummary(m.store.GetSummary(m.sessionKey))
 
+	// Load the agent's compression profile once per compression pass.
+	compressionProfile := loadCompressionProfile(m.cfg.compressionProfileDir)
+
 	// Compression loop: iteratively summarize the oldest portion of the
 	// conversation until we reach the target percentage or exhaust iterations.
 	currentStored := storedConversation
@@ -88,7 +93,7 @@ func (m *Manager) doCompress(ctx context.Context, safetyNet bool) error {
 			break // tail covers everything; nothing left to summarize
 		}
 
-		newSummary, ok := callLLMChain(ctx, clients, latestSummary, toSummarize, archiveMin, archiveMax, aggressive)
+		newSummary, ok := callLLMChain(ctx, clients, latestSummary, toSummarize, archiveMin, archiveMax, aggressive, compressionProfile)
 		if !ok {
 			iterCount++
 			continue
@@ -294,6 +299,7 @@ func callLLMChain(
 	toSummarize []memory.StoredMessage,
 	archiveMin, archiveMax int,
 	aggressive bool,
+	compressionProfile string,
 ) (*Summary, bool) {
 	if len(toSummarize) == 0 {
 		return nil, false
@@ -311,7 +317,7 @@ func callLLMChain(
 		}
 	}
 
-	prompt := buildSummarizationPrompt(existing, archiveMin, archiveMax, aggressive)
+	prompt := buildSummarizationPrompt(existing, archiveMin, archiveMax, aggressive, compressionProfile)
 	formatted := formatStoredMessagesForSummary(toSummarize)
 
 	messages := []providers.Message{
@@ -346,6 +352,29 @@ func callLLMChain(
 	return nil, false
 }
 
+// loadCompressionProfile reads compression.md from dir if it exists.
+// Returns empty string when the file is absent or unreadable.
+func loadCompressionProfile(dir string) string {
+	if dir == "" {
+		return ""
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "compression.md"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+// repetitiveRunThreshold is the minimum number of consecutive near-identical
+// messages required before they are collapsed into a count annotation.
+const repetitiveRunThreshold = 3
+
+// normalizeForComparison returns a whitespace-collapsed lowercase version of s
+// used to detect near-identical messages in repetitive run detection.
+func normalizeForComparison(s string) string {
+	return strings.ToLower(strings.Join(strings.Fields(s), " "))
+}
+
 func storedToPlain(stored []memory.StoredMessage) []providers.Message {
 	msgs := make([]providers.Message, len(stored))
 	for i, sm := range stored {
@@ -354,7 +383,43 @@ func storedToPlain(stored []memory.StoredMessage) []providers.Message {
 	return msgs
 }
 
+// collapseRepetitiveRuns scans stored messages for runs of N+ consecutive
+// messages with the same role and near-identical content, replacing each run
+// with a single annotated entry so the LLM summarizer handles them correctly
+// instead of silently ignoring them.
+func collapseRepetitiveRuns(stored []memory.StoredMessage) []memory.StoredMessage {
+	if len(stored) < repetitiveRunThreshold {
+		return stored
+	}
+	result := make([]memory.StoredMessage, 0, len(stored))
+	i := 0
+	for i < len(stored) {
+		j := i + 1
+		norm := normalizeForComparison(stored[i].Content)
+		for j < len(stored) &&
+			stored[j].Role == stored[i].Role &&
+			normalizeForComparison(stored[j].Content) == norm {
+			j++
+		}
+		runLen := j - i
+		if runLen >= repetitiveRunThreshold {
+			// Emit a single representative entry with a count annotation.
+			collapsed := stored[i]
+			collapsed.Content = fmt.Sprintf(
+				"[REPEATED %d TIMES — content identical to above]\n%s",
+				runLen, stored[i].Content,
+			)
+			result = append(result, collapsed)
+		} else {
+			result = append(result, stored[i:j]...)
+		}
+		i = j
+	}
+	return result
+}
+
 func formatStoredMessagesForSummary(stored []memory.StoredMessage) string {
+	stored = collapseRepetitiveRuns(stored)
 	var sb strings.Builder
 	for _, sm := range stored {
 		fmt.Fprintf(&sb, "[#%d] [%s]\n", sm.Seq, sm.Role)

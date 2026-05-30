@@ -254,6 +254,7 @@ func (al *AgentLoop) getContextManager(agent *AgentInstance, sessionKey string) 
 		llmcontext.WithContextWindow(agent.ContextWindow),
 		llmcontext.WithArchiveDir(archiveDir),
 		llmcontext.WithCompressLLM(compressClients...),
+		llmcontext.WithCompressionProfileDir(agent.Workspace),
 	}, agent.CompressOpts...)
 	cm := llmcontext.New(sessionKey, agent.Sessions, agent.ContextBuilder, llmClient, opts...)
 
