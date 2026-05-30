@@ -40,7 +40,10 @@ type modelResponse struct {
 	RequestTimeout int    `json:"request_timeout,omitempty"`
 	ThinkingLevel  string `json:"thinking_level,omitempty"`
 	NoTools        bool   `json:"no_tools,omitempty"`
-	Enabled        bool   `json:"enabled"`
+	// Shape 3 per-LLM custom fields.
+	ReasoningEffort string         `json:"reasoning_effort,omitempty"`
+	ExtraBody       map[string]any `json:"extra_body,omitempty"`
+	Enabled         bool           `json:"enabled"`
 	// Meta
 	Configured bool `json:"configured"`
 	IsDefault  bool `json:"is_default"`
@@ -72,24 +75,26 @@ func (h *Handler) handleListModels(w http.ResponseWriter, r *http.Request) {
 	models := make([]modelResponse, 0, len(cfg.ModelList))
 	for i, m := range cfg.ModelList {
 		models = append(models, modelResponse{
-			Index:          i,
-			ModelName:      m.ModelName,
-			Model:          m.Model,
-			APIBase:        m.APIBase,
-			APIKey:         maskAPIKey(m.APIKey),
-			Proxy:          m.Proxy,
-			AuthMethod:     m.AuthMethod,
-			ConnectMode:    m.ConnectMode,
-			Workspace:      m.Workspace,
-			RPM:            m.RPM,
-			MaxTokens:      m.MaxTokens,
-			MaxTokensField: m.MaxTokensField,
-			RequestTimeout: m.RequestTimeout,
-			ThinkingLevel:  m.ThinkingLevel,
-			NoTools:        m.NoTools,
-			Enabled:        m.Enabled,
-			Configured:     configured[i],
-			IsDefault:      m.ModelName == defaultModel,
+			Index:           i,
+			ModelName:       m.ModelName,
+			Model:           m.Model,
+			APIBase:         m.APIBase,
+			APIKey:          maskAPIKey(m.APIKey),
+			Proxy:           m.Proxy,
+			AuthMethod:      m.AuthMethod,
+			ConnectMode:     m.ConnectMode,
+			Workspace:       m.Workspace,
+			RPM:             m.RPM,
+			MaxTokens:       m.MaxTokens,
+			MaxTokensField:  m.MaxTokensField,
+			RequestTimeout:  m.RequestTimeout,
+			ThinkingLevel:   m.ThinkingLevel,
+			NoTools:         m.NoTools,
+			ReasoningEffort: m.ReasoningEffort,
+			ExtraBody:       m.ExtraBody,
+			Enabled:         m.Enabled,
+			Configured:      configured[i],
+			IsDefault:       m.ModelName == defaultModel,
 		})
 	}
 

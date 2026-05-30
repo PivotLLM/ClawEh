@@ -17,7 +17,7 @@ Ultra-lightweight personal AI assistant
 - Web search and content fetching
 - File system operations (read, write, edit)
 - Shell command execution
-- Multi-channel messaging (Telegram, WhatsApp, Feishu)
+- Multi-channel messaging (Telegram, Slack, Discord, Matrix, LINE)
 - Skill-based extensibility
 - Memory and context management
 

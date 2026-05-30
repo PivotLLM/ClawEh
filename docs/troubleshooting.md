@@ -1,5 +1,22 @@
 # Troubleshooting
 
+## Telegram bot doesn't respond to messages in a group
+
+**Symptom:** The bot works in private chats and may respond once in a group
+(e.g. to a command or mention), but then ignores ordinary group messages.
+Nothing appears in the logs when those messages are sent.
+
+**Cause:** A Telegram bot has **Group Privacy enabled** by default. While it is
+on, Telegram only delivers `/commands`, `@mentions` of the bot, and replies to
+the bot's own messages to the bot — ordinary group messages are filtered out
+server-side and never reach ClawEh, so they never appear in the logs.
+
+**Fix:** In [@BotFather](https://t.me/BotFather): `/mybots` → select the bot →
+**Bot Settings** → **Group Privacy** → **Turn off**. The change takes effect
+immediately; you do **not** need to remove and re-add the bot from the group.
+
+See [docs/telegram.md](telegram.md) for full setup details.
+
 ## "model ... not found in model_list" or OpenRouter "free is not a valid model ID"
 
 **Symptom:** You see either:

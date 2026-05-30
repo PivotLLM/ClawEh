@@ -25,34 +25,34 @@ func TestShowListHandlers_ChannelPolicy(t *testing.T) {
 		t.Fatalf("telegram /show reply=%q, want=%q", telegramReply, "Current Channel: telegram")
 	}
 
-	var whatsappReply string
-	handledWhatsApp := ex.Execute(context.Background(), Request{
-		Channel: "whatsapp",
+	var slackReply string
+	handledSlack := ex.Execute(context.Background(), Request{
+		Channel: "slack",
 		Text:    "/show channel",
 		Reply: func(text string) error {
-			whatsappReply = text
+			slackReply = text
 			return nil
 		},
 	})
-	if handledWhatsApp.Outcome != OutcomeHandled {
-		t.Fatalf("whatsapp /show outcome=%v, want=%v", handledWhatsApp.Outcome, OutcomeHandled)
+	if handledSlack.Outcome != OutcomeHandled {
+		t.Fatalf("slack /show outcome=%v, want=%v", handledSlack.Outcome, OutcomeHandled)
 	}
-	if handledWhatsApp.Command != "show" {
-		t.Fatalf("whatsapp /show command=%q, want=%q", handledWhatsApp.Command, "show")
+	if handledSlack.Command != "show" {
+		t.Fatalf("slack /show command=%q, want=%q", handledSlack.Command, "show")
 	}
-	if whatsappReply != "Current Channel: whatsapp" {
-		t.Fatalf("whatsapp /show reply=%q, want=%q", whatsappReply, "Current Channel: whatsapp")
+	if slackReply != "Current Channel: slack" {
+		t.Fatalf("slack /show reply=%q, want=%q", slackReply, "Current Channel: slack")
 	}
 
 	passthrough := ex.Execute(context.Background(), Request{
-		Channel: "whatsapp",
+		Channel: "slack",
 		Text:    "/foo",
 	})
 	if passthrough.Outcome != OutcomePassthrough {
-		t.Fatalf("whatsapp /foo outcome=%v, want=%v", passthrough.Outcome, OutcomePassthrough)
+		t.Fatalf("slack /foo outcome=%v, want=%v", passthrough.Outcome, OutcomePassthrough)
 	}
 	if passthrough.Command != "foo" {
-		t.Fatalf("whatsapp /foo command=%q, want=%q", passthrough.Command, "foo")
+		t.Fatalf("slack /foo command=%q, want=%q", passthrough.Command, "foo")
 	}
 }
 
@@ -66,7 +66,7 @@ func TestShowListHandlers_ListHandledOnAllChannels(t *testing.T) {
 
 	var reply string
 	res := ex.Execute(context.Background(), Request{
-		Channel: "whatsapp",
+		Channel: "slack",
 		Text:    "/list channels",
 		Reply: func(text string) error {
 			reply = text
@@ -74,12 +74,12 @@ func TestShowListHandlers_ListHandledOnAllChannels(t *testing.T) {
 		},
 	})
 	if res.Outcome != OutcomeHandled {
-		t.Fatalf("whatsapp /list outcome=%v, want=%v", res.Outcome, OutcomeHandled)
+		t.Fatalf("slack /list outcome=%v, want=%v", res.Outcome, OutcomeHandled)
 	}
 	if res.Command != "list" {
-		t.Fatalf("whatsapp /list command=%q, want=%q", res.Command, "list")
+		t.Fatalf("slack /list command=%q, want=%q", res.Command, "list")
 	}
 	if !strings.Contains(reply, "telegram") {
-		t.Fatalf("whatsapp /list reply=%q, expected enabled channels content", reply)
+		t.Fatalf("slack /list reply=%q, expected enabled channels content", reply)
 	}
 }

@@ -47,7 +47,7 @@ func TestSelectTail_BudgetRetention(t *testing.T) {
 		msg("assistant", "ok"),        // fits
 	}
 	// Budget of 10 tokens; only "hi"+"ok" fit (each ~1 token).
-	got := selectTail(history, 10, 0)
+	got := selectTail(history, 10, 0, estimateTokens)
 	if len(got) != 2 {
 		t.Fatalf("want 2 messages, got %d", len(got))
 	}
@@ -67,7 +67,7 @@ func TestSelectTail_MinFloorOverride(t *testing.T) {
 		msg("assistant", fmt.Sprintf("%0200d", 4)), // distinct
 	}
 	// Budget of 1 token — nothing fits — but floor is 3.
-	got := selectTail(history, 1, 3)
+	got := selectTail(history, 1, 3, estimateTokens)
 	if len(got) < 3 {
 		t.Fatalf("want at least 3 messages due to floor, got %d", len(got))
 	}
@@ -83,7 +83,7 @@ func TestSelectTail_ToolGroupKeptWhole(t *testing.T) {
 		msg("user", "follow up"),
 	}
 	// Budget large enough to fit everything.
-	got := selectTail(history, 10000, 0)
+	got := selectTail(history, 10000, 0, estimateTokens)
 	if len(got) != 4 {
 		t.Fatalf("want 4 messages, got %d", len(got))
 	}
@@ -101,7 +101,7 @@ func TestSelectTail_ToolGroupDroppedWhole(t *testing.T) {
 		toolResultMsg(longTool, "tc1"),
 		msg("user", "after"),
 	}
-	got := selectTail(history, 10, 0)
+	got := selectTail(history, 10, 0, estimateTokens)
 	// Only "after" fits; the tool group (tc1 + result) must not be partially included.
 	for _, m := range got {
 		if m.ToolCallID == "tc1" || (len(m.ToolCalls) > 0 && m.ToolCalls[0].ID == "tc1") {
@@ -120,7 +120,7 @@ func TestSelectTail_NoiseCollapsed(t *testing.T) {
 		msg("assistant", "hi"),    // duplicate of history[1]
 		msg("user", "different"),
 	}
-	got := selectTail(history, 10000, 0)
+	got := selectTail(history, 10000, 0, estimateTokens)
 	// Collapsed: only one "hello" user and one "hi" assistant should survive each.
 	userCount := 0
 	for _, m := range got {
@@ -154,7 +154,7 @@ func TestSelectTail_CronNoiseCollapsed(t *testing.T) {
 		wrap("11:00", "run backup"), // same payload — noise
 		msg("assistant", "done"),
 	}
-	got := selectTail(history, 10000, 0)
+	got := selectTail(history, 10000, 0, estimateTokens)
 	cronCount := 0
 	for _, m := range got {
 		if strings.HasPrefix(m.Content, tailCronPrefix) {
@@ -168,7 +168,7 @@ func TestSelectTail_CronNoiseCollapsed(t *testing.T) {
 
 // TestSelectTail_EmptyHistory returns nil for an empty input.
 func TestSelectTail_EmptyHistory(t *testing.T) {
-	got := selectTail(nil, 1000, 2)
+	got := selectTail(nil, 1000, 2, estimateTokens)
 	if got != nil {
 		t.Errorf("want nil, got %v", got)
 	}
@@ -181,7 +181,7 @@ func TestSelectTail_ZeroBudget(t *testing.T) {
 		msg("assistant", "b"),
 		msg("user", "c"),
 	}
-	got := selectTail(history, 0, 0)
+	got := selectTail(history, 0, 0, estimateTokens)
 	if len(got) != 3 {
 		t.Errorf("zero budget should keep all messages, got %d", len(got))
 	}

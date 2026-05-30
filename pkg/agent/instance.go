@@ -12,6 +12,7 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/config"
 	"github.com/PivotLLM/ClawEh/pkg/global"
 	"github.com/PivotLLM/ClawEh/pkg/llmcontext"
+	"github.com/PivotLLM/ClawEh/pkg/logger"
 	"github.com/PivotLLM/ClawEh/pkg/memory"
 	"github.com/PivotLLM/ClawEh/pkg/providers"
 	"github.com/PivotLLM/ClawEh/pkg/routing"
@@ -241,6 +242,18 @@ func NewAgentInstance(
 		return 0, false
 	}
 
+	// resolveFloatOpt mirrors resolveIntOpt for float-valued knobs. 0 = not
+	// configured (use the llmcontext default).
+	resolveFloatOpt := func(agentPtr *float64, defaultsVal float64) (float64, bool) {
+		if agentPtr != nil {
+			return *agentPtr, true
+		}
+		if defaultsVal != 0 {
+			return defaultsVal, true
+		}
+		return 0, false
+	}
+
 	var compressOpts []llmcontext.Option
 
 	if v, ok := resolveIntOpt(func() *int {
@@ -307,12 +320,36 @@ func NewAgentInstance(
 	}(), defaults.ArchiveDays); ok {
 		compressOpts = append(compressOpts, llmcontext.WithArchiveDays(v))
 	}
+	if v, ok := resolveFloatOpt(func() *float64 {
+		if agentCfg != nil {
+			return agentCfg.CompressCharsPerToken
+		}
+		return nil
+	}(), defaults.CompressCharsPerToken); ok {
+		compressOpts = append(compressOpts, llmcontext.WithCharsPerToken(v))
+	}
+	if v, ok := resolveFloatOpt(func() *float64 {
+		if agentCfg != nil {
+			return agentCfg.CompressTokenSafetyMargin
+		}
+		return nil
+	}(), defaults.CompressTokenSafetyMargin); ok {
+		compressOpts = append(compressOpts, llmcontext.WithTokenSafetyMargin(v))
+	}
+	if v, ok := resolveIntOpt(func() *int {
+		if agentCfg != nil {
+			return agentCfg.ArchiveContentMaxBytes
+		}
+		return nil
+	}(), defaults.ArchiveContentMaxBytes); ok {
+		compressOpts = append(compressOpts, llmcontext.WithArchiveContentMaxBytes(v))
+	}
 	// Resolve fallback candidates
 	modelCfg := providers.ModelConfig{
 		Primary:   model,
 		Fallbacks: fallbacks,
 	}
-	resolveFromModelList := func(raw string) (string, bool) {
+	resolveFromModelList := func(raw string) (alias, resolved string, ok bool) {
 		ensureProtocol := func(model string) string {
 			model = strings.TrimSpace(model)
 			if model == "" {
@@ -326,12 +363,12 @@ func NewAgentInstance(
 
 		raw = strings.TrimSpace(raw)
 		if raw == "" {
-			return "", false
+			return "", "", false
 		}
 
 		if cfg != nil {
 			if mc, err := cfg.GetModelConfig(raw); err == nil && mc != nil && strings.TrimSpace(mc.Model) != "" {
-				return ensureProtocol(mc.Model), true
+				return mc.ModelName, ensureProtocol(mc.Model), true
 			}
 
 			for i := range cfg.ModelList {
@@ -343,19 +380,27 @@ func NewAgentInstance(
 					continue
 				}
 				if fullModel == raw {
-					return ensureProtocol(fullModel), true
+					return cfg.ModelList[i].ModelName, ensureProtocol(fullModel), true
 				}
 				_, modelID := providers.ExtractProtocol(fullModel)
 				if modelID == raw {
-					return ensureProtocol(fullModel), true
+					return cfg.ModelList[i].ModelName, ensureProtocol(fullModel), true
 				}
 			}
 		}
 
-		return "", false
+		return "", "", false
 	}
 
 	candidates := providers.ResolveCandidatesWithLookup(modelCfg, "", resolveFromModelList)
+	if len(candidates) == 0 {
+		logger.ErrorCF("agent", "agent fallback chain is empty after resolving aliases",
+			map[string]any{
+				"agent_id":  agentID,
+				"primary":   model,
+				"fallbacks": fallbacks,
+			})
+	}
 
 	// Model routing setup: pre-resolve light model candidates at creation time
 	// to avoid repeated model_list lookups on every incoming message.

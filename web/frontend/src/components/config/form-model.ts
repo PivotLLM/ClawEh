@@ -78,7 +78,10 @@ export const EMPTY_FORM: CoreConfigForm = {
 }
 
 export const EMPTY_LAUNCHER_FORM: LauncherForm = {
-  port: "18800",
+  // The merged claw binary serves the WebUI on the gateway port (default
+  // 18790). Older installs that still had a launcher-config.json on disk
+  // continue to override this via /api/system/launcher-config.
+  port: "18790",
   publicAccess: false,
   allowedCIDRsText: "",
 }

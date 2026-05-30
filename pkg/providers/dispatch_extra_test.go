@@ -27,7 +27,7 @@ func TestProviderDispatcher_Get_TimeoutInjected(t *testing.T) {
 	}
 	d := providers.NewProviderDispatcher(cfg)
 
-	p, err := d.Get("claude-cli", "test-timeout")
+	p, err := d.Get("test-alias")
 	if err != nil {
 		t.Fatalf("Get() error = %v", err)
 	}

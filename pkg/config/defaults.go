@@ -52,13 +52,13 @@ func DefaultConfig() *Config {
 	cfg := &Config{
 		Agents: AgentsConfig{
 			Defaults: AgentDefaults{
-				Workspace:                 workspacePath,
-				RestrictToWorkspace:       true,
-				Model:                     &AgentModelConfig{Primary: "claude-cli", Fallbacks: []string{"codex-cli"}},
-				MaxTokens:         32768,
-				Temperature:       nil, // nil means use provider default
-				MaxToolIterations: 50,
-				ContextWindow:     128000,
+				Workspace:           workspacePath,
+				RestrictToWorkspace: true,
+				Model:               &AgentModelConfig{Primary: "claude-cli", Fallbacks: []string{"codex-cli"}},
+				MaxTokens:           32768,
+				Temperature:         nil, // nil means use provider default
+				MaxToolIterations:   50,
+				ContextWindow:       128000,
 			},
 			List: []AgentConfig{
 				{
@@ -75,13 +75,6 @@ func DefaultConfig() *Config {
 			Mode: "unified",
 		},
 		Channels: ChannelsConfig{
-			WhatsApp: WhatsAppConfig{
-				Enabled:          false,
-				BridgeURL:        "ws://localhost:3001",
-				UseNative:        false,
-				SessionStorePath: "",
-				AllowFrom:        FlexibleStringSlice{},
-			},
 			Telegram: []TelegramBotConfig{
 				{
 					ID:        "default",

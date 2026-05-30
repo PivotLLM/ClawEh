@@ -154,9 +154,10 @@ func TestWriteFile_Backup_ExistingTarget_Creates0001PreservingMode(t *testing.T)
 
 	tool := NewWriteFileTool(ws, true)
 	res := tool.Execute(context.Background(), map[string]any{
-		"path":    "config.json",
-		"content": "replaced",
-		"backup":  true,
+		"path":      "config.json",
+		"content":   "replaced",
+		"backup":    true,
+		"overwrite": true,
 	})
 	if res.IsError {
 		t.Fatalf("write failed: %s", res.ForLLM)
@@ -198,13 +199,13 @@ func TestWriteFile_Backup_TwiceCreates0001Then0002(t *testing.T) {
 	tool := NewWriteFileTool(ws, true)
 
 	res := tool.Execute(context.Background(), map[string]any{
-		"path": "x.txt", "content": "v1", "backup": true,
+		"path": "x.txt", "content": "v1", "backup": true, "overwrite": true,
 	})
 	if res.IsError {
 		t.Fatalf("first write failed: %s", res.ForLLM)
 	}
 	res = tool.Execute(context.Background(), map[string]any{
-		"path": "x.txt", "content": "v2", "backup": true,
+		"path": "x.txt", "content": "v2", "backup": true, "overwrite": true,
 	})
 	if res.IsError {
 		t.Fatalf("second write failed: %s", res.ForLLM)
@@ -241,7 +242,7 @@ func TestWriteFile_Backup_GapPreserved(t *testing.T) {
 
 	tool := NewWriteFileTool(ws, true)
 	res := tool.Execute(context.Background(), map[string]any{
-		"path": "g.txt", "content": "new", "backup": true,
+		"path": "g.txt", "content": "new", "backup": true, "overwrite": true,
 	})
 	if res.IsError {
 		t.Fatalf("write failed: %s", res.ForLLM)
@@ -262,8 +263,9 @@ func TestWriteFile_Backup_False_Default_NoSibling(t *testing.T) {
 	}
 	tool := NewWriteFileTool(ws, true)
 	res := tool.Execute(context.Background(), map[string]any{
-		"path":    "x.txt",
-		"content": "v1",
+		"path":      "x.txt",
+		"content":   "v1",
+		"overwrite": true,
 	})
 	if res.IsError {
 		t.Fatalf("write failed: %s", res.ForLLM)
@@ -456,9 +458,10 @@ func TestWriteFile_Backup_FailureAbortsModification(t *testing.T) {
 
 	tool := NewWriteFileTool(ws, true)
 	res := tool.Execute(context.Background(), map[string]any{
-		"path":    "ro/f.txt",
-		"content": "replaced",
-		"backup":  true,
+		"path":      "ro/f.txt",
+		"content":   "replaced",
+		"backup":    true,
+		"overwrite": true,
 	})
 	if !res.IsError {
 		t.Fatal("expected error when backup write fails")
@@ -579,9 +582,10 @@ func TestWriteFile_Backup_Concurrent_DistinctSuffixes(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			res := tool.Execute(context.Background(), map[string]any{
-				"path":    "shared.txt",
-				"content": fmt.Sprintf("v%d", i+1),
-				"backup":  true,
+				"path":      "shared.txt",
+				"content":   fmt.Sprintf("v%d", i+1),
+				"backup":    true,
+				"overwrite": true,
 			})
 			if res.IsError {
 				errs[i] = res.ForLLM
@@ -637,9 +641,10 @@ func TestWriteFile_Backup_MemoryRedirect_BackupLandsInMemoryRoot(t *testing.T) {
 
 	tool := NewWriteFileToolWithMemoryRedirect(ws, true, nil, memRoot)
 	res := tool.Execute(context.Background(), map[string]any{
-		"path":    "memory/foo.md",
-		"content": "post-image",
-		"backup":  true,
+		"path":      "memory/foo.md",
+		"content":   "post-image",
+		"backup":    true,
+		"overwrite": true,
 	})
 	if res.IsError {
 		t.Fatalf("write failed: %s", res.ForLLM)
@@ -680,9 +685,10 @@ func TestWriteFile_Backup_OutsideWorkspace(t *testing.T) {
 	}
 	tool := NewWriteFileTool(ws, true)
 	res := tool.Execute(context.Background(), map[string]any{
-		"path":    target,
-		"content": "new",
-		"backup":  true,
+		"path":      target,
+		"content":   "new",
+		"backup":    true,
+		"overwrite": true,
 	})
 	if !res.IsError {
 		t.Fatal("expected error for target outside workspace")

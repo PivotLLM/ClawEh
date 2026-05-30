@@ -4,23 +4,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/PivotLLM/ClawEh/web/backend/launcherconfig"
 )
 
-func TestResolveLaunchCommandUsesConfigFileDefaults(t *testing.T) {
+func TestResolveLaunchCommandHasNoLauncherFlags(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	h := NewHandler(configPath)
-
-	// Persist non-default launcher options to ensure resolveLaunchCommand does not
-	// pin them into autostart args.
-	launcherPath := launcherconfig.PathForAppConfig(configPath)
-	if err := launcherconfig.Save(launcherPath, launcherconfig.Config{
-		Port:   19999,
-		Public: true,
-	}); err != nil {
-		t.Fatalf("launcherconfig.Save() error = %v", err)
-	}
 
 	exePath, args, err := h.resolveLaunchCommand()
 	if err != nil {
@@ -29,24 +17,15 @@ func TestResolveLaunchCommandUsesConfigFileDefaults(t *testing.T) {
 	if exePath == "" {
 		t.Fatal("resolveLaunchCommand() returned empty executable path")
 	}
-	if len(args) != 2 {
-		t.Fatalf("args len = %d, want 2 (got %v)", len(args), args)
-	}
-	if args[0] != "-no-browser" {
-		t.Fatalf("args[0] = %q, want %q", args[0], "-no-browser")
-	}
-	if args[1] != configPath {
-		t.Fatalf("args[1] = %q, want %q", args[1], configPath)
-	}
-	for _, arg := range args {
-		if arg == "-port" || arg == "-public" {
-			t.Fatalf("autostart args should not pin network flags, got %v", args)
-		}
+	// The merged claw binary takes no autostart-time arguments — gateway is
+	// the default subcommand and no -no-browser flag is needed.
+	if len(args) != 0 {
+		t.Fatalf("args = %v, want []", args)
 	}
 }
 
 func TestBuildDarwinPlistIncludesRunAtLoad(t *testing.T) {
-	plist := buildDarwinPlist("/tmp/claw-web", []string{"-no-browser", "/tmp/config.json"})
+	plist := buildDarwinPlist("/usr/local/bin/claw", []string{})
 	if !strings.Contains(plist, "<key>RunAtLoad</key>") {
 		t.Fatalf("plist missing RunAtLoad key:\n%s", plist)
 	}

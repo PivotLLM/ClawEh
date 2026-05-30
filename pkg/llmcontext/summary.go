@@ -8,39 +8,60 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/PivotLLM/ClawEh/pkg/logger"
 )
 
-const summaryVersion = 1
+const summaryVersion = 2
 
 // Summary is the structured session summary stored in meta.json and rendered
 // into the system prompt. Stored as JSON; rendered as Markdown for injection.
 type Summary struct {
-	Version              int          `json:"version"`
-	State                SummaryState `json:"state"`
-	KeyMoments           []KeyMoment  `json:"key_moments,omitempty"`
-	MessageIndex         []IndexEntry `json:"message_index,omitempty"`
-	CoveredSeqStart      int          `json:"covered_seq_start"`
-	CoveredSeqEnd        int          `json:"covered_seq_end"`
-	CoveredSeqStartAt    time.Time    `json:"covered_seq_start_at,omitempty"`
-	CoveredSeqEndAt      time.Time    `json:"covered_seq_end_at,omitempty"`
-	GeneratedAt          time.Time    `json:"generated_at"`
-	Model                string       `json:"model,omitempty"`
+	Version             int          `json:"version"`
+	State               SummaryState `json:"state"`
+	KeyMoments          []KeyMoment  `json:"key_moments,omitempty"`
+	MessageIndex        []IndexEntry `json:"message_index,omitempty"`
+	CoveredSeqStart     int          `json:"covered_seq_start"`
+	CoveredSeqEnd       int          `json:"covered_seq_end"`
+	CoveredRanges       []SeqRange   `json:"covered_ranges,omitempty"`
+	LastSummarizedSeq   int          `json:"last_summarized_seq,omitempty"`
+	LastSummarizedRange SeqRange     `json:"last_summarized_range,omitempty"`
+	CoveredSeqStartAt   time.Time    `json:"covered_seq_start_at,omitempty"`
+	CoveredSeqEndAt     time.Time    `json:"covered_seq_end_at,omitempty"`
+	GeneratedAt         time.Time    `json:"generated_at"`
+	Model               string       `json:"model,omitempty"`
 }
 
-// SummaryState holds the four dynamic sections of the current state.
+// SeqRange is an inclusive archive message ID range.
+type SeqRange struct {
+	SeqStart int `json:"seq_start"`
+	SeqEnd   int `json:"seq_end,omitempty"`
+}
+
+// SummaryItem is a cited state item. Text is the compact paraphrase; Exact is
+// reserved for user instructions, constraints, paths, commands, IDs, decisions,
+// and config values where literal wording matters.
+type SummaryItem struct {
+	Text  string     `json:"text"`
+	Refs  []SeqRange `json:"refs,omitempty"`
+	Exact string     `json:"exact,omitempty"`
+}
+
+// SummaryState holds the dynamic cited sections of the current state.
 type SummaryState struct {
-	Goals       string `json:"goals,omitempty"`
-	Progress    string `json:"progress,omitempty"`
-	Pending     string `json:"pending,omitempty"`
-	Constraints string `json:"constraints,omitempty"`
+	Goals       []SummaryItem `json:"goals,omitempty"`
+	Progress    []SummaryItem `json:"progress,omitempty"`
+	Pending     []SummaryItem `json:"pending,omitempty"`
+	Constraints []SummaryItem `json:"constraints,omitempty"`
 }
 
 // KeyMoment records a single high-importance event in the conversation.
 type KeyMoment struct {
-	Seq     int    `json:"seq"`
-	Role    string `json:"role"`
-	Summary string `json:"summary"`
-	Exact   string `json:"exact,omitempty"`
+	Seq     int        `json:"seq,omitempty"`
+	Refs    []SeqRange `json:"refs,omitempty"`
+	Role    string     `json:"role,omitempty"`
+	Summary string     `json:"summary"`
+	Exact   string     `json:"exact,omitempty"`
 }
 
 // IndexEntry is one entry (or a collapsed range) in the retrievable message index.
@@ -56,6 +77,7 @@ func (s *Summary) Validate() error {
 	if s == nil {
 		return fmt.Errorf("summary is nil")
 	}
+	s.NormalizeRefs()
 	if s.Version != summaryVersion {
 		return fmt.Errorf("unsupported summary version: %d", s.Version)
 	}
@@ -66,6 +88,95 @@ func (s *Summary) Validate() error {
 		return fmt.Errorf("seq range end (%d) < start (%d)", s.CoveredSeqEnd, s.CoveredSeqStart)
 	}
 	return nil
+}
+
+// NormalizeRefs fills omitted range ends and converts legacy single-seq
+// KeyMoment references into v2 refs.
+func (s *Summary) NormalizeRefs() {
+	if s == nil {
+		return
+	}
+	normalize := func(refs []SeqRange) []SeqRange {
+		for i := range refs {
+			if refs[i].SeqEnd == 0 {
+				refs[i].SeqEnd = refs[i].SeqStart
+			}
+		}
+		return refs
+	}
+	for i := range s.State.Goals {
+		s.State.Goals[i].Refs = normalize(s.State.Goals[i].Refs)
+	}
+	for i := range s.State.Progress {
+		s.State.Progress[i].Refs = normalize(s.State.Progress[i].Refs)
+	}
+	for i := range s.State.Pending {
+		s.State.Pending[i].Refs = normalize(s.State.Pending[i].Refs)
+	}
+	for i := range s.State.Constraints {
+		s.State.Constraints[i].Refs = normalize(s.State.Constraints[i].Refs)
+	}
+	for i := range s.KeyMoments {
+		if len(s.KeyMoments[i].Refs) == 0 && s.KeyMoments[i].Seq > 0 {
+			s.KeyMoments[i].Refs = []SeqRange{{SeqStart: s.KeyMoments[i].Seq, SeqEnd: s.KeyMoments[i].Seq}}
+		}
+		s.KeyMoments[i].Refs = normalize(s.KeyMoments[i].Refs)
+	}
+	s.CoveredRanges = normalize(s.CoveredRanges)
+}
+
+func (s *Summary) HasMaterial() bool {
+	if s == nil {
+		return false
+	}
+	return len(s.State.Goals) > 0 ||
+		len(s.State.Progress) > 0 ||
+		len(s.State.Pending) > 0 ||
+		len(s.State.Constraints) > 0 ||
+		len(s.KeyMoments) > 0 ||
+		len(s.MessageIndex) > 0
+}
+
+func (s *Summary) HasEvidence() bool {
+	if s == nil {
+		return false
+	}
+	hasRefs := func(items []SummaryItem) bool {
+		for _, item := range items {
+			if strings.TrimSpace(item.Text) == "" && strings.TrimSpace(item.Exact) == "" {
+				continue
+			}
+			if len(item.Refs) == 0 {
+				return false
+			}
+		}
+		return true
+	}
+	if !hasRefs(s.State.Goals) ||
+		!hasRefs(s.State.Progress) ||
+		!hasRefs(s.State.Pending) ||
+		!hasRefs(s.State.Constraints) {
+		return false
+	}
+	for _, km := range s.KeyMoments {
+		if (strings.TrimSpace(km.Summary) != "" || strings.TrimSpace(km.Exact) != "") && len(km.Refs) == 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *Summary) LastSummarizedSeqRange() SeqRange {
+	if s == nil {
+		return SeqRange{}
+	}
+	if s.LastSummarizedRange.SeqStart > 0 {
+		return s.LastSummarizedRange
+	}
+	if len(s.CoveredRanges) == 0 {
+		return SeqRange{}
+	}
+	return s.CoveredRanges[len(s.CoveredRanges)-1]
 }
 
 // TruncateToFit removes the oldest key_moments and retrievable_history (MessageIndex)
@@ -105,35 +216,75 @@ func (s *Summary) TruncateToFit(tokenLimit int) bool {
 	return truncated
 }
 
-// StripOutOfRangeSeqRefs removes KeyMoments and MessageIndex entries whose seq
-// references fall outside [coveredSeqStart, archiveMaxSeq]. This prevents
-// hallucinated or stale seq values emitted by the summarizer from appearing in
-// the rendered summary.
-//
-// coveredSeqStart is the start of the range covered by this summary.
-// archiveMaxSeq is the highest seq currently in the archive (0 means unknown:
-// only the coveredSeqStart floor is enforced in that case).
-func (s *Summary) StripOutOfRangeSeqRefs(coveredSeqStart, archiveMaxSeq int) {
+// StripOutOfRangeSeqRefs removes state items, KeyMoments, and MessageIndex
+// entries whose seq references fall outside [archiveMinSeq, archiveMaxSeq].
+// This prevents hallucinated or stale seq values emitted by the summarizer from
+// appearing in the rendered summary. archiveMaxSeq is 0 when unknown; in that
+// case only the lower bound is applied.
+func (s *Summary) StripOutOfRangeSeqRefs(archiveMinSeq, archiveMaxSeq int) {
 	if s == nil {
 		return
 	}
+	s.NormalizeRefs()
 
-	inRange := func(seq int) bool {
-		if seq < coveredSeqStart {
+	inRange := func(ref SeqRange) bool {
+		if ref.SeqStart <= 0 || ref.SeqEnd < ref.SeqStart {
 			return false
 		}
-		if archiveMaxSeq > 0 && seq > archiveMaxSeq {
+		if archiveMinSeq > 0 && ref.SeqStart < archiveMinSeq {
+			return false
+		}
+		if archiveMaxSeq > 0 && ref.SeqEnd > archiveMaxSeq {
 			return false
 		}
 		return true
 	}
+	filterRefs := func(refs []SeqRange) []SeqRange {
+		out := refs[:0]
+		for _, ref := range refs {
+			if inRange(ref) {
+				out = append(out, ref)
+			}
+		}
+		return out
+	}
+	filterItems := func(items []SummaryItem) []SummaryItem {
+		out := items[:0]
+		for _, item := range items {
+			originalRefs := len(item.Refs)
+			item.Refs = filterRefs(item.Refs)
+			if originalRefs > 0 && len(item.Refs) == 0 {
+				continue
+			}
+			if strings.TrimSpace(item.Text) == "" && strings.TrimSpace(item.Exact) == "" {
+				continue
+			}
+			out = append(out, item)
+		}
+		return out
+	}
+
+	s.State.Goals = filterItems(s.State.Goals)
+	s.State.Progress = filterItems(s.State.Progress)
+	s.State.Pending = filterItems(s.State.Pending)
+	s.State.Constraints = filterItems(s.State.Constraints)
 
 	// Filter KeyMoments.
 	valid := s.KeyMoments[:0]
 	for _, km := range s.KeyMoments {
-		if inRange(km.Seq) {
-			valid = append(valid, km)
+		originalRefs := len(km.Refs)
+		km.Refs = filterRefs(km.Refs)
+		if originalRefs > 0 && len(km.Refs) == 0 {
+			continue
 		}
+		if strings.TrimSpace(km.Summary) == "" && strings.TrimSpace(km.Exact) == "" {
+			continue
+		}
+		if len(km.Refs) == 0 {
+			continue
+		}
+		km.Seq = km.Refs[0].SeqStart
+		valid = append(valid, km)
 	}
 	s.KeyMoments = valid
 
@@ -141,7 +292,11 @@ func (s *Summary) StripOutOfRangeSeqRefs(coveredSeqStart, archiveMaxSeq int) {
 	// SeqStart and SeqEnd are within the allowed range.
 	validIdx := s.MessageIndex[:0]
 	for _, e := range s.MessageIndex {
-		if inRange(e.SeqStart) && inRange(e.SeqEnd) {
+		ref := SeqRange{SeqStart: e.SeqStart, SeqEnd: e.SeqEnd}
+		if ref.SeqEnd == 0 {
+			ref.SeqEnd = ref.SeqStart
+		}
+		if inRange(ref) {
 			validIdx = append(validIdx, e)
 		}
 	}
@@ -156,35 +311,31 @@ func (s *Summary) Render(archiveMinSeq, archiveMaxSeq int) string {
 		if !s.CoveredSeqStartAt.IsZero() && !s.CoveredSeqEndAt.IsZero() {
 			startStr := s.CoveredSeqStartAt.UTC().Format("2006-01-02 15:04 UTC")
 			endStr := s.CoveredSeqEndAt.UTC().Format("2006-01-02 15:04 UTC")
-			fmt.Fprintf(&sb, "Context summary: messages #%d (%s) – #%d (%s). Full messages retrievable via get_session_messages.\n\n",
+			fmt.Fprintf(&sb, "Context summary: messages #%d (%s) - #%d (%s). Full messages retrievable via get_session_messages.\n\n",
 				s.CoveredSeqStart, startStr, s.CoveredSeqEnd, endStr)
 		} else {
-			fmt.Fprintf(&sb, "Context summary: messages #%d – #%d. Full messages retrievable via get_session_messages.\n\n",
+			fmt.Fprintf(&sb, "Context summary: messages #%d - #%d. Full messages retrievable via get_session_messages.\n\n",
 				s.CoveredSeqStart, s.CoveredSeqEnd)
 		}
 	}
 
 	sb.WriteString("## Current State\n")
-	if s.State.Goals != "" {
-		fmt.Fprintf(&sb, "**Goals:** %s\n", s.State.Goals)
-	}
-	if s.State.Progress != "" {
-		fmt.Fprintf(&sb, "**Progress:** %s\n", s.State.Progress)
-	}
-	if s.State.Pending != "" {
-		fmt.Fprintf(&sb, "**Pending:** %s\n", s.State.Pending)
-	}
-	if s.State.Constraints != "" {
-		fmt.Fprintf(&sb, "**Constraints:** %s\n", s.State.Constraints)
-	}
+	renderItems(&sb, "Goals", s.State.Goals)
+	renderItems(&sb, "Progress", s.State.Progress)
+	renderItems(&sb, "Pending", s.State.Pending)
+	renderItems(&sb, "Constraints", s.State.Constraints)
 
 	if len(s.KeyMoments) > 0 {
 		sb.WriteString("\n## Key Moments\n")
 		for _, km := range s.KeyMoments {
+			refText := formatRefs(km.Refs)
+			if refText == "" && km.Seq > 0 {
+				refText = fmt.Sprintf("[#%d]", km.Seq)
+			}
 			if km.Exact != "" {
-				fmt.Fprintf(&sb, "- [#%d] %s: exact: %q\n", km.Seq, km.Role, km.Exact)
+				fmt.Fprintf(&sb, "- %s %s: exact: %q\n", refText, km.Role, km.Exact)
 			} else {
-				fmt.Fprintf(&sb, "- [#%d] %s: %s\n", km.Seq, km.Role, km.Summary)
+				fmt.Fprintf(&sb, "- %s %s: %s\n", refText, km.Role, km.Summary)
 			}
 		}
 	}
@@ -202,12 +353,45 @@ func (s *Summary) Render(archiveMinSeq, archiveMaxSeq int) string {
 			if e.SeqStart == e.SeqEnd {
 				fmt.Fprintf(&sb, "- [#%d] %s: %s\n", e.SeqStart, e.Role, e.Label)
 			} else {
-				fmt.Fprintf(&sb, "- [#%d–#%d] %s: %s\n", e.SeqStart, e.SeqEnd, e.Role, e.Label)
+				fmt.Fprintf(&sb, "- [#%d-#%d] %s: %s\n", e.SeqStart, e.SeqEnd, e.Role, e.Label)
 			}
 		}
 	}
 
 	return strings.TrimRight(sb.String(), "\n")
+}
+
+func renderItems(sb *strings.Builder, title string, items []SummaryItem) {
+	if len(items) == 0 {
+		return
+	}
+	fmt.Fprintf(sb, "**%s:**\n", title)
+	for _, item := range items {
+		text := item.Text
+		if item.Exact != "" {
+			text = fmt.Sprintf("exact: %q", item.Exact)
+		}
+		if refs := formatRefs(item.Refs); refs != "" {
+			fmt.Fprintf(sb, "- %s %s\n", refs, text)
+		} else {
+			fmt.Fprintf(sb, "- %s\n", text)
+		}
+	}
+}
+
+func formatRefs(refs []SeqRange) string {
+	if len(refs) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		if ref.SeqEnd == 0 || ref.SeqStart == ref.SeqEnd {
+			parts = append(parts, fmt.Sprintf("#%d", ref.SeqStart))
+		} else {
+			parts = append(parts, fmt.Sprintf("#%d-#%d", ref.SeqStart, ref.SeqEnd))
+		}
+	}
+	return "[" + strings.Join(parts, ", ") + "]"
 }
 
 // unmarshalSummary attempts to parse raw as a Summary. Returns nil if raw is
@@ -243,19 +427,19 @@ func renderSummaryFromRaw(raw string, archiveMinSeq, archiveMaxSeq int) string {
 }
 
 // promptStandard is the standard summarization prompt. The LLM fills state,
-// key_moments, and message_index; covered_seq_* are populated by the caller.
+// key_moments, and message_index; coverage fields are populated by the caller.
 const promptStandard = `You are an AI assistant performing context summarization. Produce a JSON object matching this schema exactly:
 
 {
-  "version": 1,
+  "version": 2,
   "state": {
-    "goals": "<current active goals>",
-    "progress": "<progress toward goals>",
-    "pending": "<immediate next actions in flight>",
-    "constraints": "<persistent rules and preferences>"
+    "goals": [{"text": "<current active goal>", "refs": [{"seq_start": <int>, "seq_end": <int>}]}],
+    "progress": [{"text": "<progress toward a goal>", "refs": [{"seq_start": <int>, "seq_end": <int>}]}],
+    "pending": [{"text": "<immediate next action in flight>", "refs": [{"seq_start": <int>, "seq_end": <int>}]}],
+    "constraints": [{"text": "<persistent rule or preference>", "exact": "<verbatim if needed>", "refs": [{"seq_start": <int>, "seq_end": <int>}]}]
   },
   "key_moments": [
-    {"seq": <int>, "role": "<role>", "summary": "<summary>", "exact": "<verbatim if needed>"}
+    {"refs": [{"seq_start": <int>, "seq_end": <int>}], "role": "<role>", "summary": "<summary>", "exact": "<verbatim if needed>"}
   ],
   "message_index": [
     {"seq_start": <int>, "seq_end": <int>, "role": "<role>", "label": "<label>"}
@@ -263,7 +447,9 @@ const promptStandard = `You are an AI assistant performing context summarization
 }
 
 Instructions:
-- Goals/Progress: update dynamically — only active goals; retire completed/superseded ones.
+- Update the existing summary with the new messages. Do not replace it wholesale.
+- Every state item and key moment MUST cite archive message IDs in refs.
+- Goals/Progress: update dynamically; only active goals; retire completed/superseded ones only when the new messages support that.
 - Pending: capture immediate next actions in flight at this moment. Answer "what was I about to do?"
 - Constraints: preserve verbatim unless user explicitly changed them.
 - Key Moments: curated high-importance events only. Use exact field for instructions, decisions, config values.
@@ -277,15 +463,15 @@ Instructions:
 const promptAggressive = `You are an AI assistant performing urgent context summarization. Token budget is critical — be maximally concise without losing actionable state. Produce a JSON object matching this schema exactly:
 
 {
-  "version": 1,
+  "version": 2,
   "state": {
-    "goals": "<active goals, one sentence each>",
-    "progress": "<current status per goal, one sentence each>",
-    "pending": "<immediate next actions, one line each>",
-    "constraints": "<essential rules only>"
+    "goals": [{"text": "<active goal>", "refs": [{"seq_start": <int>, "seq_end": <int>}]}],
+    "progress": [{"text": "<current status>", "refs": [{"seq_start": <int>, "seq_end": <int>}]}],
+    "pending": [{"text": "<next action>", "refs": [{"seq_start": <int>, "seq_end": <int>}]}],
+    "constraints": [{"text": "<essential rule>", "exact": "<verbatim only if needed>", "refs": [{"seq_start": <int>, "seq_end": <int>}]}]
   },
   "key_moments": [
-    {"seq": <int>, "role": "<role>", "summary": "<15 words or fewer>", "exact": "<verbatim only if a literal value is required>"}
+    {"refs": [{"seq_start": <int>, "seq_end": <int>}], "role": "<role>", "summary": "<15 words or fewer>", "exact": "<verbatim only if a literal value is required>"}
   ],
   "message_index": [
     {"seq_start": <int>, "seq_end": <int>, "role": "<role>", "label": "<topic label>"}
@@ -294,6 +480,7 @@ const promptAggressive = `You are an AI assistant performing urgent context summ
 
 Rules:
 - State: one concise sentence per item; omit any field that is empty.
+- Every state item and key moment MUST cite archive message IDs in refs.
 - Key Moments: include only decisions and facts required to continue in-progress work; omit anything already captured in state or easily derivable from context. No hard cap — include what is needed, nothing more.
 - Message Index: collapse aggressively into broad topic or project ranges (archive window: seq %d to %d); one entry per project/thread area rather than per message.
 - Update the existing summary rather than replacing it — preserve active goals and constraints.
@@ -319,6 +506,11 @@ func buildSummarizationPrompt(existing *Summary, archiveMin, archiveMax int, agg
 }
 
 // validateAndUnmarshalLLMResponse parses and validates an LLM-produced Summary JSON.
+// It tolerates a leading code fence and a prose preamble/suffix wrapped around
+// a JSON object: after stripping the fence, it searches for the first balanced
+// {...} object (respecting string literals and \-escaped quotes) and parses
+// that. If no balanced object is found, the original buffer's unmarshal error
+// is returned unchanged so genuinely broken responses still fail loudly.
 func validateAndUnmarshalLLMResponse(response string) (*Summary, error) {
 	// Strip markdown fences if present (some providers add them despite instructions).
 	cleaned := strings.TrimSpace(response)
@@ -329,12 +521,82 @@ func validateAndUnmarshalLLMResponse(response string) (*Summary, error) {
 		cleaned = strings.TrimSuffix(strings.TrimSpace(cleaned), "```")
 		cleaned = strings.TrimSpace(cleaned)
 	}
+
 	var s Summary
-	if err := json.Unmarshal([]byte(cleaned), &s); err != nil {
-		return nil, fmt.Errorf("unmarshal: %w", err)
+	directErr := json.Unmarshal([]byte(cleaned), &s)
+	if directErr == nil {
+		if err := s.Validate(); err != nil {
+			return nil, fmt.Errorf("validate: %w", err)
+		}
+		return &s, nil
 	}
-	if err := s.Validate(); err != nil {
+
+	// Direct unmarshal failed. Try to recover by extracting the first balanced
+	// JSON object from anywhere in the buffer (handles prose preamble/suffix).
+	start, end, ok := findBalancedJSONObject(cleaned)
+	if !ok {
+		return nil, fmt.Errorf("unmarshal: %w", directErr)
+	}
+	extracted := cleaned[start : end+1]
+	var s2 Summary
+	if err := json.Unmarshal([]byte(extracted), &s2); err != nil {
+		// Extraction located braces but the inner content is still invalid;
+		// surface the original error so we don't mask the real failure.
+		return nil, fmt.Errorf("unmarshal: %w", directErr)
+	}
+	logger.DebugCF("llmcontext", "recovered JSON from prose-wrapped LLM response",
+		map[string]any{
+			"prefix_len": start,
+			"suffix_len": len(cleaned) - (end + 1),
+		})
+	if err := s2.Validate(); err != nil {
 		return nil, fmt.Errorf("validate: %w", err)
 	}
-	return &s, nil
+	return &s2, nil
+}
+
+// findBalancedJSONObject locates the first balanced {...} in s, respecting
+// double-quoted string literals and \-escaped quotes inside them. Returns the
+// byte offsets of the opening '{' and matching closing '}', or ok=false when
+// no balanced object exists.
+func findBalancedJSONObject(s string) (start, end int, ok bool) {
+	start = -1
+	depth := 0
+	inString := false
+	escape := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if inString {
+			if escape {
+				escape = false
+				continue
+			}
+			if c == '\\' {
+				escape = true
+				continue
+			}
+			if c == '"' {
+				inString = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inString = true
+		case '{':
+			if depth == 0 {
+				start = i
+			}
+			depth++
+		case '}':
+			if depth == 0 {
+				continue
+			}
+			depth--
+			if depth == 0 {
+				return start, i, true
+			}
+		}
+	}
+	return -1, -1, false
 }

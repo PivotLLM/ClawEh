@@ -29,9 +29,9 @@ func TestFallback_SameProviderFallbackNotCooldownSkipped(t *testing.T) {
 	}
 
 	calls := []string{}
-	run := func(ctx context.Context, provider, model string) (*LLMResponse, error) {
-		calls = append(calls, model)
-		if model == "meta-llama/llama-4-scout" {
+	run := func(ctx context.Context, c FallbackCandidate) (*LLMResponse, error) {
+		calls = append(calls, c.Model)
+		if c.Model == "meta-llama/llama-4-scout" {
 			return nil, &common.HTTPStatusError{
 				StatusCode:  429,
 				BodyPreview: `{"error":"rate_limited"}`,
@@ -159,8 +159,8 @@ func TestFallback_ParseErrorTriggersFallback(t *testing.T) {
 		makeCandidate("openrouter", "auto"),
 	}
 
-	run := func(ctx context.Context, provider, model string) (*LLMResponse, error) {
-		if model == "scout" {
+	run := func(ctx context.Context, c FallbackCandidate) (*LLMResponse, error) {
+		if c.Model == "scout" {
 			return nil, errors.New("failed to parse JSON response: unexpected EOF")
 		}
 		return &LLMResponse{Content: "ok", FinishReason: "stop"}, nil

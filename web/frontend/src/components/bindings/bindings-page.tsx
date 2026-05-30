@@ -69,7 +69,7 @@ function parseChannelNames(cfg: unknown): string[] {
     }
   }
 
-  for (const name of ["webui", "slack", "discord", "matrix", "irc", "line", "whatsapp"]) {
+  for (const name of ["webui", "slack", "discord", "matrix", "line"]) {
     if (asRecord(channels[name]).enabled === true) names.push(name)
   }
 

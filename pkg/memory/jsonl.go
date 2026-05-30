@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
@@ -61,6 +63,22 @@ type sessionMeta struct {
 	// Set before the LLM call; cleared when the final response is persisted.
 	// A true value on startup indicates the process was interrupted mid-turn.
 	PendingTurn bool `json:"pending_turn,omitempty"`
+}
+
+// SummaryCheckpoint is one append-only record of a generated context summary.
+// The latest summary still lives in sessionMeta.Summary for fast context
+// injection; checkpoints are for audit, recovery, and debugging.
+type SummaryCheckpoint struct {
+	ID              int       `json:"id"`
+	GeneratedAt     time.Time `json:"generated_at"`
+	Model           string    `json:"model,omitempty"`
+	SourceSeqStart  int       `json:"source_seq_start"`
+	SourceSeqEnd    int       `json:"source_seq_end"`
+	CoveredSeqStart int       `json:"covered_seq_start"`
+	CoveredSeqEnd   int       `json:"covered_seq_end"`
+	PrevHash        string    `json:"prev_hash,omitempty"`
+	SummaryHash     string    `json:"summary_hash"`
+	Summary         string    `json:"summary"`
 }
 
 // noiseCache tracks the last written message per role and the last cron
@@ -161,6 +179,10 @@ func (s *JSONLStore) metaPath(key string) string {
 	return filepath.Join(s.dir, sanitizeKey(key)+".meta.json")
 }
 
+func (s *JSONLStore) summaryHistoryPath(key string) string {
+	return filepath.Join(s.dir, sanitizeKey(key)+".summaries.jsonl")
+}
+
 // sanitizeKey converts a session key to a safe filename component.
 // Mirrors pkg/session.sanitizeFilename so that migration paths match.
 // Replaces ':' with '_' (session key separator) and '/' and '\' with '_'
@@ -185,6 +207,16 @@ func (s *JSONLStore) getNoiseCache(key string) *noiseCache {
 	c := newNoiseCache()
 	s.noiseCaches[key] = c
 	return c
+}
+
+// ForgetSession drops in-memory per-session state (the noise cache) for key.
+// Durable data on disk is untouched: a subsequent access lazily recreates the
+// cache. Called when a session's context manager is evicted so the noiseCaches
+// map does not grow unbounded over the lifetime of the process.
+func (s *JSONLStore) ForgetSession(key string) {
+	s.noiseMu.Lock()
+	defer s.noiseMu.Unlock()
+	delete(s.noiseCaches, key)
 }
 
 // readMeta loads the metadata file for a session.
@@ -340,7 +372,7 @@ func (s *JSONLStore) addMsg(sessionKey string, msg providers.Message) error {
 	if seq <= 0 {
 		seq = 1
 	}
-	stored := StoredMessage{Seq: seq, Message: msg}
+	stored := NewStoredMessage(seq, msg)
 
 	// Serialize as StoredMessage (includes seq field).
 	line, err := json.Marshal(stored)
@@ -583,7 +615,11 @@ func (s *JSONLStore) SetHistory(
 	stored := make([]StoredMessage, len(history))
 	for i, msg := range history {
 		startSeq++
-		stored[i] = StoredMessage{Seq: startSeq, Message: msg}
+		// SetHistory takes []providers.Message — no prior CreatedAt to carry
+		// over, so NewStoredMessage stamps time.Now(). This loses the original
+		// per-message timestamps, which is a known limitation of the rewrite
+		// path; before the constructor existed, the field was simply zero.
+		stored[i] = NewStoredMessage(startSeq, msg)
 	}
 
 	if err := s.rewriteStoredJSONL(sessionKey, stored); err != nil {
@@ -593,6 +629,51 @@ func (s *JSONLStore) SetHistory(
 	// Update NextSeq now that we have written new seq numbers.
 	meta.NextSeq = startSeq
 	return s.writeMeta(sessionKey, meta)
+}
+
+// SetHistoryWithSeqs replaces all messages while preserving stable seq numbers.
+// It is intended for compaction: retained tail messages keep the IDs already
+// advertised in summaries and written to the archive.
+func (s *JSONLStore) SetHistoryWithSeqs(
+	_ context.Context,
+	sessionKey string,
+	history []StoredMessage,
+) error {
+	l := s.sessionLock(sessionKey)
+	l.Lock()
+	defer l.Unlock()
+
+	meta, err := s.readMeta(sessionKey)
+	if err != nil {
+		return err
+	}
+	now := time.Now()
+	if meta.CreatedAt.IsZero() {
+		meta.CreatedAt = now
+	}
+	meta.Skip = 0
+	meta.Count = len(history)
+	meta.UpdatedAt = now
+
+	maxSeq := meta.NextSeq
+	stored := make([]StoredMessage, len(history))
+	for i, sm := range history {
+		if sm.Seq <= 0 {
+			maxSeq++
+			sm.Seq = maxSeq
+		}
+		if sm.Seq > maxSeq {
+			maxSeq = sm.Seq
+		}
+		stored[i] = NewStoredMessageAt(sm.Seq, sm.Message, sm.CreatedAt)
+	}
+	meta.NextSeq = maxSeq
+
+	err = s.writeMeta(sessionKey, meta)
+	if err != nil {
+		return err
+	}
+	return s.rewriteStoredJSONL(sessionKey, stored)
 }
 
 // Compact physically rewrites the JSONL file, dropping all logically
@@ -637,6 +718,79 @@ func (s *JSONLStore) Compact(
 	}
 
 	return s.rewriteStoredJSONL(sessionKey, active)
+}
+
+// AppendSummaryCheckpoint appends a generated summary to the per-session
+// checkpoint log. It fills ID, PrevHash, SummaryHash, and GeneratedAt.
+func (s *JSONLStore) AppendSummaryCheckpoint(
+	_ context.Context,
+	sessionKey string,
+	checkpoint SummaryCheckpoint,
+) error {
+	l := s.sessionLock(sessionKey)
+	l.Lock()
+	defer l.Unlock()
+
+	path := s.summaryHistoryPath(sessionKey)
+	prevHash := ""
+	nextID := 1
+	if f, err := os.Open(path); err == nil {
+		scanner := bufio.NewScanner(f)
+		scanner.Buffer(make([]byte, 0, 64*1024), maxLineSize)
+		for scanner.Scan() {
+			var prior SummaryCheckpoint
+			if json.Unmarshal(scanner.Bytes(), &prior) == nil {
+				if prior.ID >= nextID {
+					nextID = prior.ID + 1
+				}
+				if prior.SummaryHash != "" {
+					prevHash = prior.SummaryHash
+				}
+			}
+		}
+		if scanErr := scanner.Err(); scanErr != nil {
+			f.Close()
+			return fmt.Errorf("memory: scan summary history: %w", scanErr)
+		}
+		if closeErr := f.Close(); closeErr != nil {
+			return fmt.Errorf("memory: close summary history: %w", closeErr)
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("memory: open summary history: %w", err)
+	}
+
+	if checkpoint.GeneratedAt.IsZero() {
+		checkpoint.GeneratedAt = time.Now().UTC()
+	} else {
+		checkpoint.GeneratedAt = checkpoint.GeneratedAt.UTC()
+	}
+	checkpoint.ID = nextID
+	checkpoint.PrevHash = prevHash
+	sum := sha256.Sum256([]byte(checkpoint.Summary))
+	checkpoint.SummaryHash = hex.EncodeToString(sum[:])
+
+	line, err := json.Marshal(checkpoint)
+	if err != nil {
+		return fmt.Errorf("memory: marshal summary checkpoint: %w", err)
+	}
+	line = append(line, '\n')
+
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return fmt.Errorf("memory: open summary history for append: %w", err)
+	}
+	if _, err := f.Write(line); err != nil {
+		f.Close()
+		return fmt.Errorf("memory: append summary checkpoint: %w", err)
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return fmt.Errorf("memory: sync summary history: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("memory: close summary history: %w", err)
+	}
+	return nil
 }
 
 // rewriteStoredJSONL atomically replaces the JSONL file with the given

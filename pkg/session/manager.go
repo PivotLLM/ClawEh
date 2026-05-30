@@ -117,7 +117,7 @@ func (sm *SessionManager) GetHistoryWithSeqs(key string) []memory.StoredMessage 
 
 	stored := make([]memory.StoredMessage, len(session.Messages))
 	for i, msg := range session.Messages {
-		stored[i] = memory.StoredMessage{Seq: i + 1, Message: msg}
+		stored[i] = memory.NewStoredMessage(i+1, msg)
 	}
 	return stored
 }
@@ -333,4 +333,15 @@ func (sm *SessionManager) SetHistory(key string, history []providers.Message) {
 		session.Messages = msgs
 		session.Updated = time.Now()
 	}
+}
+
+// SetHistoryWithSeqs updates the messages of a session, ignoring seq metadata.
+// The legacy JSON session backend has no stable seq counter; callers that need
+// retrievable IDs should use the JSONL backend.
+func (sm *SessionManager) SetHistoryWithSeqs(key string, history []memory.StoredMessage) {
+	msgs := make([]providers.Message, len(history))
+	for i, smsg := range history {
+		msgs[i] = smsg.Message
+	}
+	sm.SetHistory(key, msgs)
 }

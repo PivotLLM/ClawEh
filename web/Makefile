@@ -1,38 +1,38 @@
 .PHONY: dev dev-frontend dev-backend build test lint clean
 
-# Run both frontend and backend dev servers
+# This Makefile is a thin convenience wrapper around the frontend dev loop.
+# Since the WebUI is now embedded into the single `claw` binary, the
+# "backend" main lives at the repo root — there is no separate claw-web binary.
+
+# Run frontend dev server alongside the merged claw binary.
 dev:
-	@if [ ! -f backend/claw-web ] || [ ! -d backend/dist ]; then \
-		echo "Build artifacts not found, building..."; \
-		$(MAKE) build; \
-	fi
-	@echo "Starting backend and frontend dev servers..."
+	@echo "Starting claw (merged gateway+WebUI) and the Vite frontend dev server..."
 	@$(MAKE) dev-backend & $(MAKE) dev-frontend
 
-# Start frontend dev server (Vite, with proxy to backend)
+# Start the frontend dev server (Vite, proxies /api and /webui to claw).
 dev-frontend:
 	cd frontend && pnpm dev
 
-# Start backend dev server
+# Start the merged claw binary in dev mode.
 dev-backend:
-	cd backend && go run .
+	cd .. && go run .
 
-# Build frontend and embed into Go binary
+# Build the frontend bundle into web/backend/dist so that the Go embed in the
+# merged claw binary picks it up on the next `go build`.
 build:
 	cd frontend && pnpm build:backend
-	cd backend && go build -o claw-web .
 
-# Run all tests
+# Run all tests (frontend lint + Go vet).
 test:
-	cd backend && go test ./...
 	cd frontend && pnpm lint
+	cd .. && go test ./...
 
-# Lint and format
+# Lint and format.
 lint:
-	cd backend && go vet ./...
+	cd .. && go vet ./...
 	cd frontend && pnpm check
 
-# Clean build artifacts
+# Clean build artifacts.
 clean:
-	rm -rf frontend/dist backend/dist backend/claw-web
+	rm -rf frontend/dist backend/dist
 	mkdir -p backend/dist && touch backend/dist/.gitkeep

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -14,9 +13,17 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+
+	"github.com/PivotLLM/ClawEh/pkg/logger"
 	"github.com/PivotLLM/ClawEh/pkg/providers/common"
 	"github.com/PivotLLM/ClawEh/pkg/providers/protocoltypes"
 )
+
+// warnFn is the logger hook the provider uses for non-fatal warnings (e.g.
+// extra_body merge collisions, diagnostic log open/write failures). Tests
+// swap this for a capturing function.
+var warnFn = logger.WarnCF
 
 type (
 	ToolCall               = protocoltypes.ToolCall
@@ -35,14 +42,21 @@ type (
 type Provider struct {
 	apiKey              string
 	apiBase             string
-	maxTokensField      string // Field name for max tokens (e.g., "max_completion_tokens" for o1/glm models)
-	strictCompat        bool   // Strip non-standard fields for strict OpenAI-compatible endpoints
-	noParallelToolCalls bool   // Send parallel_tool_calls=false (required by Groq/some Llama providers)
-	responseLogFile     string // Append raw response bodies here when non-empty (diagnostic only)
+	maxTokensField      string         // Field name for max tokens (e.g., "max_completion_tokens" for o1/glm models)
+	strictCompat        bool           // Strip non-standard fields for strict OpenAI-compatible endpoints
+	noParallelToolCalls bool           // Send parallel_tool_calls=false (required by Groq/some Llama providers)
+	responseLogFile     string         // Append JSONL request+response records here when non-empty (diagnostic only)
+	reasoningEffort     string         // OpenAI/Grok `reasoning_effort` request field; empty omits it
+	extraBody           map[string]any // Free-form passthrough merged into the request body before marshal
+	modelLabel          string         // User-facing model name used in WarnCF for merge collisions; empty falls back to wire model
+	protocol            string         // Protocol prefix (e.g. "openai", "xai", "openrouter"); drives capability gating
+	responseFormatJSON  bool           // Whether this provider may emit response_format=json_object when callers ask for it
 	httpClient          *http.Client
 
 	logMu      sync.Mutex // serialises appends to responseLogFile across goroutines sharing this Provider
-	logErrOnce sync.Once  // emits at most one stderr warning per Provider lifetime on log write failure
+	logFile    *os.File   // lazily opened on first use; held for Provider lifetime so the file is opened at most once
+	logOpenErr error      // sticky open error; once set, the file is never re-opened
+	logErrOnce sync.Once  // emits at most one WRN per Provider lifetime on log open/write failure
 }
 
 type Option func(*Provider)
@@ -75,14 +89,74 @@ func WithNoParallelToolCalls(v bool) Option {
 	}
 }
 
-// WithResponseLogFile enables append-only raw response capture to the given
-// path. Empty disables it (the default). Diagnostic feature; see
-// (*Provider).appendResponseLog for the record format.
+// WithResponseLogFile enables append-only JSONL capture of outgoing request
+// bodies and incoming response bodies to the given path. Empty disables it
+// (the default). Diagnostic feature; see (*Provider).writeLogEntry for the
+// record format and pairing semantics.
 func WithResponseLogFile(path string) Option {
 	return func(p *Provider) {
 		p.responseLogFile = path
 	}
 }
+
+// WithReasoningEffort sets the `reasoning_effort` request field that some
+// providers (notably xAI Grok and OpenAI o-series) honour. Empty omits the
+// field. Validated upstream in pkg/config; the provider trusts what it gets.
+func WithReasoningEffort(level string) Option {
+	return func(p *Provider) {
+		p.reasoningEffort = level
+	}
+}
+
+// WithExtraBody supplies a free-form map merged into the JSON request body
+// just before marshal. Used as the per-model passthrough for provider-specific
+// knobs claw does not model natively. Collisions with claw-managed fields are
+// rejected at config load; the merge step here is purely defensive.
+func WithExtraBody(extra map[string]any) Option {
+	return func(p *Provider) {
+		p.extraBody = extra
+	}
+}
+
+// WithModelLabel records the user-facing model name (ModelConfig.ModelName)
+// so log lines about this provider can identify the offending entry. Optional;
+// when unset, logs fall back to the wire-format model identifier.
+func WithModelLabel(label string) Option {
+	return func(p *Provider) {
+		p.modelLabel = label
+	}
+}
+
+// WithProtocol records the protocol prefix this provider was built for (e.g.
+// "openai", "xai", "openrouter"). Used solely for capability gating decisions
+// such as whether response_format=json_object may be emitted. Unset providers
+// fall through to the conservative default (no response_format emission).
+func WithProtocol(protocol string) Option {
+	return func(p *Provider) {
+		p.protocol = protocol
+	}
+}
+
+// WithResponseFormatJSONCapable explicitly enables (or disables) emission of
+// response_format=json_object when a caller sets the per-call option. This is
+// the configuration override path; the built-in per-protocol defaults are
+// applied separately and OR'd together at the call site so that both
+// well-known capable protocols (openai, xai) and operator-enabled protocols
+// (e.g. openrouter via config) work.
+func WithResponseFormatJSONCapable(v bool) Option {
+	return func(p *Provider) {
+		p.responseFormatJSON = v
+	}
+}
+
+// ResponseLogFile returns the configured per-provider response log file path.
+// Exposed primarily for tests that need to assert per-entry openai_compat
+// state was correctly attached to this Provider instance.
+func (p *Provider) ResponseLogFile() string { return p.responseLogFile }
+
+// ReasoningEffort returns the configured reasoning_effort. See ResponseLogFile
+// for the same caveat about intended use.
+func (p *Provider) ReasoningEffort() string { return p.reasoningEffort }
 
 func NewProvider(apiKey, apiBase, proxy string, opts ...Option) *Provider {
 	p := &Provider{
@@ -192,6 +266,45 @@ func (p *Provider) Chat(
 		}
 	}
 
+	if p.reasoningEffort != "" {
+		requestBody["reasoning_effort"] = p.reasoningEffort
+	}
+
+	// response_format=json_object: caller (compression code) sets this option
+	// to force the worker model to emit machine-parseable JSON. Only emitted
+	// for protocols known to support it (or explicitly enabled via config).
+	// Silently dropped otherwise so providers that 422 on unknown fields
+	// (Mistral, Gemini, …) keep working.
+	if wantsJSONObject(options) {
+		if p.responseFormatJSON || defaultSupportsResponseFormatJSON(p.protocol) {
+			requestBody["response_format"] = map[string]any{"type": "json_object"}
+		} else {
+			logger.DebugCF("openai_compat",
+				"response_format=json_object dropped: protocol not capable",
+				map[string]any{
+					"protocol": p.protocol,
+					"model":    p.modelLabelOr(model),
+				})
+		}
+	}
+
+	// Merge extra_body last so any forgotten claw-managed field still wins.
+	// The config-load collision guard ensures this loop should be a no-op for
+	// reserved keys; the defensive check below logs and skips if one slips
+	// through (e.g. a key claw added after the config validator was last
+	// updated).
+	for k, v := range p.extraBody {
+		if _, clash := requestBody[k]; clash {
+			warnFn("openai_compat", "extra_body key collides with claw-managed request field; skipping",
+				map[string]any{
+					"model": p.modelLabelOr(model),
+					"key":   k,
+				})
+			continue
+		}
+		requestBody[k] = v
+	}
+
 	jsonData, err := json.Marshal(requestBody)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
@@ -205,6 +318,15 @@ func (p *Provider) Chat(
 	req.Header.Set("Content-Type", "application/json")
 	if p.apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+p.apiKey)
+	}
+
+	// Pair the outgoing request body with its eventual response in the
+	// diagnostic log via a single corr_id. The UUID is generated only when
+	// logging is enabled so the disabled path stays cheap.
+	var corrID string
+	if p.responseLogFile != "" {
+		corrID = uuid.New().String()
+		p.appendRequestLog(corrID, model, jsonData)
 	}
 
 	bytesSent := int64(len(jsonData))
@@ -226,7 +348,7 @@ func (p *Provider) Chat(
 			return httpErrorStatus(model, "error", time.Since(start).Milliseconds(), bytesSent, int64(len(raw))),
 				fmt.Errorf("failed to read response body: %w", readErr)
 		}
-		p.appendResponseLog(req.URL.String(), model, resp.StatusCode, raw)
+		p.appendResponseLog(corrID, model, resp.StatusCode, time.Since(start).Milliseconds(), raw)
 		resp.Body = io.NopCloser(bytes.NewReader(raw))
 	}
 
@@ -386,52 +508,169 @@ func normalizeModel(model, apiBase string) string {
 	}
 }
 
-// appendResponseLog writes one record describing an HTTP response to the
-// configured response_log_file. Each record is:
-//
-//	=== <ISO-8601 ts> status=<code> model=<model> url=<url> ===\n
-//	<raw body — exact bytes received, no trimming>
-//	\n---END---\n
-//
-// A trailing newline is inserted before the separator only when the body does
-// not already end in '\n', so single-line JSON responses stay readable and the
-// separator always sits on its own line.
-//
-// Failures are swallowed: the request must complete regardless of whether the
-// diagnostic file is writable. One stderr warning is emitted per Provider
-// lifetime (via sync.Once) to surface persistent misconfiguration without
-// flooding the log under sustained failure.
-func (p *Provider) appendResponseLog(reqURL, model string, status int, body []byte) {
+// logEntry is one JSONL record written to response_log_file. A request entry
+// and its paired response entry share the same CorrID; readers can group them
+// by that field. Status and DurationMs are populated only on response entries.
+type logEntry struct {
+	Ts         string          `json:"ts"`
+	CorrID     string          `json:"corr_id"`
+	Dir        string          `json:"dir"`
+	Model      string          `json:"model"`
+	Body       json.RawMessage `json:"body"`
+	Status     int             `json:"status,omitempty"`
+	DurationMs int64           `json:"duration_ms,omitempty"`
+}
+
+// appendRequestLog writes the outgoing request body to the diagnostic log
+// before the HTTP round-trip starts. The body is parsed to redact a top-level
+// "api_key" field (rare, but defensive — claw never sets one, but extra_body
+// passthrough could). Request headers (including Authorization) are never
+// logged.
+func (p *Provider) appendRequestLog(corrID, wireModel string, body []byte) {
+	p.writeLogEntry(logEntry{
+		Ts:     time.Now().Format(time.RFC3339Nano),
+		CorrID: corrID,
+		Dir:    "request",
+		Model:  p.modelLabelOr(wireModel),
+		Body:   safeRawMessage(redactAPIKey(body)),
+	})
+}
+
+// appendResponseLog writes one JSONL record describing an HTTP response,
+// paired with the matching request entry via corrID. The raw body is embedded
+// as json.RawMessage when it parses as JSON; otherwise it is quoted as a
+// string so the surrounding entry remains valid JSON (e.g. HTML error pages
+// from misconfigured proxies).
+func (p *Provider) appendResponseLog(corrID, wireModel string, status int, durationMs int64, body []byte) {
+	p.writeLogEntry(logEntry{
+		Ts:         time.Now().Format(time.RFC3339Nano),
+		CorrID:     corrID,
+		Dir:        "response",
+		Model:      p.modelLabelOr(wireModel),
+		Body:       safeRawMessage(body),
+		Status:     status,
+		DurationMs: durationMs,
+	})
+}
+
+// writeLogEntry serialises a logEntry to JSONL and appends it to the configured
+// response_log_file. The file handle is opened lazily on first use and reused
+// for the Provider's lifetime; mode 0640 keeps the file readable by group but
+// not world. Failure to open or write must NOT block or fail the actual
+// request — at most one WRN is emitted per Provider lifetime via sync.Once.
+func (p *Provider) writeLogEntry(e logEntry) {
 	if p.responseLogFile == "" {
 		return
 	}
-
-	var buf bytes.Buffer
-	fmt.Fprintf(&buf, "=== %s status=%d model=%s url=%s ===\n",
-		time.Now().Format(time.RFC3339), status, model, reqURL)
-	buf.Write(body)
-	if len(body) == 0 || body[len(body)-1] != '\n' {
-		buf.WriteByte('\n')
+	line, err := json.Marshal(e)
+	if err != nil {
+		return
 	}
-	buf.WriteString("---END---\n")
+	line = append(line, '\n')
 
 	p.logMu.Lock()
 	defer p.logMu.Unlock()
 
-	f, err := os.OpenFile(p.responseLogFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
-	if err != nil {
-		p.logErrOnce.Do(func() {
-			log.Printf("openai_compat: response_log_file %q open failed: %v (further failures suppressed)",
-				p.responseLogFile, err)
-		})
+	if p.logFile == nil && p.logOpenErr == nil {
+		f, err := os.OpenFile(p.responseLogFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o640)
+		if err != nil {
+			p.logOpenErr = err
+			p.logErrOnce.Do(func() {
+				warnFn("openai_compat", "response_log_file open failed; further failures suppressed",
+					map[string]any{"path": p.responseLogFile, "err": err.Error()})
+			})
+			return
+		}
+		p.logFile = f
+	}
+	if p.logFile == nil {
 		return
 	}
-	defer f.Close()
-	if _, err := f.Write(buf.Bytes()); err != nil {
+	if _, err := p.logFile.Write(line); err != nil {
 		p.logErrOnce.Do(func() {
-			log.Printf("openai_compat: response_log_file %q write failed: %v (further failures suppressed)",
-				p.responseLogFile, err)
+			warnFn("openai_compat", "response_log_file write failed; further failures suppressed",
+				map[string]any{"path": p.responseLogFile, "err": err.Error()})
 		})
+	}
+}
+
+// redactAPIKey returns body with any top-level "api_key" field replaced by
+// "[REDACTED]". Non-JSON-object bodies are returned unchanged.
+func redactAPIKey(body []byte) []byte {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(body, &m); err != nil {
+		return body
+	}
+	if _, has := m["api_key"]; !has {
+		return body
+	}
+	m["api_key"] = json.RawMessage(`"[REDACTED]"`)
+	redacted, err := json.Marshal(m)
+	if err != nil {
+		return body
+	}
+	return redacted
+}
+
+// safeRawMessage returns body as json.RawMessage when it parses as JSON;
+// otherwise it returns the body encoded as a JSON string so the surrounding
+// entry stays valid JSON even when an upstream returns HTML or plain text.
+func safeRawMessage(body []byte) json.RawMessage {
+	if len(body) > 0 && json.Valid(body) {
+		return json.RawMessage(body)
+	}
+	quoted, err := json.Marshal(string(body))
+	if err != nil {
+		return json.RawMessage(`""`)
+	}
+	return json.RawMessage(quoted)
+}
+
+// modelLabelOr returns the configured user-facing model label, or fallback
+// when the label is empty. Keeps WarnCF messages identifying the offending
+// model_list entry rather than the bare wire identifier.
+func (p *Provider) modelLabelOr(fallback string) string {
+	if p.modelLabel != "" {
+		return p.modelLabel
+	}
+	return fallback
+}
+
+// ResponseFormatJSONObjectOption is the options-map key callers set to
+// request response_format={"type":"json_object"} on the outbound request. The
+// provider gates emission on protocol capability; the per-call signal is just
+// a "yes please" — the provider decides whether to honour it.
+const ResponseFormatJSONObjectOption = "response_format_json_object"
+
+// wantsJSONObject reports whether the caller's options map asks for
+// response_format=json_object. Accepts bool true or the string "true" so the
+// option can be threaded through config-driven layers without re-typing.
+func wantsJSONObject(options map[string]any) bool {
+	if options == nil {
+		return false
+	}
+	switch v := options[ResponseFormatJSONObjectOption].(type) {
+	case bool:
+		return v
+	case string:
+		return v == "true"
+	}
+	return false
+}
+
+// defaultSupportsResponseFormatJSON returns the built-in capability default
+// for a given protocol. The defaults track what each protocol is documented
+// to accept: OpenAI and xAI honour response_format natively; everything else
+// either rejects the field outright or routes downstream in a way that
+// silently drops it. Operators can flip a protocol on via configuration
+// (Config.OpenAICompatResponseFormat) — that override is applied at the
+// factory layer via WithResponseFormatJSONCapable and OR'd with this default.
+func defaultSupportsResponseFormatJSON(protocol string) bool {
+	switch protocol {
+	case "openai", "xai":
+		return true
+	default:
+		return false
 	}
 }
 

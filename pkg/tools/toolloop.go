@@ -15,7 +15,6 @@ import (
 
 	"github.com/PivotLLM/ClawEh/pkg/logger"
 	"github.com/PivotLLM/ClawEh/pkg/providers"
-	"github.com/PivotLLM/ClawEh/pkg/utils"
 )
 
 // ToolLoopConfig configures the tool execution loop.
@@ -118,11 +117,15 @@ func RunToolLoop(
 				fbResult, fbErr := config.Fallback.Execute(
 					ctx,
 					config.Candidates,
-					func(ctx context.Context, providerName, model string) (*providers.LLMResponse, error) {
-						if p, perr := config.Dispatcher.Get(providerName, model); perr == nil {
-							return p.Chat(ctx, messages, providerToolDefs, model, filterOptsForProvider(p, llmOpts))
+					func(ctx context.Context, c providers.FallbackCandidate) (*providers.LLMResponse, error) {
+						key := c.Alias
+						if key == "" {
+							key = c.Provider + "/" + c.Model
 						}
-						return config.Provider.Chat(ctx, messages, providerToolDefs, model, filterOptsForProvider(config.Provider, llmOpts))
+						if p, perr := config.Dispatcher.Get(key); perr == nil {
+							return p.Chat(ctx, messages, providerToolDefs, c.Model, filterOptsForProvider(p, llmOpts))
+						}
+						return config.Provider.Chat(ctx, messages, providerToolDefs, c.Model, filterOptsForProvider(config.Provider, llmOpts))
 					},
 				)
 				if fbErr != nil {
@@ -135,7 +138,11 @@ func RunToolLoop(
 				}
 			} else {
 				first := config.Candidates[0]
-				if p, perr := config.Dispatcher.Get(first.Provider, first.Model); perr == nil {
+				key := first.Alias
+				if key == "" {
+					key = first.Provider + "/" + first.Model
+				}
+				if p, perr := config.Dispatcher.Get(key); perr == nil {
 					response, err = p.Chat(ctx, messages, providerToolDefs, first.Model, filterOptsForProvider(p, llmOpts))
 				} else {
 					response, err = config.Provider.Chat(ctx, messages, providerToolDefs, first.Model, filterOptsForProvider(config.Provider, llmOpts))
@@ -220,12 +227,18 @@ func RunToolLoop(
 			go func(idx int, tc providers.ToolCall) {
 				defer wg.Done()
 
-				argsJSON, _ := json.Marshal(tc.Arguments)
-				argsPreview := utils.Truncate(string(argsJSON), 200)
-				logger.InfoCF("toolloop", fmt.Sprintf("Tool call: %s(%s)", tc.Name, argsPreview),
+				redacted := RedactArgs(tc.Name, tc.Arguments)
+				logger.InfoCF("toolloop", "Tool call dispatched",
 					map[string]any{
 						"tool":      tc.Name,
 						"iteration": iteration,
+						"args":      redacted,
+					})
+				logger.DebugCF("toolloop", "Tool call dispatched (raw args)",
+					map[string]any{
+						"tool":      tc.Name,
+						"iteration": iteration,
+						"args":      tc.Arguments,
 					})
 
 				var toolResult *ToolResult

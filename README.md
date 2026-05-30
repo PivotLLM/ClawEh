@@ -54,7 +54,7 @@ npm install -g pnpm
 
 ## Building
 
-Clone the repository and build both binaries:
+Clone the repository and build the single `claw` binary (the WebUI is embedded):
 
 ```bash
 git clone https://github.com/PivotLLM/ClawEh.git
@@ -62,26 +62,37 @@ cd ClawEh
 make install
 ```
 
-This builds `claw` and `claw-launcher` and installs them to `~/.local/bin`.
+This builds `claw` (gateway + WebUI + session API in one binary) and installs
+it to `~/.local/bin`. The frontend bundle in `web/frontend` is built and
+embedded into the same binary, so a single `claw` invocation serves
+everything — the chat agent, the WebSocket WebUI, and the JSON config API —
+on `cfg.Gateway.Port` (default `18790`).
 
-**Agent only (no web frontend):** Node.js and pnpm are not required if you skip the launcher:
-
-```bash
-make install-agent
-```
+If you do not have Node.js and pnpm installed, you can still build the agent
+side as long as `web/backend/dist/index.html` is already present (the
+embedded asset directory is committed empty with a `.gitkeep`, so missing
+frontend assets just mean the WebUI 404s, the gateway still runs).
 
 **Available make targets:**
 
 | Target | Description |
 |---|---|
-| `make build` | Build both binaries |
-| `make install` | Build and install both to `~/.local/bin` |
-| `make build-agent` | Build `claw` only |
-| `make install-agent` | Build and install `claw` only |
-| `make build-launcher` | Build `claw-launcher` only |
-| `make install-launcher` | Build and install `claw-launcher` only |
+| `make build` | Build `claw` (with embedded WebUI) for the current platform |
+| `make install` | Build and install `claw` to `~/.local/bin` |
 | `make test` | Run tests |
 | `make clean` | Remove build artifacts |
+
+## Running
+
+Start claw with the bare command (no subcommand):
+
+```bash
+claw
+```
+
+The WebUI is served on `http://localhost:18790` — open that URL in a browser
+to reach the chat interface and configuration console. The port is
+configurable via `gateway.port` in `~/.claw/config.json`.
 
 ## Terms of Use and Compliance
 ClawEh supports a wide range of LLM providers. It is your responsibility to ensure that your use of any provider, API, service, or model is consistent with the applicable terms of service, acceptable use policies, contracts, and legal requirements. This includes use-case restrictions, data handling obligations, and any prohibition on accessing non-public or undocumented APIs. We have removed support for some providers where we determined the implementation could not reasonably be used without violating the provider's terms. We welcome feedback from any LLM providers on this topic.
@@ -160,7 +171,11 @@ To reduce the risk of financial surprises, we strongly recommend using prepaid A
 
 ## Running as a service (Linux)
 
-`claw.service` and `claw-web.service` in the project root are systemd unit files for running ClawEh as a background service on Linux. Replace `YOUR_USERNAME` with the user account the service should run under, then install with:
+`claw.service` in the project root is a systemd unit file for running ClawEh
+as a background service on Linux. The merged binary handles the gateway, the
+WebUI HTTP layer, and the session API in one process — there is no longer a
+separate `claw-web` service. Replace `YOUR_USERNAME` with the user account
+the service should run under, then install with:
 
 ```
 sudo cp claw.service /etc/systemd/system/
@@ -168,7 +183,8 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now claw
 ```
 
-ClawEh writes logs to `~/.claw/logs/claw.log` and the web console to `~/.claw/logs/claw-launcher.log`. No log redirection is required in the service file.
+ClawEh writes logs to `~/.claw/logs/claw.log`. No log redirection is required
+in the service file.
 
 ## Diagnostic dumps
 
@@ -244,8 +260,11 @@ Context management options live in the agent config block (or `agents.defaults`)
 | Field | Default | Description |
 |---|---|---|
 | `context_window` | `128000` | Model context window in tokens. Used to compute compression thresholds. |
-| `archive_message_count` | `1000` | Maximum number of messages to retain in the retrievable archive per session. |
+| `compress_chars_per_token` | `4.0` | Characters-per-token divisor for the token estimate. Lower values estimate more tokens (more conservative); tune toward `3.5` for code/JSON-heavy sessions. |
+| `compress_token_safety_margin` | `1.0` | Multiplier applied to every token estimate so it errs high, triggering compression earlier. `1.1` inflates the estimate by 10%. |
+| `archive_message_count` | `5000` | Maximum number of messages to retain in the retrievable archive per session. |
 | `archive_days` | `0` (unlimited) | Limit archive retrieval to messages within the last *n* days. |
+| `archive_content_max_bytes` | `4096` | Maximum per-message content bytes stored in the archive; longer content is truncated (the active context still saw the full text). |
 | `compress_model` | agent's primary model | Model used for summarisation. Can be a cheaper or faster model. |
 
 Example (per-agent override):

@@ -1,4 +1,7 @@
-package main
+// Package webserver hosts the embedded WebUI frontend assets and the
+// route-registration entry point that the merged claw binary uses to mount
+// the WebUI on the gateway's shared HTTP mux.
+package webserver
 
 import (
 	"embed"
@@ -14,26 +17,24 @@ import (
 //go:embed all:dist
 var frontendFS embed.FS
 
-// registerEmbedRoutes sets up the HTTP handler to serve the embedded frontend files
-func registerEmbedRoutes(mux *http.ServeMux) {
-	// Register correct MIME type for SVG files
-	// Go's built-in mime.TypeByExtension returns "image/svg" which is incorrect
-	// The correct MIME type per RFC 6838 is "image/svg+xml"
+// RegisterEmbedRoutes sets up the HTTP handler to serve the embedded frontend
+// assets on the given mux. Unknown /api/* paths remain 404 (so the gateway's
+// own /api/* handlers are reachable without being shadowed by the SPA fallback).
+func RegisterEmbedRoutes(mux *http.ServeMux) {
+	// Go's built-in mime.TypeByExtension returns "image/svg" which is incorrect.
+	// The correct MIME type per RFC 6838 is "image/svg+xml".
 	if err := mime.AddExtensionType(".svg", "image/svg+xml"); err != nil {
 		logger.WarnCF("web", "Failed to register SVG MIME type", map[string]any{"error": err.Error()})
 	}
 
-	// Attempt to get the subdirectory 'dist' where Vite usually builds
 	subFS, err := fs.Sub(frontendFS, "dist")
 	if err != nil {
-		// Log a warning if dist doesn't exist yet (e.g., during development before a frontend build)
-		logger.WarnC("web", "No 'dist' folder found in embedded frontend - run pnpm build:backend before building the Go backend")
+		logger.WarnC("web", "No 'dist' folder found in embedded frontend — run `pnpm build:backend` in web/frontend before building")
 		return
 	}
 
 	fileServer := http.FileServer(http.FS(subFS))
 
-	// Serve static assets and fallback to index.html for SPA routes.
 	mux.Handle(
 		"/",
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -53,7 +54,6 @@ func registerEmbedRoutes(mux *http.ServeMux) {
 				cleanPath = ""
 			}
 
-			// Existing static files/directories should be served directly.
 			if cleanPath != "" {
 				if _, statErr := fs.Stat(subFS, cleanPath); statErr == nil {
 					fileServer.ServeHTTP(w, r)

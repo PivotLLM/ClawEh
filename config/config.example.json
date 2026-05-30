@@ -161,14 +161,6 @@
       },
       "reasoning_channel_id": ""
     },
-    "whatsapp": {
-      "enabled": false,
-      "bridge_url": "ws://localhost:3001",
-      "use_native": false,
-      "session_store_path": "",
-      "allow_from": ["YOUR_USER_ID"],
-      "reasoning_channel_id": ""
-    },
     "slack": {
       "enabled": false,
       "bot_token": "xoxb-YOUR-BOT-TOKEN",
@@ -199,33 +191,6 @@
       "channel_access_token": "YOUR_LINE_CHANNEL_ACCESS_TOKEN",
       "webhook_path": "/webhook/line",
       "allow_from": ["YOUR_USER_ID"],
-      "reasoning_channel_id": ""
-    },
-    "irc": {
-      "enabled": false,
-      "server": "irc.libera.chat:6697",
-      "tls": true,
-      "nick": "mybot",
-      "user": "",
-      "real_name": "",
-      "password": "",
-      "nickserv_password": "",
-      "sasl_user": "",
-      "sasl_password": "",
-      "channels": [
-        "#mychannel"
-      ],
-      "request_caps": [
-        "server-time",
-        "message-tags"
-      ],
-      "allow_from": ["YOUR_USER_ID"],
-      "group_trigger": {
-        "mention_only": true
-      },
-      "typing": {
-        "enabled": false
-      },
       "reasoning_channel_id": ""
     }
   },

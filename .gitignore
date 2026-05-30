@@ -10,7 +10,7 @@ private/
 *.out
 /claw
 /claw-test
-cmd/**/workspace
+internal/onboard/workspace/
 
 # ClawEh data directory
 .claw/

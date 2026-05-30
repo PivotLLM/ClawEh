@@ -10,6 +10,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/pkg/llmcontext"
 	"github.com/PivotLLM/ClawEh/pkg/logger"
+	"github.com/PivotLLM/ClawEh/pkg/session"
 )
 
 const (
@@ -21,9 +22,23 @@ const (
 // goroutine. The sync.Map in AgentLoop stores *cmEntry values.
 type cmEntry struct {
 	cm           llmcontext.ContextManager
-	sessionKey   string // used by the eviction pass to revoke session tokens
+	sessionKey   string               // used by the eviction pass to revoke session tokens
+	store        session.SessionStore // used on eviction to drop per-session in-memory caches
 	lastAccessed time.Time
 	refcount     atomic.Int32
+}
+
+// forgetSessionState drops per-session in-memory caches in the session store
+// (e.g. the noise-dedup cache) when a context manager is evicted, so those
+// caches do not grow unbounded over the lifetime of the process. Best-effort:
+// stores that do not support it are skipped.
+func forgetSessionState(store session.SessionStore, sessionKey string) {
+	if store == nil || sessionKey == "" {
+		return
+	}
+	if f, ok := store.(interface{ ForgetSession(string) }); ok {
+		f.ForgetSession(sessionKey)
+	}
 }
 
 // evictContextManagers runs until evictStop is closed, waking every
@@ -79,6 +94,7 @@ func (al *AgentLoop) runEvictionPass(ttl time.Duration) {
 				"error": err.Error(),
 			})
 		}
+		forgetSessionState(entry.store, entry.sessionKey)
 		logger.InfoCF("agent", "evicted idle context manager", map[string]any{
 			"key":      key,
 			"idle_min": now.Sub(entry.lastAccessed).Minutes(),
@@ -109,6 +125,7 @@ func (al *AgentLoop) drainContextManagers() {
 				"error": err.Error(),
 			})
 		}
+		forgetSessionState(entry.store, entry.sessionKey)
 		return true
 	})
 }

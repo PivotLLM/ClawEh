@@ -1,5 +1,5 @@
 import { IconLoader2 } from "@tabler/icons-react"
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useTranslation } from "react-i18next"
 
 import { type ModelInfo, setDefaultModel, updateModel } from "@/api/models"
@@ -10,8 +10,20 @@ import {
   KeyInput,
   SwitchCardField,
 } from "@/components/shared-form"
+import {
+  REASONING_EFFORT_OPTIONS,
+  formatExtraBody,
+  parseExtraBody,
+} from "@/components/models/model-config-fields"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import {
   Sheet,
   SheetContent,
@@ -20,6 +32,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet"
+import { Textarea } from "@/components/ui/textarea"
 
 interface EditForm {
   apiKey: string
@@ -33,6 +46,8 @@ interface EditForm {
   maxTokensField: string
   requestTimeout: string
   thinkingLevel: string
+  reasoningEffort: string
+  extraBody: string
   noTools: boolean
 }
 
@@ -62,6 +77,8 @@ export function EditModelSheet({
     maxTokensField: "",
     requestTimeout: "",
     thinkingLevel: "",
+    reasoningEffort: "",
+    extraBody: "",
     noTools: false,
   })
   const [saving, setSaving] = useState(false)
@@ -84,6 +101,8 @@ export function EditModelSheet({
           ? String(model.request_timeout)
           : "",
         thinkingLevel: model.thinking_level ?? "",
+        reasoningEffort: model.reasoning_effort ?? "",
+        extraBody: formatExtraBody(model.extra_body),
         noTools: model.no_tools ?? false,
       })
       setSetAsDefault(model.is_default)
@@ -95,8 +114,14 @@ export function EditModelSheet({
     (key: keyof EditForm) => (e: React.ChangeEvent<HTMLInputElement>) =>
       setForm((f) => ({ ...f, [key]: e.target.value }))
 
+  const extraBodyParsed = useMemo(
+    () => parseExtraBody(form.extraBody, t),
+    [form.extraBody, t],
+  )
+
   const handleSave = async () => {
     if (!model) return
+    if (extraBodyParsed.error) return
     setSaving(true)
     setError("")
     try {
@@ -116,6 +141,12 @@ export function EditModelSheet({
           ? Number(form.requestTimeout)
           : undefined,
         thinking_level: form.thinkingLevel || undefined,
+        // Always send reasoning_effort and extra_body, even when empty:
+        // handleUpdateModel merge-unmarshals into the existing entry, so an
+        // absent field preserves the old value. "" / null tell the backend to
+        // clear, which then drops the field via omitempty on save.
+        reasoning_effort: form.reasoningEffort,
+        extra_body: extraBodyParsed.value ?? null,
         no_tools: form.noTools,
       })
       if (setAsDefault && !model.is_default) {
@@ -271,6 +302,52 @@ export function EditModelSheet({
                 />
               </Field>
 
+              <Field
+                label={t("models.field.reasoningEffort")}
+                hint={t("models.field.reasoningEffortHint")}
+              >
+                <Select
+                  value={form.reasoningEffort === "" ? "__unset__" : form.reasoningEffort}
+                  onValueChange={(v) =>
+                    setForm((f) => ({
+                      ...f,
+                      reasoningEffort: v === "__unset__" ? "" : v,
+                    }))
+                  }
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__unset__">
+                      {t("models.field.reasoningEffortUnset")}
+                    </SelectItem>
+                    {REASONING_EFFORT_OPTIONS.map((opt) => (
+                      <SelectItem key={opt} value={opt}>
+                        {opt}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
+
+              <Field
+                label={t("models.field.extraBody")}
+                hint={t("models.field.extraBodyHint")}
+                error={extraBodyParsed.error}
+              >
+                <Textarea
+                  value={form.extraBody}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, extraBody: e.target.value }))
+                  }
+                  placeholder={t("models.field.extraBodyPlaceholder")}
+                  className="font-mono text-xs"
+                  rows={6}
+                  aria-invalid={!!extraBodyParsed.error}
+                />
+              </Field>
+
               <SwitchCardField
                 label="Tools Enabled"
                 hint="When off, no tools are passed to this model. Disable for models that don't support tool calling."
@@ -315,7 +392,10 @@ export function EditModelSheet({
           <Button variant="ghost" onClick={onClose} disabled={saving}>
             {t("common.cancel")}
           </Button>
-          <Button onClick={handleSave} disabled={saving}>
+          <Button
+            onClick={handleSave}
+            disabled={saving || !!extraBodyParsed.error}
+          >
             {saving && <IconLoader2 className="size-4 animate-spin" />}
             {t("common.save")}
           </Button>

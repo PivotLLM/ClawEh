@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/PivotLLM/ClawEh/pkg/memory"
+	"github.com/PivotLLM/ClawEh/pkg/providers"
 	"github.com/PivotLLM/ClawEh/pkg/tools"
 )
 
@@ -27,7 +28,11 @@ func (al *AgentLoop) registerSessionManagementTools(registry *AgentRegistry) {
 		currentAgent := agentInst
 
 		// compact_session: triggers an immediate LLM-based compression pass.
+		// Wrap ctx with the agent ID so provider error logs from the
+		// compression LLM call attribute correctly when the MCP tool path
+		// reaches the context manager outside runAgentLoop.
 		compactFn := func(ctx context.Context, sessionKey string) error {
+			ctx = providers.WithAgentID(ctx, currentAgent.ID)
 			cm, release := al.getContextManager(currentAgent, sessionKey)
 			defer release()
 			return cm.Compact(ctx)

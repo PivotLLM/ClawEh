@@ -16,11 +16,13 @@ const (
 	defaultMinCompressionGain    = 0.05
 	defaultCooldownMessages      = 5
 	defaultLargeMsgOffset        = 20
-	defaultArchiveMessageCount   = 1000
+	defaultArchiveMessageCount   = 5000
 	defaultCompressTargetFactor  = 0.5
 	defaultMinLoopGain           = 0.10
 	defaultMaxCompressIterations = 3
 	defaultOverheadTokens        = 4000
+	defaultCharsPerToken         = 4.0
+	defaultTokenSafetyMargin     = 1.0
 )
 
 // managerConfig holds resolved configuration for a Manager.
@@ -39,7 +41,18 @@ type managerConfig struct {
 	contextWindow       int
 	overheadTokens      int
 	maxSummaryTokens    int // 0 = use 20% of contextWindow at truncation time
-	notifyCallback      func(msg string)
+	// charsPerToken is the divisor used to convert a rune count into an
+	// estimated token count. Lower values estimate more tokens per character
+	// (more conservative). Default: 4.0.
+	charsPerToken float64
+	// tokenSafetyMargin multiplies the token estimate so it errs high. A value
+	// of 1.1 inflates the estimate by 10%, triggering compression slightly
+	// earlier. Default: 1.0 (no inflation).
+	tokenSafetyMargin float64
+	// archiveContentMaxBytes caps per-message content stored in the archive.
+	// 0 (the default) resolves to archiveContentMaxBytes at write time.
+	archiveContentMaxBytes int
+	notifyCallback         func(msg string)
 }
 
 func defaultManagerConfig() managerConfig {
@@ -53,6 +66,8 @@ func defaultManagerConfig() managerConfig {
 		archiveMessageCount: defaultArchiveMessageCount,
 		contextWindow:       128000,
 		overheadTokens:      defaultOverheadTokens,
+		charsPerToken:       defaultCharsPerToken,
+		tokenSafetyMargin:   defaultTokenSafetyMargin,
 	}
 }
 
@@ -131,4 +146,38 @@ func WithMaxSummaryTokens(n int) Option {
 
 func WithNotifyCallback(fn func(msg string)) Option {
 	return func(c *managerConfig) { c.notifyCallback = fn }
+}
+
+// WithCharsPerToken sets the divisor used to convert a rune count into an
+// estimated token count. Lower values produce a higher (more conservative)
+// token estimate. Values <= 0 are ignored and the default (4.0) is retained.
+func WithCharsPerToken(v float64) Option {
+	return func(c *managerConfig) {
+		if v > 0 {
+			c.charsPerToken = v
+		}
+	}
+}
+
+// WithTokenSafetyMargin sets the multiplier applied to every token estimate so
+// it errs high, triggering compression earlier. A value of 1.1 inflates the
+// estimate by 10%. Values <= 0 are ignored and the default (1.0) is retained.
+func WithTokenSafetyMargin(v float64) Option {
+	return func(c *managerConfig) {
+		if v > 0 {
+			c.tokenSafetyMargin = v
+		}
+	}
+}
+
+// WithArchiveContentMaxBytes sets the maximum per-message content size stored
+// in the archive. Messages whose Content exceeds this are truncated before
+// writing. Values <= 0 are ignored and the default (archiveContentMaxBytes) is
+// used at write time.
+func WithArchiveContentMaxBytes(n int) Option {
+	return func(c *managerConfig) {
+		if n > 0 {
+			c.archiveContentMaxBytes = n
+		}
+	}
 }

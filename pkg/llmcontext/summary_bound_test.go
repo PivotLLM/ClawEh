@@ -13,12 +13,12 @@ import (
 // entries, each containing verbose text so the serialized form is large.
 func makeLargeSummary(n int) *Summary {
 	s := &Summary{
-		Version: 1,
+		Version: 2,
 		State: SummaryState{
-			Goals:       strings.Repeat("a goal that is somewhat verbose ", 5),
-			Progress:    strings.Repeat("making good progress on many tasks ", 5),
-			Pending:     strings.Repeat("waiting on various things ", 5),
-			Constraints: strings.Repeat("important constraint to remember ", 5),
+			Goals:       []SummaryItem{{Text: strings.Repeat("a goal that is somewhat verbose ", 5), Refs: []SeqRange{{SeqStart: 1}}}},
+			Progress:    []SummaryItem{{Text: strings.Repeat("making good progress on many tasks ", 5), Refs: []SeqRange{{SeqStart: 2}}}},
+			Pending:     []SummaryItem{{Text: strings.Repeat("waiting on various things ", 5), Refs: []SeqRange{{SeqStart: 3}}}},
+			Constraints: []SummaryItem{{Text: strings.Repeat("important constraint to remember ", 5), Refs: []SeqRange{{SeqStart: 4}}}},
 		},
 		CoveredSeqStart: 1,
 		CoveredSeqEnd:   n,
@@ -70,13 +70,13 @@ func TestTruncateToFit_FitsWithinLimit(t *testing.T) {
 // (highest index) are preserved and the oldest (index 0) are dropped first.
 func TestTruncateToFit_PreservesNewest(t *testing.T) {
 	s := &Summary{
-		Version:         1,
+		Version:         2,
 		CoveredSeqStart: 1,
 		CoveredSeqEnd:   10,
 		KeyMoments: []KeyMoment{
-			{Seq: 1, Role: "user", Summary: strings.Repeat("old moment ", 30)},
-			{Seq: 5, Role: "user", Summary: strings.Repeat("middle moment ", 30)},
-			{Seq: 10, Role: "user", Summary: strings.Repeat("newest moment ", 30)},
+			{Refs: []SeqRange{{SeqStart: 1}}, Role: "user", Summary: strings.Repeat("old moment ", 30)},
+			{Refs: []SeqRange{{SeqStart: 5}}, Role: "user", Summary: strings.Repeat("middle moment ", 30)},
+			{Refs: []SeqRange{{SeqStart: 10}}, Role: "user", Summary: strings.Repeat("newest moment ", 30)},
 		},
 	}
 
@@ -89,7 +89,7 @@ func TestTruncateToFit_PreservesNewest(t *testing.T) {
 	// The most recent key moment (seq 10) should still be present.
 	found := false
 	for _, km := range s.KeyMoments {
-		if km.Seq == 10 {
+		if len(km.Refs) > 0 && km.Refs[0].SeqStart == 10 {
 			found = true
 		}
 	}
@@ -101,8 +101,8 @@ func TestTruncateToFit_PreservesNewest(t *testing.T) {
 // TestTruncateToFit_AlreadyFits returns false when summary already fits.
 func TestTruncateToFit_AlreadyFits(t *testing.T) {
 	s := &Summary{
-		Version: 1,
-		State:   SummaryState{Goals: "short"},
+		Version: 2,
+		State:   SummaryState{Goals: []SummaryItem{{Text: "short", Refs: []SeqRange{{SeqStart: 1}}}}},
 	}
 	if s.TruncateToFit(10000) {
 		t.Error("TruncateToFit should return false when summary already fits")
@@ -150,7 +150,7 @@ func TestStats_SummaryTokensPopulated(t *testing.T) {
 	m := newTestManager(store, WithContextWindow(128000))
 
 	// newTestManager uses sessionKey "test-session" — inject on the correct key.
-	store.SetSummary("test-session", `{"version":1,"state":{"goals":"test"},"covered_seq_start":0,"covered_seq_end":5,"generated_at":"2026-01-01T00:00:00Z"}`)
+	store.SetSummary("test-session", `{"version":2,"state":{"goals":[{"text":"test","refs":[{"seq_start":1}]}]},"covered_seq_start":0,"covered_seq_end":5,"generated_at":"2026-01-01T00:00:00Z"}`)
 
 	stats := m.Stats()
 	if stats.SummaryTokens == 0 {

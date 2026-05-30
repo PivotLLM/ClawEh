@@ -111,8 +111,27 @@ type Config struct {
 	// file for changes and triggers a reload. Defaults to
 	// global.DefaultConfigReloadIntervalSeconds; floored at
 	// global.MinConfigReloadIntervalSeconds.
-	ConfigReloadIntervalSeconds int    `json:"config_reload_interval_seconds,omitempty" env:"CLAW_CONFIG_RELOAD_INTERVAL_SECONDS"`
-	dataDir                     string // runtime-only: base data directory, not serialized
+	ConfigReloadIntervalSeconds int `json:"config_reload_interval_seconds,omitempty" env:"CLAW_CONFIG_RELOAD_INTERVAL_SECONDS"`
+
+	// OpenAICompatProtocols registers additional protocol prefixes that should
+	// be served by the openai-compatible HTTP provider. Keys are the protocol
+	// identifier (the part before "/" in a ModelConfig.Model string); values
+	// are the default api_base for that protocol — empty means "no default,
+	// each model must set api_base explicitly". Keys must not collide with
+	// any protocol owned by a hardcoded provider (see reservedProtocolNames).
+	OpenAICompatProtocols map[string]string `json:"openai_compat_protocols,omitempty"`
+
+	// OpenAICompatResponseFormat overrides the per-protocol default for
+	// emitting `response_format={"type":"json_object"}` on outbound requests
+	// when the caller asks for JSON-mode output. Built-in defaults: openai
+	// and xai are capable; everything else is off. Operators can flip a
+	// configurable protocol on (e.g. openrouter, groq, litellm) without
+	// touching code by setting `openai_compat_response_format: {openrouter:
+	// true}` here. Protocols not present in the map fall back to the
+	// hardcoded default.
+	OpenAICompatResponseFormat map[string]bool `json:"openai_compat_response_format,omitempty"`
+
+	dataDir string // runtime-only: base data directory, not serialized
 }
 
 // MarshalJSON implements custom JSON marshaling for Config
@@ -208,8 +227,11 @@ type AgentConfig struct {
 	CompressRetainTokenPercent *int              `json:"compress_retain_token_percent,omitempty"`
 	CompressRetainMinMessages  *int              `json:"compress_retain_min_messages,omitempty"`
 	CompressModel              *AgentModelConfig `json:"compress_model,omitempty"`
+	CompressCharsPerToken      *float64          `json:"compress_chars_per_token,omitempty"`
+	CompressTokenSafetyMargin  *float64          `json:"compress_token_safety_margin,omitempty"`
 	ArchiveMessageCount        *int              `json:"archive_message_count,omitempty"`
 	ArchiveDays                *int              `json:"archive_days,omitempty"`
+	ArchiveContentMaxBytes     *int              `json:"archive_content_max_bytes,omitempty"`
 }
 
 // IsEnabled returns true if the agent is enabled (nil means enabled by default).
@@ -326,8 +348,11 @@ type AgentDefaults struct {
 	CompressRetainTokenPercent int               `json:"compress_retain_token_percent,omitempty" env:"CLAW_AGENTS_DEFAULTS_COMPRESS_RETAIN_TOKEN_PERCENT"`
 	CompressRetainMinMessages  int               `json:"compress_retain_min_messages,omitempty"  env:"CLAW_AGENTS_DEFAULTS_COMPRESS_RETAIN_MIN_MESSAGES"`
 	CompressModel              AgentModelConfig  `json:"compress_model,omitempty"`
+	CompressCharsPerToken      float64           `json:"compress_chars_per_token,omitempty"      env:"CLAW_AGENTS_DEFAULTS_COMPRESS_CHARS_PER_TOKEN"`
+	CompressTokenSafetyMargin  float64           `json:"compress_token_safety_margin,omitempty"  env:"CLAW_AGENTS_DEFAULTS_COMPRESS_TOKEN_SAFETY_MARGIN"`
 	ArchiveMessageCount        int               `json:"archive_message_count,omitempty"         env:"CLAW_AGENTS_DEFAULTS_ARCHIVE_MESSAGE_COUNT"`
 	ArchiveDays                int               `json:"archive_days,omitempty"                  env:"CLAW_AGENTS_DEFAULTS_ARCHIVE_DAYS"`
+	ArchiveContentMaxBytes     int               `json:"archive_content_max_bytes,omitempty"     env:"CLAW_AGENTS_DEFAULTS_ARCHIVE_CONTENT_MAX_BYTES"`
 	DefaultTools               []string          `json:"default_tools,omitempty"`
 	Routing                    *RoutingConfig    `json:"routing,omitempty"`
 }
@@ -359,14 +384,12 @@ func (d *AgentDefaults) SetDefaultModel(modelName string) {
 }
 
 type ChannelsConfig struct {
-	WhatsApp WhatsAppConfig      `json:"whatsapp"`
 	Telegram []TelegramBotConfig `json:"telegram"`
 	Discord  DiscordConfig       `json:"discord"`
 	Slack    SlackConfig         `json:"slack"`
 	Matrix   MatrixConfig        `json:"matrix"`
 	LINE     LINEConfig          `json:"line"`
 	WebUI    WebUIConfig         `json:"webui"`
-	IRC      IRCConfig           `json:"irc"`
 }
 
 // GroupTriggerConfig controls when the bot responds in group chats.
@@ -384,15 +407,6 @@ type TypingConfig struct {
 type PlaceholderConfig struct {
 	Enabled bool   `json:"enabled,omitempty"`
 	Text    string `json:"text,omitempty"`
-}
-
-type WhatsAppConfig struct {
-	Enabled            bool                `json:"enabled"              env:"CLAW_CHANNELS_WHATSAPP_ENABLED"`
-	BridgeURL          string              `json:"bridge_url"           env:"CLAW_CHANNELS_WHATSAPP_BRIDGE_URL"`
-	UseNative          bool                `json:"use_native"           env:"CLAW_CHANNELS_WHATSAPP_USE_NATIVE"`
-	SessionStorePath   string              `json:"session_store_path"   env:"CLAW_CHANNELS_WHATSAPP_SESSION_STORE_PATH"`
-	AllowFrom          FlexibleStringSlice `json:"allow_from"           env:"CLAW_CHANNELS_WHATSAPP_ALLOW_FROM"`
-	ReasoningChannelID string              `json:"reasoning_channel_id" env:"CLAW_CHANNELS_WHATSAPP_REASONING_CHANNEL_ID"`
 }
 
 // TelegramBotConfig defines a single named Telegram bot.
@@ -483,25 +497,6 @@ type WebUIConfig struct {
 	MaxConnections  int                 `json:"max_connections,omitempty"`
 	AllowFrom       FlexibleStringSlice `json:"allow_from"                  env:"CLAW_CHANNELS_WEBUI_ALLOW_FROM"`
 	Placeholder     PlaceholderConfig   `json:"placeholder,omitempty"`
-}
-
-type IRCConfig struct {
-	Enabled            bool                `json:"enabled"                 env:"CLAW_CHANNELS_IRC_ENABLED"`
-	Server             string              `json:"server"                  env:"CLAW_CHANNELS_IRC_SERVER"`
-	TLS                bool                `json:"tls"                     env:"CLAW_CHANNELS_IRC_TLS"`
-	Nick               string              `json:"nick"                    env:"CLAW_CHANNELS_IRC_NICK"`
-	User               string              `json:"user,omitempty"          env:"CLAW_CHANNELS_IRC_USER"`
-	RealName           string              `json:"real_name,omitempty"     env:"CLAW_CHANNELS_IRC_REAL_NAME"`
-	Password           string              `json:"password"                env:"CLAW_CHANNELS_IRC_PASSWORD"`
-	NickServPassword   string              `json:"nickserv_password"       env:"CLAW_CHANNELS_IRC_NICKSERV_PASSWORD"`
-	SASLUser           string              `json:"sasl_user"               env:"CLAW_CHANNELS_IRC_SASL_USER"`
-	SASLPassword       string              `json:"sasl_password"           env:"CLAW_CHANNELS_IRC_SASL_PASSWORD"`
-	Channels           FlexibleStringSlice `json:"channels"                env:"CLAW_CHANNELS_IRC_CHANNELS"`
-	RequestCaps        FlexibleStringSlice `json:"request_caps,omitempty"  env:"CLAW_CHANNELS_IRC_REQUEST_CAPS"`
-	AllowFrom          FlexibleStringSlice `json:"allow_from"              env:"CLAW_CHANNELS_IRC_ALLOW_FROM"`
-	GroupTrigger       GroupTriggerConfig  `json:"group_trigger,omitempty"`
-	Typing             TypingConfig        `json:"typing,omitempty"`
-	ReasoningChannelID string              `json:"reasoning_channel_id"    env:"CLAW_CHANNELS_IRC_REASONING_CHANNEL_ID"`
 }
 
 type DevicesConfig struct {
@@ -630,6 +625,102 @@ type ModelConfig struct {
 	// feature only; no rotation, no expansion of ~ or env vars. Ignored by
 	// providers other than openai_compat.
 	ResponseLogFile string `json:"response_log_file,omitempty"`
+
+	// ReasoningEffort sets the OpenAI-style reasoning_effort request field for
+	// models that natively accept it (notably Grok). Valid values are "low",
+	// "medium", "high", or empty (the field is omitted). Providers that don't
+	// understand the field will silently ignore it.
+	ReasoningEffort string `json:"reasoning_effort,omitempty" yaml:"reasoning_effort,omitempty"`
+
+	// ExtraBody is a free-form passthrough map merged into the JSON request
+	// body for OpenAI-compatible providers. Use it for per-provider knobs that
+	// claw does not model natively. Keys colliding with claw-managed fields
+	// (see reservedRequestBodyKeys) are rejected at config load.
+	ExtraBody map[string]any `json:"extra_body,omitempty" yaml:"extra_body,omitempty"`
+
+	// Runtime-only: set by Config.resolveOpenAICompatProtocols when the
+	// model's protocol prefix matches an entry in
+	// Config.OpenAICompatProtocols. Unexported so JSON ignores them.
+	openaiCompatExtra bool
+	openaiCompatBase  string
+
+	// Runtime-only: set during config resolution from
+	// Config.OpenAICompatResponseFormat. When true, the openai-compat
+	// provider built from this ModelConfig is allowed to emit
+	// response_format=json_object on outbound requests (the built-in
+	// per-protocol default is OR'd in by the provider itself). Unexported
+	// so JSON ignores it.
+	responseFormatJSON bool
+}
+
+// IsOpenAICompatExtra reports whether this model's protocol prefix was
+// registered via Config.OpenAICompatProtocols. The providers factory uses
+// this to route an otherwise-unknown protocol through the openai-compat
+// HTTP provider.
+func (c *ModelConfig) IsOpenAICompatExtra() bool {
+	if c == nil {
+		return false
+	}
+	return c.openaiCompatExtra
+}
+
+// OpenAICompatBase returns the default api_base registered for this model's
+// protocol via Config.OpenAICompatProtocols. Empty when the protocol was not
+// registered, or when it was registered with an empty default.
+func (c *ModelConfig) OpenAICompatBase() string {
+	if c == nil {
+		return ""
+	}
+	return c.openaiCompatBase
+}
+
+// MarkOpenAICompatExtra tags this ModelConfig as resolved via
+// Config.OpenAICompatProtocols. base is the registered default api_base
+// (may be empty). Called by Config.resolveOpenAICompatProtocols; also useful
+// in tests that construct a ModelConfig directly without going through
+// LoadConfig.
+func (c *ModelConfig) MarkOpenAICompatExtra(base string) {
+	c.openaiCompatExtra = true
+	c.openaiCompatBase = base
+}
+
+// ResponseFormatJSONCapable reports whether this ModelConfig has been
+// resolved as capable of receiving response_format=json_object via the
+// Config.OpenAICompatResponseFormat override. The built-in per-protocol
+// defaults are applied separately inside the openai-compat provider; this
+// flag only conveys the operator-supplied override.
+func (c *ModelConfig) ResponseFormatJSONCapable() bool {
+	if c == nil {
+		return false
+	}
+	return c.responseFormatJSON
+}
+
+// SetResponseFormatJSONCapable records the operator-supplied override that
+// the openai-compat provider should be permitted to emit response_format=
+// json_object for this model. Called by config resolution; exposed so tests
+// can build ModelConfigs directly without round-tripping through LoadConfig.
+func (c *ModelConfig) SetResponseFormatJSONCapable(v bool) {
+	c.responseFormatJSON = v
+}
+
+// reservedRequestBodyKeys lists the JSON request fields owned by claw's own
+// request builder. ExtraBody entries colliding with these keys are rejected at
+// config load — the collision guard there is what guarantees the merge step in
+// the request builder cannot overwrite a claw-managed field.
+var reservedRequestBodyKeys = map[string]struct{}{
+	"model":                 {},
+	"messages":              {},
+	"stream":                {},
+	"tools":                 {},
+	"tool_choice":           {},
+	"parallel_tool_calls":   {},
+	"reasoning_effort":      {},
+	"temperature":           {},
+	"max_tokens":            {},
+	"max_completion_tokens": {},
+	"top_p":                 {},
+	"n":                     {},
 }
 
 // Validate checks if the ModelConfig has all required fields.
@@ -639,6 +730,23 @@ func (c *ModelConfig) Validate() error {
 	}
 	if c.Model == "" {
 		return fmt.Errorf("model is required")
+	}
+	switch c.ReasoningEffort {
+	case "", "low", "medium", "high":
+		// ok
+	default:
+		return fmt.Errorf(
+			"model %q: invalid reasoning_effort %q (valid: low, medium, high, or omit)",
+			c.ModelName, c.ReasoningEffort,
+		)
+	}
+	for k := range c.ExtraBody {
+		if _, reserved := reservedRequestBodyKeys[k]; reserved {
+			return fmt.Errorf(
+				"model %q: extra_body key %q collides with claw-managed request field",
+				c.ModelName, k,
+			)
+		}
 	}
 	return nil
 }
@@ -901,6 +1009,14 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, err
 	}
 
+	// Reject openai_compat_protocols entries that collide with hardcoded
+	// providers, then tag matching model_list entries so the providers
+	// factory can route them via the openai-compat HTTP provider.
+	if err := cfg.ValidateOpenAICompatProtocols(); err != nil {
+		return nil, err
+	}
+	cfg.resolveOpenAICompatProtocols()
+
 	return cfg, nil
 }
 
@@ -1126,6 +1242,107 @@ func (c *Config) ValidateModelList() error {
 		}
 	}
 	return nil
+}
+
+// reservedProtocolNames is the set of protocol identifiers owned by a
+// hardcoded case branch in pkg/providers/factory_provider.go. Entries in
+// Config.OpenAICompatProtocols may not use these names — operators should
+// rely on the built-in behavior for these protocols, or pick a different
+// identifier.
+//
+// Keep this list in sync with the switch in
+// pkg/providers/factory_provider.go:CreateProviderFromConfig.
+var reservedProtocolNames = map[string]struct{}{
+	"openai":             {},
+	"azure":              {},
+	"azure-openai":       {},
+	"bedrock":            {},
+	"litellm":            {},
+	"openrouter":         {},
+	"groq":               {},
+	"gemini":             {},
+	"nvidia":             {},
+	"ollama":             {},
+	"moonshot":           {},
+	"deepseek":           {},
+	"cerebras":           {},
+	"vllm":               {},
+	"qwen":               {},
+	"mistral":            {},
+	"avian":              {},
+	"xai":                {},
+	"anthropic":          {},
+	"anthropic-messages": {},
+	"claude-cli":         {},
+	"claudecli":          {},
+	"codex-cli":          {},
+	"codexcli":           {},
+	"gemini-cli":         {},
+	"geminicli":          {},
+}
+
+// IsReservedProtocol reports whether name collides with a protocol owned by
+// a hardcoded provider in pkg/providers/factory_provider.go.
+func IsReservedProtocol(name string) bool {
+	_, ok := reservedProtocolNames[strings.ToLower(strings.TrimSpace(name))]
+	return ok
+}
+
+// ValidateOpenAICompatProtocols checks that no entry in OpenAICompatProtocols
+// collides with a hardcoded provider protocol or is otherwise malformed.
+// An entry duplicating a hardcoded openai-compat protocol (e.g. "xai") is
+// rejected — those protocols already ship with the right defaults, and
+// allowing operators to silently override them would mask drift between the
+// config-driven default and the hardcoded one.
+func (c *Config) ValidateOpenAICompatProtocols() error {
+	for proto := range c.OpenAICompatProtocols {
+		p := strings.TrimSpace(proto)
+		if p == "" {
+			return fmt.Errorf("openai_compat_protocols: empty protocol name")
+		}
+		if strings.ContainsAny(p, "/ \t") {
+			return fmt.Errorf("openai_compat_protocols: protocol name %q must not contain '/' or whitespace", proto)
+		}
+		if IsReservedProtocol(p) {
+			return fmt.Errorf(
+				"openai_compat_protocols: protocol %q is reserved by a built-in provider; remove the entry or pick a different name",
+				proto,
+			)
+		}
+	}
+	return nil
+}
+
+// resolveOpenAICompatProtocols walks ModelList and tags any entry whose
+// protocol prefix appears in OpenAICompatProtocols, recording the registered
+// default api_base on the entry so the providers factory can route it through
+// the openai-compat HTTP provider without a hardcoded switch entry. It also
+// applies any per-protocol overrides from OpenAICompatResponseFormat so the
+// openai-compat provider knows whether it may emit response_format=json_object
+// when a caller asks for JSON-mode output.
+func (c *Config) resolveOpenAICompatProtocols() {
+	for i := range c.ModelList {
+		proto := extractProtocolStatic(c.ModelList[i].Model)
+		if len(c.OpenAICompatProtocols) > 0 {
+			if base, ok := c.OpenAICompatProtocols[proto]; ok {
+				c.ModelList[i].MarkOpenAICompatExtra(base)
+			}
+		}
+		if enabled, ok := c.OpenAICompatResponseFormat[proto]; ok {
+			c.ModelList[i].SetResponseFormatJSONCapable(enabled)
+		}
+	}
+}
+
+// extractProtocolStatic mirrors providers.ExtractProtocol; duplicated here to
+// avoid an import cycle (providers imports config).
+func extractProtocolStatic(model string) string {
+	model = strings.TrimSpace(model)
+	protocol, _, found := strings.Cut(model, "/")
+	if !found {
+		return "openai"
+	}
+	return protocol
 }
 
 func MergeAPIKeys(apiKey string, apiKeys []string) []string {

@@ -11,19 +11,29 @@ import (
 // per-request by the agent loop so that per-request state (like session scope)
 // can coexist with long-lived callbacks (like GetModelInfo).
 type Runtime struct {
-	Config               *config.Config
-	AgentName            string
-	GetModelInfo         func() (name, provider, apiBase string)
-	ListAgentIDs         func() []string
-	ListDefinitions      func() []Definition
-	GetEnabledChannels   func() []string
-	SwitchModel          func(value string) (oldModel string, err error)
-	SwitchChannel        func(value string) error
-	ClearHistory         func() error
-	CompactHistory       func(ctx context.Context) error
-	ResetCooldown        func()
+	Config             *config.Config
+	AgentName          string
+	GetModelInfo       func() (name, provider, apiBase string)
+	ListAgentIDs       func() []string
+	ListDefinitions    func() []Definition
+	GetEnabledChannels func() []string
+	SwitchModel        func(value string) (oldModel string, err error)
+	SwitchChannel      func(value string) error
+	ClearHistory       func() error
+	CompactHistory     func(ctx context.Context) error
+	ResetCooldown      func()
+	// ClearCooldown clears the cooldown for a single provider/model and
+	// returns true when an entry existed. Used by `/cooldowns clear <p/m>`
+	// to surface a "no cooldown found" message when the entry was already
+	// clear (informational, not an error).
+	ClearCooldown        func(provider, model string) bool
 	RetriggerLastMessage func(ctx context.Context) error
 	CancelPending        func() int // drains pending queued messages; returns skip count
+
+	// ListCooldowns returns the process-wide snapshot of models that are
+	// currently in cooldown or billing-disabled. Returns nil on no
+	// implementation; the renderer must handle that as "feature unavailable".
+	ListCooldowns func() []CooldownEntry
 
 	Uptime          func() time.Duration
 	GetSessionStats func() (msgCount int, estTokens int, summaryChars int)
@@ -40,4 +50,15 @@ type Runtime struct {
 	// archive exists. Implementations must be cheap (single SQL aggregate or
 	// equivalent) and must not load message bodies.
 	GetArchiveStats func() (count int, first, last time.Time)
+}
+
+// CooldownEntry is a single row of the process-wide cooldown snapshot
+// surfaced in /status and /cooldowns. Decoupled from the providers package
+// so the commands package doesn't import providers.
+type CooldownEntry struct {
+	Provider string
+	Model    string
+	Reason   string
+	Since    time.Time
+	Until    time.Time
 }

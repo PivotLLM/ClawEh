@@ -2,13 +2,14 @@
 
 ## Overview
 
-This test plan covers manual and automated verification of the ClawEh web frontend and backend launcher. It is organized by feature area. Run against a locally running `claw-web` instance (`http://127.0.0.1:18800`).
+This test plan covers manual and automated verification of the ClawEh web frontend and the WebUI HTTP layer that lives inside the merged `claw` binary. It is organized by feature area. Run against a locally running `claw` instance (`http://127.0.0.1:18790`).
 
 ## Prerequisites
 
-- `claw-web` is running (`update-claw.sh` or `cd web/backend && ./claw-web`)
-- A browser or Playwright session pointed at `http://127.0.0.1:18800`
-- The claw gateway may or may not be running; tests note where it matters
+- `claw` is running (`update-claw.sh`, `make install && claw`, or `go run .`)
+- A browser or Playwright session pointed at `http://127.0.0.1:18790`
+- Because the gateway and the WebUI now run in the same process, the gateway
+  is always available whenever the WebUI is reachable.
 
 ---
 
@@ -52,7 +53,7 @@ OAuth is used to authenticate with providers that use browser-based or device-co
 - **OpenAI** — browser OAuth or device code
 - **Google Antigravity** (Cloud Code Assist / Gemini) — browser OAuth
 
-The flow opens a popup/new tab to the provider's auth page. When auth completes, the provider redirects to a local callback URL served by `claw-web`. That callback page sends a `postMessage` with type `claw-oauth-result` back to the opener tab, closing the loop.
+The flow opens a popup/new tab to the provider's auth page. When auth completes, the provider redirects to a local callback URL served by the merged `claw` binary. That callback page sends a `postMessage` with type `claw-oauth-result` back to the opener tab, closing the loop.
 
 | # | Test | Expected |
 |---|------|----------|
@@ -77,12 +78,16 @@ The flow opens a popup/new tab to the provider's auth page. When auth completes,
 
 ## 6. Gateway Control
 
+The gateway lives in the same process as the WebUI, so /api/gateway/status
+always reports "running" and /api/gateway/start is a no-op. /api/gateway/restart
+is reserved for in-process config reload (the config-file watcher already
+covers this path; see commit `515ed8f` for the merge).
+
 | # | Test | Expected |
 |---|------|----------|
-| 6.1 | Start gateway from web UI | Gateway starts; status shows running |
-| 6.2 | `CLAW_BINARY` env var override | If set, `claw-web` uses that binary path |
-| 6.3 | `CLAW_HOME` env var override | If set, `claw-web` uses that as the base directory |
-| 6.4 | Stop gateway from web UI | Gateway stops cleanly |
+| 6.1 | `GET /api/gateway/status` | `gateway_status: "running"` whenever `claw` is up |
+| 6.2 | `CLAW_HOME` env var override | If set, `claw` uses that as the base directory |
+| 6.3 | Save config via WebUI → `/api/config` | File on disk updates; in-process watcher triggers reload (no subprocess restart) |
 
 ---
 
@@ -100,9 +105,9 @@ The flow opens a popup/new tab to the provider's auth page. When auth completes,
 
 | # | Test | Expected |
 |---|------|----------|
-| 8.1 | Enable autostart in settings | Creates `~/.config/autostart/claw-web.desktop` |
-| 8.2 | Desktop file contents | `Name=ClawEh Web`, `Exec=claw-web`, `Icon=claw-web` |
-| 8.3 | Disable autostart | Removes `claw-web.desktop` |
+| 8.1 | Enable autostart in settings | Creates `~/.config/autostart/claw.desktop` |
+| 8.2 | Desktop file contents | `Name=ClawEh`, `Exec=claw` (no args), launches the merged binary |
+| 8.3 | Disable autostart | Removes `claw.desktop` |
 
 ---
 
@@ -110,15 +115,14 @@ The flow opens a popup/new tab to the provider's auth page. When auth completes,
 
 | # | Test | Expected |
 |---|------|----------|
-| 9.1 | `cat web/frontend/package.json \| grep name` | `"name": "claw-web"` |
-| 9.2 | Build frontend: `cd web && make` | Output binary named `claw-web` |
-| 9.3 | `.goreleaser.yaml` build IDs | `claw`, `claw-launcher`, `claw-launcher-tui` |
+| 9.1 | `cd web/frontend && pnpm build:backend` | Writes the bundle into `web/backend/dist/` for embedding |
+| 9.2 | `make build` | Produces a single `claw` binary with the WebUI embedded |
 
 ---
 
 ## Notes
 
-- Tests 4.2–4.5 and 6.x require a running `claw-web` instance.
-- Tests 5.3 additionally requires a configured and running claw gateway.
+- Tests 4.2–4.5 and 6.x require a running `claw` instance.
+- Tests 5.3 additionally requires a configured model so the agent loop can answer.
 - Test 8.x is Linux-only; macOS uses a LaunchAgent plist instead.
-- The `dist/index.html` in `web/backend/dist/` is a generated artifact from the last frontend build and may still contain old strings until the frontend is rebuilt (`cd web && make`).
+- The `dist/index.html` in `web/backend/dist/` is a generated artifact from the last frontend build and may still contain old strings until the frontend is rebuilt (`cd web/frontend && pnpm build:backend`).

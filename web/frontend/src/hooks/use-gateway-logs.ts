@@ -1,8 +1,6 @@
-import { useAtomValue } from "jotai"
 import { useEffect, useRef, useState } from "react"
 
 import { clearGatewayLogs, getGatewayLogs } from "@/api/gateway"
-import { gatewayAtom } from "@/store/gateway"
 
 export function useGatewayLogs() {
   const [logs, setLogs] = useState<string[]>([])
@@ -10,8 +8,6 @@ export function useGatewayLogs() {
   const logOffsetRef = useRef(0)
   const logRunIdRef = useRef(-1)
   const syncTokenRef = useRef(0)
-
-  const gateway = useAtomValue(gatewayAtom)
 
   const clearLogs = async () => {
     setClearing(true)
@@ -35,15 +31,7 @@ export function useGatewayLogs() {
     let timeout: ReturnType<typeof setTimeout>
 
     const fetchLogs = async () => {
-      if (
-        !mounted ||
-        !["running", "starting", "restarting"].includes(gateway.status)
-      ) {
-        if (mounted) {
-          timeout = setTimeout(fetchLogs, 1000)
-        }
-        return
-      }
+      if (!mounted) return
 
       try {
         const requestToken = syncTokenRef.current
@@ -86,7 +74,7 @@ export function useGatewayLogs() {
       mounted = false
       clearTimeout(timeout)
     }
-  }, [gateway.status])
+  }, [])
 
   return {
     clearLogs,

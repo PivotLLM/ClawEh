@@ -482,7 +482,11 @@ func (al *AgentLoop) processSessionMessage(ctx context.Context, msg bus.InboundM
 
 	response, err := al.processMessage(msgCtx, msg)
 	if err != nil {
-		response = fmt.Sprintf("Error processing message: %v", err)
+		if friendly := renderBillingError(err); friendly != "" {
+			response = friendly
+		} else {
+			response = fmt.Sprintf("Error processing message: %v", err)
+		}
 	}
 
 	if response != "" && !roundSent.Load() {
@@ -1290,6 +1294,14 @@ func (al *AgentLoop) runAgentLoop(
 		}
 	}
 
+	// Attach the agent ID to the context so every downstream provider call —
+	// including compression-time invocations through PreDispatchCheck,
+	// CheckAndCompress, AddUserMessage's trigger check, and the compact_session
+	// MCP tool — surfaces the agent in error logs. runLLMIteration also wraps
+	// ctx for its own scope, but compression paths fan out from runAgentLoop
+	// before reaching that point, so we set it once here at the top.
+	ctx = providers.WithAgentID(ctx, agent.ID)
+
 	// 1. Get or create the ContextManager for this session.
 	cm, releaseCtxMgr := al.getContextManager(agent, opts.SessionKey)
 	defer releaseCtxMgr()
@@ -1593,19 +1605,26 @@ func (al *AgentLoop) runLLMIteration(
 		var response *providers.LLMResponse
 		var err error
 
+		// Resolve the provider that will actually serve this turn's request so
+		// the type assertions below reflect that provider's capabilities rather
+		// than the shared agent.Provider (which on the default config is
+		// claude-cli for every agent, including those whose primary is a
+		// non-CLI / non-Anthropic protocol).
+		runProvider, runModel := al.resolveRunProvider(agent, activeCandidates, activeModel)
+
 		llmOpts := map[string]any{
 			"max_tokens":       agent.MaxTokens,
 			"prompt_cache_key": agent.ID,
 		}
 		// CLI providers (claude-cli, codex-cli, gemini-cli) invoke a subprocess and
 		// do not accept HTTP request parameters. Skip temperature for those providers.
-		if _, isCLI := agent.Provider.(providers.CLIProvider); !isCLI {
+		if _, isCLI := runProvider.(providers.CLIProvider); !isCLI {
 			llmOpts["temperature"] = agent.Temperature
 		}
 		// parseThinkingLevel guarantees ThinkingOff for empty/unknown values,
 		// so checking != ThinkingOff is sufficient.
 		if agent.ThinkingLevel != ThinkingOff {
-			if tc, ok := agent.Provider.(providers.ThinkingCapable); ok && tc.SupportsThinking() {
+			if tc, ok := runProvider.(providers.ThinkingCapable); ok && tc.SupportsThinking() {
 				llmOpts["thinking_level"] = string(agent.ThinkingLevel)
 			} else {
 				logger.WarnCF("agent", "thinking_level is set but current provider does not support it, ignoring",
@@ -1627,13 +1646,17 @@ func (al *AgentLoop) runLLMIteration(
 				fbResult, fbErr := al.fallback.Execute(
 					ctx,
 					activeCandidates,
-					func(ctx context.Context, providerName, model string) (*providers.LLMResponse, error) {
+					func(ctx context.Context, c providers.FallbackCandidate) (*providers.LLMResponse, error) {
 						if al.dispatcher != nil {
-							if p, err := al.dispatcher.Get(providerName, model); err == nil {
-								return p.Chat(ctx, messages, providerToolDefs, model, llmOpts)
+							key := c.Alias
+							if key == "" {
+								key = c.Provider + "/" + c.Model
+							}
+							if p, err := al.dispatcher.Get(key); err == nil {
+								return p.Chat(ctx, messages, providerToolDefs, c.Model, llmOpts)
 							}
 						}
-						return agent.Provider.Chat(ctx, messages, providerToolDefs, model, llmOpts)
+						return agent.Provider.Chat(ctx, messages, providerToolDefs, c.Model, llmOpts)
 					},
 				)
 				if fbErr != nil {
@@ -1673,7 +1696,14 @@ func (al *AgentLoop) runLLMIteration(
 				}
 				return fbResult.Response, nil
 			}
-			return agent.Provider.Chat(ctx, messages, providerToolDefs, activeModel, llmOpts)
+			// No active fallback chain (no candidates, or fallback disabled):
+			// route through the dispatcher-resolved provider for the agent's
+			// primary model so non-default protocols don't get silently routed
+			// through the shared agent.Provider (the default-config claude-cli).
+			// resolveRunProvider returns agent.Provider + activeModel as the
+			// last-resort safety net when dispatcher resolution cannot satisfy
+			// the request.
+			return runProvider.Chat(ctx, messages, providerToolDefs, runModel, llmOpts)
 		}
 
 		// Retry loop for context/token errors
@@ -1936,13 +1966,20 @@ func (al *AgentLoop) runLLMIteration(
 			go func(idx int, tc providers.ToolCall) {
 				defer wg.Done()
 
-				argsJSON, _ := json.Marshal(tc.Arguments)
-				argsPreview := utils.Truncate(string(argsJSON), 200)
-				logger.InfoCF("agent", fmt.Sprintf("Tool call: %s(%s)", tc.Name, argsPreview),
+				redacted := tools.RedactArgs(tc.Name, tc.Arguments)
+				logger.InfoCF("agent", "Tool call dispatched",
 					map[string]any{
 						"agent_id":  agent.ID,
 						"tool":      tc.Name,
 						"iteration": iteration,
+						"args":      redacted,
+					})
+				logger.DebugCF("agent", "Tool call dispatched (raw args)",
+					map[string]any{
+						"agent_id":  agent.ID,
+						"tool":      tc.Name,
+						"iteration": iteration,
+						"args":      tc.Arguments,
 					})
 
 				// Create async callback for tools that implement AsyncExecutor.
@@ -2095,6 +2132,44 @@ func (al *AgentLoop) runLLMIteration(
 	}
 
 	return finalContent, lastNormal, lastFinishReason, iteration, nil
+}
+
+// resolveRunProvider returns the LLMProvider (and matching model id) that will
+// serve this turn's primary chat dispatch. When activeCandidates has at least
+// one entry the first candidate's (protocol, model) pair is resolved through
+// the per-model dispatcher; otherwise the agent's primary model is resolved
+// through the dispatcher in the same way buildDefaultCompressLLMClient does.
+//
+// Falls back to (agent.Provider, activeModel) only when the dispatcher cannot
+// satisfy the request — mirroring the compress-empty-fallback safety net in
+// context_manager.go. This prevents the type-assertion + dispatch sites from
+// silently consulting the shared agent.Provider (which on the shipped default
+// config is claude-cli for every agent) for non-claude-cli primaries.
+func (al *AgentLoop) resolveRunProvider(
+	agent *AgentInstance,
+	activeCandidates []providers.FallbackCandidate,
+	activeModel string,
+) (providers.LLMProvider, string) {
+	if al.dispatcher != nil {
+		var alias, protocol, modelID string
+		if len(activeCandidates) > 0 {
+			alias = strings.TrimSpace(activeCandidates[0].Alias)
+			protocol = strings.TrimSpace(activeCandidates[0].Provider)
+			modelID = strings.TrimSpace(activeCandidates[0].Model)
+		} else if a, p, m, ok := resolveCompressModelTarget(al.GetConfig(), strings.TrimSpace(agent.Model)); ok {
+			alias, protocol, modelID = a, p, m
+		}
+		if protocol != "" && modelID != "" {
+			key := alias
+			if key == "" {
+				key = protocol + "/" + modelID
+			}
+			if p, err := al.dispatcher.Get(key); err == nil {
+				return p, modelID
+			}
+		}
+	}
+	return agent.Provider, activeModel
 }
 
 // selectCandidates returns the model candidates and resolved model name to use
@@ -2403,6 +2478,29 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 			if al.fallback != nil {
 				al.fallback.Reset()
 			}
+		}
+		rt.ClearCooldown = func(provider, model string) bool {
+			if al.fallback == nil {
+				return false
+			}
+			return al.fallback.Clear(provider, model)
+		}
+		rt.ListCooldowns = func() []commands.CooldownEntry {
+			if al.fallback == nil {
+				return nil
+			}
+			snap := al.fallback.CooldownSnapshot()
+			out := make([]commands.CooldownEntry, 0, len(snap))
+			for _, s := range snap {
+				out = append(out, commands.CooldownEntry{
+					Provider: s.Provider,
+					Model:    s.Model,
+					Reason:   string(s.Reason),
+					Since:    s.Since,
+					Until:    s.Until,
+				})
+			}
+			return out
 		}
 		if opts != nil {
 			sessionKey := opts.SessionKey

@@ -11,8 +11,8 @@ func makeCandidate(provider, model string) FallbackCandidate {
 	return FallbackCandidate{Provider: provider, Model: model}
 }
 
-func successRun(content string) func(ctx context.Context, provider, model string) (*LLMResponse, error) {
-	return func(ctx context.Context, provider, model string) (*LLMResponse, error) {
+func successRun(content string) func(ctx context.Context, c FallbackCandidate) (*LLMResponse, error) {
+	return func(ctx context.Context, c FallbackCandidate) (*LLMResponse, error) {
 		return &LLMResponse{Content: content, FinishReason: "stop"}, nil
 	}
 }
@@ -44,7 +44,7 @@ func TestFallback_SecondCandidateSuccess(t *testing.T) {
 	}
 
 	attempt := 0
-	run := func(ctx context.Context, provider, model string) (*LLMResponse, error) {
+	run := func(ctx context.Context, c FallbackCandidate) (*LLMResponse, error) {
 		attempt++
 		if attempt == 1 {
 			return nil, errors.New("rate limit exceeded")
@@ -77,7 +77,7 @@ func TestFallback_AllFail(t *testing.T) {
 		makeCandidate("groq", "llama"),
 	}
 
-	run := func(ctx context.Context, provider, model string) (*LLMResponse, error) {
+	run := func(ctx context.Context, c FallbackCandidate) (*LLMResponse, error) {
 		return nil, errors.New("rate limit exceeded")
 	}
 
@@ -105,7 +105,7 @@ func TestFallback_ContextCanceled(t *testing.T) {
 	}
 
 	attempt := 0
-	run := func(ctx context.Context, provider, model string) (*LLMResponse, error) {
+	run := func(ctx context.Context, c FallbackCandidate) (*LLMResponse, error) {
 		attempt++
 		if attempt == 1 {
 			cancel() // cancel context
@@ -131,7 +131,7 @@ func TestFallback_NonRetriableError(t *testing.T) {
 	}
 
 	attempt := 0
-	run := func(ctx context.Context, provider, model string) (*LLMResponse, error) {
+	run := func(ctx context.Context, c FallbackCandidate) (*LLMResponse, error) {
 		attempt++
 		return nil, errors.New("string should match pattern")
 	}
@@ -165,8 +165,8 @@ func TestFallback_CooldownSkip(t *testing.T) {
 		makeCandidate("anthropic", "claude"),
 	}
 
-	run := func(ctx context.Context, provider, model string) (*LLMResponse, error) {
-		if provider == "openai" {
+	run := func(ctx context.Context, c FallbackCandidate) (*LLMResponse, error) {
+		if c.Provider == "openai" {
 			t.Error("should not call openai (in cooldown)")
 		}
 		return &LLMResponse{Content: "claude response", FinishReason: "stop"}, nil
@@ -205,7 +205,7 @@ func TestFallback_AllInCooldown(t *testing.T) {
 	}
 
 	_, err := fc.Execute(context.Background(), candidates,
-		func(ctx context.Context, provider, model string) (*LLMResponse, error) {
+		func(ctx context.Context, c FallbackCandidate) (*LLMResponse, error) {
 			t.Error("should not call any provider (all in cooldown)")
 			return nil, nil
 		})
@@ -254,7 +254,7 @@ func TestFallback_UnclassifiedError(t *testing.T) {
 	}
 
 	attempt := 0
-	run := func(ctx context.Context, provider, model string) (*LLMResponse, error) {
+	run := func(ctx context.Context, c FallbackCandidate) (*LLMResponse, error) {
 		attempt++
 		return nil, errors.New("completely unknown internal error")
 	}
@@ -275,7 +275,7 @@ func TestFallback_SuccessResetsCooldown(t *testing.T) {
 	candidates := []FallbackCandidate{makeCandidate("openai", "gpt-4")}
 
 	attempt := 0
-	run := func(ctx context.Context, provider, model string) (*LLMResponse, error) {
+	run := func(ctx context.Context, c FallbackCandidate) (*LLMResponse, error) {
 		attempt++
 		if attempt == 1 {
 			ct.MarkFailure("openai", "gpt-4", FailoverRateLimit, 0) // simulate failure tracked elsewhere
@@ -318,7 +318,7 @@ func TestImageFallback_DimensionError(t *testing.T) {
 	}
 
 	attempt := 0
-	run := func(ctx context.Context, provider, model string) (*LLMResponse, error) {
+	run := func(ctx context.Context, c FallbackCandidate) (*LLMResponse, error) {
 		attempt++
 		return nil, errors.New("image dimensions exceed max 4096x4096")
 	}
@@ -342,7 +342,7 @@ func TestImageFallback_SizeError(t *testing.T) {
 	}
 
 	attempt := 0
-	run := func(ctx context.Context, provider, model string) (*LLMResponse, error) {
+	run := func(ctx context.Context, c FallbackCandidate) (*LLMResponse, error) {
 		attempt++
 		return nil, errors.New("image exceeds 20 mb")
 	}
@@ -366,7 +366,7 @@ func TestImageFallback_RetryOnOtherErrors(t *testing.T) {
 	}
 
 	attempt := 0
-	run := func(ctx context.Context, provider, model string) (*LLMResponse, error) {
+	run := func(ctx context.Context, c FallbackCandidate) (*LLMResponse, error) {
 		attempt++
 		if attempt == 1 {
 			return nil, errors.New("rate limit exceeded")
@@ -459,11 +459,11 @@ func TestResolveCandidatesWithLookup_AliasResolvesToNestedModel(t *testing.T) {
 		Fallbacks: nil,
 	}
 
-	lookup := func(raw string) (string, bool) {
+	lookup := func(raw string) (alias, resolved string, ok bool) {
 		if raw == "step-3.5-flash" {
-			return "openrouter/stepfun/step-3.5-flash:free", true
+			return "step-3.5-flash", "openrouter/stepfun/step-3.5-flash:free", true
 		}
-		return "", false
+		return "", "", false
 	}
 
 	candidates := ResolveCandidatesWithLookup(cfg, "", lookup)
@@ -476,6 +476,9 @@ func TestResolveCandidatesWithLookup_AliasResolvesToNestedModel(t *testing.T) {
 	if candidates[0].Model != "stepfun/step-3.5-flash:free" {
 		t.Fatalf("model = %q, want stepfun/step-3.5-flash:free", candidates[0].Model)
 	}
+	if candidates[0].Alias != "step-3.5-flash" {
+		t.Fatalf("alias = %q, want step-3.5-flash", candidates[0].Alias)
+	}
 }
 
 func TestResolveCandidatesWithLookup_DeduplicateAfterLookup(t *testing.T) {
@@ -484,16 +487,25 @@ func TestResolveCandidatesWithLookup_DeduplicateAfterLookup(t *testing.T) {
 		Fallbacks: []string{"openrouter/stepfun/step-3.5-flash:free"},
 	}
 
-	lookup := func(raw string) (string, bool) {
+	lookup := func(raw string) (alias, resolved string, ok bool) {
 		if raw == "step-3.5-flash" {
-			return "openrouter/stepfun/step-3.5-flash:free", true
+			return "step-3.5-flash", "openrouter/stepfun/step-3.5-flash:free", true
 		}
-		return "", false
+		return "", "", false
 	}
 
 	candidates := ResolveCandidatesWithLookup(cfg, "", lookup)
-	if len(candidates) != 1 {
-		t.Fatalf("candidates = %d, want 1", len(candidates))
+	// Two entries: the primary resolves with alias "step-3.5-flash"; the
+	// fallback resolves with no alias (no lookup match). Both target the
+	// same wire model but carry distinct alias state, so dedup keeps both.
+	if len(candidates) != 2 {
+		t.Fatalf("candidates = %d, want 2 (distinct aliases)", len(candidates))
+	}
+	if candidates[0].Alias != "step-3.5-flash" {
+		t.Fatalf("candidates[0].Alias = %q, want step-3.5-flash", candidates[0].Alias)
+	}
+	if candidates[1].Alias != "" {
+		t.Fatalf("candidates[1].Alias = %q, want empty", candidates[1].Alias)
 	}
 }
 
@@ -503,11 +515,11 @@ func TestResolveCandidatesWithLookup_AliasWithoutProtocolUsesDefaultProvider(t *
 		Fallbacks: nil,
 	}
 
-	lookup := func(raw string) (string, bool) {
+	lookup := func(raw string) (alias, resolved string, ok bool) {
 		if raw == "glm-5" {
-			return "glm-5", true
+			return "glm-5", "glm-5", true
 		}
-		return "", false
+		return "", "", false
 	}
 
 	candidates := ResolveCandidatesWithLookup(cfg, "openai", lookup)

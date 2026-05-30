@@ -71,6 +71,27 @@ func (b *JSONLBackend) SetHistory(key string, history []providers.Message) {
 	}
 }
 
+// SetHistoryWithSeqs replaces the session history while preserving stable
+// sequence numbers. Context compaction uses this so summary citations remain
+// linked to archive message IDs.
+func (b *JSONLBackend) SetHistoryWithSeqs(key string, history []memory.StoredMessage) {
+	if err := b.store.SetHistoryWithSeqs(context.Background(), key, history); err != nil {
+		log.Printf("session: set history with seqs: %v", err)
+	}
+}
+
+// AppendSummaryCheckpoint appends one summary checkpoint when the underlying
+// store supports checkpoint history.
+func (b *JSONLBackend) AppendSummaryCheckpoint(sessionKey string, checkpoint memory.SummaryCheckpoint) error {
+	type checkpointAppender interface {
+		AppendSummaryCheckpoint(context.Context, string, memory.SummaryCheckpoint) error
+	}
+	if a, ok := b.store.(checkpointAppender); ok {
+		return a.AppendSummaryCheckpoint(context.Background(), sessionKey, checkpoint)
+	}
+	return nil
+}
+
 func (b *JSONLBackend) TruncateHistory(key string, keepLast int) {
 	if err := b.store.TruncateHistory(context.Background(), key, keepLast); err != nil {
 		log.Printf("session: truncate history: %v", err)
@@ -129,6 +150,19 @@ func (b *JSONLBackend) SetCompactionState(sessionKey string, state memory.Compac
 		return s.SetCompactionState(sessionKey, state)
 	}
 	return nil
+}
+
+// ForgetSession drops in-memory per-session state held by the underlying store
+// (e.g. the noise-dedup cache). Durable data on disk is untouched. No-ops if
+// the underlying store does not support it. Called when a session's context
+// manager is evicted so per-session caches do not grow unbounded.
+func (b *JSONLBackend) ForgetSession(key string) {
+	type sessionForgetter interface {
+		ForgetSession(key string)
+	}
+	if f, ok := b.store.(sessionForgetter); ok {
+		f.ForgetSession(key)
+	}
 }
 
 // Close releases resources held by the underlying store.

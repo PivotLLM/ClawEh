@@ -1,4 +1,4 @@
-package main
+package webserver
 
 import (
 	"net/http"
@@ -8,7 +8,7 @@ import (
 
 func TestUnknownAPIPathStays404(t *testing.T) {
 	mux := http.NewServeMux()
-	registerEmbedRoutes(mux)
+	RegisterEmbedRoutes(mux)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/not-found", nil)
 	rr := httptest.NewRecorder()
@@ -21,7 +21,7 @@ func TestUnknownAPIPathStays404(t *testing.T) {
 
 func TestMissingAssetStays404(t *testing.T) {
 	mux := http.NewServeMux()
-	registerEmbedRoutes(mux)
+	RegisterEmbedRoutes(mux)
 
 	req := httptest.NewRequest(http.MethodGet, "/assets/not-found.js", nil)
 	rr := httptest.NewRecorder()

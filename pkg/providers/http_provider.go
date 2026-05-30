@@ -35,3 +35,11 @@ func (p *HTTPProvider) Chat(
 func (p *HTTPProvider) GetDefaultModel() string {
 	return ""
 }
+
+// Delegate returns the underlying openai_compat.Provider so tests can inspect
+// per-entry state (ResponseLogFile, ReasoningEffort, ...) attached at
+// construction time. Internal callers should keep going through the
+// LLMProvider interface.
+func (p *HTTPProvider) Delegate() *openai_compat.Provider {
+	return p.delegate
+}

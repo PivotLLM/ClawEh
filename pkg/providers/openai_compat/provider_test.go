@@ -1174,7 +1174,40 @@ func TestProviderChat_OmitsProviderObjectWhenNoTools(t *testing.T) {
 // ensure protocoltypes import is used in this file
 var _ = protocoltypes.DispatchStatus{}
 
-func TestResponseLogFile_AppendsRecord(t *testing.T) {
+// logRecord mirrors the JSONL record written by (*Provider).writeLogEntry.
+// Body stays as json.RawMessage so tests can decode it either as a JSON
+// object (claw's request body) or as a JSON string (non-JSON upstream body).
+type logRecord struct {
+	Ts         string          `json:"ts"`
+	CorrID     string          `json:"corr_id"`
+	Dir        string          `json:"dir"`
+	Model      string          `json:"model"`
+	Body       json.RawMessage `json:"body"`
+	Status     int             `json:"status,omitempty"`
+	DurationMs int64           `json:"duration_ms,omitempty"`
+}
+
+func parseLogFile(t *testing.T, path string) []logRecord {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read log file: %v", err)
+	}
+	var out []logRecord
+	for i, line := range bytes.Split(bytes.TrimRight(data, "\n"), []byte("\n")) {
+		if len(line) == 0 {
+			continue
+		}
+		var rec logRecord
+		if err := json.Unmarshal(line, &rec); err != nil {
+			t.Fatalf("line %d not valid JSON: %v; line=%s", i, err, line)
+		}
+		out = append(out, rec)
+	}
+	return out
+}
+
+func TestRequestBodyLogging_PairsWithResponse(t *testing.T) {
 	respBody := `{"choices":[{"message":{"content":"hi"},"finish_reason":"stop"}]}`
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -1183,36 +1216,198 @@ func TestResponseLogFile_AppendsRecord(t *testing.T) {
 	defer server.Close()
 
 	dir := t.TempDir()
-	logPath := filepath.Join(dir, "responses.log")
+	logPath := filepath.Join(dir, "rrlog.jsonl")
+
+	p := NewProvider("key", server.URL, "",
+		WithResponseLogFile(logPath),
+		WithModelLabel("test-alias"),
+	)
+	if _, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "test-model", nil); err != nil {
+		t.Fatalf("Chat() error = %v", err)
+	}
+
+	recs := parseLogFile(t, logPath)
+	if len(recs) != 2 {
+		t.Fatalf("expected 2 JSONL records (request+response), got %d: %+v", len(recs), recs)
+	}
+	if recs[0].Dir != "request" {
+		t.Errorf("recs[0].Dir = %q, want \"request\"", recs[0].Dir)
+	}
+	if recs[1].Dir != "response" {
+		t.Errorf("recs[1].Dir = %q, want \"response\"", recs[1].Dir)
+	}
+	if recs[0].CorrID == "" {
+		t.Error("request corr_id must be non-empty")
+	}
+	if recs[0].CorrID != recs[1].CorrID {
+		t.Errorf("corr_id mismatch: request=%q response=%q", recs[0].CorrID, recs[1].CorrID)
+	}
+	if recs[0].Model != "test-alias" || recs[1].Model != "test-alias" {
+		t.Errorf("expected model=test-alias on both records; got req=%q resp=%q", recs[0].Model, recs[1].Model)
+	}
+	if recs[1].Status != http.StatusOK {
+		t.Errorf("response status = %d, want 200", recs[1].Status)
+	}
+	if recs[1].DurationMs < 0 {
+		t.Errorf("response duration_ms must be non-negative, got %d", recs[1].DurationMs)
+	}
+
+	var reqBody map[string]any
+	if err := json.Unmarshal(recs[0].Body, &reqBody); err != nil {
+		t.Fatalf("request body not valid JSON object: %v; body=%s", err, recs[0].Body)
+	}
+	if reqBody["model"] != "test-model" {
+		t.Errorf("logged request model = %v, want test-model", reqBody["model"])
+	}
+
+	var respBodyParsed map[string]any
+	if err := json.Unmarshal(recs[1].Body, &respBodyParsed); err != nil {
+		t.Fatalf("response body not valid JSON object: %v; body=%s", err, recs[1].Body)
+	}
+}
+
+func TestRequestBodyLogging_RedactsAPIKey(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"choices":[{"message":{"content":"hi"},"finish_reason":"stop"}]}`)
+	}))
+	defer server.Close()
+
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "rrlog.jsonl")
+
+	// Smuggle an api_key field into the request body via extra_body to
+	// exercise the redaction path. claw's config validator would normally
+	// reject this, but the provider must still defend the diagnostic log.
+	p := NewProvider("super-secret-key", server.URL, "",
+		WithResponseLogFile(logPath),
+		WithExtraBody(map[string]any{"api_key": "leak-me-not"}),
+	)
+	if _, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "test-model", nil); err != nil {
+		t.Fatalf("Chat() error = %v", err)
+	}
+
+	recs := parseLogFile(t, logPath)
+	if len(recs) < 1 {
+		t.Fatalf("expected at least 1 record; got %d", len(recs))
+	}
+	reqRec := recs[0]
+	if reqRec.Dir != "request" {
+		t.Fatalf("first record dir = %q, want request", reqRec.Dir)
+	}
+
+	if bytes.Contains(reqRec.Body, []byte("leak-me-not")) {
+		t.Errorf("api_key value should be redacted, but body contains it: %s", reqRec.Body)
+	}
+
+	var reqBody map[string]any
+	if err := json.Unmarshal(reqRec.Body, &reqBody); err != nil {
+		t.Fatalf("request body not valid JSON: %v; body=%s", err, reqRec.Body)
+	}
+	if reqBody["api_key"] != "[REDACTED]" {
+		t.Errorf("api_key = %v, want [REDACTED]", reqBody["api_key"])
+	}
+
+	// Bearer Authorization header must never appear in the log either.
+	raw, _ := os.ReadFile(logPath)
+	if bytes.Contains(raw, []byte("super-secret-key")) {
+		t.Errorf("bearer key should never appear in log; got:\n%s", raw)
+	}
+	if bytes.Contains(raw, []byte("Authorization")) {
+		t.Errorf("Authorization header should never be logged; got:\n%s", raw)
+	}
+}
+
+func TestRequestBodyLogging_NoOpWhenUnset(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"choices":[{"message":{"content":"hi"},"finish_reason":"stop"}]}`)
+	}))
+	defer server.Close()
+
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "rrlog.jsonl")
+
+	p := NewProvider("key", server.URL, "") // no WithResponseLogFile
+	if _, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "test-model", nil); err != nil {
+		t.Fatalf("Chat() error = %v", err)
+	}
+
+	if _, err := os.Stat(logPath); !os.IsNotExist(err) {
+		t.Errorf("log file must not be created when response_log_file is unset; stat err=%v", err)
+	}
+	if p.logFile != nil {
+		t.Errorf("provider must not open a log handle when response_log_file is unset; got %v", p.logFile)
+	}
+}
+
+func TestRequestBodyLogging_NonBlockingOnWriteError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"choices":[{"message":{"content":"ok"},"finish_reason":"stop"}]}`)
+	}))
+	defer server.Close()
+
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "rrlog.jsonl")
+
+	type warnRecord struct {
+		component string
+		message   string
+		fields    map[string]any
+	}
+	var warns []warnRecord
+	prev := warnFn
+	warnFn = func(component, message string, fields map[string]any) {
+		copied := make(map[string]any, len(fields))
+		for k, v := range fields {
+			copied[k] = v
+		}
+		warns = append(warns, warnRecord{component, message, copied})
+	}
+	t.Cleanup(func() { warnFn = prev })
 
 	p := NewProvider("key", server.URL, "", WithResponseLogFile(logPath))
-	if _, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "test-model", nil); err != nil {
-		t.Fatalf("Chat() error = %v", err)
+
+	// First call lazily opens the file handle.
+	if _, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "first"}}, nil, "test-model", nil); err != nil {
+		t.Fatalf("Chat #1 error = %v", err)
 	}
-	if _, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "test-model", nil); err != nil {
-		t.Fatalf("Chat() error = %v", err)
+	if p.logFile == nil {
+		t.Fatal("expected logFile to be opened after first request")
 	}
 
-	data, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatalf("read log file: %v", err)
+	// Force write failures on subsequent calls by closing the handle out
+	// from under the provider. The provider must not reopen it (sticky
+	// state) and must not propagate the write error.
+	if err := p.logFile.Close(); err != nil {
+		t.Fatalf("close logFile: %v", err)
 	}
-	contents := string(data)
 
-	if !strings.Contains(contents, respBody) {
-		t.Errorf("log missing raw body; got:\n%s", contents)
+	// Two more calls; both should succeed, and the provider should emit
+	// at most one WRN total.
+	for i := 0; i < 2; i++ {
+		if _, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "after-close"}}, nil, "test-model", nil); err != nil {
+			t.Fatalf("Chat #%d after close: error = %v", i+2, err)
+		}
 	}
-	if !strings.Contains(contents, "status=200") {
-		t.Errorf("log missing status; got:\n%s", contents)
+
+	// Filter for log-write warnings (extra_body collision uses a different
+	// message; this test does not trigger it but stay defensive).
+	var logWarns []warnRecord
+	for _, w := range warns {
+		if strings.Contains(w.message, "response_log_file") {
+			logWarns = append(logWarns, w)
+		}
 	}
-	if !strings.Contains(contents, "model=test-model") {
-		t.Errorf("log missing model; got:\n%s", contents)
+	if len(logWarns) != 1 {
+		t.Fatalf("expected exactly 1 response_log_file WRN, got %d: %+v", len(logWarns), logWarns)
 	}
-	if !strings.Contains(contents, "url="+server.URL+"/chat/completions") {
-		t.Errorf("log missing url; got:\n%s", contents)
+	if logWarns[0].component != "openai_compat" {
+		t.Errorf("WRN component = %q, want openai_compat", logWarns[0].component)
 	}
-	if got := strings.Count(contents, "---END---"); got != 2 {
-		t.Errorf("expected 2 ---END--- separators, got %d; contents:\n%s", got, contents)
+	if logWarns[0].fields["path"] != logPath {
+		t.Errorf("WRN fields.path = %v, want %q", logWarns[0].fields["path"], logPath)
 	}
 }
 
@@ -1226,43 +1421,161 @@ func TestResponseLogFile_LogsErrorResponses(t *testing.T) {
 	defer server.Close()
 
 	dir := t.TempDir()
-	logPath := filepath.Join(dir, "responses.log")
+	logPath := filepath.Join(dir, "rrlog.jsonl")
 
 	p := NewProvider("key", server.URL, "", WithResponseLogFile(logPath))
 	if _, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "test-model", nil); err == nil {
 		t.Fatalf("expected error from 500 response")
 	}
 
-	data, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatalf("read log file: %v", err)
+	recs := parseLogFile(t, logPath)
+	if len(recs) != 2 {
+		t.Fatalf("expected 2 records (request+response), got %d: %+v", len(recs), recs)
 	}
-	contents := string(data)
-	if !strings.Contains(contents, errBody) {
-		t.Errorf("log missing error body; got:\n%s", contents)
+	if recs[1].Status != http.StatusInternalServerError {
+		t.Errorf("response status = %d, want 500", recs[1].Status)
 	}
-	if !strings.Contains(contents, "status=500") {
-		t.Errorf("log missing status=500; got:\n%s", contents)
+	if !bytes.Contains(recs[1].Body, []byte("boom")) {
+		t.Errorf("response body missing upstream error text; got: %s", recs[1].Body)
 	}
 }
 
-func TestResponseLogFile_UnsetDoesNotCreateFile(t *testing.T) {
+func TestReasoningEffort_AddedToRequestBody(t *testing.T) {
+	var captured map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
-		io.WriteString(w, `{"choices":[{"message":{"content":"hi"},"finish_reason":"stop"}]}`)
+		json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]any{"content": "ok"}, "finish_reason": "stop"}},
+		})
 	}))
 	defer server.Close()
 
-	dir := t.TempDir()
-	logPath := filepath.Join(dir, "responses.log")
+	p := NewProvider("key", server.URL, "", WithReasoningEffort("high"))
+	if _, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "grok-3", nil); err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	if got, _ := captured["reasoning_effort"].(string); got != "high" {
+		t.Errorf("reasoning_effort = %v, want high; body=%v", captured["reasoning_effort"], captured)
+	}
+}
 
-	p := NewProvider("key", server.URL, "") // no WithResponseLogFile
-	if _, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "test-model", nil); err != nil {
-		t.Fatalf("Chat() error = %v", err)
+func TestReasoningEffort_OmittedWhenEmpty(t *testing.T) {
+	var captured map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&captured)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]any{"content": "ok"}, "finish_reason": "stop"}},
+		})
+	}))
+	defer server.Close()
+
+	p := NewProvider("key", server.URL, "")
+	if _, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "gpt-4o", nil); err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	if _, ok := captured["reasoning_effort"]; ok {
+		t.Errorf("reasoning_effort should be omitted; body=%v", captured)
+	}
+}
+
+func TestExtraBody_MergedIntoRequest(t *testing.T) {
+	var captured map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&captured)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]any{"content": "ok"}, "finish_reason": "stop"}},
+		})
+	}))
+	defer server.Close()
+
+	extra := map[string]any{
+		"search_parameters": map[string]any{"mode": "auto"},
+		"custom_flag":       true,
+	}
+	p := NewProvider("key", server.URL, "", WithExtraBody(extra))
+	if _, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "gpt-4o", nil); err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	sp, ok := captured["search_parameters"].(map[string]any)
+	if !ok {
+		t.Fatalf("search_parameters missing or wrong type: %v", captured)
+	}
+	if sp["mode"] != "auto" {
+		t.Errorf("search_parameters.mode = %v, want auto", sp["mode"])
+	}
+	if captured["custom_flag"] != true {
+		t.Errorf("custom_flag = %v, want true", captured["custom_flag"])
+	}
+}
+
+// TestExtraBody_CollisionLogsAndDoesNotOverwrite exercises the defensive merge
+// guard. We force a clash by stuffing a reserved key into extra_body — the
+// config validator normally rejects this at load, but bypassing the validator
+// here lets us verify the provider's defensive log+skip path.
+func TestExtraBody_CollisionLogsAndDoesNotOverwrite(t *testing.T) {
+	var captured map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&captured)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]any{"content": "ok"}, "finish_reason": "stop"}},
+		})
+	}))
+	defer server.Close()
+
+	type warnRecord struct {
+		component string
+		message   string
+		fields    map[string]any
+	}
+	var warns []warnRecord
+	prev := warnFn
+	warnFn = func(component, message string, fields map[string]any) {
+		copied := make(map[string]any, len(fields))
+		for k, v := range fields {
+			copied[k] = v
+		}
+		warns = append(warns, warnRecord{component, message, copied})
+	}
+	t.Cleanup(func() { warnFn = prev })
+
+	extra := map[string]any{
+		"model":       "should-not-overwrite", // collides with the wire model
+		"extra_field": "kept",
+	}
+	p := NewProvider(
+		"key", server.URL, "",
+		WithExtraBody(extra),
+		WithModelLabel("grok-3-config-label"),
+	)
+	if _, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "grok-real-wire", nil); err != nil {
+		t.Fatalf("Chat: %v", err)
 	}
 
-	if _, err := os.Stat(logPath); !os.IsNotExist(err) {
-		t.Errorf("expected log file to not exist; stat err=%v", err)
+	if got := captured["model"]; got != "grok-real-wire" {
+		t.Errorf("model overwritten: got %v, want grok-real-wire", got)
+	}
+	if got := captured["extra_field"]; got != "kept" {
+		t.Errorf("extra_field lost: got %v", got)
+	}
+	if len(warns) != 1 {
+		t.Fatalf("expected 1 warn call, got %d: %+v", len(warns), warns)
+	}
+	w := warns[0]
+	if w.component != "openai_compat" {
+		t.Errorf("warn component = %q, want openai_compat", w.component)
+	}
+	if w.fields["key"] != "model" {
+		t.Errorf("warn fields.key = %v, want %q", w.fields["key"], "model")
+	}
+	if w.fields["model"] != "grok-3-config-label" {
+		t.Errorf("warn fields.model = %v, want %q (label fallback)", w.fields["model"], "grok-3-config-label")
 	}
 }
 

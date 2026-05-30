@@ -1,4 +1,3 @@
-import { getDefaultStore } from "jotai"
 import { toast } from "sonner"
 
 import { getWebUIToken } from "@/api/webui"
@@ -11,7 +10,6 @@ import {
   readStoredSessionId,
 } from "@/lib/claw-chat-state"
 import { type ChatMessage, getChatState, updateChatStore } from "@/store/chat"
-import { gatewayAtom } from "@/store/gateway"
 
 interface WebUIMessage {
   type: string
@@ -21,14 +19,11 @@ interface WebUIMessage {
   payload?: Record<string, unknown>
 }
 
-const store = getDefaultStore()
-
 let wsRef: WebSocket | null = null
 let isConnecting = false
 let msgIdCounter = 0
 let activeSessionIdRef = getChatState().activeSessionId
 let initialized = false
-let unsubscribeGateway: (() => void) | null = null
 let hydratePromise: Promise<void> | null = null
 let connectionGeneration = 0
 
@@ -114,10 +109,6 @@ function setActiveSessionId(sessionId: string) {
 }
 
 export async function connectChat() {
-  if (store.get(gatewayAtom).status !== "running") {
-    return
-  }
-
   if (
     isConnecting ||
     (wsRef &&
@@ -344,9 +335,7 @@ export async function switchChatSession(sessionId: string) {
       hasHydratedActiveSession: true,
     })
 
-    if (store.get(gatewayAtom).status === "running") {
-      await connectChat()
-    }
+    await connectChat()
   } catch (error) {
     console.error("Failed to load session history:", error)
     toast.error(i18n.t("chat.historyOpenFailed"))
@@ -366,9 +355,7 @@ export async function newChatSession() {
     hasHydratedActiveSession: true,
   })
 
-  if (store.get(gatewayAtom).status === "running") {
-    await connectChat()
-  }
+  await connectChat()
 }
 
 export function initializeChatStore() {
@@ -379,27 +366,14 @@ export function initializeChatStore() {
   initialized = true
   activeSessionIdRef = getChatState().activeSessionId
 
-  const syncConnectionWithGateway = () => {
-    if (store.get(gatewayAtom).status === "running") {
-      void connectChat()
-      return
-    }
-
-    disconnectChat()
-  }
-
-  unsubscribeGateway = store.sub(gatewayAtom, syncConnectionWithGateway)
-
   if (!readStoredSessionId()) {
     updateChatStore({ hasHydratedActiveSession: true })
   }
 
-  syncConnectionWithGateway()
+  void connectChat()
 }
 
 export function teardownChatStore() {
-  unsubscribeGateway?.()
-  unsubscribeGateway = null
   initialized = false
   disconnectChat()
 }

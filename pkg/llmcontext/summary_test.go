@@ -11,12 +11,12 @@ import (
 
 func validSummary() *Summary {
 	return &Summary{
-		Version: 1,
+		Version: 2,
 		State: SummaryState{
-			Goals:       "finish feature X",
-			Progress:    "80% done",
-			Pending:     "write tests",
-			Constraints: "no breaking changes",
+			Goals:       []SummaryItem{{Text: "finish feature X", Refs: []SeqRange{{SeqStart: 1}}}},
+			Progress:    []SummaryItem{{Text: "80% done", Refs: []SeqRange{{SeqStart: 2}}}},
+			Pending:     []SummaryItem{{Text: "write tests", Refs: []SeqRange{{SeqStart: 3}}}},
+			Constraints: []SummaryItem{{Text: "no breaking changes", Refs: []SeqRange{{SeqStart: 4}}}},
 		},
 		CoveredSeqStart: 0,
 		CoveredSeqEnd:   10,
@@ -67,8 +67,8 @@ func TestSummary_Validate_NegativeSeq(t *testing.T) {
 func TestSummary_Render_AllSections(t *testing.T) {
 	s := validSummary()
 	s.KeyMoments = []KeyMoment{
-		{Seq: 3, Role: "user", Summary: "defined acceptance criteria"},
-		{Seq: 5, Role: "assistant", Exact: "use mutex for shared state"},
+		{Refs: []SeqRange{{SeqStart: 3}}, Role: "user", Summary: "defined acceptance criteria"},
+		{Refs: []SeqRange{{SeqStart: 5}}, Role: "assistant", Exact: "use mutex for shared state"},
 	}
 	s.MessageIndex = []IndexEntry{
 		{SeqStart: 1, SeqEnd: 2, Role: "user", Label: "initial setup discussion"},
@@ -151,7 +151,7 @@ func TestRenderSummaryFromRaw_EmptyString(t *testing.T) {
 
 // TestRenderSummaryFromRaw_ValidJSON — valid JSON summary renders as Markdown.
 func TestRenderSummaryFromRaw_ValidJSON(t *testing.T) {
-	raw := `{"version":1,"state":{"goals":"ship v2"},"covered_seq_start":0,"covered_seq_end":5,"generated_at":"2026-01-01T00:00:00Z"}`
+	raw := `{"version":2,"state":{"goals":[{"text":"ship v2","refs":[{"seq_start":1}]}]},"covered_seq_start":0,"covered_seq_end":5,"generated_at":"2026-01-01T00:00:00Z"}`
 	out := renderSummaryFromRaw(raw, 0, 0)
 
 	if !strings.Contains(out, "## Current State") {
@@ -164,25 +164,130 @@ func TestRenderSummaryFromRaw_ValidJSON(t *testing.T) {
 
 // TestValidateAndUnmarshalLLMResponse_CleanJSON — parses clean JSON correctly.
 func TestValidateAndUnmarshalLLMResponse_CleanJSON(t *testing.T) {
-	raw := `{"version":1,"state":{"goals":"build feature"},"covered_seq_start":0,"covered_seq_end":0,"generated_at":"2026-01-01T00:00:00Z"}`
+	raw := `{"version":2,"state":{"goals":[{"text":"build feature","refs":[{"seq_start":1}]}]},"covered_seq_start":0,"covered_seq_end":0,"generated_at":"2026-01-01T00:00:00Z"}`
 	s, err := validateAndUnmarshalLLMResponse(raw)
 	if err != nil {
 		t.Fatalf("expected nil error, got: %v", err)
 	}
-	if s.State.Goals != "build feature" {
-		t.Errorf("expected goals 'build feature', got: %q", s.State.Goals)
+	if len(s.State.Goals) != 1 || s.State.Goals[0].Text != "build feature" {
+		t.Errorf("expected goals 'build feature', got: %+v", s.State.Goals)
 	}
 }
 
 // TestValidateAndUnmarshalLLMResponse_MarkdownFenced — strips markdown fences before parsing.
 func TestValidateAndUnmarshalLLMResponse_MarkdownFenced(t *testing.T) {
-	raw := "```json\n{\"version\":1,\"state\":{\"goals\":\"build feature\"},\"covered_seq_start\":0,\"covered_seq_end\":0,\"generated_at\":\"2026-01-01T00:00:00Z\"}\n```"
+	raw := "```json\n{\"version\":2,\"state\":{\"goals\":[{\"text\":\"build feature\",\"refs\":[{\"seq_start\":1}]}]},\"covered_seq_start\":0,\"covered_seq_end\":0,\"generated_at\":\"2026-01-01T00:00:00Z\"}\n```"
 	s, err := validateAndUnmarshalLLMResponse(raw)
 	if err != nil {
 		t.Fatalf("expected nil error, got: %v", err)
 	}
-	if s.State.Goals != "build feature" {
-		t.Errorf("expected goals 'build feature', got: %q", s.State.Goals)
+	if len(s.State.Goals) != 1 || s.State.Goals[0].Text != "build feature" {
+		t.Errorf("expected goals 'build feature', got: %+v", s.State.Goals)
+	}
+}
+
+// TestValidateAndUnmarshalLLMResponse_ProsePreamble — prose preceding a JSON
+// object is stripped and the inner object is parsed (recovery path).
+func TestValidateAndUnmarshalLLMResponse_ProsePreamble(t *testing.T) {
+	raw := "Quick summary follows.\n\n" +
+		`{"version":2,"state":{"goals":[{"text":"build feature","refs":[{"seq_start":1}]}]},"covered_seq_start":0,"covered_seq_end":0,"generated_at":"2026-01-01T00:00:00Z"}`
+	s, err := validateAndUnmarshalLLMResponse(raw)
+	if err != nil {
+		t.Fatalf("expected nil error, got: %v", err)
+	}
+	if len(s.State.Goals) != 1 || s.State.Goals[0].Text != "build feature" {
+		t.Errorf("expected goals 'build feature', got: %+v", s.State.Goals)
+	}
+}
+
+// TestValidateAndUnmarshalLLMResponse_ProsePreambleWithFence — prose, then a
+// code-fenced JSON block. The code fence is stripped first, then the prose
+// preamble is removed by the recovery path.
+func TestValidateAndUnmarshalLLMResponse_ProsePreambleWithFence(t *testing.T) {
+	raw := "Here is the summary:\n```json\nthis is leading prose inside the fence\n" +
+		`{"version":2,"state":{"goals":[{"text":"fenced+prose","refs":[{"seq_start":1}]}]},"covered_seq_start":0,"covered_seq_end":0,"generated_at":"2026-01-01T00:00:00Z"}` +
+		"\nand some trailing prose\n```"
+	s, err := validateAndUnmarshalLLMResponse(raw)
+	if err != nil {
+		t.Fatalf("expected nil error, got: %v", err)
+	}
+	if len(s.State.Goals) != 1 || s.State.Goals[0].Text != "fenced+prose" {
+		t.Errorf("expected goals 'fenced+prose', got: %+v", s.State.Goals)
+	}
+}
+
+// TestValidateAndUnmarshalLLMResponse_BracesInsideString — braces appearing
+// inside a JSON string literal must not throw off the brace-matching scanner.
+// The inner string contains both '{' and '}' as well as an escaped quote.
+func TestValidateAndUnmarshalLLMResponse_BracesInsideString(t *testing.T) {
+	// goals contains: "text}with}braces and an escaped \" quote
+	raw := "preamble " +
+		`{"version":2,"state":{"goals":[{"text":"\"text}with}braces\"","refs":[{"seq_start":1}]}]},"covered_seq_start":0,"covered_seq_end":0,"generated_at":"2026-01-01T00:00:00Z"}`
+	s, err := validateAndUnmarshalLLMResponse(raw)
+	if err != nil {
+		t.Fatalf("expected nil error, got: %v", err)
+	}
+	if len(s.State.Goals) != 1 || !strings.Contains(s.State.Goals[0].Text, "text}with}braces") {
+		t.Errorf("expected goals to contain literal braces, got: %+v", s.State.Goals)
+	}
+}
+
+// TestValidateAndUnmarshalLLMResponse_TruncatedJSON — an open brace with no
+// matching close returns the original unmarshal error (recovery fails).
+func TestValidateAndUnmarshalLLMResponse_TruncatedJSON(t *testing.T) {
+	raw := `{"version":1,"state":{"goals":"truncated`
+	_, err := validateAndUnmarshalLLMResponse(raw)
+	if err == nil {
+		t.Fatal("expected unmarshal error for truncated JSON, got nil")
+	}
+	if !strings.HasPrefix(err.Error(), "unmarshal:") {
+		t.Errorf("expected original unmarshal error, got: %v", err)
+	}
+}
+
+// TestValidateAndUnmarshalLLMResponse_EmptyAndWhitespace — empty and
+// whitespace-only inputs return the original unmarshal error unchanged.
+func TestValidateAndUnmarshalLLMResponse_EmptyAndWhitespace(t *testing.T) {
+	cases := []string{"", "   ", "\n\t  \n"}
+	for _, raw := range cases {
+		if _, err := validateAndUnmarshalLLMResponse(raw); err == nil {
+			t.Errorf("expected error for empty/whitespace input %q, got nil", raw)
+		}
+	}
+}
+
+// TestFindBalancedJSONObject — unit-tests the brace scanner directly so
+// edge cases stay covered even when validate-level paths change.
+func TestFindBalancedJSONObject(t *testing.T) {
+	tests := []struct {
+		name  string
+		in    string
+		ok    bool
+		start int
+		end   int
+	}{
+		{"plain object", `{"a":1}`, true, 0, 6},
+		{"with preamble", `hi {"a":1}`, true, 3, 9},
+		{"nested", `pre {"a":{"b":2}}`, true, 4, 16},
+		{"braces in string", `pre {"k":"a}b{c"}`, true, 4, 16},
+		{"escaped quote in string", `pre {"k":"a\"}b"}`, true, 4, 16},
+		{"no opening brace", "hello world", false, -1, -1},
+		{"unbalanced", `pre {"a":1`, false, -1, -1},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			start, end, ok := findBalancedJSONObject(tc.in)
+			if ok != tc.ok {
+				t.Fatalf("ok = %v, want %v", ok, tc.ok)
+			}
+			if !ok {
+				return
+			}
+			if start != tc.start || end != tc.end {
+				t.Errorf("got (%d, %d), want (%d, %d); slice=%q",
+					start, end, tc.start, tc.end, tc.in[start:end+1])
+			}
+		})
 	}
 }
 
@@ -211,7 +316,7 @@ func TestBuildSummarizationPrompt_Aggressive(t *testing.T) {
 		t.Error("aggressive prompt must instruct collapsing message index into ranges")
 	}
 	// Existing summary should be appended when provided.
-	existing := &Summary{Version: 1, State: SummaryState{Goals: "test goal"}}
+	existing := &Summary{Version: 2, State: SummaryState{Goals: []SummaryItem{{Text: "test goal", Refs: []SeqRange{{SeqStart: 1}}}}}}
 	withExisting := buildSummarizationPrompt(existing, 10, 100, true)
 	if !strings.Contains(withExisting, "test goal") {
 		t.Error("aggressive prompt must include existing summary when provided")

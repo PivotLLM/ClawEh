@@ -15,9 +15,9 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/channels"
 	"github.com/PivotLLM/ClawEh/pkg/commands"
 	"github.com/PivotLLM/ClawEh/pkg/config"
+	"github.com/PivotLLM/ClawEh/pkg/llmcontext"
 	"github.com/PivotLLM/ClawEh/pkg/media"
 	"github.com/PivotLLM/ClawEh/pkg/providers"
-	"github.com/PivotLLM/ClawEh/pkg/llmcontext"
 	"github.com/PivotLLM/ClawEh/pkg/routing"
 	"github.com/PivotLLM/ClawEh/pkg/tools"
 )
@@ -501,7 +501,7 @@ func TestProcessMessage_CommandOutcomes(t *testing.T) {
 	helper := testHelper{al: al}
 
 	baseMsg := bus.InboundMessage{
-		Channel:  "whatsapp",
+		Channel:  "slack",
 		SenderID: "user1",
 		ChatID:   "chat1",
 		Peer: bus.Peer{
@@ -517,7 +517,7 @@ func TestProcessMessage_CommandOutcomes(t *testing.T) {
 		Content:  "/show channel",
 		Peer:     baseMsg.Peer,
 	})
-	if showResp != "Current Channel: whatsapp" {
+	if showResp != "Current Channel: slack" {
 		t.Fatalf("unexpected /show reply: %q", showResp)
 	}
 	if provider.calls != 0 {
@@ -903,7 +903,6 @@ func TestTargetReasoningChannelID_AllChannels(t *testing.T) {
 		t.Fatalf("Failed to create channel manager: %v", err)
 	}
 	for name, id := range map[string]string{
-		"whatsapp": "rid-whatsapp",
 		"telegram": "rid-telegram",
 		"discord":  "rid-discord",
 		"slack":    "rid-slack",
@@ -916,7 +915,6 @@ func TestTargetReasoningChannelID_AllChannels(t *testing.T) {
 		channel string
 		wantID  string
 	}{
-		{channel: "whatsapp", wantID: "rid-whatsapp"},
 		{channel: "telegram", wantID: "rid-telegram"},
 		{channel: "discord", wantID: "rid-discord"},
 		{channel: "slack", wantID: "rid-slack"},
@@ -2019,10 +2017,10 @@ func TestInferMediaType(t *testing.T) {
 		{"movie.mp4", "video/mp4", "video"},
 		{"doc.pdf", "application/pdf", "file"},
 		{"audio.ogg", "application/ogg", "audio"},
-		{"image.png", "", "image"},     // extension fallback
-		{"audio.wav", "", "audio"},     // extension fallback
-		{"video.avi", "", "video"},     // extension fallback
-		{"unknown.xyz", "", "file"},    // unknown extension
+		{"image.png", "", "image"},  // extension fallback
+		{"audio.wav", "", "audio"},  // extension fallback
+		{"video.avi", "", "video"},  // extension fallback
+		{"unknown.xyz", "", "file"}, // unknown extension
 	}
 
 	for _, tc := range tests {

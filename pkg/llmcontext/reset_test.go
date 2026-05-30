@@ -22,7 +22,7 @@ func newResetStore(sessionKey string) *mockStore {
 		{Role: "user", Content: "hello"},
 		{Role: "assistant", Content: "hi"},
 	}
-	s.summary[sessionKey] = `{"version":1,"state":{"goals":"some goal"}}`
+	s.summary[sessionKey] = `{"version":2,"state":{"goals":[{"text":"some goal","refs":[{"seq_start":1}]}]}}`
 	return s
 }
 

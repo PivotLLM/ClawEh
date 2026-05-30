@@ -341,7 +341,7 @@ low gain, notification callback called on start and completion.
      `seq_start`/`seq_end` are ignored.
    - Read from `{key}.archive.jsonl` by seq number.
    - Return full message content; for out-of-window seqs return
-     `"not available — message has aged out of the archive"`.
+     `"not available in the current archive window"`.
    - Session scoping is a known gap; to be resolved in a follow-on change.
 
 2. Register in each agent's tool registry at startup, following the existing registration

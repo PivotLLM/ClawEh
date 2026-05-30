@@ -1,12 +1,10 @@
-.PHONY: all build build-agent build-launcher install install-agent install-launcher uninstall uninstall-all clean help test test-race test-coverage test-cover-html test-regression
+.PHONY: all build install uninstall uninstall-all clean help test test-race test-coverage test-cover-html test-regression generate vet fmt lint fix deps update-deps check run frontend frontend-deps build-linux-arm build-linux-arm64 build-linux-mipsle build-pi-zero build-all
 
 # Binary names
 BINARY_NAME=claw
-LAUNCHER_NAME=claw-launcher
 BUILD_DIR=build
-CMD_DIR=cmd/$(BINARY_NAME)
-LAUNCHER_WEB_DIR=web/backend
-MAIN_GO=$(CMD_DIR)/main.go
+CMD_DIR=.
+MAIN_GO=main.go
 
 # Version
 VERSION?=$(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -93,35 +91,49 @@ else
 endif
 
 BINARY_PATH=$(BUILD_DIR)/$(BINARY_NAME)-$(PLATFORM)-$(ARCH)
-LAUNCHER_PATH=$(BUILD_DIR)/$(LAUNCHER_NAME)-$(PLATFORM)-$(ARCH)
+
+# Frontend / embedded SPA
+FRONTEND_DIR=web/frontend
+FRONTEND_NODE_MODULES=$(FRONTEND_DIR)/node_modules
+EMBED_DIR=web/backend/dist
+EMBED_INDEX=$(EMBED_DIR)/index.html
+# Source files that, when changed, should retrigger the frontend build.
+FRONTEND_SOURCES=$(shell find $(FRONTEND_DIR)/src $(FRONTEND_DIR)/public 2>/dev/null) \
+	$(FRONTEND_DIR)/index.html \
+	$(FRONTEND_DIR)/package.json \
+	$(FRONTEND_DIR)/pnpm-lock.yaml \
+	$(FRONTEND_DIR)/vite.config.ts \
+	$(FRONTEND_DIR)/tsconfig.json \
+	$(FRONTEND_DIR)/tsconfig.app.json \
+	$(FRONTEND_DIR)/tsconfig.node.json
 
 # Default target
 all: build
 
-## build: Build claw and claw-launcher for current platform
-build: build-agent build-launcher
-
-## build-agent: Build the claw binary for current platform
-build-agent: generate
+## build: Build the claw binary (frontend SPA embedded) for current platform.
+build: $(EMBED_INDEX) generate
 	@echo "Building $(BINARY_NAME) for $(PLATFORM)/$(ARCH)..."
 	@mkdir -p $(BUILD_DIR)
 	@$(GO) build $(GOFLAGS) $(LDFLAGS) -o $(BINARY_PATH) ./$(CMD_DIR)
 	@echo "Build complete: $(BINARY_PATH)"
 	@ln -sf $(BINARY_NAME)-$(PLATFORM)-$(ARCH) $(BUILD_DIR)/$(BINARY_NAME)
 
-## build-launcher: Build the claw-launcher (web console) binary
-build-launcher:
-	@echo "Building $(LAUNCHER_NAME) for $(PLATFORM)/$(ARCH)..."
-	@mkdir -p $(BUILD_DIR)
-	@if [ ! -f web/backend/dist/index.html ]; then \
-		echo "Building frontend..."; \
-		cd web/frontend && pnpm install && pnpm build:backend; \
-	fi
-	@$(GO) build $(GOFLAGS) -o $(LAUNCHER_PATH) ./$(LAUNCHER_WEB_DIR)
-	@ln -sf $(LAUNCHER_NAME)-$(PLATFORM)-$(ARCH) $(BUILD_DIR)/$(LAUNCHER_NAME)
-	@echo "Build complete: $(LAUNCHER_PATH)"
+## frontend: Build the SPA into the Go embed source (web/backend/dist).
+frontend: $(EMBED_INDEX)
 
-## install: Build and install claw and claw-launcher
+## frontend-deps: Install frontend npm dependencies.
+frontend-deps: $(FRONTEND_NODE_MODULES)
+
+$(FRONTEND_NODE_MODULES): $(FRONTEND_DIR)/package.json $(FRONTEND_DIR)/pnpm-lock.yaml
+	@echo "Installing frontend dependencies (pnpm install)..."
+	@cd $(FRONTEND_DIR) && pnpm install
+	@touch $(FRONTEND_NODE_MODULES)
+
+$(EMBED_INDEX): $(FRONTEND_SOURCES) | $(FRONTEND_NODE_MODULES)
+	@echo "Building frontend SPA into $(EMBED_DIR)..."
+	@cd $(FRONTEND_DIR) && pnpm run build:backend
+
+## install: Build and install claw to $(INSTALL_BIN_DIR)
 install: build
 	@echo "Installing $(BINARY_NAME)..."
 	@mkdir -p $(INSTALL_BIN_DIR)
@@ -129,86 +141,46 @@ install: build
 	@chmod +x $(INSTALL_BIN_DIR)/$(BINARY_NAME)$(INSTALL_TMP_SUFFIX)
 	@mv -f $(INSTALL_BIN_DIR)/$(BINARY_NAME)$(INSTALL_TMP_SUFFIX) $(INSTALL_BIN_DIR)/$(BINARY_NAME)
 	@echo "Installed: $(INSTALL_BIN_DIR)/$(BINARY_NAME)"
-	@cp $(LAUNCHER_PATH) $(INSTALL_BIN_DIR)/$(LAUNCHER_NAME)$(INSTALL_TMP_SUFFIX)
-	@chmod +x $(INSTALL_BIN_DIR)/$(LAUNCHER_NAME)$(INSTALL_TMP_SUFFIX)
-	@mv -f $(INSTALL_BIN_DIR)/$(LAUNCHER_NAME)$(INSTALL_TMP_SUFFIX) $(INSTALL_BIN_DIR)/$(LAUNCHER_NAME)
-	@echo "Installed: $(INSTALL_BIN_DIR)/$(LAUNCHER_NAME)"
-	@echo "Installation complete!"
 
-## install-agent: Build and install the claw binary only
-install-agent: build-agent
-	@echo "Installing $(BINARY_NAME)..."
-	@mkdir -p $(INSTALL_BIN_DIR)
-	@cp $(BINARY_PATH) $(INSTALL_BIN_DIR)/$(BINARY_NAME)$(INSTALL_TMP_SUFFIX)
-	@chmod +x $(INSTALL_BIN_DIR)/$(BINARY_NAME)$(INSTALL_TMP_SUFFIX)
-	@mv -f $(INSTALL_BIN_DIR)/$(BINARY_NAME)$(INSTALL_TMP_SUFFIX) $(INSTALL_BIN_DIR)/$(BINARY_NAME)
-	@echo "Installed: $(INSTALL_BIN_DIR)/$(BINARY_NAME)"
-
-## install-launcher: Build and install claw-launcher only
-install-launcher: build-launcher
-	@echo "Installing $(LAUNCHER_NAME)..."
-	@mkdir -p $(INSTALL_BIN_DIR)
-	@cp $(LAUNCHER_PATH) $(INSTALL_BIN_DIR)/$(LAUNCHER_NAME)$(INSTALL_TMP_SUFFIX)
-	@chmod +x $(INSTALL_BIN_DIR)/$(LAUNCHER_NAME)$(INSTALL_TMP_SUFFIX)
-	@mv -f $(INSTALL_BIN_DIR)/$(LAUNCHER_NAME)$(INSTALL_TMP_SUFFIX) $(INSTALL_BIN_DIR)/$(LAUNCHER_NAME)
-	@echo "Installed: $(INSTALL_BIN_DIR)/$(LAUNCHER_NAME)"
-
-## uninstall: Remove claw and claw-launcher from system
+## uninstall: Remove claw from system
 uninstall:
-	@echo "Uninstalling $(BINARY_NAME) and $(LAUNCHER_NAME)..."
+	@echo "Uninstalling $(BINARY_NAME)..."
 	@rm -f $(INSTALL_BIN_DIR)/$(BINARY_NAME)
-	@rm -f $(INSTALL_BIN_DIR)/$(LAUNCHER_NAME)
 	@echo "Removed binaries from $(INSTALL_BIN_DIR)"
 	@echo "Note: Data directory $(CLAW_HOME) was not removed. Run 'make uninstall-all' to remove everything."
 
-## uninstall-all: Remove claw, claw-launcher, and all data
+## uninstall-all: Remove claw and all data
 uninstall-all:
 	@echo "Removing binaries..."
 	@rm -f $(INSTALL_BIN_DIR)/$(BINARY_NAME)
-	@rm -f $(INSTALL_BIN_DIR)/$(LAUNCHER_NAME)
 	@echo "Removing data directory..."
 	@rm -rf $(CLAW_HOME)
 	@echo "Removed: $(CLAW_HOME)"
 	@echo "Complete uninstallation done!"
 
-## generate: Run generate
+## generate: Run go generate (refreshes embedded onboard workspace)
 generate:
 	@echo "Run generate..."
-	@rm -r ./$(CMD_DIR)/workspace 2>/dev/null || true
+	@rm -r ./internal/onboard/workspace 2>/dev/null || true
 	@$(GO) generate ./...
 	@echo "Run generate complete"
 
-## build-whatsapp-native: Build with WhatsApp native (whatsmeow) support; larger binary
-build-whatsapp-native: generate
-	@echo "Building for multiple platforms..."
-	@mkdir -p $(BUILD_DIR)
-	GOOS=linux GOARCH=amd64 $(GO) build -tags whatsapp_native $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 ./$(CMD_DIR)
-	GOOS=linux GOARCH=arm GOARM=7 $(GO) build -tags whatsapp_native $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-arm ./$(CMD_DIR)
-	GOOS=linux GOARCH=arm64 $(GO) build -tags whatsapp_native $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-arm64 ./$(CMD_DIR)
-	GOOS=linux GOARCH=loong64 $(GO) build -tags whatsapp_native $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-loong64 ./$(CMD_DIR)
-	GOOS=linux GOARCH=riscv64 $(GO) build -tags whatsapp_native $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-riscv64 ./$(CMD_DIR)
-	GOOS=linux GOARCH=mipsle GOMIPS=softfloat $(GO) build -tags whatsapp_native $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-mipsle ./$(CMD_DIR)
-	$(call PATCH_MIPS_FLAGS,$(BUILD_DIR)/$(BINARY_NAME)-linux-mipsle)
-	GOOS=darwin GOARCH=arm64 $(GO) build -tags whatsapp_native $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-arm64 ./$(CMD_DIR)
-	GOOS=windows GOARCH=amd64 $(GO) build -tags whatsapp_native $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-windows-amd64.exe ./$(CMD_DIR)
-	@echo "Build complete"
-
 ## build-linux-arm: Build for Linux ARMv7 (e.g. Raspberry Pi Zero 2 W 32-bit)
-build-linux-arm: generate
+build-linux-arm: $(EMBED_INDEX) generate
 	@echo "Building for linux/arm (GOARM=7)..."
 	@mkdir -p $(BUILD_DIR)
 	GOOS=linux GOARCH=arm GOARM=7 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-arm ./$(CMD_DIR)
 	@echo "Build complete: $(BUILD_DIR)/$(BINARY_NAME)-linux-arm"
 
 ## build-linux-arm64: Build for Linux ARM64 (e.g. Raspberry Pi Zero 2 W 64-bit)
-build-linux-arm64: generate
+build-linux-arm64: $(EMBED_INDEX) generate
 	@echo "Building for linux/arm64..."
 	@mkdir -p $(BUILD_DIR)
 	GOOS=linux GOARCH=arm64 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-arm64 ./$(CMD_DIR)
 	@echo "Build complete: $(BUILD_DIR)/$(BINARY_NAME)-linux-arm64"
 
 ## build-linux-mipsle: Build for Linux MIPS32 LE
-build-linux-mipsle: generate
+build-linux-mipsle: $(EMBED_INDEX) generate
 	@echo "Building for linux/mipsle (softfloat)..."
 	@mkdir -p $(BUILD_DIR)
 	GOOS=linux GOARCH=mipsle GOMIPS=softfloat $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-mipsle ./$(CMD_DIR)
@@ -220,7 +192,7 @@ build-pi-zero: build-linux-arm build-linux-arm64
 	@echo "Pi Zero 2 W builds: $(BUILD_DIR)/$(BINARY_NAME)-linux-arm (32-bit), $(BUILD_DIR)/$(BINARY_NAME)-linux-arm64 (64-bit)"
 
 ## build-all: Build claw for all platforms
-build-all: generate
+build-all: $(EMBED_INDEX) generate
 	@echo "Building for multiple platforms..."
 	@mkdir -p $(BUILD_DIR)
 	GOOS=linux GOARCH=amd64 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 ./$(CMD_DIR)
@@ -237,11 +209,13 @@ build-all: generate
 	GOOS=netbsd GOARCH=arm64 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-netbsd-arm64 ./$(CMD_DIR)
 	@echo "All builds complete"
 
-## clean: Remove build artifacts
+## clean: Remove all build artifacts (Go binaries, frontend dist, embedded SPA)
 clean:
 	@echo "Cleaning build artifacts..."
 	@rm -rf $(BUILD_DIR)
-	@echo "Clean complete"
+	@rm -rf $(EMBED_DIR)
+	@rm -rf $(FRONTEND_DIR)/dist
+	@echo "Clean complete (node_modules left in place)"
 
 ## vet: Run go vet for static analysis
 vet: generate
@@ -300,7 +274,7 @@ lint:
 fix:
 	@$(GOLANGCI_LINT) run --fix
 
-## deps: Download dependencies
+## deps: Download and verify dependencies (optional; only needed for offline-build prep or after go.mod changes — normal builds and tests fetch implicitly)
 deps:
 	@$(GO) mod download
 	@$(GO) mod verify
@@ -310,50 +284,12 @@ update-deps:
 	@$(GO) get -u ./...
 	@$(GO) mod tidy
 
-## check: Run vet, fmt, and verify dependencies
-check: deps fmt vet test
+## check: Run fmt, vet, and tests
+check: fmt vet test
 
 ## run: Build and run claw
-run: build-agent
+run: build
 	@$(BUILD_DIR)/$(BINARY_NAME) $(ARGS)
-
-## docker-build: Build Docker image (minimal Alpine-based)
-docker-build:
-	@echo "Building minimal Docker image (Alpine-based)..."
-	docker compose -f docker/docker-compose.yml build claw-agent claw-gateway
-
-## docker-build-full: Build Docker image with full MCP support (Node.js 24)
-docker-build-full:
-	@echo "Building full-featured Docker image (Node.js 24)..."
-	docker compose -f docker/docker-compose.full.yml build claw-agent claw-gateway
-
-## docker-test: Test MCP tools in Docker container
-docker-test:
-	@echo "Testing MCP tools in Docker..."
-	@chmod +x scripts/test-docker-mcp.sh
-	@./scripts/test-docker-mcp.sh
-
-## docker-run: Run claw gateway in Docker (Alpine-based)
-docker-run:
-	docker compose -f docker/docker-compose.yml --profile gateway up
-
-## docker-run-full: Run claw gateway in Docker (full-featured)
-docker-run-full:
-	docker compose -f docker/docker-compose.full.yml --profile gateway up
-
-## docker-run-agent: Run claw agent in Docker (interactive, Alpine-based)
-docker-run-agent:
-	docker compose -f docker/docker-compose.yml run --rm claw-agent
-
-## docker-run-agent-full: Run claw agent in Docker (interactive, full-featured)
-docker-run-agent-full:
-	docker compose -f docker/docker-compose.full.yml run --rm claw-agent
-
-## docker-clean: Clean Docker images and volumes
-docker-clean:
-	docker compose -f docker/docker-compose.yml down -v
-	docker compose -f docker/docker-compose.full.yml down -v
-	docker rmi claw:latest claw:full 2>/dev/null || true
 
 ## help: Show this help message
 help:
@@ -366,12 +302,10 @@ help:
 	@grep -E '^## ' $(MAKEFILE_LIST) | sort | awk -F': ' '{printf "  %-20s %s\n", substr($$1, 4), $$2}'
 	@echo ""
 	@echo "Examples:"
-	@echo "  make build              # Build claw and claw-launcher for current platform"
-	@echo "  make build-agent        # Build claw only"
-	@echo "  make build-launcher     # Build claw-launcher only"
-	@echo "  make install            # Install both to $(INSTALL_BIN_DIR)"
-	@echo "  make install-agent      # Install claw only"
-	@echo "  make install-launcher   # Install claw-launcher only"
+	@echo "  make                    # Same as 'make build'"
+	@echo "  make build              # Build claw (frontend SPA embedded) for current platform"
+	@echo "  make install            # Build and install to $(INSTALL_BIN_DIR)"
+	@echo "  make clean              # Remove all build artifacts (keeps node_modules)"
 	@echo "  make uninstall          # Remove binaries"
 	@echo "  make uninstall-all      # Remove binaries and data directory"
 	@echo ""
@@ -383,6 +317,5 @@ help:
 	@echo "Current Configuration:"
 	@echo "  Platform: $(PLATFORM)/$(ARCH)"
 	@echo "  Binary:   $(BINARY_PATH)"
-	@echo "  Launcher: $(LAUNCHER_PATH)"
 	@echo "  Install:  $(INSTALL_BIN_DIR)"
 	@echo "  Data:     $(CLAW_HOME)"

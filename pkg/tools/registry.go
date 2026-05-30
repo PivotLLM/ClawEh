@@ -10,6 +10,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/pkg/logger"
 	"github.com/PivotLLM/ClawEh/pkg/providers"
+	"github.com/PivotLLM/ClawEh/pkg/utils"
 )
 
 type ToolEntry struct {
@@ -168,6 +169,11 @@ func (r *ToolRegistry) ExecuteWithContext(
 	logger.InfoCF("tool", "Tool execution started",
 		map[string]any{
 			"tool": name,
+			"args": redactArgs(name, args),
+		})
+	logger.DebugCF("tool", "Tool execution started (raw args)",
+		map[string]any{
+			"tool": name,
 			"args": args,
 		})
 
@@ -216,7 +222,7 @@ func (r *ToolRegistry) ExecuteWithContext(
 			map[string]any{
 				"tool":     name,
 				"duration": duration.Milliseconds(),
-				"error":    result.ForLLM,
+				"error":    utils.Truncate(result.ForLLM, 500),
 			})
 	} else if result.Async {
 		logger.InfoCF("tool", "Tool started (async)",

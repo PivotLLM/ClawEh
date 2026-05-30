@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/PivotLLM/ClawEh/pkg/logger"
 )
 
 // maxSameModelRetryWait bounds how long a same-model retry is allowed to
@@ -19,9 +21,16 @@ type FallbackChain struct {
 }
 
 // FallbackCandidate represents one model/provider to try.
+//
+// Alias is the user-facing model_name from the resolved model_list entry,
+// when known. It carries the per-entry openai_compat state through to the
+// dispatcher (response_log_file, reasoning_effort, extra_body, …) when
+// multiple entries share the same wire model. Empty when the candidate was
+// constructed from a bare wire model with no matching alias.
 type FallbackCandidate struct {
 	Provider string
 	Model    string
+	Alias    string
 }
 
 // FallbackResult contains the successful response and metadata about all attempts.
@@ -53,32 +62,80 @@ func (fc *FallbackChain) Reset() {
 	}
 }
 
+// Clear removes the cooldown entry for a single provider/model. Returns true
+// when an entry actually existed. The per-model counterpart to Reset.
+func (fc *FallbackChain) Clear(provider, model string) bool {
+	if fc.cooldown == nil {
+		return false
+	}
+	return fc.cooldown.Clear(provider, model)
+}
+
+// CooldownSnapshot returns the cooldown tracker's current view of blocked
+// models. Surfaced via /cooldowns and /status; the slice is empty when no
+// model is in cooldown or when the chain has no tracker.
+func (fc *FallbackChain) CooldownSnapshot() []CooldownStatus {
+	if fc.cooldown == nil {
+		return nil
+	}
+	return fc.cooldown.Snapshot()
+}
+
 // ResolveCandidates parses model config into a deduplicated candidate list.
 func ResolveCandidates(cfg ModelConfig, defaultProvider string) []FallbackCandidate {
 	return ResolveCandidatesWithLookup(cfg, defaultProvider, nil)
 }
 
+// LookupFunc resolves a user-written candidate string (typically a
+// model_name alias) into the corresponding ModelList entry. It returns the
+// resolved wire model ("protocol/modelID") and the entry's model_name. The
+// model_name is what the dispatcher uses to honour per-entry openai_compat
+// state, so a lookup that finds an entry by wire-model match (without an
+// explicit alias) should still return that entry's ModelName.
+type LookupFunc func(raw string) (alias, resolved string, ok bool)
+
 func ResolveCandidatesWithLookup(
 	cfg ModelConfig,
 	defaultProvider string,
-	lookup func(raw string) (resolved string, ok bool),
+	lookup LookupFunc,
 ) []FallbackCandidate {
 	seen := make(map[string]bool)
 	var candidates []FallbackCandidate
 
 	addCandidate := func(raw string) {
-		candidateRaw := strings.TrimSpace(raw)
+		original := strings.TrimSpace(raw)
+		if original == "" {
+			return
+		}
+		candidateRaw := original
+		candidateAlias := ""
+		resolvedByLookup := false
 		if lookup != nil {
-			if resolved, ok := lookup(candidateRaw); ok {
+			if alias, resolved, ok := lookup(candidateRaw); ok {
 				candidateRaw = resolved
+				candidateAlias = alias
+				resolvedByLookup = true
 			}
 		}
 
 		ref := ParseModelRef(candidateRaw, defaultProvider)
 		if ref == nil {
+			// Drop the candidate silently in the return value but log it: a
+			// non-empty alias that fails to resolve usually means it isn't
+			// enabled in model_list, and the operator otherwise sees a
+			// shortened fallback chain with no explanation.
+			logger.WarnCF("providers", "fallback alias dropped (not enabled in model_list)",
+				map[string]any{
+					"alias":              original,
+					"resolved_by_lookup": resolvedByLookup,
+					"resolved":           candidateRaw,
+				})
 			return
 		}
-		key := ModelKey(ref.Provider, ref.Model)
+		// Dedup on (provider, model, alias) so two entries with the same
+		// wire model but different aliases are both kept (each carries its
+		// own per-entry openai_compat state).
+		key := ModelKey(ref.Provider, ref.Model) + "#" + candidateAlias
 		if seen[key] {
 			return
 		}
@@ -86,6 +143,7 @@ func ResolveCandidatesWithLookup(
 		candidates = append(candidates, FallbackCandidate{
 			Provider: ref.Provider,
 			Model:    ref.Model,
+			Alias:    candidateAlias,
 		})
 	}
 
@@ -113,7 +171,7 @@ func ResolveCandidatesWithLookup(
 func (fc *FallbackChain) Execute(
 	ctx context.Context,
 	candidates []FallbackCandidate,
-	run func(ctx context.Context, provider, model string) (*LLMResponse, error),
+	run func(ctx context.Context, candidate FallbackCandidate) (*LLMResponse, error),
 ) (*FallbackResult, error) {
 	if len(candidates) == 0 {
 		return nil, fmt.Errorf("fallback: no candidates configured")
@@ -159,7 +217,7 @@ func (fc *FallbackChain) Execute(
 		for {
 			attempts++
 			start := time.Now()
-			resp, err = run(ctx, candidate.Provider, candidate.Model)
+			resp, err = run(ctx, candidate)
 			elapsed = time.Since(start)
 
 			if err == nil {
@@ -222,10 +280,12 @@ func (fc *FallbackChain) Execute(
 		}
 
 		// Retriable error: mark failure and continue to next candidate.
-		// Context-limit, billing, and auth errors are user-fixable without a restart;
-		// skip cooldown so the model is retried immediately once the issue is resolved.
+		// Context-limit and auth are user-fixable without a restart and skip
+		// cooldown so the model is retried immediately once the issue is
+		// resolved. Billing DOES get a (short) cooldown so a credits-exhausted
+		// model is skipped within the same session — see billingInitialCooldown
+		// in cooldown.go. Use /cooldowns clear or /retry to override.
 		noCooldown := failErr.Reason == FailoverContextLimit ||
-			failErr.Reason == FailoverBilling ||
 			failErr.Reason == FailoverAuth
 		if !noCooldown {
 			fc.cooldown.MarkFailure(candidate.Provider, candidate.Model, failErr.Reason, failErr.RetryAfter)
@@ -254,7 +314,7 @@ func (fc *FallbackChain) Execute(
 func (fc *FallbackChain) ExecuteImage(
 	ctx context.Context,
 	candidates []FallbackCandidate,
-	run func(ctx context.Context, provider, model string) (*LLMResponse, error),
+	run func(ctx context.Context, candidate FallbackCandidate) (*LLMResponse, error),
 ) (*FallbackResult, error) {
 	if len(candidates) == 0 {
 		return nil, fmt.Errorf("image fallback: no candidates configured")
@@ -270,7 +330,7 @@ func (fc *FallbackChain) ExecuteImage(
 		}
 
 		start := time.Now()
-		resp, err := run(ctx, candidate.Provider, candidate.Model)
+		resp, err := run(ctx, candidate)
 		elapsed := time.Since(start)
 
 		if err == nil {

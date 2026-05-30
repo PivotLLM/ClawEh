@@ -1,5 +1,3 @@
-import { refreshGatewayState } from "@/store/gateway"
-
 // API client for model list management.
 
 export interface ModelInfo {
@@ -19,6 +17,12 @@ export interface ModelInfo {
   request_timeout?: number
   thinking_level?: string
   no_tools?: boolean
+  // Shape 3 per-LLM custom fields. extra_body accepts an explicit `null` on
+  // save to clear a previously-stored value; the backend handler merge-loads
+  // the request JSON into the existing entry, so an absent field would
+  // otherwise preserve the old value rather than removing it.
+  reasoning_effort?: string
+  extra_body?: Record<string, unknown> | null
   enabled: boolean
   // Meta
   configured: boolean
@@ -81,14 +85,11 @@ export async function deleteModel(index: number): Promise<ModelActionResponse> {
 export async function setDefaultModel(
   modelName: string,
 ): Promise<ModelActionResponse> {
-  const response = await request<ModelActionResponse>("/api/models/default", {
+  return request<ModelActionResponse>("/api/models/default", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ model_name: modelName }),
   })
-
-  await refreshGatewayState()
-  return response
 }
 
 export type { ModelsListResponse, ModelActionResponse }

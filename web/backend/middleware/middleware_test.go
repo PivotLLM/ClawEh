@@ -26,19 +26,6 @@ func TestJSONContentType_SetsHeaderForAPIPath(t *testing.T) {
 	}
 }
 
-func TestJSONContentType_SkipsSSEEndpoints(t *testing.T) {
-	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
-	h := JSONContentType(inner)
-
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/gateway/events", nil)
-	h.ServeHTTP(rec, req)
-
-	if ct := rec.Header().Get("Content-Type"); ct == "application/json" {
-		t.Fatalf("Content-Type should not be application/json for SSE endpoint, got %q", ct)
-	}
-}
-
 func TestJSONContentType_SkipsNonAPIPath(t *testing.T) {
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
 	h := JSONContentType(inner)

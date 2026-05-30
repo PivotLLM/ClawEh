@@ -1,12 +1,16 @@
 [Unit]
-Description=Claw AI Agent
+Description=Claw AI Agent (gateway + WebUI on a single port)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
 User=YOUR_USERNAME
-ExecStart=/home/YOUR_USERNAME/.local/bin/claw gateway
+# The merged claw binary launches the gateway, the WebUI HTTP layer, and the
+# session API on the same port (cfg.Gateway.Port, default 18790). No
+# subcommand is needed — `claw` with no arguments is the supported entry
+# point. The legacy `claw gateway` alias is still accepted.
+ExecStart=/home/YOUR_USERNAME/.local/bin/claw
 Restart=on-failure
 RestartSec=5
 KillMode=control-group

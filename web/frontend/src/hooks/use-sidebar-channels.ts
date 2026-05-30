@@ -5,12 +5,9 @@ import {
   IconBrandMatrix,
   IconBrandSlack,
   IconBrandTelegram,
-  IconBrandWhatsapp,
-  IconMessages,
   IconPlug,
 } from "@tabler/icons-react"
 import type { TFunction } from "i18next"
-import { useAtomValue } from "jotai"
 import * as React from "react"
 
 import {
@@ -20,9 +17,7 @@ import {
   getChannelsCatalog,
 } from "@/api/channels"
 import { getChannelDisplayName } from "@/components/channels/channel-display-name"
-import { gatewayAtom } from "@/store/gateway"
 
-const DEFAULT_VISIBLE_CHANNELS = 4
 const CHANNEL_IMPORTANCE_ORDER = [
   "discord",
   "telegram",
@@ -30,9 +25,6 @@ const CHANNEL_IMPORTANCE_ORDER = [
   "line",
   "matrix",
   "webui",
-  "irc",
-  "whatsapp",
-  "whatsapp_native",
 ]
 const CHANNEL_IMPORTANCE_INDEX = new Map(
   CHANNEL_IMPORTANCE_ORDER.map((name, index) => [name, index]),
@@ -46,11 +38,8 @@ const CHANNEL_ICON_MAP: Record<
   discord: IconBrandDiscord,
   slack: IconBrandSlack,
   line: IconBrandLine,
-  whatsapp: IconBrandWhatsapp,
-  whatsapp_native: IconBrandWhatsapp,
   matrix: IconBrandMatrix,
   webui: IconBrandChrome,
-  irc: IconMessages,
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -65,19 +54,7 @@ function isChannelEnabled(
   channelsConfig: Record<string, unknown>,
 ): boolean {
   const channelConfig = asRecord(channelsConfig[channel.config_key])
-  if (channelConfig.enabled !== true) {
-    return false
-  }
-
-  // whatsapp / whatsapp_native share one config block and are split by use_native.
-  if (channel.name === "whatsapp_native") {
-    return channelConfig.use_native === true
-  }
-  if (channel.name === "whatsapp") {
-    return channelConfig.use_native !== true
-  }
-
-  return true
+  return channelConfig.enabled === true
 }
 
 function buildChannelEnabledMap(
@@ -104,12 +81,10 @@ interface UseSidebarChannelsOptions {
 }
 
 export function useSidebarChannels({ t }: UseSidebarChannelsOptions) {
-  const gateway = useAtomValue(gatewayAtom)
   const [channels, setChannels] = React.useState<SupportedChannel[]>([])
   const [enabledMap, setEnabledMap] = React.useState<Record<string, boolean>>(
     {},
   )
-  const [showAllChannels, setShowAllChannels] = React.useState(false)
 
   const reloadChannels = React.useCallback((shouldApply?: () => boolean) => {
     Promise.all([
@@ -140,15 +115,6 @@ export function useSidebarChannels({ t }: UseSidebarChannelsOptions) {
     }
   }, [reloadChannels])
 
-  const previousGatewayStatusRef = React.useRef(gateway.status)
-  React.useEffect(() => {
-    const previousStatus = previousGatewayStatusRef.current
-    if (previousStatus !== "running" && gateway.status === "running") {
-      reloadChannels()
-    }
-    previousGatewayStatusRef.current = gateway.status
-  }, [gateway.status, reloadChannels])
-
   const sortedChannels = React.useMemo(() => {
     const list = [...channels]
     list.sort((a, b) => {
@@ -173,30 +139,18 @@ export function useSidebarChannels({ t }: UseSidebarChannelsOptions) {
     return list
   }, [channels, enabledMap, t])
 
-  const hasMoreChannels = sortedChannels.length > DEFAULT_VISIBLE_CHANNELS
-  const visibleChannels = showAllChannels
-    ? sortedChannels
-    : sortedChannels.slice(0, DEFAULT_VISIBLE_CHANNELS)
-
   const channelItems = React.useMemo<SidebarChannelNavItem[]>(
     () =>
-      visibleChannels.map((channel) => ({
+      sortedChannels.map((channel) => ({
         key: channel.name,
         title: getChannelDisplayName(channel, t),
         url: `/channels/${channel.name}`,
         icon: CHANNEL_ICON_MAP[channel.name] ?? IconPlug,
       })),
-    [t, visibleChannels],
+    [sortedChannels, t],
   )
-
-  const toggleShowAllChannels = React.useCallback(() => {
-    setShowAllChannels((prev) => !prev)
-  }, [])
 
   return {
     channelItems,
-    hasMoreChannels,
-    showAllChannels,
-    toggleShowAllChannels,
   }
 }

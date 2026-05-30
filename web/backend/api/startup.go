@@ -14,8 +14,12 @@ import (
 )
 
 const (
-	autoStartEntryName = "ClawEhLauncher"
-	launchAgentLabel   = "io.claw.launcher"
+	// autoStartEntryName is the Windows Run-key value name. It identifies the
+	// merged claw binary's autostart entry.
+	autoStartEntryName = "ClawEh"
+	// launchAgentLabel is the macOS LaunchAgent label / Linux .desktop file
+	// stem used to register the merged claw binary for launch-at-login.
+	launchAgentLabel = "io.claw.gateway"
 )
 
 type autoStartRequest struct {
@@ -89,10 +93,9 @@ func (h *Handler) resolveLaunchCommand() (string, []string, error) {
 		return "", nil, err
 	}
 
-	args := []string{"-no-browser"}
-	if h.configPath != "" {
-		args = append(args, h.configPath)
-	}
+	// The merged claw binary launches the gateway by default (no subcommand).
+	// It also never opens a browser on its own, so no -no-browser flag needed.
+	args := []string{}
 
 	return exePath, args, nil
 }
@@ -215,7 +218,7 @@ func buildDarwinPlist(exePath string, args []string) string {
 
 func linuxAutoStartPath() string {
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".config", "autostart", "claw-web.desktop")
+	return filepath.Join(home, ".config", "autostart", "claw.desktop")
 }
 
 func shellQuote(s string) string {
@@ -247,8 +250,8 @@ func setLinuxAutoStart(enabled bool, exePath string, args []string) error {
 			"[Desktop Entry]",
 			"Type=Application",
 			"Version=1.0",
-			"Name=ClawEh Web",
-			"Comment=Start ClawEh Web on login",
+			"Name=ClawEh",
+			"Comment=Start ClawEh (gateway + WebUI) on login",
 			"Exec=" + buildLinuxExecLine(exePath, args),
 			"Terminal=false",
 			"X-GNOME-Autostart-enabled=true",

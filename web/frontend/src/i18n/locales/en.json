@@ -15,8 +15,6 @@
     "bindings": "Bindings",
     "services": "Services",
     "channels_group": "Channels",
-    "show_more_channels": "More",
-    "show_less_channels": "Less",
     "config": "Config",
     "mcp": "MCP Server",
     "logs": "Logs"
@@ -26,7 +24,6 @@
     "welcomeDesc": "Ask me about weather, settings, or any other tasks. I'm here to assist you.",
     "placeholder": "Start a new message...",
     "newChat": "New Chat",
-    "notConnected": "Gateway is not running. Start it to chat.",
     "thinking": {
       "step1": "Thinking...",
       "step2": "Analyzing your request...",
@@ -46,33 +43,12 @@
       "noConfiguredModelDescription": "You need to configure at least one AI model with an API key before you can start chatting.",
       "goToModels": "Go to Models",
       "noSelectedModel": "No Model Selected",
-      "noSelectedModelDescription": "You have configured models, but none is set as default. Select a model before starting chat.",
-      "notRunning": "Gateway Not Running",
-      "notRunningDescription": "Start the gateway service to begin chatting. Use the Start Gateway button in the top bar."
+      "noSelectedModelDescription": "You have configured models, but none is set as default. Select a model before starting chat."
     },
     "modelGroup": {
       "apikey": "API Key",
       "oauth": "OAuth",
       "local": "Local"
-    }
-  },
-  "header": {
-    "gateway": {
-      "stopDialog": {
-        "title": "Stop Gateway Service?",
-        "description": "Are you sure you want to stop the gateway? This will disconnect your active chat sessions and halt inference.",
-        "confirm": "Stop Gateway"
-      },
-      "action": {
-        "start": "Start Gateway",
-        "stop": "Stop Gateway",
-        "restart": "Restart Gateway"
-      },
-      "status": {
-        "starting": "Starting Gateway...",
-        "restarting": "Restarting Gateway..."
-      },
-      "restartRequired": "Model changes require a gateway restart to take effect."
     }
   },
   "common": {
@@ -219,7 +195,16 @@
       "maxTokens": "Max Output Tokens",
       "maxTokensHint": "Maximum tokens the model may generate per response. Overrides the global default for this model only.",
       "maxTokensField": "Max Tokens Field",
-      "maxTokensFieldHint": "Override the request field name for max tokens, e.g. max_completion_tokens."
+      "maxTokensFieldHint": "Override the request field name for max tokens, e.g. max_completion_tokens.",
+      "reasoningEffort": "Reasoning Effort",
+      "reasoningEffortHint": "Sets the OpenAI-style reasoning_effort request field on supported models (xAI Grok, OpenAI o-series). Accepted values: low, medium, high. Leave unset to omit.",
+      "reasoningEffortUnset": "(unset)",
+      "extraBody": "Extra Request Body",
+      "extraBodyHint": "Free-form JSON merged into the OpenAI-compatible request body for per-provider knobs not modelled natively. Must be a JSON object. Reserved keys claimed by claw are rejected.",
+      "extraBodyPlaceholder": "{\n  \"search_parameters\": { \"mode\": \"on\" }\n}",
+      "extraBodyInvalidJSON": "Must be a valid JSON object.",
+      "extraBodyNotObject": "Top-level value must be a JSON object.",
+      "extraBodyReservedKey": "Key \"{{key}}\" is claimed by claw and cannot be overridden via extra_body."
     },
     "edit": {
       "title": "Configure {{name}}",
@@ -239,11 +224,8 @@
       "discord": "Discord",
       "slack": "Slack",
       "line": "LINE",
-      "whatsapp": "WhatsApp",
-      "whatsapp_native": "WhatsApp Native",
       "webui": "Web",
-      "matrix": "Matrix",
-      "irc": "IRC"
+      "matrix": "Matrix"
     },
     "field": {
       "token": "Bot Token",
@@ -297,9 +279,6 @@
         "allowOrigins": "Allowed origin domains, separated by commas.",
         "wsUrl": "WebSocket service URL.",
         "reconnectInterval": "Reconnect interval after disconnection (seconds).",
-        "bridgeUrl": "Bridge service URL.",
-        "sessionStorePath": "Local path for session storage.",
-        "useNative": "Whether to use native client mode.",
         "host": "Service host address.",
         "port": "Service port.",
         "homeserver": "Matrix homeserver URL.",
@@ -321,13 +300,6 @@
         "readTimeout": "Read timeout in seconds.",
         "writeTimeout": "Write timeout in seconds.",
         "maxConnections": "Maximum number of concurrent connections.",
-        "server": "IRC server address.",
-        "tls": "Whether to enable TLS.",
-        "nick": "Bot nickname.",
-        "user": "IRC username.",
-        "realName": "Displayed real name.",
-        "channels": "IRC channels to join.",
-        "requestCaps": "IRC capability list requested on connect.",
         "genericField": "Used to configure {{field}}."
       }
     },
@@ -418,7 +390,7 @@
       "compress_retain_min_messages": "Minimum Tail Messages",
       "compress_retain_min_messages_hint": "Minimum messages always kept in the uncompressed tail, regardless of token budget. 0 = use default (2).",
       "archive_message_count": "Archive Window Size",
-      "archive_message_count_hint": "Maximum messages retained in the searchable archive. 0 = use default (1000).",
+      "archive_message_count_hint": "Maximum messages retained in the searchable archive. 0 = use default (5000).",
       "archive_days": "Archive Retention (Days)",
       "archive_days_hint": "Limit the archive to messages from the last N days. 0 = no time limit.",
       "session_mode": "Session Mode",
