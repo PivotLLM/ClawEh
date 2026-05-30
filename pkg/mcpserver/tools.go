@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/PivotLLM/ClawEh/pkg/agenttoken"
@@ -107,6 +108,7 @@ func addToolsToServer(
 	tracker *firstCallTracker,
 	policy acl.Policy,
 	msgBus *bus.MessageBus,
+	activeDispatches *atomic.Int32,
 ) {
 	if policy == nil {
 		policy = acl.Default
@@ -147,6 +149,10 @@ func addToolsToServer(
 
 		toolName := name // capture
 		srv.AddTool(mcpTool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			if activeDispatches != nil {
+				activeDispatches.Add(1)
+				defer activeDispatches.Add(-1)
+			}
 			args := req.GetArguments()
 			if args == nil {
 				args = map[string]any{}

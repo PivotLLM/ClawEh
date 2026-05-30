@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/PivotLLM/ClawEh/pkg/agenttoken"
@@ -57,6 +58,10 @@ type MCPServer struct {
 
 	httpServer *http.Server
 	streamable *server.StreamableHTTPServer
+
+	// activeDispatches counts tool/call POST requests currently executing.
+	// Used by Shutdown to distinguish idle SSE connections from in-flight work.
+	activeDispatches atomic.Int32
 
 	// srv is kept for test introspection.
 	srv *server.MCPServer
@@ -198,7 +203,7 @@ func New(opts ...Option) (*MCPServer, error) {
 		server.WithToolCapabilities(false),
 		server.WithRecovery(),
 	)
-	addToolsToServer(mcpSrv, m.agentRegistries, m.allowPatterns, m.sessionTokens, resolver, tracker, m.policy, m.msgBus)
+	addToolsToServer(mcpSrv, m.agentRegistries, m.allowPatterns, m.sessionTokens, resolver, tracker, m.policy, m.msgBus, &m.activeDispatches)
 
 	httpSrv := server.NewStreamableHTTPServer(mcpSrv,
 		server.WithEndpointPath(m.endpointPath),
@@ -264,15 +269,31 @@ func (m *MCPServer) Start() error {
 	}
 }
 
-// Shutdown gracefully stops the HTTP server.
+// Shutdown stops the MCP server. It waits briefly for any in-flight tool
+// dispatches (POST requests) to complete, then force-closes all remaining
+// connections — including the persistent SSE GET connections that CLI clients
+// hold open indefinitely. Without the force-close step, http.Server.Shutdown
+// blocks for the full context deadline (typically 30 s) waiting for those
+// idle SSE connections to drain on their own.
 func (m *MCPServer) Shutdown(ctx context.Context) error {
 	logger.InfoCF("mcpserver", "MCP server shutting down", nil)
-	if m.streamable != nil {
-		_ = m.streamable.Shutdown(ctx)
-	}
+
 	if m.httpServer != nil {
-		return m.httpServer.Shutdown(ctx)
+		// Stop accepting new connections immediately.
+		_ = m.httpServer.Close()
 	}
+
+	// Wait up to 3 s for in-flight tool dispatches to finish.
+	deadline := time.Now().Add(3 * time.Second)
+	for m.activeDispatches.Load() > 0 && time.Now().Before(deadline) {
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	if remaining := m.activeDispatches.Load(); remaining > 0 {
+		logger.WarnCF("mcpserver", "Shutdown with active dispatches still in flight",
+			map[string]any{"count": remaining})
+	}
+
 	return nil
 }
 
