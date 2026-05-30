@@ -209,6 +209,16 @@ func (s *JSONLStore) getNoiseCache(key string) *noiseCache {
 	return c
 }
 
+// ForgetSession drops in-memory per-session state (the noise cache) for key.
+// Durable data on disk is untouched: a subsequent access lazily recreates the
+// cache. Called when a session's context manager is evicted so the noiseCaches
+// map does not grow unbounded over the lifetime of the process.
+func (s *JSONLStore) ForgetSession(key string) {
+	s.noiseMu.Lock()
+	defer s.noiseMu.Unlock()
+	delete(s.noiseCaches, key)
+}
+
 // readMeta loads the metadata file for a session.
 // Returns a zero-value sessionMeta if the file does not exist.
 func (s *JSONLStore) readMeta(key string) (sessionMeta, error) {

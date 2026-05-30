@@ -199,7 +199,7 @@ func (m *Manager) AddToolResult(_ context.Context, msg providers.Message) error 
 // call multiple times within a single turn.
 func (m *Manager) PreDispatchCheck(ctx context.Context, current []providers.Message) ([]providers.Message, error) {
 	history := m.store.GetHistory(m.sessionKey)
-	tokens := estimateTokens(history)
+	tokens := m.estTokens(history)
 	if m.cfg.contextWindow <= 0 {
 		return current, nil
 	}
@@ -271,7 +271,7 @@ func (m *Manager) CheckAndCompress(ctx context.Context, built []providers.Messag
 		return built, nil
 	}
 
-	tokens := estimateTokens(built) + m.cfg.overheadTokens
+	tokens := m.estTokens(built) + m.cfg.overheadTokens
 	contextPct := float64(tokens) * 100.0 / float64(m.cfg.contextWindow)
 
 	if contextPct < float64(m.cfg.minPercent) {
@@ -315,10 +315,25 @@ func (m *Manager) CheckAndCompress(ctx context.Context, built []providers.Messag
 	return fresh, nil
 }
 
-// estimateTokens estimates token count using ~4 chars/token.
-// It counts both message Content and the JSON-serialized arguments of any
-// ToolCalls in the message, so tool-call turns are not under-counted.
+// estimateTokens estimates token count using the package defaults
+// (~4 chars/token, no safety margin). It is retained for callers and tests that
+// have no Manager config in scope; Manager methods should use estTokens so the
+// configured divisor and safety margin apply.
 func estimateTokens(msgs []providers.Message) int {
+	return estimateTokensWith(msgs, defaultCharsPerToken, defaultTokenSafetyMargin)
+}
+
+// estimateTokensWith estimates token count by dividing the total rune count by
+// charsPerToken and inflating by safetyMargin. It counts both message Content
+// and the JSON-serialized arguments of any ToolCalls, so tool-call turns are
+// not under-counted. Non-positive tuning values fall back to the defaults.
+func estimateTokensWith(msgs []providers.Message, charsPerToken, safetyMargin float64) int {
+	if charsPerToken <= 0 {
+		charsPerToken = defaultCharsPerToken
+	}
+	if safetyMargin <= 0 {
+		safetyMargin = defaultTokenSafetyMargin
+	}
 	total := 0
 	for _, m := range msgs {
 		total += len([]rune(m.Content))
@@ -328,7 +343,13 @@ func estimateTokens(msgs []providers.Message) int {
 			}
 		}
 	}
-	return total / 4
+	return int(float64(total) / charsPerToken * safetyMargin)
+}
+
+// estTokens estimates token count for msgs using this Manager's configured
+// chars-per-token divisor and safety margin.
+func (m *Manager) estTokens(msgs []providers.Message) int {
+	return estimateTokensWith(msgs, m.cfg.charsPerToken, m.cfg.tokenSafetyMargin)
 }
 
 // getOrOpenArchive returns the ArchiveStore for this session, opening it lazily
@@ -376,7 +397,7 @@ func (m *Manager) archiveAppend(msg providers.Message) {
 	}
 	m.archiveSeq++
 	seq := m.archiveSeq
-	msg = archiveTruncateContent(msg)
+	msg = archiveTruncateContent(msg, m.archiveContentLimit())
 	if err := a.Append(seq, msg, time.Now()); err != nil {
 		logger.WarnCF("llmcontext", "archive append failed", map[string]any{
 			"session_key": m.sessionKey,
@@ -388,23 +409,35 @@ func (m *Manager) archiveAppend(msg providers.Message) {
 	}
 }
 
-// archiveContentMaxBytes is the maximum number of content bytes stored per
-// message in the archive. Messages whose Content exceeds this limit are
+// archiveContentMaxBytes is the default maximum number of content bytes stored
+// per message in the archive. Messages whose Content exceeds this limit are
 // truncated before writing; the LLM already saw the full content in the
 // active context window, so only a compact summary is needed for history.
 // Tool results that contain large file payloads are the primary use-case.
+// Override per-agent via WithArchiveContentMaxBytes.
 const archiveContentMaxBytes = 4096
 
+// archiveContentLimit returns the effective per-message archive content cap,
+// falling back to archiveContentMaxBytes when unconfigured.
+func (m *Manager) archiveContentLimit() int {
+	if m.cfg.archiveContentMaxBytes > 0 {
+		return m.cfg.archiveContentMaxBytes
+	}
+	return archiveContentMaxBytes
+}
+
 // archiveTruncateContent returns a shallow copy of msg with Content truncated
-// to archiveContentMaxBytes if it exceeds that limit. The original msg is not
-// mutated.
-func archiveTruncateContent(msg providers.Message) providers.Message {
-	if len(msg.Content) <= archiveContentMaxBytes {
+// to maxBytes if it exceeds that limit. The original msg is not mutated.
+func archiveTruncateContent(msg providers.Message, maxBytes int) providers.Message {
+	if maxBytes <= 0 {
+		maxBytes = archiveContentMaxBytes
+	}
+	if len(msg.Content) <= maxBytes {
 		return msg
 	}
 	original := len(msg.Content)
-	msg.Content = msg.Content[:archiveContentMaxBytes] +
-		fmt.Sprintf("\n[content truncated: %d bytes total, first %d shown]", original, archiveContentMaxBytes)
+	msg.Content = msg.Content[:maxBytes] +
+		fmt.Sprintf("\n[content truncated: %d bytes total, first %d shown]", original, maxBytes)
 	return msg
 }
 
@@ -450,7 +483,7 @@ func (m *Manager) archiveWindow() (minSeq, maxSeq int) {
 // before doCompress so trigger tests remain independent of LLM behavior.
 func (m *Manager) compress(ctx context.Context, safetyNet bool) error {
 	history := m.store.GetHistory(m.sessionKey)
-	tokens := estimateTokens(history)
+	tokens := m.estTokens(history)
 	contextPct := 0.0
 	if m.cfg.contextWindow > 0 {
 		contextPct = float64(tokens) * 100.0 / float64(m.cfg.contextWindow)
@@ -473,7 +506,7 @@ func (m *Manager) compress(ctx context.Context, safetyNet bool) error {
 // AddUserMessage and AddAssistantMessage.
 func (m *Manager) triggerCheck(ctx context.Context) error {
 	history := m.store.GetHistory(m.sessionKey)
-	tokens := estimateTokens(history)
+	tokens := m.estTokens(history)
 	if m.cfg.contextWindow <= 0 {
 		return nil
 	}
@@ -612,10 +645,10 @@ func (m *Manager) ForceCompress(_ context.Context) error {
 
 	// Check whether the current turn group alone fits the context window.
 	currentGroupSlice := conversation[groups[0].start : groups[0].end+1]
-	currentGroupTokens := estimateTokens(currentGroupSlice)
+	currentGroupTokens := m.estTokens(currentGroupSlice)
 	sysTokens := 0
 	if sysMsg != nil {
-		sysTokens = estimateTokens([]providers.Message{*sysMsg})
+		sysTokens = m.estTokens([]providers.Message{*sysMsg})
 	}
 	if m.cfg.contextWindow > 0 && (currentGroupTokens+sysTokens)*100/m.cfg.contextWindow >= m.cfg.safetyPercent {
 		return fmt.Errorf("%w: current turn group (%d tokens) alone exceeds context window (%d tokens)",
@@ -627,7 +660,7 @@ func (m *Manager) ForceCompress(_ context.Context) error {
 	totalTokens := currentGroupTokens + sysTokens
 	for _, g := range groups[1:] {
 		slice := conversation[g.start : g.end+1]
-		cost := estimateTokens(slice)
+		cost := m.estTokens(slice)
 		if m.cfg.contextWindow > 0 && (totalTokens+cost)*100/m.cfg.contextWindow >= m.cfg.safetyPercent {
 			break
 		}
@@ -683,16 +716,21 @@ func (m *Manager) ForceCompress(_ context.Context) error {
 
 func (m *Manager) Stats() ContextStats {
 	history := m.store.GetHistory(m.sessionKey)
-	tokens := estimateTokens(history)
+	tokens := m.estTokens(history)
 	pct := 0.0
 	if m.cfg.contextWindow > 0 {
 		pct = float64(tokens) * 100.0 / float64(m.cfg.contextWindow)
 	}
-	// Estimate summary token count from the raw stored summary string (runes/4).
+	// Estimate summary token count from the raw stored summary string using the
+	// configured chars-per-token divisor (no safety margin — this is a stat).
 	summaryTokens := 0
 	rawSummary := m.store.GetSummary(m.sessionKey)
 	if rawSummary != "" {
-		summaryTokens = len([]rune(rawSummary)) / 4
+		cpt := m.cfg.charsPerToken
+		if cpt <= 0 {
+			cpt = defaultCharsPerToken
+		}
+		summaryTokens = int(float64(len([]rune(rawSummary))) / cpt)
 	}
 	return ContextStats{
 		TotalMessages:       len(history),

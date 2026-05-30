@@ -23,9 +23,14 @@ const tailCronPrefix = "The following message is from a cron job that fired at "
 //  4. Collapse consecutive noise messages in the retained tail to at most one.
 //
 // A budget ≤ 0 disables the budget check (only the floor applies).
-func selectTail(history []providers.Message, budget, minMessages int) []providers.Message {
+// estimate converts a message slice into an estimated token count; pass the
+// Manager's estTokens so the configured divisor and safety margin apply.
+func selectTail(history []providers.Message, budget, minMessages int, estimate func([]providers.Message) int) []providers.Message {
 	if len(history) == 0 {
 		return nil
+	}
+	if estimate == nil {
+		estimate = estimateTokens
 	}
 
 	type span struct{ start, end int }
@@ -37,7 +42,7 @@ func selectTail(history []providers.Message, budget, minMessages int) []provider
 	for i >= 0 {
 		g := resolveGroup(history, i)
 		slice := history[g.start : g.end+1]
-		cost := estimateTokens(slice)
+		cost := estimate(slice)
 		meaningful := countMeaningfulMessages(slice)
 
 		fits := budget <= 0 || totalTokens+cost <= budget

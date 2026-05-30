@@ -242,6 +242,18 @@ func NewAgentInstance(
 		return 0, false
 	}
 
+	// resolveFloatOpt mirrors resolveIntOpt for float-valued knobs. 0 = not
+	// configured (use the llmcontext default).
+	resolveFloatOpt := func(agentPtr *float64, defaultsVal float64) (float64, bool) {
+		if agentPtr != nil {
+			return *agentPtr, true
+		}
+		if defaultsVal != 0 {
+			return defaultsVal, true
+		}
+		return 0, false
+	}
+
 	var compressOpts []llmcontext.Option
 
 	if v, ok := resolveIntOpt(func() *int {
@@ -307,6 +319,30 @@ func NewAgentInstance(
 		return nil
 	}(), defaults.ArchiveDays); ok {
 		compressOpts = append(compressOpts, llmcontext.WithArchiveDays(v))
+	}
+	if v, ok := resolveFloatOpt(func() *float64 {
+		if agentCfg != nil {
+			return agentCfg.CompressCharsPerToken
+		}
+		return nil
+	}(), defaults.CompressCharsPerToken); ok {
+		compressOpts = append(compressOpts, llmcontext.WithCharsPerToken(v))
+	}
+	if v, ok := resolveFloatOpt(func() *float64 {
+		if agentCfg != nil {
+			return agentCfg.CompressTokenSafetyMargin
+		}
+		return nil
+	}(), defaults.CompressTokenSafetyMargin); ok {
+		compressOpts = append(compressOpts, llmcontext.WithTokenSafetyMargin(v))
+	}
+	if v, ok := resolveIntOpt(func() *int {
+		if agentCfg != nil {
+			return agentCfg.ArchiveContentMaxBytes
+		}
+		return nil
+	}(), defaults.ArchiveContentMaxBytes); ok {
+		compressOpts = append(compressOpts, llmcontext.WithArchiveContentMaxBytes(v))
 	}
 	// Resolve fallback candidates
 	modelCfg := providers.ModelConfig{

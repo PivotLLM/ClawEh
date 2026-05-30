@@ -52,7 +52,7 @@ func (m *Manager) doCompress(ctx context.Context, safetyNet bool) error {
 	}
 
 	conversation := storedToPlain(storedConversation)
-	tokensBeforeCompress := estimateTokens(conversation)
+	tokensBeforeCompress := m.estTokens(conversation)
 	targetPct := float64(m.cfg.normalPercent) * defaultCompressTargetFactor
 	budget := m.cfg.contextWindow * m.cfg.retainTokenPercent / 100
 
@@ -74,13 +74,13 @@ func (m *Manager) doCompress(ctx context.Context, safetyNet bool) error {
 			if !aggressive {
 				aggressive = true
 				iterCount = 0
-				tokensBeforeIteration = estimateTokens(currentConversation)
+				tokensBeforeIteration = m.estTokens(currentConversation)
 				continue
 			}
 			break // exhausted both standard and aggressive prompt types
 		}
 
-		tail := selectTail(currentConversation, budget, m.cfg.retainMinMessages)
+		tail := selectTail(currentConversation, budget, m.cfg.retainMinMessages, m.estTokens)
 		tailStart := len(currentConversation) - len(tail)
 		toSummarize := currentStored[:tailStart]
 
@@ -138,7 +138,7 @@ func (m *Manager) doCompress(ctx context.Context, safetyNet bool) error {
 		currentStored = currentStored[tailStart:]
 		currentConversation = tail
 
-		tokensCurrent := estimateTokens(currentConversation)
+		tokensCurrent := m.estTokens(currentConversation)
 		if m.cfg.contextWindow > 0 {
 			pctCurrent := float64(tokensCurrent) * 100 / float64(m.cfg.contextWindow)
 			if pctCurrent < targetPct {
@@ -194,7 +194,7 @@ func (m *Manager) handleNormalPostLoop(
 		return err
 	}
 
-	tokensFinal := estimateTokens(currentConversation)
+	tokensFinal := m.estTokens(currentConversation)
 	overallGain := 0.0
 	if tokensBeforeCompress > 0 {
 		overallGain = 1 - float64(tokensFinal)/float64(tokensBeforeCompress)
@@ -243,7 +243,7 @@ func (m *Manager) handleSafetyNetPostLoop(
 	}
 
 	currentConversation := storedToPlain(currentStored)
-	tokensFinal := estimateTokens(currentConversation)
+	tokensFinal := m.estTokens(currentConversation)
 	finalPct := 0.0
 	if m.cfg.contextWindow > 0 {
 		finalPct = float64(tokensFinal) * 100 / float64(m.cfg.contextWindow)
@@ -268,7 +268,7 @@ func (m *Manager) handleSafetyNetPostLoop(
 
 	// Recheck after drops.
 	currentConversation = storedToPlain(currentStored)
-	tokensFinal = estimateTokens(currentConversation)
+	tokensFinal = m.estTokens(currentConversation)
 	if m.cfg.contextWindow > 0 {
 		finalPct = float64(tokensFinal) * 100 / float64(m.cfg.contextWindow)
 	}
@@ -548,7 +548,7 @@ func (m *Manager) dropOldestGroups(_ context.Context, conv []providers.Message) 
 		if len(conv) <= m.cfg.retainMinMessages {
 			break
 		}
-		tokens := estimateTokens(conv)
+		tokens := m.estTokens(conv)
 		pct := 0.0
 		if m.cfg.contextWindow > 0 {
 			pct = float64(tokens) * 100 / float64(m.cfg.contextWindow)
@@ -579,7 +579,7 @@ func (m *Manager) dropOldestStoredGroups(_ context.Context, conv []memory.Stored
 			break
 		}
 		plain := storedToPlain(conv)
-		tokens := estimateTokens(plain)
+		tokens := m.estTokens(plain)
 		pct := 0.0
 		if m.cfg.contextWindow > 0 {
 			pct = float64(tokens) * 100 / float64(m.cfg.contextWindow)
@@ -612,7 +612,7 @@ func (m *Manager) applyLargeMsgChecks(conv []providers.Message) {
 	hardLimit := m.cfg.contextWindow * m.cfg.safetyPercent / 100
 
 	for i := range conv {
-		msgTokens := estimateTokens([]providers.Message{conv[i]})
+		msgTokens := m.estTokens([]providers.Message{conv[i]})
 		if msgTokens > threshold {
 			// The very last message: warn only if user, truncate otherwise.
 			if i == len(conv)-1 && conv[i].Role == "user" {

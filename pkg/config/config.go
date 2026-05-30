@@ -227,8 +227,11 @@ type AgentConfig struct {
 	CompressRetainTokenPercent *int              `json:"compress_retain_token_percent,omitempty"`
 	CompressRetainMinMessages  *int              `json:"compress_retain_min_messages,omitempty"`
 	CompressModel              *AgentModelConfig `json:"compress_model,omitempty"`
+	CompressCharsPerToken      *float64          `json:"compress_chars_per_token,omitempty"`
+	CompressTokenSafetyMargin  *float64          `json:"compress_token_safety_margin,omitempty"`
 	ArchiveMessageCount        *int              `json:"archive_message_count,omitempty"`
 	ArchiveDays                *int              `json:"archive_days,omitempty"`
+	ArchiveContentMaxBytes     *int              `json:"archive_content_max_bytes,omitempty"`
 }
 
 // IsEnabled returns true if the agent is enabled (nil means enabled by default).
@@ -345,8 +348,11 @@ type AgentDefaults struct {
 	CompressRetainTokenPercent int               `json:"compress_retain_token_percent,omitempty" env:"CLAW_AGENTS_DEFAULTS_COMPRESS_RETAIN_TOKEN_PERCENT"`
 	CompressRetainMinMessages  int               `json:"compress_retain_min_messages,omitempty"  env:"CLAW_AGENTS_DEFAULTS_COMPRESS_RETAIN_MIN_MESSAGES"`
 	CompressModel              AgentModelConfig  `json:"compress_model,omitempty"`
+	CompressCharsPerToken      float64           `json:"compress_chars_per_token,omitempty"      env:"CLAW_AGENTS_DEFAULTS_COMPRESS_CHARS_PER_TOKEN"`
+	CompressTokenSafetyMargin  float64           `json:"compress_token_safety_margin,omitempty"  env:"CLAW_AGENTS_DEFAULTS_COMPRESS_TOKEN_SAFETY_MARGIN"`
 	ArchiveMessageCount        int               `json:"archive_message_count,omitempty"         env:"CLAW_AGENTS_DEFAULTS_ARCHIVE_MESSAGE_COUNT"`
 	ArchiveDays                int               `json:"archive_days,omitempty"                  env:"CLAW_AGENTS_DEFAULTS_ARCHIVE_DAYS"`
+	ArchiveContentMaxBytes     int               `json:"archive_content_max_bytes,omitempty"     env:"CLAW_AGENTS_DEFAULTS_ARCHIVE_CONTENT_MAX_BYTES"`
 	DefaultTools               []string          `json:"default_tools,omitempty"`
 	Routing                    *RoutingConfig    `json:"routing,omitempty"`
 }

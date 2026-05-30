@@ -273,6 +273,7 @@ func (al *AgentLoop) getContextManager(agent *AgentInstance, sessionKey string) 
 	newEntry := &cmEntry{
 		cm:           cm,
 		sessionKey:   sessionKey,
+		store:        agent.Sessions,
 		lastAccessed: time.Now(),
 	}
 	newEntry.refcount.Store(1)

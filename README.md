@@ -260,8 +260,11 @@ Context management options live in the agent config block (or `agents.defaults`)
 | Field | Default | Description |
 |---|---|---|
 | `context_window` | `128000` | Model context window in tokens. Used to compute compression thresholds. |
+| `compress_chars_per_token` | `4.0` | Characters-per-token divisor for the token estimate. Lower values estimate more tokens (more conservative); tune toward `3.5` for code/JSON-heavy sessions. |
+| `compress_token_safety_margin` | `1.0` | Multiplier applied to every token estimate so it errs high, triggering compression earlier. `1.1` inflates the estimate by 10%. |
 | `archive_message_count` | `5000` | Maximum number of messages to retain in the retrievable archive per session. |
 | `archive_days` | `0` (unlimited) | Limit archive retrieval to messages within the last *n* days. |
+| `archive_content_max_bytes` | `4096` | Maximum per-message content bytes stored in the archive; longer content is truncated (the active context still saw the full text). |
 | `compress_model` | agent's primary model | Model used for summarisation. Can be a cheaper or faster model. |
 
 Example (per-agent override):

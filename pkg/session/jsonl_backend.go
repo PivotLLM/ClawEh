@@ -152,6 +152,19 @@ func (b *JSONLBackend) SetCompactionState(sessionKey string, state memory.Compac
 	return nil
 }
 
+// ForgetSession drops in-memory per-session state held by the underlying store
+// (e.g. the noise-dedup cache). Durable data on disk is untouched. No-ops if
+// the underlying store does not support it. Called when a session's context
+// manager is evicted so per-session caches do not grow unbounded.
+func (b *JSONLBackend) ForgetSession(key string) {
+	type sessionForgetter interface {
+		ForgetSession(key string)
+	}
+	if f, ok := b.store.(sessionForgetter); ok {
+		f.ForgetSession(key)
+	}
+}
+
 // Close releases resources held by the underlying store.
 func (b *JSONLBackend) Close() error {
 	return b.store.Close()
