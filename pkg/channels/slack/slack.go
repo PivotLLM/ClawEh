@@ -23,14 +23,15 @@ import (
 
 type SlackChannel struct {
 	*channels.BaseChannel
-	config       config.SlackConfig
-	api          *slack.Client
-	socketClient *socketmode.Client
-	botUserID    string
-	teamID       string
-	ctx          context.Context
-	cancel       context.CancelFunc
-	pendingAcks  sync.Map
+	config        config.SlackConfig
+	api           *slack.Client
+	socketClient  *socketmode.Client
+	botUserID     string
+	teamID        string
+	ctx           context.Context
+	cancel        context.CancelFunc
+	pendingAcks   sync.Map
+	userNameCache sync.Map // userID → display name string
 }
 
 type slackMessageRef struct {
@@ -96,6 +97,33 @@ func (c *SlackChannel) Start(ctx context.Context) error {
 	c.SetRunning(true)
 	logger.InfoC("slack", "Slack channel started (Socket Mode)")
 	return nil
+}
+
+// resolveDisplayName fetches the human-readable display name for a Slack user
+// ID, with an in-memory cache so each user is resolved at most once per
+// process lifetime. Falls back through DisplayName → RealName → Name.
+func (c *SlackChannel) resolveDisplayName(userID string) string {
+	if v, ok := c.userNameCache.Load(userID); ok {
+		return v.(string)
+	}
+	user, err := c.api.GetUserInfo(userID)
+	if err != nil {
+		logger.DebugCF("slack", "Failed to resolve display name", map[string]any{
+			"user_id": userID,
+			"error":   err.Error(),
+		})
+		c.userNameCache.Store(userID, "")
+		return ""
+	}
+	name := user.Profile.DisplayName
+	if name == "" {
+		name = user.RealName
+	}
+	if name == "" {
+		name = user.Name
+	}
+	c.userNameCache.Store(userID, name)
+	return name
 }
 
 func (c *SlackChannel) Stop(ctx context.Context) error {
@@ -330,6 +358,7 @@ func (c *SlackChannel) handleMessageEvent(ev *slackevents.MessageEvent) {
 		})
 		return
 	}
+	sender.DisplayName = c.resolveDisplayName(ev.User)
 
 	senderID := ev.User
 	channelID := ev.Channel
@@ -440,6 +469,7 @@ func (c *SlackChannel) handleAppMention(ev *slackevents.AppMentionEvent) {
 		Platform:    "slack",
 		PlatformID:  senderID,
 		CanonicalID: identity.BuildCanonicalID("slack", senderID),
+		DisplayName: c.resolveDisplayName(senderID),
 	}
 	channelID := ev.Channel
 	threadTS := ev.ThreadTimeStamp
@@ -505,6 +535,7 @@ func (c *SlackChannel) handleSlashCommand(event socketmode.Event) {
 		})
 		return
 	}
+	cmdSender.DisplayName = c.resolveDisplayName(cmd.UserID)
 
 	senderID := cmd.UserID
 	channelID := cmd.ChannelID

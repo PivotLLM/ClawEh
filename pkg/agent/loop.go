@@ -124,6 +124,7 @@ type processOptions struct {
 	SendResponse    bool     // Whether to send response via bus
 	IsRetry         bool     // True when message is a /retry retrigger (skip AddMessage)
 	SenderID        string   // Originating sender identifier for source attribution
+	SenderName      string   // Human-readable sender label (display name + canonical ID)
 }
 
 const (
@@ -1117,16 +1118,24 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 			"route_channel": route.Channel,
 		})
 
+	userContent := msg.Content
+	if msg.Peer.Kind == "group" || msg.Peer.Kind == "channel" {
+		if label := senderLabel(msg.Sender); label != "" {
+			userContent = "[From: " + label + "]\n" + msg.Content
+		}
+	}
+
 	opts := processOptions{
 		SessionKey:      sessionKey,
 		Channel:         msg.Channel,
 		ChatID:          msg.ChatID,
-		UserMessage:     msg.Content,
+		UserMessage:     userContent,
 		Media:           msg.Media,
 		DefaultResponse: defaultResponse,
 		SendResponse:    false,
 		IsRetry:         msg.IsRetry,
 		SenderID:        msg.SenderID,
+		SenderName:      senderSource(msg.SenderID, msg.Sender),
 	}
 
 	// context-dependent commands check their own Runtime fields and report
@@ -1328,7 +1337,9 @@ func (al *AgentLoop) runAgentLoop(
 	// 2. Save user message and trigger compression check (skip on retry — already in history).
 	if !opts.IsRetry {
 		userMsg := providers.Message{Role: "user", Content: opts.UserMessage}
-		if opts.SenderID != "" {
+		if opts.SenderName != "" {
+			userMsg.Source = opts.SenderName
+		} else if opts.SenderID != "" {
 			userMsg.Source = opts.SenderID
 		}
 		if strings.HasPrefix(opts.SenderID, "callback") {
@@ -2613,6 +2624,35 @@ func inboundMetadata(msg bus.InboundMessage, key string) string {
 		return ""
 	}
 	return msg.Metadata[key]
+}
+
+// senderLabel returns a short human-readable identifier for a sender, used to
+// prefix group/channel messages so the LLM knows who sent each turn.
+// Falls back gracefully: DisplayName → "@Username" → empty (caller decides).
+func senderLabel(s bus.SenderInfo) string {
+	if s.DisplayName != "" && s.Username != "" {
+		return s.DisplayName + " (@" + s.Username + ")"
+	}
+	if s.DisplayName != "" {
+		return s.DisplayName
+	}
+	if s.Username != "" {
+		return "@" + s.Username
+	}
+	return ""
+}
+
+// senderSource returns a human-readable source string for message archiving.
+// Combines the display label with the canonical ID when both are available.
+func senderSource(canonicalID string, s bus.SenderInfo) string {
+	label := senderLabel(s)
+	if label == "" {
+		return canonicalID
+	}
+	if canonicalID == "" {
+		return label
+	}
+	return label + " [" + canonicalID + "]"
 }
 
 // extractParentPeer extracts the parent peer (reply-to) from inbound message metadata.
