@@ -22,7 +22,7 @@ func (p agentsProvider) Available(cfg *config.Config) (bool, string) {
 
 func (p agentsProvider) Describe() []tools.ToolDescriptor {
 	return []tools.ToolDescriptor{
-		{Name: "agents_spawn", Description: "Launch a background subagent for long-running or delegated work.", Category: "agents", ConfigKey: "agents_spawn", DefaultEnabled: true},
+		{Name: "agents_spawn", Description: "Launch a background subagent for long-running or delegated work.", Category: "agents", ConfigKey: "agents_spawn", DefaultEnabled: false},
 	}
 }
 

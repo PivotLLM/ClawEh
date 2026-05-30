@@ -13,8 +13,8 @@ import (
 // staticToolDescriptors holds descriptors for tools not owned by any ToolProvider
 // (discovery tools registered by the MCP layer).
 var staticToolDescriptors = []tools.ToolDescriptor{
-	{Name: "find_tools_regex", Description: "Discover hidden MCP tools by regex search when tool discovery is enabled.", Category: "discovery", ConfigKey: "mcp.discovery.use_regex", DefaultEnabled: false},
-	{Name: "find_tools_bm25", Description: "Discover hidden MCP tools by semantic ranking when tool discovery is enabled.", Category: "discovery", ConfigKey: "mcp.discovery.use_bm25", DefaultEnabled: false},
+	{Name: "find_tools_regex", Description: "Discover hidden MCP tools by regex search when tool discovery is enabled.", Category: "discovery", ConfigKey: "mcp.discovery.use_regex", DefaultEnabled: true},
+	{Name: "find_tools_bm25", Description: "Discover hidden MCP tools by semantic ranking when tool discovery is enabled.", Category: "discovery", ConfigKey: "mcp.discovery.use_bm25", DefaultEnabled: true},
 }
 
 type toolSupportItem struct {

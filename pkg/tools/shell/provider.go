@@ -23,7 +23,7 @@ func (p shellProvider) Available(cfg *config.Config) (bool, string) {
 
 func (p shellProvider) Describe() []tools.ToolDescriptor {
 	return []tools.ToolDescriptor{
-		{Name: "shell_exec", Description: "Run shell commands inside the configured workspace sandbox.", Category: "automation", ConfigKey: "shell_exec", DefaultEnabled: true},
+		{Name: "shell_exec", Description: "Run shell commands inside the configured workspace sandbox.", Category: "automation", ConfigKey: "shell_exec", DefaultEnabled: false},
 	}
 }
 

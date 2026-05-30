@@ -24,8 +24,8 @@ func (p skillsProvider) Available(cfg *config.Config) (bool, string) {
 
 func (p skillsProvider) Describe() []tools.ToolDescriptor {
 	return []tools.ToolDescriptor{
-		{Name: "skills_find", Description: "Search external skill registries for installable skills.", Category: "skills", ConfigKey: "skills_find", DefaultEnabled: true},
-		{Name: "skills_install", Description: "Install a skill into the current workspace from a registry.", Category: "skills", ConfigKey: "skills_install", DefaultEnabled: true},
+		{Name: "skills_find", Description: "Search external skill registries for installable skills.", Category: "skills", ConfigKey: "skills_find", DefaultEnabled: false},
+		{Name: "skills_install", Description: "Install a skill into the current workspace from a registry.", Category: "skills", ConfigKey: "skills_install", DefaultEnabled: false},
 	}
 }
 
