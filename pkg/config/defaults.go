@@ -12,28 +12,18 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/global"
 )
 
-// DefaultAgentTools is the baseline tool allowlist for new agents when no
-// explicit tools list is configured. Excludes hardware (i2c, spi) and advanced
-// MCP discovery tools, which require deliberate opt-in.
-// The list can be overridden per-installation via agents.defaults.default_tools.
-var DefaultAgentTools = []string{
-	"files_read",
-	"files_write",
-	"files_edit",
-	"files_append",
-	"files_copy",
-	"files_list",
-	"shell_exec",
-	"web_search",
-	"web_fetch",
-	"msg_send",
-	"msg_send_file",
-	"skills_find",
-	"skills_install",
-	"agents_spawn",
-	"schedule_cron",
-	"session_messages",
-	"session_search",
+// DefaultAgentTools is the baseline tool allowlist used when an agent has no
+// explicit tools list. Populated at startup from provider descriptors via
+// SetDefaultAgentTools; the value here is a safe fallback only.
+var DefaultAgentTools = []string{"*"}
+
+// SetDefaultAgentTools replaces the default tool allowlist. Called from the
+// gateway after all tool providers are registered, so each provider's
+// DefaultEnabled flag drives which tools are in every agent's baseline.
+func SetDefaultAgentTools(names []string) {
+	if len(names) > 0 {
+		DefaultAgentTools = names
+	}
 }
 
 // DefaultConfig returns the default configuration for ClawEh.

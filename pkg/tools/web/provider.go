@@ -76,6 +76,13 @@ func (p webProvider) Build(deps tools.ToolDeps) []tools.Tool {
 	return result
 }
 
+func (p webProvider) Describe() []tools.ToolDescriptor {
+	return []tools.ToolDescriptor{
+		{Name: "web_search", Description: "Search the web using the configured providers.", Category: "web", ConfigKey: "web", DefaultEnabled: true},
+		{Name: "web_fetch", Description: "Fetch and summarize the contents of a webpage.", Category: "web", ConfigKey: "web_fetch", DefaultEnabled: true},
+	}
+}
+
 // isToolAllowed checks whether the agent config permits the named tool.
 func isToolAllowed(agentCfg *config.AgentConfig, name string) bool {
 	if agentCfg == nil {

@@ -21,6 +21,15 @@ func (p sessionProvider) Available(cfg *config.Config) (bool, string) {
 	return true, ""
 }
 
+func (p sessionProvider) Describe() []tools.ToolDescriptor {
+	return []tools.ToolDescriptor{
+		{Name: "session_messages", Description: "Retrieve archived session messages by sequence number range.", Category: "context", ConfigKey: "session_messages", DefaultEnabled: true},
+		{Name: "session_search", Description: "Full-text search over archived session messages.", Category: "context", ConfigKey: "session_search", DefaultEnabled: true},
+		{Name: "session_compact", Description: "Trigger an immediate context compaction for the current session.", Category: "context", ConfigKey: "session_compact", DefaultEnabled: false},
+		{Name: "session_info", Description: "Return archive bounds, message count, and summary coverage.", Category: "context", ConfigKey: "session_info", DefaultEnabled: false},
+	}
+}
+
 func (p sessionProvider) Build(deps tools.ToolDeps) []tools.Tool {
 	cfg := deps.Cfg
 	if cfg == nil {

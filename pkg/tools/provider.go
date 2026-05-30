@@ -7,6 +7,15 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/providers"
 )
 
+// ToolDescriptor holds static metadata for a single tool — no deps required.
+type ToolDescriptor struct {
+	Name           string // tool name as returned by Tool.Name()
+	Description    string // one-line description for the GUI
+	Category       string // GUI grouping: "filesystem", "web", "session", etc.
+	ConfigKey      string // maps to the config flag that enables/disables this tool
+	DefaultEnabled bool   // include in the default agent tool allowlist
+}
+
 // ToolProvider is implemented by each tool package. It declares what namespace
 // it owns, whether it can run in the current environment, and how to build its
 // tools given runtime dependencies.
@@ -17,6 +26,7 @@ type ToolProvider interface {
 	ConfigKey() string                            // maps to config struct field name
 	Available(cfg *config.Config) (bool, string) // (ok, reason if not)
 	Build(deps ToolDeps) []Tool
+	Describe() []ToolDescriptor
 }
 
 // ToolDeps carries everything a tool package needs at construction time.

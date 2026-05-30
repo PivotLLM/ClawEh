@@ -100,6 +100,17 @@ func (p filesProvider) Build(deps tools.ToolDeps) []tools.Tool {
 	return result
 }
 
+func (p filesProvider) Describe() []tools.ToolDescriptor {
+	return []tools.ToolDescriptor{
+		{Name: "files_read", Description: "Read file content from the workspace or explicitly allowed paths.", Category: "filesystem", ConfigKey: "files_read", DefaultEnabled: true},
+		{Name: "files_write", Description: "Create or overwrite files within the writable workspace scope.", Category: "filesystem", ConfigKey: "files_write", DefaultEnabled: true},
+		{Name: "files_list", Description: "Inspect directories and enumerate files available to the agent.", Category: "filesystem", ConfigKey: "files_list", DefaultEnabled: true},
+		{Name: "files_edit", Description: "Apply targeted edits to existing files without rewriting everything.", Category: "filesystem", ConfigKey: "files_edit", DefaultEnabled: true},
+		{Name: "files_append", Description: "Append content to the end of an existing file.", Category: "filesystem", ConfigKey: "files_append", DefaultEnabled: true},
+		{Name: "files_copy", Description: "Copy a file from a source path to a destination path within the workspace.", Category: "filesystem", ConfigKey: "files_copy", DefaultEnabled: true},
+	}
+}
+
 // resolveMemoryDir returns the memory_dir override for the agent, or "".
 func resolveMemoryDir(agentCfg *config.AgentConfig) string {
 	if agentCfg == nil {

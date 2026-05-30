@@ -26,3 +26,10 @@ func registerToolProviders() {
 	tools.RegisterProvider(schedule.Provider)
 	tools.RegisterProvider(msg.Provider)
 }
+
+// RegisterToolProvidersForTest is exported for use in tests that need
+// providers registered without starting the full gateway.
+// Safe to call multiple times — RegisterProvider is idempotent.
+func RegisterToolProvidersForTest() {
+	registerToolProviders()
+}

@@ -19,6 +19,13 @@ func (p msgProvider) Available(cfg *config.Config) (bool, string) {
 	return true, ""
 }
 
+func (p msgProvider) Describe() []tools.ToolDescriptor {
+	return []tools.ToolDescriptor{
+		{Name: "msg_send", Description: "Send a follow-up message back to the active user or chat.", Category: "communication", ConfigKey: "msg_send", DefaultEnabled: true},
+		{Name: "msg_send_file", Description: "Send an outbound file or media attachment to the active chat.", Category: "communication", ConfigKey: "msg_send_file", DefaultEnabled: true},
+	}
+}
+
 func (p msgProvider) Build(deps tools.ToolDeps) []tools.Tool {
 	cfg := deps.Cfg
 	if cfg == nil {

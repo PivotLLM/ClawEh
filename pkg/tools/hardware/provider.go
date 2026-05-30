@@ -24,6 +24,13 @@ func (p hardwareProvider) Available(cfg *config.Config) (bool, string) {
 	return true, ""
 }
 
+func (p hardwareProvider) Describe() []tools.ToolDescriptor {
+	return []tools.ToolDescriptor{
+		{Name: "hw_i2c", Description: "Interact with I2C hardware devices exposed on the host.", Category: "hardware", ConfigKey: "hw_i2c", DefaultEnabled: false},
+		{Name: "hw_spi", Description: "Interact with SPI hardware devices exposed on the host.", Category: "hardware", ConfigKey: "hw_spi", DefaultEnabled: false},
+	}
+}
+
 func (p hardwareProvider) Build(deps tools.ToolDeps) []tools.Tool {
 	cfg := deps.Cfg
 	if cfg == nil {

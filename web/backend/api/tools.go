@@ -7,13 +7,14 @@ import (
 	"runtime"
 
 	"github.com/PivotLLM/ClawEh/pkg/config"
+	"github.com/PivotLLM/ClawEh/pkg/tools"
 )
 
-type toolCatalogEntry struct {
-	Name        string
-	Description string
-	Category    string
-	ConfigKey   string
+// staticToolDescriptors holds descriptors for tools not owned by any ToolProvider
+// (discovery tools registered by the MCP layer).
+var staticToolDescriptors = []tools.ToolDescriptor{
+	{Name: "find_tools_regex", Description: "Discover hidden MCP tools by regex search when tool discovery is enabled.", Category: "discovery", ConfigKey: "mcp.discovery.use_regex", DefaultEnabled: false},
+	{Name: "find_tools_bm25", Description: "Discover hidden MCP tools by semantic ranking when tool discovery is enabled.", Category: "discovery", ConfigKey: "mcp.discovery.use_bm25", DefaultEnabled: false},
 }
 
 type toolSupportItem struct {
@@ -33,135 +34,6 @@ type toolStateRequest struct {
 	Enabled bool `json:"enabled"`
 }
 
-var toolCatalog = []toolCatalogEntry{
-	{
-		Name:        "read_file",
-		Description: "Read file content from the workspace or explicitly allowed paths.",
-		Category:    "filesystem",
-		ConfigKey:   "read_file",
-	},
-	{
-		Name:        "write_file",
-		Description: "Create or overwrite files within the writable workspace scope.",
-		Category:    "filesystem",
-		ConfigKey:   "write_file",
-	},
-	{
-		Name:        "list_dir",
-		Description: "Inspect directories and enumerate files available to the agent.",
-		Category:    "filesystem",
-		ConfigKey:   "list_dir",
-	},
-	{
-		Name:        "edit_file",
-		Description: "Apply targeted edits to existing files without rewriting everything.",
-		Category:    "filesystem",
-		ConfigKey:   "edit_file",
-	},
-	{
-		Name:        "append_file",
-		Description: "Append content to the end of an existing file.",
-		Category:    "filesystem",
-		ConfigKey:   "append_file",
-	},
-	{
-		Name:        "copy_file",
-		Description: "Copy a file from a source path to a destination path within the workspace.",
-		Category:    "filesystem",
-		ConfigKey:   "copy_file",
-	},
-	{
-		Name:        "exec",
-		Description: "Run shell commands inside the configured workspace sandbox.",
-		Category:    "automation",
-		ConfigKey:   "exec",
-	},
-	{
-		Name:        "cron",
-		Description: "Schedule one-time or recurring reminders, jobs, and shell commands.",
-		Category:    "automation",
-		ConfigKey:   "cron",
-	},
-	{
-		Name:        "web_search",
-		Description: "Search the web using the configured providers.",
-		Category:    "web",
-		ConfigKey:   "web",
-	},
-	{
-		Name:        "web_fetch",
-		Description: "Fetch and summarize the contents of a webpage.",
-		Category:    "web",
-		ConfigKey:   "web_fetch",
-	},
-	{
-		Name:        "message",
-		Description: "Send a follow-up message back to the active user or chat.",
-		Category:    "communication",
-		ConfigKey:   "message",
-	},
-	{
-		Name:        "send_file",
-		Description: "Send an outbound file or media attachment to the active chat.",
-		Category:    "communication",
-		ConfigKey:   "send_file",
-	},
-	{
-		Name:        "find_skills",
-		Description: "Search external skill registries for installable skills.",
-		Category:    "skills",
-		ConfigKey:   "find_skills",
-	},
-	{
-		Name:        "install_skill",
-		Description: "Install a skill into the current workspace from a registry.",
-		Category:    "skills",
-		ConfigKey:   "install_skill",
-	},
-	{
-		Name:        "spawn",
-		Description: "Launch a background subagent for long-running or delegated work.",
-		Category:    "agents",
-		ConfigKey:   "spawn",
-	},
-	{
-		Name:        "i2c",
-		Description: "Interact with I2C hardware devices exposed on the host.",
-		Category:    "hardware",
-		ConfigKey:   "i2c",
-	},
-	{
-		Name:        "spi",
-		Description: "Interact with SPI hardware devices exposed on the host.",
-		Category:    "hardware",
-		ConfigKey:   "spi",
-	},
-	{
-		Name:        "find_tools_regex",
-		Description: "Discover hidden MCP tools by regex search when tool discovery is enabled.",
-		Category:    "discovery",
-		ConfigKey:   "mcp.discovery.use_regex",
-	},
-	{
-		Name:        "find_tools_bm25",
-		Description: "Discover hidden MCP tools by semantic ranking when tool discovery is enabled.",
-		Category:    "discovery",
-		ConfigKey:   "mcp.discovery.use_bm25",
-	},
-	{
-		Name:        "get_session_messages",
-		Description: "Retrieve archived session messages by sequence number range.",
-		Category:    "context",
-		ConfigKey:   "get_session_messages",
-	},
-	{
-		Name:        "search_session_messages",
-		Description: "Full-text search over archived session messages.",
-		Category:    "context",
-		ConfigKey:   "search_session_messages",
-	},
-}
-
 func (h *Handler) registerToolRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/tools", h.handleListTools)
 	mux.HandleFunc("PUT /api/tools/{name}/state", h.handleUpdateToolState)
@@ -173,11 +45,8 @@ func (h *Handler) handleListTools(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Failed to load config: %v", err), http.StatusInternalServerError)
 		return
 	}
-
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(toolSupportResponse{
-		Tools: buildToolSupport(cfg),
-	})
+	json.NewEncoder(w).Encode(toolSupportResponse{Tools: buildToolSupport(cfg)})
 }
 
 func (h *Handler) handleUpdateToolState(w http.ResponseWriter, r *http.Request) {
@@ -186,86 +55,124 @@ func (h *Handler) handleUpdateToolState(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, fmt.Sprintf("Failed to load config: %v", err), http.StatusInternalServerError)
 		return
 	}
-
 	var req toolStateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, fmt.Sprintf("Invalid JSON: %v", err), http.StatusBadRequest)
 		return
 	}
-
 	if err := applyToolState(cfg, r.PathValue("name"), req.Enabled); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-
 	if err := config.SaveConfig(h.configPath, cfg); err != nil {
 		http.Error(w, fmt.Sprintf("Failed to save config: %v", err), http.StatusInternalServerError)
 		return
 	}
-
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
 func buildToolSupport(cfg *config.Config) []toolSupportItem {
-	items := make([]toolSupportItem, 0, len(toolCatalog))
-	for _, entry := range toolCatalog {
-		status := "disabled"
-		reasonCode := ""
+	var items []toolSupportItem
 
-		switch entry.Name {
-		case "find_skills", "install_skill":
-			if cfg.Tools.IsToolEnabled(entry.ConfigKey) {
-				if cfg.Tools.IsToolEnabled("skills") {
-					status = "enabled"
-				} else {
-					status = "blocked"
-					reasonCode = "requires_skills"
-				}
-			}
-		case "spawn":
-			if cfg.Tools.IsToolEnabled(entry.ConfigKey) {
-				if cfg.Tools.IsToolEnabled("subagent") {
-					status = "enabled"
-				} else {
-					status = "blocked"
-					reasonCode = "requires_subagent"
-				}
-			}
-		case "find_tools_regex":
-			status, reasonCode = resolveDiscoveryToolSupport(cfg, cfg.Tools.MCP.Discovery.UseRegex)
-		case "find_tools_bm25":
-			status, reasonCode = resolveDiscoveryToolSupport(cfg, cfg.Tools.MCP.Discovery.UseBM25)
-		case "get_session_messages", "search_session_messages":
-			status = "enabled"
-		case "i2c", "spi":
-			status, reasonCode = resolveHardwareToolSupport(cfg.Tools.IsToolEnabled(entry.ConfigKey))
-		default:
-			if cfg.Tools.IsToolEnabled(entry.ConfigKey) {
-				status = "enabled"
-			}
+	for _, p := range tools.GetProviders() {
+		_, unavailReason := p.Available(cfg)
+		for _, d := range p.Describe() {
+			items = append(items, toolSupportItem{
+				Name:        d.Name,
+				Description: d.Description,
+				Category:    d.Category,
+				ConfigKey:   d.ConfigKey,
+				Status:      resolveToolStatus(cfg, d, p, unavailReason),
+				ReasonCode:  resolveToolReasonCode(cfg, d, p, unavailReason),
+			})
 		}
+	}
 
+	// Append static (non-provider) tools.
+	for _, d := range staticToolDescriptors {
+		status, reason := resolveStaticToolStatus(cfg, d)
 		items = append(items, toolSupportItem{
-			Name:        entry.Name,
-			Description: entry.Description,
-			Category:    entry.Category,
-			ConfigKey:   entry.ConfigKey,
+			Name:        d.Name,
+			Description: d.Description,
+			Category:    d.Category,
+			ConfigKey:   d.ConfigKey,
 			Status:      status,
-			ReasonCode:  reasonCode,
+			ReasonCode:  reason,
 		})
 	}
+
 	return items
 }
 
-func resolveHardwareToolSupport(enabled bool) (string, string) {
-	if !enabled {
-		return "disabled", ""
+func resolveToolStatus(cfg *config.Config, d tools.ToolDescriptor, p tools.ToolProvider, unavailReason string) string {
+	if unavailReason != "" {
+		return "blocked"
 	}
-	if runtime.GOOS != "linux" {
-		return "blocked", "requires_linux"
+	switch d.Name {
+	case "skills_find", "skills_install":
+		if !cfg.Tools.IsToolEnabled(d.ConfigKey) {
+			return "disabled"
+		}
+		if !cfg.Tools.IsToolEnabled("skills") {
+			return "blocked"
+		}
+		return "enabled"
+	case "agents_spawn":
+		if !cfg.Tools.IsToolEnabled(d.ConfigKey) {
+			return "disabled"
+		}
+		if !cfg.Tools.IsToolEnabled("subagent") {
+			return "blocked"
+		}
+		return "enabled"
+	case "hw_i2c", "hw_spi":
+		if !cfg.Tools.IsToolEnabled(d.ConfigKey) {
+			return "disabled"
+		}
+		if runtime.GOOS != "linux" {
+			return "blocked"
+		}
+		return "enabled"
+	case "session_messages", "session_search", "session_compact", "session_info":
+		return "enabled"
+	default:
+		if cfg.Tools.IsToolEnabled(d.ConfigKey) {
+			return "enabled"
+		}
+		return "disabled"
 	}
-	return "enabled", ""
+}
+
+func resolveToolReasonCode(cfg *config.Config, d tools.ToolDescriptor, p tools.ToolProvider, unavailReason string) string {
+	if unavailReason != "" {
+		return unavailReason
+	}
+	switch d.Name {
+	case "skills_find", "skills_install":
+		if cfg.Tools.IsToolEnabled(d.ConfigKey) && !cfg.Tools.IsToolEnabled("skills") {
+			return "requires_skills"
+		}
+	case "agents_spawn":
+		if cfg.Tools.IsToolEnabled(d.ConfigKey) && !cfg.Tools.IsToolEnabled("subagent") {
+			return "requires_subagent"
+		}
+	case "hw_i2c", "hw_spi":
+		if cfg.Tools.IsToolEnabled(d.ConfigKey) && runtime.GOOS != "linux" {
+			return "requires_linux"
+		}
+	}
+	return ""
+}
+
+func resolveStaticToolStatus(cfg *config.Config, d tools.ToolDescriptor) (string, string) {
+	switch d.ConfigKey {
+	case "mcp.discovery.use_regex":
+		return resolveDiscoveryToolSupport(cfg, cfg.Tools.MCP.Discovery.UseRegex)
+	case "mcp.discovery.use_bm25":
+		return resolveDiscoveryToolSupport(cfg, cfg.Tools.MCP.Discovery.UseBM25)
+	}
+	return "disabled", ""
 }
 
 func resolveDiscoveryToolSupport(cfg *config.Config, methodEnabled bool) (string, string) {
@@ -282,64 +189,82 @@ func resolveDiscoveryToolSupport(cfg *config.Config, methodEnabled bool) (string
 }
 
 func applyToolState(cfg *config.Config, toolName string, enabled bool) error {
-	switch toolName {
-	case "read_file":
+	// Look up ConfigKey from registered providers.
+	for _, p := range tools.GetProviders() {
+		for _, d := range p.Describe() {
+			if d.Name == toolName {
+				return applyConfigKey(cfg, d.ConfigKey, enabled)
+			}
+		}
+	}
+	// Check static tools.
+	for _, d := range staticToolDescriptors {
+		if d.Name == toolName {
+			return applyConfigKey(cfg, d.ConfigKey, enabled)
+		}
+	}
+	return fmt.Errorf("tool %q not found", toolName)
+}
+
+func applyConfigKey(cfg *config.Config, key string, enabled bool) error {
+	switch key {
+	case "files_read":
 		cfg.Tools.ReadFile.Enabled = enabled
-	case "write_file":
+	case "files_write":
 		cfg.Tools.WriteFile.Enabled = enabled
-	case "list_dir":
+	case "files_list":
 		cfg.Tools.ListDir.Enabled = enabled
-	case "edit_file":
+	case "files_edit":
 		cfg.Tools.EditFile.Enabled = enabled
-	case "append_file":
+	case "files_append":
 		cfg.Tools.AppendFile.Enabled = enabled
-	case "copy_file":
+	case "files_copy":
 		cfg.Tools.CopyFile.Enabled = enabled
-	case "exec":
+	case "shell_exec":
 		cfg.Tools.Exec.Enabled = enabled
-	case "cron":
+	case "schedule_cron":
 		cfg.Tools.Cron.Enabled = enabled
-	case "web_search":
+	case "web":
 		cfg.Tools.Web.Enabled = enabled
 	case "web_fetch":
 		cfg.Tools.WebFetch.Enabled = enabled
-	case "message":
+	case "msg_send":
 		cfg.Tools.Message.Enabled = enabled
-	case "send_file":
+	case "msg_send_file":
 		cfg.Tools.SendFile.Enabled = enabled
-	case "find_skills":
+	case "skills_find":
 		cfg.Tools.FindSkills.Enabled = enabled
 		if enabled {
 			cfg.Tools.Skills.Registry.Enabled = true
 		}
-	case "install_skill":
+	case "skills_install":
 		cfg.Tools.InstallSkill.Enabled = enabled
 		if enabled {
 			cfg.Tools.Skills.Registry.Enabled = true
 		}
-	case "spawn":
+	case "agents_spawn":
 		cfg.Tools.Spawn.Enabled = enabled
 		if enabled {
 			cfg.Tools.Subagent.Enabled = true
 		}
-	case "i2c":
+	case "hw_i2c":
 		cfg.Tools.I2C.Enabled = enabled
-	case "spi":
+	case "hw_spi":
 		cfg.Tools.SPI.Enabled = enabled
-	case "find_tools_regex":
+	case "mcp.discovery.use_regex":
 		cfg.Tools.MCP.Discovery.UseRegex = enabled
 		if enabled {
 			cfg.Tools.MCP.Enabled = true
 			cfg.Tools.MCP.Discovery.Enabled = true
 		}
-	case "find_tools_bm25":
+	case "mcp.discovery.use_bm25":
 		cfg.Tools.MCP.Discovery.UseBM25 = enabled
 		if enabled {
 			cfg.Tools.MCP.Enabled = true
 			cfg.Tools.MCP.Discovery.Enabled = true
 		}
 	default:
-		return fmt.Errorf("tool %q cannot be updated", toolName)
+		return fmt.Errorf("config key %q not mapped", key)
 	}
 	return nil
 }
