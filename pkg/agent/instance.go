@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 
+	agentws "github.com/PivotLLM/ClawEh/internal/workspace"
 	"github.com/PivotLLM/ClawEh/pkg/config"
 	"github.com/PivotLLM/ClawEh/pkg/global"
 	"github.com/PivotLLM/ClawEh/pkg/llmcontext"
@@ -63,7 +64,7 @@ func NewAgentInstance(
 	provider providers.LLMProvider,
 ) *AgentInstance {
 	workspace := resolveAgentWorkspace(agentCfg, defaults)
-	os.MkdirAll(workspace, 0o755)
+	agentws.Populate(workspace)
 
 	// Resolve the memory directory: empty = legacy <workspace>/memory layout.
 	// When non-empty (and non-default), eagerly create it; failure is a hard
