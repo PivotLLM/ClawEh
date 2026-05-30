@@ -316,85 +316,80 @@ func setupAndStartServices(
 	}
 
 	// Start the MCP server so CLI providers (claude-cli/codex-cli/gemini-cli)
-	// can call claw's host-side tools natively over MCP. Each agent's calls
-	// route via the `agent_token` parameter to that agent's own workspace —
-	// see pkg/agenttoken and pkg/mcpserver.
-	if cfg.MCPHostEffectivelyEnabled() {
-		autoStarted := !cfg.MCPHost.Enabled
-		defaultAgent := agentLoop.GetRegistry().GetDefaultAgent()
-		if defaultAgent == nil || defaultAgent.Tools == nil {
-			logger.WarnC("mcpserver", "MCP host enabled but no default agent registry available — skipping start")
-		} else {
-			// Collect per-agent registries — every registered agent contributes
-			// its own registry; the token-based dispatcher uses these as the
-			// execution targets keyed by agent ID.
-			agentRegistries := make(map[string]*tools.ToolRegistry)
-			agentWorkspaces := make(map[string]string)
-			for _, agentID := range agentLoop.GetRegistry().ListAgentIDs() {
-				a, ok := agentLoop.GetRegistry().GetAgent(agentID)
-				if !ok || a.Tools == nil {
-					continue
-				}
-				agentRegistries[agentID] = a.Tools
-				agentWorkspaces[agentID] = a.Workspace
-			}
-
-			srv, err := mcpserver.New(
-				mcpserver.WithAgentRegistries(agentRegistries),
-				mcpserver.WithAgentTokens(agentLoop.AgentTokens()),
-				mcpserver.WithAgentWorkspaces(agentWorkspaces),
-				mcpserver.WithListen(cfg.MCPHost.Listen),
-				mcpserver.WithEndpointPath(cfg.MCPHost.EndpointPath),
-				mcpserver.WithAllowlist(cfg.MCPHost.Tools),
-				mcpserver.WithMessageBus(msgBus),
-			)
-			if err != nil {
-				return nil, fmt.Errorf("error creating MCP server: %w", err)
-			}
-			if err := srv.Start(); err != nil {
-				return nil, fmt.Errorf("error starting MCP server: %w", err)
-			}
-			services.MCPServer = srv
-			// Wire the session token store into the agent loop so it can issue
-			// and revoke per-session tokens when context managers are created,
-			// evicted, or cleared.
-			agentLoop.SetSessionTokenIssuer(srv.SessionTokens())
-
-			// CLAW_MCP_TEST_TOKEN: if set, pre-register a pinned session token for
-			// the default agent so integration tests can authenticate without an
-			// active LLM session. The token is never written to config or disk —
-			// it lives only in the environment and in memory.
-			if testTok := os.Getenv("CLAW_MCP_TEST_TOKEN"); testTok != "" {
-				defaultAgentID := agentLoop.GetRegistry().GetDefaultAgentID()
-				if defaultAgentID == "" {
-					logger.WarnC("mcpserver", "CLAW_MCP_TEST_TOKEN set but no default agent found — skipping registration")
-				} else {
-					defaultAgent, ok := agentLoop.GetRegistry().GetAgent(defaultAgentID)
-					if ok && defaultAgent != nil {
-						archiveDir := filepath.Join(defaultAgent.Workspace, "sessions")
-						srv.SessionTokens().Register(testTok, defaultAgentID, "test-session", archiveDir)
-						logger.InfoCF("mcpserver", "Test session token registered",
-							map[string]any{"agent": defaultAgentID})
-					}
-				}
-			}
-
-			logger.InfoCF("mcpserver", "MCP host started",
-				map[string]any{
-					"listen":       srv.Listen(),
-					"endpoint":     srv.EndpointPath(),
-					"auto_enabled": autoStarted,
-				})
-
-			// Write per-agent .claude.json files. With token-based routing
-			// every agent points at the same endpoint URL; the agent_token
-			// in each call selects the workspace.
-			baseURL := "http://" + srv.Listen()
-			srv.WriteWorkspaceConfigs(baseURL, agentWorkspaces)
-		}
+	// can call claw's host-side tools natively over MCP.
+	if err := startMCPServer(cfg, agentLoop, msgBus, services); err != nil {
+		return nil, err
 	}
 
 	return services, nil
+}
+
+// startMCPServer starts the MCP server if enabled and wires it into services
+// and the agent loop. Called on both initial startup and config reload.
+func startMCPServer(cfg *config.Config, agentLoop *agent.AgentLoop, msgBus *bus.MessageBus, services *gatewayServices) error {
+	if !cfg.MCPHostEffectivelyEnabled() {
+		return nil
+	}
+	autoStarted := !cfg.MCPHost.Enabled
+	defaultAgent := agentLoop.GetRegistry().GetDefaultAgent()
+	if defaultAgent == nil || defaultAgent.Tools == nil {
+		logger.WarnC("mcpserver", "MCP host enabled but no default agent registry available — skipping start")
+		return nil
+	}
+
+	agentRegistries := make(map[string]*tools.ToolRegistry)
+	agentWorkspaces := make(map[string]string)
+	for _, agentID := range agentLoop.GetRegistry().ListAgentIDs() {
+		a, ok := agentLoop.GetRegistry().GetAgent(agentID)
+		if !ok || a.Tools == nil {
+			continue
+		}
+		agentRegistries[agentID] = a.Tools
+		agentWorkspaces[agentID] = a.Workspace
+	}
+
+	srv, err := mcpserver.New(
+		mcpserver.WithAgentRegistries(agentRegistries),
+		mcpserver.WithAgentTokens(agentLoop.AgentTokens()),
+		mcpserver.WithAgentWorkspaces(agentWorkspaces),
+		mcpserver.WithListen(cfg.MCPHost.Listen),
+		mcpserver.WithEndpointPath(cfg.MCPHost.EndpointPath),
+		mcpserver.WithAllowlist(cfg.MCPHost.Tools),
+		mcpserver.WithMessageBus(msgBus),
+	)
+	if err != nil {
+		return fmt.Errorf("error creating MCP server: %w", err)
+	}
+	if err := srv.Start(); err != nil {
+		return fmt.Errorf("error starting MCP server: %w", err)
+	}
+	services.MCPServer = srv
+	agentLoop.SetSessionTokenIssuer(srv.SessionTokens())
+
+	if testTok := os.Getenv("CLAW_MCP_TEST_TOKEN"); testTok != "" {
+		defaultAgentID := agentLoop.GetRegistry().GetDefaultAgentID()
+		if defaultAgentID == "" {
+			logger.WarnC("mcpserver", "CLAW_MCP_TEST_TOKEN set but no default agent found — skipping registration")
+		} else {
+			if da, ok := agentLoop.GetRegistry().GetAgent(defaultAgentID); ok && da != nil {
+				archiveDir := filepath.Join(da.Workspace, "sessions")
+				srv.SessionTokens().Register(testTok, defaultAgentID, "test-session", archiveDir)
+				logger.InfoCF("mcpserver", "Test session token registered",
+					map[string]any{"agent": defaultAgentID})
+			}
+		}
+	}
+
+	logger.InfoCF("mcpserver", "MCP host started",
+		map[string]any{
+			"listen":       srv.Listen(),
+			"endpoint":     srv.EndpointPath(),
+			"auto_enabled": autoStarted,
+		})
+
+	baseURL := "http://" + srv.Listen()
+	srv.WriteWorkspaceConfigs(baseURL, agentWorkspaces)
+	return nil
 }
 
 // stopAndCleanupServices stops all services and cleans up resources
@@ -619,6 +614,11 @@ func restartServices(
 		logger.InfoCF("voice", "Transcription re-enabled (agent-level)", map[string]any{"provider": transcriber.Name()})
 	} else {
 		logger.InfoCF("voice", "Transcription disabled", nil)
+	}
+
+	// Restart MCP server — it was shut down as part of stopAndCleanupServices.
+	if err := startMCPServer(cfg, al, msgBus, services); err != nil {
+		return fmt.Errorf("error restarting MCP server: %w", err)
 	}
 
 	return nil
