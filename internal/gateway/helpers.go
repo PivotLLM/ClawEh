@@ -144,13 +144,18 @@ func gatewayCmd(debug bool) error {
 
 	registerToolProviders()
 
-	// Build default agent tool allowlist from provider descriptors.
+	// Build default agent tool allowlist from provider descriptors and static tools.
 	var defaultTools []string
 	for _, p := range tools.GetProviders() {
 		for _, d := range p.Describe() {
 			if d.DefaultEnabled {
 				defaultTools = append(defaultTools, d.Name)
 			}
+		}
+	}
+	for _, d := range tools.StaticToolDescriptors {
+		if d.DefaultEnabled {
+			defaultTools = append(defaultTools, d.Name)
 		}
 	}
 	config.SetDefaultAgentTools(defaultTools)
