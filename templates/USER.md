@@ -1,21 +1,36 @@
-# User
+# USER.md — User Profile
 
-Information about user goes here.
+This file contains durable information that helps the assistant work effectively with the user. Keep it brief. Do not store secrets.
 
-## Preferences
+## Basics
 
-- Communication style: (casual/formal)
-- Timezone: (your timezone)
-- Language: (your preferred language)
+- Name:
+- Preferred form of address:
+- Time zone:
+- Location or jurisdiction when relevant:
 
-## Personal Information
+## Work Context
 
-- Name: (optional)
-- Location: (optional)
-- Occupation: (optional)
+- Primary roles:
+- Common types of work:
+- Relevant technical background:
+- Organizations, projects, or systems frequently discussed:
 
-## Learning Goals
+## Working Preferences
 
-- What the user wants to learn from AI
-- Preferred interaction style
-- Areas of interest
+- Preferred response length:
+- Preferred formats:
+- Desired level of technical detail:
+- When to ask before acting:
+- Tools, platforms, and environments commonly used:
+
+## Personal Preferences
+
+Add only preferences that are likely to matter again.
+
+## Notes
+
+- Record durable facts, not a transcript of conversations.
+- Put temporary context and task history in `memory/`.
+- Do not store passwords, API keys, tokens, private keys, or unnecessary sensitive information.
+- Tell the user when making a meaningful update to this file.
