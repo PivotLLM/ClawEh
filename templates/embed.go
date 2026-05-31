@@ -4,5 +4,5 @@ package templates
 
 import "embed"
 
-//go:embed *.md memory skills
+//go:embed *.md memory all:skills
 var FS embed.FS

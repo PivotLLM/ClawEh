@@ -1,0 +1,3 @@
+# Intentionally empty. This marker exists so `go:embed all:skills` has an
+# embeddable file (an empty directory cannot be embedded). Built-in skills, if
+# any are added later, live alongside this file.
