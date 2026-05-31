@@ -114,7 +114,7 @@ func (t *SessionHistoryTool) Execute(ctx context.Context, args map[string]any) *
 	}
 
 	type toolResultEntry struct {
-		seq     int
+		seq     int64
 		content string
 		status  string
 	}
@@ -134,10 +134,10 @@ func (t *SessionHistoryTool) Execute(ctx context.Context, args map[string]any) *
 		Input  string `json:"input"`
 		Output string `json:"output,omitempty"`
 		Status string `json:"status"`
-		Seq    int    `json:"result_seq,omitempty"`
+		Seq    int64  `json:"result_seq,omitempty"`
 	}
 	type msgEntry struct {
-		Seq       int             `json:"seq"`
+		Seq       int64           `json:"seq"`
 		Role      string          `json:"role"`
 		Source    string          `json:"source,omitempty"`
 		Content   string          `json:"content"`
@@ -176,7 +176,7 @@ func (t *SessionHistoryTool) Execute(ctx context.Context, args map[string]any) *
 }
 
 // parseSeqArgs returns the seq range from args.
-func parseSeqArgs(args map[string]any) (seqStart, seqEnd int, err error) {
+func parseSeqArgs(args map[string]any) (seqStart, seqEnd int64, err error) {
 	if seq, ok := intArg(args, "seq"); ok {
 		return seq, seq, nil
 	}
@@ -191,21 +191,21 @@ func parseSeqArgs(args map[string]any) (seqStart, seqEnd int, err error) {
 	return start, end, nil
 }
 
-func intArg(args map[string]any, key string) (int, bool) {
+func intArg(args map[string]any, key string) (int64, bool) {
 	v, ok := args[key]
 	if !ok || v == nil {
 		return 0, false
 	}
 	switch n := v.(type) {
 	case int:
+		return int64(n), true
+	case int64:
 		return n, true
 	case float64:
-		return int(n), true
-	case int64:
-		return int(n), true
+		return int64(n), true
 	case json.Number:
 		i, e := n.Int64()
-		return int(i), e == nil
+		return i, e == nil
 	}
 	return 0, false
 }

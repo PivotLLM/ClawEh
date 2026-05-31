@@ -247,6 +247,16 @@ func (al *AgentLoop) getContextManager(agent *AgentInstance, sessionKey string) 
 		compressClients = []llmcontext.LLMClient{al.buildDefaultCompressLLMClient(agent, sessionKey)}
 	}
 
+	// Stamp the compaction summary with the effective compress model so the
+	// rendered "Generated: <time> by <model>" line is populated (used for
+	// debugging compression quality). Falls back to the agent's primary model
+	// when no compress_model is configured — that is the model the default
+	// compress client actually runs against.
+	effectiveCompressModel := compressModelName
+	if effectiveCompressModel == "" {
+		effectiveCompressModel = strings.TrimSpace(agent.Model)
+	}
+
 	// The archive directory is the sessions directory within the agent workspace.
 	// We derive it from the workspace the same way initSessionStore does.
 	archiveDir := filepath.Join(agent.Workspace, "sessions")
@@ -254,6 +264,7 @@ func (al *AgentLoop) getContextManager(agent *AgentInstance, sessionKey string) 
 		llmcontext.WithContextWindow(agent.ContextWindow),
 		llmcontext.WithArchiveDir(archiveDir),
 		llmcontext.WithCompressLLM(compressClients...),
+		llmcontext.WithCompressModel(llmcontext.ModelChain{Primary: effectiveCompressModel}),
 		llmcontext.WithCompressionProfileDir(agent.Workspace),
 	}, agent.CompressOpts...)
 	cm := llmcontext.New(sessionKey, agent.Sessions, agent.ContextBuilder, llmClient, opts...)

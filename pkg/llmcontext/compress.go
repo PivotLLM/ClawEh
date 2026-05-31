@@ -297,7 +297,7 @@ func callLLMChain(
 	clients []LLMClient,
 	existing *Summary,
 	toSummarize []memory.StoredMessage,
-	archiveMin, archiveMax int,
+	archiveMin, archiveMax int64,
 	aggressive bool,
 	compressionProfile string,
 ) (*Summary, bool) {
@@ -383,10 +383,23 @@ func storedToPlain(stored []memory.StoredMessage) []providers.Message {
 	return msgs
 }
 
-// collapseRepetitiveRuns scans stored messages for runs of N+ consecutive
-// messages with the same role and near-identical content, replacing each run
-// with a single annotated entry so the LLM summarizer handles them correctly
-// instead of silently ignoring them.
+// cronNoOpReplyMaxLen bounds how long an assistant reply may be (after trim)
+// to still count as a "routine" no-op reply eligible for cron run collapse.
+// This avoids collapsing substantive replies that merely happen to repeat.
+const cronNoOpReplyMaxLen = 200
+
+// collapseRepetitiveRuns scans stored messages for two kinds of repetition and
+// replaces each run with a single counted anchor so the LLM summarizer handles
+// them correctly instead of silently ignoring them:
+//
+//  1. Cron no-op runs: maximal runs of [cron-marker user message with the SAME
+//     key] → [assistant reply] pairs where every assistant reply in the run is
+//     mutually identical (trimmed-equal) and short. Each cron fire embeds a
+//     different timestamp, so a byte-identical check would miss them entirely;
+//     the marker key (fingerprint, or payload for legacy fires) lets us group
+//     them. Seq of the first message is preserved.
+//  2. Byte-identical same-role runs: the original behavior, applied to anything
+//     not consumed by cron collapse.
 func collapseRepetitiveRuns(stored []memory.StoredMessage) []memory.StoredMessage {
 	if len(stored) < repetitiveRunThreshold {
 		return stored
@@ -394,6 +407,12 @@ func collapseRepetitiveRuns(stored []memory.StoredMessage) []memory.StoredMessag
 	result := make([]memory.StoredMessage, 0, len(stored))
 	i := 0
 	for i < len(stored) {
+		if anchor, next, ok := collapseCronRun(stored, i); ok {
+			result = append(result, anchor)
+			i = next
+			continue
+		}
+
 		j := i + 1
 		norm := normalizeForComparison(stored[i].Content)
 		for j < len(stored) &&
@@ -411,11 +430,148 @@ func collapseRepetitiveRuns(stored []memory.StoredMessage) []memory.StoredMessag
 			)
 			result = append(result, collapsed)
 		} else {
-			result = append(result, stored[i:j]...)
+			result = append(result, stored[i])
+			j = i + 1
 		}
 		i = j
 	}
 	return result
+}
+
+// collapseCronRun attempts to detect a cron no-op run starting at index start.
+// A qualifying run is a maximal sequence of consecutive [cron-marker user
+// message with the SAME collapse key] → [assistant reply] pairs where all the
+// assistant replies are mutually trimmed-equal and short (<= cronNoOpReplyMaxLen).
+// It returns the synthetic counted anchor, the index immediately after the run,
+// and true. If no qualifying run of >= repetitiveRunThreshold fires begins at
+// start, ok is false.
+func collapseCronRun(stored []memory.StoredMessage, start int) (memory.StoredMessage, int, bool) {
+	fp, _, isCron := parseCronMarker(stored[start].Content)
+	if stored[start].Role != "user" || !isCron {
+		return memory.StoredMessage{}, start, false
+	}
+
+	key, _ := cronCollapseKey(stored[start].Content)
+	var reply string
+	haveReply := false
+	count := 0
+	i := start
+
+	for i+1 < len(stored) {
+		userMsg := stored[i]
+		replyMsg := stored[i+1]
+
+		if userMsg.Role != "user" {
+			break
+		}
+		k, ok := cronCollapseKey(userMsg.Content)
+		if !ok || k != key {
+			break
+		}
+		if replyMsg.Role != "assistant" {
+			break
+		}
+		// Action detection: a reply that issued tool calls means the LLM DID
+		// something in response to this fire (restarted a service, sent a message,
+		// wrote a file, ...) — it is not routine noise. Stop the run here so the
+		// acting fire and the entire tool exchange that follows it (tool results,
+		// follow-up assistant turns) are preserved verbatim, never folded into the
+		// collapsed count. A reply with no tool calls is a complete [cron → reply]
+		// turn; the loop's own cron-key check ends the run when the next message
+		// isn't another fire of the same job.
+		if len(replyMsg.ToolCalls) > 0 {
+			break
+		}
+		r := strings.TrimSpace(replyMsg.Content)
+		if len(r) > cronNoOpReplyMaxLen {
+			break
+		}
+		if !haveReply {
+			reply = r
+			haveReply = true
+		} else if r != reply {
+			// A differing reply means something actually happened — it breaks
+			// the run. The accumulated uniform prefix is collapsed; this pair is
+			// preserved verbatim by the caller continuing from the run boundary.
+			break
+		}
+
+		count++
+		i += 2
+	}
+
+	if count < repetitiveRunThreshold {
+		return memory.StoredMessage{}, start, false
+	}
+
+	// The run spans stored[start] (first cron message) through stored[i-1] (last
+	// consumed assistant reply). The anchor carries the seq of the FIRST message
+	// and notes the full [first-last] seq range in its text. Seqs are permanent
+	// identities — they are never renumbered — so the collapsed-away messages
+	// simply do not appear inline in the retained tail; they remain intact in the
+	// archive and stay retrievable by seq via get_session_messages.
+	firstSeq := stored[start].Seq
+	lastSeq := stored[i-1].Seq
+
+	anchor := stored[start] // carry the seq of the first message in the run.
+	anchor.Role = "user"
+	anchor.Content = cronRunAnchor(fp, count, firstSeq, lastSeq, reply)
+	anchor.ToolCalls = nil
+	anchor.ToolCallID = ""
+	return anchor, i, true
+}
+
+// cronRunAnchor renders the counted anchor string for a collapsed cron no-op run.
+// It states the count and the [firstSeq-lastSeq] range so a reader knows exactly
+// which archived messages were elided and can retrieve them via get_session_messages.
+func cronRunAnchor(fingerprint string, count int, firstSeq, lastSeq int64, reply string) string {
+	shortReply := truncateRunes(reply, 60)
+	if fingerprint != "" {
+		return fmt.Sprintf(
+			"[scheduled job %s fired ×%d (#%d-#%d); routine, replies identical: %q]",
+			fingerprint, count, firstSeq, lastSeq, shortReply,
+		)
+	}
+	return fmt.Sprintf(
+		"[scheduled job fired ×%d (#%d-#%d); routine, replies identical: %q]",
+		count, firstSeq, lastSeq, shortReply,
+	)
+}
+
+// collapseRetainedCronRuns collapses runs of repeated cron no-op fires in the
+// RETAINED live tail into a single counted anchor — the same transformation the
+// summarizer input receives — so the kept context window does not carry many
+// identical scheduled checks verbatim. Only cron no-op runs are collapsed; every
+// other message is preserved unchanged. The anchor carries the seq of the first
+// message in the run; the elided originals remain in the archive (retrievable via
+// get_session_messages), so this elides them only from the live tail, never from
+// the durable record.
+func collapseRetainedCronRuns(stored []memory.StoredMessage) []memory.StoredMessage {
+	if len(stored) < repetitiveRunThreshold {
+		return stored
+	}
+	result := make([]memory.StoredMessage, 0, len(stored))
+	i := 0
+	for i < len(stored) {
+		if anchor, next, ok := collapseCronRun(stored, i); ok {
+			result = append(result, anchor)
+			i = next
+			continue
+		}
+		result = append(result, stored[i])
+		i++
+	}
+	return result
+}
+
+// truncateRunes returns s clipped to at most max runes, appending an ellipsis
+// when truncation occurs.
+func truncateRunes(s string, max int) string {
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max]) + "…"
 }
 
 func formatStoredMessagesForSummary(stored []memory.StoredMessage) string {
@@ -461,7 +617,7 @@ func formatStoredMessagesForSummary(stored []memory.StoredMessage) string {
 	return sb.String()
 }
 
-func applySummaryCoverage(summary, existing *Summary, coveredStart, coveredEnd int, summarized []memory.StoredMessage) {
+func applySummaryCoverage(summary, existing *Summary, coveredStart, coveredEnd int64, summarized []memory.StoredMessage) {
 	if summary == nil {
 		return
 	}
@@ -530,6 +686,14 @@ func mergeSeqRanges(ranges []SeqRange) []SeqRange {
 // It returns ErrCompressionFailed if Save() fails.
 // After a successful save it persists compaction state if the store supports it.
 func (m *Manager) persistStoredResult(sysMsg *memory.StoredMessage, conv []memory.StoredMessage, summary *Summary) error {
+	// Collapse repeated cron no-op runs in the retained tail before persisting,
+	// so the live context window the LLM keeps seeing carries one counted anchor
+	// instead of many identical scheduled checks. The elided fires remain in the
+	// archive (retrievable by seq); only the live tail elides them. Idempotent:
+	// an already-collapsed anchor is not a cron-marker message, so re-running it
+	// leaves anchors untouched.
+	conv = collapseRetainedCronRuns(conv)
+
 	newStored := make([]memory.StoredMessage, 0, len(conv)+1)
 	if sysMsg != nil {
 		newStored = append(newStored, *sysMsg)

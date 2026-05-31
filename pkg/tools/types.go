@@ -66,16 +66,16 @@ type SessionInfo struct {
 	StartedAt           *time.Time       `json:"started_at,omitempty"`
 	Channel             string           `json:"channel,omitempty"`
 	ContextMessageCount int              `json:"context_message_count"`
-	ArchiveMinSeq       int              `json:"archive_min_seq"`
-	ArchiveMaxSeq       int              `json:"archive_max_seq"`
-	TotalArchived       int              `json:"total_archived"`
+	ArchiveMinSeq       int64            `json:"archive_min_seq"`
+	ArchiveMaxSeq       int64            `json:"archive_max_seq"`
+	TotalArchived       int64            `json:"total_archived"`
 	SummaryCovers       *SummaryCoverage `json:"summary_covers,omitempty"`
 	LastCompressedAt    *time.Time       `json:"last_compressed_at,omitempty"`
 }
 
 // SummaryCoverage describes the seq range covered by the current summary.
 type SummaryCoverage struct {
-	SeqStart    int        `json:"seq_start"`
-	SeqEnd      int        `json:"seq_end"`
+	SeqStart    int64      `json:"seq_start"`
+	SeqEnd      int64      `json:"seq_end"`
 	GeneratedAt *time.Time `json:"generated_at,omitempty"`
 }

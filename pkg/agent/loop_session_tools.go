@@ -31,8 +31,8 @@ func buildSessionInfo(al *AgentLoop, agent *AgentInstance, sessionKey string) (*
 	rawSummary := agent.Sessions.GetSummary(sessionKey)
 	if rawSummary != "" {
 		var sv struct {
-			CoveredSeqStart int `json:"covered_seq_start"`
-			CoveredSeqEnd   int `json:"covered_seq_end"`
+			CoveredSeqStart int64 `json:"covered_seq_start"`
+			CoveredSeqEnd   int64 `json:"covered_seq_end"`
 		}
 		if err := json.Unmarshal([]byte(rawSummary), &sv); err == nil && sv.CoveredSeqStart > 0 {
 			info.SummaryCovers = &tools.SummaryCoverage{

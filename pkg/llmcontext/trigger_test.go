@@ -29,8 +29,9 @@ func (s *mockStore) AddMessage(sessionKey, role, content string) {
 	s.history[sessionKey] = append(s.history[sessionKey], providers.Message{Role: role, Content: content})
 }
 
-func (s *mockStore) AddFullMessage(sessionKey string, msg providers.Message) {
+func (s *mockStore) AddFullMessage(sessionKey string, msg providers.Message) int64 {
 	s.history[sessionKey] = append(s.history[sessionKey], msg)
+	return int64(len(s.history[sessionKey]))
 }
 
 func (s *mockStore) GetHistory(key string) []providers.Message {
@@ -63,7 +64,7 @@ func (s *mockStore) TruncateHistory(key string, keepLast int) {
 }
 func (s *mockStore) SetPendingTurn(_ string) error { return nil }
 func (s *mockStore) ClearPendingTurn(_ string) error            { return nil }
-func (s *mockStore) GetArchiveBounds(_ string) (int, int)       { return 0, 0 }
+func (s *mockStore) GetArchiveBounds(_ string) (int64, int64)   { return 0, 0 }
 func (s *mockStore) ListPendingSessions() ([]string, error)     { return nil, nil }
 func (s *mockStore) Save(_ string) error                        { return nil }
 func (s *mockStore) Close() error                               { return nil }
@@ -71,7 +72,7 @@ func (s *mockStore) GetHistoryWithSeqs(key string) []memory.StoredMessage {
 	src := s.history[key]
 	stored := make([]memory.StoredMessage, len(src))
 	for i, msg := range src {
-		stored[i] = memory.StoredMessage{Seq: i + 1, Message: msg}
+		stored[i] = memory.StoredMessage{Seq: int64(i + 1), Message: msg}
 	}
 	return stored
 }

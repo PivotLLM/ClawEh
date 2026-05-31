@@ -69,7 +69,13 @@ func (sm *SessionManager) AddMessage(sessionKey, role, content string) {
 
 // AddFullMessage adds a complete message with tool calls and tool call ID to the session.
 // This is used to save the full conversation flow including tool calls and tool results.
-func (sm *SessionManager) AddFullMessage(sessionKey string, msg providers.Message) {
+//
+// It returns the synthesized sequence number of the written message. The
+// in-memory SessionManager has no durable seq counter, so seq is the 1-based
+// position of the message — matching how GetHistoryWithSeqs synthesizes seqs
+// (i+1 for the i-th message). The value is coherent for callers but, unlike the
+// JSONL backend, is not aligned with any archive.
+func (sm *SessionManager) AddFullMessage(sessionKey string, msg providers.Message) int64 {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
@@ -87,6 +93,7 @@ func (sm *SessionManager) AddFullMessage(sessionKey string, msg providers.Messag
 
 	session.Messages = append(session.Messages, msg)
 	session.Updated = time.Now()
+	return int64(len(session.Messages))
 }
 
 func (sm *SessionManager) GetHistory(key string) []providers.Message {
@@ -117,7 +124,7 @@ func (sm *SessionManager) GetHistoryWithSeqs(key string) []memory.StoredMessage 
 
 	stored := make([]memory.StoredMessage, len(session.Messages))
 	for i, msg := range session.Messages {
-		stored[i] = memory.NewStoredMessage(i+1, msg)
+		stored[i] = memory.NewStoredMessage(int64(i+1), msg)
 	}
 	return stored
 }
@@ -304,7 +311,7 @@ func (sm *SessionManager) ClearPendingTurn(_ string) error {
 
 // GetArchiveBounds is a no-op for the in-memory SessionManager; it satisfies
 // the SessionStore interface.
-func (sm *SessionManager) GetArchiveBounds(_ string) (int, int) {
+func (sm *SessionManager) GetArchiveBounds(_ string) (int64, int64) {
 	return 0, 0
 }
 

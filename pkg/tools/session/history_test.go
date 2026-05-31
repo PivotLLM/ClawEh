@@ -33,7 +33,7 @@ func writeArchive(t *testing.T, dir, sessionKey string, msgs []memory.StoredMess
 	return path
 }
 
-func archiveMsg(seq int, role, content string) memory.StoredMessage {
+func archiveMsg(seq int64, role, content string) memory.StoredMessage {
 	return memory.StoredMessage{
 		Seq: seq,
 		Message: providers.Message{

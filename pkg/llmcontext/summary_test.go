@@ -45,8 +45,8 @@ func TestSummary_Validate_WrongVersion(t *testing.T) {
 func TestSummary_Validate_NegativeSeq(t *testing.T) {
 	tests := []struct {
 		name  string
-		start int
-		end   int
+		start int64
+		end   int64
 	}{
 		{"negative start", -1, 10},
 		{"negative end", 0, -1},

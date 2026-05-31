@@ -105,7 +105,7 @@ func TestAddFullMessage_WithToolCalls(t *testing.T) {
 		},
 	}
 
-	err := store.AddFullMessage(ctx, "tc", msg)
+	_, err := store.AddFullMessage(ctx, "tc", msg)
 	if err != nil {
 		t.Fatalf("AddFullMessage: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestAddFullMessage_ToolCallID(t *testing.T) {
 		ToolCallID: "call_abc",
 	}
 
-	err := store.AddFullMessage(ctx, "tr", msg)
+	_, err := store.AddFullMessage(ctx, "tr", msg)
 	if err != nil {
 		t.Fatalf("AddFullMessage: %v", err)
 	}
@@ -954,7 +954,7 @@ func TestStoredMessage_SeqAssignment(t *testing.T) {
 		t.Fatalf("expected 5 stored messages, got %d", len(stored))
 	}
 	for i, sm := range stored {
-		want := i + 1
+		want := int64(i + 1)
 		if sm.Seq != want {
 			t.Errorf("stored[%d].Seq = %d, want %d", i, sm.Seq, want)
 		}
@@ -979,7 +979,7 @@ func TestStoredMessage_SeqAssignment(t *testing.T) {
 	}
 	// seq numbers 3, 4, 5 should be preserved.
 	for i, sm := range stored {
-		want := i + 3
+		want := int64(i + 3)
 		if sm.Seq != want {
 			t.Errorf("after compact stored[%d].Seq = %d, want %d", i, sm.Seq, want)
 		}
@@ -1200,7 +1200,7 @@ func TestAddMessage_StampsCreatedAt(t *testing.T) {
 	if err := store.AddMessage(ctx, "stamp-sess", "user", "hello"); err != nil {
 		t.Fatalf("AddMessage: %v", err)
 	}
-	if err := store.AddFullMessage(ctx, "stamp-sess", providers.Message{
+	if _, err := store.AddFullMessage(ctx, "stamp-sess", providers.Message{
 		Role:    "assistant",
 		Content: "hi",
 	}); err != nil {

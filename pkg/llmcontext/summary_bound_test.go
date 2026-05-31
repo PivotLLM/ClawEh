@@ -21,17 +21,17 @@ func makeLargeSummary(n int) *Summary {
 			Constraints: []SummaryItem{{Text: strings.Repeat("important constraint to remember ", 5), Refs: []SeqRange{{SeqStart: 4}}}},
 		},
 		CoveredSeqStart: 1,
-		CoveredSeqEnd:   n,
+		CoveredSeqEnd:   int64(n),
 	}
 	for i := range n {
 		s.KeyMoments = append(s.KeyMoments, KeyMoment{
-			Seq:     i + 1,
+			Seq:     int64(i + 1),
 			Role:    "user",
 			Summary: strings.Repeat("very important moment that happened at step ", 3),
 		})
 		s.MessageIndex = append(s.MessageIndex, IndexEntry{
-			SeqStart: i + 1,
-			SeqEnd:   i + 1,
+			SeqStart: int64(i + 1),
+			SeqEnd:   int64(i + 1),
 			Role:     "user",
 			Label:    strings.Repeat("descriptive label for archival purpose ", 3),
 		})

@@ -864,3 +864,148 @@ func makeEnabledJobWithNextRun(id string, nextRunAtMS int64) CronJob {
 		},
 	}
 }
+
+// --- cronFingerprint tests ---
+
+func baseSchedule() CronSchedule {
+	return CronSchedule{Kind: "cron", Expr: "0 * * * *", TZ: "UTC"}
+}
+
+func basePayload() CronPayload {
+	return CronPayload{Mode: "agent", Message: "self-check", Channel: "slack", To: "C123", PeerKind: "channel"}
+}
+
+// TestCronFingerprint_Stable verifies the same definition yields the same hash.
+func TestCronFingerprint_Stable(t *testing.T) {
+	a := cronFingerprint(baseSchedule(), basePayload())
+	b := cronFingerprint(baseSchedule(), basePayload())
+	if a == "" {
+		t.Fatal("fingerprint is empty")
+	}
+	if len(a) != 8 {
+		t.Fatalf("fingerprint length = %d, want 8", len(a))
+	}
+	if a != b {
+		t.Errorf("same definition produced different fingerprints: %q vs %q", a, b)
+	}
+}
+
+// TestCronFingerprint_SensitiveToDefinition verifies that changing Schedule or
+// Payload changes the hash.
+func TestCronFingerprint_SensitiveToDefinition(t *testing.T) {
+	base := cronFingerprint(baseSchedule(), basePayload())
+
+	sched := baseSchedule()
+	sched.Expr = "0 0 * * *"
+	if got := cronFingerprint(sched, basePayload()); got == base {
+		t.Errorf("changing Schedule.Expr did not change fingerprint (%q)", got)
+	}
+
+	pay := basePayload()
+	pay.Message = "different message"
+	if got := cronFingerprint(baseSchedule(), pay); got == base {
+		t.Errorf("changing Payload.Message did not change fingerprint (%q)", got)
+	}
+
+	pay2 := basePayload()
+	pay2.Channel = "telegram"
+	if got := cronFingerprint(baseSchedule(), pay2); got == base {
+		t.Errorf("changing Payload.Channel did not change fingerprint (%q)", got)
+	}
+}
+
+// TestCronFingerprint_IgnoresNonDefinitionFields verifies Name/Enabled/State/ID/
+// timestamps/DeleteAfterRun do NOT participate in the hash (they are not inputs).
+func TestCronFingerprint_IgnoresNonDefinitionFields(t *testing.T) {
+	// cronFingerprint only takes schedule + payload, so building two jobs that
+	// differ only in non-definition fields must yield equal fingerprints.
+	j1 := CronJob{
+		ID: "id-1", Name: "name one", Enabled: true,
+		Schedule: baseSchedule(), Payload: basePayload(),
+		State:       CronJobState{LastStatus: "ok"},
+		CreatedAtMS: 1, UpdatedAtMS: 2, DeleteAfterRun: true,
+	}
+	j2 := CronJob{
+		ID: "id-2", Name: "name two", Enabled: false,
+		Schedule: baseSchedule(), Payload: basePayload(),
+		State:       CronJobState{LastStatus: "error", LastError: "boom"},
+		CreatedAtMS: 99, UpdatedAtMS: 100, DeleteAfterRun: false,
+	}
+	f1 := cronFingerprint(j1.Schedule, j1.Payload)
+	f2 := cronFingerprint(j2.Schedule, j2.Payload)
+	if f1 != f2 {
+		t.Errorf("non-definition fields affected fingerprint: %q vs %q", f1, f2)
+	}
+}
+
+// TestAddJob_PopulatesFingerprint verifies AddJob sets the fingerprint.
+func TestAddJob_PopulatesFingerprint(t *testing.T) {
+	storePath := filepath.Join(t.TempDir(), "jobs.json")
+	cs := NewCronService(storePath, nil)
+	job, err := cs.AddJob("n", baseSchedule(), "self-check", "agent", "slack", "C123", "channel")
+	if err != nil {
+		t.Fatalf("AddJob: %v", err)
+	}
+	if job.Fingerprint == "" {
+		t.Fatal("AddJob did not populate Fingerprint")
+	}
+	want := cronFingerprint(job.Schedule, job.Payload)
+	if job.Fingerprint != want {
+		t.Errorf("Fingerprint = %q, want %q", job.Fingerprint, want)
+	}
+}
+
+// TestUpdateJob_RecomputesFingerprint verifies editing the definition changes
+// the stored fingerprint.
+func TestUpdateJob_RecomputesFingerprint(t *testing.T) {
+	storePath := filepath.Join(t.TempDir(), "jobs.json")
+	cs := NewCronService(storePath, nil)
+	job, err := cs.AddJob("n", baseSchedule(), "self-check", "agent", "slack", "C123", "channel")
+	if err != nil {
+		t.Fatalf("AddJob: %v", err)
+	}
+	orig := job.Fingerprint
+
+	job.Payload.Message = "a wholly different payload"
+	if err := cs.UpdateJob(job); err != nil {
+		t.Fatalf("UpdateJob: %v", err)
+	}
+
+	stored := cs.ListJobs(true)
+	var updated *CronJob
+	for i := range stored {
+		if stored[i].ID == job.ID {
+			updated = &stored[i]
+			break
+		}
+	}
+	if updated == nil {
+		t.Fatal("job not found after update")
+	}
+	if updated.Fingerprint == orig {
+		t.Errorf("UpdateJob did not recompute fingerprint (still %q)", orig)
+	}
+	if want := cronFingerprint(updated.Schedule, updated.Payload); updated.Fingerprint != want {
+		t.Errorf("Fingerprint = %q, want %q", updated.Fingerprint, want)
+	}
+}
+
+// TestLoadStore_BackfillsFingerprint verifies legacy stores with no fingerprint
+// get one populated on load.
+func TestLoadStore_BackfillsFingerprint(t *testing.T) {
+	storePath := filepath.Join(t.TempDir(), "jobs.json")
+	legacy := `{"version":1,"jobs":[{"id":"j1","name":"legacy","enabled":true,` +
+		`"schedule":{"kind":"cron","expr":"0 * * * *"},` +
+		`"payload":{"mode":"agent","message":"hi"},"state":{}}]}`
+	if err := os.WriteFile(storePath, []byte(legacy), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cs := NewCronService(storePath, nil)
+	jobs := cs.ListJobs(true)
+	if len(jobs) != 1 {
+		t.Fatalf("got %d jobs, want 1", len(jobs))
+	}
+	if jobs[0].Fingerprint == "" {
+		t.Error("loadStore did not backfill fingerprint for legacy job")
+	}
+}

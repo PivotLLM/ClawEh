@@ -131,7 +131,7 @@ func TestSearchTool_LimitEnforcedAt100(t *testing.T) {
 	dir := t.TempDir()
 	var msgs []memory.StoredMessage
 	for i := 1; i <= 150; i++ {
-		msgs = append(msgs, archiveMsg(i, "user", "matchterm repetitive content"))
+		msgs = append(msgs, archiveMsg(int64(i), "user", "matchterm repetitive content"))
 	}
 	writeArchive(t, dir, "limitsess", msgs)
 

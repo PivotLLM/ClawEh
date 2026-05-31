@@ -58,7 +58,7 @@ func (s *seqStore) SetSummary(_, v string)     { s.summary = v }
 func (s *seqStore) SetHistory(_ string, h []providers.Message) {
 	stored := make([]memory.StoredMessage, len(h))
 	for i, msg := range h {
-		stored[i] = memory.StoredMessage{Seq: i + 1, Message: msg}
+		stored[i] = memory.StoredMessage{Seq: int64(i + 1), Message: msg}
 	}
 	s.stored = stored
 }
@@ -67,15 +67,15 @@ func (s *seqStore) SetHistoryWithSeqs(_ string, h []memory.StoredMessage) {
 	copy(cp, h)
 	s.stored = cp
 }
-func (s *seqStore) Save(_ string) error                          { return nil }
-func (s *seqStore) AddMessage(_, _, _ string)                    {}
-func (s *seqStore) AddFullMessage(_ string, _ providers.Message) {}
-func (s *seqStore) TruncateHistory(_ string, _ int)              {}
-func (s *seqStore) SetPendingTurn(_ string) error                { return nil }
-func (s *seqStore) ClearPendingTurn(_ string) error              { return nil }
-func (s *seqStore) GetArchiveBounds(_ string) (int, int)         { return 0, 0 }
-func (s *seqStore) ListPendingSessions() ([]string, error)       { return nil, nil }
-func (s *seqStore) Close() error                                 { return nil }
+func (s *seqStore) Save(_ string) error                                { return nil }
+func (s *seqStore) AddMessage(_, _, _ string)                          {}
+func (s *seqStore) AddFullMessage(_ string, _ providers.Message) int64 { return 0 }
+func (s *seqStore) TruncateHistory(_ string, _ int)                    {}
+func (s *seqStore) SetPendingTurn(_ string) error                      { return nil }
+func (s *seqStore) ClearPendingTurn(_ string) error                    { return nil }
+func (s *seqStore) GetArchiveBounds(_ string) (int64, int64)           { return 0, 0 }
+func (s *seqStore) ListPendingSessions() ([]string, error)             { return nil, nil }
+func (s *seqStore) Close() error                                       { return nil }
 
 // buildSeqSummaryJSON builds a valid summary JSON with the given coverage fields.
 func buildSeqSummaryJSON(goals string, coveredStart, coveredEnd int) string {
@@ -95,13 +95,13 @@ func TestSeqAware_CoveredRangeSetFromActualSeqs(t *testing.T) {
 	stored := make([]memory.StoredMessage, 10)
 	for i := range stored {
 		stored[i] = memory.StoredMessage{
-			Seq:     startSeq + i,
+			Seq:     int64(startSeq + i),
 			Message: providers.Message{Role: "user", Content: strings.Repeat("a", 200)},
 		}
 	}
 	if len(stored)%2 != 0 {
 		stored = append(stored, memory.StoredMessage{
-			Seq:     startSeq + len(stored),
+			Seq:     int64(startSeq + len(stored)),
 			Message: providers.Message{Role: "assistant", Content: strings.Repeat("b", 200)},
 		})
 	}
@@ -335,7 +335,7 @@ func TestSeqAware_ExistingSummaryCoverageAndRefsSurviveNextCompaction(t *testing
 	stored := make([]memory.StoredMessage, 10)
 	for i := range stored {
 		stored[i] = memory.StoredMessage{
-			Seq:     11 + i,
+			Seq:     int64(11 + i),
 			Message: providers.Message{Role: "user", Content: strings.Repeat("x", 500)},
 		}
 	}

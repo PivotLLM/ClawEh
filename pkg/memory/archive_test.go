@@ -58,7 +58,7 @@ func TestArchiveStore_AppendAndQueryRange(t *testing.T) {
 		sampleMsg("assistant", "with tool", tc),
 	}
 	for i, m := range msgs {
-		if err := a.Append(i+1, m, now.Add(time.Duration(i)*time.Second)); err != nil {
+		if err := a.Append(int64(i+1), m, now.Add(time.Duration(i)*time.Second)); err != nil {
 			t.Fatalf("Append seq=%d: %v", i+1, err)
 		}
 	}
@@ -92,7 +92,7 @@ func TestArchiveStore_QueryRange_SubRange(t *testing.T) {
 	now := time.Now()
 
 	for i := 1; i <= 10; i++ {
-		if err := a.Append(i, sampleMsg("user", fmt.Sprintf("msg%d", i)), now); err != nil {
+		if err := a.Append(int64(i), sampleMsg("user", fmt.Sprintf("msg%d", i)), now); err != nil {
 			t.Fatalf("Append: %v", err)
 		}
 	}
@@ -125,7 +125,7 @@ func TestArchiveStore_Bounds(t *testing.T) {
 	}
 
 	now := time.Now()
-	for _, seq := range []int{5, 10, 3, 8} {
+	for _, seq := range []int64{5, 10, 3, 8} {
 		if err := a.Append(seq, sampleMsg("user", "x"), now); err != nil {
 			t.Fatalf("Append seq=%d: %v", seq, err)
 		}
@@ -161,7 +161,7 @@ func TestArchiveStore_Stats(t *testing.T) {
 	t2 := time.Unix(1_700_005_000, 0)
 	t3 := time.Unix(1_700_010_000, 0)
 	for _, e := range []struct {
-		seq int
+		seq int64
 		at  time.Time
 	}{
 		{seq: 2, at: t2},
@@ -198,7 +198,7 @@ func TestArchiveStore_RetrievalWindowClamping(t *testing.T) {
 
 	// Write seq 1..300
 	for i := 1; i <= 300; i++ {
-		if err := a.Append(i, sampleMsg("user", fmt.Sprintf("msg%d", i)), now); err != nil {
+		if err := a.Append(int64(i), sampleMsg("user", fmt.Sprintf("msg%d", i)), now); err != nil {
 			t.Fatalf("Append seq=%d: %v", i, err)
 		}
 	}
@@ -209,9 +209,9 @@ func TestArchiveStore_RetrievalWindowClamping(t *testing.T) {
 	}
 
 	// Tool layer clamping as per remediation plan:
-	windowSize := 250
-	requestedMin := 1
-	requestedMax := 1000
+	windowSize := int64(250)
+	requestedMin := int64(1)
+	requestedMax := int64(1000)
 
 	effectiveMin := requestedMin
 	if floor := maxSeq - windowSize + 1; floor > effectiveMin {
@@ -304,7 +304,7 @@ func TestArchiveStore_ConcurrentReadDuringWrite(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for i := 1; i <= total; i++ {
-			if err := a.Append(i, sampleMsg("user", fmt.Sprintf("msg%d", i)), now); err != nil {
+			if err := a.Append(int64(i), sampleMsg("user", fmt.Sprintf("msg%d", i)), now); err != nil {
 				t.Errorf("Append seq=%d: %v", i, err)
 				return
 			}
@@ -452,7 +452,7 @@ func TestArchiveStore_Search_LimitClamped(t *testing.T) {
 	term := "clamptest"
 	for i := 1; i <= 120; i++ {
 		m := sampleMsg("user", fmt.Sprintf("%s message %d", term, i))
-		if err := a.Append(i, m, now); err != nil {
+		if err := a.Append(int64(i), m, now); err != nil {
 			t.Fatalf("Append seq=%d: %v", i, err)
 		}
 	}
@@ -547,7 +547,7 @@ func TestArchiveStore_ConcurrentAppends(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for i := 0; i < perGoroutine; i++ {
-				seq := g*perGoroutine + i + 1
+				seq := int64(g*perGoroutine + i + 1)
 				if err := a.Append(seq, sampleMsg("user", fmt.Sprintf("msg%d", seq)), now); err != nil {
 					t.Errorf("goroutine %d Append seq=%d: %v", g, seq, err)
 				}

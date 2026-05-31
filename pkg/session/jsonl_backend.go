@@ -26,10 +26,13 @@ func (b *JSONLBackend) AddMessage(sessionKey, role, content string) {
 	}
 }
 
-func (b *JSONLBackend) AddFullMessage(sessionKey string, msg providers.Message) {
-	if err := b.store.AddFullMessage(context.Background(), sessionKey, msg); err != nil {
+func (b *JSONLBackend) AddFullMessage(sessionKey string, msg providers.Message) int64 {
+	seq, err := b.store.AddFullMessage(context.Background(), sessionKey, msg)
+	if err != nil {
 		log.Printf("session: add full message: %v", err)
+		return 0
 	}
+	return seq
 }
 
 func (b *JSONLBackend) GetHistory(key string) []providers.Message {
@@ -110,7 +113,7 @@ func (b *JSONLBackend) ListPendingSessions() ([]string, error) {
 	return b.store.ListPendingSessions(context.Background())
 }
 
-func (b *JSONLBackend) GetArchiveBounds(sessionKey string) (minSeq, maxSeq int) {
+func (b *JSONLBackend) GetArchiveBounds(sessionKey string) (minSeq, maxSeq int64) {
 	min, max, err := b.store.GetArchiveBounds(context.Background(), sessionKey)
 	if err != nil {
 		log.Printf("session: get archive bounds: %v", err)

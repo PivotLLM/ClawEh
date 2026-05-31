@@ -12,8 +12,11 @@ type Store interface {
 	// AddMessage appends a simple text message to a session.
 	AddMessage(ctx context.Context, sessionKey, role, content string) error
 
-	// AddFullMessage appends a complete message (with tool calls, etc.) to a session.
-	AddFullMessage(ctx context.Context, sessionKey string, msg providers.Message) error
+	// AddFullMessage appends a complete message (with tool calls, etc.) to a
+	// session. It returns the monotonic sequence number assigned to the written
+	// message so callers can key durable side-stores (e.g. the archive) under
+	// the same seq, keeping one sequence space across memory and archive.
+	AddFullMessage(ctx context.Context, sessionKey string, msg providers.Message) (int64, error)
 
 	// GetHistory returns all messages for a session in insertion order.
 	// Returns an empty slice (not nil) if the session does not exist.
@@ -58,7 +61,7 @@ type Store interface {
 
 	// GetArchiveBounds returns the inclusive seq range of messages stored in the
 	// session archive. Returns (0, 0) if no archive exists yet.
-	GetArchiveBounds(ctx context.Context, sessionKey string) (minSeq, maxSeq int, err error)
+	GetArchiveBounds(ctx context.Context, sessionKey string) (minSeq, maxSeq int64, err error)
 
 	// ListPendingSessions returns session keys for all sessions where PendingTurn is true.
 	ListPendingSessions(ctx context.Context) ([]string, error)

@@ -77,7 +77,7 @@ func (t *SessionHistorySearchTool) Execute(ctx context.Context, args map[string]
 
 	limit := 20
 	if l, ok := intArg(args, "limit"); ok {
-		limit = l
+		limit = int(l)
 	}
 	if limit < 1 {
 		limit = 1
@@ -109,7 +109,7 @@ func (t *SessionHistorySearchTool) Execute(ctx context.Context, args map[string]
 	}
 
 	type msgEntry struct {
-		Seq       int       `json:"seq"`
+		Seq       int64     `json:"seq"`
 		Role      string    `json:"role"`
 		Source    string    `json:"source,omitempty"`
 		Content   string    `json:"content"`

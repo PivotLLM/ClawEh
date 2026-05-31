@@ -49,11 +49,11 @@ type sessionMeta struct {
 	UpdatedAt time.Time `json:"updated_at"`
 
 	// Phase 2 fields
-	NextSeq                     int       `json:"next_seq,omitempty"`
+	NextSeq                     int64     `json:"next_seq,omitempty"`
 	MeaningfulCount             int       `json:"meaningful_count,omitempty"`
 	CompressedAtMeaningfulCount int       `json:"compressed_at_meaningful_count,omitempty"`
-	ArchiveMinSeq               int       `json:"archive_min_seq,omitempty"`
-	ArchiveMaxSeq               int       `json:"archive_max_seq,omitempty"`
+	ArchiveMinSeq               int64     `json:"archive_min_seq,omitempty"`
+	ArchiveMaxSeq               int64     `json:"archive_max_seq,omitempty"`
 	SummaryGeneratedAt          time.Time `json:"summary_generated_at,omitempty"`
 	SummaryModel                string    `json:"summary_model,omitempty"`
 	CompressionCooling          bool      `json:"compression_cooling,omitempty"`
@@ -72,10 +72,10 @@ type SummaryCheckpoint struct {
 	ID              int       `json:"id"`
 	GeneratedAt     time.Time `json:"generated_at"`
 	Model           string    `json:"model,omitempty"`
-	SourceSeqStart  int       `json:"source_seq_start"`
-	SourceSeqEnd    int       `json:"source_seq_end"`
-	CoveredSeqStart int       `json:"covered_seq_start"`
-	CoveredSeqEnd   int       `json:"covered_seq_end"`
+	SourceSeqStart  int64     `json:"source_seq_start"`
+	SourceSeqEnd    int64     `json:"source_seq_end"`
+	CoveredSeqStart int64     `json:"covered_seq_start"`
+	CoveredSeqEnd   int64     `json:"covered_seq_end"`
 	PrevHash        string    `json:"prev_hash,omitempty"`
 	SummaryHash     string    `json:"summary_hash"`
 	Summary         string    `json:"summary"`
@@ -93,8 +93,14 @@ func newNoiseCache() *noiseCache {
 }
 
 // extractCronPayload returns the payload after the timestamp header, or ("", false).
-// Format: "...fired at <timestamp>:\n\n<payload>"
+// Format: "...fired at <timestamp>:\n\n<payload>". It tolerates an optional leading
+// "[<hex>] " fingerprint marker injected by the scheduler; when present, the
+// fingerprint is the more reliable dedup key and is returned in its place so that
+// fires of the same job (which embed differing timestamps) collapse to one.
 func extractCronPayload(content string) (string, bool) {
+	if fp, marked := stripCronFingerprint(content); marked {
+		return fp, true
+	}
 	if !strings.HasPrefix(content, cronWrapperPrefix) {
 		return "", false
 	}
@@ -103,6 +109,34 @@ func extractCronPayload(content string) (string, bool) {
 		return "", false
 	}
 	return content[idx+3:], true
+}
+
+// stripCronFingerprint reports whether content carries a leading "[<hex>] " cron
+// fingerprint marker immediately followed by the cron wrapper prefix, returning
+// the fingerprint when so.
+func stripCronFingerprint(content string) (string, bool) {
+	if !strings.HasPrefix(content, "[") {
+		return "", false
+	}
+	end := strings.IndexByte(content, ']')
+	if end <= 1 || end > 12 {
+		return "", false
+	}
+	token := content[1:end]
+	if !strings.HasPrefix(content[end:], "] ") {
+		return "", false
+	}
+	for i := 0; i < len(token); i++ {
+		c := token[i]
+		if (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') {
+			continue
+		}
+		return "", false
+	}
+	if !strings.HasPrefix(content[end+2:], cronWrapperPrefix) {
+		return "", false
+	}
+	return token, true
 }
 
 // isNoise returns true if msg is a duplicate that contributes no new information.
@@ -286,7 +320,7 @@ func readStoredMessages(path string, skip int) ([]StoredMessage, error) {
 		// Migration: legacy lines written before Phase 2 have seq == 0.
 		// Assign an approximate seq based on position.
 		if stored.Seq == 0 {
-			stored.Seq = skip + lineNum
+			stored.Seq = int64(skip + lineNum)
 		}
 		msgs = append(msgs, stored)
 	}
@@ -343,20 +377,22 @@ func countLines(path string) (int, error) {
 func (s *JSONLStore) AddMessage(
 	_ context.Context, sessionKey, role, content string,
 ) error {
-	return s.addMsg(sessionKey, providers.Message{
+	_, err := s.addMsg(sessionKey, providers.Message{
 		Role:    role,
 		Content: content,
 	})
+	return err
 }
 
 func (s *JSONLStore) AddFullMessage(
 	_ context.Context, sessionKey string, msg providers.Message,
-) error {
+) (int64, error) {
 	return s.addMsg(sessionKey, msg)
 }
 
 // addMsg is the shared implementation for AddMessage and AddFullMessage.
-func (s *JSONLStore) addMsg(sessionKey string, msg providers.Message) error {
+// It returns the monotonic sequence number assigned to the written message.
+func (s *JSONLStore) addMsg(sessionKey string, msg providers.Message) (int64, error) {
 	l := s.sessionLock(sessionKey)
 	l.Lock()
 	defer l.Unlock()
@@ -364,7 +400,7 @@ func (s *JSONLStore) addMsg(sessionKey string, msg providers.Message) error {
 	// Read meta first so we can assign the next seq number.
 	meta, err := s.readMeta(sessionKey)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	// Assign monotonically increasing sequence number.
@@ -377,7 +413,7 @@ func (s *JSONLStore) addMsg(sessionKey string, msg providers.Message) error {
 	// Serialize as StoredMessage (includes seq field).
 	line, err := json.Marshal(stored)
 	if err != nil {
-		return fmt.Errorf("memory: marshal message: %w", err)
+		return 0, fmt.Errorf("memory: marshal message: %w", err)
 	}
 	line = append(line, '\n')
 
@@ -387,12 +423,12 @@ func (s *JSONLStore) addMsg(sessionKey string, msg providers.Message) error {
 		0o644,
 	)
 	if err != nil {
-		return fmt.Errorf("memory: open jsonl for append: %w", err)
+		return 0, fmt.Errorf("memory: open jsonl for append: %w", err)
 	}
 	_, writeErr := f.Write(line)
 	if writeErr != nil {
 		f.Close()
-		return fmt.Errorf("memory: append message: %w", writeErr)
+		return 0, fmt.Errorf("memory: append message: %w", writeErr)
 	}
 	// Flush to physical storage before closing. This matches the
 	// durability guarantee of writeMeta and rewriteStoredJSONL (which use
@@ -400,10 +436,10 @@ func (s *JSONLStore) addMsg(sessionKey string, msg providers.Message) error {
 	// leave the append in the kernel page cache only — lost on reboot.
 	if syncErr := f.Sync(); syncErr != nil {
 		f.Close()
-		return fmt.Errorf("memory: sync jsonl: %w", syncErr)
+		return 0, fmt.Errorf("memory: sync jsonl: %w", syncErr)
 	}
 	if closeErr := f.Close(); closeErr != nil {
-		return fmt.Errorf("memory: close jsonl: %w", closeErr)
+		return 0, fmt.Errorf("memory: close jsonl: %w", closeErr)
 	}
 
 	// Determine if this message is noise (no new information).
@@ -428,7 +464,10 @@ func (s *JSONLStore) addMsg(sessionKey string, msg providers.Message) error {
 	log.Printf("memory: message_stored seq=%d length=%d counted=%v role=%q session=%q",
 		seq, len(msg.Content), !isNoisy, msg.Role, sessionKey)
 
-	return s.writeMeta(sessionKey, meta)
+	if writeMetaErr := s.writeMeta(sessionKey, meta); writeMetaErr != nil {
+		return 0, writeMetaErr
+	}
+	return seq, nil
 }
 
 // GetHistoryWithSeqs returns the active history window for sessionKey with seq
@@ -452,7 +491,7 @@ func (s *JSONLStore) GetHistoryWithSeqs(
 			return nil, countErr
 		}
 		if n > 0 {
-			meta.NextSeq = n
+			meta.NextSeq = int64(n)
 			if saveErr := s.writeMeta(sessionKey, meta); saveErr != nil {
 				log.Printf("memory: warn: could not save migrated NextSeq for session %q: %v",
 					sessionKey, saveErr)
@@ -484,7 +523,7 @@ func (s *JSONLStore) GetHistory(
 			return nil, countErr
 		}
 		if n > 0 {
-			meta.NextSeq = n
+			meta.NextSeq = int64(n)
 			if saveErr := s.writeMeta(sessionKey, meta); saveErr != nil {
 				// Non-fatal: log and continue; seq will be approximate.
 				log.Printf("memory: warn: could not save migrated NextSeq for session %q: %v",
@@ -874,7 +913,7 @@ func (s *JSONLStore) ListPendingSessions(_ context.Context) ([]string, error) {
 
 // GetArchiveBounds returns (0, 0, nil). Archive bounds are now owned by
 // ContextManager via ArchiveStore.Bounds(); the JSONLStore no longer tracks them.
-func (s *JSONLStore) GetArchiveBounds(_ context.Context, _ string) (minSeq, maxSeq int, err error) {
+func (s *JSONLStore) GetArchiveBounds(_ context.Context, _ string) (minSeq, maxSeq int64, err error) {
 	return 0, 0, nil
 }
 
