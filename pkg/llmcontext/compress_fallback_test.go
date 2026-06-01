@@ -14,6 +14,27 @@ import (
 	"testing"
 )
 
+// TestLoadCompressionProfile_StripsComments verifies the human-facing comment in
+// the default profile never reaches the prompt, while real role guidance does.
+func TestLoadCompressionProfile_StripsComments(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "compression.md")
+
+	if err := os.WriteFile(path, []byte("<!--\ndocumentation only\n-->\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := loadCompressionProfile(dir); got != "" {
+		t.Errorf("comment-only profile = %q; want empty", got)
+	}
+
+	if err := os.WriteFile(path, []byte("<!-- doc -->\nPreserve PR numbers.\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := loadCompressionProfile(dir); got != "Preserve PR numbers." {
+		t.Errorf("profile = %q; want %q", got, "Preserve PR numbers.")
+	}
+}
+
 // modelMockLLM is a mockLLM that also reports a model name, used to verify the
 // per-invocation labels in the compaction report.
 type modelMockLLM struct {

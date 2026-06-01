@@ -416,8 +416,10 @@ func profileFingerprint(profile string) string {
 	return hex.EncodeToString(sum[:])[:8]
 }
 
-// loadCompressionProfile reads compression.md from dir if it exists.
-// Returns empty string when the file is absent or unreadable.
+// loadCompressionProfile reads compression.md from dir if it exists. HTML
+// comments are stripped so the template's human-facing documentation never
+// reaches the summarizer; only real role-specific guidance is appended to the
+// prompt. Returns "" when the file is absent, unreadable, or comment-only.
 func loadCompressionProfile(dir string) string {
 	if dir == "" {
 		return ""
@@ -426,7 +428,26 @@ func loadCompressionProfile(dir string) string {
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(data))
+	return strings.TrimSpace(stripHTMLComments(string(data)))
+}
+
+// stripHTMLComments removes <!-- ... --> blocks (including multi-line and
+// unterminated ones) from s.
+func stripHTMLComments(s string) string {
+	for {
+		start := strings.Index(s, "<!--")
+		if start < 0 {
+			break
+		}
+		rest := s[start+len("<!--"):]
+		end := strings.Index(rest, "-->")
+		if end < 0 {
+			s = s[:start] // unterminated comment: drop to end
+			break
+		}
+		s = s[:start] + rest[end+len("-->"):]
+	}
+	return s
 }
 
 // repetitiveRunThreshold is the minimum number of consecutive near-identical
