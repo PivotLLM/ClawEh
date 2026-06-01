@@ -5,6 +5,8 @@ package llmcontext
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -346,10 +348,23 @@ func callLLMChain(
 		// emitted by the LLM itself.
 		applySummaryCoverage(summary, existing, coveredStart, coveredEnd, toSummarize)
 		summary.GeneratedAt = time.Now()
+		summary.Profile = profileFingerprint(compressionProfile)
 		return summary, true
 	}
 
 	return nil, false
+}
+
+// profileFingerprint returns a short sha256 hex[:8] fingerprint of a compression
+// profile's content, or "" when no profile is in effect. Stamped into the summary
+// so a reader can tell which profile shaped it and detect when the profile changed.
+func profileFingerprint(profile string) string {
+	p := strings.TrimSpace(profile)
+	if p == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(p))
+	return hex.EncodeToString(sum[:])[:8]
 }
 
 // loadCompressionProfile reads compression.md from dir if it exists.
@@ -770,38 +785,9 @@ func (m *Manager) persistStoredResult(sysMsg *memory.StoredMessage, conv []memor
 	return nil
 }
 
-// dropOldestGroups removes the oldest turn groups from conv until the estimated
-// token count drops below safetyPercent or conv reaches retainMinMessages.
-func (m *Manager) dropOldestGroups(_ context.Context, conv []providers.Message) []providers.Message {
-	for {
-		if len(conv) <= m.cfg.retainMinMessages {
-			break
-		}
-		tokens := m.estTokens(conv)
-		pct := 0.0
-		if m.cfg.contextWindow > 0 {
-			pct = float64(tokens) * 100 / float64(m.cfg.contextWindow)
-		}
-		if pct < float64(m.cfg.safetyPercent) {
-			break
-		}
-
-		// Find the end of the first turn group.
-		groupEnd := resolveGroup(conv, 0).end
-
-		logger.WarnCF("llmcontext", "safety-net: dropping oldest turn group", map[string]any{
-			"session_key": m.sessionKey,
-			"group_end":   groupEnd,
-			"tokens":      tokens,
-			"pct":         pct,
-		})
-
-		conv = conv[groupEnd+1:]
-	}
-	return conv
-}
-
-// dropOldestStoredGroups is the seq-preserving equivalent of dropOldestGroups.
+// dropOldestStoredGroups removes the oldest turn groups (seq-preserving) from
+// conv until the estimated token count drops below safetyPercent or conv reaches
+// retainMinMessages.
 func (m *Manager) dropOldestStoredGroups(_ context.Context, conv []memory.StoredMessage) []memory.StoredMessage {
 	for {
 		if len(conv) <= m.cfg.retainMinMessages {

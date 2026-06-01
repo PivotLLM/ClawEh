@@ -30,6 +30,11 @@ type Summary struct {
 	CoveredSeqEndAt     time.Time    `json:"covered_seq_end_at,omitempty"`
 	GeneratedAt         time.Time    `json:"generated_at"`
 	Model               string       `json:"model,omitempty"`
+	// Profile is a short fingerprint (sha256 hex[:8]) of the agent compression
+	// profile (compression.md) in effect when this summary was generated, or ""
+	// when no profile was applied. Stamped into the rendered summary so agents
+	// can tell which profile shaped a summary and detect when it changed.
+	Profile string `json:"profile,omitempty"`
 }
 
 // SeqRange is an inclusive archive message ID range.
@@ -317,14 +322,19 @@ func (s *Summary) Render(archiveMinSeq, archiveMaxSeq int64) string {
 			fmt.Fprintf(&sb, "Context summary: messages #%d - #%d. Full messages retrievable via get_session_messages.\n",
 				s.CoveredSeqStart, s.CoveredSeqEnd)
 		}
-		// Stamp generation metadata so agents can identify when and by what model
-		// this summary was produced — useful for debugging compression quality.
+		// Stamp generation metadata so agents can identify when, by what model,
+		// under which summary version, and with which compression profile this
+		// summary was produced — useful for debugging compression quality.
 		if !s.GeneratedAt.IsZero() {
 			stamp := s.GeneratedAt.UTC().Format("2006-01-02 15:04 UTC")
+			meta := fmt.Sprintf("v%d", s.Version)
+			if s.Profile != "" {
+				meta += ", profile " + s.Profile
+			}
 			if s.Model != "" {
-				fmt.Fprintf(&sb, "Generated: %s by %s\n", stamp, s.Model)
+				fmt.Fprintf(&sb, "Generated: %s by %s (%s)\n", stamp, s.Model, meta)
 			} else {
-				fmt.Fprintf(&sb, "Generated: %s\n", stamp)
+				fmt.Fprintf(&sb, "Generated: %s (%s)\n", stamp, meta)
 			}
 		}
 		sb.WriteString("\n")
@@ -461,9 +471,9 @@ Purpose: this summary COMPLEMENTS the agent's always-present system prompt (its 
 
 Instructions:
 - Update the existing summary with the new messages. Do not replace it wholesale.
-- Every state item and key moment MUST cite archive message IDs in refs.
+- Every state item and key moment MUST cite archive message IDs in refs. Refs must point to the SPECIFIC message(s) that establish the item — a single seq, or the tightest range possible. Never cite a broad span of the whole conversation (e.g. avoid [#1-#551]).
 - Goals/Progress/Pending are the priority — keep them rich and current: active goals, concrete progress toward them, and the immediate next action in flight ("what was I about to do?"). Retire completed/superseded goals only when the new messages support that.
-- Constraints: include ONLY conversation-specific rules or decisions that are NOT already in the system prompt or agent files. Omit standing rules the agent always has loaded. Preserve any you do include verbatim unless the user explicitly changed them.
+- Constraints: include ONLY conversation-specific rules or decisions that are NOT already in the system prompt or agent files. Omit standing rules the agent always has loaded. ONE rule per constraint — never combine multiple facts into a single item; split them into separate constraints. Cite the specific message where each was established, not a broad range. Preserve wording verbatim unless the user explicitly changed it.
 - Key Moments: curated high-importance events only. Use exact field for instructions, decisions, config values.
 - Message Index: collapse consecutive identical entries to a range. Only include messages in the archive window (seq %d to %d).
 - Respond with valid JSON only. No markdown fences, no prose.`
@@ -492,8 +502,8 @@ const promptAggressive = `You are an AI assistant performing urgent context summ
 
 Rules:
 - State: one concise sentence per item; omit any field that is empty. Goals/Progress/Pending come first — they are the transient state worth preserving.
-- Every state item and key moment MUST cite archive message IDs in refs.
-- Constraints: include ONLY conversation-specific rules not already in the system prompt; omit standing rules the agent always has loaded.
+- Every state item and key moment MUST cite archive message IDs in refs — the specific establishing message(s), a single seq or tightest range, never a broad span of the conversation.
+- Constraints: include ONLY conversation-specific rules not already in the system prompt; omit standing rules the agent always has loaded. One rule per constraint — do not combine multiple facts.
 - Key Moments: include only decisions and facts required to continue in-progress work; omit anything already captured in state or easily derivable from context. No hard cap — include what is needed, nothing more.
 - Message Index: collapse aggressively into broad topic or project ranges (archive window: seq %d to %d); one entry per project/thread area rather than per message.
 - Update the existing summary rather than replacing it — preserve active goals.
