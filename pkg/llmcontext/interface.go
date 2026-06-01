@@ -54,6 +54,9 @@ type ContextManager interface {
 	// Compact triggers a normal LLM-based compression pass on demand, identical
 	// to the path taken when the regular compression threshold is crossed.
 	Compact(ctx context.Context) error
+	// LastCompactionReport returns the report from the most recent compaction
+	// pass (manual or automatic), or nil if none has run.
+	LastCompactionReport() *CompactionReport
 	// ForceCompress aggressively reduces context when the hard limit is hit.
 	ForceCompress(ctx context.Context) error
 	// Stats returns the current observable state of this context.

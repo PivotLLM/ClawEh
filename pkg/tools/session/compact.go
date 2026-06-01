@@ -5,8 +5,10 @@ package session
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
+	"github.com/PivotLLM/ClawEh/pkg/llmcontext"
 	"github.com/PivotLLM/ClawEh/pkg/tools"
 )
 
@@ -14,11 +16,12 @@ import (
 // It triggers an immediate context compaction for the current session.
 // Session scoping uses the key injected via WithSessionKey (see base.go).
 type SessionCompactTool struct {
-	compact func(ctx context.Context, sessionKey string) error
+	compact func(ctx context.Context, sessionKey string) (string, error)
 }
 
-// NewSessionCompactTool creates a SessionCompactTool with the given compact callback.
-func NewSessionCompactTool(compact func(ctx context.Context, sessionKey string) error) *SessionCompactTool {
+// NewSessionCompactTool creates a SessionCompactTool with the given compact
+// callback. The callback returns a human-readable compaction report and an error.
+func NewSessionCompactTool(compact func(ctx context.Context, sessionKey string) (string, error)) *SessionCompactTool {
 	return &SessionCompactTool{compact: compact}
 }
 
@@ -46,7 +49,16 @@ func (t *SessionCompactTool) Execute(ctx context.Context, _ map[string]any) *too
 	if t.compact == nil {
 		return tools.ErrorResult("compact function not configured")
 	}
-	if err := t.compact(ctx, sessionKey); err != nil {
+	report, err := t.compact(ctx, sessionKey)
+	// The report (when present) already describes the outcome — attempts and a
+	// success/failure/nothing final line — so surface it verbatim to the LLM.
+	if report != "" {
+		return &tools.ToolResult{ForLLM: report}
+	}
+	if err != nil {
+		if errors.Is(err, llmcontext.ErrNothingToCompress) {
+			return &tools.ToolResult{ForLLM: "Session is already compact — nothing to summarize."}
+		}
 		return tools.ErrorResult(fmt.Sprintf("compaction failed: %v", err))
 	}
 	return &tools.ToolResult{ForLLM: "Session compacted successfully."}

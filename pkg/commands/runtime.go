@@ -20,7 +20,7 @@ type Runtime struct {
 	SwitchModel        func(value string) (oldModel string, err error)
 	SwitchChannel      func(value string) error
 	ClearHistory       func() error
-	CompactHistory     func(ctx context.Context) error
+	CompactHistory     func(ctx context.Context) (report string, err error)
 	ResetCooldown      func()
 	// ClearCooldown clears the cooldown for a single provider/model and
 	// returns true when an entry existed. Used by `/cooldowns clear <p/m>`

@@ -18,6 +18,7 @@ import {
   DevicesSection,
   LauncherSection,
   RuntimeSection,
+  SummarizationSection,
 } from "@/components/config/config-sections"
 import {
   type CoreConfigForm,
@@ -150,7 +151,9 @@ export function ConfigPage() {
           "Max tool iterations",
           { min: 1 },
         )
-        const compressModel = form.compressModel.trim()
+        const summarizationModels = form.summarizationModels
+          .map((m) => m.trim())
+          .filter((m) => m.length > 0)
         const compressNormalPercent = parseIntField(
           form.compressNormalPercent,
           "Normal compression threshold",
@@ -196,7 +199,6 @@ export function ConfigPage() {
               restrict_to_workspace: form.restrictToWorkspace,
               max_tokens: maxTokens,
               max_tool_iterations: maxToolIterations,
-              compress_model: compressModel,
               compress_normal_percent: compressNormalPercent,
               compress_safety_percent: compressSafetyPercent,
               compress_min_percent: compressMinPercent,
@@ -206,6 +208,10 @@ export function ConfigPage() {
               archive_message_count: archiveMessageCount,
               archive_days: archiveDays,
             },
+          },
+          summarization: {
+            models: summarizationModels,
+            debug_capture: form.summarizationDebugCapture,
           },
           session: {
             mode: sessionMode,
@@ -303,6 +309,8 @@ export function ConfigPage() {
               )}
 
               <AgentDefaultsSection form={form} onFieldChange={updateField} />
+
+              <SummarizationSection form={form} onFieldChange={updateField} />
 
               <ContextManagementSection form={form} onFieldChange={updateField} />
 

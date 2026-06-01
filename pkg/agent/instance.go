@@ -64,13 +64,18 @@ func NewAgentInstance(
 	provider providers.LLMProvider,
 ) *AgentInstance {
 	workspace := resolveAgentWorkspace(agentCfg, defaults)
-	agentws.Populate(workspace)
 
-	// Resolve the memory directory: empty = legacy <workspace>/memory layout.
-	// When non-empty (and non-default), eagerly create it; failure is a hard
-	// startup error so we never silently fall back to workspace memory and
-	// leak private notes into the wrong directory.
+	// Resolve the memory directory before populating templates so the workspace
+	// seeder never recreates <workspace>/memory when memory is relocated.
+	// Empty = legacy <workspace>/memory layout.
 	memoryDir := resolveAgentMemoryDir(agentCfg)
+
+	agentws.Populate(workspace, memoryDir)
+
+	// When memory is relocated (non-empty and non-default), eagerly create the
+	// directory: the memory tools open it via os.OpenRoot, which requires it to
+	// exist. Failure is a hard startup error so we never silently fall back to
+	// workspace memory and leak private notes into the wrong directory.
 	if memoryDir != "" {
 		defaultMem := filepath.Join(workspace, "memory")
 		if memoryDir != defaultMem {
@@ -102,9 +107,9 @@ func NewAgentInstance(
 	// Runtime-dependent providers (session closures, spawn, msg) are registered
 	// by the AgentLoop after construction via registerRuntimeTools().
 	phase1Deps := tools.ToolDeps{
-		Cfg:       cfg,
-		AgentCfg:  agentCfg,
-		AgentID:   func() string {
+		Cfg:      cfg,
+		AgentCfg: agentCfg,
+		AgentID: func() string {
 			if agentCfg != nil {
 				return routing.NormalizeAgentID(agentCfg.ID)
 			}

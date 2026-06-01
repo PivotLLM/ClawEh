@@ -10,7 +10,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/PivotLLM/ClawEh/pkg/bus"
 	"github.com/PivotLLM/ClawEh/pkg/config"
+	"github.com/PivotLLM/ClawEh/pkg/constants"
 	"github.com/PivotLLM/ClawEh/pkg/llmcontext"
 	"github.com/PivotLLM/ClawEh/pkg/logger"
 	"github.com/PivotLLM/ClawEh/pkg/providers"
@@ -30,6 +32,10 @@ type providerLLMClient struct {
 	model             string
 	requestJSONObject bool
 }
+
+// Model returns the model name this client dispatches to, used to label
+// per-invocation entries in the compaction report.
+func (c *providerLLMClient) Model() string { return c.model }
 
 func (c *providerLLMClient) Complete(ctx context.Context, messages []providers.Message) (providers.Message, error) {
 	var opts map[string]any
@@ -211,50 +217,57 @@ func (al *AgentLoop) getContextManager(agent *AgentInstance, sessionKey string) 
 	// Primary LLM client used for normal dispatch and as fallback for compression.
 	llmClient := &providerLLMClient{provider: agent.Provider, model: agent.Model}
 
-	// Resolve compress_model: agent-level config takes precedence over defaults.
-	// Both the agent config and the defaults may specify a compress_model.
+	// Resolve the global summarization model chain. Models from
+	// cfg.Summarization.Models are tried in order; the agent's own primary model
+	// is always appended as a last-resort fallback. See buildCompressLLMClient
+	// and buildDefaultCompressLLMClient for per-entry resolution rules.
 	var compressClients []llmcontext.LLMClient
-	compressModelName := ""
-
-	// Check agent-level config first, then agent defaults via the loaded config.
-	if agent.Config != nil && agent.Config.CompressModel != nil {
-		compressModelName = strings.TrimSpace(agent.Config.CompressModel.Primary)
-	}
-	if compressModelName == "" {
-		// Fall back to agent defaults from the loaded config.
-		if cfg := al.GetConfig(); cfg != nil {
-			dm := strings.TrimSpace(cfg.Agents.Defaults.CompressModel.Primary)
-			if dm != "" {
-				compressModelName = dm
+	effectiveCompressModel := ""
+	if cfg := al.GetConfig(); cfg != nil {
+		for _, raw := range cfg.Summarization.Models {
+			name := strings.TrimSpace(raw)
+			if name == "" {
+				continue
 			}
+			if effectiveCompressModel == "" {
+				effectiveCompressModel = name
+			}
+			compressClients = append(compressClients, al.buildCompressLLMClient(agent, name, sessionKey))
 		}
 	}
-
-	if compressModelName != "" {
-		// Build the compress client through the per-model dispatcher so the
-		// configured compress_model is invoked through its own protocol's
-		// provider, not the agent's default provider. See buildCompressLLMClient
-		// for the resolution rules and fallback behaviour.
-		compressClient := al.buildCompressLLMClient(agent, compressModelName, sessionKey)
-		// compress client is tried first; primary model is the fallback.
-		compressClients = []llmcontext.LLMClient{compressClient, llmClient}
-	} else {
-		// No compress_model configured: default to the agent's primary model
-		// resolved through the dispatcher, so compression runs against the
-		// agent's actual primary protocol instead of the shared agent.Provider
-		// (which on a "claude-cli" default would mis-route compression for
-		// any non-Claude primary). See buildDefaultCompressLLMClient.
-		compressClients = []llmcontext.LLMClient{al.buildDefaultCompressLLMClient(agent, sessionKey)}
-	}
+	// Always append the agent's primary model as the final fallback, so
+	// summarization still works when the global list is empty or every
+	// configured model fails to produce an acceptable summary.
+	compressClients = append(compressClients, al.buildDefaultCompressLLMClient(agent, sessionKey))
 
 	// Stamp the compaction summary with the effective compress model so the
 	// rendered "Generated: <time> by <model>" line is populated (used for
 	// debugging compression quality). Falls back to the agent's primary model
-	// when no compress_model is configured — that is the model the default
-	// compress client actually runs against.
-	effectiveCompressModel := compressModelName
+	// when no summarization models are configured — that is the model the
+	// appended default compress client actually runs against.
 	if effectiveCompressModel == "" {
 		effectiveCompressModel = strings.TrimSpace(agent.Model)
+	}
+
+	// Global debug-capture flag: when on, the manager writes the verbatim
+	// request/response of each summarization call to <workspace>/compact.jsonl.
+	debugCapture := false
+	if cfg := al.GetConfig(); cfg != nil {
+		debugCapture = cfg.Summarization.DebugCapture
+	}
+
+	// Reporter delivers the compaction report to the user on the automatic path.
+	// Internal channels (e.g. cron-internal) are skipped to avoid loops; manual
+	// /compact returns the report directly instead of using this.
+	reporter := func(channel, chatID, text string) {
+		if text == "" || channel == "" || al.bus == nil || constants.IsInternalChannel(channel) {
+			return
+		}
+		_ = al.bus.PublishOutbound(context.Background(), bus.OutboundMessage{
+			Channel: channel,
+			ChatID:  chatID,
+			Content: text,
+		})
 	}
 
 	// The archive directory is the sessions directory within the agent workspace.
@@ -266,6 +279,8 @@ func (al *AgentLoop) getContextManager(agent *AgentInstance, sessionKey string) 
 		llmcontext.WithCompressLLM(compressClients...),
 		llmcontext.WithCompressModel(llmcontext.ModelChain{Primary: effectiveCompressModel}),
 		llmcontext.WithCompressionProfileDir(agent.Workspace),
+		llmcontext.WithCompactDebug(debugCapture),
+		llmcontext.WithCompactionReporter(reporter),
 	}, agent.CompressOpts...)
 	cm := llmcontext.New(sessionKey, agent.Sessions, agent.ContextBuilder, llmClient, opts...)
 

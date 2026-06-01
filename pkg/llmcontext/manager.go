@@ -38,12 +38,21 @@ type Manager struct {
 	cooling           bool // true while in the post-compression cooldown window
 	coolingSinceCount int  // msgCount when cooling started
 
+	// failure circuit breaker — in-memory, resets on restart. Counts consecutive
+	// failed automatic compactions; once it reaches
+	// defaultMaxConsecutiveCompactFailures the automatic path is suppressed until
+	// msgCount advances past breakerTrippedUntilCount. A manual /compact (Compact)
+	// and the 413-recovery path (ForceCompress) bypass the breaker.
+	consecutiveCompactFailures int
+	breakerTrippedUntilCount   int // 0 = not tripped
+
 	// compression clients resolved at construction time
 	compressClients []LLMClient
 
 	// compression outcome tracking
 	lastCompressedAt    time.Time
 	lastCompressionGain float64
+	lastReport          *CompactionReport // report from the most recent doCompress
 
 	// archive is opened lazily on first write; nil until then.
 	// archiveMu guards lazy initialisation; read operations do not need it.
@@ -232,7 +241,7 @@ func (m *Manager) PreDispatchCheck(ctx context.Context, current []providers.Mess
 		return current, nil
 	}
 
-	if err := m.compress(ctx, safetyNet); err != nil {
+	if err := m.compress(ctx, safetyNet); err != nil && !errors.Is(err, ErrNothingToCompress) {
 		logger.WarnCF("llmcontext", "PreDispatchCheck: compression failed (continuing with stale slice)", map[string]any{
 			"session_key": m.sessionKey,
 			"error":       err.Error(),
@@ -291,7 +300,7 @@ func (m *Manager) CheckAndCompress(ctx context.Context, built []providers.Messag
 		}
 	}
 
-	if err := m.compress(ctx, safetyNet); err != nil {
+	if err := m.compress(ctx, safetyNet); err != nil && !errors.Is(err, ErrNothingToCompress) {
 		logger.WarnCF("llmcontext", "CheckAndCompress: compression failed (continuing with input slice)", map[string]any{
 			"session_key": m.sessionKey,
 			"error":       err.Error(),
@@ -492,6 +501,18 @@ func (m *Manager) archiveWindow() (minSeq, maxSeq int64) {
 // compressor. If compressHook is set (tests only), the hook short-circuits
 // before doCompress so trigger tests remain independent of LLM behavior.
 func (m *Manager) compress(ctx context.Context, safetyNet bool) error {
+	// Failure circuit breaker: after repeated automatic-compaction failures,
+	// suppress the automatic path until enough new messages accumulate. A manual
+	// /compact (Compact) and the 413-recovery path (ForceCompress) bypass this.
+	if m.autoCompactionSuppressed() {
+		logger.InfoCF("llmcontext", "automatic compaction suppressed by circuit breaker", map[string]any{
+			"session_key":          m.sessionKey,
+			"consecutive_failures": m.consecutiveCompactFailures,
+			"resume_at_msg_count":  m.breakerTrippedUntilCount,
+		})
+		return nil
+	}
+
 	history := m.store.GetHistory(m.sessionKey)
 	tokens := m.estTokens(history)
 	contextPct := 0.0
@@ -509,7 +530,51 @@ func (m *Manager) compress(ctx context.Context, safetyNet bool) error {
 		m.compressHook(safetyNet)
 		return nil
 	}
-	return m.doCompress(ctx, safetyNet)
+	err := m.doCompress(ctx, safetyNet)
+	m.recordCompactionOutcome(err)
+	// Deliver the report for the automatic path. The manual /compact path returns
+	// the report to the caller instead and leaves reportCallback unset here.
+	if m.cfg.reportCallback != nil && m.lastReport != nil {
+		m.cfg.reportCallback(m.channel, m.chatID, m.lastReport.String())
+	}
+	return err
+}
+
+// autoCompactionSuppressed reports whether the failure circuit breaker is
+// currently tripped for the automatic compaction path. It clears the breaker
+// once enough new messages have accumulated, allowing a fresh attempt.
+func (m *Manager) autoCompactionSuppressed() bool {
+	if m.breakerTrippedUntilCount == 0 {
+		return false
+	}
+	if m.msgCount >= m.breakerTrippedUntilCount {
+		m.breakerTrippedUntilCount = 0
+		m.consecutiveCompactFailures = 0
+		return false
+	}
+	return true
+}
+
+// recordCompactionOutcome updates the failure circuit breaker from a doCompress
+// result. A genuine compression failure increments the consecutive-failure
+// counter and trips the breaker at the threshold; success or a benign no-op
+// (nothing to compress) resets it. Transient/other errors leave it unchanged.
+func (m *Manager) recordCompactionOutcome(err error) {
+	switch {
+	case err == nil || errors.Is(err, ErrNothingToCompress):
+		m.consecutiveCompactFailures = 0
+		m.breakerTrippedUntilCount = 0
+	case errors.Is(err, ErrCompressionFailed):
+		m.consecutiveCompactFailures++
+		if m.consecutiveCompactFailures >= defaultMaxConsecutiveCompactFailures && m.breakerTrippedUntilCount == 0 {
+			m.breakerTrippedUntilCount = m.msgCount + defaultCompactFailureCooldownMessages
+			logger.WarnCF("llmcontext", "compaction circuit breaker tripped; suppressing automatic compaction", map[string]any{
+				"session_key":          m.sessionKey,
+				"consecutive_failures": m.consecutiveCompactFailures,
+				"resume_at_msg_count":  m.breakerTrippedUntilCount,
+			})
+		}
+	}
 }
 
 // triggerCheck runs the unified compression trigger. Called at the end of
@@ -608,9 +673,20 @@ func (m *Manager) Build(_ context.Context) ([]providers.Message, error) {
 }
 
 // Compact triggers a normal LLM-based compression pass, identical to what
-// runs when the regular compression threshold is crossed.
+// runs when the regular compression threshold is crossed. It is the manual
+// /compact entry point and bypasses the failure circuit breaker, but a
+// successful manual compaction still resets the breaker so the automatic path
+// resumes.
 func (m *Manager) Compact(ctx context.Context) error {
-	return m.doCompress(ctx, false)
+	err := m.doCompress(ctx, false)
+	m.recordCompactionOutcome(err)
+	return err
+}
+
+// LastCompactionReport returns the report produced by the most recent
+// compaction pass, or nil if none has run on this manager.
+func (m *Manager) LastCompactionReport() *CompactionReport {
+	return m.lastReport
 }
 
 // ForceCompress aggressively reduces context by performing a group-aware backward

@@ -7,6 +7,7 @@ import {
   type LauncherForm,
 } from "@/components/config/form-model"
 import { Field, SwitchCardField } from "@/components/shared-form"
+import { Button } from "@/components/ui/button"
 import {
   Card,
   CardContent,
@@ -23,6 +24,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
+import { useChatModels } from "@/hooks/use-chat-models"
 
 type UpdateCoreField = <K extends keyof CoreConfigForm>(
   key: K,
@@ -136,6 +138,123 @@ interface ContextManagementSectionProps {
   onFieldChange: UpdateCoreField
 }
 
+interface SummarizationModelsFieldProps {
+  value: string[]
+  onChange: (next: string[]) => void
+}
+
+// SummarizationModelsField edits the ordered global summarization model list.
+// Models are tried in order during context compaction; the agent's own model is
+// always appended as a final fallback at runtime, so an empty list is valid.
+function SummarizationModelsField({
+  value,
+  onChange,
+}: SummarizationModelsFieldProps) {
+  const { t } = useTranslation()
+  const { apiKeyModels, oauthModels, localModels } = useChatModels()
+  const suggestions = [...apiKeyModels, ...oauthModels, ...localModels].map(
+    (m) => m.model_name,
+  )
+
+  const updateAt = (index: number, next: string) => {
+    const copy = [...value]
+    copy[index] = next
+    onChange(copy)
+  }
+  const removeAt = (index: number) => {
+    onChange(value.filter((_, i) => i !== index))
+  }
+  const addRow = () => onChange([...value, ""])
+
+  return (
+    <Field
+      label={t("pages.config.summarization_models")}
+      hint={t("pages.config.summarization_models_hint")}
+    >
+      <datalist id="summarization-model-suggestions">
+        {suggestions.map((name) => (
+          <option key={name} value={name} />
+        ))}
+      </datalist>
+      <div className="flex flex-col gap-2">
+        {value.length === 0 && (
+          <p className="text-muted-foreground text-sm">
+            {t("pages.config.summarization_models_empty")}
+          </p>
+        )}
+        {value.map((model, index) => (
+          <div key={index} className="flex items-center gap-2">
+            <span className="text-muted-foreground w-5 text-right text-sm tabular-nums">
+              {index + 1}.
+            </span>
+            <Input
+              className="flex-1"
+              list="summarization-model-suggestions"
+              value={model}
+              placeholder="e.g. claude-haiku-4-5"
+              onChange={(e) => updateAt(index, e.target.value)}
+            />
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => removeAt(index)}
+            >
+              {t("pages.config.summarization_models_remove")}
+            </Button>
+          </div>
+        ))}
+        <div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={addRow}
+          >
+            {t("pages.config.summarization_models_add")}
+          </Button>
+        </div>
+      </div>
+    </Field>
+  )
+}
+
+interface SummarizationSectionProps {
+  form: CoreConfigForm
+  onFieldChange: UpdateCoreField
+}
+
+// SummarizationSection is a global (not per-agent) configuration card for the
+// ordered summarization model chain used during context compaction.
+export function SummarizationSection({
+  form,
+  onFieldChange,
+}: SummarizationSectionProps) {
+  const { t } = useTranslation()
+
+  return (
+    <ConfigSectionCard
+      title={t("pages.config.sections.summarization")}
+      description={t("pages.config.sections.summarization_desc")}
+    >
+      <SummarizationModelsField
+        value={form.summarizationModels}
+        onChange={(next) => onFieldChange("summarizationModels", next)}
+      />
+
+      <SwitchCardField
+        label={t("pages.config.summarization_debug_capture")}
+        hint={t("pages.config.summarization_debug_capture_hint")}
+        layout="setting-row"
+        checked={form.summarizationDebugCapture}
+        onCheckedChange={(checked) =>
+          onFieldChange("summarizationDebugCapture", checked)
+        }
+      />
+    </ConfigSectionCard>
+  )
+}
+
 export function ContextManagementSection({
   form,
   onFieldChange,
@@ -147,18 +266,6 @@ export function ContextManagementSection({
       title={t("pages.config.sections.context_management")}
       description={t("pages.config.sections.context_management_desc")}
     >
-      <Field
-        label={t("pages.config.compress_model")}
-        hint={t("pages.config.compress_model_hint")}
-        layout="setting-row"
-      >
-        <Input
-          value={form.compressModel}
-          placeholder="e.g. claude-haiku-4-5"
-          onChange={(e) => onFieldChange("compressModel", e.target.value)}
-        />
-      </Field>
-
       <Field
         label={t("pages.config.compress_normal_percent")}
         hint={t("pages.config.compress_normal_percent_hint")}

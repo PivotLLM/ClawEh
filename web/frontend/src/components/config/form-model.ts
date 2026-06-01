@@ -6,7 +6,8 @@ export interface CoreConfigForm {
   allowRemote: boolean
   maxTokens: string
   maxToolIterations: string
-  compressModel: string
+  summarizationModels: string[]
+  summarizationDebugCapture: boolean
   compressNormalPercent: string
   compressSafetyPercent: string
   compressMinPercent: string
@@ -63,7 +64,8 @@ export const EMPTY_FORM: CoreConfigForm = {
   allowRemote: true,
   maxTokens: "32768",
   maxToolIterations: "50",
-  compressModel: "",
+  summarizationModels: [],
+  summarizationDebugCapture: false,
   compressNormalPercent: "0",
   compressSafetyPercent: "0",
   compressMinPercent: "0",
@@ -97,6 +99,13 @@ function asString(value: unknown): string {
   return typeof value === "string" ? value : ""
 }
 
+function asStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+  return value.filter((v): v is string => typeof v === "string")
+}
+
 function asBool(value: unknown): boolean {
   return value === true
 }
@@ -115,6 +124,7 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
   const root = asRecord(config)
   const agents = asRecord(root.agents)
   const defaults = asRecord(agents.defaults)
+  const summarization = asRecord(root.summarization)
   const session = asRecord(root.session)
   const devices = asRecord(root.devices)
   const tools = asRecord(root.tools)
@@ -135,7 +145,8 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
       defaults.max_tool_iterations,
       EMPTY_FORM.maxToolIterations,
     ),
-    compressModel: asString(defaults.compress_model) || EMPTY_FORM.compressModel,
+    summarizationModels: asStringArray(summarization.models),
+    summarizationDebugCapture: asBool(summarization.debug_capture),
     compressNormalPercent: asNumberString(
       defaults.compress_normal_percent,
       EMPTY_FORM.compressNormalPercent,
