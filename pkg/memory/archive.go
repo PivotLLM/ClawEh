@@ -42,7 +42,7 @@ END;
 // SearchResult holds one result from an ArchiveStore.Search call.
 // It pairs the archive sequence number and timestamp with the deserialized message.
 type SearchResult struct {
-	Seq       int
+	Seq       int64
 	CreatedAt time.Time
 	Message   providers.Message
 }
@@ -122,7 +122,7 @@ func Open(path string) (*ArchiveStore, error) {
 // msg is serialized as JSON payload; searchable text is derived from
 // msg.Content plus any ToolCalls arguments.
 // Acquires the write mutex; no-op if unavailable.
-func (a *ArchiveStore) Append(seq int, msg providers.Message, createdAt time.Time) error {
+func (a *ArchiveStore) Append(seq int64, msg providers.Message, createdAt time.Time) error {
 	if a.unavailable {
 		return nil
 	}
@@ -145,16 +145,15 @@ func (a *ArchiveStore) Append(seq int, msg providers.Message, createdAt time.Tim
 }
 
 // MaxSeq returns the current maximum sequence number using the write connection.
-// Called by ContextManager to seed archiveSeq; avoids the WAL visibility gap
-// that affects read-only connections opened with a separate URI.
-// Returns 0 if no messages exist or the store is unavailable.
-func (a *ArchiveStore) MaxSeq() int {
+// Avoids the WAL visibility gap that affects read-only connections opened with a
+// separate URI. Returns 0 if no messages exist or the store is unavailable.
+func (a *ArchiveStore) MaxSeq() int64 {
 	if a.unavailable || a.db == nil {
 		return 0
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	var maxSeq int
+	var maxSeq int64
 	row := a.db.QueryRowContext(context.Background(), `SELECT COALESCE(MAX(seq), 0) FROM messages`)
 	if err := row.Scan(&maxSeq); err != nil {
 		return 0
@@ -165,7 +164,7 @@ func (a *ArchiveStore) MaxSeq() int {
 // QueryRange returns messages with seq in [minSeq, maxSeq] inclusive.
 // Uses a read-only connection opened and closed per call.
 // Returns (nil, ErrArchiveUnavailable) if the store is unavailable.
-func (a *ArchiveStore) QueryRange(minSeq, maxSeq int) ([]StoredMessage, error) {
+func (a *ArchiveStore) QueryRange(minSeq, maxSeq int64) ([]StoredMessage, error) {
 	if a.unavailable {
 		return nil, ErrArchiveUnavailable
 	}
@@ -238,7 +237,7 @@ func (a *ArchiveStore) Search(ctx context.Context, query, role string, limit int
 // Bounds returns the inclusive [minSeq, maxSeq] of stored messages.
 // Returns (0, 0, nil) if no messages exist.
 // Uses a read-only connection opened and closed per call.
-func (a *ArchiveStore) Bounds() (minSeq, maxSeq int, err error) {
+func (a *ArchiveStore) Bounds() (minSeq, maxSeq int64, err error) {
 	if a.unavailable {
 		return 0, 0, ErrArchiveUnavailable
 	}
@@ -290,7 +289,7 @@ func (a *ArchiveStore) Stats() (count int, first, last time.Time, err error) {
 // MinSeqAfter returns the smallest seq with created_at >= t.Unix().
 // Returns (0, nil) if no messages exist at or after that time or the store is unavailable.
 // Uses a read-only connection opened and closed per call.
-func (a *ArchiveStore) MinSeqAfter(t time.Time) (int, error) {
+func (a *ArchiveStore) MinSeqAfter(t time.Time) (int64, error) {
 	if a.unavailable {
 		return 0, ErrArchiveUnavailable
 	}
@@ -301,7 +300,7 @@ func (a *ArchiveStore) MinSeqAfter(t time.Time) (int, error) {
 	}
 	defer db.Close()
 
-	var minSeq int
+	var minSeq int64
 	row := db.QueryRowContext(context.Background(),
 		`SELECT COALESCE(MIN(seq), 0) FROM messages WHERE created_at >= ?`,
 		t.Unix(),
@@ -356,7 +355,7 @@ func deriveArchiveText(msg providers.Message) string {
 func scanStoredMessages(rows *sql.Rows) ([]StoredMessage, error) {
 	var msgs []StoredMessage
 	for rows.Next() {
-		var seq int
+		var seq int64
 		var payload string
 		var createdAtUnix int64
 		if err := rows.Scan(&seq, &payload, &createdAtUnix); err != nil {
@@ -378,7 +377,7 @@ func scanStoredMessages(rows *sql.Rows) ([]StoredMessage, error) {
 func scanSearchResults(rows *sql.Rows) ([]SearchResult, error) {
 	var results []SearchResult
 	for rows.Next() {
-		var seq int
+		var seq int64
 		var payload string
 		var createdAtUnix int64
 		if err := rows.Scan(&seq, &payload, &createdAtUnix); err != nil {

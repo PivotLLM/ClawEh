@@ -1,19 +1,21 @@
 #!/usr/bin/env bash
 ################################################################################
 # ClawEh Comprehensive Test Suite
-# Runs all Go tests with race detector and coverage measurement.
+# Runs all Go tests with race detector and coverage measurement, followed by
+# MCP server integration tests (probe-driven, self-contained).
 #
 # Usage:
-#   ./test.sh             Full suite: race detector + coverage (default)
+#   ./test.sh             Full suite: unit tests + MCP integration (default)
 #   ./test.sh -f          Fast mode: no race detector, no coverage
 #   ./test.sh -c          Coverage only (no race detector)
-#   ./test.sh -i          Also run MCP server integration tests (probe-driven).
-#                         Self-contained: builds claw, starts a fresh gateway
-#                         in a temp CLAW_HOME, runs the test, tears it down.
-#                         Requires the 'probe' binary on PATH.
+#   ./test.sh -s          Skip MCP integration tests
 #   ./test.sh -n          Disable colour output
 #   ./test.sh -x          Preserve test artifacts after completion
 #   ./test.sh -h          Show help
+#
+# MCP integration tests require the 'probe' binary on PATH. If probe is not
+# found, the integration section is skipped with a warning (not a failure).
+# Set PROBE_PATH to override the binary location.
 #
 # Exit codes:
 #   0  All tests passed and coverage gate met
@@ -41,27 +43,28 @@ FAST_MODE=false
 COVERAGE_ONLY=false
 NO_COLOR=false
 PRESERVE_ARTIFACTS=false
-INTEGRATION=false
+SKIP_INTEGRATION=false
 
-while getopts "fcinxh" opt; do
+while getopts "fcsinxh" opt; do
     case $opt in
         f) FAST_MODE=true ;;
         c) COVERAGE_ONLY=true ;;
-        i) INTEGRATION=true ;;
+        s) SKIP_INTEGRATION=true ;;
+        i) ;;  # kept for backward compat — integration now runs by default
         n) NO_COLOR=true ;;
         x) PRESERVE_ARTIFACTS=true ;;
         h)
-            echo "Usage: $0 [-f] [-c] [-i] [-n] [-x] [-h]"
+            echo "Usage: $0 [-f] [-c] [-s] [-n] [-x] [-h]"
             echo "  -f  Fast mode: no race detector, no coverage (quickest feedback)"
             echo "  -c  Coverage mode: coverage measurement only, no race detector"
-            echo "  -i  Also run MCP server integration tests (probe-driven, self-contained)"
+            echo "  -s  Skip MCP integration tests"
             echo "  -n  Disable colour output"
             echo "  -x  Preserve test artifacts after completion (for debugging)"
             echo "  -h  Show this help"
             exit 0
             ;;
         *)
-            echo "Usage: $0 [-f] [-c] [-i] [-n] [-x] [-h]"
+            echo "Usage: $0 [-f] [-c] [-s] [-n] [-x] [-h]"
             exit 1
             ;;
     esac
@@ -98,6 +101,9 @@ elif $COVERAGE_ONLY; then
     echo "${BOLD}   Mode: Coverage (no race detector)${NC}"
 else
     echo "${BOLD}   Mode: Full (race detector + coverage)${NC}"
+fi
+if $SKIP_INTEGRATION; then
+    echo "${BOLD}   Integration: skipped (-s)${NC}"
 fi
 echo "${BOLD}============================================${NC}"
 echo ""
@@ -284,8 +290,10 @@ fi
 
 INTEGRATION_RAN=false
 INTEGRATION_PASSED=true
+INTEGRATION_PASS_COUNT=0
+INTEGRATION_FAIL_COUNT=0
 
-if $INTEGRATION; then
+if ! $SKIP_INTEGRATION; then
     echo ""
     echo "${BOLD}============================================${NC}"
     echo "${BOLD}   MCP SERVER INTEGRATION TESTS${NC}"
@@ -297,10 +305,11 @@ if $INTEGRATION; then
         echo "${RED}ERROR: $INTEGRATION_SCRIPT not found or not executable${NC}"
         INTEGRATION_PASSED=false
     else
-        # Need a probe binary to drive the test.
+        # probe is a required external prerequisite for integration tests.
         PROBE_BIN="${PROBE_PATH:-probe}"
         if ! command -v "$PROBE_BIN" >/dev/null 2>&1; then
-            echo "${RED}ERROR: 'probe' not found on PATH (set PROBE_PATH to override)${NC}"
+            echo "${RED}ERROR: 'probe' not found on PATH — MCP integration tests cannot run.${NC}"
+            echo "${DIM}Set PROBE_PATH or install probe to run the full test suite.${NC}"
             INTEGRATION_PASSED=false
         else
             INTEGRATION_RAN=true
@@ -369,6 +378,11 @@ PY
         "name": "main",
         "default": true,
         "tools": ["*"]
+      },
+      {
+        "id": "alice",
+        "name": "alice",
+        "tools": ["*"]
       }
     ]
   },
@@ -395,18 +409,18 @@ PY
     "listen": "127.0.0.1:$MCP_PORT",
     "endpoint_path": "/mcp",
     "tools": [
-      "read_file",
-      "write_file",
-      "edit_file",
-      "append_file",
-      "list_dir",
+      "files_read",
+      "files_write",
+      "files_edit",
+      "files_append",
+      "files_list",
       "web_fetch",
       "web_search",
-      "send_file",
-      "get_session_messages",
-      "search_session_messages",
-      "compact_session",
-      "get_session_info"
+      "msg_send_file",
+      "session_messages",
+      "session_search",
+      "session_compact",
+      "session_info"
     ]
   }
 }
@@ -438,11 +452,35 @@ EOF
                     echo "${GREEN}Gateway ready on 127.0.0.1:$MCP_PORT/mcp${NC}"
                     echo ""
 
+                    # ---- Workspace population: initial startup ----
+                    echo "${BOLD}--- Workspace population (initial startup) ---${NC}"
+                    echo ""
+                    WORKSPACE_PASS=true
+                    WORKSPACE_TEMPLATES="AGENTS.md SOUL.md USER.md IDENTITY.md memory/MEMORY.md"
+                    # The default agent (id=main) uses agents/default; named agents use agents/{id}
+                    for agent_ws in "main:$INTEG_HOME/agents/default" "alice:$INTEG_HOME/agents/alice"; do
+                        agent="${agent_ws%%:*}"
+                        WS="${agent_ws#*:}"
+                        for tpl in $WORKSPACE_TEMPLATES; do
+                            if [ -f "$WS/$tpl" ]; then
+                                echo "  ${GREEN}PASS${NC}: $agent/$tpl populated at startup"
+                                INTEGRATION_PASS_COUNT=$((INTEGRATION_PASS_COUNT + 1))
+                            else
+                                echo "  ${RED}FAIL${NC}: $agent/$tpl missing after startup"
+                                INTEGRATION_FAIL_COUNT=$((INTEGRATION_FAIL_COUNT + 1))
+                                WORKSPACE_PASS=false
+                            fi
+                        done
+                    done
+                    echo ""
+
                     # Run the probe-driven test against this ephemeral instance.
                     if SERVER_URL="http://127.0.0.1:$MCP_PORT" \
                        ENDPOINT="/mcp" \
                        PROBE_PATH="$PROBE_BIN" \
                        SESSION_TOKEN="$TEST_SESSION_TOKEN" \
+                       CONFIG_FILE="$INTEG_HOME/config.json" \
+                       GATEWAY_URL="http://127.0.0.1:$GATEWAY_PORT" \
                        bash "$INTEGRATION_SCRIPT"; then
                         echo "${GREEN}MCP server integration tests passed.${NC}"
                     else
@@ -450,6 +488,60 @@ EOF
                         echo "${DIM}--- gateway log (tail) ---${NC}"
                         tail -n 40 "$INTEG_LOG" | sed 's/^/    /'
                         INTEGRATION_PASSED=false
+                    fi
+
+                    # ---- Workspace re-population: delete alice's dir and restart ----
+                    echo ""
+                    echo "${BOLD}--- Workspace population (restart after deletion) ---${NC}"
+                    echo ""
+
+                    # Stop the current gateway.
+                    kill -TERM "$INTEG_PID" 2>/dev/null
+                    for _ in $(seq 1 20); do
+                        kill -0 "$INTEG_PID" 2>/dev/null || break
+                        sleep 0.25
+                    done
+                    kill -KILL "$INTEG_PID" 2>/dev/null || true
+
+                    # Delete alice's workspace — simulates adding a fresh agent.
+                    rm -rf "$INTEG_HOME/agents/alice"
+                    echo "  ${DIM}Deleted alice's workspace directory${NC}"
+
+                    # Restart the gateway.
+                    CLAW_HOME="$INTEG_HOME" CLAW_MCP_TEST_TOKEN="$TEST_SESSION_TOKEN" \
+                        "$INTEG_BIN" gateway >>"$INTEG_LOG" 2>&1 &
+                    INTEG_PID=$!
+
+                    # Wait for MCP port — workspace population happens before the server
+                    # starts listening, so once the port is up the files are on disk.
+                    RESTART_READY=false
+                    for _ in $(seq 1 40); do
+                        if ! kill -0 "$INTEG_PID" 2>/dev/null; then
+                            break
+                        fi
+                        if (echo > "/dev/tcp/127.0.0.1/$MCP_PORT") 2>/dev/null; then
+                            RESTART_READY=true
+                            break
+                        fi
+                        sleep 0.25
+                    done
+
+                    ALICE_WS="$INTEG_HOME/agents/alice"
+                    if ! $RESTART_READY; then
+                        echo "  ${RED}FAIL${NC}: gateway did not restart within 10s"
+                        INTEGRATION_FAIL_COUNT=$((INTEGRATION_FAIL_COUNT + 1))
+                        INTEGRATION_PASSED=false
+                    else
+                        for tpl in $WORKSPACE_TEMPLATES; do
+                            if [ -f "$ALICE_WS/$tpl" ]; then
+                                echo "  ${GREEN}PASS${NC}: alice/$tpl re-populated after restart"
+                                INTEGRATION_PASS_COUNT=$((INTEGRATION_PASS_COUNT + 1))
+                            else
+                                echo "  ${RED}FAIL${NC}: alice/$tpl missing after restart"
+                                INTEGRATION_FAIL_COUNT=$((INTEGRATION_FAIL_COUNT + 1))
+                                INTEGRATION_PASSED=false
+                            fi
+                        done
                     fi
                 fi
             fi
@@ -492,13 +584,19 @@ if $RUN_RACE; then
     echo "Race:        ${GREEN}enabled${NC}"
 fi
 
-if $INTEGRATION_RAN; then
+if $SKIP_INTEGRATION; then
+    echo "MCP integ:   ${DIM}skipped (-s)${NC}"
+elif $INTEGRATION_RAN; then
     if $INTEGRATION_PASSED; then
-        echo "MCP integ:   ${GREEN}passed${NC}"
+        echo "MCP integ:   ${GREEN}passed${NC} (workspace: ${INTEGRATION_PASS_COUNT}/${INTEGRATION_PASS_COUNT} checks)"
     else
-        echo "MCP integ:   ${RED}failed${NC}"
+        echo "MCP integ:   ${RED}failed${NC} (workspace: ${INTEGRATION_FAIL_COUNT} failure(s))"
         OVERALL_PASS=false
     fi
+else
+    # probe was not found — counts as a failure per test suite contract
+    echo "MCP integ:   ${RED}failed (probe not found)${NC}"
+    OVERALL_PASS=false
 fi
 
 echo ""

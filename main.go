@@ -19,7 +19,6 @@ import (
 	"github.com/PivotLLM/ClawEh/internal/gateway"
 	"github.com/PivotLLM/ClawEh/internal/test"
 	"github.com/PivotLLM/ClawEh/internal/model"
-	"github.com/PivotLLM/ClawEh/internal/onboard"
 	"github.com/PivotLLM/ClawEh/internal/skills"
 	"github.com/PivotLLM/ClawEh/internal/status"
 	"github.com/PivotLLM/ClawEh/internal/version"
@@ -43,7 +42,6 @@ func NewPicoclawCommand(binaryName string) *cobra.Command {
 	cmd.Flags().AddFlagSet(defaultCmd.Flags())
 
 	cmd.AddCommand(
-		onboard.NewOnboardCommand(),
 		agent.NewAgentCommand(),
 		auth.NewAuthCommand(),
 		defaultCmd,

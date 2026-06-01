@@ -21,21 +21,26 @@ type Summary struct {
 	State               SummaryState `json:"state"`
 	KeyMoments          []KeyMoment  `json:"key_moments,omitempty"`
 	MessageIndex        []IndexEntry `json:"message_index,omitempty"`
-	CoveredSeqStart     int          `json:"covered_seq_start"`
-	CoveredSeqEnd       int          `json:"covered_seq_end"`
+	CoveredSeqStart     int64        `json:"covered_seq_start"`
+	CoveredSeqEnd       int64        `json:"covered_seq_end"`
 	CoveredRanges       []SeqRange   `json:"covered_ranges,omitempty"`
-	LastSummarizedSeq   int          `json:"last_summarized_seq,omitempty"`
+	LastSummarizedSeq   int64        `json:"last_summarized_seq,omitempty"`
 	LastSummarizedRange SeqRange     `json:"last_summarized_range,omitempty"`
 	CoveredSeqStartAt   time.Time    `json:"covered_seq_start_at,omitempty"`
 	CoveredSeqEndAt     time.Time    `json:"covered_seq_end_at,omitempty"`
 	GeneratedAt         time.Time    `json:"generated_at"`
 	Model               string       `json:"model,omitempty"`
+	// Profile is a short fingerprint (sha256 hex[:8]) of the agent compression
+	// profile (compression.md) in effect when this summary was generated, or ""
+	// when no profile was applied. Stamped into the rendered summary so agents
+	// can tell which profile shaped a summary and detect when it changed.
+	Profile string `json:"profile,omitempty"`
 }
 
 // SeqRange is an inclusive archive message ID range.
 type SeqRange struct {
-	SeqStart int `json:"seq_start"`
-	SeqEnd   int `json:"seq_end,omitempty"`
+	SeqStart int64 `json:"seq_start"`
+	SeqEnd   int64 `json:"seq_end,omitempty"`
 }
 
 // SummaryItem is a cited state item. Text is the compact paraphrase; Exact is
@@ -57,7 +62,7 @@ type SummaryState struct {
 
 // KeyMoment records a single high-importance event in the conversation.
 type KeyMoment struct {
-	Seq     int        `json:"seq,omitempty"`
+	Seq     int64      `json:"seq,omitempty"`
 	Refs    []SeqRange `json:"refs,omitempty"`
 	Role    string     `json:"role,omitempty"`
 	Summary string     `json:"summary"`
@@ -66,8 +71,8 @@ type KeyMoment struct {
 
 // IndexEntry is one entry (or a collapsed range) in the retrievable message index.
 type IndexEntry struct {
-	SeqStart int    `json:"seq_start"`
-	SeqEnd   int    `json:"seq_end"`
+	SeqStart int64  `json:"seq_start"`
+	SeqEnd   int64  `json:"seq_end"`
 	Role     string `json:"role"`
 	Label    string `json:"label"`
 }
@@ -221,7 +226,7 @@ func (s *Summary) TruncateToFit(tokenLimit int) bool {
 // This prevents hallucinated or stale seq values emitted by the summarizer from
 // appearing in the rendered summary. archiveMaxSeq is 0 when unknown; in that
 // case only the lower bound is applied.
-func (s *Summary) StripOutOfRangeSeqRefs(archiveMinSeq, archiveMaxSeq int) {
+func (s *Summary) StripOutOfRangeSeqRefs(archiveMinSeq, archiveMaxSeq int64) {
 	if s == nil {
 		return
 	}
@@ -304,19 +309,35 @@ func (s *Summary) StripOutOfRangeSeqRefs(archiveMinSeq, archiveMaxSeq int) {
 }
 
 // Render produces the Markdown block injected at the CONTEXT_SUMMARY position.
-func (s *Summary) Render(archiveMinSeq, archiveMaxSeq int) string {
+func (s *Summary) Render(archiveMinSeq, archiveMaxSeq int64) string {
 	var sb strings.Builder
 
 	if s.CoveredSeqStart > 0 {
 		if !s.CoveredSeqStartAt.IsZero() && !s.CoveredSeqEndAt.IsZero() {
 			startStr := s.CoveredSeqStartAt.UTC().Format("2006-01-02 15:04 UTC")
 			endStr := s.CoveredSeqEndAt.UTC().Format("2006-01-02 15:04 UTC")
-			fmt.Fprintf(&sb, "Context summary: messages #%d (%s) - #%d (%s). Full messages retrievable via get_session_messages.\n\n",
+			fmt.Fprintf(&sb, "Context summary: messages #%d (%s) - #%d (%s). Full messages retrievable via get_session_messages.\n",
 				s.CoveredSeqStart, startStr, s.CoveredSeqEnd, endStr)
 		} else {
-			fmt.Fprintf(&sb, "Context summary: messages #%d - #%d. Full messages retrievable via get_session_messages.\n\n",
+			fmt.Fprintf(&sb, "Context summary: messages #%d - #%d. Full messages retrievable via get_session_messages.\n",
 				s.CoveredSeqStart, s.CoveredSeqEnd)
 		}
+		// Stamp generation metadata so agents can identify when, by what model,
+		// under which summary version, and with which compression profile this
+		// summary was produced — useful for debugging compression quality.
+		if !s.GeneratedAt.IsZero() {
+			stamp := s.GeneratedAt.UTC().Format("2006-01-02 15:04 UTC")
+			meta := fmt.Sprintf("v%d", s.Version)
+			if s.Profile != "" {
+				meta += ", profile " + s.Profile
+			}
+			if s.Model != "" {
+				fmt.Fprintf(&sb, "Generated: %s by %s (%s)\n", stamp, s.Model, meta)
+			} else {
+				fmt.Fprintf(&sb, "Generated: %s (%s)\n", stamp, meta)
+			}
+		}
+		sb.WriteString("\n")
 	}
 
 	sb.WriteString("## Current State\n")
@@ -418,7 +439,7 @@ func unmarshalSummary(raw string) (*Summary, error) {
 // renderSummaryFromRaw returns the Markdown to inject into the system prompt.
 // If raw is a valid Summary JSON it is rendered structurally. Otherwise it is
 // returned as-is (legacy prose or empty string).
-func renderSummaryFromRaw(raw string, archiveMinSeq, archiveMaxSeq int) string {
+func renderSummaryFromRaw(raw string, archiveMinSeq, archiveMaxSeq int64) string {
 	s, err := unmarshalSummary(raw)
 	if err != nil || s == nil {
 		return raw // legacy prose or empty — pass through unchanged
@@ -446,12 +467,13 @@ const promptStandard = `You are an AI assistant performing context summarization
   ]
 }
 
+Purpose: this summary COMPLEMENTS the agent's always-present system prompt (its identity, standing rules, user preferences, and durable project state, all loaded from workspace files on every turn). Do NOT re-derive standing identity or rules the system prompt already provides. Capture what would otherwise be LOST if the conversation were cleared right now: the transient, in-flight state — active work and branches, dispatched/pending tasks, the last user instruction, open action items, and recent decisions.
+
 Instructions:
 - Update the existing summary with the new messages. Do not replace it wholesale.
-- Every state item and key moment MUST cite archive message IDs in refs.
-- Goals/Progress: update dynamically; only active goals; retire completed/superseded ones only when the new messages support that.
-- Pending: capture immediate next actions in flight at this moment. Answer "what was I about to do?"
-- Constraints: preserve verbatim unless user explicitly changed them.
+- Every state item and key moment MUST cite archive message IDs in refs. Refs must point to the SPECIFIC message(s) that establish the item — a single seq, or the tightest range possible. Never cite a broad span of the whole conversation (e.g. avoid [#1-#551]).
+- Goals/Progress/Pending are the priority — keep them rich and current: active goals, concrete progress toward them, and the immediate next action in flight ("what was I about to do?"). Retire completed/superseded goals only when the new messages support that.
+- Constraints: include ONLY conversation-specific rules or decisions that are NOT already in the system prompt or agent files. Omit standing rules the agent always has loaded. ONE rule per constraint — never combine multiple facts into a single item; split them into separate constraints. Cite the specific message where each was established, not a broad range. Preserve wording verbatim unless the user explicitly changed it.
 - Key Moments: curated high-importance events only. Use exact field for instructions, decisions, config values.
 - Message Index: collapse consecutive identical entries to a range. Only include messages in the archive window (seq %d to %d).
 - Respond with valid JSON only. No markdown fences, no prose.`
@@ -460,7 +482,7 @@ Instructions:
 // It keeps the same schema as the standard prompt but instructs the LLM to
 // produce more compact output: terse state fields, selective key moments, and
 // aggressively collapsed message index ranges.
-const promptAggressive = `You are an AI assistant performing urgent context summarization. Token budget is critical — be maximally concise without losing actionable state. Produce a JSON object matching this schema exactly:
+const promptAggressive = `You are an AI assistant performing urgent context summarization. Token budget is critical — be maximally concise without losing actionable state. Prioritize transient in-flight state (active work and branches, dispatched/pending tasks, the last user instruction, open action items) that would be lost if the conversation were cleared; do NOT re-derive standing rules already in the agent's system prompt. Produce a JSON object matching this schema exactly:
 
 {
   "version": 2,
@@ -479,21 +501,27 @@ const promptAggressive = `You are an AI assistant performing urgent context summ
 }
 
 Rules:
-- State: one concise sentence per item; omit any field that is empty.
-- Every state item and key moment MUST cite archive message IDs in refs.
+- State: one concise sentence per item; omit any field that is empty. Goals/Progress/Pending come first — they are the transient state worth preserving.
+- Every state item and key moment MUST cite archive message IDs in refs — the specific establishing message(s), a single seq or tightest range, never a broad span of the conversation.
+- Constraints: include ONLY conversation-specific rules not already in the system prompt; omit standing rules the agent always has loaded. One rule per constraint — do not combine multiple facts.
 - Key Moments: include only decisions and facts required to continue in-progress work; omit anything already captured in state or easily derivable from context. No hard cap — include what is needed, nothing more.
 - Message Index: collapse aggressively into broad topic or project ranges (archive window: seq %d to %d); one entry per project/thread area rather than per message.
-- Update the existing summary rather than replacing it — preserve active goals and constraints.
+- Update the existing summary rather than replacing it — preserve active goals.
 - Respond with valid JSON only. No markdown fences, no prose.`
 
 // buildSummarizationPrompt returns the prompt for a summarization call.
-// existing may be nil on the first cycle.
-func buildSummarizationPrompt(existing *Summary, archiveMin, archiveMax int, aggressive bool) string {
+// existing may be nil on the first cycle. compressionProfile is the content of
+// the agent's compression.md file; it is appended after the base prompt when
+// non-empty so agents can declare role-specific summarization rules.
+func buildSummarizationPrompt(existing *Summary, archiveMin, archiveMax int64, aggressive bool, compressionProfile string) string {
 	var base string
 	if aggressive {
 		base = fmt.Sprintf(promptAggressive, archiveMin, archiveMax)
 	} else {
 		base = fmt.Sprintf(promptStandard, archiveMin, archiveMax)
+	}
+	if compressionProfile != "" {
+		base += "\n\n## Agent compression profile (follow these instructions when summarizing):\n" + compressionProfile
 	}
 	if existing == nil {
 		return base

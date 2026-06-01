@@ -14,14 +14,14 @@ import (
 // construction outside this package's tests will leave CreatedAt zero and corrupt
 // on-disk metadata (covered_seq_*_at on context summaries, etc.).
 type StoredMessage struct {
-	Seq       int       `json:"seq"`
+	Seq       int64     `json:"seq"`
 	CreatedAt time.Time `json:"created_at"`
 	providers.Message
 }
 
 // NewStoredMessage builds a StoredMessage and stamps CreatedAt with the current
 // UTC wall-clock time. Use this on the write path when no prior timestamp exists.
-func NewStoredMessage(seq int, msg providers.Message) StoredMessage {
+func NewStoredMessage(seq int64, msg providers.Message) StoredMessage {
 	return NewStoredMessageAt(seq, msg, time.Now().UTC())
 }
 
@@ -29,7 +29,7 @@ func NewStoredMessage(seq int, msg providers.Message) StoredMessage {
 // supplied time is zero, CreatedAt is stamped with time.Now().UTC() to preserve
 // the non-zero invariant. Use this when reading a timestamp back from a durable
 // source (e.g. the archive DB).
-func NewStoredMessageAt(seq int, msg providers.Message, createdAt time.Time) StoredMessage {
+func NewStoredMessageAt(seq int64, msg providers.Message, createdAt time.Time) StoredMessage {
 	if createdAt.IsZero() {
 		createdAt = time.Now().UTC()
 	} else {

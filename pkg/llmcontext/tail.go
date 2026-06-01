@@ -102,7 +102,7 @@ func resolveGroup(history []providers.Message, end int) groupBounds {
 
 // countMeaningfulMessages counts non-noise messages in a slice using the same
 // stateful noise definition as the storage layer: identical content for the same
-// role, or identical cron payload for cron-wrapper messages.
+// role, or identical cron key (fingerprint-or-payload) for cron-wrapper messages.
 func countMeaningfulMessages(msgs []providers.Message) int {
 	lastByRole := make(map[string]string)
 	lastCron := ""
@@ -112,8 +112,8 @@ func countMeaningfulMessages(msgs []providers.Message) int {
 			continue
 		}
 		n++
-		if payload, ok := tailCronPayload(m.Content); ok {
-			lastCron = payload
+		if key, ok := cronCollapseKey(m.Content); ok {
+			lastCron = key
 		}
 		lastByRole[m.Role] = m.Content
 	}
@@ -133,8 +133,8 @@ func collapseNoise(msgs []providers.Message) []providers.Message {
 		if isTailNoise(m, lastByRole, lastCron) {
 			continue
 		}
-		if payload, ok := tailCronPayload(m.Content); ok {
-			lastCron = payload
+		if key, ok := cronCollapseKey(m.Content); ok {
+			lastCron = key
 		}
 		lastByRole[m.Role] = m.Content
 		out = append(out, m)
@@ -144,21 +144,64 @@ func collapseNoise(msgs []providers.Message) []providers.Message {
 
 // isTailNoise returns true if m is a noise duplicate given the current state.
 func isTailNoise(m providers.Message, lastByRole map[string]string, lastCron string) bool {
-	if payload, ok := tailCronPayload(m.Content); ok {
-		return payload != "" && payload == lastCron
+	if key, ok := cronCollapseKey(m.Content); ok {
+		return key != "" && key == lastCron
 	}
 	prev, ok := lastByRole[m.Role]
 	return ok && m.Content == prev
 }
 
-// tailCronPayload reports whether content is a cron-wrapper message and, if so,
-// returns the payload after the timestamp line.
-func tailCronPayload(content string) (string, bool) {
-	if !strings.HasPrefix(content, tailCronPrefix) {
+// cronCollapseKey returns the collapse key for a cron-wrapper message: the
+// fingerprint when present, otherwise the payload (legacy fallback). The bool is
+// false for non-cron content.
+func cronCollapseKey(content string) (string, bool) {
+	fp, payload, ok := parseCronMarker(content)
+	if !ok {
 		return "", false
 	}
-	if idx := strings.IndexByte(content[len(tailCronPrefix):], '\n'); idx >= 0 {
-		return content[len(tailCronPrefix)+idx+1:], true
+	if fp != "" {
+		return fp, true
 	}
-	return "", true
+	return payload, true
+}
+
+// parseCronMarker reports whether content is a cron-wrapper message. It tolerates
+// an optional leading "[<hex>] " fingerprint marker (new format) and also the
+// legacy un-marked form. Returns the fingerprint ("" if absent), the payload
+// (text after the timestamp line), and ok.
+func parseCronMarker(content string) (fingerprint, payload string, ok bool) {
+	work := content
+	if strings.HasPrefix(work, "[") {
+		if end := strings.IndexByte(work, ']'); end > 1 && end <= 12 {
+			token := work[1:end]
+			if isLowerHex(token) && strings.HasPrefix(work[end:], "] ") {
+				fingerprint = token
+				work = work[end+2:]
+			}
+		}
+	}
+
+	if !strings.HasPrefix(work, tailCronPrefix) {
+		return "", "", false
+	}
+	if idx := strings.IndexByte(work[len(tailCronPrefix):], '\n'); idx >= 0 {
+		payload = work[len(tailCronPrefix)+idx+1:]
+	}
+	return fingerprint, payload, true
+}
+
+// isLowerHex reports whether s is non-empty and consists solely of lowercase
+// hexadecimal digits.
+func isLowerHex(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') {
+			continue
+		}
+		return false
+	}
+	return true
 }

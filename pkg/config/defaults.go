@@ -12,28 +12,18 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/global"
 )
 
-// DefaultAgentTools is the baseline tool allowlist for new agents when no
-// explicit tools list is configured. Excludes hardware (i2c, spi) and advanced
-// MCP discovery tools, which require deliberate opt-in.
-// The list can be overridden per-installation via agents.defaults.default_tools.
-var DefaultAgentTools = []string{
-	"read_file",
-	"write_file",
-	"edit_file",
-	"append_file",
-	"copy_file",
-	"list_dir",
-	"exec",
-	"web_search",
-	"web_fetch",
-	"message",
-	"send_file",
-	"find_skills",
-	"install_skill",
-	"spawn",
-	"cron",
-	"get_session_messages",
-	"search_session_messages",
+// DefaultAgentTools is the baseline tool allowlist used when an agent has no
+// explicit tools list. Populated at startup from provider descriptors via
+// SetDefaultAgentTools; the value here is a safe fallback only.
+var DefaultAgentTools = []string{"*"}
+
+// SetDefaultAgentTools replaces the default tool allowlist. Called from the
+// gateway after all tool providers are registered, so each provider's
+// DefaultEnabled flag drives which tools are in every agent's baseline.
+func SetDefaultAgentTools(names []string) {
+	if len(names) > 0 {
+		DefaultAgentTools = names
+	}
 }
 
 // DefaultConfig returns the default configuration for ClawEh.
@@ -512,19 +502,19 @@ func DefaultConfig() *Config {
 			Listen:       "127.0.0.1:5911",
 			EndpointPath: "/mcp",
 			Tools: []string{
-				"read_file",
-				"write_file",
-				"edit_file",
-				"append_file",
-				"copy_file",
-				"list_dir",
+				"files_read",
+				"files_write",
+				"files_edit",
+				"files_append",
+				"files_copy",
+				"files_list",
 				"web_fetch",
 				"web_search",
-				"send_file",
-				"get_session_messages",
-				"search_session_messages",
-				"compact_session",
-				"get_session_info",
+				"msg_send_file",
+				"session_messages",
+				"session_search",
+				"session_compact",
+				"session_info",
 			},
 		},
 		ConfigReloadIntervalSeconds: global.DefaultConfigReloadIntervalSeconds,

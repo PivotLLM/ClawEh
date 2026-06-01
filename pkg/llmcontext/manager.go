@@ -47,11 +47,8 @@ type Manager struct {
 
 	// archive is opened lazily on first write; nil until then.
 	// archiveMu guards lazy initialisation; read operations do not need it.
-	archive    *memory.ArchiveStore
-	archiveMu  sync.Mutex
-	// archiveSeq tracks the next sequence number to use when appending to the
-	// archive. It is initialised lazily from archive.Bounds() on first write.
-	archiveSeq int
+	archive   *memory.ArchiveStore
+	archiveMu sync.Mutex
 
 	// sessionToken is the SST-prefixed per-session MCP token injected into the
 	// system prompt by Build() so the LLM can call session-scoped tools. Set
@@ -140,8 +137,8 @@ func (m *Manager) SetCallContext(channel, chatID string) {
 }
 
 func (m *Manager) AddUserMessage(ctx context.Context, msg providers.Message) error {
-	m.store.AddFullMessage(m.sessionKey, msg)
-	m.archiveAppend(msg)
+	seq := m.store.AddFullMessage(m.sessionKey, msg)
+	m.archiveAppend(seq, msg)
 	m.msgCount++
 	if err := m.triggerCheck(ctx); err != nil {
 		// Automatic triggers log and continue — do not block the LLM call.
@@ -154,8 +151,8 @@ func (m *Manager) AddUserMessage(ctx context.Context, msg providers.Message) err
 }
 
 func (m *Manager) AddAssistantMessage(ctx context.Context, msg providers.Message) error {
-	m.store.AddFullMessage(m.sessionKey, msg)
-	m.archiveAppend(msg)
+	seq := m.store.AddFullMessage(m.sessionKey, msg)
+	m.archiveAppend(seq, msg)
 	m.msgCount++
 	if err := m.triggerCheck(ctx); err != nil {
 		// Automatic triggers log and continue — do not block the LLM call.
@@ -172,8 +169,8 @@ func (m *Manager) AddAssistantMessage(ctx context.Context, msg providers.Message
 // Does NOT trigger a compression check — compression is deferred to PreDispatchCheck
 // so that the check runs once per dispatch rather than after every tool-call message.
 func (m *Manager) AddToolCallMessage(_ context.Context, msg providers.Message) error {
-	m.store.AddFullMessage(m.sessionKey, msg)
-	m.archiveAppend(msg)
+	seq := m.store.AddFullMessage(m.sessionKey, msg)
+	m.archiveAppend(seq, msg)
 	m.msgCount++
 	return nil
 }
@@ -182,8 +179,8 @@ func (m *Manager) AddToolCallMessage(_ context.Context, msg providers.Message) e
 // Writes to session store and archive. Increments msgCount.
 // Does NOT trigger a compression check — compression is deferred to PreDispatchCheck.
 func (m *Manager) AddToolResult(_ context.Context, msg providers.Message) error {
-	m.store.AddFullMessage(m.sessionKey, msg)
-	m.archiveAppend(msg)
+	seq := m.store.AddFullMessage(m.sessionKey, msg)
+	m.archiveAppend(seq, msg)
 	m.msgCount++
 	return nil
 }
@@ -377,26 +374,37 @@ func (m *Manager) getOrOpenArchive() *memory.ArchiveStore {
 	return m.archive
 }
 
-// archiveAppend writes msg to the archive if one is configured.
-// The seq counter is managed internally: on first call it is seeded from the
-// archive's current max seq; subsequent calls increment it by one.
-// Best-effort: errors are logged but not returned to callers.
-func (m *Manager) archiveAppend(msg providers.Message) {
+// archiveAppend writes msg to the archive (if one is configured) keyed by the
+// MEMORY seq assigned to the message by the session store. Using the memory seq
+// (not a separate archive-private counter) keeps a single sequence space across
+// the memory store, the archive, and the summaries that cite them: the seq the
+// summarizer cites == the seq the strip validates == the seq stored in (and
+// retrievable from) the archive.
+//
+// Cutover note: archives written before this change stored rows under an OLD,
+// separate archive-space counter (1, 2, 3, ...). New messages now use the memory
+// seq, which is typically far higher on a long-lived session. As a result,
+// Bounds() returns a mixed min(legacy_low)..max(memory) range until those old
+// rows age out of the retrieval window. This is harmless: the previous bug was
+// the archive upper bound being too LOW (so fresh summary refs were stripped);
+// now max tracks the memory seq, so fresh refs survive. The legacy low-seq rows
+// are inert. No data migration is required.
+//
+// Best-effort: errors are logged but not returned to callers. A non-positive seq
+// (e.g. a store that failed to assign one) is skipped to avoid corrupting the
+// archive with seq 0.
+func (m *Manager) archiveAppend(seq int64, msg providers.Message) {
 	a := m.getOrOpenArchive()
 	if a == nil {
 		return
 	}
-	// Seed the seq counter lazily from the write connection's MAX(seq) so that
-	// restarts and new ContextManagers continue from where the last one left off.
-	// Using the write connection (MaxSeq) avoids the WAL visibility gap that
-	// can affect a fresh read-only connection opened with a separate URI.
-	if m.archiveSeq == 0 {
-		if max := a.MaxSeq(); max > 0 {
-			m.archiveSeq = max
-		}
+	if seq <= 0 {
+		logger.WarnCF("llmcontext", "archive append skipped: non-positive seq", map[string]any{
+			"session_key": m.sessionKey,
+			"seq":         seq,
+		})
+		return
 	}
-	m.archiveSeq++
-	seq := m.archiveSeq
 	msg = archiveTruncateContent(msg, m.archiveContentLimit())
 	if err := a.Append(seq, msg, time.Now()); err != nil {
 		logger.WarnCF("llmcontext", "archive append failed", map[string]any{
@@ -404,8 +412,6 @@ func (m *Manager) archiveAppend(msg providers.Message) {
 			"seq":         seq,
 			"error":       err.Error(),
 		})
-		// Roll back the counter so the next successful append does not skip a seq.
-		m.archiveSeq--
 	}
 }
 
@@ -453,7 +459,7 @@ func sanitizeSessionKey(key string) string {
 // archiveWindow returns the effective [minSeq, maxSeq] range of retrievable
 // archive messages for this session, applying the archiveMessageCount cap.
 // Returns (0, 0) if no archive exists or the archive is unavailable.
-func (m *Manager) archiveWindow() (minSeq, maxSeq int) {
+func (m *Manager) archiveWindow() (minSeq, maxSeq int64) {
 	a := m.getOrOpenArchive()
 	if a == nil {
 		return 0, 0
@@ -463,8 +469,12 @@ func (m *Manager) archiveWindow() (minSeq, maxSeq int) {
 	if err != nil || maxSeq == 0 {
 		return 0, 0
 	}
+	// Cutover note: because the archive is now keyed by the memory seq, Bounds()
+	// may return a mixed range whose minSeq is an old archive-space value while
+	// maxSeq is a high memory seq. That is expected and harmless — see
+	// archiveAppend for the full explanation.
 	if m.cfg.archiveMessageCount > 0 {
-		floor := maxSeq - m.cfg.archiveMessageCount + 1
+		floor := maxSeq - int64(m.cfg.archiveMessageCount) + 1
 		if floor > minSeq {
 			minSeq = floor
 		}
@@ -814,8 +824,9 @@ func (m *Manager) Reset(ctx context.Context) error {
 	m.store.TruncateHistory(m.sessionKey, 0)
 	m.store.SetSummary(m.sessionKey, "")
 
-	// 4. Close and delete the archive. Reset archiveSeq so the next write
-	// starts from seq 1 on the fresh archive.
+	// 4. Close and delete the archive. The archive is keyed by the memory seq,
+	// so there is no private archive counter to reset; after deletion the next
+	// write simply re-keys under whatever memory seq the store assigns.
 	m.archiveMu.Lock()
 	if m.archive != nil {
 		if err := m.archive.Delete(); err != nil {
@@ -826,7 +837,6 @@ func (m *Manager) Reset(ctx context.Context) error {
 		}
 		m.archive = nil
 	}
-	m.archiveSeq = 0
 	m.archiveMu.Unlock()
 
 	// 5. If the store implements CompactionStateStore, write zeroed state back.

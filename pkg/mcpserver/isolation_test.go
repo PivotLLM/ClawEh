@@ -14,6 +14,7 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/agenttoken"
 	"github.com/PivotLLM/ClawEh/pkg/logger"
 	"github.com/PivotLLM/ClawEh/pkg/tools"
+	toolsfiles "github.com/PivotLLM/ClawEh/pkg/tools/files"
 )
 
 // resolverFor builds an AgentResolver from a static map.
@@ -164,13 +165,13 @@ func TestDispatch_RelativePathOutsideWorkspaceRejected(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rf := tools.NewReadFileTool(aliceWs, true, 0)
+	rf := toolsfiles.NewReadFileTool(aliceWs, true, 0)
 	reg := tools.NewToolRegistry()
 	reg.Register(rf)
 
 	st, tok := seedSessionToken("alice")
 
-	out, isErr := dispatchToolCall(context.Background(), "read_file",
+	out, isErr := dispatchToolCall(context.Background(), "files_read",
 		map[string]any{"session_token": tok, "path": "../etc/passwd"},
 		st, resolverFor(map[string]*tools.ToolRegistry{"alice": reg}), nil, nil, nil)
 	if !isErr {

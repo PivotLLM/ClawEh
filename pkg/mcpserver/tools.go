@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/PivotLLM/ClawEh/pkg/agenttoken"
@@ -23,7 +24,7 @@ import (
 
 // messageToolName is the agent-internal outbound-publish tool, never exposed
 // to MCP clients (it has no meaningful semantics outside the agent loop).
-const messageToolName = "message"
+const messageToolName = "msg_send"
 
 // invalidTokenMessage is what we return when the supplied session_token is
 // missing, malformed, or unknown. The wording is intentionally instructive
@@ -107,13 +108,15 @@ func addToolsToServer(
 	tracker *firstCallTracker,
 	policy acl.Policy,
 	msgBus *bus.MessageBus,
+	activeDispatches *atomic.Int32,
 ) {
 	if policy == nil {
 		policy = acl.Default
 	}
 
 	for _, name := range catalogueToolNames(agentRegistries) {
-		if name == messageToolName {
+		// Never expose the agent-internal message tools.
+		if name == messageToolName || name == "message" {
 			continue
 		}
 		if !config.MatchToolPattern(allowPatterns, name) {
@@ -146,6 +149,10 @@ func addToolsToServer(
 
 		toolName := name // capture
 		srv.AddTool(mcpTool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			if activeDispatches != nil {
+				activeDispatches.Add(1)
+				defer activeDispatches.Add(-1)
+			}
 			args := req.GetArguments()
 			if args == nil {
 				args = map[string]any{}

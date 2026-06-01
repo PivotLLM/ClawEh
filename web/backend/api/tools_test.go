@@ -55,20 +55,20 @@ func TestHandleListTools(t *testing.T) {
 	for _, tool := range resp.Tools {
 		gotTools[tool.Name] = tool
 	}
-	if gotTools["read_file"].Status != "enabled" {
-		t.Fatalf("read_file status = %q, want enabled", gotTools["read_file"].Status)
+	if gotTools["files_read"].Status != "enabled" {
+		t.Fatalf("read_file status = %q, want enabled", gotTools["files_read"].Status)
 	}
-	if gotTools["write_file"].Status != "disabled" {
-		t.Fatalf("write_file status = %q, want disabled", gotTools["write_file"].Status)
+	if gotTools["files_write"].Status != "disabled" {
+		t.Fatalf("write_file status = %q, want disabled", gotTools["files_write"].Status)
 	}
-	if gotTools["cron"].Status != "enabled" {
-		t.Fatalf("cron status = %q, want enabled", gotTools["cron"].Status)
+	if gotTools["schedule_cron"].Status != "enabled" {
+		t.Fatalf("cron status = %q, want enabled", gotTools["schedule_cron"].Status)
 	}
-	if gotTools["spawn"].Status != "blocked" || gotTools["spawn"].ReasonCode != "requires_subagent" {
-		t.Fatalf("spawn = %#v, want blocked/requires_subagent", gotTools["spawn"])
+	if gotTools["agents_spawn"].Status != "blocked" || gotTools["agents_spawn"].ReasonCode != "requires_subagent" {
+		t.Fatalf("agents_spawn = %#v, want blocked/requires_subagent", gotTools["agents_spawn"])
 	}
-	if gotTools["find_skills"].Status != "enabled" {
-		t.Fatalf("find_skills status = %q, want enabled", gotTools["find_skills"].Status)
+	if gotTools["skills_find"].Status != "enabled" {
+		t.Fatalf("skills_find status = %q, want enabled", gotTools["skills_find"].Status)
 	}
 	if gotTools["find_tools_regex"].Status != "enabled" {
 		t.Fatalf("find_tools_regex status = %q, want enabled", gotTools["find_tools_regex"].Status)
@@ -88,15 +88,15 @@ func TestHandleListTools(t *testing.T) {
 			gotTools["find_tools_bm25"].ConfigKey,
 		)
 	}
-	if gotTools["get_session_messages"].Status != "enabled" {
-		t.Fatalf("get_session_messages status = %q, want enabled", gotTools["get_session_messages"].Status)
+	if gotTools["session_messages"].Status != "enabled" {
+		t.Fatalf("session_messages status = %q, want enabled", gotTools["session_messages"].Status)
 	}
-	if gotTools["search_session_messages"].Status != "enabled" {
-		t.Fatalf("search_session_messages status = %q, want enabled", gotTools["search_session_messages"].Status)
+	if gotTools["session_search"].Status != "enabled" {
+		t.Fatalf("session_search status = %q, want enabled", gotTools["session_search"].Status)
 	}
 	if runtime.GOOS == "linux" {
-		if gotTools["i2c"].Status != "disabled" {
-			t.Fatalf("i2c status = %q, want disabled on linux when config is off", gotTools["i2c"].Status)
+		if gotTools["hw_i2c"].Status != "disabled" {
+			t.Fatalf("hw_i2c status = %q, want disabled on linux when config is off", gotTools["hw_i2c"].Status)
 		}
 	} else {
 		cfg.Tools.I2C.Enabled = true
@@ -120,11 +120,11 @@ func TestHandleListTools(t *testing.T) {
 			gotTools[tool.Name] = tool
 		}
 
-		if gotTools["i2c"].Status != "blocked" || gotTools["i2c"].ReasonCode != "requires_linux" {
-			t.Fatalf("i2c = %#v, want blocked/requires_linux", gotTools["i2c"])
+		if gotTools["hw_i2c"].Status != "blocked" || gotTools["hw_i2c"].ReasonCode != "requires_linux" {
+			t.Fatalf("hw_i2c = %#v, want blocked/requires_linux", gotTools["hw_i2c"])
 		}
-		if gotTools["spi"].Status != "blocked" || gotTools["spi"].ReasonCode != "requires_linux" {
-			t.Fatalf("spi = %#v, want blocked/requires_linux", gotTools["spi"])
+		if gotTools["hw_spi"].Status != "blocked" || gotTools["hw_spi"].ReasonCode != "requires_linux" {
+			t.Fatalf("hw_spi = %#v, want blocked/requires_linux", gotTools["hw_spi"])
 		}
 	}
 }
@@ -155,7 +155,7 @@ func TestHandleUpdateToolState(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(
 		http.MethodPut,
-		"/api/tools/spawn/state",
+		"/api/tools/agents_spawn/state",
 		bytes.NewBufferString(`{"enabled":true}`),
 	)
 	req.Header.Set("Content-Type", "application/json")
@@ -179,7 +179,7 @@ func TestHandleUpdateToolState(t *testing.T) {
 	rec3 := httptest.NewRecorder()
 	req3 := httptest.NewRequest(
 		http.MethodPut,
-		"/api/tools/cron/state",
+		"/api/tools/schedule_cron/state",
 		bytes.NewBufferString(`{"enabled":true}`),
 	)
 	req3.Header.Set("Content-Type", "application/json")

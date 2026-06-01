@@ -1,22 +1,24 @@
 // Tests for Name(), Description(), Parameters() methods across tool types.
 // These trivial 1-liners collectively affect coverage significantly.
-package tools
+package tools_test
 
 import (
 	"testing"
+
+	toolsfiles "github.com/PivotLLM/ClawEh/pkg/tools/files"
 )
 
 func TestReadFileTool_Metadata(t *testing.T) {
-	tool := NewReadFileTool("", false, MaxReadFileSize)
-	if tool.Name() != "read_file" {
-		t.Errorf("Name() = %q, want read_file", tool.Name())
+	tool := toolsfiles.NewReadFileTool("", false, toolsfiles.MaxReadFileSize)
+	if tool.Name() != "files_read" {
+		t.Errorf("Name() = %q, want files_read", tool.Name())
 	}
 	if tool.Description() == "" {
 		t.Error("Description() should not be empty")
 	}
 	params := tool.Parameters()
 	if params == nil {
-		t.Error("Parameters() should not be nil")
+		t.Fatal("Parameters() should not be nil")
 	}
 	props, ok := params["properties"].(map[string]any)
 	if !ok {
@@ -28,9 +30,9 @@ func TestReadFileTool_Metadata(t *testing.T) {
 }
 
 func TestWriteFileTool_Metadata(t *testing.T) {
-	tool := NewWriteFileTool("", false)
-	if tool.Name() != "write_file" {
-		t.Errorf("Name() = %q, want write_file", tool.Name())
+	tool := toolsfiles.NewWriteFileTool("", false)
+	if tool.Name() != "files_write" {
+		t.Errorf("Name() = %q, want files_write", tool.Name())
 	}
 	if tool.Description() == "" {
 		t.Error("Description() should not be empty")
@@ -42,9 +44,9 @@ func TestWriteFileTool_Metadata(t *testing.T) {
 }
 
 func TestListDirTool_Metadata(t *testing.T) {
-	tool := NewListDirTool("", false)
-	if tool.Name() != "list_dir" {
-		t.Errorf("Name() = %q, want list_dir", tool.Name())
+	tool := toolsfiles.NewListDirTool("", false)
+	if tool.Name() != "files_list" {
+		t.Errorf("Name() = %q, want files_list", tool.Name())
 	}
 	if tool.Description() == "" {
 		t.Error("Description() should not be empty")
@@ -56,16 +58,16 @@ func TestListDirTool_Metadata(t *testing.T) {
 }
 
 func TestEditFileTool_Metadata(t *testing.T) {
-	tool := NewEditFileTool("", false)
-	if tool.Name() != "edit_file" {
-		t.Errorf("Name() = %q, want edit_file", tool.Name())
+	tool := toolsfiles.NewEditFileTool("", false)
+	if tool.Name() != "files_edit" {
+		t.Errorf("Name() = %q, want files_edit", tool.Name())
 	}
 	if tool.Description() == "" {
 		t.Error("Description() should not be empty")
 	}
 	params := tool.Parameters()
 	if params == nil {
-		t.Error("Parameters() should not be nil")
+		t.Fatal("Parameters() should not be nil")
 	}
 	props, ok := params["properties"].(map[string]any)
 	if !ok {
@@ -79,9 +81,9 @@ func TestEditFileTool_Metadata(t *testing.T) {
 }
 
 func TestAppendFileTool_Metadata(t *testing.T) {
-	tool := NewAppendFileTool("", false)
-	if tool.Name() != "append_file" {
-		t.Errorf("Name() = %q, want append_file", tool.Name())
+	tool := toolsfiles.NewAppendFileTool("", false)
+	if tool.Name() != "files_append" {
+		t.Errorf("Name() = %q, want files_append", tool.Name())
 	}
 	if tool.Description() == "" {
 		t.Error("Description() should not be empty")
@@ -94,7 +96,7 @@ func TestAppendFileTool_Metadata(t *testing.T) {
 
 func TestAppendFileTool_Execute_Success(t *testing.T) {
 	dir := t.TempDir()
-	tool := NewAppendFileTool("", false)
+	tool := toolsfiles.NewAppendFileTool("", false)
 
 	// Append to a non-existent file — should create it.
 	result := tool.Execute(t.Context(), map[string]any{
@@ -107,7 +109,7 @@ func TestAppendFileTool_Execute_Success(t *testing.T) {
 }
 
 func TestAppendFileTool_Execute_MissingPath(t *testing.T) {
-	tool := NewAppendFileTool("", false)
+	tool := toolsfiles.NewAppendFileTool("", false)
 	result := tool.Execute(t.Context(), map[string]any{
 		"content": "data",
 	})
@@ -117,7 +119,7 @@ func TestAppendFileTool_Execute_MissingPath(t *testing.T) {
 }
 
 func TestAppendFileTool_Execute_MissingContent(t *testing.T) {
-	tool := NewAppendFileTool("", false)
+	tool := toolsfiles.NewAppendFileTool("", false)
 	result := tool.Execute(t.Context(), map[string]any{
 		"path": "/tmp/test.txt",
 	})

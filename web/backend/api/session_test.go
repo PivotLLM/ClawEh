@@ -44,19 +44,19 @@ func TestHandleListSessions_JSONLStorage(t *testing.T) {
 	}
 
 	sessionKey := webuiSessionPrefix + "history-jsonl"
-	if err := store.AddFullMessage(nil, sessionKey, providers.Message{
+	if _, err := store.AddFullMessage(nil, sessionKey, providers.Message{
 		Role:    "user",
 		Content: "Explain why the history API is empty after migration.",
 	}); err != nil {
 		t.Fatalf("AddFullMessage(user) error = %v", err)
 	}
-	if err := store.AddFullMessage(nil, sessionKey, providers.Message{
+	if _, err := store.AddFullMessage(nil, sessionKey, providers.Message{
 		Role:    "assistant",
 		Content: "Because the API still reads only legacy JSON session files.",
 	}); err != nil {
 		t.Fatalf("AddFullMessage(assistant) error = %v", err)
 	}
-	if err := store.AddFullMessage(nil, sessionKey, providers.Message{
+	if _, err := store.AddFullMessage(nil, sessionKey, providers.Message{
 		Role:    "tool",
 		Content: "ignored",
 	}); err != nil {
@@ -110,7 +110,7 @@ func TestHandleListSessions_TitleUsesTrimmedSummary(t *testing.T) {
 	}
 
 	sessionKey := webuiSessionPrefix + "summary-title"
-	if err := store.AddFullMessage(nil, sessionKey, providers.Message{
+	if _, err := store.AddFullMessage(nil, sessionKey, providers.Message{
 		Role:    "user",
 		Content: "fallback preview",
 	}); err != nil {
@@ -171,7 +171,7 @@ func TestHandleGetSession_JSONLStorage(t *testing.T) {
 		{Role: "assistant", Content: "second"},
 		{Role: "tool", Content: "ignored"},
 	} {
-		if err := store.AddFullMessage(nil, sessionKey, msg); err != nil {
+		if _, err := store.AddFullMessage(nil, sessionKey, msg); err != nil {
 			t.Fatalf("AddFullMessage() error = %v", err)
 		}
 	}
@@ -230,7 +230,7 @@ func TestHandleDeleteSession_JSONLStorage(t *testing.T) {
 	}
 
 	sessionKey := webuiSessionPrefix + "delete-jsonl"
-	if err := store.AddFullMessage(nil, sessionKey, providers.Message{
+	if _, err := store.AddFullMessage(nil, sessionKey, providers.Message{
 		Role:    "user",
 		Content: "delete me",
 	}); err != nil {

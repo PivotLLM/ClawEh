@@ -30,12 +30,21 @@ func (h *Handler) registerAgentRoutes(mux *http.ServeMux) {
 }
 
 func (h *Handler) handleListAgentTools(w http.ResponseWriter, r *http.Request) {
-	// Flat list of built-in tools in display order
-	builtinTools := make([]agentToolEntry, 0, len(toolCatalog))
-	for _, entry := range toolCatalog {
+	// Flat list of built-in tools in display order, built dynamically from providers.
+	var builtinTools []agentToolEntry
+	for _, p := range tools.GetProviders() {
+		for _, d := range p.Describe() {
+			builtinTools = append(builtinTools, agentToolEntry{
+				Name:        d.Name,
+				Description: d.Description,
+			})
+		}
+	}
+	// Append static (non-provider) tools.
+	for _, d := range staticToolDescriptors {
 		builtinTools = append(builtinTools, agentToolEntry{
-			Name:        entry.Name,
-			Description: entry.Description,
+			Name:        d.Name,
+			Description: d.Description,
 		})
 	}
 

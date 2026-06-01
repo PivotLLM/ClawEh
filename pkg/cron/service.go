@@ -2,6 +2,7 @@ package cron
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -24,7 +25,7 @@ type CronSchedule struct {
 }
 
 type CronPayload struct {
-	Mode     string `json:"mode"`               // "agent" | "isolated" | "deliver" | "command"
+	Mode     string `json:"mode"` // "agent" | "isolated" | "deliver" | "command"
 	Message  string `json:"message"`
 	Command  string `json:"command,omitempty"`
 	Channel  string `json:"channel,omitempty"`
@@ -49,6 +50,25 @@ type CronJob struct {
 	CreatedAtMS    int64        `json:"createdAtMs"`
 	UpdatedAtMS    int64        `json:"updatedAtMs"`
 	DeleteAfterRun bool         `json:"deleteAfterRun"`
+	Fingerprint    string       `json:"fingerprint,omitempty"`
+}
+
+// cronFingerprint computes a stable, content-addressed identifier over a job's
+// DEFINITION fields only — its Schedule and Payload. Name, Enabled, State, ID,
+// timestamps, and DeleteAfterRun are intentionally excluded so that two jobs
+// with the same schedule and payload share a fingerprint, and editing the
+// definition changes it. The result is the first 8 hex chars of the SHA-256 of
+// the marshaled definition.
+func cronFingerprint(schedule CronSchedule, payload CronPayload) string {
+	data, err := json.Marshal(struct {
+		S CronSchedule
+		P CronPayload
+	}{schedule, payload})
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])[:8]
 }
 
 type CronStore struct {
@@ -413,6 +433,10 @@ func (cs *CronService) loadStore() error {
 			p.PeerKind = "channel"
 		}
 		job.Payload = p
+		// Backfill fingerprint for legacy stores that predate the field.
+		if job.Fingerprint == "" {
+			job.Fingerprint = cronFingerprint(job.Schedule, job.Payload)
+		}
 		cs.store.Jobs[i] = job
 	}
 	if info, err := os.Stat(cs.storePath); err == nil {
@@ -476,6 +500,7 @@ func (cs *CronService) AddJob(
 		UpdatedAtMS:    now,
 		DeleteAfterRun: deleteAfterRun,
 	}
+	job.Fingerprint = cronFingerprint(job.Schedule, job.Payload)
 
 	cs.store.Jobs = append(cs.store.Jobs, job)
 	if err := cs.saveStoreUnsafe(); err != nil {
@@ -493,6 +518,8 @@ func (cs *CronService) UpdateJob(job *CronJob) error {
 		if cs.store.Jobs[i].ID == job.ID {
 			cs.store.Jobs[i] = *job
 			cs.store.Jobs[i].UpdatedAtMS = time.Now().UnixMilli()
+			// Recompute the fingerprint so definition edits change the hash.
+			cs.store.Jobs[i].Fingerprint = cronFingerprint(cs.store.Jobs[i].Schedule, cs.store.Jobs[i].Payload)
 			return cs.saveStoreUnsafe()
 		}
 	}

@@ -28,7 +28,7 @@ func (s *recoveryTestStore) SetHistory(_ string, h []providers.Message) {
 	s.history = cp
 }
 func (s *recoveryTestStore) AddMessage(_, _, _ string)                    {}
-func (s *recoveryTestStore) AddFullMessage(_ string, _ providers.Message) {}
+func (s *recoveryTestStore) AddFullMessage(_ string, _ providers.Message) int64 { return 0 }
 func (s *recoveryTestStore) GetSummary(_ string) string                   { return "" }
 func (s *recoveryTestStore) SetSummary(_, _ string)                       {}
 func (s *recoveryTestStore) TruncateHistory(_ string, _ int)              {}
@@ -38,11 +38,11 @@ func (s *recoveryTestStore) ClearPendingTurn(key string) error {
 	s.pendingCleared = key
 	return nil
 }
-func (s *recoveryTestStore) GetArchiveBounds(_ string) (int, int) { return 0, 0 }
+func (s *recoveryTestStore) GetArchiveBounds(_ string) (int64, int64) { return 0, 0 }
 func (s *recoveryTestStore) GetHistoryWithSeqs(_ string) []memory.StoredMessage {
 	stored := make([]memory.StoredMessage, len(s.history))
 	for i, msg := range s.history {
-		stored[i] = memory.StoredMessage{Seq: i + 1, Message: msg}
+		stored[i] = memory.StoredMessage{Seq: int64(i + 1), Message: msg}
 	}
 	return stored
 }

@@ -45,8 +45,8 @@ func TestSummary_Validate_WrongVersion(t *testing.T) {
 func TestSummary_Validate_NegativeSeq(t *testing.T) {
 	tests := []struct {
 		name  string
-		start int
-		end   int
+		start int64
+		end   int64
 	}{
 		{"negative start", -1, 10},
 		{"negative end", 0, -1},
@@ -293,7 +293,7 @@ func TestFindBalancedJSONObject(t *testing.T) {
 
 // TestBuildSummarizationPrompt_ContainsArchiveRange — prompt includes archive min/max.
 func TestBuildSummarizationPrompt_ContainsArchiveRange(t *testing.T) {
-	prompt := buildSummarizationPrompt(nil, 10, 50, false)
+	prompt := buildSummarizationPrompt(nil, 10, 50, false, "")
 	if !strings.Contains(prompt, "10") {
 		t.Error("expected archive min (10) in prompt")
 	}
@@ -305,7 +305,7 @@ func TestBuildSummarizationPrompt_ContainsArchiveRange(t *testing.T) {
 // TestBuildSummarizationPrompt_Aggressive — aggressive prompt keeps the same
 // schema but instructs terse output and collapsed message index ranges.
 func TestBuildSummarizationPrompt_Aggressive(t *testing.T) {
-	aggressive := buildSummarizationPrompt(nil, 10, 100, true)
+	aggressive := buildSummarizationPrompt(nil, 10, 100, true, "")
 	if !strings.Contains(aggressive, `"message_index"`) {
 		t.Error("aggressive prompt must include message_index in schema")
 	}
@@ -317,7 +317,7 @@ func TestBuildSummarizationPrompt_Aggressive(t *testing.T) {
 	}
 	// Existing summary should be appended when provided.
 	existing := &Summary{Version: 2, State: SummaryState{Goals: []SummaryItem{{Text: "test goal", Refs: []SeqRange{{SeqStart: 1}}}}}}
-	withExisting := buildSummarizationPrompt(existing, 10, 100, true)
+	withExisting := buildSummarizationPrompt(existing, 10, 100, true, "")
 	if !strings.Contains(withExisting, "test goal") {
 		t.Error("aggressive prompt must include existing summary when provided")
 	}

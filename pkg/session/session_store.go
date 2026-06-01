@@ -16,8 +16,10 @@ import (
 type SessionStore interface {
 	// AddMessage appends a simple role/content message to the session.
 	AddMessage(sessionKey, role, content string)
-	// AddFullMessage appends a complete message including tool calls.
-	AddFullMessage(sessionKey string, msg providers.Message)
+	// AddFullMessage appends a complete message including tool calls. It returns
+	// the monotonic sequence number assigned to the written message so callers
+	// can key durable side-stores (e.g. the archive) under the same seq.
+	AddFullMessage(sessionKey string, msg providers.Message) int64
 	// GetHistory returns the full message history for the session.
 	GetHistory(key string) []providers.Message
 	// GetHistoryWithSeqs returns the full message history with seq numbers intact.
@@ -38,7 +40,7 @@ type SessionStore interface {
 	ClearPendingTurn(sessionKey string) error
 	// GetArchiveBounds returns the inclusive seq range of messages stored in
 	// the session archive. Returns (0, 0) if no archive exists yet.
-	GetArchiveBounds(sessionKey string) (minSeq, maxSeq int)
+	GetArchiveBounds(sessionKey string) (minSeq, maxSeq int64)
 	// ListPendingSessions returns session keys where PendingTurn is true.
 	ListPendingSessions() ([]string, error)
 	// Save persists any pending state to durable storage.

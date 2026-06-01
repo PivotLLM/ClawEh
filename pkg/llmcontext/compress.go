@@ -5,8 +5,12 @@ package llmcontext
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -59,6 +63,9 @@ func (m *Manager) doCompress(ctx context.Context, safetyNet bool) error {
 	archiveMin, archiveMax := m.archiveWindow()
 	existingSummary, _ := unmarshalSummary(m.store.GetSummary(m.sessionKey))
 
+	// Load the agent's compression profile once per compression pass.
+	compressionProfile := loadCompressionProfile(m.cfg.compressionProfileDir)
+
 	// Compression loop: iteratively summarize the oldest portion of the
 	// conversation until we reach the target percentage or exhaust iterations.
 	currentStored := storedConversation
@@ -88,7 +95,7 @@ func (m *Manager) doCompress(ctx context.Context, safetyNet bool) error {
 			break // tail covers everything; nothing left to summarize
 		}
 
-		newSummary, ok := callLLMChain(ctx, clients, latestSummary, toSummarize, archiveMin, archiveMax, aggressive)
+		newSummary, ok := callLLMChain(ctx, clients, latestSummary, toSummarize, archiveMin, archiveMax, aggressive, compressionProfile)
 		if !ok {
 			iterCount++
 			continue
@@ -292,8 +299,9 @@ func callLLMChain(
 	clients []LLMClient,
 	existing *Summary,
 	toSummarize []memory.StoredMessage,
-	archiveMin, archiveMax int,
+	archiveMin, archiveMax int64,
 	aggressive bool,
+	compressionProfile string,
 ) (*Summary, bool) {
 	if len(toSummarize) == 0 {
 		return nil, false
@@ -311,7 +319,7 @@ func callLLMChain(
 		}
 	}
 
-	prompt := buildSummarizationPrompt(existing, archiveMin, archiveMax, aggressive)
+	prompt := buildSummarizationPrompt(existing, archiveMin, archiveMax, aggressive, compressionProfile)
 	formatted := formatStoredMessagesForSummary(toSummarize)
 
 	messages := []providers.Message{
@@ -340,10 +348,46 @@ func callLLMChain(
 		// emitted by the LLM itself.
 		applySummaryCoverage(summary, existing, coveredStart, coveredEnd, toSummarize)
 		summary.GeneratedAt = time.Now()
+		summary.Profile = profileFingerprint(compressionProfile)
 		return summary, true
 	}
 
 	return nil, false
+}
+
+// profileFingerprint returns a short sha256 hex[:8] fingerprint of a compression
+// profile's content, or "" when no profile is in effect. Stamped into the summary
+// so a reader can tell which profile shaped it and detect when the profile changed.
+func profileFingerprint(profile string) string {
+	p := strings.TrimSpace(profile)
+	if p == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(p))
+	return hex.EncodeToString(sum[:])[:8]
+}
+
+// loadCompressionProfile reads compression.md from dir if it exists.
+// Returns empty string when the file is absent or unreadable.
+func loadCompressionProfile(dir string) string {
+	if dir == "" {
+		return ""
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "compression.md"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+// repetitiveRunThreshold is the minimum number of consecutive near-identical
+// messages required before they are collapsed into a count annotation.
+const repetitiveRunThreshold = 3
+
+// normalizeForComparison returns a whitespace-collapsed lowercase version of s
+// used to detect near-identical messages in repetitive run detection.
+func normalizeForComparison(s string) string {
+	return strings.ToLower(strings.Join(strings.Fields(s), " "))
 }
 
 func storedToPlain(stored []memory.StoredMessage) []providers.Message {
@@ -354,7 +398,199 @@ func storedToPlain(stored []memory.StoredMessage) []providers.Message {
 	return msgs
 }
 
+// cronNoOpReplyMaxLen bounds how long an assistant reply may be (after trim)
+// to still count as a "routine" no-op reply eligible for cron run collapse.
+// This avoids collapsing substantive replies that merely happen to repeat.
+const cronNoOpReplyMaxLen = 200
+
+// collapseRepetitiveRuns scans stored messages for two kinds of repetition and
+// replaces each run with a single counted anchor so the LLM summarizer handles
+// them correctly instead of silently ignoring them:
+//
+//  1. Cron no-op runs: maximal runs of [cron-marker user message with the SAME
+//     key] → [assistant reply] pairs where every assistant reply in the run is
+//     mutually identical (trimmed-equal) and short. Each cron fire embeds a
+//     different timestamp, so a byte-identical check would miss them entirely;
+//     the marker key (fingerprint, or payload for legacy fires) lets us group
+//     them. Seq of the first message is preserved.
+//  2. Byte-identical same-role runs: the original behavior, applied to anything
+//     not consumed by cron collapse.
+func collapseRepetitiveRuns(stored []memory.StoredMessage) []memory.StoredMessage {
+	if len(stored) < repetitiveRunThreshold {
+		return stored
+	}
+	result := make([]memory.StoredMessage, 0, len(stored))
+	i := 0
+	for i < len(stored) {
+		if anchor, next, ok := collapseCronRun(stored, i); ok {
+			result = append(result, anchor)
+			i = next
+			continue
+		}
+
+		j := i + 1
+		norm := normalizeForComparison(stored[i].Content)
+		for j < len(stored) &&
+			stored[j].Role == stored[i].Role &&
+			normalizeForComparison(stored[j].Content) == norm {
+			j++
+		}
+		runLen := j - i
+		if runLen >= repetitiveRunThreshold {
+			// Emit a single representative entry with a count annotation.
+			collapsed := stored[i]
+			collapsed.Content = fmt.Sprintf(
+				"[REPEATED %d TIMES — content identical to above]\n%s",
+				runLen, stored[i].Content,
+			)
+			result = append(result, collapsed)
+		} else {
+			result = append(result, stored[i])
+			j = i + 1
+		}
+		i = j
+	}
+	return result
+}
+
+// collapseCronRun attempts to detect a cron no-op run starting at index start.
+// A qualifying run is a maximal sequence of consecutive [cron-marker user
+// message with the SAME collapse key] → [assistant reply] pairs where all the
+// assistant replies are mutually trimmed-equal and short (<= cronNoOpReplyMaxLen).
+// It returns the synthetic counted anchor, the index immediately after the run,
+// and true. If no qualifying run of >= repetitiveRunThreshold fires begins at
+// start, ok is false.
+func collapseCronRun(stored []memory.StoredMessage, start int) (memory.StoredMessage, int, bool) {
+	fp, _, isCron := parseCronMarker(stored[start].Content)
+	if stored[start].Role != "user" || !isCron {
+		return memory.StoredMessage{}, start, false
+	}
+
+	key, _ := cronCollapseKey(stored[start].Content)
+	var reply string
+	haveReply := false
+	count := 0
+	i := start
+
+	for i+1 < len(stored) {
+		userMsg := stored[i]
+		replyMsg := stored[i+1]
+
+		if userMsg.Role != "user" {
+			break
+		}
+		k, ok := cronCollapseKey(userMsg.Content)
+		if !ok || k != key {
+			break
+		}
+		if replyMsg.Role != "assistant" {
+			break
+		}
+		// Action detection: a reply that issued tool calls means the LLM DID
+		// something in response to this fire (restarted a service, sent a message,
+		// wrote a file, ...) — it is not routine noise. Stop the run here so the
+		// acting fire and the entire tool exchange that follows it (tool results,
+		// follow-up assistant turns) are preserved verbatim, never folded into the
+		// collapsed count. A reply with no tool calls is a complete [cron → reply]
+		// turn; the loop's own cron-key check ends the run when the next message
+		// isn't another fire of the same job.
+		if len(replyMsg.ToolCalls) > 0 {
+			break
+		}
+		r := strings.TrimSpace(replyMsg.Content)
+		if len(r) > cronNoOpReplyMaxLen {
+			break
+		}
+		if !haveReply {
+			reply = r
+			haveReply = true
+		} else if r != reply {
+			// A differing reply means something actually happened — it breaks
+			// the run. The accumulated uniform prefix is collapsed; this pair is
+			// preserved verbatim by the caller continuing from the run boundary.
+			break
+		}
+
+		count++
+		i += 2
+	}
+
+	if count < repetitiveRunThreshold {
+		return memory.StoredMessage{}, start, false
+	}
+
+	// The run spans stored[start] (first cron message) through stored[i-1] (last
+	// consumed assistant reply). The anchor carries the seq of the FIRST message
+	// and notes the full [first-last] seq range in its text. Seqs are permanent
+	// identities — they are never renumbered — so the collapsed-away messages
+	// simply do not appear inline in the retained tail; they remain intact in the
+	// archive and stay retrievable by seq via get_session_messages.
+	firstSeq := stored[start].Seq
+	lastSeq := stored[i-1].Seq
+
+	anchor := stored[start] // carry the seq of the first message in the run.
+	anchor.Role = "user"
+	anchor.Content = cronRunAnchor(fp, count, firstSeq, lastSeq, reply)
+	anchor.ToolCalls = nil
+	anchor.ToolCallID = ""
+	return anchor, i, true
+}
+
+// cronRunAnchor renders the counted anchor string for a collapsed cron no-op run.
+// It states the count and the [firstSeq-lastSeq] range so a reader knows exactly
+// which archived messages were elided and can retrieve them via get_session_messages.
+func cronRunAnchor(fingerprint string, count int, firstSeq, lastSeq int64, reply string) string {
+	shortReply := truncateRunes(reply, 60)
+	if fingerprint != "" {
+		return fmt.Sprintf(
+			"[scheduled job %s fired ×%d (#%d-#%d); routine, replies identical: %q]",
+			fingerprint, count, firstSeq, lastSeq, shortReply,
+		)
+	}
+	return fmt.Sprintf(
+		"[scheduled job fired ×%d (#%d-#%d); routine, replies identical: %q]",
+		count, firstSeq, lastSeq, shortReply,
+	)
+}
+
+// collapseRetainedCronRuns collapses runs of repeated cron no-op fires in the
+// RETAINED live tail into a single counted anchor — the same transformation the
+// summarizer input receives — so the kept context window does not carry many
+// identical scheduled checks verbatim. Only cron no-op runs are collapsed; every
+// other message is preserved unchanged. The anchor carries the seq of the first
+// message in the run; the elided originals remain in the archive (retrievable via
+// get_session_messages), so this elides them only from the live tail, never from
+// the durable record.
+func collapseRetainedCronRuns(stored []memory.StoredMessage) []memory.StoredMessage {
+	if len(stored) < repetitiveRunThreshold {
+		return stored
+	}
+	result := make([]memory.StoredMessage, 0, len(stored))
+	i := 0
+	for i < len(stored) {
+		if anchor, next, ok := collapseCronRun(stored, i); ok {
+			result = append(result, anchor)
+			i = next
+			continue
+		}
+		result = append(result, stored[i])
+		i++
+	}
+	return result
+}
+
+// truncateRunes returns s clipped to at most max runes, appending an ellipsis
+// when truncation occurs.
+func truncateRunes(s string, max int) string {
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max]) + "…"
+}
+
 func formatStoredMessagesForSummary(stored []memory.StoredMessage) string {
+	stored = collapseRepetitiveRuns(stored)
 	var sb strings.Builder
 	for _, sm := range stored {
 		fmt.Fprintf(&sb, "[#%d] [%s]\n", sm.Seq, sm.Role)
@@ -396,7 +632,7 @@ func formatStoredMessagesForSummary(stored []memory.StoredMessage) string {
 	return sb.String()
 }
 
-func applySummaryCoverage(summary, existing *Summary, coveredStart, coveredEnd int, summarized []memory.StoredMessage) {
+func applySummaryCoverage(summary, existing *Summary, coveredStart, coveredEnd int64, summarized []memory.StoredMessage) {
 	if summary == nil {
 		return
 	}
@@ -465,6 +701,14 @@ func mergeSeqRanges(ranges []SeqRange) []SeqRange {
 // It returns ErrCompressionFailed if Save() fails.
 // After a successful save it persists compaction state if the store supports it.
 func (m *Manager) persistStoredResult(sysMsg *memory.StoredMessage, conv []memory.StoredMessage, summary *Summary) error {
+	// Collapse repeated cron no-op runs in the retained tail before persisting,
+	// so the live context window the LLM keeps seeing carries one counted anchor
+	// instead of many identical scheduled checks. The elided fires remain in the
+	// archive (retrievable by seq); only the live tail elides them. Idempotent:
+	// an already-collapsed anchor is not a cron-marker message, so re-running it
+	// leaves anchors untouched.
+	conv = collapseRetainedCronRuns(conv)
+
 	newStored := make([]memory.StoredMessage, 0, len(conv)+1)
 	if sysMsg != nil {
 		newStored = append(newStored, *sysMsg)
@@ -541,38 +785,9 @@ func (m *Manager) persistStoredResult(sysMsg *memory.StoredMessage, conv []memor
 	return nil
 }
 
-// dropOldestGroups removes the oldest turn groups from conv until the estimated
-// token count drops below safetyPercent or conv reaches retainMinMessages.
-func (m *Manager) dropOldestGroups(_ context.Context, conv []providers.Message) []providers.Message {
-	for {
-		if len(conv) <= m.cfg.retainMinMessages {
-			break
-		}
-		tokens := m.estTokens(conv)
-		pct := 0.0
-		if m.cfg.contextWindow > 0 {
-			pct = float64(tokens) * 100 / float64(m.cfg.contextWindow)
-		}
-		if pct < float64(m.cfg.safetyPercent) {
-			break
-		}
-
-		// Find the end of the first turn group.
-		groupEnd := resolveGroup(conv, 0).end
-
-		logger.WarnCF("llmcontext", "safety-net: dropping oldest turn group", map[string]any{
-			"session_key": m.sessionKey,
-			"group_end":   groupEnd,
-			"tokens":      tokens,
-			"pct":         pct,
-		})
-
-		conv = conv[groupEnd+1:]
-	}
-	return conv
-}
-
-// dropOldestStoredGroups is the seq-preserving equivalent of dropOldestGroups.
+// dropOldestStoredGroups removes the oldest turn groups (seq-preserving) from
+// conv until the estimated token count drops below safetyPercent or conv reaches
+// retainMinMessages.
 func (m *Manager) dropOldestStoredGroups(_ context.Context, conv []memory.StoredMessage) []memory.StoredMessage {
 	for {
 		if len(conv) <= m.cfg.retainMinMessages {

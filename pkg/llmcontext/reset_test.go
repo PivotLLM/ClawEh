@@ -121,7 +121,7 @@ func TestReset_DeletesArchiveFile(t *testing.T) {
 	mgr := newResetManager(store, key, WithArchiveDir(archiveDir))
 
 	// Trigger lazy archive creation by appending a message.
-	mgr.archiveAppend(providers.Message{Role: "user", Content: "hello"})
+	mgr.archiveAppend(1, providers.Message{Role: "user", Content: "hello"})
 
 	// Confirm the file exists.
 	sanitized := sanitizeSessionKey(key)
@@ -155,10 +155,10 @@ func TestReset_ArchiveStartsFreshAfterNewMessages(t *testing.T) {
 	store := newResetStore(key)
 	mgr := newResetManager(store, key, WithArchiveDir(archiveDir))
 
-	// Write a few messages to the archive before reset.
-	for range 3 {
+	// Write a few messages to the archive before reset, keyed by memory seq.
+	for i := range 3 {
 		content := strings.Repeat("x", 20)
-		mgr.archiveAppend(providers.Message{Role: "user", Content: content})
+		mgr.archiveAppend(int64(i+1), providers.Message{Role: "user", Content: content})
 	}
 
 	// Reset wipes the archive.
@@ -166,8 +166,9 @@ func TestReset_ArchiveStartsFreshAfterNewMessages(t *testing.T) {
 		t.Fatalf("Reset returned error: %v", err)
 	}
 
-	// Write a new message. After Reset, archiveSeq is 0 so the first write uses seq 1.
-	mgr.archiveAppend(providers.Message{Role: "user", Content: "fresh start"})
+	// Write a new message. Reset deletes the archive file, so a write keyed at
+	// seq 1 yields bounds of exactly [1, 1] on the fresh archive.
+	mgr.archiveAppend(1, providers.Message{Role: "user", Content: "fresh start"})
 
 	// Verify the archive is available and bounds start at seq 1.
 	archive := mgr.getOrOpenArchive()
@@ -226,7 +227,7 @@ func (s *clearPendingTrackingStore) ClearPendingTurn(_ string) error {
 // newResetManagerWithStore constructs a Manager using any SessionStore.
 func newResetManagerWithStore(store interface {
 	AddMessage(sessionKey, role, content string)
-	AddFullMessage(sessionKey string, msg providers.Message)
+	AddFullMessage(sessionKey string, msg providers.Message) int64
 	GetHistory(key string) []providers.Message
 	GetHistoryWithSeqs(key string) []memory.StoredMessage
 	GetSummary(key string) string
@@ -235,7 +236,7 @@ func newResetManagerWithStore(store interface {
 	TruncateHistory(key string, keepLast int)
 	SetPendingTurn(sessionKey string) error
 	ClearPendingTurn(sessionKey string) error
-	GetArchiveBounds(sessionKey string) (int, int)
+	GetArchiveBounds(sessionKey string) (int64, int64)
 	ListPendingSessions() ([]string, error)
 	Save(key string) error
 	Close() error

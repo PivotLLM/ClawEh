@@ -1,16 +1,19 @@
 // Tests for Name(), Description(), Parameters() of various tools — simple but needed for coverage.
-package tools
+package tools_test
 
 import (
 	"testing"
 
 	"github.com/PivotLLM/ClawEh/pkg/config"
+	"github.com/PivotLLM/ClawEh/pkg/tools"
+	toolsmsg "github.com/PivotLLM/ClawEh/pkg/tools/msg"
+	toolsshell "github.com/PivotLLM/ClawEh/pkg/tools/shell"
 )
 
 func TestMessageTool_Metadata(t *testing.T) {
-	tool := NewMessageTool()
-	if tool.Name() != "message" {
-		t.Errorf("Name() = %q, want message", tool.Name())
+	tool := toolsmsg.NewMessageTool()
+	if tool.Name() != "msg_send" {
+		t.Errorf("Name() = %q, want msg_send", tool.Name())
 	}
 	if tool.Description() == "" {
 		t.Error("Description() should not be empty")
@@ -22,7 +25,7 @@ func TestMessageTool_Metadata(t *testing.T) {
 }
 
 func TestMessageTool_ResetSentInRound(t *testing.T) {
-	tool := NewMessageTool()
+	tool := toolsmsg.NewMessageTool()
 	tool.ResetSentInRound()
 	if tool.HasSentInRound() {
 		t.Error("HasSentInRound() should be false after Reset")
@@ -30,15 +33,15 @@ func TestMessageTool_ResetSentInRound(t *testing.T) {
 }
 
 func TestMessageTool_HasSentInRound_Initial(t *testing.T) {
-	tool := NewMessageTool()
+	tool := toolsmsg.NewMessageTool()
 	if tool.HasSentInRound() {
 		t.Error("HasSentInRound() should be false initially")
 	}
 }
 
 func TestRegexSearchTool_Metadata(t *testing.T) {
-	registry := NewToolRegistry()
-	tool := NewRegexSearchTool(registry, 3, 10)
+	registry := tools.NewToolRegistry()
+	tool := tools.NewRegexSearchTool(registry, 3, 10)
 	if tool.Name() != "find_tools_regex" {
 		t.Errorf("Name() = %q, want find_tools_regex", tool.Name())
 	}
@@ -52,8 +55,8 @@ func TestRegexSearchTool_Metadata(t *testing.T) {
 }
 
 func TestBM25SearchTool_Metadata(t *testing.T) {
-	registry := NewToolRegistry()
-	tool := NewBM25SearchTool(registry, 3, 10)
+	registry := tools.NewToolRegistry()
+	tool := tools.NewBM25SearchTool(registry, 3, 10)
 	if tool.Name() != "find_tools_bm25" {
 		t.Errorf("Name() = %q, want find_tools_bm25", tool.Name())
 	}
@@ -67,9 +70,9 @@ func TestBM25SearchTool_Metadata(t *testing.T) {
 }
 
 func TestSendFileTool_Metadata(t *testing.T) {
-	tool := NewSendFileTool(t.TempDir(), false, 0, nil)
-	if tool.Name() != "send_file" {
-		t.Errorf("Name() = %q, want send_file", tool.Name())
+	tool := toolsmsg.NewSendFileTool(t.TempDir(), false, 0, nil)
+	if tool.Name() != "msg_send_file" {
+		t.Errorf("Name() = %q, want msg_send_file", tool.Name())
 	}
 	if tool.Description() == "" {
 		t.Error("Description() should not be empty")
@@ -82,12 +85,12 @@ func TestSendFileTool_Metadata(t *testing.T) {
 
 func TestExecTool_Metadata(t *testing.T) {
 	cfg := config.DefaultConfig()
-	tool, err := NewExecToolWithConfig(t.TempDir(), true, cfg)
+	tool, err := toolsshell.NewExecToolWithConfig(t.TempDir(), true, cfg)
 	if err != nil {
 		t.Fatalf("NewExecToolWithConfig() error = %v", err)
 	}
-	if tool.Name() != "exec" {
-		t.Errorf("Name() = %q, want exec", tool.Name())
+	if tool.Name() != "shell_exec" {
+		t.Errorf("Name() = %q, want shell_exec", tool.Name())
 	}
 	if tool.Description() == "" {
 		t.Error("Description() should not be empty")
