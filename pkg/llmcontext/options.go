@@ -23,6 +23,14 @@ const (
 	defaultOverheadTokens        = 4000
 	defaultCharsPerToken         = 4.0
 	defaultTokenSafetyMargin     = 1.0
+
+	// defaultMaxConsecutiveCompactFailures is the number of consecutive failed
+	// automatic compactions after which the automatic compaction path is
+	// suppressed for a session (the failure circuit breaker trips).
+	defaultMaxConsecutiveCompactFailures = 3
+	// defaultCompactFailureCooldownMessages is how many additional messages must
+	// accumulate after the breaker trips before the automatic path is retried.
+	defaultCompactFailureCooldownMessages = 20
 )
 
 // managerConfig holds resolved configuration for a Manager.
@@ -53,6 +61,14 @@ type managerConfig struct {
 	// 0 (the default) resolves to archiveContentMaxBytes at write time.
 	archiveContentMaxBytes int
 	notifyCallback         func(msg string)
+	// reportCallback, when set, is invoked by the automatic compaction path with
+	// the current call's channel/chatID and the formatted compaction report so it
+	// can be delivered to the user. The manual /compact path returns the report
+	// directly instead and does not use this callback.
+	reportCallback func(channel, chatID, text string)
+	// compactDebug enables verbatim request/response capture of each
+	// summarization LLM invocation to <compressionProfileDir>/compact.jsonl.
+	compactDebug bool
 	// compressionProfileDir is the agent workspace directory. If non-empty and
 	// a file named "compression.md" exists there, its content is appended to the
 	// summarization prompt so agents can declare role-specific compression rules.
@@ -150,6 +166,18 @@ func WithMaxSummaryTokens(n int) Option {
 
 func WithNotifyCallback(fn func(msg string)) Option {
 	return func(c *managerConfig) { c.notifyCallback = fn }
+}
+
+// WithCompactionReporter sets the callback used by the automatic compaction path
+// to deliver the formatted compaction report to the user's channel.
+func WithCompactionReporter(fn func(channel, chatID, text string)) Option {
+	return func(c *managerConfig) { c.reportCallback = fn }
+}
+
+// WithCompactDebug enables verbatim capture of each summarization request and
+// response to <workspace>/compact.jsonl. Debugging only; off by default.
+func WithCompactDebug(enabled bool) Option {
+	return func(c *managerConfig) { c.compactDebug = enabled }
 }
 
 // WithCharsPerToken sets the divisor used to convert a rune count into an

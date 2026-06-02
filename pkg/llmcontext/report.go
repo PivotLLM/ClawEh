@@ -1,0 +1,236 @@
+// ClawEh
+// License: MIT
+
+package llmcontext
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/PivotLLM/ClawEh/pkg/logger"
+	"github.com/PivotLLM/ClawEh/pkg/memory"
+	"github.com/PivotLLM/ClawEh/pkg/providers"
+)
+
+// CompactionAttempt records the outcome of a single summarization LLM
+// invocation during a compaction pass.
+type CompactionAttempt struct {
+	Model      string `json:"model"`
+	Status     string `json:"status"` // "ok" | "rejected" | "error"
+	Detail     string `json:"detail,omitempty"`
+	DurationMs int64  `json:"duration_ms"`
+}
+
+// CompactionReport is a human-facing summary of a single compaction pass: the
+// context that went in, one entry per LLM invocation (in order, including
+// retries against the same model), and the final result. It is assembled on
+// every compaction path so the user can see exactly which models were tried,
+// which failed and why, and what was burned in the process.
+type CompactionReport struct {
+	SessionKey  string              `json:"session_key"`
+	BeforeMsgs  int                 `json:"before_msgs"`
+	BeforeBytes int                 `json:"before_bytes"`
+	DateFrom    time.Time           `json:"date_from"`
+	DateTo      time.Time           `json:"date_to"`
+	Attempts    []CompactionAttempt `json:"attempts"`
+	AfterMsgs   int                 `json:"after_msgs"`
+	AfterBytes  int                 `json:"after_bytes"`
+	Outcome     string              `json:"outcome"` // "success" | "nothing" | "failed" | "partial"
+}
+
+// String renders the report as the multi-line notice shown to the user.
+func (r *CompactionReport) String() string {
+	if r == nil {
+		return ""
+	}
+	var b strings.Builder
+
+	header := fmt.Sprintf("Compaction: %d messages · %s", r.BeforeMsgs, formatBytes(r.BeforeBytes))
+	if dr := formatDateRange(r.DateFrom, r.DateTo); dr != "" {
+		header = fmt.Sprintf("Compaction: %d messages · %s · %s", r.BeforeMsgs, dr, formatBytes(r.BeforeBytes))
+	}
+	b.WriteString(header)
+
+	for _, a := range r.Attempts {
+		status := a.Status
+		if a.Detail != "" {
+			status = fmt.Sprintf("%s (%s)", a.Status, a.Detail)
+		}
+		b.WriteString(fmt.Sprintf("\n  %s: %s", a.Model, status))
+	}
+
+	b.WriteString("\n")
+	switch r.Outcome {
+	case "success":
+		b.WriteString(fmt.Sprintf("Compacted to %d messages · %s", r.AfterMsgs, formatBytes(r.AfterBytes)))
+	case "partial":
+		b.WriteString(fmt.Sprintf("Partially compacted (still above safety threshold) — %d messages · %s", r.AfterMsgs, formatBytes(r.AfterBytes)))
+	case "nothing":
+		b.WriteString("Nothing to compress — already compact.")
+	default:
+		b.WriteString("Failed — no model produced an acceptable summary.")
+	}
+	return b.String()
+}
+
+// formatBytes renders a byte count as a compact human-readable string.
+func formatBytes(n int) string {
+	switch {
+	case n >= 1<<20:
+		return fmt.Sprintf("~%.1f MB", float64(n)/(1<<20))
+	case n >= 1<<10:
+		return fmt.Sprintf("~%d KB", n/(1<<10))
+	default:
+		return fmt.Sprintf("%d B", n)
+	}
+}
+
+// formatDateRange renders the inclusive span of message timestamps. Returns ""
+// when either bound is unset.
+func formatDateRange(from, to time.Time) string {
+	if from.IsZero() || to.IsZero() {
+		return ""
+	}
+	if from.Year() == to.Year() && from.YearDay() == to.YearDay() {
+		return from.Format("Jan 2")
+	}
+	return from.Format("Jan 2") + "–" + to.Format("Jan 2")
+}
+
+// compactionRecorder accumulates per-invocation attempts during a compaction
+// pass and, when debug capture is enabled, appends the verbatim request and
+// response of each invocation to a JSONL file in the agent workspace.
+type compactionRecorder struct {
+	sessionKey string
+	debugPath  string // "" disables verbatim capture
+	attempts   []CompactionAttempt
+}
+
+// record logs one LLM invocation. req/resp are only persisted when debug
+// capture is enabled; they are never retained in memory beyond the call.
+func (r *compactionRecorder) record(model, status, detail string, dur time.Duration, req []providers.Message, resp string) {
+	if model == "" {
+		model = "model"
+	}
+	r.attempts = append(r.attempts, CompactionAttempt{
+		Model:      model,
+		Status:     status,
+		Detail:     detail,
+		DurationMs: dur.Milliseconds(),
+	})
+	if r.debugPath == "" {
+		return
+	}
+	rec := map[string]any{
+		"ts":          time.Now().Format(time.RFC3339Nano),
+		"session":     r.sessionKey,
+		"attempt":     len(r.attempts),
+		"model":       model,
+		"status":      status,
+		"detail":      detail,
+		"duration_ms": dur.Milliseconds(),
+		"request":     req,
+		"response":    resp,
+	}
+	data, err := json.Marshal(rec)
+	if err != nil {
+		return
+	}
+	f, err := os.OpenFile(r.debugPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		logger.WarnCF("llmcontext", "compaction debug capture: open failed", map[string]any{
+			"session_key": r.sessionKey,
+			"path":        r.debugPath,
+			"error":       err.Error(),
+		})
+		return
+	}
+	defer f.Close()
+	if _, err := f.Write(append(data, '\n')); err != nil {
+		logger.WarnCF("llmcontext", "compaction debug capture: write failed", map[string]any{
+			"session_key": r.sessionKey,
+			"error":       err.Error(),
+		})
+	}
+}
+
+// buildReport assembles the final report from the per-pass recorder, the
+// before-stats captured at the start, and the post-compaction store state. The
+// outcome is derived from the doCompress return error.
+func (m *Manager) buildReport(rec *compactionRecorder, beforeMsgs, beforeBytes int, from, to time.Time, err error) *CompactionReport {
+	afterStored := m.store.GetHistoryWithSeqs(m.sessionKey)
+	if len(afterStored) > 0 && afterStored[0].Role == "system" {
+		afterStored = afterStored[1:]
+	}
+
+	outcome := "success"
+	switch {
+	case errors.Is(err, ErrNothingToCompress):
+		outcome = "nothing"
+	case errors.Is(err, ErrCompressionPartial):
+		outcome = "partial"
+	case err != nil:
+		outcome = "failed"
+	}
+
+	return &CompactionReport{
+		SessionKey:  m.sessionKey,
+		BeforeMsgs:  beforeMsgs,
+		BeforeBytes: beforeBytes,
+		DateFrom:    from,
+		DateTo:      to,
+		Attempts:    rec.attempts,
+		AfterMsgs:   len(afterStored),
+		AfterBytes:  storedBytes(afterStored),
+		Outcome:     outcome,
+	}
+}
+
+// clientModel returns the model name of an LLMClient when it exposes one.
+func clientModel(c LLMClient) string {
+	if m, ok := c.(interface{ Model() string }); ok {
+		return m.Model()
+	}
+	return ""
+}
+
+// shortErr returns a single-line, length-bounded form of an error for display.
+func shortErr(err error) string {
+	if err == nil {
+		return ""
+	}
+	s := strings.ReplaceAll(err.Error(), "\n", " ")
+	if len(s) > 120 {
+		s = s[:117] + "..."
+	}
+	return s
+}
+
+// storedBytes sums the content bytes of a stored message slice.
+func storedBytes(msgs []memory.StoredMessage) int {
+	n := 0
+	for _, m := range msgs {
+		n += len(m.Content)
+	}
+	return n
+}
+
+// storedDateRange returns the earliest and latest CreatedAt across the slice.
+func storedDateRange(msgs []memory.StoredMessage) (from, to time.Time) {
+	for _, m := range msgs {
+		if m.CreatedAt.IsZero() {
+			continue
+		}
+		if from.IsZero() || m.CreatedAt.Before(from) {
+			from = m.CreatedAt
+		}
+		if to.IsZero() || m.CreatedAt.After(to) {
+			to = m.CreatedAt
+		}
+	}
+	return from, to
+}

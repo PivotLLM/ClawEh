@@ -116,8 +116,8 @@ func TestSelectTail_NoiseCollapsed(t *testing.T) {
 	history := []providers.Message{
 		msg("user", "hello"),
 		msg("assistant", "hi"),
-		msg("user", "hello"),      // duplicate of history[0]
-		msg("assistant", "hi"),    // duplicate of history[1]
+		msg("user", "hello"),   // duplicate of history[0]
+		msg("assistant", "hi"), // duplicate of history[1]
 		msg("user", "different"),
 	}
 	got := selectTail(history, 10000, 0, estimateTokens)

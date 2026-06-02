@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -93,20 +94,21 @@ type SecurityConfig struct {
 }
 
 type Config struct {
-	Agents        AgentsConfig       `json:"agents"`
-	Bindings      []AgentBinding     `json:"bindings,omitempty"`
-	Session       SessionConfig      `json:"session,omitempty"`
-	AgentMentions AgentMentionConfig `json:"agent_mentions,omitempty"`
-	Channels      ChannelsConfig     `json:"channels"`
-	Providers     ProvidersConfig    `json:"providers,omitempty"`
-	ModelList     []ModelConfig      `json:"model_list"` // New model-centric provider configuration
-	Gateway       GatewayConfig      `json:"gateway"`
-	Tools         ToolsConfig        `json:"tools"`
-	Devices       DevicesConfig      `json:"devices"`
-	Voice         VoiceConfig        `json:"voice"`
-	Logging       LoggingConfig      `json:"logging"`
-	Security      SecurityConfig     `json:"security,omitempty"`
-	MCPHost       MCPHostConfig      `json:"mcp_host,omitempty"`
+	Agents        AgentsConfig        `json:"agents"`
+	Bindings      []AgentBinding      `json:"bindings,omitempty"`
+	Session       SessionConfig       `json:"session,omitempty"`
+	AgentMentions AgentMentionConfig  `json:"agent_mentions,omitempty"`
+	Channels      ChannelsConfig      `json:"channels"`
+	Providers     ProvidersConfig     `json:"providers,omitempty"`
+	ModelList     []ModelConfig       `json:"model_list"` // New model-centric provider configuration
+	Summarization SummarizationConfig `json:"summarization,omitempty"`
+	Gateway       GatewayConfig       `json:"gateway"`
+	Tools         ToolsConfig         `json:"tools"`
+	Devices       DevicesConfig       `json:"devices"`
+	Voice         VoiceConfig         `json:"voice"`
+	Logging       LoggingConfig       `json:"logging"`
+	Security      SecurityConfig      `json:"security,omitempty"`
+	MCPHost       MCPHostConfig       `json:"mcp_host,omitempty"`
 	// ConfigReloadIntervalSeconds controls how often the daemon polls the config
 	// file for changes and triggers a reload. Defaults to
 	// global.DefaultConfigReloadIntervalSeconds; floored at
@@ -200,6 +202,19 @@ func (m AgentModelConfig) MarshalJSON() ([]byte, error) {
 	return json.Marshal(raw{Primary: m.Primary, Fallbacks: m.Fallbacks})
 }
 
+// SummarizationConfig is the global, deployment-wide summarization model chain.
+// Models are tried in order for context compaction across all agents; each entry
+// is a model_list alias (or a raw protocol/model string). The agent's own
+// primary model is always appended as a final last-resort fallback at runtime.
+// An empty Models list means summarization runs against each agent's own model.
+type SummarizationConfig struct {
+	Models []string `json:"models,omitempty"`
+	// DebugCapture, when true, appends the verbatim request and response of every
+	// summarization LLM invocation to <agent-workspace>/compact.jsonl. Debugging
+	// only; off by default.
+	DebugCapture bool `json:"debug_capture,omitempty" env:"CLAW_SUMMARIZATION_DEBUG_CAPTURE"`
+}
+
 type AgentConfig struct {
 	ID        string `json:"id"`
 	Enabled   *bool  `json:"enabled,omitempty"`
@@ -220,18 +235,17 @@ type AgentConfig struct {
 	Callback    *CallbackConfig   `json:"callback,omitempty"`
 	Temperature *float64          `json:"temperature,omitempty"`
 
-	CompressMinPercent         *int              `json:"compress_min_percent,omitempty"`
-	CompressNormalPercent      *int              `json:"compress_normal_percent,omitempty"`
-	CompressSafetyPercent      *int              `json:"compress_safety_percent,omitempty"`
-	CompressMessageThreshold   *int              `json:"compress_message_threshold,omitempty"`
-	CompressRetainTokenPercent *int              `json:"compress_retain_token_percent,omitempty"`
-	CompressRetainMinMessages  *int              `json:"compress_retain_min_messages,omitempty"`
-	CompressModel              *AgentModelConfig `json:"compress_model,omitempty"`
-	CompressCharsPerToken      *float64          `json:"compress_chars_per_token,omitempty"`
-	CompressTokenSafetyMargin  *float64          `json:"compress_token_safety_margin,omitempty"`
-	ArchiveMessageCount        *int              `json:"archive_message_count,omitempty"`
-	ArchiveDays                *int              `json:"archive_days,omitempty"`
-	ArchiveContentMaxBytes     *int              `json:"archive_content_max_bytes,omitempty"`
+	CompressMinPercent         *int     `json:"compress_min_percent,omitempty"`
+	CompressNormalPercent      *int     `json:"compress_normal_percent,omitempty"`
+	CompressSafetyPercent      *int     `json:"compress_safety_percent,omitempty"`
+	CompressMessageThreshold   *int     `json:"compress_message_threshold,omitempty"`
+	CompressRetainTokenPercent *int     `json:"compress_retain_token_percent,omitempty"`
+	CompressRetainMinMessages  *int     `json:"compress_retain_min_messages,omitempty"`
+	CompressCharsPerToken      *float64 `json:"compress_chars_per_token,omitempty"`
+	CompressTokenSafetyMargin  *float64 `json:"compress_token_safety_margin,omitempty"`
+	ArchiveMessageCount        *int     `json:"archive_message_count,omitempty"`
+	ArchiveDays                *int     `json:"archive_days,omitempty"`
+	ArchiveContentMaxBytes     *int     `json:"archive_content_max_bytes,omitempty"`
 }
 
 // IsEnabled returns true if the agent is enabled (nil means enabled by default).
@@ -347,7 +361,6 @@ type AgentDefaults struct {
 	CompressMessageThreshold   int               `json:"compress_message_threshold,omitempty"    env:"CLAW_AGENTS_DEFAULTS_COMPRESS_MESSAGE_THRESHOLD"`
 	CompressRetainTokenPercent int               `json:"compress_retain_token_percent,omitempty" env:"CLAW_AGENTS_DEFAULTS_COMPRESS_RETAIN_TOKEN_PERCENT"`
 	CompressRetainMinMessages  int               `json:"compress_retain_min_messages,omitempty"  env:"CLAW_AGENTS_DEFAULTS_COMPRESS_RETAIN_MIN_MESSAGES"`
-	CompressModel              AgentModelConfig  `json:"compress_model,omitempty"`
 	CompressCharsPerToken      float64           `json:"compress_chars_per_token,omitempty"      env:"CLAW_AGENTS_DEFAULTS_COMPRESS_CHARS_PER_TOKEN"`
 	CompressTokenSafetyMargin  float64           `json:"compress_token_safety_margin,omitempty"  env:"CLAW_AGENTS_DEFAULTS_COMPRESS_TOKEN_SAFETY_MARGIN"`
 	ArchiveMessageCount        int               `json:"archive_message_count,omitempty"         env:"CLAW_AGENTS_DEFAULTS_ARCHIVE_MESSAGE_COUNT"`
@@ -992,6 +1005,8 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, err
 	}
 
+	warnLegacyCompressModel(data)
+
 	if err := env.Parse(cfg); err != nil {
 		return nil, err
 	}
@@ -1018,6 +1033,34 @@ func LoadConfig(path string) (*Config, error) {
 	cfg.resolveOpenAICompatProtocols()
 
 	return cfg, nil
+}
+
+// warnLegacyCompressModel logs a one-line warning when the loaded config still
+// carries the removed per-agent `compress_model` field. Summarization models are
+// now configured globally via the top-level `summarization.models` list.
+func warnLegacyCompressModel(data []byte) {
+	var legacy struct {
+		Agents struct {
+			Defaults struct {
+				CompressModel json.RawMessage `json:"compress_model"`
+			} `json:"defaults"`
+			List []struct {
+				ID            string          `json:"id"`
+				CompressModel json.RawMessage `json:"compress_model"`
+			} `json:"list"`
+		} `json:"agents"`
+	}
+	if err := json.Unmarshal(data, &legacy); err != nil {
+		return
+	}
+	if len(legacy.Agents.Defaults.CompressModel) > 0 {
+		log.Printf("config: ignoring removed field agents.defaults.compress_model; configure summarization models globally via summarization.models")
+	}
+	for _, a := range legacy.Agents.List {
+		if len(a.CompressModel) > 0 {
+			log.Printf("config: ignoring removed field compress_model on agent %q; configure summarization models globally via summarization.models", a.ID)
+		}
+	}
 }
 
 func (c *Config) migrateChannelConfigs() {

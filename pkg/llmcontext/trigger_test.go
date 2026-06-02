@@ -44,8 +44,8 @@ func (s *mockStore) GetHistory(key string) []providers.Message {
 	return cp
 }
 
-func (s *mockStore) GetSummary(key string) string        { return s.summary[key] }
-func (s *mockStore) SetSummary(key, summary string)      { s.summary[key] = summary }
+func (s *mockStore) GetSummary(key string) string   { return s.summary[key] }
+func (s *mockStore) SetSummary(key, summary string) { s.summary[key] = summary }
 func (s *mockStore) SetHistory(key string, h []providers.Message) {
 	cp := make([]providers.Message, len(h))
 	copy(cp, h)
@@ -62,12 +62,12 @@ func (s *mockStore) TruncateHistory(key string, keepLast int) {
 	}
 	s.history[key] = h[len(h)-keepLast:]
 }
-func (s *mockStore) SetPendingTurn(_ string) error { return nil }
-func (s *mockStore) ClearPendingTurn(_ string) error            { return nil }
-func (s *mockStore) GetArchiveBounds(_ string) (int64, int64)   { return 0, 0 }
-func (s *mockStore) ListPendingSessions() ([]string, error)     { return nil, nil }
-func (s *mockStore) Save(_ string) error                        { return nil }
-func (s *mockStore) Close() error                               { return nil }
+func (s *mockStore) SetPendingTurn(_ string) error            { return nil }
+func (s *mockStore) ClearPendingTurn(_ string) error          { return nil }
+func (s *mockStore) GetArchiveBounds(_ string) (int64, int64) { return 0, 0 }
+func (s *mockStore) ListPendingSessions() ([]string, error)   { return nil, nil }
+func (s *mockStore) Save(_ string) error                      { return nil }
+func (s *mockStore) Close() error                             { return nil }
 func (s *mockStore) GetHistoryWithSeqs(key string) []memory.StoredMessage {
 	src := s.history[key]
 	stored := make([]memory.StoredMessage, len(src))

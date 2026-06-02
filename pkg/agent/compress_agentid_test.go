@@ -20,12 +20,12 @@ import (
 // compression-capable call, which is the load-bearing detail for the missing
 // agent_id= field in compression error logs.
 type capturingContextManager struct {
-	mu                          sync.Mutex
-	addUserMsgAgentID           string
-	buildAgentID                string
-	preDispatchCheckAgentID     string
-	checkAndCompressAgentID     string
-	addAssistantMessageAgentID  string
+	mu                         sync.Mutex
+	addUserMsgAgentID          string
+	buildAgentID               string
+	preDispatchCheckAgentID    string
+	checkAndCompressAgentID    string
+	addAssistantMessageAgentID string
 }
 
 func (c *capturingContextManager) capture(field *string, ctx context.Context) {
@@ -65,11 +65,12 @@ func (c *capturingContextManager) Build(ctx context.Context) ([]providers.Messag
 	c.capture(&c.buildAgentID, ctx)
 	return []providers.Message{{Role: "user", Content: "hi"}}, nil
 }
-func (c *capturingContextManager) Compact(_ context.Context) error      { return nil }
-func (c *capturingContextManager) ForceCompress(_ context.Context) error { return nil }
-func (c *capturingContextManager) Stats() llmcontext.ContextStats        { return llmcontext.ContextStats{} }
-func (c *capturingContextManager) Reset(_ context.Context) error         { return nil }
-func (c *capturingContextManager) Close(_ context.Context) error         { return nil }
+func (c *capturingContextManager) Compact(_ context.Context) error                    { return nil }
+func (c *capturingContextManager) LastCompactionReport() *llmcontext.CompactionReport { return nil }
+func (c *capturingContextManager) ForceCompress(_ context.Context) error              { return nil }
+func (c *capturingContextManager) Stats() llmcontext.ContextStats                     { return llmcontext.ContextStats{} }
+func (c *capturingContextManager) Reset(_ context.Context) error                      { return nil }
+func (c *capturingContextManager) Close(_ context.Context) error                      { return nil }
 
 // finalLLMProvider is a provider that returns a normal terminal response so
 // runLLMIteration exits its loop cleanly without invoking tools.

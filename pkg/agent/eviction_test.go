@@ -44,10 +44,11 @@ func (m *trackingContextManager) SetSessionToken(_ string)   {}
 func (m *trackingContextManager) Build(_ context.Context) ([]providers.Message, error) {
 	return nil, nil
 }
-func (m *trackingContextManager) Compact(_ context.Context) error    { return nil }
-func (m *trackingContextManager) ForceCompress(_ context.Context) error { return nil }
-func (m *trackingContextManager) Stats() llmcontext.ContextStats      { return llmcontext.ContextStats{} }
-func (m *trackingContextManager) Reset(_ context.Context) error       { return nil }
+func (m *trackingContextManager) Compact(_ context.Context) error                    { return nil }
+func (m *trackingContextManager) LastCompactionReport() *llmcontext.CompactionReport { return nil }
+func (m *trackingContextManager) ForceCompress(_ context.Context) error              { return nil }
+func (m *trackingContextManager) Stats() llmcontext.ContextStats                     { return llmcontext.ContextStats{} }
+func (m *trackingContextManager) Reset(_ context.Context) error                      { return nil }
 func (m *trackingContextManager) Close(_ context.Context) error {
 	m.closed.Store(true)
 	return nil

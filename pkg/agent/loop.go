@@ -221,7 +221,6 @@ func NewAgentLoop(
 	return al
 }
 
-
 func (al *AgentLoop) Run(ctx context.Context) error {
 	al.running.Store(true)
 
@@ -554,12 +553,17 @@ func (al *AgentLoop) registerRuntimeTools(
 			return target.Candidates, true
 		}
 
-		// Build compact closure.
-		compactFn := func(ctx context.Context, sessionKey string) error {
+		// Build compact closure. Returns the compaction report text alongside the error.
+		compactFn := func(ctx context.Context, sessionKey string) (string, error) {
 			ctx = providers.WithAgentID(ctx, currentAgent.ID)
 			cm, release := al.getContextManager(currentAgent, sessionKey)
 			defer release()
-			return cm.Compact(ctx)
+			err := cm.Compact(ctx)
+			report := ""
+			if r := cm.LastCompactionReport(); r != nil {
+				report = r.String()
+			}
+			return report, err
 		}
 
 		// Build session info closure.
@@ -2412,14 +2416,19 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 			}
 			return nil
 		}
-		rt.CompactHistory = func(ctx context.Context) error {
+		rt.CompactHistory = func(ctx context.Context) (string, error) {
 			if opts == nil {
-				return fmt.Errorf("process options not available")
+				return "", fmt.Errorf("process options not available")
 			}
 			cm, releaseCM := al.getContextManager(agent, opts.SessionKey)
 			defer releaseCM()
 			cm.SetCallContext(opts.Channel, opts.ChatID)
-			return cm.Compact(ctx)
+			err := cm.Compact(ctx)
+			report := ""
+			if r := cm.LastCompactionReport(); r != nil {
+				report = r.String()
+			}
+			return report, err
 		}
 		rt.ResetCooldown = func() {
 			if al.fallback != nil {

@@ -37,6 +37,7 @@ func (m *Manager) doCompress(ctx context.Context, safetyNet bool) error {
 	// Resolve clients: prefer explicit compressClients, fall back to primary llm.
 	clients := m.compressClients
 	if len(clients) == 0 {
+		m.lastReport = &CompactionReport{SessionKey: m.sessionKey, Outcome: "nothing"}
 		return nil // no client configured
 	}
 
@@ -52,8 +53,21 @@ func (m *Manager) doCompress(ctx context.Context, safetyNet bool) error {
 	}
 
 	if len(storedConversation) == 0 {
+		m.lastReport = &CompactionReport{SessionKey: m.sessionKey, Outcome: "nothing"}
 		return nil
 	}
+
+	// Per-pass recorder: collects one entry per LLM invocation for the report,
+	// and (when debug capture is on) appends verbatim request/response to
+	// <workspace>/compact.jsonl.
+	debugPath := ""
+	if m.cfg.compactDebug && m.cfg.compressionProfileDir != "" {
+		debugPath = filepath.Join(m.cfg.compressionProfileDir, "compact.jsonl")
+	}
+	rec := &compactionRecorder{sessionKey: m.sessionKey, debugPath: debugPath}
+	beforeMsgs := len(storedConversation)
+	beforeBytes := storedBytes(storedConversation)
+	dateFrom, dateTo := storedDateRange(storedConversation)
 
 	conversation := storedToPlain(storedConversation)
 	tokensBeforeCompress := m.estTokens(conversation)
@@ -68,10 +82,19 @@ func (m *Manager) doCompress(ctx context.Context, safetyNet bool) error {
 
 	// Compression loop: iteratively summarize the oldest portion of the
 	// conversation until we reach the target percentage or exhaust iterations.
+	// Item 13: enforce the max summary token budget. Computed once and passed to
+	// callLLMChain so an oversized summary is rejected within the client chain
+	// (advancing to the next model) rather than after it.
+	summaryTokenLimit := m.cfg.maxSummaryTokens
+	if summaryTokenLimit <= 0 && m.cfg.contextWindow > 0 {
+		summaryTokenLimit = m.cfg.contextWindow * 20 / 100
+	}
+
 	currentStored := storedConversation
 	currentConversation := conversation
 	latestSummary := existingSummary
 	llmSucceeded := false
+	attemptedLLM := false // true once the LLM was actually invoked for a summary
 	aggressive := false
 	iterCount := 0
 	tokensBeforeIteration := tokensBeforeCompress
@@ -95,49 +118,14 @@ func (m *Manager) doCompress(ctx context.Context, safetyNet bool) error {
 			break // tail covers everything; nothing left to summarize
 		}
 
-		newSummary, ok := callLLMChain(ctx, clients, latestSummary, toSummarize, archiveMin, archiveMax, aggressive, compressionProfile)
+		attemptedLLM = true
+		newSummary, ok := callLLMChain(ctx, clients, latestSummary, toSummarize, archiveMin, archiveMax, aggressive, compressionProfile, summaryTokenLimit, m.sessionKey, rec)
 		if !ok {
 			iterCount++
 			continue
 		}
 		if newSummary.Model == "" {
 			newSummary.Model = m.cfg.compressModel.Primary
-		}
-
-		// Strip any seq references outside the valid range before accepting the summary.
-		newSummary.StripOutOfRangeSeqRefs(archiveMin, archiveMax)
-		if !newSummary.HasMaterial() || !newSummary.HasEvidence() {
-			logger.WarnCF("llmcontext", "LLM compression summary lacked cited material", map[string]any{
-				"session_key": m.sessionKey,
-			})
-			iterCount++
-			continue
-		}
-
-		// Item 13: enforce the max summary token budget.
-		summaryTokenLimit := m.cfg.maxSummaryTokens
-		if summaryTokenLimit <= 0 && m.cfg.contextWindow > 0 {
-			summaryTokenLimit = m.cfg.contextWindow * 20 / 100
-		}
-		if summaryTokenLimit > 0 {
-			if newSummary.TruncateToFit(summaryTokenLimit) {
-				logger.WarnCF("llmcontext", "summary truncated to fit token budget", map[string]any{
-					"session_key": m.sessionKey,
-					"limit":       summaryTokenLimit,
-				})
-			}
-			// After truncation, verify the summary still fits.
-			if data, merr := json.Marshal(newSummary); merr == nil {
-				if len([]rune(string(data)))/4 > summaryTokenLimit {
-					logger.WarnCF("llmcontext", "summary still oversized after truncation — discarding", map[string]any{
-						"session_key": m.sessionKey,
-						"tokens":      len([]rune(string(data))) / 4,
-						"limit":       summaryTokenLimit,
-					})
-					iterCount++
-					continue
-				}
-			}
 		}
 
 		llmSucceeded = true
@@ -172,10 +160,14 @@ func (m *Manager) doCompress(ctx context.Context, safetyNet bool) error {
 		iterCount++
 	}
 
+	var err error
 	if !safetyNet {
-		return m.handleNormalPostLoop(ctx, sysMsg, currentStored, latestSummary, llmSucceeded, tokensBeforeCompress, targetPct)
+		err = m.handleNormalPostLoop(ctx, sysMsg, currentStored, latestSummary, llmSucceeded, attemptedLLM, tokensBeforeCompress, targetPct)
+	} else {
+		err = m.handleSafetyNetPostLoop(ctx, sysMsg, storedConversation, currentStored, latestSummary, existingSummary, llmSucceeded)
 	}
-	return m.handleSafetyNetPostLoop(ctx, sysMsg, storedConversation, currentStored, latestSummary, existingSummary, llmSucceeded)
+	m.lastReport = m.buildReport(rec, beforeMsgs, beforeBytes, dateFrom, dateTo, err)
+	return err
 }
 
 // handleNormalPostLoop handles post-loop logic for the normal (non-safety-net) path.
@@ -185,13 +177,22 @@ func (m *Manager) handleNormalPostLoop(
 	currentStored []memory.StoredMessage,
 	latestSummary *Summary,
 	llmSucceeded bool,
+	attemptedLLM bool,
 	tokensBeforeCompress int,
 	targetPct float64,
 ) error {
 	_ = ctx // reserved for future use
 	currentConversation := storedToPlain(currentStored)
 	if !llmSucceeded {
-		logger.WarnCF("llmcontext", "compression failed: no LLM client succeeded", map[string]any{
+		if !attemptedLLM {
+			// The retained tail already covers the whole conversation; there was
+			// nothing to summarize. This is a benign no-op, not a failure.
+			logger.InfoCF("llmcontext", "compression: nothing to compress (tail already covers conversation)", map[string]any{
+				"session_key": m.sessionKey,
+			})
+			return ErrNothingToCompress
+		}
+		logger.WarnCF("llmcontext", "compression failed: every summarization model rejected the summary", map[string]any{
 			"session_key": m.sessionKey,
 		})
 		return ErrCompressionFailed
@@ -288,8 +289,12 @@ func (m *Manager) handleSafetyNetPostLoop(
 	return ErrCompressionPartial
 }
 
-// callLLMChain calls each client in order, returning the first successful Summary.
-// It returns (nil, false) if all clients fail.
+// callLLMChain calls each client in order, returning the first Summary that
+// passes validation. A client whose summary fails to parse, lacks cited material,
+// or cannot be trimmed within summaryTokenLimit is skipped and the next client is
+// tried — so a fully-configured summarization chain (global models + agent
+// primary) actually falls through on a model that returns an unacceptable summary,
+// not just on a hard transport error. Returns (nil, false) if every client fails.
 //
 // toSummarize is a []memory.StoredMessage so the prompt can include [#N] seq
 // prefixes for each message. CoveredSeqStart and CoveredSeqEnd are set from the
@@ -302,6 +307,9 @@ func callLLMChain(
 	archiveMin, archiveMax int64,
 	aggressive bool,
 	compressionProfile string,
+	summaryTokenLimit int,
+	sessionKey string,
+	rec *compactionRecorder,
 ) (*Summary, bool) {
 	if len(toSummarize) == 0 {
 		return nil, false
@@ -328,19 +336,24 @@ func callLLMChain(
 	}
 
 	for _, client := range clients {
+		model := clientModel(client)
+		start := time.Now()
 		response, err := client.Complete(ctx, messages)
+		dur := time.Since(start)
 		if err != nil {
 			logger.WarnCF("llmcontext", "LLM compression call failed", map[string]any{
 				"error": err.Error(),
 			})
+			rec.record(model, "error", shortErr(err), dur, messages, "")
 			continue
 		}
 
-		summary, err := validateAndUnmarshalLLMResponse(response.Content)
-		if err != nil {
+		summary, perr := validateAndUnmarshalLLMResponse(response.Content)
+		if perr != nil {
 			logger.WarnCF("llmcontext", "LLM compression response parse failed", map[string]any{
-				"error": err.Error(),
+				"error": perr.Error(),
 			})
+			rec.record(model, "error", "invalid JSON response", dur, messages, response.Content)
 			continue
 		}
 
@@ -349,6 +362,42 @@ func callLLMChain(
 		applySummaryCoverage(summary, existing, coveredStart, coveredEnd, toSummarize)
 		summary.GeneratedAt = time.Now()
 		summary.Profile = profileFingerprint(compressionProfile)
+
+		// Strip seq references outside the valid range, then require the summary
+		// to carry cited material. A model that returns an un-cited summary is
+		// skipped so the chain advances to the next model.
+		summary.StripOutOfRangeSeqRefs(archiveMin, archiveMax)
+		if !summary.HasMaterial() || !summary.HasEvidence() {
+			logger.WarnCF("llmcontext", "LLM compression summary lacked cited material", map[string]any{
+				"session_key": sessionKey,
+			})
+			rec.record(model, "rejected", "missing citations", dur, messages, response.Content)
+			continue
+		}
+
+		// Item 13: enforce the max summary token budget. Truncate, then discard
+		// (advancing to the next client) if it still does not fit.
+		if summaryTokenLimit > 0 {
+			if summary.TruncateToFit(summaryTokenLimit) {
+				logger.WarnCF("llmcontext", "summary truncated to fit token budget", map[string]any{
+					"session_key": sessionKey,
+					"limit":       summaryTokenLimit,
+				})
+			}
+			if data, merr := json.Marshal(summary); merr == nil {
+				if len([]rune(string(data)))/4 > summaryTokenLimit {
+					logger.WarnCF("llmcontext", "summary still oversized after truncation — discarding", map[string]any{
+						"session_key": sessionKey,
+						"tokens":      len([]rune(string(data))) / 4,
+						"limit":       summaryTokenLimit,
+					})
+					rec.record(model, "rejected", "summary too large", dur, messages, response.Content)
+					continue
+				}
+			}
+		}
+
+		rec.record(model, "ok", "", dur, messages, response.Content)
 		return summary, true
 	}
 
@@ -367,8 +416,10 @@ func profileFingerprint(profile string) string {
 	return hex.EncodeToString(sum[:])[:8]
 }
 
-// loadCompressionProfile reads compression.md from dir if it exists.
-// Returns empty string when the file is absent or unreadable.
+// loadCompressionProfile reads compression.md from dir if it exists. HTML
+// comments are stripped so the template's human-facing documentation never
+// reaches the summarizer; only real role-specific guidance is appended to the
+// prompt. Returns "" when the file is absent, unreadable, or comment-only.
 func loadCompressionProfile(dir string) string {
 	if dir == "" {
 		return ""
@@ -377,7 +428,26 @@ func loadCompressionProfile(dir string) string {
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(data))
+	return strings.TrimSpace(stripHTMLComments(string(data)))
+}
+
+// stripHTMLComments removes <!-- ... --> blocks (including multi-line and
+// unterminated ones) from s.
+func stripHTMLComments(s string) string {
+	for {
+		start := strings.Index(s, "<!--")
+		if start < 0 {
+			break
+		}
+		rest := s[start+len("<!--"):]
+		end := strings.Index(rest, "-->")
+		if end < 0 {
+			s = s[:start] // unterminated comment: drop to end
+			break
+		}
+		s = s[:start] + rest[end+len("-->"):]
+	}
+	return s
 }
 
 // repetitiveRunThreshold is the minimum number of consecutive near-identical

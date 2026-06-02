@@ -20,10 +20,10 @@ type ToolDescriptor struct {
 // it owns, whether it can run in the current environment, and how to build its
 // tools given runtime dependencies.
 type ToolProvider interface {
-	Namespace() string                            // e.g. "files", "web", "session"
+	Namespace() string // e.g. "files", "web", "session"
 	Description() string
 	Category() string
-	ConfigKey() string                            // maps to config struct field name
+	ConfigKey() string                           // maps to config struct field name
 	Available(cfg *config.Config) (bool, string) // (ok, reason if not)
 	Build(deps ToolDeps) []Tool
 	Describe() []ToolDescriptor
@@ -45,8 +45,9 @@ type ToolDeps struct {
 	SpawnAllowlist    func(callerID, targetID string) bool
 	CandidateResolver func(agentID string) ([]providers.FallbackCandidate, bool)
 
-	// Session tools (closures built by AgentLoop)
-	CompactFn     func(ctx context.Context, sessionKey string) error
+	// Session tools (closures built by AgentLoop). CompactFn returns a
+	// human-readable compaction report alongside any error.
+	CompactFn     func(ctx context.Context, sessionKey string) (string, error)
 	SessionInfoFn func(ctx context.Context, sessionKey string) (*SessionInfo, error)
 
 	// Shared pre-built tool instances

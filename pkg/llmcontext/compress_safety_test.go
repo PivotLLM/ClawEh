@@ -114,13 +114,14 @@ func TestItem1_PersistResultReturnsErrorOnSaveFailure(t *testing.T) {
 // produces no orphaned tool results when the last message is a tool result.
 //
 // History layout:
-//   [0] user "question"
-//   [1] asst <tool-call: id="tc1">  (padded to consume tokens)
-//   [2] tool <result for tc1>
-//   [3] asst "final answer"
-//   [4] user "follow-up"            (current trigger)
-//   [5] asst <tool-call: id="tc2">  (padded)
-//   [6] tool <result for tc2>       ← last message (in-progress tool loop)
+//
+//	[0] user "question"
+//	[1] asst <tool-call: id="tc1">  (padded to consume tokens)
+//	[2] tool <result for tc1>
+//	[3] asst "final answer"
+//	[4] user "follow-up"            (current trigger)
+//	[5] asst <tool-call: id="tc2">  (padded)
+//	[6] tool <result for tc2>       ← last message (in-progress tool loop)
 //
 // ForceCompress should keep the current turn group intact. The group ending at
 // [6] (tool result for tc2) extends back through [5] (assistant with ToolCalls
