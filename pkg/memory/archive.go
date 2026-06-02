@@ -40,6 +40,9 @@ CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
 CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
     INSERT INTO messages_fts(rowid, text) VALUES (new.seq, new.text);
 END;
+CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
+    INSERT INTO messages_fts(messages_fts, rowid, text) VALUES ('delete', old.seq, old.text);
+END;
 CREATE TABLE IF NOT EXISTS summaries (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
     generated_at      INTEGER NOT NULL,
@@ -272,6 +275,77 @@ func (a *ArchiveStore) Append(seq int64, msg providers.Message, createdAt time.T
 	_, err = a.db.Exec(
 		`INSERT OR REPLACE INTO messages (seq, role, payload, text, created_at) VALUES (?, ?, ?, ?, ?)`,
 		seq, msg.Role, string(payload), text, createdAt.Unix(),
+	)
+	return err
+}
+
+// PruneMessagesToCount deletes all but the newest n messages by seq. The
+// messages_ad AFTER DELETE trigger keeps the external-content messages_fts table
+// in sync, so search results never reference pruned rows. No-op when n <= 0 or
+// the store is unavailable. Acquires the write mutex.
+func (a *ArchiveStore) PruneMessagesToCount(n int) error {
+	if a.unavailable || a.db == nil || n <= 0 {
+		return nil
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	_, err := a.db.Exec(
+		`DELETE FROM messages WHERE seq <= (SELECT COALESCE(MAX(seq), 0) FROM messages) - ?`,
+		n,
+	)
+	return err
+}
+
+// PruneMessagesBefore deletes messages older than cutoff (created_at <
+// cutoff.Unix()). The messages_ad AFTER DELETE trigger keeps messages_fts in
+// sync. No-op when the store is unavailable. Acquires the write mutex.
+func (a *ArchiveStore) PruneMessagesBefore(cutoff time.Time) error {
+	if a.unavailable || a.db == nil {
+		return nil
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	_, err := a.db.Exec(
+		`DELETE FROM messages WHERE created_at < ?`,
+		cutoff.Unix(),
+	)
+	return err
+}
+
+// PruneSummariesToCount deletes all but the newest n summaries by id. No-op when
+// n <= 0 or the store is unavailable. Acquires the write mutex.
+func (a *ArchiveStore) PruneSummariesToCount(n int) error {
+	if a.unavailable || a.db == nil || n <= 0 {
+		return nil
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	_, err := a.db.Exec(
+		`DELETE FROM summaries WHERE id <= (SELECT COALESCE(MAX(id), 0) FROM summaries) - ?`,
+		n,
+	)
+	return err
+}
+
+// PruneSummariesBefore deletes summaries older than cutoff (generated_at <
+// cutoff.Unix()). No-op when the store is unavailable. Acquires the write mutex.
+func (a *ArchiveStore) PruneSummariesBefore(cutoff time.Time) error {
+	if a.unavailable || a.db == nil {
+		return nil
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	_, err := a.db.Exec(
+		`DELETE FROM summaries WHERE generated_at < ?`,
+		cutoff.Unix(),
 	)
 	return err
 }

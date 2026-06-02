@@ -283,6 +283,22 @@ func NewAgentInstance(
 	}(), defaults.ArchiveDays); ok {
 		compressOpts = append(compressOpts, llmcontext.WithArchiveDays(v))
 	}
+	if v, ok := resolveIntOpt(func() *int {
+		if agentCfg != nil {
+			return agentCfg.SummaryMaxCount
+		}
+		return nil
+	}(), defaults.SummaryMaxCount); ok {
+		compressOpts = append(compressOpts, llmcontext.WithSummaryMaxCount(v))
+	}
+	if v, ok := resolveIntOpt(func() *int {
+		if agentCfg != nil {
+			return agentCfg.SummaryRetentionDays
+		}
+		return nil
+	}(), defaults.SummaryRetentionDays); ok {
+		compressOpts = append(compressOpts, llmcontext.WithSummaryRetentionDays(v))
+	}
 	if v, ok := resolveFloatOpt(func() *float64 {
 		if agentCfg != nil {
 			return agentCfg.CompressCharsPerToken

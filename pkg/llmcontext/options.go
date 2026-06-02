@@ -16,7 +16,7 @@ const (
 	defaultMinCompressionGain    = 0.05
 	defaultCooldownMessages      = 5
 	defaultLargeMsgOffset        = 20
-	defaultArchiveMessageCount   = 5000
+	defaultArchiveMessageCount   = 0
 	defaultCompressTargetFactor  = 0.5
 	defaultMinLoopGain           = 0.10
 	defaultMaxCompressIterations = 3
@@ -45,10 +45,16 @@ type managerConfig struct {
 	compressClients     []LLMClient
 	archiveMessageCount int
 	archiveDays         int
-	archiveDir          string
-	contextWindow       int
-	overheadTokens      int
-	maxSummaryTokens    int // 0 = use 20% of contextWindow at truncation time
+	// summaryMaxCount caps the number of stored summaries (keep newest N).
+	// 0 (the default) disables the count cap.
+	summaryMaxCount int
+	// summaryRetentionDays deletes summaries older than N days. 0 (the default)
+	// disables the age cutoff.
+	summaryRetentionDays int
+	archiveDir           string
+	contextWindow        int
+	overheadTokens       int
+	maxSummaryTokens     int // 0 = use 20% of contextWindow at truncation time
 	// charsPerToken is the divisor used to convert a rune count into an
 	// estimated token count. Lower values estimate more tokens per character
 	// (more conservative). Default: 4.0.
@@ -135,6 +141,18 @@ func WithArchiveMessageCount(n int) Option {
 // 0 (the default) means no time-based limit.
 func WithArchiveDays(n int) Option {
 	return func(c *managerConfig) { c.archiveDays = n }
+}
+
+// WithSummaryMaxCount caps the number of stored summary checkpoints, keeping the
+// newest n. 0 (the default) disables the count cap (falls back to days).
+func WithSummaryMaxCount(n int) Option {
+	return func(c *managerConfig) { c.summaryMaxCount = n }
+}
+
+// WithSummaryRetentionDays deletes stored summaries older than n days. 0 (the
+// default) means no time-based limit.
+func WithSummaryRetentionDays(n int) Option {
+	return func(c *managerConfig) { c.summaryRetentionDays = n }
 }
 
 func WithContextWindow(tokens int) Option {

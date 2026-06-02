@@ -42,13 +42,15 @@ func DefaultConfig() *Config {
 	cfg := &Config{
 		Agents: AgentsConfig{
 			Defaults: AgentDefaults{
-				Workspace:           workspacePath,
-				RestrictToWorkspace: true,
-				Model:               &AgentModelConfig{Primary: "claude-cli", Fallbacks: []string{"codex-cli"}},
-				MaxTokens:           32768,
-				Temperature:         nil, // nil means use provider default
-				MaxToolIterations:   50,
-				ContextWindow:       128000,
+				Workspace:            workspacePath,
+				RestrictToWorkspace:  true,
+				Model:                &AgentModelConfig{Primary: "claude-cli", Fallbacks: []string{"codex-cli"}},
+				MaxTokens:            32768,
+				Temperature:          nil, // nil means use provider default
+				MaxToolIterations:    50,
+				ContextWindow:        128000,
+				ArchiveDays:          365,
+				SummaryRetentionDays: 3650,
 			},
 			List: []AgentConfig{
 				{

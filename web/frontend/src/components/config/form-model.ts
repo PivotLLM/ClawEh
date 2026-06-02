@@ -16,6 +16,8 @@ export interface CoreConfigForm {
   compressRetainMinMessages: string
   archiveMessageCount: string
   archiveDays: string
+  summaryMaxCount: string
+  summaryRetentionDays: string
   sessionMode: string
   devicesEnabled: boolean
   monitorUSB: boolean
@@ -74,6 +76,8 @@ export const EMPTY_FORM: CoreConfigForm = {
   compressRetainMinMessages: "0",
   archiveMessageCount: "0",
   archiveDays: "0",
+  summaryMaxCount: "0",
+  summaryRetentionDays: "0",
   sessionMode: "unified",
   devicesEnabled: false,
   monitorUSB: true,
@@ -178,6 +182,14 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
     archiveDays: asNumberString(
       defaults.archive_days,
       EMPTY_FORM.archiveDays,
+    ),
+    summaryMaxCount: asNumberString(
+      defaults.summary_max_count,
+      EMPTY_FORM.summaryMaxCount,
+    ),
+    summaryRetentionDays: asNumberString(
+      defaults.summary_retention_days,
+      EMPTY_FORM.summaryRetentionDays,
     ),
     sessionMode: asString(session.mode) || EMPTY_FORM.sessionMode,
     devicesEnabled:

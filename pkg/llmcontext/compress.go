@@ -819,6 +819,9 @@ func (m *Manager) persistStoredResult(sysMsg *memory.StoredMessage, conv []memor
 						"error":       appendErr.Error(),
 					})
 				}
+				// Apply retention after each compaction so a long-running agent
+				// prunes its archive incrementally as it goes. Best-effort.
+				m.pruneArchive(a)
 			}
 		}
 		summaryModel = summary.Model

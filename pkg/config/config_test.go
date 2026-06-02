@@ -206,6 +206,25 @@ func TestDefaultConfig_WorkspacePath(t *testing.T) {
 	}
 }
 
+// TestDefaultConfig_Retention verifies the generated config carries the
+// long-lived-memory retention day limits while leaving the count caps unlimited.
+func TestDefaultConfig_Retention(t *testing.T) {
+	cfg := DefaultConfig()
+
+	if cfg.Agents.Defaults.ArchiveDays != 365 {
+		t.Errorf("ArchiveDays = %d, want 365", cfg.Agents.Defaults.ArchiveDays)
+	}
+	if cfg.Agents.Defaults.SummaryRetentionDays != 3650 {
+		t.Errorf("SummaryRetentionDays = %d, want 3650", cfg.Agents.Defaults.SummaryRetentionDays)
+	}
+	if cfg.Agents.Defaults.ArchiveMessageCount != 0 {
+		t.Errorf("ArchiveMessageCount = %d, want 0 (unlimited)", cfg.Agents.Defaults.ArchiveMessageCount)
+	}
+	if cfg.Agents.Defaults.SummaryMaxCount != 0 {
+		t.Errorf("SummaryMaxCount = %d, want 0 (unlimited)", cfg.Agents.Defaults.SummaryMaxCount)
+	}
+}
+
 // TestDefaultConfig_Model verifies the default model is set with primary and fallback
 func TestDefaultConfig_Model(t *testing.T) {
 	cfg := DefaultConfig()

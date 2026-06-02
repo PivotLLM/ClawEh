@@ -380,7 +380,60 @@ func (m *Manager) getOrOpenArchive() *memory.ArchiveStore {
 		})
 	}
 	m.archive = store
+	// Apply retention once per manager lifecycle, on the path that actually opens
+	// a fresh archive (not on subsequent cached returns), so long-lived growth is
+	// trimmed at startup.
+	m.pruneArchive(store)
 	return m.archive
+}
+
+// pruneArchive applies the four retention caps (message count/age and summary
+// count/age) to the given archive using the manager's configured limits. Each
+// cap is skipped when its configured value is <= 0. Best-effort: errors are
+// logged and otherwise ignored so pruning never fails compaction or open.
+func (m *Manager) pruneArchive(a *memory.ArchiveStore) {
+	if a == nil {
+		return
+	}
+
+	if n := m.cfg.archiveMessageCount; n > 0 {
+		if err := a.PruneMessagesToCount(n); err != nil {
+			logger.WarnCF("llmcontext", "archive prune messages to count failed", map[string]any{
+				"session_key": m.sessionKey,
+				"count":       n,
+				"error":       err.Error(),
+			})
+		}
+	}
+	if d := m.cfg.archiveDays; d > 0 {
+		cutoff := time.Now().AddDate(0, 0, -d)
+		if err := a.PruneMessagesBefore(cutoff); err != nil {
+			logger.WarnCF("llmcontext", "archive prune messages before failed", map[string]any{
+				"session_key": m.sessionKey,
+				"days":        d,
+				"error":       err.Error(),
+			})
+		}
+	}
+	if n := m.cfg.summaryMaxCount; n > 0 {
+		if err := a.PruneSummariesToCount(n); err != nil {
+			logger.WarnCF("llmcontext", "archive prune summaries to count failed", map[string]any{
+				"session_key": m.sessionKey,
+				"count":       n,
+				"error":       err.Error(),
+			})
+		}
+	}
+	if d := m.cfg.summaryRetentionDays; d > 0 {
+		cutoff := time.Now().AddDate(0, 0, -d)
+		if err := a.PruneSummariesBefore(cutoff); err != nil {
+			logger.WarnCF("llmcontext", "archive prune summaries before failed", map[string]any{
+				"session_key": m.sessionKey,
+				"days":        d,
+				"error":       err.Error(),
+			})
+		}
+	}
 }
 
 // archiveAppend writes msg to the archive (if one is configured) keyed by the

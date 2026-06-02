@@ -245,6 +245,8 @@ type AgentConfig struct {
 	CompressTokenSafetyMargin  *float64 `json:"compress_token_safety_margin,omitempty"`
 	ArchiveMessageCount        *int     `json:"archive_message_count,omitempty"`
 	ArchiveDays                *int     `json:"archive_days,omitempty"`
+	SummaryMaxCount            *int     `json:"summary_max_count,omitempty"`
+	SummaryRetentionDays       *int     `json:"summary_retention_days,omitempty"`
 	ArchiveContentMaxBytes     *int     `json:"archive_content_max_bytes,omitempty"`
 }
 
@@ -365,6 +367,8 @@ type AgentDefaults struct {
 	CompressTokenSafetyMargin  float64           `json:"compress_token_safety_margin,omitempty"  env:"CLAW_AGENTS_DEFAULTS_COMPRESS_TOKEN_SAFETY_MARGIN"`
 	ArchiveMessageCount        int               `json:"archive_message_count,omitempty"         env:"CLAW_AGENTS_DEFAULTS_ARCHIVE_MESSAGE_COUNT"`
 	ArchiveDays                int               `json:"archive_days,omitempty"                  env:"CLAW_AGENTS_DEFAULTS_ARCHIVE_DAYS"`
+	SummaryMaxCount            int               `json:"summary_max_count,omitempty"             env:"CLAW_AGENTS_DEFAULTS_SUMMARY_MAX_COUNT"`
+	SummaryRetentionDays       int               `json:"summary_retention_days,omitempty"        env:"CLAW_AGENTS_DEFAULTS_SUMMARY_RETENTION_DAYS"`
 	ArchiveContentMaxBytes     int               `json:"archive_content_max_bytes,omitempty"     env:"CLAW_AGENTS_DEFAULTS_ARCHIVE_CONTENT_MAX_BYTES"`
 	DefaultTools               []string          `json:"default_tools,omitempty"`
 	Routing                    *RoutingConfig    `json:"routing,omitempty"`
