@@ -517,6 +517,8 @@ func DefaultConfig() *Config {
 				"session_search",
 				"session_compact",
 				"session_info",
+				"session_summary_list",
+				"session_summary_get",
 			},
 		},
 		ConfigReloadIntervalSeconds: global.DefaultConfigReloadIntervalSeconds,
