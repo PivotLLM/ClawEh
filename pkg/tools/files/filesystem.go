@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/PivotLLM/ClawEh/pkg/fileutil"
@@ -624,6 +625,11 @@ func (r *sandboxFs) WriteFile(path string, data []byte) error {
 	return r.WriteFileMode(path, data, 0o600)
 }
 
+// tmpFileSeq makes atomic-write temp filenames unique across concurrent
+// goroutines in this process. os.Getpid()+UnixNano() alone collides when two
+// goroutines hit the same nanosecond, which broke concurrent backups under load.
+var tmpFileSeq atomic.Uint64
+
 func (r *sandboxFs) WriteFileMode(path string, data []byte, mode os.FileMode) error {
 	return r.execute(path, func(root *os.Root, relPath string) error {
 		dir := filepath.Dir(relPath)
@@ -633,7 +639,9 @@ func (r *sandboxFs) WriteFileMode(path string, data []byte, mode os.FileMode) er
 			}
 		}
 
-		tmpRelPath := fmt.Sprintf(".tmp-%d-%d", os.Getpid(), time.Now().UnixNano())
+		// pid+nano for human/cross-process readability; the atomic counter
+		// guarantees uniqueness across concurrent goroutines within this process.
+		tmpRelPath := fmt.Sprintf(".tmp-%d-%d-%d", os.Getpid(), time.Now().UnixNano(), tmpFileSeq.Add(1))
 
 		tmpFile, err := root.OpenFile(tmpRelPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
 		if err != nil {
