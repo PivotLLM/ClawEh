@@ -146,7 +146,7 @@ func TestSelectTail_NoiseCollapsed(t *testing.T) {
 // same payload are treated as noise and collapsed.
 func TestSelectTail_CronNoiseCollapsed(t *testing.T) {
 	wrap := func(ts, payload string) providers.Message {
-		return msg("user", tailCronPrefix+"2026-01-01 "+ts+":\n"+payload)
+		return msg("user", testCronPrefix+"2026-01-01 "+ts+":\n"+payload)
 	}
 	history := []providers.Message{
 		wrap("10:00", "run backup"),
@@ -157,7 +157,7 @@ func TestSelectTail_CronNoiseCollapsed(t *testing.T) {
 	got := selectTail(history, 10000, 0, estimateTokens)
 	cronCount := 0
 	for _, m := range got {
-		if strings.HasPrefix(m.Content, tailCronPrefix) {
+		if strings.HasPrefix(m.Content, testCronPrefix) {
 			cronCount++
 		}
 	}

@@ -10,6 +10,7 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/config"
 	"github.com/PivotLLM/ClawEh/pkg/constants"
 	"github.com/PivotLLM/ClawEh/pkg/cron"
+	"github.com/PivotLLM/ClawEh/pkg/cronmsg"
 	"github.com/PivotLLM/ClawEh/pkg/tools"
 	"github.com/PivotLLM/ClawEh/pkg/tools/shell"
 	"github.com/PivotLLM/ClawEh/pkg/utils"
@@ -312,20 +313,6 @@ func (t *CronTool) enableJob(args map[string]any, enable bool) *tools.ToolResult
 	return tools.SilentResult(fmt.Sprintf("Cron job '%s' %s", job.Name, status))
 }
 
-// cronPrefixedMessage returns msg prefixed with a cron metadata header indicating
-// the fire time so the LLM knows the message originated from a scheduled job. When
-// fingerprint is non-empty it is emitted FIRST as a leading "[<fp>] " marker so the
-// context-compaction layer can group repeated fires of the same job regardless of
-// the embedded (always-changing) timestamp.
-func cronPrefixedMessage(fingerprint string, fireTime time.Time, msg string) string {
-	ts := fireTime.Format("2006-01-02 15:04 MST")
-	body := fmt.Sprintf("The following message is from a cron job that fired at %s:\n\n%s", ts, msg)
-	if fingerprint == "" {
-		return body
-	}
-	return fmt.Sprintf("[%s] %s", fingerprint, body)
-}
-
 // ExecuteJob executes a cron job through the agent
 func (t *CronTool) ExecuteJob(ctx context.Context, job *cron.CronJob) string {
 	fireTime := time.Now()
@@ -390,7 +377,7 @@ func (t *CronTool) ExecuteJob(ctx context.Context, job *cron.CronJob) string {
 		sessionKey := fmt.Sprintf("cron-%s", job.ID)
 		jobChannel := channel
 		jobChatID := chatID
-		jobContent := cronPrefixedMessage(job.Fingerprint, fireTime, job.Payload.Message)
+		jobContent := cronmsg.Build(job.Fingerprint, fireTime, job.Payload.Message)
 		jobPeerKind := peerKind
 		go func() {
 			response, err := t.executor.ProcessDirectWithChannel(context.Background(), jobContent, sessionKey, jobChannel, jobChatID, jobPeerKind)
@@ -413,7 +400,7 @@ func (t *CronTool) ExecuteJob(ctx context.Context, job *cron.CronJob) string {
 			Channel:  channel,
 			SenderID: "cron",
 			ChatID:   chatID,
-			Content:  cronPrefixedMessage(job.Fingerprint, fireTime, job.Payload.Message),
+			Content:  cronmsg.Build(job.Fingerprint, fireTime, job.Payload.Message),
 		}
 		if chatID != "" && chatID != "direct" {
 			msg.Peer = bus.Peer{Kind: peerKind, ID: chatID}

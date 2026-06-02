@@ -1000,12 +1000,16 @@ func TestStoredMessage_SeqAssignment(t *testing.T) {
 	}
 }
 
+// testCronPrefix mirrors the cron-wrapper header for building noise-classifier
+// fixtures. The shared marker parser lives in pkg/cronmsg.
+const testCronPrefix = "The following message is from a cron job that fired at "
+
 func TestNoiseClassifier_CronNoise(t *testing.T) {
 	cache := newNoiseCache()
 
 	// First cron message with a given payload — not noise.
 	payload := "check disk space: 42% used"
-	content1 := cronWrapperPrefix + "2026-01-01T00:00:00Z:\n\n" + payload
+	content1 := testCronPrefix + "2026-01-01T00:00:00Z:\n\n" + payload
 	msg1 := StoredMessage{Seq: 1, Message: providers.Message{Role: "user", Content: content1}}
 	if isNoise(msg1, cache) {
 		t.Error("first cron message should not be noise")
@@ -1013,7 +1017,7 @@ func TestNoiseClassifier_CronNoise(t *testing.T) {
 	updateNoiseCache(msg1, cache)
 
 	// Same payload at a different timestamp — noise.
-	content2 := cronWrapperPrefix + "2026-01-01T01:00:00Z:\n\n" + payload
+	content2 := testCronPrefix + "2026-01-01T01:00:00Z:\n\n" + payload
 	msg2 := StoredMessage{Seq: 2, Message: providers.Message{Role: "user", Content: content2}}
 	if !isNoise(msg2, cache) {
 		t.Error("duplicate cron payload should be noise")
@@ -1021,7 +1025,7 @@ func TestNoiseClassifier_CronNoise(t *testing.T) {
 	updateNoiseCache(msg2, cache)
 
 	// Different payload — not noise.
-	content3 := cronWrapperPrefix + "2026-01-01T02:00:00Z:\n\n" + "check disk space: 80% used"
+	content3 := testCronPrefix + "2026-01-01T02:00:00Z:\n\n" + "check disk space: 80% used"
 	msg3 := StoredMessage{Seq: 3, Message: providers.Message{Role: "user", Content: content3}}
 	if isNoise(msg3, cache) {
 		t.Error("different cron payload should not be noise")
@@ -1138,50 +1142,6 @@ func TestTruncateHistory_ResetsTrackingFields(t *testing.T) {
 	}
 	if meta.CompressionCooling {
 		t.Error("CompressionCooling should be false after reset")
-	}
-}
-
-func TestExtractCronPayload(t *testing.T) {
-	tests := []struct {
-		name        string
-		content     string
-		wantPayload string
-		wantOk      bool
-	}{
-		{
-			name:        "valid cron message",
-			content:     cronWrapperPrefix + "2026-01-01T00:00:00Z:\n\ndo the thing",
-			wantPayload: "do the thing",
-			wantOk:      true,
-		},
-		{
-			name:    "not a cron message",
-			content: "just a regular message",
-			wantOk:  false,
-		},
-		{
-			name:    "cron prefix but no separator",
-			content: cronWrapperPrefix + "2026-01-01T00:00:00Z",
-			wantOk:  false,
-		},
-		{
-			name:        "cron with multiline payload",
-			content:     cronWrapperPrefix + "2026-01-01T00:00:00Z:\n\nline1\nline2\nline3",
-			wantPayload: "line1\nline2\nline3",
-			wantOk:      true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			payload, ok := extractCronPayload(tt.content)
-			if ok != tt.wantOk {
-				t.Errorf("ok = %v, want %v", ok, tt.wantOk)
-			}
-			if ok && payload != tt.wantPayload {
-				t.Errorf("payload = %q, want %q", payload, tt.wantPayload)
-			}
-		})
 	}
 }
 

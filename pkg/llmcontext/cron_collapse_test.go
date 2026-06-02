@@ -11,67 +11,10 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/providers"
 )
 
-// --- parseCronMarker tests ---
-
-func TestParseCronMarker(t *testing.T) {
-	const ts = "2026-05-31 09:40 MST"
-	// parseCronMarker returns the substring after the FIRST newline following the
-	// prefix line (matching the legacy tailCronPayload semantics), so use a single
-	// '\n' here to make the expected payload exact.
-	marked := "[3f9a1c0d] " + tailCronPrefix + ts + ":\nNo changes."
-	legacy := tailCronPrefix + ts + ":\nNo changes."
-
-	tests := []struct {
-		name    string
-		content string
-		wantFP  string
-		wantPay string
-		wantOK  bool
-	}{
-		{"marked", marked, "3f9a1c0d", "No changes.", true},
-		{"legacy unmarked", legacy, "", "No changes.", true},
-		{"non-cron", "just a normal message", "", "", false},
-		{"non-cron with brackets", "[hello] world", "", "", false},
-		{"malformed bracket non-hex", "[zzzz] " + tailCronPrefix + ts + ":\n\nx", "", "", false},
-		{"bracket but no space", "[3f9a]" + tailCronPrefix + ts + ":\n\nx", "", "", false},
-		{"marker then non-cron", "[3f9a1c0d] not a cron message", "", "", false},
-		{"cron prefix no newline", tailCronPrefix + ts, "", "", true},
-		{"two newlines keeps trailing", "[abc] " + tailCronPrefix + ts + ":\n\nhi", "abc", "\nhi", true},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			fp, pay, ok := parseCronMarker(tc.content)
-			if ok != tc.wantOK {
-				t.Fatalf("ok = %v, want %v", ok, tc.wantOK)
-			}
-			if !ok {
-				return
-			}
-			if fp != tc.wantFP {
-				t.Errorf("fingerprint = %q, want %q", fp, tc.wantFP)
-			}
-			if pay != tc.wantPay {
-				t.Errorf("payload = %q, want %q", pay, tc.wantPay)
-			}
-		})
-	}
-}
-
-func TestCronCollapseKey(t *testing.T) {
-	const ts = "2026-05-31 09:40 MST"
-	// marked: key is the fingerprint
-	if k, ok := cronCollapseKey("[abc123] " + tailCronPrefix + ts + ":\npayload"); !ok || k != "abc123" {
-		t.Errorf("marked key = %q ok=%v, want abc123 true", k, ok)
-	}
-	// legacy: key is the payload
-	if k, ok := cronCollapseKey(tailCronPrefix + ts + ":\npayload"); !ok || k != "payload" {
-		t.Errorf("legacy key = %q ok=%v, want payload true", k, ok)
-	}
-	// non-cron
-	if _, ok := cronCollapseKey("nope"); ok {
-		t.Error("non-cron content reported as cron")
-	}
-}
+// testCronPrefix mirrors the cron-wrapper header for building test fixtures.
+// The shared marker-parsing implementation and its unit tests live in
+// pkg/cronmsg; these tests exercise the collapse policies layered on top of it.
+const testCronPrefix = "The following message is from a cron job that fired at "
 
 // --- collapseRepetitiveRuns (cron-aware) tests ---
 
@@ -80,7 +23,7 @@ func storedMsg(seq int64, role, content string) memory.StoredMessage {
 }
 
 func cronFire(seq int64, fp, ts, payload string) memory.StoredMessage {
-	content := tailCronPrefix + ts + ":\n\n" + payload
+	content := testCronPrefix + ts + ":\n\n" + payload
 	if fp != "" {
 		content = "[" + fp + "] " + content
 	}

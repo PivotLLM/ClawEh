@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/PivotLLM/ClawEh/pkg/cronmsg"
 	"github.com/PivotLLM/ClawEh/pkg/logger"
 	"github.com/PivotLLM/ClawEh/pkg/memory"
 	"github.com/PivotLLM/ClawEh/pkg/providers"
@@ -531,12 +532,12 @@ func collapseRepetitiveRuns(stored []memory.StoredMessage) []memory.StoredMessag
 // and true. If no qualifying run of >= repetitiveRunThreshold fires begins at
 // start, ok is false.
 func collapseCronRun(stored []memory.StoredMessage, start int) (memory.StoredMessage, int, bool) {
-	fp, _, isCron := parseCronMarker(stored[start].Content)
+	fp, _, isCron := cronmsg.Parse(stored[start].Content)
 	if stored[start].Role != "user" || !isCron {
 		return memory.StoredMessage{}, start, false
 	}
 
-	key, _ := cronCollapseKey(stored[start].Content)
+	key, _ := cronmsg.CollapseKey(stored[start].Content)
 	var reply string
 	haveReply := false
 	count := 0
@@ -549,7 +550,7 @@ func collapseCronRun(stored []memory.StoredMessage, start int) (memory.StoredMes
 		if userMsg.Role != "user" {
 			break
 		}
-		k, ok := cronCollapseKey(userMsg.Content)
+		k, ok := cronmsg.CollapseKey(userMsg.Content)
 		if !ok || k != key {
 			break
 		}
