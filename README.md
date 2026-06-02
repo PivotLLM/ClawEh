@@ -251,7 +251,9 @@ Each agent session maintains a persistent SQLite archive of every message it sen
 
 3. **Summarisation** — the oldest messages above a retained tail are sent to a summarisation model (defaults to the agent's primary model). The summary is structured JSON covering topics, decisions, key moments, and a retrievable history index. The rendered summary is injected at the top of the context window on every subsequent turn, and begins with the date range and message numbers it covers so the LLM can orient itself after compaction.
 
-4. **Retrieval** — the full archive is always available via the session tools (see [Session tools](#session-tools) below). The LLM can query any archived message by sequence number or full-text search, so nothing is permanently lost.
+4. **Retrieval** — the archive is available via the session tools (see [Session tools](#session-tools) below). The LLM can query any archived message by sequence number or full-text search, and browse its own past summaries, so nothing within the retention window is lost. Clearing a conversation (`/clear`) **preserves** this long-term memory — it resets only the active window, not the archive or summary log. A hard wipe is done by deleting the session's `.archive.db` manually.
+
+5. **Retention** — by default the archive and summaries grow without bound (nothing is pruned). Optionally bound them by age or count (see [Configuration](#configuration)); pruning runs on archive open and after each compaction.
 
 ### Configuration
 
@@ -262,10 +264,14 @@ Context management options live in the agent config block (or `agents.defaults`)
 | `context_window` | `128000` | Model context window in tokens. Used to compute compression thresholds. |
 | `compress_chars_per_token` | `4.0` | Characters-per-token divisor for the token estimate. Lower values estimate more tokens (more conservative); tune toward `3.5` for code/JSON-heavy sessions. |
 | `compress_token_safety_margin` | `1.0` | Multiplier applied to every token estimate so it errs high, triggering compression earlier. `1.1` inflates the estimate by 10%. |
-| `archive_message_count` | `5000` | Maximum number of messages to retain in the retrievable archive per session. |
-| `archive_days` | `0` (unlimited) | Limit archive retrieval to messages within the last *n* days. |
+| `archive_message_count` | `0` (unlimited) | Keep at most this many recent messages per session — also the retrieval/citation window. Oldest beyond *n* are pruned. `0` = unlimited; falls back to `archive_days`. |
+| `archive_days` | `0` (unlimited) | Permanently delete archived messages older than *n* days. `0` = no age limit. |
+| `summary_max_count` | `0` (unlimited) | Keep at most this many recent context summaries. `0` = unlimited; falls back to `summary_retention_days`. |
+| `summary_retention_days` | `0` (unlimited) | Permanently delete context summaries older than *n* days. `0` = no age limit. |
 | `archive_content_max_bytes` | `4096` | Maximum per-message content bytes stored in the archive; longer content is truncated (the active context still saw the full text). |
 | `compress_model` | agent's primary model | Model used for summarisation. Can be a cheaper or faster model. |
+
+> The code default for all four retention knobs is `0` (unlimited). A **newly generated** config file ships `archive_days: 365` and `summary_retention_days: 3650`; existing configs are left untouched on upgrade. A count of `0` disables the count cap and defers to the day limit.
 
 Example (per-agent override):
 
@@ -284,14 +290,16 @@ Example (per-agent override):
 
 ### Session tools
 
-The LLM has access to four session management tools:
+The LLM has access to six session management tools:
 
 | Tool | Description |
 |---|---|
-| `get_session_info` | Returns session metadata: key, start time, channel, context message count, archive bounds, current summary coverage, and last compaction time. Use to orient after a context compression. |
-| `compact_session` | Triggers an immediate context compaction. The LLM can call this after completing a major task to free context window space before starting the next one. |
-| `get_session_messages` | Returns archived messages in a sequence range. Assistant messages include paired tool call inputs and results. Each message carries a timestamp and sequence number. |
-| `search_session_messages` | Full-text search over the archived message history. Returns matching messages with sequence numbers and timestamps. |
+| `session_info` | Returns session metadata: key, start time, channel, context message count, archive bounds, current summary coverage, and last compaction time. Use to orient after a context compression. |
+| `session_compact` | Triggers an immediate context compaction. The LLM can call this after completing a major task to free context window space before starting the next one. |
+| `session_messages` | Returns archived messages in a sequence range. Assistant messages include paired tool call inputs and results. Each message carries a timestamp and sequence number. |
+| `session_search` | Full-text search over the archived message history. Returns matching messages with sequence numbers and timestamps. |
+| `session_summary_list` | Lists recorded context-summary checkpoints (id, covered message range, dates, model) so the LLM can review what it previously summarised. |
+| `session_summary_get` | Retrieves the full text of one context-summary checkpoint by id. |
 
 These tools are available to the LLM in both access paths described in the next section.
 
@@ -309,19 +317,19 @@ There are two ways an LLM running inside claw can call tools, depending on the p
 
 For providers that use the direct LLM API (`anthropic`, `openai`, `openai-compat`, `gemini`), tool calls are returned as structured blocks in the API response (`tool_use` / `function_call`). The agent loop intercepts these, executes the tool, and feeds the result back to the LLM. No `session_token` is required — the session context is implicit in the agent loop.
 
-All tools are available on this path, including `compact_session`, `get_session_info`, `get_session_messages`, and `search_session_messages`.
+All tools are available on this path, including the session tools (`session_compact`, `session_info`, `session_messages`, `session_search`, `session_summary_list`, `session_summary_get`).
 
 **Path 2 — MCP HTTP server (CLI providers)**
 
 For CLI providers (`claude-cli`, `codex-cli`, `gemini-cli`), the CLI subprocess has no access to claw's internal session state. Tools are called via the MCP HTTP server at `http://127.0.0.1:5911/mcp`. Every tool call on this path carries a `session_token` parameter — a short-lived `SST<64hex>` token injected into the agent's system prompt at session start. The MCP server resolves this token to the correct agent and session, then executes the tool.
 
-For session-scoped tools, the MCP server uses the session token to inject the session key into the execution context. All four session tools implement the `SessionScoped` interface, so the dispatcher injects the key automatically — no hardcoded list to maintain.
+For session-scoped tools, the MCP server uses the session token to inject the session key into the execution context. The session tools implement the `SessionScoped` interface, so the dispatcher injects the key automatically — no hardcoded list to maintain.
 
 | | Direct API providers | CLI providers |
 |---|---|---|
 | Tool call mechanism | API response (`tool_use` blocks) | MCP HTTP at `:5911/mcp` |
 | Session context | Implicit (agent loop) | `session_token` parameter |
-| Session tools available | All four | All four |
+| Session tools available | All six | All six |
 
 > **Important:** CLI providers (`claude-cli`, `codex-cli`, `gemini-cli`) no longer receive tool descriptions in their prompt. Each invocation runs as a single agentic turn, and the CLI reaches claw's tools only via MCP. **You must register claw as an MCP server in each CLI you intend to use** — see [Client configuration](#client-configuration) below. Without that step, the CLI will still answer prompts, but it will have no access to claw's filesystem, web, or other host-side tools.
 
