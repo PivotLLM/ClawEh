@@ -195,15 +195,7 @@ func NewAgentInstance(
 	// Helper: resolve per-agent pointer or defaults int value.
 	// For percent fields: 0 = not configured (use llmcontext default).
 	// For count fields: 0 = explicitly disabled (valid to pass).
-	resolveIntOpt := func(agentPtr *int, defaultsVal int) (int, bool) {
-		if agentPtr != nil {
-			return *agentPtr, true
-		}
-		if defaultsVal != 0 {
-			return defaultsVal, true
-		}
-		return 0, false
-	}
+	resolveIntOpt := resolveAgentIntOpt
 
 	// resolveFloatOpt mirrors resolveIntOpt for float-valued knobs. 0 = not
 	// configured (use the llmcontext default).
@@ -542,4 +534,20 @@ func expandHome(path string) string {
 		return home
 	}
 	return path
+}
+
+// resolveAgentIntOpt resolves a per-agent integer config knob against the
+// agents.defaults value. A non-nil per-agent pointer always wins (even when it
+// points to 0, an explicit "disabled"); otherwise a non-zero default applies;
+// otherwise the knob is unset (ok=false) and the llmcontext package default is
+// used. Shared by every int-valued compress/retention option wired in
+// initialization.
+func resolveAgentIntOpt(agentPtr *int, defaultsVal int) (int, bool) {
+	if agentPtr != nil {
+		return *agentPtr, true
+	}
+	if defaultsVal != 0 {
+		return defaultsVal, true
+	}
+	return 0, false
 }

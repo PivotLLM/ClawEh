@@ -4,12 +4,74 @@
 package llmcontext
 
 import (
+	"context"
 	"testing"
 	"time"
 
 	"github.com/PivotLLM/ClawEh/pkg/memory"
 	"github.com/PivotLLM/ClawEh/pkg/providers"
 )
+
+// TestPruneArchive_TriggeredOnArchiveOpen verifies the retention prune is WIRED
+// into getOrOpenArchive: a fresh manager opening an existing over-cap archive
+// prunes it on open (not just when pruneArchive is called directly).
+func TestPruneArchive_TriggeredOnArchiveOpen(t *testing.T) {
+	dir := t.TempDir()
+	const key = "open-prune"
+
+	// Populate an archive with 6 messages (no cap), then close it.
+	mgr1 := newResetManager(newResetStore(key), key, WithArchiveDir(dir))
+	for i := int64(1); i <= 6; i++ {
+		mgr1.archiveAppend(i, providers.Message{Role: "user", Content: "m"})
+	}
+	if a := mgr1.getOrOpenArchive(); a != nil {
+		_ = a.Close()
+	}
+
+	// A fresh manager with a count cap of 3 opens the existing archive; the
+	// open path must prune it down to the newest 3.
+	mgr2 := newResetManager(newResetStore(key), key, WithArchiveDir(dir), WithArchiveMessageCount(3))
+	minSeq, maxSeq, err := mgr2.getOrOpenArchive().Bounds()
+	if err != nil {
+		t.Fatalf("Bounds: %v", err)
+	}
+	if minSeq != 4 || maxSeq != 6 {
+		t.Fatalf("after open bounds = [%d,%d], want [4,6] — pruning not wired into getOrOpenArchive", minSeq, maxSeq)
+	}
+}
+
+// TestPruneArchive_TriggeredByCompaction verifies the retention prune is WIRED
+// into persistStoredResult: a real compaction prunes the archive to the cap.
+func TestPruneArchive_TriggeredByCompaction(t *testing.T) {
+	dir := t.TempDir()
+	store := &compressTestStore{history: makeConversation(10, 200)}
+	// The summary must cite a seq inside the archive window [4,6] (count=3 over
+	// archived seqs 1..6) so it survives StripOutOfRangeSeqRefs and the
+	// compaction actually persists — only then does the wired prune run.
+	const summaryInWindow = `{"version":2,"state":{"goals":[{"text":"g","refs":[{"seq_start":6,"seq_end":6}]}]},"covered_seq_start":0,"covered_seq_end":0}`
+	llm := &mockLLM{responses: []string{summaryInWindow}}
+	mgr := newCompressManager(store, []LLMClient{llm}, WithArchiveDir(dir), WithArchiveMessageCount(3))
+	mgr.msgCount = len(store.history)
+
+	for i := int64(1); i <= 6; i++ {
+		mgr.archiveAppend(i, providers.Message{Role: "user", Content: "m"})
+	}
+
+	if err := mgr.Compact(context.Background()); err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+	if store.summary == "" {
+		t.Fatal("precondition: compaction did not persist a summary")
+	}
+
+	minSeq, maxSeq, err := mgr.getOrOpenArchive().Bounds()
+	if err != nil {
+		t.Fatalf("Bounds: %v", err)
+	}
+	if minSeq != 4 || maxSeq != 6 {
+		t.Fatalf("after compaction bounds = [%d,%d], want [4,6] — pruning not wired into persistStoredResult", minSeq, maxSeq)
+	}
+}
 
 // TestPruneArchive_HonorsMessageCount verifies pruneArchive keeps the newest N
 // messages when archiveMessageCount > 0.
