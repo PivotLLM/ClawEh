@@ -1,12 +1,15 @@
 package memory
 
 import (
+	"bufio"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"log"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -37,6 +40,17 @@ CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
 CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
     INSERT INTO messages_fts(rowid, text) VALUES (new.seq, new.text);
 END;
+CREATE TABLE IF NOT EXISTS summaries (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    generated_at      INTEGER NOT NULL,
+    model             TEXT,
+    profile           TEXT,
+    source_seq_start  INTEGER,
+    source_seq_end    INTEGER,
+    covered_seq_start INTEGER,
+    covered_seq_end   INTEGER,
+    summary           TEXT    NOT NULL
+);
 `
 
 // SearchResult holds one result from an ArchiveStore.Search call.
@@ -45,6 +59,33 @@ type SearchResult struct {
 	Seq       int64
 	CreatedAt time.Time
 	Message   providers.Message
+}
+
+// SummaryRecord is the full stored representation of a context-summary
+// checkpoint, including the marshaled summary body.
+type SummaryRecord struct {
+	ID              int64
+	GeneratedAt     time.Time
+	Model           string
+	Profile         string
+	SourceSeqStart  int64
+	SourceSeqEnd    int64
+	CoveredSeqStart int64
+	CoveredSeqEnd   int64
+	Summary         string
+}
+
+// SummaryMeta is the metadata-only view of a stored summary (no body). Returned
+// by ListSummaries so callers can enumerate checkpoints cheaply.
+type SummaryMeta struct {
+	ID              int64
+	GeneratedAt     time.Time
+	Model           string
+	Profile         string
+	SourceSeqStart  int64
+	SourceSeqEnd    int64
+	CoveredSeqStart int64
+	CoveredSeqEnd   int64
 }
 
 // ArchiveStore is an append-only SQLite store for session message archives.
@@ -115,7 +156,98 @@ func Open(path string) (*ArchiveStore, error) {
 		}
 	}
 
-	return &ArchiveStore{db: db, path: path}, nil
+	store := &ArchiveStore{db: db, path: path}
+
+	// One-time import of legacy <base>.summaries.jsonl checkpoints into the
+	// summaries table. Best-effort: a failure logs and is ignored so it never
+	// blocks archive open.
+	store.importLegacySummaries()
+
+	return store, nil
+}
+
+// legacySummariesPath derives the sibling <base>.summaries.jsonl path from the
+// archive's own .archive.db path. Returns "" if the path does not end in the
+// expected suffix.
+func (a *ArchiveStore) legacySummariesPath() string {
+	const suffix = ".archive.db"
+	if !strings.HasSuffix(a.path, suffix) {
+		return ""
+	}
+	base := strings.TrimSuffix(a.path, suffix)
+	return base + ".summaries.jsonl"
+}
+
+// importLegacySummaries performs a one-time import of the legacy
+// <base>.summaries.jsonl checkpoint log into the summaries table. It runs only
+// when the summaries table is empty (the idempotency guard) and the legacy file
+// exists. Each JSONL line is parsed as a SummaryCheckpoint; the hash fields are
+// dropped and profile is set to "" (the legacy log carried no profile column).
+// Order is preserved. Any failure is logged and otherwise ignored so it never
+// breaks archive open.
+func (a *ArchiveStore) importLegacySummaries() {
+	if a.unavailable || a.db == nil {
+		return
+	}
+
+	// Idempotency guard: only import when the table is empty.
+	var count int
+	if err := a.db.QueryRow(`SELECT COUNT(*) FROM summaries`).Scan(&count); err != nil {
+		log.Printf("memory: archive summaries count %q: %v", a.path, err)
+		return
+	}
+	if count > 0 {
+		return
+	}
+
+	legacyPath := a.legacySummariesPath()
+	if legacyPath == "" {
+		return
+	}
+	f, err := os.Open(legacyPath)
+	if os.IsNotExist(err) {
+		return
+	}
+	if err != nil {
+		log.Printf("memory: archive legacy summaries open %q: %v", legacyPath, err)
+		return
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
+	imported := 0
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+		var cp SummaryCheckpoint
+		if err := json.Unmarshal(line, &cp); err != nil {
+			log.Printf("memory: archive legacy summaries skip corrupt line in %q: %v", legacyPath, err)
+			continue
+		}
+		if _, err := a.AppendSummary(SummaryRecord{
+			GeneratedAt:     cp.GeneratedAt,
+			Model:           cp.Model,
+			Profile:         "",
+			SourceSeqStart:  cp.SourceSeqStart,
+			SourceSeqEnd:    cp.SourceSeqEnd,
+			CoveredSeqStart: cp.CoveredSeqStart,
+			CoveredSeqEnd:   cp.CoveredSeqEnd,
+			Summary:         cp.Summary,
+		}); err != nil {
+			log.Printf("memory: archive legacy summaries import %q: %v", legacyPath, err)
+			return
+		}
+		imported++
+	}
+	if err := scanner.Err(); err != nil {
+		log.Printf("memory: archive legacy summaries scan %q: %v", legacyPath, err)
+	}
+	if imported > 0 {
+		log.Printf("memory: archive imported %d legacy summary checkpoint(s) from %q", imported, filepath.Base(legacyPath))
+	}
 }
 
 // Append writes one message to the archive.
@@ -142,6 +274,123 @@ func (a *ArchiveStore) Append(seq int64, msg providers.Message, createdAt time.T
 		seq, msg.Role, string(payload), text, createdAt.Unix(),
 	)
 	return err
+}
+
+// AppendSummary inserts one context-summary checkpoint and returns its new id.
+// generated_at is stored as a unix timestamp, matching messages.created_at.
+// Acquires the write mutex; no-op (returns 0) if unavailable.
+func (a *ArchiveStore) AppendSummary(rec SummaryRecord) (int64, error) {
+	if a.unavailable || a.db == nil {
+		return 0, nil
+	}
+
+	genAt := rec.GeneratedAt
+	if genAt.IsZero() {
+		genAt = time.Now()
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	res, err := a.db.Exec(
+		`INSERT INTO summaries
+		    (generated_at, model, profile, source_seq_start, source_seq_end, covered_seq_start, covered_seq_end, summary)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		genAt.Unix(), rec.Model, rec.Profile,
+		rec.SourceSeqStart, rec.SourceSeqEnd,
+		rec.CoveredSeqStart, rec.CoveredSeqEnd, rec.Summary,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+// ListSummaries returns metadata for all stored summaries (no body), ordered by
+// id ascending. Uses a read-only connection opened and closed per call so it
+// works against a read-only-opened archive.
+// Returns (nil, ErrArchiveUnavailable) if the store is unavailable.
+func (a *ArchiveStore) ListSummaries() ([]SummaryMeta, error) {
+	if a.unavailable {
+		return nil, ErrArchiveUnavailable
+	}
+
+	db, err := sql.Open("sqlite", "file:"+a.path+"?mode=ro")
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+
+	rows, err := db.QueryContext(context.Background(),
+		`SELECT id, generated_at, model, profile, source_seq_start, source_seq_end, covered_seq_start, covered_seq_end
+		 FROM summaries ORDER BY id ASC`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var metas []SummaryMeta
+	for rows.Next() {
+		var (
+			m       SummaryMeta
+			genUnix int64
+			model   sql.NullString
+			profile sql.NullString
+		)
+		if err := rows.Scan(&m.ID, &genUnix, &model, &profile,
+			&m.SourceSeqStart, &m.SourceSeqEnd, &m.CoveredSeqStart, &m.CoveredSeqEnd); err != nil {
+			return nil, err
+		}
+		m.GeneratedAt = time.Unix(genUnix, 0).UTC()
+		m.Model = model.String
+		m.Profile = profile.String
+		metas = append(metas, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return metas, nil
+}
+
+// GetSummary returns the full summary record for id, including the body.
+// ok is false if no row exists with that id. Uses a read-only connection opened
+// and closed per call so it works against a read-only-opened archive.
+// Returns (SummaryRecord{}, false, ErrArchiveUnavailable) if the store is unavailable.
+func (a *ArchiveStore) GetSummary(id int64) (SummaryRecord, bool, error) {
+	if a.unavailable {
+		return SummaryRecord{}, false, ErrArchiveUnavailable
+	}
+
+	db, err := sql.Open("sqlite", "file:"+a.path+"?mode=ro")
+	if err != nil {
+		return SummaryRecord{}, false, err
+	}
+	defer db.Close()
+
+	var (
+		rec     SummaryRecord
+		genUnix int64
+		model   sql.NullString
+		profile sql.NullString
+	)
+	row := db.QueryRowContext(context.Background(),
+		`SELECT id, generated_at, model, profile, source_seq_start, source_seq_end, covered_seq_start, covered_seq_end, summary
+		 FROM summaries WHERE id = ?`,
+		id,
+	)
+	err = row.Scan(&rec.ID, &genUnix, &model, &profile,
+		&rec.SourceSeqStart, &rec.SourceSeqEnd, &rec.CoveredSeqStart, &rec.CoveredSeqEnd, &rec.Summary)
+	if errors.Is(err, sql.ErrNoRows) {
+		return SummaryRecord{}, false, nil
+	}
+	if err != nil {
+		return SummaryRecord{}, false, err
+	}
+	rec.GeneratedAt = time.Unix(genUnix, 0).UTC()
+	rec.Model = model.String
+	rec.Profile = profile.String
+	return rec, true, nil
 }
 
 // MaxSeq returns the current maximum sequence number using the write connection.
