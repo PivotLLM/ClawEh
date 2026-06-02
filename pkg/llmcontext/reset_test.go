@@ -112,9 +112,9 @@ func TestReset_ClearsMsgCount(t *testing.T) {
 	}
 }
 
-// TestReset_DeletesArchiveFile verifies that after Reset, the archive .db file
-// no longer exists on disk.
-func TestReset_DeletesArchiveFile(t *testing.T) {
+// TestReset_PreservesArchiveFile verifies that Reset preserves the archive .db
+// (long-term memory) — clearing the conversation must not wipe the archive.
+func TestReset_PreservesArchiveFile(t *testing.T) {
 	const key = "test-session"
 	archiveDir := t.TempDir()
 	store := newResetStore(key)
@@ -134,22 +134,29 @@ func TestReset_DeletesArchiveFile(t *testing.T) {
 		t.Fatalf("Reset returned error: %v", err)
 	}
 
-	if _, err := os.Stat(archivePath); !os.IsNotExist(err) {
-		t.Errorf("expected archive file to be deleted after Reset; Stat error: %v", err)
+	// The archive file must still exist (long-term memory preserved).
+	if _, err := os.Stat(archivePath); os.IsNotExist(err) {
+		t.Errorf("expected archive file to be PRESERVED after Reset, but it was deleted")
 	}
 
-	// archive reference must be nil.
-	mgr.archiveMu.Lock()
-	archiveRef := mgr.archive
-	mgr.archiveMu.Unlock()
-	if archiveRef != nil {
-		t.Error("expected archive reference to be nil after Reset")
+	// The archived row must still be retrievable.
+	archive := mgr.getOrOpenArchive()
+	if archive == nil {
+		t.Fatal("expected archive to remain available after Reset")
+	}
+	minSeq, maxSeq, err := archive.Bounds()
+	if err != nil {
+		t.Fatalf("Bounds() returned error: %v", err)
+	}
+	if minSeq != 1 || maxSeq != 1 {
+		t.Errorf("expected preserved bounds [1,1] after Reset; got [%d,%d]", minSeq, maxSeq)
 	}
 }
 
-// TestReset_ArchiveStartsFreshAfterNewMessages verifies that after Reset, a
-// subsequent archive write creates a fresh archive starting from seq 1.
-func TestReset_ArchiveStartsFreshAfterNewMessages(t *testing.T) {
+// TestReset_ArchiveContinuesAfterNewMessages verifies that after Reset, the
+// archive is preserved and a subsequent write is appended alongside the old
+// rows (memory continues; it does not start fresh).
+func TestReset_ArchiveContinuesAfterNewMessages(t *testing.T) {
 	const key = "test-session"
 	archiveDir := t.TempDir()
 	store := newResetStore(key)
@@ -161,30 +168,27 @@ func TestReset_ArchiveStartsFreshAfterNewMessages(t *testing.T) {
 		mgr.archiveAppend(int64(i+1), providers.Message{Role: "user", Content: content})
 	}
 
-	// Reset wipes the archive.
+	// Reset preserves the archive.
 	if err := mgr.Reset(context.Background()); err != nil {
 		t.Fatalf("Reset returned error: %v", err)
 	}
 
-	// Write a new message. Reset deletes the archive file, so a write keyed at
-	// seq 1 yields bounds of exactly [1, 1] on the fresh archive.
-	mgr.archiveAppend(1, providers.Message{Role: "user", Content: "fresh start"})
+	// A new message continues under the next memory seq; the old rows remain.
+	mgr.archiveAppend(4, providers.Message{Role: "user", Content: "after clear"})
 
-	// Verify the archive is available and bounds start at seq 1.
 	archive := mgr.getOrOpenArchive()
 	if archive == nil {
-		t.Fatal("expected archive to be re-opened after Reset + new write")
+		t.Fatal("expected archive to remain available after Reset + new write")
 	}
-
 	minSeq, maxSeq, err := archive.Bounds()
 	if err != nil {
 		t.Fatalf("Bounds() returned error: %v", err)
 	}
 	if minSeq != 1 {
-		t.Errorf("expected minSeq=1 after fresh start; got %d", minSeq)
+		t.Errorf("expected oldest preserved seq=1 after clear; got %d", minSeq)
 	}
-	if maxSeq != 1 {
-		t.Errorf("expected maxSeq=1 after single write; got %d", maxSeq)
+	if maxSeq != 4 {
+		t.Errorf("expected newest seq=4 after continued write; got %d", maxSeq)
 	}
 }
 
