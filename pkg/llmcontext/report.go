@@ -96,9 +96,9 @@ func formatDateRange(from, to time.Time) string {
 		return ""
 	}
 	if from.Year() == to.Year() && from.YearDay() == to.YearDay() {
-		return from.Format("Jan 2")
+		return from.Format("Jan 2, 2006")
 	}
-	return from.Format("Jan 2") + "–" + to.Format("Jan 2")
+	return from.Format("Jan 2, 2006") + " – " + to.Format("Jan 2, 2006")
 }
 
 // compactionRecorder accumulates per-invocation attempts during a compaction
