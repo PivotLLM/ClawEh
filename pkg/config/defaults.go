@@ -503,23 +503,11 @@ func DefaultConfig() *Config {
 			AutoEnable:   true,
 			Listen:       "127.0.0.1:5911",
 			EndpointPath: "/mcp",
-			Tools: []string{
-				"files_read",
-				"files_write",
-				"files_edit",
-				"files_append",
-				"files_copy",
-				"files_list",
-				"web_fetch",
-				"web_search",
-				"msg_send_file",
-				"session_messages",
-				"session_search",
-				"session_compact",
-				"session_info",
-				"session_summary_list",
-				"session_summary_get",
-			},
+			// Tools is intentionally left unset: when empty, the MCP host exposes
+			// the DefaultEnabled tool set (same source as the per-agent default
+			// allowlist), so marking a tool DefaultEnabled exposes it everywhere.
+			// Set an explicit list only to expose a narrower subset.
+			Tools: nil,
 		},
 		ConfigReloadIntervalSeconds: global.DefaultConfigReloadIntervalSeconds,
 	}

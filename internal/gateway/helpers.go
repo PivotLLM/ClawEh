@@ -144,21 +144,9 @@ func gatewayCmd(debug bool) error {
 
 	registerToolProviders()
 
-	// Build default agent tool allowlist from provider descriptors and static tools.
-	var defaultTools []string
-	for _, p := range tools.GetProviders() {
-		for _, d := range p.Describe() {
-			if d.DefaultEnabled {
-				defaultTools = append(defaultTools, d.Name)
-			}
-		}
-	}
-	for _, d := range tools.StaticToolDescriptors {
-		if d.DefaultEnabled {
-			defaultTools = append(defaultTools, d.Name)
-		}
-	}
-	config.SetDefaultAgentTools(defaultTools)
+	// Default per-agent allowlist = every DefaultEnabled tool (single source of
+	// truth; the MCP-host default below uses the same set).
+	config.SetDefaultAgentTools(tools.DefaultEnabledToolNames())
 
 	dispatcher := providers.NewProviderDispatcher(cfg)
 	msgBus := bus.NewMessageBus()
@@ -324,6 +312,19 @@ func setupAndStartServices(
 	return services, nil
 }
 
+// mcpHostAllowlist resolves the tool allowlist the MCP host should expose. An
+// explicit cfg.MCPHost.Tools wins; otherwise (unset/empty) it defaults to the
+// DefaultEnabled set — the same source as the per-agent default allowlist — so a
+// tool marked DefaultEnabled is exposed over MCP automatically, with no separate
+// hand-maintained list. To expose NO tools, disable mcp_host rather than passing
+// an empty list.
+func mcpHostAllowlist(cfg *config.Config) []string {
+	if len(cfg.MCPHost.Tools) > 0 {
+		return cfg.MCPHost.Tools
+	}
+	return tools.DefaultEnabledToolNames()
+}
+
 // startMCPServer starts the MCP server if enabled and wires it into services
 // and the agent loop. Called on both initial startup and config reload.
 func startMCPServer(cfg *config.Config, agentLoop *agent.AgentLoop, msgBus *bus.MessageBus, services *gatewayServices) error {
@@ -354,7 +355,7 @@ func startMCPServer(cfg *config.Config, agentLoop *agent.AgentLoop, msgBus *bus.
 		mcpserver.WithAgentWorkspaces(agentWorkspaces),
 		mcpserver.WithListen(cfg.MCPHost.Listen),
 		mcpserver.WithEndpointPath(cfg.MCPHost.EndpointPath),
-		mcpserver.WithAllowlist(cfg.MCPHost.Tools),
+		mcpserver.WithAllowlist(mcpHostAllowlist(cfg)),
 		mcpserver.WithMessageBus(msgBus),
 	)
 	if err != nil {
