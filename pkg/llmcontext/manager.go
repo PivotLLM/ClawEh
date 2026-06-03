@@ -736,6 +736,14 @@ func (m *Manager) Compact(ctx context.Context) error {
 	return err
 }
 
+// RenderedSummary returns the current session summary rendered as Markdown
+// (the same block Build() injects into the system prompt), or "" when there is
+// no summary. Used by session_compact to show the agent what was just preserved.
+func (m *Manager) RenderedSummary() string {
+	archiveMin, archiveMax := m.archiveWindow()
+	return renderSummaryFromRaw(m.store.GetSummary(m.sessionKey), archiveMin, archiveMax)
+}
+
 // LastCompactionReport returns the report produced by the most recent
 // compaction pass, or nil if none has run on this manager.
 func (m *Manager) LastCompactionReport() *CompactionReport {

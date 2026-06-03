@@ -46,6 +46,7 @@ func (m *trackingContextManager) Build(_ context.Context) ([]providers.Message, 
 }
 func (m *trackingContextManager) Compact(_ context.Context) error                    { return nil }
 func (m *trackingContextManager) LastCompactionReport() *llmcontext.CompactionReport { return nil }
+func (m *trackingContextManager) RenderedSummary() string                            { return "" }
 func (m *trackingContextManager) ForceCompress(_ context.Context) error              { return nil }
 func (m *trackingContextManager) Stats() llmcontext.ContextStats                     { return llmcontext.ContextStats{} }
 func (m *trackingContextManager) Reset(_ context.Context) error                      { return nil }

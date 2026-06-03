@@ -553,8 +553,9 @@ func (al *AgentLoop) registerRuntimeTools(
 			return target.Candidates, true
 		}
 
-		// Build compact closure. Returns the compaction report text alongside the error.
-		compactFn := func(ctx context.Context, sessionKey string) (string, error) {
+		// Build compact closure. Returns the compaction report and the resulting
+		// rendered summary alongside the error.
+		compactFn := func(ctx context.Context, sessionKey string) (string, string, error) {
 			ctx = providers.WithAgentID(ctx, currentAgent.ID)
 			cm, release := al.getContextManager(currentAgent, sessionKey)
 			defer release()
@@ -563,7 +564,7 @@ func (al *AgentLoop) registerRuntimeTools(
 			if r := cm.LastCompactionReport(); r != nil {
 				report = r.String()
 			}
-			return report, err
+			return report, cm.RenderedSummary(), err
 		}
 
 		// Build session info closure.
