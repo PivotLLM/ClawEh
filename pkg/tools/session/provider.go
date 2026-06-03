@@ -29,6 +29,10 @@ func (p sessionProvider) Describe() []tools.ToolDescriptor {
 		{Name: "session_info", Description: "Return archive bounds, message count, and summary coverage.", Category: "context", ConfigKey: "session_info", DefaultEnabled: true},
 		{Name: "session_summary_list", Description: "List recorded context-summary checkpoints for the current session.", Category: "context", ConfigKey: "session_summary_list", DefaultEnabled: true},
 		{Name: "session_summary_get", Description: "Retrieve the full text of one context-summary checkpoint by id.", Category: "context", ConfigKey: "session_summary_get", DefaultEnabled: true},
+		// Off by default: clears the active conversation (archive preserved) and
+		// restarts the turn with an optional self-handoff. Enable only for agents
+		// meant to run autonomous task loops.
+		{Name: "session_clear", Description: "Clear the active conversation (archive preserved) and start a fresh turn, with an optional self-handoff note.", Category: "context", ConfigKey: "session_clear", DefaultEnabled: false},
 	}
 }
 
@@ -54,6 +58,9 @@ func (p sessionProvider) Build(deps tools.ToolDeps) []tools.Tool {
 	}
 	if deps.SessionInfoFn != nil {
 		result = append(result, NewSessionInfoTool(SessionInfoFunc(deps.SessionInfoFn)))
+	}
+	if deps.ClearFn != nil {
+		result = append(result, NewSessionClearTool(deps.ClearFn))
 	}
 
 	return result
