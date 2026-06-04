@@ -9,7 +9,7 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/config"
 )
 
-func TestHandleUpdateConfig_PreservesExecAllowRemoteDefaultWhenOmitted(t *testing.T) {
+func TestHandleUpdateConfig_AppliesExecAllowRemoteDefaultWhenOmitted(t *testing.T) {
 	configPath, cleanup := setupOAuthTestEnv(t)
 	defer cleanup()
 
@@ -44,8 +44,8 @@ func TestHandleUpdateConfig_PreservesExecAllowRemoteDefaultWhenOmitted(t *testin
 	if err != nil {
 		t.Fatalf("LoadConfig() error = %v", err)
 	}
-	if !cfg.Tools.Exec.AllowRemote {
-		t.Fatal("tools.exec.allow_remote should remain true when omitted from PUT /api/config")
+	if cfg.Tools.Exec.AllowRemote {
+		t.Fatal("tools.exec.allow_remote should take its default (false) when omitted from PUT /api/config")
 	}
 }
 

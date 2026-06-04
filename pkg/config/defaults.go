@@ -401,8 +401,11 @@ func DefaultConfig() *Config {
 					Enabled: true,
 				},
 				EnableDenyPatterns: true,
-				AllowRemote:        true,
-				TimeoutSeconds:     60,
+				// Off by default: shell_exec is restricted to internal channels
+				// (cli/system/subagent/recovery). Opt in to allow exec from remote
+				// channels such as Telegram or the WebUI chat. See GHSA-pv8c-p6jf-3fpp.
+				AllowRemote:    false,
+				TimeoutSeconds: 60,
 			},
 			Skills: SkillsToolsConfig{
 				Local: ToolConfig{

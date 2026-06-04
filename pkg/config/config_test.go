@@ -354,7 +354,6 @@ func TestSaveConfig_FilePermissions(t *testing.T) {
 	}
 }
 
-
 // TestConfig_Complete verifies all config fields are set
 func TestConfig_Complete(t *testing.T) {
 	cfg := DefaultConfig()
@@ -389,10 +388,10 @@ func TestDefaultConfig_OpenAIWebSearchEnabled(t *testing.T) {
 	}
 }
 
-func TestDefaultConfig_ExecAllowRemoteEnabled(t *testing.T) {
+func TestDefaultConfig_ExecAllowRemoteDisabled(t *testing.T) {
 	cfg := DefaultConfig()
-	if !cfg.Tools.Exec.AllowRemote {
-		t.Fatal("DefaultConfig().Tools.Exec.AllowRemote should be true")
+	if cfg.Tools.Exec.AllowRemote {
+		t.Fatal("DefaultConfig().Tools.Exec.AllowRemote should be false (exec restricted to internal channels by default)")
 	}
 }
 
@@ -412,7 +411,7 @@ func TestLoadConfig_OpenAIWebSearchDefaultsTrueWhenUnset(t *testing.T) {
 	}
 }
 
-func TestLoadConfig_ExecAllowRemoteDefaultsTrueWhenUnset(t *testing.T) {
+func TestLoadConfig_ExecAllowRemoteDefaultsFalseWhenUnset(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.json")
 	if err := os.WriteFile(configPath, []byte(`{"tools":{"exec":{"enable_deny_patterns":true}}}`), 0o600); err != nil {
@@ -423,8 +422,24 @@ func TestLoadConfig_ExecAllowRemoteDefaultsTrueWhenUnset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConfig() error: %v", err)
 	}
+	if cfg.Tools.Exec.AllowRemote {
+		t.Fatal("tools.exec.allow_remote should default to false when unset in config file")
+	}
+}
+
+func TestLoadConfig_ExecAllowRemoteCanBeEnabled(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	if err := os.WriteFile(configPath, []byte(`{"tools":{"exec":{"allow_remote":true}}}`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error: %v", err)
+	}
+
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig() error: %v", err)
+	}
 	if !cfg.Tools.Exec.AllowRemote {
-		t.Fatal("tools.exec.allow_remote should remain true when unset in config file")
+		t.Fatal("tools.exec.allow_remote should be true when explicitly enabled in config file")
 	}
 }
 

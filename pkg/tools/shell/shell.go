@@ -14,9 +14,9 @@ import (
 	"time"
 
 	"github.com/PivotLLM/ClawEh/pkg/config"
-	"github.com/PivotLLM/ClawEh/pkg/tools"
 	"github.com/PivotLLM/ClawEh/pkg/constants"
 	"github.com/PivotLLM/ClawEh/pkg/logger"
+	"github.com/PivotLLM/ClawEh/pkg/tools"
 )
 
 type ExecTool struct {
@@ -111,6 +111,8 @@ func NewExecTool(workingDir string, restrict bool) (*ExecTool, error) {
 func NewExecToolWithConfig(workingDir string, restrict bool, config *config.Config) (*ExecTool, error) {
 	denyPatterns := make([]*regexp.Regexp, 0)
 	customAllowPatterns := make([]*regexp.Regexp, 0)
+	// Default fallback for the nil-config path (tests only); production always
+	// passes a config whose tools.exec.allow_remote defaults to false.
 	allowRemote := true
 
 	if config != nil {
