@@ -46,9 +46,14 @@ type ToolDeps struct {
 	CandidateResolver func(agentID string) ([]providers.FallbackCandidate, bool)
 
 	// Session tools (closures built by AgentLoop). CompactFn returns a
-	// human-readable compaction report alongside any error.
-	CompactFn     func(ctx context.Context, sessionKey string) (string, error)
+	// human-readable compaction report and the resulting rendered summary,
+	// alongside any error.
+	CompactFn     func(ctx context.Context, sessionKey string) (report, summary string, err error)
 	SessionInfoFn func(ctx context.Context, sessionKey string) (*SessionInfo, error)
+	// ClearFn clears the active conversation (preserving the archive) and hands
+	// the agent a fresh turn, optionally delivering message as a self-handoff.
+	// nil when session_clear is not enabled for the agent.
+	ClearFn func(ctx context.Context, sessionKey, message string) error
 
 	// Shared pre-built tool instances
 	MessageTool Tool // shared msg_send instance; may be nil

@@ -42,13 +42,15 @@ func DefaultConfig() *Config {
 	cfg := &Config{
 		Agents: AgentsConfig{
 			Defaults: AgentDefaults{
-				Workspace:           workspacePath,
-				RestrictToWorkspace: true,
-				Model:               &AgentModelConfig{Primary: "claude-cli", Fallbacks: []string{"codex-cli"}},
-				MaxTokens:           32768,
-				Temperature:         nil, // nil means use provider default
-				MaxToolIterations:   50,
-				ContextWindow:       128000,
+				Workspace:            workspacePath,
+				RestrictToWorkspace:  true,
+				Model:                &AgentModelConfig{Primary: "claude-cli", Fallbacks: []string{"codex-cli"}},
+				MaxTokens:            32768,
+				Temperature:          nil, // nil means use provider default
+				MaxToolIterations:    50,
+				ContextWindow:        128000,
+				ArchiveDays:          365,
+				SummaryRetentionDays: 3650,
 			},
 			List: []AgentConfig{
 				{
@@ -399,8 +401,11 @@ func DefaultConfig() *Config {
 					Enabled: true,
 				},
 				EnableDenyPatterns: true,
-				AllowRemote:        true,
-				TimeoutSeconds:     60,
+				// Off by default: shell_exec is restricted to internal channels
+				// (cli/system/subagent/recovery). Opt in to allow exec from remote
+				// channels such as Telegram or the WebUI chat. See GHSA-pv8c-p6jf-3fpp.
+				AllowRemote:    false,
+				TimeoutSeconds: 60,
 			},
 			Skills: SkillsToolsConfig{
 				Local: ToolConfig{
@@ -501,21 +506,11 @@ func DefaultConfig() *Config {
 			AutoEnable:   true,
 			Listen:       "127.0.0.1:5911",
 			EndpointPath: "/mcp",
-			Tools: []string{
-				"files_read",
-				"files_write",
-				"files_edit",
-				"files_append",
-				"files_copy",
-				"files_list",
-				"web_fetch",
-				"web_search",
-				"msg_send_file",
-				"session_messages",
-				"session_search",
-				"session_compact",
-				"session_info",
-			},
+			// Tools is intentionally left unset: when empty, the MCP host exposes
+			// the DefaultEnabled tool set (same source as the per-agent default
+			// allowlist), so marking a tool DefaultEnabled exposes it everywhere.
+			// Set an explicit list only to expose a narrower subset.
+			Tools: nil,
 		},
 		ConfigReloadIntervalSeconds: global.DefaultConfigReloadIntervalSeconds,
 	}

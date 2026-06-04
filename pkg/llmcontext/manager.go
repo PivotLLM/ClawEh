@@ -380,7 +380,60 @@ func (m *Manager) getOrOpenArchive() *memory.ArchiveStore {
 		})
 	}
 	m.archive = store
+	// Apply retention once per manager lifecycle, on the path that actually opens
+	// a fresh archive (not on subsequent cached returns), so long-lived growth is
+	// trimmed at startup.
+	m.pruneArchive(store)
 	return m.archive
+}
+
+// pruneArchive applies the four retention caps (message count/age and summary
+// count/age) to the given archive using the manager's configured limits. Each
+// cap is skipped when its configured value is <= 0. Best-effort: errors are
+// logged and otherwise ignored so pruning never fails compaction or open.
+func (m *Manager) pruneArchive(a *memory.ArchiveStore) {
+	if a == nil {
+		return
+	}
+
+	if n := m.cfg.archiveMessageCount; n > 0 {
+		if err := a.PruneMessagesToCount(n); err != nil {
+			logger.WarnCF("llmcontext", "archive prune messages to count failed", map[string]any{
+				"session_key": m.sessionKey,
+				"count":       n,
+				"error":       err.Error(),
+			})
+		}
+	}
+	if d := m.cfg.archiveDays; d > 0 {
+		cutoff := time.Now().AddDate(0, 0, -d)
+		if err := a.PruneMessagesBefore(cutoff); err != nil {
+			logger.WarnCF("llmcontext", "archive prune messages before failed", map[string]any{
+				"session_key": m.sessionKey,
+				"days":        d,
+				"error":       err.Error(),
+			})
+		}
+	}
+	if n := m.cfg.summaryMaxCount; n > 0 {
+		if err := a.PruneSummariesToCount(n); err != nil {
+			logger.WarnCF("llmcontext", "archive prune summaries to count failed", map[string]any{
+				"session_key": m.sessionKey,
+				"count":       n,
+				"error":       err.Error(),
+			})
+		}
+	}
+	if d := m.cfg.summaryRetentionDays; d > 0 {
+		cutoff := time.Now().AddDate(0, 0, -d)
+		if err := a.PruneSummariesBefore(cutoff); err != nil {
+			logger.WarnCF("llmcontext", "archive prune summaries before failed", map[string]any{
+				"session_key": m.sessionKey,
+				"days":        d,
+				"error":       err.Error(),
+			})
+		}
+	}
 }
 
 // archiveAppend writes msg to the archive (if one is configured) keyed by the
@@ -683,6 +736,14 @@ func (m *Manager) Compact(ctx context.Context) error {
 	return err
 }
 
+// RenderedSummary returns the current session summary rendered as Markdown
+// (the same block Build() injects into the system prompt), or "" when there is
+// no summary. Used by session_compact to show the agent what was just preserved.
+func (m *Manager) RenderedSummary() string {
+	archiveMin, archiveMax := m.archiveWindow()
+	return renderSummaryFromRaw(m.store.GetSummary(m.sessionKey), archiveMin, archiveMax)
+}
+
 // LastCompactionReport returns the report produced by the most recent
 // compaction pass, or nil if none has run on this manager.
 func (m *Manager) LastCompactionReport() *CompactionReport {
@@ -876,9 +937,12 @@ func (m *Manager) Close(ctx context.Context) error {
 	return nil
 }
 
-// Reset clears all history, summary, in-memory compression state, and deletes
-// the per-session archive. After Reset the session is clean; archive and
-// compression state are recreated on demand.
+// Reset clears the active conversation — history window, current rolling
+// summary, and in-memory compression state — but PRESERVES the durable archive
+// (long-term memory) and the summary log. After Reset the session starts a fresh
+// conversation while retaining full recall via session_messages and
+// session_summary_*. A hard wipe (erase long-term memory) is done by deleting the
+// per-session .archive.db file manually; there is no destructive clear.
 func (m *Manager) Reset(ctx context.Context) error {
 	// 1. Clear in-memory compression state.
 	m.msgCount = 0
@@ -896,26 +960,14 @@ func (m *Manager) Reset(ctx context.Context) error {
 		})
 	}
 
-	// 3. Wipe active history window and stored summary.
+	// 3. Wipe the active history window and the current rolling summary. The
+	// archive (keyed by memory seq) and the summary log are intentionally left
+	// intact — the agent keeps its long-term memory across a clear; new messages
+	// continue under the next memory seq the store assigns.
 	m.store.TruncateHistory(m.sessionKey, 0)
 	m.store.SetSummary(m.sessionKey, "")
 
-	// 4. Close and delete the archive. The archive is keyed by the memory seq,
-	// so there is no private archive counter to reset; after deletion the next
-	// write simply re-keys under whatever memory seq the store assigns.
-	m.archiveMu.Lock()
-	if m.archive != nil {
-		if err := m.archive.Delete(); err != nil {
-			logger.WarnCF("llmcontext", "Reset: archive delete failed", map[string]any{
-				"session_key": m.sessionKey,
-				"error":       err.Error(),
-			})
-		}
-		m.archive = nil
-	}
-	m.archiveMu.Unlock()
-
-	// 5. If the store implements CompactionStateStore, write zeroed state back.
+	// 4. If the store implements CompactionStateStore, write zeroed state back.
 	if cs, ok := m.store.(CompactionStateStore); ok {
 		if setErr := cs.SetCompactionState(m.sessionKey, memory.CompactionState{}); setErr != nil {
 			logger.WarnCF("llmcontext", "Reset: failed to persist compaction state", map[string]any{

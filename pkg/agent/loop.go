@@ -69,6 +69,7 @@ type AgentLoop struct {
 	// (one *sync.Mutex per session key).
 	sessionMus          sync.Map
 	sessionCancelStates sync.Map // scope key → *sessionCancelState
+	lastSelfClear       sync.Map // session key → time.Time, rate-limits session_clear
 	dumpsDir            string
 	startedAt           time.Time
 
@@ -123,6 +124,7 @@ type processOptions struct {
 	DefaultResponse string   // Response when LLM returns empty
 	SendResponse    bool     // Whether to send response via bus
 	IsRetry         bool     // True when message is a /retry retrigger (skip AddMessage)
+	ResetSession    bool     // True when this message is a session_clear handoff: reset before handling
 	SenderID        string   // Originating sender identifier for source attribution
 	SenderName      string   // Human-readable sender label (display name + canonical ID)
 }
@@ -553,8 +555,9 @@ func (al *AgentLoop) registerRuntimeTools(
 			return target.Candidates, true
 		}
 
-		// Build compact closure. Returns the compaction report text alongside the error.
-		compactFn := func(ctx context.Context, sessionKey string) (string, error) {
+		// Build compact closure. Returns the compaction report and the resulting
+		// rendered summary alongside the error.
+		compactFn := func(ctx context.Context, sessionKey string) (string, string, error) {
 			ctx = providers.WithAgentID(ctx, currentAgent.ID)
 			cm, release := al.getContextManager(currentAgent, sessionKey)
 			defer release()
@@ -563,7 +566,30 @@ func (al *AgentLoop) registerRuntimeTools(
 			if r := cm.LastCompactionReport(); r != nil {
 				report = r.String()
 			}
-			return report, err
+			return report, cm.RenderedSummary(), err
+		}
+
+		// Build clear closure for session_clear: rate-limited; publishes a
+		// reset-tagged self-handoff inbound that resets the session and restarts
+		// the turn at a clean boundary (never wipes history mid-turn).
+		clearFn := func(ctx context.Context, sessionKey, message string) error {
+			if !al.allowSelfClear(sessionKey) {
+				return fmt.Errorf("session_clear is rate-limited; wait a few seconds before clearing again")
+			}
+			inbound := bus.InboundMessage{
+				Channel:    tools.ToolChannel(ctx),
+				ChatID:     tools.ToolChatID(ctx),
+				SenderID:   "system",
+				SessionKey: sessionKey,
+				Content:    wrapClearNotice(message),
+				Metadata:   map[string]string{metaSessionReset: "true"},
+			}
+			if inbound.ChatID != "" && inbound.ChatID != "direct" {
+				inbound.Peer = bus.Peer{Kind: "channel", ID: inbound.ChatID}
+			}
+			pubCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			return al.bus.PublishInbound(pubCtx, inbound)
 		}
 
 		// Build session info closure.
@@ -590,6 +616,7 @@ func (al *AgentLoop) registerRuntimeTools(
 			CandidateResolver: candidateResolver,
 			CompactFn:         compactFn,
 			SessionInfoFn:     infoFn,
+			ClearFn:           clearFn,
 			MessageTool:       sharedMessageTool,
 		}
 
@@ -1074,6 +1101,7 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 		DefaultResponse: defaultResponse,
 		SendResponse:    false,
 		IsRetry:         msg.IsRetry,
+		ResetSession:    msg.Metadata[metaSessionReset] == "true",
 		SenderID:        msg.SenderID,
 		SenderName:      senderSource(msg.SenderID, msg.Sender),
 	}
@@ -1271,6 +1299,29 @@ func (al *AgentLoop) runAgentLoop(
 		al.mu.RUnlock()
 		if stiSource != nil {
 			stiSource.SetSource(opts.SessionKey, opts.Channel, opts.ChatID)
+		}
+	}
+
+	// Session-reset handshake: session_clear publishes an inbound tagged
+	// metaSessionReset. Reset here — at a clean turn boundary, never mid-turn —
+	// before the notice message is saved, so this turn starts on a clean
+	// (archive-preserved) context, and reissue the session token so the LLM gets
+	// a fresh one in this turn's system prompt.
+	if opts.ResetSession {
+		if err := cm.Reset(ctx); err != nil {
+			logger.WarnCF("agent", "session_clear: Reset failed", map[string]any{
+				"session_key": opts.SessionKey,
+				"error":       err.Error(),
+			})
+		}
+		al.mu.RLock()
+		sti := al.sessionTokenIssuer
+		al.mu.RUnlock()
+		if sti != nil {
+			archiveDir := filepath.Join(agent.Workspace, "sessions")
+			if tok := sti.Issue(agent.ID, opts.SessionKey, archiveDir); tok != "" {
+				cm.SetSessionToken(tok)
+			}
 		}
 	}
 
@@ -2414,6 +2465,26 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 					cm.SetSessionToken(tok)
 				}
 			}
+			// Notify the agent that its context was cleared, so it can re-orient
+			// (the same notice an agent-initiated clear delivers, minus a handoff).
+			// The reset already happened above, so no reset metadata is set.
+			notice := bus.InboundMessage{
+				Channel:    msg.Channel,
+				ChatID:     msg.ChatID,
+				SenderID:   "system",
+				SessionKey: opts.SessionKey,
+				Content:    wrapClearNotice(""),
+				Peer:       msg.Peer,
+			}
+			go func() {
+				pubCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				if err := al.bus.PublishInbound(pubCtx, notice); err != nil {
+					logger.WarnCF("agent", "clear: failed to publish clear notice", map[string]any{
+						"session_key": opts.SessionKey, "error": err.Error(),
+					})
+				}
+			}()
 			return nil
 		}
 		rt.CompactHistory = func(ctx context.Context) (string, error) {
@@ -2701,4 +2772,39 @@ func (al *AgentLoop) dumpAll(
 			"iteration":     iteration,
 			"dump_base":     basename,
 		})
+}
+
+// metaSessionReset, when set to "true" on an inbound message's Metadata, tells
+// processMessage to clear the session (preserving the archive) before handling
+// the message. Set by session_clear so the reset happens at a clean turn
+// boundary instead of mid-turn.
+const metaSessionReset = "session_reset"
+
+// selfClearCooldown rate-limits agent-initiated session_clear per session to
+// prevent a clear→continue→clear runaway loop.
+const selfClearCooldown = 10 * time.Second
+
+// wrapClearNotice builds the system notice delivered to the agent on the fresh
+// turn after a clear, optionally appending a self-authored handoff note.
+func wrapClearNotice(handoff string) string {
+	const base = "[System notice] Your active conversation was just cleared. Your long-term memory is " +
+		"preserved — retrieve past messages with session_messages / session_search and past summaries " +
+		"with session_summary_get."
+	if h := strings.TrimSpace(handoff); h != "" {
+		return base + "\n\nHandoff note you left yourself before clearing:\n" + h
+	}
+	return base
+}
+
+// allowSelfClear reports whether an agent-initiated session_clear may proceed for
+// the session now, enforcing selfClearCooldown to bound runaway loops.
+func (al *AgentLoop) allowSelfClear(sessionKey string) bool {
+	now := time.Now()
+	if v, ok := al.lastSelfClear.Load(sessionKey); ok {
+		if last, ok := v.(time.Time); ok && now.Sub(last) < selfClearCooldown {
+			return false
+		}
+	}
+	al.lastSelfClear.Store(sessionKey, now)
+	return true
 }

@@ -67,6 +67,7 @@ func (c *capturingContextManager) Build(ctx context.Context) ([]providers.Messag
 }
 func (c *capturingContextManager) Compact(_ context.Context) error                    { return nil }
 func (c *capturingContextManager) LastCompactionReport() *llmcontext.CompactionReport { return nil }
+func (c *capturingContextManager) RenderedSummary() string                            { return "" }
 func (c *capturingContextManager) ForceCompress(_ context.Context) error              { return nil }
 func (c *capturingContextManager) Stats() llmcontext.ContextStats                     { return llmcontext.ContextStats{} }
 func (c *capturingContextManager) Reset(_ context.Context) error                      { return nil }

@@ -57,6 +57,9 @@ type ContextManager interface {
 	// LastCompactionReport returns the report from the most recent compaction
 	// pass (manual or automatic), or nil if none has run.
 	LastCompactionReport() *CompactionReport
+	// RenderedSummary returns the current session summary rendered as Markdown
+	// (the block Build injects into the system prompt), or "" when none.
+	RenderedSummary() string
 	// ForceCompress aggressively reduces context when the hard limit is hit.
 	ForceCompress(ctx context.Context) error
 	// Stats returns the current observable state of this context.

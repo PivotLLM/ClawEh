@@ -436,6 +436,14 @@ func unmarshalSummary(raw string) (*Summary, error) {
 	return &s, nil
 }
 
+// RenderSummaryFromRaw renders a marshaled summary body (as stored in the
+// archive summaries table) into readable Markdown. If raw is a valid Summary
+// JSON it is rendered structurally; otherwise it is returned as-is. Exported for
+// the session_summary_get tool, which renders a stored checkpoint for an agent.
+func RenderSummaryFromRaw(raw string, archiveMinSeq, archiveMaxSeq int64) string {
+	return renderSummaryFromRaw(raw, archiveMinSeq, archiveMaxSeq)
+}
+
 // renderSummaryFromRaw returns the Markdown to inject into the system prompt.
 // If raw is a valid Summary JSON it is rendered structurally. Otherwise it is
 // returned as-is (legacy prose or empty string).

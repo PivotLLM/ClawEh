@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/PivotLLM/ClawEh/pkg/cronmsg"
 	"github.com/PivotLLM/ClawEh/pkg/fileutil"
 	"github.com/PivotLLM/ClawEh/pkg/providers"
 )
@@ -32,11 +33,6 @@ const (
 	// we set a generous limit. The scanner starts at 64 KB and grows
 	// only as needed up to this cap.
 	maxLineSize = 10 * 1024 * 1024 // 10 MB
-
-	// cronWrapperPrefix is the prefix injected by pkg/tools/cron.go when
-	// wrapping cron job output as a user message. Used by the noise
-	// classifier to detect duplicate cron payloads.
-	cronWrapperPrefix = "The following message is from a cron job that fired at "
 )
 
 // sessionMeta holds per-session metadata stored in a .meta.json file.
@@ -82,70 +78,27 @@ type SummaryCheckpoint struct {
 }
 
 // noiseCache tracks the last written message per role and the last cron
-// payload so that duplicate messages can be classified as noise.
+// collapse key so that duplicate messages can be classified as noise.
 type noiseCache struct {
-	lastByRole      map[string]string // role -> last written Content
-	lastCronPayload string
+	lastByRole  map[string]string // role -> last written Content
+	lastCronKey string
 }
 
 func newNoiseCache() *noiseCache {
 	return &noiseCache{lastByRole: make(map[string]string)}
 }
 
-// extractCronPayload returns the payload after the timestamp header, or ("", false).
-// Format: "...fired at <timestamp>:\n\n<payload>". It tolerates an optional leading
-// "[<hex>] " fingerprint marker injected by the scheduler; when present, the
-// fingerprint is the more reliable dedup key and is returned in its place so that
-// fires of the same job (which embed differing timestamps) collapse to one.
-func extractCronPayload(content string) (string, bool) {
-	if fp, marked := stripCronFingerprint(content); marked {
-		return fp, true
-	}
-	if !strings.HasPrefix(content, cronWrapperPrefix) {
-		return "", false
-	}
-	idx := strings.Index(content, ":\n\n")
-	if idx < 0 {
-		return "", false
-	}
-	return content[idx+3:], true
-}
-
-// stripCronFingerprint reports whether content carries a leading "[<hex>] " cron
-// fingerprint marker immediately followed by the cron wrapper prefix, returning
-// the fingerprint when so.
-func stripCronFingerprint(content string) (string, bool) {
-	if !strings.HasPrefix(content, "[") {
-		return "", false
-	}
-	end := strings.IndexByte(content, ']')
-	if end <= 1 || end > 12 {
-		return "", false
-	}
-	token := content[1:end]
-	if !strings.HasPrefix(content[end:], "] ") {
-		return "", false
-	}
-	for i := 0; i < len(token); i++ {
-		c := token[i]
-		if (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') {
-			continue
-		}
-		return "", false
-	}
-	if !strings.HasPrefix(content[end+2:], cronWrapperPrefix) {
-		return "", false
-	}
-	return token, true
-}
-
 // isNoise returns true if msg is a duplicate that contributes no new information.
+// Cron-wrapper messages dedup on their collapse key (the job fingerprint when
+// present, else the payload) so that repeated fires of the same job — which embed
+// differing timestamps — collapse to one. All other messages dedup on identical
+// same-role content.
 func isNoise(msg StoredMessage, cache *noiseCache) bool {
 	if cache == nil {
 		return false
 	}
-	if payload, ok := extractCronPayload(msg.Content); ok {
-		return cache.lastCronPayload == payload
+	if key, ok := cronmsg.CollapseKey(msg.Content); ok {
+		return cache.lastCronKey == key
 	}
 	return cache.lastByRole[msg.Role] == msg.Content && msg.Content != ""
 }
@@ -155,8 +108,8 @@ func updateNoiseCache(msg StoredMessage, cache *noiseCache) {
 	if cache == nil {
 		return
 	}
-	if payload, ok := extractCronPayload(msg.Content); ok {
-		cache.lastCronPayload = payload
+	if key, ok := cronmsg.CollapseKey(msg.Content); ok {
+		cache.lastCronKey = key
 		return
 	}
 	cache.lastByRole[msg.Role] = msg.Content

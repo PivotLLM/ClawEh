@@ -49,9 +49,9 @@ func (r *CompactionReport) String() string {
 	}
 	var b strings.Builder
 
-	header := fmt.Sprintf("Compaction: %d messages · %s", r.BeforeMsgs, formatBytes(r.BeforeBytes))
+	header := fmt.Sprintf("Compaction: %d messages (%s)", r.BeforeMsgs, formatBytes(r.BeforeBytes))
 	if dr := formatDateRange(r.DateFrom, r.DateTo); dr != "" {
-		header = fmt.Sprintf("Compaction: %d messages · %s · %s", r.BeforeMsgs, dr, formatBytes(r.BeforeBytes))
+		header = fmt.Sprintf("Compaction: %d messages (%s) · %s", r.BeforeMsgs, formatBytes(r.BeforeBytes), dr)
 	}
 	b.WriteString(header)
 
@@ -66,9 +66,9 @@ func (r *CompactionReport) String() string {
 	b.WriteString("\n")
 	switch r.Outcome {
 	case "success":
-		b.WriteString(fmt.Sprintf("Compacted to %d messages · %s", r.AfterMsgs, formatBytes(r.AfterBytes)))
+		b.WriteString(fmt.Sprintf("Compacted to %d messages (%s)", r.AfterMsgs, formatBytes(r.AfterBytes)))
 	case "partial":
-		b.WriteString(fmt.Sprintf("Partially compacted (still above safety threshold) — %d messages · %s", r.AfterMsgs, formatBytes(r.AfterBytes)))
+		b.WriteString(fmt.Sprintf("Partially compacted (still above safety threshold) — %d messages (%s)", r.AfterMsgs, formatBytes(r.AfterBytes)))
 	case "nothing":
 		b.WriteString("Nothing to compress — already compact.")
 	default:
@@ -81,9 +81,9 @@ func (r *CompactionReport) String() string {
 func formatBytes(n int) string {
 	switch {
 	case n >= 1<<20:
-		return fmt.Sprintf("~%.1f MB", float64(n)/(1<<20))
+		return fmt.Sprintf("%.1f MB", float64(n)/(1<<20))
 	case n >= 1<<10:
-		return fmt.Sprintf("~%d KB", n/(1<<10))
+		return fmt.Sprintf("%d KB", n/(1<<10))
 	default:
 		return fmt.Sprintf("%d B", n)
 	}
@@ -96,9 +96,9 @@ func formatDateRange(from, to time.Time) string {
 		return ""
 	}
 	if from.Year() == to.Year() && from.YearDay() == to.YearDay() {
-		return from.Format("Jan 2")
+		return from.Format("Jan 2, 2006")
 	}
-	return from.Format("Jan 2") + "–" + to.Format("Jan 2")
+	return from.Format("Jan 2, 2006") + " – " + to.Format("Jan 2, 2006")
 }
 
 // compactionRecorder accumulates per-invocation attempts during a compaction

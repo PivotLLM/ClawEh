@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/PivotLLM/ClawEh/pkg/cronmsg"
 	"github.com/PivotLLM/ClawEh/pkg/logger"
 	"github.com/PivotLLM/ClawEh/pkg/memory"
 	"github.com/PivotLLM/ClawEh/pkg/providers"
@@ -531,12 +532,12 @@ func collapseRepetitiveRuns(stored []memory.StoredMessage) []memory.StoredMessag
 // and true. If no qualifying run of >= repetitiveRunThreshold fires begins at
 // start, ok is false.
 func collapseCronRun(stored []memory.StoredMessage, start int) (memory.StoredMessage, int, bool) {
-	fp, _, isCron := parseCronMarker(stored[start].Content)
+	fp, _, isCron := cronmsg.Parse(stored[start].Content)
 	if stored[start].Role != "user" || !isCron {
 		return memory.StoredMessage{}, start, false
 	}
 
-	key, _ := cronCollapseKey(stored[start].Content)
+	key, _ := cronmsg.CollapseKey(stored[start].Content)
 	var reply string
 	haveReply := false
 	count := 0
@@ -549,7 +550,7 @@ func collapseCronRun(stored []memory.StoredMessage, start int) (memory.StoredMes
 		if userMsg.Role != "user" {
 			break
 		}
-		k, ok := cronCollapseKey(userMsg.Content)
+		k, ok := cronmsg.CollapseKey(userMsg.Content)
 		if !ok || k != key {
 			break
 		}
@@ -799,23 +800,28 @@ func (m *Manager) persistStoredResult(sysMsg *memory.StoredMessage, conv []memor
 		if data, err := json.Marshal(summary); err == nil {
 			raw := string(data)
 			m.store.SetSummary(m.sessionKey, raw)
-			if hs, ok := m.store.(interface {
-				AppendSummaryCheckpoint(string, memory.SummaryCheckpoint) error
-			}); ok {
-				if appendErr := hs.AppendSummaryCheckpoint(m.sessionKey, memory.SummaryCheckpoint{
+			// Persist the summary checkpoint into the per-session archive DB
+			// (summaries table). Best-effort: log on error, never fail compaction.
+			if a := m.getOrOpenArchive(); a != nil {
+				srcRange := summary.LastSummarizedSeqRange()
+				if _, appendErr := a.AppendSummary(memory.SummaryRecord{
 					GeneratedAt:     summary.GeneratedAt,
 					Model:           summary.Model,
-					SourceSeqStart:  summary.LastSummarizedSeqRange().SeqStart,
-					SourceSeqEnd:    summary.LastSummarizedSeqRange().SeqEnd,
+					Profile:         summary.Profile,
+					SourceSeqStart:  srcRange.SeqStart,
+					SourceSeqEnd:    srcRange.SeqEnd,
 					CoveredSeqStart: summary.CoveredSeqStart,
 					CoveredSeqEnd:   summary.CoveredSeqEnd,
 					Summary:         raw,
 				}); appendErr != nil {
-					logger.WarnCF("llmcontext", "compression: failed to append summary checkpoint", map[string]any{
+					logger.WarnCF("llmcontext", "compression: failed to append summary to archive", map[string]any{
 						"session_key": m.sessionKey,
 						"error":       appendErr.Error(),
 					})
 				}
+				// Apply retention after each compaction so a long-running agent
+				// prunes its archive incrementally as it goes. Best-effort.
+				m.pruneArchive(a)
 			}
 		}
 		summaryModel = summary.Model

@@ -387,6 +387,36 @@ export function ContextManagementSection({
           onChange={(e) => onFieldChange("archiveDays", e.target.value)}
         />
       </Field>
+
+      <Field
+        label={t("pages.config.summary_max_count")}
+        hint={t("pages.config.summary_max_count_hint")}
+        layout="setting-row"
+      >
+        <Input
+          type="number"
+          min={0}
+          value={form.summaryMaxCount}
+          onChange={(e) =>
+            onFieldChange("summaryMaxCount", e.target.value)
+          }
+        />
+      </Field>
+
+      <Field
+        label={t("pages.config.summary_retention_days")}
+        hint={t("pages.config.summary_retention_days_hint")}
+        layout="setting-row"
+      >
+        <Input
+          type="number"
+          min={0}
+          value={form.summaryRetentionDays}
+          onChange={(e) =>
+            onFieldChange("summaryRetentionDays", e.target.value)
+          }
+        />
+      </Field>
     </ConfigSectionCard>
   )
 }

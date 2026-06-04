@@ -27,6 +27,12 @@ func (p sessionProvider) Describe() []tools.ToolDescriptor {
 		{Name: "session_search", Description: "Full-text search over archived session messages.", Category: "context", ConfigKey: "session_search", DefaultEnabled: true},
 		{Name: "session_compact", Description: "Trigger an immediate context compaction for the current session.", Category: "context", ConfigKey: "session_compact", DefaultEnabled: true},
 		{Name: "session_info", Description: "Return archive bounds, message count, and summary coverage.", Category: "context", ConfigKey: "session_info", DefaultEnabled: true},
+		{Name: "session_summary_list", Description: "List recorded context-summary checkpoints for the current session.", Category: "context", ConfigKey: "session_summary_list", DefaultEnabled: true},
+		{Name: "session_summary_get", Description: "Retrieve the full text of one context-summary checkpoint by id.", Category: "context", ConfigKey: "session_summary_get", DefaultEnabled: true},
+		// Off by default: clears the active conversation (archive preserved) and
+		// restarts the turn with an optional self-handoff. Enable only for agents
+		// meant to run autonomous task loops.
+		{Name: "session_clear", Description: "Clear the active conversation (archive preserved) and start a fresh turn, with an optional self-handoff note.", Category: "context", ConfigKey: "session_clear", DefaultEnabled: false},
 	}
 }
 
@@ -42,6 +48,8 @@ func (p sessionProvider) Build(deps tools.ToolDeps) []tools.Tool {
 	sessionsDir := filepath.Join(deps.Workspace, "sessions")
 	result = append(result, NewSessionHistoryTool(sessionsDir))
 	result = append(result, NewSessionHistorySearchTool(sessionsDir))
+	result = append(result, NewSessionSummaryListTool(sessionsDir))
+	result = append(result, NewSessionSummaryGetTool(sessionsDir))
 
 	// Closure-based tools: session_compact, session_info
 	// These require CompactFn/SessionInfoFn — return nil slices when not provided (phase 1 build).
@@ -50,6 +58,9 @@ func (p sessionProvider) Build(deps tools.ToolDeps) []tools.Tool {
 	}
 	if deps.SessionInfoFn != nil {
 		result = append(result, NewSessionInfoTool(SessionInfoFunc(deps.SessionInfoFn)))
+	}
+	if deps.ClearFn != nil {
+		result = append(result, NewSessionClearTool(deps.ClearFn))
 	}
 
 	return result

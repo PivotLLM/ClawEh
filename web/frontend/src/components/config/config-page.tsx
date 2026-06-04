@@ -192,6 +192,16 @@ export function ConfigPage() {
         const archiveDays = parseIntField(form.archiveDays, "Archive days", {
           min: 0,
         })
+        const summaryMaxCount = parseIntField(
+          form.summaryMaxCount,
+          "Max summaries kept",
+          { min: 0 },
+        )
+        const summaryRetentionDays = parseIntField(
+          form.summaryRetentionDays,
+          "Summary retention days",
+          { min: 0 },
+        )
         await patchAppConfig({
           agents: {
             defaults: {
@@ -207,6 +217,8 @@ export function ConfigPage() {
               compress_retain_min_messages: compressRetainMinMessages,
               archive_message_count: archiveMessageCount,
               archive_days: archiveDays,
+              summary_max_count: summaryMaxCount,
+              summary_retention_days: summaryRetentionDays,
             },
           },
           summarization: {
