@@ -65,6 +65,8 @@ type TelegramChannel struct {
 	bot            *telego.Bot
 	bh             *th.BotHandler
 	placeholderCfg config.PlaceholderConfig
+	coalesceCfg    config.CoalesceConfig
+	coalescer      *messageCoalescer
 	chatIDs        map[string]int64
 	ctx            context.Context
 	cancel         context.CancelFunc
@@ -132,6 +134,7 @@ func NewTelegramChannelFromConfig(botCfg config.TelegramBotConfig, b *bus.Messag
 		BaseChannel:    base,
 		bot:            bot,
 		placeholderCfg: botCfg.Placeholder,
+		coalesceCfg:    botCfg.Coalesce,
 		chatIDs:        make(map[string]int64),
 	}, nil
 }
@@ -141,6 +144,12 @@ func (c *TelegramChannel) Start(ctx context.Context) error {
 
 	c.ctx, c.cancel = context.WithCancel(ctx)
 	c.stopOnce = sync.Once{}
+
+	if c.coalesceCfg.IsEnabled() {
+		c.coalescer = newMessageCoalescer(c.coalesceCfg, c.dispatchCoalesced)
+	} else {
+		c.coalescer = nil
+	}
 
 	rawUpdates, err := c.bot.UpdatesViaLongPolling(c.ctx, &telego.GetUpdatesParams{
 		Timeout: 30,
@@ -186,6 +195,12 @@ func (c *TelegramChannel) Stop(ctx context.Context) error {
 	c.stopOnce.Do(func() {
 		logger.InfoC("telegram", "Stopping Telegram bot...")
 		c.SetRunning(false)
+
+		// Flush any buffered (coalescing) messages before cancelling the context
+		// so the dispatch path can still publish them to the bus.
+		if c.coalescer != nil {
+			c.coalescer.flushAll()
+		}
 
 		// Cancel first so any in-flight getUpdates / handler context unblocks.
 		if c.cancel != nil {
@@ -647,7 +662,6 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, message *telego.Mes
 	}
 
 	peer := bus.Peer{Kind: peerKind, ID: peerID}
-	messageID := fmt.Sprintf("%d", message.MessageID)
 
 	metadata := map[string]string{
 		"user_id":    fmt.Sprintf("%d", user.ID),
@@ -662,17 +676,50 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, message *telego.Mes
 		metadata["parent_peer_id"] = fmt.Sprintf("%d", threadID)
 	}
 
-	c.HandleMessage(c.ctx,
-		peer,
-		messageID,
-		platformID,
-		compositeChatID,
-		content,
-		mediaPaths,
-		metadata,
-		sender,
-	)
+	c.enqueue(coalescedMessage{
+		messageID:  message.MessageID,
+		peer:       peer,
+		platformID: platformID,
+		chatID:     compositeChatID,
+		content:    content,
+		media:      mediaPaths,
+		metadata:   metadata,
+		sender:     sender,
+	})
 	return nil
+}
+
+// enqueue routes a parsed message into the coalescer, or dispatches it
+// immediately when coalescing is disabled. Bot commands bypass the buffer
+// entirely: they must never be delayed or merged with surrounding text, and any
+// pending buffered text for the sender is flushed first so it is processed
+// before the command.
+func (c *TelegramChannel) enqueue(m coalescedMessage) {
+	if c.coalescer == nil {
+		c.dispatchCoalesced(m)
+		return
+	}
+	if _, isCmd := commands.ParseCommandName(m.content); isCmd {
+		c.coalescer.flushKey(coalesceKey(m))
+		c.dispatchCoalesced(m)
+		return
+	}
+	c.coalescer.add(coalesceKey(m), m)
+}
+
+// dispatchCoalesced forwards a (possibly combined) message to the base channel
+// for publishing. messageID is the anchor fragment's ID.
+func (c *TelegramChannel) dispatchCoalesced(m coalescedMessage) {
+	c.HandleMessage(c.ctx,
+		m.peer,
+		strconv.Itoa(m.messageID),
+		m.platformID,
+		m.chatID,
+		m.content,
+		m.media,
+		m.metadata,
+		m.sender,
+	)
 }
 
 func (c *TelegramChannel) downloadPhoto(ctx context.Context, fileID string) string {

@@ -10,7 +10,7 @@ const (
 	defaultMinPercent            = 20
 	defaultNormalPercent         = 50
 	defaultSafetyPercent         = 80
-	defaultMessageThreshold      = 20
+	defaultMessageThreshold      = 100
 	defaultRetainTokenPercent    = 20
 	defaultRetainMinMessages     = 2
 	defaultMinCompressionGain    = 0.05

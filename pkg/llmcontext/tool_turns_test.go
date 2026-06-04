@@ -5,7 +5,6 @@ package llmcontext
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"testing"
 
@@ -193,42 +192,64 @@ func TestPreDispatchCheck_TriggersCompressionAndRebuilds(t *testing.T) {
 	}
 }
 
-// TestPreDispatchCheck_CompressionFailed_ReturnsStaleSlice verifies that when all
-// LLM clients fail on the normal (non-safety-net) path, PreDispatchCheck returns
-// the stale input slice along with ErrCompressionFailed (best-effort: do not block
-// dispatch).
-//
-// The safety-net path (>= safetyPercent) bypasses LLM and drops groups, so it does
-// not return ErrCompressionFailed. This test targets the normal threshold band
-// (normalPercent <= context < safetyPercent) where LLM failure yields the error.
-func TestPreDispatchCheck_CompressionFailed_ReturnsStaleSlice(t *testing.T) {
+// TestPreDispatchCheck_NormalBand_DoesNotFire verifies that PreDispatchCheck is
+// emergency-only: in the normal band (normalPercent <= context < safetyPercent)
+// it does NOT compress mid-turn. First-stage compaction is deferred to the turn
+// boundary (triggerCheck). The input slice is returned unchanged with no error.
+func TestPreDispatchCheck_NormalBand_DoesNotFire(t *testing.T) {
 	store := newMockStore()
 
 	// History at ~62.5% of context window: between normalPercent (50%) and
-	// safetyPercent (80%), so normal path fires and LLM failure becomes ErrCompressionFailed.
+	// safetyPercent (80%). Pre-change this fired the normal path; now it must not.
 	// 10 pairs × 2 msgs × 1250 chars = 25000 chars → ~6250 tokens = 62.5% of 10000.
 	history := makeConversation(10, 1250)
 	store.SetHistory("sess", history)
 
-	// LLM always fails — return enough errors to exhaust all retry iterations.
-	failErrors := make([]error, 20)
-	for i := range failErrors {
-		failErrors[i] = errors.New("llm unavailable")
-	}
-	llm := &mockLLM{errors: failErrors}
-	mgr := newToolTurnsManager(store, []LLMClient{llm})
+	compressed := false
+	mgr := newToolTurnsManager(store, nil)
+	mgr.compressHook = func(_ bool) { compressed = true }
 	mgr.msgCount = len(history)
 
 	input := make([]providers.Message, len(history))
 	copy(input, history)
 
 	result, err := mgr.PreDispatchCheck(context.Background(), input)
-	if !errors.Is(err, ErrCompressionFailed) {
-		t.Errorf("expected ErrCompressionFailed, got: %v", err)
+	if err != nil {
+		t.Fatalf("expected no error in normal band, got: %v", err)
 	}
-	// Stale input slice returned (same length as input).
+	if compressed {
+		t.Error("expected no mid-turn compression in the normal band (deferred to turn boundary)")
+	}
 	if len(result) != len(input) {
-		t.Errorf("expected stale input slice (len %d) to be returned, got len %d", len(input), len(result))
+		t.Errorf("expected input slice unchanged (len %d), got len %d", len(input), len(result))
+	}
+}
+
+// TestPreDispatchCheck_CountTrigger_DoesNotFireMidTurn verifies that the
+// message-count trigger no longer fires mid-turn: even with the count threshold
+// far exceeded, PreDispatchCheck does not compress while context is below the
+// safety-net level.
+func TestPreDispatchCheck_CountTrigger_DoesNotFireMidTurn(t *testing.T) {
+	store := newMockStore()
+
+	// Small history (~2% of context) but a large message count since last compaction.
+	history := makeConversation(2, 200)
+	store.SetHistory("sess", history)
+
+	compressed := false
+	mgr := newToolTurnsManager(store, nil)
+	mgr.compressHook = func(_ bool) { compressed = true }
+	mgr.compressedAtCount = 0
+	mgr.msgCount = defaultMessageThreshold + 50 // well past the count threshold
+
+	input := make([]providers.Message, len(history))
+	copy(input, history)
+
+	if _, err := mgr.PreDispatchCheck(context.Background(), input); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if compressed {
+		t.Error("count trigger must not fire mid-turn; it is deferred to the turn boundary")
 	}
 }
 

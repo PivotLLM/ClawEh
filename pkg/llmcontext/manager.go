@@ -194,54 +194,36 @@ func (m *Manager) AddToolResult(_ context.Context, msg providers.Message) error 
 	return nil
 }
 
-// PreDispatchCheck runs the compression trigger check and, if compression fires
-// and succeeds, rebuilds the message slice via Build() and returns the fresh slice.
-// If no compression is needed, returns current unchanged.
-// If compression fails, logs the error and returns (current, ErrCompressionFailed)
+// PreDispatchCheck runs the mid-turn compression trigger and, if compression
+// fires and succeeds, rebuilds the message slice via Build() and returns the
+// fresh slice. If no compression is needed, returns current unchanged. If
+// compression fails, logs the error and returns (current, ErrCompressionFailed)
 // so the caller can proceed with the stale slice (best-effort).
+//
+// This runs at the top of every tool-call iteration, so it is restricted to the
+// emergency safety-net trigger (contextPct >= safetyPercent): only an imminent
+// context-window overflow may compact between iterations. First-stage compaction
+// (normal-percent and message-count) is deferred to the turn boundary, where
+// triggerCheck handles it on AddUserMessage / AddAssistantMessage — so it never
+// fires mid-turn and posts a compaction notice in the middle of a tool-using turn.
 //
 // Build() is idempotent and has no write side-effects: it reads from the store and
 // assembles the message slice without modifying any persistent state. It is safe to
 // call multiple times within a single turn.
 func (m *Manager) PreDispatchCheck(ctx context.Context, current []providers.Message) ([]providers.Message, error) {
-	history := m.store.GetHistory(m.sessionKey)
-	tokens := m.estTokens(history)
 	if m.cfg.contextWindow <= 0 {
 		return current, nil
 	}
+	history := m.store.GetHistory(m.sessionKey)
+	tokens := m.estTokens(history)
 	contextPct := float64(tokens) * 100.0 / float64(m.cfg.contextWindow)
 
-	// Below the floor — no compression possible.
-	if contextPct < float64(m.cfg.minPercent) {
+	// Emergency only: defer first-stage compaction to the turn boundary.
+	if contextPct < float64(m.cfg.safetyPercent) {
 		return current, nil
 	}
 
-	// Safety net fires unconditionally; normal and count triggers respect cooldown.
-	needsCompress := false
-	safetyNet := false
-	if contextPct >= float64(m.cfg.safetyPercent) {
-		needsCompress = true
-		safetyNet = true
-	} else {
-		// Refresh cooldown state.
-		if m.cooling {
-			coolAge := m.msgCount - m.coolingSinceCount
-			if coolAge >= defaultCooldownMessages {
-				m.cooling = false
-			}
-		}
-		countTriggered := m.cfg.messageThreshold > 0 &&
-			(m.msgCount-m.compressedAtCount) >= m.cfg.messageThreshold
-		if (contextPct >= float64(m.cfg.normalPercent) || countTriggered) && !m.cooling {
-			needsCompress = true
-		}
-	}
-
-	if !needsCompress {
-		return current, nil
-	}
-
-	if err := m.compress(ctx, safetyNet); err != nil && !errors.Is(err, ErrNothingToCompress) {
+	if err := m.compress(ctx, true); err != nil && !errors.Is(err, ErrNothingToCompress) {
 		logger.WarnCF("llmcontext", "PreDispatchCheck: compression failed (continuing with stale slice)", map[string]any{
 			"session_key": m.sessionKey,
 			"error":       err.Error(),
@@ -265,13 +247,17 @@ func (m *Manager) PreDispatchCheck(ctx context.Context, current []providers.Mess
 // CheckAndCompress estimates the post-Build token count (Message.Content plus
 // serialized ToolCalls arguments) and adds the configured overhead to account
 // for system prompt, rendered summary, tool definitions, and completion budget.
-// If the adjusted total exceeds the normal or safety threshold it triggers
-// compression using the same path as PreDispatchCheck.
+// It runs once, after Build and before the first dispatch of a turn.
 //
-// If compression fires and succeeds, a fresh message slice is produced via
-// Build() and returned. If no compression is needed the input slice is returned
-// unchanged. The cooldown mechanism prevents double-firing when PreDispatchCheck
-// already ran on the same turn.
+// It is restricted to the emergency safety-net trigger (adjusted total >=
+// safetyPercent): its purpose is to avoid sending an over-window request on the
+// first dispatch when stored history is within threshold but the rendered request
+// (system prompt + tool defs + completion budget) pushes the total over. First-stage
+// compaction (normal-percent and message-count) is handled at the turn boundary by
+// triggerCheck, not here, so it never fires while a request is being assembled.
+//
+// If compression fires and succeeds, a fresh message slice is produced via Build()
+// and returned. If no compression is needed the input slice is returned unchanged.
 func (m *Manager) CheckAndCompress(ctx context.Context, built []providers.Message) ([]providers.Message, error) {
 	if m.cfg.contextWindow <= 0 {
 		return built, nil
@@ -280,27 +266,12 @@ func (m *Manager) CheckAndCompress(ctx context.Context, built []providers.Messag
 	tokens := m.estTokens(built) + m.cfg.overheadTokens
 	contextPct := float64(tokens) * 100.0 / float64(m.cfg.contextWindow)
 
-	if contextPct < float64(m.cfg.minPercent) {
+	// Emergency only: defer first-stage compaction to the turn boundary.
+	if contextPct < float64(m.cfg.safetyPercent) {
 		return built, nil
 	}
 
-	safetyNet := contextPct >= float64(m.cfg.safetyPercent)
-	normalTriggered := contextPct >= float64(m.cfg.normalPercent)
-
-	if !safetyNet {
-		// Respect cooldown for normal trigger.
-		if m.cooling {
-			coolAge := m.msgCount - m.coolingSinceCount
-			if coolAge >= defaultCooldownMessages {
-				m.cooling = false
-			}
-		}
-		if m.cooling || !normalTriggered {
-			return built, nil
-		}
-	}
-
-	if err := m.compress(ctx, safetyNet); err != nil && !errors.Is(err, ErrNothingToCompress) {
+	if err := m.compress(ctx, true); err != nil && !errors.Is(err, ErrNothingToCompress) {
 		logger.WarnCF("llmcontext", "CheckAndCompress: compression failed (continuing with input slice)", map[string]any{
 			"session_key": m.sessionKey,
 			"error":       err.Error(),

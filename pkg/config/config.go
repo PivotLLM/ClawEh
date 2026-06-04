@@ -426,6 +426,75 @@ type PlaceholderConfig struct {
 	Text    string `json:"text,omitempty"`
 }
 
+// CoalesceConfig controls inbound message coalescing. When a client (notably
+// the Telegram app) splits a single long paste into several messages, those
+// arrive as separate updates. Coalescing buffers consecutive messages from the
+// same sender in the same chat and combines them into one inbound message once
+// no new message has arrived for WindowMS, so the agent processes them as a
+// single turn instead of one round (and reply) per fragment.
+type CoalesceConfig struct {
+	// Enabled gates coalescing. It is a pointer so that an absent value means
+	// "on" (the default): a nil Enabled enables coalescing, so existing bot
+	// configs that predate this field get it without editing. Set it explicitly
+	// to false to disable. See IsEnabled.
+	Enabled *bool `json:"enabled,omitempty"`
+	// WindowMS is the quiet period (milliseconds) to wait after the most recent
+	// message before flushing the buffer. Each new message resets the timer.
+	// Zero falls back to DefaultCoalesceWindowMS.
+	WindowMS int `json:"window_ms,omitempty"`
+	// MaxMessages caps how many messages a single buffer may accumulate before
+	// it is flushed regardless of the timer. Zero falls back to
+	// DefaultCoalesceMaxMessages.
+	MaxMessages int `json:"max_messages,omitempty"`
+	// MaxWaitMS caps the total time a buffer may stay open from its first
+	// message, even if messages keep resetting the window timer. Zero falls
+	// back to DefaultCoalesceMaxWaitMS.
+	MaxWaitMS int `json:"max_wait_ms,omitempty"`
+}
+
+// Coalesce defaults applied when a field is left at its zero value.
+const (
+	DefaultCoalesceWindowMS    = 1000
+	DefaultCoalesceMaxMessages = 50
+	DefaultCoalesceMaxWaitMS   = 30000
+)
+
+// Window returns the configured quiet period as a duration, applying the
+// default when unset.
+func (c CoalesceConfig) Window() time.Duration {
+	ms := c.WindowMS
+	if ms <= 0 {
+		ms = DefaultCoalesceWindowMS
+	}
+	return time.Duration(ms) * time.Millisecond
+}
+
+// MaxWait returns the configured maximum buffer lifetime as a duration,
+// applying the default when unset.
+func (c CoalesceConfig) MaxWait() time.Duration {
+	ms := c.MaxWaitMS
+	if ms <= 0 {
+		ms = DefaultCoalesceMaxWaitMS
+	}
+	return time.Duration(ms) * time.Millisecond
+}
+
+// MaxMessageCount returns the configured maximum buffered message count,
+// applying the default when unset.
+func (c CoalesceConfig) MaxMessageCount() int {
+	if c.MaxMessages <= 0 {
+		return DefaultCoalesceMaxMessages
+	}
+	return c.MaxMessages
+}
+
+// IsEnabled reports whether coalescing is active. A nil Enabled (the field
+// absent from config) defaults to on, so bots that predate the field — and
+// freshly configured bots — coalesce by default. An explicit false disables it.
+func (c CoalesceConfig) IsEnabled() bool {
+	return c.Enabled == nil || *c.Enabled
+}
+
 // TelegramBotConfig defines a single named Telegram bot.
 // Each entry creates a separate channel named "telegram-<id>", except when id is
 // empty or "default" which creates the standard "telegram" channel.
@@ -439,6 +508,7 @@ type TelegramBotConfig struct {
 	GroupTrigger       GroupTriggerConfig  `json:"group_trigger,omitempty"`
 	Typing             TypingConfig        `json:"typing,omitempty"`
 	Placeholder        PlaceholderConfig   `json:"placeholder,omitempty"`
+	Coalesce           CoalesceConfig      `json:"coalesce,omitempty"`
 	ReasoningChannelID string              `json:"reasoning_channel_id,omitempty"`
 }
 

@@ -5,7 +5,6 @@ package llmcontext
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"testing"
 
@@ -61,15 +60,17 @@ func TestCheckAndCompress_BelowThreshold(t *testing.T) {
 	}
 }
 
-// TestCheckAndCompress_OverheadPushesOverThreshold verifies that when stored history
-// is within the normal threshold but adding overheadTokens pushes it over,
-// compression fires at the CheckAndCompress call.
-func TestCheckAndCompress_OverheadPushesOverThreshold(t *testing.T) {
+// TestCheckAndCompress_OverheadPushesOverSafety verifies that when stored history
+// is within the safety threshold but adding overheadTokens pushes the rendered
+// request over the safety-net level, the emergency compression fires at the
+// CheckAndCompress call. (CheckAndCompress is emergency-only; the normal band is
+// handled at the turn boundary.)
+func TestCheckAndCompress_OverheadPushesOverSafety(t *testing.T) {
 	store := newMockStore()
 
-	// contextWindow = 1000. normalPercent = 50 → trigger at 500 tokens.
+	// contextWindow = 1000. safetyPercent = 80 → trigger at 800 tokens.
 	// Built messages: 1600 chars → 400 tokens from content.
-	// overheadTokens = 200 → total = 600 tokens = 60% of 1000 → above normalPercent.
+	// overheadTokens = 500 → total = 900 tokens = 90% of 1000 → above safetyPercent.
 	built := []providers.Message{
 		{Role: "user", Content: strings.Repeat("b", 1600)},
 	}
@@ -80,7 +81,7 @@ func TestCheckAndCompress_OverheadPushesOverThreshold(t *testing.T) {
 		WithContextWindow(1000),
 		WithNormalPercent(50),
 		WithSafetyPercent(80),
-		WithOverheadTokens(200),
+		WithOverheadTokens(500),
 	)
 	mgr.compressHook = func(safetyNet bool) { hookCalls = append(hookCalls, safetyNet) }
 	mgr.msgCount = 1
@@ -91,7 +92,47 @@ func TestCheckAndCompress_OverheadPushesOverThreshold(t *testing.T) {
 	_ = err
 
 	if len(hookCalls) == 0 {
-		t.Fatal("expected compression to fire when overhead pushes total over normal threshold")
+		t.Fatal("expected emergency compression to fire when overhead pushes total over safety threshold")
+	}
+	if !hookCalls[0] {
+		t.Error("expected the fired compression to be the safety-net path (safetyNet=true)")
+	}
+}
+
+// TestCheckAndCompress_NormalBand_DoesNotFire verifies that CheckAndCompress is
+// emergency-only: a rendered request in the normal band (normalPercent <= total <
+// safetyPercent) does NOT compress at dispatch time. First-stage compaction is
+// deferred to the turn boundary.
+func TestCheckAndCompress_NormalBand_DoesNotFire(t *testing.T) {
+	store := newMockStore()
+
+	// 2400 chars → 600 tokens content; overhead 0 → 600 tokens = 60% of 1000:
+	// above normalPercent (50%), below safetyPercent (80%).
+	history := makeConversation(6, 200)
+	store.SetHistory("sess", history)
+
+	compressed := false
+	mgr := newCheckCompressManager(store, nil,
+		WithContextWindow(1000),
+		WithNormalPercent(50),
+		WithSafetyPercent(80),
+		WithOverheadTokens(0),
+	)
+	mgr.compressHook = func(_ bool) { compressed = true }
+	mgr.msgCount = len(history)
+
+	built := make([]providers.Message, len(history))
+	copy(built, history)
+
+	result, err := mgr.CheckAndCompress(context.Background(), built)
+	if err != nil {
+		t.Fatalf("expected no error in normal band, got: %v", err)
+	}
+	if compressed {
+		t.Error("expected no compression in the normal band (deferred to turn boundary)")
+	}
+	if len(result) != len(built) {
+		t.Errorf("expected input slice unchanged (len %d), got len %d", len(built), len(result))
 	}
 }
 
@@ -117,8 +158,8 @@ func TestCheckAndCompress_NoContextWindow(t *testing.T) {
 func TestCheckAndCompress_CompressionFiredReturnsFreshSlice(t *testing.T) {
 	store := newMockStore()
 
-	// contextWindow = 1000. normalPercent = 50 → trigger at 500 tokens.
-	// Built: 2000 chars → 500 tokens. overheadTokens = 100 → 600 tokens → 60% → triggers.
+	// contextWindow = 1000. safetyPercent = 80 → trigger at 800 tokens.
+	// Built: 2000 chars → 500 tokens. overheadTokens = 400 → 900 tokens → 90% → triggers.
 	history := makeConversation(5, 200)
 	store.SetHistory("sess", history)
 
@@ -130,7 +171,7 @@ func TestCheckAndCompress_CompressionFiredReturnsFreshSlice(t *testing.T) {
 		WithContextWindow(1000),
 		WithNormalPercent(50),
 		WithSafetyPercent(80),
-		WithOverheadTokens(100),
+		WithOverheadTokens(400),
 	)
 	mgr.msgCount = len(history)
 
@@ -146,43 +187,6 @@ func TestCheckAndCompress_CompressionFiredReturnsFreshSlice(t *testing.T) {
 	if len(result) >= len(built) {
 		t.Errorf("expected fresh (shorter) slice after compression; got len %d (input len %d)",
 			len(result), len(built))
-	}
-}
-
-// TestCheckAndCompress_CompressFail_ReturnsStaleSlice verifies that when
-// compression fails (LLM unavailable on normal path), CheckAndCompress returns the
-// stale input and ErrCompressionFailed.
-func TestCheckAndCompress_CompressFail_ReturnsStaleSlice(t *testing.T) {
-	store := newMockStore()
-
-	// Between normal (50%) and safety (80%): 600 tokens out of 1000 = 60%.
-	// 2400 chars → 600 tokens content; overheadTokens=0 → 600 tokens → 60% → normal trigger.
-	history := makeConversation(6, 200)
-	store.SetHistory("sess", history)
-
-	failErrors := make([]error, 20)
-	for i := range failErrors {
-		failErrors[i] = errors.New("llm down")
-	}
-	llm := &mockLLM{errors: failErrors}
-
-	mgr := newCheckCompressManager(store, []LLMClient{llm},
-		WithContextWindow(1000),
-		WithNormalPercent(50),
-		WithSafetyPercent(80),
-		WithOverheadTokens(0),
-	)
-	mgr.msgCount = len(history)
-
-	built := make([]providers.Message, len(history))
-	copy(built, history)
-
-	result, err := mgr.CheckAndCompress(context.Background(), built)
-	if !errors.Is(err, ErrCompressionFailed) {
-		t.Errorf("expected ErrCompressionFailed; got %v", err)
-	}
-	if len(result) != len(built) {
-		t.Errorf("expected stale slice (len %d) on failure; got len %d", len(built), len(result))
 	}
 }
 
@@ -213,11 +217,13 @@ func TestCheckAndCompress_ToolCallsCountedInTokens(t *testing.T) {
 	}
 }
 
-// TestCheckAndCompress_CooldownPreventsDoubleFire verifies that when cooling is true,
-// the normal trigger is suppressed (preventing double-firing after PreDispatchCheck).
-func TestCheckAndCompress_CooldownPreventsDoubleFire(t *testing.T) {
+// TestCheckAndCompress_NormalBandWithCooldown_DoesNotFire verifies that a request
+// in the normal band does not compress at the CheckAndCompress call regardless of
+// cooldown state — CheckAndCompress is emergency-only, so the normal band never
+// fires here whether cooling or not.
+func TestCheckAndCompress_NormalBandWithCooldown_DoesNotFire(t *testing.T) {
 	store := newMockStore()
-	// Above normalPercent (50%) at 60% with no overhead.
+	// Above normalPercent (50%) at 60% with no overhead — still below safety (80%).
 	history := makeConversation(6, 200) // 2400 chars → 600 tokens → 60% of 1000
 	store.SetHistory("sess", history)
 
@@ -231,7 +237,6 @@ func TestCheckAndCompress_CooldownPreventsDoubleFire(t *testing.T) {
 	mgr.compressHook = func(_ bool) { compressed = true }
 	mgr.msgCount = len(history)
 
-	// Set cooling — simulates that PreDispatchCheck already compressed this turn.
 	mgr.cooling = true
 	mgr.coolingSinceCount = mgr.msgCount
 
@@ -243,6 +248,6 @@ func TestCheckAndCompress_CooldownPreventsDoubleFire(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if compressed {
-		t.Error("expected compression to be suppressed by cooldown")
+		t.Error("expected no compression in the normal band (emergency-only)")
 	}
 }
