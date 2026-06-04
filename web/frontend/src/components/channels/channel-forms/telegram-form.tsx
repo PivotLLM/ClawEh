@@ -55,7 +55,8 @@ export function TelegramForm({
   const placeholderConfig = asRecord(config.placeholder)
   const placeholderEnabled = asBool(placeholderConfig.enabled)
   const coalesceConfig = asRecord(config.coalesce)
-  const coalesceEnabled = asBool(coalesceConfig.enabled)
+  // Coalescing defaults to on: only an explicit `false` disables it (nil/absent → on).
+  const coalesceEnabled = coalesceConfig.enabled !== false
   const tokenExtraHint =
     isEdit && asString(config.token)
       ? ` ${t("channels.field.secretHintSet")}`

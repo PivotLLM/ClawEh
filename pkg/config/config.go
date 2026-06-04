@@ -433,7 +433,11 @@ type PlaceholderConfig struct {
 // no new message has arrived for WindowMS, so the agent processes them as a
 // single turn instead of one round (and reply) per fragment.
 type CoalesceConfig struct {
-	Enabled bool `json:"enabled,omitempty"`
+	// Enabled gates coalescing. It is a pointer so that an absent value means
+	// "on" (the default): a nil Enabled enables coalescing, so existing bot
+	// configs that predate this field get it without editing. Set it explicitly
+	// to false to disable. See IsEnabled.
+	Enabled *bool `json:"enabled,omitempty"`
 	// WindowMS is the quiet period (milliseconds) to wait after the most recent
 	// message before flushing the buffer. Each new message resets the timer.
 	// Zero falls back to DefaultCoalesceWindowMS.
@@ -482,6 +486,13 @@ func (c CoalesceConfig) MaxMessageCount() int {
 		return DefaultCoalesceMaxMessages
 	}
 	return c.MaxMessages
+}
+
+// IsEnabled reports whether coalescing is active. A nil Enabled (the field
+// absent from config) defaults to on, so bots that predate the field — and
+// freshly configured bots — coalesce by default. An explicit false disables it.
+func (c CoalesceConfig) IsEnabled() bool {
+	return c.Enabled == nil || *c.Enabled
 }
 
 // TelegramBotConfig defines a single named Telegram bot.

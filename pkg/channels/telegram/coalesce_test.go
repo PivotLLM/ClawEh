@@ -203,6 +203,22 @@ func TestCoalescer_FlushKeyEmptyNoop(t *testing.T) {
 	}
 }
 
+func TestCoalesceConfigIsEnabledDefaultsOn(t *testing.T) {
+	// nil Enabled (field absent from config) → on, so bots predating the field coalesce.
+	var cfg config.CoalesceConfig
+	if !cfg.IsEnabled() {
+		t.Error("nil Enabled should default to on")
+	}
+	on := true
+	off := false
+	if !(config.CoalesceConfig{Enabled: &on}).IsEnabled() {
+		t.Error("explicit true should be enabled")
+	}
+	if (config.CoalesceConfig{Enabled: &off}).IsEnabled() {
+		t.Error("explicit false should be disabled")
+	}
+}
+
 func TestCoalesceConfigDefaults(t *testing.T) {
 	var cfg config.CoalesceConfig
 	if cfg.Window() != config.DefaultCoalesceWindowMS*time.Millisecond {

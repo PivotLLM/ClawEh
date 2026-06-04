@@ -78,8 +78,8 @@ func DefaultConfig() *Config {
 						Enabled: true,
 						Text:    "Thinking... 💭",
 					},
+					// Enabled left nil → on by default (see CoalesceConfig.IsEnabled).
 					Coalesce: CoalesceConfig{
-						Enabled:  true,
 						WindowMS: DefaultCoalesceWindowMS,
 					},
 				},

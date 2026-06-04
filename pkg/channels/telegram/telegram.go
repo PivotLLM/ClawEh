@@ -145,7 +145,7 @@ func (c *TelegramChannel) Start(ctx context.Context) error {
 	c.ctx, c.cancel = context.WithCancel(ctx)
 	c.stopOnce = sync.Once{}
 
-	if c.coalesceCfg.Enabled {
+	if c.coalesceCfg.IsEnabled() {
 		c.coalescer = newMessageCoalescer(c.coalesceCfg, c.dispatchCoalesced)
 	} else {
 		c.coalescer = nil

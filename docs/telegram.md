@@ -122,8 +122,9 @@ It is **enabled by default** with a 1000 ms window. Configure it with the
 }
 ```
 
-- `enabled` — turn coalescing on or off. Set to `false` to process every message
-  immediately (the previous behavior).
+- `enabled` — turn coalescing on or off. Omitting it (or any bot config that
+  predates this field) leaves coalescing **on**; set it explicitly to `false` to
+  process every message immediately.
 - `window_ms` — quiet period to wait after the most recent message before
   flushing. Each new message resets the timer. Defaults to `1000`. Telegram
   delivers split messages almost instantly, so even `500` is usually enough;
