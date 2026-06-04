@@ -1351,10 +1351,11 @@ func (al *AgentLoop) runAgentLoop(
 		return "", fmt.Errorf("context manager build: %w", buildErr)
 	}
 
-	// Post-Build token check: include overhead (system prompt, tool defs, completion
-	// budget) to catch cases where stored history is within threshold but the full
-	// request exceeds the context window. Cooldown prevents double-firing if
-	// PreDispatchCheck already compressed on this turn.
+	// Post-Build emergency check: include overhead (system prompt, tool defs,
+	// completion budget) to catch cases where stored history is within threshold
+	// but the full request would exceed the context window. Like PreDispatchCheck,
+	// this only fires at the safety-net level; first-stage compaction happens at
+	// the turn boundary (AddUserMessage / AddAssistantMessage), not here.
 	if messages, buildErr = cm.CheckAndCompress(ctx, messages); buildErr != nil {
 		logger.WarnCF("agent", "CheckAndCompress failed (continuing with current slice)",
 			map[string]any{"error": buildErr.Error(), "session": opts.SessionKey})
