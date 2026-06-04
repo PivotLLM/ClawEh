@@ -33,6 +33,10 @@ function asBool(value: unknown): boolean {
   return value === true
 }
 
+function asNumberString(value: unknown): string {
+  return typeof value === "number" && Number.isFinite(value) ? String(value) : ""
+}
+
 export function TelegramForm({
   config,
   onChange,
@@ -50,6 +54,8 @@ export function TelegramForm({
   const typingConfig = asRecord(config.typing)
   const placeholderConfig = asRecord(config.placeholder)
   const placeholderEnabled = asBool(placeholderConfig.enabled)
+  const coalesceConfig = asRecord(config.coalesce)
+  const coalesceEnabled = asBool(coalesceConfig.enabled)
   const tokenExtraHint =
     isEdit && asString(config.token)
       ? ` ${t("channels.field.secretHintSet")}`
@@ -147,6 +153,36 @@ export function TelegramForm({
               }
               placeholder={t("channels.field.placeholderText")}
               aria-label={t("channels.field.placeholderText")}
+            />
+          </div>
+        )}
+      </SwitchCardField>
+
+      <SwitchCardField
+        label={t("channels.field.coalesceEnabled")}
+        hint={t("channels.form.desc.coalesceEnabled")}
+        checked={coalesceEnabled}
+        onCheckedChange={(checked) =>
+          onChange("coalesce", { ...coalesceConfig, enabled: checked })
+        }
+        ariaLabel={t("channels.field.coalesceEnabled")}
+      >
+        {coalesceEnabled && (
+          <div className="space-y-1">
+            <Input
+              type="number"
+              min={0}
+              value={asNumberString(coalesceConfig.window_ms)}
+              onChange={(e) => {
+                const raw = e.target.value.trim()
+                const parsed = raw === "" ? 0 : Number(raw)
+                onChange("coalesce", {
+                  ...coalesceConfig,
+                  window_ms: Number.isFinite(parsed) ? parsed : 0,
+                })
+              }}
+              placeholder="1000"
+              aria-label={t("channels.field.coalesceWindowMs")}
             />
           </div>
         )}

@@ -89,3 +89,53 @@ groups), use `group_trigger` to control when ClawEh responds. With no
 Note that `group_trigger` only governs messages Telegram actually delivers. If
 Group Privacy is on, the bot can never see plain chatter regardless of these
 settings.
+
+---
+
+## 4. Combining split messages (coalescing)
+
+When a user types or pastes a long message, the Telegram app splits it into
+several messages (Telegram caps a single message at 4096 characters, and long
+pastes are sent as separate messages when you hit send). Without coalescing,
+each fragment is processed as its own turn: the agent answers a partial
+instruction, and the next fragment is then seen as a follow-up to that reply.
+
+Coalescing buffers consecutive messages from the **same sender in the same
+chat** and combines them into one inbound message once no new message has
+arrived for a short quiet period. Fragments are reassembled in send order
+(by Telegram message ID) and joined with newlines.
+
+It is **enabled by default** with a 1000 ms window. Configure it with the
+`coalesce` block:
+
+```json
+{
+  "id": "default",
+  "enabled": true,
+  "token": "123456:ABC-DEF...",
+  "coalesce": {
+    "enabled": true,
+    "window_ms": 1000,
+    "max_messages": 50,
+    "max_wait_ms": 30000
+  }
+}
+```
+
+- `enabled` — turn coalescing on or off. Set to `false` to process every message
+  immediately (the previous behavior).
+- `window_ms` — quiet period to wait after the most recent message before
+  flushing. Each new message resets the timer. Defaults to `1000`. Telegram
+  delivers split messages almost instantly, so even `500` is usually enough;
+  `1000` is safer.
+- `max_messages` — flush regardless of the timer once this many messages have
+  buffered. Defaults to `50`.
+- `max_wait_ms` — flush regardless of the timer once this much time has elapsed
+  since the first buffered message, so a sender who keeps typing cannot hold the
+  buffer open indefinitely. Defaults to `30000`.
+
+Bot commands (e.g. `/cancel`, `/status`) bypass the buffer — they are never
+delayed or merged, and they flush any pending buffered text first. In
+mention-only groups, coalescing only applies to the messages Telegram actually
+delivers to the bot (those that mention it), so a split paste that mentions the
+bot only in its first fragment is not fully combined.

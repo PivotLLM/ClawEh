@@ -78,6 +78,10 @@ func DefaultConfig() *Config {
 						Enabled: true,
 						Text:    "Thinking... 💭",
 					},
+					Coalesce: CoalesceConfig{
+						Enabled:  true,
+						WindowMS: DefaultCoalesceWindowMS,
+					},
 				},
 			},
 			Discord: DiscordConfig{
