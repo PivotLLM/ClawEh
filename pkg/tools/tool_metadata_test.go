@@ -10,8 +10,8 @@ import (
 
 func TestReadFileTool_Metadata(t *testing.T) {
 	tool := toolsfiles.NewReadFileTool("", false, toolsfiles.MaxReadFileSize)
-	if tool.Name() != "files_read" {
-		t.Errorf("Name() = %q, want files_read", tool.Name())
+	if tool.Name() != "file_read" {
+		t.Errorf("Name() = %q, want file_read", tool.Name())
 	}
 	if tool.Description() == "" {
 		t.Error("Description() should not be empty")
@@ -31,8 +31,8 @@ func TestReadFileTool_Metadata(t *testing.T) {
 
 func TestWriteFileTool_Metadata(t *testing.T) {
 	tool := toolsfiles.NewWriteFileTool("", false)
-	if tool.Name() != "files_write" {
-		t.Errorf("Name() = %q, want files_write", tool.Name())
+	if tool.Name() != "file_write" {
+		t.Errorf("Name() = %q, want file_write", tool.Name())
 	}
 	if tool.Description() == "" {
 		t.Error("Description() should not be empty")
@@ -45,8 +45,8 @@ func TestWriteFileTool_Metadata(t *testing.T) {
 
 func TestListDirTool_Metadata(t *testing.T) {
 	tool := toolsfiles.NewListDirTool("", false)
-	if tool.Name() != "files_list" {
-		t.Errorf("Name() = %q, want files_list", tool.Name())
+	if tool.Name() != "file_list" {
+		t.Errorf("Name() = %q, want file_list", tool.Name())
 	}
 	if tool.Description() == "" {
 		t.Error("Description() should not be empty")
@@ -59,8 +59,8 @@ func TestListDirTool_Metadata(t *testing.T) {
 
 func TestEditFileTool_Metadata(t *testing.T) {
 	tool := toolsfiles.NewEditFileTool("", false)
-	if tool.Name() != "files_edit" {
-		t.Errorf("Name() = %q, want files_edit", tool.Name())
+	if tool.Name() != "file_edit" {
+		t.Errorf("Name() = %q, want file_edit", tool.Name())
 	}
 	if tool.Description() == "" {
 		t.Error("Description() should not be empty")
@@ -82,8 +82,8 @@ func TestEditFileTool_Metadata(t *testing.T) {
 
 func TestAppendFileTool_Metadata(t *testing.T) {
 	tool := toolsfiles.NewAppendFileTool("", false)
-	if tool.Name() != "files_append" {
-		t.Errorf("Name() = %q, want files_append", tool.Name())
+	if tool.Name() != "file_append" {
+		t.Errorf("Name() = %q, want file_append", tool.Name())
 	}
 	if tool.Description() == "" {
 		t.Error("Description() should not be empty")

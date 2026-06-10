@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// Tests for internal skills_install.go functions.
+// Tests for internal skill_install.go functions.
 
 func TestWriteOriginMeta_Success(t *testing.T) {
 	dir := t.TempDir()

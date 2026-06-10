@@ -34,7 +34,7 @@ func NewCopyFileToolWithMemoryRedirect(
 }
 
 func (t *CopyFileTool) Name() string {
-	return "files_copy"
+	return "file_copy"
 }
 
 func (t *CopyFileTool) Description() string {

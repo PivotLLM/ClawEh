@@ -11,9 +11,9 @@ import (
 // tool DefaultEnabled exposes it over MCP without a separate hand-maintained list).
 func TestMCPHostAllowlist(t *testing.T) {
 	explicit := &config.Config{}
-	explicit.MCPHost.Tools = []string{"files_read", "web_search"}
+	explicit.MCPHost.Tools = []string{"file_read", "web_search"}
 	got := mcpHostAllowlist(explicit)
-	if len(got) != 2 || got[0] != "files_read" || got[1] != "web_search" {
+	if len(got) != 2 || got[0] != "file_read" || got[1] != "web_search" {
 		t.Fatalf("explicit MCPHost.Tools not honored: %v", got)
 	}
 

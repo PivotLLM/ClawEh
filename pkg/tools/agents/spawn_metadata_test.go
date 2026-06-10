@@ -8,8 +8,8 @@ func TestSpawnTool_Metadata(t *testing.T) {
 	sm := NewSubagentManager(SubagentManagerConfig{})
 	tool := NewSpawnTool(sm)
 
-	if tool.Name() != "agents_spawn" {
-		t.Errorf("Name() = %q, want agents_spawn", tool.Name())
+	if tool.Name() != "agent_spawn" {
+		t.Errorf("Name() = %q, want agent_spawn", tool.Name())
 	}
 	if tool.Description() == "" {
 		t.Error("Description() should not be empty")

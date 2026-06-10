@@ -140,7 +140,7 @@ func NewReadFileToolWithMemoryRedirect(
 }
 
 func (t *ReadFileTool) Name() string {
-	return "files_read"
+	return "file_read"
 }
 
 func (t *ReadFileTool) Description() string {
@@ -347,7 +347,7 @@ func NewWriteFileToolWithMemoryRedirect(
 }
 
 func (t *WriteFileTool) Name() string {
-	return "files_write"
+	return "file_write"
 }
 
 func (t *WriteFileTool) Description() string {
@@ -445,7 +445,7 @@ func NewListDirToolWithMemoryRedirect(
 }
 
 func (t *ListDirTool) Name() string {
-	return "files_list"
+	return "file_list"
 }
 
 func (t *ListDirTool) Description() string {

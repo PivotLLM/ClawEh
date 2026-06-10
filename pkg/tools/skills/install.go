@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"github.com/PivotLLM/ClawEh/pkg/fileutil"
-	"github.com/PivotLLM/ClawEh/pkg/tools"
 	"github.com/PivotLLM/ClawEh/pkg/logger"
 	skillspkg "github.com/PivotLLM/ClawEh/pkg/skills"
+	"github.com/PivotLLM/ClawEh/pkg/tools"
 	"github.com/PivotLLM/ClawEh/pkg/utils"
 )
 
@@ -37,7 +37,7 @@ func NewInstallSkillTool(registryMgr *skillspkg.RegistryManager, workspace strin
 }
 
 func (t *InstallSkillTool) Name() string {
-	return "skills_install"
+	return "skill_install"
 }
 
 func (t *InstallSkillTool) Description() string {

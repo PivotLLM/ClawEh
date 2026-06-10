@@ -1,9 +1,9 @@
 package agents
 
 import (
-	"github.com/PivotLLM/ClawEh/pkg/tools"
 	"context"
 	"fmt"
+	"github.com/PivotLLM/ClawEh/pkg/tools"
 	"strings"
 )
 
@@ -22,7 +22,7 @@ func NewSpawnTool(manager *SubagentManager) *SpawnTool {
 }
 
 func (t *SpawnTool) Name() string {
-	return "agents_spawn"
+	return "agent_spawn"
 }
 
 func (t *SpawnTool) Description() string {

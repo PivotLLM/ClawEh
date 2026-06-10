@@ -11,7 +11,7 @@ import (
 
 func TestFindSkillsToolName(t *testing.T) {
 	tool := NewFindSkillsTool(skills.NewRegistryManager(), nil)
-	assert.Equal(t, "skills_find", tool.Name())
+	assert.Equal(t, "skill_find", tool.Name())
 }
 
 func TestFindSkillsToolMissingQuery(t *testing.T) {

@@ -14,7 +14,7 @@ import (
 
 func TestInstallSkillToolName(t *testing.T) {
 	tool := NewInstallSkillTool(skills.NewRegistryManager(), t.TempDir())
-	assert.Equal(t, "skills_install", tool.Name())
+	assert.Equal(t, "skill_install", tool.Name())
 }
 
 func TestInstallSkillToolMissingSlug(t *testing.T) {
