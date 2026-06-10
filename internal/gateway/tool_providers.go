@@ -16,15 +16,17 @@ import (
 // registerToolProviders registers all tool providers in the global registry.
 // Must be called from setupAndStartServices before agent loop initialization.
 func registerToolProviders() {
-	tools.RegisterProvider(files.Provider)
-	tools.RegisterProvider(toolsweb.Provider)
-	tools.RegisterProvider(session.Provider)
-	tools.RegisterProvider(shell.Provider)
-	tools.RegisterProvider(skills.Provider)
-	tools.RegisterProvider(agents.Provider)
-	tools.RegisterProvider(hardware.Provider)
+	tools.RegisterProvider(tools.NamespacedProvider("file", files.GlobalProvider))
+	tools.RegisterProvider(tools.NamespacedProvider("web", toolsweb.GlobalProvider))
+	tools.RegisterProvider(tools.NamespacedProvider("session", session.GlobalProvider))
+	tools.RegisterProvider(tools.NamespacedProvider("shell", shell.GlobalProvider))
+	tools.RegisterProvider(tools.NamespacedProvider("skill", skills.GlobalProvider))
+	tools.RegisterProvider(tools.NamespacedProvider("agent", agents.GlobalProvider))
+	tools.RegisterProvider(tools.NamespacedProvider("hw", hardware.GlobalProvider))
+	tools.RegisterProvider(tools.NamespacedProvider("msg", msg.GlobalProvider))
+	// schedule stays catalogue-only: the cron tool is a runtime tool registered
+	// directly via agentLoop.RegisterTool (renamed to cron_schedule).
 	tools.RegisterProvider(schedule.Provider)
-	tools.RegisterProvider(msg.Provider)
 }
 
 // RegisterToolProvidersForTest is exported for use in tests that need

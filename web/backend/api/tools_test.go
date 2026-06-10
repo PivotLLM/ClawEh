@@ -21,6 +21,9 @@ func TestHandleListTools(t *testing.T) {
 	}
 	cfg.Tools.ReadFile.Enabled = true
 	cfg.Tools.WriteFile.Enabled = false
+	// file_write is gated via the generic override map now (the namespaced file
+	// tools no longer read the legacy typed fields).
+	cfg.Tools.Overrides = map[string]bool{"file_write": false}
 	cfg.Tools.Cron.Enabled = true
 	cfg.Tools.FindSkills.Enabled = true
 	cfg.Tools.Skills.Registry.Enabled = true
@@ -55,20 +58,20 @@ func TestHandleListTools(t *testing.T) {
 	for _, tool := range resp.Tools {
 		gotTools[tool.Name] = tool
 	}
-	if gotTools["files_read"].Status != "enabled" {
-		t.Fatalf("read_file status = %q, want enabled", gotTools["files_read"].Status)
+	if gotTools["file_read"].Status != "enabled" {
+		t.Fatalf("file_read status = %q, want enabled", gotTools["file_read"].Status)
 	}
-	if gotTools["files_write"].Status != "disabled" {
-		t.Fatalf("write_file status = %q, want disabled", gotTools["files_write"].Status)
+	if gotTools["file_write"].Status != "disabled" {
+		t.Fatalf("file_write status = %q, want disabled", gotTools["file_write"].Status)
 	}
-	if gotTools["schedule_cron"].Status != "enabled" {
-		t.Fatalf("cron status = %q, want enabled", gotTools["schedule_cron"].Status)
+	if gotTools["cron_schedule"].Status != "enabled" {
+		t.Fatalf("cron status = %q, want enabled", gotTools["cron_schedule"].Status)
 	}
-	if gotTools["agents_spawn"].Status != "blocked" || gotTools["agents_spawn"].ReasonCode != "requires_subagent" {
-		t.Fatalf("agents_spawn = %#v, want blocked/requires_subagent", gotTools["agents_spawn"])
+	if gotTools["agent_spawn"].Status != "blocked" || gotTools["agent_spawn"].ReasonCode != "requires_subagent" {
+		t.Fatalf("agent_spawn = %#v, want blocked/requires_subagent", gotTools["agent_spawn"])
 	}
-	if gotTools["skills_find"].Status != "enabled" {
-		t.Fatalf("skills_find status = %q, want enabled", gotTools["skills_find"].Status)
+	if gotTools["skill_find"].Status != "enabled" {
+		t.Fatalf("skill_find status = %q, want enabled", gotTools["skill_find"].Status)
 	}
 	if gotTools["find_tools_regex"].Status != "enabled" {
 		t.Fatalf("find_tools_regex status = %q, want enabled", gotTools["find_tools_regex"].Status)
@@ -155,7 +158,7 @@ func TestHandleUpdateToolState(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(
 		http.MethodPut,
-		"/api/tools/agents_spawn/state",
+		"/api/tools/agent_spawn/state",
 		bytes.NewBufferString(`{"enabled":true}`),
 	)
 	req.Header.Set("Content-Type", "application/json")
@@ -179,7 +182,7 @@ func TestHandleUpdateToolState(t *testing.T) {
 	rec3 := httptest.NewRecorder()
 	req3 := httptest.NewRequest(
 		http.MethodPut,
-		"/api/tools/schedule_cron/state",
+		"/api/tools/cron_schedule/state",
 		bytes.NewBufferString(`{"enabled":true}`),
 	)
 	req3.Header.Set("Content-Type", "application/json")
@@ -192,13 +195,15 @@ func TestHandleUpdateToolState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConfig(updated) error = %v", err)
 	}
-	if !updated.Tools.Spawn.Enabled || !updated.Tools.Subagent.Enabled {
-		t.Fatalf("spawn/subagent should both be enabled: %#v", updated.Tools)
+	// Namespaced tools (agent_spawn, cron_schedule) toggle via the generic
+	// override map now, not the legacy typed fields.
+	if !updated.Tools.Overrides["agent_spawn"] {
+		t.Fatalf("agent_spawn override should be true: %#v", updated.Tools.Overrides)
 	}
 	if !updated.Tools.MCP.Enabled || !updated.Tools.MCP.Discovery.Enabled || !updated.Tools.MCP.Discovery.UseRegex {
 		t.Fatalf("mcp regex discovery should be enabled: %#v", updated.Tools.MCP)
 	}
-	if !updated.Tools.Cron.Enabled {
-		t.Fatalf("cron should be enabled: %#v", updated.Tools.Cron)
+	if !updated.Tools.Overrides["cron_schedule"] {
+		t.Fatalf("cron_schedule override should be true: %#v", updated.Tools.Overrides)
 	}
 }

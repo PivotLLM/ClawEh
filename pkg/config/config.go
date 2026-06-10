@@ -947,29 +947,34 @@ type ReadFileToolConfig struct {
 }
 
 type ToolsConfig struct {
-	AllowReadPaths  []string           `json:"allow_read_paths"  env:"CLAW_TOOLS_ALLOW_READ_PATHS"`
-	AllowWritePaths []string           `json:"allow_write_paths" env:"CLAW_TOOLS_ALLOW_WRITE_PATHS"`
-	Web             WebToolsConfig     `json:"web"`
-	Cron            CronToolsConfig    `json:"cron"`
-	Exec            ExecConfig         `json:"exec"`
-	Skills          SkillsToolsConfig  `json:"skills"`
-	MediaCleanup    MediaCleanupConfig `json:"media_cleanup"`
-	MCP             MCPConfig          `json:"mcp"`
-	AppendFile      ToolConfig         `json:"append_file"                                              envPrefix:"CLAW_TOOLS_APPEND_FILE_"`
-	CopyFile        ToolConfig         `json:"copy_file"                                                envPrefix:"CLAW_TOOLS_COPY_FILE_"`
-	EditFile        ToolConfig         `json:"edit_file"                                                envPrefix:"CLAW_TOOLS_EDIT_FILE_"`
-	FindSkills      ToolConfig         `json:"find_skills"                                              envPrefix:"CLAW_TOOLS_FIND_SKILLS_"`
-	I2C             ToolConfig         `json:"i2c"                                                      envPrefix:"CLAW_TOOLS_I2C_"`
-	InstallSkill    ToolConfig         `json:"install_skill"                                            envPrefix:"CLAW_TOOLS_INSTALL_SKILL_"`
-	ListDir         ToolConfig         `json:"list_dir"                                                 envPrefix:"CLAW_TOOLS_LIST_DIR_"`
-	Message         ToolConfig         `json:"message"                                                  envPrefix:"CLAW_TOOLS_MESSAGE_"`
-	ReadFile        ReadFileToolConfig `json:"read_file"                                                envPrefix:"CLAW_TOOLS_READ_FILE_"`
-	SendFile        ToolConfig         `json:"send_file"                                                envPrefix:"CLAW_TOOLS_SEND_FILE_"`
-	Spawn           ToolConfig         `json:"spawn"                                                    envPrefix:"CLAW_TOOLS_SPAWN_"`
-	SPI             ToolConfig         `json:"spi"                                                      envPrefix:"CLAW_TOOLS_SPI_"`
-	Subagent        ToolConfig         `json:"subagent"                                                 envPrefix:"CLAW_TOOLS_SUBAGENT_"`
-	WebFetch        ToolConfig         `json:"web_fetch"                                                envPrefix:"CLAW_TOOLS_WEB_FETCH_"`
-	WriteFile       ToolConfig         `json:"write_file"                                               envPrefix:"CLAW_TOOLS_WRITE_FILE_"`
+	AllowReadPaths  []string `json:"allow_read_paths"  env:"CLAW_TOOLS_ALLOW_READ_PATHS"`
+	AllowWritePaths []string `json:"allow_write_paths" env:"CLAW_TOOLS_ALLOW_WRITE_PATHS"`
+	// Overrides is a generic per-tool enable map keyed by published tool name
+	// (e.g. "skill_find"). It is the dynamic gating path for tools that have no
+	// dedicated typed field — namespaced/global-layer tools register here so the
+	// WebUI can toggle them without code changes. Checked first by IsToolEnabled.
+	Overrides    map[string]bool    `json:"tool_overrides,omitempty"`
+	Web          WebToolsConfig     `json:"web"`
+	Cron         CronToolsConfig    `json:"cron"`
+	Exec         ExecConfig         `json:"exec"`
+	Skills       SkillsToolsConfig  `json:"skills"`
+	MediaCleanup MediaCleanupConfig `json:"media_cleanup"`
+	MCP          MCPConfig          `json:"mcp"`
+	AppendFile   ToolConfig         `json:"append_file"                                              envPrefix:"CLAW_TOOLS_APPEND_FILE_"`
+	CopyFile     ToolConfig         `json:"copy_file"                                                envPrefix:"CLAW_TOOLS_COPY_FILE_"`
+	EditFile     ToolConfig         `json:"edit_file"                                                envPrefix:"CLAW_TOOLS_EDIT_FILE_"`
+	FindSkills   ToolConfig         `json:"find_skills"                                              envPrefix:"CLAW_TOOLS_FIND_SKILLS_"`
+	I2C          ToolConfig         `json:"i2c"                                                      envPrefix:"CLAW_TOOLS_I2C_"`
+	InstallSkill ToolConfig         `json:"install_skill"                                            envPrefix:"CLAW_TOOLS_INSTALL_SKILL_"`
+	ListDir      ToolConfig         `json:"list_dir"                                                 envPrefix:"CLAW_TOOLS_LIST_DIR_"`
+	Message      ToolConfig         `json:"message"                                                  envPrefix:"CLAW_TOOLS_MESSAGE_"`
+	ReadFile     ReadFileToolConfig `json:"read_file"                                                envPrefix:"CLAW_TOOLS_READ_FILE_"`
+	SendFile     ToolConfig         `json:"send_file"                                                envPrefix:"CLAW_TOOLS_SEND_FILE_"`
+	Spawn        ToolConfig         `json:"spawn"                                                    envPrefix:"CLAW_TOOLS_SPAWN_"`
+	SPI          ToolConfig         `json:"spi"                                                      envPrefix:"CLAW_TOOLS_SPI_"`
+	Subagent     ToolConfig         `json:"subagent"                                                 envPrefix:"CLAW_TOOLS_SUBAGENT_"`
+	WebFetch     ToolConfig         `json:"web_fetch"                                                envPrefix:"CLAW_TOOLS_WEB_FETCH_"`
+	WriteFile    ToolConfig         `json:"write_file"                                               envPrefix:"CLAW_TOOLS_WRITE_FILE_"`
 }
 
 type SearchCacheConfig struct {
@@ -1486,6 +1491,11 @@ func MergeAPIKeys(apiKey string, apiKeys []string) []string {
 }
 
 func (t *ToolsConfig) IsToolEnabled(name string) bool {
+	// Generic overrides win — this is the dynamic gating path for global-layer
+	// tools that have no dedicated typed field.
+	if v, ok := t.Overrides[name]; ok {
+		return v
+	}
 	switch name {
 	// Namespaced names
 	case "files_read":

@@ -261,7 +261,12 @@ func applyConfigKey(cfg *config.Config, key string, enabled bool) error {
 			cfg.Tools.MCP.Discovery.Enabled = true
 		}
 	default:
-		return fmt.Errorf("config key %q not mapped", key)
+		// Generic override: global-layer tools without a dedicated typed field are
+		// toggled here so the WebUI can manage them dynamically.
+		if cfg.Tools.Overrides == nil {
+			cfg.Tools.Overrides = map[string]bool{}
+		}
+		cfg.Tools.Overrides[key] = enabled
 	}
 	return nil
 }

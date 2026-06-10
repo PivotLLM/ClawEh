@@ -199,7 +199,7 @@ func TestRegistry_ExecuteWithContext_RedactsWriteFileArgsAtInfo(t *testing.T) {
 
 	out := buf.String()
 
-	var infLine, dbgLine string
+	var infLine string
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
 		var ev map[string]any
 		if err := json.Unmarshal([]byte(line), &ev); err != nil {
@@ -207,11 +207,8 @@ func TestRegistry_ExecuteWithContext_RedactsWriteFileArgsAtInfo(t *testing.T) {
 		}
 		msg, _ := ev["message"].(string)
 		level, _ := ev["level"].(string)
-		switch {
-		case msg == "Tool execution started" && level == "info":
+		if msg == "Tool execution started" && level == "info" {
 			infLine = line
-		case msg == "Tool execution started (raw args)" && level == "debug":
-			dbgLine = line
 		}
 	}
 
@@ -225,11 +222,9 @@ func TestRegistry_ExecuteWithContext_RedactsWriteFileArgsAtInfo(t *testing.T) {
 		t.Errorf("INF line missing redacted summary: %s", infLine)
 	}
 
-	if dbgLine == "" {
-		t.Fatal("expected DBG raw-args companion line")
-	}
-	if !strings.Contains(dbgLine, secret) {
-		t.Error("DBG line should carry the raw args")
+	// Raw-args debug logging was removed, so the secret must not appear anywhere.
+	if strings.Contains(out, secret) {
+		t.Fatal("raw secret content leaked into logs")
 	}
 }
 
