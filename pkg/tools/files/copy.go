@@ -108,7 +108,7 @@ func copyFileViaFs(fsys fileSystem, src, dst string, overwrite bool) ([]byte, er
 		return nil, fmt.Errorf("failed to stat source: %w", err)
 	}
 	if srcInfo.IsDir() {
-		return nil, fmt.Errorf("source is a directory; files_copy copies files only: %s", src)
+		return nil, fmt.Errorf("source is a directory; file_copy copies files only: %s", src)
 	}
 
 	dstInfo, dstErr := fsys.Stat(dst)

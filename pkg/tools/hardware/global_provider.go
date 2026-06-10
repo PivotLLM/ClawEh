@@ -29,7 +29,7 @@ func (globalHardwareProvider) Description() string { return "Hardware I2C/SPI bu
 
 func (globalHardwareProvider) Available(cfg any) (bool, string) {
 	if runtime.GOOS != "linux" {
-		return false, "requires Linux"
+		return false, "requires_linux"
 	}
 	return true, ""
 }

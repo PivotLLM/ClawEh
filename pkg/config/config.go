@@ -960,21 +960,11 @@ type ToolsConfig struct {
 	Skills       SkillsToolsConfig  `json:"skills"`
 	MediaCleanup MediaCleanupConfig `json:"media_cleanup"`
 	MCP          MCPConfig          `json:"mcp"`
-	AppendFile   ToolConfig         `json:"append_file"                                              envPrefix:"CLAW_TOOLS_APPEND_FILE_"`
-	CopyFile     ToolConfig         `json:"copy_file"                                                envPrefix:"CLAW_TOOLS_COPY_FILE_"`
-	EditFile     ToolConfig         `json:"edit_file"                                                envPrefix:"CLAW_TOOLS_EDIT_FILE_"`
-	FindSkills   ToolConfig         `json:"find_skills"                                              envPrefix:"CLAW_TOOLS_FIND_SKILLS_"`
-	I2C          ToolConfig         `json:"i2c"                                                      envPrefix:"CLAW_TOOLS_I2C_"`
-	InstallSkill ToolConfig         `json:"install_skill"                                            envPrefix:"CLAW_TOOLS_INSTALL_SKILL_"`
-	ListDir      ToolConfig         `json:"list_dir"                                                 envPrefix:"CLAW_TOOLS_LIST_DIR_"`
-	Message      ToolConfig         `json:"message"                                                  envPrefix:"CLAW_TOOLS_MESSAGE_"`
-	ReadFile     ReadFileToolConfig `json:"read_file"                                                envPrefix:"CLAW_TOOLS_READ_FILE_"`
-	SendFile     ToolConfig         `json:"send_file"                                                envPrefix:"CLAW_TOOLS_SEND_FILE_"`
-	Spawn        ToolConfig         `json:"spawn"                                                    envPrefix:"CLAW_TOOLS_SPAWN_"`
-	SPI          ToolConfig         `json:"spi"                                                      envPrefix:"CLAW_TOOLS_SPI_"`
-	Subagent     ToolConfig         `json:"subagent"                                                 envPrefix:"CLAW_TOOLS_SUBAGENT_"`
-	WebFetch     ToolConfig         `json:"web_fetch"                                                envPrefix:"CLAW_TOOLS_WEB_FETCH_"`
-	WriteFile    ToolConfig         `json:"write_file"                                               envPrefix:"CLAW_TOOLS_WRITE_FILE_"`
+	// ReadFile carries the read-size limit used at tool construction (its enabled
+	// state, like every per-tool toggle, lives in Overrides now).
+	ReadFile ReadFileToolConfig `json:"read_file"                                                envPrefix:"CLAW_TOOLS_READ_FILE_"`
+	// Subagent is a capability gate (off by default), not a per-tool enable.
+	Subagent ToolConfig `json:"subagent"                                                 envPrefix:"CLAW_TOOLS_SUBAGENT_"`
 }
 
 type SearchCacheConfig struct {
@@ -1497,85 +1487,24 @@ func (t *ToolsConfig) IsToolEnabled(name string) bool {
 		return v
 	}
 	switch name {
-	// Namespaced names
-	case "files_read":
-		return t.ReadFile.Enabled
-	case "files_write":
-		return t.WriteFile.Enabled
-	case "files_list":
-		return t.ListDir.Enabled
-	case "files_edit":
-		return t.EditFile.Enabled
-	case "files_append":
-		return t.AppendFile.Enabled
-	case "files_copy":
-		return t.CopyFile.Enabled
-	case "shell_exec":
-		return t.Exec.Enabled
-	case "web_search":
-		return t.Web.Enabled
-	case "web_fetch":
-		return t.WebFetch.Enabled
-	case "session_messages", "session_search", "session_compact", "session_info":
-		return true
-	case "msg_send":
-		return t.Message.Enabled
-	case "msg_send_file":
-		return t.SendFile.Enabled
-	case "skills_find":
-		return t.FindSkills.Enabled
-	case "skills_install":
-		return t.InstallSkill.Enabled
-	case "agents_spawn":
-		return t.Spawn.Enabled
-	case "hw_i2c":
-		return t.I2C.Enabled
-	case "hw_spi":
-		return t.SPI.Enabled
-	case "schedule_cron":
-		return t.Cron.Enabled
-	// Legacy names kept for backward compatibility
-	case "web":
-		return t.Web.Enabled
-	case "cron":
-		return t.Cron.Enabled
-	case "exec":
-		return t.Exec.Enabled
-	case "skills":
-		return t.Skills.Local.Enabled
-	case "media_cleanup":
-		return t.MediaCleanup.Enabled
-	case "append_file":
-		return t.AppendFile.Enabled
-	case "copy_file":
-		return t.CopyFile.Enabled
-	case "edit_file":
-		return t.EditFile.Enabled
-	case "find_skills":
-		return t.FindSkills.Enabled
-	case "i2c":
-		return t.I2C.Enabled
-	case "install_skill":
-		return t.InstallSkill.Enabled
-	case "list_dir":
-		return t.ListDir.Enabled
-	case "message":
-		return t.Message.Enabled
-	case "read_file":
-		return t.ReadFile.Enabled
-	case "spawn":
-		return t.Spawn.Enabled
-	case "spi":
-		return t.SPI.Enabled
-	case "subagent":
-		return t.Subagent.Enabled
-	case "send_file":
-		return t.SendFile.Enabled
-	case "write_file":
-		return t.WriteFile.Enabled
+	// Capability gates (off by default; these are not per-tool enables).
 	case "mcp":
 		return t.MCP.Enabled
+	case "subagent":
+		return t.Subagent.Enabled
 	default:
+		// Capability gates aside, callers that lack a per-tool default treat a
+		// tool as enabled unless an override disables it.
 		return true
 	}
+}
+
+// ToolEnabled resolves a per-tool enabled state: an explicit Overrides entry wins,
+// otherwise the tool's own default-allow (from its descriptor) applies. This is the
+// gating path for global-layer tools, which have no dedicated typed config field.
+func (t *ToolsConfig) ToolEnabled(name string, defaultAllow bool) bool {
+	if v, ok := t.Overrides[name]; ok {
+		return v
+	}
+	return defaultAllow
 }

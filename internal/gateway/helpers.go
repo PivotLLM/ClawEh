@@ -742,7 +742,7 @@ func setupCronTool(
 
 	// Create CronTool if enabled
 	var cronTool *toolschedule.CronTool
-	if cfg.Tools.IsToolEnabled("schedule_cron") {
+	if cfg.Tools.Cron.Enabled {
 		var err error
 		cronTool, err = toolschedule.NewCronTool(cronService, agentLoop, msgBus, workspace, restrict, execTimeout, cfg)
 		if err != nil {

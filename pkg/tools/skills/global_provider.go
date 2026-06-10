@@ -27,10 +27,10 @@ func (globalSkillProvider) Description() string { return "Skill discovery and in
 func (globalSkillProvider) Available(cfg any) (bool, string) {
 	c, ok := cfg.(*config.Config)
 	if !ok || c == nil {
-		return false, "skills_registry_disabled"
+		return false, "requires_skills"
 	}
 	if !c.Tools.Skills.Registry.Enabled {
-		return false, "skills_registry_disabled"
+		return false, "requires_skills"
 	}
 	return true, ""
 }

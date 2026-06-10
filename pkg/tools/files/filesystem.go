@@ -276,7 +276,7 @@ func (t *ReadFileTool) Execute(ctx context.Context, args map[string]any) *tools.
 
 	if hasMore {
 		header += fmt.Sprintf(
-			"\n[TRUNCATED - file has more content. Call files_read again with offset=%d to continue.]",
+			"\n[TRUNCATED - file has more content. Call file_read again with offset=%d to continue.]",
 			readEnd,
 		)
 	} else {

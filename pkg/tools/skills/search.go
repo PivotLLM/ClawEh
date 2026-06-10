@@ -115,6 +115,6 @@ func formatSearchResults(query string, results []skillspkg.SearchResult, cached 
 		sb.WriteString("\n")
 	}
 
-	sb.WriteString("Use skills_install with the slug to install a skill.")
+	sb.WriteString("Use skill_install with the slug to install a skill.")
 	return sb.String()
 }

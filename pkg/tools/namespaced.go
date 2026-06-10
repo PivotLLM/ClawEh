@@ -175,9 +175,9 @@ func (a namespacedProvider) Build(deps ToolDeps) []Tool {
 	defs := a.p.RegisterTools(a.toGlobalDeps(deps))
 	out := make([]Tool, 0, len(defs))
 	for _, d := range defs {
-		// Preserve the per-tool enabled gate: a tool disabled via config (the
-		// generic override map or a legacy typed field) is not registered.
-		if deps.Cfg != nil && !deps.Cfg.Tools.IsToolEnabled(a.ns+"_"+d.Name) {
+		// Per-tool enabled gate: an explicit override wins, else the tool's own
+		// default-allow. Default-deny tools are not registered unless opted in.
+		if deps.Cfg != nil && !deps.Cfg.Tools.ToolEnabled(a.ns+"_"+d.Name, d.DefaultAllowed()) {
 			continue
 		}
 		out = append(out, wrapGlobalTool(a.ns, d))

@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"runtime"
 
 	"github.com/PivotLLM/ClawEh/pkg/config"
 	"github.com/PivotLLM/ClawEh/pkg/tools"
@@ -102,64 +101,21 @@ func buildToolSupport(cfg *config.Config) []toolSupportItem {
 	return items
 }
 
-func resolveToolStatus(cfg *config.Config, d tools.ToolDescriptor, p tools.ToolProvider, unavailReason string) string {
+// resolveToolStatus derives the GUI status from the provider availability and the
+// per-tool enabled state. Capability/environment gates (skills registry, subagent,
+// Linux-only hardware) are reported by each provider's Available as unavailReason.
+func resolveToolStatus(cfg *config.Config, d tools.ToolDescriptor, _ tools.ToolProvider, unavailReason string) string {
 	if unavailReason != "" {
 		return "blocked"
 	}
-	switch d.Name {
-	case "skills_find", "skills_install":
-		if !cfg.Tools.IsToolEnabled(d.ConfigKey) {
-			return "disabled"
-		}
-		if !cfg.Tools.IsToolEnabled("skills") {
-			return "blocked"
-		}
+	if cfg.Tools.ToolEnabled(d.ConfigKey, d.DefaultEnabled) {
 		return "enabled"
-	case "agents_spawn":
-		if !cfg.Tools.IsToolEnabled(d.ConfigKey) {
-			return "disabled"
-		}
-		if !cfg.Tools.IsToolEnabled("subagent") {
-			return "blocked"
-		}
-		return "enabled"
-	case "hw_i2c", "hw_spi":
-		if !cfg.Tools.IsToolEnabled(d.ConfigKey) {
-			return "disabled"
-		}
-		if runtime.GOOS != "linux" {
-			return "blocked"
-		}
-		return "enabled"
-	case "session_messages", "session_search", "session_compact", "session_info":
-		return "enabled"
-	default:
-		if cfg.Tools.IsToolEnabled(d.ConfigKey) {
-			return "enabled"
-		}
-		return "disabled"
 	}
+	return "disabled"
 }
 
-func resolveToolReasonCode(cfg *config.Config, d tools.ToolDescriptor, p tools.ToolProvider, unavailReason string) string {
-	if unavailReason != "" {
-		return unavailReason
-	}
-	switch d.Name {
-	case "skills_find", "skills_install":
-		if cfg.Tools.IsToolEnabled(d.ConfigKey) && !cfg.Tools.IsToolEnabled("skills") {
-			return "requires_skills"
-		}
-	case "agents_spawn":
-		if cfg.Tools.IsToolEnabled(d.ConfigKey) && !cfg.Tools.IsToolEnabled("subagent") {
-			return "requires_subagent"
-		}
-	case "hw_i2c", "hw_spi":
-		if cfg.Tools.IsToolEnabled(d.ConfigKey) && runtime.GOOS != "linux" {
-			return "requires_linux"
-		}
-	}
-	return ""
+func resolveToolReasonCode(_ *config.Config, _ tools.ToolDescriptor, _ tools.ToolProvider, unavailReason string) string {
+	return unavailReason
 }
 
 func resolveStaticToolStatus(cfg *config.Config, d tools.ToolDescriptor) (string, string) {
@@ -205,49 +161,6 @@ func applyToolState(cfg *config.Config, toolName string, enabled bool) error {
 
 func applyConfigKey(cfg *config.Config, key string, enabled bool) error {
 	switch key {
-	case "files_read":
-		cfg.Tools.ReadFile.Enabled = enabled
-	case "files_write":
-		cfg.Tools.WriteFile.Enabled = enabled
-	case "files_list":
-		cfg.Tools.ListDir.Enabled = enabled
-	case "files_edit":
-		cfg.Tools.EditFile.Enabled = enabled
-	case "files_append":
-		cfg.Tools.AppendFile.Enabled = enabled
-	case "files_copy":
-		cfg.Tools.CopyFile.Enabled = enabled
-	case "shell_exec":
-		cfg.Tools.Exec.Enabled = enabled
-	case "schedule_cron":
-		cfg.Tools.Cron.Enabled = enabled
-	case "web":
-		cfg.Tools.Web.Enabled = enabled
-	case "web_fetch":
-		cfg.Tools.WebFetch.Enabled = enabled
-	case "msg_send":
-		cfg.Tools.Message.Enabled = enabled
-	case "msg_send_file":
-		cfg.Tools.SendFile.Enabled = enabled
-	case "skills_find":
-		cfg.Tools.FindSkills.Enabled = enabled
-		if enabled {
-			cfg.Tools.Skills.Registry.Enabled = true
-		}
-	case "skills_install":
-		cfg.Tools.InstallSkill.Enabled = enabled
-		if enabled {
-			cfg.Tools.Skills.Registry.Enabled = true
-		}
-	case "agents_spawn":
-		cfg.Tools.Spawn.Enabled = enabled
-		if enabled {
-			cfg.Tools.Subagent.Enabled = true
-		}
-	case "hw_i2c":
-		cfg.Tools.I2C.Enabled = enabled
-	case "hw_spi":
-		cfg.Tools.SPI.Enabled = enabled
 	case "mcp.discovery.use_regex":
 		cfg.Tools.MCP.Discovery.UseRegex = enabled
 		if enabled {

@@ -19,15 +19,12 @@ func TestHandleListTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConfig() error = %v", err)
 	}
-	cfg.Tools.ReadFile.Enabled = true
-	cfg.Tools.WriteFile.Enabled = false
-	// file_write is gated via the generic override map now (the namespaced file
-	// tools no longer read the legacy typed fields).
-	cfg.Tools.Overrides = map[string]bool{"file_write": false}
+	// Per-tool enable state lives in the generic override map now; file_read is
+	// default-allow so it stays enabled, file_write is overridden off, and
+	// skill_find (default-deny) is overridden on.
+	cfg.Tools.Overrides = map[string]bool{"file_write": false, "skill_find": true}
 	cfg.Tools.Cron.Enabled = true
-	cfg.Tools.FindSkills.Enabled = true
 	cfg.Tools.Skills.Registry.Enabled = true
-	cfg.Tools.Spawn.Enabled = true
 	cfg.Tools.Subagent.Enabled = false
 	cfg.Tools.MCP.Enabled = true
 	cfg.Tools.MCP.Discovery.Enabled = true
@@ -102,12 +99,6 @@ func TestHandleListTools(t *testing.T) {
 			t.Fatalf("hw_i2c status = %q, want disabled on linux when config is off", gotTools["hw_i2c"].Status)
 		}
 	} else {
-		cfg.Tools.I2C.Enabled = true
-		cfg.Tools.SPI.Enabled = true
-		if err := config.SaveConfig(configPath, cfg); err != nil {
-			t.Fatalf("SaveConfig() error = %v", err)
-		}
-
 		rec = httptest.NewRecorder()
 		req = httptest.NewRequest(http.MethodGet, "/api/tools", nil)
 		mux.ServeHTTP(rec, req)
@@ -140,7 +131,6 @@ func TestHandleUpdateToolState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConfig() error = %v", err)
 	}
-	cfg.Tools.Spawn.Enabled = false
 	cfg.Tools.Subagent.Enabled = false
 	cfg.Tools.Cron.Enabled = false
 	cfg.Tools.MCP.Enabled = false

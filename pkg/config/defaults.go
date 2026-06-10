@@ -430,9 +430,6 @@ func DefaultConfig() *Config {
 					TTLSeconds: 300,
 				},
 			},
-			SendFile: ToolConfig{
-				Enabled: true,
-			},
 			MCP: MCPConfig{
 				ToolConfig: ToolConfig{
 					Enabled: false,
@@ -446,47 +443,11 @@ func DefaultConfig() *Config {
 				},
 				Servers: map[string]MCPServerConfig{},
 			},
-			AppendFile: ToolConfig{
-				Enabled: true,
-			},
-			CopyFile: ToolConfig{
-				Enabled: true,
-			},
-			EditFile: ToolConfig{
-				Enabled: true,
-			},
-			FindSkills: ToolConfig{
-				Enabled: true,
-			},
-			I2C: ToolConfig{
-				Enabled: false, // Hardware tool - Linux only
-			},
-			InstallSkill: ToolConfig{
-				Enabled: true,
-			},
-			ListDir: ToolConfig{
-				Enabled: true,
-			},
-			Message: ToolConfig{
-				Enabled: true,
-			},
 			ReadFile: ReadFileToolConfig{
 				Enabled:         true,
 				MaxReadFileSize: 64 * 1024, // 64KB
 			},
-			Spawn: ToolConfig{
-				Enabled: true,
-			},
-			SPI: ToolConfig{
-				Enabled: false, // Hardware tool - Linux only
-			},
 			Subagent: ToolConfig{
-				Enabled: true,
-			},
-			WebFetch: ToolConfig{
-				Enabled: true,
-			},
-			WriteFile: ToolConfig{
 				Enabled: true,
 			},
 		},

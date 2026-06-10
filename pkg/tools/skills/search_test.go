@@ -86,5 +86,5 @@ func TestFormatSearchResultsWithData(t *testing.T) {
 	assert.Contains(t, output, "v1.0.0")
 	assert.Contains(t, output, "0.950")
 	assert.Contains(t, output, "clawhub")
-	assert.Contains(t, output, "skills_install")
+	assert.Contains(t, output, "skill_install")
 }
