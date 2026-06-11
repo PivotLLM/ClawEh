@@ -163,8 +163,8 @@ function SummarizationModelsField({
   onChange,
 }: SummarizationModelsFieldProps) {
   const { t } = useTranslation()
-  const { apiKeyModels, oauthModels, localModels } = useChatModels()
-  const available = [...apiKeyModels, ...oauthModels, ...localModels]
+  const { configuredModels } = useChatModels()
+  const available = configuredModels
   const remaining = available.filter((m) => !value.includes(m.model_name))
 
   const moveUp = (i: number) => {

@@ -86,13 +86,12 @@ func ResolveCandidates(cfg ModelConfig, defaultProvider string) []FallbackCandid
 	return ResolveCandidatesWithLookup(cfg, defaultProvider, nil)
 }
 
-// LookupFunc resolves a user-written candidate string (typically a
-// model_name alias) into the corresponding ModelList entry. It returns the
-// resolved wire model ("protocol/modelID") and the entry's model_name. The
-// model_name is what the dispatcher uses to honour per-entry openai_compat
-// state, so a lookup that finds an entry by wire-model match (without an
-// explicit alias) should still return that entry's ModelName.
-type LookupFunc func(raw string) (alias, resolved string, ok bool)
+// LookupFunc resolves a user-written candidate string (typically a model_name
+// alias) into the corresponding ModelList entry, returning the entry's
+// model_name (the dispatcher key), its raw model id, and the name of the
+// provider it is reached through. The raw model id is used verbatim — it may
+// itself contain "/" (e.g. "openrouter/auto") — so it is never re-parsed.
+type LookupFunc func(raw string) (alias, model, provider string, ok bool)
 
 func ResolveCandidatesWithLookup(
 	cfg ModelConfig,
@@ -102,49 +101,40 @@ func ResolveCandidatesWithLookup(
 	seen := make(map[string]bool)
 	var candidates []FallbackCandidate
 
-	addCandidate := func(raw string) {
-		original := strings.TrimSpace(raw)
-		if original == "" {
-			return
-		}
-		candidateRaw := original
-		candidateAlias := ""
-		resolvedByLookup := false
-		if lookup != nil {
-			if alias, resolved, ok := lookup(candidateRaw); ok {
-				candidateRaw = resolved
-				candidateAlias = alias
-				resolvedByLookup = true
-			}
-		}
-
-		ref := ParseModelRef(candidateRaw, defaultProvider)
-		if ref == nil {
-			// Drop the candidate silently in the return value but log it: a
-			// non-empty alias that fails to resolve usually means it isn't
-			// enabled in model_list, and the operator otherwise sees a
-			// shortened fallback chain with no explanation.
-			logger.WarnCF("providers", "fallback alias dropped (not enabled in model_list)",
-				map[string]any{
-					"alias":              original,
-					"resolved_by_lookup": resolvedByLookup,
-					"resolved":           candidateRaw,
-				})
-			return
-		}
-		// Dedup on (provider, model, alias) so two entries with the same
-		// wire model but different aliases are both kept (each carries its
-		// own per-entry openai_compat state).
-		key := ModelKey(ref.Provider, ref.Model) + "#" + candidateAlias
+	add := func(provider, model, alias string) {
+		key := ModelKey(provider, model) + "#" + alias
 		if seen[key] {
 			return
 		}
 		seen[key] = true
 		candidates = append(candidates, FallbackCandidate{
-			Provider: ref.Provider,
-			Model:    ref.Model,
-			Alias:    candidateAlias,
+			Provider: provider,
+			Model:    model,
+			Alias:    alias,
 		})
+	}
+
+	addCandidate := func(raw string) {
+		original := strings.TrimSpace(raw)
+		if original == "" {
+			return
+		}
+		if lookup != nil {
+			if alias, model, provider, ok := lookup(original); ok {
+				add(provider, model, alias)
+				return
+			}
+		}
+		// No model_list match: parse the bare string as a last resort so
+		// no-lookup callers (ResolveCandidates) and unconfigured inputs still
+		// produce a candidate.
+		ref := ParseModelRef(original, defaultProvider)
+		if ref == nil {
+			logger.WarnCF("providers", "fallback alias dropped (not enabled in model_list)",
+				map[string]any{"alias": original})
+			return
+		}
+		add(ref.Provider, ref.Model, "")
 	}
 
 	// Primary first.

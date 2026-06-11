@@ -565,13 +565,20 @@ func TestProcessMessage_SwitchModelShowModelConsistency(t *testing.T) {
 		Agents: config.AgentsConfig{
 			Defaults: config.AgentDefaults{
 				Workspace:         tmpDir,
-				Model:             &config.AgentModelConfig{Primary: "openai/before-switch"},
+				Model:             &config.AgentModelConfig{Primary: "before-switch"},
 				MaxTokens:         4096,
 				MaxToolIterations: 10,
 			},
 			List: []config.AgentConfig{
 				{ID: "main", Name: "Main", Default: true},
 			},
+		},
+		Providers: []config.Provider{
+			{Name: "openai", Protocol: "openai", BaseURL: "https://api.openai.com/v1", APIKey: "k"},
+		},
+		ModelList: []config.ModelConfig{
+			{ModelName: "before-switch", Model: "before-switch", Provider: "openai", Enabled: true},
+			{ModelName: "after-switch", Model: "after-switch", Provider: "openai", Enabled: true},
 		},
 	}
 
@@ -584,13 +591,13 @@ func TestProcessMessage_SwitchModelShowModelConsistency(t *testing.T) {
 		Channel:  "telegram",
 		SenderID: "user1",
 		ChatID:   "chat1",
-		Content:  "/switch model to openai/after-switch",
+		Content:  "/switch model to after-switch",
 		Peer: bus.Peer{
 			Kind: "direct",
 			ID:   "user1",
 		},
 	})
-	if !strings.Contains(switchResp, "Switched model from openai/before-switch to openai/after-switch") {
+	if !strings.Contains(switchResp, "Switched model from before-switch to after-switch") {
 		t.Fatalf("unexpected /switch reply: %q", switchResp)
 	}
 

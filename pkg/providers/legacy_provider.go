@@ -18,32 +18,20 @@ import (
 func CreateProvider(cfg *config.Config) (LLMProvider, string, error) {
 	model := cfg.Agents.Defaults.DefaultModelName()
 
-	// Ensure model_list is populated from providers config if needed
-	// This handles two cases:
-	// 1. ModelList is empty - convert all providers
-	// 2. ModelList has some entries but not all providers - merge missing ones
-	if cfg.HasProvidersConfig() {
-		providerModels := config.ConvertProvidersToModelList(cfg)
-		existingModelNames := make(map[string]bool)
-		for _, m := range cfg.ModelList {
-			existingModelNames[m.ModelName] = true
-		}
-		for _, pm := range providerModels {
-			if !existingModelNames[pm.ModelName] {
-				cfg.ModelList = append(cfg.ModelList, pm)
-			}
-		}
-	}
-
 	// Must have model_list at this point
 	if len(cfg.ModelList) == 0 {
-		return nil, "", fmt.Errorf("no providers configured. Please add entries to model_list in your config")
+		return nil, "", fmt.Errorf("no models configured. Please add entries to model_list in your config")
 	}
 
 	// Get model config from model_list
 	modelCfg, err := cfg.GetModelConfig(model)
 	if err != nil {
 		return nil, "", fmt.Errorf("model %q not found in model_list: %w", model, err)
+	}
+
+	prov, err := cfg.GetProvider(modelCfg.Provider)
+	if err != nil {
+		return nil, "", fmt.Errorf("model %q: %w", model, err)
 	}
 
 	// Inject global workspace and timeout if not set in model config.
@@ -57,7 +45,7 @@ func CreateProvider(cfg *config.Config) (LLMProvider, string, error) {
 	}
 
 	// Use factory to create provider
-	provider, modelID, err := CreateProviderFromConfig(modelCfg)
+	provider, modelID, err := CreateProviderFromConfig(modelCfg, prov)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to create provider for model %q: %w", model, err)
 	}

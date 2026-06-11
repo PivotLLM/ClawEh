@@ -77,8 +77,9 @@ func TestHandleUpdateConfig_ValidationErrorReturns400(t *testing.T) {
 	// WebUI enabled without token should fail validation
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPut, "/api/config", bytes.NewBufferString(`{
-		"agents": {"defaults": {"workspace": "~/.claw/workspace"}},
-		"model_list": [{"model_name": "m", "model": "openai/gpt-4o", "api_key": "k"}],
+		"agents": {"defaults": {"workspace": "~/.claw/workspace"}, "list": [{"id": "main", "name": "Main", "default": true}]},
+		"providers": [{"name": "openai", "protocol": "openai", "base_url": "https://api.openai.com/v1", "api_key": "k"}],
+		"model_list": [{"model_name": "m", "model": "gpt-4o", "provider": "openai", "enabled": true}],
 		"channels": {"webui": {"enabled": true, "token": ""}}
 	}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -185,8 +186,9 @@ func TestValidateConfig_TelegramBotMissingToken(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.ModelList = []config.ModelConfig{{
 		ModelName: "m",
-		Model:     "openai/gpt-4o",
-		APIKey:    "k",
+		Model:     "gpt-4o",
+		Provider:  "openai",
+		Enabled:   true,
 	}}
 	cfg.Channels.Telegram = []config.TelegramBotConfig{{
 		ID:      "bot1",
@@ -213,8 +215,9 @@ func TestValidateConfig_DiscordMissingToken(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.ModelList = []config.ModelConfig{{
 		ModelName: "m",
-		Model:     "openai/gpt-4o",
-		APIKey:    "k",
+		Model:     "gpt-4o",
+		Provider:  "openai",
+		Enabled:   true,
 	}}
 	cfg.Channels.Discord.Enabled = true
 	cfg.Channels.Discord.Token = ""

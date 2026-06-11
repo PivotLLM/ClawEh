@@ -2163,20 +2163,15 @@ func (al *AgentLoop) resolveRunProvider(
 	activeModel string,
 ) (providers.LLMProvider, string) {
 	if al.dispatcher != nil {
-		var alias, protocol, modelID string
+		var alias, modelID string
 		if len(activeCandidates) > 0 {
 			alias = strings.TrimSpace(activeCandidates[0].Alias)
-			protocol = strings.TrimSpace(activeCandidates[0].Provider)
 			modelID = strings.TrimSpace(activeCandidates[0].Model)
-		} else if a, p, m, ok := resolveCompressModelTarget(al.GetConfig(), strings.TrimSpace(agent.Model)); ok {
-			alias, protocol, modelID = a, p, m
+		} else if a, m, ok := resolveCompressModelTarget(al.GetConfig(), strings.TrimSpace(agent.Model)); ok {
+			alias, modelID = a, m
 		}
-		if protocol != "" && modelID != "" {
-			key := alias
-			if key == "" {
-				key = protocol + "/" + modelID
-			}
-			if p, err := al.dispatcher.Get(key); err == nil {
+		if alias != "" {
+			if p, err := al.dispatcher.Get(alias); err == nil {
 				return p, modelID
 			}
 		}
@@ -2430,26 +2425,21 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 			rt.AgentName = agent.ID
 		}
 		rt.GetModelInfo = func() (name, provider, protocol, apiBase string) {
-			// Resolve the configured model so the provider/protocol come from the
-			// real model string (e.g. "openrouter/deepseek/deepseek-v4-flash"),
-			// not the user-facing alias (which has no prefix and would default to
-			// "openai").
-			modelStr := agent.Model
+			// Resolve the configured model so the provider name, wire protocol,
+			// and base URL come from the model's named provider.
+			name = agent.Model
 			if mc, err := cfg.GetModelConfig(agent.Model); err == nil && mc != nil {
-				if mc.Model != "" {
-					modelStr = mc.Model
-				}
 				if mc.ModelName != "" {
 					name = mc.ModelName
+				} else if mc.Model != "" {
+					name = mc.Model
 				}
-				apiBase = mc.APIBase
+				if prov, perr := cfg.GetProvider(mc.Provider); perr == nil && prov != nil {
+					provider = prov.Name
+					protocol = prov.Protocol
+					apiBase = prov.BaseURL
+				}
 			}
-			var modelID string
-			provider, modelID = providers.ExtractProtocol(modelStr) // e.g. "openrouter"
-			if name == "" {
-				name = modelID // no config alias: show the bare model id
-			}
-			protocol = providers.WireProtocol(provider) // e.g. "openai"
 			return name, provider, protocol, apiBase
 		}
 		rt.SwitchModel = func(value string) (string, error) {

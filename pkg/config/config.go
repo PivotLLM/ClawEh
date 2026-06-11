@@ -99,7 +99,7 @@ type Config struct {
 	Session       SessionConfig       `json:"session,omitempty"`
 	AgentMentions AgentMentionConfig  `json:"agent_mentions,omitempty"`
 	Channels      ChannelsConfig      `json:"channels"`
-	Providers     ProvidersConfig     `json:"providers,omitempty"`
+	Providers     []Provider          `json:"providers,omitempty"`
 	ModelList     []ModelConfig       `json:"model_list"` // New model-centric provider configuration
 	Summarization SummarizationConfig `json:"summarization,omitempty"`
 	Gateway       GatewayConfig       `json:"gateway"`
@@ -115,42 +115,18 @@ type Config struct {
 	// global.MinConfigReloadIntervalSeconds.
 	ConfigReloadIntervalSeconds int `json:"config_reload_interval_seconds,omitempty" env:"CLAW_CONFIG_RELOAD_INTERVAL_SECONDS"`
 
-	// OpenAICompatProtocols registers additional protocol prefixes that should
-	// be served by the openai-compatible HTTP provider. Keys are the protocol
-	// identifier (the part before "/" in a ModelConfig.Model string); values
-	// are the default api_base for that protocol — empty means "no default,
-	// each model must set api_base explicitly". Keys must not collide with
-	// any protocol owned by a hardcoded provider (see reservedProtocolNames).
-	OpenAICompatProtocols map[string]string `json:"openai_compat_protocols,omitempty"`
-
-	// OpenAICompatResponseFormat overrides the per-protocol default for
-	// emitting `response_format={"type":"json_object"}` on outbound requests
-	// when the caller asks for JSON-mode output. Built-in defaults: openai
-	// and xai are capable; everything else is off. Operators can flip a
-	// configurable protocol on (e.g. openrouter, groq, litellm) without
-	// touching code by setting `openai_compat_response_format: {openrouter:
-	// true}` here. Protocols not present in the map fall back to the
-	// hardcoded default.
-	OpenAICompatResponseFormat map[string]bool `json:"openai_compat_response_format,omitempty"`
-
 	dataDir string // runtime-only: base data directory, not serialized
 }
 
-// MarshalJSON implements custom JSON marshaling for Config
-// to omit providers section when empty and session when empty
+// MarshalJSON implements custom JSON marshaling for Config to omit the session
+// section when empty. The providers list omits naturally via its slice tag.
 func (c Config) MarshalJSON() ([]byte, error) {
 	type Alias Config
 	aux := &struct {
-		Providers *ProvidersConfig `json:"providers,omitempty"`
-		Session   *SessionConfig   `json:"session,omitempty"`
+		Session *SessionConfig `json:"session,omitempty"`
 		*Alias
 	}{
 		Alias: (*Alias)(&c),
-	}
-
-	// Only include providers if not empty
-	if !c.Providers.IsEmpty() {
-		aux.Providers = &c.Providers
 	}
 
 	// Only include session if not empty
@@ -615,66 +591,24 @@ type LoggingConfig struct {
 	DumpAll bool `json:"dump_all" env:"CLAW_LOGGING_DUMP_ALL"`
 }
 
-type ProvidersConfig struct {
-	Anthropic  ProviderConfig       `json:"anthropic"`
-	OpenAI     OpenAIProviderConfig `json:"openai"`
-	LiteLLM    ProviderConfig       `json:"litellm"`
-	OpenRouter ProviderConfig       `json:"openrouter"`
-	Groq       ProviderConfig       `json:"groq"`
-	VLLM       ProviderConfig       `json:"vllm"`
-	Gemini     ProviderConfig       `json:"gemini"`
-	Nvidia     ProviderConfig       `json:"nvidia"`
-	Ollama     ProviderConfig       `json:"ollama"`
-	Moonshot   ProviderConfig       `json:"moonshot"`
-	DeepSeek   ProviderConfig       `json:"deepseek"`
-	Cerebras   ProviderConfig       `json:"cerebras"`
-	Qwen       ProviderConfig       `json:"qwen"`
-	Mistral    ProviderConfig       `json:"mistral"`
-	Avian      ProviderConfig       `json:"avian"`
-}
-
-// IsEmpty checks if all provider configs are empty (no API keys or API bases set)
-// Note: WebSearch is an optimization option and doesn't count as "non-empty"
-func (p ProvidersConfig) IsEmpty() bool {
-	return p.Anthropic.APIKey == "" && p.Anthropic.APIBase == "" &&
-		p.OpenAI.APIKey == "" && p.OpenAI.APIBase == "" &&
-		p.LiteLLM.APIKey == "" && p.LiteLLM.APIBase == "" &&
-		p.OpenRouter.APIKey == "" && p.OpenRouter.APIBase == "" &&
-		p.Groq.APIKey == "" && p.Groq.APIBase == "" &&
-		p.VLLM.APIKey == "" && p.VLLM.APIBase == "" &&
-		p.Gemini.APIKey == "" && p.Gemini.APIBase == "" &&
-		p.Nvidia.APIKey == "" && p.Nvidia.APIBase == "" &&
-		p.Ollama.APIKey == "" && p.Ollama.APIBase == "" &&
-		p.Moonshot.APIKey == "" && p.Moonshot.APIBase == "" &&
-		p.DeepSeek.APIKey == "" && p.DeepSeek.APIBase == "" &&
-		p.Cerebras.APIKey == "" && p.Cerebras.APIBase == "" &&
-		p.Qwen.APIKey == "" && p.Qwen.APIBase == "" &&
-		p.Mistral.APIKey == "" && p.Mistral.APIBase == "" &&
-		p.Avian.APIKey == "" && p.Avian.APIBase == ""
-}
-
-// MarshalJSON implements custom JSON marshaling for ProvidersConfig
-// to omit the entire section when empty
-func (p ProvidersConfig) MarshalJSON() ([]byte, error) {
-	if p.IsEmpty() {
-		return []byte("null"), nil
-	}
-	type Alias ProvidersConfig
-	return json.Marshal((*Alias)(&p))
-}
-
-type ProviderConfig struct {
-	APIKey         string `json:"api_key"                   env:"CLAW_PROVIDERS_{{.Name}}_API_KEY"`
-	APIBase        string `json:"api_base"                  env:"CLAW_PROVIDERS_{{.Name}}_API_BASE"`
-	Proxy          string `json:"proxy,omitempty"           env:"CLAW_PROVIDERS_{{.Name}}_PROXY"`
-	RequestTimeout int    `json:"request_timeout,omitempty" env:"CLAW_PROVIDERS_{{.Name}}_REQUEST_TIMEOUT"`
-	AuthMethod     string `json:"auth_method,omitempty"     env:"CLAW_PROVIDERS_{{.Name}}_AUTH_METHOD"`
-	ConnectMode    string `json:"connect_mode,omitempty"    env:"CLAW_PROVIDERS_{{.Name}}_CONNECT_MODE"`
-}
-
-type OpenAIProviderConfig struct {
-	ProviderConfig
-	WebSearch bool `json:"web_search" env:"CLAW_PROVIDERS_OPENAI_WEB_SEARCH"`
+// Provider is a named endpoint a model is reached through. It owns the wire
+// protocol, the base URL, the credentials, and endpoint-scoped quirks. Models
+// reference a provider by Name; the WebUI groups models by provider.
+type Provider struct {
+	Name     string `json:"name"`     // Unique identifier referenced by ModelConfig.Provider
+	Protocol string `json:"protocol"` // Wire format: openai, anthropic, anthropic-messages, azure, claude-cli, codex-cli, gemini-cli
+	BaseURL  string `json:"base_url,omitempty"`
+	APIKey   string `json:"api_key,omitempty"`
+	Proxy    string `json:"proxy,omitempty"`
+	// AuthMethod is how we authenticate to this endpoint: "" (api key), "oauth",
+	// or "token". OAuth is only meaningful for the anthropic protocol.
+	AuthMethod string `json:"auth_method,omitempty"`
+	// Endpoint-scoped openai-compat knobs.
+	StrictCompat        bool `json:"strict_compat,omitempty"`
+	NoParallelToolCalls bool `json:"no_parallel_tool_calls,omitempty"`
+	ResponseFormatJSON  bool `json:"response_format_json,omitempty"`
+	// Command overrides the binary path for CLI protocols (claude-cli, etc.).
+	Command string `json:"command,omitempty"`
 }
 
 // ModelConfig represents a model-centric provider configuration.
@@ -685,18 +619,12 @@ type OpenAIProviderConfig struct {
 type ModelConfig struct {
 	// Required fields
 	ModelName string `json:"model_name"` // User-facing alias for the model
-	Model     string `json:"model"`      // Protocol/model-identifier (e.g., "openai/gpt-4o", "anthropic/claude-sonnet-4.6")
-
-	// HTTP-based providers
-	APIBase string `json:"api_base,omitempty"` // API endpoint URL
-	APIKey  string `json:"api_key"`            // API authentication key
-	Proxy   string `json:"proxy,omitempty"`    // HTTP proxy URL
+	Model     string `json:"model"`      // Raw model id the endpoint expects (no claw protocol prefix)
+	Provider  string `json:"provider"`   // Name of the Provider this model is reached through
 
 	// Special providers (CLI-based, OAuth, etc.)
-	AuthMethod  string `json:"auth_method,omitempty"`  // Authentication method: oauth, token
 	ConnectMode string `json:"connect_mode,omitempty"` // Connection mode: stdio, grpc
 	Workspace   string `json:"workspace,omitempty"`    // Workspace path for CLI-based providers
-	Command     string `json:"command,omitempty"`      // Override binary path for CLI providers (e.g., /home/user/.local/bin/claude)
 
 	// Optional optimizations
 	RPM            int               `json:"rpm,omitempty"`              // Requests per minute limit
@@ -704,7 +632,6 @@ type ModelConfig struct {
 	ContextWindow  int               `json:"context_window,omitempty"`   // Actual model context window size in tokens
 	MaxTokensField string            `json:"max_tokens_field,omitempty"` // Field name for max tokens (e.g., "max_completion_tokens")
 	RequestTimeout int               `json:"request_timeout,omitempty"`
-	StrictCompat   bool              `json:"strict_compat,omitempty"`  // Strip non-standard fields for strict OpenAI-compatible endpoints
 	ThinkingLevel  string            `json:"thinking_level,omitempty"` // Extended thinking: off|low|medium|high|xhigh|adaptive
 	NoTools        bool              `json:"no_tools,omitempty"`       // When true, tools are not passed to this model
 	ExtraArgs      []string          `json:"extra_args,omitempty"`     // Additional CLI arguments appended after required flags
@@ -737,71 +664,6 @@ type ModelConfig struct {
 	// literal filter: listing structural fields like "messages" or "model" will
 	// break the request. Ignored by providers other than openai_compat.
 	DropParams []string `json:"drop_params,omitempty" yaml:"drop_params,omitempty"`
-
-	// Runtime-only: set by Config.resolveOpenAICompatProtocols when the
-	// model's protocol prefix matches an entry in
-	// Config.OpenAICompatProtocols. Unexported so JSON ignores them.
-	openaiCompatExtra bool
-	openaiCompatBase  string
-
-	// Runtime-only: set during config resolution from
-	// Config.OpenAICompatResponseFormat. When true, the openai-compat
-	// provider built from this ModelConfig is allowed to emit
-	// response_format=json_object on outbound requests (the built-in
-	// per-protocol default is OR'd in by the provider itself). Unexported
-	// so JSON ignores it.
-	responseFormatJSON bool
-}
-
-// IsOpenAICompatExtra reports whether this model's protocol prefix was
-// registered via Config.OpenAICompatProtocols. The providers factory uses
-// this to route an otherwise-unknown protocol through the openai-compat
-// HTTP provider.
-func (c *ModelConfig) IsOpenAICompatExtra() bool {
-	if c == nil {
-		return false
-	}
-	return c.openaiCompatExtra
-}
-
-// OpenAICompatBase returns the default api_base registered for this model's
-// protocol via Config.OpenAICompatProtocols. Empty when the protocol was not
-// registered, or when it was registered with an empty default.
-func (c *ModelConfig) OpenAICompatBase() string {
-	if c == nil {
-		return ""
-	}
-	return c.openaiCompatBase
-}
-
-// MarkOpenAICompatExtra tags this ModelConfig as resolved via
-// Config.OpenAICompatProtocols. base is the registered default api_base
-// (may be empty). Called by Config.resolveOpenAICompatProtocols; also useful
-// in tests that construct a ModelConfig directly without going through
-// LoadConfig.
-func (c *ModelConfig) MarkOpenAICompatExtra(base string) {
-	c.openaiCompatExtra = true
-	c.openaiCompatBase = base
-}
-
-// ResponseFormatJSONCapable reports whether this ModelConfig has been
-// resolved as capable of receiving response_format=json_object via the
-// Config.OpenAICompatResponseFormat override. The built-in per-protocol
-// defaults are applied separately inside the openai-compat provider; this
-// flag only conveys the operator-supplied override.
-func (c *ModelConfig) ResponseFormatJSONCapable() bool {
-	if c == nil {
-		return false
-	}
-	return c.responseFormatJSON
-}
-
-// SetResponseFormatJSONCapable records the operator-supplied override that
-// the openai-compat provider should be permitted to emit response_format=
-// json_object for this model. Called by config resolution; exposed so tests
-// can build ModelConfigs directly without round-tripping through LoadConfig.
-func (c *ModelConfig) SetResponseFormatJSONCapable(v bool) {
-	c.responseFormatJSON = v
 }
 
 // reservedRequestBodyKeys lists the JSON request fields owned by claw's own
@@ -830,6 +692,9 @@ func (c *ModelConfig) Validate() error {
 	}
 	if c.Model == "" {
 		return fmt.Errorf("model is required")
+	}
+	if c.Provider == "" {
+		return fmt.Errorf("model %q: provider is required", c.ModelName)
 	}
 	switch c.ReasoningEffort {
 	case "", "low", "medium", "high":
@@ -1097,22 +962,14 @@ func LoadConfig(path string) (*Config, error) {
 	cfg.migrateChannelConfigs()
 
 	// Auto-migrate: if only legacy providers config exists, convert to model_list
-	if len(cfg.ModelList) == 0 && cfg.HasProvidersConfig() {
-		cfg.ModelList = ConvertProvidersToModelList(cfg)
+	// Validate providers, then model_list (including that each model's provider
+	// reference resolves).
+	if err := cfg.ValidateProviders(); err != nil {
+		return nil, err
 	}
-
-	// Validate model_list for uniqueness and required fields
 	if err := cfg.ValidateModelList(); err != nil {
 		return nil, err
 	}
-
-	// Reject openai_compat_protocols entries that collide with hardcoded
-	// providers, then tag matching model_list entries so the providers
-	// factory can route them via the openai-compat HTTP provider.
-	if err := cfg.ValidateOpenAICompatProtocols(); err != nil {
-		return nil, err
-	}
-	cfg.resolveOpenAICompatProtocols()
 
 	return cfg, nil
 }
@@ -1170,15 +1027,11 @@ func (c *Config) HasCLIProvider() bool {
 		if !c.ModelList[i].Enabled {
 			continue
 		}
-		model := strings.TrimSpace(c.ModelList[i].Model)
-		protocol, _, found := strings.Cut(model, "/")
-		if !found {
+		prov, err := c.GetProvider(c.ModelList[i].Provider)
+		if err != nil {
 			continue
 		}
-		switch protocol {
-		case "claude-cli", "claudecli",
-			"codex-cli", "codexcli",
-			"gemini-cli", "geminicli":
+		if IsCLIProtocol(prov.Protocol) {
 			return true
 		}
 	}
@@ -1272,44 +1125,6 @@ func (c *Config) CronPath() string {
 	return filepath.Join(c.dataDir, "cron")
 }
 
-func (c *Config) GetAPIKey() string {
-	if c.Providers.OpenRouter.APIKey != "" {
-		return c.Providers.OpenRouter.APIKey
-	}
-	if c.Providers.Anthropic.APIKey != "" {
-		return c.Providers.Anthropic.APIKey
-	}
-	if c.Providers.OpenAI.APIKey != "" {
-		return c.Providers.OpenAI.APIKey
-	}
-	if c.Providers.Gemini.APIKey != "" {
-		return c.Providers.Gemini.APIKey
-	}
-	if c.Providers.Groq.APIKey != "" {
-		return c.Providers.Groq.APIKey
-	}
-	if c.Providers.VLLM.APIKey != "" {
-		return c.Providers.VLLM.APIKey
-	}
-	if c.Providers.Cerebras.APIKey != "" {
-		return c.Providers.Cerebras.APIKey
-	}
-	return ""
-}
-
-func (c *Config) GetAPIBase() string {
-	if c.Providers.OpenRouter.APIKey != "" {
-		if c.Providers.OpenRouter.APIBase != "" {
-			return c.Providers.OpenRouter.APIBase
-		}
-		return "https://openrouter.ai/api/v1"
-	}
-	if c.Providers.VLLM.APIKey != "" && c.Providers.VLLM.APIBase != "" {
-		return c.Providers.VLLM.APIBase
-	}
-	return ""
-}
-
 func expandHome(path string) string {
 	if path == "" {
 		return path
@@ -1352,122 +1167,108 @@ func (c *Config) findMatches(modelName string) []ModelConfig {
 	return matches
 }
 
-// HasProvidersConfig checks if any provider in the old providers config has configuration.
-func (c *Config) HasProvidersConfig() bool {
-	return !c.Providers.IsEmpty()
+// validProtocols is the set of wire protocols a Provider may declare. Each maps
+// to an internal provider implementation in pkg/providers.
+var validProtocols = map[string]struct{}{
+	"openai":             {},
+	"azure":              {},
+	"anthropic":          {},
+	"anthropic-messages": {},
+	"claude-cli":         {},
+	"codex-cli":          {},
+	"gemini-cli":         {},
 }
 
-// ValidateModelList validates all ModelConfig entries in the model_list.
-// It checks that each model config is valid.
-// Note: Multiple entries with the same model_name are allowed for load balancing.
+// httpProtocols are the protocols that require a base_url.
+var httpProtocols = map[string]struct{}{
+	"openai":             {},
+	"azure":              {},
+	"anthropic":          {},
+	"anthropic-messages": {},
+}
+
+// IsCLIProtocol reports whether the protocol is a subprocess CLI provider,
+// which authenticates out-of-band and needs no API key.
+func IsCLIProtocol(protocol string) bool {
+	switch protocol {
+	case "claude-cli", "codex-cli", "gemini-cli":
+		return true
+	default:
+		return false
+	}
+}
+
+// HasCredentials reports whether this provider carries enough to authenticate:
+// CLI providers always qualify (they auth out-of-band); HTTP providers need an
+// API key or an OAuth/token auth method.
+func (p *Provider) HasCredentials() bool {
+	if IsCLIProtocol(p.Protocol) {
+		return true
+	}
+	return p.APIKey != "" || p.AuthMethod != ""
+}
+
+// GetProvider resolves a provider by name. The lookup is case-sensitive on the
+// configured Name.
+func (c *Config) GetProvider(name string) (*Provider, error) {
+	for i := range c.Providers {
+		if c.Providers[i].Name == name {
+			return &c.Providers[i], nil
+		}
+	}
+	return nil, fmt.Errorf("provider %q not found", name)
+}
+
+// FindProviderByProtocol returns the first provider declaring the given
+// protocol, or nil. Used by flows that target a wire family rather than a
+// specific named endpoint (e.g. OAuth login attaching to the anthropic
+// provider).
+func (c *Config) FindProviderByProtocol(protocol string) *Provider {
+	for i := range c.Providers {
+		if c.Providers[i].Protocol == protocol {
+			return &c.Providers[i]
+		}
+	}
+	return nil
+}
+
+// ValidateProviders checks that provider names are unique and non-empty, each
+// protocol is recognised, and HTTP protocols carry a base_url.
+func (c *Config) ValidateProviders() error {
+	seen := make(map[string]struct{}, len(c.Providers))
+	for i := range c.Providers {
+		p := &c.Providers[i]
+		if strings.TrimSpace(p.Name) == "" {
+			return fmt.Errorf("providers[%d]: name is required", i)
+		}
+		if _, dup := seen[p.Name]; dup {
+			return fmt.Errorf("providers[%d]: duplicate provider name %q", i, p.Name)
+		}
+		seen[p.Name] = struct{}{}
+		if _, ok := validProtocols[p.Protocol]; !ok {
+			return fmt.Errorf("provider %q: unknown protocol %q", p.Name, p.Protocol)
+		}
+		if _, http := httpProtocols[p.Protocol]; http && p.BaseURL == "" {
+			return fmt.Errorf("provider %q: base_url is required for protocol %q", p.Name, p.Protocol)
+		}
+	}
+	return nil
+}
+
+// ValidateModelList validates all ModelConfig entries in the model_list,
+// including that each model's provider reference resolves to a configured
+// provider. Multiple entries with the same model_name are allowed for load
+// balancing.
 func (c *Config) ValidateModelList() error {
 	for i := range c.ModelList {
 		if err := c.ModelList[i].Validate(); err != nil {
 			return fmt.Errorf("model_list[%d]: %w", i, err)
 		}
-	}
-	return nil
-}
-
-// reservedProtocolNames is the set of protocol identifiers owned by a
-// hardcoded case branch in pkg/providers/factory_provider.go. Entries in
-// Config.OpenAICompatProtocols may not use these names — operators should
-// rely on the built-in behavior for these protocols, or pick a different
-// identifier.
-//
-// Keep this list in sync with the switch in
-// pkg/providers/factory_provider.go:CreateProviderFromConfig.
-var reservedProtocolNames = map[string]struct{}{
-	"openai":             {},
-	"azure":              {},
-	"azure-openai":       {},
-	"bedrock":            {},
-	"litellm":            {},
-	"openrouter":         {},
-	"groq":               {},
-	"gemini":             {},
-	"nvidia":             {},
-	"ollama":             {},
-	"moonshot":           {},
-	"deepseek":           {},
-	"cerebras":           {},
-	"vllm":               {},
-	"qwen":               {},
-	"mistral":            {},
-	"avian":              {},
-	"xai":                {},
-	"anthropic":          {},
-	"anthropic-messages": {},
-	"claude-cli":         {},
-	"claudecli":          {},
-	"codex-cli":          {},
-	"codexcli":           {},
-	"gemini-cli":         {},
-	"geminicli":          {},
-}
-
-// IsReservedProtocol reports whether name collides with a protocol owned by
-// a hardcoded provider in pkg/providers/factory_provider.go.
-func IsReservedProtocol(name string) bool {
-	_, ok := reservedProtocolNames[strings.ToLower(strings.TrimSpace(name))]
-	return ok
-}
-
-// ValidateOpenAICompatProtocols checks that no entry in OpenAICompatProtocols
-// collides with a hardcoded provider protocol or is otherwise malformed.
-// An entry duplicating a hardcoded openai-compat protocol (e.g. "xai") is
-// rejected — those protocols already ship with the right defaults, and
-// allowing operators to silently override them would mask drift between the
-// config-driven default and the hardcoded one.
-func (c *Config) ValidateOpenAICompatProtocols() error {
-	for proto := range c.OpenAICompatProtocols {
-		p := strings.TrimSpace(proto)
-		if p == "" {
-			return fmt.Errorf("openai_compat_protocols: empty protocol name")
-		}
-		if strings.ContainsAny(p, "/ \t") {
-			return fmt.Errorf("openai_compat_protocols: protocol name %q must not contain '/' or whitespace", proto)
-		}
-		if IsReservedProtocol(p) {
-			return fmt.Errorf(
-				"openai_compat_protocols: protocol %q is reserved by a built-in provider; remove the entry or pick a different name",
-				proto,
-			)
+		if _, err := c.GetProvider(c.ModelList[i].Provider); err != nil {
+			return fmt.Errorf("model_list[%d] (%q): %w", i, c.ModelList[i].ModelName, err)
 		}
 	}
 	return nil
-}
-
-// resolveOpenAICompatProtocols walks ModelList and tags any entry whose
-// protocol prefix appears in OpenAICompatProtocols, recording the registered
-// default api_base on the entry so the providers factory can route it through
-// the openai-compat HTTP provider without a hardcoded switch entry. It also
-// applies any per-protocol overrides from OpenAICompatResponseFormat so the
-// openai-compat provider knows whether it may emit response_format=json_object
-// when a caller asks for JSON-mode output.
-func (c *Config) resolveOpenAICompatProtocols() {
-	for i := range c.ModelList {
-		proto := extractProtocolStatic(c.ModelList[i].Model)
-		if len(c.OpenAICompatProtocols) > 0 {
-			if base, ok := c.OpenAICompatProtocols[proto]; ok {
-				c.ModelList[i].MarkOpenAICompatExtra(base)
-			}
-		}
-		if enabled, ok := c.OpenAICompatResponseFormat[proto]; ok {
-			c.ModelList[i].SetResponseFormatJSONCapable(enabled)
-		}
-	}
-}
-
-// extractProtocolStatic mirrors providers.ExtractProtocol; duplicated here to
-// avoid an import cycle (providers imports config).
-func extractProtocolStatic(model string) string {
-	model = strings.TrimSpace(model)
-	protocol, _, found := strings.Cut(model, "/")
-	if !found {
-		return "openai"
-	}
-	return protocol
 }
 
 func MergeAPIKeys(apiKey string, apiKeys []string) []string {

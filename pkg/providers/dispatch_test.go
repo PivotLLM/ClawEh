@@ -15,13 +15,17 @@ import (
 
 // minimalCfg builds a *config.Config with one ModelConfig entry that will
 // successfully create a claude-cli provider (no API key required).
-// alias is the model_name (dispatcher cache key); modelKey is the wire model.
-func minimalCfg(alias, modelKey string) *config.Config {
+// alias is the model_name (dispatcher cache key); model is the raw model id.
+func minimalCfg(alias, model string) *config.Config {
 	return &config.Config{
+		Providers: []config.Provider{
+			{Name: "claude-cli", Protocol: "claude-cli"},
+		},
 		ModelList: []config.ModelConfig{
 			{
 				ModelName: alias,
-				Model:     modelKey,
+				Model:     model,
+				Provider:  "claude-cli",
 				Enabled:   true,
 			},
 		},
@@ -31,7 +35,7 @@ func minimalCfg(alias, modelKey string) *config.Config {
 // TestProviderDispatcher_Get_CachesInstance verifies that calling Get twice with
 // the same alias returns the exact same provider instance.
 func TestProviderDispatcher_Get_CachesInstance(t *testing.T) {
-	cfg := minimalCfg("cache-alias", "claude-cli/test")
+	cfg := minimalCfg("cache-alias", "test")
 	d := providers.NewProviderDispatcher(cfg)
 
 	p1, err := d.Get("cache-alias")
@@ -55,7 +59,7 @@ func TestProviderDispatcher_Get_CachesInstance(t *testing.T) {
 // TestProviderDispatcher_Get_UnknownProtocol verifies that Get returns an error
 // when no ModelConfig entry matches the requested alias.
 func TestProviderDispatcher_Get_UnknownProtocol(t *testing.T) {
-	cfg := minimalCfg("known-alias", "claude-cli/test")
+	cfg := minimalCfg("known-alias", "test")
 	d := providers.NewProviderDispatcher(cfg)
 
 	_, err := d.Get("no-such-alias")
@@ -67,7 +71,7 @@ func TestProviderDispatcher_Get_UnknownProtocol(t *testing.T) {
 // TestProviderDispatcher_Flush verifies that Flush clears the cache so that a
 // subsequent Get creates a new provider instance rather than returning the old one.
 func TestProviderDispatcher_Flush(t *testing.T) {
-	cfg := minimalCfg("flush-alias", "claude-cli/test")
+	cfg := minimalCfg("flush-alias", "test")
 	d := providers.NewProviderDispatcher(cfg)
 
 	p1, err := d.Get("flush-alias")
@@ -91,7 +95,7 @@ func TestProviderDispatcher_Flush(t *testing.T) {
 // TestProviderDispatcher_Get_ThreadSafe exercises concurrent Gets to verify
 // there are no data races. Run with: go test -race ./pkg/providers/...
 func TestProviderDispatcher_Get_ThreadSafe(t *testing.T) {
-	cfg := minimalCfg("concurrent-alias", "claude-cli/concurrent")
+	cfg := minimalCfg("concurrent-alias", "concurrent")
 	d := providers.NewProviderDispatcher(cfg)
 
 	const goroutines = 20
@@ -117,7 +121,7 @@ func TestProviderDispatcher_Get_ThreadSafe(t *testing.T) {
 // TestProviderDispatcher_Get_FlushRace exercises concurrent Gets and Flushes
 // together to verify the mutex correctly protects both operations.
 func TestProviderDispatcher_Get_FlushRace(t *testing.T) {
-	cfg := minimalCfg("race-alias", "claude-cli/race")
+	cfg := minimalCfg("race-alias", "race")
 	d := providers.NewProviderDispatcher(cfg)
 
 	var wg sync.WaitGroup
@@ -141,14 +145,17 @@ func TestProviderDispatcher_Get_FlushRace(t *testing.T) {
 
 // Compile-time check: claude-cli provider satisfies LLMProvider.
 var _ providers.LLMProvider = (func() providers.LLMProvider {
-	p, _, _ := providers.CreateProviderFromConfig(&config.ModelConfig{Model: "claude-cli/x"})
+	p, _, _ := providers.CreateProviderFromConfig(
+		&config.ModelConfig{Model: "x", Provider: "claude-cli"},
+		&config.Provider{Name: "claude-cli", Protocol: "claude-cli"},
+	)
 	return p
 })()
 
 // TestClaudeCliProvider_Chat is a lightweight smoke test confirming the
 // claude-cli provider (used in dispatcher tests) satisfies the interface.
 func TestClaudeCliProvider_Chat(t *testing.T) {
-	cfg := minimalCfg("smoke-alias", "claude-cli/smoke")
+	cfg := minimalCfg("smoke-alias", "smoke")
 	d := providers.NewProviderDispatcher(cfg)
 
 	p, err := d.Get("smoke-alias")
@@ -164,7 +171,7 @@ func TestClaudeCliProvider_Chat(t *testing.T) {
 // when many goroutines race past the initial read-lock check simultaneously,
 // the provider is created exactly once and all callers receive the same instance.
 func TestProviderDispatcher_SingleCreationUnderConcurrentLoad(t *testing.T) {
-	cfg := minimalCfg("load-alias", "claude-cli/concurrent-load")
+	cfg := minimalCfg("load-alias", "concurrent-load")
 	d := providers.NewProviderDispatcher(cfg)
 
 	const goroutines = 50

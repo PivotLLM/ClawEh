@@ -21,6 +21,26 @@ func initTest(t *testing.T) {
 	_ = os.Setenv("CLAW_HOME", tmpDir)
 }
 
+// openaiProvider returns a credentialed openai provider for use in test configs.
+func openaiProvider() config.Provider {
+	return config.Provider{
+		Name:     "openai",
+		Protocol: "openai",
+		BaseURL:  "https://api.openai.com/v1",
+		APIKey:   "test",
+	}
+}
+
+// anthropicProvider returns a credentialed anthropic provider for use in test configs.
+func anthropicProvider() config.Provider {
+	return config.Provider{
+		Name:     "anthropic",
+		Protocol: "anthropic",
+		BaseURL:  "https://api.anthropic.com/v1",
+		APIKey:   "test",
+	}
+}
+
 // captureStdout captures stdout during the execution of fn and returns the captured output
 func captureStdout(fn func()) string {
 	oldStdout := os.Stdout
@@ -64,9 +84,10 @@ func TestShowCurrentModel_WithDefaultModel(t *testing.T) {
 				Model: &config.AgentModelConfig{Primary: "gpt-4"},
 			},
 		},
+		Providers: []config.Provider{openaiProvider(), anthropicProvider()},
 		ModelList: []config.ModelConfig{
-			{ModelName: "gpt-4", Model: "openai/gpt-4", APIKey: "test", Enabled: true},
-			{ModelName: "claude-3", Model: "anthropic/claude-3", APIKey: "test", Enabled: true},
+			{ModelName: "gpt-4", Model: "gpt-4", Provider: "openai", Enabled: true},
+			{ModelName: "claude-3", Model: "claude-3", Provider: "anthropic", Enabled: true},
 		},
 	}
 
@@ -85,8 +106,9 @@ func TestShowCurrentModel_NoDefaultModel(t *testing.T) {
 		Agents: config.AgentsConfig{
 			Defaults: config.AgentDefaults{},
 		},
+		Providers: []config.Provider{openaiProvider()},
 		ModelList: []config.ModelConfig{
-			{ModelName: "gpt-4", Model: "openai/gpt-4", APIKey: "test", Enabled: true},
+			{ModelName: "gpt-4", Model: "gpt-4", Provider: "openai", Enabled: true},
 		},
 	}
 
@@ -134,10 +156,16 @@ func TestListAvailableModels_WithModels(t *testing.T) {
 				Model: &config.AgentModelConfig{Primary: "gpt-4"},
 			},
 		},
+		Providers: []config.Provider{
+			openaiProvider(),
+			anthropicProvider(),
+			// Provider without credentials: models referencing it are skipped.
+			{Name: "nokey", Protocol: "openai", BaseURL: "https://api.example.com/v1"},
+		},
 		ModelList: []config.ModelConfig{
-			{ModelName: "gpt-4", Model: "openai/gpt-4", APIKey: "test", Enabled: true},
-			{ModelName: "claude-3", Model: "anthropic/claude-3", APIKey: "test", Enabled: true},
-			{ModelName: "no-key-model", Model: "openai/test", APIKey: "", Enabled: true},
+			{ModelName: "gpt-4", Model: "gpt-4", Provider: "openai", Enabled: true},
+			{ModelName: "claude-3", Model: "claude-3", Provider: "anthropic", Enabled: true},
+			{ModelName: "no-key-model", Model: "test", Provider: "nokey", Enabled: true},
 		},
 	}
 
@@ -146,8 +174,8 @@ func TestListAvailableModels_WithModels(t *testing.T) {
 	})
 
 	assert.NotEmpty(t, output)
-	assert.Contains(t, output, "> - gpt-4 (openai/gpt-4)")
-	assert.Contains(t, output, "claude-3 (anthropic/claude-3)")
+	assert.Contains(t, output, "> - gpt-4 (gpt-4 via openai)")
+	assert.Contains(t, output, "claude-3 (claude-3 via anthropic)")
 	assert.NotContains(t, output, "no-key-model")
 }
 
@@ -160,9 +188,10 @@ func TestSetDefaultModel_ValidModel(t *testing.T) {
 				Model: &config.AgentModelConfig{Primary: "old-model"},
 			},
 		},
+		Providers: []config.Provider{openaiProvider()},
 		ModelList: []config.ModelConfig{
-			{ModelName: "new-model", Model: "openai/new-model", APIKey: "test", Enabled: true},
-			{ModelName: "old-model", Model: "openai/old-model", APIKey: "test", Enabled: true},
+			{ModelName: "new-model", Model: "new-model", Provider: "openai", Enabled: true},
+			{ModelName: "old-model", Model: "old-model", Provider: "openai", Enabled: true},
 		},
 	}
 
@@ -188,15 +217,16 @@ func TestSetDefaultModel_InvalidModel(t *testing.T) {
 				Model: &config.AgentModelConfig{Primary: "existing-model"},
 			},
 		},
+		Providers: []config.Provider{openaiProvider()},
 		ModelList: []config.ModelConfig{
-			{ModelName: "existing-model", Model: "openai/existing", APIKey: "test", Enabled: true},
+			{ModelName: "existing-model", Model: "existing", Provider: "openai", Enabled: true},
 		},
 	}
 
 	assert.Error(t, setDefaultModel(configPath, cfg, "nonexistent-model"))
 }
 
-func TestSetDefaultModel_ModelWithoutAPIKey(t *testing.T) {
+func TestSetDefaultModel_DisabledModel(t *testing.T) {
 	initTest(t)
 
 	cfg := &config.Config{
@@ -205,13 +235,14 @@ func TestSetDefaultModel_ModelWithoutAPIKey(t *testing.T) {
 				Model: &config.AgentModelConfig{Primary: "existing-model"},
 			},
 		},
+		Providers: []config.Provider{openaiProvider()},
 		ModelList: []config.ModelConfig{
-			{ModelName: "existing-model", Model: "openai/existing", APIKey: "test", Enabled: true},
-			{ModelName: "no-key-model", Model: "openai/nokey", APIKey: "", Enabled: true},
+			{ModelName: "existing-model", Model: "existing", Provider: "openai", Enabled: true},
+			{ModelName: "disabled-model", Model: "disabled", Provider: "openai", Enabled: false},
 		},
 	}
 
-	assert.Error(t, setDefaultModel(configPath, cfg, "no-key-model"))
+	assert.Error(t, setDefaultModel(configPath, cfg, "disabled-model"))
 }
 
 func TestSetDefaultModel_SaveConfigError(t *testing.T) {
@@ -224,8 +255,9 @@ func TestSetDefaultModel_SaveConfigError(t *testing.T) {
 				Model: &config.AgentModelConfig{Primary: "old-model"},
 			},
 		},
+		Providers: []config.Provider{openaiProvider()},
 		ModelList: []config.ModelConfig{
-			{ModelName: "new-model", Model: "openai/new-model", APIKey: "test", Enabled: true},
+			{ModelName: "new-model", Model: "new-model", Provider: "openai", Enabled: true},
 		},
 	}
 
@@ -265,8 +297,9 @@ func TestModelCommandExecution_Show(t *testing.T) {
 				Model: &config.AgentModelConfig{Primary: "test-model"},
 			},
 		},
+		Providers: []config.Provider{openaiProvider()},
 		ModelList: []config.ModelConfig{
-			{ModelName: "test-model", Model: "openai/test", APIKey: "test", Enabled: true},
+			{ModelName: "test-model", Model: "test", Provider: "openai", Enabled: true},
 		},
 	}
 
@@ -292,9 +325,10 @@ func TestModelCommandExecution_Set(t *testing.T) {
 				Model: &config.AgentModelConfig{Primary: "old-model"},
 			},
 		},
+		Providers: []config.Provider{openaiProvider()},
 		ModelList: []config.ModelConfig{
-			{ModelName: "old-model", Model: "openai/old", APIKey: "test", Enabled: true},
-			{ModelName: "new-model", Model: "openai/new", APIKey: "test", Enabled: true},
+			{ModelName: "old-model", Model: "old", Provider: "openai", Enabled: true},
+			{ModelName: "new-model", Model: "new", Provider: "openai", Enabled: true},
 		},
 	}
 
@@ -326,10 +360,11 @@ func TestListAvailableModels_MarkerLogic(t *testing.T) {
 				Model: &config.AgentModelConfig{Primary: "middle-model"},
 			},
 		},
+		Providers: []config.Provider{openaiProvider()},
 		ModelList: []config.ModelConfig{
-			{ModelName: "first-model", Model: "openai/first", APIKey: "test", Enabled: true},
-			{ModelName: "middle-model", Model: "openai/middle", APIKey: "test", Enabled: true},
-			{ModelName: "last-model", Model: "openai/last", APIKey: "test", Enabled: true},
+			{ModelName: "first-model", Model: "first", Provider: "openai", Enabled: true},
+			{ModelName: "middle-model", Model: "middle", Provider: "openai", Enabled: true},
+			{ModelName: "last-model", Model: "last", Provider: "openai", Enabled: true},
 		},
 	}
 
@@ -337,7 +372,7 @@ func TestListAvailableModels_MarkerLogic(t *testing.T) {
 		listAvailableModels(cfg)
 	})
 
-	assert.Contains(t, output, "  - first-model (openai/first)")
-	assert.Contains(t, output, "> - middle-model (openai/middle)")
-	assert.Contains(t, output, "  - last-model (openai/last)")
+	assert.Contains(t, output, "  - first-model (first via openai)")
+	assert.Contains(t, output, "> - middle-model (middle via openai)")
+	assert.Contains(t, output, "  - last-model (last via openai)")
 }

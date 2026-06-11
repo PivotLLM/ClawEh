@@ -7,6 +7,7 @@
     "chat": "Chat",
     "model_group": "Models",
     "models": "Models",
+    "providers": "Providers",
     "credentials": "Credentials",
     "agent_group": "Agent",
     "agents": "Agents",
@@ -158,8 +159,8 @@
       "modelNamePlaceholder": "e.g. my-gpt4",
       "modelNameHint": "A short name used to identify this model in conversations.",
       "modelId": "Model Identifier",
-      "modelIdPlaceholder": "e.g. openai/gpt-4o",
-      "modelIdHint": "Format: protocol/model-id. Supported: openai, anthropic, gemini, groq, …",
+      "modelIdPlaceholder": "e.g. gpt-4o",
+      "modelIdHint": "The raw model id the provider's endpoint expects (no protocol prefix). The provider supplies the wire protocol and base URL.",
       "errorRequired": "This field is required.",
       "errorDuplicateModelName": "Model alias already exists. Please use a different name.",
       "saveError": "Failed to add model",
@@ -174,13 +175,10 @@
       "toggle": "Advanced options"
     },
     "field": {
-      "apiBase": "API Base URL",
-      "apiKey": "API Key",
-      "apiKeyPlaceholder": "Enter your API key",
-      "apiKeyPlaceholderSet": "Leave blank to keep existing key",
-      "proxy": "HTTP Proxy",
+      "provider": "Provider",
+      "providerHint": "The named provider this model is reached through. Manage providers on the Providers page.",
+      "providerPlaceholder": "Select a provider",
       "proxyHint": "Optional. e.g. http://127.0.0.1:7890",
-      "authMethod": "Auth Method",
       "authMethodHint": "Authentication method: oauth, token. Leave blank for API key auth.",
       "connectMode": "Connect Mode",
       "connectModeHint": "Connection mode for CLI-based providers: stdio or grpc.",
@@ -210,10 +208,9 @@
     },
     "edit": {
       "title": "Configure {{name}}",
-      "apiKeyHint": "A key is already set. Leave blank to keep it unchanged.",
-      "oauthNote": "This provider uses OAuth — no API key required.",
       "saveError": "Failed to save"
-    }
+    },
+    "noProvider": "(no provider)"
   },
   "channels": {
     "loadError": "Failed to load channels",
@@ -493,6 +490,65 @@
       "tools_preview_title": "Matches ({{matched}} of {{total}})",
       "tools_always_excluded": "Always excluded: {{tools}}",
       "tools_none_registered": "No tools registered yet."
+    }
+  },
+  "providers": {
+    "description": "Named providers define how models reach an upstream API or CLI. Each model references a provider by name.",
+    "loadError": "Failed to load providers",
+    "empty": "No providers configured yet.",
+    "modelCount": "{{count}} model",
+    "modelCount_plural": "{{count}} models",
+    "status": {
+      "configured": "Configured",
+      "unconfigured": "Not configured"
+    },
+    "action": {
+      "edit": "Edit",
+      "delete": "Delete"
+    },
+    "field": {
+      "name": "Name",
+      "nameHint": "A unique name used by models to reference this provider.",
+      "namePlaceholder": "e.g. openai-main",
+      "protocol": "Protocol",
+      "protocolHint": "The wire protocol used to talk to this provider.",
+      "baseURL": "Base URL",
+      "baseURLRequiredHint": "Required for this protocol. e.g. https://api.example.com/v1",
+      "command": "Command",
+      "commandHint": "Path or name of the CLI executable for this provider.",
+      "apiKey": "API Key",
+      "apiKeyPlaceholder": "Enter the API key",
+      "apiKeyPlaceholderSet": "Leave blank to keep existing key",
+      "proxy": "HTTP Proxy",
+      "proxyHint": "Optional. e.g. http://127.0.0.1:7890",
+      "authMethod": "Auth Method",
+      "authMethodHint": "Authentication method: oauth, token. Leave blank for API key auth.",
+      "strictCompat": "Strict Compatibility",
+      "strictCompatHint": "Restrict requests to a strict subset of the OpenAI-compatible schema.",
+      "noParallelToolCalls": "Disable Parallel Tool Calls",
+      "noParallelToolCallsHint": "Send parallel_tool_calls=false so the model emits one tool call at a time.",
+      "responseFormatJSON": "JSON Response Format",
+      "responseFormatJSONHint": "Request a JSON response_format from the provider."
+    },
+    "add": {
+      "button": "Add Provider",
+      "title": "Add Provider",
+      "description": "Define a named provider that models can reference.",
+      "errorRequired": "This field is required.",
+      "errorDuplicateName": "A provider with this name already exists.",
+      "saveError": "Failed to add provider",
+      "confirm": "Add Provider"
+    },
+    "edit": {
+      "title": "Edit {{name}}",
+      "apiKeyHint": "A key is already set. Leave blank to keep it unchanged.",
+      "saveError": "Failed to save"
+    },
+    "delete": {
+      "title": "Delete Provider?",
+      "description": "\"{{name}}\" will be permanently removed. This cannot be undone.",
+      "confirm": "Delete",
+      "error": "Failed to delete provider"
     }
   }
 }

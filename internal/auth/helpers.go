@@ -49,30 +49,8 @@ func authLoginOpenAI(useDeviceCode bool) error {
 
 	appCfg, err := internal.LoadConfig()
 	if err == nil {
-		// Update Providers (legacy format)
-		appCfg.Providers.OpenAI.AuthMethod = "oauth"
-
-		// Update or add openai in ModelList
-		foundOpenAI := false
-		for i := range appCfg.ModelList {
-			if isOpenAIModel(appCfg.ModelList[i].Model) {
-				appCfg.ModelList[i].AuthMethod = "oauth"
-				foundOpenAI = true
-				break
-			}
-		}
-
-		// If no openai in ModelList, add it
-		if !foundOpenAI {
-			appCfg.ModelList = append(appCfg.ModelList, config.ModelConfig{
-				ModelName:  "gpt-5.4",
-				Model:      "openai/gpt-5.4",
-				AuthMethod: "oauth",
-			})
-		}
-
-		// Update default model to use OpenAI
-		appCfg.Agents.Defaults.SetDefaultModel("gpt-5.4")
+		alias := setProtocolAuth(appCfg, "openai", "https://api.openai.com/v1", "oauth", "gpt-5.4", "gpt-5.4")
+		appCfg.Agents.Defaults.SetDefaultModel(alias)
 
 		if err = config.SaveConfig(internal.GetConfigPath(), appCfg); err != nil {
 			return fmt.Errorf("could not update config: %w", err)
@@ -131,26 +109,10 @@ func authLoginAnthropicSetupToken() error {
 
 	appCfg, err := internal.LoadConfig()
 	if err == nil {
-		appCfg.Providers.Anthropic.AuthMethod = "oauth"
-
-		found := false
-		for i := range appCfg.ModelList {
-			if isAnthropicModel(appCfg.ModelList[i].Model) {
-				appCfg.ModelList[i].AuthMethod = "oauth"
-				found = true
-				break
-			}
-		}
-		if !found {
-			appCfg.ModelList = append(appCfg.ModelList, config.ModelConfig{
-				ModelName:  defaultAnthropicModel,
-				Model:      "anthropic/" + defaultAnthropicModel,
-				AuthMethod: "oauth",
-			})
-			// Only set default model if user has no default configured yet
-			if appCfg.Agents.Defaults.DefaultModelName() == "" {
-				appCfg.Agents.Defaults.SetDefaultModel(defaultAnthropicModel)
-			}
+		alias := setProtocolAuth(appCfg, "anthropic", "https://api.anthropic.com/v1", "oauth", defaultAnthropicModel, defaultAnthropicModel)
+		// Only set default model if user has no default configured yet
+		if appCfg.Agents.Defaults.DefaultModelName() == "" {
+			appCfg.Agents.Defaults.SetDefaultModel(alias)
 		}
 
 		if err := config.SaveConfig(internal.GetConfigPath(), appCfg); err != nil {
@@ -177,44 +139,11 @@ func authLoginPasteToken(provider string) error {
 	if err == nil {
 		switch provider {
 		case "anthropic":
-			appCfg.Providers.Anthropic.AuthMethod = "token"
-			// Update ModelList
-			found := false
-			for i := range appCfg.ModelList {
-				if isAnthropicModel(appCfg.ModelList[i].Model) {
-					appCfg.ModelList[i].AuthMethod = "token"
-					found = true
-					break
-				}
-			}
-			if !found {
-				appCfg.ModelList = append(appCfg.ModelList, config.ModelConfig{
-					ModelName:  defaultAnthropicModel,
-					Model:      "anthropic/" + defaultAnthropicModel,
-					AuthMethod: "token",
-				})
-				appCfg.Agents.Defaults.SetDefaultModel(defaultAnthropicModel)
-			}
+			alias := setProtocolAuth(appCfg, "anthropic", "https://api.anthropic.com/v1", "token", defaultAnthropicModel, defaultAnthropicModel)
+			appCfg.Agents.Defaults.SetDefaultModel(alias)
 		case "openai":
-			appCfg.Providers.OpenAI.AuthMethod = "token"
-			// Update ModelList
-			found := false
-			for i := range appCfg.ModelList {
-				if isOpenAIModel(appCfg.ModelList[i].Model) {
-					appCfg.ModelList[i].AuthMethod = "token"
-					found = true
-					break
-				}
-			}
-			if !found {
-				appCfg.ModelList = append(appCfg.ModelList, config.ModelConfig{
-					ModelName:  "gpt-5.4",
-					Model:      "openai/gpt-5.4",
-					AuthMethod: "token",
-				})
-			}
-			// Update default model
-			appCfg.Agents.Defaults.SetDefaultModel("gpt-5.4")
+			alias := setProtocolAuth(appCfg, "openai", "https://api.openai.com/v1", "token", "gpt-5.4", "gpt-5.4")
+			appCfg.Agents.Defaults.SetDefaultModel(alias)
 		}
 		if err := config.SaveConfig(internal.GetConfigPath(), appCfg); err != nil {
 			return fmt.Errorf("could not update config: %w", err)
@@ -238,26 +167,7 @@ func authLogoutCmd(provider string) error {
 
 		appCfg, err := internal.LoadConfig()
 		if err == nil {
-			// Clear AuthMethod in ModelList
-			for i := range appCfg.ModelList {
-				switch provider {
-				case "openai":
-					if isOpenAIModel(appCfg.ModelList[i].Model) {
-						appCfg.ModelList[i].AuthMethod = ""
-					}
-				case "anthropic":
-					if isAnthropicModel(appCfg.ModelList[i].Model) {
-						appCfg.ModelList[i].AuthMethod = ""
-					}
-				}
-			}
-			// Clear AuthMethod in Providers (legacy)
-			switch provider {
-			case "openai":
-				appCfg.Providers.OpenAI.AuthMethod = ""
-			case "anthropic":
-				appCfg.Providers.Anthropic.AuthMethod = ""
-			}
+			clearProtocolAuth(appCfg, provider)
 			config.SaveConfig(internal.GetConfigPath(), appCfg)
 		}
 
@@ -272,13 +182,10 @@ func authLogoutCmd(provider string) error {
 
 	appCfg, err := internal.LoadConfig()
 	if err == nil {
-		// Clear all AuthMethods in ModelList
-		for i := range appCfg.ModelList {
-			appCfg.ModelList[i].AuthMethod = ""
+		// Clear auth method on every provider.
+		for i := range appCfg.Providers {
+			appCfg.Providers[i].AuthMethod = ""
 		}
-		// Clear all AuthMethods in Providers (legacy)
-		appCfg.Providers.OpenAI.AuthMethod = ""
-		appCfg.Providers.Anthropic.AuthMethod = ""
 		config.SaveConfig(internal.GetConfigPath(), appCfg)
 	}
 
@@ -339,14 +246,49 @@ func authStatusCmd() error {
 	return nil
 }
 
-// isOpenAIModel checks if a model string belongs to openai provider
-func isOpenAIModel(model string) bool {
-	return model == "openai" ||
-		strings.HasPrefix(model, "openai/")
+// ensureProtocolProvider returns the first provider speaking the given
+// protocol, creating one (named after the protocol, with the given default base
+// URL) when none exists. The returned pointer is valid until cfg.Providers is
+// next appended to.
+func ensureProtocolProvider(cfg *config.Config, protocol, baseURL string) *config.Provider {
+	if p := cfg.FindProviderByProtocol(protocol); p != nil {
+		return p
+	}
+	cfg.Providers = append(cfg.Providers, config.Provider{
+		Name:     protocol,
+		Protocol: protocol,
+		BaseURL:  baseURL,
+	})
+	return &cfg.Providers[len(cfg.Providers)-1]
 }
 
-// isAnthropicModel checks if a model string belongs to anthropic provider
-func isAnthropicModel(model string) bool {
-	return model == "anthropic" ||
-		strings.HasPrefix(model, "anthropic/")
+// setProtocolAuth attaches an OAuth/token auth method to the provider for the
+// given protocol (creating it if needed), ensures a model_list entry references
+// that provider, and returns the model alias to use as default.
+func setProtocolAuth(cfg *config.Config, protocol, baseURL, method, modelAlias, modelID string) string {
+	prov := ensureProtocolProvider(cfg, protocol, baseURL)
+	prov.AuthMethod = method
+
+	for i := range cfg.ModelList {
+		if cfg.ModelList[i].Provider == prov.Name {
+			return cfg.ModelList[i].ModelName
+		}
+	}
+	cfg.ModelList = append(cfg.ModelList, config.ModelConfig{
+		ModelName: modelAlias,
+		Model:     modelID,
+		Provider:  prov.Name,
+		Enabled:   true,
+	})
+	return modelAlias
+}
+
+// clearProtocolAuth clears the auth method on every provider speaking the given
+// protocol.
+func clearProtocolAuth(cfg *config.Config, protocol string) {
+	for i := range cfg.Providers {
+		if cfg.Providers[i].Protocol == protocol {
+			cfg.Providers[i].AuthMethod = ""
+		}
+	}
 }

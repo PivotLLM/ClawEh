@@ -4,10 +4,8 @@ export interface ModelInfo {
   index: number
   model_name: string
   model: string
-  api_base?: string
-  api_key: string
-  proxy?: string
-  auth_method?: string
+  // Name of the provider this model is reached through.
+  provider: string
   // Advanced fields
   connect_mode?: string
   workspace?: string

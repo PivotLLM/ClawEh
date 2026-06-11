@@ -78,14 +78,18 @@ func listAvailableModels(cfg *config.Config) {
 	defaultModel := cfg.Agents.Defaults.DefaultModelName()
 
 	for _, model := range cfg.ModelList {
-		if model.APIKey == "" || !model.Enabled {
+		if !model.Enabled {
+			continue
+		}
+		prov, err := cfg.GetProvider(model.Provider)
+		if err != nil || !prov.HasCredentials() {
 			continue
 		}
 		marker := "  "
 		if model.ModelName == defaultModel {
 			marker = "> "
 		}
-		fmt.Printf("%s- %s (%s)\n", marker, model.ModelName, model.Model)
+		fmt.Printf("%s- %s (%s via %s)\n", marker, model.ModelName, model.Model, model.Provider)
 	}
 }
 
@@ -93,7 +97,7 @@ func setDefaultModel(configPath string, cfg *config.Config, modelName string) er
 	// Validate that the model exists in model_list and is enabled
 	modelFound := false
 	for _, model := range cfg.ModelList {
-		if model.APIKey != "" && model.ModelName == modelName {
+		if model.ModelName == modelName {
 			modelFound = true
 			if !model.Enabled {
 				return fmt.Errorf("model '%s' is disabled; enable it before setting as default", modelName)

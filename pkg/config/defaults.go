@@ -132,190 +132,40 @@ func DefaultConfig() *Config {
 				AllowFrom:      FlexibleStringSlice{},
 			},
 		},
-		Providers: ProvidersConfig{
-			OpenAI: OpenAIProviderConfig{WebSearch: true},
+		// Named endpoints. A model references one by name; the WebUI groups
+		// models by provider. Add your API key to the provider you want to use.
+		Providers: []Provider{
+			{Name: "openai", Protocol: "openai", BaseURL: "https://api.openai.com/v1"},
+			{Name: "anthropic", Protocol: "anthropic", BaseURL: "https://api.anthropic.com/v1"},
+			{Name: "openrouter", Protocol: "openai", BaseURL: "https://openrouter.ai/api/v1"},
+			{Name: "groq", Protocol: "openai", BaseURL: "https://api.groq.com/openai/v1"},
+			{Name: "deepseek", Protocol: "openai", BaseURL: "https://api.deepseek.com/v1"},
+			{Name: "gemini", Protocol: "openai", BaseURL: "https://generativelanguage.googleapis.com/v1beta/openai"},
+			{Name: "mistral", Protocol: "openai", BaseURL: "https://api.mistral.ai/v1"},
+			{Name: "ollama", Protocol: "openai", BaseURL: "http://localhost:11434/v1", APIKey: "ollama"},
+			{Name: "claude-cli", Protocol: "claude-cli"},
+			{Name: "codex-cli", Protocol: "codex-cli"},
+			{Name: "gemini-cli", Protocol: "gemini-cli"},
 		},
 		ModelList: []ModelConfig{
 			// ============================================
-			// Add your API key to the model you want to use
+			// Enable a model and ensure its provider has an API key.
+			// model is the raw id the endpoint expects; provider names the endpoint.
 			// ============================================
 
-			// OpenAI - https://platform.openai.com/api-keys
-			{
-				ModelName: "gpt-5.4",
-				Model:     "openai/gpt-5.4",
-				APIBase:   "https://api.openai.com/v1",
-				APIKey:    "",
-				Enabled:   false,
-			},
-
-			// Anthropic Claude - https://console.anthropic.com/settings/keys
-			{
-				ModelName: "claude-sonnet-4.6",
-				Model:     "anthropic/claude-sonnet-4.6",
-				APIBase:   "https://api.anthropic.com/v1",
-				APIKey:    "",
-				Enabled:   false,
-			},
-
-			// DeepSeek - https://platform.deepseek.com/
-			{
-				ModelName: "deepseek-chat",
-				Model:     "deepseek/deepseek-chat",
-				APIBase:   "https://api.deepseek.com/v1",
-				APIKey:    "",
-				Enabled:   false,
-			},
-
-			// Google Gemini - https://ai.google.dev/
-			{
-				ModelName: "gemini-2.0-flash",
-				Model:     "gemini/gemini-2.0-flash-exp",
-				APIBase:   "https://generativelanguage.googleapis.com/v1beta",
-				APIKey:    "",
-				Enabled:   false,
-			},
-
-			// Qwen (通义千问) - https://dashscope.console.aliyun.com/apiKey
-			{
-				ModelName: "qwen-plus",
-				Model:     "qwen/qwen-plus",
-				APIBase:   "https://dashscope.aliyuncs.com/compatible-mode/v1",
-				APIKey:    "",
-				Enabled:   false,
-			},
-
-			// Moonshot (月之暗面) - https://platform.moonshot.cn/console/api-keys
-			{
-				ModelName: "moonshot-v1-8k",
-				Model:     "moonshot/moonshot-v1-8k",
-				APIBase:   "https://api.moonshot.cn/v1",
-				APIKey:    "",
-				Enabled:   false,
-			},
-
-			// Groq - https://console.groq.com/keys
-			{
-				ModelName: "llama-3.3-70b",
-				Model:     "groq/llama-3.3-70b-versatile",
-				APIBase:   "https://api.groq.com/openai/v1",
-				APIKey:    "",
-				Enabled:   false,
-			},
-
-			// OpenRouter (100+ models) - https://openrouter.ai/keys
-			{
-				ModelName: "openrouter-auto",
-				Model:     "openrouter/auto",
-				APIBase:   "https://openrouter.ai/api/v1",
-				APIKey:    "",
-				Enabled:   false,
-			},
-			{
-				ModelName: "openrouter-gpt-5.4",
-				Model:     "openrouter/openai/gpt-5.4",
-				APIBase:   "https://openrouter.ai/api/v1",
-				APIKey:    "",
-				Enabled:   false,
-			},
-
-			// NVIDIA - https://build.nvidia.com/
-			{
-				ModelName: "nemotron-4-340b",
-				Model:     "nvidia/nemotron-4-340b-instruct",
-				APIBase:   "https://integrate.api.nvidia.com/v1",
-				APIKey:    "",
-				Enabled:   false,
-			},
-
-			// Cerebras - https://inference.cerebras.ai/
-			{
-				ModelName: "cerebras-llama-3.3-70b",
-				Model:     "cerebras/llama-3.3-70b",
-				APIBase:   "https://api.cerebras.ai/v1",
-				APIKey:    "",
-				Enabled:   false,
-			},
-
-			// Ollama (local) - https://ollama.com
-			{
-				ModelName: "llama3",
-				Model:     "ollama/llama3",
-				APIBase:   "http://localhost:11434/v1",
-				APIKey:    "ollama",
-				Enabled:   false,
-			},
-
-			// Mistral AI - https://console.mistral.ai/api-keys
-			{
-				ModelName: "mistral-small",
-				Model:     "mistral/mistral-small-latest",
-				APIBase:   "https://api.mistral.ai/v1",
-				APIKey:    "",
-				Enabled:   false,
-			},
-
-			// Avian - https://avian.io
-			{
-				ModelName: "deepseek-v3.2",
-				Model:     "avian/deepseek/deepseek-v3.2",
-				APIBase:   "https://api.avian.io/v1",
-				APIKey:    "",
-				Enabled:   false,
-			},
-			{
-				ModelName: "kimi-k2.5",
-				Model:     "avian/moonshotai/kimi-k2.5",
-				APIBase:   "https://api.avian.io/v1",
-				APIKey:    "",
-				Enabled:   false,
-			},
-
-			// VLLM (local) - http://localhost:8000
-			{
-				ModelName: "local-model",
-				Model:     "vllm/custom-model",
-				APIBase:   "http://localhost:8000/v1",
-				APIKey:    "",
-				Enabled:   false,
-			},
-
-			// Azure OpenAI - https://portal.azure.com
-			// model_name is a user-friendly alias; the model field's path after "azure/" is your deployment name
-			{
-				ModelName: "azure-gpt5",
-				Model:     "azure/my-gpt5-deployment",
-				APIBase:   "https://your-resource.openai.azure.com",
-				APIKey:    "",
-				Enabled:   false,
-			},
-
-			// AWS Bedrock - https://aws.amazon.com/bedrock/
-			// api_base: region name (e.g. us-east-1) or full endpoint URL
-			// api_key: leave empty to use the AWS default credential chain (env vars, ~/.aws, IAM roles)
-			//          or set to "ACCESS_KEY_ID:SECRET_ACCESS_KEY" or a Bedrock API key (bearer token)
-			// model: use the exact Bedrock model ID from your AWS console, e.g.:
-			//   anthropic.claude-3-5-sonnet-20241022-v2:0  (direct access)
-			//   us.anthropic.claude-3-5-sonnet-20241022-v2:0  (cross-region inference profile)
-			{
-				ModelName: "bedrock-claude-sonnet",
-				Model:     "bedrock/us.anthropic.claude-sonnet-4-20250514-v1:0",
-				APIBase:   "us-east-1",
-				APIKey:    "",
-				Enabled:   false,
-			},
-			{
-				ModelName: "bedrock-deepseek-3",
-				Model:     "bedrock/deepseek.v3.2",
-				APIBase:   "us-east-1",
-				APIKey:    "",
-				Enabled:   false,
-			},
+			{ModelName: "gpt-5.4", Model: "gpt-5.4", Provider: "openai", Enabled: false},
+			{ModelName: "claude-sonnet-4.6", Model: "claude-sonnet-4.6", Provider: "anthropic", Enabled: false},
+			{ModelName: "openrouter-auto", Model: "openrouter/auto", Provider: "openrouter", Enabled: false},
+			{ModelName: "deepseek-chat", Model: "deepseek-chat", Provider: "deepseek", Enabled: false},
+			{ModelName: "llama-3.3-70b", Model: "llama-3.3-70b-versatile", Provider: "groq", Enabled: false},
+			{ModelName: "mistral-small", Model: "mistral-small-latest", Provider: "mistral", Enabled: false},
+			{ModelName: "llama3", Model: "llama3", Provider: "ollama", Enabled: false},
 
 			// Claude CLI (local) - https://claude.ai/download
 			{
 				ModelName:      "claude-cli",
-				Model:          "claude-cli/claude-cli",
+				Model:          "claude-cli",
+				Provider:       "claude-cli",
 				Workspace:      ".",
 				RequestTimeout: 3600,
 				ExtraArgs:      []string{"--dangerously-skip-permissions", "--no-chrome"},
@@ -326,7 +176,8 @@ func DefaultConfig() *Config {
 			// Codex CLI (local) - https://github.com/openai/codex
 			{
 				ModelName:      "codex-cli",
-				Model:          "codex-cli/codex-cli",
+				Model:          "codex-cli",
+				Provider:       "codex-cli",
 				Workspace:      ".",
 				RequestTimeout: 3600,
 				Enabled:        false,
@@ -335,7 +186,8 @@ func DefaultConfig() *Config {
 			// Gemini CLI (local) - https://github.com/google-gemini/gemini-cli
 			{
 				ModelName:      "gemini-cli",
-				Model:          "gemini-cli/gemini-cli",
+				Model:          "gemini-cli",
+				Provider:       "gemini-cli",
 				Workspace:      ".",
 				RequestTimeout: 3600,
 				Enabled:        false,

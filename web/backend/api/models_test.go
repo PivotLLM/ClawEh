@@ -31,10 +31,12 @@ func TestHandleListModels_ConfiguredStatusUsesRuntimeProbesForLocalModels(t *tes
 	resetOAuthHooks(t)
 	resetModelProbeHooks(t)
 
+	// Only providers with a local base_url get runtime-probed; that probe always
+	// goes through the openai-compatible /models endpoint. Remote api-key
+	// providers are considered configured without any network probe, and an
+	// oauth/token anthropic provider is unconfigured until a credential exists.
 	var mu sync.Mutex
 	var openAIProbes []string
-	var ollamaProbes []string
-	var tcpProbes []string
 
 	probeOpenAICompatibleModelFunc = func(apiBase, modelID string) bool {
 		mu.Lock()
@@ -42,52 +44,22 @@ func TestHandleListModels_ConfiguredStatusUsesRuntimeProbesForLocalModels(t *tes
 		mu.Unlock()
 		return apiBase == "http://127.0.0.1:8000/v1" && modelID == "custom-model"
 	}
-	probeOllamaModelFunc = func(apiBase, modelID string) bool {
-		mu.Lock()
-		ollamaProbes = append(ollamaProbes, apiBase+"|"+modelID)
-		mu.Unlock()
-		return apiBase == "http://localhost:11434/v1" && modelID == "llama3"
-	}
-	probeTCPServiceFunc = func(apiBase string) bool {
-		mu.Lock()
-		tcpProbes = append(tcpProbes, apiBase)
-		mu.Unlock()
-		return apiBase == "http://127.0.0.1:4321"
-	}
 
 	cfg, err := config.LoadConfig(configPath)
 	if err != nil {
 		t.Fatalf("LoadConfig() error = %v", err)
 	}
-	cfg.ModelList = []config.ModelConfig{
-		{
-			ModelName:  "openai-oauth",
-			Model:      "anthropic/claude-sonnet-4.6",
-			AuthMethod: "token",
-		},
-		{
-			ModelName: "vllm-local",
-			Model:     "vllm/custom-model",
-			APIBase:   "http://127.0.0.1:8000/v1",
-		},
-		{
-			ModelName: "ollama-default",
-			Model:     "ollama/llama3",
-		},
-		{
-			ModelName: "vllm-remote",
-			Model:     "vllm/custom-model",
-			APIBase:   "https://models.example.com/v1",
-			APIKey:    "remote-key",
-		},
-		{
-			ModelName:  "copilot-gpt-5.4",
-			Model:      "github-copilot/gpt-5.4",
-			APIBase:    "http://127.0.0.1:4321",
-			AuthMethod: "oauth",
-		},
+	cfg.Providers = []config.Provider{
+		{Name: "anthropic", Protocol: "anthropic", BaseURL: "https://api.anthropic.com/v1", AuthMethod: "token"},
+		{Name: "vllm-local", Protocol: "openai", BaseURL: "http://127.0.0.1:8000/v1"},
+		{Name: "vllm-remote", Protocol: "openai", BaseURL: "https://models.example.com/v1", APIKey: "remote-key"},
 	}
-	cfg.Agents.Defaults.SetDefaultModel("openai-oauth")
+	cfg.ModelList = []config.ModelConfig{
+		{ModelName: "anthropic-token", Model: "claude-sonnet-4.6", Provider: "anthropic", Enabled: true},
+		{ModelName: "vllm-local", Model: "custom-model", Provider: "vllm-local", Enabled: true},
+		{ModelName: "vllm-remote", Model: "custom-model", Provider: "vllm-remote", Enabled: true},
+	}
+	cfg.Agents.Defaults.SetDefaultModel("anthropic-token")
 	if err := config.SaveConfig(configPath, cfg); err != nil {
 		t.Fatalf("SaveConfig() error = %v", err)
 	}
@@ -116,29 +88,17 @@ func TestHandleListModels_ConfiguredStatusUsesRuntimeProbesForLocalModels(t *tes
 		got[model.ModelName] = model.Configured
 	}
 
-	if got["openai-oauth"] {
+	if got["anthropic-token"] {
 		t.Fatalf("anthropic token model configured = true, want false without stored credential")
 	}
 	if !got["vllm-local"] {
 		t.Fatalf("vllm local model configured = false, want true when local probe succeeds")
 	}
-	if !got["ollama-default"] {
-		t.Fatalf("ollama default model configured = false, want true when default local probe succeeds")
-	}
 	if !got["vllm-remote"] {
 		t.Fatalf("remote vllm model configured = false, want true with api_key")
 	}
-	if !got["copilot-gpt-5.4"] {
-		t.Fatalf("copilot model configured = false, want true when local bridge probe succeeds")
-	}
 	if len(openAIProbes) != 1 || openAIProbes[0] != "http://127.0.0.1:8000/v1|custom-model" {
 		t.Fatalf("openAI probes = %#v, want only local vllm probe", openAIProbes)
-	}
-	if len(ollamaProbes) != 1 || ollamaProbes[0] != "http://localhost:11434/v1|llama3" {
-		t.Fatalf("ollama probes = %#v, want default local probe", ollamaProbes)
-	}
-	if len(tcpProbes) != 1 || tcpProbes[0] != "http://127.0.0.1:4321" {
-		t.Fatalf("tcp probes = %#v, want only local copilot probe", tcpProbes)
 	}
 }
 
@@ -152,10 +112,17 @@ func TestHandleListModels_ConfiguredStatusForOAuthModelWithCredential(t *testing
 	if err != nil {
 		t.Fatalf("LoadConfig() error = %v", err)
 	}
-	cfg.ModelList = []config.ModelConfig{{
-		ModelName:  "claude-oauth",
-		Model:      "anthropic/claude-sonnet-4.6",
+	cfg.Providers = []config.Provider{{
+		Name:       "anthropic",
+		Protocol:   "anthropic",
+		BaseURL:    "https://api.anthropic.com/v1",
 		AuthMethod: "oauth",
+	}}
+	cfg.ModelList = []config.ModelConfig{{
+		ModelName: "claude-oauth",
+		Model:     "claude-sonnet-4.6",
+		Provider:  "anthropic",
+		Enabled:   true,
 	}}
 	cfg.Agents.Defaults.SetDefaultModel("claude-oauth")
 	if err := config.SaveConfig(configPath, cfg); err != nil {
@@ -215,17 +182,13 @@ func TestHandleListModels_ProbesLocalModelsConcurrently(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConfig() error = %v", err)
 	}
+	cfg.Providers = []config.Provider{
+		{Name: "vllm-a", Protocol: "openai", BaseURL: "http://127.0.0.1:8000/v1"},
+		{Name: "vllm-b", Protocol: "openai", BaseURL: "http://127.0.0.1:8001/v1"},
+	}
 	cfg.ModelList = []config.ModelConfig{
-		{
-			ModelName: "local-vllm-a",
-			Model:     "vllm/custom-a",
-			APIBase:   "http://127.0.0.1:8000/v1",
-		},
-		{
-			ModelName: "local-vllm-b",
-			Model:     "vllm/custom-b",
-			APIBase:   "http://127.0.0.1:8001/v1",
-		},
+		{ModelName: "local-vllm-a", Model: "custom-a", Provider: "vllm-a", Enabled: true},
+		{ModelName: "local-vllm-b", Model: "custom-b", Provider: "vllm-b", Enabled: true},
 	}
 	if err := config.SaveConfig(configPath, cfg); err != nil {
 		t.Fatalf("SaveConfig() error = %v", err)
@@ -274,10 +237,16 @@ func TestHandleListModels_NormalizesWildcardLocalAPIBaseForProbe(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConfig() error = %v", err)
 	}
+	cfg.Providers = []config.Provider{{
+		Name:     "vllm-local",
+		Protocol: "openai",
+		BaseURL:  "http://0.0.0.0:8000/v1",
+	}}
 	cfg.ModelList = []config.ModelConfig{{
 		ModelName: "vllm-local",
-		Model:     "vllm/custom-model",
-		APIBase:   "http://0.0.0.0:8000/v1",
+		Model:     "custom-model",
+		Provider:  "vllm-local",
+		Enabled:   true,
 	}}
 	if err := config.SaveConfig(configPath, cfg); err != nil {
 		t.Fatalf("SaveConfig() error = %v", err)

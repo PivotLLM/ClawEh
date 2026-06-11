@@ -54,6 +54,9 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	// OAuth login and credential management
 	h.registerOAuthRoutes(mux)
 
+	// Named provider management
+	h.registerProviderRoutes(mux)
+
 	// Model list management
 	h.registerModelRoutes(mux)
 

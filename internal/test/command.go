@@ -103,7 +103,7 @@ func testOne(cfg *config.Config, name string, deadline time.Duration) error {
 			if !mc.Enabled {
 				return fmt.Errorf("model %q is disabled", name)
 			}
-			printResults([]result{testModel(mc, deadline)})
+			printResults([]result{testModel(cfg, mc, deadline)})
 			return nil
 		}
 	}
@@ -138,7 +138,7 @@ func testAll(cfg *config.Config, deadline time.Duration) error {
 		wg.Add(1)
 		go func(idx int, mc config.ModelConfig) {
 			defer wg.Done()
-			results[idx] = testModel(mc, deadline)
+			results[idx] = testModel(cfg, mc, deadline)
 		}(i, mc)
 	}
 	wg.Wait()
@@ -147,10 +147,15 @@ func testAll(cfg *config.Config, deadline time.Duration) error {
 	return nil
 }
 
-func testModel(mc config.ModelConfig, timeout time.Duration) result {
+func testModel(cfg *config.Config, mc config.ModelConfig, timeout time.Duration) result {
 	r := result{modelName: mc.ModelName}
 
-	provider, modelID, err := providers.CreateProviderFromConfig(&mc)
+	prov, err := cfg.GetProvider(mc.Provider)
+	if err != nil {
+		r.err = fmt.Sprintf("provider init: %v", err)
+		return r
+	}
+	provider, modelID, err := providers.CreateProviderFromConfig(&mc, prov)
 	if err != nil {
 		r.err = fmt.Sprintf("provider init: %v", err)
 		return r

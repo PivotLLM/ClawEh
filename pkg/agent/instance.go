@@ -320,47 +320,26 @@ func NewAgentInstance(
 		Primary:   model,
 		Fallbacks: fallbacks,
 	}
-	resolveFromModelList := func(raw string) (alias, resolved string, ok bool) {
-		ensureProtocol := func(model string) string {
-			model = strings.TrimSpace(model)
-			if model == "" {
-				return ""
-			}
-			if strings.Contains(model, "/") {
-				return model
-			}
-			return "openai/" + model
-		}
-
+	resolveFromModelList := func(raw string) (alias, model, provider string, ok bool) {
 		raw = strings.TrimSpace(raw)
-		if raw == "" {
-			return "", "", false
+		if raw == "" || cfg == nil {
+			return "", "", "", false
 		}
 
-		if cfg != nil {
-			if mc, err := cfg.GetModelConfig(raw); err == nil && mc != nil && strings.TrimSpace(mc.Model) != "" {
-				return mc.ModelName, ensureProtocol(mc.Model), true
+		// Match by model_name alias first, then by raw model id.
+		if mc, err := cfg.GetModelConfig(raw); err == nil && mc != nil && strings.TrimSpace(mc.Model) != "" {
+			return mc.ModelName, mc.Model, mc.Provider, true
+		}
+		for i := range cfg.ModelList {
+			if !cfg.ModelList[i].Enabled {
+				continue
 			}
-
-			for i := range cfg.ModelList {
-				if !cfg.ModelList[i].Enabled {
-					continue
-				}
-				fullModel := strings.TrimSpace(cfg.ModelList[i].Model)
-				if fullModel == "" {
-					continue
-				}
-				if fullModel == raw {
-					return cfg.ModelList[i].ModelName, ensureProtocol(fullModel), true
-				}
-				_, modelID := providers.ExtractProtocol(fullModel)
-				if modelID == raw {
-					return cfg.ModelList[i].ModelName, ensureProtocol(fullModel), true
-				}
+			if strings.TrimSpace(cfg.ModelList[i].Model) == raw {
+				return cfg.ModelList[i].ModelName, cfg.ModelList[i].Model, cfg.ModelList[i].Provider, true
 			}
 		}
 
-		return "", "", false
+		return "", "", "", false
 	}
 
 	candidates := providers.ResolveCandidatesWithLookup(modelCfg, "", resolveFromModelList)

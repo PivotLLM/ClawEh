@@ -25,30 +25,30 @@ import (
 // "Grok-4.3" entry's instance with the low-tier response_log_file.
 func TestBuildCompressLLMClient_PerAliasRouting(t *testing.T) {
 	cfg := &config.Config{
+		Providers: []config.Provider{
+			{Name: "xai", Protocol: "openai", BaseURL: "http://127.0.0.1:0/v1", APIKey: "k"},
+		},
 		ModelList: []config.ModelConfig{
 			{
 				ModelName:       "Grok-4.3",
-				Model:           "xai/grok-4.3",
-				APIBase:         "http://127.0.0.1:0/v1",
-				APIKey:          "k",
+				Model:           "grok-4.3",
+				Provider:        "xai",
 				ResponseLogFile: "/tmp/grok-low.log",
 				ReasoningEffort: "low",
 				Enabled:         true,
 			},
 			{
 				ModelName:       "Grok-4.3-Medium",
-				Model:           "xai/grok-4.3",
-				APIBase:         "http://127.0.0.1:0/v1",
-				APIKey:          "k",
+				Model:           "grok-4.3",
+				Provider:        "xai",
 				ResponseLogFile: "/tmp/grok-medium.log",
 				ReasoningEffort: "medium",
 				Enabled:         true,
 			},
 			{
 				ModelName:       "Grok-4.3-High",
-				Model:           "xai/grok-4.3",
-				APIBase:         "http://127.0.0.1:0/v1",
-				APIKey:          "k",
+				Model:           "grok-4.3",
+				Provider:        "xai",
 				ResponseLogFile: "/tmp/grok-high.log",
 				ReasoningEffort: "high",
 				Enabled:         true,
@@ -61,7 +61,7 @@ func TestBuildCompressLLMClient_PerAliasRouting(t *testing.T) {
 	agent := &AgentInstance{
 		ID:       "compress-alias-routing",
 		Provider: &mockProvider{},
-		Model:    "claude-cli/sonnet-4-5",
+		Model:    "sonnet-4-5",
 	}
 
 	client := al.buildCompressLLMClient(agent, "Grok-4.3-Medium", "sess-medium")

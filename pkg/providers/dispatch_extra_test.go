@@ -16,10 +16,14 @@ func TestProviderDispatcher_Get_TimeoutInjected(t *testing.T) {
 				RequestTimeout: 30,
 			},
 		},
+		Providers: []config.Provider{
+			{Name: "claude-cli", Protocol: "claude-cli"},
+		},
 		ModelList: []config.ModelConfig{
 			{
 				ModelName:      "test-alias",
-				Model:          "claude-cli/test-timeout",
+				Model:          "test-timeout",
+				Provider:       "claude-cli",
 				Enabled:        true,
 				RequestTimeout: 0, // No explicit timeout; should inherit from defaults.
 			},

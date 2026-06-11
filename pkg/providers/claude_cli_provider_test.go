@@ -444,8 +444,9 @@ func TestChat_EmptyWorkspaceDoesNotSetDir(t *testing.T) {
 
 func TestCreateProvider_ClaudeCli(t *testing.T) {
 	cfg := config.DefaultConfig()
+	cfg.Providers = []config.Provider{{Name: "claude-cli", Protocol: "claude-cli"}}
 	cfg.ModelList = []config.ModelConfig{
-		{ModelName: "claude-sonnet-4.6", Model: "claude-cli/claude-sonnet-4.6", Workspace: "/test/ws", Enabled: true},
+		{ModelName: "claude-sonnet-4.6", Model: "claude-sonnet-4.6", Provider: "claude-cli", Workspace: "/test/ws", Enabled: true},
 	}
 	cfg.Agents.Defaults.SetDefaultModel("claude-sonnet-4.6")
 
@@ -463,42 +464,11 @@ func TestCreateProvider_ClaudeCli(t *testing.T) {
 	}
 }
 
-func TestCreateProvider_ClaudeCode(t *testing.T) {
-	cfg := config.DefaultConfig()
-	cfg.ModelList = []config.ModelConfig{
-		{ModelName: "claude-code", Model: "claude-cli/claude-code", Enabled: true},
-	}
-	cfg.Agents.Defaults.SetDefaultModel("claude-code")
-
-	provider, _, err := CreateProvider(cfg)
-	if err != nil {
-		t.Fatalf("CreateProvider(claude-code) error = %v", err)
-	}
-	if _, ok := provider.(*ClaudeCliProvider); !ok {
-		t.Fatalf("CreateProvider(claude-code) returned %T, want *ClaudeCliProvider", provider)
-	}
-}
-
-func TestCreateProvider_ClaudeCodec(t *testing.T) {
-	cfg := config.DefaultConfig()
-	cfg.ModelList = []config.ModelConfig{
-		{ModelName: "claudecode", Model: "claude-cli/claudecode", Enabled: true},
-	}
-	cfg.Agents.Defaults.SetDefaultModel("claudecode")
-
-	provider, _, err := CreateProvider(cfg)
-	if err != nil {
-		t.Fatalf("CreateProvider(claudecode) error = %v", err)
-	}
-	if _, ok := provider.(*ClaudeCliProvider); !ok {
-		t.Fatalf("CreateProvider(claudecode) returned %T, want *ClaudeCliProvider", provider)
-	}
-}
-
 func TestCreateProvider_ClaudeCliDefaultWorkspace(t *testing.T) {
 	cfg := config.DefaultConfig()
+	cfg.Providers = []config.Provider{{Name: "claude-cli", Protocol: "claude-cli"}}
 	cfg.ModelList = []config.ModelConfig{
-		{ModelName: "claude-cli", Model: "claude-cli/claude-sonnet", Enabled: true},
+		{ModelName: "claude-cli", Model: "claude-sonnet", Provider: "claude-cli", Enabled: true},
 	}
 	cfg.Agents.Defaults.SetDefaultModel("claude-cli")
 	cfg.Agents.Defaults.Workspace = ""

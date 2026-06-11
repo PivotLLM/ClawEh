@@ -20,13 +20,11 @@ var (
 	probeOpenAICompatibleModelFunc = probeOpenAICompatibleModel
 )
 
-func hasModelConfiguration(m config.ModelConfig) bool {
-	authMethod := strings.ToLower(strings.TrimSpace(m.AuthMethod))
-	apiKey := strings.TrimSpace(m.APIKey)
-
+func hasModelConfiguration(prov *config.Provider, m config.ModelConfig) bool {
+	authMethod := strings.ToLower(strings.TrimSpace(prov.AuthMethod))
 	if authMethod == "oauth" || authMethod == "token" {
-		if provider, ok := oauthProviderForModel(m.Model); ok {
-			cred, err := oauthGetCredential(provider)
+		if prov.Protocol == "anthropic" {
+			cred, err := oauthGetCredential(oauthProviderAnthropic)
 			if err != nil || cred == nil {
 				return false
 			}
@@ -35,81 +33,44 @@ func hasModelConfiguration(m config.ModelConfig) bool {
 		return true
 	}
 
-	if requiresRuntimeProbe(m) {
+	if config.IsCLIProtocol(prov.Protocol) {
 		return true
 	}
-
-	return apiKey != ""
+	if hasLocalAPIBase(prov.BaseURL) {
+		return true
+	}
+	return strings.TrimSpace(prov.APIKey) != ""
 }
 
 // isModelConfigured reports whether a model is currently available to use.
 // Local models must be reachable; remote/API-key models only need saved config.
-func isModelConfigured(m config.ModelConfig) bool {
-	if !hasModelConfiguration(m) {
+func isModelConfigured(prov *config.Provider, m config.ModelConfig) bool {
+	if !hasModelConfiguration(prov, m) {
 		return false
 	}
-	if requiresRuntimeProbe(m) {
-		return probeLocalModelAvailability(m)
+	if requiresRuntimeProbe(prov) {
+		return probeLocalModelAvailability(prov, m)
 	}
 	return true
 }
 
-func requiresRuntimeProbe(m config.ModelConfig) bool {
-	authMethod := strings.ToLower(strings.TrimSpace(m.AuthMethod))
-	if authMethod == "local" {
+func requiresRuntimeProbe(prov *config.Provider) bool {
+	if config.IsCLIProtocol(prov.Protocol) {
 		return true
 	}
+	return hasLocalAPIBase(prov.BaseURL)
+}
 
-	switch modelProtocol(m.Model) {
-	case "claude-cli", "claudecli", "codex-cli", "codexcli", "gemini-cli", "geminicli", "github-copilot", "copilot":
-		return true
-	case "ollama", "vllm":
-		apiBase := strings.TrimSpace(m.APIBase)
-		return apiBase == "" || hasLocalAPIBase(apiBase)
-	}
-
-	if hasLocalAPIBase(m.APIBase) {
+func probeLocalModelAvailability(prov *config.Provider, m config.ModelConfig) bool {
+	// CLI providers authenticate out-of-band and are treated as available.
+	if config.IsCLIProtocol(prov.Protocol) {
 		return true
 	}
-
+	apiBase := normalizeModelProbeAPIBase(prov.BaseURL)
+	if hasLocalAPIBase(apiBase) {
+		return probeOpenAICompatibleModelFunc(apiBase, m.Model)
+	}
 	return false
-}
-
-func probeLocalModelAvailability(m config.ModelConfig) bool {
-	apiBase := modelProbeAPIBase(m)
-	protocol, modelID := splitModel(m.Model)
-	switch protocol {
-	case "ollama":
-		return probeOllamaModelFunc(apiBase, modelID)
-	case "vllm":
-		return probeOpenAICompatibleModelFunc(apiBase, modelID)
-	case "github-copilot", "copilot":
-		return probeTCPServiceFunc(apiBase)
-	case "claude-cli", "claudecli", "codex-cli", "codexcli", "gemini-cli", "geminicli":
-		return true
-	default:
-		if hasLocalAPIBase(apiBase) {
-			return probeOpenAICompatibleModelFunc(apiBase, modelID)
-		}
-		return false
-	}
-}
-
-func modelProbeAPIBase(m config.ModelConfig) string {
-	if apiBase := strings.TrimSpace(m.APIBase); apiBase != "" {
-		return normalizeModelProbeAPIBase(apiBase)
-	}
-
-	switch modelProtocol(m.Model) {
-	case "ollama":
-		return "http://localhost:11434/v1"
-	case "vllm":
-		return "http://localhost:8000/v1"
-	case "github-copilot", "copilot":
-		return "localhost:4321"
-	default:
-		return ""
-	}
 }
 
 func normalizeModelProbeAPIBase(raw string) string {
@@ -132,29 +93,6 @@ func normalizeModelProbeAPIBase(raw string) string {
 	}
 
 	return u.String()
-}
-
-func oauthProviderForModel(model string) (string, bool) {
-	switch modelProtocol(model) {
-	case "anthropic":
-		return oauthProviderAnthropic, true
-	default:
-		return "", false
-	}
-}
-
-func modelProtocol(model string) string {
-	protocol, _ := splitModel(model)
-	return protocol
-}
-
-func splitModel(model string) (protocol, modelID string) {
-	model = strings.ToLower(strings.TrimSpace(model))
-	protocol, _, found := strings.Cut(model, "/")
-	if !found {
-		return "openai", model
-	}
-	return protocol, strings.TrimSpace(model[strings.Index(model, "/")+1:])
 }
 
 func hasLocalAPIBase(raw string) bool {

@@ -38,12 +38,14 @@ func (m *cliMockProvider) IsCLI() bool             { return true }
 // test fails on the dispatcher-bypass assertion below.
 func TestResolveRunProvider_UsesDispatcherForActiveCandidate(t *testing.T) {
 	cfg := &config.Config{
+		Providers: []config.Provider{
+			{Name: "openai", Protocol: "openai", BaseURL: "http://127.0.0.1:0/v1", APIKey: "dummy"},
+		},
 		ModelList: []config.ModelConfig{
 			{
 				ModelName: "non-cli-primary",
-				Model:     "openai/some-non-cli-model",
-				APIBase:   "http://127.0.0.1:0/v1",
-				APIKey:    "dummy",
+				Model:     "some-non-cli-model",
+				Provider:  "openai",
 				Enabled:   true,
 			},
 		},
@@ -58,10 +60,10 @@ func TestResolveRunProvider_UsesDispatcherForActiveCandidate(t *testing.T) {
 	agent := &AgentInstance{
 		ID:       "primary-dispatch-test",
 		Provider: cliShared,
-		Model:    "claude-cli/sonnet-4-5",
+		Model:    "sonnet-4-5",
 	}
 	activeCandidates := []providers.FallbackCandidate{
-		{Provider: "openai", Model: "some-non-cli-model"},
+		{Provider: "openai", Model: "some-non-cli-model", Alias: "non-cli-primary"},
 	}
 
 	p, model := al.resolveRunProvider(agent, activeCandidates, "some-non-cli-model")
@@ -91,12 +93,14 @@ func TestResolveRunProvider_UsesDispatcherForActiveCandidate(t *testing.T) {
 // primaries through the shared claude-cli provider on the default config.
 func TestResolveRunProvider_EmptyCandidatesDispatchesPrimary(t *testing.T) {
 	cfg := &config.Config{
+		Providers: []config.Provider{
+			{Name: "xai", Protocol: "openai", BaseURL: "http://127.0.0.1:0/v1", APIKey: "dummy"},
+		},
 		ModelList: []config.ModelConfig{
 			{
 				ModelName: "Grok-4.3",
-				Model:     "xai/grok-4.3",
-				APIBase:   "http://127.0.0.1:0/v1",
-				APIKey:    "dummy",
+				Model:     "grok-4.3",
+				Provider:  "xai",
 				Enabled:   true,
 			},
 		},

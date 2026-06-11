@@ -14,23 +14,27 @@ import (
 // resolution paths that compress_model strings can take.
 func TestResolveCompressModelTarget(t *testing.T) {
 	cfg := &config.Config{
+		Providers: []config.Provider{
+			{Name: "anthropic", Protocol: "anthropic", BaseURL: "https://api.anthropic.com/v1", APIKey: "k"},
+			{Name: "openai", Protocol: "openai", BaseURL: "https://api.openai.com/v1", APIKey: "k"},
+		},
 		ModelList: []config.ModelConfig{
 			{
 				ModelName: "haiku",
-				Model:     "anthropic/claude-haiku-4-5",
-				APIKey:    "k",
+				Model:     "claude-haiku-4-5",
+				Provider:  "anthropic",
 				Enabled:   true,
 			},
 			{
 				ModelName: "fast",
-				Model:     "openai/gpt-4o-mini",
-				APIKey:    "k",
+				Model:     "gpt-4o-mini",
+				Provider:  "openai",
 				Enabled:   true,
 			},
 			{
 				ModelName: "disabled",
-				Model:     "openai/gpt-3.5-turbo",
-				APIKey:    "k",
+				Model:     "gpt-3.5-turbo",
+				Provider:  "openai",
 				Enabled:   false,
 			},
 		},
@@ -40,25 +44,23 @@ func TestResolveCompressModelTarget(t *testing.T) {
 		name      string
 		raw       string
 		wantAlias string
-		wantProto string
 		wantModel string
 		wantOK    bool
 	}{
-		{"alias_lookup_by_model_name", "haiku", "haiku", "anthropic", "claude-haiku-4-5", true},
-		{"alias_lookup_by_model_id", "gpt-4o-mini", "fast", "openai", "gpt-4o-mini", true},
-		{"fully_qualified_match", "anthropic/claude-haiku-4-5", "haiku", "anthropic", "claude-haiku-4-5", true},
-		{"fully_qualified_without_match_keeps_prefix", "openrouter/xai-grok-3", "", "openrouter", "xai-grok-3", true},
-		{"unknown_bare_returns_not_found", "nope-no-match", "", "", "", false},
-		{"disabled_model_id_is_ignored", "gpt-3.5-turbo", "", "", "", false},
-		{"empty_string_returns_not_found", "", "", "", "", false},
+		{"alias_lookup_by_model_name", "haiku", "haiku", "claude-haiku-4-5", true},
+		{"alias_lookup_by_model_id", "gpt-4o-mini", "fast", "gpt-4o-mini", true},
+		{"raw_model_id_match", "claude-haiku-4-5", "haiku", "claude-haiku-4-5", true},
+		{"unknown_bare_returns_not_found", "nope-no-match", "", "", false},
+		{"disabled_model_id_is_ignored", "gpt-3.5-turbo", "", "", false},
+		{"empty_string_returns_not_found", "", "", "", false},
 	}
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			a, p, m, ok := resolveCompressModelTarget(cfg, tc.raw)
-			if ok != tc.wantOK || a != tc.wantAlias || p != tc.wantProto || m != tc.wantModel {
-				t.Fatalf("resolveCompressModelTarget(%q) = (%q,%q,%q,%v); want (%q,%q,%q,%v)",
-					tc.raw, a, p, m, ok, tc.wantAlias, tc.wantProto, tc.wantModel, tc.wantOK)
+			a, m, ok := resolveCompressModelTarget(cfg, tc.raw)
+			if ok != tc.wantOK || a != tc.wantAlias || m != tc.wantModel {
+				t.Fatalf("resolveCompressModelTarget(%q) = (%q,%q,%v); want (%q,%q,%v)",
+					tc.raw, a, m, ok, tc.wantAlias, tc.wantModel, tc.wantOK)
 			}
 		})
 	}
@@ -67,7 +69,7 @@ func TestResolveCompressModelTarget(t *testing.T) {
 // TestResolveCompressModelTarget_NilConfig defends against the unlikely case
 // where the loop has no config snapshot yet.
 func TestResolveCompressModelTarget_NilConfig(t *testing.T) {
-	_, _, _, ok := resolveCompressModelTarget(nil, "haiku")
+	_, _, ok := resolveCompressModelTarget(nil, "haiku")
 	if ok {
 		t.Fatalf("expected not-found on nil cfg")
 	}
@@ -81,12 +83,14 @@ func TestResolveCompressModelTarget_NilConfig(t *testing.T) {
 // openai/anthropic/openrouter/xai model.
 func TestBuildCompressLLMClient_UsesDispatcher(t *testing.T) {
 	cfg := &config.Config{
+		Providers: []config.Provider{
+			{Name: "openai", Protocol: "openai", BaseURL: "http://127.0.0.1:0/v1", APIKey: "dummy"},
+		},
 		ModelList: []config.ModelConfig{
 			{
 				ModelName: "compress-target",
-				Model:     "openai/test-compress-model",
-				APIBase:   "http://127.0.0.1:0/v1",
-				APIKey:    "dummy",
+				Model:     "test-compress-model",
+				Provider:  "openai",
 				Enabled:   true,
 			},
 		},
@@ -101,7 +105,7 @@ func TestBuildCompressLLMClient_UsesDispatcher(t *testing.T) {
 	agent := &AgentInstance{
 		ID:       "compress-test",
 		Provider: primary,
-		Model:    "claude-cli/sonnet-4-5",
+		Model:    "sonnet-4-5",
 	}
 
 	client := al.buildCompressLLMClient(agent, "test-compress-model", "sess-1")
@@ -165,12 +169,14 @@ func TestBuildCompressLLMClient_FallbackToAgentProvider(t *testing.T) {
 // this test fails on the dispatcher-bypass assertion below.
 func TestBuildDefaultCompressLLMClient_UsesDispatcherForPrimary(t *testing.T) {
 	cfg := &config.Config{
+		Providers: []config.Provider{
+			{Name: "openai", Protocol: "openai", BaseURL: "http://127.0.0.1:0/v1", APIKey: "dummy"},
+		},
 		ModelList: []config.ModelConfig{
 			{
 				ModelName: "primary-target",
-				Model:     "openai/some-model",
-				APIBase:   "http://127.0.0.1:0/v1",
-				APIKey:    "dummy",
+				Model:     "some-model",
+				Provider:  "openai",
 				Enabled:   true,
 			},
 		},
@@ -185,10 +191,10 @@ func TestBuildDefaultCompressLLMClient_UsesDispatcherForPrimary(t *testing.T) {
 	agent := &AgentInstance{
 		ID:       "default-compress-test",
 		Provider: primary,
-		Model:    "openai/some-model",
+		Model:    "some-model",
 		Config: &config.AgentConfig{
 			ID:    "default-compress-test",
-			Model: &config.AgentModelConfig{Primary: "openai/some-model"},
+			Model: &config.AgentModelConfig{Primary: "some-model"},
 			// CompressModel intentionally nil to exercise the default-to-primary path.
 		},
 	}
@@ -248,11 +254,14 @@ func TestBuildDefaultCompressLLMClient_FallbackWhenPrimaryUnresolved(t *testing.
 // fallback to agent.Provider rather than panic.
 func TestBuildCompressLLMClient_NilDispatcher(t *testing.T) {
 	cfg := &config.Config{
+		Providers: []config.Provider{
+			{Name: "openai", Protocol: "openai", BaseURL: "https://api.openai.com/v1", APIKey: "k"},
+		},
 		ModelList: []config.ModelConfig{
 			{
 				ModelName: "x",
-				Model:     "openai/y",
-				APIKey:    "k",
+				Model:     "y",
+				Provider:  "openai",
 				Enabled:   true,
 			},
 		},

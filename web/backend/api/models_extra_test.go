@@ -19,7 +19,7 @@ func TestHandleAddModel_Success(t *testing.T) {
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
 
-	body := `{"model_name":"new-model","model":"openai/gpt-4o","api_key":"sk-new","enabled":true}`
+	body := `{"model_name":"new-model","model":"gpt-4o","provider":"openai","enabled":true}`
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/models", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -91,7 +91,7 @@ func TestHandleUpdateModel_Success(t *testing.T) {
 	req := httptest.NewRequest(
 		http.MethodPut,
 		"/api/models/0",
-		bytes.NewBufferString(`{"model_name":"custom-default","model":"openai/gpt-4o","api_key":"","enabled":true}`),
+		bytes.NewBufferString(`{"model_name":"custom-default","model":"gpt-4o","provider":"openai","enabled":true}`),
 	)
 	req.Header.Set("Content-Type", "application/json")
 	mux.ServeHTTP(rec, req)
@@ -100,13 +100,12 @@ func TestHandleUpdateModel_Success(t *testing.T) {
 		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
 	}
 
-	// Verify original key is preserved when empty key sent
 	cfg, err := config.LoadConfig(configPath)
 	if err != nil {
 		t.Fatalf("LoadConfig() error = %v", err)
 	}
-	if cfg.ModelList[0].APIKey != "sk-default" {
-		t.Fatalf("api_key = %q, want sk-default (preserved)", cfg.ModelList[0].APIKey)
+	if cfg.ModelList[0].Model != "gpt-4o" || cfg.ModelList[0].Provider != "openai" {
+		t.Fatalf("model_list[0] = %+v, want model=gpt-4o provider=openai", cfg.ModelList[0])
 	}
 }
 
@@ -126,7 +125,7 @@ func TestHandleUpdateModel_DropParamsRoundTrip(t *testing.T) {
 	req := httptest.NewRequest(
 		http.MethodPut,
 		"/api/models/0",
-		bytes.NewBufferString(`{"model_name":"custom-default","model":"openai/gpt-4o","drop_params":["temperature","top_p"]}`),
+		bytes.NewBufferString(`{"model_name":"custom-default","model":"gpt-4o","provider":"openai","drop_params":["temperature","top_p"]}`),
 	)
 	req.Header.Set("Content-Type", "application/json")
 	mux.ServeHTTP(rec, req)
@@ -161,7 +160,7 @@ func TestHandleUpdateModel_DropParamsRoundTrip(t *testing.T) {
 	reqClear := httptest.NewRequest(
 		http.MethodPut,
 		"/api/models/0",
-		bytes.NewBufferString(`{"model_name":"custom-default","model":"openai/gpt-4o","drop_params":[]}`),
+		bytes.NewBufferString(`{"model_name":"custom-default","model":"gpt-4o","provider":"openai","drop_params":[]}`),
 	)
 	reqClear.Header.Set("Content-Type", "application/json")
 	mux.ServeHTTP(recClear, reqClear)
@@ -216,37 +215,6 @@ func TestHandleUpdateModel_InvalidIndexStringReturns400(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
-	}
-}
-
-func TestHandleUpdateModel_MaskedKeyPreservesOriginal(t *testing.T) {
-	configPath, cleanup := setupOAuthTestEnv(t)
-	defer cleanup()
-
-	h := NewHandler(configPath)
-	mux := http.NewServeMux()
-	h.RegisterRoutes(mux)
-
-	// Send a masked key (contains "****") — original should be preserved
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(
-		http.MethodPut,
-		"/api/models/0",
-		bytes.NewBufferString(`{"model_name":"custom-default","model":"openai/gpt-4o","api_key":"sk-****efgh","enabled":true}`),
-	)
-	req.Header.Set("Content-Type", "application/json")
-	mux.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
-	}
-
-	cfg, err := config.LoadConfig(configPath)
-	if err != nil {
-		t.Fatalf("LoadConfig() error = %v", err)
-	}
-	if cfg.ModelList[0].APIKey != "sk-default" {
-		t.Fatalf("api_key = %q, want sk-default (masked key should preserve original)", cfg.ModelList[0].APIKey)
 	}
 }
 
@@ -420,8 +388,8 @@ func TestHandleSetDefaultModel_DisabledModelReturns400(t *testing.T) {
 	}
 	cfg.ModelList = append(cfg.ModelList, config.ModelConfig{
 		ModelName: "disabled-model",
-		Model:     "openai/gpt-4o",
-		APIKey:    "sk-x",
+		Model:     "gpt-4o",
+		Provider:  "openai",
 		Enabled:   false,
 	})
 	if err := config.SaveConfig(configPath, cfg); err != nil {
@@ -497,11 +465,7 @@ func TestHandleListModels_ReturnsModels(t *testing.T) {
 	if resp.DefaultModel != "custom-default" {
 		t.Fatalf("default_model = %q, want custom-default", resp.DefaultModel)
 	}
-	// API key should be masked, not returned in plaintext
-	if resp.Models[0].APIKey == "" {
-		t.Fatal("api_key should be masked but got empty string")
-	}
-	if resp.Models[0].APIKey == "sk-default" {
-		t.Fatal("api_key should be masked, not returned in plaintext")
+	if resp.Models[0].Provider != "openai" {
+		t.Fatalf("provider = %q, want openai", resp.Models[0].Provider)
 	}
 }

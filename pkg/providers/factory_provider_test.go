@@ -15,125 +15,67 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/config"
 )
 
-func TestExtractProtocol(t *testing.T) {
-	tests := []struct {
-		name         string
-		model        string
-		wantProtocol string
-		wantModelID  string
-	}{
-		{
-			name:         "openai with prefix",
-			model:        "openai/gpt-4o",
-			wantProtocol: "openai",
-			wantModelID:  "gpt-4o",
-		},
-		{
-			name:         "anthropic with prefix",
-			model:        "anthropic/claude-sonnet-4.6",
-			wantProtocol: "anthropic",
-			wantModelID:  "claude-sonnet-4.6",
-		},
-		{
-			name:         "no prefix - defaults to openai",
-			model:        "gpt-4o",
-			wantProtocol: "openai",
-			wantModelID:  "gpt-4o",
-		},
-		{
-			name:         "groq with prefix",
-			model:        "groq/llama-3.1-70b",
-			wantProtocol: "groq",
-			wantModelID:  "llama-3.1-70b",
-		},
-		{
-			name:         "empty string",
-			model:        "",
-			wantProtocol: "openai",
-			wantModelID:  "",
-		},
-		{
-			name:         "with whitespace",
-			model:        "  openai/gpt-4  ",
-			wantProtocol: "openai",
-			wantModelID:  "gpt-4",
-		},
-		{
-			name:         "multiple slashes",
-			model:        "nvidia/meta/llama-3.1-8b",
-			wantProtocol: "nvidia",
-			wantModelID:  "meta/llama-3.1-8b",
-		},
-		{
-			name:         "azure with prefix",
-			model:        "azure/my-gpt5-deployment",
-			wantProtocol: "azure",
-			wantModelID:  "my-gpt5-deployment",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			protocol, modelID := ExtractProtocol(tt.model)
-			if protocol != tt.wantProtocol {
-				t.Errorf("ExtractProtocol(%q) protocol = %q, want %q", tt.model, protocol, tt.wantProtocol)
-			}
-			if modelID != tt.wantModelID {
-				t.Errorf("ExtractProtocol(%q) modelID = %q, want %q", tt.model, modelID, tt.wantModelID)
-			}
-		})
-	}
-}
-
 func TestCreateProviderFromConfig_OpenAI(t *testing.T) {
-	cfg := &config.ModelConfig{
+	model := &config.ModelConfig{
 		ModelName: "test-openai",
-		Model:     "openai/gpt-4o",
-		APIKey:    "test-key",
-		APIBase:   "https://api.example.com/v1",
+		Model:     "gpt-4o",
+		Provider:  "openai",
+	}
+	prov := &config.Provider{
+		Name:     "openai",
+		Protocol: "openai",
+		BaseURL:  "https://api.example.com/v1",
+		APIKey:   "test-key",
 	}
 
-	provider, modelID, err := CreateProviderFromConfig(cfg)
+	provider, modelID, err := CreateProviderFromConfig(model, prov)
 	if err != nil {
 		t.Fatalf("CreateProviderFromConfig() error = %v", err)
 	}
 	if provider == nil {
 		t.Fatal("CreateProviderFromConfig() returned nil provider")
 	}
+	if _, ok := provider.(*HTTPProvider); !ok {
+		t.Fatalf("expected *HTTPProvider, got %T", provider)
+	}
 	if modelID != "gpt-4o" {
 		t.Errorf("modelID = %q, want %q", modelID, "gpt-4o")
 	}
 }
 
-func TestCreateProviderFromConfig_DefaultAPIBase(t *testing.T) {
-	tests := []struct {
-		name     string
-		protocol string
+func TestCreateProviderFromConfig_OpenAIHTTPProviderForVariousEndpoints(t *testing.T) {
+	// All of these are reached via the openai wire protocol; only the
+	// endpoint base_url differs. The factory builds an *HTTPProvider for each.
+	bases := []struct {
+		name    string
+		baseURL string
 	}{
-		{"openai", "openai"},
-		{"groq", "groq"},
-		{"openrouter", "openrouter"},
-		{"cerebras", "cerebras"},
-		{"qwen", "qwen"},
-		{"vllm", "vllm"},
-		{"deepseek", "deepseek"},
-		{"ollama", "ollama"},
+		{"openai", "https://api.openai.com/v1"},
+		{"groq", "https://api.groq.com/openai/v1"},
+		{"openrouter", "https://openrouter.ai/api/v1"},
+		{"cerebras", "https://api.cerebras.ai/v1"},
+		{"deepseek", "https://api.deepseek.com/v1"},
+		{"ollama", "http://localhost:11434/v1"},
 	}
 
-	for _, tt := range tests {
+	for _, tt := range bases {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := &config.ModelConfig{
-				ModelName: "test-" + tt.protocol,
-				Model:     tt.protocol + "/test-model",
-				APIKey:    "test-key",
+			model := &config.ModelConfig{
+				ModelName: "test-" + tt.name,
+				Model:     "test-model",
+				Provider:  tt.name,
+			}
+			prov := &config.Provider{
+				Name:     tt.name,
+				Protocol: "openai",
+				BaseURL:  tt.baseURL,
+				APIKey:   "test-key",
 			}
 
-			provider, _, err := CreateProviderFromConfig(cfg)
+			provider, _, err := CreateProviderFromConfig(model, prov)
 			if err != nil {
 				t.Fatalf("CreateProviderFromConfig() error = %v", err)
 			}
-
-			// Verify we got an HTTPProvider for all these protocols
 			if _, ok := provider.(*HTTPProvider); !ok {
 				t.Fatalf("expected *HTTPProvider, got %T", provider)
 			}
@@ -141,40 +83,44 @@ func TestCreateProviderFromConfig_DefaultAPIBase(t *testing.T) {
 	}
 }
 
-func TestGetDefaultAPIBase_LiteLLM(t *testing.T) {
-	if got := getDefaultAPIBase("litellm"); got != "http://localhost:4000/v1" {
-		t.Fatalf("getDefaultAPIBase(%q) = %q, want %q", "litellm", got, "http://localhost:4000/v1")
+func TestCreateProviderFromConfig_RawModelIDWithSlash(t *testing.T) {
+	// A raw model id may itself contain a slash (e.g. an OpenRouter upstream
+	// id). It is used verbatim — never re-parsed for a protocol prefix.
+	model := &config.ModelConfig{
+		ModelName: "test-nvidia",
+		Model:     "meta/llama-3.1-8b",
+		Provider:  "nvidia",
 	}
-}
-
-func TestCreateProviderFromConfig_LiteLLM(t *testing.T) {
-	cfg := &config.ModelConfig{
-		ModelName: "test-litellm",
-		Model:     "litellm/my-proxy-alias",
-		APIKey:    "test-key",
-		APIBase:   "http://localhost:4000/v1",
+	prov := &config.Provider{
+		Name:     "nvidia",
+		Protocol: "openai",
+		BaseURL:  "https://integrate.api.nvidia.com/v1",
+		APIKey:   "nvapi-test",
 	}
 
-	provider, modelID, err := CreateProviderFromConfig(cfg)
+	_, modelID, err := CreateProviderFromConfig(model, prov)
 	if err != nil {
 		t.Fatalf("CreateProviderFromConfig() error = %v", err)
 	}
-	if provider == nil {
-		t.Fatal("CreateProviderFromConfig() returned nil provider")
-	}
-	if modelID != "my-proxy-alias" {
-		t.Errorf("modelID = %q, want %q", modelID, "my-proxy-alias")
+	if modelID != "meta/llama-3.1-8b" {
+		t.Errorf("modelID = %q, want meta/llama-3.1-8b", modelID)
 	}
 }
 
 func TestCreateProviderFromConfig_Anthropic(t *testing.T) {
-	cfg := &config.ModelConfig{
+	model := &config.ModelConfig{
 		ModelName: "test-anthropic",
-		Model:     "anthropic/claude-sonnet-4.6",
-		APIKey:    "test-key",
+		Model:     "claude-sonnet-4.6",
+		Provider:  "anthropic",
+	}
+	prov := &config.Provider{
+		Name:     "anthropic",
+		Protocol: "anthropic",
+		BaseURL:  "https://api.anthropic.com/v1",
+		APIKey:   "test-key",
 	}
 
-	provider, modelID, err := CreateProviderFromConfig(cfg)
+	provider, modelID, err := CreateProviderFromConfig(model, prov)
 	if err != nil {
 		t.Fatalf("CreateProviderFromConfig() error = %v", err)
 	}
@@ -187,17 +133,19 @@ func TestCreateProviderFromConfig_Anthropic(t *testing.T) {
 }
 
 func TestCreateProviderFromConfig_ClaudeCLI(t *testing.T) {
-	cfg := &config.ModelConfig{
+	model := &config.ModelConfig{
 		ModelName: "test-claude-cli",
-		Model:     "claude-cli/claude-sonnet-4.6",
+		Model:     "claude-sonnet-4.6",
+		Provider:  "claude-cli",
 	}
+	prov := &config.Provider{Name: "claude-cli", Protocol: "claude-cli"}
 
-	provider, modelID, err := CreateProviderFromConfig(cfg)
+	provider, modelID, err := CreateProviderFromConfig(model, prov)
 	if err != nil {
 		t.Fatalf("CreateProviderFromConfig() error = %v", err)
 	}
-	if provider == nil {
-		t.Fatal("CreateProviderFromConfig() returned nil provider")
+	if _, ok := provider.(*ClaudeCliProvider); !ok {
+		t.Fatalf("expected *ClaudeCliProvider, got %T", provider)
 	}
 	if modelID != "claude-sonnet-4.6" {
 		t.Errorf("modelID = %q, want %q", modelID, "claude-sonnet-4.6")
@@ -205,63 +153,93 @@ func TestCreateProviderFromConfig_ClaudeCLI(t *testing.T) {
 }
 
 func TestCreateProviderFromConfig_CodexCLI(t *testing.T) {
-	cfg := &config.ModelConfig{
+	model := &config.ModelConfig{
 		ModelName: "test-codex-cli",
-		Model:     "codex-cli/codex",
+		Model:     "codex",
+		Provider:  "codex-cli",
 	}
+	prov := &config.Provider{Name: "codex-cli", Protocol: "codex-cli"}
 
-	provider, modelID, err := CreateProviderFromConfig(cfg)
+	provider, modelID, err := CreateProviderFromConfig(model, prov)
 	if err != nil {
 		t.Fatalf("CreateProviderFromConfig() error = %v", err)
 	}
-	if provider == nil {
-		t.Fatal("CreateProviderFromConfig() returned nil provider")
+	if _, ok := provider.(*CodexCliProvider); !ok {
+		t.Fatalf("expected *CodexCliProvider, got %T", provider)
 	}
 	if modelID != "codex" {
 		t.Errorf("modelID = %q, want %q", modelID, "codex")
 	}
 }
 
-func TestCreateProviderFromConfig_MissingAPIKey(t *testing.T) {
-	cfg := &config.ModelConfig{
+func TestCreateProviderFromConfig_GeminiCLI(t *testing.T) {
+	model := &config.ModelConfig{
+		ModelName: "test-gemini-cli",
+		Model:     "gemini-2.5-flash",
+		Provider:  "gemini-cli",
+	}
+	prov := &config.Provider{Name: "gemini-cli", Protocol: "gemini-cli"}
+
+	provider, modelID, err := CreateProviderFromConfig(model, prov)
+	if err != nil {
+		t.Fatalf("CreateProviderFromConfig() error = %v", err)
+	}
+	if _, ok := provider.(*GeminiCliProvider); !ok {
+		t.Fatalf("expected *GeminiCliProvider, got %T", provider)
+	}
+	if modelID != "gemini-2.5-flash" {
+		t.Errorf("modelID = %q, want %q", modelID, "gemini-2.5-flash")
+	}
+}
+
+func TestCreateProviderFromConfig_AnthropicMissingAPIKey(t *testing.T) {
+	model := &config.ModelConfig{
 		ModelName: "test-no-key",
-		Model:     "openai/gpt-4o",
+		Model:     "claude-sonnet-4.6",
+		Provider:  "anthropic",
+	}
+	prov := &config.Provider{
+		Name:     "anthropic",
+		Protocol: "anthropic",
+		BaseURL:  "https://api.anthropic.com/v1",
 	}
 
-	_, _, err := CreateProviderFromConfig(cfg)
-	if err == nil {
-		t.Fatal("CreateProviderFromConfig() expected error for missing API key")
+	if _, _, err := CreateProviderFromConfig(model, prov); err == nil {
+		t.Fatal("CreateProviderFromConfig() expected error for missing API key on anthropic protocol")
 	}
 }
 
 func TestCreateProviderFromConfig_UnknownProtocol(t *testing.T) {
-	cfg := &config.ModelConfig{
+	model := &config.ModelConfig{
 		ModelName: "test-unknown",
-		Model:     "unknown-protocol/model",
-		APIKey:    "test-key",
+		Model:     "model",
+		Provider:  "weird",
 	}
+	prov := &config.Provider{Name: "weird", Protocol: "unknown-protocol"}
 
-	_, _, err := CreateProviderFromConfig(cfg)
-	if err == nil {
+	if _, _, err := CreateProviderFromConfig(model, prov); err == nil {
 		t.Fatal("CreateProviderFromConfig() expected error for unknown protocol")
 	}
 }
 
-func TestCreateProviderFromConfig_NilConfig(t *testing.T) {
-	_, _, err := CreateProviderFromConfig(nil)
-	if err == nil {
-		t.Fatal("CreateProviderFromConfig(nil) expected error")
+func TestCreateProviderFromConfig_NilModel(t *testing.T) {
+	prov := &config.Provider{Name: "openai", Protocol: "openai", BaseURL: "https://x/v1", APIKey: "k"}
+	if _, _, err := CreateProviderFromConfig(nil, prov); err == nil {
+		t.Fatal("CreateProviderFromConfig(nil model) expected error")
+	}
+}
+
+func TestCreateProviderFromConfig_NilProvider(t *testing.T) {
+	model := &config.ModelConfig{ModelName: "m", Model: "gpt-4o", Provider: "openai"}
+	if _, _, err := CreateProviderFromConfig(model, nil); err == nil {
+		t.Fatal("CreateProviderFromConfig(nil provider) expected error")
 	}
 }
 
 func TestCreateProviderFromConfig_EmptyModel(t *testing.T) {
-	cfg := &config.ModelConfig{
-		ModelName: "test-empty",
-		Model:     "",
-	}
-
-	_, _, err := CreateProviderFromConfig(cfg)
-	if err == nil {
+	model := &config.ModelConfig{ModelName: "test-empty", Model: ""}
+	prov := &config.Provider{Name: "openai", Protocol: "openai", BaseURL: "https://x/v1", APIKey: "k"}
+	if _, _, err := CreateProviderFromConfig(model, prov); err == nil {
 		t.Fatal("CreateProviderFromConfig() expected error for empty model")
 	}
 }
@@ -274,14 +252,20 @@ func TestCreateProviderFromConfig_RequestTimeoutPropagation(t *testing.T) {
 	}))
 	defer server.Close()
 
-	cfg := &config.ModelConfig{
+	model := &config.ModelConfig{
 		ModelName:      "test-timeout",
-		Model:          "openai/gpt-4o",
-		APIBase:        server.URL,
+		Model:          "gpt-4o",
+		Provider:       "openai",
 		RequestTimeout: 1,
 	}
+	prov := &config.Provider{
+		Name:     "openai",
+		Protocol: "openai",
+		BaseURL:  server.URL,
+		APIKey:   "k",
+	}
 
-	provider, modelID, err := CreateProviderFromConfig(cfg)
+	provider, modelID, err := CreateProviderFromConfig(model, prov)
 	if err != nil {
 		t.Fatalf("CreateProviderFromConfig() error = %v", err)
 	}
@@ -306,14 +290,19 @@ func TestCreateProviderFromConfig_RequestTimeoutPropagation(t *testing.T) {
 }
 
 func TestCreateProviderFromConfig_Azure(t *testing.T) {
-	cfg := &config.ModelConfig{
+	model := &config.ModelConfig{
 		ModelName: "azure-gpt5",
-		Model:     "azure/my-gpt5-deployment",
-		APIKey:    "test-azure-key",
-		APIBase:   "https://my-resource.openai.azure.com",
+		Model:     "my-gpt5-deployment",
+		Provider:  "azure",
+	}
+	prov := &config.Provider{
+		Name:     "azure",
+		Protocol: "azure",
+		BaseURL:  "https://my-resource.openai.azure.com",
+		APIKey:   "test-azure-key",
 	}
 
-	provider, modelID, err := CreateProviderFromConfig(cfg)
+	provider, modelID, err := CreateProviderFromConfig(model, prov)
 	if err != nil {
 		t.Fatalf("CreateProviderFromConfig() error = %v", err)
 	}
@@ -322,51 +311,5 @@ func TestCreateProviderFromConfig_Azure(t *testing.T) {
 	}
 	if modelID != "my-gpt5-deployment" {
 		t.Errorf("modelID = %q, want %q", modelID, "my-gpt5-deployment")
-	}
-}
-
-func TestCreateProviderFromConfig_AzureOpenAIAlias(t *testing.T) {
-	cfg := &config.ModelConfig{
-		ModelName: "azure-gpt4",
-		Model:     "azure-openai/my-deployment",
-		APIKey:    "test-azure-key",
-		APIBase:   "https://my-resource.openai.azure.com",
-	}
-
-	provider, modelID, err := CreateProviderFromConfig(cfg)
-	if err != nil {
-		t.Fatalf("CreateProviderFromConfig() error = %v", err)
-	}
-	if provider == nil {
-		t.Fatal("CreateProviderFromConfig() returned nil provider")
-	}
-	if modelID != "my-deployment" {
-		t.Errorf("modelID = %q, want %q", modelID, "my-deployment")
-	}
-}
-
-func TestCreateProviderFromConfig_AzureMissingAPIKey(t *testing.T) {
-	cfg := &config.ModelConfig{
-		ModelName: "azure-gpt5",
-		Model:     "azure/my-gpt5-deployment",
-		APIBase:   "https://my-resource.openai.azure.com",
-	}
-
-	_, _, err := CreateProviderFromConfig(cfg)
-	if err == nil {
-		t.Fatal("CreateProviderFromConfig() expected error for missing API key")
-	}
-}
-
-func TestCreateProviderFromConfig_AzureMissingAPIBase(t *testing.T) {
-	cfg := &config.ModelConfig{
-		ModelName: "azure-gpt5",
-		Model:     "azure/my-gpt5-deployment",
-		APIKey:    "test-azure-key",
-	}
-
-	_, _, err := CreateProviderFromConfig(cfg)
-	if err == nil {
-		t.Fatal("CreateProviderFromConfig() expected error for missing API base")
 	}
 }

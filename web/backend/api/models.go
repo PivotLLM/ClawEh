@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"strconv"
-	"strings"
 	"sync"
 
 	"github.com/PivotLLM/ClawEh/pkg/config"
@@ -24,13 +23,10 @@ func (h *Handler) registerModelRoutes(mux *http.ServeMux) {
 // modelResponse is the JSON structure returned for each model in the list.
 // All ModelConfig fields are included so the frontend can display and edit them.
 type modelResponse struct {
-	Index      int    `json:"index"`
-	ModelName  string `json:"model_name"`
-	Model      string `json:"model"`
-	APIBase    string `json:"api_base,omitempty"`
-	APIKey     string `json:"api_key"`
-	Proxy      string `json:"proxy,omitempty"`
-	AuthMethod string `json:"auth_method,omitempty"`
+	Index     int    `json:"index"`
+	ModelName string `json:"model_name"`
+	Model     string `json:"model"`
+	Provider  string `json:"provider"`
 	// Advanced fields
 	ConnectMode    string `json:"connect_mode,omitempty"`
 	Workspace      string `json:"workspace,omitempty"`
@@ -68,7 +64,12 @@ func (h *Handler) handleListModels(w http.ResponseWriter, r *http.Request) {
 	for i, m := range cfg.ModelList {
 		go func(i int, m config.ModelConfig) {
 			defer wg.Done()
-			configured[i] = isModelConfigured(m)
+			prov, err := cfg.GetProvider(m.Provider)
+			if err != nil {
+				configured[i] = false
+				return
+			}
+			configured[i] = isModelConfigured(prov, m)
 		}(i, m)
 	}
 	wg.Wait()
@@ -79,10 +80,7 @@ func (h *Handler) handleListModels(w http.ResponseWriter, r *http.Request) {
 			Index:           i,
 			ModelName:       m.ModelName,
 			Model:           m.Model,
-			APIBase:         m.APIBase,
-			APIKey:          maskAPIKey(m.APIKey),
-			Proxy:           m.Proxy,
-			AuthMethod:      m.AuthMethod,
+			Provider:        m.Provider,
 			ConnectMode:     m.ConnectMode,
 			Workspace:       m.Workspace,
 			RPM:             m.RPM,
@@ -133,6 +131,11 @@ func (h *Handler) handleAddModel(w http.ResponseWriter, r *http.Request) {
 	cfg, err := config.LoadConfig(h.configPath)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to load config: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	if _, err = cfg.GetProvider(mc.Provider); err != nil {
+		http.Error(w, fmt.Sprintf("Validation error: %v", err), http.StatusBadRequest)
 		return
 	}
 
@@ -193,11 +196,9 @@ func (h *Handler) handleUpdateModel(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Validation error: %v", err), http.StatusBadRequest)
 		return
 	}
-
-	// Preserve the existing API key when the caller sends an empty string or a
-	// masked placeholder value (containing "****") — both mean "don't change the key".
-	if mc.APIKey == "" || strings.Contains(mc.APIKey, "****") {
-		mc.APIKey = cfg.ModelList[idx].APIKey
+	if _, err = cfg.GetProvider(mc.Provider); err != nil {
+		http.Error(w, fmt.Sprintf("Validation error: %v", err), http.StatusBadRequest)
+		return
 	}
 
 	cfg.ModelList[idx] = mc

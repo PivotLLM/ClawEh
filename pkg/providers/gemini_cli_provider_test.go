@@ -181,8 +181,9 @@ func TestGeminiCliProvider_ParseResponse_NoStats(t *testing.T) {
 
 func TestCreateProvider_GeminiCli(t *testing.T) {
 	cfg := config.DefaultConfig()
+	cfg.Providers = []config.Provider{{Name: "gemini-cli", Protocol: "gemini-cli"}}
 	cfg.ModelList = []config.ModelConfig{
-		{ModelName: "gemini-cli", Model: "gemini-cli/gemini-cli", Workspace: "/test/ws", Enabled: true},
+		{ModelName: "gemini-cli", Model: "gemini-cli", Provider: "gemini-cli", Workspace: "/test/ws", Enabled: true},
 	}
 	cfg.Agents.Defaults.SetDefaultModel("gemini-cli")
 
@@ -206,8 +207,9 @@ func TestCreateProvider_GeminiCli(t *testing.T) {
 
 func TestCreateProvider_GeminiCliWithModel(t *testing.T) {
 	cfg := config.DefaultConfig()
+	cfg.Providers = []config.Provider{{Name: "gemini-cli", Protocol: "gemini-cli"}}
 	cfg.ModelList = []config.ModelConfig{
-		{ModelName: "gemini-flash", Model: "gemini-cli/gemini-2.5-flash", Workspace: "/ws", Enabled: true},
+		{ModelName: "gemini-flash", Model: "gemini-2.5-flash", Provider: "gemini-cli", Workspace: "/ws", Enabled: true},
 	}
 	cfg.Agents.Defaults.SetDefaultModel("gemini-flash")
 
@@ -227,8 +229,9 @@ func TestCreateProvider_GeminiCliWithModel(t *testing.T) {
 func TestCreateProvider_GeminiCliDefaultWorkspace(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Agents.Defaults.Workspace = "" // clear default so the "." fallback is exercised
+	cfg.Providers = []config.Provider{{Name: "gemini-cli", Protocol: "gemini-cli"}}
 	cfg.ModelList = []config.ModelConfig{
-		{ModelName: "gemini-cli", Model: "gemini-cli/gemini-cli", Enabled: true},
+		{ModelName: "gemini-cli", Model: "gemini-cli", Provider: "gemini-cli", Enabled: true},
 	}
 	cfg.Agents.Defaults.SetDefaultModel("gemini-cli")
 

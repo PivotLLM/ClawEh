@@ -27,30 +27,30 @@ import (
 // log file and reasoning_effort assertions for the medium/high aliases fail.
 func TestProviderDispatcher_PerAliasState(t *testing.T) {
 	cfg := &config.Config{
+		Providers: []config.Provider{
+			{Name: "xai", Protocol: "openai", BaseURL: "http://127.0.0.1:0/v1", APIKey: "k"},
+		},
 		ModelList: []config.ModelConfig{
 			{
 				ModelName:       "Grok-4.3",
-				Model:           "xai/grok-4.3",
-				APIKey:          "k",
-				APIBase:         "http://127.0.0.1:0/v1",
+				Model:           "grok-4.3",
+				Provider:        "xai",
 				ResponseLogFile: "/tmp/grok-low.log",
 				ReasoningEffort: "low",
 				Enabled:         true,
 			},
 			{
 				ModelName:       "Grok-4.3-Medium",
-				Model:           "xai/grok-4.3",
-				APIKey:          "k",
-				APIBase:         "http://127.0.0.1:0/v1",
+				Model:           "grok-4.3",
+				Provider:        "xai",
 				ResponseLogFile: "/tmp/grok-medium.log",
 				ReasoningEffort: "medium",
 				Enabled:         true,
 			},
 			{
 				ModelName:       "Grok-4.3-High",
-				Model:           "xai/grok-4.3",
-				APIKey:          "k",
-				APIBase:         "http://127.0.0.1:0/v1",
+				Model:           "grok-4.3",
+				Provider:        "xai",
 				ResponseLogFile: "/tmp/grok-high.log",
 				ReasoningEffort: "high",
 				Enabled:         true,
@@ -107,37 +107,5 @@ func TestProviderDispatcher_PerAliasState(t *testing.T) {
 				alias, other, p)
 		}
 		seen[p] = alias
-	}
-}
-
-// TestProviderDispatcher_WireModelFallback verifies the backwards-compatible
-// path where a caller still passes a "protocol/modelID" string instead of a
-// model_name. The dispatcher matches the first enabled entry whose wire
-// model equals the input. Documented as a DBG-logged fallback in dispatch.go.
-func TestProviderDispatcher_WireModelFallback(t *testing.T) {
-	cfg := &config.Config{
-		ModelList: []config.ModelConfig{
-			{
-				ModelName:       "named-alias",
-				Model:           "xai/grok-4.3",
-				APIKey:          "k",
-				APIBase:         "http://127.0.0.1:0/v1",
-				ResponseLogFile: "/tmp/wire-fallback.log",
-				Enabled:         true,
-			},
-		},
-	}
-	d := providers.NewProviderDispatcher(cfg)
-
-	p, err := d.Get("xai/grok-4.3")
-	if err != nil {
-		t.Fatalf("Get by wire model: %v", err)
-	}
-	hp, ok := p.(*providers.HTTPProvider)
-	if !ok {
-		t.Fatalf("provider type = %T, want *providers.HTTPProvider", p)
-	}
-	if got := hp.Delegate().ResponseLogFile(); got != "/tmp/wire-fallback.log" {
-		t.Errorf("ResponseLogFile = %q, want /tmp/wire-fallback.log", got)
 	}
 }

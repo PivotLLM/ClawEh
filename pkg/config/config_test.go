@@ -279,18 +279,18 @@ func TestDefaultConfig_Gateway(t *testing.T) {
 	}
 }
 
-// TestDefaultConfig_Providers verifies provider structure
+// TestDefaultConfig_Providers verifies the seeded providers carry no credentials by default.
 func TestDefaultConfig_Providers(t *testing.T) {
 	cfg := DefaultConfig()
 
-	if cfg.Providers.Anthropic.APIKey != "" {
-		t.Error("Anthropic API key should be empty by default")
-	}
-	if cfg.Providers.OpenAI.APIKey != "" {
-		t.Error("OpenAI API key should be empty by default")
-	}
-	if cfg.Providers.OpenRouter.APIKey != "" {
-		t.Error("OpenRouter API key should be empty by default")
+	for _, name := range []string{"anthropic", "openai", "openrouter"} {
+		prov, err := cfg.GetProvider(name)
+		if err != nil {
+			t.Fatalf("GetProvider(%q): %v", name, err)
+		}
+		if prov.APIKey != "" {
+			t.Errorf("%s API key should be empty by default", name)
+		}
 	}
 }
 
@@ -381,33 +381,10 @@ func TestConfig_Complete(t *testing.T) {
 	}
 }
 
-func TestDefaultConfig_OpenAIWebSearchEnabled(t *testing.T) {
-	cfg := DefaultConfig()
-	if !cfg.Providers.OpenAI.WebSearch {
-		t.Fatal("DefaultConfig().Providers.OpenAI.WebSearch should be true")
-	}
-}
-
 func TestDefaultConfig_ExecAllowRemoteDisabled(t *testing.T) {
 	cfg := DefaultConfig()
 	if cfg.Tools.Exec.AllowRemote {
 		t.Fatal("DefaultConfig().Tools.Exec.AllowRemote should be false (exec restricted to internal channels by default)")
-	}
-}
-
-func TestLoadConfig_OpenAIWebSearchDefaultsTrueWhenUnset(t *testing.T) {
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "config.json")
-	if err := os.WriteFile(configPath, []byte(`{"providers":{"openai":{"api_base":""}}}`), 0o600); err != nil {
-		t.Fatalf("WriteFile() error: %v", err)
-	}
-
-	cfg, err := LoadConfig(configPath)
-	if err != nil {
-		t.Fatalf("LoadConfig() error: %v", err)
-	}
-	if !cfg.Providers.OpenAI.WebSearch {
-		t.Fatal("OpenAI codex web search should remain true when unset in config file")
 	}
 }
 
@@ -443,28 +420,13 @@ func TestLoadConfig_ExecAllowRemoteCanBeEnabled(t *testing.T) {
 	}
 }
 
-func TestLoadConfig_OpenAIWebSearchCanBeDisabled(t *testing.T) {
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "config.json")
-	if err := os.WriteFile(configPath, []byte(`{"providers":{"openai":{"web_search":false}}}`), 0o600); err != nil {
-		t.Fatalf("WriteFile() error: %v", err)
-	}
-
-	cfg, err := LoadConfig(configPath)
-	if err != nil {
-		t.Fatalf("LoadConfig() error: %v", err)
-	}
-	if cfg.Providers.OpenAI.WebSearch {
-		t.Fatal("OpenAI codex web search should be false when disabled in config file")
-	}
-}
-
 func TestLoadConfig_WebToolsProxy(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.json")
 	configJSON := `{
   "agents": {"defaults":{"workspace":"./workspace","model":"gpt4","max_tokens":8192,"max_tool_iterations":20}},
-  "model_list": [{"model_name":"gpt4","model":"openai/gpt-5.4","api_key":"x"}],
+  "providers": [{"name":"openai","protocol":"openai","base_url":"https://api.openai.com/v1","api_key":"x"}],
+  "model_list": [{"model_name":"gpt4","model":"gpt-5.4","provider":"openai","enabled":true}],
   "tools": {"web":{"proxy":"http://127.0.0.1:7890"}}
 }`
 	if err := os.WriteFile(configPath, []byte(configJSON), 0o600); err != nil {
@@ -652,10 +614,18 @@ func TestMCPHost_DefaultAutoEnable(t *testing.T) {
 }
 
 func TestMCPHostEffectivelyEnabled(t *testing.T) {
+	cliProviders := []Provider{
+		{Name: "claude-cli", Protocol: "claude-cli"},
+		{Name: "codex-cli", Protocol: "codex-cli"},
+		{Name: "gemini-cli", Protocol: "gemini-cli"},
+		{Name: "openai", Protocol: "openai", BaseURL: "https://api.openai.com/v1"},
+		{Name: "anthropic", Protocol: "anthropic", BaseURL: "https://api.anthropic.com/v1"},
+	}
 	tests := []struct {
 		name       string
 		enabled    bool
 		autoEnable bool
+		providers  []Provider
 		models     []ModelConfig
 		want       bool
 	}{
@@ -667,49 +637,55 @@ func TestMCPHostEffectivelyEnabled(t *testing.T) {
 		{
 			name:       "auto with claude-cli model starts",
 			autoEnable: true,
+			providers:  cliProviders,
 			models: []ModelConfig{
-				{ModelName: "sonnet", Model: "claude-cli/claude-sonnet-4.6", Enabled: true},
+				{ModelName: "sonnet", Model: "claude-sonnet-4.6", Provider: "claude-cli", Enabled: true},
 			},
 			want: true,
 		},
 		{
 			name:       "auto with codex-cli model starts",
 			autoEnable: true,
+			providers:  cliProviders,
 			models: []ModelConfig{
-				{ModelName: "codex", Model: "codex-cli/gpt-5-codex", Enabled: true},
+				{ModelName: "codex", Model: "gpt-5-codex", Provider: "codex-cli", Enabled: true},
 			},
 			want: true,
 		},
 		{
 			name:       "auto with gemini-cli model starts",
 			autoEnable: true,
+			providers:  cliProviders,
 			models: []ModelConfig{
-				{ModelName: "gemini", Model: "gemini-cli/gemini-2.5", Enabled: true},
+				{ModelName: "gemini", Model: "gemini-2.5", Provider: "gemini-cli", Enabled: true},
 			},
 			want: true,
 		},
 		{
 			name:       "auto with only HTTP models does not start",
 			autoEnable: true,
+			providers:  cliProviders,
 			models: []ModelConfig{
-				{ModelName: "gpt", Model: "openai/gpt-4o", Enabled: true},
-				{ModelName: "claude", Model: "anthropic/claude-sonnet-4.6", Enabled: true},
+				{ModelName: "gpt", Model: "gpt-4o", Provider: "openai", Enabled: true},
+				{ModelName: "claude", Model: "claude-sonnet-4.6", Provider: "anthropic", Enabled: true},
 			},
 			want: false,
 		},
 		{
 			name:       "auto disabled with cli model does not start",
 			autoEnable: false,
+			providers:  cliProviders,
 			models: []ModelConfig{
-				{ModelName: "sonnet", Model: "claude-cli/claude-sonnet-4.6", Enabled: true},
+				{ModelName: "sonnet", Model: "claude-sonnet-4.6", Provider: "claude-cli", Enabled: true},
 			},
 			want: false,
 		},
 		{
 			name:       "disabled cli model does not trigger auto-start",
 			autoEnable: true,
+			providers:  cliProviders,
 			models: []ModelConfig{
-				{ModelName: "sonnet", Model: "claude-cli/claude-sonnet-4.6", Enabled: false},
+				{ModelName: "sonnet", Model: "claude-sonnet-4.6", Provider: "claude-cli", Enabled: false},
 			},
 			want: false,
 		},
@@ -726,6 +702,7 @@ func TestMCPHostEffectivelyEnabled(t *testing.T) {
 					Enabled:    tc.enabled,
 					AutoEnable: tc.autoEnable,
 				},
+				Providers: tc.providers,
 				ModelList: tc.models,
 			}
 			if got := cfg.MCPHostEffectivelyEnabled(); got != tc.want {
