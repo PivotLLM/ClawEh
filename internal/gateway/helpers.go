@@ -97,7 +97,7 @@ type gatewayServices struct {
 func gatewayCmd(debug bool) error {
 	// Acquire PID lock before connecting to any external service.
 	// If another instance is already running this exits immediately with a clear error.
-	baseDir := internal.GetPicoclawHome()
+	baseDir := internal.GetClawHome()
 	lockFile, err := acquireLock(baseDir)
 	if err != nil {
 		return fmt.Errorf("startup aborted: %w", err)
@@ -114,7 +114,7 @@ func gatewayCmd(debug bool) error {
 
 	// Apply logging config (debug flag overrides level)
 	if cfg.Logging.File {
-		logPath := filepath.Join(internal.GetPicoclawHome(), "logs", "claw.log")
+		logPath := filepath.Join(internal.GetClawHome(), "logs", "claw.log")
 		if err := logger.EnableFileLogging(logPath, cfg.Logging.JSON); err != nil {
 			logger.WarnCF("gateway", "Failed to enable file logging", map[string]any{"path": logPath, "error": err.Error()})
 		}
@@ -152,7 +152,7 @@ func gatewayCmd(debug bool) error {
 	msgBus := bus.NewMessageBus()
 	agentLoop := agent.NewAgentLoop(cfg, msgBus, provider, dispatcher)
 
-	dumpsDir := filepath.Join(internal.GetPicoclawHome(), "logs", "dumps")
+	dumpsDir := filepath.Join(internal.GetClawHome(), "logs", "dumps")
 	agentLoop.SetDumpsDir(dumpsDir)
 
 	startupInfo := agentLoop.GetStartupInfo()

@@ -10,9 +10,9 @@ import (
 // BinaryName is set from main() to filepath.Base(os.Args[0]).
 var BinaryName = "claw"
 
-// GetPicoclawHome returns the claw home directory.
+// GetClawHome returns the claw home directory.
 // Priority: $CLAW_HOME > ~/.claw
-func GetPicoclawHome() string {
+func GetClawHome() string {
 	if home := os.Getenv("CLAW_HOME"); home != "" {
 		return home
 	}
@@ -21,7 +21,7 @@ func GetPicoclawHome() string {
 }
 
 func GetConfigPath() string {
-	return filepath.Join(GetPicoclawHome(), "config.json")
+	return filepath.Join(GetClawHome(), "config.json")
 }
 
 func LoadConfig() (*config.Config, error) {
