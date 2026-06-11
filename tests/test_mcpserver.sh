@@ -50,12 +50,12 @@ FULL_URL="${SERVER_URL}${ENDPOINT}"
 # All tools the test config exposes — the source of truth for count/catalogue checks.
 # Note: find_tools_regex and find_tools_bm25 are omitted here because they only register
 # when tools.mcp.discovery.enabled=true, which the test config does not set.
-EXPECTED_TOOLS="files_read files_write files_edit files_append files_list web_fetch web_search msg_send_file session_messages session_search session_compact session_info"
+EXPECTED_TOOLS="file_read file_write file_edit file_append file_list web_fetch web_search msg_send_file session_messages session_search session_compact session_info"
 EXPECTED_TOOL_COUNT=12
 
 # Namespace prefixes that must have at least one tool in the catalogue.
 # Covers every provider-owned namespace that is in the test config.
-EXPECTED_NAMESPACES="files_ web_ session_ msg_"
+EXPECTED_NAMESPACES="file_ web_ session_ msg_"
 
 # Unique scratch file inside the agent workspace so repeated runs do not collide.
 SCRATCH_REL="claw_mcp_test_$$.txt"
@@ -394,11 +394,11 @@ check_tool() {
     fi
 }
 
-check_tool "1.1"  "files_read"
-check_tool "1.2"  "files_write"
-check_tool "1.3"  "files_edit"
-check_tool "1.4"  "files_append"
-check_tool "1.5"  "files_list"
+check_tool "1.1"  "file_read"
+check_tool "1.2"  "file_write"
+check_tool "1.3"  "file_edit"
+check_tool "1.4"  "file_append"
+check_tool "1.5"  "file_list"
 check_tool "1.6"  "web_fetch"
 check_tool "1.7"  "web_search"
 check_tool "1.8"  "msg_send_file"
@@ -415,11 +415,11 @@ check_tool "1.12" "session_info"
 
 print_section "2. Unauthenticated rejection"
 
-run_test_err_contains "2.1 files_list without session_token returns session_token error" \
-    "files_list" '{"path":"."}' "session_token"
+run_test_err_contains "2.1 file_list without session_token returns session_token error" \
+    "file_list" '{"path":"."}' "session_token"
 
-run_test_err_contains "2.2 files_read without session_token returns session_token error" \
-    "files_read" '{"path":"test.txt"}' "session_token"
+run_test_err_contains "2.2 file_read without session_token returns session_token error" \
+    "file_read" '{"path":"test.txt"}' "session_token"
 
 run_test_err_contains "2.3 session_info without session_token returns session_token error" \
     "session_info" '{}' "session_token"
@@ -450,31 +450,31 @@ else
 
     print_section "3. File operations (authenticated)"
 
-    run_test_ok_auth "3.1 files_list workspace root" \
-        "files_list" '{"path":"."}'
+    run_test_ok_auth "3.1 file_list workspace root" \
+        "file_list" '{"path":"."}'
 
-    run_test_ok_auth "3.2 files_write creates a scratch file" \
-        "files_write" "{\"path\":\"$SCRATCH_REL\",\"content\":\"$PAYLOAD\"}"
+    run_test_ok_auth "3.2 file_write creates a scratch file" \
+        "file_write" "{\"path\":\"$SCRATCH_REL\",\"content\":\"$PAYLOAD\"}"
 
-    run_test_ok_auth "3.3 files_read returns the written payload" \
-        "files_read" "{\"path\":\"$SCRATCH_REL\"}" "$PAYLOAD"
+    run_test_ok_auth "3.3 file_read returns the written payload" \
+        "file_read" "{\"path\":\"$SCRATCH_REL\"}" "$PAYLOAD"
 
     APPENDED="appended-line-$$"
 
-    run_test_ok_auth "3.4 files_append adds a new line" \
-        "files_append" "{\"path\":\"$SCRATCH_REL\",\"content\":\"\n$APPENDED\"}"
+    run_test_ok_auth "3.4 file_append adds a new line" \
+        "file_append" "{\"path\":\"$SCRATCH_REL\",\"content\":\"\n$APPENDED\"}"
 
-    run_test_ok_auth "3.5 files_read shows appended content" \
-        "files_read" "{\"path\":\"$SCRATCH_REL\"}" "$APPENDED"
+    run_test_ok_auth "3.5 file_read shows appended content" \
+        "file_read" "{\"path\":\"$SCRATCH_REL\"}" "$APPENDED"
 
-    run_test_ok_auth "3.6 files_edit replaces a substring" \
-        "files_edit" "{\"path\":\"$SCRATCH_REL\",\"old_text\":\"$PAYLOAD\",\"new_text\":\"replaced-$$\"}"
+    run_test_ok_auth "3.6 file_edit replaces a substring" \
+        "file_edit" "{\"path\":\"$SCRATCH_REL\",\"old_text\":\"$PAYLOAD\",\"new_text\":\"replaced-$$\"}"
 
-    run_test_ok_auth "3.7 files_read confirms replacement" \
-        "files_read" "{\"path\":\"$SCRATCH_REL\"}" "replaced-$$"
+    run_test_ok_auth "3.7 file_read confirms replacement" \
+        "file_read" "{\"path\":\"$SCRATCH_REL\"}" "replaced-$$"
 
-    run_test_err_auth "3.8 files_read on missing path returns an error" \
-        "files_read" '{"path":"definitely_not_a_real_file_'$$'_xyz.txt"}'
+    run_test_err_auth "3.8 file_read on missing path returns an error" \
+        "file_read" '{"path":"definitely_not_a_real_file_'$$'_xyz.txt"}'
 
     run_test_err_auth "3.9 unknown tool is rejected" \
         "definitely_not_a_real_tool_$$" '{}'
