@@ -184,7 +184,8 @@ func gatewayCmd(debug bool) error {
 	// Setup config file watcher for hot reload
 	reloadInterval := cfg.ConfigReloadInterval()
 	logger.InfoF("Config reload watcher", map[string]any{"interval": reloadInterval.String()})
-	configReloadChan, stopWatch := setupConfigWatcherPolling(configPath, reloadInterval, debug)
+	configReloadChan, stopWatch := setupConfigWatcherPolling(configPath, reloadInterval,
+		time.Duration(global.ConfigReloadDebounceSeconds)*time.Second, debug)
 	defer stopWatch()
 
 	sigChan := make(chan os.Signal, 1)
@@ -630,7 +631,7 @@ func restartServices(
 // cfg.ConfigReloadInterval() so the value honours the config override and
 // MinConfigReloadIntervalSeconds floor. Returns a channel for config updates
 // and a stop function.
-func setupConfigWatcherPolling(configPath string, interval time.Duration, debug bool) (chan *config.Config, func()) {
+func setupConfigWatcherPolling(configPath string, interval, debounce time.Duration, debug bool) (chan *config.Config, func()) {
 	configChan := make(chan *config.Config, 1)
 	stop := make(chan struct{})
 	var wg sync.WaitGroup
@@ -647,9 +648,8 @@ func setupConfigWatcherPolling(configPath string, interval time.Duration, debug 
 		observedSize := appliedSize
 
 		// Quiescence debounce: once a change is seen we wait for the file to be
-		// stable for this long (resetting on every further change) before
+		// stable for `debounce` (resetting on every further change) before
 		// reloading, so a burst of edits collapses into one reload.
-		debounce := time.Duration(global.ConfigReloadDebounceSeconds) * time.Second
 		var pending bool
 		var quietDeadline time.Time
 

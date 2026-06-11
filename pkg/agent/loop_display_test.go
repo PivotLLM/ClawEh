@@ -135,3 +135,89 @@ loop:
 		t.Fatalf("expected ForUser payload published to outbound bus; got %d msgs: %+v", len(seen), seen)
 	}
 }
+
+// TestRunLLMIteration_ToolForUser_SuppressedWhenStreamingOff verifies that with
+// StreamToolActivity off (the default), a tool's ForUser content is NOT streamed
+// to the user — the same setup as above but with the flag off.
+func TestRunLLMIteration_ToolForUser_SuppressedWhenStreamingOff(t *testing.T) {
+	al, cfg, msgBus, _, cleanup := newTestAgentLoop(t)
+	defer cleanup()
+	cfg.Agents.Defaults.StreamToolActivity = false // explicit: the default
+
+	agentInstance := al.registry.GetDefaultAgent()
+	if agentInstance == nil {
+		t.Fatal("no default agent")
+	}
+
+	const userPayload = "---\nfile contents preview\n---"
+	agentInstance.Tools.Register(&mockDisplayTool{forUser: userPayload})
+	if agentInstance.Config != nil {
+		agentInstance.Config.Tools = []string{"*"}
+	}
+
+	agentInstance.Provider = &sequenceProvider{
+		responses: []*providers.LLMResponse{
+			{
+				Content: "let me check that for you", // inter-tool narration
+				ToolCalls: []providers.ToolCall{
+					{
+						ID:       "tc-1",
+						Type:     "function",
+						Name:     "display_tool",
+						Function: &providers.FunctionCall{Name: "display_tool", Arguments: `{}`},
+					},
+				},
+			},
+			{Content: "all done"},
+		},
+		errors: []error{nil, nil},
+	}
+
+	collected := make(chan bus.OutboundMessage, 16)
+	done := make(chan struct{})
+	subCtx, subCancel := context.WithCancel(context.Background())
+	defer subCancel()
+	go func() {
+		defer close(done)
+		for {
+			msg, ok := msgBus.SubscribeOutbound(subCtx)
+			if !ok {
+				return
+			}
+			collected <- msg
+		}
+	}()
+
+	messages := []providers.Message{{Role: "user", Content: "trigger display tool"}}
+	opts := processOptions{
+		SessionKey:   "tool-foruser-off",
+		Channel:      "slack",
+		ChatID:       "C123",
+		UserMessage:  "trigger display tool",
+		SendResponse: false,
+	}
+	cm, releaseCM := al.getContextManager(agentInstance, opts.SessionKey)
+	defer releaseCM()
+
+	if _, _, _, _, err := al.runLLMIteration(context.Background(), agentInstance, messages, opts, cm); err != nil {
+		t.Fatalf("runLLMIteration: %v", err)
+	}
+
+	// Drain briefly; neither the ForUser payload nor the narration must appear.
+	deadline := time.After(500 * time.Millisecond)
+	for {
+		select {
+		case m := <-collected:
+			if m.Content == userPayload {
+				t.Fatalf("ForUser must not be streamed when StreamToolActivity is off; got: %q", m.Content)
+			}
+			if m.Content == "let me check that for you" {
+				t.Fatalf("inter-tool narration must not be streamed when StreamToolActivity is off")
+			}
+		case <-deadline:
+			subCancel()
+			<-done
+			return
+		}
+	}
+}
