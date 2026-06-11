@@ -1893,9 +1893,11 @@ func (al *AgentLoop) runLLMIteration(
 				"iteration": iteration,
 			})
 
-		// If the LLM returned both text content and tool calls, publish the
-		// text to the user immediately so it is visible before tool execution.
-		if response.Content != "" && opts.Channel != "" {
+		// If the LLM returned both text content and tool calls, publish that
+		// inter-tool narration to the user — only when streaming tool activity is
+		// enabled. Off by default so the user sees only the final answer, not the
+		// model's "let me also check…" play-by-play.
+		if response.Content != "" && opts.Channel != "" && al.GetConfig().Agents.Defaults.StreamToolActivity {
 			pubCtx, pubCancel := context.WithTimeout(ctx, 5*time.Second)
 			_ = al.bus.PublishOutbound(pubCtx, bus.OutboundMessage{
 				Channel: opts.Channel,
@@ -2048,9 +2050,12 @@ func (al *AgentLoop) runLLMIteration(
 		wg.Wait()
 
 		// Process results in original order (send to user, save to session)
+		streamActivity := al.GetConfig().Agents.Defaults.StreamToolActivity
 		for _, r := range agentResults {
-			// Send ForUser content to user immediately if not Silent
-			if !r.result.Silent && r.result.ForUser != "" {
+			// Send ForUser content to user immediately if not Silent — only when
+			// streaming tool activity is enabled (otherwise the user receives just
+			// the final answer, not each tool's intermediate output).
+			if streamActivity && !r.result.Silent && r.result.ForUser != "" {
 				if err := al.bus.PublishOutbound(ctx, bus.OutboundMessage{
 					Channel: opts.Channel,
 					ChatID:  opts.ChatID,

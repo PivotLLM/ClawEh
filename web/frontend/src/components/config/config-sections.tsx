@@ -103,6 +103,16 @@ export function AgentDefaultsSection({
         onCheckedChange={(checked) => onFieldChange("allowRemote", checked)}
       />
 
+      <SwitchCardField
+        label={t("pages.config.stream_tool_activity")}
+        hint={t("pages.config.stream_tool_activity_hint")}
+        layout="setting-row"
+        checked={form.streamToolActivity}
+        onCheckedChange={(checked) =>
+          onFieldChange("streamToolActivity", checked)
+        }
+      />
+
       <Field
         label={t("pages.config.max_tokens")}
         hint={t("pages.config.max_tokens_hint")}

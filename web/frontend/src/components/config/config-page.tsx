@@ -207,6 +207,7 @@ export function ConfigPage() {
             defaults: {
               workspace,
               restrict_to_workspace: form.restrictToWorkspace,
+              stream_tool_activity: form.streamToolActivity,
               max_tokens: maxTokens,
               max_tool_iterations: maxToolIterations,
               compress_normal_percent: compressNormalPercent,

@@ -4,6 +4,7 @@ export interface CoreConfigForm {
   workspace: string
   restrictToWorkspace: boolean
   allowRemote: boolean
+  streamToolActivity: boolean
   maxTokens: string
   maxToolIterations: string
   summarizationModels: string[]
@@ -64,6 +65,7 @@ export const EMPTY_FORM: CoreConfigForm = {
   workspace: "",
   restrictToWorkspace: true,
   allowRemote: true,
+  streamToolActivity: false,
   maxTokens: "32768",
   maxToolIterations: "50",
   summarizationModels: [],
@@ -144,6 +146,10 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
       exec.allow_remote === undefined
         ? EMPTY_FORM.allowRemote
         : asBool(exec.allow_remote),
+    streamToolActivity:
+      defaults.stream_tool_activity === undefined
+        ? EMPTY_FORM.streamToolActivity
+        : asBool(defaults.stream_tool_activity),
     maxTokens: asNumberString(defaults.max_tokens, EMPTY_FORM.maxTokens),
     maxToolIterations: asNumberString(
       defaults.max_tool_iterations,

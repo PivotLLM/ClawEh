@@ -38,8 +38,10 @@ func (m *mockDisplayTool) Execute(_ context.Context, _ map[string]any) *tools.To
 // which is false for inbound user messages, silently dropping the ForUser block
 // for write_file/edit_file/append_file with display:true.
 func TestRunLLMIteration_ToolForUser_PublishedOnInboundUserMessage(t *testing.T) {
-	al, _, msgBus, _, cleanup := newTestAgentLoop(t)
+	al, cfg, msgBus, _, cleanup := newTestAgentLoop(t)
 	defer cleanup()
+	// ForUser is only streamed to the user when tool-activity streaming is on.
+	cfg.Agents.Defaults.StreamToolActivity = true
 
 	agentInstance := al.registry.GetDefaultAgent()
 	if agentInstance == nil {

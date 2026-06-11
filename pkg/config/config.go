@@ -345,8 +345,12 @@ type RoutingConfig struct {
 }
 
 type AgentDefaults struct {
-	Workspace                  string            `json:"workspace,omitempty"             env:"CLAW_AGENTS_DEFAULTS_WORKSPACE"`
-	RestrictToWorkspace        bool              `json:"restrict_to_workspace"           env:"CLAW_AGENTS_DEFAULTS_RESTRICT_TO_WORKSPACE"`
+	Workspace           string `json:"workspace,omitempty"             env:"CLAW_AGENTS_DEFAULTS_WORKSPACE"`
+	RestrictToWorkspace bool   `json:"restrict_to_workspace"           env:"CLAW_AGENTS_DEFAULTS_RESTRICT_TO_WORKSPACE"`
+	// StreamToolActivity, when true, sends the model's inter-tool narration and
+	// each tool's user-facing output to the channel as it happens. When false
+	// (default) the user receives only the final answer, not the play-by-play.
+	StreamToolActivity         bool              `json:"stream_tool_activity,omitempty"  env:"CLAW_AGENTS_DEFAULTS_STREAM_TOOL_ACTIVITY"`
 	AllowReadOutsideWorkspace  bool              `json:"allow_read_outside_workspace"    env:"CLAW_AGENTS_DEFAULTS_ALLOW_READ_OUTSIDE_WORKSPACE"`
 	Model                      *AgentModelConfig `json:"model,omitempty"`
 	ImageModel                 string            `json:"image_model,omitempty"           env:"CLAW_AGENTS_DEFAULTS_IMAGE_MODEL"`
