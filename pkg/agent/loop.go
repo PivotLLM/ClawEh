@@ -2425,17 +2425,28 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 		} else {
 			rt.AgentName = agent.ID
 		}
-		rt.GetModelInfo = func() (string, string, string) {
-			protocol, modelID := providers.ExtractProtocol(agent.Model)
-			name := modelID
-			apiBase := ""
+		rt.GetModelInfo = func() (name, provider, protocol, apiBase string) {
+			// Resolve the configured model so the provider/protocol come from the
+			// real model string (e.g. "openrouter/deepseek/deepseek-v4-flash"),
+			// not the user-facing alias (which has no prefix and would default to
+			// "openai").
+			modelStr := agent.Model
 			if mc, err := cfg.GetModelConfig(agent.Model); err == nil && mc != nil {
+				if mc.Model != "" {
+					modelStr = mc.Model
+				}
 				if mc.ModelName != "" {
 					name = mc.ModelName
 				}
 				apiBase = mc.APIBase
 			}
-			return name, protocol, apiBase
+			var modelID string
+			provider, modelID = providers.ExtractProtocol(modelStr) // e.g. "openrouter"
+			if name == "" {
+				name = modelID // no config alias: show the bare model id
+			}
+			protocol = providers.WireProtocol(provider) // e.g. "openai"
+			return name, provider, protocol, apiBase
 		}
 		rt.SwitchModel = func(value string) (string, error) {
 			oldModel := agent.Model

@@ -47,9 +47,14 @@ func buildStatusReply(req Request, rt *Runtime) string {
 		fmt.Fprintf(&body, "Agent: %s\n", rt.AgentName)
 	}
 	if rt != nil && rt.GetModelInfo != nil {
-		name, provider, apiBase := rt.GetModelInfo()
+		name, provider, protocol, apiBase := rt.GetModelInfo()
 		fmt.Fprintf(&body, "Model: %s\n", name)
-		fmt.Fprintf(&body, "Provider: %s\n", provider)
+		if provider != "" {
+			fmt.Fprintf(&body, "Provider: %s\n", provider)
+		}
+		if protocol != "" {
+			fmt.Fprintf(&body, "Protocol: %s\n", protocol)
+		}
 		if apiBase != "" {
 			fmt.Fprintf(&body, "API: %s\n", apiBase)
 		}

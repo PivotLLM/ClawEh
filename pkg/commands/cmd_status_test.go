@@ -12,8 +12,8 @@ import (
 func TestStatus_BasicFields(t *testing.T) {
 	rt := &Runtime{
 		AgentName: "Alice",
-		GetModelInfo: func() (string, string, string) {
-			return "gpt-4", "openai", ""
+		GetModelInfo: func() (string, string, string, string) {
+			return "gpt-4", "openai", "openai", ""
 		},
 		Uptime: func() time.Duration {
 			return 2*time.Hour + 13*time.Minute
@@ -76,8 +76,8 @@ func TestStatus_BasicFields(t *testing.T) {
 func TestStatus_SessionStatsReflected(t *testing.T) {
 	rt := &Runtime{
 		AgentName: "Bob",
-		GetModelInfo: func() (string, string, string) {
-			return "claude-opus-4-7", "anthropic", ""
+		GetModelInfo: func() (string, string, string, string) {
+			return "claude-opus-4-7", "anthropic", "anthropic", ""
 		},
 		Uptime: func() time.Duration { return 5 * time.Second },
 		GetSessionStats: func() (int, int, int) {
@@ -161,8 +161,8 @@ func TestStatus_GracefulDegradation(t *testing.T) {
 func TestStatus_ExactShape(t *testing.T) {
 	rt := &Runtime{
 		AgentName: "Amber",
-		GetModelInfo: func() (string, string, string) {
-			return "DeepSeek-V4-Flash", "openai", ""
+		GetModelInfo: func() (string, string, string, string) {
+			return "DeepSeek-V4-Flash", "openrouter", "openai", ""
 		},
 		Uptime: func() time.Duration {
 			return 59*time.Minute + 38*time.Second
@@ -220,7 +220,8 @@ func TestStatus_ExactShape(t *testing.T) {
 		"Uptime: 59m38s",
 		"Agent: Amber",
 		"Model: DeepSeek-V4-Flash",
-		"Provider: openai",
+		"Provider: openrouter",
+		"Protocol: openai",
 		"Channel: webui",
 		"Session messages: 4",
 		"Archive messages: 12",

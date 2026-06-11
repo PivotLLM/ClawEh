@@ -45,6 +45,24 @@ func ExtractProtocol(model string) (protocol, modelID string) {
 	return protocol, modelID
 }
 
+// WireProtocol returns the API protocol family a provider prefix speaks, for
+// display/diagnostics. Most providers (openrouter, groq, deepseek, gemini, xai,
+// …) speak the OpenAI-compatible protocol; anthropic and the *-cli subprocess
+// providers are the exceptions. This is the provider→format grouping that
+// CreateProviderFromConfig routes on.
+func WireProtocol(providerPrefix string) string {
+	switch providerPrefix {
+	case "anthropic", "anthropic-messages":
+		return "anthropic"
+	case "claude-cli", "codex-cli", "gemini-cli":
+		return "cli"
+	case "bedrock":
+		return "bedrock"
+	default:
+		return "openai"
+	}
+}
+
 // CreateProviderFromConfig creates a provider based on the ModelConfig.
 // It uses the protocol prefix in the Model field to determine which provider to create.
 // Supported protocols: openai, anthropic, anthropic-messages, azure, bedrock,
