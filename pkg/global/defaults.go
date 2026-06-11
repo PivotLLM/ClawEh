@@ -17,10 +17,10 @@ const EnvVarHome = "CLAW_HOME"
 // agent-level nor agent_defaults temperature is configured.
 const DefaultTemperature = 0.2
 
-const DefaultLogFile    = true
+const DefaultLogFile = true
 const DefaultLogConsole = true
-const DefaultLogLevel   = "info"
-const DefaultLogJSON    = false
+const DefaultLogLevel = "info"
+const DefaultLogJSON = false
 
 // DefaultCallbackPrefix is prepended to all messages received via the callback
 // endpoint before they reach the LLM. It can be overridden per-deployment via
@@ -35,3 +35,10 @@ const DefaultConfigReloadIntervalSeconds = 5
 // MinConfigReloadIntervalSeconds is the floor applied to any configured value
 // to prevent pathological polling rates.
 const MinConfigReloadIntervalSeconds = 1
+
+// ConfigReloadDebounceSeconds is how long the config file must be quiescent (no
+// further mtime/size changes) before a detected change triggers a reload. Each
+// new change resets the timer, so a burst of saves (e.g. editing several fields
+// in the WebUI) collapses into a single reload once the dust settles — avoiding
+// repeated full-service restarts that tear down live channels/WebSockets.
+const ConfigReloadDebounceSeconds = 30

@@ -639,9 +639,19 @@ func setupConfigWatcherPolling(configPath string, interval time.Duration, debug 
 	go func() {
 		defer wg.Done()
 
-		// Get initial file info
-		lastModTime := getFileModTime(configPath)
-		lastSize := getFileSize(configPath)
+		// appliedModTime/appliedSize track the last config we actually reloaded.
+		// observedModTime/observedSize track the most recent on-disk state.
+		appliedModTime := getFileModTime(configPath)
+		appliedSize := getFileSize(configPath)
+		observedModTime := appliedModTime
+		observedSize := appliedSize
+
+		// Quiescence debounce: once a change is seen we wait for the file to be
+		// stable for this long (resetting on every further change) before
+		// reloading, so a burst of edits collapses into one reload.
+		debounce := time.Duration(global.ConfigReloadDebounceSeconds) * time.Second
+		var pending bool
+		var quietDeadline time.Time
 
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
@@ -652,43 +662,50 @@ func setupConfigWatcherPolling(configPath string, interval time.Duration, debug 
 				currentModTime := getFileModTime(configPath)
 				currentSize := getFileSize(configPath)
 
-				// Check if file changed (modification time or size changed)
-				if currentModTime.After(lastModTime) || currentSize != lastSize {
+				// A change relative to the most recent observation resets the
+				// quiet timer — the user is still editing.
+				if currentModTime.After(observedModTime) || currentSize != observedSize {
+					observedModTime = currentModTime
+					observedSize = currentSize
+					quietDeadline = time.Now().Add(debounce)
+					pending = true
 					if debug {
-						logger.Debugf("🔍 Config file change detected")
+						logger.Debugf("🔍 Config file change detected; debouncing %s", debounce)
 					}
+					continue
+				}
 
-					// Debounce - wait a bit to ensure file write is complete
-					time.Sleep(500 * time.Millisecond)
+				// File is stable since the last observation. If a change is
+				// pending and it has now been quiet for the full debounce window,
+				// and the file actually differs from what we last applied, reload.
+				if !pending || time.Now().Before(quietDeadline) {
+					continue
+				}
+				pending = false
+				if !currentModTime.After(appliedModTime) && currentSize == appliedSize {
+					continue
+				}
 
-					// Validate and load new config
-					newCfg, err := config.LoadConfig(configPath)
-					if err != nil {
-						logger.Errorf("⚠ Error loading new config: %v", err)
-						logger.Warn("  Using previous valid config")
-						continue
-					}
+				newCfg, err := config.LoadConfig(configPath)
+				if err != nil {
+					logger.Errorf("⚠ Error loading new config: %v", err)
+					logger.Warn("  Using previous valid config")
+					continue
+				}
+				if err := newCfg.ValidateModelList(); err != nil {
+					logger.Errorf("  ⚠ New config validation failed: %v", err)
+					logger.Warn("  Using previous valid config")
+					continue
+				}
 
-					// Validate the new config
-					if err := newCfg.ValidateModelList(); err != nil {
-						logger.Errorf("  ⚠ New config validation failed: %v", err)
-						logger.Warn("  Using previous valid config")
-						continue
-					}
+				logger.Info("✓ Config file validated and loaded")
+				appliedModTime = currentModTime
+				appliedSize = currentSize
 
-					logger.Info("✓ Config file validated and loaded")
-
-					// Update last known state
-					lastModTime = currentModTime
-					lastSize = currentSize
-
-					// Send new config to main loop (non-blocking)
-					select {
-					case configChan <- newCfg:
-					default:
-						// Channel full, skip this update
-						logger.Warn("⚠ Previous config reload still in progress, skipping")
-					}
+				select {
+				case configChan <- newCfg:
+				default:
+					logger.Warn("⚠ Previous config reload still in progress, skipping")
 				}
 
 			case <-stop:
