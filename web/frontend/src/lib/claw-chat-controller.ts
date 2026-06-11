@@ -26,6 +26,8 @@ let activeSessionIdRef = getChatState().activeSessionId
 let initialized = false
 let hydratePromise: Promise<void> | null = null
 let connectionGeneration = 0
+let reconnectAttempts = 0
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 
 async function loadSessionMessages(sessionId: string): Promise<ChatMessage[]> {
   const detail = await getSessionHistory(sessionId)
@@ -118,6 +120,12 @@ export async function connectChat() {
     return
   }
 
+  // A fresh connect attempt supersedes any pending auto-reconnect.
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer)
+    reconnectTimer = null
+  }
+
   const generation = connectionGeneration + 1
   connectionGeneration = generation
   isConnecting = true
@@ -168,6 +176,7 @@ export async function connectChat() {
       if (wsRef !== socket) {
         return
       }
+      reconnectAttempts = 0
       updateChatStore({ connectionState: "connected" })
       isConnecting = false
     }
@@ -191,6 +200,15 @@ export async function connectChat() {
         connectionState: "disconnected",
         isTyping: false,
       })
+      // Auto-reconnect with capped exponential backoff (1s → 30s). An
+      // intentional disconnectChat() nulls wsRef and bumps the generation, so it
+      // hits the guard above and never schedules a reconnect.
+      const delay = Math.min(30000, 1000 * 2 ** reconnectAttempts)
+      reconnectAttempts += 1
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null
+        void connectChat()
+      }, delay)
     }
 
     socket.onerror = () => {
@@ -214,6 +232,11 @@ export async function connectChat() {
 
 export function disconnectChat() {
   connectionGeneration += 1
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer)
+    reconnectTimer = null
+  }
+  reconnectAttempts = 0
 
   const socket = wsRef
   wsRef = null
