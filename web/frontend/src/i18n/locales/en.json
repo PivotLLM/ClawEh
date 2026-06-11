@@ -204,7 +204,9 @@
       "extraBodyPlaceholder": "{\n  \"search_parameters\": { \"mode\": \"on\" }\n}",
       "extraBodyInvalidJSON": "Must be a valid JSON object.",
       "extraBodyNotObject": "Top-level value must be a JSON object.",
-      "extraBodyReservedKey": "Key \"{{key}}\" is claimed by claw and cannot be overridden via extra_body."
+      "extraBodyReservedKey": "Key \"{{key}}\" is claimed by claw and cannot be overridden via extra_body.",
+      "dropParams": "Drop Request Fields",
+      "dropParamsHint": "Comma-separated request body fields to strip before sending (e.g. temperature). Use for parameters a model or upstream rejects — such as temperature on OpenRouter reasoning models that 404 under require_parameters. Applied after extra_body."
     },
     "edit": {
       "title": "Configure {{name}}",
@@ -385,6 +387,7 @@
       "summarization_models_empty": "No summarization models configured — each agent uses its own model.",
       "summarization_models_add": "Add model",
       "summarization_models_remove": "Remove",
+      "summarization_models_move_up": "Move up",
       "summarization_debug_capture": "Debug capture",
       "summarization_debug_capture_hint": "Write the verbatim request and response of every summarization call to compact.jsonl in the agent's workspace. Debugging only — leave off in normal use.",
       "compress_normal_percent": "Normal Compression Threshold",

@@ -110,6 +110,73 @@ func TestHandleUpdateModel_Success(t *testing.T) {
 	}
 }
 
+// TestHandleUpdateModel_DropParamsRoundTrip verifies the WebUI wiring for the
+// per-model drop_params filter: PUT persists the list, GET exposes it, and a
+// subsequent empty-array PUT clears it (omitempty drops it on save).
+func TestHandleUpdateModel_DropParamsRoundTrip(t *testing.T) {
+	configPath, cleanup := setupOAuthTestEnv(t)
+	defer cleanup()
+
+	h := NewHandler(configPath)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+
+	// PUT with drop_params set.
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(
+		http.MethodPut,
+		"/api/models/0",
+		bytes.NewBufferString(`{"model_name":"custom-default","model":"openai/gpt-4o","drop_params":["temperature","top_p"]}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	cfg, err := config.LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	if got := cfg.ModelList[0].DropParams; len(got) != 2 || got[0] != "temperature" || got[1] != "top_p" {
+		t.Fatalf("DropParams = %v, want [temperature top_p]", got)
+	}
+
+	// GET must expose it.
+	recGet := httptest.NewRecorder()
+	mux.ServeHTTP(recGet, httptest.NewRequest(http.MethodGet, "/api/models", nil))
+	var listResp struct {
+		Models []map[string]any `json:"models"`
+	}
+	if err := json.Unmarshal(recGet.Body.Bytes(), &listResp); err != nil {
+		t.Fatalf("Unmarshal list: %v", err)
+	}
+	dp, ok := listResp.Models[0]["drop_params"].([]any)
+	if !ok || len(dp) != 2 {
+		t.Fatalf("GET drop_params = %v, want 2 entries", listResp.Models[0]["drop_params"])
+	}
+
+	// PUT with [] clears it.
+	recClear := httptest.NewRecorder()
+	reqClear := httptest.NewRequest(
+		http.MethodPut,
+		"/api/models/0",
+		bytes.NewBufferString(`{"model_name":"custom-default","model":"openai/gpt-4o","drop_params":[]}`),
+	)
+	reqClear.Header.Set("Content-Type", "application/json")
+	mux.ServeHTTP(recClear, reqClear)
+	if recClear.Code != http.StatusOK {
+		t.Fatalf("clear PUT status = %d, want %d, body=%s", recClear.Code, http.StatusOK, recClear.Body.String())
+	}
+	cfg, err = config.LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig() after clear error = %v", err)
+	}
+	if len(cfg.ModelList[0].DropParams) != 0 {
+		t.Fatalf("DropParams after clear = %v, want empty", cfg.ModelList[0].DropParams)
+	}
+}
+
 func TestHandleUpdateModel_InvalidIndexReturns404(t *testing.T) {
 	configPath, cleanup := setupOAuthTestEnv(t)
 	defer cleanup()

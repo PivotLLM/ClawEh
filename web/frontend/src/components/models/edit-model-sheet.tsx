@@ -12,7 +12,9 @@ import {
 } from "@/components/shared-form"
 import {
   REASONING_EFFORT_OPTIONS,
+  formatDropParams,
   formatExtraBody,
+  parseDropParams,
   parseExtraBody,
 } from "@/components/models/model-config-fields"
 import { Button } from "@/components/ui/button"
@@ -48,6 +50,7 @@ interface EditForm {
   thinkingLevel: string
   reasoningEffort: string
   extraBody: string
+  dropParams: string
   noTools: boolean
 }
 
@@ -79,6 +82,7 @@ export function EditModelSheet({
     thinkingLevel: "",
     reasoningEffort: "",
     extraBody: "",
+    dropParams: "",
     noTools: false,
   })
   const [saving, setSaving] = useState(false)
@@ -103,6 +107,7 @@ export function EditModelSheet({
         thinkingLevel: model.thinking_level ?? "",
         reasoningEffort: model.reasoning_effort ?? "",
         extraBody: formatExtraBody(model.extra_body),
+        dropParams: formatDropParams(model.drop_params),
         noTools: model.no_tools ?? false,
       })
       setSetAsDefault(model.is_default)
@@ -147,6 +152,10 @@ export function EditModelSheet({
         // clear, which then drops the field via omitempty on save.
         reasoning_effort: form.reasoningEffort,
         extra_body: extraBodyParsed.value ?? null,
+        // Always send drop_params: [] clears a previously-stored list, since
+        // handleUpdateModel merge-unmarshals and an absent field would preserve
+        // the old value (omitempty then drops the empty slice on save).
+        drop_params: parseDropParams(form.dropParams),
         no_tools: form.noTools,
       })
       if (setAsDefault && !model.is_default) {
@@ -345,6 +354,17 @@ export function EditModelSheet({
                   className="font-mono text-xs"
                   rows={6}
                   aria-invalid={!!extraBodyParsed.error}
+                />
+              </Field>
+
+              <Field
+                label={t("models.field.dropParams")}
+                hint={t("models.field.dropParamsHint")}
+              >
+                <Input
+                  value={form.dropParams}
+                  onChange={setField("dropParams")}
+                  placeholder="temperature, top_p"
                 />
               </Field>
 

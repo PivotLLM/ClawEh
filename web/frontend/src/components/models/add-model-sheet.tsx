@@ -6,6 +6,7 @@ import { addModel, setDefaultModel } from "@/api/models"
 import { maskedSecretPlaceholder } from "@/components/secret-placeholder"
 import {
   REASONING_EFFORT_OPTIONS,
+  parseDropParams,
   parseExtraBody,
 } from "@/components/models/model-config-fields"
 import {
@@ -48,6 +49,7 @@ interface AddForm {
   thinkingLevel: string
   reasoningEffort: string
   extraBody: string
+  dropParams: string
 }
 
 const EMPTY_ADD_FORM: AddForm = {
@@ -65,6 +67,7 @@ const EMPTY_ADD_FORM: AddForm = {
   thinkingLevel: "",
   reasoningEffort: "",
   extraBody: "",
+  dropParams: "",
 }
 
 interface AddModelSheetProps {
@@ -153,6 +156,7 @@ export function AddModelSheet({
         thinking_level: form.thinkingLevel.trim() || undefined,
         reasoning_effort: form.reasoningEffort || undefined,
         extra_body: extraBodyParsed.value,
+        drop_params: parseDropParams(form.dropParams),
       })
       if (setAsDefault) {
         await setDefaultModel(modelName)
@@ -364,6 +368,17 @@ export function AddModelSheet({
                   className="font-mono text-xs"
                   rows={6}
                   aria-invalid={!!extraBodyParsed.error}
+                />
+              </Field>
+
+              <Field
+                label={t("models.field.dropParams")}
+                hint={t("models.field.dropParamsHint")}
+              >
+                <Input
+                  value={form.dropParams}
+                  onChange={setField("dropParams")}
+                  placeholder="temperature, top_p"
                 />
               </Field>
 

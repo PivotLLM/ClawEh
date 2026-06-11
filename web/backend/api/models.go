@@ -43,6 +43,7 @@ type modelResponse struct {
 	// Shape 3 per-LLM custom fields.
 	ReasoningEffort string         `json:"reasoning_effort,omitempty"`
 	ExtraBody       map[string]any `json:"extra_body,omitempty"`
+	DropParams      []string       `json:"drop_params,omitempty"`
 	Enabled         bool           `json:"enabled"`
 	// Meta
 	Configured bool `json:"configured"`
@@ -92,6 +93,7 @@ func (h *Handler) handleListModels(w http.ResponseWriter, r *http.Request) {
 			NoTools:         m.NoTools,
 			ReasoningEffort: m.ReasoningEffort,
 			ExtraBody:       m.ExtraBody,
+			DropParams:      m.DropParams,
 			Enabled:         m.Enabled,
 			Configured:      configured[i],
 			IsDefault:       m.ModelName == defaultModel,

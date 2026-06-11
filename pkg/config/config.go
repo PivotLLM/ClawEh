@@ -729,6 +729,15 @@ type ModelConfig struct {
 	// (see reservedRequestBodyKeys) are rejected at config load.
 	ExtraBody map[string]any `json:"extra_body,omitempty" yaml:"extra_body,omitempty"`
 
+	// DropParams lists top-level request-body fields to strip before sending to
+	// OpenAI-compatible providers. Use it to suppress a parameter a model or
+	// upstream rejects — e.g. "temperature" for OpenRouter reasoning models that
+	// don't advertise it and would 404 under provider.require_parameters.
+	// Stripping is applied last (after extra_body), so it always wins. It is a
+	// literal filter: listing structural fields like "messages" or "model" will
+	// break the request. Ignored by providers other than openai_compat.
+	DropParams []string `json:"drop_params,omitempty" yaml:"drop_params,omitempty"`
+
 	// Runtime-only: set by Config.resolveOpenAICompatProtocols when the
 	// model's protocol prefix matches an entry in
 	// Config.OpenAICompatProtocols. Unexported so JSON ignores them.

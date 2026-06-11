@@ -433,6 +433,90 @@ func TestProviderChat_StripsMoonshotPrefixAndNormalizesKimiTemperature(t *testin
 	}
 }
 
+// TestProviderChat_DropParamsStripsFields verifies that WithDropParams removes
+// the named top-level fields from the outgoing request body, even when claw
+// would normally set them (temperature here), while leaving other fields intact.
+// This is the generic, model-agnostic escape hatch for upstreams that reject a
+// parameter (e.g. OpenRouter reasoning models that 404 under
+// provider.require_parameters when temperature is present).
+func TestProviderChat_DropParamsStripsFields(t *testing.T) {
+	var requestBody map[string]any
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		resp := map[string]any{
+			"choices": []map[string]any{
+				{"message": map[string]any{"content": "ok"}, "finish_reason": "stop"},
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	p := NewProvider("key", server.URL, "", WithDropParams([]string{"temperature"}))
+	_, err := p.Chat(
+		t.Context(),
+		[]Message{{Role: "user", Content: "hi"}},
+		nil,
+		"openai/gpt-5.4",
+		map[string]any{"temperature": 0.2, "max_tokens": 100},
+	)
+	if err != nil {
+		t.Fatalf("Chat() error = %v", err)
+	}
+
+	if _, present := requestBody["temperature"]; present {
+		t.Fatalf("temperature should be stripped by drop_params, got %v", requestBody["temperature"])
+	}
+	// Other fields must survive — drop_params is a targeted filter, not a wipe.
+	if requestBody["model"] != "openai/gpt-5.4" {
+		t.Fatalf("model = %v, want openai/gpt-5.4", requestBody["model"])
+	}
+	if _, ok := requestBody["messages"]; !ok {
+		t.Fatalf("messages should be present, body = %v", requestBody)
+	}
+}
+
+// TestProviderChat_NoDropParamsKeepsTemperature is the off-path: without
+// WithDropParams the temperature claw sets is sent as usual.
+func TestProviderChat_NoDropParamsKeepsTemperature(t *testing.T) {
+	var requestBody map[string]any
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		resp := map[string]any{
+			"choices": []map[string]any{
+				{"message": map[string]any{"content": "ok"}, "finish_reason": "stop"},
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	p := NewProvider("key", server.URL, "")
+	_, err := p.Chat(
+		t.Context(),
+		[]Message{{Role: "user", Content: "hi"}},
+		nil,
+		"openai/gpt-4o",
+		map[string]any{"temperature": 0.2},
+	)
+	if err != nil {
+		t.Fatalf("Chat() error = %v", err)
+	}
+	if requestBody["temperature"] != 0.2 {
+		t.Fatalf("temperature = %v, want 0.2", requestBody["temperature"])
+	}
+}
+
 func TestProviderChat_StripsProtocolPrefixes(t *testing.T) {
 	tests := []struct {
 		name      string

@@ -75,3 +75,28 @@ export function parseExtraBody(
 
   return { value: obj, error: undefined }
 }
+
+// formatDropParams renders a saved drop_params list as a comma-separated string
+// for the text input. An empty / absent list collapses to "".
+export function formatDropParams(
+  params: string[] | null | undefined,
+): string {
+  if (!params || params.length === 0) return ""
+  return params.join(", ")
+}
+
+// parseDropParams splits the comma-separated input into a trimmed, de-duplicated
+// list of field names. Empty / whitespace-only input yields an empty array so
+// the caller can send [] to clear a previously-stored value.
+export function parseDropParams(raw: string): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const part of raw.split(",")) {
+    const name = part.trim()
+    if (name !== "" && !seen.has(name)) {
+      seen.add(name)
+      out.push(name)
+    }
+  }
+  return out
+}

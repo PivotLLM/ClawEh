@@ -42,15 +42,16 @@ type (
 type Provider struct {
 	apiKey              string
 	apiBase             string
-	maxTokensField      string         // Field name for max tokens (e.g., "max_completion_tokens" for o1/glm models)
-	strictCompat        bool           // Strip non-standard fields for strict OpenAI-compatible endpoints
-	noParallelToolCalls bool           // Send parallel_tool_calls=false (required by Groq/some Llama providers)
-	responseLogFile     string         // Append JSONL request+response records here when non-empty (diagnostic only)
-	reasoningEffort     string         // OpenAI/Grok `reasoning_effort` request field; empty omits it
-	extraBody           map[string]any // Free-form passthrough merged into the request body before marshal
-	modelLabel          string         // User-facing model name used in WarnCF for merge collisions; empty falls back to wire model
-	protocol            string         // Protocol prefix (e.g. "openai", "xai", "openrouter"); drives capability gating
-	responseFormatJSON  bool           // Whether this provider may emit response_format=json_object when callers ask for it
+	maxTokensField      string              // Field name for max tokens (e.g., "max_completion_tokens" for o1/glm models)
+	strictCompat        bool                // Strip non-standard fields for strict OpenAI-compatible endpoints
+	noParallelToolCalls bool                // Send parallel_tool_calls=false (required by Groq/some Llama providers)
+	responseLogFile     string              // Append JSONL request+response records here when non-empty (diagnostic only)
+	reasoningEffort     string              // OpenAI/Grok `reasoning_effort` request field; empty omits it
+	extraBody           map[string]any      // Free-form passthrough merged into the request body before marshal
+	dropParams          map[string]struct{} // Top-level request-body fields to strip just before marshal
+	modelLabel          string              // User-facing model name used in WarnCF for merge collisions; empty falls back to wire model
+	protocol            string              // Protocol prefix (e.g. "openai", "xai", "openrouter"); drives capability gating
+	responseFormatJSON  bool                // Whether this provider may emit response_format=json_object when callers ask for it
 	httpClient          *http.Client
 
 	logMu      sync.Mutex // serialises appends to responseLogFile across goroutines sharing this Provider
@@ -115,6 +116,28 @@ func WithReasoningEffort(level string) Option {
 func WithExtraBody(extra map[string]any) Option {
 	return func(p *Provider) {
 		p.extraBody = extra
+	}
+}
+
+// WithDropParams supplies a set of top-level request-body field names to remove
+// just before marshal. Use it to suppress a parameter a particular model or
+// upstream rejects (e.g. "temperature" on reasoning models that don't advertise
+// it). Applied after extra_body, so it always wins. Empty/blank names are
+// ignored; an empty list leaves the request untouched.
+func WithDropParams(names []string) Option {
+	return func(p *Provider) {
+		if len(names) == 0 {
+			return
+		}
+		set := make(map[string]struct{}, len(names))
+		for _, n := range names {
+			if n != "" {
+				set[n] = struct{}{}
+			}
+		}
+		if len(set) > 0 {
+			p.dropParams = set
+		}
 	}
 }
 
@@ -303,6 +326,12 @@ func (p *Provider) Chat(
 			continue
 		}
 		requestBody[k] = v
+	}
+
+	// Strip operator-configured fields last so drop_params wins over every
+	// source, including extra_body and claw-managed defaults.
+	for k := range p.dropParams {
+		delete(requestBody, k)
 	}
 
 	jsonData, err := json.Marshal(requestBody)

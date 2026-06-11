@@ -1848,16 +1848,20 @@ func (al *AgentLoop) runLLMIteration(
 			al.targetReasoningChannelID(opts.Channel),
 		)
 
-		logger.DebugCF("agent", "LLM response",
-			map[string]any{
-				"agent_id":       agent.ID,
-				"iteration":      iteration,
-				"content_chars":  len(response.Content),
-				"tool_calls":     len(response.ToolCalls),
-				"reasoning":      response.Reasoning,
-				"target_channel": al.targetReasoningChannelID(opts.Channel),
-				"channel":        opts.Channel,
-			})
+		respFields := map[string]any{
+			"agent_id":        agent.ID,
+			"iteration":       iteration,
+			"content_chars":   len(response.Content),
+			"tool_calls":      len(response.ToolCalls),
+			"reasoning_chars": len(response.Reasoning),
+			"target_channel":  al.targetReasoningChannelID(opts.Channel),
+			"channel":         opts.Channel,
+		}
+		// Reasoning text is response body content — gate behind log_message_content.
+		if logger.GetLogMessageContent() {
+			respFields["reasoning"] = response.Reasoning
+		}
+		logger.DebugCF("agent", "LLM response", respFields)
 		// Check if no tool calls - then check reasoning content if any
 		if len(response.ToolCalls) == 0 {
 			finalContent = response.Content

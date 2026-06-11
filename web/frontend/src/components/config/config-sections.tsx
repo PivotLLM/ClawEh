@@ -156,74 +156,89 @@ interface SummarizationModelsFieldProps {
 // SummarizationModelsField edits the ordered global summarization model list.
 // Models are tried in order during context compaction; the agent's own model is
 // always appended as a final fallback at runtime, so an empty list is valid.
+// Mirrors the agent fallback-model UI: a themed Select adds models and each
+// chosen model is an ordered row with move-up / remove controls.
 function SummarizationModelsField({
   value,
   onChange,
 }: SummarizationModelsFieldProps) {
   const { t } = useTranslation()
   const { apiKeyModels, oauthModels, localModels } = useChatModels()
-  const suggestions = [...apiKeyModels, ...oauthModels, ...localModels].map(
-    (m) => m.model_name,
-  )
+  const available = [...apiKeyModels, ...oauthModels, ...localModels]
+  const remaining = available.filter((m) => !value.includes(m.model_name))
 
-  const updateAt = (index: number, next: string) => {
-    const copy = [...value]
-    copy[index] = next
-    onChange(copy)
+  const moveUp = (i: number) => {
+    if (i === 0) return
+    const next = [...value]
+    ;[next[i - 1], next[i]] = [next[i], next[i - 1]]
+    onChange(next)
   }
-  const removeAt = (index: number) => {
-    onChange(value.filter((_, i) => i !== index))
+  const removeAt = (i: number) => {
+    onChange(value.filter((_, idx) => idx !== i))
   }
-  const addRow = () => onChange([...value, ""])
+  const add = (name: string) => {
+    if (!name || value.includes(name)) return
+    onChange([...value, name])
+  }
 
   return (
     <Field
       label={t("pages.config.summarization_models")}
       hint={t("pages.config.summarization_models_hint")}
     >
-      <datalist id="summarization-model-suggestions">
-        {suggestions.map((name) => (
-          <option key={name} value={name} />
-        ))}
-      </datalist>
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-1.5">
         {value.length === 0 && (
           <p className="text-muted-foreground text-sm">
             {t("pages.config.summarization_models_empty")}
           </p>
         )}
         {value.map((model, index) => (
-          <div key={index} className="flex items-center gap-2">
+          <div key={model} className="flex items-center gap-1.5">
             <span className="text-muted-foreground w-5 text-right text-sm tabular-nums">
               {index + 1}.
             </span>
-            <Input
-              className="flex-1"
-              list="summarization-model-suggestions"
-              value={model}
-              placeholder="e.g. claude-haiku-4-5"
-              onChange={(e) => updateAt(index, e.target.value)}
-            />
+            <span className="border-border/50 bg-muted/40 flex-1 rounded px-2 py-1 font-mono text-xs">
+              {model}
+            </span>
             <Button
               type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => removeAt(index)}
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => moveUp(index)}
+              disabled={index === 0}
+              className="text-muted-foreground size-6"
+              title={t("pages.config.summarization_models_move_up")}
             >
-              {t("pages.config.summarization_models_remove")}
+              ↑
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => removeAt(index)}
+              className="text-muted-foreground hover:text-destructive size-6"
+              title={t("pages.config.summarization_models_remove")}
+            >
+              ×
             </Button>
           </div>
         ))}
-        <div>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={addRow}
-          >
-            {t("pages.config.summarization_models_add")}
-          </Button>
-        </div>
+        {remaining.length > 0 && (
+          <Select value="" onValueChange={add}>
+            <SelectTrigger className="h-8 text-sm">
+              <SelectValue
+                placeholder={t("pages.config.summarization_models_add")}
+              />
+            </SelectTrigger>
+            <SelectContent>
+              {remaining.map((m) => (
+                <SelectItem key={m.index} value={m.model_name}>
+                  {m.model_name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
       </div>
     </Field>
   )

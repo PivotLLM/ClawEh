@@ -23,6 +23,9 @@ export interface ModelInfo {
   // otherwise preserve the old value rather than removing it.
   reasoning_effort?: string
   extra_body?: Record<string, unknown> | null
+  // drop_params accepts an explicit empty array on save to clear a previously
+  // stored value, mirroring extra_body's null-to-clear semantics.
+  drop_params?: string[] | null
   enabled: boolean
   // Meta
   configured: boolean
