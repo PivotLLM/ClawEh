@@ -50,12 +50,16 @@ FULL_URL="${SERVER_URL}${ENDPOINT}"
 # All tools the test config exposes — the source of truth for count/catalogue checks.
 # Note: find_tools_regex and find_tools_bm25 are omitted here because they only register
 # when tools.mcp.discovery.enabled=true, which the test config does not set.
-EXPECTED_TOOLS="file_read file_write file_edit file_append file_list web_fetch web_search msg_send_file session_messages session_search session_compact session_info"
-EXPECTED_TOOL_COUNT=12
+# Every tool the test config exposes that is guaranteed to register (no live
+# model and no specific hardware required). agent_spawn (needs a model) and
+# hw_i2c/hw_spi (Linux + I2C/SPI devices) are also exposed but only probed when
+# actually present in the catalogue, so this script stays portable.
+EXPECTED_TOOLS="file_read file_write file_edit file_append file_list file_copy web_fetch web_search msg_send_file session_messages session_search session_compact session_info session_summary_list session_summary_get session_clear shell_exec skill_find skill_install cron_schedule"
+EXPECTED_TOOL_COUNT=20
 
 # Namespace prefixes that must have at least one tool in the catalogue.
 # Covers every provider-owned namespace that is in the test config.
-EXPECTED_NAMESPACES="file_ web_ session_ msg_"
+EXPECTED_NAMESPACES="file_ web_ session_ msg_ shell_ skill_ cron_"
 
 # Unique scratch file inside the agent workspace so repeated runs do not collide.
 SCRATCH_REL="claw_mcp_test_$$.txt"
@@ -473,10 +477,13 @@ else
     run_test_ok_auth "3.7 file_read confirms replacement" \
         "file_read" "{\"path\":\"$SCRATCH_REL\"}" "replaced-$$"
 
-    run_test_err_auth "3.8 file_read on missing path returns an error" \
+    run_test_ok_auth "3.8 file_copy duplicates a file" \
+        "file_copy" "{\"source_path\":\"$SCRATCH_REL\",\"destination_path\":\"${SCRATCH_REL}.copy\"}"
+
+    run_test_err_auth "3.9 file_read on missing path returns an error" \
         "file_read" '{"path":"definitely_not_a_real_file_'$$'_xyz.txt"}'
 
-    run_test_err_auth "3.9 unknown tool is rejected" \
+    run_test_err_auth "3.10 unknown tool is rejected" \
         "definitely_not_a_real_tool_$$" '{}'
 
     #---------------------------------------------------------------------------
@@ -496,6 +503,57 @@ else
 
     run_test_not_auth_err "4.4 session_search — token accepted" \
         "session_search" '{"query":"test"}'
+
+    run_test_not_auth_err "4.5 session_summary_list — token accepted" \
+        "session_summary_list" '{}'
+
+    run_test_not_auth_err "4.6 session_summary_get — token accepted" \
+        "session_summary_get" '{"id":"none"}'
+
+    run_test_not_auth_err "4.7 session_clear — token accepted" \
+        "session_clear" '{}'
+
+    #---------------------------------------------------------------------------
+    # Section 4b: Every remaining provider tool. These reach out to the network
+    # (web, skill), need a live model (agent), or touch hardware (hw), so we use
+    # graceful-error probes — the call must be accepted and the tool must respond
+    # (success OR a clean tool-level error), not fail at the transport/auth layer.
+    #---------------------------------------------------------------------------
+
+    print_section "4b. Remaining provider tools (graceful probes)"
+
+    # shell_exec is restricted to internal channels, so over MCP it returns a
+    # clean "restricted" error rather than running — a graceful probe.
+    run_test_not_auth_err "4b.1 shell_exec — token accepted" \
+        "shell_exec" '{"command":"echo mcp-shell-ok"}'
+
+    run_test_not_auth_err "4b.2 web_search — token accepted" \
+        "web_search" '{"query":"hello"}'
+
+    run_test_not_auth_err "4b.3 web_fetch — token accepted" \
+        "web_fetch" '{"url":"https://example.com"}'
+
+    run_test_not_auth_err "4b.4 msg_send_file — token accepted" \
+        "msg_send_file" '{"path":"no-such-file"}'
+
+    run_test_not_auth_err "4b.5 skill_find — token accepted" \
+        "skill_find" '{"query":"github"}'
+
+    run_test_not_auth_err "4b.6 skill_install — token accepted" \
+        "skill_install" '{"slug":"no-such-skill","registry":"clawhub"}'
+
+    run_test_not_auth_err "4b.7 cron_schedule — token accepted" \
+        "cron_schedule" '{}'
+
+    # Tools that only register on certain hosts (agent needs a model; hw needs
+    # Linux + I2C/SPI devices). Probe them only when the catalogue lists them.
+    for opt_tool in agent_spawn hw_i2c hw_spi; do
+        if echo "$LIST_OUT" | grep -qw "$opt_tool"; then
+            run_test_not_auth_err "4b.* $opt_tool — token accepted" "$opt_tool" '{}'
+        else
+            echo "  4b.* $opt_tool not registered on this host (skipped)"
+        fi
+    done
 
 fi  # end SESSION_TOKEN block
 

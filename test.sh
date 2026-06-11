@@ -402,6 +402,19 @@ PY
         "enabled": true,
         "max_results": 5
       }
+    },
+    "skills": { "registry": { "enabled": true } },
+    "subagent": { "enabled": true },
+    "cron": { "enabled": true },
+    "tool_overrides": {
+      "shell_exec": true,
+      "skill_find": true,
+      "skill_install": true,
+      "cron_schedule": true,
+      "agent_spawn": true,
+      "session_clear": true,
+      "hw_i2c": true,
+      "hw_spi": true
     }
   },
   "mcp_host": {
@@ -414,13 +427,24 @@ PY
       "file_edit",
       "file_append",
       "file_list",
+      "file_copy",
       "web_fetch",
       "web_search",
       "msg_send_file",
       "session_messages",
       "session_search",
       "session_compact",
-      "session_info"
+      "session_info",
+      "session_summary_list",
+      "session_summary_get",
+      "session_clear",
+      "shell_exec",
+      "skill_find",
+      "skill_install",
+      "cron_schedule",
+      "agent_spawn",
+      "hw_i2c",
+      "hw_spi"
     ]
   }
 }
