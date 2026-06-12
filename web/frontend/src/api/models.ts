@@ -24,6 +24,7 @@ export interface ModelInfo {
   // drop_params accepts an explicit empty array on save to clear a previously
   // stored value, mirroring extra_body's null-to-clear semantics.
   drop_params?: string[] | null
+  strict_alternation?: boolean
   enabled: boolean
   // Meta
   configured: boolean

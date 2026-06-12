@@ -46,6 +46,7 @@ interface AddForm {
   reasoningEffort: string
   extraBody: string
   dropParams: string
+  strictAlternation: boolean
 }
 
 const EMPTY_ADD_FORM: AddForm = {
@@ -61,6 +62,7 @@ const EMPTY_ADD_FORM: AddForm = {
   reasoningEffort: "",
   extraBody: "",
   dropParams: "",
+  strictAlternation: false,
 }
 
 interface AddModelSheetProps {
@@ -152,6 +154,7 @@ export function AddModelSheet({
         reasoning_effort: form.reasoningEffort || undefined,
         extra_body: extraBodyParsed.value,
         drop_params: parseDropParams(form.dropParams),
+        strict_alternation: form.strictAlternation,
       })
       if (setAsDefault) {
         await setDefaultModel(modelName)
@@ -367,6 +370,15 @@ export function AddModelSheet({
                   placeholder="temperature, top_p"
                 />
               </Field>
+
+              <SwitchCardField
+                label={t("models.field.strictAlternation")}
+                hint={t("models.field.strictAlternationHint")}
+                checked={form.strictAlternation}
+                onCheckedChange={(v) =>
+                  setForm((f) => ({ ...f, strictAlternation: v }))
+                }
+              />
 
               <Field
                 label={t("models.field.maxTokensField")}

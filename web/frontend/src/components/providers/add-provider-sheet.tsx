@@ -44,7 +44,6 @@ interface AddForm {
   strictCompat: boolean
   noParallelToolCalls: boolean
   responseFormatJSON: boolean
-  strictAlternation: boolean
 }
 
 const EMPTY_ADD_FORM: AddForm = {
@@ -58,7 +57,6 @@ const EMPTY_ADD_FORM: AddForm = {
   strictCompat: false,
   noParallelToolCalls: false,
   responseFormatJSON: false,
-  strictAlternation: false,
 }
 
 interface AddProviderSheetProps {
@@ -137,7 +135,6 @@ export function AddProviderSheet({
         strict_compat: form.strictCompat,
         no_parallel_tool_calls: form.noParallelToolCalls,
         response_format_json: form.responseFormatJSON,
-        strict_alternation: form.strictAlternation,
       })
       onSaved()
       onClose()
@@ -296,15 +293,6 @@ export function AddProviderSheet({
                 checked={form.responseFormatJSON}
                 onCheckedChange={(v) =>
                   setForm((f) => ({ ...f, responseFormatJSON: v }))
-                }
-              />
-
-              <SwitchCardField
-                label={t("providers.field.strictAlternation")}
-                hint={t("providers.field.strictAlternationHint")}
-                checked={form.strictAlternation}
-                onCheckedChange={(v) =>
-                  setForm((f) => ({ ...f, strictAlternation: v }))
                 }
               />
             </AdvancedSection>

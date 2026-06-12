@@ -48,6 +48,7 @@ interface EditForm {
   extraBody: string
   dropParams: string
   noTools: boolean
+  strictAlternation: boolean
 }
 
 interface EditModelSheetProps {
@@ -77,6 +78,7 @@ export function EditModelSheet({
     extraBody: "",
     dropParams: "",
     noTools: false,
+    strictAlternation: false,
   })
   const [providers, setProviders] = useState<ProviderInfo[]>([])
   const [saving, setSaving] = useState(false)
@@ -100,6 +102,7 @@ export function EditModelSheet({
         extraBody: formatExtraBody(model.extra_body),
         dropParams: formatDropParams(model.drop_params),
         noTools: model.no_tools ?? false,
+        strictAlternation: model.strict_alternation ?? false,
       })
       setSetAsDefault(model.is_default)
       setError("")
@@ -152,6 +155,7 @@ export function EditModelSheet({
         // the old value (omitempty then drops the empty slice on save).
         drop_params: parseDropParams(form.dropParams),
         no_tools: form.noTools,
+        strict_alternation: form.strictAlternation,
       })
       if (setAsDefault && !model.is_default) {
         await setDefaultModel(model.model_name)
@@ -334,6 +338,15 @@ export function EditModelSheet({
                 hint="When off, no tools are passed to this model. Disable for models that don't support tool calling."
                 checked={!form.noTools}
                 onCheckedChange={(v) => setForm((f) => ({ ...f, noTools: !v }))}
+              />
+
+              <SwitchCardField
+                label={t("models.field.strictAlternation")}
+                hint={t("models.field.strictAlternationHint")}
+                checked={form.strictAlternation}
+                onCheckedChange={(v) =>
+                  setForm((f) => ({ ...f, strictAlternation: v }))
+                }
               />
 
               <Field

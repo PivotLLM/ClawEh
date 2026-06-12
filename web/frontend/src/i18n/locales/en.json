@@ -204,7 +204,9 @@
       "extraBodyNotObject": "Top-level value must be a JSON object.",
       "extraBodyReservedKey": "Key \"{{key}}\" is claimed by claw and cannot be overridden via extra_body.",
       "dropParams": "Drop Request Fields",
-      "dropParamsHint": "Comma-separated request body fields to strip before sending (e.g. temperature). Use for parameters a model or upstream rejects — such as temperature on OpenRouter reasoning models that 404 under require_parameters. Applied after extra_body."
+      "dropParamsHint": "Comma-separated request body fields to strip before sending (e.g. temperature). Use for parameters a model or upstream rejects — such as temperature on OpenRouter reasoning models that 404 under require_parameters. Applied after extra_body.",
+      "strictAlternation": "Strict Role Alternation",
+      "strictAlternationHint": "For chat-only models that require alternating user/assistant turns and reject system/tool roles (e.g. Gemma): folds the system prompt into the first user turn, turns tool results into user turns, and merges consecutive same-role messages. Pair with Tools Disabled."
     },
     "edit": {
       "title": "Configure {{name}}",
@@ -528,9 +530,7 @@
       "noParallelToolCalls": "Disable Parallel Tool Calls",
       "noParallelToolCallsHint": "Send parallel_tool_calls=false so the model emits one tool call at a time.",
       "responseFormatJSON": "JSON Response Format",
-      "responseFormatJSONHint": "Request a JSON response_format from the provider.",
-      "strictAlternation": "Strict Role Alternation",
-      "strictAlternationHint": "For chat-only models that require alternating user/assistant turns and reject system/tool roles (e.g. Gemma): folds the system prompt into the first user turn, turns tool results into user turns, and merges consecutive same-role messages. Pair with Tools Disabled on the model."
+      "responseFormatJSONHint": "Request a JSON response_format from the provider."
     },
     "add": {
       "button": "Add Provider",
