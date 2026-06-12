@@ -4,6 +4,7 @@
 package llmcontext
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -299,6 +300,71 @@ func TestBuildSummarizationPrompt_ContainsArchiveRange(t *testing.T) {
 	}
 	if !strings.Contains(prompt, "50") {
 		t.Error("expected archive max (50) in prompt")
+	}
+}
+
+// TestBuildSummarizationPrompt_PreservesUserInstructions — both the standard and
+// aggressive prompts must direct the model to retain explicit user instructions.
+func TestBuildSummarizationPrompt_PreservesUserInstructions(t *testing.T) {
+	for _, aggressive := range []bool{false, true} {
+		prompt := buildSummarizationPrompt(nil, 10, 50, aggressive, "")
+		if !strings.Contains(prompt, "User Instructions") {
+			t.Errorf("aggressive=%v: prompt must instruct preserving user instructions", aggressive)
+		}
+	}
+}
+
+// TestBuildSummarizationPrompt_CarryForward — both prompt variants advertise the
+// carry_forward schema field and instruct the model to populate it.
+func TestBuildSummarizationPrompt_CarryForward(t *testing.T) {
+	for _, aggressive := range []bool{false, true} {
+		prompt := buildSummarizationPrompt(nil, 10, 50, aggressive, "")
+		if !strings.Contains(prompt, `"carry_forward"`) {
+			t.Errorf("aggressive=%v: prompt must include carry_forward in schema", aggressive)
+		}
+		if !strings.Contains(prompt, "Carry Forward") {
+			t.Errorf("aggressive=%v: prompt must instruct populating carry_forward", aggressive)
+		}
+		if !strings.Contains(prompt, "AGENT.md") {
+			t.Errorf("aggressive=%v: carry_forward instruction should mention persisting to AGENT.md", aggressive)
+		}
+	}
+}
+
+// TestSummary_CarryForward_RendersAndCounts — a summary with carry_forward items
+// renders a Carry-Forward section, counts as material, and round-trips through JSON.
+func TestSummary_CarryForward_RendersAndCounts(t *testing.T) {
+	s := validSummary()
+	s.CarryForward = []SummaryItem{
+		{Text: "Persist the 'no force-push' rule to AGENT.md", Refs: []SeqRange{{SeqStart: 4}}},
+		{Text: "Outstanding: deploy the new binary before reloading config"},
+	}
+
+	out := s.Render(0, 10)
+	if !strings.Contains(out, "## Carry-Forward") {
+		t.Error("missing Carry-Forward section")
+	}
+	if !strings.Contains(out, "Persist the 'no force-push' rule to AGENT.md") {
+		t.Error("missing carry-forward item text")
+	}
+
+	// Material even if it were the only populated section.
+	bare := &Summary{Version: 2, CarryForward: s.CarryForward}
+	if !bare.HasMaterial() {
+		t.Error("carry_forward-only summary should count as material")
+	}
+
+	// Round-trips through the on-disk JSON form.
+	data, err := json.Marshal(s)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	parsed, err := unmarshalSummary(string(data))
+	if err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(parsed.CarryForward) != 2 {
+		t.Fatalf("CarryForward len = %d, want 2", len(parsed.CarryForward))
 	}
 }
 
