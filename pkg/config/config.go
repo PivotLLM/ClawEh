@@ -607,12 +607,6 @@ type Provider struct {
 	StrictCompat        bool `json:"strict_compat,omitempty"`
 	NoParallelToolCalls bool `json:"no_parallel_tool_calls,omitempty"`
 	ResponseFormatJSON  bool `json:"response_format_json,omitempty"`
-	// StrictAlternation rewrites the outbound message list for chat-only models
-	// that require strict user/assistant alternation and reject system/tool roles
-	// (e.g. Gemma on some gateways): the system prompt is folded into the first
-	// user turn, tool results become user turns, and consecutive same-role
-	// messages are merged. Pair with no_tools, since tool_calls are dropped.
-	StrictAlternation bool `json:"strict_alternation,omitempty"`
 	// Command overrides the binary path for CLI protocols (claude-cli, etc.).
 	Command string `json:"command,omitempty"`
 }
@@ -670,6 +664,15 @@ type ModelConfig struct {
 	// literal filter: listing structural fields like "messages" or "model" will
 	// break the request. Ignored by providers other than openai_compat.
 	DropParams []string `json:"drop_params,omitempty" yaml:"drop_params,omitempty"`
+
+	// StrictAlternation rewrites the outbound message list for chat-only models
+	// that require strict user/assistant alternation and reject system/tool roles
+	// (e.g. Gemma on some gateways): the system prompt is folded into the first
+	// user turn, tool results become user turns, and consecutive same-role
+	// messages are merged. It is model-scoped because models on the same endpoint
+	// differ (Gemma needs it; Claude/Nova don't). Pair with no_tools, since
+	// tool_calls are dropped. Ignored by providers other than openai_compat.
+	StrictAlternation bool `json:"strict_alternation,omitempty"`
 }
 
 // reservedRequestBodyKeys lists the JSON request fields owned by claw's own

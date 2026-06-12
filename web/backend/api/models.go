@@ -37,10 +37,11 @@ type modelResponse struct {
 	ThinkingLevel  string `json:"thinking_level,omitempty"`
 	NoTools        bool   `json:"no_tools,omitempty"`
 	// Shape 3 per-LLM custom fields.
-	ReasoningEffort string         `json:"reasoning_effort,omitempty"`
-	ExtraBody       map[string]any `json:"extra_body,omitempty"`
-	DropParams      []string       `json:"drop_params,omitempty"`
-	Enabled         bool           `json:"enabled"`
+	ReasoningEffort   string         `json:"reasoning_effort,omitempty"`
+	ExtraBody         map[string]any `json:"extra_body,omitempty"`
+	DropParams        []string       `json:"drop_params,omitempty"`
+	StrictAlternation bool           `json:"strict_alternation,omitempty"`
+	Enabled           bool           `json:"enabled"`
 	// Meta
 	Configured bool `json:"configured"`
 	IsDefault  bool `json:"is_default"`
@@ -77,24 +78,25 @@ func (h *Handler) handleListModels(w http.ResponseWriter, r *http.Request) {
 	models := make([]modelResponse, 0, len(cfg.Models))
 	for i, m := range cfg.Models {
 		models = append(models, modelResponse{
-			Index:           i,
-			ModelName:       m.ModelName,
-			Model:           m.Model,
-			Provider:        m.Provider,
-			ConnectMode:     m.ConnectMode,
-			Workspace:       m.Workspace,
-			RPM:             m.RPM,
-			MaxTokens:       m.MaxTokens,
-			MaxTokensField:  m.MaxTokensField,
-			RequestTimeout:  m.RequestTimeout,
-			ThinkingLevel:   m.ThinkingLevel,
-			NoTools:         m.NoTools,
-			ReasoningEffort: m.ReasoningEffort,
-			ExtraBody:       m.ExtraBody,
-			DropParams:      m.DropParams,
-			Enabled:         m.Enabled,
-			Configured:      configured[i],
-			IsDefault:       m.ModelName == defaultModel,
+			Index:             i,
+			ModelName:         m.ModelName,
+			Model:             m.Model,
+			Provider:          m.Provider,
+			ConnectMode:       m.ConnectMode,
+			Workspace:         m.Workspace,
+			RPM:               m.RPM,
+			MaxTokens:         m.MaxTokens,
+			MaxTokensField:    m.MaxTokensField,
+			RequestTimeout:    m.RequestTimeout,
+			ThinkingLevel:     m.ThinkingLevel,
+			NoTools:           m.NoTools,
+			ReasoningEffort:   m.ReasoningEffort,
+			ExtraBody:         m.ExtraBody,
+			DropParams:        m.DropParams,
+			StrictAlternation: m.StrictAlternation,
+			Enabled:           m.Enabled,
+			Configured:        configured[i],
+			IsDefault:         m.ModelName == defaultModel,
 		})
 	}
 

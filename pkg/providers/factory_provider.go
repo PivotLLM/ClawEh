@@ -40,7 +40,7 @@ func compatOpts(model *config.ModelConfig, prov *config.Provider) []openai_compa
 		openai_compat.WithRequestTimeout(time.Duration(model.RequestTimeout) * time.Second),
 		openai_compat.WithStrictCompat(prov.StrictCompat),
 		openai_compat.WithNoParallelToolCalls(prov.NoParallelToolCalls),
-		openai_compat.WithStrictAlternation(prov.StrictAlternation),
+		openai_compat.WithStrictAlternation(model.StrictAlternation),
 		openai_compat.WithResponseLogFile(model.ResponseLogFile),
 		openai_compat.WithReasoningEffort(model.ReasoningEffort),
 		openai_compat.WithExtraBody(model.ExtraBody),
