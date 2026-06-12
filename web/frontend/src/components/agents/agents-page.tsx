@@ -39,6 +39,7 @@ interface AgentEntry {
   callback?: CallbackConfig | null
   temperature?: number
   memory_dir?: string
+  summarization_models?: string[]
 }
 
 interface AgentsConfig {
@@ -102,6 +103,7 @@ function parseAgent(value: unknown): AgentEntry {
     callback: cbMins > 0 ? { window_minutes: cbMins, window_count: asNumber(cbRaw.window_count) || 2 } : null,
     temperature: typeof r.temperature === "number" ? r.temperature : undefined,
     memory_dir: asString(r.memory_dir) || undefined,
+    summarization_models: asArray(r.summarization_models).map(asString).filter(Boolean),
   }
 }
 
@@ -219,9 +221,10 @@ interface FallbacksSelectProps {
   primary: string
   models: ModelInfo[]
   onChange: (fallbacks: string[]) => void
+  addPlaceholder?: string
 }
 
-function FallbacksSelect({ fallbacks, primary, models, onChange }: FallbacksSelectProps) {
+function FallbacksSelect({ fallbacks, primary, models, onChange, addPlaceholder }: FallbacksSelectProps) {
   const available = models
     .filter((m) => m.configured && m.enabled && m.model_name !== primary)
     .sort((a, b) => a.model_name.localeCompare(b.model_name))
@@ -276,7 +279,7 @@ function FallbacksSelect({ fallbacks, primary, models, onChange }: FallbacksSele
       {remaining.length > 0 && (
         <Select value="" onValueChange={add}>
           <SelectTrigger className="h-7 text-xs">
-            <SelectValue placeholder="Add fallback model…" />
+            <SelectValue placeholder={addPlaceholder ?? "Add fallback model…"} />
           </SelectTrigger>
           <SelectContent>
             {remaining.map((m) => (
@@ -309,6 +312,7 @@ interface AgentCardProps {
   callbackWindowCount?: number
   temperature?: number
   memoryDir?: string
+  summarizationModels?: string[]
   onToggleEnabled?: () => void
   onModelChange: (v: string) => void
   onFallbacksChange: (fallbacks: string[]) => void
@@ -317,6 +321,7 @@ interface AgentCardProps {
   onCallbackChange?: (mins: number, count: number) => void
   onTemperatureChange?: (t: number | undefined) => void
   onMemoryDirChange?: (v: string | undefined) => void
+  onSummarizationModelsChange?: (models: string[]) => void
   onDelete?: () => void
   status?: "saving" | "saved" | "error"
 }
@@ -336,6 +341,7 @@ function AgentCard({
   callbackWindowCount = 2,
   temperature = undefined,
   memoryDir = undefined,
+  summarizationModels = [],
   onToggleEnabled,
   onModelChange,
   onFallbacksChange,
@@ -344,6 +350,7 @@ function AgentCard({
   onCallbackChange,
   onTemperatureChange = undefined,
   onMemoryDirChange = undefined,
+  onSummarizationModelsChange = undefined,
   onDelete,
   status,
 }: AgentCardProps) {
@@ -412,6 +419,24 @@ function AgentCard({
           onChange={onFallbacksChange}
         />
       </div>
+
+      {onSummarizationModelsChange !== undefined && (
+        <div className="space-y-1.5">
+          <p className="text-muted-foreground text-xs font-medium">
+            {t("agents.summarizationModels")}
+          </p>
+          <FallbacksSelect
+            fallbacks={summarizationModels}
+            primary=""
+            models={models}
+            onChange={onSummarizationModelsChange}
+            addPlaceholder={t("agents.summarizationModelsAdd")}
+          />
+          <p className="text-muted-foreground text-xs">
+            {t("agents.summarizationModelsHint")}
+          </p>
+        </div>
+      )}
 
       {availableSkills.length > 0 && (
         <div className="space-y-1.5">
@@ -624,6 +649,9 @@ export function AgentsPage() {
           : null,
         ...(a.temperature !== undefined ? { temperature: a.temperature } : {}),
         ...(a.memory_dir ? { memory_dir: a.memory_dir } : {}),
+        ...(a.summarization_models && a.summarization_models.length > 0
+          ? { summarization_models: a.summarization_models }
+          : {}),
       })),
     },
   })
@@ -671,8 +699,7 @@ export function AgentsPage() {
     }
   }
 
-  const handleSaveAgent = async (index: number, modelName: string, fallbacks: string[], skills: string[], tools: string[], callbackMins: number, callbackCount: number, temperature: number | undefined, memoryDir: string | undefined) => {
-    setSaving(`agent-${index}`)
+  const handleSaveAgent = async (index: number, modelName: string, fallbacks: string[], skills: string[], tools: string[], callbackMins: number, callbackCount: number, temperature: number | undefined, memoryDir: string | undefined, summarizationModels: string[]) => {
     const list = [...(agentsCfg.list ?? [])]
     list[index] = {
       ...list[index],
@@ -682,6 +709,7 @@ export function AgentsPage() {
       callback: callbackMins > 0 ? { window_minutes: callbackMins, window_count: callbackCount } : null,
       temperature,
       memory_dir: memoryDir,
+      summarization_models: summarizationModels.length > 0 ? summarizationModels : undefined,
     }
     const next: AgentsConfig = { ...agentsCfg, list }
     const key = `agent-${index}`
@@ -793,6 +821,7 @@ export function AgentsPage() {
   const [agentCallbackEdits, setAgentCallbackEdits] = useState<Array<{ mins: number; count: number }>>([])
   const [agentTemperatureEdits, setAgentTemperatureEdits] = useState<Array<number | undefined>>([])
   const [agentMemoryDirEdits, setAgentMemoryDirEdits] = useState<Array<string | undefined>>([])
+  const [agentSummarizationEdits, setAgentSummarizationEdits] = useState<string[][]>([])
   useEffect(() => {
     if (skipAgentsResync.current) {
       skipAgentsResync.current = false
@@ -808,6 +837,7 @@ export function AgentsPage() {
     })))
     setAgentTemperatureEdits((agentsCfg.list ?? []).map((a) => a.temperature))
     setAgentMemoryDirEdits((agentsCfg.list ?? []).map((a) => a.memory_dir))
+    setAgentSummarizationEdits((agentsCfg.list ?? []).map((a) => a.summarization_models ?? []))
   }, [agentsCfg.list])
 
   // Mirror the latest edit values into a ref so the debounced autosave fires
@@ -820,6 +850,7 @@ export function AgentsPage() {
     agentCallbackEdits,
     agentTemperatureEdits,
     agentMemoryDirEdits,
+    agentSummarizationEdits,
     defaultModelEdit,
     defaultFallbacksEdit,
     defaultTemperatureEdit,
@@ -832,6 +863,7 @@ export function AgentsPage() {
     agentCallbackEdits,
     agentTemperatureEdits,
     agentMemoryDirEdits,
+    agentSummarizationEdits,
     defaultModelEdit,
     defaultFallbacksEdit,
     defaultTemperatureEdit,
@@ -853,6 +885,7 @@ export function AgentsPage() {
         L.agentCallbackEdits[index]?.count ?? 2,
         L.agentTemperatureEdits[index],
         L.agentMemoryDirEdits[index],
+        L.agentSummarizationEdits[index] ?? [],
       )
     }, AUTOSAVE_MS)
   }
@@ -1024,6 +1057,15 @@ export function AgentsPage() {
                     setAgentMemoryDirEdits((prev) => {
                       const next = [...prev]
                       next[i] = md
+                      return next
+                    })
+                    scheduleSaveAgent(i)
+                  }}
+                  summarizationModels={agentSummarizationEdits[i] ?? []}
+                  onSummarizationModelsChange={(sm) => {
+                    setAgentSummarizationEdits((prev) => {
+                      const next = [...prev]
+                      next[i] = sm
                       return next
                     })
                     scheduleSaveAgent(i)

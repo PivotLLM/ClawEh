@@ -64,6 +64,30 @@ func (c *providerLLMClient) Complete(ctx context.Context, messages []providers.M
 // Returns ("", "", "", false) when the reference cannot be resolved against the
 // configured models — callers should then fall back to the agent's default
 // provider rather than guess a protocol.
+// resolveCompressModelChain returns the ordered, de-duplicated summarization
+// model chain for an agent: its own summarization_models first, then the global
+// summarization.models. Blank entries are skipped; the first occurrence of each
+// model name wins. The agent's primary model is appended separately by the
+// caller as a final fallback.
+func resolveCompressModelChain(agentModels, globalModels []string) []string {
+	seen := make(map[string]struct{}, len(agentModels)+len(globalModels))
+	var out []string
+	for _, list := range [][]string{agentModels, globalModels} {
+		for _, raw := range list {
+			name := strings.TrimSpace(raw)
+			if name == "" {
+				continue
+			}
+			if _, dup := seen[name]; dup {
+				continue
+			}
+			seen[name] = struct{}{}
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
 func resolveCompressModelTarget(cfg *config.Config, raw string) (alias, modelID string, ok bool) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" || cfg == nil {
@@ -180,23 +204,27 @@ func (al *AgentLoop) getContextManager(agent *AgentInstance, sessionKey string) 
 	// Primary LLM client used for normal dispatch and as fallback for compression.
 	llmClient := &providerLLMClient{provider: agent.Provider, model: agent.Model}
 
-	// Resolve the global summarization model chain. Models from
-	// cfg.Summarization.Models are tried in order; the agent's own primary model
-	// is always appended as a last-resort fallback. See buildCompressLLMClient
-	// and buildDefaultCompressLLMClient for per-entry resolution rules.
+	// Resolve the summarization model chain. Order: the agent's own
+	// summarization_models (optional) first, then the global
+	// cfg.Summarization.Models, then the agent's primary model (appended below
+	// as a last-resort fallback). Per-agent models let an agent use specialised
+	// summarizers when the default ones refuse its content. See
+	// buildCompressLLMClient / buildDefaultCompressLLMClient for per-entry rules.
+	var agentModels, globalModels []string
+	if agent.Config != nil {
+		agentModels = agent.Config.SummarizationModels
+	}
+	if cfg := al.GetConfig(); cfg != nil {
+		globalModels = cfg.Summarization.Models
+	}
+
 	var compressClients []llmcontext.LLMClient
 	effectiveCompressModel := ""
-	if cfg := al.GetConfig(); cfg != nil {
-		for _, raw := range cfg.Summarization.Models {
-			name := strings.TrimSpace(raw)
-			if name == "" {
-				continue
-			}
-			if effectiveCompressModel == "" {
-				effectiveCompressModel = name
-			}
-			compressClients = append(compressClients, al.buildCompressLLMClient(agent, name, sessionKey))
+	for _, name := range resolveCompressModelChain(agentModels, globalModels) {
+		if effectiveCompressModel == "" {
+			effectiveCompressModel = name
 		}
+		compressClients = append(compressClients, al.buildCompressLLMClient(agent, name, sessionKey))
 	}
 	// Always append the agent's primary model as the final fallback, so
 	// summarization still works when the global list is empty or every

@@ -211,6 +211,14 @@ type AgentConfig struct {
 	Callback    *CallbackConfig   `json:"callback,omitempty"`
 	Temperature *float64          `json:"temperature,omitempty"`
 
+	// SummarizationModels is an optional per-agent summarization model chain.
+	// When non-empty, these models are tried first (in order) for this agent's
+	// context compaction, ahead of the global summarization.models list and the
+	// agent's own model. Use it to give an agent uncensored/specialised
+	// summarizers when the default models refuse its content (e.g. security or
+	// fiction topics). Resolution order: agent-specific → global → agent's model.
+	SummarizationModels []string `json:"summarization_models,omitempty"`
+
 	CompressMinPercent         *int     `json:"compress_min_percent,omitempty"`
 	CompressNormalPercent      *int     `json:"compress_normal_percent,omitempty"`
 	CompressSafetyPercent      *int     `json:"compress_safety_percent,omitempty"`
