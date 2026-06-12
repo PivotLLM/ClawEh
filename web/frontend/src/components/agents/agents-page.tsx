@@ -1,6 +1,6 @@
 import { IconChevronRight, IconLoader2, IconPlus, IconTrash } from "@tabler/icons-react"
 import { Switch } from "@/components/ui/switch"
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 
@@ -318,8 +318,7 @@ interface AgentCardProps {
   onTemperatureChange?: (t: number | undefined) => void
   onMemoryDirChange?: (v: string | undefined) => void
   onDelete?: () => void
-  saving: boolean
-  onSave: () => void
+  status?: "saving" | "saved" | "error"
 }
 
 function AgentCard({
@@ -346,8 +345,7 @@ function AgentCard({
   onTemperatureChange = undefined,
   onMemoryDirChange = undefined,
   onDelete,
-  saving,
-  onSave,
+  status,
 }: AgentCardProps) {
   const { t } = useTranslation()
   const [toolsExpanded, setToolsExpanded] = useState(false)
@@ -362,6 +360,13 @@ function AgentCard({
           )}
         </div>
         <div className="flex items-center gap-2">
+          {status && (
+            <span
+              className={`text-xs ${status === "error" ? "text-destructive" : status === "saved" ? "text-emerald-500" : "text-muted-foreground"}`}
+            >
+              {status === "saving" ? "Saving…" : status === "saved" ? "Saved ✓" : "Save failed"}
+            </span>
+          )}
           {onToggleEnabled !== undefined && (
             <Switch
               checked={enabled ?? true}
@@ -515,11 +520,6 @@ function AgentCard({
         </div>
       )}
 
-      <div className="flex justify-end">
-        <Button size="sm" onClick={onSave} disabled={saving}>
-          {saving ? "Saving..." : "Save"}
-        </Button>
-      </div>
     </div>
   )
 }
@@ -536,6 +536,30 @@ export function AgentsPage() {
     list: [],
   })
   const [saving, setSaving] = useState<string | null>(null)
+
+  // Autosave plumbing. autoStatus drives the per-card "Saving…/Saved" hint.
+  // The skip refs suppress the buffer-resync effects when WE caused the
+  // agentsCfg change (a field autosave), so an in-flight edit is never clobbered
+  // by the saved snapshot; add/delete (which change the agent set) still resync.
+  const [autoStatus, setAutoStatus] = useState<
+    Record<string, "saving" | "saved" | "error">
+  >({})
+  const skipAgentsResync = useRef(false)
+  const skipDefaultsResync = useRef(false)
+  const saveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
+  const savedTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
+
+  const markSaved = useCallback((key: string) => {
+    setAutoStatus((s) => ({ ...s, [key]: "saved" }))
+    clearTimeout(savedTimers.current[key])
+    savedTimers.current[key] = setTimeout(() => {
+      setAutoStatus((s) => {
+        const next = { ...s }
+        delete next[key]
+        return next
+      })
+    }, 2000)
+  }, [])
 
   // For adding new agent
   const [addingId, setAddingId] = useState("")
@@ -625,7 +649,7 @@ export function AgentsPage() {
   }
 
   const handleSaveDefault = async (modelName: string, fallbacks: string[], temperature: number | undefined) => {
-    setSaving("default")
+    setAutoStatus((s) => ({ ...s, default: "saving" }))
     const next: AgentsConfig = {
       ...agentsCfg,
       defaults: {
@@ -636,14 +660,14 @@ export function AgentsPage() {
     }
     try {
       await patchAppConfig(buildPayload(next))
-      toast.success("Saved")
-      // Update local state in place instead of reloading the whole page, which
-      // would unmount the list and scroll back to the top.
+      // Update local state in place (no reload → no scroll jump); skip the
+      // resync so the saved snapshot doesn't overwrite a still-editing field.
+      skipDefaultsResync.current = true
       setAgentsCfg(next)
+      markSaved("default")
     } catch (e) {
+      setAutoStatus((s) => ({ ...s, default: "error" }))
       toast.error(e instanceof Error ? e.message : "Failed to save")
-    } finally {
-      setSaving(null)
     }
   }
 
@@ -660,16 +684,18 @@ export function AgentsPage() {
       memory_dir: memoryDir,
     }
     const next: AgentsConfig = { ...agentsCfg, list }
+    const key = `agent-${index}`
+    setAutoStatus((s) => ({ ...s, [key]: "saving" }))
     try {
       await patchAppConfig(buildPayload(next))
-      toast.success("Saved")
-      // Update local state in place instead of reloading the whole page, which
-      // would unmount the list and scroll back to the top.
+      // In-place update (no reload → no scroll jump); skip the resync so the
+      // saved snapshot doesn't overwrite a field that's still being edited.
+      skipAgentsResync.current = true
       setAgentsCfg(next)
+      markSaved(key)
     } catch (e) {
+      setAutoStatus((s) => ({ ...s, [key]: "error" }))
       toast.error(e instanceof Error ? e.message : "Failed to save")
-    } finally {
-      setSaving(null)
     }
   }
 
@@ -750,6 +776,10 @@ export function AgentsPage() {
   const [defaultFallbacksEdit, setDefaultFallbacksEdit] = useState<string[]>([])
   const [defaultTemperatureEdit, setDefaultTemperatureEdit] = useState<number | undefined>(undefined)
   useEffect(() => {
+    if (skipDefaultsResync.current) {
+      skipDefaultsResync.current = false
+      return
+    }
     setDefaultModelEdit(agentsCfg.defaults.model?.primary ?? "")
     setDefaultFallbacksEdit(agentsCfg.defaults.model?.fallbacks ?? [])
     setDefaultTemperatureEdit(agentsCfg.defaults.temperature)
@@ -764,6 +794,10 @@ export function AgentsPage() {
   const [agentTemperatureEdits, setAgentTemperatureEdits] = useState<Array<number | undefined>>([])
   const [agentMemoryDirEdits, setAgentMemoryDirEdits] = useState<Array<string | undefined>>([])
   useEffect(() => {
+    if (skipAgentsResync.current) {
+      skipAgentsResync.current = false
+      return
+    }
     setAgentModelEdits((agentsCfg.list ?? []).map((a) => a.model?.primary ?? ""))
     setAgentFallbacksEdits((agentsCfg.list ?? []).map((a) => a.model?.fallbacks ?? []))
     setAgentSkillsEdits((agentsCfg.list ?? []).map((a) => a.skills ?? []))
@@ -775,6 +809,64 @@ export function AgentsPage() {
     setAgentTemperatureEdits((agentsCfg.list ?? []).map((a) => a.temperature))
     setAgentMemoryDirEdits((agentsCfg.list ?? []).map((a) => a.memory_dir))
   }, [agentsCfg.list])
+
+  // Mirror the latest edit values into a ref so the debounced autosave fires
+  // with current data rather than the values captured when the timer was set.
+  const latestRef = useRef({
+    agentModelEdits,
+    agentFallbacksEdits,
+    agentSkillsEdits,
+    agentToolsEdits,
+    agentCallbackEdits,
+    agentTemperatureEdits,
+    agentMemoryDirEdits,
+    defaultModelEdit,
+    defaultFallbacksEdit,
+    defaultTemperatureEdit,
+  })
+  latestRef.current = {
+    agentModelEdits,
+    agentFallbacksEdits,
+    agentSkillsEdits,
+    agentToolsEdits,
+    agentCallbackEdits,
+    agentTemperatureEdits,
+    agentMemoryDirEdits,
+    defaultModelEdit,
+    defaultFallbacksEdit,
+    defaultTemperatureEdit,
+  }
+
+  const AUTOSAVE_MS = 600
+  const scheduleSaveAgent = (index: number) => {
+    const key = `agent-${index}`
+    clearTimeout(saveTimers.current[key])
+    saveTimers.current[key] = setTimeout(() => {
+      const L = latestRef.current
+      void handleSaveAgent(
+        index,
+        L.agentModelEdits[index] ?? "",
+        L.agentFallbacksEdits[index] ?? [],
+        L.agentSkillsEdits[index] ?? [],
+        L.agentToolsEdits[index] ?? [],
+        L.agentCallbackEdits[index]?.mins ?? 0,
+        L.agentCallbackEdits[index]?.count ?? 2,
+        L.agentTemperatureEdits[index],
+        L.agentMemoryDirEdits[index],
+      )
+    }, AUTOSAVE_MS)
+  }
+  const scheduleSaveDefault = () => {
+    clearTimeout(saveTimers.current.default)
+    saveTimers.current.default = setTimeout(() => {
+      const L = latestRef.current
+      void handleSaveDefault(
+        L.defaultModelEdit,
+        L.defaultFallbacksEdit,
+        L.defaultTemperatureEdit,
+      )
+    }, AUTOSAVE_MS)
+  }
 
   return (
     <div className="flex h-full flex-col">
@@ -844,13 +936,21 @@ export function AgentsPage() {
                 availableTools={{ tools: [], default_tools: [] }}
                 models={models}
                 temperature={defaultTemperatureEdit}
-                onModelChange={setDefaultModelEdit}
-                onFallbacksChange={setDefaultFallbacksEdit}
+                onModelChange={(v) => {
+                  setDefaultModelEdit(v)
+                  scheduleSaveDefault()
+                }}
+                onFallbacksChange={(f) => {
+                  setDefaultFallbacksEdit(f)
+                  scheduleSaveDefault()
+                }}
                 onSkillsChange={() => {}}
                 onToolsChange={() => {}}
-                onTemperatureChange={setDefaultTemperatureEdit}
-                saving={saving === "default"}
-                onSave={() => handleSaveDefault(defaultModelEdit, defaultFallbacksEdit, defaultTemperatureEdit)}
+                onTemperatureChange={(tp) => {
+                  setDefaultTemperatureEdit(tp)
+                  scheduleSaveDefault()
+                }}
+                status={autoStatus.default}
               />
 
               {/* Named agents */}
@@ -872,70 +972,64 @@ export function AgentsPage() {
                   temperature={agentTemperatureEdits[i]}
                   memoryDir={agentMemoryDirEdits[i]}
                   onToggleEnabled={() => handleToggleAgent(i)}
-                  onModelChange={(v) =>
+                  onModelChange={(v) => {
                     setAgentModelEdits((prev) => {
                       const next = [...prev]
                       next[i] = v
                       return next
                     })
-                  }
-                  onFallbacksChange={(f) =>
+                    scheduleSaveAgent(i)
+                  }}
+                  onFallbacksChange={(f) => {
                     setAgentFallbacksEdits((prev) => {
                       const next = [...prev]
                       next[i] = f
                       return next
                     })
-                  }
-                  onSkillsChange={(s) =>
+                    scheduleSaveAgent(i)
+                  }}
+                  onSkillsChange={(s) => {
                     setAgentSkillsEdits((prev) => {
                       const next = [...prev]
                       next[i] = s
                       return next
                     })
-                  }
-                  onToolsChange={(t) =>
+                    scheduleSaveAgent(i)
+                  }}
+                  onToolsChange={(tl) => {
                     setAgentToolsEdits((prev) => {
                       const next = [...prev]
-                      next[i] = t
+                      next[i] = tl
                       return next
                     })
-                  }
-                  onCallbackChange={(mins, count) =>
+                    scheduleSaveAgent(i)
+                  }}
+                  onCallbackChange={(mins, count) => {
                     setAgentCallbackEdits((prev) => {
                       const next = [...prev]
                       next[i] = { mins, count }
                       return next
                     })
-                  }
-                  onTemperatureChange={(tp) =>
+                    scheduleSaveAgent(i)
+                  }}
+                  onTemperatureChange={(tp) => {
                     setAgentTemperatureEdits((prev) => {
                       const next = [...prev]
                       next[i] = tp
                       return next
                     })
-                  }
-                  onMemoryDirChange={(md) =>
+                    scheduleSaveAgent(i)
+                  }}
+                  onMemoryDirChange={(md) => {
                     setAgentMemoryDirEdits((prev) => {
                       const next = [...prev]
                       next[i] = md
                       return next
                     })
-                  }
+                    scheduleSaveAgent(i)
+                  }}
                   onDelete={() => handleDeleteAgent(i)}
-                  saving={saving === `agent-${i}` || saving === `delete-${i}` || saving === `toggle-${i}`}
-                  onSave={() =>
-                    handleSaveAgent(
-                      i,
-                      agentModelEdits[i] ?? "",
-                      agentFallbacksEdits[i] ?? [],
-                      agentSkillsEdits[i] ?? [],
-                      agentToolsEdits[i] ?? [],
-                      agentCallbackEdits[i]?.mins ?? 0,
-                      agentCallbackEdits[i]?.count ?? 2,
-                      agentTemperatureEdits[i],
-                      agentMemoryDirEdits[i],
-                    )
-                  }
+                  status={autoStatus[`agent-${i}`]}
                 />
               ))}
 
