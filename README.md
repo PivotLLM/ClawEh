@@ -1,5 +1,13 @@
 # ClawEh: Yet another claw - Canadian style
 
+> **⚠️ Breaking config changes** — recent work changed the model/provider config schema. There is no automatic migration; existing config files must be updated by hand:
+> - **Named providers:** a new top-level `providers` list now owns each endpoint (base URL, API key, protocol, proxy, and endpoint quirks). Models reference a provider by name.
+> - **Models simplified:** model entries lose `api_base`, `api_key`, `proxy`, `auth_method`, and the `protocol/` prefix; `model` is now the raw model id the endpoint expects, plus a `provider` field naming its provider.
+> - **`model_list` → `models`:** the model array key was renamed.
+> - **Bedrock provider removed** (along with the AWS SDK dependency) — reach Bedrock as an OpenAI-compatible provider with a base URL.
+> - **Removed:** the legacy `providers` object and `openai_compat_protocols` config, superseded by the named-providers list.
+> - **Attribute stripping** can be performed on a per-model basis (for example strip the "temperature" field for GPT 5 models).
+
 ClawEh began as a fork of [PicoClaw](https://github.com/sipeed/picoclaw). Written in Go, ClawEh it is focused on a minimal footprint, efficient deployment, core stability, reliability, security, and long-term maintainability.
 
 ## Why ClawEh exists
