@@ -93,7 +93,11 @@ export function AddModelSheet({
       setFieldErrors({})
       setServerError("")
       getProviders()
-        .then((data) => setProviders(data.providers))
+        .then((data) =>
+          setProviders(
+            [...data.providers].sort((a, b) => a.name.localeCompare(b.name)),
+          ),
+        )
         .catch(() => setProviders([]))
     }
   }, [open])

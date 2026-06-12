@@ -133,7 +133,9 @@ interface ModelSelectProps {
 }
 
 function ModelSelect({ value, models, onChange, placeholder }: ModelSelectProps) {
-  const configured = models.filter((m) => m.configured && m.enabled)
+  const configured = models
+    .filter((m) => m.configured && m.enabled)
+    .sort((a, b) => a.model_name.localeCompare(b.model_name))
   const selectedModel = models.find((m) => m.model_name === value)
   const noToolsWarning = selectedModel?.no_tools === true
   return (
@@ -220,9 +222,9 @@ interface FallbacksSelectProps {
 }
 
 function FallbacksSelect({ fallbacks, primary, models, onChange }: FallbacksSelectProps) {
-  const available = models.filter(
-    (m) => m.configured && m.enabled && m.model_name !== primary,
-  )
+  const available = models
+    .filter((m) => m.configured && m.enabled && m.model_name !== primary)
+    .sort((a, b) => a.model_name.localeCompare(b.model_name))
 
   const moveUp = (i: number) => {
     if (i === 0) return
@@ -612,7 +614,9 @@ export function AgentsPage() {
     try {
       await patchAppConfig(buildPayload(next))
       toast.success("Default agent updated")
-      await loadData()
+      // Update local state in place instead of reloading the whole page, which
+      // would unmount the list and scroll back to the top.
+      setAgentsCfg(next)
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to save")
     } finally {
@@ -633,7 +637,9 @@ export function AgentsPage() {
     try {
       await patchAppConfig(buildPayload(next))
       toast.success("Saved")
-      await loadData()
+      // Update local state in place instead of reloading the whole page, which
+      // would unmount the list and scroll back to the top.
+      setAgentsCfg(next)
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to save")
     } finally {
@@ -657,7 +663,9 @@ export function AgentsPage() {
     try {
       await patchAppConfig(buildPayload(next))
       toast.success("Saved")
-      await loadData()
+      // Update local state in place instead of reloading the whole page, which
+      // would unmount the list and scroll back to the top.
+      setAgentsCfg(next)
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to save")
     } finally {
@@ -672,7 +680,9 @@ export function AgentsPage() {
     try {
       await patchAppConfig(buildPayload(next))
       toast.success("Deleted")
-      await loadData()
+      // Update local state in place instead of reloading the whole page, which
+      // would unmount the list and scroll back to the top.
+      setAgentsCfg(next)
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to delete")
     } finally {
@@ -688,7 +698,9 @@ export function AgentsPage() {
     setSaving(`toggle-${index}`)
     try {
       await patchAppConfig(buildPayload(next))
-      await loadData()
+      // Update local state in place instead of reloading the whole page, which
+      // would unmount the list and scroll back to the top.
+      setAgentsCfg(next)
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to save")
     } finally {
@@ -723,7 +735,9 @@ export function AgentsPage() {
       setAddingSkills([])
       setAddingTools([])
       setShowAdd(false)
-      await loadData()
+      // Update local state in place instead of reloading the whole page, which
+      // would unmount the list and scroll back to the top.
+      setAgentsCfg(next)
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to add agent")
     } finally {
