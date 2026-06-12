@@ -726,14 +726,14 @@ func (h *Handler) syncProviderAuthMethod(provider, authMethod string) error {
 
 	// Ensure a model references this provider.
 	hasModel := false
-	for i := range cfg.ModelList {
-		if cfg.ModelList[i].Provider == provName {
+	for i := range cfg.Models {
+		if cfg.Models[i].Provider == provName {
 			hasModel = true
 			break
 		}
 	}
 	if !hasModel && authMethod != "" {
-		cfg.ModelList = append(cfg.ModelList, config.ModelConfig{
+		cfg.Models = append(cfg.Models, config.ModelConfig{
 			ModelName: modelAlias,
 			Model:     modelID,
 			Provider:  provName,

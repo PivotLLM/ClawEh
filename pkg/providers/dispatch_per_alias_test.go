@@ -11,7 +11,7 @@ import (
 )
 
 // TestProviderDispatcher_PerAliasState is the regression-lock for the bug
-// where multiple model_list entries sharing the same wire model (e.g.
+// where multiple models entries sharing the same wire model (e.g.
 // xai/grok-4.3) had all-but-the-first entry shadowed by the dispatcher
 // cache, so per-entry openai_compat state (reasoning_effort,
 // response_log_file, extra_body, ...) was silently ignored.
@@ -30,7 +30,7 @@ func TestProviderDispatcher_PerAliasState(t *testing.T) {
 		Providers: []config.Provider{
 			{Name: "xai", Protocol: "openai", BaseURL: "http://127.0.0.1:0/v1", APIKey: "k"},
 		},
-		ModelList: []config.ModelConfig{
+		Models: []config.ModelConfig{
 			{
 				ModelName:       "Grok-4.3",
 				Model:           "grok-4.3",

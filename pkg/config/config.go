@@ -100,7 +100,7 @@ type Config struct {
 	AgentMentions AgentMentionConfig  `json:"agent_mentions,omitempty"`
 	Channels      ChannelsConfig      `json:"channels"`
 	Providers     []Provider          `json:"providers,omitempty"`
-	ModelList     []ModelConfig       `json:"model_list"` // New model-centric provider configuration
+	Models        []ModelConfig       `json:"models"` // Models, each reached through a named provider
 	Summarization SummarizationConfig `json:"summarization,omitempty"`
 	Gateway       GatewayConfig       `json:"gateway"`
 	Tools         ToolsConfig         `json:"tools"`
@@ -180,7 +180,7 @@ func (m AgentModelConfig) MarshalJSON() ([]byte, error) {
 
 // SummarizationConfig is the global, deployment-wide summarization model chain.
 // Models are tried in order for context compaction across all agents; each entry
-// is a model_list alias (or a raw protocol/model string). The agent's own
+// is a models alias (or a raw protocol/model string). The agent's own
 // primary model is always appended as a final last-resort fallback at runtime.
 // An empty Models list means summarization runs against each agent's own model.
 type SummarizationConfig struct {
@@ -316,7 +316,7 @@ type SessionConfig struct {
 // requiring any keyword matching — all scoring is language-agnostic.
 type RoutingConfig struct {
 	Enabled    bool    `json:"enabled"`
-	LightModel string  `json:"light_model"` // model_name from model_list to use for simple tasks
+	LightModel string  `json:"light_model"` // model_name from models to use for simple tasks
 	Threshold  float64 `json:"threshold"`   // complexity score in [0,1]; score >= threshold → primary model
 }
 
@@ -930,7 +930,7 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, err
 	}
 
-	// Pre-scan the JSON to check how many model_list / agents.list entries the
+	// Pre-scan the JSON to check how many models / agents.list entries the
 	// user provided. Go's JSON decoder reuses existing slice backing-array
 	// elements rather than zero-initializing them, so fields absent from the
 	// user's JSON (e.g. workspace) would silently inherit values from the
@@ -941,8 +941,8 @@ func LoadConfig(path string) (*Config, error) {
 	if err := json.Unmarshal(data, &tmp); err != nil {
 		return nil, err
 	}
-	if len(tmp.ModelList) > 0 {
-		cfg.ModelList = nil
+	if len(tmp.Models) > 0 {
+		cfg.Models = nil
 	}
 	if len(tmp.Agents.List) > 0 {
 		cfg.Agents.List = nil
@@ -961,13 +961,13 @@ func LoadConfig(path string) (*Config, error) {
 	// Migrate legacy channel config fields to new unified structures
 	cfg.migrateChannelConfigs()
 
-	// Auto-migrate: if only legacy providers config exists, convert to model_list
-	// Validate providers, then model_list (including that each model's provider
+	// Auto-migrate: if only legacy providers config exists, convert to models
+	// Validate providers, then models (including that each model's provider
 	// reference resolves).
 	if err := cfg.ValidateProviders(); err != nil {
 		return nil, err
 	}
-	if err := cfg.ValidateModelList(); err != nil {
+	if err := cfg.ValidateModels(); err != nil {
 		return nil, err
 	}
 
@@ -1023,11 +1023,11 @@ func SaveConfig(path string, cfg *Config) error {
 // *-cli protocol (claude-cli, codex-cli, gemini-cli). Those CLIs rely on
 // the MCP host to call claw's tools natively.
 func (c *Config) HasCLIProvider() bool {
-	for i := range c.ModelList {
-		if !c.ModelList[i].Enabled {
+	for i := range c.Models {
+		if !c.Models[i].Enabled {
 			continue
 		}
-		prov, err := c.GetProvider(c.ModelList[i].Provider)
+		prov, err := c.GetProvider(c.Models[i].Provider)
 		if err != nil {
 			continue
 		}
@@ -1145,7 +1145,7 @@ func expandHome(path string) string {
 func (c *Config) GetModelConfig(modelName string) (*ModelConfig, error) {
 	matches := c.findMatches(modelName)
 	if len(matches) == 0 {
-		return nil, fmt.Errorf("model %q not found in model_list or providers", modelName)
+		return nil, fmt.Errorf("model %q not found in models or providers", modelName)
 	}
 	if len(matches) == 1 {
 		return &matches[0], nil
@@ -1159,9 +1159,9 @@ func (c *Config) GetModelConfig(modelName string) (*ModelConfig, error) {
 // findMatches finds all ModelConfig entries with the given model_name.
 func (c *Config) findMatches(modelName string) []ModelConfig {
 	var matches []ModelConfig
-	for i := range c.ModelList {
-		if c.ModelList[i].ModelName == modelName && c.ModelList[i].Enabled {
-			matches = append(matches, c.ModelList[i])
+	for i := range c.Models {
+		if c.Models[i].ModelName == modelName && c.Models[i].Enabled {
+			matches = append(matches, c.Models[i])
 		}
 	}
 	return matches
@@ -1255,17 +1255,17 @@ func (c *Config) ValidateProviders() error {
 	return nil
 }
 
-// ValidateModelList validates all ModelConfig entries in the model_list,
+// ValidateModels validates all ModelConfig entries in the models,
 // including that each model's provider reference resolves to a configured
 // provider. Multiple entries with the same model_name are allowed for load
 // balancing.
-func (c *Config) ValidateModelList() error {
-	for i := range c.ModelList {
-		if err := c.ModelList[i].Validate(); err != nil {
-			return fmt.Errorf("model_list[%d]: %w", i, err)
+func (c *Config) ValidateModels() error {
+	for i := range c.Models {
+		if err := c.Models[i].Validate(); err != nil {
+			return fmt.Errorf("models[%d]: %w", i, err)
 		}
-		if _, err := c.GetProvider(c.ModelList[i].Provider); err != nil {
-			return fmt.Errorf("model_list[%d] (%q): %w", i, c.ModelList[i].ModelName, err)
+		if _, err := c.GetProvider(c.Models[i].Provider); err != nil {
+			return fmt.Errorf("models[%d] (%q): %w", i, c.Models[i].ModelName, err)
 		}
 	}
 	return nil

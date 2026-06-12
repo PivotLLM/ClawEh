@@ -11,13 +11,13 @@ import (
 
 func TestCreateProvider_NoModelList_ReturnsError(t *testing.T) {
 	cfg := config.DefaultConfig()
-	// Clear everything so there's no model_list configured.
-	cfg.ModelList = nil
+	// Clear everything so there's no models configured.
+	cfg.Models = nil
 	cfg.Agents.Defaults.SetDefaultModel("")
 
 	_, _, err := CreateProvider(cfg)
 	if err == nil {
-		t.Fatal("expected error when no model_list configured")
+		t.Fatal("expected error when no models configured")
 	}
 }
 
@@ -26,7 +26,7 @@ func TestCreateProvider_WithModelList_ValidModel(t *testing.T) {
 	cfg.Providers = []config.Provider{
 		{Name: "groq", Protocol: "openai", BaseURL: "https://api.groq.com/openai/v1", APIKey: "gsk-test"},
 	}
-	cfg.ModelList = []config.ModelConfig{
+	cfg.Models = []config.ModelConfig{
 		{
 			ModelName: "my-groq",
 			Model:     "llama-3.3-70b",
@@ -53,7 +53,7 @@ func TestCreateProvider_ModelNotFoundInList_ReturnsError(t *testing.T) {
 	cfg.Providers = []config.Provider{
 		{Name: "groq", Protocol: "openai", BaseURL: "https://api.groq.com/openai/v1", APIKey: "gsk-test"},
 	}
-	cfg.ModelList = []config.ModelConfig{
+	cfg.Models = []config.ModelConfig{
 		{
 			ModelName: "my-groq",
 			Model:     "llama-3.3-70b",
@@ -65,10 +65,10 @@ func TestCreateProvider_ModelNotFoundInList_ReturnsError(t *testing.T) {
 
 	_, _, err := CreateProvider(cfg)
 	if err == nil {
-		t.Fatal("expected error for model not found in model_list")
+		t.Fatal("expected error for model not found in models")
 	}
-	if !strings.Contains(err.Error(), "not found in model_list") {
-		t.Errorf("error = %q, want 'not found in model_list'", err.Error())
+	if !strings.Contains(err.Error(), "not found in models") {
+		t.Errorf("error = %q, want 'not found in models'", err.Error())
 	}
 }
 
@@ -76,7 +76,7 @@ func TestCreateProvider_UnknownProvider_ReturnsError(t *testing.T) {
 	cfg := config.DefaultConfig()
 	// Model references a provider that is not configured.
 	cfg.Providers = nil
-	cfg.ModelList = []config.ModelConfig{
+	cfg.Models = []config.ModelConfig{
 		{
 			ModelName: "my-groq",
 			Model:     "llama-3.3-70b",
@@ -99,7 +99,7 @@ func TestCreateProvider_WorkspaceInjected(t *testing.T) {
 	cfg.Providers = []config.Provider{
 		{Name: "claude-cli", Protocol: "claude-cli"},
 	}
-	cfg.ModelList = []config.ModelConfig{
+	cfg.Models = []config.ModelConfig{
 		{
 			ModelName: "my-claude-cli",
 			Model:     "claude-sonnet-4.6",
@@ -124,7 +124,7 @@ func TestCreateProvider_TimeoutInjected(t *testing.T) {
 	cfg.Providers = []config.Provider{
 		{Name: "openai", Protocol: "openai", BaseURL: "https://api.openai.com/v1", APIKey: "sk-test"},
 	}
-	cfg.ModelList = []config.ModelConfig{
+	cfg.Models = []config.ModelConfig{
 		{
 			ModelName: "my-openai",
 			Model:     "gpt-4o",

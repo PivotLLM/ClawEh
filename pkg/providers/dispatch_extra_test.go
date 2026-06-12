@@ -19,7 +19,7 @@ func TestProviderDispatcher_Get_TimeoutInjected(t *testing.T) {
 		Providers: []config.Provider{
 			{Name: "claude-cli", Protocol: "claude-cli"},
 		},
-		ModelList: []config.ModelConfig{
+		Models: []config.ModelConfig{
 			{
 				ModelName:      "test-alias",
 				Model:          "test-timeout",

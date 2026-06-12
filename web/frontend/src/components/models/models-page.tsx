@@ -35,11 +35,12 @@ export function ModelsPage() {
   const fetchModels = useCallback(async () => {
     try {
       const data = await getModels()
+      // Sort by provider, then alphabetically by model name within each
+      // provider. The provider groups are ordered alphabetically below; this
+      // keeps each group's models in alphabetical order.
       const sorted = [...data.models].sort((a, b) => {
-        if (a.is_default && !b.is_default) return -1
-        if (!a.is_default && b.is_default) return 1
-        if (a.configured && !b.configured) return -1
-        if (!a.configured && b.configured) return 1
+        const byProvider = (a.provider || "").localeCompare(b.provider || "")
+        if (byProvider !== 0) return byProvider
         return a.model_name.localeCompare(b.model_name)
       })
       setModels(sorted)
@@ -100,16 +101,7 @@ export function ModelsPage() {
         configuredCount,
       }
     })
-    .sort((a, b) => {
-      if (a.hasDefault && !b.hasDefault) return -1
-      if (!a.hasDefault && b.hasDefault) return 1
-
-      if (a.configuredCount !== b.configuredCount) {
-        return b.configuredCount - a.configuredCount
-      }
-
-      return a.label.localeCompare(b.label)
-    })
+    .sort((a, b) => a.label.localeCompare(b.label))
 
   const defaultModel = models.find((model) => model.is_default)
 

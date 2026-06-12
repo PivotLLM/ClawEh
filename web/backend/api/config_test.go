@@ -32,7 +32,7 @@ func TestHandleUpdateConfig_AppliesExecAllowRemoteDefaultWhenOmitted(t *testing.
 				"api_key": "sk-default"
 			}
 		],
-		"model_list": [
+		"models": [
 			{
 				"model_name": "custom-default",
 				"model": "gpt-4o",
@@ -81,7 +81,7 @@ func TestHandleUpdateConfig_DoesNotInheritDefaultModelFields(t *testing.T) {
 				"api_key": "sk-default"
 			}
 		],
-		"model_list": [
+		"models": [
 			{
 				"model_name": "custom-default",
 				"model": "gpt-4o",
@@ -102,10 +102,10 @@ func TestHandleUpdateConfig_DoesNotInheritDefaultModelFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConfig() error = %v", err)
 	}
-	if got := cfg.ModelList[0].ConnectMode; got != "" {
-		t.Fatalf("model_list[0].connect_mode = %q, want empty string (not inherited from default template)", got)
+	if got := cfg.Models[0].ConnectMode; got != "" {
+		t.Fatalf("models[0].connect_mode = %q, want empty string (not inherited from default template)", got)
 	}
-	if got := cfg.ModelList[0].Workspace; got != "" {
-		t.Fatalf("model_list[0].workspace = %q, want empty string (not inherited from default template)", got)
+	if got := cfg.Models[0].Workspace; got != "" {
+		t.Fatalf("models[0].workspace = %q, want empty string (not inherited from default template)", got)
 	}
 }

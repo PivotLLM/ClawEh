@@ -41,7 +41,7 @@ func TestResolveRunProvider_UsesDispatcherForActiveCandidate(t *testing.T) {
 		Providers: []config.Provider{
 			{Name: "openai", Protocol: "openai", BaseURL: "http://127.0.0.1:0/v1", APIKey: "dummy"},
 		},
-		ModelList: []config.ModelConfig{
+		Models: []config.ModelConfig{
 			{
 				ModelName: "non-cli-primary",
 				Model:     "some-non-cli-model",
@@ -96,7 +96,7 @@ func TestResolveRunProvider_EmptyCandidatesDispatchesPrimary(t *testing.T) {
 		Providers: []config.Provider{
 			{Name: "xai", Protocol: "openai", BaseURL: "http://127.0.0.1:0/v1", APIKey: "dummy"},
 		},
-		ModelList: []config.ModelConfig{
+		Models: []config.ModelConfig{
 			{
 				ModelName: "Grok-4.3",
 				Model:     "grok-4.3",
@@ -137,11 +137,11 @@ func TestResolveRunProvider_EmptyCandidatesDispatchesPrimary(t *testing.T) {
 
 // TestResolveRunProvider_FallbackToAgentProvider confirms the last-resort
 // safety net: when the dispatcher cannot resolve a (protocol, model) pair —
-// either because the candidate references a missing model_list entry or
+// either because the candidate references a missing models entry or
 // because agent.Model is an unknown alias — fall back to agent.Provider so
 // existing single-provider configurations keep working.
 func TestResolveRunProvider_FallbackToAgentProvider(t *testing.T) {
-	cfg := &config.Config{ModelList: []config.ModelConfig{}}
+	cfg := &config.Config{Models: []config.ModelConfig{}}
 	dispatcher := providers.NewProviderDispatcher(cfg)
 
 	cliShared := &cliMockProvider{}

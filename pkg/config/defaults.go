@@ -147,7 +147,7 @@ func DefaultConfig() *Config {
 			{Name: "codex-cli", Protocol: "codex-cli"},
 			{Name: "gemini-cli", Protocol: "gemini-cli"},
 		},
-		ModelList: []ModelConfig{
+		Models: []ModelConfig{
 			// ============================================
 			// Enable a model and ensure its provider has an API key.
 			// model is the raw id the endpoint expects; provider names the endpoint.

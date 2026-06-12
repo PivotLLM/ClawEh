@@ -46,7 +46,7 @@ type modelResponse struct {
 	IsDefault  bool `json:"is_default"`
 }
 
-// handleListModels returns all model_list entries with masked API keys.
+// handleListModels returns all models entries with masked API keys.
 //
 //	GET /api/models
 func (h *Handler) handleListModels(w http.ResponseWriter, r *http.Request) {
@@ -57,11 +57,11 @@ func (h *Handler) handleListModels(w http.ResponseWriter, r *http.Request) {
 	}
 
 	defaultModel := cfg.Agents.Defaults.DefaultModelName()
-	configured := make([]bool, len(cfg.ModelList))
+	configured := make([]bool, len(cfg.Models))
 
 	var wg sync.WaitGroup
-	wg.Add(len(cfg.ModelList))
-	for i, m := range cfg.ModelList {
+	wg.Add(len(cfg.Models))
+	for i, m := range cfg.Models {
 		go func(i int, m config.ModelConfig) {
 			defer wg.Done()
 			prov, err := cfg.GetProvider(m.Provider)
@@ -74,8 +74,8 @@ func (h *Handler) handleListModels(w http.ResponseWriter, r *http.Request) {
 	}
 	wg.Wait()
 
-	models := make([]modelResponse, 0, len(cfg.ModelList))
-	for i, m := range cfg.ModelList {
+	models := make([]modelResponse, 0, len(cfg.Models))
+	for i, m := range cfg.Models {
 		models = append(models, modelResponse{
 			Index:           i,
 			ModelName:       m.ModelName,
@@ -139,7 +139,7 @@ func (h *Handler) handleAddModel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cfg.ModelList = append(cfg.ModelList, mc)
+	cfg.Models = append(cfg.Models, mc)
 
 	if err := config.SaveConfig(h.configPath, cfg); err != nil {
 		http.Error(w, fmt.Sprintf("Failed to save config: %v", err), http.StatusInternalServerError)
@@ -149,7 +149,7 @@ func (h *Handler) handleAddModel(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
 		"status": "ok",
-		"index":  len(cfg.ModelList) - 1,
+		"index":  len(cfg.Models) - 1,
 	})
 }
 
@@ -179,14 +179,14 @@ func (h *Handler) handleUpdateModel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if idx < 0 || idx >= len(cfg.ModelList) {
-		http.Error(w, fmt.Sprintf("Index %d out of range (0-%d)", idx, len(cfg.ModelList)-1), http.StatusNotFound)
+	if idx < 0 || idx >= len(cfg.Models) {
+		http.Error(w, fmt.Sprintf("Index %d out of range (0-%d)", idx, len(cfg.Models)-1), http.StatusNotFound)
 		return
 	}
 
 	// Start from the existing entry so fields not present in the request body
 	// (e.g. enabled, extra_args, strict_compat) keep their current values.
-	mc := cfg.ModelList[idx]
+	mc := cfg.Models[idx]
 	if err = json.Unmarshal(body, &mc); err != nil {
 		http.Error(w, fmt.Sprintf("Invalid JSON: %v", err), http.StatusBadRequest)
 		return
@@ -201,7 +201,7 @@ func (h *Handler) handleUpdateModel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cfg.ModelList[idx] = mc
+	cfg.Models[idx] = mc
 
 	if err := config.SaveConfig(h.configPath, cfg); err != nil {
 		http.Error(w, fmt.Sprintf("Failed to save config: %v", err), http.StatusInternalServerError)
@@ -228,14 +228,14 @@ func (h *Handler) handleDeleteModel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if idx < 0 || idx >= len(cfg.ModelList) {
-		http.Error(w, fmt.Sprintf("Index %d out of range (0-%d)", idx, len(cfg.ModelList)-1), http.StatusNotFound)
+	if idx < 0 || idx >= len(cfg.Models) {
+		http.Error(w, fmt.Sprintf("Index %d out of range (0-%d)", idx, len(cfg.Models)-1), http.StatusNotFound)
 		return
 	}
 
-	deletedModelName := cfg.ModelList[idx].ModelName
+	deletedModelName := cfg.Models[idx].ModelName
 
-	cfg.ModelList = append(cfg.ModelList[:idx], cfg.ModelList[idx+1:]...)
+	cfg.Models = append(cfg.Models[:idx], cfg.Models[idx+1:]...)
 
 	// If the deleted model was the default, clear it.
 	if cfg.Agents.Defaults.DefaultModelName() == deletedModelName {
@@ -285,9 +285,9 @@ func (h *Handler) handleSetDefaultModel(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Verify the model_name exists in model_list and is enabled
+	// Verify the model_name exists in models and is enabled
 	found := false
-	for _, m := range cfg.ModelList {
+	for _, m := range cfg.Models {
 		if m.ModelName == req.ModelName {
 			if !m.Enabled {
 				http.Error(w, fmt.Sprintf("Model %q is disabled; enable it before setting as default", req.ModelName), http.StatusBadRequest)
@@ -298,7 +298,7 @@ func (h *Handler) handleSetDefaultModel(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	if !found {
-		http.Error(w, fmt.Sprintf("Model %q not found in model_list", req.ModelName), http.StatusNotFound)
+		http.Error(w, fmt.Sprintf("Model %q not found in models", req.ModelName), http.StatusNotFound)
 		return
 	}
 

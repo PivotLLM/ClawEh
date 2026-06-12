@@ -263,18 +263,18 @@ func ensureProtocolProvider(cfg *config.Config, protocol, baseURL string) *confi
 }
 
 // setProtocolAuth attaches an OAuth/token auth method to the provider for the
-// given protocol (creating it if needed), ensures a model_list entry references
+// given protocol (creating it if needed), ensures a models entry references
 // that provider, and returns the model alias to use as default.
 func setProtocolAuth(cfg *config.Config, protocol, baseURL, method, modelAlias, modelID string) string {
 	prov := ensureProtocolProvider(cfg, protocol, baseURL)
 	prov.AuthMethod = method
 
-	for i := range cfg.ModelList {
-		if cfg.ModelList[i].Provider == prov.Name {
-			return cfg.ModelList[i].ModelName
+	for i := range cfg.Models {
+		if cfg.Models[i].Provider == prov.Name {
+			return cfg.Models[i].ModelName
 		}
 	}
-	cfg.ModelList = append(cfg.ModelList, config.ModelConfig{
+	cfg.Models = append(cfg.Models, config.ModelConfig{
 		ModelName: modelAlias,
 		Model:     modelID,
 		Provider:  prov.Name,

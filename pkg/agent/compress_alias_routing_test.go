@@ -13,7 +13,7 @@ import (
 // TestBuildCompressLLMClient_PerAliasRouting is the regression-lock for the
 // dispatcher cache-key fix on the compress path.
 //
-// Three model_list entries share the same wire model xai/grok-4.3 but differ
+// Three models entries share the same wire model xai/grok-4.3 but differ
 // in model_name and response_log_file. An agent whose compress_model points
 // at the medium alias must compress through a provider built from the
 // medium entry's state — not the first entry's (the pre-fix bug). The test
@@ -28,7 +28,7 @@ func TestBuildCompressLLMClient_PerAliasRouting(t *testing.T) {
 		Providers: []config.Provider{
 			{Name: "xai", Protocol: "openai", BaseURL: "http://127.0.0.1:0/v1", APIKey: "k"},
 		},
-		ModelList: []config.ModelConfig{
+		Models: []config.ModelConfig{
 			{
 				ModelName:       "Grok-4.3",
 				Model:           "grok-4.3",

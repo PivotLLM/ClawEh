@@ -16,7 +16,7 @@ import (
 
 func TestGetModelConfig_Found(t *testing.T) {
 	cfg := &Config{
-		ModelList: []ModelConfig{
+		Models: []ModelConfig{
 			{ModelName: "test-model", Model: "openai/gpt-4o", Enabled: true},
 			{ModelName: "other-model", Model: "anthropic/claude", Enabled: true},
 		},
@@ -33,7 +33,7 @@ func TestGetModelConfig_Found(t *testing.T) {
 
 func TestGetModelConfig_NotFound(t *testing.T) {
 	cfg := &Config{
-		ModelList: []ModelConfig{
+		Models: []ModelConfig{
 			{ModelName: "test-model", Model: "openai/gpt-4o"},
 		},
 	}
@@ -46,7 +46,7 @@ func TestGetModelConfig_NotFound(t *testing.T) {
 
 func TestGetModelConfig_EmptyList(t *testing.T) {
 	cfg := &Config{
-		ModelList: []ModelConfig{},
+		Models: []ModelConfig{},
 	}
 
 	_, err := cfg.GetModelConfig("any-model")
@@ -57,7 +57,7 @@ func TestGetModelConfig_EmptyList(t *testing.T) {
 
 func TestGetModelConfig_RoundRobin(t *testing.T) {
 	cfg := &Config{
-		ModelList: []ModelConfig{
+		Models: []ModelConfig{
 			{ModelName: "lb-model", Model: "openai/gpt-4o-1", Enabled: true},
 			{ModelName: "lb-model", Model: "openai/gpt-4o-2", Enabled: true},
 			{ModelName: "lb-model", Model: "openai/gpt-4o-3", Enabled: true},
@@ -84,7 +84,7 @@ func TestGetModelConfig_RoundRobin(t *testing.T) {
 
 func TestGetModelConfig_Concurrent(t *testing.T) {
 	cfg := &Config{
-		ModelList: []ModelConfig{
+		Models: []ModelConfig{
 			{ModelName: "concurrent-model", Model: "openai/gpt-4o-1", Enabled: true},
 			{ModelName: "concurrent-model", Model: "openai/gpt-4o-2", Enabled: true},
 		},
@@ -186,7 +186,7 @@ func TestFullConfig_JSON_ModelConfig(t *testing.T) {
 				"max_tokens": 4096
 			}
 		},
-		"model_list": [
+		"models": [
 			{
 				"model_name": "gpt4",
 				"model": "openai/gpt-4o",
@@ -286,7 +286,7 @@ func TestConfig_ValidateModelList(t *testing.T) {
 					{Name: "openai", Protocol: "openai", BaseURL: "https://api.openai.com/v1"},
 					{Name: "anthropic", Protocol: "anthropic", BaseURL: "https://api.anthropic.com"},
 				},
-				ModelList: []ModelConfig{
+				Models: []ModelConfig{
 					{ModelName: "test1", Model: "gpt-4o", Provider: "openai"},
 					{ModelName: "test2", Model: "claude", Provider: "anthropic"},
 				},
@@ -299,7 +299,7 @@ func TestConfig_ValidateModelList(t *testing.T) {
 				Providers: []Provider{
 					{Name: "openai", Protocol: "openai", BaseURL: "https://api.openai.com/v1"},
 				},
-				ModelList: []ModelConfig{
+				Models: []ModelConfig{
 					{ModelName: "test1", Model: "gpt-4o", Provider: "openai"},
 					{ModelName: "", Model: "claude", Provider: "openai"}, // missing model_name
 				},
@@ -310,7 +310,7 @@ func TestConfig_ValidateModelList(t *testing.T) {
 		{
 			name: "unknown provider reference",
 			config: &Config{
-				ModelList: []ModelConfig{
+				Models: []ModelConfig{
 					{ModelName: "test1", Model: "gpt-4o", Provider: "nope"},
 				},
 			},
@@ -320,7 +320,7 @@ func TestConfig_ValidateModelList(t *testing.T) {
 		{
 			name: "empty list",
 			config: &Config{
-				ModelList: []ModelConfig{},
+				Models: []ModelConfig{},
 			},
 			wantErr: false,
 		},
@@ -331,7 +331,7 @@ func TestConfig_ValidateModelList(t *testing.T) {
 				Providers: []Provider{
 					{Name: "openai", Protocol: "openai", BaseURL: "https://api.openai.com/v1"},
 				},
-				ModelList: []ModelConfig{
+				Models: []ModelConfig{
 					{ModelName: "gpt-4", Model: "gpt-4o", Provider: "openai"},
 					{ModelName: "gpt-4", Model: "gpt-4-turbo", Provider: "openai"},
 				},
@@ -346,7 +346,7 @@ func TestConfig_ValidateModelList(t *testing.T) {
 					{Name: "openai", Protocol: "openai", BaseURL: "https://api.openai.com/v1"},
 					{Name: "anthropic", Protocol: "anthropic", BaseURL: "https://api.anthropic.com"},
 				},
-				ModelList: []ModelConfig{
+				Models: []ModelConfig{
 					{ModelName: "model-a", Model: "gpt-4o", Provider: "openai"},
 					{ModelName: "model-b", Model: "claude", Provider: "anthropic"},
 					{ModelName: "model-a", Model: "gpt-4-turbo", Provider: "openai"},
@@ -358,13 +358,13 @@ func TestConfig_ValidateModelList(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := tt.config.ValidateModelList()
+			err := tt.config.ValidateModels()
 			if (err != nil) != tt.wantErr {
-				t.Errorf("ValidateModelList() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("ValidateModels() error = %v, wantErr %v", err, tt.wantErr)
 			}
 			if err != nil && tt.errMsg != "" {
 				if !strings.Contains(err.Error(), tt.errMsg) {
-					t.Errorf("ValidateModelList() error = %v, want error containing %q", err, tt.errMsg)
+					t.Errorf("ValidateModels() error = %v, want error containing %q", err, tt.errMsg)
 				}
 			}
 		})

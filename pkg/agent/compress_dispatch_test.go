@@ -18,7 +18,7 @@ func TestResolveCompressModelTarget(t *testing.T) {
 			{Name: "anthropic", Protocol: "anthropic", BaseURL: "https://api.anthropic.com/v1", APIKey: "k"},
 			{Name: "openai", Protocol: "openai", BaseURL: "https://api.openai.com/v1", APIKey: "k"},
 		},
-		ModelList: []config.ModelConfig{
+		Models: []config.ModelConfig{
 			{
 				ModelName: "haiku",
 				Model:     "claude-haiku-4-5",
@@ -86,7 +86,7 @@ func TestBuildCompressLLMClient_UsesDispatcher(t *testing.T) {
 		Providers: []config.Provider{
 			{Name: "openai", Protocol: "openai", BaseURL: "http://127.0.0.1:0/v1", APIKey: "dummy"},
 		},
-		ModelList: []config.ModelConfig{
+		Models: []config.ModelConfig{
 			{
 				ModelName: "compress-target",
 				Model:     "test-compress-model",
@@ -125,11 +125,11 @@ func TestBuildCompressLLMClient_UsesDispatcher(t *testing.T) {
 }
 
 // TestBuildCompressLLMClient_FallbackToAgentProvider exercises the last-resort
-// path: when the compress_model name does not resolve against model_list,
+// path: when the compress_model name does not resolve against models,
 // fall back to the agent's primary provider rather than fail compression.
 func TestBuildCompressLLMClient_FallbackToAgentProvider(t *testing.T) {
 	cfg := &config.Config{
-		ModelList: []config.ModelConfig{},
+		Models: []config.ModelConfig{},
 	}
 	dispatcher := providers.NewProviderDispatcher(cfg)
 
@@ -172,7 +172,7 @@ func TestBuildDefaultCompressLLMClient_UsesDispatcherForPrimary(t *testing.T) {
 		Providers: []config.Provider{
 			{Name: "openai", Protocol: "openai", BaseURL: "http://127.0.0.1:0/v1", APIKey: "dummy"},
 		},
-		ModelList: []config.ModelConfig{
+		Models: []config.ModelConfig{
 			{
 				ModelName: "primary-target",
 				Model:     "some-model",
@@ -217,11 +217,11 @@ func TestBuildDefaultCompressLLMClient_UsesDispatcherForPrimary(t *testing.T) {
 
 // TestBuildDefaultCompressLLMClient_FallbackWhenPrimaryUnresolved confirms
 // that when the agent's primary model cannot be resolved through the
-// dispatcher (no matching enabled model_list entry), the default-compress
+// dispatcher (no matching enabled models entry), the default-compress
 // path falls back to agent.Provider rather than failing.
 func TestBuildDefaultCompressLLMClient_FallbackWhenPrimaryUnresolved(t *testing.T) {
 	cfg := &config.Config{
-		ModelList: []config.ModelConfig{},
+		Models: []config.ModelConfig{},
 	}
 	dispatcher := providers.NewProviderDispatcher(cfg)
 
@@ -257,7 +257,7 @@ func TestBuildCompressLLMClient_NilDispatcher(t *testing.T) {
 		Providers: []config.Provider{
 			{Name: "openai", Protocol: "openai", BaseURL: "https://api.openai.com/v1", APIKey: "k"},
 		},
-		ModelList: []config.ModelConfig{
+		Models: []config.ModelConfig{
 			{
 				ModelName: "x",
 				Model:     "y",

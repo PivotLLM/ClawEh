@@ -657,7 +657,7 @@ func safeRawMessage(body []byte) json.RawMessage {
 
 // modelLabelOr returns the configured user-facing model label, or fallback
 // when the label is empty. Keeps WarnCF messages identifying the offending
-// model_list entry rather than the bare wire identifier.
+// models entry rather than the bare wire identifier.
 func (p *Provider) modelLabelOr(fallback string) string {
 	if p.modelLabel != "" {
 		return p.modelLabel

@@ -85,7 +85,7 @@ func TestShowCurrentModel_WithDefaultModel(t *testing.T) {
 			},
 		},
 		Providers: []config.Provider{openaiProvider(), anthropicProvider()},
-		ModelList: []config.ModelConfig{
+		Models: []config.ModelConfig{
 			{ModelName: "gpt-4", Model: "gpt-4", Provider: "openai", Enabled: true},
 			{ModelName: "claude-3", Model: "claude-3", Provider: "anthropic", Enabled: true},
 		},
@@ -107,7 +107,7 @@ func TestShowCurrentModel_NoDefaultModel(t *testing.T) {
 			Defaults: config.AgentDefaults{},
 		},
 		Providers: []config.Provider{openaiProvider()},
-		ModelList: []config.ModelConfig{
+		Models: []config.ModelConfig{
 			{ModelName: "gpt-4", Model: "gpt-4", Provider: "openai", Enabled: true},
 		},
 	}
@@ -127,7 +127,7 @@ func TestShowCurrentModel_WithModelConfig(t *testing.T) {
 				Model: &config.AgentModelConfig{Primary: "my-model"},
 			},
 		},
-		ModelList: []config.ModelConfig{},
+		Models: []config.ModelConfig{},
 	}
 
 	output := captureStdout(func() {
@@ -139,14 +139,14 @@ func TestShowCurrentModel_WithModelConfig(t *testing.T) {
 
 func TestListAvailableModels_Empty(t *testing.T) {
 	cfg := &config.Config{
-		ModelList: []config.ModelConfig{},
+		Models: []config.ModelConfig{},
 	}
 
 	output := captureStdout(func() {
 		listAvailableModels(cfg)
 	})
 
-	assert.Contains(t, output, "No models configured in model_list")
+	assert.Contains(t, output, "No models configured in models")
 }
 
 func TestListAvailableModels_WithModels(t *testing.T) {
@@ -162,7 +162,7 @@ func TestListAvailableModels_WithModels(t *testing.T) {
 			// Provider without credentials: models referencing it are skipped.
 			{Name: "nokey", Protocol: "openai", BaseURL: "https://api.example.com/v1"},
 		},
-		ModelList: []config.ModelConfig{
+		Models: []config.ModelConfig{
 			{ModelName: "gpt-4", Model: "gpt-4", Provider: "openai", Enabled: true},
 			{ModelName: "claude-3", Model: "claude-3", Provider: "anthropic", Enabled: true},
 			{ModelName: "no-key-model", Model: "test", Provider: "nokey", Enabled: true},
@@ -189,7 +189,7 @@ func TestSetDefaultModel_ValidModel(t *testing.T) {
 			},
 		},
 		Providers: []config.Provider{openaiProvider()},
-		ModelList: []config.ModelConfig{
+		Models: []config.ModelConfig{
 			{ModelName: "new-model", Model: "new-model", Provider: "openai", Enabled: true},
 			{ModelName: "old-model", Model: "old-model", Provider: "openai", Enabled: true},
 		},
@@ -218,7 +218,7 @@ func TestSetDefaultModel_InvalidModel(t *testing.T) {
 			},
 		},
 		Providers: []config.Provider{openaiProvider()},
-		ModelList: []config.ModelConfig{
+		Models: []config.ModelConfig{
 			{ModelName: "existing-model", Model: "existing", Provider: "openai", Enabled: true},
 		},
 	}
@@ -236,7 +236,7 @@ func TestSetDefaultModel_DisabledModel(t *testing.T) {
 			},
 		},
 		Providers: []config.Provider{openaiProvider()},
-		ModelList: []config.ModelConfig{
+		Models: []config.ModelConfig{
 			{ModelName: "existing-model", Model: "existing", Provider: "openai", Enabled: true},
 			{ModelName: "disabled-model", Model: "disabled", Provider: "openai", Enabled: false},
 		},
@@ -256,7 +256,7 @@ func TestSetDefaultModel_SaveConfigError(t *testing.T) {
 			},
 		},
 		Providers: []config.Provider{openaiProvider()},
-		ModelList: []config.ModelConfig{
+		Models: []config.ModelConfig{
 			{ModelName: "new-model", Model: "new-model", Provider: "openai", Enabled: true},
 		},
 	}
@@ -298,7 +298,7 @@ func TestModelCommandExecution_Show(t *testing.T) {
 			},
 		},
 		Providers: []config.Provider{openaiProvider()},
-		ModelList: []config.ModelConfig{
+		Models: []config.ModelConfig{
 			{ModelName: "test-model", Model: "test", Provider: "openai", Enabled: true},
 		},
 	}
@@ -326,7 +326,7 @@ func TestModelCommandExecution_Set(t *testing.T) {
 			},
 		},
 		Providers: []config.Provider{openaiProvider()},
-		ModelList: []config.ModelConfig{
+		Models: []config.ModelConfig{
 			{ModelName: "old-model", Model: "old", Provider: "openai", Enabled: true},
 			{ModelName: "new-model", Model: "new", Provider: "openai", Enabled: true},
 		},
@@ -361,7 +361,7 @@ func TestListAvailableModels_MarkerLogic(t *testing.T) {
 			},
 		},
 		Providers: []config.Provider{openaiProvider()},
-		ModelList: []config.ModelConfig{
+		Models: []config.ModelConfig{
 			{ModelName: "first-model", Model: "first", Provider: "openai", Enabled: true},
 			{ModelName: "middle-model", Model: "middle", Provider: "openai", Enabled: true},
 			{ModelName: "last-model", Model: "last", Provider: "openai", Enabled: true},

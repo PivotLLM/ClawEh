@@ -24,7 +24,11 @@ export function ProvidersPage() {
   const fetchProviders = useCallback(async () => {
     try {
       const data = await getProviders()
-      setProviders(data.providers)
+      // Display alphabetically by name; each entry keeps its backend index so
+      // edit/delete still target the correct config slot.
+      setProviders(
+        [...data.providers].sort((a, b) => a.name.localeCompare(b.name)),
+      )
       setFetchError("")
     } catch (e) {
       setFetchError(e instanceof Error ? e.message : t("providers.loadError"))

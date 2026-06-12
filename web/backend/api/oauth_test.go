@@ -134,7 +134,7 @@ func TestOAuthLogoutClearsCredentialAndConfig(t *testing.T) {
 		BaseURL:    "https://api.anthropic.com/v1",
 		AuthMethod: "token",
 	})
-	cfg.ModelList = append(cfg.ModelList, config.ModelConfig{
+	cfg.Models = append(cfg.Models, config.ModelConfig{
 		ModelName: "claude-sonnet-4.6",
 		Model:     "claude-sonnet-4.6",
 		Provider:  "anthropic",
@@ -206,7 +206,7 @@ func setupOAuthTestEnv(t *testing.T) (string, func()) {
 		BaseURL:  "https://api.openai.com/v1",
 		APIKey:   "sk-default",
 	}}
-	cfg.ModelList = []config.ModelConfig{{
+	cfg.Models = []config.ModelConfig{{
 		ModelName: "custom-default",
 		Model:     "gpt-4o",
 		Provider:  "openai",

@@ -472,7 +472,7 @@ func handleConfigReload(
 	stopAndCleanupServices(services, serviceShutdownTimeout)
 
 	// Create new provider from updated config first to ensure validity
-	// This will use the correct API key and settings from newCfg.ModelList
+	// This will use the correct API key and settings from newCfg.Models
 	newProvider, newModelID, err := providers.CreateProvider(newCfg)
 	if err != nil {
 		logger.WarnCF("gateway", "No model configured after reload, running in unconfigured state", map[string]any{"detail": err.Error()})
@@ -692,7 +692,7 @@ func setupConfigWatcherPolling(configPath string, interval, debounce time.Durati
 					logger.Warn("  Using previous valid config")
 					continue
 				}
-				if err := newCfg.ValidateModelList(); err != nil {
+				if err := newCfg.ValidateModels(); err != nil {
 					logger.Errorf("  ⚠ New config validation failed: %v", err)
 					logger.Warn("  Using previous valid config")
 					continue

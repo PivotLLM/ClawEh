@@ -34,13 +34,13 @@ func TestHandleAddModel_Success(t *testing.T) {
 		t.Fatalf("LoadConfig() error = %v", err)
 	}
 	found := false
-	for _, m := range cfg.ModelList {
+	for _, m := range cfg.Models {
 		if m.ModelName == "new-model" {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatal("new-model not found in model_list after add")
+		t.Fatal("new-model not found in models after add")
 	}
 }
 
@@ -104,8 +104,8 @@ func TestHandleUpdateModel_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConfig() error = %v", err)
 	}
-	if cfg.ModelList[0].Model != "gpt-4o" || cfg.ModelList[0].Provider != "openai" {
-		t.Fatalf("model_list[0] = %+v, want model=gpt-4o provider=openai", cfg.ModelList[0])
+	if cfg.Models[0].Model != "gpt-4o" || cfg.Models[0].Provider != "openai" {
+		t.Fatalf("models[0] = %+v, want model=gpt-4o provider=openai", cfg.Models[0])
 	}
 }
 
@@ -137,7 +137,7 @@ func TestHandleUpdateModel_DropParamsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConfig() error = %v", err)
 	}
-	if got := cfg.ModelList[0].DropParams; len(got) != 2 || got[0] != "temperature" || got[1] != "top_p" {
+	if got := cfg.Models[0].DropParams; len(got) != 2 || got[0] != "temperature" || got[1] != "top_p" {
 		t.Fatalf("DropParams = %v, want [temperature top_p]", got)
 	}
 
@@ -171,8 +171,8 @@ func TestHandleUpdateModel_DropParamsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConfig() after clear error = %v", err)
 	}
-	if len(cfg.ModelList[0].DropParams) != 0 {
-		t.Fatalf("DropParams after clear = %v, want empty", cfg.ModelList[0].DropParams)
+	if len(cfg.Models[0].DropParams) != 0 {
+		t.Fatalf("DropParams after clear = %v, want empty", cfg.Models[0].DropParams)
 	}
 }
 
@@ -238,8 +238,8 @@ func TestHandleDeleteModel_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConfig() error = %v", err)
 	}
-	if len(cfg.ModelList) != 0 {
-		t.Fatalf("model_list len = %d, want 0 after delete", len(cfg.ModelList))
+	if len(cfg.Models) != 0 {
+		t.Fatalf("models len = %d, want 0 after delete", len(cfg.Models))
 	}
 }
 
@@ -386,7 +386,7 @@ func TestHandleSetDefaultModel_DisabledModelReturns400(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConfig() error = %v", err)
 	}
-	cfg.ModelList = append(cfg.ModelList, config.ModelConfig{
+	cfg.Models = append(cfg.Models, config.ModelConfig{
 		ModelName: "disabled-model",
 		Model:     "gpt-4o",
 		Provider:  "openai",

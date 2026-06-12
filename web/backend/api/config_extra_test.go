@@ -79,7 +79,7 @@ func TestHandleUpdateConfig_ValidationErrorReturns400(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/api/config", bytes.NewBufferString(`{
 		"agents": {"defaults": {"workspace": "~/.claw/workspace"}, "list": [{"id": "main", "name": "Main", "default": true}]},
 		"providers": [{"name": "openai", "protocol": "openai", "base_url": "https://api.openai.com/v1", "api_key": "k"}],
-		"model_list": [{"model_name": "m", "model": "gpt-4o", "provider": "openai", "enabled": true}],
+		"models": [{"model_name": "m", "model": "gpt-4o", "provider": "openai", "enabled": true}],
 		"channels": {"webui": {"enabled": true, "token": ""}}
 	}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -184,7 +184,7 @@ func TestHandlePatchConfig_UnreadableConfigReturns500(t *testing.T) {
 
 func TestValidateConfig_TelegramBotMissingToken(t *testing.T) {
 	cfg := config.DefaultConfig()
-	cfg.ModelList = []config.ModelConfig{{
+	cfg.Models = []config.ModelConfig{{
 		ModelName: "m",
 		Model:     "gpt-4o",
 		Provider:  "openai",
@@ -213,7 +213,7 @@ func TestValidateConfig_TelegramBotMissingToken(t *testing.T) {
 
 func TestValidateConfig_DiscordMissingToken(t *testing.T) {
 	cfg := config.DefaultConfig()
-	cfg.ModelList = []config.ModelConfig{{
+	cfg.Models = []config.ModelConfig{{
 		ModelName: "m",
 		Model:     "gpt-4o",
 		Provider:  "openai",

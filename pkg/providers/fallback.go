@@ -22,7 +22,7 @@ type FallbackChain struct {
 
 // FallbackCandidate represents one model/provider to try.
 //
-// Alias is the user-facing model_name from the resolved model_list entry,
+// Alias is the user-facing model_name from the resolved models entry,
 // when known. It carries the per-entry openai_compat state through to the
 // dispatcher (response_log_file, reasoning_effort, extra_body, …) when
 // multiple entries share the same wire model. Empty when the candidate was
@@ -125,12 +125,12 @@ func ResolveCandidatesWithLookup(
 				return
 			}
 		}
-		// No model_list match: parse the bare string as a last resort so
+		// No models match: parse the bare string as a last resort so
 		// no-lookup callers (ResolveCandidates) and unconfigured inputs still
 		// produce a candidate.
 		ref := ParseModelRef(original, defaultProvider)
 		if ref == nil {
-			logger.WarnCF("providers", "fallback alias dropped (not enabled in model_list)",
+			logger.WarnCF("providers", "fallback alias dropped (not enabled in models)",
 				map[string]any{"alias": original})
 			return
 		}

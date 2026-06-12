@@ -54,7 +54,7 @@ func (c *providerLLMClient) Complete(ctx context.Context, messages []providers.M
 // resolveCompressModelTarget resolves a configured compress_model reference into
 // the (alias, protocol, modelID) triple that can be handed to the provider
 // dispatcher. Bare aliases and shorthand model IDs are looked up against the
-// loaded model_list, mirroring resolveFromModelList in instance.go.
+// loaded models, mirroring resolveFromModelList in instance.go.
 //
 // The returned alias is the resolved entry's model_name; the dispatcher uses
 // it as the cache/lookup key so per-entry openai_compat state
@@ -62,7 +62,7 @@ func (c *providerLLMClient) Complete(ctx context.Context, messages []providers.M
 // multiple entries share the same wire model.
 //
 // Returns ("", "", "", false) when the reference cannot be resolved against the
-// configured model_list — callers should then fall back to the agent's default
+// configured models — callers should then fall back to the agent's default
 // provider rather than guess a protocol.
 func resolveCompressModelTarget(cfg *config.Config, raw string) (alias, modelID string, ok bool) {
 	raw = strings.TrimSpace(raw)
@@ -71,19 +71,19 @@ func resolveCompressModelTarget(cfg *config.Config, raw string) (alias, modelID 
 	}
 
 	// Direct alias / ModelName lookup wins: this lets users say
-	// compress_model: "haiku" and have it resolve to the model_list entry
+	// compress_model: "haiku" and have it resolve to the models entry
 	// whose model_name == "haiku".
 	if mc, err := cfg.GetModelConfig(raw); err == nil && mc != nil && mc.Model != "" {
 		return mc.ModelName, mc.Model, true
 	}
 
-	// Otherwise scan enabled model_list entries: match by the raw model id.
-	for i := range cfg.ModelList {
-		if !cfg.ModelList[i].Enabled {
+	// Otherwise scan enabled models entries: match by the raw model id.
+	for i := range cfg.Models {
+		if !cfg.Models[i].Enabled {
 			continue
 		}
-		if strings.TrimSpace(cfg.ModelList[i].Model) == raw {
-			return cfg.ModelList[i].ModelName, cfg.ModelList[i].Model, true
+		if strings.TrimSpace(cfg.Models[i].Model) == raw {
+			return cfg.Models[i].ModelName, cfg.Models[i].Model, true
 		}
 	}
 
@@ -92,7 +92,7 @@ func resolveCompressModelTarget(cfg *config.Config, raw string) (alias, modelID 
 
 // buildCompressLLMClient returns the LLMClient used to drive context-window
 // compression for the given agent. When the configured compress_model resolves
-// against the loaded model_list, the per-protocol provider is constructed via
+// against the loaded models, the per-protocol provider is constructed via
 // the dispatcher so non-default protocols (anthropic, openai, openrouter, xai…)
 // don't get accidentally routed through the shared agent.Provider — which on a
 // "claude-cli" default tries to shell out to claude-cli for every compression
@@ -113,13 +113,13 @@ func (al *AgentLoop) buildCompressLLMClient(agent *AgentInstance, compressModelN
 				compressModelName, alias, modelID, err)
 		}
 	} else if !ok {
-		log.Printf("agent: compress_model %q did not match any enabled model_list entry; falling back to agent.Provider",
+		log.Printf("agent: compress_model %q did not match any enabled models entry; falling back to agent.Provider",
 			compressModelName)
 	}
 	// Last-resort fallback: use the agent's primary provider with the raw
 	// compress_model string so the existing single-provider configurations
 	// (e.g. all-anthropic, all-openai deployments) keep working without a
-	// model_list entry.
+	// models entry.
 	return &providerLLMClient{provider: agent.Provider, model: compressModelName, requestJSONObject: true}
 }
 

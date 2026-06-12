@@ -16,7 +16,7 @@ import (
 // ProviderDispatcher creates and caches per-model LLMProvider instances.
 //
 // The cache key is the user-facing alias (ModelConfig.ModelName). Keying by
-// alias is required because multiple model_list entries may share the same raw
+// alias is required because multiple models entries may share the same raw
 // model id while differing on per-entry state (response_log_file,
 // reasoning_effort, extra_body, max_tokens_field, request_timeout, drop_params)
 // or on the named provider they resolve through.
@@ -61,12 +61,12 @@ func (d *ProviderDispatcher) Get(alias string) (LLMProvider, error) {
 	d.mu.RLock()
 	cfgSnapshot := d.cfg
 	var matched *config.ModelConfig
-	for i := range cfgSnapshot.ModelList {
-		if !cfgSnapshot.ModelList[i].Enabled {
+	for i := range cfgSnapshot.Models {
+		if !cfgSnapshot.Models[i].Enabled {
 			continue
 		}
-		if cfgSnapshot.ModelList[i].ModelName == alias {
-			cp := cfgSnapshot.ModelList[i]
+		if cfgSnapshot.Models[i].ModelName == alias {
+			cp := cfgSnapshot.Models[i]
 			matched = &cp
 			break
 		}
@@ -77,7 +77,7 @@ func (d *ProviderDispatcher) Get(alias string) (LLMProvider, error) {
 	d.mu.RUnlock()
 
 	if matched == nil {
-		return nil, fmt.Errorf("dispatcher: no enabled model_list entry with model_name=%q", alias)
+		return nil, fmt.Errorf("dispatcher: no enabled models entry with model_name=%q", alias)
 	}
 
 	prov, err := cfgSnapshot.GetProvider(matched.Provider)

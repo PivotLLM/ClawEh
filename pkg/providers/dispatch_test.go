@@ -21,7 +21,7 @@ func minimalCfg(alias, model string) *config.Config {
 		Providers: []config.Provider{
 			{Name: "claude-cli", Protocol: "claude-cli"},
 		},
-		ModelList: []config.ModelConfig{
+		Models: []config.ModelConfig{
 			{
 				ModelName: alias,
 				Model:     model,

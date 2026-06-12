@@ -54,7 +54,7 @@ func TestHandleListModels_ConfiguredStatusUsesRuntimeProbesForLocalModels(t *tes
 		{Name: "vllm-local", Protocol: "openai", BaseURL: "http://127.0.0.1:8000/v1"},
 		{Name: "vllm-remote", Protocol: "openai", BaseURL: "https://models.example.com/v1", APIKey: "remote-key"},
 	}
-	cfg.ModelList = []config.ModelConfig{
+	cfg.Models = []config.ModelConfig{
 		{ModelName: "anthropic-token", Model: "claude-sonnet-4.6", Provider: "anthropic", Enabled: true},
 		{ModelName: "vllm-local", Model: "custom-model", Provider: "vllm-local", Enabled: true},
 		{ModelName: "vllm-remote", Model: "custom-model", Provider: "vllm-remote", Enabled: true},
@@ -118,7 +118,7 @@ func TestHandleListModels_ConfiguredStatusForOAuthModelWithCredential(t *testing
 		BaseURL:    "https://api.anthropic.com/v1",
 		AuthMethod: "oauth",
 	}}
-	cfg.ModelList = []config.ModelConfig{{
+	cfg.Models = []config.ModelConfig{{
 		ModelName: "claude-oauth",
 		Model:     "claude-sonnet-4.6",
 		Provider:  "anthropic",
@@ -186,7 +186,7 @@ func TestHandleListModels_ProbesLocalModelsConcurrently(t *testing.T) {
 		{Name: "vllm-a", Protocol: "openai", BaseURL: "http://127.0.0.1:8000/v1"},
 		{Name: "vllm-b", Protocol: "openai", BaseURL: "http://127.0.0.1:8001/v1"},
 	}
-	cfg.ModelList = []config.ModelConfig{
+	cfg.Models = []config.ModelConfig{
 		{ModelName: "local-vllm-a", Model: "custom-a", Provider: "vllm-a", Enabled: true},
 		{ModelName: "local-vllm-b", Model: "custom-b", Provider: "vllm-b", Enabled: true},
 	}
@@ -242,7 +242,7 @@ func TestHandleListModels_NormalizesWildcardLocalAPIBaseForProbe(t *testing.T) {
 		Protocol: "openai",
 		BaseURL:  "http://0.0.0.0:8000/v1",
 	}}
-	cfg.ModelList = []config.ModelConfig{{
+	cfg.Models = []config.ModelConfig{{
 		ModelName: "vllm-local",
 		Model:     "custom-model",
 		Provider:  "vllm-local",

@@ -7,13 +7,13 @@ import (
 	"time"
 )
 
-// validConfigJSON is the minimal config the watcher's LoadConfig+ValidateModelList
-// accepts. An empty model_list is valid (validation only rejects malformed lists).
-const validConfigJSON = `{"model_list":[]}`
+// validConfigJSON is the minimal config the watcher's LoadConfig+ValidateModels
+// accepts. An empty models is valid (validation only rejects malformed lists).
+const validConfigJSON = `{"models":[]}`
 
 func writeConfig(t *testing.T, path, extra string) {
 	t.Helper()
-	body := `{"model_list":[],"_marker":"` + extra + `"}`
+	body := `{"models":[],"_marker":"` + extra + `"}`
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}

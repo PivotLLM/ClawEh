@@ -17,21 +17,21 @@ immediately; you do **not** need to remove and re-add the bot from the group.
 
 See [docs/telegram.md](telegram.md) for full setup details.
 
-## "model ... not found in model_list" or OpenRouter "free is not a valid model ID"
+## "model ... not found in models" or OpenRouter "free is not a valid model ID"
 
 **Symptom:** You see either:
 
-- `Error creating provider: model "openrouter/free" not found in model_list`
+- `Error creating provider: model "openrouter/free" not found in models`
 - OpenRouter returns 400: `"free is not a valid model ID"`
 
-**Cause:** The `model` field in your `model_list` entry is what gets sent to the API. For OpenRouter you must use the **full** model ID, not a shorthand.
+**Cause:** The `model` field in your `models` entry is what gets sent to the API. For OpenRouter you must use the **full** model ID, not a shorthand.
 
 - **Wrong:** `"model": "free"` → OpenRouter receives `free` and rejects it.
 - **Right:** `"model": "openrouter/free"` → OpenRouter receives `openrouter/free` (auto free-tier routing).
 
 **Fix:** In `~/.claw/config.json` (or your config path):
 
-1. **agents.defaults.model** must match a `model_name` in `model_list` (e.g. `"openrouter-free"`).
+1. **agents.defaults.model** must match a `model_name` in `models` (e.g. `"openrouter-free"`).
 2. That entry’s **model** must be a valid OpenRouter model ID, for example:
    - `"openrouter/free"` – auto free-tier
    - `"google/gemini-2.0-flash-exp:free"`
@@ -46,7 +46,7 @@ Example snippet:
       "model": "openrouter-free"
     }
   },
-  "model_list": [
+  "models": [
     {
       "model_name": "openrouter-free",
       "model": "openrouter/free",

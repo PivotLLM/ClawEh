@@ -294,6 +294,38 @@ func TestDefaultConfig_Providers(t *testing.T) {
 	}
 }
 
+// TestDefaultConfig_Validates guards the first-run experience: internal.LoadConfig
+// writes DefaultConfig() to disk and immediately reloads it through the
+// validators, so the default must pass ValidateProviders and ValidateModels
+// (every model's provider reference resolves, every provider is well-formed).
+func TestDefaultConfig_Validates(t *testing.T) {
+	cfg := DefaultConfig()
+	if err := cfg.ValidateProviders(); err != nil {
+		t.Fatalf("DefaultConfig ValidateProviders: %v", err)
+	}
+	if err := cfg.ValidateModels(); err != nil {
+		t.Fatalf("DefaultConfig ValidateModels: %v", err)
+	}
+	// Every model must reference a configured provider.
+	for _, m := range cfg.Models {
+		if _, err := cfg.GetProvider(m.Provider); err != nil {
+			t.Errorf("model %q: %v", m.ModelName, err)
+		}
+	}
+	// The default agent model must exist in the model list.
+	def := cfg.Agents.Defaults.DefaultModelName()
+	found := false
+	for _, m := range cfg.Models {
+		if m.ModelName == def {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("default model %q not present in models", def)
+	}
+}
+
 // TestDefaultConfig_Channels verifies channels are disabled by default
 func TestDefaultConfig_Channels(t *testing.T) {
 	cfg := DefaultConfig()
@@ -426,7 +458,7 @@ func TestLoadConfig_WebToolsProxy(t *testing.T) {
 	configJSON := `{
   "agents": {"defaults":{"workspace":"./workspace","model":"gpt4","max_tokens":8192,"max_tool_iterations":20}},
   "providers": [{"name":"openai","protocol":"openai","base_url":"https://api.openai.com/v1","api_key":"x"}],
-  "model_list": [{"model_name":"gpt4","model":"gpt-5.4","provider":"openai","enabled":true}],
+  "models": [{"model_name":"gpt4","model":"gpt-5.4","provider":"openai","enabled":true}],
   "tools": {"web":{"proxy":"http://127.0.0.1:7890"}}
 }`
 	if err := os.WriteFile(configPath, []byte(configJSON), 0o600); err != nil {
@@ -703,7 +735,7 @@ func TestMCPHostEffectivelyEnabled(t *testing.T) {
 					AutoEnable: tc.autoEnable,
 				},
 				Providers: tc.providers,
-				ModelList: tc.models,
+				Models:    tc.models,
 			}
 			if got := cfg.MCPHostEffectivelyEnabled(); got != tc.want {
 				t.Errorf("MCPHostEffectivelyEnabled()=%v, want %v", got, tc.want)

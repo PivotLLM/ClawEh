@@ -30,7 +30,7 @@ type providerResponse struct {
 	NoParallelToolCalls bool   `json:"no_parallel_tool_calls,omitempty"`
 	ResponseFormatJSON  bool   `json:"response_format_json,omitempty"`
 	Command             string `json:"command,omitempty"`
-	// ModelCount is how many model_list entries reference this provider — used
+	// ModelCount is how many models entries reference this provider — used
 	// by the WebUI to warn before deleting an in-use provider.
 	ModelCount int `json:"model_count"`
 }
@@ -43,7 +43,7 @@ func (h *Handler) handleListProviders(w http.ResponseWriter, r *http.Request) {
 	}
 
 	counts := map[string]int{}
-	for _, m := range cfg.ModelList {
+	for _, m := range cfg.Models {
 		counts[m.Provider]++
 	}
 
@@ -134,9 +134,9 @@ func (h *Handler) handleUpdateProvider(w http.ResponseWriter, r *http.Request) {
 
 	// If the provider was renamed, re-point models that referenced it.
 	if p.Name != oldName {
-		for i := range cfg.ModelList {
-			if cfg.ModelList[i].Provider == oldName {
-				cfg.ModelList[i].Provider = p.Name
+		for i := range cfg.Models {
+			if cfg.Models[i].Provider == oldName {
+				cfg.Models[i].Provider = p.Name
 			}
 		}
 	}
@@ -167,7 +167,7 @@ func (h *Handler) handleDeleteProvider(w http.ResponseWriter, r *http.Request) {
 	}
 
 	name := cfg.Providers[idx].Name
-	for _, m := range cfg.ModelList {
+	for _, m := range cfg.Models {
 		if m.Provider == name {
 			http.Error(w, fmt.Sprintf("provider %q is in use by model %q", name, m.ModelName), http.StatusConflict)
 			return
