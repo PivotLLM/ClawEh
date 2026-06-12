@@ -528,7 +528,9 @@
       "noParallelToolCalls": "Disable Parallel Tool Calls",
       "noParallelToolCallsHint": "Send parallel_tool_calls=false so the model emits one tool call at a time.",
       "responseFormatJSON": "JSON Response Format",
-      "responseFormatJSONHint": "Request a JSON response_format from the provider."
+      "responseFormatJSONHint": "Request a JSON response_format from the provider.",
+      "strictAlternation": "Strict Role Alternation",
+      "strictAlternationHint": "For chat-only models that require alternating user/assistant turns and reject system/tool roles (e.g. Gemma): folds the system prompt into the first user turn, turns tool results into user turns, and merges consecutive same-role messages. Pair with Tools Disabled on the model."
     },
     "add": {
       "button": "Add Provider",

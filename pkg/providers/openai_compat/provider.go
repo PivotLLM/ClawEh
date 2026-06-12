@@ -49,6 +49,7 @@ type Provider struct {
 	reasoningEffort     string              // OpenAI/Grok `reasoning_effort` request field; empty omits it
 	extraBody           map[string]any      // Free-form passthrough merged into the request body before marshal
 	dropParams          map[string]struct{} // Top-level request-body fields to strip just before marshal
+	strictAlternation   bool                // Rewrite messages for chat-only strict user/assistant-alternation models
 	modelLabel          string              // User-facing model name used in WarnCF for merge collisions; empty falls back to wire model
 	protocol            string              // Protocol prefix (e.g. "openai", "xai", "openrouter"); drives capability gating
 	responseFormatJSON  bool                // Whether this provider may emit response_format=json_object when callers ask for it
@@ -87,6 +88,15 @@ func WithStrictCompat(v bool) Option {
 func WithNoParallelToolCalls(v bool) Option {
 	return func(p *Provider) {
 		p.noParallelToolCalls = v
+	}
+}
+
+// WithStrictAlternation enables message normalization for chat-only models that
+// require strict user/assistant alternation and reject system/tool roles. See
+// normalizeAlternation for the exact rewrite.
+func WithStrictAlternation(v bool) Option {
+	return func(p *Provider) {
+		p.strictAlternation = v
 	}
 }
 
@@ -226,6 +236,10 @@ func (p *Provider) Chat(
 	}
 
 	model = normalizeModel(model, p.apiBase)
+
+	if p.strictAlternation {
+		messages = normalizeAlternation(messages)
+	}
 
 	requestBody := map[string]any{
 		"model":    model,
@@ -438,6 +452,82 @@ func msgContent(content string, toolCalls []ToolCall) *string {
 		return nil
 	}
 	return &content
+}
+
+// normalizeAlternation rewrites a message list for chat-only models that
+// require strict user/assistant alternation and reject system/tool roles
+// (e.g. Gemma on some Bedrock gateways). It:
+//   - folds system/developer content into the first user turn,
+//   - converts tool-result messages into user turns,
+//   - drops tool_calls/tool_call_id/reasoning (the model can't use them),
+//   - merges consecutive same-role messages.
+//
+// It pairs with no_tools: tool calling cannot work once tool_calls are dropped.
+func normalizeAlternation(in []Message) []Message {
+	var systemPrefix strings.Builder
+	rewritten := make([]Message, 0, len(in))
+	for _, msg := range in {
+		role := msg.Role
+		content := msg.Content
+		switch role {
+		case "system", "developer":
+			if strings.TrimSpace(content) != "" {
+				if systemPrefix.Len() > 0 {
+					systemPrefix.WriteString("\n\n")
+				}
+				systemPrefix.WriteString(content)
+			}
+			continue
+		case "tool":
+			role = "user"
+			if strings.TrimSpace(content) == "" {
+				content = "(tool result)"
+			}
+			content = "Tool result:\n" + content
+		case "assistant":
+			if strings.TrimSpace(content) == "" && len(msg.ToolCalls) > 0 {
+				content = "(requested tool calls)"
+			}
+		}
+		rewritten = append(rewritten, Message{
+			Role:    role,
+			Content: content,
+			Media:   msg.Media,
+		})
+	}
+
+	// Prepend the folded system content to the first user turn (or create one).
+	if systemPrefix.Len() > 0 {
+		placed := false
+		for i := range rewritten {
+			if rewritten[i].Role == "user" {
+				rewritten[i].Content = systemPrefix.String() + "\n\n" + rewritten[i].Content
+				placed = true
+				break
+			}
+		}
+		if !placed {
+			rewritten = append([]Message{{Role: "user", Content: systemPrefix.String()}}, rewritten...)
+		}
+	}
+
+	// Merge consecutive same-role messages.
+	merged := make([]Message, 0, len(rewritten))
+	for _, msg := range rewritten {
+		if n := len(merged); n > 0 && merged[n-1].Role == msg.Role {
+			last := &merged[n-1]
+			if strings.TrimSpace(msg.Content) != "" {
+				if strings.TrimSpace(last.Content) != "" {
+					last.Content += "\n\n"
+				}
+				last.Content += msg.Content
+			}
+			last.Media = append(last.Media, msg.Media...)
+			continue
+		}
+		merged = append(merged, msg)
+	}
+	return merged
 }
 
 // serializeMessages converts internal Message structs to the OpenAI wire format.

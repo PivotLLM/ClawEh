@@ -44,6 +44,7 @@ interface EditForm {
   strictCompat: boolean
   noParallelToolCalls: boolean
   responseFormatJSON: boolean
+  strictAlternation: boolean
 }
 
 interface EditProviderSheetProps {
@@ -71,6 +72,7 @@ export function EditProviderSheet({
     strictCompat: false,
     noParallelToolCalls: false,
     responseFormatJSON: false,
+    strictAlternation: false,
   })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState("")
@@ -90,6 +92,7 @@ export function EditProviderSheet({
         strictCompat: provider.strict_compat ?? false,
         noParallelToolCalls: provider.no_parallel_tool_calls ?? false,
         responseFormatJSON: provider.response_format_json ?? false,
+        strictAlternation: provider.strict_alternation ?? false,
       })
       setError("")
     }
@@ -117,6 +120,7 @@ export function EditProviderSheet({
         strict_compat: form.strictCompat,
         no_parallel_tool_calls: form.noParallelToolCalls,
         response_format_json: form.responseFormatJSON,
+        strict_alternation: form.strictAlternation,
       })
       onSaved()
       onClose()
@@ -268,6 +272,15 @@ export function EditProviderSheet({
                 checked={form.responseFormatJSON}
                 onCheckedChange={(v) =>
                   setForm((f) => ({ ...f, responseFormatJSON: v }))
+                }
+              />
+
+              <SwitchCardField
+                label={t("providers.field.strictAlternation")}
+                hint={t("providers.field.strictAlternationHint")}
+                checked={form.strictAlternation}
+                onCheckedChange={(v) =>
+                  setForm((f) => ({ ...f, strictAlternation: v }))
                 }
               />
             </AdvancedSection>

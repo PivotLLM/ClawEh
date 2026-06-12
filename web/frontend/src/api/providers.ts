@@ -11,6 +11,7 @@ export interface ProviderInfo {
   strict_compat?: boolean
   no_parallel_tool_calls?: boolean
   response_format_json?: boolean
+  strict_alternation?: boolean
   command?: string
   // model_count is how many models reference this provider.
   model_count: number

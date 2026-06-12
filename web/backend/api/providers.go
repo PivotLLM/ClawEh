@@ -29,6 +29,7 @@ type providerResponse struct {
 	StrictCompat        bool   `json:"strict_compat,omitempty"`
 	NoParallelToolCalls bool   `json:"no_parallel_tool_calls,omitempty"`
 	ResponseFormatJSON  bool   `json:"response_format_json,omitempty"`
+	StrictAlternation   bool   `json:"strict_alternation,omitempty"`
 	Command             string `json:"command,omitempty"`
 	// ModelCount is how many models entries reference this provider — used
 	// by the WebUI to warn before deleting an in-use provider.
@@ -61,6 +62,7 @@ func (h *Handler) handleListProviders(w http.ResponseWriter, r *http.Request) {
 			StrictCompat:        p.StrictCompat,
 			NoParallelToolCalls: p.NoParallelToolCalls,
 			ResponseFormatJSON:  p.ResponseFormatJSON,
+			StrictAlternation:   p.StrictAlternation,
 			Command:             p.Command,
 			ModelCount:          counts[p.Name],
 		})
