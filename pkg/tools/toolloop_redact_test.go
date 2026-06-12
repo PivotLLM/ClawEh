@@ -15,7 +15,7 @@ import (
 // success — enough to drive RunToolLoop through its INF/DBG dispatch lines.
 type writeFileSilentTool struct{}
 
-func (writeFileSilentTool) Name() string        { return "write_file" }
+func (writeFileSilentTool) Name() string        { return "file_write" }
 func (writeFileSilentTool) Description() string { return "noop write_file for redaction tests" }
 func (writeFileSilentTool) Parameters() map[string]any {
 	return map[string]any{"type": "object", "properties": map[string]any{}}
@@ -46,9 +46,9 @@ func runToolLoopWriteFileOnce(t *testing.T, secret string) string {
 					{
 						ID:   "tc-1",
 						Type: "function",
-						Name: "write_file",
+						Name: "file_write",
 						Function: &providers.FunctionCall{
-							Name:      "write_file",
+							Name:      "file_write",
 							Arguments: string(argsJSON),
 						},
 					},

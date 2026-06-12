@@ -99,8 +99,8 @@ type Config struct {
 	Session       SessionConfig       `json:"session,omitempty"`
 	AgentMentions AgentMentionConfig  `json:"agent_mentions,omitempty"`
 	Channels      ChannelsConfig      `json:"channels"`
-	Providers     ProvidersConfig     `json:"providers,omitempty"`
-	ModelList     []ModelConfig       `json:"model_list"` // New model-centric provider configuration
+	Providers     []Provider          `json:"providers,omitempty"`
+	Models        []ModelConfig       `json:"models"` // Models, each reached through a named provider
 	Summarization SummarizationConfig `json:"summarization,omitempty"`
 	Gateway       GatewayConfig       `json:"gateway"`
 	Tools         ToolsConfig         `json:"tools"`
@@ -115,42 +115,18 @@ type Config struct {
 	// global.MinConfigReloadIntervalSeconds.
 	ConfigReloadIntervalSeconds int `json:"config_reload_interval_seconds,omitempty" env:"CLAW_CONFIG_RELOAD_INTERVAL_SECONDS"`
 
-	// OpenAICompatProtocols registers additional protocol prefixes that should
-	// be served by the openai-compatible HTTP provider. Keys are the protocol
-	// identifier (the part before "/" in a ModelConfig.Model string); values
-	// are the default api_base for that protocol — empty means "no default,
-	// each model must set api_base explicitly". Keys must not collide with
-	// any protocol owned by a hardcoded provider (see reservedProtocolNames).
-	OpenAICompatProtocols map[string]string `json:"openai_compat_protocols,omitempty"`
-
-	// OpenAICompatResponseFormat overrides the per-protocol default for
-	// emitting `response_format={"type":"json_object"}` on outbound requests
-	// when the caller asks for JSON-mode output. Built-in defaults: openai
-	// and xai are capable; everything else is off. Operators can flip a
-	// configurable protocol on (e.g. openrouter, groq, litellm) without
-	// touching code by setting `openai_compat_response_format: {openrouter:
-	// true}` here. Protocols not present in the map fall back to the
-	// hardcoded default.
-	OpenAICompatResponseFormat map[string]bool `json:"openai_compat_response_format,omitempty"`
-
 	dataDir string // runtime-only: base data directory, not serialized
 }
 
-// MarshalJSON implements custom JSON marshaling for Config
-// to omit providers section when empty and session when empty
+// MarshalJSON implements custom JSON marshaling for Config to omit the session
+// section when empty. The providers list omits naturally via its slice tag.
 func (c Config) MarshalJSON() ([]byte, error) {
 	type Alias Config
 	aux := &struct {
-		Providers *ProvidersConfig `json:"providers,omitempty"`
-		Session   *SessionConfig   `json:"session,omitempty"`
+		Session *SessionConfig `json:"session,omitempty"`
 		*Alias
 	}{
 		Alias: (*Alias)(&c),
-	}
-
-	// Only include providers if not empty
-	if !c.Providers.IsEmpty() {
-		aux.Providers = &c.Providers
 	}
 
 	// Only include session if not empty
@@ -204,7 +180,7 @@ func (m AgentModelConfig) MarshalJSON() ([]byte, error) {
 
 // SummarizationConfig is the global, deployment-wide summarization model chain.
 // Models are tried in order for context compaction across all agents; each entry
-// is a model_list alias (or a raw protocol/model string). The agent's own
+// is a models alias (or a raw protocol/model string). The agent's own
 // primary model is always appended as a final last-resort fallback at runtime.
 // An empty Models list means summarization runs against each agent's own model.
 type SummarizationConfig struct {
@@ -340,13 +316,17 @@ type SessionConfig struct {
 // requiring any keyword matching — all scoring is language-agnostic.
 type RoutingConfig struct {
 	Enabled    bool    `json:"enabled"`
-	LightModel string  `json:"light_model"` // model_name from model_list to use for simple tasks
+	LightModel string  `json:"light_model"` // model_name from models to use for simple tasks
 	Threshold  float64 `json:"threshold"`   // complexity score in [0,1]; score >= threshold → primary model
 }
 
 type AgentDefaults struct {
-	Workspace                  string            `json:"workspace,omitempty"             env:"CLAW_AGENTS_DEFAULTS_WORKSPACE"`
-	RestrictToWorkspace        bool              `json:"restrict_to_workspace"           env:"CLAW_AGENTS_DEFAULTS_RESTRICT_TO_WORKSPACE"`
+	Workspace           string `json:"workspace,omitempty"             env:"CLAW_AGENTS_DEFAULTS_WORKSPACE"`
+	RestrictToWorkspace bool   `json:"restrict_to_workspace"           env:"CLAW_AGENTS_DEFAULTS_RESTRICT_TO_WORKSPACE"`
+	// StreamToolActivity, when true, sends the model's inter-tool narration and
+	// each tool's user-facing output to the channel as it happens. When false
+	// (default) the user receives only the final answer, not the play-by-play.
+	StreamToolActivity         bool              `json:"stream_tool_activity,omitempty"  env:"CLAW_AGENTS_DEFAULTS_STREAM_TOOL_ACTIVITY"`
 	AllowReadOutsideWorkspace  bool              `json:"allow_read_outside_workspace"    env:"CLAW_AGENTS_DEFAULTS_ALLOW_READ_OUTSIDE_WORKSPACE"`
 	Model                      *AgentModelConfig `json:"model,omitempty"`
 	ImageModel                 string            `json:"image_model,omitempty"           env:"CLAW_AGENTS_DEFAULTS_IMAGE_MODEL"`
@@ -611,66 +591,30 @@ type LoggingConfig struct {
 	DumpAll bool `json:"dump_all" env:"CLAW_LOGGING_DUMP_ALL"`
 }
 
-type ProvidersConfig struct {
-	Anthropic  ProviderConfig       `json:"anthropic"`
-	OpenAI     OpenAIProviderConfig `json:"openai"`
-	LiteLLM    ProviderConfig       `json:"litellm"`
-	OpenRouter ProviderConfig       `json:"openrouter"`
-	Groq       ProviderConfig       `json:"groq"`
-	VLLM       ProviderConfig       `json:"vllm"`
-	Gemini     ProviderConfig       `json:"gemini"`
-	Nvidia     ProviderConfig       `json:"nvidia"`
-	Ollama     ProviderConfig       `json:"ollama"`
-	Moonshot   ProviderConfig       `json:"moonshot"`
-	DeepSeek   ProviderConfig       `json:"deepseek"`
-	Cerebras   ProviderConfig       `json:"cerebras"`
-	Qwen       ProviderConfig       `json:"qwen"`
-	Mistral    ProviderConfig       `json:"mistral"`
-	Avian      ProviderConfig       `json:"avian"`
-}
-
-// IsEmpty checks if all provider configs are empty (no API keys or API bases set)
-// Note: WebSearch is an optimization option and doesn't count as "non-empty"
-func (p ProvidersConfig) IsEmpty() bool {
-	return p.Anthropic.APIKey == "" && p.Anthropic.APIBase == "" &&
-		p.OpenAI.APIKey == "" && p.OpenAI.APIBase == "" &&
-		p.LiteLLM.APIKey == "" && p.LiteLLM.APIBase == "" &&
-		p.OpenRouter.APIKey == "" && p.OpenRouter.APIBase == "" &&
-		p.Groq.APIKey == "" && p.Groq.APIBase == "" &&
-		p.VLLM.APIKey == "" && p.VLLM.APIBase == "" &&
-		p.Gemini.APIKey == "" && p.Gemini.APIBase == "" &&
-		p.Nvidia.APIKey == "" && p.Nvidia.APIBase == "" &&
-		p.Ollama.APIKey == "" && p.Ollama.APIBase == "" &&
-		p.Moonshot.APIKey == "" && p.Moonshot.APIBase == "" &&
-		p.DeepSeek.APIKey == "" && p.DeepSeek.APIBase == "" &&
-		p.Cerebras.APIKey == "" && p.Cerebras.APIBase == "" &&
-		p.Qwen.APIKey == "" && p.Qwen.APIBase == "" &&
-		p.Mistral.APIKey == "" && p.Mistral.APIBase == "" &&
-		p.Avian.APIKey == "" && p.Avian.APIBase == ""
-}
-
-// MarshalJSON implements custom JSON marshaling for ProvidersConfig
-// to omit the entire section when empty
-func (p ProvidersConfig) MarshalJSON() ([]byte, error) {
-	if p.IsEmpty() {
-		return []byte("null"), nil
-	}
-	type Alias ProvidersConfig
-	return json.Marshal((*Alias)(&p))
-}
-
-type ProviderConfig struct {
-	APIKey         string `json:"api_key"                   env:"CLAW_PROVIDERS_{{.Name}}_API_KEY"`
-	APIBase        string `json:"api_base"                  env:"CLAW_PROVIDERS_{{.Name}}_API_BASE"`
-	Proxy          string `json:"proxy,omitempty"           env:"CLAW_PROVIDERS_{{.Name}}_PROXY"`
-	RequestTimeout int    `json:"request_timeout,omitempty" env:"CLAW_PROVIDERS_{{.Name}}_REQUEST_TIMEOUT"`
-	AuthMethod     string `json:"auth_method,omitempty"     env:"CLAW_PROVIDERS_{{.Name}}_AUTH_METHOD"`
-	ConnectMode    string `json:"connect_mode,omitempty"    env:"CLAW_PROVIDERS_{{.Name}}_CONNECT_MODE"`
-}
-
-type OpenAIProviderConfig struct {
-	ProviderConfig
-	WebSearch bool `json:"web_search" env:"CLAW_PROVIDERS_OPENAI_WEB_SEARCH"`
+// Provider is a named endpoint a model is reached through. It owns the wire
+// protocol, the base URL, the credentials, and endpoint-scoped quirks. Models
+// reference a provider by Name; the WebUI groups models by provider.
+type Provider struct {
+	Name     string `json:"name"`     // Unique identifier referenced by ModelConfig.Provider
+	Protocol string `json:"protocol"` // Wire format: openai, anthropic, anthropic-messages, azure, claude-cli, codex-cli, gemini-cli
+	BaseURL  string `json:"base_url,omitempty"`
+	APIKey   string `json:"api_key,omitempty"`
+	Proxy    string `json:"proxy,omitempty"`
+	// AuthMethod is how we authenticate to this endpoint: "" (api key), "oauth",
+	// or "token". OAuth is only meaningful for the anthropic protocol.
+	AuthMethod string `json:"auth_method,omitempty"`
+	// Endpoint-scoped openai-compat knobs.
+	StrictCompat        bool `json:"strict_compat,omitempty"`
+	NoParallelToolCalls bool `json:"no_parallel_tool_calls,omitempty"`
+	ResponseFormatJSON  bool `json:"response_format_json,omitempty"`
+	// StrictAlternation rewrites the outbound message list for chat-only models
+	// that require strict user/assistant alternation and reject system/tool roles
+	// (e.g. Gemma on some gateways): the system prompt is folded into the first
+	// user turn, tool results become user turns, and consecutive same-role
+	// messages are merged. Pair with no_tools, since tool_calls are dropped.
+	StrictAlternation bool `json:"strict_alternation,omitempty"`
+	// Command overrides the binary path for CLI protocols (claude-cli, etc.).
+	Command string `json:"command,omitempty"`
 }
 
 // ModelConfig represents a model-centric provider configuration.
@@ -681,18 +625,12 @@ type OpenAIProviderConfig struct {
 type ModelConfig struct {
 	// Required fields
 	ModelName string `json:"model_name"` // User-facing alias for the model
-	Model     string `json:"model"`      // Protocol/model-identifier (e.g., "openai/gpt-4o", "anthropic/claude-sonnet-4.6")
-
-	// HTTP-based providers
-	APIBase string `json:"api_base,omitempty"` // API endpoint URL
-	APIKey  string `json:"api_key"`            // API authentication key
-	Proxy   string `json:"proxy,omitempty"`    // HTTP proxy URL
+	Model     string `json:"model"`      // Raw model id the endpoint expects (no claw protocol prefix)
+	Provider  string `json:"provider"`   // Name of the Provider this model is reached through
 
 	// Special providers (CLI-based, OAuth, etc.)
-	AuthMethod  string `json:"auth_method,omitempty"`  // Authentication method: oauth, token
 	ConnectMode string `json:"connect_mode,omitempty"` // Connection mode: stdio, grpc
 	Workspace   string `json:"workspace,omitempty"`    // Workspace path for CLI-based providers
-	Command     string `json:"command,omitempty"`      // Override binary path for CLI providers (e.g., /home/user/.local/bin/claude)
 
 	// Optional optimizations
 	RPM            int               `json:"rpm,omitempty"`              // Requests per minute limit
@@ -700,7 +638,6 @@ type ModelConfig struct {
 	ContextWindow  int               `json:"context_window,omitempty"`   // Actual model context window size in tokens
 	MaxTokensField string            `json:"max_tokens_field,omitempty"` // Field name for max tokens (e.g., "max_completion_tokens")
 	RequestTimeout int               `json:"request_timeout,omitempty"`
-	StrictCompat   bool              `json:"strict_compat,omitempty"`  // Strip non-standard fields for strict OpenAI-compatible endpoints
 	ThinkingLevel  string            `json:"thinking_level,omitempty"` // Extended thinking: off|low|medium|high|xhigh|adaptive
 	NoTools        bool              `json:"no_tools,omitempty"`       // When true, tools are not passed to this model
 	ExtraArgs      []string          `json:"extra_args,omitempty"`     // Additional CLI arguments appended after required flags
@@ -725,70 +662,14 @@ type ModelConfig struct {
 	// (see reservedRequestBodyKeys) are rejected at config load.
 	ExtraBody map[string]any `json:"extra_body,omitempty" yaml:"extra_body,omitempty"`
 
-	// Runtime-only: set by Config.resolveOpenAICompatProtocols when the
-	// model's protocol prefix matches an entry in
-	// Config.OpenAICompatProtocols. Unexported so JSON ignores them.
-	openaiCompatExtra bool
-	openaiCompatBase  string
-
-	// Runtime-only: set during config resolution from
-	// Config.OpenAICompatResponseFormat. When true, the openai-compat
-	// provider built from this ModelConfig is allowed to emit
-	// response_format=json_object on outbound requests (the built-in
-	// per-protocol default is OR'd in by the provider itself). Unexported
-	// so JSON ignores it.
-	responseFormatJSON bool
-}
-
-// IsOpenAICompatExtra reports whether this model's protocol prefix was
-// registered via Config.OpenAICompatProtocols. The providers factory uses
-// this to route an otherwise-unknown protocol through the openai-compat
-// HTTP provider.
-func (c *ModelConfig) IsOpenAICompatExtra() bool {
-	if c == nil {
-		return false
-	}
-	return c.openaiCompatExtra
-}
-
-// OpenAICompatBase returns the default api_base registered for this model's
-// protocol via Config.OpenAICompatProtocols. Empty when the protocol was not
-// registered, or when it was registered with an empty default.
-func (c *ModelConfig) OpenAICompatBase() string {
-	if c == nil {
-		return ""
-	}
-	return c.openaiCompatBase
-}
-
-// MarkOpenAICompatExtra tags this ModelConfig as resolved via
-// Config.OpenAICompatProtocols. base is the registered default api_base
-// (may be empty). Called by Config.resolveOpenAICompatProtocols; also useful
-// in tests that construct a ModelConfig directly without going through
-// LoadConfig.
-func (c *ModelConfig) MarkOpenAICompatExtra(base string) {
-	c.openaiCompatExtra = true
-	c.openaiCompatBase = base
-}
-
-// ResponseFormatJSONCapable reports whether this ModelConfig has been
-// resolved as capable of receiving response_format=json_object via the
-// Config.OpenAICompatResponseFormat override. The built-in per-protocol
-// defaults are applied separately inside the openai-compat provider; this
-// flag only conveys the operator-supplied override.
-func (c *ModelConfig) ResponseFormatJSONCapable() bool {
-	if c == nil {
-		return false
-	}
-	return c.responseFormatJSON
-}
-
-// SetResponseFormatJSONCapable records the operator-supplied override that
-// the openai-compat provider should be permitted to emit response_format=
-// json_object for this model. Called by config resolution; exposed so tests
-// can build ModelConfigs directly without round-tripping through LoadConfig.
-func (c *ModelConfig) SetResponseFormatJSONCapable(v bool) {
-	c.responseFormatJSON = v
+	// DropParams lists top-level request-body fields to strip before sending to
+	// OpenAI-compatible providers. Use it to suppress a parameter a model or
+	// upstream rejects — e.g. "temperature" for OpenRouter reasoning models that
+	// don't advertise it and would 404 under provider.require_parameters.
+	// Stripping is applied last (after extra_body), so it always wins. It is a
+	// literal filter: listing structural fields like "messages" or "model" will
+	// break the request. Ignored by providers other than openai_compat.
+	DropParams []string `json:"drop_params,omitempty" yaml:"drop_params,omitempty"`
 }
 
 // reservedRequestBodyKeys lists the JSON request fields owned by claw's own
@@ -817,6 +698,9 @@ func (c *ModelConfig) Validate() error {
 	}
 	if c.Model == "" {
 		return fmt.Errorf("model is required")
+	}
+	if c.Provider == "" {
+		return fmt.Errorf("model %q: provider is required", c.ModelName)
 	}
 	switch c.ReasoningEffort {
 	case "", "low", "medium", "high":
@@ -947,29 +831,24 @@ type ReadFileToolConfig struct {
 }
 
 type ToolsConfig struct {
-	AllowReadPaths  []string           `json:"allow_read_paths"  env:"CLAW_TOOLS_ALLOW_READ_PATHS"`
-	AllowWritePaths []string           `json:"allow_write_paths" env:"CLAW_TOOLS_ALLOW_WRITE_PATHS"`
-	Web             WebToolsConfig     `json:"web"`
-	Cron            CronToolsConfig    `json:"cron"`
-	Exec            ExecConfig         `json:"exec"`
-	Skills          SkillsToolsConfig  `json:"skills"`
-	MediaCleanup    MediaCleanupConfig `json:"media_cleanup"`
-	MCP             MCPConfig          `json:"mcp"`
-	AppendFile      ToolConfig         `json:"append_file"                                              envPrefix:"CLAW_TOOLS_APPEND_FILE_"`
-	CopyFile        ToolConfig         `json:"copy_file"                                                envPrefix:"CLAW_TOOLS_COPY_FILE_"`
-	EditFile        ToolConfig         `json:"edit_file"                                                envPrefix:"CLAW_TOOLS_EDIT_FILE_"`
-	FindSkills      ToolConfig         `json:"find_skills"                                              envPrefix:"CLAW_TOOLS_FIND_SKILLS_"`
-	I2C             ToolConfig         `json:"i2c"                                                      envPrefix:"CLAW_TOOLS_I2C_"`
-	InstallSkill    ToolConfig         `json:"install_skill"                                            envPrefix:"CLAW_TOOLS_INSTALL_SKILL_"`
-	ListDir         ToolConfig         `json:"list_dir"                                                 envPrefix:"CLAW_TOOLS_LIST_DIR_"`
-	Message         ToolConfig         `json:"message"                                                  envPrefix:"CLAW_TOOLS_MESSAGE_"`
-	ReadFile        ReadFileToolConfig `json:"read_file"                                                envPrefix:"CLAW_TOOLS_READ_FILE_"`
-	SendFile        ToolConfig         `json:"send_file"                                                envPrefix:"CLAW_TOOLS_SEND_FILE_"`
-	Spawn           ToolConfig         `json:"spawn"                                                    envPrefix:"CLAW_TOOLS_SPAWN_"`
-	SPI             ToolConfig         `json:"spi"                                                      envPrefix:"CLAW_TOOLS_SPI_"`
-	Subagent        ToolConfig         `json:"subagent"                                                 envPrefix:"CLAW_TOOLS_SUBAGENT_"`
-	WebFetch        ToolConfig         `json:"web_fetch"                                                envPrefix:"CLAW_TOOLS_WEB_FETCH_"`
-	WriteFile       ToolConfig         `json:"write_file"                                               envPrefix:"CLAW_TOOLS_WRITE_FILE_"`
+	AllowReadPaths  []string `json:"allow_read_paths"  env:"CLAW_TOOLS_ALLOW_READ_PATHS"`
+	AllowWritePaths []string `json:"allow_write_paths" env:"CLAW_TOOLS_ALLOW_WRITE_PATHS"`
+	// Overrides is a generic per-tool enable map keyed by published tool name
+	// (e.g. "skill_find"). It is the dynamic gating path for tools that have no
+	// dedicated typed field — namespaced/global-layer tools register here so the
+	// WebUI can toggle them without code changes. Checked first by IsToolEnabled.
+	Overrides    map[string]bool    `json:"tool_overrides,omitempty"`
+	Web          WebToolsConfig     `json:"web"`
+	Cron         CronToolsConfig    `json:"cron"`
+	Exec         ExecConfig         `json:"exec"`
+	Skills       SkillsToolsConfig  `json:"skills"`
+	MediaCleanup MediaCleanupConfig `json:"media_cleanup"`
+	MCP          MCPConfig          `json:"mcp"`
+	// ReadFile carries the read-size limit used at tool construction (its enabled
+	// state, like every per-tool toggle, lives in Overrides now).
+	ReadFile ReadFileToolConfig `json:"read_file"                                                envPrefix:"CLAW_TOOLS_READ_FILE_"`
+	// Subagent is a capability gate (off by default), not a per-tool enable.
+	Subagent ToolConfig `json:"subagent"                                                 envPrefix:"CLAW_TOOLS_SUBAGENT_"`
 }
 
 type SearchCacheConfig struct {
@@ -1057,7 +936,7 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, err
 	}
 
-	// Pre-scan the JSON to check how many model_list / agents.list entries the
+	// Pre-scan the JSON to check how many models / agents.list entries the
 	// user provided. Go's JSON decoder reuses existing slice backing-array
 	// elements rather than zero-initializing them, so fields absent from the
 	// user's JSON (e.g. workspace) would silently inherit values from the
@@ -1068,8 +947,8 @@ func LoadConfig(path string) (*Config, error) {
 	if err := json.Unmarshal(data, &tmp); err != nil {
 		return nil, err
 	}
-	if len(tmp.ModelList) > 0 {
-		cfg.ModelList = nil
+	if len(tmp.Models) > 0 {
+		cfg.Models = nil
 	}
 	if len(tmp.Agents.List) > 0 {
 		cfg.Agents.List = nil
@@ -1088,23 +967,15 @@ func LoadConfig(path string) (*Config, error) {
 	// Migrate legacy channel config fields to new unified structures
 	cfg.migrateChannelConfigs()
 
-	// Auto-migrate: if only legacy providers config exists, convert to model_list
-	if len(cfg.ModelList) == 0 && cfg.HasProvidersConfig() {
-		cfg.ModelList = ConvertProvidersToModelList(cfg)
-	}
-
-	// Validate model_list for uniqueness and required fields
-	if err := cfg.ValidateModelList(); err != nil {
+	// Auto-migrate: if only legacy providers config exists, convert to models
+	// Validate providers, then models (including that each model's provider
+	// reference resolves).
+	if err := cfg.ValidateProviders(); err != nil {
 		return nil, err
 	}
-
-	// Reject openai_compat_protocols entries that collide with hardcoded
-	// providers, then tag matching model_list entries so the providers
-	// factory can route them via the openai-compat HTTP provider.
-	if err := cfg.ValidateOpenAICompatProtocols(); err != nil {
+	if err := cfg.ValidateModels(); err != nil {
 		return nil, err
 	}
-	cfg.resolveOpenAICompatProtocols()
 
 	return cfg, nil
 }
@@ -1158,19 +1029,15 @@ func SaveConfig(path string, cfg *Config) error {
 // *-cli protocol (claude-cli, codex-cli, gemini-cli). Those CLIs rely on
 // the MCP host to call claw's tools natively.
 func (c *Config) HasCLIProvider() bool {
-	for i := range c.ModelList {
-		if !c.ModelList[i].Enabled {
+	for i := range c.Models {
+		if !c.Models[i].Enabled {
 			continue
 		}
-		model := strings.TrimSpace(c.ModelList[i].Model)
-		protocol, _, found := strings.Cut(model, "/")
-		if !found {
+		prov, err := c.GetProvider(c.Models[i].Provider)
+		if err != nil {
 			continue
 		}
-		switch protocol {
-		case "claude-cli", "claudecli",
-			"codex-cli", "codexcli",
-			"gemini-cli", "geminicli":
+		if IsCLIProtocol(prov.Protocol) {
 			return true
 		}
 	}
@@ -1264,44 +1131,6 @@ func (c *Config) CronPath() string {
 	return filepath.Join(c.dataDir, "cron")
 }
 
-func (c *Config) GetAPIKey() string {
-	if c.Providers.OpenRouter.APIKey != "" {
-		return c.Providers.OpenRouter.APIKey
-	}
-	if c.Providers.Anthropic.APIKey != "" {
-		return c.Providers.Anthropic.APIKey
-	}
-	if c.Providers.OpenAI.APIKey != "" {
-		return c.Providers.OpenAI.APIKey
-	}
-	if c.Providers.Gemini.APIKey != "" {
-		return c.Providers.Gemini.APIKey
-	}
-	if c.Providers.Groq.APIKey != "" {
-		return c.Providers.Groq.APIKey
-	}
-	if c.Providers.VLLM.APIKey != "" {
-		return c.Providers.VLLM.APIKey
-	}
-	if c.Providers.Cerebras.APIKey != "" {
-		return c.Providers.Cerebras.APIKey
-	}
-	return ""
-}
-
-func (c *Config) GetAPIBase() string {
-	if c.Providers.OpenRouter.APIKey != "" {
-		if c.Providers.OpenRouter.APIBase != "" {
-			return c.Providers.OpenRouter.APIBase
-		}
-		return "https://openrouter.ai/api/v1"
-	}
-	if c.Providers.VLLM.APIKey != "" && c.Providers.VLLM.APIBase != "" {
-		return c.Providers.VLLM.APIBase
-	}
-	return ""
-}
-
 func expandHome(path string) string {
 	if path == "" {
 		return path
@@ -1322,7 +1151,7 @@ func expandHome(path string) string {
 func (c *Config) GetModelConfig(modelName string) (*ModelConfig, error) {
 	matches := c.findMatches(modelName)
 	if len(matches) == 0 {
-		return nil, fmt.Errorf("model %q not found in model_list or providers", modelName)
+		return nil, fmt.Errorf("model %q not found in models or providers", modelName)
 	}
 	if len(matches) == 1 {
 		return &matches[0], nil
@@ -1336,130 +1165,116 @@ func (c *Config) GetModelConfig(modelName string) (*ModelConfig, error) {
 // findMatches finds all ModelConfig entries with the given model_name.
 func (c *Config) findMatches(modelName string) []ModelConfig {
 	var matches []ModelConfig
-	for i := range c.ModelList {
-		if c.ModelList[i].ModelName == modelName && c.ModelList[i].Enabled {
-			matches = append(matches, c.ModelList[i])
+	for i := range c.Models {
+		if c.Models[i].ModelName == modelName && c.Models[i].Enabled {
+			matches = append(matches, c.Models[i])
 		}
 	}
 	return matches
 }
 
-// HasProvidersConfig checks if any provider in the old providers config has configuration.
-func (c *Config) HasProvidersConfig() bool {
-	return !c.Providers.IsEmpty()
-}
-
-// ValidateModelList validates all ModelConfig entries in the model_list.
-// It checks that each model config is valid.
-// Note: Multiple entries with the same model_name are allowed for load balancing.
-func (c *Config) ValidateModelList() error {
-	for i := range c.ModelList {
-		if err := c.ModelList[i].Validate(); err != nil {
-			return fmt.Errorf("model_list[%d]: %w", i, err)
-		}
-	}
-	return nil
-}
-
-// reservedProtocolNames is the set of protocol identifiers owned by a
-// hardcoded case branch in pkg/providers/factory_provider.go. Entries in
-// Config.OpenAICompatProtocols may not use these names — operators should
-// rely on the built-in behavior for these protocols, or pick a different
-// identifier.
-//
-// Keep this list in sync with the switch in
-// pkg/providers/factory_provider.go:CreateProviderFromConfig.
-var reservedProtocolNames = map[string]struct{}{
+// validProtocols is the set of wire protocols a Provider may declare. Each maps
+// to an internal provider implementation in pkg/providers.
+var validProtocols = map[string]struct{}{
 	"openai":             {},
 	"azure":              {},
-	"azure-openai":       {},
-	"bedrock":            {},
-	"litellm":            {},
-	"openrouter":         {},
-	"groq":               {},
-	"gemini":             {},
-	"nvidia":             {},
-	"ollama":             {},
-	"moonshot":           {},
-	"deepseek":           {},
-	"cerebras":           {},
-	"vllm":               {},
-	"qwen":               {},
-	"mistral":            {},
-	"avian":              {},
-	"xai":                {},
 	"anthropic":          {},
 	"anthropic-messages": {},
 	"claude-cli":         {},
-	"claudecli":          {},
 	"codex-cli":          {},
-	"codexcli":           {},
 	"gemini-cli":         {},
-	"geminicli":          {},
 }
 
-// IsReservedProtocol reports whether name collides with a protocol owned by
-// a hardcoded provider in pkg/providers/factory_provider.go.
-func IsReservedProtocol(name string) bool {
-	_, ok := reservedProtocolNames[strings.ToLower(strings.TrimSpace(name))]
-	return ok
+// httpProtocols are the protocols that require a base_url.
+var httpProtocols = map[string]struct{}{
+	"openai":             {},
+	"azure":              {},
+	"anthropic":          {},
+	"anthropic-messages": {},
 }
 
-// ValidateOpenAICompatProtocols checks that no entry in OpenAICompatProtocols
-// collides with a hardcoded provider protocol or is otherwise malformed.
-// An entry duplicating a hardcoded openai-compat protocol (e.g. "xai") is
-// rejected — those protocols already ship with the right defaults, and
-// allowing operators to silently override them would mask drift between the
-// config-driven default and the hardcoded one.
-func (c *Config) ValidateOpenAICompatProtocols() error {
-	for proto := range c.OpenAICompatProtocols {
-		p := strings.TrimSpace(proto)
-		if p == "" {
-			return fmt.Errorf("openai_compat_protocols: empty protocol name")
+// IsCLIProtocol reports whether the protocol is a subprocess CLI provider,
+// which authenticates out-of-band and needs no API key.
+func IsCLIProtocol(protocol string) bool {
+	switch protocol {
+	case "claude-cli", "codex-cli", "gemini-cli":
+		return true
+	default:
+		return false
+	}
+}
+
+// HasCredentials reports whether this provider carries enough to authenticate:
+// CLI providers always qualify (they auth out-of-band); HTTP providers need an
+// API key or an OAuth/token auth method.
+func (p *Provider) HasCredentials() bool {
+	if IsCLIProtocol(p.Protocol) {
+		return true
+	}
+	return p.APIKey != "" || p.AuthMethod != ""
+}
+
+// GetProvider resolves a provider by name. The lookup is case-sensitive on the
+// configured Name.
+func (c *Config) GetProvider(name string) (*Provider, error) {
+	for i := range c.Providers {
+		if c.Providers[i].Name == name {
+			return &c.Providers[i], nil
 		}
-		if strings.ContainsAny(p, "/ \t") {
-			return fmt.Errorf("openai_compat_protocols: protocol name %q must not contain '/' or whitespace", proto)
-		}
-		if IsReservedProtocol(p) {
-			return fmt.Errorf(
-				"openai_compat_protocols: protocol %q is reserved by a built-in provider; remove the entry or pick a different name",
-				proto,
-			)
+	}
+	return nil, fmt.Errorf("provider %q not found", name)
+}
+
+// FindProviderByProtocol returns the first provider declaring the given
+// protocol, or nil. Used by flows that target a wire family rather than a
+// specific named endpoint (e.g. OAuth login attaching to the anthropic
+// provider).
+func (c *Config) FindProviderByProtocol(protocol string) *Provider {
+	for i := range c.Providers {
+		if c.Providers[i].Protocol == protocol {
+			return &c.Providers[i]
 		}
 	}
 	return nil
 }
 
-// resolveOpenAICompatProtocols walks ModelList and tags any entry whose
-// protocol prefix appears in OpenAICompatProtocols, recording the registered
-// default api_base on the entry so the providers factory can route it through
-// the openai-compat HTTP provider without a hardcoded switch entry. It also
-// applies any per-protocol overrides from OpenAICompatResponseFormat so the
-// openai-compat provider knows whether it may emit response_format=json_object
-// when a caller asks for JSON-mode output.
-func (c *Config) resolveOpenAICompatProtocols() {
-	for i := range c.ModelList {
-		proto := extractProtocolStatic(c.ModelList[i].Model)
-		if len(c.OpenAICompatProtocols) > 0 {
-			if base, ok := c.OpenAICompatProtocols[proto]; ok {
-				c.ModelList[i].MarkOpenAICompatExtra(base)
-			}
+// ValidateProviders checks that provider names are unique and non-empty, each
+// protocol is recognised, and HTTP protocols carry a base_url.
+func (c *Config) ValidateProviders() error {
+	seen := make(map[string]struct{}, len(c.Providers))
+	for i := range c.Providers {
+		p := &c.Providers[i]
+		if strings.TrimSpace(p.Name) == "" {
+			return fmt.Errorf("providers[%d]: name is required", i)
 		}
-		if enabled, ok := c.OpenAICompatResponseFormat[proto]; ok {
-			c.ModelList[i].SetResponseFormatJSONCapable(enabled)
+		if _, dup := seen[p.Name]; dup {
+			return fmt.Errorf("providers[%d]: duplicate provider name %q", i, p.Name)
+		}
+		seen[p.Name] = struct{}{}
+		if _, ok := validProtocols[p.Protocol]; !ok {
+			return fmt.Errorf("provider %q: unknown protocol %q", p.Name, p.Protocol)
+		}
+		if _, http := httpProtocols[p.Protocol]; http && p.BaseURL == "" {
+			return fmt.Errorf("provider %q: base_url is required for protocol %q", p.Name, p.Protocol)
 		}
 	}
+	return nil
 }
 
-// extractProtocolStatic mirrors providers.ExtractProtocol; duplicated here to
-// avoid an import cycle (providers imports config).
-func extractProtocolStatic(model string) string {
-	model = strings.TrimSpace(model)
-	protocol, _, found := strings.Cut(model, "/")
-	if !found {
-		return "openai"
+// ValidateModels validates all ModelConfig entries in the models,
+// including that each model's provider reference resolves to a configured
+// provider. Multiple entries with the same model_name are allowed for load
+// balancing.
+func (c *Config) ValidateModels() error {
+	for i := range c.Models {
+		if err := c.Models[i].Validate(); err != nil {
+			return fmt.Errorf("models[%d]: %w", i, err)
+		}
+		if _, err := c.GetProvider(c.Models[i].Provider); err != nil {
+			return fmt.Errorf("models[%d] (%q): %w", i, c.Models[i].ModelName, err)
+		}
 	}
-	return protocol
+	return nil
 }
 
 func MergeAPIKeys(apiKey string, apiKeys []string) []string {
@@ -1486,86 +1301,30 @@ func MergeAPIKeys(apiKey string, apiKeys []string) []string {
 }
 
 func (t *ToolsConfig) IsToolEnabled(name string) bool {
+	// Generic overrides win — this is the dynamic gating path for global-layer
+	// tools that have no dedicated typed field.
+	if v, ok := t.Overrides[name]; ok {
+		return v
+	}
 	switch name {
-	// Namespaced names
-	case "files_read":
-		return t.ReadFile.Enabled
-	case "files_write":
-		return t.WriteFile.Enabled
-	case "files_list":
-		return t.ListDir.Enabled
-	case "files_edit":
-		return t.EditFile.Enabled
-	case "files_append":
-		return t.AppendFile.Enabled
-	case "files_copy":
-		return t.CopyFile.Enabled
-	case "shell_exec":
-		return t.Exec.Enabled
-	case "web_search":
-		return t.Web.Enabled
-	case "web_fetch":
-		return t.WebFetch.Enabled
-	case "session_messages", "session_search", "session_compact", "session_info":
-		return true
-	case "msg_send":
-		return t.Message.Enabled
-	case "msg_send_file":
-		return t.SendFile.Enabled
-	case "skills_find":
-		return t.FindSkills.Enabled
-	case "skills_install":
-		return t.InstallSkill.Enabled
-	case "agents_spawn":
-		return t.Spawn.Enabled
-	case "hw_i2c":
-		return t.I2C.Enabled
-	case "hw_spi":
-		return t.SPI.Enabled
-	case "schedule_cron":
-		return t.Cron.Enabled
-	// Legacy names kept for backward compatibility
-	case "web":
-		return t.Web.Enabled
-	case "cron":
-		return t.Cron.Enabled
-	case "exec":
-		return t.Exec.Enabled
-	case "skills":
-		return t.Skills.Local.Enabled
-	case "media_cleanup":
-		return t.MediaCleanup.Enabled
-	case "append_file":
-		return t.AppendFile.Enabled
-	case "copy_file":
-		return t.CopyFile.Enabled
-	case "edit_file":
-		return t.EditFile.Enabled
-	case "find_skills":
-		return t.FindSkills.Enabled
-	case "i2c":
-		return t.I2C.Enabled
-	case "install_skill":
-		return t.InstallSkill.Enabled
-	case "list_dir":
-		return t.ListDir.Enabled
-	case "message":
-		return t.Message.Enabled
-	case "read_file":
-		return t.ReadFile.Enabled
-	case "spawn":
-		return t.Spawn.Enabled
-	case "spi":
-		return t.SPI.Enabled
-	case "subagent":
-		return t.Subagent.Enabled
-	case "send_file":
-		return t.SendFile.Enabled
-	case "write_file":
-		return t.WriteFile.Enabled
+	// Capability gates (off by default; these are not per-tool enables).
 	case "mcp":
 		return t.MCP.Enabled
+	case "subagent":
+		return t.Subagent.Enabled
 	default:
+		// Capability gates aside, callers that lack a per-tool default treat a
+		// tool as enabled unless an override disables it.
 		return true
 	}
+}
+
+// ToolEnabled resolves a per-tool enabled state: an explicit Overrides entry wins,
+// otherwise the tool's own default-allow (from its descriptor) applies. This is the
+// gating path for global-layer tools, which have no dedicated typed config field.
+func (t *ToolsConfig) ToolEnabled(name string, defaultAllow bool) bool {
+	if v, ok := t.Overrides[name]; ok {
+		return v
+	}
+	return defaultAllow
 }

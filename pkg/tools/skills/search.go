@@ -26,11 +26,11 @@ func NewFindSkillsTool(registryMgr *skillspkg.RegistryManager, cache *skillspkg.
 }
 
 func (t *FindSkillsTool) Name() string {
-	return "skills_find"
+	return "skill_find"
 }
 
 func (t *FindSkillsTool) Description() string {
-	return "Search for installable skills from skill registries. Returns skill slugs, descriptions, versions, and relevance scores. Use this to discover skills before installing them with skills_install."
+	return "Search for installable skills from skill registries. Returns skill slugs, descriptions, versions, and relevance scores. Use this to discover skills before installing them with skill_install."
 }
 
 func (t *FindSkillsTool) Parameters() map[string]any {
@@ -115,6 +115,6 @@ func formatSearchResults(query string, results []skillspkg.SearchResult, cached 
 		sb.WriteString("\n")
 	}
 
-	sb.WriteString("Use skills_install with the slug to install a skill.")
+	sb.WriteString("Use skill_install with the slug to install a skill.")
 	return sb.String()
 }

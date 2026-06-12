@@ -49,7 +49,7 @@ type AgentInstance struct {
 	// whether to route to LightCandidates or stay with Candidates.
 	Router *routing.Router
 	// LightCandidates holds the resolved provider candidates for the light model.
-	// Pre-computed at agent creation to avoid repeated model_list lookups at runtime.
+	// Pre-computed at agent creation to avoid repeated models lookups at runtime.
 	LightCandidates []providers.FallbackCandidate
 
 	// Config is the agent's configuration, used for per-agent tool allowlists.
@@ -320,47 +320,26 @@ func NewAgentInstance(
 		Primary:   model,
 		Fallbacks: fallbacks,
 	}
-	resolveFromModelList := func(raw string) (alias, resolved string, ok bool) {
-		ensureProtocol := func(model string) string {
-			model = strings.TrimSpace(model)
-			if model == "" {
-				return ""
-			}
-			if strings.Contains(model, "/") {
-				return model
-			}
-			return "openai/" + model
-		}
-
+	resolveFromModelList := func(raw string) (alias, model, provider string, ok bool) {
 		raw = strings.TrimSpace(raw)
-		if raw == "" {
-			return "", "", false
+		if raw == "" || cfg == nil {
+			return "", "", "", false
 		}
 
-		if cfg != nil {
-			if mc, err := cfg.GetModelConfig(raw); err == nil && mc != nil && strings.TrimSpace(mc.Model) != "" {
-				return mc.ModelName, ensureProtocol(mc.Model), true
+		// Match by model_name alias first, then by raw model id.
+		if mc, err := cfg.GetModelConfig(raw); err == nil && mc != nil && strings.TrimSpace(mc.Model) != "" {
+			return mc.ModelName, mc.Model, mc.Provider, true
+		}
+		for i := range cfg.Models {
+			if !cfg.Models[i].Enabled {
+				continue
 			}
-
-			for i := range cfg.ModelList {
-				if !cfg.ModelList[i].Enabled {
-					continue
-				}
-				fullModel := strings.TrimSpace(cfg.ModelList[i].Model)
-				if fullModel == "" {
-					continue
-				}
-				if fullModel == raw {
-					return cfg.ModelList[i].ModelName, ensureProtocol(fullModel), true
-				}
-				_, modelID := providers.ExtractProtocol(fullModel)
-				if modelID == raw {
-					return cfg.ModelList[i].ModelName, ensureProtocol(fullModel), true
-				}
+			if strings.TrimSpace(cfg.Models[i].Model) == raw {
+				return cfg.Models[i].ModelName, cfg.Models[i].Model, cfg.Models[i].Provider, true
 			}
 		}
 
-		return "", "", false
+		return "", "", "", false
 	}
 
 	candidates := providers.ResolveCandidatesWithLookup(modelCfg, "", resolveFromModelList)
@@ -374,7 +353,7 @@ func NewAgentInstance(
 	}
 
 	// Model routing setup: pre-resolve light model candidates at creation time
-	// to avoid repeated model_list lookups on every incoming message.
+	// to avoid repeated models lookups on every incoming message.
 	var router *routing.Router
 	var lightCandidates []providers.FallbackCandidate
 	if rc := defaults.Routing; rc != nil && rc.Enabled && rc.LightModel != "" {
@@ -387,7 +366,7 @@ func NewAgentInstance(
 			})
 			lightCandidates = resolved
 		} else {
-			log.Printf("routing: light_model %q not found in model_list — routing disabled for agent %q",
+			log.Printf("routing: light_model %q not found in models — routing disabled for agent %q",
 				rc.LightModel, agentID)
 		}
 	}

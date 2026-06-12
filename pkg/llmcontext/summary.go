@@ -21,6 +21,11 @@ type Summary struct {
 	State               SummaryState `json:"state"`
 	KeyMoments          []KeyMoment  `json:"key_moments,omitempty"`
 	MessageIndex        []IndexEntry `json:"message_index,omitempty"`
+	// CarryForward holds self-directed reminders surfaced at compaction: info
+	// that should be persisted to the agent's AGENT.md/memory files, outstanding
+	// action items, or unresolved issues that would otherwise be lost when older
+	// messages are dropped.
+	CarryForward []SummaryItem `json:"carry_forward,omitempty"`
 	CoveredSeqStart     int64        `json:"covered_seq_start"`
 	CoveredSeqEnd       int64        `json:"covered_seq_end"`
 	CoveredRanges       []SeqRange   `json:"covered_ranges,omitempty"`
@@ -121,6 +126,9 @@ func (s *Summary) NormalizeRefs() {
 	for i := range s.State.Constraints {
 		s.State.Constraints[i].Refs = normalize(s.State.Constraints[i].Refs)
 	}
+	for i := range s.CarryForward {
+		s.CarryForward[i].Refs = normalize(s.CarryForward[i].Refs)
+	}
 	for i := range s.KeyMoments {
 		if len(s.KeyMoments[i].Refs) == 0 && s.KeyMoments[i].Seq > 0 {
 			s.KeyMoments[i].Refs = []SeqRange{{SeqStart: s.KeyMoments[i].Seq, SeqEnd: s.KeyMoments[i].Seq}}
@@ -138,6 +146,7 @@ func (s *Summary) HasMaterial() bool {
 		len(s.State.Progress) > 0 ||
 		len(s.State.Pending) > 0 ||
 		len(s.State.Constraints) > 0 ||
+		len(s.CarryForward) > 0 ||
 		len(s.KeyMoments) > 0 ||
 		len(s.MessageIndex) > 0
 }
@@ -346,6 +355,21 @@ func (s *Summary) Render(archiveMinSeq, archiveMaxSeq int64) string {
 	renderItems(&sb, "Pending", s.State.Pending)
 	renderItems(&sb, "Constraints", s.State.Constraints)
 
+	if len(s.CarryForward) > 0 {
+		sb.WriteString("\n## Carry-Forward (review and action before continuing)\n")
+		for _, item := range s.CarryForward {
+			text := item.Text
+			if item.Exact != "" {
+				text = fmt.Sprintf("exact: %q", item.Exact)
+			}
+			if refs := formatRefs(item.Refs); refs != "" {
+				fmt.Fprintf(&sb, "- %s %s\n", refs, text)
+			} else {
+				fmt.Fprintf(&sb, "- %s\n", text)
+			}
+		}
+	}
+
 	if len(s.KeyMoments) > 0 {
 		sb.WriteString("\n## Key Moments\n")
 		for _, km := range s.KeyMoments {
@@ -472,6 +496,9 @@ const promptStandard = `You are an AI assistant performing context summarization
   ],
   "message_index": [
     {"seq_start": <int>, "seq_end": <int>, "role": "<role>", "label": "<label>"}
+  ],
+  "carry_forward": [
+    {"text": "<self-directed reminder: information that should be persisted to the agent's AGENT.md/memory files, an outstanding action item, or an unresolved issue>", "refs": [{"seq_start": <int>, "seq_end": <int>}]}
   ]
 }
 
@@ -482,8 +509,10 @@ Instructions:
 - Every state item and key moment MUST cite archive message IDs in refs. Refs must point to the SPECIFIC message(s) that establish the item — a single seq, or the tightest range possible. Never cite a broad span of the whole conversation (e.g. avoid [#1-#551]).
 - Goals/Progress/Pending are the priority — keep them rich and current: active goals, concrete progress toward them, and the immediate next action in flight ("what was I about to do?"). Retire completed/superseded goals only when the new messages support that.
 - Constraints: include ONLY conversation-specific rules or decisions that are NOT already in the system prompt or agent files. Omit standing rules the agent always has loaded. ONE rule per constraint — never combine multiple facts into a single item; split them into separate constraints. Cite the specific message where each was established, not a broad range. Preserve wording verbatim unless the user explicitly changed it.
+- User Instructions: ALWAYS capture explicit instructions and directives the user has given that govern current or future work — record them verbatim in the exact field of the relevant pending, constraints, or key_moments item. Never drop, soften, or paraphrase away an instruction the user stated.
 - Key Moments: curated high-importance events only. Use exact field for instructions, decisions, config values.
 - Message Index: collapse consecutive identical entries to a range. Only include messages in the archive window (seq %d to %d).
+- Carry Forward: after deciding what to summarize, give your future self a heads-up. Review whether anything should be written into the agent's AGENT.md or memory files (new durable instructions, decisions, or preferences worth keeping), and surface any outstanding action items or unresolved issues that would otherwise be forgotten once the older messages are dropped. Add each as a carry_forward item, citing the establishing message in refs. Omit the field entirely when there is genuinely nothing to carry forward.
 - Respond with valid JSON only. No markdown fences, no prose.`
 
 // promptAggressive is used when the context is approaching its size limit.
@@ -505,6 +534,9 @@ const promptAggressive = `You are an AI assistant performing urgent context summ
   ],
   "message_index": [
     {"seq_start": <int>, "seq_end": <int>, "role": "<role>", "label": "<topic label>"}
+  ],
+  "carry_forward": [
+    {"text": "<reminder: persist to AGENT.md/memory, action item, or unresolved issue>", "refs": [{"seq_start": <int>, "seq_end": <int>}]}
   ]
 }
 
@@ -512,9 +544,11 @@ Rules:
 - State: one concise sentence per item; omit any field that is empty. Goals/Progress/Pending come first — they are the transient state worth preserving.
 - Every state item and key moment MUST cite archive message IDs in refs — the specific establishing message(s), a single seq or tightest range, never a broad span of the conversation.
 - Constraints: include ONLY conversation-specific rules not already in the system prompt; omit standing rules the agent always has loaded. One rule per constraint — do not combine multiple facts.
+- User Instructions: ALWAYS retain explicit user instructions and directives verbatim in the exact field — preserving them is top priority, even under tight budget.
 - Key Moments: include only decisions and facts required to continue in-progress work; omit anything already captured in state or easily derivable from context. No hard cap — include what is needed, nothing more.
 - Message Index: collapse aggressively into broad topic or project ranges (archive window: seq %d to %d); one entry per project/thread area rather than per message.
 - Update the existing summary rather than replacing it — preserve active goals.
+- Carry Forward: flag anything that must be persisted to AGENT.md/memory or actioned before older context is lost; omit the field if none.
 - Respond with valid JSON only. No markdown fences, no prose.`
 
 // buildSummarizationPrompt returns the prompt for a summarization call.

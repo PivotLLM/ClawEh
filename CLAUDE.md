@@ -31,6 +31,13 @@ To build and deploy: run `update-claw.sh` (on PATH). It builds the binary, stops
 - **Agents**: named agents with separate workspaces; bindings route channels to agents.
 - **Systemd**: service needs `Environment=PATH=/home/eric/.local/bin:/usr/local/bin:/usr/bin:/bin`. Set `CLAW_HOME` only if using a non-default data directory (defaults to `~/.claw`). The app writes its own log to `$CLAW_HOME/logs/claw.log` — no `StandardOutput`/`StandardError` redirection needed.
 
+## Testing — always keep tests in sync (do not skip this)
+- A change is not done until its tests are updated AND passing. Run `make test` after every change.
+- **Add tests for new behavior.** New config flags, gating, and branches need a test for both the on and off paths — not just a tweak that makes existing tests compile.
+- **Keep test fixtures in sync with renames/refactors.** When tool names, config keys, or APIs change, grep the whole repo (including `*_test.go`, `test.sh`, `tests/`) and update every reference. A rename that compiles can still break integration tests.
+- **MCP integration tests are part of the suite.** `test.sh` runs `tests/test_mcpserver.sh` via the external `probe` binary against an ephemeral gateway. Every provider tool must be exposed in the test config and probed: success for hermetic tools, graceful-error probes for network/hardware/LLM tools (web, skill, agent_spawn, hw). Add a probe case when you add a tool.
+- After implementing, do a final grep for the old name/symbol to confirm nothing stale remains in code, tests, scripts, or docs.
+
 ## Workflow Rules
 - Never commit or push without explicit user instruction.
 - Never push directly to main — use feature branches + PRs.

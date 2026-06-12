@@ -3,16 +3,17 @@ import { useEffect, useMemo, useState } from "react"
 import { useTranslation } from "react-i18next"
 
 import { type ModelInfo, setDefaultModel, updateModel } from "@/api/models"
-import { maskedSecretPlaceholder } from "@/components/secret-placeholder"
+import { type ProviderInfo, getProviders } from "@/api/providers"
 import {
   AdvancedSection,
   Field,
-  KeyInput,
   SwitchCardField,
 } from "@/components/shared-form"
 import {
   REASONING_EFFORT_OPTIONS,
+  formatDropParams,
   formatExtraBody,
+  parseDropParams,
   parseExtraBody,
 } from "@/components/models/model-config-fields"
 import { Button } from "@/components/ui/button"
@@ -35,10 +36,7 @@ import {
 import { Textarea } from "@/components/ui/textarea"
 
 interface EditForm {
-  apiKey: string
-  apiBase: string
-  proxy: string
-  authMethod: string
+  provider: string
   connectMode: string
   workspace: string
   rpm: string
@@ -48,6 +46,7 @@ interface EditForm {
   thinkingLevel: string
   reasoningEffort: string
   extraBody: string
+  dropParams: string
   noTools: boolean
 }
 
@@ -66,10 +65,7 @@ export function EditModelSheet({
 }: EditModelSheetProps) {
   const { t } = useTranslation()
   const [form, setForm] = useState<EditForm>({
-    apiKey: "",
-    apiBase: "",
-    proxy: "",
-    authMethod: "",
+    provider: "",
     connectMode: "",
     workspace: "",
     rpm: "",
@@ -79,8 +75,10 @@ export function EditModelSheet({
     thinkingLevel: "",
     reasoningEffort: "",
     extraBody: "",
+    dropParams: "",
     noTools: false,
   })
+  const [providers, setProviders] = useState<ProviderInfo[]>([])
   const [saving, setSaving] = useState(false)
   const [setAsDefault, setSetAsDefault] = useState(false)
   const [error, setError] = useState("")
@@ -88,10 +86,7 @@ export function EditModelSheet({
   useEffect(() => {
     if (model) {
       setForm({
-        apiKey: "",
-        apiBase: model.api_base ?? "",
-        proxy: model.proxy ?? "",
-        authMethod: model.auth_method ?? "",
+        provider: model.provider ?? "",
         connectMode: model.connect_mode ?? "",
         workspace: model.workspace ?? "",
         rpm: model.rpm ? String(model.rpm) : "",
@@ -103,10 +98,18 @@ export function EditModelSheet({
         thinkingLevel: model.thinking_level ?? "",
         reasoningEffort: model.reasoning_effort ?? "",
         extraBody: formatExtraBody(model.extra_body),
+        dropParams: formatDropParams(model.drop_params),
         noTools: model.no_tools ?? false,
       })
       setSetAsDefault(model.is_default)
       setError("")
+      getProviders()
+        .then((data) =>
+          setProviders(
+            [...data.providers].sort((a, b) => a.name.localeCompare(b.name)),
+          ),
+        )
+        .catch(() => setProviders([]))
     }
   }, [model])
 
@@ -128,10 +131,7 @@ export function EditModelSheet({
       await updateModel(model.index, {
         model_name: model.model_name,
         model: model.model,
-        api_base: form.apiBase || undefined,
-        api_key: form.apiKey || undefined,
-        proxy: form.proxy || undefined,
-        auth_method: form.authMethod || undefined,
+        provider: form.provider || undefined,
         connect_mode: form.connectMode || undefined,
         workspace: form.workspace || undefined,
         rpm: form.rpm ? Number(form.rpm) : undefined,
@@ -147,6 +147,10 @@ export function EditModelSheet({
         // clear, which then drops the field via omitempty on save.
         reasoning_effort: form.reasoningEffort,
         extra_body: extraBodyParsed.value ?? null,
+        // Always send drop_params: [] clears a previously-stored list, since
+        // handleUpdateModel merge-unmarshals and an absent field would preserve
+        // the old value (omitempty then drops the empty slice on save).
+        drop_params: parseDropParams(form.dropParams),
         no_tools: form.noTools,
       })
       if (setAsDefault && !model.is_default) {
@@ -160,14 +164,6 @@ export function EditModelSheet({
       setSaving(false)
     }
   }
-
-  const isOAuth = model?.auth_method === "oauth"
-  const apiKeyPlaceholder = model?.configured
-    ? maskedSecretPlaceholder(
-        model.api_key,
-        t("models.field.apiKeyPlaceholderSet"),
-      )
-    : t("models.field.apiKeyPlaceholder")
 
   return (
     <Sheet open={open} onOpenChange={(v) => !v && onClose()}>
@@ -186,31 +182,27 @@ export function EditModelSheet({
 
         <div className="min-h-0 flex-1 overflow-y-auto">
           <div className="space-y-5 px-6 py-5">
-            {!isOAuth && (
-              <Field
-                label={t("models.field.apiKey")}
-                hint={
-                  model?.configured ? t("models.edit.apiKeyHint") : undefined
-                }
-              >
-                <KeyInput
-                  value={form.apiKey}
-                  onChange={(v) => setForm((f) => ({ ...f, apiKey: v }))}
-                  placeholder={apiKeyPlaceholder}
-                />
-              </Field>
-            )}
-
             <Field
-              label={t("models.field.apiBase")}
-              hint={isOAuth ? t("models.edit.oauthNote") : undefined}
+              label={t("models.field.provider")}
+              hint={t("models.field.providerHint")}
             >
-              <Input
-                value={form.apiBase}
-                onChange={setField("apiBase")}
-                placeholder="https://api.example.com/v1"
-                disabled={isOAuth}
-              />
+              <Select
+                value={form.provider || undefined}
+                onValueChange={(v) => setForm((f) => ({ ...f, provider: v }))}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue
+                    placeholder={t("models.field.providerPlaceholder")}
+                  />
+                </SelectTrigger>
+                <SelectContent>
+                  {providers.map((p) => (
+                    <SelectItem key={p.index} value={p.name}>
+                      {p.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </Field>
 
             <SwitchCardField
@@ -221,28 +213,6 @@ export function EditModelSheet({
             />
 
             <AdvancedSection>
-              <Field
-                label={t("models.field.proxy")}
-                hint={t("models.field.proxyHint")}
-              >
-                <Input
-                  value={form.proxy}
-                  onChange={setField("proxy")}
-                  placeholder="http://127.0.0.1:7890"
-                />
-              </Field>
-
-              <Field
-                label={t("models.field.authMethod")}
-                hint={t("models.field.authMethodHint")}
-              >
-                <Input
-                  value={form.authMethod}
-                  onChange={setField("authMethod")}
-                  placeholder="oauth"
-                />
-              </Field>
-
               <Field
                 label={t("models.field.connectMode")}
                 hint={t("models.field.connectModeHint")}
@@ -345,6 +315,17 @@ export function EditModelSheet({
                   className="font-mono text-xs"
                   rows={6}
                   aria-invalid={!!extraBodyParsed.error}
+                />
+              </Field>
+
+              <Field
+                label={t("models.field.dropParams")}
+                hint={t("models.field.dropParamsHint")}
+              >
+                <Input
+                  value={form.dropParams}
+                  onChange={setField("dropParams")}
+                  placeholder="temperature, top_p"
                 />
               </Field>
 

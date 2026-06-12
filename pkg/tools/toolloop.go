@@ -1,4 +1,4 @@
-// PicoClaw - Ultra-lightweight personal AI agent
+// ClawEh - Personal AI Assistant
 // Inspired by and based on nanobot: https://github.com/HKUDS/nanobot
 // License: MIT
 //

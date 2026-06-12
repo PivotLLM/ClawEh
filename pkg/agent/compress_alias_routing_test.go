@@ -13,7 +13,7 @@ import (
 // TestBuildCompressLLMClient_PerAliasRouting is the regression-lock for the
 // dispatcher cache-key fix on the compress path.
 //
-// Three model_list entries share the same wire model xai/grok-4.3 but differ
+// Three models entries share the same wire model xai/grok-4.3 but differ
 // in model_name and response_log_file. An agent whose compress_model points
 // at the medium alias must compress through a provider built from the
 // medium entry's state — not the first entry's (the pre-fix bug). The test
@@ -25,30 +25,30 @@ import (
 // "Grok-4.3" entry's instance with the low-tier response_log_file.
 func TestBuildCompressLLMClient_PerAliasRouting(t *testing.T) {
 	cfg := &config.Config{
-		ModelList: []config.ModelConfig{
+		Providers: []config.Provider{
+			{Name: "xai", Protocol: "openai", BaseURL: "http://127.0.0.1:0/v1", APIKey: "k"},
+		},
+		Models: []config.ModelConfig{
 			{
 				ModelName:       "Grok-4.3",
-				Model:           "xai/grok-4.3",
-				APIBase:         "http://127.0.0.1:0/v1",
-				APIKey:          "k",
+				Model:           "grok-4.3",
+				Provider:        "xai",
 				ResponseLogFile: "/tmp/grok-low.log",
 				ReasoningEffort: "low",
 				Enabled:         true,
 			},
 			{
 				ModelName:       "Grok-4.3-Medium",
-				Model:           "xai/grok-4.3",
-				APIBase:         "http://127.0.0.1:0/v1",
-				APIKey:          "k",
+				Model:           "grok-4.3",
+				Provider:        "xai",
 				ResponseLogFile: "/tmp/grok-medium.log",
 				ReasoningEffort: "medium",
 				Enabled:         true,
 			},
 			{
 				ModelName:       "Grok-4.3-High",
-				Model:           "xai/grok-4.3",
-				APIBase:         "http://127.0.0.1:0/v1",
-				APIKey:          "k",
+				Model:           "grok-4.3",
+				Provider:        "xai",
 				ResponseLogFile: "/tmp/grok-high.log",
 				ReasoningEffort: "high",
 				Enabled:         true,
@@ -61,7 +61,7 @@ func TestBuildCompressLLMClient_PerAliasRouting(t *testing.T) {
 	agent := &AgentInstance{
 		ID:       "compress-alias-routing",
 		Provider: &mockProvider{},
-		Model:    "claude-cli/sonnet-4-5",
+		Model:    "sonnet-4-5",
 	}
 
 	client := al.buildCompressLLMClient(agent, "Grok-4.3-Medium", "sess-medium")

@@ -11,8 +11,8 @@ import (
 
 func TestCopyFileTool_Metadata(t *testing.T) {
 	tool := NewCopyFileTool("", false)
-	if tool.Name() != "files_copy" {
-		t.Errorf("Name() = %q, want files_copy", tool.Name())
+	if tool.Name() != "file_copy" {
+		t.Errorf("Name() = %q, want file_copy", tool.Name())
 	}
 	if tool.Description() == "" {
 		t.Error("Description() should not be empty")

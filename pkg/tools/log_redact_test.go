@@ -13,7 +13,7 @@ import (
 
 func TestRedactArgs_WriteFile_RecordsContentBytes(t *testing.T) {
 	content := strings.Repeat("x", 10240)
-	got := redactArgs("write_file", map[string]any{
+	got := redactArgs("file_write", map[string]any{
 		"path":    "/tmp/secret.txt",
 		"content": content,
 	})
@@ -39,7 +39,7 @@ func TestRedactArgs_WriteFile_RecordsContentBytes(t *testing.T) {
 }
 
 func TestRedactArgs_AppendFile_RecordsContentBytes(t *testing.T) {
-	got := redactArgs("append_file", map[string]any{
+	got := redactArgs("file_append", map[string]any{
 		"path":    "log.txt",
 		"content": "hello",
 	})
@@ -50,7 +50,7 @@ func TestRedactArgs_AppendFile_RecordsContentBytes(t *testing.T) {
 }
 
 func TestRedactArgs_ReadFile_Shape(t *testing.T) {
-	got := redactArgs("read_file", map[string]any{
+	got := redactArgs("file_read", map[string]any{
 		"path":   "/etc/passwd",
 		"offset": 100,
 		"length": 4096,
@@ -68,7 +68,7 @@ func TestRedactArgs_ReadFile_Shape(t *testing.T) {
 }
 
 func TestRedactArgs_ReadFile_OmitsNilFields(t *testing.T) {
-	got := redactArgs("read_file", map[string]any{
+	got := redactArgs("file_read", map[string]any{
 		"path": "/etc/passwd",
 	})
 	m := got.(map[string]any)
@@ -81,7 +81,7 @@ func TestRedactArgs_ReadFile_OmitsNilFields(t *testing.T) {
 }
 
 func TestRedactArgs_EditFile_RecordsByteLengths(t *testing.T) {
-	got := redactArgs("edit_file", map[string]any{
+	got := redactArgs("file_edit", map[string]any{
 		"path":     "src/main.go",
 		"old_text": "foo",
 		"new_text": "barbaz",
@@ -184,7 +184,7 @@ func TestRegistry_ExecuteWithContext_RedactsWriteFileArgsAtInfo(t *testing.T) {
 	r := NewToolRegistry()
 	r.Register(&leakyTool{
 		mockRegistryTool: mockRegistryTool{
-			name:   "write_file",
+			name:   "file_write",
 			desc:   "writes",
 			params: map[string]any{},
 			result: SilentResult("ok"),
@@ -192,14 +192,14 @@ func TestRegistry_ExecuteWithContext_RedactsWriteFileArgsAtInfo(t *testing.T) {
 	})
 
 	secret := strings.Repeat("S", 10240)
-	r.ExecuteWithContext(context.Background(), "write_file", map[string]any{
+	r.ExecuteWithContext(context.Background(), "file_write", map[string]any{
 		"path":    "/tmp/diary.txt",
 		"content": secret,
 	}, "", "", nil)
 
 	out := buf.String()
 
-	var infLine, dbgLine string
+	var infLine string
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
 		var ev map[string]any
 		if err := json.Unmarshal([]byte(line), &ev); err != nil {
@@ -207,11 +207,8 @@ func TestRegistry_ExecuteWithContext_RedactsWriteFileArgsAtInfo(t *testing.T) {
 		}
 		msg, _ := ev["message"].(string)
 		level, _ := ev["level"].(string)
-		switch {
-		case msg == "Tool execution started" && level == "info":
+		if msg == "Tool execution started" && level == "info" {
 			infLine = line
-		case msg == "Tool execution started (raw args)" && level == "debug":
-			dbgLine = line
 		}
 	}
 
@@ -225,11 +222,9 @@ func TestRegistry_ExecuteWithContext_RedactsWriteFileArgsAtInfo(t *testing.T) {
 		t.Errorf("INF line missing redacted summary: %s", infLine)
 	}
 
-	if dbgLine == "" {
-		t.Fatal("expected DBG raw-args companion line")
-	}
-	if !strings.Contains(dbgLine, secret) {
-		t.Error("DBG line should carry the raw args")
+	// Raw-args debug logging was removed, so the secret must not appear anywhere.
+	if strings.Contains(out, secret) {
+		t.Fatal("raw secret content leaked into logs")
 	}
 }
 

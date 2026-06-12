@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"strconv"
-	"strings"
 	"sync"
 
 	"github.com/PivotLLM/ClawEh/pkg/config"
@@ -24,13 +23,10 @@ func (h *Handler) registerModelRoutes(mux *http.ServeMux) {
 // modelResponse is the JSON structure returned for each model in the list.
 // All ModelConfig fields are included so the frontend can display and edit them.
 type modelResponse struct {
-	Index      int    `json:"index"`
-	ModelName  string `json:"model_name"`
-	Model      string `json:"model"`
-	APIBase    string `json:"api_base,omitempty"`
-	APIKey     string `json:"api_key"`
-	Proxy      string `json:"proxy,omitempty"`
-	AuthMethod string `json:"auth_method,omitempty"`
+	Index     int    `json:"index"`
+	ModelName string `json:"model_name"`
+	Model     string `json:"model"`
+	Provider  string `json:"provider"`
 	// Advanced fields
 	ConnectMode    string `json:"connect_mode,omitempty"`
 	Workspace      string `json:"workspace,omitempty"`
@@ -43,13 +39,14 @@ type modelResponse struct {
 	// Shape 3 per-LLM custom fields.
 	ReasoningEffort string         `json:"reasoning_effort,omitempty"`
 	ExtraBody       map[string]any `json:"extra_body,omitempty"`
+	DropParams      []string       `json:"drop_params,omitempty"`
 	Enabled         bool           `json:"enabled"`
 	// Meta
 	Configured bool `json:"configured"`
 	IsDefault  bool `json:"is_default"`
 }
 
-// handleListModels returns all model_list entries with masked API keys.
+// handleListModels returns all models entries with masked API keys.
 //
 //	GET /api/models
 func (h *Handler) handleListModels(w http.ResponseWriter, r *http.Request) {
@@ -60,28 +57,30 @@ func (h *Handler) handleListModels(w http.ResponseWriter, r *http.Request) {
 	}
 
 	defaultModel := cfg.Agents.Defaults.DefaultModelName()
-	configured := make([]bool, len(cfg.ModelList))
+	configured := make([]bool, len(cfg.Models))
 
 	var wg sync.WaitGroup
-	wg.Add(len(cfg.ModelList))
-	for i, m := range cfg.ModelList {
+	wg.Add(len(cfg.Models))
+	for i, m := range cfg.Models {
 		go func(i int, m config.ModelConfig) {
 			defer wg.Done()
-			configured[i] = isModelConfigured(m)
+			prov, err := cfg.GetProvider(m.Provider)
+			if err != nil {
+				configured[i] = false
+				return
+			}
+			configured[i] = isModelConfigured(prov, m)
 		}(i, m)
 	}
 	wg.Wait()
 
-	models := make([]modelResponse, 0, len(cfg.ModelList))
-	for i, m := range cfg.ModelList {
+	models := make([]modelResponse, 0, len(cfg.Models))
+	for i, m := range cfg.Models {
 		models = append(models, modelResponse{
 			Index:           i,
 			ModelName:       m.ModelName,
 			Model:           m.Model,
-			APIBase:         m.APIBase,
-			APIKey:          maskAPIKey(m.APIKey),
-			Proxy:           m.Proxy,
-			AuthMethod:      m.AuthMethod,
+			Provider:        m.Provider,
 			ConnectMode:     m.ConnectMode,
 			Workspace:       m.Workspace,
 			RPM:             m.RPM,
@@ -92,6 +91,7 @@ func (h *Handler) handleListModels(w http.ResponseWriter, r *http.Request) {
 			NoTools:         m.NoTools,
 			ReasoningEffort: m.ReasoningEffort,
 			ExtraBody:       m.ExtraBody,
+			DropParams:      m.DropParams,
 			Enabled:         m.Enabled,
 			Configured:      configured[i],
 			IsDefault:       m.ModelName == defaultModel,
@@ -134,7 +134,12 @@ func (h *Handler) handleAddModel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cfg.ModelList = append(cfg.ModelList, mc)
+	if _, err = cfg.GetProvider(mc.Provider); err != nil {
+		http.Error(w, fmt.Sprintf("Validation error: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	cfg.Models = append(cfg.Models, mc)
 
 	if err := config.SaveConfig(h.configPath, cfg); err != nil {
 		http.Error(w, fmt.Sprintf("Failed to save config: %v", err), http.StatusInternalServerError)
@@ -144,7 +149,7 @@ func (h *Handler) handleAddModel(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
 		"status": "ok",
-		"index":  len(cfg.ModelList) - 1,
+		"index":  len(cfg.Models) - 1,
 	})
 }
 
@@ -174,14 +179,14 @@ func (h *Handler) handleUpdateModel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if idx < 0 || idx >= len(cfg.ModelList) {
-		http.Error(w, fmt.Sprintf("Index %d out of range (0-%d)", idx, len(cfg.ModelList)-1), http.StatusNotFound)
+	if idx < 0 || idx >= len(cfg.Models) {
+		http.Error(w, fmt.Sprintf("Index %d out of range (0-%d)", idx, len(cfg.Models)-1), http.StatusNotFound)
 		return
 	}
 
 	// Start from the existing entry so fields not present in the request body
 	// (e.g. enabled, extra_args, strict_compat) keep their current values.
-	mc := cfg.ModelList[idx]
+	mc := cfg.Models[idx]
 	if err = json.Unmarshal(body, &mc); err != nil {
 		http.Error(w, fmt.Sprintf("Invalid JSON: %v", err), http.StatusBadRequest)
 		return
@@ -191,14 +196,12 @@ func (h *Handler) handleUpdateModel(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Validation error: %v", err), http.StatusBadRequest)
 		return
 	}
-
-	// Preserve the existing API key when the caller sends an empty string or a
-	// masked placeholder value (containing "****") — both mean "don't change the key".
-	if mc.APIKey == "" || strings.Contains(mc.APIKey, "****") {
-		mc.APIKey = cfg.ModelList[idx].APIKey
+	if _, err = cfg.GetProvider(mc.Provider); err != nil {
+		http.Error(w, fmt.Sprintf("Validation error: %v", err), http.StatusBadRequest)
+		return
 	}
 
-	cfg.ModelList[idx] = mc
+	cfg.Models[idx] = mc
 
 	if err := config.SaveConfig(h.configPath, cfg); err != nil {
 		http.Error(w, fmt.Sprintf("Failed to save config: %v", err), http.StatusInternalServerError)
@@ -225,14 +228,14 @@ func (h *Handler) handleDeleteModel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if idx < 0 || idx >= len(cfg.ModelList) {
-		http.Error(w, fmt.Sprintf("Index %d out of range (0-%d)", idx, len(cfg.ModelList)-1), http.StatusNotFound)
+	if idx < 0 || idx >= len(cfg.Models) {
+		http.Error(w, fmt.Sprintf("Index %d out of range (0-%d)", idx, len(cfg.Models)-1), http.StatusNotFound)
 		return
 	}
 
-	deletedModelName := cfg.ModelList[idx].ModelName
+	deletedModelName := cfg.Models[idx].ModelName
 
-	cfg.ModelList = append(cfg.ModelList[:idx], cfg.ModelList[idx+1:]...)
+	cfg.Models = append(cfg.Models[:idx], cfg.Models[idx+1:]...)
 
 	// If the deleted model was the default, clear it.
 	if cfg.Agents.Defaults.DefaultModelName() == deletedModelName {
@@ -282,9 +285,9 @@ func (h *Handler) handleSetDefaultModel(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Verify the model_name exists in model_list and is enabled
+	// Verify the model_name exists in models and is enabled
 	found := false
-	for _, m := range cfg.ModelList {
+	for _, m := range cfg.Models {
 		if m.ModelName == req.ModelName {
 			if !m.Enabled {
 				http.Error(w, fmt.Sprintf("Model %q is disabled; enable it before setting as default", req.ModelName), http.StatusBadRequest)
@@ -295,7 +298,7 @@ func (h *Handler) handleSetDefaultModel(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	if !found {
-		http.Error(w, fmt.Sprintf("Model %q not found in model_list", req.ModelName), http.StatusNotFound)
+		http.Error(w, fmt.Sprintf("Model %q not found in models", req.ModelName), http.StatusNotFound)
 		return
 	}
 

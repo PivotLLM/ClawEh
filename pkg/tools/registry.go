@@ -171,11 +171,14 @@ func (r *ToolRegistry) ExecuteWithContext(
 			"tool": name,
 			"args": redactArgs(name, args),
 		})
+
+	/*
 	logger.DebugCF("tool", "Tool execution started (raw args)",
 		map[string]any{
 			"tool": name,
 			"args": args,
 		})
+	*/
 
 	// Defense-in-depth: check tool allowlist from context before execution.
 	if checker := ToolAllowCheckerFromCtx(ctx); checker != nil {

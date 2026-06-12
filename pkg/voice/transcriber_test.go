@@ -37,42 +37,29 @@ func TestDetectTranscriber(t *testing.T) {
 		{
 			name: "groq provider key",
 			cfg: &config.Config{
-				Providers: config.ProvidersConfig{
-					Groq: config.ProviderConfig{APIKey: "sk-groq-direct"},
+				Providers: []config.Provider{
+					{Name: "groq", Protocol: "openai", BaseURL: "https://api.groq.com/openai/v1", APIKey: "sk-groq-direct"},
 				},
 			},
 			wantName: "groq",
 		},
 		{
-			name: "groq via model list",
+			name: "groq provider without key is skipped",
 			cfg: &config.Config{
-				ModelList: []config.ModelConfig{
-					{Model: "openai/gpt-4o", APIKey: "sk-openai", Enabled: true},
-					{Model: "groq/llama-3.3-70b", APIKey: "sk-groq-model", Enabled: true},
-				},
-			},
-			wantName: "groq",
-		},
-		{
-			name: "groq model list entry without key is skipped",
-			cfg: &config.Config{
-				ModelList: []config.ModelConfig{
-					{Model: "groq/llama-3.3-70b", APIKey: ""},
+				Providers: []config.Provider{
+					{Name: "groq", Protocol: "openai", BaseURL: "https://api.groq.com/openai/v1"},
 				},
 			},
 			wantNil: true,
 		},
 		{
-			name: "provider key takes priority over model list",
+			name: "non-groq provider with key is ignored",
 			cfg: &config.Config{
-				Providers: config.ProvidersConfig{
-					Groq: config.ProviderConfig{APIKey: "sk-groq-direct"},
-				},
-				ModelList: []config.ModelConfig{
-					{Model: "groq/llama-3.3-70b", APIKey: "sk-groq-model"},
+				Providers: []config.Provider{
+					{Name: "openai", Protocol: "openai", BaseURL: "https://api.openai.com/v1", APIKey: "sk-openai"},
 				},
 			},
-			wantName: "groq",
+			wantNil: true,
 		},
 	}
 

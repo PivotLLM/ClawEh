@@ -2,17 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
 import { type ModelInfo, getModels, setDefaultModel } from "@/api/models"
 
-function isLocalModel(model: ModelInfo): boolean {
-  const isLocalHostBase = Boolean(
-    model.api_base?.includes("localhost") ||
-    model.api_base?.includes("127.0.0.1"),
-  )
-
-  return (
-    model.auth_method === "local" || (!model.auth_method && isLocalHostBase)
-  )
-}
-
 export function useChatModels() {
   const [modelList, setModelList] = useState<ModelInfo[]>([])
   const [defaultModelName, setDefaultModelName] = useState("")
@@ -66,30 +55,15 @@ export function useChatModels() {
     [modelList],
   )
 
-  const oauthModels = useMemo(
-    () => modelList.filter((m) => m.configured && m.auth_method === "oauth"),
-    [modelList],
-  )
-
-  const localModels = useMemo(
-    () => modelList.filter((m) => m.configured && isLocalModel(m)),
-    [modelList],
-  )
-
-  const apiKeyModels = useMemo(
-    () =>
-      modelList.filter(
-        (m) => m.configured && m.auth_method !== "oauth" && !isLocalModel(m),
-      ),
+  const configuredModels = useMemo(
+    () => modelList.filter((m) => m.configured),
     [modelList],
   )
 
   return {
     defaultModelName,
     hasConfiguredModels,
-    apiKeyModels,
-    oauthModels,
-    localModels,
+    configuredModels,
     handleSetDefault,
   }
 }

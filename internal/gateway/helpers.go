@@ -97,7 +97,7 @@ type gatewayServices struct {
 func gatewayCmd(debug bool) error {
 	// Acquire PID lock before connecting to any external service.
 	// If another instance is already running this exits immediately with a clear error.
-	baseDir := internal.GetPicoclawHome()
+	baseDir := internal.GetClawHome()
 	lockFile, err := acquireLock(baseDir)
 	if err != nil {
 		return fmt.Errorf("startup aborted: %w", err)
@@ -114,7 +114,7 @@ func gatewayCmd(debug bool) error {
 
 	// Apply logging config (debug flag overrides level)
 	if cfg.Logging.File {
-		logPath := filepath.Join(internal.GetPicoclawHome(), "logs", "claw.log")
+		logPath := filepath.Join(internal.GetClawHome(), "logs", "claw.log")
 		if err := logger.EnableFileLogging(logPath, cfg.Logging.JSON); err != nil {
 			logger.WarnCF("gateway", "Failed to enable file logging", map[string]any{"path": logPath, "error": err.Error()})
 		}
@@ -152,7 +152,7 @@ func gatewayCmd(debug bool) error {
 	msgBus := bus.NewMessageBus()
 	agentLoop := agent.NewAgentLoop(cfg, msgBus, provider, dispatcher)
 
-	dumpsDir := filepath.Join(internal.GetPicoclawHome(), "logs", "dumps")
+	dumpsDir := filepath.Join(internal.GetClawHome(), "logs", "dumps")
 	agentLoop.SetDumpsDir(dumpsDir)
 
 	startupInfo := agentLoop.GetStartupInfo()
@@ -184,7 +184,8 @@ func gatewayCmd(debug bool) error {
 	// Setup config file watcher for hot reload
 	reloadInterval := cfg.ConfigReloadInterval()
 	logger.InfoF("Config reload watcher", map[string]any{"interval": reloadInterval.String()})
-	configReloadChan, stopWatch := setupConfigWatcherPolling(configPath, reloadInterval, debug)
+	configReloadChan, stopWatch := setupConfigWatcherPolling(configPath, reloadInterval,
+		time.Duration(global.ConfigReloadDebounceSeconds)*time.Second, debug)
 	defer stopWatch()
 
 	sigChan := make(chan os.Signal, 1)
@@ -471,7 +472,7 @@ func handleConfigReload(
 	stopAndCleanupServices(services, serviceShutdownTimeout)
 
 	// Create new provider from updated config first to ensure validity
-	// This will use the correct API key and settings from newCfg.ModelList
+	// This will use the correct API key and settings from newCfg.Models
 	newProvider, newModelID, err := providers.CreateProvider(newCfg)
 	if err != nil {
 		logger.WarnCF("gateway", "No model configured after reload, running in unconfigured state", map[string]any{"detail": err.Error()})
@@ -630,7 +631,7 @@ func restartServices(
 // cfg.ConfigReloadInterval() so the value honours the config override and
 // MinConfigReloadIntervalSeconds floor. Returns a channel for config updates
 // and a stop function.
-func setupConfigWatcherPolling(configPath string, interval time.Duration, debug bool) (chan *config.Config, func()) {
+func setupConfigWatcherPolling(configPath string, interval, debounce time.Duration, debug bool) (chan *config.Config, func()) {
 	configChan := make(chan *config.Config, 1)
 	stop := make(chan struct{})
 	var wg sync.WaitGroup
@@ -639,9 +640,18 @@ func setupConfigWatcherPolling(configPath string, interval time.Duration, debug 
 	go func() {
 		defer wg.Done()
 
-		// Get initial file info
-		lastModTime := getFileModTime(configPath)
-		lastSize := getFileSize(configPath)
+		// appliedModTime/appliedSize track the last config we actually reloaded.
+		// observedModTime/observedSize track the most recent on-disk state.
+		appliedModTime := getFileModTime(configPath)
+		appliedSize := getFileSize(configPath)
+		observedModTime := appliedModTime
+		observedSize := appliedSize
+
+		// Quiescence debounce: once a change is seen we wait for the file to be
+		// stable for `debounce` (resetting on every further change) before
+		// reloading, so a burst of edits collapses into one reload.
+		var pending bool
+		var quietDeadline time.Time
 
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
@@ -652,43 +662,50 @@ func setupConfigWatcherPolling(configPath string, interval time.Duration, debug 
 				currentModTime := getFileModTime(configPath)
 				currentSize := getFileSize(configPath)
 
-				// Check if file changed (modification time or size changed)
-				if currentModTime.After(lastModTime) || currentSize != lastSize {
+				// A change relative to the most recent observation resets the
+				// quiet timer — the user is still editing.
+				if currentModTime.After(observedModTime) || currentSize != observedSize {
+					observedModTime = currentModTime
+					observedSize = currentSize
+					quietDeadline = time.Now().Add(debounce)
+					pending = true
 					if debug {
-						logger.Debugf("🔍 Config file change detected")
+						logger.Debugf("🔍 Config file change detected; debouncing %s", debounce)
 					}
+					continue
+				}
 
-					// Debounce - wait a bit to ensure file write is complete
-					time.Sleep(500 * time.Millisecond)
+				// File is stable since the last observation. If a change is
+				// pending and it has now been quiet for the full debounce window,
+				// and the file actually differs from what we last applied, reload.
+				if !pending || time.Now().Before(quietDeadline) {
+					continue
+				}
+				pending = false
+				if !currentModTime.After(appliedModTime) && currentSize == appliedSize {
+					continue
+				}
 
-					// Validate and load new config
-					newCfg, err := config.LoadConfig(configPath)
-					if err != nil {
-						logger.Errorf("⚠ Error loading new config: %v", err)
-						logger.Warn("  Using previous valid config")
-						continue
-					}
+				newCfg, err := config.LoadConfig(configPath)
+				if err != nil {
+					logger.Errorf("⚠ Error loading new config: %v", err)
+					logger.Warn("  Using previous valid config")
+					continue
+				}
+				if err := newCfg.ValidateModels(); err != nil {
+					logger.Errorf("  ⚠ New config validation failed: %v", err)
+					logger.Warn("  Using previous valid config")
+					continue
+				}
 
-					// Validate the new config
-					if err := newCfg.ValidateModelList(); err != nil {
-						logger.Errorf("  ⚠ New config validation failed: %v", err)
-						logger.Warn("  Using previous valid config")
-						continue
-					}
+				logger.Info("✓ Config file validated and loaded")
+				appliedModTime = currentModTime
+				appliedSize = currentSize
 
-					logger.Info("✓ Config file validated and loaded")
-
-					// Update last known state
-					lastModTime = currentModTime
-					lastSize = currentSize
-
-					// Send new config to main loop (non-blocking)
-					select {
-					case configChan <- newCfg:
-					default:
-						// Channel full, skip this update
-						logger.Warn("⚠ Previous config reload still in progress, skipping")
-					}
+				select {
+				case configChan <- newCfg:
+				default:
+					logger.Warn("⚠ Previous config reload still in progress, skipping")
 				}
 
 			case <-stop:
@@ -742,7 +759,7 @@ func setupCronTool(
 
 	// Create CronTool if enabled
 	var cronTool *toolschedule.CronTool
-	if cfg.Tools.IsToolEnabled("schedule_cron") {
+	if cfg.Tools.Cron.Enabled {
 		var err error
 		cronTool, err = toolschedule.NewCronTool(cronService, agentLoop, msgBus, workspace, restrict, execTimeout, cfg)
 		if err != nil {

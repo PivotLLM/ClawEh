@@ -38,12 +38,14 @@ func (m *cliMockProvider) IsCLI() bool             { return true }
 // test fails on the dispatcher-bypass assertion below.
 func TestResolveRunProvider_UsesDispatcherForActiveCandidate(t *testing.T) {
 	cfg := &config.Config{
-		ModelList: []config.ModelConfig{
+		Providers: []config.Provider{
+			{Name: "openai", Protocol: "openai", BaseURL: "http://127.0.0.1:0/v1", APIKey: "dummy"},
+		},
+		Models: []config.ModelConfig{
 			{
 				ModelName: "non-cli-primary",
-				Model:     "openai/some-non-cli-model",
-				APIBase:   "http://127.0.0.1:0/v1",
-				APIKey:    "dummy",
+				Model:     "some-non-cli-model",
+				Provider:  "openai",
 				Enabled:   true,
 			},
 		},
@@ -58,10 +60,10 @@ func TestResolveRunProvider_UsesDispatcherForActiveCandidate(t *testing.T) {
 	agent := &AgentInstance{
 		ID:       "primary-dispatch-test",
 		Provider: cliShared,
-		Model:    "claude-cli/sonnet-4-5",
+		Model:    "sonnet-4-5",
 	}
 	activeCandidates := []providers.FallbackCandidate{
-		{Provider: "openai", Model: "some-non-cli-model"},
+		{Provider: "openai", Model: "some-non-cli-model", Alias: "non-cli-primary"},
 	}
 
 	p, model := al.resolveRunProvider(agent, activeCandidates, "some-non-cli-model")
@@ -91,12 +93,14 @@ func TestResolveRunProvider_UsesDispatcherForActiveCandidate(t *testing.T) {
 // primaries through the shared claude-cli provider on the default config.
 func TestResolveRunProvider_EmptyCandidatesDispatchesPrimary(t *testing.T) {
 	cfg := &config.Config{
-		ModelList: []config.ModelConfig{
+		Providers: []config.Provider{
+			{Name: "xai", Protocol: "openai", BaseURL: "http://127.0.0.1:0/v1", APIKey: "dummy"},
+		},
+		Models: []config.ModelConfig{
 			{
 				ModelName: "Grok-4.3",
-				Model:     "xai/grok-4.3",
-				APIBase:   "http://127.0.0.1:0/v1",
-				APIKey:    "dummy",
+				Model:     "grok-4.3",
+				Provider:  "xai",
 				Enabled:   true,
 			},
 		},
@@ -133,11 +137,11 @@ func TestResolveRunProvider_EmptyCandidatesDispatchesPrimary(t *testing.T) {
 
 // TestResolveRunProvider_FallbackToAgentProvider confirms the last-resort
 // safety net: when the dispatcher cannot resolve a (protocol, model) pair —
-// either because the candidate references a missing model_list entry or
+// either because the candidate references a missing models entry or
 // because agent.Model is an unknown alias — fall back to agent.Provider so
 // existing single-provider configurations keep working.
 func TestResolveRunProvider_FallbackToAgentProvider(t *testing.T) {
-	cfg := &config.Config{ModelList: []config.ModelConfig{}}
+	cfg := &config.Config{Models: []config.ModelConfig{}}
 	dispatcher := providers.NewProviderDispatcher(cfg)
 
 	cliShared := &cliMockProvider{}

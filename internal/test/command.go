@@ -44,7 +44,7 @@ func newModelsCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "models",
 		Short: "Test connectivity to all enabled models",
-		Long: `Sends a simple prompt to every enabled model in model_list and reports which are reachable.
+		Long: `Sends a simple prompt to every enabled model in models and reports which are reachable.
 
 Each model is asked to reply with "OK".`,
 		Args: cobra.MaximumNArgs(1),
@@ -54,8 +54,8 @@ Each model is asked to reply with "OK".`,
 				return fmt.Errorf("failed to load config: %w", err)
 			}
 
-			if len(cfg.ModelList) == 0 {
-				fmt.Println("No models configured in model_list.")
+			if len(cfg.Models) == 0 {
+				fmt.Println("No models configured in models.")
 				return nil
 			}
 
@@ -98,29 +98,29 @@ func newModelCommand() *cobra.Command {
 }
 
 func testOne(cfg *config.Config, name string, deadline time.Duration) error {
-	for _, mc := range cfg.ModelList {
+	for _, mc := range cfg.Models {
 		if mc.ModelName == name {
 			if !mc.Enabled {
 				return fmt.Errorf("model %q is disabled", name)
 			}
-			printResults([]result{testModel(mc, deadline)})
+			printResults([]result{testModel(cfg, mc, deadline)})
 			return nil
 		}
 	}
-	return fmt.Errorf("model %q not found in model_list", name)
+	return fmt.Errorf("model %q not found in models", name)
 }
 
 func testAll(cfg *config.Config, deadline time.Duration) error {
 	var enabled []config.ModelConfig
-	for _, mc := range cfg.ModelList {
+	for _, mc := range cfg.Models {
 		if mc.Enabled {
 			enabled = append(enabled, mc)
 		}
 	}
-	disabledCount := len(cfg.ModelList) - len(enabled)
+	disabledCount := len(cfg.Models) - len(enabled)
 
 	if len(enabled) == 0 {
-		fmt.Println("No enabled models in model_list.")
+		fmt.Println("No enabled models in models.")
 		return nil
 	}
 
@@ -138,7 +138,7 @@ func testAll(cfg *config.Config, deadline time.Duration) error {
 		wg.Add(1)
 		go func(idx int, mc config.ModelConfig) {
 			defer wg.Done()
-			results[idx] = testModel(mc, deadline)
+			results[idx] = testModel(cfg, mc, deadline)
 		}(i, mc)
 	}
 	wg.Wait()
@@ -147,10 +147,15 @@ func testAll(cfg *config.Config, deadline time.Duration) error {
 	return nil
 }
 
-func testModel(mc config.ModelConfig, timeout time.Duration) result {
+func testModel(cfg *config.Config, mc config.ModelConfig, timeout time.Duration) result {
 	r := result{modelName: mc.ModelName}
 
-	provider, modelID, err := providers.CreateProviderFromConfig(&mc)
+	prov, err := cfg.GetProvider(mc.Provider)
+	if err != nil {
+		r.err = fmt.Sprintf("provider init: %v", err)
+		return r
+	}
+	provider, modelID, err := providers.CreateProviderFromConfig(&mc, prov)
 	if err != nil {
 		r.err = fmt.Sprintf("provider init: %v", err)
 		return r

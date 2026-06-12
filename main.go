@@ -25,7 +25,7 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/global"
 )
 
-func NewPicoclawCommand(binaryName string) *cobra.Command {
+func NewClawCommand(binaryName string) *cobra.Command {
 	// Default subcommand: run the merged gateway + WebUI + session API on the
 	// single port from cfg.Gateway. `claw` with no arguments is the supported
 	// way to launch the server; the `claw gateway` alias is preserved for
@@ -59,7 +59,7 @@ func NewPicoclawCommand(binaryName string) *cobra.Command {
 func main() {
 	binaryName := filepath.Base(os.Args[0])
 	internal.BinaryName = binaryName
-	cmd := NewPicoclawCommand(binaryName)
+	cmd := NewClawCommand(binaryName)
 	if err := cmd.Execute(); err != nil {
 		os.Exit(1)
 	}

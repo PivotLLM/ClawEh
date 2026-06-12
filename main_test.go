@@ -10,8 +10,8 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/global"
 )
 
-func TestNewPicoclawCommand(t *testing.T) {
-	cmd := NewPicoclawCommand("claw")
+func TestNewClawCommand(t *testing.T) {
+	cmd := NewClawCommand("claw")
 
 	require.NotNil(t, cmd)
 

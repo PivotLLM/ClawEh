@@ -49,9 +49,9 @@ func TestWebTool_WebFetch_Success(t *testing.T) {
 		t.Errorf("Expected ForLLM to contain 'Test Page', got: %s", result.ForLLM)
 	}
 
-	// ForUser should contain summary
-	if !strings.Contains(result.ForUser, "bytes") && !strings.Contains(result.ForUser, "extractor") {
-		t.Errorf("Expected ForUser to contain summary, got: %s", result.ForUser)
+	// web_fetch is silent: the fetched data goes to the model, not to the user.
+	if !result.Silent || result.ForUser != "" {
+		t.Errorf("Expected silent web_fetch result, got Silent=%v ForUser=%q", result.Silent, result.ForUser)
 	}
 }
 
@@ -781,15 +781,16 @@ func TestWebTool_TavilySearch_Success(t *testing.T) {
 		t.Errorf("Expected success, got IsError=true: %s", result.ForLLM)
 	}
 
-	// ForUser should contain result titles and URLs
-	if !strings.Contains(result.ForUser, "Test Result 1") ||
-		!strings.Contains(result.ForUser, "https://example.com/1") {
-		t.Errorf("Expected results in output, got: %s", result.ForUser)
+	// web_search is silent: results go to the model via ForLLM, not to the user.
+	if !result.Silent || result.ForUser != "" {
+		t.Errorf("Expected silent web_search result, got Silent=%v ForUser=%q", result.Silent, result.ForUser)
 	}
-
-	// Should mention via Tavily
-	if !strings.Contains(result.ForUser, "via Tavily") {
-		t.Errorf("Expected 'via Tavily' in output, got: %s", result.ForUser)
+	if !strings.Contains(result.ForLLM, "Test Result 1") ||
+		!strings.Contains(result.ForLLM, "https://example.com/1") {
+		t.Errorf("Expected results in ForLLM, got: %s", result.ForLLM)
+	}
+	if !strings.Contains(result.ForLLM, "via Tavily") {
+		t.Errorf("Expected 'via Tavily' in ForLLM, got: %s", result.ForLLM)
 	}
 }
 
@@ -903,8 +904,8 @@ func TestWebTool_TavilySearch_Failover(t *testing.T) {
 	if result.IsError {
 		t.Errorf("Expected success, got Error: %s", result.ForLLM)
 	}
-	if !strings.Contains(result.ForUser, "Success Result") {
-		t.Errorf("Expected failover to second key and success result, got: %s", result.ForUser)
+	if !strings.Contains(result.ForLLM, "Success Result") {
+		t.Errorf("Expected failover to second key and success result, got: %s", result.ForLLM)
 	}
 }
 
@@ -965,14 +966,14 @@ func TestWebTool_GLMSearch_Success(t *testing.T) {
 	if result.IsError {
 		t.Errorf("Expected success, got IsError=true: %s", result.ForLLM)
 	}
-	if !strings.Contains(result.ForUser, "Test GLM Result") {
-		t.Errorf("Expected 'Test GLM Result' in output, got: %s", result.ForUser)
+	if !strings.Contains(result.ForLLM, "Test GLM Result") {
+		t.Errorf("Expected 'Test GLM Result' in ForLLM, got: %s", result.ForLLM)
 	}
-	if !strings.Contains(result.ForUser, "https://example.com/glm") {
-		t.Errorf("Expected URL in output, got: %s", result.ForUser)
+	if !strings.Contains(result.ForLLM, "https://example.com/glm") {
+		t.Errorf("Expected URL in ForLLM, got: %s", result.ForLLM)
 	}
-	if !strings.Contains(result.ForUser, "via GLM Search") {
-		t.Errorf("Expected 'via GLM Search' in output, got: %s", result.ForUser)
+	if !strings.Contains(result.ForLLM, "via GLM Search") {
+		t.Errorf("Expected 'via GLM Search' in ForLLM, got: %s", result.ForLLM)
 	}
 }
 

@@ -172,8 +172,8 @@ func validateConfig(cfg *config.Config) []string {
 		errs = append(errs, "agents.list: at least one named agent must be configured")
 	}
 
-	// Validate model_list entries
-	if err := cfg.ValidateModelList(); err != nil {
+	// Validate models entries
+	if err := cfg.ValidateModels(); err != nil {
 		errs = append(errs, err.Error())
 	}
 

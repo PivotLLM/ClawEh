@@ -18,7 +18,7 @@ func listCommand() Definition {
 					if rt == nil || rt.GetModelInfo == nil {
 						return req.Reply(unavailableMsg)
 					}
-					name, provider, _ := rt.GetModelInfo()
+					name, provider, _, _ := rt.GetModelInfo()
 					if provider == "" {
 						provider = "configured default"
 					}

@@ -6,6 +6,7 @@ import {
   IconListDetails,
   IconMessageCircle,
   IconPlugConnected,
+  IconRoute,
   IconRobot,
   IconSettings,
   IconSparkles,
@@ -91,6 +92,12 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             title: "navigation.models",
             url: "/models",
             icon: IconAtom,
+            translateTitle: true,
+          },
+          {
+            title: "navigation.providers",
+            url: "/providers",
+            icon: IconRoute,
             translateTitle: true,
           },
           {

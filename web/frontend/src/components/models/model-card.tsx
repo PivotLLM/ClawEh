@@ -31,7 +31,6 @@ export function ModelCard({
   settingDefault,
 }: ModelCardProps) {
   const { t } = useTranslation()
-  const isOAuth = model.auth_method === "oauth"
   const canSetDefault = model.configured && !model.is_default
 
   return (
@@ -122,11 +121,7 @@ export function ModelCard({
 
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
-          {isOAuth ? (
-            <span className="text-muted-foreground bg-muted rounded px-1.5 py-0.5 text-[10px] font-medium">
-              OAuth
-            </span>
-          ) : model.configured ? (
+          {model.configured ? (
             <span className="text-muted-foreground/70 flex items-center gap-1 text-[11px]">
               <IconKey className="size-3" />
               {t("models.status.configured")}

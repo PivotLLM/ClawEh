@@ -9,29 +9,7 @@ import { Button } from "@/components/ui/button"
 import { AddModelSheet } from "./add-model-sheet"
 import { DeleteModelDialog } from "./delete-model-dialog"
 import { EditModelSheet } from "./edit-model-sheet"
-import { getProviderKey, getProviderLabel } from "./provider-label"
 import { ProviderSection } from "./provider-section"
-
-const PROVIDER_PRIORITY: Record<string, number> = {
-  volcengine: 0,
-  openai: 1,
-  gemini: 2,
-  anthropic: 3,
-  zhipu: 4,
-  deepseek: 5,
-  openrouter: 6,
-  qwen: 7,
-  moonshot: 8,
-  groq: 9,
-  "github-copilot": 10,
-  nvidia: 11,
-  cerebras: 13,
-  shengsuanyun: 14,
-  ollama: 15,
-  vllm: 16,
-  mistral: 17,
-  avian: 18,
-}
 
 interface ProviderGroup {
   key: string
@@ -57,11 +35,12 @@ export function ModelsPage() {
   const fetchModels = useCallback(async () => {
     try {
       const data = await getModels()
+      // Sort by provider, then alphabetically by model name within each
+      // provider. The provider groups are ordered alphabetically below; this
+      // keeps each group's models in alphabetical order.
       const sorted = [...data.models].sort((a, b) => {
-        if (a.is_default && !b.is_default) return -1
-        if (!a.is_default && b.is_default) return 1
-        if (a.configured && !b.configured) return -1
-        if (!a.configured && b.configured) return 1
+        const byProvider = (a.provider || "").localeCompare(b.provider || "")
+        if (byProvider !== 0) return byProvider
         return a.model_name.localeCompare(b.model_name)
       })
       setModels(sorted)
@@ -100,47 +79,29 @@ export function ModelsPage() {
     }
   }
 
-  const grouped: Record<string, { label: string; models: ModelInfo[] }> = {}
+  const grouped: Record<string, ModelInfo[]> = {}
   for (const model of models) {
-    const providerKey = getProviderKey(model.model)
+    const providerKey = model.provider || t("models.noProvider")
     if (!grouped[providerKey]) {
-      grouped[providerKey] = {
-        label: getProviderLabel(model.model),
-        models: [],
-      }
+      grouped[providerKey] = []
     }
-    grouped[providerKey].models.push(model)
+    grouped[providerKey].push(model)
   }
 
   const providerGroups: ProviderGroup[] = Object.entries(grouped)
-    .map(([key, group]) => {
-      const configuredCount = group.models.filter(
+    .map(([key, groupModels]) => {
+      const configuredCount = groupModels.filter(
         (model) => model.configured,
       ).length
       return {
         key,
-        label: group.label,
-        models: group.models,
-        hasDefault: group.models.some((model) => model.is_default),
+        label: key,
+        models: groupModels,
+        hasDefault: groupModels.some((model) => model.is_default),
         configuredCount,
       }
     })
-    .sort((a, b) => {
-      if (a.hasDefault && !b.hasDefault) return -1
-      if (!a.hasDefault && b.hasDefault) return 1
-
-      if (a.configuredCount !== b.configuredCount) {
-        return b.configuredCount - a.configuredCount
-      }
-
-      const aPriority = PROVIDER_PRIORITY[a.key] ?? Number.MAX_SAFE_INTEGER
-      const bPriority = PROVIDER_PRIORITY[b.key] ?? Number.MAX_SAFE_INTEGER
-      if (aPriority !== bPriority) {
-        return aPriority - bPriority
-      }
-
-      return a.label.localeCompare(b.label)
-    })
+    .sort((a, b) => a.label.localeCompare(b.label))
 
   const defaultModel = models.find((model) => model.is_default)
 

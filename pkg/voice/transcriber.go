@@ -164,16 +164,14 @@ func (t *GroqTranscriber) Name() string {
 }
 
 // DetectTranscriber inspects cfg and returns the appropriate Transcriber, or
-// nil if no supported transcription provider is configured.
+// nil if no supported transcription provider is configured. Groq is identified
+// by a provider whose base URL targets the Groq API (Groq hosts the Whisper
+// transcription endpoint claw uses).
 func DetectTranscriber(cfg *config.Config) Transcriber {
-	// Direct Groq provider config takes priority.
-	if key := cfg.Providers.Groq.APIKey; key != "" {
-		return NewGroqTranscriber(key)
-	}
-	// Fall back to any model-list entry that uses the groq/ protocol.
-	for _, mc := range cfg.ModelList {
-		if strings.HasPrefix(mc.Model, "groq/") && mc.APIKey != "" && mc.Enabled {
-			return NewGroqTranscriber(mc.APIKey)
+	for i := range cfg.Providers {
+		p := &cfg.Providers[i]
+		if p.APIKey != "" && strings.Contains(p.BaseURL, "api.groq.com") {
+			return NewGroqTranscriber(p.APIKey)
 		}
 	}
 	return nil

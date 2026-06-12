@@ -1,4 +1,4 @@
-// PicoClaw - Ultra-lightweight personal AI agent
+// ClawEh - Personal AI Assistant
 // License: MIT
 //
 // Copyright (c) 2026 PicoClaw contributors

@@ -1,4 +1,4 @@
-// PicoClaw - Ultra-lightweight personal AI agent
+// ClawEh - Personal AI Assistant
 // Inspired by and based on nanobot: https://github.com/HKUDS/nanobot
 // License: MIT
 //
@@ -1848,16 +1848,20 @@ func (al *AgentLoop) runLLMIteration(
 			al.targetReasoningChannelID(opts.Channel),
 		)
 
-		logger.DebugCF("agent", "LLM response",
-			map[string]any{
-				"agent_id":       agent.ID,
-				"iteration":      iteration,
-				"content_chars":  len(response.Content),
-				"tool_calls":     len(response.ToolCalls),
-				"reasoning":      response.Reasoning,
-				"target_channel": al.targetReasoningChannelID(opts.Channel),
-				"channel":        opts.Channel,
-			})
+		respFields := map[string]any{
+			"agent_id":        agent.ID,
+			"iteration":       iteration,
+			"content_chars":   len(response.Content),
+			"tool_calls":      len(response.ToolCalls),
+			"reasoning_chars": len(response.Reasoning),
+			"target_channel":  al.targetReasoningChannelID(opts.Channel),
+			"channel":         opts.Channel,
+		}
+		// Reasoning text is response body content — gate behind log_message_content.
+		if logger.GetLogMessageContent() {
+			respFields["reasoning"] = response.Reasoning
+		}
+		logger.DebugCF("agent", "LLM response", respFields)
 		// Check if no tool calls - then check reasoning content if any
 		if len(response.ToolCalls) == 0 {
 			finalContent = response.Content
@@ -1893,9 +1897,11 @@ func (al *AgentLoop) runLLMIteration(
 				"iteration": iteration,
 			})
 
-		// If the LLM returned both text content and tool calls, publish the
-		// text to the user immediately so it is visible before tool execution.
-		if response.Content != "" && opts.Channel != "" {
+		// If the LLM returned both text content and tool calls, publish that
+		// inter-tool narration to the user — only when streaming tool activity is
+		// enabled. Off by default so the user sees only the final answer, not the
+		// model's "let me also check…" play-by-play.
+		if response.Content != "" && opts.Channel != "" && al.GetConfig().Agents.Defaults.StreamToolActivity {
 			pubCtx, pubCancel := context.WithTimeout(ctx, 5*time.Second)
 			_ = al.bus.PublishOutbound(pubCtx, bus.OutboundMessage{
 				Channel: opts.Channel,
@@ -2048,9 +2054,12 @@ func (al *AgentLoop) runLLMIteration(
 		wg.Wait()
 
 		// Process results in original order (send to user, save to session)
+		streamActivity := al.GetConfig().Agents.Defaults.StreamToolActivity
 		for _, r := range agentResults {
-			// Send ForUser content to user immediately if not Silent
-			if !r.result.Silent && r.result.ForUser != "" {
+			// Send ForUser content to user immediately if not Silent — only when
+			// streaming tool activity is enabled (otherwise the user receives just
+			// the final answer, not each tool's intermediate output).
+			if streamActivity && !r.result.Silent && r.result.ForUser != "" {
 				if err := al.bus.PublishOutbound(ctx, bus.OutboundMessage{
 					Channel: opts.Channel,
 					ChatID:  opts.ChatID,
@@ -2154,20 +2163,15 @@ func (al *AgentLoop) resolveRunProvider(
 	activeModel string,
 ) (providers.LLMProvider, string) {
 	if al.dispatcher != nil {
-		var alias, protocol, modelID string
+		var alias, modelID string
 		if len(activeCandidates) > 0 {
 			alias = strings.TrimSpace(activeCandidates[0].Alias)
-			protocol = strings.TrimSpace(activeCandidates[0].Provider)
 			modelID = strings.TrimSpace(activeCandidates[0].Model)
-		} else if a, p, m, ok := resolveCompressModelTarget(al.GetConfig(), strings.TrimSpace(agent.Model)); ok {
-			alias, protocol, modelID = a, p, m
+		} else if a, m, ok := resolveCompressModelTarget(al.GetConfig(), strings.TrimSpace(agent.Model)); ok {
+			alias, modelID = a, m
 		}
-		if protocol != "" && modelID != "" {
-			key := alias
-			if key == "" {
-				key = protocol + "/" + modelID
-			}
-			if p, err := al.dispatcher.Get(key); err == nil {
+		if alias != "" {
+			if p, err := al.dispatcher.Get(alias); err == nil {
 				return p, modelID
 			}
 		}
@@ -2420,17 +2424,23 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 		} else {
 			rt.AgentName = agent.ID
 		}
-		rt.GetModelInfo = func() (string, string, string) {
-			protocol, modelID := providers.ExtractProtocol(agent.Model)
-			name := modelID
-			apiBase := ""
+		rt.GetModelInfo = func() (name, provider, protocol, apiBase string) {
+			// Resolve the configured model so the provider name, wire protocol,
+			// and base URL come from the model's named provider.
+			name = agent.Model
 			if mc, err := cfg.GetModelConfig(agent.Model); err == nil && mc != nil {
 				if mc.ModelName != "" {
 					name = mc.ModelName
+				} else if mc.Model != "" {
+					name = mc.Model
 				}
-				apiBase = mc.APIBase
+				if prov, perr := cfg.GetProvider(mc.Provider); perr == nil && prov != nil {
+					provider = prov.Name
+					protocol = prov.Protocol
+					apiBase = prov.BaseURL
+				}
 			}
-			return name, protocol, apiBase
+			return name, provider, protocol, apiBase
 		}
 		rt.SwitchModel = func(value string) (string, error) {
 			oldModel := agent.Model

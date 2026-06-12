@@ -184,8 +184,8 @@ func TestCronTool_MissingAction(t *testing.T) {
 func TestCronTool_NameDescriptionParameters(t *testing.T) {
 	tool := newTestCronTool(t)
 
-	if tool.Name() != "schedule_cron" {
-		t.Errorf("Name() = %q, want schedule_cron", tool.Name())
+	if tool.Name() != "cron_schedule" {
+		t.Errorf("Name() = %q, want cron_schedule", tool.Name())
 	}
 	if tool.Description() == "" {
 		t.Error("Description() should not be empty")

@@ -37,7 +37,7 @@ func NewEditFileToolWithMemoryRedirect(
 }
 
 func (t *EditFileTool) Name() string {
-	return "files_edit"
+	return "file_edit"
 }
 
 func (t *EditFileTool) Description() string {
@@ -142,7 +142,7 @@ func NewAppendFileToolWithMemoryRedirect(
 }
 
 func (t *AppendFileTool) Name() string {
-	return "files_append"
+	return "file_append"
 }
 
 func (t *AppendFileTool) Description() string {

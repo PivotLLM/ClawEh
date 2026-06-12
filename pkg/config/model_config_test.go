@@ -1,4 +1,4 @@
-// PicoClaw - Ultra-lightweight personal AI agent
+// ClawEh - Personal AI Assistant
 // License: MIT
 //
 // Copyright (c) 2026 PicoClaw contributors
@@ -16,9 +16,9 @@ import (
 
 func TestGetModelConfig_Found(t *testing.T) {
 	cfg := &Config{
-		ModelList: []ModelConfig{
-			{ModelName: "test-model", Model: "openai/gpt-4o", APIKey: "key1", Enabled: true},
-			{ModelName: "other-model", Model: "anthropic/claude", APIKey: "key2", Enabled: true},
+		Models: []ModelConfig{
+			{ModelName: "test-model", Model: "openai/gpt-4o", Enabled: true},
+			{ModelName: "other-model", Model: "anthropic/claude", Enabled: true},
 		},
 	}
 
@@ -33,8 +33,8 @@ func TestGetModelConfig_Found(t *testing.T) {
 
 func TestGetModelConfig_NotFound(t *testing.T) {
 	cfg := &Config{
-		ModelList: []ModelConfig{
-			{ModelName: "test-model", Model: "openai/gpt-4o", APIKey: "key1"},
+		Models: []ModelConfig{
+			{ModelName: "test-model", Model: "openai/gpt-4o"},
 		},
 	}
 
@@ -46,7 +46,7 @@ func TestGetModelConfig_NotFound(t *testing.T) {
 
 func TestGetModelConfig_EmptyList(t *testing.T) {
 	cfg := &Config{
-		ModelList: []ModelConfig{},
+		Models: []ModelConfig{},
 	}
 
 	_, err := cfg.GetModelConfig("any-model")
@@ -57,10 +57,10 @@ func TestGetModelConfig_EmptyList(t *testing.T) {
 
 func TestGetModelConfig_RoundRobin(t *testing.T) {
 	cfg := &Config{
-		ModelList: []ModelConfig{
-			{ModelName: "lb-model", Model: "openai/gpt-4o-1", APIKey: "key1", Enabled: true},
-			{ModelName: "lb-model", Model: "openai/gpt-4o-2", APIKey: "key2", Enabled: true},
-			{ModelName: "lb-model", Model: "openai/gpt-4o-3", APIKey: "key3", Enabled: true},
+		Models: []ModelConfig{
+			{ModelName: "lb-model", Model: "openai/gpt-4o-1", Enabled: true},
+			{ModelName: "lb-model", Model: "openai/gpt-4o-2", Enabled: true},
+			{ModelName: "lb-model", Model: "openai/gpt-4o-3", Enabled: true},
 		},
 	}
 
@@ -84,9 +84,9 @@ func TestGetModelConfig_RoundRobin(t *testing.T) {
 
 func TestGetModelConfig_Concurrent(t *testing.T) {
 	cfg := &Config{
-		ModelList: []ModelConfig{
-			{ModelName: "concurrent-model", Model: "openai/gpt-4o-1", APIKey: "key1", Enabled: true},
-			{ModelName: "concurrent-model", Model: "openai/gpt-4o-2", APIKey: "key2", Enabled: true},
+		Models: []ModelConfig{
+			{ModelName: "concurrent-model", Model: "openai/gpt-4o-1", Enabled: true},
+			{ModelName: "concurrent-model", Model: "openai/gpt-4o-2", Enabled: true},
 		},
 	}
 
@@ -186,7 +186,7 @@ func TestFullConfig_JSON_ModelConfig(t *testing.T) {
 				"max_tokens": 4096
 			}
 		},
-		"model_list": [
+		"models": [
 			{
 				"model_name": "gpt4",
 				"model": "openai/gpt-4o",
@@ -226,14 +226,16 @@ func TestModelConfig_Validate(t *testing.T) {
 			name: "valid config",
 			config: ModelConfig{
 				ModelName: "test",
-				Model:     "openai/gpt-4o",
+				Model:     "gpt-4o",
+				Provider:  "openai",
 			},
 			wantErr: false,
 		},
 		{
 			name: "missing model_name",
 			config: ModelConfig{
-				Model: "openai/gpt-4o",
+				Model:    "gpt-4o",
+				Provider: "openai",
 			},
 			wantErr: true,
 		},
@@ -241,6 +243,15 @@ func TestModelConfig_Validate(t *testing.T) {
 			name: "missing model",
 			config: ModelConfig{
 				ModelName: "test",
+				Provider:  "openai",
+			},
+			wantErr: true,
+		},
+		{
+			name: "missing provider",
+			config: ModelConfig{
+				ModelName: "test",
+				Model:     "gpt-4o",
 			},
 			wantErr: true,
 		},
@@ -271,9 +282,13 @@ func TestConfig_ValidateModelList(t *testing.T) {
 		{
 			name: "valid list",
 			config: &Config{
-				ModelList: []ModelConfig{
-					{ModelName: "test1", Model: "openai/gpt-4o"},
-					{ModelName: "test2", Model: "anthropic/claude"},
+				Providers: []Provider{
+					{Name: "openai", Protocol: "openai", BaseURL: "https://api.openai.com/v1"},
+					{Name: "anthropic", Protocol: "anthropic", BaseURL: "https://api.anthropic.com"},
+				},
+				Models: []ModelConfig{
+					{ModelName: "test1", Model: "gpt-4o", Provider: "openai"},
+					{ModelName: "test2", Model: "claude", Provider: "anthropic"},
 				},
 			},
 			wantErr: false,
@@ -281,18 +296,31 @@ func TestConfig_ValidateModelList(t *testing.T) {
 		{
 			name: "invalid entry",
 			config: &Config{
-				ModelList: []ModelConfig{
-					{ModelName: "test1", Model: "openai/gpt-4o"},
-					{ModelName: "", Model: "anthropic/claude"}, // missing model_name
+				Providers: []Provider{
+					{Name: "openai", Protocol: "openai", BaseURL: "https://api.openai.com/v1"},
+				},
+				Models: []ModelConfig{
+					{ModelName: "test1", Model: "gpt-4o", Provider: "openai"},
+					{ModelName: "", Model: "claude", Provider: "openai"}, // missing model_name
 				},
 			},
 			wantErr: true,
 			errMsg:  "model_name is required",
 		},
 		{
+			name: "unknown provider reference",
+			config: &Config{
+				Models: []ModelConfig{
+					{ModelName: "test1", Model: "gpt-4o", Provider: "nope"},
+				},
+			},
+			wantErr: true,
+			errMsg:  "provider \"nope\" not found",
+		},
+		{
 			name: "empty list",
 			config: &Config{
-				ModelList: []ModelConfig{},
+				Models: []ModelConfig{},
 			},
 			wantErr: false,
 		},
@@ -300,9 +328,12 @@ func TestConfig_ValidateModelList(t *testing.T) {
 			// Load balancing: multiple entries with same model_name are allowed
 			name: "duplicate model_name for load balancing",
 			config: &Config{
-				ModelList: []ModelConfig{
-					{ModelName: "gpt-4", Model: "openai/gpt-4o", APIKey: "key1"},
-					{ModelName: "gpt-4", Model: "openai/gpt-4-turbo", APIKey: "key2"},
+				Providers: []Provider{
+					{Name: "openai", Protocol: "openai", BaseURL: "https://api.openai.com/v1"},
+				},
+				Models: []ModelConfig{
+					{ModelName: "gpt-4", Model: "gpt-4o", Provider: "openai"},
+					{ModelName: "gpt-4", Model: "gpt-4-turbo", Provider: "openai"},
 				},
 			},
 			wantErr: false, // Changed: duplicates are allowed for load balancing
@@ -311,10 +342,14 @@ func TestConfig_ValidateModelList(t *testing.T) {
 			// Load balancing: non-adjacent entries with same model_name are also allowed
 			name: "duplicate model_name non-adjacent for load balancing",
 			config: &Config{
-				ModelList: []ModelConfig{
-					{ModelName: "model-a", Model: "openai/gpt-4o"},
-					{ModelName: "model-b", Model: "anthropic/claude"},
-					{ModelName: "model-a", Model: "openai/gpt-4-turbo"},
+				Providers: []Provider{
+					{Name: "openai", Protocol: "openai", BaseURL: "https://api.openai.com/v1"},
+					{Name: "anthropic", Protocol: "anthropic", BaseURL: "https://api.anthropic.com"},
+				},
+				Models: []ModelConfig{
+					{ModelName: "model-a", Model: "gpt-4o", Provider: "openai"},
+					{ModelName: "model-b", Model: "claude", Provider: "anthropic"},
+					{ModelName: "model-a", Model: "gpt-4-turbo", Provider: "openai"},
 				},
 			},
 			wantErr: false, // Changed: duplicates are allowed for load balancing
@@ -323,13 +358,13 @@ func TestConfig_ValidateModelList(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := tt.config.ValidateModelList()
+			err := tt.config.ValidateModels()
 			if (err != nil) != tt.wantErr {
-				t.Errorf("ValidateModelList() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("ValidateModels() error = %v, wantErr %v", err, tt.wantErr)
 			}
 			if err != nil && tt.errMsg != "" {
 				if !strings.Contains(err.Error(), tt.errMsg) {
-					t.Errorf("ValidateModelList() error = %v, want error containing %q", err, tt.errMsg)
+					t.Errorf("ValidateModels() error = %v, want error containing %q", err, tt.errMsg)
 				}
 			}
 		})
@@ -338,13 +373,13 @@ func TestConfig_ValidateModelList(t *testing.T) {
 
 func TestModelConfig_ReasoningEffort_Validate(t *testing.T) {
 	for _, level := range []string{"", "low", "medium", "high"} {
-		cfg := ModelConfig{ModelName: "m", Model: "openai/gpt", ReasoningEffort: level}
+		cfg := ModelConfig{ModelName: "m", Model: "gpt", Provider: "openai", ReasoningEffort: level}
 		if err := cfg.Validate(); err != nil {
 			t.Errorf("Validate(%q) returned error: %v", level, err)
 		}
 	}
 
-	cfg := ModelConfig{ModelName: "grok-3", Model: "openai/grok-3", ReasoningEffort: "extreme"}
+	cfg := ModelConfig{ModelName: "grok-3", Model: "grok-3", Provider: "openai", ReasoningEffort: "extreme"}
 	err := cfg.Validate()
 	if err == nil {
 		t.Fatal("Validate() expected error for invalid reasoning_effort")
@@ -366,7 +401,8 @@ func TestModelConfig_ExtraBody_CollisionRejected(t *testing.T) {
 	for _, key := range cases {
 		cfg := ModelConfig{
 			ModelName: "the-model",
-			Model:     "openai/whatever",
+			Model:     "whatever",
+			Provider:  "openai",
 			ExtraBody: map[string]any{key: 1},
 		}
 		err := cfg.Validate()
@@ -386,7 +422,8 @@ func TestModelConfig_ExtraBody_CollisionRejected(t *testing.T) {
 func TestModelConfig_ExtraBody_AllowedKeysPass(t *testing.T) {
 	cfg := ModelConfig{
 		ModelName: "m",
-		Model:     "openai/gpt",
+		Model:     "gpt",
+		Provider:  "openai",
 		ExtraBody: map[string]any{
 			"custom_xai_thinking": map[string]any{"budget": 1024},
 			"safety_settings":     []any{"strict"},
@@ -401,7 +438,6 @@ func TestModelConfig_ReasoningEffort_ExtraBody_JSONRoundTrip(t *testing.T) {
 	original := ModelConfig{
 		ModelName:       "grok",
 		Model:           "openai/grok-3",
-		APIKey:          "k",
 		ReasoningEffort: "high",
 		ExtraBody: map[string]any{
 			"search_parameters": map[string]any{"mode": "auto"},
@@ -434,7 +470,6 @@ func TestModelConfig_ReasoningEffort_ExtraBody_YAMLRoundTrip(t *testing.T) {
 	original := ModelConfig{
 		ModelName:       "grok",
 		Model:           "openai/grok-3",
-		APIKey:          "k",
 		ReasoningEffort: "medium",
 		ExtraBody: map[string]any{
 			"search_parameters": map[string]any{"mode": "auto"},

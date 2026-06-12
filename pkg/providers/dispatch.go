@@ -1,4 +1,4 @@
-// PicoClaw - Ultra-lightweight personal AI agent
+// ClawEh - Personal AI Assistant
 // License: MIT
 //
 // Copyright (c) 2026 PicoClaw contributors
@@ -11,18 +11,15 @@ import (
 	"sync"
 
 	"github.com/PivotLLM/ClawEh/pkg/config"
-	"github.com/PivotLLM/ClawEh/pkg/logger"
 )
 
 // ProviderDispatcher creates and caches per-model LLMProvider instances.
 //
-// The cache key is the user-facing alias (ModelConfig.ModelName), not the
-// wire model (protocol+"/"+modelID). Keying by alias is required because
-// multiple model_list entries may share the same wire model while differing
-// on per-entry openai_compat state (response_log_file, reasoning_effort,
-// extra_body, strict_compat, no_parallel_tool_calls, max_tokens_field,
-// request_timeout, proxy, api_key, model_label). Keying by wire model
-// shadowed all entries past the first-match.
+// The cache key is the user-facing alias (ModelConfig.ModelName). Keying by
+// alias is required because multiple models entries may share the same raw
+// model id while differing on per-entry state (response_log_file,
+// reasoning_effort, extra_body, max_tokens_field, request_timeout, drop_params)
+// or on the named provider they resolve through.
 //
 // Thread-safe: uses sync.RWMutex with read-locking for cache hits.
 type ProviderDispatcher struct {
@@ -40,15 +37,12 @@ func NewProviderDispatcher(cfg *config.Config) *ProviderDispatcher {
 }
 
 // Get returns a cached or newly created provider for the given model alias
-// (ModelConfig.ModelName).
+// (ModelConfig.ModelName). The matching entry's provider reference is resolved
+// to a configured provider, which supplies the wire protocol, base URL, and
+// credentials.
 //
-// Lookup precedence:
-//  1. enabled ModelList entry with ModelName == alias (the intended path).
-//  2. enabled ModelList entry whose wire model (protocol+"/"+modelID) equals
-//     the alias — backwards-compatible fallback for callers that still hand
-//     in a wire model. A DBG log fires so stragglers can be found and fixed.
-//
-// Returns an error if no matching ModelConfig is found or provider creation fails.
+// Returns an error if no enabled ModelConfig matches the alias, the model's
+// provider cannot be resolved, or provider creation fails.
 func (d *ProviderDispatcher) Get(alias string) (LLMProvider, error) {
 	alias = strings.TrimSpace(alias)
 	if alias == "" {
@@ -67,30 +61,14 @@ func (d *ProviderDispatcher) Get(alias string) (LLMProvider, error) {
 	d.mu.RLock()
 	cfgSnapshot := d.cfg
 	var matched *config.ModelConfig
-	var matchedByWire bool
-	for i := range cfgSnapshot.ModelList {
-		if !cfgSnapshot.ModelList[i].Enabled {
+	for i := range cfgSnapshot.Models {
+		if !cfgSnapshot.Models[i].Enabled {
 			continue
 		}
-		if cfgSnapshot.ModelList[i].ModelName == alias {
-			cp := cfgSnapshot.ModelList[i]
+		if cfgSnapshot.Models[i].ModelName == alias {
+			cp := cfgSnapshot.Models[i]
 			matched = &cp
 			break
-		}
-	}
-	if matched == nil {
-		// Backwards-compatible fallback: match by wire model.
-		for i := range cfgSnapshot.ModelList {
-			if !cfgSnapshot.ModelList[i].Enabled {
-				continue
-			}
-			p, m := ExtractProtocol(cfgSnapshot.ModelList[i].Model)
-			if p+"/"+m == alias {
-				cp := cfgSnapshot.ModelList[i]
-				matched = &cp
-				matchedByWire = true
-				break
-			}
 		}
 	}
 	if matched != nil && matched.RequestTimeout == 0 && cfgSnapshot.Agents.Defaults.RequestTimeout > 0 {
@@ -99,19 +77,16 @@ func (d *ProviderDispatcher) Get(alias string) (LLMProvider, error) {
 	d.mu.RUnlock()
 
 	if matched == nil {
-		return nil, fmt.Errorf("dispatcher: no enabled model_list entry with model_name=%q", alias)
+		return nil, fmt.Errorf("dispatcher: no enabled models entry with model_name=%q", alias)
 	}
 
-	if matchedByWire {
-		logger.DebugCF("providers", "dispatcher: caller passed wire model instead of alias",
-			map[string]any{
-				"wire_model": alias,
-				"model_name": matched.ModelName,
-			})
+	prov, err := cfgSnapshot.GetProvider(matched.Provider)
+	if err != nil {
+		return nil, fmt.Errorf("dispatcher: resolving provider for %q: %w", alias, err)
 	}
 
 	// Create the provider outside any lock (may do I/O).
-	provider, _, err := CreateProviderFromConfig(matched)
+	provider, _, err := CreateProviderFromConfig(matched, prov)
 	if err != nil {
 		return nil, fmt.Errorf("dispatcher: creating provider for %q: %w", alias, err)
 	}

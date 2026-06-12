@@ -25,7 +25,7 @@ func (p scheduleProvider) Available(cfg *config.Config) (bool, string) {
 
 func (p scheduleProvider) Describe() []tools.ToolDescriptor {
 	return []tools.ToolDescriptor{
-		{Name: "schedule_cron", Description: "Schedule one-time or recurring reminders, jobs, and shell commands.", Category: "automation", ConfigKey: "schedule_cron", DefaultEnabled: true},
+		{Name: "cron_schedule", Description: "Schedule one-time or recurring reminders, jobs, and shell commands.", Category: "automation", ConfigKey: "cron_schedule", DefaultEnabled: true},
 	}
 }
 

@@ -19,8 +19,8 @@ import (
 // (e.g. TestAgentLoop_GetStartupInfo) need at least a few providers registered
 // so that registerRuntimeTools produces a non-empty tool registry.
 func TestMain(m *testing.M) {
-	tools.RegisterProvider(toolsfiles.Provider)
-	tools.RegisterProvider(toolsshell.Provider)
-	tools.RegisterProvider(toolssession.Provider)
+	tools.RegisterProvider(tools.NamespacedProvider("file", toolsfiles.GlobalProvider))
+	tools.RegisterProvider(tools.NamespacedProvider("shell", toolsshell.GlobalProvider))
+	tools.RegisterProvider(tools.NamespacedProvider("session", toolssession.GlobalProvider))
 	os.Exit(m.Run())
 }

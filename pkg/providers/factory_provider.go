@@ -1,4 +1,4 @@
-// PicoClaw - Ultra-lightweight personal AI agent
+// ClawEh - Personal AI Assistant
 // License: MIT
 //
 // Copyright (c) 2026 PicoClaw contributors
@@ -6,17 +6,19 @@
 package providers
 
 import (
-	"context"
 	"fmt"
-	"strings"
 	"time"
 
+	"github.com/PivotLLM/ClawEh/pkg/auth"
 	"github.com/PivotLLM/ClawEh/pkg/config"
 	anthropicmessages "github.com/PivotLLM/ClawEh/pkg/providers/anthropic_messages"
 	"github.com/PivotLLM/ClawEh/pkg/providers/azure"
-	"github.com/PivotLLM/ClawEh/pkg/providers/bedrock"
 	"github.com/PivotLLM/ClawEh/pkg/providers/openai_compat"
 )
+
+// getCredential is the auth-store lookup used by the Claude OAuth provider.
+// Indirected through a package var so tests can stub it.
+var getCredential = auth.GetCredential
 
 // createClaudeAuthProvider creates a Claude provider using OAuth credentials from auth store.
 func createClaudeAuthProvider() (LLMProvider, error) {
@@ -30,304 +32,99 @@ func createClaudeAuthProvider() (LLMProvider, error) {
 	return NewClaudeProviderWithTokenSource(cred.AccessToken, createClaudeTokenSource()), nil
 }
 
-// ExtractProtocol extracts the protocol prefix and model identifier from a model string.
-// If no prefix is specified, it defaults to "openai".
-// Examples:
-//   - "openai/gpt-4o" -> ("openai", "gpt-4o")
-//   - "anthropic/claude-sonnet-4.6" -> ("anthropic", "claude-sonnet-4.6")
-//   - "gpt-4o" -> ("openai", "gpt-4o")  // default protocol
-func ExtractProtocol(model string) (protocol, modelID string) {
-	model = strings.TrimSpace(model)
-	protocol, modelID, found := strings.Cut(model, "/")
-	if !found {
-		return "openai", model
+// compatOpts builds the openai_compat options from the endpoint-scoped provider
+// knobs and the model-scoped request knobs.
+func compatOpts(model *config.ModelConfig, prov *config.Provider) []openai_compat.Option {
+	return []openai_compat.Option{
+		openai_compat.WithMaxTokensField(model.MaxTokensField),
+		openai_compat.WithRequestTimeout(time.Duration(model.RequestTimeout) * time.Second),
+		openai_compat.WithStrictCompat(prov.StrictCompat),
+		openai_compat.WithNoParallelToolCalls(prov.NoParallelToolCalls),
+		openai_compat.WithStrictAlternation(prov.StrictAlternation),
+		openai_compat.WithResponseLogFile(model.ResponseLogFile),
+		openai_compat.WithReasoningEffort(model.ReasoningEffort),
+		openai_compat.WithExtraBody(model.ExtraBody),
+		openai_compat.WithDropParams(model.DropParams),
+		openai_compat.WithModelLabel(model.ModelName),
+		openai_compat.WithProtocol(prov.Protocol),
+		openai_compat.WithResponseFormatJSONCapable(prov.ResponseFormatJSON),
 	}
-	return protocol, modelID
 }
 
-// CreateProviderFromConfig creates a provider based on the ModelConfig.
-// It uses the protocol prefix in the Model field to determine which provider to create.
-// Supported protocols: openai, anthropic, anthropic-messages, azure, bedrock,
-// litellm, openrouter, groq, gemini, nvidia, ollama, moonshot, deepseek,
-// cerebras, vllm, qwen, mistral, avian, xai, claude-cli, codex-cli, gemini-cli.
-// Additional openai-compatible protocols can be registered via
-// Config.OpenAICompatProtocols — those are surfaced on the ModelConfig by
-// LoadConfig (see MarkOpenAICompatExtra) and routed through the openai-compat
-// HTTP provider here.
-// Returns the provider, the model ID (without protocol prefix), and any error.
-func CreateProviderFromConfig(cfg *config.ModelConfig) (LLMProvider, string, error) {
-	if cfg == nil {
-		return nil, "", fmt.Errorf("config is nil")
+// CreateProviderFromConfig builds the LLM provider for a model reached through
+// the given named provider. prov supplies the wire protocol, base URL,
+// credentials, and endpoint-scoped knobs; model supplies the raw model id and
+// request-scoped knobs. Returns the provider, the raw model id, and any error.
+func CreateProviderFromConfig(model *config.ModelConfig, prov *config.Provider) (LLMProvider, string, error) {
+	if model == nil {
+		return nil, "", fmt.Errorf("model config is nil")
 	}
-
-	if cfg.Model == "" {
+	if model.Model == "" {
 		return nil, "", fmt.Errorf("model is required")
 	}
+	if prov == nil {
+		return nil, "", fmt.Errorf("provider is nil for model %q", model.ModelName)
+	}
 
-	protocol, modelID := ExtractProtocol(cfg.Model)
+	modelID := model.Model
 
-	switch protocol {
+	switch prov.Protocol {
 	case "openai":
-		// OpenAI with API key
-		if cfg.APIKey == "" && cfg.APIBase == "" {
-			return nil, "", fmt.Errorf("api_key or api_base is required for HTTP-based protocol %q", protocol)
-		}
-		apiBase := cfg.APIBase
-		if apiBase == "" {
-			apiBase = getDefaultAPIBase(protocol)
-		}
-		opts := []openai_compat.Option{
-			openai_compat.WithMaxTokensField(cfg.MaxTokensField),
-			openai_compat.WithRequestTimeout(time.Duration(cfg.RequestTimeout) * time.Second),
-			openai_compat.WithStrictCompat(cfg.StrictCompat),
-			openai_compat.WithResponseLogFile(cfg.ResponseLogFile),
-			openai_compat.WithReasoningEffort(cfg.ReasoningEffort),
-			openai_compat.WithExtraBody(cfg.ExtraBody),
-			openai_compat.WithModelLabel(cfg.ModelName),
-			openai_compat.WithProtocol(protocol),
-			openai_compat.WithResponseFormatJSONCapable(cfg.ResponseFormatJSONCapable()),
-		}
-		return NewHTTPProviderWithOptions(cfg.APIKey, apiBase, cfg.Proxy, opts...), modelID, nil
+		return NewHTTPProviderWithOptions(prov.APIKey, prov.BaseURL, prov.Proxy, compatOpts(model, prov)...), modelID, nil
 
-	case "azure", "azure-openai":
-		// Azure OpenAI uses deployment-based URLs, api-key header auth,
-		// and always sends max_completion_tokens.
-		if cfg.APIKey == "" {
-			return nil, "", fmt.Errorf("api_key is required for azure protocol")
-		}
-		if cfg.APIBase == "" {
-			return nil, "", fmt.Errorf(
-				"api_base is required for azure protocol (e.g., https://your-resource.openai.azure.com)",
-			)
-		}
-		return azure.NewProviderWithTimeout(
-			cfg.APIKey,
-			cfg.APIBase,
-			cfg.Proxy,
-			cfg.RequestTimeout,
-		), modelID, nil
-
-	case "bedrock":
-		// AWS Bedrock uses AWS SDK credentials (env vars, profiles, IAM roles, etc.)
-		// api_base can be:
-		//   - A region name: us-east-1 (AWS SDK resolves endpoint automatically)
-		//   - A full endpoint URL: https://bedrock-runtime.us-east-1.amazonaws.com
-		// api_key (optional): one of:
-		//   - An Amazon Bedrock API key (bearer token) — no colon, e.g. "bak-abc123..."
-		//   - "ACCESS_KEY_ID:SECRET_ACCESS_KEY" or "ACCESS_KEY_ID:SECRET_ACCESS_KEY:SESSION_TOKEN"
-		//   If omitted, the AWS default credential chain is used (env vars, ~/.aws, IAM roles).
-		var opts []bedrock.Option
-		if cfg.APIKey != "" {
-			if strings.Contains(cfg.APIKey, ":") {
-				parts := strings.SplitN(cfg.APIKey, ":", 3)
-				sessionToken := ""
-				if len(parts) == 3 {
-					sessionToken = parts[2]
-				}
-				opts = append(opts, bedrock.WithStaticCredentials(parts[0], parts[1], sessionToken))
-			} else {
-				opts = append(opts, bedrock.WithBearerToken(cfg.APIKey))
-			}
-		}
-		if cfg.APIBase != "" {
-			if !strings.Contains(cfg.APIBase, "://") {
-				// Treat as region
-				opts = append(opts, bedrock.WithRegion(cfg.APIBase))
-			} else {
-				// Full endpoint URL (for custom endpoints or testing)
-				opts = append(opts, bedrock.WithBaseEndpoint(cfg.APIBase))
-			}
-		}
-		// Use a separate timeout for AWS config loading (credential resolution can block)
-		initTimeout := 30 * time.Second
-		if cfg.RequestTimeout > 0 {
-			reqTimeout := time.Duration(cfg.RequestTimeout) * time.Second
-			opts = append(opts, bedrock.WithRequestTimeout(reqTimeout))
-			if reqTimeout > initTimeout {
-				initTimeout = reqTimeout
-			}
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), initTimeout)
-		defer cancel()
-		provider, err := bedrock.NewProvider(ctx, opts...)
-		if err != nil {
-			return nil, "", fmt.Errorf("creating bedrock provider: %w", err)
-		}
-		return provider, modelID, nil
-
-	case "litellm", "openrouter", "groq", "gemini", "nvidia",
-		"ollama", "moonshot", "deepseek", "cerebras",
-		"vllm", "qwen", "mistral", "avian", "xai":
-		// All other OpenAI-compatible HTTP providers
-		if cfg.APIKey == "" && cfg.APIBase == "" {
-			return nil, "", fmt.Errorf("api_key or api_base is required for HTTP-based protocol %q", protocol)
-		}
-		apiBase := cfg.APIBase
-		if apiBase == "" {
-			apiBase = getDefaultAPIBase(protocol)
-		}
-		opts := []openai_compat.Option{
-			openai_compat.WithMaxTokensField(cfg.MaxTokensField),
-			openai_compat.WithRequestTimeout(time.Duration(cfg.RequestTimeout) * time.Second),
-			openai_compat.WithStrictCompat(cfg.StrictCompat),
-			openai_compat.WithResponseLogFile(cfg.ResponseLogFile),
-			openai_compat.WithReasoningEffort(cfg.ReasoningEffort),
-			openai_compat.WithExtraBody(cfg.ExtraBody),
-			openai_compat.WithModelLabel(cfg.ModelName),
-			openai_compat.WithProtocol(protocol),
-			openai_compat.WithResponseFormatJSONCapable(cfg.ResponseFormatJSONCapable()),
-			// Groq's Llama models fail tool calls when parallel_tool_calls is enabled.
-			openai_compat.WithNoParallelToolCalls(protocol == "groq"),
-		}
-		return NewHTTPProviderWithOptions(cfg.APIKey, apiBase, cfg.Proxy, opts...), modelID, nil
+	case "azure":
+		return azure.NewProviderWithTimeout(prov.APIKey, prov.BaseURL, prov.Proxy, model.RequestTimeout), modelID, nil
 
 	case "anthropic":
-		if cfg.AuthMethod == "oauth" || cfg.AuthMethod == "token" {
-			// Use OAuth credentials from auth store
-			provider, err := createClaudeAuthProvider()
+		// OAuth/token credentials use the native Claude auth provider; an api
+		// key uses the OpenAI-compatible HTTP path against the Anthropic base.
+		if prov.AuthMethod == "oauth" || prov.AuthMethod == "token" {
+			p, err := createClaudeAuthProvider()
 			if err != nil {
 				return nil, "", err
 			}
-			return provider, modelID, nil
+			return p, modelID, nil
 		}
-		// Use API key with HTTP API
-		apiBase := cfg.APIBase
-		if apiBase == "" {
-			apiBase = "https://api.anthropic.com/v1"
+		if prov.APIKey == "" {
+			return nil, "", fmt.Errorf("provider %q: api_key required for anthropic protocol", prov.Name)
 		}
-		if cfg.APIKey == "" {
-			return nil, "", fmt.Errorf("api_key is required for anthropic protocol (model: %s)", cfg.Model)
-		}
-		opts := []openai_compat.Option{
-			openai_compat.WithMaxTokensField(cfg.MaxTokensField),
-			openai_compat.WithRequestTimeout(time.Duration(cfg.RequestTimeout) * time.Second),
-			openai_compat.WithStrictCompat(cfg.StrictCompat),
-			openai_compat.WithResponseLogFile(cfg.ResponseLogFile),
-			openai_compat.WithReasoningEffort(cfg.ReasoningEffort),
-			openai_compat.WithExtraBody(cfg.ExtraBody),
-			openai_compat.WithModelLabel(cfg.ModelName),
-			openai_compat.WithProtocol(protocol),
-			openai_compat.WithResponseFormatJSONCapable(cfg.ResponseFormatJSONCapable()),
-		}
-		return NewHTTPProviderWithOptions(cfg.APIKey, apiBase, cfg.Proxy, opts...), modelID, nil
+		return NewHTTPProviderWithOptions(prov.APIKey, prov.BaseURL, prov.Proxy, compatOpts(model, prov)...), modelID, nil
 
 	case "anthropic-messages":
-		// Anthropic Messages API with native format (HTTP-based, no SDK)
-		apiBase := cfg.APIBase
-		if apiBase == "" {
-			apiBase = "https://api.anthropic.com/v1"
+		if prov.APIKey == "" {
+			return nil, "", fmt.Errorf("provider %q: api_key required for anthropic-messages protocol", prov.Name)
 		}
-		if cfg.APIKey == "" {
-			return nil, "", fmt.Errorf("api_key is required for anthropic-messages protocol (model: %s)", cfg.Model)
-		}
-		return anthropicmessages.NewProviderWithTimeout(
-			cfg.APIKey,
-			apiBase,
-			cfg.RequestTimeout,
-		), modelID, nil
+		return anthropicmessages.NewProviderWithTimeout(prov.APIKey, prov.BaseURL, model.RequestTimeout), modelID, nil
 
-	case "claude-cli", "claudecli":
-		workspace := cfg.Workspace
-		if workspace == "" {
-			workspace = "."
-		}
-		if cfg.RequestTimeout > 0 {
-			return NewClaudeCliProviderWithTimeout(cfg.Command, workspace, time.Duration(cfg.RequestTimeout)*time.Second, cfg.ExtraArgs, cfg.Env), modelID, nil
-		}
-		return NewClaudeCliProvider(cfg.Command, workspace, cfg.ExtraArgs, cfg.Env), modelID, nil
+	case "claude-cli":
+		return newCLIProvider(NewClaudeCliProvider, NewClaudeCliProviderWithTimeout, model, prov), modelID, nil
 
-	case "codex-cli", "codexcli":
-		workspace := cfg.Workspace
-		if workspace == "" {
-			workspace = "."
-		}
-		if cfg.RequestTimeout > 0 {
-			return NewCodexCliProviderWithTimeout(cfg.Command, workspace, time.Duration(cfg.RequestTimeout)*time.Second, cfg.ExtraArgs, cfg.Env), modelID, nil
-		}
-		return NewCodexCliProvider(cfg.Command, workspace, cfg.ExtraArgs, cfg.Env), modelID, nil
+	case "codex-cli":
+		return newCLIProvider(NewCodexCliProvider, NewCodexCliProviderWithTimeout, model, prov), modelID, nil
 
-	case "gemini-cli", "geminicli":
-		workspace := cfg.Workspace
-		if workspace == "" {
-			workspace = "."
-		}
-		if cfg.RequestTimeout > 0 {
-			return NewGeminiCliProviderWithTimeout(cfg.Command, workspace, time.Duration(cfg.RequestTimeout)*time.Second, cfg.ExtraArgs, cfg.Env), modelID, nil
-		}
-		return NewGeminiCliProvider(cfg.Command, workspace, cfg.ExtraArgs, cfg.Env), modelID, nil
+	case "gemini-cli":
+		return newCLIProvider(NewGeminiCliProvider, NewGeminiCliProviderWithTimeout, model, prov), modelID, nil
 
 	default:
-		// Config-driven OpenAI-compatible protocol: an entry in
-		// Config.OpenAICompatProtocols tagged this ModelConfig during
-		// LoadConfig. The hardcoded switch entries above keep working
-		// unchanged; this branch only handles protocols registered via
-		// config.
-		if !cfg.IsOpenAICompatExtra() {
-			return nil, "", fmt.Errorf("unknown protocol %q in model %q", protocol, cfg.Model)
-		}
-		apiBase := cfg.APIBase
-		if apiBase == "" {
-			apiBase = cfg.OpenAICompatBase()
-		}
-		// Unlike the hardcoded openai-compat protocols (which all have a
-		// built-in default), an extra protocol may be registered with an
-		// empty default — in that case the per-model api_base is required,
-		// otherwise the HTTP client has nowhere to send the request.
-		if apiBase == "" {
-			return nil, "", fmt.Errorf(
-				"api_base is required for protocol %q: set openai_compat_protocols[%q] or the model's api_base",
-				protocol, protocol,
-			)
-		}
-		opts := []openai_compat.Option{
-			openai_compat.WithMaxTokensField(cfg.MaxTokensField),
-			openai_compat.WithRequestTimeout(time.Duration(cfg.RequestTimeout) * time.Second),
-			openai_compat.WithStrictCompat(cfg.StrictCompat),
-			openai_compat.WithResponseLogFile(cfg.ResponseLogFile),
-			openai_compat.WithReasoningEffort(cfg.ReasoningEffort),
-			openai_compat.WithExtraBody(cfg.ExtraBody),
-			openai_compat.WithModelLabel(cfg.ModelName),
-			openai_compat.WithProtocol(protocol),
-			openai_compat.WithResponseFormatJSONCapable(cfg.ResponseFormatJSONCapable()),
-		}
-		return NewHTTPProviderWithOptions(cfg.APIKey, apiBase, cfg.Proxy, opts...), modelID, nil
+		return nil, "", fmt.Errorf("provider %q: unknown protocol %q", prov.Name, prov.Protocol)
 	}
 }
 
-// getDefaultAPIBase returns the default API base URL for a given protocol.
-func getDefaultAPIBase(protocol string) string {
-	switch protocol {
-	case "openai":
-		return "https://api.openai.com/v1"
-	case "openrouter":
-		return "https://openrouter.ai/api/v1"
-	case "litellm":
-		return "http://localhost:4000/v1"
-	case "groq":
-		return "https://api.groq.com/openai/v1"
-	case "gemini":
-		return "https://generativelanguage.googleapis.com/v1beta"
-	case "nvidia":
-		return "https://integrate.api.nvidia.com/v1"
-	case "ollama":
-		return "http://localhost:11434/v1"
-	case "moonshot":
-		return "https://api.moonshot.cn/v1"
-	case "deepseek":
-		return "https://api.deepseek.com/v1"
-	case "cerebras":
-		return "https://api.cerebras.ai/v1"
-	case "qwen":
-		return "https://dashscope.aliyuncs.com/compatible-mode/v1"
-	case "vllm":
-		return "http://localhost:8000/v1"
-	case "mistral":
-		return "https://api.mistral.ai/v1"
-	case "avian":
-		return "https://api.avian.io/v1"
-	case "xai":
-		return "https://api.x.ai/v1"
-	default:
-		return ""
+// newCLIProvider builds a subprocess CLI provider, applying the request timeout
+// when set. The binary path comes from the provider (Command); workspace and
+// CLI args/env come from the model.
+func newCLIProvider[T LLMProvider](
+	plain func(command, workspace string, extraArgs []string, env map[string]string) T,
+	withTimeout func(command, workspace string, timeout time.Duration, extraArgs []string, env map[string]string) T,
+	model *config.ModelConfig,
+	prov *config.Provider,
+) LLMProvider {
+	workspace := model.Workspace
+	if workspace == "" {
+		workspace = "."
 	}
+	if model.RequestTimeout > 0 {
+		return withTimeout(prov.Command, workspace, time.Duration(model.RequestTimeout)*time.Second, model.ExtraArgs, model.Env)
+	}
+	return plain(prov.Command, workspace, model.ExtraArgs, model.Env)
 }

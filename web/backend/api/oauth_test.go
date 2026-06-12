@@ -128,11 +128,17 @@ func TestOAuthLogoutClearsCredentialAndConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConfig error: %v", err)
 	}
-	cfg.Providers.Anthropic.AuthMethod = "token"
-	cfg.ModelList = append(cfg.ModelList, config.ModelConfig{
-		ModelName:  "claude-sonnet-4.6",
-		Model:      "anthropic/claude-sonnet-4.6",
+	cfg.Providers = append(cfg.Providers, config.Provider{
+		Name:       "anthropic",
+		Protocol:   "anthropic",
+		BaseURL:    "https://api.anthropic.com/v1",
 		AuthMethod: "token",
+	})
+	cfg.Models = append(cfg.Models, config.ModelConfig{
+		ModelName: "claude-sonnet-4.6",
+		Model:     "claude-sonnet-4.6",
+		Provider:  "anthropic",
+		Enabled:   true,
 	})
 	if err = config.SaveConfig(configPath, cfg); err != nil {
 		t.Fatalf("SaveConfig error: %v", err)
@@ -170,13 +176,12 @@ func TestOAuthLogoutClearsCredentialAndConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConfig error: %v", err)
 	}
-	if updated.Providers.Anthropic.AuthMethod != "" {
-		t.Fatalf("providers.anthropic.auth_method = %q, want empty", updated.Providers.Anthropic.AuthMethod)
+	prov, err := updated.GetProvider("anthropic")
+	if err != nil {
+		t.Fatalf("GetProvider(anthropic) error: %v", err)
 	}
-	for _, m := range updated.ModelList {
-		if strings.HasPrefix(m.Model, "anthropic/") && m.AuthMethod != "" {
-			t.Fatalf("anthropic model auth_method = %q, want empty", m.AuthMethod)
-		}
+	if prov.AuthMethod != "" {
+		t.Fatalf("anthropic provider auth_method = %q, want empty", prov.AuthMethod)
 	}
 }
 
@@ -195,10 +200,16 @@ func setupOAuthTestEnv(t *testing.T) (string, func()) {
 	}
 
 	cfg := config.DefaultConfig()
-	cfg.ModelList = []config.ModelConfig{{
+	cfg.Providers = []config.Provider{{
+		Name:     "openai",
+		Protocol: "openai",
+		BaseURL:  "https://api.openai.com/v1",
+		APIKey:   "sk-default",
+	}}
+	cfg.Models = []config.ModelConfig{{
 		ModelName: "custom-default",
-		Model:     "openai/gpt-4o",
-		APIKey:    "sk-default",
+		Model:     "gpt-4o",
+		Provider:  "openai",
 		Enabled:   true,
 	}}
 	cfg.Agents.Defaults.SetDefaultModel("custom-default")

@@ -3,15 +3,15 @@ import { useEffect, useMemo, useState } from "react"
 import { useTranslation } from "react-i18next"
 
 import { addModel, setDefaultModel } from "@/api/models"
-import { maskedSecretPlaceholder } from "@/components/secret-placeholder"
+import { type ProviderInfo, getProviders } from "@/api/providers"
 import {
   REASONING_EFFORT_OPTIONS,
+  parseDropParams,
   parseExtraBody,
 } from "@/components/models/model-config-fields"
 import {
   AdvancedSection,
   Field,
-  KeyInput,
   SwitchCardField,
 } from "@/components/shared-form"
 import { Button } from "@/components/ui/button"
@@ -36,10 +36,7 @@ import { Textarea } from "@/components/ui/textarea"
 interface AddForm {
   modelName: string
   model: string
-  apiBase: string
-  apiKey: string
-  proxy: string
-  authMethod: string
+  provider: string
   connectMode: string
   workspace: string
   rpm: string
@@ -48,15 +45,13 @@ interface AddForm {
   thinkingLevel: string
   reasoningEffort: string
   extraBody: string
+  dropParams: string
 }
 
 const EMPTY_ADD_FORM: AddForm = {
   modelName: "",
   model: "",
-  apiBase: "",
-  apiKey: "",
-  proxy: "",
-  authMethod: "",
+  provider: "",
   connectMode: "",
   workspace: "",
   rpm: "",
@@ -65,6 +60,7 @@ const EMPTY_ADD_FORM: AddForm = {
   thinkingLevel: "",
   reasoningEffort: "",
   extraBody: "",
+  dropParams: "",
 }
 
 interface AddModelSheetProps {
@@ -82,16 +78,13 @@ export function AddModelSheet({
 }: AddModelSheetProps) {
   const { t } = useTranslation()
   const [form, setForm] = useState<AddForm>(EMPTY_ADD_FORM)
+  const [providers, setProviders] = useState<ProviderInfo[]>([])
   const [saving, setSaving] = useState(false)
   const [setAsDefault, setSetAsDefault] = useState(false)
   const [fieldErrors, setFieldErrors] = useState<
     Partial<Record<keyof AddForm, string>>
   >({})
   const [serverError, setServerError] = useState("")
-  const apiKeyPlaceholder = maskedSecretPlaceholder(
-    form.apiKey,
-    t("models.field.apiKeyPlaceholder"),
-  )
 
   useEffect(() => {
     if (open) {
@@ -99,6 +92,13 @@ export function AddModelSheet({
       setSetAsDefault(false)
       setFieldErrors({})
       setServerError("")
+      getProviders()
+        .then((data) =>
+          setProviders(
+            [...data.providers].sort((a, b) => a.name.localeCompare(b.name)),
+          ),
+        )
+        .catch(() => setProviders([]))
     }
   }, [open])
 
@@ -111,6 +111,7 @@ export function AddModelSheet({
       errors.modelName = t("models.add.errorDuplicateModelName")
     }
     if (!form.model.trim()) errors.model = t("models.add.errorRequired")
+    if (!form.provider.trim()) errors.provider = t("models.add.errorRequired")
     setFieldErrors(errors)
     return Object.keys(errors).length === 0
   }
@@ -139,10 +140,7 @@ export function AddModelSheet({
       await addModel({
         model_name: modelName,
         model: modelId,
-        api_base: form.apiBase.trim() || undefined,
-        api_key: form.apiKey.trim() || undefined,
-        proxy: form.proxy.trim() || undefined,
-        auth_method: form.authMethod.trim() || undefined,
+        provider: form.provider.trim(),
         connect_mode: form.connectMode.trim() || undefined,
         workspace: form.workspace.trim() || undefined,
         rpm: form.rpm ? Number(form.rpm) : undefined,
@@ -153,6 +151,7 @@ export function AddModelSheet({
         thinking_level: form.thinkingLevel.trim() || undefined,
         reasoning_effort: form.reasoningEffort || undefined,
         extra_body: extraBodyParsed.value,
+        drop_params: parseDropParams(form.dropParams),
       })
       if (setAsDefault) {
         await setDefaultModel(modelName)
@@ -214,20 +213,33 @@ export function AddModelSheet({
               )}
             </Field>
 
-            <Field label={t("models.field.apiKey")}>
-              <KeyInput
-                value={form.apiKey}
-                onChange={(v) => setForm((f) => ({ ...f, apiKey: v }))}
-                placeholder={apiKeyPlaceholder}
-              />
-            </Field>
-
-            <Field label={t("models.field.apiBase")}>
-              <Input
-                value={form.apiBase}
-                onChange={setField("apiBase")}
-                placeholder="https://api.example.com/v1"
-              />
+            <Field
+              label={t("models.field.provider")}
+              hint={t("models.field.providerHint")}
+            >
+              <Select
+                value={form.provider || undefined}
+                onValueChange={(v) => {
+                  setForm((f) => ({ ...f, provider: v }))
+                  if (fieldErrors.provider) {
+                    setFieldErrors((prev) => ({ ...prev, provider: undefined }))
+                  }
+                }}
+              >
+                <SelectTrigger className="w-full" aria-invalid={!!fieldErrors.provider}>
+                  <SelectValue placeholder={t("models.field.providerPlaceholder")} />
+                </SelectTrigger>
+                <SelectContent>
+                  {providers.map((p) => (
+                    <SelectItem key={p.index} value={p.name}>
+                      {p.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {fieldErrors.provider && (
+                <p className="text-destructive text-xs">{fieldErrors.provider}</p>
+              )}
             </Field>
 
             <SwitchCardField
@@ -238,28 +250,6 @@ export function AddModelSheet({
             />
 
             <AdvancedSection>
-              <Field
-                label={t("models.field.proxy")}
-                hint={t("models.field.proxyHint")}
-              >
-                <Input
-                  value={form.proxy}
-                  onChange={setField("proxy")}
-                  placeholder="http://127.0.0.1:7890"
-                />
-              </Field>
-
-              <Field
-                label={t("models.field.authMethod")}
-                hint={t("models.field.authMethodHint")}
-              >
-                <Input
-                  value={form.authMethod}
-                  onChange={setField("authMethod")}
-                  placeholder="oauth"
-                />
-              </Field>
-
               <Field
                 label={t("models.field.connectMode")}
                 hint={t("models.field.connectModeHint")}
@@ -364,6 +354,17 @@ export function AddModelSheet({
                   className="font-mono text-xs"
                   rows={6}
                   aria-invalid={!!extraBodyParsed.error}
+                />
+              </Field>
+
+              <Field
+                label={t("models.field.dropParams")}
+                hint={t("models.field.dropParamsHint")}
+              >
+                <Input
+                  value={form.dropParams}
+                  onChange={setField("dropParams")}
+                  placeholder="temperature, top_p"
                 />
               </Field>
 

@@ -99,23 +99,29 @@ func TestNewAgentInstance_ResolveCandidatesFromModelListAlias(t *testing.T) {
 		name         string
 		aliasName    string
 		modelName    string
-		apiBase      string
+		provider     config.Provider
 		wantProvider string
 		wantModel    string
 	}{
 		{
-			name:         "alias with provider prefix",
-			aliasName:    "step-3.5-flash",
-			modelName:    "openrouter/stepfun/step-3.5-flash:free",
-			apiBase:      "https://openrouter.ai/api/v1",
+			name:      "alias routed through openrouter provider",
+			aliasName: "step-3.5-flash",
+			modelName: "stepfun/step-3.5-flash:free",
+			provider: config.Provider{
+				Name: "openrouter", Protocol: "openai",
+				BaseURL: "https://openrouter.ai/api/v1", APIKey: "k",
+			},
 			wantProvider: "openrouter",
 			wantModel:    "stepfun/step-3.5-flash:free",
 		},
 		{
-			name:         "alias without provider prefix",
-			aliasName:    "glm-5",
-			modelName:    "glm-5",
-			apiBase:      "https://api.z.ai/api/coding/paas/v4",
+			name:      "alias routed through openai-compatible provider",
+			aliasName: "glm-5",
+			modelName: "glm-5",
+			provider: config.Provider{
+				Name: "openai", Protocol: "openai",
+				BaseURL: "https://api.z.ai/api/coding/paas/v4", APIKey: "k",
+			},
 			wantProvider: "openai",
 			wantModel:    "glm-5",
 		},
@@ -136,11 +142,12 @@ func TestNewAgentInstance_ResolveCandidatesFromModelListAlias(t *testing.T) {
 						Model:     &config.AgentModelConfig{Primary: tt.aliasName},
 					},
 				},
-				ModelList: []config.ModelConfig{
+				Providers: []config.Provider{tt.provider},
+				Models: []config.ModelConfig{
 					{
 						ModelName: tt.aliasName,
 						Model:     tt.modelName,
-						APIBase:   tt.apiBase,
+						Provider:  tt.provider.Name,
 						Enabled:   true,
 					},
 				},

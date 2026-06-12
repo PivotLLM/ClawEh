@@ -704,47 +704,42 @@ func (h *Handler) syncProviderAuthMethod(provider, authMethod string) error {
 		return err
 	}
 
+	// Map the OAuth provider id to a wire protocol.
+	var protocol, baseURL, modelAlias, modelID string
 	switch provider {
 	case oauthProviderAnthropic:
-		cfg.Providers.Anthropic.AuthMethod = authMethod
+		protocol, baseURL = "anthropic", "https://api.anthropic.com/v1"
+		modelAlias, modelID = "claude-sonnet-4.6", "claude-sonnet-4.6"
 	default:
 		return fmt.Errorf("unsupported provider %q", provider)
 	}
 
-	found := false
-	for i := range cfg.ModelList {
-		if modelBelongsToProvider(provider, cfg.ModelList[i].Model) {
-			cfg.ModelList[i].AuthMethod = authMethod
-			found = true
+	// Attach the auth method to the provider of that protocol, creating one if
+	// needed.
+	prov := cfg.FindProviderByProtocol(protocol)
+	if prov == nil {
+		cfg.Providers = append(cfg.Providers, config.Provider{Name: protocol, Protocol: protocol, BaseURL: baseURL})
+		prov = &cfg.Providers[len(cfg.Providers)-1]
+	}
+	prov.AuthMethod = authMethod
+	provName := prov.Name
+
+	// Ensure a model references this provider.
+	hasModel := false
+	for i := range cfg.Models {
+		if cfg.Models[i].Provider == provName {
+			hasModel = true
+			break
 		}
 	}
-
-	if !found && authMethod != "" {
-		cfg.ModelList = append(cfg.ModelList, defaultModelConfigForProvider(provider, authMethod))
+	if !hasModel && authMethod != "" {
+		cfg.Models = append(cfg.Models, config.ModelConfig{
+			ModelName: modelAlias,
+			Model:     modelID,
+			Provider:  provName,
+			Enabled:   true,
+		})
 	}
 
 	return oauthSaveConfig(h.configPath, cfg)
-}
-
-func modelBelongsToProvider(provider, model string) bool {
-	lower := strings.ToLower(strings.TrimSpace(model))
-	switch provider {
-	case oauthProviderAnthropic:
-		return lower == "anthropic" || strings.HasPrefix(lower, "anthropic/")
-	default:
-		return false
-	}
-}
-
-func defaultModelConfigForProvider(provider, authMethod string) config.ModelConfig {
-	switch provider {
-	case oauthProviderAnthropic:
-		return config.ModelConfig{
-			ModelName:  "claude-sonnet-4.6",
-			Model:      "anthropic/claude-sonnet-4.6",
-			AuthMethod: authMethod,
-		}
-	default:
-		return config.ModelConfig{}
-	}
 }

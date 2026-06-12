@@ -24,11 +24,20 @@ func TestHandleUpdateConfig_AppliesExecAllowRemoteDefaultWhenOmitted(t *testing.
 			},
 			"list": [{"id": "main", "name": "Main", "default": true}]
 		},
-		"model_list": [
+		"providers": [
+			{
+				"name": "openai",
+				"protocol": "openai",
+				"base_url": "https://api.openai.com/v1",
+				"api_key": "sk-default"
+			}
+		],
+		"models": [
 			{
 				"model_name": "custom-default",
-				"model": "openai/gpt-4o",
-				"api_key": "sk-default"
+				"model": "gpt-4o",
+				"provider": "openai",
+				"enabled": true
 			}
 		]
 	}`))
@@ -64,11 +73,20 @@ func TestHandleUpdateConfig_DoesNotInheritDefaultModelFields(t *testing.T) {
 			},
 			"list": [{"id": "main", "name": "Main", "default": true}]
 		},
-		"model_list": [
+		"providers": [
+			{
+				"name": "openai",
+				"protocol": "openai",
+				"base_url": "https://api.openai.com/v1",
+				"api_key": "sk-default"
+			}
+		],
+		"models": [
 			{
 				"model_name": "custom-default",
-				"model": "openai/gpt-4o",
-				"api_key": "sk-default"
+				"model": "gpt-4o",
+				"provider": "openai",
+				"enabled": true
 			}
 		]
 	}`))
@@ -84,7 +102,10 @@ func TestHandleUpdateConfig_DoesNotInheritDefaultModelFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConfig() error = %v", err)
 	}
-	if got := cfg.ModelList[0].APIBase; got != "" {
-		t.Fatalf("model_list[0].api_base = %q, want empty string", got)
+	if got := cfg.Models[0].ConnectMode; got != "" {
+		t.Fatalf("models[0].connect_mode = %q, want empty string (not inherited from default template)", got)
+	}
+	if got := cfg.Models[0].Workspace; got != "" {
+		t.Fatalf("models[0].workspace = %q, want empty string (not inherited from default template)", got)
 	}
 }

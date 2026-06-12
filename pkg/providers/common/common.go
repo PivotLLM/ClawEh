@@ -1,4 +1,4 @@
-// PicoClaw - Ultra-lightweight personal AI agent
+// ClawEh - Personal AI Assistant
 // License: MIT
 //
 // Copyright (c) 2026 PicoClaw contributors
@@ -16,6 +16,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -320,7 +321,7 @@ func ParseResponse(body io.Reader, toolNames map[string]struct{}) (*LLMResponse,
 	}
 
 	return &LLMResponse{
-		Content:          aggContent,
+		Content:          SanitizeModelContent(aggContent),
 		ReasoningContent: aggReasoningContent,
 		Reasoning:        aggReasoning,
 		ReasoningDetails: aggReasoningDetails,
@@ -555,6 +556,29 @@ func ReadAndParseResponse(resp *http.Response, apiBase string, toolNames map[str
 // underlying reader is streamed (mirroring ReadAndParseResponse's prior
 // behaviour) so endpoints that close mid-trailer after a complete JSON object
 // still parse successfully.
+var (
+	// deepseekTokenBalanced matches DeepSeek special tokens delimited by the
+	// fullwidth vertical bar (U+FF5C), e.g. <｜tool▁calls▁begin｜> or <｜DSML｜…｜>.
+	deepseekTokenBalanced = regexp.MustCompile(`<\x{FF5C}[^<>]*?\x{FF5C}>`)
+	// deepseekTokenDangling matches an unterminated opener a model leaks as plain
+	// text, e.g. a bare "<｜DSML｜function_calls" with no closing "｜>".
+	deepseekTokenDangling = regexp.MustCompile(`<\x{FF5C}[^\n<>]*`)
+)
+
+// SanitizeModelContent strips provider special tokens — notably DeepSeek's
+// fullwidth-bar tool-call delimiters — that some models leak into message
+// content instead of emitting them as structured tool calls. Without this they
+// surface as literal noise (e.g. "<｜DSML｜function_calls") in the chat. The guard
+// keeps the common (no-token) path allocation-free.
+func SanitizeModelContent(s string) string {
+	if !strings.Contains(s, "<｜") {
+		return s
+	}
+	s = deepseekTokenBalanced.ReplaceAllString(s, "")
+	s = deepseekTokenDangling.ReplaceAllString(s, "")
+	return strings.TrimSpace(s)
+}
+
 func ReadParseAndMeasure(resp *http.Response, apiBase string, toolNames map[string]struct{}) (*LLMResponse, int64, error) {
 	contentType := resp.Header.Get("Content-Type")
 	counter := &readCounter{r: resp.Body}

@@ -514,7 +514,7 @@ func (p *SearXNGSearchProvider) Search(ctx context.Context, query string, count 
 		result.Results = result.Results[:count]
 	}
 
-	// Format results in standard PicoClaw format
+	// Format results in standard format
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("Results for: %s (via SearXNG)\n", query))
 	for i, r := range result.Results {
@@ -767,9 +767,11 @@ func (t *WebSearchTool) Execute(ctx context.Context, args map[string]any) *tools
 		return tools.ErrorResult(fmt.Sprintf("search failed: %v", err))
 	}
 
+	// Silent: the model's final answer presents the results; the raw search
+	// payload is not streamed to the user as a separate message.
 	return &tools.ToolResult{
-		ForLLM:  result,
-		ForUser: result,
+		ForLLM: result,
+		Silent: true,
 	}
 }
 
@@ -946,15 +948,11 @@ func (t *WebFetchTool) Execute(ctx context.Context, args map[string]any) *tools.
 
 	resultJSON, _ := json.MarshalIndent(result, "", "  ")
 
+	// Silent: the "Fetched N bytes…" status is telemetry, not user content.
+	// The model's final answer carries the fetched information.
 	return &tools.ToolResult{
 		ForLLM: string(resultJSON),
-		ForUser: fmt.Sprintf(
-			"Fetched %d bytes from %s (extractor: %s, truncated: %v)",
-			len(text),
-			urlStr,
-			extractor,
-			truncated,
-		),
+		Silent: true,
 	}
 }
 

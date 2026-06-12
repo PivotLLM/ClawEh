@@ -38,7 +38,7 @@ func (s *safeBufLoop) String() string {
 // loop.go INF path will emit a content_bytes summary instead of raw content.
 type noopWriteFile struct{}
 
-func (n *noopWriteFile) Name() string        { return "write_file" }
+func (n *noopWriteFile) Name() string        { return "file_write" }
 func (n *noopWriteFile) Description() string { return "noop write_file for redaction tests" }
 func (n *noopWriteFile) Parameters() map[string]any {
 	return map[string]any{"type": "object", "properties": map[string]any{}}
@@ -82,9 +82,9 @@ func runWriteFileToolCallOnce(t *testing.T, secret string) string {
 					{
 						ID:   "tc-1",
 						Type: "function",
-						Name: "write_file",
+						Name: "file_write",
 						Function: &providers.FunctionCall{
-							Name:      "write_file",
+							Name:      "file_write",
 							Arguments: string(argsJSON),
 						},
 					},
