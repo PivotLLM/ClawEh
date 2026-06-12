@@ -59,6 +59,13 @@ func Populate(workspace, memoryDir string) {
 		if path == "BOOTSTRAP.md" && initialized {
 			return nil
 		}
+		// COMPRESSION.md is an optional, user-deletable summarization profile.
+		// Seed it only into a brand-new workspace so deleting it (to use the
+		// built-in behavior) sticks, and so an existing customised compression
+		// profile is never clobbered.
+		if path == "COMPRESSION.md" && initialized {
+			return nil
+		}
 		dest := filepath.Join(workspace, path)
 		if _, statErr := os.Stat(dest); statErr == nil {
 			return nil // already exists — preserve user customisation

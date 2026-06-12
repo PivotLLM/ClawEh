@@ -130,6 +130,26 @@ func TestLoadCompressionProfile(t *testing.T) {
 	}
 }
 
+// TestLoadCompressionProfile_PrefersUppercase verifies COMPRESSION.md is used in
+// preference to the legacy lowercase compression.md when both exist.
+func TestLoadCompressionProfile_PrefersUppercase(t *testing.T) {
+	dir := t.TempDir()
+	// Only uppercase present.
+	if err := os.WriteFile(filepath.Join(dir, "COMPRESSION.md"), []byte("upper rules"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := loadCompressionProfile(dir); got != "upper rules" {
+		t.Errorf("uppercase only = %q, want %q", got, "upper rules")
+	}
+	// Both present: uppercase wins.
+	if err := os.WriteFile(filepath.Join(dir, "compression.md"), []byte("lower rules"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := loadCompressionProfile(dir); got != "upper rules" {
+		t.Errorf("both present = %q, want uppercase %q", got, "upper rules")
+	}
+}
+
 // --- On-demand compaction (the /compact path) stamps model + profile end-to-end ---
 
 func TestCompact_OnDemandStampsProfile(t *testing.T) {

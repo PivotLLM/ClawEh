@@ -76,7 +76,7 @@ type managerConfig struct {
 	// summarization LLM invocation to <compressionProfileDir>/compact.jsonl.
 	compactDebug bool
 	// compressionProfileDir is the agent workspace directory. If non-empty and
-	// a file named "compression.md" exists there, its content is appended to the
+	// a file named "COMPRESSION.md" (or legacy "compression.md") exists there, its content is appended to the
 	// summarization prompt so agents can declare role-specific compression rules.
 	compressionProfileDir string
 }
@@ -233,7 +233,7 @@ func WithArchiveContentMaxBytes(n int) Option {
 }
 
 // WithCompressionProfileDir sets the agent workspace directory. If the file
-// "compression.md" exists there it is appended verbatim to every summarization
+// "COMPRESSION.md" (or legacy "compression.md") exists there it is appended verbatim to every summarization
 // prompt, letting agents declare role-specific compression rules and structure.
 func WithCompressionProfileDir(dir string) Option {
 	return func(c *managerConfig) { c.compressionProfileDir = dir }

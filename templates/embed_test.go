@@ -9,7 +9,7 @@ func TestEmbeddedFiles(t *testing.T) {
 	for _, f := range []string{
 		"AGENTS.md",
 		"IDENTITY.md",
-		"compression.md",
+		"COMPRESSION.md",
 		"memory/MEMORY.md",
 		"skills/.gitkeep",
 	} {

@@ -331,6 +331,49 @@ func TestBuildSummarizationPrompt_CarryForward(t *testing.T) {
 	}
 }
 
+// TestBuildSummarizationPrompt_Notes — both prompts advertise the notes field,
+// and a compression profile is appended with the notes-overflow guidance.
+func TestBuildSummarizationPrompt_Notes(t *testing.T) {
+	for _, aggressive := range []bool{false, true} {
+		if p := buildSummarizationPrompt(nil, 1, 50, aggressive, ""); !strings.Contains(p, `"notes"`) {
+			t.Errorf("aggressive=%v: prompt must include notes in schema", aggressive)
+		}
+	}
+	withProfile := buildSummarizationPrompt(nil, 1, 50, false, "preserve exploit payloads verbatim")
+	if !strings.Contains(withProfile, "Use the 'notes' field") {
+		t.Error("profile append should direct overflow info into the notes field")
+	}
+	if !strings.Contains(withProfile, "preserve exploit payloads verbatim") {
+		t.Error("profile content should be appended")
+	}
+}
+
+// TestSummary_Notes_RendersAndCounts — a summary with notes renders a Notes
+// section, counts as material, and round-trips through JSON.
+func TestSummary_Notes_RendersAndCounts(t *testing.T) {
+	s := validSummary()
+	s.Notes = []string{"User prefers metric units", ""}
+
+	out := s.Render(0, 10)
+	if !strings.Contains(out, "## Notes") || !strings.Contains(out, "User prefers metric units") {
+		t.Errorf("missing rendered Notes section: %s", out)
+	}
+
+	bare := &Summary{Version: 2, Notes: []string{"x"}}
+	if !bare.HasMaterial() {
+		t.Error("notes-only summary should count as material")
+	}
+
+	data, _ := json.Marshal(s)
+	parsed, err := unmarshalSummary(string(data))
+	if err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(parsed.Notes) != 2 {
+		t.Fatalf("Notes len = %d, want 2", len(parsed.Notes))
+	}
+}
+
 // TestSummary_CarryForward_RendersAndCounts — a summary with carry_forward items
 // renders a Carry-Forward section, counts as material, and round-trips through JSON.
 func TestSummary_CarryForward_RendersAndCounts(t *testing.T) {

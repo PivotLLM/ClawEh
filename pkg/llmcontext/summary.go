@@ -26,6 +26,9 @@ type Summary struct {
 	// action items, or unresolved issues that would otherwise be lost when older
 	// messages are dropped.
 	CarryForward []SummaryItem `json:"carry_forward,omitempty"`
+	// Notes is a freeform catch-all for information the agent's compression
+	// profile (COMPRESSION.md) asks to preserve that does not fit another field.
+	Notes []string `json:"notes,omitempty"`
 	CoveredSeqStart     int64        `json:"covered_seq_start"`
 	CoveredSeqEnd       int64        `json:"covered_seq_end"`
 	CoveredRanges       []SeqRange   `json:"covered_ranges,omitempty"`
@@ -36,7 +39,7 @@ type Summary struct {
 	GeneratedAt         time.Time    `json:"generated_at"`
 	Model               string       `json:"model,omitempty"`
 	// Profile is a short fingerprint (sha256 hex[:8]) of the agent compression
-	// profile (compression.md) in effect when this summary was generated, or ""
+	// profile (COMPRESSION.md) in effect when this summary was generated, or ""
 	// when no profile was applied. Stamped into the rendered summary so agents
 	// can tell which profile shaped a summary and detect when it changed.
 	Profile string `json:"profile,omitempty"`
@@ -147,6 +150,7 @@ func (s *Summary) HasMaterial() bool {
 		len(s.State.Pending) > 0 ||
 		len(s.State.Constraints) > 0 ||
 		len(s.CarryForward) > 0 ||
+		len(s.Notes) > 0 ||
 		len(s.KeyMoments) > 0 ||
 		len(s.MessageIndex) > 0
 }
@@ -370,6 +374,16 @@ func (s *Summary) Render(archiveMinSeq, archiveMaxSeq int64) string {
 		}
 	}
 
+	if len(s.Notes) > 0 {
+		sb.WriteString("\n## Notes\n")
+		for _, note := range s.Notes {
+			if strings.TrimSpace(note) == "" {
+				continue
+			}
+			fmt.Fprintf(&sb, "- %s\n", note)
+		}
+	}
+
 	if len(s.KeyMoments) > 0 {
 		sb.WriteString("\n## Key Moments\n")
 		for _, km := range s.KeyMoments {
@@ -499,7 +513,8 @@ const promptStandard = `You are an AI assistant performing context summarization
   ],
   "carry_forward": [
     {"text": "<self-directed reminder: information that should be persisted to the agent's AGENT.md/memory files, an outstanding action item, or an unresolved issue>", "refs": [{"seq_start": <int>, "seq_end": <int>}]}
-  ]
+  ],
+  "notes": ["<freeform note for information the agent compression profile asks to preserve that does not fit another field; omit when none>"]
 }
 
 Purpose: this summary COMPLEMENTS the agent's always-present system prompt (its identity, standing rules, user preferences, and durable project state, all loaded from workspace files on every turn). Do NOT re-derive standing identity or rules the system prompt already provides. Capture what would otherwise be LOST if the conversation were cleared right now: the transient, in-flight state — active work and branches, dispatched/pending tasks, the last user instruction, open action items, and recent decisions.
@@ -537,7 +552,8 @@ const promptAggressive = `You are an AI assistant performing urgent context summ
   ],
   "carry_forward": [
     {"text": "<reminder: persist to AGENT.md/memory, action item, or unresolved issue>", "refs": [{"seq_start": <int>, "seq_end": <int>}]}
-  ]
+  ],
+  "notes": ["<freeform note for profile-requested info that does not fit another field; omit when none>"]
 }
 
 Rules:
@@ -553,7 +569,7 @@ Rules:
 
 // buildSummarizationPrompt returns the prompt for a summarization call.
 // existing may be nil on the first cycle. compressionProfile is the content of
-// the agent's compression.md file; it is appended after the base prompt when
+// the agent's COMPRESSION.md file; it is appended after the base prompt when
 // non-empty so agents can declare role-specific summarization rules.
 func buildSummarizationPrompt(existing *Summary, archiveMin, archiveMax int64, aggressive bool, compressionProfile string) string {
 	var base string
@@ -563,7 +579,7 @@ func buildSummarizationPrompt(existing *Summary, archiveMin, archiveMax int64, a
 		base = fmt.Sprintf(promptStandard, archiveMin, archiveMax)
 	}
 	if compressionProfile != "" {
-		base += "\n\n## Agent compression profile (follow these instructions when summarizing):\n" + compressionProfile
+		base += "\n\n## Agent compression profile. This is additional guidance. Use the 'notes' field for any requested information that does not fit another field.\n" + compressionProfile
 	}
 	if existing == nil {
 		return base

@@ -417,17 +417,23 @@ func profileFingerprint(profile string) string {
 	return hex.EncodeToString(sum[:])[:8]
 }
 
-// loadCompressionProfile reads compression.md from dir if it exists. HTML
-// comments are stripped so the template's human-facing documentation never
-// reaches the summarizer; only real role-specific guidance is appended to the
-// prompt. Returns "" when the file is absent, unreadable, or comment-only.
+// loadCompressionProfile reads COMPRESSION.md (or the legacy compression.md)
+// from dir if it exists. HTML comments are stripped so the template's
+// human-facing documentation never reaches the summarizer; only real
+// role-specific guidance is appended to the prompt. Returns "" when neither file
+// is present, unreadable, or comment-only.
 func loadCompressionProfile(dir string) string {
 	if dir == "" {
 		return ""
 	}
-	data, err := os.ReadFile(filepath.Join(dir, "compression.md"))
+	// Prefer the uppercase name to match the other workspace files (AGENTS.md,
+	// SOUL.md, MEMORY.md, …); fall back to the legacy lowercase name.
+	data, err := os.ReadFile(filepath.Join(dir, "COMPRESSION.md"))
 	if err != nil {
-		return ""
+		data, err = os.ReadFile(filepath.Join(dir, "compression.md"))
+		if err != nil {
+			return ""
+		}
 	}
 	return strings.TrimSpace(stripHTMLComments(string(data)))
 }
