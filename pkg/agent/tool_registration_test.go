@@ -12,6 +12,7 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/bus"
 	"github.com/PivotLLM/ClawEh/pkg/config"
 	"github.com/PivotLLM/ClawEh/pkg/logger"
+	"github.com/PivotLLM/ClawEh/pkg/providers"
 )
 
 // toolRegTestConfig builds a single-agent config that allows all tools.
@@ -102,5 +103,31 @@ func TestReloadProviderAndConfig_RegistersRuntimeTools(t *testing.T) {
 	assertHasTool(t, after, "file_read")
 	if len(after) != len(before) {
 		t.Errorf("tool set changed across reload: before=%d (%v) after=%d (%v)", len(before), before, len(after), after)
+	}
+}
+
+// TestGetModelInfo_ReflectsActiveSelection guards that /status (via GetModelInfo)
+// reports the session's selected model, not always the first candidate.
+func TestGetModelInfo_ReflectsActiveSelection(t *testing.T) {
+	cfg := toolRegTestConfig(t)
+	al := NewAgentLoop(cfg, bus.NewMessageBus(), &mockProvider{}, nil)
+	ag, ok := al.GetRegistry().GetAgent("main")
+	if !ok {
+		t.Fatal("agent 'main' not found")
+	}
+	ag.Candidates = []providers.FallbackCandidate{
+		{Alias: "m0", Provider: "P"},
+		{Alias: "m1", Provider: "P"},
+		{Alias: "m2", Provider: "P"},
+	}
+	const sk = "sess-1"
+	if err := al.setActiveModelIndex(ag, sk, 2); err != nil {
+		t.Fatalf("setActiveModelIndex: %v", err)
+	}
+
+	rt := al.buildCommandsRuntime(ag, &processOptions{SessionKey: sk}, bus.InboundMessage{})
+	name, _, _, _ := rt.GetModelInfo()
+	if name != "m2" {
+		t.Errorf("GetModelInfo name = %q, want m2 (the active selection)", name)
 	}
 }

@@ -2545,10 +2545,27 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 			rt.AgentName = agent.ID
 		}
 		rt.GetModelInfo = func() (name, provider, protocol, apiBase string) {
+			// Resolve the model that is actually active for THIS session (the
+			// /model selection), not just the agent's first candidate, so /status
+			// and /show model reflect the current choice.
+			active := agent.Model
+			if len(agent.Candidates) > 0 {
+				idx := 0
+				if opts != nil {
+					idx = al.getActiveModelIndex(agent, opts.SessionKey)
+				}
+				if idx >= 0 && idx < len(agent.Candidates) {
+					if a := agent.Candidates[idx].Alias; a != "" {
+						active = a
+					} else if m := agent.Candidates[idx].Model; m != "" {
+						active = m
+					}
+				}
+			}
 			// Resolve the configured model so the provider name, wire protocol,
 			// and base URL come from the model's named provider.
-			name = agent.Model
-			if mc, err := cfg.GetModelConfig(agent.Model); err == nil && mc != nil {
+			name = active
+			if mc, err := cfg.GetModelConfig(active); err == nil && mc != nil {
 				if mc.ModelName != "" {
 					name = mc.ModelName
 				} else if mc.Model != "" {
