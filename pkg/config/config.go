@@ -981,16 +981,11 @@ func LoadConfig(path string) (*Config, error) {
 	// Migrate legacy channel config fields to new unified structures
 	cfg.migrateChannelConfigs()
 
-	// Auto-migrate: if only legacy providers config exists, convert to models
-	// Validate providers, then models (including that each model's provider
-	// reference resolves).
-	if err := cfg.ValidateProviders(); err != nil {
-		return nil, err
-	}
-	if err := cfg.ValidateModels(); err != nil {
-		return nil, err
-	}
-
+	// Note: provider/model validation is intentionally NOT fatal here. LoadConfig
+	// returns the full parsed config so the WebUI can display and repair invalid
+	// entries (a bad provider must not make the config unreadable). The gateway
+	// calls PruneInvalid() at startup to drop invalid entries with a WARN and run
+	// on the survivors; the WebUI save path validates strictly before persisting.
 	return cfg, nil
 }
 
@@ -1299,6 +1294,67 @@ func (c *Config) ValidateModels() error {
 		}
 	}
 	return nil
+}
+
+// PruneInvalid removes providers and models that fail validation, logging a WARN
+// for each dropped entry, and returns how many of each were removed. It is the
+// lenient counterpart to ValidateProviders/ValidateModels: the gateway calls it
+// at startup so a single bad entry (e.g. a stale/unknown protocol, or a model
+// pointing at a missing provider) degrades gracefully instead of aborting the
+// whole process. It mutates the in-memory config only — it never writes to disk.
+func (c *Config) PruneInvalid() (droppedProviders, droppedModels int) {
+	seen := make(map[string]struct{}, len(c.Providers))
+	valid := make(map[string]struct{}, len(c.Providers))
+	keptProviders := make([]Provider, 0, len(c.Providers))
+	for i := range c.Providers {
+		p := c.Providers[i]
+		var reason string
+		if strings.TrimSpace(p.Name) == "" {
+			reason = "name is required"
+		} else if _, dup := seen[p.Name]; dup {
+			reason = "duplicate provider name"
+		} else if _, ok := validProtocols[p.Protocol]; !ok {
+			reason = fmt.Sprintf("unknown protocol %q", p.Protocol)
+		} else if _, http := httpProtocols[p.Protocol]; http && p.BaseURL == "" {
+			reason = fmt.Sprintf("base_url is required for protocol %q", p.Protocol)
+		}
+		if reason != "" {
+			logger.WarnCF("config", "ignoring invalid provider", map[string]any{
+				"provider": p.Name,
+				"reason":   reason,
+			})
+			droppedProviders++
+			continue
+		}
+		seen[p.Name] = struct{}{}
+		valid[p.Name] = struct{}{}
+		keptProviders = append(keptProviders, p)
+	}
+	c.Providers = keptProviders
+
+	keptModels := make([]ModelConfig, 0, len(c.Models))
+	for i := range c.Models {
+		m := c.Models[i]
+		if err := m.Validate(); err != nil {
+			logger.WarnCF("config", "ignoring invalid model", map[string]any{
+				"model":  m.ModelName,
+				"reason": err.Error(),
+			})
+			droppedModels++
+			continue
+		}
+		if _, ok := valid[m.Provider]; !ok {
+			logger.WarnCF("config", "ignoring model with unknown provider", map[string]any{
+				"model":    m.ModelName,
+				"provider": m.Provider,
+			})
+			droppedModels++
+			continue
+		}
+		keptModels = append(keptModels, m)
+	}
+	c.Models = keptModels
+	return droppedProviders, droppedModels
 }
 
 func MergeAPIKeys(apiKey string, apiKeys []string) []string {

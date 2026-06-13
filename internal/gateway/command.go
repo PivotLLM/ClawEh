@@ -35,6 +35,9 @@ func NewGatewayCommand() *cobra.Command {
 		},
 		RunE: func(_ *cobra.Command, _ []string) error {
 			if err := gatewayCmd(debug); err != nil {
+				// Log to claw.log too (gatewayCmd enables file logging early), not
+				// just the console/journal, so the fatal reason is captured.
+				logger.ErrorCF("gateway", "gateway exited with error", map[string]any{"error": err.Error()})
 				fmt.Fprintf(os.Stderr, "\nError: %s\n\n", err)
 				os.Exit(1)
 			}
