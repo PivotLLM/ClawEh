@@ -6,17 +6,11 @@ import { toast } from "sonner"
 
 import { type ModelInfo, getModels } from "@/api/models"
 import { type AgentToolCatalogResponse, getAppConfig, getAgentTools, patchAppConfig } from "@/api/channels"
+import { FallbacksSelect, ModelSelect } from "@/components/agents/model-selects"
 import { ToolSelect } from "@/components/agents/tool-select"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
 
 interface AgentModelConfig {
   primary: string
@@ -38,7 +32,6 @@ interface AgentEntry {
   tools?: string[]
   callback?: CallbackConfig | null
   temperature?: number
-  memory_dir?: string
   summarization_models?: string[]
 }
 
@@ -102,9 +95,18 @@ function parseAgent(value: unknown): AgentEntry {
     tools: asArray(r.tools).map(asString).filter(Boolean),
     callback: cbMins > 0 ? { window_minutes: cbMins, window_count: asNumber(cbRaw.window_count) || 2 } : null,
     temperature: typeof r.temperature === "number" ? r.temperature : undefined,
-    memory_dir: asString(r.memory_dir) || undefined,
     summarization_models: asArray(r.summarization_models).map(asString).filter(Boolean),
   }
+}
+
+// sortAgentList orders agents alphabetically by display name (name, falling back
+// to id), case-insensitively. Order in agents.list is not semantically
+// significant (the default agent is marked by its `default` flag, bindings route
+// by id), so sorting for display is safe and keeps the list stable.
+function sortAgentList(list: AgentEntry[]): AgentEntry[] {
+  return [...list].sort((a, b) =>
+    (a.name || a.id).localeCompare(b.name || b.id, undefined, { sensitivity: "base" }),
+  )
 }
 
 function parseAgentsConfig(appConfig: unknown): AgentsConfig {
@@ -116,7 +118,7 @@ function parseAgentsConfig(appConfig: unknown): AgentsConfig {
       model: parseModelConfig(defaults.model),
       temperature: typeof defaults.temperature === "number" ? defaults.temperature : undefined,
     },
-    list: asArray(agents.list).map(parseAgent),
+    list: sortAgentList(asArray(agents.list).map(parseAgent)),
   }
 }
 
@@ -125,44 +127,6 @@ async function fetchSkills(): Promise<SkillInfo[]> {
   if (!res.ok) return []
   const data = (await res.json()) as { skills?: SkillInfo[] }
   return data.skills ?? []
-}
-
-interface ModelSelectProps {
-  value: string
-  models: ModelInfo[]
-  onChange: (v: string) => void
-  placeholder?: string
-}
-
-function ModelSelect({ value, models, onChange, placeholder }: ModelSelectProps) {
-  const configured = models
-    .filter((m) => m.configured && m.enabled)
-    .sort((a, b) => a.model_name.localeCompare(b.model_name))
-  const selectedModel = models.find((m) => m.model_name === value)
-  const noToolsWarning = selectedModel?.no_tools === true
-  return (
-    <div className="space-y-1.5">
-      <Select value={value || "__none__"} onValueChange={(v) => onChange(v === "__none__" ? "" : v)}>
-        <SelectTrigger className="w-full">
-          <SelectValue placeholder={placeholder ?? "Select model"} />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="__none__">{placeholder ?? "No model override"}</SelectItem>
-          {configured.map((m) => (
-            <SelectItem key={m.index} value={m.model_name}>
-              {m.model_name}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-      {noToolsWarning && (
-        <p className="text-amber-600 dark:text-amber-400 text-xs flex items-center gap-1">
-          <span>&#9888;</span>
-          Tools are disabled for {selectedModel.model_name}
-        </p>
-      )}
-    </div>
-  )
 }
 
 interface SkillsSelectProps {
@@ -216,87 +180,6 @@ function SkillsSelect({ selected, availableSkills, onChange }: SkillsSelectProps
   )
 }
 
-interface FallbacksSelectProps {
-  fallbacks: string[]
-  primary: string
-  models: ModelInfo[]
-  onChange: (fallbacks: string[]) => void
-  addPlaceholder?: string
-}
-
-function FallbacksSelect({ fallbacks, primary, models, onChange, addPlaceholder }: FallbacksSelectProps) {
-  const available = models
-    .filter((m) => m.configured && m.enabled && m.model_name !== primary)
-    .sort((a, b) => a.model_name.localeCompare(b.model_name))
-
-  const moveUp = (i: number) => {
-    if (i === 0) return
-    const next = [...fallbacks]
-    ;[next[i - 1], next[i]] = [next[i], next[i - 1]]
-    onChange(next)
-  }
-
-  const remove = (i: number) => {
-    onChange(fallbacks.filter((_, idx) => idx !== i))
-  }
-
-  const add = (name: string) => {
-    if (!name || fallbacks.includes(name)) return
-    onChange([...fallbacks, name])
-  }
-
-  const remaining = available.filter((m) => !fallbacks.includes(m.model_name))
-
-  return (
-    <div className="space-y-1.5">
-      {fallbacks.map((fb, i) => (
-        <div key={fb} className="flex items-center gap-1.5">
-          <span className="text-muted-foreground w-4 text-center text-xs">{i + 1}</span>
-          <span className="border-border/50 bg-muted/40 flex-1 rounded px-2 py-1 font-mono text-xs">
-            {fb}
-          </span>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={() => moveUp(i)}
-            disabled={i === 0}
-            className="text-muted-foreground size-6"
-            title="Move up"
-          >
-            ↑
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={() => remove(i)}
-            className="text-muted-foreground hover:text-destructive size-6"
-            title="Remove"
-          >
-            ×
-          </Button>
-        </div>
-      ))}
-      {remaining.length > 0 && (
-        <Select value="" onValueChange={add}>
-          <SelectTrigger className="h-7 text-xs">
-            <SelectValue placeholder={addPlaceholder ?? "Add fallback model…"} />
-          </SelectTrigger>
-          <SelectContent>
-            {remaining.map((m) => (
-              <SelectItem key={m.index} value={m.model_name}>
-                {m.model_name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      )}
-      {fallbacks.length === 0 && remaining.length === 0 && (
-        <p className="text-muted-foreground text-xs">No other configured models available.</p>
-      )}
-    </div>
-  )
-}
-
 interface AgentCardProps {
   label: string
   name?: string
@@ -311,7 +194,6 @@ interface AgentCardProps {
   callbackWindowMinutes?: number
   callbackWindowCount?: number
   temperature?: number
-  memoryDir?: string
   summarizationModels?: string[]
   onToggleEnabled?: () => void
   onModelChange: (v: string) => void
@@ -320,7 +202,6 @@ interface AgentCardProps {
   onToolsChange: (tools: string[]) => void
   onCallbackChange?: (mins: number, count: number) => void
   onTemperatureChange?: (t: number | undefined) => void
-  onMemoryDirChange?: (v: string | undefined) => void
   onSummarizationModelsChange?: (models: string[]) => void
   onDelete?: () => void
   status?: "saving" | "saved" | "error"
@@ -340,7 +221,6 @@ function AgentCard({
   callbackWindowMinutes = 0,
   callbackWindowCount = 2,
   temperature = undefined,
-  memoryDir = undefined,
   summarizationModels = [],
   onToggleEnabled,
   onModelChange,
@@ -349,7 +229,6 @@ function AgentCard({
   onToolsChange,
   onCallbackChange,
   onTemperatureChange = undefined,
-  onMemoryDirChange = undefined,
   onSummarizationModelsChange = undefined,
   onDelete,
   status,
@@ -529,22 +408,6 @@ function AgentCard({
         </div>
       )}
 
-      {onMemoryDirChange !== undefined && (
-        <div className="space-y-1.5">
-          <p className="text-muted-foreground text-xs font-medium">{t("agents.memoryDir")}</p>
-          <Input
-            value={memoryDir ?? ""}
-            onChange={(e) => {
-              const v = e.target.value
-              onMemoryDirChange(v.trim() === "" ? undefined : v)
-            }}
-            className="h-7 text-xs font-mono"
-            placeholder="/path/to/private/memory"
-          />
-          <p className="text-muted-foreground text-xs">{t("agents.memoryDirHint")}</p>
-        </div>
-      )}
-
     </div>
   )
 }
@@ -570,7 +433,6 @@ export function AgentsPage() {
     Record<string, "saving" | "saved" | "error">
   >({})
   const skipAgentsResync = useRef(false)
-  const skipDefaultsResync = useRef(false)
   const saveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
   const savedTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
 
@@ -627,15 +489,12 @@ export function AgentsPage() {
     return primary  // simple string form when no fallbacks
   }
 
+  // Note: agents.defaults (default model/temperature) and the default-agent
+  // selector live on the Config page now, so this payload intentionally omits
+  // `defaults`. The backend patch is a deep merge, so leaving it out preserves
+  // whatever the Config page last saved.
   const buildPayload = (cfg: AgentsConfig) => ({
     agents: {
-      defaults: {
-        model: buildModelPayload(
-          cfg.defaults.model?.primary ?? "",
-          cfg.defaults.model?.fallbacks ?? [],
-        ),
-        ...(cfg.defaults.temperature !== undefined ? { temperature: cfg.defaults.temperature } : {}),
-      },
       list: (cfg.list ?? []).map((a) => ({
         id: a.id,
         ...(a.enabled === false ? { enabled: false } : {}),
@@ -648,7 +507,6 @@ export function AgentsPage() {
           ? { window_minutes: a.callback.window_minutes, window_count: a.callback.window_count }
           : null,
         ...(a.temperature !== undefined ? { temperature: a.temperature } : {}),
-        ...(a.memory_dir ? { memory_dir: a.memory_dir } : {}),
         ...(a.summarization_models && a.summarization_models.length > 0
           ? { summarization_models: a.summarization_models }
           : {}),
@@ -656,50 +514,7 @@ export function AgentsPage() {
     },
   })
 
-  const handleSetDefaultAgent = async (agentId: string) => {
-    setSaving("set-default")
-    const list = (agentsCfg.list ?? []).map((a) => ({
-      ...a,
-      default: a.id === agentId,
-    }))
-    const next: AgentsConfig = { ...agentsCfg, list }
-    try {
-      await patchAppConfig(buildPayload(next))
-      toast.success("Default agent updated")
-      // Update local state in place instead of reloading the whole page, which
-      // would unmount the list and scroll back to the top.
-      setAgentsCfg(next)
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to save")
-    } finally {
-      setSaving(null)
-    }
-  }
-
-  const handleSaveDefault = async (modelName: string, fallbacks: string[], temperature: number | undefined) => {
-    setAutoStatus((s) => ({ ...s, default: "saving" }))
-    const next: AgentsConfig = {
-      ...agentsCfg,
-      defaults: {
-        ...agentsCfg.defaults,
-        model: modelName ? { primary: modelName, fallbacks } : null,
-        temperature,
-      },
-    }
-    try {
-      await patchAppConfig(buildPayload(next))
-      // Update local state in place (no reload → no scroll jump); skip the
-      // resync so the saved snapshot doesn't overwrite a still-editing field.
-      skipDefaultsResync.current = true
-      setAgentsCfg(next)
-      markSaved("default")
-    } catch (e) {
-      setAutoStatus((s) => ({ ...s, default: "error" }))
-      toast.error(e instanceof Error ? e.message : "Failed to save")
-    }
-  }
-
-  const handleSaveAgent = async (index: number, modelName: string, fallbacks: string[], skills: string[], tools: string[], callbackMins: number, callbackCount: number, temperature: number | undefined, memoryDir: string | undefined, summarizationModels: string[]) => {
+  const handleSaveAgent = async (index: number, modelName: string, fallbacks: string[], skills: string[], tools: string[], callbackMins: number, callbackCount: number, temperature: number | undefined, summarizationModels: string[]) => {
     const list = [...(agentsCfg.list ?? [])]
     list[index] = {
       ...list[index],
@@ -708,7 +523,6 @@ export function AgentsPage() {
       tools: tools,
       callback: callbackMins > 0 ? { window_minutes: callbackMins, window_count: callbackCount } : null,
       temperature,
-      memory_dir: memoryDir,
       summarization_models: summarizationModels.length > 0 ? summarizationModels : undefined,
     }
     const next: AgentsConfig = { ...agentsCfg, list }
@@ -767,7 +581,7 @@ export function AgentsPage() {
       toast.error("Agent ID is required")
       return
     }
-    const list = [
+    const list = sortAgentList([
       ...(agentsCfg.list ?? []),
       {
         id: addingId.trim(),
@@ -776,7 +590,7 @@ export function AgentsPage() {
         skills: addingSkills.length > 0 ? addingSkills : undefined,
         tools: addingTools,
       },
-    ]
+    ])
     const next: AgentsConfig = { ...agentsCfg, list }
     setSaving("add")
     try {
@@ -799,20 +613,6 @@ export function AgentsPage() {
     }
   }
 
-  // Local edit state for default model + fallbacks + temperature
-  const [defaultModelEdit, setDefaultModelEdit] = useState("")
-  const [defaultFallbacksEdit, setDefaultFallbacksEdit] = useState<string[]>([])
-  const [defaultTemperatureEdit, setDefaultTemperatureEdit] = useState<number | undefined>(undefined)
-  useEffect(() => {
-    if (skipDefaultsResync.current) {
-      skipDefaultsResync.current = false
-      return
-    }
-    setDefaultModelEdit(agentsCfg.defaults.model?.primary ?? "")
-    setDefaultFallbacksEdit(agentsCfg.defaults.model?.fallbacks ?? [])
-    setDefaultTemperatureEdit(agentsCfg.defaults.temperature)
-  }, [agentsCfg.defaults])
-
   // Local edit state for each agent
   const [agentModelEdits, setAgentModelEdits] = useState<string[]>([])
   const [agentFallbacksEdits, setAgentFallbacksEdits] = useState<string[][]>([])
@@ -820,7 +620,6 @@ export function AgentsPage() {
   const [agentToolsEdits, setAgentToolsEdits] = useState<string[][]>([])
   const [agentCallbackEdits, setAgentCallbackEdits] = useState<Array<{ mins: number; count: number }>>([])
   const [agentTemperatureEdits, setAgentTemperatureEdits] = useState<Array<number | undefined>>([])
-  const [agentMemoryDirEdits, setAgentMemoryDirEdits] = useState<Array<string | undefined>>([])
   const [agentSummarizationEdits, setAgentSummarizationEdits] = useState<string[][]>([])
   useEffect(() => {
     if (skipAgentsResync.current) {
@@ -836,7 +635,6 @@ export function AgentsPage() {
       count: a.callback?.window_count ?? 2,
     })))
     setAgentTemperatureEdits((agentsCfg.list ?? []).map((a) => a.temperature))
-    setAgentMemoryDirEdits((agentsCfg.list ?? []).map((a) => a.memory_dir))
     setAgentSummarizationEdits((agentsCfg.list ?? []).map((a) => a.summarization_models ?? []))
   }, [agentsCfg.list])
 
@@ -849,11 +647,7 @@ export function AgentsPage() {
     agentToolsEdits,
     agentCallbackEdits,
     agentTemperatureEdits,
-    agentMemoryDirEdits,
     agentSummarizationEdits,
-    defaultModelEdit,
-    defaultFallbacksEdit,
-    defaultTemperatureEdit,
   })
   latestRef.current = {
     agentModelEdits,
@@ -862,11 +656,7 @@ export function AgentsPage() {
     agentToolsEdits,
     agentCallbackEdits,
     agentTemperatureEdits,
-    agentMemoryDirEdits,
     agentSummarizationEdits,
-    defaultModelEdit,
-    defaultFallbacksEdit,
-    defaultTemperatureEdit,
   }
 
   const AUTOSAVE_MS = 600
@@ -884,23 +674,10 @@ export function AgentsPage() {
         L.agentCallbackEdits[index]?.mins ?? 0,
         L.agentCallbackEdits[index]?.count ?? 2,
         L.agentTemperatureEdits[index],
-        L.agentMemoryDirEdits[index],
         L.agentSummarizationEdits[index] ?? [],
       )
     }, AUTOSAVE_MS)
   }
-  const scheduleSaveDefault = () => {
-    clearTimeout(saveTimers.current.default)
-    saveTimers.current.default = setTimeout(() => {
-      const L = latestRef.current
-      void handleSaveDefault(
-        L.defaultModelEdit,
-        L.defaultFallbacksEdit,
-        L.defaultTemperatureEdit,
-      )
-    }, AUTOSAVE_MS)
-  }
-
   return (
     <div className="flex h-full flex-col">
       <PageHeader title={t("navigation.agents")}>
@@ -919,7 +696,7 @@ export function AgentsPage() {
       </PageHeader>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-8 sm:px-6">
-        <div className="mx-auto w-full max-w-250 pt-4 space-y-3">
+        <div className="w-full max-w-250 pt-4 space-y-3">
           {loading && (
             <div className="flex items-center justify-center py-20">
               <IconLoader2 className="text-muted-foreground size-6 animate-spin" />
@@ -934,59 +711,8 @@ export function AgentsPage() {
 
           {!loading && !fetchError && (
             <>
-              {/* Default agent selector */}
-              {(agentsCfg.list ?? []).length > 0 && (
-                <div className="border-border/60 bg-card rounded-xl border p-4 flex items-center gap-3">
-                  <p className="text-sm font-medium shrink-0">Default agent</p>
-                  <Select
-                    value={(agentsCfg.list ?? []).find((a) => a.default)?.id ?? (agentsCfg.list?.[0]?.id ?? "")}
-                    onValueChange={handleSetDefaultAgent}
-                    disabled={saving === "set-default"}
-                  >
-                    <SelectTrigger className="w-48">
-                      <SelectValue placeholder="Select default agent" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {(agentsCfg.list ?? []).filter((a) => a.enabled !== false).map((a) => (
-                        <SelectItem key={a.id} value={a.id}>{a.name || a.id}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <p className="text-muted-foreground text-xs">
-                    Handles messages that don't match any binding
-                  </p>
-                </div>
-              )}
-
-              {/* Default model settings */}
-              <AgentCard
-                label="Agent Defaults"
-                modelName={defaultModelEdit}
-                fallbacks={defaultFallbacksEdit}
-                skills={[]}
-                tools={[]}
-                availableSkills={[]}
-                availableTools={{ tools: [], default_tools: [] }}
-                models={models}
-                temperature={defaultTemperatureEdit}
-                onModelChange={(v) => {
-                  setDefaultModelEdit(v)
-                  scheduleSaveDefault()
-                }}
-                onFallbacksChange={(f) => {
-                  setDefaultFallbacksEdit(f)
-                  scheduleSaveDefault()
-                }}
-                onSkillsChange={() => {}}
-                onToolsChange={() => {}}
-                onTemperatureChange={(tp) => {
-                  setDefaultTemperatureEdit(tp)
-                  scheduleSaveDefault()
-                }}
-                status={autoStatus.default}
-              />
-
-              {/* Named agents */}
+              {/* Named agents. Agent defaults (default agent, default model,
+                  summarization models) now live on the Config page. */}
               {(agentsCfg.list ?? []).map((agent, i) => (
                 <AgentCard
                   key={agent.id}
@@ -1003,7 +729,6 @@ export function AgentsPage() {
                   callbackWindowMinutes={agentCallbackEdits[i]?.mins ?? 0}
                   callbackWindowCount={agentCallbackEdits[i]?.count ?? 2}
                   temperature={agentTemperatureEdits[i]}
-                  memoryDir={agentMemoryDirEdits[i]}
                   onToggleEnabled={() => handleToggleAgent(i)}
                   onModelChange={(v) => {
                     setAgentModelEdits((prev) => {
@@ -1049,14 +774,6 @@ export function AgentsPage() {
                     setAgentTemperatureEdits((prev) => {
                       const next = [...prev]
                       next[i] = tp
-                      return next
-                    })
-                    scheduleSaveAgent(i)
-                  }}
-                  onMemoryDirChange={(md) => {
-                    setAgentMemoryDirEdits((prev) => {
-                      const next = [...prev]
-                      next[i] = md
                       return next
                     })
                     scheduleSaveAgent(i)

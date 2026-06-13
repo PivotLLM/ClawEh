@@ -1,12 +1,18 @@
 export type JsonRecord = Record<string, unknown>
 
 export interface CoreConfigForm {
-  workspace: string
+  baseDir: string
   restrictToWorkspace: boolean
   allowRemote: boolean
   streamToolActivity: boolean
   maxTokens: string
   maxToolIterations: string
+  // Agent defaults (agents.defaults.model / .temperature) and the default-agent
+  // id (agents.list[].default). Consolidated here from the Agents page.
+  defaultAgentId: string
+  defaultModel: string
+  defaultModelFallbacks: string[]
+  defaultTemperature: string
   summarizationModels: string[]
   summarizationDebugCapture: boolean
   compressNormalPercent: string
@@ -62,12 +68,16 @@ export const SESSION_MODE_OPTIONS = [
 ] as const
 
 export const EMPTY_FORM: CoreConfigForm = {
-  workspace: "",
+  baseDir: "",
   restrictToWorkspace: true,
   allowRemote: true,
   streamToolActivity: false,
   maxTokens: "32768",
   maxToolIterations: "50",
+  defaultAgentId: "",
+  defaultModel: "",
+  defaultModelFallbacks: [],
+  defaultTemperature: "",
   summarizationModels: [],
   summarizationDebugCapture: false,
   compressNormalPercent: "0",
@@ -126,6 +136,14 @@ function asNumberString(value: unknown, fallback: string): string {
   return fallback
 }
 
+// parseDefaultModel extracts (primary, fallbacks) from agents.defaults.model,
+// which may be a bare string or a { primary, fallbacks } object.
+function parseDefaultModel(value: unknown): { primary: string; fallbacks: string[] } {
+  if (typeof value === "string") return { primary: value, fallbacks: [] }
+  const r = asRecord(value)
+  return { primary: asString(r.primary), fallbacks: asStringArray(r.fallbacks) }
+}
+
 export function buildFormFromConfig(config: unknown): CoreConfigForm {
   const root = asRecord(config)
   const agents = asRecord(root.agents)
@@ -136,8 +154,14 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
   const tools = asRecord(root.tools)
   const exec = asRecord(tools.exec)
 
+  const defaultModel = parseDefaultModel(defaults.model)
+  const agentList = Array.isArray(agents.list) ? agents.list : []
+  const defaultAgentId = asString(
+    (agentList.find((a) => asRecord(a).default === true) as { id?: unknown } | undefined)?.id,
+  )
+
   return {
-    workspace: asString(defaults.workspace) || EMPTY_FORM.workspace,
+    baseDir: asString(agents.base_dir),
     restrictToWorkspace:
       defaults.restrict_to_workspace === undefined
         ? EMPTY_FORM.restrictToWorkspace
@@ -155,6 +179,11 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
       defaults.max_tool_iterations,
       EMPTY_FORM.maxToolIterations,
     ),
+    defaultAgentId,
+    defaultModel: defaultModel.primary,
+    defaultModelFallbacks: defaultModel.fallbacks,
+    defaultTemperature:
+      typeof defaults.temperature === "number" ? String(defaults.temperature) : "",
     summarizationModels: asStringArray(summarization.models),
     summarizationDebugCapture: asBool(summarization.debug_capture),
     compressNormalPercent: asNumberString(

@@ -45,6 +45,12 @@ type ToolDeps struct {
 	SpawnAllowlist    func(callerID, targetID string) bool
 	CandidateResolver func(agentID string) ([]providers.FallbackCandidate, bool)
 
+	// Spawn holds the robust sub-agent launcher (a global.Spawner). The AgentLoop
+	// builds it per agent and sets it here; toGlobalDeps forwards it to
+	// global.Deps.Spawn so any tool package can launch workers by DI. Typed as any
+	// to keep pkg/tools free of an import dependency on the spawner implementation.
+	Spawn any
+
 	// Session tools (closures built by AgentLoop). CompactFn returns a
 	// human-readable compaction report and the resulting rendered summary,
 	// alongside any error.

@@ -471,7 +471,7 @@ func TestCreateProvider_ClaudeCliDefaultWorkspace(t *testing.T) {
 		{ModelName: "claude-cli", Model: "claude-sonnet", Provider: "claude-cli", Enabled: true},
 	}
 	cfg.Agents.Defaults.SetDefaultModel("claude-cli")
-	cfg.Agents.Defaults.Workspace = ""
+	cfg.Agents.BaseDir = ""
 
 	provider, _, err := CreateProvider(cfg)
 	if err != nil {

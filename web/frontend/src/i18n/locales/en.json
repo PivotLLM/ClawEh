@@ -1,7 +1,5 @@
 {
   "agents": {
-    "memoryDir": "Memory Directory",
-    "memoryDirHint": "Absolute path that relocates this agent's memory folder off the default workspace location. Leave blank to keep the standard <workspace>/memory layout. Each agent's memory_dir must be unique and outside every workspace.",
     "summarizationModels": "Summarization models (optional)",
     "summarizationModelsAdd": "Add summarization model…",
     "summarizationModelsHint": "Models tried first when summarizing this agent's context, ahead of the global summarization models and the agent's own model. Use to give an agent specialised summarizers when the defaults refuse its content."
@@ -372,8 +370,8 @@
     },
     "config": {
       "load_error": "Failed to load configuration. Please refresh and try again.",
-      "workspace": "Workspace Directory",
-      "workspace_hint": "Base directory for agent file operations.",
+      "base_dir": "Agent Base Directory",
+      "base_dir_hint": "Base directory for all agent files. Each agent lives in <base>/<id> (the default agent in <base>/default). Leave blank for ~/.claw/agents; point it at another volume to relocate every agent.",
       "restrict_workspace": "Restrict to Workspace",
       "restrict_workspace_hint": "Only allow file operations inside workspace.",
       "allow_remote": "Allow Remote Shell Execution",
@@ -384,6 +382,14 @@
       "max_tokens_hint": "Upper token limit per model response.",
       "max_tool_iterations": "Max Tool Iterations",
       "max_tool_iterations_hint": "Maximum tool-call loops in a single task.",
+      "default_agent": "Default agent",
+      "default_agent_hint": "Handles messages that don't match any binding.",
+      "default_model": "Default model",
+      "default_model_hint": "Model used by agents that don't set their own. Leave unset to require each agent to pick one.",
+      "default_model_none": "No default model",
+      "default_fallbacks": "Default fallback models",
+      "default_temperature": "Default temperature",
+      "default_temperature_hint": "0–2; blank uses the provider default.",
       "summarization_models": "Summarization Models",
       "summarization_models_hint": "Models tried in order for context summarization across all agents. Each agent's own model is always used as a final fallback. Leave empty to use each agent's own model.",
       "summarization_models_empty": "No summarization models configured — each agent uses its own model.",
@@ -439,6 +445,8 @@
       "allowed_cidrs_placeholder": "192.168.1.0/24\n10.0.0.0/8",
       "sections": {
         "agent": "Agent",
+        "agent_defaults": "Agent Defaults",
+        "agent_defaults_desc": "Default model, summarization chain, and the agent that handles unrouted messages — applied to agents without their own override.",
         "summarization": "Summarization",
         "summarization_desc": "Global summarization model chain used to compress context for every agent.",
         "context_management": "Context Management",

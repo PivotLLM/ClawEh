@@ -23,8 +23,9 @@ func TestHandleListSkills(t *testing.T) {
 		t.Fatalf("LoadConfig() error = %v", err)
 	}
 
-	workspace := filepath.Join(t.TempDir(), "workspace")
-	cfg.Agents.Defaults.Workspace = workspace
+	base := t.TempDir()
+	cfg.Agents.BaseDir = base
+	workspace := filepath.Join(base, "default")
 	err = config.SaveConfig(configPath, cfg)
 	if err != nil {
 		t.Fatalf("SaveConfig() error = %v", err)
@@ -122,8 +123,9 @@ func TestHandleGetSkill(t *testing.T) {
 		t.Fatalf("LoadConfig() error = %v", err)
 	}
 
-	workspace := filepath.Join(t.TempDir(), "workspace")
-	cfg.Agents.Defaults.Workspace = workspace
+	base := t.TempDir()
+	cfg.Agents.BaseDir = base
+	workspace := filepath.Join(base, "default")
 	err = config.SaveConfig(configPath, cfg)
 	if err != nil {
 		t.Fatalf("SaveConfig() error = %v", err)
@@ -176,8 +178,9 @@ func TestHandleGetSkillUsesResolvedPath(t *testing.T) {
 		t.Fatalf("LoadConfig() error = %v", err)
 	}
 
-	workspace := filepath.Join(t.TempDir(), "workspace")
-	cfg.Agents.Defaults.Workspace = workspace
+	base := t.TempDir()
+	cfg.Agents.BaseDir = base
+	workspace := filepath.Join(base, "default")
 	err = config.SaveConfig(configPath, cfg)
 	if err != nil {
 		t.Fatalf("SaveConfig() error = %v", err)
@@ -227,8 +230,8 @@ func TestHandleImportSkill(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConfig() error = %v", err)
 	}
-	workspace := filepath.Join(t.TempDir(), "workspace")
-	cfg.Agents.Defaults.Workspace = workspace
+	base := t.TempDir()
+	cfg.Agents.BaseDir = base
 	err = config.SaveConfig(configPath, cfg)
 	if err != nil {
 		t.Fatalf("SaveConfig() error = %v", err)
@@ -301,8 +304,9 @@ func TestHandleDeleteSkill(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConfig() error = %v", err)
 	}
-	workspace := filepath.Join(t.TempDir(), "workspace")
-	cfg.Agents.Defaults.Workspace = workspace
+	base := t.TempDir()
+	cfg.Agents.BaseDir = base
+	workspace := filepath.Join(base, "default")
 	if err := config.SaveConfig(configPath, cfg); err != nil {
 		t.Fatalf("SaveConfig() error = %v", err)
 	}

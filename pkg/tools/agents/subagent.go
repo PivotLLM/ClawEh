@@ -288,6 +288,58 @@ func (sm *SubagentManager) runTask(ctx context.Context, task *SubagentTask, call
 	}
 }
 
+// Run executes a sub-agent task synchronously and returns its result. Unlike
+// Spawn (which runs in the background and reports via callback), Run blocks until
+// the worker finishes. agentID == "" is a self-spawn. channel/chatID are used for
+// attribution and tool context; callers pass "cli"/"direct" for non-conversation
+// callers.
+func (sm *SubagentManager) Run(
+	ctx context.Context,
+	task, label, agentID, channel, chatID string,
+) (*tools.ToolResult, error) {
+	if strings.TrimSpace(task) == "" {
+		return nil, fmt.Errorf("task is required")
+	}
+	if sm == nil {
+		return nil, fmt.Errorf("subagent manager not configured")
+	}
+
+	messages := []providers.Message{
+		{Role: "system", Content: subagentSystemPrompt()},
+		{Role: "user", Content: task},
+	}
+
+	sm.mu.RLock()
+	loopCfg := sm.resolveLoopConfig(agentID)
+	sm.mu.RUnlock()
+
+	loopResult, err := tools.RunToolLoop(ctx, loopCfg, messages, channel, chatID)
+	if err != nil {
+		return nil, err
+	}
+
+	// ForUser: brief summary (truncated); ForLLM: full execution details.
+	userContent := loopResult.Content
+	const maxUserLen = 500
+	if len(userContent) > maxUserLen {
+		userContent = userContent[:maxUserLen] + "..."
+	}
+	labelStr := label
+	if labelStr == "" {
+		labelStr = "(unnamed)"
+	}
+	llmContent := fmt.Sprintf("Subagent task completed:\nLabel: %s\nIterations: %d\nResult: %s",
+		labelStr, loopResult.Iterations, loopResult.Content)
+
+	return &tools.ToolResult{
+		ForLLM:  llmContent,
+		ForUser: attributedContent(agentID, userContent),
+		Silent:  false,
+		IsError: false,
+		Async:   false,
+	}, nil
+}
+
 func (sm *SubagentManager) GetTask(taskID string) (*SubagentTask, bool) {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
@@ -351,32 +403,12 @@ func (t *SubagentTool) Execute(ctx context.Context, args map[string]any) *tools.
 	}
 
 	label, _ := args["label"].(string)
-	agentID, _ := args["agent_id"].(string)
 
 	if t.manager == nil {
 		return tools.ErrorResult("Subagent manager not configured").WithError(fmt.Errorf("manager is nil"))
 	}
 
-	messages := []providers.Message{
-		{
-			Role:    "system",
-			Content: subagentSystemPrompt(),
-		},
-		{
-			Role:    "user",
-			Content: task,
-		},
-	}
-
-	// Use RunToolLoop to execute with tools (same as async SpawnTool).
-	// SubagentTool always performs a self-spawn (no explicit agent_id).
-	sm := t.manager
-	sm.mu.RLock()
-	loopCfg := sm.resolveLoopConfig("")
-	sm.mu.RUnlock()
-
-	// Fall back to "cli"/"direct" for non-conversation callers (e.g., CLI, tests)
-	// to preserve the same defaults as the original NewSubagentTool constructor.
+	// Fall back to "cli"/"direct" for non-conversation callers (e.g., CLI, tests).
 	channel := tools.ToolChannel(ctx)
 	if channel == "" {
 		channel = "cli"
@@ -386,31 +418,10 @@ func (t *SubagentTool) Execute(ctx context.Context, args map[string]any) *tools.
 		chatID = "direct"
 	}
 
-	loopResult, err := tools.RunToolLoop(ctx, loopCfg, messages, channel, chatID)
+	// SubagentTool always performs a self-spawn (no explicit agent_id).
+	result, err := t.manager.Run(ctx, task, label, "", channel, chatID)
 	if err != nil {
 		return tools.ErrorResult(fmt.Sprintf("Subagent execution failed: %v", err)).WithError(err)
 	}
-
-	// ForUser: Brief summary for user (truncated if too long)
-	userContent := loopResult.Content
-	maxUserLen := 500
-	if len(userContent) > maxUserLen {
-		userContent = userContent[:maxUserLen] + "..."
-	}
-
-	// ForLLM: Full execution details
-	labelStr := label
-	if labelStr == "" {
-		labelStr = "(unnamed)"
-	}
-	llmContent := fmt.Sprintf("Subagent task completed:\nLabel: %s\nIterations: %d\nResult: %s",
-		labelStr, loopResult.Iterations, loopResult.Content)
-
-	return &tools.ToolResult{
-		ForLLM:  llmContent,
-		ForUser: attributedContent(agentID, userContent),
-		Silent:  false,
-		IsError: false,
-		Async:   false,
-	}
+	return result
 }

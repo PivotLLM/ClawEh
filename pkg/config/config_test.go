@@ -201,7 +201,7 @@ func TestConfig_NoAgentsListInheritsDefault(t *testing.T) {
 func TestDefaultConfig_WorkspacePath(t *testing.T) {
 	cfg := DefaultConfig()
 
-	if cfg.Agents.Defaults.Workspace == "" {
+	if cfg.WorkspacePath() == "" {
 		t.Error("Workspace should not be empty")
 	}
 }
@@ -390,7 +390,7 @@ func TestSaveConfig_FilePermissions(t *testing.T) {
 func TestConfig_Complete(t *testing.T) {
 	cfg := DefaultConfig()
 
-	if cfg.Agents.Defaults.Workspace == "" {
+	if cfg.WorkspacePath() == "" {
 		t.Error("Workspace should not be empty")
 	}
 	if cfg.Agents.Defaults.Model == nil || cfg.Agents.Defaults.Model.Primary == "" {
@@ -503,8 +503,8 @@ func TestDefaultConfig_WorkspacePath_Default(t *testing.T) {
 	cfg := DefaultConfig()
 	want := filepath.Join("/tmp/home", ".claw", "agents", "default")
 
-	if cfg.Agents.Defaults.Workspace != want {
-		t.Errorf("Default workspace path = %q, want %q", cfg.Agents.Defaults.Workspace, want)
+	if cfg.WorkspacePath() != want {
+		t.Errorf("Default workspace path = %q, want %q", cfg.WorkspacePath(), want)
 	}
 }
 
@@ -514,8 +514,8 @@ func TestDefaultConfig_WorkspacePath_WithClawHome(t *testing.T) {
 	cfg := DefaultConfig()
 	want := "/custom/claw/home/agents/default"
 
-	if cfg.Agents.Defaults.Workspace != want {
-		t.Errorf("Workspace path with CLAW_HOME = %q, want %q", cfg.Agents.Defaults.Workspace, want)
+	if cfg.WorkspacePath() != want {
+		t.Errorf("Workspace path with CLAW_HOME = %q, want %q", cfg.WorkspacePath(), want)
 	}
 }
 

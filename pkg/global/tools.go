@@ -137,8 +137,10 @@ type Deps struct {
 	Cfg       any // *config.Config in Claw; hosts type-assert
 	AgentID   string
 	Workspace string
-	// Spawn launches sub-tasks/agents. nil ⇒ this host cannot launch any.
-	// Concrete shape is defined when the spawning tool (agents) is migrated.
+	// Spawn launches sub-agent workers. When non-nil it holds a global.Spawner;
+	// recover it with sp, ok := deps.Spawn.(global.Spawner). nil ⇒ this host
+	// cannot launch sub-agents. The host injects one robust spawner here so any
+	// tool package (internal or external/MCP) can launch workers by DI.
 	Spawn any
 	// Host carries host-specific, strongly-typed dependencies (Claw passes its
 	// rich tools.ToolDeps here; providers type-assert).

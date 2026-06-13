@@ -10,9 +10,18 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/providers"
 )
 
-// LLMClient calls an LLM and returns a single response message.
+// LLMClient calls an LLM and returns a single response.
 type LLMClient interface {
-	Complete(ctx context.Context, messages []providers.Message) (providers.Message, error)
+	Complete(ctx context.Context, messages []providers.Message) (LLMReply, error)
+}
+
+// LLMReply is the result of one LLMClient.Complete call. FinishReason carries the
+// provider's stop reason (e.g. "stop", "length", "refusal", "content_filter")
+// when available, so the summarizer can distinguish a content refusal from a
+// transient error. It is "" when the provider does not report one.
+type LLMReply struct {
+	Content      string
+	FinishReason string
 }
 
 // ModelChain records which LLM chain is configured for compression (for stats and logging).

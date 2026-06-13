@@ -2,8 +2,6 @@ package agent
 
 import (
 	"context"
-	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -63,34 +61,9 @@ func NewAgentInstance(
 	cfg *config.Config,
 	provider providers.LLMProvider,
 ) *AgentInstance {
-	workspace := resolveAgentWorkspace(agentCfg, defaults)
+	workspace := resolveAgentWorkspace(agentCfg, cfg.BaseDir())
 
-	// Resolve the memory directory before populating templates so the workspace
-	// seeder never recreates <workspace>/memory when memory is relocated.
-	// Empty = legacy <workspace>/memory layout.
-	memoryDir := resolveAgentMemoryDir(agentCfg)
-
-	agentws.Populate(workspace, memoryDir)
-
-	// When memory is relocated (non-empty and non-default), eagerly create the
-	// directory: the memory tools open it via os.OpenRoot, which requires it to
-	// exist. Failure is a hard startup error so we never silently fall back to
-	// workspace memory and leak private notes into the wrong directory.
-	if memoryDir != "" {
-		defaultMem := filepath.Join(workspace, "memory")
-		if memoryDir != defaultMem {
-			if err := os.MkdirAll(memoryDir, 0o700); err != nil {
-				log.Fatalf("agent %q: failed to create memory_dir %q: %v",
-					func() string {
-						if agentCfg != nil {
-							return agentCfg.ID
-						}
-						return ""
-					}(),
-					memoryDir, err)
-			}
-		}
-	}
+	agentws.Populate(workspace)
 
 	model := resolveAgentModel(agentCfg, defaults)
 	fallbacks := resolveAgentFallbacks(agentCfg, defaults)
@@ -130,7 +103,7 @@ func NewAgentInstance(
 	}
 
 	mcpDiscoveryActive := cfg.Tools.MCP.Enabled && cfg.Tools.MCP.Discovery.Enabled
-	contextBuilder := NewContextBuilderWithMemory(workspace, memoryDir).WithToolDiscovery(
+	contextBuilder := NewContextBuilder(workspace).WithToolDiscovery(
 		mcpDiscoveryActive && cfg.Tools.MCP.Discovery.UseBM25,
 		mcpDiscoveryActive && cfg.Tools.MCP.Discovery.UseRegex,
 	)
@@ -366,8 +339,11 @@ func NewAgentInstance(
 			})
 			lightCandidates = resolved
 		} else {
-			log.Printf("routing: light_model %q not found in models — routing disabled for agent %q",
-				rc.LightModel, agentID)
+			logger.WarnCF("routing", "light_model not found in models — routing disabled",
+				map[string]any{
+					"light_model": rc.LightModel,
+					"agent_id":    agentID,
+				})
 		}
 	}
 
@@ -404,36 +380,21 @@ func NewAgentInstance(
 	}
 }
 
-// resolveAgentMemoryDir returns the absolute on-disk memory directory override
-// for an agent, or "" when the legacy <workspace>/memory layout should be used.
-//
-// Note on migration: relocating memory_dir does NOT auto-copy any files that
-// already live under <workspace>/memory. Operators must move existing
-// MEMORY.md and daily-note files manually; otherwise they become orphaned.
-func resolveAgentMemoryDir(agentCfg *config.AgentConfig) string {
-	if agentCfg == nil {
-		return ""
-	}
-	md := strings.TrimSpace(agentCfg.MemoryDir)
-	if md == "" {
-		return ""
-	}
-	return expandHome(md)
-}
-
-// resolveAgentWorkspace determines the workspace directory for an agent.
-func resolveAgentWorkspace(agentCfg *config.AgentConfig, defaults *config.AgentDefaults) string {
+// resolveAgentWorkspace determines the workspace directory for an agent:
+// an explicit per-agent workspace wins; otherwise the agent lives at
+// <base_dir>/<id>, with the routing-default agent (empty/"main" id) at
+// <base_dir>/default.
+func resolveAgentWorkspace(agentCfg *config.AgentConfig, baseDir string) string {
 	if agentCfg != nil && strings.TrimSpace(agentCfg.Workspace) != "" {
 		return expandHome(strings.TrimSpace(agentCfg.Workspace))
 	}
-	// Use the configured default workspace (respects CLAW_HOME)
-	if agentCfg == nil || agentCfg.ID == "" || routing.NormalizeAgentID(agentCfg.ID) == "main" {
-		return expandHome(defaults.Workspace)
+	id := "default"
+	if agentCfg != nil {
+		if nid := routing.NormalizeAgentID(agentCfg.ID); nid != "" && nid != "main" {
+			id = nid
+		}
 	}
-	// For named agents without explicit workspace, use agents/{id} sibling of default
-	id := routing.NormalizeAgentID(agentCfg.ID)
-	agentsDir := filepath.Dir(expandHome(defaults.Workspace)) // ~/.claw/agents
-	return filepath.Join(agentsDir, id)
+	return filepath.Join(baseDir, id)
 }
 
 // resolveAgentModel resolves the primary model for an agent.
@@ -460,7 +421,11 @@ func compilePatterns(patterns []string) []*regexp.Regexp {
 	for _, p := range patterns {
 		re, err := regexp.Compile(p)
 		if err != nil {
-			fmt.Printf("Warning: invalid path pattern %q: %v\n", p, err)
+			logger.WarnCF("agent", "invalid path pattern",
+				map[string]any{
+					"pattern": p,
+					"error":   err.Error(),
+				})
 			continue
 		}
 		compiled = append(compiled, re)
@@ -483,7 +448,8 @@ func (a *AgentInstance) Close() error {
 func initSessionStore(dir string) session.SessionStore {
 	store, err := memory.NewJSONLStore(dir)
 	if err != nil {
-		log.Printf("memory: init store: %v; using json sessions", err)
+		logger.WarnCF("memory", "init store failed; using json sessions",
+			map[string]any{"error": err.Error()})
 		return session.NewSessionManager(dir)
 	}
 
@@ -491,11 +457,13 @@ func initSessionStore(dir string) session.SessionStore {
 		// Migration failure means the store could not write data.
 		// Fall back to SessionManager to avoid a split state where
 		// some sessions are in JSONL and others remain in JSON.
-		log.Printf("memory: migration failed: %v; falling back to json sessions", merr)
+		logger.WarnCF("memory", "migration failed; falling back to json sessions",
+			map[string]any{"error": merr.Error()})
 		store.Close()
 		return session.NewSessionManager(dir)
 	} else if n > 0 {
-		log.Printf("memory: migrated %d session(s) to jsonl", n)
+		logger.InfoCF("memory", "migrated sessions to jsonl",
+			map[string]any{"count": n})
 	}
 
 	return session.NewJSONLBackend(store)

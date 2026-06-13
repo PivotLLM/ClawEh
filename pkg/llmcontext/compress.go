@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/PivotLLM/ClawEh/pkg/cronmsg"
+	"github.com/PivotLLM/ClawEh/pkg/global"
 	"github.com/PivotLLM/ClawEh/pkg/logger"
 	"github.com/PivotLLM/ClawEh/pkg/memory"
 	"github.com/PivotLLM/ClawEh/pkg/providers"
@@ -40,6 +41,22 @@ func (m *Manager) doCompress(ctx context.Context, safetyNet bool) error {
 	if len(clients) == 0 {
 		m.lastReport = &CompactionReport{SessionKey: m.sessionKey, Outcome: "nothing"}
 		return nil // no client configured
+	}
+
+	// Drop models that already refused this session's content. This is what
+	// prevents us from burning a call on a refusing model on every compaction —
+	// the refusal is remembered for the session's lifetime.
+	clients = m.filterRefusedClients(clients)
+	if len(clients) == 0 {
+		logger.WarnCF("llmcontext", "compression: every summarization model has refused this session's content", map[string]any{
+			"session_key": m.sessionKey,
+		})
+		m.lastReport = &CompactionReport{
+			SessionKey: m.sessionKey,
+			Attempts:   m.refusedAttempts(),
+			Outcome:    "failed",
+		}
+		return ErrCompressionFailed
 	}
 
 	// Separate system message from conversation.
@@ -165,6 +182,9 @@ func (m *Manager) doCompress(ctx context.Context, safetyNet bool) error {
 		iterCount++
 	}
 
+	// Remember any models that refused this pass so they are skipped next time.
+	m.noteRefusedModels(rec)
+
 	var err error
 	if !safetyNet {
 		err = m.handleNormalPostLoop(ctx, sysMsg, currentStored, latestSummary, llmSucceeded, attemptedLLM, tokensBeforeCompress, targetPct)
@@ -173,6 +193,64 @@ func (m *Manager) doCompress(ctx context.Context, safetyNet bool) error {
 	}
 	m.lastReport = m.buildReport(rec, beforeMsgs, beforeBytes, dateFrom, dateTo, err)
 	return err
+}
+
+// filterRefusedClients returns the subset of clients whose model has not refused
+// this session's content. Clients without a reportable model name are always
+// kept (we cannot match them against the refusal set).
+func (m *Manager) filterRefusedClients(clients []LLMClient) []LLMClient {
+	m.refusedMu.Lock()
+	defer m.refusedMu.Unlock()
+	if len(m.refusedModels) == 0 {
+		return clients
+	}
+	out := make([]LLMClient, 0, len(clients))
+	for _, c := range clients {
+		model := clientModel(c)
+		if model != "" && m.refusedModels[model] {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+// noteRefusedModels records, from a completed pass, every model that refused so
+// later compactions for this session skip it.
+func (m *Manager) noteRefusedModels(rec *compactionRecorder) {
+	if rec == nil {
+		return
+	}
+	m.refusedMu.Lock()
+	defer m.refusedMu.Unlock()
+	for _, a := range rec.attempts {
+		if a.Status != "refused" || a.Model == "" || a.Model == "model" {
+			continue
+		}
+		if m.refusedModels == nil {
+			m.refusedModels = make(map[string]bool)
+		}
+		if !m.refusedModels[a.Model] {
+			m.refusedModels[a.Model] = true
+			logger.WarnCF("llmcontext", "summarization model refused this session's content; skipping it for future compactions", map[string]any{
+				"session_key": m.sessionKey,
+				"model":       a.Model,
+				"detail":      a.Detail,
+			})
+		}
+	}
+}
+
+// refusedAttempts synthesises report attempt entries for the models already known
+// to have refused this session, used when every model has been filtered out.
+func (m *Manager) refusedAttempts() []CompactionAttempt {
+	m.refusedMu.Lock()
+	defer m.refusedMu.Unlock()
+	out := make([]CompactionAttempt, 0, len(m.refusedModels))
+	for model := range m.refusedModels {
+		out = append(out, CompactionAttempt{Model: model, Status: "refused", Detail: "content policy (skipped)"})
+	}
+	return out
 }
 
 // handleNormalPostLoop handles post-loop logic for the normal (non-safety-net) path.
@@ -353,6 +431,14 @@ func callLLMChain(
 
 		summary, perr := validateAndUnmarshalLLMResponse(response.Content)
 		if perr != nil {
+			// A response that did not yield a valid summary AND carries refusal
+			// signals (finish_reason or a decline phrase) is a content refusal, not
+			// a flaky model. Record it distinctly so the user is alerted and the
+			// caller can stop sending this session's content to this model.
+			if global.IsRefusal(response.FinishReason, response.Content) {
+				rec.record(model, "refused", global.RefusalDetail(response.FinishReason), dur, messages, response.Content)
+				continue
+			}
 			rec.record(model, "error", "invalid JSON response: "+shortErr(perr), dur, messages, response.Content)
 			continue
 		}

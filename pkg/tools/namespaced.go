@@ -219,6 +219,7 @@ func (a namespacedProvider) toGlobalDeps(deps ToolDeps) global.Deps {
 		Cfg:       deps.Cfg,
 		AgentID:   deps.AgentID,
 		Workspace: deps.Workspace,
+		Spawn:     deps.Spawn,
 		Host:      deps,
 	}
 }

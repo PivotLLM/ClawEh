@@ -228,7 +228,7 @@ func TestCreateProvider_GeminiCliWithModel(t *testing.T) {
 
 func TestCreateProvider_GeminiCliDefaultWorkspace(t *testing.T) {
 	cfg := config.DefaultConfig()
-	cfg.Agents.Defaults.Workspace = "" // clear default so the "." fallback is exercised
+	cfg.Agents.BaseDir = "" // clear base dir so the "." fallback is exercised
 	cfg.Providers = []config.Provider{{Name: "gemini-cli", Protocol: "gemini-cli"}}
 	cfg.Models = []config.ModelConfig{
 		{ModelName: "gemini-cli", Model: "gemini-cli", Provider: "gemini-cli", Enabled: true},

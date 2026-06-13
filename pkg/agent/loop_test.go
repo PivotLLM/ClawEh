@@ -43,8 +43,8 @@ func newTestAgentLoop(
 	}
 	cfg = &config.Config{
 		Agents: config.AgentsConfig{
+			BaseDir: tmpDir,
 			Defaults: config.AgentDefaults{
-				Workspace:         tmpDir,
 				Model:             &config.AgentModelConfig{Primary: "test-model"},
 				MaxTokens:         4096,
 				MaxToolIterations: 10,
@@ -105,8 +105,8 @@ func TestNewAgentLoop_StateInitialized(t *testing.T) {
 	// Create test config
 	cfg := &config.Config{
 		Agents: config.AgentsConfig{
+			BaseDir: tmpDir,
 			Defaults: config.AgentDefaults{
-				Workspace:         tmpDir,
 				Model:             &config.AgentModelConfig{Primary: "test-model"},
 				MaxTokens:         4096,
 				MaxToolIterations: 10,
@@ -127,8 +127,9 @@ func TestNewAgentLoop_StateInitialized(t *testing.T) {
 		t.Error("Expected state manager to be initialized")
 	}
 
-	// Verify state directory was created
-	stateDir := filepath.Join(tmpDir, "state")
+	// Verify state directory was created. The default agent resolves to
+	// <base_dir>/default, so its state lives under tmpDir/default/state.
+	stateDir := filepath.Join(tmpDir, "default", "state")
 	if _, err := os.Stat(stateDir); os.IsNotExist(err) {
 		t.Error("Expected state directory to exist")
 	}
@@ -151,8 +152,8 @@ func TestToolRegistry_ToolRegistration(t *testing.T) {
 					Tools:   []string{"mock_custom"},
 				},
 			},
+			BaseDir: tmpDir,
 			Defaults: config.AgentDefaults{
-				Workspace:         tmpDir,
 				Model:             &config.AgentModelConfig{Primary: "test-model"},
 				MaxTokens:         4096,
 				MaxToolIterations: 10,
@@ -214,8 +215,8 @@ func TestToolRegistry_GetDefinitions(t *testing.T) {
 					Tools:   []string{"mock_custom"},
 				},
 			},
+			BaseDir: tmpDir,
 			Defaults: config.AgentDefaults{
-				Workspace:         tmpDir,
 				Model:             &config.AgentModelConfig{Primary: "test-model"},
 				MaxTokens:         4096,
 				MaxToolIterations: 10,
@@ -251,7 +252,7 @@ func TestAgentLoop_GetStartupInfo(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	cfg := config.DefaultConfig()
-	cfg.Agents.Defaults.Workspace = tmpDir
+	cfg.Agents.BaseDir = tmpDir
 	cfg.Agents.Defaults.SetDefaultModel("test-model")
 	cfg.Agents.Defaults.MaxTokens = 4096
 	cfg.Agents.Defaults.MaxToolIterations = 10
@@ -301,8 +302,8 @@ func TestAgentLoop_Stop(t *testing.T) {
 
 	cfg := &config.Config{
 		Agents: config.AgentsConfig{
+			BaseDir: tmpDir,
 			Defaults: config.AgentDefaults{
-				Workspace:         tmpDir,
 				Model:             &config.AgentModelConfig{Primary: "test-model"},
 				MaxTokens:         4096,
 				MaxToolIterations: 10,
@@ -421,8 +422,8 @@ func TestProcessMessage_UsesRouteSessionKey(t *testing.T) {
 
 	cfg := &config.Config{
 		Agents: config.AgentsConfig{
+			BaseDir: tmpDir,
 			Defaults: config.AgentDefaults{
-				Workspace:         tmpDir,
 				Model:             &config.AgentModelConfig{Primary: "test-model"},
 				MaxTokens:         4096,
 				MaxToolIterations: 10,
@@ -480,8 +481,8 @@ func TestProcessMessage_CommandOutcomes(t *testing.T) {
 
 	cfg := &config.Config{
 		Agents: config.AgentsConfig{
+			BaseDir: tmpDir,
 			Defaults: config.AgentDefaults{
-				Workspace:         tmpDir,
 				Model:             &config.AgentModelConfig{Primary: "test-model"},
 				MaxTokens:         4096,
 				MaxToolIterations: 10,
@@ -563,8 +564,8 @@ func TestProcessMessage_SwitchModelShowModelConsistency(t *testing.T) {
 
 	cfg := &config.Config{
 		Agents: config.AgentsConfig{
+			BaseDir: tmpDir,
 			Defaults: config.AgentDefaults{
-				Workspace:         tmpDir,
 				Model:             &config.AgentModelConfig{Primary: "before-switch"},
 				MaxTokens:         4096,
 				MaxToolIterations: 10,
@@ -630,8 +631,8 @@ func TestToolResult_SilentToolDoesNotSendUserMessage(t *testing.T) {
 
 	cfg := &config.Config{
 		Agents: config.AgentsConfig{
+			BaseDir: tmpDir,
 			Defaults: config.AgentDefaults{
-				Workspace:         tmpDir,
 				Model:             &config.AgentModelConfig{Primary: "test-model"},
 				MaxTokens:         4096,
 				MaxToolIterations: 10,
@@ -675,8 +676,8 @@ func TestToolResult_UserFacingToolDoesSendMessage(t *testing.T) {
 
 	cfg := &config.Config{
 		Agents: config.AgentsConfig{
+			BaseDir: tmpDir,
 			Defaults: config.AgentDefaults{
-				Workspace:         tmpDir,
 				Model:             &config.AgentModelConfig{Primary: "test-model"},
 				MaxTokens:         4096,
 				MaxToolIterations: 10,
@@ -749,8 +750,8 @@ func TestAgentLoop_ContextExhaustionRetry(t *testing.T) {
 
 	cfg := &config.Config{
 		Agents: config.AgentsConfig{
+			BaseDir: tmpDir,
 			Defaults: config.AgentDefaults{
-				Workspace:         tmpDir,
 				Model:             &config.AgentModelConfig{Primary: "test-model"},
 				MaxTokens:         4096,
 				MaxToolIterations: 10,
@@ -839,8 +840,8 @@ func TestProcessDirectWithChannel_TriggersMCPInitialization(t *testing.T) {
 	// Test with MCP enabled but no servers - should not initialize manager
 	cfg := &config.Config{
 		Agents: config.AgentsConfig{
+			BaseDir: tmpDir,
 			Defaults: config.AgentDefaults{
-				Workspace:         tmpDir,
 				Model:             &config.AgentModelConfig{Primary: "test-model"},
 				MaxTokens:         4096,
 				MaxToolIterations: 10,
@@ -895,8 +896,8 @@ func TestTargetReasoningChannelID_AllChannels(t *testing.T) {
 
 	cfg := &config.Config{
 		Agents: config.AgentsConfig{
+			BaseDir: tmpDir,
 			Defaults: config.AgentDefaults{
-				Workspace:         tmpDir,
 				Model:             &config.AgentModelConfig{Primary: "test-model"},
 				MaxTokens:         4096,
 				MaxToolIterations: 10,
@@ -949,8 +950,8 @@ func TestHandleReasoning(t *testing.T) {
 		t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
 		cfg := &config.Config{
 			Agents: config.AgentsConfig{
+				BaseDir: tmpDir,
 				Defaults: config.AgentDefaults{
-					Workspace:         tmpDir,
 					Model:             &config.AgentModelConfig{Primary: "test-model"},
 					MaxTokens:         4096,
 					MaxToolIterations: 10,
@@ -2233,8 +2234,8 @@ func TestReloadProviderAndConfig_Success(t *testing.T) {
 
 	newCfg := &config.Config{
 		Agents: config.AgentsConfig{
+			BaseDir: cfg.Agents.BaseDir,
 			Defaults: config.AgentDefaults{
-				Workspace:         cfg.Agents.Defaults.Workspace,
 				Model:             &config.AgentModelConfig{Primary: "new-model"},
 				MaxTokens:         4096,
 				MaxToolIterations: 10,
@@ -2292,8 +2293,8 @@ func TestResolveMessageRoute_PreresolvedAgentID(t *testing.T) {
 
 	cfg := &config.Config{
 		Agents: config.AgentsConfig{
+			BaseDir: tmpDir,
 			Defaults: config.AgentDefaults{
-				Workspace:         tmpDir,
 				Model:             &config.AgentModelConfig{Primary: "test-model"},
 				MaxTokens:         4096,
 				MaxToolIterations: 10,

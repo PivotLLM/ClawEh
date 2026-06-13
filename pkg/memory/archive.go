@@ -6,7 +6,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +14,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"github.com/PivotLLM/ClawEh/pkg/logger"
 	"github.com/PivotLLM/ClawEh/pkg/providers"
 )
 
@@ -123,7 +123,8 @@ func OpenReadOnly(path string) (*ArchiveStore, error) {
 func Open(path string) (*ArchiveStore, error) {
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
-		log.Printf("memory: archive open %q: %v", path, err)
+		logger.WarnCF("memory", "archive open failed",
+			map[string]any{"path": path, "error": err.Error()})
 		return &ArchiveStore{path: path, unavailable: true}, ErrArchiveUnavailable
 	}
 
@@ -133,28 +134,33 @@ func Open(path string) (*ArchiveStore, error) {
 	// Enable WAL mode for concurrent reader support.
 	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
 		db.Close()
-		log.Printf("memory: archive WAL %q: %v", path, err)
+		logger.WarnCF("memory", "archive WAL failed",
+			map[string]any{"path": path, "error": err.Error()})
 		return &ArchiveStore{path: path, unavailable: true}, ErrArchiveUnavailable
 	}
 	if _, err := db.Exec("PRAGMA busy_timeout=2000"); err != nil {
 		db.Close()
-		log.Printf("memory: archive busy_timeout %q: %v", path, err)
+		logger.WarnCF("memory", "archive busy_timeout failed",
+			map[string]any{"path": path, "error": err.Error()})
 		return &ArchiveStore{path: path, unavailable: true}, ErrArchiveUnavailable
 	}
 
 	// Create schema.
 	if _, err := db.Exec(archiveSchema); err != nil {
 		db.Close()
-		log.Printf("memory: archive schema %q: %v", path, err)
+		logger.WarnCF("memory", "archive schema failed",
+			map[string]any{"path": path, "error": err.Error()})
 		return &ArchiveStore{path: path, unavailable: true}, ErrArchiveUnavailable
 	}
 
 	// FTS5 integrity check; rebuild if needed.
 	if _, err := db.Exec("INSERT INTO messages_fts(messages_fts) VALUES ('integrity-check')"); err != nil {
-		log.Printf("memory: archive FTS5 integrity check failed for %q, rebuilding: %v", path, err)
+		logger.WarnCF("memory", "archive FTS5 integrity check failed, rebuilding",
+			map[string]any{"path": path, "error": err.Error()})
 		if _, rebuildErr := db.Exec("INSERT INTO messages_fts(messages_fts) VALUES ('rebuild')"); rebuildErr != nil {
 			db.Close()
-			log.Printf("memory: archive FTS5 rebuild failed %q: %v", path, rebuildErr)
+			logger.WarnCF("memory", "archive FTS5 rebuild failed",
+				map[string]any{"path": path, "error": rebuildErr.Error()})
 			return &ArchiveStore{path: path, unavailable: true}, ErrArchiveUnavailable
 		}
 	}
@@ -196,7 +202,8 @@ func (a *ArchiveStore) importLegacySummaries() {
 	// Idempotency guard: only import when the table is empty.
 	var count int
 	if err := a.db.QueryRow(`SELECT COUNT(*) FROM summaries`).Scan(&count); err != nil {
-		log.Printf("memory: archive summaries count %q: %v", a.path, err)
+		logger.WarnCF("memory", "archive summaries count failed",
+			map[string]any{"path": a.path, "error": err.Error()})
 		return
 	}
 	if count > 0 {
@@ -212,7 +219,8 @@ func (a *ArchiveStore) importLegacySummaries() {
 		return
 	}
 	if err != nil {
-		log.Printf("memory: archive legacy summaries open %q: %v", legacyPath, err)
+		logger.WarnCF("memory", "archive legacy summaries open failed",
+			map[string]any{"path": legacyPath, "error": err.Error()})
 		return
 	}
 	defer f.Close()
@@ -227,7 +235,8 @@ func (a *ArchiveStore) importLegacySummaries() {
 		}
 		var cp SummaryCheckpoint
 		if err := json.Unmarshal(line, &cp); err != nil {
-			log.Printf("memory: archive legacy summaries skip corrupt line in %q: %v", legacyPath, err)
+			logger.WarnCF("memory", "archive legacy summaries skip corrupt line",
+				map[string]any{"path": legacyPath, "error": err.Error()})
 			continue
 		}
 		if _, err := a.AppendSummary(SummaryRecord{
@@ -240,16 +249,19 @@ func (a *ArchiveStore) importLegacySummaries() {
 			CoveredSeqEnd:   cp.CoveredSeqEnd,
 			Summary:         cp.Summary,
 		}); err != nil {
-			log.Printf("memory: archive legacy summaries import %q: %v", legacyPath, err)
+			logger.WarnCF("memory", "archive legacy summaries import failed",
+				map[string]any{"path": legacyPath, "error": err.Error()})
 			return
 		}
 		imported++
 	}
 	if err := scanner.Err(); err != nil {
-		log.Printf("memory: archive legacy summaries scan %q: %v", legacyPath, err)
+		logger.WarnCF("memory", "archive legacy summaries scan failed",
+			map[string]any{"path": legacyPath, "error": err.Error()})
 	}
 	if imported > 0 {
-		log.Printf("memory: archive imported %d legacy summary checkpoint(s) from %q", imported, filepath.Base(legacyPath))
+		logger.InfoCF("memory", "archive imported legacy summary checkpoints",
+			map[string]any{"count": imported, "path": filepath.Base(legacyPath)})
 	}
 }
 

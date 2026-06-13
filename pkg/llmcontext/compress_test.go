@@ -53,22 +53,30 @@ func (s *compressTestStore) GetHistoryWithSeqs(_ string) []memory.StoredMessage 
 
 // mockLLM is a sequence-based LLM client for testing.
 type mockLLM struct {
-	responses []string
-	errors    []error
-	callCount int
+	model         string // reported via Model(); "" leaves attempts labelled "model"
+	responses     []string
+	errors        []error
+	finishReasons []string // optional, parallel to responses
+	callCount     int
 }
 
-func (m *mockLLM) Complete(_ context.Context, _ []providers.Message) (providers.Message, error) {
+func (m *mockLLM) Model() string { return m.model }
+
+func (m *mockLLM) Complete(_ context.Context, _ []providers.Message) (LLMReply, error) {
 	i := m.callCount
 	m.callCount++
 	if i < len(m.errors) && m.errors[i] != nil {
-		return providers.Message{}, m.errors[i]
+		return LLMReply{}, m.errors[i]
 	}
 	resp := ""
 	if i < len(m.responses) {
 		resp = m.responses[i]
 	}
-	return providers.Message{Role: "assistant", Content: resp}, nil
+	fr := ""
+	if i < len(m.finishReasons) {
+		fr = m.finishReasons[i]
+	}
+	return LLMReply{Content: resp, FinishReason: fr}, nil
 }
 
 // validSummaryJSON produces minimal valid Summary JSON.
@@ -134,6 +142,60 @@ func TestCompress_PrimarySuccess(t *testing.T) {
 	}
 	if llm.callCount == 0 {
 		t.Error("expected LLM to be called")
+	}
+}
+
+// TestCompress_RefusalDetectedAndModelSkipped verifies that a content refusal is
+// (a) classified as "refused" rather than "error", (b) does not block a later
+// model from succeeding, and (c) causes the refusing model to be skipped on the
+// next compaction for the same session.
+func TestCompress_RefusalDetectedAndModelSkipped(t *testing.T) {
+	store := &compressTestStore{history: makeConversation(10, 200)}
+
+	// First model refuses (partial JSON then a decline, no finish_reason);
+	// second model produces a valid summary.
+	refuser := &mockLLM{
+		model:     "gpt-refuser",
+		responses: []string{`{"version":2,"state":{"goals":[{"text":"x"` + "\n\nI'm sorry, but I cannot assist with that request."},
+	}
+	worker := &mockLLM{
+		model:     "deepseek-worker",
+		responses: []string{validSummaryJSON("g1"), validSummaryJSON("g2")},
+	}
+
+	mgr := newCompressManager(store, []LLMClient{refuser, worker})
+	mgr.msgCount = len(store.history)
+
+	if err := mgr.doCompress(context.Background(), false); err != nil {
+		t.Fatalf("doCompress returned error: %v", err)
+	}
+
+	// The refuser must be recorded as "refused", and remembered.
+	var sawRefused bool
+	for _, a := range mgr.lastReport.Attempts {
+		if a.Model == "gpt-refuser" && a.Status == "refused" {
+			sawRefused = true
+		}
+	}
+	if !sawRefused {
+		t.Fatalf("expected gpt-refuser attempt with status 'refused'; got %+v", mgr.lastReport.Attempts)
+	}
+	if !mgr.refusedModels["gpt-refuser"] {
+		t.Fatal("expected gpt-refuser to be remembered in refusedModels")
+	}
+	if store.summary == "" {
+		t.Fatal("expected a summary from the non-refusing model")
+	}
+
+	// Second compaction: the refuser must be skipped entirely (no new call).
+	refuser.callCount = 0
+	store.history = makeConversation(10, 200)
+	mgr.msgCount = len(store.history)
+	if err := mgr.doCompress(context.Background(), false); err != nil {
+		t.Fatalf("second doCompress returned error: %v", err)
+	}
+	if refuser.callCount != 0 {
+		t.Errorf("expected refusing model to be skipped on the second pass; got %d calls", refuser.callCount)
 	}
 }
 

@@ -45,7 +45,6 @@ func (globalFilesProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 		// is preserved. The bridge + agent allowlist handle gating, so we
 		// construct ALL six tools here (no IsToolEnabled / isToolAllowed gate).
 		workspace := cd.Workspace
-		agentCfg := cd.AgentCfg
 		restrict := c.Agents.Defaults.RestrictToWorkspace
 		readRestrict := restrict && !c.Agents.Defaults.AllowReadOutsideWorkspace
 
@@ -59,33 +58,14 @@ func (globalFilesProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 			}
 		}
 
-		// Resolve memory redirect.
-		memoryDir := resolveMemoryDir(agentCfg)
-		memoryRedirectActive := ""
-		if memoryDir != "" {
-			defaultMemDir := workspace + "/memory"
-			if memoryDir != defaultMemDir {
-				memoryRedirectActive = memoryDir
-			}
-		}
-
 		maxReadFileSize := c.Tools.ReadFile.MaxReadFileSize
 
-		if memoryRedirectActive != "" {
-			read = NewReadFileToolWithMemoryRedirect(workspace, readRestrict, maxReadFileSize, allowReadPaths, memoryRedirectActive)
-			write = NewWriteFileToolWithMemoryRedirect(workspace, restrict, allowWritePaths, memoryRedirectActive)
-			list = NewListDirToolWithMemoryRedirect(workspace, readRestrict, allowReadPaths, memoryRedirectActive)
-			edit = NewEditFileToolWithMemoryRedirect(workspace, restrict, allowWritePaths, memoryRedirectActive)
-			apnd = NewAppendFileToolWithMemoryRedirect(workspace, restrict, allowWritePaths, memoryRedirectActive)
-			cp = NewCopyFileToolWithMemoryRedirect(workspace, restrict, allowWritePaths, memoryRedirectActive)
-		} else {
-			read = NewReadFileTool(workspace, readRestrict, maxReadFileSize, allowReadPaths)
-			write = NewWriteFileTool(workspace, restrict, allowWritePaths)
-			list = NewListDirTool(workspace, readRestrict, allowReadPaths)
-			edit = NewEditFileTool(workspace, restrict, allowWritePaths)
-			apnd = NewAppendFileTool(workspace, restrict, allowWritePaths)
-			cp = NewCopyFileTool(workspace, restrict, allowWritePaths)
-		}
+		read = NewReadFileTool(workspace, readRestrict, maxReadFileSize, allowReadPaths)
+		write = NewWriteFileTool(workspace, restrict, allowWritePaths)
+		list = NewListDirTool(workspace, readRestrict, allowReadPaths)
+		edit = NewEditFileTool(workspace, restrict, allowWritePaths)
+		apnd = NewAppendFileTool(workspace, restrict, allowWritePaths)
+		cp = NewCopyFileTool(workspace, restrict, allowWritePaths)
 	}
 
 	return []global.ToolDefinition{

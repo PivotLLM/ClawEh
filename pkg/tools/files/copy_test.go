@@ -265,38 +265,6 @@ func TestCopyFileTool_Display_False_NoBlock(t *testing.T) {
 	}
 }
 
-func TestCopyFileTool_MemoryRedirect_CrossSandbox(t *testing.T) {
-	ws := t.TempDir()
-	memRoot := t.TempDir()
-	// Place a file in mem root so memory/src.txt resolves there.
-	if err := os.WriteFile(filepath.Join(memRoot, "src.txt"), []byte("from memory"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	tool := NewCopyFileToolWithMemoryRedirect(ws, true, nil, memRoot)
-	res := tool.Execute(context.Background(), map[string]any{
-		"source_path":      "memory/src.txt",
-		"destination_path": "dst.txt",
-	})
-	if res.IsError {
-		t.Fatalf("cross-sandbox copy failed: %s", res.ForLLM)
-	}
-	got, err := os.ReadFile(filepath.Join(ws, "dst.txt"))
-	if err != nil {
-		t.Fatalf("read dst: %v", err)
-	}
-	if string(got) != "from memory" {
-		t.Errorf("dst = %q, want %q", got, "from memory")
-	}
-	// Original memory file unchanged.
-	got, err = os.ReadFile(filepath.Join(memRoot, "src.txt"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got) != "from memory" {
-		t.Errorf("source memory file changed: %q", got)
-	}
-}
-
 func TestCopyFileTool_SameSourceDestination_OverwriteFalse(t *testing.T) {
 	ws := t.TempDir()
 	if err := os.WriteFile(filepath.Join(ws, "f.txt"), []byte("original"), 0o644); err != nil {

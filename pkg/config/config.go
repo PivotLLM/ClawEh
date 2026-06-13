@@ -138,6 +138,12 @@ func (c Config) MarshalJSON() ([]byte, error) {
 }
 
 type AgentsConfig struct {
+	// BaseDir is the base directory under which every agent's workspace lives:
+	// each agent resolves to <base_dir>/<agent-id> (the routing-default agent
+	// uses <base_dir>/default). A per-agent `workspace` overrides this. Empty
+	// defaults to <data_dir>/agents. Point it at another volume to relocate all
+	// agent files at once.
+	BaseDir  string        `json:"base_dir,omitempty" env:"CLAW_AGENTS_BASE_DIR"`
 	Defaults AgentDefaults `json:"defaults"`
 	List     []AgentConfig `json:"list,omitempty"`
 }
@@ -192,18 +198,11 @@ type SummarizationConfig struct {
 }
 
 type AgentConfig struct {
-	ID        string `json:"id"`
-	Enabled   *bool  `json:"enabled,omitempty"`
-	Default   bool   `json:"default,omitempty"`
-	Name      string `json:"name,omitempty"`
-	Workspace string `json:"workspace,omitempty"`
-	// MemoryDir relocates this agent's memory folder off the default
-	// <workspace>/memory location. Empty preserves the default. Non-empty
-	// must be an absolute path (may contain ~). The on-disk path is hidden
-	// from the agent; the system prompt continues to advertise the canonical
-	// <workspace>/memory/... paths and the read/write/list/edit/append tools
-	// transparently redirect "memory/..." accesses to this folder.
-	MemoryDir   string            `json:"memory_dir,omitempty"`
+	ID          string            `json:"id"`
+	Enabled     *bool             `json:"enabled,omitempty"`
+	Default     bool              `json:"default,omitempty"`
+	Name        string            `json:"name,omitempty"`
+	Workspace   string            `json:"workspace,omitempty"`
 	Model       *AgentModelConfig `json:"model,omitempty"`
 	Skills      []string          `json:"skills,omitempty"`
 	Tools       []string          `json:"tools,omitempty"`
@@ -329,8 +328,7 @@ type RoutingConfig struct {
 }
 
 type AgentDefaults struct {
-	Workspace           string `json:"workspace,omitempty"             env:"CLAW_AGENTS_DEFAULTS_WORKSPACE"`
-	RestrictToWorkspace bool   `json:"restrict_to_workspace"           env:"CLAW_AGENTS_DEFAULTS_RESTRICT_TO_WORKSPACE"`
+	RestrictToWorkspace bool `json:"restrict_to_workspace"           env:"CLAW_AGENTS_DEFAULTS_RESTRICT_TO_WORKSPACE"`
 	// StreamToolActivity, when true, sends the model's inter-tool narration and
 	// each tool's user-facing output to the channel as it happens. When false
 	// (default) the user receives only the final answer, not the play-by-play.
@@ -1084,11 +1082,21 @@ func (c *Config) ConfigReloadInterval() time.Duration {
 	return time.Duration(secs) * time.Second
 }
 
-func (c *Config) WorkspacePath() string {
-	if c.Agents.Defaults.Workspace != "" {
-		return expandHome(c.Agents.Defaults.Workspace)
+// BaseDir returns the base directory under which agent workspaces live. An
+// explicit agents.base_dir wins; otherwise it defaults to <data_dir>/agents.
+func (c *Config) BaseDir() string {
+	if c.Agents.BaseDir != "" {
+		return expandHome(c.Agents.BaseDir)
 	}
-	return filepath.Join(c.dataDir, "agents", "default")
+	return filepath.Join(c.dataDir, "agents")
+}
+
+// WorkspacePath returns the primary/default-agent workspace (<base_dir>/default).
+// It is used for gateway-global operations (skills view, gateway state, MCP
+// config) and as the CLI-provider working-dir fallback. Per-agent workspaces are
+// resolved by pkg/agent.resolveAgentWorkspace.
+func (c *Config) WorkspacePath() string {
+	return filepath.Join(c.BaseDir(), "default")
 }
 
 // AgentSessionDirs returns the sessions subdirectory for every configured
@@ -1096,8 +1104,7 @@ func (c *Config) WorkspacePath() string {
 // pkg/agent/instance.go:resolveAgentWorkspace. The result is used by the
 // WebUI to enumerate sessions across all agents, not just the defaults workspace.
 func (c *Config) AgentSessionDirs() []string {
-	defaultWS := c.WorkspacePath() // agents/default (or custom)
-	agentsDir := filepath.Dir(defaultWS)
+	base := c.BaseDir()
 
 	seen := make(map[string]struct{})
 	var dirs []string
@@ -1119,15 +1126,14 @@ func (c *Config) AgentSessionDirs() []string {
 		}
 		id := strings.ToLower(strings.TrimSpace(ac.ID))
 		if id == "" || id == "main" {
-			add(defaultWS)
-		} else {
-			add(filepath.Join(agentsDir, id))
+			id = "default"
 		}
+		add(filepath.Join(base, id))
 	}
 
-	// Always include the defaults workspace — covers agents that were removed
+	// Always include the default workspace — covers agents that were removed
 	// from config but left files on disk.
-	add(defaultWS)
+	add(filepath.Join(base, "default"))
 
 	return dirs
 }

@@ -26,18 +26,11 @@ type MemoryStore struct {
 	memoryFile string
 }
 
-// NewMemoryStore creates a new MemoryStore.
-// If memoryDirOverride is empty, the standard <workspace>/memory layout is used.
-// Otherwise the override (with ~ expansion) is used as the memory root.
+// NewMemoryStore creates a new MemoryStore rooted at <workspace>/memory.
 // It ensures the memory directory exists; if MkdirAll fails the error is
 // logged but the store is still returned so callers can decide what to do.
-func NewMemoryStore(workspace, memoryDirOverride string) *MemoryStore {
-	var memoryDir string
-	if strings.TrimSpace(memoryDirOverride) != "" {
-		memoryDir = expandHome(strings.TrimSpace(memoryDirOverride))
-	} else {
-		memoryDir = filepath.Join(workspace, "memory")
-	}
+func NewMemoryStore(workspace string) *MemoryStore {
+	memoryDir := filepath.Join(workspace, "memory")
 	memoryFile := filepath.Join(memoryDir, "MEMORY.md")
 
 	if err := os.MkdirAll(memoryDir, 0o700); err != nil {
