@@ -95,8 +95,7 @@ func (e *FailoverError) IsRetriable() bool {
 	return e.Reason != FailoverFormat
 }
 
-// ModelConfig holds primary model and fallback list.
+// ModelConfig holds an ordered list of models, tried in order (index 0 first).
 type ModelConfig struct {
-	Primary   string
-	Fallbacks []string
+	Models []string
 }

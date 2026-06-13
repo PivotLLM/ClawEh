@@ -45,7 +45,7 @@ func DefaultConfig() *Config {
 			BaseDir: agentsBaseDir,
 			Defaults: AgentDefaults{
 				RestrictToWorkspace:  true,
-				Model:                &AgentModelConfig{Primary: "Claude CLI", Fallbacks: []string{"Codex CLI"}},
+				Models:               []string{"Claude CLI", "Codex CLI"},
 				MaxTokens:            32768,
 				Temperature:          nil, // nil means use provider default
 				MaxToolIterations:    50,

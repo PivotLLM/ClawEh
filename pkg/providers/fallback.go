@@ -137,12 +137,9 @@ func ResolveCandidatesWithLookup(
 		add(ref.Provider, ref.Model, "")
 	}
 
-	// Primary first.
-	addCandidate(cfg.Primary)
-
-	// Then fallbacks.
-	for _, fb := range cfg.Fallbacks {
-		addCandidate(fb)
+	// Models are tried in order (index 0 first).
+	for _, m := range cfg.Models {
+		addCandidate(m)
 	}
 
 	return candidates

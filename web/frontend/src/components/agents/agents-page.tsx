@@ -6,16 +6,11 @@ import { toast } from "sonner"
 
 import { type ModelInfo, getModels } from "@/api/models"
 import { type AgentToolCatalogResponse, getAppConfig, getAgentTools, patchAppConfig } from "@/api/channels"
-import { FallbacksSelect, ModelSelect } from "@/components/agents/model-selects"
+import { FallbacksSelect } from "@/components/agents/model-selects"
 import { ToolSelect } from "@/components/agents/tool-select"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-
-interface AgentModelConfig {
-  primary: string
-  fallbacks?: string[]
-}
 
 interface CallbackConfig {
   window_minutes: number
@@ -27,7 +22,7 @@ interface AgentEntry {
   name?: string
   enabled?: boolean
   default?: boolean
-  model?: AgentModelConfig | null
+  models?: string[]
   skills?: string[]
   tools?: string[]
   callback?: CallbackConfig | null
@@ -37,7 +32,7 @@ interface AgentEntry {
 
 interface AgentsConfig {
   defaults: {
-    model?: AgentModelConfig | null
+    models?: string[]
     temperature?: number
   }
   list?: AgentEntry[]
@@ -68,18 +63,6 @@ function asNumber(value: unknown, defaultVal = 0): number {
   return typeof value === "number" ? value : defaultVal
 }
 
-function parseModelConfig(value: unknown): AgentModelConfig | null {
-  if (!value) return null
-  if (typeof value === "string") return { primary: value, fallbacks: [] }
-  const r = asRecord(value)
-  const primary = asString(r.primary)
-  if (!primary) return null
-  return {
-    primary,
-    fallbacks: asArray(r.fallbacks).map(asString).filter(Boolean),
-  }
-}
-
 function parseAgent(value: unknown): AgentEntry {
   const r = asRecord(value)
   const enabledRaw = r.enabled
@@ -90,7 +73,7 @@ function parseAgent(value: unknown): AgentEntry {
     name: asString(r.name) || undefined,
     enabled: enabledRaw === false ? false : true,
     default: r.default === true,
-    model: parseModelConfig(r.model),
+    models: asArray(r.models).map(asString).filter(Boolean),
     skills: asArray(r.skills).map(asString).filter(Boolean),
     tools: asArray(r.tools).map(asString).filter(Boolean),
     callback: cbMins > 0 ? { window_minutes: cbMins, window_count: asNumber(cbRaw.window_count) || 2 } : null,
@@ -115,7 +98,7 @@ function parseAgentsConfig(appConfig: unknown): AgentsConfig {
   const defaults = asRecord(agents.defaults)
   return {
     defaults: {
-      model: parseModelConfig(defaults.model),
+      models: asArray(defaults.models).map(asString).filter(Boolean),
       temperature: typeof defaults.temperature === "number" ? defaults.temperature : undefined,
     },
     list: sortAgentList(asArray(agents.list).map(parseAgent)),
@@ -184,8 +167,7 @@ interface AgentCardProps {
   label: string
   name?: string
   enabled?: boolean
-  modelName: string
-  fallbacks: string[]
+  selectedModels: string[]
   skills: string[]
   tools: string[]
   availableSkills: SkillInfo[]
@@ -196,8 +178,7 @@ interface AgentCardProps {
   temperature?: number
   summarizationModels?: string[]
   onToggleEnabled?: () => void
-  onModelChange: (v: string) => void
-  onFallbacksChange: (fallbacks: string[]) => void
+  onModelsChange: (models: string[]) => void
   onSkillsChange: (skills: string[]) => void
   onToolsChange: (tools: string[]) => void
   onCallbackChange?: (mins: number, count: number) => void
@@ -211,8 +192,7 @@ function AgentCard({
   label,
   name,
   enabled,
-  modelName,
-  fallbacks,
+  selectedModels,
   skills,
   tools,
   availableSkills,
@@ -223,8 +203,7 @@ function AgentCard({
   temperature = undefined,
   summarizationModels = [],
   onToggleEnabled,
-  onModelChange,
-  onFallbacksChange,
+  onModelsChange,
   onSkillsChange,
   onToolsChange,
   onCallbackChange,
@@ -274,28 +253,12 @@ function AgentCard({
       </div>
 
       <div className="space-y-1.5">
-        <p className="text-muted-foreground text-xs font-medium">Model</p>
-        <ModelSelect
-          value={modelName}
-          models={models}
-          onChange={(v) => {
-            onModelChange(v)
-            // Remove new primary from fallbacks if present
-            if (fallbacks.includes(v)) {
-              onFallbacksChange(fallbacks.filter((f) => f !== v))
-            }
-          }}
-          placeholder="Use default model"
-        />
-      </div>
-
-      <div className="space-y-1.5">
-        <p className="text-muted-foreground text-xs font-medium">Fallback models</p>
+        <p className="text-muted-foreground text-xs font-medium">Models (tried in order)</p>
         <FallbacksSelect
-          fallbacks={fallbacks}
-          primary={modelName}
+          fallbacks={selectedModels}
+          primary=""
           models={models}
-          onChange={onFallbacksChange}
+          onChange={onModelsChange}
         />
       </div>
 
@@ -451,8 +414,7 @@ export function AgentsPage() {
   // For adding new agent
   const [addingId, setAddingId] = useState("")
   const [addingName, setAddingName] = useState("")
-  const [addingModel, setAddingModel] = useState("")
-  const [addingFallbacks, setAddingFallbacks] = useState<string[]>([])
+  const [addingModels, setAddingModels] = useState<string[]>([])
   const [addingSkills, setAddingSkills] = useState<string[]>([])
   const [addingTools, setAddingTools] = useState<string[]>([])
   const [addingToolsExpanded, setAddingToolsExpanded] = useState(false)
@@ -483,12 +445,6 @@ export function AgentsPage() {
     void loadData()
   }, [loadData])
 
-  const buildModelPayload = (primary: string, fallbacks: string[]) => {
-    if (!primary) return null
-    if (fallbacks.length > 0) return { primary, fallbacks }
-    return primary  // simple string form when no fallbacks
-  }
-
   // Note: agents.defaults (default model/temperature) and the default-agent
   // selector live on the Config page now, so this payload intentionally omits
   // `defaults`. The backend patch is a deep merge, so leaving it out preserves
@@ -500,7 +456,7 @@ export function AgentsPage() {
         ...(a.enabled === false ? { enabled: false } : {}),
         ...(a.name ? { name: a.name } : {}),
         ...(a.default ? { default: true } : {}),
-        model: buildModelPayload(a.model?.primary ?? "", a.model?.fallbacks ?? []),
+        ...(a.models && a.models.length > 0 ? { models: a.models } : {}),
         ...(a.skills && a.skills.length > 0 ? { skills: a.skills } : {}),
         tools: a.tools ?? [],
         callback: a.callback && a.callback.window_minutes > 0
@@ -514,11 +470,11 @@ export function AgentsPage() {
     },
   })
 
-  const handleSaveAgent = async (index: number, modelName: string, fallbacks: string[], skills: string[], tools: string[], callbackMins: number, callbackCount: number, temperature: number | undefined, summarizationModels: string[]) => {
+  const handleSaveAgent = async (index: number, models: string[], skills: string[], tools: string[], callbackMins: number, callbackCount: number, temperature: number | undefined, summarizationModels: string[]) => {
     const list = [...(agentsCfg.list ?? [])]
     list[index] = {
       ...list[index],
-      model: modelName ? { primary: modelName, fallbacks } : null,
+      models: models.length > 0 ? models : undefined,
       skills: skills.length > 0 ? skills : undefined,
       tools: tools,
       callback: callbackMins > 0 ? { window_minutes: callbackMins, window_count: callbackCount } : null,
@@ -586,7 +542,7 @@ export function AgentsPage() {
       {
         id: addingId.trim(),
         ...(addingName.trim() ? { name: addingName.trim() } : {}),
-        model: addingModel ? { primary: addingModel, fallbacks: addingFallbacks } : null,
+        ...(addingModels.length > 0 ? { models: addingModels } : {}),
         skills: addingSkills.length > 0 ? addingSkills : undefined,
         tools: addingTools,
       },
@@ -598,8 +554,7 @@ export function AgentsPage() {
       toast.success("Agent added")
       setAddingId("")
       setAddingName("")
-      setAddingModel("")
-      setAddingFallbacks([])
+      setAddingModels([])
       setAddingSkills([])
       setAddingTools([])
       setShowAdd(false)
@@ -614,8 +569,7 @@ export function AgentsPage() {
   }
 
   // Local edit state for each agent
-  const [agentModelEdits, setAgentModelEdits] = useState<string[]>([])
-  const [agentFallbacksEdits, setAgentFallbacksEdits] = useState<string[][]>([])
+  const [agentModelsEdits, setAgentModelsEdits] = useState<string[][]>([])
   const [agentSkillsEdits, setAgentSkillsEdits] = useState<string[][]>([])
   const [agentToolsEdits, setAgentToolsEdits] = useState<string[][]>([])
   const [agentCallbackEdits, setAgentCallbackEdits] = useState<Array<{ mins: number; count: number }>>([])
@@ -626,8 +580,7 @@ export function AgentsPage() {
       skipAgentsResync.current = false
       return
     }
-    setAgentModelEdits((agentsCfg.list ?? []).map((a) => a.model?.primary ?? ""))
-    setAgentFallbacksEdits((agentsCfg.list ?? []).map((a) => a.model?.fallbacks ?? []))
+    setAgentModelsEdits((agentsCfg.list ?? []).map((a) => a.models ?? []))
     setAgentSkillsEdits((agentsCfg.list ?? []).map((a) => a.skills ?? []))
     setAgentToolsEdits((agentsCfg.list ?? []).map((a) => a.tools ?? []))
     setAgentCallbackEdits((agentsCfg.list ?? []).map((a) => ({
@@ -641,8 +594,7 @@ export function AgentsPage() {
   // Mirror the latest edit values into a ref so the debounced autosave fires
   // with current data rather than the values captured when the timer was set.
   const latestRef = useRef({
-    agentModelEdits,
-    agentFallbacksEdits,
+    agentModelsEdits,
     agentSkillsEdits,
     agentToolsEdits,
     agentCallbackEdits,
@@ -650,8 +602,7 @@ export function AgentsPage() {
     agentSummarizationEdits,
   })
   latestRef.current = {
-    agentModelEdits,
-    agentFallbacksEdits,
+    agentModelsEdits,
     agentSkillsEdits,
     agentToolsEdits,
     agentCallbackEdits,
@@ -667,8 +618,7 @@ export function AgentsPage() {
       const L = latestRef.current
       void handleSaveAgent(
         index,
-        L.agentModelEdits[index] ?? "",
-        L.agentFallbacksEdits[index] ?? [],
+        L.agentModelsEdits[index] ?? [],
         L.agentSkillsEdits[index] ?? [],
         L.agentToolsEdits[index] ?? [],
         L.agentCallbackEdits[index]?.mins ?? 0,
@@ -719,8 +669,7 @@ export function AgentsPage() {
                   label={agent.id}
                   name={agent.name}
                   enabled={agent.enabled !== false}
-                  modelName={agentModelEdits[i] ?? ""}
-                  fallbacks={agentFallbacksEdits[i] ?? []}
+                  selectedModels={agentModelsEdits[i] ?? []}
                   skills={agentSkillsEdits[i] ?? []}
                   tools={agentToolsEdits[i] ?? []}
                   availableSkills={availableSkills}
@@ -730,18 +679,10 @@ export function AgentsPage() {
                   callbackWindowCount={agentCallbackEdits[i]?.count ?? 2}
                   temperature={agentTemperatureEdits[i]}
                   onToggleEnabled={() => handleToggleAgent(i)}
-                  onModelChange={(v) => {
-                    setAgentModelEdits((prev) => {
+                  onModelsChange={(m) => {
+                    setAgentModelsEdits((prev) => {
                       const next = [...prev]
-                      next[i] = v
-                      return next
-                    })
-                    scheduleSaveAgent(i)
-                  }}
-                  onFallbacksChange={(f) => {
-                    setAgentFallbacksEdits((prev) => {
-                      const next = [...prev]
-                      next[i] = f
+                      next[i] = m
                       return next
                     })
                     scheduleSaveAgent(i)
@@ -808,26 +749,12 @@ export function AgentsPage() {
                       placeholder="Display name (optional, e.g. Sam)"
                     />
                     <div className="space-y-1.5">
-                      <p className="text-muted-foreground text-xs font-medium">Model</p>
-                      <ModelSelect
-                        value={addingModel}
-                        models={models}
-                        onChange={(v) => {
-                          setAddingModel(v)
-                          if (addingFallbacks.includes(v)) {
-                            setAddingFallbacks(addingFallbacks.filter((f) => f !== v))
-                          }
-                        }}
-                        placeholder="Use default model"
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <p className="text-muted-foreground text-xs font-medium">Fallback models</p>
+                      <p className="text-muted-foreground text-xs font-medium">Models (tried in order)</p>
                       <FallbacksSelect
-                        fallbacks={addingFallbacks}
-                        primary={addingModel}
+                        fallbacks={addingModels}
+                        primary=""
                         models={models}
-                        onChange={setAddingFallbacks}
+                        onChange={setAddingModels}
                       />
                     </div>
                     {availableSkills.length > 0 && (
@@ -871,8 +798,7 @@ export function AgentsPage() {
                         setShowAdd(false)
                         setAddingId("")
                         setAddingName("")
-                        setAddingModel("")
-                        setAddingFallbacks([])
+                        setAddingModels([])
                         setAddingSkills([])
                         setAddingTools([])
                         setAddingToolsExpanded(false)

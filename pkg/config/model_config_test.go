@@ -128,12 +128,12 @@ func TestAgentDefaults_DefaultModelName(t *testing.T) {
 		},
 		{
 			name:     "model with primary set",
-			defaults: AgentDefaults{Model: &AgentModelConfig{Primary: "gpt4"}},
+			defaults: AgentDefaults{Models: []string{"gpt4"}},
 			wantName: "gpt4",
 		},
 		{
 			name:     "model with primary and fallbacks",
-			defaults: AgentDefaults{Model: &AgentModelConfig{Primary: "gpt4", Fallbacks: []string{"claude"}}},
+			defaults: AgentDefaults{Models: []string{"gpt4", "claude"}},
 			wantName: "gpt4",
 		},
 	}
@@ -148,41 +148,38 @@ func TestAgentDefaults_DefaultModelName(t *testing.T) {
 }
 
 func TestAgentDefaults_SetDefaultModel(t *testing.T) {
-	t.Run("set model on nil model field", func(t *testing.T) {
+	t.Run("set model on empty model list", func(t *testing.T) {
 		var defaults AgentDefaults
 		defaults.SetDefaultModel("gpt4")
-		if defaults.Model == nil {
-			t.Fatal("Model should not be nil after SetDefaultModel")
+		if len(defaults.Models) != 1 {
+			t.Fatalf("Models len = %d, want 1", len(defaults.Models))
 		}
-		if defaults.Model.Primary != "gpt4" {
-			t.Errorf("Primary = %q, want %q", defaults.Model.Primary, "gpt4")
+		if defaults.Models[0] != "gpt4" {
+			t.Errorf("Models[0] = %q, want %q", defaults.Models[0], "gpt4")
 		}
 	})
 
-	t.Run("set model preserves existing fallbacks", func(t *testing.T) {
+	t.Run("set model preserves remaining entries", func(t *testing.T) {
 		defaults := AgentDefaults{
-			Model: &AgentModelConfig{
-				Primary:   "old-model",
-				Fallbacks: []string{"fallback1"},
-			},
+			Models: []string{"old-model", "fallback1"},
 		}
 		defaults.SetDefaultModel("new-model")
-		if defaults.Model.Primary != "new-model" {
-			t.Errorf("Primary = %q, want %q", defaults.Model.Primary, "new-model")
+		if defaults.Models[0] != "new-model" {
+			t.Errorf("Models[0] = %q, want %q", defaults.Models[0], "new-model")
 		}
-		if len(defaults.Model.Fallbacks) != 1 || defaults.Model.Fallbacks[0] != "fallback1" {
-			t.Errorf("Fallbacks = %v, want [fallback1]", defaults.Model.Fallbacks)
+		if len(defaults.Models) != 2 || defaults.Models[1] != "fallback1" {
+			t.Errorf("Models = %v, want [new-model fallback1]", defaults.Models)
 		}
 	})
 }
 
 func TestFullConfig_JSON_ModelConfig(t *testing.T) {
-	// Test complete config with model as AgentModelConfig
+	// Test complete config with the agent model list
 	jsonStr := `{
 		"agents": {
 			"defaults": {
 				"workspace": "~/.claw/workspace",
-				"model": {"primary": "gpt4", "fallbacks": ["claude"]},
+				"models": ["gpt4", "claude"],
 				"max_tokens": 4096
 			}
 		},

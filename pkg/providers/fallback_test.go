@@ -397,8 +397,7 @@ func TestImageFallback_NoCandidates(t *testing.T) {
 
 func TestResolveCandidates_Simple(t *testing.T) {
 	cfg := ModelConfig{
-		Primary:   "gpt-4",
-		Fallbacks: []string{"anthropic/claude-opus", "groq/llama-3"},
+		Models: []string{"gpt-4", "anthropic/claude-opus", "groq/llama-3"},
 	}
 
 	candidates := ResolveCandidates(cfg, "openai")
@@ -419,8 +418,7 @@ func TestResolveCandidates_Simple(t *testing.T) {
 
 func TestResolveCandidates_Deduplication(t *testing.T) {
 	cfg := ModelConfig{
-		Primary:   "openai/gpt-4",
-		Fallbacks: []string{"openai/gpt-4", "anthropic/claude"},
+		Models: []string{"openai/gpt-4", "openai/gpt-4", "anthropic/claude"},
 	}
 
 	candidates := ResolveCandidates(cfg, "default")
@@ -431,8 +429,7 @@ func TestResolveCandidates_Deduplication(t *testing.T) {
 
 func TestResolveCandidates_EmptyFallbacks(t *testing.T) {
 	cfg := ModelConfig{
-		Primary:   "gpt-4",
-		Fallbacks: nil,
+		Models: []string{"gpt-4"},
 	}
 
 	candidates := ResolveCandidates(cfg, "openai")
@@ -441,10 +438,9 @@ func TestResolveCandidates_EmptyFallbacks(t *testing.T) {
 	}
 }
 
-func TestResolveCandidates_EmptyPrimary(t *testing.T) {
+func TestResolveCandidates_EmptyFirstEntry(t *testing.T) {
 	cfg := ModelConfig{
-		Primary:   "",
-		Fallbacks: []string{"anthropic/claude"},
+		Models: []string{"", "anthropic/claude"},
 	}
 
 	candidates := ResolveCandidates(cfg, "openai")
@@ -455,8 +451,7 @@ func TestResolveCandidates_EmptyPrimary(t *testing.T) {
 
 func TestResolveCandidatesWithLookup_AliasResolvesToNestedModel(t *testing.T) {
 	cfg := ModelConfig{
-		Primary:   "step-3.5-flash",
-		Fallbacks: nil,
+		Models: []string{"step-3.5-flash"},
 	}
 
 	lookup := func(raw string) (alias, model, provider string, ok bool) {
@@ -483,8 +478,7 @@ func TestResolveCandidatesWithLookup_AliasResolvesToNestedModel(t *testing.T) {
 
 func TestResolveCandidatesWithLookup_DeduplicateAfterLookup(t *testing.T) {
 	cfg := ModelConfig{
-		Primary:   "step-3.5-flash",
-		Fallbacks: []string{"openrouter/stepfun/step-3.5-flash:free"},
+		Models: []string{"step-3.5-flash", "openrouter/stepfun/step-3.5-flash:free"},
 	}
 
 	lookup := func(raw string) (alias, model, provider string, ok bool) {
@@ -511,8 +505,7 @@ func TestResolveCandidatesWithLookup_DeduplicateAfterLookup(t *testing.T) {
 
 func TestResolveCandidatesWithLookup_AliasCarriesProvider(t *testing.T) {
 	cfg := ModelConfig{
-		Primary:   "glm-5",
-		Fallbacks: nil,
+		Models: []string{"glm-5"},
 	}
 
 	// A lookup hit now reports the provider name directly; the raw model id

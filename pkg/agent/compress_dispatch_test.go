@@ -193,8 +193,8 @@ func TestBuildDefaultCompressLLMClient_UsesDispatcherForPrimary(t *testing.T) {
 		Provider: primary,
 		Model:    "some-model",
 		Config: &config.AgentConfig{
-			ID:    "default-compress-test",
-			Model: &config.AgentModelConfig{Primary: "some-model"},
+			ID:     "default-compress-test",
+			Models: []string{"some-model"},
 			// CompressModel intentionally nil to exercise the default-to-primary path.
 		},
 	}

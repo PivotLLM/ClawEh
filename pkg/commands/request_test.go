@@ -9,8 +9,8 @@ func TestHasCommandPrefix(t *testing.T) {
 	}{
 		{"/help", true},
 		{"!help", true},
-		{"/switch model to gpt-4", true},
-		{"!switch model to gpt-4", true},
+		{"/model 1", true},
+		{"!model 1", true},
 		{"hello", false},
 		{"", false},
 		{"   ", false},

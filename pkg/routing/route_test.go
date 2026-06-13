@@ -11,7 +11,7 @@ func testConfig(agents []config.AgentConfig, bindings []config.AgentBinding) *co
 		Agents: config.AgentsConfig{
 			BaseDir: "/tmp/claw-test",
 			Defaults: config.AgentDefaults{
-				Model: &config.AgentModelConfig{Primary: "gpt-4"},
+				Models: []string{"gpt-4"},
 			},
 			List: agents,
 		},

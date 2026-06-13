@@ -66,17 +66,15 @@ func TestPruneInvalid(t *testing.T) {
 }
 
 func TestRenameModelReferences(t *testing.T) {
-	light := &RoutingConfig{LightModel: "old"}
 	cfg := &Config{
 		Agents: AgentsConfig{
 			Defaults: AgentDefaults{
-				Model:               &AgentModelConfig{Primary: "old", Fallbacks: []string{"old", "keep"}},
+				Models:              []string{"old", "old", "keep"},
 				ImageModel:          "old",
 				ImageModelFallbacks: []string{"old", "x"},
-				Routing:             light,
 			},
 			List: []AgentConfig{
-				{ID: "a", Model: &AgentModelConfig{Primary: "keep", Fallbacks: []string{"old"}}, SummarizationModels: []string{"old", "y"}},
+				{ID: "a", Models: []string{"keep", "old"}, SummarizationModels: []string{"old", "y"}},
 			},
 		},
 		Summarization: SummarizationConfig{Models: []string{"z", "old"}},
@@ -84,30 +82,27 @@ func TestRenameModelReferences(t *testing.T) {
 
 	cfg.RenameModelReferences("old", "new")
 
-	if cfg.Agents.Defaults.Model.Primary != "new" || cfg.Agents.Defaults.Model.Fallbacks[0] != "new" {
-		t.Errorf("defaults model not repointed: %+v", cfg.Agents.Defaults.Model)
+	if cfg.Agents.Defaults.Models[0] != "new" || cfg.Agents.Defaults.Models[1] != "new" {
+		t.Errorf("defaults model not repointed: %v", cfg.Agents.Defaults.Models)
 	}
-	if cfg.Agents.Defaults.Model.Fallbacks[1] != "keep" {
-		t.Error("unrelated fallback should be untouched")
+	if cfg.Agents.Defaults.Models[2] != "keep" {
+		t.Error("unrelated model entry should be untouched")
 	}
 	if cfg.Agents.Defaults.ImageModel != "new" || cfg.Agents.Defaults.ImageModelFallbacks[0] != "new" {
 		t.Errorf("image model not repointed: %v / %v", cfg.Agents.Defaults.ImageModel, cfg.Agents.Defaults.ImageModelFallbacks)
 	}
-	if light.LightModel != "new" {
-		t.Errorf("routing light_model not repointed: %q", light.LightModel)
-	}
 	if cfg.Summarization.Models[1] != "new" {
 		t.Errorf("summarization chain not repointed: %v", cfg.Summarization.Models)
 	}
-	if cfg.Agents.List[0].Model.Fallbacks[0] != "new" || cfg.Agents.List[0].SummarizationModels[0] != "new" {
-		t.Errorf("per-agent refs not repointed: %+v / %v", cfg.Agents.List[0].Model, cfg.Agents.List[0].SummarizationModels)
+	if cfg.Agents.List[0].Models[1] != "new" || cfg.Agents.List[0].SummarizationModels[0] != "new" {
+		t.Errorf("per-agent refs not repointed: %v / %v", cfg.Agents.List[0].Models, cfg.Agents.List[0].SummarizationModels)
 	}
 
 	// No-op cases.
-	before := cfg.Agents.Defaults.Model.Primary
+	before := cfg.Agents.Defaults.Models[0]
 	cfg.RenameModelReferences("", "x")
 	cfg.RenameModelReferences("new", "new")
-	if cfg.Agents.Defaults.Model.Primary != before {
+	if cfg.Agents.Defaults.Models[0] != before {
 		t.Error("no-op rename mutated config")
 	}
 }

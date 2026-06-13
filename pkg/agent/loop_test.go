@@ -45,7 +45,7 @@ func newTestAgentLoop(
 		Agents: config.AgentsConfig{
 			BaseDir: tmpDir,
 			Defaults: config.AgentDefaults{
-				Model:             &config.AgentModelConfig{Primary: "test-model"},
+				Models:            []string{"test-model"},
 				MaxTokens:         4096,
 				MaxToolIterations: 10,
 			},
@@ -107,7 +107,7 @@ func TestNewAgentLoop_StateInitialized(t *testing.T) {
 		Agents: config.AgentsConfig{
 			BaseDir: tmpDir,
 			Defaults: config.AgentDefaults{
-				Model:             &config.AgentModelConfig{Primary: "test-model"},
+				Models:            []string{"test-model"},
 				MaxTokens:         4096,
 				MaxToolIterations: 10,
 			},
@@ -154,7 +154,7 @@ func TestToolRegistry_ToolRegistration(t *testing.T) {
 			},
 			BaseDir: tmpDir,
 			Defaults: config.AgentDefaults{
-				Model:             &config.AgentModelConfig{Primary: "test-model"},
+				Models:            []string{"test-model"},
 				MaxTokens:         4096,
 				MaxToolIterations: 10,
 			},
@@ -217,7 +217,7 @@ func TestToolRegistry_GetDefinitions(t *testing.T) {
 			},
 			BaseDir: tmpDir,
 			Defaults: config.AgentDefaults{
-				Model:             &config.AgentModelConfig{Primary: "test-model"},
+				Models:            []string{"test-model"},
 				MaxTokens:         4096,
 				MaxToolIterations: 10,
 			},
@@ -304,7 +304,7 @@ func TestAgentLoop_Stop(t *testing.T) {
 		Agents: config.AgentsConfig{
 			BaseDir: tmpDir,
 			Defaults: config.AgentDefaults{
-				Model:             &config.AgentModelConfig{Primary: "test-model"},
+				Models:            []string{"test-model"},
 				MaxTokens:         4096,
 				MaxToolIterations: 10,
 			},
@@ -424,7 +424,7 @@ func TestProcessMessage_UsesRouteSessionKey(t *testing.T) {
 		Agents: config.AgentsConfig{
 			BaseDir: tmpDir,
 			Defaults: config.AgentDefaults{
-				Model:             &config.AgentModelConfig{Primary: "test-model"},
+				Models:            []string{"test-model"},
 				MaxTokens:         4096,
 				MaxToolIterations: 10,
 			},
@@ -483,7 +483,7 @@ func TestProcessMessage_CommandOutcomes(t *testing.T) {
 		Agents: config.AgentsConfig{
 			BaseDir: tmpDir,
 			Defaults: config.AgentDefaults{
-				Model:             &config.AgentModelConfig{Primary: "test-model"},
+				Models:            []string{"test-model"},
 				MaxTokens:         4096,
 				MaxToolIterations: 10,
 			},
@@ -555,7 +555,7 @@ func TestProcessMessage_CommandOutcomes(t *testing.T) {
 	}
 }
 
-func TestProcessMessage_SwitchModelShowModelConsistency(t *testing.T) {
+func TestProcessMessage_ModelSelectListConsistency(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "agent-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
@@ -566,7 +566,7 @@ func TestProcessMessage_SwitchModelShowModelConsistency(t *testing.T) {
 		Agents: config.AgentsConfig{
 			BaseDir: tmpDir,
 			Defaults: config.AgentDefaults{
-				Model:             &config.AgentModelConfig{Primary: "before-switch"},
+				Models:            []string{"primary", "secondary"},
 				MaxTokens:         4096,
 				MaxToolIterations: 10,
 			},
@@ -578,8 +578,8 @@ func TestProcessMessage_SwitchModelShowModelConsistency(t *testing.T) {
 			{Name: "openai", Protocol: "openai-chat", BaseURL: "https://api.openai.com/v1", APIKey: "k"},
 		},
 		Models: []config.ModelConfig{
-			{ModelName: "before-switch", Model: "before-switch", Provider: "openai", Enabled: true},
-			{ModelName: "after-switch", Model: "after-switch", Provider: "openai", Enabled: true},
+			{ModelName: "primary", Model: "primary", Provider: "openai", Enabled: true},
+			{ModelName: "secondary", Model: "secondary", Provider: "openai", Enabled: true},
 		},
 	}
 
@@ -588,36 +588,36 @@ func TestProcessMessage_SwitchModelShowModelConsistency(t *testing.T) {
 	al := NewAgentLoop(cfg, msgBus, provider, nil)
 	helper := testHelper{al: al}
 
-	switchResp := helper.executeAndGetResponse(t, context.Background(), bus.InboundMessage{
+	modelResp := helper.executeAndGetResponse(t, context.Background(), bus.InboundMessage{
 		Channel:  "telegram",
 		SenderID: "user1",
 		ChatID:   "chat1",
-		Content:  "/switch model to after-switch",
+		Content:  "/model 1",
 		Peer: bus.Peer{
 			Kind: "direct",
 			ID:   "user1",
 		},
 	})
-	if !strings.Contains(switchResp, "Switched model from before-switch to after-switch") {
-		t.Fatalf("unexpected /switch reply: %q", switchResp)
+	if !strings.Contains(modelResp, "Model set to 1: secondary") {
+		t.Fatalf("unexpected /model reply: %q", modelResp)
 	}
 
-	showResp := helper.executeAndGetResponse(t, context.Background(), bus.InboundMessage{
+	listResp := helper.executeAndGetResponse(t, context.Background(), bus.InboundMessage{
 		Channel:  "telegram",
 		SenderID: "user1",
 		ChatID:   "chat1",
-		Content:  "/show model",
+		Content:  "/list models",
 		Peer: bus.Peer{
 			Kind: "direct",
 			ID:   "user1",
 		},
 	})
-	if !strings.Contains(showResp, "Current Model: after-switch (Provider: openai)") {
-		t.Fatalf("unexpected /show model reply after switch: %q", showResp)
+	if !strings.Contains(listResp, "▶ 1: secondary") {
+		t.Fatalf("unexpected /list models reply after select: %q", listResp)
 	}
 
 	if provider.calls != 0 {
-		t.Fatalf("LLM should not be called for /switch and /show, calls=%d", provider.calls)
+		t.Fatalf("LLM should not be called for /model and /list, calls=%d", provider.calls)
 	}
 }
 
@@ -633,7 +633,7 @@ func TestToolResult_SilentToolDoesNotSendUserMessage(t *testing.T) {
 		Agents: config.AgentsConfig{
 			BaseDir: tmpDir,
 			Defaults: config.AgentDefaults{
-				Model:             &config.AgentModelConfig{Primary: "test-model"},
+				Models:            []string{"test-model"},
 				MaxTokens:         4096,
 				MaxToolIterations: 10,
 			},
@@ -678,7 +678,7 @@ func TestToolResult_UserFacingToolDoesSendMessage(t *testing.T) {
 		Agents: config.AgentsConfig{
 			BaseDir: tmpDir,
 			Defaults: config.AgentDefaults{
-				Model:             &config.AgentModelConfig{Primary: "test-model"},
+				Models:            []string{"test-model"},
 				MaxTokens:         4096,
 				MaxToolIterations: 10,
 			},
@@ -752,7 +752,7 @@ func TestAgentLoop_ContextExhaustionRetry(t *testing.T) {
 		Agents: config.AgentsConfig{
 			BaseDir: tmpDir,
 			Defaults: config.AgentDefaults{
-				Model:             &config.AgentModelConfig{Primary: "test-model"},
+				Models:            []string{"test-model"},
 				MaxTokens:         4096,
 				MaxToolIterations: 10,
 			},
@@ -842,7 +842,7 @@ func TestProcessDirectWithChannel_TriggersMCPInitialization(t *testing.T) {
 		Agents: config.AgentsConfig{
 			BaseDir: tmpDir,
 			Defaults: config.AgentDefaults{
-				Model:             &config.AgentModelConfig{Primary: "test-model"},
+				Models:            []string{"test-model"},
 				MaxTokens:         4096,
 				MaxToolIterations: 10,
 			},
@@ -898,7 +898,7 @@ func TestTargetReasoningChannelID_AllChannels(t *testing.T) {
 		Agents: config.AgentsConfig{
 			BaseDir: tmpDir,
 			Defaults: config.AgentDefaults{
-				Model:             &config.AgentModelConfig{Primary: "test-model"},
+				Models:            []string{"test-model"},
 				MaxTokens:         4096,
 				MaxToolIterations: 10,
 			},
@@ -952,7 +952,7 @@ func TestHandleReasoning(t *testing.T) {
 			Agents: config.AgentsConfig{
 				BaseDir: tmpDir,
 				Defaults: config.AgentDefaults{
-					Model:             &config.AgentModelConfig{Primary: "test-model"},
+					Models:            []string{"test-model"},
 					MaxTokens:         4096,
 					MaxToolIterations: 10,
 				},
@@ -1798,41 +1798,19 @@ func TestRunLLMIteration_MaxIterations(t *testing.T) {
 	}
 }
 
-// TestSelectCandidates_NoRouter verifies that when no Router is configured,
-// selectCandidates returns the agent's primary Candidates and Model unchanged.
-func TestSelectCandidates_NoRouter(t *testing.T) {
-	al, _, _, _, cleanup := newTestAgentLoop(t)
-	defer cleanup()
-
-	agent := al.registry.GetDefaultAgent()
-	if agent == nil {
-		t.Fatal("no default agent")
-	}
-
-	// Ensure no router is set.
-	agent.Router = nil
-	agent.Candidates = []providers.FallbackCandidate{
-		{Provider: "openai", Model: "gpt-4"},
-	}
-	agent.Model = "gpt-4"
-
-	candidates, model := al.selectCandidates(agent, "simple question", nil)
-
-	if model != agent.Model {
-		t.Errorf("expected model %q, got %q", agent.Model, model)
-	}
-	if len(candidates) != len(agent.Candidates) {
-		t.Errorf("expected %d candidates, got %d", len(agent.Candidates), len(candidates))
-	}
-	if len(candidates) > 0 && candidates[0].Model != agent.Candidates[0].Model {
-		t.Errorf("expected candidate model %q, got %q", agent.Candidates[0].Model, candidates[0].Model)
+// fourCandidates returns a deterministic 4-element candidate list for reorder tests.
+func fourCandidates() []providers.FallbackCandidate {
+	return []providers.FallbackCandidate{
+		{Provider: "p0", Model: "m0", Alias: "a0"},
+		{Provider: "p1", Model: "m1", Alias: "a1"},
+		{Provider: "p2", Model: "m2", Alias: "a2"},
+		{Provider: "p3", Model: "m3", Alias: "a3"},
 	}
 }
 
-// TestSelectCandidates_WithRouter_PrimarySelected verifies that when a Router
-// is configured and the message scores above the threshold, the primary
-// Candidates and Model are returned.
-func TestSelectCandidates_WithRouter_PrimarySelected(t *testing.T) {
+// TestSelectCandidates_DefaultOrder verifies that with the default active index
+// (0) selectCandidates returns the candidate list in its original order.
+func TestSelectCandidates_DefaultOrder(t *testing.T) {
 	al, _, _, _, cleanup := newTestAgentLoop(t)
 	defer cleanup()
 
@@ -1840,53 +1818,24 @@ func TestSelectCandidates_WithRouter_PrimarySelected(t *testing.T) {
 	if agent == nil {
 		t.Fatal("no default agent")
 	}
+	agent.Candidates = fourCandidates()
+	agent.Model = "primary"
 
-	// Set up primary and light candidates.
-	agent.Candidates = []providers.FallbackCandidate{
-		{Provider: "openai", Model: "gpt-4"},
+	candidates, model := al.selectCandidates(agent, "session-default")
+
+	if model != "a0" {
+		t.Errorf("expected model %q, got %q", "a0", model)
 	}
-	agent.Model = "gpt-4"
-	agent.LightCandidates = []providers.FallbackCandidate{
-		{Provider: "openai", Model: "gpt-3.5-turbo"},
-	}
-
-	// Use a high threshold so even a complex message picks primary.
-	agent.Router = routing.New(routing.RouterConfig{
-		LightModel: "gpt-3.5-turbo",
-		Threshold:  0.99, // almost never go light
-	})
-
-	// A short message should score low, but threshold is 0.99 so primary is used.
-	candidates, model := al.selectCandidates(agent, "hi", nil)
-
-	// With threshold 0.99 even a trivial message stays on primary because
-	// score < 0.99 means light — we need the opposite. Use a very low threshold.
-	// Actually score < threshold => light, score >= threshold => primary.
-	// Let's confirm the routing.Router behaviour and adjust:
-	// score for "hi" is very low (~0), which is < 0.99 → light chosen.
-	// We want primary selected, so use threshold=0.0 so every message uses primary.
-	agent.Router = routing.New(routing.RouterConfig{
-		LightModel: "gpt-3.5-turbo",
-		Threshold:  0.0, // RuleClassifier always returns >= 0 so all go to light
-	})
-	// Actually threshold <= 0 gets replaced by defaultThreshold (0.35).
-	// Use a known complex message to ensure score >= 0.35.
-	complexMsg := "```go\npackage main\nimport \"fmt\"\nfunc main() { fmt.Println(\"Hello, World!\") }\n```"
-	candidates, model = al.selectCandidates(agent, complexMsg, nil)
-
-	// A message with a code block should score >= 0.35 → primary model selected.
-	if model != agent.Model {
-		t.Errorf("expected primary model %q, got %q", agent.Model, model)
-	}
-	if len(candidates) != 1 || candidates[0].Model != "gpt-4" {
-		t.Errorf("expected primary candidates with gpt-4, got %+v", candidates)
+	for i, c := range candidates {
+		if c.Model != agent.Candidates[i].Model {
+			t.Fatalf("candidate %d = %q, want %q (order changed)", i, c.Model, agent.Candidates[i].Model)
+		}
 	}
 }
 
-// TestSelectCandidates_WithRouter_LightSelected verifies that when a Router is
-// configured and the message scores below the threshold, the light model
-// candidates are returned.
-func TestSelectCandidates_WithRouter_LightSelected(t *testing.T) {
+// TestSelectCandidates_Reorder verifies move-to-front semantics: selecting index
+// 2 returns [2,0,1,3] and never mutates agent.Candidates.
+func TestSelectCandidates_Reorder(t *testing.T) {
 	al, _, _, _, cleanup := newTestAgentLoop(t)
 	defer cleanup()
 
@@ -1894,29 +1843,86 @@ func TestSelectCandidates_WithRouter_LightSelected(t *testing.T) {
 	if agent == nil {
 		t.Fatal("no default agent")
 	}
+	agent.Candidates = fourCandidates()
+	agent.Model = "primary"
 
-	agent.Candidates = []providers.FallbackCandidate{
-		{Provider: "openai", Model: "gpt-4"},
+	orig := fourCandidates()
+	const sessionKey = "session-reorder"
+
+	if err := al.setActiveModelIndex(agent, sessionKey, 2); err != nil {
+		t.Fatalf("setActiveModelIndex(2) failed: %v", err)
 	}
-	agent.Model = "gpt-4"
-	agent.LightCandidates = []providers.FallbackCandidate{
-		{Provider: "openai", Model: "gpt-3.5-turbo"},
+
+	candidates, model := al.selectCandidates(agent, sessionKey)
+	wantOrder := []string{"m2", "m0", "m1", "m3"}
+	if len(candidates) != len(wantOrder) {
+		t.Fatalf("got %d candidates, want %d", len(candidates), len(wantOrder))
+	}
+	for i, want := range wantOrder {
+		if candidates[i].Model != want {
+			t.Errorf("candidate %d = %q, want %q", i, candidates[i].Model, want)
+		}
+	}
+	if model != "a2" {
+		t.Errorf("expected model %q, got %q", "a2", model)
 	}
 
-	// Very high threshold ensures even complex messages score below it → light.
-	agent.Router = routing.New(routing.RouterConfig{
-		LightModel: "gpt-3.5-turbo",
-		Threshold:  1.1, // impossible to reach → always light
-	})
-
-	candidates, model := al.selectCandidates(agent, "simple question", nil)
-
-	lightModel := agent.Router.LightModel()
-	if model != lightModel {
-		t.Errorf("expected light model %q, got %q", lightModel, model)
+	// agent.Candidates must be untouched.
+	for i := range orig {
+		if agent.Candidates[i].Model != orig[i].Model {
+			t.Errorf("agent.Candidates mutated at %d: %q != %q", i, agent.Candidates[i].Model, orig[i].Model)
+		}
 	}
-	if len(candidates) != 1 || candidates[0].Model != "gpt-3.5-turbo" {
-		t.Errorf("expected light candidates with gpt-3.5-turbo, got %+v", candidates)
+}
+
+// TestSetActiveModelIndex_OutOfRange verifies range/empty validation.
+func TestSetActiveModelIndex_OutOfRange(t *testing.T) {
+	al, _, _, _, cleanup := newTestAgentLoop(t)
+	defer cleanup()
+
+	agent := al.registry.GetDefaultAgent()
+	if agent == nil {
+		t.Fatal("no default agent")
+	}
+	agent.Candidates = fourCandidates()
+
+	if err := al.setActiveModelIndex(agent, "s", 4); err == nil {
+		t.Error("expected error for index 4 (out of range), got nil")
+	}
+	if err := al.setActiveModelIndex(agent, "s", -1); err == nil {
+		t.Error("expected error for index -1, got nil")
+	}
+
+	agent.Candidates = nil
+	if err := al.setActiveModelIndex(agent, "s", 0); err == nil {
+		t.Error("expected error when agent has no candidates, got nil")
+	}
+}
+
+// TestActiveModelIndex_Persists verifies the active index survives a cache clear
+// by reloading through the session store's CompactionState.
+func TestActiveModelIndex_Persists(t *testing.T) {
+	al, _, _, _, cleanup := newTestAgentLoop(t)
+	defer cleanup()
+
+	agent := al.registry.GetDefaultAgent()
+	if agent == nil {
+		t.Fatal("no default agent")
+	}
+	agent.Candidates = fourCandidates()
+	const sessionKey = "session-persist"
+
+	if err := al.setActiveModelIndex(agent, sessionKey, 3); err != nil {
+		t.Fatalf("setActiveModelIndex(3) failed: %v", err)
+	}
+
+	// Clear the in-memory cache so the next read must come from the store.
+	al.activeModelMu.Lock()
+	al.activeModelIdx = make(map[string]int)
+	al.activeModelMu.Unlock()
+
+	if got := al.getActiveModelIndex(agent, sessionKey); got != 3 {
+		t.Errorf("reloaded active index = %d, want 3", got)
 	}
 }
 
@@ -2236,7 +2242,7 @@ func TestReloadProviderAndConfig_Success(t *testing.T) {
 		Agents: config.AgentsConfig{
 			BaseDir: cfg.Agents.BaseDir,
 			Defaults: config.AgentDefaults{
-				Model:             &config.AgentModelConfig{Primary: "new-model"},
+				Models:            []string{"new-model"},
 				MaxTokens:         4096,
 				MaxToolIterations: 10,
 			},
@@ -2295,7 +2301,7 @@ func TestResolveMessageRoute_PreresolvedAgentID(t *testing.T) {
 		Agents: config.AgentsConfig{
 			BaseDir: tmpDir,
 			Defaults: config.AgentDefaults{
-				Model:             &config.AgentModelConfig{Primary: "test-model"},
+				Models:            []string{"test-model"},
 				MaxTokens:         4096,
 				MaxToolIterations: 10,
 			},

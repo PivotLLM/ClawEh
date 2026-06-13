@@ -81,7 +81,7 @@ func TestShowCurrentModel_WithDefaultModel(t *testing.T) {
 	cfg := &config.Config{
 		Agents: config.AgentsConfig{
 			Defaults: config.AgentDefaults{
-				Model: &config.AgentModelConfig{Primary: "gpt-4"},
+				Models: []string{"gpt-4"},
 			},
 		},
 		Providers: []config.Provider{openaiProvider(), anthropicProvider()},
@@ -124,7 +124,7 @@ func TestShowCurrentModel_WithModelConfig(t *testing.T) {
 	cfg := &config.Config{
 		Agents: config.AgentsConfig{
 			Defaults: config.AgentDefaults{
-				Model: &config.AgentModelConfig{Primary: "my-model"},
+				Models: []string{"my-model"},
 			},
 		},
 		Models: []config.ModelConfig{},
@@ -153,7 +153,7 @@ func TestListAvailableModels_WithModels(t *testing.T) {
 	cfg := &config.Config{
 		Agents: config.AgentsConfig{
 			Defaults: config.AgentDefaults{
-				Model: &config.AgentModelConfig{Primary: "gpt-4"},
+				Models: []string{"gpt-4"},
 			},
 		},
 		Providers: []config.Provider{
@@ -185,7 +185,7 @@ func TestSetDefaultModel_ValidModel(t *testing.T) {
 	cfg := &config.Config{
 		Agents: config.AgentsConfig{
 			Defaults: config.AgentDefaults{
-				Model: &config.AgentModelConfig{Primary: "old-model"},
+				Models: []string{"old-model"},
 			},
 		},
 		Providers: []config.Provider{openaiProvider()},
@@ -214,7 +214,7 @@ func TestSetDefaultModel_InvalidModel(t *testing.T) {
 	cfg := &config.Config{
 		Agents: config.AgentsConfig{
 			Defaults: config.AgentDefaults{
-				Model: &config.AgentModelConfig{Primary: "existing-model"},
+				Models: []string{"existing-model"},
 			},
 		},
 		Providers: []config.Provider{openaiProvider()},
@@ -232,7 +232,7 @@ func TestSetDefaultModel_DisabledModel(t *testing.T) {
 	cfg := &config.Config{
 		Agents: config.AgentsConfig{
 			Defaults: config.AgentDefaults{
-				Model: &config.AgentModelConfig{Primary: "existing-model"},
+				Models: []string{"existing-model"},
 			},
 		},
 		Providers: []config.Provider{openaiProvider()},
@@ -252,7 +252,7 @@ func TestSetDefaultModel_SaveConfigError(t *testing.T) {
 	cfg := &config.Config{
 		Agents: config.AgentsConfig{
 			Defaults: config.AgentDefaults{
-				Model: &config.AgentModelConfig{Primary: "old-model"},
+				Models: []string{"old-model"},
 			},
 		},
 		Providers: []config.Provider{openaiProvider()},
@@ -294,7 +294,7 @@ func TestModelCommandExecution_Show(t *testing.T) {
 	cfg := &config.Config{
 		Agents: config.AgentsConfig{
 			Defaults: config.AgentDefaults{
-				Model: &config.AgentModelConfig{Primary: "test-model"},
+				Models: []string{"test-model"},
 			},
 		},
 		Providers: []config.Provider{openaiProvider()},
@@ -322,7 +322,7 @@ func TestModelCommandExecution_Set(t *testing.T) {
 	cfg := &config.Config{
 		Agents: config.AgentsConfig{
 			Defaults: config.AgentDefaults{
-				Model: &config.AgentModelConfig{Primary: "old-model"},
+				Models: []string{"old-model"},
 			},
 		},
 		Providers: []config.Provider{openaiProvider()},
@@ -357,7 +357,7 @@ func TestListAvailableModels_MarkerLogic(t *testing.T) {
 	cfg := &config.Config{
 		Agents: config.AgentsConfig{
 			Defaults: config.AgentDefaults{
-				Model: &config.AgentModelConfig{Primary: "middle-model"},
+				Models: []string{"middle-model"},
 			},
 		},
 		Providers: []config.Provider{openaiProvider()},

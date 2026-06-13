@@ -6,7 +6,7 @@ import {
   SESSION_MODE_OPTIONS,
   type LauncherForm,
 } from "@/components/config/form-model"
-import { FallbacksSelect, ModelSelect } from "@/components/agents/model-selects"
+import { FallbacksSelect } from "@/components/agents/model-selects"
 import { Field, SwitchCardField } from "@/components/shared-form"
 import { Button } from "@/components/ui/button"
 import {
@@ -256,8 +256,8 @@ interface AgentModelDefaultsSectionProps {
 // AgentModelDefaultsSection consolidates the model-related agent defaults that
 // used to be split between the Agents page (default agent, default model) and
 // the Config page (summarization model chain): the default agent for unrouted
-// messages, the default model + fallbacks + temperature applied to agents with
-// no override, and the global summarization model chain.
+// messages, the default models (tried in order) + temperature applied to agents
+// with no override, and the global summarization model chain.
 export function AgentModelDefaultsSection({
   form,
   onFieldChange,
@@ -297,26 +297,15 @@ export function AgentModelDefaultsSection({
 
       <Field
         label={t("pages.config.default_model")}
-        hint={t("pages.config.default_model_hint")}
+        hint={t("pages.config.default_model_models_hint", "Models tried in order; index 0 first.")}
       >
-        <ModelSelect
-          value={form.defaultModel}
+        <FallbacksSelect
+          fallbacks={form.defaultModels}
+          primary=""
           models={configuredModels}
-          onChange={(v) => onFieldChange("defaultModel", v)}
-          placeholder={t("pages.config.default_model_none")}
+          onChange={(next) => onFieldChange("defaultModels", next)}
         />
       </Field>
-
-      {form.defaultModel && (
-        <Field label={t("pages.config.default_fallbacks")}>
-          <FallbacksSelect
-            fallbacks={form.defaultModelFallbacks}
-            primary={form.defaultModel}
-            models={configuredModels}
-            onChange={(next) => onFieldChange("defaultModelFallbacks", next)}
-          />
-        </Field>
-      )}
 
       <Field
         label={t("pages.config.default_temperature")}

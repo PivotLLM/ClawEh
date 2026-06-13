@@ -21,7 +21,7 @@ func toolRegTestConfig(t *testing.T) *config.Config {
 		Agents: config.AgentsConfig{
 			BaseDir: t.TempDir(),
 			Defaults: config.AgentDefaults{
-				Model:             &config.AgentModelConfig{Primary: "test-model"},
+				Models:            []string{"test-model"},
 				MaxTokens:         4096,
 				MaxToolIterations: 10,
 			},
