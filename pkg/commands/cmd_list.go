@@ -15,17 +15,14 @@ func listCommand() Definition {
 				Name:        "models",
 				Description: "Configured models",
 				Handler: func(_ context.Context, req Request, rt *Runtime) error {
-					if rt == nil || rt.GetModelInfo == nil {
-						return req.Reply(unavailableMsg)
+					if rt == nil || rt.GetAgentModels == nil {
+						return req.Reply("This agent has no configured models; it uses the global default model.")
 					}
-					name, provider, _, _ := rt.GetModelInfo()
-					if provider == "" {
-						provider = "configured default"
+					entries, active := rt.GetAgentModels()
+					if len(entries) == 0 {
+						return req.Reply("This agent has no configured models; it uses the global default model.")
 					}
-					return req.Reply(fmt.Sprintf(
-						"Configured Model: %s\nProvider: %s\n\nTo change models, update config.json",
-						name, provider,
-					))
+					return req.Reply(renderModelList(entries, active))
 				},
 			},
 			{

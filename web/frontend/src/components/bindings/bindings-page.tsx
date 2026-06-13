@@ -388,7 +388,7 @@ export function BindingsPage() {
                           </SelectTrigger>
                           <SelectContent>
                             <SelectItem value="__none__">Select channel</SelectItem>
-                            {channels.map((ch) => (
+                            {[...channels].sort((a, b) => a.localeCompare(b)).map((ch) => (
                               <SelectItem key={ch} value={ch}>{ch}</SelectItem>
                             ))}
                           </SelectContent>
@@ -415,7 +415,7 @@ export function BindingsPage() {
                           </SelectTrigger>
                           <SelectContent>
                             <SelectItem value="__none__">Select agent</SelectItem>
-                            {agents.map((a) => (
+                            {[...agents].sort((x, y) => x.localeCompare(y)).map((a) => (
                               <SelectItem key={a} value={a}>{a}</SelectItem>
                             ))}
                           </SelectContent>

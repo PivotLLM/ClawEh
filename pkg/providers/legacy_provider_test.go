@@ -24,7 +24,7 @@ func TestCreateProvider_NoModelList_ReturnsError(t *testing.T) {
 func TestCreateProvider_WithModelList_ValidModel(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Providers = []config.Provider{
-		{Name: "groq", Protocol: "openai", BaseURL: "https://api.groq.com/openai/v1", APIKey: "gsk-test"},
+		{Name: "groq", Protocol: "openai-chat", BaseURL: "https://api.groq.com/openai/v1", APIKey: "gsk-test"},
 	}
 	cfg.Models = []config.ModelConfig{
 		{
@@ -51,7 +51,7 @@ func TestCreateProvider_WithModelList_ValidModel(t *testing.T) {
 func TestCreateProvider_ModelNotFoundInList_ReturnsError(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Providers = []config.Provider{
-		{Name: "groq", Protocol: "openai", BaseURL: "https://api.groq.com/openai/v1", APIKey: "gsk-test"},
+		{Name: "groq", Protocol: "openai-chat", BaseURL: "https://api.groq.com/openai/v1", APIKey: "gsk-test"},
 	}
 	cfg.Models = []config.ModelConfig{
 		{
@@ -122,7 +122,7 @@ func TestCreateProvider_TimeoutInjected(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Agents.Defaults.RequestTimeout = 60
 	cfg.Providers = []config.Provider{
-		{Name: "openai", Protocol: "openai", BaseURL: "https://api.openai.com/v1", APIKey: "sk-test"},
+		{Name: "openai", Protocol: "openai-chat", BaseURL: "https://api.openai.com/v1", APIKey: "sk-test"},
 	}
 	cfg.Models = []config.ModelConfig{
 		{

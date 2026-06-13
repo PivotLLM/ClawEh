@@ -1176,7 +1176,11 @@ func TestProviderChat_HTTPErrorPopulatesStatus(t *testing.T) {
 	}
 }
 
-func TestProviderChat_SetsRequireParametersWhenToolsAdvertised(t *testing.T) {
+// TestProviderChat_OmitsRequireParametersForNonOpenRouter verifies the
+// OpenRouter-only `provider.require_parameters` hint is NOT sent to other
+// OpenAI-compatible endpoints (which reject unknown fields, e.g. Google → 400),
+// even when tools are advertised. The httptest server is a non-OpenRouter base.
+func TestProviderChat_OmitsRequireParametersForNonOpenRouter(t *testing.T) {
 	var requestBody map[string]any
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1214,12 +1218,27 @@ func TestProviderChat_SetsRequireParametersWhenToolsAdvertised(t *testing.T) {
 		t.Fatalf("Chat() error = %v", err)
 	}
 
-	provider, ok := requestBody["provider"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected provider object in request, got %T", requestBody["provider"])
+	if _, ok := requestBody["provider"]; ok {
+		t.Fatalf("provider key must be omitted for non-OpenRouter endpoints, got %v", requestBody["provider"])
 	}
-	if provider["require_parameters"] != true {
-		t.Fatalf("provider.require_parameters = %v, want true", provider["require_parameters"])
+}
+
+func TestIsOpenRouterBase(t *testing.T) {
+	cases := []struct {
+		base string
+		want bool
+	}{
+		{"https://openrouter.ai/api/v1", true},
+		{"https://OpenRouter.ai/api/v1", true},
+		{"https://api.openai.com/v1", false},
+		{"https://generativelanguage.googleapis.com/v1beta/openai", false},
+		{"https://api.groq.com/openai/v1", false},
+		{"", false},
+	}
+	for _, tc := range cases {
+		if got := isOpenRouterBase(tc.base); got != tc.want {
+			t.Errorf("isOpenRouterBase(%q) = %v, want %v", tc.base, got, tc.want)
+		}
 	}
 }
 

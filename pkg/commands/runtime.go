@@ -17,11 +17,18 @@ type Runtime struct {
 	ListAgentIDs       func() []string
 	ListDefinitions    func() []Definition
 	GetEnabledChannels func() []string
-	SwitchModel        func(value string) (oldModel string, err error)
 	SwitchChannel      func(value string) error
-	ClearHistory       func() error
-	CompactHistory     func(ctx context.Context) (report string, err error)
-	ResetCooldown      func()
+
+	// GetAgentModels returns the agent's configured candidate models (numbered
+	// from 0 in order) and the index of the session's currently active model.
+	GetAgentModels func() (entries []ModelEntry, active int)
+	// SetActiveModel sets the session's active model to the 0-based index and
+	// returns the selected model's name. Returns an error for an out-of-range
+	// index or when the agent has no selectable models.
+	SetActiveModel func(idx int) (name string, err error)
+	ClearHistory   func() error
+	CompactHistory func(ctx context.Context) (report string, err error)
+	ResetCooldown  func()
 	// ClearCooldown clears the cooldown for a single provider/model and
 	// returns true when an entry existed. Used by `/cooldowns clear <p/m>`
 	// to surface a "no cooldown found" message when the entry was already
@@ -50,6 +57,13 @@ type Runtime struct {
 	// archive exists. Implementations must be cheap (single SQL aggregate or
 	// equivalent) and must not load message bodies.
 	GetArchiveStats func() (count int, first, last time.Time)
+}
+
+// ModelEntry is one configured candidate model for an agent, surfaced by
+// /list models and /model.
+type ModelEntry struct {
+	Name     string
+	Provider string
 }
 
 // CooldownEntry is a single row of the process-wide cooldown snapshot

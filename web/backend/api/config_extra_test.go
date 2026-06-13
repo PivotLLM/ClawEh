@@ -78,7 +78,7 @@ func TestHandleUpdateConfig_ValidationErrorReturns400(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPut, "/api/config", bytes.NewBufferString(`{
 		"agents": {"defaults": {"workspace": "~/.claw/workspace"}, "list": [{"id": "main", "name": "Main", "default": true}]},
-		"providers": [{"name": "openai", "protocol": "openai", "base_url": "https://api.openai.com/v1", "api_key": "k"}],
+		"providers": [{"name": "openai", "protocol": "openai-chat", "base_url": "https://api.openai.com/v1", "api_key": "k"}],
 		"models": [{"model_name": "m", "model": "gpt-4o", "provider": "openai", "enabled": true}],
 		"channels": {"webui": {"enabled": true, "token": ""}}
 	}`))

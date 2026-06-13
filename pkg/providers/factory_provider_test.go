@@ -23,7 +23,7 @@ func TestCreateProviderFromConfig_OpenAI(t *testing.T) {
 	}
 	prov := &config.Provider{
 		Name:     "openai",
-		Protocol: "openai",
+		Protocol: "openai-chat",
 		BaseURL:  "https://api.example.com/v1",
 		APIKey:   "test-key",
 	}
@@ -67,7 +67,7 @@ func TestCreateProviderFromConfig_OpenAIHTTPProviderForVariousEndpoints(t *testi
 			}
 			prov := &config.Provider{
 				Name:     tt.name,
-				Protocol: "openai",
+				Protocol: "openai-chat",
 				BaseURL:  tt.baseURL,
 				APIKey:   "test-key",
 			}
@@ -93,7 +93,7 @@ func TestCreateProviderFromConfig_RawModelIDWithSlash(t *testing.T) {
 	}
 	prov := &config.Provider{
 		Name:     "nvidia",
-		Protocol: "openai",
+		Protocol: "openai-chat",
 		BaseURL:  "https://integrate.api.nvidia.com/v1",
 		APIKey:   "nvapi-test",
 	}
@@ -223,7 +223,7 @@ func TestCreateProviderFromConfig_UnknownProtocol(t *testing.T) {
 }
 
 func TestCreateProviderFromConfig_NilModel(t *testing.T) {
-	prov := &config.Provider{Name: "openai", Protocol: "openai", BaseURL: "https://x/v1", APIKey: "k"}
+	prov := &config.Provider{Name: "openai", Protocol: "openai-chat", BaseURL: "https://x/v1", APIKey: "k"}
 	if _, _, err := CreateProviderFromConfig(nil, prov); err == nil {
 		t.Fatal("CreateProviderFromConfig(nil model) expected error")
 	}
@@ -238,7 +238,7 @@ func TestCreateProviderFromConfig_NilProvider(t *testing.T) {
 
 func TestCreateProviderFromConfig_EmptyModel(t *testing.T) {
 	model := &config.ModelConfig{ModelName: "test-empty", Model: ""}
-	prov := &config.Provider{Name: "openai", Protocol: "openai", BaseURL: "https://x/v1", APIKey: "k"}
+	prov := &config.Provider{Name: "openai", Protocol: "openai-chat", BaseURL: "https://x/v1", APIKey: "k"}
 	if _, _, err := CreateProviderFromConfig(model, prov); err == nil {
 		t.Fatal("CreateProviderFromConfig() expected error for empty model")
 	}
@@ -260,7 +260,7 @@ func TestCreateProviderFromConfig_RequestTimeoutPropagation(t *testing.T) {
 	}
 	prov := &config.Provider{
 		Name:     "openai",
-		Protocol: "openai",
+		Protocol: "openai-chat",
 		BaseURL:  server.URL,
 		APIKey:   "k",
 	}

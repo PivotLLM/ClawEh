@@ -68,7 +68,7 @@ export function ToolSelect({ selected, catalog, onChange }: ToolSelectProps) {
       )}
 
       <div className="space-y-0.5">
-        {catalog.tools.map((tool) => (
+        {[...catalog.tools].sort((a, b) => a.name.localeCompare(b.name)).map((tool) => (
           <label
             key={tool.name}
             className="flex items-center gap-2 cursor-pointer select-none"
@@ -87,7 +87,7 @@ export function ToolSelect({ selected, catalog, onChange }: ToolSelectProps) {
         <div>
           <p className="text-xs font-semibold text-foreground mb-1">MCP Servers</p>
           <div className="space-y-0.5">
-            {catalog.mcp_servers!.map((server) => (
+            {[...catalog.mcp_servers!].sort((a, b) => a.name.localeCompare(b.name)).map((server) => (
               <label
                 key={server.name}
                 className="flex items-center gap-2 cursor-pointer select-none"

@@ -54,6 +54,7 @@ type sessionMeta struct {
 	SummaryModel                string    `json:"summary_model,omitempty"`
 	CompressionCooling          bool      `json:"compression_cooling,omitempty"`
 	CoolingSinceCount           int       `json:"cooling_since_count,omitempty"`
+	ActiveModelIndex            int       `json:"active_model_index,omitempty"`
 
 	// PendingTurn is true while an LLM turn is in flight for this session.
 	// Set before the LLM call; cleared when the final response is persisted.
@@ -886,6 +887,7 @@ type CompactionState struct {
 	CoolingSinceCount           int       `json:"cooling_since_count"`
 	SummaryGeneratedAt          time.Time `json:"summary_generated_at,omitempty"`
 	SummaryModel                string    `json:"summary_model,omitempty"`
+	ActiveModelIndex            int       `json:"active_model_index,omitempty"`
 }
 
 // GetCompactionState reads the compaction counters from the session meta file.
@@ -905,6 +907,7 @@ func (s *JSONLStore) GetCompactionState(sessionKey string) (CompactionState, err
 		CoolingSinceCount:           meta.CoolingSinceCount,
 		SummaryGeneratedAt:          meta.SummaryGeneratedAt,
 		SummaryModel:                meta.SummaryModel,
+		ActiveModelIndex:            meta.ActiveModelIndex,
 	}, nil
 }
 
@@ -924,6 +927,7 @@ func (s *JSONLStore) SetCompactionState(sessionKey string, state CompactionState
 	meta.CoolingSinceCount = state.CoolingSinceCount
 	meta.SummaryGeneratedAt = state.SummaryGeneratedAt
 	meta.SummaryModel = state.SummaryModel
+	meta.ActiveModelIndex = state.ActiveModelIndex
 	meta.UpdatedAt = time.Now()
 	return s.writeMeta(sessionKey, meta)
 }

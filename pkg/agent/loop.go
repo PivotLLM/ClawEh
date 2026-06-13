@@ -74,6 +74,11 @@ type AgentLoop struct {
 	dumpsDir            string
 	startedAt           time.Time
 
+	// activeModelIdx caches the per-session active model index (write-through to
+	// the session store's CompactionState). Key = agent.ID + "\x00" + sessionKey.
+	activeModelMu  sync.Mutex
+	activeModelIdx map[string]int
+
 	// sessionTokenIssuer issues and revokes per-session MCP tokens. Wired in
 	// from the MCP server at startup via SetSessionTokenIssuer; nil when the
 	// MCP host is not configured.
@@ -215,6 +220,7 @@ func NewAgentLoop(
 		evictStop:        make(chan struct{}),
 		evictTTL:         defaultEvictTTL,
 		evictInterval:    defaultEvictInterval,
+		activeModelIdx:   make(map[string]int),
 	}
 
 	// Register runtime-dependent tools via providers (session closures,
@@ -509,9 +515,13 @@ func (al *AgentLoop) HandleCallbackMessage(ctx context.Context, agentID, body st
 	return al.bus.PublishInbound(ctx, msg)
 }
 
-// registerRuntimeTools registers tools that require runtime dependencies (session closures,
-// spawn providers, shared message tool) via the ToolProvider system.
-// Called from NewAgentLoop after the AgentLoop is constructed so closures can capture al.
+// registerRuntimeTools is the single tool-registration entry point: for every
+// agent in the registry it builds the full ToolDeps (session closures, the
+// sub-agent spawner, the shared message tool, dispatcher/fallback) and registers
+// every allowed provider tool exactly once. It runs after the AgentLoop exists so
+// the closures can capture al — at initial construction (NewAgentLoop) and again
+// on config reload (ReloadProviderAndConfig). NewAgentInstance deliberately
+// leaves the registry empty so tools are never double-registered.
 func (al *AgentLoop) registerRuntimeTools(
 	registry *AgentRegistry,
 	provider providers.LLMProvider,
@@ -733,6 +743,14 @@ func (al *AgentLoop) ReloadProviderAndConfig(
 		return fmt.Errorf("context canceled after registry creation: %w", err)
 	}
 
+	// Register tools on the freshly built registry with the full runtime deps —
+	// the same single registration the initial construction performs. Without
+	// this, reloaded agents would have an empty tool set (NewAgentInstance no
+	// longer registers anything). The new fallback chain is built here so it is
+	// shared between the registered spawn tools and the swapped-in al.fallback.
+	newFallback := providers.NewFallbackChain(providers.NewCooldownTracker())
+	al.registerRuntimeTools(registry, provider, al.dispatcher, newFallback)
+
 	// Re-issue MCP isolation tokens for the new registry so the new
 	// agents' context builders carry fresh tokens. Old tokens are
 	// implicitly replaced by Issue(); agents removed from config are
@@ -751,8 +769,9 @@ func (al *AgentLoop) ReloadProviderAndConfig(
 	al.cfg = cfg
 	al.registry = registry
 
-	// Also update fallback chain with new config
-	al.fallback = providers.NewFallbackChain(providers.NewCooldownTracker())
+	// Also update fallback chain with new config (same chain used for the tools
+	// just registered above).
+	al.fallback = newFallback
 
 	al.mu.Unlock()
 
@@ -1536,11 +1555,11 @@ func (al *AgentLoop) runLLMIteration(
 	// failures to the specific agent without correlating timestamps.
 	ctx = providers.WithAgentID(ctx, agent.ID)
 
-	// Determine effective model tier for this conversation turn.
-	// selectCandidates evaluates routing once and the decision is sticky for
-	// all tool-follow-up iterations within the same turn so that a multi-step
-	// tool chain doesn't switch models mid-way through.
-	activeCandidates, activeModel := al.selectCandidates(agent, opts.UserMessage, messages)
+	// Determine effective model for this conversation turn from the session's
+	// active model selection. The decision is sticky for all tool-follow-up
+	// iterations within the same turn so that a multi-step tool chain doesn't
+	// switch models mid-way through.
+	activeCandidates, activeModel := al.selectCandidates(agent, opts.SessionKey)
 
 	// Log which model/provider this turn is routed to.
 	{
@@ -2202,42 +2221,120 @@ func (al *AgentLoop) resolveRunProvider(
 	return agent.Provider, activeModel
 }
 
+// compactionStateStore is the subset of the session store used to persist the
+// per-session active model index inside the CompactionState record.
+type compactionStateStore interface {
+	GetCompactionState(sessionKey string) (memory.CompactionState, error)
+	SetCompactionState(sessionKey string, state memory.CompactionState) error
+}
+
+// activeModelCacheKey builds the cache key for a session's active model index.
+func activeModelCacheKey(agentID, sessionKey string) string {
+	return agentID + "\x00" + sessionKey
+}
+
+// getActiveModelIndex returns the session's active model index, loading it from
+// the session store on a cache miss. The result is clamped to a valid candidate
+// index and cached.
+func (al *AgentLoop) getActiveModelIndex(agent *AgentInstance, sessionKey string) int {
+	key := activeModelCacheKey(agent.ID, sessionKey)
+
+	al.activeModelMu.Lock()
+	if idx, ok := al.activeModelIdx[key]; ok {
+		al.activeModelMu.Unlock()
+		return idx
+	}
+	al.activeModelMu.Unlock()
+
+	idx := 0
+	if store, ok := agent.Sessions.(compactionStateStore); ok {
+		if st, err := store.GetCompactionState(sessionKey); err == nil {
+			idx = st.ActiveModelIndex
+		}
+	}
+	// Clamp to the valid candidate range.
+	if n := len(agent.Candidates); n == 0 {
+		idx = 0
+	} else if idx < 0 {
+		idx = 0
+	} else if idx >= n {
+		idx = n - 1
+	}
+
+	al.activeModelMu.Lock()
+	al.activeModelIdx[key] = idx
+	al.activeModelMu.Unlock()
+	return idx
+}
+
+// setActiveModelIndex sets the session's active model index, updating the cache
+// and persisting it through the session store's CompactionState. Persistence is
+// best-effort: a store error is logged but does not fail the call.
+func (al *AgentLoop) setActiveModelIndex(agent *AgentInstance, sessionKey string, idx int) error {
+	n := len(agent.Candidates)
+	if n == 0 {
+		return fmt.Errorf("this agent has no selectable models")
+	}
+	if idx < 0 || idx >= n {
+		return fmt.Errorf("model index out of range (0-%d)", n-1)
+	}
+
+	key := activeModelCacheKey(agent.ID, sessionKey)
+	al.activeModelMu.Lock()
+	al.activeModelIdx[key] = idx
+	al.activeModelMu.Unlock()
+
+	if store, ok := agent.Sessions.(compactionStateStore); ok {
+		st, err := store.GetCompactionState(sessionKey)
+		if err != nil {
+			logger.WarnCF("agent", "active model index: load compaction state failed",
+				map[string]any{"session_key": sessionKey, "error": err.Error()})
+			return nil
+		}
+		st.ActiveModelIndex = idx
+		if err := store.SetCompactionState(sessionKey, st); err != nil {
+			logger.WarnCF("agent", "active model index: persist failed",
+				map[string]any{"session_key": sessionKey, "error": err.Error()})
+		}
+	}
+	return nil
+}
+
 // selectCandidates returns the model candidates and resolved model name to use
-// for a conversation turn. When model routing is configured and the incoming
-// message scores below the complexity threshold, it returns the light model
-// candidates instead of the primary ones.
+// for a conversation turn, honouring the session's active model selection.
+//
+// The active model (by per-session index, default 0) is moved to the front of a
+// copy of the agent's candidate list; the remaining candidates keep their
+// original order so the fallback chain still applies. agent.Candidates is never
+// mutated.
 //
 // The returned (candidates, model) pair is used for all LLM calls within one
-// turn — tool follow-up iterations use the same tier as the initial call so
-// that a multi-step tool chain doesn't switch models mid-way.
+// turn so that a multi-step tool chain doesn't switch models mid-way.
 func (al *AgentLoop) selectCandidates(
 	agent *AgentInstance,
-	userMsg string,
-	history []providers.Message,
+	sessionKey string,
 ) (candidates []providers.FallbackCandidate, model string) {
-	if agent.Router == nil || len(agent.LightCandidates) == 0 {
+	if len(agent.Candidates) == 0 {
 		return agent.Candidates, agent.Model
 	}
 
-	_, usedLight, score := agent.Router.SelectModel(userMsg, history, agent.Model)
-	if !usedLight {
-		logger.DebugCF("agent", "Model routing: primary model selected",
-			map[string]any{
-				"agent_id":  agent.ID,
-				"score":     score,
-				"threshold": agent.Router.Threshold(),
-			})
-		return agent.Candidates, agent.Model
+	idx := al.getActiveModelIndex(agent, sessionKey)
+
+	// Move-to-front of idx: selected first, then the rest in original order.
+	reordered := make([]providers.FallbackCandidate, 0, len(agent.Candidates))
+	reordered = append(reordered, agent.Candidates[idx])
+	for i := range agent.Candidates {
+		if i == idx {
+			continue
+		}
+		reordered = append(reordered, agent.Candidates[i])
 	}
 
-	logger.InfoCF("agent", "Model routing: light model selected",
-		map[string]any{
-			"agent_id":    agent.ID,
-			"light_model": agent.Router.LightModel(),
-			"score":       score,
-			"threshold":   agent.Router.Threshold(),
-		})
-	return agent.LightCandidates, agent.Router.LightModel()
+	model = reordered[0].Alias
+	if model == "" {
+		model = agent.Model
+	}
+	return reordered, model
 }
 
 // GetStartupInfo returns information about loaded tools and skills for logging.
@@ -2448,10 +2545,27 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 			rt.AgentName = agent.ID
 		}
 		rt.GetModelInfo = func() (name, provider, protocol, apiBase string) {
+			// Resolve the model that is actually active for THIS session (the
+			// /model selection), not just the agent's first candidate, so /status
+			// and /show model reflect the current choice.
+			active := agent.Model
+			if len(agent.Candidates) > 0 {
+				idx := 0
+				if opts != nil {
+					idx = al.getActiveModelIndex(agent, opts.SessionKey)
+				}
+				if idx >= 0 && idx < len(agent.Candidates) {
+					if a := agent.Candidates[idx].Alias; a != "" {
+						active = a
+					} else if m := agent.Candidates[idx].Model; m != "" {
+						active = m
+					}
+				}
+			}
 			// Resolve the configured model so the provider name, wire protocol,
 			// and base URL come from the model's named provider.
-			name = agent.Model
-			if mc, err := cfg.GetModelConfig(agent.Model); err == nil && mc != nil {
+			name = active
+			if mc, err := cfg.GetModelConfig(active); err == nil && mc != nil {
 				if mc.ModelName != "" {
 					name = mc.ModelName
 				} else if mc.Model != "" {
@@ -2465,10 +2579,33 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 			}
 			return name, provider, protocol, apiBase
 		}
-		rt.SwitchModel = func(value string) (string, error) {
-			oldModel := agent.Model
-			agent.Model = value
-			return oldModel, nil
+		rt.GetAgentModels = func() ([]commands.ModelEntry, int) {
+			entries := make([]commands.ModelEntry, 0, len(agent.Candidates))
+			for _, c := range agent.Candidates {
+				name := c.Alias
+				if name == "" {
+					name = c.Model
+				}
+				entries = append(entries, commands.ModelEntry{Name: name, Provider: c.Provider})
+			}
+			active := 0
+			if opts != nil {
+				active = al.getActiveModelIndex(agent, opts.SessionKey)
+			}
+			return entries, active
+		}
+		rt.SetActiveModel = func(idx int) (string, error) {
+			if opts == nil {
+				return "", fmt.Errorf("process options not available")
+			}
+			if err := al.setActiveModelIndex(agent, opts.SessionKey, idx); err != nil {
+				return "", err
+			}
+			name := agent.Candidates[idx].Alias
+			if name == "" {
+				name = agent.Candidates[idx].Model
+			}
+			return name, nil
 		}
 
 		rt.ClearHistory = func() error {

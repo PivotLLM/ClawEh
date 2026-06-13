@@ -42,14 +42,6 @@ type AgentInstance struct {
 	SkillsFilter   []string
 	Candidates     []providers.FallbackCandidate
 
-	// Router is non-nil when model routing is configured and the light model
-	// was successfully resolved. It scores each incoming message and decides
-	// whether to route to LightCandidates or stay with Candidates.
-	Router *routing.Router
-	// LightCandidates holds the resolved provider candidates for the light model.
-	// Pre-computed at agent creation to avoid repeated models lookups at runtime.
-	LightCandidates []providers.FallbackCandidate
-
 	// Config is the agent's configuration, used for per-agent tool allowlists.
 	Config *config.AgentConfig
 }
@@ -65,8 +57,13 @@ func NewAgentInstance(
 
 	agentws.Populate(workspace)
 
-	model := resolveAgentModel(agentCfg, defaults)
-	fallbacks := resolveAgentFallbacks(agentCfg, defaults)
+	models := resolveAgentModels(agentCfg, defaults)
+	model := ""
+	var fallbacks []string
+	if len(models) > 0 {
+		model = models[0]
+		fallbacks = models[1:]
+	}
 
 	restrict := defaults.RestrictToWorkspace
 	_ = restrict // restrict is available to providers via cfg and defaults
@@ -76,31 +73,11 @@ func NewAgentInstance(
 	sessionsDir := filepath.Join(workspace, "sessions")
 	sessions := initSessionStore(sessionsDir)
 
-	// Phase 1: register tools via providers (files, shell, hardware, session history).
-	// Runtime-dependent providers (session closures, spawn, msg) are registered
-	// by the AgentLoop after construction via registerRuntimeTools().
-	phase1Deps := tools.ToolDeps{
-		Cfg:      cfg,
-		AgentCfg: agentCfg,
-		AgentID: func() string {
-			if agentCfg != nil {
-				return routing.NormalizeAgentID(agentCfg.ID)
-			}
-			return routing.DefaultAgentID
-		}(),
-		Workspace: workspace,
-	}
-	for _, p := range tools.GetProviders() {
-		if ok, _ := p.Available(cfg); !ok {
-			continue
-		}
-		builtTools := p.Build(phase1Deps)
-		for _, t := range builtTools {
-			if agentCfg == nil || agentCfg.IsToolAllowed(t.Name()) {
-				toolsRegistry.Register(t)
-			}
-		}
-	}
+	// The registry starts empty. Tools are registered exactly once — after
+	// construction by AgentLoop.registerRuntimeTools, and again on config reload —
+	// so the full runtime deps (session closures, the sub-agent spawner, and the
+	// shared message tool) are present. Registering here too would double-build
+	// every tool and overwrite it, so we intentionally don't.
 
 	mcpDiscoveryActive := cfg.Tools.MCP.Enabled && cfg.Tools.MCP.Discovery.Enabled
 	contextBuilder := NewContextBuilder(workspace).WithToolDiscovery(
@@ -289,10 +266,7 @@ func NewAgentInstance(
 		compressOpts = append(compressOpts, llmcontext.WithArchiveContentMaxBytes(v))
 	}
 	// Resolve fallback candidates
-	modelCfg := providers.ModelConfig{
-		Primary:   model,
-		Fallbacks: fallbacks,
-	}
+	modelCfg := providers.ModelConfig{Models: models}
 	resolveFromModelList := func(raw string) (alias, model, provider string, ok bool) {
 		raw = strings.TrimSpace(raw)
 		if raw == "" || cfg == nil {
@@ -325,28 +299,6 @@ func NewAgentInstance(
 			})
 	}
 
-	// Model routing setup: pre-resolve light model candidates at creation time
-	// to avoid repeated models lookups on every incoming message.
-	var router *routing.Router
-	var lightCandidates []providers.FallbackCandidate
-	if rc := defaults.Routing; rc != nil && rc.Enabled && rc.LightModel != "" {
-		lightModelCfg := providers.ModelConfig{Primary: rc.LightModel}
-		resolved := providers.ResolveCandidatesWithLookup(lightModelCfg, "", resolveFromModelList)
-		if len(resolved) > 0 {
-			router = routing.New(routing.RouterConfig{
-				LightModel: rc.LightModel,
-				Threshold:  rc.Threshold,
-			})
-			lightCandidates = resolved
-		} else {
-			logger.WarnCF("routing", "light_model not found in models — routing disabled",
-				map[string]any{
-					"light_model": rc.LightModel,
-					"agent_id":    agentID,
-				})
-		}
-	}
-
 	// Normalize agentCfg to non-nil so Config is never nil after construction.
 	// A nil config is equivalent to an empty allowlist (deny all tools).
 	// IsToolAllowed() is already nil-safe, but callers should not need to guard on nil.
@@ -355,28 +307,26 @@ func NewAgentInstance(
 	}
 
 	return &AgentInstance{
-		ID:              agentID,
-		Name:            agentName,
-		Model:           model,
-		Fallbacks:       fallbacks,
-		Workspace:       workspace,
-		MaxIterations:   maxIter,
-		MaxTokens:       maxTokens,
-		Temperature:     temperature,
-		ThinkingLevel:   thinkingLevel,
-		NoTools:         noTools,
-		ContextWindow:   contextWindow,
-		CompressOpts:    compressOpts,
-		Provider:        provider,
-		Sessions:        sessions,
-		ContextBuilder:  contextBuilder,
-		Tools:           toolsRegistry,
-		Subagents:       subagents,
-		SkillsFilter:    skillsFilter,
-		Candidates:      candidates,
-		Router:          router,
-		LightCandidates: lightCandidates,
-		Config:          agentCfg,
+		ID:             agentID,
+		Name:           agentName,
+		Model:          model,
+		Fallbacks:      fallbacks,
+		Workspace:      workspace,
+		MaxIterations:  maxIter,
+		MaxTokens:      maxTokens,
+		Temperature:    temperature,
+		ThinkingLevel:  thinkingLevel,
+		NoTools:        noTools,
+		ContextWindow:  contextWindow,
+		CompressOpts:   compressOpts,
+		Provider:       provider,
+		Sessions:       sessions,
+		ContextBuilder: contextBuilder,
+		Tools:          toolsRegistry,
+		Subagents:      subagents,
+		SkillsFilter:   skillsFilter,
+		Candidates:     candidates,
+		Config:         agentCfg,
 	}
 }
 
@@ -397,23 +347,14 @@ func resolveAgentWorkspace(agentCfg *config.AgentConfig, baseDir string) string 
 	return filepath.Join(baseDir, id)
 }
 
-// resolveAgentModel resolves the primary model for an agent.
-func resolveAgentModel(agentCfg *config.AgentConfig, defaults *config.AgentDefaults) string {
-	if agentCfg != nil && agentCfg.Model != nil && strings.TrimSpace(agentCfg.Model.Primary) != "" {
-		return strings.TrimSpace(agentCfg.Model.Primary)
+// resolveAgentModels resolves the ordered model list for an agent: the agent's
+// own Models when non-empty, otherwise the defaults' Models. Index 0 is the
+// preferred model; the rest are fallbacks tried in order.
+func resolveAgentModels(agentCfg *config.AgentConfig, defaults *config.AgentDefaults) []string {
+	if agentCfg != nil && len(agentCfg.Models) > 0 {
+		return agentCfg.Models
 	}
-	return defaults.DefaultModelName()
-}
-
-// resolveAgentFallbacks resolves the fallback models for an agent.
-func resolveAgentFallbacks(agentCfg *config.AgentConfig, defaults *config.AgentDefaults) []string {
-	if agentCfg != nil && agentCfg.Model != nil && agentCfg.Model.Fallbacks != nil {
-		return agentCfg.Model.Fallbacks
-	}
-	if defaults.Model != nil {
-		return defaults.Model.Fallbacks
-	}
-	return nil
+	return defaults.Models
 }
 
 func compilePatterns(patterns []string) []*regexp.Regexp {

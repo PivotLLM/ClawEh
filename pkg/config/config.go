@@ -148,42 +148,6 @@ type AgentsConfig struct {
 	List     []AgentConfig `json:"list,omitempty"`
 }
 
-// AgentModelConfig supports both string and structured model config.
-// String format: "gpt-4" (just primary, no fallbacks)
-// Object format: {"primary": "gpt-4", "fallbacks": ["claude-haiku"]}
-type AgentModelConfig struct {
-	Primary   string   `json:"primary,omitempty"`
-	Fallbacks []string `json:"fallbacks,omitempty"`
-}
-
-func (m *AgentModelConfig) UnmarshalJSON(data []byte) error {
-	var s string
-	if err := json.Unmarshal(data, &s); err == nil {
-		m.Primary = s
-		m.Fallbacks = nil
-		return nil
-	}
-	type raw struct {
-		Primary   string   `json:"primary"`
-		Fallbacks []string `json:"fallbacks"`
-	}
-	var r raw
-	if err := json.Unmarshal(data, &r); err != nil {
-		return err
-	}
-	m.Primary = r.Primary
-	m.Fallbacks = r.Fallbacks
-	return nil
-}
-
-func (m AgentModelConfig) MarshalJSON() ([]byte, error) {
-	type raw struct {
-		Primary   string   `json:"primary,omitempty"`
-		Fallbacks []string `json:"fallbacks,omitempty"`
-	}
-	return json.Marshal(raw{Primary: m.Primary, Fallbacks: m.Fallbacks})
-}
-
 // SummarizationConfig is the global, deployment-wide summarization model chain.
 // Models are tried in order for context compaction across all agents; each entry
 // is a models alias (or a raw protocol/model string). The agent's own
@@ -198,17 +162,17 @@ type SummarizationConfig struct {
 }
 
 type AgentConfig struct {
-	ID          string            `json:"id"`
-	Enabled     *bool             `json:"enabled,omitempty"`
-	Default     bool              `json:"default,omitempty"`
-	Name        string            `json:"name,omitempty"`
-	Workspace   string            `json:"workspace,omitempty"`
-	Model       *AgentModelConfig `json:"model,omitempty"`
-	Skills      []string          `json:"skills,omitempty"`
-	Tools       []string          `json:"tools,omitempty"`
-	Subagents   *SubagentsConfig  `json:"subagents,omitempty"`
-	Callback    *CallbackConfig   `json:"callback,omitempty"`
-	Temperature *float64          `json:"temperature,omitempty"`
+	ID          string           `json:"id"`
+	Enabled     *bool            `json:"enabled,omitempty"`
+	Default     bool             `json:"default,omitempty"`
+	Name        string           `json:"name,omitempty"`
+	Workspace   string           `json:"workspace,omitempty"`
+	Models      []string         `json:"models,omitempty"`
+	Skills      []string         `json:"skills,omitempty"`
+	Tools       []string         `json:"tools,omitempty"`
+	Subagents   *SubagentsConfig `json:"subagents,omitempty"`
+	Callback    *CallbackConfig  `json:"callback,omitempty"`
+	Temperature *float64         `json:"temperature,omitempty"`
 
 	// SummarizationModels is an optional per-agent summarization model chain.
 	// When non-empty, these models are tried first (in order) for this agent's
@@ -280,8 +244,8 @@ func (a *AgentConfig) IsToolAllowed(name string) bool {
 }
 
 type SubagentsConfig struct {
-	AllowAgents []string          `json:"allow_agents,omitempty"`
-	Model       *AgentModelConfig `json:"model,omitempty"`
+	AllowAgents []string `json:"allow_agents,omitempty"`
+	Models      []string `json:"models,omitempty"`
 }
 
 // CallbackConfig controls the rotating-token callback system for an agent.
@@ -315,49 +279,36 @@ type SessionConfig struct {
 	IdentityLinks map[string][]string `json:"identity_links,omitempty"`
 }
 
-// RoutingConfig controls the intelligent model routing feature.
-// When enabled, each incoming message is scored against structural features
-// (message length, code blocks, tool call history, conversation depth, attachments).
-// Messages scoring below Threshold are sent to LightModel; all others use the
-// agent's primary model. This reduces cost and latency for simple tasks without
-// requiring any keyword matching — all scoring is language-agnostic.
-type RoutingConfig struct {
-	Enabled    bool    `json:"enabled"`
-	LightModel string  `json:"light_model"` // model_name from models to use for simple tasks
-	Threshold  float64 `json:"threshold"`   // complexity score in [0,1]; score >= threshold → primary model
-}
-
 type AgentDefaults struct {
 	RestrictToWorkspace bool `json:"restrict_to_workspace"           env:"CLAW_AGENTS_DEFAULTS_RESTRICT_TO_WORKSPACE"`
 	// StreamToolActivity, when true, sends the model's inter-tool narration and
 	// each tool's user-facing output to the channel as it happens. When false
 	// (default) the user receives only the final answer, not the play-by-play.
-	StreamToolActivity         bool              `json:"stream_tool_activity,omitempty"  env:"CLAW_AGENTS_DEFAULTS_STREAM_TOOL_ACTIVITY"`
-	AllowReadOutsideWorkspace  bool              `json:"allow_read_outside_workspace"    env:"CLAW_AGENTS_DEFAULTS_ALLOW_READ_OUTSIDE_WORKSPACE"`
-	Model                      *AgentModelConfig `json:"model,omitempty"`
-	ImageModel                 string            `json:"image_model,omitempty"           env:"CLAW_AGENTS_DEFAULTS_IMAGE_MODEL"`
-	ImageModelFallbacks        []string          `json:"image_model_fallbacks,omitempty"`
-	RequestTimeout             int               `json:"request_timeout,omitempty"       env:"CLAW_AGENTS_DEFAULTS_REQUEST_TIMEOUT"`
-	MaxTokens                  int               `json:"max_tokens"                      env:"CLAW_AGENTS_DEFAULTS_MAX_TOKENS"`
-	Temperature                *float64          `json:"temperature,omitempty"           env:"CLAW_AGENTS_DEFAULTS_TEMPERATURE"`
-	MaxToolIterations          int               `json:"max_tool_iterations"             env:"CLAW_AGENTS_DEFAULTS_MAX_TOOL_ITERATIONS"`
-	ContextWindow              int               `json:"context_window,omitempty"        env:"CLAW_AGENTS_DEFAULTS_CONTEXT_WINDOW"`
-	MaxMediaSize               int               `json:"max_media_size,omitempty"        env:"CLAW_AGENTS_DEFAULTS_MAX_MEDIA_SIZE"`
-	CompressMinPercent         int               `json:"compress_min_percent,omitempty"          env:"CLAW_AGENTS_DEFAULTS_COMPRESS_MIN_PERCENT"`
-	CompressNormalPercent      int               `json:"compress_normal_percent,omitempty"       env:"CLAW_AGENTS_DEFAULTS_COMPRESS_NORMAL_PERCENT"`
-	CompressSafetyPercent      int               `json:"compress_safety_percent,omitempty"       env:"CLAW_AGENTS_DEFAULTS_COMPRESS_SAFETY_PERCENT"`
-	CompressMessageThreshold   int               `json:"compress_message_threshold,omitempty"    env:"CLAW_AGENTS_DEFAULTS_COMPRESS_MESSAGE_THRESHOLD"`
-	CompressRetainTokenPercent int               `json:"compress_retain_token_percent,omitempty" env:"CLAW_AGENTS_DEFAULTS_COMPRESS_RETAIN_TOKEN_PERCENT"`
-	CompressRetainMinMessages  int               `json:"compress_retain_min_messages,omitempty"  env:"CLAW_AGENTS_DEFAULTS_COMPRESS_RETAIN_MIN_MESSAGES"`
-	CompressCharsPerToken      float64           `json:"compress_chars_per_token,omitempty"      env:"CLAW_AGENTS_DEFAULTS_COMPRESS_CHARS_PER_TOKEN"`
-	CompressTokenSafetyMargin  float64           `json:"compress_token_safety_margin,omitempty"  env:"CLAW_AGENTS_DEFAULTS_COMPRESS_TOKEN_SAFETY_MARGIN"`
-	ArchiveMessageCount        int               `json:"archive_message_count,omitempty"         env:"CLAW_AGENTS_DEFAULTS_ARCHIVE_MESSAGE_COUNT"`
-	ArchiveDays                int               `json:"archive_days,omitempty"                  env:"CLAW_AGENTS_DEFAULTS_ARCHIVE_DAYS"`
-	SummaryMaxCount            int               `json:"summary_max_count,omitempty"             env:"CLAW_AGENTS_DEFAULTS_SUMMARY_MAX_COUNT"`
-	SummaryRetentionDays       int               `json:"summary_retention_days,omitempty"        env:"CLAW_AGENTS_DEFAULTS_SUMMARY_RETENTION_DAYS"`
-	ArchiveContentMaxBytes     int               `json:"archive_content_max_bytes,omitempty"     env:"CLAW_AGENTS_DEFAULTS_ARCHIVE_CONTENT_MAX_BYTES"`
-	DefaultTools               []string          `json:"default_tools,omitempty"`
-	Routing                    *RoutingConfig    `json:"routing,omitempty"`
+	StreamToolActivity         bool     `json:"stream_tool_activity,omitempty"  env:"CLAW_AGENTS_DEFAULTS_STREAM_TOOL_ACTIVITY"`
+	AllowReadOutsideWorkspace  bool     `json:"allow_read_outside_workspace"    env:"CLAW_AGENTS_DEFAULTS_ALLOW_READ_OUTSIDE_WORKSPACE"`
+	Models                     []string `json:"models,omitempty"`
+	ImageModel                 string   `json:"image_model,omitempty"           env:"CLAW_AGENTS_DEFAULTS_IMAGE_MODEL"`
+	ImageModelFallbacks        []string `json:"image_model_fallbacks,omitempty"`
+	RequestTimeout             int      `json:"request_timeout,omitempty"       env:"CLAW_AGENTS_DEFAULTS_REQUEST_TIMEOUT"`
+	MaxTokens                  int      `json:"max_tokens"                      env:"CLAW_AGENTS_DEFAULTS_MAX_TOKENS"`
+	Temperature                *float64 `json:"temperature,omitempty"           env:"CLAW_AGENTS_DEFAULTS_TEMPERATURE"`
+	MaxToolIterations          int      `json:"max_tool_iterations"             env:"CLAW_AGENTS_DEFAULTS_MAX_TOOL_ITERATIONS"`
+	ContextWindow              int      `json:"context_window,omitempty"        env:"CLAW_AGENTS_DEFAULTS_CONTEXT_WINDOW"`
+	MaxMediaSize               int      `json:"max_media_size,omitempty"        env:"CLAW_AGENTS_DEFAULTS_MAX_MEDIA_SIZE"`
+	CompressMinPercent         int      `json:"compress_min_percent,omitempty"          env:"CLAW_AGENTS_DEFAULTS_COMPRESS_MIN_PERCENT"`
+	CompressNormalPercent      int      `json:"compress_normal_percent,omitempty"       env:"CLAW_AGENTS_DEFAULTS_COMPRESS_NORMAL_PERCENT"`
+	CompressSafetyPercent      int      `json:"compress_safety_percent,omitempty"       env:"CLAW_AGENTS_DEFAULTS_COMPRESS_SAFETY_PERCENT"`
+	CompressMessageThreshold   int      `json:"compress_message_threshold,omitempty"    env:"CLAW_AGENTS_DEFAULTS_COMPRESS_MESSAGE_THRESHOLD"`
+	CompressRetainTokenPercent int      `json:"compress_retain_token_percent,omitempty" env:"CLAW_AGENTS_DEFAULTS_COMPRESS_RETAIN_TOKEN_PERCENT"`
+	CompressRetainMinMessages  int      `json:"compress_retain_min_messages,omitempty"  env:"CLAW_AGENTS_DEFAULTS_COMPRESS_RETAIN_MIN_MESSAGES"`
+	CompressCharsPerToken      float64  `json:"compress_chars_per_token,omitempty"      env:"CLAW_AGENTS_DEFAULTS_COMPRESS_CHARS_PER_TOKEN"`
+	CompressTokenSafetyMargin  float64  `json:"compress_token_safety_margin,omitempty"  env:"CLAW_AGENTS_DEFAULTS_COMPRESS_TOKEN_SAFETY_MARGIN"`
+	ArchiveMessageCount        int      `json:"archive_message_count,omitempty"         env:"CLAW_AGENTS_DEFAULTS_ARCHIVE_MESSAGE_COUNT"`
+	ArchiveDays                int      `json:"archive_days,omitempty"                  env:"CLAW_AGENTS_DEFAULTS_ARCHIVE_DAYS"`
+	SummaryMaxCount            int      `json:"summary_max_count,omitempty"             env:"CLAW_AGENTS_DEFAULTS_SUMMARY_MAX_COUNT"`
+	SummaryRetentionDays       int      `json:"summary_retention_days,omitempty"        env:"CLAW_AGENTS_DEFAULTS_SUMMARY_RETENTION_DAYS"`
+	ArchiveContentMaxBytes     int      `json:"archive_content_max_bytes,omitempty"     env:"CLAW_AGENTS_DEFAULTS_ARCHIVE_CONTENT_MAX_BYTES"`
+	DefaultTools               []string `json:"default_tools,omitempty"`
 }
 
 const DefaultMaxMediaSize = 20 * 1024 * 1024 // 20 MB
@@ -369,20 +320,21 @@ func (d *AgentDefaults) GetMaxMediaSize() int {
 	return DefaultMaxMediaSize
 }
 
-// DefaultModelName returns the primary model name, or "" if unset.
+// DefaultModelName returns the first model in the list, or "" if unset.
 func (d *AgentDefaults) DefaultModelName() string {
-	if d.Model == nil {
+	if len(d.Models) == 0 {
 		return ""
 	}
-	return d.Model.Primary
+	return d.Models[0]
 }
 
-// SetDefaultModel sets the primary model, preserving any existing fallbacks.
+// SetDefaultModel makes modelName the first entry in the model list,
+// preserving any existing remaining entries.
 func (d *AgentDefaults) SetDefaultModel(modelName string) {
-	if d.Model == nil {
-		d.Model = &AgentModelConfig{Primary: modelName}
+	if len(d.Models) == 0 {
+		d.Models = []string{modelName}
 	} else {
-		d.Model.Primary = modelName
+		d.Models[0] = modelName
 	}
 }
 
@@ -981,16 +933,11 @@ func LoadConfig(path string) (*Config, error) {
 	// Migrate legacy channel config fields to new unified structures
 	cfg.migrateChannelConfigs()
 
-	// Auto-migrate: if only legacy providers config exists, convert to models
-	// Validate providers, then models (including that each model's provider
-	// reference resolves).
-	if err := cfg.ValidateProviders(); err != nil {
-		return nil, err
-	}
-	if err := cfg.ValidateModels(); err != nil {
-		return nil, err
-	}
-
+	// Note: provider/model validation is intentionally NOT fatal here. LoadConfig
+	// returns the full parsed config so the WebUI can display and repair invalid
+	// entries (a bad provider must not make the config unreadable). The gateway
+	// calls PruneInvalid() at startup to drop invalid entries with a WARN and run
+	// on the survivors; the WebUI save path validates strictly before persisting.
 	return cfg, nil
 }
 
@@ -1198,7 +1145,8 @@ func (c *Config) findMatches(modelName string) []ModelConfig {
 // validProtocols is the set of wire protocols a Provider may declare. Each maps
 // to an internal provider implementation in pkg/providers.
 var validProtocols = map[string]struct{}{
-	"openai":             {},
+	"openai-chat":        {},
+	"openai-responses":   {},
 	"azure":              {},
 	"anthropic":          {},
 	"anthropic-messages": {},
@@ -1209,7 +1157,8 @@ var validProtocols = map[string]struct{}{
 
 // httpProtocols are the protocols that require a base_url.
 var httpProtocols = map[string]struct{}{
-	"openai":             {},
+	"openai-chat":        {},
+	"openai-responses":   {},
 	"azure":              {},
 	"anthropic":          {},
 	"anthropic-messages": {},
@@ -1297,6 +1246,129 @@ func (c *Config) ValidateModels() error {
 		}
 	}
 	return nil
+}
+
+// RenameModelReferences repoints every reference to a model alias from oldName
+// to newName across agent defaults, per-agent model chains, image models, and
+// the global summarization chain. Used when a model's
+// model_name changes via the WebUI so existing references are not orphaned.
+// No-op when oldName is empty or unchanged. Mutates in-memory config only.
+func (c *Config) RenameModelReferences(oldName, newName string) {
+	if oldName == "" || oldName == newName {
+		return
+	}
+	renameInSlice(c.Agents.Defaults.Models, oldName, newName)
+	c.Agents.Defaults.ImageModel = renameScalar(c.Agents.Defaults.ImageModel, oldName, newName)
+	renameInSlice(c.Agents.Defaults.ImageModelFallbacks, oldName, newName)
+	renameInSlice(c.Summarization.Models, oldName, newName)
+	for i := range c.Agents.List {
+		renameInSlice(c.Agents.List[i].Models, oldName, newName)
+		renameInSlice(c.Agents.List[i].SummarizationModels, oldName, newName)
+	}
+}
+
+func renameScalar(s, oldName, newName string) string {
+	if s == oldName {
+		return newName
+	}
+	return s
+}
+
+func renameInSlice(ss []string, oldName, newName string) {
+	for i := range ss {
+		if ss[i] == oldName {
+			ss[i] = newName
+		}
+	}
+}
+
+// ValidateProvider validates a single provider (the one at idx) without
+// rejecting the whole config because OTHER providers are invalid. It checks the
+// provider's own name, protocol, and base_url, plus that its name does not
+// collide with another provider. The per-provider WebUI endpoints use this so an
+// operator can repair one entry at a time (e.g. during a protocol migration)
+// even while other entries remain invalid.
+func (c *Config) ValidateProvider(idx int) error {
+	if idx < 0 || idx >= len(c.Providers) {
+		return fmt.Errorf("provider index %d out of range", idx)
+	}
+	p := &c.Providers[idx]
+	if strings.TrimSpace(p.Name) == "" {
+		return fmt.Errorf("provider name is required")
+	}
+	for i := range c.Providers {
+		if i != idx && c.Providers[i].Name == p.Name {
+			return fmt.Errorf("duplicate provider name %q", p.Name)
+		}
+	}
+	if _, ok := validProtocols[p.Protocol]; !ok {
+		return fmt.Errorf("provider %q: unknown protocol %q", p.Name, p.Protocol)
+	}
+	if _, http := httpProtocols[p.Protocol]; http && p.BaseURL == "" {
+		return fmt.Errorf("provider %q: base_url is required for protocol %q", p.Name, p.Protocol)
+	}
+	return nil
+}
+
+// PruneInvalid removes providers and models that fail validation, logging a WARN
+// for each dropped entry, and returns how many of each were removed. It is the
+// lenient counterpart to ValidateProviders/ValidateModels: the gateway calls it
+// at startup so a single bad entry (e.g. a stale/unknown protocol, or a model
+// pointing at a missing provider) degrades gracefully instead of aborting the
+// whole process. It mutates the in-memory config only — it never writes to disk.
+func (c *Config) PruneInvalid() (droppedProviders, droppedModels int) {
+	seen := make(map[string]struct{}, len(c.Providers))
+	valid := make(map[string]struct{}, len(c.Providers))
+	keptProviders := make([]Provider, 0, len(c.Providers))
+	for i := range c.Providers {
+		p := c.Providers[i]
+		var reason string
+		if strings.TrimSpace(p.Name) == "" {
+			reason = "name is required"
+		} else if _, dup := seen[p.Name]; dup {
+			reason = "duplicate provider name"
+		} else if _, ok := validProtocols[p.Protocol]; !ok {
+			reason = fmt.Sprintf("unknown protocol %q", p.Protocol)
+		} else if _, http := httpProtocols[p.Protocol]; http && p.BaseURL == "" {
+			reason = fmt.Sprintf("base_url is required for protocol %q", p.Protocol)
+		}
+		if reason != "" {
+			logger.WarnCF("config", "ignoring invalid provider", map[string]any{
+				"provider": p.Name,
+				"reason":   reason,
+			})
+			droppedProviders++
+			continue
+		}
+		seen[p.Name] = struct{}{}
+		valid[p.Name] = struct{}{}
+		keptProviders = append(keptProviders, p)
+	}
+	c.Providers = keptProviders
+
+	keptModels := make([]ModelConfig, 0, len(c.Models))
+	for i := range c.Models {
+		m := c.Models[i]
+		if err := m.Validate(); err != nil {
+			logger.WarnCF("config", "ignoring invalid model", map[string]any{
+				"model":  m.ModelName,
+				"reason": err.Error(),
+			})
+			droppedModels++
+			continue
+		}
+		if _, ok := valid[m.Provider]; !ok {
+			logger.WarnCF("config", "ignoring model with unknown provider", map[string]any{
+				"model":    m.ModelName,
+				"provider": m.Provider,
+			})
+			droppedModels++
+			continue
+		}
+		keptModels = append(keptModels, m)
+	}
+	c.Models = keptModels
+	return droppedProviders, droppedModels
 }
 
 func MergeAPIKeys(apiKey string, apiKeys []string) []string {

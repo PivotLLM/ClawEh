@@ -11,61 +11,30 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/global"
 )
 
-func TestAgentModelConfig_UnmarshalString(t *testing.T) {
-	var m AgentModelConfig
-	if err := json.Unmarshal([]byte(`"gpt-4"`), &m); err != nil {
-		t.Fatalf("unmarshal string: %v", err)
-	}
-	if m.Primary != "gpt-4" {
-		t.Errorf("Primary = %q, want 'gpt-4'", m.Primary)
-	}
-	if m.Fallbacks != nil {
-		t.Errorf("Fallbacks = %v, want nil", m.Fallbacks)
-	}
-}
-
-func TestAgentModelConfig_UnmarshalObject(t *testing.T) {
-	var m AgentModelConfig
-	data := `{"primary": "claude-opus", "fallbacks": ["gpt-4o-mini", "haiku"]}`
-	if err := json.Unmarshal([]byte(data), &m); err != nil {
-		t.Fatalf("unmarshal object: %v", err)
-	}
-	if m.Primary != "claude-opus" {
-		t.Errorf("Primary = %q, want 'claude-opus'", m.Primary)
-	}
-	if len(m.Fallbacks) != 2 {
-		t.Fatalf("Fallbacks len = %d, want 2", len(m.Fallbacks))
-	}
-	if m.Fallbacks[0] != "gpt-4o-mini" || m.Fallbacks[1] != "haiku" {
-		t.Errorf("Fallbacks = %v", m.Fallbacks)
-	}
-}
-
-func TestAgentModelConfig_MarshalString(t *testing.T) {
-	m := AgentModelConfig{Primary: "gpt-4"}
-	data, err := json.Marshal(m)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	var result map[string]any
-	if err := json.Unmarshal(data, &result); err != nil {
+func TestAgentModels_RoundTrip(t *testing.T) {
+	var a AgentConfig
+	data := `{"id": "x", "models": ["claude-opus", "gpt-4o-mini", "haiku"]}`
+	if err := json.Unmarshal([]byte(data), &a); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if result["primary"] != "gpt-4" {
-		t.Errorf("primary = %v, want gpt-4", result["primary"])
+	if len(a.Models) != 3 {
+		t.Fatalf("Models len = %d, want 3", len(a.Models))
 	}
-}
+	if a.Models[0] != "claude-opus" || a.Models[1] != "gpt-4o-mini" || a.Models[2] != "haiku" {
+		t.Errorf("Models = %v", a.Models)
+	}
 
-func TestAgentModelConfig_MarshalObject(t *testing.T) {
-	m := AgentModelConfig{Primary: "claude-opus", Fallbacks: []string{"haiku"}}
-	data, err := json.Marshal(m)
+	out, err := json.Marshal(a)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
 	var result map[string]any
-	json.Unmarshal(data, &result)
-	if result["primary"] != "claude-opus" {
-		t.Errorf("primary = %v", result["primary"])
+	if err := json.Unmarshal(out, &result); err != nil {
+		t.Fatalf("unmarshal result: %v", err)
+	}
+	models, ok := result["models"].([]any)
+	if !ok || len(models) != 3 || models[0] != "claude-opus" {
+		t.Errorf("models = %v", result["models"])
 	}
 }
 
@@ -83,15 +52,12 @@ func TestAgentConfig_FullParse(t *testing.T) {
 					"id": "sales",
 					"default": true,
 					"name": "Sales Bot",
-					"model": "gpt-4"
+					"models": ["gpt-4"]
 				},
 				{
 					"id": "support",
 					"name": "Support Bot",
-					"model": {
-						"primary": "claude-opus",
-						"fallbacks": ["haiku"]
-					},
+					"models": ["claude-opus", "haiku"],
 					"subagents": {
 						"allow_agents": ["sales"]
 					}
@@ -129,19 +95,16 @@ func TestAgentConfig_FullParse(t *testing.T) {
 	if sales.ID != "sales" || !sales.Default || sales.Name != "Sales Bot" {
 		t.Errorf("sales = %+v", sales)
 	}
-	if sales.Model == nil || sales.Model.Primary != "gpt-4" {
-		t.Errorf("sales.Model = %+v", sales.Model)
+	if len(sales.Models) != 1 || sales.Models[0] != "gpt-4" {
+		t.Errorf("sales.Models = %v", sales.Models)
 	}
 
 	support := cfg.Agents.List[1]
 	if support.ID != "support" || support.Name != "Support Bot" {
 		t.Errorf("support = %+v", support)
 	}
-	if support.Model == nil || support.Model.Primary != "claude-opus" {
-		t.Errorf("support.Model = %+v", support.Model)
-	}
-	if len(support.Model.Fallbacks) != 1 || support.Model.Fallbacks[0] != "haiku" {
-		t.Errorf("support.Model.Fallbacks = %v", support.Model.Fallbacks)
+	if len(support.Models) != 2 || support.Models[0] != "claude-opus" || support.Models[1] != "haiku" {
+		t.Errorf("support.Models = %v", support.Models)
 	}
 	if support.Subagents == nil || len(support.Subagents.AllowAgents) != 1 {
 		t.Errorf("support.Subagents = %+v", support.Subagents)
@@ -225,18 +188,19 @@ func TestDefaultConfig_Retention(t *testing.T) {
 	}
 }
 
-// TestDefaultConfig_Model verifies the default model is set with primary and fallback
+// TestDefaultConfig_Model verifies the default model list is ordered with
+// "Claude CLI" first and "Codex CLI" second.
 func TestDefaultConfig_Model(t *testing.T) {
 	cfg := DefaultConfig()
 
-	if cfg.Agents.Defaults.Model == nil {
-		t.Fatal("Model should not be nil in default config")
+	if len(cfg.Agents.Defaults.Models) != 2 {
+		t.Fatalf("Models len = %d, want 2", len(cfg.Agents.Defaults.Models))
 	}
-	if cfg.Agents.Defaults.Model.Primary != "claude-cli" {
-		t.Errorf("Primary = %q, want claude-cli", cfg.Agents.Defaults.Model.Primary)
+	if cfg.Agents.Defaults.Models[0] != "Claude CLI" {
+		t.Errorf("Models[0] = %q, want Claude CLI", cfg.Agents.Defaults.Models[0])
 	}
-	if len(cfg.Agents.Defaults.Model.Fallbacks) == 0 || cfg.Agents.Defaults.Model.Fallbacks[0] != "codex-cli" {
-		t.Errorf("Fallbacks = %v, want [codex-cli]", cfg.Agents.Defaults.Model.Fallbacks)
+	if cfg.Agents.Defaults.Models[1] != "Codex CLI" {
+		t.Errorf("Models[1] = %q, want Codex CLI", cfg.Agents.Defaults.Models[1])
 	}
 }
 
@@ -283,7 +247,7 @@ func TestDefaultConfig_Gateway(t *testing.T) {
 func TestDefaultConfig_Providers(t *testing.T) {
 	cfg := DefaultConfig()
 
-	for _, name := range []string{"anthropic", "openai", "openrouter"} {
+	for _, name := range []string{"Anthropic", "OpenAI", "OpenRouter Chat"} {
 		prov, err := cfg.GetProvider(name)
 		if err != nil {
 			t.Fatalf("GetProvider(%q): %v", name, err)
@@ -393,7 +357,7 @@ func TestConfig_Complete(t *testing.T) {
 	if cfg.WorkspacePath() == "" {
 		t.Error("Workspace should not be empty")
 	}
-	if cfg.Agents.Defaults.Model == nil || cfg.Agents.Defaults.Model.Primary == "" {
+	if len(cfg.Agents.Defaults.Models) == 0 || cfg.Agents.Defaults.Models[0] == "" {
 		t.Error("Model should be set in default config")
 	}
 	if cfg.Agents.Defaults.Temperature != nil {
@@ -457,7 +421,7 @@ func TestLoadConfig_WebToolsProxy(t *testing.T) {
 	configPath := filepath.Join(tmpDir, "config.json")
 	configJSON := `{
   "agents": {"defaults":{"workspace":"./workspace","model":"gpt4","max_tokens":8192,"max_tool_iterations":20}},
-  "providers": [{"name":"openai","protocol":"openai","base_url":"https://api.openai.com/v1","api_key":"x"}],
+  "providers": [{"name":"openai","protocol":"openai-chat","base_url":"https://api.openai.com/v1","api_key":"x"}],
   "models": [{"model_name":"gpt4","model":"gpt-5.4","provider":"openai","enabled":true}],
   "tools": {"web":{"proxy":"http://127.0.0.1:7890"}}
 }`
@@ -650,7 +614,7 @@ func TestMCPHostEffectivelyEnabled(t *testing.T) {
 		{Name: "claude-cli", Protocol: "claude-cli"},
 		{Name: "codex-cli", Protocol: "codex-cli"},
 		{Name: "gemini-cli", Protocol: "gemini-cli"},
-		{Name: "openai", Protocol: "openai", BaseURL: "https://api.openai.com/v1"},
+		{Name: "openai", Protocol: "openai-chat", BaseURL: "https://api.openai.com/v1"},
 		{Name: "anthropic", Protocol: "anthropic", BaseURL: "https://api.anthropic.com/v1"},
 	}
 	tests := []struct {

@@ -189,6 +189,7 @@ func (h *Handler) handleUpdateModel(w http.ResponseWriter, r *http.Request) {
 	// Start from the existing entry so fields not present in the request body
 	// (e.g. enabled, extra_args, strict_compat) keep their current values.
 	mc := cfg.Models[idx]
+	oldName := mc.ModelName
 	if err = json.Unmarshal(body, &mc); err != nil {
 		http.Error(w, fmt.Sprintf("Invalid JSON: %v", err), http.StatusBadRequest)
 		return
@@ -202,8 +203,23 @@ func (h *Handler) handleUpdateModel(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Validation error: %v", err), http.StatusBadRequest)
 		return
 	}
+	// Reject a model_name that collides with a different model.
+	if mc.ModelName != oldName {
+		for i := range cfg.Models {
+			if i != idx && cfg.Models[i].ModelName == mc.ModelName {
+				http.Error(w, fmt.Sprintf("Validation error: model name %q already in use", mc.ModelName), http.StatusBadRequest)
+				return
+			}
+		}
+	}
 
 	cfg.Models[idx] = mc
+
+	// If the alias was renamed, repoint every reference (agent defaults,
+	// per-agent chains, routing, image models, summarization) so nothing orphans.
+	if mc.ModelName != oldName {
+		cfg.RenameModelReferences(oldName, mc.ModelName)
+	}
 
 	if err := config.SaveConfig(h.configPath, cfg); err != nil {
 		http.Error(w, fmt.Sprintf("Failed to save config: %v", err), http.StatusInternalServerError)

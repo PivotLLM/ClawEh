@@ -98,6 +98,16 @@ func gatewayCmd(debug bool) error {
 	// Acquire PID lock before connecting to any external service.
 	// If another instance is already running this exits immediately with a clear error.
 	baseDir := internal.GetClawHome()
+
+	// Enable file logging as early as possible so startup, config load, prune
+	// warnings, and any fatal error are captured in claw.log — not just on the
+	// console / journal. The configured format/level are re-applied below once
+	// the config is loaded.
+	logPath := filepath.Join(baseDir, "logs", "claw.log")
+	if err := logger.EnableFileLogging(logPath, false); err != nil {
+		logger.WarnCF("gateway", "Failed to enable file logging", map[string]any{"path": logPath, "error": err.Error()})
+	}
+
 	lockFile, err := acquireLock(baseDir)
 	if err != nil {
 		return fmt.Errorf("startup aborted: %w", err)
@@ -112,12 +122,24 @@ func gatewayCmd(debug bool) error {
 		return fmt.Errorf("error loading config: %w", err)
 	}
 
-	// Apply logging config (debug flag overrides level)
+	// Drop invalid providers/models (e.g. a stale/unknown protocol, or a model
+	// pointing at a missing provider) with a WARN and continue on the survivors,
+	// rather than failing startup over one bad entry. The on-disk config is left
+	// untouched so it can be repaired via the WebUI.
+	if dp, dm := cfg.PruneInvalid(); dp > 0 || dm > 0 {
+		logger.WarnCF("gateway", "ignored invalid config entries; continuing with the rest", map[string]any{
+			"providers_dropped": dp,
+			"models_dropped":    dm,
+		})
+	}
+
+	// Re-apply logging config (debug flag overrides level).
 	if cfg.Logging.File {
-		logPath := filepath.Join(internal.GetClawHome(), "logs", "claw.log")
 		if err := logger.EnableFileLogging(logPath, cfg.Logging.JSON); err != nil {
 			logger.WarnCF("gateway", "Failed to enable file logging", map[string]any{"path": logPath, "error": err.Error()})
 		}
+	} else {
+		logger.DisableFileLogging()
 	}
 	if !cfg.Logging.Console {
 		logger.DisableConsole()

@@ -14,6 +14,7 @@ import (
 	anthropicmessages "github.com/PivotLLM/ClawEh/pkg/providers/anthropic_messages"
 	"github.com/PivotLLM/ClawEh/pkg/providers/azure"
 	"github.com/PivotLLM/ClawEh/pkg/providers/openai_compat"
+	"github.com/PivotLLM/ClawEh/pkg/providers/openai_responses"
 )
 
 // getCredential is the auth-store lookup used by the Claude OAuth provider.
@@ -51,6 +52,23 @@ func compatOpts(model *config.ModelConfig, prov *config.Provider) []openai_compa
 	}
 }
 
+// responsesOpts builds the openai_responses options from the provider- and
+// model-scoped knobs that apply to the Responses API (a subset of compatOpts —
+// no max_tokens_field/strict_compat/strict_alternation, which are chat-only).
+func responsesOpts(model *config.ModelConfig, prov *config.Provider) []openai_responses.Option {
+	return []openai_responses.Option{
+		openai_responses.WithRequestTimeout(time.Duration(model.RequestTimeout) * time.Second),
+		openai_responses.WithNoParallelToolCalls(prov.NoParallelToolCalls),
+		openai_responses.WithReasoningEffort(model.ReasoningEffort),
+		openai_responses.WithExtraBody(model.ExtraBody),
+		openai_responses.WithDropParams(model.DropParams),
+		openai_responses.WithModelLabel(model.ModelName),
+		openai_responses.WithProtocol(prov.Protocol),
+		openai_responses.WithResponseFormatJSONCapable(prov.ResponseFormatJSON),
+		openai_responses.WithResponseLogFile(model.ResponseLogFile),
+	}
+}
+
 // CreateProviderFromConfig builds the LLM provider for a model reached through
 // the given named provider. prov supplies the wire protocol, base URL,
 // credentials, and endpoint-scoped knobs; model supplies the raw model id and
@@ -69,8 +87,11 @@ func CreateProviderFromConfig(model *config.ModelConfig, prov *config.Provider) 
 	modelID := model.Model
 
 	switch prov.Protocol {
-	case "openai":
+	case "openai-chat":
 		return NewHTTPProviderWithOptions(prov.APIKey, prov.BaseURL, prov.Proxy, compatOpts(model, prov)...), modelID, nil
+
+	case "openai-responses":
+		return openai_responses.NewProvider(prov.APIKey, prov.BaseURL, prov.Proxy, responsesOpts(model, prov)...), modelID, nil
 
 	case "azure":
 		return azure.NewProviderWithTimeout(prov.APIKey, prov.BaseURL, prov.Proxy, model.RequestTimeout), modelID, nil

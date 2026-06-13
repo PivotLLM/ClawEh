@@ -170,7 +170,7 @@ export function EditProviderSheet({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {PROTOCOL_OPTIONS.map((opt) => (
+                  {[...PROTOCOL_OPTIONS].sort((a, b) => a.localeCompare(b)).map((opt) => (
                     <SelectItem key={opt} value={opt}>
                       {opt}
                     </SelectItem>

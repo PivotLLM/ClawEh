@@ -29,7 +29,7 @@ func testCfg(agents []config.AgentConfig) *config.Config {
 		Agents: config.AgentsConfig{
 			BaseDir: "/tmp/claw-test-registry",
 			Defaults: config.AgentDefaults{
-				Model:             &config.AgentModelConfig{Primary: "gpt-4"},
+				Models:            []string{"gpt-4"},
 				MaxTokens:         8192,
 				MaxToolIterations: 10,
 			},
@@ -154,9 +154,8 @@ func TestAgentRegistry_CanSpawnSubagent_Wildcard(t *testing.T) {
 }
 
 func TestAgentInstance_Model(t *testing.T) {
-	model := &config.AgentModelConfig{Primary: "claude-opus"}
 	cfg := testCfg([]config.AgentConfig{
-		{ID: "custom", Default: true, Model: model},
+		{ID: "custom", Default: true, Models: []string{"claude-opus"}},
 	})
 	registry := NewAgentRegistry(cfg, &mockRegistryProvider{})
 
@@ -170,9 +169,10 @@ func TestAgentInstance_FallbackInheritance(t *testing.T) {
 	cfg := testCfg([]config.AgentConfig{
 		{ID: "inherit", Default: true},
 	})
-	cfg.Agents.Defaults.Model = &config.AgentModelConfig{
-		Primary:   cfg.Agents.Defaults.DefaultModelName(),
-		Fallbacks: []string{"openai/gpt-4o-mini", "anthropic/haiku"},
+	cfg.Agents.Defaults.Models = []string{
+		cfg.Agents.Defaults.DefaultModelName(),
+		"openai/gpt-4o-mini",
+		"anthropic/haiku",
 	}
 	registry := NewAgentRegistry(cfg, &mockRegistryProvider{})
 
@@ -182,22 +182,20 @@ func TestAgentInstance_FallbackInheritance(t *testing.T) {
 	}
 }
 
-func TestAgentInstance_FallbackExplicitEmpty(t *testing.T) {
-	model := &config.AgentModelConfig{
-		Primary:   "gpt-4",
-		Fallbacks: []string{}, // explicitly empty = disable
-	}
+func TestAgentInstance_FallbackSingleModel(t *testing.T) {
+	// A single-element agent model list yields no fallbacks, regardless of
+	// what the defaults specify.
 	cfg := testCfg([]config.AgentConfig{
-		{ID: "no-fallback", Default: true, Model: model},
+		{ID: "no-fallback", Default: true, Models: []string{"gpt-4"}},
 	})
-	cfg.Agents.Defaults.Model = &config.AgentModelConfig{
-		Primary:   cfg.Agents.Defaults.DefaultModelName(),
-		Fallbacks: []string{"should-not-inherit"},
+	cfg.Agents.Defaults.Models = []string{
+		cfg.Agents.Defaults.DefaultModelName(),
+		"should-not-inherit",
 	}
 	registry := NewAgentRegistry(cfg, &mockRegistryProvider{})
 
 	agent, _ := registry.GetAgent("no-fallback")
 	if len(agent.Fallbacks) != 0 {
-		t.Errorf("expected 0 fallbacks (explicit empty), got %d: %v", len(agent.Fallbacks), agent.Fallbacks)
+		t.Errorf("expected 0 fallbacks (single model), got %d: %v", len(agent.Fallbacks), agent.Fallbacks)
 	}
 }

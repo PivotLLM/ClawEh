@@ -202,7 +202,7 @@ func setupOAuthTestEnv(t *testing.T) (string, func()) {
 	cfg := config.DefaultConfig()
 	cfg.Providers = []config.Provider{{
 		Name:     "openai",
-		Protocol: "openai",
+		Protocol: "openai-chat",
 		BaseURL:  "https://api.openai.com/v1",
 		APIKey:   "sk-default",
 	}}

@@ -84,7 +84,10 @@ func (h *Handler) handleAddProvider(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cfg.Providers = append(cfg.Providers, p)
-	if err = cfg.ValidateProviders(); err != nil {
+	// Validate only the new provider, not the whole list — pre-existing invalid
+	// entries (e.g. a stale protocol awaiting migration) must not block adding a
+	// valid one.
+	if err = cfg.ValidateProvider(len(cfg.Providers) - 1); err != nil {
 		http.Error(w, fmt.Sprintf("Validation error: %v", err), http.StatusBadRequest)
 		return
 	}
@@ -127,7 +130,10 @@ func (h *Handler) handleUpdateProvider(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg.Providers[idx] = p
 
-	if err = cfg.ValidateProviders(); err != nil {
+	// Validate only the edited provider, not the whole list — this lets an
+	// operator repair entries one at a time even while others are still invalid
+	// (e.g. migrating several providers off a renamed protocol).
+	if err = cfg.ValidateProvider(idx); err != nil {
 		http.Error(w, fmt.Sprintf("Validation error: %v", err), http.StatusBadRequest)
 		return
 	}

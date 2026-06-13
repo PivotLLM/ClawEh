@@ -45,7 +45,7 @@ func DefaultConfig() *Config {
 			BaseDir: agentsBaseDir,
 			Defaults: AgentDefaults{
 				RestrictToWorkspace:  true,
-				Model:                &AgentModelConfig{Primary: "claude-cli", Fallbacks: []string{"codex-cli"}},
+				Models:               []string{"Claude CLI", "Codex CLI"},
 				MaxTokens:            32768,
 				Temperature:          nil, // nil means use provider default
 				MaxToolIterations:    50,
@@ -136,63 +136,82 @@ func DefaultConfig() *Config {
 		// Named endpoints. A model references one by name; the WebUI groups
 		// models by provider. Add your API key to the provider you want to use.
 		Providers: []Provider{
-			{Name: "openai", Protocol: "openai", BaseURL: "https://api.openai.com/v1"},
-			{Name: "anthropic", Protocol: "anthropic", BaseURL: "https://api.anthropic.com/v1"},
-			{Name: "openrouter", Protocol: "openai", BaseURL: "https://openrouter.ai/api/v1"},
-			{Name: "groq", Protocol: "openai", BaseURL: "https://api.groq.com/openai/v1"},
-			{Name: "deepseek", Protocol: "openai", BaseURL: "https://api.deepseek.com/v1"},
-			{Name: "gemini", Protocol: "openai", BaseURL: "https://generativelanguage.googleapis.com/v1beta/openai"},
-			{Name: "mistral", Protocol: "openai", BaseURL: "https://api.mistral.ai/v1"},
-			{Name: "ollama", Protocol: "openai", BaseURL: "http://localhost:11434/v1", APIKey: "ollama"},
-			{Name: "claude-cli", Protocol: "claude-cli"},
-			{Name: "codex-cli", Protocol: "codex-cli"},
-			{Name: "gemini-cli", Protocol: "gemini-cli"},
+			// CLI providers run a local binary found on PATH; set `command` to
+			// override the path. base_url is unused for CLI protocols.
+			{Name: "Claude CLI", Protocol: "claude-cli"},
+			{Name: "Codex CLI", Protocol: "codex-cli"},
+			{Name: "Gemini CLI", Protocol: "gemini-cli"},
+
+			{Name: "OpenAI", Protocol: "openai-chat", BaseURL: "https://api.openai.com/v1"},
+			{Name: "Anthropic", Protocol: "anthropic", BaseURL: "https://api.anthropic.com/v1"},
+			{Name: "DeepSeek", Protocol: "openai-chat", BaseURL: "https://api.deepseek.com/v1"},
+			{Name: "Google API", Protocol: "openai-chat", BaseURL: "https://generativelanguage.googleapis.com/v1beta/openai"},
+			{Name: "Qwen", Protocol: "openai-chat", BaseURL: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"},
+			{Name: "Moonshot", Protocol: "openai-chat", BaseURL: "https://api.moonshot.ai/v1"},
+			{Name: "Groq", Protocol: "openai-chat", BaseURL: "https://api.groq.com/openai/v1", NoParallelToolCalls: true},
+			{Name: "OpenRouter Chat", Protocol: "openai-chat", BaseURL: "https://openrouter.ai/api/v1"},
+			{Name: "OpenRouter Responses", Protocol: "openai-responses", BaseURL: "https://openrouter.ai/api/v1"},
+			{Name: "OpenRouter Strict", Protocol: "openai-chat", BaseURL: "https://openrouter.ai/api/v1", StrictCompat: true},
+			{Name: "NVIDIA", Protocol: "openai-chat", BaseURL: "https://integrate.api.nvidia.com/v1"},
+			{Name: "Cerebras", Protocol: "openai-chat", BaseURL: "https://api.cerebras.ai/v1"},
+			{Name: "Ollama", Protocol: "openai-chat", BaseURL: "http://localhost:11434/v1"},
+			{Name: "Mistral", Protocol: "openai-chat", BaseURL: "https://api.mistral.ai/v1"},
+			{Name: "Avian", Protocol: "openai-chat", BaseURL: "https://api.avian.io/v1"},
+			{Name: "vLLM Local", Protocol: "openai-chat", BaseURL: "http://localhost:8000/v1"},
+			{Name: "Bedrock Chat", Protocol: "openai-chat", BaseURL: "https://bedrock-mantle.us-east-1.api.aws/v1"},
+			{Name: "Bedrock Responses", Protocol: "openai-responses", BaseURL: "https://bedrock-mantle.us-east-1.api.aws/openai/v1"},
+			{Name: "Abliteration", Protocol: "openai-chat", BaseURL: "https://api.abliteration.ai/v1"},
+			{Name: "xAI", Protocol: "openai-chat", BaseURL: "https://api.x.ai/v1"},
 		},
 		Models: []ModelConfig{
 			// ============================================
-			// Enable a model and ensure its provider has an API key.
-			// model is the raw id the endpoint expects; provider names the endpoint.
+			// A starter catalogue of tested providers/models, ALL DISABLED.
+			// Enable a model and add its provider's api_key to use it. CLI models
+			// need the matching binary on PATH. `model` is the raw id the endpoint
+			// expects; `provider` names the endpoint above.
 			// ============================================
 
-			{ModelName: "gpt-5.4", Model: "gpt-5.4", Provider: "openai", Enabled: false},
-			{ModelName: "claude-sonnet-4.6", Model: "claude-sonnet-4.6", Provider: "anthropic", Enabled: false},
-			{ModelName: "openrouter-auto", Model: "openrouter/auto", Provider: "openrouter", Enabled: false},
-			{ModelName: "deepseek-chat", Model: "deepseek-chat", Provider: "deepseek", Enabled: false},
-			{ModelName: "llama-3.3-70b", Model: "llama-3.3-70b-versatile", Provider: "groq", Enabled: false},
-			{ModelName: "mistral-small", Model: "mistral-small-latest", Provider: "mistral", Enabled: false},
-			{ModelName: "llama3", Model: "llama3", Provider: "ollama", Enabled: false},
+			// CLI providers (local binaries).
+			{ModelName: "Claude CLI", Model: "claude-cli", Provider: "Claude CLI", RequestTimeout: 3600, ExtraArgs: []string{"--dangerously-skip-permissions", "--no-chrome"}, Env: map[string]string{"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"}, Enabled: false},
+			{ModelName: "Claude CLI Opus", Model: "claude-opus-4-7", Provider: "Claude CLI", RequestTimeout: 3600, ExtraArgs: []string{"--dangerously-skip-permissions", "--no-chrome"}, Env: map[string]string{"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"}, Enabled: false},
+			{ModelName: "Codex CLI", Model: "codex-cli", Provider: "Codex CLI", RequestTimeout: 3600, ExtraArgs: []string{"--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check"}, Enabled: false},
+			{ModelName: "Gemini CLI", Model: "gemini-2.5-pro", Provider: "Gemini CLI", RequestTimeout: 3600, ExtraArgs: []string{"--yolo"}, Enabled: false},
 
-			// Claude CLI (local) - https://claude.ai/download
-			{
-				ModelName:      "claude-cli",
-				Model:          "claude-cli",
-				Provider:       "claude-cli",
-				Workspace:      ".",
-				RequestTimeout: 3600,
-				ExtraArgs:      []string{"--dangerously-skip-permissions", "--no-chrome"},
-				Env:            map[string]string{"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"},
-				Enabled:        false,
-			},
-
-			// Codex CLI (local) - https://github.com/openai/codex
-			{
-				ModelName:      "codex-cli",
-				Model:          "codex-cli",
-				Provider:       "codex-cli",
-				Workspace:      ".",
-				RequestTimeout: 3600,
-				Enabled:        false,
-			},
-
-			// Gemini CLI (local) - https://github.com/google-gemini/gemini-cli
-			{
-				ModelName:      "gemini-cli",
-				Model:          "gemini-cli",
-				Provider:       "gemini-cli",
-				Workspace:      ".",
-				RequestTimeout: 3600,
-				Enabled:        false,
-			},
+			// HTTP providers.
+			{ModelName: "OpenAI GPT 5.5", Model: "gpt-5.5", Provider: "OpenAI", DropParams: []string{"temperature"}, Enabled: false},
+			{ModelName: "Claude Sonnet 4.6", Model: "claude-sonnet-4.6", Provider: "Anthropic", Enabled: false},
+			{ModelName: "DeepSeek Chat", Model: "deepseek-chat", Provider: "DeepSeek", Enabled: false},
+			{ModelName: "Gemini 3.5 Flash", Model: "gemini-3.5-flash", Provider: "Google API", Enabled: false},
+			{ModelName: "Qwen Plus", Model: "qwen-plus", Provider: "Qwen", Enabled: false},
+			{ModelName: "Moonshot v1 8k", Model: "moonshot-v1-8k", Provider: "Moonshot", Enabled: false},
+			{ModelName: "Groq Llama 3.3 70b", Model: "llama-3.3-70b-versatile", Provider: "Groq", NoTools: true, Enabled: false},
+			{ModelName: "Groq GPT OSS 120b", Model: "openai/gpt-oss-120b", Provider: "Groq", Enabled: false},
+			{ModelName: "OpenRouter Auto", Model: "openrouter/auto", Provider: "OpenRouter Chat", Enabled: false},
+			{ModelName: "OpenRouter GPT 5.4", Model: "openai/gpt-5.4", Provider: "OpenRouter Strict", DropParams: []string{"temperature"}, Enabled: false},
+			{ModelName: "NVIDIA Nemotron 4 340b", Model: "nemotron-4-340b-instruct", Provider: "NVIDIA", Enabled: false},
+			{ModelName: "Cerebras Llama 3.3 70b", Model: "llama-3.3-70b", Provider: "Cerebras", Enabled: false},
+			{ModelName: "Llama 3", Model: "llama3", Provider: "Ollama", Enabled: false},
+			{ModelName: "Mistral Small", Model: "mistral-small-latest", Provider: "Mistral", Enabled: false},
+			{ModelName: "DeepSeek v3.2", Model: "deepseek/deepseek-v3.2", Provider: "Avian", Enabled: false},
+			{ModelName: "Kimi k2.5", Model: "moonshotai/kimi-k2.5", Provider: "Avian", Enabled: false},
+			{ModelName: "Local Model", Model: "custom-model", Provider: "vLLM Local", Enabled: false},
+			{ModelName: "Bedrock Opus 4.8", Model: "anthropic.claude-opus-4-8", Provider: "Bedrock Chat", Enabled: false},
+			{ModelName: "Bedrock Sonnet 4.6", Model: "anthropic.claude-sonnet-4-6", Provider: "Bedrock Chat", Enabled: false},
+			{ModelName: "Bedrock GPT 5.5", Model: "openai.gpt-5.5", Provider: "Bedrock Responses", DropParams: []string{"temperature"}, Enabled: false},
+			{ModelName: "Bedrock DeepSeek 3", Model: "deepseek.v3.2", Provider: "Bedrock Chat", Enabled: false},
+			{ModelName: "Bedrock Nova 2 Lite", Model: "amazon.nova-2-lite-v1:0", Provider: "Bedrock Chat", Enabled: false},
+			{ModelName: "Bedrock Gemma 3", Model: "google.gemma-3-27b-it", Provider: "Bedrock Chat", MaxTokens: 5000, StrictAlternation: true, Enabled: false},
+			{ModelName: "Abliteration", Model: "abliterated-model", Provider: "Abliteration", Enabled: false},
+			{ModelName: "OpenRouter Elephant", Model: "elephant-alpha", Provider: "OpenRouter Chat", Enabled: false},
+			{ModelName: "Gemini 3.1 Flash Lite Preview", Model: "google/gemini-3.1-flash-lite-preview", Provider: "OpenRouter Chat", Enabled: false},
+			{ModelName: "OpenRouter Llama 4 Maverick", Model: "meta-llama/llama-4-maverick", Provider: "OpenRouter Chat", Enabled: false},
+			{ModelName: "OpenRouter Llama 4 Scout", Model: "meta-llama/llama-4-scout", Provider: "OpenRouter Chat", Enabled: false},
+			{ModelName: "OpenRouter DeepSeek V4 Flash", Model: "deepseek/deepseek-v4-flash", Provider: "OpenRouter Chat", Enabled: false},
+			{ModelName: "OpenRouter DeepSeek V4 Pro", Model: "deepseek/deepseek-v4-pro", Provider: "OpenRouter Chat", Enabled: false},
+			{ModelName: "Grok 4.3", Model: "grok-4.3", Provider: "xAI", Enabled: false},
+			{ModelName: "Grok 4.3 High", Model: "grok-4.3", Provider: "xAI", ReasoningEffort: "high", Enabled: false},
+			{ModelName: "Grok 4.3 Medium", Model: "grok-4.3", Provider: "xAI", ReasoningEffort: "medium", Enabled: false},
+			{ModelName: "OpenRouter GPT 5.5", Model: "openai/gpt-5.5", Provider: "OpenRouter Strict", DropParams: []string{"temperature"}, Enabled: false},
 		},
 		Gateway: GatewayConfig{
 			Host: "127.0.0.1",

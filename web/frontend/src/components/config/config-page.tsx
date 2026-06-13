@@ -93,7 +93,8 @@ export function ConfigPage() {
       rawAgentList
         .filter((a) => a.enabled !== false)
         .map((a) => ({ id: String(a.id ?? ""), name: a.name ? String(a.name) : undefined }))
-        .filter((a) => a.id),
+        .filter((a) => a.id)
+        .sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id)),
     [rawAgentList],
   )
 
@@ -173,17 +174,10 @@ export function ConfigPage() {
           .map((m) => m.trim())
           .filter((m) => m.length > 0)
 
-        // Default model (agents.defaults.model): bare string when no fallbacks,
-        // { primary, fallbacks } with them, null when cleared.
-        const defaultModelName = form.defaultModel.trim()
-        const defaultFallbacks = form.defaultModelFallbacks
-          .map((m) => m.trim())
-          .filter((m) => m.length > 0)
-        const defaultModelPayload = !defaultModelName
-          ? null
-          : defaultFallbacks.length > 0
-            ? { primary: defaultModelName, fallbacks: defaultFallbacks }
-            : defaultModelName
+        // Default models (agents.defaults.models): ordered list tried in order.
+        const defaultModels = form.defaultModels
+          .map((s) => s.trim())
+          .filter((s) => s.length > 0)
 
         // Default temperature: number in [0,2], or null to clear when blank.
         const tempRaw = form.defaultTemperature.trim()
@@ -266,7 +260,7 @@ export function ConfigPage() {
               stream_tool_activity: form.streamToolActivity,
               max_tokens: maxTokens,
               max_tool_iterations: maxToolIterations,
-              model: defaultModelPayload,
+              models: defaultModels,
               temperature: defaultTemperaturePayload,
               compress_normal_percent: compressNormalPercent,
               compress_safety_percent: compressSafetyPercent,

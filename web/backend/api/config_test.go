@@ -27,7 +27,7 @@ func TestHandleUpdateConfig_AppliesExecAllowRemoteDefaultWhenOmitted(t *testing.
 		"providers": [
 			{
 				"name": "openai",
-				"protocol": "openai",
+				"protocol": "openai-chat",
 				"base_url": "https://api.openai.com/v1",
 				"api_key": "sk-default"
 			}
@@ -76,7 +76,7 @@ func TestHandleUpdateConfig_DoesNotInheritDefaultModelFields(t *testing.T) {
 		"providers": [
 			{
 				"name": "openai",
-				"protocol": "openai",
+				"protocol": "openai-chat",
 				"base_url": "https://api.openai.com/v1",
 				"api_key": "sk-default"
 			}
