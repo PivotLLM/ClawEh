@@ -743,6 +743,11 @@ func (al *AgentLoop) ReloadProviderAndConfig(
 		al.dispatcher.Flush(cfg)
 	}
 
+	// Drop cached ContextManagers so per-session config baked in at creation —
+	// notably the summarization model chain — is rebuilt from the new config on
+	// next use.
+	al.invalidateContextManagers()
+
 	// Close old provider after releasing the lock
 	// This prevents blocking readers while closing
 	if oldProvider, ok := extractProvider(oldRegistry); ok {

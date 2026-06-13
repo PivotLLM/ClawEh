@@ -5,7 +5,6 @@ package agent
 
 import (
 	"context"
-	"log"
 	"path/filepath"
 	"strings"
 	"time"
@@ -129,16 +128,30 @@ func (al *AgentLoop) buildCompressLLMClient(agent *AgentInstance, compressModelN
 		// The dispatcher keys on the model_name alias and resolves the provider
 		// from the model's provider reference.
 		if p, err := al.dispatcher.Get(alias); err == nil {
-			log.Printf("agent: compress_model %q dispatched via alias=%q (model=%q) for agent %q session %q",
-				compressModelName, alias, modelID, agent.ID, sessionKey)
+			logger.DebugCF("llmcontext", "compression model resolved", map[string]any{
+				"agent_id": agent.ID,
+				"requested": compressModelName,
+				"alias":    alias,
+				"model":    modelID,
+				"session":  sessionKey,
+			})
 			return &providerLLMClient{provider: p, model: modelID, requestJSONObject: true}
 		} else {
-			log.Printf("agent: dispatcher could not build compress provider for %q (alias=%q model=%q): %v; falling back to agent.Provider",
-				compressModelName, alias, modelID, err)
+			logger.WarnCF("llmcontext", "compression model dispatch failed; falling back to agent provider", map[string]any{
+				"agent_id":  agent.ID,
+				"requested": compressModelName,
+				"alias":     alias,
+				"model":     modelID,
+				"session":   sessionKey,
+				"error":     err.Error(),
+			})
 		}
 	} else if !ok {
-		log.Printf("agent: compress_model %q did not match any enabled models entry; falling back to agent.Provider",
-			compressModelName)
+		logger.WarnCF("llmcontext", "compression model not found in enabled models; falling back to agent provider", map[string]any{
+			"agent_id":  agent.ID,
+			"requested": compressModelName,
+			"session":   sessionKey,
+		})
 	}
 	// Last-resort fallback: use the agent's primary provider with the raw
 	// compress_model string so the existing single-provider configurations
@@ -164,7 +177,7 @@ func (al *AgentLoop) buildDefaultCompressLLMClient(agent *AgentInstance, session
 	if primary != "" && al.dispatcher != nil {
 		if alias, modelID, ok := resolveCompressModelTarget(cfg, primary); ok {
 			if p, err := al.dispatcher.Get(alias); err == nil {
-				logger.DebugCF("llmcontext", "compress_model unset; defaulting to agent primary via dispatcher", map[string]any{
+				logger.DebugCF("llmcontext", "compression: agent primary appended as final fallback", map[string]any{
 					"agent_id": agent.ID,
 					"alias":    alias,
 					"model":    modelID,
@@ -172,8 +185,13 @@ func (al *AgentLoop) buildDefaultCompressLLMClient(agent *AgentInstance, session
 				})
 				return &providerLLMClient{provider: p, model: modelID, requestJSONObject: true}
 			} else {
-				log.Printf("agent: dispatcher could not build default compress provider for primary %q (alias=%q model=%q): %v; falling back to agent.Provider",
-					primary, alias, modelID, err)
+				logger.WarnCF("llmcontext", "compression: default (agent primary) dispatch failed; using agent provider directly", map[string]any{
+					"agent_id": agent.ID,
+					"alias":    alias,
+					"model":    modelID,
+					"session":  sessionKey,
+					"error":    err.Error(),
+				})
 			}
 		}
 	}
@@ -220,7 +238,8 @@ func (al *AgentLoop) getContextManager(agent *AgentInstance, sessionKey string) 
 
 	var compressClients []llmcontext.LLMClient
 	effectiveCompressModel := ""
-	for _, name := range resolveCompressModelChain(agentModels, globalModels) {
+	chainNames := resolveCompressModelChain(agentModels, globalModels)
+	for _, name := range chainNames {
 		if effectiveCompressModel == "" {
 			effectiveCompressModel = name
 		}
@@ -230,6 +249,15 @@ func (al *AgentLoop) getContextManager(agent *AgentInstance, sessionKey string) 
 	// summarization still works when the global list is empty or every
 	// configured model fails to produce an acceptable summary.
 	compressClients = append(compressClients, al.buildDefaultCompressLLMClient(agent, sessionKey))
+
+	// One clear line (in claw.log) showing the whole compression chain that will
+	// be tried in order — the per-client detail above goes to the structured log
+	// too, but this is the at-a-glance summary of what's actually in effect.
+	logger.InfoCF("llmcontext", "compression model chain", map[string]any{
+		"agent_id": agent.ID,
+		"session":  sessionKey,
+		"chain":    append(append([]string{}, chainNames...), agent.Model+" (agent default)"),
+	})
 
 	// Stamp the compaction summary with the effective compress model so the
 	// rendered "Generated: <time> by <model>" line is populated (used for

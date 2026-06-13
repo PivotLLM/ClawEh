@@ -66,6 +66,28 @@ func makeEntry(al *AgentLoop, key string, cm llmcontext.ContextManager, lastAcce
 	return entry
 }
 
+// TestInvalidateContextManagers verifies a config reload clears every cached
+// context manager (so the summarization chain rebuilds) WITHOUT closing them or
+// disturbing active sessions.
+func TestInvalidateContextManagers(t *testing.T) {
+	al := &AgentLoop{}
+	cm1 := &trackingContextManager{}
+	cm2 := &trackingContextManager{}
+	makeEntry(al, "a:main", cm1, time.Now(), 0)
+	makeEntry(al, "b:main", cm2, time.Now(), 1) // refcount>0: still in-flight
+
+	al.invalidateContextManagers()
+
+	remaining := 0
+	al.contextManagers.Range(func(_, _ any) bool { remaining++; return true })
+	if remaining != 0 {
+		t.Fatalf("expected all entries cleared, %d remain", remaining)
+	}
+	if cm1.closed.Load() || cm2.closed.Load() {
+		t.Error("invalidation must not Close managers (in-flight holders keep using them)")
+	}
+}
+
 // TestEviction_IdleEntryEvicted verifies that an entry with refcount==0 and
 // idle time > TTL is evicted and Close is called.
 func TestEviction_IdleEntryEvicted(t *testing.T) {
