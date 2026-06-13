@@ -232,11 +232,11 @@ func TestDefaultConfig_Model(t *testing.T) {
 	if cfg.Agents.Defaults.Model == nil {
 		t.Fatal("Model should not be nil in default config")
 	}
-	if cfg.Agents.Defaults.Model.Primary != "claude-cli" {
-		t.Errorf("Primary = %q, want claude-cli", cfg.Agents.Defaults.Model.Primary)
+	if cfg.Agents.Defaults.Model.Primary != "Claude CLI" {
+		t.Errorf("Primary = %q, want Claude CLI", cfg.Agents.Defaults.Model.Primary)
 	}
-	if len(cfg.Agents.Defaults.Model.Fallbacks) == 0 || cfg.Agents.Defaults.Model.Fallbacks[0] != "codex-cli" {
-		t.Errorf("Fallbacks = %v, want [codex-cli]", cfg.Agents.Defaults.Model.Fallbacks)
+	if len(cfg.Agents.Defaults.Model.Fallbacks) == 0 || cfg.Agents.Defaults.Model.Fallbacks[0] != "Codex CLI" {
+		t.Errorf("Fallbacks = %v, want [Codex CLI]", cfg.Agents.Defaults.Model.Fallbacks)
 	}
 }
 
@@ -283,7 +283,7 @@ func TestDefaultConfig_Gateway(t *testing.T) {
 func TestDefaultConfig_Providers(t *testing.T) {
 	cfg := DefaultConfig()
 
-	for _, name := range []string{"anthropic", "openai", "openrouter"} {
+	for _, name := range []string{"anthropic", "openai", "openrouter-chat"} {
 		prov, err := cfg.GetProvider(name)
 		if err != nil {
 			t.Fatalf("GetProvider(%q): %v", name, err)
