@@ -75,14 +75,14 @@ export function AgentDefaultsSection({
   return (
     <ConfigSectionCard title={t("pages.config.sections.agent")}>
       <Field
-        label={t("pages.config.workspace")}
-        hint={t("pages.config.workspace_hint")}
+        label={t("pages.config.base_dir")}
+        hint={t("pages.config.base_dir_hint")}
         layout="setting-row"
       >
         <Input
-          value={form.workspace}
-          onChange={(e) => onFieldChange("workspace", e.target.value)}
-          placeholder="~/.claw/workspace"
+          value={form.baseDir}
+          onChange={(e) => onFieldChange("baseDir", e.target.value)}
+          placeholder="~/.claw/agents"
         />
       </Field>
 

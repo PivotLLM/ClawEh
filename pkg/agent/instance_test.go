@@ -16,8 +16,8 @@ func TestNewAgentInstance_UsesDefaultsTemperatureAndMaxTokens(t *testing.T) {
 
 	cfg := &config.Config{
 		Agents: config.AgentsConfig{
+			BaseDir: tmpDir,
 			Defaults: config.AgentDefaults{
-				Workspace:         tmpDir,
 				Model:             &config.AgentModelConfig{Primary: "test-model"},
 				MaxTokens:         1234,
 				MaxToolIterations: 5,
@@ -48,8 +48,8 @@ func TestNewAgentInstance_DefaultsTemperatureWhenZero(t *testing.T) {
 
 	cfg := &config.Config{
 		Agents: config.AgentsConfig{
+			BaseDir: tmpDir,
 			Defaults: config.AgentDefaults{
-				Workspace:         tmpDir,
 				Model:             &config.AgentModelConfig{Primary: "test-model"},
 				MaxTokens:         1234,
 				MaxToolIterations: 5,
@@ -77,8 +77,8 @@ func TestNewAgentInstance_DefaultsTemperatureWhenUnset(t *testing.T) {
 
 	cfg := &config.Config{
 		Agents: config.AgentsConfig{
+			BaseDir: tmpDir,
 			Defaults: config.AgentDefaults{
-				Workspace:         tmpDir,
 				Model:             &config.AgentModelConfig{Primary: "test-model"},
 				MaxTokens:         1234,
 				MaxToolIterations: 5,
@@ -137,9 +137,9 @@ func TestNewAgentInstance_ResolveCandidatesFromModelListAlias(t *testing.T) {
 
 			cfg := &config.Config{
 				Agents: config.AgentsConfig{
+					BaseDir: tmpDir,
 					Defaults: config.AgentDefaults{
-						Workspace: tmpDir,
-						Model:     &config.AgentModelConfig{Primary: tt.aliasName},
+						Model: &config.AgentModelConfig{Primary: tt.aliasName},
 					},
 				},
 				Providers: []config.Provider{tt.provider},

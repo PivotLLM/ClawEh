@@ -370,8 +370,8 @@
     },
     "config": {
       "load_error": "Failed to load configuration. Please refresh and try again.",
-      "workspace": "Workspace Directory",
-      "workspace_hint": "Base directory for agent file operations.",
+      "base_dir": "Agent Base Directory",
+      "base_dir_hint": "Base directory for all agent files. Each agent lives in <base>/<id> (the default agent in <base>/default). Leave blank for ~/.claw/agents; point it at another volume to relocate every agent.",
       "restrict_workspace": "Restrict to Workspace",
       "restrict_workspace_hint": "Only allow file operations inside workspace.",
       "allow_remote": "Allow Remote Shell Execution",

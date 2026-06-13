@@ -61,7 +61,7 @@ func NewAgentInstance(
 	cfg *config.Config,
 	provider providers.LLMProvider,
 ) *AgentInstance {
-	workspace := resolveAgentWorkspace(agentCfg, defaults)
+	workspace := resolveAgentWorkspace(agentCfg, cfg.BaseDir())
 
 	agentws.Populate(workspace)
 
@@ -380,19 +380,21 @@ func NewAgentInstance(
 	}
 }
 
-// resolveAgentWorkspace determines the workspace directory for an agent.
-func resolveAgentWorkspace(agentCfg *config.AgentConfig, defaults *config.AgentDefaults) string {
+// resolveAgentWorkspace determines the workspace directory for an agent:
+// an explicit per-agent workspace wins; otherwise the agent lives at
+// <base_dir>/<id>, with the routing-default agent (empty/"main" id) at
+// <base_dir>/default.
+func resolveAgentWorkspace(agentCfg *config.AgentConfig, baseDir string) string {
 	if agentCfg != nil && strings.TrimSpace(agentCfg.Workspace) != "" {
 		return expandHome(strings.TrimSpace(agentCfg.Workspace))
 	}
-	// Use the configured default workspace (respects CLAW_HOME)
-	if agentCfg == nil || agentCfg.ID == "" || routing.NormalizeAgentID(agentCfg.ID) == "main" {
-		return expandHome(defaults.Workspace)
+	id := "default"
+	if agentCfg != nil {
+		if nid := routing.NormalizeAgentID(agentCfg.ID); nid != "" && nid != "main" {
+			id = nid
+		}
 	}
-	// For named agents without explicit workspace, use agents/{id} sibling of default
-	id := routing.NormalizeAgentID(agentCfg.ID)
-	agentsDir := filepath.Dir(expandHome(defaults.Workspace)) // ~/.claw/agents
-	return filepath.Join(agentsDir, id)
+	return filepath.Join(baseDir, id)
 }
 
 // resolveAgentModel resolves the primary model for an agent.

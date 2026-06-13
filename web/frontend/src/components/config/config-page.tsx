@@ -153,12 +153,10 @@ export function ConfigPage() {
       setSaving(true)
 
       if (configDirty) {
-        const workspace = form.workspace.trim()
+        // base_dir may be blank — the backend then defaults to <data_dir>/agents.
+        const baseDir = form.baseDir.trim()
         const sessionMode = form.sessionMode.trim()
 
-        if (!workspace) {
-          throw new Error("Workspace path is required.")
-        }
         if (!sessionMode) {
           throw new Error("Session mode is required.")
         }
@@ -262,8 +260,8 @@ export function ConfigPage() {
 
         await patchAppConfig({
           agents: {
+            base_dir: baseDir,
             defaults: {
-              workspace,
               restrict_to_workspace: form.restrictToWorkspace,
               stream_tool_activity: form.streamToolActivity,
               max_tokens: maxTokens,

@@ -37,12 +37,13 @@ func DefaultConfig() *Config {
 		userHome, _ := os.UserHomeDir()
 		homePath = filepath.Join(userHome, global.DefaultDataDir)
 	}
-	workspacePath := filepath.Join(homePath, "agents", "default")
+	agentsBaseDir := filepath.Join(homePath, "agents")
+	workspacePath := filepath.Join(agentsBaseDir, "default")
 
 	cfg := &Config{
 		Agents: AgentsConfig{
+			BaseDir: agentsBaseDir,
 			Defaults: AgentDefaults{
-				Workspace:            workspacePath,
 				RestrictToWorkspace:  true,
 				Model:                &AgentModelConfig{Primary: "claude-cli", Fallbacks: []string{"codex-cli"}},
 				MaxTokens:            32768,

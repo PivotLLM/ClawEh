@@ -27,8 +27,8 @@ func (m *mockRegistryProvider) GetDefaultModel() string {
 func testCfg(agents []config.AgentConfig) *config.Config {
 	return &config.Config{
 		Agents: config.AgentsConfig{
+			BaseDir: "/tmp/claw-test-registry",
 			Defaults: config.AgentDefaults{
-				Workspace:         "/tmp/claw-test-registry",
 				Model:             &config.AgentModelConfig{Primary: "gpt-4"},
 				MaxTokens:         8192,
 				MaxToolIterations: 10,

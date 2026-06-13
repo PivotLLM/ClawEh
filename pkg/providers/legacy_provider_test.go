@@ -95,7 +95,7 @@ func TestCreateProvider_UnknownProvider_ReturnsError(t *testing.T) {
 func TestCreateProvider_WorkspaceInjected(t *testing.T) {
 	cfg := config.DefaultConfig()
 	dir := t.TempDir()
-	cfg.Agents.Defaults.Workspace = dir
+	cfg.Agents.BaseDir = dir
 	cfg.Providers = []config.Provider{
 		{Name: "claude-cli", Protocol: "claude-cli"},
 	}

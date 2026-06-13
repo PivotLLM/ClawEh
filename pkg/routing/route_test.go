@@ -9,9 +9,9 @@ import (
 func testConfig(agents []config.AgentConfig, bindings []config.AgentBinding) *config.Config {
 	return &config.Config{
 		Agents: config.AgentsConfig{
+			BaseDir: "/tmp/claw-test",
 			Defaults: config.AgentDefaults{
-				Workspace: "/tmp/claw-test",
-				Model:     &config.AgentModelConfig{Primary: "gpt-4"},
+				Model: &config.AgentModelConfig{Primary: "gpt-4"},
 			},
 			List: agents,
 		},
