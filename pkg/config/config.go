@@ -597,6 +597,11 @@ type LoggingConfig struct {
 	// DumpAll, when true, writes the full LLM input and output to a file
 	// in logs/dumps/ for every LLM response, regardless of finish reason.
 	DumpAll bool `json:"dump_all" env:"CLAW_LOGGING_DUMP_ALL"`
+	// DumpFailedCompressions, when true, writes the summarization request and the
+	// raw model response to a file in logs/dumps/ whenever a summarization
+	// (context compaction) attempt fails — an API error, a non-JSON response, or
+	// a rejected summary. Diagnostic only.
+	DumpFailedCompressions bool `json:"dump_failed_compressions" env:"CLAW_LOGGING_DUMP_FAILED_COMPRESSIONS"`
 }
 
 // Provider is a named endpoint a model is reached through. It owns the wire

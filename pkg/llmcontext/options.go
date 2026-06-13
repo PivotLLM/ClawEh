@@ -79,6 +79,10 @@ type managerConfig struct {
 	// a file named "COMPRESSION.md" (or legacy "compression.md") exists there, its content is appended to the
 	// summarization prompt so agents can declare role-specific compression rules.
 	compressionProfileDir string
+	// compressFailureDumpDir, when non-empty, is the logs/dumps directory to
+	// which the request + raw response of each FAILED summarization attempt is
+	// written for diagnosis.
+	compressFailureDumpDir string
 }
 
 func defaultManagerConfig() managerConfig {
@@ -237,4 +241,11 @@ func WithArchiveContentMaxBytes(n int) Option {
 // prompt, letting agents declare role-specific compression rules and structure.
 func WithCompressionProfileDir(dir string) Option {
 	return func(c *managerConfig) { c.compressionProfileDir = dir }
+}
+
+// WithCompressFailureDumpDir sets the logs/dumps directory to which the request
+// and raw model response of each failed summarization attempt are written.
+// Empty (the default) disables the dumps.
+func WithCompressFailureDumpDir(dir string) Option {
+	return func(c *managerConfig) { c.compressFailureDumpDir = dir }
 }

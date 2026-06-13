@@ -243,8 +243,12 @@ func (al *AgentLoop) getContextManager(agent *AgentInstance, sessionKey string) 
 	// Global debug-capture flag: when on, the manager writes the verbatim
 	// request/response of each summarization call to <workspace>/compact.jsonl.
 	debugCapture := false
+	failureDumpDir := ""
 	if cfg := al.GetConfig(); cfg != nil {
 		debugCapture = cfg.Summarization.DebugCapture
+		if cfg.Logging.DumpFailedCompressions {
+			failureDumpDir = al.dumpsDir
+		}
 	}
 
 	// Reporter delivers the compaction report to the user on the automatic path.
@@ -271,6 +275,7 @@ func (al *AgentLoop) getContextManager(agent *AgentInstance, sessionKey string) 
 		llmcontext.WithCompressModel(llmcontext.ModelChain{Primary: effectiveCompressModel}),
 		llmcontext.WithCompressionProfileDir(agent.Workspace),
 		llmcontext.WithCompactDebug(debugCapture),
+		llmcontext.WithCompressFailureDumpDir(failureDumpDir),
 		llmcontext.WithCompactionReporter(reporter),
 	}, agent.CompressOpts...)
 	cm := llmcontext.New(sessionKey, agent.Sessions, agent.ContextBuilder, llmClient, opts...)

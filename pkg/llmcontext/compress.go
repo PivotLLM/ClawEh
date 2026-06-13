@@ -65,7 +65,11 @@ func (m *Manager) doCompress(ctx context.Context, safetyNet bool) error {
 	if m.cfg.compactDebug && m.cfg.compressionProfileDir != "" {
 		debugPath = filepath.Join(m.cfg.compressionProfileDir, "compact.jsonl")
 	}
-	rec := &compactionRecorder{sessionKey: m.sessionKey, debugPath: debugPath}
+	rec := &compactionRecorder{
+		sessionKey:     m.sessionKey,
+		debugPath:      debugPath,
+		failureDumpDir: m.cfg.compressFailureDumpDir,
+	}
 	beforeMsgs := len(storedConversation)
 	beforeBytes := storedBytes(storedConversation)
 	dateFrom, dateTo := storedDateRange(storedConversation)
