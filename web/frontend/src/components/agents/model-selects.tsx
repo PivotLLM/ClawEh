@@ -112,7 +112,7 @@ export function FallbacksSelect({ fallbacks, primary, models, onChange, addPlace
       {remaining.length > 0 && (
         <Select value="" onValueChange={add}>
           <SelectTrigger className="h-7 text-xs">
-            <SelectValue placeholder={addPlaceholder ?? "Add fallback model…"} />
+            <SelectValue placeholder={addPlaceholder ?? "Add model…"} />
           </SelectTrigger>
           <SelectContent>
             {remaining.map((m) => (
