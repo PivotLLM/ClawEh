@@ -25,7 +25,7 @@ func initTest(t *testing.T) {
 func openaiProvider() config.Provider {
 	return config.Provider{
 		Name:     "openai",
-		Protocol: "openai",
+		Protocol: "openai-chat",
 		BaseURL:  "https://api.openai.com/v1",
 		APIKey:   "test",
 	}
@@ -160,7 +160,7 @@ func TestListAvailableModels_WithModels(t *testing.T) {
 			openaiProvider(),
 			anthropicProvider(),
 			// Provider without credentials: models referencing it are skipped.
-			{Name: "nokey", Protocol: "openai", BaseURL: "https://api.example.com/v1"},
+			{Name: "nokey", Protocol: "openai-chat", BaseURL: "https://api.example.com/v1"},
 		},
 		Models: []config.ModelConfig{
 			{ModelName: "gpt-4", Model: "gpt-4", Provider: "openai", Enabled: true},

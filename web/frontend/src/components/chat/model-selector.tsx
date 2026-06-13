@@ -31,7 +31,7 @@ export function ModelSelector({
         <SelectValue placeholder={t("chat.noModel")} />
       </SelectTrigger>
       <SelectContent position="popper" align="start">
-        {models.map((model) => (
+        {[...models].sort((a, b) => a.model_name.localeCompare(b.model_name)).map((model) => (
           <SelectItem key={model.index} value={model.model_name}>
             {model.model_name}
           </SelectItem>

@@ -93,7 +93,8 @@ export function ConfigPage() {
       rawAgentList
         .filter((a) => a.enabled !== false)
         .map((a) => ({ id: String(a.id ?? ""), name: a.name ? String(a.name) : undefined }))
-        .filter((a) => a.id),
+        .filter((a) => a.id)
+        .sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id)),
     [rawAgentList],
   )
 

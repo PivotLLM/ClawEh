@@ -16,7 +16,7 @@ func TestResolveCompressModelTarget(t *testing.T) {
 	cfg := &config.Config{
 		Providers: []config.Provider{
 			{Name: "anthropic", Protocol: "anthropic", BaseURL: "https://api.anthropic.com/v1", APIKey: "k"},
-			{Name: "openai", Protocol: "openai", BaseURL: "https://api.openai.com/v1", APIKey: "k"},
+			{Name: "openai", Protocol: "openai-chat", BaseURL: "https://api.openai.com/v1", APIKey: "k"},
 		},
 		Models: []config.ModelConfig{
 			{
@@ -84,7 +84,7 @@ func TestResolveCompressModelTarget_NilConfig(t *testing.T) {
 func TestBuildCompressLLMClient_UsesDispatcher(t *testing.T) {
 	cfg := &config.Config{
 		Providers: []config.Provider{
-			{Name: "openai", Protocol: "openai", BaseURL: "http://127.0.0.1:0/v1", APIKey: "dummy"},
+			{Name: "openai", Protocol: "openai-chat", BaseURL: "http://127.0.0.1:0/v1", APIKey: "dummy"},
 		},
 		Models: []config.ModelConfig{
 			{
@@ -170,7 +170,7 @@ func TestBuildCompressLLMClient_FallbackToAgentProvider(t *testing.T) {
 func TestBuildDefaultCompressLLMClient_UsesDispatcherForPrimary(t *testing.T) {
 	cfg := &config.Config{
 		Providers: []config.Provider{
-			{Name: "openai", Protocol: "openai", BaseURL: "http://127.0.0.1:0/v1", APIKey: "dummy"},
+			{Name: "openai", Protocol: "openai-chat", BaseURL: "http://127.0.0.1:0/v1", APIKey: "dummy"},
 		},
 		Models: []config.ModelConfig{
 			{
@@ -255,7 +255,7 @@ func TestBuildDefaultCompressLLMClient_FallbackWhenPrimaryUnresolved(t *testing.
 func TestBuildCompressLLMClient_NilDispatcher(t *testing.T) {
 	cfg := &config.Config{
 		Providers: []config.Provider{
-			{Name: "openai", Protocol: "openai", BaseURL: "https://api.openai.com/v1", APIKey: "k"},
+			{Name: "openai", Protocol: "openai-chat", BaseURL: "https://api.openai.com/v1", APIKey: "k"},
 		},
 		Models: []config.ModelConfig{
 			{

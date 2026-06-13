@@ -283,7 +283,7 @@ func TestConfig_ValidateModelList(t *testing.T) {
 			name: "valid list",
 			config: &Config{
 				Providers: []Provider{
-					{Name: "openai", Protocol: "openai", BaseURL: "https://api.openai.com/v1"},
+					{Name: "openai", Protocol: "openai-chat", BaseURL: "https://api.openai.com/v1"},
 					{Name: "anthropic", Protocol: "anthropic", BaseURL: "https://api.anthropic.com"},
 				},
 				Models: []ModelConfig{
@@ -297,7 +297,7 @@ func TestConfig_ValidateModelList(t *testing.T) {
 			name: "invalid entry",
 			config: &Config{
 				Providers: []Provider{
-					{Name: "openai", Protocol: "openai", BaseURL: "https://api.openai.com/v1"},
+					{Name: "openai", Protocol: "openai-chat", BaseURL: "https://api.openai.com/v1"},
 				},
 				Models: []ModelConfig{
 					{ModelName: "test1", Model: "gpt-4o", Provider: "openai"},
@@ -329,7 +329,7 @@ func TestConfig_ValidateModelList(t *testing.T) {
 			name: "duplicate model_name for load balancing",
 			config: &Config{
 				Providers: []Provider{
-					{Name: "openai", Protocol: "openai", BaseURL: "https://api.openai.com/v1"},
+					{Name: "openai", Protocol: "openai-chat", BaseURL: "https://api.openai.com/v1"},
 				},
 				Models: []ModelConfig{
 					{ModelName: "gpt-4", Model: "gpt-4o", Provider: "openai"},
@@ -343,7 +343,7 @@ func TestConfig_ValidateModelList(t *testing.T) {
 			name: "duplicate model_name non-adjacent for load balancing",
 			config: &Config{
 				Providers: []Provider{
-					{Name: "openai", Protocol: "openai", BaseURL: "https://api.openai.com/v1"},
+					{Name: "openai", Protocol: "openai-chat", BaseURL: "https://api.openai.com/v1"},
 					{Name: "anthropic", Protocol: "anthropic", BaseURL: "https://api.anthropic.com"},
 				},
 				Models: []ModelConfig{

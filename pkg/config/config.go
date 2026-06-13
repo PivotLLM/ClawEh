@@ -1198,7 +1198,8 @@ func (c *Config) findMatches(modelName string) []ModelConfig {
 // validProtocols is the set of wire protocols a Provider may declare. Each maps
 // to an internal provider implementation in pkg/providers.
 var validProtocols = map[string]struct{}{
-	"openai":             {},
+	"openai-chat":        {},
+	"openai-responses":   {},
 	"azure":              {},
 	"anthropic":          {},
 	"anthropic-messages": {},
@@ -1209,7 +1210,8 @@ var validProtocols = map[string]struct{}{
 
 // httpProtocols are the protocols that require a base_url.
 var httpProtocols = map[string]struct{}{
-	"openai":             {},
+	"openai-chat":        {},
+	"openai-responses":   {},
 	"azure":              {},
 	"anthropic":          {},
 	"anthropic-messages": {},

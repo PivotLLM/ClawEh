@@ -136,14 +136,14 @@ func DefaultConfig() *Config {
 		// Named endpoints. A model references one by name; the WebUI groups
 		// models by provider. Add your API key to the provider you want to use.
 		Providers: []Provider{
-			{Name: "openai", Protocol: "openai", BaseURL: "https://api.openai.com/v1"},
+			{Name: "openai", Protocol: "openai-chat", BaseURL: "https://api.openai.com/v1"},
 			{Name: "anthropic", Protocol: "anthropic", BaseURL: "https://api.anthropic.com/v1"},
-			{Name: "openrouter", Protocol: "openai", BaseURL: "https://openrouter.ai/api/v1"},
-			{Name: "groq", Protocol: "openai", BaseURL: "https://api.groq.com/openai/v1"},
-			{Name: "deepseek", Protocol: "openai", BaseURL: "https://api.deepseek.com/v1"},
-			{Name: "gemini", Protocol: "openai", BaseURL: "https://generativelanguage.googleapis.com/v1beta/openai"},
-			{Name: "mistral", Protocol: "openai", BaseURL: "https://api.mistral.ai/v1"},
-			{Name: "ollama", Protocol: "openai", BaseURL: "http://localhost:11434/v1", APIKey: "ollama"},
+			{Name: "openrouter", Protocol: "openai-chat", BaseURL: "https://openrouter.ai/api/v1"},
+			{Name: "groq", Protocol: "openai-chat", BaseURL: "https://api.groq.com/openai/v1"},
+			{Name: "deepseek", Protocol: "openai-chat", BaseURL: "https://api.deepseek.com/v1"},
+			{Name: "gemini", Protocol: "openai-chat", BaseURL: "https://generativelanguage.googleapis.com/v1beta/openai"},
+			{Name: "mistral", Protocol: "openai-chat", BaseURL: "https://api.mistral.ai/v1"},
+			{Name: "ollama", Protocol: "openai-chat", BaseURL: "http://localhost:11434/v1", APIKey: "ollama"},
 			{Name: "claude-cli", Protocol: "claude-cli"},
 			{Name: "codex-cli", Protocol: "codex-cli"},
 			{Name: "gemini-cli", Protocol: "gemini-cli"},

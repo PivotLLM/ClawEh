@@ -108,7 +108,7 @@ func TestNewAgentInstance_ResolveCandidatesFromModelListAlias(t *testing.T) {
 			aliasName: "step-3.5-flash",
 			modelName: "stepfun/step-3.5-flash:free",
 			provider: config.Provider{
-				Name: "openrouter", Protocol: "openai",
+				Name: "openrouter", Protocol: "openai-chat",
 				BaseURL: "https://openrouter.ai/api/v1", APIKey: "k",
 			},
 			wantProvider: "openrouter",
@@ -119,7 +119,7 @@ func TestNewAgentInstance_ResolveCandidatesFromModelListAlias(t *testing.T) {
 			aliasName: "glm-5",
 			modelName: "glm-5",
 			provider: config.Provider{
-				Name: "openai", Protocol: "openai",
+				Name: "openai", Protocol: "openai-chat",
 				BaseURL: "https://api.z.ai/api/coding/paas/v4", APIKey: "k",
 			},
 			wantProvider: "openai",

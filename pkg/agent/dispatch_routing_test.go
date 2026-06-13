@@ -39,7 +39,7 @@ func (m *cliMockProvider) IsCLI() bool             { return true }
 func TestResolveRunProvider_UsesDispatcherForActiveCandidate(t *testing.T) {
 	cfg := &config.Config{
 		Providers: []config.Provider{
-			{Name: "openai", Protocol: "openai", BaseURL: "http://127.0.0.1:0/v1", APIKey: "dummy"},
+			{Name: "openai", Protocol: "openai-chat", BaseURL: "http://127.0.0.1:0/v1", APIKey: "dummy"},
 		},
 		Models: []config.ModelConfig{
 			{
@@ -94,7 +94,7 @@ func TestResolveRunProvider_UsesDispatcherForActiveCandidate(t *testing.T) {
 func TestResolveRunProvider_EmptyCandidatesDispatchesPrimary(t *testing.T) {
 	cfg := &config.Config{
 		Providers: []config.Provider{
-			{Name: "xai", Protocol: "openai", BaseURL: "http://127.0.0.1:0/v1", APIKey: "dummy"},
+			{Name: "xai", Protocol: "openai-chat", BaseURL: "http://127.0.0.1:0/v1", APIKey: "dummy"},
 		},
 		Models: []config.ModelConfig{
 			{

@@ -575,7 +575,7 @@ func TestProcessMessage_SwitchModelShowModelConsistency(t *testing.T) {
 			},
 		},
 		Providers: []config.Provider{
-			{Name: "openai", Protocol: "openai", BaseURL: "https://api.openai.com/v1", APIKey: "k"},
+			{Name: "openai", Protocol: "openai-chat", BaseURL: "https://api.openai.com/v1", APIKey: "k"},
 		},
 		Models: []config.ModelConfig{
 			{ModelName: "before-switch", Model: "before-switch", Provider: "openai", Enabled: true},

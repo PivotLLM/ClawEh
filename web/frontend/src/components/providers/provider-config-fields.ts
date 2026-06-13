@@ -1,7 +1,8 @@
 // Shared definitions for the provider management UI.
 
 export const PROTOCOL_OPTIONS = [
-  "openai",
+  "openai-chat",
+  "openai-responses",
   "azure",
   "anthropic",
   "anthropic-messages",
@@ -27,7 +28,8 @@ export function isCliProtocol(protocol: string): boolean {
 // requiresBaseURL reports whether base_url is required for a protocol.
 export function requiresBaseURL(protocol: string): boolean {
   return (
-    protocol === "openai" ||
+    protocol === "openai-chat" ||
+    protocol === "openai-responses" ||
     protocol === "azure" ||
     protocol === "anthropic" ||
     protocol === "anthropic-messages"

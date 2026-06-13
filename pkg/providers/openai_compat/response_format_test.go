@@ -76,7 +76,7 @@ func TestCompressionRequest_SetsResponseFormat_XAI(t *testing.T) {
 // the openai protocol.
 func TestCompressionRequest_SetsResponseFormat_OpenAI(t *testing.T) {
 	body := captureChatRequestBody(t,
-		[]Option{WithProtocol("openai")},
+		[]Option{WithProtocol("openai-chat")},
 		map[string]any{ResponseFormatJSONObjectOption: true},
 		"gpt-4o",
 	)
@@ -150,7 +150,7 @@ func TestDefaultSupportsResponseFormatJSON(t *testing.T) {
 		protocol string
 		want     bool
 	}{
-		{"openai", true},
+		{"openai-chat", true},
 		{"xai", true},
 		{"openrouter", false},
 		{"groq", false},

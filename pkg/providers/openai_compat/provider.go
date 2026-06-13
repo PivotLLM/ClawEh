@@ -786,7 +786,7 @@ func wantsJSONObject(options map[string]any) bool {
 // factory layer via WithResponseFormatJSONCapable and OR'd with this default.
 func defaultSupportsResponseFormatJSON(protocol string) bool {
 	switch protocol {
-	case "openai", "xai":
+	case "openai-chat", "xai":
 		return true
 	default:
 		return false

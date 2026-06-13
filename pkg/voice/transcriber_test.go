@@ -38,7 +38,7 @@ func TestDetectTranscriber(t *testing.T) {
 			name: "groq provider key",
 			cfg: &config.Config{
 				Providers: []config.Provider{
-					{Name: "groq", Protocol: "openai", BaseURL: "https://api.groq.com/openai/v1", APIKey: "sk-groq-direct"},
+					{Name: "groq", Protocol: "openai-chat", BaseURL: "https://api.groq.com/openai/v1", APIKey: "sk-groq-direct"},
 				},
 			},
 			wantName: "groq",
@@ -47,7 +47,7 @@ func TestDetectTranscriber(t *testing.T) {
 			name: "groq provider without key is skipped",
 			cfg: &config.Config{
 				Providers: []config.Provider{
-					{Name: "groq", Protocol: "openai", BaseURL: "https://api.groq.com/openai/v1"},
+					{Name: "groq", Protocol: "openai-chat", BaseURL: "https://api.groq.com/openai/v1"},
 				},
 			},
 			wantNil: true,
@@ -56,7 +56,7 @@ func TestDetectTranscriber(t *testing.T) {
 			name: "non-groq provider with key is ignored",
 			cfg: &config.Config{
 				Providers: []config.Provider{
-					{Name: "openai", Protocol: "openai", BaseURL: "https://api.openai.com/v1", APIKey: "sk-openai"},
+					{Name: "openai", Protocol: "openai-chat", BaseURL: "https://api.openai.com/v1", APIKey: "sk-openai"},
 				},
 			},
 			wantNil: true,

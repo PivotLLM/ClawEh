@@ -469,7 +469,7 @@ export function AgentsPage() {
       ])
       setAgentsCfg(parseAgentsConfig(appConfig))
       setModels(modelsData.models)
-      setAvailableSkills(skillsData)
+      setAvailableSkills([...skillsData].sort((a, b) => a.name.localeCompare(b.name)))
       setAvailableTools(toolsData)
       setFetchError("")
     } catch (e) {

@@ -457,7 +457,7 @@ func TestLoadConfig_WebToolsProxy(t *testing.T) {
 	configPath := filepath.Join(tmpDir, "config.json")
 	configJSON := `{
   "agents": {"defaults":{"workspace":"./workspace","model":"gpt4","max_tokens":8192,"max_tool_iterations":20}},
-  "providers": [{"name":"openai","protocol":"openai","base_url":"https://api.openai.com/v1","api_key":"x"}],
+  "providers": [{"name":"openai","protocol":"openai-chat","base_url":"https://api.openai.com/v1","api_key":"x"}],
   "models": [{"model_name":"gpt4","model":"gpt-5.4","provider":"openai","enabled":true}],
   "tools": {"web":{"proxy":"http://127.0.0.1:7890"}}
 }`
@@ -650,7 +650,7 @@ func TestMCPHostEffectivelyEnabled(t *testing.T) {
 		{Name: "claude-cli", Protocol: "claude-cli"},
 		{Name: "codex-cli", Protocol: "codex-cli"},
 		{Name: "gemini-cli", Protocol: "gemini-cli"},
-		{Name: "openai", Protocol: "openai", BaseURL: "https://api.openai.com/v1"},
+		{Name: "openai", Protocol: "openai-chat", BaseURL: "https://api.openai.com/v1"},
 		{Name: "anthropic", Protocol: "anthropic", BaseURL: "https://api.anthropic.com/v1"},
 	}
 	tests := []struct {

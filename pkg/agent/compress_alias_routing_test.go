@@ -26,7 +26,7 @@ import (
 func TestBuildCompressLLMClient_PerAliasRouting(t *testing.T) {
 	cfg := &config.Config{
 		Providers: []config.Provider{
-			{Name: "xai", Protocol: "openai", BaseURL: "http://127.0.0.1:0/v1", APIKey: "k"},
+			{Name: "xai", Protocol: "openai-chat", BaseURL: "http://127.0.0.1:0/v1", APIKey: "k"},
 		},
 		Models: []config.ModelConfig{
 			{
