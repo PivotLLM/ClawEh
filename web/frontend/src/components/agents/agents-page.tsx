@@ -6,17 +6,11 @@ import { toast } from "sonner"
 
 import { type ModelInfo, getModels } from "@/api/models"
 import { type AgentToolCatalogResponse, getAppConfig, getAgentTools, patchAppConfig } from "@/api/channels"
+import { FallbacksSelect, ModelSelect } from "@/components/agents/model-selects"
 import { ToolSelect } from "@/components/agents/tool-select"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
 
 interface AgentModelConfig {
   primary: string
@@ -107,6 +101,16 @@ function parseAgent(value: unknown): AgentEntry {
   }
 }
 
+// sortAgentList orders agents alphabetically by display name (name, falling back
+// to id), case-insensitively. Order in agents.list is not semantically
+// significant (the default agent is marked by its `default` flag, bindings route
+// by id), so sorting for display is safe and keeps the list stable.
+function sortAgentList(list: AgentEntry[]): AgentEntry[] {
+  return [...list].sort((a, b) =>
+    (a.name || a.id).localeCompare(b.name || b.id, undefined, { sensitivity: "base" }),
+  )
+}
+
 function parseAgentsConfig(appConfig: unknown): AgentsConfig {
   const cfg = asRecord(appConfig)
   const agents = asRecord(cfg.agents)
@@ -116,7 +120,7 @@ function parseAgentsConfig(appConfig: unknown): AgentsConfig {
       model: parseModelConfig(defaults.model),
       temperature: typeof defaults.temperature === "number" ? defaults.temperature : undefined,
     },
-    list: asArray(agents.list).map(parseAgent),
+    list: sortAgentList(asArray(agents.list).map(parseAgent)),
   }
 }
 
@@ -125,44 +129,6 @@ async function fetchSkills(): Promise<SkillInfo[]> {
   if (!res.ok) return []
   const data = (await res.json()) as { skills?: SkillInfo[] }
   return data.skills ?? []
-}
-
-interface ModelSelectProps {
-  value: string
-  models: ModelInfo[]
-  onChange: (v: string) => void
-  placeholder?: string
-}
-
-function ModelSelect({ value, models, onChange, placeholder }: ModelSelectProps) {
-  const configured = models
-    .filter((m) => m.configured && m.enabled)
-    .sort((a, b) => a.model_name.localeCompare(b.model_name))
-  const selectedModel = models.find((m) => m.model_name === value)
-  const noToolsWarning = selectedModel?.no_tools === true
-  return (
-    <div className="space-y-1.5">
-      <Select value={value || "__none__"} onValueChange={(v) => onChange(v === "__none__" ? "" : v)}>
-        <SelectTrigger className="w-full">
-          <SelectValue placeholder={placeholder ?? "Select model"} />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="__none__">{placeholder ?? "No model override"}</SelectItem>
-          {configured.map((m) => (
-            <SelectItem key={m.index} value={m.model_name}>
-              {m.model_name}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-      {noToolsWarning && (
-        <p className="text-amber-600 dark:text-amber-400 text-xs flex items-center gap-1">
-          <span>&#9888;</span>
-          Tools are disabled for {selectedModel.model_name}
-        </p>
-      )}
-    </div>
-  )
 }
 
 interface SkillsSelectProps {
@@ -211,87 +177,6 @@ function SkillsSelect({ selected, availableSkills, onChange }: SkillsSelectProps
             ? "No skills selected (agent has no skill access)"
             : `${selected.length} skill${selected.length === 1 ? "" : "s"} selected`}
         </p>
-      )}
-    </div>
-  )
-}
-
-interface FallbacksSelectProps {
-  fallbacks: string[]
-  primary: string
-  models: ModelInfo[]
-  onChange: (fallbacks: string[]) => void
-  addPlaceholder?: string
-}
-
-function FallbacksSelect({ fallbacks, primary, models, onChange, addPlaceholder }: FallbacksSelectProps) {
-  const available = models
-    .filter((m) => m.configured && m.enabled && m.model_name !== primary)
-    .sort((a, b) => a.model_name.localeCompare(b.model_name))
-
-  const moveUp = (i: number) => {
-    if (i === 0) return
-    const next = [...fallbacks]
-    ;[next[i - 1], next[i]] = [next[i], next[i - 1]]
-    onChange(next)
-  }
-
-  const remove = (i: number) => {
-    onChange(fallbacks.filter((_, idx) => idx !== i))
-  }
-
-  const add = (name: string) => {
-    if (!name || fallbacks.includes(name)) return
-    onChange([...fallbacks, name])
-  }
-
-  const remaining = available.filter((m) => !fallbacks.includes(m.model_name))
-
-  return (
-    <div className="space-y-1.5">
-      {fallbacks.map((fb, i) => (
-        <div key={fb} className="flex items-center gap-1.5">
-          <span className="text-muted-foreground w-4 text-center text-xs">{i + 1}</span>
-          <span className="border-border/50 bg-muted/40 flex-1 rounded px-2 py-1 font-mono text-xs">
-            {fb}
-          </span>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={() => moveUp(i)}
-            disabled={i === 0}
-            className="text-muted-foreground size-6"
-            title="Move up"
-          >
-            ↑
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={() => remove(i)}
-            className="text-muted-foreground hover:text-destructive size-6"
-            title="Remove"
-          >
-            ×
-          </Button>
-        </div>
-      ))}
-      {remaining.length > 0 && (
-        <Select value="" onValueChange={add}>
-          <SelectTrigger className="h-7 text-xs">
-            <SelectValue placeholder={addPlaceholder ?? "Add fallback model…"} />
-          </SelectTrigger>
-          <SelectContent>
-            {remaining.map((m) => (
-              <SelectItem key={m.index} value={m.model_name}>
-                {m.model_name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      )}
-      {fallbacks.length === 0 && remaining.length === 0 && (
-        <p className="text-muted-foreground text-xs">No other configured models available.</p>
       )}
     </div>
   )
@@ -570,7 +455,6 @@ export function AgentsPage() {
     Record<string, "saving" | "saved" | "error">
   >({})
   const skipAgentsResync = useRef(false)
-  const skipDefaultsResync = useRef(false)
   const saveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
   const savedTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
 
@@ -627,15 +511,12 @@ export function AgentsPage() {
     return primary  // simple string form when no fallbacks
   }
 
+  // Note: agents.defaults (default model/temperature) and the default-agent
+  // selector live on the Config page now, so this payload intentionally omits
+  // `defaults`. The backend patch is a deep merge, so leaving it out preserves
+  // whatever the Config page last saved.
   const buildPayload = (cfg: AgentsConfig) => ({
     agents: {
-      defaults: {
-        model: buildModelPayload(
-          cfg.defaults.model?.primary ?? "",
-          cfg.defaults.model?.fallbacks ?? [],
-        ),
-        ...(cfg.defaults.temperature !== undefined ? { temperature: cfg.defaults.temperature } : {}),
-      },
       list: (cfg.list ?? []).map((a) => ({
         id: a.id,
         ...(a.enabled === false ? { enabled: false } : {}),
@@ -655,49 +536,6 @@ export function AgentsPage() {
       })),
     },
   })
-
-  const handleSetDefaultAgent = async (agentId: string) => {
-    setSaving("set-default")
-    const list = (agentsCfg.list ?? []).map((a) => ({
-      ...a,
-      default: a.id === agentId,
-    }))
-    const next: AgentsConfig = { ...agentsCfg, list }
-    try {
-      await patchAppConfig(buildPayload(next))
-      toast.success("Default agent updated")
-      // Update local state in place instead of reloading the whole page, which
-      // would unmount the list and scroll back to the top.
-      setAgentsCfg(next)
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to save")
-    } finally {
-      setSaving(null)
-    }
-  }
-
-  const handleSaveDefault = async (modelName: string, fallbacks: string[], temperature: number | undefined) => {
-    setAutoStatus((s) => ({ ...s, default: "saving" }))
-    const next: AgentsConfig = {
-      ...agentsCfg,
-      defaults: {
-        ...agentsCfg.defaults,
-        model: modelName ? { primary: modelName, fallbacks } : null,
-        temperature,
-      },
-    }
-    try {
-      await patchAppConfig(buildPayload(next))
-      // Update local state in place (no reload → no scroll jump); skip the
-      // resync so the saved snapshot doesn't overwrite a still-editing field.
-      skipDefaultsResync.current = true
-      setAgentsCfg(next)
-      markSaved("default")
-    } catch (e) {
-      setAutoStatus((s) => ({ ...s, default: "error" }))
-      toast.error(e instanceof Error ? e.message : "Failed to save")
-    }
-  }
 
   const handleSaveAgent = async (index: number, modelName: string, fallbacks: string[], skills: string[], tools: string[], callbackMins: number, callbackCount: number, temperature: number | undefined, memoryDir: string | undefined, summarizationModels: string[]) => {
     const list = [...(agentsCfg.list ?? [])]
@@ -767,7 +605,7 @@ export function AgentsPage() {
       toast.error("Agent ID is required")
       return
     }
-    const list = [
+    const list = sortAgentList([
       ...(agentsCfg.list ?? []),
       {
         id: addingId.trim(),
@@ -776,7 +614,7 @@ export function AgentsPage() {
         skills: addingSkills.length > 0 ? addingSkills : undefined,
         tools: addingTools,
       },
-    ]
+    ])
     const next: AgentsConfig = { ...agentsCfg, list }
     setSaving("add")
     try {
@@ -798,20 +636,6 @@ export function AgentsPage() {
       setSaving(null)
     }
   }
-
-  // Local edit state for default model + fallbacks + temperature
-  const [defaultModelEdit, setDefaultModelEdit] = useState("")
-  const [defaultFallbacksEdit, setDefaultFallbacksEdit] = useState<string[]>([])
-  const [defaultTemperatureEdit, setDefaultTemperatureEdit] = useState<number | undefined>(undefined)
-  useEffect(() => {
-    if (skipDefaultsResync.current) {
-      skipDefaultsResync.current = false
-      return
-    }
-    setDefaultModelEdit(agentsCfg.defaults.model?.primary ?? "")
-    setDefaultFallbacksEdit(agentsCfg.defaults.model?.fallbacks ?? [])
-    setDefaultTemperatureEdit(agentsCfg.defaults.temperature)
-  }, [agentsCfg.defaults])
 
   // Local edit state for each agent
   const [agentModelEdits, setAgentModelEdits] = useState<string[]>([])
@@ -851,9 +675,6 @@ export function AgentsPage() {
     agentTemperatureEdits,
     agentMemoryDirEdits,
     agentSummarizationEdits,
-    defaultModelEdit,
-    defaultFallbacksEdit,
-    defaultTemperatureEdit,
   })
   latestRef.current = {
     agentModelEdits,
@@ -864,9 +685,6 @@ export function AgentsPage() {
     agentTemperatureEdits,
     agentMemoryDirEdits,
     agentSummarizationEdits,
-    defaultModelEdit,
-    defaultFallbacksEdit,
-    defaultTemperatureEdit,
   }
 
   const AUTOSAVE_MS = 600
@@ -889,18 +707,6 @@ export function AgentsPage() {
       )
     }, AUTOSAVE_MS)
   }
-  const scheduleSaveDefault = () => {
-    clearTimeout(saveTimers.current.default)
-    saveTimers.current.default = setTimeout(() => {
-      const L = latestRef.current
-      void handleSaveDefault(
-        L.defaultModelEdit,
-        L.defaultFallbacksEdit,
-        L.defaultTemperatureEdit,
-      )
-    }, AUTOSAVE_MS)
-  }
-
   return (
     <div className="flex h-full flex-col">
       <PageHeader title={t("navigation.agents")}>
@@ -934,59 +740,8 @@ export function AgentsPage() {
 
           {!loading && !fetchError && (
             <>
-              {/* Default agent selector */}
-              {(agentsCfg.list ?? []).length > 0 && (
-                <div className="border-border/60 bg-card rounded-xl border p-4 flex items-center gap-3">
-                  <p className="text-sm font-medium shrink-0">Default agent</p>
-                  <Select
-                    value={(agentsCfg.list ?? []).find((a) => a.default)?.id ?? (agentsCfg.list?.[0]?.id ?? "")}
-                    onValueChange={handleSetDefaultAgent}
-                    disabled={saving === "set-default"}
-                  >
-                    <SelectTrigger className="w-48">
-                      <SelectValue placeholder="Select default agent" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {(agentsCfg.list ?? []).filter((a) => a.enabled !== false).map((a) => (
-                        <SelectItem key={a.id} value={a.id}>{a.name || a.id}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <p className="text-muted-foreground text-xs">
-                    Handles messages that don't match any binding
-                  </p>
-                </div>
-              )}
-
-              {/* Default model settings */}
-              <AgentCard
-                label="Agent Defaults"
-                modelName={defaultModelEdit}
-                fallbacks={defaultFallbacksEdit}
-                skills={[]}
-                tools={[]}
-                availableSkills={[]}
-                availableTools={{ tools: [], default_tools: [] }}
-                models={models}
-                temperature={defaultTemperatureEdit}
-                onModelChange={(v) => {
-                  setDefaultModelEdit(v)
-                  scheduleSaveDefault()
-                }}
-                onFallbacksChange={(f) => {
-                  setDefaultFallbacksEdit(f)
-                  scheduleSaveDefault()
-                }}
-                onSkillsChange={() => {}}
-                onToolsChange={() => {}}
-                onTemperatureChange={(tp) => {
-                  setDefaultTemperatureEdit(tp)
-                  scheduleSaveDefault()
-                }}
-                status={autoStatus.default}
-              />
-
-              {/* Named agents */}
+              {/* Named agents. Agent defaults (default agent, default model,
+                  summarization models) now live on the Config page. */}
               {(agentsCfg.list ?? []).map((agent, i) => (
                 <AgentCard
                   key={agent.id}

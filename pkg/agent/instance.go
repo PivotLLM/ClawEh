@@ -2,8 +2,6 @@ package agent
 
 import (
 	"context"
-	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -74,20 +72,24 @@ func NewAgentInstance(
 
 	// When memory is relocated (non-empty and non-default), eagerly create the
 	// directory: the memory tools open it via os.OpenRoot, which requires it to
-	// exist. Failure is a hard startup error so we never silently fall back to
-	// workspace memory and leak private notes into the wrong directory.
+	// exist. A failure here is logged at error level but is NOT fatal — a single
+	// agent's mkdir failure must not kill the whole gateway process. The memory
+	// tools will then fail to open the (missing) dir and surface their own errors
+	// rather than silently writing private notes to the wrong directory.
 	if memoryDir != "" {
 		defaultMem := filepath.Join(workspace, "memory")
 		if memoryDir != defaultMem {
 			if err := os.MkdirAll(memoryDir, 0o700); err != nil {
-				log.Fatalf("agent %q: failed to create memory_dir %q: %v",
-					func() string {
-						if agentCfg != nil {
-							return agentCfg.ID
-						}
-						return ""
-					}(),
-					memoryDir, err)
+				agentIDForLog := ""
+				if agentCfg != nil {
+					agentIDForLog = agentCfg.ID
+				}
+				logger.ErrorCF("agent", "failed to create memory_dir",
+					map[string]any{
+						"agent_id":   agentIDForLog,
+						"memory_dir": memoryDir,
+						"error":      err.Error(),
+					})
 			}
 		}
 	}
@@ -366,8 +368,11 @@ func NewAgentInstance(
 			})
 			lightCandidates = resolved
 		} else {
-			log.Printf("routing: light_model %q not found in models — routing disabled for agent %q",
-				rc.LightModel, agentID)
+			logger.WarnCF("routing", "light_model not found in models — routing disabled",
+				map[string]any{
+					"light_model": rc.LightModel,
+					"agent_id":    agentID,
+				})
 		}
 	}
 
@@ -460,7 +465,11 @@ func compilePatterns(patterns []string) []*regexp.Regexp {
 	for _, p := range patterns {
 		re, err := regexp.Compile(p)
 		if err != nil {
-			fmt.Printf("Warning: invalid path pattern %q: %v\n", p, err)
+			logger.WarnCF("agent", "invalid path pattern",
+				map[string]any{
+					"pattern": p,
+					"error":   err.Error(),
+				})
 			continue
 		}
 		compiled = append(compiled, re)
@@ -483,7 +492,8 @@ func (a *AgentInstance) Close() error {
 func initSessionStore(dir string) session.SessionStore {
 	store, err := memory.NewJSONLStore(dir)
 	if err != nil {
-		log.Printf("memory: init store: %v; using json sessions", err)
+		logger.WarnCF("memory", "init store failed; using json sessions",
+			map[string]any{"error": err.Error()})
 		return session.NewSessionManager(dir)
 	}
 
@@ -491,11 +501,13 @@ func initSessionStore(dir string) session.SessionStore {
 		// Migration failure means the store could not write data.
 		// Fall back to SessionManager to avoid a split state where
 		// some sessions are in JSONL and others remain in JSON.
-		log.Printf("memory: migration failed: %v; falling back to json sessions", merr)
+		logger.WarnCF("memory", "migration failed; falling back to json sessions",
+			map[string]any{"error": merr.Error()})
 		store.Close()
 		return session.NewSessionManager(dir)
 	} else if n > 0 {
-		log.Printf("memory: migrated %d session(s) to jsonl", n)
+		logger.InfoCF("memory", "migrated sessions to jsonl",
+			map[string]any{"count": n})
 	}
 
 	return session.NewJSONLBackend(store)

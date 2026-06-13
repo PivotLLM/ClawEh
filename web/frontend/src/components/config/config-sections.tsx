@@ -6,6 +6,7 @@ import {
   SESSION_MODE_OPTIONS,
   type LauncherForm,
 } from "@/components/config/form-model"
+import { FallbacksSelect, ModelSelect } from "@/components/agents/model-selects"
 import { Field, SwitchCardField } from "@/components/shared-form"
 import { Button } from "@/components/ui/button"
 import {
@@ -244,24 +245,94 @@ function SummarizationModelsField({
   )
 }
 
-interface SummarizationSectionProps {
+interface AgentModelDefaultsSectionProps {
   form: CoreConfigForm
   onFieldChange: UpdateCoreField
+  agentOptions: { id: string; name?: string }[]
 }
 
-// SummarizationSection is a global (not per-agent) configuration card for the
-// ordered summarization model chain used during context compaction.
-export function SummarizationSection({
+// AgentModelDefaultsSection consolidates the model-related agent defaults that
+// used to be split between the Agents page (default agent, default model) and
+// the Config page (summarization model chain): the default agent for unrouted
+// messages, the default model + fallbacks + temperature applied to agents with
+// no override, and the global summarization model chain.
+export function AgentModelDefaultsSection({
   form,
   onFieldChange,
-}: SummarizationSectionProps) {
+  agentOptions,
+}: AgentModelDefaultsSectionProps) {
   const { t } = useTranslation()
+  const { configuredModels } = useChatModels()
 
   return (
     <ConfigSectionCard
-      title={t("pages.config.sections.summarization")}
-      description={t("pages.config.sections.summarization_desc")}
+      title={t("pages.config.sections.agent_defaults")}
+      description={t("pages.config.sections.agent_defaults_desc")}
     >
+      {agentOptions.length > 0 && (
+        <Field
+          label={t("pages.config.default_agent")}
+          hint={t("pages.config.default_agent_hint")}
+          layout="setting-row"
+        >
+          <Select
+            value={form.defaultAgentId || agentOptions[0]?.id || ""}
+            onValueChange={(v) => onFieldChange("defaultAgentId", v)}
+          >
+            <SelectTrigger className="w-56">
+              <SelectValue placeholder={t("pages.config.default_agent")} />
+            </SelectTrigger>
+            <SelectContent>
+              {agentOptions.map((a) => (
+                <SelectItem key={a.id} value={a.id}>
+                  {a.name || a.id}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </Field>
+      )}
+
+      <Field
+        label={t("pages.config.default_model")}
+        hint={t("pages.config.default_model_hint")}
+      >
+        <ModelSelect
+          value={form.defaultModel}
+          models={configuredModels}
+          onChange={(v) => onFieldChange("defaultModel", v)}
+          placeholder={t("pages.config.default_model_none")}
+        />
+      </Field>
+
+      {form.defaultModel && (
+        <Field label={t("pages.config.default_fallbacks")}>
+          <FallbacksSelect
+            fallbacks={form.defaultModelFallbacks}
+            primary={form.defaultModel}
+            models={configuredModels}
+            onChange={(next) => onFieldChange("defaultModelFallbacks", next)}
+          />
+        </Field>
+      )}
+
+      <Field
+        label={t("pages.config.default_temperature")}
+        hint={t("pages.config.default_temperature_hint")}
+        layout="setting-row"
+      >
+        <Input
+          type="number"
+          min={0}
+          max={2}
+          step={0.1}
+          value={form.defaultTemperature}
+          onChange={(e) => onFieldChange("defaultTemperature", e.target.value)}
+          placeholder="default"
+          className="w-24"
+        />
+      </Field>
+
       <SummarizationModelsField
         value={form.summarizationModels}
         onChange={(next) => onFieldChange("summarizationModels", next)}

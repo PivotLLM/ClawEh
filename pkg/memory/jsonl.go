@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,6 +17,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/pkg/cronmsg"
 	"github.com/PivotLLM/ClawEh/pkg/fileutil"
+	"github.com/PivotLLM/ClawEh/pkg/logger"
 	"github.com/PivotLLM/ClawEh/pkg/providers"
 )
 
@@ -266,8 +266,8 @@ func readStoredMessages(path string, skip int) ([]StoredMessage, error) {
 		var stored StoredMessage
 		if err := json.Unmarshal(line, &stored); err != nil {
 			// Corrupt line — likely a partial write from a crash.
-			log.Printf("memory: skipping corrupt line %d in %s: %v",
-				lineNum, filepath.Base(path), err)
+			logger.WarnCF("memory", "skipping corrupt line",
+				map[string]any{"line": lineNum, "path": filepath.Base(path), "error": err.Error()})
 			continue
 		}
 		// Migration: legacy lines written before Phase 2 have seq == 0.
@@ -414,8 +414,14 @@ func (s *JSONLStore) addMsg(sessionKey string, msg providers.Message) (int64, er
 	// Update noise cache after computing isNoisy.
 	updateNoiseCache(stored, cache)
 
-	log.Printf("memory: message_stored seq=%d length=%d counted=%v role=%q session=%q",
-		seq, len(msg.Content), !isNoisy, msg.Role, sessionKey)
+	logger.DebugCF("memory", "message_stored",
+		map[string]any{
+			"seq":     seq,
+			"length":  len(msg.Content),
+			"counted": !isNoisy,
+			"role":    msg.Role,
+			"session": sessionKey,
+		})
 
 	if writeMetaErr := s.writeMeta(sessionKey, meta); writeMetaErr != nil {
 		return 0, writeMetaErr
@@ -446,8 +452,8 @@ func (s *JSONLStore) GetHistoryWithSeqs(
 		if n > 0 {
 			meta.NextSeq = int64(n)
 			if saveErr := s.writeMeta(sessionKey, meta); saveErr != nil {
-				log.Printf("memory: warn: could not save migrated NextSeq for session %q: %v",
-					sessionKey, saveErr)
+				logger.WarnCF("memory", "could not save migrated NextSeq",
+					map[string]any{"session": sessionKey, "error": saveErr.Error()})
 			}
 		}
 	}
@@ -479,8 +485,8 @@ func (s *JSONLStore) GetHistory(
 			meta.NextSeq = int64(n)
 			if saveErr := s.writeMeta(sessionKey, meta); saveErr != nil {
 				// Non-fatal: log and continue; seq will be approximate.
-				log.Printf("memory: warn: could not save migrated NextSeq for session %q: %v",
-					sessionKey, saveErr)
+				logger.WarnCF("memory", "could not save migrated NextSeq",
+					map[string]any{"session": sessionKey, "error": saveErr.Error()})
 			}
 		}
 	}

@@ -1,7 +1,7 @@
 import { IconCode, IconDeviceFloppy } from "@tabler/icons-react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 
@@ -14,11 +14,11 @@ import {
 } from "@/api/system"
 import {
   AgentDefaultsSection,
+  AgentModelDefaultsSection,
   ContextManagementSection,
   DevicesSection,
   LauncherSection,
   RuntimeSection,
-  SummarizationSection,
 } from "@/components/config/config-sections"
 import {
   type CoreConfigForm,
@@ -76,6 +76,26 @@ export function ConfigPage() {
     setForm(parsed)
     setBaseline(parsed)
   }, [data])
+
+  // Raw agents.list straight from the loaded config — re-sent verbatim (with the
+  // default flag flipped) when the default agent changes, so no agent fields are
+  // lost. The backend patch replaces the list array wholesale, so it must be
+  // complete.
+  const rawAgentList = useMemo<Array<Record<string, unknown>>>(() => {
+    const agents = (data as { agents?: { list?: unknown } } | undefined)?.agents
+    return Array.isArray(agents?.list)
+      ? (agents.list as Array<Record<string, unknown>>)
+      : []
+  }, [data])
+
+  const agentOptions = useMemo(
+    () =>
+      rawAgentList
+        .filter((a) => a.enabled !== false)
+        .map((a) => ({ id: String(a.id ?? ""), name: a.name ? String(a.name) : undefined }))
+        .filter((a) => a.id),
+    [rawAgentList],
+  )
 
   useEffect(() => {
     if (!launcherConfig) return
@@ -154,6 +174,29 @@ export function ConfigPage() {
         const summarizationModels = form.summarizationModels
           .map((m) => m.trim())
           .filter((m) => m.length > 0)
+
+        // Default model (agents.defaults.model): bare string when no fallbacks,
+        // { primary, fallbacks } with them, null when cleared.
+        const defaultModelName = form.defaultModel.trim()
+        const defaultFallbacks = form.defaultModelFallbacks
+          .map((m) => m.trim())
+          .filter((m) => m.length > 0)
+        const defaultModelPayload = !defaultModelName
+          ? null
+          : defaultFallbacks.length > 0
+            ? { primary: defaultModelName, fallbacks: defaultFallbacks }
+            : defaultModelName
+
+        // Default temperature: number in [0,2], or null to clear when blank.
+        const tempRaw = form.defaultTemperature.trim()
+        let defaultTemperaturePayload: number | null = null
+        if (tempRaw !== "") {
+          const tp = Number(tempRaw)
+          if (Number.isNaN(tp) || tp < 0 || tp > 2) {
+            throw new Error("Default temperature must be a number between 0 and 2.")
+          }
+          defaultTemperaturePayload = tp
+        }
         const compressNormalPercent = parseIntField(
           form.compressNormalPercent,
           "Normal compression threshold",
@@ -202,6 +245,21 @@ export function ConfigPage() {
           "Summary retention days",
           { min: 0 },
         )
+        // Re-send the full agents.list with default flags flipped only when the
+        // default agent actually changed (the patch replaces the array wholesale).
+        const defaultAgentChanged = form.defaultAgentId !== baseline.defaultAgentId
+        const agentListPayload = defaultAgentChanged
+          ? rawAgentList.map((a) => {
+              const next = { ...a }
+              if (String(a.id ?? "") === form.defaultAgentId) {
+                next.default = true
+              } else {
+                delete next.default
+              }
+              return next
+            })
+          : undefined
+
         await patchAppConfig({
           agents: {
             defaults: {
@@ -210,6 +268,8 @@ export function ConfigPage() {
               stream_tool_activity: form.streamToolActivity,
               max_tokens: maxTokens,
               max_tool_iterations: maxToolIterations,
+              model: defaultModelPayload,
+              temperature: defaultTemperaturePayload,
               compress_normal_percent: compressNormalPercent,
               compress_safety_percent: compressSafetyPercent,
               compress_min_percent: compressMinPercent,
@@ -221,6 +281,7 @@ export function ConfigPage() {
               summary_max_count: summaryMaxCount,
               summary_retention_days: summaryRetentionDays,
             },
+            ...(agentListPayload ? { list: agentListPayload } : {}),
           },
           summarization: {
             models: summarizationModels,
@@ -323,7 +384,11 @@ export function ConfigPage() {
 
               <AgentDefaultsSection form={form} onFieldChange={updateField} />
 
-              <SummarizationSection form={form} onFieldChange={updateField} />
+              <AgentModelDefaultsSection
+                form={form}
+                onFieldChange={updateField}
+                agentOptions={agentOptions}
+              />
 
               <ContextManagementSection form={form} onFieldChange={updateField} />
 

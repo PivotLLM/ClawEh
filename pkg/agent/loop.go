@@ -36,6 +36,7 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/routing"
 	"github.com/PivotLLM/ClawEh/pkg/state"
 	"github.com/PivotLLM/ClawEh/pkg/tools"
+	toolsagents "github.com/PivotLLM/ClawEh/pkg/tools/agents"
 	toolsmsg "github.com/PivotLLM/ClawEh/pkg/tools/msg"
 	"github.com/PivotLLM/ClawEh/pkg/utils"
 	"github.com/PivotLLM/ClawEh/pkg/voice"
@@ -603,6 +604,22 @@ func (al *AgentLoop) registerRuntimeTools(
 			return registry.CanSpawnSubagent(currentAgentID, targetID)
 		}
 
+		// Robust sub-agent launcher, injected via Deps.Spawn so the internal spawn
+		// tool and any external/MCP tool launch workers through the same path.
+		spawnMgr := toolsagents.NewSubagentManager(toolsagents.SubagentManagerConfig{
+			Provider:          provider,
+			Workspace:         currentAgent.Workspace,
+			Dispatcher:        dispatcher,
+			Fallback:          fallbackChain,
+			SelfCandidates:    currentAgent.Candidates,
+			CallerAgentID:     agentID,
+			CandidateResolver: candidateResolver,
+		})
+		spawner := toolsagents.NewSpawner(spawnMgr)
+		spawner.SetAllowlistChecker(func(targetID string) bool {
+			return spawnAllowlist(currentAgentID, targetID)
+		})
+
 		deps := tools.ToolDeps{
 			Cfg:               cfg,
 			AgentCfg:          agentCfg,
@@ -614,6 +631,7 @@ func (al *AgentLoop) registerRuntimeTools(
 			Candidates:        currentAgent.Candidates,
 			SpawnAllowlist:    spawnAllowlist,
 			CandidateResolver: candidateResolver,
+			Spawn:             spawner,
 			CompactFn:         compactFn,
 			SessionInfoFn:     infoFn,
 			ClearFn:           clearFn,

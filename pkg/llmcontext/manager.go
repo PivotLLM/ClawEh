@@ -49,6 +49,14 @@ type Manager struct {
 	// compression clients resolved at construction time
 	compressClients []LLMClient
 
+	// refusedModels tracks summarization models that refused this session's
+	// content on content-policy grounds. Such models are skipped on subsequent
+	// compactions for this session so we stop sending material to a model that
+	// will not handle it. In-memory and per-session: cleared when the
+	// ContextManager is rebuilt (config reload / restart). Guarded by refusedMu.
+	refusedModels map[string]bool
+	refusedMu     sync.Mutex
+
 	// compression outcome tracking
 	lastCompressedAt    time.Time
 	lastCompressionGain float64

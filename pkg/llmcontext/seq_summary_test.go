@@ -21,12 +21,12 @@ type seqTrackingLLM struct {
 	err              error
 }
 
-func (l *seqTrackingLLM) Complete(_ context.Context, messages []providers.Message) (providers.Message, error) {
+func (l *seqTrackingLLM) Complete(_ context.Context, messages []providers.Message) (LLMReply, error) {
 	l.capturedMessages = messages
 	if l.err != nil {
-		return providers.Message{}, l.err
+		return LLMReply{}, l.err
 	}
-	return providers.Message{Role: "assistant", Content: l.response}, nil
+	return LLMReply{Content: l.response}, nil
 }
 
 // seqStore is a SessionStore that returns StoredMessages with explicit seq numbers.

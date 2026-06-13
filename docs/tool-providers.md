@@ -112,7 +112,7 @@ type Deps struct {
     Cfg       any    // *config.Config in Claw (type-assert)
     AgentID   string
     Workspace string
-    Spawn     any    // sub-agent launcher; nil ⇒ host cannot spawn
+    Spawn     any    // global.Spawner; nil ⇒ host cannot spawn sub-agents
     Host      any    // host-specific strong deps; Claw passes tools.ToolDeps
 }
 
@@ -257,6 +257,34 @@ When a module needs Claw-specific dependencies, it reaches them through
 `deps.Host.(tools.ToolDeps)` — which keeps the *portable* part (the tool
 definitions and handlers' signatures) free of Claw imports while still letting
 the handler bodies use Claw internals when running inside Claw.
+
+### Spawning sub-agents from a module
+
+A tool can launch sub-agent workers through the portable `global.Spawner` the
+host injects into `Deps.Spawn`:
+
+```go
+sp, ok := deps.Spawn.(global.Spawner)
+if ok && sp != nil {
+    res, err := sp.Spawn(call.Ctx, global.SpawnRequest{
+        Mode:    global.SpawnAndWait, // or SpawnCallback / SpawnDetached
+        Task:    "summarize the attached log",
+        Channel: call.Channel,
+        ChatID:  call.ChatID,
+        OnResult: call.Notify, // for SpawnCallback: re-inject the result on the channel
+    })
+    _ = res
+    _ = err
+}
+```
+
+The three modes are: `SpawnDetached` (fire-and-forget, result discarded),
+`SpawnCallback` (fire-and-forget; the worker's result is delivered to
+`OnResult` when it finishes — wire it to `call.Notify` to surface it on the
+originating channel), and `SpawnAndWait` (run to completion and return the
+worker's `Result` synchronously). `Spawner` lives in `pkg/global` (stdlib-only),
+so an external module can depend on it without importing the rest of Claw; the
+host supplies the concrete implementation.
 
 ---
 

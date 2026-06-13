@@ -21,7 +21,7 @@ import (
 // invocation during a compaction pass.
 type CompactionAttempt struct {
 	Model      string `json:"model"`
-	Status     string `json:"status"` // "ok" | "rejected" | "error"
+	Status     string `json:"status"` // "ok" | "rejected" | "error" | "refused"
 	Detail     string `json:"detail,omitempty"`
 	DurationMs int64  `json:"duration_ms"`
 }
@@ -73,9 +73,23 @@ func (r *CompactionReport) String() string {
 	case "nothing":
 		b.WriteString("Nothing to compress — already compact.")
 	default:
-		b.WriteString("Failed — no model produced an acceptable summary.")
+		if r.hasRefusal() {
+			b.WriteString("Failed — model(s) refused to summarize this content (content policy). Refusing models will be skipped for this session.")
+		} else {
+			b.WriteString("Failed — no model produced an acceptable summary.")
+		}
 	}
 	return b.String()
+}
+
+// hasRefusal reports whether any attempt in the pass was a content refusal.
+func (r *CompactionReport) hasRefusal() bool {
+	for _, a := range r.Attempts {
+		if a.Status == "refused" {
+			return true
+		}
+	}
+	return false
 }
 
 // formatBytes renders a byte count as a compact human-readable string.

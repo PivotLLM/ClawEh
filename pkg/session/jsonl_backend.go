@@ -2,8 +2,8 @@ package session
 
 import (
 	"context"
-	"log"
 
+	"github.com/PivotLLM/ClawEh/pkg/logger"
 	"github.com/PivotLLM/ClawEh/pkg/memory"
 	"github.com/PivotLLM/ClawEh/pkg/providers"
 )
@@ -22,14 +22,14 @@ func NewJSONLBackend(store memory.Store) *JSONLBackend {
 
 func (b *JSONLBackend) AddMessage(sessionKey, role, content string) {
 	if err := b.store.AddMessage(context.Background(), sessionKey, role, content); err != nil {
-		log.Printf("session: add message: %v", err)
+		logger.WarnCF("session", "add message", map[string]any{"error": err.Error()})
 	}
 }
 
 func (b *JSONLBackend) AddFullMessage(sessionKey string, msg providers.Message) int64 {
 	seq, err := b.store.AddFullMessage(context.Background(), sessionKey, msg)
 	if err != nil {
-		log.Printf("session: add full message: %v", err)
+		logger.WarnCF("session", "add full message", map[string]any{"error": err.Error()})
 		return 0
 	}
 	return seq
@@ -38,7 +38,7 @@ func (b *JSONLBackend) AddFullMessage(sessionKey string, msg providers.Message) 
 func (b *JSONLBackend) GetHistory(key string) []providers.Message {
 	msgs, err := b.store.GetHistory(context.Background(), key)
 	if err != nil {
-		log.Printf("session: get history: %v", err)
+		logger.WarnCF("session", "get history", map[string]any{"error": err.Error()})
 		return []providers.Message{}
 	}
 	return msgs
@@ -47,7 +47,7 @@ func (b *JSONLBackend) GetHistory(key string) []providers.Message {
 func (b *JSONLBackend) GetHistoryWithSeqs(key string) []memory.StoredMessage {
 	stored, err := b.store.GetHistoryWithSeqs(context.Background(), key)
 	if err != nil {
-		log.Printf("session: get history with seqs: %v", err)
+		logger.WarnCF("session", "get history with seqs", map[string]any{"error": err.Error()})
 		return []memory.StoredMessage{}
 	}
 	return stored
@@ -56,7 +56,7 @@ func (b *JSONLBackend) GetHistoryWithSeqs(key string) []memory.StoredMessage {
 func (b *JSONLBackend) GetSummary(key string) string {
 	summary, err := b.store.GetSummary(context.Background(), key)
 	if err != nil {
-		log.Printf("session: get summary: %v", err)
+		logger.WarnCF("session", "get summary", map[string]any{"error": err.Error()})
 		return ""
 	}
 	return summary
@@ -64,13 +64,13 @@ func (b *JSONLBackend) GetSummary(key string) string {
 
 func (b *JSONLBackend) SetSummary(key, summary string) {
 	if err := b.store.SetSummary(context.Background(), key, summary); err != nil {
-		log.Printf("session: set summary: %v", err)
+		logger.WarnCF("session", "set summary", map[string]any{"error": err.Error()})
 	}
 }
 
 func (b *JSONLBackend) SetHistory(key string, history []providers.Message) {
 	if err := b.store.SetHistory(context.Background(), key, history); err != nil {
-		log.Printf("session: set history: %v", err)
+		logger.WarnCF("session", "set history", map[string]any{"error": err.Error()})
 	}
 }
 
@@ -79,7 +79,7 @@ func (b *JSONLBackend) SetHistory(key string, history []providers.Message) {
 // linked to archive message IDs.
 func (b *JSONLBackend) SetHistoryWithSeqs(key string, history []memory.StoredMessage) {
 	if err := b.store.SetHistoryWithSeqs(context.Background(), key, history); err != nil {
-		log.Printf("session: set history with seqs: %v", err)
+		logger.WarnCF("session", "set history with seqs", map[string]any{"error": err.Error()})
 	}
 }
 
@@ -97,7 +97,7 @@ func (b *JSONLBackend) AppendSummaryCheckpoint(sessionKey string, checkpoint mem
 
 func (b *JSONLBackend) TruncateHistory(key string, keepLast int) {
 	if err := b.store.TruncateHistory(context.Background(), key, keepLast); err != nil {
-		log.Printf("session: truncate history: %v", err)
+		logger.WarnCF("session", "truncate history", map[string]any{"error": err.Error()})
 	}
 }
 
@@ -116,7 +116,7 @@ func (b *JSONLBackend) ListPendingSessions() ([]string, error) {
 func (b *JSONLBackend) GetArchiveBounds(sessionKey string) (minSeq, maxSeq int64) {
 	min, max, err := b.store.GetArchiveBounds(context.Background(), sessionKey)
 	if err != nil {
-		log.Printf("session: get archive bounds: %v", err)
+		logger.WarnCF("session", "get archive bounds", map[string]any{"error": err.Error()})
 		return 0, 0
 	}
 	return min, max

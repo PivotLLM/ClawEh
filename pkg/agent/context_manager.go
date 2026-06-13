@@ -36,7 +36,7 @@ type providerLLMClient struct {
 // per-invocation entries in the compaction report.
 func (c *providerLLMClient) Model() string { return c.model }
 
-func (c *providerLLMClient) Complete(ctx context.Context, messages []providers.Message) (providers.Message, error) {
+func (c *providerLLMClient) Complete(ctx context.Context, messages []providers.Message) (llmcontext.LLMReply, error) {
 	var opts map[string]any
 	if c.requestJSONObject {
 		opts = map[string]any{
@@ -45,9 +45,9 @@ func (c *providerLLMClient) Complete(ctx context.Context, messages []providers.M
 	}
 	resp, err := c.provider.Chat(ctx, messages, nil, c.model, opts)
 	if err != nil {
-		return providers.Message{}, err
+		return llmcontext.LLMReply{}, err
 	}
-	return providers.Message{Role: "assistant", Content: resp.Content}, nil
+	return llmcontext.LLMReply{Content: resp.Content, FinishReason: resp.FinishReason}, nil
 }
 
 // resolveCompressModelTarget resolves a configured compress_model reference into
