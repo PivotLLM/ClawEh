@@ -254,13 +254,15 @@ func (p *Provider) Chat(
 		}
 		// OpenRouter routing hint: require an upstream that supports the
 		// `parameters` field on tool definitions, i.e. one that can actually
-		// honour function calling. Without this, OpenRouter silently down-
-		// routes tools-enabled requests to upstreams that drop the tools and
-		// produce text-only replies (sometimes with the tool descriptor
-		// echoed back inside the content). Non-OpenRouter upstreams ignore
-		// unknown top-level fields, so this is safe for every endpoint.
-		requestBody["provider"] = map[string]any{
-			"require_parameters": true,
+		// honour function calling. Without this, OpenRouter silently down-routes
+		// tools-enabled requests to upstreams that drop the tools and produce
+		// text-only replies. This is an OpenRouter-specific extension — strict
+		// OpenAI-compatible endpoints (e.g. Google's /v1beta/openai) reject
+		// unknown top-level fields with HTTP 400, so only send it to OpenRouter.
+		if isOpenRouterBase(p.apiBase) {
+			requestBody["provider"] = map[string]any{
+				"require_parameters": true,
+			}
 		}
 	}
 
@@ -607,13 +609,21 @@ func serializeMessages(messages []Message, strictCompat bool) []any {
 	return out
 }
 
+// isOpenRouterBase reports whether the configured base URL points at OpenRouter.
+// OpenRouter-specific request extensions (the `provider` routing hint, model
+// prefixes) are gated on this — other OpenAI-compatible endpoints reject unknown
+// fields.
+func isOpenRouterBase(apiBase string) bool {
+	return strings.Contains(strings.ToLower(apiBase), "openrouter.ai")
+}
+
 func normalizeModel(model, apiBase string) string {
 	before, after, ok := strings.Cut(model, "/")
 	if !ok {
 		return model
 	}
 
-	if strings.Contains(strings.ToLower(apiBase), "openrouter.ai") {
+	if isOpenRouterBase(apiBase) {
 		return model
 	}
 
