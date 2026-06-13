@@ -165,7 +165,9 @@ function SummarizationModelsField({
 }: SummarizationModelsFieldProps) {
   const { t } = useTranslation()
   const { configuredModels } = useChatModels()
-  const available = configuredModels
+  const available = [...configuredModels].sort((a, b) =>
+    a.model_name.localeCompare(b.model_name),
+  )
   const remaining = available.filter((m) => !value.includes(m.model_name))
 
   const moveUp = (i: number) => {

@@ -1296,6 +1296,34 @@ func (c *Config) ValidateModels() error {
 	return nil
 }
 
+// ValidateProvider validates a single provider (the one at idx) without
+// rejecting the whole config because OTHER providers are invalid. It checks the
+// provider's own name, protocol, and base_url, plus that its name does not
+// collide with another provider. The per-provider WebUI endpoints use this so an
+// operator can repair one entry at a time (e.g. during a protocol migration)
+// even while other entries remain invalid.
+func (c *Config) ValidateProvider(idx int) error {
+	if idx < 0 || idx >= len(c.Providers) {
+		return fmt.Errorf("provider index %d out of range", idx)
+	}
+	p := &c.Providers[idx]
+	if strings.TrimSpace(p.Name) == "" {
+		return fmt.Errorf("provider name is required")
+	}
+	for i := range c.Providers {
+		if i != idx && c.Providers[i].Name == p.Name {
+			return fmt.Errorf("duplicate provider name %q", p.Name)
+		}
+	}
+	if _, ok := validProtocols[p.Protocol]; !ok {
+		return fmt.Errorf("provider %q: unknown protocol %q", p.Name, p.Protocol)
+	}
+	if _, http := httpProtocols[p.Protocol]; http && p.BaseURL == "" {
+		return fmt.Errorf("provider %q: base_url is required for protocol %q", p.Name, p.Protocol)
+	}
+	return nil
+}
+
 // PruneInvalid removes providers and models that fail validation, logging a WARN
 // for each dropped entry, and returns how many of each were removed. It is the
 // lenient counterpart to ValidateProviders/ValidateModels: the gateway calls it

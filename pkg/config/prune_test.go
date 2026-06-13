@@ -5,6 +5,31 @@ package config
 
 import "testing"
 
+func TestValidateProvider_IgnoresOtherInvalidEntries(t *testing.T) {
+	cfg := &Config{Providers: []Provider{
+		{Name: "stale", Protocol: "openai", BaseURL: "https://x/v1"},     // invalid (renamed protocol)
+		{Name: "good", Protocol: "openai-chat", BaseURL: "https://x/v1"}, // valid
+	}}
+	// The valid provider validates fine even though another entry is invalid —
+	// this is what lets the WebUI fix providers one at a time.
+	if err := cfg.ValidateProvider(1); err != nil {
+		t.Errorf("ValidateProvider(good) = %v, want nil", err)
+	}
+	// The invalid provider still reports its own reason.
+	if err := cfg.ValidateProvider(0); err == nil {
+		t.Error("ValidateProvider(stale) = nil, want unknown-protocol error")
+	}
+	// Duplicate names are still rejected.
+	cfg.Providers = append(cfg.Providers, Provider{Name: "good", Protocol: "openai-chat", BaseURL: "https://y/v1"})
+	if err := cfg.ValidateProvider(2); err == nil {
+		t.Error("ValidateProvider(dup) = nil, want duplicate-name error")
+	}
+	// Out-of-range index is an error, not a panic.
+	if err := cfg.ValidateProvider(99); err == nil {
+		t.Error("ValidateProvider(99) = nil, want out-of-range error")
+	}
+}
+
 func TestPruneInvalid(t *testing.T) {
 	cfg := &Config{
 		Providers: []Provider{
