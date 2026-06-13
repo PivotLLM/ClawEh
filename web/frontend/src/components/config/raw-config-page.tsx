@@ -130,7 +130,7 @@ export function RawConfigPage() {
       </PageHeader>
 
       <div className="flex min-h-0 flex-1 flex-col p-1 lg:p-3 lg:p-6">
-        <div className="mx-auto flex h-full min-h-0 w-full max-w-[1000px] flex-col">
+        <div className="flex h-full min-h-0 w-full max-w-[1000px] flex-col">
           {isLoading ? (
             <div className="flex flex-1 items-center justify-center">
               <p>{t("labels.loading")}</p>

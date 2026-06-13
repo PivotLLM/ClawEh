@@ -245,7 +245,7 @@ export function BindingsPage() {
       </PageHeader>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-8 sm:px-6">
-        <div className="mx-auto w-full max-w-250 pt-4 space-y-3">
+        <div className="w-full max-w-250 pt-4 space-y-3">
           {loading && (
             <div className="flex items-center justify-center py-20">
               <IconLoader2 className="text-muted-foreground size-6 animate-spin" />

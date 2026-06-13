@@ -365,7 +365,7 @@ export function ConfigPage() {
         }
       />
       <div className="flex-1 overflow-auto p-3 lg:p-6">
-        <div className="mx-auto w-full max-w-[1000px] space-y-6">
+        <div className="w-full max-w-[1000px] space-y-6">
           {isLoading ? (
             <div className="text-muted-foreground py-6 text-sm">
               {t("labels.loading")}
