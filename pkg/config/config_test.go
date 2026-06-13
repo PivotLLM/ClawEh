@@ -283,7 +283,7 @@ func TestDefaultConfig_Gateway(t *testing.T) {
 func TestDefaultConfig_Providers(t *testing.T) {
 	cfg := DefaultConfig()
 
-	for _, name := range []string{"anthropic", "openai", "openrouter-chat"} {
+	for _, name := range []string{"Anthropic", "OpenAI", "OpenRouter Chat"} {
 		prov, err := cfg.GetProvider(name)
 		if err != nil {
 			t.Fatalf("GetProvider(%q): %v", name, err)
