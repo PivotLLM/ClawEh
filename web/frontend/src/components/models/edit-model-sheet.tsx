@@ -37,6 +37,8 @@ import { Textarea } from "@/components/ui/textarea"
 
 interface EditForm {
   provider: string
+  name: string
+  modelId: string
   connectMode: string
   workspace: string
   rpm: string
@@ -66,6 +68,8 @@ export function EditModelSheet({
 }: EditModelSheetProps) {
   const { t } = useTranslation()
   const [form, setForm] = useState<EditForm>({
+    name: "",
+    modelId: "",
     provider: "",
     connectMode: "",
     workspace: "",
@@ -88,6 +92,8 @@ export function EditModelSheet({
   useEffect(() => {
     if (model) {
       setForm({
+        name: model.model_name ?? "",
+        modelId: model.model ?? "",
         provider: model.provider ?? "",
         connectMode: model.connect_mode ?? "",
         workspace: model.workspace ?? "",
@@ -132,8 +138,8 @@ export function EditModelSheet({
     setError("")
     try {
       await updateModel(model.index, {
-        model_name: model.model_name,
-        model: model.model,
+        model_name: form.name.trim(),
+        model: form.modelId.trim(),
         provider: form.provider || undefined,
         connect_mode: form.connectMode || undefined,
         workspace: form.workspace || undefined,
@@ -158,7 +164,7 @@ export function EditModelSheet({
         strict_alternation: form.strictAlternation,
       })
       if (setAsDefault && !model.is_default) {
-        await setDefaultModel(model.model_name)
+        await setDefaultModel(form.name.trim())
       }
       onSaved()
       onClose()
@@ -186,6 +192,20 @@ export function EditModelSheet({
 
         <div className="min-h-0 flex-1 overflow-y-auto">
           <div className="space-y-5 px-6 py-5">
+            <Field
+              label="Model Name"
+              hint="Display name / alias referenced by agents, fallbacks, and the summarization chain. Renaming repoints those references automatically."
+            >
+              <Input value={form.name} onChange={setField("name")} />
+            </Field>
+
+            <Field
+              label="Model ID"
+              hint="The raw model id sent to the provider (e.g. kimi-k2.5, gpt-5.5)."
+            >
+              <Input value={form.modelId} onChange={setField("modelId")} />
+            </Field>
+
             <Field
               label={t("models.field.provider")}
               hint={t("models.field.providerHint")}

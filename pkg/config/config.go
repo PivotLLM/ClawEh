@@ -1296,6 +1296,53 @@ func (c *Config) ValidateModels() error {
 	return nil
 }
 
+// RenameModelReferences repoints every reference to a model alias from oldName
+// to newName across agent defaults, per-agent model chains, routing light_model,
+// image models, and the global summarization chain. Used when a model's
+// model_name changes via the WebUI so existing references are not orphaned.
+// No-op when oldName is empty or unchanged. Mutates in-memory config only.
+func (c *Config) RenameModelReferences(oldName, newName string) {
+	if oldName == "" || oldName == newName {
+		return
+	}
+	renameInModelChain(c.Agents.Defaults.Model, oldName, newName)
+	c.Agents.Defaults.ImageModel = renameScalar(c.Agents.Defaults.ImageModel, oldName, newName)
+	renameInSlice(c.Agents.Defaults.ImageModelFallbacks, oldName, newName)
+	if c.Agents.Defaults.Routing != nil {
+		c.Agents.Defaults.Routing.LightModel = renameScalar(c.Agents.Defaults.Routing.LightModel, oldName, newName)
+	}
+	renameInSlice(c.Summarization.Models, oldName, newName)
+	for i := range c.Agents.List {
+		renameInModelChain(c.Agents.List[i].Model, oldName, newName)
+		renameInSlice(c.Agents.List[i].SummarizationModels, oldName, newName)
+	}
+}
+
+func renameInModelChain(m *AgentModelConfig, oldName, newName string) {
+	if m == nil {
+		return
+	}
+	if m.Primary == oldName {
+		m.Primary = newName
+	}
+	renameInSlice(m.Fallbacks, oldName, newName)
+}
+
+func renameScalar(s, oldName, newName string) string {
+	if s == oldName {
+		return newName
+	}
+	return s
+}
+
+func renameInSlice(ss []string, oldName, newName string) {
+	for i := range ss {
+		if ss[i] == oldName {
+			ss[i] = newName
+		}
+	}
+}
+
 // ValidateProvider validates a single provider (the one at idx) without
 // rejecting the whole config because OTHER providers are invalid. It checks the
 // provider's own name, protocol, and base_url, plus that its name does not
