@@ -63,36 +63,7 @@ func NewAgentInstance(
 ) *AgentInstance {
 	workspace := resolveAgentWorkspace(agentCfg, defaults)
 
-	// Resolve the memory directory before populating templates so the workspace
-	// seeder never recreates <workspace>/memory when memory is relocated.
-	// Empty = legacy <workspace>/memory layout.
-	memoryDir := resolveAgentMemoryDir(agentCfg)
-
-	agentws.Populate(workspace, memoryDir)
-
-	// When memory is relocated (non-empty and non-default), eagerly create the
-	// directory: the memory tools open it via os.OpenRoot, which requires it to
-	// exist. A failure here is logged at error level but is NOT fatal — a single
-	// agent's mkdir failure must not kill the whole gateway process. The memory
-	// tools will then fail to open the (missing) dir and surface their own errors
-	// rather than silently writing private notes to the wrong directory.
-	if memoryDir != "" {
-		defaultMem := filepath.Join(workspace, "memory")
-		if memoryDir != defaultMem {
-			if err := os.MkdirAll(memoryDir, 0o700); err != nil {
-				agentIDForLog := ""
-				if agentCfg != nil {
-					agentIDForLog = agentCfg.ID
-				}
-				logger.ErrorCF("agent", "failed to create memory_dir",
-					map[string]any{
-						"agent_id":   agentIDForLog,
-						"memory_dir": memoryDir,
-						"error":      err.Error(),
-					})
-			}
-		}
-	}
+	agentws.Populate(workspace)
 
 	model := resolveAgentModel(agentCfg, defaults)
 	fallbacks := resolveAgentFallbacks(agentCfg, defaults)
@@ -132,7 +103,7 @@ func NewAgentInstance(
 	}
 
 	mcpDiscoveryActive := cfg.Tools.MCP.Enabled && cfg.Tools.MCP.Discovery.Enabled
-	contextBuilder := NewContextBuilderWithMemory(workspace, memoryDir).WithToolDiscovery(
+	contextBuilder := NewContextBuilder(workspace).WithToolDiscovery(
 		mcpDiscoveryActive && cfg.Tools.MCP.Discovery.UseBM25,
 		mcpDiscoveryActive && cfg.Tools.MCP.Discovery.UseRegex,
 	)
@@ -407,23 +378,6 @@ func NewAgentInstance(
 		LightCandidates: lightCandidates,
 		Config:          agentCfg,
 	}
-}
-
-// resolveAgentMemoryDir returns the absolute on-disk memory directory override
-// for an agent, or "" when the legacy <workspace>/memory layout should be used.
-//
-// Note on migration: relocating memory_dir does NOT auto-copy any files that
-// already live under <workspace>/memory. Operators must move existing
-// MEMORY.md and daily-note files manually; otherwise they become orphaned.
-func resolveAgentMemoryDir(agentCfg *config.AgentConfig) string {
-	if agentCfg == nil {
-		return ""
-	}
-	md := strings.TrimSpace(agentCfg.MemoryDir)
-	if md == "" {
-		return ""
-	}
-	return expandHome(md)
 }
 
 // resolveAgentWorkspace determines the workspace directory for an agent.

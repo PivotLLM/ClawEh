@@ -24,15 +24,6 @@ func NewCopyFileTool(workspace string, restrict bool, allowPaths ...[]*regexp.Re
 	return &CopyFileTool{sysFs: buildFs(workspace, restrict, patterns)}
 }
 
-func NewCopyFileToolWithMemoryRedirect(
-	workspace string,
-	restrict bool,
-	patterns []*regexp.Regexp,
-	memoryRoot string,
-) *CopyFileTool {
-	return &CopyFileTool{sysFs: buildFsWithMemoryRedirect(workspace, restrict, patterns, memoryRoot)}
-}
-
 func (t *CopyFileTool) Name() string {
 	return "file_copy"
 }

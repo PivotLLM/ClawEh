@@ -628,52 +628,6 @@ func TestWriteFile_Backup_Concurrent_DistinctSuffixes(t *testing.T) {
 	}
 }
 
-// --- N1: backup + memory redirect lands inside the memory sandbox ------------
-
-func TestWriteFile_Backup_MemoryRedirect_BackupLandsInMemoryRoot(t *testing.T) {
-	ws := t.TempDir()
-	memRoot := t.TempDir()
-	// Pre-create the target inside memRoot so write_file with memory/foo.md
-	// is overwriting an existing file (and therefore triggers a backup).
-	if err := os.WriteFile(filepath.Join(memRoot, "foo.md"), []byte("pre-image"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	tool := NewWriteFileToolWithMemoryRedirect(ws, true, nil, memRoot)
-	res := tool.Execute(context.Background(), map[string]any{
-		"path":      "memory/foo.md",
-		"content":   "post-image",
-		"backup":    true,
-		"overwrite": true,
-	})
-	if res.IsError {
-		t.Fatalf("write failed: %s", res.ForLLM)
-	}
-
-	// Modification lands in memRoot, not workspace.
-	got, err := os.ReadFile(filepath.Join(memRoot, "foo.md"))
-	if err != nil {
-		t.Fatalf("memRoot file missing: %v", err)
-	}
-	if string(got) != "post-image" {
-		t.Errorf("memRoot file = %q want %q", got, "post-image")
-	}
-
-	// Backup lands in memRoot, not workspace.
-	backup, err := os.ReadFile(filepath.Join(memRoot, "foo.md.0001"))
-	if err != nil {
-		t.Fatalf("memRoot backup missing: %v", err)
-	}
-	if string(backup) != "pre-image" {
-		t.Errorf("backup = %q want %q", backup, "pre-image")
-	}
-
-	// Nothing should have been written under the workspace memory/ subtree.
-	if _, err := os.Stat(filepath.Join(ws, "memory")); !os.IsNotExist(err) {
-		t.Errorf("workspace memory/ should not exist; got err=%v", err)
-	}
-}
-
 // --- scope confinement: target outside workspace still errors ---------------
 
 func TestWriteFile_Backup_OutsideWorkspace(t *testing.T) {

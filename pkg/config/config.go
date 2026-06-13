@@ -192,18 +192,11 @@ type SummarizationConfig struct {
 }
 
 type AgentConfig struct {
-	ID        string `json:"id"`
-	Enabled   *bool  `json:"enabled,omitempty"`
-	Default   bool   `json:"default,omitempty"`
-	Name      string `json:"name,omitempty"`
-	Workspace string `json:"workspace,omitempty"`
-	// MemoryDir relocates this agent's memory folder off the default
-	// <workspace>/memory location. Empty preserves the default. Non-empty
-	// must be an absolute path (may contain ~). The on-disk path is hidden
-	// from the agent; the system prompt continues to advertise the canonical
-	// <workspace>/memory/... paths and the read/write/list/edit/append tools
-	// transparently redirect "memory/..." accesses to this folder.
-	MemoryDir   string            `json:"memory_dir,omitempty"`
+	ID          string            `json:"id"`
+	Enabled     *bool             `json:"enabled,omitempty"`
+	Default     bool              `json:"default,omitempty"`
+	Name        string            `json:"name,omitempty"`
+	Workspace   string            `json:"workspace,omitempty"`
 	Model       *AgentModelConfig `json:"model,omitempty"`
 	Skills      []string          `json:"skills,omitempty"`
 	Tools       []string          `json:"tools,omitempty"`

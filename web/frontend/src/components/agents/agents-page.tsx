@@ -32,7 +32,6 @@ interface AgentEntry {
   tools?: string[]
   callback?: CallbackConfig | null
   temperature?: number
-  memory_dir?: string
   summarization_models?: string[]
 }
 
@@ -96,7 +95,6 @@ function parseAgent(value: unknown): AgentEntry {
     tools: asArray(r.tools).map(asString).filter(Boolean),
     callback: cbMins > 0 ? { window_minutes: cbMins, window_count: asNumber(cbRaw.window_count) || 2 } : null,
     temperature: typeof r.temperature === "number" ? r.temperature : undefined,
-    memory_dir: asString(r.memory_dir) || undefined,
     summarization_models: asArray(r.summarization_models).map(asString).filter(Boolean),
   }
 }
@@ -196,7 +194,6 @@ interface AgentCardProps {
   callbackWindowMinutes?: number
   callbackWindowCount?: number
   temperature?: number
-  memoryDir?: string
   summarizationModels?: string[]
   onToggleEnabled?: () => void
   onModelChange: (v: string) => void
@@ -205,7 +202,6 @@ interface AgentCardProps {
   onToolsChange: (tools: string[]) => void
   onCallbackChange?: (mins: number, count: number) => void
   onTemperatureChange?: (t: number | undefined) => void
-  onMemoryDirChange?: (v: string | undefined) => void
   onSummarizationModelsChange?: (models: string[]) => void
   onDelete?: () => void
   status?: "saving" | "saved" | "error"
@@ -225,7 +221,6 @@ function AgentCard({
   callbackWindowMinutes = 0,
   callbackWindowCount = 2,
   temperature = undefined,
-  memoryDir = undefined,
   summarizationModels = [],
   onToggleEnabled,
   onModelChange,
@@ -234,7 +229,6 @@ function AgentCard({
   onToolsChange,
   onCallbackChange,
   onTemperatureChange = undefined,
-  onMemoryDirChange = undefined,
   onSummarizationModelsChange = undefined,
   onDelete,
   status,
@@ -414,22 +408,6 @@ function AgentCard({
         </div>
       )}
 
-      {onMemoryDirChange !== undefined && (
-        <div className="space-y-1.5">
-          <p className="text-muted-foreground text-xs font-medium">{t("agents.memoryDir")}</p>
-          <Input
-            value={memoryDir ?? ""}
-            onChange={(e) => {
-              const v = e.target.value
-              onMemoryDirChange(v.trim() === "" ? undefined : v)
-            }}
-            className="h-7 text-xs font-mono"
-            placeholder="/path/to/private/memory"
-          />
-          <p className="text-muted-foreground text-xs">{t("agents.memoryDirHint")}</p>
-        </div>
-      )}
-
     </div>
   )
 }
@@ -529,7 +507,6 @@ export function AgentsPage() {
           ? { window_minutes: a.callback.window_minutes, window_count: a.callback.window_count }
           : null,
         ...(a.temperature !== undefined ? { temperature: a.temperature } : {}),
-        ...(a.memory_dir ? { memory_dir: a.memory_dir } : {}),
         ...(a.summarization_models && a.summarization_models.length > 0
           ? { summarization_models: a.summarization_models }
           : {}),
@@ -537,7 +514,7 @@ export function AgentsPage() {
     },
   })
 
-  const handleSaveAgent = async (index: number, modelName: string, fallbacks: string[], skills: string[], tools: string[], callbackMins: number, callbackCount: number, temperature: number | undefined, memoryDir: string | undefined, summarizationModels: string[]) => {
+  const handleSaveAgent = async (index: number, modelName: string, fallbacks: string[], skills: string[], tools: string[], callbackMins: number, callbackCount: number, temperature: number | undefined, summarizationModels: string[]) => {
     const list = [...(agentsCfg.list ?? [])]
     list[index] = {
       ...list[index],
@@ -546,7 +523,6 @@ export function AgentsPage() {
       tools: tools,
       callback: callbackMins > 0 ? { window_minutes: callbackMins, window_count: callbackCount } : null,
       temperature,
-      memory_dir: memoryDir,
       summarization_models: summarizationModels.length > 0 ? summarizationModels : undefined,
     }
     const next: AgentsConfig = { ...agentsCfg, list }
@@ -644,7 +620,6 @@ export function AgentsPage() {
   const [agentToolsEdits, setAgentToolsEdits] = useState<string[][]>([])
   const [agentCallbackEdits, setAgentCallbackEdits] = useState<Array<{ mins: number; count: number }>>([])
   const [agentTemperatureEdits, setAgentTemperatureEdits] = useState<Array<number | undefined>>([])
-  const [agentMemoryDirEdits, setAgentMemoryDirEdits] = useState<Array<string | undefined>>([])
   const [agentSummarizationEdits, setAgentSummarizationEdits] = useState<string[][]>([])
   useEffect(() => {
     if (skipAgentsResync.current) {
@@ -660,7 +635,6 @@ export function AgentsPage() {
       count: a.callback?.window_count ?? 2,
     })))
     setAgentTemperatureEdits((agentsCfg.list ?? []).map((a) => a.temperature))
-    setAgentMemoryDirEdits((agentsCfg.list ?? []).map((a) => a.memory_dir))
     setAgentSummarizationEdits((agentsCfg.list ?? []).map((a) => a.summarization_models ?? []))
   }, [agentsCfg.list])
 
@@ -673,7 +647,6 @@ export function AgentsPage() {
     agentToolsEdits,
     agentCallbackEdits,
     agentTemperatureEdits,
-    agentMemoryDirEdits,
     agentSummarizationEdits,
   })
   latestRef.current = {
@@ -683,7 +656,6 @@ export function AgentsPage() {
     agentToolsEdits,
     agentCallbackEdits,
     agentTemperatureEdits,
-    agentMemoryDirEdits,
     agentSummarizationEdits,
   }
 
@@ -702,7 +674,6 @@ export function AgentsPage() {
         L.agentCallbackEdits[index]?.mins ?? 0,
         L.agentCallbackEdits[index]?.count ?? 2,
         L.agentTemperatureEdits[index],
-        L.agentMemoryDirEdits[index],
         L.agentSummarizationEdits[index] ?? [],
       )
     }, AUTOSAVE_MS)
@@ -758,7 +729,6 @@ export function AgentsPage() {
                   callbackWindowMinutes={agentCallbackEdits[i]?.mins ?? 0}
                   callbackWindowCount={agentCallbackEdits[i]?.count ?? 2}
                   temperature={agentTemperatureEdits[i]}
-                  memoryDir={agentMemoryDirEdits[i]}
                   onToggleEnabled={() => handleToggleAgent(i)}
                   onModelChange={(v) => {
                     setAgentModelEdits((prev) => {
@@ -804,14 +774,6 @@ export function AgentsPage() {
                     setAgentTemperatureEdits((prev) => {
                       const next = [...prev]
                       next[i] = tp
-                      return next
-                    })
-                    scheduleSaveAgent(i)
-                  }}
-                  onMemoryDirChange={(md) => {
-                    setAgentMemoryDirEdits((prev) => {
-                      const next = [...prev]
-                      next[i] = md
                       return next
                     })
                     scheduleSaveAgent(i)

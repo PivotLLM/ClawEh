@@ -120,25 +120,6 @@ func NewReadFileTool(
 	}
 }
 
-// NewReadFileToolWithMemoryRedirect is like NewReadFileTool but also redirects
-// any access under the workspace-relative "memory/" subtree to memoryRoot.
-func NewReadFileToolWithMemoryRedirect(
-	workspace string,
-	restrict bool,
-	maxReadFileSize int,
-	patterns []*regexp.Regexp,
-	memoryRoot string,
-) *ReadFileTool {
-	maxSize := int64(maxReadFileSize)
-	if maxSize <= 0 {
-		maxSize = MaxReadFileSize
-	}
-	return &ReadFileTool{
-		sysFs:   buildFsWithMemoryRedirect(workspace, restrict, patterns, memoryRoot),
-		maxSize: maxSize,
-	}
-}
-
 func (t *ReadFileTool) Name() string {
 	return "file_read"
 }
@@ -337,15 +318,6 @@ func NewWriteFileTool(workspace string, restrict bool, allowPaths ...[]*regexp.R
 	return &WriteFileTool{sysFs: buildFs(workspace, restrict, patterns)}
 }
 
-func NewWriteFileToolWithMemoryRedirect(
-	workspace string,
-	restrict bool,
-	patterns []*regexp.Regexp,
-	memoryRoot string,
-) *WriteFileTool {
-	return &WriteFileTool{sysFs: buildFsWithMemoryRedirect(workspace, restrict, patterns, memoryRoot)}
-}
-
 func (t *WriteFileTool) Name() string {
 	return "file_write"
 }
@@ -433,15 +405,6 @@ func NewListDirTool(workspace string, restrict bool, allowPaths ...[]*regexp.Reg
 		patterns = allowPaths[0]
 	}
 	return &ListDirTool{sysFs: buildFs(workspace, restrict, patterns)}
-}
-
-func NewListDirToolWithMemoryRedirect(
-	workspace string,
-	restrict bool,
-	patterns []*regexp.Regexp,
-	memoryRoot string,
-) *ListDirTool {
-	return &ListDirTool{sysFs: buildFsWithMemoryRedirect(workspace, restrict, patterns, memoryRoot)}
 }
 
 func (t *ListDirTool) Name() string {
@@ -842,111 +805,6 @@ func buildFs(workspace string, restrict bool, patterns []*regexp.Regexp) fileSys
 		return &whitelistFs{sandbox: sandbox, patterns: patterns}
 	}
 	return sandbox
-}
-
-// redirectFs transparently rewrites any access whose path is workspace-relative
-// "memory" (or starts with "memory/") so it lands under memoryRoot instead of
-// <workspace>/memory.
-type redirectFs struct {
-	base       fileSystem
-	mem        fileSystem
-	workspace  string
-	memoryRoot string
-}
-
-func (r *redirectFs) rewrite(path string) (fileSystem, string) {
-	if r.memoryRoot == "" {
-		return r.base, path
-	}
-
-	var rel string
-	if filepath.IsAbs(path) {
-		cleaned := filepath.Clean(path)
-		rr, err := filepath.Rel(r.workspace, cleaned)
-		if err != nil || !filepath.IsLocal(rr) {
-			return r.base, path
-		}
-		rel = rr
-	} else {
-		rel = filepath.Clean(path)
-		if !filepath.IsLocal(rel) {
-			return r.base, path
-		}
-	}
-
-	slashed := filepath.ToSlash(rel)
-	if slashed == "memory" {
-		return r.mem, "."
-	}
-	if strings.HasPrefix(slashed, "memory/") {
-		sub := strings.TrimPrefix(slashed, "memory/")
-		if sub == "" {
-			return r.mem, "."
-		}
-		return r.mem, filepath.FromSlash(sub)
-	}
-	return r.base, path
-}
-
-func (r *redirectFs) ReadFile(path string) ([]byte, error) {
-	fsys, p := r.rewrite(path)
-	return fsys.ReadFile(p)
-}
-
-func (r *redirectFs) WriteFile(path string, data []byte) error {
-	fsys, p := r.rewrite(path)
-	return fsys.WriteFile(p, data)
-}
-
-func (r *redirectFs) WriteFileMode(path string, data []byte, mode os.FileMode) error {
-	fsys, p := r.rewrite(path)
-	return fsys.WriteFileMode(p, data, mode)
-}
-
-func (r *redirectFs) WriteFileExclMode(path string, data []byte, mode os.FileMode) error {
-	fsys, p := r.rewrite(path)
-	return fsys.WriteFileExclMode(p, data, mode)
-}
-
-func (r *redirectFs) Stat(path string) (os.FileInfo, error) {
-	fsys, p := r.rewrite(path)
-	return fsys.Stat(p)
-}
-
-func (r *redirectFs) ReadDir(path string) ([]os.DirEntry, error) {
-	fsys, p := r.rewrite(path)
-	return fsys.ReadDir(p)
-}
-
-func (r *redirectFs) Open(path string) (fs.File, error) {
-	fsys, p := r.rewrite(path)
-	return fsys.Open(p)
-}
-
-func buildFsWithMemoryRedirect(workspace string, restrict bool, patterns []*regexp.Regexp, memoryRoot string) fileSystem {
-	base := buildFs(workspace, restrict, patterns)
-	if !restrict || strings.TrimSpace(memoryRoot) == "" {
-		return base
-	}
-
-	absWS, err := filepath.Abs(workspace)
-	if err != nil {
-		return base
-	}
-	absMem, err := filepath.Abs(memoryRoot)
-	if err != nil {
-		return base
-	}
-	if absMem == filepath.Join(absWS, "memory") {
-		return base
-	}
-
-	return &redirectFs{
-		base:       base,
-		mem:        &sandboxFs{workspace: absMem},
-		workspace:  absWS,
-		memoryRoot: absMem,
-	}
 }
 
 // Helper to get a safe relative path for os.Root usage

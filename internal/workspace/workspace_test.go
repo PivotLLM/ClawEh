@@ -16,7 +16,7 @@ func exists(t *testing.T, path string) bool {
 // starter memory, into a brand-new workspace.
 func TestPopulate_FreshWorkspace(t *testing.T) {
 	ws := t.TempDir()
-	Populate(ws, "")
+	Populate(ws)
 
 	for _, f := range []string{"AGENTS.md", "BOOTSTRAP.md", "COMPRESSION.md", "IDENTITY.md", "SOUL.md", "USER.md"} {
 		if !exists(t, filepath.Join(ws, f)) {
@@ -32,13 +32,13 @@ func TestPopulate_FreshWorkspace(t *testing.T) {
 // BOOTSTRAP.md does not get it re-added on a subsequent startup.
 func TestPopulate_BootstrapNotRecreated(t *testing.T) {
 	ws := t.TempDir()
-	Populate(ws, "") // fresh: seeds AGENTS.md + BOOTSTRAP.md
+	Populate(ws) // fresh: seeds AGENTS.md + BOOTSTRAP.md
 
 	if err := os.Remove(filepath.Join(ws, "BOOTSTRAP.md")); err != nil {
 		t.Fatalf("remove BOOTSTRAP.md: %v", err)
 	}
 
-	Populate(ws, "") // restart: workspace already initialized (AGENTS.md present)
+	Populate(ws) // restart: workspace already initialized (AGENTS.md present)
 
 	if exists(t, filepath.Join(ws, "BOOTSTRAP.md")) {
 		t.Error("BOOTSTRAP.md must not be recreated on an initialized workspace")
@@ -52,7 +52,7 @@ func TestPopulate_BootstrapNotRecreated(t *testing.T) {
 // optional COMPRESSION.md profile does not get it re-added on a later startup.
 func TestPopulate_CompressionNotRecreated(t *testing.T) {
 	ws := t.TempDir()
-	Populate(ws, "") // fresh: seeds AGENTS.md + COMPRESSION.md
+	Populate(ws) // fresh: seeds AGENTS.md + COMPRESSION.md
 
 	if !exists(t, filepath.Join(ws, "COMPRESSION.md")) {
 		t.Fatal("expected COMPRESSION.md seeded into a fresh workspace")
@@ -61,48 +61,34 @@ func TestPopulate_CompressionNotRecreated(t *testing.T) {
 		t.Fatalf("remove COMPRESSION.md: %v", err)
 	}
 
-	Populate(ws, "") // restart: workspace already initialized
+	Populate(ws) // restart: workspace already initialized
 
 	if exists(t, filepath.Join(ws, "COMPRESSION.md")) {
 		t.Error("COMPRESSION.md must not be recreated on an initialized workspace")
 	}
 }
 
-// TestPopulate_RelocatedMemory_NoDefaultDir verifies that with memory relocated,
-// the default <workspace>/memory is never created and the seed lands in the
-// relocated directory.
-func TestPopulate_RelocatedMemory_NoDefaultDir(t *testing.T) {
+// TestPopulate_DeletedMemoryNotRecreated verifies that once a workspace is
+// initialized, a deleted <workspace>/memory is not recreated on restart.
+func TestPopulate_DeletedMemoryNotRecreated(t *testing.T) {
 	ws := t.TempDir()
-	memDir := filepath.Join(t.TempDir(), "relocated-mem")
 
-	Populate(ws, memDir)
-
-	if exists(t, filepath.Join(ws, "memory")) {
-		t.Error("<workspace>/memory must not be created when memory is relocated")
-	}
-	if !exists(t, filepath.Join(memDir, "MEMORY.md")) {
-		t.Error("starter memory should be seeded into the relocated directory")
-	}
-}
-
-// TestPopulate_DeletedDefaultMemoryNotRecreated verifies that once a workspace is
-// initialized, a deleted <workspace>/memory is not recreated on restart — the
-// reported bug for relocated memory.
-func TestPopulate_DeletedDefaultMemoryNotRecreated(t *testing.T) {
-	ws := t.TempDir()
-	memDir := filepath.Join(t.TempDir(), "relocated-mem")
-
-	// First run initializes the workspace (writes AGENTS.md). Memory is relocated,
-	// so <workspace>/memory is never created.
-	Populate(ws, memDir)
+	// First run initializes the workspace (writes AGENTS.md) and seeds memory.
+	Populate(ws)
 	if !exists(t, filepath.Join(ws, "AGENTS.md")) {
 		t.Fatal("expected workspace to be initialized")
 	}
+	if !exists(t, filepath.Join(ws, "memory", "MEMORY.md")) {
+		t.Fatal("expected starter memory seeded on first run")
+	}
 
-	// Simulate the user having (at some point) a default memory dir and deleting
-	// it. A restart must not bring it back.
-	Populate(ws, memDir)
+	// Simulate the user deleting their memory directory. A restart must not
+	// bring it back.
+	if err := os.RemoveAll(filepath.Join(ws, "memory")); err != nil {
+		t.Fatal(err)
+	}
+	Populate(ws)
 	if exists(t, filepath.Join(ws, "memory")) {
-		t.Error("<workspace>/memory must not reappear on an initialized, relocated-memory workspace")
+		t.Error("<workspace>/memory must not reappear on an initialized workspace")
 	}
 }
