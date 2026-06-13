@@ -346,19 +346,14 @@ func callLLMChain(
 		response, err := client.Complete(ctx, messages)
 		dur := time.Since(start)
 		if err != nil {
-			logger.WarnCF("llmcontext", "LLM compression call failed", map[string]any{
-				"error": err.Error(),
-			})
+			// rec.record logs the per-model outcome (model + status + detail).
 			rec.record(model, "error", shortErr(err), dur, messages, "")
 			continue
 		}
 
 		summary, perr := validateAndUnmarshalLLMResponse(response.Content)
 		if perr != nil {
-			logger.WarnCF("llmcontext", "LLM compression response parse failed", map[string]any{
-				"error": perr.Error(),
-			})
-			rec.record(model, "error", "invalid JSON response", dur, messages, response.Content)
+			rec.record(model, "error", "invalid JSON response: "+shortErr(perr), dur, messages, response.Content)
 			continue
 		}
 
@@ -373,9 +368,6 @@ func callLLMChain(
 		// skipped so the chain advances to the next model.
 		summary.StripOutOfRangeSeqRefs(archiveMin, archiveMax)
 		if !summary.HasMaterial() || !summary.HasEvidence() {
-			logger.WarnCF("llmcontext", "LLM compression summary lacked cited material", map[string]any{
-				"session_key": sessionKey,
-			})
 			rec.record(model, "rejected", "missing citations", dur, messages, response.Content)
 			continue
 		}

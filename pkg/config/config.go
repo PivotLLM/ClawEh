@@ -3,7 +3,6 @@ package config
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +13,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/pkg/fileutil"
 	"github.com/PivotLLM/ClawEh/pkg/global"
+	"github.com/PivotLLM/ClawEh/pkg/logger"
 )
 
 // rrCounter is a global counter for round-robin load balancing across models.
@@ -1015,11 +1015,11 @@ func warnLegacyCompressModel(data []byte) {
 		return
 	}
 	if len(legacy.Agents.Defaults.CompressModel) > 0 {
-		log.Printf("config: ignoring removed field agents.defaults.compress_model; configure summarization models globally via summarization.models")
+		logger.WarnCF("config", "ignoring removed field agents.defaults.compress_model; configure summarization models globally via summarization.models", nil)
 	}
 	for _, a := range legacy.Agents.List {
 		if len(a.CompressModel) > 0 {
-			log.Printf("config: ignoring removed field compress_model on agent %q; configure summarization models globally via summarization.models", a.ID)
+			logger.WarnCF("config", "ignoring removed field compress_model on agent; configure summarization models globally via summarization.models", map[string]any{"agent_id": a.ID})
 		}
 	}
 }
