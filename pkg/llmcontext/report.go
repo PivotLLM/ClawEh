@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/PivotLLM/ClawEh/pkg/dump"
 	"github.com/PivotLLM/ClawEh/pkg/logger"
 	"github.com/PivotLLM/ClawEh/pkg/memory"
 	"github.com/PivotLLM/ClawEh/pkg/providers"
@@ -107,7 +108,10 @@ func formatDateRange(from, to time.Time) string {
 type compactionRecorder struct {
 	sessionKey string
 	debugPath  string // "" disables verbatim capture
-	attempts   []CompactionAttempt
+	// failureDumpDir, when non-empty, is the logs/dumps directory to which the
+	// request + raw response of each FAILED attempt (status != "ok") is written.
+	failureDumpDir string
+	attempts       []CompactionAttempt
 }
 
 // record logs one LLM invocation. req/resp are only persisted when debug
@@ -122,6 +126,26 @@ func (r *compactionRecorder) record(model, status, detail string, dur time.Durat
 		Detail:     detail,
 		DurationMs: dur.Milliseconds(),
 	})
+	// Always log the per-model outcome (independent of debug capture) so claw.log
+	// shows which summarization model succeeded or failed for each attempt.
+	if status == "ok" {
+		logger.InfoCF("llmcontext", "compression model succeeded", map[string]any{
+			"model":       model,
+			"session":     r.sessionKey,
+			"duration_ms": dur.Milliseconds(),
+		})
+	} else {
+		logger.WarnCF("llmcontext", "compression model failed", map[string]any{
+			"model":       model,
+			"status":      status,
+			"detail":      detail,
+			"session":     r.sessionKey,
+			"duration_ms": dur.Milliseconds(),
+		})
+	}
+	if r.failureDumpDir != "" && status != "ok" {
+		r.dumpFailure(model, status, detail, dur, req, resp)
+	}
 	if r.debugPath == "" {
 		return
 	}
@@ -152,6 +176,28 @@ func (r *compactionRecorder) record(model, status, detail string, dur time.Durat
 	defer f.Close()
 	if _, err := f.Write(append(data, '\n')); err != nil {
 		logger.WarnCF("llmcontext", "compaction debug capture: write failed", map[string]any{
+			"session_key": r.sessionKey,
+			"error":       err.Error(),
+		})
+	}
+}
+
+// dumpFailure writes a diagnostic snapshot of one failed summarization attempt
+// (request + raw response) to logs/dumps via the shared dump package. The raw
+// response is JSON-encoded as a string so the dump file stays valid JSON even
+// when the model returned non-JSON (the common failure mode).
+func (r *compactionRecorder) dumpFailure(model, status, detail string, dur time.Duration, req []providers.Message, resp string) {
+	input, _ := json.Marshal(req)
+	output, _ := json.Marshal(resp)
+	meta := map[string]any{
+		"session":     r.sessionKey,
+		"model":       model,
+		"status":      status,
+		"detail":      detail,
+		"duration_ms": dur.Milliseconds(),
+	}
+	if _, err := dump.Write(r.failureDumpDir, "compress_fail", meta, input, output); err != nil {
+		logger.WarnCF("llmcontext", "failed-compression dump: write failed", map[string]any{
 			"session_key": r.sessionKey,
 			"error":       err.Error(),
 		})

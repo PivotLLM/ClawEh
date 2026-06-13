@@ -3,7 +3,6 @@ package config
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +13,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/pkg/fileutil"
 	"github.com/PivotLLM/ClawEh/pkg/global"
+	"github.com/PivotLLM/ClawEh/pkg/logger"
 )
 
 // rrCounter is a global counter for round-robin load balancing across models.
@@ -210,6 +210,14 @@ type AgentConfig struct {
 	Subagents   *SubagentsConfig  `json:"subagents,omitempty"`
 	Callback    *CallbackConfig   `json:"callback,omitempty"`
 	Temperature *float64          `json:"temperature,omitempty"`
+
+	// SummarizationModels is an optional per-agent summarization model chain.
+	// When non-empty, these models are tried first (in order) for this agent's
+	// context compaction, ahead of the global summarization.models list and the
+	// agent's own model. Use it to give an agent uncensored/specialised
+	// summarizers when the default models refuse its content (e.g. security or
+	// fiction topics). Resolution order: agent-specific → global → agent's model.
+	SummarizationModels []string `json:"summarization_models,omitempty"`
 
 	CompressMinPercent         *int     `json:"compress_min_percent,omitempty"`
 	CompressNormalPercent      *int     `json:"compress_normal_percent,omitempty"`
@@ -589,6 +597,11 @@ type LoggingConfig struct {
 	// DumpAll, when true, writes the full LLM input and output to a file
 	// in logs/dumps/ for every LLM response, regardless of finish reason.
 	DumpAll bool `json:"dump_all" env:"CLAW_LOGGING_DUMP_ALL"`
+	// DumpFailedCompressions, when true, writes the summarization request and the
+	// raw model response to a file in logs/dumps/ whenever a summarization
+	// (context compaction) attempt fails — an API error, a non-JSON response, or
+	// a rejected summary. Diagnostic only.
+	DumpFailedCompressions bool `json:"dump_failed_compressions" env:"CLAW_LOGGING_DUMP_FAILED_COMPRESSIONS"`
 }
 
 // Provider is a named endpoint a model is reached through. It owns the wire
@@ -1002,11 +1015,11 @@ func warnLegacyCompressModel(data []byte) {
 		return
 	}
 	if len(legacy.Agents.Defaults.CompressModel) > 0 {
-		log.Printf("config: ignoring removed field agents.defaults.compress_model; configure summarization models globally via summarization.models")
+		logger.WarnCF("config", "ignoring removed field agents.defaults.compress_model; configure summarization models globally via summarization.models", nil)
 	}
 	for _, a := range legacy.Agents.List {
 		if len(a.CompressModel) > 0 {
-			log.Printf("config: ignoring removed field compress_model on agent %q; configure summarization models globally via summarization.models", a.ID)
+			logger.WarnCF("config", "ignoring removed field compress_model on agent; configure summarization models globally via summarization.models", map[string]any{"agent_id": a.ID})
 		}
 	}
 }

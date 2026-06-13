@@ -18,7 +18,7 @@ func TestPopulate_FreshWorkspace(t *testing.T) {
 	ws := t.TempDir()
 	Populate(ws, "")
 
-	for _, f := range []string{"AGENTS.md", "BOOTSTRAP.md", "IDENTITY.md", "SOUL.md", "USER.md"} {
+	for _, f := range []string{"AGENTS.md", "BOOTSTRAP.md", "COMPRESSION.md", "IDENTITY.md", "SOUL.md", "USER.md"} {
 		if !exists(t, filepath.Join(ws, f)) {
 			t.Errorf("expected %s to be seeded into a fresh workspace", f)
 		}
@@ -45,6 +45,26 @@ func TestPopulate_BootstrapNotRecreated(t *testing.T) {
 	}
 	if !exists(t, filepath.Join(ws, "AGENTS.md")) {
 		t.Error("AGENTS.md should still be present")
+	}
+}
+
+// TestPopulate_CompressionNotRecreated verifies that an agent which deleted its
+// optional COMPRESSION.md profile does not get it re-added on a later startup.
+func TestPopulate_CompressionNotRecreated(t *testing.T) {
+	ws := t.TempDir()
+	Populate(ws, "") // fresh: seeds AGENTS.md + COMPRESSION.md
+
+	if !exists(t, filepath.Join(ws, "COMPRESSION.md")) {
+		t.Fatal("expected COMPRESSION.md seeded into a fresh workspace")
+	}
+	if err := os.Remove(filepath.Join(ws, "COMPRESSION.md")); err != nil {
+		t.Fatalf("remove COMPRESSION.md: %v", err)
+	}
+
+	Populate(ws, "") // restart: workspace already initialized
+
+	if exists(t, filepath.Join(ws, "COMPRESSION.md")) {
+		t.Error("COMPRESSION.md must not be recreated on an initialized workspace")
 	}
 }
 

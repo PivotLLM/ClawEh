@@ -129,3 +129,21 @@ func (al *AgentLoop) drainContextManagers() {
 		return true
 	})
 }
+
+// invalidateContextManagers drops every cached ContextManager so the next access
+// rebuilds it from the current config. Unlike drainContextManagers (shutdown),
+// it does NOT close the manager or revoke session tokens: in-flight holders keep
+// their existing entry and active sessions are undisturbed; only the cached
+// mapping is cleared so a fresh manager (with the reloaded summarization chain
+// and other per-session config) is built on demand. Called on config reload.
+func (al *AgentLoop) invalidateContextManagers() {
+	n := 0
+	al.contextManagers.Range(func(key, _ any) bool {
+		al.contextManagers.Delete(key)
+		n++
+		return true
+	})
+	if n > 0 {
+		logger.DebugCF("agent", "config reload: invalidated cached context managers", map[string]any{"count": n})
+	}
+}
