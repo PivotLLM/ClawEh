@@ -509,9 +509,13 @@ func (al *AgentLoop) HandleCallbackMessage(ctx context.Context, agentID, body st
 	return al.bus.PublishInbound(ctx, msg)
 }
 
-// registerRuntimeTools registers tools that require runtime dependencies (session closures,
-// spawn providers, shared message tool) via the ToolProvider system.
-// Called from NewAgentLoop after the AgentLoop is constructed so closures can capture al.
+// registerRuntimeTools is the single tool-registration entry point: for every
+// agent in the registry it builds the full ToolDeps (session closures, the
+// sub-agent spawner, the shared message tool, dispatcher/fallback) and registers
+// every allowed provider tool exactly once. It runs after the AgentLoop exists so
+// the closures can capture al — at initial construction (NewAgentLoop) and again
+// on config reload (ReloadProviderAndConfig). NewAgentInstance deliberately
+// leaves the registry empty so tools are never double-registered.
 func (al *AgentLoop) registerRuntimeTools(
 	registry *AgentRegistry,
 	provider providers.LLMProvider,
@@ -733,6 +737,14 @@ func (al *AgentLoop) ReloadProviderAndConfig(
 		return fmt.Errorf("context canceled after registry creation: %w", err)
 	}
 
+	// Register tools on the freshly built registry with the full runtime deps —
+	// the same single registration the initial construction performs. Without
+	// this, reloaded agents would have an empty tool set (NewAgentInstance no
+	// longer registers anything). The new fallback chain is built here so it is
+	// shared between the registered spawn tools and the swapped-in al.fallback.
+	newFallback := providers.NewFallbackChain(providers.NewCooldownTracker())
+	al.registerRuntimeTools(registry, provider, al.dispatcher, newFallback)
+
 	// Re-issue MCP isolation tokens for the new registry so the new
 	// agents' context builders carry fresh tokens. Old tokens are
 	// implicitly replaced by Issue(); agents removed from config are
@@ -751,8 +763,9 @@ func (al *AgentLoop) ReloadProviderAndConfig(
 	al.cfg = cfg
 	al.registry = registry
 
-	// Also update fallback chain with new config
-	al.fallback = providers.NewFallbackChain(providers.NewCooldownTracker())
+	// Also update fallback chain with new config (same chain used for the tools
+	// just registered above).
+	al.fallback = newFallback
 
 	al.mu.Unlock()
 

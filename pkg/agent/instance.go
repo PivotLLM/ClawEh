@@ -76,31 +76,11 @@ func NewAgentInstance(
 	sessionsDir := filepath.Join(workspace, "sessions")
 	sessions := initSessionStore(sessionsDir)
 
-	// Phase 1: register tools via providers (files, shell, hardware, session history).
-	// Runtime-dependent providers (session closures, spawn, msg) are registered
-	// by the AgentLoop after construction via registerRuntimeTools().
-	phase1Deps := tools.ToolDeps{
-		Cfg:      cfg,
-		AgentCfg: agentCfg,
-		AgentID: func() string {
-			if agentCfg != nil {
-				return routing.NormalizeAgentID(agentCfg.ID)
-			}
-			return routing.DefaultAgentID
-		}(),
-		Workspace: workspace,
-	}
-	for _, p := range tools.GetProviders() {
-		if ok, _ := p.Available(cfg); !ok {
-			continue
-		}
-		builtTools := p.Build(phase1Deps)
-		for _, t := range builtTools {
-			if agentCfg == nil || agentCfg.IsToolAllowed(t.Name()) {
-				toolsRegistry.Register(t)
-			}
-		}
-	}
+	// The registry starts empty. Tools are registered exactly once — after
+	// construction by AgentLoop.registerRuntimeTools, and again on config reload —
+	// so the full runtime deps (session closures, the sub-agent spawner, and the
+	// shared message tool) are present. Registering here too would double-build
+	// every tool and overwrite it, so we intentionally don't.
 
 	mcpDiscoveryActive := cfg.Tools.MCP.Enabled && cfg.Tools.MCP.Discovery.Enabled
 	contextBuilder := NewContextBuilder(workspace).WithToolDiscovery(
