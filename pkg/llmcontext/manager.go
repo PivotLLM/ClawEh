@@ -67,6 +67,11 @@ type Manager struct {
 	archive   *memory.ArchiveStore
 	archiveMu sync.Mutex
 
+	// protectUnconsolidated, when true, is propagated to the archive on open so
+	// retention pruning never removes messages not yet consolidated. Set via
+	// SetProtectUnconsolidated by the cognitive-memory wiring; default false.
+	protectUnconsolidated bool
+
 	// sessionToken is the SST-prefixed per-session MCP token injected into the
 	// system prompt by Build() so the LLM can call session-scoped tools. Set
 	// via SetSessionToken; empty means no injection.
@@ -368,6 +373,9 @@ func (m *Manager) getOrOpenArchive() *memory.ArchiveStore {
 			"path":        path,
 			"error":       err.Error(),
 		})
+	}
+	if store != nil {
+		store.SetProtectUnconsolidated(m.protectUnconsolidated)
 	}
 	m.archive = store
 	// Apply retention once per manager lifecycle, on the path that actually opens
@@ -685,6 +693,14 @@ func (m *Manager) SetSessionToken(token string) {
 // nil disables it.
 func (m *Manager) SetArchiveAppendHook(fn func(seq int64, msg providers.Message)) {
 	m.archiveAppendHook = fn
+}
+
+// SetProtectUnconsolidated enables the archive retention guard for this
+// session. When true, the archive (once opened) refuses to prune messages that
+// have not yet been consolidated. Must be called before the archive is first
+// opened (i.e. during wiring) to take effect. Default false.
+func (m *Manager) SetProtectUnconsolidated(v bool) {
+	m.protectUnconsolidated = v
 }
 
 // SetMemoryBlocks installs a callback that returns the cognitive-memory STABLE

@@ -54,6 +54,12 @@ type Worker struct {
 	autoPromote    bool
 	debugDump      string
 	modelName      string
+
+	// markConsolidated, when set, flags archive messages up to a seq as
+	// consolidated after a successful apply + watermark advance. Best-effort:
+	// the cogmem.db watermark remains the source of truth, so a mark failure is
+	// logged in the run record but never rolls back the run.
+	markConsolidated func(uptoSeq int64) error
 }
 
 // Option configures a Worker (functional-options pattern, per dev standards).
@@ -74,6 +80,14 @@ func WithDebugDump(dir string) Option { return func(w *Worker) { w.debugDump = d
 
 // WithModelName records a human-readable model name in consolidation runs.
 func WithModelName(name string) Option { return func(w *Worker) { w.modelName = name } }
+
+// WithMarkConsolidated installs a best-effort callback invoked after a
+// successful apply + watermark advance with the highest consolidated seq, so
+// the writable archive can flag those rows and allow retention pruning to
+// reclaim them. A callback error is recorded in the run but never rolls back.
+func WithMarkConsolidated(fn func(uptoSeq int64) error) Option {
+	return func(w *Worker) { w.markConsolidated = fn }
+}
 
 // NewWorker builds a Worker over a store, an archive source, and a model caller.
 func NewWorker(st *store.Store, src MessageSource, model ModelCaller, opts ...Option) *Worker {
@@ -208,7 +222,17 @@ func (w *Worker) RunOnce(ctx context.Context, p RunParams) (RunResult, error) {
 	if err := w.st.SetWatermark(ctx, w.st.DB(), p.ArchivePath, lastSeq, maxSeq); err != nil {
 		return result, fmt.Errorf("consolidate: set watermark: %w", err)
 	}
-	w.recordRun(ctx, p, "ok", applied, consolidated+1, lastSeq, inputTokens, outputTokens, "", started)
+
+	// Best-effort: flag the now-consolidated archive rows so retention pruning
+	// may reclaim them. A failure is recorded but does not roll back the run —
+	// the cogmem.db watermark is the source of truth.
+	markErr := ""
+	if w.markConsolidated != nil {
+		if err := w.markConsolidated(lastSeq); err != nil {
+			markErr = "mark consolidated: " + err.Error()
+		}
+	}
+	w.recordRun(ctx, p, "ok", applied, consolidated+1, lastSeq, inputTokens, outputTokens, markErr, started)
 	w.dump(p, system, string(userJSON), raw, applied)
 
 	result.Applied = applied

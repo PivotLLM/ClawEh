@@ -67,6 +67,23 @@ func setupCogmemConsolidation(cfg *config.Config, agentLoop *agent.AgentLoop) *c
 		mem := cfg.Agents.Defaults.EffectiveMemory(inst.Config)
 		caller := agentLoop.NewMemoryModelCaller(inst)
 		opts := workerOptions(mem, j.Workspace)
+
+		// Wire the retention-guard mark: after a successful run advances the
+		// watermark, flag the consolidated archive rows so pruning may reclaim
+		// them. Opens a short-lived writable archive per call (WAL allows the
+		// concurrent ContextManager writer; this only flips a flag on committed
+		// rows). Best-effort — the worker logs a mark error without rolling back.
+		markPath := filepath.Join(j.Workspace, "sessions",
+			store.SanitizeSessionKey(j.SessionKey)+".archive.db")
+		opts = append(opts, consolidate.WithMarkConsolidated(func(uptoSeq int64) error {
+			wa, err := memory.Open(markPath)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = wa.Close() }()
+			return wa.MarkConsolidated(uptoSeq)
+		}))
+
 		w := consolidate.NewWorker(st, archiveSource{a: ar}, caller, opts...)
 		return w, nil
 	}

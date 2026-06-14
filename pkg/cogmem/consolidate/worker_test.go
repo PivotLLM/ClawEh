@@ -154,6 +154,133 @@ func TestRunOnceHappyPath(t *testing.T) {
 	}
 }
 
+func TestRunOnceMarkConsolidatedOnSuccess(t *testing.T) {
+	s := openStore(t)
+	domainID, hookID := seedDomain(t, s)
+	src := &fakeSource{msgs: sampleMessages()}
+
+	raw := fmt.Sprintf(`{
+		"domain_ops": [],
+		"hook_ops": [{
+			"op": "supersede",
+			"domain": %q,
+			"old_id": %q,
+			"kind": "rule",
+			"text": "Always run gofmt and make test before committing.",
+			"status": "active",
+			"source": "user_explicit",
+			"confidence": 0.95,
+			"evidence": {"seq_start": 1, "seq_end": 2}
+		}],
+		"conflict_ledger": []
+	}`, domainID, hookID)
+
+	var (
+		calls  int
+		gotSeq int64
+	)
+	mark := func(uptoSeq int64) error {
+		calls++
+		gotSeq = uptoSeq
+		return nil
+	}
+
+	w := NewWorker(s, src, &fakeModel{raw: raw}, WithModelName("test-model"), WithMarkConsolidated(mark))
+	res, err := w.RunOnce(context.Background(), params())
+	if err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	if res.Status != "ok" {
+		t.Fatalf("status = %q, want ok", res.Status)
+	}
+	if calls != 1 {
+		t.Fatalf("mark calls = %d, want 1", calls)
+	}
+	// lastSeq is the highest meaningful seq consolidated (seq 2; seq 3 is a tool
+	// plumbing message dropped by MeaningfulRole).
+	if gotSeq != 2 {
+		t.Fatalf("mark seq = %d, want 2 (lastSeq)", gotSeq)
+	}
+}
+
+func TestRunOnceMarkConsolidatedErrorDoesNotRollBack(t *testing.T) {
+	s := openStore(t)
+	domainID, hookID := seedDomain(t, s)
+	src := &fakeSource{msgs: sampleMessages()}
+
+	raw := fmt.Sprintf(`{"domain_ops":[],"hook_ops":[{"op":"supersede","domain":%q,"old_id":%q,"kind":"rule","text":"Run gofmt and tests.","status":"active","source":"user_explicit","evidence":{"seq_start":1,"seq_end":2}}],"conflict_ledger":[]}`, domainID, hookID)
+
+	mark := func(uptoSeq int64) error { return fmt.Errorf("archive open boom") }
+
+	w := NewWorker(s, src, &fakeModel{raw: raw}, WithModelName("test-model"), WithMarkConsolidated(mark))
+	res, err := w.RunOnce(context.Background(), params())
+	if err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	// A mark failure must not change the run status nor the watermark.
+	if res.Status != "ok" {
+		t.Fatalf("status = %q, want ok", res.Status)
+	}
+	ctx := context.Background()
+	st, _ := s.GetState(ctx, s.DB(), params().ArchivePath)
+	if st.ConsolidatedSeq != 2 {
+		t.Fatalf("consolidated_seq = %d, want 2 (watermark intact)", st.ConsolidatedSeq)
+	}
+	// The error is surfaced in the run record.
+	run, ok, err := s.LastRun(ctx, s.DB())
+	if err != nil || !ok {
+		t.Fatalf("last run: ok=%v err=%v", ok, err)
+	}
+	if run.Error == "" {
+		t.Fatalf("run.Error = %q, want non-empty mark error", run.Error)
+	}
+}
+
+func TestRunOnceMarkConsolidatedNotCalledOnInvalidJSON(t *testing.T) {
+	s := openStore(t)
+	seedDomain(t, s)
+	src := &fakeSource{msgs: sampleMessages()}
+
+	calls := 0
+	mark := func(uptoSeq int64) error { calls++; return nil }
+
+	w := NewWorker(s, src, &fakeModel{raw: "not json at all"}, WithMarkConsolidated(mark))
+	res, err := w.RunOnce(context.Background(), params())
+	if err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	if res.Status != "invalid_json" {
+		t.Fatalf("status = %q, want invalid_json", res.Status)
+	}
+	if calls != 0 {
+		t.Fatalf("mark calls = %d, want 0 on invalid_json", calls)
+	}
+}
+
+func TestRunOnceMarkConsolidatedNotCalledOnAborted(t *testing.T) {
+	s := openStore(t)
+	domainID, hookID := seedDomain(t, s)
+	src := &fakeSource{msgs: sampleMessages()}
+
+	// Evidence seq_end 99 is outside the batch [1,2] → Validate fails → aborted.
+	raw := fmt.Sprintf(`{"domain_ops":[],"hook_ops":[{"op":"supersede","domain":%q,"old_id":%q,"kind":"rule","text":"Out of range.","status":"active","source":"user_explicit","evidence":{"seq_start":1,"seq_end":99}}],"conflict_ledger":[]}`, domainID, hookID)
+
+	calls := 0
+	mark := func(uptoSeq int64) error { calls++; return nil }
+
+	w := NewWorker(s, src, &fakeModel{raw: raw}, WithMarkConsolidated(mark))
+	res, err := w.RunOnce(context.Background(), params())
+	if err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	if res.Status != "aborted" {
+		t.Fatalf("status = %q, want aborted", res.Status)
+	}
+	if calls != 0 {
+		t.Fatalf("mark calls = %d, want 0 on aborted", calls)
+	}
+}
+
 func TestRunOnceInvalidJSON(t *testing.T) {
 	s := openStore(t)
 	seedDomain(t, s)

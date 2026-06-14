@@ -46,6 +46,10 @@ func (al *AgentLoop) wireCognitiveMemory(agent *AgentInstance, sessionKey string
 	}
 	mem := cfg.Agents.Defaults.EffectiveMemory(agent.Config)
 
+	// Retention guard: protect not-yet-consolidated archive messages from
+	// pruning for cognitive agents when configured (default true).
+	mgr.SetProtectUnconsolidated(mem.Retention.ProtectUnconsolidated)
+
 	// Archive hook: notify the consolidation manager on every archive write.
 	al.mu.RLock()
 	cogMgr := al.cogmemManager
