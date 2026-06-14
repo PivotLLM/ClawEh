@@ -20,6 +20,7 @@ import (
 	_ "github.com/PivotLLM/ClawEh/pkg/channels/slack"
 	_ "github.com/PivotLLM/ClawEh/pkg/channels/telegram"
 	_ "github.com/PivotLLM/ClawEh/pkg/channels/webui"
+	"github.com/PivotLLM/ClawEh/pkg/cogmem/consolidate"
 	"github.com/PivotLLM/ClawEh/pkg/config"
 	"github.com/PivotLLM/ClawEh/pkg/cron"
 	"github.com/PivotLLM/ClawEh/pkg/devices"
@@ -92,6 +93,7 @@ type gatewayServices struct {
 	MCPServer      *mcpserver.MCPServer
 	WebServer      *webserver.Server
 	HTTPHost       *httpHost
+	CogmemManager  *consolidate.Manager
 }
 
 func gatewayCmd(debug bool) error {
@@ -332,6 +334,10 @@ func setupAndStartServices(
 		return nil, err
 	}
 
+	// Start cognitive-memory consolidation (inert unless an agent is allowed the
+	// cogmem tools).
+	services.CogmemManager = setupCogmemConsolidation(cfg, agentLoop)
+
 	return services, nil
 }
 
@@ -424,6 +430,9 @@ func stopAndCleanupServices(
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer shutdownCancel()
 
+	if services.CogmemManager != nil {
+		services.CogmemManager.Stop()
+	}
 	if services.MCPServer != nil {
 		if err := services.MCPServer.Shutdown(shutdownCtx); err != nil {
 			logger.WarnCF("mcpserver", "MCP server shutdown error", map[string]any{"error": err.Error()})

@@ -23,6 +23,7 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/bus"
 	"github.com/PivotLLM/ClawEh/pkg/callback"
 	"github.com/PivotLLM/ClawEh/pkg/channels"
+	"github.com/PivotLLM/ClawEh/pkg/cogmem/consolidate"
 	"github.com/PivotLLM/ClawEh/pkg/commands"
 	"github.com/PivotLLM/ClawEh/pkg/config"
 	"github.com/PivotLLM/ClawEh/pkg/constants"
@@ -83,6 +84,12 @@ type AgentLoop struct {
 	// from the MCP server at startup via SetSessionTokenIssuer; nil when the
 	// MCP host is not configured.
 	sessionTokenIssuer SessionTokenIssuer
+
+	// cogmemManager schedules background cognitive-memory consolidation. Wired in
+	// from the gateway at startup via SetCogmemManager; nil when cognitive memory
+	// is not in use. Only ever consulted for cognitive agents (those allowed the
+	// cogmem tools), so non-cognitive agents are entirely unaffected.
+	cogmemManager *consolidate.Manager
 
 	// Context manager idle eviction.
 	// evictStop is closed by Close() to signal the eviction goroutine to exit.
@@ -435,6 +442,16 @@ func (al *AgentLoop) SetSessionTokenIssuer(sti SessionTokenIssuer) {
 	al.mu.Lock()
 	defer al.mu.Unlock()
 	al.sessionTokenIssuer = sti
+}
+
+// SetCogmemManager wires the cognitive-memory consolidation manager into the
+// agent loop. The loop notifies it (OnMessage) on archive writes for cognitive
+// agents only. Nil → cognitive memory inert (non-cognitive agents are never
+// affected regardless).
+func (al *AgentLoop) SetCogmemManager(mgr *consolidate.Manager) {
+	al.mu.Lock()
+	defer al.mu.Unlock()
+	al.cogmemManager = mgr
 }
 
 // issueAgentTokens issues (or re-issues) MCP isolation tokens for every

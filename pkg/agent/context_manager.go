@@ -129,11 +129,11 @@ func (al *AgentLoop) buildCompressLLMClient(agent *AgentInstance, compressModelN
 		// from the model's provider reference.
 		if p, err := al.dispatcher.Get(alias); err == nil {
 			logger.DebugCF("llmcontext", "compression model resolved", map[string]any{
-				"agent_id": agent.ID,
+				"agent_id":  agent.ID,
 				"requested": compressModelName,
-				"alias":    alias,
-				"model":    modelID,
-				"session":  sessionKey,
+				"alias":     alias,
+				"model":     modelID,
+				"session":   sessionKey,
 			})
 			return &providerLLMClient{provider: p, model: modelID, requestJSONObject: true}
 		} else {
@@ -321,11 +321,16 @@ func (al *AgentLoop) getContextManager(agent *AgentInstance, sessionKey string) 
 		}
 	}
 
+	// Cognitive-memory wiring — cognitive agents ONLY. For every other agent this
+	// is a no-op (returns nil) and the manager behaves exactly as before.
+	cmCleanup := al.wireCognitiveMemory(agent, sessionKey, cm)
+
 	newEntry := &cmEntry{
 		cm:           cm,
 		sessionKey:   sessionKey,
 		store:        agent.Sessions,
 		lastAccessed: time.Now(),
+		cleanup:      cmCleanup,
 	}
 	newEntry.refcount.Store(1)
 
@@ -336,6 +341,10 @@ func (al *AgentLoop) getContextManager(agent *AgentInstance, sessionKey string) 
 		// Revoke the token we just issued since we won't use this CM.
 		if sti != nil {
 			sti.Revoke(sessionKey)
+		}
+		// Release the cogmem store handle we opened for the discarded CM.
+		if cmCleanup != nil {
+			cmCleanup()
 		}
 		entry := actual.(*cmEntry)
 		entry.refcount.Add(1)

@@ -26,6 +26,10 @@ type cmEntry struct {
 	store        session.SessionStore // used on eviction to drop per-session in-memory caches
 	lastAccessed time.Time
 	refcount     atomic.Int32
+	// cleanup, when non-nil, releases per-entry resources on eviction/drain
+	// (e.g. the cached cognitive-memory store handle). Nil for non-cognitive
+	// agents.
+	cleanup func()
 }
 
 // forgetSessionState drops per-session in-memory caches in the session store
@@ -95,6 +99,9 @@ func (al *AgentLoop) runEvictionPass(ttl time.Duration) {
 			})
 		}
 		forgetSessionState(entry.store, entry.sessionKey)
+		if entry.cleanup != nil {
+			entry.cleanup()
+		}
 		logger.InfoCF("agent", "evicted idle context manager", map[string]any{
 			"key":      key,
 			"idle_min": now.Sub(entry.lastAccessed).Minutes(),
@@ -126,6 +133,9 @@ func (al *AgentLoop) drainContextManagers() {
 			})
 		}
 		forgetSessionState(entry.store, entry.sessionKey)
+		if entry.cleanup != nil {
+			entry.cleanup()
+		}
 		return true
 	})
 }

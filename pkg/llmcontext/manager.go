@@ -74,6 +74,17 @@ type Manager struct {
 
 	// compressHook is called by compress() when non-nil. Only for testing.
 	compressHook func(safetyNet bool)
+
+	// archiveAppendHook, when non-nil, is invoked at the end of archiveAppend
+	// with the seq and message just archived. The agent loop sets a closure
+	// (cognitive agents only) that notifies the cogmem consolidation manager.
+	// Nil for every non-cognitive agent → identical behavior to before.
+	archiveAppendHook func(seq int64, msg providers.Message)
+
+	// memoryBlocks, when non-nil, returns the cognitive-memory STABLE and ROUTED
+	// prompt blocks for the session. Set by the agent loop for cognitive agents
+	// only; Build injects the blocks into the system message when non-empty.
+	memoryBlocks func(sessionKey string) (stable, routed string)
 }
 
 // New constructs a ContextManager. Options are applied over package defaults.
@@ -454,6 +465,11 @@ func (m *Manager) archiveAppend(seq int64, msg providers.Message) {
 			"error":       err.Error(),
 		})
 	}
+	// Notify the cognitive-memory consolidation manager (cognitive agents only;
+	// nil for everyone else). Best-effort and non-blocking by contract.
+	if m.archiveAppendHook != nil {
+		m.archiveAppendHook(seq, msg)
+	}
 }
 
 // archiveContentMaxBytes is the default maximum number of content bytes stored
@@ -663,6 +679,21 @@ func (m *Manager) SetSessionToken(token string) {
 	m.sessionToken = token
 }
 
+// SetArchiveAppendHook installs a callback invoked at the end of every
+// archiveAppend with the seq and message just written. Used by the agent loop
+// (cognitive agents only) to notify the cogmem consolidation manager. Passing
+// nil disables it.
+func (m *Manager) SetArchiveAppendHook(fn func(seq int64, msg providers.Message)) {
+	m.archiveAppendHook = fn
+}
+
+// SetMemoryBlocks installs a callback that returns the cognitive-memory STABLE
+// and ROUTED prompt blocks for the session. Build injects them into the system
+// message when either is non-empty. Passing nil disables injection.
+func (m *Manager) SetMemoryBlocks(fn func(sessionKey string) (stable, routed string)) {
+	m.memoryBlocks = fn
+}
+
 func (m *Manager) Build(_ context.Context) ([]providers.Message, error) {
 	if m.builder == nil {
 		return []providers.Message{}, nil
@@ -699,6 +730,31 @@ func (m *Manager) Build(_ context.Context) ([]providers.Message, error) {
 			Type: "text",
 			Text: sessionTokenSection,
 		})
+	}
+
+	// Inject cognitive-memory blocks (cognitive agents only; nil otherwise).
+	// The STABLE block is cacheable (cache_control: ephemeral) and goes after the
+	// static/dynamic prompt; the ROUTED block is per-turn-varying and trails
+	// un-cached so it never invalidates the cached prefix. Both are mirrored into
+	// msgs[0].Content for adapters that ignore SystemParts, matching the
+	// session-token injection above.
+	if m.memoryBlocks != nil && len(msgs) > 0 && msgs[0].Role == "system" {
+		stable, routed := m.memoryBlocks(m.sessionKey)
+		if stable != "" {
+			msgs[0].Content += "\n\n---\n\n" + stable
+			msgs[0].SystemParts = append(msgs[0].SystemParts, providers.ContentBlock{
+				Type:         "text",
+				Text:         stable,
+				CacheControl: &providers.CacheControl{Type: "ephemeral"},
+			})
+		}
+		if routed != "" {
+			msgs[0].Content += "\n\n---\n\n" + routed
+			msgs[0].SystemParts = append(msgs[0].SystemParts, providers.ContentBlock{
+				Type: "text",
+				Text: routed,
+			})
+		}
 	}
 
 	return msgs, nil
