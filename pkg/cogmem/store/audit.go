@@ -56,6 +56,55 @@ func (s *Store) RecordRun(ctx context.Context, q DBTX, r Run) error {
 	return err
 }
 
+// LastRun returns the most recent consolidation-run record by start time, with
+// ok=false when no run has been recorded yet.
+func (s *Store) LastRun(ctx context.Context, q DBTX) (r Run, ok bool, err error) {
+	var (
+		seqStart, seqEnd   *int64
+		inTok, outTok      *int
+		errStr, promptHash *string
+		startedAt          int64
+		finishedAt         *int64
+	)
+	row := q.QueryRowContext(ctx, `
+		SELECT id, trigger, model, seq_start, seq_end, input_tokens, output_tokens,
+		       status, ops_applied, error, prompt_hash, started_at, finished_at
+		FROM consolidation_runs ORDER BY started_at DESC, id DESC LIMIT 1`)
+	err = row.Scan(&r.ID, &r.Trigger, &r.Model, &seqStart, &seqEnd, &inTok, &outTok,
+		&r.Status, &r.OpsApplied, &errStr, &promptHash, &startedAt, &finishedAt)
+	if err == sql.ErrNoRows {
+		return Run{}, false, nil
+	}
+	if err != nil {
+		return Run{}, false, err
+	}
+	r.SeqStart = derefOr0(seqStart)
+	r.SeqEnd = derefOr0(seqEnd)
+	if inTok != nil {
+		r.InputTokens = *inTok
+	}
+	if outTok != nil {
+		r.OutputTokens = *outTok
+	}
+	if errStr != nil {
+		r.Error = *errStr
+	}
+	if promptHash != nil {
+		r.PromptHash = *promptHash
+	}
+	r.StartedAt = timeUnix(startedAt)
+	r.FinishedAt = unixPtr(finishedAt)
+	return r, true, nil
+}
+
+// PendingCount returns the number of review-status hooks awaiting confirmation.
+func (s *Store) PendingCount(ctx context.Context, q DBTX) (int, error) {
+	var n int
+	err := q.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM hooks WHERE status=?`, string(StatusReview)).Scan(&n)
+	return n, err
+}
+
 // ConsolidationState is the per-archive watermark/trigger bookkeeping.
 type ConsolidationState struct {
 	ArchivePath     string
