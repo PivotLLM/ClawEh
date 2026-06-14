@@ -30,6 +30,14 @@ func Populate(workspace string) {
 		return
 	}
 
+	// The agent's writable area is <workspace>/files (the read-only-workspace
+	// default; see AgentDefaults.WorkspaceWriteSubdir). Ensure it always exists
+	// so the agent has somewhere to write from first run.
+	if err := os.MkdirAll(filepath.Join(workspace, "files"), 0o755); err != nil {
+		logger.WarnCF("workspace", "Failed to create workspace files directory",
+			map[string]any{"dir": filepath.Join(workspace, "files"), "error": err.Error()})
+	}
+
 	// A workspace is "initialized" once its core identity file exists. On an
 	// initialized workspace we must not recreate one-time or user-deletable
 	// files: otherwise a personalized agent would be told to bootstrap again on
