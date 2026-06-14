@@ -86,6 +86,18 @@ export function AgentDefaultsSection({
         />
       </Field>
 
+      <Field
+        label={t("pages.config.common_dir")}
+        hint={t("pages.config.common_dir_hint")}
+        layout="setting-row"
+      >
+        <Input
+          value={form.commonDir}
+          onChange={(e) => onFieldChange("commonDir", e.target.value)}
+          placeholder="<agents>/common"
+        />
+      </Field>
+
       <SwitchCardField
         label={t("pages.config.restrict_workspace")}
         hint={t("pages.config.restrict_workspace_hint")}

@@ -472,7 +472,11 @@ PY
       "cogmem_archive_domain",
       "cogmem_forget",
       "cogmem_consolidate",
-      "cogmem_status"
+      "cogmem_status",
+      "common_list",
+      "common_get",
+      "common_put",
+      "common_delete"
     ]
   }
 }

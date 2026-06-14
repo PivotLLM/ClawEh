@@ -55,12 +55,12 @@ FULL_URL="${SERVER_URL}${ENDPOINT}"
 # (subagent capability) and hw_i2c/hw_spi (Linux + I2C/SPI devices) are also
 # exposed but only probed when actually present in the catalogue, so this script
 # stays portable.
-EXPECTED_TOOLS="file_read file_write file_edit file_append file_list file_copy web_fetch web_search msg_send_file session_messages session_search session_compact session_info session_summary_list session_summary_get session_clear shell_exec skill_find skill_install cron_schedule cogmem_get_domain cogmem_search cogmem_list_domains cogmem_explain cogmem_remember cogmem_update_domain cogmem_retire_hook cogmem_create_domain cogmem_archive_domain cogmem_forget cogmem_consolidate cogmem_status"
-EXPECTED_TOOL_COUNT=32
+EXPECTED_TOOLS="file_read file_write file_edit file_append file_list file_copy web_fetch web_search msg_send_file session_messages session_search session_compact session_info session_summary_list session_summary_get session_clear shell_exec skill_find skill_install cron_schedule cogmem_get_domain cogmem_search cogmem_list_domains cogmem_explain cogmem_remember cogmem_update_domain cogmem_retire_hook cogmem_create_domain cogmem_archive_domain cogmem_forget cogmem_consolidate cogmem_status common_list common_get common_put common_delete"
+EXPECTED_TOOL_COUNT=36
 
 # Namespace prefixes that must have at least one tool in the catalogue.
 # Covers every provider-owned namespace that is in the test config.
-EXPECTED_NAMESPACES="file_ web_ session_ msg_ shell_ skill_ cron_ cogmem_"
+EXPECTED_NAMESPACES="file_ web_ session_ msg_ shell_ skill_ cron_ cogmem_ common_"
 
 # Unique scratch file inside the agent workspace so repeated runs do not collide.
 # Writes are confined to <workspace>/files by the read-only-workspace default
@@ -630,6 +630,25 @@ else
 
     run_test_not_auth_err "4c.12 cogmem_consolidate — token accepted (queued/accepted)" \
         "cogmem_consolidate" '{"scope":"probe"}'
+
+    # Section 4d: Shared common-directory tools (common_*). Hermetic and
+    # deterministic. common_put copies the scratch file (under files/, created in
+    # Section 3) into the shared dir; list/get/delete round-trip it.
+    print_section "4d. Common-directory tools (common)"
+
+    COMMON_NAME="mcp_common_$$.txt"
+
+    run_test_ok_auth "4d.1 common_put copies a workspace file to the shared dir" \
+        "common_put" "{\"path\":\"$SCRATCH_REL\",\"as\":\"$COMMON_NAME\"}"
+
+    run_test_ok_auth "4d.2 common_list shows the shared file" \
+        "common_list" '{}' "$COMMON_NAME"
+
+    run_test_ok_auth "4d.3 common_get copies it into the agent workspace" \
+        "common_get" "{\"name\":\"$COMMON_NAME\"}"
+
+    run_test_ok_auth "4d.4 common_delete removes the shared file" \
+        "common_delete" "{\"name\":\"$COMMON_NAME\"}"
 
 fi  # end SESSION_TOKEN block
 

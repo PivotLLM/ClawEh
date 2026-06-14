@@ -28,6 +28,7 @@ interface AgentEntry {
   callback?: CallbackConfig | null
   temperature?: number
   summarization_models?: string[]
+  share_common?: boolean
 }
 
 interface AgentsConfig {
@@ -79,6 +80,7 @@ function parseAgent(value: unknown): AgentEntry {
     callback: cbMins > 0 ? { window_minutes: cbMins, window_count: asNumber(cbRaw.window_count) || 2 } : null,
     temperature: typeof r.temperature === "number" ? r.temperature : undefined,
     summarization_models: asArray(r.summarization_models).map(asString).filter(Boolean),
+    share_common: r.share_common === false ? false : true,
   }
 }
 
@@ -177,6 +179,7 @@ interface AgentCardProps {
   callbackWindowCount?: number
   temperature?: number
   summarizationModels?: string[]
+  shareCommon?: boolean
   onToggleEnabled?: () => void
   onModelsChange: (models: string[]) => void
   onSkillsChange: (skills: string[]) => void
@@ -184,6 +187,7 @@ interface AgentCardProps {
   onCallbackChange?: (mins: number, count: number) => void
   onTemperatureChange?: (t: number | undefined) => void
   onSummarizationModelsChange?: (models: string[]) => void
+  onShareCommonChange?: (share: boolean) => void
   onDelete?: () => void
   status?: "saving" | "saved" | "error"
 }
@@ -202,6 +206,7 @@ function AgentCard({
   callbackWindowCount = 2,
   temperature = undefined,
   summarizationModels = [],
+  shareCommon = true,
   onToggleEnabled,
   onModelsChange,
   onSkillsChange,
@@ -209,6 +214,7 @@ function AgentCard({
   onCallbackChange,
   onTemperatureChange = undefined,
   onSummarizationModelsChange = undefined,
+  onShareCommonChange = undefined,
   onDelete,
   status,
 }: AgentCardProps) {
@@ -371,6 +377,24 @@ function AgentCard({
         </div>
       )}
 
+      {onShareCommonChange !== undefined && (
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-muted-foreground text-xs font-medium">
+              {t("agents.shareCommon")}
+            </p>
+            <Switch
+              checked={shareCommon}
+              onCheckedChange={onShareCommonChange}
+              aria-label={t("agents.shareCommon")}
+            />
+          </div>
+          <p className="text-muted-foreground text-xs">
+            {t("agents.shareCommonHint")}
+          </p>
+        </div>
+      )}
+
     </div>
   )
 }
@@ -466,11 +490,12 @@ export function AgentsPage() {
         ...(a.summarization_models && a.summarization_models.length > 0
           ? { summarization_models: a.summarization_models }
           : {}),
+        ...(a.share_common === false ? { share_common: false } : {}),
       })),
     },
   })
 
-  const handleSaveAgent = async (index: number, models: string[], skills: string[], tools: string[], callbackMins: number, callbackCount: number, temperature: number | undefined, summarizationModels: string[]) => {
+  const handleSaveAgent = async (index: number, models: string[], skills: string[], tools: string[], callbackMins: number, callbackCount: number, temperature: number | undefined, summarizationModels: string[], shareCommon: boolean) => {
     const list = [...(agentsCfg.list ?? [])]
     list[index] = {
       ...list[index],
@@ -480,6 +505,7 @@ export function AgentsPage() {
       callback: callbackMins > 0 ? { window_minutes: callbackMins, window_count: callbackCount } : null,
       temperature,
       summarization_models: summarizationModels.length > 0 ? summarizationModels : undefined,
+      share_common: shareCommon,
     }
     const next: AgentsConfig = { ...agentsCfg, list }
     const key = `agent-${index}`
@@ -575,6 +601,7 @@ export function AgentsPage() {
   const [agentCallbackEdits, setAgentCallbackEdits] = useState<Array<{ mins: number; count: number }>>([])
   const [agentTemperatureEdits, setAgentTemperatureEdits] = useState<Array<number | undefined>>([])
   const [agentSummarizationEdits, setAgentSummarizationEdits] = useState<string[][]>([])
+  const [agentShareCommonEdits, setAgentShareCommonEdits] = useState<boolean[]>([])
   useEffect(() => {
     if (skipAgentsResync.current) {
       skipAgentsResync.current = false
@@ -589,6 +616,7 @@ export function AgentsPage() {
     })))
     setAgentTemperatureEdits((agentsCfg.list ?? []).map((a) => a.temperature))
     setAgentSummarizationEdits((agentsCfg.list ?? []).map((a) => a.summarization_models ?? []))
+    setAgentShareCommonEdits((agentsCfg.list ?? []).map((a) => a.share_common !== false))
   }, [agentsCfg.list])
 
   // Mirror the latest edit values into a ref so the debounced autosave fires
@@ -600,6 +628,7 @@ export function AgentsPage() {
     agentCallbackEdits,
     agentTemperatureEdits,
     agentSummarizationEdits,
+    agentShareCommonEdits,
   })
   latestRef.current = {
     agentModelsEdits,
@@ -608,6 +637,7 @@ export function AgentsPage() {
     agentCallbackEdits,
     agentTemperatureEdits,
     agentSummarizationEdits,
+    agentShareCommonEdits,
   }
 
   const AUTOSAVE_MS = 600
@@ -625,6 +655,7 @@ export function AgentsPage() {
         L.agentCallbackEdits[index]?.count ?? 2,
         L.agentTemperatureEdits[index],
         L.agentSummarizationEdits[index] ?? [],
+        L.agentShareCommonEdits[index] ?? true,
       )
     }, AUTOSAVE_MS)
   }
@@ -724,6 +755,15 @@ export function AgentsPage() {
                     setAgentSummarizationEdits((prev) => {
                       const next = [...prev]
                       next[i] = sm
+                      return next
+                    })
+                    scheduleSaveAgent(i)
+                  }}
+                  shareCommon={agentShareCommonEdits[i] ?? true}
+                  onShareCommonChange={(sc) => {
+                    setAgentShareCommonEdits((prev) => {
+                      const next = [...prev]
+                      next[i] = sc
                       return next
                     })
                     scheduleSaveAgent(i)

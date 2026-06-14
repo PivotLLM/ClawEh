@@ -255,6 +255,7 @@ export function ConfigPage() {
         await patchAppConfig({
           agents: {
             base_dir: baseDir,
+            common_dir: form.commonDir.trim(),
             defaults: {
               restrict_to_workspace: form.restrictToWorkspace,
               stream_tool_activity: form.streamToolActivity,

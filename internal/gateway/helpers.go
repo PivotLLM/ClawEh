@@ -241,6 +241,14 @@ func setupAndStartServices(
 ) (*gatewayServices, error) {
 	services := &gatewayServices{}
 
+	// Ensure the shared "common" directory exists so the common_* tools have a
+	// place to read/write. Idempotent.
+	if commonDir := cfg.ResolveCommonDir(); commonDir != "" {
+		if err := os.MkdirAll(commonDir, 0o755); err != nil {
+			logger.WarnCF("gateway", "Failed to create common directory", map[string]any{"path": commonDir, "error": err.Error()})
+		}
+	}
+
 	// Setup cron tool and service
 	execTimeout := time.Duration(cfg.Tools.Cron.ExecTimeoutMinutes) * time.Minute
 	var cronTool *toolschedule.CronTool

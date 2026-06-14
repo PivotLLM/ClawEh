@@ -143,9 +143,13 @@ type AgentsConfig struct {
 	// uses <base_dir>/default). A per-agent `workspace` overrides this. Empty
 	// defaults to <data_dir>/agents. Point it at another volume to relocate all
 	// agent files at once.
-	BaseDir  string        `json:"base_dir,omitempty" env:"CLAW_AGENTS_BASE_DIR"`
-	Defaults AgentDefaults `json:"defaults"`
-	List     []AgentConfig `json:"list,omitempty"`
+	BaseDir string `json:"base_dir,omitempty" env:"CLAW_AGENTS_BASE_DIR"`
+	// CommonDir is the global path to the shared directory that agents can read
+	// from and write to via the "common" tools. Empty defaults to
+	// <agents base>/common (see Config.ResolveCommonDir).
+	CommonDir string        `json:"common_dir,omitempty" env:"CLAW_AGENTS_COMMON_DIR"`
+	Defaults  AgentDefaults `json:"defaults"`
+	List      []AgentConfig `json:"list,omitempty"`
 }
 
 // SummarizationConfig is the global, deployment-wide summarization model chain.
@@ -222,6 +226,10 @@ type AgentConfig struct {
 	Callback    *CallbackConfig  `json:"callback,omitempty"`
 	Temperature *float64         `json:"temperature,omitempty"`
 
+	// ShareCommon toggles the per-agent "common" shared-directory tools. nil or
+	// true (the default) exposes them; false withholds them from this agent.
+	ShareCommon *bool `json:"share_common,omitempty"`
+
 	// Memory optionally overrides the agent-defaults memory config wholesale
 	// (nil → use AgentDefaults.Memory). Only meaningful when the agent is
 	// allowed the cogmem tools.
@@ -253,6 +261,12 @@ type AgentConfig struct {
 // IsEnabled returns true if the agent is enabled (nil means enabled by default).
 func (a *AgentConfig) IsEnabled() bool {
 	return a.Enabled == nil || *a.Enabled
+}
+
+// SharesCommon reports whether this agent gets the "common" shared-directory
+// tools. The default is ON: a nil agent or an unset ShareCommon shares.
+func (a *AgentConfig) SharesCommon() bool {
+	return a == nil || a.ShareCommon == nil || *a.ShareCommon
 }
 
 // MatchToolPattern returns true if name matches any entry in patterns.
@@ -1116,6 +1130,16 @@ func (c *Config) BaseDir() string {
 		return expandHome(c.Agents.BaseDir)
 	}
 	return filepath.Join(c.dataDir, "agents")
+}
+
+// ResolveCommonDir returns the global shared directory agents read/write via the
+// "common" tools. An explicit agents.common_dir wins; otherwise it defaults to
+// <agents base>/common.
+func (c *Config) ResolveCommonDir() string {
+	if c.Agents.CommonDir != "" {
+		return expandHome(c.Agents.CommonDir)
+	}
+	return filepath.Join(c.BaseDir(), "common")
 }
 
 // WorkspacePath returns the primary/default-agent workspace (<base_dir>/default).

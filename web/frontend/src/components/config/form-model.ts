@@ -2,6 +2,7 @@ export type JsonRecord = Record<string, unknown>
 
 export interface CoreConfigForm {
   baseDir: string
+  commonDir: string
   restrictToWorkspace: boolean
   allowRemote: boolean
   streamToolActivity: boolean
@@ -68,6 +69,7 @@ export const SESSION_MODE_OPTIONS = [
 
 export const EMPTY_FORM: CoreConfigForm = {
   baseDir: "",
+  commonDir: "",
   restrictToWorkspace: true,
   allowRemote: true,
   streamToolActivity: false,
@@ -151,6 +153,7 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
 
   return {
     baseDir: asString(agents.base_dir),
+    commonDir: asString(agents.common_dir),
     restrictToWorkspace:
       defaults.restrict_to_workspace === undefined
         ? EMPTY_FORM.restrictToWorkspace
