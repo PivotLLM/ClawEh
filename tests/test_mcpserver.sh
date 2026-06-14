@@ -55,15 +55,17 @@ FULL_URL="${SERVER_URL}${ENDPOINT}"
 # (subagent capability) and hw_i2c/hw_spi (Linux + I2C/SPI devices) are also
 # exposed but only probed when actually present in the catalogue, so this script
 # stays portable.
-EXPECTED_TOOLS="file_read file_write file_edit file_append file_list file_copy web_fetch web_search msg_send_file session_messages session_search session_compact session_info session_summary_list session_summary_get session_clear shell_exec skill_find skill_install cron_schedule"
-EXPECTED_TOOL_COUNT=20
+EXPECTED_TOOLS="file_read file_write file_edit file_append file_list file_copy web_fetch web_search msg_send_file session_messages session_search session_compact session_info session_summary_list session_summary_get session_clear shell_exec skill_find skill_install cron_schedule cogmem_get_domain cogmem_search cogmem_list_domains cogmem_explain cogmem_remember cogmem_update_domain cogmem_retire_hook cogmem_create_domain cogmem_archive_domain cogmem_forget cogmem_consolidate cogmem_status"
+EXPECTED_TOOL_COUNT=32
 
 # Namespace prefixes that must have at least one tool in the catalogue.
 # Covers every provider-owned namespace that is in the test config.
-EXPECTED_NAMESPACES="file_ web_ session_ msg_ shell_ skill_ cron_"
+EXPECTED_NAMESPACES="file_ web_ session_ msg_ shell_ skill_ cron_ cogmem_"
 
 # Unique scratch file inside the agent workspace so repeated runs do not collide.
-SCRATCH_REL="claw_mcp_test_$$.txt"
+# Writes are confined to <workspace>/files by the read-only-workspace default
+# (WorkspaceWriteSubdir), so the scratch file must live under files/.
+SCRATCH_REL="files/claw_mcp_test_$$.txt"
 
 # Colors
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
@@ -411,6 +413,9 @@ check_tool "1.9"  "session_messages"
 check_tool "1.10" "session_search"
 check_tool "1.11" "session_compact"
 check_tool "1.12" "session_info"
+check_tool "1.13" "cogmem_create_domain"
+check_tool "1.14" "cogmem_remember"
+check_tool "1.15" "cogmem_status"
 # find_tools_regex and find_tools_bm25 are only registered when
 # tools.mcp.discovery.enabled=true — not set in the standard test config.
 
@@ -557,6 +562,74 @@ else
             echo "  4b.* $opt_tool not registered on this host (skipped)"
         fi
     done
+
+    #---------------------------------------------------------------------------
+    # Section 4c: Cognitive-memory tools (cogmem_*). Session-scoped, off by
+    # default (DefaultAllow=false) — the test agent's allowlist enables them via
+    # "cogmem_*". The store is a per-session SQLite DB created on demand, so the
+    # deterministic, hermetic tools (create_domain, remember, list_domains,
+    # search, forget, status) are asserted as full SUCCESS. Tools that need a
+    # specific domain/hook id (get_domain, explain, update_domain, retire_hook,
+    # archive_domain) are probed with representative args as graceful cases — the
+    # harness has no facility to thread the generated id between probe calls, so
+    # we assert the call is accepted (token honoured, no transport/auth failure)
+    # rather than a specific id-dependent outcome. consolidate is non-blocking and
+    # may touch an LLM in the background, so it is a graceful probe too.
+    #---------------------------------------------------------------------------
+
+    print_section "4c. Cognitive-memory tools (cogmem)"
+
+    COGMEM_DOMAIN="mcp-cogmem-test-$$"
+    COGMEM_HOOK_TEXT="cogmem probe note $$"
+
+    # --- Hermetic, deterministic tools: assert full SUCCESS. ---
+
+    # create_domain returns a freshly assigned domain id and reports success.
+    run_test_ok_auth "4c.1 cogmem_create_domain creates a project domain" \
+        "cogmem_create_domain" "{\"type\":\"project\",\"name\":\"$COGMEM_DOMAIN\"}" "Created domain"
+
+    # remember with a domain_hint auto-creates/uses a project domain and records
+    # a durable hook — no pre-existing id required, so it succeeds deterministically.
+    run_test_ok_auth "4c.2 cogmem_remember records a hook (domain_hint)" \
+        "cogmem_remember" "{\"domain_hint\":\"$COGMEM_DOMAIN\",\"kind\":\"fact\",\"text\":\"$COGMEM_HOOK_TEXT\"}"
+
+    # list_domains must now report at least the domain(s) created above.
+    run_test_ok_auth "4c.3 cogmem_list_domains lists domains" \
+        "cogmem_list_domains" '{}' "domain(s)"
+
+    # search over hook text — success whether or not a match is found.
+    run_test_ok_auth "4c.4 cogmem_search returns a result set" \
+        "cogmem_search" "{\"query\":\"$COGMEM_HOOK_TEXT\"}"
+
+    # status reports store health deterministically.
+    run_test_ok_auth "4c.5 cogmem_status reports memory health" \
+        "cogmem_status" '{}' "Cognitive memory database"
+
+    # forget retires matching hooks; succeeds whether 0 or N hooks match.
+    run_test_ok_auth "4c.6 cogmem_forget retires matching hooks" \
+        "cogmem_forget" "{\"query\":\"$COGMEM_HOOK_TEXT\"}"
+
+    # --- id-dependent tools: graceful probes (token accepted). ---
+
+    run_test_not_auth_err "4c.7 cogmem_get_domain — token accepted" \
+        "cogmem_get_domain" '{"id":"dMCPtest"}'
+
+    run_test_not_auth_err "4c.8 cogmem_explain — token accepted" \
+        "cogmem_explain" '{"id":"dMCPtest"}'
+
+    run_test_not_auth_err "4c.9 cogmem_update_domain — token accepted" \
+        "cogmem_update_domain" '{"id":"dMCPtest","expected_version":1,"set_summary":"probe"}'
+
+    run_test_not_auth_err "4c.10 cogmem_retire_hook — token accepted" \
+        "cogmem_retire_hook" '{"id":"hMCPtest","reason":"probe"}'
+
+    run_test_not_auth_err "4c.11 cogmem_archive_domain — token accepted" \
+        "cogmem_archive_domain" '{"id":"dMCPtest"}'
+
+    # --- consolidate: non-blocking, may touch an LLM — graceful probe. ---
+
+    run_test_not_auth_err "4c.12 cogmem_consolidate — token accepted (queued/accepted)" \
+        "cogmem_consolidate" '{"scope":"probe"}'
 
 fi  # end SESSION_TOKEN block
 

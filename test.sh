@@ -377,12 +377,12 @@ PY
         "id": "main",
         "name": "main",
         "default": true,
-        "tools": ["*"]
+        "tools": ["*", "cogmem_*"]
       },
       {
         "id": "alice",
         "name": "alice",
-        "tools": ["*"]
+        "tools": ["*", "cogmem_*"]
       }
     ]
   },
@@ -416,7 +416,19 @@ PY
       "agent_list": true,
       "session_clear": true,
       "hw_i2c": true,
-      "hw_spi": true
+      "hw_spi": true,
+      "cogmem_get_domain": true,
+      "cogmem_search": true,
+      "cogmem_list_domains": true,
+      "cogmem_explain": true,
+      "cogmem_remember": true,
+      "cogmem_update_domain": true,
+      "cogmem_retire_hook": true,
+      "cogmem_create_domain": true,
+      "cogmem_archive_domain": true,
+      "cogmem_forget": true,
+      "cogmem_consolidate": true,
+      "cogmem_status": true
     }
   },
   "mcp_host": {
@@ -448,7 +460,19 @@ PY
       "agent_status",
       "agent_list",
       "hw_i2c",
-      "hw_spi"
+      "hw_spi",
+      "cogmem_get_domain",
+      "cogmem_search",
+      "cogmem_list_domains",
+      "cogmem_explain",
+      "cogmem_remember",
+      "cogmem_update_domain",
+      "cogmem_retire_hook",
+      "cogmem_create_domain",
+      "cogmem_archive_domain",
+      "cogmem_forget",
+      "cogmem_consolidate",
+      "cogmem_status"
     ]
   }
 }
