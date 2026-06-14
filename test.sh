@@ -412,6 +412,8 @@ PY
       "skill_install": true,
       "cron_schedule": true,
       "agent_spawn": true,
+      "agent_status": true,
+      "agent_list": true,
       "session_clear": true,
       "hw_i2c": true,
       "hw_spi": true
@@ -443,6 +445,8 @@ PY
       "skill_install",
       "cron_schedule",
       "agent_spawn",
+      "agent_status",
+      "agent_list",
       "hw_i2c",
       "hw_spi"
     ]

@@ -13,16 +13,20 @@ import (
 )
 
 // Spawner is the robust sub-agent launcher injected via Deps.Spawn. It wraps a
-// SubagentManager and exposes all three launch modes (detached / callback / wait)
-// through the transport-neutral global.Spawner interface, so the internal spawn
-// tool and any external/MCP tool launch workers through the same path.
+// SubagentManager and exposes the two launch modes (callback / wait) through the
+// transport-neutral global.Spawner interface, plus task inspection
+// (global.TaskInspector), so the internal spawn tool and any external/MCP tool
+// launch and query workers through the same path.
 type Spawner struct {
 	mgr            *SubagentManager
 	allowlistCheck func(targetAgentID string) bool
 }
 
-// Compile-time check: Spawner implements global.Spawner.
-var _ global.Spawner = (*Spawner)(nil)
+// Compile-time checks.
+var (
+	_ global.Spawner       = (*Spawner)(nil)
+	_ global.TaskInspector = (*Spawner)(nil)
+)
 
 // NewSpawner builds a Spawner over the given manager.
 func NewSpawner(mgr *SubagentManager) *Spawner {
@@ -67,7 +71,14 @@ func (s *Spawner) Spawn(ctx context.Context, req global.SpawnRequest) (*global.R
 		}
 		return tools.ResultToGlobal(res), nil
 
-	case global.SpawnCallback:
+	default: // global.SpawnCallback
+		name := strings.TrimSpace(req.Name)
+		if name == "" {
+			name = strings.TrimSpace(req.Label)
+		}
+		if name == "" {
+			return &global.Result{IsError: true, ForLLM: "name is required for callback mode (a short identifier for the task)"}, nil
+		}
 		var cb tools.AsyncCallback
 		if req.OnResult != nil {
 			onResult := req.OnResult
@@ -75,17 +86,29 @@ func (s *Spawner) Spawn(ctx context.Context, req global.SpawnRequest) (*global.R
 				onResult(tools.ResultToGlobal(r))
 			}
 		}
-		msg, err := s.mgr.Spawn(ctx, req.Task, req.Label, req.TargetAgentID, channel, chatID, cb)
+		id, err := s.mgr.SpawnCallback(req.Task, name, req.TargetAgentID, channel, chatID, cb)
 		if err != nil {
 			return &global.Result{IsError: true, ForLLM: fmt.Sprintf("failed to spawn subagent: %v", err)}, nil
 		}
-		return tools.ResultToGlobal(tools.AsyncResult(msg)), nil
-
-	default: // global.SpawnDetached
-		msg, err := s.mgr.Spawn(ctx, req.Task, req.Label, req.TargetAgentID, channel, chatID, nil)
-		if err != nil {
-			return &global.Result{IsError: true, ForLLM: fmt.Sprintf("failed to spawn subagent: %v", err)}, nil
-		}
+		msg := fmt.Sprintf("Spawned background task '%s' (uuid: %s). It runs in the background; "+
+			"you'll be notified on completion with a pointer to the result file, or poll agent_status with uuid=%q.",
+			name, id, id)
 		return tools.ResultToGlobal(tools.AsyncResult(msg)), nil
 	}
+}
+
+// TaskStatus implements global.TaskInspector.
+func (s *Spawner) TaskStatus(uuid string) (*global.TaskStatus, error) {
+	if s == nil || s.mgr == nil {
+		return nil, fmt.Errorf("spawn is not available")
+	}
+	return s.mgr.TaskStatus(uuid)
+}
+
+// TaskList implements global.TaskInspector.
+func (s *Spawner) TaskList() ([]global.TaskBrief, error) {
+	if s == nil || s.mgr == nil {
+		return nil, fmt.Errorf("spawn is not available")
+	}
+	return s.mgr.TaskList()
 }

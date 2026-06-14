@@ -91,6 +91,17 @@ type AgentLoop struct {
 	evictStop     chan struct{}
 	evictTTL      time.Duration
 	evictInterval time.Duration
+
+	// Background-task supervision. taskLive is the process-shared running-task
+	// set, shared by every per-agent SubagentManager (across reloads) so the
+	// supervisor never relaunches a task that is still running. spawnManagers maps
+	// agentID → its current manager (rebuilt on each registerRuntimeTools), used
+	// by the supervisor to scan/relaunch interrupted tasks. superStop is closed by
+	// Close() to stop the supervisor goroutine.
+	taskLive      *toolsagents.LiveSet
+	spawnMu       sync.Mutex
+	spawnManagers map[string]*toolsagents.SubagentManager
+	superStop     chan struct{}
 }
 
 // SessionTokenIssuer issues and revokes SST-prefixed session tokens used by
@@ -221,6 +232,9 @@ func NewAgentLoop(
 		evictTTL:         defaultEvictTTL,
 		evictInterval:    defaultEvictInterval,
 		activeModelIdx:   make(map[string]int),
+		taskLive:         toolsagents.NewLiveSet(),
+		spawnManagers:    make(map[string]*toolsagents.SubagentManager),
+		superStop:        make(chan struct{}),
 	}
 
 	// Register runtime-dependent tools via providers (session closures,
@@ -239,6 +253,10 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 
 	// Start the background context-manager eviction goroutine.
 	go al.evictContextManagers()
+
+	// Start the background task supervisor: periodically relaunches interrupted
+	// callback tasks (.run markers with no live worker).
+	go al.superviseTasks(ctx)
 
 	al.recoverPendingTurns(ctx)
 
@@ -373,6 +391,12 @@ func (al *AgentLoop) Close() {
 		// already closed
 	default:
 		close(al.evictStop)
+	}
+	select {
+	case <-al.superStop:
+		// already closed
+	default:
+		close(al.superStop)
 	}
 	al.drainContextManagers()
 
@@ -546,6 +570,10 @@ func (al *AgentLoop) registerRuntimeTools(
 		sharedMessageTool = mt
 	}
 
+	// Collect the per-agent spawn managers built below so the task supervisor can
+	// scan/relaunch interrupted tasks against the current config.
+	managers := make(map[string]*toolsagents.SubagentManager)
+
 	for _, agentID := range registry.ListAgentIDs() {
 		agentInst, ok := registry.GetAgent(agentID)
 		if !ok {
@@ -619,12 +647,14 @@ func (al *AgentLoop) registerRuntimeTools(
 		spawnMgr := toolsagents.NewSubagentManager(toolsagents.SubagentManagerConfig{
 			Provider:          provider,
 			Workspace:         currentAgent.Workspace,
+			Live:              al.taskLive,
 			Dispatcher:        dispatcher,
 			Fallback:          fallbackChain,
 			SelfCandidates:    currentAgent.Candidates,
 			CallerAgentID:     agentID,
 			CandidateResolver: candidateResolver,
 		})
+		managers[agentID] = spawnMgr
 		spawner := toolsagents.NewSpawner(spawnMgr)
 		spawner.SetAllowlistChecker(func(targetID string) bool {
 			return spawnAllowlist(currentAgentID, targetID)
@@ -660,6 +690,10 @@ func (al *AgentLoop) registerRuntimeTools(
 			}
 		}
 	}
+
+	al.spawnMu.Lock()
+	al.spawnManagers = managers
+	al.spawnMu.Unlock()
 }
 
 func (al *AgentLoop) RegisterTool(tool tools.Tool) {
@@ -685,6 +719,76 @@ func (al *AgentLoop) RegisterTool(tool tools.Tool) {
 
 func (al *AgentLoop) SetChannelManager(cm *channels.Manager) {
 	al.channelManager = cm
+}
+
+// superviseTasks periodically relaunches interrupted callback tasks across every
+// agent's workspace. It exits on ctx cancellation or Close().
+func (al *AgentLoop) superviseTasks(ctx context.Context) {
+	ticker := time.NewTicker(global.TaskSupervisorInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-al.superStop:
+			return
+		case <-ticker.C:
+			al.runTaskSupervision()
+		}
+	}
+}
+
+// runTaskSupervision runs one supervision pass over all current spawn managers.
+func (al *AgentLoop) runTaskSupervision() {
+	al.spawnMu.Lock()
+	managers := make([]*toolsagents.SubagentManager, 0, len(al.spawnManagers))
+	for _, m := range al.spawnManagers {
+		managers = append(managers, m)
+	}
+	al.spawnMu.Unlock()
+
+	now := time.Now().Unix()
+	for _, m := range managers {
+		m.SuperviseOnce(now, func(rec *toolsagents.TaskRecord) tools.AsyncCallback {
+			return al.taskPointerCallback(rec.Channel, rec.ChatID)
+		})
+	}
+}
+
+// taskPointerCallback builds the completion callback for a relaunched task: it
+// publishes the compact completion pointer to the task's origin channel (the
+// agent reads the referenced result file). Mirrors the inline async-tool callback
+// used for the initial in-turn spawn.
+func (al *AgentLoop) taskPointerCallback(channel, chatID string) tools.AsyncCallback {
+	return func(_ context.Context, result *tools.ToolResult) {
+		if result == nil {
+			return
+		}
+		if !result.Silent && result.ForUser != "" {
+			outCtx, outCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			_ = al.bus.PublishOutbound(outCtx, bus.OutboundMessage{
+				Channel: channel,
+				ChatID:  chatID,
+				Content: result.ForUser,
+			})
+			outCancel()
+		}
+		content := result.ForLLM
+		if content == "" && result.Err != nil {
+			content = result.Err.Error()
+		}
+		if content == "" {
+			return
+		}
+		pubCtx, pubCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = al.bus.PublishInbound(pubCtx, bus.InboundMessage{
+			Channel:  "system",
+			SenderID: "async:agent_spawn",
+			ChatID:   fmt.Sprintf("%s:%s", channel, chatID),
+			Content:  content,
+		})
+		pubCancel()
+	}
 }
 
 // ReloadProviderAndConfig atomically swaps the provider and config with proper synchronization.

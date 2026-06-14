@@ -8,19 +8,46 @@ import (
 	"time"
 
 	"github.com/PivotLLM/ClawEh/pkg/global"
+	"github.com/PivotLLM/ClawEh/pkg/providers"
 )
 
-func newTestSpawner() *Spawner {
+// MockLLMProvider echoes the last user message back as the assistant response so
+// wait-mode results reference the task text.
+type MockLLMProvider struct{}
+
+func (m *MockLLMProvider) Chat(
+	_ context.Context,
+	messages []providers.Message,
+	_ []providers.ToolDefinition,
+	_ string,
+	_ map[string]any,
+) (*providers.LLMResponse, error) {
+	content := ""
+	for _, msg := range messages {
+		if msg.Role == "user" {
+			content = msg.Content
+		}
+	}
+	return &providers.LLMResponse{Content: content}, nil
+}
+
+func (m *MockLLMProvider) GetDefaultModel() string { return "test-model" }
+func (m *MockLLMProvider) SupportsTools() bool     { return false }
+func (m *MockLLMProvider) GetContextWindow() int   { return 4096 }
+
+func newTestSpawner(t *testing.T) *Spawner {
+	t.Helper()
 	mgr := NewSubagentManager(SubagentManagerConfig{
 		Provider:     &MockLLMProvider{},
 		DefaultModel: "test-model",
-		Workspace:    "/tmp/test",
+		Workspace:    t.TempDir(),
+		Live:         NewLiveSet(),
 	})
 	return NewSpawner(mgr)
 }
 
 func TestSpawner_WaitMode_ReturnsResultSynchronously(t *testing.T) {
-	sp := newTestSpawner()
+	sp := newTestSpawner(t)
 	res, err := sp.Spawn(context.Background(), global.SpawnRequest{
 		Mode: global.SpawnAndWait,
 		Task: "do the thing",
@@ -39,8 +66,8 @@ func TestSpawner_WaitMode_ReturnsResultSynchronously(t *testing.T) {
 	}
 }
 
-func TestSpawner_CallbackMode_DeliversResult(t *testing.T) {
-	sp := newTestSpawner()
+func TestSpawner_CallbackMode_DeliversPointer(t *testing.T) {
+	sp := newTestSpawner(t)
 	var (
 		mu   sync.Mutex
 		got  *global.Result
@@ -48,6 +75,7 @@ func TestSpawner_CallbackMode_DeliversResult(t *testing.T) {
 	)
 	res, err := sp.Spawn(context.Background(), global.SpawnRequest{
 		Mode: global.SpawnCallback,
+		Name: "bg",
 		Task: "background work",
 		OnResult: func(r *global.Result) {
 			mu.Lock()
@@ -72,24 +100,25 @@ func TestSpawner_CallbackMode_DeliversResult(t *testing.T) {
 	if got == nil || got.IsError {
 		t.Fatalf("expected a successful callback result, got %+v", got)
 	}
+	// The pointer payload references the result file, not the full content.
+	if !strings.Contains(got.ForLLM, "result_file") {
+		t.Errorf("expected a compact pointer payload, got %q", got.ForLLM)
+	}
 }
 
-func TestSpawner_DetachedMode_NoCallback(t *testing.T) {
-	sp := newTestSpawner()
-	res, err := sp.Spawn(context.Background(), global.SpawnRequest{
-		Mode: global.SpawnDetached,
-		Task: "fire and forget",
+func TestSpawner_CallbackMode_RequiresName(t *testing.T) {
+	sp := newTestSpawner(t)
+	res, _ := sp.Spawn(context.Background(), global.SpawnRequest{
+		Mode: global.SpawnCallback,
+		Task: "no name given",
 	})
-	if err != nil {
-		t.Fatalf("Spawn returned error: %v", err)
-	}
-	if res == nil || !res.Async {
-		t.Fatalf("detached mode should return an async acknowledgement, got %+v", res)
+	if res == nil || !res.IsError {
+		t.Fatalf("expected error result when name is missing for callback, got %+v", res)
 	}
 }
 
 func TestSpawner_EmptyTask_IsError(t *testing.T) {
-	sp := newTestSpawner()
+	sp := newTestSpawner(t)
 	res, _ := sp.Spawn(context.Background(), global.SpawnRequest{Mode: global.SpawnAndWait, Task: "  "})
 	if res == nil || !res.IsError {
 		t.Fatalf("expected error result for empty task, got %+v", res)
@@ -97,7 +126,7 @@ func TestSpawner_EmptyTask_IsError(t *testing.T) {
 }
 
 func TestSpawner_TargetedSpawn_AllowlistDeny(t *testing.T) {
-	sp := newTestSpawner()
+	sp := newTestSpawner(t)
 	sp.SetAllowlistChecker(func(string) bool { return false })
 	res, _ := sp.Spawn(context.Background(), global.SpawnRequest{
 		Mode:          global.SpawnAndWait,
@@ -130,11 +159,10 @@ func TestResolveSpawnMode(t *testing.T) {
 	}{
 		{"wait", true, global.SpawnAndWait, false},
 		{"sync", false, global.SpawnAndWait, false},
-		{"detached", true, global.SpawnDetached, false},
 		{"callback", true, global.SpawnCallback, true},
 		{"", true, global.SpawnCallback, true},
-		{"", false, global.SpawnDetached, false}, // no async path → degrade
-		{"bogus", false, global.SpawnDetached, false},
+		{"", false, global.SpawnCallback, false}, // no async path → still callback, no push
+		{"bogus", false, global.SpawnCallback, false},
 	}
 	for _, tc := range cases {
 		call := &global.ToolCall{}
@@ -151,14 +179,31 @@ func TestResolveSpawnMode(t *testing.T) {
 	}
 }
 
-// Compile-time assurance the global provider exposes the spawn tool and uses the
-// injected spawner.
-func TestGlobalProvider_SpawnToolWiredToDeps(t *testing.T) {
-	defs := GlobalProvider.RegisterTools(global.Deps{Spawn: newTestSpawner()})
-	if len(defs) != 1 || defs[0].Name != "spawn" {
-		t.Fatalf("expected a single 'spawn' tool, got %+v", defs)
+// TestGlobalProvider_TaskToolsWiredToDeps verifies the provider exposes the three
+// task tools and the spawn handler uses the injected spawner.
+func TestGlobalProvider_TaskToolsWiredToDeps(t *testing.T) {
+	defs := GlobalProvider.RegisterTools(global.Deps{Spawn: newTestSpawner(t)})
+	names := map[string]bool{}
+	for _, d := range defs {
+		names[d.Name] = true
 	}
-	res, err := defs[0].Handler(&global.ToolCall{
+	for _, want := range []string{"spawn", "status", "list"} {
+		if !names[want] {
+			t.Errorf("expected provider to expose %q; got %+v", want, names)
+		}
+	}
+
+	var spawnDef *global.ToolDefinition
+	for i := range defs {
+		if defs[i].Name == "spawn" {
+			spawnDef = &defs[i]
+			break
+		}
+	}
+	if spawnDef == nil {
+		t.Fatal("spawn tool not found")
+	}
+	res, err := spawnDef.Handler(&global.ToolCall{
 		Ctx:  context.Background(),
 		Args: map[string]any{"task": "hello", "mode": "wait"},
 	})

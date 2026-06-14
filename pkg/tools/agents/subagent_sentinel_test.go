@@ -40,21 +40,20 @@ func TestSubagentSystemPrompt_ContainsSentinel(t *testing.T) {
 	}
 }
 
-// TestSubagentTool_Execute_InjectsSubagentSentinel asserts the sentinel is
-// present in the system message sent to the LLM by the synchronous tool path.
-func TestSubagentTool_Execute_InjectsSubagentSentinel(t *testing.T) {
+// TestSubagentRun_InjectsSubagentSentinel asserts the sentinel is
+// present in the system message sent to the LLM by the synchronous (wait) path.
+func TestSubagentRun_InjectsSubagentSentinel(t *testing.T) {
 	provider := &capturingProvider{}
 	manager := NewSubagentManager(SubagentManagerConfig{
 		Provider:     provider,
 		DefaultModel: "test-model",
-		Workspace:    "/tmp/test",
+		Workspace:    t.TempDir(),
 	})
-	tool := NewSubagentTool(manager)
 
 	ctx := tools.WithToolContext(context.Background(), "cli", "direct")
-	res := tool.Execute(ctx, map[string]any{"task": "do something"})
-	if res == nil || res.IsError {
-		t.Fatalf("expected success, got: %+v", res)
+	res, err := manager.Run(ctx, "do something", "", "", "cli", "direct")
+	if err != nil || res == nil || res.IsError {
+		t.Fatalf("expected success, got res=%+v err=%v", res, err)
 	}
 
 	if len(provider.lastMessages) == 0 {

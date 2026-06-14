@@ -51,9 +51,10 @@ FULL_URL="${SERVER_URL}${ENDPOINT}"
 # Note: find_tools_regex and find_tools_bm25 are omitted here because they only register
 # when tools.mcp.discovery.enabled=true, which the test config does not set.
 # Every tool the test config exposes that is guaranteed to register (no live
-# model and no specific hardware required). agent_spawn (needs a model) and
-# hw_i2c/hw_spi (Linux + I2C/SPI devices) are also exposed but only probed when
-# actually present in the catalogue, so this script stays portable.
+# model and no specific hardware required). agent_spawn/agent_status/agent_list
+# (subagent capability) and hw_i2c/hw_spi (Linux + I2C/SPI devices) are also
+# exposed but only probed when actually present in the catalogue, so this script
+# stays portable.
 EXPECTED_TOOLS="file_read file_write file_edit file_append file_list file_copy web_fetch web_search msg_send_file session_messages session_search session_compact session_info session_summary_list session_summary_get session_clear shell_exec skill_find skill_install cron_schedule"
 EXPECTED_TOOL_COUNT=20
 
@@ -545,9 +546,11 @@ else
     run_test_not_auth_err "4b.7 cron_schedule — token accepted" \
         "cron_schedule" '{}'
 
-    # Tools that only register on certain hosts (agent needs a model; hw needs
-    # Linux + I2C/SPI devices). Probe them only when the catalogue lists them.
-    for opt_tool in agent_spawn hw_i2c hw_spi; do
+    # Tools that only register on certain hosts (agent tools need the subagent
+    # capability; hw needs Linux + I2C/SPI devices). Probe them only when the
+    # catalogue lists them. Empty args are fine — these probes assert the session
+    # token is accepted, not that the call succeeds (agent_status needs a uuid).
+    for opt_tool in agent_spawn agent_status agent_list hw_i2c hw_spi; do
         if echo "$LIST_OUT" | grep -qw "$opt_tool"; then
             run_test_not_auth_err "4b.* $opt_tool — token accepted" "$opt_tool" '{}'
         else
