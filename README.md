@@ -8,6 +8,57 @@
 > - **Removed:** the legacy `providers` object and `openai_compat_protocols` config, superseded by the named-providers list.
 > - **Attribute stripping** can be performed on a per-model basis (for example strip the "temperature" field for GPT 5 models).
 
+## What's New
+
+### Improved context compression
+Context compression (summarizing older conversation so long sessions stay within
+the model's context window) has been significantly improved for reliability and
+quality. You can now optionally tailor it per agent: drop a `COMPRESSION.md` file
+in the agent's workspace with additional instructions, and those are folded into
+the summarization prompt. Leave it out to use the built-in behavior.
+
+### Cognitive memory (cogmem)
+ClawEh is gaining a cognitive-memory engine so long-running agents get smarter
+over time instead of relying on hand-edited prompt files. Each session has a
+small SQLite memory database alongside its existing archive. A background "sleep
+cycle" periodically reviews new conversation and distills it into structured,
+de-duplicated, contradiction-resolved memory (preferences, project state,
+lessons, facts); the relevant pieces are then composed into the system prompt for
+each turn. Consolidation reuses your configured **Memory models** (formerly
+"Summarization models" — the same setting, renamed) and its prompt lives in an
+editable `COGMEM.md` seeded into each agent's workspace, so you can tune how the
+agent learns. Cognitive memory is **off until you grant an agent the `cogmem_*`
+tools** — that tool allowlist is the on/off switch.
+
+### Workspace `.md` files are now for humans, not the agent
+The agent no longer edits its own workspace markdown files (`AGENTS.md`,
+`SOUL.md`, `IDENTITY.md`, `USER.md`, `MEMORY.md`). They are now intended for
+**human authorship**. As in other *claw applications, these files are combined
+and inserted into the system prompt, so keep them **brief and general** — they
+are sent on every turn. As the cognitive-memory implementation matures, the
+specific, situational information the agent needs is inserted into the context
+automatically rather than living in these files. The `.md` files are treated as
+**authoritative** (they always win over learned memory) and are **reviewed during
+cognitive-memory consolidation**, so anything you write in them shapes what the
+agent learns. The agent records what it learns to its memory database (via the
+`cogmem_*` tools / the sleep cycle), not to your files.
+
+### Agent file access: `<workspace>/files`
+By default an agent now has **read-only access to its workspace except for
+`<workspace>/files`**, which is its read/write working area for drafts and
+outputs. This directory is created automatically. **Existing agent files that
+need to be writable must be moved into `files/` manually.** (This default can be
+changed in config if you need the whole workspace writable.) A shared
+**common directory** (default `agents/common`, configurable to any path) also
+lets agents exchange files via `common_put` / `common_get` / `common_list` /
+`common_delete`; access is on by default and can be toggled per agent.
+
+### What's next
+1. **Monitoring, reviewing, and tweaking cognitive memory** — observing what it
+   learns and refining the prompts, thresholds, and routing.
+2. Depending on what we find, **exploring additional approaches to automatically
+   insert the most appropriate memory** into the agent's context.
+
 ClawEh began as a fork of [PicoClaw](https://github.com/sipeed/picoclaw). Written in Go, ClawEh it is focused on a minimal footprint, efficient deployment, core stability, reliability, security, and long-term maintainability.
 
 ## Why ClawEh exists
