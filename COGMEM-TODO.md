@@ -37,6 +37,55 @@ Bug found & fixed mid-session: `last_active_at` used unix **seconds**, so
 same-second touches tied and recency ordering fell back to id order. Switched the
 recency key to unix **nanoseconds** (ordering-only field).
 
+## Session 2 outcome (2026-06-14) — Phases 0–3 complete, pushed
+
+All on `feature/cogmem`, pushed. `go build ./...` and `go test ./...` pass
+module-wide; gofmt/vet clean. Commits: foundation → write-default+UI →
+MemoryConfig → Phase 2+3a → Phase 3b.
+
+Done this session:
+- **6-char IDs** (prefix + 5 Crockford base32), functional options + per-package
+  `constants.go`, prompt renamed to **`templates/COGMEM.md`** (seeded per-agent,
+  write-if-missing).
+- **Write-default**: agents are **read-only in their workspace except
+  `<workspace>/files`** unless config overrides (`WorkspaceWriteSubdir`, default
+  "files"). Takes effect on deploy.
+- **UI**: "Summarization" model settings renamed to **"Memory"** (labels only).
+- **MemoryConfig** on AgentDefaults + per-agent override; consolidation reuses
+  the summarization/"Memory" model chain (no separate model field).
+- **Phase 2** — 12 `cogmem_*` MCP tools, `DefaultAllow=false` (opt-in via tool
+  allowlist; this is the on/off switch).
+- **Phase 3a** — consolidation worker core (decoupled MessageSource/ModelCaller,
+  RunOnce, export), fully tested.
+- **Phase 3b** — Manager (message/idle/nightly triggers, pool), ModelCaller
+  adapter over the summarization chain, gated wiring (archive hook + prompt
+  injection of stable/routed blocks), gateway startup, `cogmem_consolidate`
+  trigger. **Everything inert unless an agent is granted the cogmem tools.**
+
+## Remaining / follow-ups (need attention before relying on it)
+
+1. **Runtime verification (REQUIRED).** None of the wiring has been exercised
+   against a live model. To test: enable cogmem tools for one agent
+   (`tools: ["...", "cogmem_*"]`), set its summarization/Memory model, deploy,
+   converse, then check `cogmem_status`, the GENERATED_*.md export, and that the
+   stable/routed blocks appear in the prompt.
+2. **D7 retention guard not wired.** `protect_unconsolidated` config exists but
+   is NOT enforced: the archive `messages` table has no `consolidated` column and
+   pruning does not yet skip unconsolidated rows. The worker advances the cogmem
+   watermark only. Implement the archive column + prune-skip (mem-proposal §10/§11
+   step 8) so long backlogs aren't pruned before consolidation.
+3. **MCP probes.** Per CLAUDE.md, add `cogmem_*` probe cases to
+   `tests/test_mcpserver.sh` + the test gateway config (graceful-error probes for
+   the LLM-backed ones).
+4. **Trigger cadence is fixed at startup** (not hot-reloaded on config change).
+   Per-agent batch levers and model chains DO read live config per job. Add a
+   reload hook only if cadence-on-reload is wanted.
+5. **Sync check:** `templates/COGMEM.md` and the embedded
+   `pkg/cogmem/consolidate/default_prompt.md` are identical copies — keep in sync
+   (or generate one from the other) when you tune the prompt.
+6. Optional: caching-order precision for the injected stable block, and Touch on
+   compose so recency reflects prompt loads.
+
 ---
 
 ## 1. Decisions made autonomously (review these)
