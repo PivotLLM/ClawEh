@@ -284,8 +284,13 @@ type AgentDefaults struct {
 	// StreamToolActivity, when true, sends the model's inter-tool narration and
 	// each tool's user-facing output to the channel as it happens. When false
 	// (default) the user receives only the final answer, not the play-by-play.
-	StreamToolActivity         bool     `json:"stream_tool_activity,omitempty"  env:"CLAW_AGENTS_DEFAULTS_STREAM_TOOL_ACTIVITY"`
-	AllowReadOutsideWorkspace  bool     `json:"allow_read_outside_workspace"    env:"CLAW_AGENTS_DEFAULTS_ALLOW_READ_OUTSIDE_WORKSPACE"`
+	StreamToolActivity        bool `json:"stream_tool_activity,omitempty"  env:"CLAW_AGENTS_DEFAULTS_STREAM_TOOL_ACTIVITY"`
+	AllowReadOutsideWorkspace bool `json:"allow_read_outside_workspace"    env:"CLAW_AGENTS_DEFAULTS_ALLOW_READ_OUTSIDE_WORKSPACE"`
+	// WorkspaceWriteSubdir confines writes to <workspace>/<subdir> while reads
+	// remain workspace-wide. Only applies when RestrictToWorkspace is true.
+	// Default "files" (writes land in <workspace>/files). Set to "" to make the
+	// whole workspace writable (legacy behavior).
+	WorkspaceWriteSubdir       string   `json:"workspace_write_subdir"          env:"CLAW_AGENTS_DEFAULTS_WORKSPACE_WRITE_SUBDIR"`
 	Models                     []string `json:"models,omitempty"`
 	ImageModel                 string   `json:"image_model,omitempty"           env:"CLAW_AGENTS_DEFAULTS_IMAGE_MODEL"`
 	ImageModelFallbacks        []string `json:"image_model_fallbacks,omitempty"`

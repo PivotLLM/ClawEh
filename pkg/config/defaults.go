@@ -45,6 +45,7 @@ func DefaultConfig() *Config {
 			BaseDir: agentsBaseDir,
 			Defaults: AgentDefaults{
 				RestrictToWorkspace:  true,
+				WorkspaceWriteSubdir: "files",
 				Models:               []string{"Claude CLI", "Codex CLI"},
 				MaxTokens:            32768,
 				Temperature:          nil, // nil means use provider default

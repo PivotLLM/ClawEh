@@ -1,6 +1,8 @@
 package files
 
 import (
+	"os"
+	"path/filepath"
 	"regexp"
 
 	"github.com/PivotLLM/ClawEh/pkg/config"
@@ -60,12 +62,20 @@ func (globalFilesProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 
 		maxReadFileSize := c.Tools.ReadFile.MaxReadFileSize
 
+		// Writes are confined to <workspace>/<writeSubdir> (default "files") when
+		// restriction is on; reads remain workspace-wide. Ensure the subdir exists
+		// so the agent has somewhere to write.
+		writeSubdir := c.Agents.Defaults.WorkspaceWriteSubdir
+		if restrict && writeSubdir != "" && workspace != "" {
+			_ = os.MkdirAll(filepath.Join(workspace, writeSubdir), 0o755)
+		}
+
 		read = NewReadFileTool(workspace, readRestrict, maxReadFileSize, allowReadPaths)
-		write = NewWriteFileTool(workspace, restrict, allowWritePaths)
+		write = NewWriteFileToolScoped(workspace, restrict, writeSubdir, allowWritePaths)
 		list = NewListDirTool(workspace, readRestrict, allowReadPaths)
-		edit = NewEditFileTool(workspace, restrict, allowWritePaths)
-		apnd = NewAppendFileTool(workspace, restrict, allowWritePaths)
-		cp = NewCopyFileTool(workspace, restrict, allowWritePaths)
+		edit = NewEditFileToolScoped(workspace, restrict, writeSubdir, allowWritePaths)
+		apnd = NewAppendFileToolScoped(workspace, restrict, writeSubdir, allowWritePaths)
+		cp = NewCopyFileToolScoped(workspace, restrict, writeSubdir, allowWritePaths)
 	}
 
 	return []global.ToolDefinition{

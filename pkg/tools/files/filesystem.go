@@ -311,11 +311,18 @@ type WriteFileTool struct {
 }
 
 func NewWriteFileTool(workspace string, restrict bool, allowPaths ...[]*regexp.Regexp) *WriteFileTool {
+	return NewWriteFileToolScoped(workspace, restrict, "", allowPaths...)
+}
+
+// NewWriteFileToolScoped constructs a WriteFileTool whose writes are confined to
+// <workspace>/<writeSubdir> (reads stay workspace-wide). An empty writeSubdir
+// yields the legacy whole-workspace behaviour.
+func NewWriteFileToolScoped(workspace string, restrict bool, writeSubdir string, allowPaths ...[]*regexp.Regexp) *WriteFileTool {
 	var patterns []*regexp.Regexp
 	if len(allowPaths) > 0 {
 		patterns = allowPaths[0]
 	}
-	return &WriteFileTool{sysFs: buildFs(workspace, restrict, patterns)}
+	return &WriteFileTool{sysFs: buildWriteFs(workspace, restrict, writeSubdir, patterns)}
 }
 
 func (t *WriteFileTool) Name() string {
@@ -805,6 +812,102 @@ func buildFs(workspace string, restrict bool, patterns []*regexp.Regexp) fileSys
 		return &whitelistFs{sandbox: sandbox, patterns: patterns}
 	}
 	return sandbox
+}
+
+// buildWriteFs returns the fileSystem for the write/edit/append/copy tools.
+// When restrict is on and writeSubdir is non-empty, writes are confined to
+// <workspace>/<writeSubdir> while reads stay workspace-wide; host paths matching
+// patterns (Tools.AllowWritePaths) remain writable. When writeSubdir is empty,
+// behaviour matches buildFs (legacy: the whole workspace is writable).
+func buildWriteFs(workspace string, restrict bool, writeSubdir string, patterns []*regexp.Regexp) fileSystem {
+	inner := buildFs(workspace, restrict, patterns)
+	if !restrict || writeSubdir == "" {
+		return inner
+	}
+	return &writeScopedFs{
+		inner:     inner,
+		workspace: workspace,
+		writeRoot: filepath.Join(workspace, writeSubdir),
+		patterns:  patterns,
+	}
+}
+
+// writeScopedFs wraps an inner fileSystem to allow reads across the whole
+// workspace while confining writes (and the directory creation they imply) to
+// writeRoot (<workspace>/<subdir>). Host paths matching patterns are exempt so
+// Tools.AllowWritePaths keeps working.
+type writeScopedFs struct {
+	inner     fileSystem
+	workspace string
+	writeRoot string
+	patterns  []*regexp.Regexp
+}
+
+// writeAllowed reports whether a write to path is permitted: either the path
+// matches a whitelisted host pattern, or it resolves within writeRoot.
+func (w *writeScopedFs) writeAllowed(path string) error {
+	for _, p := range w.patterns {
+		if p.MatchString(path) {
+			return nil
+		}
+	}
+
+	absRoot, err := filepath.Abs(w.writeRoot)
+	if err != nil {
+		return fmt.Errorf("failed to resolve write root: %w", err)
+	}
+
+	var absPath string
+	if filepath.IsAbs(path) {
+		absPath = filepath.Clean(path)
+	} else {
+		absPath, err = filepath.Abs(filepath.Join(w.workspace, path))
+		if err != nil {
+			return fmt.Errorf("failed to resolve file path: %w", err)
+		}
+	}
+
+	if absPath != absRoot && !isWithinWorkspace(absPath, absRoot) {
+		return fmt.Errorf("write denied: outside %s", w.writeRoot)
+	}
+	return nil
+}
+
+func (w *writeScopedFs) ReadFile(path string) ([]byte, error) {
+	return w.inner.ReadFile(path)
+}
+
+func (w *writeScopedFs) ReadDir(path string) ([]os.DirEntry, error) {
+	return w.inner.ReadDir(path)
+}
+
+func (w *writeScopedFs) Open(path string) (fs.File, error) {
+	return w.inner.Open(path)
+}
+
+func (w *writeScopedFs) Stat(path string) (os.FileInfo, error) {
+	return w.inner.Stat(path)
+}
+
+func (w *writeScopedFs) WriteFile(path string, data []byte) error {
+	if err := w.writeAllowed(path); err != nil {
+		return err
+	}
+	return w.inner.WriteFile(path, data)
+}
+
+func (w *writeScopedFs) WriteFileMode(path string, data []byte, mode os.FileMode) error {
+	if err := w.writeAllowed(path); err != nil {
+		return err
+	}
+	return w.inner.WriteFileMode(path, data, mode)
+}
+
+func (w *writeScopedFs) WriteFileExclMode(path string, data []byte, mode os.FileMode) error {
+	if err := w.writeAllowed(path); err != nil {
+		return err
+	}
+	return w.inner.WriteFileExclMode(path, data, mode)
 }
 
 // Helper to get a safe relative path for os.Root usage

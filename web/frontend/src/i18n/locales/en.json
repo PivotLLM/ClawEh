@@ -1,8 +1,8 @@
 {
   "agents": {
-    "summarizationModels": "Summarization models (optional)",
-    "summarizationModelsAdd": "Add summarization model…",
-    "summarizationModelsHint": "Models tried first when summarizing this agent's context, ahead of the global summarization models and the agent's own model. Use to give an agent specialised summarizers when the defaults refuse its content."
+    "summarizationModels": "Memory models (optional)",
+    "summarizationModelsAdd": "Add memory model…",
+    "summarizationModelsHint": "Models tried first for this agent's memory consolidation and context summarization, ahead of the global memory models and the agent's own model. Use to give an agent specialised models when the defaults refuse its content."
   },
   "navigation": {
     "chat": "Chat",
@@ -387,9 +387,9 @@
       "default_model": "Default models",
       "default_temperature": "Default temperature",
       "default_temperature_hint": "0–2; blank uses the provider default.",
-      "summarization_models": "Summarization Models",
-      "summarization_models_hint": "Models tried in order for context summarization across all agents. Each agent's own model is always used as a final fallback. Leave empty to use each agent's own model.",
-      "summarization_models_empty": "No summarization models configured — each agent uses its own model.",
+      "summarization_models": "Memory Models",
+      "summarization_models_hint": "Models tried in order for memory consolidation and context summarization across all agents. Each agent's own model is always used as a final fallback. Leave empty to use each agent's own model.",
+      "summarization_models_empty": "No memory models configured — each agent uses its own model.",
       "summarization_models_add": "Add model",
       "summarization_models_remove": "Remove",
       "summarization_models_move_up": "Move up",
@@ -443,9 +443,9 @@
       "sections": {
         "agent": "Agent",
         "agent_defaults": "Agent Defaults",
-        "agent_defaults_desc": "Default model, summarization chain, and the agent that handles unrouted messages — applied to agents without their own override.",
-        "summarization": "Summarization",
-        "summarization_desc": "Global summarization model chain used to compress context for every agent.",
+        "agent_defaults_desc": "Default model, memory model chain, and the agent that handles unrouted messages — applied to agents without their own override.",
+        "summarization": "Memory",
+        "summarization_desc": "Global memory model chain used for memory consolidation and context compression for every agent.",
         "context_management": "Context Management",
         "context_management_desc": "Controls when context is compressed, how much is retained, and how the archive is sized.",
         "runtime": "Runtime",
