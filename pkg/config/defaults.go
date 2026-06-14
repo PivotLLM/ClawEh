@@ -46,6 +46,20 @@ func DefaultConfig() *Config {
 			Defaults: AgentDefaults{
 				RestrictToWorkspace:  true,
 				WorkspaceWriteSubdir: "files",
+				Memory: MemoryConfig{
+					Prompt: MemoryPromptConfig{
+						TopKDomains: 3, MaxChars: 4000, MinConfidence: 0.65,
+						IncludeDebugTrace: false, PendingSurface: "ask", PendingMax: 8,
+					},
+					Consolidation: MemoryConsolidationConfig{
+						EveryNMessages: 50, IdleMinutes: 60, Nightly: true, NightlyAt: "03:20",
+						ProposeDomains: true, AutoPromote: false, DebugDump: false,
+						MaxBatchMessages: 200, MaxInputTokens: 96000, PerMessageChars: 12000,
+						MaxOutputTokens: 8000, MaxRuntimeSecs: 120,
+					},
+					Retention: MemoryRetentionConfig{ProtectUnconsolidated: true},
+					Export:    MemoryExportConfig{Enabled: true},
+				},
 				Models:               []string{"Claude CLI", "Codex CLI"},
 				MaxTokens:            32768,
 				Temperature:          nil, // nil means use provider default

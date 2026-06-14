@@ -161,6 +161,54 @@ type SummarizationConfig struct {
 	DebugCapture bool `json:"debug_capture,omitempty" env:"CLAW_SUMMARIZATION_DEBUG_CAPTURE"`
 }
 
+// MemoryConfig configures the cognitive-memory subsystem for an agent. The
+// subsystem is ACTIVE for an agent only when that agent is allowed the cogmem
+// tools (there is no separate engine flag). The consolidation model is NOT
+// configured here: it reuses the agent's summarization ("Memory") model chain
+// (SummarizationModels → global Summarization.Models → the agent's own model).
+type MemoryConfig struct {
+	Prompt        MemoryPromptConfig        `json:"prompt"`
+	Consolidation MemoryConsolidationConfig `json:"consolidation"`
+	Retention     MemoryRetentionConfig     `json:"retention"`
+	Export        MemoryExportConfig        `json:"export"`
+}
+
+// MemoryPromptConfig tunes per-turn prompt composition.
+type MemoryPromptConfig struct {
+	TopKDomains       int     `json:"top_k_domains"`
+	MaxChars          int     `json:"max_chars"`
+	MinConfidence     float64 `json:"min_confidence"`
+	IncludeDebugTrace bool    `json:"include_debug_trace"`
+	PendingSurface    string  `json:"pending_surface"` // "ask" | "export_only"
+	PendingMax        int     `json:"pending_max"`
+}
+
+// MemoryConsolidationConfig tunes the background sleep cycle.
+type MemoryConsolidationConfig struct {
+	EveryNMessages   int    `json:"every_n_messages"`
+	IdleMinutes      int    `json:"idle_minutes"`
+	Nightly          bool   `json:"nightly"`
+	NightlyAt        string `json:"nightly_at"`
+	ProposeDomains   bool   `json:"propose_domains"`
+	AutoPromote      bool   `json:"auto_promote"`
+	DebugDump        bool   `json:"debug_dump"`
+	MaxBatchMessages int    `json:"max_batch_messages"`
+	MaxInputTokens   int    `json:"max_input_tokens"`
+	PerMessageChars  int    `json:"per_message_chars"`
+	MaxOutputTokens  int    `json:"max_output_tokens"`
+	MaxRuntimeSecs   int    `json:"max_runtime_seconds"`
+}
+
+// MemoryRetentionConfig guards unconsolidated archive messages from pruning.
+type MemoryRetentionConfig struct {
+	ProtectUnconsolidated bool `json:"protect_unconsolidated"`
+}
+
+// MemoryExportConfig controls the read-only GENERATED_*.md export.
+type MemoryExportConfig struct {
+	Enabled bool `json:"enabled"`
+}
+
 type AgentConfig struct {
 	ID          string           `json:"id"`
 	Enabled     *bool            `json:"enabled,omitempty"`
@@ -173,6 +221,11 @@ type AgentConfig struct {
 	Subagents   *SubagentsConfig `json:"subagents,omitempty"`
 	Callback    *CallbackConfig  `json:"callback,omitempty"`
 	Temperature *float64         `json:"temperature,omitempty"`
+
+	// Memory optionally overrides the agent-defaults memory config wholesale
+	// (nil → use AgentDefaults.Memory). Only meaningful when the agent is
+	// allowed the cogmem tools.
+	Memory *MemoryConfig `json:"memory,omitempty"`
 
 	// SummarizationModels is an optional per-agent summarization model chain.
 	// When non-empty, these models are tried first (in order) for this agent's
@@ -314,6 +367,19 @@ type AgentDefaults struct {
 	SummaryRetentionDays       int      `json:"summary_retention_days,omitempty"        env:"CLAW_AGENTS_DEFAULTS_SUMMARY_RETENTION_DAYS"`
 	ArchiveContentMaxBytes     int      `json:"archive_content_max_bytes,omitempty"     env:"CLAW_AGENTS_DEFAULTS_ARCHIVE_CONTENT_MAX_BYTES"`
 	DefaultTools               []string `json:"default_tools,omitempty"`
+
+	// Memory is the default cognitive-memory config applied to agents allowed
+	// the cogmem tools (overridable per agent via AgentConfig.Memory).
+	Memory MemoryConfig `json:"memory"`
+}
+
+// EffectiveMemory returns the memory config for an agent: the per-agent block
+// if present, otherwise the defaults.
+func (d AgentDefaults) EffectiveMemory(a *AgentConfig) MemoryConfig {
+	if a != nil && a.Memory != nil {
+		return *a.Memory
+	}
+	return d.Memory
 }
 
 const DefaultMaxMediaSize = 20 * 1024 * 1024 // 20 MB
