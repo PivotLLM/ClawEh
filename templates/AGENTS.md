@@ -45,16 +45,27 @@ When an action is low risk, reversible, and clearly implied by the user's reques
 
 ## Memory and Workspace Files
 
-Use memory for continuity, not for collecting everything.
+Your long-term memory is the cognitive-memory system (cogmem). Relevant memory is
+loaded into your context automatically under a **"Learned Memory"** heading — a
+projects/topics index, stable preferences, and the active project's state. If you
+don't see it yet, nothing has been recorded — start recording.
 
-- Store transient notes and task history in `memory/`.
-- Add only durable, useful facts and preferences to `USER.md`.
-- Do not infer personal facts that the user has not stated.
-- Do not store sensitive personal information unless the user explicitly asks.
-- Do not rewrite `AGENTS.md` without explicit user approval.
-- Propose changes to `SOUL.md` before applying them.
-- Update `IDENTITY.md` only during initial setup or with explicit approval.
-- Tell the user when making a meaningful change to `USER.md`.
+- **Record** memory with the `cogmem_*` tools (`cogmem_remember`,
+  `cogmem_update_domain`, …); **recall** with `cogmem_search` or
+  `cogmem_get_domain`.
+- **Projects:** for any ongoing project, make sure it has a domain. If it isn't in
+  your projects index, create it with `cogmem_create_domain`, then keep its
+  summary, blockers, and next actions current.
+- **Durable facts, preferences, lessons:** capture them with `cogmem_remember`
+  when you learn something worth keeping. Don't restate what's already in context,
+  and don't infer personal facts the user hasn't stated.
+- **Working files** (drafts, outputs): write them under `files/` — your read/write
+  area. The rest of your workspace is read-only. Use the `common_*` tools to share
+  files with other agents.
+- `AGENTS.md`, `SOUL.md`, `IDENTITY.md`, `USER.md`, and `MEMORY.md` are
+  human-authored and read-only to you. Do not edit them; record what you learn in
+  cogmem instead.
+- Never store secrets, credentials, or sensitive personal data in memory.
 
 ## First Run
 

@@ -27,8 +27,9 @@ lessons, facts); the relevant pieces are then composed into the system prompt fo
 each turn. Consolidation reuses your configured **Memory models** (formerly
 "Summarization models" — the same setting, renamed) and its prompt lives in an
 editable `COGMEM.md` seeded into each agent's workspace, so you can tune how the
-agent learns. Cognitive memory is **off until you grant an agent the `cogmem_*`
-tools** — that tool allowlist is the on/off switch.
+agent learns. Cognitive memory is **on by default** for every agent; to disable
+it for a specific agent, give that agent a tool allowlist that excludes the
+`cogmem_*` tools.
 
 ### Workspace `.md` files are now for humans, not the agent
 The agent no longer edits its own workspace markdown files (`AGENTS.md`,
