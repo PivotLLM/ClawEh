@@ -358,10 +358,11 @@ func DefaultConfig() *Config {
 			AutoEnable:   true,
 			Listen:       "127.0.0.1:5911",
 			EndpointPath: "/mcp",
-			// Tools is intentionally left unset: when empty, the MCP host exposes
-			// the DefaultEnabled tool set (same source as the per-agent default
-			// allowlist), so marking a tool DefaultEnabled exposes it everywhere.
-			// Set an explicit list only to expose a narrower subset.
+			// Tools is intentionally left unset: when empty, the MCP host
+			// catalogue mirrors the internal API path — it advertises every tool
+			// any agent is allowed, gated PER AGENT at execution time via the
+			// session_token (full internal/external parity). Set an explicit list
+			// only to narrow the externally-advertised catalogue.
 			Tools: nil,
 		},
 		ConfigReloadIntervalSeconds: global.DefaultConfigReloadIntervalSeconds,

@@ -7,8 +7,9 @@ import (
 )
 
 // TestMCPHostAllowlist verifies the MCP host allowlist resolution: an explicit
-// list wins; otherwise it defaults to the DefaultEnabled tool set (so marking a
-// tool DefaultEnabled exposes it over MCP without a separate hand-maintained list).
+// list wins; otherwise it defaults to "*" — the full union of every agent's
+// allowed tools, for internal/external parity (per-agent gating happens at
+// execution time via the session_token, not at catalogue time).
 func TestMCPHostAllowlist(t *testing.T) {
 	explicit := &config.Config{}
 	explicit.MCPHost.Tools = []string{"file_read", "web_search"}
@@ -20,15 +21,7 @@ func TestMCPHostAllowlist(t *testing.T) {
 	empty := &config.Config{}
 	empty.MCPHost.Tools = nil
 	got = mcpHostAllowlist(empty)
-	has := func(n string) bool {
-		for _, x := range got {
-			if x == n {
-				return true
-			}
-		}
-		return false
-	}
-	if len(got) == 0 || !has("find_tools_regex") {
-		t.Fatalf("empty MCPHost.Tools should default to the DefaultEnabled set, got %v", got)
+	if len(got) != 1 || got[0] != "*" {
+		t.Fatalf("empty MCPHost.Tools should default to [\"*\"] (full parity), got %v", got)
 	}
 }
