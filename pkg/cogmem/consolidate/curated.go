@@ -8,10 +8,9 @@ import (
 	"path/filepath"
 )
 
-// curatedFiles maps each Curated field to its workspace-relative path. The
-// persona files live at the workspace root; MEMORY.md lives under memory/ (see
-// pkg/agent.MemoryStore). Missing files are tolerated (empty string), so the
-// human layer is always best-effort.
+// curatedFiles maps each Curated field to its workspace-relative path. All five
+// curated files live at the workspace root. Missing files are tolerated (empty
+// string), so the human layer is always best-effort.
 var curatedFiles = []struct {
 	relPath string
 	set     func(*Curated, string)
@@ -20,7 +19,7 @@ var curatedFiles = []struct {
 	{"SOUL.md", func(c *Curated, v string) { c.SoulMD = v }},
 	{"IDENTITY.md", func(c *Curated, v string) { c.IdentityMD = v }},
 	{"USER.md", func(c *Curated, v string) { c.UserMD = v }},
-	{filepath.Join("memory", "MEMORY.md"), func(c *Curated, v string) { c.MemoryMD = v }},
+	{"MEMORY.md", func(c *Curated, v string) { c.MemoryMD = v }},
 }
 
 // ReadCurated reads the verbatim human-authored layer from a workspace. Every

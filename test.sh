@@ -512,7 +512,7 @@ EOF
                     echo "${BOLD}--- Workspace population (initial startup) ---${NC}"
                     echo ""
                     WORKSPACE_PASS=true
-                    WORKSPACE_TEMPLATES="AGENTS.md SOUL.md USER.md IDENTITY.md memory/MEMORY.md"
+                    WORKSPACE_TEMPLATES="AGENTS.md SOUL.md USER.md IDENTITY.md MEMORY.md"
                     # The default agent (id=main) uses agents/default; named agents use agents/{id}
                     for agent_ws in "main:$INTEG_HOME/agents/default" "alice:$INTEG_HOME/agents/alice"; do
                         agent="${agent_ws%%:*}"

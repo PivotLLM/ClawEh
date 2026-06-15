@@ -16,8 +16,9 @@ func TestMemoryStore_UsesWorkspaceMemory(t *testing.T) {
 	if ms.Dir() != wantDir {
 		t.Fatalf("Dir() = %q, want %q", ms.Dir(), wantDir)
 	}
-	if ms.memoryFile != filepath.Join(wantDir, "MEMORY.md") {
-		t.Fatalf("memoryFile = %q, want %q", ms.memoryFile, filepath.Join(wantDir, "MEMORY.md"))
+	// MEMORY.md now lives at the workspace root (a curated file), not under memory/.
+	if ms.memoryFile != filepath.Join(ws, "MEMORY.md") {
+		t.Fatalf("memoryFile = %q, want %q", ms.memoryFile, filepath.Join(ws, "MEMORY.md"))
 	}
 	if _, err := os.Stat(wantDir); err != nil {
 		t.Fatalf("expected memory dir to be created: %v", err)
@@ -26,7 +27,7 @@ func TestMemoryStore_UsesWorkspaceMemory(t *testing.T) {
 	if err := ms.WriteLongTerm("hello"); err != nil {
 		t.Fatalf("WriteLongTerm: %v", err)
 	}
-	data, err := os.ReadFile(filepath.Join(wantDir, "MEMORY.md"))
+	data, err := os.ReadFile(filepath.Join(ws, "MEMORY.md"))
 	if err != nil {
 		t.Fatalf("read MEMORY.md: %v", err)
 	}

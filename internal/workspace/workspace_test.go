@@ -23,7 +23,7 @@ func TestPopulate_FreshWorkspace(t *testing.T) {
 			t.Errorf("expected %s to be seeded into a fresh workspace", f)
 		}
 	}
-	if !exists(t, filepath.Join(ws, "memory", "MEMORY.md")) {
+	if !exists(t, filepath.Join(ws, "MEMORY.md")) {
 		t.Error("expected starter memory seeded into <workspace>/memory")
 	}
 }
@@ -78,7 +78,7 @@ func TestPopulate_DeletedMemoryNotRecreated(t *testing.T) {
 	if !exists(t, filepath.Join(ws, "AGENTS.md")) {
 		t.Fatal("expected workspace to be initialized")
 	}
-	if !exists(t, filepath.Join(ws, "memory", "MEMORY.md")) {
+	if !exists(t, filepath.Join(ws, "MEMORY.md")) {
 		t.Fatal("expected starter memory seeded on first run")
 	}
 

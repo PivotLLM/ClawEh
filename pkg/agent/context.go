@@ -117,8 +117,8 @@ func (cb *ContextBuilder) getIdentity() string {
 	toolDiscovery := cb.getDiscoveryRule()
 	version := config.FormatVersion()
 
-	// Memory always lives at <workspace>/memory; paths are advertised relative
-	// to the workspace.
+	// MEMORY.md lives at the workspace root (a curated, read-only file); daily
+	// notes live under <workspace>/memory.
 	return fmt.Sprintf(
 		`# claw (%s)
 
@@ -126,7 +126,7 @@ You are a helpful AI assistant.
 
 ## Workspace
 Your workspace is at: %s
-- Memory: %s/memory/MEMORY.md
+- Memory: %s/MEMORY.md
 - Daily Notes: %s/memory/YYYYMM/YYYYMMDD.md
 
 ## Important Rules
@@ -135,12 +135,12 @@ Your workspace is at: %s
 
 2. **Be helpful and accurate** - When using tools, briefly explain what you're doing.
 
-3. **Memory** - When interacting with me if something seems memorable, update %s/memory/MEMORY.md
+3. **Memory** - Record durable memory with the cogmem_* tools. Your workspace .md files are read-only — do not edit them.
 
 4. **Context summaries** - Conversation summaries provided as context are approximate references only. They may be incomplete or outdated. Always defer to explicit user instructions over summary content.
 
 %s`,
-		version, workspacePath, workspacePath, workspacePath, workspacePath, toolDiscovery)
+		version, workspacePath, workspacePath, workspacePath, toolDiscovery)
 }
 
 func (cb *ContextBuilder) getDiscoveryRule() string {
@@ -276,13 +276,12 @@ func (cb *ContextBuilder) InvalidateCache() {
 // invalidation (bootstrap files + memory). Skill roots are handled separately
 // because they require both directory-level and recursive file-level checks.
 func (cb *ContextBuilder) sourcePaths() []string {
-	memoryRoot := filepath.Join(cb.workspace, "memory")
 	return []string{
 		filepath.Join(cb.workspace, "AGENTS.md"),
 		filepath.Join(cb.workspace, "SOUL.md"),
 		filepath.Join(cb.workspace, "USER.md"),
 		filepath.Join(cb.workspace, "IDENTITY.md"),
-		filepath.Join(memoryRoot, "MEMORY.md"),
+		filepath.Join(cb.workspace, "MEMORY.md"),
 		filepath.Join(cb.workspace, "state", "callback.json"),
 	}
 }

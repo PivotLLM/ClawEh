@@ -147,7 +147,7 @@ func TestMtimeAutoInvalidation(t *testing.T) {
 		},
 		{
 			name:       "memory file change",
-			file:       "memory/MEMORY.md",
+			file:       "MEMORY.md",
 			contentV1:  "# Memory\nUser likes Go.",
 			contentV2:  "# Memory\nUser likes Rust.",
 			checkField: "User likes Rust",
@@ -287,7 +287,7 @@ func TestNewFileCreationInvalidatesCache(t *testing.T) {
 		},
 		{
 			name:       "new memory file",
-			file:       "memory/MEMORY.md",
+			file:       "MEMORY.md",
 			content:    "# Memory\nUser prefers dark mode.",
 			checkField: "User prefers dark mode",
 		},
@@ -547,7 +547,7 @@ func TestConcurrentBuildSystemPromptWithCache(t *testing.T) {
 	tmpDir := setupWorkspace(t, map[string]string{
 		"IDENTITY.md":          "# Identity\nConcurrency test agent.",
 		"SOUL.md":              "# Soul\nBe helpful.",
-		"memory/MEMORY.md":     "# Memory\nUser prefers Go.",
+		"MEMORY.md":            "# Memory\nUser prefers Go.",
 		"skills/demo/SKILL.md": "---\nname: demo\ndescription: \"demo skill\"\n---\n# Demo",
 	})
 	defer os.RemoveAll(tmpDir)

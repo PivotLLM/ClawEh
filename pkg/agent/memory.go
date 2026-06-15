@@ -18,7 +18,7 @@ import (
 )
 
 // MemoryStore manages persistent memory for the agent.
-// - Long-term memory: memory/MEMORY.md
+// - Long-term memory: MEMORY.md (workspace root, alongside the other curated files)
 // - Daily notes: memory/YYYYMM/YYYYMMDD.md
 type MemoryStore struct {
 	workspace  string
@@ -26,12 +26,13 @@ type MemoryStore struct {
 	memoryFile string
 }
 
-// NewMemoryStore creates a new MemoryStore rooted at <workspace>/memory.
-// It ensures the memory directory exists; if MkdirAll fails the error is
-// logged but the store is still returned so callers can decide what to do.
+// NewMemoryStore creates a new MemoryStore. MEMORY.md lives at the workspace
+// root (a curated file); daily notes live under <workspace>/memory. It ensures
+// the memory directory exists; if MkdirAll fails the error is logged but the
+// store is still returned so callers can decide what to do.
 func NewMemoryStore(workspace string) *MemoryStore {
 	memoryDir := filepath.Join(workspace, "memory")
-	memoryFile := filepath.Join(memoryDir, "MEMORY.md")
+	memoryFile := filepath.Join(workspace, "MEMORY.md")
 
 	if err := os.MkdirAll(memoryDir, 0o700); err != nil {
 		logger.WarnCF("agent", "memory: failed to create memory directory",
