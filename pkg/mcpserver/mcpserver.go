@@ -296,24 +296,3 @@ func (m *MCPServer) Shutdown(ctx context.Context) error {
 
 	return nil
 }
-
-// WriteWorkspaceConfigs writes per-agent .claude.json files mapping each
-// agent's workspace to the (single) MCP endpoint URL. With token-based
-// isolation the URL is the same for every agent — routing happens in the
-// call body via `agent_token`. baseURL is the server's base URL (e.g.
-// "http://127.0.0.1:5911"). workspaces maps agentID → workspace path.
-func (m *MCPServer) WriteWorkspaceConfigs(baseURL string, workspaces map[string]string) {
-	url := baseURL + m.endpointPath
-	for agentID, workspace := range workspaces {
-		if workspace == "" {
-			continue
-		}
-		if err := WriteAgentWorkspaceConfig(workspace, url); err != nil {
-			logger.WarnCF("mcpserver", "Failed to write workspace MCP config",
-				map[string]any{"agent": agentID, "workspace": workspace, "error": err.Error()})
-		} else {
-			logger.DebugCF("mcpserver", "Wrote workspace MCP config",
-				map[string]any{"agent": agentID, "path": workspace + "/.claude.json"})
-		}
-	}
-}

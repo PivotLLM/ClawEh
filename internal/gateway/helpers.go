@@ -427,8 +427,6 @@ func startMCPServer(cfg *config.Config, agentLoop *agent.AgentLoop, msgBus *bus.
 			"auto_enabled": autoStarted,
 		})
 
-	baseURL := "http://" + srv.Listen()
-	srv.WriteWorkspaceConfigs(baseURL, agentWorkspaces)
 	return nil
 }
 
