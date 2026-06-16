@@ -32,6 +32,7 @@ func (m *trackingContextManager) AddToolCallMessage(_ context.Context, _ provide
 func (m *trackingContextManager) AddToolResult(_ context.Context, _ providers.Message) error {
 	return nil
 }
+func (m *trackingContextManager) RecordToolUse(_ ...string) {}
 func (m *trackingContextManager) PreDispatchCheck(_ context.Context, current []providers.Message) ([]providers.Message, error) {
 	return current, nil
 }

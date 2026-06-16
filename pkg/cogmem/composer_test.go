@@ -56,6 +56,67 @@ func TestStableBlockContent(t *testing.T) {
 	}
 }
 
+func TestRoutedBlockToolTrigger(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	db := s.DB()
+	// Two domains; "Email" is older (less recent) but trigger-matched.
+	email, _ := s.CreateDomain(ctx, db, store.CreateDomainParams{
+		AgentID: "a", Type: store.DomainProject, Name: "Email", Summary: "mail prefs",
+		Triggers: "google_gmail,microsoft365_mail",
+	})
+	other, _ := s.CreateDomain(ctx, db, store.CreateDomainParams{AgentID: "a", Type: store.DomainProject, Name: "Other", Summary: "misc"})
+	_, _ = s.AddHook(ctx, db, store.AddHookParams{DomainID: email.ID, Kind: store.KindPreference, Text: "Archive newsletters.", Status: store.StatusActive, Confidence: 0.9, Source: store.SourceUserExplicit})
+	// "Other" is the most recently touched, so recency alone would rank it first.
+	_ = s.Touch(ctx, db, email.ID)
+	_ = s.Touch(ctx, db, other.ID)
+
+	c := New(s, WithTopKDomains(1))
+	res, err := c.RoutedBlock(ctx, RouteRequest{
+		RecentTools: []string{"mcp__fusion__system__get", "mcp__fusion__google_gmail_messages_list"},
+		Trace:       true,
+	})
+	if err != nil {
+		t.Fatalf("routed: %v", err)
+	}
+	// The tool-triggered Email domain must win the single slot over more-recent Other.
+	if len(res.Loaded) != 1 || res.Loaded[0] != email.ID {
+		t.Fatalf("expected tool-triggered %s first, got %v", email.ID, res.Loaded)
+	}
+	if len(res.Trace) != 1 || res.Trace[0].Signal != "tool:google_gmail" {
+		t.Fatalf("trace = %+v, want signal tool:google_gmail", res.Trace)
+	}
+	if !strings.Contains(res.Text, "Archive newsletters.") {
+		t.Fatalf("routed text missing email hook:\n%s", res.Text)
+	}
+}
+
+func TestRoutedBlockToolTriggerNoDuplicate(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	db := s.DB()
+	// A domain that is BOTH tool-triggered AND the most recent must appear once.
+	d, _ := s.CreateDomain(ctx, db, store.CreateDomainParams{
+		AgentID: "a", Type: store.DomainProject, Name: "Email", Summary: "mail", Triggers: "gmail",
+	})
+	_ = s.Touch(ctx, db, d.ID)
+
+	c := New(s, WithTopKDomains(8))
+	res, err := c.RoutedBlock(ctx, RouteRequest{RecentTools: []string{"mcp__fusion__google_gmail_messages_list"}, Trace: true})
+	if err != nil {
+		t.Fatalf("routed: %v", err)
+	}
+	if len(res.Loaded) != 1 || res.Loaded[0] != d.ID {
+		t.Fatalf("domain should appear exactly once, got %v", res.Loaded)
+	}
+	if c := strings.Count(res.Text, "Active Context: "+d.ID); c != 1 {
+		t.Fatalf("domain rendered %d times, want 1:\n%s", c, res.Text)
+	}
+	if res.Trace[0].Signal != "tool:gmail" {
+		t.Fatalf("trigger should take precedence over recency, got %q", res.Trace[0].Signal)
+	}
+}
+
 func TestRoutedBlockRecency(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()

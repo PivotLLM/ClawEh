@@ -113,6 +113,7 @@ func (globalCogmemProvider) RegisterTools(deps global.Deps) []global.ToolDefinit
 				{Name: "set_blockers", Type: "array", Items: "string", Required: false, Description: "Replace the blockers list."},
 				{Name: "set_next_actions", Type: "array", Items: "string", Required: false, Description: "Replace the next-actions list."},
 				{Name: "set_constraints", Type: "array", Items: "string", Required: false, Description: "Replace the constraints list."},
+				{Name: "set_triggers", Type: "string", Required: false, Description: "Replace the tool triggers: a comma-separated list of tool-name substrings (e.g. \"fusion_m365_,fusion_google_\"). This domain is auto-loaded into context whenever you use a tool whose name contains any token. Empty string clears triggers."},
 			}, true, updateDomain),
 
 		def("hook_retire",
@@ -129,6 +130,7 @@ func (globalCogmemProvider) RegisterTools(deps global.Deps) []global.ToolDefinit
 					Enum: []any{"project", "workflow", "repo"}},
 				{Name: "name", Type: "string", Required: true, Description: "Domain name."},
 				{Name: "summary", Type: "string", Required: false, Description: "Optional one-line summary."},
+				{Name: "triggers", Type: "string", Required: false, Description: "Optional tool triggers: a comma-separated list of tool-name substrings (e.g. \"fusion_m365_,fusion_google_\" or \"system\"). This domain is auto-loaded into context whenever you use a tool whose name contains any token."},
 			}, true, createDomain),
 
 		def("domain_archive",

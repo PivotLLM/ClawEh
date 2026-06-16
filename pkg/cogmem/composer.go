@@ -102,15 +102,16 @@ func New(st *store.Store, opts ...Option) *Composer {
 
 // RouteRequest carries the per-turn routing inputs.
 type RouteRequest struct {
-	RouteText string // latest user message (reserved for future signals)
-	Trace     bool
+	RouteText   string   // latest user message (reserved for future signals)
+	RecentTools []string // recently-invoked tool names (newest-first) for tool-trigger activation
+	Trace       bool
 }
 
 // DomainSelection is one trace entry explaining a routed pre-load.
 type DomainSelection struct {
 	ID     string
 	Name   string
-	Signal string // "recency"
+	Signal string // "tool:<token>" (tool-trigger activation) or "recency"
 }
 
 // RoutedResult is the per-turn block plus optional trace.
@@ -210,13 +211,37 @@ func (c *Composer) RoutedBlock(ctx context.Context, req RouteRequest) (RoutedRes
 	sort.SliceStable(topics, func(i, j int) bool {
 		return lastActive(topics[i]) > lastActive(topics[j])
 	})
-	if len(topics) > c.opt.topKDomains {
-		topics = topics[:c.opt.topKDomains]
+
+	// Order the candidates: domains activated by a recently-used tool come first
+	// (each tagged with the matching token), then the rest by recency. A single
+	// pass with a seen-set guarantees every domain appears at most once, so a
+	// domain that is both tool-triggered and recent is never duplicated.
+	type candidate struct {
+		d      store.Domain
+		signal string
+	}
+	seen := make(map[string]bool, len(topics))
+	var ordered []candidate
+	for _, d := range topics {
+		if tok, ok := matchAnyTool(d, req.RecentTools); ok {
+			seen[d.ID] = true
+			ordered = append(ordered, candidate{d: d, signal: "tool:" + tok})
+		}
+	}
+	for _, d := range topics {
+		if !seen[d.ID] {
+			seen[d.ID] = true
+			ordered = append(ordered, candidate{d: d, signal: "recency"})
+		}
+	}
+	if len(ordered) > c.opt.topKDomains {
+		ordered = ordered[:c.opt.topKDomains]
 	}
 
 	var b strings.Builder
 	var res RoutedResult
-	for _, d := range topics {
+	for _, cand := range ordered {
+		d := cand.d
 		hooks, err := c.st.ListHooks(ctx, db, d.ID, store.StatusActive)
 		if err != nil {
 			return RoutedResult{}, err
@@ -229,11 +254,25 @@ func (c *Composer) RoutedBlock(ctx context.Context, req RouteRequest) (RoutedRes
 		b.WriteString(section)
 		res.Loaded = append(res.Loaded, d.ID)
 		if req.Trace {
-			res.Trace = append(res.Trace, DomainSelection{ID: d.ID, Name: d.Name, Signal: "recency"})
+			res.Trace = append(res.Trace, DomainSelection{ID: d.ID, Name: d.Name, Signal: cand.signal})
 		}
 	}
 	res.Text = strings.TrimRight(b.String(), "\n")
 	return res, nil
+}
+
+// matchAnyTool reports the first trigger token of d that matches any recently
+// used tool name, and whether one matched.
+func matchAnyTool(d store.Domain, recentTools []string) (string, bool) {
+	if d.Triggers == "" {
+		return "", false
+	}
+	for _, name := range recentTools {
+		if tok, ok := d.MatchTrigger(name); ok {
+			return tok, true
+		}
+	}
+	return "", false
 }
 
 func renderDomain(d store.Domain, hooks []store.Hook) string {

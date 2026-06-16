@@ -57,6 +57,14 @@ don't see it yet, nothing has been recorded — start recording.
   `cogmem_hook_create` a `domain_hint` to create/use one (or `cogmem_domain_create`),
   and keep its summary, blockers, and next actions current with
   `cogmem_domain_update`. Other domains are loaded only when you request them.
+- **Auto-load on tool use:** a domain can carry `triggers` — a comma-separated
+  list of tool-name substrings (set via `cogmem_domain_create`/`cogmem_domain_update`).
+  Whenever you call a tool whose name contains one of the tokens, that domain is
+  loaded into your context automatically. Use it to attach context to the work it
+  belongs to — e.g. triggers `google_gmail,microsoft365_mail` on an "Email" domain
+  so your mail preferences appear the moment you touch a mail tool. Tokens match by
+  literal substring of the full tool name (e.g. `system` matches
+  `mcp__fusion__system__get`), so pick a distinctive fragment of the real name.
 - **Working files** (drafts, outputs): write them under `files/` — your read/write
   area. The rest of your workspace is read-only. Use the `common_*` tools to share
   files with other agents.

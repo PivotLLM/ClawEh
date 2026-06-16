@@ -89,8 +89,18 @@ type Manager struct {
 	// memoryBlocks, when non-nil, returns the cognitive-memory STABLE and ROUTED
 	// prompt blocks for the session. Set by the agent loop for cognitive agents
 	// only; Build injects the blocks into the system message when non-empty.
-	memoryBlocks func(sessionKey string) (stable, routed string)
+	// recentTools (newest-first, capped) is passed for tool-trigger routing.
+	memoryBlocks func(sessionKey string, recentTools []string) (stable, routed string)
+
+	// recentTools is a small newest-first ring of recently-invoked tool names,
+	// fed by RecordToolUse and read at Build time so cognitive memory can auto-load
+	// domains whose triggers match a tool the agent just used. Guarded by recentMu.
+	recentMu    sync.Mutex
+	recentTools []string
 }
+
+// maxRecentTools bounds the recent-tool ring used for tool-trigger memory routing.
+const maxRecentTools = 8
 
 // New constructs a ContextManager. Options are applied over package defaults.
 // Validation order: (a) zero percent → default; (b) safety ≤ normal → WARN;
@@ -705,9 +715,49 @@ func (m *Manager) SetProtectUnconsolidated(v bool) {
 
 // SetMemoryBlocks installs a callback that returns the cognitive-memory STABLE
 // and ROUTED prompt blocks for the session. Build injects them into the system
-// message when either is non-empty. Passing nil disables injection.
-func (m *Manager) SetMemoryBlocks(fn func(sessionKey string) (stable, routed string)) {
+// message when either is non-empty. The callback receives the newest-first
+// recent-tool ring for tool-trigger routing. Passing nil disables injection.
+func (m *Manager) SetMemoryBlocks(fn func(sessionKey string, recentTools []string) (stable, routed string)) {
 	m.memoryBlocks = fn
+}
+
+// RecordToolUse records the names of tools the LLM just invoked into the recent
+// ring (newest-first, deduped, capped at maxRecentTools). Read at Build time so
+// cognitive memory can auto-load domains whose triggers match a recent tool.
+func (m *Manager) RecordToolUse(names ...string) {
+	if len(names) == 0 {
+		return
+	}
+	m.recentMu.Lock()
+	defer m.recentMu.Unlock()
+	for _, n := range names {
+		if n == "" {
+			continue
+		}
+		// Move-to-front: drop any existing entry so the ring holds distinct names.
+		out := m.recentTools[:0]
+		for _, e := range m.recentTools {
+			if e != n {
+				out = append(out, e)
+			}
+		}
+		m.recentTools = append([]string{n}, out...)
+	}
+	if len(m.recentTools) > maxRecentTools {
+		m.recentTools = m.recentTools[:maxRecentTools]
+	}
+}
+
+// recentToolsSnapshot returns a copy of the recent-tool ring (newest-first).
+func (m *Manager) recentToolsSnapshot() []string {
+	m.recentMu.Lock()
+	defer m.recentMu.Unlock()
+	if len(m.recentTools) == 0 {
+		return nil
+	}
+	out := make([]string, len(m.recentTools))
+	copy(out, m.recentTools)
+	return out
 }
 
 func (m *Manager) Build(_ context.Context) ([]providers.Message, error) {
@@ -755,7 +805,7 @@ func (m *Manager) Build(_ context.Context) ([]providers.Message, error) {
 	// msgs[0].Content for adapters that ignore SystemParts, matching the
 	// session-token injection above.
 	if m.memoryBlocks != nil && len(msgs) > 0 && msgs[0].Role == "system" {
-		stable, routed := m.memoryBlocks(m.sessionKey)
+		stable, routed := m.memoryBlocks(m.sessionKey, m.recentToolsSnapshot())
 		if stable != "" {
 			msgs[0].Content += "\n\n---\n\n" + stable
 			msgs[0].SystemParts = append(msgs[0].SystemParts, providers.ContentBlock{

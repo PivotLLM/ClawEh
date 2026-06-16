@@ -4,7 +4,7 @@
 package store
 
 // schemaVersion is the current migration version. Bump when DDL changes.
-const schemaVersion = 1
+const schemaVersion = 2
 
 // schema is the full DDL for a .cogmem.db. All statements are idempotent so
 // migrate() can run it on every open. No FTS, no vector columns (see
@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS domains (
   schema_name    TEXT NOT NULL DEFAULT 'domain',
   schema_version INTEGER NOT NULL DEFAULT 1,
   last_active_at INTEGER,
+  triggers       TEXT NOT NULL DEFAULT '',
   created_at     INTEGER NOT NULL,
   updated_at     INTEGER NOT NULL,
   archived_at    INTEGER

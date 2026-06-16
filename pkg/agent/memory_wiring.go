@@ -98,7 +98,7 @@ func (al *AgentLoop) wireCognitiveMemory(agent *AgentInstance, sessionKey string
 		return comp
 	}
 
-	mgr.SetMemoryBlocks(func(_ string) (stable, routed string) {
+	mgr.SetMemoryBlocks(func(_ string, recentTools []string) (stable, routed string) {
 		c := ensure()
 		if c == nil {
 			return "", ""
@@ -110,7 +110,7 @@ func (al *AgentLoop) wireCognitiveMemory(agent *AgentInstance, sessionKey string
 				"agent_id": agent.ID, "session_key": sessionKey, "error": err.Error(),
 			})
 		}
-		rr, err := c.RoutedBlock(ctx, cogmem.RouteRequest{Trace: mem.Prompt.IncludeDebugTrace})
+		rr, err := c.RoutedBlock(ctx, cogmem.RouteRequest{RecentTools: recentTools, Trace: mem.Prompt.IncludeDebugTrace})
 		if err != nil {
 			logger.WarnCF("cogmem", "routed block failed", map[string]any{
 				"agent_id": agent.ID, "session_key": sessionKey, "error": err.Error(),

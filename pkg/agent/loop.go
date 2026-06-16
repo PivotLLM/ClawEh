@@ -2052,6 +2052,10 @@ func (al *AgentLoop) runLLMIteration(
 		for _, tc := range normalizedToolCalls {
 			toolNames = append(toolNames, tc.Name)
 		}
+		// Feed the recent-tool ring so cognitive memory can auto-load domains whose
+		// triggers match a tool the agent just used; the next build (same turn,
+		// after tool results) picks it up. No-op for non-cognitive agents.
+		cm.RecordToolUse(toolNames...)
 		logger.InfoCF("agent", "LLM requested tool calls",
 			map[string]any{
 				"agent_id":  agent.ID,

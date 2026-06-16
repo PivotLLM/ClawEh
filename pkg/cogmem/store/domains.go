@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // ErrNotFound is returned when an addressed domain or hook does not exist.
@@ -27,6 +28,7 @@ type CreateDomainParams struct {
 	Status     Status // active or review
 	Summary    string
 	State      DomainState
+	Triggers   string // comma-delimited tool-name substrings (optional)
 }
 
 // CreateDomain inserts a new domain, assigns a short id, and bumps stable_rev
@@ -47,10 +49,10 @@ func (s *Store) CreateDomain(ctx context.Context, q DBTX, p CreateDomainParams) 
 	_, err = q.ExecContext(ctx, `
 		INSERT INTO domains(id, agent_id, session_key, type, name, status, version,
 		                    summary, state_json, schema_name, schema_version,
-		                    last_active_at, created_at, updated_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		                    last_active_at, triggers, created_at, updated_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		id, p.AgentID, p.SessionKey, string(p.Type), p.Name, string(p.Status), 1,
-		p.Summary, string(stateJSON), "domain", 1, ts, ts, ts)
+		p.Summary, string(stateJSON), "domain", 1, ts, normalizeTriggers(p.Triggers), ts, ts)
 	if err != nil {
 		return Domain{}, fmt.Errorf("cogmem: create domain: %w", err)
 	}
@@ -66,6 +68,7 @@ type UpdateDomainParams struct {
 	Summary         *string
 	State           *DomainState
 	Status          *Status
+	Triggers        *string // when non-nil, replaces the comma-delimited trigger list
 }
 
 // UpdateDomain applies a patch if ExpectedVersion matches, bumping version and
@@ -91,14 +94,18 @@ func (s *Store) UpdateDomain(ctx context.Context, q DBTX, id string, p UpdateDom
 	if p.Status != nil {
 		status = *p.Status
 	}
+	triggers := cur.Triggers
+	if p.Triggers != nil {
+		triggers = normalizeTriggers(*p.Triggers)
+	}
 	stateJSON, err := json.Marshal(state)
 	if err != nil {
 		return err
 	}
 	res, err := q.ExecContext(ctx, `
-		UPDATE domains SET summary=?, state_json=?, status=?, version=version+1, updated_at=?
+		UPDATE domains SET summary=?, state_json=?, status=?, triggers=?, version=version+1, updated_at=?
 		WHERE id=? AND version=?`,
-		summary, string(stateJSON), string(status), now(), id, p.ExpectedVersion)
+		summary, string(stateJSON), string(status), triggers, now(), id, p.ExpectedVersion)
 	if err != nil {
 		return fmt.Errorf("cogmem: update domain: %w", err)
 	}
@@ -202,12 +209,47 @@ func (s *Store) ListDomains(ctx context.Context, q DBTX, statuses ...Status) ([]
 
 const domainSelect = `
 	SELECT id, agent_id, session_key, type, name, status, version, summary,
-	       state_json, schema_name, schema_version, last_active_at,
+	       state_json, schema_name, schema_version, last_active_at, triggers,
 	       created_at, updated_at, archived_at
 	FROM domains`
 
 type scanner interface {
 	Scan(dest ...any) error
+}
+
+// normalizeTriggers canonicalizes a comma-delimited trigger list: trims each
+// token, drops empties, lowercases (matching is case-insensitive), and rejoins
+// with single commas. Stored form is what TriggerTokens splits back out.
+func normalizeTriggers(s string) string {
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if t := strings.ToLower(strings.TrimSpace(p)); t != "" {
+			out = append(out, t)
+		}
+	}
+	return strings.Join(out, ",")
+}
+
+// TriggerTokens returns the domain's normalized trigger substrings (lowercased,
+// no empties). A domain activates when an invoked tool name contains any token.
+func (d Domain) TriggerTokens() []string {
+	if d.Triggers == "" {
+		return nil
+	}
+	return strings.Split(normalizeTriggers(d.Triggers), ",")
+}
+
+// MatchTrigger reports the first trigger token contained (case-insensitively) in
+// toolName, and whether any matched. toolName need not be pre-lowercased.
+func (d Domain) MatchTrigger(toolName string) (string, bool) {
+	lname := strings.ToLower(toolName)
+	for _, t := range d.TriggerTokens() {
+		if strings.Contains(lname, t) {
+			return t, true
+		}
+	}
+	return "", false
 }
 
 func scanDomain(sc scanner) (Domain, error) {
@@ -219,7 +261,7 @@ func scanDomain(sc scanner) (Domain, error) {
 	)
 	err := sc.Scan(&d.ID, &d.AgentID, &d.SessionKey, &typ, &d.Name, &status,
 		&d.Version, &d.Summary, &stateJSON, &d.SchemaName, &d.SchemaVersion,
-		&lastActivePtr, &createdAt, &updatedAt, &archivedAt)
+		&lastActivePtr, &d.Triggers, &createdAt, &updatedAt, &archivedAt)
 	if err != nil {
 		return Domain{}, err
 	}

@@ -80,6 +80,42 @@ func TestDomainCreateAndIDs(t *testing.T) {
 	}
 }
 
+func TestDomainTriggersRoundTrip(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	d, err := s.CreateDomain(ctx, s.DB(), CreateDomainParams{
+		AgentID: "a", Type: DomainProject, Name: "Email",
+		Triggers: "  Google_Gmail, microsoft365_mail ,, system  ",
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	// Stored normalized: trimmed, lowercased, empties dropped.
+	if d.Triggers != "google_gmail,microsoft365_mail,system" {
+		t.Fatalf("triggers = %q, want normalized", d.Triggers)
+	}
+	// Case-insensitive substring match against a full tool name.
+	if tok, ok := d.MatchTrigger("mcp__fusion__google_gmail_messages_list"); !ok || tok != "google_gmail" {
+		t.Fatalf("MatchTrigger gmail = %q,%v", tok, ok)
+	}
+	if tok, ok := d.MatchTrigger("mcp__fusion__system__get"); !ok || tok != "system" {
+		t.Fatalf("MatchTrigger system = %q,%v", tok, ok)
+	}
+	if _, ok := d.MatchTrigger("web_fetch"); ok {
+		t.Fatalf("web_fetch should not match")
+	}
+
+	// Update replaces triggers; empty clears them.
+	empty := ""
+	if err := s.UpdateDomain(ctx, s.DB(), d.ID, UpdateDomainParams{ExpectedVersion: 1, Triggers: &empty}); err != nil {
+		t.Fatalf("update clear: %v", err)
+	}
+	got, _ := s.GetDomain(ctx, s.DB(), d.ID, false)
+	if got.Triggers != "" || len(got.TriggerTokens()) != 0 {
+		t.Fatalf("triggers not cleared: %q", got.Triggers)
+	}
+}
+
 func TestDomainOptimisticConcurrency(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()

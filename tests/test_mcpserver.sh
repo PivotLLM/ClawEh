@@ -585,8 +585,9 @@ else
     # --- Hermetic, deterministic tools: assert full SUCCESS. ---
 
     # create_domain returns a freshly assigned domain id and reports success.
+    # Includes a tool-trigger list (comma-delimited substrings) to exercise that param.
     run_test_ok_auth "4c.1 cogmem_domain_create creates a project domain" \
-        "cogmem_domain_create" "{\"type\":\"project\",\"name\":\"$COGMEM_DOMAIN\"}" "Created domain"
+        "cogmem_domain_create" "{\"type\":\"project\",\"name\":\"$COGMEM_DOMAIN\",\"triggers\":\"google_gmail,system\"}" "Created domain"
 
     # remember with a domain_hint auto-creates/uses a project domain and records
     # a durable hook — no pre-existing id required, so it succeeds deterministically.

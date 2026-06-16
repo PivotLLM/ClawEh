@@ -105,10 +105,48 @@ func (s *Store) migrate(ctx context.Context) error {
 		schemaVersion, now()); err != nil {
 		return fmt.Errorf("cogmem: record migration: %w", err)
 	}
+	if err := s.ensureDomainColumns(ctx); err != nil {
+		return fmt.Errorf("cogmem: ensure domain columns: %w", err)
+	}
 	if err := s.ensureGeneralDomain(ctx); err != nil {
 		return fmt.Errorf("cogmem: seed general domain: %w", err)
 	}
 	return nil
+}
+
+// ensureDomainColumns adds columns introduced after a database was first created.
+// CREATE TABLE IF NOT EXISTS does not add columns to an existing table, so each
+// additive column gets an idempotent ALTER guarded by a table_info check.
+func (s *Store) ensureDomainColumns(ctx context.Context) error {
+	have, err := s.columnSet(ctx, "domains")
+	if err != nil {
+		return err
+	}
+	if !have["triggers"] {
+		if _, err := s.db.ExecContext(ctx,
+			`ALTER TABLE domains ADD COLUMN triggers TEXT NOT NULL DEFAULT ''`); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// columnSet returns the set of column names on a table.
+func (s *Store) columnSet(ctx context.Context, table string) (map[string]bool, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT name FROM pragma_table_info(?)`, table)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	set := map[string]bool{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		set[name] = true
+	}
+	return set, rows.Err()
 }
 
 // ensureGeneralDomain creates the single mandatory always-on "general" domain if
@@ -131,11 +169,11 @@ func (s *Store) ensureGeneralDomain(ctx context.Context) error {
 	ts := now()
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO domains(id, agent_id, session_key, type, name, status, version,
-		                    summary, state_json, schema_name, schema_version,
+		                    summary, state_json, schema_name, schema_version, triggers,
 		                    created_at, updated_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		id, "", "", string(DomainGeneral), "General", string(StatusActive), 1,
-		"Global rules, preferences, and standing facts.", "{}", "domain", 1, ts, ts)
+		"Global rules, preferences, and standing facts.", "{}", "domain", 1, "", ts, ts)
 	return err
 }
 

@@ -122,6 +122,9 @@ func getDomain(s *store.Store, call *global.ToolCall) (string, error) {
 	if d.Summary != "" {
 		fmt.Fprintf(&b, "Summary: %s\n", d.Summary)
 	}
+	if d.Triggers != "" {
+		fmt.Fprintf(&b, "Triggers (auto-load on tool use): %s\n", d.Triggers)
+	}
 	writeStateLine(&b, "Blockers", d.State.Blockers)
 	writeStateLine(&b, "Next actions", d.State.NextActions)
 	writeStateLine(&b, "Constraints", d.State.Constraints)
@@ -320,8 +323,13 @@ func updateDomain(s *store.Store, call *global.ToolCall) (string, error) {
 	if changedState {
 		p.State = &state
 	}
-	if p.Summary == nil && p.State == nil {
-		return "", errors.New("nothing to update (set_summary or a list field required)")
+	// set_triggers present (even empty) replaces the trigger list; empty clears it.
+	if _, ok := call.Args["set_triggers"]; ok {
+		v := argStr(call, "set_triggers")
+		p.Triggers = &v
+	}
+	if p.Summary == nil && p.State == nil && p.Triggers == nil {
+		return "", errors.New("nothing to update (set_summary, set_triggers, or a list field required)")
 	}
 	if err := s.UpdateDomain(call.Ctx, s.DB(), id, p); err != nil {
 		if errors.Is(err, store.ErrVersionConflict) {
@@ -357,6 +365,7 @@ func createDomain(s *store.Store, call *global.ToolCall) (string, error) {
 		Name:       name,
 		Status:     store.StatusActive,
 		Summary:    argStr(call, "summary"),
+		Triggers:   argStr(call, "triggers"),
 	})
 	if err != nil {
 		return "", err
