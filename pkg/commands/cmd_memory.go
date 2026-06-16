@@ -2,8 +2,6 @@ package commands
 
 import (
 	"context"
-
-	"github.com/PivotLLM/ClawEh/pkg/global"
 )
 
 func memoryCommand() Definition {
@@ -20,7 +18,7 @@ func memoryCommand() Definition {
 				return req.Reply("Cognitive memory is not enabled for this agent.")
 			}
 			// Fenced so every channel renderer preserves the per-line breaks.
-			return req.Reply("```\n" + global.AppName + " Memory\n\n" + status + "\n```")
+			return req.Reply("```\n" + status + "\n```")
 		},
 	}
 }

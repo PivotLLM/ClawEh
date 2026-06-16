@@ -23,7 +23,7 @@ func runMemory(t *testing.T, rt *Runtime) string {
 func TestMemoryCommand_RendersStatus(t *testing.T) {
 	rt := &Runtime{GetMemoryStatus: func() string { return "Active domains: 3\nActive memories: 12" }}
 	got := runMemory(t, rt)
-	if !strings.Contains(got, "Active domains: 3") || !strings.Contains(got, "Memory") {
+	if !strings.Contains(got, "Active domains: 3") || !strings.Contains(got, "```") {
 		t.Fatalf("unexpected reply: %q", got)
 	}
 }
