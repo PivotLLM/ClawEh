@@ -5,23 +5,15 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestMemoryStore_UsesWorkspaceMemory(t *testing.T) {
 	ws := t.TempDir()
 	ms := NewMemoryStore(ws)
 
-	wantDir := filepath.Join(ws, "memory")
-	if ms.Dir() != wantDir {
-		t.Fatalf("Dir() = %q, want %q", ms.Dir(), wantDir)
-	}
-	// MEMORY.md now lives at the workspace root (a curated file), not under memory/.
+	// MEMORY.md lives at the workspace root (a curated file).
 	if ms.memoryFile != filepath.Join(ws, "MEMORY.md") {
 		t.Fatalf("memoryFile = %q, want %q", ms.memoryFile, filepath.Join(ws, "MEMORY.md"))
-	}
-	if _, err := os.Stat(wantDir); err != nil {
-		t.Fatalf("expected memory dir to be created: %v", err)
 	}
 
 	if err := ms.WriteLongTerm("hello"); err != nil {
@@ -35,28 +27,19 @@ func TestMemoryStore_UsesWorkspaceMemory(t *testing.T) {
 		t.Fatalf("MEMORY.md content = %q, want %q", string(data), "hello")
 	}
 
-	got := ms.ReadLongTerm()
-	if got != "hello" {
+	if got := ms.ReadLongTerm(); got != "hello" {
 		t.Fatalf("ReadLongTerm = %q, want %q", got, "hello")
+	}
+	if ctx := ms.GetMemoryContext(); !strings.Contains(ctx, "hello") {
+		t.Fatalf("GetMemoryContext = %q, want it to contain the memory", ctx)
 	}
 }
 
-func TestMemoryStore_DailyNote(t *testing.T) {
+// No memory/ directory should be created — daily notes were removed.
+func TestMemoryStore_NoMemoryDir(t *testing.T) {
 	ws := t.TempDir()
-	ms := NewMemoryStore(ws)
-
-	if err := ms.AppendToday("entry-1"); err != nil {
-		t.Fatalf("AppendToday: %v", err)
-	}
-
-	today := time.Now().Format("20060102")
-	monthDir := today[:6]
-	expected := filepath.Join(ws, "memory", monthDir, today+".md")
-	data, err := os.ReadFile(expected)
-	if err != nil {
-		t.Fatalf("expected daily note at %s: %v", expected, err)
-	}
-	if !strings.Contains(string(data), "entry-1") {
-		t.Fatalf("daily note missing entry: %q", string(data))
+	_ = NewMemoryStore(ws)
+	if _, err := os.Stat(filepath.Join(ws, "memory")); !os.IsNotExist(err) {
+		t.Fatalf("memory/ directory should not be created (err=%v)", err)
 	}
 }

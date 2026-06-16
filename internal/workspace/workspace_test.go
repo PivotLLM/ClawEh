@@ -24,7 +24,7 @@ func TestPopulate_FreshWorkspace(t *testing.T) {
 		}
 	}
 	if !exists(t, filepath.Join(ws, "MEMORY.md")) {
-		t.Error("expected starter memory seeded into <workspace>/memory")
+		t.Error("expected MEMORY.md seeded at the workspace root")
 	}
 }
 
@@ -48,27 +48,12 @@ func TestPopulate_CompressionNotRecreated(t *testing.T) {
 	}
 }
 
-// TestPopulate_DeletedMemoryNotRecreated verifies that once a workspace is
-// initialized, a deleted <workspace>/memory is not recreated on restart.
-func TestPopulate_DeletedMemoryNotRecreated(t *testing.T) {
+// TestPopulate_NoMemoryDir verifies Populate never creates a <workspace>/memory
+// directory (daily notes were removed).
+func TestPopulate_NoMemoryDir(t *testing.T) {
 	ws := t.TempDir()
-
-	// First run initializes the workspace (writes AGENTS.md) and seeds memory.
-	Populate(ws)
-	if !exists(t, filepath.Join(ws, "AGENTS.md")) {
-		t.Fatal("expected workspace to be initialized")
-	}
-	if !exists(t, filepath.Join(ws, "MEMORY.md")) {
-		t.Fatal("expected starter memory seeded on first run")
-	}
-
-	// Simulate the user deleting their memory directory. A restart must not
-	// bring it back.
-	if err := os.RemoveAll(filepath.Join(ws, "memory")); err != nil {
-		t.Fatal(err)
-	}
 	Populate(ws)
 	if exists(t, filepath.Join(ws, "memory")) {
-		t.Error("<workspace>/memory must not reappear on an initialized workspace")
+		t.Error("<workspace>/memory must not be created")
 	}
 }
