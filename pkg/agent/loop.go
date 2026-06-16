@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1661,6 +1662,37 @@ func (al *AgentLoop) handleReasoning(
 	}
 }
 
+// maxIdenticalToolBatches caps how many consecutive iterations may request the
+// exact same tool-call batch before the loop aborts (degenerate-loop guard).
+const maxIdenticalToolBatches = 3
+
+// toolCallSignature returns a stable signature for a tool-call batch (sorted
+// name+arguments), used to detect a model repeating the identical call. Returns
+// "" for an empty batch.
+func toolCallSignature(calls []providers.ToolCall) string {
+	if len(calls) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(calls))
+	for _, c := range calls {
+		args := ""
+		if len(c.Arguments) > 0 {
+			if b, err := json.Marshal(c.Arguments); err == nil { // json sorts map keys
+				args = string(b)
+			}
+		} else if c.Function != nil {
+			args = c.Function.Arguments
+		}
+		name := c.Name
+		if name == "" && c.Function != nil {
+			name = c.Function.Name
+		}
+		parts = append(parts, name+":"+args)
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, "|")
+}
+
 // runLLMIteration executes the LLM call loop with tool handling.
 func (al *AgentLoop) runLLMIteration(
 	ctx context.Context,
@@ -1673,6 +1705,11 @@ func (al *AgentLoop) runLLMIteration(
 	var finalContent string
 	lastNormal := false
 	lastFinishReason := "max_iterations"
+	// Loop protection: if the model requests the exact same tool call(s) on
+	// consecutive iterations, break rather than spin (e.g. re-writing the same
+	// memory over and over). Tracks the prior iteration's tool-call signature.
+	var lastToolSig string
+	identicalToolBatches := 0
 
 	// Inject agent ID into context so provider error log entries can attribute
 	// failures to the specific agent without correlating timestamps.
@@ -2060,6 +2097,29 @@ func (al *AgentLoop) runLLMIteration(
 		for _, tc := range normalizedToolCalls {
 			toolNames = append(toolNames, tc.Name)
 		}
+		// Loop protection: break if the model requests the identical tool-call
+		// batch on consecutive iterations (e.g. re-writing the same memory in a
+		// loop). After maxIdenticalToolBatches repeats, stop dispatching.
+		if sig := toolCallSignature(normalizedToolCalls); sig != "" {
+			if sig == lastToolSig {
+				identicalToolBatches++
+			} else {
+				identicalToolBatches = 0
+				lastToolSig = sig
+			}
+			if identicalToolBatches+1 >= maxIdenticalToolBatches {
+				logger.WarnCF("agent", "aborting: identical tool call repeated", map[string]any{
+					"agent_id":  agent.ID,
+					"iteration": iteration,
+					"tools":     toolNames,
+					"repeats":   identicalToolBatches + 1,
+				})
+				finalContent = "Stopped: the model repeated the same action several times in a row; aborting to avoid a loop."
+				lastFinishReason = "loop_detected"
+				break
+			}
+		}
+
 		// Feed the recent-tool ring so cognitive memory can auto-load domains whose
 		// triggers match a tool the agent just used; the next build (same turn,
 		// after tool results) picks it up. No-op for non-cognitive agents.

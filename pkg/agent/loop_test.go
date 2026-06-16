@@ -1751,25 +1751,26 @@ func TestRunLLMIteration_MaxIterations(t *testing.T) {
 	agent.MaxIterations = maxIter
 	agent.Tools.Register(&mockEchoTool{})
 
-	// Always return a tool call — never a text response.
-	toolCallResp := &providers.LLMResponse{
-		Content: "",
-		ToolCalls: []providers.ToolCall{
-			{
-				ID:   "tc-inf",
-				Type: "function",
-				Name: "echo_tool",
-				Function: &providers.FunctionCall{
-					Name:      "echo_tool",
-					Arguments: `{"text":"loop"}`,
-				},
-			},
-		},
-	}
+	// Always return a tool call — never a text response. Vary the arguments each
+	// iteration so the distinct-call loop hits the iteration cap (this test's
+	// subject), not the identical-tool-call breaker (tested separately).
 	responses := make([]*providers.LLMResponse, maxIter+2)
 	errors := make([]error, maxIter+2)
 	for i := range responses {
-		responses[i] = toolCallResp
+		responses[i] = &providers.LLMResponse{
+			Content: "",
+			ToolCalls: []providers.ToolCall{
+				{
+					ID:   fmt.Sprintf("tc-%d", i),
+					Type: "function",
+					Name: "echo_tool",
+					Function: &providers.FunctionCall{
+						Name:      "echo_tool",
+						Arguments: fmt.Sprintf(`{"text":"loop-%d"}`, i),
+					},
+				},
+			},
+		}
 		errors[i] = nil
 	}
 	agent.Provider = &sequenceProvider{responses: responses, errors: errors}
