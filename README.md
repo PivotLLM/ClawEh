@@ -1,13 +1,5 @@
 # ClawEh: Yet another claw - Canadian style
 
-> **⚠️ Breaking config changes** — recent work changed the model/provider config schema. There is no automatic migration; existing config files must be updated by hand:
-> - **Named providers:** a new top-level `providers` list now owns each endpoint (base URL, API key, protocol, proxy, and endpoint quirks). Models reference a provider by name.
-> - **Models simplified:** model entries lose `api_base`, `api_key`, `proxy`, `auth_method`, and the `protocol/` prefix; `model` is now the raw model id the endpoint expects, plus a `provider` field naming its provider.
-> - **`model_list` → `models`:** the model array key was renamed.
-> - **Bedrock provider removed** (along with the AWS SDK dependency) — reach Bedrock as an OpenAI-compatible provider with a base URL.
-> - **Removed:** the legacy `providers` object and `openai_compat_protocols` config, superseded by the named-providers list.
-> - **Attribute stripping** can be performed on a per-model basis (for example strip the "temperature" field for GPT 5 models).
-
 ## What's New
 
 ### Improved context compression
@@ -18,7 +10,7 @@ in the agent's workspace with additional instructions, and those are folded into
 the summarization prompt. Leave it out to use the built-in behavior.
 
 ### Cognitive memory (cogmem)
-ClawEh is gaining a cognitive-memory engine so long-running agents get smarter
+ClawEh has gained a cognitive-memory engine so long-running agents get smarter
 over time instead of relying on hand-edited prompt files. Each session has a
 small SQLite memory database alongside its existing archive. A background "sleep
 cycle" periodically reviews new conversation and distills it into structured,
@@ -41,7 +33,7 @@ as soon as it touches a mail tool. Matching ignores case and underscores. The
 agent sets triggers itself (`cogmem_domain_create`/`cogmem_domain_update`), and
 the sleep cycle can add them when a domain clearly pertains to specific tools.
 
-### Workspace `.md` files are now for humans, not the agent
+### Workspace `.md` are files are now for humans to edit, not the agent
 The agent no longer edits its own workspace markdown files (`AGENTS.md`,
 `SOUL.md`, `IDENTITY.md`, `USER.md`, `MEMORY.md`). They are now intended for
 **human authorship**. As in other *claw applications, these files are combined
