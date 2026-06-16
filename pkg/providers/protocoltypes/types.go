@@ -1,5 +1,7 @@
 package protocoltypes
 
+import "encoding/json"
+
 type ToolCall struct {
 	ID               string         `json:"id"`
 	Type             string         `json:"type,omitempty"`
@@ -34,6 +36,11 @@ type LLMResponse struct {
 	Reasoning        string            `json:"reasoning"`
 	ReasoningDetails []ReasoningDetail `json:"reasoning_details"`
 	Status           *DispatchStatus   `json:"status,omitempty"`
+	// ResponsesReasoning carries opaque OpenAI Responses reasoning items
+	// (verbatim, incl. encrypted_content) so they can be replayed before the
+	// function_call they produced on the next turn. Reasoning models + tools
+	// only; empty otherwise.
+	ResponsesReasoning []json.RawMessage `json:"responses_reasoning,omitempty"`
 }
 
 // DispatchStatus is populated by each provider on every Chat() return
@@ -102,6 +109,10 @@ type Message struct {
 	SystemParts      []ContentBlock      `json:"system_parts,omitempty"` // structured system blocks for cache-aware adapters
 	ToolCalls        []ToolCall          `json:"tool_calls,omitempty"`
 	ToolCallID       string              `json:"tool_call_id,omitempty"`
+	// ResponsesReasoning carries opaque OpenAI Responses reasoning items for this
+	// assistant turn, replayed before its function_call items on the next request
+	// (Responses API, reasoning models + tools). Persisted with history.
+	ResponsesReasoning []json.RawMessage `json:"responses_reasoning,omitempty"`
 }
 
 type ToolDefinition struct {

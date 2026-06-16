@@ -171,12 +171,27 @@ func (p *Provider) Chat(
 	if maxTokens, ok := common.AsInt(options["max_tokens"]); ok {
 		requestBody["max_output_tokens"] = maxTokens
 	}
-	if temperature, ok := common.AsFloat(options["temperature"]); ok {
-		requestBody["temperature"] = temperature
+	// "none" means reasoning is explicitly disabled (sent, but not a reasoning
+	// run); a level (low/medium/high) means the model reasons.
+	reasoning := p.reasoningEffort != "" && p.reasoningEffort != "none"
+	// Reasoning models reject temperature (and top_p); only send it otherwise.
+	if !reasoning {
+		if temperature, ok := common.AsFloat(options["temperature"]); ok {
+			requestBody["temperature"] = temperature
+		}
 	}
 	if p.reasoningEffort != "" {
 		requestBody["reasoning"] = map[string]any{"effort": p.reasoningEffort}
 	}
+	if reasoning {
+		// Stateless reasoning preservation: ask for encrypted reasoning so the
+		// reasoning item that precedes a function_call can be replayed next turn
+		// (store=false → no server-side state to chain via previous_response_id).
+		requestBody["include"] = []string{"reasoning.encrypted_content"}
+	}
+	// Privacy: never persist responses server-side. We rebuild full history each
+	// turn, so previous_response_id chaining is intentionally not used.
+	requestBody["store"] = false
 
 	// JSON-object output: the Responses API nests this under text.format
 	// (vs. chat's top-level response_format). Only emit when capable.
@@ -282,6 +297,14 @@ func buildInput(messages []Message) (instructions string, input []any) {
 				"output":  m.Content,
 			})
 		case "assistant":
+			// Replay this turn's reasoning items first (verbatim, incl.
+			// encrypted_content): the API requires the reasoning item to precede
+			// the function_call it produced. Reasoning models + tools only.
+			for _, ri := range m.ResponsesReasoning {
+				if len(ri) > 0 {
+					input = append(input, json.RawMessage(ri))
+				}
+			}
 			if strings.TrimSpace(m.Content) != "" {
 				input = append(input, map[string]any{
 					"role":    "assistant",
@@ -344,10 +367,11 @@ func responsesTools(tools []ToolDefinition) []map[string]any {
 }
 
 // responseEnvelope is the subset of the Responses API response we consume.
+// Output items are kept raw so reasoning items can be captured verbatim (with
+// encrypted_content) for replay; each is then typed via responseOutputItem.
 type responseEnvelope struct {
-	Output            []responseOutputItem `json:"output"`
-	OutputText        string               `json:"output_text"`
-	Status            string               `json:"status"`
+	Output            []json.RawMessage `json:"output"`
+	Status            string            `json:"status"`
 	IncompleteDetails *struct {
 		Reason string `json:"reason"`
 	} `json:"incomplete_details"`
@@ -385,7 +409,12 @@ func parseResponse(raw []byte, model string) (*LLMResponse, error) {
 	var content strings.Builder
 	var reasoning strings.Builder
 	var toolCalls []ToolCall
-	for _, item := range env.Output {
+	var reasoningItems []json.RawMessage
+	for _, raw := range env.Output {
+		var item responseOutputItem
+		if err := json.Unmarshal(raw, &item); err != nil {
+			continue
+		}
 		switch item.Type {
 		case "message":
 			for _, part := range item.Content {
@@ -407,29 +436,36 @@ func parseResponse(raw []byte, model string) (*LLMResponse, error) {
 			for _, s := range item.Summary {
 				reasoning.WriteString(s.Text)
 			}
+			// Capture the whole item verbatim so it can be replayed before its
+			// function_call next turn (carries encrypted_content when store=false).
+			reasoningItems = append(reasoningItems, append(json.RawMessage(nil), raw...))
 		}
 	}
 
 	text := content.String()
-	if text == "" && len(toolCalls) == 0 {
-		// Fall back to the aggregated convenience field if no message parts.
-		text = env.OutputText
-	}
 
 	finishReason := "stop"
 	switch {
 	case len(toolCalls) > 0:
 		finishReason = "tool_calls"
-	case env.Status == "incomplete" && env.IncompleteDetails != nil && env.IncompleteDetails.Reason == "max_output_tokens":
-		finishReason = "length"
+	case env.Status == "incomplete" && env.IncompleteDetails != nil:
+		switch env.IncompleteDetails.Reason {
+		case "max_output_tokens":
+			finishReason = "length"
+		case "content_filter":
+			finishReason = "content_filter"
+		default:
+			finishReason = "incomplete"
+		}
 	}
 
 	out := &LLMResponse{
-		Content:          text,
-		ReasoningContent: reasoning.String(),
-		ToolCalls:        toolCalls,
-		FinishReason:     finishReason,
-		Normal:           finishReason == "stop" || finishReason == "tool_calls",
+		Content:            text,
+		ReasoningContent:   reasoning.String(),
+		ToolCalls:          toolCalls,
+		ResponsesReasoning: reasoningItems,
+		FinishReason:       finishReason,
+		Normal:             finishReason == "stop" || finishReason == "tool_calls",
 		Status: &DispatchStatus{
 			Model:      model,
 			StopReason: finishReason,

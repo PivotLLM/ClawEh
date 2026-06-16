@@ -2151,6 +2151,9 @@ func (al *AgentLoop) runLLMIteration(
 			Role:             "assistant",
 			Content:          response.Content,
 			ReasoningContent: response.ReasoningContent,
+			// Carry Responses reasoning items so the next turn can replay them
+			// before this turn's function_call (reasoning models + tools).
+			ResponsesReasoning: response.ResponsesReasoning,
 		}
 		for _, tc := range normalizedToolCalls {
 			argumentsJSON, marshalErr := json.Marshal(tc.Arguments)
