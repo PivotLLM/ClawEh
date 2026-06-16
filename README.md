@@ -45,6 +45,44 @@ These signals are deduplicated and ranked (tool trigger, then lexical match, the
 recency), so each relevant domain is loaded once. No embeddings or vector search
 are involved — routing is lexical and deterministic.
 
+#### Purging cognitive memory
+`claw memory purge` cleans up accumulated clutter across **all** assistants. It
+purges everything that is **not current active memory** — every domain whose
+status is not active (archived/review) along with its memories, plus every
+non-active memory (retired, superseded, review). Only active memories in active
+domains survive (including the always-on `general` domain).
+
+It is a **dry run by default** — it reports what would be removed, per database and
+in total, without changing anything:
+
+```bash
+claw memory purge
+```
+
+Add `--confirm` to actually delete (it also `VACUUM`s each database to reclaim
+space):
+
+```bash
+claw memory purge --confirm
+```
+
+Recommended sequence — review the counts first, and stop the gateway so you are
+not racing live agents writing memory:
+
+```bash
+sudo systemctl stop claw      # avoid racing live agents
+claw memory purge             # dry run — review the counts
+claw memory purge --confirm   # delete + vacuum
+sudo systemctl start claw
+```
+
+Notes:
+- If you run with a non-default data directory, set `CLAW_HOME` the same way the
+  service does (e.g. `CLAW_HOME=/path claw memory purge`) so it targets the same
+  agents tree.
+- Even the dry run opens each `.cogmem.db`, which runs the normal idempotent
+  migrations — harmless, but another reason to stop the gateway first.
+
 ### Workspace `.md` are files are now for humans to edit, not the agent
 The agent no longer edits its own workspace markdown files (`AGENTS.md`,
 `SOUL.md`, `IDENTITY.md`, `USER.md`, `MEMORY.md`). They are now intended for
