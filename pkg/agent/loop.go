@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -24,6 +25,7 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/callback"
 	"github.com/PivotLLM/ClawEh/pkg/channels"
 	"github.com/PivotLLM/ClawEh/pkg/cogmem/consolidate"
+	cogmemstore "github.com/PivotLLM/ClawEh/pkg/cogmem/store"
 	"github.com/PivotLLM/ClawEh/pkg/commands"
 	"github.com/PivotLLM/ClawEh/pkg/config"
 	"github.com/PivotLLM/ClawEh/pkg/constants"
@@ -2555,6 +2557,55 @@ func (al *AgentLoop) estimateTokens(messages []providers.Message) int {
 	return totalChars * 2 / 5
 }
 
+// cogmemSessionStatus renders a short cognitive-memory summary for the session:
+// active domain/memory counts, the pending-review count, and the last
+// consolidation run. Returns "" when the agent is not cognitive. Opening the
+// store runs the normal idempotent migrations, matching the cogmem_status tool.
+func (al *AgentLoop) cogmemSessionStatus(agent *AgentInstance, sessionKey string) string {
+	if agent == nil || agent.Config == nil || !agent.Config.CognitiveMemoryEnabled() {
+		return ""
+	}
+	path := cogmemstore.SessionDBPath(agent.Workspace, sessionKey)
+	if _, err := os.Stat(path); err != nil {
+		return "No cognitive-memory database for this session yet."
+	}
+	s, err := cogmemstore.Open(path)
+	if err != nil {
+		return "Cognitive memory unavailable: " + err.Error()
+	}
+	defer s.Close()
+
+	ctx := context.Background()
+	db := s.DB()
+	var b strings.Builder
+
+	active, _ := s.ListDomains(ctx, db, cogmemstore.StatusActive)
+	memCount := 0
+	for _, d := range active {
+		ms, _ := s.ListMemories(ctx, db, d.ID, cogmemstore.StatusActive)
+		memCount += len(ms)
+	}
+	fmt.Fprintf(&b, "Active domains: %d\n", len(active))
+	fmt.Fprintf(&b, "Active memories: %d\n", memCount)
+
+	if pending, perr := s.PendingCount(ctx, db); perr == nil {
+		fmt.Fprintf(&b, "Pending (review): %d\n", pending)
+	}
+
+	run, ok, _ := s.LastRun(ctx, db)
+	if !ok {
+		b.WriteString("Last consolidation: none yet")
+	} else {
+		when := run.StartedAt.Format("2006-01-02 15:04")
+		fmt.Fprintf(&b, "Last consolidation: %s — trigger=%s, status=%s, changes=%d",
+			when, run.Trigger, run.Status, run.OpsApplied)
+		if run.Error != "" {
+			fmt.Fprintf(&b, "\nLast error: %s", run.Error)
+		}
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
 func (al *AgentLoop) handleCommand(
 	ctx context.Context,
 	msg bus.InboundMessage,
@@ -2636,6 +2687,12 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 			defer store.Close()
 			count, first, last, _ := store.Stats()
 			return count, first, last
+		},
+		GetMemoryStatus: func() string {
+			if agent == nil || opts == nil {
+				return ""
+			}
+			return al.cogmemSessionStatus(agent, opts.SessionKey)
 		},
 		SwitchChannel: func(value string) error {
 			if al.channelManager == nil {

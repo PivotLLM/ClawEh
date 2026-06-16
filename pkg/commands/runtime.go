@@ -57,6 +57,11 @@ type Runtime struct {
 	// archive exists. Implementations must be cheap (single SQL aggregate or
 	// equivalent) and must not load message bodies.
 	GetArchiveStats func() (count int, first, last time.Time)
+
+	// GetMemoryStatus returns a human-readable cognitive-memory summary for THIS
+	// session (active domain/memory counts, pending-review count, and the last
+	// consolidation run). Returns "" when the agent has no cognitive memory.
+	GetMemoryStatus func() string
 }
 
 // ModelEntry is one configured candidate model for an agent, surfaced by

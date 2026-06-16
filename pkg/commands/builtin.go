@@ -17,6 +17,7 @@ func BuiltinDefinitions() []Definition {
 		compactCommand(),
 		retryCommand(),
 		statusCommand(),
+		memoryCommand(),
 		cooldownsCommand(),
 		versionCommand(),
 	}
