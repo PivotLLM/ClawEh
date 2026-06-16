@@ -155,6 +155,10 @@ func (globalCogmemProvider) RegisterTools(deps global.Deps) []global.ToolDefinit
 				{Name: "scope", Type: "string", Required: false, Description: "Optional scope hint (currently advisory)."},
 			}, true, consolidate),
 
+		def("export",
+			"Dump the agent's entire active memory (all domains and their memories, plus pending items) to a single Markdown file at files/MEMORY_EXPORT.md, and report the path and counts.",
+			nil, true, exportMemory),
+
 		def("status",
 			"Report cognitive-memory health: database path, last consolidation run, and pending-memory count.",
 			nil, true, status),

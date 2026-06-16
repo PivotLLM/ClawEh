@@ -114,8 +114,26 @@ func (s *Store) migrate(ctx context.Context) error {
 	if err := s.ensureDomainColumns(ctx); err != nil {
 		return fmt.Errorf("cogmem: ensure domain columns: %w", err)
 	}
+	if err := s.ensureTypeValues(ctx); err != nil {
+		return fmt.Errorf("cogmem: normalize type values: %w", err)
+	}
 	if err := s.ensureGeneralDomain(ctx); err != nil {
 		return fmt.Errorf("cogmem: seed general domain: %w", err)
+	}
+	return nil
+}
+
+// ensureTypeValues folds retired type values into the current set so stored data
+// matches the slimmed model: memory types project_state/workflow/lesson → fact,
+// and the dropped domain type repo → project. Idempotent (no-op once normalized).
+func (s *Store) ensureTypeValues(ctx context.Context) error {
+	if _, err := s.db.ExecContext(ctx,
+		`UPDATE memories SET type='fact' WHERE type IN ('project_state','workflow','lesson')`); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx,
+		`UPDATE domains SET type='project' WHERE type='repo'`); err != nil {
+		return err
 	}
 	return nil
 }

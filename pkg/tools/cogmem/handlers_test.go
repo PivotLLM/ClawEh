@@ -7,6 +7,8 @@ package cogmem
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -206,6 +208,30 @@ func TestStatusAndConsolidate(t *testing.T) {
 	res = run(t, h["consolidate"], newCall(testSession, nil))
 	if res.IsError || !strings.Contains(res.ForLLM, "worker not yet running") {
 		t.Fatalf("unexpected consolidate result: %s", res.ForLLM)
+	}
+}
+
+func TestExportMemory(t *testing.T) {
+	h, ws := buildHandlers(t)
+	res := run(t, h["domain_create"], newCall(testSession, map[string]any{"type": "project", "name": "BioTech"}))
+	domainID := extractID(t, res.ForLLM, "d")
+	run(t, h["memory_create"], newCall(testSession, map[string]any{
+		"domain_id": domainID, "type": "fact", "text": "the report targets Q3",
+	}))
+
+	res = run(t, h["export"], newCall(testSession, nil))
+	if res.IsError || !strings.Contains(res.ForLLM, "MEMORY_EXPORT.md") {
+		t.Fatalf("unexpected export result: %s", res.ForLLM)
+	}
+	data, err := os.ReadFile(filepath.Join(ws, "files", "MEMORY_EXPORT.md"))
+	if err != nil {
+		t.Fatalf("read export: %v", err)
+	}
+	body := string(data)
+	for _, want := range []string{"# Cognitive Memory Export", "## Projects", "BioTech", "the report targets Q3"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("export missing %q:\n%s", want, body)
+		}
 	}
 }
 

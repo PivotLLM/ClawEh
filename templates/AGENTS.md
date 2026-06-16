@@ -61,6 +61,8 @@ don't see it yet, nothing has been recorded — start recording.
   loaded only when relevant — by recency, by your message wording, or by triggers.
 - **Memory types:** every memory is a `fact` (something true), a `preference` (how
   the user likes things done), or a `rule` (a hard directive).
+- **Export:** `cogmem_export` dumps your entire memory to one Markdown file
+  at `files/MEMORY_EXPORT.md` (e.g. when the user asks to see everything you remember).
 - **Auto-load on tool use:** a domain can carry `triggers` — a comma-separated
   list of tool-name substrings (set via `cogmem_domain_create`/`cogmem_domain_update`).
   Whenever you call a tool whose name contains one of the tokens, that domain is

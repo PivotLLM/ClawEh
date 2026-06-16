@@ -348,6 +348,27 @@ func updateDomain(s *store.Store, call *global.ToolCall) (string, error) {
 	return fmt.Sprintf("Updated domain %s (now version %d).", id, cur.Version+1), nil
 }
 
+// exportMemory writes the agent's entire active memory as one Markdown document
+// to files/MEMORY_EXPORT.md (its writable area) and reports the path and counts.
+func exportMemory(s *store.Store, call *global.ToolCall) (string, error) {
+	doc, nDomains, nMemories, err := renderFullExport(call.Ctx, s)
+	if err != nil {
+		return "", err
+	}
+	// The store lives at <workspace>/sessions/<key>.cogmem.db; recover <workspace>
+	// to write the export into the agent's read/write files/ directory.
+	workspace := filepath.Dir(filepath.Dir(s.Path()))
+	outDir := filepath.Join(workspace, "files")
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		return "", fmt.Errorf("failed to prepare export directory: %w", err)
+	}
+	outPath := filepath.Join(outDir, "MEMORY_EXPORT.md")
+	if err := os.WriteFile(outPath, []byte(doc), 0o644); err != nil {
+		return "", fmt.Errorf("failed to write export: %w", err)
+	}
+	return fmt.Sprintf("Exported %d domain(s) and %d memory(ies) to files/MEMORY_EXPORT.md.", nDomains, nMemories), nil
+}
+
 func retireHook(s *store.Store, call *global.ToolCall) (string, error) {
 	id := argStr(call, "id")
 	reason := argStr(call, "reason")

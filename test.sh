@@ -428,6 +428,7 @@ PY
       "cogmem_domain_archive": true,
       "cogmem_memory_forget": true,
       "cogmem_consolidate": true,
+      "cogmem_export": true,
       "cogmem_status": true
     }
   },
@@ -472,6 +473,7 @@ PY
       "cogmem_domain_archive",
       "cogmem_memory_forget",
       "cogmem_consolidate",
+      "cogmem_export",
       "cogmem_status",
       "common_list",
       "common_get",

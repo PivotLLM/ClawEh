@@ -55,8 +55,8 @@ FULL_URL="${SERVER_URL}${ENDPOINT}"
 # (subagent capability) and hw_i2c/hw_spi (Linux + I2C/SPI devices) are also
 # exposed but only probed when actually present in the catalogue, so this script
 # stays portable.
-EXPECTED_TOOLS="file_read file_write file_edit file_append file_list file_copy web_fetch web_search msg_send_file session_messages session_search session_compact session_info session_summary_list session_summary_get session_clear shell_exec skill_find skill_install cron_schedule cogmem_domain_get cogmem_memory_search cogmem_domain_list cogmem_explain cogmem_memory_create cogmem_domain_update cogmem_memory_retire cogmem_domain_create cogmem_domain_archive cogmem_memory_forget cogmem_consolidate cogmem_status common_list common_get common_put common_delete"
-EXPECTED_TOOL_COUNT=36
+EXPECTED_TOOLS="file_read file_write file_edit file_append file_list file_copy web_fetch web_search msg_send_file session_messages session_search session_compact session_info session_summary_list session_summary_get session_clear shell_exec skill_find skill_install cron_schedule cogmem_domain_get cogmem_memory_search cogmem_domain_list cogmem_explain cogmem_memory_create cogmem_domain_update cogmem_memory_retire cogmem_domain_create cogmem_domain_archive cogmem_memory_forget cogmem_consolidate cogmem_status cogmem_export common_list common_get common_put common_delete"
+EXPECTED_TOOL_COUNT=37
 
 # Namespace prefixes that must have at least one tool in the catalogue.
 # Covers every provider-owned namespace that is in the test config.
@@ -631,6 +631,10 @@ else
 
     run_test_not_auth_err "4c.12 cogmem_consolidate — token accepted (queued/accepted)" \
         "cogmem_consolidate" '{"scope":"probe"}'
+
+    # export: dumps active memory to files/MEMORY_EXPORT.md — hermetic, succeeds with auth.
+    run_test_ok_auth "4c.13 cogmem_export writes a Markdown dump" \
+        "cogmem_export" '{}' "MEMORY_EXPORT.md"
 
     # Section 4d: Shared common-directory tools (common_*). Hermetic and
     # deterministic. common_put copies the scratch file (under files/, created in

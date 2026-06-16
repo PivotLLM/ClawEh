@@ -137,6 +137,41 @@ func TestTriggerUnderscoreInsensitive(t *testing.T) {
 	}
 }
 
+func TestEnsureTypeValuesNormalizesLegacy(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "legacy.cogmem.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	// Seed a project domain + memory, then force legacy type values directly.
+	d, _ := s.CreateDomain(ctx, s.DB(), CreateDomainParams{AgentID: "a", Type: DomainProject, Name: "P"})
+	m, _ := s.AddMemory(ctx, s.DB(), AddMemoryParams{DomainID: d.ID, Type: TypeFact, Text: "x", Status: StatusActive, Confidence: 0.9, Source: SourceUserExplicit})
+	if _, err := s.DB().ExecContext(ctx, `UPDATE memories SET type='lesson' WHERE id=?`, m.ID); err != nil {
+		t.Fatalf("force legacy memory type: %v", err)
+	}
+	if _, err := s.DB().ExecContext(ctx, `UPDATE domains SET type='repo' WHERE id=?`, d.ID); err != nil {
+		t.Fatalf("force legacy domain type: %v", err)
+	}
+	_ = s.Close()
+
+	// Reopen → migrate() runs ensureTypeValues and normalizes the legacy values.
+	s2, err := Open(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer s2.Close()
+	gm, _ := s2.GetMemory(ctx, s2.DB(), m.ID)
+	if gm.Type != TypeFact {
+		t.Fatalf("memory type = %q, want fact", gm.Type)
+	}
+	gd, _ := s2.GetDomain(ctx, s2.DB(), d.ID, false)
+	if gd.Type != DomainProject {
+		t.Fatalf("domain type = %q, want project", gd.Type)
+	}
+}
+
 func TestDomainOptimisticConcurrency(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()
