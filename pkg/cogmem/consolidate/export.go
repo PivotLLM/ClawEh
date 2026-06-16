@@ -32,23 +32,23 @@ func WriteExport(ctx context.Context, st *store.Store, memoryDir string) error {
 	}
 
 	// Bucket domains by concern.
-	var projects, lessons, userLearned []store.Domain
+	var projects, lessons, general []store.Domain
 	for _, d := range domains {
 		switch d.Type {
 		case store.DomainProject, store.DomainRepo:
 			projects = append(projects, d)
-		case store.DomainUserProfile:
-			userLearned = append(userLearned, d)
+		case store.DomainGeneral:
+			general = append(general, d)
 		default:
 			lessons = append(lessons, d)
 		}
 	}
 
 	files := map[string]string{
-		"GENERATED_PROJECTS.md":     renderDomains(ctx, st, "Projects", projects),
-		"GENERATED_LESSONS.md":      renderDomains(ctx, st, "Lessons & Workflows", lessons),
-		"GENERATED_USER_LEARNED.md": renderDomains(ctx, st, "Learned About the User", userLearned),
-		"GENERATED_PENDING.md":      renderPending(ctx, st),
+		"GENERATED_GENERAL.md":  renderDomains(ctx, st, "General (always in context)", general),
+		"GENERATED_PROJECTS.md": renderDomains(ctx, st, "Projects", projects),
+		"GENERATED_LESSONS.md":  renderDomains(ctx, st, "Lessons & Workflows", lessons),
+		"GENERATED_PENDING.md":  renderPending(ctx, st),
 	}
 
 	var firstErr error

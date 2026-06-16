@@ -161,6 +161,17 @@ func (s *Store) GetDomain(ctx context.Context, q DBTX, id string, withHooks bool
 	return d, nil
 }
 
+// GeneralDomain returns the mandatory always-on "general" domain, which is
+// seeded on Open so it always exists.
+func (s *Store) GeneralDomain(ctx context.Context, q DBTX) (Domain, error) {
+	row := q.QueryRowContext(ctx, domainSelect+` WHERE type=? ORDER BY id LIMIT 1`, string(DomainGeneral))
+	d, err := scanDomain(row)
+	if err == sql.ErrNoRows {
+		return Domain{}, ErrNotFound
+	}
+	return d, err
+}
+
 // ListDomains returns domains with any of the given statuses (all if none),
 // ordered by id for stable index rendering.
 func (s *Store) ListDomains(ctx context.Context, q DBTX, statuses ...Status) ([]Domain, error) {

@@ -105,7 +105,38 @@ func (s *Store) migrate(ctx context.Context) error {
 		schemaVersion, now()); err != nil {
 		return fmt.Errorf("cogmem: record migration: %w", err)
 	}
+	if err := s.ensureGeneralDomain(ctx); err != nil {
+		return fmt.Errorf("cogmem: seed general domain: %w", err)
+	}
 	return nil
+}
+
+// ensureGeneralDomain creates the single mandatory always-on "general" domain if
+// it does not already exist. Idempotent (migrate runs on every Open). It does a
+// direct insert without bumping stable_rev: an empty general domain renders
+// nothing, so the cached stable block is unaffected until a hook is added.
+func (s *Store) ensureGeneralDomain(ctx context.Context) error {
+	var n int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM domains WHERE type=?`, string(DomainGeneral)).Scan(&n); err != nil {
+		return err
+	}
+	if n > 0 {
+		return nil
+	}
+	id, err := freshID(ctx, s.db, domainIDPrefix, "domains")
+	if err != nil {
+		return err
+	}
+	ts := now()
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO domains(id, agent_id, session_key, type, name, status, version,
+		                    summary, state_json, schema_name, schema_version,
+		                    created_at, updated_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		id, "", "", string(DomainGeneral), "General", string(StatusActive), 1,
+		"Global rules, preferences, and standing facts.", "{}", "domain", 1, ts, ts)
+	return err
 }
 
 // WithTx runs fn inside a transaction, committing on success and rolling back

@@ -246,19 +246,25 @@ func remember(s *store.Store, call *global.ToolCall) (string, error) {
 	if domainID == "" {
 		hint := argStr(call, "domain_hint")
 		if hint == "" {
-			return "", errors.New("provide a domain_id, or a domain_hint to create a new domain")
+			// No domain specified → the always-on general domain (seeded on open).
+			g, err := s.GeneralDomain(call.Ctx, s.DB())
+			if err != nil {
+				return "", err
+			}
+			domainID = g.ID
+		} else {
+			d, err := s.CreateDomain(call.Ctx, s.DB(), store.CreateDomainParams{
+				AgentID:    call.AgentID,
+				SessionKey: call.Session,
+				Type:       store.DomainProject,
+				Name:       hint,
+				Status:     store.StatusActive,
+			})
+			if err != nil {
+				return "", err
+			}
+			domainID = d.ID
 		}
-		d, err := s.CreateDomain(call.Ctx, s.DB(), store.CreateDomainParams{
-			AgentID:    call.AgentID,
-			SessionKey: call.Session,
-			Type:       store.DomainProject,
-			Name:       hint,
-			Status:     store.StatusActive,
-		})
-		if err != nil {
-			return "", err
-		}
-		domainID = d.ID
 	}
 
 	status := store.Status(argStr(call, "status"))

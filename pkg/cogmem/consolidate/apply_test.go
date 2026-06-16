@@ -70,11 +70,18 @@ func TestApplyCreateWithTmpID(t *testing.T) {
 	if n != 2 {
 		t.Fatalf("applied = %d, want 2", n)
 	}
+	// ListDomains includes the seeded always-on general domain; find the project.
 	doms, _ := st.ListDomains(ctx, st.DB(), store.StatusActive)
-	if len(doms) != 1 || doms[0].Name != "New Project" {
-		t.Fatalf("domains = %+v", doms)
+	var proj *store.Domain
+	for i := range doms {
+		if doms[i].Type == store.DomainProject && doms[i].Name == "New Project" {
+			proj = &doms[i]
+		}
 	}
-	hooks, _ := st.ListHooks(ctx, st.DB(), doms[0].ID, store.StatusActive)
+	if proj == nil {
+		t.Fatalf("created project not found in %+v", doms)
+	}
+	hooks, _ := st.ListHooks(ctx, st.DB(), proj.ID, store.StatusActive)
 	if len(hooks) != 1 || hooks[0].Text != "a durable fact" {
 		t.Fatalf("hooks = %+v", hooks)
 	}

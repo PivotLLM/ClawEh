@@ -25,8 +25,11 @@ future turn.
 # OPERATIONS
 Per piece of information choose: domains → create / update / archive; hooks →
 add / supersede / retire; or do nothing.
-- Put knowledge in the right domain. Always-on: `baseline` (global rules) and
-  `user_profile` (user facts). Topic domains: `project`, `workflow`, `repo`.
+- Put knowledge in the right domain. The always-on `general` domain (already in
+  `current_state`) holds global rules, preferences, and standing facts that should
+  always apply — add such hooks there. Topic domains: `project`, `workflow`,
+  `repo` (create these for distinct ongoing topics). Never create a `general`
+  domain; one already exists.
 - Create a new domain (with a `tmp_id`) only for a clearly distinct ongoing topic
   not already represented. Hooks may reference that `tmp_id`.
 - Every operation MUST cite `evidence` — the seq range in `new_messages` that

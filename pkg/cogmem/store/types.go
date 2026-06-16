@@ -10,21 +10,24 @@ package store
 
 import "time"
 
-// DomainType classifies a memory domain. Baseline and UserProfile are always-on
-// (injected every turn); the rest are routed (loaded on relevance).
+// DomainType classifies a memory domain. General is the single mandatory,
+// always-on domain (injected every turn); the rest are routed (loaded on request
+// or relevance).
 type DomainType string
 
 const (
-	DomainBaseline    DomainType = "baseline"
-	DomainUserProfile DomainType = "user_profile"
-	DomainProject     DomainType = "project"
-	DomainWorkflow    DomainType = "workflow"
-	DomainRepo        DomainType = "repo"
+	// DomainGeneral is the one mandatory always-on domain, seeded into every
+	// session's .cogmem.db and injected into the prompt each turn. It is the home
+	// for global rules, preferences, and standing facts the agent records.
+	DomainGeneral  DomainType = "general"
+	DomainProject  DomainType = "project"
+	DomainWorkflow DomainType = "workflow"
+	DomainRepo     DomainType = "repo"
 )
 
 // AlwaysOn reports whether a domain of this type is injected into every prompt.
 func (t DomainType) AlwaysOn() bool {
-	return t == DomainBaseline || t == DomainUserProfile
+	return t == DomainGeneral
 }
 
 // Status is the lifecycle state of a domain or hook.

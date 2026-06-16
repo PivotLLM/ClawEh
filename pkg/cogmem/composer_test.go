@@ -34,7 +34,7 @@ func TestStableBlockContent(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
 	db := s.DB()
-	base, _ := s.CreateDomain(ctx, db, store.CreateDomainParams{AgentID: "a", Type: store.DomainBaseline, Name: "baseline"})
+	base, _ := s.GeneralDomain(ctx, db) // the seeded always-on general domain
 	_, _ = s.AddHook(ctx, db, store.AddHookParams{DomainID: base.ID, Kind: store.KindPreference, Text: "Be concise.", Status: store.StatusActive, Confidence: 0.95, Source: store.SourceUserExplicit})
 	proj, _ := s.CreateDomain(ctx, db, store.CreateDomainParams{AgentID: "a", Type: store.DomainProject, Name: "Website Redesign", Summary: "CSS grid migration"})
 	_ = proj

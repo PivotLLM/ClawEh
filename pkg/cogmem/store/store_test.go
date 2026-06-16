@@ -102,7 +102,7 @@ func TestHookLifecycleAndStableRev(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()
 	// Always-on domain so active hooks affect stable_rev.
-	base, _ := s.CreateDomain(ctx, s.DB(), CreateDomainParams{AgentID: "a", Type: DomainBaseline, Name: "baseline"})
+	base, _ := s.GeneralDomain(ctx, s.DB()) // the seeded always-on general domain
 	revAfterDomain, _ := s.StableRev(ctx)
 
 	h, err := s.AddHook(ctx, s.DB(), AddHookParams{

@@ -46,15 +46,17 @@ loaded into your context automatically under a **"Learned Memory"** heading — 
 projects/topics index, stable preferences, and the active project's state. If you
 don't see it yet, nothing has been recorded — start recording.
 
-- **Record** memory with the `cogmem_*` tools (`cogmem_remember`,
-  `cogmem_update_domain`, …); **recall** with `cogmem_search` or
-  `cogmem_get_domain`.
-- **Projects:** for any ongoing project, make sure it has a domain. If it isn't in
-  your projects index, create it with `cogmem_create_domain`, then keep its
-  summary, blockers, and next actions current.
-- **Durable facts, preferences, lessons:** capture them with `cogmem_remember`
-  when you learn something worth keeping. Don't restate what's already in context,
-  and don't infer personal facts the user hasn't stated.
+- You have one always-on **`general`** domain — global rules, preferences, and
+  standing facts that should apply on every turn. It is shown under **"General"**
+  in your context whenever it has content.
+- **Record** memory with the `cogmem_*` tools; **recall** with `cogmem_search` or
+  `cogmem_get_domain`. `cogmem_remember` with **no domain** stores into `general`
+  (use this for durable rules/preferences/facts worth keeping). Don't restate
+  what's already in context, and don't infer personal facts the user hasn't stated.
+- **Projects:** keep project-specific memory in a project domain — give
+  `cogmem_remember` a `domain_hint` to create/use one (or `cogmem_create_domain`),
+  and keep its summary, blockers, and next actions current with
+  `cogmem_update_domain`. Other domains are loaded only when you request them.
 - **Working files** (drafts, outputs): write them under `files/` — your read/write
   area. The rest of your workspace is read-only. Use the `common_*` tools to share
   files with other agents.

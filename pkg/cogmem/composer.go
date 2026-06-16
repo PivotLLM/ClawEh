@@ -4,7 +4,7 @@
 // Package cogmem composes per-turn prompt memory from a session's .cogmem.db.
 // It produces two blocks (mem-proposal.md §10):
 //
-//   - StableBlock: always-on learned memory (baseline + user_profile), the
+//   - StableBlock: always-on learned memory (the "general" domain), the
 //     pending-confirmation digest, and the domain index. Cacheable; it carries
 //     the store's stable_rev so the caller invalidates only on change. The
 //     caller (the agent context layer) prepends the verbatim curated .md files.
@@ -131,7 +131,7 @@ func (c *Composer) StableBlock(ctx context.Context) (string, int64, error) {
 	}
 	var b strings.Builder
 
-	// Always-on domains: baseline + user_profile.
+	// The always-on "general" domain: global rules, preferences, and standing facts.
 	active, err := c.st.ListDomains(ctx, db, store.StatusActive)
 	if err != nil {
 		return "", rev, err
@@ -148,11 +148,7 @@ func (c *Composer) StableBlock(ctx context.Context) (string, int64, error) {
 		if len(hooks) == 0 {
 			continue
 		}
-		heading := "Stable Preferences"
-		if d.Type == store.DomainUserProfile {
-			heading = "User Profile"
-		}
-		fmt.Fprintf(&b, "## %s\n", heading)
+		b.WriteString("## General\n")
 		for _, h := range hooks {
 			fmt.Fprintf(&b, "- %s\n", h.Text)
 		}

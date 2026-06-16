@@ -91,10 +91,10 @@ func (globalCogmemProvider) RegisterTools(deps global.Deps) []global.ToolDefinit
 			}, true, explain),
 
 		def("remember",
-			"Record a durable memory hook (a preference, rule, fact, project_state, workflow, or lesson). Provide a domain_id, or a domain_hint to create/use a project domain.",
+			"Record a durable memory hook (a preference, rule, fact, project_state, workflow, or lesson). With NO domain_id and NO domain_hint it records to your always-on 'general' domain (global rules/preferences/facts that should always be in context). Give a domain_hint to create/use a project domain, or a domain_id to target a specific one.",
 			[]global.Parameter{
-				{Name: "domain_id", Type: "string", Required: false, Description: "Target domain id. If omitted, domain_hint is required."},
-				{Name: "domain_hint", Type: "string", Required: false, Description: "Name for a new project domain when domain_id is not given."},
+				{Name: "domain_id", Type: "string", Required: false, Description: "Target domain id. If omitted and no domain_hint is given, records to the always-on general domain."},
+				{Name: "domain_hint", Type: "string", Required: false, Description: "Name for a new project domain when domain_id is not given (omit to use the general domain)."},
 				{Name: "kind", Type: "string", Required: true, Description: "Hook kind.",
 					Enum: []any{"preference", "rule", "fact", "project_state", "workflow", "lesson"}},
 				{Name: "text", Type: "string", Required: true, Description: "The memory content to store."},
@@ -125,7 +125,7 @@ func (globalCogmemProvider) RegisterTools(deps global.Deps) []global.ToolDefinit
 			"Create a new memory domain and return its assigned id.",
 			[]global.Parameter{
 				{Name: "type", Type: "string", Required: true, Description: "Domain type.",
-					Enum: []any{"project", "workflow", "repo", "baseline", "user_profile"}},
+					Enum: []any{"project", "workflow", "repo"}},
 				{Name: "name", Type: "string", Required: true, Description: "Domain name."},
 				{Name: "summary", Type: "string", Required: false, Description: "Optional one-line summary."},
 			}, true, createDomain),
