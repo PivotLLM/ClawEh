@@ -4,9 +4,10 @@
 // Copyright (c) 2026 Tenebris Technologies Inc.
 
 // Package cogmem exposes the cognitive-memory store (pkg/cogmem/store) as a
-// transport-neutral tool provider with BARE names ("get_domain", "remember",
+// transport-neutral tool provider with BARE names ("domain_get", "hook_create",
 // ...). The aggregator mounts the provider under the "cogmem" namespace, so the
-// published tool names are "cogmem_get_domain", "cogmem_remember", etc.
+// published tool names are "cogmem_domain_get", "cogmem_hook_create", etc.
+// Names follow the object_verb convention (domain_*, hook_*, memory_*).
 //
 // Every tool is session-scoped: it operates on the per-session .cogmem.db
 // resolved from the workspace and ToolCall.Session. Cognitive memory is ON by
@@ -64,33 +65,33 @@ func (globalCogmemProvider) RegisterTools(deps global.Deps) []global.ToolDefinit
 	}
 
 	return []global.ToolDefinition{
-		def("get_domain",
+		def("domain_get",
 			"Load a memory domain by id together with its active hooks (rendered as readable text including each hook id).",
 			[]global.Parameter{
 				{Name: "id", Type: "string", Required: true, Description: "Domain id (e.g. d3K9P)."},
 			}, true, getDomain),
 
-		def("search",
+		def("hook_search",
 			"Search active memory hooks by a case-insensitive substring of their text.",
 			[]global.Parameter{
 				{Name: "query", Type: "string", Required: true, Description: "Substring to match against hook text."},
 				{Name: "limit", Type: "integer", Required: false, Description: "Max results (default 20)."},
 			}, true, search),
 
-		def("list_domains",
+		def("domain_list",
 			"List memory domains (id, name, summary, status). Optionally filter by status.",
 			[]global.Parameter{
 				{Name: "status", Type: "string", Required: false, Description: "Filter by status.",
 					Enum: []any{"active", "review", "archived"}},
 			}, true, listDomains),
 
-		def("explain",
+		def("memory_explain",
 			"Summarize the status, source, and evidence of a domain or hook id.",
 			[]global.Parameter{
 				{Name: "id", Type: "string", Required: true, Description: "A domain id (d…) or hook id (h…)."},
 			}, true, explain),
 
-		def("remember",
+		def("hook_create",
 			"Record a durable memory hook (a preference, rule, fact, project_state, workflow, or lesson). With NO domain_id and NO domain_hint it records to your always-on 'general' domain (global rules/preferences/facts that should always be in context). Give a domain_hint to create/use a project domain, or a domain_id to target a specific one.",
 			[]global.Parameter{
 				{Name: "domain_id", Type: "string", Required: false, Description: "Target domain id. If omitted and no domain_hint is given, records to the always-on general domain."},
@@ -103,7 +104,7 @@ func (globalCogmemProvider) RegisterTools(deps global.Deps) []global.ToolDefinit
 					Enum: []any{"active", "review"}},
 			}, true, remember),
 
-		def("update_domain",
+		def("domain_update",
 			"Patch a domain under optimistic concurrency (requires the current expected_version).",
 			[]global.Parameter{
 				{Name: "id", Type: "string", Required: true, Description: "Domain id."},
@@ -114,14 +115,14 @@ func (globalCogmemProvider) RegisterTools(deps global.Deps) []global.ToolDefinit
 				{Name: "set_constraints", Type: "array", Items: "string", Required: false, Description: "Replace the constraints list."},
 			}, true, updateDomain),
 
-		def("retire_hook",
+		def("hook_retire",
 			"Retire a hook (it stays in the audit trail but leaves active memory).",
 			[]global.Parameter{
 				{Name: "id", Type: "string", Required: true, Description: "Hook id."},
 				{Name: "reason", Type: "string", Required: true, Description: "Why it is being retired."},
 			}, true, retireHook),
 
-		def("create_domain",
+		def("domain_create",
 			"Create a new memory domain and return its assigned id.",
 			[]global.Parameter{
 				{Name: "type", Type: "string", Required: true, Description: "Domain type.",
@@ -130,26 +131,26 @@ func (globalCogmemProvider) RegisterTools(deps global.Deps) []global.ToolDefinit
 				{Name: "summary", Type: "string", Required: false, Description: "Optional one-line summary."},
 			}, true, createDomain),
 
-		def("archive_domain",
+		def("domain_archive",
 			"Archive a domain so it is no longer used in prompting.",
 			[]global.Parameter{
 				{Name: "id", Type: "string", Required: true, Description: "Domain id."},
 			}, true, archiveDomain),
 
-		def("forget",
+		def("hook_forget",
 			"Retire all active hooks matching a query (optionally limited to one domain). Reports how many were retired.",
 			[]global.Parameter{
 				{Name: "query", Type: "string", Required: true, Description: "Substring to match against active hook text."},
 				{Name: "domain_id", Type: "string", Required: false, Description: "Restrict to this domain."},
 			}, true, forget),
 
-		def("consolidate",
+		def("memory_consolidate",
 			"Request a (non-blocking) memory-consolidation pass. Returns immediately.",
 			[]global.Parameter{
 				{Name: "scope", Type: "string", Required: false, Description: "Optional scope hint (currently advisory)."},
 			}, true, consolidate),
 
-		def("status",
+		def("memory_status",
 			"Report cognitive-memory health: database path, last consolidation run, and pending-hook count.",
 			nil, true, status),
 	}

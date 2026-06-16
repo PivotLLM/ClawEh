@@ -40,7 +40,7 @@ func (s archiveSource) Range(minSeq, maxSeq int64) ([]consolidate.SourceMessage,
 }
 
 // setupCogmemConsolidation builds and starts the cognitive-memory consolidation
-// manager and installs the cogmem_consolidate tool trigger. It is inert unless
+// manager and installs the cogmem_memory_consolidate tool trigger. It is inert unless
 // at least one agent is allowed the cogmem tools, and every job it runs is
 // scoped to a cognitive agent's session.
 func setupCogmemConsolidation(cfg *config.Config, agentLoop *agent.AgentLoop) *consolidate.Manager {
@@ -110,7 +110,7 @@ func setupCogmemConsolidation(cfg *config.Config, agentLoop *agent.AgentLoop) *c
 	mgr.Start(context.Background())
 	agentLoop.SetCogmemManager(mgr)
 
-	// The cogmem_consolidate tool triggers a manual run for its session.
+	// The cogmem_memory_consolidate tool triggers a manual run for its session.
 	cogmemtools.SetConsolidateTrigger(func(agentID, sessionKey string) {
 		inst, ok := agentLoop.GetRegistry().GetAgent(agentID)
 		if !ok || inst == nil {

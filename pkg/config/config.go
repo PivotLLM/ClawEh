@@ -312,11 +312,11 @@ func (a *AgentConfig) IsToolAllowed(name string) bool {
 
 // CognitiveMemoryEnabled reports whether this agent is allowed the cognitive-
 // memory tools. The subsystem activates for an agent only when that agent may
-// call the cogmem tools; "cogmem_get_domain" is used as the sentinel. Agents
+// call the cogmem tools; "cogmem_domain_get" is used as the sentinel. Agents
 // that are not allowed cogmem tools get IDENTICAL behavior to before — no
 // prompt injection, no archive hook, no consolidation.
 func (a *AgentConfig) CognitiveMemoryEnabled() bool {
-	return a.IsToolAllowed("cogmem_get_domain")
+	return a.IsToolAllowed("cogmem_domain_get")
 }
 
 type SubagentsConfig struct {

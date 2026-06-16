@@ -27,7 +27,7 @@ no separate engine flag.
 | D6 | Sleep-cycle triggers | **Per-agent configurable.** Defaults: every **50** meaningful messages, **60** idle minutes, nightly **on**. |
 | D7 | Retention guard | **Per-agent `protect_unconsolidated`** prevents archive pruning from removing unconsolidated messages. |
 | D8 | Curated files + persona | The **5 standard files are kept** as the verbatim, authoritative human layer; the agent writes learned memory to the **DB, not the files**; consolidation reconciles learned memory against the curated files (curated always wins). |
-| D9 | Forget/purge | `cogmem_forget` retires active memory + regenerates the read-only export. Physical archive purge stays an operator workflow, never an LLM tool. |
+| D9 | Forget/purge | `cogmem_hook_forget` retires active memory + regenerates the read-only export. Physical archive purge stays an operator workflow, never an LLM tool. |
 | D10 | Activation | **No `engine` flag.** Cognitive memory is active for an agent exactly when that agent is allowed the `cogmem` tools (existing per-agent tool allowlist). Allowing/denying those tools is the on/off control (§3.3). |
 | D11 | File access | General file-write tools are confined by default to `<workspace>/files/`; the curated `.md` files, `memory/`, and `sessions/` are **not** agent-writable. Memory is written only via `cogmem` tools (§3.4). |
 | D12 | Addressing | Domains and hooks have **short, stable, system-assigned ids**. The index shows `id · name · summary`; tools key on **id**. Names are LLM-supplied labels and need not be unique (§10, §12). |
@@ -356,7 +356,7 @@ retiring one bad memory doesn't rewrite unrelated state; optimistic concurrency 
 cleaner per-row. Keep `state_json` for structured domain state; represent discrete
 knowledge as hooks.
 
-**Search at this scale.** `cogmem_search` runs a plain SQL `LIKE`/scan over active
+**Search at this scale.** `cogmem_hook_search` runs a plain SQL `LIKE`/scan over active
 hooks - trivially fast over a few hundred rows. No FTS5 table is needed; the
 archive keeps its own FTS for raw-history search, which is a different corpus and
 purpose.
@@ -376,7 +376,7 @@ value so the caller can cache it and invalidate only when `stable_rev` changes
 **Dynamic part (per turn, tail):** the full state + active hooks of the
 **most-recently-active** domain(s) by `last_active_at`, up to `top_k_domains`,
 bounded by `max_chars`. This covers continuation. On a **topic switch** the LLM
-sees the index and pulls the right domain with `cogmem_get_domain(id)` - one tool
+sees the index and pulls the right domain with `cogmem_domain_get(id)` - one tool
 round-trip, rare and cheap at < 10 domains. (Recency is the only pre-load signal;
 keyword/vector pre-load is deferred - §18.)
 
@@ -402,7 +402,7 @@ type ComposeResult struct {
 ```
 
 **Output (routed block):** rendered with hook ids so the LLM can act on a specific
-hook (e.g. `cogmem_retire_hook`):
+hook (e.g. `cogmem_hook_retire`):
 
 ```markdown
 ## Active Context: d7 · Website Redesign
@@ -532,9 +532,9 @@ Every resolution writes a `memory_events` row (old, new, evidence, reason).
 
 ### 11.6 Domain Discovery (D5 - hybrid)
 
-- **Explicit** - agent/user calls `cogmem_create_domain`.
+- **Explicit** - agent/user calls `cogmem_domain_create`.
 - **Proposed** - the sleep cycle may create a domain in **`review` status**, kept
-  out of prompts until confirmed by later evidence or an explicit `cogmem_remember`
+  out of prompts until confirmed by later evidence or an explicit `cogmem_hook_create`
   / promotion. Broad coverage without junk topics in routing.
 - **Promotion (point 3)** - by default (`auto_promote: false`, conservative)
   `review` items become `active` only on explicit confirmation; the sleep cycle
@@ -544,7 +544,7 @@ Every resolution writes a `memory_events` row (old, new, evidence, reason).
 - **Pending confirmations.** `review` items are not silently shelved: a capped
   **pending digest** is surfaced in the prompt (§8/§10) so the agent can confirm
   them with you **opportunistically** - prompt guidance is "ask at natural moments,
-  batch, do not pester." On "yes" the agent calls `cogmem_remember` and the item
+  batch, do not pester." On "yes" the agent calls `cogmem_hook_create` and the item
   becomes `active`; on "no" it is retired/rejected. Pending items also appear in
   the export (§13) so you can confirm/reject proactively. Per-agent
   `pending.surface` selects `ask` (default) or `export_only` (no proactive asking);
@@ -637,7 +637,7 @@ prompts alongside models. The prompt and the model are the two quality levers.
 
 **Per-run debug (for model comparison).** Each run records a `consolidation_runs`
 row (trigger, model, seq range, input/output tokens, latency, status,
-ops-applied, error, prompt_hash), surfaced by `cogmem_status`. With `debug_dump`
+ops-applied, error, prompt_hash), surfaced by `cogmem_memory_status`. With `debug_dump`
 on, the full prompt + raw response + parsed ops are written to
 `memory/consolidation/<timestamp>.json` so you can read exactly what each model
 produced and why it was accepted or rejected.
@@ -665,21 +665,21 @@ automatically. All tools address domains/hooks **by id** (D12).
 
 | Tool | Mode | Purpose |
 |---|---|---|
-| `cogmem_get_domain` | read | Load one domain by **id**: summary/state/hooks (incl. hook ids). The LLM's pull path. |
-| `cogmem_search` | read | Keyword/substring search (SQL scan) over active hooks. |
-| `cogmem_list_domains` | read | List active/review/archived domains (id · name · summary). |
-| `cogmem_explain` | read | Explain why a hook/domain (by id) is active, with evidence. |
-| `cogmem_remember` | write | Add/update a durable hook from explicit instruction or strong evidence. |
-| `cogmem_update_domain` | write | Typed patch (summary/blockers/next-actions/constraints) by id with `expected_version`. |
-| `cogmem_retire_hook` | write | Retire a hook by id with a reason (stays audited). |
-| `cogmem_create_domain` | write | Create a project/workflow/repo/profile domain; **returns the assigned id** (D5). |
-| `cogmem_archive_domain` | write | Archive a domain by id, out of default prompting. |
-| `cogmem_forget` | write | Retire active memory for a topic; regenerate export (D9). |
-| `cogmem_consolidate` | control | Queue a consolidation run (non-blocking). |
-| `cogmem_status` | read | DB health, last consolidation, degraded mode. |
+| `cogmem_domain_get` | read | Load one domain by **id**: summary/state/hooks (incl. hook ids). The LLM's pull path. |
+| `cogmem_hook_search` | read | Keyword/substring search (SQL scan) over active hooks. |
+| `cogmem_domain_list` | read | List active/review/archived domains (id · name · summary). |
+| `cogmem_memory_explain` | read | Explain why a hook/domain (by id) is active, with evidence. |
+| `cogmem_hook_create` | write | Add/update a durable hook from explicit instruction or strong evidence. |
+| `cogmem_domain_update` | write | Typed patch (summary/blockers/next-actions/constraints) by id with `expected_version`. |
+| `cogmem_hook_retire` | write | Retire a hook by id with a reason (stays audited). |
+| `cogmem_domain_create` | write | Create a project/workflow/repo/profile domain; **returns the assigned id** (D5). |
+| `cogmem_domain_archive` | write | Archive a domain by id, out of default prompting. |
+| `cogmem_hook_forget` | write | Retire active memory for a topic; regenerate export (D9). |
+| `cogmem_memory_consolidate` | control | Queue a consolidation run (non-blocking). |
+| `cogmem_memory_status` | read | DB health, last consolidation, degraded mode. |
 
-`cogmem_update_domain` uses a typed patch + `expected_version` (optimistic
-concurrency). `cogmem_forget` retires matching hooks and regenerates the export;
+`cogmem_domain_update` uses a typed patch + `expected_version` (optimistic
+concurrency). `cogmem_hook_forget` retires matching hooks and regenerates the export;
 it never rewrites raw archives - physical purge is operator-only (D9).
 
 **Never exposed:** raw SQL; raw writes to the curated files or the export; direct
@@ -891,7 +891,7 @@ cheaper, and at least as accurate. **Defer.**
 - Memorize sensitive personal data only on explicit request and when useful.
 - Memory cannot override higher-priority instructions or tool ACLs.
 - The export excludes raw transcripts by default.
-- `cogmem_forget` lets the user remove active memory without a human file edit.
+- `cogmem_hook_forget` lets the user remove active memory without a human file edit.
 - Raw archive purge stays an operator workflow, not an LLM tool.
 - Log memory operations structurally; avoid logging full sensitive content unless
   `log_message_content` is enabled.
@@ -907,10 +907,10 @@ authority); consolidation-payload schema validation (valid, invalid id, secret i
 text, partial-failure abort); export banner/content; Compose stable-block (+rev)
 and recency routed-block selection.
 
-**Tools** (extend `tests/test_mcpserver.sh`): `cogmem_get_domain`/`cogmem_search`
-empty + positive; `cogmem_create_domain` returns an id; `cogmem_remember` creates
-a hook with evidence; `cogmem_update_domain` rejects stale `expected_version`;
-`cogmem_retire_hook` removes a hook from Compose; `cogmem_forget` retires matches;
+**Tools** (extend `tests/test_mcpserver.sh`): `cogmem_domain_get`/`cogmem_hook_search`
+empty + positive; `cogmem_domain_create` returns an id; `cogmem_hook_create` creates
+a hook with evidence; `cogmem_domain_update` rejects stale `expected_version`;
+`cogmem_hook_retire` removes a hook from Compose; `cogmem_hook_forget` retires matches;
 write tools reject missing session context; cogmem tools absent when the `cogmem`
 provider isn't in the agent's allowlist; writes outside `<workspace>/files/`
 rejected; explicit allowlists respected.
