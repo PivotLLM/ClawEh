@@ -58,14 +58,19 @@ cognitive-memory consolidation**, so anything you write in them shapes what the
 agent learns. The agent records what it learns to its memory database (via the
 `cogmem_*` tools / the sleep cycle), not to your files.
 
-### Agent file access: `<workspace>/files`
-By default an agent now has **read-only access to its workspace except for
-`<workspace>/files`**, which is its read/write working area for drafts and
-outputs. This directory is created automatically. **Existing agent files that
-need to be writable must be moved into `files/` manually.** (This default can be
-changed in config if you need the whole workspace writable.) A shared
-**common directory** (default `agents/common`, configurable to any path) also
-lets agents exchange files via `common_put` / `common_get` / `common_list` /
+### Agent file access: `files/` + `skills/`
+By default an agent's file tools are scoped to just two directories:
+**`<workspace>/files`** (read **and** write — its working area for drafts and
+outputs, created automatically) and **`<workspace>/skills`** (read-only). The rest
+of the workspace is invisible to the agent's file tools — including the
+human-authored config files (`AGENTS.md`, `SOUL.md`, `IDENTITY.md`, `USER.md`,
+`MEMORY.md`), which are already injected into its prompt, and subsystem files like
+`COGMEM.md`/`COMPRESSION.md`, which are configuration, not instructions for the
+agent. Both lists are configurable (`workspace_read_subdirs`, default
+`["files","skills"]`; `workspace_write_subdir`, default `files`). **Existing files
+that need to be agent-writable must be moved into `files/` manually.** A shared
+**common directory** (default `agents/common`, configurable to any path) also lets
+agents exchange files via `common_put` / `common_get` / `common_list` /
 `common_delete`; access is on by default and can be toggled per agent.
 
 ### What's next
