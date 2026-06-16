@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"unicode"
 
 	"github.com/PivotLLM/ClawEh/pkg/cogmem/store"
@@ -80,10 +81,18 @@ func WithPendingSurface(s string) Option {
 	}
 }
 
-// Composer reads a session's cogmem store.
+// Composer reads a session's cogmem store. A Composer instance is scoped to a
+// single session (see pkg/agent/memory_wiring.go), so its in-memory
+// shownPending set throttles the pending-confirmation digest to once per
+// session per memory: each review memory is surfaced for confirmation exactly
+// once, and re-surfaces only if a new pending memory appears later in the
+// session.
 type Composer struct {
 	st  *store.Store
 	opt options
+
+	mu           sync.Mutex
+	shownPending map[string]bool
 }
 
 // New returns a Composer over st with the given options applied over defaults.
@@ -98,7 +107,23 @@ func New(st *store.Store, opts ...Option) *Composer {
 	for _, fn := range opts {
 		fn(&o)
 	}
-	return &Composer{st: st, opt: o}
+	return &Composer{st: st, opt: o, shownPending: make(map[string]bool)}
+}
+
+// unshownPending returns the pending memories not yet surfaced this session,
+// marking them surfaced. Throttles the digest so the agent asks about each
+// pending memory only once.
+func (c *Composer) unshownPending(pend []store.Memory) []store.Memory {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var out []store.Memory
+	for _, h := range pend {
+		if !c.shownPending[h.ID] {
+			out = append(out, h)
+			c.shownPending[h.ID] = true
+		}
+	}
+	return out
 }
 
 // RouteRequest carries the per-turn routing inputs.
@@ -157,15 +182,16 @@ func (c *Composer) StableBlock(ctx context.Context) (string, int64, error) {
 		b.WriteString("\n")
 	}
 
-	// Pending (unconfirmed) digest.
+	// Pending (unconfirmed) digest — surfaced once per session per memory so the
+	// agent asks the user to confirm without nagging on every turn.
 	if c.opt.pendingSurface != PendingSurfaceExportOnly {
 		pend, err := c.st.ListPending(ctx, db, c.opt.pendingMax)
 		if err != nil {
 			return "", rev, err
 		}
-		if len(pend) > 0 {
-			b.WriteString("## Pending (unconfirmed — ask to confirm, do not act on as rules)\n")
-			for _, h := range pend {
+		if fresh := c.unshownPending(pend); len(fresh) > 0 {
+			b.WriteString("## Pending (unconfirmed — do not act on as rules). Ask the user to confirm; on \"yes\" call cogmem_memory_confirm with the id, on \"no\" call cogmem_memory_retire.\n")
+			for _, h := range fresh {
 				fmt.Fprintf(&b, "- (%s) %s\n", h.ID, h.Text)
 			}
 			b.WriteString("\n")

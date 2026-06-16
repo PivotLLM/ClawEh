@@ -152,6 +152,46 @@ func TestSearchActiveVsReview(t *testing.T) {
 	}
 }
 
+func TestConfirmPromotesReviewMemory(t *testing.T) {
+	h, _ := buildHandlers(t)
+	res := run(t, h["domain_create"], newCall(testSession, map[string]any{"type": "project", "name": "p"}))
+	domainID := extractID(t, res.ForLLM, "d")
+
+	// A review (pending) memory is not returned by active search.
+	res = run(t, h["memory_create"], newCall(testSession, map[string]any{
+		"domain_id": domainID, "type": "fact", "text": "pending widget", "status": "review",
+	}))
+	if res.IsError {
+		t.Fatalf("memory_create error: %s", res.ForLLM)
+	}
+	memoryID := extractID(t, res.ForLLM, "h")
+
+	res = run(t, h["memory_search"], newCall(testSession, map[string]any{"query": "widget"}))
+	if strings.Contains(res.ForLLM, memoryID) {
+		t.Fatalf("review hook found in active search before confirm: %s", res.ForLLM)
+	}
+
+	// memory_confirm promotes it to active.
+	res = run(t, h["memory_confirm"], newCall(testSession, map[string]any{"id": memoryID}))
+	if res.IsError {
+		t.Fatalf("memory_confirm error: %s", res.ForLLM)
+	}
+
+	// now active search finds it.
+	res = run(t, h["memory_search"], newCall(testSession, map[string]any{"query": "widget"}))
+	if !strings.Contains(res.ForLLM, memoryID) {
+		t.Fatalf("confirmed hook not found in active search: %s", res.ForLLM)
+	}
+}
+
+func TestConfirmRequiresID(t *testing.T) {
+	h, _ := buildHandlers(t)
+	res := run(t, h["memory_confirm"], newCall(testSession, map[string]any{}))
+	if !res.IsError {
+		t.Fatalf("expected error for missing id, got: %s", res.ForLLM)
+	}
+}
+
 func TestForgetRetiresMatches(t *testing.T) {
 	h, _ := buildHandlers(t)
 	res := run(t, h["domain_create"], newCall(testSession, map[string]any{"type": "project", "name": "p"}))

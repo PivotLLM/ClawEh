@@ -56,6 +56,47 @@ func TestStableBlockContent(t *testing.T) {
 	}
 }
 
+func TestPendingDigestThrottledToOncePerSession(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	db := s.DB()
+	base, _ := s.GeneralDomain(ctx, db)
+	_, _ = s.AddMemory(ctx, db, store.AddMemoryParams{DomainID: base.ID, Type: store.TypePreference, Text: "Prefers tabs.", Status: store.StatusReview, Confidence: 0.6, Source: store.SourceAssistantInferred})
+
+	c := New(s)
+
+	// First call surfaces the pending digest.
+	first, _, err := c.StableBlock(ctx)
+	if err != nil {
+		t.Fatalf("first stable block: %v", err)
+	}
+	if !strings.Contains(first, "Prefers tabs.") || !strings.Contains(first, "Pending") {
+		t.Fatalf("first call should surface pending:\n%s", first)
+	}
+
+	// Second call (same session/composer) must not re-surface the same pending memory.
+	second, _, err := c.StableBlock(ctx)
+	if err != nil {
+		t.Fatalf("second stable block: %v", err)
+	}
+	if strings.Contains(second, "Prefers tabs.") {
+		t.Fatalf("second call should not re-surface already-asked pending memory:\n%s", second)
+	}
+
+	// A newly added pending memory IS surfaced on the next call.
+	_, _ = s.AddMemory(ctx, db, store.AddMemoryParams{DomainID: base.ID, Type: store.TypeFact, Text: "Uses Linux.", Status: store.StatusReview, Confidence: 0.6, Source: store.SourceAssistantInferred})
+	third, _, err := c.StableBlock(ctx)
+	if err != nil {
+		t.Fatalf("third stable block: %v", err)
+	}
+	if !strings.Contains(third, "Uses Linux.") {
+		t.Fatalf("third call should surface the new pending memory:\n%s", third)
+	}
+	if strings.Contains(third, "Prefers tabs.") {
+		t.Fatalf("third call should not re-surface the old pending memory:\n%s", third)
+	}
+}
+
 func TestRoutedBlockToolTrigger(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()

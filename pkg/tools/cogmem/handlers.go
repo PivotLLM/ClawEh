@@ -376,6 +376,17 @@ func retireHook(s *store.Store, call *global.ToolCall) (string, error) {
 	return fmt.Sprintf("Retired memory %s.", id), nil
 }
 
+func confirmHook(s *store.Store, call *global.ToolCall) (string, error) {
+	id := argStr(call, "id")
+	if id == "" {
+		return "", errors.New("id is required")
+	}
+	if err := s.PromoteMemory(call.Ctx, s.DB(), id); err != nil {
+		return "", mapErr(err, id)
+	}
+	return fmt.Sprintf("Confirmed memory %s (now active).", id), nil
+}
+
 func createDomain(s *store.Store, call *global.ToolCall) (string, error) {
 	typ := argStr(call, "type")
 	name := argStr(call, "name")

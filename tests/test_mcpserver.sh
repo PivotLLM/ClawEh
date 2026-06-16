@@ -55,7 +55,7 @@ FULL_URL="${SERVER_URL}${ENDPOINT}"
 # (subagent capability) and hw_i2c/hw_spi (Linux + I2C/SPI devices) are also
 # exposed but only probed when actually present in the catalogue, so this script
 # stays portable.
-EXPECTED_TOOLS="file_read file_write file_edit file_append file_list file_copy web_fetch web_search msg_send_file session_messages session_search session_compact session_info session_summary_list session_summary_get session_clear shell_exec skill_find skill_install cron_schedule cogmem_domain_get cogmem_memory_search cogmem_domain_list cogmem_explain cogmem_memory_create cogmem_domain_update cogmem_memory_retire cogmem_domain_create cogmem_domain_archive cogmem_memory_forget cogmem_consolidate cogmem_status cogmem_export common_list common_get common_put common_delete"
+EXPECTED_TOOLS="file_read file_write file_edit file_append file_list file_copy web_fetch web_search msg_send_file session_messages session_search session_compact session_info session_summary_list session_summary_get session_clear shell_exec skill_find skill_install cron_schedule cogmem_domain_get cogmem_memory_search cogmem_domain_list cogmem_explain cogmem_memory_create cogmem_domain_update cogmem_memory_retire cogmem_memory_confirm cogmem_domain_create cogmem_domain_archive cogmem_memory_forget cogmem_consolidate cogmem_status cogmem_export common_list common_get common_put common_delete"
 EXPECTED_TOOL_COUNT=37
 
 # Namespace prefixes that must have at least one tool in the catalogue.
@@ -416,6 +416,7 @@ check_tool "1.12" "session_info"
 check_tool "1.13" "cogmem_domain_create"
 check_tool "1.14" "cogmem_memory_create"
 check_tool "1.15" "cogmem_status"
+check_tool "1.16" "cogmem_memory_confirm"
 # find_tools_regex and find_tools_bm25 are only registered when
 # tools.mcp.discovery.enabled=true — not set in the standard test config.
 

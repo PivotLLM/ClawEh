@@ -45,6 +45,18 @@ These signals are deduplicated and ranked (tool trigger, then lexical match, the
 recency), so each relevant domain is loaded once. No embeddings or vector search
 are involved — routing is lexical and deterministic.
 
+#### Confirming inferred memories
+When the agent (or the sleep cycle) infers something it is not certain about, it
+stores it as a **pending** memory rather than acting on it. Pending memories are
+surfaced **once per session** as a short digest in the prompt, and the agent asks
+you to confirm in chat. Reply naturally — on a "yes" the agent calls
+`cogmem_memory_confirm` to promote it to active memory, and on a "no" it calls
+`cogmem_memory_retire` to drop it. The digest is throttled so it is not repeated
+every turn; a newly inferred pending memory re-surfaces the next turn. Set
+`memory.prompt.pending_surface: "export_only"` to keep pending items out of the
+prompt entirely (they still appear in `cogmem_export` and the WebUI memory
+browser).
+
 #### Purging cognitive memory
 `claw memory purge` cleans up accumulated clutter across **all** assistants. It
 purges everything that is **not current active memory** — every domain whose

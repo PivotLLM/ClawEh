@@ -120,11 +120,17 @@ func (globalCogmemProvider) RegisterTools(deps global.Deps) []global.ToolDefinit
 			}, true, updateDomain),
 
 		def("memory_retire",
-			"Retire a memory (it stays in the audit trail but leaves active memory). To change a memory, retire the old one and create a new one.",
+			"Retire a memory (it stays in the audit trail but leaves active memory). To change a memory, retire the old one and create a new one. Also use this to reject a pending (unconfirmed) memory when the user declines it.",
 			[]global.Parameter{
 				{Name: "id", Type: "string", Required: true, Description: "Memory id."},
 				{Name: "reason", Type: "string", Required: true, Description: "Why it is being retired."},
 			}, true, retireHook),
+
+		def("memory_confirm",
+			"Confirm a pending (unconfirmed) memory, promoting it from review to active so it is used in prompting. Call this when the user confirms a memory from the pending digest.",
+			[]global.Parameter{
+				{Name: "id", Type: "string", Required: true, Description: "Pending memory id (from the pending digest)."},
+			}, true, confirmHook),
 
 		def("domain_create",
 			"Create a new memory domain and return its assigned id. Register each ongoing project as a 'project' domain so your project list stays complete.",
