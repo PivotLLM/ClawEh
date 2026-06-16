@@ -2030,7 +2030,13 @@ func (al *AgentLoop) runLLMIteration(
 		// Check if no tool calls - then check reasoning content if any
 		if len(response.ToolCalls) == 0 {
 			finalContent = response.Content
-			if finalContent == "" && response.ReasoningContent != "" {
+			// Only fall back to reasoning_content as the visible reply when the
+			// operator opts in. Default off: a model that returns empty content but
+			// full reasoning (e.g. degenerating into reasoning-only/repetition output)
+			// must NOT leak its raw chain-of-thought to the user — empty content then
+			// hits the graceful empty-response path instead.
+			if finalContent == "" && response.ReasoningContent != "" &&
+				al.cfg != nil && al.cfg.Agents.Defaults.ShowReasoningAsContent {
 				finalContent = response.ReasoningContent
 			}
 			lastNormal = response.Normal

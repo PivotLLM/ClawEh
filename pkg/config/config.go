@@ -362,6 +362,11 @@ type AgentDefaults struct {
 	// (default) the user receives only the final answer, not the play-by-play.
 	StreamToolActivity        bool `json:"stream_tool_activity,omitempty"  env:"CLAW_AGENTS_DEFAULTS_STREAM_TOOL_ACTIVITY"`
 	AllowReadOutsideWorkspace bool `json:"allow_read_outside_workspace"    env:"CLAW_AGENTS_DEFAULTS_ALLOW_READ_OUTSIDE_WORKSPACE"`
+	// ShowReasoningAsContent, when true, lets a model's reasoning_content be used
+	// as the user-facing reply when the model returns empty content. Default false:
+	// reasoning never reaches the main chat (it would otherwise leak raw
+	// chain-of-thought, e.g. a model that degenerates into reasoning-only output).
+	ShowReasoningAsContent bool `json:"show_reasoning_as_content,omitempty" env:"CLAW_AGENTS_DEFAULTS_SHOW_REASONING_AS_CONTENT"`
 	// WorkspaceWriteSubdir confines writes to <workspace>/<subdir> while reads
 	// remain workspace-wide. Only applies when RestrictToWorkspace is true.
 	// Default "files" (writes land in <workspace>/files). Set to "" to make the
