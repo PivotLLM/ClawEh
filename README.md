@@ -476,6 +476,17 @@ The server auto-starts whenever any enabled model in `models` uses a `*-cli` pro
 
 The `tools` list is a single global allowlist applied to all MCP clients (not per-LLM). Supports `"*"` (all tools), prefix globs like `"read_*"`, and exact names. The agent's internal `message` tool is never exposed regardless of the allowlist. Tools inherit the default agent's workspace and sandboxing rules.
 
+### Consuming external MCP servers (claw as an MCP client)
+
+Claw can also connect **outward** to third-party (upstream) MCP servers and make their tools available to your agents. Configure them under `tools.mcp.servers` (stdio, SSE, or Streamable HTTP transports, with optional auth headers and env files); claw connects on startup, lists each server's tools, and registers them as ordinary tools.
+
+There is an important split by provider type:
+
+- **Direct API providers** (`anthropic`, `openai`, `openai-compat`, `gemini`): **get external MCP tools automatically.** Claw acts as the MCP client — it lists the upstream tools, presents them to the model alongside its own, and proxies each call to the upstream server.
+- **CLI providers** (`claude-cli`, `codex-cli`, `gemini-cli`): **do not** receive external MCP tools through claw (the CLI runs as its own agent and ignores claw-side tool definitions). Instead, **configure those MCP servers directly in each CLI** using its own native MCP configuration — the CLIs (Claude Code, Codex CLI, Gemini CLI) all support connecting to MCP servers themselves. (They reach *claw's* own tools via the MCP host above; point them at any *external* MCP servers directly.)
+
+In short: API agents get upstream MCP via claw; CLI agents should be pointed at upstream MCP servers directly in their own config. External MCP servers can be managed from the WebUI (the MCP page) or in `tools.mcp.servers`.
+
 ### Client configuration
 
 The server speaks the Streamable HTTP transport at `http://127.0.0.1:5911/mcp`.
