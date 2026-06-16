@@ -2142,20 +2142,13 @@ func (al *AgentLoop) runLLMIteration(
 			go func(idx int, tc providers.ToolCall) {
 				defer wg.Done()
 
-				redacted := tools.RedactArgs(tc.Name, tc.Arguments)
+				// Tool arguments are intentionally NOT logged: they routinely carry
+				// memory content, file contents, and other user data.
 				logger.InfoCF("agent", "Tool call dispatched",
 					map[string]any{
 						"agent_id":  agent.ID,
 						"tool":      tc.Name,
 						"iteration": iteration,
-						"args":      redacted,
-					})
-				logger.DebugCF("agent", "Tool call dispatched (raw args)",
-					map[string]any{
-						"agent_id":  agent.ID,
-						"tool":      tc.Name,
-						"iteration": iteration,
-						"args":      tc.Arguments,
 					})
 
 				// Create async callback for tools that implement AsyncExecutor.

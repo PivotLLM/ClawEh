@@ -98,64 +98,26 @@ func findToolloopDispatchLines(t *testing.T, out string) (infLine, dbgLine strin
 	return infLine, dbgLine
 }
 
-// TestRunToolLoop_WriteFileToolCall_RedactsArgsAtInfo verifies the toolloop.go
-// per-tool-call INF line carries content_bytes, not raw content.
-//
-// Mutation evidence: revert the RedactArgs(...) call back to
-// utils.Truncate(string(json.Marshal(tc.Arguments)), 200) at toolloop.go and
-// this test fails on the 'raw secret leaked' assertion.
-func TestRunToolLoop_WriteFileToolCall_RedactsArgsAtInfo(t *testing.T) {
+// TestRunToolLoop_DispatchLogOmitsArgs verifies the toolloop.go per-tool-call
+// dispatch log names the tool but carries NO arguments at all — tool args
+// routinely contain memory/file content that must never reach the logs. There is
+// also no longer a paired raw-args DBG line.
+func TestRunToolLoop_DispatchLogOmitsArgs(t *testing.T) {
 	secret := strings.Repeat("S", 10240)
 	out := runToolLoopWriteFileOnce(t, secret)
 
-	infLine, _ := findToolloopDispatchLines(t, out)
+	infLine, dbgLine := findToolloopDispatchLines(t, out)
 	if infLine == "" {
 		t.Fatalf("expected INF 'Tool call dispatched' line in toolloop output: %s", out)
 	}
-	if strings.Contains(infLine, secret) {
-		t.Fatalf("raw write_file content leaked into toolloop INF log line")
+	if !strings.Contains(infLine, "file_write") {
+		t.Errorf("dispatch line should name the tool: %s", infLine)
 	}
-	if !strings.Contains(infLine, "content_bytes") || !strings.Contains(infLine, "10240") {
-		t.Errorf("INF line missing redacted content_bytes summary: %s", infLine)
+	if strings.Contains(infLine, secret) || strings.Contains(infLine, `"args"`) {
+		t.Fatalf("tool args leaked into dispatch INF log line: %s", infLine)
 	}
-}
-
-// TestRunToolLoop_WriteFileToolCall_DBGCarriesRawArgs verifies the paired DBG
-// line in toolloop.go carries the full raw arguments.
-//
-// Mutation evidence: delete the DebugCF block at toolloop.go and this test
-// fails with 'expected DBG raw-args companion line'.
-func TestRunToolLoop_WriteFileToolCall_DBGCarriesRawArgs(t *testing.T) {
-	secret := strings.Repeat("D", 4096)
-	out := runToolLoopWriteFileOnce(t, secret)
-
-	_, dbgLine := findToolloopDispatchLines(t, out)
-	if dbgLine == "" {
-		t.Fatalf("expected DBG 'Tool call dispatched (raw args)' line in toolloop output: %s", out)
-	}
-	if !strings.Contains(dbgLine, secret) {
-		t.Errorf("DBG line should carry the raw args, got: %s", dbgLine)
-	}
-}
-
-// TestRunToolLoop_WriteFileToolCall_NoTruncateCannotUncap verifies the
-// global --no-truncate flag does not uncap toolloop.go's INF redaction.
-func TestRunToolLoop_WriteFileToolCall_NoTruncateCannotUncap(t *testing.T) {
-	utils.SetDisableTruncation(true)
-	defer utils.SetDisableTruncation(false)
-
-	secret := strings.Repeat("N", 8192)
-	out := runToolLoopWriteFileOnce(t, secret)
-
-	infLine, _ := findToolloopDispatchLines(t, out)
-	if infLine == "" {
-		t.Fatalf("expected INF 'Tool call dispatched' line: %s", out)
-	}
-	if strings.Contains(infLine, secret) {
-		t.Fatalf("--no-truncate uncapped the toolloop INF redaction: raw secret leaked")
-	}
-	if !strings.Contains(infLine, "content_bytes") || !strings.Contains(infLine, "8192") {
-		t.Errorf("INF line missing redacted content_bytes summary under --no-truncate: %s", infLine)
+	if dbgLine != "" {
+		t.Fatalf("raw-args DBG line should no longer be emitted: %s", dbgLine)
 	}
 }
 
