@@ -89,8 +89,9 @@ type Manager struct {
 	// memoryBlocks, when non-nil, returns the cognitive-memory STABLE and ROUTED
 	// prompt blocks for the session. Set by the agent loop for cognitive agents
 	// only; Build injects the blocks into the system message when non-empty.
-	// recentTools (newest-first, capped) is passed for tool-trigger routing.
-	memoryBlocks func(sessionKey string, recentTools []string) (stable, routed string)
+	// recentTools (newest-first, capped) feeds tool-trigger routing; routeText is
+	// the latest user message for lexical routing.
+	memoryBlocks func(sessionKey string, recentTools []string, routeText string) (stable, routed string)
 
 	// recentTools is a small newest-first ring of recently-invoked tool names,
 	// fed by RecordToolUse and read at Build time so cognitive memory can auto-load
@@ -716,8 +717,9 @@ func (m *Manager) SetProtectUnconsolidated(v bool) {
 // SetMemoryBlocks installs a callback that returns the cognitive-memory STABLE
 // and ROUTED prompt blocks for the session. Build injects them into the system
 // message when either is non-empty. The callback receives the newest-first
-// recent-tool ring for tool-trigger routing. Passing nil disables injection.
-func (m *Manager) SetMemoryBlocks(fn func(sessionKey string, recentTools []string) (stable, routed string)) {
+// recent-tool ring (tool-trigger routing) and the latest user message (lexical
+// routing). Passing nil disables injection.
+func (m *Manager) SetMemoryBlocks(fn func(sessionKey string, recentTools []string, routeText string) (stable, routed string)) {
 	m.memoryBlocks = fn
 }
 
@@ -805,7 +807,7 @@ func (m *Manager) Build(_ context.Context) ([]providers.Message, error) {
 	// msgs[0].Content for adapters that ignore SystemParts, matching the
 	// session-token injection above.
 	if m.memoryBlocks != nil && len(msgs) > 0 && msgs[0].Role == "system" {
-		stable, routed := m.memoryBlocks(m.sessionKey, m.recentToolsSnapshot())
+		stable, routed := m.memoryBlocks(m.sessionKey, m.recentToolsSnapshot(), latestUserText(history))
 		if stable != "" {
 			msgs[0].Content += "\n\n---\n\n" + stable
 			msgs[0].SystemParts = append(msgs[0].SystemParts, providers.ContentBlock{
@@ -824,6 +826,18 @@ func (m *Manager) Build(_ context.Context) ([]providers.Message, error) {
 	}
 
 	return msgs, nil
+}
+
+// latestUserText returns the content of the most recent user-role message in
+// history (the human's intent for this turn), used for lexical memory routing.
+// Returns "" when none — e.g. the turn ends on a tool result.
+func latestUserText(history []providers.Message) string {
+	for i := len(history) - 1; i >= 0; i-- {
+		if history[i].Role == "user" {
+			return history[i].Content
+		}
+	}
+	return ""
 }
 
 // Compact triggers a normal LLM-based compression pass, identical to what

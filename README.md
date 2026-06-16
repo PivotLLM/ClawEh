@@ -23,15 +23,25 @@ agent learns. Cognitive memory is **on by default** for every agent; to disable
 it for a specific agent, give that agent a tool allowlist that excludes the
 `cogmem_*` tools.
 
-Memory is surfaced two ways: the always-on **`general`** domain (global rules,
-preferences, and standing facts) is in every prompt, and topic domains load on
-relevance. Beyond recency, a domain can declare **tool triggers** — a
-comma-separated list of tool-name substrings — so it auto-loads the moment the
-agent uses a matching tool. For example an "Email" domain with triggers
-`google_gmail,microsoft365_mail` brings the agent's mail preferences into context
-as soon as it touches a mail tool. Matching ignores case and underscores. The
-agent sets triggers itself (`cogmem_domain_create`/`cogmem_domain_update`), and
-the sleep cycle can add them when a domain clearly pertains to specific tools.
+Memory is surfaced in layers. The always-on **`general`** domain (global rules,
+preferences, and standing facts) is in every prompt; topic domains are then
+auto-loaded by relevance using three signals:
+
+- **Recency** — the most recently used topic domains.
+- **Lexical match** — domains whose name, summary, or hooks match salient words in
+  the user's latest message, so asking "what's the status of the BioTech report?"
+  pulls in the BioTech domain even if it hasn't been touched recently.
+- **Tool triggers** — a domain can declare a comma-separated list of tool-name
+  substrings, so it auto-loads the moment the agent uses a matching tool. For
+  example an "Email" domain with triggers `google_gmail,microsoft365_mail` brings
+  the agent's mail preferences into context as soon as it touches a mail tool.
+  Matching ignores case and underscores; the agent sets triggers itself
+  (`cogmem_domain_create`/`cogmem_domain_update`), and the sleep cycle can add them
+  when a domain clearly pertains to specific tools.
+
+These signals are deduplicated and ranked (tool trigger, then lexical match, then
+recency), so each relevant domain is loaded once. No embeddings or vector search
+are involved — routing is lexical and deterministic.
 
 ### Workspace `.md` are files are now for humans to edit, not the agent
 The agent no longer edits its own workspace markdown files (`AGENTS.md`,
@@ -58,9 +68,10 @@ lets agents exchange files via `common_put` / `common_get` / `common_list` /
 
 ### What's next
 1. **Monitoring, reviewing, and tweaking cognitive memory** — observing what it
-   learns and refining the prompts, thresholds, and routing.
-2. Depending on what we find, **exploring additional approaches to automatically
-   insert the most appropriate memory** into the agent's context.
+   learns and refining the prompts, thresholds, and routing signals (recency,
+   lexical match, tool triggers).
+2. Depending on what we find, **refining how the most appropriate memory is
+   automatically inserted** into the agent's context.
 
 ClawEh began as a fork of [PicoClaw](https://github.com/sipeed/picoclaw). Written in Go, ClawEh it is focused on a minimal footprint, efficient deployment, core stability, reliability, security, and long-term maintainability.
 

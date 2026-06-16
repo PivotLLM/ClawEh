@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"unicode"
 
 	"github.com/PivotLLM/ClawEh/pkg/cogmem/store"
 )
@@ -212,14 +213,11 @@ func (c *Composer) RoutedBlock(ctx context.Context, req RouteRequest) (RoutedRes
 		return lastActive(topics[i]) > lastActive(topics[j])
 	})
 
-	// Order the candidates: domains activated by a recently-used tool come first
-	// (each tagged with the matching token), then the rest by recency. A single
-	// pass with a seen-set guarantees every domain appears at most once, so a
-	// domain that is both tool-triggered and recent is never duplicated.
-	type candidate struct {
-		d      store.Domain
-		signal string
-	}
+	// Order the candidates by signal strength: (1) domains activated by a
+	// recently-used tool, (2) domains lexically matching the latest user message,
+	// (3) the rest by recency. A single shared seen-set guarantees every domain
+	// appears at most once, so a domain matched by more than one signal (e.g. both
+	// tool-triggered and recent) is never duplicated.
 	seen := make(map[string]bool, len(topics))
 	var ordered []candidate
 	for _, d := range topics {
@@ -227,6 +225,10 @@ func (c *Composer) RoutedBlock(ctx context.Context, req RouteRequest) (RoutedRes
 			seen[d.ID] = true
 			ordered = append(ordered, candidate{d: d, signal: "tool:" + tok})
 		}
+	}
+	for _, cand := range c.lexicalCandidates(ctx, topics, req.RouteText, seen) {
+		seen[cand.d.ID] = true
+		ordered = append(ordered, cand)
 	}
 	for _, d := range topics {
 		if !seen[d.ID] {
@@ -261,6 +263,12 @@ func (c *Composer) RoutedBlock(ctx context.Context, req RouteRequest) (RoutedRes
 	return res, nil
 }
 
+// candidate is one routed-block selection: a domain plus the signal that chose it.
+type candidate struct {
+	d      store.Domain
+	signal string // "tool:<token>", "match:<term>", or "recency"
+}
+
 // matchAnyTool reports the first trigger token of d that matches any recently
 // used tool name, and whether one matched.
 func matchAnyTool(d store.Domain, recentTools []string) (string, bool) {
@@ -273,6 +281,104 @@ func matchAnyTool(d store.Domain, recentTools []string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// lexicalCandidates returns topic domains whose name, summary, or active hooks
+// contain a salient term from the latest user message, ordered by match count
+// (recency breaks ties). Domains already in `seen` (e.g. tool-triggered) are
+// skipped so the caller's dedup holds. Returns nil when routeText has no usable
+// terms — keeping behavior identical to before for empty/tool-result turns.
+func (c *Composer) lexicalCandidates(ctx context.Context, topics []store.Domain, routeText string, seen map[string]bool) []candidate {
+	terms := routeTokens(routeText)
+	if len(terms) == 0 {
+		return nil
+	}
+	db := c.st.DB()
+	// Restrict scoring to the routed topic set (general is handled in StableBlock).
+	inTopics := make(map[string]bool, len(topics))
+	for _, d := range topics {
+		inTopics[d.ID] = true
+	}
+	type hit struct {
+		score int
+		term  string
+	}
+	hits := make(map[string]*hit)
+	bump := func(domainID, term string) {
+		if !inTopics[domainID] || seen[domainID] {
+			return
+		}
+		h := hits[domainID]
+		if h == nil {
+			h = &hit{term: term}
+			hits[domainID] = h
+		}
+		h.score++
+	}
+	for _, t := range terms {
+		// Hook-text matches via the indexed substring scan (returns DomainID).
+		rows, err := c.st.SearchHooks(ctx, db, t, lexicalSearchLimit)
+		if err == nil {
+			for _, h := range rows {
+				bump(h.DomainID, t)
+			}
+		}
+		// Name / summary matches, scored in-memory over the topic set.
+		for _, d := range topics {
+			if strings.Contains(strings.ToLower(d.Name), t) || strings.Contains(strings.ToLower(d.Summary), t) {
+				bump(d.ID, t)
+			}
+		}
+	}
+	if len(hits) == 0 {
+		return nil
+	}
+	// Walk topics in recency order, keep those with a hit; stable-sort by score
+	// so a stronger lexical match wins, recency breaking ties.
+	var out []candidate
+	for _, d := range topics {
+		if h := hits[d.ID]; h != nil {
+			out = append(out, candidate{d: d, signal: "match:" + h.term})
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		return hits[out[i].d.ID].score > hits[out[j].d.ID].score
+	})
+	return out
+}
+
+// routeTokens extracts salient, deduped lowercase terms from the user message for
+// lexical routing: alphanumeric runs of at least minRouteTokenLen, minus a small
+// stopword set, capped at maxRouteTokens.
+func routeTokens(s string) []string {
+	fields := strings.FieldsFunc(strings.ToLower(s), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	})
+	seen := make(map[string]bool, len(fields))
+	var out []string
+	for _, f := range fields {
+		if len(f) < minRouteTokenLen || routeStopwords[f] || seen[f] {
+			continue
+		}
+		seen[f] = true
+		out = append(out, f)
+		if len(out) >= maxRouteTokens {
+			break
+		}
+	}
+	return out
+}
+
+// routeStopwords are common 4+ char words excluded from lexical routing so they
+// don't pull in unrelated domains on ordinary phrasing.
+var routeStopwords = map[string]bool{
+	"what": true, "when": true, "where": true, "which": true, "this": true,
+	"that": true, "with": true, "have": true, "will": true, "from": true,
+	"they": true, "them": true, "then": true, "here": true, "there": true,
+	"about": true, "would": true, "could": true, "should": true, "please": true,
+	"need": true, "want": true, "like": true, "your": true, "ours": true,
+	"into": true, "just": true, "also": true, "make": true, "does": true,
+	"done": true, "been": true, "were": true, "than": true, "very": true,
 }
 
 func renderDomain(d store.Domain, hooks []store.Hook) string {

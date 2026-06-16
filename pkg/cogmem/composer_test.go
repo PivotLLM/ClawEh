@@ -117,6 +117,72 @@ func TestRoutedBlockToolTriggerNoDuplicate(t *testing.T) {
 	}
 }
 
+func TestRoutedBlockLexicalMatch(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	db := s.DB()
+	// "BioTech" is older/less recent; "Other" is the most recently touched.
+	bio, _ := s.CreateDomain(ctx, db, store.CreateDomainParams{AgentID: "a", Type: store.DomainProject, Name: "BioTech", Summary: "research report"})
+	other, _ := s.CreateDomain(ctx, db, store.CreateDomainParams{AgentID: "a", Type: store.DomainProject, Name: "Other", Summary: "misc"})
+	_, _ = s.AddHook(ctx, db, store.AddHookParams{DomainID: bio.ID, Kind: store.KindFact, Text: "The biotech report targets Q3.", Status: store.StatusActive, Confidence: 0.9, Source: store.SourceUserExplicit})
+	_ = s.Touch(ctx, db, bio.ID)
+	_ = s.Touch(ctx, db, other.ID)
+
+	c := New(s, WithTopKDomains(1))
+	res, err := c.RoutedBlock(ctx, RouteRequest{RouteText: "what's the status of the biotech report?", Trace: true})
+	if err != nil {
+		t.Fatalf("routed: %v", err)
+	}
+	// Lexical match on "biotech" must beat the more-recent "Other" for the slot.
+	if len(res.Loaded) != 1 || res.Loaded[0] != bio.ID {
+		t.Fatalf("expected lexical match %s, got %v", bio.ID, res.Loaded)
+	}
+	if len(res.Trace) != 1 || res.Trace[0].Signal != "match:biotech" {
+		t.Fatalf("trace = %+v, want match:biotech", res.Trace)
+	}
+}
+
+func TestRoutedBlockSignalPriorityNoDuplicate(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	db := s.DB()
+	// One domain is both lexically matched AND tool-triggered; it must appear once
+	// and the stronger (tool) signal wins.
+	email, _ := s.CreateDomain(ctx, db, store.CreateDomainParams{
+		AgentID: "a", Type: store.DomainProject, Name: "Email", Summary: "email handling", Triggers: "google_gmail",
+	})
+	_ = s.Touch(ctx, db, email.ID)
+
+	c := New(s, WithTopKDomains(8))
+	res, err := c.RoutedBlock(ctx, RouteRequest{
+		RouteText:   "please check my email",
+		RecentTools: []string{"mcp__fusion__google_gmail_messages_list"},
+		Trace:       true,
+	})
+	if err != nil {
+		t.Fatalf("routed: %v", err)
+	}
+	if len(res.Loaded) != 1 || res.Loaded[0] != email.ID {
+		t.Fatalf("domain should appear exactly once, got %v", res.Loaded)
+	}
+	if res.Trace[0].Signal != "tool:google_gmail" {
+		t.Fatalf("tool signal should win over lexical/recency, got %q", res.Trace[0].Signal)
+	}
+}
+
+func TestRouteTokensStopwordsAndLength(t *testing.T) {
+	got := routeTokens("What is the STATUS of the BioTech report, please?")
+	want := map[string]bool{"status": true, "biotech": true, "report": true}
+	if len(got) != len(want) {
+		t.Fatalf("tokens = %v, want exactly %v", got, want)
+	}
+	for _, tok := range got {
+		if !want[tok] {
+			t.Fatalf("unexpected token %q in %v", tok, got)
+		}
+	}
+}
+
 func TestRoutedBlockRecency(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
