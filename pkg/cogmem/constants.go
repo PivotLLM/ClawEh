@@ -18,7 +18,7 @@ const (
 const (
 	minRouteTokenLen   = 4  // ignore shorter tokens (the, and, you, ...)
 	maxRouteTokens     = 12 // cap salient terms taken from one message
-	lexicalSearchLimit = 50 // max hooks scanned per term via SearchHooks
+	lexicalSearchLimit = 50 // max hooks scanned per term via SearchMemories
 )
 
 // Pending-digest surfacing modes.

@@ -162,8 +162,8 @@ func TestHookLifecycleAndStableRev(t *testing.T) {
 	base, _ := s.GeneralDomain(ctx, s.DB()) // the seeded always-on general domain
 	revAfterDomain, _ := s.StableRev(ctx)
 
-	h, err := s.AddHook(ctx, s.DB(), AddHookParams{
-		DomainID: base.ID, Kind: KindRule, Text: "Never use blue.",
+	h, err := s.AddMemory(ctx, s.DB(), AddMemoryParams{
+		DomainID: base.ID, Type: TypeRule, Text: "Never use blue.",
 		Status: StatusActive, Confidence: 0.95, Source: SourceUserExplicit,
 	})
 	if err != nil {
@@ -177,21 +177,21 @@ func TestHookLifecycleAndStableRev(t *testing.T) {
 	}
 
 	// Supersede.
-	h2, err := s.SupersedeHook(ctx, s.DB(), h.ID, AddHookParams{
-		DomainID: base.ID, Kind: KindRule, Text: "Use blue for the layout.",
+	h2, err := s.SupersedeMemory(ctx, s.DB(), h.ID, AddMemoryParams{
+		DomainID: base.ID, Type: TypeRule, Text: "Use blue for the layout.",
 		Status: StatusActive, Confidence: 0.95, Source: SourceUserExplicit,
 	})
 	if err != nil {
 		t.Fatalf("supersede: %v", err)
 	}
-	old, _ := s.GetHook(ctx, s.DB(), h.ID)
+	old, _ := s.GetMemory(ctx, s.DB(), h.ID)
 	if old.Status != StatusRetired {
 		t.Fatalf("old hook status = %q, want retired", old.Status)
 	}
-	if h2.SupersedesHookID == nil || *h2.SupersedesHookID != h.ID {
+	if h2.SupersedesMemoryID == nil || *h2.SupersedesMemoryID != h.ID {
 		t.Fatalf("supersede link not set on %s", h2.ID)
 	}
-	active, _ := s.ListHooks(ctx, s.DB(), base.ID, StatusActive)
+	active, _ := s.ListMemories(ctx, s.DB(), base.ID, StatusActive)
 	if len(active) != 1 || active[0].Text != "Use blue for the layout." {
 		t.Fatalf("active hooks = %+v", active)
 	}
@@ -201,15 +201,15 @@ func TestSearchAndPending(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()
 	d, _ := s.CreateDomain(ctx, s.DB(), CreateDomainParams{AgentID: "a", Type: DomainProject, Name: "P"})
-	_, _ = s.AddHook(ctx, s.DB(), AddHookParams{DomainID: d.ID, Kind: KindFact, Text: "The BioTech report targets Q3.", Status: StatusActive, Confidence: 0.9, Source: SourceUserExplicit})
-	_, _ = s.AddHook(ctx, s.DB(), AddHookParams{DomainID: d.ID, Kind: KindFact, Text: "Eric likes terse output.", Status: StatusReview, Confidence: 0.6, Source: SourceAssistantInferred})
+	_, _ = s.AddMemory(ctx, s.DB(), AddMemoryParams{DomainID: d.ID, Type: TypeFact, Text: "The BioTech report targets Q3.", Status: StatusActive, Confidence: 0.9, Source: SourceUserExplicit})
+	_, _ = s.AddMemory(ctx, s.DB(), AddMemoryParams{DomainID: d.ID, Type: TypeFact, Text: "Eric likes terse output.", Status: StatusReview, Confidence: 0.6, Source: SourceAssistantInferred})
 
-	hits, err := s.SearchHooks(ctx, s.DB(), "biotech", 10)
+	hits, err := s.SearchMemories(ctx, s.DB(), "biotech", 10)
 	if err != nil || len(hits) != 1 {
 		t.Fatalf("search biotech: %v hits=%d", err, len(hits))
 	}
 	// Review hook is not returned by active search.
-	if h, _ := s.SearchHooks(ctx, s.DB(), "terse", 10); len(h) != 0 {
+	if h, _ := s.SearchMemories(ctx, s.DB(), "terse", 10); len(h) != 0 {
 		t.Fatalf("review hook leaked into active search")
 	}
 	pend, err := s.ListPending(ctx, s.DB(), 8)

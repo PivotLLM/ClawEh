@@ -14,7 +14,7 @@ const (
 	idRandomLen    = 5
 	idMaxAttempts  = 8
 	domainIDPrefix = "d"
-	hookIDPrefix   = "h"
+	memoryIDPrefix = "h"
 	// crockfordAlphabet has 32 symbols; 256 % 32 == 0 so byte%32 is unbiased.
 	crockfordAlphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 )

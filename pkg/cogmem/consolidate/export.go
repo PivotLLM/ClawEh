@@ -35,7 +35,7 @@ func WriteExport(ctx context.Context, st *store.Store, memoryDir string) error {
 	var projects, lessons, general []store.Domain
 	for _, d := range domains {
 		switch d.Type {
-		case store.DomainProject, store.DomainRepo:
+		case store.DomainProject:
 			projects = append(projects, d)
 		case store.DomainGeneral:
 			general = append(general, d)
@@ -75,12 +75,12 @@ func renderDomains(ctx context.Context, st *store.Store, title string, domains [
 		if s := strings.TrimSpace(d.Summary); s != "" {
 			fmt.Fprintf(&b, "%s\n\n", s)
 		}
-		hooks, err := st.ListHooks(ctx, st.DB(), d.ID, store.StatusActive)
+		hooks, err := st.ListMemories(ctx, st.DB(), d.ID, store.StatusActive)
 		if err != nil {
 			continue
 		}
 		for _, h := range hooks {
-			fmt.Fprintf(&b, "- (%s) %s\n", h.Kind, strings.TrimSpace(h.Text))
+			fmt.Fprintf(&b, "- (%s) %s\n", h.Type, strings.TrimSpace(h.Text))
 		}
 		b.WriteString("\n")
 	}
@@ -96,7 +96,7 @@ func renderPending(ctx context.Context, st *store.Store) string {
 	b.WriteString("# Pending Confirmation\n\n")
 	b.WriteString("Items inferred from conversation, awaiting your confirmation.\n\n")
 	for _, h := range pending {
-		fmt.Fprintf(&b, "- (%s, confidence %.2f) %s\n", h.Kind, h.Confidence, strings.TrimSpace(h.Text))
+		fmt.Fprintf(&b, "- (%s, confidence %.2f) %s\n", h.Type, h.Confidence, strings.TrimSpace(h.Text))
 	}
 	return b.String()
 }

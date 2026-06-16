@@ -86,8 +86,8 @@ func seedDomain(t *testing.T, s *store.Store) (string, string) {
 	if err != nil {
 		t.Fatalf("seed domain: %v", err)
 	}
-	h, err := s.AddHook(ctx, s.DB(), store.AddHookParams{
-		DomainID: d.ID, Kind: store.KindRule, Text: "Run make test after changes.",
+	h, err := s.AddMemory(ctx, s.DB(), store.AddMemoryParams{
+		DomainID: d.ID, Type: store.TypeRule, Text: "Run make test after changes.",
 		Status: store.StatusActive, Confidence: 0.9, Source: store.SourceUserExplicit,
 	})
 	if err != nil {
@@ -98,17 +98,17 @@ func seedDomain(t *testing.T, s *store.Store) (string, string) {
 
 func TestRunOnceHappyPath(t *testing.T) {
 	s := openStore(t)
-	domainID, hookID := seedDomain(t, s)
+	domainID, memoryID := seedDomain(t, s)
 	src := &fakeSource{msgs: sampleMessages()}
 
 	// A valid supersede: replace the existing rule with a new one, evidence in batch.
 	raw := fmt.Sprintf(`{
 		"domain_ops": [],
-		"hook_ops": [{
+		"memory_ops": [{
 			"op": "supersede",
 			"domain": %q,
 			"old_id": %q,
-			"kind": "rule",
+			"type": "rule",
 			"text": "Always run gofmt and make test before committing.",
 			"status": "active",
 			"source": "user_explicit",
@@ -116,7 +116,7 @@ func TestRunOnceHappyPath(t *testing.T) {
 			"evidence": {"seq_start": 1, "seq_end": 2}
 		}],
 		"conflict_ledger": []
-	}`, domainID, hookID)
+	}`, domainID, memoryID)
 
 	w := NewWorker(s, src, &fakeModel{raw: raw}, WithModelName("test-model"))
 	res, err := w.RunOnce(context.Background(), params())
@@ -148,7 +148,7 @@ func TestRunOnceHappyPath(t *testing.T) {
 	}
 
 	// Old hook retired, new one active.
-	active, _ := s.ListHooks(ctx, s.DB(), domainID, store.StatusActive)
+	active, _ := s.ListMemories(ctx, s.DB(), domainID, store.StatusActive)
 	if len(active) != 1 || active[0].Text != "Always run gofmt and make test before committing." {
 		t.Fatalf("active hooks = %+v", active)
 	}
@@ -156,16 +156,16 @@ func TestRunOnceHappyPath(t *testing.T) {
 
 func TestRunOnceMarkConsolidatedOnSuccess(t *testing.T) {
 	s := openStore(t)
-	domainID, hookID := seedDomain(t, s)
+	domainID, memoryID := seedDomain(t, s)
 	src := &fakeSource{msgs: sampleMessages()}
 
 	raw := fmt.Sprintf(`{
 		"domain_ops": [],
-		"hook_ops": [{
+		"memory_ops": [{
 			"op": "supersede",
 			"domain": %q,
 			"old_id": %q,
-			"kind": "rule",
+			"type": "rule",
 			"text": "Always run gofmt and make test before committing.",
 			"status": "active",
 			"source": "user_explicit",
@@ -173,7 +173,7 @@ func TestRunOnceMarkConsolidatedOnSuccess(t *testing.T) {
 			"evidence": {"seq_start": 1, "seq_end": 2}
 		}],
 		"conflict_ledger": []
-	}`, domainID, hookID)
+	}`, domainID, memoryID)
 
 	var (
 		calls  int
@@ -205,10 +205,10 @@ func TestRunOnceMarkConsolidatedOnSuccess(t *testing.T) {
 
 func TestRunOnceMarkConsolidatedErrorDoesNotRollBack(t *testing.T) {
 	s := openStore(t)
-	domainID, hookID := seedDomain(t, s)
+	domainID, memoryID := seedDomain(t, s)
 	src := &fakeSource{msgs: sampleMessages()}
 
-	raw := fmt.Sprintf(`{"domain_ops":[],"hook_ops":[{"op":"supersede","domain":%q,"old_id":%q,"kind":"rule","text":"Run gofmt and tests.","status":"active","source":"user_explicit","evidence":{"seq_start":1,"seq_end":2}}],"conflict_ledger":[]}`, domainID, hookID)
+	raw := fmt.Sprintf(`{"domain_ops":[],"memory_ops":[{"op":"supersede","domain":%q,"old_id":%q,"type":"rule","text":"Run gofmt and tests.","status":"active","source":"user_explicit","evidence":{"seq_start":1,"seq_end":2}}],"conflict_ledger":[]}`, domainID, memoryID)
 
 	mark := func(uptoSeq int64) error { return fmt.Errorf("archive open boom") }
 
@@ -259,11 +259,11 @@ func TestRunOnceMarkConsolidatedNotCalledOnInvalidJSON(t *testing.T) {
 
 func TestRunOnceMarkConsolidatedNotCalledOnAborted(t *testing.T) {
 	s := openStore(t)
-	domainID, hookID := seedDomain(t, s)
+	domainID, memoryID := seedDomain(t, s)
 	src := &fakeSource{msgs: sampleMessages()}
 
 	// Evidence seq_end 99 is outside the batch [1,2] → Validate fails → aborted.
-	raw := fmt.Sprintf(`{"domain_ops":[],"hook_ops":[{"op":"supersede","domain":%q,"old_id":%q,"kind":"rule","text":"Out of range.","status":"active","source":"user_explicit","evidence":{"seq_start":1,"seq_end":99}}],"conflict_ledger":[]}`, domainID, hookID)
+	raw := fmt.Sprintf(`{"domain_ops":[],"memory_ops":[{"op":"supersede","domain":%q,"old_id":%q,"type":"rule","text":"Out of range.","status":"active","source":"user_explicit","evidence":{"seq_start":1,"seq_end":99}}],"conflict_ledger":[]}`, domainID, memoryID)
 
 	calls := 0
 	mark := func(uptoSeq int64) error { calls++; return nil }
@@ -302,24 +302,24 @@ func TestRunOnceInvalidJSON(t *testing.T) {
 
 func TestRunOnceValidationAborted(t *testing.T) {
 	s := openStore(t)
-	domainID, hookID := seedDomain(t, s)
+	domainID, memoryID := seedDomain(t, s)
 	src := &fakeSource{msgs: sampleMessages()}
 
 	// Evidence seq_end 99 is outside the batch [1,2] → Validate fails.
 	raw := fmt.Sprintf(`{
 		"domain_ops": [],
-		"hook_ops": [{
+		"memory_ops": [{
 			"op": "supersede",
 			"domain": %q,
 			"old_id": %q,
-			"kind": "rule",
+			"type": "rule",
 			"text": "Out of range evidence.",
 			"status": "active",
 			"source": "user_explicit",
 			"evidence": {"seq_start": 1, "seq_end": 99}
 		}],
 		"conflict_ledger": []
-	}`, domainID, hookID)
+	}`, domainID, memoryID)
 
 	w := NewWorker(s, src, &fakeModel{raw: raw}, WithModelName("test-model"))
 	res, err := w.RunOnce(context.Background(), params())
@@ -385,11 +385,11 @@ func TestRunOnceBusyWhenLeased(t *testing.T) {
 
 func TestRunOnceDebugDump(t *testing.T) {
 	s := openStore(t)
-	domainID, hookID := seedDomain(t, s)
+	domainID, memoryID := seedDomain(t, s)
 	src := &fakeSource{msgs: sampleMessages()}
 	dir := t.TempDir()
 
-	raw := fmt.Sprintf(`{"domain_ops":[],"hook_ops":[{"op":"supersede","domain":%q,"old_id":%q,"kind":"rule","text":"Run gofmt and tests.","status":"active","source":"user_explicit","evidence":{"seq_start":1,"seq_end":2}}],"conflict_ledger":[]}`, domainID, hookID)
+	raw := fmt.Sprintf(`{"domain_ops":[],"memory_ops":[{"op":"supersede","domain":%q,"old_id":%q,"type":"rule","text":"Run gofmt and tests.","status":"active","source":"user_explicit","evidence":{"seq_start":1,"seq_end":2}}],"conflict_ledger":[]}`, domainID, memoryID)
 
 	w := NewWorker(s, src, &fakeModel{raw: raw}, WithDebugDump(dir))
 	if _, err := w.RunOnce(context.Background(), params()); err != nil {

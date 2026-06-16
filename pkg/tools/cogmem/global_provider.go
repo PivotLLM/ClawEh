@@ -4,10 +4,11 @@
 // Copyright (c) 2026 Tenebris Technologies Inc.
 
 // Package cogmem exposes the cognitive-memory store (pkg/cogmem/store) as a
-// transport-neutral tool provider with BARE names ("domain_get", "hook_create",
+// transport-neutral tool provider with BARE names ("domain_get", "memory_create",
 // ...). The aggregator mounts the provider under the "cogmem" namespace, so the
-// published tool names are "cogmem_domain_get", "cogmem_hook_create", etc.
-// Names follow the object_verb convention (domain_*, hook_*, memory_*).
+// published tool names are "cogmem_domain_get", "cogmem_memory_create", etc.
+// Names follow object_verb: domain_* (containers), memory_* (items), plus the
+// subsystem tools status/explain/consolidate.
 //
 // Every tool is session-scoped: it operates on the per-session .cogmem.db
 // resolved from the workspace and ToolCall.Session. Cognitive memory is ON by
@@ -66,38 +67,40 @@ func (globalCogmemProvider) RegisterTools(deps global.Deps) []global.ToolDefinit
 
 	return []global.ToolDefinition{
 		def("domain_get",
-			"Load a memory domain by id together with its active hooks (rendered as readable text including each hook id).",
+			"Load a memory domain by id together with its active memories (rendered as readable text including each memory id).",
 			[]global.Parameter{
 				{Name: "id", Type: "string", Required: true, Description: "Domain id (e.g. d3K9P)."},
 			}, true, getDomain),
 
-		def("hook_search",
-			"Search active memory hooks by a case-insensitive substring of their text.",
+		def("memory_search",
+			"Search active memories by a case-insensitive substring of their text.",
 			[]global.Parameter{
-				{Name: "query", Type: "string", Required: true, Description: "Substring to match against hook text."},
+				{Name: "query", Type: "string", Required: true, Description: "Substring to match against memory text."},
 				{Name: "limit", Type: "integer", Required: false, Description: "Max results (default 20)."},
 			}, true, search),
 
 		def("domain_list",
-			"List memory domains (id, name, summary, status). Optionally filter by status.",
+			"List memory domains (id, name, summary, type, status). Optionally filter by status and/or type. To answer \"what am I working on?\", list type=project.",
 			[]global.Parameter{
 				{Name: "status", Type: "string", Required: false, Description: "Filter by status.",
 					Enum: []any{"active", "review", "archived"}},
+				{Name: "type", Type: "string", Required: false, Description: "Filter by domain type.",
+					Enum: []any{"project", "workflow", "general"}},
 			}, true, listDomains),
 
-		def("memory_explain",
-			"Summarize the status, source, and evidence of a domain or hook id.",
+		def("explain",
+			"Summarize the status, source, and evidence of a domain or memory id.",
 			[]global.Parameter{
-				{Name: "id", Type: "string", Required: true, Description: "A domain id (d…) or hook id (h…)."},
+				{Name: "id", Type: "string", Required: true, Description: "A domain id (d…) or memory id (h…)."},
 			}, true, explain),
 
-		def("hook_create",
-			"Record a durable memory hook (a preference, rule, fact, project_state, workflow, or lesson). With NO domain_id and NO domain_hint it records to your always-on 'general' domain (global rules/preferences/facts that should always be in context). Give a domain_hint to create/use a project domain, or a domain_id to target a specific one.",
+		def("memory_create",
+			"Record a durable memory (a fact, preference, or rule). With NO domain_id and NO domain_hint it records to your always-on 'general' domain (global rules/preferences/facts that should always be in context). Give a domain_hint to create/use a project domain, or a domain_id to target a specific one.",
 			[]global.Parameter{
 				{Name: "domain_id", Type: "string", Required: false, Description: "Target domain id. If omitted and no domain_hint is given, records to the always-on general domain."},
 				{Name: "domain_hint", Type: "string", Required: false, Description: "Name for a new project domain when domain_id is not given (omit to use the general domain)."},
-				{Name: "kind", Type: "string", Required: true, Description: "Hook kind.",
-					Enum: []any{"preference", "rule", "fact", "project_state", "workflow", "lesson"}},
+				{Name: "type", Type: "string", Required: true, Description: "Memory type: fact (something true), preference (how the user likes things done), or rule (a hard directive).",
+					Enum: []any{"fact", "preference", "rule"}},
 				{Name: "text", Type: "string", Required: true, Description: "The memory content to store."},
 				{Name: "confidence", Type: "number", Required: false, Description: "Confidence 0..1 (default 0.9)."},
 				{Name: "status", Type: "string", Required: false, Description: "active (default) or review.",
@@ -116,18 +119,18 @@ func (globalCogmemProvider) RegisterTools(deps global.Deps) []global.ToolDefinit
 				{Name: "set_triggers", Type: "string", Required: false, Description: "Replace the tool triggers: a comma-separated list of tool-name substrings (e.g. \"google_gmail,microsoft365_mail\"). This domain is auto-loaded into context whenever you use a tool whose name contains any token (case- and underscore-insensitive). Empty string clears triggers."},
 			}, true, updateDomain),
 
-		def("hook_retire",
-			"Retire a hook (it stays in the audit trail but leaves active memory).",
+		def("memory_retire",
+			"Retire a memory (it stays in the audit trail but leaves active memory). To change a memory, retire the old one and create a new one.",
 			[]global.Parameter{
-				{Name: "id", Type: "string", Required: true, Description: "Hook id."},
+				{Name: "id", Type: "string", Required: true, Description: "Memory id."},
 				{Name: "reason", Type: "string", Required: true, Description: "Why it is being retired."},
 			}, true, retireHook),
 
 		def("domain_create",
-			"Create a new memory domain and return its assigned id.",
+			"Create a new memory domain and return its assigned id. Register each ongoing project as a 'project' domain so your project list stays complete.",
 			[]global.Parameter{
 				{Name: "type", Type: "string", Required: true, Description: "Domain type.",
-					Enum: []any{"project", "workflow", "repo"}},
+					Enum: []any{"project", "workflow"}},
 				{Name: "name", Type: "string", Required: true, Description: "Domain name."},
 				{Name: "summary", Type: "string", Required: false, Description: "Optional one-line summary."},
 				{Name: "triggers", Type: "string", Required: false, Description: "Optional tool triggers: a comma-separated list of tool-name substrings (e.g. \"google_gmail,microsoft365_mail\" or \"system\"). This domain is auto-loaded into context whenever you use a tool whose name contains any token. Matching ignores case and treats _ and __ the same."},
@@ -139,21 +142,21 @@ func (globalCogmemProvider) RegisterTools(deps global.Deps) []global.ToolDefinit
 				{Name: "id", Type: "string", Required: true, Description: "Domain id."},
 			}, true, archiveDomain),
 
-		def("hook_forget",
-			"Retire all active hooks matching a query (optionally limited to one domain). Reports how many were retired.",
+		def("memory_forget",
+			"Retire all active memories matching a query (optionally limited to one domain). Reports how many were retired.",
 			[]global.Parameter{
-				{Name: "query", Type: "string", Required: true, Description: "Substring to match against active hook text."},
+				{Name: "query", Type: "string", Required: true, Description: "Substring to match against active memory text."},
 				{Name: "domain_id", Type: "string", Required: false, Description: "Restrict to this domain."},
 			}, true, forget),
 
-		def("memory_consolidate",
+		def("consolidate",
 			"Request a (non-blocking) memory-consolidation pass. Returns immediately.",
 			[]global.Parameter{
 				{Name: "scope", Type: "string", Required: false, Description: "Optional scope hint (currently advisory)."},
 			}, true, consolidate),
 
-		def("memory_status",
-			"Report cognitive-memory health: database path, last consolidation run, and pending-hook count.",
+		def("status",
+			"Report cognitive-memory health: database path, last consolidation run, and pending-memory count.",
 			nil, true, status),
 	}
 }

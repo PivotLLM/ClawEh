@@ -42,20 +42,20 @@ type CurrentState struct {
 
 // DomainView is a compact projection of a domain for the model.
 type DomainView struct {
-	ID      string            `json:"id"`
-	Type    string            `json:"type"`
-	Name    string            `json:"name"`
-	Status  string            `json:"status"`
-	Version int64             `json:"version"`
-	Summary string            `json:"summary"`
-	State   store.DomainState `json:"state"`
-	Hooks   []HookView        `json:"hooks"`
+	ID       string            `json:"id"`
+	Type     string            `json:"type"`
+	Name     string            `json:"name"`
+	Status   string            `json:"status"`
+	Version  int64             `json:"version"`
+	Summary  string            `json:"summary"`
+	State    store.DomainState `json:"state"`
+	Memories []MemoryView      `json:"memories"`
 }
 
-// HookView is a compact projection of a hook for the model.
-type HookView struct {
+// MemoryView is a compact projection of a hook for the model.
+type MemoryView struct {
 	ID         string  `json:"id"`
-	Kind       string  `json:"kind"`
+	Type       string  `json:"type"`
 	Text       string  `json:"text"`
 	Confidence float64 `json:"confidence"`
 }
@@ -70,7 +70,7 @@ type Message struct {
 // Output is the strict JSON the model must return.
 type Output struct {
 	DomainOps      []DomainOp    `json:"domain_ops"`
-	HookOps        []HookOp      `json:"hook_ops"`
+	MemoryOps      []MemoryOp    `json:"memory_ops"`
 	ConflictLedger []LedgerEntry `json:"conflict_ledger"`
 }
 
@@ -90,12 +90,12 @@ type DomainOp struct {
 	Evidence        store.Evidence     `json:"evidence"`
 }
 
-// HookOp is an add/supersede/retire operation on a hook.
-type HookOp struct {
+// MemoryOp is an add/supersede/retire operation on a hook.
+type MemoryOp struct {
 	Op         string         `json:"op"`
 	Domain     string         `json:"domain,omitempty"` // existing domain id or a tmp_id
 	OldID      string         `json:"old_id,omitempty"`
-	Kind       string         `json:"kind,omitempty"`
+	Type       string         `json:"type,omitempty"`
 	Text       string         `json:"text,omitempty"`
 	Status     string         `json:"status,omitempty"`
 	Source     string         `json:"source,omitempty"`
@@ -113,13 +113,10 @@ type LedgerEntry struct {
 }
 
 var (
-	validDomainTypes = map[string]bool{"project": true, "workflow": true, "repo": true}
-	validHookKinds   = map[string]bool{
-		"preference": true, "rule": true, "fact": true,
-		"project_state": true, "workflow": true, "lesson": true,
-	}
-	validStatuses = map[string]bool{"active": true, "review": true}
-	validSources  = map[string]bool{"user_explicit": true, "assistant_inferred": true}
+	validDomainTypes = map[string]bool{"project": true, "workflow": true}
+	validMemoryTypes = map[string]bool{"fact": true, "preference": true, "rule": true}
+	validStatuses    = map[string]bool{"active": true, "review": true}
+	validSources     = map[string]bool{"user_explicit": true, "assistant_inferred": true}
 )
 
 // maxTriggersLen caps the comma-delimited tool-trigger string a domain op may set.
@@ -129,11 +126,11 @@ const maxTriggersLen = 512
 // the whole payload (the worker then leaves the watermark unchanged and retries).
 func (o Output) Validate(in Input) error {
 	domainIDs := map[string]bool{}
-	hookIDs := map[string]bool{}
+	memoryIDs := map[string]bool{}
 	for _, d := range in.CurrentState.Domains {
 		domainIDs[d.ID] = true
-		for _, h := range d.Hooks {
-			hookIDs[h.ID] = true
+		for _, h := range d.Memories {
+			memoryIDs[h.ID] = true
 		}
 	}
 	var minSeq, maxSeq int64
@@ -200,43 +197,43 @@ func (o Output) Validate(in Input) error {
 		}
 	}
 
-	for i, op := range o.HookOps {
+	for i, op := range o.MemoryOps {
 		if err := evOK(op.Evidence); err != nil {
-			return fmt.Errorf("hook_ops[%d]: %w", i, err)
+			return fmt.Errorf("memory_ops[%d]: %w", i, err)
 		}
 		switch op.Op {
 		case "add", "supersede":
 			if !domainIDs[op.Domain] && !tmpIDs[op.Domain] {
-				return fmt.Errorf("hook_ops[%d]: unknown domain %q", i, op.Domain)
+				return fmt.Errorf("memory_ops[%d]: unknown domain %q", i, op.Domain)
 			}
-			if !validHookKinds[op.Kind] {
-				return fmt.Errorf("hook_ops[%d]: invalid kind %q", i, op.Kind)
+			if !validMemoryTypes[op.Type] {
+				return fmt.Errorf("memory_ops[%d]: invalid type %q", i, op.Type)
 			}
 			if strings.TrimSpace(op.Text) == "" {
-				return fmt.Errorf("hook_ops[%d]: empty text", i)
+				return fmt.Errorf("memory_ops[%d]: empty text", i)
 			}
 			if op.Status != "" && !validStatuses[op.Status] {
-				return fmt.Errorf("hook_ops[%d]: invalid status %q", i, op.Status)
+				return fmt.Errorf("memory_ops[%d]: invalid status %q", i, op.Status)
 			}
 			if op.Source != "" && !validSources[op.Source] {
-				return fmt.Errorf("hook_ops[%d]: invalid source %q", i, op.Source)
+				return fmt.Errorf("memory_ops[%d]: invalid source %q", i, op.Source)
 			}
 			// Inferred items must be review (rule 5).
 			if op.Source == "assistant_inferred" && op.Status == "active" {
-				return fmt.Errorf("hook_ops[%d]: inferred item must be status=review", i)
+				return fmt.Errorf("memory_ops[%d]: inferred item must be status=review", i)
 			}
 			if containsSecret(op.Text) {
-				return fmt.Errorf("hook_ops[%d]: text appears to contain a secret/credential", i)
+				return fmt.Errorf("memory_ops[%d]: text appears to contain a secret/credential", i)
 			}
-			if op.Op == "supersede" && !hookIDs[op.OldID] {
-				return fmt.Errorf("hook_ops[%d]: supersede unknown old_id %q", i, op.OldID)
+			if op.Op == "supersede" && !memoryIDs[op.OldID] {
+				return fmt.Errorf("memory_ops[%d]: supersede unknown old_id %q", i, op.OldID)
 			}
 		case "retire":
-			if !hookIDs[op.ID] {
-				return fmt.Errorf("hook_ops[%d]: retire unknown hook %q", i, op.ID)
+			if !memoryIDs[op.ID] {
+				return fmt.Errorf("memory_ops[%d]: retire unknown memory %q", i, op.ID)
 			}
 		default:
-			return fmt.Errorf("hook_ops[%d]: invalid op %q", i, op.Op)
+			return fmt.Errorf("memory_ops[%d]: invalid op %q", i, op.Op)
 		}
 	}
 

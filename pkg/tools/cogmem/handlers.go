@@ -128,12 +128,12 @@ func getDomain(s *store.Store, call *global.ToolCall) (string, error) {
 	writeStateLine(&b, "Blockers", d.State.Blockers)
 	writeStateLine(&b, "Next actions", d.State.NextActions)
 	writeStateLine(&b, "Constraints", d.State.Constraints)
-	if len(d.Hooks) == 0 {
-		b.WriteString("Hooks: (none active)\n")
+	if len(d.Memories) == 0 {
+		b.WriteString("Memories: (none active)\n")
 	} else {
-		fmt.Fprintf(&b, "Hooks (%d active):\n", len(d.Hooks))
-		for _, h := range d.Hooks {
-			fmt.Fprintf(&b, "  %s [%s] (conf=%.2f) %s\n", h.ID, h.Kind, h.Confidence, h.Text)
+		fmt.Fprintf(&b, "Memories (%d active):\n", len(d.Memories))
+		for _, h := range d.Memories {
+			fmt.Fprintf(&b, "  %s [%s] (conf=%.2f) %s\n", h.ID, h.Type, h.Confidence, h.Text)
 		}
 	}
 	return b.String(), nil
@@ -145,17 +145,17 @@ func search(s *store.Store, call *global.ToolCall) (string, error) {
 		return "", errors.New("query is required")
 	}
 	limit := argInt(call, "limit", 20)
-	hooks, err := s.SearchHooks(call.Ctx, s.DB(), query, limit)
+	hooks, err := s.SearchMemories(call.Ctx, s.DB(), query, limit)
 	if err != nil {
 		return "", err
 	}
 	if len(hooks) == 0 {
-		return fmt.Sprintf("No active hooks match %q.", query), nil
+		return fmt.Sprintf("No active memories match %q.", query), nil
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "%d active hook(s) matching %q:\n", len(hooks), query)
+	fmt.Fprintf(&b, "%d active memories matching %q:\n", len(hooks), query)
 	for _, h := range hooks {
-		fmt.Fprintf(&b, "  %s [%s] (domain=%s, conf=%.2f) %s\n", h.ID, h.Kind, h.DomainID, h.Confidence, h.Text)
+		fmt.Fprintf(&b, "  %s [%s] (domain=%s, conf=%.2f) %s\n", h.ID, h.Type, h.DomainID, h.Confidence, h.Text)
 	}
 	return b.String(), nil
 }
@@ -169,17 +169,25 @@ func listDomains(s *store.Store, call *global.ToolCall) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if len(domains) == 0 {
+	typeFilter := argStr(call, "type")
+	var out []store.Domain
+	for _, d := range domains {
+		if typeFilter != "" && string(d.Type) != typeFilter {
+			continue
+		}
+		out = append(out, d)
+	}
+	if len(out) == 0 {
 		return "No domains.", nil
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "%d domain(s):\n", len(domains))
-	for _, d := range domains {
+	fmt.Fprintf(&b, "%d domain(s):\n", len(out))
+	for _, d := range out {
 		summary := d.Summary
 		if summary == "" {
 			summary = "(no summary)"
 		}
-		fmt.Fprintf(&b, "  %s · %s · %s · %s\n", d.ID, d.Name, summary, d.Status)
+		fmt.Fprintf(&b, "  %s · %s · %s · %s · %s\n", d.ID, d.Type, d.Name, summary, d.Status)
 	}
 	return b.String(), nil
 }
@@ -189,18 +197,18 @@ func explain(s *store.Store, call *global.ToolCall) (string, error) {
 	if id == "" {
 		return "", errors.New("id is required")
 	}
-	// Hook ids carry the "h" prefix; domain ids "d". Try the matching lookup
+	// Memory ids carry the "h" prefix; domain ids "d". Try the matching lookup
 	// first, then fall back to the other so a mis-typed prefix still resolves.
 	if strings.HasPrefix(id, "h") {
-		if h, err := s.GetHook(call.Ctx, s.DB(), id); err == nil {
-			return explainHook(h), nil
+		if h, err := s.GetMemory(call.Ctx, s.DB(), id); err == nil {
+			return explainMemory(h), nil
 		}
 	}
 	if d, err := s.GetDomain(call.Ctx, s.DB(), id, false); err == nil {
 		return explainDomain(d), nil
 	}
-	if h, err := s.GetHook(call.Ctx, s.DB(), id); err == nil {
-		return explainHook(h), nil
+	if h, err := s.GetMemory(call.Ctx, s.DB(), id); err == nil {
+		return explainMemory(h), nil
 	}
 	return "", mapErr(store.ErrNotFound, id)
 }
@@ -216,16 +224,16 @@ func explainDomain(d store.Domain) string {
 	return b.String()
 }
 
-func explainHook(h store.Hook) string {
+func explainMemory(h store.Memory) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Hook %s (domain %s)\n", h.ID, h.DomainID)
-	fmt.Fprintf(&b, "  kind=%s status=%s confidence=%.2f source=%s\n", h.Kind, h.Status, h.Confidence, h.Source)
+	fmt.Fprintf(&b, "Memory %s (domain %s)\n", h.ID, h.DomainID)
+	fmt.Fprintf(&b, "  type=%s status=%s confidence=%.2f source=%s\n", h.Type, h.Status, h.Confidence, h.Source)
 	fmt.Fprintf(&b, "  text: %s\n", h.Text)
 	if h.SourceSeqStart != nil && h.SourceSeqEnd != nil {
 		fmt.Fprintf(&b, "  evidence: seq %d..%d\n", *h.SourceSeqStart, *h.SourceSeqEnd)
 	}
-	if h.SupersedesHookID != nil {
-		fmt.Fprintf(&b, "  supersedes: %s\n", *h.SupersedesHookID)
+	if h.SupersedesMemoryID != nil {
+		fmt.Fprintf(&b, "  supersedes: %s\n", *h.SupersedesMemoryID)
 	}
 	if h.RetireReason != nil && *h.RetireReason != "" {
 		fmt.Fprintf(&b, "  retire reason: %s\n", *h.RetireReason)
@@ -234,10 +242,10 @@ func explainHook(h store.Hook) string {
 }
 
 func remember(s *store.Store, call *global.ToolCall) (string, error) {
-	kind := argStr(call, "kind")
+	mtype := argStr(call, "type")
 	text := argStr(call, "text")
-	if kind == "" || text == "" {
-		return "", errors.New("kind and text are required")
+	if mtype == "" || text == "" {
+		return "", errors.New("type and text are required")
 	}
 	// Lightweight secret guard. consolidate.containsSecret is unexported, so this
 	// is a basic keyword check rather than the consolidation worker's detector.
@@ -274,9 +282,9 @@ func remember(s *store.Store, call *global.ToolCall) (string, error) {
 	if status == "" {
 		status = store.StatusActive
 	}
-	h, err := s.AddHook(call.Ctx, s.DB(), store.AddHookParams{
+	h, err := s.AddMemory(call.Ctx, s.DB(), store.AddMemoryParams{
 		DomainID:   domainID,
-		Kind:       store.HookKind(kind),
+		Type:       store.MemoryType(mtype),
 		Text:       text,
 		Status:     status,
 		Confidence: argFloat(call, "confidence", 0.9),
@@ -285,7 +293,7 @@ func remember(s *store.Store, call *global.ToolCall) (string, error) {
 	if err != nil {
 		return "", mapErr(err, domainID)
 	}
-	return fmt.Sprintf("Stored hook %s in domain %s (kind=%s, status=%s).", h.ID, domainID, h.Kind, h.Status), nil
+	return fmt.Sprintf("Stored memory %s in domain %s (type=%s, status=%s).", h.ID, domainID, h.Type, h.Status), nil
 }
 
 func updateDomain(s *store.Store, call *global.ToolCall) (string, error) {
@@ -346,10 +354,10 @@ func retireHook(s *store.Store, call *global.ToolCall) (string, error) {
 	if id == "" || reason == "" {
 		return "", errors.New("id and reason are required")
 	}
-	if err := s.RetireHook(call.Ctx, s.DB(), id, reason); err != nil {
+	if err := s.RetireMemory(call.Ctx, s.DB(), id, reason); err != nil {
 		return "", mapErr(err, id)
 	}
-	return fmt.Sprintf("Retired hook %s.", id), nil
+	return fmt.Sprintf("Retired memory %s.", id), nil
 }
 
 func createDomain(s *store.Store, call *global.ToolCall) (string, error) {
@@ -390,7 +398,7 @@ func forget(s *store.Store, call *global.ToolCall) (string, error) {
 		return "", errors.New("query is required")
 	}
 	domainFilter := argStr(call, "domain_id")
-	hooks, err := s.SearchHooks(call.Ctx, s.DB(), query, 100)
+	hooks, err := s.SearchMemories(call.Ctx, s.DB(), query, 100)
 	if err != nil {
 		return "", err
 	}
@@ -399,16 +407,16 @@ func forget(s *store.Store, call *global.ToolCall) (string, error) {
 		if domainFilter != "" && h.DomainID != domainFilter {
 			continue
 		}
-		if err := s.RetireHook(call.Ctx, s.DB(), h.ID, "forget: "+query); err != nil {
+		if err := s.RetireMemory(call.Ctx, s.DB(), h.ID, "forget: "+query); err != nil {
 			return "", err
 		}
 		retired = append(retired, h.ID)
 	}
 	if len(retired) == 0 {
-		return fmt.Sprintf("No active hooks matched %q; nothing retired.", query), nil
+		return fmt.Sprintf("No active memories matched %q; nothing retired.", query), nil
 	}
 	sort.Strings(retired)
-	return fmt.Sprintf("Retired %d hook(s): %s.", len(retired), strings.Join(retired, ", ")), nil
+	return fmt.Sprintf("Retired %d memories: %s.", len(retired), strings.Join(retired, ", ")), nil
 }
 
 func consolidate(_ *store.Store, call *global.ToolCall) (string, error) {
@@ -427,7 +435,7 @@ func status(s *store.Store, call *global.ToolCall) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	fmt.Fprintf(&b, "Pending (review) hooks: %d\n", pending)
+	fmt.Fprintf(&b, "Pending (review) memories: %d\n", pending)
 
 	run, ok, err := s.LastRun(call.Ctx, s.DB())
 	if err != nil {

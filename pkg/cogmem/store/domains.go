@@ -149,7 +149,7 @@ func (s *Store) Touch(ctx context.Context, q DBTX, id string) error {
 }
 
 // GetDomain loads one domain by id, optionally with its hooks.
-func (s *Store) GetDomain(ctx context.Context, q DBTX, id string, withHooks bool) (Domain, error) {
+func (s *Store) GetDomain(ctx context.Context, q DBTX, id string, withMemories bool) (Domain, error) {
 	row := q.QueryRowContext(ctx, domainSelect+` WHERE id=?`, id)
 	d, err := scanDomain(row)
 	if err == sql.ErrNoRows {
@@ -158,12 +158,12 @@ func (s *Store) GetDomain(ctx context.Context, q DBTX, id string, withHooks bool
 	if err != nil {
 		return Domain{}, err
 	}
-	if withHooks {
-		hooks, err := s.ListHooks(ctx, q, id, StatusActive)
+	if withMemories {
+		memories, err := s.ListMemories(ctx, q, id, StatusActive)
 		if err != nil {
 			return Domain{}, err
 		}
-		d.Hooks = hooks
+		d.Memories = memories
 	}
 	return d, nil
 }

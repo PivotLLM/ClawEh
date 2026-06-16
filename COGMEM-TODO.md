@@ -59,7 +59,7 @@ Done this session:
   RunOnce, export), fully tested.
 - **Phase 3b** — Manager (message/idle/nightly triggers, pool), ModelCaller
   adapter over the summarization chain, gated wiring (archive hook + prompt
-  injection of stable/routed blocks), gateway startup, `cogmem_memory_consolidate`
+  injection of stable/routed blocks), gateway startup, `cogmem_consolidate`
   trigger. **Everything inert unless an agent is granted the cogmem tools.**
 
 ## Remaining / follow-ups (need attention before relying on it)
@@ -67,7 +67,7 @@ Done this session:
 1. **Runtime verification (REQUIRED).** None of the wiring has been exercised
    against a live model. To test: enable cogmem tools for one agent
    (`tools: ["...", "cogmem_*"]`), set its summarization/Memory model, deploy,
-   converse, then check `cogmem_memory_status`, the GENERATED_*.md export, and that the
+   converse, then check `cogmem_status`, the GENERATED_*.md export, and that the
    stable/routed blocks appear in the prompt.
 2. **D7 retention guard not wired.** `protect_unconsolidated` config exists but
    is NOT enforced: the archive `messages` table has no `consolidated` column and
@@ -108,7 +108,7 @@ Done this session:
   the pending set). Compose reads it to validate its cached stable block.
 - **DEC-6 Pending default.** `auto_promote=false`; `pending.surface="ask"`,
   `pending.max=8`. (Per your confirmation.)
-- **DEC-7 Search.** `cogmem_hook_search` is a SQL `LIKE` scan over active hooks — no
+- **DEC-7 Search.** `cogmem_memory_search` is a SQL `LIKE` scan over active hooks — no
   FTS5 table (dropped per design). Case-insensitive, capped result count.
 - **DEC-8 Archive `consolidated` flag.** Implemented as a deferred shared edit
   (§4) since it touches `pkg/memory/archive.go` (other agent's territory). The

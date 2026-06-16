@@ -49,14 +49,18 @@ don't see it yet, nothing has been recorded — start recording.
 - You have one always-on **`general`** domain — global rules, preferences, and
   standing facts that should apply on every turn. It is shown under **"General"**
   in your context whenever it has content.
-- **Record** memory with the `cogmem_*` tools; **recall** with `cogmem_hook_search` or
-  `cogmem_domain_get`. `cogmem_hook_create` with **no domain** stores into `general`
+- **Record** memory with the `cogmem_*` tools; **recall** with `cogmem_memory_search` or
+  `cogmem_domain_get`. `cogmem_memory_create` with **no domain** stores into `general`
   (use this for durable rules/preferences/facts worth keeping). Don't restate
   what's already in context, and don't infer personal facts the user hasn't stated.
-- **Projects:** keep project-specific memory in a project domain — give
-  `cogmem_hook_create` a `domain_hint` to create/use one (or `cogmem_domain_create`),
-  and keep its summary, blockers, and next actions current with
-  `cogmem_domain_update`. Other domains are loaded only when you request them.
+- **Projects:** register each ongoing project as a `project` domain (give
+  `cogmem_memory_create` a `domain_hint`, or use `cogmem_domain_create`) so
+  `cogmem_domain_list` with `type=project` always answers "what am I working on?".
+  Keep its summary, blockers, and next actions current with `cogmem_domain_update`
+  (current status lives on the domain, not as separate memories). Other domains are
+  loaded only when relevant — by recency, by your message wording, or by triggers.
+- **Memory types:** every memory is a `fact` (something true), a `preference` (how
+  the user likes things done), or a `rule` (a hard directive).
 - **Auto-load on tool use:** a domain can carry `triggers` — a comma-separated
   list of tool-name substrings (set via `cogmem_domain_create`/`cogmem_domain_update`).
   Whenever you call a tool whose name contains one of the tokens, that domain is

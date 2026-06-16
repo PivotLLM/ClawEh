@@ -24,14 +24,14 @@ func TestWriteExport(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create domain: %v", err)
 	}
-	if _, err := s.AddHook(ctx, s.DB(), store.AddHookParams{
-		DomainID: d.ID, Kind: store.KindRule, Text: "Run make test.",
+	if _, err := s.AddMemory(ctx, s.DB(), store.AddMemoryParams{
+		DomainID: d.ID, Type: store.TypeRule, Text: "Run make test.",
 		Status: store.StatusActive, Confidence: 0.9, Source: store.SourceUserExplicit,
 	}); err != nil {
 		t.Fatalf("add active hook: %v", err)
 	}
-	if _, err := s.AddHook(ctx, s.DB(), store.AddHookParams{
-		DomainID: d.ID, Kind: store.KindFact, Text: "Eric prefers terse output.",
+	if _, err := s.AddMemory(ctx, s.DB(), store.AddMemoryParams{
+		DomainID: d.ID, Type: store.TypeFact, Text: "Eric prefers terse output.",
 		Status: store.StatusReview, Confidence: 0.6, Source: store.SourceAssistantInferred,
 	}); err != nil {
 		t.Fatalf("add review hook: %v", err)

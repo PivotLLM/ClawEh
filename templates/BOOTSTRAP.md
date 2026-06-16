@@ -16,7 +16,7 @@ On an early turn:
    name, preferred form of address, and time zone; the kinds of tasks to handle;
    preferred response style and detail; which actions always require confirmation;
    and any privacy, security, or channel constraints.
-3. **Record** durable preferences and facts you learn using `cogmem_hook_create`
+3. **Record** durable preferences and facts you learn using `cogmem_memory_create`
    (that is your writable memory).
 4. For the parts that belong in the human-authored files, **draft the text** and
    ask the user to paste it into `IDENTITY.md`, `USER.md`, and — if they want

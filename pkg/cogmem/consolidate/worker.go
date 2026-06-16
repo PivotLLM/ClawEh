@@ -258,12 +258,12 @@ func (w *Worker) currentState(ctx context.Context) CurrentState {
 			Summary: d.Summary,
 			State:   d.State,
 		}
-		hooks, err := w.st.ListHooks(ctx, w.st.DB(), d.ID, store.StatusActive)
+		hooks, err := w.st.ListMemories(ctx, w.st.DB(), d.ID, store.StatusActive)
 		if err == nil {
 			for _, h := range hooks {
-				dv.Hooks = append(dv.Hooks, HookView{
+				dv.Memories = append(dv.Memories, MemoryView{
 					ID:         h.ID,
-					Kind:       string(h.Kind),
+					Type:       string(h.Type),
 					Text:       h.Text,
 					Confidence: h.Confidence,
 				})

@@ -20,11 +20,11 @@ func (s *Store) LogEvent(ctx context.Context, q DBTX, e Event) error {
 		e.Evidence = "{}"
 	}
 	_, err := q.ExecContext(ctx, `
-		INSERT INTO memory_events(id, event_type, domain_id, hook_id, old_json,
+		INSERT INTO memory_events(id, event_type, domain_id, memory_id, old_json,
 		                          new_json, reason, evidence_json, actor, model,
 		                          prompt_hash, created_at)
 		VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
-		e.ID, e.Type, nullStr(e.DomainID), nullStr(e.HookID), nullStr(e.OldJSON),
+		e.ID, e.Type, nullStr(e.DomainID), nullStr(e.MemoryID), nullStr(e.OldJSON),
 		nullStr(e.NewJSON), e.Reason, e.Evidence, e.Actor, nullStr(e.Model),
 		nullStr(e.PromptHash), now())
 	return err
@@ -101,7 +101,7 @@ func (s *Store) LastRun(ctx context.Context, q DBTX) (r Run, ok bool, err error)
 func (s *Store) PendingCount(ctx context.Context, q DBTX) (int, error) {
 	var n int
 	err := q.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM hooks WHERE status=?`, string(StatusReview)).Scan(&n)
+		`SELECT COUNT(*) FROM memories WHERE status=?`, string(StatusReview)).Scan(&n)
 	return n, err
 }
 

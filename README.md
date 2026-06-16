@@ -12,11 +12,13 @@ the summarization prompt. Leave it out to use the built-in behavior.
 ### Cognitive memory (cogmem)
 ClawEh has gained a cognitive-memory engine so long-running agents get smarter
 over time instead of relying on hand-edited prompt files. Each session has a
-small SQLite memory database alongside its existing archive. A background "sleep
-cycle" periodically reviews new conversation and distills it into structured,
-de-duplicated, contradiction-resolved memory (preferences, project state,
-lessons, facts); the relevant pieces are then composed into the system prompt for
-each turn. Consolidation reuses your configured **Memory models** (formerly
+small SQLite memory database alongside its existing archive. Memory is organized
+as **domains** (containers — the always-on `general` domain plus `project` and
+`workflow` topics) that each hold **memories**, where every memory is a `fact`, a
+`preference`, or a `rule`. A background "sleep cycle" periodically reviews new
+conversation and distills it into structured, de-duplicated,
+contradiction-resolved memories; the relevant pieces are then composed into the
+system prompt for each turn. Consolidation reuses your configured **Memory models** (formerly
 "Summarization models" — the same setting, renamed) and its prompt lives in an
 editable `COGMEM.md` seeded into each agent's workspace, so you can tune how the
 agent learns. Cognitive memory is **on by default** for every agent; to disable
@@ -28,7 +30,7 @@ preferences, and standing facts) is in every prompt; topic domains are then
 auto-loaded by relevance using three signals:
 
 - **Recency** — the most recently used topic domains.
-- **Lexical match** — domains whose name, summary, or hooks match salient words in
+- **Lexical match** — domains whose name, summary, or memories match salient words in
   the user's latest message, so asking "what's the status of the BioTech report?"
   pulls in the BioTech domain even if it hasn't been touched recently.
 - **Tool triggers** — a domain can declare a comma-separated list of tool-name

@@ -142,7 +142,7 @@ func (c *Composer) StableBlock(ctx context.Context) (string, int64, error) {
 		if !d.Type.AlwaysOn() {
 			continue
 		}
-		hooks, err := c.st.ListHooks(ctx, db, d.ID, store.StatusActive)
+		hooks, err := c.st.ListMemories(ctx, db, d.ID, store.StatusActive)
 		if err != nil {
 			return "", rev, err
 		}
@@ -182,7 +182,7 @@ func (c *Composer) StableBlock(ctx context.Context) (string, int64, error) {
 	if len(index) > 0 {
 		b.WriteString("## Projects / Topics (index)\n")
 		for _, d := range index {
-			fmt.Fprintf(&b, "- %s · %s — %s\n", d.ID, d.Name, oneLine(d.Summary))
+			fmt.Fprintf(&b, "- [%s] %s · %s — %s\n", d.Type, d.ID, d.Name, oneLine(d.Summary))
 		}
 		b.WriteString("\n")
 	}
@@ -244,7 +244,7 @@ func (c *Composer) RoutedBlock(ctx context.Context, req RouteRequest) (RoutedRes
 	var res RoutedResult
 	for _, cand := range ordered {
 		d := cand.d
-		hooks, err := c.st.ListHooks(ctx, db, d.ID, store.StatusActive)
+		hooks, err := c.st.ListMemories(ctx, db, d.ID, store.StatusActive)
 		if err != nil {
 			return RoutedResult{}, err
 		}
@@ -316,8 +316,8 @@ func (c *Composer) lexicalCandidates(ctx context.Context, topics []store.Domain,
 		h.score++
 	}
 	for _, t := range terms {
-		// Hook-text matches via the indexed substring scan (returns DomainID).
-		rows, err := c.st.SearchHooks(ctx, db, t, lexicalSearchLimit)
+		// Memory-text matches via the indexed substring scan (returns DomainID).
+		rows, err := c.st.SearchMemories(ctx, db, t, lexicalSearchLimit)
 		if err == nil {
 			for _, h := range rows {
 				bump(h.DomainID, t)
@@ -381,7 +381,7 @@ var routeStopwords = map[string]bool{
 	"done": true, "been": true, "were": true, "than": true, "very": true,
 }
 
-func renderDomain(d store.Domain, hooks []store.Hook) string {
+func renderDomain(d store.Domain, hooks []store.Memory) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "## Active Context: %s · %s\n", d.ID, d.Name)
 	if s := oneLine(d.Summary); s != "" {
@@ -412,7 +412,7 @@ func renderDomain(d store.Domain, hooks []store.Hook) string {
 	return b.String()
 }
 
-func filterConfidence(hooks []store.Hook, min float64) []store.Hook {
+func filterConfidence(hooks []store.Memory, min float64) []store.Memory {
 	out := hooks[:0:0]
 	for _, h := range hooks {
 		if h.Confidence >= min {

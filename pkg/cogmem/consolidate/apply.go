@@ -81,14 +81,14 @@ func Apply(ctx context.Context, st *store.Store, out Output, ac ApplyContext) (i
 			applied++
 		}
 
-		for _, op := range out.HookOps {
+		for _, op := range out.MemoryOps {
 			domainID := op.Domain
 			if mapped, ok := tmp[op.Domain]; ok {
 				domainID = mapped
 			}
 			switch op.Op {
 			case "add":
-				h, err := st.AddHook(ctx, tx, hookParams(domainID, op))
+				h, err := st.AddMemory(ctx, tx, memoryParams(domainID, op))
 				if err != nil {
 					return err
 				}
@@ -96,7 +96,7 @@ func Apply(ctx context.Context, st *store.Store, out Output, ac ApplyContext) (i
 					return err
 				}
 			case "supersede":
-				h, err := st.SupersedeHook(ctx, tx, op.OldID, hookParams(domainID, op))
+				h, err := st.SupersedeMemory(ctx, tx, op.OldID, memoryParams(domainID, op))
 				if err != nil {
 					return err
 				}
@@ -104,7 +104,7 @@ func Apply(ctx context.Context, st *store.Store, out Output, ac ApplyContext) (i
 					return err
 				}
 			case "retire":
-				if err := st.RetireHook(ctx, tx, op.ID, op.Reason); err != nil {
+				if err := st.RetireMemory(ctx, tx, op.ID, op.Reason); err != nil {
 					return err
 				}
 				if err := logOp(ctx, st, tx, ac, "retire", "", op.ID, op.Reason, op.Evidence); err != nil {
@@ -128,10 +128,10 @@ func Apply(ctx context.Context, st *store.Store, out Output, ac ApplyContext) (i
 	return applied, err
 }
 
-func hookParams(domainID string, op HookOp) store.AddHookParams {
-	return store.AddHookParams{
+func memoryParams(domainID string, op MemoryOp) store.AddMemoryParams {
+	return store.AddMemoryParams{
 		DomainID:       domainID,
-		Kind:           store.HookKind(op.Kind),
+		Type:           store.MemoryType(op.Type),
 		Text:           op.Text,
 		Status:         store.Status(orDefault(op.Status, "active")),
 		Confidence:     op.Confidence,
@@ -141,9 +141,9 @@ func hookParams(domainID string, op HookOp) store.AddHookParams {
 	}
 }
 
-func logOp(ctx context.Context, st *store.Store, tx *sql.Tx, ac ApplyContext, typ, domainID, hookID, reason string, ev store.Evidence) error {
+func logOp(ctx context.Context, st *store.Store, tx *sql.Tx, ac ApplyContext, typ, domainID, memoryID, reason string, ev store.Evidence) error {
 	return st.LogEvent(ctx, tx, store.Event{
-		Type: typ, DomainID: domainID, HookID: hookID, Reason: reason,
+		Type: typ, DomainID: domainID, MemoryID: memoryID, Reason: reason,
 		Evidence: evidenceJSON(ev), Actor: ac.Actor, Model: ac.Model, PromptHash: ac.PromptHash,
 	})
 }

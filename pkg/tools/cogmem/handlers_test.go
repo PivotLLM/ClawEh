@@ -62,20 +62,20 @@ func TestCreateRememberGetUpdateRetire(t *testing.T) {
 	domainID := extractID(t, res.ForLLM, "d")
 
 	// remember adds a hook to the domain.
-	res = run(t, h["hook_create"], newCall(testSession, map[string]any{
-		"domain_id": domainID, "kind": "fact", "text": "the sky is blue",
+	res = run(t, h["memory_create"], newCall(testSession, map[string]any{
+		"domain_id": domainID, "type": "fact", "text": "the sky is blue",
 	}))
 	if res.IsError {
 		t.Fatalf("remember error: %s", res.ForLLM)
 	}
-	hookID := extractID(t, res.ForLLM, "h")
+	memoryID := extractID(t, res.ForLLM, "h")
 
 	// get_domain shows the hook id and text.
 	res = run(t, h["domain_get"], newCall(testSession, map[string]any{"id": domainID}))
 	if res.IsError {
 		t.Fatalf("get_domain error: %s", res.ForLLM)
 	}
-	if !strings.Contains(res.ForLLM, hookID) || !strings.Contains(res.ForLLM, "the sky is blue") {
+	if !strings.Contains(res.ForLLM, memoryID) || !strings.Contains(res.ForLLM, "the sky is blue") {
 		t.Fatalf("get_domain missing hook: %s", res.ForLLM)
 	}
 
@@ -97,32 +97,32 @@ func TestCreateRememberGetUpdateRetire(t *testing.T) {
 	}
 
 	// retire_hook removes it from active memory.
-	res = run(t, h["hook_retire"], newCall(testSession, map[string]any{
-		"id": hookID, "reason": "no longer true",
+	res = run(t, h["memory_retire"], newCall(testSession, map[string]any{
+		"id": memoryID, "reason": "no longer true",
 	}))
 	if res.IsError {
 		t.Fatalf("retire_hook error: %s", res.ForLLM)
 	}
 
 	// search no longer finds it (retired != active).
-	res = run(t, h["hook_search"], newCall(testSession, map[string]any{"query": "sky"}))
+	res = run(t, h["memory_search"], newCall(testSession, map[string]any{"query": "sky"}))
 	if res.IsError {
 		t.Fatalf("search error: %s", res.ForLLM)
 	}
-	if strings.Contains(res.ForLLM, hookID) {
+	if strings.Contains(res.ForLLM, memoryID) {
 		t.Fatalf("retired hook still found in search: %s", res.ForLLM)
 	}
 }
 
 func TestRememberWithDomainHint(t *testing.T) {
 	h, _ := buildHandlers(t)
-	res := run(t, h["hook_create"], newCall(testSession, map[string]any{
-		"domain_hint": "new project", "kind": "preference", "text": "use tabs",
+	res := run(t, h["memory_create"], newCall(testSession, map[string]any{
+		"domain_hint": "new project", "type": "preference", "text": "use tabs",
 	}))
 	if res.IsError {
 		t.Fatalf("remember(hint) error: %s", res.ForLLM)
 	}
-	if !strings.Contains(res.ForLLM, "Stored hook h") {
+	if !strings.Contains(res.ForLLM, "Stored memory h") {
 		t.Fatalf("unexpected result: %s", res.ForLLM)
 	}
 }
@@ -133,15 +133,15 @@ func TestSearchActiveVsReview(t *testing.T) {
 	domainID := extractID(t, res.ForLLM, "d")
 
 	// active hook
-	run(t, h["hook_create"], newCall(testSession, map[string]any{
-		"domain_id": domainID, "kind": "fact", "text": "active widget", "status": "active",
+	run(t, h["memory_create"], newCall(testSession, map[string]any{
+		"domain_id": domainID, "type": "fact", "text": "active widget", "status": "active",
 	}))
 	// review hook
-	run(t, h["hook_create"], newCall(testSession, map[string]any{
-		"domain_id": domainID, "kind": "fact", "text": "review widget", "status": "review",
+	run(t, h["memory_create"], newCall(testSession, map[string]any{
+		"domain_id": domainID, "type": "fact", "text": "review widget", "status": "review",
 	}))
 
-	res = run(t, h["hook_search"], newCall(testSession, map[string]any{"query": "widget"}))
+	res = run(t, h["memory_search"], newCall(testSession, map[string]any{"query": "widget"}))
 	if !strings.Contains(res.ForLLM, "active widget") {
 		t.Fatalf("search missed active hook: %s", res.ForLLM)
 	}
@@ -155,19 +155,19 @@ func TestForgetRetiresMatches(t *testing.T) {
 	res := run(t, h["domain_create"], newCall(testSession, map[string]any{"type": "project", "name": "p"}))
 	domainID := extractID(t, res.ForLLM, "d")
 	for _, txt := range []string{"forget me one", "forget me two", "keep this"} {
-		run(t, h["hook_create"], newCall(testSession, map[string]any{
-			"domain_id": domainID, "kind": "fact", "text": txt,
+		run(t, h["memory_create"], newCall(testSession, map[string]any{
+			"domain_id": domainID, "type": "fact", "text": txt,
 		}))
 	}
-	res = run(t, h["hook_forget"], newCall(testSession, map[string]any{"query": "forget me"}))
+	res = run(t, h["memory_forget"], newCall(testSession, map[string]any{"query": "forget me"}))
 	if res.IsError {
 		t.Fatalf("forget error: %s", res.ForLLM)
 	}
-	if !strings.Contains(res.ForLLM, "Retired 2 hook") {
+	if !strings.Contains(res.ForLLM, "Retired 2 memories") {
 		t.Fatalf("expected 2 retired, got: %s", res.ForLLM)
 	}
 	// "keep this" should still be searchable.
-	res = run(t, h["hook_search"], newCall(testSession, map[string]any{"query": "keep this"}))
+	res = run(t, h["memory_search"], newCall(testSession, map[string]any{"query": "keep this"}))
 	if !strings.Contains(res.ForLLM, "keep this") {
 		t.Fatalf("forget removed the wrong hook: %s", res.ForLLM)
 	}
@@ -194,16 +194,16 @@ func TestArchiveAndListDomains(t *testing.T) {
 
 func TestStatusAndConsolidate(t *testing.T) {
 	h, _ := buildHandlers(t)
-	res := run(t, h["memory_status"], newCall(testSession, nil))
+	res := run(t, h["status"], newCall(testSession, nil))
 	if res.IsError {
 		t.Fatalf("status error: %s", res.ForLLM)
 	}
-	if !strings.Contains(res.ForLLM, "Pending (review) hooks: 0") ||
+	if !strings.Contains(res.ForLLM, "Pending (review) memories: 0") ||
 		!strings.Contains(res.ForLLM, "Last consolidation run: none") {
 		t.Fatalf("unexpected status: %s", res.ForLLM)
 	}
 
-	res = run(t, h["memory_consolidate"], newCall(testSession, nil))
+	res = run(t, h["consolidate"], newCall(testSession, nil))
 	if res.IsError || !strings.Contains(res.ForLLM, "worker not yet running") {
 		t.Fatalf("unexpected consolidate result: %s", res.ForLLM)
 	}
@@ -211,8 +211,8 @@ func TestStatusAndConsolidate(t *testing.T) {
 
 func TestEmptySessionErrors(t *testing.T) {
 	h, _ := buildHandlers(t)
-	for _, name := range []string{"domain_get", "hook_search", "hook_create", "memory_status", "domain_create"} {
-		res := run(t, h[name], newCall("", map[string]any{"id": "dXXXXX", "query": "x", "kind": "fact", "text": "t", "type": "project", "name": "n"}))
+	for _, name := range []string{"domain_get", "memory_search", "memory_create", "status", "domain_create"} {
+		res := run(t, h[name], newCall("", map[string]any{"id": "dXXXXX", "query": "x", "type": "project", "text": "t", "name": "n"}))
 		if !res.IsError {
 			t.Fatalf("%s: expected error for empty session, got: %s", name, res.ForLLM)
 		}
@@ -221,8 +221,8 @@ func TestEmptySessionErrors(t *testing.T) {
 
 func TestRememberRejectsSecret(t *testing.T) {
 	h, _ := buildHandlers(t)
-	res := run(t, h["hook_create"], newCall(testSession, map[string]any{
-		"domain_hint": "creds", "kind": "fact", "text": "the api_key is sk-123",
+	res := run(t, h["memory_create"], newCall(testSession, map[string]any{
+		"domain_hint": "creds", "type": "fact", "text": "the api_key is sk-123",
 	}))
 	if !res.IsError || !strings.Contains(res.ForLLM, "secret") {
 		t.Fatalf("expected secret rejection, got: isErr=%v %s", res.IsError, res.ForLLM)

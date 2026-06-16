@@ -22,7 +22,6 @@ const (
 	DomainGeneral  DomainType = "general"
 	DomainProject  DomainType = "project"
 	DomainWorkflow DomainType = "workflow"
-	DomainRepo     DomainType = "repo"
 )
 
 // AlwaysOn reports whether a domain of this type is injected into every prompt.
@@ -30,27 +29,26 @@ func (t DomainType) AlwaysOn() bool {
 	return t == DomainGeneral
 }
 
-// Status is the lifecycle state of a domain or hook.
+// Status is the lifecycle state of a domain or memory.
 type Status string
 
 const (
 	StatusActive   Status = "active"   // used in prompts
 	StatusReview   Status = "review"   // unconfirmed; pending digest only
 	StatusArchived Status = "archived" // domains
-	StatusRetired  Status = "retired"  // hooks
-	StatusRejected Status = "rejected" // hooks
+	StatusRetired  Status = "retired"  // memories
+	StatusRejected Status = "rejected" // memories
 )
 
-// HookKind classifies a hook.
-type HookKind string
+// MemoryType classifies a memory. The set is deliberately small: what a memory
+// is (fact), how the user wants things done (preference), or a hard directive
+// (rule). Volatile project status lives on the domain's state, not here.
+type MemoryType string
 
 const (
-	KindPreference   HookKind = "preference"
-	KindRule         HookKind = "rule"
-	KindFact         HookKind = "fact"
-	KindProjectState HookKind = "project_state"
-	KindWorkflow     HookKind = "workflow"
-	KindLesson       HookKind = "lesson"
+	TypeFact       MemoryType = "fact"
+	TypePreference MemoryType = "preference"
+	TypeRule       MemoryType = "rule"
 )
 
 // Source records how a memory item came to exist.
@@ -89,26 +87,26 @@ type Domain struct {
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
 	ArchivedAt    *time.Time
-	Hooks         []Hook // populated by GetDomain / ListHooks; nil otherwise
+	Memories      []Memory // populated by GetDomain / ListMemories; nil otherwise
 }
 
-// Hook is a short, addressable unit of learned memory inside a domain.
-type Hook struct {
-	ID               string
-	DomainID         string
-	Kind             HookKind
-	Text             string
-	Status           Status
-	Confidence       float64
-	Priority         int
-	Source           Source
-	SourceSession    *string
-	SourceSeqStart   *int64
-	SourceSeqEnd     *int64
-	SupersedesHookID *string
-	RetireReason     *string
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+// Memory is a short, addressable unit of learned memory inside a domain.
+type Memory struct {
+	ID                 string
+	DomainID           string
+	Type               MemoryType
+	Text               string
+	Status             Status
+	Confidence         float64
+	Priority           int
+	Source             Source
+	SourceSession      *string
+	SourceSeqStart     *int64
+	SourceSeqEnd       *int64
+	SupersedesMemoryID *string
+	RetireReason       *string
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 }
 
 // Evidence references the archive seq range that justifies a memory change.
@@ -122,7 +120,7 @@ type Event struct {
 	ID         string
 	Type       string // create, update, retire, merge, reject, conflict_resolved, gap
 	DomainID   string
-	HookID     string
+	MemoryID   string
 	OldJSON    string
 	NewJSON    string
 	Reason     string

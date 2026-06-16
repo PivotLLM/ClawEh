@@ -4,7 +4,7 @@
 package store
 
 // schemaVersion is the current migration version. Bump when DDL changes.
-const schemaVersion = 2
+const schemaVersion = 3
 
 // schema is the full DDL for a .cogmem.db. All statements are idempotent so
 // migrate() can run it on every open. No FTS, no vector columns (see
@@ -42,10 +42,10 @@ CREATE TABLE IF NOT EXISTS domains (
 );
 CREATE INDEX IF NOT EXISTS idx_domains_status ON domains(status);
 
-CREATE TABLE IF NOT EXISTS hooks (
+CREATE TABLE IF NOT EXISTS memories (
   id                 TEXT PRIMARY KEY,
   domain_id          TEXT NOT NULL REFERENCES domains(id),
-  kind               TEXT NOT NULL,
+  type               TEXT NOT NULL,
   text               TEXT NOT NULL,
   status             TEXT NOT NULL,
   confidence         REAL NOT NULL,
@@ -54,13 +54,13 @@ CREATE TABLE IF NOT EXISTS hooks (
   source_session     TEXT,
   source_seq_start   INTEGER,
   source_seq_end     INTEGER,
-  supersedes_hook_id TEXT,
+  supersedes_memory_id TEXT,
   retire_reason      TEXT,
   created_at         INTEGER NOT NULL,
   updated_at         INTEGER NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_hooks_domain ON hooks(domain_id, status);
-CREATE INDEX IF NOT EXISTS idx_hooks_status ON hooks(status);
+CREATE INDEX IF NOT EXISTS idx_memories_domain ON memories(domain_id, status);
+CREATE INDEX IF NOT EXISTS idx_memories_status ON memories(status);
 
 CREATE TABLE IF NOT EXISTS consolidation_state (
   archive_path     TEXT PRIMARY KEY,
@@ -75,7 +75,7 @@ CREATE TABLE IF NOT EXISTS memory_events (
   id          TEXT PRIMARY KEY,
   event_type  TEXT NOT NULL,
   domain_id   TEXT,
-  hook_id     TEXT,
+  memory_id     TEXT,
   old_json    TEXT,
   new_json    TEXT,
   reason      TEXT NOT NULL DEFAULT '',

@@ -16,7 +16,7 @@ func sampleInput() Input {
 	return Input{
 		CurrentState: CurrentState{Domains: []DomainView{{
 			ID: "d4", Type: "project", Name: "Layout", Status: "active", Version: 2,
-			Hooks: []HookView{{ID: "h9", Kind: "rule", Text: "Never use the color blue.", Confidence: 0.9}},
+			Memories: []MemoryView{{ID: "h9", Type: "rule", Text: "Never use the color blue.", Confidence: 0.9}},
 		}}},
 		NewMessages: []Message{{Seq: 512, Role: "user", Text: "Actually, use blue for the layout."}},
 	}
@@ -25,8 +25,8 @@ func sampleInput() Input {
 func TestValidateHappyPath(t *testing.T) {
 	in := sampleInput()
 	out := Output{
-		HookOps: []HookOp{{
-			Op: "supersede", OldID: "h9", Domain: "d4", Kind: "rule",
+		MemoryOps: []MemoryOp{{
+			Op: "supersede", OldID: "h9", Domain: "d4", Type: "rule",
 			Text: "Use blue for the layout.", Confidence: 0.95, Status: "active",
 			Source: "user_explicit", Evidence: ev(512, 512),
 		}},
@@ -40,12 +40,12 @@ func TestValidateHappyPath(t *testing.T) {
 func TestValidateRejections(t *testing.T) {
 	in := sampleInput()
 	cases := map[string]Output{
-		"evidence out of range": {HookOps: []HookOp{{Op: "add", Domain: "d4", Kind: "fact", Text: "ok", Source: "user_explicit", Status: "active", Evidence: ev(999, 999)}}},
-		"unknown domain":        {HookOps: []HookOp{{Op: "add", Domain: "dX", Kind: "fact", Text: "ok", Source: "user_explicit", Status: "active", Evidence: ev(512, 512)}}},
-		"unknown retire id":     {HookOps: []HookOp{{Op: "retire", ID: "hZ", Reason: "x", Evidence: ev(512, 512)}}},
-		"invalid kind":          {HookOps: []HookOp{{Op: "add", Domain: "d4", Kind: "bogus", Text: "ok", Source: "user_explicit", Status: "active", Evidence: ev(512, 512)}}},
-		"inferred active":       {HookOps: []HookOp{{Op: "add", Domain: "d4", Kind: "fact", Text: "ok", Source: "assistant_inferred", Status: "active", Evidence: ev(512, 512)}}},
-		"secret in text":        {HookOps: []HookOp{{Op: "add", Domain: "d4", Kind: "fact", Text: "api_key = sk-abcdefghij0123456789", Source: "user_explicit", Status: "active", Evidence: ev(512, 512)}}},
+		"evidence out of range": {MemoryOps: []MemoryOp{{Op: "add", Domain: "d4", Type: "fact", Text: "ok", Source: "user_explicit", Status: "active", Evidence: ev(999, 999)}}},
+		"unknown domain":        {MemoryOps: []MemoryOp{{Op: "add", Domain: "dX", Type: "fact", Text: "ok", Source: "user_explicit", Status: "active", Evidence: ev(512, 512)}}},
+		"unknown retire id":     {MemoryOps: []MemoryOp{{Op: "retire", ID: "hZ", Reason: "x", Evidence: ev(512, 512)}}},
+		"invalid kind":          {MemoryOps: []MemoryOp{{Op: "add", Domain: "d4", Type: "bogus", Text: "ok", Source: "user_explicit", Status: "active", Evidence: ev(512, 512)}}},
+		"inferred active":       {MemoryOps: []MemoryOp{{Op: "add", Domain: "d4", Type: "fact", Text: "ok", Source: "assistant_inferred", Status: "active", Evidence: ev(512, 512)}}},
+		"secret in text":        {MemoryOps: []MemoryOp{{Op: "add", Domain: "d4", Type: "fact", Text: "api_key = sk-abcdefghij0123456789", Source: "user_explicit", Status: "active", Evidence: ev(512, 512)}}},
 		"update no version":     {DomainOps: []DomainOp{{Op: "update", ID: "d4", Evidence: ev(512, 512)}}},
 		"create no tmp_id":      {DomainOps: []DomainOp{{Op: "create", Type: "project", Name: "X", Evidence: ev(512, 512)}}},
 	}
@@ -60,7 +60,7 @@ func TestValidateTmpIDReference(t *testing.T) {
 	in := sampleInput()
 	out := Output{
 		DomainOps: []DomainOp{{Op: "create", TmpID: "t1", Type: "project", Name: "New", Status: "active", Evidence: ev(512, 512)}},
-		HookOps:   []HookOp{{Op: "add", Domain: "t1", Kind: "fact", Text: "a fact", Source: "user_explicit", Status: "active", Evidence: ev(512, 512)}},
+		MemoryOps: []MemoryOp{{Op: "add", Domain: "t1", Type: "fact", Text: "a fact", Source: "user_explicit", Status: "active", Evidence: ev(512, 512)}},
 	}
 	if err := out.Validate(in); err != nil {
 		t.Fatalf("tmp_id reference rejected: %v", err)

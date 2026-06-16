@@ -35,11 +35,11 @@ func TestStableBlockContent(t *testing.T) {
 	ctx := context.Background()
 	db := s.DB()
 	base, _ := s.GeneralDomain(ctx, db) // the seeded always-on general domain
-	_, _ = s.AddHook(ctx, db, store.AddHookParams{DomainID: base.ID, Kind: store.KindPreference, Text: "Be concise.", Status: store.StatusActive, Confidence: 0.95, Source: store.SourceUserExplicit})
+	_, _ = s.AddMemory(ctx, db, store.AddMemoryParams{DomainID: base.ID, Type: store.TypePreference, Text: "Be concise.", Status: store.StatusActive, Confidence: 0.95, Source: store.SourceUserExplicit})
 	proj, _ := s.CreateDomain(ctx, db, store.CreateDomainParams{AgentID: "a", Type: store.DomainProject, Name: "Website Redesign", Summary: "CSS grid migration"})
 	_ = proj
 	// A pending (review) inference.
-	_, _ = s.AddHook(ctx, db, store.AddHookParams{DomainID: base.ID, Kind: store.KindPreference, Text: "Prefers tabs.", Status: store.StatusReview, Confidence: 0.6, Source: store.SourceAssistantInferred})
+	_, _ = s.AddMemory(ctx, db, store.AddMemoryParams{DomainID: base.ID, Type: store.TypePreference, Text: "Prefers tabs.", Status: store.StatusReview, Confidence: 0.6, Source: store.SourceAssistantInferred})
 
 	c := New(s)
 	txt, rev, err := c.StableBlock(ctx)
@@ -66,7 +66,7 @@ func TestRoutedBlockToolTrigger(t *testing.T) {
 		Triggers: "google_gmail,microsoft365_mail",
 	})
 	other, _ := s.CreateDomain(ctx, db, store.CreateDomainParams{AgentID: "a", Type: store.DomainProject, Name: "Other", Summary: "misc"})
-	_, _ = s.AddHook(ctx, db, store.AddHookParams{DomainID: email.ID, Kind: store.KindPreference, Text: "Archive newsletters.", Status: store.StatusActive, Confidence: 0.9, Source: store.SourceUserExplicit})
+	_, _ = s.AddMemory(ctx, db, store.AddMemoryParams{DomainID: email.ID, Type: store.TypePreference, Text: "Archive newsletters.", Status: store.StatusActive, Confidence: 0.9, Source: store.SourceUserExplicit})
 	// "Other" is the most recently touched, so recency alone would rank it first.
 	_ = s.Touch(ctx, db, email.ID)
 	_ = s.Touch(ctx, db, other.ID)
@@ -124,7 +124,7 @@ func TestRoutedBlockLexicalMatch(t *testing.T) {
 	// "BioTech" is older/less recent; "Other" is the most recently touched.
 	bio, _ := s.CreateDomain(ctx, db, store.CreateDomainParams{AgentID: "a", Type: store.DomainProject, Name: "BioTech", Summary: "research report"})
 	other, _ := s.CreateDomain(ctx, db, store.CreateDomainParams{AgentID: "a", Type: store.DomainProject, Name: "Other", Summary: "misc"})
-	_, _ = s.AddHook(ctx, db, store.AddHookParams{DomainID: bio.ID, Kind: store.KindFact, Text: "The biotech report targets Q3.", Status: store.StatusActive, Confidence: 0.9, Source: store.SourceUserExplicit})
+	_, _ = s.AddMemory(ctx, db, store.AddMemoryParams{DomainID: bio.ID, Type: store.TypeFact, Text: "The biotech report targets Q3.", Status: store.StatusActive, Confidence: 0.9, Source: store.SourceUserExplicit})
 	_ = s.Touch(ctx, db, bio.ID)
 	_ = s.Touch(ctx, db, other.ID)
 
@@ -189,7 +189,7 @@ func TestRoutedBlockRecency(t *testing.T) {
 	db := s.DB()
 	d1, _ := s.CreateDomain(ctx, db, store.CreateDomainParams{AgentID: "a", Type: store.DomainProject, Name: "Old", Summary: "old"})
 	d2, _ := s.CreateDomain(ctx, db, store.CreateDomainParams{AgentID: "a", Type: store.DomainProject, Name: "Recent", Summary: "recent"})
-	_, _ = s.AddHook(ctx, db, store.AddHookParams{DomainID: d2.ID, Kind: store.KindFact, Text: "key fact", Status: store.StatusActive, Confidence: 0.9, Source: store.SourceUserExplicit})
+	_, _ = s.AddMemory(ctx, db, store.AddMemoryParams{DomainID: d2.ID, Type: store.TypeFact, Text: "key fact", Status: store.StatusActive, Confidence: 0.9, Source: store.SourceUserExplicit})
 	// d2 is touched (more recent) than d1.
 	_ = s.Touch(ctx, db, d1.ID)
 	_ = s.Touch(ctx, db, d2.ID)

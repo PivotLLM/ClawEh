@@ -88,6 +88,12 @@ func (s *Store) Path() string { return s.path }
 func (s *Store) Close() error { return s.db.Close() }
 
 func (s *Store) migrate(ctx context.Context) error {
+	// Legacy rename (hook→memory, kind→type) must run BEFORE the schema DDL, or
+	// CREATE TABLE IF NOT EXISTS memories would make a fresh empty table beside
+	// the existing data. Idempotent and a no-op on fresh databases.
+	if err := s.renameLegacyTables(ctx); err != nil {
+		return fmt.Errorf("cogmem: legacy rename: %w", err)
+	}
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("cogmem: schema: %w", err)
 	}
@@ -112,6 +118,64 @@ func (s *Store) migrate(ctx context.Context) error {
 		return fmt.Errorf("cogmem: seed general domain: %w", err)
 	}
 	return nil
+}
+
+// renameLegacyTables migrates a pre-rename database (hooks→memories, kind→type,
+// supersedes_hook_id→supersedes_memory_id, memory_events.hook_id→memory_id) in
+// place. Every step is guarded so it is idempotent and a no-op on fresh DBs.
+func (s *Store) renameLegacyTables(ctx context.Context) error {
+	hooksExists, err := s.tableExists(ctx, "hooks")
+	if err != nil {
+		return err
+	}
+	memExists, err := s.tableExists(ctx, "memories")
+	if err != nil {
+		return err
+	}
+	if hooksExists && !memExists {
+		if _, err := s.db.ExecContext(ctx, `ALTER TABLE hooks RENAME TO memories`); err != nil {
+			return err
+		}
+		// Indexes follow the renamed table but keep their idx_hooks_* names; drop
+		// them so the schema DDL can recreate idx_memories_* without duplication.
+		for _, idx := range []string{"idx_hooks_domain", "idx_hooks_status"} {
+			if _, err := s.db.ExecContext(ctx, `DROP INDEX IF EXISTS `+idx); err != nil {
+				return err
+			}
+		}
+	}
+	renames := []struct{ table, old, new string }{
+		{"memories", "kind", "type"},
+		{"memories", "supersedes_hook_id", "supersedes_memory_id"},
+		{"memory_events", "hook_id", "memory_id"},
+	}
+	for _, r := range renames {
+		cols, err := s.columnSet(ctx, r.table)
+		if err != nil {
+			return err
+		}
+		if cols[r.old] && !cols[r.new] {
+			if _, err := s.db.ExecContext(ctx,
+				fmt.Sprintf(`ALTER TABLE %s RENAME COLUMN %s TO %s`, r.table, r.old, r.new)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// tableExists reports whether a table of the given name exists.
+func (s *Store) tableExists(ctx context.Context, name string) (bool, error) {
+	var x string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT name FROM sqlite_master WHERE type='table' AND name=?`, name).Scan(&x)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // ensureDomainColumns adds columns introduced after a database was first created.

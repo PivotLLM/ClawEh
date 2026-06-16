@@ -55,7 +55,7 @@ FULL_URL="${SERVER_URL}${ENDPOINT}"
 # (subagent capability) and hw_i2c/hw_spi (Linux + I2C/SPI devices) are also
 # exposed but only probed when actually present in the catalogue, so this script
 # stays portable.
-EXPECTED_TOOLS="file_read file_write file_edit file_append file_list file_copy web_fetch web_search msg_send_file session_messages session_search session_compact session_info session_summary_list session_summary_get session_clear shell_exec skill_find skill_install cron_schedule cogmem_domain_get cogmem_hook_search cogmem_domain_list cogmem_memory_explain cogmem_hook_create cogmem_domain_update cogmem_hook_retire cogmem_domain_create cogmem_domain_archive cogmem_hook_forget cogmem_memory_consolidate cogmem_memory_status common_list common_get common_put common_delete"
+EXPECTED_TOOLS="file_read file_write file_edit file_append file_list file_copy web_fetch web_search msg_send_file session_messages session_search session_compact session_info session_summary_list session_summary_get session_clear shell_exec skill_find skill_install cron_schedule cogmem_domain_get cogmem_memory_search cogmem_domain_list cogmem_explain cogmem_memory_create cogmem_domain_update cogmem_memory_retire cogmem_domain_create cogmem_domain_archive cogmem_memory_forget cogmem_consolidate cogmem_status common_list common_get common_put common_delete"
 EXPECTED_TOOL_COUNT=36
 
 # Namespace prefixes that must have at least one tool in the catalogue.
@@ -414,8 +414,8 @@ check_tool "1.10" "session_search"
 check_tool "1.11" "session_compact"
 check_tool "1.12" "session_info"
 check_tool "1.13" "cogmem_domain_create"
-check_tool "1.14" "cogmem_hook_create"
-check_tool "1.15" "cogmem_memory_status"
+check_tool "1.14" "cogmem_memory_create"
+check_tool "1.15" "cogmem_status"
 # find_tools_regex and find_tools_bm25 are only registered when
 # tools.mcp.discovery.enabled=true — not set in the standard test config.
 
@@ -591,46 +591,46 @@ else
 
     # remember with a domain_hint auto-creates/uses a project domain and records
     # a durable hook — no pre-existing id required, so it succeeds deterministically.
-    run_test_ok_auth "4c.2 cogmem_hook_create records a hook (domain_hint)" \
-        "cogmem_hook_create" "{\"domain_hint\":\"$COGMEM_DOMAIN\",\"kind\":\"fact\",\"text\":\"$COGMEM_HOOK_TEXT\"}"
+    run_test_ok_auth "4c.2 cogmem_memory_create records a hook (domain_hint)" \
+        "cogmem_memory_create" "{\"domain_hint\":\"$COGMEM_DOMAIN\",\"type\":\"fact\",\"text\":\"$COGMEM_HOOK_TEXT\"}"
 
     # list_domains must now report at least the domain(s) created above.
     run_test_ok_auth "4c.3 cogmem_domain_list lists domains" \
         "cogmem_domain_list" '{}' "domain(s)"
 
     # search over hook text — success whether or not a match is found.
-    run_test_ok_auth "4c.4 cogmem_hook_search returns a result set" \
-        "cogmem_hook_search" "{\"query\":\"$COGMEM_HOOK_TEXT\"}"
+    run_test_ok_auth "4c.4 cogmem_memory_search returns a result set" \
+        "cogmem_memory_search" "{\"query\":\"$COGMEM_HOOK_TEXT\"}"
 
     # status reports store health deterministically.
-    run_test_ok_auth "4c.5 cogmem_memory_status reports memory health" \
-        "cogmem_memory_status" '{}' "Cognitive memory database"
+    run_test_ok_auth "4c.5 cogmem_status reports memory health" \
+        "cogmem_status" '{}' "Cognitive memory database"
 
     # forget retires matching hooks; succeeds whether 0 or N hooks match.
-    run_test_ok_auth "4c.6 cogmem_hook_forget retires matching hooks" \
-        "cogmem_hook_forget" "{\"query\":\"$COGMEM_HOOK_TEXT\"}"
+    run_test_ok_auth "4c.6 cogmem_memory_forget retires matching hooks" \
+        "cogmem_memory_forget" "{\"query\":\"$COGMEM_HOOK_TEXT\"}"
 
     # --- id-dependent tools: graceful probes (token accepted). ---
 
     run_test_not_auth_err "4c.7 cogmem_domain_get — token accepted" \
         "cogmem_domain_get" '{"id":"dMCPtest"}'
 
-    run_test_not_auth_err "4c.8 cogmem_memory_explain — token accepted" \
-        "cogmem_memory_explain" '{"id":"dMCPtest"}'
+    run_test_not_auth_err "4c.8 cogmem_explain — token accepted" \
+        "cogmem_explain" '{"id":"dMCPtest"}'
 
     run_test_not_auth_err "4c.9 cogmem_domain_update — token accepted" \
         "cogmem_domain_update" '{"id":"dMCPtest","expected_version":1,"set_summary":"probe"}'
 
-    run_test_not_auth_err "4c.10 cogmem_hook_retire — token accepted" \
-        "cogmem_hook_retire" '{"id":"hMCPtest","reason":"probe"}'
+    run_test_not_auth_err "4c.10 cogmem_memory_retire — token accepted" \
+        "cogmem_memory_retire" '{"id":"hMCPtest","reason":"probe"}'
 
     run_test_not_auth_err "4c.11 cogmem_domain_archive — token accepted" \
         "cogmem_domain_archive" '{"id":"dMCPtest"}'
 
     # --- consolidate: non-blocking, may touch an LLM — graceful probe. ---
 
-    run_test_not_auth_err "4c.12 cogmem_memory_consolidate — token accepted (queued/accepted)" \
-        "cogmem_memory_consolidate" '{"scope":"probe"}'
+    run_test_not_auth_err "4c.12 cogmem_consolidate — token accepted (queued/accepted)" \
+        "cogmem_consolidate" '{"scope":"probe"}'
 
     # Section 4d: Shared common-directory tools (common_*). Hermetic and
     # deterministic. common_put copies the scratch file (under files/, created in
