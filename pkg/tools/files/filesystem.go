@@ -808,10 +808,113 @@ func buildFs(workspace string, restrict bool, patterns []*regexp.Regexp) fileSys
 		return &hostFs{}
 	}
 	sandbox := &sandboxFs{workspace: workspace}
+	var inner fileSystem = sandbox
 	if len(patterns) > 0 {
-		return &whitelistFs{sandbox: sandbox, patterns: patterns}
+		inner = &whitelistFs{sandbox: sandbox, patterns: patterns}
 	}
-	return sandbox
+	// Optional read-scope: confine agent reads to specific workspace subdirs
+	// (e.g. files/ + skills/). Off by default (nil) so direct unit-test
+	// construction is unaffected; the provider enables it from config.
+	if len(readScopeSubdirs) > 0 && workspace != "" {
+		return newReadScopedFs(inner, workspace, readScopeSubdirs, patterns)
+	}
+	return inner
+}
+
+// readScopeSubdirs, when non-empty, confines agent file reads to these workspace
+// subdirectories (plus any allow-listed host paths). It is a single process-wide
+// read policy, set once at provider construction from
+// AgentDefaults.WorkspaceReadSubdirs; empty means legacy workspace-wide reads.
+var readScopeSubdirs []string
+
+// SetReadScopeSubdirs installs the workspace read allowlist (e.g. ["files","skills"]).
+// Passing nil/empty restores legacy workspace-wide reads.
+func SetReadScopeSubdirs(subdirs []string) { readScopeSubdirs = subdirs }
+
+// readScopedFs wraps an inner fileSystem to confine reads to a set of workspace
+// subdirectories (readRoots). Host paths matching patterns (e.g. the global
+// skills dir, Tools.AllowReadPaths) bypass the check. Writes pass through — the
+// write tools layer writeScopedFs on top for write confinement.
+type readScopedFs struct {
+	inner       fileSystem
+	workspace   string
+	readRoots   []string // absolute
+	subdirNames []string // for the error message
+	patterns    []*regexp.Regexp
+}
+
+func newReadScopedFs(inner fileSystem, workspace string, subdirs []string, patterns []*regexp.Regexp) *readScopedFs {
+	roots := make([]string, 0, len(subdirs))
+	for _, s := range subdirs {
+		if abs, err := filepath.Abs(filepath.Join(workspace, s)); err == nil {
+			roots = append(roots, abs)
+		}
+	}
+	return &readScopedFs{inner: inner, workspace: workspace, readRoots: roots, subdirNames: subdirs, patterns: patterns}
+}
+
+func (r *readScopedFs) readAllowed(path string) error {
+	for _, p := range r.patterns {
+		if p.MatchString(path) {
+			return nil
+		}
+	}
+	var absPath string
+	if filepath.IsAbs(path) {
+		absPath = filepath.Clean(path)
+	} else {
+		a, err := filepath.Abs(filepath.Join(r.workspace, path))
+		if err != nil {
+			return fmt.Errorf("failed to resolve file path: %w", err)
+		}
+		absPath = a
+	}
+	for _, root := range r.readRoots {
+		if absPath == root || isWithinWorkspace(absPath, root) {
+			return nil
+		}
+	}
+	return fmt.Errorf("read denied: the agent can only read %s/", strings.Join(r.subdirNames, "/, "))
+}
+
+func (r *readScopedFs) ReadFile(path string) ([]byte, error) {
+	if err := r.readAllowed(path); err != nil {
+		return nil, err
+	}
+	return r.inner.ReadFile(path)
+}
+
+func (r *readScopedFs) ReadDir(path string) ([]os.DirEntry, error) {
+	if err := r.readAllowed(path); err != nil {
+		return nil, err
+	}
+	return r.inner.ReadDir(path)
+}
+
+func (r *readScopedFs) Open(path string) (fs.File, error) {
+	if err := r.readAllowed(path); err != nil {
+		return nil, err
+	}
+	return r.inner.Open(path)
+}
+
+func (r *readScopedFs) Stat(path string) (os.FileInfo, error) {
+	if err := r.readAllowed(path); err != nil {
+		return nil, err
+	}
+	return r.inner.Stat(path)
+}
+
+func (r *readScopedFs) WriteFile(path string, data []byte) error {
+	return r.inner.WriteFile(path, data)
+}
+
+func (r *readScopedFs) WriteFileMode(path string, data []byte, mode os.FileMode) error {
+	return r.inner.WriteFileMode(path, data, mode)
+}
+
+func (r *readScopedFs) WriteFileExclMode(path string, data []byte, mode os.FileMode) error {
+	return r.inner.WriteFileExclMode(path, data, mode)
 }
 
 // buildWriteFs returns the fileSystem for the write/edit/append/copy tools.

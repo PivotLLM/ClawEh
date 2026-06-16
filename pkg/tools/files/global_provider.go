@@ -70,6 +70,13 @@ func (globalFilesProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 			_ = os.MkdirAll(filepath.Join(workspace, writeSubdir), 0o755)
 		}
 
+		// Confine agent reads to the configured workspace subdirs (default
+		// files/ + skills/). Process-wide policy consulted by buildFs; empty
+		// restores legacy workspace-wide reads.
+		if readRestrict {
+			SetReadScopeSubdirs(c.Agents.Defaults.WorkspaceReadSubdirs)
+		}
+
 		read = NewReadFileTool(workspace, readRestrict, maxReadFileSize, allowReadPaths)
 		write = NewWriteFileToolScoped(workspace, restrict, writeSubdir, allowWritePaths)
 		list = NewListDirTool(workspace, readRestrict, allowReadPaths)

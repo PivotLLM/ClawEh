@@ -46,6 +46,7 @@ func DefaultConfig() *Config {
 			Defaults: AgentDefaults{
 				RestrictToWorkspace:  true,
 				WorkspaceWriteSubdir: "files",
+				WorkspaceReadSubdirs: []string{"files", "skills"},
 				Memory: MemoryConfig{
 					Prompt: MemoryPromptConfig{
 						TopKDomains: 3, MaxChars: 4000, MinConfidence: 0.65,

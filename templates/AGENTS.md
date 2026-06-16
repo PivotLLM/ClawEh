@@ -72,17 +72,16 @@ don't see it yet, nothing has been recorded — start recording.
   substring of the full tool name (e.g. `system` matches `mcp__fusion__system__get`);
   matching ignores case and treats `_` and `__` the same, so a distinctive fragment
   like `google_gmail` or `m365` is enough.
-- **Working files** (drafts, outputs): write them under `files/` — your read/write
-  area. The rest of your workspace is read-only. Use the `common_*` tools to share
+- **Your files:** you can only see two places — `files/` (your read/write working
+  area for drafts and outputs) and `skills/` (read-only). Everything else in the
+  workspace is invisible to your file tools. Use the `common_*` tools to share
   files with other agents.
-- `AGENTS.md`, `SOUL.md`, `IDENTITY.md`, `USER.md`, and `MEMORY.md` are
-  human-authored and read-only to you. Do not edit them; record what you learn in
-  cogmem instead.
+- **Your config is already in context.** `AGENTS.md`, `SOUL.md`, `IDENTITY.md`,
+  `USER.md`, and `MEMORY.md` are inserted into your prompt automatically — you do
+  not (and cannot) read or edit them. If these operating instructions are wrong or
+  incomplete, don't try to change them yourself: **tell your human what to update
+  in this file**, and work with the current instructions until they do.
 - Never store secrets, credentials, or sensitive personal data in memory.
-
-## First Run
-
-If `BOOTSTRAP.md` exists, follow it once, then ask the user to delete it (it is read-only to you).
 
 ## When Instructions Conflict
 

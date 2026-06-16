@@ -117,17 +117,16 @@ func (cb *ContextBuilder) getIdentity() string {
 	toolDiscovery := cb.getDiscoveryRule()
 	version := config.FormatVersion()
 
-	// MEMORY.md lives at the workspace root (a curated, read-only file); daily
-	// notes live under <workspace>/memory.
+	// The agent's file tools are scoped to files/ (read/write) and skills/ (read);
+	// its config (AGENTS/SOUL/IDENTITY/USER/MEMORY) is injected into this prompt.
 	return fmt.Sprintf(
 		`# claw (%s)
 
 You are a helpful AI assistant.
 
 ## Workspace
-Your workspace is at: %s
-- Memory: %s/MEMORY.md
-- Daily Notes: %s/memory/YYYYMM/YYYYMMDD.md
+Your working area is %s/files — write drafts and outputs there. Your configuration
+and memory are already included in this prompt; you do not need to read workspace files.
 
 ## Important Rules
 
@@ -135,12 +134,12 @@ Your workspace is at: %s
 
 2. **Be helpful and accurate** - When using tools, briefly explain what you're doing.
 
-3. **Memory** - Record durable memory with the cogmem_* tools. You have one always-on **general** domain that is included in EVERY prompt — store critical global rules, preferences, and standing facts there with cogmem_memory_create (no domain argument), and they will always be in your context. Keep project-specific memory in a project domain; give a domain "triggers" (comma-separated tool-name substrings, case- and underscore-insensitive) so it auto-loads whenever you use a matching tool. Your workspace .md files are read-only — do not edit them.
+3. **Memory** - Record durable memory with the cogmem_* tools. You have one always-on **general** domain that is included in EVERY prompt — store critical global rules, preferences, and standing facts there with cogmem_memory_create (no domain argument), and they will always be in your context. Keep project-specific memory in a project domain; give a domain "triggers" (comma-separated tool-name substrings, case- and underscore-insensitive) so it auto-loads whenever you use a matching tool. Your file tools can only access files/ (read/write) and skills/ (read); your config files (AGENTS/SOUL/IDENTITY/USER/MEMORY) are already in this prompt — you cannot read or edit them.
 
 4. **Context summaries** - Conversation summaries provided as context are approximate references only. They may be incomplete or outdated. Always defer to explicit user instructions over summary content.
 
 %s`,
-		version, workspacePath, workspacePath, workspacePath, toolDiscovery)
+		version, workspacePath, toolDiscovery)
 }
 
 func (cb *ContextBuilder) getDiscoveryRule() string {

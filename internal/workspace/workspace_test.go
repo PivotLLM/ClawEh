@@ -12,39 +12,19 @@ func exists(t *testing.T, path string) bool {
 	return err == nil
 }
 
-// TestPopulate_FreshWorkspace seeds all templates, including BOOTSTRAP.md and a
-// starter memory, into a brand-new workspace.
+// TestPopulate_FreshWorkspace seeds all templates and a starter memory into a
+// brand-new workspace.
 func TestPopulate_FreshWorkspace(t *testing.T) {
 	ws := t.TempDir()
 	Populate(ws)
 
-	for _, f := range []string{"AGENTS.md", "BOOTSTRAP.md", "COMPRESSION.md", "IDENTITY.md", "SOUL.md", "USER.md"} {
+	for _, f := range []string{"AGENTS.md", "COMPRESSION.md", "IDENTITY.md", "SOUL.md", "USER.md"} {
 		if !exists(t, filepath.Join(ws, f)) {
 			t.Errorf("expected %s to be seeded into a fresh workspace", f)
 		}
 	}
 	if !exists(t, filepath.Join(ws, "MEMORY.md")) {
 		t.Error("expected starter memory seeded into <workspace>/memory")
-	}
-}
-
-// TestPopulate_BootstrapNotRecreated verifies a personalized agent that deleted
-// BOOTSTRAP.md does not get it re-added on a subsequent startup.
-func TestPopulate_BootstrapNotRecreated(t *testing.T) {
-	ws := t.TempDir()
-	Populate(ws) // fresh: seeds AGENTS.md + BOOTSTRAP.md
-
-	if err := os.Remove(filepath.Join(ws, "BOOTSTRAP.md")); err != nil {
-		t.Fatalf("remove BOOTSTRAP.md: %v", err)
-	}
-
-	Populate(ws) // restart: workspace already initialized (AGENTS.md present)
-
-	if exists(t, filepath.Join(ws, "BOOTSTRAP.md")) {
-		t.Error("BOOTSTRAP.md must not be recreated on an initialized workspace")
-	}
-	if !exists(t, filepath.Join(ws, "AGENTS.md")) {
-		t.Error("AGENTS.md should still be present")
 	}
 }
 

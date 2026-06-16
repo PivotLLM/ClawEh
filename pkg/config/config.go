@@ -366,7 +366,14 @@ type AgentDefaults struct {
 	// remain workspace-wide. Only applies when RestrictToWorkspace is true.
 	// Default "files" (writes land in <workspace>/files). Set to "" to make the
 	// whole workspace writable (legacy behavior).
-	WorkspaceWriteSubdir       string   `json:"workspace_write_subdir"          env:"CLAW_AGENTS_DEFAULTS_WORKSPACE_WRITE_SUBDIR"`
+	WorkspaceWriteSubdir string `json:"workspace_write_subdir"          env:"CLAW_AGENTS_DEFAULTS_WORKSPACE_WRITE_SUBDIR"`
+	// WorkspaceReadSubdirs confines agent file reads to these <workspace>/<subdir>
+	// directories (plus allow-listed host paths). Only applies when
+	// RestrictToWorkspace is true. Default ["files","skills"] — the agent's
+	// read/write area plus its skills. Empty makes reads workspace-wide (legacy),
+	// which exposes config/subsystem files (AGENTS.md, COGMEM.md, …) the agent
+	// already receives in its prompt or should never read.
+	WorkspaceReadSubdirs       []string `json:"workspace_read_subdirs"          env:"CLAW_AGENTS_DEFAULTS_WORKSPACE_READ_SUBDIRS"`
 	Models                     []string `json:"models,omitempty"`
 	ImageModel                 string   `json:"image_model,omitempty"           env:"CLAW_AGENTS_DEFAULTS_IMAGE_MODEL"`
 	ImageModelFallbacks        []string `json:"image_model_fallbacks,omitempty"`

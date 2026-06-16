@@ -460,8 +460,8 @@ else
 
     print_section "3. File operations (authenticated)"
 
-    run_test_ok_auth "3.1 file_list workspace root" \
-        "file_list" '{"path":"."}'
+    run_test_ok_auth "3.1 file_list working area (files/)" \
+        "file_list" '{"path":"files"}'
 
     run_test_ok_auth "3.2 file_write creates a scratch file" \
         "file_write" "{\"path\":\"$SCRATCH_REL\",\"content\":\"$PAYLOAD\"}"
@@ -487,7 +487,7 @@ else
         "file_copy" "{\"source_path\":\"$SCRATCH_REL\",\"destination_path\":\"${SCRATCH_REL}.copy\"}"
 
     run_test_err_auth "3.9 file_read on missing path returns an error" \
-        "file_read" '{"path":"definitely_not_a_real_file_'$$'_xyz.txt"}'
+        "file_read" '{"path":"files/definitely_not_a_real_file_'$$'_xyz.txt"}'
 
     run_test_err_auth "3.10 unknown tool is rejected" \
         "definitely_not_a_real_tool_$$" '{}'

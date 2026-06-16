@@ -14,9 +14,9 @@ import (
 // any file that already exists. It is safe to call on every startup — existing
 // agent customizations are never overwritten.
 //
-// BOOTSTRAP.md, COMPRESSION.md, and MEMORY.md are user-deletable: they are seeded
-// only into a brand-new (uninitialized) workspace, so deleting one sticks and a
-// personalized agent is not disturbed on restart.
+// COMPRESSION.md and MEMORY.md are user-deletable: they are seeded only into a
+// brand-new (uninitialized) workspace, so deleting one sticks and a personalized
+// agent is not disturbed on restart.
 func Populate(workspace string) {
 	if err := os.MkdirAll(workspace, 0o755); err != nil {
 		logger.WarnCF("workspace", "Failed to create workspace directory",
@@ -34,12 +34,11 @@ func Populate(workspace string) {
 
 	// A workspace is "initialized" once its core identity file exists. On an
 	// initialized workspace we must not recreate user-deletable files, or a
-	// deleted BOOTSTRAP/COMPRESSION/MEMORY file would silently reappear.
+	// deleted COMPRESSION/MEMORY file would silently reappear.
 	initialized := fileExists(filepath.Join(workspace, "AGENTS.md"))
 
 	// Seeded only into a brand-new workspace (so deleting one sticks).
 	seedOnce := map[string]bool{
-		"BOOTSTRAP.md":   true,
 		"COMPRESSION.md": true,
 		"MEMORY.md":      true,
 	}
