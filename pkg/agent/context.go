@@ -635,6 +635,11 @@ func sanitizeHistoryForProvider(history []providers.Message) []providers.Message
 		return history
 	}
 
+	// Drop reasons are counted and logged once at the end rather than per message,
+	// because a single post-compaction boundary can orphan several leading
+	// tool-call turns and would otherwise spam one DBG line each, every dispatch.
+	var dropSystem, dropLeadingTool, dropOrphanTool, dropAsstStart, dropAsstBadPred, dropIncompleteGroup int
+
 	sanitized := make([]providers.Message, 0, len(history))
 	for _, msg := range history {
 		switch msg.Role {
@@ -643,12 +648,12 @@ func sanitizeHistoryForProvider(history []providers.Message) []providers.Message
 			// constructs its own single system message (static + dynamic +
 			// summary); extra system messages would break providers that
 			// only accept one (Anthropic, Codex).
-			logger.DebugCF("agent", "Dropping system message from history", map[string]any{})
+			dropSystem++
 			continue
 
 		case "tool":
 			if len(sanitized) == 0 {
-				logger.DebugCF("agent", "Dropping orphaned leading tool message", map[string]any{})
+				dropLeadingTool++
 				continue
 			}
 			// Walk backwards to find the nearest assistant message,
@@ -664,7 +669,7 @@ func sanitizeHistoryForProvider(history []providers.Message) []providers.Message
 				break
 			}
 			if !foundAssistant {
-				logger.DebugCF("agent", "Dropping orphaned tool message", map[string]any{})
+				dropOrphanTool++
 				continue
 			}
 			sanitized = append(sanitized, msg)
@@ -672,16 +677,12 @@ func sanitizeHistoryForProvider(history []providers.Message) []providers.Message
 		case "assistant":
 			if len(msg.ToolCalls) > 0 {
 				if len(sanitized) == 0 {
-					logger.DebugCF("agent", "Dropping assistant tool-call turn at history start", map[string]any{})
+					dropAsstStart++
 					continue
 				}
 				prev := sanitized[len(sanitized)-1]
 				if prev.Role != "user" && prev.Role != "tool" {
-					logger.DebugCF(
-						"agent",
-						"Dropping assistant tool-call turn with invalid predecessor",
-						map[string]any{"prev_role": prev.Role},
-					)
+					dropAsstBadPred++
 					continue
 				}
 			}
@@ -720,18 +721,10 @@ func sanitizeHistoryForProvider(history []providers.Message) []providers.Message
 
 			// If any tool_call_id is missing, drop this assistant message and its partial tool messages
 			allFound := true
-			for toolCallID, found := range expected {
+			for _, found := range expected {
 				if !found {
 					allFound = false
-					logger.DebugCF(
-						"agent",
-						"Dropping assistant message with incomplete tool results",
-						map[string]any{
-							"missing_tool_call_id": toolCallID,
-							"expected_count":       len(expected),
-							"found_count":          toolMsgCount,
-						},
-					)
+					dropIncompleteGroup++
 					break
 				}
 			}
@@ -743,6 +736,19 @@ func sanitizeHistoryForProvider(history []providers.Message) []providers.Message
 			}
 		}
 		final = append(final, msg)
+	}
+
+	if n := dropSystem + dropLeadingTool + dropOrphanTool + dropAsstStart + dropAsstBadPred + dropIncompleteGroup; n > 0 {
+		logger.DebugCF("agent", "Sanitized history for provider", map[string]any{
+			"dropped_total":         n,
+			"system":                dropSystem,
+			"leading_tool_orphans":  dropLeadingTool,
+			"orphan_tool":           dropOrphanTool,
+			"assistant_at_start":    dropAsstStart,
+			"assistant_bad_pred":    dropAsstBadPred,
+			"incomplete_tool_group": dropIncompleteGroup,
+			"kept":                  len(final),
+		})
 	}
 
 	return final

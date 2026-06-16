@@ -110,6 +110,37 @@ func TestSelectTail_ToolGroupDroppedWhole(t *testing.T) {
 	}
 }
 
+// TestSelectTail_LeadingToolGroupTrimmed verifies the retained tail never starts
+// on a partial tool group: when the budget cut lands inside a tool-call sequence,
+// the leading assistant tool-call + tool results are trimmed (handed to the
+// summary) so the tail begins on a clean boundary the provider sanitizer accepts.
+func TestSelectTail_LeadingToolGroupTrimmed(t *testing.T) {
+	history := []providers.Message{
+		msg("user", "old question"),
+		toolCallMsg("calling tool", "tc1"),
+		toolResultMsg("tool output", "tc1"),
+		msg("user", "recent question"),
+	}
+	// Budget fits everything by tokens, but force the floor so all groups are
+	// collected — then the leading tool group must still be trimmed.
+	got := selectTail(history, 10000, 0, estimateTokens)
+	if len(got) == 0 {
+		t.Fatal("expected a non-empty tail")
+	}
+	first := got[0]
+	if first.Role == "tool" || (first.Role == "assistant" && len(first.ToolCalls) > 0) {
+		t.Fatalf("tail starts on a partial tool group: %+v", first)
+	}
+
+	// Now make the cut land mid-group: only the tool result + final user fit by
+	// budget, so resolveGroup pulls in the assistant — the whole leading group
+	// must be trimmed, leaving just the clean trailing user message.
+	got2 := selectTail(history[1:], 10000, 0, estimateTokens) // [toolcall, toolresult, user]
+	if len(got2) != 1 || got2[0].Content != "recent question" {
+		t.Fatalf("expected only the trailing user message, got %+v", got2)
+	}
+}
+
 // TestSelectTail_NoiseCollapsed verifies that consecutive identical same-role
 // messages are collapsed to at most one in the retained tail.
 func TestSelectTail_NoiseCollapsed(t *testing.T) {
