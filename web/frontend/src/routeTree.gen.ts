@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as ProvidersRouteImport } from './routes/providers'
 import { Route as ModelsRouteImport } from './routes/models'
+import { Route as MemoryRouteImport } from './routes/memory'
 import { Route as McpRouteImport } from './routes/mcp'
 import { Route as LogsRouteImport } from './routes/logs'
 import { Route as CredentialsRouteImport } from './routes/credentials'
@@ -33,6 +34,11 @@ const ProvidersRoute = ProvidersRouteImport.update({
 const ModelsRoute = ModelsRouteImport.update({
   id: '/models',
   path: '/models',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MemoryRoute = MemoryRouteImport.update({
+  id: '/memory',
+  path: '/memory',
   getParentRoute: () => rootRouteImport,
 } as any)
 const McpRoute = McpRouteImport.update({
@@ -110,6 +116,7 @@ export interface FileRoutesByFullPath {
   '/credentials': typeof CredentialsRoute
   '/logs': typeof LogsRoute
   '/mcp': typeof McpRoute
+  '/memory': typeof MemoryRoute
   '/models': typeof ModelsRoute
   '/providers': typeof ProvidersRoute
   '/agent/bindings': typeof AgentBindingsRoute
@@ -127,6 +134,7 @@ export interface FileRoutesByTo {
   '/credentials': typeof CredentialsRoute
   '/logs': typeof LogsRoute
   '/mcp': typeof McpRoute
+  '/memory': typeof MemoryRoute
   '/models': typeof ModelsRoute
   '/providers': typeof ProvidersRoute
   '/agent/bindings': typeof AgentBindingsRoute
@@ -145,6 +153,7 @@ export interface FileRoutesById {
   '/credentials': typeof CredentialsRoute
   '/logs': typeof LogsRoute
   '/mcp': typeof McpRoute
+  '/memory': typeof MemoryRoute
   '/models': typeof ModelsRoute
   '/providers': typeof ProvidersRoute
   '/agent/bindings': typeof AgentBindingsRoute
@@ -164,6 +173,7 @@ export interface FileRouteTypes {
     | '/credentials'
     | '/logs'
     | '/mcp'
+    | '/memory'
     | '/models'
     | '/providers'
     | '/agent/bindings'
@@ -181,6 +191,7 @@ export interface FileRouteTypes {
     | '/credentials'
     | '/logs'
     | '/mcp'
+    | '/memory'
     | '/models'
     | '/providers'
     | '/agent/bindings'
@@ -198,6 +209,7 @@ export interface FileRouteTypes {
     | '/credentials'
     | '/logs'
     | '/mcp'
+    | '/memory'
     | '/models'
     | '/providers'
     | '/agent/bindings'
@@ -216,6 +228,7 @@ export interface RootRouteChildren {
   CredentialsRoute: typeof CredentialsRoute
   LogsRoute: typeof LogsRoute
   McpRoute: typeof McpRoute
+  MemoryRoute: typeof MemoryRoute
   ModelsRoute: typeof ModelsRoute
   ProvidersRoute: typeof ProvidersRoute
 }
@@ -234,6 +247,13 @@ declare module '@tanstack/react-router' {
       path: '/models'
       fullPath: '/models'
       preLoaderRoute: typeof ModelsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/memory': {
+      id: '/memory'
+      path: '/memory'
+      fullPath: '/memory'
+      preLoaderRoute: typeof MemoryRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/mcp': {
@@ -376,6 +396,7 @@ const rootRouteChildren: RootRouteChildren = {
   CredentialsRoute: CredentialsRoute,
   LogsRoute: LogsRoute,
   McpRoute: McpRoute,
+  MemoryRoute: MemoryRoute,
   ModelsRoute: ModelsRoute,
   ProvidersRoute: ProvidersRoute,
 }

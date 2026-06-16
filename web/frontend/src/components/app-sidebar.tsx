@@ -2,6 +2,7 @@ import { IconChevronRight } from "@tabler/icons-react"
 import {
   IconArrowsTransferDown,
   IconAtom,
+  IconBrain,
   IconKey,
   IconListDetails,
   IconMessageCircle,
@@ -143,6 +144,12 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             title: "navigation.bindings",
             url: "/agent/bindings",
             icon: IconArrowsTransferDown,
+            translateTitle: true,
+          },
+          {
+            title: "navigation.memory",
+            url: "/memory",
+            icon: IconBrain,
             translateTitle: true,
           },
         ],

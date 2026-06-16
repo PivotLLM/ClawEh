@@ -21,7 +21,8 @@
     "channels_group": "Channels",
     "config": "Config",
     "mcp": "MCP Server",
-    "logs": "Logs"
+    "logs": "Logs",
+    "memory": "Memory"
   },
   "chat": {
     "welcome": "How can I help you today?",
@@ -509,6 +510,20 @@
       "tools_none_registered": "No tools registered yet.",
       "client_hint": "Upstream MCP servers claw connects out to (tools.mcp.servers). Their tools are exposed to direct API providers; CLI providers configure MCP separately. Edit as a JSON object keyed by server name. Leave empty for none.",
       "client_placeholder": "{\n  \"my-server\": {\n    \"url\": \"https://example.com/mcp\"\n  }\n}"
+    },
+    "memory": {
+      "empty": "No cognitive-memory databases found yet.",
+      "select_prompt": "Select a memory store to view its domains and memories.",
+      "load_error": "Failed to load this memory store.",
+      "active_domains": "Active domains",
+      "active_memories": "Active memories",
+      "pending": "Pending",
+      "pending_review": "Pending review",
+      "last_run": "Last consolidation",
+      "never": "never",
+      "triggers": "Triggers",
+      "no_memories": "No active memories in this domain.",
+      "memory_count": "{{count}} memories"
     }
   },
   "providers": {
