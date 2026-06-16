@@ -172,6 +172,66 @@ func TestEnsureTypeValuesNormalizesLegacy(t *testing.T) {
 	}
 }
 
+func TestDedupeGeneralDomains(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "dup.cogmem.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	// The seeded general, plus a memory in it.
+	g1, _ := s.GeneralDomain(ctx, s.DB())
+	_, _ = s.AddMemory(ctx, s.DB(), AddMemoryParams{DomainID: g1.ID, Type: TypeRule, Text: "rule one", Status: StatusActive, Confidence: 0.9, Source: SourceUserExplicit})
+
+	// Simulate the pre-fix race: a second general inserted directly (bypassing the
+	// guarded seed), with its own memory. Drop the unique index first so the raw
+	// insert is possible, mimicking an older database.
+	if _, err := s.DB().ExecContext(ctx, `DROP INDEX IF EXISTS idx_one_general`); err != nil {
+		t.Fatalf("drop index: %v", err)
+	}
+	if _, err := s.DB().ExecContext(ctx, `
+		INSERT INTO domains(id, agent_id, session_key, type, name, status, version, summary, state_json, schema_name, schema_version, triggers, created_at, updated_at)
+		VALUES('dDUP02','','','general','General',?,1,'','{}','domain',1,'',?,?)`,
+		string(StatusActive), now()+1, now()+1); err != nil {
+		t.Fatalf("insert dup: %v", err)
+	}
+	_, _ = s.AddMemory(ctx, s.DB(), AddMemoryParams{DomainID: "dDUP02", Type: TypeFact, Text: "fact two", Status: StatusActive, Confidence: 0.9, Source: SourceUserExplicit})
+	_ = s.Close()
+
+	// Reopen → migrate() dedupes and re-creates the unique index.
+	s2, err := Open(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer s2.Close()
+
+	doms, _ := s2.ListDomains(ctx, s2.DB(), StatusActive)
+	generals := 0
+	var gid string
+	for _, d := range doms {
+		if d.Type == DomainGeneral {
+			generals++
+			gid = d.ID
+		}
+	}
+	if generals != 1 {
+		t.Fatalf("general domains after dedupe = %d, want 1", generals)
+	}
+	// Both memories survived, merged onto the surviving general.
+	mems, _ := s2.ListMemories(ctx, s2.DB(), gid, StatusActive)
+	if len(mems) != 2 {
+		t.Fatalf("merged memories = %d, want 2", len(mems))
+	}
+	// The unique index now blocks a second general.
+	if _, err := s2.DB().ExecContext(ctx, `
+		INSERT INTO domains(id, agent_id, session_key, type, name, status, version, summary, state_json, schema_name, schema_version, triggers, created_at, updated_at)
+		VALUES('dDUP03','','','general','General','active',1,'','{}','domain',1,'',?,?)`,
+		now(), now()); err == nil {
+		t.Fatal("expected unique-index violation inserting a second general")
+	}
+}
+
 func TestDomainOptimisticConcurrency(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -117,10 +118,61 @@ func (s *Store) migrate(ctx context.Context) error {
 	if err := s.ensureTypeValues(ctx); err != nil {
 		return fmt.Errorf("cogmem: normalize type values: %w", err)
 	}
+	// Merge any duplicate general domains (from a pre-fix concurrent-open race)
+	// into one BEFORE creating the unique index that prevents recurrence.
+	if err := s.dedupeGeneralDomains(ctx); err != nil {
+		return fmt.Errorf("cogmem: dedupe general: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_one_general ON domains(type) WHERE type='general'`); err != nil {
+		return fmt.Errorf("cogmem: general unique index: %w", err)
+	}
 	if err := s.ensureGeneralDomain(ctx); err != nil {
 		return fmt.Errorf("cogmem: seed general domain: %w", err)
 	}
 	return nil
+}
+
+// dedupeGeneralDomains collapses multiple "general" domains into one. A pre-fix
+// race (concurrent store opens both seeding general before the unique index
+// existed) could create duplicates. The oldest is canonical; every other
+// general's memories are repointed onto it and the empty extra is deleted.
+func (s *Store) dedupeGeneralDomains(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id FROM domains WHERE type=? ORDER BY created_at, id`, string(DomainGeneral))
+	if err != nil {
+		return err
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		ids = append(ids, id)
+	}
+	_ = rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(ids) <= 1 {
+		return nil
+	}
+	canonical, extras := ids[0], ids[1:]
+	return s.WithTx(ctx, func(tx *sql.Tx) error {
+		for _, ex := range extras {
+			if _, err := tx.ExecContext(ctx,
+				`UPDATE memories SET domain_id=? WHERE domain_id=?`, canonical, ex); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `DELETE FROM domains WHERE id=?`, ex); err != nil {
+				return err
+			}
+		}
+		// Merged content changed the always-on block; force a cache rebuild.
+		return bumpStableRev(ctx, tx)
+	})
 }
 
 // ensureTypeValues folds retired type values into the current set so stored data
@@ -232,18 +284,12 @@ func (s *Store) columnSet(ctx context.Context, table string) (map[string]bool, e
 }
 
 // ensureGeneralDomain creates the single mandatory always-on "general" domain if
-// it does not already exist. Idempotent (migrate runs on every Open). It does a
-// direct insert without bumping stable_rev: an empty general domain renders
-// nothing, so the cached stable block is unaffected until a hook is added.
+// it does not already exist. The insert is atomic (guarded by WHERE NOT EXISTS)
+// and the idx_one_general unique index makes a concurrent double-seed impossible;
+// a race that still trips the constraint is treated as success. No stable_rev
+// bump: an empty general domain renders nothing, so the cached block is
+// unaffected until a memory is added.
 func (s *Store) ensureGeneralDomain(ctx context.Context) error {
-	var n int
-	if err := s.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM domains WHERE type=?`, string(DomainGeneral)).Scan(&n); err != nil {
-		return err
-	}
-	if n > 0 {
-		return nil
-	}
 	id, err := freshID(ctx, s.db, domainIDPrefix, "domains")
 	if err != nil {
 		return err
@@ -253,9 +299,14 @@ func (s *Store) ensureGeneralDomain(ctx context.Context) error {
 		INSERT INTO domains(id, agent_id, session_key, type, name, status, version,
 		                    summary, state_json, schema_name, schema_version, triggers,
 		                    created_at, updated_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?
+		WHERE NOT EXISTS (SELECT 1 FROM domains WHERE type=?)`,
 		id, "", "", string(DomainGeneral), "General", string(StatusActive), 1,
-		"Global rules, preferences, and standing facts.", "{}", "domain", 1, "", ts, ts)
+		"Global rules, preferences, and standing facts.", "{}", "domain", 1, "", ts, ts,
+		string(DomainGeneral))
+	if err != nil && strings.Contains(err.Error(), "UNIQUE constraint") {
+		return nil // another opener seeded it concurrently
+	}
 	return err
 }
 
