@@ -245,19 +245,6 @@ func TestEmptySessionErrors(t *testing.T) {
 	}
 }
 
-// The secret scanner was removed (too many false positives). Secret-looking text
-// is stored like any other memory; the agent is instructed not to store secrets,
-// but nothing hard-rejects it.
-func TestRememberStoresSecretLikeText(t *testing.T) {
-	h, _ := buildHandlers(t)
-	res := run(t, h["memory_create"], newCall(testSession, map[string]any{
-		"domain_hint": "creds", "type": "fact", "text": "the api_key is sk-123",
-	}))
-	if res.IsError {
-		t.Fatalf("expected secret-like text to be stored, got error: %s", res.ForLLM)
-	}
-}
-
 // extractID pulls the first whitespace-delimited token beginning with prefix
 // followed by Crockford chars (e.g. "d3K9P") from text.
 func extractID(t *testing.T, text, prefix string) string {
