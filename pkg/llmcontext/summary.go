@@ -520,7 +520,7 @@ const promptStandard = `You are an AI assistant performing context summarization
 Purpose: this summary COMPLEMENTS the agent's always-present system prompt (its identity, standing rules, user preferences, and durable project state, all loaded from workspace files on every turn). Do NOT re-derive standing identity or rules the system prompt already provides. Capture what would otherwise be LOST if the conversation were cleared right now: the transient, in-flight state — active work and branches, dispatched/pending tasks, the last user instruction, open action items, and recent decisions.
 
 Instructions:
-- Update the existing summary with the new messages. Do not replace it wholesale.
+- Update the existing summary with the new messages — do not discard its substance or active goals. But the existing summary is fully EDITABLE, not append-only: if it has grown bloated (verbatim prose or dialogue in exact fields, stale or redundant items, an over-long message_index, near-duplicate constraints), actively PRUNE and rewrite it down to the minimal set that preserves actionable, in-flight state. Shedding accumulated cruft from the existing summary is as important as capturing the new messages — a leaner summary is better as long as nothing actionable is lost.
 - Every state item and key moment MUST cite archive message IDs in refs. Refs must point to the SPECIFIC message(s) that establish the item — a single seq, or the tightest range possible. Never cite a broad span of the whole conversation (e.g. avoid [#1-#551]).
 - Goals/Progress/Pending are the priority — keep them rich and current: active goals, concrete progress toward them, and the immediate next action in flight ("what was I about to do?"). Retire completed/superseded goals only when the new messages support that.
 - Constraints: include ONLY conversation-specific rules or decisions that are NOT already in the system prompt or agent files. Omit standing rules the agent always has loaded. ONE rule per constraint — never combine multiple facts into a single item; split them into separate constraints. Cite the specific message where each was established, not a broad range. Preserve wording verbatim unless the user explicitly changed it.
@@ -567,7 +567,7 @@ Rules:
 - The exact field is for SHORT literal values only (cap roughly 200 characters) — never prose, passages, dialogue, or drafts. To reference long content, cite its seq range in refs and describe it in a few words; do not quote it.
 - Consolidate: merge duplicate/overlapping items, update in place rather than appending, and retire completed progress and superseded constraints. Keep every list minimal.
 - Message Index: collapse aggressively into broad topic or project ranges (archive window: seq %d to %d); one entry per project/thread area rather than per message.
-- Update the existing summary rather than replacing it — preserve active goals.
+- Update the existing summary rather than replacing it — preserve active goals — but PRUNE it: it is editable, not append-only. If it carries bloat (verbatim prose in exact fields, stale or redundant items, an over-long message_index), actively cut and rewrite it down. Under tight budget, shedding accumulated cruft is the priority.
 - Carry Forward: flag anything that must be persisted to AGENT.md/memory or actioned before older context is lost; omit the field if none.
 - Respond with valid JSON only. No markdown fences, no prose.`
 
