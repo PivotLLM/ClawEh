@@ -245,13 +245,16 @@ func TestEmptySessionErrors(t *testing.T) {
 	}
 }
 
-func TestRememberRejectsSecret(t *testing.T) {
+// The secret scanner was removed (too many false positives). Secret-looking text
+// is stored like any other memory; the agent is instructed not to store secrets,
+// but nothing hard-rejects it.
+func TestRememberStoresSecretLikeText(t *testing.T) {
 	h, _ := buildHandlers(t)
 	res := run(t, h["memory_create"], newCall(testSession, map[string]any{
 		"domain_hint": "creds", "type": "fact", "text": "the api_key is sk-123",
 	}))
-	if !res.IsError || !strings.Contains(res.ForLLM, "secret") {
-		t.Fatalf("expected secret rejection, got: isErr=%v %s", res.IsError, res.ForLLM)
+	if res.IsError {
+		t.Fatalf("expected secret-like text to be stored, got error: %s", res.ForLLM)
 	}
 }
 

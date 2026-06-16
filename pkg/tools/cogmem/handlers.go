@@ -247,11 +247,6 @@ func remember(s *store.Store, call *global.ToolCall) (string, error) {
 	if mtype == "" || text == "" {
 		return "", errors.New("type and text are required")
 	}
-	// Lightweight secret guard. consolidate.containsSecret is unexported, so this
-	// is a basic keyword check rather than the consolidation worker's detector.
-	if looksLikeSecret(text) {
-		return "", errors.New("refusing to store text that appears to contain a secret or credential")
-	}
 
 	domainID := argStr(call, "domain_id")
 	if domainID == "" {
@@ -491,17 +486,4 @@ func mapErr(err error, id string) error {
 		return fmt.Errorf("%s not found", id)
 	}
 	return err
-}
-
-// looksLikeSecret is a deliberately conservative keyword check. The real
-// detector (consolidate.containsSecret) is unexported in the consolidation
-// package, so this guards the obvious cases without a heavy dependency.
-func looksLikeSecret(text string) bool {
-	lower := strings.ToLower(text)
-	for _, kw := range []string{"api_key", "api key", "apikey", "secret", "password", "passwd", "private key", "-----begin", "bearer ", "token="} {
-		if strings.Contains(lower, kw) {
-			return true
-		}
-	}
-	return false
 }

@@ -13,7 +13,6 @@ package consolidate
 
 import (
 	"fmt"
-	"regexp"
 	"strings"
 
 	"github.com/PivotLLM/ClawEh/pkg/cogmem/store"
@@ -222,9 +221,6 @@ func (o Output) Validate(in Input) error {
 			if op.Source == "assistant_inferred" && op.Status == "active" {
 				return fmt.Errorf("memory_ops[%d]: inferred item must be status=review", i)
 			}
-			if containsSecret(op.Text) {
-				return fmt.Errorf("memory_ops[%d]: text appears to contain a secret/credential", i)
-			}
 			if op.Op == "supersede" && !memoryIDs[op.OldID] {
 				return fmt.Errorf("memory_ops[%d]: supersede unknown old_id %q", i, op.OldID)
 			}
@@ -243,25 +239,4 @@ func (o Output) Validate(in Input) error {
 		}
 	}
 	return nil
-}
-
-// secretPatterns is a conservative first-pass detector. During integration this
-// should be augmented with the existing MCP token scrubber (see COGMEM-TODO §4).
-var secretPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`(?i)\bapi[_-]?key\b\s*[:=]`),
-	regexp.MustCompile(`(?i)\b(password|passwd|secret|token)\b\s*[:=]\s*\S`),
-	regexp.MustCompile(`\bsk-[A-Za-z0-9]{16,}\b`),       // OpenAI-style
-	regexp.MustCompile(`\bSST[0-9a-fA-F]{32,}\b`),       // ClawEh session tokens
-	regexp.MustCompile(`\bAKIA[0-9A-Z]{16}\b`),          // AWS access key id
-	regexp.MustCompile(`\b[0-9a-fA-F]{40,}\b`),          // long hex secrets
-	regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY`), // PEM private keys
-}
-
-func containsSecret(text string) bool {
-	for _, re := range secretPatterns {
-		if re.MatchString(text) {
-			return true
-		}
-	}
-	return false
 }

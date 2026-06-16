@@ -45,7 +45,6 @@ func TestValidateRejections(t *testing.T) {
 		"unknown retire id":     {MemoryOps: []MemoryOp{{Op: "retire", ID: "hZ", Reason: "x", Evidence: ev(512, 512)}}},
 		"invalid kind":          {MemoryOps: []MemoryOp{{Op: "add", Domain: "d4", Type: "bogus", Text: "ok", Source: "user_explicit", Status: "active", Evidence: ev(512, 512)}}},
 		"inferred active":       {MemoryOps: []MemoryOp{{Op: "add", Domain: "d4", Type: "fact", Text: "ok", Source: "assistant_inferred", Status: "active", Evidence: ev(512, 512)}}},
-		"secret in text":        {MemoryOps: []MemoryOp{{Op: "add", Domain: "d4", Type: "fact", Text: "api_key = sk-abcdefghij0123456789", Source: "user_explicit", Status: "active", Evidence: ev(512, 512)}}},
 		"update no version":     {DomainOps: []DomainOp{{Op: "update", ID: "d4", Evidence: ev(512, 512)}}},
 		"create no tmp_id":      {DomainOps: []DomainOp{{Op: "create", Type: "project", Name: "X", Evidence: ev(512, 512)}}},
 	}

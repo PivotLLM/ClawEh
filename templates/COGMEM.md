@@ -96,7 +96,7 @@ Return exactly this shape (keys must exist; arrays may be empty):
 ```
 The validator discards the whole payload if: any evidence falls outside the batch
 seq range; an update/archive/retire references an unknown id; a memory references
-a non-existent domain/tmp_id; an enum is invalid; a secret appears in any text; or
-an inferred item is not `review`.
+a non-existent domain/tmp_id; an enum is invalid; or an inferred item is not
+`review`.
 
 Return only the JSON object.
