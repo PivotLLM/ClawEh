@@ -16,7 +16,7 @@ export const RESERVED_REQUEST_BODY_KEYS: readonly string[] = [
   "n",
 ] as const
 
-export const REASONING_EFFORT_OPTIONS = ["low", "medium", "high"] as const
+export const REASONING_EFFORT_OPTIONS = ["none", "low", "medium", "high"] as const
 
 export type ExtraBodyParseResult =
   | { value: Record<string, unknown> | undefined; error: undefined }

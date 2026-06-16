@@ -709,9 +709,10 @@ type ModelConfig struct {
 	ResponseLogFile string `json:"response_log_file,omitempty"`
 
 	// ReasoningEffort sets the OpenAI-style reasoning_effort request field for
-	// models that natively accept it (notably Grok). Valid values are "low",
-	// "medium", "high", or empty (the field is omitted). Providers that don't
-	// understand the field will silently ignore it.
+	// models that natively accept it (notably Grok). Valid values are "none",
+	// "low", "medium", "high", or empty. Empty omits the field entirely; "none"
+	// is sent explicitly (e.g. to disable reasoning on models that support it).
+	// Providers that don't understand the field will silently ignore it.
 	ReasoningEffort string `json:"reasoning_effort,omitempty" yaml:"reasoning_effort,omitempty"`
 
 	// ExtraBody is a free-form passthrough map merged into the JSON request
@@ -770,11 +771,11 @@ func (c *ModelConfig) Validate() error {
 		return fmt.Errorf("model %q: provider is required", c.ModelName)
 	}
 	switch c.ReasoningEffort {
-	case "", "low", "medium", "high":
+	case "", "none", "low", "medium", "high":
 		// ok
 	default:
 		return fmt.Errorf(
-			"model %q: invalid reasoning_effort %q (valid: low, medium, high, or omit)",
+			"model %q: invalid reasoning_effort %q (valid: none, low, medium, high, or omit)",
 			c.ModelName, c.ReasoningEffort,
 		)
 	}

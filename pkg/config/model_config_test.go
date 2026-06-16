@@ -369,7 +369,7 @@ func TestConfig_ValidateModelList(t *testing.T) {
 }
 
 func TestModelConfig_ReasoningEffort_Validate(t *testing.T) {
-	for _, level := range []string{"", "low", "medium", "high"} {
+	for _, level := range []string{"", "none", "low", "medium", "high"} {
 		cfg := ModelConfig{ModelName: "m", Model: "gpt", Provider: "openai", ReasoningEffort: level}
 		if err := cfg.Validate(); err != nil {
 			t.Errorf("Validate(%q) returned error: %v", level, err)
