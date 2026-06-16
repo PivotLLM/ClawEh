@@ -62,9 +62,10 @@ don't see it yet, nothing has been recorded — start recording.
   Whenever you call a tool whose name contains one of the tokens, that domain is
   loaded into your context automatically. Use it to attach context to the work it
   belongs to — e.g. triggers `google_gmail,microsoft365_mail` on an "Email" domain
-  so your mail preferences appear the moment you touch a mail tool. Tokens match by
-  literal substring of the full tool name (e.g. `system` matches
-  `mcp__fusion__system__get`), so pick a distinctive fragment of the real name.
+  so your mail preferences appear the moment you touch a mail tool. Tokens match a
+  substring of the full tool name (e.g. `system` matches `mcp__fusion__system__get`);
+  matching ignores case and treats `_` and `__` the same, so a distinctive fragment
+  like `google_gmail` or `m365` is enough.
 - **Working files** (drafts, outputs): write them under `files/` — your read/write
   area. The rest of your workspace is read-only. Use the `common_*` tools to share
   files with other agents.

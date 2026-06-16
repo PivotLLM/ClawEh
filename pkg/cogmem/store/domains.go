@@ -217,21 +217,34 @@ type scanner interface {
 	Scan(dest ...any) error
 }
 
-// normalizeTriggers canonicalizes a comma-delimited trigger list: trims each
-// token, drops empties, lowercases (matching is case-insensitive), and rejoins
-// with single commas. Stored form is what TriggerTokens splits back out.
+// canonTool canonicalizes a tool name or trigger token for matching: trims,
+// lowercases (case-insensitive), and collapses runs of '_' to a single '_'. The
+// collapse lets single-underscore tokens (e.g. "fusion_google_") match the
+// double-underscore MCP separators in real names (mcp__fusion__google_*) and
+// vice-versa.
+func canonTool(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	for strings.Contains(s, "__") {
+		s = strings.ReplaceAll(s, "__", "_")
+	}
+	return s
+}
+
+// normalizeTriggers canonicalizes a comma-delimited trigger list: canonTool each
+// token (trim, lowercase, collapse underscores), drop empties, rejoin with single
+// commas. Stored form is what TriggerTokens splits back out.
 func normalizeTriggers(s string) string {
 	parts := strings.Split(s, ",")
 	out := make([]string, 0, len(parts))
 	for _, p := range parts {
-		if t := strings.ToLower(strings.TrimSpace(p)); t != "" {
+		if t := canonTool(p); t != "" {
 			out = append(out, t)
 		}
 	}
 	return strings.Join(out, ",")
 }
 
-// TriggerTokens returns the domain's normalized trigger substrings (lowercased,
+// TriggerTokens returns the domain's normalized trigger substrings (canonicalized,
 // no empties). A domain activates when an invoked tool name contains any token.
 func (d Domain) TriggerTokens() []string {
 	if d.Triggers == "" {
@@ -240,12 +253,13 @@ func (d Domain) TriggerTokens() []string {
 	return strings.Split(normalizeTriggers(d.Triggers), ",")
 }
 
-// MatchTrigger reports the first trigger token contained (case-insensitively) in
-// toolName, and whether any matched. toolName need not be pre-lowercased.
+// MatchTrigger reports the first trigger token contained in toolName (both
+// canonicalized: case-insensitive, underscores collapsed), and whether any
+// matched. toolName need not be pre-normalized.
 func (d Domain) MatchTrigger(toolName string) (string, bool) {
-	lname := strings.ToLower(toolName)
+	cname := canonTool(toolName)
 	for _, t := range d.TriggerTokens() {
-		if strings.Contains(lname, t) {
+		if strings.Contains(cname, t) {
 			return t, true
 		}
 	}

@@ -34,10 +34,11 @@ func Apply(ctx context.Context, st *store.Store, out Output, ac ApplyContext) (i
 			case "create":
 				d, err := st.CreateDomain(ctx, tx, store.CreateDomainParams{
 					AgentID: ac.AgentID, SessionKey: ac.SessionKey,
-					Type:    store.DomainType(op.Type),
-					Name:    op.Name,
-					Status:  store.Status(orDefault(op.Status, "active")),
-					Summary: op.Summary,
+					Type:     store.DomainType(op.Type),
+					Name:     op.Name,
+					Status:   store.Status(orDefault(op.Status, "active")),
+					Summary:  op.Summary,
+					Triggers: op.Triggers,
 				})
 				if err != nil {
 					return err
@@ -58,6 +59,10 @@ func Apply(ctx context.Context, st *store.Store, out Output, ac ApplyContext) (i
 				if op.Status != "" {
 					s := store.Status(op.Status)
 					p.Status = &s
+				}
+				if op.Triggers != "" {
+					t := op.Triggers
+					p.Triggers = &t
 				}
 				if err := st.UpdateDomain(ctx, tx, op.ID, p); err != nil {
 					return err

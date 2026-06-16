@@ -116,6 +116,27 @@ func TestDomainTriggersRoundTrip(t *testing.T) {
 	}
 }
 
+func TestTriggerUnderscoreInsensitive(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	// Token written with double underscores is collapsed on store.
+	d, _ := s.CreateDomain(ctx, s.DB(), CreateDomainParams{
+		AgentID: "a", Type: DomainProject, Name: "M", Triggers: "fusion__google",
+	})
+	if d.Triggers != "fusion_google" {
+		t.Fatalf("triggers = %q, want collapsed fusion_google", d.Triggers)
+	}
+	// Matches whether the tool name uses single or double underscores.
+	for _, name := range []string{
+		"mcp__fusion__google_gmail_messages_list", // double-underscore MCP separators
+		"mcp_fusion_google_x",                     // single underscore
+	} {
+		if tok, ok := d.MatchTrigger(name); !ok || tok != "fusion_google" {
+			t.Fatalf("MatchTrigger(%q) = %q,%v", name, tok, ok)
+		}
+	}
+}
+
 func TestDomainOptimisticConcurrency(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()

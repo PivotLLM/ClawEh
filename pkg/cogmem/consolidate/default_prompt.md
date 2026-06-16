@@ -32,6 +32,12 @@ add / supersede / retire; or do nothing.
   domain; one already exists.
 - Create a new domain (with a `tmp_id`) only for a clearly distinct ongoing topic
   not already represented. Hooks may reference that `tmp_id`.
+- Tool triggers (optional): if a domain clearly pertains to specific tools the
+  agent used — tool calls appear in `new_messages` — set `triggers` to a
+  comma-separated list of distinctive substrings of those tool names (e.g.
+  `"google_gmail,microsoft365_mail"`). The domain is then auto-loaded into context
+  whenever a matching tool is used again. Matching is case- and
+  underscore-insensitive. Omit when no tool clearly maps to the domain.
 - Every operation MUST cite `evidence` — the seq range in `new_messages` that
   justifies it. No evidence → omit the op.
 
@@ -53,9 +59,11 @@ Return exactly this shape (keys must exist; arrays may be empty):
   "domain_ops": [
     { "op": "create", "tmp_id": "t1", "type": "project|workflow|repo",
       "name": "string", "summary": "one line", "status": "active|review",
+      "triggers": "substr1,substr2 (optional)",
       "evidence": { "seq_start": 0, "seq_end": 0 } },
     { "op": "update", "id": "d7", "expected_version": 4, "summary": "one line",
       "state": { "blockers": [], "next_actions": [], "constraints": [] },
+      "triggers": "substr1,substr2 (optional)",
       "evidence": { "seq_start": 0, "seq_end": 0 } },
     { "op": "archive", "id": "d9", "reason": "string",
       "evidence": { "seq_start": 0, "seq_end": 0 } }

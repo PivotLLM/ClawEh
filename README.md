@@ -31,6 +31,16 @@ agent learns. Cognitive memory is **on by default** for every agent; to disable
 it for a specific agent, give that agent a tool allowlist that excludes the
 `cogmem_*` tools.
 
+Memory is surfaced two ways: the always-on **`general`** domain (global rules,
+preferences, and standing facts) is in every prompt, and topic domains load on
+relevance. Beyond recency, a domain can declare **tool triggers** — a
+comma-separated list of tool-name substrings — so it auto-loads the moment the
+agent uses a matching tool. For example an "Email" domain with triggers
+`google_gmail,microsoft365_mail` brings the agent's mail preferences into context
+as soon as it touches a mail tool. Matching ignores case and underscores. The
+agent sets triggers itself (`cogmem_domain_create`/`cogmem_domain_update`), and
+the sleep cycle can add them when a domain clearly pertains to specific tools.
+
 ### Workspace `.md` files are now for humans, not the agent
 The agent no longer edits its own workspace markdown files (`AGENTS.md`,
 `SOUL.md`, `IDENTITY.md`, `USER.md`, `MEMORY.md`). They are now intended for

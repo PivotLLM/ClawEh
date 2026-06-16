@@ -83,6 +83,7 @@ type DomainOp struct {
 	Name            string             `json:"name,omitempty"`
 	Summary         string             `json:"summary,omitempty"`
 	Status          string             `json:"status,omitempty"`
+	Triggers        string             `json:"triggers,omitempty"` // comma-delimited tool-name substrings (auto-load)
 	Reason          string             `json:"reason,omitempty"`
 	ExpectedVersion *int64             `json:"expected_version,omitempty"`
 	State           *store.DomainState `json:"state,omitempty"`
@@ -120,6 +121,9 @@ var (
 	validStatuses = map[string]bool{"active": true, "review": true}
 	validSources  = map[string]bool{"user_explicit": true, "assistant_inferred": true}
 )
+
+// maxTriggersLen caps the comma-delimited tool-trigger string a domain op may set.
+const maxTriggersLen = 512
 
 // Validate enforces the contract against the input. A single violation rejects
 // the whole payload (the worker then leaves the watermark unchanged and retries).
@@ -161,6 +165,9 @@ func (o Output) Validate(in Input) error {
 	for i, op := range o.DomainOps {
 		if err := evOK(op.Evidence); err != nil {
 			return fmt.Errorf("domain_ops[%d]: %w", i, err)
+		}
+		if len(op.Triggers) > maxTriggersLen {
+			return fmt.Errorf("domain_ops[%d]: triggers too long (%d > %d)", i, len(op.Triggers), maxTriggersLen)
 		}
 		switch op.Op {
 		case "create":

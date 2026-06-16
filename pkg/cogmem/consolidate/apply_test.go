@@ -86,3 +86,36 @@ func TestApplyCreateWithTmpID(t *testing.T) {
 		t.Fatalf("hooks = %+v", hooks)
 	}
 }
+
+func TestApplySetsTriggers(t *testing.T) {
+	ctx := context.Background()
+	st, _ := store.Open(filepath.Join(t.TempDir(), "t.cogmem.db"))
+	defer st.Close()
+
+	out := Output{
+		DomainOps: []DomainOp{{
+			Op: "create", TmpID: "t1", Type: "project", Name: "Email", Summary: "mail",
+			Triggers: "google_gmail, microsoft365_mail", Status: "active",
+			Evidence: store.Evidence{SeqStart: 1, SeqEnd: 1},
+		}},
+	}
+	if _, err := Apply(ctx, st, out, ApplyContext{AgentID: "alice", Actor: "sleep_cycle"}); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	doms, _ := st.ListDomains(ctx, st.DB(), store.StatusActive)
+	var email *store.Domain
+	for i := range doms {
+		if doms[i].Name == "Email" {
+			email = &doms[i]
+		}
+	}
+	if email == nil {
+		t.Fatalf("Email domain not created: %+v", doms)
+	}
+	if email.Triggers != "google_gmail,microsoft365_mail" {
+		t.Fatalf("triggers = %q, want normalized list", email.Triggers)
+	}
+	if _, ok := email.MatchTrigger("mcp__fusion__google_gmail_messages_list"); !ok {
+		t.Fatalf("worker-set trigger should match gmail tool")
+	}
+}
