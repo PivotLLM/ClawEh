@@ -378,10 +378,13 @@ type AgentDefaults struct {
 	// read/write area plus its skills. Empty makes reads workspace-wide (legacy),
 	// which exposes config/subsystem files (AGENTS.md, COGMEM.md, …) the agent
 	// already receives in its prompt or should never read.
-	WorkspaceReadSubdirs       []string `json:"workspace_read_subdirs"          env:"CLAW_AGENTS_DEFAULTS_WORKSPACE_READ_SUBDIRS"`
-	Models                     []string `json:"models,omitempty"`
-	ImageModel                 string   `json:"image_model,omitempty"           env:"CLAW_AGENTS_DEFAULTS_IMAGE_MODEL"`
-	ImageModelFallbacks        []string `json:"image_model_fallbacks,omitempty"`
+	WorkspaceReadSubdirs []string `json:"workspace_read_subdirs"          env:"CLAW_AGENTS_DEFAULTS_WORKSPACE_READ_SUBDIRS"`
+	Models               []string `json:"models,omitempty"`
+	ImageModel           string   `json:"image_model,omitempty"           env:"CLAW_AGENTS_DEFAULTS_IMAGE_MODEL"`
+	ImageModelFallbacks  []string `json:"image_model_fallbacks,omitempty"`
+	// RequestTimeout is the global default request timeout (seconds) applied to
+	// any model whose own request_timeout is 0. Default 300; CLI models override
+	// it higher (e.g. 3600). 0 falls back to the built-in 120s HTTP default.
 	RequestTimeout             int      `json:"request_timeout,omitempty"       env:"CLAW_AGENTS_DEFAULTS_REQUEST_TIMEOUT"`
 	MaxTokens                  int      `json:"max_tokens"                      env:"CLAW_AGENTS_DEFAULTS_MAX_TOKENS"`
 	Temperature                *float64 `json:"temperature,omitempty"           env:"CLAW_AGENTS_DEFAULTS_TEMPERATURE"`

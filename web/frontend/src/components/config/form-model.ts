@@ -8,6 +8,7 @@ export interface CoreConfigForm {
   streamToolActivity: boolean
   maxTokens: string
   maxToolIterations: string
+  requestTimeout: string
   // Agent defaults (agents.defaults.models / .temperature) and the default-agent
   // id (agents.list[].default). Consolidated here from the Agents page.
   defaultAgentId: string
@@ -75,6 +76,7 @@ export const EMPTY_FORM: CoreConfigForm = {
   streamToolActivity: false,
   maxTokens: "32768",
   maxToolIterations: "50",
+  requestTimeout: "300",
   defaultAgentId: "",
   defaultModels: [],
   defaultTemperature: "",
@@ -171,6 +173,7 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
       defaults.max_tool_iterations,
       EMPTY_FORM.maxToolIterations,
     ),
+    requestTimeout: asNumberString(defaults.request_timeout, EMPTY_FORM.requestTimeout),
     defaultAgentId,
     defaultModels: asStringArray(defaults.models),
     defaultTemperature:

@@ -65,6 +65,7 @@ func DefaultConfig() *Config {
 				MaxTokens:            32768,
 				Temperature:          nil, // nil means use provider default
 				MaxToolIterations:    50,
+				RequestTimeout:       300, // global default (s); per-model overrides (CLIs set longer)
 				ContextWindow:        128000,
 				ArchiveDays:          365,
 				SummaryRetentionDays: 3650,

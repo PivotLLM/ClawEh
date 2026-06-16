@@ -170,6 +170,11 @@ export function ConfigPage() {
           "Max tool iterations",
           { min: 1 },
         )
+        const requestTimeout = parseIntField(
+          form.requestTimeout,
+          "Request timeout (s)",
+          { min: 0 },
+        )
         const summarizationModels = form.summarizationModels
           .map((m) => m.trim())
           .filter((m) => m.length > 0)
@@ -261,6 +266,7 @@ export function ConfigPage() {
               stream_tool_activity: form.streamToolActivity,
               max_tokens: maxTokens,
               max_tool_iterations: maxToolIterations,
+              request_timeout: requestTimeout,
               models: defaultModels,
               temperature: defaultTemperaturePayload,
               compress_normal_percent: compressNormalPercent,

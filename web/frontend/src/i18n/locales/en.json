@@ -386,6 +386,8 @@
       "max_tokens_hint": "Upper token limit per model response.",
       "max_tool_iterations": "Max Tool Iterations",
       "max_tool_iterations_hint": "Maximum tool-call loops in a single task.",
+      "request_timeout": "Request Timeout (s)",
+      "request_timeout_hint": "Global default seconds to wait for a model response. Per-model timeouts override this (CLI models set it higher). 0 = built-in 120s default.",
       "default_agent": "Default agent",
       "default_agent_hint": "Handles messages that don't match any binding.",
       "default_model": "Default models",

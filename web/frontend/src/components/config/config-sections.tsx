@@ -152,6 +152,19 @@ export function AgentDefaultsSection({
         />
       </Field>
 
+      <Field
+        label={t("pages.config.request_timeout")}
+        hint={t("pages.config.request_timeout_hint")}
+        layout="setting-row"
+      >
+        <Input
+          type="number"
+          min={0}
+          value={form.requestTimeout}
+          onChange={(e) => onFieldChange("requestTimeout", e.target.value)}
+        />
+      </Field>
+
     </ConfigSectionCard>
   )
 }
