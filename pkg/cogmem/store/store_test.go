@@ -232,6 +232,59 @@ func TestDedupeGeneralDomains(t *testing.T) {
 	}
 }
 
+func TestPurgeNonActive(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	db := s.DB()
+
+	// Active project domain with an active + a retired memory.
+	keep, _ := s.CreateDomain(ctx, db, CreateDomainParams{AgentID: "a", Type: DomainProject, Name: "Keep", Status: StatusActive})
+	_, _ = s.AddMemory(ctx, db, AddMemoryParams{DomainID: keep.ID, Type: TypeFact, Text: "active fact", Status: StatusActive, Confidence: 0.9, Source: SourceUserExplicit})
+	_, _ = s.AddMemory(ctx, db, AddMemoryParams{DomainID: keep.ID, Type: TypeFact, Text: "old fact", Status: StatusRetired, Confidence: 0.9, Source: SourceUserExplicit})
+
+	// Archived domain with a (still-active) memory — both should go.
+	arch, _ := s.CreateDomain(ctx, db, CreateDomainParams{AgentID: "a", Type: DomainProject, Name: "Arch", Status: StatusActive})
+	_, _ = s.AddMemory(ctx, db, AddMemoryParams{DomainID: arch.ID, Type: TypeFact, Text: "archived domain fact", Status: StatusActive, Confidence: 0.9, Source: SourceUserExplicit})
+	if err := s.ArchiveDomain(ctx, db, arch.ID); err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+
+	// Dry run reports counts without deleting: 1 retired memory + 1 archived
+	// domain's memory = 2 memories, 1 domain.
+	st, err := s.PurgeNonActive(ctx, false)
+	if err != nil {
+		t.Fatalf("dry run: %v", err)
+	}
+	if st.Memories != 2 || st.Domains != 1 {
+		t.Fatalf("dry run counts = %+v, want {2,1}", st)
+	}
+	// Nothing deleted yet.
+	if doms, _ := s.ListDomains(ctx, db, StatusActive); len(doms) != 2 { // Keep + General
+		t.Fatalf("dry run deleted domains: %d active remain", len(doms))
+	}
+
+	// Apply.
+	st, err = s.PurgeNonActive(ctx, true)
+	if err != nil {
+		t.Fatalf("purge: %v", err)
+	}
+	if st.Memories != 2 || st.Domains != 1 {
+		t.Fatalf("purge counts = %+v, want {2,1}", st)
+	}
+
+	// Only the active "Keep" memory + the seeded general remain; archived domain gone.
+	all, _ := s.ListDomains(ctx, db) // all statuses
+	for _, d := range all {
+		if d.ID == arch.ID {
+			t.Fatalf("archived domain survived purge")
+		}
+	}
+	mems, _ := s.ListMemories(ctx, db, keep.ID) // all statuses
+	if len(mems) != 1 || mems[0].Text != "active fact" {
+		t.Fatalf("kept memories = %+v, want only 'active fact'", mems)
+	}
+}
+
 func TestDomainOptimisticConcurrency(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()

@@ -17,10 +17,11 @@ import (
 	"github.com/PivotLLM/ClawEh/internal/auth"
 	"github.com/PivotLLM/ClawEh/internal/cron"
 	"github.com/PivotLLM/ClawEh/internal/gateway"
-	"github.com/PivotLLM/ClawEh/internal/test"
+	"github.com/PivotLLM/ClawEh/internal/memory"
 	"github.com/PivotLLM/ClawEh/internal/model"
 	"github.com/PivotLLM/ClawEh/internal/skills"
 	"github.com/PivotLLM/ClawEh/internal/status"
+	"github.com/PivotLLM/ClawEh/internal/test"
 	"github.com/PivotLLM/ClawEh/internal/version"
 	"github.com/PivotLLM/ClawEh/pkg/global"
 )
@@ -48,6 +49,7 @@ func NewClawCommand(binaryName string) *cobra.Command {
 		status.NewStatusCommand(),
 		cron.NewCronCommand(),
 		skills.NewSkillsCommand(),
+		memory.NewMemoryCommand(),
 		model.NewModelCommand(),
 		test.NewTestCommand(),
 		version.NewVersionCommand(),

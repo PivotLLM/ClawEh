@@ -133,6 +133,58 @@ func (s *Store) migrate(ctx context.Context) error {
 	return nil
 }
 
+// PurgeStats reports how many rows a purge removed (or would remove on a dry run).
+type PurgeStats struct {
+	Memories int64
+	Domains  int64
+}
+
+// PurgeNonActive hard-deletes everything that is not current active memory: every
+// domain whose status is not active (and all of its memories, regardless of their
+// status), and every non-active memory in the surviving active domains. Only
+// active memories in active domains remain. When apply is false it counts what
+// would be removed without deleting. Returns the counts either way.
+func (s *Store) PurgeNonActive(ctx context.Context, apply bool) (PurgeStats, error) {
+	var st PurgeStats
+	// Memories removed: non-active, or belonging to a non-active domain.
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM memories
+		WHERE status != ? OR domain_id IN (SELECT id FROM domains WHERE status != ?)`,
+		string(StatusActive), string(StatusActive)).Scan(&st.Memories); err != nil {
+		return st, err
+	}
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM domains WHERE status != ?`, string(StatusActive)).Scan(&st.Domains); err != nil {
+		return st, err
+	}
+	if !apply || (st.Memories == 0 && st.Domains == 0) {
+		return st, nil
+	}
+	err := s.WithTx(ctx, func(tx *sql.Tx) error {
+		// Delete memories first (FK: memories reference domains). This clears every
+		// non-active memory plus all memories under soon-to-be-deleted domains.
+		if _, err := tx.ExecContext(ctx, `
+			DELETE FROM memories
+			WHERE status != ? OR domain_id IN (SELECT id FROM domains WHERE status != ?)`,
+			string(StatusActive), string(StatusActive)); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM domains WHERE status != ?`, string(StatusActive)); err != nil {
+			return err
+		}
+		// Pending digest / always-on content may have changed; force a rebuild.
+		return bumpStableRev(ctx, tx)
+	})
+	return st, err
+}
+
+// Vacuum reclaims disk space after deletions. Must run outside a transaction.
+func (s *Store) Vacuum(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx, `VACUUM`)
+	return err
+}
+
 // dedupeGeneralDomains collapses multiple "general" domains into one. A pre-fix
 // race (concurrent store opens both seeding general before the unique index
 // existed) could create duplicates. The oldest is canonical; every other

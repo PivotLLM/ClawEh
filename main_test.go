@@ -37,6 +37,7 @@ func TestNewClawCommand(t *testing.T) {
 		"auth",
 		"cron",
 		"gateway",
+		"memory",
 		"test",
 		"model",
 		"skills",
