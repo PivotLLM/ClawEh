@@ -133,6 +133,57 @@ func (s *Store) migrate(ctx context.Context) error {
 	return nil
 }
 
+// DedupeActiveMemories retires active memories that exactly duplicate an earlier
+// active memory in the same domain (same domain_id + text). The earliest by
+// created_at (then id) is kept; the rest are retired with reason "duplicate".
+// Returns how many were retired. Idempotent: a no-op once there are no dups.
+func (s *Store) DedupeActiveMemories(ctx context.Context) (int, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT m.id FROM memories m
+		WHERE m.status = ?
+		  AND EXISTS (
+		    SELECT 1 FROM memories e
+		    WHERE e.domain_id = m.domain_id AND e.text = m.text AND e.status = ?
+		      AND (e.created_at < m.created_at OR (e.created_at = m.created_at AND e.id < m.id))
+		  )`, string(StatusActive), string(StatusActive))
+	if err != nil {
+		return 0, err
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
+			return 0, err
+		}
+		ids = append(ids, id)
+	}
+	_ = rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	args := make([]any, 0, len(ids)+2)
+	args = append(args, string(StatusRetired), now())
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	err = s.WithTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE memories SET status=?, retire_reason='duplicate', updated_at=? WHERE id IN (`+
+				placeholders(len(ids))+`)`, args...); err != nil {
+			return err
+		}
+		return bumpStableRev(ctx, tx)
+	})
+	if err != nil {
+		return 0, err
+	}
+	return len(ids), nil
+}
+
 // PurgeStats reports how many rows a purge removed (or would remove on a dry run).
 type PurgeStats struct {
 	Memories int64

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/PivotLLM/ClawEh/pkg/cogmem/store"
+	"github.com/PivotLLM/ClawEh/pkg/logger"
 	"github.com/google/uuid"
 )
 
@@ -166,6 +167,19 @@ func (w *Worker) RunOnce(ctx context.Context, p RunParams) (RunResult, error) {
 	batch, lastSeq, more := SelectBatch(msgs, w.batchOpts)
 	if len(batch) == 0 {
 		return RunResult{Status: "idle", SeqStart: consolidated + 1}, nil
+	}
+
+	// Cleanup before the model sees current_state: retire exact-duplicate active
+	// memories (e.g. a runaway loop that wrote the same fact repeatedly). Cheap
+	// and idempotent; best-effort so a dedup error never blocks consolidation.
+	if n, derr := w.st.DedupeActiveMemories(ctx); derr != nil {
+		logger.WarnCF("cogmem", "dedupe active memories failed", map[string]any{
+			"session_key": p.SessionKey, "error": derr.Error(),
+		})
+	} else if n > 0 {
+		logger.InfoCF("cogmem", "consolidation: retired duplicate memories", map[string]any{
+			"session_key": p.SessionKey, "retired": n,
+		})
 	}
 
 	in := Input{

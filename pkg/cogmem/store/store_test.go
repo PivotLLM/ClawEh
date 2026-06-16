@@ -172,6 +172,53 @@ func TestEnsureTypeValuesNormalizesLegacy(t *testing.T) {
 	}
 }
 
+func TestDedupeActiveMemories(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	db := s.DB()
+	d, _ := s.CreateDomain(ctx, db, CreateDomainParams{AgentID: "a", Type: DomainProject, Name: "P"})
+	other, _ := s.CreateDomain(ctx, db, CreateDomainParams{AgentID: "a", Type: DomainProject, Name: "Q"})
+
+	add := func(domainID, text string) {
+		_, _ = s.AddMemory(ctx, db, AddMemoryParams{DomainID: domainID, Type: TypeFact, Text: text, Status: StatusActive, Confidence: 0.9, Source: SourceUserExplicit})
+	}
+	// Three identical "The Frame" in domain d (the runaway-loop case) + one unique.
+	add(d.ID, "The Frame")
+	add(d.ID, "The Frame")
+	add(d.ID, "The Frame")
+	add(d.ID, "unique fact")
+	// Same text in a DIFFERENT domain must NOT be treated as a duplicate.
+	add(other.ID, "The Frame")
+
+	n, err := s.DedupeActiveMemories(ctx)
+	if err != nil {
+		t.Fatalf("dedupe: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("retired = %d, want 2 (two of the three dups)", n)
+	}
+	// d keeps exactly one "The Frame" + the unique fact.
+	act, _ := s.ListMemories(ctx, db, d.ID, StatusActive)
+	frames := 0
+	for _, m := range act {
+		if m.Text == "The Frame" {
+			frames++
+		}
+	}
+	if frames != 1 || len(act) != 2 {
+		t.Fatalf("domain d active = %d (frames=%d), want 2 (1 frame + 1 unique)", len(act), frames)
+	}
+	// Other domain's "The Frame" is untouched.
+	oa, _ := s.ListMemories(ctx, db, other.ID, StatusActive)
+	if len(oa) != 1 {
+		t.Fatalf("other domain active = %d, want 1", len(oa))
+	}
+	// Idempotent.
+	if n2, _ := s.DedupeActiveMemories(ctx); n2 != 0 {
+		t.Fatalf("second dedupe retired %d, want 0", n2)
+	}
+}
+
 func TestDedupeGeneralDomains(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
