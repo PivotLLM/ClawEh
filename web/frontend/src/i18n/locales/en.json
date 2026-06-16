@@ -486,7 +486,8 @@
       "sections": {
         "enable": "Enable",
         "transport": "Transport",
-        "tools": "Tool Allowlist"
+        "tools": "Tool Allowlist",
+        "client": "External MCP Servers"
       },
       "enable_desc": "Controls whether claw runs an MCP server so CLI-based providers (claude-cli, codex-cli, gemini-cli) can call claw's host-side tools natively.",
       "enabled": "Enabled",
@@ -505,7 +506,9 @@
       "tools_add_pattern": "Add pattern",
       "tools_preview_title": "Matches ({{matched}} of {{total}})",
       "tools_always_excluded": "Always excluded: {{tools}}",
-      "tools_none_registered": "No tools registered yet."
+      "tools_none_registered": "No tools registered yet.",
+      "client_hint": "Upstream MCP servers claw connects out to (tools.mcp.servers). Their tools are exposed to direct API providers; CLI providers configure MCP separately. Edit as a JSON object keyed by server name. Leave empty for none.",
+      "client_placeholder": "{\n  \"my-server\": {\n    \"url\": \"https://example.com/mcp\"\n  }\n}"
     }
   },
   "providers": {
