@@ -48,6 +48,8 @@ type DomainView struct {
 	Version  int64             `json:"version"`
 	Summary  string            `json:"summary"`
 	State    store.DomainState `json:"state"`
+	Triggers string            `json:"triggers,omitempty"`
+	KeywordTriggers string      `json:"keyword_triggers,omitempty"`
 	Memories []MemoryView      `json:"memories"`
 }
 
@@ -82,7 +84,8 @@ type DomainOp struct {
 	Name            string             `json:"name,omitempty"`
 	Summary         string             `json:"summary,omitempty"`
 	Status          string             `json:"status,omitempty"`
-	Triggers        string             `json:"triggers,omitempty"` // comma-delimited tool-name substrings (auto-load)
+	Triggers        string             `json:"triggers,omitempty"`         // comma-delimited tool-name substrings (auto-load on tool use)
+	KeywordTriggers string             `json:"keyword_triggers,omitempty"` // comma-delimited message-text phrases (auto-load when mentioned)
 	Reason          string             `json:"reason,omitempty"`
 	ExpectedVersion *int64             `json:"expected_version,omitempty"`
 	State           *store.DomainState `json:"state,omitempty"`
@@ -164,6 +167,9 @@ func (o Output) Validate(in Input) error {
 		}
 		if len(op.Triggers) > maxTriggersLen {
 			return fmt.Errorf("domain_ops[%d]: triggers too long (%d > %d)", i, len(op.Triggers), maxTriggersLen)
+		}
+		if len(op.KeywordTriggers) > maxTriggersLen {
+			return fmt.Errorf("domain_ops[%d]: keyword_triggers too long (%d > %d)", i, len(op.KeywordTriggers), maxTriggersLen)
 		}
 		switch op.Op {
 		case "create":

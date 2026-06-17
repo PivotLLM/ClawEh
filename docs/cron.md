@@ -27,6 +27,16 @@ on someone else's id returns "not found"). The `claw cron` **CLI is the operator
 view and sees all jobs** regardless of owner; CLI-created jobs have no owner and
 are managed only from the CLI.
 
+### Loading a domain's context when a job fires
+
+A scheduled message is processed like any other, so the agent's cognitive-memory
+routing applies. To make a **workflow/domain load when the job fires**, give that
+domain **keyword triggers** (`cogmem_domain_update` → `set_keyword_triggers`) and
+word the cron message to contain one of those phrases. For example, a domain with
+`["morning routine"]` is pulled into context when the cron message says "run the
+morning routine." (Domain *tool* triggers don't help here — they match tool names,
+not the message; keyword triggers match the message text.)
+
 ### Execution model
 
 Jobs are placed on the same inbound message queue as messages from users and processed in

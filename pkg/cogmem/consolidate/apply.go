@@ -39,6 +39,7 @@ func Apply(ctx context.Context, st *store.Store, out Output, ac ApplyContext) (i
 					Status:   store.Status(orDefault(op.Status, "active")),
 					Summary:  op.Summary,
 					Triggers: op.Triggers,
+					KeywordTriggers: op.KeywordTriggers,
 				})
 				if err != nil {
 					return err
@@ -63,6 +64,10 @@ func Apply(ctx context.Context, st *store.Store, out Output, ac ApplyContext) (i
 				if op.Triggers != "" {
 					t := op.Triggers
 					p.Triggers = &t
+				}
+				if op.KeywordTriggers != "" {
+					k := op.KeywordTriggers
+					p.KeywordTriggers = &k
 				}
 				if err := st.UpdateDomain(ctx, tx, op.ID, p); err != nil {
 					return err

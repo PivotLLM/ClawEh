@@ -119,3 +119,36 @@ func TestApplySetsTriggers(t *testing.T) {
 		t.Fatalf("worker-set trigger should match gmail tool")
 	}
 }
+
+func TestApplySetsKeywordTriggers(t *testing.T) {
+	ctx := context.Background()
+	st, _ := store.Open(filepath.Join(t.TempDir(), "kw.cogmem.db"))
+	defer st.Close()
+
+	out := Output{
+		DomainOps: []DomainOp{{
+			Op: "create", TmpID: "t1", Type: "workflow", Name: "Daily Ops", Summary: "ops",
+			KeywordTriggers: "Morning Routine, weekly report", Status: "active",
+			Evidence: store.Evidence{SeqStart: 1, SeqEnd: 1},
+		}},
+	}
+	if _, err := Apply(ctx, st, out, ApplyContext{AgentID: "alice", Actor: "sleep_cycle"}); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	doms, _ := st.ListDomains(ctx, st.DB(), store.StatusActive)
+	var wf *store.Domain
+	for i := range doms {
+		if doms[i].Name == "Daily Ops" {
+			wf = &doms[i]
+		}
+	}
+	if wf == nil {
+		t.Fatalf("Daily Ops domain not created: %+v", doms)
+	}
+	if wf.KeywordTriggers != "morning routine,weekly report" {
+		t.Fatalf("keyword_triggers = %q, want normalized list", wf.KeywordTriggers)
+	}
+	if _, ok := wf.MatchKeyword("time for your morning routine"); !ok {
+		t.Fatalf("worker-set keyword trigger should match the phrase")
+	}
+}

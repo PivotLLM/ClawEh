@@ -271,6 +271,8 @@ func (w *Worker) currentState(ctx context.Context) CurrentState {
 			Version: d.Version,
 			Summary: d.Summary,
 			State:   d.State,
+			Triggers:        d.Triggers,
+			KeywordTriggers: d.KeywordTriggers,
 		}
 		hooks, err := w.st.ListMemories(ctx, w.st.DB(), d.ID, store.StatusActive)
 		if err == nil {

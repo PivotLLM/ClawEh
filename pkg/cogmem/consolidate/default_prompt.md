@@ -49,6 +49,13 @@ add / supersede / retire; or do nothing.
   server. The domain is then auto-loaded whenever a matching tool is used again.
   Matching is case- and underscore-insensitive. Omit when no tool clearly maps to
   the domain.
+- Keyword triggers (optional): set `keyword_triggers` to a comma-separated list of
+  distinctive words/phrases that should load this domain when one appears in an
+  incoming message (e.g. a recurring workflow that fires on a schedule, or a topic
+  the user names). Matched as a whole phrase on word boundaries, so prefer
+  multi-word phrases (`morning routine,weekly report`) over common single words
+  like `morning` that would match too often. Unlike `triggers` (which match tool
+  names), these match the message text. Omit when nothing clearly applies.
 - Every operation MUST cite `evidence` — the seq range in `new_messages` that
   justifies it. No evidence → omit the op.
 
@@ -71,10 +78,12 @@ Return exactly this shape (keys must exist; arrays may be empty):
     { "op": "create", "tmp_id": "t1", "type": "project|workflow",
       "name": "string", "summary": "one line", "status": "active|review",
       "triggers": "substr1,substr2 (optional)",
+      "keyword_triggers": "phrase one,phrase two (optional)",
       "evidence": { "seq_start": 0, "seq_end": 0 } },
     { "op": "update", "id": "d7", "expected_version": 4, "summary": "one line",
       "state": { "blockers": [], "next_actions": [], "constraints": [] },
       "triggers": "substr1,substr2 (optional)",
+      "keyword_triggers": "phrase one,phrase two (optional)",
       "evidence": { "seq_start": 0, "seq_end": 0 } },
     { "op": "archive", "id": "d9", "reason": "string",
       "evidence": { "seq_start": 0, "seq_end": 0 } }
