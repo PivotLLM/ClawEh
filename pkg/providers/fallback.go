@@ -155,10 +155,27 @@ func ResolveCandidatesWithLookup(
 //   - Retriable errors trigger fallback to next candidate.
 //   - Success marks provider as good (resets cooldown).
 //   - If all fail, returns aggregate error with all attempts.
+// FallbackNotify is an optional callback invoked when a candidate fails and the
+// chain is about to try the next one. `failed` is the attempt that just failed;
+// `next` is the candidate that will be tried next. It lets the caller surface a
+// user-facing heads-up ("X failed, trying Y…"). Never called for the final
+// candidate (that surfaces as the returned error instead).
+type FallbackNotify func(failed FallbackAttempt, next FallbackCandidate)
+
 func (fc *FallbackChain) Execute(
 	ctx context.Context,
 	candidates []FallbackCandidate,
 	run func(ctx context.Context, candidate FallbackCandidate) (*LLMResponse, error),
+) (*FallbackResult, error) {
+	return fc.ExecuteWithNotify(ctx, candidates, run, nil)
+}
+
+// ExecuteWithNotify is Execute with an optional per-failover notification hook.
+func (fc *FallbackChain) ExecuteWithNotify(
+	ctx context.Context,
+	candidates []FallbackCandidate,
+	run func(ctx context.Context, candidate FallbackCandidate) (*LLMResponse, error),
+	notify FallbackNotify,
 ) (*FallbackResult, error) {
 	if len(candidates) == 0 {
 		return nil, fmt.Errorf("fallback: no candidates configured")
@@ -288,6 +305,11 @@ func (fc *FallbackChain) Execute(
 		// If this was the last candidate, return aggregate error.
 		if i == len(candidates)-1 {
 			return nil, &FallbackExhaustedError{Attempts: result.Attempts}
+		}
+
+		// Heads-up to the caller: this model failed and we're moving to the next.
+		if notify != nil {
+			notify(result.Attempts[len(result.Attempts)-1], candidates[i+1])
 		}
 	}
 

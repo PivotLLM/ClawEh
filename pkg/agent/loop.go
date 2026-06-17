@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"sync"
@@ -355,15 +356,18 @@ func (al *AgentLoop) processSessionMessage(ctx context.Context, msg bus.InboundM
 	}
 
 	var roundSent atomic.Bool
-	msgCtx := tools.WithRoundSentFlag(ctx, &roundSent)
+	// Overall turn budget: a hard backstop so a hung provider or tool can never
+	// leave the user waiting forever. When it elapses the context is cancelled,
+	// the LLM/tool loop unwinds, and we deliver a clear message below (which also
+	// clears the typing indicator via the channel manager's preSend).
+	turnTimeout := al.GetConfig().Agents.Defaults.GetTurnTimeout()
+	turnCtx, turnCancel := context.WithTimeout(ctx, turnTimeout)
+	defer turnCancel()
+	msgCtx := tools.WithRoundSentFlag(turnCtx, &roundSent)
 
-	response, err := al.processMessage(msgCtx, msg)
+	response, err := al.processMessageSafely(msgCtx, msg)
 	if err != nil {
-		if friendly := renderBillingError(err); friendly != "" {
-			response = friendly
-		} else {
-			response = fmt.Sprintf("Error processing message: %v", err)
-		}
+		response = renderTurnError(turnCtx, turnTimeout, err)
 	}
 
 	if response != "" && !roundSent.Load() {
@@ -752,6 +756,47 @@ func (al *AgentLoop) SetChannelManager(cm *channels.Manager) {
 func (al *AgentLoop) stopTyping(channel, chatID string) {
 	if al.channelManager != nil && channel != "" && chatID != "" {
 		al.channelManager.StopTyping(channel, chatID)
+	}
+}
+
+// startProgressUpdates edits the turn's "Thinking…" placeholder every interval
+// so a long-running turn (many tool calls, slow model) never looks dead. The
+// returned function stops the updater and must be deferred. It is a no-op (and
+// returns a no-op stopper) for non-user turns or when progress is disabled.
+// completed is the live count of finished tool calls, shared with the LLM loop.
+func (al *AgentLoop) startProgressUpdates(channel, chatID string, interval time.Duration, completed *atomic.Int64) func() {
+	if interval <= 0 || al.channelManager == nil || channel == "" || channel == "system" || chatID == "" {
+		return func() {}
+	}
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				n := completed.Load()
+				var text string
+				if n == 0 {
+					text = "⏳ Still working…"
+				} else {
+					text = fmt.Sprintf("⏳ Still working… %d tool call(s) completed so far.", n)
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				al.channelManager.UpdatePlaceholder(ctx, channel, chatID, text)
+				cancel()
+			}
+		}
+	}()
+	// Block until the updater has fully exited so no placeholder edit can land
+	// after the turn's final reply (which consumes the placeholder).
+	return func() {
+		close(stop)
+		<-done
 	}
 }
 
@@ -1170,6 +1215,28 @@ func (al *AgentLoop) ProcessDirectWithChannel(
 		msg.Peer = bus.Peer{Kind: kind, ID: chatID}
 	}
 
+	return al.processMessage(ctx, msg)
+}
+
+// processMessageSafely runs processMessage with a panic guard so a bug in the
+// turn (or a tool) is converted into a returned error and delivered to the user
+// instead of crashing the per-message goroutine and leaving the typing indicator
+// stuck. processSessionMessage runs us in our own goroutine, so an unrecovered
+// panic here would otherwise take down the process.
+func (al *AgentLoop) processMessageSafely(ctx context.Context, msg bus.InboundMessage) (resp string, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			logger.ErrorCF("agent", "panic while processing message",
+				map[string]any{
+					"channel": msg.Channel,
+					"chat_id": msg.ChatID,
+					"panic":   fmt.Sprintf("%v", r),
+					"stack":   string(debug.Stack()),
+				})
+			resp = ""
+			err = fmt.Errorf("internal error while processing the message: %v", r)
+		}
+	}()
 	return al.processMessage(ctx, msg)
 }
 
@@ -1781,6 +1848,15 @@ func (al *AgentLoop) runLLMIteration(
 	var finalContent string
 	lastNormal := false
 	lastFinishReason := "max_iterations"
+
+	// Progress heartbeat: keep a long turn visibly alive by editing its
+	// placeholder every progress_interval with a running tool-call count. Stops
+	// when the turn returns (defer). completedTools is bumped after each batch.
+	var completedTools atomic.Int64
+	stopProgress := al.startProgressUpdates(opts.Channel, opts.ChatID,
+		al.GetConfig().Agents.Defaults.GetProgressInterval(), &completedTools)
+	defer stopProgress()
+
 	// Loop protection: if the model requests the exact same tool call(s) on
 	// consecutive iterations, break rather than spin (e.g. re-writing the same
 	// memory over and over). Tracks the prior iteration's tool-call signature.
@@ -1929,7 +2005,7 @@ func (al *AgentLoop) runLLMIteration(
 			defer al.activeRequests.Done()
 
 			if len(activeCandidates) >= 1 && al.fallback != nil {
-				fbResult, fbErr := al.fallback.Execute(
+				fbResult, fbErr := al.fallback.ExecuteWithNotify(
 					ctx,
 					activeCandidates,
 					func(ctx context.Context, c providers.FallbackCandidate) (*providers.LLMResponse, error) {
@@ -1944,6 +2020,7 @@ func (al *AgentLoop) runLLMIteration(
 						}
 						return agent.Provider.Chat(ctx, messages, providerToolDefs, c.Model, llmOpts)
 					},
+					al.fallbackNotifier(opts),
 				)
 				if fbErr != nil {
 					return nil, fbErr
@@ -2316,12 +2393,35 @@ func (al *AgentLoop) runLLMIteration(
 		agentResults := make([]indexedAgentResult, len(normalizedToolCalls))
 		var wg sync.WaitGroup
 
+		// Per-tool budget: a single tool call cannot run longer than this. The
+		// tool's context is cancelled at the deadline so a well-behaved tool
+		// returns a timeout error and the model can continue the turn. The overall
+		// turn budget (applied to ctx upstream) is the hard backstop for any tool
+		// that ignores cancellation.
+		toolTimeout := al.GetConfig().Agents.Defaults.GetToolTimeout()
+
 		for i, tc := range normalizedToolCalls {
 			agentResults[i].tc = tc
 
 			wg.Add(1)
 			go func(idx int, tc providers.ToolCall) {
 				defer wg.Done()
+				// A panicking tool must not crash the process or wedge wg.Wait();
+				// convert it into an error result so the turn proceeds.
+				defer func() {
+					if r := recover(); r != nil {
+						logger.ErrorCF("agent", "panic in tool call",
+							map[string]any{
+								"tool":  tc.Name,
+								"panic": fmt.Sprintf("%v", r),
+								"stack": string(debug.Stack()),
+							})
+						agentResults[idx].result = &tools.ToolResult{
+							Err:    fmt.Errorf("tool %s panicked: %v", tc.Name, r),
+							ForLLM: fmt.Sprintf("Tool %s failed with an internal error.", tc.Name),
+						}
+					}
+				}()
 
 				// Tool arguments are intentionally NOT logged: they routinely carry
 				// memory content, file contents, and other user data.
@@ -2380,6 +2480,11 @@ func (al *AgentLoop) runLLMIteration(
 				// Config is always non-nil after construction.
 				execCtx := tools.WithToolAllowChecker(ctx, agent.Config)
 				execCtx = tools.WithSessionKey(execCtx, opts.SessionKey)
+				if toolTimeout > 0 {
+					var toolCancel context.CancelFunc
+					execCtx, toolCancel = context.WithTimeout(execCtx, toolTimeout)
+					defer toolCancel()
+				}
 
 				toolResult := agent.Tools.ExecuteWithContext(
 					execCtx,
@@ -2393,6 +2498,7 @@ func (al *AgentLoop) runLLMIteration(
 			}(i, tc)
 		}
 		wg.Wait()
+		completedTools.Add(int64(len(normalizedToolCalls)))
 
 		// Process results in original order (send to user, save to session)
 		streamActivity := al.GetConfig().Agents.Defaults.StreamToolActivity

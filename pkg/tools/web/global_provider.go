@@ -76,6 +76,13 @@ func (globalWebProvider) RegisterTools(deps global.Deps) []global.ToolDefinition
 			Category:     "web",
 			DefaultAllow: global.Allow(true),
 			Handler: func(call *global.ToolCall) (*global.Result, error) {
+				// search is nil when no web-search provider is configured/enabled.
+				// The tool is still advertised, so guard here and report it to the
+				// model rather than dereferencing a nil receiver (which segfaults).
+				if search == nil {
+					return tools.ResultToGlobal(tools.ErrorResult(
+						"web search is not configured on this server (no search provider is enabled)")), nil
+				}
 				return tools.ResultToGlobal(search.Execute(call.Ctx, call.Args)), nil
 			},
 		},
@@ -86,6 +93,10 @@ func (globalWebProvider) RegisterTools(deps global.Deps) []global.ToolDefinition
 			Category:     "web",
 			DefaultAllow: global.Allow(true),
 			Handler: func(call *global.ToolCall) (*global.Result, error) {
+				if fetch == nil {
+					return tools.ResultToGlobal(tools.ErrorResult(
+						"web fetch is not configured on this server")), nil
+				}
 				return tools.ResultToGlobal(fetch.Execute(call.Ctx, call.Args)), nil
 			},
 		},

@@ -108,6 +108,37 @@ func (m *Manager) RecordPlaceholder(channel, chatID, placeholderID string) {
 	m.placeholders.Store(key, placeholderEntry{id: placeholderID, createdAt: time.Now()})
 }
 
+// UpdatePlaceholder edits the active placeholder for channel/chatID in place to
+// show progress on a long-running turn. Unlike preSend it does NOT consume the
+// placeholder (the final reply still edits it) and does NOT stop typing. It is a
+// no-op when there is no recorded placeholder or the channel cannot edit
+// messages. Returns true when the placeholder was updated.
+func (m *Manager) UpdatePlaceholder(ctx context.Context, channel, chatID, text string) bool {
+	key := channel + ":" + chatID
+	v, ok := m.placeholders.Load(key)
+	if !ok {
+		return false
+	}
+	entry, ok := v.(placeholderEntry)
+	if !ok || entry.id == "" {
+		return false
+	}
+	m.mu.RLock()
+	ch, ok := m.channels[channel]
+	m.mu.RUnlock()
+	if !ok {
+		return false
+	}
+	editor, ok := ch.(MessageEditor)
+	if !ok {
+		return false
+	}
+	if err := editor.EditMessage(ctx, chatID, entry.id, text); err != nil {
+		return false
+	}
+	return true
+}
+
 // SendPlaceholder sends a "Thinking…" placeholder for the given channel/chatID
 // and records it for later editing. Returns true if a placeholder was sent.
 func (m *Manager) SendPlaceholder(ctx context.Context, channel, chatID string) bool {

@@ -739,3 +739,34 @@ func TestDefaultConfig_ConfigReloadInterval(t *testing.T) {
 		t.Errorf("default ConfigReloadInterval()=%v, want %v", got, want)
 	}
 }
+
+func TestTurnToolProgressDefaults(t *testing.T) {
+	var d AgentDefaults // all zero
+	if got := d.GetTurnTimeout(); got != DefaultTurnTimeout {
+		t.Errorf("GetTurnTimeout()=%v, want default %v", got, DefaultTurnTimeout)
+	}
+	if got := d.GetToolTimeout(); got != DefaultToolTimeout {
+		t.Errorf("GetToolTimeout()=%v, want default %v", got, DefaultToolTimeout)
+	}
+	if got := d.GetProgressInterval(); got != DefaultProgressInterval {
+		t.Errorf("GetProgressInterval()=%v, want default %v", got, DefaultProgressInterval)
+	}
+
+	// Explicit values (seconds) override the defaults.
+	d = AgentDefaults{TurnTimeout: 600, ToolTimeout: 90, ProgressInterval: 10}
+	if got := d.GetTurnTimeout(); got != 600*time.Second {
+		t.Errorf("GetTurnTimeout()=%v, want 10m", got)
+	}
+	if got := d.GetToolTimeout(); got != 90*time.Second {
+		t.Errorf("GetToolTimeout()=%v, want 90s", got)
+	}
+	if got := d.GetProgressInterval(); got != 10*time.Second {
+		t.Errorf("GetProgressInterval()=%v, want 10s", got)
+	}
+
+	// A negative progress interval disables progress updates.
+	d = AgentDefaults{ProgressInterval: -1}
+	if got := d.GetProgressInterval(); got != 0 {
+		t.Errorf("GetProgressInterval()=%v, want 0 (disabled)", got)
+	}
+}

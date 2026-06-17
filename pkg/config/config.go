@@ -386,6 +386,20 @@ type AgentDefaults struct {
 	// any model whose own request_timeout is 0. Default 300; CLI models override
 	// it higher (e.g. 3600). 0 falls back to the built-in 120s HTTP default.
 	RequestTimeout             int      `json:"request_timeout,omitempty"       env:"CLAW_AGENTS_DEFAULTS_REQUEST_TIMEOUT"`
+	// TurnTimeout is the overall wall-clock budget (seconds) for a single user
+	// turn — all LLM iterations plus every tool call. It is a hard backstop that
+	// guarantees the turn ends (the context is cancelled) so the user always gets
+	// a reply and the typing indicator clears, even if a provider or tool hangs.
+	// 0 falls back to the built-in default (DefaultTurnTimeout).
+	TurnTimeout int `json:"turn_timeout,omitempty"          env:"CLAW_AGENTS_DEFAULTS_TURN_TIMEOUT"`
+	// ToolTimeout is the per-tool-call budget (seconds). A tool whose context
+	// deadline elapses is cancelled and reported as a timeout to the model, which
+	// can then continue the turn. 0 falls back to DefaultToolTimeout.
+	ToolTimeout int `json:"tool_timeout,omitempty"          env:"CLAW_AGENTS_DEFAULTS_TOOL_TIMEOUT"`
+	// ProgressInterval is how often (seconds) a long-running turn emits a
+	// lightweight progress update so it never looks dead. 0 falls back to
+	// DefaultProgressInterval; a negative value disables progress updates.
+	ProgressInterval int `json:"progress_interval,omitempty"     env:"CLAW_AGENTS_DEFAULTS_PROGRESS_INTERVAL"`
 	MaxTokens                  int      `json:"max_tokens"                      env:"CLAW_AGENTS_DEFAULTS_MAX_TOKENS"`
 	Temperature                *float64 `json:"temperature,omitempty"           env:"CLAW_AGENTS_DEFAULTS_TEMPERATURE"`
 	MaxToolIterations          int      `json:"max_tool_iterations"             env:"CLAW_AGENTS_DEFAULTS_MAX_TOOL_ITERATIONS"`
@@ -427,6 +441,46 @@ func (d *AgentDefaults) GetMaxMediaSize() int {
 		return d.MaxMediaSize
 	}
 	return DefaultMaxMediaSize
+}
+
+// Turn/tool/progress defaults. A turn is the whole exchange for one user
+// message (all LLM iterations + tool calls); the turn budget is the hard
+// backstop against a hung provider or tool.
+const (
+	DefaultTurnTimeout      = 15 * time.Minute
+	DefaultToolTimeout      = 5 * time.Minute
+	DefaultProgressInterval = 30 * time.Second
+)
+
+// GetTurnTimeout returns the overall turn budget: the configured value (seconds)
+// or DefaultTurnTimeout when unset (0).
+func (d *AgentDefaults) GetTurnTimeout() time.Duration {
+	if d.TurnTimeout > 0 {
+		return time.Duration(d.TurnTimeout) * time.Second
+	}
+	return DefaultTurnTimeout
+}
+
+// GetToolTimeout returns the per-tool-call budget: the configured value
+// (seconds) or DefaultToolTimeout when unset (0).
+func (d *AgentDefaults) GetToolTimeout() time.Duration {
+	if d.ToolTimeout > 0 {
+		return time.Duration(d.ToolTimeout) * time.Second
+	}
+	return DefaultToolTimeout
+}
+
+// GetProgressInterval returns the progress-update cadence: the configured value
+// (seconds), DefaultProgressInterval when unset (0), or 0 (disabled) when
+// negative.
+func (d *AgentDefaults) GetProgressInterval() time.Duration {
+	if d.ProgressInterval < 0 {
+		return 0
+	}
+	if d.ProgressInterval == 0 {
+		return DefaultProgressInterval
+	}
+	return time.Duration(d.ProgressInterval) * time.Second
 }
 
 // DefaultModelName returns the first model in the list, or "" if unset.

@@ -511,6 +511,54 @@ func TestPreSend_PlaceholderEditFails_FallsThrough(t *testing.T) {
 	}
 }
 
+func TestUpdatePlaceholder_EditsInPlaceWithoutConsuming(t *testing.T) {
+	m := newTestManager()
+	var edits []string
+	ch := &mockMessageEditor{
+		mockChannel: mockChannel{
+			sendFn: func(_ context.Context, _ bus.OutboundMessage) error { return nil },
+		},
+		editFn: func(_ context.Context, _, messageID, content string) error {
+			if messageID != "456" {
+				t.Fatalf("expected placeholder id 456, got %s", messageID)
+			}
+			edits = append(edits, content)
+			return nil
+		},
+	}
+	m.RegisterChannel("test", ch)
+	m.RecordPlaceholder("test", "123", "456")
+
+	// First progress update edits the placeholder in place.
+	if ok := m.UpdatePlaceholder(context.Background(), "test", "123", "⏳ working… 2 done"); !ok {
+		t.Fatal("expected UpdatePlaceholder to report success")
+	}
+	// It must NOT consume the placeholder: a second update still works, and a
+	// later preSend (final reply) can still edit the same placeholder.
+	if ok := m.UpdatePlaceholder(context.Background(), "test", "123", "⏳ working… 5 done"); !ok {
+		t.Fatal("placeholder was consumed by UpdatePlaceholder")
+	}
+	msg := bus.OutboundMessage{Channel: "test", ChatID: "123", Content: "final answer"}
+	if edited := m.preSend(context.Background(), "test", msg, ch); !edited {
+		t.Fatal("final reply should still edit the placeholder")
+	}
+	if len(edits) != 3 || edits[2] != "final answer" {
+		t.Fatalf("edits = %v, want two progress updates then 'final answer'", edits)
+	}
+}
+
+func TestUpdatePlaceholder_NoPlaceholder(t *testing.T) {
+	m := newTestManager()
+	ch := &mockMessageEditor{
+		mockChannel: mockChannel{sendFn: func(_ context.Context, _ bus.OutboundMessage) error { return nil }},
+		editFn:      func(_ context.Context, _, _, _ string) error { return nil },
+	}
+	m.RegisterChannel("test", ch)
+	if m.UpdatePlaceholder(context.Background(), "test", "123", "x") {
+		t.Fatal("expected no-op when no placeholder recorded")
+	}
+}
+
 func TestPreSend_TypingStopCalled(t *testing.T) {
 	m := newTestManager()
 	var stopCalled bool
