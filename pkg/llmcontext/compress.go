@@ -149,6 +149,15 @@ func (m *Manager) doCompress(ctx context.Context, safetyNet bool) error {
 
 		tail := selectTail(currentConversation, budget, m.cfg.retainMinMessages, m.estTokens)
 		tailStart := len(currentConversation) - len(tail)
+		// Never archive past the most recent user message: the live window must
+		// always retain the latest user turn. Otherwise the next dispatch sends a
+		// payload of only system+assistant+tool messages, which strict providers
+		// reject with "messages must contain at least one item with role='user'"
+		// (a non-retriable 400 that kills the turn).
+		if lu := lastUserStoredIndex(currentStored); lu >= 0 && lu < tailStart {
+			tailStart = lu
+			tail = currentConversation[tailStart:] // keep tail/tailStart consistent
+		}
 		toSummarize := currentStored[:tailStart]
 
 		if len(toSummarize) == 0 {
@@ -336,6 +345,17 @@ func (m *Manager) cooledAttempts() []CompactionAttempt {
 		}
 	}
 	return out
+}
+
+// lastUserStoredIndex returns the index of the most recent user-role message in
+// the (system-stripped) conversation slice, or -1 if there is none.
+func lastUserStoredIndex(stored []memory.StoredMessage) int {
+	for i := len(stored) - 1; i >= 0; i-- {
+		if stored[i].Role == "user" {
+			return i
+		}
+	}
+	return -1
 }
 
 // handleNormalPostLoop handles post-loop logic for the normal (non-safety-net) path.

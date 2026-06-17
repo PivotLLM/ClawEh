@@ -199,6 +199,35 @@ func TestCompress_RefusalDetectedAndModelSkipped(t *testing.T) {
 	}
 }
 
+// TestCompress_RetainsLastUserMessage verifies compaction never archives the
+// most recent user turn. A long tool/assistant tail after the last user message
+// would otherwise push it out of the retained window, leaving a payload with no
+// user-role message (strict providers reject that with a non-retriable 400).
+func TestCompress_RetainsLastUserMessage(t *testing.T) {
+	history := []providers.Message{{Role: "system", Content: "sys"}}
+	history = append(history, providers.Message{Role: "user", Content: strings.Repeat("u", 200)})
+	for i := 0; i < 60; i++ { // long assistant tail after the only user turn
+		history = append(history, providers.Message{Role: "assistant", Content: strings.Repeat("a", 200)})
+	}
+	store := &compressTestStore{history: history}
+	llm := &mockLLM{responses: []string{validSummaryJSON("goal")}}
+	mgr := newCompressManager(store, []LLMClient{llm})
+	mgr.msgCount = len(history)
+
+	_ = mgr.doCompress(context.Background(), false)
+
+	hasUser := false
+	for _, m := range store.GetHistory("sess") {
+		if m.Role == "user" {
+			hasUser = true
+			break
+		}
+	}
+	if !hasUser {
+		t.Fatalf("compaction archived the last user message — payload would have no user role")
+	}
+}
+
 // TestCompress_BillingFailurePutsModelInCooldown verifies that a summarization
 // model returning a billing (402) error is put in cooldown and not retried on
 // the next compaction — so an out-of-credits compression model is not hammered.
