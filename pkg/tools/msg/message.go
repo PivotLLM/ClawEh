@@ -23,7 +23,7 @@ func (t *MessageTool) Name() string {
 }
 
 func (t *MessageTool) Description() string {
-	return "Send a message to user on a chat channel. Use this when you want to communicate something."
+	return "Send a message to the user in the current conversation. Use this when you want to say something to the user."
 }
 
 func (t *MessageTool) Parameters() map[string]any {
@@ -33,14 +33,6 @@ func (t *MessageTool) Parameters() map[string]any {
 			"content": map[string]any{
 				"type":        "string",
 				"description": "The message content to send",
-			},
-			"channel": map[string]any{
-				"type":        "string",
-				"description": "Optional: target channel (telegram, slack, etc.)",
-			},
-			"chat_id": map[string]any{
-				"type":        "string",
-				"description": "Optional: target chat/user ID",
 			},
 		},
 		"required": []string{"content"},
@@ -68,15 +60,12 @@ func (t *MessageTool) Execute(ctx context.Context, args map[string]any) *tools.T
 		return &tools.ToolResult{ForLLM: "content is required", IsError: true}
 	}
 
-	channel, _ := args["channel"].(string)
-	chatID, _ := args["chat_id"].(string)
-
-	if channel == "" {
-		channel = tools.ToolChannel(ctx)
-	}
-	if chatID == "" {
-		chatID = tools.ToolChatID(ctx)
-	}
+	// Security: the target is always the session's own source channel/chat. The
+	// model cannot choose where a message goes — any channel/chat_id in args is
+	// ignored, so an agent cannot be coaxed into sending into another channel or
+	// to another user's chat.
+	channel := tools.ToolChannel(ctx)
+	chatID := tools.ToolChatID(ctx)
 
 	if channel == "" || chatID == "" {
 		return &tools.ToolResult{ForLLM: "No target channel/chat specified", IsError: true}

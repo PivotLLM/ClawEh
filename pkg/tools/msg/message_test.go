@@ -59,7 +59,10 @@ func TestMessageTool_Execute_Success(t *testing.T) {
 	}
 }
 
-func TestMessageTool_Execute_WithCustomChannel(t *testing.T) {
+// TestMessageTool_Execute_IgnoresSuppliedChannel is a security regression: the
+// model must NOT be able to redirect a message to another channel/chat. Any
+// channel/chat_id in args is ignored; the session's own source is always used.
+func TestMessageTool_Execute_IgnoresSuppliedChannel(t *testing.T) {
 	tool := NewMessageTool()
 
 	var sentChannel, sentChatID string
@@ -69,28 +72,28 @@ func TestMessageTool_Execute_WithCustomChannel(t *testing.T) {
 		return nil
 	})
 
-	ctx := tools.WithToolContext(context.Background(), "default-channel", "default-chat-id")
+	ctx := tools.WithToolContext(context.Background(), "session-channel", "session-chat-id")
 	args := map[string]any{
 		"content": "Test message",
-		"channel": "custom-channel",
-		"chat_id": "custom-chat-id",
+		"channel": "other-channel",  // must be ignored
+		"chat_id": "other-chat-id",  // must be ignored
 	}
 
 	result := tool.Execute(ctx, args)
 
-	// Verify custom channel/chatID were used instead of defaults
-	if sentChannel != "custom-channel" {
-		t.Errorf("Expected channel 'custom-channel', got '%s'", sentChannel)
+	// The session's own channel/chatID must be used, never the supplied ones.
+	if sentChannel != "session-channel" {
+		t.Errorf("Expected channel 'session-channel' (supplied channel must be ignored), got '%s'", sentChannel)
 	}
-	if sentChatID != "custom-chat-id" {
-		t.Errorf("Expected chatID 'custom-chat-id', got '%s'", sentChatID)
+	if sentChatID != "session-chat-id" {
+		t.Errorf("Expected chatID 'session-chat-id' (supplied chat_id must be ignored), got '%s'", sentChatID)
 	}
 
 	if !result.Silent {
 		t.Error("Expected Silent=true")
 	}
-	if result.ForLLM != "Message sent to custom-channel:custom-chat-id" {
-		t.Errorf("Expected ForLLM 'Message sent to custom-channel:custom-chat-id', got '%s'", result.ForLLM)
+	if result.ForLLM != "Message sent to session-channel:session-chat-id" {
+		t.Errorf("Expected ForLLM 'Message sent to session-channel:session-chat-id', got '%s'", result.ForLLM)
 	}
 }
 
@@ -236,21 +239,12 @@ func TestMessageTool_Parameters(t *testing.T) {
 		t.Error("Expected content type to be 'string'")
 	}
 
-	// Check channel property (optional)
-	channelProp, ok := props["channel"].(map[string]any)
-	if !ok {
-		t.Error("Expected 'channel' property")
+	// Security: channel/chat_id must NOT be model-selectable. The tool always
+	// targets the session's own source channel.
+	if _, present := props["channel"]; present {
+		t.Error("'channel' must not be a model-facing parameter (target is locked to the session)")
 	}
-	if channelProp["type"] != "string" {
-		t.Error("Expected channel type to be 'string'")
-	}
-
-	// Check chat_id property (optional)
-	chatIDProp, ok := props["chat_id"].(map[string]any)
-	if !ok {
-		t.Error("Expected 'chat_id' property")
-	}
-	if chatIDProp["type"] != "string" {
-		t.Error("Expected chat_id type to be 'string'")
+	if _, present := props["chat_id"]; present {
+		t.Error("'chat_id' must not be a model-facing parameter (target is locked to the session)")
 	}
 }
