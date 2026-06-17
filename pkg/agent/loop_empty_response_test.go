@@ -71,6 +71,22 @@ func TestEmptyResponse_DegenerateAfterRetries(t *testing.T) {
 	}
 }
 
+// Reasoning may arrive in the `reasoning` field (OpenRouter/DeepSeek) rather
+// than `reasoning_content` (OpenAI) — the empty-response handling must treat
+// either as "the model thought but didn't reply" and poke/flag accordingly.
+func TestEmptyResponse_ReasoningFieldAlsoTriggers(t *testing.T) {
+	empty := func() *providers.LLMResponse {
+		return &providers.LLMResponse{Content: "", Reasoning: "thinking...", FinishReason: "stop", Normal: true}
+	}
+	got, degenerate := driveEmptyResponse(t, []*providers.LLMResponse{empty(), empty(), empty()})
+	if got != "" {
+		t.Fatalf("expected empty final content, got %q", got)
+	}
+	if !degenerate {
+		t.Fatalf("reasoning in the `reasoning` field must also flag degenerate after retries")
+	}
+}
+
 // Genuinely empty (no content AND no reasoning) is not degenerate and is not
 // poked — it stays silent (e.g. a message @-directed at another agent).
 func TestEmptyResponse_NoReasoningStaysSilent(t *testing.T) {

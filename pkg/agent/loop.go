@@ -2103,14 +2103,20 @@ func (al *AgentLoop) runLLMIteration(
 		// Check if no tool calls - then check reasoning content if any
 		if len(response.ToolCalls) == 0 {
 			finalContent = response.Content
-			// Only fall back to reasoning_content as the visible reply when the
-			// operator opts in. Default off: a model that returns empty content but
-			// full reasoning (e.g. degenerating into reasoning-only/repetition output)
-			// must NOT leak its raw chain-of-thought to the user — empty content then
-			// hits the graceful empty-response path instead.
-			if finalContent == "" && response.ReasoningContent != "" &&
+			// "Thinking" may arrive as reasoning_content (OpenAI-style) or reasoning
+			// (OpenRouter-style); treat either as the model's reasoning.
+			reasoningText := response.ReasoningContent
+			if reasoningText == "" {
+				reasoningText = response.Reasoning
+			}
+			// Only fall back to reasoning as the visible reply when the operator opts
+			// in. Default off: a model that returns empty content but full reasoning
+			// (e.g. degenerating into reasoning-only/repetition output) must NOT leak
+			// its raw chain-of-thought to the user — empty content then hits the
+			// graceful empty-response path instead.
+			if finalContent == "" && reasoningText != "" &&
 				al.cfg != nil && al.cfg.Agents.Defaults.ShowReasoningAsContent {
-				finalContent = response.ReasoningContent
+				finalContent = reasoningText
 			}
 			lastNormal = response.Normal
 			lastFinishReason = response.FinishReason
@@ -2119,7 +2125,7 @@ func (al *AgentLoop) runLLMIteration(
 			// while clearly having "thought" (non-empty reasoning) — a common
 			// failure mode of some models, which otherwise leaves the user with no
 			// reply. Nudge it to actually respond, capped by maxEmptyRetries.
-			if finalContent == "" && response.ReasoningContent != "" {
+			if finalContent == "" && reasoningText != "" {
 				if emptyRetries < maxEmptyRetries {
 					emptyRetries++
 					messages = append(messages, providers.Message{
