@@ -121,34 +121,11 @@ func attemptDescription(model string, status int, reason providers.FailoverReaso
 	if name == "" {
 		name = "model"
 	}
-	r := failoverReasonText(reason)
+	r := providers.ReasonText(reason)
 	if status > 0 {
 		return fmt.Sprintf("%s error HTTP %d (%s)", name, status, r)
 	}
 	return fmt.Sprintf("%s error: %s", name, r)
-}
-
-// failoverReasonText maps a FailoverReason to a short human phrase. The HTTP code
-// carries the precise signal; this is just a hint alongside it.
-func failoverReasonText(reason providers.FailoverReason) string {
-	switch reason {
-	case providers.FailoverBilling:
-		return "out of credits"
-	case providers.FailoverAuth:
-		return "auth failed"
-	case providers.FailoverRateLimit:
-		return "rate limited"
-	case providers.FailoverTimeout:
-		return "timeout"
-	case providers.FailoverOverloaded:
-		return "overloaded"
-	case providers.FailoverContextLimit:
-		return "context too large"
-	case providers.FailoverFormat:
-		return "bad response format"
-	default:
-		return "error"
-	}
 }
 
 // formatBudget renders a turn budget compactly (e.g. "15m", "90s").

@@ -73,9 +73,12 @@ func (r *CompactionReport) String() string {
 	case "nothing":
 		b.WriteString("Nothing to compress — already compact.")
 	default:
-		if r.hasRefusal() {
+		switch {
+		case r.hasRefusal():
 			b.WriteString("Failed — model(s) refused to summarize this content (content policy). Refusing models will be skipped for this session.")
-		} else {
+		case r.hasCooldown():
+			b.WriteString("Failed — summarization model unavailable (billing/auth/rate-limit); it is in cooldown and compaction will retry later.")
+		default:
 			b.WriteString("Failed — no model produced an acceptable summary.")
 		}
 	}
@@ -86,6 +89,22 @@ func (r *CompactionReport) String() string {
 func (r *CompactionReport) hasRefusal() bool {
 	for _, a := range r.Attempts {
 		if a.Status == "refused" {
+			return true
+		}
+	}
+	return false
+}
+
+// hasCooldown reports whether any attempt was skipped for, or failed into, a
+// cooldown (billing/auth/rate-limit/overload).
+func (r *CompactionReport) hasCooldown() bool {
+	for _, a := range r.Attempts {
+		if a.Status == "skipped" && strings.Contains(a.Detail, "cooldown") {
+			return true
+		}
+		if a.Status == "error" && (strings.Contains(a.Detail, "out of credits") ||
+			strings.Contains(a.Detail, "rate limited") || strings.Contains(a.Detail, "auth failed") ||
+			strings.Contains(a.Detail, "overloaded")) {
 			return true
 		}
 	}

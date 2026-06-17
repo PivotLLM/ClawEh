@@ -68,6 +68,43 @@ const (
 	FailoverContextLimit FailoverReason = "context_limit"
 )
 
+// ReasonText returns a short human phrase for a FailoverReason, for user-facing
+// messages. The precise signal is the HTTP status code shown alongside it.
+func ReasonText(r FailoverReason) string {
+	switch r {
+	case FailoverBilling:
+		return "out of credits"
+	case FailoverAuth:
+		return "auth failed"
+	case FailoverRateLimit:
+		return "rate limited"
+	case FailoverTimeout:
+		return "timeout"
+	case FailoverOverloaded:
+		return "overloaded"
+	case FailoverContextLimit:
+		return "context too large"
+	case FailoverFormat:
+		return "bad response format"
+	default:
+		return "error"
+	}
+}
+
+// CoolsDown reports whether a failure of this kind means the model is unusable
+// for a while (so callers should put it in cooldown rather than hammering it):
+// billing exhaustion, auth failure, rate limiting, or provider overload. Format,
+// context-limit, timeout, and unknown errors do not (they are per-request or
+// transient).
+func (r FailoverReason) CoolsDown() bool {
+	switch r {
+	case FailoverBilling, FailoverAuth, FailoverRateLimit, FailoverOverloaded:
+		return true
+	default:
+		return false
+	}
+}
+
 // FailoverError wraps an LLM provider error with classification metadata.
 // RetryAfter, when non-zero, is the server-supplied hint (parsed from the
 // Retry-After header) telling callers how long to wait before retrying.

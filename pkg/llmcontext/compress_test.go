@@ -199,6 +199,44 @@ func TestCompress_RefusalDetectedAndModelSkipped(t *testing.T) {
 	}
 }
 
+// TestCompress_BillingFailurePutsModelInCooldown verifies that a summarization
+// model returning a billing (402) error is put in cooldown and not retried on
+// the next compaction — so an out-of-credits compression model is not hammered.
+func TestCompress_BillingFailureCooldown(t *testing.T) {
+	store := &compressTestStore{history: makeConversation(10, 200)}
+	failing := &modelMockLLM{
+		mockLLM: mockLLM{errors: []error{
+			errors.New("API request failed:   Status: 402   Body: {\"error\":{\"billing_url\":\"x\"}}"),
+			errors.New("API request failed:   Status: 402   Body: {\"error\":{\"billing_url\":\"x\"}}"),
+		}},
+		model: "abliterated-model",
+	}
+	mgr := newCompressManager(store, []LLMClient{failing})
+	mgr.msgCount = len(store.history)
+
+	// First pass: the model is called once, fails with 402, gets cooled.
+	_ = mgr.doCompress(context.Background(), false)
+	if failing.callCount != 1 {
+		t.Fatalf("first pass: callCount = %d, want 1", failing.callCount)
+	}
+	rep := mgr.LastCompactionReport()
+	if rep == nil || len(rep.Attempts) == 0 || rep.Attempts[0].Detail != "HTTP 402 (out of credits)" {
+		t.Fatalf("first pass detail not neatened: %+v", rep)
+	}
+
+	// Second pass: the cooled model must be skipped entirely (no new call).
+	store.history = makeConversation(10, 200)
+	mgr.msgCount = len(store.history)
+	_ = mgr.doCompress(context.Background(), false)
+	if failing.callCount != 1 {
+		t.Fatalf("second pass: cooled model was retried (callCount = %d, want 1)", failing.callCount)
+	}
+	rep = mgr.LastCompactionReport()
+	if rep == nil || !rep.hasCooldown() {
+		t.Fatalf("second pass report should reflect cooldown: %+v", rep)
+	}
+}
+
 // TestCompress_FallbackSuccess verifies that when the first client fails the
 // second client is tried and a successful result is persisted.
 func TestCompress_FallbackSuccess(t *testing.T) {

@@ -57,6 +57,13 @@ type Manager struct {
 	refusedModels map[string]bool
 	refusedMu     sync.Mutex
 
+	// cooledModels tracks summarization models that returned a "model is
+	// unusable for a while" failure (billing/auth/rate-limit/overload). Each is
+	// skipped until its cooldown expires, so a credits-exhausted compression
+	// model is not hammered on every compaction. In-memory, per-session; guarded
+	// by refusedMu (same skip-state domain).
+	cooledModels map[string]time.Time
+
 	// compression outcome tracking
 	lastCompressedAt    time.Time
 	lastCompressionGain float64

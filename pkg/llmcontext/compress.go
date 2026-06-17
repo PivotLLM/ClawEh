@@ -59,6 +59,21 @@ func (m *Manager) doCompress(ctx context.Context, safetyNet bool) error {
 		return ErrCompressionFailed
 	}
 
+	// Drop models still in cooldown from an earlier billing/auth/rate-limit
+	// failure. If that leaves nothing, fail fast WITHOUT dispatching — this is
+	// what stops an out-of-credits model from being hammered on every compaction.
+	if len(m.filterCooledClients(clients)) == 0 {
+		logger.WarnCF("llmcontext", "compression: every summarization model is in cooldown (billing/auth/rate-limit)", map[string]any{
+			"session_key": m.sessionKey,
+		})
+		m.lastReport = &CompactionReport{
+			SessionKey: m.sessionKey,
+			Attempts:   m.cooledAttempts(),
+			Outcome:    "failed",
+		}
+		return ErrCompressionFailed
+	}
+
 	// Separate system message from conversation.
 	// Use GetHistoryWithSeqs to preserve seq numbers for the summarizer.
 	storedHistory := m.store.GetHistoryWithSeqs(m.sessionKey)
@@ -141,7 +156,7 @@ func (m *Manager) doCompress(ctx context.Context, safetyNet bool) error {
 		}
 
 		attemptedLLM = true
-		newSummary, ok := callLLMChain(ctx, clients, latestSummary, toSummarize, archiveMin, archiveMax, aggressive, compressionProfile, summaryTokenLimit, m.sessionKey, rec)
+		newSummary, ok := m.callLLMChain(ctx, clients, latestSummary, toSummarize, archiveMin, archiveMax, aggressive, compressionProfile, summaryTokenLimit, rec)
 		if !ok {
 			iterCount++
 			continue
@@ -249,6 +264,76 @@ func (m *Manager) refusedAttempts() []CompactionAttempt {
 	out := make([]CompactionAttempt, 0, len(m.refusedModels))
 	for model := range m.refusedModels {
 		out = append(out, CompactionAttempt{Model: model, Status: "refused", Detail: "content policy (skipped)"})
+	}
+	return out
+}
+
+// compressModelCooldown is how long a summarization model is skipped after a
+// "model is unusable for a while" failure (billing/auth/rate-limit/overload). It
+// expires so a topped-up model is retried later without a restart.
+const compressModelCooldown = 10 * time.Minute
+
+// markCooled puts a summarization model in cooldown for compressModelCooldown.
+func (m *Manager) markCooled(model string) {
+	if model == "" || model == "model" {
+		return
+	}
+	m.refusedMu.Lock()
+	defer m.refusedMu.Unlock()
+	if m.cooledModels == nil {
+		m.cooledModels = make(map[string]time.Time)
+	}
+	until := time.Now().Add(compressModelCooldown)
+	if existing, ok := m.cooledModels[model]; !ok || until.After(existing) {
+		m.cooledModels[model] = until
+		logger.WarnCF("llmcontext", "summarization model put in cooldown after a billing/auth/rate-limit failure", map[string]any{
+			"session_key": m.sessionKey,
+			"model":       model,
+			"cooldown":    compressModelCooldown.String(),
+		})
+	}
+}
+
+// filterCooledClients drops clients whose model is still in cooldown. Clients
+// with no reportable model name are kept (cannot be matched).
+func (m *Manager) filterCooledClients(clients []LLMClient) []LLMClient {
+	m.refusedMu.Lock()
+	defer m.refusedMu.Unlock()
+	if len(m.cooledModels) == 0 {
+		return clients
+	}
+	now := time.Now()
+	out := make([]LLMClient, 0, len(clients))
+	for _, c := range clients {
+		model := clientModel(c)
+		if model != "" {
+			if until, ok := m.cooledModels[model]; ok {
+				if now.Before(until) {
+					continue // still cooling — skip
+				}
+				delete(m.cooledModels, model) // expired — allow again
+			}
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+// cooledAttempts synthesises report entries for models skipped because they are
+// in cooldown, so the user sees why nothing was tried.
+func (m *Manager) cooledAttempts() []CompactionAttempt {
+	m.refusedMu.Lock()
+	defer m.refusedMu.Unlock()
+	now := time.Now()
+	out := make([]CompactionAttempt, 0, len(m.cooledModels))
+	for model, until := range m.cooledModels {
+		if now.Before(until) {
+			out = append(out, CompactionAttempt{
+				Model:  model,
+				Status: "skipped",
+				Detail: fmt.Sprintf("in cooldown (%s remaining)", time.Until(until).Round(time.Second)),
+			})
+		}
 	}
 	return out
 }
@@ -382,7 +467,7 @@ func (m *Manager) handleSafetyNetPostLoop(
 // toSummarize is a []memory.StoredMessage so the prompt can include [#N] seq
 // prefixes for each message. CoveredSeqStart and CoveredSeqEnd are set from the
 // actual min/max seq of the slice, not from any LLM-emitted values.
-func callLLMChain(
+func (m *Manager) callLLMChain(
 	ctx context.Context,
 	clients []LLMClient,
 	existing *Summary,
@@ -391,12 +476,15 @@ func callLLMChain(
 	aggressive bool,
 	compressionProfile string,
 	summaryTokenLimit int,
-	sessionKey string,
 	rec *compactionRecorder,
 ) (*Summary, bool) {
 	if len(toSummarize) == 0 {
 		return nil, false
 	}
+	sessionKey := m.sessionKey
+	// Skip models still in cooldown from an earlier billing/auth/rate-limit
+	// failure so we don't hammer an unusable model on every compaction.
+	clients = m.filterCooledClients(clients)
 
 	// Compute the actual seq range from the slice (do not trust LLM output).
 	coveredStart := toSummarize[0].Seq
@@ -424,8 +512,22 @@ func callLLMChain(
 		response, err := client.Complete(ctx, messages)
 		dur := time.Since(start)
 		if err != nil {
-			// rec.record logs the per-model outcome (model + status + detail).
-			rec.record(model, "error", shortErr(err), dur, messages, "")
+			// Classify so the report shows a clean "HTTP 402 (out of credits)"
+			// instead of a raw body dump, and so a model that is unusable for a
+			// while (billing/auth/rate-limit/overload) is put in cooldown rather
+			// than retried on every compaction.
+			detail := shortErr(err)
+			if fe := providers.ClassifyError(err, "", model); fe != nil {
+				if fe.Status > 0 {
+					detail = fmt.Sprintf("HTTP %d (%s)", fe.Status, providers.ReasonText(fe.Reason))
+				} else {
+					detail = providers.ReasonText(fe.Reason)
+				}
+				if fe.Reason.CoolsDown() {
+					m.markCooled(model)
+				}
+			}
+			rec.record(model, "error", detail, dur, messages, "")
 			continue
 		}
 
