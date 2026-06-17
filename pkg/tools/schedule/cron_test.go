@@ -19,6 +19,13 @@ func newTestCronTool(t *testing.T) *CronTool {
 	return NewCronTool(cronService, msgBus)
 }
 
+// agentCtx builds a tool context for the given agent — channel/chat (captured as
+// the job's destination) plus the session key cron uses for per-agent scoping.
+func agentCtx(agentID, channel, chatID string) context.Context {
+	ctx := tools.WithToolContext(context.Background(), channel, chatID)
+	return tools.WithSessionKey(ctx, "agent:"+agentID+":main")
+}
+
 // TestCronTool_AddJobRequiresSessionContext verifies fail-closed when channel/chatID missing.
 func TestCronTool_AddJobRequiresSessionContext(t *testing.T) {
 	tool := newTestCronTool(t)
@@ -41,7 +48,7 @@ func TestCronTool_AddJobRequiresSessionContext(t *testing.T) {
 // channel/chat_id is ignored.
 func TestCronTool_AddJobCapturesSessionChannel(t *testing.T) {
 	tool := newTestCronTool(t)
-	ctx := tools.WithToolContext(context.Background(), "telegram-Amber", "chat-1")
+	ctx := agentCtx("amber", "telegram-Amber", "chat-1")
 	result := tool.Execute(ctx, map[string]any{
 		"action":     "add",
 		"message":    "time to stretch",
@@ -66,7 +73,7 @@ func TestCronTool_AddJobCapturesSessionChannel(t *testing.T) {
 // TestCronTool_GetJob returns full detail for one job and errors on a bad id.
 func TestCronTool_GetJob(t *testing.T) {
 	tool := newTestCronTool(t)
-	ctx := tools.WithToolContext(context.Background(), "telegram-Amber", "chat-1")
+	ctx := agentCtx("amber", "telegram-Amber", "chat-1")
 	add := tool.Execute(ctx, map[string]any{
 		"action":     "add",
 		"message":    "daily standup reminder",
@@ -90,5 +97,44 @@ func TestCronTool_GetJob(t *testing.T) {
 	missing := tool.Execute(ctx, map[string]any{"action": "get", "job_id": "nope"})
 	if !missing.IsError {
 		t.Fatalf("expected error for unknown job id, got: %s", missing.ForLLM)
+	}
+}
+
+// TestCronTool_ScopedToAgent verifies one agent cannot see or manage another
+// agent's jobs: list hides them, and get/remove/disable report "not found".
+func TestCronTool_ScopedToAgent(t *testing.T) {
+	tool := newTestCronTool(t)
+
+	// Amber creates a job.
+	amber := agentCtx("amber", "telegram-Amber", "chat-1")
+	add := tool.Execute(amber, map[string]any{
+		"action": "add", "message": "amber's reminder", "every_seconds": float64(3600),
+	})
+	if add.IsError {
+		t.Fatalf("amber add failed: %s", add.ForLLM)
+	}
+	jobID := tool.cronService.ListJobs(true)[0].ID
+
+	// Karen cannot see it.
+	karen := agentCtx("karen", "telegram-Karen", "chat-2")
+	list := tool.Execute(karen, map[string]any{"action": "list"})
+	if !strings.Contains(list.ForLLM, "No scheduled jobs") {
+		t.Fatalf("karen should see no jobs, got: %s", list.ForLLM)
+	}
+	// Karen cannot get/remove/disable it (reported as not found).
+	for _, action := range []string{"get", "remove", "disable"} {
+		res := tool.Execute(karen, map[string]any{"action": action, "job_id": jobID})
+		if !res.IsError || !strings.Contains(res.ForLLM, "not found") {
+			t.Fatalf("karen %s on amber's job should be 'not found', got: isErr=%v %s",
+				action, res.IsError, res.ForLLM)
+		}
+	}
+
+	// Amber still sees and can remove her own job.
+	if l := tool.Execute(amber, map[string]any{"action": "list"}); !strings.Contains(l.ForLLM, "amber's reminder") {
+		t.Fatalf("amber should see her own job, got: %s", l.ForLLM)
+	}
+	if r := tool.Execute(amber, map[string]any{"action": "remove", "job_id": jobID}); r.IsError {
+		t.Fatalf("amber should be able to remove her own job, got: %s", r.ForLLM)
 	}
 }

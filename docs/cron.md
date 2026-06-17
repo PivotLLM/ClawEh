@@ -18,6 +18,15 @@ consequence: to have a reminder come back on Slack, ask the agent on Slack; to g
 Telegram, ask on Telegram. (Operators creating jobs from the CLI set `--channel`/`--to`
 explicitly.)
 
+### Scope (per agent)
+
+Jobs are **owned by the agent that creates them** (recorded as `agentId`). Through
+the `cron_schedule` tool an agent sees and manages **only its own** jobs —
+`list`/`get`/`remove`/`enable`/`disable` ignore other agents' jobs (a `get`/etc.
+on someone else's id returns "not found"). The `claw cron` **CLI is the operator
+view and sees all jobs** regardless of owner; CLI-created jobs have no owner and
+are managed only from the CLI.
+
 ### Execution model
 
 Jobs are placed on the same inbound message queue as messages from users and processed in

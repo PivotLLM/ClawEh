@@ -9,6 +9,7 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/bus"
 	"github.com/PivotLLM/ClawEh/pkg/cron"
 	"github.com/PivotLLM/ClawEh/pkg/cronmsg"
+	"github.com/PivotLLM/ClawEh/pkg/routing"
 	"github.com/PivotLLM/ClawEh/pkg/tools"
 	"github.com/PivotLLM/ClawEh/pkg/utils"
 )
@@ -24,6 +25,20 @@ type CronTool struct {
 // NewCronTool creates a new CronTool.
 func NewCronTool(cronService *cron.CronService, msgBus *bus.MessageBus) *CronTool {
 	return &CronTool{cronService: cronService, msgBus: msgBus}
+}
+
+// IsSessionScoped makes the MCP dispatcher (and agent loop) inject the session
+// key, so the tool can scope jobs to the calling agent.
+func (t *CronTool) IsSessionScoped() bool { return true }
+
+// callerAgentID extracts the calling agent's ID from the session key in context
+// (e.g. "agent:amber:main" → "amber"). Empty when unavailable — callers treat
+// an empty id as "owns nothing" so cron stays fail-closed.
+func callerAgentID(ctx context.Context) string {
+	if pk := routing.ParseAgentSessionKey(tools.ToolSessionKey(ctx)); pk != nil {
+		return pk.AgentID
+	}
+	return ""
 }
 
 // Name returns the tool name
@@ -78,25 +93,45 @@ func (t *CronTool) Execute(ctx context.Context, args map[string]any) *tools.Tool
 		return tools.ErrorResult("action is required")
 	}
 
+	// Cron jobs are scoped to the calling agent: an agent only sees and manages
+	// its own jobs (operators see everything via the `claw cron` CLI).
+	agentID := callerAgentID(ctx)
+
 	switch action {
 	case "add":
-		return t.addJob(ctx, args)
+		return t.addJob(ctx, args, agentID)
 	case "list":
-		return t.listJobs()
+		return t.listJobs(agentID)
 	case "get":
-		return t.getJob(args)
+		return t.getJob(args, agentID)
 	case "remove":
-		return t.removeJob(args)
+		return t.removeJob(args, agentID)
 	case "enable":
-		return t.enableJob(args, true)
+		return t.enableJob(args, true, agentID)
 	case "disable":
-		return t.enableJob(args, false)
+		return t.enableJob(args, false, agentID)
 	default:
 		return tools.ErrorResult(fmt.Sprintf("unknown action: %s", action))
 	}
 }
 
-func (t *CronTool) addJob(ctx context.Context, args map[string]any) *tools.ToolResult {
+// ownedJob returns the job with the given id if it is owned by agentID, else
+// nil. Used to gate get/remove/enable so an agent cannot see or touch another
+// agent's (or an operator/legacy) job. Returns nil when agentID is empty.
+func (t *CronTool) ownedJob(jobID, agentID string) *cron.CronJob {
+	if jobID == "" || agentID == "" {
+		return nil
+	}
+	jobs := t.cronService.ListJobs(true)
+	for i := range jobs {
+		if jobs[i].ID == jobID && jobs[i].AgentID == agentID {
+			return &jobs[i]
+		}
+	}
+	return nil
+}
+
+func (t *CronTool) addJob(ctx context.Context, args map[string]any, agentID string) *tools.ToolResult {
 	// The destination is the conversation the job is created in — captured from
 	// context, never chosen by the model. When it fires, the message is delivered
 	// here and the bound agent handles it.
@@ -164,6 +199,12 @@ func (t *CronTool) addJob(ctx context.Context, args map[string]any) *tools.ToolR
 		return tools.ErrorResult(fmt.Sprintf("Error adding job: %v", err))
 	}
 
+	// Record the owning agent so only this agent can later see/manage the job.
+	if agentID != "" {
+		job.AgentID = agentID
+		t.cronService.UpdateJob(job)
+	}
+
 	return tools.SilentResult(fmt.Sprintf("Cron job added: %s (id: %s)", job.Name, job.ID))
 }
 
@@ -189,8 +230,14 @@ func formatNextRun(j *cron.CronJob) string {
 	return time.UnixMilli(*j.State.NextRunAtMS).Format("2006-01-02 15:04")
 }
 
-func (t *CronTool) listJobs() *tools.ToolResult {
-	jobs := t.cronService.ListJobs(false)
+func (t *CronTool) listJobs(agentID string) *tools.ToolResult {
+	all := t.cronService.ListJobs(false)
+	jobs := make([]cron.CronJob, 0, len(all))
+	for _, j := range all {
+		if agentID != "" && j.AgentID == agentID {
+			jobs = append(jobs, j)
+		}
+	}
 
 	if len(jobs) == 0 {
 		return tools.SilentResult("No scheduled jobs")
@@ -211,19 +258,12 @@ func (t *CronTool) listJobs() *tools.ToolResult {
 	return tools.SilentResult(result.String())
 }
 
-func (t *CronTool) getJob(args map[string]any) *tools.ToolResult {
+func (t *CronTool) getJob(args map[string]any, agentID string) *tools.ToolResult {
 	jobID, ok := args["job_id"].(string)
 	if !ok || jobID == "" {
 		return tools.ErrorResult("job_id is required for get")
 	}
-	var job *cron.CronJob
-	jobs := t.cronService.ListJobs(true)
-	for i := range jobs {
-		if jobs[i].ID == jobID {
-			job = &jobs[i]
-			break
-		}
-	}
+	job := t.ownedJob(jobID, agentID)
 	if job == nil {
 		return tools.ErrorResult(fmt.Sprintf("Job %s not found", jobID))
 	}
@@ -246,10 +286,14 @@ func (t *CronTool) getJob(args map[string]any) *tools.ToolResult {
 	return tools.SilentResult(b.String())
 }
 
-func (t *CronTool) removeJob(args map[string]any) *tools.ToolResult {
+func (t *CronTool) removeJob(args map[string]any, agentID string) *tools.ToolResult {
 	jobID, ok := args["job_id"].(string)
 	if !ok || jobID == "" {
 		return tools.ErrorResult("job_id is required for remove")
+	}
+	// Only the owning agent may remove a job.
+	if t.ownedJob(jobID, agentID) == nil {
+		return tools.ErrorResult(fmt.Sprintf("Job %s not found", jobID))
 	}
 
 	removed, err := t.cronService.RemoveJob(jobID)
@@ -262,10 +306,14 @@ func (t *CronTool) removeJob(args map[string]any) *tools.ToolResult {
 	return tools.ErrorResult(fmt.Sprintf("Job %s not found", jobID))
 }
 
-func (t *CronTool) enableJob(args map[string]any, enable bool) *tools.ToolResult {
+func (t *CronTool) enableJob(args map[string]any, enable bool, agentID string) *tools.ToolResult {
 	jobID, ok := args["job_id"].(string)
 	if !ok || jobID == "" {
 		return tools.ErrorResult("job_id is required for enable/disable")
+	}
+	// Only the owning agent may enable/disable a job.
+	if t.ownedJob(jobID, agentID) == nil {
+		return tools.ErrorResult(fmt.Sprintf("Job %s not found", jobID))
 	}
 
 	job, err := t.cronService.EnableJob(jobID, enable)

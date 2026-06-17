@@ -26,7 +26,7 @@ func TestCronTool_ListJobs_Empty(t *testing.T) {
 // TestCronTool_ListJobs_WithJob verifies that added jobs appear in the list.
 func TestCronTool_ListJobs_WithJob(t *testing.T) {
 	tool := newTestCronTool(t)
-	ctx := tools.WithToolContext(context.Background(), "cli", "direct")
+	ctx := agentCtx("tester", "cli", "direct")
 
 	// Add a job first
 	addResult := tool.Execute(ctx, map[string]any{
@@ -38,8 +38,8 @@ func TestCronTool_ListJobs_WithJob(t *testing.T) {
 		t.Fatalf("add failed: %s", addResult.ForLLM)
 	}
 
-	// Now list
-	listResult := tool.Execute(context.Background(), map[string]any{
+	// Now list (same agent)
+	listResult := tool.Execute(ctx, map[string]any{
 		"action": "list",
 	})
 
@@ -85,7 +85,7 @@ func TestCronTool_RemoveJob_MissingID(t *testing.T) {
 // TestCronTool_RemoveJob_Success verifies successful job removal.
 func TestCronTool_RemoveJob_Success(t *testing.T) {
 	tool := newTestCronTool(t)
-	ctx := tools.WithToolContext(context.Background(), "cli", "direct")
+	ctx := agentCtx("tester", "cli", "direct")
 
 	// Add a job to get a valid ID
 	addResult := tool.Execute(ctx, map[string]any{
@@ -111,8 +111,8 @@ func TestCronTool_RemoveJob_Success(t *testing.T) {
 	}
 	jobID := msg[idStart : idStart+idEnd]
 
-	// Remove the job
-	removeResult := tool.Execute(context.Background(), map[string]any{
+	// Remove the job (same agent)
+	removeResult := tool.Execute(ctx, map[string]any{
 		"action": "remove",
 		"job_id": jobID,
 	})
@@ -276,7 +276,7 @@ func TestCronTool_AddJob_NoSchedule(t *testing.T) {
 // TestCronTool_EnableDisable_Success verifies enabling and disabling a job.
 func TestCronTool_EnableDisable_Success(t *testing.T) {
 	tool := newTestCronTool(t)
-	ctx := tools.WithToolContext(context.Background(), "cli", "direct")
+	ctx := agentCtx("tester", "cli", "direct")
 
 	// Add a job
 	addResult := tool.Execute(ctx, map[string]any{
@@ -301,8 +301,8 @@ func TestCronTool_EnableDisable_Success(t *testing.T) {
 	}
 	jobID := msg[idStart : idStart+idEnd]
 
-	// Disable
-	disableResult := tool.Execute(context.Background(), map[string]any{
+	// Disable (same agent)
+	disableResult := tool.Execute(ctx, map[string]any{
 		"action": "disable",
 		"job_id": jobID,
 	})
@@ -313,8 +313,8 @@ func TestCronTool_EnableDisable_Success(t *testing.T) {
 		t.Errorf("expected 'disabled', got: %s", disableResult.ForLLM)
 	}
 
-	// Enable
-	enableResult := tool.Execute(context.Background(), map[string]any{
+	// Enable (same agent)
+	enableResult := tool.Execute(ctx, map[string]any{
 		"action": "enable",
 		"job_id": jobID,
 	})

@@ -43,6 +43,7 @@ type CronJobState struct {
 type CronJob struct {
 	ID             string       `json:"id"`
 	Name           string       `json:"name"`
+	AgentID        string       `json:"agentId,omitempty"` // owning agent; empty = operator/legacy (CLI-managed only)
 	Enabled        bool         `json:"enabled"`
 	Schedule       CronSchedule `json:"schedule"`
 	Payload        CronPayload  `json:"payload"`
