@@ -109,6 +109,7 @@ type Config struct {
 	Logging       LoggingConfig       `json:"logging"`
 	Security      SecurityConfig      `json:"security,omitempty"`
 	MCPHost       MCPHostConfig       `json:"mcp_host,omitempty"`
+	Cooldown      CooldownConfig      `json:"cooldown,omitempty"`
 	// ConfigReloadIntervalSeconds controls how often the daemon polls the config
 	// file for changes and triggers a reload. Defaults to
 	// global.DefaultConfigReloadIntervalSeconds; floored at
@@ -481,6 +482,63 @@ func (d *AgentDefaults) GetProgressInterval() time.Duration {
 		return DefaultProgressInterval
 	}
 	return time.Duration(d.ProgressInterval) * time.Second
+}
+
+// CooldownConfig sets, per HTTP-status category, how long a model that keeps
+// failing is taken out of rotation (the "settled" cooldown reached after the
+// short 1/3/5-minute escalation on the first three consecutive failures). Each
+// value is in MINUTES: 0 uses the built-in default; a negative value disables
+// cooldown for that category (the model is never taken out for it). 413
+// (context-too-large) and errors with no HTTP status never cool — they are
+// per-request or transient.
+type CooldownConfig struct {
+	// BillingAuthMinutes covers HTTP 401, 402, 403 (auth / out-of-credits).
+	BillingAuthMinutes int `json:"billing_auth_minutes,omitempty" env:"CLAW_COOLDOWN_BILLING_AUTH_MINUTES"`
+	// RateLimitMinutes covers HTTP 429.
+	RateLimitMinutes int `json:"rate_limit_minutes,omitempty" env:"CLAW_COOLDOWN_RATE_LIMIT_MINUTES"`
+	// BadRequestMinutes covers HTTP 400.
+	BadRequestMinutes int `json:"bad_request_minutes,omitempty" env:"CLAW_COOLDOWN_BAD_REQUEST_MINUTES"`
+	// ClientErrorMinutes covers other 4xx (404, 408, …; not 400/401/402/403/429/413).
+	ClientErrorMinutes int `json:"client_error_minutes,omitempty" env:"CLAW_COOLDOWN_CLIENT_ERROR_MINUTES"`
+	// ServerErrorMinutes covers 5xx.
+	ServerErrorMinutes int `json:"server_error_minutes,omitempty" env:"CLAW_COOLDOWN_SERVER_ERROR_MINUTES"`
+}
+
+// Cooldown category defaults (minutes). Billing/auth is long because the operator
+// usually has to top up or rotate a key; the rest are short.
+const (
+	DefaultCooldownBillingAuthMinutes = 60
+	DefaultCooldownRateLimitMinutes   = 10
+	DefaultCooldownBadRequestMinutes  = 1
+	DefaultCooldownClientErrorMinutes = 10
+	DefaultCooldownServerErrorMinutes = 10
+)
+
+// minutesOrDefault maps a config value to a duration: 0 → def, <0 → 0 (disabled).
+func minutesOrDefault(v, def int) time.Duration {
+	if v < 0 {
+		return 0
+	}
+	if v == 0 {
+		return time.Duration(def) * time.Minute
+	}
+	return time.Duration(v) * time.Minute
+}
+
+func (c CooldownConfig) BillingAuth() time.Duration {
+	return minutesOrDefault(c.BillingAuthMinutes, DefaultCooldownBillingAuthMinutes)
+}
+func (c CooldownConfig) RateLimit() time.Duration {
+	return minutesOrDefault(c.RateLimitMinutes, DefaultCooldownRateLimitMinutes)
+}
+func (c CooldownConfig) BadRequest() time.Duration {
+	return minutesOrDefault(c.BadRequestMinutes, DefaultCooldownBadRequestMinutes)
+}
+func (c CooldownConfig) ClientError() time.Duration {
+	return minutesOrDefault(c.ClientErrorMinutes, DefaultCooldownClientErrorMinutes)
+}
+func (c CooldownConfig) ServerError() time.Duration {
+	return minutesOrDefault(c.ServerErrorMinutes, DefaultCooldownServerErrorMinutes)
 }
 
 // DefaultModelName returns the first model in the list, or "" if unset.

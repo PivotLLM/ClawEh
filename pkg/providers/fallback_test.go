@@ -206,7 +206,7 @@ func TestFallback_CooldownSkip(t *testing.T) {
 	fc := NewFallbackChain(ct)
 
 	// Put openai/gpt-4 in cooldown
-	ct.MarkFailure("openai", "gpt-4", FailoverRateLimit, 0)
+	ct.MarkFailure("openai", "gpt-4", FailoverRateLimit, 429, 0)
 
 	candidates := []FallbackCandidate{
 		makeCandidate("openai", "gpt-4"),
@@ -244,8 +244,8 @@ func TestFallback_AllInCooldown(t *testing.T) {
 	fc := NewFallbackChain(ct)
 
 	// Put all candidates in cooldown
-	ct.MarkFailure("openai", "gpt-4", FailoverRateLimit, 0)
-	ct.MarkFailure("anthropic", "claude", FailoverBilling, 0)
+	ct.MarkFailure("openai", "gpt-4", FailoverRateLimit, 429, 0)
+	ct.MarkFailure("anthropic", "claude", FailoverBilling, 402, 0)
 
 	candidates := []FallbackCandidate{
 		makeCandidate("openai", "gpt-4"),
@@ -326,7 +326,7 @@ func TestFallback_SuccessResetsCooldown(t *testing.T) {
 	run := func(ctx context.Context, c FallbackCandidate) (*LLMResponse, error) {
 		attempt++
 		if attempt == 1 {
-			ct.MarkFailure("openai", "gpt-4", FailoverRateLimit, 0) // simulate failure tracked elsewhere
+			ct.MarkFailure("openai", "gpt-4", FailoverRateLimit, 429, 0) // simulate failure tracked elsewhere
 		}
 		return &LLMResponse{Content: "ok", FinishReason: "stop"}, nil
 	}

@@ -176,8 +176,8 @@ func NewAgentLoop(
 ) *AgentLoop {
 	registry := NewAgentRegistry(cfg, provider)
 
-	// Set up shared fallback chain
-	cooldown := providers.NewCooldownTracker()
+	// Set up shared fallback chain with the config-driven cooldown policy.
+	cooldown := providers.NewCooldownTrackerWithPolicy(cooldownPolicy(cfg))
 	fallbackChain := providers.NewFallbackChain(cooldown)
 
 	// Create state manager using default agent's workspace for channel recording
@@ -931,7 +931,7 @@ func (al *AgentLoop) ReloadProviderAndConfig(
 	// this, reloaded agents would have an empty tool set (NewAgentInstance no
 	// longer registers anything). The new fallback chain is built here so it is
 	// shared between the registered spawn tools and the swapped-in al.fallback.
-	newFallback := providers.NewFallbackChain(providers.NewCooldownTracker())
+	newFallback := providers.NewFallbackChain(providers.NewCooldownTrackerWithPolicy(cooldownPolicy(cfg)))
 	al.registerRuntimeTools(registry, provider, al.dispatcher, newFallback)
 
 	// Re-issue MCP isolation tokens for the new registry so the new

@@ -68,7 +68,7 @@ func (m *Manager) doCompress(ctx context.Context, safetyNet bool) error {
 		})
 		m.lastReport = &CompactionReport{
 			SessionKey: m.sessionKey,
-			Attempts:   m.cooledAttempts(),
+			Attempts:   m.cooledAttempts(clients),
 			Outcome:    "failed",
 		}
 		return ErrCompressionFailed
@@ -277,70 +277,40 @@ func (m *Manager) refusedAttempts() []CompactionAttempt {
 	return out
 }
 
-// compressModelCooldown is how long a summarization model is skipped after a
-// "model is unusable for a while" failure (billing/auth/rate-limit/overload). It
-// expires so a topped-up model is retried later without a restart.
-const compressModelCooldown = 10 * time.Minute
-
-// markCooled puts a summarization model in cooldown for compressModelCooldown.
-func (m *Manager) markCooled(model string) {
-	if model == "" || model == "model" {
-		return
-	}
-	m.refusedMu.Lock()
-	defer m.refusedMu.Unlock()
-	if m.cooledModels == nil {
-		m.cooledModels = make(map[string]time.Time)
-	}
-	until := time.Now().Add(compressModelCooldown)
-	if existing, ok := m.cooledModels[model]; !ok || until.After(existing) {
-		m.cooledModels[model] = until
-		logger.WarnCF("llmcontext", "summarization model put in cooldown after a billing/auth/rate-limit failure", map[string]any{
-			"session_key": m.sessionKey,
-			"model":       model,
-			"cooldown":    compressModelCooldown.String(),
-		})
-	}
-}
-
-// filterCooledClients drops clients whose model is still in cooldown. Clients
-// with no reportable model name are kept (cannot be matched).
+// filterCooledClients drops clients whose model is currently in cooldown (per
+// the shared cooldown tracker). Clients with no reportable model name are kept.
 func (m *Manager) filterCooledClients(clients []LLMClient) []LLMClient {
-	m.refusedMu.Lock()
-	defer m.refusedMu.Unlock()
-	if len(m.cooledModels) == 0 {
+	if m.cooldown == nil {
 		return clients
 	}
-	now := time.Now()
 	out := make([]LLMClient, 0, len(clients))
 	for _, c := range clients {
 		model := clientModel(c)
-		if model != "" {
-			if until, ok := m.cooledModels[model]; ok {
-				if now.Before(until) {
-					continue // still cooling — skip
-				}
-				delete(m.cooledModels, model) // expired — allow again
-			}
+		if model != "" && !m.cooldown.IsAvailable("", model) {
+			continue // still cooling — skip
 		}
 		out = append(out, c)
 	}
 	return out
 }
 
-// cooledAttempts synthesises report entries for models skipped because they are
-// in cooldown, so the user sees why nothing was tried.
-func (m *Manager) cooledAttempts() []CompactionAttempt {
-	m.refusedMu.Lock()
-	defer m.refusedMu.Unlock()
-	now := time.Now()
-	out := make([]CompactionAttempt, 0, len(m.cooledModels))
-	for model, until := range m.cooledModels {
-		if now.Before(until) {
+// cooledAttempts synthesises report entries for the given clients' models that
+// are in cooldown, so the user sees why nothing was tried.
+func (m *Manager) cooledAttempts(clients []LLMClient) []CompactionAttempt {
+	if m.cooldown == nil {
+		return nil
+	}
+	out := make([]CompactionAttempt, 0, len(clients))
+	for _, c := range clients {
+		model := clientModel(c)
+		if model == "" {
+			continue
+		}
+		if rem := m.cooldown.CooldownRemaining("", model); rem > 0 {
 			out = append(out, CompactionAttempt{
 				Model:  model,
 				Status: "skipped",
-				Detail: fmt.Sprintf("in cooldown (%s remaining)", time.Until(until).Round(time.Second)),
+				Detail: fmt.Sprintf("in cooldown (%s remaining)", rem.Round(time.Second)),
 			})
 		}
 	}
@@ -543,8 +513,10 @@ func (m *Manager) callLLMChain(
 				} else {
 					detail = providers.ReasonText(fe.Reason)
 				}
-				if fe.Reason.CoolsDown() {
-					m.markCooled(model)
+				// Record the failure against the shared cooldown policy; statuses
+				// that never cool (413, no HTTP status) are ignored internally.
+				if m.cooldown != nil {
+					m.cooldown.MarkFailure("", model, fe.Reason, fe.Status, fe.RetryAfter)
 				}
 			}
 			rec.record(model, "error", detail, dur, messages, "")
@@ -603,6 +575,9 @@ func (m *Manager) callLLMChain(
 		}
 
 		rec.record(model, "ok", "", dur, messages, response.Content)
+		if m.cooldown != nil {
+			m.cooldown.MarkSuccess("", model) // reset any prior cooldown/escalation
+		}
 		return summary, true
 	}
 

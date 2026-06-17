@@ -770,3 +770,26 @@ func TestTurnToolProgressDefaults(t *testing.T) {
 		t.Errorf("GetProgressInterval()=%v, want 0 (disabled)", got)
 	}
 }
+
+func TestCooldownConfigDurations(t *testing.T) {
+	// All zero → built-in defaults (minutes).
+	var c CooldownConfig
+	if c.BillingAuth() != 60*time.Minute {
+		t.Errorf("BillingAuth default = %v, want 60m", c.BillingAuth())
+	}
+	if c.RateLimit() != 10*time.Minute || c.ClientError() != 10*time.Minute || c.ServerError() != 10*time.Minute {
+		t.Errorf("rate/client/server defaults wrong: %v %v %v", c.RateLimit(), c.ClientError(), c.ServerError())
+	}
+	if c.BadRequest() != 1*time.Minute {
+		t.Errorf("BadRequest default = %v, want 1m", c.BadRequest())
+	}
+
+	// Explicit value overrides; negative disables.
+	c = CooldownConfig{BillingAuthMinutes: 1440, RateLimitMinutes: -1}
+	if c.BillingAuth() != 1440*time.Minute {
+		t.Errorf("BillingAuth = %v, want 24h", c.BillingAuth())
+	}
+	if c.RateLimit() != 0 {
+		t.Errorf("negative RateLimit should disable (0), got %v", c.RateLimit())
+	}
+}

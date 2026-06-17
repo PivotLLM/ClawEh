@@ -283,17 +283,12 @@ func (fc *FallbackChain) ExecuteWithNotify(
 			break
 		}
 
-		// Retriable error: mark failure and continue to next candidate.
-		// Context-limit and auth are user-fixable without a restart and skip
-		// cooldown so the model is retried immediately once the issue is
-		// resolved. Billing DOES get a (short) cooldown so a credits-exhausted
-		// model is skipped within the same session — see billingInitialCooldown
-		// in cooldown.go. Use /cooldowns clear or /retry to override.
-		noCooldown := failErr.Reason == FailoverContextLimit ||
-			failErr.Reason == FailoverAuth
-		if !noCooldown {
-			fc.cooldown.MarkFailure(candidate.Provider, candidate.Model, failErr.Reason, failErr.RetryAfter)
-		}
+		// Retriable error: record the failure and continue to the next candidate.
+		// The cooldown policy decides the duration from the HTTP status (with the
+		// 1/3/5-minute escalation), and ignores statuses that must never cool —
+		// notably 413/context-limit, which is fixed by compaction rather than by
+		// waiting. Use /cooldowns clear or /retry to override.
+		fc.cooldown.MarkFailure(candidate.Provider, candidate.Model, failErr.Reason, failErr.Status, failErr.RetryAfter)
 		result.Attempts = append(result.Attempts, FallbackAttempt{
 			Provider: candidate.Provider,
 			Model:    candidate.Model,

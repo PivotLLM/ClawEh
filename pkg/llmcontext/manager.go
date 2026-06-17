@@ -57,12 +57,12 @@ type Manager struct {
 	refusedModels map[string]bool
 	refusedMu     sync.Mutex
 
-	// cooledModels tracks summarization models that returned a "model is
-	// unusable for a while" failure (billing/auth/rate-limit/overload). Each is
-	// skipped until its cooldown expires, so a credits-exhausted compression
-	// model is not hammered on every compaction. In-memory, per-session; guarded
-	// by refusedMu (same skip-state domain).
-	cooledModels map[string]time.Time
+	// cooldown applies the shared, config-driven cooldown policy to summarization
+	// models: a model that fails with a cooldownable HTTP status (billing/auth/
+	// rate-limit/server/etc.) is skipped until its cooldown expires, so a
+	// credits-exhausted compression model is not hammered on every compaction.
+	// Same policy as the main fallback chain; in-memory, per-manager.
+	cooldown *providers.CooldownTracker
 
 	// compression outcome tracking
 	lastCompressedAt    time.Time
@@ -155,6 +155,11 @@ func New(
 		clients = []LLMClient{llm}
 	}
 
+	cooldownPolicy := providers.DefaultCooldownPolicy()
+	if cfg.cooldownPolicy != nil {
+		cooldownPolicy = *cfg.cooldownPolicy
+	}
+
 	m := &Manager{
 		sessionKey:      sessionKey,
 		store:           store,
@@ -162,6 +167,7 @@ func New(
 		llm:             llm,
 		cfg:             cfg,
 		compressClients: clients,
+		cooldown:        providers.NewCooldownTrackerWithPolicy(cooldownPolicy),
 	}
 
 	// 9c. Load durable compaction state if the store supports it.

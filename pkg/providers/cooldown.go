@@ -1,7 +1,6 @@
 package providers
 
 import (
-	"math"
 	"sort"
 	"sync"
 	"time"
@@ -11,19 +10,77 @@ const (
 	defaultFailureWindow = 24 * time.Hour
 
 	// maxRetryAfterCooldown caps the duration we will honour from a server-
-	// supplied Retry-After header before falling back to default exponential
-	// backoff. A misconfigured upstream could otherwise pin a model for hours.
+	// supplied Retry-After header. A misconfigured upstream could otherwise pin
+	// a model for hours.
 	maxRetryAfterCooldown = 5 * time.Minute
-
-	// billingInitialCooldown is the duration a billing-marked provider is
-	// skipped after its first credits-exhausted signal. Picked short (5 min)
-	// rather than the 5-24h schedule used by the original OpenClaw billing
-	// backoff: ClawEh is a single-user dev tool and the operator typically
-	// tops up within minutes, so a multi-hour cooldown is more disruptive
-	// than the repeated 402s it prevents. Use /cooldowns clear (or /retry)
-	// for an immediate escape.
-	billingInitialCooldown = 5 * time.Minute
 )
+
+// Escalation steps applied to the first consecutive failures before the
+// per-category cooldown takes over: failure 1 → 1m, 2 → 3m, 3 → 5m, 4+ →
+// CooldownPolicy.CategoryCooldown(status). A transient blip costs only a short
+// retry; a persistently-failing model escalates into the full category lockout.
+var cooldownEscalation = []time.Duration{
+	1 * time.Minute,
+	3 * time.Minute,
+	5 * time.Minute,
+}
+
+// CooldownPolicy maps an HTTP status to the "settled" cooldown duration reached
+// after the escalation steps. A zero duration for a category means "never cool"
+// (the model is not taken out of rotation for that status).
+type CooldownPolicy struct {
+	BillingAuth time.Duration // 401, 402, 403
+	RateLimit   time.Duration // 429
+	BadRequest  time.Duration // 400
+	ClientError time.Duration // other 4xx (404, 408, …)
+	ServerError time.Duration // 5xx
+}
+
+// DefaultCooldownPolicy is used when no config-derived policy is supplied.
+func DefaultCooldownPolicy() CooldownPolicy {
+	return CooldownPolicy{
+		BillingAuth: 60 * time.Minute,
+		RateLimit:   10 * time.Minute,
+		BadRequest:  1 * time.Minute,
+		ClientError: 10 * time.Minute,
+		ServerError: 10 * time.Minute,
+	}
+}
+
+// CategoryCooldown returns the settled cooldown for an HTTP status, or 0 when
+// the status must never cool: 413 (context-too-large, fixed by compaction) and
+// any non-error/unknown status (e.g. a network error with no HTTP code).
+func (p CooldownPolicy) CategoryCooldown(status int) time.Duration {
+	switch {
+	case status == 413:
+		return 0
+	case status == 401 || status == 402 || status == 403:
+		return p.BillingAuth
+	case status == 429:
+		return p.RateLimit
+	case status == 400:
+		return p.BadRequest
+	case status >= 400 && status < 500:
+		return p.ClientError
+	case status >= 500 && status < 600:
+		return p.ServerError
+	default:
+		return 0
+	}
+}
+
+// cooldownForFailure returns the cooldown for the n-th consecutive failure of a
+// model that failed with the given status: the 1/3/5-minute escalation for the
+// first three, then the category cooldown. Returns 0 when the status never cools.
+func (p CooldownPolicy) cooldownForFailure(errorCount, status int) time.Duration {
+	if p.CategoryCooldown(status) == 0 {
+		return 0
+	}
+	if errorCount >= 1 && errorCount <= len(cooldownEscalation) {
+		return cooldownEscalation[errorCount-1]
+	}
+	return p.CategoryCooldown(status)
+}
 
 // CooldownTracker manages per-model cooldown state for the fallback chain.
 // Entries are keyed by ModelKey(provider, model) so that a rate-limit on one
@@ -34,32 +91,40 @@ type CooldownTracker struct {
 	mu            sync.RWMutex
 	entries       map[string]*cooldownEntry
 	failureWindow time.Duration
+	policy        CooldownPolicy
 	nowFunc       func() time.Time // for testing
 }
 
 type cooldownEntry struct {
-	ErrorCount     int
-	FailureCounts  map[FailoverReason]int
-	CooldownEnd    time.Time      // standard cooldown expiry
-	DisabledUntil  time.Time      // billing-specific disable expiry
-	DisabledReason FailoverReason // reason for disable (billing)
-	LastFailure    time.Time
+	ErrorCount    int
+	FailureCounts map[FailoverReason]int
+	CooldownEnd   time.Time      // current cooldown expiry
+	LastReason    FailoverReason // most recent failure reason (for display)
+	LastFailure   time.Time
 }
 
-// NewCooldownTracker creates a tracker with default 24h failure window.
+// NewCooldownTracker creates a tracker with the default policy and 24h window.
 func NewCooldownTracker() *CooldownTracker {
+	return NewCooldownTrackerWithPolicy(DefaultCooldownPolicy())
+}
+
+// NewCooldownTrackerWithPolicy creates a tracker driven by the given policy.
+func NewCooldownTrackerWithPolicy(policy CooldownPolicy) *CooldownTracker {
 	return &CooldownTracker{
 		entries:       make(map[string]*cooldownEntry),
 		failureWindow: defaultFailureWindow,
+		policy:        policy,
 		nowFunc:       time.Now,
 	}
 }
 
-// MarkFailure records a failure for a model and sets the appropriate cooldown.
-// When retryAfter > 0 (i.e. the server returned a Retry-After header) the
-// caller's hint is used as the cooldown duration, capped at maxRetryAfterCooldown.
-// Otherwise the standard exponential backoff applies.
-func (ct *CooldownTracker) MarkFailure(provider, model string, reason FailoverReason, retryAfter time.Duration) {
+// MarkFailure records a failure for a model and sets the appropriate cooldown
+// from the policy: the 1/3/5-minute escalation for the first three consecutive
+// failures, then the per-category cooldown for the HTTP status. A status the
+// policy never cools (413, or no HTTP status) is ignored entirely — it neither
+// cools the model nor counts toward escalation. When retryAfter > 0 (server
+// Retry-After) it is honoured as a floor, capped at maxRetryAfterCooldown.
+func (ct *CooldownTracker) MarkFailure(provider, model string, reason FailoverReason, status int, retryAfter time.Duration) {
 	ct.mu.Lock()
 	defer ct.mu.Unlock()
 
@@ -73,17 +138,20 @@ func (ct *CooldownTracker) MarkFailure(provider, model string, reason FailoverRe
 		entry.FailureCounts = make(map[FailoverReason]int)
 	}
 
-	entry.ErrorCount++
-	entry.FailureCounts[reason]++
-	entry.LastFailure = now
-
-	if reason == FailoverBilling {
-		entry.DisabledUntil = now.Add(billingInitialCooldown)
-		entry.DisabledReason = FailoverBilling
+	// Statuses the policy never cools (413, network/no-status) do not count.
+	if ct.policy.CategoryCooldown(status) == 0 {
 		return
 	}
 
-	cooldown := calculateStandardCooldown(entry.ErrorCount)
+	entry.ErrorCount++
+	entry.FailureCounts[reason]++
+	entry.LastReason = reason
+	entry.LastFailure = now
+
+	cooldown := ct.policy.cooldownForFailure(entry.ErrorCount, status)
+	// A server-supplied Retry-After is authoritative for when to retry, so it
+	// REPLACES the computed cooldown (capped so a misbehaving upstream cannot pin
+	// a model for hours).
 	if retryAfter > 0 {
 		if retryAfter > maxRetryAfterCooldown {
 			retryAfter = maxRetryAfterCooldown
@@ -106,11 +174,10 @@ func (ct *CooldownTracker) MarkSuccess(provider, model string) {
 	entry.ErrorCount = 0
 	entry.FailureCounts = make(map[FailoverReason]int)
 	entry.CooldownEnd = time.Time{}
-	entry.DisabledUntil = time.Time{}
-	entry.DisabledReason = ""
+	entry.LastReason = ""
 }
 
-// IsAvailable returns true if the model is not in cooldown or disabled.
+// IsAvailable returns true if the model is not currently in cooldown.
 func (ct *CooldownTracker) IsAvailable(provider, model string) bool {
 	ct.mu.RLock()
 	defer ct.mu.RUnlock()
@@ -119,20 +186,8 @@ func (ct *CooldownTracker) IsAvailable(provider, model string) bool {
 	if entry == nil {
 		return true
 	}
-
 	now := ct.nowFunc()
-
-	// Billing disable takes precedence (longer cooldown).
-	if !entry.DisabledUntil.IsZero() && now.Before(entry.DisabledUntil) {
-		return false
-	}
-
-	// Standard cooldown.
-	if !entry.CooldownEnd.IsZero() && now.Before(entry.CooldownEnd) {
-		return false
-	}
-
-	return true
+	return entry.CooldownEnd.IsZero() || !now.Before(entry.CooldownEnd)
 }
 
 // CooldownRemaining returns how long until the model becomes available.
@@ -145,25 +200,11 @@ func (ct *CooldownTracker) CooldownRemaining(provider, model string) time.Durati
 	if entry == nil {
 		return 0
 	}
-
 	now := ct.nowFunc()
-	var remaining time.Duration
-
-	if !entry.DisabledUntil.IsZero() && now.Before(entry.DisabledUntil) {
-		d := entry.DisabledUntil.Sub(now)
-		if d > remaining {
-			remaining = d
-		}
-	}
-
 	if !entry.CooldownEnd.IsZero() && now.Before(entry.CooldownEnd) {
-		d := entry.CooldownEnd.Sub(now)
-		if d > remaining {
-			remaining = d
-		}
+		return entry.CooldownEnd.Sub(now)
 	}
-
-	return remaining
+	return 0
 }
 
 // ErrorCount returns the current error count for a model.
@@ -251,16 +292,10 @@ func (ct *CooldownTracker) Snapshot() []CooldownStatus {
 		}
 		var until time.Time
 		var reason FailoverReason
-		if !entry.DisabledUntil.IsZero() && now.Before(entry.DisabledUntil) {
-			until = entry.DisabledUntil
-			reason = entry.DisabledReason
-		}
 		if !entry.CooldownEnd.IsZero() && now.Before(entry.CooldownEnd) {
-			if entry.CooldownEnd.After(until) {
-				until = entry.CooldownEnd
-			}
+			until = entry.CooldownEnd
+			reason = entry.LastReason
 			if reason == "" {
-				// Best-effort reason: the most common failure recorded.
 				reason = dominantReason(entry.FailureCounts)
 			}
 		}
@@ -302,17 +337,3 @@ func (ct *CooldownTracker) getOrCreate(key string) *cooldownEntry {
 	return entry
 }
 
-// calculateStandardCooldown computes standard exponential backoff.
-// Formula from OpenClaw: min(1h, 1min * 5^min(n-1, 3))
-//
-//	1 error  → 1 min
-//	2 errors → 5 min
-//	3 errors → 25 min
-//	4+ errors → 1 hour (cap)
-func calculateStandardCooldown(errorCount int) time.Duration {
-	n := max(1, errorCount)
-	exp := min(n-1, 3)
-	ms := 60_000 * int(math.Pow(5, float64(exp)))
-	ms = min(3_600_000, ms) // cap at 1 hour
-	return time.Duration(ms) * time.Millisecond
-}

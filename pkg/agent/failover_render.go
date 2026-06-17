@@ -8,9 +8,27 @@ import (
 	"time"
 
 	"github.com/PivotLLM/ClawEh/pkg/bus"
+	"github.com/PivotLLM/ClawEh/pkg/config"
 	"github.com/PivotLLM/ClawEh/pkg/logger"
 	"github.com/PivotLLM/ClawEh/pkg/providers"
 )
+
+// cooldownPolicy maps the config cooldown section to a providers.CooldownPolicy
+// (the per-category "settled" durations reached after the 1/3/5-minute
+// escalation). A nil config yields the built-in defaults.
+func cooldownPolicy(cfg *config.Config) providers.CooldownPolicy {
+	if cfg == nil {
+		return providers.DefaultCooldownPolicy()
+	}
+	c := cfg.Cooldown
+	return providers.CooldownPolicy{
+		BillingAuth: c.BillingAuth(),
+		RateLimit:   c.RateLimit(),
+		BadRequest:  c.BadRequest(),
+		ClientError: c.ClientError(),
+		ServerError: c.ServerError(),
+	}
+}
 
 // renderTurnError converts a failed turn into a single user-facing string. Order
 // of precedence:

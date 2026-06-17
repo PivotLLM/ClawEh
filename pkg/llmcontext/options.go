@@ -3,6 +3,8 @@
 
 package llmcontext
 
+import "github.com/PivotLLM/ClawEh/pkg/providers"
+
 // Option is a functional option for configuring a Manager.
 type Option func(*managerConfig)
 
@@ -83,6 +85,9 @@ type managerConfig struct {
 	// which the request + raw response of each FAILED summarization attempt is
 	// written for diagnosis.
 	compressFailureDumpDir string
+	// cooldownPolicy, when non-nil, sets the summarization-model cooldown policy.
+	// Nil resolves to providers.DefaultCooldownPolicy() in New().
+	cooldownPolicy *providers.CooldownPolicy
 }
 
 func defaultManagerConfig() managerConfig {
@@ -135,6 +140,13 @@ func WithCompressModel(model ModelChain) Option {
 // passed to New() is used for compression.
 func WithCompressLLM(clients ...LLMClient) Option {
 	return func(c *managerConfig) { c.compressClients = clients }
+}
+
+// WithCooldownPolicy sets the cooldown policy applied to summarization models so
+// the compaction path matches the main fallback chain. When unset, the built-in
+// default policy is used.
+func WithCooldownPolicy(p providers.CooldownPolicy) Option {
+	return func(c *managerConfig) { c.cooldownPolicy = &p }
 }
 
 func WithArchiveMessageCount(n int) Option {

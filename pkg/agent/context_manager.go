@@ -305,6 +305,7 @@ func (al *AgentLoop) getContextManager(agent *AgentInstance, sessionKey string) 
 		llmcontext.WithCompactDebug(debugCapture),
 		llmcontext.WithCompressFailureDumpDir(failureDumpDir),
 		llmcontext.WithCompactionReporter(reporter),
+		llmcontext.WithCooldownPolicy(cooldownPolicy(al.GetConfig())),
 	}, agent.CompressOpts...)
 	cm := llmcontext.New(sessionKey, agent.Sessions, agent.ContextBuilder, llmClient, opts...)
 

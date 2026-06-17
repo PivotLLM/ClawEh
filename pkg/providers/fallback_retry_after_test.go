@@ -78,7 +78,7 @@ func TestFallback_RetryAfterRespectedInCooldown(t *testing.T) {
 	now := time.Now()
 	ct, current := newTestTracker(now)
 
-	ct.MarkFailure("openrouter", "scout", FailoverRateLimit, 3*time.Second)
+	ct.MarkFailure("openrouter", "scout", FailoverRateLimit, 429, 3*time.Second)
 	if ct.IsAvailable("openrouter", "scout") {
 		t.Fatal("expected scout to be in cooldown immediately after failure")
 	}
@@ -100,7 +100,7 @@ func TestFallback_RetryAfterCappedAtFiveMinutes(t *testing.T) {
 	now := time.Now()
 	ct, current := newTestTracker(now)
 
-	ct.MarkFailure("openrouter", "scout", FailoverRateLimit, 24*time.Hour)
+	ct.MarkFailure("openrouter", "scout", FailoverRateLimit, 429, 24*time.Hour)
 	*current = now.Add(5*time.Minute + time.Second)
 	if !ct.IsAvailable("openrouter", "scout") {
 		t.Fatal("expected scout available 5m1s after a 24h Retry-After hint (cap is 5m)")
