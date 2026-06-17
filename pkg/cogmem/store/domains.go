@@ -218,12 +218,15 @@ type scanner interface {
 }
 
 // canonTool canonicalizes a tool name or trigger token for matching: trims,
-// lowercases (case-insensitive), and collapses runs of '_' to a single '_'. The
-// collapse lets single-underscore tokens (e.g. "fusion_google_") match the
-// double-underscore MCP separators in real names (mcp__fusion__google_*) and
-// vice-versa.
+// lowercases (case-insensitive), strips '*', and collapses runs of '_' to a
+// single '_'. Matching is always substring (contains), so '*' is purely
+// decorative: "*mail*", "mail*", and "mail" all canonicalize to "mail" and
+// behave identically. The underscore collapse lets single-underscore tokens
+// (e.g. "fusion_google_") match the double-underscore MCP separators in real
+// names (mcp__fusion__google_*) and vice-versa.
 func canonTool(s string) string {
 	s = strings.ToLower(strings.TrimSpace(s))
+	s = strings.ReplaceAll(s, "*", "")
 	for strings.Contains(s, "__") {
 		s = strings.ReplaceAll(s, "__", "_")
 	}

@@ -116,6 +116,35 @@ func TestDomainTriggersRoundTrip(t *testing.T) {
 	}
 }
 
+// TestDomainTriggerWildcardsAreDecorative confirms '*' wrappers are stripped and
+// behave identically to the bare substring (matching is always "contains").
+func TestDomainTriggerWildcardsAreDecorative(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	d, err := s.CreateDomain(ctx, s.DB(), CreateDomainParams{
+		AgentID: "a", Type: DomainProject, Name: "Dev",
+		Triggers: "*github*, *mail*",
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	// Stored form has the asterisks stripped — same as the bare words.
+	if d.Triggers != "github,mail" {
+		t.Fatalf("triggers = %q, want %q", d.Triggers, "github,mail")
+	}
+	// "*github*" matches an MCP tool from the github server.
+	if tok, ok := d.MatchTrigger("mcp_github_search"); !ok || tok != "github" {
+		t.Fatalf("MatchTrigger github = %q,%v", tok, ok)
+	}
+	// "*mail*" matches anywhere in the name.
+	if _, ok := d.MatchTrigger("google_gmail_send"); !ok {
+		t.Fatalf("*mail* should match google_gmail_send")
+	}
+	if _, ok := d.MatchTrigger("web_fetch"); ok {
+		t.Fatalf("web_fetch should not match")
+	}
+}
+
 func TestTriggerUnderscoreInsensitive(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()

@@ -67,15 +67,15 @@ func (globalCogmemProvider) RegisterTools(deps global.Deps) []global.ToolDefinit
 
 	return []global.ToolDefinition{
 		def("domain_get",
-			"Load a memory domain by id together with its active memories (rendered as readable text including each memory id).",
+			"Load a domain by id, with its active memories as readable text (each memory's id included).",
 			[]global.Parameter{
 				{Name: "id", Type: "string", Required: true, Description: "Domain id (e.g. d3K9P)."},
 			}, true, getDomain),
 
 		def("memory_search",
-			"Search active memories by a case-insensitive substring of their text.",
+			"Search your active memories by a word or phrase in their text (case-insensitive). Use it to look something up when the answer may be in memory but is not currently shown in your context.",
 			[]global.Parameter{
-				{Name: "query", Type: "string", Required: true, Description: "Substring to match against memory text."},
+				{Name: "query", Type: "string", Required: true, Description: "Word or phrase to match against memory text."},
 				{Name: "limit", Type: "integer", Required: false, Description: "Max results (default 20)."},
 			}, true, search),
 
@@ -103,24 +103,24 @@ func (globalCogmemProvider) RegisterTools(deps global.Deps) []global.ToolDefinit
 					Enum: []any{"fact", "preference", "rule"}},
 				{Name: "text", Type: "string", Required: true, Description: "The memory content to store."},
 				{Name: "confidence", Type: "number", Required: false, Description: "Confidence 0..1 (default 0.9)."},
-				{Name: "status", Type: "string", Required: false, Description: "active (default) or review.",
+				{Name: "status", Type: "string", Required: false, Description: "active (default), or review to hold it as pending (unconfirmed) until the user confirms.",
 					Enum: []any{"active", "review"}},
 			}, true, remember),
 
 		def("domain_update",
-			"Patch a domain under optimistic concurrency (requires the current expected_version).",
+			"Update a domain's summary, state (blockers / next actions / constraints), or triggers. Pass the current expected_version (from domain_get or domain_list) so you do not overwrite newer changes.",
 			[]global.Parameter{
 				{Name: "id", Type: "string", Required: true, Description: "Domain id."},
-				{Name: "expected_version", Type: "integer", Required: true, Description: "Version you last read; rejected if stale."},
+				{Name: "expected_version", Type: "integer", Required: true, Description: "The version you last read (from domain_get or domain_list); rejected if it is stale."},
 				{Name: "set_summary", Type: "string", Required: false, Description: "Replace the domain summary."},
 				{Name: "set_blockers", Type: "array", Items: "string", Required: false, Description: "Replace the blockers list."},
 				{Name: "set_next_actions", Type: "array", Items: "string", Required: false, Description: "Replace the next-actions list."},
 				{Name: "set_constraints", Type: "array", Items: "string", Required: false, Description: "Replace the constraints list."},
-				{Name: "set_triggers", Type: "string", Required: false, Description: "Replace the tool triggers: a comma-separated list of tool-name substrings (e.g. \"google_gmail,microsoft365_mail\"). This domain is auto-loaded into context whenever you use a tool whose name contains any token (case- and underscore-insensitive). Empty string clears triggers."},
+				{Name: "set_triggers", Type: "string", Required: false, Description: "Replace the tool triggers: a comma-separated list of patterns. This domain auto-loads whenever you use a tool whose name contains one of them — use short distinctive words wrapped in *, e.g. \"*mail*\" or \"*github*,*calendar*\". (The * are optional; \"mail\" and \"*mail*\" behave the same — matching is always \"contains\", case- and underscore-insensitive.) MCP tools work too: their names look like mcp_<server>_<tool>, so \"*github*\" matches that whole server. Empty string clears triggers."},
 			}, true, updateDomain),
 
 		def("memory_retire",
-			"Retire a memory (it stays in the audit trail but leaves active memory). To change a memory, retire the old one and create a new one. Also use this to reject a pending (unconfirmed) memory when the user declines it.",
+			"Retire a memory so it is no longer used (it stays in the audit history). To change a memory, retire the old one and create a new one. Also use this to reject a pending (unconfirmed) memory when the user declines it.",
 			[]global.Parameter{
 				{Name: "id", Type: "string", Required: true, Description: "Memory id."},
 				{Name: "reason", Type: "string", Required: true, Description: "Why it is being retired."},
@@ -139,7 +139,7 @@ func (globalCogmemProvider) RegisterTools(deps global.Deps) []global.ToolDefinit
 					Enum: []any{"project", "workflow"}},
 				{Name: "name", Type: "string", Required: true, Description: "Domain name."},
 				{Name: "summary", Type: "string", Required: false, Description: "Optional one-line summary."},
-				{Name: "triggers", Type: "string", Required: false, Description: "Optional tool triggers: a comma-separated list of tool-name substrings (e.g. \"google_gmail,microsoft365_mail\" or \"system\"). This domain is auto-loaded into context whenever you use a tool whose name contains any token. Matching ignores case and treats _ and __ the same."},
+				{Name: "triggers", Type: "string", Required: false, Description: "Optional tool triggers: a comma-separated list of patterns. This domain auto-loads whenever you use a tool whose name contains one of them — use short distinctive words wrapped in *, e.g. \"*mail*\" or \"*github*,*calendar*\". (The * are optional wildcards; \"mail\" and \"*mail*\" behave the same — matching is always \"contains\".) MCP tools work too: their names look like mcp_<server>_<tool>, so \"*github*\" matches every tool from the github server. Matching ignores case and treats _ and __ the same."},
 			}, true, createDomain),
 
 		def("domain_archive",
@@ -156,7 +156,7 @@ func (globalCogmemProvider) RegisterTools(deps global.Deps) []global.ToolDefinit
 			}, true, forget),
 
 		def("consolidate",
-			"Request a (non-blocking) memory-consolidation pass. Returns immediately.",
+			"Ask the background process to review the recent conversation and update memory now. Returns immediately; the work runs in the background.",
 			[]global.Parameter{
 				{Name: "scope", Type: "string", Required: false, Description: "Optional scope hint (currently advisory)."},
 			}, true, consolidate),
@@ -166,7 +166,7 @@ func (globalCogmemProvider) RegisterTools(deps global.Deps) []global.ToolDefinit
 			nil, true, exportMemory),
 
 		def("status",
-			"Report cognitive-memory health: database path, last consolidation run, and pending-memory count.",
+			"Report memory status: database path, the last background update, and the number of pending (unconfirmed) memories.",
 			nil, true, status),
 	}
 }

@@ -42,10 +42,13 @@ add / supersede / retire; or do nothing.
   `tmp_id`.
 - Tool triggers (optional): if a domain clearly pertains to specific tools the
   agent used — tool calls appear in `new_messages` — set `triggers` to a
-  comma-separated list of distinctive substrings of those tool names (e.g.
-  `"google_gmail,microsoft365_mail"`). The domain is then auto-loaded into context
-  whenever a matching tool is used again. Matching is case- and
-  underscore-insensitive. Omit when no tool clearly maps to the domain.
+  comma-separated list of short distinctive words from those tool names, wrapped
+  in `*` (e.g. `*mail*,*calendar*`). The `*` are optional wildcards; `mail` and
+  `*mail*` behave the same (matching is always "contains"). MCP tool names look
+  like `mcp_<server>_<tool>`, so `*github*` matches every tool from the github
+  server. The domain is then auto-loaded whenever a matching tool is used again.
+  Matching is case- and underscore-insensitive. Omit when no tool clearly maps to
+  the domain.
 - Every operation MUST cite `evidence` — the seq range in `new_messages` that
   justifies it. No evidence → omit the op.
 
