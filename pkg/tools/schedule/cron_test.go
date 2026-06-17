@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/PivotLLM/ClawEh/pkg/bus"
-	"github.com/PivotLLM/ClawEh/pkg/config"
 	"github.com/PivotLLM/ClawEh/pkg/cron"
 	"github.com/PivotLLM/ClawEh/pkg/tools"
 )
@@ -17,74 +16,10 @@ func newTestCronTool(t *testing.T) *CronTool {
 	storePath := filepath.Join(t.TempDir(), "cron.json")
 	cronService := cron.NewCronService(storePath, nil)
 	msgBus := bus.NewMessageBus()
-	cfg := config.DefaultConfig()
-	tool, err := NewCronTool(cronService, nil, msgBus, t.TempDir(), true, 0, cfg)
-	if err != nil {
-		t.Fatalf("NewCronTool() error: %v", err)
-	}
-	return tool
+	return NewCronTool(cronService, msgBus)
 }
 
-// TestCronTool_CommandBlockedFromRemoteChannel verifies command scheduling is restricted to internal channels
-func TestCronTool_CommandBlockedFromRemoteChannel(t *testing.T) {
-	tool := newTestCronTool(t)
-	ctx := tools.WithToolContext(context.Background(), "telegram", "chat-1")
-	result := tool.Execute(ctx, map[string]any{
-		"action":          "add",
-		"message":         "check disk",
-		"command":         "df -h",
-		"command_confirm": true,
-		"at_seconds":      float64(60),
-	})
-
-	if !result.IsError {
-		t.Fatal("expected command scheduling to be blocked from remote channel")
-	}
-	if !strings.Contains(result.ForLLM, "restricted to internal channels") {
-		t.Errorf("expected 'restricted to internal channels', got: %s", result.ForLLM)
-	}
-}
-
-// TestCronTool_CommandRequiresConfirm verifies command_confirm=true is required
-func TestCronTool_CommandRequiresConfirm(t *testing.T) {
-	tool := newTestCronTool(t)
-	ctx := tools.WithToolContext(context.Background(), "cli", "direct")
-	result := tool.Execute(ctx, map[string]any{
-		"action":     "add",
-		"message":    "check disk",
-		"command":    "df -h",
-		"at_seconds": float64(60),
-	})
-
-	if !result.IsError {
-		t.Fatal("expected error when command_confirm is missing")
-	}
-	if !strings.Contains(result.ForLLM, "command_confirm=true") {
-		t.Errorf("expected 'command_confirm=true' message, got: %s", result.ForLLM)
-	}
-}
-
-// TestCronTool_CommandAllowedFromInternalChannel verifies command scheduling works from internal channels
-func TestCronTool_CommandAllowedFromInternalChannel(t *testing.T) {
-	tool := newTestCronTool(t)
-	ctx := tools.WithToolContext(context.Background(), "cli", "direct")
-	result := tool.Execute(ctx, map[string]any{
-		"action":          "add",
-		"message":         "check disk",
-		"command":         "df -h",
-		"command_confirm": true,
-		"at_seconds":      float64(60),
-	})
-
-	if result.IsError {
-		t.Fatalf("expected command scheduling to succeed from internal channel, got: %s", result.ForLLM)
-	}
-	if !strings.Contains(result.ForLLM, "Cron job added") {
-		t.Errorf("expected 'Cron job added', got: %s", result.ForLLM)
-	}
-}
-
-// TestCronTool_AddJobRequiresSessionContext verifies fail-closed when channel/chatID missing
+// TestCronTool_AddJobRequiresSessionContext verifies fail-closed when channel/chatID missing.
 func TestCronTool_AddJobRequiresSessionContext(t *testing.T) {
 	tool := newTestCronTool(t)
 	result := tool.Execute(context.Background(), map[string]any{
@@ -101,17 +36,59 @@ func TestCronTool_AddJobRequiresSessionContext(t *testing.T) {
 	}
 }
 
-// TestCronTool_NonCommandJobAllowedFromRemoteChannel verifies regular reminders work from any channel
-func TestCronTool_NonCommandJobAllowedFromRemoteChannel(t *testing.T) {
+// TestCronTool_AddJobCapturesSessionChannel verifies the job is created against
+// the channel/chat from context (the model cannot choose a target) — a supplied
+// channel/chat_id is ignored.
+func TestCronTool_AddJobCapturesSessionChannel(t *testing.T) {
 	tool := newTestCronTool(t)
-	ctx := tools.WithToolContext(context.Background(), "telegram", "chat-1")
+	ctx := tools.WithToolContext(context.Background(), "telegram-Amber", "chat-1")
 	result := tool.Execute(ctx, map[string]any{
 		"action":     "add",
 		"message":    "time to stretch",
 		"at_seconds": float64(600),
+		"channel":    "slack-other", // must be ignored
+		"chat_id":    "someone-else", // must be ignored
 	})
-
 	if result.IsError {
-		t.Fatalf("expected non-command reminder to succeed from remote channel, got: %s", result.ForLLM)
+		t.Fatalf("expected add to succeed, got: %s", result.ForLLM)
+	}
+
+	jobs := tool.cronService.ListJobs(true)
+	if len(jobs) != 1 {
+		t.Fatalf("expected 1 job, got %d", len(jobs))
+	}
+	if jobs[0].Payload.Channel != "telegram-Amber" || jobs[0].Payload.To != "chat-1" {
+		t.Fatalf("job target should be the session channel/chat, got %s/%s",
+			jobs[0].Payload.Channel, jobs[0].Payload.To)
+	}
+}
+
+// TestCronTool_GetJob returns full detail for one job and errors on a bad id.
+func TestCronTool_GetJob(t *testing.T) {
+	tool := newTestCronTool(t)
+	ctx := tools.WithToolContext(context.Background(), "telegram-Amber", "chat-1")
+	add := tool.Execute(ctx, map[string]any{
+		"action":     "add",
+		"message":    "daily standup reminder",
+		"every_seconds": float64(3600),
+	})
+	if add.IsError {
+		t.Fatalf("add failed: %s", add.ForLLM)
+	}
+	jobID := tool.cronService.ListJobs(true)[0].ID
+
+	got := tool.Execute(ctx, map[string]any{"action": "get", "job_id": jobID})
+	if got.IsError {
+		t.Fatalf("get failed: %s", got.ForLLM)
+	}
+	for _, want := range []string{jobID, "daily standup reminder", "every 3600s", "enabled"} {
+		if !strings.Contains(got.ForLLM, want) {
+			t.Fatalf("get output missing %q:\n%s", want, got.ForLLM)
+		}
+	}
+
+	missing := tool.Execute(ctx, map[string]any{"action": "get", "job_id": "nope"})
+	if !missing.IsError {
+		t.Fatalf("expected error for unknown job id, got: %s", missing.ForLLM)
 	}
 }

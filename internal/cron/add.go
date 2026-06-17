@@ -14,7 +14,6 @@ func newAddCommand(storePath func() string) *cobra.Command {
 		message  string
 		every    int64
 		cronExp  string
-		mode     string
 		peerKind string
 		channel  string
 		to       string
@@ -38,7 +37,9 @@ func newAddCommand(storePath func() string) *cobra.Command {
 			}
 
 			cs := cron.NewCronService(storePath(), nil)
-			job, err := cs.AddJob(name, schedule, message, mode, channel, to, peerKind)
+			// A scheduled job always delivers its message inbound to channel/to,
+			// where the bound agent handles it (single behavior; "mode" retired).
+			job, err := cs.AddJob(name, schedule, message, "agent", channel, to, peerKind)
 			if err != nil {
 				return fmt.Errorf("error adding job: %w", err)
 			}
@@ -53,7 +54,6 @@ func newAddCommand(storePath func() string) *cobra.Command {
 	cmd.Flags().StringVarP(&message, "message", "m", "", "Message for agent")
 	cmd.Flags().Int64VarP(&every, "every", "e", 0, "Run every N seconds")
 	cmd.Flags().StringVarP(&cronExp, "cron", "c", "", "Cron expression (e.g. '0 9 * * *')")
-	cmd.Flags().StringVar(&mode, "mode", "agent", "Execution mode: agent (default), isolated, deliver, command")
 	cmd.Flags().StringVar(&peerKind, "peer-kind", "channel", "Peer kind: channel (default) or direct (for DM targets)")
 	cmd.Flags().StringVar(&to, "to", "", "Recipient chat/channel ID")
 	cmd.Flags().StringVar(&channel, "channel", "", "Channel platform (e.g. slack, telegram)")

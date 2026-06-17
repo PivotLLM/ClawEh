@@ -21,7 +21,7 @@ func TestNewAddSubcommand(t *testing.T) {
 
 	assert.NotNil(t, cmd.Flags().Lookup("every"))
 	assert.NotNil(t, cmd.Flags().Lookup("cron"))
-	assert.NotNil(t, cmd.Flags().Lookup("mode"))
+	assert.Nil(t, cmd.Flags().Lookup("mode")) // retired: jobs have a single behavior
 	assert.NotNil(t, cmd.Flags().Lookup("peer-kind"))
 	assert.NotNil(t, cmd.Flags().Lookup("to"))
 	assert.NotNil(t, cmd.Flags().Lookup("channel"))

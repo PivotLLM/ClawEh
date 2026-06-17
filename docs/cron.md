@@ -8,20 +8,27 @@ recurring interval, or on a cron expression. Jobs are stored in
 
 ## How jobs run
 
-When a job fires, the cron service calls the agent with the job's payload. What happens
-next depends on the job's `mode` (see below). The agent sends its response to the
-`channel` and `to` specified in the payload.
+When a job fires, its `message` is injected **inbound** to the job's `channel` + `to` —
+exactly as if a user had sent that message there. Normal routing delivers it to the agent
+bound to that channel, which processes it and replies on the same channel. There is a
+single behavior; the agent that schedules a job cannot choose a different destination.
+
+The destination is **captured from the conversation the job was created in**. Practical
+consequence: to have a reminder come back on Slack, ask the agent on Slack; to get it on
+Telegram, ask on Telegram. (Operators creating jobs from the CLI set `--channel`/`--to`
+explicitly.)
 
 ### Execution model
 
-`agent` mode jobs are placed on the same inbound message queue as messages from users.
-They are processed in order — if the agent is already handling a message when the job
-fires, the job waits its turn. This prevents two `agent`-mode jobs (or a job and a live
-user message) from running concurrently and stepping on each other's shared session state.
+Jobs are placed on the same inbound message queue as messages from users and processed in
+order — if the agent is already handling a message when a job fires, the job waits its
+turn. This prevents a job and a live user message from running concurrently and stepping
+on each other's shared session state.
 
-`isolated` mode jobs bypass the queue and run immediately in their own goroutine. Because
-each isolated job uses a unique session key (`cron-{jobID}`) that is never shared with
-any other message, there is no risk of state collision regardless of what else is running.
+> **Note:** earlier versions had per-job execution `mode`s (`agent`, `isolated`,
+> `deliver`, `command`) and a `command` field for running shell commands. These were
+> removed — every job now uses the single inbound behavior above. Legacy `mode`/`command`
+> fields left in `jobs.json` are ignored.
 
 ---
 
@@ -68,108 +75,28 @@ any other message, there is no risk of state collision regardless of what else i
 
 | Field | Type | Description |
 |---|---|---|
-| `mode` | string | How the job executes — see [Modes](#modes) |
-| `message` | string | The message or prompt to send |
-| `command` | string | Shell command to run (only used with `mode: "command"`) |
-| `channel` | string | Channel platform to deliver to (e.g. `"slack"`, `"telegram"`) |
+| `message` | string | The message injected inbound when the job fires |
+| `channel` | string | Channel to deliver to (e.g. `"slack"`, `"telegram-Amber"`) |
 | `to` | string | Channel or user ID to deliver to (e.g. a Slack channel ID `C0ABC123` or user ID `U0ABC123`) |
 | `peer_kind` | string | `"channel"` (default) or `"direct"` — see [peer_kind](#peer_kind) |
 
----
-
-## Modes
-
-`mode` controls what happens when the job fires.
-
-### `agent` (default)
-
-The message is fed to the agent as a prompt. The agent processes it in the **user's real
-ongoing session** — the same session the user converses in. Replies from the user continue
-the conversation naturally; the agent remembers what it sent.
-
-Use this for tasks where follow-up is expected — summaries, reports, questions.
-
-```json
-{
-  "mode": "agent",
-  "message": "Get email.md from the assistant playbook and run it.",
-  "channel": "slack",
-  "to": "C0AMNPSSQRK",
-  "peer_kind": "channel"
-}
-```
-
-### `isolated`
-
-The message is fed to the agent in a **fresh, one-off session**. No memory of previous
-runs or conversations. Each run starts clean.
-
-Use this for recurring tasks where you don't want context from previous runs (e.g. a
-nightly system health check that should always start fresh).
-
-```json
-{
-  "mode": "isolated",
-  "message": "Check disk usage and memory. Report anything above 80%.",
-  "channel": "slack",
-  "to": "C0AMNPSSQRK",
-  "peer_kind": "channel"
-}
-```
-
-### `deliver`
-
-The message is sent **verbatim** to the channel. No LLM is involved. The text arrives
-exactly as written.
-
-Use this for simple scheduled notifications — a morning greeting, a reminder, a static
-message at a fixed time.
-
-```json
-{
-  "mode": "deliver",
-  "message": "Good morning! Don't forget your 10am standup.",
-  "channel": "slack",
-  "to": "C0ANLEQP5GQ",
-  "peer_kind": "channel"
-}
-```
-
-### `command`
-
-Runs a shell command and sends the output to the channel. The `command` field holds the
-shell command; `message` is a human-readable description used as the job name.
-
-**Security:** Command jobs can only be created from an internal channel (e.g. the CLI),
-not from Slack or Telegram.
-
-```json
-{
-  "mode": "command",
-  "message": "Daily disk usage report",
-  "command": "df -h",
-  "channel": "slack",
-  "to": "C0AMNPSSQRK",
-  "peer_kind": "channel"
-}
-```
+> Legacy payloads may also contain `mode` and `command`; both are ignored.
 
 ---
 
 ## `peer_kind`
 
-Tells the router whether `to` is a **channel ID** or a **DM user ID**. This matters for
-`agent` mode because it determines which session key is used — and the session key must
-match what the user's reply will produce, otherwise the agent won't remember the
-conversation.
+Tells the router whether `to` is a **channel ID** or a **DM user ID**. It determines which
+session key the fired message routes to — and that key must match what the user's reply
+produces, otherwise the agent won't remember the conversation.
 
 | Value | Use when `to` is... | Example |
 |---|---|---|
 | `channel` | A group channel or room ID | Slack `C0AMNPSSQRK` |
 | `direct` | A DM user ID | Slack `U0YOURSLACKID` |
 
-If you get this wrong with `mode: "agent"`, the agent's cron session and your reply session
-won't match — the agent will respond without memory of what it sent you.
+If you get this wrong, the cron-fired session and your reply session won't match — the
+agent will respond without memory of what it sent you.
 
 **Rule of thumb:**
 - Slack channel IDs start with `C` → use `"channel"`
@@ -181,12 +108,9 @@ won't match — the agent will respond without memory of what it sent you.
 
 ## Session behaviour
 
-| Mode | Session | Execution | Effect on replies |
-|---|---|---|---|
-| `agent` | Real user session (derived from `channel` + `to` + `peer_kind`) | Queued | Replies continue the conversation |
-| `isolated` | Isolated session (`cron-{jobID}`) | Immediate (goroutine) | Replies start a fresh conversation |
-| `deliver` | None | Immediate | No session |
-| `command` | None | Immediate | No session |
+The fired message routes to the real user session derived from `channel` + `to` +
+`peer_kind` (the same session a live message from there would use), so replies continue
+the conversation. Jobs are queued on the inbound bus and processed in order.
 
 ---
 
@@ -207,7 +131,6 @@ claw cron add \
   --name "Daily standup reminder" \
   --message "Time for your standup!" \
   --cron "0 9 * * 1-5" \
-  --mode deliver \
   --channel slack \
   --to C0ANLEQP5GQ
 ```
@@ -217,12 +140,11 @@ claw cron add \
 | Flag | Default | Description |
 |---|---|---|
 | `--name` / `-n` | required | Job name |
-| `--message` / `-m` | required | Message or prompt |
+| `--message` / `-m` | required | Message injected when the job fires |
 | `--cron` / `-c` | | Cron expression |
 | `--every` / `-e` | | Recurring interval in seconds |
-| `--mode` | `agent` | Execution mode: `agent`, `isolated`, `deliver`, `command` |
 | `--peer-kind` | `channel` | `channel` or `direct` |
-| `--channel` | | Channel platform |
+| `--channel` | | Channel to deliver to |
 | `--to` | | Channel or user ID |
 
 `--cron` and `--every` are mutually exclusive.
@@ -272,7 +194,6 @@ to see all scheduled jobs, or ask the agent to list them.
         "expr": "0 9 * * *"
       },
       "payload": {
-        "mode": "deliver",
         "message": "Good morning!",
         "channel": "slack",
         "to": "C0ANLEQP5GQ",
@@ -296,7 +217,6 @@ to see all scheduled jobs, or ask the agent to list them.
         "expr": "0 8 * * *"
       },
       "payload": {
-        "mode": "agent",
         "message": "Get email.md from the assistant playbook and run it.",
         "channel": "slack",
         "to": "C0AMNPSSQRK",

@@ -804,11 +804,7 @@ func setupCronTool(
 	// Create CronTool if enabled
 	var cronTool *toolschedule.CronTool
 	if cfg.Tools.Cron.Enabled {
-		var err error
-		cronTool, err = toolschedule.NewCronTool(cronService, agentLoop, msgBus, workspace, restrict, execTimeout, cfg)
-		if err != nil {
-			logger.Fatalf("Critical error during CronTool initialization: %v", err)
-		}
+		cronTool = toolschedule.NewCronTool(cronService, msgBus)
 	}
 
 	// Set onJob handler

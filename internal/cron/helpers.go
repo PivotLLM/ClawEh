@@ -45,7 +45,6 @@ func cronListCmd(storePath string) {
 		fmt.Printf("    Schedule: %s\n", schedule)
 		fmt.Printf("    Status:   %s\n", status)
 		fmt.Printf("    Next run: %s\n", nextRun)
-		fmt.Printf("    Mode:     %s\n", job.Payload.Mode)
 		fmt.Printf("    Channel:  %s\n", job.Payload.Channel)
 		fmt.Printf("    To:       %s\n", job.Payload.To)
 		if job.Payload.PeerKind == "direct" {
