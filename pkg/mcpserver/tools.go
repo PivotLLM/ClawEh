@@ -240,20 +240,27 @@ func dispatchToolCall(
 		return subagentMessage, true
 	}
 
-	if sessionTokens == nil || rawSessTok == "" {
-		logger.WarnCF("mcpserver", "MCP token rejected",
-			map[string]any{"tool": toolName, "reason": "invalid_token", "token_len": len(rawSessTok)})
+	if rawSessTok == "" {
+		logger.WarnCF("mcpserver", "MCP tool call presented no session_token",
+			map[string]any{"tool": toolName, "reason": "no_token"})
+		return invalidTokenMessage, true
+	}
+	if sessionTokens == nil {
+		logger.WarnCF("mcpserver", "MCP token rejected: token store unavailable",
+			map[string]any{"tool": toolName, "reason": "no_token_store"})
 		return invalidTokenMessage, true
 	}
 
 	rec, found := sessionTokens.Resolve(rawSessTok)
 	if !found {
-		logger.WarnCF("mcpserver", "MCP token rejected",
+		logger.WarnCF("mcpserver", "MCP session token verification failed",
 			map[string]any{"tool": toolName, "reason": "invalid_token", "token_len": len(rawSessTok)})
 		return invalidTokenMessage, true
 	}
 
 	agentName := rec.agentID
+	logger.InfoCF("mcpserver", "MCP session token verified",
+		map[string]any{"agent": agentName, "session": rec.sessionKey, "tool": toolName})
 
 	reg, ok := resolver(agentName)
 	if !ok || reg == nil {

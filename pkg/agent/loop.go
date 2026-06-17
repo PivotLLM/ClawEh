@@ -223,6 +223,11 @@ func NewAgentLoop(
 		} else if mgr != nil {
 			callbackManagers[agentID] = mgr
 			agentInstance.ContextBuilder.WithCallbackManager(mgr)
+			logger.InfoCF("callback", "callbacks ENABLED for agent",
+				map[string]any{"agent": agentID, "window_minutes": windowMinutes, "window_count": windowCount})
+		} else {
+			logger.InfoCF("callback", "callbacks disabled for agent (no token will be issued or injected)",
+				map[string]any{"agent": agentID})
 		}
 	}
 

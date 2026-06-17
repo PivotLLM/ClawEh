@@ -191,9 +191,13 @@ The following skills extend your capabilities. To use a skill, read its SKILL.md
 		parts = append(parts, "# Memory\n\n"+memoryContext)
 	}
 
-	// Callback token
+	// Callback token. Injected ONLY when a callback manager exists (callbacks
+	// enabled) and it currently holds a token — so a disabled agent (nil manager)
+	// can never get a token in its prompt.
 	if cb.callbackManager != nil {
 		if token := cb.callbackManager.CurrentToken(); token != "" {
+			logger.DebugCF("callback", "callback token injected into prompt",
+				map[string]any{"workspace": cb.workspace})
 			parts = append(parts, fmt.Sprintf(
 				"# Callback Token\n\nThe following token is confidential. Do not share it with users.\n\nEndpoint: POST http://localhost:18790/api/reply/{token}\nToken: %s",
 				token))

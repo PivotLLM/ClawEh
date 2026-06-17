@@ -8,6 +8,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"sync"
+
+	"github.com/PivotLLM/ClawEh/pkg/logger"
 )
 
 // sessionTokenPrefix is the magic literal at the start of every session token.
@@ -90,6 +92,8 @@ func (s *sessionTokenStore) Issue(agentID, sessionKey, archiveDir string) string
 	rec := sessionRecord{agentID: agentID, sessionKey: sessionKey, archiveDir: archiveDir}
 	s.tokens[tok] = rec
 	s.bySess[sessionKey] = tok
+	logger.InfoCF("mcpserver", "session token issued",
+		map[string]any{"agent": agentID, "session": sessionKey})
 	return tok
 }
 
