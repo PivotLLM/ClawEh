@@ -1562,7 +1562,7 @@ func (al *AgentLoop) runAgentLoop(
 	// Intentional silence: the model replied with the no-response sentinel (e.g.
 	// a group message addressed to someone else). Clear the typing indicator and
 	// send nothing — never poked or surfaced, unlike a degenerate empty reply.
-	if strings.EqualFold(strings.TrimSpace(finalContent), noResponseSentinel) {
+	if isNoResponseSentinel(finalContent) {
 		logger.DebugCF("agent", "LLM declined to respond (no-response sentinel)",
 			map[string]any{"agent_id": agent.ID, "session_key": opts.SessionKey})
 		al.stopTyping(opts.Channel, opts.ChatID)
@@ -1707,11 +1707,35 @@ const maxIdenticalToolBatches = 3
 // graceful fallback rather than leaving the user with no answer.
 const maxEmptyRetries = 2
 
-// noResponseSentinel is the exact reply a model uses to decline responding (e.g.
-// a group message addressed to someone else). It is treated as intentional
+// noResponseSentinel is the reply a model uses to decline responding (e.g. a
+// group message addressed to someone else). It is treated as intentional
 // silence: the typing indicator is cleared, nothing is sent, and the empty-
 // response poke/fallback does NOT fire (distinguishing it from a real failure).
 const noResponseSentinel = "!none"
+
+// isNoResponseSentinel reports whether content is the model's "decline to reply"
+// signal. Tolerant of surrounding quotes/backticks, whitespace, and any trailing
+// text after the token — e.g. `"!none"`, "!none.", "!none — that's for Bob" all
+// count — but not a longer word that merely starts with it (e.g. "!nonexistent").
+func isNoResponseSentinel(content string) bool {
+	s := strings.TrimSpace(content)
+	// Strip any leading quotes/backticks the model may have wrapped it in; the
+	// boundary check below tolerates a trailing quote/punctuation/text.
+	s = strings.TrimSpace(strings.TrimLeft(s, "\"'`"))
+	s = strings.ToLower(s)
+	if !strings.HasPrefix(s, noResponseSentinel) {
+		return false
+	}
+	rest := s[len(noResponseSentinel):]
+	if rest == "" {
+		return true
+	}
+	// The next character must be a boundary (not a letter/digit), so a longer
+	// token like "!nonexistent" does not match.
+	c := rest[0]
+	alnum := (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+	return !alnum
+}
 
 // toolCallSignature returns a stable signature for a tool-call batch (sorted
 // name+arguments), used to detect a model repeating the identical call. Returns
