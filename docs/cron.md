@@ -18,11 +18,6 @@ consequence: to have a reminder come back on Slack, ask the agent on Slack; to g
 Telegram, ask on Telegram. (Operators creating jobs from the CLI set `--channel`/`--to`
 explicitly.)
 
-When an agent schedules **over MCP** and its session has no bound channel (e.g. no recent
-inbound turn), the tool falls back to explicit `channel`/`chat_id` arguments, which the
-agent reads from its `## Current Session` context. The job is still owned by the calling
-agent regardless of the delivery target.
-
 ### Scope (per agent)
 
 Jobs are **owned by the agent that creates them** (recorded as `agentId`). Through
