@@ -36,10 +36,39 @@ func TestCronTool_AddJobRequiresSessionContext(t *testing.T) {
 	})
 
 	if !result.IsError {
-		t.Fatal("expected error when session context is missing")
+		t.Fatal("expected error when no delivery target is available")
 	}
-	if !strings.Contains(result.ForLLM, "no session context") {
-		t.Errorf("expected 'no session context' message, got: %s", result.ForLLM)
+	if !strings.Contains(result.ForLLM, "no delivery target") {
+		t.Errorf("expected 'no delivery target' message, got: %s", result.ForLLM)
+	}
+}
+
+// TestCronTool_AddJobMCPFallback verifies that when the session has no bound
+// channel (the MCP case), explicit channel/chat_id args are used, and the job is
+// still owned by the calling agent (from the session key).
+func TestCronTool_AddJobMCPFallback(t *testing.T) {
+	tool := newTestCronTool(t)
+	// Session key present (→ agent ownership) but NO ToolChannel/ChatID in context.
+	ctx := tools.WithSessionKey(context.Background(), "agent:karen:main")
+	res := tool.Execute(ctx, map[string]any{
+		"action":    "add",
+		"message":   "Karen morning",
+		"cron_expr": "0 8 * * *",
+		"channel":   "slack",
+		"chat_id":   "C0ANLEQP5GQ",
+	})
+	if res.IsError {
+		t.Fatalf("expected add to succeed via explicit channel/chat_id, got: %s", res.ForLLM)
+	}
+	jobs := tool.cronService.ListJobs(true)
+	if len(jobs) != 1 {
+		t.Fatalf("expected 1 job, got %d", len(jobs))
+	}
+	if jobs[0].Payload.Channel != "slack" || jobs[0].Payload.To != "C0ANLEQP5GQ" {
+		t.Fatalf("job target should use explicit args, got %s/%s", jobs[0].Payload.Channel, jobs[0].Payload.To)
+	}
+	if jobs[0].AgentID != "karen" {
+		t.Fatalf("job should be owned by caller karen, got %q", jobs[0].AgentID)
 	}
 }
 

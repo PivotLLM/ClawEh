@@ -81,6 +81,14 @@ func (t *CronTool) Parameters() map[string]any {
 				"type":        "string",
 				"description": "Job ID (for 'get', 'remove', 'enable', 'disable').",
 			},
+			"channel": map[string]any{
+				"type":        "string",
+				"description": "Usually omit — the job delivers to the current conversation. Only needed when scheduling via MCP and your session has no bound channel: pass the channel from your '## Current Session' context (e.g. 'slack').",
+			},
+			"chat_id": map[string]any{
+				"type":        "string",
+				"description": "Usually omit. Companion to 'channel' for the MCP/no-bound-channel case: the chat/user id from your '## Current Session' context.",
+			},
 		},
 		"required": []string{"action"},
 	}
@@ -132,13 +140,21 @@ func (t *CronTool) ownedJob(jobID, agentID string) *cron.CronJob {
 }
 
 func (t *CronTool) addJob(ctx context.Context, args map[string]any, agentID string) *tools.ToolResult {
-	// The destination is the conversation the job is created in — captured from
-	// context, never chosen by the model. When it fires, the message is delivered
-	// here and the bound agent handles it.
+	// The destination is normally the conversation the job is created in, captured
+	// from context. On the MCP path a session may have no bound channel (no recent
+	// inbound turn), so fall back to explicit channel/chat_id args the caller reads
+	// from its "## Current Session" header. The job is still owned by the calling
+	// agent (agentID), so scoping is unaffected.
 	channel := tools.ToolChannel(ctx)
+	if channel == "" {
+		channel, _ = args["channel"].(string)
+	}
 	chatID := tools.ToolChatID(ctx)
+	if chatID == "" {
+		chatID, _ = args["chat_id"].(string)
+	}
 	if channel == "" || chatID == "" {
-		return tools.ErrorResult("no session context (channel/chat_id not set). Use this tool in an active conversation.")
+		return tools.ErrorResult("no delivery target: this session has no bound channel, so pass channel and chat_id (from your '## Current Session' context).")
 	}
 
 	message, ok := args["message"].(string)
