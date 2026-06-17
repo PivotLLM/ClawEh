@@ -53,7 +53,7 @@ func TestLoopProtection_BreaksOnRepeatedToolCall(t *testing.T) {
 	cm, release := al.getContextManager(agentInstance, opts.SessionKey)
 	defer release()
 
-	finalContent, _, finishReason, iteration, err := al.runLLMIteration(
+	finalContent, _, _, finishReason, iteration, err := al.runLLMIteration(
 		context.Background(), agentInstance,
 		[]providers.Message{{Role: "user", Content: "go"}}, opts, cm,
 	)

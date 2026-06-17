@@ -741,6 +741,15 @@ func (al *AgentLoop) SetChannelManager(cm *channels.Manager) {
 	al.channelManager = cm
 }
 
+// stopTyping clears the typing indicator for a channel/chatID when a turn ends
+// without sending a reply (the send path stops typing on its own). No-op when
+// the channel manager is unset or the target is empty.
+func (al *AgentLoop) stopTyping(channel, chatID string) {
+	if al.channelManager != nil && channel != "" && chatID != "" {
+		al.channelManager.StopTyping(channel, chatID)
+	}
+}
+
 // superviseTasks periodically relaunches interrupted callback tasks across every
 // agent's workspace. It exits on ctx cancellation or Close().
 func (al *AgentLoop) superviseTasks(ctx context.Context) {
@@ -1545,7 +1554,7 @@ func (al *AgentLoop) runAgentLoop(
 	}()
 
 	// 4. Run LLM iteration loop
-	finalContent, normal, finishReason, iteration, err := al.runLLMIteration(ctx, agent, messages, opts, cm)
+	finalContent, normal, degenerate, finishReason, iteration, err := al.runLLMIteration(ctx, agent, messages, opts, cm)
 	if err != nil {
 		return "", err
 	}
@@ -1558,17 +1567,33 @@ func (al *AgentLoop) runAgentLoop(
 	// was @-directed at another agent). Non-normal termination means something went wrong.
 	isSystemError := false
 	if finalContent == "" {
-		if normal {
+		// Genuinely nothing to say (empty content AND no reasoning, normal finish)
+		// — e.g. a group message @-directed at another agent. Stay silent, but
+		// always clear the typing indicator so the user is not left waiting.
+		if normal && !degenerate {
 			logger.DebugCF("agent", "LLM returned empty response with normal termination",
 				map[string]any{
 					"agent_id":      agent.ID,
 					"session_key":   opts.SessionKey,
 					"finish_reason": finishReason,
 				})
+			al.stopTyping(opts.Channel, opts.ChatID)
 			return "", nil
 		}
+		// Degenerate empty (model produced reasoning but no reply, even after
+		// poking) or abnormal termination: the user must still get something.
 		isSystemError = true
-		finalContent = fmt.Sprintf("The AI provider returned an empty response (finish reason: %s). Check provider logs for details.", finishReason)
+		if degenerate {
+			finalContent = "Sorry — I couldn't compose a reply to that. Please try again."
+			logger.WarnCF("agent", "degenerate empty response; sending fallback reply",
+				map[string]any{
+					"agent_id":      agent.ID,
+					"session_key":   opts.SessionKey,
+					"finish_reason": finishReason,
+				})
+		} else {
+			finalContent = fmt.Sprintf("The AI provider returned an empty response (finish reason: %s). Check provider logs for details.", finishReason)
+		}
 	}
 
 	// 6. Save final assistant message to session (skip system error strings)
@@ -1666,6 +1691,12 @@ func (al *AgentLoop) handleReasoning(
 // exact same tool-call batch before the loop aborts (degenerate-loop guard).
 const maxIdenticalToolBatches = 3
 
+// maxEmptyRetries caps how many times the loop pokes the model to actually reply
+// after it finished a turn with no visible content but non-empty reasoning (a
+// common degenerate-model failure mode). After the cap the caller sends a
+// graceful fallback rather than leaving the user with no answer.
+const maxEmptyRetries = 2
+
 // toolCallSignature returns a stable signature for a tool-call batch (sorted
 // name+arguments), used to detect a model repeating the identical call. Returns
 // "" for an empty batch.
@@ -1700,7 +1731,7 @@ func (al *AgentLoop) runLLMIteration(
 	messages []providers.Message,
 	opts processOptions,
 	cm llmcontext.ContextManager,
-) (string, bool, string, int, error) {
+) (string, bool, bool, string, int, error) {
 	iteration := 0
 	var finalContent string
 	lastNormal := false
@@ -1710,6 +1741,11 @@ func (al *AgentLoop) runLLMIteration(
 	// memory over and over). Tracks the prior iteration's tool-call signature.
 	var lastToolSig string
 	identicalToolBatches := 0
+	// Empty-response handling: poke the model to reply when it finishes with no
+	// content but non-empty reasoning; degenerate flags that the retries were
+	// exhausted so the caller sends a fallback instead of going silent.
+	emptyRetries := 0
+	degenerate := false
 
 	// Inject agent ID into context so provider error log entries can attribute
 	// failures to the specific agent without correlating timestamps.
@@ -1964,7 +2000,7 @@ func (al *AgentLoop) runLLMIteration(
 				})
 				select {
 				case <-ctx.Done():
-					return "", false, "", 0, ctx.Err()
+					return "", false, false, "", 0, ctx.Err()
 				case <-time.After(backoff):
 				}
 				continue
@@ -2030,7 +2066,7 @@ func (al *AgentLoop) runLLMIteration(
 					"model":     activeModel,
 					"error":     err.Error(),
 				})
-			return "", false, "", iteration, fmt.Errorf("LLM call failed after retries: %w", err)
+			return "", false, false, "", iteration, fmt.Errorf("LLM call failed after retries: %w", err)
 		}
 
 		// Dump responses when enabled.
@@ -2078,6 +2114,29 @@ func (al *AgentLoop) runLLMIteration(
 			}
 			lastNormal = response.Normal
 			lastFinishReason = response.FinishReason
+
+			// Poke-and-retry: the model finished but produced no visible content
+			// while clearly having "thought" (non-empty reasoning) — a common
+			// failure mode of some models, which otherwise leaves the user with no
+			// reply. Nudge it to actually respond, capped by maxEmptyRetries.
+			if finalContent == "" && response.ReasoningContent != "" {
+				if emptyRetries < maxEmptyRetries {
+					emptyRetries++
+					messages = append(messages, providers.Message{
+						Role:    "user",
+						Content: "Your previous turn produced no reply. Make sure you have completed the user's request, then respond to the user now.",
+					})
+					logger.InfoCF("agent", "empty response with reasoning; poking model to reply",
+						map[string]any{
+							"agent_id": agent.ID, "iteration": iteration, "retry": emptyRetries,
+						})
+					continue
+				}
+				// Retries exhausted: tell the caller this was a degenerate empty
+				// response so it sends a fallback instead of going silent.
+				degenerate = true
+			}
+
 			logger.InfoCF("agent", "LLM response without tool calls (direct answer)",
 				map[string]any{
 					"agent_id":      agent.ID,
@@ -2374,7 +2433,7 @@ func (al *AgentLoop) runLLMIteration(
 		})
 	}
 
-	return finalContent, lastNormal, lastFinishReason, iteration, nil
+	return finalContent, lastNormal, degenerate, lastFinishReason, iteration, nil
 }
 
 // resolveRunProvider returns the LLMProvider (and matching model id) that will

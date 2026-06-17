@@ -141,6 +141,20 @@ func (m *Manager) RecordTypingStop(channel, chatID string, stop func()) {
 	}
 }
 
+// StopTyping ends the typing indicator for a channel/chatID without sending a
+// message. Normally typing is stopped in preSend when an outbound reply is sent,
+// but a turn that produces no reply (e.g. an empty model response) must still
+// clear the indicator so the user is not left waiting. Idempotent and a no-op
+// when no typing indicator is active.
+func (m *Manager) StopTyping(channel, chatID string) {
+	key := channel + ":" + chatID
+	if v, loaded := m.typingStops.LoadAndDelete(key); loaded {
+		if entry, ok := v.(typingEntry); ok && entry.stop != nil {
+			entry.stop()
+		}
+	}
+}
+
 // RecordReactionUndo registers a reaction undo function for later invocation.
 // Implements PlaceholderRecorder.
 func (m *Manager) RecordReactionUndo(channel, chatID, messageID string, undo func()) {

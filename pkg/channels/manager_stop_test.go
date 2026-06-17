@@ -127,3 +127,29 @@ func TestStopAll_CollectsAllChannelErrors(t *testing.T) {
 		t.Errorf("non-failing channel c: stopped=%d, want 1 (a failure must not short-circuit StopAll)", got)
 	}
 }
+
+// TestStopTyping_StopsAndRemoves verifies StopTyping invokes the registered stop
+// function and clears the entry so a later send does not double-stop.
+func TestStopTyping_StopsAndRemoves(t *testing.T) {
+	m := newTestManager()
+
+	calls := 0
+	m.RecordTypingStop("test", "123", func() { calls++ })
+
+	m.StopTyping("test", "123")
+	if calls != 1 {
+		t.Fatalf("expected stop func called once, got %d", calls)
+	}
+
+	// Entry removed: a second StopTyping is a no-op.
+	m.StopTyping("test", "123")
+	if calls != 1 {
+		t.Fatalf("second StopTyping should be a no-op, calls=%d", calls)
+	}
+}
+
+// TestStopTyping_Unregistered is a no-op (no panic) when nothing is registered.
+func TestStopTyping_Unregistered(t *testing.T) {
+	m := newTestManager()
+	m.StopTyping("nope", "0") // must not panic
+}

@@ -38,7 +38,7 @@ func runReasoningOnlyTurn(t *testing.T, showAsContent bool) string {
 	cm, release := al.getContextManager(agentInstance, opts.SessionKey)
 	defer release()
 
-	finalContent, _, _, _, err := al.runLLMIteration(
+	finalContent, _, _, _, _, err := al.runLLMIteration(
 		context.Background(), agentInstance,
 		[]providers.Message{{Role: "user", Content: "go"}}, opts, cm,
 	)
