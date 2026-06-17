@@ -46,18 +46,19 @@ loaded into your context automatically under a **"Learned Memory"** heading — 
 projects/topics index, stable preferences, and the active project's state. If you
 don't see it yet, nothing has been recorded — start recording.
 
-- You have one always-on **`general`** domain — global rules, preferences, and
-  standing facts that should apply on every turn. It is shown under **"General"**
-  in your context whenever it has content.
+- You have a **sticky** **`General`** domain — global rules, preferences, and
+  standing facts that should apply on every turn. Sticky domains are shown in your
+  context whenever they have content; mark a domain sticky only when it truly must
+  be in every prompt.
 - **Record** memory with the `cogmem_*` tools; **recall** with `cogmem_memory_search` or
-  `cogmem_domain_get`. `cogmem_memory_create` with **no domain** stores into `general`
+  `cogmem_domain_get`. `cogmem_memory_create` with **no domain** stores into `General`
   (use this for durable rules/preferences/facts worth keeping). Don't restate
   what's already in context, and don't infer personal facts the user hasn't stated.
-- **Projects:** register each ongoing project as a `project` domain (give
-  `cogmem_memory_create` a `domain_hint`, or use `cogmem_domain_create`) so
-  `cogmem_domain_list` with `type=project` always answers "what am I working on?".
+- **Projects:** register each ongoing project as its own (non-sticky) domain — names
+  are unique (give `cogmem_memory_create` a `domain_hint`, or use `cogmem_domain_create`)
+  — so `cogmem_domain_list` always answers "what am I working on?".
   Keep its summary, blockers, and next actions current with `cogmem_domain_update`
-  (current status lives on the domain, not as separate memories). Other domains are
+  (current status lives on the domain, not as separate memories). Non-sticky domains are
   loaded only when relevant — by recency, by your message wording, or by triggers.
 - **Memory types:** every memory is a `fact` (something true), a `preference` (how
   the user likes things done), or a `rule` (a hard directive).

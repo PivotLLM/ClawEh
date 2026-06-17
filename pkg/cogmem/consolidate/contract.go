@@ -42,7 +42,7 @@ type CurrentState struct {
 // DomainView is a compact projection of a domain for the model.
 type DomainView struct {
 	ID       string            `json:"id"`
-	Type     string            `json:"type"`
+	Sticky   bool              `json:"sticky"`
 	Name     string            `json:"name"`
 	Status   string            `json:"status"`
 	Version  int64             `json:"version"`
@@ -80,14 +80,13 @@ type DomainOp struct {
 	Op              string             `json:"op"`
 	TmpID           string             `json:"tmp_id,omitempty"`
 	ID              string             `json:"id,omitempty"`
-	Type            string             `json:"type,omitempty"`
+	Sticky          *bool              `json:"sticky,omitempty"` // optional; sets/clears always-in-prompt
 	Name            string             `json:"name,omitempty"`
 	Summary         string             `json:"summary,omitempty"`
 	Status          string             `json:"status,omitempty"`
 	Triggers        string             `json:"triggers,omitempty"`         // comma-delimited tool-name substrings (auto-load on tool use)
 	KeywordTriggers string             `json:"keyword_triggers,omitempty"` // comma-delimited message-text phrases (auto-load when mentioned)
 	Reason          string             `json:"reason,omitempty"`
-	ExpectedVersion *int64             `json:"expected_version,omitempty"`
 	State           *store.DomainState `json:"state,omitempty"`
 	Evidence        store.Evidence     `json:"evidence"`
 }
@@ -115,7 +114,6 @@ type LedgerEntry struct {
 }
 
 var (
-	validDomainTypes = map[string]bool{"project": true, "workflow": true}
 	validMemoryTypes = map[string]bool{"fact": true, "preference": true, "rule": true}
 	validStatuses    = map[string]bool{"active": true, "review": true}
 	validSources     = map[string]bool{"user_explicit": true, "assistant_inferred": true}
@@ -176,9 +174,6 @@ func (o Output) Validate(in Input) error {
 			if op.TmpID == "" || tmpIDs[op.TmpID] {
 				return fmt.Errorf("domain_ops[%d]: create needs a unique tmp_id", i)
 			}
-			if !validDomainTypes[op.Type] {
-				return fmt.Errorf("domain_ops[%d]: invalid type %q", i, op.Type)
-			}
 			if strings.TrimSpace(op.Name) == "" {
 				return fmt.Errorf("domain_ops[%d]: create needs a name", i)
 			}
@@ -189,9 +184,6 @@ func (o Output) Validate(in Input) error {
 		case "update":
 			if !domainIDs[op.ID] {
 				return fmt.Errorf("domain_ops[%d]: update unknown domain %q", i, op.ID)
-			}
-			if op.ExpectedVersion == nil {
-				return fmt.Errorf("domain_ops[%d]: update needs expected_version", i)
 			}
 		case "archive":
 			if !domainIDs[op.ID] {

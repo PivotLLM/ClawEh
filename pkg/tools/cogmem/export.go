@@ -24,17 +24,12 @@ func renderFullExport(ctx context.Context, s *store.Store) (doc string, nDomains
 		return "", 0, 0, err
 	}
 
-	var general, projects, workflows, other []store.Domain
+	var sticky, topics []store.Domain
 	for _, d := range domains {
-		switch d.Type {
-		case store.DomainGeneral:
-			general = append(general, d)
-		case store.DomainProject:
-			projects = append(projects, d)
-		case store.DomainWorkflow:
-			workflows = append(workflows, d)
-		default:
-			other = append(other, d)
+		if d.Sticky() {
+			sticky = append(sticky, d)
+		} else {
+			topics = append(topics, d)
 		}
 	}
 
@@ -54,7 +49,11 @@ func renderFullExport(ctx context.Context, s *store.Store) (doc string, nDomains
 			}
 			nDomains++
 			nMemories += len(mems)
-			fmt.Fprintf(&b, "### %s · `%s` (%s)\n\n", d.Name, d.ID, d.Type)
+			label := "topic"
+			if d.Sticky() {
+				label = "sticky"
+			}
+			fmt.Fprintf(&b, "### %s · `%s` (%s)\n\n", d.Name, d.ID, label)
 			if sm := strings.TrimSpace(d.Summary); sm != "" {
 				fmt.Fprintf(&b, "%s\n\n", sm)
 			}
@@ -79,16 +78,10 @@ func renderFullExport(ctx context.Context, s *store.Store) (doc string, nDomains
 		return nil
 	}
 
-	if err := section("General (always in context)", general); err != nil {
+	if err := section("Sticky (always in context)", sticky); err != nil {
 		return "", 0, 0, err
 	}
-	if err := section("Projects", projects); err != nil {
-		return "", 0, 0, err
-	}
-	if err := section("Workflows", workflows); err != nil {
-		return "", 0, 0, err
-	}
-	if err := section("Other", other); err != nil {
+	if err := section("Topics", topics); err != nil {
 		return "", 0, 0, err
 	}
 

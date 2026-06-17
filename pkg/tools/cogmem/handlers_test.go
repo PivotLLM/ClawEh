@@ -56,7 +56,7 @@ func TestCreateRememberGetUpdateRetire(t *testing.T) {
 
 	// create_domain returns an id.
 	res := run(t, h["domain_create"], newCall(testSession, map[string]any{
-		"type": "project", "name": "Bob's project", "summary": "demo",
+		"name": "Bob's project", "summary": "demo",
 	}))
 	if res.IsError {
 		t.Fatalf("create_domain error: %s", res.ForLLM)
@@ -81,21 +81,21 @@ func TestCreateRememberGetUpdateRetire(t *testing.T) {
 		t.Fatalf("get_domain missing hook: %s", res.ForLLM)
 	}
 
-	// update_domain with the correct version succeeds.
+	// update_domain is a patch — no version needed; only provided fields change.
 	res = run(t, h["domain_update"], newCall(testSession, map[string]any{
-		"id": domainID, "expected_version": float64(1), "set_summary": "updated",
+		"id": domainID, "set_summary": "updated",
 		"set_blockers": []any{"waiting on review"},
 	}))
 	if res.IsError {
 		t.Fatalf("update_domain error: %s", res.ForLLM)
 	}
 
-	// update_domain with a stale version is rejected clearly.
+	// A second patch (e.g. set_sticky) also succeeds — there is no optimistic lock.
 	res = run(t, h["domain_update"], newCall(testSession, map[string]any{
-		"id": domainID, "expected_version": float64(1), "set_summary": "again",
+		"id": domainID, "set_sticky": true,
 	}))
-	if !res.IsError || !strings.Contains(res.ForLLM, "version conflict") {
-		t.Fatalf("expected version conflict, got: isErr=%v %s", res.IsError, res.ForLLM)
+	if res.IsError {
+		t.Fatalf("second update_domain (set_sticky) error: %s", res.ForLLM)
 	}
 
 	// retire_hook removes it from active memory.
@@ -131,7 +131,7 @@ func TestRememberWithDomainHint(t *testing.T) {
 
 func TestSearchActiveVsReview(t *testing.T) {
 	h, _ := buildHandlers(t)
-	res := run(t, h["domain_create"], newCall(testSession, map[string]any{"type": "project", "name": "p"}))
+	res := run(t, h["domain_create"], newCall(testSession, map[string]any{"name": "p"}))
 	domainID := extractID(t, res.ForLLM, "d")
 
 	// active hook
@@ -154,7 +154,7 @@ func TestSearchActiveVsReview(t *testing.T) {
 
 func TestConfirmPromotesReviewMemory(t *testing.T) {
 	h, _ := buildHandlers(t)
-	res := run(t, h["domain_create"], newCall(testSession, map[string]any{"type": "project", "name": "p"}))
+	res := run(t, h["domain_create"], newCall(testSession, map[string]any{"name": "p"}))
 	domainID := extractID(t, res.ForLLM, "d")
 
 	// A review (pending) memory is not returned by active search.
@@ -194,7 +194,7 @@ func TestConfirmRequiresID(t *testing.T) {
 
 func TestForgetRetiresMatches(t *testing.T) {
 	h, _ := buildHandlers(t)
-	res := run(t, h["domain_create"], newCall(testSession, map[string]any{"type": "project", "name": "p"}))
+	res := run(t, h["domain_create"], newCall(testSession, map[string]any{"name": "p"}))
 	domainID := extractID(t, res.ForLLM, "d")
 	for _, txt := range []string{"forget me one", "forget me two", "keep this"} {
 		run(t, h["memory_create"], newCall(testSession, map[string]any{
@@ -217,7 +217,7 @@ func TestForgetRetiresMatches(t *testing.T) {
 
 func TestArchiveAndListDomains(t *testing.T) {
 	h, _ := buildHandlers(t)
-	res := run(t, h["domain_create"], newCall(testSession, map[string]any{"type": "project", "name": "Bob proj"}))
+	res := run(t, h["domain_create"], newCall(testSession, map[string]any{"name": "Bob proj"}))
 	domainID := extractID(t, res.ForLLM, "d")
 
 	res = run(t, h["domain_list"], newCall(testSession, map[string]any{"status": "active"}))
@@ -231,6 +231,26 @@ func TestArchiveAndListDomains(t *testing.T) {
 	res = run(t, h["domain_list"], newCall(testSession, map[string]any{"status": "active"}))
 	if strings.Contains(res.ForLLM, domainID) {
 		t.Fatalf("archived domain still active: %s", res.ForLLM)
+	}
+}
+
+func TestDomainMigrate(t *testing.T) {
+	h, _ := buildHandlers(t)
+	fromID := extractID(t, run(t, h["domain_create"], newCall(testSession, map[string]any{"name": "From"})).ForLLM, "d")
+	toID := extractID(t, run(t, h["domain_create"], newCall(testSession, map[string]any{"name": "To"})).ForLLM, "d")
+	run(t, h["memory_create"], newCall(testSession, map[string]any{"domain_id": fromID, "type": "fact", "text": "migrate me"}))
+
+	res := run(t, h["domain_migrate"], newCall(testSession, map[string]any{"from": fromID, "to": toID}))
+	if res.IsError {
+		t.Fatalf("domain_migrate error: %s", res.ForLLM)
+	}
+	// The source domain is gone; its memory now lives under the target.
+	if r := run(t, h["domain_get"], newCall(testSession, map[string]any{"id": fromID})); !r.IsError {
+		t.Fatalf("source domain survived migrate: %s", r.ForLLM)
+	}
+	r := run(t, h["domain_get"], newCall(testSession, map[string]any{"id": toID}))
+	if r.IsError || !strings.Contains(r.ForLLM, "migrate me") {
+		t.Fatalf("target domain missing migrated memory: %s", r.ForLLM)
 	}
 }
 
@@ -254,7 +274,7 @@ func TestStatusAndConsolidate(t *testing.T) {
 func TestExportMemory(t *testing.T) {
 	h, ws := buildHandlers(t)
 	res := run(t, h["domain_create"], newCall(testSession, map[string]any{
-		"type": "project", "name": "BioTech",
+		"name":             "BioTech",
 		"triggers":         "google_gmail",
 		"keyword_triggers": []any{"biotech report"},
 	}))
@@ -272,7 +292,7 @@ func TestExportMemory(t *testing.T) {
 		t.Fatalf("read export: %v", err)
 	}
 	body := string(data)
-	for _, want := range []string{"# Cognitive Memory Export", "## Projects", "BioTech", "the report targets Q3",
+	for _, want := range []string{"# Cognitive Memory Export", "## Topics", "BioTech", "the report targets Q3",
 		"Tool triggers", "google_gmail", "Keyword triggers", "biotech report"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("export missing %q:\n%s", want, body)

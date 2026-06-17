@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -31,7 +32,7 @@ func (s *Store) AddMemory(ctx context.Context, q DBTX, p AddMemoryParams) (Memor
 	if p.Status == "" {
 		p.Status = StatusActive
 	}
-	dt, err := s.domainType(ctx, q, p.DomainID)
+	sticky, err := s.domainSticky(ctx, q, p.DomainID)
 	if err != nil {
 		return Memory{}, err
 	}
@@ -51,7 +52,7 @@ func (s *Store) AddMemory(ctx context.Context, q DBTX, p AddMemoryParams) (Memor
 	if err != nil {
 		return Memory{}, fmt.Errorf("cogmem: add hook: %w", err)
 	}
-	if affectsStable(dt, p.Status) {
+	if affectsStable(sticky, p.Status) {
 		if err := bumpStableRev(ctx, q); err != nil {
 			return Memory{}, err
 		}
@@ -65,7 +66,7 @@ func (s *Store) RetireMemory(ctx context.Context, q DBTX, id, reason string) err
 	if err != nil {
 		return err
 	}
-	dt, err := s.domainType(ctx, q, h.DomainID)
+	sticky, err := s.domainSticky(ctx, q, h.DomainID)
 	if err != nil {
 		return err
 	}
@@ -75,7 +76,7 @@ func (s *Store) RetireMemory(ctx context.Context, q DBTX, id, reason string) err
 	if err != nil {
 		return err
 	}
-	if affectsStable(dt, h.Status) {
+	if affectsStable(sticky, h.Status) {
 		return bumpStableRev(ctx, q)
 	}
 	return nil
@@ -172,20 +173,23 @@ func (s *Store) queryMemories(ctx context.Context, q DBTX, query string, args ..
 	return out, rows.Err()
 }
 
-func (s *Store) domainType(ctx context.Context, q DBTX, domainID string) (DomainType, error) {
+// domainSticky reports whether the domain is sticky (legacy "type" column parsed
+// as int > 0).
+func (s *Store) domainSticky(ctx context.Context, q DBTX, domainID string) (bool, error) {
 	var t string
 	err := q.QueryRowContext(ctx, `SELECT type FROM domains WHERE id=?`, domainID).Scan(&t)
 	if err == sql.ErrNoRows {
-		return "", ErrNotFound
+		return false, ErrNotFound
 	}
-	return DomainType(t), err
+	n, _ := strconv.Atoi(strings.TrimSpace(t))
+	return n > 0, err
 }
 
-// affectsStable reports whether a hook of this status in a domain of this type
-// is part of the cached stable block (always-on active) or the pending digest
-// (review) - either way the stable block must be rebuilt.
-func affectsStable(dt DomainType, st Status) bool {
-	return st == StatusReview || (dt.AlwaysOn() && st == StatusActive)
+// affectsStable reports whether a memory of this status in a sticky/non-sticky
+// domain is part of the cached stable block (sticky active) or the pending
+// digest (review) - either way the stable block must be rebuilt.
+func affectsStable(sticky bool, st Status) bool {
+	return st == StatusReview || (sticky && st == StatusActive)
 }
 
 const memorySelect = `

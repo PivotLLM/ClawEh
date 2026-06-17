@@ -34,6 +34,8 @@ func openTest(t *testing.T) *Store {
 	return s
 }
 
+// TestOpenMigrateSeeds verifies a brand-new DB seeds a single sticky "General"
+// domain (which bumps stable_rev to 1).
 func TestOpenMigrateSeeds(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()
@@ -41,8 +43,15 @@ func TestOpenMigrateSeeds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stable rev: %v", err)
 	}
-	if rev != 0 {
-		t.Fatalf("initial stable_rev = %d, want 0", rev)
+	if rev != 1 {
+		t.Fatalf("initial stable_rev = %d, want 1 (seeded General)", rev)
+	}
+	g, err := s.GeneralDomain(ctx, s.DB())
+	if err != nil {
+		t.Fatalf("general domain: %v", err)
+	}
+	if !g.Sticky() {
+		t.Fatalf("seeded General is not sticky")
 	}
 }
 
@@ -51,7 +60,7 @@ func TestDomainCreateAndIDs(t *testing.T) {
 	ctx := context.Background()
 	d1, err := s.CreateDomain(ctx, s.DB(), CreateDomainParams{
 		AgentID: "alice", SessionKey: "agent:alice:main",
-		Type: DomainProject, Name: "Website Redesign", Status: StatusActive,
+		Name: "Website Redesign", Status: StatusActive,
 		Summary: "CSS grid migration",
 	})
 	if err != nil {
@@ -62,7 +71,7 @@ func TestDomainCreateAndIDs(t *testing.T) {
 	}
 	d2, err := s.CreateDomain(ctx, s.DB(), CreateDomainParams{
 		AgentID: "alice", SessionKey: "agent:alice:main",
-		Type: DomainProject, Name: "BioTech",
+		Name: "BioTech",
 	})
 	if err != nil {
 		t.Fatalf("create d2: %v", err)
@@ -70,9 +79,9 @@ func TestDomainCreateAndIDs(t *testing.T) {
 	if !validID(d2.ID, "d") || d2.ID == d1.ID {
 		t.Fatalf("second domain id = %q (d1=%q): want distinct d+5 chars", d2.ID, d1.ID)
 	}
-	// stable_rev bumped twice (one per create).
-	if rev, _ := s.StableRev(ctx); rev != 2 {
-		t.Fatalf("stable_rev = %d, want 2", rev)
+	// stable_rev: 1 (seeded General) + 2 (one bump per create) = 3.
+	if rev, _ := s.StableRev(ctx); rev != 3 {
+		t.Fatalf("stable_rev = %d, want 3", rev)
 	}
 	got, err := s.GetDomain(ctx, s.DB(), d1.ID, false)
 	if err != nil || got.Name != "Website Redesign" {
@@ -80,11 +89,28 @@ func TestDomainCreateAndIDs(t *testing.T) {
 	}
 }
 
+// TestCreateDuplicateNameRejected confirms domain names are unique
+// (case-insensitive, trimmed): a second create with the same name is rejected.
+func TestCreateDuplicateNameRejected(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	if _, err := s.CreateDomain(ctx, s.DB(), CreateDomainParams{AgentID: "a", Name: "Dup"}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := s.CreateDomain(ctx, s.DB(), CreateDomainParams{AgentID: "a", Name: "  dup  "}); err != ErrDuplicateName {
+		t.Fatalf("duplicate create err = %v, want ErrDuplicateName", err)
+	}
+	// The seeded "General" name is also taken.
+	if _, err := s.CreateDomain(ctx, s.DB(), CreateDomainParams{AgentID: "a", Name: "general"}); err != ErrDuplicateName {
+		t.Fatalf("duplicate General err = %v, want ErrDuplicateName", err)
+	}
+}
+
 func TestDomainTriggersRoundTrip(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()
 	d, err := s.CreateDomain(ctx, s.DB(), CreateDomainParams{
-		AgentID: "a", Type: DomainProject, Name: "Email",
+		AgentID: "a", Name: "Email",
 		Triggers: "  Google_Gmail, microsoft365_mail ,, system  ",
 	})
 	if err != nil {
@@ -107,7 +133,7 @@ func TestDomainTriggersRoundTrip(t *testing.T) {
 
 	// Update replaces triggers; empty clears them.
 	empty := ""
-	if err := s.UpdateDomain(ctx, s.DB(), d.ID, UpdateDomainParams{ExpectedVersion: 1, Triggers: &empty}); err != nil {
+	if err := s.UpdateDomain(ctx, s.DB(), d.ID, UpdateDomainParams{Triggers: &empty}); err != nil {
 		t.Fatalf("update clear: %v", err)
 	}
 	got, _ := s.GetDomain(ctx, s.DB(), d.ID, false)
@@ -122,7 +148,7 @@ func TestDomainTriggerWildcardsAreDecorative(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()
 	d, err := s.CreateDomain(ctx, s.DB(), CreateDomainParams{
-		AgentID: "a", Type: DomainProject, Name: "Dev",
+		AgentID: "a", Name: "Dev",
 		Triggers: "*github*, *mail*",
 	})
 	if err != nil {
@@ -150,7 +176,7 @@ func TestTriggerUnderscoreInsensitive(t *testing.T) {
 	ctx := context.Background()
 	// Token written with double underscores is collapsed on store.
 	d, _ := s.CreateDomain(ctx, s.DB(), CreateDomainParams{
-		AgentID: "a", Type: DomainProject, Name: "M", Triggers: "fusion__google",
+		AgentID: "a", Name: "M", Triggers: "fusion__google",
 	})
 	if d.Triggers != "fusion_google" {
 		t.Fatalf("triggers = %q, want collapsed fusion_google", d.Triggers)
@@ -166,7 +192,10 @@ func TestTriggerUnderscoreInsensitive(t *testing.T) {
 	}
 }
 
-func TestEnsureTypeValuesNormalizesLegacy(t *testing.T) {
+// TestNormalizeLegacyTypes confirms migrate() folds legacy values: retired memory
+// types collapse to "fact", the legacy domain "type" string becomes a sticky-
+// priority int (old "general" → sticky, any other string → not sticky).
+func TestNormalizeLegacyTypes(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "legacy.cogmem.db")
@@ -174,18 +203,22 @@ func TestEnsureTypeValuesNormalizesLegacy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	// Seed a project domain + memory, then force legacy type values directly.
-	d, _ := s.CreateDomain(ctx, s.DB(), CreateDomainParams{AgentID: "a", Type: DomainProject, Name: "P"})
-	m, _ := s.AddMemory(ctx, s.DB(), AddMemoryParams{DomainID: d.ID, Type: TypeFact, Text: "x", Status: StatusActive, Confidence: 0.9, Source: SourceUserExplicit})
+	// Two domains + a memory, then force legacy string values directly.
+	topic, _ := s.CreateDomain(ctx, s.DB(), CreateDomainParams{AgentID: "a", Name: "P"})
+	legacyGen, _ := s.CreateDomain(ctx, s.DB(), CreateDomainParams{AgentID: "a", Name: "LegacyGlobal"})
+	m, _ := s.AddMemory(ctx, s.DB(), AddMemoryParams{DomainID: topic.ID, Type: TypeFact, Text: "x", Status: StatusActive, Confidence: 0.9, Source: SourceUserExplicit})
 	if _, err := s.DB().ExecContext(ctx, `UPDATE memories SET type='lesson' WHERE id=?`, m.ID); err != nil {
 		t.Fatalf("force legacy memory type: %v", err)
 	}
-	if _, err := s.DB().ExecContext(ctx, `UPDATE domains SET type='repo' WHERE id=?`, d.ID); err != nil {
+	if _, err := s.DB().ExecContext(ctx, `UPDATE domains SET type='repo' WHERE id=?`, topic.ID); err != nil {
 		t.Fatalf("force legacy domain type: %v", err)
+	}
+	if _, err := s.DB().ExecContext(ctx, `UPDATE domains SET type='general' WHERE id=?`, legacyGen.ID); err != nil {
+		t.Fatalf("force legacy general type: %v", err)
 	}
 	_ = s.Close()
 
-	// Reopen → migrate() runs ensureTypeValues and normalizes the legacy values.
+	// Reopen → migrate() normalizes the legacy values.
 	s2, err := Open(path)
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
@@ -195,9 +228,13 @@ func TestEnsureTypeValuesNormalizesLegacy(t *testing.T) {
 	if gm.Type != TypeFact {
 		t.Fatalf("memory type = %q, want fact", gm.Type)
 	}
-	gd, _ := s2.GetDomain(ctx, s2.DB(), d.ID, false)
-	if gd.Type != DomainProject {
-		t.Fatalf("domain type = %q, want project", gd.Type)
+	gd, _ := s2.GetDomain(ctx, s2.DB(), topic.ID, false)
+	if gd.Sticky() {
+		t.Fatalf("legacy 'repo' domain became sticky, want not sticky")
+	}
+	gg, _ := s2.GetDomain(ctx, s2.DB(), legacyGen.ID, false)
+	if !gg.Sticky() {
+		t.Fatalf("legacy 'general' domain not sticky after migrate")
 	}
 }
 
@@ -205,8 +242,8 @@ func TestDedupeActiveMemories(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()
 	db := s.DB()
-	d, _ := s.CreateDomain(ctx, db, CreateDomainParams{AgentID: "a", Type: DomainProject, Name: "P"})
-	other, _ := s.CreateDomain(ctx, db, CreateDomainParams{AgentID: "a", Type: DomainProject, Name: "Q"})
+	d, _ := s.CreateDomain(ctx, db, CreateDomainParams{AgentID: "a", Name: "P"})
+	other, _ := s.CreateDomain(ctx, db, CreateDomainParams{AgentID: "a", Name: "Q"})
 
 	add := func(domainID, text string) {
 		_, _ = s.AddMemory(ctx, db, AddMemoryParams{DomainID: domainID, Type: TypeFact, Text: text, Status: StatusActive, Confidence: 0.9, Source: SourceUserExplicit})
@@ -248,63 +285,62 @@ func TestDedupeActiveMemories(t *testing.T) {
 	}
 }
 
-func TestDedupeGeneralDomains(t *testing.T) {
+// TestSeedGeneralOnce confirms the sticky "General" domain is seeded only on a
+// brand-new DB: once the user deletes it, reopening does NOT bring it back.
+func TestSeedGeneralOnce(t *testing.T) {
 	ctx := context.Background()
-	dir := t.TempDir()
-	path := filepath.Join(dir, "dup.cogmem.db")
+	path := filepath.Join(t.TempDir(), "seed.cogmem.db")
 	s, err := Open(path)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	// The seeded general, plus a memory in it.
-	g1, _ := s.GeneralDomain(ctx, s.DB())
-	_, _ = s.AddMemory(ctx, s.DB(), AddMemoryParams{DomainID: g1.ID, Type: TypeRule, Text: "rule one", Status: StatusActive, Confidence: 0.9, Source: SourceUserExplicit})
-
-	// Simulate the pre-fix race: a second general inserted directly (bypassing the
-	// guarded seed), with its own memory. Drop the unique index first so the raw
-	// insert is possible, mimicking an older database.
-	if _, err := s.DB().ExecContext(ctx, `DROP INDEX IF EXISTS idx_one_general`); err != nil {
-		t.Fatalf("drop index: %v", err)
+	g, err := s.GeneralDomain(ctx, s.DB())
+	if err != nil {
+		t.Fatalf("seeded general missing: %v", err)
 	}
-	if _, err := s.DB().ExecContext(ctx, `
-		INSERT INTO domains(id, agent_id, session_key, type, name, status, version, summary, state_json, schema_name, schema_version, triggers, created_at, updated_at)
-		VALUES('dDUP02','','','general','General',?,1,'','{}','domain',1,'',?,?)`,
-		string(StatusActive), now()+1, now()+1); err != nil {
-		t.Fatalf("insert dup: %v", err)
+	if err := s.DeleteDomain(ctx, s.DB(), g.ID); err != nil {
+		t.Fatalf("delete general: %v", err)
 	}
-	_, _ = s.AddMemory(ctx, s.DB(), AddMemoryParams{DomainID: "dDUP02", Type: TypeFact, Text: "fact two", Status: StatusActive, Confidence: 0.9, Source: SourceUserExplicit})
 	_ = s.Close()
 
-	// Reopen → migrate() dedupes and re-creates the unique index.
 	s2, err := Open(path)
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
 	defer s2.Close()
+	if _, err := s2.GeneralDomain(ctx, s2.DB()); err != ErrNotFound {
+		t.Fatalf("General was re-seeded after deletion (err=%v); seed must run only once", err)
+	}
+}
 
-	doms, _ := s2.ListDomains(ctx, s2.DB(), StatusActive)
-	generals := 0
-	var gid string
-	for _, d := range doms {
-		if d.Type == DomainGeneral {
-			generals++
-			gid = d.ID
-		}
+// TestMigrateDomain confirms MigrateDomain moves all memories into the target and
+// deletes the source domain.
+func TestMigrateDomain(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	db := s.DB()
+	from, _ := s.CreateDomain(ctx, db, CreateDomainParams{AgentID: "a", Name: "From"})
+	to, _ := s.CreateDomain(ctx, db, CreateDomainParams{AgentID: "a", Name: "To"})
+	add := func(domainID, text string) {
+		_, _ = s.AddMemory(ctx, db, AddMemoryParams{DomainID: domainID, Type: TypeFact, Text: text, Status: StatusActive, Confidence: 0.9, Source: SourceUserExplicit})
 	}
-	if generals != 1 {
-		t.Fatalf("general domains after dedupe = %d, want 1", generals)
+	add(from.ID, "a")
+	add(from.ID, "b")
+	add(to.ID, "c")
+
+	moved, err := s.MigrateDomain(ctx, db, from.ID, to.ID)
+	if err != nil {
+		t.Fatalf("migrate: %v", err)
 	}
-	// Both memories survived, merged onto the surviving general.
-	mems, _ := s2.ListMemories(ctx, s2.DB(), gid, StatusActive)
-	if len(mems) != 2 {
-		t.Fatalf("merged memories = %d, want 2", len(mems))
+	if moved != 2 {
+		t.Fatalf("moved = %d, want 2", moved)
 	}
-	// The unique index now blocks a second general.
-	if _, err := s2.DB().ExecContext(ctx, `
-		INSERT INTO domains(id, agent_id, session_key, type, name, status, version, summary, state_json, schema_name, schema_version, triggers, created_at, updated_at)
-		VALUES('dDUP03','','','general','General','active',1,'','{}','domain',1,'',?,?)`,
-		now(), now()); err == nil {
-		t.Fatal("expected unique-index violation inserting a second general")
+	if _, err := s.GetDomain(ctx, db, from.ID, false); err != ErrNotFound {
+		t.Fatalf("source domain survived migrate (err=%v)", err)
+	}
+	mems, _ := s.ListMemories(ctx, db, to.ID, StatusActive)
+	if len(mems) != 3 {
+		t.Fatalf("target active memories = %d, want 3", len(mems))
 	}
 }
 
@@ -313,13 +349,13 @@ func TestPurgeNonActive(t *testing.T) {
 	ctx := context.Background()
 	db := s.DB()
 
-	// Active project domain with an active + a retired memory.
-	keep, _ := s.CreateDomain(ctx, db, CreateDomainParams{AgentID: "a", Type: DomainProject, Name: "Keep", Status: StatusActive})
+	// Active topic domain with an active + a retired memory.
+	keep, _ := s.CreateDomain(ctx, db, CreateDomainParams{AgentID: "a", Name: "Keep", Status: StatusActive})
 	_, _ = s.AddMemory(ctx, db, AddMemoryParams{DomainID: keep.ID, Type: TypeFact, Text: "active fact", Status: StatusActive, Confidence: 0.9, Source: SourceUserExplicit})
 	_, _ = s.AddMemory(ctx, db, AddMemoryParams{DomainID: keep.ID, Type: TypeFact, Text: "old fact", Status: StatusRetired, Confidence: 0.9, Source: SourceUserExplicit})
 
 	// Archived domain with a (still-active) memory — both should go.
-	arch, _ := s.CreateDomain(ctx, db, CreateDomainParams{AgentID: "a", Type: DomainProject, Name: "Arch", Status: StatusActive})
+	arch, _ := s.CreateDomain(ctx, db, CreateDomainParams{AgentID: "a", Name: "Arch", Status: StatusActive})
 	_, _ = s.AddMemory(ctx, db, AddMemoryParams{DomainID: arch.ID, Type: TypeFact, Text: "archived domain fact", Status: StatusActive, Confidence: 0.9, Source: SourceUserExplicit})
 	if err := s.ArchiveDomain(ctx, db, arch.ID); err != nil {
 		t.Fatalf("archive: %v", err)
@@ -361,29 +397,45 @@ func TestPurgeNonActive(t *testing.T) {
 	}
 }
 
-func TestDomainOptimisticConcurrency(t *testing.T) {
+// TestDomainUpdatePatch confirms UpdateDomain is a true patch: only provided
+// fields change, the version bumps, and no expected-version is required.
+func TestDomainUpdatePatch(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()
-	d, _ := s.CreateDomain(ctx, s.DB(), CreateDomainParams{AgentID: "a", Type: DomainProject, Name: "P"})
+	d, _ := s.CreateDomain(ctx, s.DB(), CreateDomainParams{AgentID: "a", Name: "P", Summary: "orig"})
 	sum := "updated summary"
-	if err := s.UpdateDomain(ctx, s.DB(), d.ID, UpdateDomainParams{ExpectedVersion: 1, Summary: &sum}); err != nil {
-		t.Fatalf("update v1: %v", err)
-	}
-	// Stale version must conflict.
-	if err := s.UpdateDomain(ctx, s.DB(), d.ID, UpdateDomainParams{ExpectedVersion: 1, Summary: &sum}); err != ErrVersionConflict {
-		t.Fatalf("stale update err = %v, want ErrVersionConflict", err)
+	if err := s.UpdateDomain(ctx, s.DB(), d.ID, UpdateDomainParams{Summary: &sum}); err != nil {
+		t.Fatalf("update: %v", err)
 	}
 	got, _ := s.GetDomain(ctx, s.DB(), d.ID, false)
 	if got.Version != 2 || got.Summary != sum {
 		t.Fatalf("after update: version=%d summary=%q", got.Version, got.Summary)
 	}
+	if got.Name != "P" {
+		t.Fatalf("name changed by summary-only patch: %q", got.Name)
+	}
+	// Set sticky on; toggling it bumps the version again.
+	on := true
+	if err := s.UpdateDomain(ctx, s.DB(), d.ID, UpdateDomainParams{Sticky: &on}); err != nil {
+		t.Fatalf("set sticky: %v", err)
+	}
+	got, _ = s.GetDomain(ctx, s.DB(), d.ID, false)
+	if !got.Sticky() || got.Version != 3 {
+		t.Fatalf("after sticky patch: sticky=%v version=%d", got.Sticky(), got.Version)
+	}
+	// Rename onto an existing name is rejected.
+	if err := s.UpdateDomain(ctx, s.DB(), d.ID, UpdateDomainParams{Name: strptr("General")}); err != ErrDuplicateName {
+		t.Fatalf("rename collision err = %v, want ErrDuplicateName", err)
+	}
 }
+
+func strptr(s string) *string { return &s }
 
 func TestHookLifecycleAndStableRev(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()
-	// Always-on domain so active hooks affect stable_rev.
-	base, _ := s.GeneralDomain(ctx, s.DB()) // the seeded always-on general domain
+	// Sticky domain so active hooks affect stable_rev.
+	base, _ := s.GeneralDomain(ctx, s.DB()) // the seeded sticky general domain
 	revAfterDomain, _ := s.StableRev(ctx)
 
 	h, err := s.AddMemory(ctx, s.DB(), AddMemoryParams{
@@ -397,7 +449,7 @@ func TestHookLifecycleAndStableRev(t *testing.T) {
 		t.Fatalf("hook id = %q, want h+5 chars", h.ID)
 	}
 	if rev, _ := s.StableRev(ctx); rev <= revAfterDomain {
-		t.Fatalf("stable_rev did not bump on always-on active hook add")
+		t.Fatalf("stable_rev did not bump on sticky active hook add")
 	}
 
 	// Supersede.
@@ -424,7 +476,7 @@ func TestHookLifecycleAndStableRev(t *testing.T) {
 func TestSearchAndPending(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()
-	d, _ := s.CreateDomain(ctx, s.DB(), CreateDomainParams{AgentID: "a", Type: DomainProject, Name: "P"})
+	d, _ := s.CreateDomain(ctx, s.DB(), CreateDomainParams{AgentID: "a", Name: "P"})
 	_, _ = s.AddMemory(ctx, s.DB(), AddMemoryParams{DomainID: d.ID, Type: TypeFact, Text: "The BioTech report targets Q3.", Status: StatusActive, Confidence: 0.9, Source: SourceUserExplicit})
 	_, _ = s.AddMemory(ctx, s.DB(), AddMemoryParams{DomainID: d.ID, Type: TypeFact, Text: "Eric likes terse output.", Status: StatusReview, Confidence: 0.6, Source: SourceAssistantInferred})
 
@@ -482,7 +534,7 @@ func TestDomainKeywordTriggers(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()
 	d, err := s.CreateDomain(ctx, s.DB(), CreateDomainParams{
-		AgentID: "a", Type: DomainProject, Name: "Briefing",
+		AgentID: "a", Name: "Briefing",
 		KeywordTriggers: "  Morning Routine , weekly report ,, ",
 	})
 	if err != nil {
@@ -511,7 +563,7 @@ func TestDomainKeywordTriggers(t *testing.T) {
 
 	// Update replaces; empty clears.
 	empty := ""
-	if err := s.UpdateDomain(ctx, s.DB(), d.ID, UpdateDomainParams{ExpectedVersion: 1, KeywordTriggers: &empty}); err != nil {
+	if err := s.UpdateDomain(ctx, s.DB(), d.ID, UpdateDomainParams{KeywordTriggers: &empty}); err != nil {
 		t.Fatalf("update clear: %v", err)
 	}
 	got, _ := s.GetDomain(ctx, s.DB(), d.ID, false)

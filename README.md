@@ -13,9 +13,9 @@ the summarization prompt. Leave it out to use the built-in behavior.
 ClawEh has gained a cognitive-memory engine so long-running agents get smarter
 over time instead of relying on hand-edited prompt files. Each session has a
 small SQLite memory database alongside its existing archive. Memory is organized
-as **domains** (containers — the always-on `general` domain plus `project` and
-`workflow` topics) that each hold **memories**, where every memory is a `fact`, a
-`preference`, or a `rule`. A background "sleep cycle" periodically reviews new
+as **domains** (containers, each with a unique name — a domain is **sticky**
+(always in the prompt) or a routed topic) that each hold **memories**, where every
+memory is a `fact`, a `preference`, or a `rule`. A background "sleep cycle" periodically reviews new
 conversation and distills it into structured, de-duplicated,
 contradiction-resolved memories; the relevant pieces are then composed into the
 system prompt for each turn. Consolidation reuses your configured **Memory models** (formerly
@@ -25,9 +25,9 @@ agent learns. Cognitive memory is **on by default** for every agent; to disable
 it for a specific agent, give that agent a tool allowlist that excludes the
 `cogmem_*` tools.
 
-Memory is surfaced in layers. The always-on **`general`** domain (global rules,
-preferences, and standing facts) is in every prompt; topic domains are then
-auto-loaded by relevance using these signals:
+Memory is surfaced in layers. **Sticky** domains (the seeded **`General`** domain
+holds global rules, preferences, and standing facts) are in every prompt; non-sticky
+topic domains are then auto-loaded by relevance using these signals:
 
 - **Recency** — the most recently used topic domains.
 - **Lexical match** — domains whose name, summary, or memories match salient words in
@@ -69,7 +69,7 @@ browser).
 purges everything that is **not current active memory** — every domain whose
 status is not active (archived/review) along with its memories, plus every
 non-active memory (retired, superseded, review). Only active memories in active
-domains survive (including the always-on `general` domain).
+domains survive (including the sticky `General` domain).
 
 It is a **dry run by default** — it reports what would be removed, per database and
 in total, without changing anything:

@@ -18,7 +18,7 @@ func TestWriteExport(t *testing.T) {
 	ctx := context.Background()
 
 	d, err := s.CreateDomain(ctx, s.DB(), store.CreateDomainParams{
-		AgentID: "alice", Type: store.DomainProject, Name: "ClawEh",
+		AgentID: "alice", Name: "ClawEh",
 		Status: store.StatusActive, Summary: "Go gateway",
 	})
 	if err != nil {
@@ -42,16 +42,26 @@ func TestWriteExport(t *testing.T) {
 		t.Fatalf("WriteExport: %v", err)
 	}
 
-	projects := filepath.Join(dir, "GENERATED_PROJECTS.md")
-	body, err := os.ReadFile(projects)
+	// The non-sticky "ClawEh" domain lands in the topics export.
+	topics := filepath.Join(dir, "GENERATED_TOPICS.md")
+	body, err := os.ReadFile(topics)
 	if err != nil {
-		t.Fatalf("read projects export: %v", err)
+		t.Fatalf("read topics export: %v", err)
 	}
 	if !strings.HasPrefix(string(body), "<!-- DO NOT EDIT") {
-		t.Fatalf("projects export missing banner: %q", string(body)[:40])
+		t.Fatalf("topics export missing banner: %q", string(body)[:40])
 	}
 	if !strings.Contains(string(body), "Run make test.") {
-		t.Fatalf("projects export missing hook text")
+		t.Fatalf("topics export missing hook text")
+	}
+
+	// The seeded sticky "General" domain lands in the sticky export.
+	stickyBody, err := os.ReadFile(filepath.Join(dir, "GENERATED_STICKY.md"))
+	if err != nil {
+		t.Fatalf("read sticky export: %v", err)
+	}
+	if !strings.Contains(string(stickyBody), "General") {
+		t.Fatalf("sticky export missing the General domain")
 	}
 
 	pendingBody, err := os.ReadFile(filepath.Join(dir, "GENERATED_PENDING.md"))
@@ -63,10 +73,5 @@ func TestWriteExport(t *testing.T) {
 	}
 	if !strings.Contains(string(pendingBody), "Eric prefers terse output.") {
 		t.Fatalf("pending export missing review hook")
-	}
-
-	// Empty sections (lessons / user_learned) are skipped.
-	if _, err := os.Stat(filepath.Join(dir, "GENERATED_LESSONS.md")); !os.IsNotExist(err) {
-		t.Fatalf("empty lessons file should not be written")
 	}
 }

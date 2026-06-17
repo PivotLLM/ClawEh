@@ -265,7 +265,7 @@ func (w *Worker) currentState(ctx context.Context) CurrentState {
 	for _, d := range domains {
 		dv := DomainView{
 			ID:      d.ID,
-			Type:    string(d.Type),
+			Sticky:  d.Sticky(),
 			Name:    d.Name,
 			Status:  string(d.Status),
 			Version: d.Version,

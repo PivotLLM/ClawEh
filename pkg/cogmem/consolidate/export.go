@@ -31,24 +31,20 @@ func WriteExport(ctx context.Context, st *store.Store, memoryDir string) error {
 		return fmt.Errorf("consolidate: export list domains: %w", err)
 	}
 
-	// Bucket domains by concern.
-	var projects, lessons, general []store.Domain
+	// Bucket domains: sticky (always in context) vs the rest (topics).
+	var sticky, topics []store.Domain
 	for _, d := range domains {
-		switch d.Type {
-		case store.DomainProject:
-			projects = append(projects, d)
-		case store.DomainGeneral:
-			general = append(general, d)
-		default:
-			lessons = append(lessons, d)
+		if d.Sticky() {
+			sticky = append(sticky, d)
+		} else {
+			topics = append(topics, d)
 		}
 	}
 
 	files := map[string]string{
-		"GENERATED_GENERAL.md":  renderDomains(ctx, st, "General (always in context)", general),
-		"GENERATED_PROJECTS.md": renderDomains(ctx, st, "Projects", projects),
-		"GENERATED_LESSONS.md":  renderDomains(ctx, st, "Lessons & Workflows", lessons),
-		"GENERATED_PENDING.md":  renderPending(ctx, st),
+		"GENERATED_STICKY.md":  renderDomains(ctx, st, "Sticky (always in context)", sticky),
+		"GENERATED_TOPICS.md":  renderDomains(ctx, st, "Topics", topics),
+		"GENERATED_PENDING.md": renderPending(ctx, st),
 	}
 
 	var firstErr error

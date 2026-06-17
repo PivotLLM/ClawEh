@@ -30,7 +30,6 @@ func seedCogmemDB(t *testing.T, configPath string) string {
 
 	ctx := context.Background()
 	d, err := s.CreateDomain(ctx, s.DB(), cogmemstore.CreateDomainParams{
-		Type:    cogmemstore.DomainProject,
 		Name:    "Website Redesign",
 		Status:  cogmemstore.StatusActive,
 		Summary: "the redesign project",
@@ -108,8 +107,8 @@ func TestHandleGetMemoryStore(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &detail); err != nil {
 		t.Fatalf("Unmarshal() error = %v", err)
 	}
-	// Open() auto-creates the always-on general domain, so there is at least
-	// the project domain we seeded plus general.
+	// Open() auto-seeds the sticky General domain, so there is at least the
+	// (non-sticky) topic domain we seeded plus General.
 	if detail.ActiveDomains < 1 {
 		t.Fatalf("active_domains = %d, want >= 1", detail.ActiveDomains)
 	}
@@ -118,12 +117,15 @@ func TestHandleGetMemoryStore(t *testing.T) {
 	}
 	var project *memoryDomain
 	for i := range detail.Domains {
-		if detail.Domains[i].Type == "project" {
+		if detail.Domains[i].Name == "Website Redesign" {
 			project = &detail.Domains[i]
 		}
 	}
 	if project == nil || len(project.Memories) != 1 {
 		t.Fatalf("project domain shape unexpected: %+v", detail.Domains)
+	}
+	if project.Sticky {
+		t.Fatalf("topic domain should not be sticky")
 	}
 	if project.Memories[0].Text != "launch date is in the fall" {
 		t.Fatalf("memory text = %q", project.Memories[0].Text)

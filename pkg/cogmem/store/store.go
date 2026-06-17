@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
-	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -115,19 +114,13 @@ func (s *Store) migrate(ctx context.Context) error {
 	if err := s.ensureDomainColumns(ctx); err != nil {
 		return fmt.Errorf("cogmem: ensure domain columns: %w", err)
 	}
-	if err := s.ensureTypeValues(ctx); err != nil {
-		return fmt.Errorf("cogmem: normalize type values: %w", err)
+	if err := s.normalizeMemoryTypes(ctx); err != nil {
+		return fmt.Errorf("cogmem: normalize memory types: %w", err)
 	}
-	// Merge any duplicate general domains (from a pre-fix concurrent-open race)
-	// into one BEFORE creating the unique index that prevents recurrence.
-	if err := s.dedupeGeneralDomains(ctx); err != nil {
-		return fmt.Errorf("cogmem: dedupe general: %w", err)
+	if err := s.normalizeStickyColumn(ctx); err != nil {
+		return fmt.Errorf("cogmem: normalize sticky column: %w", err)
 	}
-	if _, err := s.db.ExecContext(ctx,
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_one_general ON domains(type) WHERE type='general'`); err != nil {
-		return fmt.Errorf("cogmem: general unique index: %w", err)
-	}
-	if err := s.ensureGeneralDomain(ctx); err != nil {
+	if err := s.seedGeneralOnce(ctx); err != nil {
 		return fmt.Errorf("cogmem: seed general domain: %w", err)
 	}
 	return nil
@@ -236,61 +229,27 @@ func (s *Store) Vacuum(ctx context.Context) error {
 	return err
 }
 
-// dedupeGeneralDomains collapses multiple "general" domains into one. A pre-fix
-// race (concurrent store opens both seeding general before the unique index
-// existed) could create duplicates. The oldest is canonical; every other
-// general's memories are repointed onto it and the empty extra is deleted.
-func (s *Store) dedupeGeneralDomains(ctx context.Context) error {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT id FROM domains WHERE type=? ORDER BY created_at, id`, string(DomainGeneral))
-	if err != nil {
-		return err
-	}
-	var ids []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			_ = rows.Close()
-			return err
-		}
-		ids = append(ids, id)
-	}
-	_ = rows.Close()
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	if len(ids) <= 1 {
-		return nil
-	}
-	canonical, extras := ids[0], ids[1:]
-	return s.WithTx(ctx, func(tx *sql.Tx) error {
-		for _, ex := range extras {
-			if _, err := tx.ExecContext(ctx,
-				`UPDATE memories SET domain_id=? WHERE domain_id=?`, canonical, ex); err != nil {
-				return err
-			}
-			if _, err := tx.ExecContext(ctx, `DELETE FROM domains WHERE id=?`, ex); err != nil {
-				return err
-			}
-		}
-		// Merged content changed the always-on block; force a cache rebuild.
-		return bumpStableRev(ctx, tx)
-	})
+// normalizeMemoryTypes folds retired memory type values into the current set:
+// project_state/workflow/lesson → fact. Idempotent.
+func (s *Store) normalizeMemoryTypes(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE memories SET type='fact' WHERE type IN ('project_state','workflow','lesson')`)
+	return err
 }
 
-// ensureTypeValues folds retired type values into the current set so stored data
-// matches the slimmed model: memory types project_state/workflow/lesson → fact,
-// and the dropped domain type repo → project. Idempotent (no-op once normalized).
-func (s *Store) ensureTypeValues(ctx context.Context) error {
+// normalizeStickyColumn migrates the legacy domain "type" column to a sticky
+// priority int: the old always-on "general" → "1" (sticky); every other legacy
+// string value (project/workflow/repo/empty) → "0" (not sticky). Numeric values
+// are left as-is. Idempotent.
+func (s *Store) normalizeStickyColumn(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx,
-		`UPDATE memories SET type='fact' WHERE type IN ('project_state','workflow','lesson')`); err != nil {
+		`UPDATE domains SET type='1' WHERE type='general'`); err != nil {
 		return err
 	}
-	if _, err := s.db.ExecContext(ctx,
-		`UPDATE domains SET type='project' WHERE type='repo'`); err != nil {
-		return err
-	}
-	return nil
+	// Any remaining non-numeric value (CAST→0) that isn't already "0" → "0".
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE domains SET type='0' WHERE CAST(type AS INTEGER)=0 AND type<>'0'`)
+	return err
 }
 
 // renameLegacyTables migrates a pre-rename database (hooks→memories, kind→type,
@@ -392,30 +351,36 @@ func (s *Store) columnSet(ctx context.Context, table string) (map[string]bool, e
 	return set, rows.Err()
 }
 
-// ensureGeneralDomain creates the single mandatory always-on "general" domain if
-// it does not already exist. The insert is atomic (guarded by WHERE NOT EXISTS)
-// and the idx_one_general unique index makes a concurrent double-seed impossible;
-// a race that still trips the constraint is treated as success. No stable_rev
-// bump: an empty general domain renders nothing, so the cached block is
-// unaffected until a memory is added.
-func (s *Store) ensureGeneralDomain(ctx context.Context) error {
-	id, err := freshID(ctx, s.db, domainIDPrefix, "domains")
-	if err != nil {
+// seedGeneralOnce creates a sticky "General" domain on a brand-new DB only. A
+// meta flag (seeded_general) records that the one-time seed has happened, so a
+// General the user later deletes is never re-created. Existing (migrated) DBs
+// that already have domains are not seeded.
+func (s *Store) seedGeneralOnce(ctx context.Context) error {
+	seeded, err := getMetaInt(ctx, s.db, "seeded_general")
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	ts := now()
-	_, err = s.db.ExecContext(ctx, `
-		INSERT INTO domains(id, agent_id, session_key, type, name, status, version,
-		                    summary, state_json, schema_name, schema_version, triggers,
-		                    created_at, updated_at)
-		SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?
-		WHERE NOT EXISTS (SELECT 1 FROM domains WHERE type=?)`,
-		id, "", "", string(DomainGeneral), "General", string(StatusActive), 1,
-		"Global rules, preferences, and standing facts.", "{}", "domain", 1, "", ts, ts,
-		string(DomainGeneral))
-	if err != nil && strings.Contains(err.Error(), "UNIQUE constraint") {
-		return nil // another opener seeded it concurrently
+	if seeded != 0 {
+		return nil // already seeded once (or explicitly skipped) — respect deletions
 	}
+	// Mark seeded first so the one-time seed never repeats, even across upgrades.
+	if err := setMetaInt(ctx, s.db, "seeded_general", 1); err != nil {
+		return err
+	}
+	// Only seed a truly fresh DB; a migrated DB already has its domains.
+	var count int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM domains`).Scan(&count); err != nil {
+		return err
+	}
+	if count > 0 {
+		return nil
+	}
+	_, err = s.CreateDomain(ctx, s.db, CreateDomainParams{
+		Name:    "General",
+		Sticky:  true,
+		Status:  StatusActive,
+		Summary: "Global rules, preferences, and standing facts.",
+	})
 	return err
 }
 

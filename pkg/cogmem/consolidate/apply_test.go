@@ -21,7 +21,7 @@ func TestApplySupersedeEndToEnd(t *testing.T) {
 
 	// Seed: a project domain with a rule hook.
 	d, _ := st.CreateDomain(ctx, st.DB(), store.CreateDomainParams{
-		AgentID: "alice", Type: store.DomainProject, Name: "Layout", Status: store.StatusActive,
+		AgentID: "alice", Name: "Layout", Status: store.StatusActive,
 	})
 	h, _ := st.AddMemory(ctx, st.DB(), store.AddMemoryParams{
 		DomainID: d.ID, Type: store.TypeRule, Text: "Never use the color blue.",
@@ -60,7 +60,7 @@ func TestApplyCreateWithTmpID(t *testing.T) {
 	defer st.Close()
 
 	out := Output{
-		DomainOps: []DomainOp{{Op: "create", TmpID: "t1", Type: "project", Name: "New Project", Summary: "x", Status: "active", Evidence: store.Evidence{SeqStart: 1, SeqEnd: 1}}},
+		DomainOps: []DomainOp{{Op: "create", TmpID: "t1", Name: "New Project", Summary: "x", Status: "active", Evidence: store.Evidence{SeqStart: 1, SeqEnd: 1}}},
 		MemoryOps: []MemoryOp{{Op: "add", Domain: "t1", Type: "fact", Text: "a durable fact", Confidence: 0.9, Status: "active", Source: "user_explicit", Evidence: store.Evidence{SeqStart: 1, SeqEnd: 1}}},
 	}
 	n, err := Apply(ctx, st, out, ApplyContext{AgentID: "alice", Actor: "sleep_cycle"})
@@ -70,11 +70,11 @@ func TestApplyCreateWithTmpID(t *testing.T) {
 	if n != 2 {
 		t.Fatalf("applied = %d, want 2", n)
 	}
-	// ListDomains includes the seeded always-on general domain; find the project.
+	// ListDomains includes the seeded sticky general domain; find the new topic.
 	doms, _ := st.ListDomains(ctx, st.DB(), store.StatusActive)
 	var proj *store.Domain
 	for i := range doms {
-		if doms[i].Type == store.DomainProject && doms[i].Name == "New Project" {
+		if doms[i].Name == "New Project" && !doms[i].Sticky() {
 			proj = &doms[i]
 		}
 	}
@@ -94,7 +94,7 @@ func TestApplySetsTriggers(t *testing.T) {
 
 	out := Output{
 		DomainOps: []DomainOp{{
-			Op: "create", TmpID: "t1", Type: "project", Name: "Email", Summary: "mail",
+			Op: "create", TmpID: "t1", Name: "Email", Summary: "mail",
 			Triggers: "google_gmail, microsoft365_mail", Status: "active",
 			Evidence: store.Evidence{SeqStart: 1, SeqEnd: 1},
 		}},
@@ -127,7 +127,7 @@ func TestApplySetsKeywordTriggers(t *testing.T) {
 
 	out := Output{
 		DomainOps: []DomainOp{{
-			Op: "create", TmpID: "t1", Type: "workflow", Name: "Daily Ops", Summary: "ops",
+			Op: "create", TmpID: "t1", Name: "Daily Ops", Summary: "ops",
 			KeywordTriggers: "Morning Routine, weekly report", Status: "active",
 			Evidence: store.Evidence{SeqStart: 1, SeqEnd: 1},
 		}},
@@ -150,5 +150,43 @@ func TestApplySetsKeywordTriggers(t *testing.T) {
 	}
 	if _, ok := wf.MatchKeyword("time for your morning routine"); !ok {
 		t.Fatalf("worker-set keyword trigger should match the phrase")
+	}
+}
+
+// TestApplyStickyCreateAndUpdate confirms the worker can create a sticky domain
+// and later toggle stickiness via an update patch.
+func TestApplyStickyCreateAndUpdate(t *testing.T) {
+	ctx := context.Background()
+	st, _ := store.Open(filepath.Join(t.TempDir(), "sticky.cogmem.db"))
+	defer st.Close()
+
+	yes := true
+	createOut := Output{
+		DomainOps: []DomainOp{{
+			Op: "create", TmpID: "t1", Name: "House Rules", Summary: "global",
+			Sticky: &yes, Status: "active", Evidence: store.Evidence{SeqStart: 1, SeqEnd: 1},
+		}},
+	}
+	if _, err := Apply(ctx, st, createOut, ApplyContext{AgentID: "alice", Actor: "sleep_cycle"}); err != nil {
+		t.Fatalf("apply create: %v", err)
+	}
+	d, err := st.DomainByName(ctx, st.DB(), "House Rules")
+	if err != nil || !d.Sticky() {
+		t.Fatalf("created domain sticky=%v err=%v, want sticky", d.Sticky(), err)
+	}
+
+	no := false
+	updateOut := Output{
+		DomainOps: []DomainOp{{
+			Op: "update", ID: d.ID, Sticky: &no,
+			Evidence: store.Evidence{SeqStart: 2, SeqEnd: 2},
+		}},
+	}
+	if _, err := Apply(ctx, st, updateOut, ApplyContext{AgentID: "alice", Actor: "sleep_cycle"}); err != nil {
+		t.Fatalf("apply update: %v", err)
+	}
+	d2, _ := st.GetDomain(ctx, st.DB(), d.ID, false)
+	if d2.Sticky() {
+		t.Fatalf("domain still sticky after update releasing it")
 	}
 }

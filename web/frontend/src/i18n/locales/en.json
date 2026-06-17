@@ -524,6 +524,7 @@
       "last_run": "Last consolidation",
       "never": "never",
       "triggers": "Triggers",
+      "sticky": "sticky",
       "no_memories": "No active memories in this domain.",
       "memory_count": "{{count}} memories"
     }

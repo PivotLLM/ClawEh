@@ -55,7 +55,7 @@ function DomainCard({ d }: { d: MemoryDomain }) {
           className={`size-4 transition-transform ${open ? "rotate-90" : ""}`}
         />
         <span className="font-medium">{d.name}</span>
-        <Pill>{d.type}</Pill>
+        {d.sticky && <Pill>{t("pages.memory.sticky")}</Pill>}
         <span className="text-muted-foreground ml-auto text-xs">
           {t("pages.memory.memory_count", { count: d.memories.length })}
         </span>

@@ -21,11 +21,12 @@ export interface MemoryMemory {
 
 export interface MemoryDomain {
   id: string
-  type: string
+  sticky: boolean
   name: string
   status: string
   summary: string
   triggers?: string
+  keyword_triggers?: string
   memories: MemoryMemory[]
 }
 

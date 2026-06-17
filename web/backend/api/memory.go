@@ -42,13 +42,14 @@ type memoryMemory struct {
 }
 
 type memoryDomain struct {
-	ID       string         `json:"id"`
-	Type     string         `json:"type"`
-	Name     string         `json:"name"`
-	Status   string         `json:"status"`
-	Summary  string         `json:"summary"`
-	Triggers string         `json:"triggers,omitempty"`
-	Memories []memoryMemory `json:"memories"`
+	ID              string         `json:"id"`
+	Sticky          bool           `json:"sticky"`
+	Name            string         `json:"name"`
+	Status          string         `json:"status"`
+	Summary         string         `json:"summary"`
+	Triggers        string         `json:"triggers,omitempty"`
+	KeywordTriggers string         `json:"keyword_triggers,omitempty"`
+	Memories        []memoryMemory `json:"memories"`
 }
 
 type memoryRun struct {
@@ -197,13 +198,14 @@ func (h *Handler) handleGetMemoryStore(w http.ResponseWriter, r *http.Request) {
 	for _, d := range domains {
 		mems, _ := s.ListMemories(ctx, db, d.ID, cogmemstore.StatusActive)
 		dm := memoryDomain{
-			ID:       d.ID,
-			Type:     string(d.Type),
-			Name:     d.Name,
-			Status:   string(d.Status),
-			Summary:  d.Summary,
-			Triggers: d.Triggers,
-			Memories: make([]memoryMemory, 0, len(mems)),
+			ID:              d.ID,
+			Sticky:          d.Sticky(),
+			Name:            d.Name,
+			Status:          string(d.Status),
+			Summary:         d.Summary,
+			Triggers:        d.Triggers,
+			KeywordTriggers: d.KeywordTriggers,
+			Memories:        make([]memoryMemory, 0, len(mems)),
 		}
 		for _, m := range mems {
 			dm.Memories = append(dm.Memories, toMemoryMemory(m))

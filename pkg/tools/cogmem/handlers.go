@@ -64,6 +64,13 @@ func argStr(call *global.ToolCall, key string) string {
 	return ""
 }
 
+func argBool(call *global.ToolCall, key string, def bool) bool {
+	if v, ok := call.Args[key].(bool); ok {
+		return v
+	}
+	return def
+}
+
 func argInt(call *global.ToolCall, key string, def int) int {
 	switch v := call.Args[key].(type) {
 	case float64:
@@ -118,12 +125,15 @@ func getDomain(s *store.Store, call *global.ToolCall) (string, error) {
 		return "", mapErr(err, id)
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "Domain %s [%s] %q (status=%s, version=%d)\n", d.ID, d.Type, d.Name, d.Status, d.Version)
+	fmt.Fprintf(&b, "Domain %s %q (sticky=%t, status=%s, version=%d)\n", d.ID, d.Name, d.Sticky(), d.Status, d.Version)
 	if d.Summary != "" {
 		fmt.Fprintf(&b, "Summary: %s\n", d.Summary)
 	}
 	if d.Triggers != "" {
-		fmt.Fprintf(&b, "Triggers (auto-load on tool use): %s\n", d.Triggers)
+		fmt.Fprintf(&b, "Tool triggers (auto-load on tool use): %s\n", d.Triggers)
+	}
+	if d.KeywordTriggers != "" {
+		fmt.Fprintf(&b, "Keyword triggers (auto-load when mentioned): %s\n", d.KeywordTriggers)
 	}
 	writeStateLine(&b, "Blockers", d.State.Blockers)
 	writeStateLine(&b, "Next actions", d.State.NextActions)
@@ -169,12 +179,8 @@ func listDomains(s *store.Store, call *global.ToolCall) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	typeFilter := argStr(call, "type")
 	var out []store.Domain
 	for _, d := range domains {
-		if typeFilter != "" && string(d.Type) != typeFilter {
-			continue
-		}
 		out = append(out, d)
 	}
 	if len(out) == 0 {
@@ -187,7 +193,11 @@ func listDomains(s *store.Store, call *global.ToolCall) (string, error) {
 		if summary == "" {
 			summary = "(no summary)"
 		}
-		fmt.Fprintf(&b, "  %s · %s · %s · %s · %s\n", d.ID, d.Type, d.Name, summary, d.Status)
+		marker := ""
+		if d.Sticky() {
+			marker = " [sticky]"
+		}
+		fmt.Fprintf(&b, "  %s · %s%s · %s · %s\n", d.ID, d.Name, marker, summary, d.Status)
 	}
 	return b.String(), nil
 }
@@ -216,7 +226,7 @@ func explain(s *store.Store, call *global.ToolCall) (string, error) {
 func explainDomain(d store.Domain) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Domain %s %q\n", d.ID, d.Name)
-	fmt.Fprintf(&b, "  type=%s status=%s version=%d\n", d.Type, d.Status, d.Version)
+	fmt.Fprintf(&b, "  sticky=%t status=%s version=%d\n", d.Sticky(), d.Status, d.Version)
 	fmt.Fprintf(&b, "  created=%s updated=%s\n", d.CreatedAt.Format("2006-01-02"), d.UpdatedAt.Format("2006-01-02"))
 	if d.Summary != "" {
 		fmt.Fprintf(&b, "  summary: %s\n", d.Summary)
@@ -252,20 +262,31 @@ func remember(s *store.Store, call *global.ToolCall) (string, error) {
 	if domainID == "" {
 		hint := argStr(call, "domain_hint")
 		if hint == "" {
-			// No domain specified → the always-on general domain (seeded on open).
+			// No domain specified → the sticky "General" domain. Re-create it if the
+			// user previously deleted it, so there's always a default home.
 			g, err := s.GeneralDomain(call.Ctx, s.DB())
+			if errors.Is(err, store.ErrNotFound) {
+				g, err = s.CreateDomain(call.Ctx, s.DB(), store.CreateDomainParams{
+					AgentID: call.AgentID, SessionKey: call.Session,
+					Name: "General", Sticky: true, Status: store.StatusActive,
+					Summary: "Global rules, preferences, and standing facts.",
+				})
+			}
 			if err != nil {
 				return "", err
 			}
 			domainID = g.ID
 		} else {
-			d, err := s.CreateDomain(call.Ctx, s.DB(), store.CreateDomainParams{
-				AgentID:    call.AgentID,
-				SessionKey: call.Session,
-				Type:       store.DomainProject,
-				Name:       hint,
-				Status:     store.StatusActive,
-			})
+			// Reuse an existing domain with that name, else create a new (non-sticky) one.
+			d, err := s.DomainByName(call.Ctx, s.DB(), hint)
+			if errors.Is(err, store.ErrNotFound) {
+				d, err = s.CreateDomain(call.Ctx, s.DB(), store.CreateDomainParams{
+					AgentID:    call.AgentID,
+					SessionKey: call.Session,
+					Name:       hint,
+					Status:     store.StatusActive,
+				})
+			}
 			if err != nil {
 				return "", err
 			}
@@ -296,18 +317,21 @@ func updateDomain(s *store.Store, call *global.ToolCall) (string, error) {
 	if id == "" {
 		return "", errors.New("id is required")
 	}
-	if _, ok := call.Args["expected_version"]; !ok {
-		return "", errors.New("expected_version is required")
-	}
-	expected := int64(argInt(call, "expected_version", 0))
-
 	cur, err := s.GetDomain(call.Ctx, s.DB(), id, false)
 	if err != nil {
 		return "", mapErr(err, id)
 	}
-	p := store.UpdateDomainParams{ExpectedVersion: expected}
+	p := store.UpdateDomainParams{}
+	if _, ok := call.Args["set_name"]; ok {
+		v := argStr(call, "set_name")
+		p.Name = &v
+	}
 	if v := argStr(call, "set_summary"); v != "" {
 		p.Summary = &v
+	}
+	if _, ok := call.Args["set_sticky"]; ok {
+		v := argBool(call, "set_sticky", false)
+		p.Sticky = &v
 	}
 	state := cur.State
 	changedState := false
@@ -337,16 +361,16 @@ func updateDomain(s *store.Store, call *global.ToolCall) (string, error) {
 		v := strings.Join(kw, ",")
 		p.KeywordTriggers = &v
 	}
-	if p.Summary == nil && p.State == nil && p.Triggers == nil && p.KeywordTriggers == nil {
-		return "", errors.New("nothing to update (set_summary, set_triggers, set_keyword_triggers, or a list field required)")
+	if p.Name == nil && p.Summary == nil && p.State == nil && p.Triggers == nil && p.KeywordTriggers == nil && p.Sticky == nil {
+		return "", errors.New("nothing to update (set_name, set_summary, set_sticky, set_triggers, set_keyword_triggers, or a list field)")
 	}
 	if err := s.UpdateDomain(call.Ctx, s.DB(), id, p); err != nil {
-		if errors.Is(err, store.ErrVersionConflict) {
-			return "", fmt.Errorf("version conflict: domain %s is at version %d, not %d — reload and retry", id, cur.Version, expected)
+		if errors.Is(err, store.ErrDuplicateName) {
+			return "", fmt.Errorf("a domain named that already exists — pick a unique name")
 		}
 		return "", mapErr(err, id)
 	}
-	return fmt.Sprintf("Updated domain %s (now version %d).", id, cur.Version+1), nil
+	return fmt.Sprintf("Updated domain %s.", id), nil
 }
 
 // exportMemory writes the agent's entire active memory as one Markdown document
@@ -394,16 +418,15 @@ func confirmHook(s *store.Store, call *global.ToolCall) (string, error) {
 }
 
 func createDomain(s *store.Store, call *global.ToolCall) (string, error) {
-	typ := argStr(call, "type")
 	name := argStr(call, "name")
-	if typ == "" || name == "" {
-		return "", errors.New("type and name are required")
+	if name == "" {
+		return "", errors.New("name is required")
 	}
 	kw, _ := argStrSlice(call, "keyword_triggers")
 	d, err := s.CreateDomain(call.Ctx, s.DB(), store.CreateDomainParams{
 		AgentID:         call.AgentID,
 		SessionKey:      call.Session,
-		Type:            store.DomainType(typ),
+		Sticky:          argBool(call, "sticky", false),
 		Name:            name,
 		Status:          store.StatusActive,
 		Summary:         argStr(call, "summary"),
@@ -411,9 +434,25 @@ func createDomain(s *store.Store, call *global.ToolCall) (string, error) {
 		KeywordTriggers: strings.Join(kw, ","),
 	})
 	if err != nil {
+		if errors.Is(err, store.ErrDuplicateName) {
+			return "", fmt.Errorf("a domain named %q already exists — use it, rename it, or pick a unique name", name)
+		}
 		return "", err
 	}
-	return fmt.Sprintf("Created domain %s (type=%s, name=%q).", d.ID, d.Type, d.Name), nil
+	return fmt.Sprintf("Created domain %s (name=%q, sticky=%t).", d.ID, d.Name, d.Sticky()), nil
+}
+
+func migrateDomain(s *store.Store, call *global.ToolCall) (string, error) {
+	from := argStr(call, "from")
+	to := argStr(call, "to")
+	if from == "" || to == "" {
+		return "", errors.New("from and to domain ids are required")
+	}
+	n, err := s.MigrateDomain(call.Ctx, s.DB(), from, to)
+	if err != nil {
+		return "", mapErr(err, from)
+	}
+	return fmt.Sprintf("Migrated %d mem(s) from domain %s into %s; %s deleted.", n, from, to, from), nil
 }
 
 func archiveDomain(s *store.Store, call *global.ToolCall) (string, error) {

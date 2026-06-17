@@ -30,16 +30,20 @@ future turn.
 # OPERATIONS
 Per piece of information choose: domains → create / update / archive; memories →
 add / supersede / retire; or do nothing.
-- Put knowledge in the right domain. The always-on `general` domain (already in
-  `current_state`) holds global rules, preferences, and standing facts that should
-  always apply — add such memories there. Topic domains: `project`, `workflow`
-  (create these for distinct ongoing topics). Never create a `general` domain; one
-  already exists.
-- Register each clearly distinct ongoing project as a `project` domain (with a
-  `tmp_id`), so the assistant's project list stays complete. Keep its current
-  status on the domain's `state` (blockers/next_actions), not as memories. Only
-  create a domain for a topic not already represented. Memories may reference its
-  `tmp_id`.
+- A domain is identified by its `name`, which MUST be unique — never create a
+  second domain with a name that already exists in `current_state` (reuse or
+  update it instead).
+- Domains are either **sticky** or not. A sticky domain is injected into context
+  every turn; use it for global rules, preferences, and standing facts that should
+  ALWAYS apply. The pre-existing sticky `General` domain holds these — add such
+  memories there; do not create another sticky global domain. Non-sticky (topic)
+  domains are loaded only when relevant (by recency, lexical match, or triggers);
+  use them for distinct ongoing topics/projects. Set `sticky` sparingly.
+- Register each clearly distinct ongoing project/topic as its own (non-sticky)
+  domain (with a `tmp_id`), so the assistant's project list stays complete. Keep
+  its current status on the domain's `state` (blockers/next_actions), not as
+  memories. Only create a domain for a topic not already represented. Memories may
+  reference its `tmp_id`.
 - Tool triggers (optional): if a domain clearly pertains to specific tools the
   agent used — tool calls appear in `new_messages` — set `triggers` to a
   comma-separated list of short distinctive words from those tool names, wrapped
@@ -75,12 +79,13 @@ Return exactly this shape (keys must exist; arrays may be empty):
 ```json
 {
   "domain_ops": [
-    { "op": "create", "tmp_id": "t1", "type": "project|workflow",
-      "name": "string", "summary": "one line", "status": "active|review",
+    { "op": "create", "tmp_id": "t1", "name": "string (unique)",
+      "sticky": false, "summary": "one line", "status": "active|review",
       "triggers": "substr1,substr2 (optional)",
       "keyword_triggers": "phrase one,phrase two (optional)",
       "evidence": { "seq_start": 0, "seq_end": 0 } },
-    { "op": "update", "id": "d7", "expected_version": 4, "summary": "one line",
+    { "op": "update", "id": "d7", "name": "rename (optional)",
+      "sticky": true, "summary": "one line",
       "state": { "blockers": [], "next_actions": [], "constraints": [] },
       "triggers": "substr1,substr2 (optional)",
       "keyword_triggers": "phrase one,phrase two (optional)",
@@ -106,9 +111,13 @@ Return exactly this shape (keys must exist; arrays may be empty):
   ]
 }
 ```
+A domain `update` is a patch: provide only the fields you want to change
+(`name`, `sticky`, `summary`, `state`, `triggers`, `keyword_triggers`); omitted
+fields are left unchanged. No version number is needed.
+
 The validator discards the whole payload if: any evidence falls outside the batch
-seq range; an update/archive/retire references an unknown id; a memory references
-a non-existent domain/tmp_id; an enum is invalid; or an inferred item is not
-`review`.
+seq range; an update/archive/retire references an unknown id; a `create` uses a
+name that already exists; a memory references a non-existent domain/tmp_id; an
+enum is invalid; or an inferred item is not `review`.
 
 Return only the JSON object.

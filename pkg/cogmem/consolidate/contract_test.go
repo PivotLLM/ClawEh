@@ -15,7 +15,7 @@ import (
 func sampleInput() Input {
 	return Input{
 		CurrentState: CurrentState{Domains: []DomainView{{
-			ID: "d4", Type: "project", Name: "Layout", Status: "active", Version: 2,
+			ID: "d4", Name: "Layout", Status: "active", Version: 2,
 			Memories: []MemoryView{{ID: "h9", Type: "rule", Text: "Never use the color blue.", Confidence: 0.9}},
 		}}},
 		NewMessages: []Message{{Seq: 512, Role: "user", Text: "Actually, use blue for the layout."}},
@@ -45,8 +45,7 @@ func TestValidateRejections(t *testing.T) {
 		"unknown retire id":     {MemoryOps: []MemoryOp{{Op: "retire", ID: "hZ", Reason: "x", Evidence: ev(512, 512)}}},
 		"invalid kind":          {MemoryOps: []MemoryOp{{Op: "add", Domain: "d4", Type: "bogus", Text: "ok", Source: "user_explicit", Status: "active", Evidence: ev(512, 512)}}},
 		"inferred active":       {MemoryOps: []MemoryOp{{Op: "add", Domain: "d4", Type: "fact", Text: "ok", Source: "assistant_inferred", Status: "active", Evidence: ev(512, 512)}}},
-		"update no version":     {DomainOps: []DomainOp{{Op: "update", ID: "d4", Evidence: ev(512, 512)}}},
-		"create no tmp_id":      {DomainOps: []DomainOp{{Op: "create", Type: "project", Name: "X", Evidence: ev(512, 512)}}},
+		"create no tmp_id":      {DomainOps: []DomainOp{{Op: "create", Name: "X", Evidence: ev(512, 512)}}},
 	}
 	for name, out := range cases {
 		if err := out.Validate(in); err == nil {
@@ -58,11 +57,24 @@ func TestValidateRejections(t *testing.T) {
 func TestValidateTmpIDReference(t *testing.T) {
 	in := sampleInput()
 	out := Output{
-		DomainOps: []DomainOp{{Op: "create", TmpID: "t1", Type: "project", Name: "New", Status: "active", Evidence: ev(512, 512)}},
+		DomainOps: []DomainOp{{Op: "create", TmpID: "t1", Name: "New", Status: "active", Evidence: ev(512, 512)}},
 		MemoryOps: []MemoryOp{{Op: "add", Domain: "t1", Type: "fact", Text: "a fact", Source: "user_explicit", Status: "active", Evidence: ev(512, 512)}},
 	}
 	if err := out.Validate(in); err != nil {
 		t.Fatalf("tmp_id reference rejected: %v", err)
+	}
+}
+
+// TestValidateUpdateIsPatch confirms a domain update no longer requires a version
+// (the patch model dropped expected_version) and accepts an optional sticky flag.
+func TestValidateUpdateIsPatch(t *testing.T) {
+	in := sampleInput()
+	yes := true
+	out := Output{
+		DomainOps: []DomainOp{{Op: "update", ID: "d4", Sticky: &yes, Summary: "new", Evidence: ev(512, 512)}},
+	}
+	if err := out.Validate(in); err != nil {
+		t.Fatalf("versionless update patch rejected: %v", err)
 	}
 }
 

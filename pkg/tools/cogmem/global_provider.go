@@ -80,12 +80,10 @@ func (globalCogmemProvider) RegisterTools(deps global.Deps) []global.ToolDefinit
 			}, true, search),
 
 		def("domain_list",
-			"List memory domains (id, name, summary, type, status). Optionally filter by status and/or type. To answer \"what am I working on?\", list type=project.",
+			"List memory domains (id, name, summary, status; sticky ones are marked). Optionally filter by status. To see everything you're tracking, list with no filter.",
 			[]global.Parameter{
 				{Name: "status", Type: "string", Required: false, Description: "Filter by status.",
 					Enum: []any{"active", "review", "archived"}},
-				{Name: "type", Type: "string", Required: false, Description: "Filter by domain type.",
-					Enum: []any{"project", "workflow", "general"}},
 			}, true, listDomains),
 
 		def("explain",
@@ -95,10 +93,10 @@ func (globalCogmemProvider) RegisterTools(deps global.Deps) []global.ToolDefinit
 			}, true, explain),
 
 		def("memory_create",
-			"Record a durable memory (a fact, preference, or rule). With NO domain_id and NO domain_hint it records to your always-on 'general' domain (global rules/preferences/facts that should always be in context). Give a domain_hint to create/use a project domain, or a domain_id to target a specific one.",
+			"Record a durable memory (a fact, preference, or rule). With NO domain_id and NO domain_hint it records to your sticky 'General' domain (global rules/preferences/facts always in context). Give a domain_hint to use (or create) a topic domain by name, or a domain_id to target a specific one.",
 			[]global.Parameter{
-				{Name: "domain_id", Type: "string", Required: false, Description: "Target domain id. If omitted and no domain_hint is given, records to the always-on general domain."},
-				{Name: "domain_hint", Type: "string", Required: false, Description: "Name for a new project domain when domain_id is not given (omit to use the general domain)."},
+				{Name: "domain_id", Type: "string", Required: false, Description: "Target domain id. If omitted and no domain_hint is given, records to the sticky General domain."},
+				{Name: "domain_hint", Type: "string", Required: false, Description: "A domain name: an existing domain with that name is reused, otherwise a new (non-sticky) one is created. Omit to use General."},
 				{Name: "type", Type: "string", Required: true, Description: "Memory type: fact (something true), preference (how the user likes things done), or rule (a hard directive).",
 					Enum: []any{"fact", "preference", "rule"}},
 				{Name: "text", Type: "string", Required: true, Description: "The memory content to store."},
@@ -108,10 +106,11 @@ func (globalCogmemProvider) RegisterTools(deps global.Deps) []global.ToolDefinit
 			}, true, remember),
 
 		def("domain_update",
-			"Update a domain's summary, state (blockers / next actions / constraints), or triggers. Pass the current expected_version (from domain_get or domain_list) so you do not overwrite newer changes.",
+			"Update a domain — a patch: pass only the fields you want to change (rename, summary, state, sticky, triggers). No version needed.",
 			[]global.Parameter{
 				{Name: "id", Type: "string", Required: true, Description: "Domain id."},
-				{Name: "expected_version", Type: "integer", Required: true, Description: "The version you last read (from domain_get or domain_list); rejected if it is stale."},
+				{Name: "set_name", Type: "string", Required: false, Description: "Rename the domain. Names must be unique; rejected if another domain already uses it."},
+				{Name: "set_sticky", Type: "boolean", Required: false, Description: "true = always inject this domain into context every turn; false = routed only when relevant. Use sticky sparingly."},
 				{Name: "set_summary", Type: "string", Required: false, Description: "Replace the domain summary."},
 				{Name: "set_blockers", Type: "array", Items: "string", Required: false, Description: "Replace the blockers list."},
 				{Name: "set_next_actions", Type: "array", Items: "string", Required: false, Description: "Replace the next-actions list."},
@@ -134,11 +133,10 @@ func (globalCogmemProvider) RegisterTools(deps global.Deps) []global.ToolDefinit
 			}, true, confirmHook),
 
 		def("domain_create",
-			"Create a new memory domain and return its assigned id. Register each ongoing project as a 'project' domain so your project list stays complete.",
+			"Create a new memory domain and return its assigned id. A domain groups related memories; register each ongoing project/topic as its own domain. Names must be unique — creating one with an existing name returns an error (reuse or rename instead).",
 			[]global.Parameter{
-				{Name: "type", Type: "string", Required: true, Description: "Domain type.",
-					Enum: []any{"project", "workflow"}},
-				{Name: "name", Type: "string", Required: true, Description: "Domain name."},
+				{Name: "name", Type: "string", Required: true, Description: "Domain name (must be unique)."},
+				{Name: "sticky", Type: "boolean", Required: false, Description: "true = always inject this domain into context every turn (use sparingly). Default false: loaded only when relevant."},
 				{Name: "summary", Type: "string", Required: false, Description: "Optional one-line summary."},
 				{Name: "triggers", Type: "string", Required: false, Description: "Optional tool triggers: a comma-separated list of patterns. This domain auto-loads whenever you use a tool whose name contains one of them — use short distinctive words wrapped in *, e.g. \"*mail*\" or \"*github*,*calendar*\". (The * are optional wildcards; \"mail\" and \"*mail*\" behave the same — matching is always \"contains\".) MCP tools work too: their names look like mcp_<server>_<tool>, so \"*github*\" matches every tool from the github server. Matching ignores case and treats _ and __ the same."},
 				{Name: "keyword_triggers", Type: "array", Items: "string", Required: false, Description: "Optional keyword triggers: a list of distinctive words/phrases that load this domain when one appears in the incoming message text (e.g. a scheduled reminder, or what the user says). Matched as a whole phrase on word boundaries, so prefer multi-word phrases — [\"morning routine\",\"weekly report\"] — over common single words like \"morning\", which would match too often. Use this (not tool triggers) to have a workflow's context pulled up when a cron job fires."},
@@ -149,6 +147,13 @@ func (globalCogmemProvider) RegisterTools(deps global.Deps) []global.ToolDefinit
 			[]global.Parameter{
 				{Name: "id", Type: "string", Required: true, Description: "Domain id."},
 			}, true, archiveDomain),
+
+		def("domain_migrate",
+			"Merge two domains: move every memory from the 'from' domain into the 'to' domain, then permanently delete the 'from' domain. Use this to consolidate duplicate/overlapping domains into one.",
+			[]global.Parameter{
+				{Name: "from", Type: "string", Required: true, Description: "Source domain id — its memories are moved out and the domain is deleted."},
+				{Name: "to", Type: "string", Required: true, Description: "Destination domain id — receives the moved memories."},
+			}, true, migrateDomain),
 
 		def("memory_forget",
 			"Retire all active memories matching a query (optionally limited to one domain). Reports how many were retired.",

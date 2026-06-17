@@ -34,7 +34,7 @@ func Apply(ctx context.Context, st *store.Store, out Output, ac ApplyContext) (i
 			case "create":
 				d, err := st.CreateDomain(ctx, tx, store.CreateDomainParams{
 					AgentID: ac.AgentID, SessionKey: ac.SessionKey,
-					Type:     store.DomainType(op.Type),
+					Sticky:   op.Sticky != nil && *op.Sticky,
 					Name:     op.Name,
 					Status:   store.Status(orDefault(op.Status, "active")),
 					Summary:  op.Summary,
@@ -49,7 +49,7 @@ func Apply(ctx context.Context, st *store.Store, out Output, ac ApplyContext) (i
 					return err
 				}
 			case "update":
-				p := store.UpdateDomainParams{ExpectedVersion: derefVersion(op.ExpectedVersion)}
+				p := store.UpdateDomainParams{}
 				if op.Summary != "" {
 					s := op.Summary
 					p.Summary = &s
@@ -68,6 +68,9 @@ func Apply(ctx context.Context, st *store.Store, out Output, ac ApplyContext) (i
 				if op.KeywordTriggers != "" {
 					k := op.KeywordTriggers
 					p.KeywordTriggers = &k
+				}
+				if op.Sticky != nil {
+					p.Sticky = op.Sticky
 				}
 				if err := st.UpdateDomain(ctx, tx, op.ID, p); err != nil {
 					return err
@@ -166,13 +169,6 @@ func orDefault(v, def string) string {
 		return def
 	}
 	return v
-}
-
-func derefVersion(p *int64) int64 {
-	if p == nil {
-		return 0
-	}
-	return *p
 }
 
 func i64ptr(v int64) *int64 { return &v }

@@ -158,15 +158,25 @@ func (c *Composer) StableBlock(ctx context.Context) (string, int64, error) {
 	}
 	var b strings.Builder
 
-	// The always-on "general" domain: global rules, preferences, and standing facts.
+	// Sticky domains: always injected. Each is labeled so the model knows which
+	// domain it's seeing and why; higher StickyPriority first, then name.
 	active, err := c.st.ListDomains(ctx, db, store.StatusActive)
 	if err != nil {
 		return "", rev, err
 	}
+	var sticky []store.Domain
 	for _, d := range active {
-		if !d.Type.AlwaysOn() {
-			continue
+		if d.Sticky() {
+			sticky = append(sticky, d)
 		}
+	}
+	sort.SliceStable(sticky, func(i, j int) bool {
+		if sticky[i].StickyPriority != sticky[j].StickyPriority {
+			return sticky[i].StickyPriority > sticky[j].StickyPriority
+		}
+		return sticky[i].Name < sticky[j].Name
+	})
+	for _, d := range sticky {
 		hooks, err := c.st.ListMemories(ctx, db, d.ID, store.StatusActive)
 		if err != nil {
 			return "", rev, err
@@ -175,7 +185,7 @@ func (c *Composer) StableBlock(ctx context.Context) (string, int64, error) {
 		if len(hooks) == 0 {
 			continue
 		}
-		b.WriteString("## General\n")
+		fmt.Fprintf(&b, "COGMEM domain %s is sticky:\n\n", d.Name)
 		for _, h := range hooks {
 			fmt.Fprintf(&b, "- %s\n", h.Text)
 		}
@@ -198,17 +208,17 @@ func (c *Composer) StableBlock(ctx context.Context) (string, int64, error) {
 		}
 	}
 
-	// Domain index (routed, active topic domains), stable sort by id.
+	// Domain index (routed, active non-sticky topic domains), stable sort by id.
 	var index []store.Domain
 	for _, d := range active {
-		if !d.Type.AlwaysOn() {
+		if !d.Sticky() {
 			index = append(index, d)
 		}
 	}
 	if len(index) > 0 {
-		b.WriteString("## Projects / Topics (index)\n")
+		b.WriteString("## Topics (index)\n")
 		for _, d := range index {
-			fmt.Fprintf(&b, "- [%s] %s · %s — %s\n", d.Type, d.ID, d.Name, oneLine(d.Summary))
+			fmt.Fprintf(&b, "- %s · %s — %s\n", d.ID, d.Name, oneLine(d.Summary))
 		}
 		b.WriteString("\n")
 	}
@@ -230,7 +240,7 @@ func (c *Composer) RoutedBlock(ctx context.Context, req RouteRequest) (RoutedRes
 	}
 	var topics []store.Domain
 	for _, d := range active {
-		if !d.Type.AlwaysOn() {
+		if !d.Sticky() {
 			topics = append(topics, d)
 		}
 	}

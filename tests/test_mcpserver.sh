@@ -55,7 +55,7 @@ FULL_URL="${SERVER_URL}${ENDPOINT}"
 # (subagent capability) and hw_i2c/hw_spi (Linux + I2C/SPI devices) are also
 # exposed but only probed when actually present in the catalogue, so this script
 # stays portable.
-EXPECTED_TOOLS="file_read file_write file_edit file_append file_list file_copy web_fetch web_search msg_send_file session_messages session_search session_compact session_info session_summary_list session_summary_get session_clear shell_exec skill_find skill_install cron_schedule cogmem_domain_get cogmem_memory_search cogmem_domain_list cogmem_explain cogmem_memory_create cogmem_domain_update cogmem_memory_retire cogmem_memory_confirm cogmem_domain_create cogmem_domain_archive cogmem_memory_forget cogmem_consolidate cogmem_status cogmem_export common_list common_get common_put common_delete"
+EXPECTED_TOOLS="file_read file_write file_edit file_append file_list file_copy web_fetch web_search msg_send_file session_messages session_search session_compact session_info session_summary_list session_summary_get session_clear shell_exec skill_find skill_install cron_schedule cogmem_domain_get cogmem_memory_search cogmem_domain_list cogmem_explain cogmem_memory_create cogmem_domain_update cogmem_memory_retire cogmem_memory_confirm cogmem_domain_create cogmem_domain_archive cogmem_domain_migrate cogmem_memory_forget cogmem_consolidate cogmem_status cogmem_export common_list common_get common_put common_delete"
 EXPECTED_TOOL_COUNT=37
 
 # Namespace prefixes that must have at least one tool in the catalogue.
@@ -417,6 +417,7 @@ check_tool "1.13" "cogmem_domain_create"
 check_tool "1.14" "cogmem_memory_create"
 check_tool "1.15" "cogmem_status"
 check_tool "1.16" "cogmem_memory_confirm"
+check_tool "1.17" "cogmem_domain_migrate"
 # find_tools_regex and find_tools_bm25 are only registered when
 # tools.mcp.discovery.enabled=true — not set in the standard test config.
 
@@ -587,10 +588,10 @@ else
 
     # create_domain returns a freshly assigned domain id and reports success.
     # Includes a tool-trigger list (comma-delimited substrings) to exercise that param.
-    run_test_ok_auth "4c.1 cogmem_domain_create creates a project domain" \
-        "cogmem_domain_create" "{\"type\":\"project\",\"name\":\"$COGMEM_DOMAIN\",\"triggers\":\"google_gmail,system\"}" "Created domain"
+    run_test_ok_auth "4c.1 cogmem_domain_create creates a (non-sticky) topic domain" \
+        "cogmem_domain_create" "{\"name\":\"$COGMEM_DOMAIN\",\"triggers\":\"google_gmail,system\"}" "Created domain"
 
-    # remember with a domain_hint auto-creates/uses a project domain and records
+    # remember with a domain_hint auto-creates/uses a topic domain and records
     # a durable hook — no pre-existing id required, so it succeeds deterministically.
     run_test_ok_auth "4c.2 cogmem_memory_create records a hook (domain_hint)" \
         "cogmem_memory_create" "{\"domain_hint\":\"$COGMEM_DOMAIN\",\"type\":\"fact\",\"text\":\"$COGMEM_HOOK_TEXT\"}"
@@ -620,13 +621,16 @@ else
         "cogmem_explain" '{"id":"dMCPtest"}'
 
     run_test_not_auth_err "4c.9 cogmem_domain_update — token accepted" \
-        "cogmem_domain_update" '{"id":"dMCPtest","expected_version":1,"set_summary":"probe"}'
+        "cogmem_domain_update" '{"id":"dMCPtest","set_summary":"probe","set_sticky":true}'
 
     run_test_not_auth_err "4c.10 cogmem_memory_retire — token accepted" \
         "cogmem_memory_retire" '{"id":"hMCPtest","reason":"probe"}'
 
     run_test_not_auth_err "4c.11 cogmem_domain_archive — token accepted" \
         "cogmem_domain_archive" '{"id":"dMCPtest"}'
+
+    run_test_not_auth_err "4c.11b cogmem_domain_migrate — token accepted" \
+        "cogmem_domain_migrate" '{"from":"dMCPfrom","to":"dMCPto"}'
 
     # --- consolidate: non-blocking, may touch an LLM — graceful probe. ---
 

@@ -9,21 +9,41 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
 // ErrNotFound is returned when an addressed domain or hook does not exist.
 var ErrNotFound = errors.New("cogmem: not found")
 
-// ErrVersionConflict is returned by UpdateDomain when expected_version does not
-// match the stored version (optimistic concurrency).
-var ErrVersionConflict = errors.New("cogmem: version conflict")
+// ErrDuplicateName is returned by CreateDomain/UpdateDomain when a domain name
+// collides with an existing active domain (case-insensitive, trimmed).
+var ErrDuplicateName = errors.New("cogmem: a domain with that name already exists")
+
+// stickyValue maps a sticky bool to the value stored in the legacy "type"
+// column ("1" = sticky, "0" = not). The magnitude is reserved for future sorting.
+func stickyValue(sticky bool) string {
+	if sticky {
+		return "1"
+	}
+	return "0"
+}
+
+// nameTaken reports whether an active domain (other than excludeID) already uses
+// name (case-insensitive, trimmed).
+func (s *Store) nameTaken(ctx context.Context, q DBTX, name, excludeID string) (bool, error) {
+	var n int
+	err := q.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM domains WHERE status=? AND lower(trim(name))=lower(trim(?)) AND id<>?`,
+		string(StatusActive), name, excludeID).Scan(&n)
+	return n > 0, err
+}
 
 // CreateDomainParams are the inputs for CreateDomain.
 type CreateDomainParams struct {
 	AgentID    string
 	SessionKey string
-	Type       DomainType
+	Sticky     bool // injected into every prompt when true (use sparingly)
 	Name       string
 	Status     Status // active or review
 	Summary    string
@@ -33,8 +53,14 @@ type CreateDomainParams struct {
 }
 
 // CreateDomain inserts a new domain, assigns a short id, and bumps stable_rev
-// (a new domain always affects either the index or the pending digest).
+// (a new domain always affects either the index or the pending digest). Returns
+// ErrDuplicateName if an active domain already uses the name.
 func (s *Store) CreateDomain(ctx context.Context, q DBTX, p CreateDomainParams) (Domain, error) {
+	if taken, err := s.nameTaken(ctx, q, p.Name, ""); err != nil {
+		return Domain{}, err
+	} else if taken {
+		return Domain{}, ErrDuplicateName
+	}
 	id, err := freshID(ctx, q, domainIDPrefix, "domains")
 	if err != nil {
 		return Domain{}, err
@@ -52,7 +78,7 @@ func (s *Store) CreateDomain(ctx context.Context, q DBTX, p CreateDomainParams) 
 		                    summary, state_json, schema_name, schema_version,
 		                    last_active_at, triggers, keyword_triggers, created_at, updated_at)
 		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		id, p.AgentID, p.SessionKey, string(p.Type), p.Name, string(p.Status), 1,
+		id, p.AgentID, p.SessionKey, stickyValue(p.Sticky), p.Name, string(p.Status), 1,
 		p.Summary, string(stateJSON), "domain", 1, ts, normalizeTriggers(p.Triggers), normalizeKeywords(p.KeywordTriggers), ts, ts)
 	if err != nil {
 		return Domain{}, fmt.Errorf("cogmem: create domain: %w", err)
@@ -63,26 +89,35 @@ func (s *Store) CreateDomain(ctx context.Context, q DBTX, p CreateDomainParams) 
 	return s.GetDomain(ctx, q, id, false)
 }
 
-// UpdateDomainParams patches a domain under optimistic concurrency.
+// UpdateDomainParams is a patch: every field is optional and only provided
+// (non-nil) fields are changed. There is no optimistic-concurrency check —
+// domain edits (rename, sticky, summary/state) don't risk overwriting data.
 type UpdateDomainParams struct {
-	ExpectedVersion int64
+	Name            *string // rename; rejected with ErrDuplicateName on collision
 	Summary         *string
 	State           *DomainState
 	Status          *Status
 	Triggers        *string // when non-nil, replaces the comma-delimited trigger list
 	KeywordTriggers *string // when non-nil, replaces the comma-delimited keyword-trigger list
+	Sticky          *bool   // when non-nil, sets/clears sticky (always-in-prompt)
 }
 
-// UpdateDomain applies a patch if ExpectedVersion matches, bumping version and
-// (when index/always-on content changed) stable_rev. Returns ErrVersionConflict
-// or ErrNotFound.
+// UpdateDomain applies the patch (only provided fields change) and bumps the
+// version. Returns ErrNotFound for a missing domain, or ErrDuplicateName when a
+// rename collides with another active domain.
 func (s *Store) UpdateDomain(ctx context.Context, q DBTX, id string, p UpdateDomainParams) error {
 	cur, err := s.GetDomain(ctx, q, id, false)
 	if err != nil {
 		return err
 	}
-	if cur.Version != p.ExpectedVersion {
-		return ErrVersionConflict
+	name := cur.Name
+	if p.Name != nil {
+		if taken, terr := s.nameTaken(ctx, q, *p.Name, id); terr != nil {
+			return terr
+		} else if taken {
+			return ErrDuplicateName
+		}
+		name = *p.Name
 	}
 	summary := cur.Summary
 	if p.Summary != nil {
@@ -104,28 +139,73 @@ func (s *Store) UpdateDomain(ctx context.Context, q DBTX, id string, p UpdateDom
 	if p.KeywordTriggers != nil {
 		keywordTriggers = normalizeKeywords(*p.KeywordTriggers)
 	}
+	stickyCol := stickyValue(cur.Sticky())
+	if p.Sticky != nil {
+		stickyCol = stickyValue(*p.Sticky)
+	}
 	stateJSON, err := json.Marshal(state)
 	if err != nil {
 		return err
 	}
 	res, err := q.ExecContext(ctx, `
-		UPDATE domains SET summary=?, state_json=?, status=?, triggers=?, keyword_triggers=?, version=version+1, updated_at=?
-		WHERE id=? AND version=?`,
-		summary, string(stateJSON), string(status), triggers, keywordTriggers, now(), id, p.ExpectedVersion)
+		UPDATE domains SET name=?, summary=?, state_json=?, status=?, triggers=?, keyword_triggers=?, type=?, version=version+1, updated_at=?
+		WHERE id=?`,
+		name, summary, string(stateJSON), string(status), triggers, keywordTriggers, stickyCol, now(), id)
 	if err != nil {
 		return fmt.Errorf("cogmem: update domain: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		return ErrVersionConflict
+		return ErrNotFound
 	}
-	// Index/pending/always-on visibility changed if summary, status, or an
-	// always-on domain changed.
-	if cur.Type.AlwaysOn() || p.Summary != nil || p.Status != nil {
+	// Stable block changes if a sticky domain changed, or name/summary/status/
+	// sticky changed (index + always-in-prompt visibility).
+	if cur.Sticky() || p.Sticky != nil || p.Name != nil || p.Summary != nil || p.Status != nil {
 		if err := bumpStableRev(ctx, q); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// DeleteDomain hard-deletes a domain and all of its memories. Returns ErrNotFound
+// if the domain does not exist.
+func (s *Store) DeleteDomain(ctx context.Context, q DBTX, id string) error {
+	if _, err := s.GetDomain(ctx, q, id, false); err != nil {
+		return err
+	}
+	if _, err := q.ExecContext(ctx, `DELETE FROM memories WHERE domain_id=?`, id); err != nil {
+		return fmt.Errorf("cogmem: delete domain memories: %w", err)
+	}
+	if _, err := q.ExecContext(ctx, `DELETE FROM domains WHERE id=?`, id); err != nil {
+		return fmt.Errorf("cogmem: delete domain: %w", err)
+	}
+	return bumpStableRev(ctx, q)
+}
+
+// MigrateDomain moves every memory from the "from" domain into the "to" domain,
+// then hard-deletes the "from" domain. Both must exist.
+func (s *Store) MigrateDomain(ctx context.Context, q DBTX, fromID, toID string) (moved int, err error) {
+	if fromID == toID {
+		return 0, errors.New("cogmem: from and to domains are the same")
+	}
+	if _, err := s.GetDomain(ctx, q, fromID, false); err != nil {
+		return 0, err
+	}
+	if _, err := s.GetDomain(ctx, q, toID, false); err != nil {
+		return 0, err
+	}
+	res, err := q.ExecContext(ctx, `UPDATE memories SET domain_id=? WHERE domain_id=?`, toID, fromID)
+	if err != nil {
+		return 0, fmt.Errorf("cogmem: migrate memories: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if _, err := q.ExecContext(ctx, `DELETE FROM domains WHERE id=?`, fromID); err != nil {
+		return 0, fmt.Errorf("cogmem: delete migrated domain: %w", err)
+	}
+	if err := bumpStableRev(ctx, q); err != nil {
+		return 0, err
+	}
+	return int(n), nil
 }
 
 // ArchiveDomain marks a domain archived (out of default prompting).
@@ -174,10 +254,25 @@ func (s *Store) GetDomain(ctx context.Context, q DBTX, id string, withMemories b
 	return d, nil
 }
 
-// GeneralDomain returns the mandatory always-on "general" domain, which is
-// seeded on Open so it always exists.
+// DomainByName returns the active domain with the given name (case-insensitive,
+// trimmed). Returns ErrNotFound if none exists.
+func (s *Store) DomainByName(ctx context.Context, q DBTX, name string) (Domain, error) {
+	row := q.QueryRowContext(ctx,
+		domainSelect+` WHERE status=? AND lower(trim(name))=lower(trim(?)) ORDER BY id LIMIT 1`,
+		string(StatusActive), name)
+	d, err := scanDomain(row)
+	if err == sql.ErrNoRows {
+		return Domain{}, ErrNotFound
+	}
+	return d, err
+}
+
+// GeneralDomain returns the seeded "General" domain (created sticky on a fresh
+// DB). It may not exist if the user deleted it. Returns ErrNotFound if absent.
 func (s *Store) GeneralDomain(ctx context.Context, q DBTX) (Domain, error) {
-	row := q.QueryRowContext(ctx, domainSelect+` WHERE type=? ORDER BY id LIMIT 1`, string(DomainGeneral))
+	row := q.QueryRowContext(ctx,
+		domainSelect+` WHERE lower(trim(name))='general' AND status=? ORDER BY id LIMIT 1`,
+		string(StatusActive))
 	d, err := scanDomain(row)
 	if err == sql.ErrNoRows {
 		return Domain{}, ErrNotFound
@@ -353,7 +448,9 @@ func scanDomain(sc scanner) (Domain, error) {
 	if err != nil {
 		return Domain{}, err
 	}
-	d.Type = DomainType(typ)
+	// The legacy "type" column now holds a sticky priority (int as text); a
+	// non-numeric legacy value ("project"/"workflow"/…) parses to 0 (not sticky).
+	d.StickyPriority, _ = strconv.Atoi(strings.TrimSpace(typ))
 	d.Status = Status(status)
 	if err := json.Unmarshal([]byte(stateJSON), &d.State); err != nil {
 		return Domain{}, fmt.Errorf("cogmem: bad state_json for %s: %w", d.ID, err)
