@@ -71,6 +71,18 @@ type memoryDetailResponse struct {
 	PendingList    []memoryMemory `json:"pending_list"`
 }
 
+// sortMemoryStores orders stores by agent name (alphabetical, case-insensitive)
+// and, within an agent, most-recently-updated first.
+func sortMemoryStores(items []memoryStoreItem) {
+	sort.Slice(items, func(i, j int) bool {
+		ai, aj := strings.ToLower(items[i].Agent), strings.ToLower(items[j].Agent)
+		if ai != aj {
+			return ai < aj
+		}
+		return items[i].Updated > items[j].Updated
+	})
+}
+
 // agentForSessionsDir derives the agent id from a sessions directory path of the
 // form <base>/<agentid>/sessions, returning the parent directory's name.
 func agentForSessionsDir(dir string) string {
@@ -119,7 +131,7 @@ func (h *Handler) handleListMemoryStores(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	sort.Slice(items, func(i, j int) bool { return items[i].Updated > items[j].Updated })
+	sortMemoryStores(items)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"sessions": items})

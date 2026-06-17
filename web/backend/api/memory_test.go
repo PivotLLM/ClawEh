@@ -85,6 +85,29 @@ func TestHandleListMemoryStores(t *testing.T) {
 	}
 }
 
+func TestSortMemoryStores(t *testing.T) {
+	items := []memoryStoreItem{
+		{ID: "1", Agent: "wendy", Updated: "2026-06-17T10:00:00Z"},
+		{ID: "2", Agent: "Alice", Updated: "2026-06-17T09:00:00Z"},
+		{ID: "3", Agent: "bob", Updated: "2026-06-17T08:00:00Z"},
+		{ID: "4", Agent: "alice", Updated: "2026-06-17T12:00:00Z"}, // newer alice
+	}
+	sortMemoryStores(items)
+
+	// Agents alphabetical (case-insensitive): alice, alice, bob, wendy.
+	gotAgents := []string{items[0].Agent, items[1].Agent, items[2].Agent, items[3].Agent}
+	wantAgents := []string{"alice", "Alice", "bob", "wendy"} // newer alice first within the group
+	for i := range wantAgents {
+		if gotAgents[i] != wantAgents[i] {
+			t.Fatalf("order[%d] agent = %q, want %q (full: %v)", i, gotAgents[i], wantAgents[i], gotAgents)
+		}
+	}
+	// Within the alice group, the most-recently-updated comes first.
+	if items[0].ID != "4" {
+		t.Fatalf("within-agent tiebreak wrong: first alice id = %q, want 4 (newer)", items[0].ID)
+	}
+}
+
 func TestHandleGetMemoryStore(t *testing.T) {
 	configPath, cleanup := setupOAuthTestEnv(t)
 	defer cleanup()
