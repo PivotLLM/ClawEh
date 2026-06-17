@@ -314,7 +314,68 @@ sudo systemctl enable --now claw
 ```
 
 ClawEh writes logs to `~/.claw/logs/claw.log`. No log redirection is required
-in the service file.
+in the service file. See [Logging](#logging) for rotation and retention.
+
+## Logging
+
+ClawEh writes its own log files to `$CLAW_HOME/logs/` (default `~/.claw/logs/`),
+so the systemd unit needs no `StandardOutput`/`StandardError` redirection:
+
+- **`claw.log`** — the main log: everything at or above the configured `level`.
+- **`error.log`** — a high-signal companion containing only `WARN` and above, so
+  you can scan for problems quickly without wading through routine activity.
+  Fatal errors (including config-file errors that abort startup) are written
+  here as well as to `claw.log`.
+
+### Daily rotation and retention
+
+Both files roll once per day. At local midnight the active `claw.log` / `error.log`
+are renamed to date-stamped archives — `YYYYMMDD-claw.log` and `YYYYMMDD-error.log`
+— and fresh active files are opened. The date is taken from each file's
+last-modified time, so if the gateway was not running at midnight the roll
+happens as soon as it next starts, stamping the archive with the day the log
+actually covers.
+
+Retention is a single setting, `logging.retention_days`. After each roll,
+date-stamped archives older than that many days are deleted; **`0` keeps logs
+forever**. The default is `30`. It can also be set via the
+`CLAW_LOGGING_RETENTION_DAYS` environment variable, and is editable in the WebUI
+under **Config → Runtime → Log retention (days)** (changes apply on the next
+gateway start). Only `YYYYMMDD-*.log` archives are pruned — the active
+`claw.log` / `error.log` and the `dumps/` directory are never touched.
+
+### Logging options
+
+```json
+{
+  "logging": {
+    "file": true,
+    "console": true,
+    "level": "info",
+    "json": false,
+    "retention_days": 30,
+    "log_message_content": false,
+    "dump_refusals": true,
+    "dump_all": false,
+    "dump_failed_compressions": false
+  }
+}
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `file` | `true` | Write to `claw.log` (and `error.log`). |
+| `console` | `true` | Also write to stdout/console. |
+| `level` | `info` | Minimum level: `debug`, `info`, `warn`, `error`. |
+| `json` | `false` | Emit JSON instead of the human-readable console format. |
+| `retention_days` | `30` | Days of rolled daily logs to keep; `0` = keep forever. |
+| `log_message_content` | `false` | Include message text and API request/response bodies in logs. Off by default for privacy. |
+| `dump_refusals` | `true` | See [Diagnostic dumps](#diagnostic-dumps). |
+| `dump_all` | `false` | See [Diagnostic dumps](#diagnostic-dumps). |
+| `dump_failed_compressions` | `false` | Write a dump when a context-compaction (summarization) attempt fails. |
+
+Each option also has a `CLAW_LOGGING_*` environment override (e.g.
+`CLAW_LOGGING_LEVEL`, `CLAW_LOGGING_RETENTION_DAYS`).
 
 ## Diagnostic dumps
 
