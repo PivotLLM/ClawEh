@@ -1559,6 +1559,16 @@ func (al *AgentLoop) runAgentLoop(
 		return "", err
 	}
 
+	// Intentional silence: the model replied with the no-response sentinel (e.g.
+	// a group message addressed to someone else). Clear the typing indicator and
+	// send nothing — never poked or surfaced, unlike a degenerate empty reply.
+	if strings.EqualFold(strings.TrimSpace(finalContent), noResponseSentinel) {
+		logger.DebugCF("agent", "LLM declined to respond (no-response sentinel)",
+			map[string]any{"agent_id": agent.ID, "session_key": opts.SessionKey})
+		al.stopTyping(opts.Channel, opts.ChatID)
+		return "", nil
+	}
+
 	// If last tool had ForUser content and we already sent it, we might not need to send final response
 	// This is controlled by the tool's Silent flag and ForUser content
 
@@ -1696,6 +1706,12 @@ const maxIdenticalToolBatches = 3
 // common degenerate-model failure mode). After the cap the caller sends a
 // graceful fallback rather than leaving the user with no answer.
 const maxEmptyRetries = 2
+
+// noResponseSentinel is the exact reply a model uses to decline responding (e.g.
+// a group message addressed to someone else). It is treated as intentional
+// silence: the typing indicator is cleared, nothing is sent, and the empty-
+// response poke/fallback does NOT fire (distinguishing it from a real failure).
+const noResponseSentinel = "!none"
 
 // toolCallSignature returns a stable signature for a tool-call batch (sorted
 // name+arguments), used to detect a model repeating the identical call. Returns

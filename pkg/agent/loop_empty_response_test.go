@@ -71,6 +71,38 @@ func TestEmptyResponse_DegenerateAfterRetries(t *testing.T) {
 	}
 }
 
+// The no-response sentinel is treated as intentional silence: nothing is sent
+// and the model is NOT poked (one provider call only).
+func TestNoResponseSentinel_SilentNoPoke(t *testing.T) {
+	al, _, _, _, cleanup := newTestAgentLoop(t)
+	defer cleanup()
+
+	agentInstance := al.registry.GetDefaultAgent()
+	if agentInstance == nil {
+		t.Fatal("no default agent")
+	}
+	provider := &sequenceProvider{
+		responses: []*providers.LLMResponse{
+			{Content: "!none", Reasoning: "this message is for someone else", FinishReason: "stop", Normal: true},
+		},
+		errors: []error{nil},
+	}
+	agentInstance.Provider = provider
+
+	resp, err := al.ProcessDirectWithChannel(
+		context.Background(), "hello everyone", "sentinel-test", "test", "test-chat", "channel",
+	)
+	if err != nil {
+		t.Fatalf("ProcessDirectWithChannel: %v", err)
+	}
+	if resp != "" {
+		t.Fatalf("expected silent (empty) response for sentinel, got %q", resp)
+	}
+	if provider.idx != 1 {
+		t.Fatalf("expected exactly 1 provider call (no poke), got %d", provider.idx)
+	}
+}
+
 // Reasoning may arrive in the `reasoning` field (OpenRouter/DeepSeek) rather
 // than `reasoning_content` (OpenAI) — the empty-response handling must treat
 // either as "the model thought but didn't reply" and poke/flag accordingly.
