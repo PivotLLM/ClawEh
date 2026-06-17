@@ -242,6 +242,11 @@ export function ConfigPage() {
           "Summary retention days",
           { min: 0 },
         )
+        const logRetentionDays = parseIntField(
+          form.logRetentionDays,
+          "Log retention days",
+          { min: 0 },
+        )
         // Re-send the full agents.list with default flags flipped only when the
         // default agent actually changed (the patch replaces the array wholesale).
         const defaultAgentChanged = form.defaultAgentId !== baseline.defaultAgentId
@@ -297,6 +302,9 @@ export function ConfigPage() {
           devices: {
             enabled: form.devicesEnabled,
             monitor_usb: form.monitorUSB,
+          },
+          logging: {
+            retention_days: logRetentionDays,
           },
         })
 

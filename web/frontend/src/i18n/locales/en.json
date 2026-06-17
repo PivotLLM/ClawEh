@@ -472,7 +472,9 @@
       "format_success": "JSON formatted successfully.",
       "format_error": "Invalid JSON format.",
       "format": "Format",
-      "unsaved_changes": "You have unsaved changes."
+      "unsaved_changes": "You have unsaved changes.",
+      "log_retention_days": "Log retention (days)",
+      "log_retention_days_hint": "Days of rolled daily logs (YYYYMMDD-claw.log / -error.log) to keep. claw.log rolls at local midnight. 0 = keep forever."
     },
     "logs": {
       "clear": "Clear logs",

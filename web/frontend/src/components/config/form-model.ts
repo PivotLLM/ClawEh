@@ -26,6 +26,7 @@ export interface CoreConfigForm {
   archiveDays: string
   summaryMaxCount: string
   summaryRetentionDays: string
+  logRetentionDays: string
   sessionMode: string
   devicesEnabled: boolean
   monitorUSB: boolean
@@ -92,6 +93,7 @@ export const EMPTY_FORM: CoreConfigForm = {
   archiveDays: "0",
   summaryMaxCount: "0",
   summaryRetentionDays: "0",
+  logRetentionDays: "30",
   sessionMode: "unified",
   devicesEnabled: false,
   monitorUSB: true,
@@ -145,6 +147,7 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
   const summarization = asRecord(root.summarization)
   const session = asRecord(root.session)
   const devices = asRecord(root.devices)
+  const logging = asRecord(root.logging)
   const tools = asRecord(root.tools)
   const exec = asRecord(tools.exec)
 
@@ -219,6 +222,10 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
     summaryRetentionDays: asNumberString(
       defaults.summary_retention_days,
       EMPTY_FORM.summaryRetentionDays,
+    ),
+    logRetentionDays: asNumberString(
+      logging.retention_days,
+      EMPTY_FORM.logRetentionDays,
     ),
     sessionMode: asString(session.mode) || EMPTY_FORM.sessionMode,
     devicesEnabled:

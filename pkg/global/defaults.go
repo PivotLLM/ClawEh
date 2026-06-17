@@ -22,6 +22,15 @@ const DefaultLogConsole = true
 const DefaultLogLevel = "info"
 const DefaultLogJSON = false
 
+// DefaultLogRetentionDays is how many days of rolled daily logs to keep.
+// 0 means keep forever (no deletion).
+const DefaultLogRetentionDays = 30
+
+// ErrorLogLevel is the minimum level (this level and above) mirrored to the
+// high-signal error.log beside claw.log: "warn" captures warnings, errors, and
+// fatals. Valid values: debug, info, warn, error, fatal.
+const ErrorLogLevel = "warn"
+
 // DefaultCallbackPrefix is prepended to all messages received via the callback
 // endpoint before they reach the LLM. It can be overridden per-deployment via
 // Config.Security.CallbackPrefix.

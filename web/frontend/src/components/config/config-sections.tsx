@@ -580,6 +580,18 @@ export function RuntimeSection({ form, onFieldChange }: RuntimeSectionProps) {
         </Select>
       </Field>
 
+      <Field
+        label={t("pages.config.log_retention_days")}
+        hint={t("pages.config.log_retention_days_hint")}
+        layout="setting-row"
+      >
+        <Input
+          type="number"
+          min={0}
+          value={form.logRetentionDays}
+          onChange={(e) => onFieldChange("logRetentionDays", e.target.value)}
+        />
+      </Field>
     </ConfigSectionCard>
   )
 }

@@ -106,6 +106,7 @@ func gatewayCmd(debug bool) error {
 	// console / journal. The configured format/level are re-applied below once
 	// the config is loaded.
 	logPath := filepath.Join(baseDir, "logs", "claw.log")
+	logger.SetErrorLogLevel(logger.ParseLevel(global.ErrorLogLevel))
 	if err := logger.EnableFileLogging(logPath, false); err != nil {
 		logger.WarnCF("gateway", "Failed to enable file logging", map[string]any{"path": logPath, "error": err.Error()})
 	}
@@ -202,6 +203,10 @@ func gatewayCmd(debug bool) error {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	// Daily log rotation: roll claw.log/error.log at local midnight (and on
+	// startup if claw.log predates today), pruning archives past retention.
+	startLogRotation(ctx, logPath, cfg.Logging.RetentionDays)
 
 	go agentLoop.Run(ctx)
 
