@@ -29,6 +29,7 @@ type CreateDomainParams struct {
 	Summary    string
 	State      DomainState
 	Triggers   string // comma-delimited tool-name substrings (optional)
+	KeywordTriggers string // comma-delimited message-text phrases (optional)
 }
 
 // CreateDomain inserts a new domain, assigns a short id, and bumps stable_rev
@@ -49,10 +50,10 @@ func (s *Store) CreateDomain(ctx context.Context, q DBTX, p CreateDomainParams) 
 	_, err = q.ExecContext(ctx, `
 		INSERT INTO domains(id, agent_id, session_key, type, name, status, version,
 		                    summary, state_json, schema_name, schema_version,
-		                    last_active_at, triggers, created_at, updated_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		                    last_active_at, triggers, keyword_triggers, created_at, updated_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		id, p.AgentID, p.SessionKey, string(p.Type), p.Name, string(p.Status), 1,
-		p.Summary, string(stateJSON), "domain", 1, ts, normalizeTriggers(p.Triggers), ts, ts)
+		p.Summary, string(stateJSON), "domain", 1, ts, normalizeTriggers(p.Triggers), normalizeKeywords(p.KeywordTriggers), ts, ts)
 	if err != nil {
 		return Domain{}, fmt.Errorf("cogmem: create domain: %w", err)
 	}
@@ -69,6 +70,7 @@ type UpdateDomainParams struct {
 	State           *DomainState
 	Status          *Status
 	Triggers        *string // when non-nil, replaces the comma-delimited trigger list
+	KeywordTriggers *string // when non-nil, replaces the comma-delimited keyword-trigger list
 }
 
 // UpdateDomain applies a patch if ExpectedVersion matches, bumping version and
@@ -98,14 +100,18 @@ func (s *Store) UpdateDomain(ctx context.Context, q DBTX, id string, p UpdateDom
 	if p.Triggers != nil {
 		triggers = normalizeTriggers(*p.Triggers)
 	}
+	keywordTriggers := cur.KeywordTriggers
+	if p.KeywordTriggers != nil {
+		keywordTriggers = normalizeKeywords(*p.KeywordTriggers)
+	}
 	stateJSON, err := json.Marshal(state)
 	if err != nil {
 		return err
 	}
 	res, err := q.ExecContext(ctx, `
-		UPDATE domains SET summary=?, state_json=?, status=?, triggers=?, version=version+1, updated_at=?
+		UPDATE domains SET summary=?, state_json=?, status=?, triggers=?, keyword_triggers=?, version=version+1, updated_at=?
 		WHERE id=? AND version=?`,
-		summary, string(stateJSON), string(status), triggers, now(), id, p.ExpectedVersion)
+		summary, string(stateJSON), string(status), triggers, keywordTriggers, now(), id, p.ExpectedVersion)
 	if err != nil {
 		return fmt.Errorf("cogmem: update domain: %w", err)
 	}
@@ -210,7 +216,7 @@ func (s *Store) ListDomains(ctx context.Context, q DBTX, statuses ...Status) ([]
 const domainSelect = `
 	SELECT id, agent_id, session_key, type, name, status, version, summary,
 	       state_json, schema_name, schema_version, last_active_at, triggers,
-	       created_at, updated_at, archived_at
+	       keyword_triggers, created_at, updated_at, archived_at
 	FROM domains`
 
 type scanner interface {
@@ -269,6 +275,71 @@ func (d Domain) MatchTrigger(toolName string) (string, bool) {
 	return "", false
 }
 
+// normalizeKeywords canonicalizes a comma-delimited keyword-trigger list: trims
+// and lowercases each phrase, drops empties, rejoins with single commas. Unlike
+// tool triggers these are matched against free-form message text, so '*' and
+// underscores are NOT special — a phrase may contain spaces (e.g. "morning
+// routine") and is matched whole.
+func normalizeKeywords(s string) string {
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if t := strings.ToLower(strings.TrimSpace(p)); t != "" {
+			out = append(out, t)
+		}
+	}
+	return strings.Join(out, ",")
+}
+
+// KeywordPhrases returns the domain's normalized keyword-trigger phrases.
+func (d Domain) KeywordPhrases() []string {
+	if d.KeywordTriggers == "" {
+		return nil
+	}
+	return strings.Split(normalizeKeywords(d.KeywordTriggers), ",")
+}
+
+// MatchKeyword reports the first keyword phrase that appears in text as a whole
+// phrase on word boundaries (case-insensitive), and whether any matched. The
+// boundary check means a phrase like "git" matches the word "git" but not
+// "legitimate", and "morning routine" matches only that contiguous phrase.
+func (d Domain) MatchKeyword(text string) (string, bool) {
+	lower := strings.ToLower(text)
+	for _, p := range d.KeywordPhrases() {
+		if phraseMatch(lower, p) {
+			return p, true
+		}
+	}
+	return "", false
+}
+
+// phraseMatch reports whether phrase occurs in text (both lowercase) bounded by
+// non-word characters (start/end of string count as boundaries).
+func phraseMatch(text, phrase string) bool {
+	if phrase == "" {
+		return false
+	}
+	for start := 0; start <= len(text)-len(phrase); {
+		i := strings.Index(text[start:], phrase)
+		if i < 0 {
+			return false
+		}
+		i += start
+		beforeOK := i == 0 || !isWordByte(text[i-1])
+		end := i + len(phrase)
+		afterOK := end == len(text) || !isWordByte(text[end])
+		if beforeOK && afterOK {
+			return true
+		}
+		start = i + 1
+	}
+	return false
+}
+
+func isWordByte(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9')
+}
+
 func scanDomain(sc scanner) (Domain, error) {
 	var (
 		d                         Domain
@@ -278,7 +349,7 @@ func scanDomain(sc scanner) (Domain, error) {
 	)
 	err := sc.Scan(&d.ID, &d.AgentID, &d.SessionKey, &typ, &d.Name, &status,
 		&d.Version, &d.Summary, &stateJSON, &d.SchemaName, &d.SchemaVersion,
-		&lastActivePtr, &d.Triggers, &createdAt, &updatedAt, &archivedAt)
+		&lastActivePtr, &d.Triggers, &d.KeywordTriggers, &createdAt, &updatedAt, &archivedAt)
 	if err != nil {
 		return Domain{}, err
 	}

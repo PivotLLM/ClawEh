@@ -331,8 +331,14 @@ func updateDomain(s *store.Store, call *global.ToolCall) (string, error) {
 		v := argStr(call, "set_triggers")
 		p.Triggers = &v
 	}
-	if p.Summary == nil && p.State == nil && p.Triggers == nil {
-		return "", errors.New("nothing to update (set_summary, set_triggers, or a list field required)")
+	// set_keyword_triggers present (even empty) replaces the keyword list.
+	if _, ok := call.Args["set_keyword_triggers"]; ok {
+		kw, _ := argStrSlice(call, "set_keyword_triggers")
+		v := strings.Join(kw, ",")
+		p.KeywordTriggers = &v
+	}
+	if p.Summary == nil && p.State == nil && p.Triggers == nil && p.KeywordTriggers == nil {
+		return "", errors.New("nothing to update (set_summary, set_triggers, set_keyword_triggers, or a list field required)")
 	}
 	if err := s.UpdateDomain(call.Ctx, s.DB(), id, p); err != nil {
 		if errors.Is(err, store.ErrVersionConflict) {
@@ -393,14 +399,16 @@ func createDomain(s *store.Store, call *global.ToolCall) (string, error) {
 	if typ == "" || name == "" {
 		return "", errors.New("type and name are required")
 	}
+	kw, _ := argStrSlice(call, "keyword_triggers")
 	d, err := s.CreateDomain(call.Ctx, s.DB(), store.CreateDomainParams{
-		AgentID:    call.AgentID,
-		SessionKey: call.Session,
-		Type:       store.DomainType(typ),
-		Name:       name,
-		Status:     store.StatusActive,
-		Summary:    argStr(call, "summary"),
-		Triggers:   argStr(call, "triggers"),
+		AgentID:         call.AgentID,
+		SessionKey:      call.Session,
+		Type:            store.DomainType(typ),
+		Name:            name,
+		Status:          store.StatusActive,
+		Summary:         argStr(call, "summary"),
+		Triggers:        argStr(call, "triggers"),
+		KeywordTriggers: strings.Join(kw, ","),
 	})
 	if err != nil {
 		return "", err

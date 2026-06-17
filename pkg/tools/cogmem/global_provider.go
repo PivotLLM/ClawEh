@@ -117,6 +117,7 @@ func (globalCogmemProvider) RegisterTools(deps global.Deps) []global.ToolDefinit
 				{Name: "set_next_actions", Type: "array", Items: "string", Required: false, Description: "Replace the next-actions list."},
 				{Name: "set_constraints", Type: "array", Items: "string", Required: false, Description: "Replace the constraints list."},
 				{Name: "set_triggers", Type: "string", Required: false, Description: "Replace the tool triggers: a comma-separated list of patterns. This domain auto-loads whenever you use a tool whose name contains one of them — use short distinctive words wrapped in *, e.g. \"*mail*\" or \"*github*,*calendar*\". (The * are optional; \"mail\" and \"*mail*\" behave the same — matching is always \"contains\", case- and underscore-insensitive.) MCP tools work too: their names look like mcp_<server>_<tool>, so \"*github*\" matches that whole server. Empty string clears triggers."},
+				{Name: "set_keyword_triggers", Type: "array", Items: "string", Required: false, Description: "Replace the keyword triggers: a list of distinctive words/phrases that load this domain when one appears in the incoming message text (e.g. a scheduled reminder or a user message). Matched as a whole phrase on word boundaries, so prefer multi-word phrases — [\"morning routine\",\"weekly report\"] — over common single words like \"morning\", which would match too often. Empty list clears them."},
 			}, true, updateDomain),
 
 		def("memory_retire",
@@ -140,6 +141,7 @@ func (globalCogmemProvider) RegisterTools(deps global.Deps) []global.ToolDefinit
 				{Name: "name", Type: "string", Required: true, Description: "Domain name."},
 				{Name: "summary", Type: "string", Required: false, Description: "Optional one-line summary."},
 				{Name: "triggers", Type: "string", Required: false, Description: "Optional tool triggers: a comma-separated list of patterns. This domain auto-loads whenever you use a tool whose name contains one of them — use short distinctive words wrapped in *, e.g. \"*mail*\" or \"*github*,*calendar*\". (The * are optional wildcards; \"mail\" and \"*mail*\" behave the same — matching is always \"contains\".) MCP tools work too: their names look like mcp_<server>_<tool>, so \"*github*\" matches every tool from the github server. Matching ignores case and treats _ and __ the same."},
+				{Name: "keyword_triggers", Type: "array", Items: "string", Required: false, Description: "Optional keyword triggers: a list of distinctive words/phrases that load this domain when one appears in the incoming message text (e.g. a scheduled reminder, or what the user says). Matched as a whole phrase on word boundaries, so prefer multi-word phrases — [\"morning routine\",\"weekly report\"] — over common single words like \"morning\", which would match too often. Use this (not tool triggers) to have a workflow's context pulled up when a cron job fires."},
 			}, true, createDomain),
 
 		def("domain_archive",

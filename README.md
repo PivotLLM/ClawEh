@@ -27,7 +27,7 @@ it for a specific agent, give that agent a tool allowlist that excludes the
 
 Memory is surfaced in layers. The always-on **`general`** domain (global rules,
 preferences, and standing facts) is in every prompt; topic domains are then
-auto-loaded by relevance using three signals:
+auto-loaded by relevance using these signals:
 
 - **Recency** — the most recently used topic domains.
 - **Lexical match** — domains whose name, summary, or memories match salient words in
@@ -40,10 +40,17 @@ auto-loaded by relevance using three signals:
   Matching ignores case and underscores; the agent sets triggers itself
   (`cogmem_domain_create`/`cogmem_domain_update`), and the sleep cycle can add them
   when a domain clearly pertains to specific tools.
+- **Keyword triggers** — a domain can declare a list of distinctive words/phrases
+  that load it when one appears in the incoming message text (matched as a whole
+  phrase, on word boundaries). Unlike tool triggers (which match *tool names*),
+  these match the *message*, so they're the way to have a workflow's context
+  pulled up when a scheduled (cron) job fires or the user mentions it — e.g. a
+  domain with `["morning routine"]` loads when a message says "time for your
+  morning routine." Prefer multi-word phrases over common single words.
 
-These signals are deduplicated and ranked (tool trigger, then lexical match, then
-recency), so each relevant domain is loaded once. No embeddings or vector search
-are involved — routing is lexical and deterministic.
+These signals are deduplicated and ranked (tool trigger, then keyword, then lexical
+match, then recency), so each relevant domain is loaded once. No embeddings or
+vector search are involved — routing is lexical and deterministic.
 
 #### Confirming inferred memories
 When the agent (or the sleep cycle) infers something it is not certain about, it

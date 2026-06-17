@@ -240,16 +240,28 @@ func (c *Composer) RoutedBlock(ctx context.Context, req RouteRequest) (RoutedRes
 	})
 
 	// Order the candidates by signal strength: (1) domains activated by a
-	// recently-used tool, (2) domains lexically matching the latest user message,
-	// (3) the rest by recency. A single shared seen-set guarantees every domain
-	// appears at most once, so a domain matched by more than one signal (e.g. both
-	// tool-triggered and recent) is never duplicated.
+	// recently-used tool, (2) domains whose keyword_triggers appear in the latest
+	// message, (3) domains lexically matching the latest message, (4) the rest by
+	// recency. A single shared seen-set guarantees every domain appears at most
+	// once, so a domain matched by more than one signal is never duplicated.
 	seen := make(map[string]bool, len(topics))
 	var ordered []candidate
 	for _, d := range topics {
 		if tok, ok := matchAnyTool(d, req.RecentTools); ok {
 			seen[d.ID] = true
 			ordered = append(ordered, candidate{d: d, signal: "tool:" + tok})
+		}
+	}
+	// Author-defined keyword triggers: activate when a phrase appears (whole-
+	// phrase, word-boundary) in the latest message — e.g. a workflow domain that
+	// should load when a cron message or user mentions "morning routine".
+	for _, d := range topics {
+		if seen[d.ID] {
+			continue
+		}
+		if kw, ok := d.MatchKeyword(req.RouteText); ok {
+			seen[d.ID] = true
+			ordered = append(ordered, candidate{d: d, signal: "keyword:" + kw})
 		}
 	}
 	for _, cand := range c.lexicalCandidates(ctx, topics, req.RouteText, seen) {

@@ -84,6 +84,7 @@ type Domain struct {
 	SchemaVersion int
 	LastActiveAt  int64  // unix-nanos ordering key for recency (0 = never), not displayed
 	Triggers      string // comma-delimited tool-name substrings; activates this domain when a matching tool is used (see TriggerTokens)
+	KeywordTriggers string // comma-delimited phrases; activates this domain when one appears (whole-phrase, word-boundary) in the message text (see KeywordPhrases)
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
 	ArchivedAt    *time.Time

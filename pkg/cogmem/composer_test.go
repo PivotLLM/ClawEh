@@ -250,3 +250,41 @@ func TestRoutedBlockRecency(t *testing.T) {
 		t.Fatalf("trace = %+v", res.Trace)
 	}
 }
+
+// A domain with keyword_triggers loads when its phrase appears in the message
+// (beating a more-recent domain for the single slot), and not for a bare word.
+func TestRoutedBlockKeywordTrigger(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	db := s.DB()
+	// "Daily Ops" is named so it doesn't lexically collide with "morning".
+	wf, _ := s.CreateDomain(ctx, db, store.CreateDomainParams{
+		AgentID: "a", Type: store.DomainWorkflow, Name: "Daily Ops",
+		KeywordTriggers: "morning routine",
+	})
+	_, _ = s.AddMemory(ctx, db, store.AddMemoryParams{DomainID: wf.ID, Type: store.TypeRule, Text: "Review the calendar.", Status: store.StatusActive, Confidence: 0.9, Source: store.SourceUserExplicit})
+	other, _ := s.CreateDomain(ctx, db, store.CreateDomainParams{AgentID: "a", Type: store.DomainProject, Name: "Other", Summary: "misc"})
+	_ = s.Touch(ctx, db, wf.ID)
+	_ = s.Touch(ctx, db, other.ID) // Other is the most recent
+
+	c := New(s, WithTopKDomains(1))
+
+	// Phrase present → keyword routes the workflow into the single slot, beating recency.
+	rr, err := c.RoutedBlock(ctx, RouteRequest{RouteText: "time for your morning routine", Trace: true})
+	if err != nil {
+		t.Fatalf("routed: %v", err)
+	}
+	if len(rr.Loaded) != 1 || rr.Loaded[0] != wf.ID {
+		t.Fatalf("keyword should route the workflow, got %v", rr.Loaded)
+	}
+	if len(rr.Trace) != 1 || rr.Trace[0].Signal != "keyword:morning routine" {
+		t.Fatalf("trace = %+v, want keyword:morning routine", rr.Trace)
+	}
+
+	// Bare "morning" → no keyword (phrase-only) and no lexical hit on "Daily Ops";
+	// the more-recent Other takes the slot instead.
+	rr2, _ := c.RoutedBlock(ctx, RouteRequest{RouteText: "good morning everyone"})
+	if len(rr2.Loaded) != 1 || rr2.Loaded[0] != other.ID {
+		t.Fatalf("bare 'morning' should not route the workflow; expected Other, got %v", rr2.Loaded)
+	}
+}

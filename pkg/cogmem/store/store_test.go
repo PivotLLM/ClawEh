@@ -477,3 +477,45 @@ func TestWatermarkAndLease(t *testing.T) {
 		t.Fatalf("worker-2 could not acquire after release")
 	}
 }
+
+func TestDomainKeywordTriggers(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	d, err := s.CreateDomain(ctx, s.DB(), CreateDomainParams{
+		AgentID: "a", Type: DomainProject, Name: "Briefing",
+		KeywordTriggers: "  Morning Routine , weekly report ,, ",
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	// Normalized: trimmed, lowercased, empties dropped.
+	if d.KeywordTriggers != "morning routine,weekly report" {
+		t.Fatalf("keyword_triggers = %q, want normalized", d.KeywordTriggers)
+	}
+
+	// Whole-phrase, word-boundary, case-insensitive matches.
+	if kw, ok := d.MatchKeyword("Time for the MORNING ROUTINE, everyone"); !ok || kw != "morning routine" {
+		t.Fatalf("MatchKeyword phrase = %q,%v", kw, ok)
+	}
+	if _, ok := d.MatchKeyword("please file the weekly report by noon"); !ok {
+		t.Fatalf("expected 'weekly report' to match")
+	}
+	// The individual words must NOT match on their own (phrase only).
+	if _, ok := d.MatchKeyword("good morning"); ok {
+		t.Fatalf("bare 'morning' should not match the phrase 'morning routine'")
+	}
+	// No substring-in-word false positives.
+	if _, ok := d.MatchKeyword("this is legitimate work"); ok {
+		t.Fatalf("should not match inside another word")
+	}
+
+	// Update replaces; empty clears.
+	empty := ""
+	if err := s.UpdateDomain(ctx, s.DB(), d.ID, UpdateDomainParams{ExpectedVersion: 1, KeywordTriggers: &empty}); err != nil {
+		t.Fatalf("update clear: %v", err)
+	}
+	got, _ := s.GetDomain(ctx, s.DB(), d.ID, false)
+	if got.KeywordTriggers != "" || len(got.KeywordPhrases()) != 0 {
+		t.Fatalf("keyword triggers not cleared: %q", got.KeywordTriggers)
+	}
+}

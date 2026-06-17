@@ -365,6 +365,12 @@ func (s *Store) ensureDomainColumns(ctx context.Context) error {
 			return err
 		}
 	}
+	if !have["keyword_triggers"] {
+		if _, err := s.db.ExecContext(ctx,
+			`ALTER TABLE domains ADD COLUMN keyword_triggers TEXT NOT NULL DEFAULT ''`); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
