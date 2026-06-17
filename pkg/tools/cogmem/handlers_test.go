@@ -253,7 +253,11 @@ func TestStatusAndConsolidate(t *testing.T) {
 
 func TestExportMemory(t *testing.T) {
 	h, ws := buildHandlers(t)
-	res := run(t, h["domain_create"], newCall(testSession, map[string]any{"type": "project", "name": "BioTech"}))
+	res := run(t, h["domain_create"], newCall(testSession, map[string]any{
+		"type": "project", "name": "BioTech",
+		"triggers":         "google_gmail",
+		"keyword_triggers": []any{"biotech report"},
+	}))
 	domainID := extractID(t, res.ForLLM, "d")
 	run(t, h["memory_create"], newCall(testSession, map[string]any{
 		"domain_id": domainID, "type": "fact", "text": "the report targets Q3",
@@ -268,7 +272,8 @@ func TestExportMemory(t *testing.T) {
 		t.Fatalf("read export: %v", err)
 	}
 	body := string(data)
-	for _, want := range []string{"# Cognitive Memory Export", "## Projects", "BioTech", "the report targets Q3"} {
+	for _, want := range []string{"# Cognitive Memory Export", "## Projects", "BioTech", "the report targets Q3",
+		"Tool triggers", "google_gmail", "Keyword triggers", "biotech report"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("export missing %q:\n%s", want, body)
 		}

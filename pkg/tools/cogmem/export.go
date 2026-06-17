@@ -15,7 +15,7 @@ import (
 
 // renderFullExport renders the agent's entire active cognitive memory as one
 // Markdown document: the always-on general domain, every topic domain (with its
-// state, triggers, and memories), and the pending-confirmation digest. It returns
+// state, tool/keyword triggers, and memories), and the pending-confirmation digest. It returns
 // the document plus the domain and memory counts for the tool's summary line.
 func renderFullExport(ctx context.Context, s *store.Store) (doc string, nDomains, nMemories int, err error) {
 	db := s.DB()
@@ -62,7 +62,10 @@ func renderFullExport(ctx context.Context, s *store.Store) (doc string, nDomains
 			writeList(&b, "Next actions", d.State.NextActions)
 			writeList(&b, "Constraints", d.State.Constraints)
 			if d.Triggers != "" {
-				fmt.Fprintf(&b, "Triggers (auto-load on tool use): `%s`\n\n", d.Triggers)
+				fmt.Fprintf(&b, "Tool triggers (auto-load when a matching tool is used): `%s`\n\n", d.Triggers)
+			}
+			if d.KeywordTriggers != "" {
+				fmt.Fprintf(&b, "Keyword triggers (auto-load when a phrase appears in the message): `%s`\n\n", d.KeywordTriggers)
 			}
 			if len(mems) == 0 {
 				b.WriteString("_(no memories)_\n\n")

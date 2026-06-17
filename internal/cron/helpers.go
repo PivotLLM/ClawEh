@@ -41,7 +41,12 @@ func cronListCmd(storePath string) {
 			status = "disabled"
 		}
 
+		agent := job.AgentID
+		if agent == "" {
+			agent = "(operator/legacy)"
+		}
 		fmt.Printf("  %s (%s)\n", job.Name, job.ID)
+		fmt.Printf("    Agent:    %s\n", agent)
 		fmt.Printf("    Schedule: %s\n", schedule)
 		fmt.Printf("    Status:   %s\n", status)
 		fmt.Printf("    Next run: %s\n", nextRun)
