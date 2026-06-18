@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/PivotLLM/ClawEh/pkg/cogmem/consolidate"
 	"github.com/PivotLLM/ClawEh/pkg/llmcontext"
@@ -49,7 +50,20 @@ func (c *memoryModelCaller) Consolidate(ctx context.Context, systemPrompt, userJ
 			})
 			continue
 		}
+		// An empty/whitespace reply (e.g. a reasoning-only response, or a model
+		// that returned no content) cannot be parsed as the consolidation JSON.
+		// Treat it as a failure and try the next model rather than returning ""
+		// (which the worker would record as a confusing "invalid_json /
+		// unexpected end of JSON input").
+		if strings.TrimSpace(reply.Content) == "" {
+			lastErr = errors.New("model returned empty content")
+			logger.DebugCF("cogmem", "memory model returned empty content; trying next in chain", nil)
+			continue
+		}
 		return reply.Content, nil
+	}
+	if lastErr == nil {
+		lastErr = errors.New("no usable response")
 	}
 	return "", fmt.Errorf("cogmem: all memory models failed: %w", lastErr)
 }
