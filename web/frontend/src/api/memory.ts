@@ -15,6 +15,7 @@ export interface MemoryMemory {
   confidence: number
   priority: number
   source: string
+  origin: string
   created: string
   updated: string
 }

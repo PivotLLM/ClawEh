@@ -34,6 +34,7 @@ function MemoryRow({ m }: { m: MemoryMemory }) {
       <div className="text-muted-foreground mt-1 flex gap-3 text-[11px]">
         <span>conf {m.confidence.toFixed(2)}</span>
         <span>prio {m.priority}</span>
+        {m.origin && <span>from {m.origin}</span>}
         <span>{m.source}</span>
         <span>{new Date(m.updated).toLocaleString()}</span>
       </div>

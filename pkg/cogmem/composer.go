@@ -187,7 +187,7 @@ func (c *Composer) StableBlock(ctx context.Context) (string, int64, error) {
 		}
 		fmt.Fprintf(&b, "COGMEM domain %s is sticky:\n\n", d.Name)
 		for _, h := range hooks {
-			fmt.Fprintf(&b, "- %s\n", h.Text)
+			fmt.Fprintf(&b, "- %s%s\n", h.Text, originSuffix(h.Origin))
 		}
 		b.WriteString("\n")
 	}
@@ -429,6 +429,20 @@ var routeStopwords = map[string]bool{
 	"done": true, "been": true, "were": true, "than": true, "very": true,
 }
 
+// originSuffix tags a memory line with where it came from, so the assistant
+// knows its provenance. Chat-origin (the agent's own notes) is the unremarkable
+// default and gets no tag; user- and consolidation-origin are flagged.
+func originSuffix(o store.Origin) string {
+	switch o {
+	case store.OriginUser:
+		return " [source: user]"
+	case store.OriginConsolidation:
+		return " [source: consolidation]"
+	default:
+		return ""
+	}
+}
+
 func renderDomain(d store.Domain, hooks []store.Memory) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "## Active Context: %s · %s\n", d.ID, d.Name)
@@ -454,7 +468,7 @@ func renderDomain(d store.Domain, hooks []store.Memory) string {
 		}
 	}
 	for _, h := range hooks {
-		fmt.Fprintf(&b, "- (%s) %s\n", h.ID, h.Text)
+		fmt.Fprintf(&b, "- (%s) %s%s\n", h.ID, h.Text, originSuffix(h.Origin))
 	}
 	b.WriteString("\n")
 	return b.String()

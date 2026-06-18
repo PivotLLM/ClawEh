@@ -237,7 +237,7 @@ func explainDomain(d store.Domain) string {
 func explainMemory(h store.Memory) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Memory %s (domain %s)\n", h.ID, h.DomainID)
-	fmt.Fprintf(&b, "  type=%s status=%s confidence=%.2f source=%s\n", h.Type, h.Status, h.Confidence, h.Source)
+	fmt.Fprintf(&b, "  type=%s status=%s confidence=%.2f source=%s origin=%s\n", h.Type, h.Status, h.Confidence, h.Source, h.Origin)
 	fmt.Fprintf(&b, "  text: %s\n", h.Text)
 	if h.SourceSeqStart != nil && h.SourceSeqEnd != nil {
 		fmt.Fprintf(&b, "  evidence: seq %d..%d\n", *h.SourceSeqStart, *h.SourceSeqEnd)
@@ -305,6 +305,7 @@ func remember(s *store.Store, call *global.ToolCall) (string, error) {
 		Status:     status,
 		Confidence: argFloat(call, "confidence", 0.9),
 		Source:     store.SourceToolWrite,
+		Origin:     store.OriginChat,
 	})
 	if err != nil {
 		return "", mapErr(err, domainID)

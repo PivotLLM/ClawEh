@@ -37,6 +37,7 @@ type memoryMemory struct {
 	Confidence float64 `json:"confidence"`
 	Priority   int     `json:"priority"`
 	Source     string  `json:"source"`
+	Origin     string  `json:"origin"`
 	Created    string  `json:"created"`
 	Updated    string  `json:"updated"`
 }
@@ -162,6 +163,7 @@ func toMemoryMemory(m cogmemstore.Memory) memoryMemory {
 		Confidence: m.Confidence,
 		Priority:   m.Priority,
 		Source:     string(m.Source),
+		Origin:     string(m.Origin),
 		Created:    m.CreatedAt.Format(time.RFC3339),
 		Updated:    m.UpdatedAt.Format(time.RFC3339),
 	}

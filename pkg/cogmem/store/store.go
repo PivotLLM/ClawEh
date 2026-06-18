@@ -114,6 +114,9 @@ func (s *Store) migrate(ctx context.Context) error {
 	if err := s.ensureDomainColumns(ctx); err != nil {
 		return fmt.Errorf("cogmem: ensure domain columns: %w", err)
 	}
+	if err := s.ensureMemoryColumns(ctx); err != nil {
+		return fmt.Errorf("cogmem: ensure memory columns: %w", err)
+	}
 	if err := s.normalizeMemoryTypes(ctx); err != nil {
 		return fmt.Errorf("cogmem: normalize memory types: %w", err)
 	}
@@ -329,6 +332,34 @@ func (s *Store) ensureDomainColumns(ctx context.Context) error {
 			`ALTER TABLE domains ADD COLUMN keyword_triggers TEXT NOT NULL DEFAULT ''`); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// ensureMemoryColumns adds the origin column to a pre-existing memories table and
+// backfills it from the legacy source value: tool_write→chat, migration→user,
+// user_explicit/assistant_inferred→consolidation. Idempotent; a no-op once the
+// column exists.
+func (s *Store) ensureMemoryColumns(ctx context.Context) error {
+	have, err := s.columnSet(ctx, "memories")
+	if err != nil {
+		return err
+	}
+	if have["origin"] {
+		return nil
+	}
+	if _, err := s.db.ExecContext(ctx,
+		`ALTER TABLE memories ADD COLUMN origin TEXT NOT NULL DEFAULT 'chat'`); err != nil {
+		return err
+	}
+	// Backfill from source (rows default to 'chat' from the ALTER above).
+	if _, err := s.db.ExecContext(ctx,
+		`UPDATE memories SET origin='consolidation' WHERE source IN ('user_explicit','assistant_inferred')`); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx,
+		`UPDATE memories SET origin='user' WHERE source='migration'`); err != nil {
+		return err
 	}
 	return nil
 }

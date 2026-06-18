@@ -20,6 +20,7 @@ type AddMemoryParams struct {
 	Confidence         float64
 	Priority           int
 	Source             Source
+	Origin             Origin
 	SourceSession      *string
 	SourceSeqStart     *int64
 	SourceSeqEnd       *int64
@@ -43,11 +44,11 @@ func (s *Store) AddMemory(ctx context.Context, q DBTX, p AddMemoryParams) (Memor
 	ts := now()
 	_, err = q.ExecContext(ctx, `
 		INSERT INTO memories(id, domain_id, type, text, status, confidence, priority,
-		                  source, source_session, source_seq_start, source_seq_end,
+		                  source, origin, source_session, source_seq_start, source_seq_end,
 		                  supersedes_memory_id, created_at, updated_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		id, p.DomainID, string(p.Type), p.Text, string(p.Status), p.Confidence,
-		p.Priority, string(p.Source), p.SourceSession, p.SourceSeqStart,
+		p.Priority, string(p.Source), string(normalizeOrigin(p.Origin)), p.SourceSession, p.SourceSeqStart,
 		p.SourceSeqEnd, p.SupersedesMemoryID, ts, ts)
 	if err != nil {
 		return Memory{}, fmt.Errorf("cogmem: add hook: %w", err)
@@ -193,19 +194,19 @@ func affectsStable(sticky bool, st Status) bool {
 }
 
 const memorySelect = `
-	SELECT id, domain_id, type, text, status, confidence, priority, source,
+	SELECT id, domain_id, type, text, status, confidence, priority, source, origin,
 	       source_session, source_seq_start, source_seq_end, supersedes_memory_id,
 	       retire_reason, created_at, updated_at
 	FROM memories`
 
 func scanMemory(sc scanner) (Memory, error) {
 	var (
-		h                    Memory
-		kind, status, source string
-		createdAt, updatedAt int64
+		h                            Memory
+		kind, status, source, origin string
+		createdAt, updatedAt         int64
 	)
 	err := sc.Scan(&h.ID, &h.DomainID, &kind, &h.Text, &status, &h.Confidence,
-		&h.Priority, &source, &h.SourceSession, &h.SourceSeqStart, &h.SourceSeqEnd,
+		&h.Priority, &source, &origin, &h.SourceSession, &h.SourceSeqStart, &h.SourceSeqEnd,
 		&h.SupersedesMemoryID, &h.RetireReason, &createdAt, &updatedAt)
 	if err != nil {
 		return Memory{}, err
@@ -213,6 +214,7 @@ func scanMemory(sc scanner) (Memory, error) {
 	h.Type = MemoryType(kind)
 	h.Status = Status(status)
 	h.Source = Source(source)
+	h.Origin = normalizeOrigin(Origin(origin))
 	h.CreatedAt = timeUnix(createdAt)
 	h.UpdatedAt = timeUnix(updatedAt)
 	return h, nil

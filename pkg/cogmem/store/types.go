@@ -42,6 +42,27 @@ const (
 	SourceMigration         Source = "migration"
 )
 
+// Origin records which actor created a memory, independent of Source (which
+// records provenance). Surfaced to the user and into the prompt so the
+// assistant knows where a memory came from.
+type Origin string
+
+const (
+	OriginChat          Origin = "chat"          // the agent wrote it during a conversation (cogmem tools)
+	OriginConsolidation Origin = "consolidation" // the background sleep-cycle worker wrote it
+	OriginUser          Origin = "user"          // a human created it directly (WebUI / import)
+)
+
+// normalizeOrigin returns a valid Origin, defaulting unknown/empty to OriginChat.
+func normalizeOrigin(o Origin) Origin {
+	switch o {
+	case OriginChat, OriginConsolidation, OriginUser:
+		return o
+	default:
+		return OriginChat
+	}
+}
+
 // DomainState is the structured JSON payload stored in domains.state_json.
 type DomainState struct {
 	Blockers    []string       `json:"blockers,omitempty"`
@@ -88,6 +109,7 @@ type Memory struct {
 	Confidence         float64
 	Priority           int
 	Source             Source
+	Origin             Origin
 	SourceSession      *string
 	SourceSeqStart     *int64
 	SourceSeqEnd       *int64

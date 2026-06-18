@@ -144,6 +144,7 @@ func memoryParams(domainID string, op MemoryOp) store.AddMemoryParams {
 		Status:         store.Status(orDefault(op.Status, "active")),
 		Confidence:     op.Confidence,
 		Source:         store.Source(orDefault(op.Source, "assistant_inferred")),
+		Origin:         store.OriginConsolidation,
 		SourceSeqStart: i64ptr(op.Evidence.SeqStart),
 		SourceSeqEnd:   i64ptr(op.Evidence.SeqEnd),
 	}

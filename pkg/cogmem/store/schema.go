@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS memories (
   confidence         REAL NOT NULL,
   priority           INTEGER NOT NULL DEFAULT 0,
   source             TEXT NOT NULL,
+  origin             TEXT NOT NULL DEFAULT 'chat',
   source_session     TEXT,
   source_seq_start   INTEGER,
   source_seq_end     INTEGER,

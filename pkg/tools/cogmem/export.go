@@ -71,7 +71,7 @@ func renderFullExport(ctx context.Context, s *store.Store) (doc string, nDomains
 				continue
 			}
 			for _, m := range mems {
-				fmt.Fprintf(&b, "- (%s) %s\n", m.Type, strings.TrimSpace(m.Text))
+				fmt.Fprintf(&b, "- (%s · %s) %s\n", m.Type, m.Origin, strings.TrimSpace(m.Text))
 			}
 			b.WriteString("\n")
 		}

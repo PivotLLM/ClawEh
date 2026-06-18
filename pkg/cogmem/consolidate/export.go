@@ -76,7 +76,7 @@ func renderDomains(ctx context.Context, st *store.Store, title string, domains [
 			continue
 		}
 		for _, h := range hooks {
-			fmt.Fprintf(&b, "- (%s) %s\n", h.Type, strings.TrimSpace(h.Text))
+			fmt.Fprintf(&b, "- (%s · %s) %s\n", h.Type, h.Origin, strings.TrimSpace(h.Text))
 		}
 		b.WriteString("\n")
 	}

@@ -473,6 +473,36 @@ func TestHookLifecycleAndStableRev(t *testing.T) {
 	}
 }
 
+// TestMemoryOriginRoundTrip confirms origin is persisted, defaults to chat when
+// unset, and round-trips through GetMemory.
+func TestMemoryOriginRoundTrip(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	d, _ := s.CreateDomain(ctx, s.DB(), CreateDomainParams{AgentID: "a", Name: "P"})
+
+	withOrigin, _ := s.AddMemory(ctx, s.DB(), AddMemoryParams{
+		DomainID: d.ID, Type: TypeFact, Text: "from a human", Status: StatusActive,
+		Confidence: 0.9, Source: SourceUserExplicit, Origin: OriginUser,
+	})
+	if withOrigin.Origin != OriginUser {
+		t.Fatalf("origin = %q, want user", withOrigin.Origin)
+	}
+
+	// Origin unset → defaults to chat.
+	noOrigin, _ := s.AddMemory(ctx, s.DB(), AddMemoryParams{
+		DomainID: d.ID, Type: TypeFact, Text: "agent note", Status: StatusActive,
+		Confidence: 0.9, Source: SourceToolWrite,
+	})
+	if noOrigin.Origin != OriginChat {
+		t.Fatalf("default origin = %q, want chat", noOrigin.Origin)
+	}
+
+	got, _ := s.GetMemory(ctx, s.DB(), withOrigin.ID)
+	if got.Origin != OriginUser {
+		t.Fatalf("reloaded origin = %q, want user", got.Origin)
+	}
+}
+
 func TestSearchAndPending(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()
