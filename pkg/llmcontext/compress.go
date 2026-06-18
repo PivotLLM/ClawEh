@@ -286,7 +286,7 @@ func (m *Manager) filterCooledClients(clients []LLMClient) []LLMClient {
 	out := make([]LLMClient, 0, len(clients))
 	for _, c := range clients {
 		model := clientModel(c)
-		if model != "" && !m.cooldown.IsAvailable("", model) {
+		if model != "" && !m.cooldown.IsAvailable(clientCooldownProvider(c), model) {
 			continue // still cooling — skip
 		}
 		out = append(out, c)
@@ -306,7 +306,7 @@ func (m *Manager) cooledAttempts(clients []LLMClient) []CompactionAttempt {
 		if model == "" {
 			continue
 		}
-		if rem := m.cooldown.CooldownRemaining("", model); rem > 0 {
+		if rem := m.cooldown.CooldownRemaining(clientCooldownProvider(c), model); rem > 0 {
 			out = append(out, CompactionAttempt{
 				Model:  model,
 				Status: "skipped",
@@ -516,7 +516,7 @@ func (m *Manager) callLLMChain(
 				// Record the failure against the shared cooldown policy; statuses
 				// that never cool (413, no HTTP status) are ignored internally.
 				if m.cooldown != nil {
-					m.cooldown.MarkFailure("", model, fe.Reason, fe.Status, fe.RetryAfter)
+					m.cooldown.MarkFailure(clientCooldownProvider(client), model, fe.Reason, fe.Status, fe.RetryAfter)
 				}
 			}
 			rec.record(model, "error", detail, dur, messages, "")
@@ -576,7 +576,7 @@ func (m *Manager) callLLMChain(
 
 		rec.record(model, "ok", "", dur, messages, response.Content)
 		if m.cooldown != nil {
-			m.cooldown.MarkSuccess("", model) // reset any prior cooldown/escalation
+			m.cooldown.MarkSuccess(clientCooldownProvider(client), model) // reset any prior cooldown/escalation
 		}
 		return summary, true
 	}

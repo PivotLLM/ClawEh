@@ -155,9 +155,15 @@ func New(
 		clients = []LLMClient{llm}
 	}
 
-	cooldownPolicy := providers.DefaultCooldownPolicy()
-	if cfg.cooldownPolicy != nil {
-		cooldownPolicy = *cfg.cooldownPolicy
+	// Prefer a shared tracker (unified with the main fallback chain); otherwise
+	// build a private one from the policy.
+	cooldown := cfg.cooldownTracker
+	if cooldown == nil {
+		policy := providers.DefaultCooldownPolicy()
+		if cfg.cooldownPolicy != nil {
+			policy = *cfg.cooldownPolicy
+		}
+		cooldown = providers.NewCooldownTrackerWithPolicy(policy)
 	}
 
 	m := &Manager{
@@ -167,7 +173,7 @@ func New(
 		llm:             llm,
 		cfg:             cfg,
 		compressClients: clients,
-		cooldown:        providers.NewCooldownTrackerWithPolicy(cooldownPolicy),
+		cooldown:        cooldown,
 	}
 
 	// 9c. Load durable compaction state if the store supports it.

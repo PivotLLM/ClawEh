@@ -199,6 +199,37 @@ func TestCompress_RefusalDetectedAndModelSkipped(t *testing.T) {
 	}
 }
 
+// cooldownMockLLM reports a provider name so it keys cooldown by provider+model
+// like the main fallback chain.
+type cooldownMockLLM struct {
+	mockLLM
+	provider string
+}
+
+func (m *cooldownMockLLM) CooldownProvider() string { return m.provider }
+
+// TestCompress_SharedCooldownSkipsModel verifies that a model parked in the
+// shared cooldown tracker (e.g. an out-of-credits 402 hit by the main chain) is
+// skipped by the compaction path — not retried.
+func TestCompress_SharedCooldownSkipsModel(t *testing.T) {
+	tracker := providers.NewCooldownTrackerWithPolicy(providers.DefaultCooldownPolicy())
+	// Simulate the main chain having parked the model on a 402.
+	tracker.MarkFailure("Abliteration", "abliterated-model", providers.FailoverBilling, 402, 0)
+
+	store := &compressTestStore{history: makeConversation(10, 200)}
+	client := &cooldownMockLLM{
+		provider: "Abliteration",
+		mockLLM:  mockLLM{model: "abliterated-model", responses: []string{validSummaryJSON("x")}},
+	}
+	mgr := newCompressManager(store, []LLMClient{client}, WithCooldownTracker(tracker))
+	mgr.msgCount = len(store.history)
+
+	_ = mgr.doCompress(context.Background(), false)
+	if client.callCount != 0 {
+		t.Fatalf("model cooled in the shared tracker must be skipped by compaction; calls=%d", client.callCount)
+	}
+}
+
 // TestCompress_RetainsLastUserMessage verifies compaction never archives the
 // most recent user turn. A long tool/assistant tail after the last user message
 // would otherwise push it out of the retained window, leaving a payload with no

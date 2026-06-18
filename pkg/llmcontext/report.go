@@ -284,6 +284,17 @@ func clientModel(c LLMClient) string {
 	return ""
 }
 
+// clientCooldownProvider returns the provider NAME an LLMClient reaches through,
+// when it exposes one. Combined with clientModel it forms the same
+// provider+model cooldown key the main fallback chain uses, so a cooldown shared
+// between the two paths applies consistently.
+func clientCooldownProvider(c LLMClient) string {
+	if p, ok := c.(interface{ CooldownProvider() string }); ok {
+		return p.CooldownProvider()
+	}
+	return ""
+}
+
 // shortErr returns a single-line, length-bounded form of an error for display.
 func shortErr(err error) string {
 	if err == nil {

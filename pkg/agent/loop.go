@@ -64,6 +64,10 @@ type AgentLoop struct {
 	// Track active requests for safe provider cleanup
 	activeRequests   sync.WaitGroup
 	dispatcher       *providers.ProviderDispatcher
+	// cooldown is the shared per-model cooldown tracker used by BOTH the main
+	// fallback chain and the compaction path, so a model parked by either (e.g.
+	// an out-of-credits 402) is skipped by both. Swapped under mu on reload.
+	cooldown         *providers.CooldownTracker
 	callbackManagers map[string]*callback.Manager // agentID -> manager (nil entry means disabled)
 	agentTokens      *agenttoken.Manager
 	agentStates      map[string]*state.Manager // agentID -> per-agent state manager
@@ -210,6 +214,7 @@ func NewAgentLoop(
 		registry:         registry,
 		state:            stateManager,
 		fallback:         fallbackChain,
+		cooldown:         cooldown,
 		cmdRegistry:      commands.NewRegistry(commands.BuiltinDefinitions()),
 		dispatcher:       dispatcher,
 		agentStates:      agentStates,
@@ -954,7 +959,8 @@ func (al *AgentLoop) ReloadProviderAndConfig(
 	// this, reloaded agents would have an empty tool set (NewAgentInstance no
 	// longer registers anything). The new fallback chain is built here so it is
 	// shared between the registered spawn tools and the swapped-in al.fallback.
-	newFallback := providers.NewFallbackChain(providers.NewCooldownTrackerWithPolicy(cooldownPolicy(cfg)))
+	newCooldown := providers.NewCooldownTrackerWithPolicy(cooldownPolicy(cfg))
+	newFallback := providers.NewFallbackChain(newCooldown)
 	al.registerRuntimeTools(registry, provider, al.dispatcher, newFallback)
 
 	// Re-issue MCP isolation tokens for the new registry so the new
@@ -984,8 +990,10 @@ func (al *AgentLoop) ReloadProviderAndConfig(
 	al.callbackManagers = newCallbackManagers
 
 	// Also update fallback chain with new config (same chain used for the tools
-	// just registered above).
+	// just registered above). al.cooldown tracks the new chain's tracker so the
+	// compaction managers (rebuilt via invalidateContextManagers below) share it.
 	al.fallback = newFallback
+	al.cooldown = newCooldown
 
 	al.mu.Unlock()
 
@@ -1031,6 +1039,14 @@ func (al *AgentLoop) ReloadProviderAndConfig(
 		})
 
 	return nil
+}
+
+// cooldownTracker returns the shared cooldown tracker (thread-safe). Compaction
+// managers use it so cooldowns are unified with the main fallback chain.
+func (al *AgentLoop) cooldownTracker() *providers.CooldownTracker {
+	al.mu.RLock()
+	defer al.mu.RUnlock()
+	return al.cooldown
 }
 
 // GetRegistry returns the current registry (thread-safe)

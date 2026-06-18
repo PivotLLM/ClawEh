@@ -64,18 +64,28 @@ func TestCooldown_Escalation(t *testing.T) {
 	}
 }
 
-// TestCooldown_BillingReachesCategory verifies billing escalates 1/3/5 then
-// settles at the long billing/auth cooldown (default 60m).
-func TestCooldown_BillingReachesCategory(t *testing.T) {
-	now := time.Now()
-	ct, current := newTestTracker(now)
-	for i := 0; i < 3; i++ {
-		mark(ct, "openai", testModel, FailoverBilling)
-		*current = current.Add(10 * time.Minute)
-	}
-	mark(ct, "openai", testModel, FailoverBilling) // 4th → category
+// TestCooldown_BillingSkipsEscalation verifies billing/auth go straight to the
+// full category cooldown (default 60m) on the FIRST failure — no 1/3/5 ramp,
+// since an out-of-credits model won't recover in minutes.
+func TestCooldown_BillingSkipsEscalation(t *testing.T) {
+	ct, _ := newTestTracker(time.Now())
+	mark(ct, "openai", testModel, FailoverBilling) // first failure → 60m
 	if got := ct.CooldownRemaining("openai", testModel); got != 60*time.Minute {
-		t.Fatalf("billing settled cooldown = %v, want 60m", got)
+		t.Fatalf("first billing cooldown = %v, want 60m (no escalation)", got)
+	}
+
+	// Auth (401/403) behaves the same.
+	ct2, _ := newTestTracker(time.Now())
+	mark(ct2, "openai", testModel, FailoverAuth)
+	if got := ct2.CooldownRemaining("openai", testModel); got != 60*time.Minute {
+		t.Fatalf("first auth cooldown = %v, want 60m", got)
+	}
+
+	// A transient category (rate-limit) still escalates 1m on the first failure.
+	ct3, _ := newTestTracker(time.Now())
+	mark(ct3, "openai", testModel, FailoverRateLimit)
+	if got := ct3.CooldownRemaining("openai", testModel); got != 1*time.Minute {
+		t.Fatalf("first rate-limit cooldown = %v, want 1m (escalation)", got)
 	}
 }
 

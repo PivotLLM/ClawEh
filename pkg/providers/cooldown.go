@@ -73,13 +73,20 @@ func (p CooldownPolicy) CategoryCooldown(status int) time.Duration {
 // model that failed with the given status: the 1/3/5-minute escalation for the
 // first three, then the category cooldown. Returns 0 when the status never cools.
 func (p CooldownPolicy) cooldownForFailure(errorCount, status int) time.Duration {
-	if p.CategoryCooldown(status) == 0 {
+	cat := p.CategoryCooldown(status)
+	if cat == 0 {
 		return 0
+	}
+	// Billing/auth (401/402/403) won't recover in minutes — skip the escalation
+	// and park the model for the full category cooldown on the FIRST failure, so
+	// an out-of-credits model isn't retried every 1–5 minutes.
+	if status == 401 || status == 402 || status == 403 {
+		return cat
 	}
 	if errorCount >= 1 && errorCount <= len(cooldownEscalation) {
 		return cooldownEscalation[errorCount-1]
 	}
-	return p.CategoryCooldown(status)
+	return cat
 }
 
 // CooldownTracker manages per-model cooldown state for the fallback chain.

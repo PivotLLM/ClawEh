@@ -29,12 +29,18 @@ import (
 type providerLLMClient struct {
 	provider          providers.LLMProvider
 	model             string
+	providerName      string // provider NAME (config), for the shared cooldown key
 	requestJSONObject bool
 }
 
 // Model returns the model name this client dispatches to, used to label
 // per-invocation entries in the compaction report.
 func (c *providerLLMClient) Model() string { return c.model }
+
+// CooldownProvider returns the provider name so the compaction path keys
+// cooldown by provider+model identically to the main fallback chain (shared
+// tracker). Empty when unknown (last-resort fallback client).
+func (c *providerLLMClient) CooldownProvider() string { return c.providerName }
 
 func (c *providerLLMClient) Complete(ctx context.Context, messages []providers.Message) (llmcontext.LLMReply, error) {
 	var opts map[string]any
@@ -87,6 +93,18 @@ func resolveCompressModelChain(agentModels, globalModels []string) []string {
 	return out
 }
 
+// compressProviderName resolves the provider NAME for a model alias, so the
+// compaction client keys cooldown by the same provider+model as the main chain.
+func compressProviderName(cfg *config.Config, alias string) string {
+	if cfg == nil {
+		return ""
+	}
+	if mc, err := cfg.GetModelConfig(alias); err == nil && mc != nil {
+		return mc.Provider
+	}
+	return ""
+}
+
 func resolveCompressModelTarget(cfg *config.Config, raw string) (alias, modelID string, ok bool) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" || cfg == nil {
@@ -135,7 +153,7 @@ func (al *AgentLoop) buildCompressLLMClient(agent *AgentInstance, compressModelN
 				"model":     modelID,
 				"session":   sessionKey,
 			})
-			return &providerLLMClient{provider: p, model: modelID, requestJSONObject: true}
+			return &providerLLMClient{provider: p, model: modelID, providerName: compressProviderName(cfg, alias), requestJSONObject: true}
 		} else {
 			logger.WarnCF("llmcontext", "compression model dispatch failed; falling back to agent provider", map[string]any{
 				"agent_id":  agent.ID,
@@ -305,7 +323,7 @@ func (al *AgentLoop) getContextManager(agent *AgentInstance, sessionKey string) 
 		llmcontext.WithCompactDebug(debugCapture),
 		llmcontext.WithCompressFailureDumpDir(failureDumpDir),
 		llmcontext.WithCompactionReporter(reporter),
-		llmcontext.WithCooldownPolicy(cooldownPolicy(al.GetConfig())),
+		llmcontext.WithCooldownTracker(al.cooldownTracker()),
 	}, agent.CompressOpts...)
 	cm := llmcontext.New(sessionKey, agent.Sessions, agent.ContextBuilder, llmClient, opts...)
 

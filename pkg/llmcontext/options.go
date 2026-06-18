@@ -88,6 +88,9 @@ type managerConfig struct {
 	// cooldownPolicy, when non-nil, sets the summarization-model cooldown policy.
 	// Nil resolves to providers.DefaultCooldownPolicy() in New().
 	cooldownPolicy *providers.CooldownPolicy
+	// cooldownTracker, when non-nil, is shared with the compaction path instead
+	// of building a private tracker (so cooldowns are unified with the main chain).
+	cooldownTracker *providers.CooldownTracker
 }
 
 func defaultManagerConfig() managerConfig {
@@ -144,9 +147,17 @@ func WithCompressLLM(clients ...LLMClient) Option {
 
 // WithCooldownPolicy sets the cooldown policy applied to summarization models so
 // the compaction path matches the main fallback chain. When unset, the built-in
-// default policy is used.
+// default policy is used. Ignored when WithCooldownTracker is also set.
 func WithCooldownPolicy(p providers.CooldownPolicy) Option {
 	return func(c *managerConfig) { c.cooldownPolicy = &p }
+}
+
+// WithCooldownTracker shares an existing cooldown tracker with the compaction
+// path — pass the main fallback chain's tracker so a model parked by either path
+// (e.g. an out-of-credits 402) is skipped by both. Takes precedence over
+// WithCooldownPolicy.
+func WithCooldownTracker(t *providers.CooldownTracker) Option {
+	return func(c *managerConfig) { c.cooldownTracker = t }
 }
 
 func WithArchiveMessageCount(n int) Option {
