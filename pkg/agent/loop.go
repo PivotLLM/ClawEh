@@ -959,8 +959,12 @@ func (al *AgentLoop) ReloadProviderAndConfig(
 	// this, reloaded agents would have an empty tool set (NewAgentInstance no
 	// longer registers anything). The new fallback chain is built here so it is
 	// shared between the registered spawn tools and the swapped-in al.fallback.
-	newCooldown := providers.NewCooldownTrackerWithPolicy(cooldownPolicy(cfg))
-	newFallback := providers.NewFallbackChain(newCooldown)
+	// Reuse the existing cooldown tracker so its state (notably out-of-credits
+	// parks) PERSISTS across the reload; only refresh its policy from the new
+	// config. The shared tracker continues to back both the new fallback chain
+	// and the rebuilt compaction managers.
+	al.cooldown.SetPolicy(cooldownPolicy(cfg))
+	newFallback := providers.NewFallbackChain(al.cooldown)
 	al.registerRuntimeTools(registry, provider, al.dispatcher, newFallback)
 
 	// Re-issue MCP isolation tokens for the new registry so the new
@@ -990,10 +994,10 @@ func (al *AgentLoop) ReloadProviderAndConfig(
 	al.callbackManagers = newCallbackManagers
 
 	// Also update fallback chain with new config (same chain used for the tools
-	// just registered above). al.cooldown tracks the new chain's tracker so the
-	// compaction managers (rebuilt via invalidateContextManagers below) share it.
+	// just registered above). al.cooldown is unchanged — the same shared tracker
+	// persists across reload and backs both the chain and the rebuilt compaction
+	// managers.
 	al.fallback = newFallback
-	al.cooldown = newCooldown
 
 	al.mu.Unlock()
 

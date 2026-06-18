@@ -244,6 +244,15 @@ func (ct *CooldownTracker) Reset() {
 	ct.entries = make(map[string]*cooldownEntry)
 }
 
+// SetPolicy updates the cooldown durations in place WITHOUT clearing the current
+// cooldown state. Used on config reload so an out-of-credits model stays parked
+// across the reload (the entries persist; only future cooldown sizing changes).
+func (ct *CooldownTracker) SetPolicy(p CooldownPolicy) {
+	ct.mu.Lock()
+	defer ct.mu.Unlock()
+	ct.policy = p
+}
+
 // Clear removes any cooldown/disabled state for a single provider+model.
 // Used as the per-model escape hatch after the operator tops up billing
 // or otherwise resolves the upstream condition. Returns true when an entry

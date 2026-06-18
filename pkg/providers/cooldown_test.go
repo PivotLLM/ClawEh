@@ -126,6 +126,28 @@ func TestCooldown_RetryAfterHonored(t *testing.T) {
 	}
 }
 
+// TestCooldown_SetPolicyPreservesState verifies a policy refresh (config reload)
+// keeps existing cooldown entries — an out-of-credits model stays parked.
+func TestCooldown_SetPolicyPreservesState(t *testing.T) {
+	now := time.Now()
+	ct, current := newTestTracker(now)
+	mark(ct, "openai", testModel, FailoverBilling) // parked 60m
+	if ct.IsAvailable("openai", testModel) {
+		t.Fatal("model should be parked after billing failure")
+	}
+
+	// Reload: refresh the policy (different durations) — state must persist.
+	ct.SetPolicy(CooldownPolicy{BillingAuth: 30 * time.Minute, RateLimit: time.Minute})
+	if ct.IsAvailable("openai", testModel) {
+		t.Fatal("model must remain parked across a policy refresh (reload)")
+	}
+	// Still parked well into the original 60m window.
+	*current = now.Add(40 * time.Minute)
+	if ct.IsAvailable("openai", testModel) {
+		t.Fatal("existing cooldown (60m) must not be shortened by the new policy")
+	}
+}
+
 func TestCooldown_ClearPerModel(t *testing.T) {
 	ct := NewCooldownTracker()
 	mark(ct, "openai", testModel, FailoverBilling)
