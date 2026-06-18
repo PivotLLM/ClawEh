@@ -21,7 +21,7 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/tools"
 )
 
-const MaxReadFileSize = 64 * 1024 // 64KB limit to avoid context overflow
+const MaxReadFileSize = 32 * 1024 // 32KB (~8K tokens) per-read cap to avoid context overflow
 
 // defaultReadLineCount is how many lines file_read returns in line mode when
 // line_count is unspecified. Output is still capped to the byte ceiling.

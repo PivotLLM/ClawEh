@@ -334,7 +334,7 @@ func DefaultConfig() *Config {
 			},
 			ReadFile: ReadFileToolConfig{
 				Enabled:         true,
-				MaxReadFileSize: 64 * 1024, // 64KB
+				MaxReadFileSize: 32 * 1024, // 32KB (~8K tokens) per read
 			},
 			Subagent: ToolConfig{
 				Enabled: true,

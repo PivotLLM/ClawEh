@@ -77,6 +77,14 @@ don't see it yet, nothing has been recorded — start recording.
   area for drafts and outputs) and `skills/` (read-only). Everything else in the
   workspace is invisible to your file tools. Use the `common_*` tools to share
   files with other agents.
+- **Large files (chapters, outlines, long docs):** don't read the whole file —
+  that floods your context and forces wasteful re-reads. Instead: use
+  `file_search` to locate the relevant part (e.g. a heading), `file_read` with
+  `start_line`/`line_count` to pull just that numbered section, then `file_edit`
+  using text copied exactly from what you read (so `old_text` matches). Reads are
+  chunked (~32 KB each) and tell you how to continue with the next `start_line`/
+  `offset`; page through only what you actually need, and prefer editing in place
+  over re-reading.
 - **Your config is already in context.** `AGENTS.md`, `SOUL.md`, `IDENTITY.md`,
   `USER.md`, and `MEMORY.md` are inserted into your prompt automatically — you do
   not (and cannot) read or edit them. If these operating instructions are wrong or
