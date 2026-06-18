@@ -1814,7 +1814,9 @@ func (al *AgentLoop) handleReasoning(
 
 // maxIdenticalToolBatches caps how many consecutive iterations may request the
 // exact same tool-call batch before the loop aborts (degenerate-loop guard).
-const maxIdenticalToolBatches = 3
+// The model is steered (told it is repeating, and to re-read/adjust) on each
+// repeat before this cap, so the cap allows a couple of correction chances.
+const maxIdenticalToolBatches = 4
 
 // maxEmptyRetries caps how many times the loop pokes the model to actually reply
 // after it finished a turn with no visible content but non-empty reasoning (a
@@ -2349,7 +2351,9 @@ func (al *AgentLoop) runLLMIteration(
 					"tools":     toolNames,
 					"repeats":   identicalToolBatches + 1,
 				})
-				finalContent = "Stopped: the model repeated the same action several times in a row; aborting to avoid a loop."
+				finalContent = fmt.Sprintf(
+					"Stopped: I kept making the same %s call (%d times) without success, so I'm aborting to avoid a loop. Please check the request or rephrase it.",
+					strings.Join(toolNames, ", "), identicalToolBatches+1)
 				lastFinishReason = "loop_detected"
 				break
 			}
@@ -2624,6 +2628,23 @@ func (al *AgentLoop) runLLMIteration(
 					"error":    err.Error(),
 				})
 			}
+		}
+
+		// If the model just repeated an identical tool-call batch (it isn't
+		// working), steer it before the next iteration: tell it how many times it
+		// has tried the exact same thing, that the file may have changed or its
+		// input doesn't match, and to re-read and adjust rather than retry blindly.
+		// identicalToolBatches > 0 means this batch matched the previous one.
+		if identicalToolBatches > 0 {
+			n := identicalToolBatches + 1
+			messages = append(messages, providers.Message{
+				Role: "user",
+				Content: fmt.Sprintf(
+					"⚠️ You have made the exact same tool call %d times in a row and it is not working — stop repeating it. The file may have changed since you last read it, or your input does not match the file exactly (e.g. old_text whitespace/indentation differs). Re-read the relevant file (file_read) and issue a corrected call, or explain the problem instead of retrying the identical call.",
+					n),
+			})
+			logger.InfoCF("agent", "steering model away from repeated identical tool call",
+				map[string]any{"agent_id": agent.ID, "iteration": iteration, "repeats": n})
 		}
 
 		// Tick down TTL of discovered tools after processing tool results.

@@ -63,11 +63,24 @@ func TestLoopProtection_BreaksOnRepeatedToolCall(t *testing.T) {
 	if finishReason != "loop_detected" {
 		t.Fatalf("finishReason = %q, want loop_detected", finishReason)
 	}
-	if !strings.Contains(finalContent, "repeated the same action") {
+	// Abort message names the repeated tool and that it's a loop.
+	if !strings.Contains(finalContent, "file_write") || !strings.Contains(finalContent, "avoid a loop") {
 		t.Fatalf("finalContent = %q", finalContent)
 	}
-	// Must have broken well before MaxIterations (≈ at the 3rd identical batch).
+	// Must have broken well before MaxIterations (at the 4th identical batch).
 	if iteration >= agentInstance.MaxIterations {
 		t.Fatalf("did not break early: iteration=%d max=%d", iteration, agentInstance.MaxIterations)
+	}
+	// Before aborting, the model is steered: a later dispatch must carry the
+	// "exact same tool call N times" guidance so it can self-correct.
+	sp := agentInstance.Provider.(*sequenceProvider)
+	steered := false
+	for _, m := range sp.lastMessages {
+		if strings.Contains(m.Content, "exact same tool call") {
+			steered = true
+		}
+	}
+	if !steered {
+		t.Fatal("expected a steering message injected before the loop abort")
 	}
 }

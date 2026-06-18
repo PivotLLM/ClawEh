@@ -1535,10 +1535,11 @@ func TestRunLLMIteration_ContextCancelDuringBackoff(t *testing.T) {
 // sequenceProvider returns a predetermined sequence of responses and errors.
 // After the sequence is exhausted it returns a generic "done" response.
 type sequenceProvider struct {
-	responses []*providers.LLMResponse
-	errors    []error
-	idx       int
-	mu        sync.Mutex
+	responses    []*providers.LLMResponse
+	errors       []error
+	idx          int
+	lastMessages []providers.Message // messages seen on the most recent Chat call
+	mu           sync.Mutex
 }
 
 func (p *sequenceProvider) Chat(
@@ -1550,6 +1551,7 @@ func (p *sequenceProvider) Chat(
 ) (*providers.LLMResponse, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.lastMessages = messages
 	if p.idx >= len(p.responses) {
 		return &providers.LLMResponse{Content: "done"}, nil
 	}
