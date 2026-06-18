@@ -78,13 +78,13 @@ func (al *AgentLoop) fallbackNotifier(opts processOptions) providers.FallbackNot
 }
 
 // formatFallbackNotice builds the mid-chain heads-up, e.g.
-// "⚠️ grok-2 error HTTP 402 (out of credits); trying gpt-4o…".
+// "⚠️ grok-2 error HTTP 402 (out of credits).\nTrying gpt-4o…".
 func formatFallbackNotice(failed providers.FallbackAttempt, next providers.FallbackCandidate) string {
 	nextName := next.Alias
 	if nextName == "" {
 		nextName = next.Model
 	}
-	return fmt.Sprintf("⚠️ %s; trying %s…",
+	return fmt.Sprintf("⚠️ %s.\nTrying %s…",
 		attemptDescription(failed.Model, failoverStatus(failed.Error), failed.Reason),
 		nextName,
 	)

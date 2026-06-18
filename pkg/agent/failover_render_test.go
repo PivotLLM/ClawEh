@@ -64,8 +64,9 @@ func TestFormatFallbackNotice(t *testing.T) {
 	}
 	next := providers.FallbackCandidate{Model: "gpt-4o", Alias: "smart"}
 	got := formatFallbackNotice(failed, next)
-	// Alias preferred for the next model; HTTP code surfaced for the failed one.
-	if !strings.Contains(got, "HTTP 402") || !strings.Contains(got, "trying smart") {
+	// Alias preferred for the next model; HTTP code surfaced for the failed one;
+	// period + newline before "Trying".
+	if !strings.Contains(got, "HTTP 402") || !strings.Contains(got, ").\nTrying smart…") {
 		t.Fatalf("notice unexpected: %q", got)
 	}
 }
