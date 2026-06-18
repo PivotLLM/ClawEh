@@ -171,3 +171,66 @@ func TestHandleGetMemoryStore_NotFound(t *testing.T) {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
 	}
 }
+
+func TestHandleDeleteMemoryAndDomain(t *testing.T) {
+	configPath, cleanup := setupOAuthTestEnv(t)
+	defer cleanup()
+
+	id := seedCogmemDB(t, configPath)
+	h := NewHandler(configPath)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+
+	getDetail := func() memoryDetailResponse {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/memory/"+id, nil))
+		var d memoryDetailResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &d); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		return d
+	}
+
+	// Find the seeded topic domain + its memory.
+	var domainID, memoryID string
+	for _, dm := range getDetail().Domains {
+		if dm.Name == "Website Redesign" {
+			domainID = dm.ID
+			if len(dm.Memories) > 0 {
+				memoryID = dm.Memories[0].ID
+			}
+		}
+	}
+	if domainID == "" || memoryID == "" {
+		t.Fatalf("seeded domain/memory not found")
+	}
+
+	// Delete the memory.
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/api/memory/"+id+"/memories/"+memoryID, nil))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("delete memory status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if got := getDetail().ActiveMemories; got != 0 {
+		t.Fatalf("active memories after delete = %d, want 0", got)
+	}
+
+	// Delete the domain.
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/api/memory/"+id+"/domains/"+domainID, nil))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("delete domain status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	for _, dm := range getDetail().Domains {
+		if dm.ID == domainID {
+			t.Fatalf("domain survived delete")
+		}
+	}
+
+	// Deleting a missing memory returns 404.
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/api/memory/"+id+"/memories/hMISSING", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("delete missing memory status = %d, want 404", rec.Code)
+	}
+}

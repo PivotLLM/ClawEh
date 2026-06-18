@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -19,6 +20,8 @@ const cogmemDBSuffix = ".cogmem.db"
 func (h *Handler) registerMemoryRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/memory", h.handleListMemoryStores)
 	mux.HandleFunc("GET /api/memory/{id}", h.handleGetMemoryStore)
+	mux.HandleFunc("DELETE /api/memory/{id}/domains/{domainID}", h.handleDeleteDomain)
+	mux.HandleFunc("DELETE /api/memory/{id}/memories/{memoryID}", h.handleDeleteMemory)
 }
 
 // memoryStoreItem is one per-session cognitive-memory database in the list view.
@@ -249,4 +252,64 @@ func (h *Handler) handleGetMemoryStore(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+// openMemoryForWrite validates the {id} path value, locates the session's
+// .cogmem.db, and opens it. On any failure it writes the HTTP error and returns
+// ok=false. The caller must Close the returned store.
+func (h *Handler) openMemoryForWrite(w http.ResponseWriter, r *http.Request) (*cogmemstore.Store, bool) {
+	id := r.PathValue("id")
+	if id == "" || strings.ContainsAny(id, "/\\") || strings.Contains(id, "..") {
+		http.Error(w, "invalid memory id", http.StatusBadRequest)
+		return nil, false
+	}
+	path, _, ok := h.findMemoryDB(id)
+	if !ok {
+		http.Error(w, "memory store not found", http.StatusNotFound)
+		return nil, false
+	}
+	s, err := cogmemstore.Open(path)
+	if err != nil {
+		http.Error(w, "failed to open memory store", http.StatusInternalServerError)
+		return nil, false
+	}
+	return s, true
+}
+
+// handleDeleteDomain hard-deletes a domain (and its memories) from a session's
+// memory store. DELETE /api/memory/{id}/domains/{domainID}
+func (h *Handler) handleDeleteDomain(w http.ResponseWriter, r *http.Request) {
+	s, ok := h.openMemoryForWrite(w, r)
+	if !ok {
+		return
+	}
+	defer s.Close()
+	if err := s.DeleteDomain(context.Background(), s.DB(), r.PathValue("domainID")); err != nil {
+		if errors.Is(err, cogmemstore.ErrNotFound) {
+			http.Error(w, "domain not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "failed to delete domain", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleDeleteMemory hard-deletes a single memory from a session's memory store.
+// DELETE /api/memory/{id}/memories/{memoryID}
+func (h *Handler) handleDeleteMemory(w http.ResponseWriter, r *http.Request) {
+	s, ok := h.openMemoryForWrite(w, r)
+	if !ok {
+		return
+	}
+	defer s.Close()
+	if err := s.DeleteMemory(context.Background(), s.DB(), r.PathValue("memoryID")); err != nil {
+		if errors.Is(err, cogmemstore.ErrNotFound) {
+			http.Error(w, "memory not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "failed to delete memory", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

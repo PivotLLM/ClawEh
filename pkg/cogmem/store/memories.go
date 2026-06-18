@@ -83,6 +83,27 @@ func (s *Store) RetireMemory(ctx context.Context, q DBTX, id, reason string) err
 	return nil
 }
 
+// DeleteMemory hard-deletes a memory row (no audit trail kept), bumping
+// stable_rev when it was active content in a sticky domain. Returns ErrNotFound
+// if the memory does not exist.
+func (s *Store) DeleteMemory(ctx context.Context, q DBTX, id string) error {
+	h, err := s.GetMemory(ctx, q, id)
+	if err != nil {
+		return err
+	}
+	sticky, err := s.domainSticky(ctx, q, h.DomainID)
+	if err != nil {
+		return err
+	}
+	if _, err := q.ExecContext(ctx, `DELETE FROM memories WHERE id=?`, id); err != nil {
+		return fmt.Errorf("cogmem: delete memory: %w", err)
+	}
+	if affectsStable(sticky, h.Status) {
+		return bumpStableRev(ctx, q)
+	}
+	return nil
+}
+
 // SupersedeMemory retires oldID and adds a replacement hook linked back to it.
 func (s *Store) SupersedeMemory(ctx context.Context, q DBTX, oldID string, p AddMemoryParams) (Memory, error) {
 	if err := s.RetireMemory(ctx, q, oldID, "superseded"); err != nil {

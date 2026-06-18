@@ -1,11 +1,13 @@
-import { IconBrain, IconChevronRight } from "@tabler/icons-react"
-import { useQuery } from "@tanstack/react-query"
+import { IconBrain, IconChevronRight, IconTrash } from "@tabler/icons-react"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useEffect, useState } from "react"
 import { useTranslation } from "react-i18next"
 
 import {
   type MemoryDomain,
   type MemoryMemory,
+  deleteMemoryDomain,
+  deleteMemoryItem,
   getMemoryStore,
   getMemoryStores,
 } from "@/api/memory"
@@ -24,12 +26,27 @@ function Pill({ children }: { children: React.ReactNode }) {
   )
 }
 
-function MemoryRow({ m }: { m: MemoryMemory }) {
+function MemoryRow({
+  m,
+  onDelete,
+}: {
+  m: MemoryMemory
+  onDelete?: () => void
+}) {
   return (
     <div className="border-border/40 border-b py-2 last:border-0">
       <div className="flex items-start gap-2">
         <Pill>{m.type}</Pill>
         <span className="flex-1 text-sm">{m.text}</span>
+        {onDelete && (
+          <button
+            onClick={onDelete}
+            title="Delete this memory"
+            className="text-muted-foreground hover:text-destructive shrink-0"
+          >
+            <IconTrash className="size-3.5" />
+          </button>
+        )}
       </div>
       <div className="text-muted-foreground mt-1 flex gap-3 text-[11px]">
         <span>conf {m.confidence.toFixed(2)}</span>
@@ -42,7 +59,15 @@ function MemoryRow({ m }: { m: MemoryMemory }) {
   )
 }
 
-function DomainCard({ d }: { d: MemoryDomain }) {
+function DomainCard({
+  d,
+  onDeleteDomain,
+  onDeleteMemory,
+}: {
+  d: MemoryDomain
+  onDeleteDomain: (d: MemoryDomain) => void
+  onDeleteMemory: (m: MemoryMemory) => void
+}) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(true)
   return (
@@ -51,16 +76,25 @@ function DomainCard({ d }: { d: MemoryDomain }) {
       onOpenChange={setOpen}
       className="border-border rounded-lg border"
     >
-      <CollapsibleTrigger className="flex w-full items-center gap-2 px-3 py-2 text-left">
-        <IconChevronRight
-          className={`size-4 transition-transform ${open ? "rotate-90" : ""}`}
-        />
-        <span className="font-medium">{d.name}</span>
-        {d.sticky && <Pill>{t("pages.memory.sticky")}</Pill>}
-        <span className="text-muted-foreground ml-auto text-xs">
-          {t("pages.memory.memory_count", { count: d.memories.length })}
-        </span>
-      </CollapsibleTrigger>
+      <div className="flex w-full items-center gap-2 px-3 py-2">
+        <CollapsibleTrigger className="flex flex-1 items-center gap-2 text-left">
+          <IconChevronRight
+            className={`size-4 transition-transform ${open ? "rotate-90" : ""}`}
+          />
+          <span className="font-medium">{d.name}</span>
+          {d.sticky && <Pill>{t("pages.memory.sticky")}</Pill>}
+          <span className="text-muted-foreground ml-auto text-xs">
+            {t("pages.memory.memory_count", { count: d.memories.length })}
+          </span>
+        </CollapsibleTrigger>
+        <button
+          onClick={() => onDeleteDomain(d)}
+          title="Delete this domain and all its memories"
+          className="text-muted-foreground hover:text-destructive shrink-0"
+        >
+          <IconTrash className="size-4" />
+        </button>
+      </div>
       <CollapsibleContent className="px-3 pb-2">
         {d.summary && (
           <p className="text-muted-foreground mb-2 text-xs italic">{d.summary}</p>
@@ -75,7 +109,9 @@ function DomainCard({ d }: { d: MemoryDomain }) {
             {t("pages.memory.no_memories")}
           </p>
         ) : (
-          d.memories.map((m) => <MemoryRow key={m.id} m={m} />)
+          d.memories.map((m) => (
+            <MemoryRow key={m.id} m={m} onDelete={() => onDeleteMemory(m)} />
+          ))
         )}
       </CollapsibleContent>
     </Collapsible>
@@ -102,6 +138,36 @@ export function MemoryPage() {
     queryFn: () => getMemoryStore(selected as string),
     enabled: selected !== null,
   })
+
+  const qc = useQueryClient()
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey: ["memory-store", selected] })
+    qc.invalidateQueries({ queryKey: ["memory-stores"] })
+  }
+
+  const handleDeleteDomain = async (d: MemoryDomain) => {
+    if (selected === null) return
+    if (!window.confirm(`Delete domain "${d.name}" and all ${d.memories.length} of its memories? This cannot be undone.`)) {
+      return
+    }
+    try {
+      await deleteMemoryDomain(selected, d.id)
+      refresh()
+    } catch (e) {
+      window.alert(`Failed to delete domain: ${e instanceof Error ? e.message : e}`)
+    }
+  }
+
+  const handleDeleteMemory = async (m: MemoryMemory) => {
+    if (selected === null) return
+    if (!window.confirm("Delete this memory? This cannot be undone.")) return
+    try {
+      await deleteMemoryItem(selected, m.id)
+      refresh()
+    } catch (e) {
+      window.alert(`Failed to delete memory: ${e instanceof Error ? e.message : e}`)
+    }
+  }
 
   return (
     <div className="flex h-full flex-col">
@@ -187,7 +253,12 @@ export function MemoryPage() {
               )}
 
               {detail.domains.map((d) => (
-                <DomainCard key={d.id} d={d} />
+                <DomainCard
+                  key={d.id}
+                  d={d}
+                  onDeleteDomain={handleDeleteDomain}
+                  onDeleteMemory={handleDeleteMemory}
+                />
               ))}
 
               {detail.pending_list.length > 0 && (
@@ -198,7 +269,11 @@ export function MemoryPage() {
                   </div>
                   <div className="px-3 pb-2">
                     {detail.pending_list.map((m) => (
-                      <MemoryRow key={m.id} m={m} />
+                      <MemoryRow
+                        key={m.id}
+                        m={m}
+                        onDelete={() => handleDeleteMemory(m)}
+                      />
                     ))}
                   </div>
                 </div>

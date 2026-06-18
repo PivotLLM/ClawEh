@@ -473,6 +473,27 @@ func TestHookLifecycleAndStableRev(t *testing.T) {
 	}
 }
 
+// TestDeleteMemory confirms a hard memory delete removes the row and is
+// idempotent-safe (ErrNotFound on a second delete).
+func TestDeleteMemory(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	d, _ := s.CreateDomain(ctx, s.DB(), CreateDomainParams{AgentID: "a", Name: "P"})
+	m, _ := s.AddMemory(ctx, s.DB(), AddMemoryParams{
+		DomainID: d.ID, Type: TypeFact, Text: "delete me", Status: StatusActive,
+		Confidence: 0.9, Source: SourceToolWrite,
+	})
+	if err := s.DeleteMemory(ctx, s.DB(), m.ID); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if _, err := s.GetMemory(ctx, s.DB(), m.ID); err != ErrNotFound {
+		t.Fatalf("memory survived delete (err=%v)", err)
+	}
+	if err := s.DeleteMemory(ctx, s.DB(), m.ID); err != ErrNotFound {
+		t.Fatalf("second delete err = %v, want ErrNotFound", err)
+	}
+}
+
 // TestMemoryOriginRoundTrip confirms origin is persisted, defaults to chat when
 // unset, and round-trips through GetMemory.
 func TestMemoryOriginRoundTrip(t *testing.T) {
