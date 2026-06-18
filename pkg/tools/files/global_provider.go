@@ -34,12 +34,13 @@ func (globalFilesProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 	cd, _ := deps.Host.(tools.ToolDeps)
 
 	var (
-		read  *ReadFileTool
-		write *WriteFileTool
-		list  *ListDirTool
-		edit  *EditFileTool
-		apnd  *AppendFileTool
-		cp    *CopyFileTool
+		read   *ReadFileTool
+		write  *WriteFileTool
+		list   *ListDirTool
+		edit   *EditFileTool
+		apnd   *AppendFileTool
+		cp     *CopyFileTool
+		search *SearchFilesTool
 	)
 
 	if c != nil {
@@ -78,6 +79,7 @@ func (globalFilesProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 		}
 
 		read = NewReadFileTool(workspace, readRestrict, maxReadFileSize, allowReadPaths)
+		search = NewSearchFilesTool(workspace, readRestrict, allowReadPaths)
 		write = NewWriteFileToolScoped(workspace, restrict, writeSubdir, allowWritePaths)
 		list = NewListDirTool(workspace, readRestrict, allowReadPaths)
 		edit = NewEditFileToolScoped(workspace, restrict, writeSubdir, allowWritePaths)
@@ -114,6 +116,19 @@ func (globalFilesProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 			DefaultAllow: global.Allow(true),
 			Handler: func(call *global.ToolCall) (*global.Result, error) {
 				return tools.ResultToGlobal(list.Execute(call.Ctx, call.Args)), nil
+			},
+		},
+		{
+			Name:         "search",
+			Description:  (&SearchFilesTool{}).Description(),
+			RawSchema:    (&SearchFilesTool{}).Parameters(),
+			Category:     "filesystem",
+			DefaultAllow: global.Allow(true),
+			Handler: func(call *global.ToolCall) (*global.Result, error) {
+				if search == nil {
+					return tools.ResultToGlobal(tools.ErrorResult("file search is not available")), nil
+				}
+				return tools.ResultToGlobal(search.Execute(call.Ctx, call.Args)), nil
 			},
 		},
 		{

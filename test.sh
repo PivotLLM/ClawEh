@@ -444,6 +444,7 @@ PY
       "file_edit",
       "file_append",
       "file_list",
+      "file_search",
       "file_copy",
       "web_fetch",
       "web_search",
