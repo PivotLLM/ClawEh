@@ -84,6 +84,11 @@ type AgentLoop struct {
 	activeModelMu  sync.Mutex
 	activeModelIdx map[string]int
 
+	// exposeReasoning caches the per-session "expose reasoning to the user" flag
+	// (write-through to CompactionState). Same key scheme as activeModelIdx.
+	exposeReasoningMu    sync.Mutex
+	exposeReasoningCache map[string]bool
+
 	// sessionTokenIssuer issues and revokes per-session MCP tokens. Wired in
 	// from the MCP server at startup via SetSessionTokenIssuer; nil when the
 	// MCP host is not configured.
@@ -247,7 +252,8 @@ func NewAgentLoop(
 		evictStop:        make(chan struct{}),
 		evictTTL:         defaultEvictTTL,
 		evictInterval:    defaultEvictInterval,
-		activeModelIdx:   make(map[string]int),
+		activeModelIdx:       make(map[string]int),
+		exposeReasoningCache: make(map[string]bool),
 		taskLive:         toolsagents.NewLiveSet(),
 		spawnManagers:    make(map[string]*toolsagents.SubagentManager),
 		superStop:        make(chan struct{}),
@@ -1726,9 +1732,15 @@ func (al *AgentLoop) targetReasoningChannelID(channelName string) (chatID string
 func (al *AgentLoop) handleReasoning(
 	ctx context.Context,
 	reasoningContent, channelName, channelID string,
+	inline bool,
 ) {
 	if reasoningContent == "" || channelName == "" || channelID == "" {
 		return
+	}
+	// When delivered inline in the main chat (no dedicated reasoning channel),
+	// mark it so the user can tell the model's thinking from its actual reply.
+	if inline {
+		reasoningContent = "💭 _Reasoning:_\n" + reasoningContent
 	}
 
 	// Check context cancellation before attempting to publish,
@@ -2201,12 +2213,17 @@ func (al *AgentLoop) runLLMIteration(
 			}
 		}
 
-		go al.handleReasoning(
-			ctx,
-			response.Reasoning,
-			opts.Channel,
-			al.targetReasoningChannelID(opts.Channel),
-		)
+		// Deliver reasoning only when the session opted in (/reasoning on). Route
+		// to the configured reasoning channel if one exists, else inline in the
+		// main chat so the toggle works on any channel.
+		if al.getExposeReasoning(agent, opts.SessionKey) {
+			reasoningTarget := al.targetReasoningChannelID(opts.Channel)
+			inline := reasoningTarget == ""
+			if inline {
+				reasoningTarget = opts.ChatID
+			}
+			go al.handleReasoning(ctx, response.Reasoning, opts.Channel, reasoningTarget, inline)
+		}
 
 		respFields := map[string]any{
 			"agent_id":        agent.ID,
@@ -2705,6 +2722,54 @@ func (al *AgentLoop) setActiveModelIndex(agent *AgentInstance, sessionKey string
 	return nil
 }
 
+// getExposeReasoning returns whether the session exposes the model's reasoning
+// to the user, loading it from the session store on a cache miss. Default false.
+func (al *AgentLoop) getExposeReasoning(agent *AgentInstance, sessionKey string) bool {
+	key := activeModelCacheKey(agent.ID, sessionKey)
+
+	al.exposeReasoningMu.Lock()
+	if v, ok := al.exposeReasoningCache[key]; ok {
+		al.exposeReasoningMu.Unlock()
+		return v
+	}
+	al.exposeReasoningMu.Unlock()
+
+	v := false
+	if store, ok := agent.Sessions.(compactionStateStore); ok {
+		if st, err := store.GetCompactionState(sessionKey); err == nil {
+			v = st.ExposeReasoning
+		}
+	}
+
+	al.exposeReasoningMu.Lock()
+	al.exposeReasoningCache[key] = v
+	al.exposeReasoningMu.Unlock()
+	return v
+}
+
+// setExposeReasoning sets the session's expose-reasoning flag, updating the cache
+// and persisting it through CompactionState (best-effort).
+func (al *AgentLoop) setExposeReasoning(agent *AgentInstance, sessionKey string, v bool) {
+	key := activeModelCacheKey(agent.ID, sessionKey)
+	al.exposeReasoningMu.Lock()
+	al.exposeReasoningCache[key] = v
+	al.exposeReasoningMu.Unlock()
+
+	if store, ok := agent.Sessions.(compactionStateStore); ok {
+		st, err := store.GetCompactionState(sessionKey)
+		if err != nil {
+			logger.WarnCF("agent", "expose reasoning: load compaction state failed",
+				map[string]any{"session_key": sessionKey, "error": err.Error()})
+			return
+		}
+		st.ExposeReasoning = v
+		if err := store.SetCompactionState(sessionKey, st); err != nil {
+			logger.WarnCF("agent", "expose reasoning: persist failed",
+				map[string]any{"session_key": sessionKey, "error": err.Error()})
+		}
+	}
+}
+
 // selectCandidates returns the model candidates and resolved model name to use
 // for a conversation turn, honouring the session's active model selection.
 //
@@ -3066,6 +3131,19 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 				name = agent.Candidates[idx].Model
 			}
 			return name, nil
+		}
+
+		rt.GetExposeReasoning = func() bool {
+			if opts == nil {
+				return false
+			}
+			return al.getExposeReasoning(agent, opts.SessionKey)
+		}
+		rt.SetExposeReasoning = func(on bool) {
+			if opts == nil {
+				return
+			}
+			al.setExposeReasoning(agent, opts.SessionKey, on)
 		}
 
 		rt.ClearHistory = func() error {

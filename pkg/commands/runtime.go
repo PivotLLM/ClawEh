@@ -26,7 +26,12 @@ type Runtime struct {
 	// returns the selected model's name. Returns an error for an out-of-range
 	// index or when the agent has no selectable models.
 	SetActiveModel func(idx int) (name string, err error)
-	ClearHistory   func() error
+	// GetExposeReasoning / SetExposeReasoning read and toggle whether this session
+	// delivers the model's reasoning to the user (/reasoning). Nil when the host
+	// does not support it.
+	GetExposeReasoning func() bool
+	SetExposeReasoning func(on bool)
+	ClearHistory       func() error
 	CompactHistory func(ctx context.Context) (report string, err error)
 	ResetCooldown  func()
 	// ClearCooldown clears the cooldown for a single provider/model and
