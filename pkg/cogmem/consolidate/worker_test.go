@@ -37,12 +37,17 @@ func (f *fakeSource) Range(minSeq, maxSeq int64) ([]SourceMessage, error) {
 
 // fakeModel returns a canned raw string regardless of input.
 type fakeModel struct {
-	raw string
-	err error
+	raw   string
+	model string
+	err   error
 }
 
-func (m *fakeModel) Consolidate(ctx context.Context, system, userJSON string) (string, error) {
-	return m.raw, m.err
+func (m *fakeModel) Consolidate(ctx context.Context, system, userJSON string) (string, string, error) {
+	name := m.model
+	if name == "" {
+		name = "fake-model"
+	}
+	return m.raw, name, m.err
 }
 
 func openStore(t *testing.T) *store.Store {

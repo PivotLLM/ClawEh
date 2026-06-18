@@ -38,10 +38,14 @@ type MessageSource interface {
 }
 
 // ModelCaller invokes the configured memory model with a system prompt and a
-// JSON user message, returning the raw model text (expected to be JSON). It is
-// decoupled from pkg/providers so the worker never imports a provider package.
+// JSON user message, returning the raw model text (which MUST parse as a
+// consolidation Output via ParseOutput) and the name of the model that produced
+// it. Implementations fall through their model chain until one returns a usable,
+// parseable response; only then do they return a nil error. This contract means
+// the worker never has to record a raw JSON-parser error from a flaky model. It
+// is decoupled from pkg/providers so the worker never imports a provider package.
 type ModelCaller interface {
-	Consolidate(ctx context.Context, systemPrompt, userJSON string) (raw string, err error)
+	Consolidate(ctx context.Context, systemPrompt, userJSON string) (raw string, model string, err error)
 }
 
 // Worker runs the consolidation "sleep cycle" against one store + archive pair.
@@ -198,24 +202,33 @@ func (w *Worker) RunOnce(ctx context.Context, p RunParams) (RunResult, error) {
 	started := time.Now()
 	inputTokens := EstimateTokens(system + string(userJSON))
 
-	raw, err := w.model.Consolidate(ctx, system, string(userJSON))
+	raw, model, err := w.model.Consolidate(ctx, system, string(userJSON))
+	if model == "" {
+		model = w.modelName
+	}
 	if err != nil {
-		w.recordRun(ctx, p, "error", 0, consolidated+1, lastSeq, inputTokens, 0, err.Error(), started)
+		// The caller exhausted its model chain without a usable, parseable
+		// response. err is a clean, human-readable message (never a raw
+		// JSON-parser error) — see ModelCaller.
+		w.recordRun(ctx, p, model, "error", 0, consolidated+1, lastSeq, inputTokens, 0, err.Error(), started)
 		result.Status = "error"
 		return result, fmt.Errorf("consolidate: model call: %w", err)
 	}
 	outputTokens := EstimateTokens(raw)
 
-	out, perr := parseOutput(raw)
+	out, perr := ParseOutput(raw)
 	if perr != nil {
-		w.recordRun(ctx, p, "invalid_json", 0, consolidated+1, lastSeq, inputTokens, outputTokens, perr.Error(), started)
+		// Defensive: ModelCaller guarantees parseable raw, so this is
+		// unreachable in practice. Never surface the raw parser error to the
+		// user (e.g. "unexpected end of JSON input") — record a clean message.
+		w.recordRun(ctx, p, model, "invalid_json", 0, consolidated+1, lastSeq, inputTokens, outputTokens, "memory model output was not valid JSON", started)
 		w.dump(p, system, string(userJSON), raw, 0)
 		result.Status = "invalid_json"
 		return result, nil
 	}
 
 	if verr := out.Validate(in); verr != nil {
-		w.recordRun(ctx, p, "aborted", 0, consolidated+1, lastSeq, inputTokens, outputTokens, verr.Error(), started)
+		w.recordRun(ctx, p, model, "aborted", 0, consolidated+1, lastSeq, inputTokens, outputTokens, verr.Error(), started)
 		w.dump(p, system, string(userJSON), raw, 0)
 		result.Status = "aborted"
 		return result, nil
@@ -225,10 +238,10 @@ func (w *Worker) RunOnce(ctx context.Context, p RunParams) (RunResult, error) {
 		AgentID:    p.AgentID,
 		SessionKey: p.SessionKey,
 		Actor:      actorSleepCycle,
-		Model:      w.modelName,
+		Model:      model,
 	})
 	if err != nil {
-		w.recordRun(ctx, p, "error", applied, consolidated+1, lastSeq, inputTokens, outputTokens, err.Error(), started)
+		w.recordRun(ctx, p, model, "error", applied, consolidated+1, lastSeq, inputTokens, outputTokens, err.Error(), started)
 		result.Status = "error"
 		return result, fmt.Errorf("consolidate: apply: %w", err)
 	}
@@ -246,7 +259,7 @@ func (w *Worker) RunOnce(ctx context.Context, p RunParams) (RunResult, error) {
 			markErr = "mark consolidated: " + err.Error()
 		}
 	}
-	w.recordRun(ctx, p, "ok", applied, consolidated+1, lastSeq, inputTokens, outputTokens, markErr, started)
+	w.recordRun(ctx, p, model, "ok", applied, consolidated+1, lastSeq, inputTokens, outputTokens, markErr, started)
 	w.dump(p, system, string(userJSON), raw, applied)
 
 	result.Applied = applied
@@ -264,13 +277,13 @@ func (w *Worker) currentState(ctx context.Context) CurrentState {
 	}
 	for _, d := range domains {
 		dv := DomainView{
-			ID:      d.ID,
-			Sticky:  d.Sticky(),
-			Name:    d.Name,
-			Status:  string(d.Status),
-			Version: d.Version,
-			Summary: d.Summary,
-			State:   d.State,
+			ID:              d.ID,
+			Sticky:          d.Sticky(),
+			Name:            d.Name,
+			Status:          string(d.Status),
+			Version:         d.Version,
+			Summary:         d.Summary,
+			State:           d.State,
 			Triggers:        d.Triggers,
 			KeywordTriggers: d.KeywordTriggers,
 		}
@@ -290,11 +303,11 @@ func (w *Worker) currentState(ctx context.Context) CurrentState {
 	return cs
 }
 
-func (w *Worker) recordRun(ctx context.Context, p RunParams, status string, applied int, seqStart, seqEnd int64, inTok, outTok int, errMsg string, started time.Time) {
+func (w *Worker) recordRun(ctx context.Context, p RunParams, model, status string, applied int, seqStart, seqEnd int64, inTok, outTok int, errMsg string, started time.Time) {
 	finished := time.Now()
 	_ = w.st.RecordRun(ctx, w.st.DB(), store.Run{
 		Trigger:      p.Trigger,
-		Model:        w.modelName,
+		Model:        model,
 		SeqStart:     seqStart,
 		SeqEnd:       seqEnd,
 		InputTokens:  inTok,
@@ -338,9 +351,9 @@ func (w *Worker) leaseOwner(agentID string) string {
 	return fmt.Sprintf("%s-%d-%s", agentID, os.Getpid(), id)
 }
 
-// parseOutput trims the raw model text, strips a leading/trailing ```json fence
+// ParseOutput trims the raw model text, strips a leading/trailing ```json fence
 // if present, and unmarshals it into an Output.
-func parseOutput(raw string) (Output, error) {
+func ParseOutput(raw string) (Output, error) {
 	s := strings.TrimSpace(raw)
 	s = stripFence(s)
 	var out Output
