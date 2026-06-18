@@ -614,7 +614,9 @@ func (m *Manager) compress(ctx context.Context, safetyNet bool) error {
 	m.recordCompactionOutcome(err)
 	// Deliver the report for the automatic path. The manual /compact path returns
 	// the report to the caller instead and leaves reportCallback unset here.
-	if m.cfg.reportCallback != nil && m.lastReport != nil {
+	// Skip the "nothing to compress" non-event — auto compaction firing with
+	// nothing to do is noise (and produced the bogus "0 messages (0 B)" notice).
+	if m.cfg.reportCallback != nil && m.lastReport != nil && m.lastReport.Outcome != "nothing" {
 		m.cfg.reportCallback(m.channel, m.chatID, m.lastReport.String())
 	}
 	return err

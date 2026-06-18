@@ -50,9 +50,16 @@ func (r *CompactionReport) String() string {
 	}
 	var b strings.Builder
 
-	header := fmt.Sprintf("Compaction: %d messages (%s)", r.BeforeMsgs, formatBytes(r.BeforeBytes))
-	if dr := formatDateRange(r.DateFrom, r.DateTo); dr != "" {
+	// When the pass exited before reading the conversation (e.g. every model is
+	// in cooldown), there are no before-stats — omit the misleading
+	// "0 messages (0 B)" and show a bare header.
+	var header string
+	if r.BeforeMsgs == 0 && r.BeforeBytes == 0 {
+		header = "Compaction:"
+	} else if dr := formatDateRange(r.DateFrom, r.DateTo); dr != "" {
 		header = fmt.Sprintf("Compaction: %d messages (%s) · %s", r.BeforeMsgs, formatBytes(r.BeforeBytes), dr)
+	} else {
+		header = fmt.Sprintf("Compaction: %d messages (%s)", r.BeforeMsgs, formatBytes(r.BeforeBytes))
 	}
 	b.WriteString(header)
 
