@@ -22,10 +22,6 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 )
 
-// messageToolName is the agent-internal outbound-publish tool, never exposed
-// to MCP clients (it has no meaningful semantics outside the agent loop).
-const messageToolName = "msg_send"
-
 // invalidTokenMessage is what we return when the supplied session_token is
 // missing, malformed, or unknown. The wording is intentionally instructive
 // so a confused LLM can self-correct on the next call.
@@ -115,10 +111,10 @@ func addToolsToServer(
 	}
 
 	for _, name := range catalogueToolNames(agentRegistries) {
-		// Never expose the agent-internal message tools.
-		if name == messageToolName || name == "message" {
-			continue
-		}
+		// msg_send (the outbound-message tool) obeys the allowlist like any other
+		// tool: it is only reachable by an authenticated MCP client holding a valid
+		// session token, and it can only post to that session's own user, so there
+		// is no hard exclusion — include it in the allowlist to expose it.
 		if !config.MatchToolPattern(allowPatterns, name) {
 			continue
 		}

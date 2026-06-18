@@ -1112,8 +1112,8 @@ type MCPHostConfig struct {
 	Listen       string `json:"listen,omitempty"        env:"CLAW_MCP_HOST_LISTEN"`
 	EndpointPath string `json:"endpoint_path,omitempty" env:"CLAW_MCP_HOST_ENDPOINT_PATH"`
 	// Tools is the global allowlist of tool names exposed to MCP clients.
-	// Supports "*" (all), prefix globs like "read_*", and exact names.
-	// The agent's outbound "message" tool is never exposed.
+	// Supports "*" (all), prefix globs like "read_*", and exact names. Every
+	// tool obeys the allowlist; nothing (including msg_send) is hard-excluded.
 	Tools []string `json:"tools,omitempty"`
 }
 

@@ -128,9 +128,8 @@ func WithEndpointPath(path string) Option {
 
 // WithAllowlist sets the tool-name patterns to expose. Supports "*" (all),
 // prefix globs like "read_*", and exact names — see config.MatchToolPattern.
-// An empty or nil allowlist means no tools are exposed (fail-closed). The
-// "message" tool is never exposed regardless of the allowlist — it belongs
-// to the agent's outbound-publish path, not MCP clients.
+// An empty or nil allowlist means no tools are exposed (fail-closed). Every
+// tool, including msg_send, obeys the allowlist; nothing is hard-excluded.
 func WithAllowlist(names []string) Option {
 	return func(m *MCPServer) {
 		if len(names) == 0 {

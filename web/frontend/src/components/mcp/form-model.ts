@@ -104,8 +104,9 @@ export function matchToolPattern(patterns: string[], name: string): boolean {
   return false
 }
 
-// MCPHost excludes the agent's outbound "message" tool unconditionally.
-export const ALWAYS_EXCLUDED_TOOLS = ["message"]
+// MCPHost no longer hard-excludes any tool; every tool obeys the allowlist
+// (msg_send included). Kept as an empty list so the preview UI can stay generic.
+export const ALWAYS_EXCLUDED_TOOLS: string[] = []
 
 export function validateListen(value: string): string | null {
   const v = value.trim()

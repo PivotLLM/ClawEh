@@ -218,11 +218,13 @@ export function ToolsSection({
               total: filteredCandidates.length,
             })}
           </div>
-          <div className="text-muted-foreground mb-2 text-xs">
-            {t("pages.mcp.tools_always_excluded", {
-              tools: ALWAYS_EXCLUDED_TOOLS.join(", "),
-            })}
-          </div>
+          {ALWAYS_EXCLUDED_TOOLS.length > 0 && (
+            <div className="text-muted-foreground mb-2 text-xs">
+              {t("pages.mcp.tools_always_excluded", {
+                tools: ALWAYS_EXCLUDED_TOOLS.join(", "),
+              })}
+            </div>
+          )}
 
           {toolsLoading ? (
             <div className="text-muted-foreground text-xs">

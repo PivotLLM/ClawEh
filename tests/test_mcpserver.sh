@@ -55,7 +55,7 @@ FULL_URL="${SERVER_URL}${ENDPOINT}"
 # (subagent capability) and hw_i2c/hw_spi (Linux + I2C/SPI devices) are also
 # exposed but only probed when actually present in the catalogue, so this script
 # stays portable.
-EXPECTED_TOOLS="file_read file_write file_edit file_append file_list file_copy web_fetch web_search msg_send_file session_messages session_search session_compact session_info session_summary_list session_summary_get session_clear shell_exec skill_find skill_install cron_schedule cogmem_domain_get cogmem_memory_search cogmem_domain_list cogmem_explain cogmem_memory_create cogmem_domain_update cogmem_memory_retire cogmem_memory_confirm cogmem_domain_create cogmem_domain_archive cogmem_domain_migrate cogmem_memory_forget cogmem_consolidate cogmem_status cogmem_export common_list common_get common_put common_delete"
+EXPECTED_TOOLS="file_read file_write file_edit file_append file_list file_copy web_fetch web_search msg_send msg_send_file session_messages session_search session_compact session_info session_summary_list session_summary_get session_clear shell_exec skill_find skill_install cron_schedule cogmem_domain_get cogmem_memory_search cogmem_domain_list cogmem_explain cogmem_memory_create cogmem_domain_update cogmem_memory_retire cogmem_memory_confirm cogmem_domain_create cogmem_domain_archive cogmem_domain_migrate cogmem_memory_forget cogmem_consolidate cogmem_status cogmem_export common_list common_get common_put common_delete"
 EXPECTED_TOOL_COUNT=37
 
 # Namespace prefixes that must have at least one tool in the catalogue.
@@ -409,6 +409,7 @@ check_tool "1.5"  "file_list"
 check_tool "1.6"  "web_fetch"
 check_tool "1.7"  "web_search"
 check_tool "1.8"  "msg_send_file"
+check_tool "1.8b" "msg_send"
 check_tool "1.9"  "session_messages"
 check_tool "1.10" "session_search"
 check_tool "1.11" "session_compact"
@@ -543,6 +544,9 @@ else
 
     run_test_not_auth_err "4b.4 msg_send_file — token accepted" \
         "msg_send_file" '{"path":"no-such-file"}'
+
+    run_test_not_auth_err "4b.4b msg_send — token accepted (no longer hard-excluded)" \
+        "msg_send" '{"content":"probe"}'
 
     run_test_not_auth_err "4b.5 skill_find — token accepted" \
         "skill_find" '{"query":"github"}'

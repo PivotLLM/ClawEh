@@ -447,6 +447,7 @@ PY
       "file_copy",
       "web_fetch",
       "web_search",
+      "msg_send",
       "msg_send_file",
       "session_messages",
       "session_search",
