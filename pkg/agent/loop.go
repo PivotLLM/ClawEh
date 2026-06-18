@@ -194,48 +194,15 @@ func NewAgentLoop(
 
 	// Build per-agent state managers, callback managers, and agent tokens.
 	agentStates := make(map[string]*state.Manager)
-	callbackManagers := make(map[string]*callback.Manager)
 	agentTokens := agenttoken.NewManager()
 	issueAgentTokens(registry, agentTokens)
 
 	for _, agentID := range registry.ListAgentIDs() {
-		agentInstance, ok := registry.GetAgent(agentID)
-		if !ok {
-			continue
-		}
-		agentStates[agentID] = state.NewManager(agentInstance.Workspace)
-
-		// Find the matching AgentConfig for callback settings.
-		var agentCfg *config.AgentConfig
-		for i := range cfg.Agents.List {
-			if routing.NormalizeAgentID(cfg.Agents.List[i].ID) == agentID {
-				agentCfg = &cfg.Agents.List[i]
-				break
-			}
-		}
-
-		storePath := filepath.Join(agentInstance.Workspace, "state", "callback.json")
-		windowMinutes := 0
-		windowCount := 0
-		if agentCfg != nil && agentCfg.Callback != nil && agentCfg.Callback.WindowMinutes > 0 {
-			windowMinutes = agentCfg.Callback.WindowMinutes
-			windowCount = agentCfg.Callback.WindowCount
-		}
-
-		mgr, err := callback.NewManager(agentID, storePath, windowMinutes, windowCount)
-		if err != nil {
-			logger.WarnCF("callback", "Failed to initialize callback manager",
-				map[string]any{"agent": agentID, "error": err.Error()})
-		} else if mgr != nil {
-			callbackManagers[agentID] = mgr
-			agentInstance.ContextBuilder.WithCallbackManager(mgr)
-			logger.InfoCF("callback", "callbacks ENABLED for agent",
-				map[string]any{"agent": agentID, "window_minutes": windowMinutes, "window_count": windowCount})
-		} else {
-			logger.InfoCF("callback", "callbacks disabled for agent (no token will be issued or injected)",
-				map[string]any{"agent": agentID})
+		if agentInstance, ok := registry.GetAgent(agentID); ok {
+			agentStates[agentID] = state.NewManager(agentInstance.Workspace)
 		}
 	}
+	callbackManagers := buildCallbackManagers(registry, cfg)
 
 	al := &AgentLoop{
 		bus:              msgBus,
@@ -498,7 +465,10 @@ func issueAgentTokens(registry *AgentRegistry, mgr *agenttoken.Manager) {
 // ValidateCallbackToken checks all callback managers and returns the agentID
 // whose manager owns the given token. Returns ("", false) if no match.
 func (al *AgentLoop) ValidateCallbackToken(token string) (string, bool) {
-	for agentID, mgr := range al.callbackManagers {
+	al.mu.RLock()
+	managers := al.callbackManagers
+	al.mu.RUnlock()
+	for agentID, mgr := range managers {
 		if mgr.Validate(token) {
 			return agentID, true
 		}
@@ -876,6 +846,53 @@ func (al *AgentLoop) taskPointerCallback(channel, chatID string) tools.AsyncCall
 	}
 }
 
+// buildCallbackManagers constructs per-agent callback managers from cfg and
+// wires each onto its agent's ContextBuilder. An agent whose callback window is
+// not > 0 gets no manager — no token is ever issued, injected, or validated for
+// it. Call this on initial construction AND on every config reload so the
+// managers (and the ContextBuilders' wiring) track the CURRENT config; otherwise
+// a reloaded agent gets no token injected, and a now-disabled agent's old token
+// would keep validating against a stale manager.
+func buildCallbackManagers(registry *AgentRegistry, cfg *config.Config) map[string]*callback.Manager {
+	managers := make(map[string]*callback.Manager)
+	for _, agentID := range registry.ListAgentIDs() {
+		agentInstance, ok := registry.GetAgent(agentID)
+		if !ok {
+			continue
+		}
+		// Find the matching AgentConfig for callback settings.
+		var agentCfg *config.AgentConfig
+		for i := range cfg.Agents.List {
+			if routing.NormalizeAgentID(cfg.Agents.List[i].ID) == agentID {
+				agentCfg = &cfg.Agents.List[i]
+				break
+			}
+		}
+		storePath := filepath.Join(agentInstance.Workspace, "state", "callback.json")
+		windowMinutes, windowCount := 0, 0
+		if agentCfg != nil && agentCfg.Callback != nil && agentCfg.Callback.WindowMinutes > 0 {
+			windowMinutes = agentCfg.Callback.WindowMinutes
+			windowCount = agentCfg.Callback.WindowCount
+		}
+		mgr, err := callback.NewManager(agentID, storePath, windowMinutes, windowCount)
+		if err != nil {
+			logger.WarnCF("callback", "Failed to initialize callback manager",
+				map[string]any{"agent": agentID, "error": err.Error()})
+			continue
+		}
+		if mgr != nil {
+			managers[agentID] = mgr
+			agentInstance.ContextBuilder.WithCallbackManager(mgr)
+			logger.InfoCF("callback", "callbacks ENABLED for agent",
+				map[string]any{"agent": agentID, "window_minutes": windowMinutes, "window_count": windowCount})
+		} else {
+			logger.InfoCF("callback", "callbacks disabled for agent (no token will be issued or injected)",
+				map[string]any{"agent": agentID})
+		}
+	}
+	return managers
+}
+
 // ReloadProviderAndConfig atomically swaps the provider and config with proper synchronization.
 // It uses a context to allow timeout control from the caller.
 // Returns an error if the reload fails or context is canceled.
@@ -949,20 +966,34 @@ func (al *AgentLoop) ReloadProviderAndConfig(
 		issueAgentTokens(registry, al.agentTokens)
 	}
 
+	// Rebuild callback managers against the new registry/config and wire them onto
+	// the new ContextBuilders. Without this, reloaded agents get no callback token
+	// injected, and the stale managers would keep validating tokens against the
+	// OLD config (e.g. an agent whose callbacks were since disabled).
+	newCallbackManagers := buildCallbackManagers(registry, cfg)
+
 	// Atomically swap the config and registry under write lock
 	// This ensures readers see a consistent pair
 	al.mu.Lock()
 	oldRegistry := al.registry
+	oldCallbackManagers := al.callbackManagers
 
 	// Store new values
 	al.cfg = cfg
 	al.registry = registry
+	al.callbackManagers = newCallbackManagers
 
 	// Also update fallback chain with new config (same chain used for the tools
 	// just registered above).
 	al.fallback = newFallback
 
 	al.mu.Unlock()
+
+	// Stop the superseded callback managers (their tokens persist on disk and are
+	// reloaded by the rebuilt manager for still-enabled agents).
+	for _, mgr := range oldCallbackManagers {
+		mgr.Stop()
+	}
 
 	// Flush the dispatcher cache so stale providers are evicted on config reload.
 	if al.dispatcher != nil {
