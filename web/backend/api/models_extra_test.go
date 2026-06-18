@@ -44,6 +44,58 @@ func TestHandleAddModel_Success(t *testing.T) {
 	}
 }
 
+// TestHandleAddModel_ContextWindowRoundTrips verifies a per-model context_window
+// is persisted on add and surfaced in the list response (tokens).
+func TestHandleAddModel_ContextWindowRoundTrips(t *testing.T) {
+	configPath, cleanup := setupOAuthTestEnv(t)
+	defer cleanup()
+
+	h := NewHandler(configPath)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+
+	body := `{"model_name":"cw-model","model":"gpt-4o","provider":"openai","context_window":200000,"enabled":true}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/models", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("add status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+
+	// Persisted to config.
+	cfg, _ := config.LoadConfig(configPath)
+	var cw int
+	for _, m := range cfg.Models {
+		if m.ModelName == "cw-model" {
+			cw = m.ContextWindow
+		}
+	}
+	if cw != 200000 {
+		t.Fatalf("persisted context_window = %d, want 200000", cw)
+	}
+
+	// Surfaced in the list response.
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/models", nil))
+	var resp struct {
+		Models []modelResponse `json:"models"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+	found := false
+	for _, m := range resp.Models {
+		if m.ModelName == "cw-model" {
+			found = true
+			if m.ContextWindow != 200000 {
+				t.Fatalf("list context_window = %d, want 200000", m.ContextWindow)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("cw-model not in list response")
+	}
+}
+
 func TestHandleAddModel_InvalidJSONReturns400(t *testing.T) {
 	configPath, cleanup := setupOAuthTestEnv(t)
 	defer cleanup()
