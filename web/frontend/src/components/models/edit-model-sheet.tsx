@@ -242,6 +242,19 @@ export function EditModelSheet({
 
             <AdvancedSection>
               <Field
+                label={t("models.field.contextWindow")}
+                hint={t("models.field.contextWindowHint")}
+              >
+                <Input
+                  value={form.contextWindow}
+                  onChange={setField("contextWindow")}
+                  placeholder="128000"
+                  type="number"
+                  min={0}
+                />
+              </Field>
+
+              <Field
                 label={t("models.field.connectMode")}
                 hint={t("models.field.connectModeHint")}
               >
@@ -381,19 +394,6 @@ export function EditModelSheet({
                   value={form.maxTokens}
                   onChange={setField("maxTokens")}
                   placeholder="8192"
-                  type="number"
-                  min={0}
-                />
-              </Field>
-
-              <Field
-                label={t("models.field.contextWindow")}
-                hint={t("models.field.contextWindowHint")}
-              >
-                <Input
-                  value={form.contextWindow}
-                  onChange={setField("contextWindow")}
-                  placeholder="128000"
                   type="number"
                   min={0}
                 />
