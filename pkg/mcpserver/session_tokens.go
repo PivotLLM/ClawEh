@@ -78,6 +78,8 @@ func (s *sessionTokenStore) Issue(agentID, sessionKey, archiveDir string) string
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	rec := sessionRecord{agentID: agentID, sessionKey: sessionKey, archiveDir: archiveDir}
+
 	// If a test token is already registered for this session key, preserve it —
 	// test tokens are pinned for the lifetime of the test run and must not be
 	// rotated by normal session activity. Return the existing token so the caller
@@ -86,10 +88,14 @@ func (s *sessionTokenStore) Issue(agentID, sessionKey, archiveDir string) string
 		if s.tokens[old].isTestToken {
 			return old
 		}
+		// Preserve the last-known inbound source (channel/chatID) across rotation
+		// so MCP-routed tools — notably cron_schedule, which delivers to the
+		// session's own channel — keep their target. Otherwise a reissue between
+		// the inbound SetSource and the tool call would wipe it.
+		rec.channel = s.tokens[old].channel
+		rec.chatID = s.tokens[old].chatID
 		delete(s.tokens, old)
 	}
-
-	rec := sessionRecord{agentID: agentID, sessionKey: sessionKey, archiveDir: archiveDir}
 	s.tokens[tok] = rec
 	s.bySess[sessionKey] = tok
 	logger.InfoCF("mcpserver", "session token issued",
