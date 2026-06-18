@@ -104,6 +104,11 @@ function DomainCard({
             {t("pages.memory.triggers")}: {d.triggers}
           </p>
         )}
+        {d.keyword_triggers && (
+          <p className="text-muted-foreground mb-2 text-[11px]">
+            {t("pages.memory.keyword_triggers")}: {d.keyword_triggers}
+          </p>
+        )}
         {d.memories.length === 0 ? (
           <p className="text-muted-foreground text-xs">
             {t("pages.memory.no_memories")}

@@ -525,7 +525,8 @@
       "pending_review": "Pending review",
       "last_run": "Last consolidation",
       "never": "never",
-      "triggers": "Triggers",
+      "triggers": "Tool triggers",
+      "keyword_triggers": "Keyword triggers",
       "sticky": "sticky",
       "no_memories": "No active memories in this domain.",
       "memory_count": "{{count}} memories"
