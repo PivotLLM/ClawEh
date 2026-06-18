@@ -208,6 +208,40 @@ type cooldownMockLLM struct {
 
 func (m *cooldownMockLLM) CooldownProvider() string { return m.provider }
 
+// TestCompress_NeverEmptiesLiveWindow reproduces the "Compacted to 0 messages"
+// bug: a long in-flight tool-call sequence (all assistant tool_calls + tool
+// results, no user/clean anchor) must NOT be compacted away to a system-only
+// payload — at least the last turn group is retained.
+func TestCompress_NeverEmptiesLiveWindow(t *testing.T) {
+	big := strings.Repeat("x", 4000)
+	history := []providers.Message{{Role: "system", Content: "sys"}}
+	for i := 0; i < 6; i++ {
+		id := fmt.Sprintf("tc%d", i)
+		history = append(history,
+			providers.Message{Role: "assistant", Content: big, ToolCalls: []providers.ToolCall{{ID: id, Name: "x"}}},
+			providers.Message{Role: "tool", Content: big, ToolCallID: id},
+		)
+	}
+	store := &compressTestStore{history: history}
+	llm := &mockLLM{responses: []string{
+		validSummaryJSON("a"), validSummaryJSON("b"), validSummaryJSON("c"),
+	}}
+	mgr := newCompressManager(store, []LLMClient{llm})
+	mgr.msgCount = len(history)
+
+	_ = mgr.doCompress(context.Background(), false)
+
+	conv := 0
+	for _, m := range store.GetHistory("sess") {
+		if m.Role != "system" {
+			conv++
+		}
+	}
+	if conv == 0 {
+		t.Fatal("compaction emptied the live window to a system-only payload")
+	}
+}
+
 // TestCompress_SharedCooldownSkipsModel verifies that a model parked in the
 // shared cooldown tracker (e.g. an out-of-credits 402 hit by the main chain) is
 // skipped by the compaction path — not retried.

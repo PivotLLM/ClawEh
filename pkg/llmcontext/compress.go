@@ -158,6 +158,20 @@ func (m *Manager) doCompress(ctx context.Context, safetyNet bool) error {
 			tailStart = lu
 			tail = currentConversation[tailStart:] // keep tail/tailStart consistent
 		}
+		// Never empty the live window. In a long in-flight tool-call sequence the
+		// retained tail can be all tool plumbing, which selectTail trims away to
+		// nothing; with no user/clean anchor to clamp to that would archive the
+		// whole conversation and leave a system-only payload (the model loses the
+		// entire thread mid-turn). Keep at least the last turn group instead.
+		if tailStart >= len(currentConversation) && len(currentConversation) > 0 {
+			g := resolveGroup(currentConversation, len(currentConversation)-1)
+			tailStart = g.start
+			tail = currentConversation[tailStart:]
+			logger.WarnCF("llmcontext", "compaction would empty the live window; retaining the last turn group", map[string]any{
+				"session_key": m.sessionKey,
+				"kept":        len(tail),
+			})
+		}
 		toSummarize := currentStored[:tailStart]
 
 		if len(toSummarize) == 0 {
