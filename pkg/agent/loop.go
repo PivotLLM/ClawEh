@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime/debug"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -2651,20 +2652,21 @@ func (al *AgentLoop) runLLMIteration(
 		}
 
 		// If the model just repeated an identical tool-call batch (it isn't
-		// working), steer it before the next iteration: tell it how many times it
-		// has tried the exact same thing, that the file may have changed or its
-		// input doesn't match, and to re-read and adjust rather than retry blindly.
-		// identicalToolBatches > 0 means this batch matched the previous one.
+		// working), steer it before the next iteration: a generic message that
+		// applies to ANY tool, with a file_edit-specific hint only when that tool
+		// is the one being repeated. identicalToolBatches > 0 means this batch
+		// matched the previous one.
 		if identicalToolBatches > 0 {
 			n := identicalToolBatches + 1
-			messages = append(messages, providers.Message{
-				Role: "user",
-				Content: fmt.Sprintf(
-					"⚠️ You have made the exact same tool call %d times in a row and it is not working — stop repeating it. The file may have changed since you last read it, or your input does not match the file exactly (e.g. old_text whitespace/indentation differs). Re-read the relevant file (file_read) and issue a corrected call, or explain the problem instead of retrying the identical call.",
-					n),
-			})
+			guidance := fmt.Sprintf(
+				"⚠️ You have made the exact same tool call (%s) %d times in a row and it is not working — stop repeating the identical call. Change your approach: adjust the arguments, try a different tool, or explain the problem to the user instead of retrying the same thing.",
+				strings.Join(toolNames, ", "), n)
+			if slices.Contains(toolNames, "file_edit") {
+				guidance += " For file_edit specifically: the file may have changed since you last read it, or your old_text does not match exactly (e.g. whitespace/indentation) — re-read it with file_read and correct the old_text."
+			}
+			messages = append(messages, providers.Message{Role: "user", Content: guidance})
 			logger.InfoCF("agent", "steering model away from repeated identical tool call",
-				map[string]any{"agent_id": agent.ID, "iteration": iteration, "repeats": n})
+				map[string]any{"agent_id": agent.ID, "iteration": iteration, "repeats": n, "tools": toolNames})
 		}
 
 		// Tick down TTL of discovered tools after processing tool results.

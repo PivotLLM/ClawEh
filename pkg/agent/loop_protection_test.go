@@ -72,15 +72,20 @@ func TestLoopProtection_BreaksOnRepeatedToolCall(t *testing.T) {
 		t.Fatalf("did not break early: iteration=%d max=%d", iteration, agentInstance.MaxIterations)
 	}
 	// Before aborting, the model is steered: a later dispatch must carry the
-	// "exact same tool call N times" guidance so it can self-correct.
+	// generic "exact same tool call N times" guidance so it can self-correct.
 	sp := agentInstance.Provider.(*sequenceProvider)
-	steered := false
+	var steer string
 	for _, m := range sp.lastMessages {
 		if strings.Contains(m.Content, "exact same tool call") {
-			steered = true
+			steer = m.Content
 		}
 	}
-	if !steered {
+	if steer == "" {
 		t.Fatal("expected a steering message injected before the loop abort")
+	}
+	// The repeated tool here is file_write (not file_edit), so the steering must
+	// be the generic one — no file_edit/old_text wording leaking in.
+	if strings.Contains(steer, "old_text") || strings.Contains(steer, "file_edit specifically") {
+		t.Fatalf("non-file_edit loop got file-specific steering text: %q", steer)
 	}
 }
