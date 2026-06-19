@@ -51,19 +51,19 @@ interface NavGroup {
 const baseNavGroups: Omit<NavGroup, "items">[] = [
   {
     label: "navigation.chat",
-    defaultOpen: true,
+    defaultOpen: false,
   },
   {
     label: "navigation.model_group",
-    defaultOpen: true,
+    defaultOpen: false,
   },
   {
     label: "navigation.agent_group",
-    defaultOpen: true,
+    defaultOpen: false,
   },
   {
     label: "navigation.services",
-    defaultOpen: true,
+    defaultOpen: false,
   },
 ]
 
@@ -111,7 +111,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       },
       {
         label: "navigation.channels_group",
-        defaultOpen: true,
+        defaultOpen: false,
         items: channelItems.map((item) => ({
           title: item.title,
           url: item.url,
