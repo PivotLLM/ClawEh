@@ -60,6 +60,15 @@ const hRuleSubstitute = "──────────────────�
 // long-poll goroutine to exit. var (not const) so tests can shorten it.
 var pollExitTimeout = 10 * time.Second
 
+// longPollRetryTimeout is how long telego sleeps before retrying getUpdates
+// after an error. telego's retry sleep is NOT context-aware (long_polling.go),
+// so the default 8s can keep the old poller alive past Stop()'s wait on a config
+// reload — overlapping the new poller and triggering Telegram 409 "terminated by
+// other getUpdates" errors. A short value drains the old poller well within
+// pollExitTimeout so the new one starts cleanly, while still retrying genuine
+// transient errors.
+var longPollRetryTimeout = 2 * time.Second
+
 type TelegramChannel struct {
 	*channels.BaseChannel
 	bot            *telego.Bot
@@ -153,7 +162,7 @@ func (c *TelegramChannel) Start(ctx context.Context) error {
 
 	rawUpdates, err := c.bot.UpdatesViaLongPolling(c.ctx, &telego.GetUpdatesParams{
 		Timeout: 30,
-	})
+	}, telego.WithLongPollingRetryTimeout(longPollRetryTimeout))
 	if err != nil {
 		c.cancel()
 		return fmt.Errorf("failed to start long polling: %w", err)
