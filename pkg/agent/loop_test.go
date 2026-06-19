@@ -1971,6 +1971,87 @@ func TestProcessSystemMessage_WrongChannel(t *testing.T) {
 	}
 }
 
+// TestResolveSystemMessageTarget routes an async/sub-agent completion back to
+// the SPAWNING agent and its originating session, falling back to the default
+// agent's main session when no originator is supplied.
+func TestResolveSystemMessageTarget(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "agent-systarget-*")
+	if err != nil {
+		t.Fatalf("mkdir temp: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	cfg := &config.Config{
+		Agents: config.AgentsConfig{
+			BaseDir: tmpDir,
+			Defaults: config.AgentDefaults{
+				Models:            []string{"test-model"},
+				MaxTokens:         4096,
+				MaxToolIterations: 10,
+			},
+			List: []config.AgentConfig{
+				{ID: "dawn", Name: "Dawn"},
+				{ID: "penny", Name: "Penny", Default: true},
+			},
+		},
+	}
+	al := NewAgentLoop(cfg, bus.NewMessageBus(), &mockProvider{}, nil)
+
+	// Originator known: route to that agent (Dawn) in the carried session.
+	dawnSession := routing.BuildAgentMainSessionKey("dawn")
+	agent, sessionKey := al.resolveSystemMessageTarget(bus.InboundMessage{
+		Channel:    "system",
+		SessionKey: dawnSession,
+		Metadata:   map[string]string{metadataKeyPreresolvedAgentID: "dawn"},
+	})
+	if agent == nil || agent.ID != "dawn" {
+		t.Fatalf("expected routing to dawn, got %v", agent)
+	}
+	if sessionKey != dawnSession {
+		t.Errorf("session key = %q, want %q", sessionKey, dawnSession)
+	}
+
+	// Originator known but session_key absent: fall back to that agent's main session.
+	agent, sessionKey = al.resolveSystemMessageTarget(bus.InboundMessage{
+		Channel:  "system",
+		Metadata: map[string]string{metadataKeyPreresolvedAgentID: "dawn"},
+	})
+	if agent == nil || agent.ID != "dawn" {
+		t.Fatalf("expected routing to dawn, got %v", agent)
+	}
+	if want := routing.BuildAgentMainSessionKey("dawn"); sessionKey != want {
+		t.Errorf("session key = %q, want %q", sessionKey, want)
+	}
+
+	// Non-agent session_key is ignored (only "agent:" keys are honored).
+	agent, sessionKey = al.resolveSystemMessageTarget(bus.InboundMessage{
+		Channel:    "system",
+		SessionKey: "slack:C9",
+		Metadata:   map[string]string{metadataKeyPreresolvedAgentID: "dawn"},
+	})
+	if want := routing.BuildAgentMainSessionKey("dawn"); agent == nil || agent.ID != "dawn" || sessionKey != want {
+		t.Errorf("agent=%v session=%q, want dawn/%s", agent, sessionKey, want)
+	}
+
+	// No originator: fall back to the default agent (Penny) and its main session.
+	agent, sessionKey = al.resolveSystemMessageTarget(bus.InboundMessage{Channel: "system"})
+	if agent == nil || agent.ID != "penny" {
+		t.Fatalf("expected fallback to default (penny), got %v", agent)
+	}
+	if want := routing.BuildAgentMainSessionKey("penny"); sessionKey != want {
+		t.Errorf("session key = %q, want %q", sessionKey, want)
+	}
+
+	// Unknown originator: also falls back to the default agent.
+	agent, _ = al.resolveSystemMessageTarget(bus.InboundMessage{
+		Channel:  "system",
+		Metadata: map[string]string{metadataKeyPreresolvedAgentID: "nobody"},
+	})
+	if agent == nil || agent.ID != "penny" {
+		t.Fatalf("expected fallback to default (penny) for unknown originator, got %v", agent)
+	}
+}
+
 // TestRunLLMIteration_ContextWindowError_Retry verifies that when the provider
 // returns a context_length_exceeded error on the first call and succeeds on the
 // second, runLLMIteration retries and returns the successful response.

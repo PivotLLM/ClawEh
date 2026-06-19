@@ -44,6 +44,14 @@ func TestPublishMCPAsyncToLLM_ReinjectsCompletion(t *testing.T) {
 		if m.Content == "" || m.SenderID != "async:agent_spawn" {
 			t.Errorf("unexpected message: %+v", m)
 		}
+		// The spawner's session info must travel with the completion so it routes
+		// back to the spawning agent's session (not the default agent).
+		if m.SessionKey != "agent:penny:main" {
+			t.Errorf("session_key = %q, want agent:penny:main", m.SessionKey)
+		}
+		if m.Metadata["preresolved_agent_id"] != "penny" {
+			t.Errorf("preresolved_agent_id = %q, want penny", m.Metadata["preresolved_agent_id"])
+		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("expected a re-injected system inbound message")
 	}

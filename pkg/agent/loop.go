@@ -1532,14 +1532,10 @@ func (al *AgentLoop) processSystemMessage(
 		return "", nil
 	}
 
-	// Use default agent for system messages
-	agent := al.GetRegistry().GetDefaultAgent()
+	agent, sessionKey := al.resolveSystemMessageTarget(msg)
 	if agent == nil {
-		return "", fmt.Errorf("no default agent for system message")
+		return "", fmt.Errorf("no agent available for system message")
 	}
-
-	// Use the origin session for context
-	sessionKey := routing.BuildAgentMainSessionKey(agent.ID)
 
 	return al.runAgentLoop(ctx, agent, processOptions{
 		SessionKey:      sessionKey,
@@ -1549,6 +1545,36 @@ func (al *AgentLoop) processSystemMessage(
 		DefaultResponse: "Background task completed.",
 		SendResponse:    true,
 	})
+}
+
+// resolveSystemMessageTarget picks the agent and session a "system" message
+// (e.g. an async tool/sub-agent completion) should be processed in. A spawn or
+// other async tool carries the originating agent on preresolved_agent_id and its
+// session on session_key, so the completion is handled by the SPAWNING agent in
+// its own session — not whichever agent happens to be the default. Falls back to
+// the default agent and that agent's main session when no originator is given
+// (legacy behavior). Returns (nil, "") when no agent is available.
+func (al *AgentLoop) resolveSystemMessageTarget(msg bus.InboundMessage) (*AgentInstance, string) {
+	var agent *AgentInstance
+	if preresolved := inboundMetadata(msg, metadataKeyPreresolvedAgentID); preresolved != "" {
+		if a, ok := al.GetRegistry().GetAgent(routing.NormalizeAgentID(preresolved)); ok && a != nil {
+			agent = a
+		}
+	}
+	if agent == nil {
+		agent = al.GetRegistry().GetDefaultAgent()
+	}
+	if agent == nil {
+		return nil, ""
+	}
+
+	// Prefer the originator's session (so the completion lands in the conversation
+	// that spawned the work); otherwise the agent's main session.
+	sessionKey := strings.TrimSpace(msg.SessionKey)
+	if sessionKey == "" || !strings.HasPrefix(sessionKey, sessionKeyAgentPrefix) {
+		sessionKey = routing.BuildAgentMainSessionKey(agent.ID)
+	}
+	return agent, sessionKey
 }
 
 // runAgentLoop is the core message processing logic.
@@ -2553,10 +2579,12 @@ func (al *AgentLoop) runLLMIteration(
 					pubCtx, pubCancel := context.WithTimeout(context.Background(), 5*time.Second)
 					defer pubCancel()
 					_ = al.bus.PublishInbound(pubCtx, bus.InboundMessage{
-						Channel:  "system",
-						SenderID: fmt.Sprintf("async:%s", tc.Name),
-						ChatID:   fmt.Sprintf("%s:%s", opts.Channel, opts.ChatID),
-						Content:  content,
+						Channel:    "system",
+						SenderID:   fmt.Sprintf("async:%s", tc.Name),
+						ChatID:     fmt.Sprintf("%s:%s", opts.Channel, opts.ChatID),
+						Content:    content,
+						SessionKey: opts.SessionKey,
+						Metadata:   map[string]string{metadataKeyPreresolvedAgentID: agent.ID},
 					})
 				}
 
