@@ -7,24 +7,38 @@ import (
 	"time"
 
 	"github.com/PivotLLM/ClawEh/pkg/bus"
+	"github.com/PivotLLM/ClawEh/pkg/config"
 	"github.com/PivotLLM/ClawEh/pkg/cron"
 	"github.com/PivotLLM/ClawEh/pkg/cronmsg"
+	"github.com/PivotLLM/ClawEh/pkg/logger"
 	"github.com/PivotLLM/ClawEh/pkg/routing"
 	"github.com/PivotLLM/ClawEh/pkg/tools"
 	"github.com/PivotLLM/ClawEh/pkg/utils"
 )
 
-// CronTool provides scheduling capabilities for the agent. A scheduled job
-// delivers its message to the channel it was created on (captured from context),
-// where the bound agent processes it — the model never chooses the destination.
+// CronTool provides scheduling capabilities for the agent. A scheduled job is
+// addressed to an agent; when it fires it is delivered to that agent's default
+// channel (resolved live from config), where the agent processes it — the model
+// never chooses the destination.
 type CronTool struct {
 	cronService *cron.CronService
 	msgBus      *bus.MessageBus
+	// getConfig returns the live config (re-read on each call so default-channel
+	// changes and global_cron grants take effect without restart).
+	getConfig func() *config.Config
 }
 
-// NewCronTool creates a new CronTool.
-func NewCronTool(cronService *cron.CronService, msgBus *bus.MessageBus) *CronTool {
-	return &CronTool{cronService: cronService, msgBus: msgBus}
+// NewCronTool creates a new CronTool. getConfig must return the current config.
+func NewCronTool(cronService *cron.CronService, msgBus *bus.MessageBus, getConfig func() *config.Config) *CronTool {
+	return &CronTool{cronService: cronService, msgBus: msgBus, getConfig: getConfig}
+}
+
+// config returns the live config, or nil if unavailable.
+func (t *CronTool) config() *config.Config {
+	if t.getConfig == nil {
+		return nil
+	}
+	return t.getConfig()
 }
 
 // IsSessionScoped makes the MCP dispatcher (and agent loop) inject the session
@@ -48,7 +62,7 @@ func (t *CronTool) Name() string {
 
 // Description returns the tool description
 func (t *CronTool) Description() string {
-	return "Schedule a message to yourself for later — a reminder or a recurring task. When the user asks to be reminded or to schedule something, you MUST call this tool. The message is delivered back to THIS conversation when it fires (you cannot send it elsewhere), so it arrives on whatever channel the user is using now; if they want it on a specific channel, they should ask there. Use 'at_seconds' for a one-time reminder (e.g. 'in 10 minutes' → at_seconds=600), 'every_seconds' for a simple recurring interval (e.g. 'every 2 hours' → every_seconds=7200), or 'cron_expr' for calendar schedules (e.g. '0 9 * * *' for daily at 9am). Use 'list'/'get' to review jobs and 'remove'/'enable'/'disable' to manage them."
+	return "Schedule a message for later — a reminder or a recurring task. When the user asks to be reminded or to schedule something, you MUST call this tool. When the job fires, the message is delivered to the target agent's default channel (configured by the operator — you do not choose where it goes); by default the target is you. Use 'at_seconds' for a one-time reminder (e.g. 'in 10 minutes' → at_seconds=600), 'every_seconds' for a simple recurring interval (e.g. 'every 2 hours' → every_seconds=7200), or 'cron_expr' for calendar schedules (e.g. '0 9 * * *' for daily at 9am). Use 'list'/'get' to review jobs and 'remove'/'enable'/'disable' to manage them. The optional 'agent' parameter schedules for another agent (only permitted for authorized agents)."
 }
 
 // Parameters returns the tool parameters schema
@@ -81,6 +95,10 @@ func (t *CronTool) Parameters() map[string]any {
 				"type":        "string",
 				"description": "Job ID (for 'get', 'remove', 'enable', 'disable').",
 			},
+			"agent": map[string]any{
+				"type":        "string",
+				"description": "Target agent id. Optional; defaults to you. Scheduling or managing another agent's jobs requires authorization (global_cron).",
+			},
 		},
 		"required": []string{"action"},
 	}
@@ -93,31 +111,56 @@ func (t *CronTool) Execute(ctx context.Context, args map[string]any) *tools.Tool
 		return tools.ErrorResult("action is required")
 	}
 
-	// Cron jobs are scoped to the calling agent: an agent only sees and manages
-	// its own jobs (operators see everything via the `claw cron` CLI).
-	agentID := callerAgentID(ctx)
+	// Jobs are addressed to an agent. By default that's the caller; an authorized
+	// (global_cron) agent may target another agent via the `agent` arg. Operators
+	// see everything via the `claw cron` CLI.
+	callerID := callerAgentID(ctx)
+	target, errRes := t.resolveTargetAgent(args, callerID)
+	if errRes != nil {
+		return errRes
+	}
 
 	switch action {
 	case "add":
-		return t.addJob(ctx, args, agentID)
+		return t.addJob(args, target)
 	case "list":
-		return t.listJobs(agentID)
+		return t.listJobs(target)
 	case "get":
-		return t.getJob(args, agentID)
+		return t.getJob(args, target)
 	case "remove":
-		return t.removeJob(args, agentID)
+		return t.removeJob(args, target)
 	case "enable":
-		return t.enableJob(args, true, agentID)
+		return t.enableJob(args, true, target)
 	case "disable":
-		return t.enableJob(args, false, agentID)
+		return t.enableJob(args, false, target)
 	default:
 		return tools.ErrorResult(fmt.Sprintf("unknown action: %s", action))
 	}
 }
 
-// ownedJob returns the job with the given id if it is owned by agentID, else
-// nil. Used to gate get/remove/enable so an agent cannot see or touch another
-// agent's (or an operator/legacy) job. Returns nil when agentID is empty.
+// resolveTargetAgent returns the agent a cron action operates on: the caller by
+// default, or the `agent` arg when the caller is authorized (global_cron) to act
+// on another agent. Returns an error result if unauthorized or no caller agent.
+func (t *CronTool) resolveTargetAgent(args map[string]any, callerID string) (string, *tools.ToolResult) {
+	target := callerID
+	if a, ok := args["agent"].(string); ok {
+		if a = strings.TrimSpace(a); a != "" && a != callerID {
+			cfg := t.config()
+			if cfg == nil || !cfg.AgentHasGlobalCron(callerID) {
+				return "", tools.ErrorResult("not authorized to schedule or manage another agent's cron jobs (requires global_cron)")
+			}
+			target = a
+		}
+	}
+	if target == "" {
+		return "", tools.ErrorResult("no calling agent in context")
+	}
+	return target, nil
+}
+
+// ownedJob returns the job with the given id if it belongs to agentID, else nil.
+// The caller's authorization to act on agentID is already settled by
+// resolveTargetAgent. Returns nil when agentID is empty.
 func (t *CronTool) ownedJob(jobID, agentID string) *cron.CronJob {
 	if jobID == "" || agentID == "" {
 		return nil
@@ -131,14 +174,16 @@ func (t *CronTool) ownedJob(jobID, agentID string) *cron.CronJob {
 	return nil
 }
 
-func (t *CronTool) addJob(ctx context.Context, args map[string]any, agentID string) *tools.ToolResult {
-	// The destination is the conversation the job is created in — captured from
-	// context, never chosen by the model. When it fires, the message is delivered
-	// here and the bound agent handles it.
-	channel := tools.ToolChannel(ctx)
-	chatID := tools.ToolChatID(ctx)
-	if channel == "" || chatID == "" {
-		return tools.ErrorResult("no session context (channel/chat_id not set). Use this tool in an active conversation.")
+func (t *CronTool) addJob(args map[string]any, agentID string) *tools.ToolResult {
+	// The destination is resolved at fire time from the target agent's default
+	// channel — never captured here and never chosen by the model. Require that
+	// the target agent has a usable default channel now, so the job is deliverable.
+	cfg := t.config()
+	if cfg == nil {
+		return tools.ErrorResult("cron unavailable: configuration not loaded")
+	}
+	if _, _, _, ok := cfg.CronTarget(agentID); !ok {
+		return tools.ErrorResult(fmt.Sprintf("agent %q has no default channel configured; set a default channel (binding) before scheduling", agentID))
 	}
 
 	message, ok := args["message"].(string)
@@ -184,28 +229,20 @@ func (t *CronTool) addJob(ctx context.Context, args map[string]any, agentID stri
 	// Job name = a short preview of the message (max 30 chars).
 	messagePreview := utils.Truncate(message, 30)
 
-	// Single behavior: the job injects the message inbound to the captured
-	// channel/chat when it fires ("agent" mode); peer defaults to "channel".
-	job, err := t.cronService.AddJob(
-		messagePreview,
-		schedule,
-		message,
-		"agent",
-		channel,
-		chatID,
-		"channel",
-	)
+	// Destination (channel/chat) is left empty: ExecuteJob resolves the target
+	// agent's default channel at fire time, so changing the default redirects
+	// existing jobs.
+	job, err := t.cronService.AddJob(messagePreview, schedule, message, "agent", "", "", "")
 	if err != nil {
 		return tools.ErrorResult(fmt.Sprintf("Error adding job: %v", err))
 	}
 
-	// Record the owning agent so only this agent can later see/manage the job.
-	if agentID != "" {
-		job.AgentID = agentID
-		t.cronService.UpdateJob(job)
-	}
+	// Address the job to the target agent: its default channel is the delivery
+	// destination and it (or an authorized agent) manages the job.
+	job.AgentID = agentID
+	t.cronService.UpdateJob(job)
 
-	return tools.SilentResult(fmt.Sprintf("Cron job added: %s (id: %s)", job.Name, job.ID))
+	return tools.SilentResult(fmt.Sprintf("Cron job added for %s: %s (id: %s)", agentID, job.Name, job.ID))
 }
 
 // formatSchedule renders a job's schedule as readable text.
@@ -335,32 +372,43 @@ func (t *CronTool) enableJob(args map[string]any, enable bool, agentID string) *
 func (t *CronTool) ExecuteJob(ctx context.Context, job *cron.CronJob) string {
 	fireTime := time.Now()
 
-	// Get channel/chatID from job payload
-	channel := job.Payload.Channel
-	chatID := job.Payload.To
-	if channel == "" {
-		channel = "cli"
-	}
-	if chatID == "" {
-		chatID = "direct"
-	}
-	peerKind := job.Payload.PeerKind
-	if peerKind == "" {
-		peerKind = "channel"
+	// Resolve the destination. Agent-addressed jobs (created via the tool) deliver
+	// to the target agent's default channel, resolved live so a changed default
+	// redirects the job; the resolved (channel, chat, peer) are the binding's own
+	// Match fields, so delivery routes straight back to the agent. Operator/CLI
+	// jobs carry no agent id and use the explicit channel/to stored on the payload.
+	var channel, chatID, peerKind string
+	if job.AgentID != "" {
+		cfg := t.config()
+		if cfg == nil {
+			logger.WarnCF("cron", "job skipped: configuration not loaded", map[string]any{"id": job.ID, "agent_id": job.AgentID})
+			return "configuration not loaded"
+		}
+		var ok bool
+		channel, chatID, peerKind, ok = cfg.CronTarget(job.AgentID)
+		if !ok {
+			logger.WarnCF("cron", "job skipped: agent has no default channel", map[string]any{"id": job.ID, "agent_id": job.AgentID})
+			return fmt.Sprintf("agent %q has no default channel; job skipped", job.AgentID)
+		}
+	} else {
+		channel, chatID, peerKind = job.Payload.Channel, job.Payload.To, job.Payload.PeerKind
+		if channel == "" || chatID == "" {
+			logger.WarnCF("cron", "job skipped: operator job missing channel/to", map[string]any{"id": job.ID})
+			return "operator job missing channel/to; skipped"
+		}
+		if peerKind == "" {
+			peerKind = "channel"
+		}
 	}
 
-	// Single behavior: inject the message inbound to the job's channel/chat — the
-	// same routing a live user message gets — so the bound agent processes it and
-	// replies on that channel. Legacy payload modes (deliver/isolated/command) are
-	// ignored; every job now behaves this way.
+	// Inject the message inbound to the agent's default channel/chat — the same
+	// routing a live user message gets — so the agent processes it and replies there.
 	msg := bus.InboundMessage{
 		Channel:  channel,
 		SenderID: "cron",
 		ChatID:   chatID,
 		Content:  cronmsg.Build(job.Fingerprint, fireTime, job.Payload.Message),
-	}
-	if chatID != "" && chatID != "direct" {
-		msg.Peer = bus.Peer{Kind: peerKind, ID: chatID}
+		Peer:     bus.Peer{Kind: peerKind, ID: chatID},
 	}
 	pubCtx, pubCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer pubCancel()

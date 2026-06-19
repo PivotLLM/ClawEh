@@ -7,54 +7,70 @@ import (
 	"testing"
 
 	"github.com/PivotLLM/ClawEh/pkg/bus"
+	"github.com/PivotLLM/ClawEh/pkg/config"
 	"github.com/PivotLLM/ClawEh/pkg/cron"
 	"github.com/PivotLLM/ClawEh/pkg/tools"
 )
+
+// testConfig builds a config where amber and karen each have a concrete default
+// channel, boss has global_cron (may schedule for others), and nodefault has a
+// binding that is NOT marked default (so it has no delivery channel).
+func testConfig() *config.Config {
+	peer := func(id string) *config.PeerMatch { return &config.PeerMatch{Kind: "channel", ID: id} }
+	return &config.Config{
+		Bindings: []config.AgentBinding{
+			{AgentID: "amber", Default: true, Match: config.BindingMatch{Channel: "telegram-Amber", Peer: peer("chat-amber")}},
+			{AgentID: "karen", Default: true, Match: config.BindingMatch{Channel: "telegram-Karen", Peer: peer("chat-karen")}},
+			{AgentID: "tester", Default: true, Match: config.BindingMatch{Channel: "cli", Peer: peer("direct")}},
+			{AgentID: "nodefault", Match: config.BindingMatch{Channel: "slack", Peer: peer("c1")}},
+		},
+		Agents: config.AgentsConfig{List: []config.AgentConfig{
+			{ID: "amber"}, {ID: "karen"}, {ID: "tester"}, {ID: "boss", GlobalCron: true}, {ID: "nodefault"},
+		}},
+	}
+}
 
 func newTestCronTool(t *testing.T) *CronTool {
 	t.Helper()
 	storePath := filepath.Join(t.TempDir(), "cron.json")
 	cronService := cron.NewCronService(storePath, nil)
 	msgBus := bus.NewMessageBus()
-	return NewCronTool(cronService, msgBus)
+	cfg := testConfig()
+	return NewCronTool(cronService, msgBus, func() *config.Config { return cfg })
 }
 
-// agentCtx builds a tool context for the given agent — channel/chat (captured as
-// the job's destination) plus the session key cron uses for per-agent scoping.
-func agentCtx(agentID, channel, chatID string) context.Context {
-	ctx := tools.WithToolContext(context.Background(), channel, chatID)
-	return tools.WithSessionKey(ctx, "agent:"+agentID+":main")
+// agentCtx builds a tool context carrying the caller's session key (cron derives
+// the caller agent id from it). Channel/chat are no longer used by add.
+func agentCtx(agentID string) context.Context {
+	return tools.WithSessionKey(context.Background(), "agent:"+agentID+":main")
 }
 
-// TestCronTool_AddJobRequiresSessionContext verifies fail-closed when channel/chatID missing.
-func TestCronTool_AddJobRequiresSessionContext(t *testing.T) {
+// TestCronTool_AddRequiresDefaultChannel verifies add fails when the target agent
+// has no default channel configured.
+func TestCronTool_AddRequiresDefaultChannel(t *testing.T) {
 	tool := newTestCronTool(t)
-	result := tool.Execute(context.Background(), map[string]any{
+	result := tool.Execute(agentCtx("nodefault"), map[string]any{
 		"action":     "add",
 		"message":    "reminder",
 		"at_seconds": float64(60),
 	})
-
 	if !result.IsError {
-		t.Fatal("expected error when session context is missing")
+		t.Fatal("expected error when agent has no default channel")
 	}
-	if !strings.Contains(result.ForLLM, "no session context") {
-		t.Errorf("expected 'no session context' message, got: %s", result.ForLLM)
+	if !strings.Contains(result.ForLLM, "no default channel") {
+		t.Errorf("expected 'no default channel' message, got: %s", result.ForLLM)
 	}
 }
 
-// TestCronTool_AddJobCapturesSessionChannel verifies the job is created against
-// the channel/chat from context (the model cannot choose a target) — a supplied
-// channel/chat_id is ignored.
-func TestCronTool_AddJobCapturesSessionChannel(t *testing.T) {
+// TestCronTool_AddAddressesAgent verifies the job is addressed to the agent (not
+// a captured channel), with no destination stored on the payload — and that
+// ExecuteJob resolves the agent's default channel at fire time.
+func TestCronTool_AddAddressesAgent(t *testing.T) {
 	tool := newTestCronTool(t)
-	ctx := agentCtx("amber", "telegram-Amber", "chat-1")
-	result := tool.Execute(ctx, map[string]any{
+	result := tool.Execute(agentCtx("amber"), map[string]any{
 		"action":     "add",
 		"message":    "time to stretch",
 		"at_seconds": float64(600),
-		"channel":    "slack-other", // must be ignored
-		"chat_id":    "someone-else", // must be ignored
 	})
 	if result.IsError {
 		t.Fatalf("expected add to succeed, got: %s", result.ForLLM)
@@ -64,20 +80,72 @@ func TestCronTool_AddJobCapturesSessionChannel(t *testing.T) {
 	if len(jobs) != 1 {
 		t.Fatalf("expected 1 job, got %d", len(jobs))
 	}
-	if jobs[0].Payload.Channel != "telegram-Amber" || jobs[0].Payload.To != "chat-1" {
-		t.Fatalf("job target should be the session channel/chat, got %s/%s",
+	if jobs[0].AgentID != "amber" {
+		t.Fatalf("job should be addressed to amber, got %q", jobs[0].AgentID)
+	}
+	if jobs[0].Payload.Channel != "" || jobs[0].Payload.To != "" {
+		t.Fatalf("destination must be resolved at fire time, not stored; got %s/%s",
 			jobs[0].Payload.Channel, jobs[0].Payload.To)
+	}
+
+	// Fire it: delivery resolves amber's default channel.
+	out := tool.ExecuteJob(context.Background(), &jobs[0])
+	if out != "ok" {
+		t.Fatalf("ExecuteJob = %q, want ok", out)
+	}
+}
+
+// TestCronTool_CrossAgentRequiresGlobalCron verifies an ordinary agent cannot
+// schedule for another, but a global_cron agent can.
+func TestCronTool_CrossAgentRequiresGlobalCron(t *testing.T) {
+	tool := newTestCronTool(t)
+
+	// amber (no global_cron) targeting karen → denied.
+	denied := tool.Execute(agentCtx("amber"), map[string]any{
+		"action": "add", "agent": "karen", "message": "x", "at_seconds": float64(60),
+	})
+	if !denied.IsError || !strings.Contains(denied.ForLLM, "global_cron") {
+		t.Fatalf("cross-agent without global_cron should be denied, got: isErr=%v %s", denied.IsError, denied.ForLLM)
+	}
+
+	// boss (global_cron) targeting karen → allowed, job addressed to karen.
+	ok := tool.Execute(agentCtx("boss"), map[string]any{
+		"action": "add", "agent": "karen", "message": "weekly report", "every_seconds": float64(3600),
+	})
+	if ok.IsError {
+		t.Fatalf("boss scheduling for karen should succeed, got: %s", ok.ForLLM)
+	}
+	jobs := tool.cronService.ListJobs(true)
+	if len(jobs) != 1 || jobs[0].AgentID != "karen" {
+		t.Fatalf("job should be addressed to karen, got %+v", jobs)
+	}
+}
+
+// TestCronTool_ExecuteJobOperatorFallback verifies an operator/CLI job (no agent
+// id, explicit channel/to on the payload) still delivers to that explicit target.
+func TestCronTool_ExecuteJobOperatorFallback(t *testing.T) {
+	tool := newTestCronTool(t)
+	job := &cron.CronJob{
+		ID:      "op1",
+		Payload: cron.CronPayload{Message: "operator job", Channel: "slack", To: "C9", PeerKind: "channel"},
+	}
+	if out := tool.ExecuteJob(context.Background(), job); out != "ok" {
+		t.Fatalf("operator job ExecuteJob = %q, want ok", out)
+	}
+
+	// With neither agent id nor explicit channel/to → skipped.
+	bare := &cron.CronJob{ID: "op2", Payload: cron.CronPayload{Message: "x"}}
+	if out := tool.ExecuteJob(context.Background(), bare); out == "ok" {
+		t.Fatal("job with no agent and no channel/to should be skipped")
 	}
 }
 
 // TestCronTool_GetJob returns full detail for one job and errors on a bad id.
 func TestCronTool_GetJob(t *testing.T) {
 	tool := newTestCronTool(t)
-	ctx := agentCtx("amber", "telegram-Amber", "chat-1")
+	ctx := agentCtx("amber")
 	add := tool.Execute(ctx, map[string]any{
-		"action":     "add",
-		"message":    "daily standup reminder",
-		"every_seconds": float64(3600),
+		"action": "add", "message": "daily standup reminder", "every_seconds": float64(3600),
 	})
 	if add.IsError {
 		t.Fatalf("add failed: %s", add.ForLLM)
@@ -106,8 +174,7 @@ func TestCronTool_ScopedToAgent(t *testing.T) {
 	tool := newTestCronTool(t)
 
 	// Amber creates a job.
-	amber := agentCtx("amber", "telegram-Amber", "chat-1")
-	add := tool.Execute(amber, map[string]any{
+	add := tool.Execute(agentCtx("amber"), map[string]any{
 		"action": "add", "message": "amber's reminder", "every_seconds": float64(3600),
 	})
 	if add.IsError {
@@ -116,7 +183,7 @@ func TestCronTool_ScopedToAgent(t *testing.T) {
 	jobID := tool.cronService.ListJobs(true)[0].ID
 
 	// Karen cannot see it.
-	karen := agentCtx("karen", "telegram-Karen", "chat-2")
+	karen := agentCtx("karen")
 	list := tool.Execute(karen, map[string]any{"action": "list"})
 	if !strings.Contains(list.ForLLM, "No scheduled jobs") {
 		t.Fatalf("karen should see no jobs, got: %s", list.ForLLM)
@@ -131,10 +198,10 @@ func TestCronTool_ScopedToAgent(t *testing.T) {
 	}
 
 	// Amber still sees and can remove her own job.
-	if l := tool.Execute(amber, map[string]any{"action": "list"}); !strings.Contains(l.ForLLM, "amber's reminder") {
+	if l := tool.Execute(agentCtx("amber"), map[string]any{"action": "list"}); !strings.Contains(l.ForLLM, "amber's reminder") {
 		t.Fatalf("amber should see her own job, got: %s", l.ForLLM)
 	}
-	if r := tool.Execute(amber, map[string]any{"action": "remove", "job_id": jobID}); r.IsError {
+	if r := tool.Execute(agentCtx("amber"), map[string]any{"action": "remove", "job_id": jobID}); r.IsError {
 		t.Fatalf("amber should be able to remove her own job, got: %s", r.ForLLM)
 	}
 }

@@ -1,17 +1,14 @@
 package schedule
 
 import (
-	"context"
 	"strings"
 	"testing"
-
-	"github.com/PivotLLM/ClawEh/pkg/tools"
 )
 
 // TestCronTool_ListJobs_Empty verifies that listing with no jobs returns an appropriate message.
 func TestCronTool_ListJobs_Empty(t *testing.T) {
 	tool := newTestCronTool(t)
-	result := tool.Execute(context.Background(), map[string]any{
+	result := tool.Execute(agentCtx("tester"), map[string]any{
 		"action": "list",
 	})
 
@@ -26,13 +23,13 @@ func TestCronTool_ListJobs_Empty(t *testing.T) {
 // TestCronTool_ListJobs_WithJob verifies that added jobs appear in the list.
 func TestCronTool_ListJobs_WithJob(t *testing.T) {
 	tool := newTestCronTool(t)
-	ctx := agentCtx("tester", "cli", "direct")
+	ctx := agentCtx("tester")
 
 	// Add a job first
 	addResult := tool.Execute(ctx, map[string]any{
-		"action":      "add",
-		"message":     "remind me to stretch",
-		"at_seconds":  float64(600),
+		"action":     "add",
+		"message":    "remind me to stretch",
+		"at_seconds": float64(600),
 	})
 	if addResult.IsError {
 		t.Fatalf("add failed: %s", addResult.ForLLM)
@@ -54,7 +51,7 @@ func TestCronTool_ListJobs_WithJob(t *testing.T) {
 // TestCronTool_RemoveJob_NotFound verifies error when removing non-existent job.
 func TestCronTool_RemoveJob_NotFound(t *testing.T) {
 	tool := newTestCronTool(t)
-	result := tool.Execute(context.Background(), map[string]any{
+	result := tool.Execute(agentCtx("tester"), map[string]any{
 		"action": "remove",
 		"job_id": "nonexistent-job-id",
 	})
@@ -70,7 +67,7 @@ func TestCronTool_RemoveJob_NotFound(t *testing.T) {
 // TestCronTool_RemoveJob_MissingID verifies error when job_id is missing.
 func TestCronTool_RemoveJob_MissingID(t *testing.T) {
 	tool := newTestCronTool(t)
-	result := tool.Execute(context.Background(), map[string]any{
+	result := tool.Execute(agentCtx("tester"), map[string]any{
 		"action": "remove",
 	})
 
@@ -85,7 +82,7 @@ func TestCronTool_RemoveJob_MissingID(t *testing.T) {
 // TestCronTool_RemoveJob_Success verifies successful job removal.
 func TestCronTool_RemoveJob_Success(t *testing.T) {
 	tool := newTestCronTool(t)
-	ctx := agentCtx("tester", "cli", "direct")
+	ctx := agentCtx("tester")
 
 	// Add a job to get a valid ID
 	addResult := tool.Execute(ctx, map[string]any{
@@ -128,7 +125,7 @@ func TestCronTool_RemoveJob_Success(t *testing.T) {
 // TestCronTool_EnableJob_MissingID verifies error when job_id is missing for enable.
 func TestCronTool_EnableJob_MissingID(t *testing.T) {
 	tool := newTestCronTool(t)
-	result := tool.Execute(context.Background(), map[string]any{
+	result := tool.Execute(agentCtx("tester"), map[string]any{
 		"action": "enable",
 	})
 
@@ -143,7 +140,7 @@ func TestCronTool_EnableJob_MissingID(t *testing.T) {
 // TestCronTool_DisableJob_MissingID verifies error when job_id is missing for disable.
 func TestCronTool_DisableJob_MissingID(t *testing.T) {
 	tool := newTestCronTool(t)
-	result := tool.Execute(context.Background(), map[string]any{
+	result := tool.Execute(agentCtx("tester"), map[string]any{
 		"action": "disable",
 	})
 
@@ -155,7 +152,7 @@ func TestCronTool_DisableJob_MissingID(t *testing.T) {
 // TestCronTool_UnknownAction verifies error for unknown actions.
 func TestCronTool_UnknownAction(t *testing.T) {
 	tool := newTestCronTool(t)
-	result := tool.Execute(context.Background(), map[string]any{
+	result := tool.Execute(agentCtx("tester"), map[string]any{
 		"action": "fly",
 	})
 
@@ -170,7 +167,7 @@ func TestCronTool_UnknownAction(t *testing.T) {
 // TestCronTool_MissingAction verifies error when action is missing.
 func TestCronTool_MissingAction(t *testing.T) {
 	tool := newTestCronTool(t)
-	result := tool.Execute(context.Background(), map[string]any{})
+	result := tool.Execute(agentCtx("tester"), map[string]any{})
 
 	if !result.IsError {
 		t.Fatal("expected error when action is missing")
@@ -203,7 +200,7 @@ func TestCronTool_NameDescriptionParameters(t *testing.T) {
 // TestCronTool_AddJob_EverySeconds verifies recurring job creation with every_seconds.
 func TestCronTool_AddJob_EverySeconds(t *testing.T) {
 	tool := newTestCronTool(t)
-	ctx := tools.WithToolContext(context.Background(), "cli", "direct")
+	ctx := agentCtx("tester")
 
 	result := tool.Execute(ctx, map[string]any{
 		"action":        "add",
@@ -222,7 +219,7 @@ func TestCronTool_AddJob_EverySeconds(t *testing.T) {
 // TestCronTool_AddJob_CronExpr verifies cron expression job creation.
 func TestCronTool_AddJob_CronExpr(t *testing.T) {
 	tool := newTestCronTool(t)
-	ctx := tools.WithToolContext(context.Background(), "cli", "direct")
+	ctx := agentCtx("tester")
 
 	result := tool.Execute(ctx, map[string]any{
 		"action":    "add",
@@ -238,7 +235,7 @@ func TestCronTool_AddJob_CronExpr(t *testing.T) {
 // TestCronTool_AddJob_MissingMessage verifies error when message is missing.
 func TestCronTool_AddJob_MissingMessage(t *testing.T) {
 	tool := newTestCronTool(t)
-	ctx := tools.WithToolContext(context.Background(), "cli", "direct")
+	ctx := agentCtx("tester")
 
 	result := tool.Execute(ctx, map[string]any{
 		"action":     "add",
@@ -257,7 +254,7 @@ func TestCronTool_AddJob_MissingMessage(t *testing.T) {
 // TestCronTool_AddJob_NoSchedule verifies error when no schedule type is provided.
 func TestCronTool_AddJob_NoSchedule(t *testing.T) {
 	tool := newTestCronTool(t)
-	ctx := tools.WithToolContext(context.Background(), "cli", "direct")
+	ctx := agentCtx("tester")
 
 	result := tool.Execute(ctx, map[string]any{
 		"action":  "add",
@@ -276,7 +273,7 @@ func TestCronTool_AddJob_NoSchedule(t *testing.T) {
 // TestCronTool_EnableDisable_Success verifies enabling and disabling a job.
 func TestCronTool_EnableDisable_Success(t *testing.T) {
 	tool := newTestCronTool(t)
-	ctx := agentCtx("tester", "cli", "direct")
+	ctx := agentCtx("tester")
 
 	// Add a job
 	addResult := tool.Execute(ctx, map[string]any{

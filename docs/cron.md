@@ -8,24 +8,51 @@ recurring interval, or on a cron expression. Jobs are stored in
 
 ## How jobs run
 
-When a job fires, its `message` is injected **inbound** to the job's `channel` + `to` —
-exactly as if a user had sent that message there. Normal routing delivers it to the agent
-bound to that channel, which processes it and replies on the same channel. There is a
-single behavior; the agent that schedules a job cannot choose a different destination.
+A job is **addressed to an agent** (recorded as `agentId`). When it fires, its `message`
+is injected **inbound** to that agent's **default channel** — exactly as if a user had
+sent that message there. Normal routing delivers it to the agent, which processes it and
+replies on the same channel. The agent that schedules a job cannot choose a different
+destination.
 
-The destination is **captured from the conversation the job was created in**. Practical
-consequence: to have a reminder come back on Slack, ask the agent on Slack; to get it on
-Telegram, ask on Telegram. (Operators creating jobs from the CLI set `--channel`/`--to`
-explicitly.)
+The destination is **resolved live from the target agent's default channel at the moment
+the job fires** — not captured when the job is created. So if you change which channel is
+the agent's default, existing jobs follow automatically. The default channel is the
+binding marked **default** for that agent (see below); it must resolve to a concrete chat
+(a channel + a concrete peer). An agent with no default channel cannot schedule jobs (the
+`add` is rejected) and a job whose agent loses its default channel is skipped at fire time
+with a warning.
+
+Because a job only needs the **agent name** (not a live conversation), agents reach
+`cron_schedule add` over any transport, including external MCP clients (e.g. Claude Code)
+where there is no inbound channel.
+
+### Default channel
+
+Each agent's reachable channels are its **bindings**. Exactly one binding per agent may be
+marked `default: true`, and it is where that agent's cron output (and other
+agent-targeted delivery) is sent. Set it in the WebUI agent view ("Channels"), or in
+config:
+
+```json
+{ "agent_id": "karen", "default": true,
+  "match": { "channel": "slack", "peer": { "kind": "channel", "id": "C0…" } } }
+```
+
+### Scheduling for another agent (`global_cron`)
+
+By default an agent schedules and manages **only its own** jobs. An agent with
+`"global_cron": true` in its config may create and manage jobs for **any** agent by
+passing the `agent` parameter (`cron_schedule` → `{"action":"add","agent":"karen",…}`).
+Typically a single orchestrator agent has this. Without it, targeting another agent is
+rejected.
 
 ### Scope (per agent)
 
-Jobs are **owned by the agent that creates them** (recorded as `agentId`). Through
-the `cron_schedule` tool an agent sees and manages **only its own** jobs —
-`list`/`get`/`remove`/`enable`/`disable` ignore other agents' jobs (a `get`/etc.
-on someone else's id returns "not found"). The `claw cron` **CLI is the operator
-view and sees all jobs** regardless of owner; CLI-created jobs have no owner and
-are managed only from the CLI.
+Through the `cron_schedule` tool an agent sees and manages **only its own** jobs —
+`list`/`get`/`remove`/`enable`/`disable` ignore other agents' jobs (a `get`/etc. on
+someone else's id returns "not found") — unless it has `global_cron` and passes the
+`agent` parameter. The `claw cron` **CLI is the operator view and sees all jobs**
+regardless of owner.
 
 ### Loading a domain's context when a job fires
 

@@ -741,6 +741,11 @@ func setupConfigWatcherPolling(configPath string, interval, debounce time.Durati
 					logger.Warn("  Using previous valid config")
 					continue
 				}
+				if err := newCfg.ValidateBindings(); err != nil {
+					logger.Errorf("  ⚠ New config binding validation failed: %v", err)
+					logger.Warn("  Using previous valid config")
+					continue
+				}
 
 				logger.Info("✓ Config file validated and loaded")
 				appliedModTime = currentModTime
@@ -804,7 +809,7 @@ func setupCronTool(
 	// Create CronTool if enabled
 	var cronTool *toolschedule.CronTool
 	if cfg.Tools.Cron.Enabled {
-		cronTool = toolschedule.NewCronTool(cronService, msgBus)
+		cronTool = toolschedule.NewCronTool(cronService, msgBus, agentLoop.GetConfig)
 	}
 
 	// Set onJob handler

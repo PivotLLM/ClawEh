@@ -73,27 +73,27 @@ type DomainState struct {
 
 // Domain is one coherent body of learned knowledge in a session.
 type Domain struct {
-	ID            string
-	AgentID       string
-	SessionKey    string
+	ID         string
+	AgentID    string
+	SessionKey string
 	// StickyPriority is stored in the legacy "type" column (TEXT, parsed as int):
 	// 0 / non-numeric = not sticky; > 0 = sticky (injected into every prompt). The
 	// magnitude is reserved as a future sort key. See Sticky.
-	StickyPriority int
-	Name          string
-	Status        Status
-	Version       int64
-	Summary       string
-	State         DomainState
-	SchemaName    string
-	SchemaVersion int
-	LastActiveAt  int64  // unix seconds; recency/last-used signal (0 = never recorded)
-	Triggers      string // comma-delimited tool-name substrings; activates this domain when a matching tool is used (see TriggerTokens)
+	StickyPriority  int
+	Name            string
+	Status          Status
+	Version         int64
+	Summary         string
+	State           DomainState
+	SchemaName      string
+	SchemaVersion   int
+	LastActiveAt    int64  // unix seconds; recency/last-used signal (0 = never recorded)
+	Triggers        string // comma-delimited tool-name substrings; activates this domain when a matching tool is used (see TriggerTokens)
 	KeywordTriggers string // comma-delimited phrases; activates this domain when one appears (whole-phrase, word-boundary) in the message text (see KeywordPhrases)
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
-	ArchivedAt    *time.Time
-	Memories      []Memory // populated by GetDomain / ListMemories; nil otherwise
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+	ArchivedAt      *time.Time
+	Memories        []Memory // populated by GetDomain / ListMemories; nil otherwise
 }
 
 // Sticky reports whether this domain is injected into every prompt.

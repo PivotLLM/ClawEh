@@ -227,6 +227,11 @@ type AgentConfig struct {
 	Callback    *CallbackConfig  `json:"callback,omitempty"`
 	Temperature *float64         `json:"temperature,omitempty"`
 
+	// GlobalCron lets this agent create and manage cron jobs for OTHER agents
+	// (by passing their agent id). Off by default: an agent can only schedule for
+	// itself. Typically exactly one orchestrator agent has this.
+	GlobalCron bool `json:"global_cron,omitempty"`
+
 	// ShareCommon toggles the per-agent "common" shared-directory tools. nil or
 	// true (the default) exposes them; false withholds them from this agent.
 	ShareCommon *bool `json:"share_common,omitempty"`
@@ -349,11 +354,74 @@ type AgentBinding struct {
 	AgentID       string       `json:"agent_id"`
 	AgentMentions []string     `json:"agent_mentions,omitempty"`
 	Match         BindingMatch `json:"match"`
+	// Default marks this binding as the agent's default delivery channel — where
+	// cron jobs (and other agent-targeted output) are sent. At most one default
+	// per agent, and a default must resolve to a concrete chat (Match.Channel +
+	// Match.Peer{Kind,ID}). See Config.CronTarget / ValidateBindings.
+	Default bool `json:"default,omitempty"`
 }
 
 type SessionConfig struct {
 	Mode          string              `json:"mode,omitempty"`
 	IdentityLinks map[string][]string `json:"identity_links,omitempty"`
+}
+
+// DefaultBinding returns the agent's binding marked Default, or false if none.
+func (c *Config) DefaultBinding(agentID string) (*AgentBinding, bool) {
+	id := strings.TrimSpace(agentID)
+	for i := range c.Bindings {
+		b := &c.Bindings[i]
+		if b.Default && b.AgentID == id {
+			return b, true
+		}
+	}
+	return nil, false
+}
+
+// AgentHasGlobalCron reports whether the agent may schedule/manage cron jobs for
+// other agents.
+func (c *Config) AgentHasGlobalCron(agentID string) bool {
+	id := strings.TrimSpace(agentID)
+	for i := range c.Agents.List {
+		if c.Agents.List[i].ID == id {
+			return c.Agents.List[i].GlobalCron
+		}
+	}
+	return false
+}
+
+// CronTarget resolves the agent's default-channel delivery coordinates from its
+// default binding. ok is false when the agent has no default binding or that
+// binding does not resolve to a concrete chat. The values are the binding's own
+// Match fields, so delivering to them routes straight back to the agent.
+func (c *Config) CronTarget(agentID string) (channel, chatID, peerKind string, ok bool) {
+	b, found := c.DefaultBinding(agentID)
+	if !found || b.Match.Channel == "" || b.Match.Peer == nil ||
+		b.Match.Peer.Kind == "" || b.Match.Peer.ID == "" {
+		return "", "", "", false
+	}
+	return b.Match.Channel, b.Match.Peer.ID, b.Match.Peer.Kind, true
+}
+
+// ValidateBindings rejects an inconsistent binding set: more than one default
+// per agent, or a default binding that does not resolve to a concrete chat
+// (needs Match.Channel + Match.Peer{Kind,ID}) and so could not receive cron output.
+func (c *Config) ValidateBindings() error {
+	defaults := map[string]int{}
+	for i := range c.Bindings {
+		b := &c.Bindings[i]
+		if !b.Default {
+			continue
+		}
+		defaults[b.AgentID]++
+		if defaults[b.AgentID] > 1 {
+			return fmt.Errorf("agent %q has more than one default binding", b.AgentID)
+		}
+		if b.Match.Channel == "" || b.Match.Peer == nil || b.Match.Peer.Kind == "" || b.Match.Peer.ID == "" {
+			return fmt.Errorf("default binding for agent %q must specify a channel and a concrete peer (kind+id)", b.AgentID)
+		}
+	}
+	return nil
 }
 
 type AgentDefaults struct {
@@ -386,7 +454,7 @@ type AgentDefaults struct {
 	// RequestTimeout is the global default request timeout (seconds) applied to
 	// any model whose own request_timeout is 0. Default 300; CLI models override
 	// it higher (e.g. 3600). 0 falls back to the built-in 120s HTTP default.
-	RequestTimeout             int      `json:"request_timeout,omitempty"       env:"CLAW_AGENTS_DEFAULTS_REQUEST_TIMEOUT"`
+	RequestTimeout int `json:"request_timeout,omitempty"       env:"CLAW_AGENTS_DEFAULTS_REQUEST_TIMEOUT"`
 	// TurnTimeout is the overall wall-clock budget (seconds) for a single user
 	// turn — all LLM iterations plus every tool call. It is a hard backstop that
 	// guarantees the turn ends (the context is cancelled) so the user always gets
@@ -400,7 +468,7 @@ type AgentDefaults struct {
 	// ProgressInterval is how often (seconds) a long-running turn emits a
 	// lightweight progress update so it never looks dead. 0 falls back to
 	// DefaultProgressInterval; a negative value disables progress updates.
-	ProgressInterval int `json:"progress_interval,omitempty"     env:"CLAW_AGENTS_DEFAULTS_PROGRESS_INTERVAL"`
+	ProgressInterval           int      `json:"progress_interval,omitempty"     env:"CLAW_AGENTS_DEFAULTS_PROGRESS_INTERVAL"`
 	MaxTokens                  int      `json:"max_tokens"                      env:"CLAW_AGENTS_DEFAULTS_MAX_TOKENS"`
 	Temperature                *float64 `json:"temperature,omitempty"           env:"CLAW_AGENTS_DEFAULTS_TEMPERATURE"`
 	MaxToolIterations          int      `json:"max_tool_iterations"             env:"CLAW_AGENTS_DEFAULTS_MAX_TOOL_ITERATIONS"`

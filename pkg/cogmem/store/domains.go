@@ -41,14 +41,14 @@ func (s *Store) nameTaken(ctx context.Context, q DBTX, name, excludeID string) (
 
 // CreateDomainParams are the inputs for CreateDomain.
 type CreateDomainParams struct {
-	AgentID    string
-	SessionKey string
-	Sticky     bool // injected into every prompt when true (use sparingly)
-	Name       string
-	Status     Status // active or review
-	Summary    string
-	State      DomainState
-	Triggers   string // comma-delimited tool-name substrings (optional)
+	AgentID         string
+	SessionKey      string
+	Sticky          bool // injected into every prompt when true (use sparingly)
+	Name            string
+	Status          Status // active or review
+	Summary         string
+	State           DomainState
+	Triggers        string // comma-delimited tool-name substrings (optional)
 	KeywordTriggers string // comma-delimited message-text phrases (optional)
 }
 
