@@ -506,10 +506,6 @@ func freshID(ctx context.Context, q DBTX, prefix, table string) (string, error) 
 // about timestamps; cogmem rarely needs sub-second precision.
 func now() int64 { return time.Now().Unix() }
 
-// nowNano returns unix nanoseconds, used only as a strictly-increasing ordering
-// key for last_active_at (so two touches in the same second still order).
-func nowNano() int64 { return time.Now().UnixNano() }
-
 func derefOr0(p *int64) int64 {
 	if p == nil {
 		return 0

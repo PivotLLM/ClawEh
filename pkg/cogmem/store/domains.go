@@ -73,15 +73,14 @@ func (s *Store) CreateDomain(ctx context.Context, q DBTX, p CreateDomainParams) 
 		return Domain{}, err
 	}
 	ts := now()
-	// last_active_at is a nanosecond ordering key (matching Touch); created_at /
-	// updated_at are unix seconds. Creation counts as the first activity.
+	// All timestamps are unix seconds. Creation counts as the first activity.
 	_, err = q.ExecContext(ctx, `
 		INSERT INTO domains(id, agent_id, session_key, type, name, status, version,
 		                    summary, state_json, schema_name, schema_version,
 		                    last_active_at, triggers, keyword_triggers, created_at, updated_at)
 		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		id, p.AgentID, p.SessionKey, stickyValue(p.Sticky), p.Name, string(p.Status), 1,
-		p.Summary, string(stateJSON), "domain", 1, nowNano(), normalizeTriggers(p.Triggers), normalizeKeywords(p.KeywordTriggers), ts, ts)
+		p.Summary, string(stateJSON), "domain", 1, ts, normalizeTriggers(p.Triggers), normalizeKeywords(p.KeywordTriggers), ts, ts)
 	if err != nil {
 		return Domain{}, fmt.Errorf("cogmem: create domain: %w", err)
 	}
@@ -234,7 +233,7 @@ func (s *Store) ArchiveDomain(ctx context.Context, q DBTX, id string) error {
 // Touch updates last_active_at (recency signal for routed pre-load). It does NOT
 // bump stable_rev — recency is not part of the cached stable block.
 func (s *Store) Touch(ctx context.Context, q DBTX, id string) error {
-	_, err := q.ExecContext(ctx, `UPDATE domains SET last_active_at=? WHERE id=?`, nowNano(), id)
+	_, err := q.ExecContext(ctx, `UPDATE domains SET last_active_at=? WHERE id=?`, now(), id)
 	return err
 }
 

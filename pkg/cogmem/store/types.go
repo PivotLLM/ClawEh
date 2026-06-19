@@ -87,7 +87,7 @@ type Domain struct {
 	State         DomainState
 	SchemaName    string
 	SchemaVersion int
-	LastActiveAt  int64  // unix-nanos ordering key for recency (0 = never), not displayed
+	LastActiveAt  int64  // unix seconds; recency/last-used signal (0 = never recorded)
 	Triggers      string // comma-delimited tool-name substrings; activates this domain when a matching tool is used (see TriggerTokens)
 	KeywordTriggers string // comma-delimited phrases; activates this domain when one appears (whole-phrase, word-boundary) in the message text (see KeywordPhrases)
 	CreatedAt     time.Time
@@ -100,17 +100,12 @@ type Domain struct {
 func (d Domain) Sticky() bool { return d.StickyPriority > 0 }
 
 // LastActive returns when the domain was last active (created, written, loaded,
-// or read) and false if it was never recorded. It tolerates legacy rows that
-// stored the value in unix seconds rather than the current nanoseconds.
+// or read) and false if it was never recorded.
 func (d Domain) LastActive() (time.Time, bool) {
-	v := d.LastActiveAt
-	if v <= 0 {
+	if d.LastActiveAt <= 0 {
 		return time.Time{}, false
 	}
-	if v < 1_000_000_000_000 { // < ~1e12 ⇒ a unix-seconds value from before the fix
-		return time.Unix(v, 0), true
-	}
-	return time.Unix(0, v), true
+	return time.Unix(d.LastActiveAt, 0), true
 }
 
 // Memory is a short, addressable unit of learned memory inside a domain.

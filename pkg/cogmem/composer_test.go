@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/PivotLLM/ClawEh/pkg/cogmem/store"
 )
@@ -171,6 +172,12 @@ func TestRoutedBlockTouchesMatchedNotRecency(t *testing.T) {
 	})
 	other, _ := s.CreateDomain(ctx, db, store.CreateDomainParams{AgentID: "a", Name: "Other", Summary: "misc"})
 
+	// Pre-age both domains so the second-granularity touch is observable (creation
+	// and the compose call would otherwise share the same wall-clock second).
+	old := time.Now().Add(-48 * time.Hour).Unix()
+	if _, err := db.ExecContext(ctx, `UPDATE domains SET last_active_at=? WHERE id IN (?,?)`, old, email.ID, other.ID); err != nil {
+		t.Fatalf("pre-age domains: %v", err)
+	}
 	lastActive := func(id string) int64 {
 		d, err := s.GetDomain(ctx, db, id, false)
 		if err != nil {
@@ -178,8 +185,6 @@ func TestRoutedBlockTouchesMatchedNotRecency(t *testing.T) {
 		}
 		return d.LastActiveAt
 	}
-	emailBefore := lastActive(email.ID)
-	otherBefore := lastActive(other.ID)
 
 	c := New(s, WithTopKDomains(8)) // both fit: Email via tool, Other via recency
 	res, err := c.RoutedBlock(ctx, RouteRequest{RecentTools: []string{"mcp__fusion__google_gmail_messages_list"}, Trace: true})
@@ -190,13 +195,11 @@ func TestRoutedBlockTouchesMatchedNotRecency(t *testing.T) {
 		t.Fatalf("expected both domains loaded, got %v", res.Loaded)
 	}
 
-	emailAfter := lastActive(email.ID)
-	otherAfter := lastActive(other.ID)
-	if emailAfter <= emailBefore {
-		t.Errorf("tool-matched Email should be touched: before=%d after=%d", emailBefore, emailAfter)
+	if emailAfter := lastActive(email.ID); emailAfter <= old {
+		t.Errorf("tool-matched Email should be touched to now: old=%d after=%d", old, emailAfter)
 	}
-	if otherAfter != otherBefore {
-		t.Errorf("recency-filler Other must NOT be touched: before=%d after=%d", otherBefore, otherAfter)
+	if otherAfter := lastActive(other.ID); otherAfter != old {
+		t.Errorf("recency-filler Other must NOT be touched: old=%d after=%d", old, otherAfter)
 	}
 }
 
@@ -273,8 +276,11 @@ func TestRoutedBlockRecency(t *testing.T) {
 	d1, _ := s.CreateDomain(ctx, db, store.CreateDomainParams{AgentID: "a", Name: "Old", Summary: "old"})
 	d2, _ := s.CreateDomain(ctx, db, store.CreateDomainParams{AgentID: "a", Name: "Recent", Summary: "recent"})
 	_, _ = s.AddMemory(ctx, db, store.AddMemoryParams{DomainID: d2.ID, Type: store.TypeFact, Text: "key fact", Status: store.StatusActive, Confidence: 0.9, Source: store.SourceUserExplicit})
-	// d2 is touched (more recent) than d1.
-	_ = s.Touch(ctx, db, d1.ID)
+	// Make d2 strictly more recent than d1 (seconds granularity): age d1 back, d2 = now.
+	old := time.Now().Add(-1 * time.Hour).Unix()
+	if _, err := db.ExecContext(ctx, `UPDATE domains SET last_active_at=? WHERE id=?`, old, d1.ID); err != nil {
+		t.Fatalf("age d1: %v", err)
+	}
 	_ = s.Touch(ctx, db, d2.ID)
 
 	c := New(s, WithTopKDomains(1))
