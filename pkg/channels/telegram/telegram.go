@@ -861,7 +861,7 @@ func wrapMarkdownTables(text string) string {
 		// Find max content width per column, considering only non-separator rows.
 		colWidth := make([]int, maxCols)
 		for colIdx := range colWidth {
-			colWidth[colIdx] = 3 // minimum width matches "---"
+			colWidth[colIdx] = 1 // minimum width
 		}
 		for _, cells := range parsed {
 			if isSeparatorRow(cells) {
@@ -877,25 +877,39 @@ func wrapMarkdownTables(text string) string {
 			}
 		}
 
-		// Rebuild each row with normalized widths.
-		result := make([]string, len(tableLines))
-		for i, cells := range parsed {
-			rebuiltCells := make([]string, maxCols)
+		// Total line width for the divider: padded columns plus the two-space gaps.
+		totalWidth := 0
+		for _, w := range colWidth {
+			totalWidth += w
+		}
+		totalWidth += (maxCols - 1) * 2
+
+		// Rebuild rows without pipe borders: columns separated by two spaces, the
+		// markdown separator row replaced by a full-width horizontal rule.
+		var result []string
+		separatorInserted := false
+		for _, cells := range parsed {
 			if isSeparatorRow(cells) {
-				for colIdx := range rebuiltCells {
-					rebuiltCells[colIdx] = strings.Repeat("-", colWidth[colIdx])
-				}
-			} else {
-				for colIdx := range rebuiltCells {
-					var cell string
-					if colIdx < len(cells) {
-						cell = cells[colIdx]
-					}
-					// Pad with trailing spaces to colWidth (display width, not bytes/runes).
-					rebuiltCells[colIdx] = cell + strings.Repeat(" ", colWidth[colIdx]-utils.DisplayWidth(cell))
-				}
+				result = append(result, strings.Repeat("─", totalWidth))
+				separatorInserted = true
+				continue
 			}
-			result[i] = "| " + strings.Join(rebuiltCells, " | ") + " |"
+			parts := make([]string, maxCols)
+			for colIdx := range parts {
+				var cell string
+				if colIdx < len(cells) {
+					cell = cells[colIdx]
+				}
+				parts[colIdx] = cell + strings.Repeat(" ", colWidth[colIdx]-utils.DisplayWidth(cell))
+			}
+			// Trim trailing padding from the last column.
+			parts[maxCols-1] = strings.TrimRight(parts[maxCols-1], " ")
+			result = append(result, strings.Join(parts, "  "))
+		}
+
+		// If the markdown had no separator row, insert a rule after the header row.
+		if !separatorInserted && len(result) > 0 {
+			result = append(result[:1], append([]string{strings.Repeat("─", totalWidth)}, result[1:]...)...)
 		}
 		return result
 	}

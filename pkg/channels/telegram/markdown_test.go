@@ -20,8 +20,11 @@ func TestWrapMarkdownTables_EmojiAligns(t *testing.T) {
 
 	var widths []int
 	for _, line := range strings.Split(out, "\n") {
-		if !strings.HasPrefix(line, "|") {
+		if line == "```" || line == "" || strings.HasPrefix(line, "─") {
 			continue
+		}
+		if strings.Contains(line, "|") {
+			t.Fatalf("output should not contain pipe borders:\n%s", out)
 		}
 		widths = append(widths, utils.DisplayWidth(line))
 	}
@@ -234,9 +237,9 @@ func TestWrapMarkdownTables(t *testing.T) {
 				"| --- | --- |\n" +
 				"| Alice | 30 |",
 			want: "```\n" +
-				"| Name  | Age |\n" +
-				"| ----- | --- |\n" +
-				"| Alice | 30  |\n" +
+				"Name   Age\n" +
+				"──────────\n" +
+				"Alice  30\n" +
 				"```",
 		},
 		{
@@ -245,20 +248,20 @@ func TestWrapMarkdownTables(t *testing.T) {
 				"|:---|---:|\n" +
 				"| Alice | 30 |",
 			want: "```\n" +
-				"| Name  | Age |\n" +
-				"| ----- | --- |\n" +
-				"| Alice | 30  |\n" +
+				"Name   Age\n" +
+				"──────────\n" +
+				"Alice  30\n" +
 				"```",
 		},
 		{
-			name: "rune width padding aligns non-ascii",
+			name: "display width padding aligns non-ascii",
 			input: "| Name | X |\n" +
 				"| --- | --- |\n" +
 				"| café | 1 |",
 			want: "```\n" +
-				"| Name | X   |\n" +
-				"| ---- | --- |\n" +
-				"| café | 1   |\n" +
+				"Name  X\n" +
+				"───────\n" +
+				"café  1\n" +
 				"```",
 		},
 		{
