@@ -228,6 +228,11 @@ func (m *Manager) Enqueue(job Job, trigger string) {
 
 	select {
 	case m.queue <- queued{job: job, trigger: trigger}:
+		logger.DebugCF("cogmem", "consolidation job enqueued", map[string]any{
+			"agent_id":    job.AgentID,
+			"session_key": job.SessionKey,
+			"trigger":     trigger,
+		})
 	default:
 		logger.WarnCF("cogmem", "consolidation queue full; dropping job", map[string]any{
 			"agent_id":     job.AgentID,
@@ -252,6 +257,11 @@ func (m *Manager) dispatchLoop(ctx context.Context) {
 			m.mu.Lock()
 			if m.inflight[q.job.ArchivePath] {
 				m.mu.Unlock()
+				logger.DebugCF("cogmem", "consolidation job skipped; run already in flight", map[string]any{
+					"agent_id":    q.job.AgentID,
+					"session_key": q.job.SessionKey,
+					"trigger":     q.trigger,
+				})
 				continue // already running; the in-flight run drains More itself
 			}
 			m.inflight[q.job.ArchivePath] = true
@@ -298,6 +308,11 @@ func (m *Manager) runJob(ctx context.Context, j Job, trigger string) {
 		})
 		return
 	}
+	logger.DebugCF("cogmem", "consolidation run starting", map[string]any{
+		"agent_id":    j.AgentID,
+		"session_key": j.SessionKey,
+		"trigger":     trigger,
+	})
 	for {
 		select {
 		case <-m.stop:
@@ -324,6 +339,18 @@ func (m *Manager) runJob(ctx context.Context, j Job, trigger string) {
 			})
 			return
 		}
+		// Log every outcome — including idle/busy, which previously left no trace
+		// in the log or the run table, making no-op runs impossible to diagnose.
+		logger.InfoCF("cogmem", "consolidation run finished", map[string]any{
+			"agent_id":    j.AgentID,
+			"session_key": j.SessionKey,
+			"trigger":     trigger,
+			"status":      res.Status,
+			"applied":     res.Applied,
+			"seq_start":   res.SeqStart,
+			"seq_end":     res.SeqEnd,
+			"more":        res.More,
+		})
 		if res.Status == "busy" {
 			return // another owner holds the lease; let it drain.
 		}
