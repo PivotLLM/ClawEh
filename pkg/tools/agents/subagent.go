@@ -175,13 +175,34 @@ func (sm *SubagentManager) CandidatesFor(agentID string) []providers.FallbackCan
 	return candidates
 }
 
+// normalizeModelName normalizes a model name for tolerant matching: trims, strips
+// a single layer of surrounding quotes (straight or smart, single/double/back),
+// and collapses internal whitespace runs to a single space. Case is handled by
+// the EqualFold comparison in MatchCandidate.
+func normalizeModelName(s string) string {
+	s = strings.TrimSpace(s)
+	for _, q := range []struct{ open, close string }{
+		{`"`, `"`}, {`'`, `'`}, {"`", "`"}, {"“", "”"}, {"‘", "’"},
+	} {
+		if len(s) >= len(q.open)+len(q.close) && strings.HasPrefix(s, q.open) && strings.HasSuffix(s, q.close) {
+			s = s[len(q.open) : len(s)-len(q.close)]
+			break
+		}
+	}
+	return strings.Join(strings.Fields(s), " ")
+}
+
 // MatchCandidate reports whether model names one of the candidates, matching the
-// user-facing Alias (model_name) first, then the wire Model — both
-// case-insensitively. Returns the matched candidate.
+// user-facing Alias (model_name) first, then the wire Model. Matching is
+// case-insensitive and tolerant of surrounding quotes and extra whitespace.
+// Returns the matched candidate.
 func MatchCandidate(candidates []providers.FallbackCandidate, model string) (providers.FallbackCandidate, bool) {
-	m := strings.TrimSpace(model)
+	m := normalizeModelName(model)
+	if m == "" {
+		return providers.FallbackCandidate{}, false
+	}
 	for _, c := range candidates {
-		if strings.EqualFold(c.Alias, m) || strings.EqualFold(c.Model, m) {
+		if strings.EqualFold(normalizeModelName(c.Alias), m) || strings.EqualFold(normalizeModelName(c.Model), m) {
 			return c, true
 		}
 	}

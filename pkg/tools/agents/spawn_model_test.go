@@ -30,6 +30,16 @@ func TestMatchAndPromoteCandidate(t *testing.T) {
 	if _, ok := MatchCandidate(c, "gpt-9"); ok {
 		t.Fatal("unexpected match for unknown model")
 	}
+	// Tolerant of surrounding quotes and extra whitespace.
+	for _, in := range []string{` "Pro" `, "'pro'", "`Pro`", "  pro  ", "“Pro”"} {
+		if m, ok := MatchCandidate(c, in); !ok || m.Model != "pro-wire" {
+			t.Fatalf("normalized match failed for %q: %+v ok=%v", in, m, ok)
+		}
+	}
+	// Blank never matches.
+	if _, ok := MatchCandidate(c, "   "); ok {
+		t.Fatal("blank model should not match")
+	}
 	// Promote moves the chosen model to the front, keeps the rest.
 	got := promoteCandidate(c, "Pro")
 	if got[0].Alias != "Pro" || got[1].Alias != "Flash" || len(got) != 2 {
