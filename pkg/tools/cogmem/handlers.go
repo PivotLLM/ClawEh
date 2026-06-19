@@ -231,6 +231,9 @@ func explainDomain(d store.Domain) string {
 	fmt.Fprintf(&b, "Domain %s %q\n", d.ID, d.Name)
 	fmt.Fprintf(&b, "  sticky=%t status=%s version=%d\n", d.Sticky(), d.Status, d.Version)
 	fmt.Fprintf(&b, "  created=%s updated=%s\n", d.CreatedAt.Format("2006-01-02"), d.UpdatedAt.Format("2006-01-02"))
+	if t, ok := d.LastActive(); ok {
+		fmt.Fprintf(&b, "  last used=%s\n", t.Format("2006-01-02"))
+	}
 	if d.Summary != "" {
 		fmt.Fprintf(&b, "  summary: %s\n", d.Summary)
 	}

@@ -109,6 +109,12 @@ function DomainCard({
             {t("pages.memory.keyword_triggers")}: {d.keyword_triggers}
           </p>
         )}
+        {d.last_used && (
+          <p className="text-muted-foreground mb-2 text-[11px]">
+            {t("pages.memory.last_used")}:{" "}
+            {new Date(d.last_used).toLocaleDateString()}
+          </p>
+        )}
         {d.memories.length === 0 ? (
           <p className="text-muted-foreground text-xs">
             {t("pages.memory.no_memories")}

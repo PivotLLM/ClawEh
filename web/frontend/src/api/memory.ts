@@ -28,6 +28,7 @@ export interface MemoryDomain {
   summary: string
   triggers?: string
   keyword_triggers?: string
+  last_used?: string
   memories: MemoryMemory[]
 }
 

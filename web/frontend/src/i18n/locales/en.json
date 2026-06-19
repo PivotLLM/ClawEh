@@ -527,6 +527,7 @@
       "never": "never",
       "triggers": "Tool triggers",
       "keyword_triggers": "Keyword triggers",
+      "last_used": "Last used",
       "sticky": "sticky",
       "no_memories": "No active memories in this domain.",
       "memory_count": "{{count}} memories"

@@ -73,13 +73,15 @@ func (s *Store) CreateDomain(ctx context.Context, q DBTX, p CreateDomainParams) 
 		return Domain{}, err
 	}
 	ts := now()
+	// last_active_at is a nanosecond ordering key (matching Touch); created_at /
+	// updated_at are unix seconds. Creation counts as the first activity.
 	_, err = q.ExecContext(ctx, `
 		INSERT INTO domains(id, agent_id, session_key, type, name, status, version,
 		                    summary, state_json, schema_name, schema_version,
 		                    last_active_at, triggers, keyword_triggers, created_at, updated_at)
 		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		id, p.AgentID, p.SessionKey, stickyValue(p.Sticky), p.Name, string(p.Status), 1,
-		p.Summary, string(stateJSON), "domain", 1, ts, normalizeTriggers(p.Triggers), normalizeKeywords(p.KeywordTriggers), ts, ts)
+		p.Summary, string(stateJSON), "domain", 1, nowNano(), normalizeTriggers(p.Triggers), normalizeKeywords(p.KeywordTriggers), ts, ts)
 	if err != nil {
 		return Domain{}, fmt.Errorf("cogmem: create domain: %w", err)
 	}

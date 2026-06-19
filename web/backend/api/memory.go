@@ -53,6 +53,7 @@ type memoryDomain struct {
 	Summary         string         `json:"summary"`
 	Triggers        string         `json:"triggers,omitempty"`
 	KeywordTriggers string         `json:"keyword_triggers,omitempty"`
+	LastUsed        string         `json:"last_used,omitempty"` // RFC3339; empty = never used since creation
 	Memories        []memoryMemory `json:"memories"`
 }
 
@@ -73,6 +74,15 @@ type memoryDetailResponse struct {
 	LastRun        *memoryRun     `json:"last_run"`
 	Domains        []memoryDomain `json:"domains"`
 	PendingList    []memoryMemory `json:"pending_list"`
+}
+
+// domainLastUsed renders a domain's last-active time as RFC3339, or "" when it
+// has never been recorded.
+func domainLastUsed(d cogmemstore.Domain) string {
+	if t, ok := d.LastActive(); ok {
+		return t.Format(time.RFC3339)
+	}
+	return ""
 }
 
 // sortMemoryStores orders stores by agent name (alphabetical, case-insensitive)
@@ -222,6 +232,7 @@ func (h *Handler) handleGetMemoryStore(w http.ResponseWriter, r *http.Request) {
 			Summary:         d.Summary,
 			Triggers:        d.Triggers,
 			KeywordTriggers: d.KeywordTriggers,
+			LastUsed:        domainLastUsed(d),
 			Memories:        make([]memoryMemory, 0, len(mems)),
 		}
 		for _, m := range mems {

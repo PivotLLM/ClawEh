@@ -99,6 +99,20 @@ type Domain struct {
 // Sticky reports whether this domain is injected into every prompt.
 func (d Domain) Sticky() bool { return d.StickyPriority > 0 }
 
+// LastActive returns when the domain was last active (created, written, loaded,
+// or read) and false if it was never recorded. It tolerates legacy rows that
+// stored the value in unix seconds rather than the current nanoseconds.
+func (d Domain) LastActive() (time.Time, bool) {
+	v := d.LastActiveAt
+	if v <= 0 {
+		return time.Time{}, false
+	}
+	if v < 1_000_000_000_000 { // < ~1e12 ⇒ a unix-seconds value from before the fix
+		return time.Unix(v, 0), true
+	}
+	return time.Unix(0, v), true
+}
+
 // Memory is a short, addressable unit of learned memory inside a domain.
 type Memory struct {
 	ID                 string
