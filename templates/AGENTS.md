@@ -91,6 +91,13 @@ don't see it yet, nothing has been recorded — start recording.
   incomplete, don't try to change them yourself: **tell your human what to update
   in this file**, and work with the current instructions until they do.
 - Never store secrets, credentials, or sensitive personal data in memory.
+- **Delegating work (if `agent_spawn` is available):** you can spawn a sub-agent —
+  a copy of yourself on a focused task in a separate context — to keep a big or
+  isolated job out of this conversation, or to run it on a heavier model. It
+  inherits your tools, files, and a **read-only** copy of your memory, and reports
+  its result back to you. It **cannot** write your memory, schedule cron jobs, or
+  spawn further sub-agents, so anything it discovers that's worth keeping, **you**
+  record. Prefer it for self-contained subtasks; do quick work yourself inline.
 
 ## When Instructions Conflict
 

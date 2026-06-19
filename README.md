@@ -274,7 +274,7 @@ Without this, a person's Telegram ID and Slack ID are treated as two separate pe
 
 **One-shot tasks without context**
 
-In `unified` mode every conversation adds to the shared memory. If you want the agent to handle a task in isolation — without drawing on prior context and without polluting the main history — ask it to use the `spawn` tool. A spawned subagent runs in a completely separate session, completes its work, and reports back. Nothing from that exchange appears in or affects the main conversation.
+In `unified` mode every conversation adds to the shared memory. If you want the agent to handle a task in isolation — without drawing on prior chat history and without polluting the main conversation — ask it to use the `spawn` tool. A spawned sub-agent is a **copy of the agent** (same workspace, tools, MCP, prompt, and a read-only snapshot of its memory) running on the given task in a separate session, optionally on a different model. It completes the work and reports back; nothing from that exchange appears in or affects the main conversation, and it cannot write the agent's memory, schedule jobs, or spawn further sub-agents. See [docs/subagents.md](docs/subagents.md).
 
 **Security: access control**
 
