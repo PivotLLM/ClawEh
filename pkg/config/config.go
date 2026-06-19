@@ -356,9 +356,17 @@ type AgentBinding struct {
 	Match         BindingMatch `json:"match"`
 	// Default marks this binding as the agent's default delivery channel — where
 	// cron jobs (and other agent-targeted output) are sent. At most one default
-	// per agent, and a default must resolve to a concrete chat (Match.Channel +
-	// Match.Peer{Kind,ID}). See Config.CronTarget / ValidateBindings.
+	// per agent, and a default must resolve to a concrete chat: either a concrete
+	// Match.Peer{Kind,ID}, or an explicit DeliverTo. See Config.CronTarget /
+	// ValidateBindings.
 	Default bool `json:"default,omitempty"`
+	// DeliverTo is an explicit chat/peer id used ONLY for async (cron) delivery on
+	// this binding's channel — never for routing. It exists for channels whose
+	// Match has no concrete peer (e.g. a Telegram bot bound broadly to an agent):
+	// set it to the chat id cron output should go to. DeliverPeerKind defaults to
+	// "direct".
+	DeliverTo       string `json:"deliver_to,omitempty"`
+	DeliverPeerKind string `json:"deliver_peer_kind,omitempty"`
 }
 
 type SessionConfig struct {
@@ -396,11 +404,23 @@ func (c *Config) AgentHasGlobalCron(agentID string) bool {
 // Match fields, so delivering to them routes straight back to the agent.
 func (c *Config) CronTarget(agentID string) (channel, chatID, peerKind string, ok bool) {
 	b, found := c.DefaultBinding(agentID)
-	if !found || b.Match.Channel == "" || b.Match.Peer == nil ||
-		b.Match.Peer.Kind == "" || b.Match.Peer.ID == "" {
+	if !found || b.Match.Channel == "" {
 		return "", "", "", false
 	}
-	return b.Match.Channel, b.Match.Peer.ID, b.Match.Peer.Kind, true
+	// A concrete routing peer (e.g. a Slack channel binding) is the delivery target.
+	if b.Match.Peer != nil && b.Match.Peer.Kind != "" && b.Match.Peer.ID != "" {
+		return b.Match.Channel, b.Match.Peer.ID, b.Match.Peer.Kind, true
+	}
+	// Otherwise use the explicit delivery target (e.g. a Telegram chat id on a
+	// broadly-bound bot). This does not affect routing.
+	if b.DeliverTo != "" {
+		kind := b.DeliverPeerKind
+		if kind == "" {
+			kind = "direct"
+		}
+		return b.Match.Channel, b.DeliverTo, kind, true
+	}
+	return "", "", "", false
 }
 
 // ValidateBindings rejects an inconsistent binding set: more than one default
@@ -417,8 +437,9 @@ func (c *Config) ValidateBindings() error {
 		if defaults[b.AgentID] > 1 {
 			return fmt.Errorf("agent %q has more than one default binding", b.AgentID)
 		}
-		if b.Match.Channel == "" || b.Match.Peer == nil || b.Match.Peer.Kind == "" || b.Match.Peer.ID == "" {
-			return fmt.Errorf("default binding for agent %q must specify a channel and a concrete peer (kind+id)", b.AgentID)
+		concretePeer := b.Match.Peer != nil && b.Match.Peer.Kind != "" && b.Match.Peer.ID != ""
+		if b.Match.Channel == "" || (!concretePeer && b.DeliverTo == "") {
+			return fmt.Errorf("default binding for agent %q must resolve to a concrete chat: either a peer (kind+id) or a deliver_to chat id", b.AgentID)
 		}
 	}
 	return nil

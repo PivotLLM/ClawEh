@@ -9,9 +9,10 @@
     "globalCronHint": "Allow this agent to create and manage scheduled (cron) jobs for OTHER agents, not just itself. Typically only one orchestrator agent needs this.",
     "channels": "Channels",
     "channelsNone": "No channels bound to this agent yet. Add a binding on the Bindings page.",
-    "channelsNoPeer": "no specific chat — cannot be default",
     "channelsDefault": "default (cron output goes here)",
-    "channelsHint": "Pick the default channel where this agent's scheduled (cron) output is delivered. Only a channel bound to a specific chat can be the default."
+    "channelsChatIdPlaceholder": "chat id",
+    "channelsNeedChatId": "Enter the chat id to deliver to before setting this channel as default.",
+    "channelsHint": "Pick the default channel where this agent's scheduled (cron) output is delivered. For a channel bound to a specific chat (e.g. a Slack channel) that chat is used. For a channel with no specific chat (e.g. a Telegram bot), enter the chat id to deliver to — this is used for delivery only and does not change who can message the bot."
   },
   "navigation": {
     "chat": "Chat",

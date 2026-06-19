@@ -31,12 +31,29 @@ where there is no inbound channel.
 Each agent's reachable channels are its **bindings**. Exactly one binding per agent may be
 marked `default: true`, and it is where that agent's cron output (and other
 agent-targeted delivery) is sent. Set it in the WebUI agent view ("Channels"), or in
-config:
+config. A default must resolve to a concrete chat in one of two ways:
+
+**1. A binding with a concrete routing peer** (e.g. a Slack channel) — delivery goes to
+that peer:
 
 ```json
 { "agent_id": "karen", "default": true,
   "match": { "channel": "slack", "peer": { "kind": "channel", "id": "C0…" } } }
 ```
+
+**2. A broadly-bound channel with an explicit `deliver_to`** — for a Telegram bot bound to
+an agent, the binding has no specific chat (so the bot can serve multiple users/chats).
+Set `deliver_to` to the chat id cron output should go to. This is **delivery-only**: it
+does not change routing or who may message the bot.
+
+```json
+{ "agent_id": "penny", "default": true,
+  "match": { "channel": "telegram-Penny" },
+  "deliver_to": "123456789", "deliver_peer_kind": "direct" }
+```
+
+(`deliver_peer_kind` defaults to `direct`; use `channel` for a group chat id.) In the WebUI
+Channels list, selecting a peerless channel as default reveals a chat-id field.
 
 ### Scheduling for another agent (`global_cron`)
 

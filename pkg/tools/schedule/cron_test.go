@@ -22,10 +22,13 @@ func testConfig() *config.Config {
 			{AgentID: "amber", Default: true, Match: config.BindingMatch{Channel: "telegram-Amber", Peer: peer("chat-amber")}},
 			{AgentID: "karen", Default: true, Match: config.BindingMatch{Channel: "telegram-Karen", Peer: peer("chat-karen")}},
 			{AgentID: "tester", Default: true, Match: config.BindingMatch{Channel: "cli", Peer: peer("direct")}},
+			// penny: a Telegram-style default — channel-only binding (no peer) plus
+			// an explicit DeliverTo chat id.
+			{AgentID: "penny", Default: true, DeliverTo: "12345", Match: config.BindingMatch{Channel: "telegram-Penny"}},
 			{AgentID: "nodefault", Match: config.BindingMatch{Channel: "slack", Peer: peer("c1")}},
 		},
 		Agents: config.AgentsConfig{List: []config.AgentConfig{
-			{ID: "amber"}, {ID: "karen"}, {ID: "tester"}, {ID: "boss", GlobalCron: true}, {ID: "nodefault"},
+			{ID: "amber"}, {ID: "karen"}, {ID: "tester"}, {ID: "penny"}, {ID: "boss", GlobalCron: true}, {ID: "nodefault"},
 		}},
 	}
 }
@@ -118,6 +121,26 @@ func TestCronTool_CrossAgentRequiresGlobalCron(t *testing.T) {
 	jobs := tool.cronService.ListJobs(true)
 	if len(jobs) != 1 || jobs[0].AgentID != "karen" {
 		t.Fatalf("job should be addressed to karen, got %+v", jobs)
+	}
+}
+
+// TestCronTool_TelegramDeliverTo verifies an agent whose default channel is a
+// broadly-bound Telegram bot (no peer) but has an explicit DeliverTo can both
+// schedule and fire — the cron deliver-to path.
+func TestCronTool_TelegramDeliverTo(t *testing.T) {
+	tool := newTestCronTool(t)
+	add := tool.Execute(agentCtx("penny"), map[string]any{
+		"action": "add", "message": "drink water", "every_seconds": float64(3600),
+	})
+	if add.IsError {
+		t.Fatalf("penny add should succeed via deliver_to, got: %s", add.ForLLM)
+	}
+	jobs := tool.cronService.ListJobs(true)
+	if len(jobs) != 1 || jobs[0].AgentID != "penny" {
+		t.Fatalf("expected one job addressed to penny, got %+v", jobs)
+	}
+	if out := tool.ExecuteJob(context.Background(), &jobs[0]); out != "ok" {
+		t.Fatalf("penny job ExecuteJob = %q, want ok", out)
 	}
 }
 

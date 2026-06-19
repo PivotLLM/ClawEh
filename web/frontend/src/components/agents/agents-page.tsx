@@ -95,7 +95,8 @@ interface AgentBindingView {
   peerKind: string
   peerID: string
   isDefault: boolean
-  concrete: boolean // has a channel + concrete peer → eligible to be default
+  hasPeer: boolean // routing peer present → delivers there, no chat id needed
+  deliverTo: string // explicit cron delivery chat id (for peerless channels)
 }
 
 function parseAgentBindings(appConfig: unknown): Record<string, unknown>[] {
@@ -117,7 +118,8 @@ function bindingViewsForAgent(raw: Record<string, unknown>[], agentID: string): 
       peerKind,
       peerID,
       isDefault: b.default === true,
-      concrete: channel !== "" && peerKind !== "" && peerID !== "",
+      hasPeer: channel !== "" && peerKind !== "" && peerID !== "",
+      deliverTo: asString(b.deliver_to),
     })
   })
   return views
@@ -221,7 +223,7 @@ interface AgentCardProps {
   shareCommon?: boolean
   globalCron?: boolean
   agentBindings?: AgentBindingView[]
-  onSetDefaultBinding?: (targetIndex: number) => void
+  onSetDefaultBinding?: (targetIndex: number, deliverTo?: string) => void
   onToggleEnabled?: () => void
   onModelsChange: (models: string[]) => void
   onSkillsChange: (skills: string[]) => void
@@ -267,6 +269,10 @@ function AgentCard({
 }: AgentCardProps) {
   const { t } = useTranslation()
   const [toolsExpanded, setToolsExpanded] = useState(false)
+  // Local edits for explicit cron chat ids (peerless channels), keyed by the
+  // binding's index in the full bindings array.
+  const [deliverEdits, setDeliverEdits] = useState<Record<number, string>>({})
+  const deliverValue = (b: AgentBindingView) => deliverEdits[b.index] ?? b.deliverTo
 
   return (
     <div className="border-border/60 bg-card rounded-xl border p-4 space-y-3">
@@ -468,27 +474,49 @@ function AgentCard({
           {agentBindings.length === 0 ? (
             <p className="text-muted-foreground text-xs">{t("agents.channelsNone")}</p>
           ) : (
-            <div className="space-y-1">
+            <div className="space-y-1.5">
               {agentBindings.map((b) => (
-                <label
-                  key={b.index}
-                  className={`flex items-center gap-2 text-xs ${b.concrete ? "" : "opacity-50"}`}
-                >
+                <div key={b.index} className="flex items-center gap-2 text-xs">
                   <input
                     type="radio"
                     name={`default-channel-${label}`}
                     checked={b.isDefault}
-                    disabled={!b.concrete}
-                    onChange={() => onSetDefaultBinding(b.index)}
+                    onChange={() => {
+                      if (b.hasPeer) {
+                        onSetDefaultBinding(b.index)
+                        return
+                      }
+                      const to = deliverValue(b).trim()
+                      if (!to) {
+                        toast.error(t("agents.channelsNeedChatId"))
+                        return
+                      }
+                      onSetDefaultBinding(b.index, to)
+                    }}
                   />
                   <span className="font-mono">
                     {b.channel}
-                    {b.peerID ? ` · ${b.peerKind}:${b.peerID}` : ` (${t("agents.channelsNoPeer")})`}
+                    {b.hasPeer ? ` · ${b.peerKind}:${b.peerID}` : ""}
                   </span>
+                  {!b.hasPeer && (
+                    <input
+                      type="text"
+                      className="border-border/60 bg-background w-28 rounded border px-1.5 py-0.5 font-mono text-xs"
+                      placeholder={t("agents.channelsChatIdPlaceholder")}
+                      value={deliverValue(b)}
+                      onChange={(e) =>
+                        setDeliverEdits((s) => ({ ...s, [b.index]: e.target.value }))
+                      }
+                      onBlur={() => {
+                        const to = deliverValue(b).trim()
+                        if (b.isDefault && to) onSetDefaultBinding(b.index, to)
+                      }}
+                    />
+                  )}
                   {b.isDefault && (
                     <span className="text-muted-foreground">— {t("agents.channelsDefault")}</span>
                   )}
-                </label>
+                </div>
               ))}
             </div>
           )}
@@ -682,11 +710,16 @@ export function AgentsPage() {
 
   // Set the given binding (by its index in the full bindings array) as the
   // agent's default channel, clearing default on the agent's other bindings.
-  // The raw binding objects are mapped in place so unknown fields are preserved.
-  const handleSetDefaultBinding = async (agentID: string, targetIndex: number) => {
+  // deliverTo is the explicit cron chat id for channels without a routing peer
+  // (e.g. a Telegram bot); it is stored on the target binding. The raw binding
+  // objects are mapped in place so unknown fields are preserved.
+  const handleSetDefaultBinding = async (agentID: string, targetIndex: number, deliverTo?: string) => {
     const next = bindings.map((b, i) => {
       if (asString(b.agent_id) !== agentID) return b
-      return { ...b, default: i === targetIndex }
+      if (i !== targetIndex) return { ...b, default: false }
+      const updated: Record<string, unknown> = { ...b, default: true }
+      if (deliverTo !== undefined) updated.deliver_to = deliverTo
+      return updated
     })
     setSaving(`binding-${targetIndex}`)
     try {
@@ -912,7 +945,7 @@ export function AgentsPage() {
                   globalCron={agent.global_cron === true}
                   onGlobalCronChange={() => handleToggleGlobalCron(i)}
                   agentBindings={bindingViewsForAgent(bindings, agent.id)}
-                  onSetDefaultBinding={(target) => handleSetDefaultBinding(agent.id, target)}
+                  onSetDefaultBinding={(target, deliverTo) => handleSetDefaultBinding(agent.id, target, deliverTo)}
                   onDelete={() => handleDeleteAgent(i)}
                   status={autoStatus[`agent-${i}`]}
                 />

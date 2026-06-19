@@ -39,6 +39,47 @@ func TestDefaultBindingAndCronTarget(t *testing.T) {
 	}
 }
 
+func TestCronTargetDeliverTo(t *testing.T) {
+	// A Telegram-style default: channel-only binding (no peer) + explicit DeliverTo.
+	c := &Config{Bindings: []AgentBinding{
+		{AgentID: "penny", Default: true, DeliverTo: "12345",
+			Match: BindingMatch{Channel: "telegram-Penny"}},
+	}}
+	ch, chat, kind, ok := c.CronTarget("penny")
+	if !ok || ch != "telegram-Penny" || chat != "12345" || kind != "direct" {
+		t.Fatalf("penny CronTarget = %q/%q/%q ok=%v (want telegram-Penny/12345/direct)", ch, chat, kind, ok)
+	}
+
+	// DeliverPeerKind override is honored.
+	c.Bindings[0].DeliverPeerKind = "channel"
+	if _, _, kind, _ := c.CronTarget("penny"); kind != "channel" {
+		t.Fatalf("DeliverPeerKind override not honored, got %q", kind)
+	}
+
+	// A concrete peer takes precedence over DeliverTo.
+	c.Bindings[0].Match.Peer = &PeerMatch{Kind: "channel", ID: "C9"}
+	if _, chat, _, _ := c.CronTarget("penny"); chat != "C9" {
+		t.Fatalf("concrete peer should win over DeliverTo, got chat %q", chat)
+	}
+}
+
+func TestValidateBindings_DeliverToSatisfiesDefault(t *testing.T) {
+	// A default with no peer but a DeliverTo is valid.
+	ok := &Config{Bindings: []AgentBinding{
+		{AgentID: "penny", Default: true, DeliverTo: "12345", Match: BindingMatch{Channel: "telegram-Penny"}},
+	}}
+	if err := ok.ValidateBindings(); err != nil {
+		t.Fatalf("default with deliver_to should be valid: %v", err)
+	}
+	// A default with neither peer nor DeliverTo is rejected.
+	bad := &Config{Bindings: []AgentBinding{
+		{AgentID: "penny", Default: true, Match: BindingMatch{Channel: "telegram-Penny"}},
+	}}
+	if err := bad.ValidateBindings(); err == nil {
+		t.Error("default with neither peer nor deliver_to should be rejected")
+	}
+}
+
 func TestAgentHasGlobalCron(t *testing.T) {
 	c := cronTestConfig()
 	if !c.AgentHasGlobalCron("boss") {
