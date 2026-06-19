@@ -15,6 +15,7 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/config"
 	"github.com/PivotLLM/ClawEh/pkg/logger"
 	"github.com/PivotLLM/ClawEh/pkg/memory"
+	"github.com/PivotLLM/ClawEh/pkg/routing"
 	cogmemtools "github.com/PivotLLM/ClawEh/pkg/tools/cogmem"
 )
 
@@ -112,8 +113,19 @@ func setupCogmemConsolidation(cfg *config.Config, agentLoop *agent.AgentLoop) *c
 
 	// The cogmem_consolidate tool triggers a manual run for its session.
 	cogmemtools.SetConsolidateTrigger(func(agentID, sessionKey string) {
+		// Tool calls arrive over MCP without an AgentID populated on the call,
+		// so derive it from the session key ("agent:<id>:…"). Without this the
+		// GetAgent below silently fails and the manual trigger is a no-op.
+		if agentID == "" {
+			if pk := routing.ParseAgentSessionKey(sessionKey); pk != nil {
+				agentID = pk.AgentID
+			}
+		}
 		inst, ok := agentLoop.GetRegistry().GetAgent(agentID)
 		if !ok || inst == nil {
+			logger.WarnCF("cogmem", "manual consolidate ignored; agent not found", map[string]any{
+				"agent_id": agentID, "session_key": sessionKey,
+			})
 			return
 		}
 		archivePath := filepath.Join(inst.Workspace, "sessions",
