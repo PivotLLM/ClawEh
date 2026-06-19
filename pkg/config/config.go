@@ -375,11 +375,13 @@ type SessionConfig struct {
 }
 
 // DefaultBinding returns the agent's binding marked Default, or false if none.
+// Agent ids are matched case-insensitively: binding agent_ids are author-cased
+// (e.g. "Karen") while a session-derived caller id is lowercased ("karen").
 func (c *Config) DefaultBinding(agentID string) (*AgentBinding, bool) {
 	id := strings.TrimSpace(agentID)
 	for i := range c.Bindings {
 		b := &c.Bindings[i]
-		if b.Default && b.AgentID == id {
+		if b.Default && strings.EqualFold(b.AgentID, id) {
 			return b, true
 		}
 	}
@@ -391,7 +393,7 @@ func (c *Config) DefaultBinding(agentID string) (*AgentBinding, bool) {
 func (c *Config) AgentHasGlobalCron(agentID string) bool {
 	id := strings.TrimSpace(agentID)
 	for i := range c.Agents.List {
-		if c.Agents.List[i].ID == id {
+		if strings.EqualFold(c.Agents.List[i].ID, id) {
 			return c.Agents.List[i].GlobalCron
 		}
 	}
