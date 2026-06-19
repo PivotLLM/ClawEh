@@ -45,6 +45,7 @@ type TaskRecord struct {
 	AgentID      string `json:"agent_id"` // target executor; "" = self
 	Mode         string `json:"mode"`
 	Task         string `json:"task"`
+	Model        string `json:"model,omitempty"` // requested model (alias); "" = agent default
 	Channel      string `json:"channel"`
 	ChatID       string `json:"chat_id"`
 	Status       string `json:"status"`

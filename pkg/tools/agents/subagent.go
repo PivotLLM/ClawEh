@@ -115,12 +115,20 @@ func (sm *SubagentManager) tasksDir() string { return tasksDirFor(sm.workspace) 
 // When agentID is non-empty and a candidateResolver is set, it resolves the
 // target agent's candidates. Falls back to provider+defaultModel when no
 // dispatch metadata is available.
-func (sm *SubagentManager) resolveLoopConfig(agentID string) tools.ToolLoopConfig {
+func (sm *SubagentManager) resolveLoopConfig(agentID, model string) tools.ToolLoopConfig {
 	candidates := sm.selfCandidates
 	if agentID != "" && sm.candidateResolver != nil {
 		if resolved, ok := sm.candidateResolver(agentID); ok {
 			candidates = resolved
 		}
+	}
+
+	// An explicit (already-validated) model selection is promoted to the front so
+	// the sub-agent runs it first, with the remaining configured models as
+	// fallbacks. Invalid selections are rejected earlier (Spawner), so a no-match
+	// here simply leaves the default order.
+	if model != "" {
+		candidates = promoteCandidate(candidates, model)
 	}
 
 	cfg := tools.ToolLoopConfig{
@@ -150,6 +158,66 @@ func (sm *SubagentManager) resolveLoopConfig(agentID string) tools.ToolLoopConfi
 	}
 
 	return cfg
+}
+
+// CandidatesFor returns the model candidates for a target agent (or the caller's
+// own, for a self-spawn with empty agentID) — i.e. that agent's configured
+// models. Used to validate a requested spawn model.
+func (sm *SubagentManager) CandidatesFor(agentID string) []providers.FallbackCandidate {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	candidates := sm.selfCandidates
+	if agentID != "" && sm.candidateResolver != nil {
+		if resolved, ok := sm.candidateResolver(agentID); ok {
+			candidates = resolved
+		}
+	}
+	return candidates
+}
+
+// MatchCandidate reports whether model names one of the candidates, matching the
+// user-facing Alias (model_name) first, then the wire Model — both
+// case-insensitively. Returns the matched candidate.
+func MatchCandidate(candidates []providers.FallbackCandidate, model string) (providers.FallbackCandidate, bool) {
+	m := strings.TrimSpace(model)
+	for _, c := range candidates {
+		if strings.EqualFold(c.Alias, m) || strings.EqualFold(c.Model, m) {
+			return c, true
+		}
+	}
+	return providers.FallbackCandidate{}, false
+}
+
+// candidateNames lists the user-facing names of the candidates (Alias, falling
+// back to the wire Model) for an error/help message.
+func candidateNames(candidates []providers.FallbackCandidate) string {
+	names := make([]string, 0, len(candidates))
+	for _, c := range candidates {
+		n := c.Alias
+		if n == "" {
+			n = c.Model
+		}
+		names = append(names, n)
+	}
+	return strings.Join(names, ", ")
+}
+
+// promoteCandidate moves the candidate matching model to the front, preserving
+// the order of the rest. If none matches, the slice is returned unchanged.
+func promoteCandidate(candidates []providers.FallbackCandidate, model string) []providers.FallbackCandidate {
+	matched, ok := MatchCandidate(candidates, model)
+	if !ok {
+		return candidates
+	}
+	out := make([]providers.FallbackCandidate, 0, len(candidates))
+	out = append(out, matched)
+	for _, c := range candidates {
+		if c.Alias == matched.Alias && c.Model == matched.Model {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
 }
 
 // SetLLMOptions sets max tokens and temperature for subagent LLM calls.
@@ -182,7 +250,7 @@ func (sm *SubagentManager) RegisterTool(tool tools.Tool) {
 // turn). When the worker finishes, a compact pointer Result is delivered to cb.
 // Returns the task uuid.
 func (sm *SubagentManager) SpawnCallback(
-	task, name, agentID, originChannel, originChatID string,
+	task, name, agentID, originChannel, originChatID, model string,
 	cb tools.AsyncCallback,
 ) (string, error) {
 	if strings.TrimSpace(task) == "" {
@@ -197,6 +265,7 @@ func (sm *SubagentManager) SpawnCallback(
 		AgentID:      agentID,
 		Mode:         "callback",
 		Task:         task,
+		Model:        model,
 		Channel:      originChannel,
 		ChatID:       originChatID,
 		Status:       StatusRunning,
@@ -239,7 +308,7 @@ func (sm *SubagentManager) runRecord(rec *TaskRecord, cb tools.AsyncCallback, re
 	}
 
 	sm.mu.RLock()
-	loopCfg := sm.resolveLoopConfig(rec.AgentID)
+	loopCfg := sm.resolveLoopConfig(rec.AgentID, rec.Model)
 	sm.mu.RUnlock()
 
 	loopResult, err := tools.RunToolLoop(context.Background(), loopCfg, messages, rec.Channel, rec.ChatID)
@@ -384,7 +453,7 @@ func (sm *SubagentManager) TaskList() ([]global.TaskBrief, error) {
 // channel/chatID are used for attribution and tool context.
 func (sm *SubagentManager) Run(
 	ctx context.Context,
-	task, label, agentID, channel, chatID string,
+	task, label, agentID, channel, chatID, model string,
 ) (*tools.ToolResult, error) {
 	if strings.TrimSpace(task) == "" {
 		return nil, fmt.Errorf("task is required")
@@ -399,7 +468,7 @@ func (sm *SubagentManager) Run(
 	}
 
 	sm.mu.RLock()
-	loopCfg := sm.resolveLoopConfig(agentID)
+	loopCfg := sm.resolveLoopConfig(agentID, model)
 	sm.mu.RUnlock()
 
 	loopResult, err := tools.RunToolLoop(ctx, loopCfg, messages, channel, chatID)

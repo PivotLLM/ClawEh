@@ -21,7 +21,7 @@ var GlobalProvider globalAgentProvider
 
 type globalAgentProvider struct{}
 
-func (globalAgentProvider) Namespace() string  { return "agent" }
+func (globalAgentProvider) Namespace() string   { return "agent" }
 func (globalAgentProvider) Description() string { return "Subagent spawning and task tracking" }
 
 // Available gates the package on the subagent capability being enabled, matching
@@ -63,6 +63,10 @@ func spawnToolSchema() map[string]any {
 			"agent_id": map[string]any{
 				"type":        "string",
 				"description": "Optional target agent ID to delegate the task to",
+			},
+			"model": map[string]any{
+				"type":        "string",
+				"description": "Optional model for the subagent to run, by its model name. Must be one of the configured models for the executing agent (yourself on a self-spawn, or the target agent). Omit to use that agent's default model. Useful to run a heavier model for a demanding subtask while you stay on a lighter one.",
 			},
 		},
 		"required": []string{"task"},
@@ -110,6 +114,7 @@ func (globalAgentProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 				name, _ := call.Args["name"].(string)
 				agentID, _ := call.Args["agent_id"].(string)
 				modeStr, _ := call.Args["mode"].(string)
+				model, _ := call.Args["model"].(string)
 
 				mode, onResult := resolveSpawnMode(modeStr, call)
 				return sp.Spawn(call.Ctx, global.SpawnRequest{
@@ -118,6 +123,7 @@ func (globalAgentProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 					Name:          name,
 					Label:         name,
 					TargetAgentID: agentID,
+					Model:         model,
 					Channel:       call.Channel,
 					ChatID:        call.ChatID,
 					OnResult:      onResult,

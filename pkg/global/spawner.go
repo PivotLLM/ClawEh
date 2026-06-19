@@ -41,6 +41,7 @@ type SpawnRequest struct {
 	Name          string // short label; required for callback mode (human handle)
 	Label         string // optional display label (used by wait mode)
 	TargetAgentID string // "" ⇒ self-spawn (caller's own agent)
+	Model         string // optional model (alias) for the sub-agent; must be one of the executing agent's configured models. "" ⇒ that agent's default.
 	Channel       string // originating channel (for attribution / callback routing)
 	ChatID        string // originating chat id
 	// OnResult receives the compact completion pointer for SpawnCallback. Ignored

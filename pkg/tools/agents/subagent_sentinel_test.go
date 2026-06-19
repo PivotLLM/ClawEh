@@ -51,7 +51,7 @@ func TestSubagentRun_InjectsSubagentSentinel(t *testing.T) {
 	})
 
 	ctx := tools.WithToolContext(context.Background(), "cli", "direct")
-	res, err := manager.Run(ctx, "do something", "", "", "cli", "direct")
+	res, err := manager.Run(ctx, "do something", "", "", "cli", "direct", "")
 	if err != nil || res == nil || res.IsError {
 		t.Fatalf("expected success, got res=%+v err=%v", res, err)
 	}

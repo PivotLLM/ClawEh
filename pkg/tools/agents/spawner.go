@@ -54,6 +54,18 @@ func (s *Spawner) Spawn(ctx context.Context, req global.SpawnRequest) (*global.R
 		return &global.Result{IsError: true, ForLLM: fmt.Sprintf("not allowed to spawn agent '%s'", req.TargetAgentID)}, nil
 	}
 
+	// A requested model must be one of the executing agent's configured models
+	// (self-spawn → the caller's; targeted → the target's). This is the security
+	// boundary: an agent can only run a model it is already allowed to use.
+	if strings.TrimSpace(req.Model) != "" {
+		cands := s.mgr.CandidatesFor(req.TargetAgentID)
+		if _, ok := MatchCandidate(cands, req.Model); !ok {
+			return &global.Result{IsError: true, ForLLM: fmt.Sprintf(
+				"model %q is not available for this agent; choose one of: %s",
+				req.Model, candidateNames(cands))}, nil
+		}
+	}
+
 	channel := req.Channel
 	if channel == "" {
 		channel = "cli"
@@ -65,7 +77,7 @@ func (s *Spawner) Spawn(ctx context.Context, req global.SpawnRequest) (*global.R
 
 	switch req.Mode {
 	case global.SpawnAndWait:
-		res, err := s.mgr.Run(ctx, req.Task, req.Label, req.TargetAgentID, channel, chatID)
+		res, err := s.mgr.Run(ctx, req.Task, req.Label, req.TargetAgentID, channel, chatID, req.Model)
 		if err != nil {
 			return &global.Result{IsError: true, ForLLM: fmt.Sprintf("subagent execution failed: %v", err)}, nil
 		}
@@ -86,7 +98,7 @@ func (s *Spawner) Spawn(ctx context.Context, req global.SpawnRequest) (*global.R
 				onResult(tools.ResultToGlobal(r))
 			}
 		}
-		id, err := s.mgr.SpawnCallback(req.Task, name, req.TargetAgentID, channel, chatID, cb)
+		id, err := s.mgr.SpawnCallback(req.Task, name, req.TargetAgentID, channel, chatID, req.Model, cb)
 		if err != nil {
 			return &global.Result{IsError: true, ForLLM: fmt.Sprintf("failed to spawn subagent: %v", err)}, nil
 		}

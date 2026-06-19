@@ -28,7 +28,7 @@ func TestSpawnCallback_Lifecycle(t *testing.T) {
 	dir := filepath.Join(ws, "tasks")
 
 	done := make(chan *tools.ToolResult, 1)
-	id, err := mgr.SpawnCallback("the work", "job1", "", "cli", "direct",
+	id, err := mgr.SpawnCallback("the work", "job1", "", "cli", "direct", "",
 		func(_ context.Context, r *tools.ToolResult) { done <- r })
 	if err != nil {
 		t.Fatalf("SpawnCallback error: %v", err)
@@ -76,7 +76,7 @@ func TestTaskStatus_Unknown(t *testing.T) {
 func TestTaskList_ReturnsTasks(t *testing.T) {
 	mgr, _ := newTestManager(t)
 	done := make(chan *tools.ToolResult, 1)
-	if _, err := mgr.SpawnCallback("w", "listed", "", "cli", "direct",
+	if _, err := mgr.SpawnCallback("w", "listed", "", "cli", "direct", "",
 		func(_ context.Context, r *tools.ToolResult) { done <- r }); err != nil {
 		t.Fatalf("spawn: %v", err)
 	}
