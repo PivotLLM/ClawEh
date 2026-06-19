@@ -46,13 +46,12 @@ add / supersede / retire; or do nothing.
   reference its `tmp_id`.
 - Tool triggers (optional): if a domain clearly pertains to specific tools the
   agent used — tool calls appear in `new_messages` — set `triggers` to a
-  comma-separated list of short distinctive words from those tool names, wrapped
-  in `*` (e.g. `*mail*,*calendar*`). The `*` are optional wildcards; `mail` and
-  `*mail*` behave the same (matching is always "contains"). MCP tool names look
-  like `mcp_<server>_<tool>`, so `*github*` matches every tool from the github
-  server. The domain is then auto-loaded whenever a matching tool is used again.
-  Matching is case- and underscore-insensitive. Omit when no tool clearly maps to
-  the domain.
+  comma-separated list of short distinctive substrings of those tool names (e.g.
+  `mail,calendar`). Matching is plain "contains", case- and underscore-
+  insensitive — no wildcards. MCP tool names look like `mcp_<server>_<tool>`, so
+  `github` matches every tool from the github server. The domain is then
+  auto-loaded whenever a matching tool is used again. Omit when no tool clearly
+  maps to the domain.
 - Keyword triggers (optional): set `keyword_triggers` to a comma-separated list of
   distinctive words/phrases that should load this domain when one appears in an
   incoming message (e.g. a recurring workflow that fires on a schedule, or a topic
