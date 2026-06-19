@@ -4,7 +4,14 @@
     "summarizationModelsAdd": "Add memory model…",
     "summarizationModelsHint": "Models tried first for this agent's memory consolidation and context summarization, ahead of the global memory models and the agent's own model. Use to give an agent specialised models when the defaults refuse its content.",
     "shareCommon": "Share common directory",
-    "shareCommonHint": "Allow this agent to read/write the shared common directory and copy files to/from it."
+    "shareCommonHint": "Allow this agent to read/write the shared common directory and copy files to/from it.",
+    "globalCron": "Global cron",
+    "globalCronHint": "Allow this agent to create and manage scheduled (cron) jobs for OTHER agents, not just itself. Typically only one orchestrator agent needs this.",
+    "channels": "Channels",
+    "channelsNone": "No channels bound to this agent yet. Add a binding on the Bindings page.",
+    "channelsNoPeer": "no specific chat — cannot be default",
+    "channelsDefault": "default (cron output goes here)",
+    "channelsHint": "Pick the default channel where this agent's scheduled (cron) output is delivered. Only a channel bound to a specific chat can be the default."
   },
   "navigation": {
     "chat": "Chat",

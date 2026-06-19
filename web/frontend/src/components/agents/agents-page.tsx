@@ -29,6 +29,7 @@ interface AgentEntry {
   temperature?: number
   summarization_models?: string[]
   share_common?: boolean
+  global_cron?: boolean
 }
 
 interface AgentsConfig {
@@ -81,7 +82,45 @@ function parseAgent(value: unknown): AgentEntry {
     temperature: typeof r.temperature === "number" ? r.temperature : undefined,
     summarization_models: asArray(r.summarization_models).map(asString).filter(Boolean),
     share_common: r.share_common === false ? false : true,
+    global_cron: r.global_cron === true,
   }
+}
+
+// AgentBindingView is a read-only projection of one binding for the Channels
+// display. The raw binding objects are preserved separately for saving so that
+// fields this page doesn't model (account_id, guild_id, …) are never dropped.
+interface AgentBindingView {
+  index: number // index into the full bindings array
+  channel: string
+  peerKind: string
+  peerID: string
+  isDefault: boolean
+  concrete: boolean // has a channel + concrete peer → eligible to be default
+}
+
+function parseAgentBindings(appConfig: unknown): Record<string, unknown>[] {
+  return asArray(asRecord(appConfig).bindings).map((b) => asRecord(b))
+}
+
+function bindingViewsForAgent(raw: Record<string, unknown>[], agentID: string): AgentBindingView[] {
+  const views: AgentBindingView[] = []
+  raw.forEach((b, index) => {
+    if (asString(b.agent_id) !== agentID) return
+    const match = asRecord(b.match)
+    const peer = asRecord(match.peer)
+    const channel = asString(match.channel)
+    const peerKind = asString(peer.kind)
+    const peerID = asString(peer.id)
+    views.push({
+      index,
+      channel,
+      peerKind,
+      peerID,
+      isDefault: b.default === true,
+      concrete: channel !== "" && peerKind !== "" && peerID !== "",
+    })
+  })
+  return views
 }
 
 // sortAgentList orders agents alphabetically by display name (name, falling back
@@ -180,6 +219,9 @@ interface AgentCardProps {
   temperature?: number
   summarizationModels?: string[]
   shareCommon?: boolean
+  globalCron?: boolean
+  agentBindings?: AgentBindingView[]
+  onSetDefaultBinding?: (targetIndex: number) => void
   onToggleEnabled?: () => void
   onModelsChange: (models: string[]) => void
   onSkillsChange: (skills: string[]) => void
@@ -188,6 +230,7 @@ interface AgentCardProps {
   onTemperatureChange?: (t: number | undefined) => void
   onSummarizationModelsChange?: (models: string[]) => void
   onShareCommonChange?: (share: boolean) => void
+  onGlobalCronChange?: (v: boolean) => void
   onDelete?: () => void
   status?: "saving" | "saved" | "error"
 }
@@ -207,6 +250,9 @@ function AgentCard({
   temperature = undefined,
   summarizationModels = [],
   shareCommon = true,
+  globalCron = false,
+  agentBindings = [],
+  onSetDefaultBinding = undefined,
   onToggleEnabled,
   onModelsChange,
   onSkillsChange,
@@ -215,6 +261,7 @@ function AgentCard({
   onTemperatureChange = undefined,
   onSummarizationModelsChange = undefined,
   onShareCommonChange = undefined,
+  onGlobalCronChange = undefined,
   onDelete,
   status,
 }: AgentCardProps) {
@@ -395,6 +442,60 @@ function AgentCard({
         </div>
       )}
 
+      {onGlobalCronChange !== undefined && (
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-muted-foreground text-xs font-medium">
+              {t("agents.globalCron")}
+            </p>
+            <Switch
+              checked={globalCron}
+              onCheckedChange={onGlobalCronChange}
+              aria-label={t("agents.globalCron")}
+            />
+          </div>
+          <p className="text-muted-foreground text-xs">
+            {t("agents.globalCronHint")}
+          </p>
+        </div>
+      )}
+
+      {onSetDefaultBinding !== undefined && (
+        <div className="space-y-1.5">
+          <p className="text-muted-foreground text-xs font-medium">
+            {t("agents.channels")}
+          </p>
+          {agentBindings.length === 0 ? (
+            <p className="text-muted-foreground text-xs">{t("agents.channelsNone")}</p>
+          ) : (
+            <div className="space-y-1">
+              {agentBindings.map((b) => (
+                <label
+                  key={b.index}
+                  className={`flex items-center gap-2 text-xs ${b.concrete ? "" : "opacity-50"}`}
+                >
+                  <input
+                    type="radio"
+                    name={`default-channel-${label}`}
+                    checked={b.isDefault}
+                    disabled={!b.concrete}
+                    onChange={() => onSetDefaultBinding(b.index)}
+                  />
+                  <span className="font-mono">
+                    {b.channel}
+                    {b.peerID ? ` · ${b.peerKind}:${b.peerID}` : ` (${t("agents.channelsNoPeer")})`}
+                  </span>
+                  {b.isDefault && (
+                    <span className="text-muted-foreground">— {t("agents.channelsDefault")}</span>
+                  )}
+                </label>
+              ))}
+            </div>
+          )}
+          <p className="text-muted-foreground text-xs">{t("agents.channelsHint")}</p>
+        </div>
+      )}
+
     </div>
   )
 }
@@ -411,6 +512,9 @@ export function AgentsPage() {
     list: [],
   })
   const [saving, setSaving] = useState<string | null>(null)
+  // Raw binding objects, preserved verbatim so saving never drops fields this
+  // page doesn't model. Only the per-agent `default` flag is edited here.
+  const [bindings, setBindings] = useState<Record<string, unknown>[]>([])
 
   // Autosave plumbing. autoStatus drives the per-card "Saving…/Saved" hint.
   // The skip refs suppress the buffer-resync effects when WE caused the
@@ -454,6 +558,7 @@ export function AgentsPage() {
         getAgentTools(),
       ])
       setAgentsCfg(parseAgentsConfig(appConfig))
+      setBindings(parseAgentBindings(appConfig))
       setModels(modelsData.models)
       setAvailableSkills([...skillsData].sort((a, b) => a.name.localeCompare(b.name)))
       setAvailableTools(toolsData)
@@ -491,6 +596,7 @@ export function AgentsPage() {
           ? { summarization_models: a.summarization_models }
           : {}),
         ...(a.share_common === false ? { share_common: false } : {}),
+        ...(a.global_cron ? { global_cron: true } : {}),
       })),
     },
   })
@@ -553,6 +659,41 @@ export function AgentsPage() {
       setAgentsCfg(next)
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to save")
+    } finally {
+      setSaving(null)
+    }
+  }
+
+  // Independent toggle (not threaded through the big autosave): flip global_cron.
+  const handleToggleGlobalCron = async (index: number) => {
+    const list = [...(agentsCfg.list ?? [])]
+    list[index] = { ...list[index], global_cron: !list[index].global_cron }
+    const next: AgentsConfig = { ...agentsCfg, list }
+    setSaving(`globalcron-${index}`)
+    try {
+      await patchAppConfig(buildPayload(next))
+      setAgentsCfg(next)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to save")
+    } finally {
+      setSaving(null)
+    }
+  }
+
+  // Set the given binding (by its index in the full bindings array) as the
+  // agent's default channel, clearing default on the agent's other bindings.
+  // The raw binding objects are mapped in place so unknown fields are preserved.
+  const handleSetDefaultBinding = async (agentID: string, targetIndex: number) => {
+    const next = bindings.map((b, i) => {
+      if (asString(b.agent_id) !== agentID) return b
+      return { ...b, default: i === targetIndex }
+    })
+    setSaving(`binding-${targetIndex}`)
+    try {
+      await patchAppConfig({ bindings: next })
+      setBindings(next)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to save default channel")
     } finally {
       setSaving(null)
     }
@@ -768,6 +909,10 @@ export function AgentsPage() {
                     })
                     scheduleSaveAgent(i)
                   }}
+                  globalCron={agent.global_cron === true}
+                  onGlobalCronChange={() => handleToggleGlobalCron(i)}
+                  agentBindings={bindingViewsForAgent(bindings, agent.id)}
+                  onSetDefaultBinding={(target) => handleSetDefaultBinding(agent.id, target)}
                   onDelete={() => handleDeleteAgent(i)}
                   status={autoStatus[`agent-${i}`]}
                 />
