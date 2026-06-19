@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/mymmrac/telego"
 	th "github.com/mymmrac/telego/telegohandler"
@@ -805,17 +806,24 @@ func wrapMarkdownTables(text string) string {
 		return cells
 	}
 
-	// isSeparatorCell returns true when a cell contains only dashes (separator row).
+	// isSeparatorCell returns true when a cell is a markdown table separator:
+	// dashes optionally bracketed by alignment colons (---, :---, ---:, :---:).
 	isSeparatorCell := func(cell string) bool {
 		if len(cell) == 0 {
 			return false
 		}
+		hasDash := false
 		for _, ch := range cell {
-			if ch != '-' {
+			switch ch {
+			case '-':
+				hasDash = true
+			case ':':
+				// alignment marker, allowed
+			default:
 				return false
 			}
 		}
-		return true
+		return hasDash
 	}
 
 	// isSeparatorRow returns true when every cell in the row is a separator cell.
@@ -864,8 +872,8 @@ func wrapMarkdownTables(text string) string {
 				if colIdx >= maxCols {
 					break
 				}
-				if len(cell) > colWidth[colIdx] {
-					colWidth[colIdx] = len(cell)
+				if w := utf8.RuneCountInString(cell); w > colWidth[colIdx] {
+					colWidth[colIdx] = w
 				}
 			}
 		}
@@ -884,8 +892,8 @@ func wrapMarkdownTables(text string) string {
 					if colIdx < len(cells) {
 						cell = cells[colIdx]
 					}
-					// Pad with trailing spaces to colWidth.
-					rebuiltCells[colIdx] = cell + strings.Repeat(" ", colWidth[colIdx]-len(cell))
+					// Pad with trailing spaces to colWidth (rune count, not bytes).
+					rebuiltCells[colIdx] = cell + strings.Repeat(" ", colWidth[colIdx]-utf8.RuneCountInString(cell))
 				}
 			}
 			result[i] = "| " + strings.Join(rebuiltCells, " | ") + " |"

@@ -37,17 +37,24 @@ func formatSlackMessage(text string) string {
 		return cells
 	}
 
-	// isSeparatorCell returns true when a cell contains only dashes.
+	// isSeparatorCell returns true when a cell is a markdown table separator:
+	// dashes optionally bracketed by alignment colons (---, :---, ---:, :---:).
 	isSeparatorCell := func(cell string) bool {
 		if len(cell) == 0 {
 			return false
 		}
+		hasDash := false
 		for _, ch := range cell {
-			if ch != '-' {
+			switch ch {
+			case '-':
+				hasDash = true
+			case ':':
+				// alignment marker, allowed
+			default:
 				return false
 			}
 		}
-		return true
+		return hasDash
 	}
 
 	// isSeparatorRow returns true when every cell in the row is a separator cell.

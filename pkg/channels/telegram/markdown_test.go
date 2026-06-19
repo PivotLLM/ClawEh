@@ -190,3 +190,64 @@ func TestMarkdownToTelegramHTML_MultilineListItems(t *testing.T) {
 		t.Errorf("multiline list items: expected all '- ' prefixes converted, got: %q", got)
 	}
 }
+
+func TestWrapMarkdownTables(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name: "plain dash separator",
+			input: "| Name | Age |\n" +
+				"| --- | --- |\n" +
+				"| Alice | 30 |",
+			want: "```\n" +
+				"| Name  | Age |\n" +
+				"| ----- | --- |\n" +
+				"| Alice | 30  |\n" +
+				"```",
+		},
+		{
+			name: "alignment colons recognized as separator",
+			input: "| Name | Age |\n" +
+				"|:---|---:|\n" +
+				"| Alice | 30 |",
+			want: "```\n" +
+				"| Name  | Age |\n" +
+				"| ----- | --- |\n" +
+				"| Alice | 30  |\n" +
+				"```",
+		},
+		{
+			name: "rune width padding aligns non-ascii",
+			input: "| Name | X |\n" +
+				"| --- | --- |\n" +
+				"| café | 1 |",
+			want: "```\n" +
+				"| Name | X   |\n" +
+				"| ---- | --- |\n" +
+				"| café | 1   |\n" +
+				"```",
+		},
+		{
+			name: "table inside code fence is not touched",
+			input: "```\n" +
+				"| A | B |\n" +
+				"| --- | --- |\n" +
+				"```",
+			want: "```\n" +
+				"| A | B |\n" +
+				"| --- | --- |\n" +
+				"```",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := wrapMarkdownTables(tt.input); got != tt.want {
+				t.Errorf("wrapMarkdownTables mismatch:\ninput: %q\ngot:   %q\nwant:  %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}

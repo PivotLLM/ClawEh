@@ -97,6 +97,28 @@ func TestFormatSlackMessage(t *testing.T) {
 				"```",
 		},
 		{
+			name: "alignment colons recognized as separator",
+			input: "| Name | Age |\n" +
+				"|:---|---:|\n" +
+				"| Alice | 30 |",
+			want: "```\n" +
+				"Name   Age\n" +
+				"──────────\n" +
+				"Alice  30\n" +
+				"```",
+		},
+		{
+			name: "center alignment colons recognized as separator",
+			input: "| A | B |\n" +
+				"| :-: | :-: |\n" +
+				"| 1 | 2 |",
+			want: "```\n" +
+				"A  B\n" +
+				"────\n" +
+				"1  2\n" +
+				"```",
+		},
+		{
 			name: "multiple separate tables",
 			input: "| A | B |\n" +
 				"| - | - |\n" +
