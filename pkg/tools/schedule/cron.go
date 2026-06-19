@@ -45,6 +45,10 @@ func (t *CronTool) config() *config.Config {
 // key, so the tool can scope jobs to the calling agent.
 func (t *CronTool) IsSessionScoped() bool { return true }
 
+// IsPrimaryOnly restricts scheduling to primary agents — a spawned sub-agent
+// (a transient worker) must not create or manage cron jobs.
+func (t *CronTool) IsPrimaryOnly() bool { return true }
+
 // callerAgentID extracts the calling agent's ID from the session key in context
 // (e.g. "agent:amber:main" → "amber"). Empty when unavailable — callers treat
 // an empty id as "owns nothing" so cron stays fail-closed.

@@ -65,7 +65,7 @@ func (globalCogmemProvider) RegisterTools(deps global.Deps) []global.ToolDefinit
 		}
 	}
 
-	return []global.ToolDefinition{
+	defs := []global.ToolDefinition{
 		def("domain_get",
 			"Load a domain by id, with its active memories as readable text (each memory's id included).",
 			[]global.Parameter{
@@ -176,4 +176,21 @@ func (globalCogmemProvider) RegisterTools(deps global.Deps) []global.ToolDefinit
 			"Report memory status: database path, the last background update, and the number of pending (unconfirmed) memories.",
 			nil, true, status),
 	}
+
+	// Sub-agents get READ-ONLY cognitive memory: they share the primary's memory
+	// for background but cannot mutate it. Mark the write tools primary-only so a
+	// sub-agent's registry excludes them (the store is also opened read-only for
+	// sub-agents, so a stray write still fails). Read tools (domain_get,
+	// memory_search, domain_list, explain, export, status) remain available.
+	writeTools := map[string]bool{
+		"memory_create": true, "domain_update": true, "memory_retire": true,
+		"memory_confirm": true, "domain_create": true, "domain_archive": true,
+		"domain_migrate": true, "memory_forget": true, "consolidate": true,
+	}
+	for i := range defs {
+		if writeTools[defs[i].Name] {
+			defs[i].PrimaryOnly = true
+		}
+	}
+	return defs
 }
