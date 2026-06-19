@@ -9,9 +9,8 @@ package consolidate
 // the embedded default when absent.
 const PromptFilename = "COGMEM.md"
 
-// Batching defaults (DEC-4 / COGMEM-TODO §3). These are levers, surfaced
-// per-agent via config and the worker's functional options; the values here are
-// the fallback defaults.
+// Batching defaults. These are levers, surfaced per-agent via config and the
+// worker's functional options; the values here are the fallback defaults.
 const (
 	defaultMaxMessages     = 200
 	defaultMaxInputTokens  = 96000

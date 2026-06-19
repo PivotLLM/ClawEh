@@ -2,7 +2,7 @@
 // License: MIT
 
 // Package cogmem composes per-turn prompt memory from a session's .cogmem.db.
-// It produces two blocks (mem-proposal.md §10):
+// It produces two blocks:
 //
 //   - StableBlock: always-on learned memory (the "general" domain), the
 //     pending-confirmation digest, and the domain index. Cacheable; it carries

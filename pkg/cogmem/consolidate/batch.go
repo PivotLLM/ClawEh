@@ -3,7 +3,7 @@
 
 package consolidate
 
-// BatchOptions bounds one consolidation input. See COGMEM-TODO §3 (DEC-4).
+// BatchOptions bounds one consolidation input.
 type BatchOptions struct {
 	MaxMessages     int // hard count cap (default 200)
 	MaxInputTokens  int // approx input token budget (default 96000)

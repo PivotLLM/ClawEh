@@ -7,8 +7,7 @@ package store
 const schemaVersion = 3
 
 // schema is the full DDL for a .cogmem.db. All statements are idempotent so
-// migrate() can run it on every open. No FTS, no vector columns (see
-// mem-proposal.md §9, §18).
+// migrate() can run it on every open. No FTS, no vector columns.
 const schema = `
 CREATE TABLE IF NOT EXISTS schema_migrations (
   version INTEGER PRIMARY KEY,
