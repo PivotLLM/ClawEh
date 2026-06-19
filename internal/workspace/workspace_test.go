@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/PivotLLM/ClawEh/templates"
 )
 
 func exists(t *testing.T, path string) bool {
@@ -45,6 +47,37 @@ func TestPopulate_CompressionNotRecreated(t *testing.T) {
 
 	if exists(t, filepath.Join(ws, "COMPRESSION.md")) {
 		t.Error("COMPRESSION.md must not be recreated on an initialized workspace")
+	}
+}
+
+// TestPopulate_CogmemRecreated verifies that the consolidation prompt
+// (COGMEM.md) — unlike the seed-once files — IS recreated when deleted, with the
+// current template content. This is the path operators use to refresh an agent
+// onto an updated prompt: delete COGMEM.md, restart.
+func TestPopulate_CogmemRecreated(t *testing.T) {
+	ws := t.TempDir()
+	Populate(ws) // fresh: seeds AGENTS.md + COGMEM.md
+
+	cogmemPath := filepath.Join(ws, "COGMEM.md")
+	if !exists(t, cogmemPath) {
+		t.Fatal("expected COGMEM.md seeded into a fresh workspace")
+	}
+	if err := os.Remove(cogmemPath); err != nil {
+		t.Fatalf("remove COGMEM.md: %v", err)
+	}
+
+	Populate(ws) // restart: workspace already initialized
+
+	got, err := os.ReadFile(cogmemPath)
+	if err != nil {
+		t.Fatalf("COGMEM.md must be recreated on an initialized workspace: %v", err)
+	}
+	want, err := templates.FS.ReadFile("COGMEM.md")
+	if err != nil {
+		t.Fatalf("read embedded template: %v", err)
+	}
+	if string(got) != string(want) {
+		t.Error("recreated COGMEM.md does not match the current embedded template")
 	}
 }
 
