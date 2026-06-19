@@ -2,7 +2,8 @@ package slack
 
 import (
 	"strings"
-	"unicode/utf8"
+
+	"github.com/PivotLLM/ClawEh/pkg/utils"
 )
 
 // formatSlackMessage converts markdown tables in the given text to monospace
@@ -109,7 +110,7 @@ func formatSlackMessage(text string) string {
 				if colIdx >= maxCols {
 					break
 				}
-				w := utf8.RuneCountInString(cell)
+				w := utils.DisplayWidth(cell)
 				if w > colWidth[colIdx] {
 					colWidth[colIdx] = w
 				}
@@ -142,9 +143,9 @@ func formatSlackMessage(text string) string {
 				if colIdx < len(r.cells) {
 					cell = r.cells[colIdx]
 				}
-				// Pad with trailing spaces to colWidth using rune count.
-				runeLen := utf8.RuneCountInString(cell)
-				parts[colIdx] = cell + strings.Repeat(" ", colWidth[colIdx]-runeLen)
+				// Pad with trailing spaces to colWidth using display width.
+				dispLen := utils.DisplayWidth(cell)
+				parts[colIdx] = cell + strings.Repeat(" ", colWidth[colIdx]-dispLen)
 			}
 			// Trim trailing spaces from the last column.
 			parts[maxCols-1] = strings.TrimRight(parts[maxCols-1], " ")

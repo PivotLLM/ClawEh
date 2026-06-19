@@ -3,7 +3,38 @@ package telegram
 import (
 	"strings"
 	"testing"
+
+	"github.com/PivotLLM/ClawEh/pkg/utils"
 )
+
+// TestWrapMarkdownTables_EmojiAligns guards the mixed-emoji alignment bug:
+// padding by rune count over-padded "🌙" rows (1 rune) relative to "☀️" rows
+// (2 runes) though both render the same width. With display-width padding every
+// rebuilt row ends at the same display width.
+func TestWrapMarkdownTables_EmojiAligns(t *testing.T) {
+	input := "| ☀️ Morning | ☀️ Sunny | 17°C | 10% |\n" +
+		"| --- | --- | --- | --- |\n" +
+		"| 🌙 Evening | 🌙 Clear | 19°C | 43% |\n" +
+		"| 🌙 Night | 🌙 Clear | 15°C | 30% |"
+	out := wrapMarkdownTables(input)
+
+	var widths []int
+	for _, line := range strings.Split(out, "\n") {
+		if !strings.HasPrefix(line, "|") {
+			continue
+		}
+		widths = append(widths, utils.DisplayWidth(line))
+	}
+	if len(widths) < 2 {
+		t.Fatalf("expected multiple table rows, got %d:\n%s", len(widths), out)
+	}
+	for i, w := range widths {
+		if w != widths[0] {
+			t.Fatalf("row %d display width %d != row 0 width %d (misaligned)\n%s",
+				i, w, widths[0], out)
+		}
+	}
+}
 
 func TestMarkdownToTelegramHTML_HRuleSubstitute(t *testing.T) {
 	tests := []struct {

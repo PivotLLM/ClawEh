@@ -11,7 +11,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	"github.com/mymmrac/telego"
 	th "github.com/mymmrac/telego/telegohandler"
@@ -872,7 +871,7 @@ func wrapMarkdownTables(text string) string {
 				if colIdx >= maxCols {
 					break
 				}
-				if w := utf8.RuneCountInString(cell); w > colWidth[colIdx] {
+				if w := utils.DisplayWidth(cell); w > colWidth[colIdx] {
 					colWidth[colIdx] = w
 				}
 			}
@@ -892,8 +891,8 @@ func wrapMarkdownTables(text string) string {
 					if colIdx < len(cells) {
 						cell = cells[colIdx]
 					}
-					// Pad with trailing spaces to colWidth (rune count, not bytes).
-					rebuiltCells[colIdx] = cell + strings.Repeat(" ", colWidth[colIdx]-utf8.RuneCountInString(cell))
+					// Pad with trailing spaces to colWidth (display width, not bytes/runes).
+					rebuiltCells[colIdx] = cell + strings.Repeat(" ", colWidth[colIdx]-utils.DisplayWidth(cell))
 				}
 			}
 			result[i] = "| " + strings.Join(rebuiltCells, " | ") + " |"
