@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/PivotLLM/ClawEh/pkg/logger"
+	"github.com/PivotLLM/ClawEh/pkg/routing"
 )
 
 // Job identifies a single session whose archive may need consolidation. It
@@ -186,6 +187,11 @@ func (m *Manager) Stop() {
 // to call from the hot path.
 func (m *Manager) OnMessage(job Job) {
 	if job.ArchivePath == "" {
+		return
+	}
+	// Sub-agent sessions are ephemeral (a snapshot of the primary's memory, deleted
+	// when the worker finishes); never consolidate them.
+	if routing.IsSubagentSessionKey(job.SessionKey) {
 		return
 	}
 	now := m.now()

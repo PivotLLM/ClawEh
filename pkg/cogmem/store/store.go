@@ -9,7 +9,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -230,6 +232,25 @@ func (s *Store) PurgeNonActive(ctx context.Context, apply bool) (PurgeStats, err
 func (s *Store) Vacuum(ctx context.Context) error {
 	_, err := s.db.ExecContext(ctx, `VACUUM`)
 	return err
+}
+
+// Snapshot writes a clean, consistent copy of the cogmem DB at srcPath to
+// dstPath using SQLite "VACUUM INTO" (captures committed WAL data, no partial
+// pages). dstPath must not already exist. Used to give a spawned sub-agent its
+// own private copy of the primary's memory, deleted when the sub-agent finishes.
+func Snapshot(ctx context.Context, srcPath, dstPath string) error {
+	_ = os.Remove(dstPath) // VACUUM INTO requires the target not exist
+	db, err := sql.Open("sqlite", "file:"+srcPath+"?mode=ro")
+	if err != nil {
+		return fmt.Errorf("cogmem snapshot: open source: %w", err)
+	}
+	defer func() { _ = db.Close() }()
+	// dstPath is workspace-derived (no user quotes); escape single quotes defensively.
+	target := strings.ReplaceAll(dstPath, "'", "''")
+	if _, err := db.ExecContext(ctx, "VACUUM INTO '"+target+"'"); err != nil {
+		return fmt.Errorf("cogmem snapshot: vacuum into %s: %w", dstPath, err)
+	}
+	return nil
 }
 
 // normalizeMemoryTypes folds retired memory type values into the current set:

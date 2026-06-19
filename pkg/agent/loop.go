@@ -63,8 +63,8 @@ type AgentLoop struct {
 	mcp             mcpRuntime
 	mu              sync.RWMutex
 	// Track active requests for safe provider cleanup
-	activeRequests   sync.WaitGroup
-	dispatcher       *providers.ProviderDispatcher
+	activeRequests sync.WaitGroup
+	dispatcher     *providers.ProviderDispatcher
 	// cooldown is the shared per-model cooldown tracker used by BOTH the main
 	// fallback chain and the compaction path, so a model parked by either (e.g.
 	// an out-of-credits 402) is skipped by both. Swapped under mu on reload.
@@ -210,26 +210,26 @@ func NewAgentLoop(
 	callbackManagers := buildCallbackManagers(registry, cfg)
 
 	al := &AgentLoop{
-		bus:              msgBus,
-		cfg:              cfg,
-		registry:         registry,
-		state:            stateManager,
-		fallback:         fallbackChain,
-		cooldown:         cooldown,
-		cmdRegistry:      commands.NewRegistry(commands.BuiltinDefinitions()),
-		dispatcher:       dispatcher,
-		agentStates:      agentStates,
-		callbackManagers: callbackManagers,
-		agentTokens:      agentTokens,
-		startedAt:        time.Now(),
-		evictStop:        make(chan struct{}),
-		evictTTL:         defaultEvictTTL,
-		evictInterval:    defaultEvictInterval,
+		bus:                  msgBus,
+		cfg:                  cfg,
+		registry:             registry,
+		state:                stateManager,
+		fallback:             fallbackChain,
+		cooldown:             cooldown,
+		cmdRegistry:          commands.NewRegistry(commands.BuiltinDefinitions()),
+		dispatcher:           dispatcher,
+		agentStates:          agentStates,
+		callbackManagers:     callbackManagers,
+		agentTokens:          agentTokens,
+		startedAt:            time.Now(),
+		evictStop:            make(chan struct{}),
+		evictTTL:             defaultEvictTTL,
+		evictInterval:        defaultEvictInterval,
 		activeModelIdx:       make(map[string]int),
 		exposeReasoningCache: make(map[string]bool),
-		taskLive:         toolsagents.NewLiveSet(),
-		spawnManagers:    make(map[string]*toolsagents.SubagentManager),
-		superStop:        make(chan struct{}),
+		taskLive:             toolsagents.NewLiveSet(),
+		spawnManagers:        make(map[string]*toolsagents.SubagentManager),
+		superStop:            make(chan struct{}),
 	}
 
 	// Register runtime-dependent tools via providers (session closures,
@@ -664,6 +664,7 @@ func (al *AgentLoop) registerRuntimeTools(
 			SelfCandidates:    currentAgent.Candidates,
 			CallerAgentID:     agentID,
 			CandidateResolver: candidateResolver,
+			RunFull:           al.runSubagentTask,
 		})
 		managers[agentID] = spawnMgr
 		spawner := toolsagents.NewSpawner(spawnMgr)
@@ -1969,8 +1970,15 @@ func (al *AgentLoop) runLLMIteration(
 				"max":       agent.MaxIterations,
 			})
 
-		// Build tool definitions
-		providerToolDefs := agent.Tools.ToProviderDefs()
+		// Build tool definitions. Sub-agent sessions are offered the agent's tools
+		// minus PrimaryOnly ones (e.g. agent_spawn, cron_schedule, cogmem writes) —
+		// see IsSubagentSessionKey. Primary sessions are unaffected.
+		var providerToolDefs []providers.ToolDefinition
+		if routing.IsSubagentSessionKey(opts.SessionKey) {
+			providerToolDefs = agent.Tools.ToProviderDefsExcludingPrimaryOnly()
+		} else {
+			providerToolDefs = agent.Tools.ToProviderDefs()
+		}
 		if agent.NoTools {
 			providerToolDefs = nil
 		}
@@ -2557,6 +2565,15 @@ func (al *AgentLoop) runLLMIteration(
 					var toolCancel context.CancelFunc
 					execCtx, toolCancel = context.WithTimeout(execCtx, toolTimeout)
 					defer toolCancel()
+				}
+
+				// Defense-in-depth: a sub-agent must never run a PrimaryOnly tool,
+				// even if one slipped into the call list. (The tool list already
+				// excludes them; this rejects any stray attempt.)
+				if routing.IsSubagentSessionKey(opts.SessionKey) && agent.Tools.IsPrimaryOnlyTool(tc.Name) {
+					agentResults[idx].result = tools.ErrorResult(
+						fmt.Sprintf("tool %q is not available to sub-agents", tc.Name))
+					return
 				}
 
 				toolResult := agent.Tools.ExecuteWithContext(

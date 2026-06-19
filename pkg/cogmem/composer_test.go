@@ -329,8 +329,13 @@ func TestRoutedBlockKeywordTrigger(t *testing.T) {
 		t.Fatalf("trace = %+v, want keyword:morning routine", rr.Trace)
 	}
 
-	// The keyword match above marked the workflow recently-active (recency wiring),
-	// so re-touch Other to restore it as the most-recent before the recency check.
+	// The keyword match above marked the workflow recently-active (recency wiring).
+	// Make Other strictly more recent than wf for the recency check — last_active_at
+	// is second-granular, so age wf back rather than relying on same-second ordering.
+	old := time.Now().Add(-1 * time.Hour).Unix()
+	if _, err := db.ExecContext(ctx, `UPDATE domains SET last_active_at=? WHERE id=?`, old, wf.ID); err != nil {
+		t.Fatalf("age wf: %v", err)
+	}
 	_ = s.Touch(ctx, db, other.ID)
 
 	// Bare "morning" → no keyword (phrase-only) and no lexical hit on "Daily Ops";

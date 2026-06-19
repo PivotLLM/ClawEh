@@ -61,6 +61,39 @@ func (al *AgentLoop) evictContextManagers() {
 	}
 }
 
+// dropContextManager force-evicts a single session's context manager (closing
+// its DB handles and revoking its token), regardless of idle time, as long as it
+// is not in use. Used to tear down an ephemeral sub-agent session right after its
+// run so its snapshot DB can be deleted. No-op if absent or still referenced (the
+// idle sweep will reclaim it later).
+func (al *AgentLoop) dropContextManager(agent *AgentInstance, sessionKey string) {
+	key := agent.ID + ":" + sessionKey
+	v, ok := al.contextManagers.Load(key)
+	if !ok {
+		return
+	}
+	entry, ok := v.(*cmEntry)
+	if !ok || entry.refcount.Load() > 0 {
+		return
+	}
+	al.contextManagers.Delete(key)
+
+	al.mu.RLock()
+	sti := al.sessionTokenIssuer
+	al.mu.RUnlock()
+	if sti != nil && entry.sessionKey != "" {
+		sti.Revoke(entry.sessionKey)
+	}
+	if err := entry.cm.Close(context.Background()); err != nil {
+		logger.WarnCF("agent", "subagent: context manager close failed",
+			map[string]any{"key": key, "error": err.Error()})
+	}
+	forgetSessionState(entry.store, entry.sessionKey)
+	if entry.cleanup != nil {
+		entry.cleanup()
+	}
+}
+
 // runEvictionPass evicts entries that have refcount == 0 and have been idle
 // longer than ttl. It uses a fresh background context so the archive flush
 // always completes regardless of the calling goroutine's context.

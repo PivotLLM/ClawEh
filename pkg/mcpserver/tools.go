@@ -17,6 +17,7 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/config"
 	"github.com/PivotLLM/ClawEh/pkg/logger"
 	"github.com/PivotLLM/ClawEh/pkg/mcpserver/acl"
+	"github.com/PivotLLM/ClawEh/pkg/routing"
 	"github.com/PivotLLM/ClawEh/pkg/tools"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -279,6 +280,15 @@ func dispatchToolCall(
 		logger.WarnCF("mcpserver", "MCP tool denied",
 			map[string]any{"agent": agentName, "tool": toolName, "reason": "acl_denied"})
 		return aclDeniedMessage, true
+	}
+
+	// A sub-agent session (e.g. a CLI provider reaching tools over MCP) must never
+	// run a PrimaryOnly tool — this closes the recursion / privilege hole that the
+	// in-loop registry filter covers for API providers.
+	if routing.IsSubagentSessionKey(rec.sessionKey) && tools.IsPrimaryOnly(toolInstance) {
+		logger.WarnCF("mcpserver", "MCP tool denied for sub-agent",
+			map[string]any{"agent": agentName, "tool": toolName, "reason": "primary_only"})
+		return fmt.Sprintf("tool %q is not available to sub-agents", toolName), true
 	}
 
 	// Session-scoped tools call tools.ToolSessionKey(ctx); inject the resolved

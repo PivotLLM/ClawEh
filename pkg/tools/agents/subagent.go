@@ -64,6 +64,12 @@ type SubagentManager struct {
 	selfCandidates    []providers.FallbackCandidate
 	callerAgentID     string
 	candidateResolver func(agentID string) ([]providers.FallbackCandidate, bool)
+
+	// runFull runs the target agent's FULL pipeline (curated prompt, full tools,
+	// MCP, snapshotted memory) on the task in an isolated sub-agent session, and
+	// returns the final response. Injected by the host (the agent loop). When set,
+	// it is used instead of the lightweight standalone tool loop.
+	runFull func(ctx context.Context, agentID, sessionKey, task, model string) (string, error)
 }
 
 // SubagentManagerConfig holds all configuration for constructing a SubagentManager.
@@ -89,6 +95,10 @@ type SubagentManagerConfig struct {
 	// CandidateResolver resolves model candidates for a named target agent.
 	// Returns false if the agent is unknown.
 	CandidateResolver func(agentID string) ([]providers.FallbackCandidate, bool)
+	// RunFull runs the target agent's full pipeline on the task in an isolated
+	// sub-agent session (see SubagentManager.runFull). Required for spawning to
+	// behave as "a copy of the agent with fresh context."
+	RunFull func(ctx context.Context, agentID, sessionKey, task, model string) (string, error)
 }
 
 func NewSubagentManager(cfg SubagentManagerConfig) *SubagentManager {
@@ -105,7 +115,23 @@ func NewSubagentManager(cfg SubagentManagerConfig) *SubagentManager {
 		selfCandidates:    cfg.SelfCandidates,
 		callerAgentID:     cfg.CallerAgentID,
 		candidateResolver: cfg.CandidateResolver,
+		runFull:           cfg.RunFull,
 	}
+}
+
+// subagentSessionKey builds an isolated sub-agent session key for the target
+// agent (IsSubagentSessionKey reports true for it).
+func subagentSessionKey(agentID, uuid string) string {
+	return fmt.Sprintf("agent:%s:subagent:%s", agentID, uuid)
+}
+
+// targetAgent resolves the agent a spawn runs as: the explicit target, or the
+// owner for a self-spawn (empty agentID).
+func (sm *SubagentManager) targetAgent(agentID string) string {
+	if strings.TrimSpace(agentID) == "" {
+		return sm.ownerAgentID
+	}
+	return agentID
 }
 
 func (sm *SubagentManager) tasksDir() string { return tasksDirFor(sm.workspace) }
@@ -323,15 +349,28 @@ func (sm *SubagentManager) runRecord(rec *TaskRecord, cb tools.AsyncCallback, re
 	if resumed {
 		taskText = interruptionNote + "\n\n" + rec.Task
 	}
+
+	// Full-pipeline path: run a copy of the agent in an isolated sub-agent session
+	// keyed by the task UUID (deterministic, so a relaunch reuses + recleans it).
+	if sm.runFull != nil {
+		target := sm.targetAgent(rec.AgentID)
+		content, err := sm.runFull(context.Background(), target, subagentSessionKey(target, rec.UUID), taskText, rec.Model)
+		if err != nil {
+			sm.finalize(rec, "", 0, err, cb)
+			return
+		}
+		sm.finalize(rec, content, 0, nil, cb)
+		return
+	}
+
+	// Legacy fallback: lightweight standalone loop.
 	messages := []providers.Message{
 		{Role: "system", Content: subagentSystemPrompt()},
 		{Role: "user", Content: taskText},
 	}
-
 	sm.mu.RLock()
 	loopCfg := sm.resolveLoopConfig(rec.AgentID, rec.Model)
 	sm.mu.RUnlock()
-
 	loopResult, err := tools.RunToolLoop(context.Background(), loopCfg, messages, rec.Channel, rec.ChatID)
 	if err != nil {
 		sm.finalize(rec, "", 0, err, cb)
@@ -483,38 +522,50 @@ func (sm *SubagentManager) Run(
 		return nil, fmt.Errorf("subagent manager not configured")
 	}
 
-	messages := []providers.Message{
-		{Role: "system", Content: subagentSystemPrompt()},
-		{Role: "user", Content: task},
-	}
-
-	sm.mu.RLock()
-	loopCfg := sm.resolveLoopConfig(agentID, model)
-	sm.mu.RUnlock()
-
-	loopResult, err := tools.RunToolLoop(ctx, loopCfg, messages, channel, chatID)
-	if err != nil {
-		return nil, err
-	}
-
-	// ForUser: brief summary (truncated); ForLLM: full execution details.
-	userContent := loopResult.Content
 	const maxUserLen = 500
-	if len(userContent) > maxUserLen {
-		userContent = userContent[:maxUserLen] + "..."
-	}
 	labelStr := label
 	if labelStr == "" {
 		labelStr = "(unnamed)"
 	}
+
+	// Full-pipeline path: run a copy of the agent in an isolated sub-agent session.
+	if sm.runFull != nil {
+		target := sm.targetAgent(agentID)
+		content, err := sm.runFull(ctx, target, subagentSessionKey(target, uuid.NewString()), task, model)
+		if err != nil {
+			return nil, err
+		}
+		userContent := content
+		if len(userContent) > maxUserLen {
+			userContent = userContent[:maxUserLen] + "..."
+		}
+		return &tools.ToolResult{
+			ForLLM:  fmt.Sprintf("Subagent task completed:\nLabel: %s\nResult: %s", labelStr, content),
+			ForUser: attributedContent(target, userContent),
+		}, nil
+	}
+
+	// Legacy fallback: lightweight standalone loop (used when no full-pipeline
+	// runner is injected — e.g. unit tests / embedding hosts).
+	messages := []providers.Message{
+		{Role: "system", Content: subagentSystemPrompt()},
+		{Role: "user", Content: task},
+	}
+	sm.mu.RLock()
+	loopCfg := sm.resolveLoopConfig(agentID, model)
+	sm.mu.RUnlock()
+	loopResult, err := tools.RunToolLoop(ctx, loopCfg, messages, channel, chatID)
+	if err != nil {
+		return nil, err
+	}
+	userContent := loopResult.Content
+	if len(userContent) > maxUserLen {
+		userContent = userContent[:maxUserLen] + "..."
+	}
 	llmContent := fmt.Sprintf("Subagent task completed:\nLabel: %s\nIterations: %d\nResult: %s",
 		labelStr, loopResult.Iterations, loopResult.Content)
-
 	return &tools.ToolResult{
 		ForLLM:  llmContent,
 		ForUser: attributedContent(agentID, userContent),
-		Silent:  false,
-		IsError: false,
-		Async:   false,
 	}, nil
 }
