@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -110,6 +111,7 @@ type Config struct {
 	Security      SecurityConfig      `json:"security,omitempty"`
 	MCPHost       MCPHostConfig       `json:"mcp_host,omitempty"`
 	Cooldown      CooldownConfig      `json:"cooldown,omitempty"`
+	Backup        BackupConfig        `json:"backup,omitempty"`
 	// ConfigReloadIntervalSeconds controls how often the daemon polls the config
 	// file for changes and triggers a reload. Defaults to
 	// global.DefaultConfigReloadIntervalSeconds; floored at
@@ -1425,6 +1427,38 @@ func (c *Config) SkillsPath() string {
 // CronPath returns the cron store directory (~/.claw/cron).
 func (c *Config) CronPath() string {
 	return filepath.Join(c.dataDir, "cron")
+}
+
+// BackupConfig controls the optional nightly backup of key files (config.json
+// and the cron jobs file) into <data dir>/backup/YYYYMMDD/.
+type BackupConfig struct {
+	Enabled    bool   `json:"enabled,omitempty"`     // off by default
+	At         string `json:"at,omitempty"`          // "HH:MM" local time; default 03:00
+	RetainDays int    `json:"retain_days,omitempty"` // prune older day-folders; default 30
+}
+
+// BackupAt returns the configured run time as hour and minute, defaulting to
+// 03:00 when unset or unparseable.
+func (b BackupConfig) BackupAt() (hour, minute int) {
+	hour, minute = 3, 0
+	parts := strings.SplitN(strings.TrimSpace(b.At), ":", 2)
+	if len(parts) == 2 {
+		if h, err := strconv.Atoi(strings.TrimSpace(parts[0])); err == nil && h >= 0 && h <= 23 {
+			hour = h
+		}
+		if m, err := strconv.Atoi(strings.TrimSpace(parts[1])); err == nil && m >= 0 && m <= 59 {
+			minute = m
+		}
+	}
+	return hour, minute
+}
+
+// BackupRetainDays returns the retention window, defaulting to 30 when unset.
+func (b BackupConfig) BackupRetainDays() int {
+	if b.RetainDays <= 0 {
+		return 30
+	}
+	return b.RetainDays
 }
 
 func expandHome(path string) string {

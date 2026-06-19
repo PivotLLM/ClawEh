@@ -351,6 +351,11 @@ func setupAndStartServices(
 	// cogmem tools).
 	services.CogmemManager = setupCogmemConsolidation(cfg, agentLoop)
 
+	// Start the optional nightly backup scheduler. Boot-only: it reads live config
+	// each tick (via agentLoop.GetConfig), so toggling/retiming it on reload takes
+	// effect without restarting the loop. Inert until backup.enabled is set.
+	startBackupScheduler(agentLoop.GetConfig, configPath)
+
 	return services, nil
 }
 

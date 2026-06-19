@@ -30,6 +30,9 @@ export interface CoreConfigForm {
   sessionMode: string
   devicesEnabled: boolean
   monitorUSB: boolean
+  backupEnabled: boolean
+  backupAt: string
+  backupRetainDays: string
 }
 
 export interface LauncherForm {
@@ -97,6 +100,9 @@ export const EMPTY_FORM: CoreConfigForm = {
   sessionMode: "unified",
   devicesEnabled: false,
   monitorUSB: true,
+  backupEnabled: false,
+  backupAt: "03:00",
+  backupRetainDays: "30",
 }
 
 export const EMPTY_LAUNCHER_FORM: LauncherForm = {
@@ -236,6 +242,12 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
       devices.monitor_usb === undefined
         ? EMPTY_FORM.monitorUSB
         : asBool(devices.monitor_usb),
+    backupEnabled: asBool(asRecord(root.backup).enabled),
+    backupAt: asString(asRecord(root.backup).at) || EMPTY_FORM.backupAt,
+    backupRetainDays: asNumberString(
+      asRecord(root.backup).retain_days,
+      EMPTY_FORM.backupRetainDays,
+    ),
   }
 }
 

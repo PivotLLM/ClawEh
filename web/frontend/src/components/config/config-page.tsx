@@ -15,6 +15,7 @@ import {
 import {
   AgentDefaultsSection,
   AgentModelDefaultsSection,
+  BackupSection,
   ContextManagementSection,
   DevicesSection,
   LauncherSection,
@@ -306,6 +307,11 @@ export function ConfigPage() {
           logging: {
             retention_days: logRetentionDays,
           },
+          backup: {
+            enabled: form.backupEnabled,
+            at: form.backupAt.trim() || "03:00",
+            retain_days: parseIntField(form.backupRetainDays, "Backup retention days", { min: 1 }),
+          },
         })
 
         setBaseline(form)
@@ -400,6 +406,8 @@ export function ConfigPage() {
               <ContextManagementSection form={form} onFieldChange={updateField} />
 
               <RuntimeSection form={form} onFieldChange={updateField} />
+
+            <BackupSection form={form} onFieldChange={updateField} />
 
               <LauncherSection
                 launcherForm={launcherForm}

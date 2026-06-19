@@ -467,7 +467,8 @@
         "context_management_desc": "Controls when context is compressed, how much is retained, and how the archive is sized.",
         "runtime": "Runtime",
         "launcher": "Service",
-        "devices": "Devices"
+        "devices": "Devices",
+        "backup": "Backup"
       },
       "open_raw": "Raw Config",
       "back_to_visual": "Visual Config",
@@ -484,7 +485,19 @@
       "format": "Format",
       "unsaved_changes": "You have unsaved changes.",
       "log_retention_days": "Log retention (days)",
-      "log_retention_days_hint": "Days of rolled daily logs (YYYYMMDD-claw.log / -error.log) to keep. claw.log rolls at local midnight. 0 = keep forever."
+      "log_retention_days_hint": "Days of rolled daily logs (YYYYMMDD-claw.log / -error.log) to keep. claw.log rolls at local midnight. 0 = keep forever.",
+      "backup_desc": "Optionally snapshot config.json and the cron jobs file into backup/YYYYMMDD/ each night.",
+      "backup_enabled": "Nightly backup",
+      "backup_enabled_hint": "When on, copy config.json and the cron jobs file into <data dir>/backup/YYYYMMDD/ once a day.",
+      "backup_at": "Backup time",
+      "backup_at_hint": "Local time of day to run the nightly backup (default 03:00).",
+      "backup_retain_days": "Keep backups (days)",
+      "backup_retain_days_hint": "Delete backup folders older than this many days (default 30).",
+      "backup_now": "Back up now",
+      "backup_now_hint": "Run a backup immediately, regardless of the nightly toggle.",
+      "backup_now_running": "Backing up…",
+      "backup_now_done": "Backup written to {{folder}}",
+      "backup_now_failed": "Backup failed"
     },
     "logs": {
       "clear": "Clear logs",
