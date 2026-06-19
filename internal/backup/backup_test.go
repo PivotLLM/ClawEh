@@ -26,9 +26,10 @@ func TestRunCopiesPresentFilesSkipsMissing(t *testing.T) {
 	if copied != 1 {
 		t.Fatalf("copied = %d, want 1 (missing jobs.json skipped)", copied)
 	}
-	got, err := os.ReadFile(filepath.Join(day, "config.json"))
+	want := filepath.Join(day, "config.json."+now.Format("20060102-150405"))
+	got, err := os.ReadFile(want)
 	if err != nil || string(got) != `{"x":1}` {
-		t.Fatalf("backed-up config = %q err=%v", got, err)
+		t.Fatalf("backed-up config %s = %q err=%v", want, got, err)
 	}
 	if filepath.Base(day) != "20260619" {
 		t.Fatalf("day folder = %s, want 20260619", filepath.Base(day))

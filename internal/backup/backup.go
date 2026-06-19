@@ -16,15 +16,22 @@ import (
 // dateLayout is the per-day backup folder name (and the prune parser).
 const dateLayout = "20060102"
 
+// stampLayout suffixes each backed-up file with the run's date+time
+// (YYYYMMDD-HHMMSS) so repeated (especially manual) runs on the same day never
+// overwrite one another — e.g. config.json.20260619-030500.
+const stampLayout = "20060102-150405"
+
 // Run copies the given source files into destRoot/<YYYYMMDD>/ (the folder for
-// now's local date), creating the folder if needed. A missing source file is
-// skipped (not an error) so a fresh install with no cron jobs still backs up the
-// config. Returns the day-folder path and the number of files copied.
+// now's local date), creating the folder if needed. Each file is written as
+// "<name>.<YYYYMMDD-HHMMSS>" so same-day runs don't collide. A missing source
+// file is skipped (not an error) so a fresh install with no cron jobs still
+// backs up the config. Returns the day-folder path and the number of files copied.
 func Run(destRoot string, now time.Time, sources map[string]string) (string, int, error) {
 	day := filepath.Join(destRoot, now.Format(dateLayout))
 	if err := os.MkdirAll(day, 0o755); err != nil {
 		return "", 0, fmt.Errorf("backup: create %s: %w", day, err)
 	}
+	stamp := now.Format(stampLayout)
 	copied := 0
 	for src, name := range sources {
 		data, err := os.ReadFile(src)
@@ -34,8 +41,9 @@ func Run(destRoot string, now time.Time, sources map[string]string) (string, int
 			}
 			return day, copied, fmt.Errorf("backup: read %s: %w", src, err)
 		}
-		if err := os.WriteFile(filepath.Join(day, name), data, 0o600); err != nil {
-			return day, copied, fmt.Errorf("backup: write %s: %w", name, err)
+		dest := filepath.Join(day, name+"."+stamp)
+		if err := os.WriteFile(dest, data, 0o600); err != nil {
+			return day, copied, fmt.Errorf("backup: write %s: %w", dest, err)
 		}
 		copied++
 	}
