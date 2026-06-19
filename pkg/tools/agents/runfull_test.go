@@ -25,12 +25,12 @@ func TestRun_UsesRunFullWithSubagentSession(t *testing.T) {
 		Workspace:     t.TempDir(),
 		Live:          NewLiveSet(),
 		CallerAgentID: "penny",
-		RunFull: func(_ context.Context, agentID, sessionKey, task, model string) (string, error) {
+		RunFull: func(_ context.Context, agentID, sessionKey, task, model string) (string, int, error) {
 			mu.Lock()
 			defer mu.Unlock()
 			callCount++
 			gotAgent, gotKey, gotTask, gotModel = agentID, sessionKey, task, model
-			return "chapter drafted", nil
+			return "chapter drafted", 3, nil
 		},
 	})
 
@@ -55,5 +55,8 @@ func TestRun_UsesRunFullWithSubagentSession(t *testing.T) {
 	}
 	if res.IsError || !strings.Contains(res.ForLLM, "chapter drafted") {
 		t.Errorf("result should carry the runFull output, got: %+v", res)
+	}
+	if !strings.Contains(res.ForLLM, "Iterations: 3") {
+		t.Errorf("result should report the iteration count, got: %s", res.ForLLM)
 	}
 }

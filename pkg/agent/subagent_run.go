@@ -30,13 +30,13 @@ import (
 //
 // Output is captured (SendResponse:false) and returned to the caller (the
 // SubagentManager stores it to a result file / fires the callback).
-func (al *AgentLoop) runSubagentTask(ctx context.Context, agentID, sessionKey, task, model string) (string, error) {
+func (al *AgentLoop) runSubagentTask(ctx context.Context, agentID, sessionKey, task, model string) (string, int, error) {
 	agent, ok := al.GetRegistry().GetAgent(agentID)
 	if !ok || agent == nil {
-		return "", fmt.Errorf("subagent: agent %q not found", agentID)
+		return "", 0, fmt.Errorf("subagent: agent %q not found", agentID)
 	}
 	if !routing.IsSubagentSessionKey(sessionKey) {
-		return "", fmt.Errorf("subagent: %q is not a sub-agent session key", sessionKey)
+		return "", 0, fmt.Errorf("subagent: %q is not a sub-agent session key", sessionKey)
 	}
 
 	// Snapshot the agent's main-session memory into this sub-agent session's DB so
@@ -69,13 +69,16 @@ func (al *AgentLoop) runSubagentTask(ctx context.Context, agentID, sessionKey, t
 		}
 	}
 
-	return al.runAgentLoop(ctx, agent, processOptions{
-		SessionKey:   sessionKey,
-		Channel:      "subagent",
-		ChatID:       sessionKey,
-		UserMessage:  task,
-		SendResponse: false,
+	var iterations int
+	content, err := al.runAgentLoop(ctx, agent, processOptions{
+		SessionKey:    sessionKey,
+		Channel:       "subagent",
+		ChatID:        sessionKey,
+		UserMessage:   task,
+		SendResponse:  false,
+		IterationsOut: &iterations,
 	})
+	return content, iterations, err
 }
 
 // cleanupSubagentSession evicts the sub-agent session's context manager (closing

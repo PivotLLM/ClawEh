@@ -165,6 +165,7 @@ type processOptions struct {
 	ResetSession    bool     // True when this message is a session_clear handoff: reset before handling
 	SenderID        string   // Originating sender identifier for source attribution
 	SenderName      string   // Human-readable sender label (display name + canonical ID)
+	IterationsOut   *int     // optional: runAgentLoop writes the LLM iteration count here
 }
 
 const (
@@ -1769,6 +1770,9 @@ func (al *AgentLoop) runAgentLoop(
 			"system_error": isSystemError,
 		})
 
+	if opts.IterationsOut != nil {
+		*opts.IterationsOut = iteration
+	}
 	return finalContent, nil
 }
 

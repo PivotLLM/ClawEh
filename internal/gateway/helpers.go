@@ -32,6 +32,7 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/providers"
 	"github.com/PivotLLM/ClawEh/pkg/state"
 	"github.com/PivotLLM/ClawEh/pkg/tools"
+	toolsagents "github.com/PivotLLM/ClawEh/pkg/tools/agents"
 	toolschedule "github.com/PivotLLM/ClawEh/pkg/tools/schedule"
 	"github.com/PivotLLM/ClawEh/pkg/voice"
 	webserver "github.com/PivotLLM/ClawEh/web/backend"
@@ -355,6 +356,15 @@ func setupAndStartServices(
 	// each tick (via agentLoop.GetConfig), so toggling/retiming it on reload takes
 	// effect without restarting the loop. Inert until backup.enabled is set.
 	startBackupScheduler(agentLoop.GetConfig, configPath)
+
+	// Boot-only: reclaim sub-agent session files left by a crash mid-run, but only
+	// those older than 24h, so a crashed worker's artefacts can be inspected first.
+	// (Normal completion cleans up immediately.)
+	for _, agentID := range agentLoop.GetRegistry().ListAgentIDs() {
+		if a, ok := agentLoop.GetRegistry().GetAgent(agentID); ok && a != nil {
+			toolsagents.PruneOrphanSubagentSessions(a.Workspace, 24*time.Hour, time.Now())
+		}
+	}
 
 	return services, nil
 }

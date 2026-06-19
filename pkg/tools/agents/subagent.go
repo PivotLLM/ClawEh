@@ -69,7 +69,7 @@ type SubagentManager struct {
 	// MCP, snapshotted memory) on the task in an isolated sub-agent session, and
 	// returns the final response. Injected by the host (the agent loop). When set,
 	// it is used instead of the lightweight standalone tool loop.
-	runFull func(ctx context.Context, agentID, sessionKey, task, model string) (string, error)
+	runFull func(ctx context.Context, agentID, sessionKey, task, model string) (string, int, error)
 }
 
 // SubagentManagerConfig holds all configuration for constructing a SubagentManager.
@@ -98,7 +98,7 @@ type SubagentManagerConfig struct {
 	// RunFull runs the target agent's full pipeline on the task in an isolated
 	// sub-agent session (see SubagentManager.runFull). Required for spawning to
 	// behave as "a copy of the agent with fresh context."
-	RunFull func(ctx context.Context, agentID, sessionKey, task, model string) (string, error)
+	RunFull func(ctx context.Context, agentID, sessionKey, task, model string) (string, int, error)
 }
 
 func NewSubagentManager(cfg SubagentManagerConfig) *SubagentManager {
@@ -354,12 +354,12 @@ func (sm *SubagentManager) runRecord(rec *TaskRecord, cb tools.AsyncCallback, re
 	// keyed by the task UUID (deterministic, so a relaunch reuses + recleans it).
 	if sm.runFull != nil {
 		target := sm.targetAgent(rec.AgentID)
-		content, err := sm.runFull(context.Background(), target, subagentSessionKey(target, rec.UUID), taskText, rec.Model)
+		content, iterations, err := sm.runFull(context.Background(), target, subagentSessionKey(target, rec.UUID), taskText, rec.Model)
 		if err != nil {
 			sm.finalize(rec, "", 0, err, cb)
 			return
 		}
-		sm.finalize(rec, content, 0, nil, cb)
+		sm.finalize(rec, content, iterations, nil, cb)
 		return
 	}
 
@@ -531,7 +531,7 @@ func (sm *SubagentManager) Run(
 	// Full-pipeline path: run a copy of the agent in an isolated sub-agent session.
 	if sm.runFull != nil {
 		target := sm.targetAgent(agentID)
-		content, err := sm.runFull(ctx, target, subagentSessionKey(target, uuid.NewString()), task, model)
+		content, iterations, err := sm.runFull(ctx, target, subagentSessionKey(target, uuid.NewString()), task, model)
 		if err != nil {
 			return nil, err
 		}
@@ -540,7 +540,7 @@ func (sm *SubagentManager) Run(
 			userContent = userContent[:maxUserLen] + "..."
 		}
 		return &tools.ToolResult{
-			ForLLM:  fmt.Sprintf("Subagent task completed:\nLabel: %s\nResult: %s", labelStr, content),
+			ForLLM:  fmt.Sprintf("Subagent task completed:\nLabel: %s\nIterations: %d\nResult: %s", labelStr, iterations, content),
 			ForUser: attributedContent(target, userContent),
 		}, nil
 	}
