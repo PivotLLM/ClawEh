@@ -309,29 +309,60 @@ func dispatchToolCall(
 		tracker.record(agentName)
 	}
 
-	result := reg.Execute(ctx, toolName, args)
+	// Async completion handler: when a background tool (e.g. agent_spawn in
+	// callback mode) finishes later, deliver its result the same way the agent
+	// loop does — ForUser to the user, and ForLLM re-injected as a "system"
+	// message into the agent's session — so the primary LLM is notified without
+	// polling, for CLI and non-CLI providers alike. (The immediate/sync result is
+	// handled below.)
+	asyncCb := func(_ context.Context, r *tools.ToolResult) {
+		publishMCPForUser(context.Background(), msgBus, rec, toolName, r)
+		publishMCPAsyncToLLM(msgBus, rec, toolName, r)
+	}
+	result := reg.ExecuteWithContext(ctx, toolName, args, rec.channel, rec.chatID, asyncCb)
 	if result == nil {
 		logger.WarnCF("mcpserver", "tool returned nil result",
 			map[string]any{"tool": toolName, "agent": agentName, "reason": "nil_result"})
 		return agenttoken.Redact("tool returned nil result"), true
 	}
 
-	// Side-channel publish of ForUser to the originating user. The MCP response
-	// envelope to the caller (the LLM client) carries only ForLLM — ForUser is
-	// the tool's "display this back to the human" payload and is delivered out-
-	// of-band over the message bus to the session's recorded inbound source.
-	//
-	// Mirrors the inbound-user-message publish at pkg/agent/loop.go (after
-	// runLLMIteration). These two publish sites are mutually exclusive: the
-	// agent-loop publish only fires for tools dispatched by the agent loop;
-	// MCP-routed tool calls do not go through pkg/agent/loop.go.
-	//
-	// Out of scope: Media propagation and Async callbacks. A follow-up worker
-	// can pick those up — ForUser-only is the agreed scope for this commit.
+	// Side-channel publish of the immediate ForUser to the originating user. The
+	// MCP response envelope to the caller carries only ForLLM; ForUser is delivered
+	// out-of-band over the message bus to the session's recorded inbound source.
+	// (Async completions are handled by asyncCb above.)
 	publishMCPForUser(ctx, msgBus, rec, toolName, result)
 
 	out := agenttoken.Redact(result.ForLLM)
 	return out, result.IsError
+}
+
+// publishMCPAsyncToLLM re-injects an async tool's completion (ForLLM, or the
+// error) into the agent's session as a "system" message, so the primary LLM is
+// notified of the result without polling. Mirrors the agent-loop async path
+// (pkg/agent/loop.go). No-op when there is nothing to inject or no recorded
+// channel source to route to.
+func publishMCPAsyncToLLM(msgBus *bus.MessageBus, rec sessionRecord, toolName string, r *tools.ToolResult) {
+	if r == nil || msgBus == nil || rec.channel == "" || rec.chatID == "" {
+		return
+	}
+	content := r.ForLLM
+	if content == "" && r.Err != nil {
+		content = r.Err.Error()
+	}
+	if content == "" {
+		return
+	}
+	pubCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := msgBus.PublishInbound(pubCtx, bus.InboundMessage{
+		Channel:  "system",
+		SenderID: fmt.Sprintf("async:%s", toolName),
+		ChatID:   fmt.Sprintf("%s:%s", rec.channel, rec.chatID),
+		Content:  content,
+	}); err != nil {
+		logger.WarnCF("mcpserver", "mcp.async.reinject_failed",
+			map[string]any{"tool": toolName, "agent": rec.agentID, "error": err.Error()})
+	}
 }
 
 // publishMCPForUser sends a tool's ForUser payload to the originating user's
