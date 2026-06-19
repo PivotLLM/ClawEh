@@ -158,6 +158,48 @@ func TestRoutedBlockToolTriggerNoDuplicate(t *testing.T) {
 	}
 }
 
+// TestRoutedBlockTouchesMatchedNotRecency verifies the recency/staleness wiring:
+// a domain loaded because it genuinely matched (a tool trigger here) is Touched,
+// while a domain pulled in only as recency filler is left alone — otherwise the
+// recency signal would be self-reinforcing and no domain could ever go cold.
+func TestRoutedBlockTouchesMatchedNotRecency(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	db := s.DB()
+	email, _ := s.CreateDomain(ctx, db, store.CreateDomainParams{
+		AgentID: "a", Name: "Email", Summary: "mail", Triggers: "gmail",
+	})
+	other, _ := s.CreateDomain(ctx, db, store.CreateDomainParams{AgentID: "a", Name: "Other", Summary: "misc"})
+
+	lastActive := func(id string) int64 {
+		d, err := s.GetDomain(ctx, db, id, false)
+		if err != nil {
+			t.Fatalf("get domain %s: %v", id, err)
+		}
+		return d.LastActiveAt
+	}
+	emailBefore := lastActive(email.ID)
+	otherBefore := lastActive(other.ID)
+
+	c := New(s, WithTopKDomains(8)) // both fit: Email via tool, Other via recency
+	res, err := c.RoutedBlock(ctx, RouteRequest{RecentTools: []string{"mcp__fusion__google_gmail_messages_list"}, Trace: true})
+	if err != nil {
+		t.Fatalf("routed: %v", err)
+	}
+	if len(res.Loaded) != 2 {
+		t.Fatalf("expected both domains loaded, got %v", res.Loaded)
+	}
+
+	emailAfter := lastActive(email.ID)
+	otherAfter := lastActive(other.ID)
+	if emailAfter <= emailBefore {
+		t.Errorf("tool-matched Email should be touched: before=%d after=%d", emailBefore, emailAfter)
+	}
+	if otherAfter != otherBefore {
+		t.Errorf("recency-filler Other must NOT be touched: before=%d after=%d", otherBefore, otherAfter)
+	}
+}
+
 func TestRoutedBlockLexicalMatch(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
@@ -280,6 +322,10 @@ func TestRoutedBlockKeywordTrigger(t *testing.T) {
 	if len(rr.Trace) != 1 || rr.Trace[0].Signal != "keyword:morning routine" {
 		t.Fatalf("trace = %+v, want keyword:morning routine", rr.Trace)
 	}
+
+	// The keyword match above marked the workflow recently-active (recency wiring),
+	// so re-touch Other to restore it as the most-recent before the recency check.
+	_ = s.Touch(ctx, db, other.ID)
 
 	// Bare "morning" → no keyword (phrase-only) and no lexical hit on "Daily Ops";
 	// the more-recent Other takes the slot instead.

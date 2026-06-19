@@ -58,6 +58,8 @@ func (s *Store) AddMemory(ctx context.Context, q DBTX, p AddMemoryParams) (Memor
 			return Memory{}, err
 		}
 	}
+	// Writing a memory counts as using the domain (recency / staleness signal).
+	_ = s.Touch(ctx, q, p.DomainID)
 	return s.GetMemory(ctx, q, id)
 }
 
@@ -77,6 +79,7 @@ func (s *Store) RetireMemory(ctx context.Context, q DBTX, id, reason string) err
 	if err != nil {
 		return err
 	}
+	_ = s.Touch(ctx, q, h.DomainID)
 	if affectsStable(sticky, h.Status) {
 		return bumpStableRev(ctx, q)
 	}
@@ -127,6 +130,7 @@ func (s *Store) PromoteMemory(ctx context.Context, q DBTX, id string) error {
 		string(StatusActive), now(), id); err != nil {
 		return err
 	}
+	_ = s.Touch(ctx, q, h.DomainID)
 	return bumpStableRev(ctx, q) // leaves the pending digest, may enter stable
 }
 

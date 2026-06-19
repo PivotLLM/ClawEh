@@ -157,6 +157,7 @@ func (s *Store) UpdateDomain(ctx context.Context, q DBTX, id string, p UpdateDom
 	if n, _ := res.RowsAffected(); n == 0 {
 		return ErrNotFound
 	}
+	_ = s.Touch(ctx, q, id)
 	// Stable block changes if a sticky domain changed, or name/summary/status/
 	// sticky changed (index + always-in-prompt visibility).
 	if cur.Sticky() || p.Sticky != nil || p.Name != nil || p.Summary != nil || p.Status != nil {
@@ -199,6 +200,7 @@ func (s *Store) MigrateDomain(ctx context.Context, q DBTX, fromID, toID string) 
 		return 0, fmt.Errorf("cogmem: migrate memories: %w", err)
 	}
 	n, _ := res.RowsAffected()
+	_ = s.Touch(ctx, q, toID) // destination received memories — mark it active
 	if _, err := q.ExecContext(ctx, `DELETE FROM domains WHERE id=?`, fromID); err != nil {
 		return 0, fmt.Errorf("cogmem: delete migrated domain: %w", err)
 	}

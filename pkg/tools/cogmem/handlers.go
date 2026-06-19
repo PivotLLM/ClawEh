@@ -124,6 +124,9 @@ func getDomain(s *store.Store, call *global.ToolCall) (string, error) {
 	if err != nil {
 		return "", mapErr(err, id)
 	}
+	// The agent actively retrieved this domain — mark it used (recency/staleness
+	// signal). Best-effort; never fail the read on a recency-bookkeeping error.
+	_ = s.Touch(call.Ctx, s.DB(), id)
 	var b strings.Builder
 	fmt.Fprintf(&b, "Domain %s %q (sticky=%t, status=%s, version=%d)\n", d.ID, d.Name, d.Sticky(), d.Status, d.Version)
 	if d.Summary != "" {

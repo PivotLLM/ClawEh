@@ -303,6 +303,13 @@ func (c *Composer) RoutedBlock(ctx context.Context, req RouteRequest) (RoutedRes
 		}
 		b.WriteString(section)
 		res.Loaded = append(res.Loaded, d.ID)
+		// Mark the domain active when it was loaded because it was genuinely
+		// relevant (a tool, keyword, or lexical match) — not when it was only
+		// filler chosen by recency itself, which would make the recency/staleness
+		// signal self-reinforcing and never let a domain go cold. Best-effort.
+		if cand.signal != "recency" {
+			_ = c.st.Touch(ctx, db, d.ID)
+		}
 		if req.Trace {
 			res.Trace = append(res.Trace, DomainSelection{ID: d.ID, Name: d.Name, Signal: cand.signal})
 		}
