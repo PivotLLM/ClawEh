@@ -24,7 +24,7 @@ func TestCompletionResult_OrderModeSecurity(t *testing.T) {
 	if !strings.Contains(fu, "(background)") {
 		t.Errorf("callback mode should render as (background), got:\n%s", fu)
 	}
-	if !strings.Contains(fu, "CALLBACK") || !strings.Contains(fu, "tasks/u1-results.json") {
+	if !strings.Contains(fu, "TASK NOTIFICATION") || !strings.Contains(fu, "tasks/u1-results.json") {
 		t.Errorf("block should be marked and point at the results file, got:\n%s", fu)
 	}
 	if strings.Contains(fu, "SECURITY") {

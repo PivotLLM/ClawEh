@@ -419,7 +419,7 @@ func friendlyMode(mode string) string {
 // callbackRule delimits the user-facing CALLBACK block so a completion is
 // unmistakable in chat. Plain box-drawing text renders identically on every
 // channel (no reliance on markdown horizontal rules).
-const callbackRuleStart = "━━━ CALLBACK ━━━"
+const callbackRuleStart = "━━━ TASK NOTIFICATION ━━━"
 const callbackRuleEnd = "━━━"
 
 // completionResult builds the completion notification delivered on every spawn,
@@ -457,7 +457,7 @@ func (sm *SubagentManager) completionResult(rec *TaskRecord) *tools.ToolResult {
 	u.WriteString("\n")
 
 	var l strings.Builder
-	fmt.Fprintf(&l, "[SUBAGENT CALLBACK] Task '%s' (uuid %s) finished — status: %s.\n",
+	fmt.Fprintf(&l, "[TASK NOTIFICATION] Sub-agent task '%s' (uuid %s) finished — status: %s.\n",
 		rec.Name, rec.UUID, rec.Status)
 	if rec.Error != "" {
 		fmt.Fprintf(&l, "Error: %s\n", rec.Error)

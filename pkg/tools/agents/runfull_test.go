@@ -30,7 +30,7 @@ func TestRun_RoutesContentToFileWithCallbackBlock(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 	// User-facing CALLBACK block: marked, points at the file, no raw content.
-	if !strings.Contains(res.ForUser, "CALLBACK") {
+	if !strings.Contains(res.ForUser, "TASK NOTIFICATION") {
 		t.Errorf("ForUser should be a marked CALLBACK block, got %q", res.ForUser)
 	}
 	if strings.Contains(res.ForUser, "SENSITIVE WORKER OUTPUT") {
