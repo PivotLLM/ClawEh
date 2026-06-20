@@ -402,11 +402,25 @@ func (sm *SubagentManager) finalize(rec *TaskRecord, content string, iterations 
 	}
 }
 
+// friendlyMode maps the internal task mode to the user-facing term: a
+// synchronous spawn ran in "wait" mode; a tracked background spawn ran in
+// "background" mode.
+func friendlyMode(mode string) string {
+	switch mode {
+	case "wait":
+		return "wait"
+	case "callback":
+		return "background"
+	default:
+		return mode
+	}
+}
+
 // callbackRule delimits the user-facing CALLBACK block so a completion is
 // unmistakable in chat. Plain box-drawing text renders identically on every
 // channel (no reliance on markdown horizontal rules).
-const callbackRuleStart = "━━━━━━━━━━━━━━━ CALLBACK ━━━━━━━━━━━━━━━"
-const callbackRuleEnd   = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+const callbackRuleStart = "━━━ CALLBACK ━━━"
+const callbackRuleEnd = "━━━"
 
 // completionResult builds the completion notification delivered on every spawn,
 // for both the user and the LLM. It NEVER carries the sub-agent's own output —
@@ -419,17 +433,22 @@ func (sm *SubagentManager) completionResult(rec *TaskRecord) *tools.ToolResult {
 	ok := rec.Status == StatusDone
 
 	agent := sm.targetAgent(rec.AgentID)
+	mode := friendlyMode(rec.Mode)
 	var u strings.Builder
 	u.WriteString(callbackRuleStart + "\n")
 	if agent != "" {
-		fmt.Fprintf(&u, "**Agent:** %s\n", agent)
+		if mode != "" {
+			fmt.Fprintf(&u, "**Agent:** %s (%s)\n", agent, mode)
+		} else {
+			fmt.Fprintf(&u, "**Agent:** %s\n", agent)
+		}
 	}
+	fmt.Fprintf(&u, "Status: %s\n", rec.Status)
 	if ok {
 		fmt.Fprintf(&u, "Task '%s' completed successfully.\n", rec.Name)
 	} else {
 		fmt.Fprintf(&u, "Task '%s' failed.\n", rec.Name)
 	}
-	fmt.Fprintf(&u, "Status: %s\n", rec.Status)
 	if rec.Error != "" {
 		fmt.Fprintf(&u, "Error: %s\n", rec.Error)
 	}

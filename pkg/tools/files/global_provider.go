@@ -73,9 +73,17 @@ func (globalFilesProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 
 		// Confine agent reads to the configured workspace subdirs (default
 		// files/ + skills/). Process-wide policy consulted by buildFs; empty
-		// restores legacy workspace-wide reads.
+		// restores legacy workspace-wide reads. When a scope is active, always
+		// include tasks/ — spawn callbacks point the agent at
+		// tasks/<uuid>-results.json, so it must be readable regardless of the
+		// configured read subdirs (read-only; writes stay confined to the write
+		// subdir, so the agent cannot tamper with task state).
 		if readRestrict {
-			SetReadScopeSubdirs(c.Agents.Defaults.WorkspaceReadSubdirs)
+			subdirs := c.Agents.Defaults.WorkspaceReadSubdirs
+			if len(subdirs) > 0 {
+				subdirs = appendIfMissing(subdirs, "tasks")
+			}
+			SetReadScopeSubdirs(subdirs)
 		}
 
 		read = NewReadFileTool(workspace, readRestrict, maxReadFileSize, allowReadPaths)
@@ -187,4 +195,14 @@ var readSchema = map[string]any{
 		},
 	},
 	"required": []string{"path"},
+}
+
+// appendIfMissing returns subdirs with name appended if not already present.
+func appendIfMissing(subdirs []string, name string) []string {
+	for _, s := range subdirs {
+		if s == name {
+			return subdirs
+		}
+	}
+	return append(append([]string(nil), subdirs...), name)
 }

@@ -469,9 +469,11 @@ type AgentDefaults struct {
 	// WorkspaceReadSubdirs confines agent file reads to these <workspace>/<subdir>
 	// directories (plus allow-listed host paths). Only applies when
 	// RestrictToWorkspace is true. Default ["files","skills"] — the agent's
-	// read/write area plus its skills. Empty makes reads workspace-wide (legacy),
-	// which exposes config/subsystem files (AGENTS.md, COGMEM.md, …) the agent
-	// already receives in its prompt or should never read.
+	// read/write area plus its skills. (The sub-agent task-results dir, tasks/, is
+	// always readable regardless of this setting — spawn callbacks point the agent
+	// at it; see the files tool provider.) Empty makes reads workspace-wide
+	// (legacy), which exposes config/subsystem files (AGENTS.md, COGMEM.md, …) the
+	// agent already receives in its prompt or should never read.
 	WorkspaceReadSubdirs []string `json:"workspace_read_subdirs"          env:"CLAW_AGENTS_DEFAULTS_WORKSPACE_READ_SUBDIRS"`
 	Models               []string `json:"models,omitempty"`
 	ImageModel           string   `json:"image_model,omitempty"           env:"CLAW_AGENTS_DEFAULTS_IMAGE_MODEL"`
