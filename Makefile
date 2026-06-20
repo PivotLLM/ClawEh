@@ -90,6 +90,19 @@ else
 	ARCH=$(UNAME_M)
 endif
 
+# Cross-compilation: override PLATFORM and/or ARCH (and optionally GOARM/GOMIPS)
+# on the command line to build for another target. PLATFORM maps to GOOS and ARCH
+# to GOARCH; both default to the detected host, so a plain `make build` is
+# unchanged. Examples:
+#   make build PLATFORM=linux   ARCH=arm64
+#   make build PLATFORM=linux   ARCH=arm    GOARM=7
+#   make build PLATFORM=windows ARCH=amd64
+#   make build PLATFORM=darwin  ARCH=arm64
+# Note: linux/mipsle needs the ELF e_flags patch — use `make build-linux-mipsle`.
+GOARM?=
+GOMIPS?=
+BUILD_ENV=GOOS=$(PLATFORM) GOARCH=$(ARCH)$(if $(GOARM), GOARM=$(GOARM))$(if $(GOMIPS), GOMIPS=$(GOMIPS))
+
 BINARY_PATH=$(BUILD_DIR)/$(BINARY_NAME)-$(PLATFORM)-$(ARCH)
 
 # Frontend / embedded SPA
@@ -114,7 +127,7 @@ all: build
 build: $(EMBED_INDEX) generate
 	@echo "Building $(BINARY_NAME) for $(PLATFORM)/$(ARCH)..."
 	@mkdir -p $(BUILD_DIR)
-	@$(GO) build $(GOFLAGS) $(LDFLAGS) -o $(BINARY_PATH) ./$(CMD_DIR)
+	@$(BUILD_ENV) $(GO) build $(GOFLAGS) $(LDFLAGS) -o $(BINARY_PATH) ./$(CMD_DIR)
 	@echo "Build complete: $(BINARY_PATH)"
 	@ln -sf $(BINARY_NAME)-$(PLATFORM)-$(ARCH) $(BUILD_DIR)/$(BINARY_NAME)
 
@@ -309,7 +322,16 @@ help:
 	@echo "  make uninstall          # Remove binaries"
 	@echo "  make uninstall-all      # Remove binaries and data directory"
 	@echo ""
+	@echo "Cross-compilation (PLATFORM=GOOS, ARCH=GOARCH; default to host):"
+	@echo "  make build PLATFORM=linux ARCH=arm64       # Linux ARM64"
+	@echo "  make build PLATFORM=linux ARCH=arm GOARM=7 # Linux ARMv7"
+	@echo "  make build PLATFORM=windows ARCH=amd64     # Windows x86-64"
+	@echo "  make build PLATFORM=darwin ARCH=arm64      # macOS Apple Silicon"
+	@echo ""
 	@echo "Environment Variables:"
+	@echo "  PLATFORM                # Target GOOS (default: host, $(PLATFORM))"
+	@echo "  ARCH                    # Target GOARCH (default: host, $(ARCH))"
+	@echo "  GOARM / GOMIPS          # Optional sub-arch (e.g. GOARM=7, GOMIPS=softfloat)"
 	@echo "  INSTALL_PREFIX          # Installation prefix (default: ~/.local)"
 	@echo "  CLAW_HOME               # Data directory (default: ~/.claw)"
 	@echo "  VERSION                 # Version string (default: git describe)"
