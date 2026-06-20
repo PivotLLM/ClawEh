@@ -2,12 +2,58 @@ package agents
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/PivotLLM/ClawEh/pkg/routing"
 )
+
+// TestRun_RoutesContentToFileWithCallbackBlock verifies the user-facing result is
+// a clearly-marked CALLBACK block that references the results file but never
+// inlines the sub-agent's output, and that the output actually lands in the file.
+func TestRun_RoutesContentToFileWithCallbackBlock(t *testing.T) {
+	ws := t.TempDir()
+	mgr := NewSubagentManager(SubagentManagerConfig{
+		Workspace:     ws,
+		Live:          NewLiveSet(),
+		CallerAgentID: "penny",
+		RunFull: func(_ context.Context, _, _, _, _ string) (string, int, error) {
+			return "SENSITIVE WORKER OUTPUT", 2, nil
+		},
+	})
+
+	res, err := mgr.Run(context.Background(), "do work", "job", "", "cli", "direct", "")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	// User-facing CALLBACK block: marked, points at the file, no raw content.
+	if !strings.Contains(res.ForUser, "CALLBACK") {
+		t.Errorf("ForUser should be a marked CALLBACK block, got %q", res.ForUser)
+	}
+	if strings.Contains(res.ForUser, "SENSITIVE WORKER OUTPUT") {
+		t.Errorf("ForUser must NOT inline sub-agent content: %q", res.ForUser)
+	}
+	if !strings.Contains(res.ForUser, "results.json") {
+		t.Errorf("ForUser should reference the results file, got %q", res.ForUser)
+	}
+	// The content is persisted to the results file for retrieval on demand.
+	var found bool
+	entries, _ := os.ReadDir(filepath.Join(ws, "tasks"))
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), "-results.json") {
+			b, _ := os.ReadFile(filepath.Join(ws, "tasks", e.Name()))
+			if strings.Contains(string(b), "SENSITIVE WORKER OUTPUT") {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Errorf("worker output should be persisted to a -results.json file under tasks/")
+	}
+}
 
 // TestRun_UsesRunFullWithSubagentSession verifies the wait-mode spawn routes
 // through the injected full-pipeline runner with an isolated sub-agent session
@@ -53,10 +99,19 @@ func TestRun_UsesRunFullWithSubagentSession(t *testing.T) {
 	if gotTask != "write chapter 4" || gotModel != "Pro" {
 		t.Errorf("task/model not passed through: %q / %q", gotTask, gotModel)
 	}
-	if res.IsError || !strings.Contains(res.ForLLM, "chapter drafted") {
-		t.Errorf("result should carry the runFull output, got: %+v", res)
+	// The synchronous result is a completion pointer, never the raw content:
+	// the worker output goes to the results file, and the LLM gets a file
+	// reference plus the untrusted-data security warning.
+	if res.IsError {
+		t.Errorf("result should not be an error, got: %+v", res)
 	}
-	if !strings.Contains(res.ForLLM, "Iterations: 3") {
-		t.Errorf("result should report the iteration count, got: %s", res.ForLLM)
+	if strings.Contains(res.ForLLM, "chapter drafted") {
+		t.Errorf("sub-agent content must NOT be inlined; it belongs in the results file: %q", res.ForLLM)
+	}
+	if !strings.Contains(res.ForLLM, "results.json") {
+		t.Errorf("result should point at the results file, got: %q", res.ForLLM)
+	}
+	if !strings.Contains(res.ForLLM, "SECURITY") {
+		t.Errorf("result should carry the untrusted-data security warning, got: %q", res.ForLLM)
 	}
 }
