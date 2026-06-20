@@ -357,7 +357,7 @@ func publishMCPAsyncToLLM(msgBus *bus.MessageBus, rec sessionRecord, toolName st
 		// No recorded channel for this session, so we cannot route the re-injected
 		// completion. Log it rather than dropping silently — a headless/pure-MCP
 		// agent that never processed a channel message will not be notified.
-		logger.InfoCF("mcpserver", "mcp.async.reinject_dropped",
+		logger.WarnCF("mcpserver", "mcp.async.reinject_dropped",
 			map[string]any{
 				"tool":        toolName,
 				"agent":       rec.agentID,
@@ -405,7 +405,7 @@ func publishMCPForUser(
 		return
 	}
 	if msgBus == nil {
-		logger.DebugCF("mcpserver", "mcp.foruser.dropped",
+		logger.WarnCF("mcpserver", "mcp.foruser.dropped",
 			map[string]any{
 				"tool":        toolName,
 				"agent":       rec.agentID,
@@ -415,7 +415,7 @@ func publishMCPForUser(
 		return
 	}
 	if rec.channel == "" || rec.chatID == "" {
-		logger.InfoCF("mcpserver", "mcp.foruser.dropped",
+		logger.WarnCF("mcpserver", "mcp.foruser.dropped",
 			map[string]any{
 				"tool":        toolName,
 				"agent":       rec.agentID,
