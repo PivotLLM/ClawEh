@@ -6,6 +6,9 @@ export interface MCPHostForm {
   listen: string
   endpointPath: string
   toolPatterns: string[]
+  // External (upstream) MCP servers claw connects out to (tools.mcp.servers),
+  // as a JSON object keyed by server name. Edited as JSON; "" means none.
+  serversJSON: string
 }
 
 export const EMPTY_MCP_FORM: MCPHostForm = {
@@ -14,6 +17,7 @@ export const EMPTY_MCP_FORM: MCPHostForm = {
   listen: "127.0.0.1:5911",
   endpointPath: "/mcp",
   toolPatterns: ["*"],
+  serversJSON: "",
 }
 
 function asRecord(value: unknown): JsonRecord {
@@ -48,7 +52,36 @@ export function buildMCPFormFromConfig(config: unknown): MCPHostForm {
     listen: asString(mcp.listen, EMPTY_MCP_FORM.listen),
     endpointPath: asString(mcp.endpoint_path, EMPTY_MCP_FORM.endpointPath),
     toolPatterns: asStringArray(mcp.tools, EMPTY_MCP_FORM.toolPatterns),
+    serversJSON: serversToJSON(config),
   }
+}
+
+// serversToJSON pretty-prints tools.mcp.servers, or "" when none are configured.
+function serversToJSON(config: unknown): string {
+  const tools = asRecord(asRecord(config).tools)
+  const servers = asRecord(asRecord(tools.mcp).servers)
+  if (Object.keys(servers).length === 0) return ""
+  return JSON.stringify(servers, null, 2)
+}
+
+// parseServers validates the servers JSON. Empty → {} (no servers). Must be a
+// JSON object keyed by server name.
+export function parseServers(json: string): {
+  value?: Record<string, unknown>
+  error?: string
+} {
+  const trimmed = json.trim()
+  if (trimmed === "") return { value: {} }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(trimmed)
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "Invalid JSON" }
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return { error: "Servers must be a JSON object keyed by server name." }
+  }
+  return { value: parsed as Record<string, unknown> }
 }
 
 // matchToolPattern mirrors pkg/config.MatchToolPattern: "*" matches all,
@@ -71,8 +104,9 @@ export function matchToolPattern(patterns: string[], name: string): boolean {
   return false
 }
 
-// MCPHost excludes the agent's outbound "message" tool unconditionally.
-export const ALWAYS_EXCLUDED_TOOLS = ["message"]
+// MCPHost no longer hard-excludes any tool; every tool obeys the allowlist
+// (msg_send included). Kept as an empty list so the preview UI can stay generic.
+export const ALWAYS_EXCLUDED_TOOLS: string[] = []
 
 export function validateListen(value: string): string | null {
   const v = value.trim()

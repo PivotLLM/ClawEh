@@ -1,6 +1,7 @@
 import { IconCheck, IconCopy } from "@tabler/icons-react"
 import { useState } from "react"
 import ReactMarkdown from "react-markdown"
+import remarkBreaks from "remark-breaks"
 import remarkGfm from "remark-gfm"
 
 import { Button } from "@/components/ui/button"
@@ -42,7 +43,12 @@ export function AssistantMessage({
 
       <div className="bg-card text-card-foreground relative overflow-hidden rounded-xl border">
         <div className="prose dark:prose-invert prose-p:my-2 prose-pre:my-2 prose-pre:rounded-lg prose-pre:border prose-pre:bg-zinc-950 prose-pre:p-3 max-w-none p-4 text-[15px] leading-relaxed">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+          {/* remark-breaks renders single newlines as <br> so plain multi-line
+              replies (e.g. /model output) keep their line breaks instead of
+              collapsing into one run-on paragraph. */}
+          <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
+            {content}
+          </ReactMarkdown>
         </div>
         <Button
           variant="ghost"

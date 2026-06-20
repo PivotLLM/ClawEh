@@ -1,0 +1,338 @@
+// ClawEh - Cognitive Memory
+// License: MIT
+//
+// Copyright (c) 2026 Tenebris Technologies Inc.
+
+package cogmem
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/PivotLLM/ClawEh/pkg/global"
+	"github.com/PivotLLM/ClawEh/pkg/tools"
+)
+
+const testSession = "chan:123"
+
+// buildHandlers maps bare tool names to their global handlers, built against a
+// temp workspace. RegisterTools recovers the workspace from deps.Host as a
+// tools.ToolDeps, so the test supplies a real one.
+func buildHandlers(t *testing.T) (map[string]global.ToolHandler, string) {
+	t.Helper()
+	ws := t.TempDir()
+	defs := GlobalProvider.RegisterTools(global.Deps{Host: tools.ToolDeps{Workspace: ws, AgentID: "alice"}})
+	m := make(map[string]global.ToolHandler, len(defs))
+	for _, d := range defs {
+		m[d.Name] = d.Handler
+	}
+	return m, ws
+}
+
+func newCall(session string, args map[string]any) *global.ToolCall {
+	if args == nil {
+		args = map[string]any{}
+	}
+	return &global.ToolCall{Ctx: context.Background(), Args: args, AgentID: "alice", Session: session}
+}
+
+func run(t *testing.T, h global.ToolHandler, call *global.ToolCall) *global.Result {
+	t.Helper()
+	res, err := h(call)
+	if err != nil {
+		t.Fatalf("handler returned go error: %v", err)
+	}
+	if res == nil {
+		t.Fatal("nil result")
+	}
+	return res
+}
+
+func TestCreateRememberGetUpdateRetire(t *testing.T) {
+	h, _ := buildHandlers(t)
+
+	// create_domain returns an id.
+	res := run(t, h["domain_create"], newCall(testSession, map[string]any{
+		"name": "Bob's project", "summary": "demo",
+	}))
+	if res.IsError {
+		t.Fatalf("create_domain error: %s", res.ForLLM)
+	}
+	domainID := extractID(t, res.ForLLM, "d")
+
+	// remember adds a hook to the domain.
+	res = run(t, h["memory_create"], newCall(testSession, map[string]any{
+		"domain_id": domainID, "type": "fact", "text": "the sky is blue",
+	}))
+	if res.IsError {
+		t.Fatalf("remember error: %s", res.ForLLM)
+	}
+	memoryID := extractID(t, res.ForLLM, "h")
+
+	// get_domain shows the hook id and text.
+	res = run(t, h["domain_get"], newCall(testSession, map[string]any{"id": domainID}))
+	if res.IsError {
+		t.Fatalf("get_domain error: %s", res.ForLLM)
+	}
+	if !strings.Contains(res.ForLLM, memoryID) || !strings.Contains(res.ForLLM, "the sky is blue") {
+		t.Fatalf("get_domain missing hook: %s", res.ForLLM)
+	}
+
+	// update_domain is a patch — no version needed; only provided fields change.
+	res = run(t, h["domain_update"], newCall(testSession, map[string]any{
+		"id": domainID, "set_summary": "updated",
+		"set_blockers": []any{"waiting on review"},
+	}))
+	if res.IsError {
+		t.Fatalf("update_domain error: %s", res.ForLLM)
+	}
+
+	// A second patch (e.g. set_sticky) also succeeds — there is no optimistic lock.
+	res = run(t, h["domain_update"], newCall(testSession, map[string]any{
+		"id": domainID, "set_sticky": true,
+	}))
+	if res.IsError {
+		t.Fatalf("second update_domain (set_sticky) error: %s", res.ForLLM)
+	}
+
+	// retire_hook removes it from active memory.
+	res = run(t, h["memory_retire"], newCall(testSession, map[string]any{
+		"id": memoryID, "reason": "no longer true",
+	}))
+	if res.IsError {
+		t.Fatalf("retire_hook error: %s", res.ForLLM)
+	}
+
+	// search no longer finds it (retired != active).
+	res = run(t, h["memory_search"], newCall(testSession, map[string]any{"query": "sky"}))
+	if res.IsError {
+		t.Fatalf("search error: %s", res.ForLLM)
+	}
+	if strings.Contains(res.ForLLM, memoryID) {
+		t.Fatalf("retired hook still found in search: %s", res.ForLLM)
+	}
+}
+
+func TestRememberWithDomainHint(t *testing.T) {
+	h, _ := buildHandlers(t)
+	res := run(t, h["memory_create"], newCall(testSession, map[string]any{
+		"domain_hint": "new project", "type": "preference", "text": "use tabs",
+	}))
+	if res.IsError {
+		t.Fatalf("remember(hint) error: %s", res.ForLLM)
+	}
+	if !strings.Contains(res.ForLLM, "Stored memory h") {
+		t.Fatalf("unexpected result: %s", res.ForLLM)
+	}
+}
+
+func TestSearchActiveVsReview(t *testing.T) {
+	h, _ := buildHandlers(t)
+	res := run(t, h["domain_create"], newCall(testSession, map[string]any{"name": "p"}))
+	domainID := extractID(t, res.ForLLM, "d")
+
+	// active hook
+	run(t, h["memory_create"], newCall(testSession, map[string]any{
+		"domain_id": domainID, "type": "fact", "text": "active widget", "status": "active",
+	}))
+	// review hook
+	run(t, h["memory_create"], newCall(testSession, map[string]any{
+		"domain_id": domainID, "type": "fact", "text": "review widget", "status": "review",
+	}))
+
+	res = run(t, h["memory_search"], newCall(testSession, map[string]any{"query": "widget"}))
+	if !strings.Contains(res.ForLLM, "active widget") {
+		t.Fatalf("search missed active hook: %s", res.ForLLM)
+	}
+	if strings.Contains(res.ForLLM, "review widget") {
+		t.Fatalf("search returned review hook: %s", res.ForLLM)
+	}
+}
+
+func TestConfirmPromotesReviewMemory(t *testing.T) {
+	h, _ := buildHandlers(t)
+	res := run(t, h["domain_create"], newCall(testSession, map[string]any{"name": "p"}))
+	domainID := extractID(t, res.ForLLM, "d")
+
+	// A review (pending) memory is not returned by active search.
+	res = run(t, h["memory_create"], newCall(testSession, map[string]any{
+		"domain_id": domainID, "type": "fact", "text": "pending widget", "status": "review",
+	}))
+	if res.IsError {
+		t.Fatalf("memory_create error: %s", res.ForLLM)
+	}
+	memoryID := extractID(t, res.ForLLM, "h")
+
+	res = run(t, h["memory_search"], newCall(testSession, map[string]any{"query": "widget"}))
+	if strings.Contains(res.ForLLM, memoryID) {
+		t.Fatalf("review hook found in active search before confirm: %s", res.ForLLM)
+	}
+
+	// memory_confirm promotes it to active.
+	res = run(t, h["memory_confirm"], newCall(testSession, map[string]any{"id": memoryID}))
+	if res.IsError {
+		t.Fatalf("memory_confirm error: %s", res.ForLLM)
+	}
+
+	// now active search finds it.
+	res = run(t, h["memory_search"], newCall(testSession, map[string]any{"query": "widget"}))
+	if !strings.Contains(res.ForLLM, memoryID) {
+		t.Fatalf("confirmed hook not found in active search: %s", res.ForLLM)
+	}
+}
+
+func TestConfirmRequiresID(t *testing.T) {
+	h, _ := buildHandlers(t)
+	res := run(t, h["memory_confirm"], newCall(testSession, map[string]any{}))
+	if !res.IsError {
+		t.Fatalf("expected error for missing id, got: %s", res.ForLLM)
+	}
+}
+
+func TestForgetRetiresMatches(t *testing.T) {
+	h, _ := buildHandlers(t)
+	res := run(t, h["domain_create"], newCall(testSession, map[string]any{"name": "p"}))
+	domainID := extractID(t, res.ForLLM, "d")
+	for _, txt := range []string{"forget me one", "forget me two", "keep this"} {
+		run(t, h["memory_create"], newCall(testSession, map[string]any{
+			"domain_id": domainID, "type": "fact", "text": txt,
+		}))
+	}
+	res = run(t, h["memory_forget"], newCall(testSession, map[string]any{"query": "forget me"}))
+	if res.IsError {
+		t.Fatalf("forget error: %s", res.ForLLM)
+	}
+	if !strings.Contains(res.ForLLM, "Retired 2 memories") {
+		t.Fatalf("expected 2 retired, got: %s", res.ForLLM)
+	}
+	// "keep this" should still be searchable.
+	res = run(t, h["memory_search"], newCall(testSession, map[string]any{"query": "keep this"}))
+	if !strings.Contains(res.ForLLM, "keep this") {
+		t.Fatalf("forget removed the wrong hook: %s", res.ForLLM)
+	}
+}
+
+func TestArchiveAndListDomains(t *testing.T) {
+	h, _ := buildHandlers(t)
+	res := run(t, h["domain_create"], newCall(testSession, map[string]any{"name": "Bob proj"}))
+	domainID := extractID(t, res.ForLLM, "d")
+
+	res = run(t, h["domain_list"], newCall(testSession, map[string]any{"status": "active"}))
+	if !strings.Contains(res.ForLLM, domainID) {
+		t.Fatalf("active list missing domain: %s", res.ForLLM)
+	}
+
+	if r := run(t, h["domain_archive"], newCall(testSession, map[string]any{"id": domainID})); r.IsError {
+		t.Fatalf("archive error: %s", r.ForLLM)
+	}
+	res = run(t, h["domain_list"], newCall(testSession, map[string]any{"status": "active"}))
+	if strings.Contains(res.ForLLM, domainID) {
+		t.Fatalf("archived domain still active: %s", res.ForLLM)
+	}
+}
+
+func TestDomainMigrate(t *testing.T) {
+	h, _ := buildHandlers(t)
+	fromID := extractID(t, run(t, h["domain_create"], newCall(testSession, map[string]any{"name": "From"})).ForLLM, "d")
+	toID := extractID(t, run(t, h["domain_create"], newCall(testSession, map[string]any{"name": "To"})).ForLLM, "d")
+	run(t, h["memory_create"], newCall(testSession, map[string]any{"domain_id": fromID, "type": "fact", "text": "migrate me"}))
+
+	res := run(t, h["domain_migrate"], newCall(testSession, map[string]any{"from": fromID, "to": toID}))
+	if res.IsError {
+		t.Fatalf("domain_migrate error: %s", res.ForLLM)
+	}
+	// The source domain is gone; its memory now lives under the target.
+	if r := run(t, h["domain_get"], newCall(testSession, map[string]any{"id": fromID})); !r.IsError {
+		t.Fatalf("source domain survived migrate: %s", r.ForLLM)
+	}
+	r := run(t, h["domain_get"], newCall(testSession, map[string]any{"id": toID}))
+	if r.IsError || !strings.Contains(r.ForLLM, "migrate me") {
+		t.Fatalf("target domain missing migrated memory: %s", r.ForLLM)
+	}
+}
+
+func TestStatusAndConsolidate(t *testing.T) {
+	h, _ := buildHandlers(t)
+	res := run(t, h["status"], newCall(testSession, nil))
+	if res.IsError {
+		t.Fatalf("status error: %s", res.ForLLM)
+	}
+	if !strings.Contains(res.ForLLM, "Pending (review) memories: 0") ||
+		!strings.Contains(res.ForLLM, "Last consolidation run: none") {
+		t.Fatalf("unexpected status: %s", res.ForLLM)
+	}
+
+	res = run(t, h["consolidate"], newCall(testSession, nil))
+	if res.IsError || !strings.Contains(res.ForLLM, "worker not yet running") {
+		t.Fatalf("unexpected consolidate result: %s", res.ForLLM)
+	}
+}
+
+func TestExportMemory(t *testing.T) {
+	h, ws := buildHandlers(t)
+	res := run(t, h["domain_create"], newCall(testSession, map[string]any{
+		"name":             "BioTech",
+		"triggers":         "google_gmail",
+		"keyword_triggers": []any{"biotech report"},
+	}))
+	domainID := extractID(t, res.ForLLM, "d")
+	run(t, h["memory_create"], newCall(testSession, map[string]any{
+		"domain_id": domainID, "type": "fact", "text": "the report targets Q3",
+	}))
+
+	res = run(t, h["export"], newCall(testSession, nil))
+	if res.IsError || !strings.Contains(res.ForLLM, "MEMORY_EXPORT.md") {
+		t.Fatalf("unexpected export result: %s", res.ForLLM)
+	}
+	data, err := os.ReadFile(filepath.Join(ws, "files", "MEMORY_EXPORT.md"))
+	if err != nil {
+		t.Fatalf("read export: %v", err)
+	}
+	body := string(data)
+	for _, want := range []string{"# Cognitive Memory Export", "## Topics", "BioTech", "the report targets Q3",
+		"Tool triggers", "google_gmail", "Keyword triggers", "biotech report"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("export missing %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestEmptySessionErrors(t *testing.T) {
+	h, _ := buildHandlers(t)
+	for _, name := range []string{"domain_get", "memory_search", "memory_create", "status", "domain_create"} {
+		res := run(t, h[name], newCall("", map[string]any{"id": "dXXXXX", "query": "x", "type": "project", "text": "t", "name": "n"}))
+		if !res.IsError {
+			t.Fatalf("%s: expected error for empty session, got: %s", name, res.ForLLM)
+		}
+	}
+}
+
+// extractID pulls the first whitespace-delimited token beginning with prefix
+// followed by Crockford chars (e.g. "d3K9P") from text.
+func extractID(t *testing.T, text, prefix string) string {
+	t.Helper()
+	for _, tok := range strings.FieldsFunc(text, func(r rune) bool {
+		return r == ' ' || r == '\n' || r == '\t' || r == '(' || r == ')' || r == ',' || r == '.'
+	}) {
+		if len(tok) == 6 && strings.HasPrefix(tok, prefix) && isCrockfordTail(tok[1:]) {
+			return tok
+		}
+	}
+	t.Fatalf("no %s-id found in: %s", prefix, text)
+	return ""
+}
+
+// isCrockfordTail reports whether s is all uppercase Crockford base32 digits
+// (the id tail), distinguishing a real id from an English word like "domain".
+func isCrockfordTail(s string) bool {
+	const alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+	for _, c := range s {
+		if !strings.ContainsRune(alphabet, c) {
+			return false
+		}
+	}
+	return true
+}

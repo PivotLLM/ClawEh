@@ -128,9 +128,8 @@ func WithEndpointPath(path string) Option {
 
 // WithAllowlist sets the tool-name patterns to expose. Supports "*" (all),
 // prefix globs like "read_*", and exact names — see config.MatchToolPattern.
-// An empty or nil allowlist means no tools are exposed (fail-closed). The
-// "message" tool is never exposed regardless of the allowlist — it belongs
-// to the agent's outbound-publish path, not MCP clients.
+// An empty or nil allowlist means no tools are exposed (fail-closed). Every
+// tool, including msg_send, obeys the allowlist; nothing is hard-excluded.
 func WithAllowlist(names []string) Option {
 	return func(m *MCPServer) {
 		if len(names) == 0 {
@@ -295,25 +294,4 @@ func (m *MCPServer) Shutdown(ctx context.Context) error {
 	}
 
 	return nil
-}
-
-// WriteWorkspaceConfigs writes per-agent .claude.json files mapping each
-// agent's workspace to the (single) MCP endpoint URL. With token-based
-// isolation the URL is the same for every agent — routing happens in the
-// call body via `agent_token`. baseURL is the server's base URL (e.g.
-// "http://127.0.0.1:5911"). workspaces maps agentID → workspace path.
-func (m *MCPServer) WriteWorkspaceConfigs(baseURL string, workspaces map[string]string) {
-	url := baseURL + m.endpointPath
-	for agentID, workspace := range workspaces {
-		if workspace == "" {
-			continue
-		}
-		if err := WriteAgentWorkspaceConfig(workspace, url); err != nil {
-			logger.WarnCF("mcpserver", "Failed to write workspace MCP config",
-				map[string]any{"agent": agentID, "workspace": workspace, "error": err.Error()})
-		} else {
-			logger.DebugCF("mcpserver", "Wrote workspace MCP config",
-				map[string]any{"agent": agentID, "path": workspace + "/.claude.json"})
-		}
-	}
 }

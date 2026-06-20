@@ -77,6 +77,7 @@ type ToolDefinition struct {
 
     SessionScoped bool          // needs ToolCall.Session populated
     Async         bool          // may use ToolCall.Notify / return Result.Async
+    PrimaryOnly   bool          // primary agents only; excluded from sub-agents
 
     DefaultAllow *bool          // nil/false ⇒ DENY by default; Allow(true) ⇒ on
     Category     string         // GUI grouping (defaults to namespace)
@@ -136,6 +137,36 @@ hand-written schema.
 `DefaultAllow: global.Allow(true)`, or an operator explicitly enables it via
 config (`tools.tool_overrides["<ns>_<name>"] = true`). So new tools are off by
 default until you opt in or the operator turns them on.
+
+### Primary-only (sub-agent restriction)
+
+`PrimaryOnly: true` marks a tool as available only to a **primary** (top-level)
+agent — never to a spawned **sub-agent**. When a sub-agent's tool registry is
+built, primary-only tools are excluded, and execution rejects them as
+defense-in-depth (regardless of the per-agent allowlist). Set it for capabilities
+a transient worker must not have:
+
+- **`agent_spawn`** — prevents a sub-agent from spawning further sub-agents
+  (no recursion).
+- **`cron_schedule`** — a worker should not create/manage scheduled jobs.
+- **cognitive-memory WRITE tools** (`cogmem_memory_create`, `cogmem_domain_update`,
+  `cogmem_domain_create`, `cogmem_domain_archive`, `cogmem_domain_migrate`,
+  `cogmem_memory_retire`, `cogmem_memory_confirm`, `cogmem_memory_forget`,
+  `cogmem_consolidate`) — sub-agents get **read-only** memory: they share the
+  primary's memory for background but cannot mutate it. The read tools
+  (`cogmem_domain_get`, `cogmem_memory_search`, `cogmem_domain_list`,
+  `cogmem_explain`, `cogmem_export`, `cogmem_status`) stay available.
+
+How to set it, by layer:
+
+- **Global-layer tools** (a `ToolProvider`): set `PrimaryOnly: true` on the
+  `ToolDefinition`. The namespaced wrapper propagates it automatically.
+- **Directly-registered tools** (implement `tools.Tool` and registered via
+  `AgentLoop.RegisterTool`): implement the optional interface
+  `IsPrimaryOnly() bool { return true }`.
+
+Detection is uniform: `tools.IsPrimaryOnly(t)` returns true for either form
+(tools that don't opt in are available to sub-agents).
 
 ---
 
@@ -297,6 +328,7 @@ host supplies the concrete implementation.
 | Registry | `pkg/tools/providers.go` (`RegisterProvider` / `GetProviders`) |
 | **Aggregator (wire new modules here)** | `internal/gateway/tool_providers.go` |
 | Per-module entry points | `pkg/tools/<ns>/global_provider.go` (`var GlobalProvider`) |
+| Sub-agent restriction | `ToolDefinition.PrimaryOnly` / `tools.IsPrimaryOnly` (`pkg/tools/base.go`) |
 | Host deps available to handlers | `pkg/tools` `ToolDeps` (via `deps.Host`) |
 | MCP exposure | `pkg/mcpserver` (`WithAgentRegistries`) |
 | WebUI catalogue | `web/backend/api/tools.go` (`Describe`) |

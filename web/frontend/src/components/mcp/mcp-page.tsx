@@ -10,10 +10,12 @@ import {
   EMPTY_MCP_FORM,
   type MCPHostForm,
   buildMCPFormFromConfig,
+  parseServers,
   validateEndpointPath,
   validateListen,
 } from "@/components/mcp/form-model"
 import {
+  ClientServersSection,
   EnableSection,
   ToolsSection,
   TransportSection,
@@ -76,6 +78,17 @@ export function MCPPage() {
         .map((p) => p.trim())
         .filter((p) => p !== "")
 
+      const parsedServers = parseServers(form.serversJSON)
+      if (parsedServers.error) throw new Error(parsedServers.error)
+      const newServers = parsedServers.value ?? {}
+      const baseServers = parseServers(baseline.serversJSON).value ?? {}
+      // Deep-merge semantics: removed server names are set to null so the
+      // backend deletes them; present names overwrite.
+      const serversPatch: Record<string, unknown> = { ...newServers }
+      for (const name of Object.keys(baseServers)) {
+        if (!(name in newServers)) serversPatch[name] = null
+      }
+
       await patchAppConfig({
         mcp_host: {
           enabled: form.enabled,
@@ -84,6 +97,7 @@ export function MCPPage() {
           endpoint_path: form.endpointPath.trim(),
           tools: cleanedPatterns,
         },
+        tools: { mcp: { servers: serversPatch } },
       })
 
       const nextForm: MCPHostForm = { ...form, toolPatterns: cleanedPatterns }
@@ -101,6 +115,7 @@ export function MCPPage() {
   }
 
   const registeredTools = (toolsData?.tools ?? []).map((t) => t.name)
+  const serversError = parseServers(form.serversJSON).error ?? null
 
   return (
     <div className="flex h-full flex-col">
@@ -134,6 +149,12 @@ export function MCPPage() {
                 toolsLoading={toolsLoading}
               />
 
+              <ClientServersSection
+                value={form.serversJSON}
+                error={serversError}
+                onChange={(next) => updateField("serversJSON", next)}
+              />
+
               <div className="flex justify-end gap-2">
                 <Button
                   variant="outline"
@@ -142,7 +163,10 @@ export function MCPPage() {
                 >
                   {t("common.reset")}
                 </Button>
-                <Button onClick={handleSave} disabled={!isDirty || saving}>
+                <Button
+                  onClick={handleSave}
+                  disabled={!isDirty || saving || serversError !== null}
+                >
                   <IconDeviceFloppy className="size-4" />
                   {saving ? t("common.saving") : t("common.save")}
                 </Button>

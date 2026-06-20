@@ -17,11 +17,18 @@ type CopyFileTool struct {
 }
 
 func NewCopyFileTool(workspace string, restrict bool, allowPaths ...[]*regexp.Regexp) *CopyFileTool {
+	return NewCopyFileToolScoped(workspace, restrict, "", allowPaths...)
+}
+
+// NewCopyFileToolScoped constructs a CopyFileTool whose writes are confined to
+// <workspace>/<writeSubdir> (reads stay workspace-wide). An empty writeSubdir
+// yields the legacy whole-workspace behaviour.
+func NewCopyFileToolScoped(workspace string, restrict bool, writeSubdir string, allowPaths ...[]*regexp.Regexp) *CopyFileTool {
 	var patterns []*regexp.Regexp
 	if len(allowPaths) > 0 {
 		patterns = allowPaths[0]
 	}
-	return &CopyFileTool{sysFs: buildFs(workspace, restrict, patterns)}
+	return &CopyFileTool{sysFs: buildWriteFs(workspace, restrict, writeSubdir, patterns)}
 }
 
 func (t *CopyFileTool) Name() string {

@@ -24,6 +24,10 @@ type ContextManager interface {
 	// Writes to session store and archive. Increments msgCount.
 	// Does NOT trigger compression (deferred to PreDispatchCheck).
 	AddToolResult(ctx context.Context, msg providers.Message) error
+	// RecordToolUse records the names of tools the LLM just invoked, feeding the
+	// recent-tool ring used for tool-trigger cognitive-memory routing. No-op when
+	// cognitive memory is not in use.
+	RecordToolUse(names ...string)
 	// PreDispatchCheck runs the compression trigger check and, if compression
 	// fires and succeeds, rebuilds the message slice via Build() and returns it.
 	// If no compression is needed, returns current unchanged.

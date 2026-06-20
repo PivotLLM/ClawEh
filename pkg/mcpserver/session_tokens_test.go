@@ -219,6 +219,26 @@ func TestIssue_RotatesNormalToken(t *testing.T) {
 	}
 }
 
+// TestIssue_PreservesSourceAcrossReissue guards the cron delivery target: the
+// session's inbound source (channel/chatID) set via SetSource must survive token
+// rotation, so an MCP-routed tool still delivers to the right channel.
+func TestIssue_PreservesSourceAcrossReissue(t *testing.T) {
+	s := newSessionTokenStore()
+	s.Issue("agent1", "sess3", "/tmp/archive")
+	s.SetSource("sess3", "telegram-Alice", "chat-42")
+
+	// Rotate the token (e.g. on a context-manager rebuild).
+	second := s.Issue("agent1", "sess3", "/tmp/archive")
+
+	rec, ok := s.Resolve(second)
+	if !ok {
+		t.Fatal("rotated token must resolve")
+	}
+	if rec.channel != "telegram-Alice" || rec.chatID != "chat-42" {
+		t.Fatalf("source lost on reissue: channel=%q chatID=%q", rec.channel, rec.chatID)
+	}
+}
+
 // --- dispatchToolCall session token tests ---
 
 // sessionToolMock is a mock tool that captures the context passed to Execute

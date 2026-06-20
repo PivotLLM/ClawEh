@@ -101,12 +101,15 @@ func TestDispatch_InvalidTokenEmitsWarn(t *testing.T) {
 	realTok := st.Issue("alice", "test:alice:main", "/tmp/archive/alice")
 
 	cases := []struct {
-		name string
-		tok  string
+		name       string
+		tok        string
+		wantMsg    string
+		wantReason string
+		wantTokLen bool // invalid (non-empty) tokens log token_len; the no-token case does not
 	}{
-		{"empty", ""},
-		{"malformed", "not-a-token"},
-		{"unknown", sessionTokenPrefix + strings.Repeat("a", 64)},
+		{"empty", "", "MCP tool call presented no session_token", "no_token", false},
+		{"malformed", "not-a-token", "MCP session token verification failed", "invalid_token", true},
+		{"unknown", sessionTokenPrefix + strings.Repeat("a", 64), "MCP session token verification failed", "invalid_token", true},
 	}
 
 	for _, c := range cases {
@@ -121,16 +124,17 @@ func TestDispatch_InvalidTokenEmitsWarn(t *testing.T) {
 			if got := strings.Count(logs, `"level":"warn"`); got != 1 {
 				t.Errorf("expected 1 WARN entry, got %d in:\n%s", got, logs)
 			}
-			if !strings.Contains(logs, `"message":"MCP token rejected"`) {
-				t.Errorf("expected invalid-token WARN, got:\n%s", logs)
+			if !strings.Contains(logs, `"message":"`+c.wantMsg+`"`) {
+				t.Errorf("expected WARN message %q, got:\n%s", c.wantMsg, logs)
 			}
-			if !strings.Contains(logs, `"reason":"invalid_token"`) {
-				t.Errorf("expected reason=invalid_token, got:\n%s", logs)
+			if !strings.Contains(logs, `"reason":"`+c.wantReason+`"`) {
+				t.Errorf("expected reason=%s, got:\n%s", c.wantReason, logs)
 			}
-			// token_len must reflect what was supplied.
-			marker := `"token_len":` + strconv.Itoa(len(c.tok))
-			if !strings.Contains(logs, marker) {
-				t.Errorf("expected %s in log, got:\n%s", marker, logs)
+			if c.wantTokLen {
+				marker := `"token_len":` + strconv.Itoa(len(c.tok))
+				if !strings.Contains(logs, marker) {
+					t.Errorf("expected %s in log, got:\n%s", marker, logs)
+				}
 			}
 			// Ensure no real token leaks (defence-in-depth across cases).
 			if strings.Contains(logs, realTok) {

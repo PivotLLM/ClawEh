@@ -19,6 +19,7 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
 
 type UpdateMCPField = <K extends keyof MCPHostForm>(
   key: K,
@@ -217,11 +218,13 @@ export function ToolsSection({
               total: filteredCandidates.length,
             })}
           </div>
-          <div className="text-muted-foreground mb-2 text-xs">
-            {t("pages.mcp.tools_always_excluded", {
-              tools: ALWAYS_EXCLUDED_TOOLS.join(", "),
-            })}
-          </div>
+          {ALWAYS_EXCLUDED_TOOLS.length > 0 && (
+            <div className="text-muted-foreground mb-2 text-xs">
+              {t("pages.mcp.tools_always_excluded", {
+                tools: ALWAYS_EXCLUDED_TOOLS.join(", "),
+              })}
+            </div>
+          )}
 
           {toolsLoading ? (
             <div className="text-muted-foreground text-xs">
@@ -252,6 +255,38 @@ export function ToolsSection({
             </div>
           )}
         </div>
+      </div>
+    </SectionCard>
+  )
+}
+
+// ClientServersSection edits the external (upstream) MCP servers claw connects
+// out to (tools.mcp.servers). Edited as JSON, keyed by server name. These tools
+// are exposed to direct API providers; CLI providers configure MCP separately.
+export function ClientServersSection({
+  value,
+  error,
+  onChange,
+}: {
+  value: string
+  error: string | null
+  onChange: (next: string) => void
+}) {
+  const { t } = useTranslation()
+  return (
+    <SectionCard
+      title={t("pages.mcp.sections.client")}
+      description={t("pages.mcp.client_hint")}
+    >
+      <div className="space-y-2">
+        <Textarea
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={t("pages.mcp.client_placeholder")}
+          className="min-h-[180px] font-mono text-xs"
+          spellCheck={false}
+        />
+        {error && <div className="text-destructive text-xs">{error}</div>}
       </div>
     </SectionCard>
   )

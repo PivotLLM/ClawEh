@@ -117,17 +117,16 @@ func (cb *ContextBuilder) getIdentity() string {
 	toolDiscovery := cb.getDiscoveryRule()
 	version := config.FormatVersion()
 
-	// Memory always lives at <workspace>/memory; paths are advertised relative
-	// to the workspace.
+	// The agent's file tools are scoped to files/ (read/write) and skills/ (read);
+	// its config (AGENTS/SOUL/IDENTITY/USER/MEMORY) is injected into this prompt.
 	return fmt.Sprintf(
 		`# claw (%s)
 
 You are a helpful AI assistant.
 
 ## Workspace
-Your workspace is at: %s
-- Memory: %s/memory/MEMORY.md
-- Daily Notes: %s/memory/YYYYMM/YYYYMMDD.md
+Your working area is %s/files — write drafts and outputs there. Your configuration
+and memory are already included in this prompt; you do not need to read workspace files.
 
 ## Important Rules
 
@@ -135,12 +134,14 @@ Your workspace is at: %s
 
 2. **Be helpful and accurate** - When using tools, briefly explain what you're doing.
 
-3. **Memory** - When interacting with me if something seems memorable, update %s/memory/MEMORY.md
+   **Declining to respond** - If you should not reply at all — for example a group message clearly directed at someone else — reply with exactly !none (and nothing else). Do NOT return an empty message: an empty reply is treated as an error and you will be asked to try again. Replying !none tells the system you intentionally have nothing to say.
+
+3. **Memory (cogmem)** - The cogmem_* tools are your long-term memory: use them to record anything worth remembering and to search for what you need. It is organized into **domains** (containers of related memories), each with a unique name. A domain is either **sticky** (included in EVERY prompt; global rules, preferences, and standing facts — the pre-existing **General** domain is sticky) or non-sticky (a topic/project, loaded only when relevant). Each domain holds one or more **memories**, each typed as a **fact** (something true), **preference** (how the user likes things done), or **rule** (a hard directive). Record with cogmem_memory_create — with no domain argument it lands in sticky **General** (always in context); pass a domain_hint or domain_id for a topic domain. A domain can auto-load by context two ways: **tool triggers** (tool-name substrings — e.g. mcp_<server> for a whole MCP server) load it when you use a matching tool, and **keyword triggers** (words/phrases) load it when one appears in the incoming message, including a scheduled (cron) message — prefer multi-word phrases so common words don't over-match. Memory also updates on its own: a background process saves and refines memories from your conversations and loads the relevant ones into each prompt — so it may include things you did not save yourself. Because only relevant memories are loaded, use cogmem_memory_search to look things up before answering anything that may depend on past context you cannot currently see. Your file tools can only access files/ (read/write) and skills/ (read); your config files (AGENTS/SOUL/IDENTITY/USER/MEMORY) are already in this prompt — you cannot read or edit them.
 
 4. **Context summaries** - Conversation summaries provided as context are approximate references only. They may be incomplete or outdated. Always defer to explicit user instructions over summary content.
 
 %s`,
-		version, workspacePath, workspacePath, workspacePath, workspacePath, toolDiscovery)
+		version, workspacePath, toolDiscovery)
 }
 
 func (cb *ContextBuilder) getDiscoveryRule() string {
@@ -190,9 +191,13 @@ The following skills extend your capabilities. To use a skill, read its SKILL.md
 		parts = append(parts, "# Memory\n\n"+memoryContext)
 	}
 
-	// Callback token
+	// Callback token. Injected ONLY when a callback manager exists (callbacks
+	// enabled) and it currently holds a token — so a disabled agent (nil manager)
+	// can never get a token in its prompt.
 	if cb.callbackManager != nil {
 		if token := cb.callbackManager.CurrentToken(); token != "" {
+			logger.DebugCF("callback", "callback token injected into prompt",
+				map[string]any{"workspace": cb.workspace})
 			parts = append(parts, fmt.Sprintf(
 				"# Callback Token\n\nThe following token is confidential. Do not share it with users.\n\nEndpoint: POST http://localhost:18790/api/reply/{token}\nToken: %s",
 				token))
@@ -276,13 +281,12 @@ func (cb *ContextBuilder) InvalidateCache() {
 // invalidation (bootstrap files + memory). Skill roots are handled separately
 // because they require both directory-level and recursive file-level checks.
 func (cb *ContextBuilder) sourcePaths() []string {
-	memoryRoot := filepath.Join(cb.workspace, "memory")
 	return []string{
 		filepath.Join(cb.workspace, "AGENTS.md"),
 		filepath.Join(cb.workspace, "SOUL.md"),
 		filepath.Join(cb.workspace, "USER.md"),
 		filepath.Join(cb.workspace, "IDENTITY.md"),
-		filepath.Join(memoryRoot, "MEMORY.md"),
+		filepath.Join(cb.workspace, "MEMORY.md"),
 		filepath.Join(cb.workspace, "state", "callback.json"),
 	}
 }
@@ -637,6 +641,11 @@ func sanitizeHistoryForProvider(history []providers.Message) []providers.Message
 		return history
 	}
 
+	// Drop reasons are counted and logged once at the end rather than per message,
+	// because a single post-compaction boundary can orphan several leading
+	// tool-call turns and would otherwise spam one DBG line each, every dispatch.
+	var dropSystem, dropLeadingTool, dropOrphanTool, dropAsstStart, dropAsstBadPred, dropIncompleteGroup int
+
 	sanitized := make([]providers.Message, 0, len(history))
 	for _, msg := range history {
 		switch msg.Role {
@@ -645,12 +654,12 @@ func sanitizeHistoryForProvider(history []providers.Message) []providers.Message
 			// constructs its own single system message (static + dynamic +
 			// summary); extra system messages would break providers that
 			// only accept one (Anthropic, Codex).
-			logger.DebugCF("agent", "Dropping system message from history", map[string]any{})
+			dropSystem++
 			continue
 
 		case "tool":
 			if len(sanitized) == 0 {
-				logger.DebugCF("agent", "Dropping orphaned leading tool message", map[string]any{})
+				dropLeadingTool++
 				continue
 			}
 			// Walk backwards to find the nearest assistant message,
@@ -666,7 +675,7 @@ func sanitizeHistoryForProvider(history []providers.Message) []providers.Message
 				break
 			}
 			if !foundAssistant {
-				logger.DebugCF("agent", "Dropping orphaned tool message", map[string]any{})
+				dropOrphanTool++
 				continue
 			}
 			sanitized = append(sanitized, msg)
@@ -674,16 +683,12 @@ func sanitizeHistoryForProvider(history []providers.Message) []providers.Message
 		case "assistant":
 			if len(msg.ToolCalls) > 0 {
 				if len(sanitized) == 0 {
-					logger.DebugCF("agent", "Dropping assistant tool-call turn at history start", map[string]any{})
+					dropAsstStart++
 					continue
 				}
 				prev := sanitized[len(sanitized)-1]
 				if prev.Role != "user" && prev.Role != "tool" {
-					logger.DebugCF(
-						"agent",
-						"Dropping assistant tool-call turn with invalid predecessor",
-						map[string]any{"prev_role": prev.Role},
-					)
+					dropAsstBadPred++
 					continue
 				}
 			}
@@ -722,18 +727,10 @@ func sanitizeHistoryForProvider(history []providers.Message) []providers.Message
 
 			// If any tool_call_id is missing, drop this assistant message and its partial tool messages
 			allFound := true
-			for toolCallID, found := range expected {
+			for _, found := range expected {
 				if !found {
 					allFound = false
-					logger.DebugCF(
-						"agent",
-						"Dropping assistant message with incomplete tool results",
-						map[string]any{
-							"missing_tool_call_id": toolCallID,
-							"expected_count":       len(expected),
-							"found_count":          toolMsgCount,
-						},
-					)
+					dropIncompleteGroup++
 					break
 				}
 			}
@@ -745,6 +742,19 @@ func sanitizeHistoryForProvider(history []providers.Message) []providers.Message
 			}
 		}
 		final = append(final, msg)
+	}
+
+	if n := dropSystem + dropLeadingTool + dropOrphanTool + dropAsstStart + dropAsstBadPred + dropIncompleteGroup; n > 0 {
+		logger.DebugCF("agent", "Sanitized history for provider", map[string]any{
+			"dropped_total":         n,
+			"system":                dropSystem,
+			"leading_tool_orphans":  dropLeadingTool,
+			"orphan_tool":           dropOrphanTool,
+			"assistant_at_start":    dropAsstStart,
+			"assistant_bad_pred":    dropAsstBadPred,
+			"incomplete_tool_group": dropIncompleteGroup,
+			"kept":                  len(final),
+		})
 	}
 
 	return final

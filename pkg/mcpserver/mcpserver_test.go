@@ -160,8 +160,10 @@ func TestAddTools_WildcardAllowlistExposesAll(t *testing.T) {
 	if _, ok := listed["web_fetch"]; !ok {
 		t.Error("expected 'web_fetch' exposed by wildcard")
 	}
-	if _, ok := listed["message"]; ok {
-		t.Error("'message' must never be exposed even with wildcard")
+	// No tool is hard-excluded anymore: a wildcard exposes everything, including
+	// the outbound message tool.
+	if _, ok := listed["message"]; !ok {
+		t.Error("expected 'message' exposed by wildcard (no hard exclusion)")
 	}
 }
 
@@ -202,17 +204,19 @@ func TestAddTools_EmptyAllowlistRegistersNothing(t *testing.T) {
 	}
 }
 
-func TestAddTools_MessageToolNeverRegistered(t *testing.T) {
-	msg := &mockTool{name: "message", desc: "agent-internal", params: map[string]any{"type": "object"}, result: tools.SilentResult("ok")}
+func TestAddTools_MsgSendExposedWhenAllowlisted(t *testing.T) {
+	// The outbound message tool is no longer hard-excluded; it obeys the
+	// allowlist like any other tool.
+	msg := &mockTool{name: "msg_send", desc: "outbound", params: map[string]any{"type": "object"}, result: tools.SilentResult("ok")}
 	r := newRegistryWith(msg)
 
-	opts := append(minimalOpts(r), WithAllowlist([]string{"message"}))
+	opts := append(minimalOpts(r), WithAllowlist([]string{"msg_send"}))
 	srv, err := New(opts...)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if _, ok := srv.srv.ListTools()["message"]; ok {
-		t.Fatal("'message' tool must never be exposed via MCP, even when allowlisted")
+	if _, ok := srv.srv.ListTools()["msg_send"]; !ok {
+		t.Fatal("'msg_send' must be exposed when allowlisted (no hard exclusion)")
 	}
 }
 

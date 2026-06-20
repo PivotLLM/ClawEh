@@ -45,10 +45,27 @@ func DefaultConfig() *Config {
 			BaseDir: agentsBaseDir,
 			Defaults: AgentDefaults{
 				RestrictToWorkspace:  true,
+				WorkspaceWriteSubdir: "files",
+				WorkspaceReadSubdirs: []string{"files", "skills"},
+				Memory: MemoryConfig{
+					Prompt: MemoryPromptConfig{
+						TopKDomains: 3, MaxChars: 4000, MinConfidence: 0.65,
+						IncludeDebugTrace: false, PendingSurface: "ask", PendingMax: 8,
+					},
+					Consolidation: MemoryConsolidationConfig{
+						EveryNMessages: 50, IdleMinutes: 60, Nightly: true, NightlyAt: "03:20",
+						ProposeDomains: true, AutoPromote: false, DebugDump: false,
+						MaxBatchMessages: 200, MaxInputTokens: 96000, PerMessageChars: 12000,
+						MaxOutputTokens: 8000, MaxRuntimeSecs: 120,
+					},
+					Retention: MemoryRetentionConfig{ProtectUnconsolidated: true},
+					Export:    MemoryExportConfig{Enabled: true},
+				},
 				Models:               []string{"Claude CLI", "Codex CLI"},
 				MaxTokens:            32768,
 				Temperature:          nil, // nil means use provider default
 				MaxToolIterations:    50,
+				RequestTimeout:       300, // global default (s); per-model overrides (CLIs set longer)
 				ContextWindow:        128000,
 				ArchiveDays:          365,
 				SummaryRetentionDays: 3650,
@@ -317,7 +334,7 @@ func DefaultConfig() *Config {
 			},
 			ReadFile: ReadFileToolConfig{
 				Enabled:         true,
-				MaxReadFileSize: 64 * 1024, // 64KB
+				MaxReadFileSize: 32 * 1024, // 32KB (~8K tokens) per read
 			},
 			Subagent: ToolConfig{
 				Enabled: true,
@@ -331,22 +348,24 @@ func DefaultConfig() *Config {
 			EchoTranscription: false,
 		},
 		Logging: LoggingConfig{
-			File:         global.DefaultLogFile,
-			Console:      global.DefaultLogConsole,
-			Level:        global.DefaultLogLevel,
-			JSON:         global.DefaultLogJSON,
-			DumpRefusals: true,
-			DumpAll:      false,
+			File:          global.DefaultLogFile,
+			Console:       global.DefaultLogConsole,
+			Level:         global.DefaultLogLevel,
+			JSON:          global.DefaultLogJSON,
+			RetentionDays: global.DefaultLogRetentionDays,
+			DumpRefusals:  true,
+			DumpAll:       false,
 		},
 		MCPHost: MCPHostConfig{
 			Enabled:      false,
 			AutoEnable:   true,
 			Listen:       "127.0.0.1:5911",
 			EndpointPath: "/mcp",
-			// Tools is intentionally left unset: when empty, the MCP host exposes
-			// the DefaultEnabled tool set (same source as the per-agent default
-			// allowlist), so marking a tool DefaultEnabled exposes it everywhere.
-			// Set an explicit list only to expose a narrower subset.
+			// Tools is intentionally left unset: when empty, the MCP host
+			// catalogue mirrors the internal API path — it advertises every tool
+			// any agent is allowed, gated PER AGENT at execution time via the
+			// session_token (full internal/external parity). Set an explicit list
+			// only to narrow the externally-advertised catalogue.
 			Tools: nil,
 		},
 		ConfigReloadIntervalSeconds: global.DefaultConfigReloadIntervalSeconds,

@@ -127,12 +127,12 @@ type AsyncCallback func(ctx context.Context, result *ToolResult)
 //
 // Example:
 //
-//	func (t *SpawnTool) ExecuteAsync(ctx context.Context, args map[string]any, cb AsyncCallback) *ToolResult {
+//	func (t *exampleTool) ExecuteAsync(ctx context.Context, args map[string]any, cb AsyncCallback) *ToolResult {
 //	    go func() {
-//	        result := t.runSubagent(ctx, args)
+//	        result := t.runWork(ctx, args)
 //	        if cb != nil { cb(ctx, result) }
 //	    }()
-//	    return AsyncResult("Subagent spawned, will report back")
+//	    return AsyncResult("Work started, will report back")
 //	}
 type AsyncExecutor interface {
 	Tool
@@ -152,6 +152,24 @@ type AsyncExecutor interface {
 // a hardcoded list, so new session-scoped tools are handled automatically.
 type SessionScoped interface {
 	IsSessionScoped() bool
+}
+
+// PrimaryOnlyTool is an optional interface for tools restricted to primary
+// (top-level) agents. A tool reporting IsPrimaryOnly() == true is excluded when
+// a sub-agent's tool registry is built and rejected if a sub-agent attempts it.
+// Global-layer tools set ToolDefinition.PrimaryOnly (propagated by the wrapper);
+// directly-registered tools implement this method.
+type PrimaryOnlyTool interface {
+	IsPrimaryOnly() bool
+}
+
+// IsPrimaryOnly reports whether a tool is restricted to primary agents. Tools
+// that do not implement PrimaryOnlyTool are available to sub-agents (false).
+func IsPrimaryOnly(t Tool) bool {
+	if p, ok := t.(PrimaryOnlyTool); ok {
+		return p.IsPrimaryOnly()
+	}
+	return false
 }
 
 func ToolToSchema(tool Tool) map[string]any {

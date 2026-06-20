@@ -26,6 +26,10 @@ type cmEntry struct {
 	store        session.SessionStore // used on eviction to drop per-session in-memory caches
 	lastAccessed time.Time
 	refcount     atomic.Int32
+	// cleanup, when non-nil, releases per-entry resources on eviction/drain
+	// (e.g. the cached cognitive-memory store handle). Nil for non-cognitive
+	// agents.
+	cleanup func()
 }
 
 // forgetSessionState drops per-session in-memory caches in the session store
@@ -54,6 +58,39 @@ func (al *AgentLoop) evictContextManagers() {
 		case <-ticker.C:
 			al.runEvictionPass(al.evictTTL)
 		}
+	}
+}
+
+// dropContextManager force-evicts a single session's context manager (closing
+// its DB handles and revoking its token), regardless of idle time, as long as it
+// is not in use. Used to tear down an ephemeral sub-agent session right after its
+// run so its snapshot DB can be deleted. No-op if absent or still referenced (the
+// idle sweep will reclaim it later).
+func (al *AgentLoop) dropContextManager(agent *AgentInstance, sessionKey string) {
+	key := agent.ID + ":" + sessionKey
+	v, ok := al.contextManagers.Load(key)
+	if !ok {
+		return
+	}
+	entry, ok := v.(*cmEntry)
+	if !ok || entry.refcount.Load() > 0 {
+		return
+	}
+	al.contextManagers.Delete(key)
+
+	al.mu.RLock()
+	sti := al.sessionTokenIssuer
+	al.mu.RUnlock()
+	if sti != nil && entry.sessionKey != "" {
+		sti.Revoke(entry.sessionKey)
+	}
+	if err := entry.cm.Close(context.Background()); err != nil {
+		logger.WarnCF("agent", "subagent: context manager close failed",
+			map[string]any{"key": key, "error": err.Error()})
+	}
+	forgetSessionState(entry.store, entry.sessionKey)
+	if entry.cleanup != nil {
+		entry.cleanup()
 	}
 }
 
@@ -95,6 +132,9 @@ func (al *AgentLoop) runEvictionPass(ttl time.Duration) {
 			})
 		}
 		forgetSessionState(entry.store, entry.sessionKey)
+		if entry.cleanup != nil {
+			entry.cleanup()
+		}
 		logger.InfoCF("agent", "evicted idle context manager", map[string]any{
 			"key":      key,
 			"idle_min": now.Sub(entry.lastAccessed).Minutes(),
@@ -126,6 +166,9 @@ func (al *AgentLoop) drainContextManagers() {
 			})
 		}
 		forgetSessionState(entry.store, entry.sessionKey)
+		if entry.cleanup != nil {
+			entry.cleanup()
+		}
 		return true
 	})
 }

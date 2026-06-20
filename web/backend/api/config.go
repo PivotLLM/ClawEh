@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/PivotLLM/ClawEh/internal/backup"
 	"github.com/PivotLLM/ClawEh/pkg/config"
 )
 
@@ -16,6 +18,26 @@ func (h *Handler) registerConfigRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/config", h.handleGetConfig)
 	mux.HandleFunc("PUT /api/config", h.handleUpdateConfig)
 	mux.HandleFunc("PATCH /api/config", h.handlePatchConfig)
+	mux.HandleFunc("POST /api/backup", h.handleRunBackup)
+}
+
+// handleRunBackup runs an on-demand backup of config.json and the cron jobs file
+// into <data dir>/backup/YYYYMMDD/, regardless of the nightly toggle.
+//
+//	POST /api/backup
+func (h *Handler) handleRunBackup(w http.ResponseWriter, r *http.Request) {
+	cfg, err := config.LoadConfig(h.configPath)
+	if err != nil {
+		http.Error(w, "failed to load config", http.StatusInternalServerError)
+		return
+	}
+	day, copied, err := backup.RunForConfig(cfg, h.configPath, time.Now())
+	if err != nil {
+		http.Error(w, "backup failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"folder": day, "files": copied})
 }
 
 // handleGetConfig returns the complete system configuration.
@@ -172,6 +194,11 @@ func validateConfig(cfg *config.Config) []string {
 
 	// Validate models entries
 	if err := cfg.ValidateModels(); err != nil {
+		errs = append(errs, err.Error())
+	}
+
+	// Validate agent bindings (default-channel constraints)
+	if err := cfg.ValidateBindings(); err != nil {
 		errs = append(errs, err.Error())
 	}
 

@@ -11,7 +11,6 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/logger"
 	"github.com/PivotLLM/ClawEh/pkg/providers"
 	"github.com/PivotLLM/ClawEh/pkg/tools"
-	"github.com/PivotLLM/ClawEh/pkg/utils"
 )
 
 // safeBufLoop mirrors the safeBuf helper in pkg/tools tests: a sync-safe
@@ -107,7 +106,7 @@ func runWriteFileToolCallOnce(t *testing.T, secret string) string {
 	cm, releaseCM := al.getContextManager(agentInstance, opts.SessionKey)
 	defer releaseCM()
 
-	if _, _, _, _, err := al.runLLMIteration(context.Background(), agentInstance, messages, opts, cm); err != nil {
+	if _, _, _, _, _, err := al.runLLMIteration(context.Background(), agentInstance, messages, opts, cm); err != nil {
 		t.Fatalf("runLLMIteration: %v", err)
 	}
 
@@ -135,77 +134,34 @@ func findToolDispatchLines(t *testing.T, out string) (infLine, dbgLine string) {
 	return infLine, dbgLine
 }
 
-// TestRunLLMIteration_WriteFileToolCall_RedactsArgsAtInfo verifies that the
-// agent loop's per-tool-call INF log line at loop.go:~1970 carries the
-// redacted summary (content_bytes) rather than the raw content payload.
-//
-// Mutation evidence: revert tools.RedactArgs(tc.Name, tc.Arguments) back to
-// utils.Truncate(string(json.Marshal(tc.Arguments)), 200) at loop.go and
-// this test fails on the 'raw secret leaked' assertion.
-func TestRunLLMIteration_WriteFileToolCall_RedactsArgsAtInfo(t *testing.T) {
+// TestRunLLMIteration_DispatchLogOmitsArgs verifies the agent loop's per-tool-call
+// dispatch log names the tool and carries iteration context, but NO arguments at
+// all — tool args routinely contain memory/file content that must never reach the
+// logs — and that there is no longer a paired raw-args DBG line carrying the
+// secret.
+func TestRunLLMIteration_DispatchLogOmitsArgs(t *testing.T) {
 	secret := strings.Repeat("S", 10240)
 	out := runWriteFileToolCallOnce(t, secret)
 
-	infLine, _ := findToolDispatchLines(t, out)
+	infLine, dbgLine := findToolDispatchLines(t, out)
 	if infLine == "" {
 		t.Fatalf("expected INF 'Tool call dispatched' line in output: %s", out)
 	}
-	if strings.Contains(infLine, secret) {
-		t.Fatalf("raw write_file content leaked into INF log line")
+	if !strings.Contains(infLine, "file_write") {
+		t.Errorf("dispatch line should name the tool: %s", infLine)
 	}
-	if !strings.Contains(infLine, "content_bytes") || !strings.Contains(infLine, "10240") {
-		t.Errorf("INF line missing redacted content_bytes summary: %s", infLine)
-	}
-	// The iteration field is the load-bearing piece of distinct info this
-	// site carries over pkg/tools/registry.go's INF (no iteration there).
+	// iteration context distinguishes this site from the registry's execution log.
 	if !strings.Contains(infLine, `"iteration"`) {
-		t.Errorf("INF line missing iteration context (would make it redundant with registry INF): %s", infLine)
+		t.Errorf("dispatch line missing iteration context: %s", infLine)
 	}
-}
-
-// TestRunLLMIteration_WriteFileToolCall_DBGCarriesRawArgs verifies the
-// paired DBG line at loop.go carries the full raw arguments so operators
-// can still recover the payload with --log-level=debug.
-//
-// Mutation evidence: delete the DebugCF block at loop.go and this test
-// fails with 'expected DBG raw-args companion line'.
-func TestRunLLMIteration_WriteFileToolCall_DBGCarriesRawArgs(t *testing.T) {
-	secret := strings.Repeat("D", 4096)
-	out := runWriteFileToolCallOnce(t, secret)
-
-	_, dbgLine := findToolDispatchLines(t, out)
-	if dbgLine == "" {
-		t.Fatalf("expected DBG 'Tool call dispatched (raw args)' line in output: %s", out)
+	if strings.Contains(infLine, `"args"`) || strings.Contains(infLine, secret) {
+		t.Fatalf("tool args leaked into dispatch INF log line: %s", infLine)
 	}
-	if !strings.Contains(dbgLine, secret) {
-		t.Errorf("DBG line should carry the raw args (full secret), got: %s", dbgLine)
+	if dbgLine != "" {
+		t.Fatalf("raw-args DBG line should no longer be emitted: %s", dbgLine)
 	}
-}
-
-// TestRunLLMIteration_WriteFileToolCall_NoTruncateCannotUncap verifies that
-// flipping the global --no-truncate flag (utils.SetDisableTruncation) has
-// no effect on the redacted INF summary. The redaction path bypasses
-// utils.Truncate entirely, so write_file content_bytes redaction is
-// immune to the operator-facing knob that normally relaxes log truncation.
-//
-// Mutation evidence: if anyone replaces tools.RedactArgs with a
-// utils.Truncate(...)-based preview at loop.go, this test fails because
-// the raw secret reappears in the INF line under SetDisableTruncation(true).
-func TestRunLLMIteration_WriteFileToolCall_NoTruncateCannotUncap(t *testing.T) {
-	utils.SetDisableTruncation(true)
-	defer utils.SetDisableTruncation(false)
-
-	secret := strings.Repeat("N", 8192)
-	out := runWriteFileToolCallOnce(t, secret)
-
-	infLine, _ := findToolDispatchLines(t, out)
-	if infLine == "" {
-		t.Fatalf("expected INF 'Tool call dispatched' line in output: %s", out)
-	}
-	if strings.Contains(infLine, secret) {
-		t.Fatalf("--no-truncate uncapped the INF redaction: raw secret leaked into log line")
-	}
-	if !strings.Contains(infLine, "content_bytes") || !strings.Contains(infLine, "8192") {
-		t.Errorf("INF line missing redacted content_bytes summary under --no-truncate: %s", infLine)
+	// The secret must not appear anywhere in the captured logs.
+	if strings.Contains(out, secret) {
+		t.Fatalf("raw tool content leaked into logs")
 	}
 }

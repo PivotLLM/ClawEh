@@ -377,12 +377,12 @@ PY
         "id": "main",
         "name": "main",
         "default": true,
-        "tools": ["*"]
+        "tools": ["*", "cogmem_*"]
       },
       {
         "id": "alice",
         "name": "alice",
-        "tools": ["*"]
+        "tools": ["*", "cogmem_*"]
       }
     ]
   },
@@ -412,9 +412,26 @@ PY
       "skill_install": true,
       "cron_schedule": true,
       "agent_spawn": true,
+      "agent_status": true,
+      "agent_list": true,
       "session_clear": true,
       "hw_i2c": true,
-      "hw_spi": true
+      "hw_spi": true,
+      "cogmem_domain_get": true,
+      "cogmem_memory_search": true,
+      "cogmem_domain_list": true,
+      "cogmem_explain": true,
+      "cogmem_memory_create": true,
+      "cogmem_domain_update": true,
+      "cogmem_memory_retire": true,
+      "cogmem_memory_confirm": true,
+      "cogmem_domain_create": true,
+      "cogmem_domain_archive": true,
+      "cogmem_domain_migrate": true,
+      "cogmem_memory_forget": true,
+      "cogmem_consolidate": true,
+      "cogmem_export": true,
+      "cogmem_status": true
     }
   },
   "mcp_host": {
@@ -427,9 +444,11 @@ PY
       "file_edit",
       "file_append",
       "file_list",
+      "file_search",
       "file_copy",
       "web_fetch",
       "web_search",
+      "msg_send",
       "msg_send_file",
       "session_messages",
       "session_search",
@@ -443,8 +462,29 @@ PY
       "skill_install",
       "cron_schedule",
       "agent_spawn",
+      "agent_status",
+      "agent_list",
       "hw_i2c",
-      "hw_spi"
+      "hw_spi",
+      "cogmem_domain_get",
+      "cogmem_memory_search",
+      "cogmem_domain_list",
+      "cogmem_explain",
+      "cogmem_memory_create",
+      "cogmem_domain_update",
+      "cogmem_memory_retire",
+      "cogmem_memory_confirm",
+      "cogmem_domain_create",
+      "cogmem_domain_archive",
+      "cogmem_domain_migrate",
+      "cogmem_memory_forget",
+      "cogmem_consolidate",
+      "cogmem_export",
+      "cogmem_status",
+      "common_list",
+      "common_get",
+      "common_put",
+      "common_delete"
     ]
   }
 }
@@ -480,7 +520,7 @@ EOF
                     echo "${BOLD}--- Workspace population (initial startup) ---${NC}"
                     echo ""
                     WORKSPACE_PASS=true
-                    WORKSPACE_TEMPLATES="AGENTS.md SOUL.md USER.md IDENTITY.md memory/MEMORY.md"
+                    WORKSPACE_TEMPLATES="AGENTS.md SOUL.md USER.md IDENTITY.md MEMORY.md"
                     # The default agent (id=main) uses agents/default; named agents use agents/{id}
                     for agent_ws in "main:$INTEG_HOME/agents/default" "alice:$INTEG_HOME/agents/alice"; do
                         agent="${agent_ws%%:*}"

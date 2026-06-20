@@ -57,6 +57,13 @@ type Manager struct {
 	refusedModels map[string]bool
 	refusedMu     sync.Mutex
 
+	// cooldown applies the shared, config-driven cooldown policy to summarization
+	// models: a model that fails with a cooldownable HTTP status (billing/auth/
+	// rate-limit/server/etc.) is skipped until its cooldown expires, so a
+	// credits-exhausted compression model is not hammered on every compaction.
+	// Same policy as the main fallback chain; in-memory, per-manager.
+	cooldown *providers.CooldownTracker
+
 	// compression outcome tracking
 	lastCompressedAt    time.Time
 	lastCompressionGain float64
@@ -67,6 +74,11 @@ type Manager struct {
 	archive   *memory.ArchiveStore
 	archiveMu sync.Mutex
 
+	// protectUnconsolidated, when true, is propagated to the archive on open so
+	// retention pruning never removes messages not yet consolidated. Set via
+	// SetProtectUnconsolidated by the cognitive-memory wiring; default false.
+	protectUnconsolidated bool
+
 	// sessionToken is the SST-prefixed per-session MCP token injected into the
 	// system prompt by Build() so the LLM can call session-scoped tools. Set
 	// via SetSessionToken; empty means no injection.
@@ -74,7 +86,29 @@ type Manager struct {
 
 	// compressHook is called by compress() when non-nil. Only for testing.
 	compressHook func(safetyNet bool)
+
+	// archiveAppendHook, when non-nil, is invoked at the end of archiveAppend
+	// with the seq and message just archived. The agent loop sets a closure
+	// (cognitive agents only) that notifies the cogmem consolidation manager.
+	// Nil for every non-cognitive agent → identical behavior to before.
+	archiveAppendHook func(seq int64, msg providers.Message)
+
+	// memoryBlocks, when non-nil, returns the cognitive-memory STABLE and ROUTED
+	// prompt blocks for the session. Set by the agent loop for cognitive agents
+	// only; Build injects the blocks into the system message when non-empty.
+	// recentTools (newest-first, capped) feeds tool-trigger routing; routeText is
+	// the latest user message for lexical routing.
+	memoryBlocks func(sessionKey string, recentTools []string, routeText string) (stable, routed string)
+
+	// recentTools is a small newest-first ring of recently-invoked tool names,
+	// fed by RecordToolUse and read at Build time so cognitive memory can auto-load
+	// domains whose triggers match a tool the agent just used. Guarded by recentMu.
+	recentMu    sync.Mutex
+	recentTools []string
 }
+
+// maxRecentTools bounds the recent-tool ring used for tool-trigger memory routing.
+const maxRecentTools = 8
 
 // New constructs a ContextManager. Options are applied over package defaults.
 // Validation order: (a) zero percent → default; (b) safety ≤ normal → WARN;
@@ -121,6 +155,17 @@ func New(
 		clients = []LLMClient{llm}
 	}
 
+	// Prefer a shared tracker (unified with the main fallback chain); otherwise
+	// build a private one from the policy.
+	cooldown := cfg.cooldownTracker
+	if cooldown == nil {
+		policy := providers.DefaultCooldownPolicy()
+		if cfg.cooldownPolicy != nil {
+			policy = *cfg.cooldownPolicy
+		}
+		cooldown = providers.NewCooldownTrackerWithPolicy(policy)
+	}
+
 	m := &Manager{
 		sessionKey:      sessionKey,
 		store:           store,
@@ -128,6 +173,7 @@ func New(
 		llm:             llm,
 		cfg:             cfg,
 		compressClients: clients,
+		cooldown:        cooldown,
 	}
 
 	// 9c. Load durable compaction state if the store supports it.
@@ -358,6 +404,9 @@ func (m *Manager) getOrOpenArchive() *memory.ArchiveStore {
 			"error":       err.Error(),
 		})
 	}
+	if store != nil {
+		store.SetProtectUnconsolidated(m.protectUnconsolidated)
+	}
 	m.archive = store
 	// Apply retention once per manager lifecycle, on the path that actually opens
 	// a fresh archive (not on subsequent cached returns), so long-lived growth is
@@ -453,6 +502,11 @@ func (m *Manager) archiveAppend(seq int64, msg providers.Message) {
 			"seq":         seq,
 			"error":       err.Error(),
 		})
+	}
+	// Notify the cognitive-memory consolidation manager (cognitive agents only;
+	// nil for everyone else). Best-effort and non-blocking by contract.
+	if m.archiveAppendHook != nil {
+		m.archiveAppendHook(seq, msg)
 	}
 }
 
@@ -566,7 +620,9 @@ func (m *Manager) compress(ctx context.Context, safetyNet bool) error {
 	m.recordCompactionOutcome(err)
 	// Deliver the report for the automatic path. The manual /compact path returns
 	// the report to the caller instead and leaves reportCallback unset here.
-	if m.cfg.reportCallback != nil && m.lastReport != nil {
+	// Skip the "nothing to compress" non-event — auto compaction firing with
+	// nothing to do is noise (and produced the bogus "0 messages (0 B)" notice).
+	if m.cfg.reportCallback != nil && m.lastReport != nil && m.lastReport.Outcome != "nothing" {
 		m.cfg.reportCallback(m.channel, m.chatID, m.lastReport.String())
 	}
 	return err
@@ -663,6 +719,70 @@ func (m *Manager) SetSessionToken(token string) {
 	m.sessionToken = token
 }
 
+// SetArchiveAppendHook installs a callback invoked at the end of every
+// archiveAppend with the seq and message just written. Used by the agent loop
+// (cognitive agents only) to notify the cogmem consolidation manager. Passing
+// nil disables it.
+func (m *Manager) SetArchiveAppendHook(fn func(seq int64, msg providers.Message)) {
+	m.archiveAppendHook = fn
+}
+
+// SetProtectUnconsolidated enables the archive retention guard for this
+// session. When true, the archive (once opened) refuses to prune messages that
+// have not yet been consolidated. Must be called before the archive is first
+// opened (i.e. during wiring) to take effect. Default false.
+func (m *Manager) SetProtectUnconsolidated(v bool) {
+	m.protectUnconsolidated = v
+}
+
+// SetMemoryBlocks installs a callback that returns the cognitive-memory STABLE
+// and ROUTED prompt blocks for the session. Build injects them into the system
+// message when either is non-empty. The callback receives the newest-first
+// recent-tool ring (tool-trigger routing) and the latest user message (lexical
+// routing). Passing nil disables injection.
+func (m *Manager) SetMemoryBlocks(fn func(sessionKey string, recentTools []string, routeText string) (stable, routed string)) {
+	m.memoryBlocks = fn
+}
+
+// RecordToolUse records the names of tools the LLM just invoked into the recent
+// ring (newest-first, deduped, capped at maxRecentTools). Read at Build time so
+// cognitive memory can auto-load domains whose triggers match a recent tool.
+func (m *Manager) RecordToolUse(names ...string) {
+	if len(names) == 0 {
+		return
+	}
+	m.recentMu.Lock()
+	defer m.recentMu.Unlock()
+	for _, n := range names {
+		if n == "" {
+			continue
+		}
+		// Move-to-front: drop any existing entry so the ring holds distinct names.
+		out := m.recentTools[:0]
+		for _, e := range m.recentTools {
+			if e != n {
+				out = append(out, e)
+			}
+		}
+		m.recentTools = append([]string{n}, out...)
+	}
+	if len(m.recentTools) > maxRecentTools {
+		m.recentTools = m.recentTools[:maxRecentTools]
+	}
+}
+
+// recentToolsSnapshot returns a copy of the recent-tool ring (newest-first).
+func (m *Manager) recentToolsSnapshot() []string {
+	m.recentMu.Lock()
+	defer m.recentMu.Unlock()
+	if len(m.recentTools) == 0 {
+		return nil
+	}
+	out := make([]string, len(m.recentTools))
+	copy(out, m.recentTools)
+	return out
+}
+
 func (m *Manager) Build(_ context.Context) ([]providers.Message, error) {
 	if m.builder == nil {
 		return []providers.Message{}, nil
@@ -701,7 +821,44 @@ func (m *Manager) Build(_ context.Context) ([]providers.Message, error) {
 		})
 	}
 
+	// Inject cognitive-memory blocks (cognitive agents only; nil otherwise).
+	// The STABLE block is cacheable (cache_control: ephemeral) and goes after the
+	// static/dynamic prompt; the ROUTED block is per-turn-varying and trails
+	// un-cached so it never invalidates the cached prefix. Both are mirrored into
+	// msgs[0].Content for adapters that ignore SystemParts, matching the
+	// session-token injection above.
+	if m.memoryBlocks != nil && len(msgs) > 0 && msgs[0].Role == "system" {
+		stable, routed := m.memoryBlocks(m.sessionKey, m.recentToolsSnapshot(), latestUserText(history))
+		if stable != "" {
+			msgs[0].Content += "\n\n---\n\n" + stable
+			msgs[0].SystemParts = append(msgs[0].SystemParts, providers.ContentBlock{
+				Type:         "text",
+				Text:         stable,
+				CacheControl: &providers.CacheControl{Type: "ephemeral"},
+			})
+		}
+		if routed != "" {
+			msgs[0].Content += "\n\n---\n\n" + routed
+			msgs[0].SystemParts = append(msgs[0].SystemParts, providers.ContentBlock{
+				Type: "text",
+				Text: routed,
+			})
+		}
+	}
+
 	return msgs, nil
+}
+
+// latestUserText returns the content of the most recent user-role message in
+// history (the human's intent for this turn), used for lexical memory routing.
+// Returns "" when none — e.g. the turn ends on a tool result.
+func latestUserText(history []providers.Message) string {
+	for i := len(history) - 1; i >= 0; i-- {
+		if history[i].Role == "user" {
+			return history[i].Content
+		}
+	}
+	return ""
 }
 
 // Compact triggers a normal LLM-based compression pass, identical to what

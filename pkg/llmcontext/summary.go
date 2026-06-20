@@ -17,10 +17,10 @@ const summaryVersion = 2
 // Summary is the structured session summary stored in meta.json and rendered
 // into the system prompt. Stored as JSON; rendered as Markdown for injection.
 type Summary struct {
-	Version             int          `json:"version"`
-	State               SummaryState `json:"state"`
-	KeyMoments          []KeyMoment  `json:"key_moments,omitempty"`
-	MessageIndex        []IndexEntry `json:"message_index,omitempty"`
+	Version      int          `json:"version"`
+	State        SummaryState `json:"state"`
+	KeyMoments   []KeyMoment  `json:"key_moments,omitempty"`
+	MessageIndex []IndexEntry `json:"message_index,omitempty"`
 	// CarryForward holds self-directed reminders surfaced at compaction: info
 	// that should be persisted to the agent's AGENT.md/memory files, outstanding
 	// action items, or unresolved issues that would otherwise be lost when older
@@ -28,16 +28,16 @@ type Summary struct {
 	CarryForward []SummaryItem `json:"carry_forward,omitempty"`
 	// Notes is a freeform catch-all for information the agent's compression
 	// profile (COMPRESSION.md) asks to preserve that does not fit another field.
-	Notes []string `json:"notes,omitempty"`
-	CoveredSeqStart     int64        `json:"covered_seq_start"`
-	CoveredSeqEnd       int64        `json:"covered_seq_end"`
-	CoveredRanges       []SeqRange   `json:"covered_ranges,omitempty"`
-	LastSummarizedSeq   int64        `json:"last_summarized_seq,omitempty"`
-	LastSummarizedRange SeqRange     `json:"last_summarized_range,omitempty"`
-	CoveredSeqStartAt   time.Time    `json:"covered_seq_start_at,omitempty"`
-	CoveredSeqEndAt     time.Time    `json:"covered_seq_end_at,omitempty"`
-	GeneratedAt         time.Time    `json:"generated_at"`
-	Model               string       `json:"model,omitempty"`
+	Notes               []string   `json:"notes,omitempty"`
+	CoveredSeqStart     int64      `json:"covered_seq_start"`
+	CoveredSeqEnd       int64      `json:"covered_seq_end"`
+	CoveredRanges       []SeqRange `json:"covered_ranges,omitempty"`
+	LastSummarizedSeq   int64      `json:"last_summarized_seq,omitempty"`
+	LastSummarizedRange SeqRange   `json:"last_summarized_range,omitempty"`
+	CoveredSeqStartAt   time.Time  `json:"covered_seq_start_at,omitempty"`
+	CoveredSeqEndAt     time.Time  `json:"covered_seq_end_at,omitempty"`
+	GeneratedAt         time.Time  `json:"generated_at"`
+	Model               string     `json:"model,omitempty"`
 	// Profile is a short fingerprint (sha256 hex[:8]) of the agent compression
 	// profile (COMPRESSION.md) in effect when this summary was generated, or ""
 	// when no profile was applied. Stamped into the rendered summary so agents
@@ -520,12 +520,14 @@ const promptStandard = `You are an AI assistant performing context summarization
 Purpose: this summary COMPLEMENTS the agent's always-present system prompt (its identity, standing rules, user preferences, and durable project state, all loaded from workspace files on every turn). Do NOT re-derive standing identity or rules the system prompt already provides. Capture what would otherwise be LOST if the conversation were cleared right now: the transient, in-flight state — active work and branches, dispatched/pending tasks, the last user instruction, open action items, and recent decisions.
 
 Instructions:
-- Update the existing summary with the new messages. Do not replace it wholesale.
+- Update the existing summary with the new messages — do not discard its substance or active goals. But the existing summary is fully EDITABLE, not append-only: if it has grown bloated (verbatim prose or dialogue in exact fields, stale or redundant items, an over-long message_index, near-duplicate constraints), actively PRUNE and rewrite it down to the minimal set that preserves actionable, in-flight state. Shedding accumulated cruft from the existing summary is as important as capturing the new messages — a leaner summary is better as long as nothing actionable is lost.
 - Every state item and key moment MUST cite archive message IDs in refs. Refs must point to the SPECIFIC message(s) that establish the item — a single seq, or the tightest range possible. Never cite a broad span of the whole conversation (e.g. avoid [#1-#551]).
 - Goals/Progress/Pending are the priority — keep them rich and current: active goals, concrete progress toward them, and the immediate next action in flight ("what was I about to do?"). Retire completed/superseded goals only when the new messages support that.
 - Constraints: include ONLY conversation-specific rules or decisions that are NOT already in the system prompt or agent files. Omit standing rules the agent always has loaded. ONE rule per constraint — never combine multiple facts into a single item; split them into separate constraints. Cite the specific message where each was established, not a broad range. Preserve wording verbatim unless the user explicitly changed it.
 - User Instructions: ALWAYS capture explicit instructions and directives the user has given that govern current or future work — record them verbatim in the exact field of the relevant pending, constraints, or key_moments item. Never drop, soften, or paraphrase away an instruction the user stated.
-- Key Moments: curated high-importance events only. Use exact field for instructions, decisions, config values.
+- Key Moments: curated high-importance events only.
+- The exact field is for SHORT literal values only — verbatim instructions, names, numbers, or config (cap roughly 200 characters). NEVER copy prose, passages, dialogue, drafts, or long content into exact or any other field; summarize it briefly and cite the establishing seq range in refs instead. The full text is in the archive and can be retrieved by seq.
+- Consolidate and bound every list: update items in place rather than appending near-duplicates, merge overlapping items, and retire completed progress and superseded constraints/goals. Keep each list to the smallest set that preserves actionable, in-flight state — do not let it grow without bound across cycles.
 - Message Index: collapse consecutive identical entries to a range. Only include messages in the archive window (seq %d to %d).
 - Carry Forward: after deciding what to summarize, give your future self a heads-up. Review whether anything should be written into the agent's AGENT.md or memory files (new durable instructions, decisions, or preferences worth keeping), and surface any outstanding action items or unresolved issues that would otherwise be forgotten once the older messages are dropped. Add each as a carry_forward item, citing the establishing message in refs. Omit the field entirely when there is genuinely nothing to carry forward.
 - Respond with valid JSON only. No markdown fences, no prose.`
@@ -562,8 +564,10 @@ Rules:
 - Constraints: include ONLY conversation-specific rules not already in the system prompt; omit standing rules the agent always has loaded. One rule per constraint — do not combine multiple facts.
 - User Instructions: ALWAYS retain explicit user instructions and directives verbatim in the exact field — preserving them is top priority, even under tight budget.
 - Key Moments: include only decisions and facts required to continue in-progress work; omit anything already captured in state or easily derivable from context. No hard cap — include what is needed, nothing more.
+- The exact field is for SHORT literal values only (cap roughly 200 characters) — never prose, passages, dialogue, or drafts. To reference long content, cite its seq range in refs and describe it in a few words; do not quote it.
+- Consolidate: merge duplicate/overlapping items, update in place rather than appending, and retire completed progress and superseded constraints. Keep every list minimal.
 - Message Index: collapse aggressively into broad topic or project ranges (archive window: seq %d to %d); one entry per project/thread area rather than per message.
-- Update the existing summary rather than replacing it — preserve active goals.
+- Update the existing summary rather than replacing it — preserve active goals — but PRUNE it: it is editable, not append-only. If it carries bloat (verbatim prose in exact fields, stale or redundant items, an over-long message_index), actively cut and rewrite it down. Under tight budget, shedding accumulated cruft is the priority.
 - Carry Forward: flag anything that must be persisted to AGENT.md/memory or actioned before older context is lost; omit the field if none.
 - Respond with valid JSON only. No markdown fences, no prose.`
 

@@ -2,6 +2,7 @@ package logger
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -38,7 +39,33 @@ var (
 	logFile           *os.File
 	once              sync.Once
 	mu                sync.RWMutex
+
+	// error.log is a high-signal companion to claw.log: it receives only events
+	// at errorLogLevel and above, so it can be scanned quickly for problems.
+	errorLogger   zerolog.Logger
+	errorFile     *os.File
+	errorLogLevel = WARN
+
+	// Tracked so RollLogFile can reopen fresh files with the same path/format.
+	logFilePath  string
+	errorLogPath string
+	logJSON      bool
 )
+
+// errorLogName is the high-signal problem log written beside claw.log.
+const errorLogName = "error.log"
+
+// osExit is indirected so tests can assert the FATAL path writes to every sink
+// before the process exits. Production code always uses os.Exit.
+var osExit = os.Exit
+
+// SetErrorLogLevel sets the minimum level (this level and above) that is also
+// written to error.log.
+func SetErrorLogLevel(level LogLevel) {
+	mu.Lock()
+	defer mu.Unlock()
+	errorLogLevel = level
+}
 
 func init() {
 	once.Do(func() {
@@ -124,7 +151,12 @@ func GetLogMessageContent() bool {
 func EnableFileLogging(filePath string, jsonFormat bool) error {
 	mu.Lock()
 	defer mu.Unlock()
+	return enableFileLoggingLocked(filePath, jsonFormat)
+}
 
+// enableFileLoggingLocked opens (or reopens) claw.log and its companion
+// error.log. Callers must hold mu.
+func enableFileLoggingLocked(filePath string, jsonFormat bool) error {
 	if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
 		return fmt.Errorf("failed to create log directory: %w", err)
 	}
@@ -133,25 +165,129 @@ func EnableFileLogging(filePath string, jsonFormat bool) error {
 	if err != nil {
 		return fmt.Errorf("failed to open log file: %w", err)
 	}
-
-	// Close old file if exists
 	if logFile != nil {
 		logFile.Close()
 	}
-
 	logFile = newFile
-	if jsonFormat {
-		fileLogger = zerolog.New(logFile).With().Timestamp().Caller().Logger()
-	} else {
-		fileWriter := zerolog.ConsoleWriter{
-			Out:              logFile,
-			TimeFormat:       "2006-01-02 15:04:05",
-			NoColor:          true,
-			FormatFieldValue: formatFieldValue,
-		}
-		fileLogger = zerolog.New(fileWriter).With().Timestamp().Logger()
+	logFilePath = filePath
+	logJSON = jsonFormat
+	fileLogger = buildFileLogger(logFile, jsonFormat)
+
+	// error.log lives beside claw.log and captures errorLogLevel and above.
+	errorPath := filepath.Join(filepath.Dir(filePath), errorLogName)
+	ef, err := os.OpenFile(errorPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return fmt.Errorf("failed to open error log file: %w", err)
 	}
+	if errorFile != nil {
+		errorFile.Close()
+	}
+	errorFile = ef
+	errorLogPath = errorPath
+	errorLogger = buildFileLogger(errorFile, jsonFormat)
 	return nil
+}
+
+func buildFileLogger(w io.Writer, jsonFormat bool) zerolog.Logger {
+	if jsonFormat {
+		return zerolog.New(w).With().Timestamp().Caller().Logger()
+	}
+	fileWriter := zerolog.ConsoleWriter{
+		Out:              w,
+		TimeFormat:       "2006-01-02 15:04:05",
+		NoColor:          true,
+		FormatFieldValue: formatFieldValue,
+	}
+	return zerolog.New(fileWriter).With().Timestamp().Logger()
+}
+
+// RollLogFile archives the active log files (claw.log and error.log) into
+// date-stamped copies named <YYYYMMDD>-<base>, using each file's last-modified
+// date, then reopens fresh active files with the same format. Empty files are
+// left in place. It is a no-op when file logging is disabled.
+func RollLogFile() error {
+	mu.Lock()
+	defer mu.Unlock()
+
+	if logFile == nil && errorFile == nil {
+		return nil
+	}
+
+	paths := make([]string, 0, 2)
+	if logFilePath != "" {
+		paths = append(paths, logFilePath)
+	}
+	if errorLogPath != "" {
+		paths = append(paths, errorLogPath)
+	}
+
+	// Close handles so the files can be renamed, then archive each by its mtime.
+	if logFile != nil {
+		logFile.Close()
+		logFile = nil
+		fileLogger = zerolog.Logger{}
+	}
+	if errorFile != nil {
+		errorFile.Close()
+		errorFile = nil
+		errorLogger = zerolog.Logger{}
+	}
+
+	var firstErr error
+	for _, p := range paths {
+		if err := archiveLogByMtime(p); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+
+	// Reopen fresh active files (this reopens both claw.log and error.log).
+	if logFilePath != "" {
+		if err := enableFileLoggingLocked(logFilePath, logJSON); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+// archiveLogByMtime renames path to <dir>/<YYYYMMDD>-<base>, where the date is
+// path's last-modified date. Missing or empty files are skipped. If the dated
+// target already exists (e.g. a second roll on the same day), path's contents
+// are appended to it instead.
+func archiveLogByMtime(path string) error {
+	fi, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if fi.Size() == 0 {
+		return nil
+	}
+	dir := filepath.Dir(path)
+	dated := filepath.Join(dir, fi.ModTime().Format("20060102")+"-"+filepath.Base(path))
+	if _, err := os.Stat(dated); err == nil {
+		return appendAndRemove(path, dated)
+	}
+	return os.Rename(path, dated)
+}
+
+// appendAndRemove appends src to dst then removes src.
+func appendAndRemove(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+	return os.Remove(src)
 }
 
 // DisableConsole replaces the console logger with a no-op logger.
@@ -207,6 +343,11 @@ func DisableFileLogging() {
 		logFile = nil
 	}
 	fileLogger = zerolog.Logger{}
+	if errorFile != nil {
+		errorFile.Close()
+		errorFile = nil
+	}
+	errorLogger = zerolog.Logger{}
 }
 
 func getCallerInfo() (string, int, string) {
@@ -251,7 +392,10 @@ func getEvent(logger zerolog.Logger, level LogLevel) *zerolog.Event {
 	case zerolog.ErrorLevel:
 		return logger.Error()
 	case zerolog.FatalLevel:
-		return logger.Fatal()
+		// WithLevel(FatalLevel) writes at fatal level WITHOUT zerolog's built-in
+		// os.Exit, so every sink (console, claw.log, error.log) receives the line.
+		// logMessage performs the single os.Exit(1) after all sinks are written.
+		return logger.WithLevel(zerolog.FatalLevel)
 	default:
 		return logger.Info()
 	}
@@ -288,8 +432,20 @@ func logMessage(level LogLevel, component string, message string, fields map[str
 		fileEvent.Msg(message)
 	}
 
+	// Mirror problems (errorLogLevel and above) to error.log for quick scanning.
+	if level >= errorLogLevel && errorLogger.GetLevel() != zerolog.NoLevel {
+		errEvent := getEvent(errorLogger, level)
+
+		if component != "" {
+			errEvent.Str("component", component)
+		}
+
+		appendFields(errEvent, fields)
+		errEvent.Msg(message)
+	}
+
 	if level == FATAL {
-		os.Exit(1)
+		osExit(1)
 	}
 }
 

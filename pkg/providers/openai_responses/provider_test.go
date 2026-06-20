@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/PivotLLM/ClawEh/pkg/providers/protocoltypes"
@@ -231,5 +232,110 @@ func TestChat_HTTPError(t *testing.T) {
 	}
 	if out == nil || out.Status == nil || out.Status.Success {
 		t.Errorf("expected failed dispatch status, got %+v", out)
+	}
+}
+
+func TestChat_StoreAlwaysFalse(t *testing.T) {
+	reply := `{"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"x"}]}]}`
+	p, body := captureServer(t, reply)
+	if _, err := p.Chat(context.Background(), []Message{{Role: "user", Content: "hi"}}, nil, "gpt-5", nil); err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	if store, ok := (*body)["store"].(bool); !ok || store {
+		t.Errorf("store = %v, want false", (*body)["store"])
+	}
+}
+
+func TestChat_TemperatureGatedByReasoning(t *testing.T) {
+	reply := `{"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"x"}]}]}`
+
+	// Non-reasoning: temperature sent, no include.
+	p, body := captureServer(t, reply)
+	_, _ = p.Chat(context.Background(), []Message{{Role: "user", Content: "hi"}}, nil, "gpt-5", map[string]any{"temperature": 0.7})
+	if _, ok := (*body)["temperature"]; !ok {
+		t.Error("non-reasoning: temperature should be sent")
+	}
+	if _, ok := (*body)["include"]; ok {
+		t.Error("non-reasoning: include should not be sent")
+	}
+
+	// Reasoning level: temperature dropped, encrypted reasoning requested.
+	p, body = captureServer(t, reply, WithReasoningEffort("high"))
+	_, _ = p.Chat(context.Background(), []Message{{Role: "user", Content: "hi"}}, nil, "o3", map[string]any{"temperature": 0.7})
+	if _, ok := (*body)["temperature"]; ok {
+		t.Error("reasoning: temperature must be dropped")
+	}
+	inc, _ := (*body)["include"].([]any)
+	if len(inc) != 1 || inc[0] != "reasoning.encrypted_content" {
+		t.Errorf("reasoning: include = %v", (*body)["include"])
+	}
+
+	// effort "none" = reasoning disabled: temperature kept, no include.
+	p, body = captureServer(t, reply, WithReasoningEffort("none"))
+	_, _ = p.Chat(context.Background(), []Message{{Role: "user", Content: "hi"}}, nil, "gpt-5", map[string]any{"temperature": 0.7})
+	if _, ok := (*body)["temperature"]; !ok {
+		t.Error(`effort "none": temperature should be sent`)
+	}
+	if _, ok := (*body)["include"]; ok {
+		t.Error(`effort "none": include should not be sent`)
+	}
+}
+
+func TestChat_CapturesReasoningItems(t *testing.T) {
+	reply := `{"status":"completed","output":[` +
+		`{"type":"reasoning","id":"rs_1","encrypted_content":"ENC","summary":[]},` +
+		`{"type":"function_call","call_id":"call_1","name":"f","arguments":"{}"}]}`
+	p, _ := captureServer(t, reply, WithReasoningEffort("high"))
+	out, err := p.Chat(context.Background(), []Message{{Role: "user", Content: "hi"}}, nil, "o3", nil)
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	if len(out.ResponsesReasoning) != 1 {
+		t.Fatalf("captured reasoning items = %d, want 1", len(out.ResponsesReasoning))
+	}
+	if !strings.Contains(string(out.ResponsesReasoning[0]), "ENC") {
+		t.Errorf("reasoning item missing encrypted_content: %s", out.ResponsesReasoning[0])
+	}
+}
+
+func TestBuildInput_ReplaysReasoningBeforeToolCall(t *testing.T) {
+	ri := json.RawMessage(`{"type":"reasoning","id":"rs_1","encrypted_content":"ENC"}`)
+	msgs := []Message{
+		{Role: "user", Content: "q"},
+		{Role: "assistant", ResponsesReasoning: []json.RawMessage{ri},
+			ToolCalls: []ToolCall{{ID: "call_1", Function: &FunctionCall{Name: "f", Arguments: "{}"}}}},
+		{Role: "tool", ToolCallID: "call_1", Content: "result"},
+	}
+	_, input := buildInput(msgs)
+
+	reasoningIdx, fcIdx := -1, -1
+	for i, it := range input {
+		if rm, ok := it.(json.RawMessage); ok && strings.Contains(string(rm), "ENC") {
+			reasoningIdx = i
+		}
+		if m, ok := it.(map[string]any); ok && m["type"] == "function_call" {
+			fcIdx = i
+		}
+	}
+	if reasoningIdx == -1 {
+		t.Fatal("reasoning item not replayed in input")
+	}
+	if fcIdx == -1 {
+		t.Fatal("function_call not in input")
+	}
+	if reasoningIdx > fcIdx {
+		t.Fatalf("reasoning (%d) must precede function_call (%d)", reasoningIdx, fcIdx)
+	}
+}
+
+func TestChat_IncompleteContentFilter(t *testing.T) {
+	reply := `{"status":"incomplete","incomplete_details":{"reason":"content_filter"},"output":[]}`
+	p, _ := captureServer(t, reply)
+	out, err := p.Chat(context.Background(), []Message{{Role: "user", Content: "hi"}}, nil, "gpt-5", nil)
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	if out.FinishReason != "content_filter" || out.Normal {
+		t.Errorf("finish=%q normal=%v, want content_filter / false", out.FinishReason, out.Normal)
 	}
 }

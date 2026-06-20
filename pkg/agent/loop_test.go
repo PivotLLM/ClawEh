@@ -964,7 +964,7 @@ func TestHandleReasoning(t *testing.T) {
 
 	t.Run("skips when any required field is empty", func(t *testing.T) {
 		al, msgBus := newLoop(t)
-		al.handleReasoning(context.Background(), "reasoning", "telegram", "")
+		al.handleReasoning(context.Background(), "reasoning", "telegram", "", false)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 		defer cancel()
@@ -975,7 +975,7 @@ func TestHandleReasoning(t *testing.T) {
 
 	t.Run("publishes one message for non telegram", func(t *testing.T) {
 		al, msgBus := newLoop(t)
-		al.handleReasoning(context.Background(), "hello reasoning", "slack", "channel-1")
+		al.handleReasoning(context.Background(), "hello reasoning", "slack", "channel-1", false)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 		defer cancel()
@@ -991,7 +991,7 @@ func TestHandleReasoning(t *testing.T) {
 	t.Run("publishes one message for telegram", func(t *testing.T) {
 		al, msgBus := newLoop(t)
 		reasoning := "hello telegram reasoning"
-		al.handleReasoning(context.Background(), reasoning, "telegram", "tg-chat")
+		al.handleReasoning(context.Background(), reasoning, "telegram", "tg-chat", false)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 		defer cancel()
@@ -1015,7 +1015,7 @@ func TestHandleReasoning(t *testing.T) {
 		reasoning := "hello telegram reasoning"
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
-		al.handleReasoning(ctx, reasoning, "telegram", "tg-chat")
+		al.handleReasoning(ctx, reasoning, "telegram", "tg-chat", false)
 
 		ctx, cancel = context.WithTimeout(context.Background(), 200*time.Millisecond)
 		defer cancel()
@@ -1050,7 +1050,7 @@ func TestHandleReasoning(t *testing.T) {
 		defer cancel()
 
 		start := time.Now()
-		al.handleReasoning(ctx, "should timeout", "slack", "channel-full")
+		al.handleReasoning(ctx, "should timeout", "slack", "channel-full", false)
 		elapsed := time.Since(start)
 
 		// handleReasoning uses a 5s internal timeout, but the parent ctx
@@ -1513,7 +1513,7 @@ func TestRunLLMIteration_ContextCancelDuringBackoff(t *testing.T) {
 	go func() {
 		cm, releaseTestCM := al.getContextManager(agent, opts.SessionKey)
 		defer releaseTestCM()
-		_, _, _, _, err := al.runLLMIteration(ctx, agent, messages, opts, cm)
+		_, _, _, _, _, err := al.runLLMIteration(ctx, agent, messages, opts, cm)
 		done <- result{err: err}
 	}()
 
@@ -1535,10 +1535,11 @@ func TestRunLLMIteration_ContextCancelDuringBackoff(t *testing.T) {
 // sequenceProvider returns a predetermined sequence of responses and errors.
 // After the sequence is exhausted it returns a generic "done" response.
 type sequenceProvider struct {
-	responses []*providers.LLMResponse
-	errors    []error
-	idx       int
-	mu        sync.Mutex
+	responses    []*providers.LLMResponse
+	errors       []error
+	idx          int
+	lastMessages []providers.Message // messages seen on the most recent Chat call
+	mu           sync.Mutex
 }
 
 func (p *sequenceProvider) Chat(
@@ -1550,6 +1551,7 @@ func (p *sequenceProvider) Chat(
 ) (*providers.LLMResponse, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.lastMessages = messages
 	if p.idx >= len(p.responses) {
 		return &providers.LLMResponse{Content: "done"}, nil
 	}
@@ -1724,7 +1726,7 @@ func TestRunLLMIteration_ToolCalls_ThenFinalResponse(t *testing.T) {
 
 	cm, releaseTestCM := al.getContextManager(agent, opts.SessionKey)
 	defer releaseTestCM()
-	content, _, _, iterations, err := al.runLLMIteration(context.Background(), agent, messages, opts, cm)
+	content, _, _, _, iterations, err := al.runLLMIteration(context.Background(), agent, messages, opts, cm)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1751,25 +1753,26 @@ func TestRunLLMIteration_MaxIterations(t *testing.T) {
 	agent.MaxIterations = maxIter
 	agent.Tools.Register(&mockEchoTool{})
 
-	// Always return a tool call — never a text response.
-	toolCallResp := &providers.LLMResponse{
-		Content: "",
-		ToolCalls: []providers.ToolCall{
-			{
-				ID:   "tc-inf",
-				Type: "function",
-				Name: "echo_tool",
-				Function: &providers.FunctionCall{
-					Name:      "echo_tool",
-					Arguments: `{"text":"loop"}`,
-				},
-			},
-		},
-	}
+	// Always return a tool call — never a text response. Vary the arguments each
+	// iteration so the distinct-call loop hits the iteration cap (this test's
+	// subject), not the identical-tool-call breaker (tested separately).
 	responses := make([]*providers.LLMResponse, maxIter+2)
 	errors := make([]error, maxIter+2)
 	for i := range responses {
-		responses[i] = toolCallResp
+		responses[i] = &providers.LLMResponse{
+			Content: "",
+			ToolCalls: []providers.ToolCall{
+				{
+					ID:   fmt.Sprintf("tc-%d", i),
+					Type: "function",
+					Name: "echo_tool",
+					Function: &providers.FunctionCall{
+						Name:      "echo_tool",
+						Arguments: fmt.Sprintf(`{"text":"loop-%d"}`, i),
+					},
+				},
+			},
+		}
 		errors[i] = nil
 	}
 	agent.Provider = &sequenceProvider{responses: responses, errors: errors}
@@ -1785,7 +1788,7 @@ func TestRunLLMIteration_MaxIterations(t *testing.T) {
 
 	cm, releaseTestCM := al.getContextManager(agent, opts.SessionKey)
 	defer releaseTestCM()
-	content, _, _, iterations, err := al.runLLMIteration(context.Background(), agent, messages, opts, cm)
+	content, _, _, _, iterations, err := al.runLLMIteration(context.Background(), agent, messages, opts, cm)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1968,6 +1971,87 @@ func TestProcessSystemMessage_WrongChannel(t *testing.T) {
 	}
 }
 
+// TestResolveSystemMessageTarget routes an async/sub-agent completion back to
+// the SPAWNING agent and its originating session, falling back to the default
+// agent's main session when no originator is supplied.
+func TestResolveSystemMessageTarget(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "agent-systarget-*")
+	if err != nil {
+		t.Fatalf("mkdir temp: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	cfg := &config.Config{
+		Agents: config.AgentsConfig{
+			BaseDir: tmpDir,
+			Defaults: config.AgentDefaults{
+				Models:            []string{"test-model"},
+				MaxTokens:         4096,
+				MaxToolIterations: 10,
+			},
+			List: []config.AgentConfig{
+				{ID: "dawn", Name: "Dawn"},
+				{ID: "penny", Name: "Penny", Default: true},
+			},
+		},
+	}
+	al := NewAgentLoop(cfg, bus.NewMessageBus(), &mockProvider{}, nil)
+
+	// Originator known: route to that agent (Dawn) in the carried session.
+	dawnSession := routing.BuildAgentMainSessionKey("dawn")
+	agent, sessionKey := al.resolveSystemMessageTarget(bus.InboundMessage{
+		Channel:    "system",
+		SessionKey: dawnSession,
+		Metadata:   map[string]string{metadataKeyPreresolvedAgentID: "dawn"},
+	})
+	if agent == nil || agent.ID != "dawn" {
+		t.Fatalf("expected routing to dawn, got %v", agent)
+	}
+	if sessionKey != dawnSession {
+		t.Errorf("session key = %q, want %q", sessionKey, dawnSession)
+	}
+
+	// Originator known but session_key absent: fall back to that agent's main session.
+	agent, sessionKey = al.resolveSystemMessageTarget(bus.InboundMessage{
+		Channel:  "system",
+		Metadata: map[string]string{metadataKeyPreresolvedAgentID: "dawn"},
+	})
+	if agent == nil || agent.ID != "dawn" {
+		t.Fatalf("expected routing to dawn, got %v", agent)
+	}
+	if want := routing.BuildAgentMainSessionKey("dawn"); sessionKey != want {
+		t.Errorf("session key = %q, want %q", sessionKey, want)
+	}
+
+	// Non-agent session_key is ignored (only "agent:" keys are honored).
+	agent, sessionKey = al.resolveSystemMessageTarget(bus.InboundMessage{
+		Channel:    "system",
+		SessionKey: "slack:C9",
+		Metadata:   map[string]string{metadataKeyPreresolvedAgentID: "dawn"},
+	})
+	if want := routing.BuildAgentMainSessionKey("dawn"); agent == nil || agent.ID != "dawn" || sessionKey != want {
+		t.Errorf("agent=%v session=%q, want dawn/%s", agent, sessionKey, want)
+	}
+
+	// No originator: fall back to the default agent (Penny) and its main session.
+	agent, sessionKey = al.resolveSystemMessageTarget(bus.InboundMessage{Channel: "system"})
+	if agent == nil || agent.ID != "penny" {
+		t.Fatalf("expected fallback to default (penny), got %v", agent)
+	}
+	if want := routing.BuildAgentMainSessionKey("penny"); sessionKey != want {
+		t.Errorf("session key = %q, want %q", sessionKey, want)
+	}
+
+	// Unknown originator: also falls back to the default agent.
+	agent, _ = al.resolveSystemMessageTarget(bus.InboundMessage{
+		Channel:  "system",
+		Metadata: map[string]string{metadataKeyPreresolvedAgentID: "nobody"},
+	})
+	if agent == nil || agent.ID != "penny" {
+		t.Fatalf("expected fallback to default (penny) for unknown originator, got %v", agent)
+	}
+}
+
 // TestRunLLMIteration_ContextWindowError_Retry verifies that when the provider
 // returns a context_length_exceeded error on the first call and succeeds on the
 // second, runLLMIteration retries and returns the successful response.
@@ -2010,7 +2094,7 @@ func TestRunLLMIteration_ContextWindowError_Retry(t *testing.T) {
 
 	cm, releaseTestCM := al.getContextManager(agent, opts.SessionKey)
 	defer releaseTestCM()
-	content, _, _, _, err := al.runLLMIteration(context.Background(), agent, messages, opts, cm)
+	content, _, _, _, _, err := al.runLLMIteration(context.Background(), agent, messages, opts, cm)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

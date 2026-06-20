@@ -199,6 +199,138 @@ func TestCompress_RefusalDetectedAndModelSkipped(t *testing.T) {
 	}
 }
 
+// cooldownMockLLM reports a provider name so it keys cooldown by provider+model
+// like the main fallback chain.
+type cooldownMockLLM struct {
+	mockLLM
+	provider string
+}
+
+func (m *cooldownMockLLM) CooldownProvider() string { return m.provider }
+
+// TestCompress_NeverEmptiesLiveWindow reproduces the "Compacted to 0 messages"
+// bug: a long in-flight tool-call sequence (all assistant tool_calls + tool
+// results, no user/clean anchor) must NOT be compacted away to a system-only
+// payload — at least the last turn group is retained.
+func TestCompress_NeverEmptiesLiveWindow(t *testing.T) {
+	big := strings.Repeat("x", 4000)
+	history := []providers.Message{{Role: "system", Content: "sys"}}
+	for i := 0; i < 6; i++ {
+		id := fmt.Sprintf("tc%d", i)
+		history = append(history,
+			providers.Message{Role: "assistant", Content: big, ToolCalls: []providers.ToolCall{{ID: id, Name: "x"}}},
+			providers.Message{Role: "tool", Content: big, ToolCallID: id},
+		)
+	}
+	store := &compressTestStore{history: history}
+	llm := &mockLLM{responses: []string{
+		validSummaryJSON("a"), validSummaryJSON("b"), validSummaryJSON("c"),
+	}}
+	mgr := newCompressManager(store, []LLMClient{llm})
+	mgr.msgCount = len(history)
+
+	_ = mgr.doCompress(context.Background(), false)
+
+	conv := 0
+	for _, m := range store.GetHistory("sess") {
+		if m.Role != "system" {
+			conv++
+		}
+	}
+	if conv == 0 {
+		t.Fatal("compaction emptied the live window to a system-only payload")
+	}
+}
+
+// TestCompress_SharedCooldownSkipsModel verifies that a model parked in the
+// shared cooldown tracker (e.g. an out-of-credits 402 hit by the main chain) is
+// skipped by the compaction path — not retried.
+func TestCompress_SharedCooldownSkipsModel(t *testing.T) {
+	tracker := providers.NewCooldownTrackerWithPolicy(providers.DefaultCooldownPolicy())
+	// Simulate the main chain having parked the model on a 402.
+	tracker.MarkFailure("Abliteration", "abliterated-model", providers.FailoverBilling, 402, 0)
+
+	store := &compressTestStore{history: makeConversation(10, 200)}
+	client := &cooldownMockLLM{
+		provider: "Abliteration",
+		mockLLM:  mockLLM{model: "abliterated-model", responses: []string{validSummaryJSON("x")}},
+	}
+	mgr := newCompressManager(store, []LLMClient{client}, WithCooldownTracker(tracker))
+	mgr.msgCount = len(store.history)
+
+	_ = mgr.doCompress(context.Background(), false)
+	if client.callCount != 0 {
+		t.Fatalf("model cooled in the shared tracker must be skipped by compaction; calls=%d", client.callCount)
+	}
+}
+
+// TestCompress_RetainsLastUserMessage verifies compaction never archives the
+// most recent user turn. A long tool/assistant tail after the last user message
+// would otherwise push it out of the retained window, leaving a payload with no
+// user-role message (strict providers reject that with a non-retriable 400).
+func TestCompress_RetainsLastUserMessage(t *testing.T) {
+	history := []providers.Message{{Role: "system", Content: "sys"}}
+	history = append(history, providers.Message{Role: "user", Content: strings.Repeat("u", 200)})
+	for i := 0; i < 60; i++ { // long assistant tail after the only user turn
+		history = append(history, providers.Message{Role: "assistant", Content: strings.Repeat("a", 200)})
+	}
+	store := &compressTestStore{history: history}
+	llm := &mockLLM{responses: []string{validSummaryJSON("goal")}}
+	mgr := newCompressManager(store, []LLMClient{llm})
+	mgr.msgCount = len(history)
+
+	_ = mgr.doCompress(context.Background(), false)
+
+	hasUser := false
+	for _, m := range store.GetHistory("sess") {
+		if m.Role == "user" {
+			hasUser = true
+			break
+		}
+	}
+	if !hasUser {
+		t.Fatalf("compaction archived the last user message — payload would have no user role")
+	}
+}
+
+// TestCompress_BillingFailurePutsModelInCooldown verifies that a summarization
+// model returning a billing (402) error is put in cooldown and not retried on
+// the next compaction — so an out-of-credits compression model is not hammered.
+func TestCompress_BillingFailureCooldown(t *testing.T) {
+	store := &compressTestStore{history: makeConversation(10, 200)}
+	failing := &modelMockLLM{
+		mockLLM: mockLLM{errors: []error{
+			errors.New("API request failed:   Status: 402   Body: {\"error\":{\"billing_url\":\"x\"}}"),
+			errors.New("API request failed:   Status: 402   Body: {\"error\":{\"billing_url\":\"x\"}}"),
+		}},
+		model: "abliterated-model",
+	}
+	mgr := newCompressManager(store, []LLMClient{failing})
+	mgr.msgCount = len(store.history)
+
+	// First pass: the model is called once, fails with 402, gets cooled.
+	_ = mgr.doCompress(context.Background(), false)
+	if failing.callCount != 1 {
+		t.Fatalf("first pass: callCount = %d, want 1", failing.callCount)
+	}
+	rep := mgr.LastCompactionReport()
+	if rep == nil || len(rep.Attempts) == 0 || rep.Attempts[0].Detail != "HTTP 402 (out of credits)" {
+		t.Fatalf("first pass detail not neatened: %+v", rep)
+	}
+
+	// Second pass: the cooled model must be skipped entirely (no new call).
+	store.history = makeConversation(10, 200)
+	mgr.msgCount = len(store.history)
+	_ = mgr.doCompress(context.Background(), false)
+	if failing.callCount != 1 {
+		t.Fatalf("second pass: cooled model was retried (callCount = %d, want 1)", failing.callCount)
+	}
+	rep = mgr.LastCompactionReport()
+	if rep == nil || !rep.hasCooldown() {
+		t.Fatalf("second pass report should reflect cooldown: %+v", rep)
+	}
+}
+
 // TestCompress_FallbackSuccess verifies that when the first client fails the
 // second client is tried and a successful result is persisted.
 func TestCompress_FallbackSuccess(t *testing.T) {

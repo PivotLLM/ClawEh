@@ -41,11 +41,15 @@ func cronListCmd(storePath string) {
 			status = "disabled"
 		}
 
+		agent := job.AgentID
+		if agent == "" {
+			agent = "(operator/legacy)"
+		}
 		fmt.Printf("  %s (%s)\n", job.Name, job.ID)
+		fmt.Printf("    Agent:    %s\n", agent)
 		fmt.Printf("    Schedule: %s\n", schedule)
 		fmt.Printf("    Status:   %s\n", status)
 		fmt.Printf("    Next run: %s\n", nextRun)
-		fmt.Printf("    Mode:     %s\n", job.Payload.Mode)
 		fmt.Printf("    Channel:  %s\n", job.Payload.Channel)
 		fmt.Printf("    To:       %s\n", job.Payload.To)
 		if job.Payload.PeerKind == "direct" {

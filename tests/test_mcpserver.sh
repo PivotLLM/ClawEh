@@ -51,18 +51,21 @@ FULL_URL="${SERVER_URL}${ENDPOINT}"
 # Note: find_tools_regex and find_tools_bm25 are omitted here because they only register
 # when tools.mcp.discovery.enabled=true, which the test config does not set.
 # Every tool the test config exposes that is guaranteed to register (no live
-# model and no specific hardware required). agent_spawn (needs a model) and
-# hw_i2c/hw_spi (Linux + I2C/SPI devices) are also exposed but only probed when
-# actually present in the catalogue, so this script stays portable.
-EXPECTED_TOOLS="file_read file_write file_edit file_append file_list file_copy web_fetch web_search msg_send_file session_messages session_search session_compact session_info session_summary_list session_summary_get session_clear shell_exec skill_find skill_install cron_schedule"
-EXPECTED_TOOL_COUNT=20
+# model and no specific hardware required). agent_spawn/agent_status/agent_list
+# (subagent capability) and hw_i2c/hw_spi (Linux + I2C/SPI devices) are also
+# exposed but only probed when actually present in the catalogue, so this script
+# stays portable.
+EXPECTED_TOOLS="file_read file_write file_edit file_append file_list file_search file_copy web_fetch web_search msg_send msg_send_file session_messages session_search session_compact session_info session_summary_list session_summary_get session_clear shell_exec skill_find skill_install cron_schedule cogmem_domain_get cogmem_memory_search cogmem_domain_list cogmem_explain cogmem_memory_create cogmem_domain_update cogmem_memory_retire cogmem_memory_confirm cogmem_domain_create cogmem_domain_archive cogmem_domain_migrate cogmem_memory_forget cogmem_consolidate cogmem_status cogmem_export common_list common_get common_put common_delete"
+EXPECTED_TOOL_COUNT=38
 
 # Namespace prefixes that must have at least one tool in the catalogue.
 # Covers every provider-owned namespace that is in the test config.
-EXPECTED_NAMESPACES="file_ web_ session_ msg_ shell_ skill_ cron_"
+EXPECTED_NAMESPACES="file_ web_ session_ msg_ shell_ skill_ cron_ cogmem_ common_"
 
 # Unique scratch file inside the agent workspace so repeated runs do not collide.
-SCRATCH_REL="claw_mcp_test_$$.txt"
+# Writes are confined to <workspace>/files by the read-only-workspace default
+# (WorkspaceWriteSubdir), so the scratch file must live under files/.
+SCRATCH_REL="files/claw_mcp_test_$$.txt"
 
 # Colors
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
@@ -403,13 +406,20 @@ check_tool "1.2"  "file_write"
 check_tool "1.3"  "file_edit"
 check_tool "1.4"  "file_append"
 check_tool "1.5"  "file_list"
+check_tool "1.5b" "file_search"
 check_tool "1.6"  "web_fetch"
 check_tool "1.7"  "web_search"
 check_tool "1.8"  "msg_send_file"
+check_tool "1.8b" "msg_send"
 check_tool "1.9"  "session_messages"
 check_tool "1.10" "session_search"
 check_tool "1.11" "session_compact"
 check_tool "1.12" "session_info"
+check_tool "1.13" "cogmem_domain_create"
+check_tool "1.14" "cogmem_memory_create"
+check_tool "1.15" "cogmem_status"
+check_tool "1.16" "cogmem_memory_confirm"
+check_tool "1.17" "cogmem_domain_migrate"
 # find_tools_regex and find_tools_bm25 are only registered when
 # tools.mcp.discovery.enabled=true — not set in the standard test config.
 
@@ -454,8 +464,8 @@ else
 
     print_section "3. File operations (authenticated)"
 
-    run_test_ok_auth "3.1 file_list workspace root" \
-        "file_list" '{"path":"."}'
+    run_test_ok_auth "3.1 file_list working area (files/)" \
+        "file_list" '{"path":"files"}'
 
     run_test_ok_auth "3.2 file_write creates a scratch file" \
         "file_write" "{\"path\":\"$SCRATCH_REL\",\"content\":\"$PAYLOAD\"}"
@@ -471,6 +481,12 @@ else
     run_test_ok_auth "3.5 file_read shows appended content" \
         "file_read" "{\"path\":\"$SCRATCH_REL\"}" "$APPENDED"
 
+    run_test_ok_auth "3.5b file_read line mode returns numbered lines" \
+        "file_read" "{\"path\":\"$SCRATCH_REL\",\"start_line\":1,\"line_count\":1}" "1: "
+
+    run_test_ok_auth "3.5c file_search finds the appended content" \
+        "file_search" "{\"query\":\"$APPENDED\",\"path\":\"files\"}" "$APPENDED"
+
     run_test_ok_auth "3.6 file_edit replaces a substring" \
         "file_edit" "{\"path\":\"$SCRATCH_REL\",\"old_text\":\"$PAYLOAD\",\"new_text\":\"replaced-$$\"}"
 
@@ -481,7 +497,7 @@ else
         "file_copy" "{\"source_path\":\"$SCRATCH_REL\",\"destination_path\":\"${SCRATCH_REL}.copy\"}"
 
     run_test_err_auth "3.9 file_read on missing path returns an error" \
-        "file_read" '{"path":"definitely_not_a_real_file_'$$'_xyz.txt"}'
+        "file_read" '{"path":"files/definitely_not_a_real_file_'$$'_xyz.txt"}'
 
     run_test_err_auth "3.10 unknown tool is rejected" \
         "definitely_not_a_real_tool_$$" '{}'
@@ -536,6 +552,9 @@ else
     run_test_not_auth_err "4b.4 msg_send_file — token accepted" \
         "msg_send_file" '{"path":"no-such-file"}'
 
+    run_test_not_auth_err "4b.4b msg_send — token accepted (no longer hard-excluded)" \
+        "msg_send" '{"content":"probe"}'
+
     run_test_not_auth_err "4b.5 skill_find — token accepted" \
         "skill_find" '{"query":"github"}'
 
@@ -545,15 +564,112 @@ else
     run_test_not_auth_err "4b.7 cron_schedule — token accepted" \
         "cron_schedule" '{}'
 
-    # Tools that only register on certain hosts (agent needs a model; hw needs
-    # Linux + I2C/SPI devices). Probe them only when the catalogue lists them.
-    for opt_tool in agent_spawn hw_i2c hw_spi; do
+    # Tools that only register on certain hosts (agent tools need the subagent
+    # capability; hw needs Linux + I2C/SPI devices). Probe them only when the
+    # catalogue lists them. Empty args are fine — these probes assert the session
+    # token is accepted, not that the call succeeds (agent_status needs a uuid).
+    for opt_tool in agent_spawn agent_status agent_list hw_i2c hw_spi; do
         if echo "$LIST_OUT" | grep -qw "$opt_tool"; then
             run_test_not_auth_err "4b.* $opt_tool — token accepted" "$opt_tool" '{}'
         else
             echo "  4b.* $opt_tool not registered on this host (skipped)"
         fi
     done
+
+    #---------------------------------------------------------------------------
+    # Section 4c: Cognitive-memory tools (cogmem_*). Session-scoped, off by
+    # default (DefaultAllow=false) — the test agent's allowlist enables them via
+    # "cogmem_*". The store is a per-session SQLite DB created on demand, so the
+    # deterministic, hermetic tools (create_domain, remember, list_domains,
+    # search, forget, status) are asserted as full SUCCESS. Tools that need a
+    # specific domain/hook id (get_domain, explain, update_domain, retire_hook,
+    # archive_domain) are probed with representative args as graceful cases — the
+    # harness has no facility to thread the generated id between probe calls, so
+    # we assert the call is accepted (token honoured, no transport/auth failure)
+    # rather than a specific id-dependent outcome. consolidate is non-blocking and
+    # may touch an LLM in the background, so it is a graceful probe too.
+    #---------------------------------------------------------------------------
+
+    print_section "4c. Cognitive-memory tools (cogmem)"
+
+    COGMEM_DOMAIN="mcp-cogmem-test-$$"
+    COGMEM_HOOK_TEXT="cogmem probe note $$"
+
+    # --- Hermetic, deterministic tools: assert full SUCCESS. ---
+
+    # create_domain returns a freshly assigned domain id and reports success.
+    # Includes a tool-trigger list (comma-delimited substrings) to exercise that param.
+    run_test_ok_auth "4c.1 cogmem_domain_create creates a (non-sticky) topic domain" \
+        "cogmem_domain_create" "{\"name\":\"$COGMEM_DOMAIN\",\"triggers\":\"google_gmail,system\"}" "Created domain"
+
+    # remember with a domain_hint auto-creates/uses a topic domain and records
+    # a durable hook — no pre-existing id required, so it succeeds deterministically.
+    run_test_ok_auth "4c.2 cogmem_memory_create records a hook (domain_hint)" \
+        "cogmem_memory_create" "{\"domain_hint\":\"$COGMEM_DOMAIN\",\"type\":\"fact\",\"text\":\"$COGMEM_HOOK_TEXT\"}"
+
+    # list_domains must now report at least the domain(s) created above.
+    run_test_ok_auth "4c.3 cogmem_domain_list lists domains" \
+        "cogmem_domain_list" '{}' "domain(s)"
+
+    # search over hook text — success whether or not a match is found.
+    run_test_ok_auth "4c.4 cogmem_memory_search returns a result set" \
+        "cogmem_memory_search" "{\"query\":\"$COGMEM_HOOK_TEXT\"}"
+
+    # status reports store health deterministically.
+    run_test_ok_auth "4c.5 cogmem_status reports memory health" \
+        "cogmem_status" '{}' "Cognitive memory database"
+
+    # forget retires matching hooks; succeeds whether 0 or N hooks match.
+    run_test_ok_auth "4c.6 cogmem_memory_forget retires matching hooks" \
+        "cogmem_memory_forget" "{\"query\":\"$COGMEM_HOOK_TEXT\"}"
+
+    # --- id-dependent tools: graceful probes (token accepted). ---
+
+    run_test_not_auth_err "4c.7 cogmem_domain_get — token accepted" \
+        "cogmem_domain_get" '{"id":"dMCPtest"}'
+
+    run_test_not_auth_err "4c.8 cogmem_explain — token accepted" \
+        "cogmem_explain" '{"id":"dMCPtest"}'
+
+    run_test_not_auth_err "4c.9 cogmem_domain_update — token accepted" \
+        "cogmem_domain_update" '{"id":"dMCPtest","set_summary":"probe","set_sticky":true}'
+
+    run_test_not_auth_err "4c.10 cogmem_memory_retire — token accepted" \
+        "cogmem_memory_retire" '{"id":"hMCPtest","reason":"probe"}'
+
+    run_test_not_auth_err "4c.11 cogmem_domain_archive — token accepted" \
+        "cogmem_domain_archive" '{"id":"dMCPtest"}'
+
+    run_test_not_auth_err "4c.11b cogmem_domain_migrate — token accepted" \
+        "cogmem_domain_migrate" '{"from":"dMCPfrom","to":"dMCPto"}'
+
+    # --- consolidate: non-blocking, may touch an LLM — graceful probe. ---
+
+    run_test_not_auth_err "4c.12 cogmem_consolidate — token accepted (queued/accepted)" \
+        "cogmem_consolidate" '{"scope":"probe"}'
+
+    # export: dumps active memory to files/MEMORY_EXPORT.md — hermetic, succeeds with auth.
+    run_test_ok_auth "4c.13 cogmem_export writes a Markdown dump" \
+        "cogmem_export" '{}' "MEMORY_EXPORT.md"
+
+    # Section 4d: Shared common-directory tools (common_*). Hermetic and
+    # deterministic. common_put copies the scratch file (under files/, created in
+    # Section 3) into the shared dir; list/get/delete round-trip it.
+    print_section "4d. Common-directory tools (common)"
+
+    COMMON_NAME="mcp_common_$$.txt"
+
+    run_test_ok_auth "4d.1 common_put copies a workspace file to the shared dir" \
+        "common_put" "{\"path\":\"$SCRATCH_REL\",\"as\":\"$COMMON_NAME\"}"
+
+    run_test_ok_auth "4d.2 common_list shows the shared file" \
+        "common_list" '{}' "$COMMON_NAME"
+
+    run_test_ok_auth "4d.3 common_get copies it into the agent workspace" \
+        "common_get" "{\"name\":\"$COMMON_NAME\"}"
+
+    run_test_ok_auth "4d.4 common_delete removes the shared file" \
+        "common_delete" "{\"name\":\"$COMMON_NAME\"}"
 
 fi  # end SESSION_TOKEN block
 

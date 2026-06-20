@@ -15,6 +15,7 @@ import {
 import {
   AgentDefaultsSection,
   AgentModelDefaultsSection,
+  BackupSection,
   ContextManagementSection,
   DevicesSection,
   LauncherSection,
@@ -170,6 +171,11 @@ export function ConfigPage() {
           "Max tool iterations",
           { min: 1 },
         )
+        const requestTimeout = parseIntField(
+          form.requestTimeout,
+          "Request timeout (s)",
+          { min: 0 },
+        )
         const summarizationModels = form.summarizationModels
           .map((m) => m.trim())
           .filter((m) => m.length > 0)
@@ -237,6 +243,11 @@ export function ConfigPage() {
           "Summary retention days",
           { min: 0 },
         )
+        const logRetentionDays = parseIntField(
+          form.logRetentionDays,
+          "Log retention days",
+          { min: 0 },
+        )
         // Re-send the full agents.list with default flags flipped only when the
         // default agent actually changed (the patch replaces the array wholesale).
         const defaultAgentChanged = form.defaultAgentId !== baseline.defaultAgentId
@@ -255,11 +266,13 @@ export function ConfigPage() {
         await patchAppConfig({
           agents: {
             base_dir: baseDir,
+            common_dir: form.commonDir.trim(),
             defaults: {
               restrict_to_workspace: form.restrictToWorkspace,
               stream_tool_activity: form.streamToolActivity,
               max_tokens: maxTokens,
               max_tool_iterations: maxToolIterations,
+              request_timeout: requestTimeout,
               models: defaultModels,
               temperature: defaultTemperaturePayload,
               compress_normal_percent: compressNormalPercent,
@@ -290,6 +303,14 @@ export function ConfigPage() {
           devices: {
             enabled: form.devicesEnabled,
             monitor_usb: form.monitorUSB,
+          },
+          logging: {
+            retention_days: logRetentionDays,
+          },
+          backup: {
+            enabled: form.backupEnabled,
+            at: form.backupAt.trim() || "03:00",
+            retain_days: parseIntField(form.backupRetainDays, "Backup retention days", { min: 1 }),
           },
         })
 
@@ -385,6 +406,8 @@ export function ConfigPage() {
               <ContextManagementSection form={form} onFieldChange={updateField} />
 
               <RuntimeSection form={form} onFieldChange={updateField} />
+
+            <BackupSection form={form} onFieldChange={updateField} />
 
               <LauncherSection
                 launcherForm={launcherForm}

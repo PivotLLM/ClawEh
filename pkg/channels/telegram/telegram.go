@@ -60,6 +60,15 @@ const hRuleSubstitute = "──────────────────�
 // long-poll goroutine to exit. var (not const) so tests can shorten it.
 var pollExitTimeout = 10 * time.Second
 
+// longPollRetryTimeout is how long telego sleeps before retrying getUpdates
+// after an error. telego's retry sleep is NOT context-aware (long_polling.go),
+// so the default 8s can keep the old poller alive past Stop()'s wait on a config
+// reload — overlapping the new poller and triggering Telegram 409 "terminated by
+// other getUpdates" errors. A short value drains the old poller well within
+// pollExitTimeout so the new one starts cleanly, while still retrying genuine
+// transient errors.
+var longPollRetryTimeout = 2 * time.Second
+
 type TelegramChannel struct {
 	*channels.BaseChannel
 	bot            *telego.Bot
@@ -153,7 +162,7 @@ func (c *TelegramChannel) Start(ctx context.Context) error {
 
 	rawUpdates, err := c.bot.UpdatesViaLongPolling(c.ctx, &telego.GetUpdatesParams{
 		Timeout: 30,
-	})
+	}, telego.WithLongPollingRetryTimeout(longPollRetryTimeout))
 	if err != nil {
 		c.cancel()
 		return fmt.Errorf("failed to start long polling: %w", err)
@@ -805,17 +814,24 @@ func wrapMarkdownTables(text string) string {
 		return cells
 	}
 
-	// isSeparatorCell returns true when a cell contains only dashes (separator row).
+	// isSeparatorCell returns true when a cell is a markdown table separator:
+	// dashes optionally bracketed by alignment colons (---, :---, ---:, :---:).
 	isSeparatorCell := func(cell string) bool {
 		if len(cell) == 0 {
 			return false
 		}
+		hasDash := false
 		for _, ch := range cell {
-			if ch != '-' {
+			switch ch {
+			case '-':
+				hasDash = true
+			case ':':
+				// alignment marker, allowed
+			default:
 				return false
 			}
 		}
-		return true
+		return hasDash
 	}
 
 	// isSeparatorRow returns true when every cell in the row is a separator cell.
@@ -854,7 +870,7 @@ func wrapMarkdownTables(text string) string {
 		// Find max content width per column, considering only non-separator rows.
 		colWidth := make([]int, maxCols)
 		for colIdx := range colWidth {
-			colWidth[colIdx] = 3 // minimum width matches "---"
+			colWidth[colIdx] = 1 // minimum width
 		}
 		for _, cells := range parsed {
 			if isSeparatorRow(cells) {
@@ -864,31 +880,45 @@ func wrapMarkdownTables(text string) string {
 				if colIdx >= maxCols {
 					break
 				}
-				if len(cell) > colWidth[colIdx] {
-					colWidth[colIdx] = len(cell)
+				if w := utils.DisplayWidth(cell); w > colWidth[colIdx] {
+					colWidth[colIdx] = w
 				}
 			}
 		}
 
-		// Rebuild each row with normalized widths.
-		result := make([]string, len(tableLines))
-		for i, cells := range parsed {
-			rebuiltCells := make([]string, maxCols)
+		// Total line width for the divider: padded columns plus the two-space gaps.
+		totalWidth := 0
+		for _, w := range colWidth {
+			totalWidth += w
+		}
+		totalWidth += (maxCols - 1) * 2
+
+		// Rebuild rows without pipe borders: columns separated by two spaces, the
+		// markdown separator row replaced by a full-width horizontal rule.
+		var result []string
+		separatorInserted := false
+		for _, cells := range parsed {
 			if isSeparatorRow(cells) {
-				for colIdx := range rebuiltCells {
-					rebuiltCells[colIdx] = strings.Repeat("-", colWidth[colIdx])
-				}
-			} else {
-				for colIdx := range rebuiltCells {
-					var cell string
-					if colIdx < len(cells) {
-						cell = cells[colIdx]
-					}
-					// Pad with trailing spaces to colWidth.
-					rebuiltCells[colIdx] = cell + strings.Repeat(" ", colWidth[colIdx]-len(cell))
-				}
+				result = append(result, strings.Repeat("─", totalWidth))
+				separatorInserted = true
+				continue
 			}
-			result[i] = "| " + strings.Join(rebuiltCells, " | ") + " |"
+			parts := make([]string, maxCols)
+			for colIdx := range parts {
+				var cell string
+				if colIdx < len(cells) {
+					cell = cells[colIdx]
+				}
+				parts[colIdx] = cell + strings.Repeat(" ", colWidth[colIdx]-utils.DisplayWidth(cell))
+			}
+			// Trim trailing padding from the last column.
+			parts[maxCols-1] = strings.TrimRight(parts[maxCols-1], " ")
+			result = append(result, strings.Join(parts, "  "))
+		}
+
+		// If the markdown had no separator row, insert a rule after the header row.
+		if !separatorInserted && len(result) > 0 {
+			result = append(result[:1], append([]string{strings.Repeat("─", totalWidth)}, result[1:]...)...)
 		}
 		return result
 	}

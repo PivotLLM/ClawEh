@@ -227,18 +227,12 @@ func RunToolLoop(
 			go func(idx int, tc providers.ToolCall) {
 				defer wg.Done()
 
-				redacted := RedactArgs(tc.Name, tc.Arguments)
+				// Tool arguments are intentionally NOT logged: they routinely carry
+				// memory content, file contents, and other user data.
 				logger.InfoCF("toolloop", "Tool call dispatched",
 					map[string]any{
 						"tool":      tc.Name,
 						"iteration": iteration,
-						"args":      redacted,
-					})
-				logger.DebugCF("toolloop", "Tool call dispatched (raw args)",
-					map[string]any{
-						"tool":      tc.Name,
-						"iteration": iteration,
-						"args":      tc.Arguments,
 					})
 
 				var toolResult *ToolResult

@@ -3,7 +3,37 @@ package slack
 import (
 	"strings"
 	"testing"
+
+	"github.com/PivotLLM/ClawEh/pkg/utils"
 )
+
+// TestFormatSlackMessage_EmojiTableAligns guards the mixed-emoji alignment bug:
+// "☀️" (U+2600 U+FE0F, 2 runes) and "🌙" (U+1F319, 1 rune) render at the same
+// width, so padding by rune count over-padded the moon rows and pushed later
+// columns right. With display-width padding every data row ends at the same
+// display width.
+func TestFormatSlackMessage_EmojiTableAligns(t *testing.T) {
+	input := "| ☀️ Morning | ☀️ Sunny | 17°C | 10% |\n" +
+		"| --- | --- | --- | --- |\n" +
+		"| ☀️ Noon | ☀️ Sunny | 19°C | 26% |\n" +
+		"| 🌙 Evening | 🌙 Clear | 19°C | 43% |\n" +
+		"| 🌙 Night | 🌙 Clear | 15°C | 30% |"
+	out := formatSlackMessage(input)
+
+	var widths []int
+	for _, line := range strings.Split(out, "\n") {
+		if line == "```" || strings.HasPrefix(line, "─") || line == "" {
+			continue
+		}
+		widths = append(widths, utils.DisplayWidth(line))
+	}
+	for i, w := range widths {
+		if w != widths[0] {
+			t.Fatalf("row %d display width %d != row 0 width %d (columns misaligned)\n%s",
+				i, w, widths[0], out)
+		}
+	}
+}
 
 func TestFormatSlackMessage(t *testing.T) {
 	tests := []struct {
@@ -94,6 +124,28 @@ func TestFormatSlackMessage(t *testing.T) {
 				"Short  A Very Long Header\n" +
 				"─────────────────────────\n" +
 				"x      y\n" +
+				"```",
+		},
+		{
+			name: "alignment colons recognized as separator",
+			input: "| Name | Age |\n" +
+				"|:---|---:|\n" +
+				"| Alice | 30 |",
+			want: "```\n" +
+				"Name   Age\n" +
+				"──────────\n" +
+				"Alice  30\n" +
+				"```",
+		},
+		{
+			name: "center alignment colons recognized as separator",
+			input: "| A | B |\n" +
+				"| :-: | :-: |\n" +
+				"| 1 | 2 |",
+			want: "```\n" +
+				"A  B\n" +
+				"────\n" +
+				"1  2\n" +
 				"```",
 		},
 		{

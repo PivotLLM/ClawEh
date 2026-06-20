@@ -166,19 +166,12 @@ func (r *ToolRegistry) ExecuteWithContext(
 	channel, chatID string,
 	asyncCallback AsyncCallback,
 ) *ToolResult {
+	// Tool arguments are intentionally NOT logged: they routinely contain memory
+	// content, file contents, and other user data that must not leak into logs.
 	logger.InfoCF("tool", "Tool execution started",
 		map[string]any{
 			"tool": name,
-			"args": redactArgs(name, args),
 		})
-
-	/*
-	logger.DebugCF("tool", "Tool execution started (raw args)",
-		map[string]any{
-			"tool": name,
-			"args": args,
-		})
-	*/
 
 	// Defense-in-depth: check tool allowlist from context before execution.
 	if checker := ToolAllowCheckerFromCtx(ctx); checker != nil {
@@ -313,6 +306,29 @@ func (r *ToolRegistry) ToProviderDefs() []providers.ToolDefinition {
 		})
 	}
 	return definitions
+}
+
+// IsPrimaryOnlyTool reports whether the named tool is restricted to primary
+// agents (see PrimaryOnlyTool / IsPrimaryOnly). Unknown tools report false.
+func (r *ToolRegistry) IsPrimaryOnlyTool(name string) bool {
+	if t, ok := r.Get(name); ok {
+		return IsPrimaryOnly(t)
+	}
+	return false
+}
+
+// ToProviderDefsExcludingPrimaryOnly is ToProviderDefs with primary-only tools
+// removed — the tool list offered to a spawned sub-agent's model.
+func (r *ToolRegistry) ToProviderDefsExcludingPrimaryOnly() []providers.ToolDefinition {
+	all := r.ToProviderDefs()
+	out := make([]providers.ToolDefinition, 0, len(all))
+	for _, d := range all {
+		if r.IsPrimaryOnlyTool(d.Function.Name) {
+			continue
+		}
+		out = append(out, d)
+	}
+	return out
 }
 
 // List returns a list of all registered tool names.

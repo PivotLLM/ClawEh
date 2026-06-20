@@ -2,6 +2,7 @@ import { IconChevronRight } from "@tabler/icons-react"
 import {
   IconArrowsTransferDown,
   IconAtom,
+  IconBrain,
   IconKey,
   IconListDetails,
   IconMessageCircle,
@@ -50,19 +51,19 @@ interface NavGroup {
 const baseNavGroups: Omit<NavGroup, "items">[] = [
   {
     label: "navigation.chat",
-    defaultOpen: true,
+    defaultOpen: false,
   },
   {
     label: "navigation.model_group",
-    defaultOpen: true,
+    defaultOpen: false,
   },
   {
     label: "navigation.agent_group",
-    defaultOpen: true,
+    defaultOpen: false,
   },
   {
     label: "navigation.services",
-    defaultOpen: true,
+    defaultOpen: false,
   },
 ]
 
@@ -110,7 +111,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       },
       {
         label: "navigation.channels_group",
-        defaultOpen: true,
+        defaultOpen: false,
         items: channelItems.map((item) => ({
           title: item.title,
           url: item.url,
@@ -143,6 +144,12 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             title: "navigation.bindings",
             url: "/agent/bindings",
             icon: IconArrowsTransferDown,
+            translateTitle: true,
+          },
+          {
+            title: "navigation.memory",
+            url: "/memory",
+            icon: IconBrain,
             translateTitle: true,
           },
         ],
@@ -188,7 +195,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             <SidebarGroup className="px-2 py-0">
               <SidebarGroupLabel asChild>
                 <CollapsibleTrigger className="hover:bg-muted/60 flex w-full cursor-pointer items-center justify-between rounded-md px-2 py-1.5 transition-colors">
-                  <span>{t(group.label)}</span>
+                  <span className="text-sm">{t(group.label)}</span>
                   <IconChevronRight className="size-3.5 opacity-50 transition-transform duration-200 group-data-[state=open]/collapsible:rotate-90" />
                 </CollapsibleTrigger>
               </SidebarGroupLabel>

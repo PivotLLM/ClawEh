@@ -71,7 +71,26 @@ func selectTail(history []providers.Message, budget, minMessages int, estimate f
 		out = append(out, history[s.start:s.end+1]...)
 	}
 
-	return collapseNoise(out)
+	return trimLeadingPartialToolGroup(collapseNoise(out))
+}
+
+// trimLeadingPartialToolGroup removes any leading tool result or assistant
+// tool-call message so the retained tail begins on a clean boundary — a user
+// message or an assistant message without tool calls. resolveGroup binds a tool
+// result back to its assistant, so a budget cut can leave the tail starting on an
+// assistant tool-call group; without this, the provider sanitizer would drop that
+// leading group on every single dispatch (and the context would be neither kept
+// nor summarized). Trimming here hands those messages to the summary instead.
+func trimLeadingPartialToolGroup(msgs []providers.Message) []providers.Message {
+	for len(msgs) > 0 {
+		r := msgs[0].Role
+		if r == "tool" || (r == "assistant" && len(msgs[0].ToolCalls) > 0) {
+			msgs = msgs[1:]
+			continue
+		}
+		break
+	}
+	return msgs
 }
 
 type groupBounds struct{ start, end int }

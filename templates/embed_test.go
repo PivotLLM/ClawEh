@@ -10,7 +10,7 @@ func TestEmbeddedFiles(t *testing.T) {
 		"AGENTS.md",
 		"IDENTITY.md",
 		"COMPRESSION.md",
-		"memory/MEMORY.md",
+		"MEMORY.md",
 		"skills/.gitkeep",
 	} {
 		if _, err := FS.ReadFile(f); err != nil {

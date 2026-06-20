@@ -2,7 +2,8 @@ package slack
 
 import (
 	"strings"
-	"unicode/utf8"
+
+	"github.com/PivotLLM/ClawEh/pkg/utils"
 )
 
 // formatSlackMessage converts markdown tables in the given text to monospace
@@ -37,17 +38,24 @@ func formatSlackMessage(text string) string {
 		return cells
 	}
 
-	// isSeparatorCell returns true when a cell contains only dashes.
+	// isSeparatorCell returns true when a cell is a markdown table separator:
+	// dashes optionally bracketed by alignment colons (---, :---, ---:, :---:).
 	isSeparatorCell := func(cell string) bool {
 		if len(cell) == 0 {
 			return false
 		}
+		hasDash := false
 		for _, ch := range cell {
-			if ch != '-' {
+			switch ch {
+			case '-':
+				hasDash = true
+			case ':':
+				// alignment marker, allowed
+			default:
 				return false
 			}
 		}
-		return true
+		return hasDash
 	}
 
 	// isSeparatorRow returns true when every cell in the row is a separator cell.
@@ -102,7 +110,7 @@ func formatSlackMessage(text string) string {
 				if colIdx >= maxCols {
 					break
 				}
-				w := utf8.RuneCountInString(cell)
+				w := utils.DisplayWidth(cell)
 				if w > colWidth[colIdx] {
 					colWidth[colIdx] = w
 				}
@@ -135,9 +143,9 @@ func formatSlackMessage(text string) string {
 				if colIdx < len(r.cells) {
 					cell = r.cells[colIdx]
 				}
-				// Pad with trailing spaces to colWidth using rune count.
-				runeLen := utf8.RuneCountInString(cell)
-				parts[colIdx] = cell + strings.Repeat(" ", colWidth[colIdx]-runeLen)
+				// Pad with trailing spaces to colWidth using display width.
+				dispLen := utils.DisplayWidth(cell)
+				parts[colIdx] = cell + strings.Repeat(" ", colWidth[colIdx]-dispLen)
 			}
 			// Trim trailing spaces from the last column.
 			parts[maxCols-1] = strings.TrimRight(parts[maxCols-1], " ")

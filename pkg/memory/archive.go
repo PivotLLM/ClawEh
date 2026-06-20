@@ -25,11 +25,12 @@ var ErrArchiveUnavailable = errors.New("memory: archive unavailable")
 
 const archiveSchema = `
 CREATE TABLE IF NOT EXISTS messages (
-    seq        INTEGER PRIMARY KEY,
-    role       TEXT    NOT NULL,
-    payload    TEXT    NOT NULL,
-    text       TEXT    NOT NULL,
-    created_at INTEGER NOT NULL
+    seq          INTEGER PRIMARY KEY,
+    role         TEXT    NOT NULL,
+    payload      TEXT    NOT NULL,
+    text         TEXT    NOT NULL,
+    created_at   INTEGER NOT NULL,
+    consolidated INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_created_at ON messages(created_at);
 CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
@@ -102,6 +103,11 @@ type ArchiveStore struct {
 	path        string
 	mu          sync.Mutex // held only for writes (Append, Delete)
 	unavailable bool       // set true when Open fails; all ops are no-ops
+
+	// protectUnconsolidated, when true, prevents the prune methods from deleting
+	// rows whose consolidated flag is 0. Opt-in via SetProtectUnconsolidated;
+	// default false preserves the exact original prune behavior.
+	protectUnconsolidated bool
 }
 
 // OpenReadOnly creates a read-only ArchiveStore for an existing archive at path.
@@ -153,6 +159,16 @@ func Open(path string) (*ArchiveStore, error) {
 		return &ArchiveStore{path: path, unavailable: true}, ErrArchiveUnavailable
 	}
 
+	// Migrate pre-existing DBs that lack the consolidated column. Idempotent:
+	// the ADD COLUMN runs only when the column is absent and leaves the FTS
+	// triggers untouched (it does not touch the text column).
+	if err := migrateConsolidatedColumn(db); err != nil {
+		db.Close()
+		logger.WarnCF("memory", "archive migrate consolidated column failed",
+			map[string]any{"path": path, "error": err.Error()})
+		return &ArchiveStore{path: path, unavailable: true}, ErrArchiveUnavailable
+	}
+
 	// FTS5 integrity check; rebuild if needed.
 	if _, err := db.Exec("INSERT INTO messages_fts(messages_fts) VALUES ('integrity-check')"); err != nil {
 		logger.WarnCF("memory", "archive FTS5 integrity check failed, rebuilding",
@@ -173,6 +189,71 @@ func Open(path string) (*ArchiveStore, error) {
 	store.importLegacySummaries()
 
 	return store, nil
+}
+
+// migrateConsolidatedColumn adds the messages.consolidated column to a
+// pre-existing archive that predates the retention guard. It inspects
+// PRAGMA table_info(messages) and issues ALTER TABLE only when the column is
+// absent, so it is safe to run on every Open. It never touches the FTS triggers
+// or the messages_fts table.
+func migrateConsolidatedColumn(db *sql.DB) error {
+	rows, err := db.Query(`PRAGMA table_info(messages)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	hasColumn := false
+	for rows.Next() {
+		var (
+			cid       int
+			name      string
+			ctype     string
+			notNull   int
+			dfltValue sql.NullString
+			pk        int
+		)
+		if err := rows.Scan(&cid, &name, &ctype, &notNull, &dfltValue, &pk); err != nil {
+			return err
+		}
+		if name == "consolidated" {
+			hasColumn = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if hasColumn {
+		return nil
+	}
+
+	_, err = db.Exec(`ALTER TABLE messages ADD COLUMN consolidated INTEGER NOT NULL DEFAULT 0`)
+	return err
+}
+
+// SetProtectUnconsolidated toggles the retention guard. When true, the prune
+// methods will never delete rows with consolidated=0. Default false (exact
+// original prune behavior, used by non-cognitive agents).
+func (a *ArchiveStore) SetProtectUnconsolidated(v bool) {
+	a.protectUnconsolidated = v
+}
+
+// MarkConsolidated flags every message with seq <= uptoSeq as consolidated so a
+// retention-guarded prune may later remove it. No-op when the store is
+// unavailable or uptoSeq <= 0. Acquires the write mutex like other writes.
+func (a *ArchiveStore) MarkConsolidated(uptoSeq int64) error {
+	if a.unavailable || a.db == nil || uptoSeq <= 0 {
+		return nil
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	_, err := a.db.Exec(
+		`UPDATE messages SET consolidated=1 WHERE seq<=?`,
+		uptoSeq,
+	)
+	return err
 }
 
 // legacySummariesPath derives the sibling <base>.summaries.jsonl path from the
@@ -303,6 +384,18 @@ func (a *ArchiveStore) PruneMessagesToCount(n int) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
+	if a.protectUnconsolidated {
+		// Keep the newest n by seq AND every unconsolidated row, even when an
+		// unconsolidated row falls outside the newest-n window.
+		_, err := a.db.Exec(
+			`DELETE FROM messages
+			 WHERE seq <= (SELECT COALESCE(MAX(seq), 0) FROM messages) - ?
+			   AND consolidated = 1`,
+			n,
+		)
+		return err
+	}
+
 	_, err := a.db.Exec(
 		`DELETE FROM messages WHERE seq <= (SELECT COALESCE(MAX(seq), 0) FROM messages) - ?`,
 		n,
@@ -320,6 +413,14 @@ func (a *ArchiveStore) PruneMessagesBefore(cutoff time.Time) error {
 
 	a.mu.Lock()
 	defer a.mu.Unlock()
+
+	if a.protectUnconsolidated {
+		_, err := a.db.Exec(
+			`DELETE FROM messages WHERE created_at < ? AND consolidated = 1`,
+			cutoff.Unix(),
+		)
+		return err
+	}
 
 	_, err := a.db.Exec(
 		`DELETE FROM messages WHERE created_at < ?`,

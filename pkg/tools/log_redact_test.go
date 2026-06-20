@@ -176,7 +176,7 @@ type leakyTool struct {
 	mockRegistryTool
 }
 
-func TestRegistry_ExecuteWithContext_RedactsWriteFileArgsAtInfo(t *testing.T) {
+func TestRegistry_ExecuteWithContext_OmitsArgsAtInfo(t *testing.T) {
 	var buf safeBuf
 	restore := logger.RedirectForTest(&buf)
 	defer restore()
@@ -215,14 +215,14 @@ func TestRegistry_ExecuteWithContext_RedactsWriteFileArgsAtInfo(t *testing.T) {
 	if infLine == "" {
 		t.Fatal("expected INF 'Tool execution started' line")
 	}
-	if strings.Contains(infLine, secret) {
-		t.Fatal("raw secret content leaked into INF log line")
+	if !strings.Contains(infLine, "file_write") {
+		t.Errorf("execution line should name the tool: %s", infLine)
 	}
-	if !strings.Contains(infLine, "content_bytes") || !strings.Contains(infLine, "10240") {
-		t.Errorf("INF line missing redacted summary: %s", infLine)
+	// Arguments are no longer logged at all — the line carries only the tool name.
+	if strings.Contains(infLine, `"args"`) {
+		t.Fatalf("tool args must not be logged: %s", infLine)
 	}
-
-	// Raw-args debug logging was removed, so the secret must not appear anywhere.
+	// The secret must not appear anywhere in the logs.
 	if strings.Contains(out, secret) {
 		t.Fatal("raw secret content leaked into logs")
 	}

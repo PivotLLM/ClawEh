@@ -2,11 +2,13 @@ export type JsonRecord = Record<string, unknown>
 
 export interface CoreConfigForm {
   baseDir: string
+  commonDir: string
   restrictToWorkspace: boolean
   allowRemote: boolean
   streamToolActivity: boolean
   maxTokens: string
   maxToolIterations: string
+  requestTimeout: string
   // Agent defaults (agents.defaults.models / .temperature) and the default-agent
   // id (agents.list[].default). Consolidated here from the Agents page.
   defaultAgentId: string
@@ -24,9 +26,13 @@ export interface CoreConfigForm {
   archiveDays: string
   summaryMaxCount: string
   summaryRetentionDays: string
+  logRetentionDays: string
   sessionMode: string
   devicesEnabled: boolean
   monitorUSB: boolean
+  backupEnabled: boolean
+  backupAt: string
+  backupRetainDays: string
 }
 
 export interface LauncherForm {
@@ -68,11 +74,13 @@ export const SESSION_MODE_OPTIONS = [
 
 export const EMPTY_FORM: CoreConfigForm = {
   baseDir: "",
+  commonDir: "",
   restrictToWorkspace: true,
   allowRemote: true,
   streamToolActivity: false,
   maxTokens: "32768",
   maxToolIterations: "50",
+  requestTimeout: "300",
   defaultAgentId: "",
   defaultModels: [],
   defaultTemperature: "",
@@ -88,9 +96,13 @@ export const EMPTY_FORM: CoreConfigForm = {
   archiveDays: "0",
   summaryMaxCount: "0",
   summaryRetentionDays: "0",
+  logRetentionDays: "30",
   sessionMode: "unified",
   devicesEnabled: false,
   monitorUSB: true,
+  backupEnabled: false,
+  backupAt: "03:00",
+  backupRetainDays: "30",
 }
 
 export const EMPTY_LAUNCHER_FORM: LauncherForm = {
@@ -141,6 +153,7 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
   const summarization = asRecord(root.summarization)
   const session = asRecord(root.session)
   const devices = asRecord(root.devices)
+  const logging = asRecord(root.logging)
   const tools = asRecord(root.tools)
   const exec = asRecord(tools.exec)
 
@@ -151,6 +164,7 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
 
   return {
     baseDir: asString(agents.base_dir),
+    commonDir: asString(agents.common_dir),
     restrictToWorkspace:
       defaults.restrict_to_workspace === undefined
         ? EMPTY_FORM.restrictToWorkspace
@@ -168,6 +182,7 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
       defaults.max_tool_iterations,
       EMPTY_FORM.maxToolIterations,
     ),
+    requestTimeout: asNumberString(defaults.request_timeout, EMPTY_FORM.requestTimeout),
     defaultAgentId,
     defaultModels: asStringArray(defaults.models),
     defaultTemperature:
@@ -214,6 +229,10 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
       defaults.summary_retention_days,
       EMPTY_FORM.summaryRetentionDays,
     ),
+    logRetentionDays: asNumberString(
+      logging.retention_days,
+      EMPTY_FORM.logRetentionDays,
+    ),
     sessionMode: asString(session.mode) || EMPTY_FORM.sessionMode,
     devicesEnabled:
       devices.enabled === undefined
@@ -223,6 +242,12 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
       devices.monitor_usb === undefined
         ? EMPTY_FORM.monitorUSB
         : asBool(devices.monitor_usb),
+    backupEnabled: asBool(asRecord(root.backup).enabled),
+    backupAt: asString(asRecord(root.backup).at) || EMPTY_FORM.backupAt,
+    backupRetainDays: asNumberString(
+      asRecord(root.backup).retain_days,
+      EMPTY_FORM.backupRetainDays,
+    ),
   }
 }
 

@@ -26,7 +26,12 @@ type Runtime struct {
 	// returns the selected model's name. Returns an error for an out-of-range
 	// index or when the agent has no selectable models.
 	SetActiveModel func(idx int) (name string, err error)
-	ClearHistory   func() error
+	// GetExposeReasoning / SetExposeReasoning read and toggle whether this session
+	// delivers the model's reasoning to the user (/reasoning). Nil when the host
+	// does not support it.
+	GetExposeReasoning func() bool
+	SetExposeReasoning func(on bool)
+	ClearHistory       func() error
 	CompactHistory func(ctx context.Context) (report string, err error)
 	ResetCooldown  func()
 	// ClearCooldown clears the cooldown for a single provider/model and
@@ -57,6 +62,11 @@ type Runtime struct {
 	// archive exists. Implementations must be cheap (single SQL aggregate or
 	// equivalent) and must not load message bodies.
 	GetArchiveStats func() (count int, first, last time.Time)
+
+	// GetMemoryStatus returns a human-readable cognitive-memory summary for THIS
+	// session (active domain/memory counts, pending-review count, and the last
+	// consolidation run). Returns "" when the agent has no cognitive memory.
+	GetMemoryStatus func() string
 }
 
 // ModelEntry is one configured candidate model for an agent, surfaced by

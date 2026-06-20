@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/PivotLLM/ClawEh/templates"
 )
 
 func exists(t *testing.T, path string) bool {
@@ -12,39 +14,19 @@ func exists(t *testing.T, path string) bool {
 	return err == nil
 }
 
-// TestPopulate_FreshWorkspace seeds all templates, including BOOTSTRAP.md and a
-// starter memory, into a brand-new workspace.
+// TestPopulate_FreshWorkspace seeds all templates and a starter memory into a
+// brand-new workspace.
 func TestPopulate_FreshWorkspace(t *testing.T) {
 	ws := t.TempDir()
 	Populate(ws)
 
-	for _, f := range []string{"AGENTS.md", "BOOTSTRAP.md", "COMPRESSION.md", "IDENTITY.md", "SOUL.md", "USER.md"} {
+	for _, f := range []string{"AGENTS.md", "COMPRESSION.md", "IDENTITY.md", "SOUL.md", "USER.md"} {
 		if !exists(t, filepath.Join(ws, f)) {
 			t.Errorf("expected %s to be seeded into a fresh workspace", f)
 		}
 	}
-	if !exists(t, filepath.Join(ws, "memory", "MEMORY.md")) {
-		t.Error("expected starter memory seeded into <workspace>/memory")
-	}
-}
-
-// TestPopulate_BootstrapNotRecreated verifies a personalized agent that deleted
-// BOOTSTRAP.md does not get it re-added on a subsequent startup.
-func TestPopulate_BootstrapNotRecreated(t *testing.T) {
-	ws := t.TempDir()
-	Populate(ws) // fresh: seeds AGENTS.md + BOOTSTRAP.md
-
-	if err := os.Remove(filepath.Join(ws, "BOOTSTRAP.md")); err != nil {
-		t.Fatalf("remove BOOTSTRAP.md: %v", err)
-	}
-
-	Populate(ws) // restart: workspace already initialized (AGENTS.md present)
-
-	if exists(t, filepath.Join(ws, "BOOTSTRAP.md")) {
-		t.Error("BOOTSTRAP.md must not be recreated on an initialized workspace")
-	}
-	if !exists(t, filepath.Join(ws, "AGENTS.md")) {
-		t.Error("AGENTS.md should still be present")
+	if !exists(t, filepath.Join(ws, "MEMORY.md")) {
+		t.Error("expected MEMORY.md seeded at the workspace root")
 	}
 }
 
@@ -68,27 +50,43 @@ func TestPopulate_CompressionNotRecreated(t *testing.T) {
 	}
 }
 
-// TestPopulate_DeletedMemoryNotRecreated verifies that once a workspace is
-// initialized, a deleted <workspace>/memory is not recreated on restart.
-func TestPopulate_DeletedMemoryNotRecreated(t *testing.T) {
+// TestPopulate_CogmemRecreated verifies that the consolidation prompt
+// (COGMEM.md) — unlike the seed-once files — IS recreated when deleted, with the
+// current template content. This is the path operators use to refresh an agent
+// onto an updated prompt: delete COGMEM.md, restart.
+func TestPopulate_CogmemRecreated(t *testing.T) {
 	ws := t.TempDir()
+	Populate(ws) // fresh: seeds AGENTS.md + COGMEM.md
 
-	// First run initializes the workspace (writes AGENTS.md) and seeds memory.
-	Populate(ws)
-	if !exists(t, filepath.Join(ws, "AGENTS.md")) {
-		t.Fatal("expected workspace to be initialized")
+	cogmemPath := filepath.Join(ws, "COGMEM.md")
+	if !exists(t, cogmemPath) {
+		t.Fatal("expected COGMEM.md seeded into a fresh workspace")
 	}
-	if !exists(t, filepath.Join(ws, "memory", "MEMORY.md")) {
-		t.Fatal("expected starter memory seeded on first run")
+	if err := os.Remove(cogmemPath); err != nil {
+		t.Fatalf("remove COGMEM.md: %v", err)
 	}
 
-	// Simulate the user deleting their memory directory. A restart must not
-	// bring it back.
-	if err := os.RemoveAll(filepath.Join(ws, "memory")); err != nil {
-		t.Fatal(err)
+	Populate(ws) // restart: workspace already initialized
+
+	got, err := os.ReadFile(cogmemPath)
+	if err != nil {
+		t.Fatalf("COGMEM.md must be recreated on an initialized workspace: %v", err)
 	}
+	want, err := templates.FS.ReadFile("COGMEM.md")
+	if err != nil {
+		t.Fatalf("read embedded template: %v", err)
+	}
+	if string(got) != string(want) {
+		t.Error("recreated COGMEM.md does not match the current embedded template")
+	}
+}
+
+// TestPopulate_NoMemoryDir verifies Populate never creates a <workspace>/memory
+// directory (daily notes were removed).
+func TestPopulate_NoMemoryDir(t *testing.T) {
+	ws := t.TempDir()
 	Populate(ws)
 	if exists(t, filepath.Join(ws, "memory")) {
-		t.Error("<workspace>/memory must not reappear on an initialized workspace")
+		t.Error("<workspace>/memory must not be created")
 	}
 }

@@ -50,6 +50,7 @@ func (c *capturingContextManager) AddToolCallMessage(_ context.Context, _ provid
 func (c *capturingContextManager) AddToolResult(_ context.Context, _ providers.Message) error {
 	return nil
 }
+func (c *capturingContextManager) RecordToolUse(_ ...string) {}
 func (c *capturingContextManager) PreDispatchCheck(ctx context.Context, current []providers.Message) ([]providers.Message, error) {
 	c.capture(&c.preDispatchCheckAgentID, ctx)
 	return current, nil

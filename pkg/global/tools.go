@@ -99,6 +99,14 @@ type ToolDefinition struct {
 	// Async declares the tool may use ToolCall.Notify and return Result.Async.
 	Async bool
 
+	// PrimaryOnly declares the tool is available only to a primary (top-level)
+	// agent, never to a spawned sub-agent. Sub-agent tool registries exclude these
+	// regardless of the per-agent allowlist, and execution rejects them as
+	// defense-in-depth. Use for capabilities a worker must not have — e.g.
+	// agent_spawn (prevents recursion), cron_schedule, and the cognitive-memory
+	// WRITE tools (sub-agents get read-only memory).
+	PrimaryOnly bool
+
 	// DefaultAllow controls whether the tool is exposed to clients by default
 	// (the default per-agent allowlist and the default MCP-host allowlist). It is
 	// an optional bool so the safe default is **deny**: a tool that does not set

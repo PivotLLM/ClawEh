@@ -1,12 +1,141 @@
 # ClawEh: Yet another claw - Canadian style
 
-> **⚠️ Breaking config changes** — recent work changed the model/provider config schema. There is no automatic migration; existing config files must be updated by hand:
-> - **Named providers:** a new top-level `providers` list now owns each endpoint (base URL, API key, protocol, proxy, and endpoint quirks). Models reference a provider by name.
-> - **Models simplified:** model entries lose `api_base`, `api_key`, `proxy`, `auth_method`, and the `protocol/` prefix; `model` is now the raw model id the endpoint expects, plus a `provider` field naming its provider.
-> - **`model_list` → `models`:** the model array key was renamed.
-> - **Bedrock provider removed** (along with the AWS SDK dependency) — reach Bedrock as an OpenAI-compatible provider with a base URL.
-> - **Removed:** the legacy `providers` object and `openai_compat_protocols` config, superseded by the named-providers list.
-> - **Attribute stripping** can be performed on a per-model basis (for example strip the "temperature" field for GPT 5 models).
+## What's New
+
+### Improved context compression
+Context compression (summarizing older conversation so long sessions stay within
+the model's context window) has been significantly improved for reliability and
+quality. You can now optionally tailor it per agent: drop a `COMPRESSION.md` file
+in the agent's workspace with additional instructions, and those are folded into
+the summarization prompt. Leave it out to use the built-in behavior.
+
+### Cognitive memory (cogmem)
+ClawEh has gained a cognitive-memory engine so long-running agents get smarter
+over time instead of relying on hand-edited prompt files. Each session has a
+small SQLite memory database alongside its existing archive. Memory is organized
+as **domains** (containers, each with a unique name — a domain is **sticky**
+(always in the prompt) or a routed topic) that each hold **memories**, where every
+memory is a `fact`, a `preference`, or a `rule`. A background "sleep cycle" periodically reviews new
+conversation and distills it into structured, de-duplicated,
+contradiction-resolved memories; the relevant pieces are then composed into the
+system prompt for each turn. Consolidation reuses your configured **Memory models** (formerly
+"Summarization models" — the same setting, renamed) and its prompt lives in an
+editable `COGMEM.md` seeded into each agent's workspace, so you can tune how the
+agent learns. Cognitive memory is **on by default** for every agent; to disable
+it for a specific agent, give that agent a tool allowlist that excludes the
+`cogmem_*` tools.
+
+Memory is surfaced in layers. **Sticky** domains (the seeded **`General`** domain
+holds global rules, preferences, and standing facts) are in every prompt; non-sticky
+topic domains are then auto-loaded by relevance using these signals:
+
+- **Recency** — the most recently used topic domains.
+- **Lexical match** — domains whose name, summary, or memories match salient words in
+  the user's latest message, so asking "what's the status of the BioTech report?"
+  pulls in the BioTech domain even if it hasn't been touched recently.
+- **Tool triggers** — a domain can declare a comma-separated list of tool-name
+  substrings, so it auto-loads the moment the agent uses a matching tool. For
+  example an "Email" domain with triggers `google_gmail,microsoft365_mail` brings
+  the agent's mail preferences into context as soon as it touches a mail tool.
+  Matching ignores case and underscores; the agent sets triggers itself
+  (`cogmem_domain_create`/`cogmem_domain_update`), and the sleep cycle can add them
+  when a domain clearly pertains to specific tools.
+- **Keyword triggers** — a domain can declare a list of distinctive words/phrases
+  that load it when one appears in the incoming message text (matched as a whole
+  phrase, on word boundaries). Unlike tool triggers (which match *tool names*),
+  these match the *message*, so they're the way to have a workflow's context
+  pulled up when a scheduled (cron) job fires or the user mentions it — e.g. a
+  domain with `["morning routine"]` loads when a message says "time for your
+  morning routine." Prefer multi-word phrases over common single words.
+
+These signals are deduplicated and ranked (tool trigger, then keyword, then lexical
+match, then recency), so each relevant domain is loaded once. No embeddings or
+vector search are involved — routing is lexical and deterministic.
+
+#### Confirming inferred memories
+When the agent (or the sleep cycle) infers something it is not certain about, it
+stores it as a **pending** memory rather than acting on it. Pending memories are
+surfaced **once per session** as a short digest in the prompt, and the agent asks
+you to confirm in chat. Reply naturally — on a "yes" the agent calls
+`cogmem_memory_confirm` to promote it to active memory, and on a "no" it calls
+`cogmem_memory_retire` to drop it. The digest is throttled so it is not repeated
+every turn; a newly inferred pending memory re-surfaces the next turn. Set
+`memory.prompt.pending_surface: "export_only"` to keep pending items out of the
+prompt entirely (they still appear in `cogmem_export` and the WebUI memory
+browser).
+
+#### Purging cognitive memory
+`claw memory purge` cleans up accumulated clutter across **all** assistants. It
+purges everything that is **not current active memory** — every domain whose
+status is not active (archived/review) along with its memories, plus every
+non-active memory (retired, superseded, review). Only active memories in active
+domains survive (including the sticky `General` domain).
+
+It is a **dry run by default** — it reports what would be removed, per database and
+in total, without changing anything:
+
+```bash
+claw memory purge
+```
+
+Add `--confirm` to actually delete (it also `VACUUM`s each database to reclaim
+space):
+
+```bash
+claw memory purge --confirm
+```
+
+Recommended sequence — review the counts first, and stop the gateway so you are
+not racing live agents writing memory:
+
+```bash
+sudo systemctl stop claw      # avoid racing live agents
+claw memory purge             # dry run — review the counts
+claw memory purge --confirm   # delete + vacuum
+sudo systemctl start claw
+```
+
+Notes:
+- If you run with a non-default data directory, set `CLAW_HOME` the same way the
+  service does (e.g. `CLAW_HOME=/path claw memory purge`) so it targets the same
+  agents tree.
+- Even the dry run opens each `.cogmem.db`, which runs the normal idempotent
+  migrations — harmless, but another reason to stop the gateway first.
+
+### Workspace `.md` are files are now for humans to edit, not the agent
+The agent no longer edits its own workspace markdown files (`AGENTS.md`,
+`SOUL.md`, `IDENTITY.md`, `USER.md`, `MEMORY.md`). They are now intended for
+**human authorship**. As in other *claw applications, these files are combined
+and inserted into the system prompt, so keep them **brief and general** — they
+are sent on every turn. As the cognitive-memory implementation matures, the
+specific, situational information the agent needs is inserted into the context
+automatically rather than living in these files. The `.md` files are treated as
+**authoritative** (they always win over learned memory) and are **reviewed during
+cognitive-memory consolidation**, so anything you write in them shapes what the
+agent learns. The agent records what it learns to its memory database (via the
+`cogmem_*` tools / the sleep cycle), not to your files.
+
+### Agent file access: `files/` + `skills/`
+By default an agent's file tools are scoped to just two directories:
+**`<workspace>/files`** (read **and** write — its working area for drafts and
+outputs, created automatically) and **`<workspace>/skills`** (read-only). The rest
+of the workspace is invisible to the agent's file tools — including the
+human-authored config files (`AGENTS.md`, `SOUL.md`, `IDENTITY.md`, `USER.md`,
+`MEMORY.md`), which are already injected into its prompt, and subsystem files like
+`COGMEM.md`/`COMPRESSION.md`, which are configuration, not instructions for the
+agent. Both lists are configurable (`workspace_read_subdirs`, default
+`["files","skills"]`; `workspace_write_subdir`, default `files`). **Existing files
+that need to be agent-writable must be moved into `files/` manually.** A shared
+**common directory** (default `agents/common`, configurable to any path) also lets
+agents exchange files via `common_put` / `common_get` / `common_list` /
+`common_delete`; access is on by default and can be toggled per agent.
+
+### What's next
+1. **Monitoring, reviewing, and tweaking cognitive memory** — observing what it
+   learns and refining the prompts, thresholds, and routing signals (recency,
+   lexical match, tool triggers).
+2. Depending on what we find, **refining how the most appropriate memory is
+   automatically inserted** into the agent's context.
 
 ClawEh began as a fork of [PicoClaw](https://github.com/sipeed/picoclaw). Written in Go, ClawEh it is focused on a minimal footprint, efficient deployment, core stability, reliability, security, and long-term maintainability.
 
@@ -145,7 +274,7 @@ Without this, a person's Telegram ID and Slack ID are treated as two separate pe
 
 **One-shot tasks without context**
 
-In `unified` mode every conversation adds to the shared memory. If you want the agent to handle a task in isolation — without drawing on prior context and without polluting the main history — ask it to use the `spawn` tool. A spawned subagent runs in a completely separate session, completes its work, and reports back. Nothing from that exchange appears in or affects the main conversation.
+In `unified` mode every conversation adds to the shared memory. If you want the agent to handle a task in isolation — without drawing on prior chat history and without polluting the main conversation — ask it to use the `spawn` tool. A spawned sub-agent is a **copy of the agent** (same workspace, tools, MCP, prompt, and a read-only snapshot of its memory) running on the given task in a separate session, optionally on a different model. It completes the work and reports back; nothing from that exchange appears in or affects the main conversation, and it cannot write the agent's memory, schedule jobs, or spawn further sub-agents. See [docs/subagents.md](docs/subagents.md).
 
 **Security: access control**
 
@@ -192,7 +321,68 @@ sudo systemctl enable --now claw
 ```
 
 ClawEh writes logs to `~/.claw/logs/claw.log`. No log redirection is required
-in the service file.
+in the service file. See [Logging](#logging) for rotation and retention.
+
+## Logging
+
+ClawEh writes its own log files to `$CLAW_HOME/logs/` (default `~/.claw/logs/`),
+so the systemd unit needs no `StandardOutput`/`StandardError` redirection:
+
+- **`claw.log`** — the main log: everything at or above the configured `level`.
+- **`error.log`** — a high-signal companion containing only `WARN` and above, so
+  you can scan for problems quickly without wading through routine activity.
+  Fatal errors (including config-file errors that abort startup) are written
+  here as well as to `claw.log`.
+
+### Daily rotation and retention
+
+Both files roll once per day. At local midnight the active `claw.log` / `error.log`
+are renamed to date-stamped archives — `YYYYMMDD-claw.log` and `YYYYMMDD-error.log`
+— and fresh active files are opened. The date is taken from each file's
+last-modified time, so if the gateway was not running at midnight the roll
+happens as soon as it next starts, stamping the archive with the day the log
+actually covers.
+
+Retention is a single setting, `logging.retention_days`. After each roll,
+date-stamped archives older than that many days are deleted; **`0` keeps logs
+forever**. The default is `30`. It can also be set via the
+`CLAW_LOGGING_RETENTION_DAYS` environment variable, and is editable in the WebUI
+under **Config → Runtime → Log retention (days)** (changes apply on the next
+gateway start). Only `YYYYMMDD-*.log` archives are pruned — the active
+`claw.log` / `error.log` and the `dumps/` directory are never touched.
+
+### Logging options
+
+```json
+{
+  "logging": {
+    "file": true,
+    "console": true,
+    "level": "info",
+    "json": false,
+    "retention_days": 30,
+    "log_message_content": false,
+    "dump_refusals": true,
+    "dump_all": false,
+    "dump_failed_compressions": false
+  }
+}
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `file` | `true` | Write to `claw.log` (and `error.log`). |
+| `console` | `true` | Also write to stdout/console. |
+| `level` | `info` | Minimum level: `debug`, `info`, `warn`, `error`. |
+| `json` | `false` | Emit JSON instead of the human-readable console format. |
+| `retention_days` | `30` | Days of rolled daily logs to keep; `0` = keep forever. |
+| `log_message_content` | `false` | Include message text and API request/response bodies in logs. Off by default for privacy. |
+| `dump_refusals` | `true` | See [Diagnostic dumps](#diagnostic-dumps). |
+| `dump_all` | `false` | See [Diagnostic dumps](#diagnostic-dumps). |
+| `dump_failed_compressions` | `false` | Write a dump when a context-compaction (summarization) attempt fails. |
+
+Each option also has a `CLAW_LOGGING_*` environment override (e.g.
+`CLAW_LOGGING_LEVEL`, `CLAW_LOGGING_RETENTION_DAYS`).
 
 ## Diagnostic dumps
 
@@ -365,6 +555,17 @@ The server auto-starts whenever any enabled model in `models` uses a `*-cli` pro
 ```
 
 The `tools` list is a single global allowlist applied to all MCP clients (not per-LLM). Supports `"*"` (all tools), prefix globs like `"read_*"`, and exact names. The agent's internal `message` tool is never exposed regardless of the allowlist. Tools inherit the default agent's workspace and sandboxing rules.
+
+### Consuming external MCP servers (claw as an MCP client)
+
+Claw can also connect **outward** to third-party (upstream) MCP servers and make their tools available to your agents. Configure them under `tools.mcp.servers` (stdio, SSE, or Streamable HTTP transports, with optional auth headers and env files); claw connects on startup, lists each server's tools, and registers them as ordinary tools.
+
+There is an important split by provider type:
+
+- **Direct API providers** (`anthropic`, `openai`, `openai-compat`, `gemini`): **get external MCP tools automatically.** Claw acts as the MCP client — it lists the upstream tools, presents them to the model alongside its own, and proxies each call to the upstream server.
+- **CLI providers** (`claude-cli`, `codex-cli`, `gemini-cli`): **do not** receive external MCP tools through claw (the CLI runs as its own agent and ignores claw-side tool definitions). Instead, **configure those MCP servers directly in each CLI** using its own native MCP configuration — the CLIs (Claude Code, Codex CLI, Gemini CLI) all support connecting to MCP servers themselves. (They reach *claw's* own tools via the MCP host above; point them at any *external* MCP servers directly.)
+
+In short: API agents get upstream MCP via claw; CLI agents should be pointed at upstream MCP servers directly in their own config. External MCP servers can be managed from the WebUI (the MCP page) or in `tools.mcp.servers`.
 
 ### Client configuration
 

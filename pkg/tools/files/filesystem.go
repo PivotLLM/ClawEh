@@ -1,6 +1,7 @@
 package files
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -20,7 +21,11 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/tools"
 )
 
-const MaxReadFileSize = 64 * 1024 // 64KB limit to avoid context overflow
+const MaxReadFileSize = 32 * 1024 // 32KB (~8K tokens) per-read cap to avoid context overflow
+
+// defaultReadLineCount is how many lines file_read returns in line mode when
+// line_count is unspecified. Output is still capped to the byte ceiling.
+const defaultReadLineCount = 250
 
 // validatePath ensures the given path is within the workspace if restrict is true.
 func validatePath(path, workspace string, restrict bool) (string, error) {
@@ -125,7 +130,10 @@ func (t *ReadFileTool) Name() string {
 }
 
 func (t *ReadFileTool) Description() string {
-	return "Read the contents of a file. Supports pagination via `offset` and `length`."
+	return "Read the contents of a file. For text/code, prefer line addressing: pass `start_line` " +
+		"(1-based) and optional `line_count` to read a numbered slice — ideal for large files (chapters, " +
+		"outlines) and for getting exact text to pass to file_edit. Or use byte pagination via `offset`/`length`. " +
+		"Either way the result is bounded and tells you how to fetch the next chunk."
 }
 
 func (t *ReadFileTool) Parameters() map[string]any {
@@ -136,14 +144,23 @@ func (t *ReadFileTool) Parameters() map[string]any {
 				"type":        "string",
 				"description": "Path to the file to read.",
 			},
+			"start_line": map[string]any{
+				"type":        "integer",
+				"description": "1-based line to start from. When set, the file is read by numbered lines (not bytes); offset/length are ignored.",
+			},
+			"line_count": map[string]any{
+				"type":        "integer",
+				"description": "Number of lines to read from start_line (default 250). Still capped to the byte limit.",
+				"default":     defaultReadLineCount,
+			},
 			"offset": map[string]any{
 				"type":        "integer",
-				"description": "Byte offset to start reading from.",
+				"description": "Byte offset to start reading from (byte mode; ignored when start_line is set).",
 				"default":     0,
 			},
 			"length": map[string]any{
 				"type":        "integer",
-				"description": "Maximum number of bytes to read.",
+				"description": "Maximum number of bytes to read (byte mode).",
 				"default":     t.maxSize,
 			},
 		},
@@ -178,6 +195,16 @@ func (t *ReadFileTool) Execute(ctx context.Context, args map[string]any) *tools.
 		length = t.maxSize
 	}
 
+	// Line mode: when start_line is given, read a numbered slice of lines.
+	startLine, err := getInt64Arg(args, "start_line", 0)
+	if err != nil {
+		return tools.ErrorResult(err.Error())
+	}
+	lineCount, err := getInt64Arg(args, "line_count", defaultReadLineCount)
+	if err != nil {
+		return tools.ErrorResult(err.Error())
+	}
+
 	file, err := t.sysFs.Open(path)
 	if err != nil {
 		return tools.ErrorResult(err.Error())
@@ -207,6 +234,15 @@ func (t *ReadFileTool) Execute(ctx context.Context, args map[string]any) *tools.
 				"non-seekable file: cannot seek to an offset within the first 512 bytes after binary detection",
 			)
 		}
+	}
+
+	// Line mode: read a numbered slice of lines from the file (position is at 0
+	// after the sniff reset). Bounded by lineCount and the byte ceiling.
+	if startLine > 0 {
+		if lineCount <= 0 {
+			lineCount = defaultReadLineCount
+		}
+		return t.readLines(file, filepath.Base(path), startLine, lineCount)
 	}
 
 	// Seek to the requested offset.
@@ -274,6 +310,64 @@ func (t *ReadFileTool) Execute(ctx context.Context, args map[string]any) *tools.
 	return tools.NewToolResult(header + "\n\n" + string(data))
 }
 
+// readLines returns a numbered slice of lines [startLine, startLine+lineCount)
+// from file (positioned at 0), bounded by the byte ceiling. The output is
+// prefixed with each line's 1-based number and a header noting the range and how
+// to fetch the next chunk.
+func (t *ReadFileTool) readLines(file io.Reader, displayPath string, startLine, lineCount int64) *tools.ToolResult {
+	scanner := bufio.NewScanner(file)
+	// Allow long lines up to the byte ceiling (default 64KB buffer is too small).
+	scanner.Buffer(make([]byte, 0, 64*1024), int(t.maxSize)+1)
+
+	var b strings.Builder
+	var cur, emitted, lastLine int64
+	endLine := startLine + lineCount // exclusive
+	bytesCapped := false
+	moreLines := false
+
+	for scanner.Scan() {
+		cur++
+		if cur < startLine {
+			continue
+		}
+		if cur >= endLine {
+			moreLines = true
+			break
+		}
+		line := scanner.Text()
+		// Stop before exceeding the byte ceiling so the result never overflows
+		// context; tell the caller to continue from here.
+		if int64(b.Len()+len(line))+16 > t.maxSize {
+			bytesCapped = true
+			moreLines = true
+			break
+		}
+		fmt.Fprintf(&b, "%d: %s\n", cur, line)
+		emitted++
+		lastLine = cur
+	}
+	if err := scanner.Err(); err != nil {
+		return tools.ErrorResult(fmt.Sprintf("failed to read lines: %v", err))
+	}
+
+	if emitted == 0 {
+		return tools.NewToolResult(fmt.Sprintf("[file: %s | no lines at start_line=%d (file has %d line(s))]", displayPath, startLine, cur))
+	}
+
+	header := fmt.Sprintf("[file: %s | lines %d-%d]", displayPath, startLine, lastLine)
+	switch {
+	case bytesCapped:
+		header += fmt.Sprintf("\n[TRUNCATED at the byte limit — continue with start_line=%d.]", lastLine+1)
+	case moreLines:
+		header += fmt.Sprintf("\n[More lines follow — continue with start_line=%d.]", lastLine+1)
+	default:
+		header += "\n[END OF FILE - no further lines.]"
+	}
+	logger.DebugCF("tool", "ReadFileTool line-mode read completed",
+		map[string]any{"path": displayPath, "start_line": startLine, "lines": emitted, "more": moreLines})
+	return tools.NewToolResult(header + "\n\n" + b.String())
+}
+
 // getInt64Arg extracts an integer argument from the args map, returning the
 // provided default if the key is absent.
 func getInt64Arg(args map[string]any, key string, defaultVal int64) (int64, error) {
@@ -311,11 +405,18 @@ type WriteFileTool struct {
 }
 
 func NewWriteFileTool(workspace string, restrict bool, allowPaths ...[]*regexp.Regexp) *WriteFileTool {
+	return NewWriteFileToolScoped(workspace, restrict, "", allowPaths...)
+}
+
+// NewWriteFileToolScoped constructs a WriteFileTool whose writes are confined to
+// <workspace>/<writeSubdir> (reads stay workspace-wide). An empty writeSubdir
+// yields the legacy whole-workspace behaviour.
+func NewWriteFileToolScoped(workspace string, restrict bool, writeSubdir string, allowPaths ...[]*regexp.Regexp) *WriteFileTool {
 	var patterns []*regexp.Regexp
 	if len(allowPaths) > 0 {
 		patterns = allowPaths[0]
 	}
-	return &WriteFileTool{sysFs: buildFs(workspace, restrict, patterns)}
+	return &WriteFileTool{sysFs: buildWriteFs(workspace, restrict, writeSubdir, patterns)}
 }
 
 func (t *WriteFileTool) Name() string {
@@ -801,10 +902,209 @@ func buildFs(workspace string, restrict bool, patterns []*regexp.Regexp) fileSys
 		return &hostFs{}
 	}
 	sandbox := &sandboxFs{workspace: workspace}
+	var inner fileSystem = sandbox
 	if len(patterns) > 0 {
-		return &whitelistFs{sandbox: sandbox, patterns: patterns}
+		inner = &whitelistFs{sandbox: sandbox, patterns: patterns}
 	}
-	return sandbox
+	// Optional read-scope: confine agent reads to specific workspace subdirs
+	// (e.g. files/ + skills/). Off by default (nil) so direct unit-test
+	// construction is unaffected; the provider enables it from config.
+	if len(readScopeSubdirs) > 0 && workspace != "" {
+		return newReadScopedFs(inner, workspace, readScopeSubdirs, patterns)
+	}
+	return inner
+}
+
+// readScopeSubdirs, when non-empty, confines agent file reads to these workspace
+// subdirectories (plus any allow-listed host paths). It is a single process-wide
+// read policy, set once at provider construction from
+// AgentDefaults.WorkspaceReadSubdirs; empty means legacy workspace-wide reads.
+var readScopeSubdirs []string
+
+// SetReadScopeSubdirs installs the workspace read allowlist (e.g. ["files","skills"]).
+// Passing nil/empty restores legacy workspace-wide reads.
+func SetReadScopeSubdirs(subdirs []string) { readScopeSubdirs = subdirs }
+
+// readScopedFs wraps an inner fileSystem to confine reads to a set of workspace
+// subdirectories (readRoots). Host paths matching patterns (e.g. the global
+// skills dir, Tools.AllowReadPaths) bypass the check. Writes pass through — the
+// write tools layer writeScopedFs on top for write confinement.
+type readScopedFs struct {
+	inner       fileSystem
+	workspace   string
+	readRoots   []string // absolute
+	subdirNames []string // for the error message
+	patterns    []*regexp.Regexp
+}
+
+func newReadScopedFs(inner fileSystem, workspace string, subdirs []string, patterns []*regexp.Regexp) *readScopedFs {
+	roots := make([]string, 0, len(subdirs))
+	for _, s := range subdirs {
+		if abs, err := filepath.Abs(filepath.Join(workspace, s)); err == nil {
+			roots = append(roots, abs)
+		}
+	}
+	return &readScopedFs{inner: inner, workspace: workspace, readRoots: roots, subdirNames: subdirs, patterns: patterns}
+}
+
+func (r *readScopedFs) readAllowed(path string) error {
+	for _, p := range r.patterns {
+		if p.MatchString(path) {
+			return nil
+		}
+	}
+	var absPath string
+	if filepath.IsAbs(path) {
+		absPath = filepath.Clean(path)
+	} else {
+		a, err := filepath.Abs(filepath.Join(r.workspace, path))
+		if err != nil {
+			return fmt.Errorf("failed to resolve file path: %w", err)
+		}
+		absPath = a
+	}
+	for _, root := range r.readRoots {
+		if absPath == root || isWithinWorkspace(absPath, root) {
+			return nil
+		}
+	}
+	return fmt.Errorf("read denied: the agent can only read %s/", strings.Join(r.subdirNames, "/, "))
+}
+
+func (r *readScopedFs) ReadFile(path string) ([]byte, error) {
+	if err := r.readAllowed(path); err != nil {
+		return nil, err
+	}
+	return r.inner.ReadFile(path)
+}
+
+func (r *readScopedFs) ReadDir(path string) ([]os.DirEntry, error) {
+	if err := r.readAllowed(path); err != nil {
+		return nil, err
+	}
+	return r.inner.ReadDir(path)
+}
+
+func (r *readScopedFs) Open(path string) (fs.File, error) {
+	if err := r.readAllowed(path); err != nil {
+		return nil, err
+	}
+	return r.inner.Open(path)
+}
+
+func (r *readScopedFs) Stat(path string) (os.FileInfo, error) {
+	if err := r.readAllowed(path); err != nil {
+		return nil, err
+	}
+	return r.inner.Stat(path)
+}
+
+func (r *readScopedFs) WriteFile(path string, data []byte) error {
+	return r.inner.WriteFile(path, data)
+}
+
+func (r *readScopedFs) WriteFileMode(path string, data []byte, mode os.FileMode) error {
+	return r.inner.WriteFileMode(path, data, mode)
+}
+
+func (r *readScopedFs) WriteFileExclMode(path string, data []byte, mode os.FileMode) error {
+	return r.inner.WriteFileExclMode(path, data, mode)
+}
+
+// buildWriteFs returns the fileSystem for the write/edit/append/copy tools.
+// When restrict is on and writeSubdir is non-empty, writes are confined to
+// <workspace>/<writeSubdir> while reads stay workspace-wide; host paths matching
+// patterns (Tools.AllowWritePaths) remain writable. When writeSubdir is empty,
+// behaviour matches buildFs (legacy: the whole workspace is writable).
+func buildWriteFs(workspace string, restrict bool, writeSubdir string, patterns []*regexp.Regexp) fileSystem {
+	inner := buildFs(workspace, restrict, patterns)
+	if !restrict || writeSubdir == "" {
+		return inner
+	}
+	return &writeScopedFs{
+		inner:     inner,
+		workspace: workspace,
+		writeRoot: filepath.Join(workspace, writeSubdir),
+		patterns:  patterns,
+	}
+}
+
+// writeScopedFs wraps an inner fileSystem to allow reads across the whole
+// workspace while confining writes (and the directory creation they imply) to
+// writeRoot (<workspace>/<subdir>). Host paths matching patterns are exempt so
+// Tools.AllowWritePaths keeps working.
+type writeScopedFs struct {
+	inner     fileSystem
+	workspace string
+	writeRoot string
+	patterns  []*regexp.Regexp
+}
+
+// writeAllowed reports whether a write to path is permitted: either the path
+// matches a whitelisted host pattern, or it resolves within writeRoot.
+func (w *writeScopedFs) writeAllowed(path string) error {
+	for _, p := range w.patterns {
+		if p.MatchString(path) {
+			return nil
+		}
+	}
+
+	absRoot, err := filepath.Abs(w.writeRoot)
+	if err != nil {
+		return fmt.Errorf("failed to resolve write root: %w", err)
+	}
+
+	var absPath string
+	if filepath.IsAbs(path) {
+		absPath = filepath.Clean(path)
+	} else {
+		absPath, err = filepath.Abs(filepath.Join(w.workspace, path))
+		if err != nil {
+			return fmt.Errorf("failed to resolve file path: %w", err)
+		}
+	}
+
+	if absPath != absRoot && !isWithinWorkspace(absPath, absRoot) {
+		return fmt.Errorf("write denied: outside %s", w.writeRoot)
+	}
+	return nil
+}
+
+func (w *writeScopedFs) ReadFile(path string) ([]byte, error) {
+	return w.inner.ReadFile(path)
+}
+
+func (w *writeScopedFs) ReadDir(path string) ([]os.DirEntry, error) {
+	return w.inner.ReadDir(path)
+}
+
+func (w *writeScopedFs) Open(path string) (fs.File, error) {
+	return w.inner.Open(path)
+}
+
+func (w *writeScopedFs) Stat(path string) (os.FileInfo, error) {
+	return w.inner.Stat(path)
+}
+
+func (w *writeScopedFs) WriteFile(path string, data []byte) error {
+	if err := w.writeAllowed(path); err != nil {
+		return err
+	}
+	return w.inner.WriteFile(path, data)
+}
+
+func (w *writeScopedFs) WriteFileMode(path string, data []byte, mode os.FileMode) error {
+	if err := w.writeAllowed(path); err != nil {
+		return err
+	}
+	return w.inner.WriteFileMode(path, data, mode)
+}
+
+func (w *writeScopedFs) WriteFileExclMode(path string, data []byte, mode os.FileMode) error {
+	if err := w.writeAllowed(path); err != nil {
+		return err
+	}
+	return w.inner.WriteFileExclMode(path, data, mode)
 }
 
 // Helper to get a safe relative path for os.Root usage

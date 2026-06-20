@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -109,6 +110,8 @@ type Config struct {
 	Logging       LoggingConfig       `json:"logging"`
 	Security      SecurityConfig      `json:"security,omitempty"`
 	MCPHost       MCPHostConfig       `json:"mcp_host,omitempty"`
+	Cooldown      CooldownConfig      `json:"cooldown,omitempty"`
+	Backup        BackupConfig        `json:"backup,omitempty"`
 	// ConfigReloadIntervalSeconds controls how often the daemon polls the config
 	// file for changes and triggers a reload. Defaults to
 	// global.DefaultConfigReloadIntervalSeconds; floored at
@@ -143,9 +146,13 @@ type AgentsConfig struct {
 	// uses <base_dir>/default). A per-agent `workspace` overrides this. Empty
 	// defaults to <data_dir>/agents. Point it at another volume to relocate all
 	// agent files at once.
-	BaseDir  string        `json:"base_dir,omitempty" env:"CLAW_AGENTS_BASE_DIR"`
-	Defaults AgentDefaults `json:"defaults"`
-	List     []AgentConfig `json:"list,omitempty"`
+	BaseDir string `json:"base_dir,omitempty" env:"CLAW_AGENTS_BASE_DIR"`
+	// CommonDir is the global path to the shared directory that agents can read
+	// from and write to via the "common" tools. Empty defaults to
+	// <agents base>/common (see Config.ResolveCommonDir).
+	CommonDir string        `json:"common_dir,omitempty" env:"CLAW_AGENTS_COMMON_DIR"`
+	Defaults  AgentDefaults `json:"defaults"`
+	List      []AgentConfig `json:"list,omitempty"`
 }
 
 // SummarizationConfig is the global, deployment-wide summarization model chain.
@@ -161,6 +168,54 @@ type SummarizationConfig struct {
 	DebugCapture bool `json:"debug_capture,omitempty" env:"CLAW_SUMMARIZATION_DEBUG_CAPTURE"`
 }
 
+// MemoryConfig configures the cognitive-memory subsystem for an agent. The
+// subsystem is ACTIVE for an agent only when that agent is allowed the cogmem
+// tools (there is no separate engine flag). The consolidation model is NOT
+// configured here: it reuses the agent's summarization ("Memory") model chain
+// (SummarizationModels → global Summarization.Models → the agent's own model).
+type MemoryConfig struct {
+	Prompt        MemoryPromptConfig        `json:"prompt"`
+	Consolidation MemoryConsolidationConfig `json:"consolidation"`
+	Retention     MemoryRetentionConfig     `json:"retention"`
+	Export        MemoryExportConfig        `json:"export"`
+}
+
+// MemoryPromptConfig tunes per-turn prompt composition.
+type MemoryPromptConfig struct {
+	TopKDomains       int     `json:"top_k_domains"`
+	MaxChars          int     `json:"max_chars"`
+	MinConfidence     float64 `json:"min_confidence"`
+	IncludeDebugTrace bool    `json:"include_debug_trace"`
+	PendingSurface    string  `json:"pending_surface"` // "ask" | "export_only"
+	PendingMax        int     `json:"pending_max"`
+}
+
+// MemoryConsolidationConfig tunes the background sleep cycle.
+type MemoryConsolidationConfig struct {
+	EveryNMessages   int    `json:"every_n_messages"`
+	IdleMinutes      int    `json:"idle_minutes"`
+	Nightly          bool   `json:"nightly"`
+	NightlyAt        string `json:"nightly_at"`
+	ProposeDomains   bool   `json:"propose_domains"`
+	AutoPromote      bool   `json:"auto_promote"`
+	DebugDump        bool   `json:"debug_dump"`
+	MaxBatchMessages int    `json:"max_batch_messages"`
+	MaxInputTokens   int    `json:"max_input_tokens"`
+	PerMessageChars  int    `json:"per_message_chars"`
+	MaxOutputTokens  int    `json:"max_output_tokens"`
+	MaxRuntimeSecs   int    `json:"max_runtime_seconds"`
+}
+
+// MemoryRetentionConfig guards unconsolidated archive messages from pruning.
+type MemoryRetentionConfig struct {
+	ProtectUnconsolidated bool `json:"protect_unconsolidated"`
+}
+
+// MemoryExportConfig controls the read-only GENERATED_*.md export.
+type MemoryExportConfig struct {
+	Enabled bool `json:"enabled"`
+}
+
 type AgentConfig struct {
 	ID          string           `json:"id"`
 	Enabled     *bool            `json:"enabled,omitempty"`
@@ -173,6 +228,20 @@ type AgentConfig struct {
 	Subagents   *SubagentsConfig `json:"subagents,omitempty"`
 	Callback    *CallbackConfig  `json:"callback,omitempty"`
 	Temperature *float64         `json:"temperature,omitempty"`
+
+	// GlobalCron lets this agent create and manage cron jobs for OTHER agents
+	// (by passing their agent id). Off by default: an agent can only schedule for
+	// itself. Typically exactly one orchestrator agent has this.
+	GlobalCron bool `json:"global_cron,omitempty"`
+
+	// ShareCommon toggles the per-agent "common" shared-directory tools. nil or
+	// true (the default) exposes them; false withholds them from this agent.
+	ShareCommon *bool `json:"share_common,omitempty"`
+
+	// Memory optionally overrides the agent-defaults memory config wholesale
+	// (nil → use AgentDefaults.Memory). Only meaningful when the agent is
+	// allowed the cogmem tools.
+	Memory *MemoryConfig `json:"memory,omitempty"`
 
 	// SummarizationModels is an optional per-agent summarization model chain.
 	// When non-empty, these models are tried first (in order) for this agent's
@@ -200,6 +269,12 @@ type AgentConfig struct {
 // IsEnabled returns true if the agent is enabled (nil means enabled by default).
 func (a *AgentConfig) IsEnabled() bool {
 	return a.Enabled == nil || *a.Enabled
+}
+
+// SharesCommon reports whether this agent gets the "common" shared-directory
+// tools. The default is ON: a nil agent or an unset ShareCommon shares.
+func (a *AgentConfig) SharesCommon() bool {
+	return a == nil || a.ShareCommon == nil || *a.ShareCommon
 }
 
 // MatchToolPattern returns true if name matches any entry in patterns.
@@ -243,6 +318,15 @@ func (a *AgentConfig) IsToolAllowed(name string) bool {
 	return MatchToolPattern(a.Tools, name)
 }
 
+// CognitiveMemoryEnabled reports whether this agent is allowed the cognitive-
+// memory tools. The subsystem activates for an agent only when that agent may
+// call the cogmem tools; "cogmem_domain_get" is used as the sentinel. Agents
+// that are not allowed cogmem tools get IDENTICAL behavior to before — no
+// prompt injection, no archive hook, no consolidation.
+func (a *AgentConfig) CognitiveMemoryEnabled() bool {
+	return a.IsToolAllowed("cogmem_domain_get")
+}
+
 type SubagentsConfig struct {
 	AllowAgents []string `json:"allow_agents,omitempty"`
 	Models      []string `json:"models,omitempty"`
@@ -272,6 +356,19 @@ type AgentBinding struct {
 	AgentID       string       `json:"agent_id"`
 	AgentMentions []string     `json:"agent_mentions,omitempty"`
 	Match         BindingMatch `json:"match"`
+	// Default marks this binding as the agent's default delivery channel — where
+	// cron jobs (and other agent-targeted output) are sent. At most one default
+	// per agent, and a default must resolve to a concrete chat: either a concrete
+	// Match.Peer{Kind,ID}, or an explicit DeliverTo. See Config.CronTarget /
+	// ValidateBindings.
+	Default bool `json:"default,omitempty"`
+	// DeliverTo is an explicit chat/peer id used ONLY for async (cron) delivery on
+	// this binding's channel — never for routing. It exists for channels whose
+	// Match has no concrete peer (e.g. a Telegram bot bound broadly to an agent):
+	// set it to the chat id cron output should go to. DeliverPeerKind defaults to
+	// "direct".
+	DeliverTo       string `json:"deliver_to,omitempty"`
+	DeliverPeerKind string `json:"deliver_peer_kind,omitempty"`
 }
 
 type SessionConfig struct {
@@ -279,17 +376,124 @@ type SessionConfig struct {
 	IdentityLinks map[string][]string `json:"identity_links,omitempty"`
 }
 
+// DefaultBinding returns the agent's binding marked Default, or false if none.
+// Agent ids are matched case-insensitively: binding agent_ids are author-cased
+// (e.g. "Karen") while a session-derived caller id is lowercased ("karen").
+func (c *Config) DefaultBinding(agentID string) (*AgentBinding, bool) {
+	id := strings.TrimSpace(agentID)
+	for i := range c.Bindings {
+		b := &c.Bindings[i]
+		if b.Default && strings.EqualFold(b.AgentID, id) {
+			return b, true
+		}
+	}
+	return nil, false
+}
+
+// AgentHasGlobalCron reports whether the agent may schedule/manage cron jobs for
+// other agents.
+func (c *Config) AgentHasGlobalCron(agentID string) bool {
+	id := strings.TrimSpace(agentID)
+	for i := range c.Agents.List {
+		if strings.EqualFold(c.Agents.List[i].ID, id) {
+			return c.Agents.List[i].GlobalCron
+		}
+	}
+	return false
+}
+
+// CronTarget resolves the agent's default-channel delivery coordinates from its
+// default binding. ok is false when the agent has no default binding or that
+// binding does not resolve to a concrete chat. The values are the binding's own
+// Match fields, so delivering to them routes straight back to the agent.
+func (c *Config) CronTarget(agentID string) (channel, chatID, peerKind string, ok bool) {
+	b, found := c.DefaultBinding(agentID)
+	if !found || b.Match.Channel == "" {
+		return "", "", "", false
+	}
+	// A concrete routing peer (e.g. a Slack channel binding) is the delivery target.
+	if b.Match.Peer != nil && b.Match.Peer.Kind != "" && b.Match.Peer.ID != "" {
+		return b.Match.Channel, b.Match.Peer.ID, b.Match.Peer.Kind, true
+	}
+	// Otherwise use the explicit delivery target (e.g. a Telegram chat id on a
+	// broadly-bound bot). This does not affect routing.
+	if b.DeliverTo != "" {
+		kind := b.DeliverPeerKind
+		if kind == "" {
+			kind = "direct"
+		}
+		return b.Match.Channel, b.DeliverTo, kind, true
+	}
+	return "", "", "", false
+}
+
+// ValidateBindings rejects an inconsistent binding set: more than one default
+// per agent, or a default binding that does not resolve to a concrete chat
+// (needs Match.Channel + Match.Peer{Kind,ID}) and so could not receive cron output.
+func (c *Config) ValidateBindings() error {
+	defaults := map[string]int{}
+	for i := range c.Bindings {
+		b := &c.Bindings[i]
+		if !b.Default {
+			continue
+		}
+		defaults[b.AgentID]++
+		if defaults[b.AgentID] > 1 {
+			return fmt.Errorf("agent %q has more than one default binding", b.AgentID)
+		}
+		concretePeer := b.Match.Peer != nil && b.Match.Peer.Kind != "" && b.Match.Peer.ID != ""
+		if b.Match.Channel == "" || (!concretePeer && b.DeliverTo == "") {
+			return fmt.Errorf("default binding for agent %q must resolve to a concrete chat: either a peer (kind+id) or a deliver_to chat id", b.AgentID)
+		}
+	}
+	return nil
+}
+
 type AgentDefaults struct {
 	RestrictToWorkspace bool `json:"restrict_to_workspace"           env:"CLAW_AGENTS_DEFAULTS_RESTRICT_TO_WORKSPACE"`
 	// StreamToolActivity, when true, sends the model's inter-tool narration and
 	// each tool's user-facing output to the channel as it happens. When false
 	// (default) the user receives only the final answer, not the play-by-play.
-	StreamToolActivity         bool     `json:"stream_tool_activity,omitempty"  env:"CLAW_AGENTS_DEFAULTS_STREAM_TOOL_ACTIVITY"`
-	AllowReadOutsideWorkspace  bool     `json:"allow_read_outside_workspace"    env:"CLAW_AGENTS_DEFAULTS_ALLOW_READ_OUTSIDE_WORKSPACE"`
-	Models                     []string `json:"models,omitempty"`
-	ImageModel                 string   `json:"image_model,omitempty"           env:"CLAW_AGENTS_DEFAULTS_IMAGE_MODEL"`
-	ImageModelFallbacks        []string `json:"image_model_fallbacks,omitempty"`
-	RequestTimeout             int      `json:"request_timeout,omitempty"       env:"CLAW_AGENTS_DEFAULTS_REQUEST_TIMEOUT"`
+	StreamToolActivity        bool `json:"stream_tool_activity,omitempty"  env:"CLAW_AGENTS_DEFAULTS_STREAM_TOOL_ACTIVITY"`
+	AllowReadOutsideWorkspace bool `json:"allow_read_outside_workspace"    env:"CLAW_AGENTS_DEFAULTS_ALLOW_READ_OUTSIDE_WORKSPACE"`
+	// ShowReasoningAsContent, when true, lets a model's reasoning_content be used
+	// as the user-facing reply when the model returns empty content. Default false:
+	// reasoning never reaches the main chat (it would otherwise leak raw
+	// chain-of-thought, e.g. a model that degenerates into reasoning-only output).
+	ShowReasoningAsContent bool `json:"show_reasoning_as_content,omitempty" env:"CLAW_AGENTS_DEFAULTS_SHOW_REASONING_AS_CONTENT"`
+	// WorkspaceWriteSubdir confines writes to <workspace>/<subdir> while reads
+	// remain workspace-wide. Only applies when RestrictToWorkspace is true.
+	// Default "files" (writes land in <workspace>/files). Set to "" to make the
+	// whole workspace writable (legacy behavior).
+	WorkspaceWriteSubdir string `json:"workspace_write_subdir"          env:"CLAW_AGENTS_DEFAULTS_WORKSPACE_WRITE_SUBDIR"`
+	// WorkspaceReadSubdirs confines agent file reads to these <workspace>/<subdir>
+	// directories (plus allow-listed host paths). Only applies when
+	// RestrictToWorkspace is true. Default ["files","skills"] — the agent's
+	// read/write area plus its skills. Empty makes reads workspace-wide (legacy),
+	// which exposes config/subsystem files (AGENTS.md, COGMEM.md, …) the agent
+	// already receives in its prompt or should never read.
+	WorkspaceReadSubdirs []string `json:"workspace_read_subdirs"          env:"CLAW_AGENTS_DEFAULTS_WORKSPACE_READ_SUBDIRS"`
+	Models               []string `json:"models,omitempty"`
+	ImageModel           string   `json:"image_model,omitempty"           env:"CLAW_AGENTS_DEFAULTS_IMAGE_MODEL"`
+	ImageModelFallbacks  []string `json:"image_model_fallbacks,omitempty"`
+	// RequestTimeout is the global default request timeout (seconds) applied to
+	// any model whose own request_timeout is 0. Default 300; CLI models override
+	// it higher (e.g. 3600). 0 falls back to the built-in 120s HTTP default.
+	RequestTimeout int `json:"request_timeout,omitempty"       env:"CLAW_AGENTS_DEFAULTS_REQUEST_TIMEOUT"`
+	// TurnTimeout is the overall wall-clock budget (seconds) for a single user
+	// turn — all LLM iterations plus every tool call. It is a hard backstop that
+	// guarantees the turn ends (the context is cancelled) so the user always gets
+	// a reply and the typing indicator clears, even if a provider or tool hangs.
+	// 0 falls back to the built-in default (DefaultTurnTimeout).
+	TurnTimeout int `json:"turn_timeout,omitempty"          env:"CLAW_AGENTS_DEFAULTS_TURN_TIMEOUT"`
+	// ToolTimeout is the per-tool-call budget (seconds). A tool whose context
+	// deadline elapses is cancelled and reported as a timeout to the model, which
+	// can then continue the turn. 0 falls back to DefaultToolTimeout.
+	ToolTimeout int `json:"tool_timeout,omitempty"          env:"CLAW_AGENTS_DEFAULTS_TOOL_TIMEOUT"`
+	// ProgressInterval is how often (seconds) a long-running turn emits a
+	// lightweight progress update so it never looks dead. 0 falls back to
+	// DefaultProgressInterval; a negative value disables progress updates.
+	ProgressInterval           int      `json:"progress_interval,omitempty"     env:"CLAW_AGENTS_DEFAULTS_PROGRESS_INTERVAL"`
 	MaxTokens                  int      `json:"max_tokens"                      env:"CLAW_AGENTS_DEFAULTS_MAX_TOKENS"`
 	Temperature                *float64 `json:"temperature,omitempty"           env:"CLAW_AGENTS_DEFAULTS_TEMPERATURE"`
 	MaxToolIterations          int      `json:"max_tool_iterations"             env:"CLAW_AGENTS_DEFAULTS_MAX_TOOL_ITERATIONS"`
@@ -309,6 +513,19 @@ type AgentDefaults struct {
 	SummaryRetentionDays       int      `json:"summary_retention_days,omitempty"        env:"CLAW_AGENTS_DEFAULTS_SUMMARY_RETENTION_DAYS"`
 	ArchiveContentMaxBytes     int      `json:"archive_content_max_bytes,omitempty"     env:"CLAW_AGENTS_DEFAULTS_ARCHIVE_CONTENT_MAX_BYTES"`
 	DefaultTools               []string `json:"default_tools,omitempty"`
+
+	// Memory is the default cognitive-memory config applied to agents allowed
+	// the cogmem tools (overridable per agent via AgentConfig.Memory).
+	Memory MemoryConfig `json:"memory"`
+}
+
+// EffectiveMemory returns the memory config for an agent: the per-agent block
+// if present, otherwise the defaults.
+func (d AgentDefaults) EffectiveMemory(a *AgentConfig) MemoryConfig {
+	if a != nil && a.Memory != nil {
+		return *a.Memory
+	}
+	return d.Memory
 }
 
 const DefaultMaxMediaSize = 20 * 1024 * 1024 // 20 MB
@@ -318,6 +535,103 @@ func (d *AgentDefaults) GetMaxMediaSize() int {
 		return d.MaxMediaSize
 	}
 	return DefaultMaxMediaSize
+}
+
+// Turn/tool/progress defaults. A turn is the whole exchange for one user
+// message (all LLM iterations + tool calls); the turn budget is the hard
+// backstop against a hung provider or tool.
+const (
+	DefaultTurnTimeout      = 15 * time.Minute
+	DefaultToolTimeout      = 5 * time.Minute
+	DefaultProgressInterval = 30 * time.Second
+)
+
+// GetTurnTimeout returns the overall turn budget: the configured value (seconds)
+// or DefaultTurnTimeout when unset (0).
+func (d *AgentDefaults) GetTurnTimeout() time.Duration {
+	if d.TurnTimeout > 0 {
+		return time.Duration(d.TurnTimeout) * time.Second
+	}
+	return DefaultTurnTimeout
+}
+
+// GetToolTimeout returns the per-tool-call budget: the configured value
+// (seconds) or DefaultToolTimeout when unset (0).
+func (d *AgentDefaults) GetToolTimeout() time.Duration {
+	if d.ToolTimeout > 0 {
+		return time.Duration(d.ToolTimeout) * time.Second
+	}
+	return DefaultToolTimeout
+}
+
+// GetProgressInterval returns the progress-update cadence: the configured value
+// (seconds), DefaultProgressInterval when unset (0), or 0 (disabled) when
+// negative.
+func (d *AgentDefaults) GetProgressInterval() time.Duration {
+	if d.ProgressInterval < 0 {
+		return 0
+	}
+	if d.ProgressInterval == 0 {
+		return DefaultProgressInterval
+	}
+	return time.Duration(d.ProgressInterval) * time.Second
+}
+
+// CooldownConfig sets, per HTTP-status category, how long a model that keeps
+// failing is taken out of rotation (the "settled" cooldown reached after the
+// short 1/3/5-minute escalation on the first three consecutive failures). Each
+// value is in MINUTES: 0 uses the built-in default; a negative value disables
+// cooldown for that category (the model is never taken out for it). 413
+// (context-too-large) and errors with no HTTP status never cool — they are
+// per-request or transient.
+type CooldownConfig struct {
+	// BillingAuthMinutes covers HTTP 401, 402, 403 (auth / out-of-credits).
+	BillingAuthMinutes int `json:"billing_auth_minutes,omitempty" env:"CLAW_COOLDOWN_BILLING_AUTH_MINUTES"`
+	// RateLimitMinutes covers HTTP 429.
+	RateLimitMinutes int `json:"rate_limit_minutes,omitempty" env:"CLAW_COOLDOWN_RATE_LIMIT_MINUTES"`
+	// BadRequestMinutes covers HTTP 400.
+	BadRequestMinutes int `json:"bad_request_minutes,omitempty" env:"CLAW_COOLDOWN_BAD_REQUEST_MINUTES"`
+	// ClientErrorMinutes covers other 4xx (404, 408, …; not 400/401/402/403/429/413).
+	ClientErrorMinutes int `json:"client_error_minutes,omitempty" env:"CLAW_COOLDOWN_CLIENT_ERROR_MINUTES"`
+	// ServerErrorMinutes covers 5xx.
+	ServerErrorMinutes int `json:"server_error_minutes,omitempty" env:"CLAW_COOLDOWN_SERVER_ERROR_MINUTES"`
+}
+
+// Cooldown category defaults (minutes). Billing/auth is long because the operator
+// usually has to top up or rotate a key; the rest are short.
+const (
+	DefaultCooldownBillingAuthMinutes = 60
+	DefaultCooldownRateLimitMinutes   = 10
+	DefaultCooldownBadRequestMinutes  = 1
+	DefaultCooldownClientErrorMinutes = 10
+	DefaultCooldownServerErrorMinutes = 10
+)
+
+// minutesOrDefault maps a config value to a duration: 0 → def, <0 → 0 (disabled).
+func minutesOrDefault(v, def int) time.Duration {
+	if v < 0 {
+		return 0
+	}
+	if v == 0 {
+		return time.Duration(def) * time.Minute
+	}
+	return time.Duration(v) * time.Minute
+}
+
+func (c CooldownConfig) BillingAuth() time.Duration {
+	return minutesOrDefault(c.BillingAuthMinutes, DefaultCooldownBillingAuthMinutes)
+}
+func (c CooldownConfig) RateLimit() time.Duration {
+	return minutesOrDefault(c.RateLimitMinutes, DefaultCooldownRateLimitMinutes)
+}
+func (c CooldownConfig) BadRequest() time.Duration {
+	return minutesOrDefault(c.BadRequestMinutes, DefaultCooldownBadRequestMinutes)
+}
+func (c CooldownConfig) ClientError() time.Duration {
+	return minutesOrDefault(c.ClientErrorMinutes, DefaultCooldownClientErrorMinutes)
+}
+func (c CooldownConfig) ServerError() time.Duration {
+	return minutesOrDefault(c.ServerErrorMinutes, DefaultCooldownServerErrorMinutes)
 }
 
 // DefaultModelName returns the first model in the list, or "" if unset.
@@ -538,6 +852,10 @@ type LoggingConfig struct {
 	Console bool   `json:"console"             env:"CLAW_LOGGING_CONSOLE"`
 	Level   string `json:"level"               env:"CLAW_LOGGING_LEVEL"`
 	JSON    bool   `json:"json"                env:"CLAW_LOGGING_JSON"`
+	// RetentionDays is how many days of rolled daily logs (YYYYMMDD-claw.log) to
+	// keep. The active claw.log is rolled at local midnight (and, if the gateway
+	// was down at midnight, as soon as it next starts). 0 keeps logs forever.
+	RetentionDays int `json:"retention_days"      env:"CLAW_LOGGING_RETENTION_DAYS"`
 	// LogMessageContent controls whether inbound message text and API request/response
 	// bodies are included in log entries. Defaults to false to protect user privacy.
 	LogMessageContent bool `json:"log_message_content" env:"CLAW_LOGGING_MESSAGE_CONTENT"`
@@ -608,9 +926,10 @@ type ModelConfig struct {
 	ResponseLogFile string `json:"response_log_file,omitempty"`
 
 	// ReasoningEffort sets the OpenAI-style reasoning_effort request field for
-	// models that natively accept it (notably Grok). Valid values are "low",
-	// "medium", "high", or empty (the field is omitted). Providers that don't
-	// understand the field will silently ignore it.
+	// models that natively accept it (notably Grok). Valid values are "none",
+	// "low", "medium", "high", or empty. Empty omits the field entirely; "none"
+	// is sent explicitly (e.g. to disable reasoning on models that support it).
+	// Providers that don't understand the field will silently ignore it.
 	ReasoningEffort string `json:"reasoning_effort,omitempty" yaml:"reasoning_effort,omitempty"`
 
 	// ExtraBody is a free-form passthrough map merged into the JSON request
@@ -669,11 +988,11 @@ func (c *ModelConfig) Validate() error {
 		return fmt.Errorf("model %q: provider is required", c.ModelName)
 	}
 	switch c.ReasoningEffort {
-	case "", "low", "medium", "high":
+	case "", "none", "low", "medium", "high":
 		// ok
 	default:
 		return fmt.Errorf(
-			"model %q: invalid reasoning_effort %q (valid: low, medium, high, or omit)",
+			"model %q: invalid reasoning_effort %q (valid: none, low, medium, high, or omit)",
 			c.ModelName, c.ReasoningEffort,
 		)
 	}
@@ -886,8 +1205,8 @@ type MCPHostConfig struct {
 	Listen       string `json:"listen,omitempty"        env:"CLAW_MCP_HOST_LISTEN"`
 	EndpointPath string `json:"endpoint_path,omitempty" env:"CLAW_MCP_HOST_ENDPOINT_PATH"`
 	// Tools is the global allowlist of tool names exposed to MCP clients.
-	// Supports "*" (all), prefix globs like "read_*", and exact names.
-	// The agent's outbound "message" tool is never exposed.
+	// Supports "*" (all), prefix globs like "read_*", and exact names. Every
+	// tool obeys the allowlist; nothing (including msg_send) is hard-excluded.
 	Tools []string `json:"tools,omitempty"`
 }
 
@@ -1038,6 +1357,16 @@ func (c *Config) BaseDir() string {
 	return filepath.Join(c.dataDir, "agents")
 }
 
+// ResolveCommonDir returns the global shared directory agents read/write via the
+// "common" tools. An explicit agents.common_dir wins; otherwise it defaults to
+// <agents base>/common.
+func (c *Config) ResolveCommonDir() string {
+	if c.Agents.CommonDir != "" {
+		return expandHome(c.Agents.CommonDir)
+	}
+	return filepath.Join(c.BaseDir(), "common")
+}
+
 // WorkspacePath returns the primary/default-agent workspace (<base_dir>/default).
 // It is used for gateway-global operations (skills view, gateway state, MCP
 // config) and as the CLI-provider working-dir fallback. Per-agent workspaces are
@@ -1098,6 +1427,38 @@ func (c *Config) SkillsPath() string {
 // CronPath returns the cron store directory (~/.claw/cron).
 func (c *Config) CronPath() string {
 	return filepath.Join(c.dataDir, "cron")
+}
+
+// BackupConfig controls the optional nightly backup of key files (config.json
+// and the cron jobs file) into <data dir>/backup/YYYYMMDD/.
+type BackupConfig struct {
+	Enabled    bool   `json:"enabled,omitempty"`     // off by default
+	At         string `json:"at,omitempty"`          // "HH:MM" local time; default 03:00
+	RetainDays int    `json:"retain_days,omitempty"` // prune older day-folders; default 30
+}
+
+// BackupAt returns the configured run time as hour and minute, defaulting to
+// 03:00 when unset or unparseable.
+func (b BackupConfig) BackupAt() (hour, minute int) {
+	hour, minute = 3, 0
+	parts := strings.SplitN(strings.TrimSpace(b.At), ":", 2)
+	if len(parts) == 2 {
+		if h, err := strconv.Atoi(strings.TrimSpace(parts[0])); err == nil && h >= 0 && h <= 23 {
+			hour = h
+		}
+		if m, err := strconv.Atoi(strings.TrimSpace(parts[1])); err == nil && m >= 0 && m <= 59 {
+			minute = m
+		}
+	}
+	return hour, minute
+}
+
+// BackupRetainDays returns the retention window, defaulting to 30 when unset.
+func (b BackupConfig) BackupRetainDays() int {
+	if b.RetainDays <= 0 {
+		return 30
+	}
+	return b.RetainDays
 }
 
 func expandHome(path string) string {

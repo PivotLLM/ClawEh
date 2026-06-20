@@ -17,14 +17,11 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/config"
 	"github.com/PivotLLM/ClawEh/pkg/logger"
 	"github.com/PivotLLM/ClawEh/pkg/mcpserver/acl"
+	"github.com/PivotLLM/ClawEh/pkg/routing"
 	"github.com/PivotLLM/ClawEh/pkg/tools"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
-
-// messageToolName is the agent-internal outbound-publish tool, never exposed
-// to MCP clients (it has no meaningful semantics outside the agent loop).
-const messageToolName = "msg_send"
 
 // invalidTokenMessage is what we return when the supplied session_token is
 // missing, malformed, or unknown. The wording is intentionally instructive
@@ -115,10 +112,10 @@ func addToolsToServer(
 	}
 
 	for _, name := range catalogueToolNames(agentRegistries) {
-		// Never expose the agent-internal message tools.
-		if name == messageToolName || name == "message" {
-			continue
-		}
+		// msg_send (the outbound-message tool) obeys the allowlist like any other
+		// tool: it is only reachable by an authenticated MCP client holding a valid
+		// session token, and it can only post to that session's own user, so there
+		// is no hard exclusion — include it in the allowlist to expose it.
 		if !config.MatchToolPattern(allowPatterns, name) {
 			continue
 		}
@@ -240,20 +237,27 @@ func dispatchToolCall(
 		return subagentMessage, true
 	}
 
-	if sessionTokens == nil || rawSessTok == "" {
-		logger.WarnCF("mcpserver", "MCP token rejected",
-			map[string]any{"tool": toolName, "reason": "invalid_token", "token_len": len(rawSessTok)})
+	if rawSessTok == "" {
+		logger.WarnCF("mcpserver", "MCP tool call presented no session_token",
+			map[string]any{"tool": toolName, "reason": "no_token"})
+		return invalidTokenMessage, true
+	}
+	if sessionTokens == nil {
+		logger.WarnCF("mcpserver", "MCP token rejected: token store unavailable",
+			map[string]any{"tool": toolName, "reason": "no_token_store"})
 		return invalidTokenMessage, true
 	}
 
 	rec, found := sessionTokens.Resolve(rawSessTok)
 	if !found {
-		logger.WarnCF("mcpserver", "MCP token rejected",
+		logger.WarnCF("mcpserver", "MCP session token verification failed",
 			map[string]any{"tool": toolName, "reason": "invalid_token", "token_len": len(rawSessTok)})
 		return invalidTokenMessage, true
 	}
 
 	agentName := rec.agentID
+	logger.InfoCF("mcpserver", "MCP session token verified",
+		map[string]any{"agent": agentName, "session": rec.sessionKey, "tool": toolName})
 
 	reg, ok := resolver(agentName)
 	if !ok || reg == nil {
@@ -278,6 +282,15 @@ func dispatchToolCall(
 		return aclDeniedMessage, true
 	}
 
+	// A sub-agent session (e.g. a CLI provider reaching tools over MCP) must never
+	// run a PrimaryOnly tool — this closes the recursion / privilege hole that the
+	// in-loop registry filter covers for API providers.
+	if routing.IsSubagentSessionKey(rec.sessionKey) && tools.IsPrimaryOnly(toolInstance) {
+		logger.WarnCF("mcpserver", "MCP tool denied for sub-agent",
+			map[string]any{"agent": agentName, "tool": toolName, "reason": "primary_only"})
+		return fmt.Sprintf("tool %q is not available to sub-agents", toolName), true
+	}
+
 	// Session-scoped tools call tools.ToolSessionKey(ctx); inject the resolved
 	// session key so they retrieve the correct session regardless of HTTP state.
 	if t, ok := toolInstance.(tools.SessionScoped); ok && t.IsSessionScoped() {
@@ -296,29 +309,85 @@ func dispatchToolCall(
 		tracker.record(agentName)
 	}
 
-	result := reg.Execute(ctx, toolName, args)
+	// Async completion handler: when a background tool (e.g. agent_spawn in
+	// callback mode) finishes later, deliver its result the same way the agent
+	// loop does — ForUser to the user, and ForLLM re-injected as a "system"
+	// message into the agent's session — so the primary LLM is notified without
+	// polling, for CLI and non-CLI providers alike. (The immediate/sync result is
+	// handled below.)
+	asyncCb := func(_ context.Context, r *tools.ToolResult) {
+		publishMCPForUser(context.Background(), msgBus, rec, toolName, r)
+		publishMCPAsyncToLLM(msgBus, rec, toolName, r)
+	}
+	result := reg.ExecuteWithContext(ctx, toolName, args, rec.channel, rec.chatID, asyncCb)
 	if result == nil {
 		logger.WarnCF("mcpserver", "tool returned nil result",
 			map[string]any{"tool": toolName, "agent": agentName, "reason": "nil_result"})
 		return agenttoken.Redact("tool returned nil result"), true
 	}
 
-	// Side-channel publish of ForUser to the originating user. The MCP response
-	// envelope to the caller (the LLM client) carries only ForLLM — ForUser is
-	// the tool's "display this back to the human" payload and is delivered out-
-	// of-band over the message bus to the session's recorded inbound source.
-	//
-	// Mirrors the inbound-user-message publish at pkg/agent/loop.go (after
-	// runLLMIteration). These two publish sites are mutually exclusive: the
-	// agent-loop publish only fires for tools dispatched by the agent loop;
-	// MCP-routed tool calls do not go through pkg/agent/loop.go.
-	//
-	// Out of scope: Media propagation and Async callbacks. A follow-up worker
-	// can pick those up — ForUser-only is the agreed scope for this commit.
+	// Side-channel publish of the immediate ForUser to the originating user. The
+	// MCP response envelope to the caller carries only ForLLM; ForUser is delivered
+	// out-of-band over the message bus to the session's recorded inbound source.
+	// (Async completions are handled by asyncCb above.)
 	publishMCPForUser(ctx, msgBus, rec, toolName, result)
 
 	out := agenttoken.Redact(result.ForLLM)
 	return out, result.IsError
+}
+
+// publishMCPAsyncToLLM re-injects an async tool's completion (ForLLM, or the
+// error) into the agent's session as a "system" message, so the primary LLM is
+// notified of the result without polling. Mirrors the agent-loop async path
+// (pkg/agent/loop.go). No-op when there is nothing to inject; when there is no
+// recorded channel source to route to, it logs the drop rather than failing
+// silently.
+func publishMCPAsyncToLLM(msgBus *bus.MessageBus, rec sessionRecord, toolName string, r *tools.ToolResult) {
+	if r == nil || msgBus == nil {
+		return
+	}
+	content := r.ForLLM
+	if content == "" && r.Err != nil {
+		content = r.Err.Error()
+	}
+	if content == "" {
+		return
+	}
+	if rec.channel == "" || rec.chatID == "" {
+		// No recorded channel for this session, so we cannot route the re-injected
+		// completion. Log it rather than dropping silently — a headless/pure-MCP
+		// agent that never processed a channel message will not be notified.
+		logger.WarnCF("mcpserver", "mcp.async.reinject_dropped",
+			map[string]any{
+				"tool":        toolName,
+				"agent":       rec.agentID,
+				"session_key": rec.sessionKey,
+				"reason":      "no_active_channel",
+			})
+		return
+	}
+	pubCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := msgBus.PublishInbound(pubCtx, bus.InboundMessage{
+		Channel:    "system",
+		SenderID:   fmt.Sprintf("async:%s", toolName),
+		ChatID:     fmt.Sprintf("%s:%s", rec.channel, rec.chatID),
+		Content:    content,
+		SessionKey: rec.sessionKey,
+		Metadata:   map[string]string{"preresolved_agent_id": rec.agentID},
+	}); err != nil {
+		logger.WarnCF("mcpserver", "mcp.async.reinject_failed",
+			map[string]any{"tool": toolName, "agent": rec.agentID, "error": err.Error()})
+		return
+	}
+	logger.InfoCF("mcpserver", "mcp.async.reinject",
+		map[string]any{
+			"tool":        toolName,
+			"agent":       rec.agentID,
+			"session_key": rec.sessionKey,
+			"channel":     rec.channel,
+			"content_len": len(content),
+		})
 }
 
 // publishMCPForUser sends a tool's ForUser payload to the originating user's
@@ -336,7 +405,7 @@ func publishMCPForUser(
 		return
 	}
 	if msgBus == nil {
-		logger.DebugCF("mcpserver", "mcp.foruser.dropped",
+		logger.WarnCF("mcpserver", "mcp.foruser.dropped",
 			map[string]any{
 				"tool":        toolName,
 				"agent":       rec.agentID,
@@ -346,7 +415,7 @@ func publishMCPForUser(
 		return
 	}
 	if rec.channel == "" || rec.chatID == "" {
-		logger.InfoCF("mcpserver", "mcp.foruser.dropped",
+		logger.WarnCF("mcpserver", "mcp.foruser.dropped",
 			map[string]any{
 				"tool":        toolName,
 				"agent":       rec.agentID,
@@ -371,7 +440,16 @@ func publishMCPForUser(
 				"channel":     rec.channel,
 				"error":       err.Error(),
 			})
+		return
 	}
+	logger.InfoCF("mcpserver", "mcp.foruser.delivered",
+		map[string]any{
+			"tool":        toolName,
+			"agent":       rec.agentID,
+			"session_key": rec.sessionKey,
+			"channel":     rec.channel,
+			"content_len": len(result.ForUser),
+		})
 }
 
 // injectSessionTokenParam returns a deep-copied schema with `session_token` added

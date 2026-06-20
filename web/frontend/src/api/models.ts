@@ -11,6 +11,8 @@ export interface ModelInfo {
   workspace?: string
   rpm?: number
   max_tokens?: number
+  // Model context window size in tokens. 0/undefined → use the agent default.
+  context_window?: number
   max_tokens_field?: string
   request_timeout?: number
   thinking_level?: string

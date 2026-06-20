@@ -11,8 +11,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
+	"runtime/debug"
+	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -23,6 +27,8 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/bus"
 	"github.com/PivotLLM/ClawEh/pkg/callback"
 	"github.com/PivotLLM/ClawEh/pkg/channels"
+	"github.com/PivotLLM/ClawEh/pkg/cogmem/consolidate"
+	cogmemstore "github.com/PivotLLM/ClawEh/pkg/cogmem/store"
 	"github.com/PivotLLM/ClawEh/pkg/commands"
 	"github.com/PivotLLM/ClawEh/pkg/config"
 	"github.com/PivotLLM/ClawEh/pkg/constants"
@@ -57,8 +63,12 @@ type AgentLoop struct {
 	mcp             mcpRuntime
 	mu              sync.RWMutex
 	// Track active requests for safe provider cleanup
-	activeRequests   sync.WaitGroup
-	dispatcher       *providers.ProviderDispatcher
+	activeRequests sync.WaitGroup
+	dispatcher     *providers.ProviderDispatcher
+	// cooldown is the shared per-model cooldown tracker used by BOTH the main
+	// fallback chain and the compaction path, so a model parked by either (e.g.
+	// an out-of-credits 402) is skipped by both. Swapped under mu on reload.
+	cooldown         *providers.CooldownTracker
 	callbackManagers map[string]*callback.Manager // agentID -> manager (nil entry means disabled)
 	agentTokens      *agenttoken.Manager
 	agentStates      map[string]*state.Manager // agentID -> per-agent state manager
@@ -79,10 +89,21 @@ type AgentLoop struct {
 	activeModelMu  sync.Mutex
 	activeModelIdx map[string]int
 
+	// exposeReasoning caches the per-session "expose reasoning to the user" flag
+	// (write-through to CompactionState). Same key scheme as activeModelIdx.
+	exposeReasoningMu    sync.Mutex
+	exposeReasoningCache map[string]bool
+
 	// sessionTokenIssuer issues and revokes per-session MCP tokens. Wired in
 	// from the MCP server at startup via SetSessionTokenIssuer; nil when the
 	// MCP host is not configured.
 	sessionTokenIssuer SessionTokenIssuer
+
+	// cogmemManager schedules background cognitive-memory consolidation. Wired in
+	// from the gateway at startup via SetCogmemManager; nil when cognitive memory
+	// is not in use. Only ever consulted for cognitive agents (those allowed the
+	// cogmem tools), so non-cognitive agents are entirely unaffected.
+	cogmemManager *consolidate.Manager
 
 	// Context manager idle eviction.
 	// evictStop is closed by Close() to signal the eviction goroutine to exit.
@@ -91,6 +112,17 @@ type AgentLoop struct {
 	evictStop     chan struct{}
 	evictTTL      time.Duration
 	evictInterval time.Duration
+
+	// Background-task supervision. taskLive is the process-shared running-task
+	// set, shared by every per-agent SubagentManager (across reloads) so the
+	// supervisor never relaunches a task that is still running. spawnManagers maps
+	// agentID → its current manager (rebuilt on each registerRuntimeTools), used
+	// by the supervisor to scan/relaunch interrupted tasks. superStop is closed by
+	// Close() to stop the supervisor goroutine.
+	taskLive      *toolsagents.LiveSet
+	spawnMu       sync.Mutex
+	spawnManagers map[string]*toolsagents.SubagentManager
+	superStop     chan struct{}
 }
 
 // SessionTokenIssuer issues and revokes SST-prefixed session tokens used by
@@ -133,6 +165,7 @@ type processOptions struct {
 	ResetSession    bool     // True when this message is a session_clear handoff: reset before handling
 	SenderID        string   // Originating sender identifier for source attribution
 	SenderName      string   // Human-readable sender label (display name + canonical ID)
+	IterationsOut   *int     // optional: runAgentLoop writes the LLM iteration count here
 }
 
 const (
@@ -154,8 +187,8 @@ func NewAgentLoop(
 ) *AgentLoop {
 	registry := NewAgentRegistry(cfg, provider)
 
-	// Set up shared fallback chain
-	cooldown := providers.NewCooldownTracker()
+	// Set up shared fallback chain with the config-driven cooldown policy.
+	cooldown := providers.NewCooldownTrackerWithPolicy(cooldownPolicy(cfg))
 	fallbackChain := providers.NewFallbackChain(cooldown)
 
 	// Create state manager using default agent's workspace for channel recording
@@ -167,60 +200,37 @@ func NewAgentLoop(
 
 	// Build per-agent state managers, callback managers, and agent tokens.
 	agentStates := make(map[string]*state.Manager)
-	callbackManagers := make(map[string]*callback.Manager)
 	agentTokens := agenttoken.NewManager()
 	issueAgentTokens(registry, agentTokens)
 
 	for _, agentID := range registry.ListAgentIDs() {
-		agentInstance, ok := registry.GetAgent(agentID)
-		if !ok {
-			continue
-		}
-		agentStates[agentID] = state.NewManager(agentInstance.Workspace)
-
-		// Find the matching AgentConfig for callback settings.
-		var agentCfg *config.AgentConfig
-		for i := range cfg.Agents.List {
-			if routing.NormalizeAgentID(cfg.Agents.List[i].ID) == agentID {
-				agentCfg = &cfg.Agents.List[i]
-				break
-			}
-		}
-
-		storePath := filepath.Join(agentInstance.Workspace, "state", "callback.json")
-		windowMinutes := 0
-		windowCount := 0
-		if agentCfg != nil && agentCfg.Callback != nil && agentCfg.Callback.WindowMinutes > 0 {
-			windowMinutes = agentCfg.Callback.WindowMinutes
-			windowCount = agentCfg.Callback.WindowCount
-		}
-
-		mgr, err := callback.NewManager(agentID, storePath, windowMinutes, windowCount)
-		if err != nil {
-			logger.WarnCF("callback", "Failed to initialize callback manager",
-				map[string]any{"agent": agentID, "error": err.Error()})
-		} else if mgr != nil {
-			callbackManagers[agentID] = mgr
-			agentInstance.ContextBuilder.WithCallbackManager(mgr)
+		if agentInstance, ok := registry.GetAgent(agentID); ok {
+			agentStates[agentID] = state.NewManager(agentInstance.Workspace)
 		}
 	}
+	callbackManagers := buildCallbackManagers(registry, cfg)
 
 	al := &AgentLoop{
-		bus:              msgBus,
-		cfg:              cfg,
-		registry:         registry,
-		state:            stateManager,
-		fallback:         fallbackChain,
-		cmdRegistry:      commands.NewRegistry(commands.BuiltinDefinitions()),
-		dispatcher:       dispatcher,
-		agentStates:      agentStates,
-		callbackManagers: callbackManagers,
-		agentTokens:      agentTokens,
-		startedAt:        time.Now(),
-		evictStop:        make(chan struct{}),
-		evictTTL:         defaultEvictTTL,
-		evictInterval:    defaultEvictInterval,
-		activeModelIdx:   make(map[string]int),
+		bus:                  msgBus,
+		cfg:                  cfg,
+		registry:             registry,
+		state:                stateManager,
+		fallback:             fallbackChain,
+		cooldown:             cooldown,
+		cmdRegistry:          commands.NewRegistry(commands.BuiltinDefinitions()),
+		dispatcher:           dispatcher,
+		agentStates:          agentStates,
+		callbackManagers:     callbackManagers,
+		agentTokens:          agentTokens,
+		startedAt:            time.Now(),
+		evictStop:            make(chan struct{}),
+		evictTTL:             defaultEvictTTL,
+		evictInterval:        defaultEvictInterval,
+		activeModelIdx:       make(map[string]int),
+		exposeReasoningCache: make(map[string]bool),
+		taskLive:             toolsagents.NewLiveSet(),
+		spawnManagers:        make(map[string]*toolsagents.SubagentManager),
+		superStop:            make(chan struct{}),
 	}
 
 	// Register runtime-dependent tools via providers (session closures,
@@ -239,6 +249,10 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 
 	// Start the background context-manager eviction goroutine.
 	go al.evictContextManagers()
+
+	// Start the background task supervisor: periodically relaunches interrupted
+	// callback tasks (.run markers with no live worker).
+	go al.superviseTasks(ctx)
 
 	al.recoverPendingTurns(ctx)
 
@@ -322,15 +336,18 @@ func (al *AgentLoop) processSessionMessage(ctx context.Context, msg bus.InboundM
 	}
 
 	var roundSent atomic.Bool
-	msgCtx := tools.WithRoundSentFlag(ctx, &roundSent)
+	// Overall turn budget: a hard backstop so a hung provider or tool can never
+	// leave the user waiting forever. When it elapses the context is cancelled,
+	// the LLM/tool loop unwinds, and we deliver a clear message below (which also
+	// clears the typing indicator via the channel manager's preSend).
+	turnTimeout := al.GetConfig().Agents.Defaults.GetTurnTimeout()
+	turnCtx, turnCancel := context.WithTimeout(ctx, turnTimeout)
+	defer turnCancel()
+	msgCtx := tools.WithRoundSentFlag(turnCtx, &roundSent)
 
-	response, err := al.processMessage(msgCtx, msg)
+	response, err := al.processMessageSafely(msgCtx, msg)
 	if err != nil {
-		if friendly := renderBillingError(err); friendly != "" {
-			response = friendly
-		} else {
-			response = fmt.Sprintf("Error processing message: %v", err)
-		}
+		response = renderTurnError(turnCtx, turnTimeout, err)
 	}
 
 	if response != "" && !roundSent.Load() {
@@ -374,6 +391,12 @@ func (al *AgentLoop) Close() {
 	default:
 		close(al.evictStop)
 	}
+	select {
+	case <-al.superStop:
+		// already closed
+	default:
+		close(al.superStop)
+	}
 	al.drainContextManagers()
 
 	mcpManager := al.mcp.takeManager()
@@ -413,6 +436,16 @@ func (al *AgentLoop) SetSessionTokenIssuer(sti SessionTokenIssuer) {
 	al.sessionTokenIssuer = sti
 }
 
+// SetCogmemManager wires the cognitive-memory consolidation manager into the
+// agent loop. The loop notifies it (OnMessage) on archive writes for cognitive
+// agents only. Nil → cognitive memory inert (non-cognitive agents are never
+// affected regardless).
+func (al *AgentLoop) SetCogmemManager(mgr *consolidate.Manager) {
+	al.mu.Lock()
+	defer al.mu.Unlock()
+	al.cogmemManager = mgr
+}
+
 // issueAgentTokens issues (or re-issues) MCP isolation tokens for every
 // registered agent and injects them into the agents' system prompts. The
 // boot-log entry is the Eric-approved assertion that lets mis-bindings
@@ -439,7 +472,10 @@ func issueAgentTokens(registry *AgentRegistry, mgr *agenttoken.Manager) {
 // ValidateCallbackToken checks all callback managers and returns the agentID
 // whose manager owns the given token. Returns ("", false) if no match.
 func (al *AgentLoop) ValidateCallbackToken(token string) (string, bool) {
-	for agentID, mgr := range al.callbackManagers {
+	al.mu.RLock()
+	managers := al.callbackManagers
+	al.mu.RUnlock()
+	for agentID, mgr := range managers {
 		if mgr.Validate(token) {
 			return agentID, true
 		}
@@ -546,6 +582,10 @@ func (al *AgentLoop) registerRuntimeTools(
 		sharedMessageTool = mt
 	}
 
+	// Collect the per-agent spawn managers built below so the task supervisor can
+	// scan/relaunch interrupted tasks against the current config.
+	managers := make(map[string]*toolsagents.SubagentManager)
+
 	for _, agentID := range registry.ListAgentIDs() {
 		agentInst, ok := registry.GetAgent(agentID)
 		if !ok {
@@ -619,12 +659,15 @@ func (al *AgentLoop) registerRuntimeTools(
 		spawnMgr := toolsagents.NewSubagentManager(toolsagents.SubagentManagerConfig{
 			Provider:          provider,
 			Workspace:         currentAgent.Workspace,
+			Live:              al.taskLive,
 			Dispatcher:        dispatcher,
 			Fallback:          fallbackChain,
 			SelfCandidates:    currentAgent.Candidates,
 			CallerAgentID:     agentID,
 			CandidateResolver: candidateResolver,
+			RunFull:           al.runSubagentTask,
 		})
+		managers[agentID] = spawnMgr
 		spawner := toolsagents.NewSpawner(spawnMgr)
 		spawner.SetAllowlistChecker(func(targetID string) bool {
 			return spawnAllowlist(currentAgentID, targetID)
@@ -660,6 +703,10 @@ func (al *AgentLoop) registerRuntimeTools(
 			}
 		}
 	}
+
+	al.spawnMu.Lock()
+	al.spawnManagers = managers
+	al.spawnMu.Unlock()
 }
 
 func (al *AgentLoop) RegisterTool(tool tools.Tool) {
@@ -685,6 +732,173 @@ func (al *AgentLoop) RegisterTool(tool tools.Tool) {
 
 func (al *AgentLoop) SetChannelManager(cm *channels.Manager) {
 	al.channelManager = cm
+}
+
+// stopTyping clears the typing indicator for a channel/chatID when a turn ends
+// without sending a reply (the send path stops typing on its own). No-op when
+// the channel manager is unset or the target is empty.
+func (al *AgentLoop) stopTyping(channel, chatID string) {
+	if al.channelManager != nil && channel != "" && chatID != "" {
+		al.channelManager.StopTyping(channel, chatID)
+	}
+}
+
+// startProgressUpdates edits the turn's "Thinking…" placeholder every interval
+// so a long-running turn (many tool calls, slow model) never looks dead. The
+// returned function stops the updater and must be deferred. It is a no-op (and
+// returns a no-op stopper) for non-user turns or when progress is disabled.
+// completed is the live count of finished tool calls, shared with the LLM loop.
+func (al *AgentLoop) startProgressUpdates(channel, chatID string, interval time.Duration, completed *atomic.Int64) func() {
+	if interval <= 0 || al.channelManager == nil || channel == "" || channel == "system" || chatID == "" {
+		return func() {}
+	}
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				n := completed.Load()
+				var text string
+				if n == 0 {
+					text = "⏳ Still working…"
+				} else {
+					text = fmt.Sprintf("⏳ Still working… %d tool call(s) completed so far.", n)
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				al.channelManager.UpdatePlaceholder(ctx, channel, chatID, text)
+				cancel()
+			}
+		}
+	}()
+	// Block until the updater has fully exited so no placeholder edit can land
+	// after the turn's final reply (which consumes the placeholder).
+	return func() {
+		close(stop)
+		<-done
+	}
+}
+
+// superviseTasks periodically relaunches interrupted callback tasks across every
+// agent's workspace. It exits on ctx cancellation or Close().
+func (al *AgentLoop) superviseTasks(ctx context.Context) {
+	ticker := time.NewTicker(global.TaskSupervisorInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-al.superStop:
+			return
+		case <-ticker.C:
+			al.runTaskSupervision()
+		}
+	}
+}
+
+// runTaskSupervision runs one supervision pass over all current spawn managers.
+func (al *AgentLoop) runTaskSupervision() {
+	al.spawnMu.Lock()
+	managers := make([]*toolsagents.SubagentManager, 0, len(al.spawnManagers))
+	for _, m := range al.spawnManagers {
+		managers = append(managers, m)
+	}
+	al.spawnMu.Unlock()
+
+	now := time.Now().Unix()
+	for _, m := range managers {
+		m.SuperviseOnce(now, func(rec *toolsagents.TaskRecord) tools.AsyncCallback {
+			return al.taskPointerCallback(rec.Channel, rec.ChatID)
+		})
+	}
+}
+
+// taskPointerCallback builds the completion callback for a relaunched task: it
+// publishes the compact completion pointer to the task's origin channel (the
+// agent reads the referenced result file). Mirrors the inline async-tool callback
+// used for the initial in-turn spawn.
+func (al *AgentLoop) taskPointerCallback(channel, chatID string) tools.AsyncCallback {
+	return func(_ context.Context, result *tools.ToolResult) {
+		if result == nil {
+			return
+		}
+		if !result.Silent && result.ForUser != "" {
+			outCtx, outCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			_ = al.bus.PublishOutbound(outCtx, bus.OutboundMessage{
+				Channel: channel,
+				ChatID:  chatID,
+				Content: result.ForUser,
+			})
+			outCancel()
+		}
+		content := result.ForLLM
+		if content == "" && result.Err != nil {
+			content = result.Err.Error()
+		}
+		if content == "" {
+			return
+		}
+		pubCtx, pubCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = al.bus.PublishInbound(pubCtx, bus.InboundMessage{
+			Channel:  "system",
+			SenderID: "async:agent_spawn",
+			ChatID:   fmt.Sprintf("%s:%s", channel, chatID),
+			Content:  content,
+		})
+		pubCancel()
+	}
+}
+
+// buildCallbackManagers constructs per-agent callback managers from cfg and
+// wires each onto its agent's ContextBuilder. An agent whose callback window is
+// not > 0 gets no manager — no token is ever issued, injected, or validated for
+// it. Call this on initial construction AND on every config reload so the
+// managers (and the ContextBuilders' wiring) track the CURRENT config; otherwise
+// a reloaded agent gets no token injected, and a now-disabled agent's old token
+// would keep validating against a stale manager.
+func buildCallbackManagers(registry *AgentRegistry, cfg *config.Config) map[string]*callback.Manager {
+	managers := make(map[string]*callback.Manager)
+	for _, agentID := range registry.ListAgentIDs() {
+		agentInstance, ok := registry.GetAgent(agentID)
+		if !ok {
+			continue
+		}
+		// Find the matching AgentConfig for callback settings.
+		var agentCfg *config.AgentConfig
+		for i := range cfg.Agents.List {
+			if routing.NormalizeAgentID(cfg.Agents.List[i].ID) == agentID {
+				agentCfg = &cfg.Agents.List[i]
+				break
+			}
+		}
+		storePath := filepath.Join(agentInstance.Workspace, "state", "callback.json")
+		windowMinutes, windowCount := 0, 0
+		if agentCfg != nil && agentCfg.Callback != nil && agentCfg.Callback.WindowMinutes > 0 {
+			windowMinutes = agentCfg.Callback.WindowMinutes
+			windowCount = agentCfg.Callback.WindowCount
+		}
+		mgr, err := callback.NewManager(agentID, storePath, windowMinutes, windowCount)
+		if err != nil {
+			logger.WarnCF("callback", "Failed to initialize callback manager",
+				map[string]any{"agent": agentID, "error": err.Error()})
+			continue
+		}
+		if mgr != nil {
+			managers[agentID] = mgr
+			agentInstance.ContextBuilder.WithCallbackManager(mgr)
+			logger.InfoCF("callback", "callbacks ENABLED for agent",
+				map[string]any{"agent": agentID, "window_minutes": windowMinutes, "window_count": windowCount})
+		} else {
+			logger.InfoCF("callback", "callbacks disabled for agent (no token will be issued or injected)",
+				map[string]any{"agent": agentID})
+		}
+	}
+	return managers
 }
 
 // ReloadProviderAndConfig atomically swaps the provider and config with proper synchronization.
@@ -748,7 +962,12 @@ func (al *AgentLoop) ReloadProviderAndConfig(
 	// this, reloaded agents would have an empty tool set (NewAgentInstance no
 	// longer registers anything). The new fallback chain is built here so it is
 	// shared between the registered spawn tools and the swapped-in al.fallback.
-	newFallback := providers.NewFallbackChain(providers.NewCooldownTracker())
+	// Reuse the existing cooldown tracker so its state (notably out-of-credits
+	// parks) PERSISTS across the reload; only refresh its policy from the new
+	// config. The shared tracker continues to back both the new fallback chain
+	// and the rebuilt compaction managers.
+	al.cooldown.SetPolicy(cooldownPolicy(cfg))
+	newFallback := providers.NewFallbackChain(al.cooldown)
 	al.registerRuntimeTools(registry, provider, al.dispatcher, newFallback)
 
 	// Re-issue MCP isolation tokens for the new registry so the new
@@ -760,20 +979,36 @@ func (al *AgentLoop) ReloadProviderAndConfig(
 		issueAgentTokens(registry, al.agentTokens)
 	}
 
+	// Rebuild callback managers against the new registry/config and wire them onto
+	// the new ContextBuilders. Without this, reloaded agents get no callback token
+	// injected, and the stale managers would keep validating tokens against the
+	// OLD config (e.g. an agent whose callbacks were since disabled).
+	newCallbackManagers := buildCallbackManagers(registry, cfg)
+
 	// Atomically swap the config and registry under write lock
 	// This ensures readers see a consistent pair
 	al.mu.Lock()
 	oldRegistry := al.registry
+	oldCallbackManagers := al.callbackManagers
 
 	// Store new values
 	al.cfg = cfg
 	al.registry = registry
+	al.callbackManagers = newCallbackManagers
 
 	// Also update fallback chain with new config (same chain used for the tools
-	// just registered above).
+	// just registered above). al.cooldown is unchanged — the same shared tracker
+	// persists across reload and backs both the chain and the rebuilt compaction
+	// managers.
 	al.fallback = newFallback
 
 	al.mu.Unlock()
+
+	// Stop the superseded callback managers (their tokens persist on disk and are
+	// reloaded by the rebuilt manager for still-enabled agents).
+	for _, mgr := range oldCallbackManagers {
+		mgr.Stop()
+	}
 
 	// Flush the dispatcher cache so stale providers are evicted on config reload.
 	if al.dispatcher != nil {
@@ -811,6 +1046,14 @@ func (al *AgentLoop) ReloadProviderAndConfig(
 		})
 
 	return nil
+}
+
+// cooldownTracker returns the shared cooldown tracker (thread-safe). Compaction
+// managers use it so cooldowns are unified with the main fallback chain.
+func (al *AgentLoop) cooldownTracker() *providers.CooldownTracker {
+	al.mu.RLock()
+	defer al.mu.RUnlock()
+	return al.cooldown
 }
 
 // GetRegistry returns the current registry (thread-safe)
@@ -1032,6 +1275,28 @@ func (al *AgentLoop) ProcessDirectWithChannel(
 		msg.Peer = bus.Peer{Kind: kind, ID: chatID}
 	}
 
+	return al.processMessage(ctx, msg)
+}
+
+// processMessageSafely runs processMessage with a panic guard so a bug in the
+// turn (or a tool) is converted into a returned error and delivered to the user
+// instead of crashing the per-message goroutine and leaving the typing indicator
+// stuck. processSessionMessage runs us in our own goroutine, so an unrecovered
+// panic here would otherwise take down the process.
+func (al *AgentLoop) processMessageSafely(ctx context.Context, msg bus.InboundMessage) (resp string, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			logger.ErrorCF("agent", "panic while processing message",
+				map[string]any{
+					"channel": msg.Channel,
+					"chat_id": msg.ChatID,
+					"panic":   fmt.Sprintf("%v", r),
+					"stack":   string(debug.Stack()),
+				})
+			resp = ""
+			err = fmt.Errorf("internal error while processing the message: %v", r)
+		}
+	}()
 	return al.processMessage(ctx, msg)
 }
 
@@ -1267,14 +1532,10 @@ func (al *AgentLoop) processSystemMessage(
 		return "", nil
 	}
 
-	// Use default agent for system messages
-	agent := al.GetRegistry().GetDefaultAgent()
+	agent, sessionKey := al.resolveSystemMessageTarget(msg)
 	if agent == nil {
-		return "", fmt.Errorf("no default agent for system message")
+		return "", fmt.Errorf("no agent available for system message")
 	}
-
-	// Use the origin session for context
-	sessionKey := routing.BuildAgentMainSessionKey(agent.ID)
 
 	return al.runAgentLoop(ctx, agent, processOptions{
 		SessionKey:      sessionKey,
@@ -1284,6 +1545,36 @@ func (al *AgentLoop) processSystemMessage(
 		DefaultResponse: "Background task completed.",
 		SendResponse:    true,
 	})
+}
+
+// resolveSystemMessageTarget picks the agent and session a "system" message
+// (e.g. an async tool/sub-agent completion) should be processed in. A spawn or
+// other async tool carries the originating agent on preresolved_agent_id and its
+// session on session_key, so the completion is handled by the SPAWNING agent in
+// its own session — not whichever agent happens to be the default. Falls back to
+// the default agent and that agent's main session when no originator is given
+// (legacy behavior). Returns (nil, "") when no agent is available.
+func (al *AgentLoop) resolveSystemMessageTarget(msg bus.InboundMessage) (*AgentInstance, string) {
+	var agent *AgentInstance
+	if preresolved := inboundMetadata(msg, metadataKeyPreresolvedAgentID); preresolved != "" {
+		if a, ok := al.GetRegistry().GetAgent(routing.NormalizeAgentID(preresolved)); ok && a != nil {
+			agent = a
+		}
+	}
+	if agent == nil {
+		agent = al.GetRegistry().GetDefaultAgent()
+	}
+	if agent == nil {
+		return nil, ""
+	}
+
+	// Prefer the originator's session (so the completion lands in the conversation
+	// that spawned the work); otherwise the agent's main session.
+	sessionKey := strings.TrimSpace(msg.SessionKey)
+	if sessionKey == "" || !strings.HasPrefix(sessionKey, sessionKeyAgentPrefix) {
+		sessionKey = routing.BuildAgentMainSessionKey(agent.ID)
+	}
+	return agent, sessionKey
 }
 
 // runAgentLoop is the core message processing logic.
@@ -1421,9 +1712,19 @@ func (al *AgentLoop) runAgentLoop(
 	}()
 
 	// 4. Run LLM iteration loop
-	finalContent, normal, finishReason, iteration, err := al.runLLMIteration(ctx, agent, messages, opts, cm)
+	finalContent, normal, degenerate, finishReason, iteration, err := al.runLLMIteration(ctx, agent, messages, opts, cm)
 	if err != nil {
 		return "", err
+	}
+
+	// Intentional silence: the model replied with the no-response sentinel (e.g.
+	// a group message addressed to someone else). Clear the typing indicator and
+	// send nothing — never poked or surfaced, unlike a degenerate empty reply.
+	if isNoResponseSentinel(finalContent) {
+		logger.DebugCF("agent", "LLM declined to respond (no-response sentinel)",
+			map[string]any{"agent_id": agent.ID, "session_key": opts.SessionKey})
+		al.stopTyping(opts.Channel, opts.ChatID)
+		return "", nil
 	}
 
 	// If last tool had ForUser content and we already sent it, we might not need to send final response
@@ -1434,17 +1735,33 @@ func (al *AgentLoop) runAgentLoop(
 	// was @-directed at another agent). Non-normal termination means something went wrong.
 	isSystemError := false
 	if finalContent == "" {
-		if normal {
+		// Genuinely nothing to say (empty content AND no reasoning, normal finish)
+		// — e.g. a group message @-directed at another agent. Stay silent, but
+		// always clear the typing indicator so the user is not left waiting.
+		if normal && !degenerate {
 			logger.DebugCF("agent", "LLM returned empty response with normal termination",
 				map[string]any{
 					"agent_id":      agent.ID,
 					"session_key":   opts.SessionKey,
 					"finish_reason": finishReason,
 				})
+			al.stopTyping(opts.Channel, opts.ChatID)
 			return "", nil
 		}
+		// Degenerate empty (model produced reasoning but no reply, even after
+		// poking) or abnormal termination: the user must still get something.
 		isSystemError = true
-		finalContent = fmt.Sprintf("The AI provider returned an empty response (finish reason: %s). Check provider logs for details.", finishReason)
+		if degenerate {
+			finalContent = "Sorry — I couldn't compose a reply to that. Please try again."
+			logger.WarnCF("agent", "degenerate empty response; sending fallback reply",
+				map[string]any{
+					"agent_id":      agent.ID,
+					"session_key":   opts.SessionKey,
+					"finish_reason": finishReason,
+				})
+		} else {
+			finalContent = fmt.Sprintf("The AI provider returned an empty response (finish reason: %s). Check provider logs for details.", finishReason)
+		}
 	}
 
 	// 6. Save final assistant message to session (skip system error strings)
@@ -1479,6 +1796,9 @@ func (al *AgentLoop) runAgentLoop(
 			"system_error": isSystemError,
 		})
 
+	if opts.IterationsOut != nil {
+		*opts.IterationsOut = iteration
+	}
 	return finalContent, nil
 }
 
@@ -1495,9 +1815,15 @@ func (al *AgentLoop) targetReasoningChannelID(channelName string) (chatID string
 func (al *AgentLoop) handleReasoning(
 	ctx context.Context,
 	reasoningContent, channelName, channelID string,
+	inline bool,
 ) {
 	if reasoningContent == "" || channelName == "" || channelID == "" {
 		return
+	}
+	// When delivered inline in the main chat (no dedicated reasoning channel),
+	// mark it so the user can tell the model's thinking from its actual reply.
+	if inline {
+		reasoningContent = "💭 _Reasoning:_\n" + reasoningContent
 	}
 
 	// Check context cancellation before attempting to publish,
@@ -1538,6 +1864,75 @@ func (al *AgentLoop) handleReasoning(
 	}
 }
 
+// maxIdenticalToolBatches caps how many consecutive iterations may request the
+// exact same tool-call batch before the loop aborts (degenerate-loop guard).
+// The model is steered (told it is repeating, and to re-read/adjust) on each
+// repeat before this cap, so the cap allows a couple of correction chances.
+const maxIdenticalToolBatches = 4
+
+// maxEmptyRetries caps how many times the loop pokes the model to actually reply
+// after it finished a turn with no visible content but non-empty reasoning (a
+// common degenerate-model failure mode). After the cap the caller sends a
+// graceful fallback rather than leaving the user with no answer.
+const maxEmptyRetries = 2
+
+// noResponseSentinel is the reply a model uses to decline responding (e.g. a
+// group message addressed to someone else). It is treated as intentional
+// silence: the typing indicator is cleared, nothing is sent, and the empty-
+// response poke/fallback does NOT fire (distinguishing it from a real failure).
+const noResponseSentinel = "!none"
+
+// isNoResponseSentinel reports whether content is the model's "decline to reply"
+// signal. Tolerant of surrounding quotes/backticks, whitespace, and any trailing
+// text after the token — e.g. `"!none"`, "!none.", "!none — that's for Bob" all
+// count — but not a longer word that merely starts with it (e.g. "!nonexistent").
+func isNoResponseSentinel(content string) bool {
+	s := strings.TrimSpace(content)
+	// Strip any leading quotes/backticks the model may have wrapped it in; the
+	// boundary check below tolerates a trailing quote/punctuation/text.
+	s = strings.TrimSpace(strings.TrimLeft(s, "\"'`"))
+	s = strings.ToLower(s)
+	if !strings.HasPrefix(s, noResponseSentinel) {
+		return false
+	}
+	rest := s[len(noResponseSentinel):]
+	if rest == "" {
+		return true
+	}
+	// The next character must be a boundary (not a letter/digit), so a longer
+	// token like "!nonexistent" does not match.
+	c := rest[0]
+	alnum := (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+	return !alnum
+}
+
+// toolCallSignature returns a stable signature for a tool-call batch (sorted
+// name+arguments), used to detect a model repeating the identical call. Returns
+// "" for an empty batch.
+func toolCallSignature(calls []providers.ToolCall) string {
+	if len(calls) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(calls))
+	for _, c := range calls {
+		args := ""
+		if len(c.Arguments) > 0 {
+			if b, err := json.Marshal(c.Arguments); err == nil { // json sorts map keys
+				args = string(b)
+			}
+		} else if c.Function != nil {
+			args = c.Function.Arguments
+		}
+		name := c.Name
+		if name == "" && c.Function != nil {
+			name = c.Function.Name
+		}
+		parts = append(parts, name+":"+args)
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, "|")
+}
+
 // runLLMIteration executes the LLM call loop with tool handling.
 func (al *AgentLoop) runLLMIteration(
 	ctx context.Context,
@@ -1545,11 +1940,30 @@ func (al *AgentLoop) runLLMIteration(
 	messages []providers.Message,
 	opts processOptions,
 	cm llmcontext.ContextManager,
-) (string, bool, string, int, error) {
+) (string, bool, bool, string, int, error) {
 	iteration := 0
 	var finalContent string
 	lastNormal := false
 	lastFinishReason := "max_iterations"
+
+	// Progress heartbeat: keep a long turn visibly alive by editing its
+	// placeholder every progress_interval with a running tool-call count. Stops
+	// when the turn returns (defer). completedTools is bumped after each batch.
+	var completedTools atomic.Int64
+	stopProgress := al.startProgressUpdates(opts.Channel, opts.ChatID,
+		al.GetConfig().Agents.Defaults.GetProgressInterval(), &completedTools)
+	defer stopProgress()
+
+	// Loop protection: if the model requests the exact same tool call(s) on
+	// consecutive iterations, break rather than spin (e.g. re-writing the same
+	// memory over and over). Tracks the prior iteration's tool-call signature.
+	var lastToolSig string
+	identicalToolBatches := 0
+	// Empty-response handling: poke the model to reply when it finishes with no
+	// content but non-empty reasoning; degenerate flags that the retries were
+	// exhausted so the caller sends a fallback instead of going silent.
+	emptyRetries := 0
+	degenerate := false
 
 	// Inject agent ID into context so provider error log entries can attribute
 	// failures to the specific agent without correlating timestamps.
@@ -1586,8 +2000,15 @@ func (al *AgentLoop) runLLMIteration(
 				"max":       agent.MaxIterations,
 			})
 
-		// Build tool definitions
-		providerToolDefs := agent.Tools.ToProviderDefs()
+		// Build tool definitions. Sub-agent sessions are offered the agent's tools
+		// minus PrimaryOnly ones (e.g. agent_spawn, cron_schedule, cogmem writes) —
+		// see IsSubagentSessionKey. Primary sessions are unaffected.
+		var providerToolDefs []providers.ToolDefinition
+		if routing.IsSubagentSessionKey(opts.SessionKey) {
+			providerToolDefs = agent.Tools.ToProviderDefsExcludingPrimaryOnly()
+		} else {
+			providerToolDefs = agent.Tools.ToProviderDefs()
+		}
 		if agent.NoTools {
 			providerToolDefs = nil
 		}
@@ -1688,7 +2109,7 @@ func (al *AgentLoop) runLLMIteration(
 			defer al.activeRequests.Done()
 
 			if len(activeCandidates) >= 1 && al.fallback != nil {
-				fbResult, fbErr := al.fallback.Execute(
+				fbResult, fbErr := al.fallback.ExecuteWithNotify(
 					ctx,
 					activeCandidates,
 					func(ctx context.Context, c providers.FallbackCandidate) (*providers.LLMResponse, error) {
@@ -1703,6 +2124,7 @@ func (al *AgentLoop) runLLMIteration(
 						}
 						return agent.Provider.Chat(ctx, messages, providerToolDefs, c.Model, llmOpts)
 					},
+					al.fallbackNotifier(opts),
 				)
 				if fbErr != nil {
 					return nil, fbErr
@@ -1804,7 +2226,7 @@ func (al *AgentLoop) runLLMIteration(
 				})
 				select {
 				case <-ctx.Done():
-					return "", false, "", 0, ctx.Err()
+					return "", false, false, "", 0, ctx.Err()
 				case <-time.After(backoff):
 				}
 				continue
@@ -1870,7 +2292,7 @@ func (al *AgentLoop) runLLMIteration(
 					"model":     activeModel,
 					"error":     err.Error(),
 				})
-			return "", false, "", iteration, fmt.Errorf("LLM call failed after retries: %w", err)
+			return "", false, false, "", iteration, fmt.Errorf("LLM call failed after retries: %w", err)
 		}
 
 		// Dump responses when enabled.
@@ -1883,12 +2305,17 @@ func (al *AgentLoop) runLLMIteration(
 			}
 		}
 
-		go al.handleReasoning(
-			ctx,
-			response.Reasoning,
-			opts.Channel,
-			al.targetReasoningChannelID(opts.Channel),
-		)
+		// Deliver reasoning only when the session opted in (/reasoning on). Route
+		// to the configured reasoning channel if one exists, else inline in the
+		// main chat so the toggle works on any channel.
+		if al.getExposeReasoning(agent, opts.SessionKey) {
+			reasoningTarget := al.targetReasoningChannelID(opts.Channel)
+			inline := reasoningTarget == ""
+			if inline {
+				reasoningTarget = opts.ChatID
+			}
+			go al.handleReasoning(ctx, response.Reasoning, opts.Channel, reasoningTarget, inline)
+		}
 
 		respFields := map[string]any{
 			"agent_id":        agent.ID,
@@ -1907,11 +2334,46 @@ func (al *AgentLoop) runLLMIteration(
 		// Check if no tool calls - then check reasoning content if any
 		if len(response.ToolCalls) == 0 {
 			finalContent = response.Content
-			if finalContent == "" && response.ReasoningContent != "" {
-				finalContent = response.ReasoningContent
+			// "Thinking" may arrive as reasoning_content (OpenAI-style) or reasoning
+			// (OpenRouter-style); treat either as the model's reasoning.
+			reasoningText := response.ReasoningContent
+			if reasoningText == "" {
+				reasoningText = response.Reasoning
+			}
+			// Only fall back to reasoning as the visible reply when the operator opts
+			// in. Default off: a model that returns empty content but full reasoning
+			// (e.g. degenerating into reasoning-only/repetition output) must NOT leak
+			// its raw chain-of-thought to the user — empty content then hits the
+			// graceful empty-response path instead.
+			if finalContent == "" && reasoningText != "" &&
+				al.cfg != nil && al.cfg.Agents.Defaults.ShowReasoningAsContent {
+				finalContent = reasoningText
 			}
 			lastNormal = response.Normal
 			lastFinishReason = response.FinishReason
+
+			// Poke-and-retry: the model finished but produced no visible content
+			// while clearly having "thought" (non-empty reasoning) — a common
+			// failure mode of some models, which otherwise leaves the user with no
+			// reply. Nudge it to actually respond, capped by maxEmptyRetries.
+			if finalContent == "" && reasoningText != "" {
+				if emptyRetries < maxEmptyRetries {
+					emptyRetries++
+					messages = append(messages, providers.Message{
+						Role:    "user",
+						Content: "Your previous turn produced no reply. Make sure you have completed the user's request, then respond to the user now.",
+					})
+					logger.InfoCF("agent", "empty response with reasoning; poking model to reply",
+						map[string]any{
+							"agent_id": agent.ID, "iteration": iteration, "retry": emptyRetries,
+						})
+					continue
+				}
+				// Retries exhausted: tell the caller this was a degenerate empty
+				// response so it sends a fallback instead of going silent.
+				degenerate = true
+			}
+
 			logger.InfoCF("agent", "LLM response without tool calls (direct answer)",
 				map[string]any{
 					"agent_id":      agent.ID,
@@ -1931,6 +2393,35 @@ func (al *AgentLoop) runLLMIteration(
 		for _, tc := range normalizedToolCalls {
 			toolNames = append(toolNames, tc.Name)
 		}
+		// Loop protection: break if the model requests the identical tool-call
+		// batch on consecutive iterations (e.g. re-writing the same memory in a
+		// loop). After maxIdenticalToolBatches repeats, stop dispatching.
+		if sig := toolCallSignature(normalizedToolCalls); sig != "" {
+			if sig == lastToolSig {
+				identicalToolBatches++
+			} else {
+				identicalToolBatches = 0
+				lastToolSig = sig
+			}
+			if identicalToolBatches+1 >= maxIdenticalToolBatches {
+				logger.WarnCF("agent", "aborting: identical tool call repeated", map[string]any{
+					"agent_id":  agent.ID,
+					"iteration": iteration,
+					"tools":     toolNames,
+					"repeats":   identicalToolBatches + 1,
+				})
+				finalContent = fmt.Sprintf(
+					"Stopped: I kept making the same %s call (%d times) without success, so I'm aborting to avoid a loop. Please check the request or rephrase it.",
+					strings.Join(toolNames, ", "), identicalToolBatches+1)
+				lastFinishReason = "loop_detected"
+				break
+			}
+		}
+
+		// Feed the recent-tool ring so cognitive memory can auto-load domains whose
+		// triggers match a tool the agent just used; the next build (same turn,
+		// after tool results) picks it up. No-op for non-cognitive agents.
+		cm.RecordToolUse(toolNames...)
 		logger.InfoCF("agent", "LLM requested tool calls",
 			map[string]any{
 				"agent_id":  agent.ID,
@@ -1958,6 +2449,9 @@ func (al *AgentLoop) runLLMIteration(
 			Role:             "assistant",
 			Content:          response.Content,
 			ReasoningContent: response.ReasoningContent,
+			// Carry Responses reasoning items so the next turn can replay them
+			// before this turn's function_call (reasoning models + tools).
+			ResponsesReasoning: response.ResponsesReasoning,
 		}
 		for _, tc := range normalizedToolCalls {
 			argumentsJSON, marshalErr := json.Marshal(tc.Arguments)
@@ -2010,27 +2504,43 @@ func (al *AgentLoop) runLLMIteration(
 		agentResults := make([]indexedAgentResult, len(normalizedToolCalls))
 		var wg sync.WaitGroup
 
+		// Per-tool budget: a single tool call cannot run longer than this. The
+		// tool's context is cancelled at the deadline so a well-behaved tool
+		// returns a timeout error and the model can continue the turn. The overall
+		// turn budget (applied to ctx upstream) is the hard backstop for any tool
+		// that ignores cancellation.
+		toolTimeout := al.GetConfig().Agents.Defaults.GetToolTimeout()
+
 		for i, tc := range normalizedToolCalls {
 			agentResults[i].tc = tc
 
 			wg.Add(1)
 			go func(idx int, tc providers.ToolCall) {
 				defer wg.Done()
+				// A panicking tool must not crash the process or wedge wg.Wait();
+				// convert it into an error result so the turn proceeds.
+				defer func() {
+					if r := recover(); r != nil {
+						logger.ErrorCF("agent", "panic in tool call",
+							map[string]any{
+								"tool":  tc.Name,
+								"panic": fmt.Sprintf("%v", r),
+								"stack": string(debug.Stack()),
+							})
+						agentResults[idx].result = &tools.ToolResult{
+							Err:    fmt.Errorf("tool %s panicked: %v", tc.Name, r),
+							ForLLM: fmt.Sprintf("Tool %s failed with an internal error.", tc.Name),
+						}
+					}
+				}()
 
-				redacted := tools.RedactArgs(tc.Name, tc.Arguments)
+				// Tool arguments are intentionally NOT logged: they routinely carry
+				// memory content, file contents, and other user data.
 				logger.InfoCF("agent", "Tool call dispatched",
 					map[string]any{
 						"agent_id":  agent.ID,
 						"tool":      tc.Name,
 						"iteration": iteration,
-						"args":      redacted,
-					})
-				logger.DebugCF("agent", "Tool call dispatched (raw args)",
-					map[string]any{
-						"agent_id":  agent.ID,
-						"tool":      tc.Name,
-						"iteration": iteration,
-						"args":      tc.Arguments,
 					})
 
 				// Create async callback for tools that implement AsyncExecutor.
@@ -2043,6 +2553,13 @@ func (al *AgentLoop) runLLMIteration(
 					if !result.Silent && result.ForUser != "" {
 						outCtx, outCancel := context.WithTimeout(context.Background(), 5*time.Second)
 						defer outCancel()
+						logger.InfoCF("agent", "Async tool completed, delivering to user",
+							map[string]any{
+								"tool":        tc.Name,
+								"channel":     opts.Channel,
+								"chat_id":     opts.ChatID,
+								"content_len": len(result.ForUser),
+							})
 						_ = al.bus.PublishOutbound(outCtx, bus.OutboundMessage{
 							Channel: opts.Channel,
 							ChatID:  opts.ChatID,
@@ -2069,10 +2586,12 @@ func (al *AgentLoop) runLLMIteration(
 					pubCtx, pubCancel := context.WithTimeout(context.Background(), 5*time.Second)
 					defer pubCancel()
 					_ = al.bus.PublishInbound(pubCtx, bus.InboundMessage{
-						Channel:  "system",
-						SenderID: fmt.Sprintf("async:%s", tc.Name),
-						ChatID:   fmt.Sprintf("%s:%s", opts.Channel, opts.ChatID),
-						Content:  content,
+						Channel:    "system",
+						SenderID:   fmt.Sprintf("async:%s", tc.Name),
+						ChatID:     fmt.Sprintf("%s:%s", opts.Channel, opts.ChatID),
+						Content:    content,
+						SessionKey: opts.SessionKey,
+						Metadata:   map[string]string{metadataKeyPreresolvedAgentID: agent.ID},
 					})
 				}
 
@@ -2081,6 +2600,20 @@ func (al *AgentLoop) runLLMIteration(
 				// Config is always non-nil after construction.
 				execCtx := tools.WithToolAllowChecker(ctx, agent.Config)
 				execCtx = tools.WithSessionKey(execCtx, opts.SessionKey)
+				if toolTimeout > 0 {
+					var toolCancel context.CancelFunc
+					execCtx, toolCancel = context.WithTimeout(execCtx, toolTimeout)
+					defer toolCancel()
+				}
+
+				// Defense-in-depth: a sub-agent must never run a PrimaryOnly tool,
+				// even if one slipped into the call list. (The tool list already
+				// excludes them; this rejects any stray attempt.)
+				if routing.IsSubagentSessionKey(opts.SessionKey) && agent.Tools.IsPrimaryOnlyTool(tc.Name) {
+					agentResults[idx].result = tools.ErrorResult(
+						fmt.Sprintf("tool %q is not available to sub-agents", tc.Name))
+					return
+				}
 
 				toolResult := agent.Tools.ExecuteWithContext(
 					execCtx,
@@ -2094,6 +2627,7 @@ func (al *AgentLoop) runLLMIteration(
 			}(i, tc)
 		}
 		wg.Wait()
+		completedTools.Add(int64(len(normalizedToolCalls)))
 
 		// Process results in original order (send to user, save to session)
 		streamActivity := al.GetConfig().Agents.Defaults.StreamToolActivity
@@ -2173,6 +2707,24 @@ func (al *AgentLoop) runLLMIteration(
 			}
 		}
 
+		// If the model just repeated an identical tool-call batch (it isn't
+		// working), steer it before the next iteration: a generic message that
+		// applies to ANY tool, with a file_edit-specific hint only when that tool
+		// is the one being repeated. identicalToolBatches > 0 means this batch
+		// matched the previous one.
+		if identicalToolBatches > 0 {
+			n := identicalToolBatches + 1
+			guidance := fmt.Sprintf(
+				"⚠️ You have made the exact same tool call (%s) %d times in a row and it is not working — stop repeating the identical call. Change your approach: adjust the arguments, try a different tool, or explain the problem to the user instead of retrying the same thing.",
+				strings.Join(toolNames, ", "), n)
+			if slices.Contains(toolNames, "file_edit") {
+				guidance += " For file_edit specifically: the file may have changed since you last read it, or your old_text does not match exactly (e.g. whitespace/indentation) — re-read it with file_read and correct the old_text."
+			}
+			messages = append(messages, providers.Message{Role: "user", Content: guidance})
+			logger.InfoCF("agent", "steering model away from repeated identical tool call",
+				map[string]any{"agent_id": agent.ID, "iteration": iteration, "repeats": n, "tools": toolNames})
+		}
+
 		// Tick down TTL of discovered tools after processing tool results.
 		// Only reached when tool calls were made (the loop continues);
 		// the break on no-tool-call responses skips this.
@@ -2185,7 +2737,7 @@ func (al *AgentLoop) runLLMIteration(
 		})
 	}
 
-	return finalContent, lastNormal, lastFinishReason, iteration, nil
+	return finalContent, lastNormal, degenerate, lastFinishReason, iteration, nil
 }
 
 // resolveRunProvider returns the LLMProvider (and matching model id) that will
@@ -2298,6 +2850,54 @@ func (al *AgentLoop) setActiveModelIndex(agent *AgentInstance, sessionKey string
 		}
 	}
 	return nil
+}
+
+// getExposeReasoning returns whether the session exposes the model's reasoning
+// to the user, loading it from the session store on a cache miss. Default false.
+func (al *AgentLoop) getExposeReasoning(agent *AgentInstance, sessionKey string) bool {
+	key := activeModelCacheKey(agent.ID, sessionKey)
+
+	al.exposeReasoningMu.Lock()
+	if v, ok := al.exposeReasoningCache[key]; ok {
+		al.exposeReasoningMu.Unlock()
+		return v
+	}
+	al.exposeReasoningMu.Unlock()
+
+	v := false
+	if store, ok := agent.Sessions.(compactionStateStore); ok {
+		if st, err := store.GetCompactionState(sessionKey); err == nil {
+			v = st.ExposeReasoning
+		}
+	}
+
+	al.exposeReasoningMu.Lock()
+	al.exposeReasoningCache[key] = v
+	al.exposeReasoningMu.Unlock()
+	return v
+}
+
+// setExposeReasoning sets the session's expose-reasoning flag, updating the cache
+// and persisting it through CompactionState (best-effort).
+func (al *AgentLoop) setExposeReasoning(agent *AgentInstance, sessionKey string, v bool) {
+	key := activeModelCacheKey(agent.ID, sessionKey)
+	al.exposeReasoningMu.Lock()
+	al.exposeReasoningCache[key] = v
+	al.exposeReasoningMu.Unlock()
+
+	if store, ok := agent.Sessions.(compactionStateStore); ok {
+		st, err := store.GetCompactionState(sessionKey)
+		if err != nil {
+			logger.WarnCF("agent", "expose reasoning: load compaction state failed",
+				map[string]any{"session_key": sessionKey, "error": err.Error()})
+			return
+		}
+		st.ExposeReasoning = v
+		if err := store.SetCompactionState(sessionKey, st); err != nil {
+			logger.WarnCF("agent", "expose reasoning: persist failed",
+				map[string]any{"session_key": sessionKey, "error": err.Error()})
+		}
+	}
 }
 
 // selectCandidates returns the model candidates and resolved model name to use
@@ -2437,6 +3037,55 @@ func (al *AgentLoop) estimateTokens(messages []providers.Message) int {
 	return totalChars * 2 / 5
 }
 
+// cogmemSessionStatus renders a short cognitive-memory summary for the session:
+// active domain/memory counts, the pending-review count, and the last
+// consolidation run. Returns "" when the agent is not cognitive. Opening the
+// store runs the normal idempotent migrations, matching the cogmem_status tool.
+func (al *AgentLoop) cogmemSessionStatus(agent *AgentInstance, sessionKey string) string {
+	if agent == nil || agent.Config == nil || !agent.Config.CognitiveMemoryEnabled() {
+		return ""
+	}
+	path := cogmemstore.SessionDBPath(agent.Workspace, sessionKey)
+	if _, err := os.Stat(path); err != nil {
+		return "No cognitive-memory database for this session yet."
+	}
+	s, err := cogmemstore.Open(path)
+	if err != nil {
+		return "Cognitive memory unavailable: " + err.Error()
+	}
+	defer s.Close()
+
+	ctx := context.Background()
+	db := s.DB()
+	var b strings.Builder
+
+	active, _ := s.ListDomains(ctx, db, cogmemstore.StatusActive)
+	memCount := 0
+	for _, d := range active {
+		ms, _ := s.ListMemories(ctx, db, d.ID, cogmemstore.StatusActive)
+		memCount += len(ms)
+	}
+	fmt.Fprintf(&b, "Active domains: %d\n", len(active))
+	fmt.Fprintf(&b, "Active memories: %d\n", memCount)
+
+	if pending, perr := s.PendingCount(ctx, db); perr == nil {
+		fmt.Fprintf(&b, "Pending (review): %d\n", pending)
+	}
+
+	run, ok, _ := s.LastRun(ctx, db)
+	if !ok {
+		b.WriteString("Last consolidation: none yet")
+	} else {
+		when := run.StartedAt.Format("2006-01-02 15:04")
+		fmt.Fprintf(&b, "Last consolidation: %s — trigger=%s, status=%s, changes=%d",
+			when, run.Trigger, run.Status, run.OpsApplied)
+		if run.Error != "" {
+			fmt.Fprintf(&b, "\nLast error: %s", run.Error)
+		}
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
 func (al *AgentLoop) handleCommand(
 	ctx context.Context,
 	msg bus.InboundMessage,
@@ -2518,6 +3167,12 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 			defer store.Close()
 			count, first, last, _ := store.Stats()
 			return count, first, last
+		},
+		GetMemoryStatus: func() string {
+			if agent == nil || opts == nil {
+				return ""
+			}
+			return al.cogmemSessionStatus(agent, opts.SessionKey)
 		},
 		SwitchChannel: func(value string) error {
 			if al.channelManager == nil {
@@ -2606,6 +3261,19 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 				name = agent.Candidates[idx].Model
 			}
 			return name, nil
+		}
+
+		rt.GetExposeReasoning = func() bool {
+			if opts == nil {
+				return false
+			}
+			return al.getExposeReasoning(agent, opts.SessionKey)
+		}
+		rt.SetExposeReasoning = func(on bool) {
+			if opts == nil {
+				return
+			}
+			al.setExposeReasoning(agent, opts.SessionKey, on)
 		}
 
 		rt.ClearHistory = func() error {

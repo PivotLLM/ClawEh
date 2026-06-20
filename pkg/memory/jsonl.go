@@ -888,6 +888,9 @@ type CompactionState struct {
 	SummaryGeneratedAt          time.Time `json:"summary_generated_at,omitempty"`
 	SummaryModel                string    `json:"summary_model,omitempty"`
 	ActiveModelIndex            int       `json:"active_model_index,omitempty"`
+	// ExposeReasoning, when true, delivers the model's reasoning to the user for
+	// this session (toggled via /reasoning). Default false.
+	ExposeReasoning bool `json:"expose_reasoning,omitempty"`
 }
 
 // GetCompactionState reads the compaction counters from the session meta file.

@@ -28,6 +28,8 @@ interface AgentEntry {
   callback?: CallbackConfig | null
   temperature?: number
   summarization_models?: string[]
+  share_common?: boolean
+  global_cron?: boolean
 }
 
 interface AgentsConfig {
@@ -79,7 +81,48 @@ function parseAgent(value: unknown): AgentEntry {
     callback: cbMins > 0 ? { window_minutes: cbMins, window_count: asNumber(cbRaw.window_count) || 2 } : null,
     temperature: typeof r.temperature === "number" ? r.temperature : undefined,
     summarization_models: asArray(r.summarization_models).map(asString).filter(Boolean),
+    share_common: r.share_common === false ? false : true,
+    global_cron: r.global_cron === true,
   }
+}
+
+// AgentBindingView is a read-only projection of one binding for the Channels
+// display. The raw binding objects are preserved separately for saving so that
+// fields this page doesn't model (account_id, guild_id, …) are never dropped.
+interface AgentBindingView {
+  index: number // index into the full bindings array
+  channel: string
+  peerKind: string
+  peerID: string
+  isDefault: boolean
+  hasPeer: boolean // routing peer present → delivers there, no chat id needed
+  deliverTo: string // explicit cron delivery chat id (for peerless channels)
+}
+
+function parseAgentBindings(appConfig: unknown): Record<string, unknown>[] {
+  return asArray(asRecord(appConfig).bindings).map((b) => asRecord(b))
+}
+
+function bindingViewsForAgent(raw: Record<string, unknown>[], agentID: string): AgentBindingView[] {
+  const views: AgentBindingView[] = []
+  raw.forEach((b, index) => {
+    if (asString(b.agent_id) !== agentID) return
+    const match = asRecord(b.match)
+    const peer = asRecord(match.peer)
+    const channel = asString(match.channel)
+    const peerKind = asString(peer.kind)
+    const peerID = asString(peer.id)
+    views.push({
+      index,
+      channel,
+      peerKind,
+      peerID,
+      isDefault: b.default === true,
+      hasPeer: channel !== "" && peerKind !== "" && peerID !== "",
+      deliverTo: asString(b.deliver_to),
+    })
+  })
+  return views
 }
 
 // sortAgentList orders agents alphabetically by display name (name, falling back
@@ -177,6 +220,10 @@ interface AgentCardProps {
   callbackWindowCount?: number
   temperature?: number
   summarizationModels?: string[]
+  shareCommon?: boolean
+  globalCron?: boolean
+  agentBindings?: AgentBindingView[]
+  onSetDefaultBinding?: (targetIndex: number, deliverTo?: string) => void
   onToggleEnabled?: () => void
   onModelsChange: (models: string[]) => void
   onSkillsChange: (skills: string[]) => void
@@ -184,6 +231,8 @@ interface AgentCardProps {
   onCallbackChange?: (mins: number, count: number) => void
   onTemperatureChange?: (t: number | undefined) => void
   onSummarizationModelsChange?: (models: string[]) => void
+  onShareCommonChange?: (share: boolean) => void
+  onGlobalCronChange?: (v: boolean) => void
   onDelete?: () => void
   status?: "saving" | "saved" | "error"
 }
@@ -202,6 +251,10 @@ function AgentCard({
   callbackWindowCount = 2,
   temperature = undefined,
   summarizationModels = [],
+  shareCommon = true,
+  globalCron = false,
+  agentBindings = [],
+  onSetDefaultBinding = undefined,
   onToggleEnabled,
   onModelsChange,
   onSkillsChange,
@@ -209,11 +262,17 @@ function AgentCard({
   onCallbackChange,
   onTemperatureChange = undefined,
   onSummarizationModelsChange = undefined,
+  onShareCommonChange = undefined,
+  onGlobalCronChange = undefined,
   onDelete,
   status,
 }: AgentCardProps) {
   const { t } = useTranslation()
   const [toolsExpanded, setToolsExpanded] = useState(false)
+  // Local edits for explicit cron chat ids (peerless channels), keyed by the
+  // binding's index in the full bindings array.
+  const [deliverEdits, setDeliverEdits] = useState<Record<number, string>>({})
+  const deliverValue = (b: AgentBindingView) => deliverEdits[b.index] ?? b.deliverTo
 
   return (
     <div className="border-border/60 bg-card rounded-xl border p-4 space-y-3">
@@ -371,6 +430,100 @@ function AgentCard({
         </div>
       )}
 
+      {onShareCommonChange !== undefined && (
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-muted-foreground text-xs font-medium">
+              {t("agents.shareCommon")}
+            </p>
+            <Switch
+              checked={shareCommon}
+              onCheckedChange={onShareCommonChange}
+              aria-label={t("agents.shareCommon")}
+            />
+          </div>
+          <p className="text-muted-foreground text-xs">
+            {t("agents.shareCommonHint")}
+          </p>
+        </div>
+      )}
+
+      {onGlobalCronChange !== undefined && (
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-muted-foreground text-xs font-medium">
+              {t("agents.globalCron")}
+            </p>
+            <Switch
+              checked={globalCron}
+              onCheckedChange={onGlobalCronChange}
+              aria-label={t("agents.globalCron")}
+            />
+          </div>
+          <p className="text-muted-foreground text-xs">
+            {t("agents.globalCronHint")}
+          </p>
+        </div>
+      )}
+
+      {onSetDefaultBinding !== undefined && (
+        <div className="space-y-1.5">
+          <p className="text-muted-foreground text-xs font-medium">
+            {t("agents.channels")}
+          </p>
+          {agentBindings.length === 0 ? (
+            <p className="text-muted-foreground text-xs">{t("agents.channelsNone")}</p>
+          ) : (
+            <div className="space-y-1.5">
+              {agentBindings.map((b) => (
+                <div key={b.index} className="flex items-center gap-2 text-xs">
+                  <input
+                    type="radio"
+                    name={`default-channel-${label}`}
+                    checked={b.isDefault}
+                    onChange={() => {
+                      if (b.hasPeer) {
+                        onSetDefaultBinding(b.index)
+                        return
+                      }
+                      const to = deliverValue(b).trim()
+                      if (!to) {
+                        toast.error(t("agents.channelsNeedChatId"))
+                        return
+                      }
+                      onSetDefaultBinding(b.index, to)
+                    }}
+                  />
+                  <span className="font-mono">
+                    {b.channel}
+                    {b.hasPeer ? ` · ${b.peerKind}:${b.peerID}` : ""}
+                  </span>
+                  {!b.hasPeer && (
+                    <input
+                      type="text"
+                      className="border-border/60 bg-background w-28 rounded border px-1.5 py-0.5 font-mono text-xs"
+                      placeholder={t("agents.channelsChatIdPlaceholder")}
+                      value={deliverValue(b)}
+                      onChange={(e) =>
+                        setDeliverEdits((s) => ({ ...s, [b.index]: e.target.value }))
+                      }
+                      onBlur={() => {
+                        const to = deliverValue(b).trim()
+                        if (b.isDefault && to) onSetDefaultBinding(b.index, to)
+                      }}
+                    />
+                  )}
+                  {b.isDefault && (
+                    <span className="text-muted-foreground">— {t("agents.channelsDefault")}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          <p className="text-muted-foreground text-xs">{t("agents.channelsHint")}</p>
+        </div>
+      )}
+
     </div>
   )
 }
@@ -387,6 +540,9 @@ export function AgentsPage() {
     list: [],
   })
   const [saving, setSaving] = useState<string | null>(null)
+  // Raw binding objects, preserved verbatim so saving never drops fields this
+  // page doesn't model. Only the per-agent `default` flag is edited here.
+  const [bindings, setBindings] = useState<Record<string, unknown>[]>([])
 
   // Autosave plumbing. autoStatus drives the per-card "Saving…/Saved" hint.
   // The skip refs suppress the buffer-resync effects when WE caused the
@@ -430,6 +586,7 @@ export function AgentsPage() {
         getAgentTools(),
       ])
       setAgentsCfg(parseAgentsConfig(appConfig))
+      setBindings(parseAgentBindings(appConfig))
       setModels(modelsData.models)
       setAvailableSkills([...skillsData].sort((a, b) => a.name.localeCompare(b.name)))
       setAvailableTools(toolsData)
@@ -466,11 +623,13 @@ export function AgentsPage() {
         ...(a.summarization_models && a.summarization_models.length > 0
           ? { summarization_models: a.summarization_models }
           : {}),
+        ...(a.share_common === false ? { share_common: false } : {}),
+        ...(a.global_cron ? { global_cron: true } : {}),
       })),
     },
   })
 
-  const handleSaveAgent = async (index: number, models: string[], skills: string[], tools: string[], callbackMins: number, callbackCount: number, temperature: number | undefined, summarizationModels: string[]) => {
+  const handleSaveAgent = async (index: number, models: string[], skills: string[], tools: string[], callbackMins: number, callbackCount: number, temperature: number | undefined, summarizationModels: string[], shareCommon: boolean) => {
     const list = [...(agentsCfg.list ?? [])]
     list[index] = {
       ...list[index],
@@ -480,6 +639,7 @@ export function AgentsPage() {
       callback: callbackMins > 0 ? { window_minutes: callbackMins, window_count: callbackCount } : null,
       temperature,
       summarization_models: summarizationModels.length > 0 ? summarizationModels : undefined,
+      share_common: shareCommon,
     }
     const next: AgentsConfig = { ...agentsCfg, list }
     const key = `agent-${index}`
@@ -532,6 +692,46 @@ export function AgentsPage() {
     }
   }
 
+  // Independent toggle (not threaded through the big autosave): flip global_cron.
+  const handleToggleGlobalCron = async (index: number) => {
+    const list = [...(agentsCfg.list ?? [])]
+    list[index] = { ...list[index], global_cron: !list[index].global_cron }
+    const next: AgentsConfig = { ...agentsCfg, list }
+    setSaving(`globalcron-${index}`)
+    try {
+      await patchAppConfig(buildPayload(next))
+      setAgentsCfg(next)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to save")
+    } finally {
+      setSaving(null)
+    }
+  }
+
+  // Set the given binding (by its index in the full bindings array) as the
+  // agent's default channel, clearing default on the agent's other bindings.
+  // deliverTo is the explicit cron chat id for channels without a routing peer
+  // (e.g. a Telegram bot); it is stored on the target binding. The raw binding
+  // objects are mapped in place so unknown fields are preserved.
+  const handleSetDefaultBinding = async (agentID: string, targetIndex: number, deliverTo?: string) => {
+    const next = bindings.map((b, i) => {
+      if (asString(b.agent_id) !== agentID) return b
+      if (i !== targetIndex) return { ...b, default: false }
+      const updated: Record<string, unknown> = { ...b, default: true }
+      if (deliverTo !== undefined) updated.deliver_to = deliverTo
+      return updated
+    })
+    setSaving(`binding-${targetIndex}`)
+    try {
+      await patchAppConfig({ bindings: next })
+      setBindings(next)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to save default channel")
+    } finally {
+      setSaving(null)
+    }
+  }
+
   const handleAddAgent = async () => {
     if (!addingId.trim()) {
       toast.error("Agent ID is required")
@@ -575,6 +775,7 @@ export function AgentsPage() {
   const [agentCallbackEdits, setAgentCallbackEdits] = useState<Array<{ mins: number; count: number }>>([])
   const [agentTemperatureEdits, setAgentTemperatureEdits] = useState<Array<number | undefined>>([])
   const [agentSummarizationEdits, setAgentSummarizationEdits] = useState<string[][]>([])
+  const [agentShareCommonEdits, setAgentShareCommonEdits] = useState<boolean[]>([])
   useEffect(() => {
     if (skipAgentsResync.current) {
       skipAgentsResync.current = false
@@ -589,6 +790,7 @@ export function AgentsPage() {
     })))
     setAgentTemperatureEdits((agentsCfg.list ?? []).map((a) => a.temperature))
     setAgentSummarizationEdits((agentsCfg.list ?? []).map((a) => a.summarization_models ?? []))
+    setAgentShareCommonEdits((agentsCfg.list ?? []).map((a) => a.share_common !== false))
   }, [agentsCfg.list])
 
   // Mirror the latest edit values into a ref so the debounced autosave fires
@@ -600,6 +802,7 @@ export function AgentsPage() {
     agentCallbackEdits,
     agentTemperatureEdits,
     agentSummarizationEdits,
+    agentShareCommonEdits,
   })
   latestRef.current = {
     agentModelsEdits,
@@ -608,6 +811,7 @@ export function AgentsPage() {
     agentCallbackEdits,
     agentTemperatureEdits,
     agentSummarizationEdits,
+    agentShareCommonEdits,
   }
 
   const AUTOSAVE_MS = 600
@@ -625,6 +829,7 @@ export function AgentsPage() {
         L.agentCallbackEdits[index]?.count ?? 2,
         L.agentTemperatureEdits[index],
         L.agentSummarizationEdits[index] ?? [],
+        L.agentShareCommonEdits[index] ?? true,
       )
     }, AUTOSAVE_MS)
   }
@@ -728,6 +933,19 @@ export function AgentsPage() {
                     })
                     scheduleSaveAgent(i)
                   }}
+                  shareCommon={agentShareCommonEdits[i] ?? true}
+                  onShareCommonChange={(sc) => {
+                    setAgentShareCommonEdits((prev) => {
+                      const next = [...prev]
+                      next[i] = sc
+                      return next
+                    })
+                    scheduleSaveAgent(i)
+                  }}
+                  globalCron={agent.global_cron === true}
+                  onGlobalCronChange={() => handleToggleGlobalCron(i)}
+                  agentBindings={bindingViewsForAgent(bindings, agent.id)}
+                  onSetDefaultBinding={(target, deliverTo) => handleSetDefaultBinding(agent.id, target, deliverTo)}
                   onDelete={() => handleDeleteAgent(i)}
                   status={autoStatus[`agent-${i}`]}
                 />

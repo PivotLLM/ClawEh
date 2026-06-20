@@ -19,11 +19,18 @@ type EditFileTool struct {
 
 // NewEditFileTool creates a new EditFileTool with optional directory restriction.
 func NewEditFileTool(workspace string, restrict bool, allowPaths ...[]*regexp.Regexp) *EditFileTool {
+	return NewEditFileToolScoped(workspace, restrict, "", allowPaths...)
+}
+
+// NewEditFileToolScoped constructs an EditFileTool whose writes are confined to
+// <workspace>/<writeSubdir> (reads stay workspace-wide). An empty writeSubdir
+// yields the legacy whole-workspace behaviour.
+func NewEditFileToolScoped(workspace string, restrict bool, writeSubdir string, allowPaths ...[]*regexp.Regexp) *EditFileTool {
 	var patterns []*regexp.Regexp
 	if len(allowPaths) > 0 {
 		patterns = allowPaths[0]
 	}
-	return &EditFileTool{sysFs: buildFs(workspace, restrict, patterns)}
+	return &EditFileTool{sysFs: buildWriteFs(workspace, restrict, writeSubdir, patterns)}
 }
 
 func (t *EditFileTool) Name() string {
@@ -114,11 +121,18 @@ type AppendFileTool struct {
 }
 
 func NewAppendFileTool(workspace string, restrict bool, allowPaths ...[]*regexp.Regexp) *AppendFileTool {
+	return NewAppendFileToolScoped(workspace, restrict, "", allowPaths...)
+}
+
+// NewAppendFileToolScoped constructs an AppendFileTool whose writes are confined
+// to <workspace>/<writeSubdir> (reads stay workspace-wide). An empty writeSubdir
+// yields the legacy whole-workspace behaviour.
+func NewAppendFileToolScoped(workspace string, restrict bool, writeSubdir string, allowPaths ...[]*regexp.Regexp) *AppendFileTool {
 	var patterns []*regexp.Regexp
 	if len(allowPaths) > 0 {
 		patterns = allowPaths[0]
 	}
-	return &AppendFileTool{sysFs: buildFs(workspace, restrict, patterns)}
+	return &AppendFileTool{sysFs: buildWriteFs(workspace, restrict, writeSubdir, patterns)}
 }
 
 func (t *AppendFileTool) Name() string {

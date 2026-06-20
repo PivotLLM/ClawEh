@@ -51,6 +51,9 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	// Session history
 	h.registerSessionRoutes(mux)
 
+	// Cognitive-memory browser (read-only)
+	h.registerMemoryRoutes(mux)
+
 	// OAuth login and credential management
 	h.registerOAuthRoutes(mux)
 

@@ -20,6 +20,7 @@ import (
 	_ "github.com/PivotLLM/ClawEh/pkg/channels/slack"
 	_ "github.com/PivotLLM/ClawEh/pkg/channels/telegram"
 	_ "github.com/PivotLLM/ClawEh/pkg/channels/webui"
+	"github.com/PivotLLM/ClawEh/pkg/cogmem/consolidate"
 	"github.com/PivotLLM/ClawEh/pkg/config"
 	"github.com/PivotLLM/ClawEh/pkg/cron"
 	"github.com/PivotLLM/ClawEh/pkg/devices"
@@ -31,6 +32,7 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/providers"
 	"github.com/PivotLLM/ClawEh/pkg/state"
 	"github.com/PivotLLM/ClawEh/pkg/tools"
+	toolsagents "github.com/PivotLLM/ClawEh/pkg/tools/agents"
 	toolschedule "github.com/PivotLLM/ClawEh/pkg/tools/schedule"
 	"github.com/PivotLLM/ClawEh/pkg/voice"
 	webserver "github.com/PivotLLM/ClawEh/web/backend"
@@ -92,6 +94,7 @@ type gatewayServices struct {
 	MCPServer      *mcpserver.MCPServer
 	WebServer      *webserver.Server
 	HTTPHost       *httpHost
+	CogmemManager  *consolidate.Manager
 }
 
 func gatewayCmd(debug bool) error {
@@ -104,6 +107,7 @@ func gatewayCmd(debug bool) error {
 	// console / journal. The configured format/level are re-applied below once
 	// the config is loaded.
 	logPath := filepath.Join(baseDir, "logs", "claw.log")
+	logger.SetErrorLogLevel(logger.ParseLevel(global.ErrorLogLevel))
 	if err := logger.EnableFileLogging(logPath, false); err != nil {
 		logger.WarnCF("gateway", "Failed to enable file logging", map[string]any{"path": logPath, "error": err.Error()})
 	}
@@ -201,6 +205,10 @@ func gatewayCmd(debug bool) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Daily log rotation: roll claw.log/error.log at local midnight (and on
+	// startup if claw.log predates today), pruning archives past retention.
+	startLogRotation(ctx, logPath, cfg.Logging.RetentionDays)
+
 	go agentLoop.Run(ctx)
 
 	// Setup config file watcher for hot reload
@@ -238,6 +246,14 @@ func setupAndStartServices(
 	configPath string,
 ) (*gatewayServices, error) {
 	services := &gatewayServices{}
+
+	// Ensure the shared "common" directory exists so the common_* tools have a
+	// place to read/write. Idempotent.
+	if commonDir := cfg.ResolveCommonDir(); commonDir != "" {
+		if err := os.MkdirAll(commonDir, 0o755); err != nil {
+			logger.WarnCF("gateway", "Failed to create common directory", map[string]any{"path": commonDir, "error": err.Error()})
+		}
+	}
 
 	// Setup cron tool and service
 	execTimeout := time.Duration(cfg.Tools.Cron.ExecTimeoutMinutes) * time.Minute
@@ -332,20 +348,40 @@ func setupAndStartServices(
 		return nil, err
 	}
 
+	// Start cognitive-memory consolidation (inert unless an agent is allowed the
+	// cogmem tools).
+	services.CogmemManager = setupCogmemConsolidation(cfg, agentLoop)
+
+	// Start the optional nightly backup scheduler. Boot-only: it reads live config
+	// each tick (via agentLoop.GetConfig), so toggling/retiming it on reload takes
+	// effect without restarting the loop. Inert until backup.enabled is set.
+	startBackupScheduler(agentLoop.GetConfig, configPath)
+
+	// Boot-only: reclaim sub-agent session files left by a crash mid-run, but only
+	// those older than 24h, so a crashed worker's artefacts can be inspected first.
+	// (Normal completion cleans up immediately.)
+	for _, agentID := range agentLoop.GetRegistry().ListAgentIDs() {
+		if a, ok := agentLoop.GetRegistry().GetAgent(agentID); ok && a != nil {
+			toolsagents.PruneOrphanSubagentSessions(a.Workspace, 24*time.Hour, time.Now())
+		}
+	}
+
 	return services, nil
 }
 
-// mcpHostAllowlist resolves the tool allowlist the MCP host should expose. An
-// explicit cfg.MCPHost.Tools wins; otherwise (unset/empty) it defaults to the
-// DefaultEnabled set — the same source as the per-agent default allowlist — so a
-// tool marked DefaultEnabled is exposed over MCP automatically, with no separate
-// hand-maintained list. To expose NO tools, disable mcp_host rather than passing
-// an empty list.
+// mcpHostAllowlist resolves the tool allowlist the MCP host catalogue (tools/list)
+// should advertise. Parity rule: external MCP and the internal API path expose the
+// SAME tools, gated per-agent at execution time (tools/call resolves the
+// session_token to an agent and enforces that agent's config + ACL). So the
+// default exposes the FULL union of every agent's allowed tools ("*") — anything
+// an agent can use internally is discoverable and callable externally, subject to
+// the same per-agent gate. An explicit cfg.MCPHost.Tools narrows the catalogue
+// (operator override); to expose NO tools, disable mcp_host instead.
 func mcpHostAllowlist(cfg *config.Config) []string {
 	if len(cfg.MCPHost.Tools) > 0 {
 		return cfg.MCPHost.Tools
 	}
-	return tools.DefaultEnabledToolNames()
+	return []string{"*"}
 }
 
 // startMCPServer starts the MCP server if enabled and wires it into services
@@ -411,8 +447,6 @@ func startMCPServer(cfg *config.Config, agentLoop *agent.AgentLoop, msgBus *bus.
 			"auto_enabled": autoStarted,
 		})
 
-	baseURL := "http://" + srv.Listen()
-	srv.WriteWorkspaceConfigs(baseURL, agentWorkspaces)
 	return nil
 }
 
@@ -424,6 +458,9 @@ func stopAndCleanupServices(
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer shutdownCancel()
 
+	if services.CogmemManager != nil {
+		services.CogmemManager.Stop()
+	}
 	if services.MCPServer != nil {
 		if err := services.MCPServer.Shutdown(shutdownCtx); err != nil {
 			logger.WarnCF("mcpserver", "MCP server shutdown error", map[string]any{"error": err.Error()})
@@ -719,6 +756,11 @@ func setupConfigWatcherPolling(configPath string, interval, debounce time.Durati
 					logger.Warn("  Using previous valid config")
 					continue
 				}
+				if err := newCfg.ValidateBindings(); err != nil {
+					logger.Errorf("  ⚠ New config binding validation failed: %v", err)
+					logger.Warn("  Using previous valid config")
+					continue
+				}
 
 				logger.Info("✓ Config file validated and loaded")
 				appliedModTime = currentModTime
@@ -782,11 +824,7 @@ func setupCronTool(
 	// Create CronTool if enabled
 	var cronTool *toolschedule.CronTool
 	if cfg.Tools.Cron.Enabled {
-		var err error
-		cronTool, err = toolschedule.NewCronTool(cronService, agentLoop, msgBus, workspace, restrict, execTimeout, cfg)
-		if err != nil {
-			logger.Fatalf("Critical error during CronTool initialization: %v", err)
-		}
+		cronTool = toolschedule.NewCronTool(cronService, msgBus, agentLoop.GetConfig)
 	}
 
 	// Set onJob handler

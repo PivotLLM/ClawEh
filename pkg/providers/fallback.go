@@ -155,10 +155,27 @@ func ResolveCandidatesWithLookup(
 //   - Retriable errors trigger fallback to next candidate.
 //   - Success marks provider as good (resets cooldown).
 //   - If all fail, returns aggregate error with all attempts.
+// FallbackNotify is an optional callback invoked when a candidate fails and the
+// chain is about to try the next one. `failed` is the attempt that just failed;
+// `next` is the candidate that will be tried next. It lets the caller surface a
+// user-facing heads-up ("X failed, trying Y…"). Never called for the final
+// candidate (that surfaces as the returned error instead).
+type FallbackNotify func(failed FallbackAttempt, next FallbackCandidate)
+
 func (fc *FallbackChain) Execute(
 	ctx context.Context,
 	candidates []FallbackCandidate,
 	run func(ctx context.Context, candidate FallbackCandidate) (*LLMResponse, error),
+) (*FallbackResult, error) {
+	return fc.ExecuteWithNotify(ctx, candidates, run, nil)
+}
+
+// ExecuteWithNotify is Execute with an optional per-failover notification hook.
+func (fc *FallbackChain) ExecuteWithNotify(
+	ctx context.Context,
+	candidates []FallbackCandidate,
+	run func(ctx context.Context, candidate FallbackCandidate) (*LLMResponse, error),
+	notify FallbackNotify,
 ) (*FallbackResult, error) {
 	if len(candidates) == 0 {
 		return nil, fmt.Errorf("fallback: no candidates configured")
@@ -266,17 +283,12 @@ func (fc *FallbackChain) Execute(
 			break
 		}
 
-		// Retriable error: mark failure and continue to next candidate.
-		// Context-limit and auth are user-fixable without a restart and skip
-		// cooldown so the model is retried immediately once the issue is
-		// resolved. Billing DOES get a (short) cooldown so a credits-exhausted
-		// model is skipped within the same session — see billingInitialCooldown
-		// in cooldown.go. Use /cooldowns clear or /retry to override.
-		noCooldown := failErr.Reason == FailoverContextLimit ||
-			failErr.Reason == FailoverAuth
-		if !noCooldown {
-			fc.cooldown.MarkFailure(candidate.Provider, candidate.Model, failErr.Reason, failErr.RetryAfter)
-		}
+		// Retriable error: record the failure and continue to the next candidate.
+		// The cooldown policy decides the duration from the HTTP status (with the
+		// 1/3/5-minute escalation), and ignores statuses that must never cool —
+		// notably 413/context-limit, which is fixed by compaction rather than by
+		// waiting. Use /cooldowns clear or /retry to override.
+		fc.cooldown.MarkFailure(candidate.Provider, candidate.Model, failErr.Reason, failErr.Status, failErr.RetryAfter)
 		result.Attempts = append(result.Attempts, FallbackAttempt{
 			Provider: candidate.Provider,
 			Model:    candidate.Model,
@@ -288,6 +300,11 @@ func (fc *FallbackChain) Execute(
 		// If this was the last candidate, return aggregate error.
 		if i == len(candidates)-1 {
 			return nil, &FallbackExhaustedError{Attempts: result.Attempts}
+		}
+
+		// Heads-up to the caller: this model failed and we're moving to the next.
+		if notify != nil {
+			notify(result.Attempts[len(result.Attempts)-1], candidates[i+1])
 		}
 	}
 

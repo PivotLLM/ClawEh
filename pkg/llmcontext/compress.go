@@ -59,6 +59,21 @@ func (m *Manager) doCompress(ctx context.Context, safetyNet bool) error {
 		return ErrCompressionFailed
 	}
 
+	// Drop models still in cooldown from an earlier billing/auth/rate-limit
+	// failure. If that leaves nothing, fail fast WITHOUT dispatching — this is
+	// what stops an out-of-credits model from being hammered on every compaction.
+	if len(m.filterCooledClients(clients)) == 0 {
+		logger.WarnCF("llmcontext", "compression: every summarization model is in cooldown (billing/auth/rate-limit)", map[string]any{
+			"session_key": m.sessionKey,
+		})
+		m.lastReport = &CompactionReport{
+			SessionKey: m.sessionKey,
+			Attempts:   m.cooledAttempts(clients),
+			Outcome:    "failed",
+		}
+		return ErrCompressionFailed
+	}
+
 	// Separate system message from conversation.
 	// Use GetHistoryWithSeqs to preserve seq numbers for the summarizer.
 	storedHistory := m.store.GetHistoryWithSeqs(m.sessionKey)
@@ -134,6 +149,29 @@ func (m *Manager) doCompress(ctx context.Context, safetyNet bool) error {
 
 		tail := selectTail(currentConversation, budget, m.cfg.retainMinMessages, m.estTokens)
 		tailStart := len(currentConversation) - len(tail)
+		// Never archive past the most recent user message: the live window must
+		// always retain the latest user turn. Otherwise the next dispatch sends a
+		// payload of only system+assistant+tool messages, which strict providers
+		// reject with "messages must contain at least one item with role='user'"
+		// (a non-retriable 400 that kills the turn).
+		if lu := lastUserStoredIndex(currentStored); lu >= 0 && lu < tailStart {
+			tailStart = lu
+			tail = currentConversation[tailStart:] // keep tail/tailStart consistent
+		}
+		// Never empty the live window. In a long in-flight tool-call sequence the
+		// retained tail can be all tool plumbing, which selectTail trims away to
+		// nothing; with no user/clean anchor to clamp to that would archive the
+		// whole conversation and leave a system-only payload (the model loses the
+		// entire thread mid-turn). Keep at least the last turn group instead.
+		if tailStart >= len(currentConversation) && len(currentConversation) > 0 {
+			g := resolveGroup(currentConversation, len(currentConversation)-1)
+			tailStart = g.start
+			tail = currentConversation[tailStart:]
+			logger.WarnCF("llmcontext", "compaction would empty the live window; retaining the last turn group", map[string]any{
+				"session_key": m.sessionKey,
+				"kept":        len(tail),
+			})
+		}
 		toSummarize := currentStored[:tailStart]
 
 		if len(toSummarize) == 0 {
@@ -141,7 +179,7 @@ func (m *Manager) doCompress(ctx context.Context, safetyNet bool) error {
 		}
 
 		attemptedLLM = true
-		newSummary, ok := callLLMChain(ctx, clients, latestSummary, toSummarize, archiveMin, archiveMax, aggressive, compressionProfile, summaryTokenLimit, m.sessionKey, rec)
+		newSummary, ok := m.callLLMChain(ctx, clients, latestSummary, toSummarize, archiveMin, archiveMax, aggressive, compressionProfile, summaryTokenLimit, rec)
 		if !ok {
 			iterCount++
 			continue
@@ -251,6 +289,57 @@ func (m *Manager) refusedAttempts() []CompactionAttempt {
 		out = append(out, CompactionAttempt{Model: model, Status: "refused", Detail: "content policy (skipped)"})
 	}
 	return out
+}
+
+// filterCooledClients drops clients whose model is currently in cooldown (per
+// the shared cooldown tracker). Clients with no reportable model name are kept.
+func (m *Manager) filterCooledClients(clients []LLMClient) []LLMClient {
+	if m.cooldown == nil {
+		return clients
+	}
+	out := make([]LLMClient, 0, len(clients))
+	for _, c := range clients {
+		model := clientModel(c)
+		if model != "" && !m.cooldown.IsAvailable(clientCooldownProvider(c), model) {
+			continue // still cooling — skip
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+// cooledAttempts synthesises report entries for the given clients' models that
+// are in cooldown, so the user sees why nothing was tried.
+func (m *Manager) cooledAttempts(clients []LLMClient) []CompactionAttempt {
+	if m.cooldown == nil {
+		return nil
+	}
+	out := make([]CompactionAttempt, 0, len(clients))
+	for _, c := range clients {
+		model := clientModel(c)
+		if model == "" {
+			continue
+		}
+		if rem := m.cooldown.CooldownRemaining(clientCooldownProvider(c), model); rem > 0 {
+			out = append(out, CompactionAttempt{
+				Model:  model,
+				Status: "skipped",
+				Detail: fmt.Sprintf("in cooldown (%s remaining)", rem.Round(time.Second)),
+			})
+		}
+	}
+	return out
+}
+
+// lastUserStoredIndex returns the index of the most recent user-role message in
+// the (system-stripped) conversation slice, or -1 if there is none.
+func lastUserStoredIndex(stored []memory.StoredMessage) int {
+	for i := len(stored) - 1; i >= 0; i-- {
+		if stored[i].Role == "user" {
+			return i
+		}
+	}
+	return -1
 }
 
 // handleNormalPostLoop handles post-loop logic for the normal (non-safety-net) path.
@@ -382,7 +471,7 @@ func (m *Manager) handleSafetyNetPostLoop(
 // toSummarize is a []memory.StoredMessage so the prompt can include [#N] seq
 // prefixes for each message. CoveredSeqStart and CoveredSeqEnd are set from the
 // actual min/max seq of the slice, not from any LLM-emitted values.
-func callLLMChain(
+func (m *Manager) callLLMChain(
 	ctx context.Context,
 	clients []LLMClient,
 	existing *Summary,
@@ -391,12 +480,15 @@ func callLLMChain(
 	aggressive bool,
 	compressionProfile string,
 	summaryTokenLimit int,
-	sessionKey string,
 	rec *compactionRecorder,
 ) (*Summary, bool) {
 	if len(toSummarize) == 0 {
 		return nil, false
 	}
+	sessionKey := m.sessionKey
+	// Skip models still in cooldown from an earlier billing/auth/rate-limit
+	// failure so we don't hammer an unusable model on every compaction.
+	clients = m.filterCooledClients(clients)
 
 	// Compute the actual seq range from the slice (do not trust LLM output).
 	coveredStart := toSummarize[0].Seq
@@ -424,8 +516,24 @@ func callLLMChain(
 		response, err := client.Complete(ctx, messages)
 		dur := time.Since(start)
 		if err != nil {
-			// rec.record logs the per-model outcome (model + status + detail).
-			rec.record(model, "error", shortErr(err), dur, messages, "")
+			// Classify so the report shows a clean "HTTP 402 (out of credits)"
+			// instead of a raw body dump, and so a model that is unusable for a
+			// while (billing/auth/rate-limit/overload) is put in cooldown rather
+			// than retried on every compaction.
+			detail := shortErr(err)
+			if fe := providers.ClassifyError(err, "", model); fe != nil {
+				if fe.Status > 0 {
+					detail = fmt.Sprintf("HTTP %d (%s)", fe.Status, providers.ReasonText(fe.Reason))
+				} else {
+					detail = providers.ReasonText(fe.Reason)
+				}
+				// Record the failure against the shared cooldown policy; statuses
+				// that never cool (413, no HTTP status) are ignored internally.
+				if m.cooldown != nil {
+					m.cooldown.MarkFailure(clientCooldownProvider(client), model, fe.Reason, fe.Status, fe.RetryAfter)
+				}
+			}
+			rec.record(model, "error", detail, dur, messages, "")
 			continue
 		}
 
@@ -481,6 +589,9 @@ func callLLMChain(
 		}
 
 		rec.record(model, "ok", "", dur, messages, response.Content)
+		if m.cooldown != nil {
+			m.cooldown.MarkSuccess(clientCooldownProvider(client), model) // reset any prior cooldown/escalation
+		}
 		return summary, true
 	}
 

@@ -1,8 +1,18 @@
 {
   "agents": {
-    "summarizationModels": "Summarization models (optional)",
-    "summarizationModelsAdd": "Add summarization model…",
-    "summarizationModelsHint": "Models tried first when summarizing this agent's context, ahead of the global summarization models and the agent's own model. Use to give an agent specialised summarizers when the defaults refuse its content."
+    "summarizationModels": "Memory models (optional)",
+    "summarizationModelsAdd": "Add memory model…",
+    "summarizationModelsHint": "Models tried first for this agent's memory consolidation and context summarization, ahead of the global memory models and the agent's own model. Use to give an agent specialised models when the defaults refuse its content.",
+    "shareCommon": "Share common directory",
+    "shareCommonHint": "Allow this agent to read/write the shared common directory and copy files to/from it.",
+    "globalCron": "Global cron",
+    "globalCronHint": "Allow this agent to create and manage scheduled (cron) jobs for OTHER agents, not just itself. Typically only one orchestrator agent needs this.",
+    "channels": "Channels",
+    "channelsNone": "No channels bound to this agent yet. Add a binding on the Bindings page.",
+    "channelsDefault": "default (cron output goes here)",
+    "channelsChatIdPlaceholder": "chat id",
+    "channelsNeedChatId": "Enter the chat id to deliver to before setting this channel as default.",
+    "channelsHint": "Pick the default channel where this agent's scheduled (cron) output is delivered. For a channel bound to a specific chat (e.g. a Slack channel) that chat is used. For a channel with no specific chat (e.g. a Telegram bot), enter the chat id to deliver to — this is used for delivery only and does not change who can message the bot."
   },
   "navigation": {
     "chat": "Chat",
@@ -19,7 +29,8 @@
     "channels_group": "Channels",
     "config": "Config",
     "mcp": "MCP Server",
-    "logs": "Logs"
+    "logs": "Logs",
+    "memory": "Memory"
   },
   "chat": {
     "welcome": "How can I help you today?",
@@ -144,7 +155,7 @@
       "default": "Default"
     },
     "action": {
-      "edit": "Edit API key",
+      "edit": "Edit model",
       "setDefault": "Set as default",
       "delete": "Delete model"
     },
@@ -193,10 +204,12 @@
       "thinkingLevelHint": "Extended thinking budget: off, low, medium, high, xhigh, adaptive.",
       "maxTokens": "Max Output Tokens",
       "maxTokensHint": "Maximum tokens the model may generate per response. Overrides the global default for this model only.",
+      "contextWindow": "Context Window (tokens)",
+      "contextWindowHint": "The model's total context window size, in tokens (not bytes). Determines when context compaction triggers. Leave 0/blank to use the agent default.",
       "maxTokensField": "Max Tokens Field",
       "maxTokensFieldHint": "Override the request field name for max tokens, e.g. max_completion_tokens.",
       "reasoningEffort": "Reasoning Effort",
-      "reasoningEffortHint": "Sets the OpenAI-style reasoning_effort request field on supported models (xAI Grok, OpenAI o-series). Accepted values: low, medium, high. Leave unset to omit.",
+      "reasoningEffortHint": "Sets the OpenAI-style reasoning_effort request field on supported models (xAI Grok, OpenAI o-series). Accepted values: none, low, medium, high. \"none\" is sent explicitly (e.g. to disable reasoning); leave unset to omit the field entirely.",
       "reasoningEffortUnset": "(unset)",
       "extraBody": "Extra Request Body",
       "extraBodyHint": "Free-form JSON merged into the OpenAI-compatible request body for per-provider knobs not modelled natively. Must be a JSON object. Reserved keys claimed by claw are rejected.",
@@ -372,6 +385,8 @@
       "load_error": "Failed to load configuration. Please refresh and try again.",
       "base_dir": "Agent Base Directory",
       "base_dir_hint": "Base directory for all agent files. Each agent lives in <base>/<id> (the default agent in <base>/default). Leave blank for ~/.claw/agents; point it at another volume to relocate every agent.",
+      "common_dir": "Common directory",
+      "common_dir_hint": "Shared directory agents can read/write (default: <agents>/common). Set an absolute path to place it anywhere.",
       "restrict_workspace": "Restrict to Workspace",
       "restrict_workspace_hint": "Only allow file operations inside workspace.",
       "allow_remote": "Allow Remote Shell Execution",
@@ -382,14 +397,16 @@
       "max_tokens_hint": "Upper token limit per model response.",
       "max_tool_iterations": "Max Tool Iterations",
       "max_tool_iterations_hint": "Maximum tool-call loops in a single task.",
+      "request_timeout": "Request Timeout (s)",
+      "request_timeout_hint": "Global default seconds to wait for a model response. Per-model timeouts override this (CLI models set it higher). 0 = built-in 120s default.",
       "default_agent": "Default agent",
       "default_agent_hint": "Handles messages that don't match any binding.",
       "default_model": "Default models",
       "default_temperature": "Default temperature",
       "default_temperature_hint": "0–2; blank uses the provider default.",
-      "summarization_models": "Summarization Models",
-      "summarization_models_hint": "Models tried in order for context summarization across all agents. Each agent's own model is always used as a final fallback. Leave empty to use each agent's own model.",
-      "summarization_models_empty": "No summarization models configured — each agent uses its own model.",
+      "summarization_models": "Memory Models",
+      "summarization_models_hint": "Models tried in order for memory consolidation and context summarization across all agents. Each agent's own model is always used as a final fallback. Leave empty to use each agent's own model.",
+      "summarization_models_empty": "No memory models configured — each agent uses its own model.",
       "summarization_models_add": "Add model",
       "summarization_models_remove": "Remove",
       "summarization_models_move_up": "Move up",
@@ -443,14 +460,15 @@
       "sections": {
         "agent": "Agent",
         "agent_defaults": "Agent Defaults",
-        "agent_defaults_desc": "Default model, summarization chain, and the agent that handles unrouted messages — applied to agents without their own override.",
-        "summarization": "Summarization",
-        "summarization_desc": "Global summarization model chain used to compress context for every agent.",
+        "agent_defaults_desc": "Default model, memory model chain, and the agent that handles unrouted messages — applied to agents without their own override.",
+        "summarization": "Memory",
+        "summarization_desc": "Global memory model chain used for memory consolidation and context compression for every agent.",
         "context_management": "Context Management",
         "context_management_desc": "Controls when context is compressed, how much is retained, and how the archive is sized.",
         "runtime": "Runtime",
         "launcher": "Service",
-        "devices": "Devices"
+        "devices": "Devices",
+        "backup": "Backup"
       },
       "open_raw": "Raw Config",
       "back_to_visual": "Visual Config",
@@ -465,7 +483,21 @@
       "format_success": "JSON formatted successfully.",
       "format_error": "Invalid JSON format.",
       "format": "Format",
-      "unsaved_changes": "You have unsaved changes."
+      "unsaved_changes": "You have unsaved changes.",
+      "log_retention_days": "Log retention (days)",
+      "log_retention_days_hint": "Days of rolled daily logs (YYYYMMDD-claw.log / -error.log) to keep. claw.log rolls at local midnight. 0 = keep forever.",
+      "backup_desc": "Optionally snapshot config.json and the cron jobs file into backup/YYYYMMDD/ each night.",
+      "backup_enabled": "Nightly backup",
+      "backup_enabled_hint": "When on, copy config.json and the cron jobs file into <data dir>/backup/YYYYMMDD/ once a day.",
+      "backup_at": "Backup time",
+      "backup_at_hint": "Local time of day to run the nightly backup (default 03:00).",
+      "backup_retain_days": "Keep backups (days)",
+      "backup_retain_days_hint": "Delete backup folders older than this many days (default 30).",
+      "backup_now": "Back up now",
+      "backup_now_hint": "Run a backup immediately, regardless of the nightly toggle.",
+      "backup_now_running": "Backing up…",
+      "backup_now_done": "Backup written to {{folder}}",
+      "backup_now_failed": "Backup failed"
     },
     "logs": {
       "clear": "Clear logs",
@@ -480,7 +512,8 @@
       "sections": {
         "enable": "Enable",
         "transport": "Transport",
-        "tools": "Tool Allowlist"
+        "tools": "Tool Allowlist",
+        "client": "External MCP Servers"
       },
       "enable_desc": "Controls whether claw runs an MCP server so CLI-based providers (claude-cli, codex-cli, gemini-cli) can call claw's host-side tools natively.",
       "enabled": "Enabled",
@@ -499,7 +532,26 @@
       "tools_add_pattern": "Add pattern",
       "tools_preview_title": "Matches ({{matched}} of {{total}})",
       "tools_always_excluded": "Always excluded: {{tools}}",
-      "tools_none_registered": "No tools registered yet."
+      "tools_none_registered": "No tools registered yet.",
+      "client_hint": "Upstream MCP servers claw connects out to (tools.mcp.servers). Their tools are exposed to direct API providers; CLI providers configure MCP separately. Edit as a JSON object keyed by server name. Leave empty for none.",
+      "client_placeholder": "{\n  \"my-server\": {\n    \"url\": \"https://example.com/mcp\"\n  }\n}"
+    },
+    "memory": {
+      "empty": "No cognitive-memory databases found yet.",
+      "select_prompt": "Select a memory store to view its domains and memories.",
+      "load_error": "Failed to load this memory store.",
+      "active_domains": "Active domains",
+      "active_memories": "Active memories",
+      "pending": "Pending",
+      "pending_review": "Pending review",
+      "last_run": "Last consolidation",
+      "never": "never",
+      "triggers": "Tool triggers",
+      "keyword_triggers": "Keyword triggers",
+      "last_used": "Last used",
+      "sticky": "sticky",
+      "no_memories": "No active memories in this domain.",
+      "memory_count": "{{count}} memories"
     }
   },
   "providers": {

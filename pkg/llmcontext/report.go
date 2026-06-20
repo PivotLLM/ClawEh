@@ -50,9 +50,16 @@ func (r *CompactionReport) String() string {
 	}
 	var b strings.Builder
 
-	header := fmt.Sprintf("Compaction: %d messages (%s)", r.BeforeMsgs, formatBytes(r.BeforeBytes))
-	if dr := formatDateRange(r.DateFrom, r.DateTo); dr != "" {
+	// When the pass exited before reading the conversation (e.g. every model is
+	// in cooldown), there are no before-stats — omit the misleading
+	// "0 messages (0 B)" and show a bare header.
+	var header string
+	if r.BeforeMsgs == 0 && r.BeforeBytes == 0 {
+		header = "Compaction:"
+	} else if dr := formatDateRange(r.DateFrom, r.DateTo); dr != "" {
 		header = fmt.Sprintf("Compaction: %d messages (%s) · %s", r.BeforeMsgs, formatBytes(r.BeforeBytes), dr)
+	} else {
+		header = fmt.Sprintf("Compaction: %d messages (%s)", r.BeforeMsgs, formatBytes(r.BeforeBytes))
 	}
 	b.WriteString(header)
 
@@ -73,9 +80,12 @@ func (r *CompactionReport) String() string {
 	case "nothing":
 		b.WriteString("Nothing to compress — already compact.")
 	default:
-		if r.hasRefusal() {
+		switch {
+		case r.hasRefusal():
 			b.WriteString("Failed — model(s) refused to summarize this content (content policy). Refusing models will be skipped for this session.")
-		} else {
+		case r.hasCooldown():
+			b.WriteString("Failed — summarization model unavailable (billing/auth/rate-limit); it is in cooldown and compaction will retry later.")
+		default:
 			b.WriteString("Failed — no model produced an acceptable summary.")
 		}
 	}
@@ -86,6 +96,22 @@ func (r *CompactionReport) String() string {
 func (r *CompactionReport) hasRefusal() bool {
 	for _, a := range r.Attempts {
 		if a.Status == "refused" {
+			return true
+		}
+	}
+	return false
+}
+
+// hasCooldown reports whether any attempt was skipped for, or failed into, a
+// cooldown (billing/auth/rate-limit/overload).
+func (r *CompactionReport) hasCooldown() bool {
+	for _, a := range r.Attempts {
+		if a.Status == "skipped" && strings.Contains(a.Detail, "cooldown") {
+			return true
+		}
+		if a.Status == "error" && (strings.Contains(a.Detail, "out of credits") ||
+			strings.Contains(a.Detail, "rate limited") || strings.Contains(a.Detail, "auth failed") ||
+			strings.Contains(a.Detail, "overloaded")) {
 			return true
 		}
 	}
@@ -254,6 +280,17 @@ func (m *Manager) buildReport(rec *compactionRecorder, beforeMsgs, beforeBytes i
 func clientModel(c LLMClient) string {
 	if m, ok := c.(interface{ Model() string }); ok {
 		return m.Model()
+	}
+	return ""
+}
+
+// clientCooldownProvider returns the provider NAME an LLMClient reaches through,
+// when it exposes one. Combined with clientModel it forms the same
+// provider+model cooldown key the main fallback chain uses, so a cooldown shared
+// between the two paths applies consistently.
+func clientCooldownProvider(c LLMClient) string {
+	if p, ok := c.(interface{ CooldownProvider() string }); ok {
+		return p.CooldownProvider()
 	}
 	return ""
 }
