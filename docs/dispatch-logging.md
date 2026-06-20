@@ -15,7 +15,7 @@ finish event back to the agent loop iteration and records what was requested.
 
 ## DispatchStatus struct
 
-Added to `pkg/providers/protocoltypes/types.go` alongside `UsageInfo`:
+Added to `spawnllm/protocoltypes/types.go` alongside `UsageInfo`:
 
 ```go
 // DispatchStatus is populated by each provider on every Chat() return
@@ -200,8 +200,8 @@ Mapping:
 ### anthropic / anthropic_messages / bedrock (Anthropic Messages API)
 
 Response payload already parsed in
-`pkg/providers/anthropic_messages/provider.go` and the streaming-aware
-`pkg/providers/anthropic/provider.go`. Anthropic's response object includes
+`spawnllm/anthropic_messages/provider.go` and the streaming-aware
+`spawnllm/anthropic/provider.go`. Anthropic's response object includes
 `stop_reason`, `model`, and an enriched `usage` block.
 
 Mapping:
@@ -224,7 +224,7 @@ Mapping:
 The existing `usageInfo` struct in `anthropic_messages/provider.go` must be
 extended with `CacheCreationInputTokens` and `CacheReadInputTokens` fields.
 
-### openai_compat / azure / http (`pkg/providers/common/ParseResponse`)
+### openai_compat / azure / http (`spawnllm/common/ParseResponse`)
 
 Mapping:
 
@@ -354,23 +354,23 @@ End-to-end:
 
 ## Files touched
 
-- `pkg/providers/protocoltypes/types.go` — add `DispatchStatus`, add
+- `spawnllm/protocoltypes/types.go` — add `DispatchStatus`, add
   `Status *DispatchStatus` to `LLMResponse`.
 - `pkg/providers/claude_cli_provider.go` — populate `Status`; remove the
   redundant "claude-cli response" INFO log (downgrade to DEBUG).
 - `pkg/providers/codex_cli_provider.go` — same.
 - `pkg/providers/gemini_cli_provider.go` — same.
-- `pkg/providers/anthropic_messages/provider.go` — extend `usageInfo`; set
+- `spawnllm/anthropic_messages/provider.go` — extend `usageInfo`; set
   `Status`.
-- `pkg/providers/anthropic/provider.go` — set `Status` (including streaming
+- `spawnllm/anthropic/provider.go` — set `Status` (including streaming
   path that aggregates `message_delta` usage).
 - `pkg/providers/bedrock/provider_bedrock.go` — set `Status`.
-- `pkg/providers/common/common.go` — extend `ParseResponse` to surface
+- `spawnllm/common/common.go` — extend `ParseResponse` to surface
   `model` and `cached_tokens`; partial `Status` population (caller fills
   duration + success).
-- `pkg/providers/openai_compat/provider.go` — fill `Status.Success`,
+- `spawnllm/openai_compat/provider.go` — fill `Status.Success`,
   `DurationMs`.
-- `pkg/providers/azure/provider.go` — same.
+- `spawnllm/azure/provider.go` — same.
 - `pkg/providers/http_provider.go`, `legacy_provider.go`,
   `claude_provider.go` — minor — pass through.
 - `pkg/agent/loop.go` — emit `"LLM dispatch"` and `"LLM finish"` events;

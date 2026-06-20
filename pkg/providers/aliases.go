@@ -17,19 +17,16 @@ import "github.com/PivotLLM/spawnllm"
 
 // Interfaces + concrete provider types.
 type (
-	LLMProvider          = spawnllm.LLMProvider
-	StatefulProvider     = spawnllm.StatefulProvider
-	ThinkingCapable      = spawnllm.ThinkingCapable
-	CLIProvider          = spawnllm.CLIProvider
-	HTTPProvider         = spawnllm.HTTPProvider
-	UnconfiguredProvider = spawnllm.UnconfiguredProvider
-	ClaudeProvider       = spawnllm.ClaudeProvider
-	ClaudeCliProvider    = spawnllm.ClaudeCliProvider
-	CodexCliProvider     = spawnllm.CodexCliProvider
-	GeminiCliProvider    = spawnllm.GeminiCliProvider
-	CodexCliAuth         = spawnllm.CodexCliAuth
-	ModelRef             = spawnllm.ModelRef
-	ModelConfig          = spawnllm.ModelConfig
+	LLMProvider       = spawnllm.LLMProvider
+	StatefulProvider  = spawnllm.StatefulProvider
+	ThinkingCapable   = spawnllm.ThinkingCapable
+	CLIProvider       = spawnllm.CLIProvider
+	HTTPProvider      = spawnllm.HTTPProvider
+	ClaudeProvider    = spawnllm.ClaudeProvider
+	ClaudeCliProvider = spawnllm.ClaudeCliProvider
+	CodexCliProvider  = spawnllm.CodexCliProvider
+	GeminiCliProvider = spawnllm.GeminiCliProvider
+	ModelConfig       = spawnllm.ModelConfig
 )
 
 // Protocol DTOs.
@@ -46,7 +43,6 @@ type (
 	ContentBlock           = spawnllm.ContentBlock
 	CacheControl           = spawnllm.CacheControl
 	ExtraContent           = spawnllm.ExtraContent
-	GoogleExtra            = spawnllm.GoogleExtra
 )
 
 // Failover classification.
@@ -68,31 +64,25 @@ const (
 
 // Constructors + helpers.
 var (
-	NewHTTPProviderWithOptions                 = spawnllm.NewHTTPProviderWithOptions
-	NewUnconfiguredProvider                    = spawnllm.NewUnconfiguredProvider
-	NewClaudeProvider                          = spawnllm.NewClaudeProvider
-	NewClaudeProviderWithBaseURL               = spawnllm.NewClaudeProviderWithBaseURL
-	NewClaudeProviderWithTokenSource           = spawnllm.NewClaudeProviderWithTokenSource
-	NewClaudeProviderWithTokenSourceAndBaseURL = spawnllm.NewClaudeProviderWithTokenSourceAndBaseURL
-	NewClaudeCliProvider                       = spawnllm.NewClaudeCliProvider
-	NewClaudeCliProviderWithTimeout            = spawnllm.NewClaudeCliProviderWithTimeout
-	NewCodexCliProvider                        = spawnllm.NewCodexCliProvider
-	NewCodexCliProviderWithTimeout             = spawnllm.NewCodexCliProviderWithTimeout
-	NewGeminiCliProvider                       = spawnllm.NewGeminiCliProvider
-	NewGeminiCliProviderWithTimeout            = spawnllm.NewGeminiCliProviderWithTimeout
+	NewHTTPProviderWithOptions       = spawnllm.NewHTTPProviderWithOptions
+	NewUnconfiguredProvider          = spawnllm.NewUnconfiguredProvider
+	NewClaudeProviderWithTokenSource = spawnllm.NewClaudeProviderWithTokenSource
+	NewClaudeCliProvider             = spawnllm.NewClaudeCliProvider
+	NewClaudeCliProviderWithTimeout  = spawnllm.NewClaudeCliProviderWithTimeout
+	NewCodexCliProvider              = spawnllm.NewCodexCliProvider
+	NewCodexCliProviderWithTimeout   = spawnllm.NewCodexCliProviderWithTimeout
+	NewGeminiCliProvider             = spawnllm.NewGeminiCliProvider
+	NewGeminiCliProviderWithTimeout  = spawnllm.NewGeminiCliProviderWithTimeout
 
-	ModelKey                  = spawnllm.ModelKey
-	splitModelKey             = spawnllm.SplitModelKey
-	ClassifyError             = spawnllm.ClassifyError
-	ReasonText                = spawnllm.ReasonText
-	NormalizeToolCall         = spawnllm.NormalizeToolCall
-	NormalizeProvider         = spawnllm.NormalizeProvider
-	ParseModelRef             = spawnllm.ParseModelRef
-	AgentIDFromContext        = spawnllm.AgentIDFromContext
-	WithAgentID               = spawnllm.WithAgentID
-	IsImageDimensionError     = spawnllm.IsImageDimensionError
-	IsImageSizeError          = spawnllm.IsImageSizeError
-	JSONObjectFortification   = spawnllm.JSONObjectFortification
-	CreateCodexCliTokenSource = spawnllm.CreateCodexCliTokenSource
-	ReadCodexCliCredentials   = spawnllm.ReadCodexCliCredentials
+	ModelKey                = spawnllm.ModelKey
+	splitModelKey           = spawnllm.SplitModelKey
+	ClassifyError           = spawnllm.ClassifyError
+	ReasonText              = spawnllm.ReasonText
+	NormalizeToolCall       = spawnllm.NormalizeToolCall
+	ParseModelRef           = spawnllm.ParseModelRef
+	AgentIDFromContext      = spawnllm.AgentIDFromContext
+	WithAgentID             = spawnllm.WithAgentID
+	IsImageDimensionError   = spawnllm.IsImageDimensionError
+	IsImageSizeError        = spawnllm.IsImageSizeError
+	JSONObjectFortification = spawnllm.JSONObjectFortification
 )
