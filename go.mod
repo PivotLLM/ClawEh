@@ -51,6 +51,7 @@ require (
 )
 
 require (
+	github.com/PivotLLM/toolspec v0.1.0
 	github.com/andybalholm/brotli v1.2.1 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/buger/jsonparser v1.2.0 // indirect
