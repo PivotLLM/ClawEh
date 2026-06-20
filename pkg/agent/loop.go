@@ -2553,6 +2553,13 @@ func (al *AgentLoop) runLLMIteration(
 					if !result.Silent && result.ForUser != "" {
 						outCtx, outCancel := context.WithTimeout(context.Background(), 5*time.Second)
 						defer outCancel()
+						logger.InfoCF("agent", "Async tool completed, delivering to user",
+							map[string]any{
+								"tool":        tc.Name,
+								"channel":     opts.Channel,
+								"chat_id":     opts.ChatID,
+								"content_len": len(result.ForUser),
+							})
 						_ = al.bus.PublishOutbound(outCtx, bus.OutboundMessage{
 							Channel: opts.Channel,
 							ChatID:  opts.ChatID,

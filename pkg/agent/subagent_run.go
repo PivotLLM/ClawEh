@@ -69,6 +69,10 @@ func (al *AgentLoop) runSubagentTask(ctx context.Context, agentID, sessionKey, t
 		}
 	}
 
+	logger.InfoCF("agent", "subagent.run.start", map[string]any{
+		"agent": agentID, "session_key": sessionKey, "model": model, "task_len": len(task),
+	})
+
 	var iterations int
 	content, err := al.runAgentLoop(ctx, agent, processOptions{
 		SessionKey:    sessionKey,
@@ -78,6 +82,15 @@ func (al *AgentLoop) runSubagentTask(ctx context.Context, agentID, sessionKey, t
 		SendResponse:  false,
 		IterationsOut: &iterations,
 	})
+	if err != nil {
+		logger.WarnCF("agent", "subagent.run.end", map[string]any{
+			"agent": agentID, "session_key": sessionKey, "iterations": iterations, "error": err.Error(),
+		})
+	} else {
+		logger.InfoCF("agent", "subagent.run.end", map[string]any{
+			"agent": agentID, "session_key": sessionKey, "iterations": iterations, "content_len": len(content),
+		})
+	}
 	return content, iterations, err
 }
 

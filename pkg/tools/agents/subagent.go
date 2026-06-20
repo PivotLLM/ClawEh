@@ -11,6 +11,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/pkg/agenttoken"
 	"github.com/PivotLLM/ClawEh/pkg/global"
+	"github.com/PivotLLM/ClawEh/pkg/logger"
 	"github.com/PivotLLM/ClawEh/pkg/providers"
 	"github.com/PivotLLM/ClawEh/pkg/tools"
 )
@@ -328,6 +329,15 @@ func (sm *SubagentManager) SpawnCallback(
 		return "", fmt.Errorf("failed to write task marker: %w", err)
 	}
 	sm.live.Add(id)
+	logger.InfoCF("subagent", "subagent.spawn.launched", map[string]any{
+		"uuid":    id,
+		"name":    name,
+		"agent":   sm.targetAgent(agentID),
+		"owner":   sm.ownerAgentID,
+		"mode":    "callback",
+		"model":   model,
+		"channel": originChannel,
+	})
 	go sm.runRecord(rec, cb, false)
 	return id, nil
 }
@@ -407,7 +417,17 @@ func (sm *SubagentManager) finalize(rec *TaskRecord, content string, iterations 
 	clearRun(dir, rec.UUID)
 	sm.live.Remove(rec.UUID)
 
+	logger.InfoCF("subagent", "subagent.run.finished", map[string]any{
+		"uuid": rec.UUID, "name": rec.Name, "agent": sm.targetAgent(rec.AgentID),
+		"mode": "callback", "status": rec.Status, "iterations": iterations,
+		"content_len": len(content), "error": rec.Error,
+	})
+
 	if cb != nil {
+		logger.InfoCF("subagent", "subagent.callback.fired", map[string]any{
+			"uuid": rec.UUID, "name": rec.Name, "agent": sm.targetAgent(rec.AgentID),
+			"status": rec.Status, "result_file": rec.ResultsPath,
+		})
 		cb(context.Background(), sm.pointerResult(rec))
 	}
 }
@@ -531,10 +551,25 @@ func (sm *SubagentManager) Run(
 	// Full-pipeline path: run a copy of the agent in an isolated sub-agent session.
 	if sm.runFull != nil {
 		target := sm.targetAgent(agentID)
+		logger.InfoCF("subagent", "subagent.spawn.launched", map[string]any{
+			"label":   labelStr,
+			"agent":   target,
+			"owner":   sm.ownerAgentID,
+			"mode":    "wait",
+			"model":   model,
+			"channel": channel,
+		})
 		content, iterations, err := sm.runFull(ctx, target, subagentSessionKey(target, uuid.NewString()), task, model)
 		if err != nil {
+			logger.WarnCF("subagent", "subagent.run.failed", map[string]any{
+				"label": labelStr, "agent": target, "mode": "wait", "error": err.Error(),
+			})
 			return nil, err
 		}
+		logger.InfoCF("subagent", "subagent.run.finished", map[string]any{
+			"label": labelStr, "agent": target, "mode": "wait",
+			"iterations": iterations, "content_len": len(content),
+		})
 		userContent := content
 		if len(userContent) > maxUserLen {
 			userContent = userContent[:maxUserLen] + "..."
