@@ -405,7 +405,8 @@ func (sm *SubagentManager) finalize(rec *TaskRecord, content string, iterations 
 // callbackRule delimits the user-facing CALLBACK block so a completion is
 // unmistakable in chat. Plain box-drawing text renders identically on every
 // channel (no reliance on markdown horizontal rules).
-const callbackRule = "━━━━━━━━━━━━━━━ CALLBACK ━━━━━━━━━━━━━━━"
+const callbackRuleStart = "━━━━━━━━━━━━━━━ CALLBACK ━━━━━━━━━━━━━━━"
+const callbackRuleEnd   = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 // completionResult builds the completion notification delivered on every spawn,
 // for both the user and the LLM. It NEVER carries the sub-agent's own output —
@@ -419,7 +420,7 @@ func (sm *SubagentManager) completionResult(rec *TaskRecord) *tools.ToolResult {
 
 	agent := sm.targetAgent(rec.AgentID)
 	var u strings.Builder
-	u.WriteString(callbackRule + "\n")
+	u.WriteString(callbackRuleStart + "\n")
 	if agent != "" {
 		fmt.Fprintf(&u, "**Agent:** %s\n", agent)
 	}
@@ -433,7 +434,8 @@ func (sm *SubagentManager) completionResult(rec *TaskRecord) *tools.ToolResult {
 		fmt.Fprintf(&u, "Error: %s\n", rec.Error)
 	}
 	fmt.Fprintf(&u, "Full results: %s\n", rec.ResultsPath)
-	u.WriteString(callbackRule)
+	u.WriteString(callbackRuleEnd)
+	u.WriteString("\n")
 
 	var l strings.Builder
 	fmt.Fprintf(&l, "[SUBAGENT CALLBACK] Task '%s' (uuid %s) finished — status: %s.\n",
