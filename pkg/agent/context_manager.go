@@ -15,7 +15,7 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/llmcontext"
 	"github.com/PivotLLM/ClawEh/pkg/logger"
 	"github.com/PivotLLM/ClawEh/pkg/providers"
-	"github.com/PivotLLM/ClawEh/pkg/providers/openai_compat"
+	"github.com/PivotLLM/spawnllm/openai_compat"
 )
 
 // providerLLMClient adapts providers.LLMProvider to llmcontext.LLMClient so

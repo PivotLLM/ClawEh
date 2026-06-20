@@ -11,10 +11,10 @@ import (
 
 	"github.com/PivotLLM/ClawEh/pkg/auth"
 	"github.com/PivotLLM/ClawEh/pkg/config"
-	anthropicmessages "github.com/PivotLLM/ClawEh/pkg/providers/anthropic_messages"
-	"github.com/PivotLLM/ClawEh/pkg/providers/azure"
-	"github.com/PivotLLM/ClawEh/pkg/providers/openai_compat"
-	"github.com/PivotLLM/ClawEh/pkg/providers/openai_responses"
+	anthropicmessages "github.com/PivotLLM/spawnllm/anthropic_messages"
+	"github.com/PivotLLM/spawnllm/azure"
+	"github.com/PivotLLM/spawnllm/openai_compat"
+	"github.com/PivotLLM/spawnllm/openai_responses"
 )
 
 // getCredential is the auth-store lookup used by the Claude OAuth provider.
@@ -148,4 +148,20 @@ func newCLIProvider[T LLMProvider](
 		return withTimeout(prov.Command, workspace, time.Duration(model.RequestTimeout)*time.Second, model.ExtraArgs, model.Env)
 	}
 	return plain(prov.Command, workspace, model.ExtraArgs, model.Env)
+}
+
+// createClaudeTokenSource returns a token source that refreshes the Anthropic
+// OAuth access token from the host auth store. It stays host-side (auth-coupled);
+// spawnllm's ClaudeProvider takes the resulting token source by injection.
+func createClaudeTokenSource() func() (string, error) {
+	return func() (string, error) {
+		cred, err := getCredential("anthropic")
+		if err != nil {
+			return "", fmt.Errorf("loading auth credentials: %w", err)
+		}
+		if cred == nil {
+			return "", fmt.Errorf("no credentials for anthropic. Run: claw auth login --provider anthropic")
+		}
+		return cred.AccessToken, nil
+	}
 }

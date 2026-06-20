@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/PivotLLM/ClawEh/pkg/providers"
-	"github.com/PivotLLM/ClawEh/pkg/providers/protocoltypes"
+	"github.com/PivotLLM/spawnllm/protocoltypes"
 )
 
 func msg(role, content string) providers.Message {

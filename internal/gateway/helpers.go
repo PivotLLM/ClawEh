@@ -111,6 +111,8 @@ func gatewayCmd(debug bool) error {
 	if err := logger.EnableFileLogging(logPath, false); err != nil {
 		logger.WarnCF("gateway", "Failed to enable file logging", map[string]any{"path": logPath, "error": err.Error()})
 	}
+	// Route spawnllm's provider/dispatch logs into ClawEh's logger.
+	installSpawnllmLogging()
 
 	lockFile, err := acquireLock(baseDir)
 	if err != nil {
