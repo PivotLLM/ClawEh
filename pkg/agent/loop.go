@@ -704,7 +704,11 @@ func (al *AgentLoop) registerRuntimeTools(
 				isSuite = true
 			}
 			for _, t := range builtTools {
-				if isSuite || agentCfg == nil || agentCfg.IsToolAllowed(t.Name()) {
+				if isSuite {
+					// Suite tools are exempt from the per-tool allowlist at both
+					// registration and execution — gate is the suite flag.
+					currentAgent.Tools.RegisterSuite(t)
+				} else if agentCfg == nil || agentCfg.IsToolAllowed(t.Name()) {
 					currentAgent.Tools.Register(t)
 				}
 			}

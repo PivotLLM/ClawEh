@@ -17,6 +17,11 @@ type ToolEntry struct {
 	Tool   Tool
 	IsCore bool
 	TTL    int
+	// SuiteExempt marks a tool that belongs to an all-or-nothing suite (cogmem,
+	// maestro). Suites are gated as a unit by the per-agent suite flag at
+	// registration time, so their tools must also bypass the execution-time
+	// per-tool allowlist check (which has no entry for them).
+	SuiteExempt bool
 }
 
 type ToolRegistry struct {
@@ -46,6 +51,27 @@ func (r *ToolRegistry) Register(tool Tool) {
 	}
 	r.version.Add(1)
 	logger.DebugCF("tools", "Registered core tool", map[string]any{"name": name})
+}
+
+// RegisterSuite registers a tool that belongs to an all-or-nothing suite. It is
+// identical to Register but marks the entry SuiteExempt, so ExecuteWithContext
+// skips the per-tool allowlist check (the suite flag is the allow decision).
+func (r *ToolRegistry) RegisterSuite(tool Tool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	name := tool.Name()
+	if _, exists := r.tools[name]; exists {
+		logger.WarnCF("tools", "Tool registration overwrites existing tool",
+			map[string]any{"name": name})
+	}
+	r.tools[name] = &ToolEntry{
+		Tool:        tool,
+		IsCore:      true,
+		TTL:         0,
+		SuiteExempt: true,
+	}
+	r.version.Add(1)
+	logger.DebugCF("tools", "Registered suite tool", map[string]any{"name": name})
 }
 
 // RegisterHidden saves hidden tools (visible only via TTL)
@@ -151,6 +177,15 @@ func (r *ToolRegistry) Get(name string) (Tool, bool) {
 	return entry.Tool, true
 }
 
+// isSuiteExempt reports whether the named tool was registered as part of an
+// all-or-nothing suite (and thus bypasses the per-tool allowlist).
+func (r *ToolRegistry) isSuiteExempt(name string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	entry, ok := r.tools[name]
+	return ok && entry.SuiteExempt
+}
+
 func (r *ToolRegistry) Execute(ctx context.Context, name string, args map[string]any) *ToolResult {
 	return r.ExecuteWithContext(ctx, name, args, "", "", nil)
 }
@@ -174,7 +209,9 @@ func (r *ToolRegistry) ExecuteWithContext(
 		})
 
 	// Defense-in-depth: check tool allowlist from context before execution.
-	if checker := ToolAllowCheckerFromCtx(ctx); checker != nil {
+	// Suite tools (cogmem, maestro) are exempt — they are gated as a unit by the
+	// per-agent suite flag at registration, not by the per-tool allowlist.
+	if checker := ToolAllowCheckerFromCtx(ctx); checker != nil && !r.isSuiteExempt(name) {
 		if !checker.IsToolAllowed(name) {
 			logger.WarnCF("tool", "Tool execution denied by agent allowlist",
 				map[string]any{

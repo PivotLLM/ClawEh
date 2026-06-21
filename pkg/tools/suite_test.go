@@ -4,6 +4,7 @@
 package tools
 
 import (
+	"context"
 	"testing"
 
 	"github.com/PivotLLM/ClawEh/pkg/config"
@@ -62,5 +63,41 @@ func TestSuiteDefaults(t *testing.T) {
 	c2 := cfgWithAgent(config.AgentConfig{ID: "amber", Cogmem: &no})
 	if c2.AgentSuiteEnabled("amber", "cogmem") {
 		t.Error("cogmem:false should disable")
+	}
+}
+
+// denyAllChecker refuses every per-tool allowlist query, modelling an agent
+// whose allowlist does not list the suite's tools.
+type denyAllChecker struct{}
+
+func (denyAllChecker) IsToolAllowed(string) bool { return false }
+
+// TestRegisterSuite_BypassesExecutionAllowlist verifies a suite-registered tool
+// executes even when the context allowlist denies it, while a normally-registered
+// tool is still blocked by the same checker. This guards the bug where maestro
+// tools were visible but "denied by agent allowlist" at execution.
+func TestRegisterSuite_BypassesExecutionAllowlist(t *testing.T) {
+	r := NewToolRegistry()
+	suiteTool := &mockContextAwareTool{mockRegistryTool: *newMockTool("maestro_health", "suite tool")}
+	plainTool := &mockContextAwareTool{mockRegistryTool: *newMockTool("web_fetch", "ordinary tool")}
+	r.RegisterSuite(suiteTool)
+	r.Register(plainTool)
+
+	ctx := WithToolAllowChecker(context.Background(), denyAllChecker{})
+
+	res := r.ExecuteWithContext(ctx, "maestro_health", nil, "", "", nil)
+	if res == nil || res.IsError {
+		t.Fatalf("suite tool should bypass the allowlist, got %+v", res)
+	}
+	if suiteTool.lastCtx == nil {
+		t.Error("suite tool was not executed")
+	}
+
+	blocked := r.ExecuteWithContext(ctx, "web_fetch", nil, "", "", nil)
+	if blocked == nil || !blocked.IsError {
+		t.Fatalf("ordinary tool should be denied by the allowlist, got %+v", blocked)
+	}
+	if plainTool.lastCtx != nil {
+		t.Error("ordinary tool ran despite allowlist deny")
 	}
 }
