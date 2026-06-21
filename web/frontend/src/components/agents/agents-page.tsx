@@ -381,6 +381,7 @@ function AgentCard({
               selected={tools}
               catalog={availableTools}
               onChange={onToolsChange}
+              suiteStates={{ maestro, cogmem }}
             />
           )}
         </div>
@@ -1090,6 +1091,7 @@ export function AgentsPage() {
                             selected={addingTools}
                             catalog={availableTools}
                             onChange={setAddingTools}
+                            suiteStates={{ maestro: false, cogmem: true }}
                           />
                         )}
                       </div>

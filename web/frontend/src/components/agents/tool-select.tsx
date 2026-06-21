@@ -6,9 +6,12 @@ export interface ToolSelectProps {
   selected: string[]
   catalog: AgentToolCatalogResponse
   onChange: (tools: string[]) => void
+  // suiteStates maps a suite name (e.g. "maestro", "cogmem") to whether it is
+  // enabled for this agent, so the greyed suite rows reflect the live toggle.
+  suiteStates?: Record<string, boolean>
 }
 
-export function ToolSelect({ selected, catalog, onChange }: ToolSelectProps) {
+export function ToolSelect({ selected, catalog, onChange, suiteStates }: ToolSelectProps) {
   // Suite entries (cogmem, maestro) are all-or-nothing and controlled by the
   // agent's per-suite toggle — they are not part of the per-tool allowlist.
   const perToolTools = catalog.tools.filter((t) => !t.suite)
@@ -90,17 +93,22 @@ export function ToolSelect({ selected, catalog, onChange }: ToolSelectProps) {
 
       {suiteTools.length > 0 && (
         <div className="space-y-0.5">
-          {[...suiteTools].sort((a, b) => a.name.localeCompare(b.name)).map((tool) => (
-            <label
-              key={tool.name}
-              className="flex items-center gap-2 select-none opacity-50 cursor-not-allowed"
-              title={`${tool.description} — managed by the agent's ${tool.suite} toggle, not this list.`}
-            >
-              <Checkbox checked disabled />
-              <span className="font-mono text-xs">{tool.name}</span>
-              <span className="text-muted-foreground text-xs">(suite toggle)</span>
-            </label>
-          ))}
+          {[...suiteTools].sort((a, b) => a.name.localeCompare(b.name)).map((tool) => {
+            const on = !!suiteStates?.[tool.suite ?? ""]
+            return (
+              <label
+                key={tool.name}
+                className="flex items-center gap-2 select-none opacity-50 cursor-not-allowed"
+                title={`${tool.description} — ${on ? "enabled" : "disabled"} via the agent's ${tool.suite} toggle, not this list.`}
+              >
+                <Checkbox checked={on} disabled />
+                <span className="font-mono text-xs">{tool.name}</span>
+                <span className="text-muted-foreground text-xs">
+                  (suite toggle — {on ? "on" : "off"})
+                </span>
+              </label>
+            )
+          })}
         </div>
       )}
 
