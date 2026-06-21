@@ -30,6 +30,7 @@ interface AgentEntry {
   summarization_models?: string[]
   share_common?: boolean
   global_cron?: boolean
+  maestro?: boolean
 }
 
 interface AgentsConfig {
@@ -83,6 +84,7 @@ function parseAgent(value: unknown): AgentEntry {
     summarization_models: asArray(r.summarization_models).map(asString).filter(Boolean),
     share_common: r.share_common === false ? false : true,
     global_cron: r.global_cron === true,
+    maestro: r.maestro === true,
   }
 }
 
@@ -222,6 +224,7 @@ interface AgentCardProps {
   summarizationModels?: string[]
   shareCommon?: boolean
   globalCron?: boolean
+  maestro?: boolean
   agentBindings?: AgentBindingView[]
   onSetDefaultBinding?: (targetIndex: number, deliverTo?: string) => void
   onToggleEnabled?: () => void
@@ -233,6 +236,7 @@ interface AgentCardProps {
   onSummarizationModelsChange?: (models: string[]) => void
   onShareCommonChange?: (share: boolean) => void
   onGlobalCronChange?: (v: boolean) => void
+  onMaestroChange?: (v: boolean) => void
   onDelete?: () => void
   status?: "saving" | "saved" | "error"
 }
@@ -253,6 +257,7 @@ function AgentCard({
   summarizationModels = [],
   shareCommon = true,
   globalCron = false,
+  maestro = false,
   agentBindings = [],
   onSetDefaultBinding = undefined,
   onToggleEnabled,
@@ -264,6 +269,7 @@ function AgentCard({
   onSummarizationModelsChange = undefined,
   onShareCommonChange = undefined,
   onGlobalCronChange = undefined,
+  onMaestroChange = undefined,
   onDelete,
   status,
 }: AgentCardProps) {
@@ -448,6 +454,24 @@ function AgentCard({
         </div>
       )}
 
+      {onMaestroChange !== undefined && (
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-muted-foreground text-xs font-medium">
+              {t("agents.maestro")}
+            </p>
+            <Switch
+              checked={maestro}
+              onCheckedChange={onMaestroChange}
+              aria-label={t("agents.maestro")}
+            />
+          </div>
+          <p className="text-muted-foreground text-xs">
+            {t("agents.maestroHint")}
+          </p>
+        </div>
+      )}
+
       {onGlobalCronChange !== undefined && (
         <div className="space-y-1.5">
           <div className="flex items-center justify-between gap-2">
@@ -625,6 +649,7 @@ export function AgentsPage() {
           : {}),
         ...(a.share_common === false ? { share_common: false } : {}),
         ...(a.global_cron ? { global_cron: true } : {}),
+        ...(a.maestro ? { maestro: true } : {}),
       })),
     },
   })
@@ -698,6 +723,22 @@ export function AgentsPage() {
     list[index] = { ...list[index], global_cron: !list[index].global_cron }
     const next: AgentsConfig = { ...agentsCfg, list }
     setSaving(`globalcron-${index}`)
+    try {
+      await patchAppConfig(buildPayload(next))
+      setAgentsCfg(next)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to save")
+    } finally {
+      setSaving(null)
+    }
+  }
+
+  // Independent toggle: flip the agent's Maestro tool suite on/off.
+  const handleToggleMaestro = async (index: number) => {
+    const list = [...(agentsCfg.list ?? [])]
+    list[index] = { ...list[index], maestro: !list[index].maestro }
+    const next: AgentsConfig = { ...agentsCfg, list }
+    setSaving(`maestro-${index}`)
     try {
       await patchAppConfig(buildPayload(next))
       setAgentsCfg(next)
@@ -944,6 +985,8 @@ export function AgentsPage() {
                   }}
                   globalCron={agent.global_cron === true}
                   onGlobalCronChange={() => handleToggleGlobalCron(i)}
+                  maestro={agent.maestro === true}
+                  onMaestroChange={() => handleToggleMaestro(i)}
                   agentBindings={bindingViewsForAgent(bindings, agent.id)}
                   onSetDefaultBinding={(target, deliverTo) => handleSetDefaultBinding(agent.id, target, deliverTo)}
                   onDelete={() => handleDeleteAgent(i)}

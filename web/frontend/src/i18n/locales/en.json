@@ -7,6 +7,8 @@
     "shareCommonHint": "Allow this agent to read/write the shared common directory and copy files to/from it.",
     "globalCron": "Global cron",
     "globalCronHint": "Allow this agent to create and manage scheduled (cron) jobs for OTHER agents, not just itself. Typically only one orchestrator agent needs this.",
+    "maestro": "Maestro",
+    "maestroHint": "Give this agent the full Maestro task-orchestration tool suite (projects, playbooks, tasks). Data lives under the agent's workspace; tasks run as sub-agents using this agent's models. Off by default.",
     "channels": "Channels",
     "channelsNone": "No channels bound to this agent yet. Add a binding on the Bindings page.",
     "channelsDefault": "default (cron output goes here)",
