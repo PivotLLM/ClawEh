@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/PivotLLM/ClawEh/pkg/providers/common"
-	"github.com/PivotLLM/ClawEh/pkg/providers/openai_compat"
+	"github.com/PivotLLM/spawnllm/common"
+	"github.com/PivotLLM/spawnllm/openai_compat"
 )
 
 // TestFallback_SameProviderFallbackNotCooldownSkipped is the regression test

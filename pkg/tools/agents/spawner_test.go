@@ -61,8 +61,13 @@ func TestSpawner_WaitMode_ReturnsResultSynchronously(t *testing.T) {
 	if res.Async {
 		t.Error("wait mode result must not be marked Async")
 	}
-	if !strings.Contains(res.ForLLM, "do the thing") {
-		t.Errorf("expected worker output to reference the task; got %q", res.ForLLM)
+	// Wait mode no longer inlines the worker's output — it writes the content to
+	// the results file and returns a pointer with the security warning.
+	if strings.Contains(res.ForLLM, "do the thing") {
+		t.Errorf("worker output must NOT be inlined; it belongs in the results file: %q", res.ForLLM)
+	}
+	if !strings.Contains(res.ForLLM, "results.json") || !strings.Contains(res.ForLLM, "SECURITY") {
+		t.Errorf("expected a results-file pointer with a security warning; got %q", res.ForLLM)
 	}
 }
 
@@ -100,9 +105,10 @@ func TestSpawner_CallbackMode_DeliversPointer(t *testing.T) {
 	if got == nil || got.IsError {
 		t.Fatalf("expected a successful callback result, got %+v", got)
 	}
-	// The pointer payload references the result file, not the full content.
-	if !strings.Contains(got.ForLLM, "result_file") {
-		t.Errorf("expected a compact pointer payload, got %q", got.ForLLM)
+	// The callback references the results file and carries the security warning,
+	// never the full content.
+	if !strings.Contains(got.ForLLM, "results.json") || !strings.Contains(got.ForLLM, "SECURITY") {
+		t.Errorf("expected a results-file pointer with a security warning, got %q", got.ForLLM)
 	}
 }
 

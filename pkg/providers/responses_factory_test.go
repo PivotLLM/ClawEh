@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/PivotLLM/ClawEh/pkg/config"
-	"github.com/PivotLLM/ClawEh/pkg/providers/openai_responses"
+	"github.com/PivotLLM/spawnllm/openai_responses"
 )
 
 // TestCreateProviderFromConfig_OpenAIResponses verifies the factory routes the

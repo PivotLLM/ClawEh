@@ -24,7 +24,8 @@ make test        # runs tests
 To build and deploy: run `update-claw.sh` (on PATH). It builds the binary, stops claw, installs, and restarts. Do not run build/install commands directly.
 
 ## Key Architecture Notes
-- **Providers**: claude-cli, codex-cli, gemini-cli use subprocess execution. Timeout via `request_timeout` per-model config → `WithTimeout` constructors in factory.
+- **Shared modules**: the tool contract lives in `github.com/PivotLLM/toolspec`; the LLM-dispatch core (provider clients + the tool loop) lives in `github.com/PivotLLM/spawnllm`. `pkg/global` and `pkg/providers` are thin alias shims re-exporting them under the historical names, so call sites are unchanged. **Invariant: spawnllm imports only toolspec + stdlib (+ provider SDKs) — never ClawEh.** Tools (incl. the spawn tool) are *injected* as `toolspec.ToolDefinition`s, so the runtime re-entry (spawnllm runs a tool → `agent_spawn` → spawnllm) is not an import cycle; `agent_spawn` being `PrimaryOnly` prevents recursion. Guard: `pkg/providers/cycle_guard_test.go`. Policy (model selection, fallback, cooldown, config, results handling) stays in ClawEh. spawnllm logs route into ClawEh's logger via `installSpawnllmLogging` (`spawnllm/logger.SetBackend`).
+- **Providers**: claude-cli, codex-cli, gemini-cli use subprocess execution. Timeout via `request_timeout` per-model config → `WithTimeout` constructors in factory. The client implementations live in spawnllm; ClawEh's `factory_provider.go`/`dispatch.go`/`fallback.go`/`cooldown.go` map config → providers and own the policy.
 - **Cron**: mtime-based reload from disk; only saves when jobs are due. Prevents CLI/service race.
 - **Error classifier**: uses `errors.Is(err, context.DeadlineExceeded)` to trigger fallback chain.
 - **Multiple Telegram bots**: each `telegram_bots[].id` → channel `telegram-<id>`.

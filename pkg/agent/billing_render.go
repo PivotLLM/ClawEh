@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/PivotLLM/ClawEh/pkg/providers"
-	"github.com/PivotLLM/ClawEh/pkg/providers/common"
+	"github.com/PivotLLM/spawnllm/common"
 )
 
 // renderBillingError converts a provider-billing failure into a short,

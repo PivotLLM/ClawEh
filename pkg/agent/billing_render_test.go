@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/PivotLLM/ClawEh/pkg/providers"
-	"github.com/PivotLLM/ClawEh/pkg/providers/common"
+	"github.com/PivotLLM/spawnllm/common"
 )
 
 func TestRenderBillingError_Nil(t *testing.T) {

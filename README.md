@@ -219,6 +219,24 @@ frontend assets just mean the WebUI 404s, the gateway still runs).
 | `make test` | Run tests |
 | `make clean` | Remove build artifacts |
 
+### Shared modules
+
+Two pieces of ClawEh are factored into standalone, dependency-free Go modules so
+they can be reused (e.g. by Maestro) and compiled into one binary without import
+cycles:
+
+- **[`toolspec`](https://github.com/PivotLLM/toolspec)** — the transport-neutral
+  tool contract (`ToolProvider`/`ToolDefinition`/`Result`). Tool packages and
+  external hosts implement this.
+- **[`spawnllm`](https://github.com/PivotLLM/spawnllm)** — the LLM-dispatch core:
+  the provider clients (OpenAI-chat/responses, Azure, Anthropic, and the
+  claude/codex/gemini CLIs) plus the API tool-call loop. spawnllm imports only
+  `toolspec` + stdlib; it never imports a host. Policy — model selection,
+  fallback, cooldown, config, results handling — stays in ClawEh.
+
+`pkg/global` and `pkg/providers` are thin alias shims re-exporting these modules,
+so a normal `go build` fetches them by version tag; no extra setup is needed.
+
 ## Running
 
 Start claw with the bare command (no subcommand):

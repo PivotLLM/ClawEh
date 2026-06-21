@@ -73,10 +73,12 @@ don't see it yet, nothing has been recorded — start recording.
   substring of the full tool name (e.g. `system` matches `mcp__fusion__system__get`);
   matching ignores case and treats `_` and `__` the same, so a distinctive fragment
   like `google_gmail` or `m365` is enough.
-- **Your files:** you can only see two places — `files/` (your read/write working
-  area for drafts and outputs) and `skills/` (read-only). Everything else in the
-  workspace is invisible to your file tools. Use the `common_*` tools to share
-  files with other agents.
+- **Your files:** you can read three places — `files/` (your read/write working
+  area for drafts and outputs), `skills/` (read-only), and `tasks/` (read-only;
+  where a spawned sub-agent's results are saved — a spawn callback points you at
+  `tasks/<uuid>-results.json`, read it with `file_read`). Writes only go to
+  `files/`. Everything else in the workspace is invisible to your file tools. Use
+  the `common_*` tools to share files with other agents.
 - **Large files (chapters, outlines, long docs):** don't read the whole file —
   that floods your context and forces wasteful re-reads. Instead: use
   `file_search` to locate the relevant part (e.g. a heading), `file_read` with
