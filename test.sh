@@ -540,7 +540,8 @@ EOF
 
                     # Run the probe-driven test against this ephemeral instance.
                     if SERVER_URL="http://127.0.0.1:$MCP_PORT" \
-                       ENDPOINT="/mcp" \
+                       ENDPOINT="/internal" \
+                       BEARER_ENDPOINT="/mcp" \
                        PROBE_PATH="$PROBE_BIN" \
                        SESSION_TOKEN="$TEST_SESSION_TOKEN" \
                        CONFIG_FILE="$INTEG_HOME/config.json" \

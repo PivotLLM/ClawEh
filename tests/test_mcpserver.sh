@@ -21,7 +21,9 @@
 #
 # Configuration via tests/.env (optional) or env vars:
 #   SERVER_URL      Base URL of the MCP host (default: http://127.0.0.1:5911)
-#   ENDPOINT        Endpoint path (default: /mcp)
+#   ENDPOINT        Session-token-parameter endpoint path (default: /internal)
+#   BEARER_ENDPOINT Optional bearer endpoint path (e.g. /mcp); when set with
+#                   SESSION_TOKEN, Tier 3 exercises Authorization: Bearer auth
 #   PROBE_PATH      Path to probe binary (default: probe)
 #   SESSION_TOKEN   SST<64hex> token from an active claw session's system prompt
 #
@@ -40,12 +42,14 @@ if [ -f "$SCRIPT_DIR/.env" ]; then
 fi
 
 SERVER_URL="${SERVER_URL:-http://127.0.0.1:5911}"
-ENDPOINT="${ENDPOINT:-/mcp}"
+ENDPOINT="${ENDPOINT:-/internal}"
+BEARER_ENDPOINT="${BEARER_ENDPOINT:-}"   # optional: bearer endpoint path (e.g. /mcp)
 PROBE_PATH="${PROBE_PATH:-probe}"
 SESSION_TOKEN="${SESSION_TOKEN:-}"
 CONFIG_FILE="${CONFIG_FILE:-}"     # optional: path to config file for reload test
 GATEWAY_URL="${GATEWAY_URL:-}"     # optional: gateway base URL for /health and /ready checks
 FULL_URL="${SERVER_URL}${ENDPOINT}"
+BEARER_URL="${SERVER_URL}${BEARER_ENDPOINT}"
 
 # All tools the test config exposes — the source of truth for count/catalogue checks.
 # Note: find_tools_regex and find_tools_bm25 are omitted here because they only register
@@ -672,6 +676,71 @@ else
         "common_delete" "{\"name\":\"$COMMON_NAME\"}"
 
 fi  # end SESSION_TOKEN block
+
+################################################################################
+# TIER 3 — Bearer endpoint (/mcp): standard Authorization: Bearer auth with
+# clean tool schemas (no session_token parameter). Runs only when both
+# BEARER_ENDPOINT and SESSION_TOKEN are set. The same SST token authenticates
+# here, just transported in the header.
+################################################################################
+
+if [ -n "$BEARER_ENDPOINT" ] && [ -n "$SESSION_TOKEN" ]; then
+    print_section "6. Bearer endpoint ($BEARER_ENDPOINT)"
+
+    # 6.1 — A valid bearer lists tools (clean schemas, header auth).
+    echo "  6.1 tools/list over bearer endpoint with valid token"
+    bl=$("$PROBE_PATH" -url "$BEARER_URL" -transport http \
+        -headers "Authorization:Bearer ${SESSION_TOKEN}" -list 2>&1)
+    if echo "$bl" | grep -q "file_read"; then
+        echo "    ${GREEN}PASS${NC}: bearer tools/list returned the catalogue"
+        TIER2_PASS=$((TIER2_PASS + 1)); PASS_COUNT=$((PASS_COUNT + 1))
+    else
+        echo "    ${RED}FAIL${NC}: bearer tools/list did not return tools"
+        echo "    Output: $bl"
+        TIER2_FAIL=$((TIER2_FAIL + 1)); FAIL_COUNT=$((FAIL_COUNT + 1))
+    fi
+
+    # 6.2 — A hermetic tool succeeds with NO session_token param (header auth).
+    echo "  6.2 session_info via bearer header, no session_token param"
+    bc=$("$PROBE_PATH" -url "$BEARER_URL" -transport http \
+        -headers "Authorization:Bearer ${SESSION_TOKEN}" \
+        -call "session_info" -params '{}' 2>&1)
+    if echo "$bc" | grep -q "Tool call succeeded"; then
+        echo "    ${GREEN}PASS${NC}: tool call succeeded over bearer transport"
+        TIER2_PASS=$((TIER2_PASS + 1)); PASS_COUNT=$((PASS_COUNT + 1))
+    else
+        echo "    ${RED}FAIL${NC}: bearer tool call failed unexpectedly"
+        echo "    Output: $bc"
+        TIER2_FAIL=$((TIER2_FAIL + 1)); FAIL_COUNT=$((FAIL_COUNT + 1))
+    fi
+
+    # 6.3 — No bearer is rejected at the HTTP layer (401), so probe cannot init.
+    echo "  6.3 missing bearer is rejected (401)"
+    nb=$("$PROBE_PATH" -url "$BEARER_URL" -transport http \
+        -call "session_info" -params '{}' 2>&1)
+    if echo "$nb" | grep -qiE "401|unauthorized|bearer|failed|error"; then
+        echo "    ${GREEN}PASS${NC}: request without bearer was rejected"
+        TIER2_PASS=$((TIER2_PASS + 1)); PASS_COUNT=$((PASS_COUNT + 1))
+    else
+        echo "    ${RED}FAIL${NC}: missing bearer was not rejected"
+        echo "    Output: $nb"
+        TIER2_FAIL=$((TIER2_FAIL + 1)); FAIL_COUNT=$((FAIL_COUNT + 1))
+    fi
+
+    # 6.4 — An invalid bearer is rejected (401).
+    echo "  6.4 invalid bearer is rejected (401)"
+    ib=$("$PROBE_PATH" -url "$BEARER_URL" -transport http \
+        -headers "Authorization:Bearer SSTdeadbeef" \
+        -call "session_info" -params '{}' 2>&1)
+    if echo "$ib" | grep -qiE "401|unauthorized|bearer|failed|error"; then
+        echo "    ${GREEN}PASS${NC}: request with invalid bearer was rejected"
+        TIER2_PASS=$((TIER2_PASS + 1)); PASS_COUNT=$((PASS_COUNT + 1))
+    else
+        echo "    ${RED}FAIL${NC}: invalid bearer was not rejected"
+        echo "    Output: $ib"
+        TIER2_FAIL=$((TIER2_FAIL + 1)); FAIL_COUNT=$((FAIL_COUNT + 1))
+    fi
+fi  # end bearer tier
 
 ################################################################################
 # SECTION 5 — Config reload: MCP server recovers after config file change
