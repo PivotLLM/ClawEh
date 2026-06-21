@@ -1,7 +1,7 @@
 filippo.io/edwards25519 v1.2.0 h1:crnVqOiS4jqYleHd9vaKZ+HKtHfllngJIiOpNpoJsjo=
 filippo.io/edwards25519 v1.2.0/go.mod h1:xzAOLCNug/yB62zG1bQ8uziwrIqIuxhctzJT18Q77mc=
-github.com/PivotLLM/Maestro v0.3.4 h1:HZx+DVD7g4RlZdeoWEw98e2dx1uCujseMibolMHDKlk=
-github.com/PivotLLM/Maestro v0.3.4/go.mod h1:HFwYTqbEtCax2Bdj5ukMNVlS5z7uGBAda7vIoUt28Zc=
+github.com/PivotLLM/Maestro v0.3.5 h1:SvfQDI+kGoNxtohyez3pWu9HjMuGRUKKFStdFSjJjuA=
+github.com/PivotLLM/Maestro v0.3.5/go.mod h1:HFwYTqbEtCax2Bdj5ukMNVlS5z7uGBAda7vIoUt28Zc=
 github.com/PivotLLM/spawnllm v0.1.1-0.20260620215543-49cbffc5866b h1:gabfjCRru+LHsTWQDmNsRrb4K0TB4HVcHG+8kuBAWQA=
 github.com/PivotLLM/spawnllm v0.1.1-0.20260620215543-49cbffc5866b/go.mod h1:VEq3syYV2jYqeoaNPo89lH9AyA6oDzFj2AIUlPBUfnU=
 github.com/PivotLLM/toolspec v0.1.1-0.20260620173842-42a3f4752ada h1:gg2kVvWe1X+YGn9pdG4yi5fTQx/tQYVLuf+XCPrHTP4=
