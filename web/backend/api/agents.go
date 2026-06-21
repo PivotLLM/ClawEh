@@ -12,6 +12,9 @@ import (
 type agentToolEntry struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
+	// Suite, when set, marks an all-or-nothing suite (cogmem, maestro) managed by
+	// the agent's per-suite toggle rather than this per-tool list.
+	Suite string `json:"suite,omitempty"`
 }
 
 type agentMCPServer struct {
@@ -37,6 +40,7 @@ func (h *Handler) handleListAgentTools(w http.ResponseWriter, r *http.Request) {
 			builtinTools = append(builtinTools, agentToolEntry{
 				Name:        d.Name,
 				Description: d.Description,
+				Suite:       d.Suite,
 			})
 		}
 	}

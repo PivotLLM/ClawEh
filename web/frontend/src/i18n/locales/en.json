@@ -9,6 +9,8 @@
     "globalCronHint": "Allow this agent to create and manage scheduled (cron) jobs for OTHER agents, not just itself. Typically only one orchestrator agent needs this.",
     "maestro": "Maestro",
     "maestroHint": "Give this agent the full Maestro task-orchestration tool suite (projects, playbooks, tasks). Data lives under the agent's workspace; tasks run as sub-agents using this agent's models. Off by default.",
+    "cogmem": "Cognitive memory",
+    "cogmemHint": "The cognitive-memory suite: durable memory tools plus automatic prompt injection and consolidation. All-or-nothing — on by default. Turn off for agents that should run statelessly.",
     "channels": "Channels",
     "channelsNone": "No channels bound to this agent yet. Add a binding on the Bindings page.",
     "channelsDefault": "default (cron output goes here)",

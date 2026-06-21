@@ -65,6 +65,9 @@ export async function patchAppConfig(
 export interface AgentToolEntry {
   name: string
   description: string
+  // suite, when set, marks an all-or-nothing tool suite (cogmem, maestro)
+  // managed by the agent's per-suite toggle rather than this per-tool list.
+  suite?: string
 }
 
 export interface AgentMCPServer {
