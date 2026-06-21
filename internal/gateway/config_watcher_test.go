@@ -62,3 +62,56 @@ func TestConfigWatcher_DebouncesBurstIntoSingleReload(t *testing.T) {
 	case <-time.After(debounce + 100*time.Millisecond):
 	}
 }
+
+// TestConfigWatcher_RetriesWhenConsumerBusy verifies that a change which cannot
+// be delivered because the consumer is still draining a previous reload is NOT
+// lost: once the consumer catches up, the pending change is delivered. This
+// guards the bug where the applied marker advanced on a dropped send, so
+// enabling an agent's tool suite silently required a restart.
+func TestConfigWatcher_RetriesWhenConsumerBusy(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	if err := os.WriteFile(path, []byte(validConfigJSON), 0o600); err != nil {
+		t.Fatalf("seed config: %v", err)
+	}
+
+	interval := 10 * time.Millisecond
+	debounce := 60 * time.Millisecond
+	ch, stop := setupConfigWatcherPolling(path, interval, debounce, false)
+	defer stop()
+
+	// Let the watcher capture its baseline against the seed file before the first
+	// real change, so A is reliably detected as new.
+	time.Sleep(3 * interval)
+
+	// First change A is delivered into the cap-1 buffer; we intentionally do NOT
+	// read it yet, simulating a consumer still busy with a prior reload. Poll until
+	// A is actually buffered so the next write is guaranteed to find a full buffer.
+	writeConfig(t, path, "A")
+	deadline := time.Now().Add(3 * time.Second)
+	for len(ch) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("first reload (A) was never delivered to the buffer")
+		}
+		time.Sleep(interval)
+	}
+
+	// Second change B lands while the buffer is full → the send is dropped. With
+	// the fix the watcher keeps retrying instead of advancing the applied marker.
+	writeConfig(t, path, "BB")
+	time.Sleep(5 * debounce) // let the debounce elapse and the dropped send retry
+
+	// Drain A (consumer catches up).
+	select {
+	case <-ch:
+	case <-time.After(time.Second):
+		t.Fatal("expected the first reload (A) to be buffered")
+	}
+
+	// B must still be delivered — not lost.
+	select {
+	case <-ch:
+	case <-time.After(2 * time.Second):
+		t.Fatal("change B was lost: watcher advanced past it without delivering")
+	}
+}

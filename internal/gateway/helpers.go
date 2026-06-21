@@ -764,14 +764,21 @@ func setupConfigWatcherPolling(configPath string, interval, debounce time.Durati
 					continue
 				}
 
-				logger.Info("✓ Config file validated and loaded")
-				appliedModTime = currentModTime
-				appliedSize = currentSize
-
+				// Only mark the change applied once it has actually been handed to
+				// the reload consumer. If the consumer is still busy with a previous
+				// reload, re-arm and retry on a later tick rather than advancing the
+				// applied marker — otherwise this change is silently lost until the
+				// next edit or a restart (the bug where enabling an agent's tool
+				// suite did not take effect without a manual restart).
 				select {
 				case configChan <- newCfg:
+					appliedModTime = currentModTime
+					appliedSize = currentSize
+					logger.Info("✓ Config file validated and loaded")
 				default:
-					logger.Warn("⚠ Previous config reload still in progress, skipping")
+					pending = true
+					quietDeadline = time.Now() // retry on the next poll tick
+					logger.Warn("⚠ Previous config reload still in progress, will retry")
 				}
 
 			case <-stop:
