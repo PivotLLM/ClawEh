@@ -7,6 +7,7 @@ import (
 	common "github.com/PivotLLM/ClawEh/pkg/tools/common"
 	"github.com/PivotLLM/ClawEh/pkg/tools/files"
 	"github.com/PivotLLM/ClawEh/pkg/tools/hardware"
+	maestro "github.com/PivotLLM/ClawEh/pkg/tools/maestro"
 	"github.com/PivotLLM/ClawEh/pkg/tools/msg"
 	"github.com/PivotLLM/ClawEh/pkg/tools/schedule"
 	"github.com/PivotLLM/ClawEh/pkg/tools/session"
@@ -28,6 +29,7 @@ func registerToolProviders() {
 	tools.RegisterProvider(tools.NamespacedProvider("msg", msg.GlobalProvider))
 	tools.RegisterProvider(tools.NamespacedProvider("cogmem", cogmem.GlobalProvider))
 	tools.RegisterProvider(tools.NamespacedProvider("common", common.GlobalProvider))
+	tools.RegisterProvider(tools.NamespacedProvider("maestro", maestro.GlobalProvider))
 	// schedule stays catalogue-only: the cron tool is a runtime tool registered
 	// directly via agentLoop.RegisterTool (renamed to cron_schedule).
 	tools.RegisterProvider(schedule.Provider)

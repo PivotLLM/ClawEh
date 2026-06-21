@@ -124,3 +124,13 @@ func (s *Spawner) TaskList() ([]global.TaskBrief, error) {
 	}
 	return s.mgr.TaskList()
 }
+
+// RunSync runs a task as a self-spawned sub-agent and returns the worker's raw
+// content. Implements global.SyncRunner for embedded orchestrators (e.g. Maestro)
+// that dispatch task workers and consume the text directly.
+func (s *Spawner) RunSync(ctx context.Context, task, model string) (string, error) {
+	if s == nil || s.mgr == nil {
+		return "", fmt.Errorf("spawn is not available")
+	}
+	return s.mgr.RunSync(ctx, task, "", model)
+}

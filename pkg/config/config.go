@@ -234,6 +234,11 @@ type AgentConfig struct {
 	// itself. Typically exactly one orchestrator agent has this.
 	GlobalCron bool `json:"global_cron,omitempty"`
 
+	// Maestro is an all-or-nothing toggle for the Maestro task-orchestration tool
+	// suite (projects, playbooks, tasks). Off by default. When on, the agent gets
+	// the entire Maestro toolset, with per-agent data under <workspace>/maestro.
+	Maestro bool `json:"maestro,omitempty"`
+
 	// ShareCommon toggles the per-agent "common" shared-directory tools. nil or
 	// true (the default) exposes them; false withholds them from this agent.
 	ShareCommon *bool `json:"share_common,omitempty"`
@@ -397,6 +402,17 @@ func (c *Config) AgentHasGlobalCron(agentID string) bool {
 	for i := range c.Agents.List {
 		if strings.EqualFold(c.Agents.List[i].ID, id) {
 			return c.Agents.List[i].GlobalCron
+		}
+	}
+	return false
+}
+
+// AgentHasMaestro reports whether the agent has the Maestro tool suite enabled.
+func (c *Config) AgentHasMaestro(agentID string) bool {
+	id := strings.TrimSpace(agentID)
+	for i := range c.Agents.List {
+		if strings.EqualFold(c.Agents.List[i].ID, id) {
+			return c.Agents.List[i].Maestro
 		}
 	}
 	return false
