@@ -1,9 +1,9 @@
 filippo.io/edwards25519 v1.2.0 h1:crnVqOiS4jqYleHd9vaKZ+HKtHfllngJIiOpNpoJsjo=
 filippo.io/edwards25519 v1.2.0/go.mod h1:xzAOLCNug/yB62zG1bQ8uziwrIqIuxhctzJT18Q77mc=
-github.com/PivotLLM/spawnllm v0.1.0 h1:x5j2aoyw2DLlAnDH/0qeh6s6T8lU/fTHDf9zrGEwg2g=
-github.com/PivotLLM/spawnllm v0.1.0/go.mod h1:VEq3syYV2jYqeoaNPo89lH9AyA6oDzFj2AIUlPBUfnU=
-github.com/PivotLLM/toolspec v0.1.0 h1:XY837KeTwEFkH3QYr9T3XSdRlYTbtaRHECiK5aJeqH4=
-github.com/PivotLLM/toolspec v0.1.0/go.mod h1:QA/AiJHJSEwsLGEY0RTGWC124ftNigLIP8pTPj3oVKM=
+github.com/PivotLLM/spawnllm v0.1.1-0.20260620215543-49cbffc5866b h1:gabfjCRru+LHsTWQDmNsRrb4K0TB4HVcHG+8kuBAWQA=
+github.com/PivotLLM/spawnllm v0.1.1-0.20260620215543-49cbffc5866b/go.mod h1:VEq3syYV2jYqeoaNPo89lH9AyA6oDzFj2AIUlPBUfnU=
+github.com/PivotLLM/toolspec v0.1.1-0.20260620173842-42a3f4752ada h1:gg2kVvWe1X+YGn9pdG4yi5fTQx/tQYVLuf+XCPrHTP4=
+github.com/PivotLLM/toolspec v0.1.1-0.20260620173842-42a3f4752ada/go.mod h1:QA/AiJHJSEwsLGEY0RTGWC124ftNigLIP8pTPj3oVKM=
 github.com/adhocore/gronx v1.19.6 h1:5KNVcoR9ACgL9HhEqCm5QXsab/gI4QDIybTAWcXDKDc=
 github.com/adhocore/gronx v1.19.6/go.mod h1:7oUY1WAU8rEJWmAxXR2DN0JaO4gi9khSgKjiRypqteg=
 github.com/andybalholm/brotli v1.2.1 h1:R+f5xP285VArJDRgowrfb9DqL18yVK0gKAW/F+eTWro=
