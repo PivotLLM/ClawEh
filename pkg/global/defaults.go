@@ -50,4 +50,6 @@ const MinConfigReloadIntervalSeconds = 1
 // new change resets the timer, so a burst of saves (e.g. editing several fields
 // in the WebUI) collapses into a single reload once the dust settles — avoiding
 // repeated full-service restarts that tear down live channels/WebSockets.
-const ConfigReloadDebounceSeconds = 30
+// Writes are atomic (WriteFileAtomic: temp + rename), so the watcher never sees
+// a partial file; this debounce only collapses bursts, hence a short window.
+const ConfigReloadDebounceSeconds = 10
