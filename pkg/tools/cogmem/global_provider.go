@@ -36,6 +36,10 @@ func (globalCogmemProvider) Description() string {
 
 func (globalCogmemProvider) Available(cfg any) (bool, string) { return true, "" }
 
+// Suite marks cognitive memory as an all-or-nothing tool suite gated by the
+// per-agent `cogmem` flag (default ON), not the per-tool allowlist.
+func (globalCogmemProvider) Suite() string { return "cogmem" }
+
 // consolidateTrigger is an optional package-level hook the Phase 3 consolidation
 // worker can install via SetConsolidateTrigger. When nil, the consolidate tool
 // reports that the worker is not yet running.

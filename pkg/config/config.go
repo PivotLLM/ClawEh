@@ -239,6 +239,12 @@ type AgentConfig struct {
 	// the entire Maestro toolset, with per-agent data under <workspace>/maestro.
 	Maestro bool `json:"maestro,omitempty"`
 
+	// Cogmem is an all-or-nothing toggle for the cognitive-memory tool suite and
+	// subsystem (prompt injection, archive hook, consolidation). It is an optional
+	// bool so the default is ON: nil (key absent) or true ⇒ enabled; false ⇒
+	// disabled. Gated as a unit, not via the per-tool allowlist.
+	Cogmem *bool `json:"cogmem,omitempty"`
+
 	// ShareCommon toggles the per-agent "common" shared-directory tools. nil or
 	// true (the default) exposes them; false withholds them from this agent.
 	ShareCommon *bool `json:"share_common,omitempty"`
@@ -323,13 +329,16 @@ func (a *AgentConfig) IsToolAllowed(name string) bool {
 	return MatchToolPattern(a.Tools, name)
 }
 
-// CognitiveMemoryEnabled reports whether this agent is allowed the cognitive-
-// memory tools. The subsystem activates for an agent only when that agent may
-// call the cogmem tools; "cogmem_domain_get" is used as the sentinel. Agents
-// that are not allowed cogmem tools get IDENTICAL behavior to before — no
-// prompt injection, no archive hook, no consolidation.
+// CognitiveMemoryEnabled reports whether the cognitive-memory suite + subsystem
+// (tools, prompt injection, archive hook, consolidation) is active for this
+// agent. It is the per-agent `cogmem` toggle, defaulting ON: nil or true ⇒
+// enabled; false ⇒ disabled. (Previously keyed off the per-tool allowlist; it is
+// now an all-or-nothing suite gated as a unit.)
 func (a *AgentConfig) CognitiveMemoryEnabled() bool {
-	return a.IsToolAllowed("cogmem_domain_get")
+	if a == nil {
+		return false
+	}
+	return a.Cogmem == nil || *a.Cogmem
 }
 
 type SubagentsConfig struct {
@@ -416,6 +425,28 @@ func (c *Config) AgentHasMaestro(agentID string) bool {
 		}
 	}
 	return false
+}
+
+// AgentSuiteEnabled reports whether the named all-or-nothing tool suite is
+// enabled for the agent. Suites are gated as a unit by a per-agent flag rather
+// than the per-tool allowlist. cogmem defaults ON; maestro defaults OFF.
+func (c *Config) AgentSuiteEnabled(agentID, suite string) bool {
+	id := strings.TrimSpace(agentID)
+	for i := range c.Agents.List {
+		if strings.EqualFold(c.Agents.List[i].ID, id) {
+			a := &c.Agents.List[i]
+			switch suite {
+			case "maestro":
+				return a.Maestro
+			case "cogmem":
+				return a.CognitiveMemoryEnabled()
+			default:
+				return false
+			}
+		}
+	}
+	// Unknown agent: fall back to the suite default (cogmem on, others off).
+	return suite == "cogmem"
 }
 
 // CronTarget resolves the agent's default-channel delivery coordinates from its

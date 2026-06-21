@@ -4,6 +4,7 @@
 package maestro
 
 import (
+	"os"
 	"path/filepath"
 
 	mconfig "github.com/PivotLLM/Maestro/config"
@@ -30,6 +31,10 @@ func (globalMaestroProvider) Description() string {
 }
 func (globalMaestroProvider) Available(cfg any) (bool, string) { return true, "" }
 
+// Suite marks Maestro as an all-or-nothing tool suite gated by the per-agent
+// `maestro` flag (default off), not the per-tool allowlist.
+func (globalMaestroProvider) Suite() string { return "maestro" }
+
 func (globalMaestroProvider) RegisterTools(deps global.Deps) []global.ToolDefinition {
 	c, _ := deps.Cfg.(*config.Config)
 	cd, _ := deps.Host.(tools.ToolDeps)
@@ -51,6 +56,14 @@ func (globalMaestroProvider) RegisterTools(deps global.Deps) []global.ToolDefini
 		return nil
 	}
 	base := filepath.Join(workspace, "maestro")
+
+	// Make sure the base dir exists before Maestro touches it (defensive: Prepare
+	// also creates the subdirs, but never hand Maestro a missing base).
+	if err := os.MkdirAll(base, 0o755); err != nil {
+		logger.WarnCF("maestro", "failed to create maestro base dir; tools disabled",
+			map[string]any{"agent": deps.AgentID, "base": base, "error": err.Error()})
+		return nil
+	}
 
 	mcfg := mconfig.New(
 		mconfig.WithBaseDir(base),

@@ -89,3 +89,7 @@ require (
 	golang.org/x/sync v0.21.0 // indirect
 	golang.org/x/sys v0.46.0 // indirect
 )
+
+replace github.com/PivotLLM/toolspec => /home/eric/source/toolspec
+
+replace github.com/PivotLLM/Maestro => /home/eric/source/Maestro

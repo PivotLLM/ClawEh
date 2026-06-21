@@ -696,8 +696,15 @@ func (al *AgentLoop) registerRuntimeTools(
 				continue
 			}
 			builtTools := p.Build(deps)
+			// All-or-nothing suites (cogmem, maestro) are gated as a unit inside
+			// Build by the per-agent flag, so their tools bypass the per-tool
+			// allowlist — the suite flag is the allow decision.
+			isSuite := false
+			if sp, ok := p.(tools.SuiteProvider); ok && sp.Suite() != "" {
+				isSuite = true
+			}
 			for _, t := range builtTools {
-				if agentCfg == nil || agentCfg.IsToolAllowed(t.Name()) {
+				if isSuite || agentCfg == nil || agentCfg.IsToolAllowed(t.Name()) {
 					currentAgent.Tools.Register(t)
 				}
 			}

@@ -14,6 +14,19 @@ type ToolDescriptor struct {
 	Category       string // GUI grouping: "filesystem", "web", "session", etc.
 	ConfigKey      string // maps to the config flag that enables/disables this tool
 	DefaultEnabled bool   // include in the default agent tool allowlist
+	// Suite, when non-empty, marks this as an all-or-nothing tool suite (e.g.
+	// "cogmem", "maestro"): it is managed by a single per-agent toggle rather than
+	// the per-tool allowlist, and the GUI renders it as one (read-only) entry
+	// instead of listing every tool.
+	Suite string
+}
+
+// SuiteProvider is an optional interface a tool provider implements to declare
+// itself an all-or-nothing suite. Its tools are gated as a unit by the per-agent
+// flag named by Suite() (resolved via Config.AgentSuiteEnabled), bypassing the
+// per-tool allow/deny machinery, and are collapsed to a single GUI entry.
+type SuiteProvider interface {
+	Suite() string
 }
 
 // ToolProvider is implemented by each tool package. It declares what namespace
