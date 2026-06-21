@@ -3,7 +3,7 @@ module github.com/PivotLLM/ClawEh
 go 1.26
 
 require (
-	github.com/PivotLLM/Maestro v0.3.0
+	github.com/PivotLLM/Maestro v0.3.1-0.20260621063520-0b909ef1cf96
 	github.com/adhocore/gronx v1.19.6
 	github.com/bwmarrin/discordgo v0.29.0
 	github.com/caarlos0/env/v11 v11.4.1
@@ -89,5 +89,3 @@ require (
 	golang.org/x/sync v0.21.0 // indirect
 	golang.org/x/sys v0.46.0 // indirect
 )
-
-replace github.com/PivotLLM/Maestro => /home/eric/source/Maestro
