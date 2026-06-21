@@ -1,10 +1,11 @@
 # MCP server: dual-endpoint authentication
 
-Status: **design / proposed** (not yet implemented). This document specifies how
-ClawEh's MCP server should accept **standard bearer-token** auth alongside the
-existing in-call session-token model, so that standard MCP clients and a
-comprehensive `probe`-based test suite (mirroring Maestro's) can exercise every
-tool, while preserving ClawEh's multi-assistant routing.
+Status: **implemented**. This document specifies how ClawEh's MCP server accepts
+**standard bearer-token** auth alongside the existing in-call session-token
+model, so that standard MCP clients and a comprehensive `probe`-based test suite
+(mirroring Maestro's) can exercise every tool, while preserving ClawEh's
+multi-assistant routing. `/mcp` is the bearer endpoint; `/internal` carries the
+session-token parameter. See `pkg/mcpserver/{mcpserver,tools,bearer}.go`.
 
 ## Why two models
 
