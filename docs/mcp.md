@@ -108,7 +108,7 @@ ACL behavior, differing only by the `session_token` parameter.
 ## Security
 
 - Both endpoints stay bound to `127.0.0.1` (same posture as today; see
-  [callback.md](callback.md)). The bearer header is no weaker than the in-call
+  [external-messages.md](external-messages.md)). The bearer header is no weaker than the in-call
   parameter over the same transport.
 - Exposing either endpoint beyond localhost is a separate TLS decision, out of
   scope here.

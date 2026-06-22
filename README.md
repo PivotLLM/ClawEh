@@ -437,7 +437,7 @@ ClawEh provides an optional per-agent HTTP endpoint that lets external processes
 POST http://localhost:18790/api/message/{token}
 ```
 
-The rotating per-agent token is configured under **Agents** (`callback.window_minutes` / `window_count`). It is **not** injected into the agent's prompt — the endpoint is reserved for operator/integration use and a future "notify an agent" feature.
+The rotating per-agent token is configured under **Agents** (`callback.window_minutes` / `window_count`). It is **not** injected into the agent's prompt — the endpoint is reserved for operator/integration use and a future "notify an agent" feature. See [docs/external-messages.md](docs/external-messages.md).
 
 > **Security notice:** plain HTTP, bound to `127.0.0.1` only. Do not expose it externally.
 
