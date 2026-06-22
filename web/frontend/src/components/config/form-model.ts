@@ -100,7 +100,7 @@ export const EMPTY_FORM: CoreConfigForm = {
   sessionMode: "unified",
   devicesEnabled: false,
   monitorUSB: true,
-  backupEnabled: false,
+  backupEnabled: true,
   backupAt: "03:00",
   backupRetainDays: "30",
 }
@@ -242,7 +242,7 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
       devices.monitor_usb === undefined
         ? EMPTY_FORM.monitorUSB
         : asBool(devices.monitor_usb),
-    backupEnabled: asBool(asRecord(root.backup).enabled),
+    backupEnabled: asRecord(root.backup).enabled !== false, // on by default
     backupAt: asString(asRecord(root.backup).at) || EMPTY_FORM.backupAt,
     backupRetainDays: asNumberString(
       asRecord(root.backup).retain_days,

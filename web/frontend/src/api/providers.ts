@@ -7,7 +7,6 @@ export interface ProviderInfo {
   base_url?: string
   api_key: string
   proxy?: string
-  auth_method?: string
   strict_compat?: boolean
   no_parallel_tool_calls?: boolean
   response_format_json?: boolean

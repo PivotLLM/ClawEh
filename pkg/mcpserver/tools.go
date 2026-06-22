@@ -40,6 +40,36 @@ const aclDeniedMessage = "agent not authorized for this tool"
 // or (nil, false) when the agent is unknown.
 type AgentResolver func(agentName string) (*tools.ToolRegistry, bool)
 
+// authMode describes how one endpoint authenticates tool calls. The two ClawEh
+// MCP endpoints share registries, ACL, and token store and differ only here:
+//   - /internal: tools carry an injected session_token parameter; the token
+//     arrives in the call arguments (current behavior).
+//   - /mcp: tools have clean schemas; the token is a standard Authorization:
+//     Bearer header, placed in the request context by bearerContextFunc and
+//     copied into the arguments here so dispatch is transport-agnostic.
+//
+// prepareArgs runs just before dispatch and guarantees the session_token is in
+// args, regardless of transport; dispatchToolCall then reads and strips it.
+type authMode struct {
+	injectParam bool // add session_token to each published schema
+	prepareArgs func(ctx context.Context, args map[string]any)
+}
+
+// internalAuthMode: the session_token is already an in-call parameter.
+var internalAuthMode = authMode{
+	injectParam: true,
+	prepareArgs: func(context.Context, map[string]any) {},
+}
+
+// bearerAuthMode: copy the bearer token from context into args under the same
+// key, so dispatch resolves it identically to the /internal parameter.
+var bearerAuthMode = authMode{
+	injectParam: false,
+	prepareArgs: func(ctx context.Context, args map[string]any) {
+		args[sessionTokenParam] = bearerTokenFromContext(ctx)
+	},
+}
+
 // firstCallTracker debounces "first MCP call from agent=<name>" log entries
 // so we emit at most one per agent per server lifetime.
 type firstCallTracker struct {
@@ -98,6 +128,7 @@ func (t *firstCallTracker) workspace(agentName string) string {
 // enforced at tools/call via the supplied acl.Policy.
 func addToolsToServer(
 	srv *server.MCPServer,
+	mode authMode,
 	agentRegistries map[string]*tools.ToolRegistry,
 	allowPatterns []string,
 	sessionTokens *sessionTokenStore,
@@ -129,10 +160,15 @@ func addToolsToServer(
 		if params == nil {
 			params = map[string]any{"type": "object", "properties": map[string]any{}}
 		}
-		// Every tool requires session_token — it identifies both agent and session.
-		augmented := injectSessionTokenParam(params)
+		// On /internal the session_token is an in-call parameter (it identifies both
+		// agent and session); on /mcp the token is the bearer header, so schemas stay
+		// clean.
+		schema := params
+		if mode.injectParam {
+			schema = injectSessionTokenParam(params)
+		}
 
-		schemaBytes, err := json.Marshal(augmented)
+		schemaBytes, err := json.Marshal(schema)
 		if err != nil {
 			logger.WarnCF("mcpserver", "skipping tool: failed to marshal schema",
 				map[string]any{"tool": name, "error": err.Error()})
@@ -154,6 +190,7 @@ func addToolsToServer(
 			if args == nil {
 				args = map[string]any{}
 			}
+			mode.prepareArgs(ctx, args)
 			out, isErr := dispatchToolCall(ctx, toolName, args, sessionTokens, resolver, tracker, policy, msgBus)
 			if isErr {
 				return mcp.NewToolResultError(out), nil
@@ -207,14 +244,17 @@ func firstToolNamed(agentRegistries map[string]*tools.ToolRegistry, name string)
 	return nil, false
 }
 
-// dispatchToolCall validates the session_token in args, resolves the calling
-// agent and session, consults the per-agent ACL policy, routes to the resolved
-// agent's registry, executes the tool, and returns the (possibly redacted)
-// LLM-facing output along with an error flag. For session-scoped tools the
-// resolved session key is injected into the execution context.
+// dispatchToolCall validates the session_token in args (placed there by the
+// endpoint's authMode — the in-call parameter on /internal, or the bearer header
+// copied in on /mcp), resolves the calling agent and session, consults the
+// per-agent ACL policy, routes to the resolved agent's registry, executes the
+// tool, and returns the (possibly redacted) LLM-facing output along with an
+// error flag. For session-scoped tools the resolved session key is injected into
+// the execution context.
 //
-// session_token is the sole auth mechanism: it maps to (agentID, sessionKey)
-// server-side. agent_token is no longer used in MCP dispatch.
+// The session token is the sole auth mechanism: it maps to (agentID, sessionKey)
+// server-side regardless of transport. agent_token is no longer used in MCP
+// dispatch.
 //
 // Extracted so the dispatch logic can be exercised directly by tests without
 // going through the streamable HTTP layer.

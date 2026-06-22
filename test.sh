@@ -490,6 +490,13 @@ PY
 }
 EOF
 
+                # Pre-seed a long-lived service token for the default agent so the
+                # gateway loads it at boot (exercises loadServiceTokens + the
+                # headless service session on /mcp + /internal).
+                TEST_SERVICE_TOKEN="SST$(openssl rand -hex 32)"
+                mkdir -p "$INTEG_HOME/state"
+                printf '{"main":"%s"}\n' "$TEST_SERVICE_TOKEN" > "$INTEG_HOME/state/service-tokens.json"
+
                 echo "${DIM}Starting gateway (CLAW_HOME=$INTEG_HOME, MCP=127.0.0.1:$MCP_PORT)...${NC}"
                 CLAW_HOME="$INTEG_HOME" CLAW_MCP_TEST_TOKEN="$TEST_SESSION_TOKEN" "$INTEG_BIN" gateway >"$INTEG_LOG" 2>&1 &
                 INTEG_PID=$!
@@ -540,9 +547,11 @@ EOF
 
                     # Run the probe-driven test against this ephemeral instance.
                     if SERVER_URL="http://127.0.0.1:$MCP_PORT" \
-                       ENDPOINT="/mcp" \
+                       ENDPOINT="/internal" \
+                       BEARER_ENDPOINT="/mcp" \
                        PROBE_PATH="$PROBE_BIN" \
                        SESSION_TOKEN="$TEST_SESSION_TOKEN" \
+                       SERVICE_TOKEN="$TEST_SERVICE_TOKEN" \
                        CONFIG_FILE="$INTEG_HOME/config.json" \
                        GATEWAY_URL="http://127.0.0.1:$GATEWAY_PORT" \
                        bash "$INTEGRATION_SCRIPT"; then

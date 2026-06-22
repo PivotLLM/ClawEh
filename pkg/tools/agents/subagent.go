@@ -16,7 +16,7 @@ import (
 )
 
 // subagentSystemPrompt returns the system prompt installed in every
-// sub-agent. The agenttoken.SubagentSentinel is injected as the agent_token
+// sub-agent. The agenttoken.SubagentSentinel is injected as the session_token
 // for defense-in-depth: if the sub-agent attempts to invoke any mcp__claw__*
 // tool, the MCP server recognizes the sentinel and refuses the call.
 func subagentSystemPrompt() string {
@@ -26,11 +26,11 @@ After completing the task, provide a clear summary of what was done.
 
 ---
 
-# Agent Token
+# Session Token
 
-The following token is the sub-agent sentinel. Every `+"`mcp__claw__*`"+` tool call MUST include the literal string below as the `+"`agent_token`"+` parameter. The MCP server will refuse those calls — sub-agents are not granted claw MCP access; use the harness filesystem tools against your assigned working directory.
+The following token is the sub-agent sentinel. Every `+"`mcp__claw__*`"+` tool call MUST include the literal string below as the `+"`session_token`"+` parameter. The MCP server will refuse those calls — sub-agents are not granted claw MCP access; use the harness filesystem tools against your assigned working directory.
 
-agent_token: %s`, agenttoken.SubagentSentinel)
+session_token: %s`, agenttoken.SubagentSentinel)
 }
 
 type SubagentManager struct {
@@ -584,6 +584,40 @@ func (sm *SubagentManager) TaskList() ([]global.TaskBrief, error) {
 // never the raw content — so a synchronous spawn never leaks sub-agent output
 // inline. agentID == "" is a self-spawn. channel/chatID are used for attribution
 // and tool context.
+// RunSync runs a task as a sub-agent (a copy of the agent through the full
+// pipeline — curated prompt, full tools, MCP, fresh context) and returns the
+// worker's RAW content. Unlike Run (which writes the output to a results file and
+// returns only a pointer, to keep sub-agent output out of the LLM's chat), this
+// hands the text back directly — for programmatic consumers such as an embedded
+// orchestrator dispatching task workers. agentID == "" is a self-spawn.
+func (sm *SubagentManager) RunSync(ctx context.Context, task, agentID, model string) (string, error) {
+	if sm == nil {
+		return "", fmt.Errorf("subagent manager not configured")
+	}
+	if strings.TrimSpace(task) == "" {
+		return "", fmt.Errorf("task is required")
+	}
+	if sm.runFull == nil {
+		return "", fmt.Errorf("full-pipeline runner not configured")
+	}
+	target := sm.targetAgent(agentID)
+	id := uuid.NewString()
+	logger.InfoCF("subagent", "subagent.runsync.launched", map[string]any{
+		"uuid": id, "agent": target, "owner": sm.ownerAgentID, "model": model, "task_len": len(task),
+	})
+	content, iterations, err := sm.runFull(ctx, target, subagentSessionKey(target, id), task, model)
+	if err != nil {
+		logger.WarnCF("subagent", "subagent.runsync.failed", map[string]any{
+			"uuid": id, "agent": target, "error": err.Error(),
+		})
+		return "", err
+	}
+	logger.InfoCF("subagent", "subagent.runsync.finished", map[string]any{
+		"uuid": id, "agent": target, "iterations": iterations, "content_len": len(content),
+	})
+	return content, nil
+}
+
 func (sm *SubagentManager) Run(
 	ctx context.Context,
 	task, label, agentID, channel, chatID, model string,

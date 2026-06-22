@@ -7,11 +7,21 @@
 // alternative to having the CLI emit tool-call JSON in its prose (which
 // created infinite outer loops, since CLIs are themselves agentic).
 //
-// Every tool call must carry a `session_token` parameter (SST<64hex>) which
-// the server resolves to an (agentID, sessionKey) pair. This single token
-// is the sole auth mechanism for all mcp__claw__* calls: it identifies both
-// the calling agent and the active session. If the token is missing,
-// malformed, unknown, or the sub-agent sentinel, the call fails closed.
+// The server exposes two endpoints over the same registries, ACL, and token
+// store, differing only in how the session token (SST<64hex>) is transported:
+//
+//   - /internal — every tool carries a required `session_token` parameter. This
+//     is ClawEh's multi-assistant routing surface: one configured endpoint, a
+//     different token per call. ClawEh's own CLI providers point here.
+//   - /mcp — the standard bearer endpoint: clean tool schemas (no session_token
+//     parameter) with auth via `Authorization: Bearer <token>`. A missing or
+//     invalid bearer is rejected at the HTTP layer with a 401. This is the
+//     universal surface for external MCP clients and the probe test suite.
+//
+// Either way the token resolves to an (agentID, sessionKey) pair and is the sole
+// auth mechanism: it identifies both the calling agent and the active session.
+// If the token is missing, malformed, unknown, or the sub-agent sentinel, the
+// call fails closed.
 package mcpserver
 
 import (
@@ -23,7 +33,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/PivotLLM/ClawEh/pkg/agenttoken"
 	"github.com/PivotLLM/ClawEh/pkg/bus"
 	"github.com/PivotLLM/ClawEh/pkg/global"
 	"github.com/PivotLLM/ClawEh/pkg/logger"
@@ -35,8 +44,14 @@ import (
 // DefaultListen is the default bind address for the MCP server.
 const DefaultListen = "127.0.0.1:5911"
 
-// DefaultEndpointPath is the default HTTP endpoint for MCP traffic.
+// DefaultEndpointPath is the default HTTP endpoint for the standard, bearer-token
+// MCP surface. Tools here have clean schemas; auth is Authorization: Bearer.
 const DefaultEndpointPath = "/mcp"
+
+// InternalEndpointPath is the HTTP endpoint for ClawEh's multi-assistant
+// routing: every tool carries the in-call session_token parameter. This is the
+// endpoint ClawEh's own CLI providers point at.
+const InternalEndpointPath = "/internal"
 
 // MCPServer wraps the mcp-go streamable HTTP server and registers claw tools.
 // Tool enumeration via tools/list is global — the catalogue published is the
@@ -48,9 +63,9 @@ type MCPServer struct {
 	agentRegistries map[string]*tools.ToolRegistry // agentID → registry (dispatch target + schema source)
 	allowPatterns   []string
 	listen          string
-	endpointPath    string
+	endpointPath    string // bearer endpoint (/mcp)
+	internalPath    string // session-token-parameter endpoint (/internal)
 
-	tokens        *agenttoken.Manager
 	sessionTokens *sessionTokenStore // SST-prefixed per-session tokens for session-scoped tools
 	workspaces    map[string]string  // agentID → workspace (for boot/first-call logging)
 	policy        acl.Policy         // per-agent tools/call ACL; defaults to acl.Default
@@ -87,12 +102,6 @@ func WithAgentRegistries(registries map[string]*tools.ToolRegistry) Option {
 	}
 }
 
-// WithAgentTokens supplies the token manager that resolves the
-// `agent_token` call parameter to an agent ID. Required.
-func WithAgentTokens(t *agenttoken.Manager) Option {
-	return func(m *MCPServer) { m.tokens = t }
-}
-
 // WithAgentWorkspaces supplies the agentID → workspace map. Used only
 // for boot-log assertions and the first-MCP-call-per-agent log entry.
 func WithAgentWorkspaces(ws map[string]string) Option {
@@ -117,7 +126,8 @@ func WithListen(addr string) Option {
 	}
 }
 
-// WithEndpointPath sets the HTTP endpoint path (default: /mcp).
+// WithEndpointPath sets the bearer (standard) HTTP endpoint path (default:
+// /mcp). The session-token-parameter endpoint is always served at /internal.
 func WithEndpointPath(path string) Option {
 	return func(m *MCPServer) {
 		if path != "" {
@@ -163,15 +173,13 @@ func New(opts ...Option) (*MCPServer, error) {
 	m := &MCPServer{
 		listen:        DefaultListen,
 		endpointPath:  DefaultEndpointPath,
+		internalPath:  InternalEndpointPath,
 		sessionTokens: newSessionTokenStore(),
 	}
 	for _, opt := range opts {
 		opt(m)
 	}
 
-	if m.tokens == nil {
-		return nil, errors.New("mcpserver: agent-token manager is required")
-	}
 	if len(m.agentRegistries) == 0 {
 		return nil, errors.New("mcpserver: at least one agent registry is required")
 	}
@@ -198,21 +206,32 @@ func New(opts ...Option) (*MCPServer, error) {
 		return reg, ok
 	}
 
-	mcpSrv := server.NewMCPServer(global.AppName, global.Version,
-		server.WithToolCapabilities(false),
-		server.WithRecovery(),
-	)
-	addToolsToServer(mcpSrv, m.agentRegistries, m.allowPatterns, m.sessionTokens, resolver, tracker, m.policy, m.msgBus, &m.activeDispatches)
+	newSrv := func() *server.MCPServer {
+		return server.NewMCPServer(global.AppName, global.Version,
+			server.WithToolCapabilities(false),
+			server.WithRecovery(),
+		)
+	}
 
-	httpSrv := server.NewStreamableHTTPServer(mcpSrv,
-		server.WithEndpointPath(m.endpointPath),
-		server.WithStateLess(true),
-	)
-	m.srv = mcpSrv
-	m.streamable = httpSrv
+	// /internal — session-token parameter on every tool (ClawEh's CLI providers).
+	internalSrv := newSrv()
+	addToolsToServer(internalSrv, internalAuthMode, m.agentRegistries, m.allowPatterns, m.sessionTokens, resolver, tracker, m.policy, m.msgBus, &m.activeDispatches)
+
+	// /mcp — standard bearer endpoint, clean tool schemas (probe / external MCP).
+	bearerSrv := newSrv()
+	addToolsToServer(bearerSrv, bearerAuthMode, m.agentRegistries, m.allowPatterns, m.sessionTokens, resolver, tracker, m.policy, m.msgBus, &m.activeDispatches)
+
+	internalStreamable := newStreamable(internalSrv, m.internalPath, false)
+	bearerStreamable := newStreamable(bearerSrv, m.endpointPath, true)
+
+	// srv/streamable keep the internal server for test introspection (its schemas
+	// carry the session_token param, matching the historical single-endpoint).
+	m.srv = internalSrv
+	m.streamable = internalStreamable
 
 	mux := http.NewServeMux()
-	mux.Handle(m.endpointPath, httpSrv)
+	mux.Handle(m.internalPath, internalStreamable)
+	mux.Handle(m.endpointPath, bearerAuthMiddleware(m.sessionTokens, bearerStreamable))
 	m.httpServer = &http.Server{Handler: mux}
 
 	return m, nil
@@ -241,7 +260,8 @@ func (m *MCPServer) Start() error {
 	logger.InfoCF("mcpserver", "MCP server starting",
 		map[string]any{
 			"listen":   m.listen,
-			"endpoint": m.endpointPath,
+			"endpoint": m.endpointPath, // bearer (standard)
+			"internal": m.internalPath, // session-token parameter
 			"agents":   len(m.agentRegistries),
 		})
 

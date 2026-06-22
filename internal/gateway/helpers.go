@@ -30,6 +30,7 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/mcpserver"
 	"github.com/PivotLLM/ClawEh/pkg/media"
 	"github.com/PivotLLM/ClawEh/pkg/providers"
+	"github.com/PivotLLM/ClawEh/pkg/servicetoken"
 	"github.com/PivotLLM/ClawEh/pkg/state"
 	"github.com/PivotLLM/ClawEh/pkg/tools"
 	toolsagents "github.com/PivotLLM/ClawEh/pkg/tools/agents"
@@ -220,10 +221,15 @@ func gatewayCmd(debug bool) error {
 		time.Duration(global.ConfigReloadDebounceSeconds)*time.Second, debug)
 	defer stopWatch()
 
+	// Watch the service-token state file so `claw token` changes activate live
+	// (writes are atomic, so no debounce is needed).
+	svcTokenChan, stopSvcWatch := setupFileChangeWatcher(servicetoken.Path(cfg.DataDir()), reloadInterval)
+	defer stopSvcWatch()
+
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt)
 
-	// Main event loop - wait for signals or config changes
+	// Main event loop - wait for signals or config/token changes
 	for {
 		select {
 		case <-sigChan:
@@ -236,8 +242,42 @@ func gatewayCmd(debug bool) error {
 			if err != nil {
 				logger.Errorf("Config reload failed: %v", err)
 			}
+
+		case <-svcTokenChan:
+			logger.Info("🔑 Service-token file changed, reloading service tokens...")
+			syncServiceTokensFromDisk(agentLoop.GetConfig(), agentLoop, services.MCPServer)
 		}
 	}
+}
+
+// setupFileChangeWatcher polls a single file and emits on the returned channel
+// whenever its mtime or size changes. Intended for small, atomically-written
+// state files (no debounce). The first observed state is the baseline.
+func setupFileChangeWatcher(path string, interval time.Duration) (<-chan struct{}, func()) {
+	ch := make(chan struct{}, 1)
+	stop := make(chan struct{})
+	go func() {
+		lastMod := getFileModTime(path)
+		lastSize := getFileSize(path)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				m, s := getFileModTime(path), getFileSize(path)
+				if m.After(lastMod) || s != lastSize {
+					lastMod, lastSize = m, s
+					select {
+					case ch <- struct{}{}:
+					default:
+					}
+				}
+			case <-stop:
+				return
+			}
+		}
+	}()
+	return ch, func() { close(stop) }
 }
 
 // setupAndStartServices initializes and starts all services
@@ -412,7 +452,6 @@ func startMCPServer(cfg *config.Config, agentLoop *agent.AgentLoop, msgBus *bus.
 
 	srv, err := mcpserver.New(
 		mcpserver.WithAgentRegistries(agentRegistries),
-		mcpserver.WithAgentTokens(agentLoop.AgentTokens()),
 		mcpserver.WithAgentWorkspaces(agentWorkspaces),
 		mcpserver.WithListen(cfg.MCPHost.Listen),
 		mcpserver.WithEndpointPath(cfg.MCPHost.EndpointPath),
@@ -442,6 +481,11 @@ func startMCPServer(cfg *config.Config, agentLoop *agent.AgentLoop, msgBus *bus.
 		}
 	}
 
+	// Load persisted long-lived service tokens (claw token CLI) into the store.
+	// Runs at boot and on every config reload (this function rebuilds the server);
+	// the file watcher in the main loop also re-syncs on demand.
+	syncServiceTokensFromDisk(cfg, agentLoop, srv)
+
 	logger.InfoCF("mcpserver", "MCP host started",
 		map[string]any{
 			"listen":       srv.Listen(),
@@ -450,6 +494,34 @@ func startMCPServer(cfg *config.Config, agentLoop *agent.AgentLoop, msgBus *bus.
 		})
 
 	return nil
+}
+
+// syncServiceTokensFromDisk loads the persisted per-agent service tokens and
+// reconciles them into the live store (registers present, revokes removed),
+// each bound to its agent's dedicated headless service session. Unknown agents
+// are skipped. Used at boot and by the service-token file watcher, so a
+// `claw token` change activates without a restart. A missing/empty file is
+// normal (it clears any previously-loaded service tokens).
+func syncServiceTokensFromDisk(cfg *config.Config, agentLoop *agent.AgentLoop, srv *mcpserver.MCPServer) {
+	if srv == nil || cfg == nil {
+		return
+	}
+	path := servicetoken.Path(cfg.DataDir())
+	tokens, err := servicetoken.Load(path)
+	if err != nil {
+		logger.WarnCF("mcpserver", "failed to load service tokens; skipping",
+			map[string]any{"path": path, "error": err.Error()})
+		return
+	}
+	srv.SessionTokens().SyncServiceTokens(tokens, func(agentID string) string {
+		da, ok := agentLoop.GetRegistry().GetAgent(agentID)
+		if !ok || da == nil {
+			logger.WarnCF("mcpserver", "service token for unknown agent; skipping",
+				map[string]any{"agent": agentID})
+			return ""
+		}
+		return filepath.Join(da.Workspace, "sessions")
+	})
 }
 
 // stopAndCleanupServices stops all services and cleans up resources
@@ -764,14 +836,21 @@ func setupConfigWatcherPolling(configPath string, interval, debounce time.Durati
 					continue
 				}
 
-				logger.Info("✓ Config file validated and loaded")
-				appliedModTime = currentModTime
-				appliedSize = currentSize
-
+				// Only mark the change applied once it has actually been handed to
+				// the reload consumer. If the consumer is still busy with a previous
+				// reload, re-arm and retry on a later tick rather than advancing the
+				// applied marker — otherwise this change is silently lost until the
+				// next edit or a restart (the bug where enabling an agent's tool
+				// suite did not take effect without a manual restart).
 				select {
 				case configChan <- newCfg:
+					appliedModTime = currentModTime
+					appliedSize = currentSize
+					logger.Info("✓ Config file validated and loaded")
 				default:
-					logger.Warn("⚠ Previous config reload still in progress, skipping")
+					pending = true
+					quietDeadline = time.Now() // retry on the next poll tick
+					logger.Warn("⚠ Previous config reload still in progress, will retry")
 				}
 
 			case <-stop:

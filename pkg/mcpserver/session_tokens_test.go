@@ -13,6 +13,91 @@ import (
 
 // --- sessionTokenStore unit tests ---
 
+// TestRegisterService_BindsHeadlessServiceSession verifies a service token
+// resolves to the agent's dedicated service session (not its conversation
+// session), and that normal session activity on the main session does not rotate
+// or disturb it.
+func TestRegisterService_BindsHeadlessServiceSession(t *testing.T) {
+	s := newSessionTokenStore()
+	s.RegisterService("SSTservice", "alice", "/ws/alice/sessions")
+
+	rec, ok := s.Resolve("SSTservice")
+	if !ok {
+		t.Fatal("service token did not resolve")
+	}
+	if rec.agentID != "alice" {
+		t.Errorf("agentID = %q, want alice", rec.agentID)
+	}
+	if rec.sessionKey != "agent:alice:service" {
+		t.Errorf("sessionKey = %q, want agent:alice:service", rec.sessionKey)
+	}
+	if rec.channel != "" || rec.chatID != "" {
+		t.Errorf("service session must be headless, got channel=%q chatID=%q", rec.channel, rec.chatID)
+	}
+
+	// Conversation activity on the MAIN session must not touch the service token.
+	s.Issue("alice", "agent:alice:main", "/ws/alice/sessions")
+	if _, ok := s.Resolve("SSTservice"); !ok {
+		t.Error("service token was disturbed by main-session activity")
+	}
+}
+
+// TestRegisterService_NotRotated confirms re-registering the service token for an
+// agent replaces only its own (pinned) record.
+func TestRegisterService_NotRotated(t *testing.T) {
+	s := newSessionTokenStore()
+	s.RegisterService("SSTone", "alice", "/ws/alice/sessions")
+	s.RegisterService("SSTtwo", "alice", "/ws/alice/sessions")
+
+	if _, ok := s.Resolve("SSTone"); ok {
+		t.Error("old service token should be replaced on re-register")
+	}
+	rec, ok := s.Resolve("SSTtwo")
+	if !ok || rec.sessionKey != "agent:alice:service" {
+		t.Errorf("new service token missing or wrong session: %+v ok=%v", rec, ok)
+	}
+}
+
+// TestSyncServiceTokens_Reconciles verifies live reconciliation: agents in the
+// new set are registered, agents dropped from it are revoked, and conversation
+// tokens are left untouched.
+func TestSyncServiceTokens_Reconciles(t *testing.T) {
+	s := newSessionTokenStore()
+	arch := func(string) string { return "/ws/sessions" }
+
+	// A live conversation token must survive a service-token sync.
+	convTok := s.Issue("amber", "agent:amber:main", "/ws/amber/sessions")
+
+	s.SyncServiceTokens(map[string]string{"amber": "SSTamber", "dawn": "SSTdawn"}, arch)
+	if _, ok := s.Resolve("SSTamber"); !ok {
+		t.Error("amber service token not registered")
+	}
+	if _, ok := s.Resolve("SSTdawn"); !ok {
+		t.Error("dawn service token not registered")
+	}
+
+	// Re-sync without dawn → dawn revoked, amber rotated, conversation untouched.
+	s.SyncServiceTokens(map[string]string{"amber": "SSTamber2"}, arch)
+	if _, ok := s.Resolve("SSTdawn"); ok {
+		t.Error("dawn service token should be revoked after removal from the set")
+	}
+	if _, ok := s.Resolve("SSTamber"); ok {
+		t.Error("old amber service token should be replaced")
+	}
+	if _, ok := s.Resolve("SSTamber2"); !ok {
+		t.Error("new amber service token should resolve")
+	}
+	if _, ok := s.Resolve(convTok); !ok {
+		t.Error("conversation token must not be disturbed by service-token sync")
+	}
+
+	// Unknown agent (archiveDir "") is skipped, not registered.
+	s.SyncServiceTokens(map[string]string{"ghost": "SSTghost"}, func(string) string { return "" })
+	if _, ok := s.Resolve("SSTghost"); ok {
+		t.Error("unknown agent service token should be skipped")
+	}
+}
+
 func TestSessionTokenStore_IssueProducesUniqueSSTTokens(t *testing.T) {
 	s := newSessionTokenStore()
 
@@ -154,8 +239,8 @@ func TestRegister_PrespecifiedToken(t *testing.T) {
 	if rec.archiveDir != "/tmp/archive" {
 		t.Errorf("expected archiveDir=/tmp/archive, got %q", rec.archiveDir)
 	}
-	if !rec.isTestToken {
-		t.Error("expected isTestToken=true on registered token")
+	if !rec.pinned {
+		t.Error("expected pinned=true on registered token")
 	}
 
 	// Register a different token for the same session key — old token must be gone.
@@ -192,8 +277,8 @@ func TestIssue_PreservesTestToken(t *testing.T) {
 	if !ok {
 		t.Fatal("test token must still resolve after Issue() for the same session key")
 	}
-	if !rec.isTestToken {
-		t.Error("isTestToken flag must be preserved")
+	if !rec.pinned {
+		t.Error("pinned flag must be preserved")
 	}
 }
 

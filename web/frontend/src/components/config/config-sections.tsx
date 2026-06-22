@@ -630,6 +630,7 @@ export function BackupSection({ form, onFieldChange }: BackupSectionProps) {
         hint={t("pages.config.backup_enabled_hint")}
         checked={form.backupEnabled}
         onCheckedChange={(checked) => onFieldChange("backupEnabled", checked)}
+        layout="setting-row"
       />
       <Field
         label={t("pages.config.backup_at")}

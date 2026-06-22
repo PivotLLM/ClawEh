@@ -314,7 +314,7 @@ This application assumes that messages sent to assistants come from an authorize
 
 When enabling tools, including connecting MCP servers, users must carefully consider the security and privacy implications. Granting an assistant access to sensitive systems or data can have severe consequences if that assistant is exposed beyond the intended user. For example, giving an assistant access to email and then accidentally allowing anyone on Telegram to interact with it could have catastrophic privacy and security consequences. The same principle applies to file systems, shells, calendars, internal APIs, and any other connected capability.
 
-ClawEh includes an http callback mechanism that is disabled by default. When enabled for an individual agent, this feature provides the assistant with a callback URL that can be used to send the assistant a message. If used, the callback will be sent to the agent through it's standard communication channel. If this feature is used, care must be used to avoid it being used for malicious purposes. 
+ClawEh includes an HTTP external-message endpoint that is disabled by default. When enabled for an individual agent, an authenticated external process can deliver a message into the agent's active conversation (`POST /api/message/{token}`); the agent then responds on its standard communication channel. If this feature is used, care must be taken to avoid it being abused for malicious purposes. See [docs/external-messages.md](docs/external-messages.md).
 
 Users should also understand that data made available to an assistant through connected tools and services may contain malicious or misleading content. Content from email, chat systems, documents, web pages, issue trackers, or other data sources could potentially be interpreted or acted on by the assistant as if it were an instruction. It is the user's responsibility to ensure that they fully understand the risks, that appropriate security controls are in place, and that, where necessary, appropriate testing has been conducted.
 
@@ -402,6 +402,26 @@ gateway start). Only `YYYYMMDD-*.log` archives are pruned — the active
 Each option also has a `CLAW_LOGGING_*` environment override (e.g.
 `CLAW_LOGGING_LEVEL`, `CLAW_LOGGING_RETENTION_DAYS`).
 
+## Configuration backup
+
+ClawEh takes a nightly **configuration backup** — **on by default**. It snapshots `config.json` and the cron jobs file (`jobs.json`) into `$CLAW_HOME/backup/YYYYMMDD/`, with each file timestamped (e.g. `config.json.20260622-030000`) so repeated runs in a day don't overwrite. Day-folders older than the retention window are pruned.
+
+This is **configuration only** — it does **not** include agent workspaces, session archives, cognitive-memory databases, or the `state/` token files. It's a safety net for your settings and schedules, not a full data backup.
+
+Manage it in the web console under **Config → Configuration backup**, or in `config.json`:
+
+```json
+"backup": { "enabled": true, "at": "03:00", "retain_days": 30 }
+```
+
+| Field | Default | Description |
+|---|---|---|
+| `enabled` | `true` | Set `false` to turn the nightly backup off. |
+| `at` | `03:00` | Local time of day (`HH:MM`) to run. |
+| `retain_days` | `30` | Delete backup folders older than this. |
+
+The scheduler re-reads config every minute, so changes take effect without a restart. The **Back up now** button (or `POST /api/backup`) runs a backup immediately, regardless of the nightly toggle.
+
 ## Diagnostic dumps
 
 ClawEh can write full LLM request/response snapshots to disk for debugging. Files are written to `$CLAW_HOME/logs/dumps/` (e.g. `~/.claw/logs/dumps/`). Each dump produces two files sharing a common base name (`YYYYMMDD-HHMMSS-<id>`):
@@ -429,31 +449,30 @@ Two options are available in the `logging` config block:
 
 When `dump_refusals` is `true` and the response is a refusal, only the refusal dump is written — `dump_all` does not also fire for the same response.
 
-## Callback endpoint
+## External message endpoint
 
-ClawEh provides an optional per-agent HTTP endpoint that allows external processes — MCP servers, scripts, spawned subprocesses — to deliver messages to an agent without a persistent channel connection. The agent receives the message on its last active channel and responds normally.
+ClawEh provides an optional per-agent HTTP endpoint that lets external processes deliver a message into an agent's active conversation without a persistent channel connection. The agent receives the message on its last active channel and responds normally.
 
 ```
-POST http://localhost:18790/api/reply/{token}
+POST http://localhost:18790/api/message/{token}
 ```
 
-Enable it per agent in the config or via the web console under **Agents**:
+The rotating per-agent token is configured under **Agents** (`message.window_minutes` / `window_count`). It is **not** injected into the agent's prompt — the endpoint is reserved for operator/integration use and a future "notify an agent" feature. See [docs/external-messages.md](docs/external-messages.md).
 
-```json
-{
-  "id": "alice",
-  "callback": {
-    "window_minutes": 30,
-    "window_count": 2
-  }
-}
+> **Security notice:** plain HTTP, bound to `127.0.0.1` only. Do not expose it externally.
+
+## Service tokens (long-lived MCP credentials)
+
+For an external MCP client that needs to drive an agent's tools — most notably **Maestro** — on a stable footing, mint a long-lived per-agent **service token**. Unlike the per-session token (which rotates, idles out after 2h, and dies on restart), a service token persists until you revoke it.
+
+```
+claw token issue  <agent>   # mint (or replace) and print the agent's service token
+claw token rotate <agent>   # replace the existing token
+claw token revoke <agent>   # remove it
+claw token list             # list agents that have one (tokens are not shown)
 ```
 
-When enabled, the current token is injected into the agent's system prompt (marked confidential) so the agent can pass it to subprocesses or MCP servers that need to call back.
-
-> **Security notice:** This endpoint is plain HTTP, bound to `127.0.0.1` only. Do not expose it externally. See [docs/callback.md](docs/callback.md) for full details.
-
-See [docs/callback.md](docs/callback.md) for configuration reference, token rotation, routing behaviour, and troubleshooting.
+Use the token as an `Authorization: Bearer` header on `/mcp`, or as the `session_token` parameter on `/internal` — both resolve identically. A service token is **headless and isolated**: it resolves to a dedicated `agent:<id>:service` session, so it cannot read the agent's real conversations, and a tool's user-facing output is dropped (only the model-facing result returns to the caller). Tokens are stored at `$CLAW_HOME/state/service-tokens.json` (`0o600`); a running gateway picks up the change automatically within a few seconds. See [docs/service-tokens.md](docs/service-tokens.md).
 
 ## Context management
 

@@ -74,6 +74,11 @@ func buildToolSupport(cfg *config.Config) []toolSupportItem {
 	for _, p := range tools.GetProviders() {
 		_, unavailReason := p.Available(cfg)
 		for _, d := range p.Describe() {
+			// All-or-nothing suites (cogmem, maestro) are per-agent toggles, not
+			// globally enable/disable-able tools — keep them off this page.
+			if d.Suite != "" {
+				continue
+			}
 			items = append(items, toolSupportItem{
 				Name:        d.Name,
 				Description: d.Description,

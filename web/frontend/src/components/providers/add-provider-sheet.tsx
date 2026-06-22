@@ -39,7 +39,6 @@ interface AddForm {
   baseURL: string
   apiKey: string
   proxy: string
-  authMethod: string
   command: string
   strictCompat: boolean
   noParallelToolCalls: boolean
@@ -52,7 +51,6 @@ const EMPTY_ADD_FORM: AddForm = {
   baseURL: "",
   apiKey: "",
   proxy: "",
-  authMethod: "",
   command: "",
   strictCompat: false,
   noParallelToolCalls: false,
@@ -130,7 +128,6 @@ export function AddProviderSheet({
         base_url: cliProto ? undefined : form.baseURL.trim() || undefined,
         api_key: cliProto ? undefined : form.apiKey.trim() || undefined,
         proxy: form.proxy.trim() || undefined,
-        auth_method: form.authMethod.trim() || undefined,
         command: cliProto ? form.command.trim() || undefined : undefined,
         strict_compat: form.strictCompat,
         no_parallel_tool_calls: form.noParallelToolCalls,
@@ -258,16 +255,6 @@ export function AddProviderSheet({
                 />
               </Field>
 
-              <Field
-                label={t("providers.field.authMethod")}
-                hint={t("providers.field.authMethodHint")}
-              >
-                <Input
-                  value={form.authMethod}
-                  onChange={setField("authMethod")}
-                  placeholder="oauth"
-                />
-              </Field>
 
               <SwitchCardField
                 label={t("providers.field.strictCompat")}

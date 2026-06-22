@@ -10,7 +10,7 @@ import (
 )
 
 func TestHandleUpdateConfig_AppliesExecAllowRemoteDefaultWhenOmitted(t *testing.T) {
-	configPath, cleanup := setupOAuthTestEnv(t)
+	configPath, cleanup := setupTestEnv(t)
 	defer cleanup()
 
 	h := NewHandler(configPath)
@@ -59,7 +59,7 @@ func TestHandleUpdateConfig_AppliesExecAllowRemoteDefaultWhenOmitted(t *testing.
 }
 
 func TestHandleUpdateConfig_DoesNotInheritDefaultModelFields(t *testing.T) {
-	configPath, cleanup := setupOAuthTestEnv(t)
+	configPath, cleanup := setupTestEnv(t)
 	defer cleanup()
 
 	h := NewHandler(configPath)

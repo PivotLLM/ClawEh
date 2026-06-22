@@ -168,6 +168,15 @@ func (a namespacedProvider) Description() string {
 func (a namespacedProvider) Category() string  { return a.ns }
 func (a namespacedProvider) ConfigKey() string { return a.ns }
 
+// Suite reports the all-or-nothing suite name when the wrapped provider declares
+// itself one (cogmem, maestro); "" otherwise.
+func (a namespacedProvider) Suite() string {
+	if sp, ok := a.p.(SuiteProvider); ok {
+		return sp.Suite()
+	}
+	return ""
+}
+
 func (a namespacedProvider) Available(cfg *config.Config) (bool, string) {
 	if m, ok := a.p.(global.HostMeta); ok {
 		return m.Available(cfg)
@@ -176,6 +185,24 @@ func (a namespacedProvider) Available(cfg *config.Config) (bool, string) {
 }
 
 func (a namespacedProvider) Build(deps ToolDeps) []Tool {
+	suite := a.Suite()
+	// All-or-nothing suite: gated as a unit by the per-agent flag. When enabled,
+	// every tool is registered (bypassing the per-tool allow/deny gate — the flag
+	// IS the allow decision); when disabled, none are. The provider's RegisterTools
+	// already returns nothing for a disabled agent, but gate here too so the suite
+	// is never subject to the per-tool ToolEnabled filter.
+	if suite != "" {
+		if deps.Cfg != nil && !deps.Cfg.AgentSuiteEnabled(deps.AgentID, suite) {
+			return nil
+		}
+		defs := a.p.RegisterTools(a.toGlobalDeps(deps))
+		out := make([]Tool, 0, len(defs))
+		for _, d := range defs {
+			out = append(out, wrapGlobalTool(a.ns, d))
+		}
+		return out
+	}
+
 	defs := a.p.RegisterTools(a.toGlobalDeps(deps))
 	out := make([]Tool, 0, len(defs))
 	for _, d := range defs {
@@ -190,6 +217,22 @@ func (a namespacedProvider) Build(deps ToolDeps) []Tool {
 }
 
 func (a namespacedProvider) Describe() []ToolDescriptor {
+	// All-or-nothing suites collapse to a single GUI entry (managed by the agent
+	// toggle), so the per-tool catalog is not cluttered with the whole suite.
+	if suite := a.Suite(); suite != "" {
+		desc := a.ns
+		if m, ok := a.p.(global.HostMeta); ok {
+			desc = m.Description()
+		}
+		return []ToolDescriptor{{
+			Name:        a.ns,
+			Description: desc,
+			Category:    a.ns,
+			ConfigKey:   a.ns,
+			Suite:       suite,
+		}}
+	}
+
 	// Enumeration is deps-free: global providers must return their full tool set
 	// from RegisterTools and build handler closures lazily (no eager deref of
 	// deps), so a zero Deps is safe for cataloguing.

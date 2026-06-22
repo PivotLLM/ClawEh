@@ -221,16 +221,12 @@ func TestNew_BootLogEmitsAgentBindings(t *testing.T) {
 	defer restore()
 
 	r := newRegistryWith()
-	tm := agenttoken.NewManager()
-	tm.Issue("alice")
-	tm.Issue("bob")
 
 	_, err := New(
 		WithAgentRegistries(map[string]*tools.ToolRegistry{
 			"alice": r,
 			"bob":   r,
 		}),
-		WithAgentTokens(tm),
 		WithAgentWorkspaces(map[string]string{
 			"alice": "/ws/alice",
 			"bob":   "/ws/bob",

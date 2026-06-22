@@ -5,7 +5,6 @@ import (
 	"os"
 
 	"github.com/PivotLLM/ClawEh/internal"
-	"github.com/PivotLLM/ClawEh/pkg/auth"
 	"github.com/PivotLLM/ClawEh/pkg/config"
 )
 
@@ -46,7 +45,7 @@ func statusCmd() {
 		fmt.Printf("\nProviders (%d):\n", len(cfg.Providers))
 		for i := range cfg.Providers {
 			p := &cfg.Providers[i]
-			credentialed := p.APIKey != "" || p.AuthMethod != "" || p.BaseURL != ""
+			credentialed := p.APIKey != "" || p.BaseURL != ""
 			mark := "not set"
 			if credentialed {
 				mark = "✓"
@@ -56,20 +55,6 @@ func statusCmd() {
 				detail = fmt.Sprintf("%s · %s", p.Protocol, p.BaseURL)
 			}
 			fmt.Printf("  %-16s %s (%s)\n", p.Name+":", mark, detail)
-		}
-
-		store, _ := auth.LoadStore()
-		if store != nil && len(store.Credentials) > 0 {
-			fmt.Println("\nOAuth/Token Auth:")
-			for provider, cred := range store.Credentials {
-				status := "authenticated"
-				if cred.IsExpired() {
-					status = "expired"
-				} else if cred.NeedsRefresh() {
-					status = "needs refresh"
-				}
-				fmt.Printf("  %s (%s): %s\n", provider, cred.AuthMethod, status)
-			}
 		}
 	}
 }

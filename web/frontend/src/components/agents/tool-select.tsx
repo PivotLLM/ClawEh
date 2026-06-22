@@ -6,11 +6,19 @@ export interface ToolSelectProps {
   selected: string[]
   catalog: AgentToolCatalogResponse
   onChange: (tools: string[]) => void
+  // suiteStates maps a suite name (e.g. "maestro", "cogmem") to whether it is
+  // enabled for this agent, so the greyed suite rows reflect the live toggle.
+  suiteStates?: Record<string, boolean>
 }
 
-export function ToolSelect({ selected, catalog, onChange }: ToolSelectProps) {
+export function ToolSelect({ selected, catalog, onChange, suiteStates }: ToolSelectProps) {
+  // Suite entries (cogmem, maestro) are all-or-nothing and controlled by the
+  // agent's per-suite toggle — they are not part of the per-tool allowlist.
+  const perToolTools = catalog.tools.filter((t) => !t.suite)
+  const suiteTools = catalog.tools.filter((t) => t.suite)
+
   const allTools = [
-    ...catalog.tools.map((t) => t.name),
+    ...perToolTools.map((t) => t.name),
     ...(catalog.mcp_servers ?? []).map((s) => s.pattern),
   ]
 
@@ -68,7 +76,7 @@ export function ToolSelect({ selected, catalog, onChange }: ToolSelectProps) {
       )}
 
       <div className="space-y-0.5">
-        {[...catalog.tools].sort((a, b) => a.name.localeCompare(b.name)).map((tool) => (
+        {[...perToolTools].sort((a, b) => a.name.localeCompare(b.name)).map((tool) => (
           <label
             key={tool.name}
             className="flex items-center gap-2 cursor-pointer select-none"
@@ -82,6 +90,27 @@ export function ToolSelect({ selected, catalog, onChange }: ToolSelectProps) {
           </label>
         ))}
       </div>
+
+      {suiteTools.length > 0 && (
+        <div className="space-y-0.5">
+          {[...suiteTools].sort((a, b) => a.name.localeCompare(b.name)).map((tool) => {
+            const on = !!suiteStates?.[tool.suite ?? ""]
+            return (
+              <label
+                key={tool.name}
+                className="flex items-center gap-2 select-none opacity-50 cursor-not-allowed"
+                title={`${tool.description} — ${on ? "enabled" : "disabled"} via the agent's ${tool.suite} toggle, not this list.`}
+              >
+                <Checkbox checked={on} disabled />
+                <span className="font-mono text-xs">{tool.name}</span>
+                <span className="text-muted-foreground text-xs">
+                  (suite toggle — {on ? "on" : "off"})
+                </span>
+              </label>
+            )
+          })}
+        </div>
+      )}
 
       {hasMCPServers && (
         <div>
@@ -107,7 +136,7 @@ export function ToolSelect({ selected, catalog, onChange }: ToolSelectProps) {
         </div>
       )}
 
-      {catalog.tools.length === 0 && !hasMCPServers && (
+      {perToolTools.length === 0 && suiteTools.length === 0 && !hasMCPServers && (
         <span className="text-muted-foreground text-xs">No tools available</span>
       )}
     </div>

@@ -9,29 +9,12 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/PivotLLM/ClawEh/pkg/auth"
 	"github.com/PivotLLM/ClawEh/pkg/config"
 	anthropicmessages "github.com/PivotLLM/spawnllm/anthropic_messages"
 	"github.com/PivotLLM/spawnllm/azure"
 	"github.com/PivotLLM/spawnllm/openai_compat"
 	"github.com/PivotLLM/spawnllm/openai_responses"
 )
-
-// getCredential is the auth-store lookup used by the Claude OAuth provider.
-// Indirected through a package var so tests can stub it.
-var getCredential = auth.GetCredential
-
-// createClaudeAuthProvider creates a Claude provider using OAuth credentials from auth store.
-func createClaudeAuthProvider() (LLMProvider, error) {
-	cred, err := getCredential("anthropic")
-	if err != nil {
-		return nil, fmt.Errorf("loading auth credentials: %w", err)
-	}
-	if cred == nil {
-		return nil, fmt.Errorf("no credentials for anthropic. Run: claw auth login --provider anthropic")
-	}
-	return NewClaudeProviderWithTokenSource(cred.AccessToken, createClaudeTokenSource()), nil
-}
 
 // compatOpts builds the openai_compat options from the endpoint-scoped provider
 // knobs and the model-scoped request knobs.
@@ -97,15 +80,6 @@ func CreateProviderFromConfig(model *config.ModelConfig, prov *config.Provider) 
 		return azure.NewProviderWithTimeout(prov.APIKey, prov.BaseURL, prov.Proxy, model.RequestTimeout), modelID, nil
 
 	case "anthropic":
-		// OAuth/token credentials use the native Claude auth provider; an api
-		// key uses the OpenAI-compatible HTTP path against the Anthropic base.
-		if prov.AuthMethod == "oauth" || prov.AuthMethod == "token" {
-			p, err := createClaudeAuthProvider()
-			if err != nil {
-				return nil, "", err
-			}
-			return p, modelID, nil
-		}
 		if prov.APIKey == "" {
 			return nil, "", fmt.Errorf("provider %q: api_key required for anthropic protocol", prov.Name)
 		}
@@ -148,20 +122,4 @@ func newCLIProvider[T LLMProvider](
 		return withTimeout(prov.Command, workspace, time.Duration(model.RequestTimeout)*time.Second, model.ExtraArgs, model.Env)
 	}
 	return plain(prov.Command, workspace, model.ExtraArgs, model.Env)
-}
-
-// createClaudeTokenSource returns a token source that refreshes the Anthropic
-// OAuth access token from the host auth store. It stays host-side (auth-coupled);
-// spawnllm's ClaudeProvider takes the resulting token source by injection.
-func createClaudeTokenSource() func() (string, error) {
-	return func() (string, error) {
-		cred, err := getCredential("anthropic")
-		if err != nil {
-			return "", fmt.Errorf("loading auth credentials: %w", err)
-		}
-		if cred == nil {
-			return "", fmt.Errorf("no credentials for anthropic. Run: claw auth login --provider anthropic")
-		}
-		return cred.AccessToken, nil
-	}
 }

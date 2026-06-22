@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/PivotLLM/ClawEh/pkg/agenttoken"
 	"github.com/PivotLLM/ClawEh/pkg/tools"
 )
 
@@ -41,33 +40,18 @@ func newRegistryWith(toolList ...tools.Tool) *tools.ToolRegistry {
 }
 
 // minimalOpts returns the option set required for any New() call to succeed:
-// a token manager and at least one agent registry. The registry doubles as
-// the schema source for tools/list.
+// at least one agent registry. The registry doubles as the schema source for
+// tools/list.
 func minimalOpts(reg *tools.ToolRegistry) []Option {
-	tm := agenttoken.NewManager()
-	tm.Issue("alice")
 	return []Option{
 		WithAgentRegistries(map[string]*tools.ToolRegistry{"alice": reg}),
-		WithAgentTokens(tm),
 	}
 }
 
 // --- New() validation ---
 
-func TestNew_RequiresAgentTokens(t *testing.T) {
-	r := newRegistryWith()
-	_, err := New(WithAgentRegistries(map[string]*tools.ToolRegistry{"alice": r}))
-	if err == nil {
-		t.Fatal("expected error when agent-token manager is missing")
-	}
-	if !strings.Contains(err.Error(), "agent-token") {
-		t.Errorf("expected error to mention agent-token manager, got %q", err.Error())
-	}
-}
-
 func TestNew_RequiresAgentRegistries(t *testing.T) {
-	tm := agenttoken.NewManager()
-	_, err := New(WithAgentTokens(tm))
+	_, err := New()
 	if err == nil {
 		t.Fatal("expected error when agent registries are missing")
 	}

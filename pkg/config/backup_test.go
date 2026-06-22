@@ -2,6 +2,21 @@ package config
 
 import "testing"
 
+func TestBackupConfig_EnabledByDefault(t *testing.T) {
+	// Field absent (nil) → on by default.
+	if !(BackupConfig{}).IsEnabled() {
+		t.Error("backup must be enabled by default when unset")
+	}
+	no := false
+	if (BackupConfig{Enabled: &no}).IsEnabled() {
+		t.Error("explicit enabled:false must disable backup")
+	}
+	yes := true
+	if !(BackupConfig{Enabled: &yes}).IsEnabled() {
+		t.Error("explicit enabled:true must enable backup")
+	}
+}
+
 func TestBackupConfigDefaults(t *testing.T) {
 	// Unset → defaults 03:00 / 30 days.
 	var b BackupConfig

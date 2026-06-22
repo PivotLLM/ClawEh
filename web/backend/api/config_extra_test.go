@@ -11,7 +11,7 @@ import (
 )
 
 func TestHandleGetConfig_ReturnsConfig(t *testing.T) {
-	configPath, cleanup := setupOAuthTestEnv(t)
+	configPath, cleanup := setupTestEnv(t)
 	defer cleanup()
 
 	h := NewHandler(configPath)
@@ -49,7 +49,7 @@ func TestHandleGetConfig_UnreadableConfigReturns500(t *testing.T) {
 }
 
 func TestHandleUpdateConfig_InvalidJSONReturns400(t *testing.T) {
-	configPath, cleanup := setupOAuthTestEnv(t)
+	configPath, cleanup := setupTestEnv(t)
 	defer cleanup()
 
 	h := NewHandler(configPath)
@@ -67,7 +67,7 @@ func TestHandleUpdateConfig_InvalidJSONReturns400(t *testing.T) {
 }
 
 func TestHandleUpdateConfig_ValidationErrorReturns400(t *testing.T) {
-	configPath, cleanup := setupOAuthTestEnv(t)
+	configPath, cleanup := setupTestEnv(t)
 	defer cleanup()
 
 	h := NewHandler(configPath)
@@ -99,7 +99,7 @@ func TestHandleUpdateConfig_ValidationErrorReturns400(t *testing.T) {
 }
 
 func TestHandlePatchConfig_PartialUpdate(t *testing.T) {
-	configPath, cleanup := setupOAuthTestEnv(t)
+	configPath, cleanup := setupTestEnv(t)
 	defer cleanup()
 
 	h := NewHandler(configPath)
@@ -127,7 +127,7 @@ func TestHandlePatchConfig_PartialUpdate(t *testing.T) {
 }
 
 func TestHandlePatchConfig_InvalidJSONReturns400(t *testing.T) {
-	configPath, cleanup := setupOAuthTestEnv(t)
+	configPath, cleanup := setupTestEnv(t)
 	defer cleanup()
 
 	h := NewHandler(configPath)
@@ -145,7 +145,7 @@ func TestHandlePatchConfig_InvalidJSONReturns400(t *testing.T) {
 }
 
 func TestHandlePatchConfig_ValidationFailureReturns400(t *testing.T) {
-	configPath, cleanup := setupOAuthTestEnv(t)
+	configPath, cleanup := setupTestEnv(t)
 	defer cleanup()
 
 	h := NewHandler(configPath)

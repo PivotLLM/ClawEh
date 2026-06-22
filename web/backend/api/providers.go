@@ -25,7 +25,6 @@ type providerResponse struct {
 	BaseURL             string `json:"base_url,omitempty"`
 	APIKey              string `json:"api_key"`
 	Proxy               string `json:"proxy,omitempty"`
-	AuthMethod          string `json:"auth_method,omitempty"`
 	StrictCompat        bool   `json:"strict_compat,omitempty"`
 	NoParallelToolCalls bool   `json:"no_parallel_tool_calls,omitempty"`
 	ResponseFormatJSON  bool   `json:"response_format_json,omitempty"`
@@ -57,7 +56,6 @@ func (h *Handler) handleListProviders(w http.ResponseWriter, r *http.Request) {
 			BaseURL:             p.BaseURL,
 			APIKey:              maskAPIKey(p.APIKey),
 			Proxy:               p.Proxy,
-			AuthMethod:          p.AuthMethod,
 			StrictCompat:        p.StrictCompat,
 			NoParallelToolCalls: p.NoParallelToolCalls,
 			ResponseFormatJSON:  p.ResponseFormatJSON,

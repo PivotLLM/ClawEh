@@ -92,3 +92,12 @@ type TaskInspector interface {
 	// TaskList returns all tracked tasks for the owning agent.
 	TaskList() ([]TaskBrief, error)
 }
+
+// SyncRunner runs a task as a sub-agent (a copy of the agent with full tools) and
+// returns the worker's RAW content. Distinct from Spawner.Spawn's wait mode,
+// which returns a file pointer for the LLM; SyncRunner is for programmatic hosts
+// (e.g. an embedded orchestrator) that need the text. The same value injected as
+// Deps.Spawn satisfies both interfaces.
+type SyncRunner interface {
+	RunSync(ctx context.Context, task, model string) (string, error)
+}

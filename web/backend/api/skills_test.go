@@ -15,7 +15,7 @@ import (
 )
 
 func TestHandleListSkills(t *testing.T) {
-	configPath, cleanup := setupOAuthTestEnv(t)
+	configPath, cleanup := setupTestEnv(t)
 	defer cleanup()
 
 	cfg, err := config.LoadConfig(configPath)
@@ -115,7 +115,7 @@ func TestHandleListSkills(t *testing.T) {
 }
 
 func TestHandleGetSkill(t *testing.T) {
-	configPath, cleanup := setupOAuthTestEnv(t)
+	configPath, cleanup := setupTestEnv(t)
 	defer cleanup()
 
 	cfg, err := config.LoadConfig(configPath)
@@ -170,7 +170,7 @@ func TestHandleGetSkill(t *testing.T) {
 }
 
 func TestHandleGetSkillUsesResolvedPath(t *testing.T) {
-	configPath, cleanup := setupOAuthTestEnv(t)
+	configPath, cleanup := setupTestEnv(t)
 	defer cleanup()
 
 	cfg, err := config.LoadConfig(configPath)
@@ -223,7 +223,7 @@ func TestHandleGetSkillUsesResolvedPath(t *testing.T) {
 }
 
 func TestHandleImportSkill(t *testing.T) {
-	configPath, cleanup := setupOAuthTestEnv(t)
+	configPath, cleanup := setupTestEnv(t)
 	defer cleanup()
 
 	cfg, err := config.LoadConfig(configPath)
@@ -297,7 +297,7 @@ func TestHandleImportSkill(t *testing.T) {
 }
 
 func TestHandleDeleteSkill(t *testing.T) {
-	configPath, cleanup := setupOAuthTestEnv(t)
+	configPath, cleanup := setupTestEnv(t)
 	defer cleanup()
 
 	cfg, err := config.LoadConfig(configPath)

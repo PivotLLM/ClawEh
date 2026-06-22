@@ -88,10 +88,10 @@ type AgentMentionConfig struct {
 
 // SecurityConfig holds security-related configuration options.
 type SecurityConfig struct {
-	// CallbackPrefix is prepended to all messages received via the callback
+	// MessagePrefix is prepended to all messages received via the external-message
 	// endpoint before they reach the LLM. When empty, the global
-	// DefaultCallbackPrefix constant is used.
-	CallbackPrefix string `json:"callback_prefix,omitempty"`
+	// DefaultMessagePrefix constant is used.
+	MessagePrefix string `json:"message_prefix,omitempty"`
 }
 
 type Config struct {
@@ -226,13 +226,24 @@ type AgentConfig struct {
 	Skills      []string         `json:"skills,omitempty"`
 	Tools       []string         `json:"tools,omitempty"`
 	Subagents   *SubagentsConfig `json:"subagents,omitempty"`
-	Callback    *CallbackConfig  `json:"callback,omitempty"`
+	Message     *MessageConfig   `json:"message,omitempty"`
 	Temperature *float64         `json:"temperature,omitempty"`
 
 	// GlobalCron lets this agent create and manage cron jobs for OTHER agents
 	// (by passing their agent id). Off by default: an agent can only schedule for
 	// itself. Typically exactly one orchestrator agent has this.
 	GlobalCron bool `json:"global_cron,omitempty"`
+
+	// Maestro is an all-or-nothing toggle for the Maestro task-orchestration tool
+	// suite (projects, playbooks, tasks). Off by default. When on, the agent gets
+	// the entire Maestro toolset, with per-agent data under <workspace>/maestro.
+	Maestro bool `json:"maestro,omitempty"`
+
+	// Cogmem is an all-or-nothing toggle for the cognitive-memory tool suite and
+	// subsystem (prompt injection, archive hook, consolidation). It is an optional
+	// bool so the default is ON: nil (key absent) or true ⇒ enabled; false ⇒
+	// disabled. Gated as a unit, not via the per-tool allowlist.
+	Cogmem *bool `json:"cogmem,omitempty"`
 
 	// ShareCommon toggles the per-agent "common" shared-directory tools. nil or
 	// true (the default) exposes them; false withholds them from this agent.
@@ -318,13 +329,16 @@ func (a *AgentConfig) IsToolAllowed(name string) bool {
 	return MatchToolPattern(a.Tools, name)
 }
 
-// CognitiveMemoryEnabled reports whether this agent is allowed the cognitive-
-// memory tools. The subsystem activates for an agent only when that agent may
-// call the cogmem tools; "cogmem_domain_get" is used as the sentinel. Agents
-// that are not allowed cogmem tools get IDENTICAL behavior to before — no
-// prompt injection, no archive hook, no consolidation.
+// CognitiveMemoryEnabled reports whether the cognitive-memory suite + subsystem
+// (tools, prompt injection, archive hook, consolidation) is active for this
+// agent. It is the per-agent `cogmem` toggle, defaulting ON: nil or true ⇒
+// enabled; false ⇒ disabled. (Previously keyed off the per-tool allowlist; it is
+// now an all-or-nothing suite gated as a unit.)
 func (a *AgentConfig) CognitiveMemoryEnabled() bool {
-	return a.IsToolAllowed("cogmem_domain_get")
+	if a == nil {
+		return false
+	}
+	return a.Cogmem == nil || *a.Cogmem
 }
 
 type SubagentsConfig struct {
@@ -332,9 +346,9 @@ type SubagentsConfig struct {
 	Models      []string `json:"models,omitempty"`
 }
 
-// CallbackConfig controls the rotating-token callback system for an agent.
-// WindowMinutes==0 (or omitted) disables callbacks entirely.
-type CallbackConfig struct {
+// MessageConfig controls the rotating-token external-message system for an agent.
+// WindowMinutes==0 (or omitted) disables the endpoint entirely.
+type MessageConfig struct {
 	WindowMinutes int `json:"window_minutes"`
 	WindowCount   int `json:"window_count"`
 }
@@ -400,6 +414,39 @@ func (c *Config) AgentHasGlobalCron(agentID string) bool {
 		}
 	}
 	return false
+}
+
+// AgentHasMaestro reports whether the agent has the Maestro tool suite enabled.
+func (c *Config) AgentHasMaestro(agentID string) bool {
+	id := strings.TrimSpace(agentID)
+	for i := range c.Agents.List {
+		if strings.EqualFold(c.Agents.List[i].ID, id) {
+			return c.Agents.List[i].Maestro
+		}
+	}
+	return false
+}
+
+// AgentSuiteEnabled reports whether the named all-or-nothing tool suite is
+// enabled for the agent. Suites are gated as a unit by a per-agent flag rather
+// than the per-tool allowlist. cogmem defaults ON; maestro defaults OFF.
+func (c *Config) AgentSuiteEnabled(agentID, suite string) bool {
+	id := strings.TrimSpace(agentID)
+	for i := range c.Agents.List {
+		if strings.EqualFold(c.Agents.List[i].ID, id) {
+			a := &c.Agents.List[i]
+			switch suite {
+			case "maestro":
+				return a.Maestro
+			case "cogmem":
+				return a.CognitiveMemoryEnabled()
+			default:
+				return false
+			}
+		}
+	}
+	// Unknown agent: fall back to the suite default (cogmem on, others off).
+	return suite == "cogmem"
 }
 
 // CronTarget resolves the agent's default-channel delivery coordinates from its
@@ -883,9 +930,6 @@ type Provider struct {
 	BaseURL  string `json:"base_url,omitempty"`
 	APIKey   string `json:"api_key,omitempty"`
 	Proxy    string `json:"proxy,omitempty"`
-	// AuthMethod is how we authenticate to this endpoint: "" (api key), "oauth",
-	// or "token". OAuth is only meaningful for the anthropic protocol.
-	AuthMethod string `json:"auth_method,omitempty"`
 	// Endpoint-scoped openai-compat knobs.
 	StrictCompat        bool `json:"strict_compat,omitempty"`
 	NoParallelToolCalls bool `json:"no_parallel_tool_calls,omitempty"`
@@ -1431,12 +1475,21 @@ func (c *Config) CronPath() string {
 	return filepath.Join(c.dataDir, "cron")
 }
 
-// BackupConfig controls the optional nightly backup of key files (config.json
-// and the cron jobs file) into <data dir>/backup/YYYYMMDD/.
+// BackupConfig controls the nightly configuration backup of key files
+// (config.json and the cron jobs file) into <data dir>/backup/YYYYMMDD/.
 type BackupConfig struct {
-	Enabled    bool   `json:"enabled,omitempty"`     // off by default
+	// Enabled is on by default: nil (field absent) means enabled. Set an explicit
+	// false to turn the nightly backup off.
+	Enabled    *bool  `json:"enabled,omitempty"`
 	At         string `json:"at,omitempty"`          // "HH:MM" local time; default 03:00
 	RetainDays int    `json:"retain_days,omitempty"` // prune older day-folders; default 30
+}
+
+// IsEnabled reports whether the nightly configuration backup runs. It defaults
+// to true when unset, so an existing config without a backup block gets backups
+// without any edit; set "enabled": false to opt out.
+func (b BackupConfig) IsEnabled() bool {
+	return b.Enabled == nil || *b.Enabled
 }
 
 // BackupAt returns the configured run time as hour and minute, defaulting to
@@ -1540,12 +1593,12 @@ func IsCLIProtocol(protocol string) bool {
 
 // HasCredentials reports whether this provider carries enough to authenticate:
 // CLI providers always qualify (they auth out-of-band); HTTP providers need an
-// API key or an OAuth/token auth method.
+// API key.
 func (p *Provider) HasCredentials() bool {
 	if IsCLIProtocol(p.Protocol) {
 		return true
 	}
-	return p.APIKey != "" || p.AuthMethod != ""
+	return p.APIKey != ""
 }
 
 // GetProvider resolves a provider by name. The lookup is case-sensitive on the
