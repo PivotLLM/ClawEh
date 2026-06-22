@@ -46,6 +46,7 @@ ENDPOINT="${ENDPOINT:-/internal}"
 BEARER_ENDPOINT="${BEARER_ENDPOINT:-}"   # optional: bearer endpoint path (e.g. /mcp)
 PROBE_PATH="${PROBE_PATH:-probe}"
 SESSION_TOKEN="${SESSION_TOKEN:-}"
+SERVICE_TOKEN="${SERVICE_TOKEN:-}"   # optional: long-lived per-agent service token
 CONFIG_FILE="${CONFIG_FILE:-}"     # optional: path to config file for reload test
 GATEWAY_URL="${GATEWAY_URL:-}"     # optional: gateway base URL for /health and /ready checks
 FULL_URL="${SERVER_URL}${ENDPOINT}"
@@ -741,6 +742,44 @@ if [ -n "$BEARER_ENDPOINT" ] && [ -n "$SESSION_TOKEN" ]; then
         TIER2_FAIL=$((TIER2_FAIL + 1)); FAIL_COUNT=$((FAIL_COUNT + 1))
     fi
 fi  # end bearer tier
+
+################################################################################
+# TIER 4 — Service token (long-lived, headless). Exercises loadServiceTokens:
+# a token pre-seeded into the state file must work as a bearer on /mcp and as a
+# session_token parameter on /internal, resolving to the headless service
+# session. Runs only when SERVICE_TOKEN is set.
+################################################################################
+
+if [ -n "$SERVICE_TOKEN" ]; then
+    print_section "7. Service token (long-lived, headless)"
+
+    if [ -n "$BEARER_ENDPOINT" ]; then
+        echo "  7.1 service token works as a bearer on $BEARER_ENDPOINT"
+        st_b=$("$PROBE_PATH" -url "$BEARER_URL" -transport http \
+            -headers "Authorization:Bearer ${SERVICE_TOKEN}" \
+            -call "session_info" -params '{}' 2>&1)
+        if echo "$st_b" | grep -q "Tool call succeeded"; then
+            echo "    ${GREEN}PASS${NC}: service token accepted on bearer endpoint"
+            TIER2_PASS=$((TIER2_PASS + 1)); PASS_COUNT=$((PASS_COUNT + 1))
+        else
+            echo "    ${RED}FAIL${NC}: service token rejected on bearer endpoint"
+            echo "    Output: $st_b"
+            TIER2_FAIL=$((TIER2_FAIL + 1)); FAIL_COUNT=$((FAIL_COUNT + 1))
+        fi
+    fi
+
+    echo "  7.2 service token works as session_token on $ENDPOINT"
+    st_i=$("$PROBE_PATH" -url "$FULL_URL" -transport http \
+        -call "session_info" -params "$(printf '{"session_token":"%s"}' "$SERVICE_TOKEN")" 2>&1)
+    if echo "$st_i" | grep -q "Tool call succeeded"; then
+        echo "    ${GREEN}PASS${NC}: service token accepted as session_token parameter"
+        TIER2_PASS=$((TIER2_PASS + 1)); PASS_COUNT=$((PASS_COUNT + 1))
+    else
+        echo "    ${RED}FAIL${NC}: service token rejected as session_token parameter"
+        echo "    Output: $st_i"
+        TIER2_FAIL=$((TIER2_FAIL + 1)); FAIL_COUNT=$((FAIL_COUNT + 1))
+    fi
+fi  # end service-token tier
 
 ################################################################################
 # SECTION 5 — Config reload: MCP server recovers after config file change

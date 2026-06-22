@@ -71,9 +71,12 @@ at.
   (parameter on `/internal`, or `Authorization: Bearer` on `/mcp`).
 - A bearer token **is** a session token, just transported in the header — not a
   new credential type. The same `SST<64 hex>` value is accepted both ways.
-- Issuance is unchanged: `Issue()` mints per-session tokens; `Register()`
-  pre-mints a known token (already used for tests). For a `probe` run, register a
-  known token and hand it to `probe` as the bearer.
+- Issuance: `Issue()` mints per-session tokens; `Register()` pre-mints a known
+  token (used for tests); `RegisterService()` registers a long-lived per-agent
+  **service token** for the `/mcp` bearer endpoint — the natural fit for "one
+  identity per connection" — bound to a dedicated headless `agent:<id>:service`
+  session. See [service-tokens.md](service-tokens.md). For a `probe` run, register
+  a known token and hand it to `probe` as the bearer.
 - Cross-agent protection still applies: a token that resolves to one agent cannot
   act as another, on either endpoint.
 

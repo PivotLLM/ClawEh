@@ -30,6 +30,7 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/mcpserver"
 	"github.com/PivotLLM/ClawEh/pkg/media"
 	"github.com/PivotLLM/ClawEh/pkg/providers"
+	"github.com/PivotLLM/ClawEh/pkg/servicetoken"
 	"github.com/PivotLLM/ClawEh/pkg/state"
 	"github.com/PivotLLM/ClawEh/pkg/tools"
 	toolsagents "github.com/PivotLLM/ClawEh/pkg/tools/agents"
@@ -441,6 +442,11 @@ func startMCPServer(cfg *config.Config, agentLoop *agent.AgentLoop, msgBus *bus.
 		}
 	}
 
+	// Load persisted long-lived service tokens (claw token CLI) into the store.
+	// Runs at boot and on every config reload (this function rebuilds the server),
+	// so a freshly-minted token activates on the next restart or reload.
+	loadServiceTokens(cfg, agentLoop, srv)
+
 	logger.InfoCF("mcpserver", "MCP host started",
 		map[string]any{
 			"listen":       srv.Listen(),
@@ -449,6 +455,29 @@ func startMCPServer(cfg *config.Config, agentLoop *agent.AgentLoop, msgBus *bus.
 		})
 
 	return nil
+}
+
+// loadServiceTokens reads the persisted per-agent service tokens and registers
+// each against its agent's dedicated headless service session. Unknown agents
+// are skipped with a warning. Best effort: a missing/empty file is normal.
+func loadServiceTokens(cfg *config.Config, agentLoop *agent.AgentLoop, srv *mcpserver.MCPServer) {
+	path := servicetoken.Path(cfg.DataDir())
+	tokens, err := servicetoken.Load(path)
+	if err != nil {
+		logger.WarnCF("mcpserver", "failed to load service tokens; skipping",
+			map[string]any{"path": path, "error": err.Error()})
+		return
+	}
+	for _, agentID := range servicetoken.Agents(tokens) {
+		da, ok := agentLoop.GetRegistry().GetAgent(agentID)
+		if !ok || da == nil {
+			logger.WarnCF("mcpserver", "service token for unknown agent; skipping",
+				map[string]any{"agent": agentID})
+			continue
+		}
+		archiveDir := filepath.Join(da.Workspace, "sessions")
+		srv.SessionTokens().RegisterService(tokens[agentID], agentID, archiveDir)
+	}
 }
 
 // stopAndCleanupServices stops all services and cleans up resources

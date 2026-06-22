@@ -42,6 +42,7 @@ func TestNewClawCommand(t *testing.T) {
 		"model",
 		"skills",
 		"status",
+		"token",
 		"version",
 	}
 

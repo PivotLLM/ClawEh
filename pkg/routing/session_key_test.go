@@ -10,6 +10,18 @@ func TestBuildAgentMainSessionKey(t *testing.T) {
 	}
 }
 
+func TestBuildAgentServiceSessionKey(t *testing.T) {
+	got := BuildAgentServiceSessionKey("Sales Bot")
+	want := "agent:sales-bot:service"
+	if got != want {
+		t.Errorf("BuildAgentServiceSessionKey('Sales Bot') = %q, want %q", got, want)
+	}
+	// A service session must be a PRIMARY key so PrimaryOnly tools (Maestro) run.
+	if IsSubagentSessionKey(got) {
+		t.Errorf("service session key %q must not be classified as a subagent key", got)
+	}
+}
+
 func TestBuildAgentMainSessionKey_Normalizes(t *testing.T) {
 	got := BuildAgentMainSessionKey("Sales Bot")
 	want := "agent:sales-bot:main"

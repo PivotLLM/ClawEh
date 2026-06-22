@@ -429,31 +429,30 @@ Two options are available in the `logging` config block:
 
 When `dump_refusals` is `true` and the response is a refusal, only the refusal dump is written — `dump_all` does not also fire for the same response.
 
-## Callback endpoint
+## External message endpoint
 
-ClawEh provides an optional per-agent HTTP endpoint that allows external processes — MCP servers, scripts, spawned subprocesses — to deliver messages to an agent without a persistent channel connection. The agent receives the message on its last active channel and responds normally.
+ClawEh provides an optional per-agent HTTP endpoint that lets external processes deliver a message into an agent's active conversation without a persistent channel connection. The agent receives the message on its last active channel and responds normally.
 
 ```
-POST http://localhost:18790/api/reply/{token}
+POST http://localhost:18790/api/message/{token}
 ```
 
-Enable it per agent in the config or via the web console under **Agents**:
+The rotating per-agent token is configured under **Agents** (`callback.window_minutes` / `window_count`). It is **not** injected into the agent's prompt — the endpoint is reserved for operator/integration use and a future "notify an agent" feature.
 
-```json
-{
-  "id": "alice",
-  "callback": {
-    "window_minutes": 30,
-    "window_count": 2
-  }
-}
+> **Security notice:** plain HTTP, bound to `127.0.0.1` only. Do not expose it externally.
+
+## Service tokens (long-lived MCP credentials)
+
+For an external MCP client that needs to drive an agent's tools — most notably **Maestro** — on a stable footing, mint a long-lived per-agent **service token**. Unlike the per-session token (which rotates, idles out after 2h, and dies on restart), a service token persists until you revoke it.
+
+```
+claw token issue  <agent>   # mint (or replace) and print the agent's service token
+claw token rotate <agent>   # replace the existing token
+claw token revoke <agent>   # remove it
+claw token list             # list agents that have one (tokens are not shown)
 ```
 
-When enabled, the current token is injected into the agent's system prompt (marked confidential) so the agent can pass it to subprocesses or MCP servers that need to call back.
-
-> **Security notice:** This endpoint is plain HTTP, bound to `127.0.0.1` only. Do not expose it externally. See [docs/callback.md](docs/callback.md) for full details.
-
-See [docs/callback.md](docs/callback.md) for configuration reference, token rotation, routing behaviour, and troubleshooting.
+Use the token as an `Authorization: Bearer` header on `/mcp`, or as the `session_token` parameter on `/internal` — both resolve identically. A service token is **headless and isolated**: it resolves to a dedicated `agent:<id>:service` session, so it cannot read the agent's real conversations, and a tool's user-facing output is dropped (only the model-facing result returns to the caller). Tokens are stored at `$CLAW_HOME/state/service-tokens.json` (`0o600`); restart the gateway (or trigger a config reload) to activate a change. See [docs/service-tokens.md](docs/service-tokens.md).
 
 ## Context management
 

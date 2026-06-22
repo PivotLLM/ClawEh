@@ -42,6 +42,15 @@ func BuildAgentMainSessionKey(agentID string) string {
 	return fmt.Sprintf("agent:%s:%s", NormalizeAgentID(agentID), DefaultMainKey)
 }
 
+// BuildAgentServiceSessionKey returns "agent:<agentId>:service" — the dedicated,
+// headless session a long-lived MCP service token resolves to. It is a primary
+// session key (not a subagent key), so PrimaryOnly tools run, and it is distinct
+// from any conversation session, so service-token callers cannot read the
+// agent's real conversations. See docs/service-tokens.md.
+func BuildAgentServiceSessionKey(agentID string) string {
+	return fmt.Sprintf("agent:%s:service", NormalizeAgentID(agentID))
+}
+
 // BuildAgentPeerSessionKey constructs a session key based on agent, channel, peer, and DM scope.
 func BuildAgentPeerSessionKey(params SessionKeyParams) string {
 	agentID := NormalizeAgentID(params.AgentID)

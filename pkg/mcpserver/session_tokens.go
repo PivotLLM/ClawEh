@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/PivotLLM/ClawEh/pkg/logger"
+	"github.com/PivotLLM/ClawEh/pkg/routing"
 )
 
 // sessionTokenPrefix is the magic literal at the start of every session token.
@@ -37,12 +38,14 @@ const sessionTokenCrossAgentMessage = "session_token does not belong to the call
 // message via SetSource. Empty values mean no user channel is bound — the
 // MCP publish step silently drops in that case.
 type sessionRecord struct {
-	agentID     string
-	sessionKey  string
-	archiveDir  string
-	channel     string
-	chatID      string
-	isTestToken bool // true for tokens registered via Register(); never rotated by Issue()
+	agentID    string
+	sessionKey string
+	archiveDir string
+	channel    string
+	chatID     string
+	// pinned marks a token that Issue() must never rotate away: registered test
+	// tokens (Register) and long-lived per-agent service tokens (RegisterService).
+	pinned bool
 }
 
 // sessionTokenStore maps SST<64hex> tokens to session records.
@@ -80,12 +83,12 @@ func (s *sessionTokenStore) Issue(agentID, sessionKey, archiveDir string) string
 
 	rec := sessionRecord{agentID: agentID, sessionKey: sessionKey, archiveDir: archiveDir}
 
-	// If a test token is already registered for this session key, preserve it —
-	// test tokens are pinned for the lifetime of the test run and must not be
-	// rotated by normal session activity. Return the existing token so the caller
-	// (getContextManager) can store it in the system prompt if needed.
+	// If a pinned token is already registered for this session key, preserve it —
+	// pinned tokens (test + service tokens) must not be rotated by normal session
+	// activity. Return the existing token so the caller (getContextManager) can
+	// store it in the system prompt if needed.
 	if old, ok := s.bySess[sessionKey]; ok {
-		if s.tokens[old].isTestToken {
+		if s.tokens[old].pinned {
 			return old
 		}
 		// Preserve the last-known inbound source (channel/chatID) across rotation
@@ -117,9 +120,33 @@ func (s *sessionTokenStore) Register(token, agentID, sessionKey, archiveDir stri
 		delete(s.tokens, old)
 	}
 
-	rec := sessionRecord{agentID: agentID, sessionKey: sessionKey, archiveDir: archiveDir, isTestToken: true}
+	rec := sessionRecord{agentID: agentID, sessionKey: sessionKey, archiveDir: archiveDir, pinned: true}
 	s.tokens[token] = rec
 	s.bySess[sessionKey] = token
+}
+
+// RegisterService registers a long-lived per-agent service token bound to the
+// agent's dedicated headless service session (agent:<id>:service). Like Register
+// it is pinned (never rotated by Issue); unlike a conversation token it is never
+// evicted, because no ContextManager ever uses the service session key. The
+// caller supplies the exact token (minted/persisted by the `claw token` CLI).
+func (s *sessionTokenStore) RegisterService(token, agentID, archiveDir string) {
+	sessionKey := routing.BuildAgentServiceSessionKey(agentID)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if old, ok := s.bySess[sessionKey]; ok {
+		delete(s.tokens, old)
+	}
+	s.tokens[token] = sessionRecord{
+		agentID:    agentID,
+		sessionKey: sessionKey,
+		archiveDir: archiveDir,
+		pinned:     true,
+	}
+	s.bySess[sessionKey] = token
+	logger.InfoCF("mcpserver", "service token registered",
+		map[string]any{"agent": agentID, "session": sessionKey})
 }
 
 // SetSource records the most recent inbound user-message source (channel +

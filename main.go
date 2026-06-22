@@ -22,6 +22,7 @@ import (
 	"github.com/PivotLLM/ClawEh/internal/skills"
 	"github.com/PivotLLM/ClawEh/internal/status"
 	"github.com/PivotLLM/ClawEh/internal/test"
+	"github.com/PivotLLM/ClawEh/internal/token"
 	"github.com/PivotLLM/ClawEh/internal/version"
 	"github.com/PivotLLM/ClawEh/pkg/global"
 )
@@ -52,6 +53,7 @@ func NewClawCommand(binaryName string) *cobra.Command {
 		memory.NewMemoryCommand(),
 		model.NewModelCommand(),
 		test.NewTestCommand(),
+		token.NewTokenCommand(),
 		version.NewVersionCommand(),
 	)
 
