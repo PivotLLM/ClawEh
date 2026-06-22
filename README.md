@@ -2,6 +2,11 @@
 
 ## What's New
 
+### Maestro integration
+Maestro (https://github.com/PivotLLM/Maestro) has been refactored and integrated
+directly into ClawEh for better performance, easier configuration, and agent isolation.
+It remains available as a stand-alone stdio MCP service.
+
 ### Improved context compression
 Context compression (summarizing older conversation so long sessions stay within
 the model's context window) has been significantly improved for reliability and
