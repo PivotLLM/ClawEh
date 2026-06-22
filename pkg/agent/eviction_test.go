@@ -45,6 +45,9 @@ func (m *trackingContextManager) SetSessionToken(_ string)   {}
 func (m *trackingContextManager) Build(_ context.Context) ([]providers.Message, error) {
 	return nil, nil
 }
+func (m *trackingContextManager) SweepEvictions(_ context.Context) []llmcontext.EvictionEvent {
+	return nil
+}
 func (m *trackingContextManager) Compact(_ context.Context) error                    { return nil }
 func (m *trackingContextManager) LastCompactionReport() *llmcontext.CompactionReport { return nil }
 func (m *trackingContextManager) RenderedSummary() string                            { return "" }

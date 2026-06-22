@@ -21,6 +21,15 @@ stand-alone stdio MCP service for use outside ClawEh.
 
 For more about Maestro, see https://github.com/PivotLLM/Maestro.
 
+### Context eviction
+A per-turn, LLM-free sweep keeps long sessions inside the context window by
+collapsing **re-retrievable** tool results — file reads, web fetches — to a short
+placeholder once the agent has moved on. Because the source can always be fetched
+again, eviction is reversible: the only cost of dropping a stale read is a
+re-read, never lost work. It runs before every model dispatch so the window
+rarely fills enough to trigger summarization compaction at all. On by default and
+tunable per agent; see [docs/context-eviction.md](docs/context-eviction.md).
+
 ### Improved context compression
 Context compression (summarizing older conversation so long sessions stay within
 the model's context window) has been significantly improved for reliability and

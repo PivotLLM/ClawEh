@@ -1896,6 +1896,19 @@ func toolCallSignature(calls []providers.ToolCall) string {
 }
 
 // runLLMIteration executes the LLM call loop with tool handling.
+// evictionNotifyUser reports whether the agent's resolved eviction policy has
+// notify_user enabled, so the loop can surface a one-line notice per eviction.
+// The DEBUG log of evictions is unconditional and happens inside the sweep.
+func (al *AgentLoop) evictionNotifyUser(agent *AgentInstance) bool {
+	cfg := al.GetConfig()
+	p := llmcontext.DefaultEvictionPolicy()
+	applyEvictionConfig(&p, cfg.Agents.Defaults.ContextEviction)
+	if agent != nil && agent.Config != nil {
+		applyEvictionConfig(&p, agent.Config.ContextEviction)
+	}
+	return p.NotifyUser
+}
+
 func (al *AgentLoop) runLLMIteration(
 	ctx context.Context,
 	agent *AgentInstance,
@@ -1973,6 +1986,28 @@ func (al *AgentLoop) runLLMIteration(
 		}
 		if agent.NoTools {
 			providerToolDefs = nil
+		}
+
+		// Per-turn context eviction sweep (LLM-free): collapse stale, superseded,
+		// or oversized re-retrievable tool results (file reads, web fetches) in the
+		// live window to a placeholder. Runs before PreDispatchCheck so cheap
+		// eviction relieves window pressure first and summarization compaction
+		// fires far less often. Every eviction is DEBUG-logged inside the sweep;
+		// when the agent's policy has notify_user on, a one-line notice is also
+		// surfaced in the conversation.
+		if events := cm.SweepEvictions(ctx); len(events) > 0 {
+			if rebuilt, berr := cm.Build(ctx); berr == nil {
+				messages = rebuilt
+			}
+			if opts.Channel != "" && al.evictionNotifyUser(agent) {
+				for _, ev := range events {
+					_ = al.bus.PublishOutbound(ctx, bus.OutboundMessage{
+						Channel: opts.Channel,
+						ChatID:  opts.ChatID,
+						Content: ev.String(),
+					})
+				}
+			}
 		}
 
 		// Run pre-dispatch compression check. If tool-call messages or tool results

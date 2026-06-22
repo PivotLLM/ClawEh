@@ -275,6 +275,27 @@ type AgentConfig struct {
 	SummaryMaxCount            *int     `json:"summary_max_count,omitempty"`
 	SummaryRetentionDays       *int     `json:"summary_retention_days,omitempty"`
 	ArchiveContentMaxBytes     *int     `json:"archive_content_max_bytes,omitempty"`
+
+	// ContextEviction overrides the per-turn tool-result eviction policy for
+	// this agent. Unset fields fall back to the defaults block, then to the
+	// built-in defaults.
+	ContextEviction *ContextEvictionConfig `json:"context_eviction,omitempty"`
+}
+
+// ContextEvictionConfig controls the per-turn, LLM-free eviction sweep that
+// collapses re-retrievable tool results (file reads, web fetches) in the live
+// window to a placeholder so long sessions rarely trigger summarization
+// compaction. All fields are pointers so a per-agent block overrides the
+// defaults block field by field; an unset field falls back to the built-in
+// default (see llmcontext.DefaultEvictionPolicy).
+type ContextEvictionConfig struct {
+	Enabled      *bool `json:"enabled,omitempty"`       // nil => enabled
+	ProtectTurns *int  `json:"protect_turns,omitempty"` // nil => 3
+	LargeTurns   *int  `json:"large_turns,omitempty"`   // nil => 5
+	LargeSize    *int  `json:"large_size,omitempty"`    // nil => 4096 bytes
+	EvictTurns   *int  `json:"evict_turns,omitempty"`   // nil => 10
+	BudgetBytes  *int  `json:"budget_bytes,omitempty"`  // nil => derived (~40% of window)
+	NotifyUser   *bool `json:"notify_user,omitempty"`   // nil => off
 }
 
 // IsEnabled returns true if the agent is enabled (nil means enabled by default).
@@ -562,6 +583,10 @@ type AgentDefaults struct {
 	SummaryRetentionDays       int      `json:"summary_retention_days,omitempty"        env:"CLAW_AGENTS_DEFAULTS_SUMMARY_RETENTION_DAYS"`
 	ArchiveContentMaxBytes     int      `json:"archive_content_max_bytes,omitempty"     env:"CLAW_AGENTS_DEFAULTS_ARCHIVE_CONTENT_MAX_BYTES"`
 	DefaultTools               []string `json:"default_tools,omitempty"`
+
+	// ContextEviction is the default per-turn tool-result eviction policy
+	// (overridable per agent via AgentConfig.ContextEviction).
+	ContextEviction *ContextEvictionConfig `json:"context_eviction,omitempty"`
 
 	// Memory is the default cognitive-memory config applied to agents allowed
 	// the cogmem tools (overridable per agent via AgentConfig.Memory).
