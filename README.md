@@ -2,10 +2,24 @@
 
 ## What's New
 
-### Maestro integration
-Maestro (https://github.com/PivotLLM/Maestro) has been refactored and integrated
-directly into ClawEh for better performance, easier configuration, and agent isolation.
-It remains available as a stand-alone stdio MCP service.
+### Maestro is now built in
+Maestro — a task-orchestration system — is now built directly into ClawEh rather
+than a separate service you bolt on. It lets an agent break large, repeatable, or
+multi-step work into structured **projects**, reusable **playbooks**, and **task
+lists**, then run them with resumable state, retries, QA, and aggregated
+reporting — instead of trying to hold the whole job in a single conversation.
+
+Because it's built in, each Maestro task runs as one of the agent's own
+**sub-agents** (its models, its tools, a fresh context), its data lives under the
+agent's workspace, and there is nothing extra to install or run — just flip a
+single per-agent toggle. The result is better performance, simpler configuration,
+and clean per-agent isolation.
+
+Maestro was refactored to make this work — ClawEh (the host) now owns model
+selection and task dispatch — and the upstream project remains available as a
+stand-alone stdio MCP service for use outside ClawEh.
+
+For more about Maestro, see https://github.com/PivotLLM/Maestro.
 
 ### Improved context compression
 Context compression (summarizing older conversation so long sessions stay within
