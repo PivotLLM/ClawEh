@@ -38,17 +38,23 @@ func rebuildSharedHTTPServer(services *gatewayServices, host string, port int, c
 	services.HealthServer = health.NewServer(host, port)
 	mux := buildMergedMux(services.WebServer)
 	cm.RegisterHandlers(mux, services.HealthServer)
-	RegisterCallbackRoute(services.HealthServer, al)
+	RegisterMessageRoute(services.HealthServer, al)
 	swapper.SetMux(mux)
 }
 
-// RegisterCallbackRoute registers POST /api/reply/{token} on the shared HTTP
-// server. It must be called both during initial gateway boot and after every
-// config reload, because restartServices rebuilds the shared mux from scratch
-// — without re-registration the route silently disappears and every callback
-// returns 404. Returns 401 when no valid token is found.
-func RegisterCallbackRoute(server *health.Server, agentLoop *agent.AgentLoop) {
-	server.Handle("POST /api/reply/{token}", func(w http.ResponseWriter, r *http.Request) {
+// RegisterMessageRoute registers POST /api/message/{token} on the shared HTTP
+// server: an authenticated way for an external party to deliver a message into
+// an agent's active conversation. It must be called both during initial gateway
+// boot and after every config reload, because restartServices rebuilds the
+// shared mux from scratch — without re-registration the route silently
+// disappears and every request returns 404. Returns 401 when no valid token is
+// found.
+//
+// The token is a rotating per-agent token (pkg/callback). Today the agent is not
+// told about it, so the endpoint is dormant; it exists so a future "notify an
+// agent" feature can use it without re-deriving this delivery path.
+func RegisterMessageRoute(server *health.Server, agentLoop *agent.AgentLoop) {
+	server.Handle("POST /api/message/{token}", func(w http.ResponseWriter, r *http.Request) {
 		token := r.PathValue("token")
 
 		body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
@@ -64,17 +70,17 @@ func RegisterCallbackRoute(server *health.Server, agentLoop *agent.AgentLoop) {
 
 		agentID, ok := agentLoop.ValidateCallbackToken(token)
 		if !ok {
-			logger.WarnCF("callback", "Rejected callback with invalid or expired token",
+			logger.WarnCF("message", "Rejected external message with invalid or expired token",
 				map[string]any{"remote_addr": r.RemoteAddr, "body_len": len(content)})
 			http.Error(w, "invalid or expired token", http.StatusUnauthorized)
 			return
 		}
 
-		logger.InfoCF("callback", "Accepted callback",
+		logger.InfoCF("message", "Accepted external message",
 			map[string]any{"agent": agentID, "remote_addr": r.RemoteAddr, "body_len": len(content)})
 
 		if err := agentLoop.HandleCallbackMessage(r.Context(), agentID, content); err != nil {
-			logger.WarnCF("callback", "Failed to deliver callback message",
+			logger.WarnCF("message", "Failed to deliver external message",
 				map[string]any{"agent": agentID, "error": err.Error()})
 			http.Error(w, "failed to deliver message", http.StatusInternalServerError)
 			return

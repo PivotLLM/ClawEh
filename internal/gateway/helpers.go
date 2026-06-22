@@ -412,7 +412,6 @@ func startMCPServer(cfg *config.Config, agentLoop *agent.AgentLoop, msgBus *bus.
 
 	srv, err := mcpserver.New(
 		mcpserver.WithAgentRegistries(agentRegistries),
-		mcpserver.WithAgentTokens(agentLoop.AgentTokens()),
 		mcpserver.WithAgentWorkspaces(agentWorkspaces),
 		mcpserver.WithListen(cfg.MCPHost.Listen),
 		mcpserver.WithEndpointPath(cfg.MCPHost.EndpointPath),

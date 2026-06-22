@@ -12,7 +12,7 @@ import (
 	webserver "github.com/PivotLLM/ClawEh/web/backend"
 )
 
-// hitCallback POSTs to /api/reply/{token} via the external mux that
+// hitCallback POSTs to /api/message/{token} via the external mux that
 // health.Server's Handle propagates to, returning the response status.
 //
 // We use an empty body on purpose: the handler short-circuits with 400
@@ -20,29 +20,29 @@ import (
 // distinguish "route registered" (400) from "route missing" (404).
 func hitCallback(t *testing.T, mux *http.ServeMux) int {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodPost, "/api/reply/sometoken", bytes.NewReader(nil))
+	req := httptest.NewRequest(http.MethodPost, "/api/message/sometoken", bytes.NewReader(nil))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	return rec.Code
 }
 
-// TestRegisterCallbackRoute_RouteIsRegistered verifies that calling
-// RegisterCallbackRoute makes /api/reply/{token} reachable on the shared mux.
-func TestRegisterCallbackRoute_RouteIsRegistered(t *testing.T) {
+// TestRegisterMessageRoute_RouteIsRegistered verifies that calling
+// RegisterMessageRoute makes /api/message/{token} reachable on the shared mux.
+func TestRegisterMessageRoute_RouteIsRegistered(t *testing.T) {
 	server := health.NewServer("127.0.0.1", 0)
 	mux := http.NewServeMux()
 	server.RegisterOnMux(mux)
 
-	RegisterCallbackRoute(server, nil)
+	RegisterMessageRoute(server, nil)
 
 	if got := hitCallback(t, mux); got != http.StatusBadRequest {
-		t.Fatalf("after RegisterCallbackRoute: got status %d, want %d (empty-body 400 indicates route is registered)", got, http.StatusBadRequest)
+		t.Fatalf("after RegisterMessageRoute: got status %d, want %d (empty-body 400 indicates route is registered)", got, http.StatusBadRequest)
 	}
 }
 
 // TestCallbackRouteSurvivesServerRebuild is the regression test for the
 // config-reload 404 bug: handleConfigReload → restartServices rebuilds the
-// shared health.Server from scratch. If RegisterCallbackRoute is not called
+// shared health.Server from scratch. If RegisterMessageRoute is not called
 // on the new server, every callback returns 404 even though tokens are still
 // valid. This test simulates that lifecycle.
 func TestCallbackRouteSurvivesServerRebuild(t *testing.T) {
@@ -50,7 +50,7 @@ func TestCallbackRouteSurvivesServerRebuild(t *testing.T) {
 	bootServer := health.NewServer("127.0.0.1", 0)
 	bootMux := http.NewServeMux()
 	bootServer.RegisterOnMux(bootMux)
-	RegisterCallbackRoute(bootServer, nil)
+	RegisterMessageRoute(bootServer, nil)
 	if got := hitCallback(t, bootMux); got != http.StatusBadRequest {
 		t.Fatalf("boot: got status %d, want %d", got, http.StatusBadRequest)
 	}
@@ -64,12 +64,12 @@ func TestCallbackRouteSurvivesServerRebuild(t *testing.T) {
 		t.Fatalf("fresh server without registration: got status %d, want %d (this status would indicate the bug is no longer reproducible — re-evaluate the test)", got, http.StatusNotFound)
 	}
 
-	// Reload, step 2: restartServices now calls RegisterCallbackRoute on the
+	// Reload, step 2: restartServices now calls RegisterMessageRoute on the
 	// rebuilt server, so the route returns.
 	reloadedServer := health.NewServer("127.0.0.1", 0)
 	reloadedMux := http.NewServeMux()
 	reloadedServer.RegisterOnMux(reloadedMux)
-	RegisterCallbackRoute(reloadedServer, nil)
+	RegisterMessageRoute(reloadedServer, nil)
 	if got := hitCallback(t, reloadedMux); got != http.StatusBadRequest {
 		t.Fatalf("reloaded server with registration: got status %d, want %d", got, http.StatusBadRequest)
 	}
@@ -103,9 +103,9 @@ func (f *fakeMuxSwapper) SetMux(mux *http.ServeMux) { f.mux = mux }
 // guard against the e32731eb mutation: directly exercises the seam that
 // restartServices uses to rebuild the shared HTTP server, and asserts that
 // the callback route is reachable on the rebuilt mux. If the
-// RegisterCallbackRoute call is removed from rebuildSharedHTTPServer (or any
+// RegisterMessageRoute call is removed from rebuildSharedHTTPServer (or any
 // future refactor stops calling it from the reload path), this test fails
-// because POST /api/reply/{token} returns 404 instead of 400.
+// because POST /api/message/{token} returns 404 instead of 400.
 func TestRebuildSharedHTTPServer_RegistersCallbackRoute(t *testing.T) {
 	services := &gatewayServices{}
 	fake := &fakeChannelManager{}
@@ -150,7 +150,7 @@ func hitGET(t *testing.T, mux *http.ServeMux, path string) *httptest.ResponseRec
 // The point is to guard against a future refactor that "rebuilds" the shared
 // mux on reload but forgets to re-register one of:
 //
-//   - POST /api/reply/{token} — the canonical callback-404 regression (the
+//   - POST /api/message/{token} — the canonical callback-404 regression (the
 //     gateway-side bug fixed in e32731eb).
 //   - GET /api/gateway/logs — a representative WebUI API route; if missing
 //     the WebUI loses backend connectivity for log streaming.
@@ -184,10 +184,10 @@ func TestRebuildSharedHTTPServer_MergedBinaryRoutesSurviveReload(t *testing.T) {
 		t.Fatal("rebuildSharedHTTPServer did not invoke RegisterHandlers on the channel manager")
 	}
 
-	// /api/reply/{token} — empty body short-circuits to 400, proving the
+	// /api/message/{token} — empty body short-circuits to 400, proving the
 	// route is registered (404 would mean the merge dropped it).
 	if got := hitCallback(t, fake.mux); got != http.StatusBadRequest {
-		t.Fatalf("POST /api/reply/{token}: got %d, want %d (route missing — reload dropped the callback handler)", got, http.StatusBadRequest)
+		t.Fatalf("POST /api/message/{token}: got %d, want %d (route missing — reload dropped the callback handler)", got, http.StatusBadRequest)
 	}
 
 	// /api/gateway/logs — a representative WebUI API route surviving reload.

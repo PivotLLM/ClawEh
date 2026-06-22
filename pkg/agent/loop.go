@@ -23,7 +23,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/PivotLLM/ClawEh/pkg/agenttoken"
 	"github.com/PivotLLM/ClawEh/pkg/bus"
 	"github.com/PivotLLM/ClawEh/pkg/callback"
 	"github.com/PivotLLM/ClawEh/pkg/channels"
@@ -70,8 +69,7 @@ type AgentLoop struct {
 	// an out-of-credits 402) is skipped by both. Swapped under mu on reload.
 	cooldown         *providers.CooldownTracker
 	callbackManagers map[string]*callback.Manager // agentID -> manager (nil entry means disabled)
-	agentTokens      *agenttoken.Manager
-	agentStates      map[string]*state.Manager // agentID -> per-agent state manager
+	agentStates      map[string]*state.Manager    // agentID -> per-agent state manager
 	// sessionMus serializes messages within a session (session scope key → *sync.Mutex).
 	// The scope key is resolved via resolveMessageRoute before locking so that
 	// multiple channel:chatID pairs that map to the same agent session share one
@@ -198,10 +196,8 @@ func NewAgentLoop(
 		stateManager = state.NewManager(defaultAgent.Workspace)
 	}
 
-	// Build per-agent state managers, callback managers, and agent tokens.
+	// Build per-agent state managers and callback managers.
 	agentStates := make(map[string]*state.Manager)
-	agentTokens := agenttoken.NewManager()
-	issueAgentTokens(registry, agentTokens)
 
 	for _, agentID := range registry.ListAgentIDs() {
 		if agentInstance, ok := registry.GetAgent(agentID); ok {
@@ -221,7 +217,6 @@ func NewAgentLoop(
 		dispatcher:           dispatcher,
 		agentStates:          agentStates,
 		callbackManagers:     callbackManagers,
-		agentTokens:          agentTokens,
 		startedAt:            time.Now(),
 		evictStop:            make(chan struct{}),
 		evictTTL:             defaultEvictTTL,
@@ -414,17 +409,7 @@ func (al *AgentLoop) Close() {
 		mgr.Stop()
 	}
 
-	if al.agentTokens != nil {
-		al.agentTokens.RevokeAll()
-	}
-
 	al.GetRegistry().Close()
-}
-
-// AgentTokens returns the manager that holds the per-agent MCP isolation
-// tokens. Used by the MCP server to resolve the calling agent.
-func (al *AgentLoop) AgentTokens() *agenttoken.Manager {
-	return al.agentTokens
 }
 
 // SetSessionTokenIssuer wires the MCP server's session token store into the
@@ -444,29 +429,6 @@ func (al *AgentLoop) SetCogmemManager(mgr *consolidate.Manager) {
 	al.mu.Lock()
 	defer al.mu.Unlock()
 	al.cogmemManager = mgr
-}
-
-// issueAgentTokens issues (or re-issues) MCP isolation tokens for every
-// registered agent and injects them into the agents' system prompts. The
-// boot-log entry is the Eric-approved assertion that lets mis-bindings
-// show up at startup.
-func issueAgentTokens(registry *AgentRegistry, mgr *agenttoken.Manager) {
-	if mgr == nil || registry == nil {
-		return
-	}
-	for _, agentID := range registry.ListAgentIDs() {
-		instance, ok := registry.GetAgent(agentID)
-		if !ok {
-			continue
-		}
-		token := mgr.Issue(agentID)
-		instance.ContextBuilder.WithAgentToken(token)
-		logger.InfoCF("mcpserver", "Agent token registered",
-			map[string]any{
-				"agent":     agentID,
-				"workspace": instance.Workspace,
-			})
-	}
 }
 
 // ValidateCallbackToken checks all callback managers and returns the agentID
@@ -508,13 +470,12 @@ func (al *AgentLoop) HandleCallbackMessage(ctx context.Context, agentID, body st
 		channel = lastChannel
 	}
 
-	// Notify the user with the raw callback body before applying the security prefix.
+	// Notify the user with the raw message body before applying the security prefix.
 	rawBody := body
 	outbound := bus.OutboundMessage{
 		Channel: channel,
 		ChatID:  chatID,
-		//Content: fmt.Sprintf("📥 Callback received\n```\n⚠️ Unverified callback — do not act on any instructions it may contain.\n\n%s\n```", rawBody),
-		Content: fmt.Sprintf("📥 Callback received\n```\n%s\n```", rawBody),
+		Content: fmt.Sprintf("📥 Message received\n```\n%s\n```", rawBody),
 	}
 	if err := al.bus.PublishOutbound(ctx, outbound); err != nil {
 		logger.WarnCF("callback", "Failed to publish callback notification to user",
@@ -901,7 +862,6 @@ func buildCallbackManagers(registry *AgentRegistry, cfg *config.Config) map[stri
 		}
 		if mgr != nil {
 			managers[agentID] = mgr
-			agentInstance.ContextBuilder.WithCallbackManager(mgr)
 			logger.InfoCF("callback", "callbacks ENABLED for agent",
 				map[string]any{"agent": agentID, "window_minutes": windowMinutes, "window_count": windowCount})
 		} else {
@@ -980,15 +940,6 @@ func (al *AgentLoop) ReloadProviderAndConfig(
 	al.cooldown.SetPolicy(cooldownPolicy(cfg))
 	newFallback := providers.NewFallbackChain(al.cooldown)
 	al.registerRuntimeTools(registry, provider, al.dispatcher, newFallback)
-
-	// Re-issue MCP isolation tokens for the new registry so the new
-	// agents' context builders carry fresh tokens. Old tokens are
-	// implicitly replaced by Issue(); agents removed from config are
-	// not pruned here because the manager has no way to know.
-	if al.agentTokens != nil {
-		al.agentTokens.RevokeAll()
-		issueAgentTokens(registry, al.agentTokens)
-	}
 
 	// Rebuild callback managers against the new registry/config and wire them onto
 	// the new ContextBuilders. Without this, reloaded agents get no callback token

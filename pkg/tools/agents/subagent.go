@@ -16,7 +16,7 @@ import (
 )
 
 // subagentSystemPrompt returns the system prompt installed in every
-// sub-agent. The agenttoken.SubagentSentinel is injected as the agent_token
+// sub-agent. The agenttoken.SubagentSentinel is injected as the session_token
 // for defense-in-depth: if the sub-agent attempts to invoke any mcp__claw__*
 // tool, the MCP server recognizes the sentinel and refuses the call.
 func subagentSystemPrompt() string {
@@ -26,11 +26,11 @@ After completing the task, provide a clear summary of what was done.
 
 ---
 
-# Agent Token
+# Session Token
 
-The following token is the sub-agent sentinel. Every `+"`mcp__claw__*`"+` tool call MUST include the literal string below as the `+"`agent_token`"+` parameter. The MCP server will refuse those calls — sub-agents are not granted claw MCP access; use the harness filesystem tools against your assigned working directory.
+The following token is the sub-agent sentinel. Every `+"`mcp__claw__*`"+` tool call MUST include the literal string below as the `+"`session_token`"+` parameter. The MCP server will refuse those calls — sub-agents are not granted claw MCP access; use the harness filesystem tools against your assigned working directory.
 
-agent_token: %s`, agenttoken.SubagentSentinel)
+session_token: %s`, agenttoken.SubagentSentinel)
 }
 
 type SubagentManager struct {

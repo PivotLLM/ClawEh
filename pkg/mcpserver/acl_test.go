@@ -9,7 +9,6 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/PivotLLM/ClawEh/pkg/agenttoken"
 	"github.com/PivotLLM/ClawEh/pkg/mcpserver/acl"
 	"github.com/PivotLLM/ClawEh/pkg/tools"
 )
@@ -167,12 +166,8 @@ func TestNew_WithACLPolicyInjectsCustomPolicy(t *testing.T) {
 	rf := &mockTool{name: "read_file", params: map[string]any{}, result: tools.NewToolResult("ok")}
 	r := newRegistryWith(rf)
 
-	tm := agenttoken.NewManager()
-	tm.Issue("alice")
-
 	srv, err := New(
 		WithAgentRegistries(map[string]*tools.ToolRegistry{"alice": r}),
-		WithAgentTokens(tm),
 		WithAllowlist([]string{"*"}),
 		WithACLPolicy(policy),
 	)

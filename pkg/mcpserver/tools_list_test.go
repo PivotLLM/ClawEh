@@ -10,7 +10,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/PivotLLM/ClawEh/pkg/agenttoken"
 	"github.com/PivotLLM/ClawEh/pkg/tools"
 )
 
@@ -67,16 +66,11 @@ func TestToolsList_ReturnsFullCatalogueRegardlessOfToken(t *testing.T) {
 	bobRF := &mockTool{name: "read_file", params: map[string]any{}, result: tools.NewToolResult("b")}
 	bobLD := &mockTool{name: "list_dir", params: map[string]any{}, result: tools.NewToolResult("b")}
 
-	tm := agenttoken.NewManager()
-	aliceTok := tm.Issue("alice")
-	tm.Issue("bob")
-
 	srv, err := New(
 		WithAgentRegistries(map[string]*tools.ToolRegistry{
 			"alice": newRegistryWith(aliceRF, aliceWF),
 			"bob":   newRegistryWith(bobRF, bobLD),
 		}),
-		WithAgentTokens(tm),
 		WithAllowlist([]string{"*"}),
 	)
 	if err != nil {
@@ -90,8 +84,8 @@ func TestToolsList_ReturnsFullCatalogueRegardlessOfToken(t *testing.T) {
 		params map[string]any
 	}{
 		{"no token", map[string]any{}},
-		{"unknown token", map[string]any{"agent_token": agenttoken.Prefix + strings.Repeat("a", 64)}},
-		{"valid token", map[string]any{"agent_token": aliceTok}},
+		{"unknown token", map[string]any{"session_token": "SST" + strings.Repeat("a", 64)}},
+		{"some token", map[string]any{"session_token": "SST" + strings.Repeat("b", 64)}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -111,10 +105,8 @@ func TestToolsList_NeverEmitsToolCallLogs(t *testing.T) {
 	defer restore()
 
 	rf := &mockTool{name: "read_file", params: map[string]any{}, result: tools.NewToolResult("ok")}
-	tm := agenttoken.NewManager()
 	srv, err := New(
 		WithAgentRegistries(map[string]*tools.ToolRegistry{"alice": newRegistryWith(rf)}),
-		WithAgentTokens(tm),
 		WithAllowlist([]string{"*"}),
 	)
 	if err != nil {
@@ -122,7 +114,7 @@ func TestToolsList_NeverEmitsToolCallLogs(t *testing.T) {
 	}
 
 	_ = listedToolNames(t, srv, map[string]any{})
-	_ = listedToolNames(t, srv, map[string]any{"agent_token": "AGTbogus"})
+	_ = listedToolNames(t, srv, map[string]any{"session_token": "SSTbogus"})
 
 	logs := buf.String()
 	for _, marker := range []string{

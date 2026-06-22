@@ -33,7 +33,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/PivotLLM/ClawEh/pkg/agenttoken"
 	"github.com/PivotLLM/ClawEh/pkg/bus"
 	"github.com/PivotLLM/ClawEh/pkg/global"
 	"github.com/PivotLLM/ClawEh/pkg/logger"
@@ -67,7 +66,6 @@ type MCPServer struct {
 	endpointPath    string // bearer endpoint (/mcp)
 	internalPath    string // session-token-parameter endpoint (/internal)
 
-	tokens        *agenttoken.Manager
 	sessionTokens *sessionTokenStore // SST-prefixed per-session tokens for session-scoped tools
 	workspaces    map[string]string  // agentID → workspace (for boot/first-call logging)
 	policy        acl.Policy         // per-agent tools/call ACL; defaults to acl.Default
@@ -102,12 +100,6 @@ func WithAgentRegistries(registries map[string]*tools.ToolRegistry) Option {
 			m.agentRegistries[k] = v
 		}
 	}
-}
-
-// WithAgentTokens supplies the token manager that resolves the
-// `agent_token` call parameter to an agent ID. Required.
-func WithAgentTokens(t *agenttoken.Manager) Option {
-	return func(m *MCPServer) { m.tokens = t }
 }
 
 // WithAgentWorkspaces supplies the agentID → workspace map. Used only
@@ -188,9 +180,6 @@ func New(opts ...Option) (*MCPServer, error) {
 		opt(m)
 	}
 
-	if m.tokens == nil {
-		return nil, errors.New("mcpserver: agent-token manager is required")
-	}
 	if len(m.agentRegistries) == 0 {
 		return nil, errors.New("mcpserver: at least one agent registry is required")
 	}

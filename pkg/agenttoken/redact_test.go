@@ -9,8 +9,7 @@ import (
 )
 
 func TestRedact_ReplacesRealTokens(t *testing.T) {
-	m := NewManager()
-	tok := m.Issue("alice")
+	tok := "SST" + strings.Repeat("a", 64)
 
 	in := "leaked token: " + tok + " and more"
 	out := Redact(in)
@@ -34,9 +33,8 @@ func TestRedact_PreservesSentinel(t *testing.T) {
 }
 
 func TestRedact_HandlesMultipleTokens(t *testing.T) {
-	m := NewManager()
-	a := m.Issue("alice")
-	b := m.Issue("bob")
+	a := "AGT" + strings.Repeat("a", 64)
+	b := "SST" + strings.Repeat("b", 64)
 	in := a + " " + b + " " + SubagentSentinel
 	out := Redact(in)
 	if strings.Contains(out, a) || strings.Contains(out, b) {
