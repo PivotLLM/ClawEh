@@ -25,14 +25,14 @@ type muxSwapper interface {
 }
 
 // rebuildSharedHTTPServer builds a new shared health.Server, populates a fresh
-// mux with the merged WebUI routes, channel webhook handlers, and the callback
+// mux with the merged WebUI routes, channel webhook handlers, and the message
 // route, then atomically swaps it into the gateway's httpHost. The listener
 // itself is NEVER recreated here — that lives in httpHost across reloads, so
 // in-flight WebUI WebSocket connections survive a config reload.
 //
 // Both setupAndStartServices (boot) and restartServices (config reload) go
-// through this seam so neither the callback route nor the WebUI's /api/*
-// routes can disappear after a reload — the callback-404 bug fixed in
+// through this seam so neither the message route nor the WebUI's /api/*
+// routes can disappear after a reload — the route-disappears 404 bug fixed in
 // e32731eb is the canonical regression.
 func rebuildSharedHTTPServer(services *gatewayServices, host string, port int, cm handlerRegistrar, swapper muxSwapper, al *agent.AgentLoop) {
 	services.HealthServer = health.NewServer(host, port)
@@ -50,7 +50,7 @@ func rebuildSharedHTTPServer(services *gatewayServices, host string, port int, c
 // disappears and every request returns 404. Returns 401 when no valid token is
 // found.
 //
-// The token is a rotating per-agent token (pkg/callback). Today the agent is not
+// The token is a rotating per-agent token (pkg/msgtoken). Today the agent is not
 // told about it, so the endpoint is dormant; it exists so a future "notify an
 // agent" feature can use it without re-deriving this delivery path.
 func RegisterMessageRoute(server *health.Server, agentLoop *agent.AgentLoop) {
@@ -68,7 +68,7 @@ func RegisterMessageRoute(server *health.Server, agentLoop *agent.AgentLoop) {
 			return
 		}
 
-		agentID, ok := agentLoop.ValidateCallbackToken(token)
+		agentID, ok := agentLoop.ValidateMessageToken(token)
 		if !ok {
 			logger.WarnCF("message", "Rejected external message with invalid or expired token",
 				map[string]any{"remote_addr": r.RemoteAddr, "body_len": len(content)})
@@ -79,7 +79,7 @@ func RegisterMessageRoute(server *health.Server, agentLoop *agent.AgentLoop) {
 		logger.InfoCF("message", "Accepted external message",
 			map[string]any{"agent": agentID, "remote_addr": r.RemoteAddr, "body_len": len(content)})
 
-		if err := agentLoop.HandleCallbackMessage(r.Context(), agentID, content); err != nil {
+		if err := agentLoop.HandleExternalMessage(r.Context(), agentID, content); err != nil {
 			logger.WarnCF("message", "Failed to deliver external message",
 				map[string]any{"agent": agentID, "error": err.Error()})
 			http.Error(w, "failed to deliver message", http.StatusInternalServerError)

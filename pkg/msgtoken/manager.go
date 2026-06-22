@@ -1,4 +1,4 @@
-package callback
+package msgtoken
 
 import (
 	"crypto/rand"
@@ -13,7 +13,7 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/logger"
 )
 
-// Token represents a single rotating callback token with an expiry time.
+// Token represents a single rotating message token with an expiry time.
 type Token struct {
 	Value     string `json:"value"`
 	ExpiresAt int64  `json:"expires_at"` // unix timestamp
@@ -25,8 +25,8 @@ type Store struct {
 	NextRotationAt int64   `json:"next_rotation_at"` // unix timestamp
 }
 
-// Manager manages rotating callback tokens for a single agent.
-// A nil Manager indicates that callbacks are disabled for that agent.
+// Manager manages rotating message tokens for a single agent.
+// A nil Manager indicates that the message endpoint is disabled for that agent.
 type Manager struct {
 	agentID       string
 	windowMinutes int
@@ -38,9 +38,9 @@ type Manager struct {
 	done          chan struct{}
 }
 
-// NewManager creates or loads a callback Manager for the given agent.
+// NewManager creates or loads a message-token Manager for the given agent.
 //
-// If windowMinutes == 0, callbacks are disabled: any existing store file at
+// If windowMinutes == 0, the message endpoint is disabled: any existing store file at
 // storePath is removed and (nil, nil) is returned.
 //
 // If windowMinutes > 0, an existing store is loaded, stale tokens are pruned,
@@ -51,7 +51,7 @@ func NewManager(agentID, storePath string, windowMinutes, windowCount int) (*Man
 		// Disabled: clean up any leftover store file.
 		if _, err := os.Stat(storePath); err == nil {
 			if err := os.Remove(storePath); err != nil {
-				logger.WarnCF("callback", "Failed to remove disabled callback store",
+				logger.WarnCF("message", "Failed to remove disabled message-token store",
 					map[string]any{"agent": agentID, "path": storePath, "error": err.Error()})
 			}
 		}
@@ -70,7 +70,7 @@ func NewManager(agentID, storePath string, windowMinutes, windowCount int) (*Man
 	// Load existing store if present.
 	if data, err := os.ReadFile(storePath); err == nil {
 		if err := json.Unmarshal(data, &m.store); err != nil {
-			logger.WarnCF("callback", "Failed to parse callback store, starting fresh",
+			logger.WarnCF("message", "Failed to parse message-token store, starting fresh",
 				map[string]any{"agent": agentID, "error": err.Error()})
 			m.store = Store{}
 		}
@@ -122,7 +122,7 @@ func NewManager(agentID, storePath string, windowMinutes, windowCount int) (*Man
 func (m *Manager) rotate() {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
-		logger.WarnCF("callback", "Failed to generate token",
+		logger.WarnCF("message", "Failed to generate token",
 			map[string]any{"agent": m.agentID, "error": err.Error()})
 		return
 	}
@@ -139,7 +139,7 @@ func (m *Manager) rotate() {
 	nextRotation := time.Now().Unix() + int64(m.windowMinutes*60)
 	m.store.NextRotationAt = nextRotation
 
-	logger.InfoCF("callback", "Token rotated",
+	logger.InfoCF("message", "Token rotated",
 		map[string]any{"agent": m.agentID, "next_rotation": nextRotation})
 }
 
@@ -159,20 +159,20 @@ func (m *Manager) pruneExpired() {
 // save writes the store atomically to disk. Must be called with m.mu held.
 func (m *Manager) save() error {
 	if err := os.MkdirAll(filepath.Dir(m.storePath), 0o700); err != nil {
-		logger.WarnCF("callback", "Failed to create callback store directory",
+		logger.WarnCF("message", "Failed to create message-token store directory",
 			map[string]any{"agent": m.agentID, "error": err.Error()})
 		return err
 	}
 
 	data, err := json.Marshal(m.store)
 	if err != nil {
-		logger.WarnCF("callback", "Failed to marshal callback store",
+		logger.WarnCF("message", "Failed to marshal message-token store",
 			map[string]any{"agent": m.agentID, "error": err.Error()})
 		return err
 	}
 
 	if err := fileutil.WriteFileAtomic(m.storePath, data, 0o600); err != nil {
-		logger.WarnCF("callback", "Failed to write callback store",
+		logger.WarnCF("message", "Failed to write message-token store",
 			map[string]any{"agent": m.agentID, "error": err.Error()})
 		return err
 	}

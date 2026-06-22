@@ -314,7 +314,7 @@ This application assumes that messages sent to assistants come from an authorize
 
 When enabling tools, including connecting MCP servers, users must carefully consider the security and privacy implications. Granting an assistant access to sensitive systems or data can have severe consequences if that assistant is exposed beyond the intended user. For example, giving an assistant access to email and then accidentally allowing anyone on Telegram to interact with it could have catastrophic privacy and security consequences. The same principle applies to file systems, shells, calendars, internal APIs, and any other connected capability.
 
-ClawEh includes an http callback mechanism that is disabled by default. When enabled for an individual agent, this feature provides the assistant with a callback URL that can be used to send the assistant a message. If used, the callback will be sent to the agent through it's standard communication channel. If this feature is used, care must be used to avoid it being used for malicious purposes. 
+ClawEh includes an HTTP external-message endpoint that is disabled by default. When enabled for an individual agent, an authenticated external process can deliver a message into the agent's active conversation (`POST /api/message/{token}`); the agent then responds on its standard communication channel. If this feature is used, care must be taken to avoid it being abused for malicious purposes. See [docs/external-messages.md](docs/external-messages.md).
 
 Users should also understand that data made available to an assistant through connected tools and services may contain malicious or misleading content. Content from email, chat systems, documents, web pages, issue trackers, or other data sources could potentially be interpreted or acted on by the assistant as if it were an instruction. It is the user's responsibility to ensure that they fully understand the risks, that appropriate security controls are in place, and that, where necessary, appropriate testing has been conducted.
 
@@ -437,7 +437,7 @@ ClawEh provides an optional per-agent HTTP endpoint that lets external processes
 POST http://localhost:18790/api/message/{token}
 ```
 
-The rotating per-agent token is configured under **Agents** (`callback.window_minutes` / `window_count`). It is **not** injected into the agent's prompt — the endpoint is reserved for operator/integration use and a future "notify an agent" feature. See [docs/external-messages.md](docs/external-messages.md).
+The rotating per-agent token is configured under **Agents** (`message.window_minutes` / `window_count`). It is **not** injected into the agent's prompt — the endpoint is reserved for operator/integration use and a future "notify an agent" feature. See [docs/external-messages.md](docs/external-messages.md).
 
 > **Security notice:** plain HTTP, bound to `127.0.0.1` only. Do not expose it externally.
 

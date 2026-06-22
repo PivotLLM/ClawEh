@@ -1,4 +1,4 @@
-package callback
+package msgtoken
 
 import (
 	"encoding/json"
@@ -25,7 +25,7 @@ func writeFakeStore(t *testing.T, path string, s Store) {
 
 func TestNewManager_Disabled_ReturnsNil(t *testing.T) {
 	dir := t.TempDir()
-	storePath := filepath.Join(dir, "state", "callback.json")
+	storePath := filepath.Join(dir, "state", "message-tokens.json")
 
 	mgr, err := NewManager("alice", storePath, 0, 0)
 	if err != nil {
@@ -39,7 +39,7 @@ func TestNewManager_Disabled_ReturnsNil(t *testing.T) {
 
 func TestNewManager_Disabled_CleansUpFile(t *testing.T) {
 	dir := t.TempDir()
-	storePath := filepath.Join(dir, "state", "callback.json")
+	storePath := filepath.Join(dir, "state", "message-tokens.json")
 
 	// Pre-create a store file.
 	writeFakeStore(t, storePath, Store{
@@ -63,7 +63,7 @@ func TestNewManager_Disabled_CleansUpFile(t *testing.T) {
 
 func TestNewManager_CreatesInitialToken(t *testing.T) {
 	dir := t.TempDir()
-	storePath := filepath.Join(dir, "state", "callback.json")
+	storePath := filepath.Join(dir, "state", "message-tokens.json")
 
 	mgr, err := NewManager("alice", storePath, 5, 3)
 	if err != nil {
@@ -90,7 +90,7 @@ func TestNewManager_CreatesInitialToken(t *testing.T) {
 
 func TestValidate_ValidToken(t *testing.T) {
 	dir := t.TempDir()
-	storePath := filepath.Join(dir, "state", "callback.json")
+	storePath := filepath.Join(dir, "state", "message-tokens.json")
 
 	mgr, err := NewManager("alice", storePath, 5, 3)
 	if err != nil || mgr == nil {
@@ -106,7 +106,7 @@ func TestValidate_ValidToken(t *testing.T) {
 
 func TestValidate_InvalidToken(t *testing.T) {
 	dir := t.TempDir()
-	storePath := filepath.Join(dir, "state", "callback.json")
+	storePath := filepath.Join(dir, "state", "message-tokens.json")
 
 	mgr, err := NewManager("alice", storePath, 5, 3)
 	if err != nil || mgr == nil {
@@ -121,7 +121,7 @@ func TestValidate_InvalidToken(t *testing.T) {
 
 func TestValidate_ExpiredToken(t *testing.T) {
 	dir := t.TempDir()
-	storePath := filepath.Join(dir, "state", "callback.json")
+	storePath := filepath.Join(dir, "state", "message-tokens.json")
 
 	// Write a store with an already-expired token.
 	writeFakeStore(t, storePath, Store{
@@ -145,7 +145,7 @@ func TestValidate_ExpiredToken(t *testing.T) {
 
 func TestValidate_MultipleWindowsOfTokens(t *testing.T) {
 	dir := t.TempDir()
-	storePath := filepath.Join(dir, "state", "callback.json")
+	storePath := filepath.Join(dir, "state", "message-tokens.json")
 
 	// Seed three valid tokens simulating windowCount=3.
 	futureExpiry := time.Now().Add(15 * time.Minute).Unix()
@@ -175,7 +175,7 @@ func TestValidate_MultipleWindowsOfTokens(t *testing.T) {
 
 func TestRestart_PreservesExistingTokens(t *testing.T) {
 	dir := t.TempDir()
-	storePath := filepath.Join(dir, "state", "callback.json")
+	storePath := filepath.Join(dir, "state", "message-tokens.json")
 
 	// First run — create manager, capture token.
 	mgr1, err := NewManager("alice", storePath, 60, 3)
@@ -200,7 +200,7 @@ func TestRestart_PreservesExistingTokens(t *testing.T) {
 
 func TestPruning_RemovesExpiredTokens(t *testing.T) {
 	dir := t.TempDir()
-	storePath := filepath.Join(dir, "state", "callback.json")
+	storePath := filepath.Join(dir, "state", "message-tokens.json")
 
 	// Seed one expired and one valid token; rotation is not yet due.
 	writeFakeStore(t, storePath, Store{

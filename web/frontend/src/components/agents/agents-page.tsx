@@ -12,7 +12,7 @@ import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 
-interface CallbackConfig {
+interface MessageConfig {
   window_minutes: number
   window_count: number
 }
@@ -25,7 +25,7 @@ interface AgentEntry {
   models?: string[]
   skills?: string[]
   tools?: string[]
-  callback?: CallbackConfig | null
+  message?: MessageConfig | null
   temperature?: number
   summarization_models?: string[]
   share_common?: boolean
@@ -70,7 +70,7 @@ function asNumber(value: unknown, defaultVal = 0): number {
 function parseAgent(value: unknown): AgentEntry {
   const r = asRecord(value)
   const enabledRaw = r.enabled
-  const cbRaw = asRecord(r.callback)
+  const cbRaw = asRecord(r.message)
   const cbMins = asNumber(cbRaw.window_minutes)
   return {
     id: asString(r.id),
@@ -80,7 +80,7 @@ function parseAgent(value: unknown): AgentEntry {
     models: asArray(r.models).map(asString).filter(Boolean),
     skills: asArray(r.skills).map(asString).filter(Boolean),
     tools: asArray(r.tools).map(asString).filter(Boolean),
-    callback: cbMins > 0 ? { window_minutes: cbMins, window_count: asNumber(cbRaw.window_count) || 2 } : null,
+    message: cbMins > 0 ? { window_minutes: cbMins, window_count: asNumber(cbRaw.window_count) || 2 } : null,
     temperature: typeof r.temperature === "number" ? r.temperature : undefined,
     summarization_models: asArray(r.summarization_models).map(asString).filter(Boolean),
     share_common: r.share_common === false ? false : true,
@@ -220,8 +220,8 @@ interface AgentCardProps {
   availableSkills: SkillInfo[]
   availableTools: AgentToolCatalogResponse
   models: ModelInfo[]
-  callbackWindowMinutes?: number
-  callbackWindowCount?: number
+  messageWindowMinutes?: number
+  messageWindowCount?: number
   temperature?: number
   summarizationModels?: string[]
   shareCommon?: boolean
@@ -234,7 +234,7 @@ interface AgentCardProps {
   onModelsChange: (models: string[]) => void
   onSkillsChange: (skills: string[]) => void
   onToolsChange: (tools: string[]) => void
-  onCallbackChange?: (mins: number, count: number) => void
+  onMessageChange?: (mins: number, count: number) => void
   onTemperatureChange?: (t: number | undefined) => void
   onSummarizationModelsChange?: (models: string[]) => void
   onShareCommonChange?: (share: boolean) => void
@@ -255,8 +255,8 @@ function AgentCard({
   availableSkills,
   availableTools,
   models,
-  callbackWindowMinutes = 0,
-  callbackWindowCount = 2,
+  messageWindowMinutes = 0,
+  messageWindowCount = 2,
   temperature = undefined,
   summarizationModels = [],
   shareCommon = true,
@@ -269,7 +269,7 @@ function AgentCard({
   onModelsChange,
   onSkillsChange,
   onToolsChange,
-  onCallbackChange,
+  onMessageChange,
   onTemperatureChange = undefined,
   onSummarizationModelsChange = undefined,
   onShareCommonChange = undefined,
@@ -387,35 +387,35 @@ function AgentCard({
         </div>
       )}
 
-      {onCallbackChange !== undefined && (
+      {onMessageChange !== undefined && (
         <div className="space-y-1.5">
-          <p className="text-muted-foreground text-xs font-medium">Callback token</p>
+          <p className="text-muted-foreground text-xs font-medium">External message token</p>
           <div className="flex items-center gap-2">
             <Input
               type="number"
               min={0}
-              value={callbackWindowMinutes}
-              onChange={(e) => onCallbackChange(Math.max(0, parseInt(e.target.value) || 0), callbackWindowCount)}
+              value={messageWindowMinutes}
+              onChange={(e) => onMessageChange(Math.max(0, parseInt(e.target.value) || 0), messageWindowCount)}
               className="w-20 h-7 text-xs"
             />
             <span className="text-muted-foreground text-xs">min window (0 = disabled)</span>
           </div>
-          {callbackWindowMinutes > 0 && (
+          {messageWindowMinutes > 0 && (
             <div className="flex items-center gap-2">
               <Input
                 type="number"
                 min={1}
-                value={callbackWindowCount}
-                onChange={(e) => onCallbackChange(callbackWindowMinutes, Math.max(1, parseInt(e.target.value) || 1))}
+                value={messageWindowCount}
+                onChange={(e) => onMessageChange(messageWindowMinutes, Math.max(1, parseInt(e.target.value) || 1))}
                 className="w-20 h-7 text-xs"
               />
               <span className="text-muted-foreground text-xs">windows retained</span>
             </div>
           )}
-          {callbackWindowMinutes > 0 && (
+          {messageWindowMinutes > 0 && (
             <p className="text-muted-foreground text-xs">
-              Token valid for {callbackWindowMinutes * callbackWindowCount} min. Endpoint:{" "}
-              <span className="font-mono">POST /api/reply/&#123;token&#125;</span>
+              Token valid for {messageWindowMinutes * messageWindowCount} min. Endpoint:{" "}
+              <span className="font-mono">POST /api/message/&#123;token&#125;</span>
             </p>
           )}
         </div>
@@ -665,8 +665,8 @@ export function AgentsPage() {
         ...(a.models && a.models.length > 0 ? { models: a.models } : {}),
         ...(a.skills && a.skills.length > 0 ? { skills: a.skills } : {}),
         tools: a.tools ?? [],
-        callback: a.callback && a.callback.window_minutes > 0
-          ? { window_minutes: a.callback.window_minutes, window_count: a.callback.window_count }
+        message: a.message && a.message.window_minutes > 0
+          ? { window_minutes: a.message.window_minutes, window_count: a.message.window_count }
           : null,
         ...(a.temperature !== undefined ? { temperature: a.temperature } : {}),
         ...(a.summarization_models && a.summarization_models.length > 0
@@ -680,14 +680,14 @@ export function AgentsPage() {
     },
   })
 
-  const handleSaveAgent = async (index: number, models: string[], skills: string[], tools: string[], callbackMins: number, callbackCount: number, temperature: number | undefined, summarizationModels: string[], shareCommon: boolean) => {
+  const handleSaveAgent = async (index: number, models: string[], skills: string[], tools: string[], messageMins: number, messageCount: number, temperature: number | undefined, summarizationModels: string[], shareCommon: boolean) => {
     const list = [...(agentsCfg.list ?? [])]
     list[index] = {
       ...list[index],
       models: models.length > 0 ? models : undefined,
       skills: skills.length > 0 ? skills : undefined,
       tools: tools,
-      callback: callbackMins > 0 ? { window_minutes: callbackMins, window_count: callbackCount } : null,
+      message: messageMins > 0 ? { window_minutes: messageMins, window_count: messageCount } : null,
       temperature,
       summarization_models: summarizationModels.length > 0 ? summarizationModels : undefined,
       share_common: shareCommon,
@@ -855,7 +855,7 @@ export function AgentsPage() {
   const [agentModelsEdits, setAgentModelsEdits] = useState<string[][]>([])
   const [agentSkillsEdits, setAgentSkillsEdits] = useState<string[][]>([])
   const [agentToolsEdits, setAgentToolsEdits] = useState<string[][]>([])
-  const [agentCallbackEdits, setAgentCallbackEdits] = useState<Array<{ mins: number; count: number }>>([])
+  const [agentMessageEdits, setAgentMessageEdits] = useState<Array<{ mins: number; count: number }>>([])
   const [agentTemperatureEdits, setAgentTemperatureEdits] = useState<Array<number | undefined>>([])
   const [agentSummarizationEdits, setAgentSummarizationEdits] = useState<string[][]>([])
   const [agentShareCommonEdits, setAgentShareCommonEdits] = useState<boolean[]>([])
@@ -867,9 +867,9 @@ export function AgentsPage() {
     setAgentModelsEdits((agentsCfg.list ?? []).map((a) => a.models ?? []))
     setAgentSkillsEdits((agentsCfg.list ?? []).map((a) => a.skills ?? []))
     setAgentToolsEdits((agentsCfg.list ?? []).map((a) => a.tools ?? []))
-    setAgentCallbackEdits((agentsCfg.list ?? []).map((a) => ({
-      mins: a.callback?.window_minutes ?? 0,
-      count: a.callback?.window_count ?? 2,
+    setAgentMessageEdits((agentsCfg.list ?? []).map((a) => ({
+      mins: a.message?.window_minutes ?? 0,
+      count: a.message?.window_count ?? 2,
     })))
     setAgentTemperatureEdits((agentsCfg.list ?? []).map((a) => a.temperature))
     setAgentSummarizationEdits((agentsCfg.list ?? []).map((a) => a.summarization_models ?? []))
@@ -882,7 +882,7 @@ export function AgentsPage() {
     agentModelsEdits,
     agentSkillsEdits,
     agentToolsEdits,
-    agentCallbackEdits,
+    agentMessageEdits,
     agentTemperatureEdits,
     agentSummarizationEdits,
     agentShareCommonEdits,
@@ -891,7 +891,7 @@ export function AgentsPage() {
     agentModelsEdits,
     agentSkillsEdits,
     agentToolsEdits,
-    agentCallbackEdits,
+    agentMessageEdits,
     agentTemperatureEdits,
     agentSummarizationEdits,
     agentShareCommonEdits,
@@ -908,8 +908,8 @@ export function AgentsPage() {
         L.agentModelsEdits[index] ?? [],
         L.agentSkillsEdits[index] ?? [],
         L.agentToolsEdits[index] ?? [],
-        L.agentCallbackEdits[index]?.mins ?? 0,
-        L.agentCallbackEdits[index]?.count ?? 2,
+        L.agentMessageEdits[index]?.mins ?? 0,
+        L.agentMessageEdits[index]?.count ?? 2,
         L.agentTemperatureEdits[index],
         L.agentSummarizationEdits[index] ?? [],
         L.agentShareCommonEdits[index] ?? true,
@@ -963,8 +963,8 @@ export function AgentsPage() {
                   availableSkills={availableSkills}
                   availableTools={availableTools}
                   models={models}
-                  callbackWindowMinutes={agentCallbackEdits[i]?.mins ?? 0}
-                  callbackWindowCount={agentCallbackEdits[i]?.count ?? 2}
+                  messageWindowMinutes={agentMessageEdits[i]?.mins ?? 0}
+                  messageWindowCount={agentMessageEdits[i]?.count ?? 2}
                   temperature={agentTemperatureEdits[i]}
                   onToggleEnabled={() => handleToggleAgent(i)}
                   onModelsChange={(m) => {
@@ -991,8 +991,8 @@ export function AgentsPage() {
                     })
                     scheduleSaveAgent(i)
                   }}
-                  onCallbackChange={(mins, count) => {
-                    setAgentCallbackEdits((prev) => {
+                  onMessageChange={(mins, count) => {
+                    setAgentMessageEdits((prev) => {
                       const next = [...prev]
                       next[i] = { mins, count }
                       return next

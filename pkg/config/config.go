@@ -88,10 +88,10 @@ type AgentMentionConfig struct {
 
 // SecurityConfig holds security-related configuration options.
 type SecurityConfig struct {
-	// CallbackPrefix is prepended to all messages received via the callback
+	// MessagePrefix is prepended to all messages received via the external-message
 	// endpoint before they reach the LLM. When empty, the global
-	// DefaultCallbackPrefix constant is used.
-	CallbackPrefix string `json:"callback_prefix,omitempty"`
+	// DefaultMessagePrefix constant is used.
+	MessagePrefix string `json:"message_prefix,omitempty"`
 }
 
 type Config struct {
@@ -226,7 +226,7 @@ type AgentConfig struct {
 	Skills      []string         `json:"skills,omitempty"`
 	Tools       []string         `json:"tools,omitempty"`
 	Subagents   *SubagentsConfig `json:"subagents,omitempty"`
-	Callback    *CallbackConfig  `json:"callback,omitempty"`
+	Message     *MessageConfig   `json:"message,omitempty"`
 	Temperature *float64         `json:"temperature,omitempty"`
 
 	// GlobalCron lets this agent create and manage cron jobs for OTHER agents
@@ -346,9 +346,9 @@ type SubagentsConfig struct {
 	Models      []string `json:"models,omitempty"`
 }
 
-// CallbackConfig controls the rotating-token callback system for an agent.
-// WindowMinutes==0 (or omitted) disables callbacks entirely.
-type CallbackConfig struct {
+// MessageConfig controls the rotating-token external-message system for an agent.
+// WindowMinutes==0 (or omitted) disables the endpoint entirely.
+type MessageConfig struct {
 	WindowMinutes int `json:"window_minutes"`
 	WindowCount   int `json:"window_count"`
 }

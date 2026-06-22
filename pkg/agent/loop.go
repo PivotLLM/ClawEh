@@ -24,7 +24,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/PivotLLM/ClawEh/pkg/bus"
-	"github.com/PivotLLM/ClawEh/pkg/callback"
 	"github.com/PivotLLM/ClawEh/pkg/channels"
 	"github.com/PivotLLM/ClawEh/pkg/cogmem/consolidate"
 	cogmemstore "github.com/PivotLLM/ClawEh/pkg/cogmem/store"
@@ -37,6 +36,7 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/logger"
 	"github.com/PivotLLM/ClawEh/pkg/media"
 	"github.com/PivotLLM/ClawEh/pkg/memory"
+	"github.com/PivotLLM/ClawEh/pkg/msgtoken"
 	"github.com/PivotLLM/ClawEh/pkg/providers"
 	"github.com/PivotLLM/ClawEh/pkg/routing"
 	"github.com/PivotLLM/ClawEh/pkg/state"
@@ -67,9 +67,9 @@ type AgentLoop struct {
 	// cooldown is the shared per-model cooldown tracker used by BOTH the main
 	// fallback chain and the compaction path, so a model parked by either (e.g.
 	// an out-of-credits 402) is skipped by both. Swapped under mu on reload.
-	cooldown         *providers.CooldownTracker
-	callbackManagers map[string]*callback.Manager // agentID -> manager (nil entry means disabled)
-	agentStates      map[string]*state.Manager    // agentID -> per-agent state manager
+	cooldown        *providers.CooldownTracker
+	messageManagers map[string]*msgtoken.Manager // agentID -> manager (nil entry means disabled)
+	agentStates     map[string]*state.Manager    // agentID -> per-agent state manager
 	// sessionMus serializes messages within a session (session scope key → *sync.Mutex).
 	// The scope key is resolved via resolveMessageRoute before locking so that
 	// multiple channel:chatID pairs that map to the same agent session share one
@@ -196,7 +196,7 @@ func NewAgentLoop(
 		stateManager = state.NewManager(defaultAgent.Workspace)
 	}
 
-	// Build per-agent state managers and callback managers.
+	// Build per-agent state managers and message-token managers.
 	agentStates := make(map[string]*state.Manager)
 
 	for _, agentID := range registry.ListAgentIDs() {
@@ -204,7 +204,7 @@ func NewAgentLoop(
 			agentStates[agentID] = state.NewManager(agentInstance.Workspace)
 		}
 	}
-	callbackManagers := buildCallbackManagers(registry, cfg)
+	messageManagers := buildMessageManagers(registry, cfg)
 
 	al := &AgentLoop{
 		bus:                  msgBus,
@@ -216,7 +216,7 @@ func NewAgentLoop(
 		cmdRegistry:          commands.NewRegistry(commands.BuiltinDefinitions()),
 		dispatcher:           dispatcher,
 		agentStates:          agentStates,
-		callbackManagers:     callbackManagers,
+		messageManagers:      messageManagers,
 		startedAt:            time.Now(),
 		evictStop:            make(chan struct{}),
 		evictTTL:             defaultEvictTTL,
@@ -405,7 +405,7 @@ func (al *AgentLoop) Close() {
 		}
 	}
 
-	for _, mgr := range al.callbackManagers {
+	for _, mgr := range al.messageManagers {
 		mgr.Stop()
 	}
 
@@ -431,11 +431,11 @@ func (al *AgentLoop) SetCogmemManager(mgr *consolidate.Manager) {
 	al.cogmemManager = mgr
 }
 
-// ValidateCallbackToken checks all callback managers and returns the agentID
+// ValidateMessageToken checks all message-token managers and returns the agentID
 // whose manager owns the given token. Returns ("", false) if no match.
-func (al *AgentLoop) ValidateCallbackToken(token string) (string, bool) {
+func (al *AgentLoop) ValidateMessageToken(token string) (string, bool) {
 	al.mu.RLock()
-	managers := al.callbackManagers
+	managers := al.messageManagers
 	al.mu.RUnlock()
 	for agentID, mgr := range managers {
 		if mgr.Validate(token) {
@@ -445,9 +445,9 @@ func (al *AgentLoop) ValidateCallbackToken(token string) (string, bool) {
 	return "", false
 }
 
-// HandleCallbackMessage delivers a raw callback body to the agent's last active
+// HandleExternalMessage delivers a raw external-message body to the agent's last active
 // conversation by publishing it as an inbound bus message.
-func (al *AgentLoop) HandleCallbackMessage(ctx context.Context, agentID, body string) error {
+func (al *AgentLoop) HandleExternalMessage(ctx context.Context, agentID, body string) error {
 	sm, ok := al.agentStates[agentID]
 	if !ok {
 		// Fall back to the default state manager.
@@ -478,7 +478,7 @@ func (al *AgentLoop) HandleCallbackMessage(ctx context.Context, agentID, body st
 		Content: fmt.Sprintf("📥 Message received\n```\n%s\n```", rawBody),
 	}
 	if err := al.bus.PublishOutbound(ctx, outbound); err != nil {
-		logger.WarnCF("callback", "Failed to publish callback notification to user",
+		logger.WarnCF("message", "Failed to publish external-message notification to user",
 			map[string]any{
 				"channel":  channel,
 				"chat_id":  chatID,
@@ -487,9 +487,9 @@ func (al *AgentLoop) HandleCallbackMessage(ctx context.Context, agentID, body st
 			})
 	}
 
-	prefix := global.DefaultCallbackPrefix
-	if al.cfg != nil && al.cfg.Security.CallbackPrefix != "" {
-		prefix = al.cfg.Security.CallbackPrefix
+	prefix := global.DefaultMessagePrefix
+	if al.cfg != nil && al.cfg.Security.MessagePrefix != "" {
+		prefix = al.cfg.Security.MessagePrefix
 	}
 	inboundBody := prefix + rawBody
 
@@ -497,12 +497,12 @@ func (al *AgentLoop) HandleCallbackMessage(ctx context.Context, agentID, body st
 		Channel:  channel,
 		ChatID:   chatID,
 		Content:  inboundBody,
-		SenderID: "callback",
+		SenderID: "message",
 		Sender: bus.SenderInfo{
-			Platform:    "callback",
+			Platform:    "message",
 			PlatformID:  agentID,
-			CanonicalID: "callback:" + agentID,
-			DisplayName: "Callback",
+			CanonicalID: "message:" + agentID,
+			DisplayName: "External message",
 		},
 		SessionKey: routing.BuildAgentMainSessionKey(agentID),
 		Metadata: map[string]string{
@@ -826,15 +826,15 @@ func (al *AgentLoop) taskPointerCallback(channel, chatID string) tools.AsyncCall
 	}
 }
 
-// buildCallbackManagers constructs per-agent callback managers from cfg and
-// wires each onto its agent's ContextBuilder. An agent whose callback window is
+// buildMessageManagers constructs per-agent message-token managers from cfg and
+// wires each onto its agent's ContextBuilder. An agent whose message-token window is
 // not > 0 gets no manager — no token is ever issued, injected, or validated for
 // it. Call this on initial construction AND on every config reload so the
 // managers (and the ContextBuilders' wiring) track the CURRENT config; otherwise
 // a reloaded agent gets no token injected, and a now-disabled agent's old token
 // would keep validating against a stale manager.
-func buildCallbackManagers(registry *AgentRegistry, cfg *config.Config) map[string]*callback.Manager {
-	managers := make(map[string]*callback.Manager)
+func buildMessageManagers(registry *AgentRegistry, cfg *config.Config) map[string]*msgtoken.Manager {
+	managers := make(map[string]*msgtoken.Manager)
 	for _, agentID := range registry.ListAgentIDs() {
 		agentInstance, ok := registry.GetAgent(agentID)
 		if !ok {
@@ -848,13 +848,13 @@ func buildCallbackManagers(registry *AgentRegistry, cfg *config.Config) map[stri
 				break
 			}
 		}
-		storePath := filepath.Join(agentInstance.Workspace, "state", "callback.json")
+		storePath := filepath.Join(agentInstance.Workspace, "state", "message-tokens.json")
 		windowMinutes, windowCount := 0, 0
-		if agentCfg != nil && agentCfg.Callback != nil && agentCfg.Callback.WindowMinutes > 0 {
-			windowMinutes = agentCfg.Callback.WindowMinutes
-			windowCount = agentCfg.Callback.WindowCount
+		if agentCfg != nil && agentCfg.Message != nil && agentCfg.Message.WindowMinutes > 0 {
+			windowMinutes = agentCfg.Message.WindowMinutes
+			windowCount = agentCfg.Message.WindowCount
 		}
-		mgr, err := callback.NewManager(agentID, storePath, windowMinutes, windowCount)
+		mgr, err := msgtoken.NewManager(agentID, storePath, windowMinutes, windowCount)
 		if err != nil {
 			logger.WarnCF("callback", "Failed to initialize callback manager",
 				map[string]any{"agent": agentID, "error": err.Error()})
@@ -945,18 +945,18 @@ func (al *AgentLoop) ReloadProviderAndConfig(
 	// the new ContextBuilders. Without this, reloaded agents get no callback token
 	// injected, and the stale managers would keep validating tokens against the
 	// OLD config (e.g. an agent whose callbacks were since disabled).
-	newCallbackManagers := buildCallbackManagers(registry, cfg)
+	newCallbackManagers := buildMessageManagers(registry, cfg)
 
 	// Atomically swap the config and registry under write lock
 	// This ensures readers see a consistent pair
 	al.mu.Lock()
 	oldRegistry := al.registry
-	oldCallbackManagers := al.callbackManagers
+	oldCallbackManagers := al.messageManagers
 
 	// Store new values
 	al.cfg = cfg
 	al.registry = registry
-	al.callbackManagers = newCallbackManagers
+	al.messageManagers = newCallbackManagers
 
 	// Also update fallback chain with new config (same chain used for the tools
 	// just registered above). al.cooldown is unchanged — the same shared tracker

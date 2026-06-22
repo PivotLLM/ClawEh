@@ -168,7 +168,7 @@ The following skills extend your capabilities. To use a skill, read its SKILL.md
 	}
 
 	// The external-message endpoint (POST /api/message/{token}) and its rotating
-	// tokens still exist (see internal/gateway/callback_route.go) so a future
+	// tokens still exist (see internal/gateway/message_route.go) so a future
 	// "notify an agent" feature can use them, but the agent is no longer told
 	// about them — Maestro and agent_spawn deliver completions in-process via
 	// ToolCall.Notify, so there is nothing for the agent to hand out.
@@ -245,7 +245,7 @@ func (cb *ContextBuilder) sourcePaths() []string {
 		filepath.Join(cb.workspace, "USER.md"),
 		filepath.Join(cb.workspace, "IDENTITY.md"),
 		filepath.Join(cb.workspace, "MEMORY.md"),
-		filepath.Join(cb.workspace, "state", "callback.json"),
+		filepath.Join(cb.workspace, "state", "message-tokens.json"),
 	}
 }
 
