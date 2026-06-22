@@ -26,7 +26,7 @@ func startBackupScheduler(getConfig func() *config.Config, configPath string) fu
 				return
 			case now := <-ticker.C:
 				cfg := getConfig()
-				if cfg == nil || !cfg.Backup.Enabled {
+				if cfg == nil || !cfg.Backup.IsEnabled() {
 					continue
 				}
 				hour, minute := cfg.Backup.BackupAt()

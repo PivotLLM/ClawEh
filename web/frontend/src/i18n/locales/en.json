@@ -472,7 +472,7 @@
         "runtime": "Runtime",
         "launcher": "Service",
         "devices": "Devices",
-        "backup": "Backup"
+        "backup": "Configuration backup"
       },
       "open_raw": "Raw Config",
       "back_to_visual": "Visual Config",
@@ -490,7 +490,7 @@
       "unsaved_changes": "You have unsaved changes.",
       "log_retention_days": "Log retention (days)",
       "log_retention_days_hint": "Days of rolled daily logs (YYYYMMDD-claw.log / -error.log) to keep. claw.log rolls at local midnight. 0 = keep forever.",
-      "backup_desc": "Optionally snapshot config.json and the cron jobs file into backup/YYYYMMDD/ each night.",
+      "backup_desc": "Nightly configuration backup: snapshot config.json and the cron jobs file into backup/YYYYMMDD/. Configuration only — not workspaces, sessions, or memory. On by default.",
       "backup_enabled": "Nightly backup",
       "backup_enabled_hint": "When on, copy config.json and the cron jobs file into <data dir>/backup/YYYYMMDD/ once a day.",
       "backup_at": "Backup time",

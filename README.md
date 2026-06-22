@@ -402,6 +402,26 @@ gateway start). Only `YYYYMMDD-*.log` archives are pruned — the active
 Each option also has a `CLAW_LOGGING_*` environment override (e.g.
 `CLAW_LOGGING_LEVEL`, `CLAW_LOGGING_RETENTION_DAYS`).
 
+## Configuration backup
+
+ClawEh takes a nightly **configuration backup** — **on by default**. It snapshots `config.json` and the cron jobs file (`jobs.json`) into `$CLAW_HOME/backup/YYYYMMDD/`, with each file timestamped (e.g. `config.json.20260622-030000`) so repeated runs in a day don't overwrite. Day-folders older than the retention window are pruned.
+
+This is **configuration only** — it does **not** include agent workspaces, session archives, cognitive-memory databases, or the `state/` token files. It's a safety net for your settings and schedules, not a full data backup.
+
+Manage it in the web console under **Config → Configuration backup**, or in `config.json`:
+
+```json
+"backup": { "enabled": true, "at": "03:00", "retain_days": 30 }
+```
+
+| Field | Default | Description |
+|---|---|---|
+| `enabled` | `true` | Set `false` to turn the nightly backup off. |
+| `at` | `03:00` | Local time of day (`HH:MM`) to run. |
+| `retain_days` | `30` | Delete backup folders older than this. |
+
+The scheduler re-reads config every minute, so changes take effect without a restart. The **Back up now** button (or `POST /api/backup`) runs a backup immediately, regardless of the nightly toggle.
+
 ## Diagnostic dumps
 
 ClawEh can write full LLM request/response snapshots to disk for debugging. Files are written to `$CLAW_HOME/logs/dumps/` (e.g. `~/.claw/logs/dumps/`). Each dump produces two files sharing a common base name (`YYYYMMDD-HHMMSS-<id>`):

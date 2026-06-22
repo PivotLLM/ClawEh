@@ -1478,12 +1478,21 @@ func (c *Config) CronPath() string {
 	return filepath.Join(c.dataDir, "cron")
 }
 
-// BackupConfig controls the optional nightly backup of key files (config.json
-// and the cron jobs file) into <data dir>/backup/YYYYMMDD/.
+// BackupConfig controls the nightly configuration backup of key files
+// (config.json and the cron jobs file) into <data dir>/backup/YYYYMMDD/.
 type BackupConfig struct {
-	Enabled    bool   `json:"enabled,omitempty"`     // off by default
+	// Enabled is on by default: nil (field absent) means enabled. Set an explicit
+	// false to turn the nightly backup off.
+	Enabled    *bool  `json:"enabled,omitempty"`
 	At         string `json:"at,omitempty"`          // "HH:MM" local time; default 03:00
 	RetainDays int    `json:"retain_days,omitempty"` // prune older day-folders; default 30
+}
+
+// IsEnabled reports whether the nightly configuration backup runs. It defaults
+// to true when unset, so an existing config without a backup block gets backups
+// without any edit; set "enabled": false to opt out.
+func (b BackupConfig) IsEnabled() bool {
+	return b.Enabled == nil || *b.Enabled
 }
 
 // BackupAt returns the configured run time as hour and minute, defaulting to
