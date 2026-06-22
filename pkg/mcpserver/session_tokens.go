@@ -149,6 +149,34 @@ func (s *sessionTokenStore) RegisterService(token, agentID, archiveDir string) {
 		map[string]any{"agent": agentID, "session": sessionKey})
 }
 
+// SyncServiceTokens reconciles the live store to the given agentID→token set:
+// agents present have their service token (re)registered; service tokens for
+// agents no longer present are revoked. archiveDirFor maps an agentID to its
+// archive dir; agents it returns "" for (unknown) are skipped. This is what lets
+// `claw token` changes take effect without a restart.
+func (s *sessionTokenStore) SyncServiceTokens(tokens map[string]string, archiveDirFor func(agentID string) string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Drop every existing service token (identified by its service session key).
+	for tok, rec := range s.tokens {
+		if rec.sessionKey == routing.BuildAgentServiceSessionKey(rec.agentID) {
+			delete(s.tokens, tok)
+			delete(s.bySess, rec.sessionKey)
+		}
+	}
+	// Register the current set.
+	for agentID, tok := range tokens {
+		archiveDir := archiveDirFor(agentID)
+		if archiveDir == "" {
+			continue
+		}
+		sessionKey := routing.BuildAgentServiceSessionKey(agentID)
+		s.tokens[tok] = sessionRecord{agentID: agentID, sessionKey: sessionKey, archiveDir: archiveDir, pinned: true}
+		s.bySess[sessionKey] = tok
+	}
+}
+
 // SetSource records the most recent inbound user-message source (channel +
 // chatID) on the session record identified by sessionKey. Called from the
 // agent loop on every inbound user message so MCP-routed tool dispatch can

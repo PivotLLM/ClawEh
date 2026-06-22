@@ -452,7 +452,7 @@ claw token revoke <agent>   # remove it
 claw token list             # list agents that have one (tokens are not shown)
 ```
 
-Use the token as an `Authorization: Bearer` header on `/mcp`, or as the `session_token` parameter on `/internal` — both resolve identically. A service token is **headless and isolated**: it resolves to a dedicated `agent:<id>:service` session, so it cannot read the agent's real conversations, and a tool's user-facing output is dropped (only the model-facing result returns to the caller). Tokens are stored at `$CLAW_HOME/state/service-tokens.json` (`0o600`); restart the gateway (or trigger a config reload) to activate a change. See [docs/service-tokens.md](docs/service-tokens.md).
+Use the token as an `Authorization: Bearer` header on `/mcp`, or as the `session_token` parameter on `/internal` — both resolve identically. A service token is **headless and isolated**: it resolves to a dedicated `agent:<id>:service` session, so it cannot read the agent's real conversations, and a tool's user-facing output is dropped (only the model-facing result returns to the caller). Tokens are stored at `$CLAW_HOME/state/service-tokens.json` (`0o600`); a running gateway picks up the change automatically within a few seconds. See [docs/service-tokens.md](docs/service-tokens.md).
 
 ## Context management
 

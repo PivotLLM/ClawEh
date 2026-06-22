@@ -58,6 +58,46 @@ func TestRegisterService_NotRotated(t *testing.T) {
 	}
 }
 
+// TestSyncServiceTokens_Reconciles verifies live reconciliation: agents in the
+// new set are registered, agents dropped from it are revoked, and conversation
+// tokens are left untouched.
+func TestSyncServiceTokens_Reconciles(t *testing.T) {
+	s := newSessionTokenStore()
+	arch := func(string) string { return "/ws/sessions" }
+
+	// A live conversation token must survive a service-token sync.
+	convTok := s.Issue("amber", "agent:amber:main", "/ws/amber/sessions")
+
+	s.SyncServiceTokens(map[string]string{"amber": "SSTamber", "dawn": "SSTdawn"}, arch)
+	if _, ok := s.Resolve("SSTamber"); !ok {
+		t.Error("amber service token not registered")
+	}
+	if _, ok := s.Resolve("SSTdawn"); !ok {
+		t.Error("dawn service token not registered")
+	}
+
+	// Re-sync without dawn → dawn revoked, amber rotated, conversation untouched.
+	s.SyncServiceTokens(map[string]string{"amber": "SSTamber2"}, arch)
+	if _, ok := s.Resolve("SSTdawn"); ok {
+		t.Error("dawn service token should be revoked after removal from the set")
+	}
+	if _, ok := s.Resolve("SSTamber"); ok {
+		t.Error("old amber service token should be replaced")
+	}
+	if _, ok := s.Resolve("SSTamber2"); !ok {
+		t.Error("new amber service token should resolve")
+	}
+	if _, ok := s.Resolve(convTok); !ok {
+		t.Error("conversation token must not be disturbed by service-token sync")
+	}
+
+	// Unknown agent (archiveDir "") is skipped, not registered.
+	s.SyncServiceTokens(map[string]string{"ghost": "SSTghost"}, func(string) string { return "" })
+	if _, ok := s.Resolve("SSTghost"); ok {
+		t.Error("unknown agent service token should be skipped")
+	}
+}
+
 func TestSessionTokenStore_IssueProducesUniqueSSTTokens(t *testing.T) {
 	s := newSessionTokenStore()
 

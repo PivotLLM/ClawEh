@@ -39,11 +39,11 @@ uses) on a stable footing.
 ## Persistence & activation
 - Stored at `$CLAW_HOME/state/service-tokens.json` (`0o600`), as
   `{"<agentID>": "<SST token>"}`.
-- Loaded into the token store in `startMCPServer`, which runs at boot **and** on
-  every config reload (a reload rebuilds the MCP server). So a freshly-minted
-  token activates on the next gateway **restart** or **config reload**.
-  - Live file-watch activation (pick up `service-tokens.json` changes without a
-    reload) is a deliberate follow-up, not v1.
+- Loaded into the token store in `startMCPServer` (boot + every config reload),
+  **and** a file watcher on `service-tokens.json` re-syncs the live store within
+  the poll interval — so `claw token issue|revoke` takes effect **without a
+  restart**. The reconcile registers present tokens and revokes removed ones;
+  conversation tokens are untouched. Writes are atomic, so no debounce is needed.
 
 ## Security
 - The token is a standing bearer secret. The state file is `0o600`; the CLI
@@ -58,8 +58,8 @@ claw token rotate <agent>   # alias for issue — replace the existing token
 claw token revoke <agent>   # remove the agent's service token
 claw token list             # list agents that have a service token (tokens NOT shown)
 ```
-Changes are written to the state file; restart the gateway (or trigger a config
-reload) to activate.
+Changes are written to the state file; a running gateway picks them up
+automatically within a few seconds (a file watcher re-syncs the live store).
 
 ## Implementation checklist
 - [x] `pkg/servicetoken`: state-file format + `Load`/`Save`/`Generate`/`Path`,
