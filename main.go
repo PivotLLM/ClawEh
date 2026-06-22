@@ -14,7 +14,6 @@ import (
 
 	"github.com/PivotLLM/ClawEh/internal"
 	"github.com/PivotLLM/ClawEh/internal/agent"
-	"github.com/PivotLLM/ClawEh/internal/auth"
 	"github.com/PivotLLM/ClawEh/internal/cron"
 	"github.com/PivotLLM/ClawEh/internal/gateway"
 	"github.com/PivotLLM/ClawEh/internal/memory"
@@ -45,7 +44,6 @@ func NewClawCommand(binaryName string) *cobra.Command {
 
 	cmd.AddCommand(
 		agent.NewAgentCommand(),
-		auth.NewAuthCommand(),
 		defaultCmd,
 		status.NewStatusCommand(),
 		cron.NewCronCommand(),

@@ -12,7 +12,7 @@ import (
 )
 
 func TestHandleListTools(t *testing.T) {
-	configPath, cleanup := setupOAuthTestEnv(t)
+	configPath, cleanup := setupTestEnv(t)
 	defer cleanup()
 
 	cfg, err := config.LoadConfig(configPath)
@@ -124,7 +124,7 @@ func TestHandleListTools(t *testing.T) {
 }
 
 func TestHandleUpdateToolState(t *testing.T) {
-	configPath, cleanup := setupOAuthTestEnv(t)
+	configPath, cleanup := setupTestEnv(t)
 	defer cleanup()
 
 	cfg, err := config.LoadConfig(configPath)

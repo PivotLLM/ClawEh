@@ -34,7 +34,7 @@ func sessionsTestDir(t *testing.T, configPath string) string {
 }
 
 func TestHandleListSessions_JSONLStorage(t *testing.T) {
-	configPath, cleanup := setupOAuthTestEnv(t)
+	configPath, cleanup := setupTestEnv(t)
 	defer cleanup()
 
 	dir := sessionsTestDir(t, configPath)
@@ -100,7 +100,7 @@ func TestHandleListSessions_JSONLStorage(t *testing.T) {
 }
 
 func TestHandleListSessions_TitleUsesTrimmedSummary(t *testing.T) {
-	configPath, cleanup := setupOAuthTestEnv(t)
+	configPath, cleanup := setupTestEnv(t)
 	defer cleanup()
 
 	dir := sessionsTestDir(t, configPath)
@@ -156,7 +156,7 @@ func TestHandleListSessions_TitleUsesTrimmedSummary(t *testing.T) {
 }
 
 func TestHandleGetSession_JSONLStorage(t *testing.T) {
-	configPath, cleanup := setupOAuthTestEnv(t)
+	configPath, cleanup := setupTestEnv(t)
 	defer cleanup()
 
 	dir := sessionsTestDir(t, configPath)
@@ -220,7 +220,7 @@ func TestHandleGetSession_JSONLStorage(t *testing.T) {
 }
 
 func TestHandleDeleteSession_JSONLStorage(t *testing.T) {
-	configPath, cleanup := setupOAuthTestEnv(t)
+	configPath, cleanup := setupTestEnv(t)
 	defer cleanup()
 
 	dir := sessionsTestDir(t, configPath)
@@ -261,7 +261,7 @@ func TestHandleDeleteSession_JSONLStorage(t *testing.T) {
 }
 
 func TestHandleGetSession_LegacyJSONFallback(t *testing.T) {
-	configPath, cleanup := setupOAuthTestEnv(t)
+	configPath, cleanup := setupTestEnv(t)
 	defer cleanup()
 
 	dir := sessionsTestDir(t, configPath)
@@ -287,7 +287,7 @@ func TestHandleGetSession_LegacyJSONFallback(t *testing.T) {
 }
 
 func TestHandleSessions_FiltersEmptyJSONLFiles(t *testing.T) {
-	configPath, cleanup := setupOAuthTestEnv(t)
+	configPath, cleanup := setupTestEnv(t)
 	defer cleanup()
 
 	dir := sessionsTestDir(t, configPath)

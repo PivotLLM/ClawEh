@@ -14,7 +14,6 @@ import { Route as ModelsRouteImport } from './routes/models'
 import { Route as MemoryRouteImport } from './routes/memory'
 import { Route as McpRouteImport } from './routes/mcp'
 import { Route as LogsRouteImport } from './routes/logs'
-import { Route as CredentialsRouteImport } from './routes/credentials'
 import { Route as ConfigRouteImport } from './routes/config'
 import { Route as AgentsRouteImport } from './routes/agents'
 import { Route as AgentRouteImport } from './routes/agent'
@@ -49,11 +48,6 @@ const McpRoute = McpRouteImport.update({
 const LogsRoute = LogsRouteImport.update({
   id: '/logs',
   path: '/logs',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const CredentialsRoute = CredentialsRouteImport.update({
-  id: '/credentials',
-  path: '/credentials',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ConfigRoute = ConfigRouteImport.update({
@@ -113,7 +107,6 @@ export interface FileRoutesByFullPath {
   '/agent': typeof AgentRouteWithChildren
   '/agents': typeof AgentsRoute
   '/config': typeof ConfigRouteWithChildren
-  '/credentials': typeof CredentialsRoute
   '/logs': typeof LogsRoute
   '/mcp': typeof McpRoute
   '/memory': typeof MemoryRoute
@@ -131,7 +124,6 @@ export interface FileRoutesByTo {
   '/agent': typeof AgentRouteWithChildren
   '/agents': typeof AgentsRoute
   '/config': typeof ConfigRouteWithChildren
-  '/credentials': typeof CredentialsRoute
   '/logs': typeof LogsRoute
   '/mcp': typeof McpRoute
   '/memory': typeof MemoryRoute
@@ -150,7 +142,6 @@ export interface FileRoutesById {
   '/agent': typeof AgentRouteWithChildren
   '/agents': typeof AgentsRoute
   '/config': typeof ConfigRouteWithChildren
-  '/credentials': typeof CredentialsRoute
   '/logs': typeof LogsRoute
   '/mcp': typeof McpRoute
   '/memory': typeof MemoryRoute
@@ -170,7 +161,6 @@ export interface FileRouteTypes {
     | '/agent'
     | '/agents'
     | '/config'
-    | '/credentials'
     | '/logs'
     | '/mcp'
     | '/memory'
@@ -188,7 +178,6 @@ export interface FileRouteTypes {
     | '/agent'
     | '/agents'
     | '/config'
-    | '/credentials'
     | '/logs'
     | '/mcp'
     | '/memory'
@@ -206,7 +195,6 @@ export interface FileRouteTypes {
     | '/agent'
     | '/agents'
     | '/config'
-    | '/credentials'
     | '/logs'
     | '/mcp'
     | '/memory'
@@ -225,7 +213,6 @@ export interface RootRouteChildren {
   AgentRoute: typeof AgentRouteWithChildren
   AgentsRoute: typeof AgentsRoute
   ConfigRoute: typeof ConfigRouteWithChildren
-  CredentialsRoute: typeof CredentialsRoute
   LogsRoute: typeof LogsRoute
   McpRoute: typeof McpRoute
   MemoryRoute: typeof MemoryRoute
@@ -268,13 +255,6 @@ declare module '@tanstack/react-router' {
       path: '/logs'
       fullPath: '/logs'
       preLoaderRoute: typeof LogsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/credentials': {
-      id: '/credentials'
-      path: '/credentials'
-      fullPath: '/credentials'
-      preLoaderRoute: typeof CredentialsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/config': {
@@ -393,7 +373,6 @@ const rootRouteChildren: RootRouteChildren = {
   AgentRoute: AgentRouteWithChildren,
   AgentsRoute: AgentsRoute,
   ConfigRoute: ConfigRouteWithChildren,
-  CredentialsRoute: CredentialsRoute,
   LogsRoute: LogsRoute,
   McpRoute: McpRoute,
   MemoryRoute: MemoryRoute,

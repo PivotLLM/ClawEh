@@ -21,18 +21,6 @@ var (
 )
 
 func hasModelConfiguration(prov *config.Provider, m config.ModelConfig) bool {
-	authMethod := strings.ToLower(strings.TrimSpace(prov.AuthMethod))
-	if authMethod == "oauth" || authMethod == "token" {
-		if prov.Protocol == "anthropic" {
-			cred, err := oauthGetCredential(oauthProviderAnthropic)
-			if err != nil || cred == nil {
-				return false
-			}
-			return strings.TrimSpace(cred.AccessToken) != "" || strings.TrimSpace(cred.RefreshToken) != ""
-		}
-		return true
-	}
-
 	if config.IsCLIProtocol(prov.Protocol) {
 		return true
 	}

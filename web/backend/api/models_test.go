@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/PivotLLM/ClawEh/pkg/auth"
 	"github.com/PivotLLM/ClawEh/pkg/config"
 )
 
@@ -26,9 +25,8 @@ func resetModelProbeHooks(t *testing.T) {
 }
 
 func TestHandleListModels_ConfiguredStatusUsesRuntimeProbesForLocalModels(t *testing.T) {
-	configPath, cleanup := setupOAuthTestEnv(t)
+	configPath, cleanup := setupTestEnv(t)
 	defer cleanup()
-	resetOAuthHooks(t)
 	resetModelProbeHooks(t)
 
 	// Only providers with a local base_url get runtime-probed; that probe always
@@ -50,7 +48,7 @@ func TestHandleListModels_ConfiguredStatusUsesRuntimeProbesForLocalModels(t *tes
 		t.Fatalf("LoadConfig() error = %v", err)
 	}
 	cfg.Providers = []config.Provider{
-		{Name: "anthropic", Protocol: "anthropic", BaseURL: "https://api.anthropic.com/v1", AuthMethod: "token"},
+		{Name: "anthropic", Protocol: "anthropic", BaseURL: "https://api.anthropic.com/v1"},
 		{Name: "vllm-local", Protocol: "openai-chat", BaseURL: "http://127.0.0.1:8000/v1"},
 		{Name: "vllm-remote", Protocol: "openai-chat", BaseURL: "https://models.example.com/v1", APIKey: "remote-key"},
 	}
@@ -102,71 +100,9 @@ func TestHandleListModels_ConfiguredStatusUsesRuntimeProbesForLocalModels(t *tes
 	}
 }
 
-func TestHandleListModels_ConfiguredStatusForOAuthModelWithCredential(t *testing.T) {
-	configPath, cleanup := setupOAuthTestEnv(t)
-	defer cleanup()
-	resetOAuthHooks(t)
-	resetModelProbeHooks(t)
-
-	cfg, err := config.LoadConfig(configPath)
-	if err != nil {
-		t.Fatalf("LoadConfig() error = %v", err)
-	}
-	cfg.Providers = []config.Provider{{
-		Name:       "anthropic",
-		Protocol:   "anthropic",
-		BaseURL:    "https://api.anthropic.com/v1",
-		AuthMethod: "oauth",
-	}}
-	cfg.Models = []config.ModelConfig{{
-		ModelName: "claude-oauth",
-		Model:     "claude-sonnet-4.6",
-		Provider:  "anthropic",
-		Enabled:   true,
-	}}
-	cfg.Agents.Defaults.SetDefaultModel("claude-oauth")
-	if err := config.SaveConfig(configPath, cfg); err != nil {
-		t.Fatalf("SaveConfig() error = %v", err)
-	}
-
-	if err := auth.SetCredential(oauthProviderAnthropic, &auth.AuthCredential{
-		AccessToken: "anthropic-token",
-		Provider:    oauthProviderAnthropic,
-		AuthMethod:  "oauth",
-	}); err != nil {
-		t.Fatalf("SetCredential() error = %v", err)
-	}
-
-	h := NewHandler(configPath)
-	mux := http.NewServeMux()
-	h.RegisterRoutes(mux)
-
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/models", nil)
-	mux.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
-	}
-
-	var resp struct {
-		Models []modelResponse `json:"models"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("Unmarshal() error = %v", err)
-	}
-	if len(resp.Models) != 1 {
-		t.Fatalf("len(models) = %d, want 1", len(resp.Models))
-	}
-	if !resp.Models[0].Configured {
-		t.Fatalf("oauth model configured = false, want true with stored credential")
-	}
-}
-
 func TestHandleListModels_ProbesLocalModelsConcurrently(t *testing.T) {
-	configPath, cleanup := setupOAuthTestEnv(t)
+	configPath, cleanup := setupTestEnv(t)
 	defer cleanup()
-	resetOAuthHooks(t)
 	resetModelProbeHooks(t)
 
 	started := make(chan string, 2)
@@ -222,9 +158,8 @@ func TestHandleListModels_ProbesLocalModelsConcurrently(t *testing.T) {
 }
 
 func TestHandleListModels_NormalizesWildcardLocalAPIBaseForProbe(t *testing.T) {
-	configPath, cleanup := setupOAuthTestEnv(t)
+	configPath, cleanup := setupTestEnv(t)
 	defer cleanup()
-	resetOAuthHooks(t)
 	resetModelProbeHooks(t)
 
 	var gotProbe string

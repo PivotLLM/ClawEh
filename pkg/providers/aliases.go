@@ -64,15 +64,14 @@ const (
 
 // Constructors + helpers.
 var (
-	NewHTTPProviderWithOptions       = spawnllm.NewHTTPProviderWithOptions
-	NewUnconfiguredProvider          = spawnllm.NewUnconfiguredProvider
-	NewClaudeProviderWithTokenSource = spawnllm.NewClaudeProviderWithTokenSource
-	NewClaudeCliProvider             = spawnllm.NewClaudeCliProvider
-	NewClaudeCliProviderWithTimeout  = spawnllm.NewClaudeCliProviderWithTimeout
-	NewCodexCliProvider              = spawnllm.NewCodexCliProvider
-	NewCodexCliProviderWithTimeout   = spawnllm.NewCodexCliProviderWithTimeout
-	NewGeminiCliProvider             = spawnllm.NewGeminiCliProvider
-	NewGeminiCliProviderWithTimeout  = spawnllm.NewGeminiCliProviderWithTimeout
+	NewHTTPProviderWithOptions      = spawnllm.NewHTTPProviderWithOptions
+	NewUnconfiguredProvider         = spawnllm.NewUnconfiguredProvider
+	NewClaudeCliProvider            = spawnllm.NewClaudeCliProvider
+	NewClaudeCliProviderWithTimeout = spawnllm.NewClaudeCliProviderWithTimeout
+	NewCodexCliProvider             = spawnllm.NewCodexCliProvider
+	NewCodexCliProviderWithTimeout  = spawnllm.NewCodexCliProviderWithTimeout
+	NewGeminiCliProvider            = spawnllm.NewGeminiCliProvider
+	NewGeminiCliProviderWithTimeout = spawnllm.NewGeminiCliProviderWithTimeout
 
 	ModelKey                = spawnllm.ModelKey
 	splitModelKey           = spawnllm.SplitModelKey

@@ -34,7 +34,6 @@ func TestNewClawCommand(t *testing.T) {
 
 	allowedCommands := []string{
 		"agent",
-		"auth",
 		"cron",
 		"gateway",
 		"memory",

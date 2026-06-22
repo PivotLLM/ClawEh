@@ -930,9 +930,6 @@ type Provider struct {
 	BaseURL  string `json:"base_url,omitempty"`
 	APIKey   string `json:"api_key,omitempty"`
 	Proxy    string `json:"proxy,omitempty"`
-	// AuthMethod is how we authenticate to this endpoint: "" (api key), "oauth",
-	// or "token". OAuth is only meaningful for the anthropic protocol.
-	AuthMethod string `json:"auth_method,omitempty"`
 	// Endpoint-scoped openai-compat knobs.
 	StrictCompat        bool `json:"strict_compat,omitempty"`
 	NoParallelToolCalls bool `json:"no_parallel_tool_calls,omitempty"`
@@ -1596,12 +1593,12 @@ func IsCLIProtocol(protocol string) bool {
 
 // HasCredentials reports whether this provider carries enough to authenticate:
 // CLI providers always qualify (they auth out-of-band); HTTP providers need an
-// API key or an OAuth/token auth method.
+// API key.
 func (p *Provider) HasCredentials() bool {
 	if IsCLIProtocol(p.Protocol) {
 		return true
 	}
-	return p.APIKey != "" || p.AuthMethod != ""
+	return p.APIKey != ""
 }
 
 // GetProvider resolves a provider by name. The lookup is case-sensitive on the
