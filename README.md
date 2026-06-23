@@ -584,13 +584,13 @@ All tools are available on this path, including the session tools (`session_comp
 
 **Path 2 — MCP HTTP server (CLI providers)**
 
-For CLI providers (`claude-cli`, `codex-cli`, `gemini-cli`), the CLI subprocess has no access to claw's internal session state. Tools are called via the MCP HTTP server at `http://127.0.0.1:5911/mcp`. Every tool call on this path carries a `session_token` parameter — a short-lived `SST<64hex>` token injected into the agent's system prompt at session start. The MCP server resolves this token to the correct agent and session, then executes the tool.
+For CLI providers (`claude-cli`, `codex-cli`, `gemini-cli`), the CLI subprocess has no access to claw's internal session state. Tools are called via the MCP HTTP server at `http://127.0.0.1:5911/internal`. Every tool call on this path carries a `session_token` parameter — a short-lived `SST<64hex>` token injected into the agent's system prompt at session start. The MCP server resolves this token to the correct agent and session, then executes the tool.
 
 For session-scoped tools, the MCP server uses the session token to inject the session key into the execution context. The session tools implement the `SessionScoped` interface, so the dispatcher injects the key automatically — no hardcoded list to maintain.
 
 | | Direct API providers | CLI providers |
 |---|---|---|
-| Tool call mechanism | API response (`tool_use` blocks) | MCP HTTP at `:5911/mcp` |
+| Tool call mechanism | API response (`tool_use` blocks) | MCP HTTP at `:5911/internal` |
 | Session context | Implicit (agent loop) | `session_token` parameter |
 | Session tools available | All six | All six |
 
@@ -634,16 +634,31 @@ In short: API agents get upstream MCP via claw; CLI agents should be pointed at 
 
 ### Client configuration
 
-The server speaks the Streamable HTTP transport at `http://127.0.0.1:5911/mcp`.
+The server speaks the Streamable HTTP transport on the MCP host `listen` address (default `127.0.0.1:5911`, loopback only — do not expose it externally) and offers **two endpoints**:
 
-No authentication is performed: the listener is bound to loopback only and is intended for local CLI clients. Do not expose it externally.
+- **`/internal`** — authenticated by a per-call `session_token` parameter. This is ClawEh's multi-assistant routing: one local CLI install can act as **several agents** by supplying the appropriate agent's `session_token` on each call. **Local CLIs that authenticate as multiple agents should use `/internal`.**
+- **`/mcp`** — standard bearer auth (`Authorization: Bearer <token>`), one identity per connection, for external/generic MCP clients.
+
+See [docs/mcp.md](docs/mcp.md) for the full design.
+
+#### Quick setup — `set-mcp.sh`
+
+The `set-mcp.sh` script in the repo root registers (or refreshes) claw in whichever of Gemini CLI, Codex CLI, and Claude Code are **installed on your PATH** — the rest are skipped. It removes and re-adds each CLI one at a time, pointing them at the `/internal` endpoint:
+
+```bash
+./set-mcp.sh
+```
+
+> **Port:** the script's URL must match the MCP host `listen` port in your config (`tools → mcp_host → listen`). **If you change that port, update the script** — edit `CLAW_MCP_URL` at the top, or run `CLAW_MCP_URL=http://127.0.0.1:<port>/internal ./set-mcp.sh`.
+
+The per-CLI commands it runs are below if you prefer to do it by hand.
 
 #### Claude Code
 
 To register claw as an MCP server scoped to the user (all projects):
 
 ```bash
-claude mcp add --transport http claw --scope user http://127.0.0.1:5911/mcp
+claude mcp add --transport http claw --scope user http://127.0.0.1:5911/internal
 ```
 
 To list configured MCP servers:
@@ -663,14 +678,14 @@ claude mcp -h
 Register claw with the `codex mcp add` command:
 
 ```bash
-codex mcp add claw --url http://127.0.0.1:5911/mcp
+codex mcp add claw --url http://127.0.0.1:5911/internal
 ```
 
 This writes the entry to `~/.codex/config.toml`. You can also edit the file directly:
 
 ```toml
 [mcp_servers.claw]
-url = "http://127.0.0.1:5911/mcp"
+url = "http://127.0.0.1:5911/internal"
 ```
 
 #### Gemini CLI
@@ -678,7 +693,7 @@ url = "http://127.0.0.1:5911/mcp"
 [Gemini CLI](https://github.com/google-gemini/gemini-cli) supports MCP servers via the `gemini mcp add` command or by editing `~/.gemini/settings.json` directly.
 
 ```bash
-gemini mcp add claw http://127.0.0.1:5911/mcp --scope user --transport http
+gemini mcp add claw http://127.0.0.1:5911/internal --scope user --transport http
 ```
 
 Omit `--scope user` to configure claw at the project level instead.
@@ -688,7 +703,7 @@ Omit `--scope user` to configure claw at the project level instead.
 To grant access to all tools without prompting (use with caution — see warning above):
 
 ```bash
-gemini mcp add claw http://127.0.0.1:5911/mcp --scope user --transport http --trust
+gemini mcp add claw http://127.0.0.1:5911/internal --scope user --transport http --trust
 ```
 
 Alternatively, add the following to `~/.gemini/settings.json`:
@@ -697,7 +712,7 @@ Alternatively, add the following to `~/.gemini/settings.json`:
 {
   "mcpServers": {
     "claw": {
-      "url": "http://127.0.0.1:5911/mcp",
+      "url": "http://127.0.0.1:5911/internal",
       "type": "http"
     }
   }
