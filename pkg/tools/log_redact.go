@@ -56,6 +56,21 @@ func redactArgs(toolName string, args map[string]any) any {
 			"old_text_bytes": byteLen(args["old_text"]),
 			"new_text_bytes": byteLen(args["new_text"]),
 		}
+	case "file_edit_lines", "file_edit_bytes", "file_insert_lines", "file_insert_bytes",
+		"file_delete_lines", "file_delete_bytes":
+		out := map[string]any{"path": args["path"]}
+		for _, k := range []string{"start", "end", "after_line", "at_offset"} {
+			if v, ok := args[k]; ok && v != nil {
+				out[k] = v
+			}
+		}
+		if v, ok := args["replace"]; ok && v != nil {
+			out["replace_bytes"] = byteLen(v)
+		}
+		if v, ok := args["text"]; ok && v != nil {
+			out["text_bytes"] = byteLen(v)
+		}
+		return out
 	}
 
 	if strings.HasPrefix(toolName, "http_") || toolName == "web_fetch" {

@@ -83,14 +83,18 @@ don't see it yet, nothing has been recorded — start recording.
   feed them to `file_read_lines` (`start_line`); `file_search_bytes` returns BYTE
   offsets → feed them to `file_read_bytes` (`offset`). Never mix a line number
   into a byte offset or vice-versa.
+- **Editing:** `file_edit` is anchor-based (replace exact `old_text`) — good for
+  small unique fixes. When you know the line range, stay in line units:
+  `file_edit_lines` (replace a range), `file_insert_lines` (add after a line),
+  `file_delete_lines` (remove a range); byte equivalents exist too. Edit/delete
+  back up the file by default.
 - **Large files (chapters, outlines, long docs):** don't read the whole file —
   that floods your context and forces wasteful re-reads. Instead: use
   `file_search_lines` to locate the relevant part (e.g. a heading), `file_read_lines`
-  with `start_line`/`line_count` to pull just that numbered section, then `file_edit`
-  using text copied exactly from what you read (so `old_text` matches). Reads are
-  chunked (~32 KB each) and tell you how to continue with the next `start_line`/
-  `offset`; page through only what you actually need, and prefer editing in place
-  over re-reading.
+  with `start_line`/`line_count` to pull just that numbered section, then
+  `file_edit_lines`/`file_insert_lines` on those line numbers (no need to restate
+  surrounding text). Reads are chunked (~32 KB each) and tell you how to continue
+  with the next `start_line`/`offset`; page through only what you actually need.
 - **Your config is already in context.** `AGENTS.md`, `SOUL.md`, `IDENTITY.md`,
   `USER.md`, and `MEMORY.md` are inserted into your prompt automatically — you do
   not (and cannot) read or edit them. If these operating instructions are wrong or

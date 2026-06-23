@@ -60,7 +60,7 @@ BEARER_URL="${SERVER_URL}${BEARER_ENDPOINT}"
 # (subagent capability) and hw_i2c/hw_spi (Linux + I2C/SPI devices) are also
 # exposed but only probed when actually present in the catalogue, so this script
 # stays portable.
-EXPECTED_TOOLS="file_read_bytes file_read_lines file_write file_edit file_append file_list file_search_lines file_search_bytes file_copy web_fetch web_search msg_send msg_send_file session_messages session_search session_compact session_info session_summary_list session_summary_get session_clear shell_exec skill_find skill_install cron_schedule cogmem_domain_get cogmem_memory_search cogmem_domain_list cogmem_explain cogmem_memory_create cogmem_domain_update cogmem_memory_retire cogmem_memory_confirm cogmem_domain_create cogmem_domain_archive cogmem_domain_migrate cogmem_memory_forget cogmem_consolidate cogmem_status cogmem_export common_list common_get common_put common_delete"
+EXPECTED_TOOLS="file_read_bytes file_read_lines file_write file_edit file_edit_lines file_edit_bytes file_insert_lines file_insert_bytes file_delete_lines file_delete_bytes file_append file_list file_search_lines file_search_bytes file_copy web_fetch web_search msg_send msg_send_file session_messages session_search session_compact session_info session_summary_list session_summary_get session_clear shell_exec skill_find skill_install cron_schedule cogmem_domain_get cogmem_memory_search cogmem_domain_list cogmem_explain cogmem_memory_create cogmem_domain_update cogmem_memory_retire cogmem_memory_confirm cogmem_domain_create cogmem_domain_archive cogmem_domain_migrate cogmem_memory_forget cogmem_consolidate cogmem_status cogmem_export common_list common_get common_put common_delete"
 EXPECTED_TOOL_COUNT=38
 
 # Namespace prefixes that must have at least one tool in the catalogue.
@@ -410,6 +410,12 @@ check_tool "1.1"  "file_read_bytes"
 check_tool "1.1b" "file_read_lines"
 check_tool "1.2"  "file_write"
 check_tool "1.3"  "file_edit"
+check_tool "1.3a" "file_edit_lines"
+check_tool "1.3b" "file_edit_bytes"
+check_tool "1.3c" "file_insert_lines"
+check_tool "1.3d" "file_insert_bytes"
+check_tool "1.3e" "file_delete_lines"
+check_tool "1.3f" "file_delete_bytes"
 check_tool "1.4"  "file_append"
 check_tool "1.5"  "file_list"
 check_tool "1.5b" "file_search_lines"
@@ -505,6 +511,37 @@ else
 
     run_test_ok_auth "3.8 file_copy duplicates a file" \
         "file_copy" "{\"source_path\":\"$SCRATCH_REL\",\"destination_path\":\"${SCRATCH_REL}.copy\"}"
+
+    # Range edit family on a dedicated multi-line scratch file.
+    LINEFILE="files/claw_mcp_lines_$$.txt"
+    run_test_ok_auth "3.8a file_write seeds a multi-line file" \
+        "file_write" "{\"path\":\"$LINEFILE\",\"content\":\"L1\nL2\nL3\"}"
+
+    run_test_ok_auth "3.8b file_insert_lines inserts after line 1" \
+        "file_insert_lines" "{\"path\":\"$LINEFILE\",\"after_line\":1,\"text\":\"INS\"}" "Inserted"
+
+    run_test_ok_auth "3.8c file_edit_lines replaces a line" \
+        "file_edit_lines" "{\"path\":\"$LINEFILE\",\"start\":2,\"replace\":\"EDITED\"}" "Replaced"
+
+    run_test_ok_auth "3.8d file_read_lines confirms the edit" \
+        "file_read_lines" "{\"path\":\"$LINEFILE\",\"start_line\":1,\"line_count\":50}" "EDITED"
+
+    echo "  3.8e file_edit_lines refuses empty replace (points at file_delete_lines)"
+    r8e=$(probe_call_auth "file_edit_lines" "{\"path\":\"$LINEFILE\",\"start\":1,\"replace\":\"\"}")
+    if echo "$r8e" | grep -qi "file_delete_lines"; then
+        echo "    ${GREEN}PASS${NC}: empty replace refused"
+        TIER2_PASS=$((TIER2_PASS + 1)); PASS_COUNT=$((PASS_COUNT + 1))
+    else
+        echo "    ${RED}FAIL${NC}: expected refusal pointing at file_delete_lines"
+        echo "    Output: $r8e"
+        TIER2_FAIL=$((TIER2_FAIL + 1)); FAIL_COUNT=$((FAIL_COUNT + 1))
+    fi
+
+    run_test_ok_auth "3.8f file_delete_lines removes a line" \
+        "file_delete_lines" "{\"path\":\"$LINEFILE\",\"start\":1,\"end\":1}" "Deleted"
+
+    run_test_ok_auth "3.8g file_edit_bytes replaces a byte range" \
+        "file_edit_bytes" "{\"path\":\"$LINEFILE\",\"start\":0,\"end\":0,\"replace\":\"Z\"}" "Replaced"
 
     run_test_err_auth "3.9 file_read_bytes on missing path returns an error" \
         "file_read_bytes" '{"path":"files/definitely_not_a_real_file_'$$'_xyz.txt"}'

@@ -43,6 +43,7 @@ func (globalFilesProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 		cp          *CopyFileTool
 		searchLines *SearchFilesTool
 		searchBytes *SearchFilesTool
+		rangeTools  map[string]*rangeEditTool
 	)
 
 	if c != nil {
@@ -97,6 +98,33 @@ func (globalFilesProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 		edit = NewEditFileToolScoped(workspace, restrict, writeSubdir, allowWritePaths)
 		apnd = NewAppendFileToolScoped(workspace, restrict, writeSubdir, allowWritePaths)
 		cp = NewCopyFileToolScoped(workspace, restrict, writeSubdir, allowWritePaths)
+		rangeTools = map[string]*rangeEditTool{}
+		for _, op := range []string{"edit", "insert", "delete"} {
+			for _, unit := range []string{"lines", "bytes"} {
+				rangeTools[op+"_"+unit] = newRangeEditTool(op, unit, workspace, restrict, writeSubdir, allowWritePaths)
+			}
+		}
+	}
+
+	// rangeDef builds a ToolDefinition for one range-edit tool. The handler closes
+	// over rangeTools[key]; schema/description use a config-free probe instance.
+	rangeDef := func(op, unit string) global.ToolDefinition {
+		key := op + "_" + unit
+		probe := &rangeEditTool{op: op, unit: unit}
+		return global.ToolDefinition{
+			Name:         key, // namespace "file" → file_<op>_<unit>
+			Description:  probe.Description(),
+			RawSchema:    probe.Parameters(),
+			Category:     "filesystem",
+			DefaultAllow: global.Allow(true),
+			Handler: func(call *global.ToolCall) (*global.Result, error) {
+				rt := rangeTools[key]
+				if rt == nil {
+					return tools.ResultToGlobal(tools.ErrorResult("file edit is not available")), nil
+				}
+				return tools.ResultToGlobal(rt.Execute(call.Ctx, call.Args)), nil
+			},
+		}
 	}
 
 	return []global.ToolDefinition{
@@ -196,6 +224,12 @@ func (globalFilesProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 				return tools.ResultToGlobal(cp.Execute(call.Ctx, call.Args)), nil
 			},
 		},
+		rangeDef("edit", "lines"),
+		rangeDef("edit", "bytes"),
+		rangeDef("insert", "lines"),
+		rangeDef("insert", "bytes"),
+		rangeDef("delete", "lines"),
+		rangeDef("delete", "bytes"),
 	}
 }
 

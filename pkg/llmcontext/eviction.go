@@ -121,10 +121,16 @@ var evictionReaderArg = map[string]string{
 // evictionWriterArg maps a writer tool to the argument naming the resource it
 // mutates. A write supersedes any earlier read of the same resource.
 var evictionWriterArg = map[string]string{
-	"file_write":  "path",
-	"file_edit":   "path",
-	"file_append": "path",
-	"file_copy":   "destination_path",
+	"file_write":        "path",
+	"file_edit":         "path",
+	"file_append":       "path",
+	"file_copy":         "destination_path",
+	"file_edit_lines":   "path",
+	"file_edit_bytes":   "path",
+	"file_insert_lines": "path",
+	"file_insert_bytes": "path",
+	"file_delete_lines": "path",
+	"file_delete_bytes": "path",
 }
 
 type toolMeta struct {
