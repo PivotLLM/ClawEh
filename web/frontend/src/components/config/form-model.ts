@@ -29,8 +29,6 @@ export interface CoreConfigForm {
   evictionEnabled: boolean
   evictionNotifyUser: boolean
   evictionProtectTurns: string
-  evictionLargeTurns: string
-  evictionLargeSize: string
   evictionEvictTurns: string
   evictionBudgetBytes: string
   logRetentionDays: string
@@ -106,8 +104,6 @@ export const EMPTY_FORM: CoreConfigForm = {
   evictionEnabled: true,
   evictionNotifyUser: false,
   evictionProtectTurns: "3",
-  evictionLargeTurns: "5",
-  evictionLargeSize: "4096",
   evictionEvictTurns: "10",
   evictionBudgetBytes: "0",
   logRetentionDays: "30",
@@ -248,14 +244,6 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
     evictionProtectTurns: asNumberString(
       asRecord(defaults.context_eviction).protect_turns,
       EMPTY_FORM.evictionProtectTurns,
-    ),
-    evictionLargeTurns: asNumberString(
-      asRecord(defaults.context_eviction).large_turns,
-      EMPTY_FORM.evictionLargeTurns,
-    ),
-    evictionLargeSize: asNumberString(
-      asRecord(defaults.context_eviction).large_size,
-      EMPTY_FORM.evictionLargeSize,
     ),
     evictionEvictTurns: asNumberString(
       asRecord(defaults.context_eviction).evict_turns,

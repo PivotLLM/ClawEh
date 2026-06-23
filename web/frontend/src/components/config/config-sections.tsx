@@ -562,30 +562,6 @@ export function ContextManagementSection({
         />
       </Field>
       <Field
-        label={t("pages.config.eviction_large_turns")}
-        hint={t("pages.config.eviction_large_turns_hint")}
-        layout="setting-row"
-      >
-        <Input
-          type="number"
-          min={0}
-          value={form.evictionLargeTurns}
-          onChange={(e) => onFieldChange("evictionLargeTurns", e.target.value)}
-        />
-      </Field>
-      <Field
-        label={t("pages.config.eviction_large_size")}
-        hint={t("pages.config.eviction_large_size_hint")}
-        layout="setting-row"
-      >
-        <Input
-          type="number"
-          min={0}
-          value={form.evictionLargeSize}
-          onChange={(e) => onFieldChange("evictionLargeSize", e.target.value)}
-        />
-      </Field>
-      <Field
         label={t("pages.config.eviction_evict_turns")}
         hint={t("pages.config.eviction_evict_turns_hint")}
         layout="setting-row"

@@ -75,7 +75,7 @@ func findToolResult(store *seqStore, id string) string {
 }
 
 func basePolicy() EvictionPolicy {
-	return EvictionPolicy{Enabled: true, ProtectTurns: 3, LargeTurns: 5, LargeSize: 100, EvictTurns: 10, BudgetBytes: 0}
+	return EvictionPolicy{Enabled: true, ProtectTurns: 3, EvictTurns: 10, BudgetBytes: 0}
 }
 
 // --- tests ---------------------------------------------------------------
@@ -113,36 +113,21 @@ func TestSweep_ProtectsRecent(t *testing.T) {
 	}
 }
 
-func TestSweep_Large(t *testing.T) {
-	// Read at age 6 (> large 5), size >= 100 → evicted "large".
+func TestSweep_MidAgeReadKeptWithoutBudget(t *testing.T) {
+	// A large, non-superseded read in the band between protect and evict is NOT
+	// evicted on age alone (no "large" tier) — only the budget valve sheds it,
+	// and budget is disabled here. It stays until the expiry age or real pressure.
 	store := newSeqStore(buildHistory(
 		turnSpec{text: "0"}, turnSpec{text: "1"},
-		turnSpec{tool: "file_read", id: "r", args: map[string]any{"path": "ch17.md"}, content: strings.Repeat("x", 200)}, // age 6
-		turnSpec{text: "3"}, turnSpec{text: "4"}, turnSpec{text: "5"}, turnSpec{text: "6"}, turnSpec{text: "7"},
-	))
-	events := newEvictMgr(store, basePolicy()).SweepEvictions(context.Background())
-	if len(events) != 1 || events[0].Reason != "large" {
-		t.Fatalf("want 1 large eviction, got %+v", events)
-	}
-	e := events[0]
-	if e.Tool != "file_read" || e.Resource != "ch17.md" || e.Bytes != 200 || e.AgeTurns != 6 {
-		t.Fatalf("event fields wrong: %+v", e)
-	}
-	if !isEvicted(findToolResult(store, "r")) {
-		t.Fatalf("large read content not evicted")
-	}
-}
-
-func TestSweep_SmallNotEvictedEarly(t *testing.T) {
-	// Small read (< largeSize) at age 6 (between large and evict) stays.
-	store := newSeqStore(buildHistory(
-		turnSpec{text: "0"}, turnSpec{text: "1"},
-		turnSpec{tool: "file_read", id: "r", args: map[string]any{"path": "a.md"}, content: "tiny"}, // age 6, 4 bytes
+		turnSpec{tool: "file_read", id: "r", args: map[string]any{"path": "ch17.md"}, content: strings.Repeat("x", 9000)}, // age 6
 		turnSpec{text: "3"}, turnSpec{text: "4"}, turnSpec{text: "5"}, turnSpec{text: "6"}, turnSpec{text: "7"},
 	))
 	events := newEvictMgr(store, basePolicy()).SweepEvictions(context.Background())
 	if len(events) != 0 {
-		t.Fatalf("small read evicted early: %+v", events)
+		t.Fatalf("mid-age read evicted without budget pressure: %+v", events)
+	}
+	if isEvicted(findToolResult(store, "r")) {
+		t.Fatalf("mid-age large read evicted on age alone")
 	}
 }
 
@@ -243,9 +228,7 @@ func TestSweep_ProtectGuardsBudget(t *testing.T) {
 	// (age 1, distinct path, not superseded) must survive even when the window is
 	// over budget; only the older non-protected candidate is evicted.
 	p := basePolicy()
-	p.LargeTurns = 100 // disable large tier
-	p.EvictTurns = 100 // disable stale tier
-	p.LargeSize = 1 << 20
+	p.EvictTurns = 100 // disable stale tier so only budget acts
 	p.BudgetBytes = 100
 	store := newSeqStore(buildHistory(
 		turnSpec{tool: "file_read", id: "old", args: map[string]any{"path": "b.md"}, content: strings.Repeat("x", 250)}, // age 5 candidate
@@ -268,9 +251,7 @@ func TestSweep_Budget(t *testing.T) {
 	// Three reads at ages 4–6, none large/stale/superseded → budget candidates.
 	// Sizes 250+200+150=600 > budget 300 ⇒ evict largest-first (250, 200), keep 150.
 	p := basePolicy()
-	p.LargeTurns = 100 // disable the large tier
-	p.EvictTurns = 100 // disable the stale tier
-	p.LargeSize = 1 << 20
+	p.EvictTurns = 100 // disable the stale tier so only budget acts
 	p.BudgetBytes = 300
 	store := newSeqStore(buildHistory(
 		turnSpec{tool: "file_read", id: "a", args: map[string]any{"path": "a.md"}, content: strings.Repeat("x", 250)}, // age 6
@@ -309,11 +290,12 @@ func TestSweep_NonReaderUntouched(t *testing.T) {
 }
 
 func TestSweep_Idempotent(t *testing.T) {
-	store := newSeqStore(buildHistory(
-		turnSpec{text: "0"}, turnSpec{text: "1"},
-		turnSpec{tool: "file_read", id: "r", args: map[string]any{"path": "a.md"}, content: strings.Repeat("x", 200)},
-		turnSpec{text: "3"}, turnSpec{text: "4"}, turnSpec{text: "5"}, turnSpec{text: "6"}, turnSpec{text: "7"},
-	))
+	// Read at age 12 (> evict 10) → stale eviction on the first sweep, no-op after.
+	specs := []turnSpec{{tool: "file_read", id: "r", args: map[string]any{"path": "a.md"}, content: strings.Repeat("x", 200)}}
+	for i := 0; i < 11; i++ {
+		specs = append(specs, turnSpec{text: "t"})
+	}
+	store := newSeqStore(buildHistory(specs...))
 	mgr := newEvictMgr(store, basePolicy())
 	if got := mgr.SweepEvictions(context.Background()); len(got) != 1 {
 		t.Fatalf("first sweep want 1, got %d", len(got))
@@ -323,30 +305,27 @@ func TestSweep_Idempotent(t *testing.T) {
 	}
 }
 
-func TestSweep_EvictedStaysEvictedAcrossTiers(t *testing.T) {
-	// A large read is evicted via the "large" tier at age 6. After more turns
-	// push it past evict_turns (10), the sweep must recognize it is already
-	// evicted and leave it alone — no re-eviction, no duplicate notice.
+func TestSweep_EvictedStaysEvicted(t *testing.T) {
+	// A read evicted young (superseded) stays evicted after it ages past
+	// evict_turns: the content-based guard is tier/age independent, so it is
+	// never re-evicted or re-reported.
 	store := newSeqStore(buildHistory(
-		turnSpec{text: "0"}, turnSpec{text: "1"},
-		turnSpec{tool: "file_read", id: "r", args: map[string]any{"path": "a.md"}, content: strings.Repeat("x", 200)}, // age 6
-		turnSpec{text: "3"}, turnSpec{text: "4"}, turnSpec{text: "5"}, turnSpec{text: "6"}, turnSpec{text: "7"},
+		turnSpec{tool: "file_read", id: "old", args: map[string]any{"path": "a.md"}, content: strings.Repeat("x", 500)}, // superseded
+		turnSpec{tool: "file_read", id: "new", args: map[string]any{"path": "a.md"}, content: strings.Repeat("y", 500)}, // latest, kept
 	))
 	mgr := newEvictMgr(store, basePolicy())
 
 	first := mgr.SweepEvictions(context.Background())
-	if len(first) != 1 || first[0].Reason != "large" {
-		t.Fatalf("first sweep: want 1 large eviction, got %+v", first)
+	if len(first) != 1 || first[0].Reason != "superseded" {
+		t.Fatalf("first sweep: want 1 superseded eviction, got %+v", first)
 	}
-	placeholder := findToolResult(store, "r")
-	if !isEvicted(placeholder) {
-		t.Fatalf("read not evicted on first sweep")
-	}
+	oldSeq := first[0].Seq
+	placeholder := findToolResult(store, "old")
 
-	// Age the (already-evicted) read past evict_turns by appending more turns.
+	// Age both reads past evict_turns by appending more turns.
 	aged := store.GetHistoryWithSeqs("sess")
 	base := aged[len(aged)-1].Seq
-	for i := 0; i < 6; i++ {
+	for i := 0; i < 12; i++ {
 		aged = append(aged, memory.StoredMessage{
 			Seq:     base + int64(i+1),
 			Message: providers.Message{Role: "assistant", Content: "more"},
@@ -354,11 +333,14 @@ func TestSweep_EvictedStaysEvictedAcrossTiers(t *testing.T) {
 	}
 	store.SetHistoryWithSeqs("sess", aged)
 
-	second := mgr.SweepEvictions(context.Background())
-	if len(second) != 0 {
-		t.Fatalf("already-evicted read re-evicted after aging: %+v", second)
+	// The already-evicted "old" read must never reappear; only "new" (now stale)
+	// may be newly evicted.
+	for _, e := range mgr.SweepEvictions(context.Background()) {
+		if e.Seq == oldSeq {
+			t.Fatalf("already-evicted read re-evicted after aging: %+v", e)
+		}
 	}
-	if got := findToolResult(store, "r"); got != placeholder {
+	if got := findToolResult(store, "old"); got != placeholder {
 		t.Fatalf("placeholder changed on re-sweep:\n  before: %q\n  after:  %q", placeholder, got)
 	}
 }

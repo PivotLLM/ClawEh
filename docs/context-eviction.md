@@ -40,25 +40,24 @@ tool result, in priority order:
    working set).
 3. **Age > `evict_turns`** → evicted, *any size* (old content is almost
    certainly captured in the summary by now).
-4. **Age > `large_turns` and size ≥ `large_size`** → evicted *early* (big blobs
-   don't need to wait for the age cutoff).
-5. **Budget valve** — if reader-result bytes still exceed `budget_bytes`, evict
+4. **Budget valve** — if reader-result bytes still exceed `budget_bytes`, evict
    largest-first among anything older than `protect_turns` until under budget.
-   Handles a *burst* of large reads that the age tiers can't shed fast enough.
+   Handles a *burst* of large reads that the age cutoff can't shed fast enough,
+   and is the mechanism that sheds large reads under memory pressure.
 
 Because supersession is checked first and ignores the protect window, the
-`protect_turns` setting guards only the age/size/budget tiers — in practice
+`protect_turns` setting guards only the age and budget tiers — in practice
 mainly the budget valve, which can otherwise fire at any age. Keeping the latest
 read of every file is handled by supersession itself.
 
-`large_size` only gates the *early* tier (4). Supersession, the age cutoff, and
-the budget valve all evict regardless of size — so small content is still
-cleaned up when it's stale, superseded, or under memory pressure; it just isn't
-churned prematurely.
+There is deliberately no "evict large reads on age alone" tier: shedding large
+reads is the budget valve's job, and it does so only under real memory pressure.
+Evicting a big read on age while the window has room would just force a needless
+re-read.
 
-The `large_size` default (4096 bytes) matches the archive's truncation cap
-(`archive_content_max_bytes`), so "worth evicting live" equals "worth truncating
-in the archive."
+Supersession, the age cutoff, and the budget valve all evict regardless of size,
+so small content is still cleaned up when it's stale, superseded, or under memory
+pressure — there is no separate size-based tier to tune.
 
 ## Reader and writer tools
 
@@ -83,8 +82,6 @@ field). Every field is optional; unset fields fall back to the built-in defaults
       "context_eviction": {
         "enabled": true,
         "protect_turns": 3,
-        "large_turns": 5,
-        "large_size": 4096,
         "evict_turns": 10,
         "budget_bytes": 0,
         "notify_user": false
@@ -97,9 +94,7 @@ field). Every field is optional; unset fields fall back to the built-in defaults
 | Field          | Default | Meaning                                                      |
 |----------------|---------|-------------------------------------------------------------|
 | `enabled`      | `true`  | Master switch.                                              |
-| `protect_turns`| `3`     | Newest N turns are never evicted.                          |
-| `large_turns`  | `5`     | Large reads are evicted after this many turns.            |
-| `large_size`   | `4096`  | Bytes; threshold for the early (large) tier.              |
+| `protect_turns`| `3`     | Newest N turns are never evicted (except superseded duplicates). |
 | `evict_turns`  | `10`    | Any read older than this is evicted regardless of size.   |
 | `budget_bytes` | `0`     | Reader-byte cap for the burst valve; `0` ⇒ ~40% of window. |
 | `notify_user`  | `false` | Surface a one-line notice in the conversation per eviction. |

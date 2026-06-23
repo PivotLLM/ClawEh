@@ -28,34 +28,31 @@ import (
 //     later write/edit to it)                                and any size.
 //   - Age <= ProtectTurns (and not superseded)            → never evicted.
 //   - Age > EvictTurns                                    → evicted (any size).
-//   - Age > LargeTurns and size >= LargeSize              → evicted (early).
 //   - Budget valve: if reader-result bytes still exceed   → largest-first eviction
 //     BudgetBytes, evict more (age > ProtectTurns)          until under budget.
 //
 // Supersession is checked before the protect window because a stale duplicate
 // the agent has already re-read is pure bloat regardless of recency; the
 // most-recent read of each resource is never superseded, so the active view is
-// always retained. The protect window therefore guards only the age/size/budget
+// always retained. The protect window therefore guards only the age and budget
 // tiers (in practice, mainly the budget valve, which can otherwise fire at any
-// age).
+// age). Shedding large reads under memory pressure is the budget valve's job —
+// evicting them on age alone would just force re-reads when there is room.
 type EvictionPolicy struct {
 	Enabled      bool
 	ProtectTurns int
-	LargeTurns   int
-	LargeSize    int // bytes
 	EvictTurns   int
 	BudgetBytes  int  // 0 => derived from contextWindow (~40%)
 	NotifyUser   bool // emit a one-line in-conversation notice per eviction
 }
 
 // DefaultEvictionPolicy returns the built-in defaults: enabled, protect the last
-// 3 turns, evict large (>=4 KiB) reads after 5 turns, evict everything after 10.
+// 3 turns, evict reads older than 10 turns, with the budget valve shedding the
+// largest reads under memory pressure.
 func DefaultEvictionPolicy() EvictionPolicy {
 	return EvictionPolicy{
 		Enabled:      true,
 		ProtectTurns: 3,
-		LargeTurns:   5,
-		LargeSize:    4096,
 		EvictTurns:   10,
 		BudgetBytes:  0,
 		NotifyUser:   false,
@@ -300,15 +297,12 @@ func (m *Manager) SweepEvictions(_ context.Context) []EvictionEvent {
 			remainingReaderBytes += size // protected: stays in window
 			continue
 		}
-		switch {
-		case a > p.EvictTurns:
+		if a > p.EvictTurns {
 			marks[idx] = "stale"
-		case p.LargeTurns > 0 && a > p.LargeTurns && size >= p.LargeSize:
-			marks[idx] = "large"
-		default:
-			budgetCands = append(budgetCands, cand{idx: idx, size: size})
-			remainingReaderBytes += size // candidate stays unless budget evicts it
+			continue
 		}
+		budgetCands = append(budgetCands, cand{idx: idx, size: size})
+		remainingReaderBytes += size // candidate stays unless budget evicts it
 	}
 
 	// Budget valve: evict largest-first among the remaining candidates until the

@@ -463,12 +463,6 @@ func applyEvictionConfig(p *llmcontext.EvictionPolicy, c *config.ContextEviction
 	if c.ProtectTurns != nil {
 		p.ProtectTurns = *c.ProtectTurns
 	}
-	if c.LargeTurns != nil {
-		p.LargeTurns = *c.LargeTurns
-	}
-	if c.LargeSize != nil {
-		p.LargeSize = *c.LargeSize
-	}
 	if c.EvictTurns != nil {
 		p.EvictTurns = *c.EvictTurns
 	}

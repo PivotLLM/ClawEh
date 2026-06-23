@@ -250,17 +250,7 @@ export function ConfigPage() {
         )
         const evictionProtectTurns = parseIntField(
           form.evictionProtectTurns,
-          "Protect last N turns",
-          { min: 0 },
-        )
-        const evictionLargeTurns = parseIntField(
-          form.evictionLargeTurns,
-          "Evict large reads after (turns)",
-          { min: 0 },
-        )
-        const evictionLargeSize = parseIntField(
-          form.evictionLargeSize,
-          "Large read size (bytes)",
+          "Protected age",
           { min: 0 },
         )
         const evictionEvictTurns = parseIntField(
@@ -314,8 +304,6 @@ export function ConfigPage() {
                 enabled: form.evictionEnabled,
                 notify_user: form.evictionNotifyUser,
                 protect_turns: evictionProtectTurns,
-                large_turns: evictionLargeTurns,
-                large_size: evictionLargeSize,
                 evict_turns: evictionEvictTurns,
                 budget_bytes: evictionBudgetBytes,
               },

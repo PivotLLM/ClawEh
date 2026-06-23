@@ -291,8 +291,6 @@ type AgentConfig struct {
 type ContextEvictionConfig struct {
 	Enabled      *bool `json:"enabled,omitempty"`       // nil => enabled
 	ProtectTurns *int  `json:"protect_turns,omitempty"` // nil => 3
-	LargeTurns   *int  `json:"large_turns,omitempty"`   // nil => 5
-	LargeSize    *int  `json:"large_size,omitempty"`    // nil => 4096 bytes
 	EvictTurns   *int  `json:"evict_turns,omitempty"`   // nil => 10
 	BudgetBytes  *int  `json:"budget_bytes,omitempty"`  // nil => derived (~40% of window)
 	NotifyUser   *bool `json:"notify_user,omitempty"`   // nil => off
