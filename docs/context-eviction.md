@@ -31,9 +31,13 @@ Conversational text, memory, and one-shot results are never evicted.
 Turn age is **1-based**: the newest turn group is age 1. For each re-retrievable
 tool result, in priority order:
 
-1. **Age ≤ `protect_turns`** → never evicted (the active working set).
-2. **Superseded** — a later read of the same resource, or a later
-   write/edit to it — → evicted, *any size*.
+1. **Superseded** — a later read of the same resource, or a later write/edit to
+   it — → evicted, *any size and any age, including inside the protect window*.
+   A stale duplicate the agent has already re-read is pure bloat regardless of
+   recency. The most-recent read of each resource is never superseded, so the
+   agent always keeps its current view of a file.
+2. **Age ≤ `protect_turns`** (and not superseded) → never evicted (the active
+   working set).
 3. **Age > `evict_turns`** → evicted, *any size* (old content is almost
    certainly captured in the summary by now).
 4. **Age > `large_turns` and size ≥ `large_size`** → evicted *early* (big blobs
@@ -41,6 +45,11 @@ tool result, in priority order:
 5. **Budget valve** — if reader-result bytes still exceed `budget_bytes`, evict
    largest-first among anything older than `protect_turns` until under budget.
    Handles a *burst* of large reads that the age tiers can't shed fast enough.
+
+Because supersession is checked first and ignores the protect window, the
+`protect_turns` setting guards only the age/size/budget tiers — in practice
+mainly the budget valve, which can otherwise fire at any age. Keeping the latest
+read of every file is handled by supersession itself.
 
 `large_size` only gates the *early* tier (4). Supersession, the age cutoff, and
 the budget valve all evict regardless of size — so small content is still

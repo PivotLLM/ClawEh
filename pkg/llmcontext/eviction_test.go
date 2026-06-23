@@ -195,16 +195,72 @@ func TestSweep_SupersededByEdit(t *testing.T) {
 	}
 }
 
-func TestSweep_ProtectBeatsSuperseded(t *testing.T) {
-	// Read within protect, then edited — protect wins, read stays.
+func TestSweep_SupersededIgnoresProtect(t *testing.T) {
+	// A superseded duplicate is evicted even inside the protect window: the read
+	// at age 3 (within protect 3) is superseded by a later edit and must go, since
+	// keeping a stale copy the agent already replaced only bloats the window.
 	store := newSeqStore(buildHistory(
 		turnSpec{tool: "file_read", id: "r", args: map[string]any{"path": "a.md"}, content: strings.Repeat("x", 500)}, // age 3
 		turnSpec{text: "1"},
 		turnSpec{tool: "file_edit", id: "e", args: map[string]any{"path": "a.md"}, content: "ok"}, // age 1
 	))
 	events := newEvictMgr(store, basePolicy()).SweepEvictions(context.Background())
-	if len(events) != 0 {
-		t.Fatalf("protected read evicted despite supersession: %+v", events)
+	if len(events) != 1 || events[0].Reason != "superseded" {
+		t.Fatalf("want superseded read evicted inside protect, got %+v", events)
+	}
+	if !isEvicted(findToolResult(store, "r")) {
+		t.Fatalf("superseded protected read not evicted")
+	}
+}
+
+func TestSweep_LatestReadKeptInsideProtect(t *testing.T) {
+	// The most-recent read of a resource is never superseded, so it survives even
+	// when older duplicates of the same file are evicted — the agent keeps its
+	// current view. Three reads of a.md: the two older ones go, the newest stays.
+	store := newSeqStore(buildHistory(
+		turnSpec{tool: "file_read", id: "r1", args: map[string]any{"path": "a.md"}, content: strings.Repeat("x", 500)}, // age 5
+		turnSpec{text: "1"},
+		turnSpec{tool: "file_read", id: "r2", args: map[string]any{"path": "a.md"}, content: strings.Repeat("y", 500)}, // age 3 (protected, but superseded)
+		turnSpec{tool: "file_read", id: "r3", args: map[string]any{"path": "a.md"}, content: strings.Repeat("z", 500)}, // age 2 (protected, but superseded)
+		turnSpec{tool: "file_read", id: "r4", args: map[string]any{"path": "a.md"}, content: strings.Repeat("w", 500)}, // age 1 (latest, kept)
+	))
+	events := newEvictMgr(store, basePolicy()).SweepEvictions(context.Background())
+	if len(events) != 3 {
+		t.Fatalf("want 3 stale duplicates evicted, got %d: %+v", len(events), events)
+	}
+	if isEvicted(findToolResult(store, "r4")) {
+		t.Fatalf("latest read evicted — agent lost its current view")
+	}
+	for _, id := range []string{"r1", "r2", "r3"} {
+		if !isEvicted(findToolResult(store, id)) {
+			t.Fatalf("older duplicate %s not evicted", id)
+		}
+	}
+}
+
+func TestSweep_ProtectGuardsBudget(t *testing.T) {
+	// Protect still shields recent reads from the budget valve. A protected read
+	// (age 1, distinct path, not superseded) must survive even when the window is
+	// over budget; only the older non-protected candidate is evicted.
+	p := basePolicy()
+	p.LargeTurns = 100 // disable large tier
+	p.EvictTurns = 100 // disable stale tier
+	p.LargeSize = 1 << 20
+	p.BudgetBytes = 100
+	store := newSeqStore(buildHistory(
+		turnSpec{tool: "file_read", id: "old", args: map[string]any{"path": "b.md"}, content: strings.Repeat("x", 250)}, // age 5 candidate
+		turnSpec{text: "1"}, turnSpec{text: "2"}, turnSpec{text: "3"},
+		turnSpec{tool: "file_read", id: "recent", args: map[string]any{"path": "a.md"}, content: strings.Repeat("x", 250)}, // age 1 protected
+	))
+	events := newEvictMgr(store, p).SweepEvictions(context.Background())
+	if len(events) != 1 || events[0].Reason != "budget" {
+		t.Fatalf("want 1 budget eviction, got %+v", events)
+	}
+	if isEvicted(findToolResult(store, "recent")) {
+		t.Fatalf("protected recent read evicted by budget")
+	}
+	if !isEvicted(findToolResult(store, "old")) {
+		t.Fatalf("old candidate not evicted by budget")
 	}
 }
 

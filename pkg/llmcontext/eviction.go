@@ -24,13 +24,20 @@ import (
 //
 // Turn age is 1-based: the newest turn group is age 1.
 //
-//   - Age <= ProtectTurns                                 → never evicted.
-//   - Superseded (later read of the same resource, or a   → evicted (any size).
-//     later write/edit to it)
+//   - Superseded (a later read of the same resource, or a → evicted at any age
+//     later write/edit to it)                                and any size.
+//   - Age <= ProtectTurns (and not superseded)            → never evicted.
 //   - Age > EvictTurns                                    → evicted (any size).
 //   - Age > LargeTurns and size >= LargeSize              → evicted (early).
 //   - Budget valve: if reader-result bytes still exceed   → largest-first eviction
 //     BudgetBytes, evict more (age > ProtectTurns)          until under budget.
+//
+// Supersession is checked before the protect window because a stale duplicate
+// the agent has already re-read is pure bloat regardless of recency; the
+// most-recent read of each resource is never superseded, so the active view is
+// always retained. The protect window therefore guards only the age/size/budget
+// tiers (in practice, mainly the budget valve, which can otherwise fire at any
+// age).
 type EvictionPolicy struct {
 	Enabled      bool
 	ProtectTurns int
@@ -269,11 +276,12 @@ func (m *Manager) SweepEvictions(_ context.Context) []EvictionEvent {
 		if size == 0 {
 			continue
 		}
-		a := ages[idx]
-		if a <= p.ProtectTurns {
-			remainingReaderBytes += size // protected: stays in window
-			continue
-		}
+
+		// Supersession ignores the protect window: a read with a strictly-later
+		// read of the same resource (or a later write/edit to it) is a stale
+		// duplicate the agent has already replaced — keeping it, however recent,
+		// only bloats the window. The most-recent read of each resource is never
+		// superseded, so the agent never loses its current view of a file.
 		superseded := false
 		if r, k := maxReadIdx[res]; k && r > idx {
 			superseded = true
@@ -281,9 +289,18 @@ func (m *Manager) SweepEvictions(_ context.Context) []EvictionEvent {
 		if w, k := maxWriteIdx[res]; k && w > idx {
 			superseded = true
 		}
-		switch {
-		case superseded:
+		if superseded {
 			marks[idx] = "superseded"
+			continue
+		}
+
+		// All remaining tiers respect the protect window (the recent working set).
+		a := ages[idx]
+		if a <= p.ProtectTurns {
+			remainingReaderBytes += size // protected: stays in window
+			continue
+		}
+		switch {
 		case a > p.EvictTurns:
 			marks[idx] = "stale"
 		case p.LargeTurns > 0 && a > p.LargeTurns && size >= p.LargeSize:
