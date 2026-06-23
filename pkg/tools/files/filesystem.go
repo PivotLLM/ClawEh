@@ -220,6 +220,20 @@ func (t *ReadFileTool) Execute(ctx context.Context, args map[string]any) *tools.
 		return tools.ErrorResult("path is required")
 	}
 
+	// Keep the two addressing modes pure: reject the other mode's parameters
+	// rather than silently ignoring them (a stray start_line on file_read_bytes
+	// would otherwise read from offset 0 — the exact front-chunk trap this split
+	// exists to prevent). Point the caller at the right tool.
+	if t.lineMode {
+		if argPresent(args, "offset") || argPresent(args, "length") {
+			return tools.ErrorResult("file_read_lines reads by line and does not accept offset/length. " +
+				"Use file_read_lines(path, start_line[, line_count]); to read by byte use file_read_bytes(path, offset).")
+		}
+	} else if argPresent(args, "start_line") || argPresent(args, "line_count") {
+		return tools.ErrorResult("file_read_bytes reads by byte offset and does not accept start_line/line_count. " +
+			"Use file_read_bytes(path, offset[, length]); to read by line use file_read_lines(path, start_line).")
+	}
+
 	// offset (optional, default 0)
 	offset, err := getInt64Arg(args, "offset", 0)
 	if err != nil {
@@ -479,6 +493,12 @@ func getInt64Arg(args map[string]any, key string, defaultVal int64) (int64, erro
 	default:
 		return 0, fmt.Errorf("unsupported type %T for %s parameter", raw, key)
 	}
+}
+
+// argPresent reports whether the caller supplied a non-nil value for key.
+func argPresent(args map[string]any, key string) bool {
+	v, ok := args[key]
+	return ok && v != nil
 }
 
 type WriteFileTool struct {

@@ -45,6 +45,21 @@ func TestReadStatusBlock(t *testing.T) {
 		}
 	})
 
+	t.Run("read_bytes rejects line params", func(t *testing.T) {
+		res := tool.Execute(ctx, map[string]any{"path": f, "start_line": 5})
+		if !res.IsError || !strings.Contains(res.ForLLM, "file_read_lines") {
+			t.Fatalf("expected rejection pointing at file_read_lines, got: %s", res.ForLLM)
+		}
+	})
+
+	t.Run("read_lines rejects byte params", func(t *testing.T) {
+		lt := NewReadLinesTool(tmpDir, false, MaxReadFileSize)
+		res := lt.Execute(ctx, map[string]any{"path": f, "offset": 10})
+		if !res.IsError || !strings.Contains(res.ForLLM, "file_read_bytes") {
+			t.Fatalf("expected rejection pointing at file_read_bytes, got: %s", res.ForLLM)
+		}
+	})
+
 	t.Run("final chunk is complete", func(t *testing.T) {
 		res := tool.Execute(ctx, map[string]any{"path": f, "offset": 20, "length": 10})
 		out := res.ForLLM
