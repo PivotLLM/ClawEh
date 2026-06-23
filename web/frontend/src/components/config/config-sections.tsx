@@ -530,6 +530,87 @@ export function ContextManagementSection({
           }
         />
       </Field>
+
+      <SwitchCardField
+        label={t("pages.config.eviction_enabled")}
+        hint={t("pages.config.eviction_enabled_hint")}
+        checked={form.evictionEnabled}
+        onCheckedChange={(checked) => onFieldChange("evictionEnabled", checked)}
+        layout="setting-row"
+      />
+      <SwitchCardField
+        label={t("pages.config.eviction_notify_user")}
+        hint={t("pages.config.eviction_notify_user_hint")}
+        checked={form.evictionNotifyUser}
+        onCheckedChange={(checked) =>
+          onFieldChange("evictionNotifyUser", checked)
+        }
+        layout="setting-row"
+      />
+      <Field
+        label={t("pages.config.eviction_protect_turns")}
+        hint={t("pages.config.eviction_protect_turns_hint")}
+        layout="setting-row"
+      >
+        <Input
+          type="number"
+          min={0}
+          value={form.evictionProtectTurns}
+          onChange={(e) =>
+            onFieldChange("evictionProtectTurns", e.target.value)
+          }
+        />
+      </Field>
+      <Field
+        label={t("pages.config.eviction_large_turns")}
+        hint={t("pages.config.eviction_large_turns_hint")}
+        layout="setting-row"
+      >
+        <Input
+          type="number"
+          min={0}
+          value={form.evictionLargeTurns}
+          onChange={(e) => onFieldChange("evictionLargeTurns", e.target.value)}
+        />
+      </Field>
+      <Field
+        label={t("pages.config.eviction_large_size")}
+        hint={t("pages.config.eviction_large_size_hint")}
+        layout="setting-row"
+      >
+        <Input
+          type="number"
+          min={0}
+          value={form.evictionLargeSize}
+          onChange={(e) => onFieldChange("evictionLargeSize", e.target.value)}
+        />
+      </Field>
+      <Field
+        label={t("pages.config.eviction_evict_turns")}
+        hint={t("pages.config.eviction_evict_turns_hint")}
+        layout="setting-row"
+      >
+        <Input
+          type="number"
+          min={0}
+          value={form.evictionEvictTurns}
+          onChange={(e) => onFieldChange("evictionEvictTurns", e.target.value)}
+        />
+      </Field>
+      <Field
+        label={t("pages.config.eviction_budget_bytes")}
+        hint={t("pages.config.eviction_budget_bytes_hint")}
+        layout="setting-row"
+      >
+        <Input
+          type="number"
+          min={0}
+          value={form.evictionBudgetBytes}
+          onChange={(e) =>
+            onFieldChange("evictionBudgetBytes", e.target.value)
+          }
+        />
+      </Field>
     </ConfigSectionCard>
   )
 }
