@@ -110,6 +110,38 @@ func TestStatus_SessionStatsReflected(t *testing.T) {
 	}
 }
 
+func TestStatus_ContextWindowReflected(t *testing.T) {
+	// With GetContextWindow set, /status shows the window size and the usage
+	// percentage (50000 of 150000 ≈ 33%).
+	rt := &Runtime{
+		AgentName:        "Bob",
+		Uptime:           func() time.Duration { return time.Second },
+		GetSessionStats:  func() (int, int, int) { return 10, 50000, 0 },
+		GetContextWindow: func() int { return 150000 },
+	}
+	reply := buildStatusReply(Request{Channel: "cli"}, rt)
+	if !strings.Contains(reply, "Context window: 150000 tokens") {
+		t.Errorf("missing 'Context window: 150000 tokens'\n%s", reply)
+	}
+	if !strings.Contains(reply, "Context tokens: ~50000 (estimated, 33%)") {
+		t.Errorf("missing usage with percentage\n%s", reply)
+	}
+}
+
+func TestStatus_ContextWindowUnknownFallsBack(t *testing.T) {
+	// GetContextWindow nil → the plain usage line, no window/percentage.
+	rt := &Runtime{
+		GetSessionStats: func() (int, int, int) { return 1, 1234, 0 },
+	}
+	reply := buildStatusReply(Request{Channel: "cli"}, rt)
+	if !strings.Contains(reply, "Context tokens: ~1234 (estimated)") {
+		t.Errorf("missing plain usage fallback\n%s", reply)
+	}
+	if strings.Contains(reply, "Context window:") {
+		t.Errorf("unexpected window line when GetContextWindow is nil\n%s", reply)
+	}
+}
+
 func TestStatus_GracefulDegradation(t *testing.T) {
 	// All optional sources nil — handler must still produce a usable reply.
 	rt := &Runtime{}

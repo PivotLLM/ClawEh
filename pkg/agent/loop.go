@@ -3196,6 +3196,7 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 		} else {
 			rt.AgentName = agent.ID
 		}
+		rt.GetContextWindow = func() int { return agent.ContextWindow }
 		rt.GetModelInfo = func() (name, provider, protocol, apiBase string) {
 			// Resolve the model that is actually active for THIS session (the
 			// /model selection), not just the agent's first candidate, so /status

@@ -50,6 +50,11 @@ type Runtime struct {
 	Uptime          func() time.Duration
 	GetSessionStats func() (msgCount int, estTokens int, summaryChars int)
 
+	// GetContextWindow returns the context-window size (in tokens) that governs
+	// compaction and eviction for this session — i.e. the budget against which
+	// GetSessionStats' estimated tokens are measured. Returns 0 when unknown.
+	GetContextWindow func() int
+
 	// GetSessionChannels returns the channels reachable by the agent that owns
 	// this session — NOT every channel the daemon has configured. Used by
 	// /status to avoid leaking other agents' channel surface area.
