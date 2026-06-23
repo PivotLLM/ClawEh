@@ -1896,9 +1896,55 @@ func toolCallSignature(calls []providers.ToolCall) string {
 }
 
 // runLLMIteration executes the LLM call loop with tool handling.
+// summarizeEvictions renders one consolidated notice for all of a turn's
+// evictions: total count, total bytes freed, and a per-resource breakdown (top
+// few by count). Keeps the chat to a single line even when an agent re-reads the
+// same file every iteration; per-eviction detail lives in the DEBUG log.
+func summarizeEvictions(events []llmcontext.EvictionEvent) string {
+	totalBytes := 0
+	counts := map[string]int{}
+	var order []string
+	for _, e := range events {
+		totalBytes += e.Bytes
+		if _, seen := counts[e.Resource]; !seen {
+			order = append(order, e.Resource)
+		}
+		counts[e.Resource]++
+	}
+	sort.SliceStable(order, func(i, j int) bool { return counts[order[i]] > counts[order[j]] })
+
+	const maxRes = 3
+	parts := make([]string, 0, maxRes+1)
+	for i, res := range order {
+		if i >= maxRes {
+			parts = append(parts, fmt.Sprintf("+%d more", len(order)-maxRes))
+			break
+		}
+		parts = append(parts, fmt.Sprintf("%s ×%d", capEvictResource(res), counts[res]))
+	}
+	return fmt.Sprintf("[Context: evicted %d read(s), freed %s — %s]",
+		len(events), humanBytes(totalBytes), strings.Join(parts, ", "))
+}
+
+func humanBytes(n int) string {
+	if n >= 1024 {
+		return fmt.Sprintf("%.0f KB", float64(n)/1024.0)
+	}
+	return fmt.Sprintf("%d B", n)
+}
+
+func capEvictResource(s string) string {
+	const max = 64
+	if len(s) <= max {
+		return s
+	}
+	return s[:max-1] + "…"
+}
+
 // evictionNotifyUser reports whether the agent's resolved eviction policy has
-// notify_user enabled, so the loop can surface a one-line notice per eviction.
-// The DEBUG log of evictions is unconditional and happens inside the sweep.
+// notify_user enabled, so the loop can surface a consolidated notice at the end
+// of the turn. The DEBUG log of evictions is unconditional and happens inside
+// the sweep.
 func (al *AgentLoop) evictionNotifyUser(agent *AgentInstance) bool {
 	cfg := al.GetConfig()
 	p := llmcontext.DefaultEvictionPolicy()
@@ -1928,6 +1974,23 @@ func (al *AgentLoop) runLLMIteration(
 	stopProgress := al.startProgressUpdates(opts.Channel, opts.ChatID,
 		al.GetConfig().Agents.Defaults.GetProgressInterval(), &completedTools)
 	defer stopProgress()
+
+	// Context-eviction notices are accumulated across the turn's per-iteration
+	// sweeps and posted as a single consolidated line at the end (when the agent's
+	// policy has notify_user on). An agent that re-reads the same file every
+	// iteration otherwise floods the chat with one notice per eviction; the
+	// per-eviction detail is always in the DEBUG log regardless.
+	var evictedThisTurn []llmcontext.EvictionEvent
+	defer func() {
+		if len(evictedThisTurn) == 0 || opts.Channel == "" || !al.evictionNotifyUser(agent) {
+			return
+		}
+		_ = al.bus.PublishOutbound(ctx, bus.OutboundMessage{
+			Channel: opts.Channel,
+			ChatID:  opts.ChatID,
+			Content: summarizeEvictions(evictedThisTurn),
+		})
+	}()
 
 	// Loop protection: if the model requests the exact same tool call(s) on
 	// consecutive iterations, break rather than spin (e.g. re-writing the same
@@ -1999,15 +2062,7 @@ func (al *AgentLoop) runLLMIteration(
 			if rebuilt, berr := cm.Build(ctx); berr == nil {
 				messages = rebuilt
 			}
-			if opts.Channel != "" && al.evictionNotifyUser(agent) {
-				for _, ev := range events {
-					_ = al.bus.PublishOutbound(ctx, bus.OutboundMessage{
-						Channel: opts.Channel,
-						ChatID:  opts.ChatID,
-						Content: ev.String(),
-					})
-				}
-			}
+			evictedThisTurn = append(evictedThisTurn, events...)
 		}
 
 		// Run pre-dispatch compression check. If tool-call messages or tool results
