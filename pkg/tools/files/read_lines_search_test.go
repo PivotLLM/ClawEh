@@ -13,7 +13,7 @@ func TestReadFile_LineMode(t *testing.T) {
 	f := filepath.Join(dir, "outline.md")
 	os.WriteFile(f, []byte("L1\nL2\nL3\nL4\nL5\n"), 0o644)
 
-	tool := NewReadFileTool("", false, MaxReadFileSize)
+	tool := NewReadLinesTool("", false, MaxReadFileSize)
 	res := tool.Execute(context.Background(), map[string]any{
 		"path": f, "start_line": 2, "line_count": 2,
 	})
@@ -42,7 +42,7 @@ func TestSearchFiles_FindsMatches(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "sub", "b.md"), []byte("gamma\nchapter one again\n"), 0o644)
 	os.WriteFile(filepath.Join(dir, "bin"), []byte{0, 1, 2, 'C', 'h', 'a', 'p', 't', 'e', 'r'}, 0o644)
 
-	tool := NewSearchFilesTool("", false)
+	tool := NewSearchLinesTool("", false)
 
 	// Literal, case-insensitive: matches both files (recursive), skips binary.
 	res := tool.Execute(context.Background(), map[string]any{"query": "chapter one", "path": dir})

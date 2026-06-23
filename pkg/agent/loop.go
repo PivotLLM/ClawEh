@@ -2770,7 +2770,7 @@ func (al *AgentLoop) runLLMIteration(
 				"⚠️ You have made the exact same tool call (%s) %d times in a row and it is not working — stop repeating the identical call. Change your approach: adjust the arguments, try a different tool, or explain the problem to the user instead of retrying the same thing.",
 				strings.Join(toolNames, ", "), n)
 			if slices.Contains(toolNames, "file_edit") {
-				guidance += " For file_edit specifically: the file may have changed since you last read it, or your old_text does not match exactly (e.g. whitespace/indentation) — re-read it with file_read and correct the old_text."
+				guidance += " For file_edit specifically: the file may have changed since you last read it, or your old_text does not match exactly (e.g. whitespace/indentation) — re-read it with file_read_lines and correct the old_text."
 			}
 			messages = append(messages, providers.Message{Role: "user", Content: guidance})
 			logger.InfoCF("agent", "steering model away from repeated identical tool call",

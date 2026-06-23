@@ -23,7 +23,7 @@ import (
 
 const MaxReadFileSize = 32 * 1024 // 32KB (~8K tokens) per-read cap to avoid context overflow
 
-// defaultReadLineCount is how many lines file_read returns in line mode when
+// defaultReadLineCount is how many lines file_read_lines returns when
 // line_count is unspecified. Output is still capped to the byte ceiling.
 const defaultReadLineCount = 250
 
@@ -99,11 +99,33 @@ func isWithinWorkspace(candidate, workspace string) bool {
 }
 
 type ReadFileTool struct {
-	sysFs   fileSystem
-	maxSize int64
+	sysFs    fileSystem
+	maxSize  int64
+	lineMode bool // true => file_read_lines (line addressing); false => file_read_bytes
 }
 
+// NewReadFileTool builds the byte-addressed read tool (file_read_bytes).
 func NewReadFileTool(
+	workspace string,
+	restrict bool,
+	maxReadFileSize int,
+	allowPaths ...[]*regexp.Regexp,
+) *ReadFileTool {
+	return newReadTool(false, workspace, restrict, maxReadFileSize, allowPaths...)
+}
+
+// NewReadLinesTool builds the line-addressed read tool (file_read_lines).
+func NewReadLinesTool(
+	workspace string,
+	restrict bool,
+	maxReadFileSize int,
+	allowPaths ...[]*regexp.Regexp,
+) *ReadFileTool {
+	return newReadTool(true, workspace, restrict, maxReadFileSize, allowPaths...)
+}
+
+func newReadTool(
+	lineMode bool,
 	workspace string,
 	restrict bool,
 	maxReadFileSize int,
@@ -120,23 +142,56 @@ func NewReadFileTool(
 	}
 
 	return &ReadFileTool{
-		sysFs:   buildFs(workspace, restrict, patterns),
-		maxSize: maxSize,
+		sysFs:    buildFs(workspace, restrict, patterns),
+		maxSize:  maxSize,
+		lineMode: lineMode,
 	}
 }
 
 func (t *ReadFileTool) Name() string {
-	return "file_read"
+	if t.lineMode {
+		return "file_read_lines"
+	}
+	return "file_read_bytes"
 }
 
 func (t *ReadFileTool) Description() string {
-	return "Read the contents of a file. For text/code, prefer line addressing: pass `start_line` " +
-		"(1-based) and optional `line_count` to read a numbered slice — ideal for large files (chapters, " +
-		"outlines) and for getting exact text to pass to file_edit. Or use byte pagination via `offset`/`length`. " +
-		"Either way the result is bounded and tells you how to fetch the next chunk."
+	if t.lineMode {
+		return "Read a file by LINE number. Pass `start_line` (1-based) and optional `line_count` to read a " +
+			"numbered slice; lines are returned with their numbers, and the status block tells you the next " +
+			"`start_line`. Best for text/code and for getting exact text to pass to file_edit. " +
+			"Line numbers from file_search_lines feed directly into this tool. " +
+			"(To page by raw bytes instead, use file_read_bytes.)"
+	}
+	return "Read a file by BYTE offset. Pass `offset` and optional `length` to read a byte range; the status " +
+		"block tells you the next `offset`. Best for binary or very large files. " +
+		"Byte offsets from file_search_bytes feed directly into this tool. " +
+		"(For human-readable line addressing, use file_read_lines.)"
 }
 
 func (t *ReadFileTool) Parameters() map[string]any {
+	if t.lineMode {
+		return map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"path": map[string]any{
+					"type":        "string",
+					"description": "Path to the file to read.",
+				},
+				"start_line": map[string]any{
+					"type":        "integer",
+					"description": "1-based line to start from (default 1).",
+					"default":     1,
+				},
+				"line_count": map[string]any{
+					"type":        "integer",
+					"description": "Number of lines to read from start_line (default 250). Still capped to the byte limit.",
+					"default":     defaultReadLineCount,
+				},
+			},
+			"required": []string{"path"},
+		}
+	}
 	return map[string]any{
 		"type": "object",
 		"properties": map[string]any{
@@ -144,23 +199,14 @@ func (t *ReadFileTool) Parameters() map[string]any {
 				"type":        "string",
 				"description": "Path to the file to read.",
 			},
-			"start_line": map[string]any{
-				"type":        "integer",
-				"description": "1-based line to start from. When set, the file is read by numbered lines (not bytes); offset/length are ignored.",
-			},
-			"line_count": map[string]any{
-				"type":        "integer",
-				"description": "Number of lines to read from start_line (default 250). Still capped to the byte limit.",
-				"default":     defaultReadLineCount,
-			},
 			"offset": map[string]any{
 				"type":        "integer",
-				"description": "Byte offset to start reading from (byte mode; ignored when start_line is set).",
+				"description": "Byte offset to start reading from.",
 				"default":     0,
 			},
 			"length": map[string]any{
 				"type":        "integer",
-				"description": "Maximum number of bytes to read (byte mode).",
+				"description": "Maximum number of bytes to read.",
 				"default":     t.maxSize,
 			},
 		},
@@ -195,8 +241,8 @@ func (t *ReadFileTool) Execute(ctx context.Context, args map[string]any) *tools.
 		length = t.maxSize
 	}
 
-	// Line mode: when start_line is given, read a numbered slice of lines.
-	startLine, err := getInt64Arg(args, "start_line", 0)
+	// Line mode (file_read_lines): read a numbered slice of lines.
+	startLine, err := getInt64Arg(args, "start_line", 1)
 	if err != nil {
 		return tools.ErrorResult(err.Error())
 	}
@@ -236,9 +282,13 @@ func (t *ReadFileTool) Execute(ctx context.Context, args map[string]any) *tools.
 		}
 	}
 
-	// Line mode: read a numbered slice of lines from the file (position is at 0
-	// after the sniff reset). Bounded by lineCount and the byte ceiling.
-	if startLine > 0 {
+	// Line mode (file_read_lines): read a numbered slice of lines from the file
+	// (position is at 0 after the sniff reset). Bounded by lineCount and the byte
+	// ceiling.
+	if t.lineMode {
+		if startLine < 1 {
+			startLine = 1
+		}
 		if lineCount <= 0 {
 			lineCount = defaultReadLineCount
 		}
@@ -314,8 +364,8 @@ func byteReadStatus(path, displayPath string, offset, readEnd, length, totalSize
 		b.WriteString("Status: TRUNCATED — more content remains\n\n")
 		b.WriteString("ACTION REQUIRED:\n")
 		b.WriteString("  To continue, call:\n")
-		fmt.Fprintf(&b, "  file_read(path=%q, offset=%d)\n\n", path, readEnd)
-		fmt.Fprintf(&b, "Do NOT call file_read again without offset=%d — you will receive the same chunk.\n", readEnd)
+		fmt.Fprintf(&b, "  file_read_bytes(path=%q, offset=%d)\n\n", path, readEnd)
+		fmt.Fprintf(&b, "Do NOT call file_read_bytes again without offset=%d — you will receive the same chunk.\n", readEnd)
 	} else {
 		b.WriteString("Status: COMPLETE — END OF FILE, no further content\n")
 	}
@@ -390,8 +440,8 @@ func lineReadStatus(path, displayPath string, startLine, lastLine int64, moreFol
 		}
 		b.WriteString("ACTION REQUIRED:\n")
 		b.WriteString("  To continue, call:\n")
-		fmt.Fprintf(&b, "  file_read(path=%q, start_line=%d)\n\n", path, lastLine+1)
-		fmt.Fprintf(&b, "Do NOT call file_read again without start_line=%d — you will receive the same lines.\n", lastLine+1)
+		fmt.Fprintf(&b, "  file_read_lines(path=%q, start_line=%d)\n\n", path, lastLine+1)
+		fmt.Fprintf(&b, "Do NOT call file_read_lines again without start_line=%d — you will receive the same lines.\n", lastLine+1)
 	} else {
 		b.WriteString("Status: COMPLETE — END OF FILE, no further lines\n")
 	}

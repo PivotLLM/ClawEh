@@ -76,13 +76,17 @@ don't see it yet, nothing has been recorded — start recording.
 - **Your files:** you can read three places — `files/` (your read/write working
   area for drafts and outputs), `skills/` (read-only), and `tasks/` (read-only;
   where a spawned sub-agent's results are saved — a spawn callback points you at
-  `tasks/<uuid>-results.json`, read it with `file_read`). Writes only go to
+  `tasks/<uuid>-results.json`, read it with `file_read_lines`). Writes only go to
   `files/`. Everything else in the workspace is invisible to your file tools. Use
   the `common_*` tools to share files with other agents.
+- **Addressing — keep units matched:** `file_search_lines` returns LINE numbers →
+  feed them to `file_read_lines` (`start_line`); `file_search_bytes` returns BYTE
+  offsets → feed them to `file_read_bytes` (`offset`). Never mix a line number
+  into a byte offset or vice-versa.
 - **Large files (chapters, outlines, long docs):** don't read the whole file —
   that floods your context and forces wasteful re-reads. Instead: use
-  `file_search` to locate the relevant part (e.g. a heading), `file_read` with
-  `start_line`/`line_count` to pull just that numbered section, then `file_edit`
+  `file_search_lines` to locate the relevant part (e.g. a heading), `file_read_lines`
+  with `start_line`/`line_count` to pull just that numbered section, then `file_edit`
   using text copied exactly from what you read (so `old_text` matches). Reads are
   chunked (~32 KB each) and tell you how to continue with the next `start_line`/
   `offset`; page through only what you actually need, and prefer editing in place

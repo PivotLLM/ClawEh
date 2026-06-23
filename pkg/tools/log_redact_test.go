@@ -50,7 +50,7 @@ func TestRedactArgs_AppendFile_RecordsContentBytes(t *testing.T) {
 }
 
 func TestRedactArgs_ReadFile_Shape(t *testing.T) {
-	got := redactArgs("file_read", map[string]any{
+	got := redactArgs("file_read_bytes", map[string]any{
 		"path":   "/etc/passwd",
 		"offset": 100,
 		"length": 4096,
@@ -68,7 +68,7 @@ func TestRedactArgs_ReadFile_Shape(t *testing.T) {
 }
 
 func TestRedactArgs_ReadFile_OmitsNilFields(t *testing.T) {
-	got := redactArgs("file_read", map[string]any{
+	got := redactArgs("file_read_bytes", map[string]any{
 		"path": "/etc/passwd",
 	})
 	m := got.(map[string]any)

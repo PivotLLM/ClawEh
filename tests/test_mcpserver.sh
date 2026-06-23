@@ -60,7 +60,7 @@ BEARER_URL="${SERVER_URL}${BEARER_ENDPOINT}"
 # (subagent capability) and hw_i2c/hw_spi (Linux + I2C/SPI devices) are also
 # exposed but only probed when actually present in the catalogue, so this script
 # stays portable.
-EXPECTED_TOOLS="file_read file_write file_edit file_append file_list file_search file_copy web_fetch web_search msg_send msg_send_file session_messages session_search session_compact session_info session_summary_list session_summary_get session_clear shell_exec skill_find skill_install cron_schedule cogmem_domain_get cogmem_memory_search cogmem_domain_list cogmem_explain cogmem_memory_create cogmem_domain_update cogmem_memory_retire cogmem_memory_confirm cogmem_domain_create cogmem_domain_archive cogmem_domain_migrate cogmem_memory_forget cogmem_consolidate cogmem_status cogmem_export common_list common_get common_put common_delete"
+EXPECTED_TOOLS="file_read_bytes file_read_lines file_write file_edit file_append file_list file_search_lines file_search_bytes file_copy web_fetch web_search msg_send msg_send_file session_messages session_search session_compact session_info session_summary_list session_summary_get session_clear shell_exec skill_find skill_install cron_schedule cogmem_domain_get cogmem_memory_search cogmem_domain_list cogmem_explain cogmem_memory_create cogmem_domain_update cogmem_memory_retire cogmem_memory_confirm cogmem_domain_create cogmem_domain_archive cogmem_domain_migrate cogmem_memory_forget cogmem_consolidate cogmem_status cogmem_export common_list common_get common_put common_delete"
 EXPECTED_TOOL_COUNT=38
 
 # Namespace prefixes that must have at least one tool in the catalogue.
@@ -406,12 +406,14 @@ check_tool() {
     fi
 }
 
-check_tool "1.1"  "file_read"
+check_tool "1.1"  "file_read_bytes"
+check_tool "1.1b" "file_read_lines"
 check_tool "1.2"  "file_write"
 check_tool "1.3"  "file_edit"
 check_tool "1.4"  "file_append"
 check_tool "1.5"  "file_list"
-check_tool "1.5b" "file_search"
+check_tool "1.5b" "file_search_lines"
+check_tool "1.5c" "file_search_bytes"
 check_tool "1.6"  "web_fetch"
 check_tool "1.7"  "web_search"
 check_tool "1.8"  "msg_send_file"
@@ -437,8 +439,8 @@ print_section "2. Unauthenticated rejection"
 run_test_err_contains "2.1 file_list without session_token returns session_token error" \
     "file_list" '{"path":"."}' "session_token"
 
-run_test_err_contains "2.2 file_read without session_token returns session_token error" \
-    "file_read" '{"path":"test.txt"}' "session_token"
+run_test_err_contains "2.2 file_read_bytes without session_token returns session_token error" \
+    "file_read_bytes" '{"path":"test.txt"}' "session_token"
 
 run_test_err_contains "2.3 session_info without session_token returns session_token error" \
     "session_info" '{}' "session_token"
@@ -475,34 +477,37 @@ else
     run_test_ok_auth "3.2 file_write creates a scratch file" \
         "file_write" "{\"path\":\"$SCRATCH_REL\",\"content\":\"$PAYLOAD\"}"
 
-    run_test_ok_auth "3.3 file_read returns the written payload" \
-        "file_read" "{\"path\":\"$SCRATCH_REL\"}" "$PAYLOAD"
+    run_test_ok_auth "3.3 file_read_bytes returns the written payload" \
+        "file_read_bytes" "{\"path\":\"$SCRATCH_REL\"}" "$PAYLOAD"
 
     APPENDED="appended-line-$$"
 
     run_test_ok_auth "3.4 file_append adds a new line" \
         "file_append" "{\"path\":\"$SCRATCH_REL\",\"content\":\"\n$APPENDED\"}"
 
-    run_test_ok_auth "3.5 file_read shows appended content" \
-        "file_read" "{\"path\":\"$SCRATCH_REL\"}" "$APPENDED"
+    run_test_ok_auth "3.5 file_read_bytes shows appended content" \
+        "file_read_bytes" "{\"path\":\"$SCRATCH_REL\"}" "$APPENDED"
 
-    run_test_ok_auth "3.5b file_read line mode returns numbered lines" \
-        "file_read" "{\"path\":\"$SCRATCH_REL\",\"start_line\":1,\"line_count\":1}" "1: "
+    run_test_ok_auth "3.5b file_read_lines returns numbered lines" \
+        "file_read_lines" "{\"path\":\"$SCRATCH_REL\",\"start_line\":1,\"line_count\":1}" "1: "
 
-    run_test_ok_auth "3.5c file_search finds the appended content" \
-        "file_search" "{\"query\":\"$APPENDED\",\"path\":\"files\"}" "$APPENDED"
+    run_test_ok_auth "3.5c file_search_lines finds the appended content" \
+        "file_search_lines" "{\"query\":\"$APPENDED\",\"path\":\"files\"}" "$APPENDED"
+
+    run_test_ok_auth "3.5d file_search_bytes reports a byte offset for the content" \
+        "file_search_bytes" "{\"query\":\"$APPENDED\",\"path\":\"files\"}" "bytes "
 
     run_test_ok_auth "3.6 file_edit replaces a substring" \
         "file_edit" "{\"path\":\"$SCRATCH_REL\",\"old_text\":\"$PAYLOAD\",\"new_text\":\"replaced-$$\"}"
 
-    run_test_ok_auth "3.7 file_read confirms replacement" \
-        "file_read" "{\"path\":\"$SCRATCH_REL\"}" "replaced-$$"
+    run_test_ok_auth "3.7 file_read_bytes confirms replacement" \
+        "file_read_bytes" "{\"path\":\"$SCRATCH_REL\"}" "replaced-$$"
 
     run_test_ok_auth "3.8 file_copy duplicates a file" \
         "file_copy" "{\"source_path\":\"$SCRATCH_REL\",\"destination_path\":\"${SCRATCH_REL}.copy\"}"
 
-    run_test_err_auth "3.9 file_read on missing path returns an error" \
-        "file_read" '{"path":"files/definitely_not_a_real_file_'$$'_xyz.txt"}'
+    run_test_err_auth "3.9 file_read_bytes on missing path returns an error" \
+        "file_read_bytes" '{"path":"files/definitely_not_a_real_file_'$$'_xyz.txt"}'
 
     run_test_err_auth "3.10 unknown tool is rejected" \
         "definitely_not_a_real_tool_$$" '{}'
@@ -692,7 +697,7 @@ if [ -n "$BEARER_ENDPOINT" ] && [ -n "$SESSION_TOKEN" ]; then
     echo "  6.1 tools/list over bearer endpoint with valid token"
     bl=$("$PROBE_PATH" -url "$BEARER_URL" -transport http \
         -headers "Authorization:Bearer ${SESSION_TOKEN}" -list 2>&1)
-    if echo "$bl" | grep -q "file_read"; then
+    if echo "$bl" | grep -q "file_read_bytes"; then
         echo "    ${GREEN}PASS${NC}: bearer tools/list returned the catalogue"
         TIER2_PASS=$((TIER2_PASS + 1)); PASS_COUNT=$((PASS_COUNT + 1))
     else

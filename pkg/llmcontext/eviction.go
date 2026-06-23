@@ -64,7 +64,7 @@ func DefaultEvictionPolicy() EvictionPolicy {
 // is always written to the DEBUG log by the sweep itself.
 type EvictionEvent struct {
 	Seq      int64
-	Tool     string // originating tool, e.g. "file_read"
+	Tool     string // originating tool, e.g. "file_read_bytes"
 	Resource string // path or URL the tool read
 	Bytes    int    // original content size freed
 	AgeTurns int    // 1-based turn-group age (1 = newest)
@@ -77,7 +77,7 @@ const evictionResourceCap = 96
 
 // String renders the one-line in-conversation notice:
 //
-//	[Evicted 18432 bytes at 6 turns (large): file_read files/novels/ch17.md]
+//	[Evicted 18432 bytes at 6 turns (large): file_read_bytes files/novels/ch17.md]
 func (e EvictionEvent) String() string {
 	reason := ""
 	if e.Reason != "" {
@@ -112,9 +112,10 @@ func isEvicted(content string) bool {
 // resource it read. Only these tools are ever evicted — their content can be
 // recovered by calling the tool again.
 var evictionReaderArg = map[string]string{
-	"file_read": "path",
-	"file_list": "path",
-	"web_fetch": "url",
+	"file_read_bytes": "path",
+	"file_read_lines": "path",
+	"file_list":       "path",
+	"web_fetch":       "url",
 }
 
 // evictionWriterArg maps a writer tool to the argument naming the resource it

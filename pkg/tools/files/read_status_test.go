@@ -37,7 +37,7 @@ func TestReadStatusBlock(t *testing.T) {
 			"TRUNCATED",
 			"ACTION REQUIRED",
 			"offset=10)",
-			"Do NOT call file_read again without offset=10",
+			"Do NOT call file_read_bytes again without offset=10",
 		} {
 			if !strings.Contains(out, want) {
 				t.Errorf("missing %q in:\n%s", want, out)

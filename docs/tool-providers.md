@@ -33,9 +33,9 @@ pkg/tools registry  (RegisterProvider / GetProviders)
 
 Key idea: a tool package is **transport-neutral and dependency-free** (it imports
 only `pkg/global`, which itself imports only the standard library). The package
-returns tools with **bare names** (`"read"`). The *aggregator* mounts the package
+returns tools with **bare names** (`"read_bytes"`). The *aggregator* mounts the package
 under a **namespace** (`"file"`), and the published tool name is
-`"<namespace>_<bare>"` (`"file_read"`). Namespacing lives in the aggregator, not
+`"<namespace>_<bare>"` (`"file_read_bytes"`). Namespacing lives in the aggregator, not
 the package, so packages never collide and can be remounted under a new namespace
 without code changes.
 

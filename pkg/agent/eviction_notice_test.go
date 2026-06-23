@@ -14,7 +14,7 @@ func TestSummarizeEvictions(t *testing.T) {
 	t.Run("single resource collapses to one line with count", func(t *testing.T) {
 		var ev []llmcontext.EvictionEvent
 		for i := 0; i < 8; i++ {
-			ev = append(ev, llmcontext.EvictionEvent{Tool: "file_read", Resource: "files/novels/outline.md", Bytes: 65692, Reason: "superseded"})
+			ev = append(ev, llmcontext.EvictionEvent{Tool: "file_read_bytes", Resource: "files/novels/outline.md", Bytes: 65692, Reason: "superseded"})
 		}
 		got := summarizeEvictions(ev)
 		want := "[Context: evicted 8 read(s), freed 513 KB — files/novels/outline.md ×8]"

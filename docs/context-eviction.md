@@ -20,7 +20,7 @@ are touched (a file still on disk, a URL still reachable). The placeholder tells
 the model how to recover the content:
 
 ```
-[evicted: file_read files/novels/ch17.md (18432 bytes) — content evicted to save context; re-read if you need it again]
+[evicted: file_read_bytes files/novels/ch17.md (18432 bytes) — content evicted to save context; re-read if you need it again]
 ```
 
 So the only cost of an over-eager eviction is a re-read, never lost work.
@@ -63,11 +63,11 @@ pressure — there is no separate size-based tier to tune.
 
 | Role   | Tools                                                   | Resource key       |
 |--------|---------------------------------------------------------|--------------------|
-| Reader | `file_read`, `file_list`, `web_fetch`                   | `path` / `url`     |
+| Reader | `file_read_bytes`, `file_read_lines`, `file_list`, `web_fetch` | `path` / `url`     |
 | Writer | `file_write`, `file_edit`, `file_append`, `file_copy`   | `path` / `destination_path` |
 
 A writer supersedes any earlier read of the same path. MCP-published names
-(`mcp__server__file_read`) are normalized to their bare form before matching.
+(`mcp__server__file_read_bytes`) are normalized to their bare form before matching.
 
 ## Configuration
 
@@ -104,7 +104,7 @@ field). Every field is optional; unset fields fall back to the built-in defaults
 Every eviction is written to the log at **DEBUG**, regardless of `notify_user`:
 
 ```
-llmcontext  evicted tool result  session_key=... seq=... tool=file_read
+llmcontext  evicted tool result  session_key=... seq=... tool=file_read_bytes
             resource=files/ch17.md bytes=18432 age_turns=6 reason=large
 ```
 
@@ -112,7 +112,7 @@ When `notify_user` is on, the same eviction is also surfaced in the conversation
 as a one-line notice (long URLs are capped):
 
 ```
-[Evicted 18432 bytes at 6 turns (large): file_read files/novels/ch17.md]
+[Evicted 18432 bytes at 6 turns (large): file_read_bytes files/novels/ch17.md]
 ```
 
 The `reason` tag (`superseded` | `stale` | `large` | `budget`) makes it clear

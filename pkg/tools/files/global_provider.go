@@ -13,7 +13,7 @@ import (
 // GlobalProvider exposes the filesystem tools through the transport-neutral
 // global layer with BARE names ("read", "write", "list", "edit", "append",
 // "copy"). The aggregator mounts it under the "file" namespace, so the published
-// names are "file_read" / "file_write" / etc. It reuses the existing tool logic
+// names are "file_read_bytes" / "file_write" / etc. It reuses the existing tool logic
 // (mirroring filesProvider.Build's construction exactly) and converts the result
 // at the boundary, so behaviour is unchanged.
 var GlobalProvider globalFilesProvider
@@ -34,13 +34,15 @@ func (globalFilesProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 	cd, _ := deps.Host.(tools.ToolDeps)
 
 	var (
-		read   *ReadFileTool
-		write  *WriteFileTool
-		list   *ListDirTool
-		edit   *EditFileTool
-		apnd   *AppendFileTool
-		cp     *CopyFileTool
-		search *SearchFilesTool
+		readBytes   *ReadFileTool
+		readLines   *ReadFileTool
+		write       *WriteFileTool
+		list        *ListDirTool
+		edit        *EditFileTool
+		apnd        *AppendFileTool
+		cp          *CopyFileTool
+		searchLines *SearchFilesTool
+		searchBytes *SearchFilesTool
 	)
 
 	if c != nil {
@@ -86,8 +88,10 @@ func (globalFilesProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 			SetReadScopeSubdirs(subdirs)
 		}
 
-		read = NewReadFileTool(workspace, readRestrict, maxReadFileSize, allowReadPaths)
-		search = NewSearchFilesTool(workspace, readRestrict, allowReadPaths)
+		readBytes = NewReadFileTool(workspace, readRestrict, maxReadFileSize, allowReadPaths)
+		readLines = NewReadLinesTool(workspace, readRestrict, maxReadFileSize, allowReadPaths)
+		searchLines = NewSearchLinesTool(workspace, readRestrict, allowReadPaths)
+		searchBytes = NewSearchBytesTool(workspace, readRestrict, allowReadPaths)
 		write = NewWriteFileToolScoped(workspace, restrict, writeSubdir, allowWritePaths)
 		list = NewListDirTool(workspace, readRestrict, allowReadPaths)
 		edit = NewEditFileToolScoped(workspace, restrict, writeSubdir, allowWritePaths)
@@ -97,13 +101,23 @@ func (globalFilesProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 
 	return []global.ToolDefinition{
 		{
-			Name:         "read",
-			Description:  (&ReadFileTool{}).Description(),
-			RawSchema:    readSchema,
+			Name:         "read_bytes",
+			Description:  (&ReadFileTool{lineMode: false}).Description(),
+			RawSchema:    readBytesSchema,
 			Category:     "filesystem",
 			DefaultAllow: global.Allow(true),
 			Handler: func(call *global.ToolCall) (*global.Result, error) {
-				return tools.ResultToGlobal(read.Execute(call.Ctx, call.Args)), nil
+				return tools.ResultToGlobal(readBytes.Execute(call.Ctx, call.Args)), nil
+			},
+		},
+		{
+			Name:         "read_lines",
+			Description:  (&ReadFileTool{lineMode: true}).Description(),
+			RawSchema:    readLinesSchema,
+			Category:     "filesystem",
+			DefaultAllow: global.Allow(true),
+			Handler: func(call *global.ToolCall) (*global.Result, error) {
+				return tools.ResultToGlobal(readLines.Execute(call.Ctx, call.Args)), nil
 			},
 		},
 		{
@@ -127,16 +141,29 @@ func (globalFilesProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 			},
 		},
 		{
-			Name:         "search",
-			Description:  (&SearchFilesTool{}).Description(),
-			RawSchema:    (&SearchFilesTool{}).Parameters(),
+			Name:         "search_lines",
+			Description:  (&SearchFilesTool{byteMode: false}).Description(),
+			RawSchema:    (&SearchFilesTool{byteMode: false}).Parameters(),
 			Category:     "filesystem",
 			DefaultAllow: global.Allow(true),
 			Handler: func(call *global.ToolCall) (*global.Result, error) {
-				if search == nil {
+				if searchLines == nil {
 					return tools.ResultToGlobal(tools.ErrorResult("file search is not available")), nil
 				}
-				return tools.ResultToGlobal(search.Execute(call.Ctx, call.Args)), nil
+				return tools.ResultToGlobal(searchLines.Execute(call.Ctx, call.Args)), nil
+			},
+		},
+		{
+			Name:         "search_bytes",
+			Description:  (&SearchFilesTool{byteMode: true}).Description(),
+			RawSchema:    (&SearchFilesTool{byteMode: true}).Parameters(),
+			Category:     "filesystem",
+			DefaultAllow: global.Allow(true),
+			Handler: func(call *global.ToolCall) (*global.Result, error) {
+				if searchBytes == nil {
+					return tools.ResultToGlobal(tools.ErrorResult("file search is not available")), nil
+				}
+				return tools.ResultToGlobal(searchBytes.Execute(call.Ctx, call.Args)), nil
 			},
 		},
 		{
@@ -172,11 +199,10 @@ func (globalFilesProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 	}
 }
 
-// readSchema is the static JSON Schema for the read tool. ReadFileTool.Parameters()
-// embeds the instance's maxSize as the "length" default, so a zero-value instance
-// would report default 0; this literal uses MaxReadFileSize to match a properly
-// constructed instance's default.
-var readSchema = map[string]any{
+// readBytesSchema is the static JSON Schema for file_read_bytes. A properly
+// constructed ReadFileTool embeds its maxSize as the "length" default; this
+// literal uses MaxReadFileSize to match that for enumeration (zero Deps).
+var readBytesSchema = map[string]any{
 	"type": "object",
 	"properties": map[string]any{
 		"path": map[string]any{
@@ -192,6 +218,28 @@ var readSchema = map[string]any{
 			"type":        "integer",
 			"description": "Maximum number of bytes to read.",
 			"default":     int64(MaxReadFileSize),
+		},
+	},
+	"required": []string{"path"},
+}
+
+// readLinesSchema is the static JSON Schema for file_read_lines.
+var readLinesSchema = map[string]any{
+	"type": "object",
+	"properties": map[string]any{
+		"path": map[string]any{
+			"type":        "string",
+			"description": "Path to the file to read.",
+		},
+		"start_line": map[string]any{
+			"type":        "integer",
+			"description": "1-based line to start from (default 1).",
+			"default":     1,
+		},
+		"line_count": map[string]any{
+			"type":        "integer",
+			"description": "Number of lines to read from start_line (default 250). Still capped to the byte limit.",
+			"default":     defaultReadLineCount,
 		},
 	},
 	"required": []string{"path"},

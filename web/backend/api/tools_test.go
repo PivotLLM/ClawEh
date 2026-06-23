@@ -19,7 +19,7 @@ func TestHandleListTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConfig() error = %v", err)
 	}
-	// Per-tool enable state lives in the generic override map now; file_read is
+	// Per-tool enable state lives in the generic override map now; file_read_bytes is
 	// default-allow so it stays enabled, file_write is overridden off, and
 	// skill_find (default-deny) is overridden on.
 	cfg.Tools.Overrides = map[string]bool{"file_write": false, "skill_find": true}
@@ -55,8 +55,8 @@ func TestHandleListTools(t *testing.T) {
 	for _, tool := range resp.Tools {
 		gotTools[tool.Name] = tool
 	}
-	if gotTools["file_read"].Status != "enabled" {
-		t.Fatalf("file_read status = %q, want enabled", gotTools["file_read"].Status)
+	if gotTools["file_read_bytes"].Status != "enabled" {
+		t.Fatalf("file_read_bytes status = %q, want enabled", gotTools["file_read_bytes"].Status)
 	}
 	if gotTools["file_write"].Status != "disabled" {
 		t.Fatalf("file_write status = %q, want disabled", gotTools["file_write"].Status)
