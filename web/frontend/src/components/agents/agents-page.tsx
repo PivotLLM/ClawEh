@@ -290,7 +290,7 @@ function AgentCard({
     <div className="border-border/60 bg-card rounded-xl border p-4 space-y-3">
       <div className="flex items-center justify-between gap-2">
         <div>
-          <span className="font-mono text-sm font-semibold">{name || label}</span>
+          <span className="font-mono text-lg font-semibold">{name || label}</span>
           {name && name !== label && (
             <span className="text-muted-foreground font-mono text-xs ml-2">({label})</span>
           )}
