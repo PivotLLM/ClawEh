@@ -701,9 +701,9 @@ func TestReadFileTool_ChunkedReading(t *testing.T) {
 	if !strings.Contains(result1.ForLLM, "abcdefghij") {
 		t.Errorf("Chunk 1 should contain 'abcdefghij', got: %s", result1.ForLLM)
 	}
-	// Expect the header to indicate the file is truncated
-	if !strings.Contains(result1.ForLLM, "[TRUNCATED") {
-		t.Errorf("Chunk 1 header should indicate truncation, got: %s", result1.ForLLM)
+	// Expect the status block to indicate the file is truncated
+	if !strings.Contains(result1.ForLLM, "TRUNCATED") {
+		t.Errorf("Chunk 1 status should indicate truncation, got: %s", result1.ForLLM)
 	}
 	// Expect the header to suggest the next offset (10)
 	if !strings.Contains(result1.ForLLM, "offset=10") {
@@ -748,14 +748,14 @@ func TestReadFileTool_ChunkedReading(t *testing.T) {
 	if !strings.Contains(result3.ForLLM, "uvwxyz") {
 		t.Errorf("Chunk 3 should contain 'uvwxyz', got: %s", result3.ForLLM)
 	}
-	// Expect the header to indicate the end of the file
-	if !strings.Contains(result3.ForLLM, "[END OF FILE") {
-		t.Errorf("Chunk 3 header should indicate end of file, got: %s", result3.ForLLM)
+	// Expect the status block to indicate the end of the file
+	if !strings.Contains(result3.ForLLM, "END OF FILE") {
+		t.Errorf("Chunk 3 status should indicate end of file, got: %s", result3.ForLLM)
 	}
 
 	// Ensure no TRUNCATED message is present in the final chunk
-	if strings.Contains(result3.ForLLM, "[TRUNCATED") {
-		t.Errorf("Chunk 3 header should NOT indicate truncation, got: %s", result3.ForLLM)
+	if strings.Contains(result3.ForLLM, "TRUNCATED") {
+		t.Errorf("Chunk 3 status should NOT indicate truncation, got: %s", result3.ForLLM)
 	}
 }
 

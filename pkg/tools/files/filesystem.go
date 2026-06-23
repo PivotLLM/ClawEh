@@ -242,7 +242,7 @@ func (t *ReadFileTool) Execute(ctx context.Context, args map[string]any) *tools.
 		if lineCount <= 0 {
 			lineCount = defaultReadLineCount
 		}
-		return t.readLines(file, filepath.Base(path), startLine, lineCount)
+		return t.readLines(file, path, startLine, lineCount)
 	}
 
 	// Seek to the requested offset.
@@ -275,30 +275,6 @@ func (t *ReadFileTool) Execute(ctx context.Context, args map[string]any) *tools.
 	}
 
 	readEnd := offset + int64(len(data))
-	readRange := fmt.Sprintf("bytes %d-%d", offset, readEnd-1)
-
-	displayPath := filepath.Base(path)
-	var header string
-	if totalSize >= 0 {
-		header = fmt.Sprintf(
-			"[file: %s | total: %d bytes | read: %s]",
-			displayPath, totalSize, readRange,
-		)
-	} else {
-		header = fmt.Sprintf(
-			"[file: %s | read: %s | total size unknown]",
-			displayPath, readRange,
-		)
-	}
-
-	if hasMore {
-		header += fmt.Sprintf(
-			"\n[TRUNCATED - file has more content. Call file_read again with offset=%d to continue.]",
-			readEnd,
-		)
-	} else {
-		header += "\n[END OF FILE - no further content.]"
-	}
 
 	logger.DebugCF("tool", "ReadFileTool execution completed successfully",
 		map[string]any{
@@ -307,14 +283,52 @@ func (t *ReadFileTool) Execute(ctx context.Context, args map[string]any) *tools.
 			"has_more":   hasMore,
 		})
 
-	return tools.NewToolResult(header + "\n\n" + string(data))
+	// The status block follows the content (not a header) so the actionable
+	// continuation instruction sits at the model's highest-attention position.
+	// A hint buried above a large chunk was being ignored, causing models to
+	// re-read the same front chunk instead of advancing the offset.
+	return tools.NewToolResult(string(data) +
+		byteReadStatus(path, filepath.Base(path), offset, readEnd, length, totalSize, hasMore))
+}
+
+// byteReadStatus renders the explicit end-of-output status block for a byte-mode
+// read, including the exact next call to make. Placed after the content.
+func byteReadStatus(path, displayPath string, offset, readEnd, length, totalSize int64, hasMore bool) string {
+	var b strings.Builder
+	b.WriteString("\n\n=== FILE READ STATUS ===\n")
+	fmt.Fprintf(&b, "File: %s\n", displayPath)
+	if totalSize >= 0 {
+		fmt.Fprintf(&b, "Total size: %d bytes\n", totalSize)
+	}
+	if totalSize >= 0 && length > 0 {
+		totalChunks := (totalSize + length - 1) / length
+		if totalChunks < 1 {
+			totalChunks = 1
+		}
+		fmt.Fprintf(&b, "Chunk returned: bytes %d-%d (chunk %d of %d)\n",
+			offset, readEnd-1, offset/length+1, totalChunks)
+	} else {
+		fmt.Fprintf(&b, "Chunk returned: bytes %d-%d\n", offset, readEnd-1)
+	}
+	if hasMore {
+		b.WriteString("Status: TRUNCATED — more content remains\n\n")
+		b.WriteString("ACTION REQUIRED:\n")
+		b.WriteString("  To continue, call:\n")
+		fmt.Fprintf(&b, "  file_read(path=%q, offset=%d)\n\n", path, readEnd)
+		fmt.Fprintf(&b, "Do NOT call file_read again without offset=%d — you will receive the same chunk.\n", readEnd)
+	} else {
+		b.WriteString("Status: COMPLETE — END OF FILE, no further content\n")
+	}
+	b.WriteString("=== END STATUS ===")
+	return b.String()
 }
 
 // readLines returns a numbered slice of lines [startLine, startLine+lineCount)
 // from file (positioned at 0), bounded by the byte ceiling. The output is
 // prefixed with each line's 1-based number and a header noting the range and how
 // to fetch the next chunk.
-func (t *ReadFileTool) readLines(file io.Reader, displayPath string, startLine, lineCount int64) *tools.ToolResult {
+func (t *ReadFileTool) readLines(file io.Reader, path string, startLine, lineCount int64) *tools.ToolResult {
+	displayPath := filepath.Base(path)
 	scanner := bufio.NewScanner(file)
 	// Allow long lines up to the byte ceiling (default 64KB buffer is too small).
 	scanner.Buffer(make([]byte, 0, 64*1024), int(t.maxSize)+1)
@@ -354,18 +368,35 @@ func (t *ReadFileTool) readLines(file io.Reader, displayPath string, startLine, 
 		return tools.NewToolResult(fmt.Sprintf("[file: %s | no lines at start_line=%d (file has %d line(s))]", displayPath, startLine, cur))
 	}
 
-	header := fmt.Sprintf("[file: %s | lines %d-%d]", displayPath, startLine, lastLine)
-	switch {
-	case bytesCapped:
-		header += fmt.Sprintf("\n[TRUNCATED at the byte limit — continue with start_line=%d.]", lastLine+1)
-	case moreLines:
-		header += fmt.Sprintf("\n[More lines follow — continue with start_line=%d.]", lastLine+1)
-	default:
-		header += "\n[END OF FILE - no further lines.]"
-	}
 	logger.DebugCF("tool", "ReadFileTool line-mode read completed",
 		map[string]any{"path": displayPath, "start_line": startLine, "lines": emitted, "more": moreLines})
-	return tools.NewToolResult(header + "\n\n" + b.String())
+	return tools.NewToolResult(b.String() +
+		lineReadStatus(path, displayPath, startLine, lastLine, bytesCapped || moreLines, bytesCapped))
+}
+
+// lineReadStatus renders the explicit end-of-output status block for a line-mode
+// read, including the exact next call. Placed after the content (see
+// byteReadStatus for why).
+func lineReadStatus(path, displayPath string, startLine, lastLine int64, moreFollow, bytesCapped bool) string {
+	var b strings.Builder
+	b.WriteString("\n\n=== FILE READ STATUS ===\n")
+	fmt.Fprintf(&b, "File: %s\n", displayPath)
+	fmt.Fprintf(&b, "Lines returned: %d-%d\n", startLine, lastLine)
+	if moreFollow {
+		if bytesCapped {
+			b.WriteString("Status: TRUNCATED at the byte limit — more lines remain\n\n")
+		} else {
+			b.WriteString("Status: TRUNCATED — more lines remain\n\n")
+		}
+		b.WriteString("ACTION REQUIRED:\n")
+		b.WriteString("  To continue, call:\n")
+		fmt.Fprintf(&b, "  file_read(path=%q, start_line=%d)\n\n", path, lastLine+1)
+		fmt.Fprintf(&b, "Do NOT call file_read again without start_line=%d — you will receive the same lines.\n", lastLine+1)
+	} else {
+		b.WriteString("Status: COMPLETE — END OF FILE, no further lines\n")
+	}
+	b.WriteString("=== END STATUS ===")
+	return b.String()
 }
 
 // getInt64Arg extracts an integer argument from the args map, returning the
