@@ -267,6 +267,46 @@ func TestSweep_Idempotent(t *testing.T) {
 	}
 }
 
+func TestSweep_EvictedStaysEvictedAcrossTiers(t *testing.T) {
+	// A large read is evicted via the "large" tier at age 6. After more turns
+	// push it past evict_turns (10), the sweep must recognize it is already
+	// evicted and leave it alone — no re-eviction, no duplicate notice.
+	store := newSeqStore(buildHistory(
+		turnSpec{text: "0"}, turnSpec{text: "1"},
+		turnSpec{tool: "file_read", id: "r", args: map[string]any{"path": "a.md"}, content: strings.Repeat("x", 200)}, // age 6
+		turnSpec{text: "3"}, turnSpec{text: "4"}, turnSpec{text: "5"}, turnSpec{text: "6"}, turnSpec{text: "7"},
+	))
+	mgr := newEvictMgr(store, basePolicy())
+
+	first := mgr.SweepEvictions(context.Background())
+	if len(first) != 1 || first[0].Reason != "large" {
+		t.Fatalf("first sweep: want 1 large eviction, got %+v", first)
+	}
+	placeholder := findToolResult(store, "r")
+	if !isEvicted(placeholder) {
+		t.Fatalf("read not evicted on first sweep")
+	}
+
+	// Age the (already-evicted) read past evict_turns by appending more turns.
+	aged := store.GetHistoryWithSeqs("sess")
+	base := aged[len(aged)-1].Seq
+	for i := 0; i < 6; i++ {
+		aged = append(aged, memory.StoredMessage{
+			Seq:     base + int64(i+1),
+			Message: providers.Message{Role: "assistant", Content: "more"},
+		})
+	}
+	store.SetHistoryWithSeqs("sess", aged)
+
+	second := mgr.SweepEvictions(context.Background())
+	if len(second) != 0 {
+		t.Fatalf("already-evicted read re-evicted after aging: %+v", second)
+	}
+	if got := findToolResult(store, "r"); got != placeholder {
+		t.Fatalf("placeholder changed on re-sweep:\n  before: %q\n  after:  %q", placeholder, got)
+	}
+}
+
 func TestEvictionEvent_String(t *testing.T) {
 	e := EvictionEvent{Tool: "file_read", Resource: "files/ch17.md", Bytes: 18432, AgeTurns: 6, Reason: "large"}
 	want := "[Evicted 18432 bytes at 6 turns (large): file_read files/ch17.md]"
