@@ -9,15 +9,11 @@
 - [x] Mount notify watcher (.claw watermark, cron-style notice) — `6e82bc0`
 - [x] WebUI: MCP **client** enable + auto-enable toggles — `8829232`
 
-**Remaining (backend ready; UI/docs only):**
-- [ ] WebUI: structured external-MCP-server **add/edit/delete** (replace the raw
-  JSON `ClientServersSection`; transports stdio + http). Backend save path already
-  supports null-to-delete.
-- [ ] WebUI: per-agent **mounts** add/remove/edit + notify toggle (on the Agents
-  page). Backend config (`MountConfig`, `ValidateMountName`) is in place.
-- [ ] Docs: README — MCP client section (enable + server management + CLI parity),
-  external mounts + notify, and the new file tools (`file_delete`/`file_move` and
-  the earlier edit/split tools).
+- [x] WebUI: structured external-MCP-server add/edit/delete — `29647f6`
+- [x] WebUI: per-agent mounts add/edit/delete + notify toggle — `ea005c6`
+- [x] Docs: README — MCP client, external mounts + notify, file tools
+
+**All items complete.**
 
 ---
 

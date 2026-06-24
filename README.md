@@ -21,6 +21,17 @@ stand-alone stdio MCP service for use outside ClawEh.
 
 For more about Maestro, see https://github.com/PivotLLM/Maestro.
 
+### External MCP servers, mounts, and richer file tools
+Manage **external MCP servers** entirely in the WebUI (MCP page) — add/edit/delete
+with a form, no JSON — and claw now offers their tools to **every** provider
+(API agents directly, CLI agents via claw's host), with auto-enable when a server
+is turned on. Agents can **mount external folders** beside `files/` (per agent, on
+the Agents page) with an optional **notify** toggle that pings the agent when a new
+file lands. File tools gained explicit line/byte addressing
+(`file_read_lines`/`_bytes`, `file_search_lines`/`_bytes`), positional edits
+(`file_edit_lines`/`insert`/`delete` in line and byte units), and `file_move` /
+`file_delete`. See the file-access and MCP sections below.
+
 ### Context eviction
 A per-turn, LLM-free sweep keeps long sessions inside the context window by
 collapsing **re-retrievable** tool results — file reads, web fetches — to a short
@@ -157,6 +168,32 @@ that need to be agent-writable must be moved into `files/` manually.** A shared
 **common directory** (default `agents/common`, configurable to any path) also lets
 agents exchange files via `common_put` / `common_get` / `common_list` /
 `common_delete`; access is on by default and can be toggled per agent.
+
+#### External mounts
+You can mount an external directory tree as a top-level name beside `files/` and
+`skills/` — per agent, on the **Agents page** (the **Mounts** editor: a name, an
+absolute path, and a **notify** toggle). A mount named `notes` pointing at
+`/home/ai/Documents/mynotes` is reachable as `notes/...` (e.g.
+`notes/stuff.md`). The whole tree under the path is mounted, read **and** write,
+sandboxed so the agent cannot climb above the mount point (`..` is rejected).
+Mount names are a single component of letters, digits, and hyphens
+(`notes-eric` ok), and cannot shadow `files`/`skills`/`tasks`/`common`.
+
+With **notify** on, claw watches the mount and, when a **new file** appears,
+messages the agent on its default channel (cron-style) with the file's path — so
+it can act on drops into the folder. Detection is restart-safe (a `.claw` marker
+file's mtime is the watermark, so files added while claw was stopped are still
+caught) and polls every `MountNotifyIntervalSeconds` (default 10).
+
+#### File tools
+Reads and edits address files explicitly by **lines** or **bytes**, so the model
+never mixes units: `file_search_lines`/`file_read_lines` (line numbers) pair up,
+as do `file_search_bytes`/`file_read_bytes` (byte offsets). Editing: `file_edit`
+(exact-text replace), the line/byte range tools `file_edit_lines`/`_bytes`,
+`file_insert_lines`/`_bytes`, `file_delete_lines`/`_bytes`, plus whole-file
+`file_write`, `file_append`, `file_copy`, `file_move` (organize without reading;
+copy-then-delete so it works across mounts), and `file_delete` (requires
+`sure=true`; refuses to delete backup files).
 
 ### What's next
 1. **Monitoring, reviewing, and tweaking cognitive memory** — observing what it
@@ -623,14 +660,16 @@ The `tools` list is a single global allowlist applied to all MCP clients (not pe
 
 ### Consuming external MCP servers (claw as an MCP client)
 
-Claw can also connect **outward** to third-party (upstream) MCP servers and make their tools available to your agents. Configure them under `tools.mcp.servers` (stdio, SSE, or Streamable HTTP transports, with optional auth headers and env files); claw connects on startup, lists each server's tools, and registers them as ordinary tools.
+Claw can also connect **outward** to third-party (upstream) MCP servers and make their tools available to your agents. **Manage them in the WebUI (the MCP page)** — turn on **"Connect to external MCP servers"** and add each server with **Add server** (transport **stdio** or **http**; `sse` is a deprecated alias of http). No JSON editing required; the underlying config is `tools.mcp.servers`. Claw connects on startup, lists each server's tools, and registers them.
 
-There is an important split by provider type:
+You don't have to flip the master switch by hand: with **auto-enable** on (the default, `tools.mcp.auto_enable`), claw connects whenever at least one server is enabled.
 
-- **Direct API providers** (`anthropic`, `openai`, `openai-compat`, `gemini`): **get external MCP tools automatically.** Claw acts as the MCP client — it lists the upstream tools, presents them to the model alongside its own, and proxies each call to the upstream server.
-- **CLI providers** (`claude-cli`, `codex-cli`, `gemini-cli`): **do not** receive external MCP tools through claw (the CLI runs as its own agent and ignores claw-side tool definitions). Instead, **configure those MCP servers directly in each CLI** using its own native MCP configuration — the CLIs (Claude Code, Codex CLI, Gemini CLI) all support connecting to MCP servers themselves. (They reach *claw's* own tools via the MCP host above; point them at any *external* MCP servers directly.)
+Both provider types get the external tools **through claw** — full feature parity, no per-CLI setup:
 
-In short: API agents get upstream MCP via claw; CLI agents should be pointed at upstream MCP servers directly in their own config. External MCP servers can be managed from the WebUI (the MCP page) or in `tools.mcp.servers`.
+- **Direct API providers** (`anthropic`, `openai`, `openai-compat`, `gemini`): claw lists the upstream tools, presents them to the model alongside its own, and proxies each call.
+- **CLI providers** (`claude-cli`, `codex-cli`, `gemini-cli`): claw aggregates the external tools into its own MCP host, so a CLI that already talks to claw (see [Client configuration](#client-configuration)) sees them too — claw proxies the calls. (If you instead want a CLI to reach an external server *directly*, configure it in that CLI's own MCP config.)
+
+Per-agent tool allowlists apply: allow an external server's tools with the `mcp_<server>_*` pattern (or `*`).
 
 ### Client configuration
 
