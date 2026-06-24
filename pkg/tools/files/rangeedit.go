@@ -19,7 +19,10 @@ import (
 //
 // Deletion is its own verb so an empty/missing replace can never silently wipe a
 // span. backup defaults on for the destructive verbs (edit, delete) and off for
-// insert. end is optional and defaults to end-of-file.
+// insert. end is optional and defaults to the START unit (a single line/byte) so
+// an omitted end can never silently truncate to EOF — the catastrophic case a
+// model hits when it assumes "no end = just this line". To reach end-of-file the
+// caller passes end="end" (or a too-large number, which clamps to EOF).
 type rangeEditTool struct {
 	sysFs fileSystem
 	op    string // "edit" | "insert" | "delete"
@@ -42,17 +45,17 @@ func (t *rangeEditTool) backupDefault() bool { return t.op != "insert" }
 func (t *rangeEditTool) Description() string {
 	switch t.op + "_" + t.unit {
 	case "edit_lines":
-		return "Replace lines start..end (1-based; end optional, defaults to end of file) with `replace`. To remove lines use file_delete_lines."
+		return `Replace lines start..end (1-based) with ` + "`replace`" + `. Omit end to replace just the start line; pass end="end" for end of file. To remove lines use file_delete_lines.`
 	case "edit_bytes":
-		return "Replace bytes start..end (0-based, inclusive; end optional, defaults to end of file) with `replace`. To remove bytes use file_delete_bytes."
+		return `Replace bytes start..end (0-based, inclusive) with ` + "`replace`" + `. Omit end to replace just the start byte; pass end="end" for end of file. To remove bytes use file_delete_bytes.`
 	case "insert_lines":
 		return "Insert `text` after a line number (0 = top of file). Nothing is removed."
 	case "insert_bytes":
 		return "Insert `text` at a byte offset (0 = top of file). Nothing is removed."
 	case "delete_lines":
-		return "Delete lines start..end (1-based; end optional, defaults to end of file)."
+		return `Delete lines start..end (1-based). Omit end to delete just the start line; pass end="end" for end of file.`
 	case "delete_bytes":
-		return "Delete bytes start..end (0-based, inclusive; end optional, defaults to end of file)."
+		return `Delete bytes start..end (0-based, inclusive). Omit end to delete just the start byte; pass end="end" for end of file.`
 	}
 	return ""
 }
@@ -96,9 +99,39 @@ func (t *rangeEditTool) startSchema() map[string]any {
 
 func (t *rangeEditTool) endSchema() map[string]any {
 	if t.unit == "lines" {
-		return map[string]any{"type": "integer", "description": "Last line (1-based, inclusive). Omit or 0 for end of file."}
+		return map[string]any{"type": []string{"integer", "string"}, "description": `Last line (1-based, inclusive). Omit to affect only the start line; pass "end" for end of file.`}
 	}
-	return map[string]any{"type": "integer", "description": "Last byte (0-based, inclusive). Omit for end of file."}
+	return map[string]any{"type": []string{"integer", "string"}, "description": `Last byte (0-based, inclusive). Omit to affect only the start byte; pass "end" for end of file.`}
+}
+
+// eofKeyword is the explicit "to the end of the file" value the end parameter
+// accepts. Omitting end affects only the start unit; this keyword (or a
+// too-large number) extends the range to EOF.
+const eofKeyword = "end"
+
+// resolveEnd interprets the optional `end` argument for a range edit/delete:
+//
+//	omitted       -> start          (single line/byte; the safe, intuitive default)
+//	"end" keyword -> maxEnd         (end of file)
+//	number        -> clamped to maxEnd
+//
+// Returning start when end is absent is the whole point: an omitted end can
+// never silently truncate to EOF.
+func resolveEnd(args map[string]any, start, maxEnd int64) (int64, error) {
+	if !argPresent(args, "end") {
+		return start, nil
+	}
+	if s, ok := args["end"].(string); ok && strings.EqualFold(strings.TrimSpace(s), eofKeyword) {
+		return maxEnd, nil
+	}
+	end, err := getInt64Arg(args, "end", start)
+	if err != nil {
+		return 0, fmt.Errorf(`end must be a number or "end" for end of file: %w`, err)
+	}
+	if end > maxEnd {
+		end = maxEnd
+	}
+	return end, nil
 }
 
 func (t *rangeEditTool) Execute(_ context.Context, args map[string]any) *tools.ToolResult {
@@ -163,9 +196,9 @@ func (t *rangeEditTool) applyLines(content []byte, args map[string]any) (out []b
 	if start <= 0 {
 		start = 1
 	}
-	end, _ := getInt64Arg(args, "end", 0)
-	if end <= 0 || end > n {
-		end = n
+	end, err := resolveEnd(args, start, n)
+	if err != nil {
+		return nil, "", "", err
 	}
 	if start > n {
 		return nil, "", "", fmt.Errorf("start %d is past end of file (file has %d line(s); use file_insert_lines to add)", start, n)
@@ -216,12 +249,9 @@ func (t *rangeEditTool) applyBytes(content []byte, args map[string]any) (out []b
 	if start >= n {
 		return nil, "", "", fmt.Errorf("start %d is at/past end of file (file is %d bytes; use file_insert_bytes to add)", start, n)
 	}
-	end := n - 1
-	if argPresent(args, "end") {
-		end, _ = getInt64Arg(args, "end", n-1)
-		if end > n-1 {
-			end = n - 1
-		}
+	end, err := resolveEnd(args, start, n-1)
+	if err != nil {
+		return nil, "", "", err
 	}
 	if end < start {
 		return nil, "", "", fmt.Errorf("end %d is before start %d", end, start)

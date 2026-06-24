@@ -45,12 +45,45 @@ func TestEditLines_Replace(t *testing.T) {
 	}
 }
 
-func TestEditLines_EndOptionalToEOF(t *testing.T) {
+// Omitting end must edit ONLY the start line — the safe default. This is the
+// regression guard for the truncation footgun: a model that drops end can no
+// longer wipe everything after start.
+func TestEditLines_EndOmittedIsSingleLine(t *testing.T) {
 	dir, p := writeTemp(t, "L1\nL2\nL3\n")
 	rangeTool("edit", "lines", dir).Execute(context.Background(),
 		map[string]any{"path": p, "start": 2, "replace": "Z", "backup": false})
+	if got := readBack(t, p); got != "L1\nZ\nL3\n" {
+		t.Fatalf("omitted end must edit only the start line, got %q", got)
+	}
+}
+
+// end="end" is the explicit opt-in to reach end of file.
+func TestEditLines_EndKeywordToEOF(t *testing.T) {
+	dir, p := writeTemp(t, "L1\nL2\nL3\n")
+	rangeTool("edit", "lines", dir).Execute(context.Background(),
+		map[string]any{"path": p, "start": 2, "end": "end", "replace": "Z", "backup": false})
 	if got := readBack(t, p); got != "L1\nZ\n" {
-		t.Fatalf("end-optional should replace to EOF, got %q", got)
+		t.Fatalf(`end="end" must replace to EOF, got %q`, got)
+	}
+}
+
+// A too-large numeric end clamps to EOF rather than erroring.
+func TestEditLines_EndTooLargeClampsToEOF(t *testing.T) {
+	dir, p := writeTemp(t, "L1\nL2\nL3\n")
+	rangeTool("edit", "lines", dir).Execute(context.Background(),
+		map[string]any{"path": p, "start": 2, "end": 999, "replace": "Z", "backup": false})
+	if got := readBack(t, p); got != "L1\nZ\n" {
+		t.Fatalf("too-large end should clamp to EOF, got %q", got)
+	}
+}
+
+// Delete shares the same safe default: omitted end removes only the start line.
+func TestDeleteLines_EndOmittedIsSingleLine(t *testing.T) {
+	dir, p := writeTemp(t, "L1\nL2\nL3\n")
+	rangeTool("delete", "lines", dir).Execute(context.Background(),
+		map[string]any{"path": p, "start": 2, "backup": false})
+	if got := readBack(t, p); got != "L1\nL3\n" {
+		t.Fatalf("omitted end must delete only the start line, got %q", got)
 	}
 }
 
@@ -103,12 +136,22 @@ func TestEditBytes_ReplaceSingleByte(t *testing.T) {
 	}
 }
 
-func TestEditBytes_EndOptionalToEOF(t *testing.T) {
+// Bytes behave identically: omitted end replaces only the start byte.
+func TestEditBytes_EndOmittedIsSingleByte(t *testing.T) {
 	dir, p := writeTemp(t, "abcdef")
 	rangeTool("edit", "bytes", dir).Execute(context.Background(),
 		map[string]any{"path": p, "start": 3, "replace": "XYZ", "backup": false})
+	if got := readBack(t, p); got != "abcXYZef" {
+		t.Fatalf("omitted end must replace only the start byte, got %q", got)
+	}
+}
+
+func TestEditBytes_EndKeywordToEOF(t *testing.T) {
+	dir, p := writeTemp(t, "abcdef")
+	rangeTool("edit", "bytes", dir).Execute(context.Background(),
+		map[string]any{"path": p, "start": 3, "end": "end", "replace": "XYZ", "backup": false})
 	if got := readBack(t, p); got != "abcXYZ" {
-		t.Fatalf("end-optional should replace to EOF, got %q", got)
+		t.Fatalf(`end="end" must replace to EOF, got %q`, got)
 	}
 }
 
