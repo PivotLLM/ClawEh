@@ -4,9 +4,11 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	"github.com/PivotLLM/ClawEh/pkg/config"
 	"github.com/PivotLLM/ClawEh/pkg/global"
+	"github.com/PivotLLM/ClawEh/pkg/logger"
 	"github.com/PivotLLM/ClawEh/pkg/tools"
 )
 
@@ -90,6 +92,11 @@ func (globalFilesProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 			}
 			SetReadScopeSubdirs(subdirs)
 		}
+
+		// External mounts (per agent): expose extra top-level dirs beside files/.
+		// Must be registered before constructing the tools, which capture their
+		// fileSystem (mount-aware) at build time.
+		SetMountsForWorkspace(workspace, resolveAgentMounts(cd.AgentCfg))
 
 		readBytes = NewReadFileTool(workspace, readRestrict, maxReadFileSize, allowReadPaths)
 		readLines = NewReadLinesTool(workspace, readRestrict, maxReadFileSize, allowReadPaths)
@@ -301,6 +308,41 @@ var readLinesSchema = map[string]any{
 		},
 	},
 	"required": []string{"path"},
+}
+
+// resolveAgentMounts validates an agent's mount config into usable specs. Invalid
+// entries (bad name, missing/non-directory path, duplicate) are dropped with a
+// WARN so one broken mount can't take the agent down.
+func resolveAgentMounts(agentCfg *config.AgentConfig) []MountSpec {
+	if agentCfg == nil || len(agentCfg.Mounts) == 0 {
+		return nil
+	}
+	var specs []MountSpec
+	seen := map[string]bool{}
+	for _, mc := range agentCfg.Mounts {
+		name := strings.TrimSpace(mc.Name)
+		if err := config.ValidateMountName(name); err != nil {
+			logger.WarnCF("tools", "skipping invalid mount", map[string]any{"name": name, "error": err.Error()})
+			continue
+		}
+		if seen[name] {
+			logger.WarnCF("tools", "skipping duplicate mount name", map[string]any{"name": name})
+			continue
+		}
+		abs, err := filepath.Abs(strings.TrimSpace(mc.Path))
+		if err != nil {
+			logger.WarnCF("tools", "skipping mount: bad path", map[string]any{"name": name, "path": mc.Path})
+			continue
+		}
+		info, serr := os.Stat(abs)
+		if serr != nil || !info.IsDir() {
+			logger.WarnCF("tools", "skipping mount: not an existing directory", map[string]any{"name": name, "path": abs})
+			continue
+		}
+		seen[name] = true
+		specs = append(specs, MountSpec{Name: name, Path: abs})
+	}
+	return specs
 }
 
 // appendIfMissing returns subdirs with name appended if not already present.

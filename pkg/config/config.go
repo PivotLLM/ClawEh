@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -280,6 +281,39 @@ type AgentConfig struct {
 	// this agent. Unset fields fall back to the defaults block, then to the
 	// built-in defaults.
 	ContextEviction *ContextEvictionConfig `json:"context_eviction,omitempty"`
+
+	// Mounts expose external directory trees as top-level names in this agent's
+	// space (peers of files/ and skills/), accessed as <name>/... Per agent.
+	Mounts []MountConfig `json:"mounts,omitempty"`
+}
+
+// MountConfig mounts an external directory tree as a top-level name in an agent's
+// space, beside files/ and skills/. The whole tree under Path is reachable as
+// `<Name>/...`; access is sandboxed to the mount (no `..` escape). Read + write.
+type MountConfig struct {
+	Name string `json:"name"` // single path component, [A-Za-z0-9-] only
+	Path string `json:"path"` // absolute external directory
+	// Notify watches the mount tree for new files and notifies the agent on its
+	// default channel (cron-style) when one appears.
+	Notify bool `json:"notify,omitempty"`
+}
+
+var mountNameRe = regexp.MustCompile(`^[A-Za-z0-9-]+$`)
+
+// reservedMountNames cannot be used as mount names — they would shadow the
+// built-in workspace roots.
+var reservedMountNames = map[string]bool{"files": true, "skills": true, "tasks": true, "common": true}
+
+// ValidateMountName checks a mount name: a single path component of letters,
+// digits, and hyphens, not colliding with a reserved root.
+func ValidateMountName(name string) error {
+	if !mountNameRe.MatchString(name) {
+		return fmt.Errorf("mount name %q: use only letters, digits, and '-' (a single directory name)", name)
+	}
+	if reservedMountNames[strings.ToLower(name)] {
+		return fmt.Errorf("mount name %q is reserved", name)
+	}
+	return nil
 }
 
 // ContextEvictionConfig controls the per-turn, LLM-free eviction sweep that

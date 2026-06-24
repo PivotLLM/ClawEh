@@ -1036,6 +1036,13 @@ func (w *whitelistFs) Remove(path string) error {
 // buildFs returns the appropriate fileSystem implementation based on restriction
 // settings and optional path whitelist patterns.
 func buildFs(workspace string, restrict bool, patterns []*regexp.Regexp) fileSystem {
+	return withMounts(workspace, buildBaseFs(workspace, restrict, patterns))
+}
+
+// buildBaseFs is buildFs without the external-mount layer; buildWriteFs uses it
+// so the write-scope sits inside the mount layer (mountFs is always outermost,
+// so mount paths bypass the workspace read/write scopes and use their own sandbox).
+func buildBaseFs(workspace string, restrict bool, patterns []*regexp.Regexp) fileSystem {
 	if !restrict {
 		return &hostFs{}
 	}
@@ -1159,16 +1166,19 @@ func (r *readScopedFs) Remove(path string) error {
 // patterns (Tools.AllowWritePaths) remain writable. When writeSubdir is empty,
 // behaviour matches buildFs (legacy: the whole workspace is writable).
 func buildWriteFs(workspace string, restrict bool, writeSubdir string, patterns []*regexp.Regexp) fileSystem {
-	inner := buildFs(workspace, restrict, patterns)
+	base := buildBaseFs(workspace, restrict, patterns)
 	if !restrict || writeSubdir == "" {
-		return inner
+		return withMounts(workspace, base)
 	}
-	return &writeScopedFs{
-		inner:     inner,
+	// mountFs stays outermost so writes to a mount (`<name>/...`) are not rejected
+	// by the workspace write-scope; non-mount writes still confine to writeSubdir.
+	scoped := &writeScopedFs{
+		inner:     base,
 		workspace: workspace,
 		writeRoot: filepath.Join(workspace, writeSubdir),
 		patterns:  patterns,
 	}
+	return withMounts(workspace, scoped)
 }
 
 // writeScopedFs wraps an inner fileSystem to allow reads across the whole

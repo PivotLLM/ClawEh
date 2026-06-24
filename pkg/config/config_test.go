@@ -609,6 +609,21 @@ func TestMCPHost_DefaultAutoEnable(t *testing.T) {
 	}
 }
 
+func TestValidateMountName(t *testing.T) {
+	ok := []string{"notes", "notes-eric", "a1", "X-9"}
+	bad := []string{"notes eric", "notes/sub", "notes.md", "no_tes", "", "files", "skills", "tasks", "common", "Files"}
+	for _, n := range ok {
+		if err := ValidateMountName(n); err != nil {
+			t.Errorf("ValidateMountName(%q) unexpected error: %v", n, err)
+		}
+	}
+	for _, n := range bad {
+		if err := ValidateMountName(n); err == nil {
+			t.Errorf("ValidateMountName(%q) should have failed", n)
+		}
+	}
+}
+
 func TestMCPClientEffectivelyEnabled(t *testing.T) {
 	srv := func(enabled bool) map[string]MCPServerConfig {
 		return map[string]MCPServerConfig{"s": {Enabled: enabled, Type: "http", URL: "http://x"}}
