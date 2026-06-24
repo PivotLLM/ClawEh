@@ -71,3 +71,31 @@ func TestReadStatusBlock(t *testing.T) {
 		}
 	})
 }
+
+func TestListDir_Recursive(t *testing.T) {
+	ws := t.TempDir()
+	base := filepath.Join(ws, "files")
+	os.MkdirAll(filepath.Join(base, "sub", "deep"), 0o755)
+	os.WriteFile(filepath.Join(base, "top.md"), []byte("x"), 0o644)
+	os.WriteFile(filepath.Join(base, "sub", "a.md"), []byte("x"), 0o644)
+	os.WriteFile(filepath.Join(base, "sub", "deep", "b.md"), []byte("x"), 0o644)
+	os.MkdirAll(filepath.Join(base, ".git"), 0o755)
+	os.WriteFile(filepath.Join(base, ".git", "config"), []byte("x"), 0o644)
+
+	tool := NewListDirTool(ws, true) // sandboxed at ws
+	out := tool.Execute(context.Background(), map[string]any{"path": "files", "recursive": true}).ForLLM
+	for _, want := range []string{"FILE: files/top.md", "DIR:  files/sub", "FILE: files/sub/a.md", "FILE: files/sub/deep/b.md"} {
+		if !contains(out, want) {
+			t.Fatalf("missing %q in:\n%s", want, out)
+		}
+	}
+	if contains(out, ".git") {
+		t.Fatalf("hidden dirs should be skipped:\n%s", out)
+	}
+
+	// Non-recursive stays one level.
+	flat := tool.Execute(context.Background(), map[string]any{"path": "files"}).ForLLM
+	if contains(flat, "a.md") {
+		t.Fatalf("non-recursive must not descend:\n%s", flat)
+	}
+}

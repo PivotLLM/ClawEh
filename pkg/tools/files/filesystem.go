@@ -615,7 +615,7 @@ func (t *ListDirTool) Name() string {
 }
 
 func (t *ListDirTool) Description() string {
-	return "List files and directories in a path"
+	return "List files and directories in a path. One level by default; set recursive=true to list the whole tree."
 }
 
 func (t *ListDirTool) Parameters() map[string]any {
@@ -625,6 +625,11 @@ func (t *ListDirTool) Parameters() map[string]any {
 			"path": map[string]any{
 				"type":        "string",
 				"description": "Path to list",
+			},
+			"recursive": map[string]any{
+				"type":        "boolean",
+				"description": "List the entire tree under path (paths shown relative to the workspace). Hidden directories are skipped. Default false (one level).",
+				"default":     false,
 			},
 		},
 		"required": []string{"path"},
@@ -637,11 +642,66 @@ func (t *ListDirTool) Execute(ctx context.Context, args map[string]any) *tools.T
 		path = "."
 	}
 
+	if getBoolArg(args, "recursive", false) {
+		return t.listRecursive(path)
+	}
+
 	entries, err := t.sysFs.ReadDir(path)
 	if err != nil {
 		return tools.ErrorResult(fmt.Sprintf("failed to read directory: %v", err))
 	}
 	return formatDirEntries(entries)
+}
+
+// maxRecursiveListEntries caps recursive listings so a large tree can't flood the
+// model's context.
+const maxRecursiveListEntries = 1000
+
+// listRecursive walks the tree under start via the sandboxed fs (scoping and
+// mounts still apply), listing entries with workspace-relative paths. Hidden
+// directories (.git, etc.) and the .claw marker are skipped.
+func (t *ListDirTool) listRecursive(start string) *tools.ToolResult {
+	var b strings.Builder
+	count := 0
+	truncated := false
+
+	var rec func(dir string)
+	rec = func(dir string) {
+		entries, err := t.sysFs.ReadDir(dir) // os/fs ReadDir returns entries sorted by name
+		if err != nil {
+			return
+		}
+		for _, e := range entries {
+			if count >= maxRecursiveListEntries {
+				truncated = true
+				return
+			}
+			name := e.Name()
+			if name == global.MountMarkerFile {
+				continue
+			}
+			child := filepath.Join(dir, name)
+			display := filepath.ToSlash(child)
+			if e.IsDir() {
+				if strings.HasPrefix(name, ".") {
+					continue // don't descend into hidden dirs
+				}
+				b.WriteString("DIR:  " + display + "\n")
+				count++
+				rec(child)
+			} else {
+				b.WriteString("FILE: " + display + "\n")
+				count++
+			}
+		}
+	}
+	rec(start)
+
+	out := b.String()
+	if truncated {
+		out += fmt.Sprintf("\n[truncated at %d entries — list a subdirectory for more]\n", maxRecursiveListEntries)
+	}
+	return tools.NewToolResult(out)
 }
 
 func formatDirEntries(entries []os.DirEntry) *tools.ToolResult {
