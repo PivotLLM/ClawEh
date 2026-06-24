@@ -76,6 +76,40 @@ export function EnableSection({ form, onFieldChange }: EnableSectionProps) {
   )
 }
 
+interface ClientSectionProps {
+  form: MCPHostForm
+  onFieldChange: UpdateMCPField
+}
+
+// ClientSection controls claw connecting OUT to external MCP servers (the client
+// side: tools.mcp.enabled / auto_enable) — distinct from the host EnableSection.
+export function ClientSection({ form, onFieldChange }: ClientSectionProps) {
+  const { t } = useTranslation()
+  return (
+    <SectionCard
+      title={t("pages.mcp.sections.client_enable")}
+      description={t("pages.mcp.client_enable_desc")}
+    >
+      <SwitchCardField
+        label={t("pages.mcp.client_enabled")}
+        hint={t("pages.mcp.client_enabled_hint")}
+        layout="setting-row"
+        checked={form.clientEnabled}
+        onCheckedChange={(checked) => onFieldChange("clientEnabled", checked)}
+      />
+      <SwitchCardField
+        label={t("pages.mcp.client_auto_enable")}
+        hint={t("pages.mcp.client_auto_enable_hint")}
+        layout="setting-row"
+        checked={form.clientAutoEnable}
+        onCheckedChange={(checked) =>
+          onFieldChange("clientAutoEnable", checked)
+        }
+      />
+    </SectionCard>
+  )
+}
+
 interface TransportSectionProps {
   form: MCPHostForm
   onFieldChange: UpdateMCPField

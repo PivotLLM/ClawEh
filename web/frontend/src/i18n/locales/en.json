@@ -460,8 +460,14 @@
         "enable": "Enable",
         "transport": "Transport",
         "tools": "Tool Allowlist",
-        "client": "External MCP Servers"
+        "client": "External MCP Servers",
+        "client_enable": "External MCP servers (client)"
       },
+      "client_enable_desc": "Controls whether claw connects out to external MCP servers and offers their tools to your agents (including CLI agents, via claw). This is the client side — distinct from the host above.",
+      "client_enabled": "Connect to external MCP servers",
+      "client_enabled_hint": "Master switch for the MCP client. When off, no external servers are connected even if configured below.",
+      "client_auto_enable": "Auto-enable",
+      "client_auto_enable_hint": "When the master switch is off, still connect automatically if at least one external server below is enabled. Explicit on always wins.",
       "enable_desc": "Controls whether claw runs an MCP server so CLI-based providers (claude-cli, codex-cli, gemini-cli) can call claw's host-side tools natively.",
       "enabled": "Enabled",
       "enabled_hint": "When true, the MCP server always starts at daemon launch.",

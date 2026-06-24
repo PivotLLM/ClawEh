@@ -15,6 +15,7 @@ import {
   validateListen,
 } from "@/components/mcp/form-model"
 import {
+  ClientSection,
   ClientServersSection,
   EnableSection,
   ToolsSection,
@@ -97,7 +98,13 @@ export function MCPPage() {
           endpoint_path: form.endpointPath.trim(),
           tools: cleanedPatterns,
         },
-        tools: { mcp: { servers: serversPatch } },
+        tools: {
+          mcp: {
+            enabled: form.clientEnabled,
+            auto_enable: form.clientAutoEnable,
+            servers: serversPatch,
+          },
+        },
       })
 
       const nextForm: MCPHostForm = { ...form, toolPatterns: cleanedPatterns }
@@ -148,6 +155,8 @@ export function MCPPage() {
                 registeredTools={registeredTools}
                 toolsLoading={toolsLoading}
               />
+
+              <ClientSection form={form} onFieldChange={updateField} />
 
               <ClientServersSection
                 value={form.serversJSON}

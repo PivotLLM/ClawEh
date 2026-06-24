@@ -6,6 +6,11 @@ export interface MCPHostForm {
   listen: string
   endpointPath: string
   toolPatterns: string[]
+  // Client (claw connecting OUT to external MCP servers): tools.mcp.enabled /
+  // tools.mcp.auto_enable. Distinct from `enabled` above (the host: claw as a
+  // server for the CLIs).
+  clientEnabled: boolean
+  clientAutoEnable: boolean
   // External (upstream) MCP servers claw connects out to (tools.mcp.servers),
   // as a JSON object keyed by server name. Edited as JSON; "" means none.
   serversJSON: string
@@ -17,6 +22,8 @@ export const EMPTY_MCP_FORM: MCPHostForm = {
   listen: "127.0.0.1:5911",
   endpointPath: "/mcp",
   toolPatterns: ["*"],
+  clientEnabled: false,
+  clientAutoEnable: true,
   serversJSON: "",
 }
 
@@ -46,12 +53,18 @@ function asStringArray(value: unknown, fallback: string[]): string[] {
 export function buildMCPFormFromConfig(config: unknown): MCPHostForm {
   const root = asRecord(config)
   const mcp = asRecord(root.mcp_host)
+  const clientMcp = asRecord(asRecord(root.tools).mcp)
   return {
     enabled: asBool(mcp.enabled, EMPTY_MCP_FORM.enabled),
     autoEnable: asBool(mcp.auto_enable, EMPTY_MCP_FORM.autoEnable),
     listen: asString(mcp.listen, EMPTY_MCP_FORM.listen),
     endpointPath: asString(mcp.endpoint_path, EMPTY_MCP_FORM.endpointPath),
     toolPatterns: asStringArray(mcp.tools, EMPTY_MCP_FORM.toolPatterns),
+    clientEnabled: asBool(clientMcp.enabled, EMPTY_MCP_FORM.clientEnabled),
+    clientAutoEnable: asBool(
+      clientMcp.auto_enable,
+      EMPTY_MCP_FORM.clientAutoEnable,
+    ),
     serversJSON: serversToJSON(config),
   }
 }
