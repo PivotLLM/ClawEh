@@ -9,6 +9,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -19,11 +20,12 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/logger"
 )
 
-// markerFile is the per-mount watermark. Its mtime marks the last time the mount
-// was baselined or fired; a file newer than the marker is "new". Persisting it on
-// disk makes detection restart-safe (a file written while claw is stopped is not
-// missed). It is touched only on first-create (baseline) and after firing, so the
-// scan adds almost no churn. Same name the file tools hide from agents.
+// markerFile records the set of file paths the watcher has already seen in a
+// mount (one per line). A file present now but absent from the set is "new"; an
+// edited/appended file is not (its path is already recorded). Persisting it on
+// disk makes detection restart-safe and is rewritten only on baseline and when a
+// new file fires, so the scan adds almost no churn. Same name the file tools hide
+// from agents.
 const markerFile = global.MountMarkerFile
 
 // Watcher periodically scans every notify-enabled mount across all agents.
@@ -110,19 +112,19 @@ func (w *Watcher) scanMount(cfg *config.Config, agentID, mountName, mountPath st
 }
 
 // detectNewFiles returns the mount-relative paths (e.g. "notes/sub/x.md") of
-// files newer than the .claw watermark, then advances the watermark so they are
-// not re-reported. A missing marker baselines (creates it, reports nothing).
+// files that are *new* — present now but not in the set recorded in the .claw
+// marker — then records the current set so they are not re-reported. A missing
+// marker baselines (records the current files, reports nothing).
+//
+// "New" is by path, not mtime: appending to or editing an already-seen file does
+// NOT fire — only a file whose path we haven't seen before. The seen-set lives in
+// .claw on disk, so detection survives restarts (a file added while claw was
+// stopped is new on the next scan; an edited one is not).
 func detectNewFiles(mountName, mountPath string) []string {
 	marker := filepath.Join(mountPath, markerFile)
-	mi, err := os.Stat(marker)
-	if err != nil {
-		// No marker yet → baseline: create it and fire nothing for existing files.
-		touch(marker)
-		return nil
-	}
-	watermark := mi.ModTime()
+	seen, hadMarker := readSeen(marker)
 
-	var newFiles []string
+	current := make([]string, 0, len(seen))
 	_ = filepath.WalkDir(mountPath, func(p string, d os.DirEntry, werr error) error {
 		if werr != nil {
 			return nil
@@ -137,22 +139,51 @@ func detectNewFiles(mountName, mountPath string) []string {
 		if name == markerFile || strings.HasPrefix(name, ".") {
 			return nil
 		}
-		info, ierr := d.Info()
-		if ierr != nil {
-			return nil
-		}
-		if info.ModTime().After(watermark) {
-			if rel, rerr := filepath.Rel(mountPath, p); rerr == nil {
-				newFiles = append(newFiles, filepath.ToSlash(filepath.Join(mountName, rel)))
-			}
+		if rel, rerr := filepath.Rel(mountPath, p); rerr == nil {
+			current = append(current, filepath.ToSlash(filepath.Join(mountName, rel)))
 		}
 		return nil
 	})
 
+	if !hadMarker {
+		// Baseline: record what's already there, fire nothing.
+		writeSeen(marker, current)
+		return nil
+	}
+
+	var newFiles []string
+	for _, rel := range current {
+		if !seen[rel] {
+			newFiles = append(newFiles, rel)
+		}
+	}
 	if len(newFiles) > 0 {
-		touch(marker) // advance the watermark so these are not re-fired
+		// Advance the recorded set to what's present now (also prunes deletions).
+		writeSeen(marker, current)
 	}
 	return newFiles
+}
+
+// readSeen loads the recorded set of mount-relative file paths from the marker.
+// The bool is false when the marker does not exist yet (baseline needed).
+func readSeen(marker string) (map[string]bool, bool) {
+	data, err := os.ReadFile(marker)
+	if err != nil {
+		return nil, false
+	}
+	set := make(map[string]bool)
+	for _, line := range strings.Split(string(data), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			set[line] = true
+		}
+	}
+	return set, true
+}
+
+// writeSeen persists the set of mount-relative file paths to the marker.
+func writeSeen(marker string, paths []string) {
+	sort.Strings(paths)
+	_ = os.WriteFile(marker, []byte(strings.Join(paths, "\n")+"\n"), 0o600)
 }
 
 // notify delivers a single new-file notice to the agent's default channel, the
@@ -179,12 +210,3 @@ func (w *Watcher) notify(cfg *config.Config, agentID, relPath string) {
 	}
 }
 
-// touch sets the file's mtime to now, creating it if absent.
-func touch(path string) {
-	now := time.Now()
-	if err := os.Chtimes(path, now, now); err != nil {
-		if f, e := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, 0o600); e == nil {
-			_ = f.Close()
-		}
-	}
-}

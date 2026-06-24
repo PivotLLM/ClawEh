@@ -203,9 +203,11 @@ Mount names are a single component of letters, digits, and hyphens
 
 With **notify** on, claw watches the mount and, when a **new file** appears,
 messages the agent on its default channel (cron-style) with the file's path — so
-it can act on drops into the folder. Detection is restart-safe (a `.claw` marker
-file's mtime is the watermark, so files added while claw was stopped are still
-caught) and polls every `MountNotifyIntervalSeconds` (default 10).
+it can act on drops into the folder. "New" is by path: editing or appending to a
+file already seen does not fire — only a path the watcher hasn't seen before.
+Detection is restart-safe (the seen-file set is recorded in a hidden `.claw`
+marker, so a file added while claw was stopped is still caught) and polls every
+`MountNotifyIntervalSeconds` (default 10).
 
 #### File tools
 Reads and edits address files explicitly by **lines** or **bytes**, so the model
