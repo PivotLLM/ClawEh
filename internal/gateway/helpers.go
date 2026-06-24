@@ -29,6 +29,7 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/logger"
 	"github.com/PivotLLM/ClawEh/pkg/mcpserver"
 	"github.com/PivotLLM/ClawEh/pkg/media"
+	"github.com/PivotLLM/ClawEh/pkg/mountwatch"
 	"github.com/PivotLLM/ClawEh/pkg/providers"
 	"github.com/PivotLLM/ClawEh/pkg/servicetoken"
 	"github.com/PivotLLM/ClawEh/pkg/state"
@@ -88,6 +89,7 @@ func buildMergedMux(srv *webserver.Server) *http.ServeMux {
 // gatewayServices holds references to all running services
 type gatewayServices struct {
 	CronService    *cron.CronService
+	MountWatcher   *mountwatch.Watcher
 	MediaStore     media.MediaStore
 	ChannelManager *channels.Manager
 	DeviceService  *devices.Service
@@ -315,6 +317,11 @@ func setupAndStartServices(
 		return nil, fmt.Errorf("error starting cron service: %w", err)
 	}
 	logger.InfoC("cron", "Cron service started")
+
+	// Watch notify-enabled external mounts for new files (cron-style notices).
+	services.MountWatcher = mountwatch.New(agentLoop.GetConfig, msgBus, 0)
+	services.MountWatcher.Start()
+	logger.InfoC("mountwatch", "Mount watcher started")
 
 	// Create media store for file lifecycle management with TTL cleanup
 	services.MediaStore = media.NewFileMediaStoreWithCleanup(media.MediaCleanerConfig{
@@ -545,6 +552,9 @@ func stopAndCleanupServices(
 	}
 	if services.DeviceService != nil {
 		services.DeviceService.Stop()
+	}
+	if services.MountWatcher != nil {
+		services.MountWatcher.Stop()
 	}
 	if services.CronService != nil {
 		services.CronService.Stop()

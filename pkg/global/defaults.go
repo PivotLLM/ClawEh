@@ -41,6 +41,11 @@ const DefaultMessagePrefix = "SECURITY NOTICE: The following content was deliver
 // or CLAW_CONFIG_RELOAD_INTERVAL_SECONDS. Minimum enforced at 1 second.
 const DefaultConfigReloadIntervalSeconds = 5
 
+// MountNotifyIntervalSeconds is how often notify-enabled external mounts are
+// polled for newly-appeared files. Kept deliberately low-churn (a directory
+// scan); new files are detected via a .claw marker watermark.
+const MountNotifyIntervalSeconds = 10
+
 // MinConfigReloadIntervalSeconds is the floor applied to any configured value
 // to prevent pathological polling rates.
 const MinConfigReloadIntervalSeconds = 1
