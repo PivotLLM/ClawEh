@@ -10,9 +10,10 @@ import {
   EMPTY_MCP_FORM,
   type MCPHostForm,
   buildMCPFormFromConfig,
-  parseServers,
+  serversToPatch,
   validateEndpointPath,
   validateListen,
+  validateServers,
 } from "@/components/mcp/form-model"
 import {
   ClientSection,
@@ -79,16 +80,9 @@ export function MCPPage() {
         .map((p) => p.trim())
         .filter((p) => p !== "")
 
-      const parsedServers = parseServers(form.serversJSON)
-      if (parsedServers.error) throw new Error(parsedServers.error)
-      const newServers = parsedServers.value ?? {}
-      const baseServers = parseServers(baseline.serversJSON).value ?? {}
-      // Deep-merge semantics: removed server names are set to null so the
-      // backend deletes them; present names overwrite.
-      const serversPatch: Record<string, unknown> = { ...newServers }
-      for (const name of Object.keys(baseServers)) {
-        if (!(name in newServers)) serversPatch[name] = null
-      }
+      const serversErr = validateServers(form.servers)
+      if (serversErr) throw new Error(serversErr)
+      const serversPatch = serversToPatch(form.servers, baseline.servers)
 
       await patchAppConfig({
         mcp_host: {
@@ -122,7 +116,7 @@ export function MCPPage() {
   }
 
   const registeredTools = (toolsData?.tools ?? []).map((t) => t.name)
-  const serversError = parseServers(form.serversJSON).error ?? null
+  const serversError = validateServers(form.servers)
 
   return (
     <div className="flex h-full flex-col">
@@ -159,9 +153,9 @@ export function MCPPage() {
               <ClientSection form={form} onFieldChange={updateField} />
 
               <ClientServersSection
-                value={form.serversJSON}
+                servers={form.servers}
                 error={serversError}
-                onChange={(next) => updateField("serversJSON", next)}
+                onChange={(next) => updateField("servers", next)}
               />
 
               <div className="flex justify-end gap-2">

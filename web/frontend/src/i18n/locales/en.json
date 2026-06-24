@@ -486,8 +486,20 @@
       "tools_preview_title": "Matches ({{matched}} of {{total}})",
       "tools_always_excluded": "Always excluded: {{tools}}",
       "tools_none_registered": "No tools registered yet.",
-      "client_hint": "Upstream MCP servers claw connects out to (tools.mcp.servers). Their tools are exposed to direct API providers; CLI providers configure MCP separately. Edit as a JSON object keyed by server name. Leave empty for none.",
-      "client_placeholder": "{\n  \"my-server\": {\n    \"url\": \"https://example.com/mcp\"\n  }\n}"
+      "client_hint": "Upstream MCP servers claw connects out to. Their tools are offered to your agents (API agents directly, CLI agents via claw). Add as many as you like.",
+      "client_empty": "No external servers configured.",
+      "server_add": "Add server",
+      "server_name": "name (e.g. my-server)",
+      "server_enabled": "Enabled",
+      "server_url": "URL",
+      "server_headers": "Headers",
+      "server_headers_hint": "One per line, \"Header: value\".",
+      "server_command": "Command",
+      "server_args": "Arguments",
+      "server_args_hint": "One argument per line.",
+      "server_env": "Environment",
+      "server_env_hint": "One per line, KEY=VALUE.",
+      "server_env_file": "Env file"
     },
     "memory": {
       "empty": "No cognitive-memory databases found yet.",
