@@ -1,5 +1,27 @@
 # ClawEh: Yet another claw - Canadian style
 
+**ClawEh is a small, fast, self-hosted runtime for personal AI assistants.**
+Written in Go, it runs one or more agents — each with its own workspace, tools,
+and memory — and connects them to your messaging channels (Telegram, Slack,
+Discord, and a built-in web UI), keeping long-running conversations coherent,
+secure, and operationally useful. It is an independent, stability-focused fork of
+picoclaw.
+
+**Major features:**
+
+- **Multi-agent** — named agents, each with its own workspace, models, tools, system prompt, and channel bindings.
+- **Multi-provider LLMs** — direct APIs (Anthropic, OpenAI, OpenAI-compatible, Gemini) and CLI agents (Claude Code, Codex, Gemini CLI), with fallback chains and cooldowns.
+- **Messaging channels** — Telegram, Slack, Discord, and an embedded web UI, with per-agent routing.
+- **MCP, both directions** — claw is an MCP *host* (its tools are callable by CLI agents) and an MCP *client* (connects out to external MCP servers and offers their tools to every agent).
+- **Cognitive memory** — a per-agent engine that distills conversation into structured, de-duplicated memories surfaced into the prompt.
+- **Context management** — reliable summarization/compaction plus per-turn eviction so long sessions stay within the model's window.
+- **Maestro** — built-in task orchestration (projects, playbooks, resumable task lists) for complex, multi-step work.
+- **File tools** — sandboxed read/search/edit by line or byte, plus move and delete, and a shared common directory for inter-agent exchange.
+- **External folder mounts** — give an assistant access to any user-specified directory tree (read/write, sandboxed), with an optional toggle to notify the assistant whenever a new file appears in it.
+- **Scheduling** — cron-based periodic tasks and reminders.
+- **Web UI** — manage agents, providers, channels, MCP, memory, and config without editing JSON.
+- **Secure & self-hosted** — workspace sandboxing, per-agent tool allowlists, loopback-bound services, API-key-only auth; MIT-licensed Go you run yourself.
+
 ## What's New
 
 ### Maestro is now built in
@@ -660,9 +682,9 @@ The `tools` list is a single global allowlist applied to all MCP clients (not pe
 
 ### Consuming external MCP servers (claw as an MCP client)
 
-Claw can also connect **outward** to third-party (upstream) MCP servers and make their tools available to your agents. **Manage them in the WebUI (the MCP page)** — turn on **"Connect to external MCP servers"** and add each server with **Add server** (transport **stdio** or **http**; `sse` is a deprecated alias of http). No JSON editing required; the underlying config is `tools.mcp.servers`. Claw connects on startup, lists each server's tools, and registers them.
+Claw can also connect **outward** to third-party (upstream) MCP servers and make their tools available to your agents. **Manage them in the WebUI (the MCP page)** — add each server with **Add server** (transport **stdio** or **http**; `sse` is a deprecated alias of http), and enable it. No JSON editing required; the underlying config is `tools.mcp.servers`. Claw connects to enabled servers on startup, lists each server's tools, and registers them — no extra switch to flip.
 
-You don't have to flip the master switch by hand: with **auto-enable** on (the default, `tools.mcp.auto_enable`), claw connects whenever at least one server is enabled.
+(`tools.mcp.enabled` and `tools.mcp.auto_enable` remain in the config file and **both default to on**, so defining and enabling a server is all that's needed.)
 
 Both provider types get the external tools **through claw** — full feature parity, no per-CLI setup:
 

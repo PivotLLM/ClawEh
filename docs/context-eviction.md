@@ -93,7 +93,7 @@ field). Every field is optional; unset fields fall back to the built-in defaults
 
 | Field          | Default | Meaning                                                      |
 |----------------|---------|-------------------------------------------------------------|
-| `enabled`      | `true`  | Master switch.                                              |
+| `enabled`      | `true`  | Turns eviction on or off.                                  |
 | `protect_turns`| `3`     | Newest N turns are never evicted (except superseded duplicates). |
 | `evict_turns`  | `10`    | Any read older than this is evicted regardless of size.   |
 | `budget_bytes` | `0`     | Reader-byte cap for the burst valve; `0` ⇒ ~40% of window. |

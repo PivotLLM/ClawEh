@@ -85,40 +85,6 @@ export function EnableSection({ form, onFieldChange }: EnableSectionProps) {
   )
 }
 
-interface ClientSectionProps {
-  form: MCPHostForm
-  onFieldChange: UpdateMCPField
-}
-
-// ClientSection controls claw connecting OUT to external MCP servers (the client
-// side: tools.mcp.enabled / auto_enable) — distinct from the host EnableSection.
-export function ClientSection({ form, onFieldChange }: ClientSectionProps) {
-  const { t } = useTranslation()
-  return (
-    <SectionCard
-      title={t("pages.mcp.sections.client_enable")}
-      description={t("pages.mcp.client_enable_desc")}
-    >
-      <SwitchCardField
-        label={t("pages.mcp.client_enabled")}
-        hint={t("pages.mcp.client_enabled_hint")}
-        layout="setting-row"
-        checked={form.clientEnabled}
-        onCheckedChange={(checked) => onFieldChange("clientEnabled", checked)}
-      />
-      <SwitchCardField
-        label={t("pages.mcp.client_auto_enable")}
-        hint={t("pages.mcp.client_auto_enable_hint")}
-        layout="setting-row"
-        checked={form.clientAutoEnable}
-        onCheckedChange={(checked) =>
-          onFieldChange("clientAutoEnable", checked)
-        }
-      />
-    </SectionCard>
-  )
-}
-
 interface TransportSectionProps {
   form: MCPHostForm
   onFieldChange: UpdateMCPField
@@ -338,25 +304,7 @@ export function ClientServersSection({
             key={i}
             className="border-border/60 space-y-3 rounded-lg border p-3"
           >
-            <div className="flex items-center gap-2">
-              <Input
-                value={s.name}
-                onChange={(e) => update(i, { name: e.target.value })}
-                placeholder={t("pages.mcp.server_name")}
-                className="font-mono"
-              />
-              <Select
-                value={s.type}
-                onValueChange={(v) => update(i, { type: v as "stdio" | "http" })}
-              >
-                <SelectTrigger className="w-32">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="http">http</SelectItem>
-                  <SelectItem value="stdio">stdio</SelectItem>
-                </SelectContent>
-              </Select>
+            <div className="flex justify-end">
               <Button
                 type="button"
                 variant="outline"
@@ -367,6 +315,30 @@ export function ClientServersSection({
                 <IconTrash className="size-4" />
               </Button>
             </div>
+
+            <Field label={t("pages.mcp.server_name")} layout="setting-row">
+              <Input
+                value={s.name}
+                onChange={(e) => update(i, { name: e.target.value })}
+                placeholder={t("pages.mcp.server_name_ph")}
+                className="font-mono"
+              />
+            </Field>
+
+            <Field label={t("pages.mcp.server_type")} layout="setting-row">
+              <Select
+                value={s.type}
+                onValueChange={(v) => update(i, { type: v as "stdio" | "http" })}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="http">http</SelectItem>
+                  <SelectItem value="stdio">stdio</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
 
             <SwitchCardField
               label={t("pages.mcp.server_enabled")}

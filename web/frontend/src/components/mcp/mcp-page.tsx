@@ -16,7 +16,6 @@ import {
   validateServers,
 } from "@/components/mcp/form-model"
 import {
-  ClientSection,
   ClientServersSection,
   EnableSection,
   ToolsSection,
@@ -92,13 +91,9 @@ export function MCPPage() {
           endpoint_path: form.endpointPath.trim(),
           tools: cleanedPatterns,
         },
-        tools: {
-          mcp: {
-            enabled: form.clientEnabled,
-            auto_enable: form.clientAutoEnable,
-            servers: serversPatch,
-          },
-        },
+        // tools.mcp.enabled / auto_enable both default on and are config-only;
+        // the page just manages the servers themselves.
+        tools: { mcp: { servers: serversPatch } },
       })
 
       const nextForm: MCPHostForm = { ...form, toolPatterns: cleanedPatterns }
@@ -149,8 +144,6 @@ export function MCPPage() {
                 registeredTools={registeredTools}
                 toolsLoading={toolsLoading}
               />
-
-              <ClientSection form={form} onFieldChange={updateField} />
 
               <ClientServersSection
                 servers={form.servers}

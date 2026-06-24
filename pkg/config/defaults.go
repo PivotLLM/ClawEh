@@ -321,7 +321,7 @@ func DefaultConfig() *Config {
 			},
 			MCP: MCPConfig{
 				ToolConfig: ToolConfig{
-					Enabled: false,
+					Enabled: true,
 				},
 				AutoEnable: true,
 				Discovery: ToolDiscoveryConfig{
