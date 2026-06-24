@@ -32,6 +32,13 @@ interface AgentEntry {
   global_cron?: boolean
   maestro?: boolean
   cogmem?: boolean
+  mounts?: MountEntry[]
+}
+
+interface MountEntry {
+  name: string
+  path: string
+  notify?: boolean
 }
 
 interface AgentsConfig {
@@ -87,6 +94,10 @@ function parseAgent(value: unknown): AgentEntry {
     global_cron: r.global_cron === true,
     maestro: r.maestro === true,
     cogmem: r.cogmem !== false,
+    mounts: asArray(r.mounts).map((m) => {
+      const mr = asRecord(m)
+      return { name: asString(mr.name), path: asString(mr.path), notify: mr.notify === true }
+    }),
   }
 }
 
@@ -228,6 +239,8 @@ interface AgentCardProps {
   globalCron?: boolean
   maestro?: boolean
   cogmem?: boolean
+  mounts?: MountEntry[]
+  onMountsChange?: (mounts: MountEntry[]) => void
   agentBindings?: AgentBindingView[]
   onSetDefaultBinding?: (targetIndex: number, deliverTo?: string) => void
   onToggleEnabled?: () => void
@@ -263,6 +276,8 @@ function AgentCard({
   globalCron = false,
   maestro = false,
   cogmem = true,
+  mounts = [],
+  onMountsChange = undefined,
   agentBindings = [],
   onSetDefaultBinding = undefined,
   onToggleEnabled,
@@ -384,6 +399,61 @@ function AgentCard({
               suiteStates={{ maestro, cogmem }}
             />
           )}
+        </div>
+      )}
+
+      {onMountsChange !== undefined && (
+        <div className="space-y-1.5">
+          <p className="text-muted-foreground text-xs font-medium">
+            Mounts (external folders, beside files/)
+          </p>
+          {mounts.map((m, mi) => {
+            const set = (patch: Partial<MountEntry>) =>
+              onMountsChange(mounts.map((x, j) => (j === mi ? { ...x, ...patch } : x)))
+            return (
+              <div key={mi} className="flex items-center gap-1.5">
+                <Input
+                  value={m.name}
+                  onChange={(e) => set({ name: e.target.value })}
+                  placeholder="name (e.g. notes)"
+                  className="h-7 w-32 font-mono text-xs"
+                />
+                <Input
+                  value={m.path}
+                  onChange={(e) => set({ path: e.target.value })}
+                  placeholder="/absolute/path"
+                  className="h-7 flex-1 font-mono text-xs"
+                />
+                <label className="flex items-center gap-1 text-xs text-muted-foreground select-none">
+                  <Switch
+                    checked={m.notify === true}
+                    onCheckedChange={(c) => set({ notify: c })}
+                  />
+                  notify
+                </label>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="h-7 w-7"
+                  aria-label="remove mount"
+                  onClick={() => onMountsChange(mounts.filter((_, j) => j !== mi))}
+                >
+                  <IconTrash className="size-3.5" />
+                </Button>
+              </div>
+            )
+          })}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-6 text-xs px-2"
+            onClick={() => onMountsChange([...mounts, { name: "", path: "", notify: false }])}
+          >
+            <IconPlus className="size-3.5" />
+            Add mount
+          </Button>
         </div>
       )}
 
@@ -676,11 +746,20 @@ export function AgentsPage() {
         ...(a.global_cron ? { global_cron: true } : {}),
         ...(a.maestro ? { maestro: true } : {}),
         ...(a.cogmem === false ? { cogmem: false } : {}),
+        // Always sent (like tools) so removing all mounts persists; the backend
+        // drops an empty slice on save (omitempty).
+        mounts: (a.mounts ?? [])
+          .filter((m) => m.name.trim() !== "" && m.path.trim() !== "")
+          .map((m) => ({
+            name: m.name.trim(),
+            path: m.path.trim(),
+            ...(m.notify ? { notify: true } : {}),
+          })),
       })),
     },
   })
 
-  const handleSaveAgent = async (index: number, models: string[], skills: string[], tools: string[], messageMins: number, messageCount: number, temperature: number | undefined, summarizationModels: string[], shareCommon: boolean) => {
+  const handleSaveAgent = async (index: number, models: string[], skills: string[], tools: string[], messageMins: number, messageCount: number, temperature: number | undefined, summarizationModels: string[], shareCommon: boolean, mounts: MountEntry[]) => {
     const list = [...(agentsCfg.list ?? [])]
     list[index] = {
       ...list[index],
@@ -691,6 +770,7 @@ export function AgentsPage() {
       temperature,
       summarization_models: summarizationModels.length > 0 ? summarizationModels : undefined,
       share_common: shareCommon,
+      mounts,
     }
     const next: AgentsConfig = { ...agentsCfg, list }
     const key = `agent-${index}`
@@ -859,6 +939,7 @@ export function AgentsPage() {
   const [agentTemperatureEdits, setAgentTemperatureEdits] = useState<Array<number | undefined>>([])
   const [agentSummarizationEdits, setAgentSummarizationEdits] = useState<string[][]>([])
   const [agentShareCommonEdits, setAgentShareCommonEdits] = useState<boolean[]>([])
+  const [agentMountsEdits, setAgentMountsEdits] = useState<MountEntry[][]>([])
   useEffect(() => {
     if (skipAgentsResync.current) {
       skipAgentsResync.current = false
@@ -874,6 +955,7 @@ export function AgentsPage() {
     setAgentTemperatureEdits((agentsCfg.list ?? []).map((a) => a.temperature))
     setAgentSummarizationEdits((agentsCfg.list ?? []).map((a) => a.summarization_models ?? []))
     setAgentShareCommonEdits((agentsCfg.list ?? []).map((a) => a.share_common !== false))
+    setAgentMountsEdits((agentsCfg.list ?? []).map((a) => a.mounts ?? []))
   }, [agentsCfg.list])
 
   // Mirror the latest edit values into a ref so the debounced autosave fires
@@ -886,6 +968,7 @@ export function AgentsPage() {
     agentTemperatureEdits,
     agentSummarizationEdits,
     agentShareCommonEdits,
+    agentMountsEdits,
   })
   latestRef.current = {
     agentModelsEdits,
@@ -895,6 +978,7 @@ export function AgentsPage() {
     agentTemperatureEdits,
     agentSummarizationEdits,
     agentShareCommonEdits,
+    agentMountsEdits,
   }
 
   const AUTOSAVE_MS = 600
@@ -913,6 +997,7 @@ export function AgentsPage() {
         L.agentTemperatureEdits[index],
         L.agentSummarizationEdits[index] ?? [],
         L.agentShareCommonEdits[index] ?? true,
+        L.agentMountsEdits[index] ?? [],
       )
     }, AUTOSAVE_MS)
   }
@@ -1031,6 +1116,15 @@ export function AgentsPage() {
                   onMaestroChange={() => handleToggleMaestro(i)}
                   cogmem={agent.cogmem !== false}
                   onCogmemChange={() => handleToggleCogmem(i)}
+                  mounts={agentMountsEdits[i] ?? []}
+                  onMountsChange={(ms) => {
+                    setAgentMountsEdits((prev) => {
+                      const next = [...prev]
+                      next[i] = ms
+                      return next
+                    })
+                    scheduleSaveAgent(i)
+                  }}
                   agentBindings={bindingViewsForAgent(bindings, agent.id)}
                   onSetDefaultBinding={(target, deliverTo) => handleSetDefaultBinding(agent.id, target, deliverTo)}
                   onDelete={() => handleDeleteAgent(i)}
