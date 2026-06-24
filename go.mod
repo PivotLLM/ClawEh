@@ -27,7 +27,7 @@ require (
 
 require (
 	filippo.io/edwards25519 v1.2.0 // indirect
-	github.com/anthropics/anthropic-sdk-go v1.51.0 // indirect
+	github.com/anthropics/anthropic-sdk-go v1.51.1 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/gofrs/flock v0.13.0 // indirect
