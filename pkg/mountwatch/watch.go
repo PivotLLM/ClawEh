@@ -23,8 +23,8 @@ import (
 // was baselined or fired; a file newer than the marker is "new". Persisting it on
 // disk makes detection restart-safe (a file written while claw is stopped is not
 // missed). It is touched only on first-create (baseline) and after firing, so the
-// scan adds almost no churn.
-const markerFile = ".claw"
+// scan adds almost no churn. Same name the file tools hide from agents.
+const markerFile = global.MountMarkerFile
 
 // Watcher periodically scans every notify-enabled mount across all agents.
 type Watcher struct {

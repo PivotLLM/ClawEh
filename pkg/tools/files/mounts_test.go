@@ -76,3 +76,23 @@ func TestMounts_ListMountRoot(t *testing.T) {
 		t.Fatalf("list notes/ should show a.md: %s", res.ForLLM)
 	}
 }
+
+func TestMounts_HidesClawMarkerFromList(t *testing.T) {
+	ws := t.TempDir()
+	mountDir := t.TempDir()
+	os.WriteFile(filepath.Join(mountDir, "a.md"), []byte("x"), 0o644)
+	os.WriteFile(filepath.Join(mountDir, ".claw"), []byte(""), 0o600) // watermark marker
+	SetMountsForWorkspace(ws, []MountSpec{{Name: "notes", Path: mountDir}})
+	defer SetMountsForWorkspace(ws, nil)
+
+	res := NewListDirTool(ws, true).Execute(context.Background(), map[string]any{"path": "notes"})
+	if res.IsError {
+		t.Fatalf("list failed: %s", res.ForLLM)
+	}
+	if !contains(res.ForLLM, "a.md") {
+		t.Fatalf("expected a.md in listing: %s", res.ForLLM)
+	}
+	if contains(res.ForLLM, ".claw") {
+		t.Fatalf(".claw marker must be hidden from listings: %s", res.ForLLM)
+	}
+}

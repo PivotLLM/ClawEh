@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/PivotLLM/ClawEh/pkg/fileutil"
+	"github.com/PivotLLM/ClawEh/pkg/global"
 	"github.com/PivotLLM/ClawEh/pkg/logger"
 	"github.com/PivotLLM/ClawEh/pkg/tools"
 )
@@ -646,6 +647,10 @@ func (t *ListDirTool) Execute(ctx context.Context, args map[string]any) *tools.T
 func formatDirEntries(entries []os.DirEntry) *tools.ToolResult {
 	var result strings.Builder
 	for _, entry := range entries {
+		// Hide the claw-internal mount watermark from agents.
+		if entry.Name() == global.MountMarkerFile {
+			continue
+		}
 		if entry.IsDir() {
 			result.WriteString("DIR:  " + entry.Name() + "\n")
 		} else {

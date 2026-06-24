@@ -46,6 +46,10 @@ const DefaultConfigReloadIntervalSeconds = 5
 // scan); new files are detected via a .claw marker watermark.
 const MountNotifyIntervalSeconds = 10
 
+// MountMarkerFile is the per-mount watermark file used by the notify watcher.
+// It is claw-internal: hidden from agent file listings and never notified on.
+const MountMarkerFile = ".claw"
+
 // MinConfigReloadIntervalSeconds is the floor applied to any configured value
 // to prevent pathological polling rates.
 const MinConfigReloadIntervalSeconds = 1

@@ -90,6 +90,9 @@ func NewAgentInstance(
 	if agentCfg != nil && agentCfg.Skills != nil {
 		contextBuilder = contextBuilder.WithSkillsFilter(agentCfg.Skills)
 	}
+	if agentCfg != nil && len(agentCfg.Mounts) > 0 {
+		contextBuilder = contextBuilder.WithMounts(agentCfg.Mounts)
+	}
 
 	agentID := routing.DefaultAgentID
 	agentName := ""
