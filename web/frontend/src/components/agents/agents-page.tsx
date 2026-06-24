@@ -694,6 +694,8 @@ export function AgentsPage() {
   const [addingTools, setAddingTools] = useState<string[]>([])
   const [addingToolsExpanded, setAddingToolsExpanded] = useState(false)
   const [showAdd, setShowAdd] = useState(false)
+  // Which agent the left rail has selected; only that agent's card is rendered.
+  const [selectedId, setSelectedId] = useState("")
 
   const loadData = useCallback(async () => {
     setLoading(true)
@@ -798,6 +800,11 @@ export function AgentsPage() {
       // Update local state in place instead of reloading the whole page, which
       // would unmount the list and scroll back to the top.
       setAgentsCfg(next)
+      // Move the rail selection to a neighbour rather than letting it reset to
+      // the top.
+      if (list.length > 0) {
+        setSelectedId(list[Math.min(index, list.length - 1)].id)
+      }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to delete")
     } finally {
@@ -900,10 +907,11 @@ export function AgentsPage() {
       toast.error("Agent ID is required")
       return
     }
+    const newId = addingId.trim()
     const list = sortAgentList([
       ...(agentsCfg.list ?? []),
       {
-        id: addingId.trim(),
+        id: newId,
         ...(addingName.trim() ? { name: addingName.trim() } : {}),
         ...(addingModels.length > 0 ? { models: addingModels } : {}),
         skills: addingSkills.length > 0 ? addingSkills : undefined,
@@ -924,6 +932,7 @@ export function AgentsPage() {
       // Update local state in place instead of reloading the whole page, which
       // would unmount the list and scroll back to the top.
       setAgentsCfg(next)
+      setSelectedId(newId)
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to add agent")
     } finally {
@@ -957,6 +966,19 @@ export function AgentsPage() {
     setAgentShareCommonEdits((agentsCfg.list ?? []).map((a) => a.share_common !== false))
     setAgentMountsEdits((agentsCfg.list ?? []).map((a) => a.mounts ?? []))
   }, [agentsCfg.list])
+
+  // Keep the rail selection valid: default to the first agent on load, and
+  // recover when the selected agent is removed.
+  useEffect(() => {
+    const list = agentsCfg.list ?? []
+    if (list.length === 0) {
+      if (selectedId !== "") setSelectedId("")
+      return
+    }
+    if (!list.some((a) => a.id === selectedId)) {
+      setSelectedId(list[0].id)
+    }
+  }, [agentsCfg.list, selectedId])
 
   // Mirror the latest edit values into a ref so the debounced autosave fires
   // with current data rather than the values captured when the timer was set.
@@ -1018,8 +1040,39 @@ export function AgentsPage() {
         </Button>
       </PageHeader>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-8 sm:px-6">
-        <div className="w-full max-w-250 pt-4 space-y-3">
+      <div className="min-h-0 flex flex-1">
+        {/* Left rail: one entry per agent. Selecting one renders just its card,
+            so the page no longer scrolls through every agent at once. */}
+        {!loading && !fetchError && (agentsCfg.list ?? []).length > 0 && (
+          <nav className="border-border/60 w-52 shrink-0 space-y-0.5 overflow-y-auto border-r px-2 py-4">
+            {(agentsCfg.list ?? []).map((agent) => {
+              const active = !showAdd && agent.id === selectedId
+              return (
+                <button
+                  key={agent.id}
+                  type="button"
+                  onClick={() => {
+                    setShowAdd(false)
+                    setSelectedId(agent.id)
+                  }}
+                  className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition-colors ${
+                    active
+                      ? "bg-accent text-accent-foreground font-medium"
+                      : "text-muted-foreground hover:bg-accent/50"
+                  }`}
+                >
+                  <span
+                    className={`size-1.5 shrink-0 rounded-full ${agent.enabled !== false ? "bg-emerald-500" : "bg-muted-foreground/40"}`}
+                  />
+                  <span className="truncate">{agent.name || agent.id}</span>
+                </button>
+              )
+            })}
+          </nav>
+        )}
+
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-8 sm:px-6">
+          <div className="w-full max-w-250 pt-4 space-y-3">
           {loading && (
             <div className="flex items-center justify-center py-20">
               <IconLoader2 className="text-muted-foreground size-6 animate-spin" />
@@ -1034,9 +1087,19 @@ export function AgentsPage() {
 
           {!loading && !fetchError && (
             <>
-              {/* Named agents. Agent defaults (default agent, default model,
-                  summarization models) now live on the Config page. */}
-              {(agentsCfg.list ?? []).map((agent, i) => (
+              {/* Agent defaults (default agent, default model, summarization
+                  models) now live on the Config page. */}
+              {(agentsCfg.list ?? []).length === 0 && !showAdd && (
+                <p className="text-muted-foreground py-20 text-center text-sm">
+                  No agents yet. Use “Add Agent” to create one.
+                </p>
+              )}
+              {/* Only the rail-selected agent renders. The wrapper preserves the
+                  original (agent, i) binding so the card props stay unchanged. */}
+              {(agentsCfg.list ?? [])
+                .map((agent, i) => ({ agent, i }))
+                .filter(({ agent }) => !showAdd && agent.id === selectedId)
+                .map(({ agent, i }) => (
                 <AgentCard
                   key={agent.id}
                   label={agent.id}
@@ -1215,6 +1278,7 @@ export function AgentsPage() {
               )}
             </>
           )}
+          </div>
         </div>
       </div>
     </div>
