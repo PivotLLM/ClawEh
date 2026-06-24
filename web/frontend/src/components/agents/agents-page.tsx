@@ -302,7 +302,7 @@ function AgentCard({
   const deliverValue = (b: AgentBindingView) => deliverEdits[b.index] ?? b.deliverTo
 
   return (
-    <div className="border-border/60 bg-card rounded-xl border p-4 space-y-3">
+    <div className="border-border/60 bg-card rounded-xl border p-4 space-y-5">
       <div className="flex items-center justify-between gap-2">
         <div>
           <span className="font-mono text-lg font-semibold">{name || label}</span>
@@ -339,7 +339,7 @@ function AgentCard({
       </div>
 
       <div className="space-y-1.5">
-        <p className="text-muted-foreground text-xs font-medium">Models (tried in order)</p>
+        <p className="text-foreground text-sm font-semibold">Models (tried in order)</p>
         <FallbacksSelect
           fallbacks={selectedModels}
           primary=""
@@ -350,7 +350,7 @@ function AgentCard({
 
       {onSummarizationModelsChange !== undefined && (
         <div className="space-y-1.5">
-          <p className="text-muted-foreground text-xs font-medium">
+          <p className="text-foreground text-sm font-semibold">
             {t("agents.summarizationModels")}
           </p>
           <FallbacksSelect
@@ -368,7 +368,7 @@ function AgentCard({
 
       {availableSkills.length > 0 && (
         <div className="space-y-1.5">
-          <p className="text-muted-foreground text-xs font-medium">Skills</p>
+          <p className="text-foreground text-sm font-semibold">Skills</p>
           <SkillsSelect
             selected={skills}
             availableSkills={availableSkills}
@@ -387,7 +387,7 @@ function AgentCard({
             <IconChevronRight
               className={`size-3.5 text-muted-foreground opacity-60 transition-transform duration-200 ${toolsExpanded ? "rotate-90" : ""}`}
             />
-            <span className={`text-xs font-medium ${tools.length === 0 ? "text-amber-400" : "text-muted-foreground"}`}>
+            <span className={`text-sm font-semibold ${tools.length === 0 ? "text-amber-400" : "text-foreground"}`}>
               Tools ({tools.length === 0 ? "none — no tool access" : `${tools.includes("*") ? "all" : tools.length} granted`})
             </span>
           </button>
@@ -404,7 +404,7 @@ function AgentCard({
 
       {onMountsChange !== undefined && (
         <div className="space-y-1.5">
-          <p className="text-muted-foreground text-xs font-medium">
+          <p className="text-foreground text-sm font-semibold">
             Mounts (external folders, beside files/)
           </p>
           {mounts.map((m, mi) => {
@@ -459,7 +459,7 @@ function AgentCard({
 
       {onMessageChange !== undefined && (
         <div className="space-y-1.5">
-          <p className="text-muted-foreground text-xs font-medium">External message token</p>
+          <p className="text-foreground text-sm font-semibold">External message token</p>
           <div className="flex items-center gap-2">
             <Input
               type="number"
@@ -493,7 +493,7 @@ function AgentCard({
 
       {onTemperatureChange !== undefined && (
         <div className="space-y-1.5">
-          <p className="text-muted-foreground text-xs font-medium">Temperature</p>
+          <p className="text-foreground text-sm font-semibold">Temperature</p>
           <div className="flex items-center gap-2">
             <Input
               type="number"
@@ -516,7 +516,7 @@ function AgentCard({
       {onShareCommonChange !== undefined && (
         <div className="space-y-1.5">
           <div className="flex items-center justify-between gap-2">
-            <p className="text-muted-foreground text-xs font-medium">
+            <p className="text-foreground text-sm font-semibold">
               {t("agents.shareCommon")}
             </p>
             <Switch
@@ -534,7 +534,7 @@ function AgentCard({
       {onCogmemChange !== undefined && (
         <div className="space-y-1.5">
           <div className="flex items-center justify-between gap-2">
-            <p className="text-muted-foreground text-xs font-medium">
+            <p className="text-foreground text-sm font-semibold">
               {t("agents.cogmem")}
             </p>
             <Switch
@@ -552,7 +552,7 @@ function AgentCard({
       {onMaestroChange !== undefined && (
         <div className="space-y-1.5">
           <div className="flex items-center justify-between gap-2">
-            <p className="text-muted-foreground text-xs font-medium">
+            <p className="text-foreground text-sm font-semibold">
               {t("agents.maestro")}
             </p>
             <Switch
@@ -570,7 +570,7 @@ function AgentCard({
       {onGlobalCronChange !== undefined && (
         <div className="space-y-1.5">
           <div className="flex items-center justify-between gap-2">
-            <p className="text-muted-foreground text-xs font-medium">
+            <p className="text-foreground text-sm font-semibold">
               {t("agents.globalCron")}
             </p>
             <Switch
@@ -587,7 +587,7 @@ function AgentCard({
 
       {onSetDefaultBinding !== undefined && (
         <div className="space-y-1.5">
-          <p className="text-muted-foreground text-xs font-medium">
+          <p className="text-foreground text-sm font-semibold">
             {t("agents.channels")}
           </p>
           {agentBindings.length === 0 ? (
@@ -1211,7 +1211,7 @@ export function AgentsPage() {
                       placeholder="Display name (optional, e.g. Sam)"
                     />
                     <div className="space-y-1.5">
-                      <p className="text-muted-foreground text-xs font-medium">Models (tried in order)</p>
+                      <p className="text-foreground text-sm font-semibold">Models (tried in order)</p>
                       <FallbacksSelect
                         fallbacks={addingModels}
                         primary=""
@@ -1221,7 +1221,7 @@ export function AgentsPage() {
                     </div>
                     {availableSkills.length > 0 && (
                       <div className="space-y-1.5">
-                        <p className="text-muted-foreground text-xs font-medium">Skills</p>
+                        <p className="text-foreground text-sm font-semibold">Skills</p>
                         <SkillsSelect
                           selected={addingSkills}
                           availableSkills={availableSkills}
@@ -1239,7 +1239,7 @@ export function AgentsPage() {
                           <IconChevronRight
                             className={`size-3.5 text-muted-foreground opacity-60 transition-transform duration-200 ${addingToolsExpanded ? "rotate-90" : ""}`}
                           />
-                          <span className={`text-xs font-medium ${addingTools.length === 0 ? "text-amber-400" : "text-muted-foreground"}`}>
+                          <span className={`text-sm font-semibold ${addingTools.length === 0 ? "text-amber-400" : "text-foreground"}`}>
                             Tools ({addingTools.length === 0 ? "none — no tool access" : `${addingTools.includes("*") ? "all" : addingTools.length} granted`})
                           </span>
                         </button>
