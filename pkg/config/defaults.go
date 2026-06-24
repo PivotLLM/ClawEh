@@ -323,6 +323,7 @@ func DefaultConfig() *Config {
 				ToolConfig: ToolConfig{
 					Enabled: false,
 				},
+				AutoEnable: true,
 				Discovery: ToolDiscoveryConfig{
 					Enabled:          false,
 					TTL:              5,

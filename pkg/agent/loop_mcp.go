@@ -59,7 +59,7 @@ func (r *mcpRuntime) hasManager() bool {
 // ensureMCPInitialized loads MCP servers/tools once so both Run() and direct
 // agent mode share the same initialization path.
 func (al *AgentLoop) ensureMCPInitialized(ctx context.Context) error {
-	if !al.cfg.Tools.IsToolEnabled("mcp") {
+	if !al.cfg.Tools.MCPClientEffectivelyEnabled() {
 		return nil
 	}
 
@@ -118,11 +118,15 @@ func (al *AgentLoop) ensureMCPInitialized(ctx context.Context) error {
 						continue
 					}
 
-					if !agent.Config.IsToolAllowed(tool.Name) {
+					// Gate on the published (prefixed) name so the allowlist matches
+					// what both the execution path and the WebUI server pattern
+					// (mcp_<server>_*) use — checking the bare upstream name here meant
+					// only "*" ever worked.
+					mcpTool := tools.NewMCPTool(mcpManager, serverName, tool)
+
+					if !agent.Config.IsToolAllowed(mcpTool.Name()) {
 						continue
 					}
-
-					mcpTool := tools.NewMCPTool(mcpManager, serverName, tool)
 
 					if al.cfg.Tools.MCP.Discovery.Enabled {
 						agent.Tools.RegisterHidden(mcpTool)

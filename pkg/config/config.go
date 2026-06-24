@@ -1255,8 +1255,31 @@ type MCPServerConfig struct {
 type MCPConfig struct {
 	ToolConfig `                    envPrefix:"CLAW_TOOLS_MCP_"`
 	Discovery  ToolDiscoveryConfig `                                json:"discovery"`
+	// AutoEnable, when true (the default), connects to external MCP servers
+	// automatically whenever at least one configured server is enabled — so a
+	// user need not also flip the master `enabled` flag. Explicit Enabled=true
+	// always wins. Mirrors MCPHostConfig.AutoEnable.
+	AutoEnable bool `json:"auto_enable" env:"CLAW_TOOLS_MCP_AUTO_ENABLE"`
 	// Servers is a map of server name to server configuration
 	Servers map[string]MCPServerConfig `json:"servers,omitempty"`
+}
+
+// MCPClientEffectivelyEnabled reports whether claw should connect out to external
+// MCP servers: the master flag wins, otherwise auto-enable kicks in when any
+// configured server is enabled.
+func (t *ToolsConfig) MCPClientEffectivelyEnabled() bool {
+	if t.MCP.Enabled {
+		return true
+	}
+	if !t.MCP.AutoEnable {
+		return false
+	}
+	for _, s := range t.MCP.Servers {
+		if s.Enabled {
+			return true
+		}
+	}
+	return false
 }
 
 // MCPHostConfig defines configuration for the MCP server claw exposes
