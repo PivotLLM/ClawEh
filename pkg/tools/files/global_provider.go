@@ -41,6 +41,8 @@ func (globalFilesProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 		edit        *EditFileTool
 		apnd        *AppendFileTool
 		cp          *CopyFileTool
+		del         *DeleteFileTool
+		mv          *MoveFileTool
 		searchLines *SearchFilesTool
 		searchBytes *SearchFilesTool
 		rangeTools  map[string]*rangeEditTool
@@ -98,6 +100,8 @@ func (globalFilesProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 		edit = NewEditFileToolScoped(workspace, restrict, writeSubdir, allowWritePaths)
 		apnd = NewAppendFileToolScoped(workspace, restrict, writeSubdir, allowWritePaths)
 		cp = NewCopyFileToolScoped(workspace, restrict, writeSubdir, allowWritePaths)
+		del = NewDeleteFileToolScoped(workspace, restrict, writeSubdir, allowWritePaths)
+		mv = NewMoveFileToolScoped(workspace, restrict, writeSubdir, allowWritePaths)
 		rangeTools = map[string]*rangeEditTool{}
 		for _, op := range []string{"edit", "insert", "delete"} {
 			for _, unit := range []string{"lines", "bytes"} {
@@ -230,6 +234,26 @@ func (globalFilesProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 		rangeDef("insert", "bytes"),
 		rangeDef("delete", "lines"),
 		rangeDef("delete", "bytes"),
+		{
+			Name:         "delete",
+			Description:  (&DeleteFileTool{}).Description(),
+			RawSchema:    (&DeleteFileTool{}).Parameters(),
+			Category:     "filesystem",
+			DefaultAllow: global.Allow(true),
+			Handler: func(call *global.ToolCall) (*global.Result, error) {
+				return tools.ResultToGlobal(del.Execute(call.Ctx, call.Args)), nil
+			},
+		},
+		{
+			Name:         "move",
+			Description:  (&MoveFileTool{}).Description(),
+			RawSchema:    (&MoveFileTool{}).Parameters(),
+			Category:     "filesystem",
+			DefaultAllow: global.Allow(true),
+			Handler: func(call *global.ToolCall) (*global.Result, error) {
+				return tools.ResultToGlobal(mv.Execute(call.Ctx, call.Args)), nil
+			},
+		},
 	}
 }
 

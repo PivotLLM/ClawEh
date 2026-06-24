@@ -664,6 +664,7 @@ type fileSystem interface {
 	ReadDir(path string) ([]os.DirEntry, error)
 	Open(path string) (fs.File, error)
 	Stat(path string) (os.FileInfo, error)
+	Remove(path string) error
 }
 
 // hostFs is an unrestricted fileReadWriter that operates directly on the host filesystem.
@@ -693,6 +694,19 @@ func (h *hostFs) WriteFile(path string, data []byte) error {
 
 func (h *hostFs) WriteFileMode(path string, data []byte, mode os.FileMode) error {
 	return fileutil.WriteFileAtomic(path, data, mode)
+}
+
+func (h *hostFs) Remove(path string) error {
+	if err := os.Remove(path); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("failed to delete file: file not found: %w", err)
+		}
+		if os.IsPermission(err) {
+			return fmt.Errorf("failed to delete file: access denied: %w", err)
+		}
+		return fmt.Errorf("failed to delete file: %w", err)
+	}
+	return nil
 }
 
 func (h *hostFs) WriteFileExclMode(path string, data []byte, mode os.FileMode) error {
@@ -910,6 +924,22 @@ func (r *sandboxFs) ReadDir(path string) ([]os.DirEntry, error) {
 	return entries, err
 }
 
+func (r *sandboxFs) Remove(path string) error {
+	return r.execute(path, func(root *os.Root, relPath string) error {
+		if err := root.Remove(relPath); err != nil {
+			if os.IsNotExist(err) {
+				return fmt.Errorf("failed to delete file: file not found: %w", err)
+			}
+			if os.IsPermission(err) || strings.Contains(err.Error(), "escapes from parent") ||
+				strings.Contains(err.Error(), "permission denied") {
+				return fmt.Errorf("failed to delete file: access denied: %w", err)
+			}
+			return fmt.Errorf("failed to delete file: %w", err)
+		}
+		return nil
+	})
+}
+
 func (r *sandboxFs) Open(path string) (fs.File, error) {
 	var f fs.File
 	err := r.execute(path, func(root *os.Root, relPath string) error {
@@ -994,6 +1024,13 @@ func (w *whitelistFs) Open(path string) (fs.File, error) {
 		return w.host.Open(path)
 	}
 	return w.sandbox.Open(path)
+}
+
+func (w *whitelistFs) Remove(path string) error {
+	if w.matches(path) {
+		return w.host.Remove(path)
+	}
+	return w.sandbox.Remove(path)
 }
 
 // buildFs returns the appropriate fileSystem implementation based on restriction
@@ -1112,6 +1149,10 @@ func (r *readScopedFs) WriteFileExclMode(path string, data []byte, mode os.FileM
 	return r.inner.WriteFileExclMode(path, data, mode)
 }
 
+func (r *readScopedFs) Remove(path string) error {
+	return r.inner.Remove(path)
+}
+
 // buildWriteFs returns the fileSystem for the write/edit/append/copy tools.
 // When restrict is on and writeSubdir is non-empty, writes are confined to
 // <workspace>/<writeSubdir> while reads stay workspace-wide; host paths matching
@@ -1185,6 +1226,13 @@ func (w *writeScopedFs) Open(path string) (fs.File, error) {
 
 func (w *writeScopedFs) Stat(path string) (os.FileInfo, error) {
 	return w.inner.Stat(path)
+}
+
+func (w *writeScopedFs) Remove(path string) error {
+	if err := w.writeAllowed(path); err != nil {
+		return err
+	}
+	return w.inner.Remove(path)
 }
 
 func (w *writeScopedFs) WriteFile(path string, data []byte) error {

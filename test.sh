@@ -454,6 +454,8 @@ PY
       "file_search_lines",
       "file_search_bytes",
       "file_copy",
+      "file_delete",
+      "file_move",
       "web_fetch",
       "web_search",
       "msg_send",

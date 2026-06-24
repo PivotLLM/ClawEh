@@ -131,6 +131,8 @@ var evictionWriterArg = map[string]string{
 	"file_insert_bytes": "path",
 	"file_delete_lines": "path",
 	"file_delete_bytes": "path",
+	"file_delete":       "path",
+	"file_move":         "source_path", // the moved-away file; reads of it are now stale
 }
 
 type toolMeta struct {
