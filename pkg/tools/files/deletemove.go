@@ -93,7 +93,7 @@ func NewMoveFileToolScoped(workspace string, restrict bool, writeSubdir string, 
 func (t *MoveFileTool) Name() string { return "file_move" }
 
 func (t *MoveFileTool) Description() string {
-	return "Move a file from source_path to destination_path to organize files (works across mount boundaries; no content enters context)."
+	return "Move a file from source_path to destination_path to organize files (parent directories created as needed; works across mount boundaries; no content enters context)."
 }
 
 func (t *MoveFileTool) Parameters() map[string]any {

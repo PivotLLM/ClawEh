@@ -36,7 +36,7 @@ func (t *CopyFileTool) Name() string {
 }
 
 func (t *CopyFileTool) Description() string {
-	return "Copy a file from source_path to destination_path. Preserves source file mode. Refuses directories."
+	return "Copy a file from source_path to destination_path (parent directories created as needed). Preserves source file mode. Refuses directories."
 }
 
 func (t *CopyFileTool) Parameters() map[string]any {

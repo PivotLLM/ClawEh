@@ -526,7 +526,7 @@ func (t *WriteFileTool) Name() string {
 }
 
 func (t *WriteFileTool) Description() string {
-	return "Write content to a file. Refuses to replace an existing file unless overwrite is true."
+	return "Write content to a file (parent directories created as needed). Refuses to replace an existing file unless overwrite is true."
 }
 
 func (t *WriteFileTool) Parameters() map[string]any {
