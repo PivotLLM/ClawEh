@@ -33,6 +33,7 @@ interface AgentEntry {
   maestro?: boolean
   cogmem?: boolean
   mounts?: MountEntry[]
+  mcp_tools?: string[]
 }
 
 interface MountEntry {
@@ -74,6 +75,14 @@ function asNumber(value: unknown, defaultVal = 0): number {
   return typeof value === "number" ? value : defaultVal
 }
 
+// splitCsv parses a comma-separated MCP-allow string into trimmed, non-empty entries.
+function splitCsv(s: string): string[] {
+  return s.split(",").map((x) => x.trim()).filter(Boolean)
+}
+
+// settingsCardClass groups a set of agent settings into one bordered card.
+const settingsCardClass = "border-border/60 bg-card rounded-xl border p-4 space-y-5"
+
 function parseAgent(value: unknown): AgentEntry {
   const r = asRecord(value)
   const enabledRaw = r.enabled
@@ -86,7 +95,11 @@ function parseAgent(value: unknown): AgentEntry {
     default: r.default === true,
     models: asArray(r.models).map(asString).filter(Boolean),
     skills: asArray(r.skills).map(asString).filter(Boolean),
-    tools: asArray(r.tools).map(asString).filter(Boolean),
+    // Drop any stale mcp_* entries from the per-tool allowlist: MCP access now
+    // lives in mcp_tools, so saving an edited agent cleanly migrates it off the
+    // old all-or-nothing wildcard.
+    tools: asArray(r.tools).map(asString).filter(Boolean).filter((tName) => !tName.toLowerCase().startsWith("mcp_")),
+    mcp_tools: asArray(r.mcp_tools).map(asString).filter(Boolean),
     message: cbMins > 0 ? { window_minutes: cbMins, window_count: asNumber(cbRaw.window_count) || 2 } : null,
     temperature: typeof r.temperature === "number" ? r.temperature : undefined,
     summarization_models: asArray(r.summarization_models).map(asString).filter(Boolean),
@@ -241,6 +254,8 @@ interface AgentCardProps {
   cogmem?: boolean
   mounts?: MountEntry[]
   onMountsChange?: (mounts: MountEntry[]) => void
+  mcpTools?: string[]
+  onMCPToolsChange?: (mcpTools: string[]) => void
   agentBindings?: AgentBindingView[]
   onSetDefaultBinding?: (targetIndex: number, deliverTo?: string) => void
   onToggleEnabled?: () => void
@@ -278,6 +293,8 @@ function AgentCard({
   cogmem = true,
   mounts = [],
   onMountsChange = undefined,
+  mcpTools = [],
+  onMCPToolsChange = undefined,
   agentBindings = [],
   onSetDefaultBinding = undefined,
   onToggleEnabled,
@@ -295,14 +312,18 @@ function AgentCard({
   status,
 }: AgentCardProps) {
   const { t } = useTranslation()
-  const [toolsExpanded, setToolsExpanded] = useState(false)
   // Local edits for explicit cron chat ids (peerless channels), keyed by the
   // binding's index in the full bindings array.
   const [deliverEdits, setDeliverEdits] = useState<Record<number, string>>({})
   const deliverValue = (b: AgentBindingView) => deliverEdits[b.index] ?? b.deliverTo
+  // Raw text for the comma-delimited MCP-allow field, kept locally so typing
+  // commas/spaces isn't fought by a parse-on-every-keystroke round-trip. Resets
+  // per agent because AgentCard is keyed by agent id.
+  const [mcpToolsRaw, setMcpToolsRaw] = useState(mcpTools.join(", "))
+  const mcpServers = availableTools.mcp_servers ?? []
 
   return (
-    <div className="border-border/60 bg-card rounded-xl border p-4 space-y-5">
+    <div className="space-y-4">
       <div className="flex items-center justify-between gap-2">
         <div>
           <span className="font-mono text-lg font-semibold">{name || label}</span>
@@ -338,6 +359,7 @@ function AgentCard({
         </div>
       </div>
 
+      <div className={settingsCardClass}>
       <div className="space-y-1.5">
         <p className="text-foreground text-sm font-semibold">Models (tried in order)</p>
         <FallbacksSelect
@@ -365,7 +387,9 @@ function AgentCard({
           </p>
         </div>
       )}
+      </div>
 
+      <div className={settingsCardClass}>
       {availableSkills.length > 0 && (
         <div className="space-y-1.5">
           <p className="text-foreground text-sm font-semibold">Skills</p>
@@ -377,28 +401,37 @@ function AgentCard({
         </div>
       )}
 
-      {(availableTools.tools.length > 0 || (availableTools.mcp_servers?.length ?? 0) > 0) && (
+      {availableTools.tools.length > 0 && (
         <div className="space-y-1.5">
-          <button
-            type="button"
-            onClick={() => setToolsExpanded((v) => !v)}
-            className="flex items-center gap-1 cursor-pointer select-none"
-          >
-            <IconChevronRight
-              className={`size-3.5 text-muted-foreground opacity-60 transition-transform duration-200 ${toolsExpanded ? "rotate-90" : ""}`}
-            />
-            <span className={`text-sm font-semibold ${tools.length === 0 ? "text-amber-400" : "text-foreground"}`}>
-              Tools ({tools.length === 0 ? "none — no tool access" : `${tools.includes("*") ? "all" : tools.length} granted`})
-            </span>
-          </button>
-          {toolsExpanded && (
-            <ToolSelect
-              selected={tools}
-              catalog={availableTools}
-              onChange={onToolsChange}
-              suiteStates={{ maestro, cogmem }}
-            />
-          )}
+          <p className={`text-sm font-semibold ${tools.length === 0 ? "text-amber-400" : "text-foreground"}`}>
+            Tools ({tools.length === 0 ? "none — no tool access" : `${tools.includes("*") ? "all" : tools.length} granted`})
+          </p>
+          <ToolSelect
+            selected={tools}
+            catalog={availableTools}
+            onChange={onToolsChange}
+            suiteStates={{ maestro, cogmem }}
+          />
+        </div>
+      )}
+
+      {onMCPToolsChange !== undefined && (
+        <div className="space-y-1.5">
+          <p className="text-foreground text-sm font-semibold">MCP access</p>
+          <Input
+            value={mcpToolsRaw}
+            onChange={(e) => {
+              setMcpToolsRaw(e.target.value)
+              onMCPToolsChange(splitCsv(e.target.value))
+            }}
+            placeholder="e.g. fusion, fusion_trello"
+            className="h-7 font-mono text-xs"
+          />
+          <p className="text-muted-foreground text-xs">
+            Comma-separated. Each entry grants MCP tools whose name equals or starts with
+            it (case-insensitive); no mcp_ prefix or wildcard needed. Blank = no MCP tools.
+            {mcpServers.length > 0 ? ` Servers: ${mcpServers.map((s) => s.name).join(", ")}.` : ""}
+          </p>
         </div>
       )}
 
@@ -456,8 +489,10 @@ function AgentCard({
           </Button>
         </div>
       )}
+      </div>
 
       {onMessageChange !== undefined && (
+        <div className={settingsCardClass}>
         <div className="space-y-1.5">
           <p className="text-foreground text-sm font-semibold">External message token</p>
           <div className="flex items-center gap-2">
@@ -489,8 +524,10 @@ function AgentCard({
             </p>
           )}
         </div>
+        </div>
       )}
 
+      <div className={settingsCardClass}>
       {onTemperatureChange !== undefined && (
         <div className="space-y-1.5">
           <p className="text-foreground text-sm font-semibold">Temperature</p>
@@ -642,7 +679,7 @@ function AgentCard({
           <p className="text-muted-foreground text-xs">{t("agents.channelsHint")}</p>
         </div>
       )}
-
+      </div>
     </div>
   )
 }
@@ -748,6 +785,9 @@ export function AgentsPage() {
         ...(a.global_cron ? { global_cron: true } : {}),
         ...(a.maestro ? { maestro: true } : {}),
         ...(a.cogmem === false ? { cogmem: false } : {}),
+        // Always sent (like tools/mounts) so clearing the box persists; the
+        // backend drops an empty slice on save (omitempty).
+        mcp_tools: a.mcp_tools ?? [],
         // Always sent (like tools) so removing all mounts persists; the backend
         // drops an empty slice on save (omitempty).
         mounts: (a.mounts ?? [])
@@ -761,7 +801,7 @@ export function AgentsPage() {
     },
   })
 
-  const handleSaveAgent = async (index: number, models: string[], skills: string[], tools: string[], messageMins: number, messageCount: number, temperature: number | undefined, summarizationModels: string[], shareCommon: boolean, mounts: MountEntry[]) => {
+  const handleSaveAgent = async (index: number, models: string[], skills: string[], tools: string[], messageMins: number, messageCount: number, temperature: number | undefined, summarizationModels: string[], shareCommon: boolean, mounts: MountEntry[], mcpTools: string[]) => {
     const list = [...(agentsCfg.list ?? [])]
     list[index] = {
       ...list[index],
@@ -773,6 +813,7 @@ export function AgentsPage() {
       summarization_models: summarizationModels.length > 0 ? summarizationModels : undefined,
       share_common: shareCommon,
       mounts,
+      mcp_tools: mcpTools,
     }
     const next: AgentsConfig = { ...agentsCfg, list }
     const key = `agent-${index}`
@@ -949,6 +990,7 @@ export function AgentsPage() {
   const [agentSummarizationEdits, setAgentSummarizationEdits] = useState<string[][]>([])
   const [agentShareCommonEdits, setAgentShareCommonEdits] = useState<boolean[]>([])
   const [agentMountsEdits, setAgentMountsEdits] = useState<MountEntry[][]>([])
+  const [agentMCPToolsEdits, setAgentMCPToolsEdits] = useState<string[][]>([])
   useEffect(() => {
     if (skipAgentsResync.current) {
       skipAgentsResync.current = false
@@ -965,6 +1007,7 @@ export function AgentsPage() {
     setAgentSummarizationEdits((agentsCfg.list ?? []).map((a) => a.summarization_models ?? []))
     setAgentShareCommonEdits((agentsCfg.list ?? []).map((a) => a.share_common !== false))
     setAgentMountsEdits((agentsCfg.list ?? []).map((a) => a.mounts ?? []))
+    setAgentMCPToolsEdits((agentsCfg.list ?? []).map((a) => a.mcp_tools ?? []))
   }, [agentsCfg.list])
 
   // Keep the rail selection valid: default to the first agent on load, and
@@ -991,6 +1034,7 @@ export function AgentsPage() {
     agentSummarizationEdits,
     agentShareCommonEdits,
     agentMountsEdits,
+    agentMCPToolsEdits,
   })
   latestRef.current = {
     agentModelsEdits,
@@ -1001,6 +1045,7 @@ export function AgentsPage() {
     agentSummarizationEdits,
     agentShareCommonEdits,
     agentMountsEdits,
+    agentMCPToolsEdits,
   }
 
   const AUTOSAVE_MS = 600
@@ -1020,6 +1065,7 @@ export function AgentsPage() {
         L.agentSummarizationEdits[index] ?? [],
         L.agentShareCommonEdits[index] ?? true,
         L.agentMountsEdits[index] ?? [],
+        L.agentMCPToolsEdits[index] ?? [],
       )
     }, AUTOSAVE_MS)
   }
@@ -1184,6 +1230,15 @@ export function AgentsPage() {
                     setAgentMountsEdits((prev) => {
                       const next = [...prev]
                       next[i] = ms
+                      return next
+                    })
+                    scheduleSaveAgent(i)
+                  }}
+                  mcpTools={agentMCPToolsEdits[i] ?? []}
+                  onMCPToolsChange={(mt) => {
+                    setAgentMCPToolsEdits((prev) => {
+                      const next = [...prev]
+                      next[i] = mt
                       return next
                     })
                     scheduleSaveAgent(i)
