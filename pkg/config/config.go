@@ -285,6 +285,16 @@ type AgentConfig struct {
 	// Mounts expose external directory trees as top-level names in this agent's
 	// space (peers of files/ and skills/), accessed as <name>/... Per agent.
 	Mounts []MountConfig `json:"mounts,omitempty"`
+
+	// MCPTools is the per-agent allow-list for external MCP-client tools, kept
+	// separate from the generic Tools allowlist so MCP access is per-tool rather
+	// than all-or-nothing per server. Each entry is matched (case-insensitively)
+	// against a tool's <server>_<tool> name (i.e. the published mcp_<server>_<tool>
+	// with the mcp_ prefix stripped): an entry allows the tool when it equals or is
+	// a prefix of that name. So "fusion" admits every tool on servers named/
+	// starting "fusion"; "fusion_gcwx" admits just the gcwx tools. Empty ⇒ the
+	// agent gets no MCP tools. The mcp_ prefix and wildcards are never needed.
+	MCPTools []string `json:"mcp_tools,omitempty"`
 }
 
 // MountConfig mounts an external directory tree as a top-level name in an agent's
@@ -380,6 +390,29 @@ func (a *AgentConfig) IsToolAllowed(name string) bool {
 		return MatchToolPattern(DefaultAgentTools, name)
 	}
 	return MatchToolPattern(a.Tools, name)
+}
+
+// MCPToolAllowed reports whether an external MCP-client tool is permitted for
+// this agent. name is the published tool name (mcp_<server>_<tool>); the mcp_
+// prefix is stripped and the remaining <server>_<tool> is matched (case-
+// insensitively) against each MCPTools entry: an entry admits the tool when it
+// equals or is a prefix of that name. An empty MCPTools list admits nothing.
+// Unlike the generic tools allowlist, no wildcard or mcp_ prefix is used.
+func (a *AgentConfig) MCPToolAllowed(name string) bool {
+	if a == nil || len(a.MCPTools) == 0 {
+		return false
+	}
+	bare := strings.ToLower(strings.TrimPrefix(name, "mcp_"))
+	for _, entry := range a.MCPTools {
+		e := strings.ToLower(strings.TrimSpace(entry))
+		if e == "" {
+			continue
+		}
+		if strings.HasPrefix(bare, e) {
+			return true
+		}
+	}
+	return false
 }
 
 // CognitiveMemoryEnabled reports whether the cognitive-memory suite + subsystem

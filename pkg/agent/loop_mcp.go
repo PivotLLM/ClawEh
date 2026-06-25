@@ -118,13 +118,13 @@ func (al *AgentLoop) ensureMCPInitialized(ctx context.Context) error {
 						continue
 					}
 
-					// Gate on the published (prefixed) name so the allowlist matches
-					// what both the execution path and the WebUI server pattern
-					// (mcp_<server>_*) use — checking the bare upstream name here meant
-					// only "*" ever worked.
+					// Gate on the dedicated per-agent MCP allow-list (mcp_tools), which
+					// matches <server>_<tool> by equality-or-prefix. This is separate
+					// from the generic Tools allowlist so MCP access is per-tool rather
+					// than all-or-nothing per server.
 					mcpTool := tools.NewMCPTool(mcpManager, serverName, tool)
 
-					if !agent.Config.IsToolAllowed(mcpTool.Name()) {
+					if !agent.Config.MCPToolAllowed(mcpTool.Name()) {
 						continue
 					}
 

@@ -132,3 +132,57 @@ func TestAgentConfig_IsToolAllowed(t *testing.T) {
 		})
 	}
 }
+
+func TestAgentConfig_MCPToolAllowed(t *testing.T) {
+	tests := []struct {
+		name      string
+		mcpTools  []string
+		toolName  string // published mcp_<server>_<tool>
+		wantAllow bool
+	}{
+		// Empty / nil admits nothing.
+		{"nil list admits nothing", nil, "mcp_fusion_wxca_city_get", false},
+		{"empty list admits nothing", []string{}, "mcp_fusion_wxca_city_get", false},
+
+		// Server prefix admits the whole server.
+		{"server name admits all its tools", []string{"fusion"}, "mcp_fusion_wxca_city_get", true},
+		{"server name admits another tool", []string{"fusion"}, "mcp_fusion_trello_search", true},
+		{"server_ guard still admits", []string{"fusion_"}, "mcp_fusion_trello_search", true},
+
+		// Tool-group prefix scopes within a server.
+		{"group prefix admits its tools", []string{"fusion_wxca"}, "mcp_fusion_wxca_city_get", true},
+		{"group prefix excludes other groups", []string{"fusion_wxca"}, "mcp_fusion_trello_search", false},
+
+		// Exact full name.
+		{"exact full name", []string{"fusion_wxca_city_get"}, "mcp_fusion_wxca_city_get", true},
+
+		// Case-insensitive both ways.
+		{"entry uppercase matches", []string{"FUSION"}, "mcp_fusion_trello_search", true},
+		{"name uppercase matches", []string{"fusion"}, "mcp_Fusion_Trello_Search", true},
+
+		// A prefix of the server name also matches (fusion matches fusionhub).
+		{"shorter prefix spans servers", []string{"fusion"}, "mcp_fusionhub_x", true},
+
+		// Wrong server is denied.
+		{"different server denied", []string{"fusion"}, "mcp_other_tool", false},
+
+		// Blank entries are ignored (don't admit everything).
+		{"blank entry ignored", []string{"  "}, "mcp_fusion_trello_search", false},
+
+		// Multiple entries, any can match.
+		{"one of several matches", []string{"weather", "fusion_trello"}, "mcp_fusion_trello_search", true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var a *AgentConfig
+			if tc.mcpTools != nil {
+				a = &AgentConfig{MCPTools: tc.mcpTools}
+			}
+			if got := a.MCPToolAllowed(tc.toolName); got != tc.wantAllow {
+				t.Errorf("MCPToolAllowed(%q) with mcp_tools=%v = %v, want %v",
+					tc.toolName, tc.mcpTools, got, tc.wantAllow)
+			}
+		})
+	}
+}
