@@ -68,7 +68,7 @@ func (r *CompactionReport) String() string {
 		if a.Detail != "" {
 			status = fmt.Sprintf("%s (%s)", a.Status, a.Detail)
 		}
-		b.WriteString(fmt.Sprintf("\n%s: %s", a.Model, status))
+		b.WriteString(fmt.Sprintf("\nModel %s: %s", a.Model, status))
 	}
 
 	b.WriteString("\n")
