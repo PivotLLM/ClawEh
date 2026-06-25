@@ -57,7 +57,7 @@ func (r *CompactionReport) String() string {
 	if r.BeforeMsgs == 0 && r.BeforeBytes == 0 {
 		header = "Compaction:"
 	} else if dr := formatDateRange(r.DateFrom, r.DateTo); dr != "" {
-		header = fmt.Sprintf("Compaction: %d messages (%s) · %s", r.BeforeMsgs, formatBytes(r.BeforeBytes), dr)
+		header = fmt.Sprintf("Compaction: %d messages (%s)\n%s", r.BeforeMsgs, formatBytes(r.BeforeBytes), dr)
 	} else {
 		header = fmt.Sprintf("Compaction: %d messages (%s)", r.BeforeMsgs, formatBytes(r.BeforeBytes))
 	}
@@ -68,7 +68,7 @@ func (r *CompactionReport) String() string {
 		if a.Detail != "" {
 			status = fmt.Sprintf("%s (%s)", a.Status, a.Detail)
 		}
-		b.WriteString(fmt.Sprintf("\n  %s: %s", a.Model, status))
+		b.WriteString(fmt.Sprintf("\n%s: %s", a.Model, status))
 	}
 
 	b.WriteString("\n")
