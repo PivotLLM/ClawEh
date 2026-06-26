@@ -3,11 +3,9 @@ import type { ReactNode } from "react"
 import { useTranslation } from "react-i18next"
 
 import {
-  ALWAYS_EXCLUDED_TOOLS,
   type MCPHostForm,
   type MCPServerForm,
   blankServer,
-  matchVisibility,
   validateEndpointPath,
   validateListen,
 } from "@/components/mcp/form-model"
@@ -136,8 +134,6 @@ interface ToolsSectionProps {
   note: string
   patterns: string[]
   onChange: (next: string[]) => void
-  registeredTools: string[]
-  toolsLoading: boolean
 }
 
 export function ToolsSection({
@@ -146,8 +142,6 @@ export function ToolsSection({
   note,
   patterns,
   onChange,
-  registeredTools,
-  toolsLoading,
 }: ToolsSectionProps) {
   const { t } = useTranslation()
 
@@ -165,17 +159,6 @@ export function ToolsSection({
     onChange(patterns.filter((_, i) => i !== index))
   }
 
-  const filteredCandidates = registeredTools.filter(
-    (name) => !ALWAYS_EXCLUDED_TOOLS.includes(name),
-  )
-
-  const matched = filteredCandidates.filter((name) =>
-    matchVisibility(patterns, name),
-  )
-  const excluded = filteredCandidates.filter(
-    (name) => !matchVisibility(patterns, name),
-  )
-
   return (
     <SectionCard title={title} description={description}>
       <div className="space-y-3 py-4">
@@ -191,10 +174,7 @@ export function ToolsSection({
             </div>
           ) : (
             patterns.map((pattern, idx) => (
-              <div
-                key={idx}
-                className="flex items-center gap-2"
-              >
+              <div key={idx} className="flex items-center gap-2">
                 <Input
                   value={pattern}
                   placeholder={t("pages.mcp.tools_pattern_placeholder")}
@@ -212,60 +192,10 @@ export function ToolsSection({
               </div>
             ))
           )}
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={addPattern}
-          >
+          <Button type="button" variant="outline" size="sm" onClick={addPattern}>
             <IconPlus className="size-4" />
             {t("pages.mcp.tools_add_pattern")}
           </Button>
-        </div>
-
-        <div className="border-border/70 border-t pt-3">
-          <div className="text-sm font-medium">
-            {t("pages.mcp.tools_preview_title", {
-              matched: matched.length,
-              total: filteredCandidates.length,
-            })}
-          </div>
-          {ALWAYS_EXCLUDED_TOOLS.length > 0 && (
-            <div className="text-muted-foreground mb-2 text-xs">
-              {t("pages.mcp.tools_always_excluded", {
-                tools: ALWAYS_EXCLUDED_TOOLS.join(", "),
-              })}
-            </div>
-          )}
-
-          {toolsLoading ? (
-            <div className="text-muted-foreground text-xs">
-              {t("labels.loading")}
-            </div>
-          ) : filteredCandidates.length === 0 ? (
-            <div className="text-muted-foreground text-xs italic">
-              {t("pages.mcp.tools_none_registered")}
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 gap-x-4 gap-y-1 sm:grid-cols-2 md:grid-cols-3">
-              {matched.map((name) => (
-                <div
-                  key={`m-${name}`}
-                  className="font-mono text-xs text-green-600"
-                >
-                  ✓ {name}
-                </div>
-              ))}
-              {excluded.map((name) => (
-                <div
-                  key={`e-${name}`}
-                  className="text-muted-foreground/70 font-mono text-xs"
-                >
-                  ✗ {name}
-                </div>
-              ))}
-            </div>
-          )}
         </div>
       </div>
     </SectionCard>
