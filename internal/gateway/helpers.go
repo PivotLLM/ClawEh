@@ -391,6 +391,14 @@ func setupAndStartServices(
 		logger.InfoC("device", "Device event service started")
 	}
 
+	// Connect external MCP servers and register their tools onto the agent
+	// registries BEFORE the host server enumerates its catalogue — otherwise
+	// CLI-based agents (and CLI fallbacks) never see the mcp_* tools, since the
+	// host catalogue is a one-shot snapshot taken at startMCPServer time.
+	if err := agentLoop.EnsureMCPInitialized(context.Background()); err != nil {
+		logger.WarnCF("mcpserver", "MCP client initialization reported an error", map[string]any{"error": err.Error()})
+	}
+
 	// Start the MCP server so CLI providers (claude-cli/codex-cli/gemini-cli)
 	// can call claw's host-side tools natively over MCP.
 	if err := startMCPServer(cfg, agentLoop, msgBus, services); err != nil {
@@ -760,6 +768,13 @@ func restartServices(
 	} else {
 		logger.InfoCF("voice", "Transcription disabled", nil)
 	}
+
+	// Reconnect external MCP servers and re-register their tools onto the freshly
+	// rebuilt registry BEFORE the host server re-enumerates. ReloadProviderAndConfig
+	// builds a new registry (which has no MCP tools, and is not covered by the
+	// startup initOnce), so without this a reload silently drops every agent's
+	// mcp_* tools and webui edits to mcp_tools would not take effect.
+	al.ReinitMCP(runCtx)
 
 	// Restart MCP server — it was shut down as part of stopAndCleanupServices.
 	if err := startMCPServer(cfg, al, msgBus, services); err != nil {
