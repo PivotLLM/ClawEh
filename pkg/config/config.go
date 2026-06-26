@@ -380,9 +380,18 @@ func MatchToolPattern(patterns []string, name string) bool {
 // A nil or empty Tools list denies all tools. Use ["*"] to allow all tools.
 // Entries ending in "*" are treated as case-insensitive prefix matches.
 // Exact entries are matched as-is.
+//
+// External MCP-client tools (mcp_<server>_<tool>) are gated SOLELY by the
+// dedicated mcp_tools list, never the generic Tools allowlist — so this is the
+// single source of truth shared by both the registration gate and the
+// execution-time defense-in-depth check (they must agree, or a tool can be
+// registered yet rejected on call).
 func (a *AgentConfig) IsToolAllowed(name string) bool {
 	if a == nil {
 		return false
+	}
+	if strings.HasPrefix(strings.ToLower(name), "mcp_") {
+		return a.MCPToolAllowed(name)
 	}
 	// nil Tools (key absent in config) → use install defaults.
 	// Empty Tools (tools: [] in config) → deny all intentionally.
@@ -392,19 +401,27 @@ func (a *AgentConfig) IsToolAllowed(name string) bool {
 	return MatchToolPattern(a.Tools, name)
 }
 
+// mcpUnderscoreRun collapses any run of 2+ underscores to a single one before
+// MCP allow-list comparison, so a server/tool join that yields mcp_fusion__tool
+// (or a published mcp__fusion_…) still matches a clean entry like "fusion_tool".
+var mcpUnderscoreRun = regexp.MustCompile(`_{2,}`)
+
 // MCPToolAllowed reports whether an external MCP-client tool is permitted for
-// this agent. name is the published tool name (mcp_<server>_<tool>); the mcp_
-// prefix is stripped and the remaining <server>_<tool> is matched (case-
-// insensitively) against each MCPTools entry: an entry admits the tool when it
-// equals or is a prefix of that name. An empty MCPTools list admits nothing.
-// Unlike the generic tools allowlist, no wildcard or mcp_ prefix is used.
+// this agent. name is the published tool name (mcp_<server>_<tool>); underscore
+// runs are collapsed, the mcp_ prefix is stripped, and the remaining
+// <server>_<tool> is matched (case-insensitively) against each MCPTools entry:
+// an entry admits the tool when it equals or is a prefix of that name. An empty
+// MCPTools list admits nothing. Unlike the generic tools allowlist, no wildcard
+// or mcp_ prefix is used.
 func (a *AgentConfig) MCPToolAllowed(name string) bool {
 	if a == nil || len(a.MCPTools) == 0 {
 		return false
 	}
-	bare := strings.ToLower(strings.TrimPrefix(name, "mcp_"))
+	// Collapse underscores on the full name first, THEN strip mcp_, so a doubled
+	// prefix (mcp__…) reduces to a single mcp_ before stripping.
+	bare := strings.ToLower(strings.TrimPrefix(mcpUnderscoreRun.ReplaceAllString(name, "_"), "mcp_"))
 	for _, entry := range a.MCPTools {
-		e := strings.ToLower(strings.TrimSpace(entry))
+		e := mcpUnderscoreRun.ReplaceAllString(strings.ToLower(strings.TrimSpace(entry)), "_")
 		if e == "" {
 			continue
 		}

@@ -133,6 +133,39 @@ func TestAgentConfig_IsToolAllowed(t *testing.T) {
 	}
 }
 
+// IsToolAllowed must route mcp_* names through mcp_tools (never the generic
+// Tools list), so the registration gate and the execution-time check agree.
+func TestIsToolAllowed_RoutesMCPThroughMCPTools(t *testing.T) {
+	mcpName := "mcp_fusion_wxca_city_get"
+
+	// mcp_tools grants it even when Tools is empty.
+	a := &AgentConfig{Tools: []string{}, MCPTools: []string{"fusion"}}
+	if !a.IsToolAllowed(mcpName) {
+		t.Errorf("mcp_tools=[fusion] should permit %s", mcpName)
+	}
+
+	// A generic "*" must NOT grant mcp tools — only mcp_tools does.
+	a = &AgentConfig{Tools: []string{"*"}}
+	if a.IsToolAllowed(mcpName) {
+		t.Errorf(`Tools=["*"] must not grant %s (mcp_tools is empty)`, mcpName)
+	}
+
+	// A stale mcp_* entry in the generic list must NOT grant it either.
+	a = &AgentConfig{Tools: []string{"mcp_fusion_*"}}
+	if a.IsToolAllowed(mcpName) {
+		t.Errorf("stale Tools=[mcp_fusion_*] must not grant %s", mcpName)
+	}
+
+	// Non-mcp tools are unaffected by mcp_tools.
+	a = &AgentConfig{Tools: []string{"file_read_lines"}, MCPTools: []string{"fusion"}}
+	if !a.IsToolAllowed("file_read_lines") {
+		t.Error("non-mcp tool should still be governed by the Tools list")
+	}
+	if a.IsToolAllowed("mcp_other_tool") {
+		t.Error("mcp_other_tool not matched by mcp_tools=[fusion] should be denied")
+	}
+}
+
 func TestAgentConfig_MCPToolAllowed(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -171,6 +204,13 @@ func TestAgentConfig_MCPToolAllowed(t *testing.T) {
 
 		// Multiple entries, any can match.
 		{"one of several matches", []string{"weather", "fusion_trello"}, "mcp_fusion_trello_search", true},
+
+		// Underscore runs collapse for comparison: a clean entry matches a doubled name.
+		{"entry matches doubled tool name", []string{"fusion_tool"}, "mcp_fusion__tool", true},
+		{"server prefix matches doubled name", []string{"fusion"}, "mcp_fusion__tool", true},
+		{"doubled mcp prefix collapses", []string{"fusion"}, "mcp__fusion_tool", true},
+		{"doubled entry matches clean name", []string{"fusion__tool"}, "mcp_fusion_tool", true},
+		{"triple underscores collapse", []string{"fusion_wxca"}, "mcp_fusion___wxca_city_get", true},
 	}
 
 	for _, tc := range tests {
