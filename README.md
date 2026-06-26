@@ -10,17 +10,18 @@ picoclaw.
 **Major features:**
 
 - **Multi-agent** — named agents, each with its own workspace, models, tools, system prompt, and channel bindings.
-- **Multi-provider LLMs** — direct APIs (Anthropic, OpenAI, OpenAI-compatible, Gemini) and CLI agents (Claude Code, Codex, Gemini CLI), with fallback chains and cooldowns.
-- **Messaging channels** — Telegram, Slack, Discord, and an embedded web UI, with per-agent routing.
-- **MCP, both directions** — claw is an MCP *host* (its tools are callable by CLI agents) and an MCP *client* (connects out to external MCP servers and offers their tools to every agent).
-- **Cognitive memory** — a per-agent engine that distills conversation into structured, de-duplicated memories surfaced into the prompt.
-- **Context management** — reliable summarization/compaction plus per-turn eviction so long sessions stay within the model's window.
-- **Maestro** — built-in task orchestration (projects, playbooks, resumable task lists) for complex, multi-step work.
-- **File tools** — sandboxed read/search/edit by line or byte, plus move and delete, and a shared common directory for inter-agent exchange.
-- **External folder mounts** — give an assistant access to any user-specified directory tree (read/write, sandboxed), with an optional toggle to notify the assistant whenever a new file appears in it.
-- **Scheduling** — cron-based periodic tasks and reminders.
+- **All major LLM providers** — direct APIs (Anthropic, OpenAI and OpenAI-compatible, Google Gemini, and more) plus CLI agents — Claude Code, Codex, and Gemini CLI — with automatic fallback chains and cooldowns.
+- **Messaging channels** — Telegram, Slack, Discord, and a built-in web UI, with per-agent routing.
+- **Cognitive memory** — a per-agent memory that updates itself in the background: it distills conversations into structured, de-duplicated facts and automatically recalls the relevant ones into each prompt.
+- **Smart context handling** — automatic summarization and compaction, plus per-turn eviction of stale tool output, so long conversations stay fast and within the model's limits.
+- **Message history** — configurable retention and a searchable archive of past messages, per session.
+- **Directory mounts** — give an assistant any folder on your machine (read/write, sandboxed), with optional alerts the moment a new file appears in it.
+- **Scheduled jobs** — cron-based periodic tasks and reminders.
+- **Maestro, built in** — task orchestration (projects, playbooks, resumable task lists) for complex, multi-step work.
+- **MCP, both directions** — claw hosts its own tools to CLI agents, and connects out to upstream MCP servers over stdio or HTTP, with granular per-agent control over which of their tools each agent may use.
+- **File tools** — sandboxed read/search/edit by line or byte, plus move/delete and a shared common directory for inter-agent exchange.
 - **Web UI** — manage agents, providers, channels, MCP, memory, and config without editing JSON.
-- **Secure & self-hosted** — workspace sandboxing, per-agent tool allowlists, loopback-bound services, API-key-only auth; MIT-licensed Go you run yourself.
+- **Secure & self-hosted** — workspace sandboxing, per-agent tool allowlists, loopback-bound services; MIT-licensed Go you run yourself.
 
 ## What's New
 
