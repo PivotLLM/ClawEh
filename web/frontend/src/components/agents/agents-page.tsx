@@ -494,7 +494,7 @@ function AgentCard({
       {onMessageChange !== undefined && (
         <div className={settingsCardClass}>
         <div className="space-y-1.5">
-          <p className="text-foreground text-sm font-semibold">External message token</p>
+          <p className="text-foreground text-sm font-semibold">External message API token</p>
           <div className="flex items-center gap-2">
             <Input
               type="number"
@@ -503,7 +503,7 @@ function AgentCard({
               onChange={(e) => onMessageChange(Math.max(0, parseInt(e.target.value) || 0), messageWindowCount)}
               className="w-20 h-7 text-xs"
             />
-            <span className="text-muted-foreground text-xs">min window (0 = disabled)</span>
+            <span className="text-muted-foreground text-xs">Token rotation (minutes, 0 = disabled)</span>
           </div>
           {messageWindowMinutes > 0 && (
             <div className="flex items-center gap-2">
@@ -514,12 +514,12 @@ function AgentCard({
                 onChange={(e) => onMessageChange(messageWindowMinutes, Math.max(1, parseInt(e.target.value) || 1))}
                 className="w-20 h-7 text-xs"
               />
-              <span className="text-muted-foreground text-xs">windows retained</span>
+              <span className="text-muted-foreground text-xs">Number of tokens retained</span>
             </div>
           )}
           {messageWindowMinutes > 0 && (
             <p className="text-muted-foreground text-xs">
-              Token valid for {messageWindowMinutes * messageWindowCount} min. Endpoint:{" "}
+              Effective token lifetime: {messageWindowMinutes * messageWindowCount} minutes. Endpoint:{" "}
               <span className="font-mono">POST /api/message/&#123;token&#125;</span>
             </p>
           )}
