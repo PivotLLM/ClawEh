@@ -23,237 +23,101 @@ picoclaw.
 - **Web UI** — manage agents, providers, channels, MCP, memory, and config without editing JSON.
 - **Secure & self-hosted** — workspace sandboxing, per-agent tool allowlists, loopback-bound services; MIT-licensed Go you run yourself.
 
-## What's New
+## Features
 
-### Maestro is now built in
-Maestro — a task-orchestration system — is now built directly into ClawEh rather
-than a separate service you bolt on. It lets an agent break large, repeatable, or
-multi-step work into structured **projects**, reusable **playbooks**, and **task
-lists**, then run them with resumable state, retries, QA, and aggregated
-reporting — instead of trying to hold the whole job in a single conversation.
+### Maestro
+Task orchestration is built in: an agent can break large or repeatable work into
+**projects**, reusable **playbooks**, and resumable **task lists**, with retries,
+QA, and aggregated reporting. Each task runs as one of the agent's own
+**sub-agents** (its models, its tools, a fresh context); its data lives under the
+agent's workspace; you enable it with a single per-agent toggle. The upstream
+project remains available as a stand-alone stdio MCP service —
+see https://github.com/PivotLLM/Maestro.
 
-Because it's built in, each Maestro task runs as one of the agent's own
-**sub-agents** (its models, its tools, a fresh context), its data lives under the
-agent's workspace, and there is nothing extra to install or run — just flip a
-single per-agent toggle. The result is better performance, simpler configuration,
-and clean per-agent isolation.
+### MCP servers
+claw is both an MCP **host** — exposing its tools to CLI-based agents — and an MCP
+**client** that connects out to upstream servers over **stdio** or **HTTP**, adding
+their tools to your agents. Add/edit external servers in the WebUI (no JSON). Access
+is **granular per agent**: each agent is granted upstream tools individually (by
+server or tool-name prefix), and a coarse per-endpoint visibility filter controls
+what the host advertises.
 
-Maestro was refactored to make this work — ClawEh (the host) now owns model
-selection and task dispatch — and the upstream project remains available as a
-stand-alone stdio MCP service for use outside ClawEh.
+### Context management
+Two mechanisms keep long sessions inside the model's window. **Eviction** is a
+per-turn, LLM-free sweep that collapses re-retrievable tool results (file reads,
+web fetches) to a short placeholder once the agent has moved on — reversible,
+since the source can be fetched again, and it runs before every dispatch so
+summarization fires far less often. **Compression** summarizes older conversation
+when the window fills; tailor it per agent with a `COMPRESSION.md` in the
+workspace. See [docs/context-eviction.md](docs/context-eviction.md).
 
-For more about Maestro, see https://github.com/PivotLLM/Maestro.
+### Cognitive memory
+Long-running agents get smarter over time instead of relying on hand-edited prompt
+files. Each session keeps a small SQLite memory database. Memory is organized as
+**domains** — named containers that are either **sticky** (always in the prompt) or
+routed topics — holding **memories**, each a `fact`, `preference`, or `rule`. A
+background "sleep cycle" reviews new conversation and distills it into structured,
+de-duplicated, contradiction-resolved memories, and the relevant pieces are composed
+into the prompt each turn. Consolidation reuses your configured **Memory models**,
+and its prompt lives in an editable `COGMEM.md` in the workspace. On by default per
+agent.
 
-### External MCP servers, mounts, and richer file tools
-Manage **external MCP servers** entirely in the WebUI (MCP page) — add/edit/delete
-with a form, no JSON — and claw now offers their tools to **every** provider
-(API agents directly, CLI agents via claw's host), with auto-enable when a server
-is turned on. Agents can **mount external folders** beside `files/` (per agent, on
-the Agents page) with an optional **notify** toggle that pings the agent when a new
-file lands. File tools gained explicit line/byte addressing
-(`file_read_lines`/`_bytes`, `file_search_lines`/`_bytes`), positional edits
-(`file_edit_lines`/`insert`/`delete` in line and byte units), and `file_move` /
-`file_delete`. See the file-access and MCP sections below.
+The seeded **`General`** sticky domain holds global rules and standing facts; topic
+domains auto-load by relevance using **recency**, **lexical match** (salient words in
+the latest message), **tool triggers** (a domain loads when the agent uses a matching
+tool — e.g. an "Email" domain on `google_gmail`), and **keyword triggers** (phrases in
+the incoming message, so a workflow's context loads when a cron job fires or the user
+mentions it). Routing is lexical and deterministic — no embeddings or vector search.
 
-### Context eviction
-A per-turn, LLM-free sweep keeps long sessions inside the context window by
-collapsing **re-retrievable** tool results — file reads, web fetches — to a short
-placeholder once the agent has moved on. Because the source can always be fetched
-again, eviction is reversible: the only cost of dropping a stale read is a
-re-read, never lost work. It runs before every model dispatch so the window
-rarely fills enough to trigger summarization compaction at all. On by default and
-tunable per agent; see [docs/context-eviction.md](docs/context-eviction.md).
-
-### Improved context compression
-Context compression (summarizing older conversation so long sessions stay within
-the model's context window) has been significantly improved for reliability and
-quality. You can now optionally tailor it per agent: drop a `COMPRESSION.md` file
-in the agent's workspace with additional instructions, and those are folded into
-the summarization prompt. Leave it out to use the built-in behavior.
-
-### Cognitive memory (cogmem)
-ClawEh has gained a cognitive-memory engine so long-running agents get smarter
-over time instead of relying on hand-edited prompt files. Each session has a
-small SQLite memory database alongside its existing archive. Memory is organized
-as **domains** (containers, each with a unique name — a domain is **sticky**
-(always in the prompt) or a routed topic) that each hold **memories**, where every
-memory is a `fact`, a `preference`, or a `rule`. A background "sleep cycle" periodically reviews new
-conversation and distills it into structured, de-duplicated,
-contradiction-resolved memories; the relevant pieces are then composed into the
-system prompt for each turn. Consolidation reuses your configured **Memory models** (formerly
-"Summarization models" — the same setting, renamed) and its prompt lives in an
-editable `COGMEM.md` seeded into each agent's workspace, so you can tune how the
-agent learns. Cognitive memory is **on by default** for every agent; to disable
-it for a specific agent, give that agent a tool allowlist that excludes the
-`cogmem_*` tools.
-
-Memory is surfaced in layers. **Sticky** domains (the seeded **`General`** domain
-holds global rules, preferences, and standing facts) are in every prompt; non-sticky
-topic domains are then auto-loaded by relevance using these signals:
-
-- **Recency** — the most recently used topic domains.
-- **Lexical match** — domains whose name, summary, or memories match salient words in
-  the user's latest message, so asking "what's the status of the BioTech report?"
-  pulls in the BioTech domain even if it hasn't been touched recently.
-- **Tool triggers** — a domain can declare a comma-separated list of tool-name
-  substrings, so it auto-loads the moment the agent uses a matching tool. For
-  example an "Email" domain with triggers `google_gmail,microsoft365_mail` brings
-  the agent's mail preferences into context as soon as it touches a mail tool.
-  Matching ignores case and underscores; the agent sets triggers itself
-  (`cogmem_domain_create`/`cogmem_domain_update`), and the sleep cycle can add them
-  when a domain clearly pertains to specific tools.
-- **Keyword triggers** — a domain can declare a list of distinctive words/phrases
-  that load it when one appears in the incoming message text (matched as a whole
-  phrase, on word boundaries). Unlike tool triggers (which match *tool names*),
-  these match the *message*, so they're the way to have a workflow's context
-  pulled up when a scheduled (cron) job fires or the user mentions it — e.g. a
-  domain with `["morning routine"]` loads when a message says "time for your
-  morning routine." Prefer multi-word phrases over common single words.
-
-These signals are deduplicated and ranked (tool trigger, then keyword, then lexical
-match, then recency), so each relevant domain is loaded once. No embeddings or
-vector search are involved — routing is lexical and deterministic.
-
-#### Confirming inferred memories
-When the agent (or the sleep cycle) infers something it is not certain about, it
-stores it as a **pending** memory rather than acting on it. Pending memories are
-surfaced **once per session** as a short digest in the prompt, and the agent asks
-you to confirm in chat. Reply naturally — on a "yes" the agent calls
-`cogmem_memory_confirm` to promote it to active memory, and on a "no" it calls
-`cogmem_memory_retire` to drop it. The digest is throttled so it is not repeated
-every turn; a newly inferred pending memory re-surfaces the next turn. Set
-`memory.prompt.pending_surface: "export_only"` to keep pending items out of the
-prompt entirely (they still appear in `cogmem_export` and the WebUI memory
-browser).
-
-#### Purging cognitive memory
-`claw memory purge` cleans up accumulated clutter across **all** assistants. It
-purges everything that is **not current active memory** — every domain whose
-status is not active (archived/review) along with its memories, plus every
-non-active memory (retired, superseded, review). Only active memories in active
-domains survive (including the sticky `General` domain).
-
-It is a **dry run by default** — it reports what would be removed, per database and
-in total, without changing anything:
+When the agent infers something uncertain, it stores it as a **pending** memory and
+asks you to confirm in chat (reply "yes" to keep it, "no" to drop it). Use **`claw
+memory purge`** to clear everything that isn't current active memory — a dry run by
+default; add `--confirm` to delete and vacuum. Stop the gateway first so you're not
+racing live agents:
 
 ```bash
-claw memory purge
-```
-
-Add `--confirm` to actually delete (it also `VACUUM`s each database to reclaim
-space):
-
-```bash
-claw memory purge --confirm
-```
-
-Recommended sequence — review the counts first, and stop the gateway so you are
-not racing live agents writing memory:
-
-```bash
-sudo systemctl stop claw      # avoid racing live agents
 claw memory purge             # dry run — review the counts
 claw memory purge --confirm   # delete + vacuum
-sudo systemctl start claw
 ```
 
-Notes:
-- If you run with a non-default data directory, set `CLAW_HOME` the same way the
-  service does (e.g. `CLAW_HOME=/path claw memory purge`) so it targets the same
-  agents tree.
-- Even the dry run opens each `.cogmem.db`, which runs the normal idempotent
-  migrations — harmless, but another reason to stop the gateway first.
+### Agents, workspaces, and files
+By default an agent's file tools see two directories: **`<workspace>/files`** (read
+**and** write — its working area, created automatically) and **`<workspace>/skills`**
+(read-only). Everything else is invisible to the agent, including the human-authored
+prompt files — `AGENTS.md`, `SOUL.md`, `IDENTITY.md`, `USER.md`, `MEMORY.md` — which
+are combined into the system prompt every turn. Keep those **brief and general**; the
+agent no longer edits them (they're authoritative and shape what it learns). Both
+scopes are configurable (`workspace_read_subdirs`, `workspace_write_subdir`). A shared
+**common directory** lets agents exchange files via `common_put`/`common_get`/
+`common_list`/`common_delete` — on by default, per-agent toggleable.
 
-### Workspace `.md` are files are now for humans to edit, not the agent
-The agent no longer edits its own workspace markdown files (`AGENTS.md`,
-`SOUL.md`, `IDENTITY.md`, `USER.md`, `MEMORY.md`). They are now intended for
-**human authorship**. As in other *claw applications, these files are combined
-and inserted into the system prompt, so keep them **brief and general** — they
-are sent on every turn. As the cognitive-memory implementation matures, the
-specific, situational information the agent needs is inserted into the context
-automatically rather than living in these files. The `.md` files are treated as
-**authoritative** (they always win over learned memory) and are **reviewed during
-cognitive-memory consolidation**, so anything you write in them shapes what the
-agent learns. The agent records what it learns to its memory database (via the
-`cogmem_*` tools / the sleep cycle), not to your files.
+**External mounts.** Mount any external folder as a top-level name beside `files/` and
+`skills/` — per agent, on the **Agents page** (a name, an absolute path, and an
+optional **notify** toggle). A mount `notes` → `/home/ai/Documents/mynotes` is reachable
+as `notes/...`, read **and** write, sandboxed so the agent can't climb above it (`..`
+is rejected). With **notify** on, claw watches the tree and messages the agent on its
+default channel whenever a **new** file appears (by path, restart-safe) — handy for
+acting on drops into a folder.
 
-### Agent file access: `files/` + `skills/`
-By default an agent's file tools are scoped to just two directories:
-**`<workspace>/files`** (read **and** write — its working area for drafts and
-outputs, created automatically) and **`<workspace>/skills`** (read-only). The rest
-of the workspace is invisible to the agent's file tools — including the
-human-authored config files (`AGENTS.md`, `SOUL.md`, `IDENTITY.md`, `USER.md`,
-`MEMORY.md`), which are already injected into its prompt, and subsystem files like
-`COGMEM.md`/`COMPRESSION.md`, which are configuration, not instructions for the
-agent. Both lists are configurable (`workspace_read_subdirs`, default
-`["files","skills"]`; `workspace_write_subdir`, default `files`). **Existing files
-that need to be agent-writable must be moved into `files/` manually.** A shared
-**common directory** (default `agents/common`, configurable to any path) also lets
-agents exchange files via `common_put` / `common_get` / `common_list` /
-`common_delete`; access is on by default and can be toggled per agent.
-
-#### External mounts
-You can mount an external directory tree as a top-level name beside `files/` and
-`skills/` — per agent, on the **Agents page** (the **Mounts** editor: a name, an
-absolute path, and a **notify** toggle). A mount named `notes` pointing at
-`/home/ai/Documents/mynotes` is reachable as `notes/...` (e.g.
-`notes/stuff.md`). The whole tree under the path is mounted, read **and** write,
-sandboxed so the agent cannot climb above the mount point (`..` is rejected).
-Mount names are a single component of letters, digits, and hyphens
-(`notes-eric` ok), and cannot shadow `files`/`skills`/`tasks`/`common`.
-
-With **notify** on, claw watches the mount and, when a **new file** appears,
-messages the agent on its default channel (cron-style) with the file's path — so
-it can act on drops into the folder. "New" is by path: editing or appending to a
-file already seen does not fire — only a path the watcher hasn't seen before.
-Detection is restart-safe (the seen-file set is recorded in a hidden `.claw`
-marker, so a file added while claw was stopped is still caught) and polls every
-`MountNotifyIntervalSeconds` (default 10).
-
-#### File tools
-Reads and edits address files explicitly by **lines** or **bytes**, so the model
-never mixes units: `file_search_lines`/`file_read_lines` (line numbers) pair up,
-as do `file_search_bytes`/`file_read_bytes` (byte offsets). Editing: `file_edit`
-(exact-text replace), the line/byte range tools `file_edit_lines`/`_bytes`,
-`file_insert_lines`/`_bytes`, `file_delete_lines`/`_bytes`, plus whole-file
-`file_write`, `file_append`, `file_copy`, `file_move` (organize without reading;
-copy-then-delete so it works across mounts), and `file_delete` (requires
-`sure=true`; refuses to delete backup files).
-
-### What's next
-1. **Monitoring, reviewing, and tweaking cognitive memory** — observing what it
-   learns and refining the prompts, thresholds, and routing signals (recency,
-   lexical match, tool triggers).
-2. Depending on what we find, **refining how the most appropriate memory is
-   automatically inserted** into the agent's context.
-
-ClawEh began as a fork of [PicoClaw](https://github.com/sipeed/picoclaw). Written in Go, ClawEh it is focused on a minimal footprint, efficient deployment, core stability, reliability, security, and long-term maintainability.
+**File tools** address content explicitly by **lines** or **bytes**, so units never
+mix: `file_read_lines`/`_bytes`, `file_search_lines`/`_bytes`, the positional
+`file_edit_lines`/`insert`/`delete` (line and byte variants), plus `file_edit`
+(exact-text replace), `file_write`, `file_append`, `file_copy`, `file_move` (works
+across mounts), and `file_delete` (requires `sure=true`; refuses to delete backups).
 
 ## Why ClawEh exists
 
-PicoClaw originally caught my attention because it is written in Go, my language of choice for building performant systems with efficient development workflows, straightforward deployment, strong cross-platform tooling, and long-term maintainability.
+ClawEh is an independent, stability-focused fork of [PicoClaw](https://github.com/sipeed/picoclaw),
+chosen for its Go foundation — performant, easy to deploy, and maintainable. After hitting
+reliability and design issues upstream and contributing fixes back, a separate project with a
+smaller scope and a higher quality bar became the more sustainable path. This isn't a criticism
+of the original authors, whose starting point I'm grateful for — it simply reflects different
+priorities: a smaller, focused codebase emphasizing core stability, reliability, security, and
+maintainability.
 
-When I began using PicoClaw, I quickly encountered bugs and design issues that affected reliability, maintainability, and day-to-day use. I contributed a number of fixes upstream, but in practice I could not rely on the upstream softare in its state at the time for my own use. Given the volume of incoming changes, continuing to route needed fixes through a large upstream queue no longer seemed practical, so a separate project with a smaller scope, a higher quality bar, and a stronger focus on core stability became the more sustainable path.
-
-This is not intended as criticism of the original authors or their effort. I am grateful for the starting point they provided and for making the project available in Go in the first place. The PicoClaw project is clearly receiving a high volume of contributions and proposed changes, and I appreciate that keeping up with that kind of volume is difficult under any circumstances. This fork simply reflects a different set of needs and priorities: a smaller, more focused codebase with a stronger emphasis on core stability, reliability, security, and maintainability.
-
-ClawEh exists because I desired a small, reliable, performant and secure "Claw" focued on:
-
-- flexible support for both CLI-based agents and direct multi-provider API integrations
-- integration with messaging platforms such as Slack, Telegram, and Discord
-- effective use of MCP servers
-- features such as cron to execute periodic tasks
-
-From a security practitioner’s perspective, expanding AI agents by packing an ever-growing range of capabilities into a single monolithic application is a mistake. The broader and more complex the feature set becomes, the larger the attack surface and the harder it is to secure effectively. If you are looking for a "claw" with everything including the kitchen sink, this isn't it.
-
-## Core features
-
-- Lightweight Go implementation with straightforward deployment
-- Multi-agent support with per-agent configuration and workspaces
-- Flexible LLM integration through CLI-based agents and direct multi-provider APIs
-- Channel integrations and automation capabilities for practical operational use
-- Cron-based scheduling for all periodic and time-based task execution — to reduce unnecessary duplication and complexity, all scheduling and periodic execution is consolidated in cron (see [docs/cron.md](docs/cron.md))
-- MIT-licensed, with a strong emphasis on openness, reuse, and maintainability
+From a security practitioner's perspective, packing an ever-growing range of capabilities into
+one monolithic agent is a mistake — the broader the feature set, the larger the attack surface.
+If you want a "claw" with everything including the kitchen sink, this isn't it.
 
 ## Prerequisites
 
