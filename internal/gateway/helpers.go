@@ -426,17 +426,15 @@ func setupAndStartServices(
 	return services, nil
 }
 
-// mcpHostAllowlist resolves the tool allowlist the MCP host catalogue (tools/list)
-// should advertise. Parity rule: external MCP and the internal API path expose the
-// SAME tools, gated per-agent at execution time (tools/call resolves the
-// session_token to an agent and enforces that agent's config + ACL). So the
-// default exposes the FULL union of every agent's allowed tools ("*") — anything
-// an agent can use internally is discoverable and callable externally, subject to
-// the same per-agent gate. An explicit cfg.MCPHost.Tools narrows the catalogue
-// (operator override); to expose NO tools, disable mcp_host instead.
-func mcpHostAllowlist(cfg *config.Config) []string {
-	if len(cfg.MCPHost.Tools) > 0 {
-		return cfg.MCPHost.Tools
+// mcpVisibilityList resolves a per-endpoint tools/list visibility filter. Empty
+// means "advertise the full union of every agent's allowed tools" ("*") — parity
+// with the internal API path, gated per-agent at execution time (tools/call
+// resolves the session_token and enforces that agent's config + ACL). A non-empty
+// list coarsely narrows what the endpoint advertises; to expose NO tools, disable
+// mcp_host instead.
+func mcpVisibilityList(patterns []string) []string {
+	if len(patterns) > 0 {
+		return patterns
 	}
 	return []string{"*"}
 }
@@ -470,7 +468,8 @@ func startMCPServer(cfg *config.Config, agentLoop *agent.AgentLoop, msgBus *bus.
 		mcpserver.WithAgentWorkspaces(agentWorkspaces),
 		mcpserver.WithListen(cfg.MCPHost.Listen),
 		mcpserver.WithEndpointPath(cfg.MCPHost.EndpointPath),
-		mcpserver.WithAllowlist(mcpHostAllowlist(cfg)),
+		mcpserver.WithInternalAllowlist(mcpVisibilityList(cfg.MCPHost.InternalTools)),
+		mcpserver.WithExternalAllowlist(mcpVisibilityList(cfg.MCPHost.ExternalTools)),
 		mcpserver.WithMessageBus(msgBus),
 	)
 	if err != nil {

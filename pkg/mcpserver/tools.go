@@ -147,7 +147,7 @@ func addToolsToServer(
 		// tool: it is only reachable by an authenticated MCP client holding a valid
 		// session token, and it can only post to that session's own user, so there
 		// is no hard exclusion — include it in the allowlist to expose it.
-		if !config.MatchToolPattern(allowPatterns, name) {
+		if !config.MatchVisibility(allowPatterns, name) {
 			continue
 		}
 

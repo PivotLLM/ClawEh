@@ -432,6 +432,36 @@ func (a *AgentConfig) MCPToolAllowed(name string) bool {
 	return false
 }
 
+// MatchVisibility reports whether a tool named `name` passes a coarse MCP-host
+// visibility filter (the per-endpoint InternalTools/ExternalTools lists). It uses
+// the same ergonomics as the per-agent MCP allow-list, generalized to local tools
+// too: underscores are collapsed, a leading mcp_ is stripped, and an entry admits
+// the tool when it equals or is a prefix of the result (case-insensitive). A "*"
+// entry exposes everything; an empty list exposes nothing. So "file" or
+// "session_info" match local tools, and "fusion"/"fusion_wxca" match upstream MCP
+// tools without the mcp_ prefix or a glob.
+func MatchVisibility(patterns []string, name string) bool {
+	if len(patterns) == 0 {
+		return false
+	}
+	bare := strings.TrimPrefix(mcpUnderscoreRun.ReplaceAllString(strings.ToLower(name), "_"), "mcp_")
+	for _, entry := range patterns {
+		e := strings.TrimSpace(strings.ToLower(entry))
+		if e == "*" {
+			return true
+		}
+		// Tolerate a trailing glob so "fusion_*" behaves the same as "fusion_".
+		e = mcpUnderscoreRun.ReplaceAllString(strings.TrimSuffix(e, "*"), "_")
+		if e == "" {
+			continue
+		}
+		if strings.HasPrefix(bare, e) {
+			return true
+		}
+	}
+	return false
+}
+
 // CognitiveMemoryEnabled reports whether the cognitive-memory suite + subsystem
 // (tools, prompt injection, archive hook, consolidation) is active for this
 // agent. It is the per-agent `cogmem` toggle, defaulting ON: nil or true ⇒
@@ -1380,10 +1410,16 @@ type MCPHostConfig struct {
 	AutoEnable   bool   `json:"auto_enable"             env:"CLAW_MCP_HOST_AUTO_ENABLE"`
 	Listen       string `json:"listen,omitempty"        env:"CLAW_MCP_HOST_LISTEN"`
 	EndpointPath string `json:"endpoint_path,omitempty" env:"CLAW_MCP_HOST_ENDPOINT_PATH"`
-	// Tools is the global allowlist of tool names exposed to MCP clients.
-	// Supports "*" (all), prefix globs like "read_*", and exact names. Every
-	// tool obeys the allowlist; nothing (including msg_send) is hard-excluded.
-	Tools []string `json:"tools,omitempty"`
+	// InternalTools and ExternalTools are per-endpoint visibility filters that
+	// govern which tools appear in tools/list (the catalogue) on /internal and
+	// the bearer endpoint (/mcp) respectively. They are a COARSE exposure filter
+	// — per-agent execution gating still applies on top at tools/call. Each entry
+	// is matched by MatchVisibility: equality-or-prefix after collapsing
+	// underscores and stripping a leading mcp_, so "file"/"session_info" catch
+	// local tools and "fusion"/"fusion_wxca" catch upstream MCP tools (no mcp_
+	// prefix or glob needed). "*" exposes everything; empty exposes nothing.
+	InternalTools []string `json:"internal_tools,omitempty"`
+	ExternalTools []string `json:"external_tools,omitempty"`
 }
 
 func LoadConfig(path string) (*Config, error) {

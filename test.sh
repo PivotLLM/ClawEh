@@ -438,7 +438,8 @@ PY
     "enabled": true,
     "listen": "127.0.0.1:$MCP_PORT",
     "endpoint_path": "/mcp",
-    "tools": [
+    "external_tools": ["*"],
+    "internal_tools": [
       "file_read_bytes",
       "file_read_lines",
       "file_write",

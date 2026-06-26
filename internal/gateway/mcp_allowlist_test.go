@@ -6,22 +6,21 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/config"
 )
 
-// TestMCPHostAllowlist verifies the MCP host allowlist resolution: an explicit
-// list wins; otherwise it defaults to "*" — the full union of every agent's
+// TestMCPVisibilityList verifies per-endpoint visibility resolution: an explicit
+// list wins; an empty list defaults to "*" — the full union of every agent's
 // allowed tools, for internal/external parity (per-agent gating happens at
 // execution time via the session_token, not at catalogue time).
-func TestMCPHostAllowlist(t *testing.T) {
+func TestMCPVisibilityList(t *testing.T) {
 	explicit := &config.Config{}
-	explicit.MCPHost.Tools = []string{"file_read_bytes", "web_search"}
-	got := mcpHostAllowlist(explicit)
+	explicit.MCPHost.InternalTools = []string{"file_read_bytes", "web_search"}
+	got := mcpVisibilityList(explicit.MCPHost.InternalTools)
 	if len(got) != 2 || got[0] != "file_read_bytes" || got[1] != "web_search" {
-		t.Fatalf("explicit MCPHost.Tools not honored: %v", got)
+		t.Fatalf("explicit InternalTools not honored: %v", got)
 	}
 
-	empty := &config.Config{}
-	empty.MCPHost.Tools = nil
-	got = mcpHostAllowlist(empty)
+	// Empty external list → default "*".
+	got = mcpVisibilityList((&config.Config{}).MCPHost.ExternalTools)
 	if len(got) != 1 || got[0] != "*" {
-		t.Fatalf("empty MCPHost.Tools should default to [\"*\"] (full parity), got %v", got)
+		t.Fatalf("empty list should default to [\"*\"] (full parity), got %v", got)
 	}
 }

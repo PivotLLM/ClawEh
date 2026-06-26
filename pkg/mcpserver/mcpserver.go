@@ -61,7 +61,8 @@ const InternalEndpointPath = "/internal"
 // ACL gates the (agent, tool) pair, and the per-agent registry executes.
 type MCPServer struct {
 	agentRegistries map[string]*tools.ToolRegistry // agentID → registry (dispatch target + schema source)
-	allowPatterns   []string
+	internalAllow   []string                       // tools/list visibility filter for /internal
+	externalAllow   []string                       // tools/list visibility filter for /mcp (bearer)
 	listen          string
 	endpointPath    string // bearer endpoint (/mcp)
 	internalPath    string // session-token-parameter endpoint (/internal)
@@ -136,17 +137,39 @@ func WithEndpointPath(path string) Option {
 	}
 }
 
-// WithAllowlist sets the tool-name patterns to expose. Supports "*" (all),
-// prefix globs like "read_*", and exact names — see config.MatchToolPattern.
-// An empty or nil allowlist means no tools are exposed (fail-closed). Every
-// tool, including msg_send, obeys the allowlist; nothing is hard-excluded.
-func WithAllowlist(names []string) Option {
+// WithInternalAllowlist sets the tools/list visibility filter for the /internal
+// endpoint. Patterns are matched by config.MatchVisibility (equality-or-prefix,
+// underscores collapsed, leading mcp_ stripped; "*" = all). An empty/nil list
+// means no tools are exposed on /internal (fail-closed). Every tool obeys the
+// filter; nothing is hard-excluded.
+func WithInternalAllowlist(names []string) Option {
 	return func(m *MCPServer) {
 		if len(names) == 0 {
-			m.allowPatterns = nil
+			m.internalAllow = nil
 			return
 		}
-		m.allowPatterns = append([]string(nil), names...)
+		m.internalAllow = append([]string(nil), names...)
+	}
+}
+
+// WithExternalAllowlist sets the tools/list visibility filter for the bearer
+// endpoint (/mcp). Same matching semantics as WithInternalAllowlist.
+func WithExternalAllowlist(names []string) Option {
+	return func(m *MCPServer) {
+		if len(names) == 0 {
+			m.externalAllow = nil
+			return
+		}
+		m.externalAllow = append([]string(nil), names...)
+	}
+}
+
+// WithAllowlist applies the same visibility filter to BOTH endpoints. Convenience
+// for callers/tests that don't need per-endpoint lists.
+func WithAllowlist(names []string) Option {
+	return func(m *MCPServer) {
+		WithInternalAllowlist(names)(m)
+		WithExternalAllowlist(names)(m)
 	}
 }
 
@@ -215,11 +238,11 @@ func New(opts ...Option) (*MCPServer, error) {
 
 	// /internal — session-token parameter on every tool (ClawEh's CLI providers).
 	internalSrv := newSrv()
-	addToolsToServer(internalSrv, internalAuthMode, m.agentRegistries, m.allowPatterns, m.sessionTokens, resolver, tracker, m.policy, m.msgBus, &m.activeDispatches)
+	addToolsToServer(internalSrv, internalAuthMode, m.agentRegistries, m.internalAllow, m.sessionTokens, resolver, tracker, m.policy, m.msgBus, &m.activeDispatches)
 
 	// /mcp — standard bearer endpoint, clean tool schemas (probe / external MCP).
 	bearerSrv := newSrv()
-	addToolsToServer(bearerSrv, bearerAuthMode, m.agentRegistries, m.allowPatterns, m.sessionTokens, resolver, tracker, m.policy, m.msgBus, &m.activeDispatches)
+	addToolsToServer(bearerSrv, bearerAuthMode, m.agentRegistries, m.externalAllow, m.sessionTokens, resolver, tracker, m.policy, m.msgBus, &m.activeDispatches)
 
 	internalStreamable := newStreamable(internalSrv, m.internalPath, false)
 	bearerStreamable := newStreamable(bearerSrv, m.endpointPath, true)

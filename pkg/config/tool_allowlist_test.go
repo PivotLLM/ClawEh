@@ -166,6 +166,44 @@ func TestIsToolAllowed_RoutesMCPThroughMCPTools(t *testing.T) {
 	}
 }
 
+// MatchVisibility is the coarse per-endpoint MCP-host filter: prefix/equality for
+// local tools, mcp_-stripped prefix for upstream, "*" = all, empty = nothing.
+func TestMatchVisibility(t *testing.T) {
+	cases := []struct {
+		name      string
+		patterns  []string
+		tool      string
+		wantMatch bool
+	}{
+		{"empty exposes nothing", nil, "file_read_lines", false},
+		{"star exposes all local", []string{"*"}, "file_read_lines", true},
+		{"star exposes all upstream", []string{"*"}, "mcp_fusion_wxca_city_get", true},
+
+		{"local exact", []string{"session_info"}, "session_info", true},
+		{"local prefix", []string{"file"}, "file_read_lines", true},
+		{"local prefix underscore", []string{"file_"}, "file_write", true},
+		{"local non-match", []string{"file"}, "session_info", false},
+
+		{"upstream server prefix, no mcp_", []string{"fusion"}, "mcp_fusion_wxca_city_get", true},
+		{"upstream group prefix", []string{"fusion_wxca"}, "mcp_fusion_wxca_city_get", true},
+		{"upstream group excludes other group", []string{"fusion_wxca"}, "mcp_fusion_trello_search", false},
+		{"upstream collapses doubled underscore", []string{"fusion_tool"}, "mcp_fusion__tool", true},
+
+		{"trailing glob tolerated", []string{"fusion_*"}, "mcp_fusion_wxca_city_get", true},
+		{"local trailing glob tolerated", []string{"read_*"}, "read_file", true},
+
+		{"case-insensitive", []string{"FUSION"}, "mcp_Fusion_Trello_Search", true},
+		{"blank entry ignored", []string{"  "}, "file_read_lines", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := MatchVisibility(c.patterns, c.tool); got != c.wantMatch {
+				t.Errorf("MatchVisibility(%v, %q) = %v, want %v", c.patterns, c.tool, got, c.wantMatch)
+			}
+		})
+	}
+}
+
 func TestAgentConfig_MCPToolAllowed(t *testing.T) {
 	tests := []struct {
 		name      string
