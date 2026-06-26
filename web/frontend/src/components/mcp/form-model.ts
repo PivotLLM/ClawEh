@@ -5,7 +5,10 @@ export interface MCPHostForm {
   autoEnable: boolean
   listen: string
   endpointPath: string
-  toolPatterns: string[]
+  // Per-endpoint catalogue visibility filters (mcp_host.internal_tools /
+  // external_tools). Empty ⇒ expose all; entries match by MatchVisibility.
+  internalToolPatterns: string[]
+  externalToolPatterns: string[]
   // External (upstream) MCP servers claw connects out to (tools.mcp.servers),
   // structured for add/edit/delete in the UI.
   servers: MCPServerForm[]
@@ -45,7 +48,8 @@ export const EMPTY_MCP_FORM: MCPHostForm = {
   autoEnable: true,
   listen: "127.0.0.1:5911",
   endpointPath: "/mcp",
-  toolPatterns: ["*"],
+  internalToolPatterns: ["*"],
+  externalToolPatterns: ["*"],
   servers: [],
 }
 
@@ -80,7 +84,8 @@ export function buildMCPFormFromConfig(config: unknown): MCPHostForm {
     autoEnable: asBool(mcp.auto_enable, EMPTY_MCP_FORM.autoEnable),
     listen: asString(mcp.listen, EMPTY_MCP_FORM.listen),
     endpointPath: asString(mcp.endpoint_path, EMPTY_MCP_FORM.endpointPath),
-    toolPatterns: asStringArray(mcp.tools, EMPTY_MCP_FORM.toolPatterns),
+    internalToolPatterns: asStringArray(mcp.internal_tools, EMPTY_MCP_FORM.internalToolPatterns),
+    externalToolPatterns: asStringArray(mcp.external_tools, EMPTY_MCP_FORM.externalToolPatterns),
     servers: serversFromConfig(config),
   }
 }
@@ -193,19 +198,19 @@ export function serversToPatch(
 // matchToolPattern mirrors pkg/config.MatchToolPattern: "*" matches all,
 // entries ending in "*" are case-insensitive prefix matches, otherwise
 // case-insensitive exact match.
-export function matchToolPattern(patterns: string[], name: string): boolean {
+// matchVisibility mirrors pkg/config.MatchVisibility: collapse underscore runs,
+// strip a leading mcp_, then an entry matches by equality-or-prefix. "*" = all;
+// a trailing glob is tolerated ("fusion_*" == "fusion_").
+export function matchVisibility(patterns: string[], name: string): boolean {
   if (!patterns || patterns.length === 0) return false
-  const lower = name.toLowerCase()
+  const bare = name.toLowerCase().replace(/_+/g, "_").replace(/^mcp_/, "")
   for (const raw of patterns) {
-    const p = raw.trim()
-    if (p === "") continue
-    if (p === "*") return true
-    if (p.endsWith("*")) {
-      const prefix = p.slice(0, -1).toLowerCase()
-      if (lower.startsWith(prefix)) return true
-      continue
-    }
-    if (lower === p.toLowerCase()) return true
+    let e = raw.trim().toLowerCase()
+    if (e === "") continue
+    if (e === "*") return true
+    e = e.replace(/\*+$/, "").replace(/_+/g, "_")
+    if (e === "") continue
+    if (bare.startsWith(e)) return true
   }
   return false
 }

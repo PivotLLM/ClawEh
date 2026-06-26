@@ -75,9 +75,10 @@ export function MCPPage() {
       const pathErr = validateEndpointPath(form.endpointPath)
       if (pathErr) throw new Error(pathErr)
 
-      const cleanedPatterns = form.toolPatterns
-        .map((p) => p.trim())
-        .filter((p) => p !== "")
+      const clean = (ps: string[]) =>
+        ps.map((p) => p.trim()).filter((p) => p !== "")
+      const cleanedInternal = clean(form.internalToolPatterns)
+      const cleanedExternal = clean(form.externalToolPatterns)
 
       const serversErr = validateServers(form.servers)
       if (serversErr) throw new Error(serversErr)
@@ -89,14 +90,19 @@ export function MCPPage() {
           auto_enable: form.autoEnable,
           listen: form.listen.trim(),
           endpoint_path: form.endpointPath.trim(),
-          tools: cleanedPatterns,
+          internal_tools: cleanedInternal,
+          external_tools: cleanedExternal,
         },
         // tools.mcp.enabled / auto_enable both default on and are config-only;
         // the page just manages the servers themselves.
         tools: { mcp: { servers: serversPatch } },
       })
 
-      const nextForm: MCPHostForm = { ...form, toolPatterns: cleanedPatterns }
+      const nextForm: MCPHostForm = {
+        ...form,
+        internalToolPatterns: cleanedInternal,
+        externalToolPatterns: cleanedExternal,
+      }
       setForm(nextForm)
       setBaseline(nextForm)
       queryClient.invalidateQueries({ queryKey: ["config"] })
@@ -139,8 +145,21 @@ export function MCPPage() {
               <TransportSection form={form} onFieldChange={updateField} />
 
               <ToolsSection
-                form={form}
-                onFieldChange={updateField}
+                title={t("pages.mcp.sections.internal_tools")}
+                description={t("pages.mcp.internal_tools_desc")}
+                note={t("pages.mcp.internal_tools_note")}
+                patterns={form.internalToolPatterns}
+                onChange={(next) => updateField("internalToolPatterns", next)}
+                registeredTools={registeredTools}
+                toolsLoading={toolsLoading}
+              />
+
+              <ToolsSection
+                title={t("pages.mcp.sections.external_tools")}
+                description={t("pages.mcp.external_tools_desc")}
+                note={t("pages.mcp.external_tools_note")}
+                patterns={form.externalToolPatterns}
+                onChange={(next) => updateField("externalToolPatterns", next)}
                 registeredTools={registeredTools}
                 toolsLoading={toolsLoading}
               />

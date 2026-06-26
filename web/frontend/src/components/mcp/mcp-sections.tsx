@@ -7,7 +7,7 @@ import {
   type MCPHostForm,
   type MCPServerForm,
   blankServer,
-  matchToolPattern,
+  matchVisibility,
   validateEndpointPath,
   validateListen,
 } from "@/components/mcp/form-model"
@@ -131,33 +131,38 @@ export function TransportSection({
 }
 
 interface ToolsSectionProps {
-  form: MCPHostForm
-  onFieldChange: UpdateMCPField
+  title: string
+  description: string
+  note: string
+  patterns: string[]
+  onChange: (next: string[]) => void
   registeredTools: string[]
   toolsLoading: boolean
 }
 
 export function ToolsSection({
-  form,
-  onFieldChange,
+  title,
+  description,
+  note,
+  patterns,
+  onChange,
   registeredTools,
   toolsLoading,
 }: ToolsSectionProps) {
   const { t } = useTranslation()
 
   const setPatternAt = (index: number, value: string) => {
-    const next = [...form.toolPatterns]
+    const next = [...patterns]
     next[index] = value
-    onFieldChange("toolPatterns", next)
+    onChange(next)
   }
 
   const addPattern = () => {
-    onFieldChange("toolPatterns", [...form.toolPatterns, ""])
+    onChange([...patterns, ""])
   }
 
   const removePatternAt = (index: number) => {
-    const next = form.toolPatterns.filter((_, i) => i !== index)
-    onFieldChange("toolPatterns", next)
+    onChange(patterns.filter((_, i) => i !== index))
   }
 
   const filteredCandidates = registeredTools.filter(
@@ -165,29 +170,27 @@ export function ToolsSection({
   )
 
   const matched = filteredCandidates.filter((name) =>
-    matchToolPattern(form.toolPatterns, name),
+    matchVisibility(patterns, name),
   )
   const excluded = filteredCandidates.filter(
-    (name) => !matchToolPattern(form.toolPatterns, name),
+    (name) => !matchVisibility(patterns, name),
   )
 
   return (
-    <SectionCard
-      title={t("pages.mcp.sections.tools")}
-      description={t("pages.mcp.tools_desc")}
-    >
+    <SectionCard title={title} description={description}>
       <div className="space-y-3 py-4">
+        <div className="text-muted-foreground text-xs">{note}</div>
         <div className="text-muted-foreground text-xs">
           {t("pages.mcp.tools_pattern_hint")}
         </div>
 
         <div className="space-y-2">
-          {form.toolPatterns.length === 0 ? (
+          {patterns.length === 0 ? (
             <div className="text-muted-foreground text-xs italic">
               {t("pages.mcp.tools_empty_warning")}
             </div>
           ) : (
-            form.toolPatterns.map((pattern, idx) => (
+            patterns.map((pattern, idx) => (
               <div
                 key={idx}
                 className="flex items-center gap-2"
