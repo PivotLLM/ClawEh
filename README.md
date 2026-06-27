@@ -4,6 +4,8 @@
 
 Although the conversation context can be reset at any time, ClawEh is designed primarily for long-running assistants that maintain continuity over time. Its development emphasizes efficient context management, practical persistent memory, security, and a stable, dependable core.
 
+> **Web interface & authentication.** Like many "claw"-style apps intended for single-user use on a personal machine, ClawEh serves its web interface on localhost (loopback) and does not currently require authentication. We are evaluating appropriate approaches for a future version and welcome input.
+
 **Feature overview:**
 
 - **Multi-agent architecture** — Run multiple named agents, each with its own workspace, models, tools, system prompt, memory, and channel bindings.
