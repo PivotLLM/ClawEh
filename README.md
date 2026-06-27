@@ -4,7 +4,7 @@
 
 Although the conversation context can be reset at any time, ClawEh is designed primarily for long-running assistants that maintain continuity over time. Its development emphasizes efficient context management, practical persistent memory, security, and a stable, dependable core.
 
-> **Web interface & authentication.** Like many "claw"-style apps intended for single-user use on a personal machine, ClawEh serves its web interface on localhost (loopback) and does not currently require authentication. We are evaluating appropriate approaches for a future version and welcome input.
+> **Web interface & authentication.** Like many "claw"-style apps intended for single-user use on a personal machine, ClawEh serves its web interface on localhost (loopback) and does not currently require authentication. This causes security challange for those who wish to run ClawEh on a VM or other headless system. Migrating to HTTPS with authentication seems obvious, but many users would end up requiring a self-signed certicate and be plagued by browser warnings. We are evaluating appropriate approaches for a future version and welcome input.
 
 **Feature overview:**
 
@@ -219,7 +219,7 @@ On platforms like Telegram where bots are publicly discoverable by username, thi
 
 ## Security Considerations
 
-ClawEh is intended to function as personal assistant that runs on a computer the user controls. It is not designed or intended to provide any kind of public service. The current web interface uses HTTP and has no authentication, so it should be treated as unsafe for exposure to untrusted networks. We strongly recommend running it on `localhost` only, and only when needed.
+ClawEh is intended to function as personal assistant that runs on a computer the user controls. It is not designed or intended to provide any kind of public service. The current web interface uses HTTP and has no authentication, and therefore should not be exposed to untrusted networks. We strongly recommend running it on `localhost` only. We are aware that many people wish to run a "claw" application on a headless computer and are considering the right path forward.
 
 The web management API has no authentication layer. Any client that can reach the management port can add or modify model configurations (including API keys and endpoints), read session history, and start or stop the gateway process. Access control relies entirely on the listen address (localhost-only by default) and, when running in public mode, the IP allowlist. Do not run with `-public` and an empty `allowed_cidrs` list on any network where untrusted hosts could reach the port.
 
