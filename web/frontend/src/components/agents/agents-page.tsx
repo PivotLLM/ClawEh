@@ -40,6 +40,7 @@ interface MountEntry {
   name: string
   path: string
   notify?: boolean
+  writable?: boolean
 }
 
 interface AgentsConfig {
@@ -109,7 +110,7 @@ function parseAgent(value: unknown): AgentEntry {
     cogmem: r.cogmem !== false,
     mounts: asArray(r.mounts).map((m) => {
       const mr = asRecord(m)
-      return { name: asString(mr.name), path: asString(mr.path), notify: mr.notify === true }
+      return { name: asString(mr.name), path: asString(mr.path), notify: mr.notify === true, writable: mr.writable === true }
     }),
   }
 }
@@ -440,6 +441,10 @@ function AgentCard({
           <p className="text-foreground text-sm font-semibold">
             Mounts (external folders, beside files/)
           </p>
+          <p className="text-muted-foreground text-xs">
+            Read-only unless <span className="font-medium">write</span> is enabled.
+            Turn on <span className="font-medium">notify</span> to alert the agent when a new file appears.
+          </p>
           {mounts.map((m, mi) => {
             const set = (patch: Partial<MountEntry>) =>
               onMountsChange(mounts.map((x, j) => (j === mi ? { ...x, ...patch } : x)))
@@ -457,6 +462,13 @@ function AgentCard({
                   placeholder="/absolute/path"
                   className="h-7 flex-1 font-mono text-xs"
                 />
+                <label className="flex items-center gap-1 text-xs text-muted-foreground select-none">
+                  <Switch
+                    checked={m.writable === true}
+                    onCheckedChange={(c) => set({ writable: c })}
+                  />
+                  write
+                </label>
                 <label className="flex items-center gap-1 text-xs text-muted-foreground select-none">
                   <Switch
                     checked={m.notify === true}
@@ -482,7 +494,7 @@ function AgentCard({
             variant="outline"
             size="sm"
             className="h-6 text-xs px-2"
-            onClick={() => onMountsChange([...mounts, { name: "", path: "", notify: false }])}
+            onClick={() => onMountsChange([...mounts, { name: "", path: "", notify: false, writable: false }])}
           >
             <IconPlus className="size-3.5" />
             Add mount
@@ -796,6 +808,7 @@ export function AgentsPage() {
             name: m.name.trim(),
             path: m.path.trim(),
             ...(m.notify ? { notify: true } : {}),
+            ...(m.writable ? { writable: true } : {}),
           })),
       })),
     },

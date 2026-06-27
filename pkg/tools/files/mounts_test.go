@@ -16,7 +16,7 @@ func TestMounts_ReadWriteDeleteWithinMount(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(mountDir, "stuff.md"), []byte("hello"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	SetMountsForWorkspace(ws, []MountSpec{{Name: "notes", Path: mountDir}})
+	SetMountsForWorkspace(ws, []MountSpec{{Name: "notes", Path: mountDir, Writable: true}})
 	defer SetMountsForWorkspace(ws, nil)
 	ctx := context.Background()
 
@@ -47,6 +47,43 @@ func TestMounts_ReadWriteDeleteWithinMount(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(mountDir, "stuff.md")); !os.IsNotExist(err) {
 		t.Fatalf("mount file should be gone")
+	}
+}
+
+// A mount is read-only by default: reads succeed, writes and deletes are rejected.
+func TestMounts_ReadOnlyByDefault(t *testing.T) {
+	ws := t.TempDir()
+	mountDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(mountDir, "stuff.md"), []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	SetMountsForWorkspace(ws, []MountSpec{{Name: "notes", Path: mountDir}}) // Writable defaults false
+	defer SetMountsForWorkspace(ws, nil)
+	ctx := context.Background()
+
+	// Read still works.
+	read := NewReadFileTool(ws, true, MaxReadFileSize)
+	if res := read.Execute(ctx, map[string]any{"path": "notes/stuff.md"}); res.IsError || !contains(res.ForLLM, "hello") {
+		t.Fatalf("read of a read-only mount should work: %s", res.ForLLM)
+	}
+
+	// Write is rejected.
+	write := NewWriteFileToolScoped(ws, true, "files")
+	res := write.Execute(ctx, map[string]any{"path": "notes/new.md", "content": "world"})
+	if !res.IsError || !contains(res.ForLLM, "read-only") {
+		t.Fatalf("write to a read-only mount must be rejected: %s", res.ForLLM)
+	}
+	if _, err := os.Stat(filepath.Join(mountDir, "new.md")); !os.IsNotExist(err) {
+		t.Fatalf("read-only mount must not have been written")
+	}
+
+	// Delete is rejected.
+	del := NewDeleteFileToolScoped(ws, true, "files")
+	if res := del.Execute(ctx, map[string]any{"path": "notes/stuff.md", "sure": true}); !res.IsError || !contains(res.ForLLM, "read-only") {
+		t.Fatalf("delete in a read-only mount must be rejected: %s", res.ForLLM)
+	}
+	if _, err := os.Stat(filepath.Join(mountDir, "stuff.md")); err != nil {
+		t.Fatalf("read-only mount file must still exist")
 	}
 }
 

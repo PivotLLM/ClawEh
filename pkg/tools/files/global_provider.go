@@ -340,7 +340,7 @@ func resolveAgentMounts(agentCfg *config.AgentConfig) []MountSpec {
 			continue
 		}
 		seen[name] = true
-		specs = append(specs, MountSpec{Name: name, Path: abs})
+		specs = append(specs, MountSpec{Name: name, Path: abs, Writable: mc.Writable})
 	}
 	return specs
 }

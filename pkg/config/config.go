@@ -306,6 +306,10 @@ type MountConfig struct {
 	// Notify watches the mount tree for new files and notifies the agent on its
 	// default channel (cron-style) when one appears.
 	Notify bool `json:"notify,omitempty"`
+	// Writable opens the mount for writing. It defaults to false (read-only), so
+	// an agent can only modify a mounted folder when write access is explicitly
+	// granted; read-only mounts reject every write/delete.
+	Writable bool `json:"writable,omitempty"`
 }
 
 var mountNameRe = regexp.MustCompile(`^[A-Za-z0-9-]+$`)

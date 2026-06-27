@@ -69,7 +69,11 @@ func (cb *ContextBuilder) accessibleFolders() string {
 		if name == "" {
 			continue
 		}
-		parts = append(parts, fmt.Sprintf("%s/ (external, read/write)", name))
+		access := "read-only"
+		if m.Writable {
+			access = "read/write"
+		}
+		parts = append(parts, fmt.Sprintf("%s/ (external, %s)", name, access))
 	}
 	return strings.Join(parts, ", ")
 }
