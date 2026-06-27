@@ -1,73 +1,42 @@
 # ClawEh: Yet another claw - Canadian style
 
-**ClawEh is a small, fast, self-hosted runtime for personal AI assistants.**
-Written in Go, it runs one or more agents — each with its own workspace, tools,
-and memory — and connects them to your messaging channels (Telegram, Slack,
-Discord, and a built-in web UI), keeping long-running conversations coherent,
-secure, and operationally useful. It is an independent, stability-focused fork of
-picoclaw.
+**ClawEh is a small, fast, self-hosted runtime for personal AI assistants.** Written in Go, it can run one or more agents, each with its own workspace, tools, and persistent memory, and connect them to Telegram, Slack, Discord, or the built-in web interface.
 
-**Major features:**
+Although the conversation context can be reset at any time, ClawEh is designed primarily for long-running assistants that maintain continuity over time. Its development emphasizes efficient context management, practical persistent memory, security, and a stable, dependable core.
 
-- **Multi-agent** — named agents, each with its own workspace, models, tools, system prompt, and channel bindings.
-- **All major LLM providers** — direct APIs (Anthropic, OpenAI and OpenAI-compatible, Google Gemini, and more) plus CLI agents — Claude Code, Codex, and Gemini CLI — with automatic fallback chains and cooldowns.
-- **Messaging channels** — Telegram, Slack, Discord, and a built-in web UI, with per-agent routing.
-- **Cognitive memory** — a per-agent memory that updates itself in the background: it distills conversations into structured, de-duplicated facts and automatically recalls the relevant ones into each prompt.
-- **Smart context handling** — automatic summarization and compaction, plus per-turn eviction of stale tool output, so long conversations stay fast and within the model's limits.
-- **Message history** — configurable retention and a searchable archive of past messages, per session.
-- **Directory mounts** — give an assistant any folder on your machine (read/write, sandboxed), with optional alerts the moment a new file appears in it.
-- **Scheduled jobs** — cron-based periodic tasks and reminders.
-- **Maestro, built in** — task orchestration (projects, playbooks, resumable task lists) for complex, multi-step work.
-- **MCP, both directions** — claw hosts its own tools to CLI agents, and connects out to upstream MCP servers over stdio or HTTP, with granular per-agent control over which of their tools each agent may use.
-- **File tools** — sandboxed read/search/edit by line or byte, plus move/delete and a shared common directory for inter-agent exchange.
-- **Web UI** — manage agents, providers, channels, MCP, memory, and config without editing JSON.
-- **Secure & self-hosted** — workspace sandboxing, per-agent tool allowlists, loopback-bound services; MIT-licensed Go you run yourself.
+**Feature overview:**
+
+- **Multi-agent architecture** — Run multiple named agents, each with its own workspace, models, tools, system prompt, memory, and channel bindings.
+- **Strong security posture** — Only essential features are enabled by default, with fine-grained access controls for tools, files, agents, and external services.
+- **Broad LLM support** — Connect to OpenRouter, Anthropic, OpenAI, Google Gemini, AWS, x.ai, and others, or use CLI agents such as Claude Code, Codex, and Gemini CLI. Configurable fallback chains and cooldowns improve availability.
+- **Messaging channels** — Connect agents to Telegram, Slack, Discord, or the built-in web interface, with configurable per-agent routing. Additional channels are under consideration.
+- **Cognitive memory** — Each agent can maintain persistent memory that updates in the background, distilling conversations into structured, de-duplicated facts and automatically recalling relevant information for future prompts.
+- **Smart context management** — Automatic summarization and compaction, combined with per-turn eviction of stale tool output, keep long-running conversations responsive and within model context limits.
+- **Message history** — Configurable retention and a searchable archive of past messages, organized by session.
+- **Directory mounts** — Give an agent read-only or read-write access to selected directories, with optional notifications when new files appear.
+- **Scheduled jobs** — Run cron-based recurring tasks, scheduled jobs, and reminders.
+- **Maestro built in** — Orchestrate complex, multi-step work using projects, playbooks, and resumable task lists.
+- **MCP server and client** — ClawEh provides its internal tools directly to API-based LLMs and exposes them through MCP to CLI agents. It can also connect to upstream MCP servers over stdio or HTTP, with granular control over which tools each agent may use.
+- **File tools** — Sandboxed tools for reading, searching, and editing files by line or byte, along with move and delete operations and an optional shared directory for exchanging files between agents.
+- **Web UI** — Manage agents, providers, channels, MCP connections, memory, and configuration without editing JSON manually.
+- **Secure and self-hosted** — Workspace sandboxing, per-agent tool allowlists, and loopback-bound services, delivered as MIT-licensed Go software that you run on your own infrastructure.
 
 ## Features
 
-### Maestro
-Task orchestration is built in: an agent can break large or repeatable work into
-**projects**, reusable **playbooks**, and resumable **task lists**, with retries,
-QA, and aggregated reporting. Each task runs as one of the agent's own
-**sub-agents** (its models, its tools, a fresh context); its data lives under the
-agent's workspace; you enable it with a single per-agent toggle. The upstream
-project remains available as a stand-alone stdio MCP service —
-see https://github.com/PivotLLM/Maestro.
+### Maestro task orchestration
+
+Maestro lets an assistant plan, coordinate, and execute complex work rather than handling every step sequentially in a single conversation. It can break large or repeatable jobs into **projects**, reusable **playbooks**, and resumable **task lists**, then delegate individual tasks to fresh sub-agents running with the parent agent's models, tools, permissions, and workspace. Independent tasks can run in parallel, failed tasks can be retried, and completed work can be passed through automated QA and review steps before the results are combined into a final report. This makes it practical to automate multi-stage workflows such as repository analysis, research, testing, pre-audits, document generation, and recurring operational procedures. Maestro is enabled per agent with a single toggle, and all of its data remains within that agent's workspace. The upstream project is also available as a stand-alone stdio MCP service: https://github.com/PivotLLM/Maestro
 
 ### MCP servers
-claw is both an MCP **host** — exposing its tools to CLI-based agents — and an MCP
-**client** that connects out to upstream servers over **stdio** or **HTTP**, adding
-their tools to your agents. Add/edit external servers in the WebUI (no JSON). Access
-is **granular per agent**: each agent is granted upstream tools individually (by
-server or tool-name prefix), and a coarse per-endpoint visibility filter controls
-what the host advertises.
+ClawEh is both an MCP **server** — exposing its tools to CLI-based agents — and an MCP **client** that connects to upstream servers over **stdio** or **HTTP**, providing their tools to your agents. Add/edit external servers in the WebUI. Access is **granular per agent**: each agent is granted upstream tools individually (by server or tool-name prefix), and a coarse per-endpoint visibility filter controls what the host advertises.
 
 ### Context management
-Two mechanisms keep long sessions inside the model's window. **Eviction** is a
-per-turn, LLM-free sweep that collapses re-retrievable tool results (file reads,
-web fetches) to a short placeholder once the agent has moved on — reversible,
-since the source can be fetched again, and it runs before every dispatch so
-summarization fires far less often. **Compression** summarizes older conversation
-when the window fills; tailor it per agent with a `COMPRESSION.md` in the
-workspace. See [docs/context-eviction.md](docs/context-eviction.md).
+Two mechanisms keep long sessions inside the model's window. **Eviction** is a per-turn, LLM-free sweep that collapses re-retrievable tool results (file reads, web fetches) to a short placeholder once the agent has moved on. By evicting stale data before every dispatch, summarization fires far less often. **Compression** summarizes older conversation when the window fills. It can be tailored per agent with a `COMPRESSION.md` in the workspace. See [docs/context-eviction.md](docs/context-eviction.md).
 
 ### Cognitive memory
-Long-running agents get smarter over time instead of relying on hand-edited prompt
-files. Each session keeps a small SQLite memory database. Memory is organized as
-**domains** — named containers that are either **sticky** (always in the prompt) or
-routed topics — holding **memories**, each a `fact`, `preference`, or `rule`. A
-background "sleep cycle" reviews new conversation and distills it into structured,
-de-duplicated, contradiction-resolved memories, and the relevant pieces are composed
-into the prompt each turn. Consolidation reuses your configured **Memory models**,
-and its prompt lives in an editable `COGMEM.md` in the workspace. On by default per
-agent.
+Long-running agents need to get smarter over time instead of relying on hand-edited prompt files. Each session has a small SQLite memory database. Memory is organized as **domains** — named containers that are either **sticky** (always in the prompt) or routed topics — holding **memories**, each a `fact`, `preference`, or `rule`. A background "sleep cycle" reviews new conversation and distills it into structured, de-duplicated, contradiction-resolved memories, and the relevant pieces are composed into the prompt each turn. Consolidation reuses your configured **Memory models**, and its prompt lives in an editable `COGMEM.md` in the workspace. 
 
-The seeded **`General`** sticky domain holds global rules and standing facts; topic
-domains auto-load by relevance using **recency**, **lexical match** (salient words in
-the latest message), **tool triggers** (a domain loads when the agent uses a matching
-tool — e.g. an "Email" domain on `google_gmail`), and **keyword triggers** (phrases in
-the incoming message, so a workflow's context loads when a cron job fires or the user
-mentions it). Routing is lexical and deterministic — no embeddings or vector search.
+The seeded **`General`** sticky domain holds global rules and standing facts; memory domains are auto-load by relevance using **recency**, **lexical match** (salient words in the latest message), **tool triggers** (a domain loads when the agent uses a matching tool — e.g. an "email" domain on `google_gmail`), and **keyword triggers** (phrases in the incoming message. This significantly improves agent performance without relying on external embedding services or vector databases.
 
 When the agent infers something uncertain, it stores it as a **pending** memory and
 asks you to confirm in chat (reply "yes" to keep it, "no" to drop it). Use **`claw
@@ -86,18 +55,14 @@ By default an agent's file tools see two directories: **`<workspace>/files`** (r
 (read-only). Everything else is invisible to the agent, including the human-authored
 prompt files — `AGENTS.md`, `SOUL.md`, `IDENTITY.md`, `USER.md`, `MEMORY.md` — which
 are combined into the system prompt every turn. Keep those **brief and general**; the
-agent no longer edits them (they're authoritative and shape what it learns). Both
-scopes are configurable (`workspace_read_subdirs`, `workspace_write_subdir`). A shared
-**common directory** lets agents exchange files via `common_put`/`common_get`/
-`common_list`/`common_delete` — on by default, per-agent toggleable.
+agent no longer edits them, they're authoritative, and shape what it learns. A shared
+**common directory** lets agents that are given access to it exchange files.
 
-**External mounts.** Mount any external folder as a top-level name beside `files/` and
+**External mounts.** Mount any folder on the file system as a top-level name beside `files/` and
 `skills/` — per agent, on the **Agents page** (a name, an absolute path, and an
 optional **notify** toggle). A mount `notes` → `/home/ai/Documents/mynotes` is reachable
-as `notes/...`, read **and** write, sandboxed so the agent can't climb above it (`..`
-is rejected). With **notify** on, claw watches the tree and messages the agent on its
-default channel whenever a **new** file appears (by path, restart-safe) — handy for
-acting on drops into a folder.
+as `notes/.... read **and** write, sandboxed so the agent can't climb above it (`..`
+is rejected). Unless write permissions are explicitly granted, the directory is read-only. With **notify** on, claw watches the tree and messages the agent on its default channel whenever a **new** file appears.
 
 **File tools** address content explicitly by **lines** or **bytes**, so units never
 mix: `file_read_lines`/`_bytes`, `file_search_lines`/`_bytes`, the positional
@@ -107,17 +72,11 @@ across mounts), and `file_delete` (requires `sure=true`; refuses to delete backu
 
 ## Why ClawEh exists
 
-ClawEh is an independent, stability-focused fork of [PicoClaw](https://github.com/sipeed/picoclaw),
-chosen for its Go foundation — performant, easy to deploy, and maintainable. After hitting
-reliability and design issues upstream and contributing fixes back, a separate project with a
-smaller scope and a higher quality bar became the more sustainable path. This isn't a criticism
-of the original authors, whose starting point I'm grateful for — it simply reflects different
-priorities: a smaller, focused codebase emphasizing core stability, reliability, security, and
-maintainability.
+ClawEh began as a fork of [PicoClaw](https://github.com/sipeed/picoclaw), chosen for its performant, easy to deploy, and maintainable Go foundation. I loved the PicoClaw concept and originally focused on fixing issues and contributing to the project. However, a growing PR backlog, and the apparent prioritization of new features over core stability make it clear that PicoClaw was unlikely to meet my needs in the foreseeable future. This is not a criticism of the PicoClaw authors, it simply reflects different priorities: a smaller, focused codebase emphasizing core stability, reliability, security, and maintainability.
 
-From a security practitioner's perspective, packing an ever-growing range of capabilities into
-one monolithic agent is a mistake — the broader the feature set, the larger the attack surface.
-If you want a "claw" with everything including the kitchen sink, this isn't it.
+## Binary distribution
+
+To assist users who are not interested in compiling it themselves, I will be uploading recommended builds to GitHub for a variety of platforms. If you'd like another 
 
 ## Prerequisites
 
@@ -212,7 +171,7 @@ ClawEh supports a wide range of LLM providers. It is your responsibility to ensu
 
 | Mode | Memory per | Description |
 |---|---|---|
-| `unified` | Agent | One shared memory for the entire agent, across all users, channels, and platforms |
+| `unified` | Agent | One shared memory for the entire agent, across all users, channels, and platforms. |
 | `per-user` | Person | Each person gets their own private memory. Recognises the same person across platforms if `identity_links` are configured; otherwise each platform ID is a separate person |
 | `per-platform` | Person × platform | Each person has a separate memory per platform. Slack and Telegram are independent conversations even for the same person |
 | `per-account` | Person × platform × bot | Like `per-platform`, but also separates by bot account. Relevant only when multiple bots on the same platform are routed to the same agent |
@@ -223,7 +182,7 @@ The default is `unified`.
 
 *Personal assistant, or a purpose-built specialist* — use `unified`. This is the right choice in two situations. For a personal assistant: one continuous memory across all your channels, it knows your preferences, remembers your projects, and picks up where you left off regardless of where you reach it. For a purpose-built assistant — if you create an agent named Alice who specialises in security, there is one Alice. Anyone who contacts her, through any channel you have configured, is talking to the same Alice with the same accumulated knowledge and context. She does not have separate memories for different users; she is one coherent assistant.
 
-*Shared assistant for a team or family* — use `per-user`. Each person gets their own private relationship with the assistant — their own context, their own memory, no bleed between users. If the same person might contact the assistant from multiple platforms, configure `identity_links` to tell the system they are the same person (see below).
+*Shared assistant for a team or family* — use `per-user`. Each person gets their own private relationship with the assistant — their own context, their own memory, no bleed between users. If the same person might contact the assistant from multiple platforms, configure `identity_links` to tell the system they are the same person (see below). However, before going this route, consider using `unified` mode and creating a separate agent for each user.
 
 *Keeping contexts separate by platform* — use `per-platform`. Each person gets a separate session per platform, so a user's Slack and Telegram conversations are fully independent even when handled by the same agent.
 
@@ -246,7 +205,7 @@ Without this, a person's Telegram ID and Slack ID are treated as two separate pe
 
 **One-shot tasks without context**
 
-In `unified` mode every conversation adds to the shared memory. If you want the agent to handle a task in isolation — without drawing on prior chat history and without polluting the main conversation — ask it to use the `spawn` tool. A spawned sub-agent is a **copy of the agent** (same workspace, tools, MCP, prompt, and a read-only snapshot of its memory) running on the given task in a separate session, optionally on a different model. It completes the work and reports back; nothing from that exchange appears in or affects the main conversation, and it cannot write the agent's memory, schedule jobs, or spawn further sub-agents. See [docs/subagents.md](docs/subagents.md).
+In `unified` mode every conversation adds to the shared memory. If you want the agent to handle a task in isolation, without drawing on prior chat history and without polluting the main conversation, ask it to use the `spawn` tool. A spawned sub-agent is a **copy of the agent** (same workspace, tools, MCP, prompt, and a read-only snapshot of its memory) running on the given task in a separate session, optionally on a different model. It completes the work and reports back; nothing from that exchange appears in or affects the main conversation, and it cannot write the agent's memory, schedule jobs, or spawn further sub-agents. See [docs/subagents.md](docs/subagents.md).
 
 **Security: access control**
 
