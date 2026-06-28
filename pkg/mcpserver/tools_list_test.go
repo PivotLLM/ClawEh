@@ -77,7 +77,8 @@ func TestToolsList_ReturnsFullCatalogueRegardlessOfToken(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	expect := []string{"list_dir", "read_file", "write_file"}
+	// Built-in (non-MCP) tools are published under the reserved local_ namespace.
+	expect := []string{"local_list_dir", "local_read_file", "local_write_file"}
 
 	cases := []struct {
 		name   string

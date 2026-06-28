@@ -31,6 +31,15 @@ func (m *mockTool) Execute(_ context.Context, args map[string]any) *tools.ToolRe
 	return m.result
 }
 
+// externalNamedMock advertises a custom external name, like an upstream
+// MCP-client tool (MCPTool) does.
+type externalNamedMock struct {
+	mockTool
+	external string
+}
+
+func (m *externalNamedMock) ExternalName() string { return m.external }
+
 func newRegistryWith(toolList ...tools.Tool) *tools.ToolRegistry {
 	r := tools.NewToolRegistry()
 	for _, t := range toolList {
@@ -118,10 +127,10 @@ func TestAddTools_AllowlistFiltersTools(t *testing.T) {
 	}
 
 	listed := srv.srv.ListTools()
-	if _, ok := listed["read_file"]; !ok {
+	if _, ok := listed["local_read_file"]; !ok {
 		t.Error("expected allowed tool 'read_file' to be registered")
 	}
-	if _, ok := listed["exec_shell"]; ok {
+	if _, ok := listed["local_exec_shell"]; ok {
 		t.Error("did not expect denied tool 'exec_shell' to be registered")
 	}
 }
@@ -138,15 +147,15 @@ func TestAddTools_WildcardAllowlistExposesAll(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	listed := srv.srv.ListTools()
-	if _, ok := listed["read_file"]; !ok {
+	if _, ok := listed["local_read_file"]; !ok {
 		t.Error("expected 'read_file' exposed by wildcard")
 	}
-	if _, ok := listed["web_fetch"]; !ok {
+	if _, ok := listed["local_web_fetch"]; !ok {
 		t.Error("expected 'web_fetch' exposed by wildcard")
 	}
 	// No tool is hard-excluded anymore: a wildcard exposes everything, including
 	// the outbound message tool.
-	if _, ok := listed["message"]; !ok {
+	if _, ok := listed["local_message"]; !ok {
 		t.Error("expected 'message' exposed by wildcard (no hard exclusion)")
 	}
 }
@@ -163,13 +172,13 @@ func TestAddTools_PrefixWildcardAllowlist(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	listed := srv.srv.ListTools()
-	if _, ok := listed["read_file"]; !ok {
+	if _, ok := listed["local_read_file"]; !ok {
 		t.Error("expected 'read_file' exposed by 'read_*'")
 	}
-	if _, ok := listed["read_dir"]; !ok {
+	if _, ok := listed["local_read_dir"]; !ok {
 		t.Error("expected 'read_dir' exposed by 'read_*'")
 	}
-	if _, ok := listed["write_file"]; ok {
+	if _, ok := listed["local_write_file"]; ok {
 		t.Error("did not expect 'write_file' exposed by 'read_*'")
 	}
 }
@@ -199,7 +208,7 @@ func TestAddTools_MsgSendExposedWhenAllowlisted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if _, ok := srv.srv.ListTools()["msg_send"]; !ok {
+	if _, ok := srv.srv.ListTools()["local_msg_send"]; !ok {
 		t.Fatal("'msg_send' must be exposed when allowlisted (no hard exclusion)")
 	}
 }
@@ -213,7 +222,37 @@ func TestAddTools_NilParametersStillRegisters(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if _, ok := srv.srv.ListTools()["noparams"]; !ok {
+	if _, ok := srv.srv.ListTools()["local_noparams"]; !ok {
 		t.Error("expected tool with nil parameters to register with synthetic empty-object schema")
+	}
+}
+
+// TestAddTools_ExternalNaming pins the published-name scheme: claw-native tools
+// are advertised under the reserved local_ namespace, and upstream MCP tools
+// (ExternalNamer) under "<server>_<tool>" — neither under its bare/internal name.
+func TestAddTools_ExternalNaming(t *testing.T) {
+	builtin := &mockTool{name: "file_read", params: map[string]any{}, result: tools.SilentResult("ok")}
+	upstream := &externalNamedMock{
+		mockTool: mockTool{name: "mcp_fusion_trello_search", params: map[string]any{}, result: tools.SilentResult("ok")},
+		external: "fusion_trello_search",
+	}
+	r := newRegistryWith(builtin, upstream)
+	srv, err := New(append(minimalOpts(r), WithAllowlist([]string{"*"}))...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listed := srv.srv.ListTools()
+
+	if _, ok := listed["local_file_read"]; !ok {
+		t.Error("built-in should publish as local_file_read")
+	}
+	if _, ok := listed["file_read"]; ok {
+		t.Error("built-in must not publish under its bare internal name")
+	}
+	if _, ok := listed["fusion_trello_search"]; !ok {
+		t.Error("MCP tool should publish under its ExternalName")
+	}
+	if _, ok := listed["mcp_fusion_trello_search"]; ok {
+		t.Error("MCP tool must not publish under the internal mcp_ name")
 	}
 }

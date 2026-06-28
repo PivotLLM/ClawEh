@@ -109,11 +109,14 @@ print_section() {
 
 # probe_call <tool> <params-json>
 # Echoes raw output, returns probe's exit code.
+# The MCP host advertises claw-native tools under the reserved "local_" namespace
+# (upstream MCP tools would be "<server>_*"); this test config exposes only
+# built-ins, so calls target "local_<tool>". Callers pass the bare internal name.
 probe_call() {
     local tool="$1"
     local params="$2"
     "$PROBE_PATH" -url "$FULL_URL" -transport http \
-        -call "$tool" -params "$params" 2>&1
+        -call "local_$tool" -params "$params" 2>&1
 }
 
 # probe_call_auth <tool> <params-json>
@@ -129,7 +132,7 @@ p['session_token'] = '${SESSION_TOKEN}'
 print(json.dumps(p))
 ")
     "$PROBE_PATH" -url "$FULL_URL" -transport http \
-        -call "$tool" -params "$augmented" 2>&1
+        -call "local_$tool" -params "$augmented" 2>&1
 }
 
 # run_test_ok <name> <tool> <params> [expected_substring]
@@ -747,7 +750,7 @@ if [ -n "$BEARER_ENDPOINT" ] && [ -n "$SESSION_TOKEN" ]; then
     echo "  6.2 session_info via bearer header, no session_token param"
     bc=$("$PROBE_PATH" -url "$BEARER_URL" -transport http \
         -headers "Authorization:Bearer ${SESSION_TOKEN}" \
-        -call "session_info" -params '{}' 2>&1)
+        -call "local_session_info" -params '{}' 2>&1)
     if echo "$bc" | grep -q "Tool call succeeded"; then
         echo "    ${GREEN}PASS${NC}: tool call succeeded over bearer transport"
         TIER2_PASS=$((TIER2_PASS + 1)); PASS_COUNT=$((PASS_COUNT + 1))
@@ -760,7 +763,7 @@ if [ -n "$BEARER_ENDPOINT" ] && [ -n "$SESSION_TOKEN" ]; then
     # 6.3 — No bearer is rejected at the HTTP layer (401), so probe cannot init.
     echo "  6.3 missing bearer is rejected (401)"
     nb=$("$PROBE_PATH" -url "$BEARER_URL" -transport http \
-        -call "session_info" -params '{}' 2>&1)
+        -call "local_session_info" -params '{}' 2>&1)
     if echo "$nb" | grep -qiE "401|unauthorized|bearer|failed|error"; then
         echo "    ${GREEN}PASS${NC}: request without bearer was rejected"
         TIER2_PASS=$((TIER2_PASS + 1)); PASS_COUNT=$((PASS_COUNT + 1))
@@ -774,7 +777,7 @@ if [ -n "$BEARER_ENDPOINT" ] && [ -n "$SESSION_TOKEN" ]; then
     echo "  6.4 invalid bearer is rejected (401)"
     ib=$("$PROBE_PATH" -url "$BEARER_URL" -transport http \
         -headers "Authorization:Bearer SSTdeadbeef" \
-        -call "session_info" -params '{}' 2>&1)
+        -call "local_session_info" -params '{}' 2>&1)
     if echo "$ib" | grep -qiE "401|unauthorized|bearer|failed|error"; then
         echo "    ${GREEN}PASS${NC}: request with invalid bearer was rejected"
         TIER2_PASS=$((TIER2_PASS + 1)); PASS_COUNT=$((PASS_COUNT + 1))
@@ -799,7 +802,7 @@ if [ -n "$SERVICE_TOKEN" ]; then
         echo "  7.1 service token works as a bearer on $BEARER_ENDPOINT"
         st_b=$("$PROBE_PATH" -url "$BEARER_URL" -transport http \
             -headers "Authorization:Bearer ${SERVICE_TOKEN}" \
-            -call "session_info" -params '{}' 2>&1)
+            -call "local_session_info" -params '{}' 2>&1)
         if echo "$st_b" | grep -q "Tool call succeeded"; then
             echo "    ${GREEN}PASS${NC}: service token accepted on bearer endpoint"
             TIER2_PASS=$((TIER2_PASS + 1)); PASS_COUNT=$((PASS_COUNT + 1))
@@ -812,7 +815,7 @@ if [ -n "$SERVICE_TOKEN" ]; then
 
     echo "  7.2 service token works as session_token on $ENDPOINT"
     st_i=$("$PROBE_PATH" -url "$FULL_URL" -transport http \
-        -call "session_info" -params "$(printf '{"session_token":"%s"}' "$SERVICE_TOKEN")" 2>&1)
+        -call "local_session_info" -params "$(printf '{"session_token":"%s"}' "$SERVICE_TOKEN")" 2>&1)
     if echo "$st_i" | grep -q "Tool call succeeded"; then
         echo "    ${GREEN}PASS${NC}: service token accepted as session_token parameter"
         TIER2_PASS=$((TIER2_PASS + 1)); PASS_COUNT=$((PASS_COUNT + 1))

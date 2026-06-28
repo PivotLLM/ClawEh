@@ -14,7 +14,9 @@ var Provider scheduleProvider
 
 type scheduleProvider struct{}
 
-func (p scheduleProvider) Namespace() string   { return "schedule" }
+// Namespace matches the tool it emits (cron_schedule), so the declared namespace
+// lines up with the tool name rather than diverging ("schedule" vs "cron_*").
+func (p scheduleProvider) Namespace() string { return "cron" }
 func (p scheduleProvider) Description() string { return "Cron scheduling and job management" }
 func (p scheduleProvider) Category() string    { return "schedule" }
 func (p scheduleProvider) ConfigKey() string   { return "cron" }

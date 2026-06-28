@@ -20,6 +20,15 @@ type MCPManager interface {
 	) (*mcp.CallToolResult, error)
 }
 
+// ExternalNamer is implemented by tools that should be advertised to external MCP
+// clients under a different name than their internal registry name. The MCP host
+// asks the tool for this name structurally rather than inspecting name prefixes,
+// so the published catalogue reads cleanly (e.g. "<server>_<tool>") while internal
+// gating and dispatch keep using the registry name.
+type ExternalNamer interface {
+	ExternalName() string
+}
+
 // MCPTool wraps an MCP tool to implement the Tool interface
 type MCPTool struct {
 	manager    MCPManager
@@ -129,6 +138,16 @@ func (t *MCPTool) Name() string {
 		base = strings.TrimRight(full[:maxTotal-9], "_")
 	}
 	return base + "_" + suffix
+}
+
+// ExternalName is the name claw's MCP host advertises this upstream tool under to
+// external clients: "<server>_<tool>" — claw's internal "mcp_" namespacing is
+// dropped so clients see e.g. "fusion_trello_search" instead of the doubly-
+// prefixed "mcp__claw__mcp_fusion_trello_search". The internal registry name
+// (Name) is unchanged; only the externally published name differs. Implements
+// the tools.ExternalNamer interface.
+func (t *MCPTool) ExternalName() string {
+	return strings.TrimPrefix(t.Name(), "mcp_")
 }
 
 // Description returns the tool description

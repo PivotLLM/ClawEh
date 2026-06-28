@@ -100,6 +100,27 @@ func TestMCPTool_Name(t *testing.T) {
 	}
 }
 
+// TestMCPTool_ExternalName verifies the externally-published name drops claw's
+// internal "mcp_" prefix, leaving "<server>_<tool>", and that MCPTool satisfies
+// the ExternalNamer interface used by the MCP host.
+func TestMCPTool_ExternalName(t *testing.T) {
+	var _ ExternalNamer = (*MCPTool)(nil) // compile-time: MCPTool implements it
+
+	cases := []struct{ server, tool, want string }{
+		{"fusion", "trello_search", "fusion_trello_search"},
+		{"github", "create_issue", "github_create_issue"},
+	}
+	for _, c := range cases {
+		mt := NewMCPTool(&MockMCPManager{}, c.server, &mcp.Tool{Name: c.tool})
+		if got := mt.ExternalName(); got != c.want {
+			t.Errorf("ExternalName(%s,%s) = %q, want %q", c.server, c.tool, got, c.want)
+		}
+		if mt.Name() != "mcp_"+c.want {
+			t.Errorf("internal Name should keep mcp_ prefix: %q", mt.Name())
+		}
+	}
+}
+
 // TestMCPTool_Description verifies tool description generation
 func TestMCPTool_Description(t *testing.T) {
 	tests := []struct {
