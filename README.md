@@ -674,8 +674,8 @@ Before starting this project, I contributed a number of fixes and improvements u
 
 ## Copyright and license
 
-Copyright (c) 2026 PicoClaw contributors  
 Copyright (c) 2026 Tenebris Technologies Inc.
+Somce code Copyright (c) 2026 PicoClaw contributors 
 
 This software is licensed under the MIT License. Please see `LICENSE` for details.
 
