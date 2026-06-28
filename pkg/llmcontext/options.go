@@ -91,6 +91,9 @@ type managerConfig struct {
 	// cooldownTracker, when non-nil, is shared with the compaction path instead
 	// of building a private tracker (so cooldowns are unified with the main chain).
 	cooldownTracker *providers.CooldownTracker
+	// eviction is the per-turn tool-result eviction policy. Defaults to
+	// DefaultEvictionPolicy() (enabled); override via WithEvictionPolicy.
+	eviction EvictionPolicy
 }
 
 func defaultManagerConfig() managerConfig {
@@ -106,7 +109,15 @@ func defaultManagerConfig() managerConfig {
 		overheadTokens:      defaultOverheadTokens,
 		charsPerToken:       defaultCharsPerToken,
 		tokenSafetyMargin:   defaultTokenSafetyMargin,
+		eviction:            DefaultEvictionPolicy(),
 	}
+}
+
+// WithEvictionPolicy sets the per-turn tool-result eviction policy. The agent
+// layer resolves per-agent + defaults config into a single EvictionPolicy and
+// passes it here. When unset, DefaultEvictionPolicy() applies.
+func WithEvictionPolicy(p EvictionPolicy) Option {
+	return func(c *managerConfig) { c.eviction = p }
 }
 
 func WithMinPercent(pct int) Option {

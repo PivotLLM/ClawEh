@@ -4,16 +4,18 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	"github.com/PivotLLM/ClawEh/pkg/config"
 	"github.com/PivotLLM/ClawEh/pkg/global"
+	"github.com/PivotLLM/ClawEh/pkg/logger"
 	"github.com/PivotLLM/ClawEh/pkg/tools"
 )
 
 // GlobalProvider exposes the filesystem tools through the transport-neutral
 // global layer with BARE names ("read", "write", "list", "edit", "append",
 // "copy"). The aggregator mounts it under the "file" namespace, so the published
-// names are "file_read" / "file_write" / etc. It reuses the existing tool logic
+// names are "file_read_bytes" / "file_write" / etc. It reuses the existing tool logic
 // (mirroring filesProvider.Build's construction exactly) and converts the result
 // at the boundary, so behaviour is unchanged.
 var GlobalProvider globalFilesProvider
@@ -34,13 +36,18 @@ func (globalFilesProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 	cd, _ := deps.Host.(tools.ToolDeps)
 
 	var (
-		read   *ReadFileTool
-		write  *WriteFileTool
-		list   *ListDirTool
-		edit   *EditFileTool
-		apnd   *AppendFileTool
-		cp     *CopyFileTool
-		search *SearchFilesTool
+		readBytes   *ReadFileTool
+		readLines   *ReadFileTool
+		write       *WriteFileTool
+		list        *ListDirTool
+		edit        *EditFileTool
+		apnd        *AppendFileTool
+		cp          *CopyFileTool
+		del         *DeleteFileTool
+		mv          *MoveFileTool
+		searchLines *SearchFilesTool
+		searchBytes *SearchFilesTool
+		rangeTools  map[string]*rangeEditTool
 	)
 
 	if c != nil {
@@ -86,24 +93,70 @@ func (globalFilesProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 			SetReadScopeSubdirs(subdirs)
 		}
 
-		read = NewReadFileTool(workspace, readRestrict, maxReadFileSize, allowReadPaths)
-		search = NewSearchFilesTool(workspace, readRestrict, allowReadPaths)
+		// External mounts (per agent): expose extra top-level dirs beside files/.
+		// Must be registered before constructing the tools, which capture their
+		// fileSystem (mount-aware) at build time.
+		SetMountsForWorkspace(workspace, resolveAgentMounts(cd.AgentCfg))
+
+		readBytes = NewReadFileTool(workspace, readRestrict, maxReadFileSize, allowReadPaths)
+		readLines = NewReadLinesTool(workspace, readRestrict, maxReadFileSize, allowReadPaths)
+		searchLines = NewSearchLinesTool(workspace, readRestrict, allowReadPaths)
+		searchBytes = NewSearchBytesTool(workspace, readRestrict, allowReadPaths)
 		write = NewWriteFileToolScoped(workspace, restrict, writeSubdir, allowWritePaths)
 		list = NewListDirTool(workspace, readRestrict, allowReadPaths)
 		edit = NewEditFileToolScoped(workspace, restrict, writeSubdir, allowWritePaths)
 		apnd = NewAppendFileToolScoped(workspace, restrict, writeSubdir, allowWritePaths)
 		cp = NewCopyFileToolScoped(workspace, restrict, writeSubdir, allowWritePaths)
+		del = NewDeleteFileToolScoped(workspace, restrict, writeSubdir, allowWritePaths)
+		mv = NewMoveFileToolScoped(workspace, restrict, writeSubdir, allowWritePaths)
+		rangeTools = map[string]*rangeEditTool{}
+		for _, op := range []string{"edit", "insert", "delete"} {
+			for _, unit := range []string{"lines", "bytes"} {
+				rangeTools[op+"_"+unit] = newRangeEditTool(op, unit, workspace, restrict, writeSubdir, allowWritePaths)
+			}
+		}
+	}
+
+	// rangeDef builds a ToolDefinition for one range-edit tool. The handler closes
+	// over rangeTools[key]; schema/description use a config-free probe instance.
+	rangeDef := func(op, unit string) global.ToolDefinition {
+		key := op + "_" + unit
+		probe := &rangeEditTool{op: op, unit: unit}
+		return global.ToolDefinition{
+			Name:         key, // namespace "file" → file_<op>_<unit>
+			Description:  probe.Description(),
+			RawSchema:    probe.Parameters(),
+			Category:     "filesystem",
+			DefaultAllow: global.Allow(true),
+			Handler: func(call *global.ToolCall) (*global.Result, error) {
+				rt := rangeTools[key]
+				if rt == nil {
+					return tools.ResultToGlobal(tools.ErrorResult("file edit is not available")), nil
+				}
+				return tools.ResultToGlobal(rt.Execute(call.Ctx, call.Args)), nil
+			},
+		}
 	}
 
 	return []global.ToolDefinition{
 		{
-			Name:         "read",
-			Description:  (&ReadFileTool{}).Description(),
-			RawSchema:    readSchema,
+			Name:         "read_bytes",
+			Description:  (&ReadFileTool{lineMode: false}).Description(),
+			RawSchema:    readBytesSchema,
 			Category:     "filesystem",
 			DefaultAllow: global.Allow(true),
 			Handler: func(call *global.ToolCall) (*global.Result, error) {
-				return tools.ResultToGlobal(read.Execute(call.Ctx, call.Args)), nil
+				return tools.ResultToGlobal(readBytes.Execute(call.Ctx, call.Args)), nil
+			},
+		},
+		{
+			Name:         "read_lines",
+			Description:  (&ReadFileTool{lineMode: true}).Description(),
+			RawSchema:    readLinesSchema,
+			Category:     "filesystem",
+			DefaultAllow: global.Allow(true),
+			Handler: func(call *global.ToolCall) (*global.Result, error) {
+				return tools.ResultToGlobal(readLines.Execute(call.Ctx, call.Args)), nil
 			},
 		},
 		{
@@ -127,16 +180,29 @@ func (globalFilesProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 			},
 		},
 		{
-			Name:         "search",
-			Description:  (&SearchFilesTool{}).Description(),
-			RawSchema:    (&SearchFilesTool{}).Parameters(),
+			Name:         "search_lines",
+			Description:  (&SearchFilesTool{byteMode: false}).Description(),
+			RawSchema:    (&SearchFilesTool{byteMode: false}).Parameters(),
 			Category:     "filesystem",
 			DefaultAllow: global.Allow(true),
 			Handler: func(call *global.ToolCall) (*global.Result, error) {
-				if search == nil {
+				if searchLines == nil {
 					return tools.ResultToGlobal(tools.ErrorResult("file search is not available")), nil
 				}
-				return tools.ResultToGlobal(search.Execute(call.Ctx, call.Args)), nil
+				return tools.ResultToGlobal(searchLines.Execute(call.Ctx, call.Args)), nil
+			},
+		},
+		{
+			Name:         "search_bytes",
+			Description:  (&SearchFilesTool{byteMode: true}).Description(),
+			RawSchema:    (&SearchFilesTool{byteMode: true}).Parameters(),
+			Category:     "filesystem",
+			DefaultAllow: global.Allow(true),
+			Handler: func(call *global.ToolCall) (*global.Result, error) {
+				if searchBytes == nil {
+					return tools.ResultToGlobal(tools.ErrorResult("file search is not available")), nil
+				}
+				return tools.ResultToGlobal(searchBytes.Execute(call.Ctx, call.Args)), nil
 			},
 		},
 		{
@@ -169,14 +235,39 @@ func (globalFilesProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 				return tools.ResultToGlobal(cp.Execute(call.Ctx, call.Args)), nil
 			},
 		},
+		rangeDef("edit", "lines"),
+		rangeDef("edit", "bytes"),
+		rangeDef("insert", "lines"),
+		rangeDef("insert", "bytes"),
+		rangeDef("delete", "lines"),
+		rangeDef("delete", "bytes"),
+		{
+			Name:         "delete",
+			Description:  (&DeleteFileTool{}).Description(),
+			RawSchema:    (&DeleteFileTool{}).Parameters(),
+			Category:     "filesystem",
+			DefaultAllow: global.Allow(true),
+			Handler: func(call *global.ToolCall) (*global.Result, error) {
+				return tools.ResultToGlobal(del.Execute(call.Ctx, call.Args)), nil
+			},
+		},
+		{
+			Name:         "move",
+			Description:  (&MoveFileTool{}).Description(),
+			RawSchema:    (&MoveFileTool{}).Parameters(),
+			Category:     "filesystem",
+			DefaultAllow: global.Allow(true),
+			Handler: func(call *global.ToolCall) (*global.Result, error) {
+				return tools.ResultToGlobal(mv.Execute(call.Ctx, call.Args)), nil
+			},
+		},
 	}
 }
 
-// readSchema is the static JSON Schema for the read tool. ReadFileTool.Parameters()
-// embeds the instance's maxSize as the "length" default, so a zero-value instance
-// would report default 0; this literal uses MaxReadFileSize to match a properly
-// constructed instance's default.
-var readSchema = map[string]any{
+// readBytesSchema is the static JSON Schema for file_read_bytes. A properly
+// constructed ReadFileTool embeds its maxSize as the "length" default; this
+// literal uses MaxReadFileSize to match that for enumeration (zero Deps).
+var readBytesSchema = map[string]any{
 	"type": "object",
 	"properties": map[string]any{
 		"path": map[string]any{
@@ -195,6 +286,63 @@ var readSchema = map[string]any{
 		},
 	},
 	"required": []string{"path"},
+}
+
+// readLinesSchema is the static JSON Schema for file_read_lines.
+var readLinesSchema = map[string]any{
+	"type": "object",
+	"properties": map[string]any{
+		"path": map[string]any{
+			"type":        "string",
+			"description": "Path to the file to read.",
+		},
+		"start_line": map[string]any{
+			"type":        "integer",
+			"description": "1-based line to start from (default 1).",
+			"default":     1,
+		},
+		"line_count": map[string]any{
+			"type":        "integer",
+			"description": "Number of lines to read from start_line (default 250). Still capped to the byte limit.",
+			"default":     defaultReadLineCount,
+		},
+	},
+	"required": []string{"path"},
+}
+
+// resolveAgentMounts validates an agent's mount config into usable specs. Invalid
+// entries (bad name, missing/non-directory path, duplicate) are dropped with a
+// WARN so one broken mount can't take the agent down.
+func resolveAgentMounts(agentCfg *config.AgentConfig) []MountSpec {
+	if agentCfg == nil || len(agentCfg.Mounts) == 0 {
+		return nil
+	}
+	var specs []MountSpec
+	seen := map[string]bool{}
+	for _, mc := range agentCfg.Mounts {
+		name := strings.TrimSpace(mc.Name)
+		if err := config.ValidateMountName(name); err != nil {
+			logger.WarnCF("tools", "skipping invalid mount", map[string]any{"name": name, "error": err.Error()})
+			continue
+		}
+		if seen[name] {
+			logger.WarnCF("tools", "skipping duplicate mount name", map[string]any{"name": name})
+			continue
+		}
+		abs, err := filepath.Abs(strings.TrimSpace(mc.Path))
+		if err != nil {
+			logger.WarnCF("tools", "skipping mount: bad path", map[string]any{"name": name, "path": mc.Path})
+			continue
+		}
+		info, serr := os.Stat(abs)
+		if serr != nil || !info.IsDir() {
+			logger.WarnCF("tools", "skipping mount: not an existing directory", map[string]any{"name": name, "path": abs})
+			continue
+		}
+		seen[name] = true
+		specs = append(specs, MountSpec{Name: name, Path: abs, Writable: mc.Writable})
+	}
+	return specs
 }
 
 // appendIfMissing returns subdirs with name appended if not already present.

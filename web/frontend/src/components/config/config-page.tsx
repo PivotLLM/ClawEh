@@ -248,6 +248,21 @@ export function ConfigPage() {
           "Log retention days",
           { min: 0 },
         )
+        const evictionProtectTurns = parseIntField(
+          form.evictionProtectTurns,
+          "Protected age",
+          { min: 0 },
+        )
+        const evictionEvictTurns = parseIntField(
+          form.evictionEvictTurns,
+          "Evict everything after (turns)",
+          { min: 0 },
+        )
+        const evictionBudgetBytes = parseIntField(
+          form.evictionBudgetBytes,
+          "Read byte budget",
+          { min: 0 },
+        )
         // Re-send the full agents.list with default flags flipped only when the
         // default agent actually changed (the patch replaces the array wholesale).
         const defaultAgentChanged = form.defaultAgentId !== baseline.defaultAgentId
@@ -285,6 +300,13 @@ export function ConfigPage() {
               archive_days: archiveDays,
               summary_max_count: summaryMaxCount,
               summary_retention_days: summaryRetentionDays,
+              context_eviction: {
+                enabled: form.evictionEnabled,
+                notify_user: form.evictionNotifyUser,
+                protect_turns: evictionProtectTurns,
+                evict_turns: evictionEvictTurns,
+                budget_bytes: evictionBudgetBytes,
+              },
             },
             ...(agentListPayload ? { list: agentListPayload } : {}),
           },

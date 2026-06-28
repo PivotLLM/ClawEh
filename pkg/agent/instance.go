@@ -90,6 +90,9 @@ func NewAgentInstance(
 	if agentCfg != nil && agentCfg.Skills != nil {
 		contextBuilder = contextBuilder.WithSkillsFilter(agentCfg.Skills)
 	}
+	if agentCfg != nil && len(agentCfg.Mounts) > 0 {
+		contextBuilder = contextBuilder.WithMounts(agentCfg.Mounts)
+	}
 
 	agentID := routing.DefaultAgentID
 	agentName := ""
@@ -265,6 +268,16 @@ func NewAgentInstance(
 	}(), defaults.ArchiveContentMaxBytes); ok {
 		compressOpts = append(compressOpts, llmcontext.WithArchiveContentMaxBytes(v))
 	}
+
+	// Resolve the per-turn eviction policy: built-in defaults, overlaid by the
+	// defaults config block, overlaid by the per-agent block (field by field).
+	evPolicy := llmcontext.DefaultEvictionPolicy()
+	applyEvictionConfig(&evPolicy, defaults.ContextEviction)
+	if agentCfg != nil {
+		applyEvictionConfig(&evPolicy, agentCfg.ContextEviction)
+	}
+	compressOpts = append(compressOpts, llmcontext.WithEvictionPolicy(evPolicy))
+
 	// Resolve fallback candidates
 	modelCfg := providers.ModelConfig{Models: models}
 	resolveFromModelList := func(raw string) (alias, model, provider string, ok bool) {
@@ -438,4 +451,28 @@ func resolveAgentIntOpt(agentPtr *int, defaultsVal int) (int, bool) {
 		return defaultsVal, true
 	}
 	return 0, false
+}
+
+// applyEvictionConfig overlays a ContextEvictionConfig block onto an
+// EvictionPolicy, leaving fields the block does not set untouched. Passing nil
+// is a no-op, so callers can chain defaults then per-agent without nil guards.
+func applyEvictionConfig(p *llmcontext.EvictionPolicy, c *config.ContextEvictionConfig) {
+	if c == nil {
+		return
+	}
+	if c.Enabled != nil {
+		p.Enabled = *c.Enabled
+	}
+	if c.ProtectTurns != nil {
+		p.ProtectTurns = *c.ProtectTurns
+	}
+	if c.EvictTurns != nil {
+		p.EvictTurns = *c.EvictTurns
+	}
+	if c.BudgetBytes != nil {
+		p.BudgetBytes = *c.BudgetBytes
+	}
+	if c.NotifyUser != nil {
+		p.NotifyUser = *c.NotifyUser
+	}
 }

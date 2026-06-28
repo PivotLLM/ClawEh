@@ -69,6 +69,51 @@ var pollExitTimeout = 10 * time.Second
 // transient errors.
 var longPollRetryTimeout = 2 * time.Second
 
+// isTransientPollError reports whether a telego log message describes a
+// recoverable, auto-retried long-poll failure — a transient Telegram 5xx or a
+// network blip during getUpdates — rather than a genuine fault. telego emits
+// these via Errorf at ERROR; they are demoted to WARN because the poll loop
+// retries automatically and no updates are lost (the offset is not advanced on
+// a failed call). Genuine faults — 401 unauthorized, 409 conflict, 4xx bad
+// request — are left at ERROR. Wired into the telego logger via
+// WithErrorDowngrade.
+func isTransientPollError(msg string) bool {
+	m := strings.ToLower(msg)
+	// Restrict to the long-poll update path so unrelated telego errors are
+	// never downgraded.
+	if !strings.Contains(m, "getupdates") && !strings.Contains(m, "getting updates") {
+		return false
+	}
+	// telego's own "Retrying getting updates in Ns..." recovery notice.
+	if strings.Contains(m, "retrying getting updates") {
+		return true
+	}
+	// A transient HTTP 5xx from Telegram's API (telego formats these as
+	// "internal server error: <code>"), or a transport-level blip that means the
+	// request never reached Telegram.
+	if strings.Contains(m, "internal server error: 5") {
+		return true
+	}
+	for _, s := range []string{
+		"bad gateway",
+		"gateway timeout",
+		"service unavailable",
+		"i/o timeout",
+		"tls handshake timeout",
+		"context deadline exceeded",
+		"connection reset",
+		"connection refused",
+		"network is unreachable",
+		"no route to host",
+		"unexpected eof",
+	} {
+		if strings.Contains(m, s) {
+			return true
+		}
+	}
+	return false
+}
+
 type TelegramChannel struct {
 	*channels.BaseChannel
 	bot            *telego.Bot
@@ -121,7 +166,9 @@ func NewTelegramChannelFromConfig(botCfg config.TelegramBotConfig, b *bus.Messag
 	if baseURL := strings.TrimRight(strings.TrimSpace(botCfg.BaseURL), "/"); baseURL != "" {
 		opts = append(opts, telego.WithAPIServer(baseURL))
 	}
-	opts = append(opts, telego.WithLogger(logger.NewLogger("telego").WithContentSensitive()))
+	opts = append(opts, telego.WithLogger(
+		logger.NewLogger("telego").WithContentSensitive().WithErrorDowngrade(isTransientPollError),
+	))
 
 	bot, err := telego.NewBot(botCfg.Token, opts...)
 	if err != nil {

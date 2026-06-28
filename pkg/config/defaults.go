@@ -321,8 +321,9 @@ func DefaultConfig() *Config {
 			},
 			MCP: MCPConfig{
 				ToolConfig: ToolConfig{
-					Enabled: false,
+					Enabled: true,
 				},
+				AutoEnable: true,
 				Discovery: ToolDiscoveryConfig{
 					Enabled:          false,
 					TTL:              5,
@@ -361,12 +362,13 @@ func DefaultConfig() *Config {
 			AutoEnable:   true,
 			Listen:       "127.0.0.1:5911",
 			EndpointPath: "/mcp",
-			// Tools is intentionally left unset: when empty, the MCP host
-			// catalogue mirrors the internal API path — it advertises every tool
-			// any agent is allowed, gated PER AGENT at execution time via the
-			// session_token (full internal/external parity). Set an explicit list
-			// only to narrow the externally-advertised catalogue.
-			Tools: nil,
+			// InternalTools/ExternalTools are intentionally left unset: when empty,
+			// each endpoint's catalogue mirrors the internal API path — it advertises
+			// every tool any agent is allowed, gated PER AGENT at execution time via
+			// the session_token. Set an explicit per-endpoint list only to narrow
+			// (coarsely) what /internal or /mcp advertises.
+			InternalTools: nil,
+			ExternalTools: nil,
 		},
 		ConfigReloadIntervalSeconds: global.DefaultConfigReloadIntervalSeconds,
 	}

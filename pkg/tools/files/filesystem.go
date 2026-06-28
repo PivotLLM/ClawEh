@@ -17,13 +17,14 @@ import (
 	"time"
 
 	"github.com/PivotLLM/ClawEh/pkg/fileutil"
+	"github.com/PivotLLM/ClawEh/pkg/global"
 	"github.com/PivotLLM/ClawEh/pkg/logger"
 	"github.com/PivotLLM/ClawEh/pkg/tools"
 )
 
 const MaxReadFileSize = 32 * 1024 // 32KB (~8K tokens) per-read cap to avoid context overflow
 
-// defaultReadLineCount is how many lines file_read returns in line mode when
+// defaultReadLineCount is how many lines file_read_lines returns when
 // line_count is unspecified. Output is still capped to the byte ceiling.
 const defaultReadLineCount = 250
 
@@ -99,11 +100,33 @@ func isWithinWorkspace(candidate, workspace string) bool {
 }
 
 type ReadFileTool struct {
-	sysFs   fileSystem
-	maxSize int64
+	sysFs    fileSystem
+	maxSize  int64
+	lineMode bool // true => file_read_lines (line addressing); false => file_read_bytes
 }
 
+// NewReadFileTool builds the byte-addressed read tool (file_read_bytes).
 func NewReadFileTool(
+	workspace string,
+	restrict bool,
+	maxReadFileSize int,
+	allowPaths ...[]*regexp.Regexp,
+) *ReadFileTool {
+	return newReadTool(false, workspace, restrict, maxReadFileSize, allowPaths...)
+}
+
+// NewReadLinesTool builds the line-addressed read tool (file_read_lines).
+func NewReadLinesTool(
+	workspace string,
+	restrict bool,
+	maxReadFileSize int,
+	allowPaths ...[]*regexp.Regexp,
+) *ReadFileTool {
+	return newReadTool(true, workspace, restrict, maxReadFileSize, allowPaths...)
+}
+
+func newReadTool(
+	lineMode bool,
 	workspace string,
 	restrict bool,
 	maxReadFileSize int,
@@ -120,23 +143,56 @@ func NewReadFileTool(
 	}
 
 	return &ReadFileTool{
-		sysFs:   buildFs(workspace, restrict, patterns),
-		maxSize: maxSize,
+		sysFs:    buildFs(workspace, restrict, patterns),
+		maxSize:  maxSize,
+		lineMode: lineMode,
 	}
 }
 
 func (t *ReadFileTool) Name() string {
-	return "file_read"
+	if t.lineMode {
+		return "file_read_lines"
+	}
+	return "file_read_bytes"
 }
 
 func (t *ReadFileTool) Description() string {
-	return "Read the contents of a file. For text/code, prefer line addressing: pass `start_line` " +
-		"(1-based) and optional `line_count` to read a numbered slice — ideal for large files (chapters, " +
-		"outlines) and for getting exact text to pass to file_edit. Or use byte pagination via `offset`/`length`. " +
-		"Either way the result is bounded and tells you how to fetch the next chunk."
+	if t.lineMode {
+		return "Read a file by LINE number. Pass `start_line` (1-based) and optional `line_count` to read a " +
+			"numbered slice; lines are returned with their numbers, and the status block tells you the next " +
+			"`start_line`. Best for text/code and for getting exact text to pass to file_edit. " +
+			"Line numbers from file_search_lines feed directly into this tool. " +
+			"(To page by raw bytes instead, use file_read_bytes.)"
+	}
+	return "Read a file by BYTE offset. Pass `offset` and optional `length` to read a byte range; the status " +
+		"block tells you the next `offset`. Best for binary or very large files. " +
+		"Byte offsets from file_search_bytes feed directly into this tool. " +
+		"(For human-readable line addressing, use file_read_lines.)"
 }
 
 func (t *ReadFileTool) Parameters() map[string]any {
+	if t.lineMode {
+		return map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"path": map[string]any{
+					"type":        "string",
+					"description": "Path to the file to read.",
+				},
+				"start_line": map[string]any{
+					"type":        "integer",
+					"description": "1-based line to start from (default 1).",
+					"default":     1,
+				},
+				"line_count": map[string]any{
+					"type":        "integer",
+					"description": "Number of lines to read from start_line (default 250). Still capped to the byte limit.",
+					"default":     defaultReadLineCount,
+				},
+			},
+			"required": []string{"path"},
+		}
+	}
 	return map[string]any{
 		"type": "object",
 		"properties": map[string]any{
@@ -144,23 +200,14 @@ func (t *ReadFileTool) Parameters() map[string]any {
 				"type":        "string",
 				"description": "Path to the file to read.",
 			},
-			"start_line": map[string]any{
-				"type":        "integer",
-				"description": "1-based line to start from. When set, the file is read by numbered lines (not bytes); offset/length are ignored.",
-			},
-			"line_count": map[string]any{
-				"type":        "integer",
-				"description": "Number of lines to read from start_line (default 250). Still capped to the byte limit.",
-				"default":     defaultReadLineCount,
-			},
 			"offset": map[string]any{
 				"type":        "integer",
-				"description": "Byte offset to start reading from (byte mode; ignored when start_line is set).",
+				"description": "Byte offset to start reading from.",
 				"default":     0,
 			},
 			"length": map[string]any{
 				"type":        "integer",
-				"description": "Maximum number of bytes to read (byte mode).",
+				"description": "Maximum number of bytes to read.",
 				"default":     t.maxSize,
 			},
 		},
@@ -172,6 +219,20 @@ func (t *ReadFileTool) Execute(ctx context.Context, args map[string]any) *tools.
 	path, ok := args["path"].(string)
 	if !ok {
 		return tools.ErrorResult("path is required")
+	}
+
+	// Keep the two addressing modes pure: reject the other mode's parameters
+	// rather than silently ignoring them (a stray start_line on file_read_bytes
+	// would otherwise read from offset 0 — the exact front-chunk trap this split
+	// exists to prevent). Point the caller at the right tool.
+	if t.lineMode {
+		if argPresent(args, "offset") || argPresent(args, "length") {
+			return tools.ErrorResult("file_read_lines reads by line and does not accept offset/length. " +
+				"Use file_read_lines(path, start_line[, line_count]); to read by byte use file_read_bytes(path, offset).")
+		}
+	} else if argPresent(args, "start_line") || argPresent(args, "line_count") {
+		return tools.ErrorResult("file_read_bytes reads by byte offset and does not accept start_line/line_count. " +
+			"Use file_read_bytes(path, offset[, length]); to read by line use file_read_lines(path, start_line).")
 	}
 
 	// offset (optional, default 0)
@@ -195,8 +256,8 @@ func (t *ReadFileTool) Execute(ctx context.Context, args map[string]any) *tools.
 		length = t.maxSize
 	}
 
-	// Line mode: when start_line is given, read a numbered slice of lines.
-	startLine, err := getInt64Arg(args, "start_line", 0)
+	// Line mode (file_read_lines): read a numbered slice of lines.
+	startLine, err := getInt64Arg(args, "start_line", 1)
 	if err != nil {
 		return tools.ErrorResult(err.Error())
 	}
@@ -236,13 +297,17 @@ func (t *ReadFileTool) Execute(ctx context.Context, args map[string]any) *tools.
 		}
 	}
 
-	// Line mode: read a numbered slice of lines from the file (position is at 0
-	// after the sniff reset). Bounded by lineCount and the byte ceiling.
-	if startLine > 0 {
+	// Line mode (file_read_lines): read a numbered slice of lines from the file
+	// (position is at 0 after the sniff reset). Bounded by lineCount and the byte
+	// ceiling.
+	if t.lineMode {
+		if startLine < 1 {
+			startLine = 1
+		}
 		if lineCount <= 0 {
 			lineCount = defaultReadLineCount
 		}
-		return t.readLines(file, filepath.Base(path), startLine, lineCount)
+		return t.readLines(file, path, startLine, lineCount)
 	}
 
 	// Seek to the requested offset.
@@ -275,30 +340,6 @@ func (t *ReadFileTool) Execute(ctx context.Context, args map[string]any) *tools.
 	}
 
 	readEnd := offset + int64(len(data))
-	readRange := fmt.Sprintf("bytes %d-%d", offset, readEnd-1)
-
-	displayPath := filepath.Base(path)
-	var header string
-	if totalSize >= 0 {
-		header = fmt.Sprintf(
-			"[file: %s | total: %d bytes | read: %s]",
-			displayPath, totalSize, readRange,
-		)
-	} else {
-		header = fmt.Sprintf(
-			"[file: %s | read: %s | total size unknown]",
-			displayPath, readRange,
-		)
-	}
-
-	if hasMore {
-		header += fmt.Sprintf(
-			"\n[TRUNCATED - file has more content. Call file_read again with offset=%d to continue.]",
-			readEnd,
-		)
-	} else {
-		header += "\n[END OF FILE - no further content.]"
-	}
 
 	logger.DebugCF("tool", "ReadFileTool execution completed successfully",
 		map[string]any{
@@ -307,14 +348,52 @@ func (t *ReadFileTool) Execute(ctx context.Context, args map[string]any) *tools.
 			"has_more":   hasMore,
 		})
 
-	return tools.NewToolResult(header + "\n\n" + string(data))
+	// The status block follows the content (not a header) so the actionable
+	// continuation instruction sits at the model's highest-attention position.
+	// A hint buried above a large chunk was being ignored, causing models to
+	// re-read the same front chunk instead of advancing the offset.
+	return tools.NewToolResult(string(data) +
+		byteReadStatus(path, filepath.Base(path), offset, readEnd, length, totalSize, hasMore))
+}
+
+// byteReadStatus renders the explicit end-of-output status block for a byte-mode
+// read, including the exact next call to make. Placed after the content.
+func byteReadStatus(path, displayPath string, offset, readEnd, length, totalSize int64, hasMore bool) string {
+	var b strings.Builder
+	b.WriteString("\n\n=== FILE READ STATUS ===\n")
+	fmt.Fprintf(&b, "File: %s\n", displayPath)
+	if totalSize >= 0 {
+		fmt.Fprintf(&b, "Total size: %d bytes\n", totalSize)
+	}
+	if totalSize >= 0 && length > 0 {
+		totalChunks := (totalSize + length - 1) / length
+		if totalChunks < 1 {
+			totalChunks = 1
+		}
+		fmt.Fprintf(&b, "Chunk returned: bytes %d-%d (chunk %d of %d)\n",
+			offset, readEnd-1, offset/length+1, totalChunks)
+	} else {
+		fmt.Fprintf(&b, "Chunk returned: bytes %d-%d\n", offset, readEnd-1)
+	}
+	if hasMore {
+		b.WriteString("Status: TRUNCATED — more content remains\n\n")
+		b.WriteString("ACTION REQUIRED:\n")
+		b.WriteString("  To continue, call:\n")
+		fmt.Fprintf(&b, "  file_read_bytes(path=%q, offset=%d)\n\n", path, readEnd)
+		fmt.Fprintf(&b, "Do NOT call file_read_bytes again without offset=%d — you will receive the same chunk.\n", readEnd)
+	} else {
+		b.WriteString("Status: COMPLETE — END OF FILE, no further content\n")
+	}
+	b.WriteString("=== END STATUS ===")
+	return b.String()
 }
 
 // readLines returns a numbered slice of lines [startLine, startLine+lineCount)
 // from file (positioned at 0), bounded by the byte ceiling. The output is
 // prefixed with each line's 1-based number and a header noting the range and how
 // to fetch the next chunk.
-func (t *ReadFileTool) readLines(file io.Reader, displayPath string, startLine, lineCount int64) *tools.ToolResult {
+func (t *ReadFileTool) readLines(file io.Reader, path string, startLine, lineCount int64) *tools.ToolResult {
+	displayPath := filepath.Base(path)
 	scanner := bufio.NewScanner(file)
 	// Allow long lines up to the byte ceiling (default 64KB buffer is too small).
 	scanner.Buffer(make([]byte, 0, 64*1024), int(t.maxSize)+1)
@@ -354,18 +433,35 @@ func (t *ReadFileTool) readLines(file io.Reader, displayPath string, startLine, 
 		return tools.NewToolResult(fmt.Sprintf("[file: %s | no lines at start_line=%d (file has %d line(s))]", displayPath, startLine, cur))
 	}
 
-	header := fmt.Sprintf("[file: %s | lines %d-%d]", displayPath, startLine, lastLine)
-	switch {
-	case bytesCapped:
-		header += fmt.Sprintf("\n[TRUNCATED at the byte limit — continue with start_line=%d.]", lastLine+1)
-	case moreLines:
-		header += fmt.Sprintf("\n[More lines follow — continue with start_line=%d.]", lastLine+1)
-	default:
-		header += "\n[END OF FILE - no further lines.]"
-	}
 	logger.DebugCF("tool", "ReadFileTool line-mode read completed",
 		map[string]any{"path": displayPath, "start_line": startLine, "lines": emitted, "more": moreLines})
-	return tools.NewToolResult(header + "\n\n" + b.String())
+	return tools.NewToolResult(b.String() +
+		lineReadStatus(path, displayPath, startLine, lastLine, bytesCapped || moreLines, bytesCapped))
+}
+
+// lineReadStatus renders the explicit end-of-output status block for a line-mode
+// read, including the exact next call. Placed after the content (see
+// byteReadStatus for why).
+func lineReadStatus(path, displayPath string, startLine, lastLine int64, moreFollow, bytesCapped bool) string {
+	var b strings.Builder
+	b.WriteString("\n\n=== FILE READ STATUS ===\n")
+	fmt.Fprintf(&b, "File: %s\n", displayPath)
+	fmt.Fprintf(&b, "Lines returned: %d-%d\n", startLine, lastLine)
+	if moreFollow {
+		if bytesCapped {
+			b.WriteString("Status: TRUNCATED at the byte limit — more lines remain\n\n")
+		} else {
+			b.WriteString("Status: TRUNCATED — more lines remain\n\n")
+		}
+		b.WriteString("ACTION REQUIRED:\n")
+		b.WriteString("  To continue, call:\n")
+		fmt.Fprintf(&b, "  file_read_lines(path=%q, start_line=%d)\n\n", path, lastLine+1)
+		fmt.Fprintf(&b, "Do NOT call file_read_lines again without start_line=%d — you will receive the same lines.\n", lastLine+1)
+	} else {
+		b.WriteString("Status: COMPLETE — END OF FILE, no further lines\n")
+	}
+	b.WriteString("=== END STATUS ===")
+	return b.String()
 }
 
 // getInt64Arg extracts an integer argument from the args map, returning the
@@ -400,6 +496,12 @@ func getInt64Arg(args map[string]any, key string, defaultVal int64) (int64, erro
 	}
 }
 
+// argPresent reports whether the caller supplied a non-nil value for key.
+func argPresent(args map[string]any, key string) bool {
+	v, ok := args[key]
+	return ok && v != nil
+}
+
 type WriteFileTool struct {
 	sysFs fileSystem
 }
@@ -424,7 +526,7 @@ func (t *WriteFileTool) Name() string {
 }
 
 func (t *WriteFileTool) Description() string {
-	return "Write content to a file. Refuses to replace an existing file unless overwrite is true."
+	return "Write content to a file (parent directories created as needed). Refuses to replace an existing file unless overwrite is true."
 }
 
 func (t *WriteFileTool) Parameters() map[string]any {
@@ -513,7 +615,7 @@ func (t *ListDirTool) Name() string {
 }
 
 func (t *ListDirTool) Description() string {
-	return "List files and directories in a path"
+	return "List files and directories in a path. One level by default; set recursive=true to list the whole tree."
 }
 
 func (t *ListDirTool) Parameters() map[string]any {
@@ -523,6 +625,11 @@ func (t *ListDirTool) Parameters() map[string]any {
 			"path": map[string]any{
 				"type":        "string",
 				"description": "Path to list",
+			},
+			"recursive": map[string]any{
+				"type":        "boolean",
+				"description": "List the entire tree under path (paths shown relative to the workspace). Hidden directories are skipped. Default false (one level).",
+				"default":     false,
 			},
 		},
 		"required": []string{"path"},
@@ -535,6 +642,10 @@ func (t *ListDirTool) Execute(ctx context.Context, args map[string]any) *tools.T
 		path = "."
 	}
 
+	if getBoolArg(args, "recursive", false) {
+		return t.listRecursive(path)
+	}
+
 	entries, err := t.sysFs.ReadDir(path)
 	if err != nil {
 		return tools.ErrorResult(fmt.Sprintf("failed to read directory: %v", err))
@@ -542,9 +653,64 @@ func (t *ListDirTool) Execute(ctx context.Context, args map[string]any) *tools.T
 	return formatDirEntries(entries)
 }
 
+// maxRecursiveListEntries caps recursive listings so a large tree can't flood the
+// model's context.
+const maxRecursiveListEntries = 1000
+
+// listRecursive walks the tree under start via the sandboxed fs (scoping and
+// mounts still apply), listing entries with workspace-relative paths. Hidden
+// directories (.git, etc.) and the .claw marker are skipped.
+func (t *ListDirTool) listRecursive(start string) *tools.ToolResult {
+	var b strings.Builder
+	count := 0
+	truncated := false
+
+	var rec func(dir string)
+	rec = func(dir string) {
+		entries, err := t.sysFs.ReadDir(dir) // os/fs ReadDir returns entries sorted by name
+		if err != nil {
+			return
+		}
+		for _, e := range entries {
+			if count >= maxRecursiveListEntries {
+				truncated = true
+				return
+			}
+			name := e.Name()
+			if name == global.MountMarkerFile {
+				continue
+			}
+			child := filepath.Join(dir, name)
+			display := filepath.ToSlash(child)
+			if e.IsDir() {
+				if strings.HasPrefix(name, ".") {
+					continue // don't descend into hidden dirs
+				}
+				b.WriteString("DIR:  " + display + "\n")
+				count++
+				rec(child)
+			} else {
+				b.WriteString("FILE: " + display + "\n")
+				count++
+			}
+		}
+	}
+	rec(start)
+
+	out := b.String()
+	if truncated {
+		out += fmt.Sprintf("\n[truncated at %d entries — list a subdirectory for more]\n", maxRecursiveListEntries)
+	}
+	return tools.NewToolResult(out)
+}
+
 func formatDirEntries(entries []os.DirEntry) *tools.ToolResult {
 	var result strings.Builder
 	for _, entry := range entries {
+		// Hide the claw-internal mount watermark from agents.
+		if entry.Name() == global.MountMarkerFile {
+			continue
+		}
 		if entry.IsDir() {
 			result.WriteString("DIR:  " + entry.Name() + "\n")
 		} else {
@@ -563,6 +729,7 @@ type fileSystem interface {
 	ReadDir(path string) ([]os.DirEntry, error)
 	Open(path string) (fs.File, error)
 	Stat(path string) (os.FileInfo, error)
+	Remove(path string) error
 }
 
 // hostFs is an unrestricted fileReadWriter that operates directly on the host filesystem.
@@ -592,6 +759,19 @@ func (h *hostFs) WriteFile(path string, data []byte) error {
 
 func (h *hostFs) WriteFileMode(path string, data []byte, mode os.FileMode) error {
 	return fileutil.WriteFileAtomic(path, data, mode)
+}
+
+func (h *hostFs) Remove(path string) error {
+	if err := os.Remove(path); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("failed to delete file: file not found: %w", err)
+		}
+		if os.IsPermission(err) {
+			return fmt.Errorf("failed to delete file: access denied: %w", err)
+		}
+		return fmt.Errorf("failed to delete file: %w", err)
+	}
+	return nil
 }
 
 func (h *hostFs) WriteFileExclMode(path string, data []byte, mode os.FileMode) error {
@@ -809,6 +989,22 @@ func (r *sandboxFs) ReadDir(path string) ([]os.DirEntry, error) {
 	return entries, err
 }
 
+func (r *sandboxFs) Remove(path string) error {
+	return r.execute(path, func(root *os.Root, relPath string) error {
+		if err := root.Remove(relPath); err != nil {
+			if os.IsNotExist(err) {
+				return fmt.Errorf("failed to delete file: file not found: %w", err)
+			}
+			if os.IsPermission(err) || strings.Contains(err.Error(), "escapes from parent") ||
+				strings.Contains(err.Error(), "permission denied") {
+				return fmt.Errorf("failed to delete file: access denied: %w", err)
+			}
+			return fmt.Errorf("failed to delete file: %w", err)
+		}
+		return nil
+	})
+}
+
 func (r *sandboxFs) Open(path string) (fs.File, error) {
 	var f fs.File
 	err := r.execute(path, func(root *os.Root, relPath string) error {
@@ -895,9 +1091,23 @@ func (w *whitelistFs) Open(path string) (fs.File, error) {
 	return w.sandbox.Open(path)
 }
 
+func (w *whitelistFs) Remove(path string) error {
+	if w.matches(path) {
+		return w.host.Remove(path)
+	}
+	return w.sandbox.Remove(path)
+}
+
 // buildFs returns the appropriate fileSystem implementation based on restriction
 // settings and optional path whitelist patterns.
 func buildFs(workspace string, restrict bool, patterns []*regexp.Regexp) fileSystem {
+	return withMounts(workspace, buildBaseFs(workspace, restrict, patterns))
+}
+
+// buildBaseFs is buildFs without the external-mount layer; buildWriteFs uses it
+// so the write-scope sits inside the mount layer (mountFs is always outermost,
+// so mount paths bypass the workspace read/write scopes and use their own sandbox).
+func buildBaseFs(workspace string, restrict bool, patterns []*regexp.Regexp) fileSystem {
 	if !restrict {
 		return &hostFs{}
 	}
@@ -1011,22 +1221,29 @@ func (r *readScopedFs) WriteFileExclMode(path string, data []byte, mode os.FileM
 	return r.inner.WriteFileExclMode(path, data, mode)
 }
 
+func (r *readScopedFs) Remove(path string) error {
+	return r.inner.Remove(path)
+}
+
 // buildWriteFs returns the fileSystem for the write/edit/append/copy tools.
 // When restrict is on and writeSubdir is non-empty, writes are confined to
 // <workspace>/<writeSubdir> while reads stay workspace-wide; host paths matching
 // patterns (Tools.AllowWritePaths) remain writable. When writeSubdir is empty,
 // behaviour matches buildFs (legacy: the whole workspace is writable).
 func buildWriteFs(workspace string, restrict bool, writeSubdir string, patterns []*regexp.Regexp) fileSystem {
-	inner := buildFs(workspace, restrict, patterns)
+	base := buildBaseFs(workspace, restrict, patterns)
 	if !restrict || writeSubdir == "" {
-		return inner
+		return withMounts(workspace, base)
 	}
-	return &writeScopedFs{
-		inner:     inner,
+	// mountFs stays outermost so writes to a mount (`<name>/...`) are not rejected
+	// by the workspace write-scope; non-mount writes still confine to writeSubdir.
+	scoped := &writeScopedFs{
+		inner:     base,
 		workspace: workspace,
 		writeRoot: filepath.Join(workspace, writeSubdir),
 		patterns:  patterns,
 	}
+	return withMounts(workspace, scoped)
 }
 
 // writeScopedFs wraps an inner fileSystem to allow reads across the whole
@@ -1084,6 +1301,13 @@ func (w *writeScopedFs) Open(path string) (fs.File, error) {
 
 func (w *writeScopedFs) Stat(path string) (os.FileInfo, error) {
 	return w.inner.Stat(path)
+}
+
+func (w *writeScopedFs) Remove(path string) error {
+	if err := w.writeAllowed(path); err != nil {
+		return err
+	}
+	return w.inner.Remove(path)
 }
 
 func (w *writeScopedFs) WriteFile(path string, data []byte) error {

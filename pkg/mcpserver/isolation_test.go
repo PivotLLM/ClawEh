@@ -171,7 +171,7 @@ func TestDispatch_RelativePathOutsideWorkspaceRejected(t *testing.T) {
 
 	st, tok := seedSessionToken("alice")
 
-	out, isErr := dispatchToolCall(context.Background(), "file_read",
+	out, isErr := dispatchToolCall(context.Background(), "file_read_bytes",
 		map[string]any{"session_token": tok, "path": "../etc/passwd"},
 		st, resolverFor(map[string]*tools.ToolRegistry{"alice": reg}), nil, nil, nil)
 	if !isErr {

@@ -42,13 +42,12 @@ func redactArgs(toolName string, args map[string]any) any {
 			"path":          args["path"],
 			"content_bytes": byteLen(args["content"]),
 		}
-	case "file_read":
+	case "file_read_bytes", "file_read_lines":
 		out := map[string]any{"path": args["path"]}
-		if v, ok := args["offset"]; ok && v != nil {
-			out["offset"] = v
-		}
-		if v, ok := args["length"]; ok && v != nil {
-			out["length"] = v
+		for _, k := range []string{"offset", "length", "start_line", "line_count"} {
+			if v, ok := args[k]; ok && v != nil {
+				out[k] = v
+			}
 		}
 		return out
 	case "file_edit":
@@ -57,6 +56,21 @@ func redactArgs(toolName string, args map[string]any) any {
 			"old_text_bytes": byteLen(args["old_text"]),
 			"new_text_bytes": byteLen(args["new_text"]),
 		}
+	case "file_edit_lines", "file_edit_bytes", "file_insert_lines", "file_insert_bytes",
+		"file_delete_lines", "file_delete_bytes":
+		out := map[string]any{"path": args["path"]}
+		for _, k := range []string{"start", "end", "after_line", "at_offset"} {
+			if v, ok := args[k]; ok && v != nil {
+				out[k] = v
+			}
+		}
+		if v, ok := args["replace"]; ok && v != nil {
+			out["replace_bytes"] = byteLen(v)
+		}
+		if v, ok := args["text"]; ok && v != nil {
+			out["text_bytes"] = byteLen(v)
+		}
+		return out
 	}
 
 	if strings.HasPrefix(toolName, "http_") || toolName == "web_fetch" {

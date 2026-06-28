@@ -55,6 +55,13 @@ type ContextManager interface {
 	SetSessionToken(token string)
 	// Build returns the full message slice ready to send to the LLM.
 	Build(ctx context.Context) ([]providers.Message, error)
+	// SweepEvictions runs the per-turn, LLM-free eviction pass: it collapses
+	// stale/superseded/oversized re-retrievable tool results (file reads, web
+	// fetches) in the live window to a short placeholder, rewriting stored
+	// history in place. It returns the evictions performed (also DEBUG-logged)
+	// so the caller can optionally surface a one-line notice. No-op when the
+	// eviction policy is disabled.
+	SweepEvictions(ctx context.Context) []EvictionEvent
 	// Compact triggers a normal LLM-based compression pass on demand, identical
 	// to the path taken when the regular compression threshold is crossed.
 	Compact(ctx context.Context) error

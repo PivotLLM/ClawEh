@@ -1,18 +1,17 @@
-import { IconDeviceFloppy } from "@tabler/icons-react"
-import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { useEffect, useState } from "react"
+import { useQuery } from "@tanstack/react-query"
+import { useEffect, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 
 import { patchAppConfig } from "@/api/channels"
-import { getTools } from "@/api/tools"
 import {
   EMPTY_MCP_FORM,
   type MCPHostForm,
   buildMCPFormFromConfig,
-  parseServers,
+  serversToPatch,
   validateEndpointPath,
   validateListen,
+  validateServers,
 } from "@/components/mcp/form-model"
 import {
   ClientServersSection,
@@ -21,14 +20,22 @@ import {
   TransportSection,
 } from "@/components/mcp/mcp-sections"
 import { PageHeader } from "@/components/page-header"
-import { Button } from "@/components/ui/button"
+
+type SaveStatus = "saving" | "saved" | "error" | null
 
 export function MCPPage() {
   const { t } = useTranslation()
-  const queryClient = useQueryClient()
   const [form, setForm] = useState<MCPHostForm>(EMPTY_MCP_FORM)
-  const [baseline, setBaseline] = useState<MCPHostForm>(EMPTY_MCP_FORM)
-  const [saving, setSaving] = useState(false)
+  const [status, setStatus] = useState<SaveStatus>(null)
+
+  // baselineRef tracks the last-saved form so server diffs (serversToPatch) are
+  // computed against what's actually persisted. formRef mirrors the latest form
+  // so the debounced save reads current values.
+  const baselineRef = useRef<MCPHostForm>(EMPTY_MCP_FORM)
+  const formRef = useRef<MCPHostForm>(form)
+  formRef.current = form
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const savedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["config"],
@@ -39,87 +46,107 @@ export function MCPPage() {
     },
   })
 
-  const { data: toolsData, isLoading: toolsLoading } = useQuery({
-    queryKey: ["tools"],
-    queryFn: getTools,
-  })
-
   useEffect(() => {
     if (!data) return
     const parsed = buildMCPFormFromConfig(data)
     setForm(parsed)
-    setBaseline(parsed)
+    baselineRef.current = parsed
   }, [data])
 
-  const isDirty = JSON.stringify(form) !== JSON.stringify(baseline)
+  // Clear timers on unmount.
+  useEffect(
+    () => () => {
+      clearTimeout(saveTimer.current)
+      clearTimeout(savedTimer.current)
+    },
+    [],
+  )
+
+  const clean = (ps: string[]) => ps.map((p) => p.trim()).filter((p) => p !== "")
+
+  // doSave persists whatever is currently valid. Validation-gated per block so a
+  // half-typed server never blocks saving a visibility/toggle change, and an
+  // invalid listen/endpoint never blocks the servers. Does NOT refetch config, so
+  // in-progress edits (e.g. an empty pattern row) survive.
+  const doSave = async () => {
+    const f = formRef.current
+    const listenErr = validateListen(f.listen)
+    const pathErr = validateEndpointPath(f.endpointPath)
+    const serversErr = validateServers(f.servers)
+
+    const patch: Record<string, unknown> = {}
+    if (!listenErr && !pathErr) {
+      patch.mcp_host = {
+        enabled: f.enabled,
+        auto_enable: f.autoEnable,
+        listen: f.listen.trim(),
+        endpoint_path: f.endpointPath.trim(),
+        internal_tools: clean(f.internalToolPatterns),
+        external_tools: clean(f.externalToolPatterns),
+      }
+    }
+    if (!serversErr) {
+      patch.tools = {
+        mcp: { servers: serversToPatch(f.servers, baselineRef.current.servers) },
+      }
+    }
+    if (Object.keys(patch).length === 0) {
+      setStatus("error")
+      return
+    }
+
+    setStatus("saving")
+    try {
+      await patchAppConfig(patch)
+      // Advance the saved baseline; keep the prior servers baseline if we didn't
+      // persist servers this round (so the next diff is still correct).
+      baselineRef.current = {
+        ...f,
+        servers: serversErr ? baselineRef.current.servers : f.servers,
+      }
+      if (listenErr || pathErr || serversErr) {
+        setStatus("error")
+      } else {
+        setStatus("saved")
+        clearTimeout(savedTimer.current)
+        savedTimer.current = setTimeout(() => setStatus(null), 2000)
+      }
+    } catch (e) {
+      setStatus("error")
+      toast.error(e instanceof Error ? e.message : t("pages.mcp.save_error"))
+    }
+  }
+
+  const scheduleSave = () => {
+    clearTimeout(saveTimer.current)
+    saveTimer.current = setTimeout(() => void doSave(), 600)
+  }
 
   const updateField = <K extends keyof MCPHostForm>(
     key: K,
     value: MCPHostForm[K],
   ) => {
     setForm((prev) => ({ ...prev, [key]: value }))
+    scheduleSave()
   }
 
-  const handleReset = () => {
-    setForm(baseline)
-    toast.info(t("pages.mcp.reset_success"))
-  }
-
-  const handleSave = async () => {
-    try {
-      setSaving(true)
-
-      const listenErr = validateListen(form.listen)
-      if (listenErr) throw new Error(listenErr)
-      const pathErr = validateEndpointPath(form.endpointPath)
-      if (pathErr) throw new Error(pathErr)
-
-      const cleanedPatterns = form.toolPatterns
-        .map((p) => p.trim())
-        .filter((p) => p !== "")
-
-      const parsedServers = parseServers(form.serversJSON)
-      if (parsedServers.error) throw new Error(parsedServers.error)
-      const newServers = parsedServers.value ?? {}
-      const baseServers = parseServers(baseline.serversJSON).value ?? {}
-      // Deep-merge semantics: removed server names are set to null so the
-      // backend deletes them; present names overwrite.
-      const serversPatch: Record<string, unknown> = { ...newServers }
-      for (const name of Object.keys(baseServers)) {
-        if (!(name in newServers)) serversPatch[name] = null
-      }
-
-      await patchAppConfig({
-        mcp_host: {
-          enabled: form.enabled,
-          auto_enable: form.autoEnable,
-          listen: form.listen.trim(),
-          endpoint_path: form.endpointPath.trim(),
-          tools: cleanedPatterns,
-        },
-        tools: { mcp: { servers: serversPatch } },
-      })
-
-      const nextForm: MCPHostForm = { ...form, toolPatterns: cleanedPatterns }
-      setForm(nextForm)
-      setBaseline(nextForm)
-      queryClient.invalidateQueries({ queryKey: ["config"] })
-      toast.success(t("pages.mcp.save_success"))
-    } catch (err) {
-      toast.error(
-        err instanceof Error ? err.message : t("pages.mcp.save_error"),
-      )
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const registeredTools = (toolsData?.tools ?? []).map((t) => t.name)
-  const serversError = parseServers(form.serversJSON).error ?? null
+  const serversError = validateServers(form.servers)
 
   return (
     <div className="flex h-full flex-col">
-      <PageHeader title={t("navigation.mcp")} />
+      <PageHeader title={t("navigation.mcp")}>
+        {status && (
+          <span
+            className={`text-xs ${status === "error" ? "text-destructive" : status === "saved" ? "text-emerald-500" : "text-muted-foreground"}`}
+          >
+            {status === "saving"
+              ? "Saving…"
+              : status === "saved"
+                ? "Saved ✓"
+                : "Save failed"}
+          </span>
+        )}
+      </PageHeader>
       <div className="flex-1 overflow-auto p-3 lg:p-6">
         <div className="w-full max-w-[1000px] space-y-6">
           {isLoading ? (
@@ -132,45 +159,31 @@ export function MCPPage() {
             </div>
           ) : (
             <div className="space-y-6">
-              {isDirty && (
-                <div className="bg-yellow-50 px-3 py-2 text-sm text-yellow-700">
-                  {t("pages.mcp.unsaved_changes")}
-                </div>
-              )}
-
               <EnableSection form={form} onFieldChange={updateField} />
 
               <TransportSection form={form} onFieldChange={updateField} />
 
               <ToolsSection
-                form={form}
-                onFieldChange={updateField}
-                registeredTools={registeredTools}
-                toolsLoading={toolsLoading}
+                title={t("pages.mcp.sections.internal_tools")}
+                description={t("pages.mcp.internal_tools_desc")}
+                note={t("pages.mcp.internal_tools_note")}
+                patterns={form.internalToolPatterns}
+                onChange={(next) => updateField("internalToolPatterns", next)}
+              />
+
+              <ToolsSection
+                title={t("pages.mcp.sections.external_tools")}
+                description={t("pages.mcp.external_tools_desc")}
+                note={t("pages.mcp.external_tools_note")}
+                patterns={form.externalToolPatterns}
+                onChange={(next) => updateField("externalToolPatterns", next)}
               />
 
               <ClientServersSection
-                value={form.serversJSON}
+                servers={form.servers}
                 error={serversError}
-                onChange={(next) => updateField("serversJSON", next)}
+                onChange={(next) => updateField("servers", next)}
               />
-
-              <div className="flex justify-end gap-2">
-                <Button
-                  variant="outline"
-                  onClick={handleReset}
-                  disabled={!isDirty || saving}
-                >
-                  {t("common.reset")}
-                </Button>
-                <Button
-                  onClick={handleSave}
-                  disabled={!isDirty || saving || serversError !== null}
-                >
-                  <IconDeviceFloppy className="size-4" />
-                  {saving ? t("common.saving") : t("common.save")}
-                </Button>
-              </div>
             </div>
           )}
         </div>

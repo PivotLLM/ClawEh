@@ -1,174 +1,86 @@
 # ClawEh: Yet another claw - Canadian style
 
-## What's New
+**ClawEh is a small, fast, self-hosted runtime for personal AI assistants.** Written in Go, it can run one or more agents, each with its own workspace, tools, and persistent memory, and connect them to Telegram, Slack, Discord, or the built-in web interface.
 
-### Maestro integration
-Maestro (https://github.com/PivotLLM/Maestro) has been refactored and integrated
-directly into ClawEh for better performance, easier configuration, and agent isolation.
-It remains available as a stand-alone stdio MCP service.
+Although the conversation context can be reset at any time, ClawEh is designed primarily for long-running assistants that maintain continuity over time. Its development emphasizes efficient context management, practical persistent memory, security, and a stable, dependable core.
 
-### Improved context compression
-Context compression (summarizing older conversation so long sessions stay within
-the model's context window) has been significantly improved for reliability and
-quality. You can now optionally tailor it per agent: drop a `COMPRESSION.md` file
-in the agent's workspace with additional instructions, and those are folded into
-the summarization prompt. Leave it out to use the built-in behavior.
+> **Development status:** This application is under active development and I use it on a daily basis for personal and business tasks. It is, however, a work in progress.
 
-### Cognitive memory (cogmem)
-ClawEh has gained a cognitive-memory engine so long-running agents get smarter
-over time instead of relying on hand-edited prompt files. Each session has a
-small SQLite memory database alongside its existing archive. Memory is organized
-as **domains** (containers, each with a unique name — a domain is **sticky**
-(always in the prompt) or a routed topic) that each hold **memories**, where every
-memory is a `fact`, a `preference`, or a `rule`. A background "sleep cycle" periodically reviews new
-conversation and distills it into structured, de-duplicated,
-contradiction-resolved memories; the relevant pieces are then composed into the
-system prompt for each turn. Consolidation reuses your configured **Memory models** (formerly
-"Summarization models" — the same setting, renamed) and its prompt lives in an
-editable `COGMEM.md` seeded into each agent's workspace, so you can tune how the
-agent learns. Cognitive memory is **on by default** for every agent; to disable
-it for a specific agent, give that agent a tool allowlist that excludes the
-`cogmem_*` tools.
+> **Web interface & authentication:** Like many "claw"-style apps intended for single-user use on a personal machine, ClawEh serves its web interface on localhost (loopback) and does not currently require authentication. This causes security challange for those who wish to run ClawEh on a VM or other headless system. Migrating to HTTPS with authentication seems obvious, but many users would end up requiring a self-signed certicate and be plagued by browser warnings. We are evaluating appropriate approaches for a future version and welcome input.
 
-Memory is surfaced in layers. **Sticky** domains (the seeded **`General`** domain
-holds global rules, preferences, and standing facts) are in every prompt; non-sticky
-topic domains are then auto-loaded by relevance using these signals:
+**Feature overview:**
 
-- **Recency** — the most recently used topic domains.
-- **Lexical match** — domains whose name, summary, or memories match salient words in
-  the user's latest message, so asking "what's the status of the BioTech report?"
-  pulls in the BioTech domain even if it hasn't been touched recently.
-- **Tool triggers** — a domain can declare a comma-separated list of tool-name
-  substrings, so it auto-loads the moment the agent uses a matching tool. For
-  example an "Email" domain with triggers `google_gmail,microsoft365_mail` brings
-  the agent's mail preferences into context as soon as it touches a mail tool.
-  Matching ignores case and underscores; the agent sets triggers itself
-  (`cogmem_domain_create`/`cogmem_domain_update`), and the sleep cycle can add them
-  when a domain clearly pertains to specific tools.
-- **Keyword triggers** — a domain can declare a list of distinctive words/phrases
-  that load it when one appears in the incoming message text (matched as a whole
-  phrase, on word boundaries). Unlike tool triggers (which match *tool names*),
-  these match the *message*, so they're the way to have a workflow's context
-  pulled up when a scheduled (cron) job fires or the user mentions it — e.g. a
-  domain with `["morning routine"]` loads when a message says "time for your
-  morning routine." Prefer multi-word phrases over common single words.
+- **Multi-agent architecture** — Run multiple named agents, each with its own workspace, models, tools, system prompt, memory, and channel bindings.
+- **Strong security posture** — Only essential features are enabled by default, with fine-grained access controls for tools, files, agents, and external services.
+- **Broad LLM support** — Connect to OpenRouter, Anthropic, OpenAI, Google Gemini, AWS, x.ai, and others, or use CLI agents such as Claude Code, Codex, and Gemini CLI. Configurable fallback chains and cooldowns improve availability.
+- **Messaging channels** — Connect agents to Telegram, Slack, Discord, or the built-in web interface, with configurable per-agent routing. Additional channels are under consideration.
+- **Cognitive memory** — Each agent can maintain persistent memory that updates in the background, distilling conversations into structured, de-duplicated facts and automatically recalling relevant information for future prompts.
+- **Smart context management** — Automatic summarization and compaction, combined with per-turn eviction of stale tool output, keep long-running conversations responsive and within model context limits.
+- **Message history** — Configurable retention and a searchable archive of past messages, organized by session.
+- **Directory mounts** — Give an agent read-only or read-write access to selected directories, with optional notifications when new files appear.
+- **Scheduled jobs** — Run cron-based recurring tasks, scheduled jobs, and reminders.
+- **Maestro built in** — Orchestrate complex, multi-step work using projects, playbooks, and resumable task lists.
+- **MCP server and client** — ClawEh provides its internal tools directly to API-based LLMs and exposes them through MCP to CLI agents. It can also connect to upstream MCP servers over stdio or HTTP, with granular control over which tools each agent may use.
+- **File tools** — Sandboxed tools for reading, searching, and editing files by line or byte, along with move and delete operations and an optional shared directory for exchanging files between agents.
+- **Web UI** — Manage agents, providers, channels, MCP connections, memory, and configuration without editing JSON manually.
+- **Secure and self-hosted** — Workspace sandboxing, per-agent tool allowlists, and loopback-bound services, delivered as MIT-licensed Go software that you run on your own infrastructure.
 
-These signals are deduplicated and ranked (tool trigger, then keyword, then lexical
-match, then recency), so each relevant domain is loaded once. No embeddings or
-vector search are involved — routing is lexical and deterministic.
+## Features
 
-#### Confirming inferred memories
-When the agent (or the sleep cycle) infers something it is not certain about, it
-stores it as a **pending** memory rather than acting on it. Pending memories are
-surfaced **once per session** as a short digest in the prompt, and the agent asks
-you to confirm in chat. Reply naturally — on a "yes" the agent calls
-`cogmem_memory_confirm` to promote it to active memory, and on a "no" it calls
-`cogmem_memory_retire` to drop it. The digest is throttled so it is not repeated
-every turn; a newly inferred pending memory re-surfaces the next turn. Set
-`memory.prompt.pending_surface: "export_only"` to keep pending items out of the
-prompt entirely (they still appear in `cogmem_export` and the WebUI memory
-browser).
+### Maestro task orchestration
 
-#### Purging cognitive memory
-`claw memory purge` cleans up accumulated clutter across **all** assistants. It
-purges everything that is **not current active memory** — every domain whose
-status is not active (archived/review) along with its memories, plus every
-non-active memory (retired, superseded, review). Only active memories in active
-domains survive (including the sticky `General` domain).
+Maestro lets an assistant plan, coordinate, and execute complex work rather than handling every step sequentially in a single conversation. It can break large or repeatable jobs into **projects**, reusable **playbooks**, and resumable **task lists**, then delegate individual tasks to fresh sub-agents running with the parent agent's models, tools, permissions, and workspace. Independent tasks can run in parallel, failed tasks can be retried, and completed work can be passed through automated QA and review steps before the results are combined into a final report. This makes it practical to automate multi-stage workflows such as repository analysis, research, testing, pre-audits, document generation, and recurring operational procedures. Maestro is enabled per agent with a single toggle, and all of its data remains within that agent's workspace. The upstream project is also available as a stand-alone stdio MCP service: https://github.com/PivotLLM/Maestro
 
-It is a **dry run by default** — it reports what would be removed, per database and
-in total, without changing anything:
+### MCP servers
+ClawEh is both an MCP **server** — exposing its tools to CLI-based agents — and an MCP **client** that connects to upstream servers over **stdio** or **HTTP**, providing their tools to your agents. Add/edit external servers in the WebUI. Access is **granular per agent**: each agent is granted upstream tools individually (by server or tool-name prefix), and a coarse per-endpoint visibility filter controls what the host advertises.
+
+### Context management
+Two mechanisms keep long sessions inside the model's window. **Eviction** is a per-turn, LLM-free sweep that collapses re-retrievable tool results (file reads, web fetches) to a short placeholder once the agent has moved on. By evicting stale data before every dispatch, summarization fires far less often. **Compression** summarizes older conversation when the window fills. It can be tailored per agent with a `COMPRESSION.md` in the workspace. See [docs/context-eviction.md](docs/context-eviction.md).
+
+### Cognitive memory
+Long-running agents need to get smarter over time instead of relying on hand-edited prompt files. Each session has a small SQLite memory database. Memory is organized as **domains** — named containers that are either **sticky** (always in the prompt) or routed topics — holding **memories**, each a `fact`, `preference`, or `rule`. A background "sleep cycle" reviews new conversation and distills it into structured, de-duplicated, contradiction-resolved memories, and the relevant pieces are composed into the prompt each turn. Consolidation reuses your configured **Memory models**, and its prompt lives in an editable `COGMEM.md` in the workspace. 
+
+The seeded **`General`** sticky domain holds global rules and standing facts; memory domains are auto-load by relevance using **recency**, **lexical match** (salient words in the latest message), **tool triggers** (a domain loads when the agent uses a matching tool — e.g. an "email" domain on `google_gmail`), and **keyword triggers** (phrases in the incoming message. This significantly improves agent performance without relying on external embedding services or vector databases.
+
+When the agent infers something uncertain, it stores it as a **pending** memory and
+asks you to confirm in chat (reply "yes" to keep it, "no" to drop it). Use **`claw
+memory purge`** to clear everything that isn't current active memory — a dry run by
+default; add `--confirm` to delete and vacuum. Stop the gateway first so you're not
+racing live agents:
 
 ```bash
-claw memory purge
-```
-
-Add `--confirm` to actually delete (it also `VACUUM`s each database to reclaim
-space):
-
-```bash
-claw memory purge --confirm
-```
-
-Recommended sequence — review the counts first, and stop the gateway so you are
-not racing live agents writing memory:
-
-```bash
-sudo systemctl stop claw      # avoid racing live agents
 claw memory purge             # dry run — review the counts
 claw memory purge --confirm   # delete + vacuum
-sudo systemctl start claw
 ```
 
-Notes:
-- If you run with a non-default data directory, set `CLAW_HOME` the same way the
-  service does (e.g. `CLAW_HOME=/path claw memory purge`) so it targets the same
-  agents tree.
-- Even the dry run opens each `.cogmem.db`, which runs the normal idempotent
-  migrations — harmless, but another reason to stop the gateway first.
+### Agents, workspaces, and files
+By default an agent's file tools see two directories: **`<workspace>/files`** (read
+**and** write — its working area, created automatically) and **`<workspace>/skills`**
+(read-only). Everything else is invisible to the agent, including the human-authored
+prompt files — `AGENTS.md`, `SOUL.md`, `IDENTITY.md`, `USER.md`, `MEMORY.md` — which
+are combined into the system prompt every turn. Keep those **brief and general**; the
+agent no longer edits them, they're authoritative, and shape what it learns. A shared
+**common directory** lets agents that are given access to it exchange files.
 
-### Workspace `.md` are files are now for humans to edit, not the agent
-The agent no longer edits its own workspace markdown files (`AGENTS.md`,
-`SOUL.md`, `IDENTITY.md`, `USER.md`, `MEMORY.md`). They are now intended for
-**human authorship**. As in other *claw applications, these files are combined
-and inserted into the system prompt, so keep them **brief and general** — they
-are sent on every turn. As the cognitive-memory implementation matures, the
-specific, situational information the agent needs is inserted into the context
-automatically rather than living in these files. The `.md` files are treated as
-**authoritative** (they always win over learned memory) and are **reviewed during
-cognitive-memory consolidation**, so anything you write in them shapes what the
-agent learns. The agent records what it learns to its memory database (via the
-`cogmem_*` tools / the sleep cycle), not to your files.
+**External mounts.** Mount any folder on the file system as a top-level name beside `files/` and
+`skills/` — per agent, on the **Agents page** (a name, an absolute path, and an
+optional **notify** toggle). A mount `notes` → `/home/ai/Documents/mynotes` is reachable
+as `notes/.... read **and** write, sandboxed so the agent can't climb above it (`..`
+is rejected). Unless write permissions are explicitly granted, the directory is read-only. With **notify** on, claw watches the tree and messages the agent on its default channel whenever a **new** file appears.
 
-### Agent file access: `files/` + `skills/`
-By default an agent's file tools are scoped to just two directories:
-**`<workspace>/files`** (read **and** write — its working area for drafts and
-outputs, created automatically) and **`<workspace>/skills`** (read-only). The rest
-of the workspace is invisible to the agent's file tools — including the
-human-authored config files (`AGENTS.md`, `SOUL.md`, `IDENTITY.md`, `USER.md`,
-`MEMORY.md`), which are already injected into its prompt, and subsystem files like
-`COGMEM.md`/`COMPRESSION.md`, which are configuration, not instructions for the
-agent. Both lists are configurable (`workspace_read_subdirs`, default
-`["files","skills"]`; `workspace_write_subdir`, default `files`). **Existing files
-that need to be agent-writable must be moved into `files/` manually.** A shared
-**common directory** (default `agents/common`, configurable to any path) also lets
-agents exchange files via `common_put` / `common_get` / `common_list` /
-`common_delete`; access is on by default and can be toggled per agent.
-
-### What's next
-1. **Monitoring, reviewing, and tweaking cognitive memory** — observing what it
-   learns and refining the prompts, thresholds, and routing signals (recency,
-   lexical match, tool triggers).
-2. Depending on what we find, **refining how the most appropriate memory is
-   automatically inserted** into the agent's context.
-
-ClawEh began as a fork of [PicoClaw](https://github.com/sipeed/picoclaw). Written in Go, ClawEh it is focused on a minimal footprint, efficient deployment, core stability, reliability, security, and long-term maintainability.
+**File tools** address content explicitly by **lines** or **bytes**, so units never
+mix: `file_read_lines`/`_bytes`, `file_search_lines`/`_bytes`, the positional
+`file_edit_lines`/`insert`/`delete` (line and byte variants), plus `file_edit`
+(exact-text replace), `file_write`, `file_append`, `file_copy`, `file_move` (works
+across mounts), and `file_delete` (requires `sure=true`; refuses to delete backups).
 
 ## Why ClawEh exists
 
-PicoClaw originally caught my attention because it is written in Go, my language of choice for building performant systems with efficient development workflows, straightforward deployment, strong cross-platform tooling, and long-term maintainability.
+ClawEh began as a fork of [PicoClaw](https://github.com/sipeed/picoclaw), chosen for its performant, easy to deploy, and maintainable Go foundation. I loved the PicoClaw concept and originally focused on fixing issues and contributing to the project. However, a growing PR backlog, and the apparent prioritization of new features over core stability make it clear that PicoClaw was unlikely to meet my needs in the foreseeable future. This is not a criticism of the PicoClaw authors, it simply reflects different priorities: a smaller, focused codebase emphasizing core stability, reliability, security, and maintainability.
 
-When I began using PicoClaw, I quickly encountered bugs and design issues that affected reliability, maintainability, and day-to-day use. I contributed a number of fixes upstream, but in practice I could not rely on the upstream softare in its state at the time for my own use. Given the volume of incoming changes, continuing to route needed fixes through a large upstream queue no longer seemed practical, so a separate project with a smaller scope, a higher quality bar, and a stronger focus on core stability became the more sustainable path.
+## Binary distribution
 
-This is not intended as criticism of the original authors or their effort. I am grateful for the starting point they provided and for making the project available in Go in the first place. The PicoClaw project is clearly receiving a high volume of contributions and proposed changes, and I appreciate that keeping up with that kind of volume is difficult under any circumstances. This fork simply reflects a different set of needs and priorities: a smaller, more focused codebase with a stronger emphasis on core stability, reliability, security, and maintainability.
-
-ClawEh exists because I desired a small, reliable, performant and secure "Claw" focued on:
-
-- flexible support for both CLI-based agents and direct multi-provider API integrations
-- integration with messaging platforms such as Slack, Telegram, and Discord
-- effective use of MCP servers
-- features such as cron to execute periodic tasks
-
-From a security practitioner’s perspective, expanding AI agents by packing an ever-growing range of capabilities into a single monolithic application is a mistake. The broader and more complex the feature set becomes, the larger the attack surface and the harder it is to secure effectively. If you are looking for a "claw" with everything including the kitchen sink, this isn't it.
-
-## Core features
-
-- Lightweight Go implementation with straightforward deployment
-- Multi-agent support with per-agent configuration and workspaces
-- Flexible LLM integration through CLI-based agents and direct multi-provider APIs
-- Channel integrations and automation capabilities for practical operational use
-- Cron-based scheduling for all periodic and time-based task execution — to reduce unnecessary duplication and complexity, all scheduling and periodic execution is consolidated in cron (see [docs/cron.md](docs/cron.md))
-- MIT-licensed, with a strong emphasis on openness, reuse, and maintainability
+To assist users who are not interested in compiling it themselves, I will be uploading recommended builds to GitHub for a variety of platforms. If you'd like another 
 
 ## Prerequisites
 
@@ -263,7 +175,7 @@ ClawEh supports a wide range of LLM providers. It is your responsibility to ensu
 
 | Mode | Memory per | Description |
 |---|---|---|
-| `unified` | Agent | One shared memory for the entire agent, across all users, channels, and platforms |
+| `unified` | Agent | One shared memory for the entire agent, across all users, channels, and platforms. |
 | `per-user` | Person | Each person gets their own private memory. Recognises the same person across platforms if `identity_links` are configured; otherwise each platform ID is a separate person |
 | `per-platform` | Person × platform | Each person has a separate memory per platform. Slack and Telegram are independent conversations even for the same person |
 | `per-account` | Person × platform × bot | Like `per-platform`, but also separates by bot account. Relevant only when multiple bots on the same platform are routed to the same agent |
@@ -274,7 +186,7 @@ The default is `unified`.
 
 *Personal assistant, or a purpose-built specialist* — use `unified`. This is the right choice in two situations. For a personal assistant: one continuous memory across all your channels, it knows your preferences, remembers your projects, and picks up where you left off regardless of where you reach it. For a purpose-built assistant — if you create an agent named Alice who specialises in security, there is one Alice. Anyone who contacts her, through any channel you have configured, is talking to the same Alice with the same accumulated knowledge and context. She does not have separate memories for different users; she is one coherent assistant.
 
-*Shared assistant for a team or family* — use `per-user`. Each person gets their own private relationship with the assistant — their own context, their own memory, no bleed between users. If the same person might contact the assistant from multiple platforms, configure `identity_links` to tell the system they are the same person (see below).
+*Shared assistant for a team or family* — use `per-user`. Each person gets their own private relationship with the assistant — their own context, their own memory, no bleed between users. If the same person might contact the assistant from multiple platforms, configure `identity_links` to tell the system they are the same person (see below). However, before going this route, consider using `unified` mode and creating a separate agent for each user.
 
 *Keeping contexts separate by platform* — use `per-platform`. Each person gets a separate session per platform, so a user's Slack and Telegram conversations are fully independent even when handled by the same agent.
 
@@ -297,7 +209,7 @@ Without this, a person's Telegram ID and Slack ID are treated as two separate pe
 
 **One-shot tasks without context**
 
-In `unified` mode every conversation adds to the shared memory. If you want the agent to handle a task in isolation — without drawing on prior chat history and without polluting the main conversation — ask it to use the `spawn` tool. A spawned sub-agent is a **copy of the agent** (same workspace, tools, MCP, prompt, and a read-only snapshot of its memory) running on the given task in a separate session, optionally on a different model. It completes the work and reports back; nothing from that exchange appears in or affects the main conversation, and it cannot write the agent's memory, schedule jobs, or spawn further sub-agents. See [docs/subagents.md](docs/subagents.md).
+In `unified` mode every conversation adds to the shared memory. If you want the agent to handle a task in isolation, without drawing on prior chat history and without polluting the main conversation, ask it to use the `spawn` tool. A spawned sub-agent is a **copy of the agent** (same workspace, tools, MCP, prompt, and a read-only snapshot of its memory) running on the given task in a separate session, optionally on a different model. It completes the work and reports back; nothing from that exchange appears in or affects the main conversation, and it cannot write the agent's memory, schedule jobs, or spawn further sub-agents. See [docs/subagents.md](docs/subagents.md).
 
 **Security: access control**
 
@@ -309,7 +221,7 @@ On platforms like Telegram where bots are publicly discoverable by username, thi
 
 ## Security Considerations
 
-ClawEh is intended to function as personal assistant that runs on a computer the user controls. It is not designed or intended to provide any kind of public service. The current web interface uses HTTP and has no authentication, so it should be treated as unsafe for exposure to untrusted networks. We strongly recommend running it on `localhost` only, and only when needed.
+ClawEh is intended to function as personal assistant that runs on a computer the user controls. It is not designed or intended to provide any kind of public service. The current web interface uses HTTP and has no authentication, and therefore should not be exposed to untrusted networks. We strongly recommend running it on `localhost` only. We are aware that many people wish to run a "claw" application on a headless computer and are considering the right path forward.
 
 The web management API has no authentication layer. Any client that can reach the management port can add or modify model configurations (including API keys and endpoints), read session history, and start or stop the gateway process. Access control relies entirely on the listen address (localhost-only by default) and, when running in public mode, the IP allowlist. Do not run with `-public` and an empty `allowed_cidrs` list on any network where untrusted hosts could reach the port.
 
@@ -561,13 +473,13 @@ All tools are available on this path, including the session tools (`session_comp
 
 **Path 2 — MCP HTTP server (CLI providers)**
 
-For CLI providers (`claude-cli`, `codex-cli`, `gemini-cli`), the CLI subprocess has no access to claw's internal session state. Tools are called via the MCP HTTP server at `http://127.0.0.1:5911/mcp`. Every tool call on this path carries a `session_token` parameter — a short-lived `SST<64hex>` token injected into the agent's system prompt at session start. The MCP server resolves this token to the correct agent and session, then executes the tool.
+For CLI providers (`claude-cli`, `codex-cli`, `gemini-cli`), the CLI subprocess has no access to claw's internal session state. Tools are called via the MCP HTTP server at `http://127.0.0.1:5911/internal`. Every tool call on this path carries a `session_token` parameter — a short-lived `SST<64hex>` token injected into the agent's system prompt at session start. The MCP server resolves this token to the correct agent and session, then executes the tool.
 
 For session-scoped tools, the MCP server uses the session token to inject the session key into the execution context. The session tools implement the `SessionScoped` interface, so the dispatcher injects the key automatically — no hardcoded list to maintain.
 
 | | Direct API providers | CLI providers |
 |---|---|---|
-| Tool call mechanism | API response (`tool_use` blocks) | MCP HTTP at `:5911/mcp` |
+| Tool call mechanism | API response (`tool_use` blocks) | MCP HTTP at `:5911/internal` |
 | Session context | Implicit (agent loop) | `session_token` parameter |
 | Session tools available | All six | All six |
 
@@ -600,27 +512,44 @@ The `tools` list is a single global allowlist applied to all MCP clients (not pe
 
 ### Consuming external MCP servers (claw as an MCP client)
 
-Claw can also connect **outward** to third-party (upstream) MCP servers and make their tools available to your agents. Configure them under `tools.mcp.servers` (stdio, SSE, or Streamable HTTP transports, with optional auth headers and env files); claw connects on startup, lists each server's tools, and registers them as ordinary tools.
+Claw can also connect **outward** to third-party (upstream) MCP servers and make their tools available to your agents. **Manage them in the WebUI (the MCP page)** — add each server with **Add server** (transport **stdio** or **http**; `sse` is a deprecated alias of http), and enable it. No JSON editing required; the underlying config is `tools.mcp.servers`. Claw connects to enabled servers on startup, lists each server's tools, and registers them — no extra switch to flip.
 
-There is an important split by provider type:
+(`tools.mcp.enabled` and `tools.mcp.auto_enable` remain in the config file and **both default to on**, so defining and enabling a server is all that's needed.)
 
-- **Direct API providers** (`anthropic`, `openai`, `openai-compat`, `gemini`): **get external MCP tools automatically.** Claw acts as the MCP client — it lists the upstream tools, presents them to the model alongside its own, and proxies each call to the upstream server.
-- **CLI providers** (`claude-cli`, `codex-cli`, `gemini-cli`): **do not** receive external MCP tools through claw (the CLI runs as its own agent and ignores claw-side tool definitions). Instead, **configure those MCP servers directly in each CLI** using its own native MCP configuration — the CLIs (Claude Code, Codex CLI, Gemini CLI) all support connecting to MCP servers themselves. (They reach *claw's* own tools via the MCP host above; point them at any *external* MCP servers directly.)
+Both provider types get the external tools **through claw** — full feature parity, no per-CLI setup:
 
-In short: API agents get upstream MCP via claw; CLI agents should be pointed at upstream MCP servers directly in their own config. External MCP servers can be managed from the WebUI (the MCP page) or in `tools.mcp.servers`.
+- **Direct API providers** (`anthropic`, `openai`, `openai-compat`, `gemini`): claw lists the upstream tools, presents them to the model alongside its own, and proxies each call.
+- **CLI providers** (`claude-cli`, `codex-cli`, `gemini-cli`): claw aggregates the external tools into its own MCP host, so a CLI that already talks to claw (see [Client configuration](#client-configuration)) sees them too — claw proxies the calls. (If you instead want a CLI to reach an external server *directly*, configure it in that CLI's own MCP config.)
+
+Per-agent tool allowlists apply: allow an external server's tools with the `mcp_<server>_*` pattern (or `*`).
 
 ### Client configuration
 
-The server speaks the Streamable HTTP transport at `http://127.0.0.1:5911/mcp`.
+The server speaks the Streamable HTTP transport on the MCP host `listen` address (default `127.0.0.1:5911`, loopback only — do not expose it externally) and offers **two endpoints**:
 
-No authentication is performed: the listener is bound to loopback only and is intended for local CLI clients. Do not expose it externally.
+- **`/internal`** — authenticated by a per-call `session_token` parameter. This is ClawEh's multi-assistant routing: one local CLI install can act as **several agents** by supplying the appropriate agent's `session_token` on each call. **Local CLIs that authenticate as multiple agents should use `/internal`.**
+- **`/mcp`** — standard bearer auth (`Authorization: Bearer <token>`), one identity per connection, for external/generic MCP clients.
+
+See [docs/mcp.md](docs/mcp.md) for the full design.
+
+#### Quick setup — `set-mcp.sh`
+
+The `set-mcp.sh` script in the repo root registers (or refreshes) claw in whichever of Gemini CLI, Codex CLI, and Claude Code are **installed on your PATH** — the rest are skipped. It removes and re-adds each CLI one at a time, pointing them at the `/internal` endpoint:
+
+```bash
+./set-mcp.sh
+```
+
+> **Port:** the script's URL must match the MCP host `listen` port in your config (`tools → mcp_host → listen`). **If you change that port, update the script** — edit `CLAW_MCP_URL` at the top, or run `CLAW_MCP_URL=http://127.0.0.1:<port>/internal ./set-mcp.sh`.
+
+The per-CLI commands it runs are below if you prefer to do it by hand.
 
 #### Claude Code
 
 To register claw as an MCP server scoped to the user (all projects):
 
 ```bash
-claude mcp add --transport http claw --scope user http://127.0.0.1:5911/mcp
+claude mcp add --transport http claw --scope user http://127.0.0.1:5911/internal
 ```
 
 To list configured MCP servers:
@@ -640,14 +569,14 @@ claude mcp -h
 Register claw with the `codex mcp add` command:
 
 ```bash
-codex mcp add claw --url http://127.0.0.1:5911/mcp
+codex mcp add claw --url http://127.0.0.1:5911/internal
 ```
 
 This writes the entry to `~/.codex/config.toml`. You can also edit the file directly:
 
 ```toml
 [mcp_servers.claw]
-url = "http://127.0.0.1:5911/mcp"
+url = "http://127.0.0.1:5911/internal"
 ```
 
 #### Gemini CLI
@@ -655,7 +584,7 @@ url = "http://127.0.0.1:5911/mcp"
 [Gemini CLI](https://github.com/google-gemini/gemini-cli) supports MCP servers via the `gemini mcp add` command or by editing `~/.gemini/settings.json` directly.
 
 ```bash
-gemini mcp add claw http://127.0.0.1:5911/mcp --scope user --transport http
+gemini mcp add claw http://127.0.0.1:5911/internal --scope user --transport http
 ```
 
 Omit `--scope user` to configure claw at the project level instead.
@@ -665,7 +594,7 @@ Omit `--scope user` to configure claw at the project level instead.
 To grant access to all tools without prompting (use with caution — see warning above):
 
 ```bash
-gemini mcp add claw http://127.0.0.1:5911/mcp --scope user --transport http --trust
+gemini mcp add claw http://127.0.0.1:5911/internal --scope user --transport http --trust
 ```
 
 Alternatively, add the following to `~/.gemini/settings.json`:
@@ -674,7 +603,7 @@ Alternatively, add the following to `~/.gemini/settings.json`:
 {
   "mcpServers": {
     "claw": {
-      "url": "http://127.0.0.1:5911/mcp",
+      "url": "http://127.0.0.1:5911/internal",
       "type": "http"
     }
   }

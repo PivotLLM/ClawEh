@@ -10,8 +10,8 @@ import (
 
 func TestReadFileTool_Metadata(t *testing.T) {
 	tool := toolsfiles.NewReadFileTool("", false, toolsfiles.MaxReadFileSize)
-	if tool.Name() != "file_read" {
-		t.Errorf("Name() = %q, want file_read", tool.Name())
+	if tool.Name() != "file_read_bytes" {
+		t.Errorf("Name() = %q, want file_read_bytes", tool.Name())
 	}
 	if tool.Description() == "" {
 		t.Error("Description() should not be empty")

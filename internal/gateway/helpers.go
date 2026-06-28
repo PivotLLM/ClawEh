@@ -29,6 +29,7 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/logger"
 	"github.com/PivotLLM/ClawEh/pkg/mcpserver"
 	"github.com/PivotLLM/ClawEh/pkg/media"
+	"github.com/PivotLLM/ClawEh/pkg/mountwatch"
 	"github.com/PivotLLM/ClawEh/pkg/providers"
 	"github.com/PivotLLM/ClawEh/pkg/servicetoken"
 	"github.com/PivotLLM/ClawEh/pkg/state"
@@ -88,6 +89,7 @@ func buildMergedMux(srv *webserver.Server) *http.ServeMux {
 // gatewayServices holds references to all running services
 type gatewayServices struct {
 	CronService    *cron.CronService
+	MountWatcher   *mountwatch.Watcher
 	MediaStore     media.MediaStore
 	ChannelManager *channels.Manager
 	DeviceService  *devices.Service
@@ -316,6 +318,11 @@ func setupAndStartServices(
 	}
 	logger.InfoC("cron", "Cron service started")
 
+	// Watch notify-enabled external mounts for new files (cron-style notices).
+	services.MountWatcher = mountwatch.New(agentLoop.GetConfig, msgBus, 0)
+	services.MountWatcher.Start()
+	logger.InfoC("mountwatch", "Mount watcher started")
+
 	// Create media store for file lifecycle management with TTL cleanup
 	services.MediaStore = media.NewFileMediaStoreWithCleanup(media.MediaCleanerConfig{
 		Enabled:  cfg.Tools.MediaCleanup.Enabled,
@@ -384,6 +391,14 @@ func setupAndStartServices(
 		logger.InfoC("device", "Device event service started")
 	}
 
+	// Connect external MCP servers and register their tools onto the agent
+	// registries BEFORE the host server enumerates its catalogue — otherwise
+	// CLI-based agents (and CLI fallbacks) never see the mcp_* tools, since the
+	// host catalogue is a one-shot snapshot taken at startMCPServer time.
+	if err := agentLoop.EnsureMCPInitialized(context.Background()); err != nil {
+		logger.WarnCF("mcpserver", "MCP client initialization reported an error", map[string]any{"error": err.Error()})
+	}
+
 	// Start the MCP server so CLI providers (claude-cli/codex-cli/gemini-cli)
 	// can call claw's host-side tools natively over MCP.
 	if err := startMCPServer(cfg, agentLoop, msgBus, services); err != nil {
@@ -411,17 +426,15 @@ func setupAndStartServices(
 	return services, nil
 }
 
-// mcpHostAllowlist resolves the tool allowlist the MCP host catalogue (tools/list)
-// should advertise. Parity rule: external MCP and the internal API path expose the
-// SAME tools, gated per-agent at execution time (tools/call resolves the
-// session_token to an agent and enforces that agent's config + ACL). So the
-// default exposes the FULL union of every agent's allowed tools ("*") — anything
-// an agent can use internally is discoverable and callable externally, subject to
-// the same per-agent gate. An explicit cfg.MCPHost.Tools narrows the catalogue
-// (operator override); to expose NO tools, disable mcp_host instead.
-func mcpHostAllowlist(cfg *config.Config) []string {
-	if len(cfg.MCPHost.Tools) > 0 {
-		return cfg.MCPHost.Tools
+// mcpVisibilityList resolves a per-endpoint tools/list visibility filter. Empty
+// means "advertise the full union of every agent's allowed tools" ("*") — parity
+// with the internal API path, gated per-agent at execution time (tools/call
+// resolves the session_token and enforces that agent's config + ACL). A non-empty
+// list coarsely narrows what the endpoint advertises; to expose NO tools, disable
+// mcp_host instead.
+func mcpVisibilityList(patterns []string) []string {
+	if len(patterns) > 0 {
+		return patterns
 	}
 	return []string{"*"}
 }
@@ -455,7 +468,8 @@ func startMCPServer(cfg *config.Config, agentLoop *agent.AgentLoop, msgBus *bus.
 		mcpserver.WithAgentWorkspaces(agentWorkspaces),
 		mcpserver.WithListen(cfg.MCPHost.Listen),
 		mcpserver.WithEndpointPath(cfg.MCPHost.EndpointPath),
-		mcpserver.WithAllowlist(mcpHostAllowlist(cfg)),
+		mcpserver.WithInternalAllowlist(mcpVisibilityList(cfg.MCPHost.InternalTools)),
+		mcpserver.WithExternalAllowlist(mcpVisibilityList(cfg.MCPHost.ExternalTools)),
 		mcpserver.WithMessageBus(msgBus),
 	)
 	if err != nil {
@@ -545,6 +559,9 @@ func stopAndCleanupServices(
 	}
 	if services.DeviceService != nil {
 		services.DeviceService.Stop()
+	}
+	if services.MountWatcher != nil {
+		services.MountWatcher.Stop()
 	}
 	if services.CronService != nil {
 		services.CronService.Stop()
@@ -750,6 +767,13 @@ func restartServices(
 	} else {
 		logger.InfoCF("voice", "Transcription disabled", nil)
 	}
+
+	// Reconnect external MCP servers and re-register their tools onto the freshly
+	// rebuilt registry BEFORE the host server re-enumerates. ReloadProviderAndConfig
+	// builds a new registry (which has no MCP tools, and is not covered by the
+	// startup initOnce), so without this a reload silently drops every agent's
+	// mcp_* tools and webui edits to mcp_tools would not take effect.
+	al.ReinitMCP(runCtx)
 
 	// Restart MCP server — it was shut down as part of stopAndCleanupServices.
 	if err := startMCPServer(cfg, al, msgBus, services); err != nil {

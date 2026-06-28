@@ -24,6 +24,7 @@ type ContextBuilder struct {
 	skillsLoader       *skills.SkillsLoader
 	skillsFilter       []string
 	memory             *MemoryStore
+	mounts             []config.MountConfig
 	toolDiscoveryBM25  bool
 	toolDiscoveryRegex bool
 
@@ -50,6 +51,31 @@ func (cb *ContextBuilder) WithToolDiscovery(useBM25, useRegex bool) *ContextBuil
 	cb.toolDiscoveryBM25 = useBM25
 	cb.toolDiscoveryRegex = useRegex
 	return cb
+}
+
+// WithMounts records the agent's external folder mounts so the system prompt can
+// tell the agent which top-level folders it can reach.
+func (cb *ContextBuilder) WithMounts(mounts []config.MountConfig) *ContextBuilder {
+	cb.mounts = mounts
+	return cb
+}
+
+// accessibleFolders is the short list of top-level folders the file tools can
+// reach: files/ and skills/ always, plus each configured mount.
+func (cb *ContextBuilder) accessibleFolders() string {
+	parts := []string{"files/ (read/write)", "skills/ (read-only)"}
+	for _, m := range cb.mounts {
+		name := strings.TrimSpace(m.Name)
+		if name == "" {
+			continue
+		}
+		access := "read-only"
+		if m.Writable {
+			access = "read/write"
+		}
+		parts = append(parts, fmt.Sprintf("%s/ (external, %s)", name, access))
+	}
+	return strings.Join(parts, ", ")
 }
 
 // WithSkillsFilter restricts which skills are available to this agent.
@@ -103,6 +129,7 @@ You are a helpful AI assistant.
 ## Workspace
 Your working area is %s/files — write drafts and outputs there. Your configuration
 and memory are already included in this prompt; you do not need to read workspace files.
+Folders your file tools can reach: %s.
 
 ## Important Rules
 
@@ -112,12 +139,12 @@ and memory are already included in this prompt; you do not need to read workspac
 
    **Declining to respond** - If you should not reply at all — for example a group message clearly directed at someone else — reply with exactly !none (and nothing else). Do NOT return an empty message: an empty reply is treated as an error and you will be asked to try again. Replying !none tells the system you intentionally have nothing to say.
 
-3. **Memory (cogmem)** - The cogmem_* tools are your long-term memory: use them to record anything worth remembering and to search for what you need. It is organized into **domains** (containers of related memories), each with a unique name. A domain is either **sticky** (included in EVERY prompt; global rules, preferences, and standing facts — the pre-existing **General** domain is sticky) or non-sticky (a topic/project, loaded only when relevant). Each domain holds one or more **memories**, each typed as a **fact** (something true), **preference** (how the user likes things done), or **rule** (a hard directive). Record with cogmem_memory_create — with no domain argument it lands in sticky **General** (always in context); pass a domain_hint or domain_id for a topic domain. A domain can auto-load by context two ways: **tool triggers** (tool-name substrings — e.g. mcp_<server> for a whole MCP server) load it when you use a matching tool, and **keyword triggers** (words/phrases) load it when one appears in the incoming message, including a scheduled (cron) message — prefer multi-word phrases so common words don't over-match. Memory also updates on its own: a background process saves and refines memories from your conversations and loads the relevant ones into each prompt — so it may include things you did not save yourself. Because only relevant memories are loaded, use cogmem_memory_search to look things up before answering anything that may depend on past context you cannot currently see. Your file tools can only access files/ (read/write) and skills/ (read); your config files (AGENTS/SOUL/IDENTITY/USER/MEMORY) are already in this prompt — you cannot read or edit them.
+3. **Memory (cogmem)** - The cogmem_* tools are your long-term memory: use them to record anything worth remembering and to search for what you need. It is organized into **domains** (containers of related memories), each with a unique name. A domain is either **sticky** (included in EVERY prompt; global rules, preferences, and standing facts — the pre-existing **General** domain is sticky) or non-sticky (a topic/project, loaded only when relevant). Each domain holds one or more **memories**, each typed as a **fact** (something true), **preference** (how the user likes things done), or **rule** (a hard directive). Record with cogmem_memory_create — with no domain argument it lands in sticky **General** (always in context); pass a domain_hint or domain_id for a topic domain. A domain can auto-load by context two ways: **tool triggers** (tool-name substrings — e.g. mcp_<server> for a whole MCP server) load it when you use a matching tool, and **keyword triggers** (words/phrases) load it when one appears in the incoming message, including a scheduled (cron) message — prefer multi-word phrases so common words don't over-match. Memory also updates on its own: a background process saves and refines memories from your conversations and loads the relevant ones into each prompt — so it may include things you did not save yourself. Because only relevant memories are loaded, use cogmem_memory_search to look things up before answering anything that may depend on past context you cannot currently see. Your file tools can reach the folders listed in the Workspace section above; your config files (AGENTS/SOUL/IDENTITY/USER/MEMORY) are already in this prompt — you cannot read or edit them.
 
 4. **Context summaries** - Conversation summaries provided as context are approximate references only. They may be incomplete or outdated. Always defer to explicit user instructions over summary content.
 
 %s`,
-		version, workspacePath, toolDiscovery)
+		version, workspacePath, cb.accessibleFolders(), toolDiscovery)
 }
 
 func (cb *ContextBuilder) getDiscoveryRule() string {

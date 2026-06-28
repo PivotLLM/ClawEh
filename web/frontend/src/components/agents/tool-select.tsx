@@ -17,10 +17,9 @@ export function ToolSelect({ selected, catalog, onChange, suiteStates }: ToolSel
   const perToolTools = catalog.tools.filter((t) => !t.suite)
   const suiteTools = catalog.tools.filter((t) => t.suite)
 
-  const allTools = [
-    ...perToolTools.map((t) => t.name),
-    ...(catalog.mcp_servers ?? []).map((s) => s.pattern),
-  ]
+  // MCP-client tools are no longer part of this per-tool allowlist; they have
+  // their own per-tool mcp_tools field (see the MCP access box).
+  const allTools = perToolTools.map((t) => t.name)
 
   // When "*" is present, expand to full explicit list before applying any change.
   const effectiveSelected = (): string[] => {
@@ -44,7 +43,6 @@ export function ToolSelect({ selected, catalog, onChange, suiteStates }: ToolSel
   const handleClear = () => onChange([])
 
   const noneSelected = selected.length === 0
-  const hasMCPServers = (catalog.mcp_servers?.length ?? 0) > 0
 
   return (
     <div className="space-y-2">
@@ -75,7 +73,7 @@ export function ToolSelect({ selected, catalog, onChange, suiteStates }: ToolSel
         </p>
       )}
 
-      <div className="space-y-0.5">
+      <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 md:grid-cols-3">
         {[...perToolTools].sort((a, b) => a.name.localeCompare(b.name)).map((tool) => (
           <label
             key={tool.name}
@@ -112,31 +110,7 @@ export function ToolSelect({ selected, catalog, onChange, suiteStates }: ToolSel
         </div>
       )}
 
-      {hasMCPServers && (
-        <div>
-          <p className="text-xs font-semibold text-foreground mb-1">MCP Servers</p>
-          <div className="space-y-0.5">
-            {[...catalog.mcp_servers!].sort((a, b) => a.name.localeCompare(b.name)).map((server) => (
-              <label
-                key={server.name}
-                className="flex items-center gap-2 cursor-pointer select-none"
-                title={`Allow all tools from the "${server.name}" MCP server (${server.pattern})`}
-              >
-                <Checkbox
-                  checked={isChecked(server.pattern)}
-                  onCheckedChange={() => handleToggle(server.pattern)}
-                />
-                <span className="font-mono text-xs">{server.name}</span>
-                <span className="text-muted-foreground text-xs">
-                  ({server.pattern})
-                </span>
-              </label>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {perToolTools.length === 0 && suiteTools.length === 0 && !hasMCPServers && (
+      {perToolTools.length === 0 && suiteTools.length === 0 && (
         <span className="text-muted-foreground text-xs">No tools available</span>
       )}
     </div>

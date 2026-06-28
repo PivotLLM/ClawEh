@@ -75,7 +75,16 @@ func buildStatusReply(req Request, rt *Runtime) string {
 				fmt.Fprintf(&body, "Archive last: %s\n", last.UTC().Format(time.RFC3339))
 			}
 		}
-		fmt.Fprintf(&body, "Context tokens: ~%d (estimated)\n", estTokens)
+		window := 0
+		if rt.GetContextWindow != nil {
+			window = rt.GetContextWindow()
+		}
+		if window > 0 {
+			fmt.Fprintf(&body, "Context window: %d tokens\n", window)
+			fmt.Fprintf(&body, "Context tokens: ~%d (estimated, %d%%)\n", estTokens, estTokens*100/window)
+		} else {
+			fmt.Fprintf(&body, "Context tokens: ~%d (estimated)\n", estTokens)
+		}
 		fmt.Fprintf(&body, "Summary chars: %d\n", summaryChars)
 	}
 	if rt != nil && rt.GetSessionChannels != nil {

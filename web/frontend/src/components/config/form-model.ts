@@ -26,6 +26,11 @@ export interface CoreConfigForm {
   archiveDays: string
   summaryMaxCount: string
   summaryRetentionDays: string
+  evictionEnabled: boolean
+  evictionNotifyUser: boolean
+  evictionProtectTurns: string
+  evictionEvictTurns: string
+  evictionBudgetBytes: string
   logRetentionDays: string
   sessionMode: string
   devicesEnabled: boolean
@@ -96,6 +101,11 @@ export const EMPTY_FORM: CoreConfigForm = {
   archiveDays: "0",
   summaryMaxCount: "0",
   summaryRetentionDays: "0",
+  evictionEnabled: true,
+  evictionNotifyUser: false,
+  evictionProtectTurns: "3",
+  evictionEvictTurns: "10",
+  evictionBudgetBytes: "0",
   logRetentionDays: "30",
   sessionMode: "unified",
   devicesEnabled: false,
@@ -228,6 +238,20 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
     summaryRetentionDays: asNumberString(
       defaults.summary_retention_days,
       EMPTY_FORM.summaryRetentionDays,
+    ),
+    evictionEnabled: asRecord(defaults.context_eviction).enabled !== false, // on by default
+    evictionNotifyUser: asRecord(defaults.context_eviction).notify_user === true,
+    evictionProtectTurns: asNumberString(
+      asRecord(defaults.context_eviction).protect_turns,
+      EMPTY_FORM.evictionProtectTurns,
+    ),
+    evictionEvictTurns: asNumberString(
+      asRecord(defaults.context_eviction).evict_turns,
+      EMPTY_FORM.evictionEvictTurns,
+    ),
+    evictionBudgetBytes: asNumberString(
+      asRecord(defaults.context_eviction).budget_bytes,
+      EMPTY_FORM.evictionBudgetBytes,
     ),
     logRetentionDays: asNumberString(
       logging.retention_days,

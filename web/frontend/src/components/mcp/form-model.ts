@@ -5,10 +5,42 @@ export interface MCPHostForm {
   autoEnable: boolean
   listen: string
   endpointPath: string
-  toolPatterns: string[]
+  // Per-endpoint catalogue visibility filters (mcp_host.internal_tools /
+  // external_tools). Empty ⇒ expose all; entries match by MatchVisibility.
+  internalToolPatterns: string[]
+  externalToolPatterns: string[]
   // External (upstream) MCP servers claw connects out to (tools.mcp.servers),
-  // as a JSON object keyed by server name. Edited as JSON; "" means none.
-  serversJSON: string
+  // structured for add/edit/delete in the UI.
+  servers: MCPServerForm[]
+}
+
+// MCPServerForm is one external server, edited via form fields (no raw JSON).
+export interface MCPServerForm {
+  name: string
+  enabled: boolean
+  type: "stdio" | "http" // "sse" is treated as http (deprecated alias)
+  // stdio
+  command: string
+  args: string // one arg per line
+  env: string // KEY=VALUE per line
+  envFile: string
+  // http
+  url: string
+  headers: string // "Header: value" per line
+}
+
+export function blankServer(): MCPServerForm {
+  return {
+    name: "",
+    enabled: true,
+    type: "http",
+    command: "",
+    args: "",
+    env: "",
+    envFile: "",
+    url: "",
+    headers: "",
+  }
 }
 
 export const EMPTY_MCP_FORM: MCPHostForm = {
@@ -16,8 +48,9 @@ export const EMPTY_MCP_FORM: MCPHostForm = {
   autoEnable: true,
   listen: "127.0.0.1:5911",
   endpointPath: "/mcp",
-  toolPatterns: ["*"],
-  serversJSON: "",
+  internalToolPatterns: ["*"],
+  externalToolPatterns: ["*"],
+  servers: [],
 }
 
 function asRecord(value: unknown): JsonRecord {
@@ -51,55 +84,133 @@ export function buildMCPFormFromConfig(config: unknown): MCPHostForm {
     autoEnable: asBool(mcp.auto_enable, EMPTY_MCP_FORM.autoEnable),
     listen: asString(mcp.listen, EMPTY_MCP_FORM.listen),
     endpointPath: asString(mcp.endpoint_path, EMPTY_MCP_FORM.endpointPath),
-    toolPatterns: asStringArray(mcp.tools, EMPTY_MCP_FORM.toolPatterns),
-    serversJSON: serversToJSON(config),
+    internalToolPatterns: asStringArray(mcp.internal_tools, EMPTY_MCP_FORM.internalToolPatterns),
+    externalToolPatterns: asStringArray(mcp.external_tools, EMPTY_MCP_FORM.externalToolPatterns),
+    servers: serversFromConfig(config),
   }
 }
 
-// serversToJSON pretty-prints tools.mcp.servers, or "" when none are configured.
-function serversToJSON(config: unknown): string {
-  const tools = asRecord(asRecord(config).tools)
-  const servers = asRecord(asRecord(tools.mcp).servers)
-  if (Object.keys(servers).length === 0) return ""
-  return JSON.stringify(servers, null, 2)
+// --- external server (tools.mcp.servers) structured conversions ---------------
+
+function recordToLines(v: unknown, sep: string): string {
+  const r = asRecord(v)
+  return Object.entries(r)
+    .map(([k, val]) => `${k}${sep}${typeof val === "string" ? val : String(val)}`)
+    .join("\n")
 }
 
-// parseServers validates the servers JSON. Empty → {} (no servers). Must be a
-// JSON object keyed by server name.
-export function parseServers(json: string): {
-  value?: Record<string, unknown>
-  error?: string
-} {
-  const trimmed = json.trim()
-  if (trimmed === "") return { value: {} }
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(trimmed)
-  } catch (e) {
-    return { error: e instanceof Error ? e.message : "Invalid JSON" }
+function linesToRecord(s: string, sep: string): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const line of s.split("\n")) {
+    const t = line.trim()
+    if (t === "") continue
+    const i = t.indexOf(sep)
+    if (i < 0) continue
+    const k = t.slice(0, i).trim()
+    if (k !== "") out[k] = t.slice(i + sep.length).trim()
   }
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    return { error: "Servers must be a JSON object keyed by server name." }
+  return out
+}
+
+function linesToArray(s: string): string[] {
+  return s
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l !== "")
+}
+
+export function serversFromConfig(config: unknown): MCPServerForm[] {
+  const servers = asRecord(asRecord(asRecord(config).tools).mcp).servers
+  const rec = asRecord(servers)
+  const out: MCPServerForm[] = []
+  for (const name of Object.keys(rec).sort()) {
+    const s = asRecord(rec[name])
+    const type: "stdio" | "http" =
+      s.type === "stdio" || (!s.type && s.command && !s.url) ? "stdio" : "http"
+    out.push({
+      name,
+      enabled: asBool(s.enabled, false),
+      type,
+      command: asString(s.command, ""),
+      args: Array.isArray(s.args)
+        ? (s.args as unknown[]).filter((a): a is string => typeof a === "string").join("\n")
+        : "",
+      env: recordToLines(s.env, "="),
+      envFile: asString(s.env_file, ""),
+      url: asString(s.url, ""),
+      headers: recordToLines(s.headers, ": "),
+    })
   }
-  return { value: parsed as Record<string, unknown> }
+  return out
+}
+
+// validateServers returns the first problem found, or null when valid.
+export function validateServers(servers: MCPServerForm[]): string | null {
+  const seen = new Set<string>()
+  for (const s of servers) {
+    const name = s.name.trim()
+    if (name === "") return "Each external server needs a name."
+    if (seen.has(name)) return `Duplicate server name: ${name}`
+    seen.add(name)
+    if (s.type === "stdio" && s.command.trim() === "") {
+      return `Server "${name}": command is required for stdio.`
+    }
+    if (s.type === "http" && s.url.trim() === "") {
+      return `Server "${name}": URL is required for http.`
+    }
+  }
+  return null
+}
+
+// serversToPatch builds the tools.mcp.servers patch: present names overwrite,
+// names dropped since baseline are set to null so the backend deletes them.
+export function serversToPatch(
+  servers: MCPServerForm[],
+  baseline: MCPServerForm[],
+): Record<string, unknown> {
+  const patch: Record<string, unknown> = {}
+  const seen = new Set<string>()
+  for (const s of servers) {
+    const name = s.name.trim()
+    if (name === "") continue
+    seen.add(name)
+    const cfg: Record<string, unknown> = { enabled: s.enabled, type: s.type }
+    if (s.type === "stdio") {
+      cfg.command = s.command.trim()
+      cfg.args = linesToArray(s.args)
+      const env = linesToRecord(s.env, "=")
+      if (Object.keys(env).length > 0) cfg.env = env
+      if (s.envFile.trim() !== "") cfg.env_file = s.envFile.trim()
+    } else {
+      cfg.url = s.url.trim()
+      const headers = linesToRecord(s.headers, ":")
+      if (Object.keys(headers).length > 0) cfg.headers = headers
+    }
+    patch[name] = cfg
+  }
+  for (const s of baseline) {
+    const name = s.name.trim()
+    if (name !== "" && !seen.has(name)) patch[name] = null
+  }
+  return patch
 }
 
 // matchToolPattern mirrors pkg/config.MatchToolPattern: "*" matches all,
 // entries ending in "*" are case-insensitive prefix matches, otherwise
 // case-insensitive exact match.
-export function matchToolPattern(patterns: string[], name: string): boolean {
+// matchVisibility mirrors pkg/config.MatchVisibility: collapse underscore runs,
+// strip a leading mcp_, then an entry matches by equality-or-prefix. "*" = all;
+// a trailing glob is tolerated ("fusion_*" == "fusion_").
+export function matchVisibility(patterns: string[], name: string): boolean {
   if (!patterns || patterns.length === 0) return false
-  const lower = name.toLowerCase()
+  const bare = name.toLowerCase().replace(/_+/g, "_").replace(/^mcp_/, "")
   for (const raw of patterns) {
-    const p = raw.trim()
-    if (p === "") continue
-    if (p === "*") return true
-    if (p.endsWith("*")) {
-      const prefix = p.slice(0, -1).toLowerCase()
-      if (lower.startsWith(prefix)) return true
-      continue
-    }
-    if (lower === p.toLowerCase()) return true
+    let e = raw.trim().toLowerCase()
+    if (e === "") continue
+    if (e === "*") return true
+    e = e.replace(/\*+$/, "").replace(/_+/g, "_")
+    if (e === "") continue
+    if (bare.startsWith(e)) return true
   }
   return false
 }

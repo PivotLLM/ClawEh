@@ -66,6 +66,9 @@ func (c *capturingContextManager) Build(ctx context.Context) ([]providers.Messag
 	c.capture(&c.buildAgentID, ctx)
 	return []providers.Message{{Role: "user", Content: "hi"}}, nil
 }
+func (c *capturingContextManager) SweepEvictions(_ context.Context) []llmcontext.EvictionEvent {
+	return nil
+}
 func (c *capturingContextManager) Compact(_ context.Context) error                    { return nil }
 func (c *capturingContextManager) LastCompactionReport() *llmcontext.CompactionReport { return nil }
 func (c *capturingContextManager) RenderedSummary() string                            { return "" }

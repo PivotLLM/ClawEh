@@ -3,9 +3,9 @@ import type { ReactNode } from "react"
 import { useTranslation } from "react-i18next"
 
 import {
-  ALWAYS_EXCLUDED_TOOLS,
   type MCPHostForm,
-  matchToolPattern,
+  type MCPServerForm,
+  blankServer,
   validateEndpointPath,
   validateListen,
 } from "@/components/mcp/form-model"
@@ -19,6 +19,13 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 
 type UpdateMCPField = <K extends keyof MCPHostForm>(
@@ -122,67 +129,52 @@ export function TransportSection({
 }
 
 interface ToolsSectionProps {
-  form: MCPHostForm
-  onFieldChange: UpdateMCPField
-  registeredTools: string[]
-  toolsLoading: boolean
+  title: string
+  description: string
+  note: string
+  patterns: string[]
+  onChange: (next: string[]) => void
 }
 
 export function ToolsSection({
-  form,
-  onFieldChange,
-  registeredTools,
-  toolsLoading,
+  title,
+  description,
+  note,
+  patterns,
+  onChange,
 }: ToolsSectionProps) {
   const { t } = useTranslation()
 
   const setPatternAt = (index: number, value: string) => {
-    const next = [...form.toolPatterns]
+    const next = [...patterns]
     next[index] = value
-    onFieldChange("toolPatterns", next)
+    onChange(next)
   }
 
   const addPattern = () => {
-    onFieldChange("toolPatterns", [...form.toolPatterns, ""])
+    onChange([...patterns, ""])
   }
 
   const removePatternAt = (index: number) => {
-    const next = form.toolPatterns.filter((_, i) => i !== index)
-    onFieldChange("toolPatterns", next)
+    onChange(patterns.filter((_, i) => i !== index))
   }
 
-  const filteredCandidates = registeredTools.filter(
-    (name) => !ALWAYS_EXCLUDED_TOOLS.includes(name),
-  )
-
-  const matched = filteredCandidates.filter((name) =>
-    matchToolPattern(form.toolPatterns, name),
-  )
-  const excluded = filteredCandidates.filter(
-    (name) => !matchToolPattern(form.toolPatterns, name),
-  )
-
   return (
-    <SectionCard
-      title={t("pages.mcp.sections.tools")}
-      description={t("pages.mcp.tools_desc")}
-    >
+    <SectionCard title={title} description={description}>
       <div className="space-y-3 py-4">
+        <div className="text-muted-foreground text-xs">{note}</div>
         <div className="text-muted-foreground text-xs">
           {t("pages.mcp.tools_pattern_hint")}
         </div>
 
         <div className="space-y-2">
-          {form.toolPatterns.length === 0 ? (
+          {patterns.length === 0 ? (
             <div className="text-muted-foreground text-xs italic">
               {t("pages.mcp.tools_empty_warning")}
             </div>
           ) : (
-            form.toolPatterns.map((pattern, idx) => (
-              <div
-                key={idx}
-                className="flex items-center gap-2"
-              >
+            patterns.map((pattern, idx) => (
+              <div key={idx} className="flex items-center gap-2">
                 <Input
                   value={pattern}
                   placeholder={t("pages.mcp.tools_pattern_placeholder")}
@@ -200,60 +192,10 @@ export function ToolsSection({
               </div>
             ))
           )}
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={addPattern}
-          >
+          <Button type="button" variant="outline" size="sm" onClick={addPattern}>
             <IconPlus className="size-4" />
             {t("pages.mcp.tools_add_pattern")}
           </Button>
-        </div>
-
-        <div className="border-border/70 border-t pt-3">
-          <div className="text-sm font-medium">
-            {t("pages.mcp.tools_preview_title", {
-              matched: matched.length,
-              total: filteredCandidates.length,
-            })}
-          </div>
-          {ALWAYS_EXCLUDED_TOOLS.length > 0 && (
-            <div className="text-muted-foreground mb-2 text-xs">
-              {t("pages.mcp.tools_always_excluded", {
-                tools: ALWAYS_EXCLUDED_TOOLS.join(", "),
-              })}
-            </div>
-          )}
-
-          {toolsLoading ? (
-            <div className="text-muted-foreground text-xs">
-              {t("labels.loading")}
-            </div>
-          ) : filteredCandidates.length === 0 ? (
-            <div className="text-muted-foreground text-xs italic">
-              {t("pages.mcp.tools_none_registered")}
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 gap-x-4 gap-y-1 sm:grid-cols-2 md:grid-cols-3">
-              {matched.map((name) => (
-                <div
-                  key={`m-${name}`}
-                  className="font-mono text-xs text-green-600"
-                >
-                  ✓ {name}
-                </div>
-              ))}
-              {excluded.map((name) => (
-                <div
-                  key={`e-${name}`}
-                  className="text-muted-foreground/70 font-mono text-xs"
-                >
-                  ✗ {name}
-                </div>
-              ))}
-            </div>
-          )}
         </div>
       </div>
     </SectionCard>
@@ -261,32 +203,168 @@ export function ToolsSection({
 }
 
 // ClientServersSection edits the external (upstream) MCP servers claw connects
-// out to (tools.mcp.servers). Edited as JSON, keyed by server name. These tools
-// are exposed to direct API providers; CLI providers configure MCP separately.
+// out to (tools.mcp.servers) via form fields — add / edit / delete, no raw JSON.
 export function ClientServersSection({
-  value,
+  servers,
   error,
   onChange,
 }: {
-  value: string
+  servers: MCPServerForm[]
   error: string | null
-  onChange: (next: string) => void
+  onChange: (next: MCPServerForm[]) => void
 }) {
   const { t } = useTranslation()
+
+  const update = (i: number, patch: Partial<MCPServerForm>) => {
+    onChange(servers.map((s, idx) => (idx === i ? { ...s, ...patch } : s)))
+  }
+  const remove = (i: number) => onChange(servers.filter((_, idx) => idx !== i))
+  const add = () => onChange([...servers, blankServer()])
+
   return (
     <SectionCard
       title={t("pages.mcp.sections.client")}
       description={t("pages.mcp.client_hint")}
     >
-      <div className="space-y-2">
-        <Textarea
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder={t("pages.mcp.client_placeholder")}
-          className="min-h-[180px] font-mono text-xs"
-          spellCheck={false}
-        />
+      <div className="space-y-4 pt-2">
+        {servers.length === 0 && (
+          <div className="text-muted-foreground text-sm">
+            {t("pages.mcp.client_empty")}
+          </div>
+        )}
+        {servers.map((s, i) => (
+          <div
+            key={i}
+            className="border-border/60 space-y-3 rounded-lg border p-3"
+          >
+            <div className="flex justify-end">
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                aria-label={t("common.remove")}
+                onClick={() => remove(i)}
+              >
+                <IconTrash className="size-4" />
+              </Button>
+            </div>
+
+            <Field label={t("pages.mcp.server_name")} layout="setting-row">
+              <Input
+                value={s.name}
+                onChange={(e) => update(i, { name: e.target.value })}
+                placeholder={t("pages.mcp.server_name_ph")}
+                className="font-mono"
+              />
+            </Field>
+
+            <Field label={t("pages.mcp.server_type")} layout="setting-row">
+              <Select
+                value={s.type}
+                onValueChange={(v) => update(i, { type: v as "stdio" | "http" })}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="http">http</SelectItem>
+                  <SelectItem value="stdio">stdio</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+
+            <SwitchCardField
+              label={t("pages.mcp.server_enabled")}
+              checked={s.enabled}
+              onCheckedChange={(c) => update(i, { enabled: c })}
+              layout="setting-row"
+            />
+
+            {s.type === "http" ? (
+              <>
+                <Field label={t("pages.mcp.server_url")} layout="setting-row">
+                  <Input
+                    value={s.url}
+                    onChange={(e) => update(i, { url: e.target.value })}
+                    placeholder="http://127.0.0.1:9999/mcp"
+                    className="font-mono"
+                  />
+                </Field>
+                <Field
+                  label={t("pages.mcp.server_headers")}
+                  hint={t("pages.mcp.server_headers_hint")}
+                  layout="setting-row"
+                >
+                  <Textarea
+                    value={s.headers}
+                    onChange={(e) => update(i, { headers: e.target.value })}
+                    placeholder={"Authorization: Bearer xyz"}
+                    className="min-h-[60px] font-mono text-xs"
+                    spellCheck={false}
+                  />
+                </Field>
+              </>
+            ) : (
+              <>
+                <Field
+                  label={t("pages.mcp.server_command")}
+                  layout="setting-row"
+                >
+                  <Input
+                    value={s.command}
+                    onChange={(e) => update(i, { command: e.target.value })}
+                    placeholder="npx"
+                    className="font-mono"
+                  />
+                </Field>
+                <Field
+                  label={t("pages.mcp.server_args")}
+                  hint={t("pages.mcp.server_args_hint")}
+                  layout="setting-row"
+                >
+                  <Textarea
+                    value={s.args}
+                    onChange={(e) => update(i, { args: e.target.value })}
+                    placeholder={"-y\n@modelcontextprotocol/server-foo"}
+                    className="min-h-[60px] font-mono text-xs"
+                    spellCheck={false}
+                  />
+                </Field>
+                <Field
+                  label={t("pages.mcp.server_env")}
+                  hint={t("pages.mcp.server_env_hint")}
+                  layout="setting-row"
+                >
+                  <Textarea
+                    value={s.env}
+                    onChange={(e) => update(i, { env: e.target.value })}
+                    placeholder={"API_KEY=..."}
+                    className="min-h-[60px] font-mono text-xs"
+                    spellCheck={false}
+                  />
+                </Field>
+                <Field
+                  label={t("pages.mcp.server_env_file")}
+                  layout="setting-row"
+                >
+                  <Input
+                    value={s.envFile}
+                    onChange={(e) => update(i, { envFile: e.target.value })}
+                    placeholder="/path/to/.env"
+                    className="font-mono"
+                  />
+                </Field>
+              </>
+            )}
+          </div>
+        ))}
+
         {error && <div className="text-destructive text-xs">{error}</div>}
+
+        <Button type="button" variant="outline" size="sm" onClick={add}>
+          <IconPlus className="size-4" />
+          {t("pages.mcp.server_add")}
+        </Button>
       </div>
     </SectionCard>
   )

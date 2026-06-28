@@ -57,7 +57,7 @@ func (r *CompactionReport) String() string {
 	if r.BeforeMsgs == 0 && r.BeforeBytes == 0 {
 		header = "Compaction:"
 	} else if dr := formatDateRange(r.DateFrom, r.DateTo); dr != "" {
-		header = fmt.Sprintf("Compaction: %d messages (%s) · %s", r.BeforeMsgs, formatBytes(r.BeforeBytes), dr)
+		header = fmt.Sprintf("Compaction: %d messages (%s)\n%s", r.BeforeMsgs, formatBytes(r.BeforeBytes), dr)
 	} else {
 		header = fmt.Sprintf("Compaction: %d messages (%s)", r.BeforeMsgs, formatBytes(r.BeforeBytes))
 	}
@@ -68,7 +68,7 @@ func (r *CompactionReport) String() string {
 		if a.Detail != "" {
 			status = fmt.Sprintf("%s (%s)", a.Status, a.Detail)
 		}
-		b.WriteString(fmt.Sprintf("\n  %s: %s", a.Model, status))
+		b.WriteString(fmt.Sprintf("\nModel %s: %s", a.Model, status))
 	}
 
 	b.WriteString("\n")
@@ -139,7 +139,7 @@ func formatDateRange(from, to time.Time) string {
 	if from.Year() == to.Year() && from.YearDay() == to.YearDay() {
 		return from.Format("Jan 2, 2006")
 	}
-	return from.Format("Jan 2, 2006") + " – " + to.Format("Jan 2, 2006")
+	return from.Format("Jan 2, 2006") + " to " + to.Format("Jan 2, 2006")
 }
 
 // compactionRecorder accumulates per-invocation attempts during a compaction

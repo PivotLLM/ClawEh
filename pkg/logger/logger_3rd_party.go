@@ -12,6 +12,12 @@ type Logger struct {
 	// message content (e.g. API request/response bodies). When true, Debug and
 	// Debugf calls are suppressed unless log_message_content is enabled.
 	contentSensitive bool
+	// errorDowngrade, when non-nil, is consulted on every Error/Errorf call: if
+	// it returns true for the formatted message, the line is logged at WARN
+	// instead of ERROR. Used to demote a 3rd-party library's recoverable,
+	// auto-retried transient errors (e.g. telego long-poll getUpdates 5xx) so
+	// they don't read as fatal or trip alerts.
+	errorDowngrade func(msg string) bool
 }
 
 // WithContentSensitive marks the logger so that its debug-level output is
@@ -19,6 +25,22 @@ type Logger struct {
 func (b *Logger) WithContentSensitive() *Logger {
 	b.contentSensitive = true
 	return b
+}
+
+// WithErrorDowngrade installs a predicate that demotes matching Error/Errorf
+// messages to WARN. Pass nil to clear. The predicate receives the fully
+// formatted message string.
+func (b *Logger) WithErrorDowngrade(fn func(msg string) bool) *Logger {
+	b.errorDowngrade = fn
+	return b
+}
+
+// errorLevel returns WARN when the downgrade predicate matches msg, else ERROR.
+func (b *Logger) errorLevel(msg string) LogLevel {
+	if b.errorDowngrade != nil && b.errorDowngrade(msg) {
+		return WARN
+	}
+	return ERROR
 }
 
 // Debug logs debug messages
@@ -41,7 +63,8 @@ func (b *Logger) Warn(v ...any) {
 
 // Error logs error messages
 func (b *Logger) Error(v ...any) {
-	logMessage(ERROR, b.component, fmt.Sprint(v...), nil)
+	msg := fmt.Sprint(v...)
+	logMessage(b.errorLevel(msg), b.component, msg, nil)
 }
 
 // Debugf logs formatted debug messages
@@ -69,7 +92,8 @@ func (b *Logger) Warningf(format string, v ...any) {
 
 // Errorf logs formatted error messages
 func (b *Logger) Errorf(format string, v ...any) {
-	logMessage(ERROR, b.component, fmt.Sprintf(format, v...), nil)
+	msg := fmt.Sprintf(format, v...)
+	logMessage(b.errorLevel(msg), b.component, msg, nil)
 }
 
 // Fatalf logs formatted fatal messages and exits

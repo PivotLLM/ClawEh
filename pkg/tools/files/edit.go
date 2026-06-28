@@ -140,7 +140,7 @@ func (t *AppendFileTool) Name() string {
 }
 
 func (t *AppendFileTool) Description() string {
-	return "Append content to the end of a file"
+	return "Append content to the end of a file (parent directories created as needed)"
 }
 
 func (t *AppendFileTool) Parameters() map[string]any {

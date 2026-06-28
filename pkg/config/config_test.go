@@ -609,6 +609,52 @@ func TestMCPHost_DefaultAutoEnable(t *testing.T) {
 	}
 }
 
+func TestValidateMountName(t *testing.T) {
+	ok := []string{"notes", "notes-eric", "a1", "X-9"}
+	bad := []string{"notes eric", "notes/sub", "notes.md", "no_tes", "", "files", "skills", "tasks", "common", "Files"}
+	for _, n := range ok {
+		if err := ValidateMountName(n); err != nil {
+			t.Errorf("ValidateMountName(%q) unexpected error: %v", n, err)
+		}
+	}
+	for _, n := range bad {
+		if err := ValidateMountName(n); err == nil {
+			t.Errorf("ValidateMountName(%q) should have failed", n)
+		}
+	}
+}
+
+func TestMCPClientEffectivelyEnabled(t *testing.T) {
+	srv := func(enabled bool) map[string]MCPServerConfig {
+		return map[string]MCPServerConfig{"s": {Enabled: enabled, Type: "http", URL: "http://x"}}
+	}
+	cases := []struct {
+		name       string
+		enabled    bool
+		autoEnable bool
+		servers    map[string]MCPServerConfig
+		want       bool
+	}{
+		{"master on wins", true, false, nil, true},
+		{"auto + enabled server", false, true, srv(true), true},
+		{"auto + no enabled server", false, true, srv(false), false},
+		{"auto off, server enabled", false, false, srv(true), false},
+		{"all off", false, true, nil, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			tc := ToolsConfig{MCP: MCPConfig{
+				ToolConfig: ToolConfig{Enabled: c.enabled},
+				AutoEnable: c.autoEnable,
+				Servers:    c.servers,
+			}}
+			if got := tc.MCPClientEffectivelyEnabled(); got != c.want {
+				t.Fatalf("got %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
 func TestMCPHostEffectivelyEnabled(t *testing.T) {
 	cliProviders := []Provider{
 		{Name: "claude-cli", Protocol: "claude-cli"},

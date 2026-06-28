@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -275,6 +276,72 @@ type AgentConfig struct {
 	SummaryMaxCount            *int     `json:"summary_max_count,omitempty"`
 	SummaryRetentionDays       *int     `json:"summary_retention_days,omitempty"`
 	ArchiveContentMaxBytes     *int     `json:"archive_content_max_bytes,omitempty"`
+
+	// ContextEviction overrides the per-turn tool-result eviction policy for
+	// this agent. Unset fields fall back to the defaults block, then to the
+	// built-in defaults.
+	ContextEviction *ContextEvictionConfig `json:"context_eviction,omitempty"`
+
+	// Mounts expose external directory trees as top-level names in this agent's
+	// space (peers of files/ and skills/), accessed as <name>/... Per agent.
+	Mounts []MountConfig `json:"mounts,omitempty"`
+
+	// MCPTools is the per-agent allow-list for external MCP-client tools, kept
+	// separate from the generic Tools allowlist so MCP access is per-tool rather
+	// than all-or-nothing per server. Each entry is matched (case-insensitively)
+	// against a tool's <server>_<tool> name (i.e. the published mcp_<server>_<tool>
+	// with the mcp_ prefix stripped): an entry allows the tool when it equals or is
+	// a prefix of that name. So "fusion" admits every tool on servers named/
+	// starting "fusion"; "fusion_gcwx" admits just the gcwx tools. Empty ⇒ the
+	// agent gets no MCP tools. The mcp_ prefix and wildcards are never needed.
+	MCPTools []string `json:"mcp_tools,omitempty"`
+}
+
+// MountConfig mounts an external directory tree as a top-level name in an agent's
+// space, beside files/ and skills/. The whole tree under Path is reachable as
+// `<Name>/...`; access is sandboxed to the mount (no `..` escape). Read + write.
+type MountConfig struct {
+	Name string `json:"name"` // single path component, [A-Za-z0-9-] only
+	Path string `json:"path"` // absolute external directory
+	// Notify watches the mount tree for new files and notifies the agent on its
+	// default channel (cron-style) when one appears.
+	Notify bool `json:"notify,omitempty"`
+	// Writable opens the mount for writing. It defaults to false (read-only), so
+	// an agent can only modify a mounted folder when write access is explicitly
+	// granted; read-only mounts reject every write/delete.
+	Writable bool `json:"writable,omitempty"`
+}
+
+var mountNameRe = regexp.MustCompile(`^[A-Za-z0-9-]+$`)
+
+// reservedMountNames cannot be used as mount names — they would shadow the
+// built-in workspace roots.
+var reservedMountNames = map[string]bool{"files": true, "skills": true, "tasks": true, "common": true}
+
+// ValidateMountName checks a mount name: a single path component of letters,
+// digits, and hyphens, not colliding with a reserved root.
+func ValidateMountName(name string) error {
+	if !mountNameRe.MatchString(name) {
+		return fmt.Errorf("mount name %q: use only letters, digits, and '-' (a single directory name)", name)
+	}
+	if reservedMountNames[strings.ToLower(name)] {
+		return fmt.Errorf("mount name %q is reserved", name)
+	}
+	return nil
+}
+
+// ContextEvictionConfig controls the per-turn, LLM-free eviction sweep that
+// collapses re-retrievable tool results (file reads, web fetches) in the live
+// window to a placeholder so long sessions rarely trigger summarization
+// compaction. All fields are pointers so a per-agent block overrides the
+// defaults block field by field; an unset field falls back to the built-in
+// default (see llmcontext.DefaultEvictionPolicy).
+type ContextEvictionConfig struct {
+	Enabled      *bool `json:"enabled,omitempty"`       // nil => enabled
+	ProtectTurns *int  `json:"protect_turns,omitempty"` // nil => 3
+	EvictTurns   *int  `json:"evict_turns,omitempty"`   // nil => 10
+	BudgetBytes  *int  `json:"budget_bytes,omitempty"`  // nil => derived (~40% of window)
+	NotifyUser   *bool `json:"notify_user,omitempty"`   // nil => off
 }
 
 // IsEnabled returns true if the agent is enabled (nil means enabled by default).
@@ -317,9 +384,18 @@ func MatchToolPattern(patterns []string, name string) bool {
 // A nil or empty Tools list denies all tools. Use ["*"] to allow all tools.
 // Entries ending in "*" are treated as case-insensitive prefix matches.
 // Exact entries are matched as-is.
+//
+// External MCP-client tools (mcp_<server>_<tool>) are gated SOLELY by the
+// dedicated mcp_tools list, never the generic Tools allowlist — so this is the
+// single source of truth shared by both the registration gate and the
+// execution-time defense-in-depth check (they must agree, or a tool can be
+// registered yet rejected on call).
 func (a *AgentConfig) IsToolAllowed(name string) bool {
 	if a == nil {
 		return false
+	}
+	if strings.HasPrefix(strings.ToLower(name), "mcp_") {
+		return a.MCPToolAllowed(name)
 	}
 	// nil Tools (key absent in config) → use install defaults.
 	// Empty Tools (tools: [] in config) → deny all intentionally.
@@ -327,6 +403,67 @@ func (a *AgentConfig) IsToolAllowed(name string) bool {
 		return MatchToolPattern(DefaultAgentTools, name)
 	}
 	return MatchToolPattern(a.Tools, name)
+}
+
+// mcpUnderscoreRun collapses any run of 2+ underscores to a single one before
+// MCP allow-list comparison, so a server/tool join that yields mcp_fusion__tool
+// (or a published mcp__fusion_…) still matches a clean entry like "fusion_tool".
+var mcpUnderscoreRun = regexp.MustCompile(`_{2,}`)
+
+// MCPToolAllowed reports whether an external MCP-client tool is permitted for
+// this agent. name is the published tool name (mcp_<server>_<tool>); underscore
+// runs are collapsed, the mcp_ prefix is stripped, and the remaining
+// <server>_<tool> is matched (case-insensitively) against each MCPTools entry:
+// an entry admits the tool when it equals or is a prefix of that name. An empty
+// MCPTools list admits nothing. Unlike the generic tools allowlist, no wildcard
+// or mcp_ prefix is used.
+func (a *AgentConfig) MCPToolAllowed(name string) bool {
+	if a == nil || len(a.MCPTools) == 0 {
+		return false
+	}
+	// Collapse underscores on the full name first, THEN strip mcp_, so a doubled
+	// prefix (mcp__…) reduces to a single mcp_ before stripping.
+	bare := strings.ToLower(strings.TrimPrefix(mcpUnderscoreRun.ReplaceAllString(name, "_"), "mcp_"))
+	for _, entry := range a.MCPTools {
+		e := mcpUnderscoreRun.ReplaceAllString(strings.ToLower(strings.TrimSpace(entry)), "_")
+		if e == "" {
+			continue
+		}
+		if strings.HasPrefix(bare, e) {
+			return true
+		}
+	}
+	return false
+}
+
+// MatchVisibility reports whether a tool named `name` passes a coarse MCP-host
+// visibility filter (the per-endpoint InternalTools/ExternalTools lists). It uses
+// the same ergonomics as the per-agent MCP allow-list, generalized to local tools
+// too: underscores are collapsed, a leading mcp_ is stripped, and an entry admits
+// the tool when it equals or is a prefix of the result (case-insensitive). A "*"
+// entry exposes everything; an empty list exposes nothing. So "file" or
+// "session_info" match local tools, and "fusion"/"fusion_wxca" match upstream MCP
+// tools without the mcp_ prefix or a glob.
+func MatchVisibility(patterns []string, name string) bool {
+	if len(patterns) == 0 {
+		return false
+	}
+	bare := strings.TrimPrefix(mcpUnderscoreRun.ReplaceAllString(strings.ToLower(name), "_"), "mcp_")
+	for _, entry := range patterns {
+		e := strings.TrimSpace(strings.ToLower(entry))
+		if e == "*" {
+			return true
+		}
+		// Tolerate a trailing glob so "fusion_*" behaves the same as "fusion_".
+		e = mcpUnderscoreRun.ReplaceAllString(strings.TrimSuffix(e, "*"), "_")
+		if e == "" {
+			continue
+		}
+		if strings.HasPrefix(bare, e) {
+			return true
+		}
+	}
+	return false
 }
 
 // CognitiveMemoryEnabled reports whether the cognitive-memory suite + subsystem
@@ -562,6 +699,10 @@ type AgentDefaults struct {
 	SummaryRetentionDays       int      `json:"summary_retention_days,omitempty"        env:"CLAW_AGENTS_DEFAULTS_SUMMARY_RETENTION_DAYS"`
 	ArchiveContentMaxBytes     int      `json:"archive_content_max_bytes,omitempty"     env:"CLAW_AGENTS_DEFAULTS_ARCHIVE_CONTENT_MAX_BYTES"`
 	DefaultTools               []string `json:"default_tools,omitempty"`
+
+	// ContextEviction is the default per-turn tool-result eviction policy
+	// (overridable per agent via AgentConfig.ContextEviction).
+	ContextEviction *ContextEvictionConfig `json:"context_eviction,omitempty"`
 
 	// Memory is the default cognitive-memory config applied to agents allowed
 	// the cogmem tools (overridable per agent via AgentConfig.Memory).
@@ -1232,8 +1373,31 @@ type MCPServerConfig struct {
 type MCPConfig struct {
 	ToolConfig `                    envPrefix:"CLAW_TOOLS_MCP_"`
 	Discovery  ToolDiscoveryConfig `                                json:"discovery"`
+	// AutoEnable, when true (the default), connects to external MCP servers
+	// automatically whenever at least one configured server is enabled — so a
+	// user need not also flip the master `enabled` flag. Explicit Enabled=true
+	// always wins. Mirrors MCPHostConfig.AutoEnable.
+	AutoEnable bool `json:"auto_enable" env:"CLAW_TOOLS_MCP_AUTO_ENABLE"`
 	// Servers is a map of server name to server configuration
 	Servers map[string]MCPServerConfig `json:"servers,omitempty"`
+}
+
+// MCPClientEffectivelyEnabled reports whether claw should connect out to external
+// MCP servers: the master flag wins, otherwise auto-enable kicks in when any
+// configured server is enabled.
+func (t *ToolsConfig) MCPClientEffectivelyEnabled() bool {
+	if t.MCP.Enabled {
+		return true
+	}
+	if !t.MCP.AutoEnable {
+		return false
+	}
+	for _, s := range t.MCP.Servers {
+		if s.Enabled {
+			return true
+		}
+	}
+	return false
 }
 
 // MCPHostConfig defines configuration for the MCP server claw exposes
@@ -1250,10 +1414,16 @@ type MCPHostConfig struct {
 	AutoEnable   bool   `json:"auto_enable"             env:"CLAW_MCP_HOST_AUTO_ENABLE"`
 	Listen       string `json:"listen,omitempty"        env:"CLAW_MCP_HOST_LISTEN"`
 	EndpointPath string `json:"endpoint_path,omitempty" env:"CLAW_MCP_HOST_ENDPOINT_PATH"`
-	// Tools is the global allowlist of tool names exposed to MCP clients.
-	// Supports "*" (all), prefix globs like "read_*", and exact names. Every
-	// tool obeys the allowlist; nothing (including msg_send) is hard-excluded.
-	Tools []string `json:"tools,omitempty"`
+	// InternalTools and ExternalTools are per-endpoint visibility filters that
+	// govern which tools appear in tools/list (the catalogue) on /internal and
+	// the bearer endpoint (/mcp) respectively. They are a COARSE exposure filter
+	// — per-agent execution gating still applies on top at tools/call. Each entry
+	// is matched by MatchVisibility: equality-or-prefix after collapsing
+	// underscores and stripping a leading mcp_, so "file"/"session_info" catch
+	// local tools and "fusion"/"fusion_wxca" catch upstream MCP tools (no mcp_
+	// prefix or glob needed). "*" exposes everything; empty exposes nothing.
+	InternalTools []string `json:"internal_tools,omitempty"`
+	ExternalTools []string `json:"external_tools,omitempty"`
 }
 
 func LoadConfig(path string) (*Config, error) {
