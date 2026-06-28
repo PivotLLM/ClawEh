@@ -17,6 +17,7 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/config"
 	"github.com/PivotLLM/ClawEh/pkg/identity"
 	"github.com/PivotLLM/ClawEh/pkg/logger"
+	"github.com/PivotLLM/ClawEh/pkg/mdhelper"
 	"github.com/PivotLLM/ClawEh/pkg/media"
 	"github.com/PivotLLM/ClawEh/pkg/utils"
 )
@@ -149,7 +150,7 @@ func (c *SlackChannel) Send(ctx context.Context, msg bus.OutboundMessage) error 
 	}
 
 	opts := []slack.MsgOption{
-		slack.MsgOptionText(formatSlackMessage(markdownToMrkdwn(msg.Content)), false),
+		slack.MsgOptionText(mdhelper.FormatTables(markdownToMrkdwn(msg.Content)), false),
 	}
 
 	if msg.ReplyToMessageID != "" && threadTS == "" {
