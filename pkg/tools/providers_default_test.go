@@ -41,7 +41,12 @@ func TestDefaultEnabledToolNames(t *testing.T) {
 	if has("ztest_off") {
 		t.Error("DefaultEnabled=false tool ztest_off must not be included")
 	}
-	if !has("find_tools_regex") {
-		t.Error("DefaultEnabled static tool find_tools_regex missing from result")
+	// find_tools_* are intentionally NOT default-enabled (only useful when MCP
+	// tool discovery is on), so they must be absent from the baseline set.
+	if has("find_tools_regex") {
+		t.Error("find_tools_regex is not DefaultEnabled and must not be in the baseline")
+	}
+	if has("find_tools_bm25") {
+		t.Error("find_tools_bm25 is not DefaultEnabled and must not be in the baseline")
 	}
 }
