@@ -60,3 +60,19 @@ export async function setLauncherConfig(
     body: JSON.stringify(payload),
   })
 }
+
+export interface CLIInfo {
+  protocol: string
+  label: string
+  binary: string
+  installed: boolean
+  path?: string
+  version?: string
+}
+
+// listCLIs reports which known CLI agents (claude/codex/gemini) are installed on
+// the host, so the setup wizard can show what's available without the user
+// configuring a CLI whose binary isn't on PATH.
+export async function listCLIs(): Promise<CLIInfo[]> {
+  return request<CLIInfo[]>("/api/system/clis")
+}

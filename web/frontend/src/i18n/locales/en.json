@@ -575,5 +575,54 @@
       "confirm": "Delete",
       "error": "Failed to delete provider"
     }
+  },
+  "setup": {
+    "back": "Back",
+    "next": "Next",
+    "finish": "Finish setup",
+    "finishedToast": "Setup complete — you're ready to chat.",
+    "steps": {
+      "welcome": "Welcome",
+      "provider": "Provider",
+      "model": "Model",
+      "agent": "Agent",
+      "review": "Review"
+    },
+    "welcome": {
+      "title": "Let's get you set up",
+      "body": "This short wizard configures the essentials so you can start chatting: an AI provider, a model, and your first agent.",
+      "point1": "Connect one AI provider and verify the API key live.",
+      "point2": "Pick a model to use by default.",
+      "point3": "Create your first agent."
+    },
+    "provider": {
+      "title": "Connect an AI provider",
+      "body": "Choose a provider, paste your API key, and test it. Testing catches a wrong key or endpoint before it causes errors later.",
+      "selectLabel": "Provider",
+      "selectPlaceholder": "Select a provider",
+      "endpoint": "Endpoint",
+      "keyLabel": "API key",
+      "keyPlaceholder": "Paste your API key",
+      "testButton": "Test key"
+    },
+    "model": {
+      "title": "Choose a model",
+      "body": "Pick a model offered by this provider, or enter a custom model id. It becomes your default model.",
+      "selectLabel": "Model",
+      "selectPlaceholder": "Select a model",
+      "customOption": "Custom model…",
+      "customIdLabel": "Model id",
+      "customNameLabel": "Display name",
+      "customNamePlaceholder": "My model"
+    },
+    "agent": {
+      "title": "Create your first agent",
+      "body": "Give your agent a name. It will use the default model and standard tools — you can fine-tune it later on the Agents page.",
+      "nameLabel": "Agent name"
+    },
+    "review": {
+      "title": "Review and finish",
+      "body": "Here's what will be configured. Go back to make changes, or finish to apply."
+    }
   }
 }

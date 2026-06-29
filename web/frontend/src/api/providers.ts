@@ -76,4 +76,24 @@ export async function deleteProvider(
   })
 }
 
+export interface ProviderTestResult {
+  ok: boolean
+  message: string
+}
+
+// testProvider runs a live connectivity/auth probe against a provider's
+// (possibly not-yet-saved) settings, so the setup wizard can catch a bad key or
+// base URL before persisting it.
+export async function testProvider(req: {
+  protocol: string
+  base_url?: string
+  api_key?: string
+}): Promise<ProviderTestResult> {
+  return request<ProviderTestResult>("/api/providers/test", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+  })
+}
+
 export type { ProvidersListResponse, ProviderActionResponse }
