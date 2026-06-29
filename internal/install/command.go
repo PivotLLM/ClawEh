@@ -14,6 +14,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/PivotLLM/ClawEh/internal"
+	"github.com/PivotLLM/ClawEh/pkg/config"
 	"github.com/PivotLLM/ClawEh/pkg/fileutil"
 	"github.com/PivotLLM/ClawEh/pkg/global"
 )
@@ -25,19 +27,27 @@ const (
 
 // NewInstallCommand returns the `claw install` subcommand.
 func NewInstallCommand() *cobra.Command {
-	return &cobra.Command{
+	var host string
+	var port int
+	cmd := &cobra.Command{
 		Use:   "install",
 		Short: "Install the binary and register a systemd service that starts " + global.AppName + " at boot",
 		Long: "Copies the running binary to ~/bin (or ~/.local/bin), ensures that directory is on\n" +
 			"your PATH, and writes a systemd system service that runs " + global.AppName + " as your user\n" +
 			"account at boot. Writing the service unit requires sudo; you'll be prompted for your\n" +
-			"password. Run this as your normal user, not with sudo.",
+			"password. Run this as your normal user, not with sudo.\n\n" +
+			"On a headless host, pass --host 0.0.0.0 so the WebUI is reachable on the network\n" +
+			"(it binds to localhost by default). NOTE: the WebUI has no authentication — only\n" +
+			"expose it on a trusted network or behind an authenticated reverse proxy.",
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return runInstall()
+			return runInstall(host, port)
 		},
 	}
+	cmd.Flags().StringVar(&host, "host", "", "Bind address for the web/gateway server (e.g. 0.0.0.0 for all interfaces). Empty keeps the current/seeded value.")
+	cmd.Flags().IntVar(&port, "port", 0, "HTTP port for the web/gateway server. 0 keeps the current/seeded value.")
+	return cmd
 }
 
 // NewUninstallCommand returns the `claw uninstall` subcommand.
@@ -53,7 +63,7 @@ func NewUninstallCommand() *cobra.Command {
 	}
 }
 
-func runInstall() error {
+func runInstall(host string, port int) error {
 	if runtime.GOOS != "linux" {
 		return fmt.Errorf("`%s install` is only supported on Linux (systemd); this is %s", serviceName, runtime.GOOS)
 	}
@@ -98,6 +108,14 @@ func runInstall() error {
 	// 3. Ensure the bin dir is on PATH for interactive shells.
 	if note := ensurePath(binDir); note != "" {
 		fmt.Println(note)
+	}
+
+	// 3b. Apply requested bind host/port to the config before the service starts,
+	// so a headless host is reachable on first boot without a manual config edit.
+	if host != "" || port != 0 {
+		if err := applyServerSettings(host, port); err != nil {
+			return fmt.Errorf("applying server settings: %w", err)
+		}
 	}
 
 	// 4. Write the systemd unit to a temp file, then install it with one sudo call.
@@ -180,6 +198,46 @@ func buildUnit(username, group, execPath, binDir string) string {
 	b.WriteString("\n[Install]\n")
 	b.WriteString("WantedBy=multi-user.target\n")
 	return b.String()
+}
+
+// applyServerSettings writes the requested bind host/port into the config (a
+// blank/zero value leaves the existing one untouched), creating the config from
+// defaults if it doesn't exist yet. It warns when binding a non-loopback address
+// because the WebUI has no authentication.
+func applyServerSettings(host string, port int) error {
+	path := internal.GetConfigPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	cfg, err := config.LoadConfig(path)
+	if err != nil {
+		return err
+	}
+	if host != "" {
+		cfg.Gateway.Host = host
+	}
+	if port != 0 {
+		cfg.Gateway.Port = port
+	}
+	if err := config.SaveConfig(path, cfg); err != nil {
+		return err
+	}
+	fmt.Printf("Server bind set to %s:%d (%s)\n", cfg.Gateway.Host, cfg.Gateway.Port, path)
+	if isPublicBind(cfg.Gateway.Host) {
+		fmt.Printf("WARNING: %s binds a non-loopback address and the WebUI has NO authentication.\n", global.AppName)
+		fmt.Println("         Restrict access with a firewall or an authenticated reverse proxy.")
+	}
+	return nil
+}
+
+// isPublicBind reports whether host exposes the server beyond the local machine.
+func isPublicBind(host string) bool {
+	switch strings.TrimSpace(host) {
+	case "", "127.0.0.1", "localhost", "::1":
+		return false
+	default:
+		return true
+	}
 }
 
 // servicePATH builds the PATH baked into the systemd unit: binDir first, then the

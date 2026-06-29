@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/PivotLLM/ClawEh/internal"
+	"github.com/PivotLLM/ClawEh/pkg/config"
 	"github.com/PivotLLM/ClawEh/pkg/global"
 )
 
@@ -47,6 +49,44 @@ func TestServicePATH_PrependsBinDirAndDedups(t *testing.T) {
 	want := "/home/bob/bin:/usr/bin:/home/bob/.local/bin:/usr/local/bin:/bin"
 	if got != want {
 		t.Errorf("servicePATH = %q, want %q", got, want)
+	}
+}
+
+func TestApplyServerSettings_WritesHostAndPort(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv(global.EnvVarHome, dir) // CLAW_HOME → config under dir
+
+	if err := applyServerSettings("0.0.0.0", 12345); err != nil {
+		t.Fatalf("applyServerSettings: %v", err)
+	}
+	cfg, err := config.LoadConfig(internal.GetConfigPath())
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.Gateway.Host != "0.0.0.0" || cfg.Gateway.Port != 12345 {
+		t.Fatalf("got %s:%d, want 0.0.0.0:12345", cfg.Gateway.Host, cfg.Gateway.Port)
+	}
+
+	// A blank host / zero port must leave the stored values untouched.
+	if err := applyServerSettings("", 0); err != nil {
+		t.Fatalf("applyServerSettings (no-op): %v", err)
+	}
+	cfg, _ = config.LoadConfig(internal.GetConfigPath())
+	if cfg.Gateway.Host != "0.0.0.0" || cfg.Gateway.Port != 12345 {
+		t.Fatalf("blank args changed bind: got %s:%d", cfg.Gateway.Host, cfg.Gateway.Port)
+	}
+}
+
+func TestIsPublicBind(t *testing.T) {
+	for _, h := range []string{"", "127.0.0.1", "localhost", "::1"} {
+		if isPublicBind(h) {
+			t.Errorf("isPublicBind(%q) = true, want false", h)
+		}
+	}
+	for _, h := range []string{"0.0.0.0", "192.168.1.10", "::"} {
+		if !isPublicBind(h) {
+			t.Errorf("isPublicBind(%q) = false, want true", h)
+		}
 	}
 }
 
