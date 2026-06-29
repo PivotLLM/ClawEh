@@ -5,6 +5,7 @@ package install
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"os/user"
@@ -157,10 +158,55 @@ func runInstall(host string, port int, allowedCIDRs string) error {
 	}
 
 	fmt.Printf("\n%s is installed and running.\n", global.AppName)
+	fmt.Printf("  Open:   %s\n", accessURL())
 	fmt.Printf("  Status: systemctl status %s\n", serviceName)
 	fmt.Printf("  Logs:   journalctl -u %s -f   (or %s/logs/claw.log)\n", serviceName, dataDir(u.HomeDir))
 	fmt.Printf("  Stop/remove: %s uninstall\n", serviceName)
 	return nil
+}
+
+// accessURL returns the web UI URL to print after install, derived from the
+// active bind host/port. For an all-interfaces bind it uses the host's primary
+// private IP so a headless user gets a reachable address, not "0.0.0.0".
+func accessURL() string {
+	host, port := "127.0.0.1", launcherconfig.DefaultPort
+	if cfg, err := config.LoadConfig(internal.GetConfigPath()); err == nil {
+		if cfg.Gateway.Host != "" {
+			host = cfg.Gateway.Host
+		}
+		if cfg.Gateway.Port != 0 {
+			port = cfg.Gateway.Port
+		}
+	}
+	switch strings.TrimSpace(host) {
+	case "0.0.0.0", "::", "":
+		if ip := primaryLANIP(); ip != "" {
+			return fmt.Sprintf("http://%s:%d", ip, port)
+		}
+		return fmt.Sprintf("http://<server-ip>:%d", port)
+	case "127.0.0.1", "localhost", "::1":
+		return fmt.Sprintf("http://localhost:%d", port)
+	default:
+		return fmt.Sprintf("http://%s:%d", host, port)
+	}
+}
+
+// primaryLANIP returns the host's first non-loopback private IPv4, or "".
+func primaryLANIP() string {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return ""
+	}
+	for _, a := range addrs {
+		ipnet, ok := a.(*net.IPNet)
+		if !ok || ipnet.IP.IsLoopback() {
+			continue
+		}
+		if ip4 := ipnet.IP.To4(); ip4 != nil && ip4.IsPrivate() {
+			return ip4.String()
+		}
+	}
+	return ""
 }
 
 func runUninstall() error {

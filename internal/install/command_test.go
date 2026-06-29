@@ -96,6 +96,34 @@ func TestApplyAllowlist_WritesCIDRs(t *testing.T) {
 	}
 }
 
+func TestAccessURL(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv(global.EnvVarHome, dir)
+	write := func(host string, port int) {
+		cfg := config.DefaultConfig()
+		cfg.Gateway.Host = host
+		cfg.Gateway.Port = port
+		if err := config.SaveConfig(internal.GetConfigPath(), cfg); err != nil {
+			t.Fatalf("SaveConfig: %v", err)
+		}
+	}
+
+	write("127.0.0.1", 18790)
+	if got := accessURL(); got != "http://localhost:18790" {
+		t.Errorf("loopback URL = %q, want http://localhost:18790", got)
+	}
+	write("192.168.1.5", 9000)
+	if got := accessURL(); got != "http://192.168.1.5:9000" {
+		t.Errorf("specific-host URL = %q, want http://192.168.1.5:9000", got)
+	}
+	// All-interfaces: resolves to a LAN IP (or the <server-ip> placeholder), but
+	// always carries the right scheme and port.
+	write("0.0.0.0", 8080)
+	if got := accessURL(); !strings.HasPrefix(got, "http://") || !strings.HasSuffix(got, ":8080") {
+		t.Errorf("all-interfaces URL = %q, want http://…:8080", got)
+	}
+}
+
 func TestIsPublicBind(t *testing.T) {
 	for _, h := range []string{"", "127.0.0.1", "localhost", "::1"} {
 		if isPublicBind(h) {
