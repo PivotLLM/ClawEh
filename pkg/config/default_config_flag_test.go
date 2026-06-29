@@ -47,6 +47,24 @@ func TestDefaultConfig_DefaultAgentInheritsDefaultTools(t *testing.T) {
 	}
 }
 
+func TestDefaultConfig_GeminiCLITrustsWorkspace(t *testing.T) {
+	// Newer Gemini CLI refuses to run headless in an "untrusted" folder, so the
+	// seeded model must set GEMINI_CLI_TRUST_WORKSPACE=true or tool calls fail.
+	cfg := DefaultConfig()
+	var found bool
+	for _, m := range cfg.Models {
+		if m.ModelName == "Gemini CLI" {
+			found = true
+			if m.Env["GEMINI_CLI_TRUST_WORKSPACE"] != "true" {
+				t.Errorf("Gemini CLI model env = %v, want GEMINI_CLI_TRUST_WORKSPACE=true", m.Env)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("seeded Gemini CLI model not found")
+	}
+}
+
 func TestSeedDefaultConfig_PreservesMarker(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 

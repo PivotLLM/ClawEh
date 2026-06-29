@@ -198,7 +198,10 @@ func DefaultConfig() *Config {
 			{ModelName: "Claude CLI", Model: "claude-cli", Provider: "Claude CLI", RequestTimeout: 3600, ExtraArgs: []string{"--dangerously-skip-permissions", "--no-chrome"}, Env: map[string]string{"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"}, Enabled: false},
 			{ModelName: "Claude CLI Opus", Model: "claude-opus-4-7", Provider: "Claude CLI", RequestTimeout: 3600, ExtraArgs: []string{"--dangerously-skip-permissions", "--no-chrome"}, Env: map[string]string{"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"}, Enabled: false},
 			{ModelName: "Codex CLI", Model: "codex-cli", Provider: "Codex CLI", RequestTimeout: 3600, ExtraArgs: []string{"--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check"}, Enabled: false},
-			{ModelName: "Gemini CLI", Model: "gemini-2.5-pro", Provider: "Gemini CLI", RequestTimeout: 3600, ExtraArgs: []string{"--yolo"}, Enabled: false},
+			// GEMINI_CLI_TRUST_WORKSPACE=true is required for headless/automated use:
+			// without it, newer Gemini CLI refuses to run in an "untrusted" folder and
+			// overrides --yolo back to manual approval. See geminicli.com trusted-folders.
+			{ModelName: "Gemini CLI", Model: "gemini-2.5-pro", Provider: "Gemini CLI", RequestTimeout: 3600, ExtraArgs: []string{"--yolo"}, Env: map[string]string{"GEMINI_CLI_TRUST_WORKSPACE": "true"}, Enabled: false},
 
 			// HTTP providers.
 			{ModelName: "OpenAI GPT 5.5", Model: "gpt-5.5", Provider: "OpenAI", DropParams: []string{"temperature"}, Enabled: false},
