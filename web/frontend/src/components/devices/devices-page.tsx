@@ -37,15 +37,42 @@ export function DevicesPage() {
   const paired = useQuery({ queryKey: ["device-paired"], queryFn: listPairedDevices })
 
   const [lan, setLan] = useState(false)
-  const [extUrl, setExtUrl] = useState("")
+  const [extHost, setExtHost] = useState("")
+  const [extPort, setExtPort] = useState("")
+  const [extTls, setExtTls] = useState(false)
   const [qr, setQr] = useState<DeviceStatus | null>(null)
 
   useEffect(() => {
-    if (status.data) {
-      setLan(status.data.listen_lan)
-      setExtUrl(status.data.external_url)
+    if (!status.data) return
+    setLan(status.data.listen_lan)
+    const url = status.data.external_url
+    if (!url) {
+      setExtHost("")
+      setExtPort("")
+      setExtTls(false)
+      return
+    }
+    try {
+      const u = new URL(url)
+      setExtHost(u.hostname)
+      setExtPort(u.port)
+      setExtTls(u.protocol === "https:" || u.protocol === "wss:")
+    } catch {
+      setExtHost(url)
+      setExtPort("")
+      setExtTls(false)
     }
   }, [status.data])
+
+  // Compose the stored external_url from the host/port/TLS fields. Empty host means
+  // "direct LAN" (auto-detect), so external_url is cleared.
+  const buildExternalURL = () => {
+    const host = extHost.trim()
+    if (host === "") return ""
+    const scheme = extTls ? "https" : "http"
+    const port = extPort.trim()
+    return port ? `${scheme}://${host}:${port}` : `${scheme}://${host}`
+  }
 
   const refresh = () => {
     void qc.invalidateQueries({ queryKey: ["device-status"] })
@@ -63,7 +90,8 @@ export function DevicesPage() {
     onError: (e: Error) => toast.error(e.message),
   })
   const saveMut = useMutation({
-    mutationFn: () => saveDeviceSettings({ listen_lan: lan, external_url: extUrl }),
+    mutationFn: () =>
+      saveDeviceSettings({ listen_lan: lan, external_url: buildExternalURL() }),
     onSuccess: () => {
       toast.success("Network settings saved")
       refresh()
@@ -132,18 +160,31 @@ export function DevicesPage() {
               </div>
               <Switch id="lan-switch" checked={lan} onCheckedChange={setLan} />
             </div>
-            <div className="space-y-1">
-              <Label htmlFor="ext-url">External URL</Label>
-              <Input
-                id="ext-url"
-                value={extUrl}
-                placeholder={s ? `http://${s.ips[0] ?? "<ip>"}:${s.listen_port}` : ""}
-                onChange={(e) => setExtUrl(e.target.value)}
-              />
+            <div className="space-y-2">
+              <Label>External address (reverse proxy / tunnel)</Label>
+              <div className="flex gap-2">
+                <Input
+                  className="flex-1"
+                  placeholder="host or IP (blank = direct LAN)"
+                  value={extHost}
+                  onChange={(e) => setExtHost(e.target.value)}
+                />
+                <Input
+                  className="w-28"
+                  placeholder="port"
+                  inputMode="numeric"
+                  value={extPort}
+                  onChange={(e) => setExtPort(e.target.value)}
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <Switch id="tls-switch" checked={extTls} onCheckedChange={setExtTls} />
+                <Label htmlFor="tls-switch">Use TLS (secure wss connection)</Label>
+              </div>
               <p className="text-muted-foreground text-sm">
-                What devices are told to connect to. Leave blank to auto-detect the
-                LAN address. Set to e.g. <code>https://claw.example.com</code> when
-                using a reverse proxy / Cloudflare.
+                What devices are told to connect to. Leave host blank for direct LAN
+                access (auto-detected). Set these when a reverse proxy or tunnel fronts
+                the gateway — with TLS on, the host must match the proxy's certificate.
               </p>
             </div>
             {s?.warnings?.length ? (
