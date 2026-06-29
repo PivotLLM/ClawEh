@@ -138,10 +138,16 @@ func (s *Server) HandleWS(w http.ResponseWriter, r *http.Request) {
 
 	hello, fail := s.handshake(r, connID, nonce, raw)
 	if fail != nil {
+		logger.WarnCF("device", "connect rejected", map[string]any{
+			"reason": fail.reason, "code": fail.err.Code, "message": fail.err.Message,
+		})
 		_ = cw.writeJSON(gatewayproto.NewErrorResponse(fail.id, fail.err))
 		cw.closeWith(fail.code, fail.reason)
 		return
 	}
+	logger.InfoCF("device", "connect accepted", map[string]any{
+		"deviceId": hello.deviceID, "role": hello.role,
+	})
 
 	if err := cw.writeJSON(gatewayproto.NewOKResponse(hello.id, hello.payload)); err != nil {
 		_ = conn.Close()
@@ -191,6 +197,18 @@ func (s *Server) handshake(r *http.Request, connID, nonce string, raw []byte) (*
 	if err := json.Unmarshal(req.Params, &p); err != nil {
 		return nil, &handshakeFail{id: req.ID, err: gatewayproto.NewError(gatewayproto.CodeInvalidRequest, "invalid connect params", nil), code: websocket.ClosePolicyViolation, reason: "invalid handshake"}
 	}
+
+	// Diagnostic: record exactly what a device advertises at connect (no secrets).
+	// Critical for characterizing third-party clients like the Rabbit R1.
+	logger.InfoCF("device", "connect attempt", map[string]any{
+		"clientId": p.Client.ID, "mode": p.Client.Mode, "role": p.Role,
+		"platform": p.Client.Platform, "deviceFamily": p.Client.DeviceFamily,
+		"version": p.Client.Version, "displayName": p.Client.DisplayName,
+		"caps": p.Caps, "commands": p.Commands,
+		"minProtocol": p.MinProtocol, "maxProtocol": p.MaxProtocol,
+		"hasDevice": p.Device != nil, "hasToken": p.Auth != nil && p.Auth.Token != "",
+		"remoteIp": clientIP(r),
+	})
 
 	// Protocol negotiation.
 	if !gatewayproto.NegotiateProtocol(p.MinProtocol, p.MaxProtocol, p.Client.Mode == "probe") {
@@ -382,6 +400,9 @@ func (s *Server) serveLoop(ctx context.Context, lc *liveConn) {
 
 // dispatch routes a post-handshake request frame.
 func (s *Server) dispatch(lc *liveConn, req gatewayproto.RequestFrame) {
+	// Diagnostic: capture which methods a device actually calls post-handshake
+	// (reveals the R1's Talk model — chat.send text loop vs. audio streaming).
+	logger.InfoCF("device", "node request", map[string]any{"method": req.Method, "deviceId": lc.deviceID})
 	switch req.Method {
 	case "health":
 		_ = lc.cw.writeJSON(gatewayproto.NewOKResponse(req.ID, map[string]any{"status": "ok"}))
