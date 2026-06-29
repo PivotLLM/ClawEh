@@ -95,4 +95,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 
 	// First-run setup status (drives the wizard redirect)
 	h.registerSetupStatusRoutes(mux)
+
+	// External-device gateway onboarding + pairing management
+	h.registerDeviceRoutes(mux)
 }

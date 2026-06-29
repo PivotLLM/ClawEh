@@ -14,6 +14,7 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/agent"
 	"github.com/PivotLLM/ClawEh/pkg/bus"
 	"github.com/PivotLLM/ClawEh/pkg/channels"
+	_ "github.com/PivotLLM/ClawEh/pkg/channels/device"
 	_ "github.com/PivotLLM/ClawEh/pkg/channels/discord"
 	_ "github.com/PivotLLM/ClawEh/pkg/channels/line"
 	_ "github.com/PivotLLM/ClawEh/pkg/channels/matrix"

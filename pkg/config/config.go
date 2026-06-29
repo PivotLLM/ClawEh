@@ -856,6 +856,7 @@ type ChannelsConfig struct {
 	Matrix   MatrixConfig        `json:"matrix"`
 	LINE     LINEConfig          `json:"line"`
 	WebUI    WebUIConfig         `json:"webui"`
+	Device   DeviceChannelConfig `json:"device"`
 }
 
 // GroupTriggerConfig controls when the bot responds in group chats.
@@ -1038,6 +1039,20 @@ type WebUIConfig struct {
 type DevicesConfig struct {
 	Enabled    bool `json:"enabled"     env:"CLAW_DEVICES_ENABLED"`
 	MonitorUSB bool `json:"monitor_usb" env:"CLAW_DEVICES_MONITOR_USB"`
+}
+
+// DeviceChannelConfig configures the external-device gateway: an OpenClaw
+// Gateway-protocol WebSocket endpoint that hardware devices (e.g. the Rabbit R1)
+// connect to. Distinct from DevicesConfig (USB hardware monitor).
+type DeviceChannelConfig struct {
+	Enabled bool   `json:"enabled"                env:"CLAW_CHANNELS_DEVICE_ENABLED"`
+	Token   string `json:"token"                  env:"CLAW_CHANNELS_DEVICE_TOKEN"` // shared gateway auth token presented in the QR
+	Path    string `json:"path,omitempty"`                                          // WS mount path (default /gateway/)
+	// AutoApprove skips operator approval for fresh device pairings. Intended for
+	// trusted home-LAN setups (matches the Rabbit setup-script UX); default off.
+	AutoApprove  bool                `json:"auto_approve,omitempty"`
+	AllowOrigins []string            `json:"allow_origins,omitempty"`
+	AllowFrom    FlexibleStringSlice `json:"allow_from"             env:"CLAW_CHANNELS_DEVICE_ALLOW_FROM"`
 }
 
 type VoiceConfig struct {

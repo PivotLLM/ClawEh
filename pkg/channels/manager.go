@@ -378,6 +378,11 @@ func (m *Manager) initChannels() error {
 		m.initChannel("webui", "WebUI")
 	}
 
+	if m.config.Channels.Device.Enabled {
+		warnEmptyAllowFrom("Device", m.config.Channels.Device.AllowFrom)
+		m.initChannel("device", "Device Gateway")
+	}
+
 	logger.InfoCF("channels", "Channel initialization completed", map[string]any{
 		"enabled_channels": len(m.channels),
 	})

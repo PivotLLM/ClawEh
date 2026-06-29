@@ -155,6 +155,11 @@ func DefaultConfig() *Config {
 				MaxConnections: 100,
 				AllowFrom:      FlexibleStringSlice{},
 			},
+			Device: DeviceChannelConfig{
+				Enabled:   false,
+				Path:      "/gateway/",
+				AllowFrom: FlexibleStringSlice{},
+			},
 		},
 		// Named endpoints. A model references one by name; the WebUI groups
 		// models by provider. Add your API key to the provider you want to use.
