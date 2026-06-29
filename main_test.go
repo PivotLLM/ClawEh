@@ -36,12 +36,14 @@ func TestNewClawCommand(t *testing.T) {
 		"agent",
 		"cron",
 		"gateway",
+		"install",
 		"memory",
 		"test",
 		"model",
 		"skills",
 		"status",
 		"token",
+		"uninstall",
 		"version",
 	}
 
