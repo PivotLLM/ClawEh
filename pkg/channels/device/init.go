@@ -8,6 +8,6 @@ import (
 
 func init() {
 	channels.RegisterFactory("device", func(cfg *config.Config, b *bus.MessageBus) (channels.Channel, error) {
-		return NewDeviceChannel(cfg.Channels.Device, cfg.DataDir(), b)
+		return NewDeviceChannel(cfg.Channels.Device, cfg.DataDir(), cfg.Logging.LogMessageContent, b)
 	})
 }

@@ -30,8 +30,8 @@ type DeviceChannel struct {
 }
 
 // NewDeviceChannel opens the pairing store under <dataDir>/state and builds the
-// gateway protocol server.
-func NewDeviceChannel(cfg config.DeviceChannelConfig, dataDir string, b *bus.MessageBus) (*DeviceChannel, error) {
+// gateway protocol server. logMessages enables full inbound/outbound content logs.
+func NewDeviceChannel(cfg config.DeviceChannelConfig, dataDir string, logMessages bool, b *bus.MessageBus) (*DeviceChannel, error) {
 	stateDir := filepath.Join(dataDir, "state")
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		return nil, fmt.Errorf("device: create state dir: %w", err)
@@ -45,6 +45,7 @@ func NewDeviceChannel(cfg config.DeviceChannelConfig, dataDir string, b *bus.Mes
 		ServerVersion: global.Version,
 		AutoApprove:   cfg.AutoApprove,
 		AllowOrigins:  cfg.AllowOrigins,
+		LogMessages:   logMessages,
 	})
 	path := cfg.Path
 	if path == "" {

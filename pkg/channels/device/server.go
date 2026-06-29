@@ -27,6 +27,7 @@ type ServerOptions struct {
 	ServerVersion string   // reported in hello-ok.server.version
 	AutoApprove   bool     // dev/LAN: auto-approve fresh pending pairings
 	AllowOrigins  []string // WS Origin allowlist; empty allows all
+	LogMessages   bool     // log full inbound/outbound message content (logging.log_message_content)
 }
 
 // InboundFunc submits a device utterance into the agent layer. The channel sets
@@ -217,16 +218,20 @@ func (s *Server) handshake(r *http.Request, connID, nonce string, raw []byte) (*
 		return nil, &handshakeFail{id: req.ID, err: gatewayproto.NewError(gatewayproto.CodeInvalidRequest, "protocol mismatch", detail), code: websocket.CloseProtocolError, reason: "protocol mismatch"}
 	}
 
-	// Gateway shared-token auth (independent of device identity).
-	if s.opts.SharedToken != "" {
-		tok := ""
-		if p.Auth != nil {
-			tok = p.Auth.Token
+	// Gateway authentication: accept the shared token OR a valid issued device
+	// token. A paired device (e.g. the Rabbit R1) reconnects presenting its device
+	// token rather than the shared secret, so shared-token-only auth would wrongly
+	// reject it. When no shared token is configured (loopback dev), auth is open.
+	if s.opts.SharedToken != "" && !s.authorizeGateway(r.Context(), &p) {
+		if s.opts.LogMessages {
+			logger.WarnCF("device", "gateway auth failed", map[string]any{
+				"clientId":           p.Client.ID,
+				"tokenPresent":       p.Auth != nil && p.Auth.Token != "",
+				"deviceTokenPresent": p.Auth != nil && p.Auth.DeviceToken != "",
+			})
 		}
-		if subtle.ConstantTimeCompare([]byte(tok), []byte(s.opts.SharedToken)) != 1 {
-			detail := map[string]any{"code": gatewayproto.DetailAuthTokenMismatch}
-			return nil, &handshakeFail{id: req.ID, err: gatewayproto.NewError(gatewayproto.CodeInvalidRequest, "gateway authentication failed", detail), code: websocket.ClosePolicyViolation, reason: "unauthorized"}
-		}
+		detail := map[string]any{"code": gatewayproto.DetailAuthTokenMismatch}
+		return nil, &handshakeFail{id: req.ID, err: gatewayproto.NewError(gatewayproto.CodeInvalidRequest, "gateway authentication failed", detail), code: websocket.ClosePolicyViolation, reason: "unauthorized"}
 	}
 
 	// Device identity is required for a device/node client.
@@ -325,6 +330,27 @@ func (s *Server) verifyDeviceIdentity(reqID, nonce string, p *gatewayproto.Conne
 		return fail("device signature verification failed")
 	}
 	return nil
+}
+
+// authorizeGateway reports whether the connection satisfies gateway auth: either
+// the shared token, or a non-revoked device token we issued (presented in either
+// the token or deviceToken field). Called only when a shared token is configured.
+func (s *Server) authorizeGateway(ctx context.Context, p *gatewayproto.ConnectParams) bool {
+	if p.Auth == nil {
+		return false
+	}
+	if p.Auth.Token != "" && subtle.ConstantTimeCompare([]byte(p.Auth.Token), []byte(s.opts.SharedToken)) == 1 {
+		return true
+	}
+	for _, t := range []string{p.Auth.DeviceToken, p.Auth.Token} {
+		if t == "" {
+			continue
+		}
+		if _, ok, err := s.store.TokenByValue(ctx, t); err == nil && ok {
+			return true
+		}
+	}
+	return false
 }
 
 // buildHelloOk assembles the hello-ok payload for a paired device, echoing the
@@ -442,6 +468,12 @@ func (s *Server) handleChatSend(lc *liveConn, req gatewayproto.RequestFrame) {
 	lc.currentRun = runID
 	lc.mu.Unlock()
 
+	if s.opts.LogMessages {
+		logger.InfoCF("device", "chat.send in", map[string]any{
+			"deviceId": lc.deviceID, "runId": runID, "sessionKey": p.SessionKey, "message": p.Message,
+		})
+	}
+
 	_ = lc.cw.writeJSON(gatewayproto.NewOKResponse(req.ID, map[string]any{"runId": runID, "status": "started"}))
 	if s.inbound != nil {
 		go s.inbound(lc.deviceID, lc.chatID, p.Message, runID)
@@ -484,6 +516,12 @@ func (s *Server) DeliverReply(chatID, content string) bool {
 	sessionKey := lc.sessionKey
 	lc.currentRun = ""
 	lc.mu.Unlock()
+
+	if s.opts.LogMessages {
+		logger.InfoCF("device", "chat reply out", map[string]any{
+			"deviceId": lc.deviceID, "runId": runID, "sessionKey": sessionKey, "content": content,
+		})
+	}
 
 	payload := map[string]any{
 		"runId":      runID,
