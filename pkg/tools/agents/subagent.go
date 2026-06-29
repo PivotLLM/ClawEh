@@ -419,7 +419,7 @@ func friendlyMode(mode string) string {
 // callbackRule delimits the user-facing CALLBACK block so a completion is
 // unmistakable in chat. Plain box-drawing text renders identically on every
 // channel (no reliance on markdown horizontal rules).
-const callbackRuleStart = "━━━ TASK NOTIFICATION ━━━"
+const callbackRuleStart = "━━━\nTASK NOTIFICATION"
 const callbackRuleEnd = "━━━"
 
 // completionResult builds the completion notification delivered on every spawn,

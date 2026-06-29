@@ -34,7 +34,7 @@ const (
 // Example (the fences are added by this function):
 //
 //	| Item  | Qty |        Item    Qty
-//	|:------|----:|   →    ───────────
+//	|:------|----:|   →    -----------
 //	| Apple |   5 |        Apple     5
 func FormatTables(text string) string {
 	lines := strings.Split(text, "\n")
@@ -169,7 +169,7 @@ func padCell(cell string, w int, a align) string {
 }
 
 // renderTableBlock turns raw Markdown table lines into aligned, border-free rows:
-// a header, a ─ rule (replacing the separator row, or inserted after the first
+// a header, a - rule (replacing the separator row, or inserted after the first
 // row when none is present), then data rows. Columns are padded to display width
 // (so emoji/CJK align), separated by two spaces; per-column alignment is taken
 // from the separator row.
@@ -241,7 +241,7 @@ func renderTableBlock(tableLines []string) []string {
 	sepInserted := false
 	for i, cells := range parsed {
 		if isSep[i] {
-			result = append(result, strings.Repeat("─", totalWidth))
+			result = append(result, strings.Repeat("-", totalWidth))
 			sepInserted = true
 			continue
 		}
@@ -260,7 +260,7 @@ func renderTableBlock(tableLines []string) []string {
 
 	// No separator row present → insert a rule after the header.
 	if !sepInserted && len(result) > 0 {
-		result = append(result[:1], append([]string{strings.Repeat("─", totalWidth)}, result[1:]...)...)
+		result = append(result[:1], append([]string{strings.Repeat("-", totalWidth)}, result[1:]...)...)
 	}
 	return result
 }

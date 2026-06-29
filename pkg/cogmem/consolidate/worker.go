@@ -227,6 +227,12 @@ func (w *Worker) RunOnce(ctx context.Context, p RunParams) (RunResult, error) {
 		return result, nil
 	}
 
+	// Repair safe, mechanically-fixable deviations (e.g. an inferred item the
+	// model marked active → review) before validating, so a single such mistake
+	// doesn't discard the whole batch and lose real memories. Genuinely malformed
+	// batches still fail Validate below.
+	repairs := out.Normalize()
+
 	if verr := out.Validate(in); verr != nil {
 		w.recordRun(ctx, p, model, "aborted", 0, consolidated+1, lastSeq, inputTokens, outputTokens, verr.Error(), started)
 		w.dump(p, system, string(userJSON), raw, 0)
@@ -259,7 +265,18 @@ func (w *Worker) RunOnce(ctx context.Context, p RunParams) (RunResult, error) {
 			markErr = "mark consolidated: " + err.Error()
 		}
 	}
-	w.recordRun(ctx, p, model, "ok", applied, consolidated+1, lastSeq, inputTokens, outputTokens, markErr, started)
+	// Surface any auto-repairs on the (successful) run record so they're visible
+	// on the memory page rather than hidden.
+	runNote := markErr
+	if len(repairs) > 0 {
+		note := "auto-repaired: " + strings.Join(repairs, "; ")
+		if runNote != "" {
+			runNote = note + "; " + runNote
+		} else {
+			runNote = note
+		}
+	}
+	w.recordRun(ctx, p, model, "ok", applied, consolidated+1, lastSeq, inputTokens, outputTokens, runNote, started)
 	w.dump(p, system, string(userJSON), raw, applied)
 
 	result.Applied = applied

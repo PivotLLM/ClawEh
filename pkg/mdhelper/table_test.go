@@ -31,7 +31,7 @@ func TestFormatTables(t *testing.T) {
 				"| Row 2A | Row 2B | Row 2C |",
 			want: "```\n" +
 				"Column A  Column B  Column C\n" +
-				"────────────────────────────\n" +
+				"----------------------------\n" +
 				"Row 1A    Row 1B    Row 1C\n" +
 				"Row 2A    Row 2B    Row 2C\n" +
 				"```",
@@ -42,7 +42,7 @@ func TestFormatTables(t *testing.T) {
 				"| val1 | val2 |",
 			want: "```\n" +
 				"Col A  Col B\n" +
-				"────────────\n" +
+				"------------\n" +
 				"val1   val2\n" +
 				"```",
 		},
@@ -56,7 +56,7 @@ func TestFormatTables(t *testing.T) {
 			want: "Some text before.\n\n" +
 				"```\n" +
 				"Name   Age\n" +
-				"──────────\n" +
+				"----------\n" +
 				"Alice  30\n" +
 				"```\n\n" +
 				"Some text after.",
@@ -82,7 +82,7 @@ func TestFormatTables(t *testing.T) {
 				"```\nsome code\n```",
 			want: "```\n" +
 				"A  B\n" +
-				"────\n" +
+				"----\n" +
 				"1  2\n" +
 				"```\n" +
 				"```\nsome code\n```",
@@ -94,7 +94,7 @@ func TestFormatTables(t *testing.T) {
 				"| x | y |",
 			want: "```\n" +
 				"Short  A Very Long Header\n" +
-				"─────────────────────────\n" +
+				"-------------------------\n" +
 				"x      y\n" +
 				"```",
 		},
@@ -107,7 +107,7 @@ func TestFormatTables(t *testing.T) {
 				"| Alice | 30 |",
 			want: "```\n" +
 				"Name   Age\n" +
-				"──────────\n" +
+				"----------\n" +
 				"Alice   30\n" +
 				"```",
 		},
@@ -119,7 +119,7 @@ func TestFormatTables(t *testing.T) {
 				"| xxxxx | y |",
 			want: "```\n" +
 				"  h    val\n" +
-				"──────────\n" +
+				"----------\n" +
 				"xxxxx   y\n" +
 				"```",
 		},
@@ -131,7 +131,7 @@ func TestFormatTables(t *testing.T) {
 				"| Al | Ottawa |",
 			want: "```\n" +
 				"Name  City\n" +
-				"────────────\n" +
+				"------------\n" +
 				"Al    Ottawa\n" +
 				"```",
 		},
@@ -145,12 +145,12 @@ func TestFormatTables(t *testing.T) {
 				"| 3 | 4 |",
 			want: "```\n" +
 				"A  B\n" +
-				"────\n" +
+				"----\n" +
 				"1  2\n" +
 				"```\n\n" +
 				"```\n" +
 				"C  D\n" +
-				"────\n" +
+				"----\n" +
 				"3  4\n" +
 				"```",
 		},
@@ -186,7 +186,7 @@ func TestFormatTables_EmojiAligns(t *testing.T) {
 
 	var widths []int
 	for _, line := range strings.Split(out, "\n") {
-		if line == "```" || strings.HasPrefix(line, "─") || line == "" {
+		if line == "```" || strings.HasPrefix(line, "-") || line == "" {
 			continue
 		}
 		widths = append(widths, utils.DisplayWidth(line))
@@ -195,6 +195,34 @@ func TestFormatTables_EmojiAligns(t *testing.T) {
 		if w != widths[0] {
 			t.Fatalf("row %d display width %d != row 0 width %d (columns misaligned)\n%s", i, w, widths[0], out)
 		}
+	}
+}
+
+// TestFormatTables_DividerMatchesLongestRow guards that the divider rule is
+// exactly as wide as the widest data row, so it lines up under the columns.
+func TestFormatTables_DividerMatchesLongestRow(t *testing.T) {
+	input := "| Time | PP | Comments |\n" +
+		"|------|---:|----------|\n" +
+		"| 14:00 | 30% | Possible t-storms |\n" +
+		"| 16:00 | 30% | Clear |"
+	out := FormatTables(input)
+
+	divider, widest := -1, 0
+	for _, line := range strings.Split(out, "\n") {
+		if line == "```" || line == "" {
+			continue
+		}
+		w := utils.DisplayWidth(line)
+		if strings.Trim(line, "-") == "" { // the all-dashes rule line
+			divider = w
+			continue
+		}
+		if w > widest {
+			widest = w
+		}
+	}
+	if divider != widest {
+		t.Fatalf("divider width %d != widest row %d\n%s", divider, widest, out)
 	}
 }
 
@@ -208,7 +236,7 @@ func TestFormatTables_RightAlignedColumnEndsFlush(t *testing.T) {
 	out := FormatTables(input)
 
 	for _, line := range strings.Split(out, "\n") {
-		if line == "```" || strings.HasPrefix(line, "─") || line == "" {
+		if line == "```" || strings.HasPrefix(line, "-") || line == "" {
 			continue
 		}
 		// Right-aligned last column: no row carries trailing spaces, and the line

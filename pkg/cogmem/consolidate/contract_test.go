@@ -139,3 +139,37 @@ func TestLoadPrompt(t *testing.T) {
 }
 
 func ev(a, b int64) store.Evidence { return store.Evidence{SeqStart: a, SeqEnd: b} }
+
+// TestOutput_Normalize_DowngradesInferredActive verifies the safe repair: an
+// inferred item marked active is downgraded to review (so the batch is kept and
+// the item goes to pending confirmation), while explicit items are untouched.
+func TestOutput_Normalize_DowngradesInferredActive(t *testing.T) {
+	out := Output{MemoryOps: []MemoryOp{
+		{Op: "add", Domain: "d1", Type: "fact", Text: "guessed", Source: "assistant_inferred", Status: "active"},
+		{Op: "add", Domain: "d1", Type: "fact", Text: "stated", Source: "user_explicit", Status: "active"},
+		{Op: "supersede", OldID: "h1", Domain: "d1", Type: "rule", Text: "guess2", Source: "assistant_inferred", Status: "active"},
+		{Op: "add", Domain: "d1", Type: "fact", Text: "already review", Source: "assistant_inferred", Status: "review"},
+	}}
+
+	notes := out.Normalize()
+
+	if out.MemoryOps[0].Status != "review" {
+		t.Errorf("inferred add should be downgraded to review, got %q", out.MemoryOps[0].Status)
+	}
+	if out.MemoryOps[1].Status != "active" {
+		t.Errorf("user_explicit add must be untouched, got %q", out.MemoryOps[1].Status)
+	}
+	if out.MemoryOps[2].Status != "review" {
+		t.Errorf("inferred supersede should be downgraded to review, got %q", out.MemoryOps[2].Status)
+	}
+	if len(notes) != 2 {
+		t.Errorf("expected 2 repair notes, got %d: %v", len(notes), notes)
+	}
+
+	// The repaired batch must no longer trip the inferred-active rule.
+	for i, op := range out.MemoryOps {
+		if op.Source == "assistant_inferred" && op.Status == "active" {
+			t.Errorf("memory_ops[%d] still inferred+active after Normalize", i)
+		}
+	}
+}
