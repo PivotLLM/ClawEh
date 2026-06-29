@@ -1,11 +1,11 @@
 import { createFileRoute, redirect } from "@tanstack/react-router"
 
-import { getModels } from "@/api/models"
+import { getSetupStatus } from "@/api/system"
 import { ChatPage } from "@/components/chat/chat-page"
 import { SETUP_DISMISSED_KEY } from "@/components/setup/dismissed"
 
 export const Route = createFileRoute("/")({
-  // First-run convenience: send installs with no usable model straight to the
+  // First-run convenience: send a fresh, never-saved install straight to the
   // setup wizard. Suppressed once the user has cancelled the wizard this session
   // (so cancelling doesn't bounce them right back), and never blocks chat on a
   // transient API error.
@@ -13,16 +13,15 @@ export const Route = createFileRoute("/")({
     try {
       if (sessionStorage.getItem(SETUP_DISMISSED_KEY)) return
     } catch {
-      // sessionStorage unavailable — fall through and check models.
+      // sessionStorage unavailable — fall through and check setup status.
     }
-    let configured = true
+    let needsSetup = false
     try {
-      const data = await getModels()
-      configured = data.models.some((m) => m.configured)
+      needsSetup = (await getSetupStatus()).needs_setup
     } catch {
-      configured = true // don't redirect on a fetch error
+      needsSetup = false // don't redirect on a fetch error
     }
-    if (!configured) throw redirect({ to: "/setup" })
+    if (needsSetup) throw redirect({ to: "/setup" })
   },
   component: ChatPage,
 })

@@ -24,7 +24,7 @@ import {
   updateProvider,
   type ProviderInfo,
 } from "@/api/providers"
-import { listCLIs, type CLIInfo } from "@/api/system"
+import { getSetupStatus, listCLIs, type CLIInfo } from "@/api/system"
 import { SETUP_DISMISSED_KEY } from "@/components/setup/dismissed"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -77,6 +77,9 @@ export function SetupWizard() {
   const [models, setModels] = useState<ModelInfo[]>([])
   const [clis, setClis] = useState<CLIInfo[]>([])
   const [defaultTools, setDefaultTools] = useState<string[]>([])
+  // Whether the config has been saved before — drives the "already configured"
+  // warning. A pristine (never-saved) install shows no warning.
+  const [alreadyConfigured, setAlreadyConfigured] = useState(false)
   const [loadError, setLoadError] = useState("")
   const [loading, setLoading] = useState(true)
 
@@ -105,17 +108,19 @@ export function SetupWizard() {
     let cancelled = false
     void (async () => {
       try {
-        const [provs, mods, tools, cliList] = await Promise.all([
+        const [provs, mods, tools, cliList, status] = await Promise.all([
           getProviders(),
           getModels(),
           getAgentTools(),
           listCLIs(),
+          getSetupStatus(),
         ])
         if (cancelled) return
         setProviders(provs.providers)
         setModels(mods.models)
         setDefaultTools(tools.default_tools ?? [])
         setClis(cliList)
+        setAlreadyConfigured(!status.pristine)
       } catch (e) {
         if (!cancelled) {
           setLoadError(e instanceof Error ? e.message : "Failed to load")
@@ -171,14 +176,6 @@ export function SetupWizard() {
   const presetModels = useMemo(
     () => models.filter((m) => selectedProvider && m.provider === selectedProvider.name),
     [models, selectedProvider],
-  )
-
-  // The wizard is also reachable after setup (from the chat empty state), so warn
-  // when a usable model already exists: continuing adds a new agent and changes
-  // the default model, though existing providers/models/agents are kept.
-  const alreadyConfigured = useMemo(
-    () => models.some((m) => m.configured),
-    [models],
   )
 
   const cancel = useCallback(() => {

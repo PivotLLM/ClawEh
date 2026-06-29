@@ -76,3 +76,18 @@ export interface CLIInfo {
 export async function listCLIs(): Promise<CLIInfo[]> {
   return request<CLIInfo[]>("/api/system/clis")
 }
+
+export interface SetupStatus {
+  // pristine: an auto-seeded config the user has never saved.
+  pristine: boolean
+  // has_usable_model: at least one enabled model has working credentials.
+  has_usable_model: boolean
+  // needs_setup: pristine with no usable model — drives the first-run redirect.
+  needs_setup: boolean
+}
+
+// getSetupStatus reports whether this is a fresh install that should be sent to
+// the setup wizard.
+export async function getSetupStatus(): Promise<SetupStatus> {
+  return request<SetupStatus>("/api/system/setup-status")
+}

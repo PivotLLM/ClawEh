@@ -41,6 +41,9 @@ func DefaultConfig() *Config {
 	workspacePath := filepath.Join(agentsBaseDir, "default")
 
 	cfg := &Config{
+		// Marks this as an auto-seeded config the user hasn't saved yet; the first
+		// SaveConfig clears it. SeedDefaultConfig preserves it when written to disk.
+		DefaultConfig: true,
 		Agents: AgentsConfig{
 			BaseDir: agentsBaseDir,
 			Defaults: AgentDefaults{
