@@ -173,13 +173,37 @@ func buildUnit(username, group, execPath, binDir string) string {
 	b.WriteString("ExecStart=" + execPath + "\n")
 	b.WriteString("Restart=on-failure\n")
 	b.WriteString("RestartSec=5\n")
-	b.WriteString("Environment=PATH=" + binDir + ":/usr/local/bin:/usr/bin:/bin\n")
+	b.WriteString("Environment=PATH=" + servicePATH(binDir) + "\n")
 	if home := os.Getenv(global.EnvVarHome); home != "" {
 		b.WriteString("Environment=" + global.EnvVarHome + "=" + home + "\n")
 	}
 	b.WriteString("\n[Install]\n")
 	b.WriteString("WantedBy=multi-user.target\n")
 	return b.String()
+}
+
+// servicePATH builds the PATH baked into the systemd unit: binDir first, then the
+// user's current interactive PATH (captured at install time — this is what makes
+// CLI agents in ~/.local/bin or an nvm node bin reachable by the service, for both
+// detection and execution), with the standard system dirs appended as a backstop.
+// Note: an nvm path is tied to the active node version; switch versions and you'll
+// need to re-run `claw install` to refresh it.
+func servicePATH(binDir string) string {
+	parts := []string{binDir}
+	seen := map[string]bool{binDir: true}
+	add := func(p string) {
+		if p != "" && !seen[p] {
+			parts = append(parts, p)
+			seen[p] = true
+		}
+	}
+	for _, p := range filepath.SplitList(os.Getenv("PATH")) {
+		add(p)
+	}
+	for _, p := range []string{"/usr/local/bin", "/usr/bin", "/bin"} {
+		add(p)
+	}
+	return strings.Join(parts, ":")
 }
 
 // ensurePath appends binDir to the user's shell rc if it isn't already on PATH.
