@@ -96,6 +96,11 @@ func NewDeviceChannel(cfg config.DeviceChannelConfig, dataDir string, logMessage
 	return dc, nil
 }
 
+// SetAgentQuerier wires the read-only agent/session accessor into the protocol
+// server so operator clients can call agents.list / chat.history. Injected from
+// internal/gateway (which owns the agent loop) after the channel is built.
+func (c *DeviceChannel) SetAgentQuerier(q AgentQuerier) { c.server.SetQuerier(q) }
+
 // Start launches the device gateway's own HTTP listener.
 func (c *DeviceChannel) Start(ctx context.Context) error {
 	c.ctx, c.cancel = context.WithCancel(ctx)

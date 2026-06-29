@@ -945,6 +945,15 @@ func (m *Manager) GetEnabledChannels() []string {
 	return names
 }
 
+// Channel returns the enabled channel registered under name, if any. Used by the
+// gateway wiring to inject late dependencies into a specific channel.
+func (m *Manager) Channel(name string) (Channel, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	ch, ok := m.channels[name]
+	return ch, ok
+}
+
 func (m *Manager) RegisterChannel(name string, channel Channel) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

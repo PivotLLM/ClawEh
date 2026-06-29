@@ -382,6 +382,9 @@ func setupAndStartServices(
 	agentLoop.SetChannelManager(services.ChannelManager)
 	agentLoop.SetMediaStore(services.MediaStore)
 
+	// Let the device gateway answer operator-client reads (agents.list, chat.history).
+	injectDeviceAgentQuerier(services.ChannelManager, agentLoop)
+
 	// Wire up voice transcription if a supported provider is configured.
 	if transcriber := voice.DetectTranscriber(cfg); transcriber != nil {
 		agentLoop.SetTranscriber(transcriber)

@@ -50,7 +50,8 @@ type Server struct {
 	events   []string
 
 	inbound InboundFunc
-	conns   sync.Map // chatID -> *liveConn
+	querier AgentQuerier // optional: serves agents.list / chat.history to operator clients
+	conns   sync.Map     // chatID -> *liveConn
 }
 
 // liveConn is a post-handshake device connection used for conversation routing.
@@ -94,6 +95,14 @@ func NewServer(store *Store, opts ServerOptions) *Server {
 
 // SetInbound installs the agent bridge invoked on each chat.send.
 func (s *Server) SetInbound(fn InboundFunc) { s.inbound = fn }
+
+// SetQuerier installs the read-only agent/session accessor used to answer
+// operator-client RPCs (agents.list, chat.history). When set, those methods are
+// advertised in hello-ok and handled in dispatch.
+func (s *Server) SetQuerier(q AgentQuerier) {
+	s.querier = q
+	s.methods = append(s.methods, "agents.list", "chat.history")
+}
 
 // connWriter serializes writes to one websocket connection.
 type connWriter struct {
@@ -147,6 +156,9 @@ func (s *Server) HandleWS(w http.ResponseWriter, r *http.Request) {
 		_ = conn.Close()
 		return
 	}
+	if s.opts.LogMessages {
+		logger.InfoCF("device", "raw in (connect)", map[string]any{"raw": string(raw)})
+	}
 
 	hello, fail := s.handshake(r, connID, nonce, raw)
 	if fail != nil {
@@ -161,7 +173,13 @@ func (s *Server) HandleWS(w http.ResponseWriter, r *http.Request) {
 		"deviceId": hello.deviceID, "role": hello.role,
 	})
 
-	if err := cw.writeJSON(gatewayproto.NewOKResponse(hello.id, hello.payload)); err != nil {
+	helloRes := gatewayproto.NewOKResponse(hello.id, hello.payload)
+	if s.opts.LogMessages {
+		if b, mErr := json.Marshal(helloRes); mErr == nil {
+			logger.InfoCF("device", "raw out (hello-ok)", map[string]any{"raw": string(b)})
+		}
+	}
+	if err := cw.writeJSON(helloRes); err != nil {
 		_ = conn.Close()
 		return
 	}
@@ -426,6 +444,9 @@ func (s *Server) serveLoop(ctx context.Context, lc *liveConn) {
 				return
 			}
 			_ = conn.SetReadDeadline(time.Now().Add(deviceReadTimeout))
+			if s.opts.LogMessages {
+				logger.InfoCF("device", "raw in", map[string]any{"deviceId": lc.deviceID, "raw": string(raw)})
+			}
 			var req gatewayproto.RequestFrame
 			if json.Unmarshal(raw, &req) != nil || req.Type != gatewayproto.FrameReq {
 				continue
@@ -464,6 +485,10 @@ func (s *Server) dispatch(lc *liveConn, req gatewayproto.RequestFrame) {
 		s.handleChatSend(lc, req)
 	case "node.event":
 		s.handleNodeEvent(lc, req)
+	case "agents.list":
+		s.handleAgentsList(lc, req)
+	case "chat.history":
+		s.handleChatHistory(lc, req)
 	default:
 		_ = lc.cw.writeJSON(gatewayproto.NewErrorResponse(req.ID,
 			gatewayproto.NewError(gatewayproto.CodeInvalidRequest, "method not supported: "+req.Method, nil)))
@@ -500,7 +525,12 @@ func (s *Server) handleChatSend(lc *liveConn, req gatewayproto.RequestFrame) {
 		})
 	}
 
-	_ = lc.cw.writeJSON(gatewayproto.NewOKResponse(req.ID, map[string]any{"runId": runID, "status": "started"}))
+	// Acknowledge transport receipt immediately with a non-terminal status, exactly
+	// as OpenClaw does (server-methods/chat.ts ackPayload: {runId, status:"started"}).
+	// The assistant reply is delivered asynchronously via "chat" delta/final events
+	// from DeliverReply; the res must NOT carry the result or block on the run, or a
+	// strict client's transport times out waiting for this frame.
+	s.writeRes(lc, gatewayproto.NewOKResponse(req.ID, map[string]any{"runId": runID, "status": "started"}), "chat.send ack")
 	if s.inbound != nil {
 		go s.inbound(lc.deviceID, lc.chatID, p.Message, runID)
 	}
@@ -527,6 +557,88 @@ func (s *Server) handleNodeEvent(lc *liveConn, req gatewayproto.RequestFrame) {
 	_ = lc.cw.writeJSON(gatewayproto.NewOKResponse(req.ID, map[string]any{"ok": true}))
 }
 
+// handleAgentsList answers an operator client's agents.list with the configured
+// agents and the default agent's main session key (which the client echoes back
+// as the chat.history/chat.send sessionKey).
+func (s *Server) handleAgentsList(lc *liveConn, req gatewayproto.RequestFrame) {
+	if s.querier == nil {
+		_ = lc.cw.writeJSON(gatewayproto.NewErrorResponse(req.ID,
+			gatewayproto.NewError(gatewayproto.CodeInvalidRequest, "method not supported: agents.list", nil)))
+		return
+	}
+	agents, defaultID, mainKey := s.querier.Agents()
+	list := make([]map[string]any, 0, len(agents))
+	for _, a := range agents {
+		entry := map[string]any{"id": a.ID}
+		if a.Name != "" {
+			entry["name"] = a.Name
+		}
+		list = append(list, entry)
+	}
+	// Default the connection's session to the agent's main key so a subsequent
+	// chat.send without an explicit sessionKey lands in the same conversation the
+	// client just read history for.
+	lc.mu.Lock()
+	if lc.sessionKey == "" {
+		lc.sessionKey = mainKey
+	}
+	lc.mu.Unlock()
+	s.writeRes(lc, gatewayproto.NewOKResponse(req.ID, map[string]any{
+		"defaultId": defaultID,
+		"mainKey":   mainKey,
+		"scope":     "global",
+		"agents":    list,
+	}), "agents.list res")
+}
+
+// writeRes writes a response frame, logging the exact bytes when content logging
+// is enabled (debugging third-party client compatibility).
+func (s *Server) writeRes(lc *liveConn, res gatewayproto.ResponseFrame, label string) {
+	if s.opts.LogMessages {
+		if b, err := json.Marshal(res); err == nil {
+			logger.InfoCF("device", "raw out ("+label+")", map[string]any{"deviceId": lc.deviceID, "raw": string(b)})
+		}
+	}
+	_ = lc.cw.writeJSON(res)
+}
+
+// handleChatHistory returns the stored transcript for the requested session key,
+// shaped like the live "chat" event message so the client renders past turns the
+// same way it renders incoming replies.
+func (s *Server) handleChatHistory(lc *liveConn, req gatewayproto.RequestFrame) {
+	if s.querier == nil {
+		_ = lc.cw.writeJSON(gatewayproto.NewErrorResponse(req.ID,
+			gatewayproto.NewError(gatewayproto.CodeInvalidRequest, "method not supported: chat.history", nil)))
+		return
+	}
+	var p struct {
+		SessionKey string `json:"sessionKey"`
+	}
+	if json.Unmarshal(req.Params, &p) != nil {
+		_ = lc.cw.writeJSON(gatewayproto.NewErrorResponse(req.ID,
+			gatewayproto.NewError(gatewayproto.CodeInvalidRequest, "invalid chat.history params", nil)))
+		return
+	}
+	sessionKey := p.SessionKey
+	if sessionKey == "" {
+		lc.mu.Lock()
+		sessionKey = lc.sessionKey
+		lc.mu.Unlock()
+	}
+	history := s.querier.History(sessionKey)
+	messages := make([]map[string]any, 0, len(history))
+	for _, m := range history {
+		messages = append(messages, map[string]any{
+			"role":    m.Role,
+			"content": []map[string]any{{"type": "text", "text": m.Content}},
+		})
+	}
+	s.writeRes(lc, gatewayproto.NewOKResponse(req.ID, map[string]any{
+		"sessionKey": sessionKey,
+		"messages":   messages,
+	}), "chat.history res")
+}
+
 // DeliverReply emits a terminal "chat" final event to the device for the given
 // chatID, carrying the in-flight runId. Returns false if no connection matches.
 func (s *Server) DeliverReply(chatID, content string) bool {
@@ -537,7 +649,9 @@ func (s *Server) DeliverReply(chatID, content string) bool {
 	lc := v.(*liveConn)
 	lc.mu.Lock()
 	lc.seq++
-	seq := lc.seq
+	deltaSeq := lc.seq
+	lc.seq++
+	finalSeq := lc.seq
 	runID := lc.currentRun
 	sessionKey := lc.sessionKey
 	lc.currentRun = ""
@@ -549,18 +663,47 @@ func (s *Server) DeliverReply(chatID, content string) bool {
 		})
 	}
 
-	payload := map[string]any{
+	sendEvent := func(p map[string]any, seq uint64, label string) bool {
+		ev := gatewayproto.NewEvent("chat", p, &seq)
+		if s.opts.LogMessages {
+			if b, err := json.Marshal(ev); err == nil {
+				logger.InfoCF("device", "raw out ("+label+")", map[string]any{"deviceId": lc.deviceID, "raw": string(b)})
+			}
+		}
+		return lc.cw.writeJSON(ev) == nil
+	}
+
+	// OpenClaw streams chat events as one or more state:"delta" chunks (carrying
+	// deltaText) and then a state:"final". Clients that show a thinking indicator
+	// until the first token leave that state on the delta, so a lone final never
+	// clears it. We emit the whole reply as a single delta, then the final.
+	sendEvent(map[string]any{
+		"runId":      runID,
+		"sessionKey": sessionKey,
+		"state":      "delta",
+		"seq":        deltaSeq,
+		"deltaText":  content,
+	}, deltaSeq, "chat delta")
+
+	// Match OpenClaw's broadcastChatFinal message shape exactly: a top-level "text"
+	// alongside the content blocks (simple clients read message.text), plus the
+	// terminal stopReason/usage fields. See server-methods/chat.ts broadcastChatFinal.
+	message := map[string]any{
+		"role":       "assistant",
+		"content":    []map[string]any{{"type": "text", "text": content}},
+		"text":       content,
+		"timestamp":  time.Now().UnixMilli(),
+		"stopReason": "stop",
+		"usage":      map[string]any{"input": 0, "output": 0, "totalTokens": 0},
+	}
+	ok = sendEvent(map[string]any{
 		"runId":      runID,
 		"sessionKey": sessionKey,
 		"state":      "final",
-		"seq":        seq,
-		"message": map[string]any{
-			"role":      "assistant",
-			"content":   []map[string]any{{"type": "text", "text": content}},
-			"timestamp": time.Now().UnixMilli(),
-		},
-	}
-	return lc.cw.writeJSON(gatewayproto.NewEvent("chat", payload, &seq)) == nil
+		"seq":        finalSeq,
+		"message":    message,
+	}, finalSeq, "chat final")
+	return ok
 }
 
 func randomToken(n int) string {
