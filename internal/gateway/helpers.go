@@ -219,7 +219,7 @@ func gatewayCmd(debug bool) error {
 	// Setup config file watcher for hot reload
 	reloadInterval := cfg.ConfigReloadInterval()
 	logger.InfoF("Config reload watcher", map[string]any{"interval": reloadInterval.String()})
-	configReloadChan, stopWatch := setupConfigWatcherPolling(configPath, reloadInterval,
+	configReloadChan, stopWatch, markConfigApplied := setupConfigWatcherPolling(configPath, reloadInterval,
 		time.Duration(global.ConfigReloadDebounceSeconds)*time.Second, debug)
 	defer stopWatch()
 
@@ -269,7 +269,13 @@ func gatewayCmd(debug bool) error {
 				done <- lerr
 				break
 			}
-			done <- handleConfigReload(ctx, agentLoop, newCfg, &provider, services, msgBus)
+			rerr := handleConfigReload(ctx, agentLoop, newCfg, &provider, services, msgBus)
+			if rerr == nil {
+				// Tell the watcher we've applied the current file so it doesn't
+				// fire a second, disruptive reload for the same change.
+				markConfigApplied()
+			}
+			done <- rerr
 
 		case <-svcTokenChan:
 			logger.Info("🔑 Service-token file changed, reloading service tokens...")
@@ -827,9 +833,13 @@ func restartServices(
 // cfg.ConfigReloadInterval() so the value honours the config override and
 // MinConfigReloadIntervalSeconds floor. Returns a channel for config updates
 // and a stop function.
-func setupConfigWatcherPolling(configPath string, interval, debounce time.Duration, debug bool) (chan *config.Config, func()) {
+func setupConfigWatcherPolling(configPath string, interval, debounce time.Duration, debug bool) (chan *config.Config, func(), func()) {
 	configChan := make(chan *config.Config, 1)
 	stop := make(chan struct{})
+	// markCh lets an out-of-band reload (the force-reload API) tell the watcher
+	// it already applied the current on-disk config, so the watcher advances its
+	// baseline instead of firing a second, disruptive reload for the same change.
+	markCh := make(chan struct{}, 1)
 	var wg sync.WaitGroup
 
 	wg.Add(1)
@@ -916,6 +926,15 @@ func setupConfigWatcherPolling(configPath string, interval, debounce time.Durati
 					logger.Warn("⚠ Previous config reload still in progress, will retry")
 				}
 
+			case <-markCh:
+				// A force-reload already applied the current on-disk config;
+				// advance the baseline so we don't re-fire for the same change.
+				appliedModTime = getFileModTime(configPath)
+				appliedSize = getFileSize(configPath)
+				observedModTime = appliedModTime
+				observedSize = appliedSize
+				pending = false
+
 			case <-stop:
 				return
 			}
@@ -927,7 +946,14 @@ func setupConfigWatcherPolling(configPath string, interval, debounce time.Durati
 		wg.Wait()
 	}
 
-	return configChan, stopFunc
+	markApplied := func() {
+		select {
+		case markCh <- struct{}{}:
+		default:
+		}
+	}
+
+	return configChan, stopFunc, markApplied
 }
 
 // getFileModTime returns the modification time of a file, or zero time if file doesn't exist
