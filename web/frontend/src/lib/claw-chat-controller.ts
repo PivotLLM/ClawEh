@@ -29,6 +29,24 @@ let connectionGeneration = 0
 let reconnectAttempts = 0
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 
+// scheduleReconnect arms a single capped-exponential-backoff (1s → 30s) retry of
+// connectChat. Used by every failure path — socket close, socket error, and a
+// failed connect attempt (token fetch / WebSocket construction) — so the chat
+// self-heals after a transient (e.g. the WebUI channel bouncing during a config
+// reload) instead of staying dead until a manual browser refresh. An intentional
+// disconnectChat() clears the timer and bumps the generation, so it won't fire.
+function scheduleReconnect() {
+  if (reconnectTimer) {
+    return
+  }
+  const delay = Math.min(30000, 1000 * 2 ** reconnectAttempts)
+  reconnectAttempts += 1
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null
+    void connectChat()
+  }, delay)
+}
+
 async function loadSessionMessages(sessionId: string): Promise<ChatMessage[]> {
   const detail = await getSessionHistory(sessionId)
   const fallbackTime = detail.updated
@@ -200,15 +218,7 @@ export async function connectChat() {
         connectionState: "disconnected",
         isTyping: false,
       })
-      // Auto-reconnect with capped exponential backoff (1s → 30s). An
-      // intentional disconnectChat() nulls wsRef and bumps the generation, so it
-      // hits the guard above and never schedules a reconnect.
-      const delay = Math.min(30000, 1000 * 2 ** reconnectAttempts)
-      reconnectAttempts += 1
-      reconnectTimer = setTimeout(() => {
-        reconnectTimer = null
-        void connectChat()
-      }, delay)
+      scheduleReconnect()
     }
 
     socket.onerror = () => {
@@ -217,6 +227,9 @@ export async function connectChat() {
       }
       isConnecting = false
       updateChatStore({ connectionState: "error" })
+      // A socket error is usually followed by onclose, but not always — retry so
+      // the chat doesn't get stuck in "error" until a manual refresh.
+      scheduleReconnect()
     }
 
     wsRef = socket
@@ -227,6 +240,9 @@ export async function connectChat() {
     console.error("Failed to connect to webui:", error)
     updateChatStore({ connectionState: "error" })
     isConnecting = false
+    // The attempt failed before a socket existed (token fetch / construction),
+    // so there's no onclose to retry for us — schedule one here.
+    scheduleReconnect()
   }
 }
 
