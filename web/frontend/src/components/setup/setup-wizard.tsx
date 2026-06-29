@@ -77,8 +77,9 @@ export function SetupWizard() {
   const [models, setModels] = useState<ModelInfo[]>([])
   const [clis, setClis] = useState<CLIInfo[]>([])
   const [defaultTools, setDefaultTools] = useState<string[]>([])
-  // Whether the config has been saved before — drives the "already configured"
-  // warning. A pristine (never-saved) install shows no warning.
+  // Whether a usable model already exists — drives the "already configured"
+  // warning and whether the wizard reconfigures the default agent in place
+  // (fresh install) or appends a new one.
   const [alreadyConfigured, setAlreadyConfigured] = useState(false)
   const [loadError, setLoadError] = useState("")
   const [loading, setLoading] = useState(true)
@@ -120,7 +121,7 @@ export function SetupWizard() {
         setModels(mods.models)
         setDefaultTools(tools.default_tools ?? [])
         setClis(cliList)
-        setAlreadyConfigured(!status.pristine)
+        setAlreadyConfigured(status.has_usable_model)
       } catch (e) {
         if (!cancelled) {
           setLoadError(e instanceof Error ? e.message : "Failed to load")

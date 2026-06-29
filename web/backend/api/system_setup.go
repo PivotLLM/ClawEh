@@ -14,9 +14,11 @@ type setupStatusResponse struct {
 	// HasUsableModel is true when at least one enabled model has the credentials
 	// (or local/CLI provider) needed to run.
 	HasUsableModel bool `json:"has_usable_model"`
-	// NeedsSetup drives the first-run redirect to the wizard: a pristine config
-	// with no usable model. The "no usable model" guard means a hand-edited
-	// working config is never sent to the wizard.
+	// NeedsSetup drives the first-run redirect to the wizard. It is simply "no
+	// usable model": without one the app can't be used, so onboarding is needed.
+	// It deliberately does NOT depend on "pristine" — changing an unrelated
+	// setting (e.g. the bind address on a headless host) must not suppress
+	// onboarding. The WebUI's session "dismissed" flag lets a user opt out.
 	NeedsSetup bool `json:"needs_setup"`
 }
 
@@ -48,7 +50,7 @@ func (h *Handler) handleSetupStatus(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
-	resp.NeedsSetup = resp.Pristine && !resp.HasUsableModel
+	resp.NeedsSetup = !resp.HasUsableModel
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
