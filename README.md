@@ -27,6 +27,8 @@ Although the conversation context can be reset at any time, ClawEh is designed p
 
 ## Quickstart
 
+**This is a new feature. Please let me know if you encounter any issues.**
+
 Pre-built binaries are published on the [GitHub Releases page](https://github.com/PivotLLM/ClawEh/releases); you can also build from source.
 
 ### 1. Get the binary
