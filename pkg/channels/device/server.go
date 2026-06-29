@@ -19,6 +19,11 @@ import (
 const (
 	handshakeTimeout = 15 * time.Second
 	signatureSkewMs  = 5 * 60 * 1000 // accept signedAt within +/- 5 minutes
+	// Keepalive: ping the device periodically; if no pong/data arrives within the
+	// read timeout, the read fails and the (possibly half-open) connection is closed
+	// so the device reconnects instead of black-holing its sends.
+	devicePingInterval = 30 * time.Second
+	deviceReadTimeout  = 90 * time.Second
 )
 
 // ServerOptions configures a gateway protocol Server.
@@ -108,6 +113,12 @@ func (w *connWriter) closeWith(code int, reason string) {
 	_ = w.conn.WriteControl(websocket.CloseMessage,
 		websocket.FormatCloseMessage(code, reason), time.Now().Add(2*time.Second))
 	_ = w.conn.Close()
+}
+
+func (w *connWriter) ping() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(5*time.Second))
 }
 
 // HandleWS upgrades an HTTP request to the gateway protocol and runs the handshake.
@@ -394,16 +405,27 @@ func (s *Server) buildHelloOk(ctx context.Context, connID string, paired *Paired
 // serveLoop handles post-handshake frames: keepalive tick plus the conversation
 // RPC surface (health, chat.send, node.event/chat.subscribe).
 func (s *Server) serveLoop(ctx context.Context, lc *liveConn) {
+	conn := lc.cw.conn
+	_ = conn.SetReadDeadline(time.Now().Add(deviceReadTimeout))
+	conn.SetPongHandler(func(string) error {
+		_ = conn.SetReadDeadline(time.Now().Add(deviceReadTimeout))
+		return nil
+	})
+
 	tick := time.NewTicker(gatewayproto.TickIntervalMs * time.Millisecond)
 	defer tick.Stop()
+	ping := time.NewTicker(devicePingInterval)
+	defer ping.Stop()
+
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		for {
-			_, raw, err := lc.cw.conn.ReadMessage()
+			_, raw, err := conn.ReadMessage()
 			if err != nil {
 				return
 			}
+			_ = conn.SetReadDeadline(time.Now().Add(deviceReadTimeout))
 			var req gatewayproto.RequestFrame
 			if json.Unmarshal(raw, &req) != nil || req.Type != gatewayproto.FrameReq {
 				continue
@@ -420,6 +442,10 @@ func (s *Server) serveLoop(ctx context.Context, lc *liveConn) {
 			return
 		case <-tick.C:
 			if err := lc.cw.writeJSON(gatewayproto.NewEvent("tick", map[string]any{"ts": time.Now().UnixMilli()}, nil)); err != nil {
+				return
+			}
+		case <-ping.C:
+			if err := lc.cw.ping(); err != nil {
 				return
 			}
 		}
