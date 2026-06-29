@@ -13,6 +13,7 @@ import (
 // registerProviderRoutes binds named-provider management endpoints.
 func (h *Handler) registerProviderRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/providers", h.handleListProviders)
+	mux.HandleFunc("POST /api/providers/test", h.handleTestProvider)
 	mux.HandleFunc("POST /api/providers", h.handleAddProvider)
 	mux.HandleFunc("PUT /api/providers/{index}", h.handleUpdateProvider)
 	mux.HandleFunc("DELETE /api/providers/{index}", h.handleDeleteProvider)

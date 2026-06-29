@@ -71,4 +71,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 
 	// Launcher service parameters (port/public)
 	h.registerLauncherConfigRoutes(mux)
+
+	// CLI-agent detection (claude/codex/gemini on PATH) for the setup wizard
+	h.registerSystemCLIRoutes(mux)
 }
