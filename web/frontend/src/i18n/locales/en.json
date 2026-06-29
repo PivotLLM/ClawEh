@@ -580,6 +580,7 @@
   "setup": {
     "back": "Back",
     "next": "Next",
+    "cancel": "Cancel",
     "finish": "Finish setup",
     "finishedToast": "Setup complete — you're ready to chat.",
     "steps": {
@@ -594,7 +595,8 @@
       "body": "This short wizard configures the essentials so you can start chatting: an AI provider, a model, and your first agent.",
       "point1": "Connect one AI provider and verify the API key live.",
       "point2": "Pick a model to use by default.",
-      "point3": "Create your first agent."
+      "point3": "Create your first agent.",
+      "alreadyConfigured": "ClawEh already has a usable model configured. Continuing will add a new agent and make the model you pick the new default — your existing providers, models, and agents are kept. Cancel to leave your current setup unchanged."
     },
     "provider": {
       "title": "Connect an AI provider",

@@ -25,6 +25,7 @@ import {
   type ProviderInfo,
 } from "@/api/providers"
 import { listCLIs, type CLIInfo } from "@/api/system"
+import { SETUP_DISMISSED_KEY } from "@/components/setup/dismissed"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -171,6 +172,23 @@ export function SetupWizard() {
     () => models.filter((m) => selectedProvider && m.provider === selectedProvider.name),
     [models, selectedProvider],
   )
+
+  // The wizard is also reachable after setup (from the chat empty state), so warn
+  // when a usable model already exists: continuing adds a new agent and changes
+  // the default model, though existing providers/models/agents are kept.
+  const alreadyConfigured = useMemo(
+    () => models.some((m) => m.configured),
+    [models],
+  )
+
+  const cancel = useCallback(() => {
+    try {
+      sessionStorage.setItem(SETUP_DISMISSED_KEY, "1")
+    } catch {
+      // sessionStorage may be unavailable; the redirect simply won't be suppressed.
+    }
+    void navigate({ to: "/" })
+  }, [navigate])
 
   const steps: StepDef[] = [
     { key: "welcome", title: t("setup.steps.welcome") },
@@ -364,6 +382,11 @@ export function SetupWizard() {
               <li>{t("setup.welcome.point2")}</li>
               <li>{t("setup.welcome.point3")}</li>
             </ul>
+            {alreadyConfigured && (
+              <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-700 dark:text-amber-300">
+                {t("setup.welcome.alreadyConfigured")}
+              </div>
+            )}
           </div>
         )}
 
@@ -592,13 +615,19 @@ export function SetupWizard() {
 
       {/* Footer nav */}
       <div className="mt-8 flex items-center justify-between border-t pt-4">
-        <Button
-          variant="ghost"
-          onClick={() => setStep((s) => Math.max(0, s - 1))}
-          disabled={step === 0 || finishing}
-        >
-          <IconArrowLeft className="size-4" /> {t("setup.back")}
-        </Button>
+        {step === 0 ? (
+          <Button variant="ghost" onClick={cancel} disabled={finishing}>
+            {t("setup.cancel")}
+          </Button>
+        ) : (
+          <Button
+            variant="ghost"
+            onClick={() => setStep((s) => Math.max(0, s - 1))}
+            disabled={finishing}
+          >
+            <IconArrowLeft className="size-4" /> {t("setup.back")}
+          </Button>
+        )}
 
         {steps[step].key === "review" ? (
           <Button onClick={finish} disabled={finishing}>
