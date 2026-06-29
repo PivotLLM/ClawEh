@@ -515,7 +515,40 @@ func (cb *ContextBuilder) buildDynamicContext(channel, chatID string) string {
 		fmt.Fprintf(&sb, "\n\n## Current Session\nChannel: %s\nChat ID: %s", channel, chatID)
 	}
 
+	// Channel-specific guidance from <workspace>/channel-<channel>.md (seeded from
+	// templates, user-editable). Injected here (not in the cached static prompt)
+	// because it varies by channel while the static prompt is shared per agent.
+	if extra := cb.loadChannelPrompt(channel); extra != "" {
+		fmt.Fprintf(&sb, "\n\n%s", extra)
+	}
+
 	return sb.String()
+}
+
+// loadChannelPrompt returns the contents of <workspace>/channel-<channel>.md, or
+// "" if there is none. The channel name is sanitized to a safe filename token.
+func (cb *ContextBuilder) loadChannelPrompt(channel string) string {
+	safe := sanitizeChannelName(channel)
+	if safe == "" {
+		return ""
+	}
+	data, err := os.ReadFile(filepath.Join(cb.workspace, "channel-"+safe+".md"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+// sanitizeChannelName keeps only [A-Za-z0-9_-] so the channel name can't escape
+// the workspace via path traversal.
+func sanitizeChannelName(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if r == '-' || r == '_' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 func (cb *ContextBuilder) BuildMessages(
