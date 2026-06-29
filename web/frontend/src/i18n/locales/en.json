@@ -617,6 +617,7 @@
       "body": "Pick a model offered by this provider, or enter a custom model id. It becomes your default model.",
       "selectLabel": "Model",
       "selectPlaceholder": "Select a model",
+      "cliDefaultOption": "Default (use the CLI's built-in model)",
       "customOption": "Custom model…",
       "customIdLabel": "Model id",
       "customNameLabel": "Display name",

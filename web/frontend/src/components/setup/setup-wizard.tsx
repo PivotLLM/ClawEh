@@ -55,6 +55,10 @@ const COMMON_PROVIDERS = [
 ]
 
 const CUSTOM_MODEL = "__custom__"
+// Sentinel for "let the CLI use its own default model" — maps to a model whose
+// id is the CLI protocol (e.g. "gemini-cli"), which the provider treats as
+// "pass no --model arg".
+const CLI_DEFAULT = "__cli_default__"
 
 type TestState = "idle" | "testing" | "ok" | "warn" | "fail"
 
@@ -271,7 +275,26 @@ export function SetupWizard() {
 
       // 2. Enable the chosen model and capture its name for the default.
       let defaultName = ""
-      if (modelChoice === CUSTOM_MODEL) {
+      if (modelChoice === CLI_DEFAULT) {
+        // The CLI's built-in model: a model whose id is the CLI protocol
+        // sentinel (e.g. "gemini-cli"), which makes the provider pass no
+        // --model arg. Reuse a seeded sentinel model if one exists.
+        const sentinel = selectedProvider.protocol
+        const existing = presetModels.find((m) => m.model === sentinel)
+        if (existing) {
+          await updateModel(existing.index, { enabled: true })
+          defaultName = existing.model_name
+        } else {
+          const label = `${selectedProvider.name} (default)`
+          await addModel({
+            model_name: label,
+            model: sentinel,
+            provider: selectedProvider.name,
+            enabled: true,
+          })
+          defaultName = label
+        }
+      } else if (modelChoice === CUSTOM_MODEL) {
         const label = (customLabel.trim() || customModel.trim()).trim()
         await addModel({
           model_name: label,
@@ -433,6 +456,10 @@ export function SetupWizard() {
                   setProviderName(v)
                   setApiKey("")
                   resetTest()
+                  // CLIs need no specific model — default the choice to the
+                  // CLI's built-in model so the user can just continue.
+                  const p = allProviders.find((x) => x.name === v)
+                  setModelChoice(p?.protocol.endsWith("-cli") ? CLI_DEFAULT : "")
                 }}
               >
                 <SelectTrigger>
@@ -588,11 +615,24 @@ export function SetupWizard() {
                   <SelectValue placeholder={t("setup.model.selectPlaceholder")} />
                 </SelectTrigger>
                 <SelectContent>
-                  {presetModels.map((m) => (
-                    <SelectItem key={m.index} value={m.model_name}>
-                      {m.model_name} ({m.model})
+                  {isCliProvider && (
+                    <SelectItem value={CLI_DEFAULT}>
+                      {t("setup.model.cliDefaultOption")}
                     </SelectItem>
-                  ))}
+                  )}
+                  {presetModels
+                    // For CLIs, hide the sentinel "no-model" presets — the
+                    // Default option above covers them.
+                    .filter(
+                      (m) =>
+                        !isCliProvider ||
+                        m.model !== selectedProvider?.protocol,
+                    )
+                    .map((m) => (
+                      <SelectItem key={m.index} value={m.model_name}>
+                        {m.model_name} ({m.model})
+                      </SelectItem>
+                    ))}
                   <SelectItem value={CUSTOM_MODEL}>
                     {t("setup.model.customOption")}
                   </SelectItem>
@@ -653,9 +693,11 @@ export function SetupWizard() {
               <div className="flex justify-between p-3">
                 <dt className="text-muted-foreground">{t("setup.steps.model")}</dt>
                 <dd className="font-medium">
-                  {modelChoice === CUSTOM_MODEL
-                    ? customLabel.trim() || customModel.trim()
-                    : modelChoice}
+                  {modelChoice === CLI_DEFAULT
+                    ? t("setup.model.cliDefaultOption")
+                    : modelChoice === CUSTOM_MODEL
+                      ? customLabel.trim() || customModel.trim()
+                      : modelChoice}
                 </dd>
               </div>
               <div className="flex justify-between p-3">
