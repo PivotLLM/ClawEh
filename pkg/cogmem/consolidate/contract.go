@@ -238,3 +238,30 @@ func (o Output) Validate(in Input) error {
 	}
 	return nil
 }
+
+// Normalize repairs safe, unambiguous contract deviations in place, so a single
+// mechanically-fixable mistake doesn't make Validate reject an otherwise-good
+// batch (which would silently drop real memories). It returns a human-readable
+// note per repair, for the run record/log.
+//
+// Current repairs:
+//   - An inferred memory the model marked status=active is downgraded to
+//     status=review — its correct, more conservative state. It then flows
+//     through the normal pending-confirmation path instead of the whole batch
+//     being aborted.
+//
+// Genuinely ambiguous violations (unknown domain, invalid type, empty text,
+// dangling supersede/retire references) are deliberately NOT repaired — Validate
+// still rejects those, since there is no safe automatic correction.
+func (o *Output) Normalize() []string {
+	var notes []string
+	for i := range o.MemoryOps {
+		op := &o.MemoryOps[i]
+		if (op.Op == "add" || op.Op == "supersede") &&
+			op.Source == "assistant_inferred" && op.Status == "active" {
+			op.Status = "review"
+			notes = append(notes, fmt.Sprintf("memory_ops[%d]: inferred item active→review", i))
+		}
+	}
+	return notes
+}

@@ -3,7 +3,7 @@ module github.com/PivotLLM/ClawEh
 go 1.26
 
 require (
-	github.com/PivotLLM/Maestro v0.3.5
+	github.com/PivotLLM/Maestro v0.3.6
 	github.com/adhocore/gronx v1.20.0
 	github.com/bwmarrin/discordgo v0.29.0
 	github.com/caarlos0/env/v11 v11.4.1
@@ -16,7 +16,7 @@ require (
 	github.com/modelcontextprotocol/go-sdk v1.6.1
 	github.com/mymmrac/telego v1.10.0
 	github.com/rs/zerolog v1.35.1
-	github.com/slack-go/slack v0.26.0
+	github.com/slack-go/slack v0.27.0
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
 	golang.org/x/time v0.15.0
