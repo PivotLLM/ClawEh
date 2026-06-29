@@ -62,6 +62,8 @@ type ToolFunctionDefinition struct {
 
 // SessionInfo holds the structured data returned by the session_info tool.
 type SessionInfo struct {
+	Server              string           `json:"server,omitempty"` // e.g. "ClawEh 0.4.8"
+	OS                  string           `json:"os,omitempty"`     // e.g. "linux/amd64"
 	SessionKey          string           `json:"session_key"`
 	StartedAt           *time.Time       `json:"started_at,omitempty"`
 	Channel             string           `json:"channel,omitempty"`
