@@ -3,9 +3,13 @@ package device
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/gorilla/websocket"
 
@@ -17,16 +21,25 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/logger"
 )
 
-// DeviceChannel is the external-device gateway channel. It mounts an OpenClaw
-// Gateway-protocol WebSocket endpoint on the shared HTTP server so hardware
-// devices (e.g. the Rabbit R1) can connect, pair, and converse with an agent.
+// DefaultDevicePort is the device gateway's own listen port when unset.
+const DefaultDevicePort = 8078
+
+// DeviceChannel is the external-device gateway channel. It runs its OWN HTTP
+// listener (Host:Port) — independent of the WebUI/admin port — serving the
+// OpenClaw Gateway WebSocket protocol so hardware devices (e.g. the Rabbit R1)
+// can connect, pair, and converse with an agent. Keeping it on a separate,
+// authenticated listener lets it be exposed to the network without exposing the
+// unauthenticated WebUI.
 type DeviceChannel struct {
 	*channels.BaseChannel
-	server *Server
-	store  *Store
-	path   string
-	ctx    context.Context
-	cancel context.CancelFunc
+	server       *Server
+	store        *Store
+	host         string
+	port         int
+	allowedCIDRs []string
+	httpSrv      *http.Server
+	ctx          context.Context
+	cancel       context.CancelFunc
 }
 
 // NewDeviceChannel opens the pairing store under <dataDir>/state and builds the
@@ -47,15 +60,21 @@ func NewDeviceChannel(cfg config.DeviceChannelConfig, dataDir string, logMessage
 		AllowOrigins:  cfg.AllowOrigins,
 		LogMessages:   logMessages,
 	})
-	path := cfg.Path
-	if path == "" {
-		path = "/gateway/"
+	host := cfg.Host
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	port := cfg.Port
+	if port == 0 {
+		port = DefaultDevicePort
 	}
 	dc := &DeviceChannel{
-		BaseChannel: channels.NewBaseChannel("device", cfg, b, cfg.AllowFrom),
-		server:      srv,
-		store:       store,
-		path:        path,
+		BaseChannel:  channels.NewBaseChannel("device", cfg, b, cfg.AllowFrom),
+		server:       srv,
+		store:        store,
+		host:         host,
+		port:         port,
+		allowedCIDRs: cfg.AllowedCIDRs,
 	}
 	// Bridge each device utterance into the message bus. The agent's reply returns
 	// via Send -> server.DeliverReply.
@@ -76,24 +95,56 @@ func NewDeviceChannel(cfg config.DeviceChannelConfig, dataDir string, logMessage
 	return dc, nil
 }
 
-// Start implements channels.Channel.
+// Start launches the device gateway's own HTTP listener.
 func (c *DeviceChannel) Start(ctx context.Context) error {
 	c.ctx, c.cancel = context.WithCancel(ctx)
+
+	// WebSocket upgrade at any path (devices connect to ws://host:port/ with no path).
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !websocket.IsWebSocketUpgrade(r) {
+			http.NotFound(w, r)
+			return
+		}
+		c.server.HandleWS(w, r)
+	})
+	wrapped, err := ipAllowlistHandler(c.allowedCIDRs, handler)
+	if err != nil {
+		return fmt.Errorf("device: %w", err)
+	}
+
+	addr := net.JoinHostPort(c.host, strconv.Itoa(c.port))
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("device: listen %s: %w", addr, err)
+	}
+	// No Read/WriteTimeout: long-lived WebSocket connections manage their own
+	// deadlines after the gorilla upgrade hijacks the conn.
+	c.httpSrv = &http.Server{Addr: addr, Handler: wrapped}
 	c.SetRunning(true)
-	logger.InfoCF("device", "Device gateway channel started", map[string]any{"path": c.path})
+	go func() {
+		if serveErr := c.httpSrv.Serve(ln); serveErr != nil && serveErr != http.ErrServerClosed {
+			logger.ErrorCF("device", "Device gateway listener error", map[string]any{"error": serveErr.Error()})
+		}
+	}()
+	logger.InfoCF("device", "Device gateway listening", map[string]any{"addr": addr})
 	return nil
 }
 
-// Stop implements channels.Channel.
+// Stop shuts down the device listener and store.
 func (c *DeviceChannel) Stop(_ context.Context) error {
 	c.SetRunning(false)
 	if c.cancel != nil {
 		c.cancel()
 	}
+	if c.httpSrv != nil {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = c.httpSrv.Shutdown(shutdownCtx)
+	}
 	if c.store != nil {
 		_ = c.store.Close()
 	}
-	logger.InfoC("device", "Device gateway channel stopped")
+	logger.InfoC("device", "Device gateway stopped")
 	return nil
 }
 
@@ -109,23 +160,47 @@ func (c *DeviceChannel) Send(_ context.Context, msg bus.OutboundMessage) error {
 	return channels.ErrSendFailed
 }
 
-// WebhookPath implements channels.WebhookHandler — the shared-mux mount point.
-func (c *DeviceChannel) WebhookPath() string { return c.path }
-
-// ClaimsRootWebSocket implements channels.RootWebSocketClaimer: OpenClaw-protocol
-// devices (e.g. the Rabbit R1) connect to ws://host:port with no path, so the
-// device gateway also handles root-path WebSocket upgrades.
-func (c *DeviceChannel) ClaimsRootWebSocket() bool { return true }
-
-// ServeHTTP upgrades WebSocket requests to the gateway protocol.
-func (c *DeviceChannel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if !c.IsRunning() {
-		http.Error(w, "channel not running", http.StatusServiceUnavailable)
-		return
+// ipAllowlistHandler restricts the device listener to the given CIDRs (loopback
+// always allowed). An empty list allows any client IP — the gateway is itself
+// authenticated, so the allowlist is optional defense-in-depth.
+func ipAllowlistHandler(cidrs []string, next http.Handler) (http.Handler, error) {
+	nets := make([]*net.IPNet, 0, len(cidrs))
+	for _, c := range cidrs {
+		c = strings.TrimSpace(c)
+		if c == "" {
+			continue
+		}
+		_, n, err := net.ParseCIDR(c)
+		if err != nil {
+			return nil, fmt.Errorf("invalid allowed_cidrs entry %q: %w", c, err)
+		}
+		nets = append(nets, n)
 	}
-	if !websocket.IsWebSocketUpgrade(r) {
-		http.NotFound(w, r)
-		return
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if len(nets) == 0 || clientIPAllowed(r.RemoteAddr, nets) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		http.Error(w, "forbidden", http.StatusForbidden)
+	}), nil
+}
+
+func clientIPAllowed(remoteAddr string, nets []*net.IPNet) bool {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		host = remoteAddr
 	}
-	c.server.HandleWS(w, r)
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	if ip.IsLoopback() {
+		return true
+	}
+	for _, n := range nets {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }

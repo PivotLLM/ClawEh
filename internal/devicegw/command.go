@@ -18,7 +18,6 @@ import (
 	"github.com/PivotLLM/ClawEh/internal"
 	"github.com/PivotLLM/ClawEh/pkg/channels/device"
 	"github.com/PivotLLM/ClawEh/pkg/config"
-	"github.com/PivotLLM/ClawEh/pkg/gatewayproto"
 )
 
 // NewDevicesCommand returns the `claw devices` command group.
@@ -68,11 +67,15 @@ func pair() error {
 	if err != nil {
 		return fmt.Errorf("provision device gateway: %w", err)
 	}
-	port := cfg.Gateway.Port
-	if port == 0 {
-		port = 18790
+	dev := cfg.Channels.Device
+	devicePort := dev.Port
+	if devicePort == 0 {
+		devicePort = device.DefaultDevicePort
 	}
-	payload := gatewayproto.NewSetupPayload(device.LANIPv4s(), port, cfg.Channels.Device.Token, gatewayproto.SetupProtocolWS)
+	payload, err := device.BuildSetupPayload(dev.ExternalURL, device.LANIPv4s(), devicePort, dev.Token)
+	if err != nil {
+		return fmt.Errorf("build setup payload: %w", err)
+	}
 	encoded, err := payload.Encode()
 	if err != nil {
 		return fmt.Errorf("encode setup payload: %w", err)
@@ -86,20 +89,22 @@ func pair() error {
 	fmt.Println()
 	fmt.Println(ascii)
 	fmt.Println("Setup payload:", encoded)
-	if len(payload.IPs) > 0 {
-		fmt.Println("Connect URLs:")
-		for _, ip := range payload.IPs {
-			fmt.Printf("  ws://%s:%d\n", ip, port)
-		}
+	fmt.Println("Connect URLs:")
+	for _, host := range payload.IPs {
+		fmt.Printf("  %s://%s:%d\n", payload.Protocol, host, payload.Port)
 	}
 	if changed {
 		fmt.Println("(generated a shared token and enabled the device gateway; a running gateway will pick this up within a few seconds)")
 	}
-	if device.IsLoopbackHost(cfg.Gateway.Host) {
-		fmt.Printf("WARNING: gateway is bound to loopback (%s); LAN devices cannot connect. Set gateway.host to 0.0.0.0 or a LAN IP.\n", cfg.Gateway.Host)
+	host := dev.Host
+	if host == "" {
+		host = "127.0.0.1"
 	}
-	if len(payload.IPs) == 0 {
-		fmt.Println("WARNING: no routable LAN IPv4 address detected.")
+	if device.IsLoopbackHost(host) {
+		fmt.Printf("WARNING: device gateway listens on loopback (%s); enable local-network listening in the WebUI (or set channels.device.host=0.0.0.0) so devices can connect.\n", host)
+	}
+	if dev.ExternalURL == "" && len(payload.IPs) == 0 {
+		fmt.Println("WARNING: no routable LAN IPv4 address detected; set channels.device.external_url.")
 	}
 	fmt.Println("\nAfter the device connects, approve it with: claw devices approve <request-id>")
 	return nil

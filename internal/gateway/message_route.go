@@ -24,13 +24,6 @@ type muxSwapper interface {
 	SetMux(mux *http.ServeMux)
 }
 
-// rootWSSwapper is implemented by the real httpHost to receive the channel that
-// claims root-path WebSocket upgrades (the external-device gateway). Test mux
-// fakes that don't implement it simply skip this wiring.
-type rootWSSwapper interface {
-	SetRootWSHandler(handler http.Handler)
-}
-
 // rebuildSharedHTTPServer builds a new shared health.Server, populates a fresh
 // mux with the merged WebUI routes, channel webhook handlers, and the message
 // route, then atomically swaps it into the gateway's httpHost. The listener
@@ -47,11 +40,6 @@ func rebuildSharedHTTPServer(services *gatewayServices, host string, port int, c
 	cm.RegisterHandlers(mux, services.HealthServer)
 	RegisterMessageRoute(services.HealthServer, al)
 	swapper.SetMux(mux)
-	// Route root-path ("/") WebSocket upgrades to the external-device gateway so
-	// OpenClaw-protocol devices (Rabbit R1) that connect to ws://host:port reach it.
-	if rs, ok := swapper.(rootWSSwapper); ok && services.ChannelManager != nil {
-		rs.SetRootWSHandler(services.ChannelManager.RootWebSocketHandler())
-	}
 }
 
 // RegisterMessageRoute registers POST /api/message/{token} on the shared HTTP

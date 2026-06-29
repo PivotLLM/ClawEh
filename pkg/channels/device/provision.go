@@ -5,9 +5,39 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net"
+	"net/url"
+	"strconv"
+	"strings"
 
 	"github.com/PivotLLM/ClawEh/pkg/config"
+	"github.com/PivotLLM/ClawEh/pkg/gatewayproto"
 )
+
+// BuildSetupPayload builds the device QR payload. When externalURL is set it is the
+// authoritative advertised endpoint (http->ws, https->wss); otherwise the payload
+// advertises the detected LAN IPs on the device listener port.
+func BuildSetupPayload(externalURL string, lanIPs []string, devicePort int, token string) (gatewayproto.SetupPayload, error) {
+	externalURL = strings.TrimSpace(externalURL)
+	if externalURL == "" {
+		return gatewayproto.NewSetupPayload(lanIPs, devicePort, token, gatewayproto.SetupProtocolWS), nil
+	}
+	u, err := url.Parse(externalURL)
+	if err != nil || u.Hostname() == "" {
+		return gatewayproto.SetupPayload{}, fmt.Errorf("device: invalid external_url %q", externalURL)
+	}
+	proto := gatewayproto.SetupProtocolWS
+	port := 80
+	switch strings.ToLower(u.Scheme) {
+	case "https", "wss":
+		proto, port = gatewayproto.SetupProtocolWSS, 443
+	}
+	if p := u.Port(); p != "" {
+		if pi, perr := strconv.Atoi(p); perr == nil {
+			port = pi
+		}
+	}
+	return gatewayproto.NewSetupPayload([]string{u.Hostname()}, port, token, proto), nil
+}
 
 // GenerateSharedToken returns a 32-byte random hex token (matches the Rabbit
 // setup script's `openssl rand -hex 32`), used as the gateway shared auth token.

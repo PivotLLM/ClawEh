@@ -16,14 +16,14 @@ func TestPruneOldLogs(t *testing.T) {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
-	mk("20260101-claw.log")     // old → delete (cutoff = 2026-05-17)
-	mk("20260101-error.log")    // old → delete
-	mk("20260610-claw.log")     // within retention → keep
-	mk("20260610-error.log")    // within retention → keep
-	mk("claw.log")              // active → keep
-	mk("error.log")             // active → keep
-	mk("20260101-claw.log.gz")  // non-.log suffix → keep
-	mk("notalog.txt")           // unrelated → keep
+	mk("20260101-claw.log")    // old → delete (cutoff = 2026-05-17)
+	mk("20260101-error.log")   // old → delete
+	mk("20260610-claw.log")    // within retention → keep
+	mk("20260610-error.log")   // within retention → keep
+	mk("claw.log")             // active → keep
+	mk("error.log")            // active → keep
+	mk("20260101-claw.log.gz") // non-.log suffix → keep
+	mk("notalog.txt")          // unrelated → keep
 
 	pruneOldLogs(dir, 30, now)
 

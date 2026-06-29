@@ -6,8 +6,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/gorilla/websocket"
-
 	"github.com/PivotLLM/ClawEh/pkg/logger"
 	"github.com/PivotLLM/ClawEh/web/backend/middleware"
 )
@@ -20,14 +18,7 @@ import (
 type httpHost struct {
 	server *http.Server
 	mux    atomic.Pointer[http.ServeMux]
-	// rootWS, when set, claims root-path ("/") WebSocket upgrades. OpenClaw-protocol
-	// devices (e.g. the Rabbit R1) connect to ws://host:port with no path, so the
-	// upgrade lands on "/", which the SPA otherwise owns. Normal GET "/" still serves
-	// the SPA. Swapped atomically alongside the mux on config reload.
-	rootWS atomic.Pointer[rootWSHandler]
 }
-
-type rootWSHandler struct{ h http.Handler }
 
 func newHTTPHost(addr string, allowedCIDRs []string) (*httpHost, error) {
 	h := &httpHost{}
@@ -56,24 +47,7 @@ func (h *httpHost) SetMux(mux *http.ServeMux) {
 	h.mux.Store(mux)
 }
 
-// SetRootWSHandler installs (or clears, with nil) the handler that claims
-// root-path WebSocket upgrades. Safe to call on every reload.
-func (h *httpHost) SetRootWSHandler(handler http.Handler) {
-	if handler == nil {
-		h.rootWS.Store(nil)
-		return
-	}
-	h.rootWS.Store(&rootWSHandler{h: handler})
-}
-
 func (h *httpHost) serveMux(w http.ResponseWriter, r *http.Request) {
-	// Root-path WebSocket upgrades go to the external-device gateway, not the SPA.
-	if r.URL.Path == "/" && websocket.IsWebSocketUpgrade(r) {
-		if rw := h.rootWS.Load(); rw != nil {
-			rw.h.ServeHTTP(w, r)
-			return
-		}
-	}
 	if m := h.mux.Load(); m != nil {
 		m.ServeHTTP(w, r)
 		return

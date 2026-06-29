@@ -9,7 +9,6 @@ import (
 
 	"github.com/PivotLLM/ClawEh/pkg/channels/device"
 	"github.com/PivotLLM/ClawEh/pkg/config"
-	"github.com/PivotLLM/ClawEh/pkg/gatewayproto"
 )
 
 // registerDeviceRoutes wires the external-device gateway onboarding/management API.
@@ -79,35 +78,53 @@ func (h *Handler) handleDevicePairStatus(w http.ResponseWriter, _ *http.Request)
 	writeJSON(w, http.StatusOK, h.buildPairResponse(cfg, false))
 }
 
-// buildPairResponse assembles the setup payload, optional rendered QR, and operator
-// warnings (e.g. loopback bind) from the active config.
+// buildPairResponse assembles the setup payload, optional rendered QR, the device
+// listener status, and operator warnings from the active config. The advertised
+// endpoint comes from channels.device.external_url (or the LAN IPs by default), and
+// the listener status reflects channels.device host/port (NOT the WebUI port).
 func (h *Handler) buildPairResponse(cfg *config.Config, render bool) map[string]any {
-	port := cfg.Gateway.Port
-	if port == 0 {
-		port = 18790
+	dev := cfg.Channels.Device
+	devicePort := dev.Port
+	if devicePort == 0 {
+		devicePort = device.DefaultDevicePort
 	}
-	token := cfg.Channels.Device.Token
-	payload := gatewayproto.NewSetupPayload(device.LANIPv4s(), port, token, gatewayproto.SetupProtocolWS)
-	encoded, _ := payload.Encode()
+	host := dev.Host
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	token := dev.Token
+
+	payload, perr := device.BuildSetupPayload(dev.ExternalURL, device.LANIPv4s(), devicePort, token)
+	encoded := ""
+	if perr == nil {
+		encoded, _ = payload.Encode()
+	}
 
 	warnings := []string{}
-	if device.IsLoopbackHost(cfg.Gateway.Host) {
-		warnings = append(warnings, "Gateway is bound to loopback ("+cfg.Gateway.Host+"); LAN devices cannot connect. Set gateway.host to 0.0.0.0 or a LAN IP.")
+	if device.IsLoopbackHost(host) {
+		warnings = append(warnings, "Device gateway listens on loopback only ("+host+"); turn on \"listen for local network connections\" so devices can reach it.")
 	}
-	if len(payload.IPs) == 0 {
-		warnings = append(warnings, "No routable LAN IPv4 address detected.")
+	if dev.ExternalURL == "" && len(payload.IPs) == 0 {
+		warnings = append(warnings, "No routable LAN IPv4 address detected; set an External URL.")
+	}
+	if perr != nil {
+		warnings = append(warnings, perr.Error())
 	}
 
 	out := map[string]any{
-		"payload":  encoded, // raw JSON string the device decodes from the QR
-		"ips":      payload.IPs,
-		"port":     payload.Port,
-		"protocol": payload.Protocol,
-		"enabled":  cfg.Channels.Device.Enabled,
-		"hasToken": token != "",
-		"warnings": warnings,
+		"payload":      encoded, // raw JSON string the device decodes from the QR
+		"ips":          payload.IPs,
+		"port":         payload.Port,
+		"protocol":     payload.Protocol,
+		"enabled":      dev.Enabled,
+		"hasToken":     token != "",
+		"listen_host":  host,
+		"listen_port":  devicePort,
+		"listen_lan":   !device.IsLoopbackHost(host),
+		"external_url": dev.ExternalURL,
+		"warnings":     warnings,
 	}
-	if render && token != "" {
+	if render && token != "" && encoded != "" {
 		if pngURL, err := device.RenderQRCodePNGDataURL(encoded); err == nil {
 			out["qr_png"] = pngURL
 		}

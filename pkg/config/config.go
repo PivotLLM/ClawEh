@@ -1043,11 +1043,23 @@ type DevicesConfig struct {
 
 // DeviceChannelConfig configures the external-device gateway: an OpenClaw
 // Gateway-protocol WebSocket endpoint that hardware devices (e.g. the Rabbit R1)
-// connect to. Distinct from DevicesConfig (USB hardware monitor).
+// connect to. It runs on its OWN listener (Host/Port) independent of the WebUI/
+// admin port, so it can be exposed to the network without exposing the
+// unauthenticated WebUI. Distinct from DevicesConfig (USB hardware monitor).
 type DeviceChannelConfig struct {
 	Enabled bool   `json:"enabled"                env:"CLAW_CHANNELS_DEVICE_ENABLED"`
 	Token   string `json:"token"                  env:"CLAW_CHANNELS_DEVICE_TOKEN"` // shared gateway auth token presented in the QR
-	Path    string `json:"path,omitempty"`                                          // WS mount path (default /gateway/)
+	// Host is the device listener bind address: 127.0.0.1 (loopback, default) or
+	// 0.0.0.0 to listen for local-network connections. Port defaults to 8078.
+	Host string `json:"host,omitempty"`
+	Port int    `json:"port,omitempty"`
+	// AllowedCIDRs restricts which client IPs may reach the device listener. Empty
+	// allows any (the gateway is authenticated); loopback is always allowed.
+	AllowedCIDRs []string `json:"allowed_cidrs,omitempty"`
+	// ExternalURL is the endpoint advertised to devices in the QR. Empty defaults to
+	// http://<lan-ip>:<port>. Set to e.g. https://claw.example.com behind a reverse
+	// proxy / Cloudflare (https maps to wss).
+	ExternalURL string `json:"external_url,omitempty"`
 	// AutoApprove skips operator approval for fresh device pairings. Intended for
 	// trusted home-LAN setups (matches the Rabbit setup-script UX); default off.
 	AutoApprove  bool                `json:"auto_approve,omitempty"`

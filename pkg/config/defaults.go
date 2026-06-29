@@ -157,7 +157,8 @@ func DefaultConfig() *Config {
 			},
 			Device: DeviceChannelConfig{
 				Enabled:   false,
-				Path:      "/gateway/",
+				Host:      "127.0.0.1", // loopback until the user enables local-network listening
+				Port:      8078,        // own listener, separate from the WebUI/admin port
 				AllowFrom: FlexibleStringSlice{},
 			},
 		},

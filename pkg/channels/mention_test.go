@@ -9,12 +9,12 @@ func TestExtractAgentMention(t *testing.T) {
 	defaultTriggers := []string{"@", "/", "."}
 
 	tests := []struct {
-		name           string
-		text           string
-		triggers       []string
-		knownAgents    []string
-		wantAgent      string
-		wantStripped   string
+		name         string
+		text         string
+		triggers     []string
+		knownAgents  []string
+		wantAgent    string
+		wantStripped string
 	}{
 		{
 			name:         "at-mention basic",
