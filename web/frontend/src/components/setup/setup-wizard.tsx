@@ -24,6 +24,7 @@ import {
   updateProvider,
   type ProviderInfo,
 } from "@/api/providers"
+import { listCLIs, type CLIInfo } from "@/api/system"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -73,6 +74,7 @@ export function SetupWizard() {
   // Loaded reference data.
   const [providers, setProviders] = useState<ProviderInfo[]>([])
   const [models, setModels] = useState<ModelInfo[]>([])
+  const [clis, setClis] = useState<CLIInfo[]>([])
   const [defaultTools, setDefaultTools] = useState<string[]>([])
   const [loadError, setLoadError] = useState("")
   const [loading, setLoading] = useState(true)
@@ -102,15 +104,17 @@ export function SetupWizard() {
     let cancelled = false
     void (async () => {
       try {
-        const [provs, mods, tools] = await Promise.all([
+        const [provs, mods, tools, cliList] = await Promise.all([
           getProviders(),
           getModels(),
           getAgentTools(),
+          listCLIs(),
         ])
         if (cancelled) return
         setProviders(provs.providers)
         setModels(mods.models)
         setDefaultTools(tools.default_tools ?? [])
+        setClis(cliList)
       } catch (e) {
         if (!cancelled) {
           setLoadError(e instanceof Error ? e.message : "Failed to load")
@@ -124,8 +128,8 @@ export function SetupWizard() {
     }
   }, [])
 
-  // API-key providers (CLI providers are handled by detection, not the wizard).
-  const keyProviders = useMemo(() => {
+  // API-key providers, common ones first.
+  const apiProviders = useMemo(() => {
     const list = providers.filter((p) => !p.protocol.endsWith("-cli"))
     const rank = (name: string) => {
       const i = COMMON_PROVIDERS.indexOf(name)
@@ -137,10 +141,31 @@ export function SetupWizard() {
     })
   }, [providers])
 
-  const selectedProvider = useMemo(
-    () => keyProviders.find((p) => p.name === providerName),
-    [keyProviders, providerName],
+  // CLI providers are first-class connections too, but only selectable when the
+  // binary is detected on PATH (no API key — auth is the CLI's own concern).
+  const cliProviders = useMemo(
+    () => providers.filter((p) => p.protocol.endsWith("-cli")),
+    [providers],
   )
+
+  const allProviders = useMemo(
+    () => [...apiProviders, ...cliProviders],
+    [apiProviders, cliProviders],
+  )
+
+  const selectedProvider = useMemo(
+    () => allProviders.find((p) => p.name === providerName),
+    [allProviders, providerName],
+  )
+
+  const isCliProvider = !!selectedProvider?.protocol.endsWith("-cli")
+
+  const cliFor = useCallback(
+    (protocol: string) => clis.find((c) => c.protocol === protocol),
+    [clis],
+  )
+
+  const selectedCli = selectedProvider ? cliFor(selectedProvider.protocol) : undefined
 
   const presetModels = useMemo(
     () => models.filter((m) => selectedProvider && m.provider === selectedProvider.name),
@@ -190,7 +215,9 @@ export function SetupWizard() {
   const canAdvance = useMemo(() => {
     switch (steps[step].key) {
       case "provider":
-        return !!selectedProvider && (testState === "ok" || testState === "warn")
+        if (!selectedProvider) return false
+        if (isCliProvider) return !!selectedCli?.installed
+        return testState === "ok" || testState === "warn"
       case "model":
         if (modelChoice === CUSTOM_MODEL) return customModel.trim() !== ""
         return modelChoice !== ""
@@ -199,7 +226,17 @@ export function SetupWizard() {
       default:
         return true
     }
-  }, [steps, step, selectedProvider, testState, modelChoice, customModel, agentName])
+  }, [
+    steps,
+    step,
+    selectedProvider,
+    isCliProvider,
+    selectedCli,
+    testState,
+    modelChoice,
+    customModel,
+    agentName,
+  ])
 
   const finish = useCallback(async () => {
     if (!selectedProvider) return
@@ -353,16 +390,60 @@ export function SetupWizard() {
                   <SelectValue placeholder={t("setup.provider.selectPlaceholder")} />
                 </SelectTrigger>
                 <SelectContent>
-                  {keyProviders.map((p) => (
+                  {apiProviders.map((p) => (
                     <SelectItem key={p.index} value={p.name}>
                       {p.name}
                     </SelectItem>
                   ))}
+                  {cliProviders.map((p) => {
+                    const info = cliFor(p.protocol)
+                    return (
+                      <SelectItem
+                        key={p.index}
+                        value={p.name}
+                        disabled={!info?.installed}
+                      >
+                        {p.name}
+                        {info?.installed
+                          ? ` — ${t("setup.provider.cliInstalled")}`
+                          : ` — ${t("setup.provider.cliMissing")}`}
+                      </SelectItem>
+                    )
+                  })}
                 </SelectContent>
               </Select>
+              <p className="text-muted-foreground text-xs">
+                {t("setup.provider.cliHint")}
+              </p>
             </div>
 
-            {selectedProvider && (
+            {selectedProvider && isCliProvider && (
+              <div className="border-border/60 bg-card space-y-1 rounded-xl border p-4 text-sm">
+                {selectedCli?.installed ? (
+                  <>
+                    <p className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
+                      <IconCheck className="size-4" />
+                      {t("setup.provider.cliDetected")}
+                    </p>
+                    {selectedCli.version && (
+                      <p className="text-muted-foreground">{selectedCli.version}</p>
+                    )}
+                    {selectedCli.path && (
+                      <p className="text-muted-foreground font-mono text-xs">
+                        {selectedCli.path}
+                      </p>
+                    )}
+                  </>
+                ) : (
+                  <p className="text-destructive flex items-center gap-1">
+                    <IconX className="size-4" />
+                    {t("setup.provider.cliNotDetected")}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {selectedProvider && !isCliProvider && (
               <>
                 {selectedProvider.base_url && (
                   <p className="text-muted-foreground text-xs">

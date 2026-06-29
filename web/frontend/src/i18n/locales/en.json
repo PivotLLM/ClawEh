@@ -58,6 +58,7 @@
       "noConfiguredModel": "No Model Configured",
       "noConfiguredModelDescription": "You need to configure at least one AI model with an API key before you can start chatting.",
       "goToModels": "Go to Models",
+      "runSetup": "Run setup wizard",
       "noSelectedModel": "No Model Selected",
       "noSelectedModelDescription": "You have configured models, but none is set as default. Select a model before starting chat."
     },
@@ -603,7 +604,12 @@
       "endpoint": "Endpoint",
       "keyLabel": "API key",
       "keyPlaceholder": "Paste your API key",
-      "testButton": "Test key"
+      "testButton": "Test key",
+      "cliHint": "Local CLI agents (Claude Code, Codex, Gemini) appear below and can be selected when their command is installed — no API key needed.",
+      "cliInstalled": "installed",
+      "cliMissing": "not installed",
+      "cliDetected": "Command detected — no API key needed.",
+      "cliNotDetected": "This command isn't installed. Install it and reopen the wizard, or pick another option."
     },
     "model": {
       "title": "Choose a model",
