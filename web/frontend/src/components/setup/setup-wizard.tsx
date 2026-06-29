@@ -451,6 +451,37 @@ export function SetupWizard() {
               </p>
             </div>
 
+            {clis.length > 0 && (
+              <div className="border-border/60 bg-card space-y-2 rounded-xl border p-4 text-sm">
+                <p className="font-medium">
+                  {t("setup.provider.cliDetectedHeading")}
+                </p>
+                {clis.map((c) => (
+                  <div
+                    key={c.protocol}
+                    className="flex items-center justify-between gap-3"
+                  >
+                    <span className="flex items-center gap-2">
+                      {c.installed ? (
+                        <IconCheck className="size-4 text-emerald-600 dark:text-emerald-400" />
+                      ) : (
+                        <IconX className="text-muted-foreground size-4" />
+                      )}
+                      {c.label}
+                    </span>
+                    <span className="text-muted-foreground truncate text-xs">
+                      {c.installed
+                        ? c.version || c.path
+                        : t("setup.provider.cliMissing")}
+                    </span>
+                  </div>
+                ))}
+                <p className="text-muted-foreground text-xs">
+                  {t("setup.provider.cliPickHint")}
+                </p>
+              </div>
+            )}
+
             {selectedProvider && isCliProvider && (
               <div className="border-border/60 bg-card space-y-1 rounded-xl border p-4 text-sm">
                 {selectedCli?.installed ? (

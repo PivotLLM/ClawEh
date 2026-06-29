@@ -604,6 +604,8 @@
       "keyPlaceholder": "Paste your API key",
       "testButton": "Test key",
       "cliHint": "Local CLI agents (Claude Code, Codex, Gemini) appear below and can be selected when their command is installed — no API key needed.",
+      "cliDetectedHeading": "Detected CLI agents",
+      "cliPickHint": "Installed CLIs are selectable in the dropdown above — no API key needed.",
       "cliInstalled": "installed",
       "cliMissing": "not installed",
       "cliDetected": "Command detected — no API key needed.",
