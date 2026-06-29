@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/PivotLLM/ClawEh/pkg/config"
+	"github.com/PivotLLM/ClawEh/pkg/global"
 	"github.com/PivotLLM/ClawEh/pkg/logger"
 	"github.com/PivotLLM/ClawEh/pkg/providers"
 	"github.com/PivotLLM/ClawEh/pkg/skills"
@@ -505,7 +506,8 @@ func (cb *ContextBuilder) LoadBootstrapFiles() string {
 // See: https://platform.openai.com/docs/guides/prompt-caching
 func (cb *ContextBuilder) buildDynamicContext(channel, chatID string) string {
 	now := time.Now().Format("2006-01-02 15:04 (Monday)")
-	rt := fmt.Sprintf("%s %s, Go %s", runtime.GOOS, runtime.GOARCH, runtime.Version())
+	rt := fmt.Sprintf("%s %s — %s %s, Go %s",
+		global.AppName, global.Version, runtime.GOOS, runtime.GOARCH, runtime.Version())
 
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "## Current Time\n%s\n\n## Runtime\n%s", now, rt)
