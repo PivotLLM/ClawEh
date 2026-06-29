@@ -79,7 +79,10 @@ func DefaultConfig() *Config {
 					Name:      "Claw",
 					Default:   true,
 					Workspace: workspacePath,
-					Tools:     []string{"*"},
+					// Tools intentionally omitted (nil): the agent inherits the
+					// install default tool set (DefaultAgentTools, driven by each
+					// provider's DefaultEnabled flag). Using ["*"] here would grant
+					// every tool, exceeding the defaults.
 				},
 			},
 		},

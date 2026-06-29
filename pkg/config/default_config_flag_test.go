@@ -35,6 +35,18 @@ func TestSaveConfig_ClearsDefaultMarker(t *testing.T) {
 	}
 }
 
+func TestDefaultConfig_DefaultAgentInheritsDefaultTools(t *testing.T) {
+	// The seeded default agent must NOT grant all tools (["*"]); leaving Tools nil
+	// makes it inherit the install default tool set, so it never exceeds defaults.
+	cfg := DefaultConfig()
+	if len(cfg.Agents.List) == 0 {
+		t.Fatal("DefaultConfig() should seed a default agent")
+	}
+	if tools := cfg.Agents.List[0].Tools; len(tools) != 0 {
+		t.Errorf("seeded default agent should leave Tools unset (inherit defaults), got %v", tools)
+	}
+}
+
 func TestSeedDefaultConfig_PreservesMarker(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 

@@ -284,26 +284,38 @@ export function SetupWizard() {
       // 3. Make it the default model.
       await setDefaultModel(defaultName)
 
-      // 4. Create the first agent, defaulting it unless one already exists.
+      // 4. Set up the first agent. On a pristine install, reconfigure the seeded
+      // default agent in place (keeping its id/workspace) rather than adding a
+      // second agent that wouldn't be the default. Otherwise append a new one.
       const cfg = (await getAppConfig()) as Record<string, unknown>
       const agentsCfg = (cfg.agents as Record<string, unknown>) ?? {}
       const rawList = Array.isArray(agentsCfg.list)
         ? (agentsCfg.list as Record<string, unknown>[])
         : []
-      const hasDefault = rawList.some((a) => a.default === true)
-      const existingIds = new Set(rawList.map((a) => String(a.id ?? "")))
-      let id = slugify(agentName)
-      for (let n = 2; existingIds.has(id); n++) id = `${slugify(agentName)}-${n}`
+      const defaultIdx = rawList.findIndex((a) => a.default === true)
 
-      const newAgent: Record<string, unknown> = {
-        id,
-        name: agentName.trim(),
-        models: [defaultName],
-        tools: defaultTools,
+      let list: Record<string, unknown>[]
+      if (!alreadyConfigured && defaultIdx >= 0) {
+        list = rawList.map((a, i) =>
+          i === defaultIdx
+            ? { ...a, name: agentName.trim(), models: [defaultName], tools: defaultTools }
+            : a,
+        )
+      } else {
+        const existingIds = new Set(rawList.map((a) => String(a.id ?? "")))
+        let id = slugify(agentName)
+        for (let n = 2; existingIds.has(id); n++) id = `${slugify(agentName)}-${n}`
+        const newAgent: Record<string, unknown> = {
+          id,
+          name: agentName.trim(),
+          models: [defaultName],
+          tools: defaultTools,
+        }
+        if (defaultIdx < 0) newAgent.default = true
+        list = [...rawList, newAgent]
       }
-      if (!hasDefault) newAgent.default = true
 
-      await patchAppConfig({ agents: { list: [...rawList, newAgent] } })
+      await patchAppConfig({ agents: { list } })
 
       toast.success(t("setup.finishedToast"))
       void navigate({ to: "/" })
@@ -321,6 +333,7 @@ export function SetupWizard() {
     presetModels,
     agentName,
     defaultTools,
+    alreadyConfigured,
     navigate,
     t,
   ])
