@@ -20,8 +20,10 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/logger"
 )
 
-// DefaultDevicePort is the device gateway's own listen port when unset.
-const DefaultDevicePort = 8078
+// DefaultDevicePort is the device gateway's own listen port when unset. It sits
+// next to the default WebUI/admin port (18790) so a default install runs both on
+// adjacent ports.
+const DefaultDevicePort = 18791
 
 // DeviceChannel is the external-device gateway channel. It runs its OWN HTTP
 // listener (Host:Port) — independent of the WebUI/admin port — serving the

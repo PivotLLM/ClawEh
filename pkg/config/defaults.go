@@ -158,7 +158,7 @@ func DefaultConfig() *Config {
 			Device: DeviceChannelConfig{
 				Enabled:   false,
 				Host:      "127.0.0.1", // loopback until the user enables local-network listening
-				Port:      8078,        // own listener, separate from the WebUI/admin port
+				Port:      18791,       // own listener, next to the WebUI/admin port (18790)
 				AllowFrom: FlexibleStringSlice{},
 			},
 		},
