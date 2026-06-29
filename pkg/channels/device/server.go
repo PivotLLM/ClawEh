@@ -210,8 +210,9 @@ func (s *Server) handshake(r *http.Request, connID, nonce string, raw []byte) (*
 		"remoteIp": clientIP(r),
 	})
 
-	// Protocol negotiation.
-	if !gatewayproto.NegotiateProtocol(p.MinProtocol, p.MaxProtocol, p.Client.Mode == "probe") {
+	// Protocol negotiation — accept the highest version both sides support.
+	negotiatedProtocol := gatewayproto.NegotiateProtocol(p.MinProtocol, p.MaxProtocol, p.Client.Mode == "probe")
+	if negotiatedProtocol == 0 {
 		detail := map[string]any{"code": gatewayproto.DetailProtocolMismatch, "expectedProtocol": gatewayproto.ProtocolVersion}
 		return nil, &handshakeFail{id: req.ID, err: gatewayproto.NewError(gatewayproto.CodeInvalidRequest, "protocol mismatch", detail), code: websocket.CloseProtocolError, reason: "protocol mismatch"}
 	}
@@ -274,7 +275,7 @@ func (s *Server) handshake(r *http.Request, connID, nonce string, raw []byte) (*
 
 	_ = s.store.UpdateLastSeen(ctx, paired.DeviceID, time.Now().UnixMilli())
 
-	hello := s.buildHelloOk(ctx, connID, paired)
+	hello := s.buildHelloOk(ctx, connID, paired, negotiatedProtocol)
 	return &handshakeOK{id: req.ID, payload: hello, deviceID: paired.DeviceID, chatID: "device:" + paired.DeviceID, role: role, scopes: paired.Scopes}, nil
 }
 
@@ -326,8 +327,9 @@ func (s *Server) verifyDeviceIdentity(reqID, nonce string, p *gatewayproto.Conne
 	return nil
 }
 
-// buildHelloOk assembles the hello-ok payload for a paired device.
-func (s *Server) buildHelloOk(ctx context.Context, connID string, paired *PairedDevice) gatewayproto.HelloOk {
+// buildHelloOk assembles the hello-ok payload for a paired device, echoing the
+// negotiated protocol version (which may be lower than ProtocolVersion).
+func (s *Server) buildHelloOk(ctx context.Context, connID string, paired *PairedDevice, protocol int) gatewayproto.HelloOk {
 	role := gatewayproto.RoleNode
 	if len(paired.Roles) > 0 {
 		role = paired.Roles[0]
@@ -351,7 +353,7 @@ func (s *Server) buildHelloOk(ctx context.Context, connID string, paired *Paired
 	}
 	return gatewayproto.HelloOk{
 		Type:     "hello-ok",
-		Protocol: gatewayproto.ProtocolVersion,
+		Protocol: protocol,
 		Server:   gatewayproto.HelloServer{Version: s.opts.ServerVersion, ConnID: connID},
 		Features: gatewayproto.HelloFeatures{Methods: s.methods, Events: s.events},
 		Auth:     auth,

@@ -1,21 +1,31 @@
 package gatewayproto
 
-// Protocol version constants. The OpenClaw reference server currently pins all
-// three at 4 (packages/gateway-protocol/src/version.ts). A client is accepted
-// when maxProtocol >= ProtocolVersion && minProtocol <= ProtocolVersion (probe
-// clients relax the lower bound to MinProbeProtocolVersion).
+// Protocol version constants. ProtocolVersion is the highest we speak; we accept
+// down to MinClientProtocolVersion. The OpenClaw reference currently pins its
+// constants at 4, but the protocol version is a compatibility marker with no
+// wire-shape branching in the gateway, and the Rabbit R1 (firmware 20260619.1)
+// advertises protocol 3 — so ClawEh negotiates the range [3, 4] and echoes the
+// negotiated version back in hello-ok.
 const (
 	ProtocolVersion          = 4
-	MinClientProtocolVersion = 4
-	MinProbeProtocolVersion  = 4
+	MinClientProtocolVersion = 3
+	MinProbeProtocolVersion  = 3
 )
 
-// NegotiateProtocol reports whether a client advertising [minProtocol, maxProtocol]
-// is compatible. probe relaxes the accepted floor (probe-mode connections only).
-func NegotiateProtocol(minProtocol, maxProtocol int, probe bool) bool {
-	floor := ProtocolVersion
-	if probe {
-		floor = MinProbeProtocolVersion
+// NegotiateProtocol returns the highest protocol version both sides support, or 0
+// if there is no overlap. ClawEh speaks [MinClientProtocolVersion, ProtocolVersion]
+// (probe clients relax the floor to MinProbeProtocolVersion).
+func NegotiateProtocol(clientMin, clientMax int, probe bool) int {
+	ourMin := MinClientProtocolVersion
+	if probe && MinProbeProtocolVersion < ourMin {
+		ourMin = MinProbeProtocolVersion
 	}
-	return maxProtocol >= floor && minProtocol <= ProtocolVersion
+	negotiated := clientMax
+	if negotiated > ProtocolVersion {
+		negotiated = ProtocolVersion
+	}
+	if negotiated < clientMin || negotiated < ourMin {
+		return 0
+	}
+	return negotiated
 }
