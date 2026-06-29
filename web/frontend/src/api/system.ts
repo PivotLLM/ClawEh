@@ -1,10 +1,3 @@
-export interface AutoStartStatus {
-  enabled: boolean
-  supported: boolean
-  platform: string
-  message?: string
-}
-
 export interface LauncherConfig {
   port: number
   public: boolean
@@ -33,20 +26,6 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json() as Promise<T>
 }
 
-export async function getAutoStartStatus(): Promise<AutoStartStatus> {
-  return request<AutoStartStatus>("/api/system/autostart")
-}
-
-export async function setAutoStartEnabled(
-  enabled: boolean,
-): Promise<AutoStartStatus> {
-  return request<AutoStartStatus>("/api/system/autostart", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ enabled }),
-  })
-}
-
 export async function getLauncherConfig(): Promise<LauncherConfig> {
   return request<LauncherConfig>("/api/system/launcher-config")
 }
@@ -59,4 +38,42 @@ export async function setLauncherConfig(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   })
+}
+
+export interface CLIInfo {
+  protocol: string
+  label: string
+  binary: string
+  installed: boolean
+  path?: string
+  version?: string
+}
+
+// listCLIs reports which known CLI agents (claude/codex/gemini) are installed on
+// the host, so the setup wizard can show what's available without the user
+// configuring a CLI whose binary isn't on PATH.
+export async function listCLIs(): Promise<CLIInfo[]> {
+  return request<CLIInfo[]>("/api/system/clis")
+}
+
+export interface SetupStatus {
+  // pristine: an auto-seeded config the user has never saved.
+  pristine: boolean
+  // has_usable_model: at least one enabled model has working credentials.
+  has_usable_model: boolean
+  // needs_setup: pristine with no usable model — drives the first-run redirect.
+  needs_setup: boolean
+}
+
+// getSetupStatus reports whether this is a fresh install that should be sent to
+// the setup wizard.
+export async function getSetupStatus(): Promise<SetupStatus> {
+  return request<SetupStatus>("/api/system/setup-status")
+}
+
+// reloadGateway forces an immediate config reload, bypassing the mtime-debounce.
+// It resolves only once the reload has completed, so callers can wait before
+// directing the user back into the app.
+export async function reloadGateway(): Promise<void> {
+  await request<unknown>("/api/gateway/reload", { method: "POST" })
 }

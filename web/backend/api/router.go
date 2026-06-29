@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"sync"
 
 	"github.com/PivotLLM/ClawEh/web/backend/launcherconfig"
 )
@@ -13,6 +14,26 @@ type Handler struct {
 	serverPublic         bool
 	serverPublicExplicit bool
 	serverCIDRs          []string
+
+	// reloadTrigger, when set by the gateway, forces an immediate config reload
+	// (bypassing the mtime-debounce). Guarded because it's set at startup on one
+	// goroutine and read on HTTP-handler goroutines.
+	reloadMu      sync.Mutex
+	reloadTrigger func() error
+}
+
+// SetReloadTrigger wires the gateway's force-reload function into the handler so
+// POST /api/gateway/reload can apply config changes immediately.
+func (h *Handler) SetReloadTrigger(fn func() error) {
+	h.reloadMu.Lock()
+	h.reloadTrigger = fn
+	h.reloadMu.Unlock()
+}
+
+func (h *Handler) reloadFunc() func() error {
+	h.reloadMu.Lock()
+	defer h.reloadMu.Unlock()
+	return h.reloadTrigger
 }
 
 // NewHandler creates an instance of the API handler.
@@ -66,9 +87,12 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	// Agent tool catalog
 	h.registerAgentRoutes(mux)
 
-	// OS startup / launch-at-login
-	h.registerStartupRoutes(mux)
-
 	// Launcher service parameters (port/public)
 	h.registerLauncherConfigRoutes(mux)
+
+	// CLI-agent detection (claude/codex/gemini on PATH) for the setup wizard
+	h.registerSystemCLIRoutes(mux)
+
+	// First-run setup status (drives the wizard redirect)
+	h.registerSetupStatusRoutes(mux)
 }

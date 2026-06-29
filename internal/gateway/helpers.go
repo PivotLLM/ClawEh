@@ -219,9 +219,26 @@ func gatewayCmd(debug bool) error {
 	// Setup config file watcher for hot reload
 	reloadInterval := cfg.ConfigReloadInterval()
 	logger.InfoF("Config reload watcher", map[string]any{"interval": reloadInterval.String()})
-	configReloadChan, stopWatch := setupConfigWatcherPolling(configPath, reloadInterval,
+	configReloadChan, stopWatch, markConfigApplied := setupConfigWatcherPolling(configPath, reloadInterval,
 		time.Duration(global.ConfigReloadDebounceSeconds)*time.Second, debug)
 	defer stopWatch()
+
+	// Force-reload channel: lets POST /api/gateway/reload apply config changes
+	// immediately, bypassing the mtime-debounce (so the setup wizard / WebUI saves
+	// don't leave the user in a ~10-15s window where the new config isn't live).
+	// The trigger sends a response channel and blocks until the reload completes.
+	forceReload := make(chan chan error, 1)
+	if services.WebServer != nil {
+		services.WebServer.APIHandler().SetReloadTrigger(func() error {
+			done := make(chan error, 1)
+			select {
+			case forceReload <- done:
+				return <-done
+			case <-time.After(5 * time.Second):
+				return fmt.Errorf("gateway busy; reload not accepted")
+			}
+		})
+	}
 
 	// Watch the service-token state file so `claw token` changes activate live
 	// (writes are atomic, so no debounce is needed).
@@ -244,6 +261,21 @@ func gatewayCmd(debug bool) error {
 			if err != nil {
 				logger.Errorf("Config reload failed: %v", err)
 			}
+
+		case done := <-forceReload:
+			logger.Info("Forced config reload requested via API")
+			newCfg, lerr := config.LoadConfig(configPath)
+			if lerr != nil {
+				done <- lerr
+				break
+			}
+			rerr := handleConfigReload(ctx, agentLoop, newCfg, &provider, services, msgBus)
+			if rerr == nil {
+				// Tell the watcher we've applied the current file so it doesn't
+				// fire a second, disruptive reload for the same change.
+				markConfigApplied()
+			}
+			done <- rerr
 
 		case <-svcTokenChan:
 			logger.Info("🔑 Service-token file changed, reloading service tokens...")
@@ -368,7 +400,20 @@ func setupAndStartServices(
 	// rebuild. See rebuildSharedHTTPServer for the swap seam.
 	addr := fmt.Sprintf("%s:%d", cfg.Gateway.Host, cfg.Gateway.Port)
 	services.WebServer = newMergedWebServer(configPath, cfg)
-	services.HTTPHost = newHTTPHost(addr)
+	// IP allowlist for the shared HTTP port. Defaults (via launcherconfig.Default)
+	// to the RFC1918 private ranges, so the no-auth WebUI is reachable only from
+	// loopback + the LAN even when bound to 0.0.0.0.
+	lc, lcErr := launcherconfig.Load(launcherconfig.PathForAppConfig(configPath), launcherconfig.Default())
+	if lcErr != nil {
+		logger.WarnCF("gateway", "Failed to load launcher config; using default network allowlist", map[string]any{"error": lcErr.Error()})
+		lc = launcherconfig.Default()
+	}
+	httpHost, hostErr := newHTTPHost(addr, lc.AllowedCIDRs)
+	if hostErr != nil {
+		return nil, fmt.Errorf("invalid network allowlist %v: %w", lc.AllowedCIDRs, hostErr)
+	}
+	services.HTTPHost = httpHost
+	logger.InfoF("Network allowlist active", map[string]any{"allowed_cidrs": lc.AllowedCIDRs, "loopback": "always allowed"})
 	rebuildSharedHTTPServer(services, cfg.Gateway.Host, cfg.Gateway.Port, services.ChannelManager, services.HTTPHost, agentLoop)
 	services.HTTPHost.Start()
 
@@ -788,9 +833,13 @@ func restartServices(
 // cfg.ConfigReloadInterval() so the value honours the config override and
 // MinConfigReloadIntervalSeconds floor. Returns a channel for config updates
 // and a stop function.
-func setupConfigWatcherPolling(configPath string, interval, debounce time.Duration, debug bool) (chan *config.Config, func()) {
+func setupConfigWatcherPolling(configPath string, interval, debounce time.Duration, debug bool) (chan *config.Config, func(), func()) {
 	configChan := make(chan *config.Config, 1)
 	stop := make(chan struct{})
+	// markCh lets an out-of-band reload (the force-reload API) tell the watcher
+	// it already applied the current on-disk config, so the watcher advances its
+	// baseline instead of firing a second, disruptive reload for the same change.
+	markCh := make(chan struct{}, 1)
 	var wg sync.WaitGroup
 
 	wg.Add(1)
@@ -877,6 +926,15 @@ func setupConfigWatcherPolling(configPath string, interval, debounce time.Durati
 					logger.Warn("⚠ Previous config reload still in progress, will retry")
 				}
 
+			case <-markCh:
+				// A force-reload already applied the current on-disk config;
+				// advance the baseline so we don't re-fire for the same change.
+				appliedModTime = getFileModTime(configPath)
+				appliedSize = getFileSize(configPath)
+				observedModTime = appliedModTime
+				observedSize = appliedSize
+				pending = false
+
 			case <-stop:
 				return
 			}
@@ -888,7 +946,14 @@ func setupConfigWatcherPolling(configPath string, interval, debounce time.Durati
 		wg.Wait()
 	}
 
-	return configChan, stopFunc
+	markApplied := func() {
+		select {
+		case markCh <- struct{}{}:
+		default:
+		}
+	}
+
+	return configChan, stopFunc, markApplied
 }
 
 // getFileModTime returns the modification time of a file, or zero time if file doesn't exist

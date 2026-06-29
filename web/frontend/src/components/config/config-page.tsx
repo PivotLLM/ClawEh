@@ -7,9 +7,7 @@ import { toast } from "sonner"
 
 import { patchAppConfig } from "@/api/channels"
 import {
-  getAutoStartStatus,
   getLauncherConfig,
-  setAutoStartEnabled as updateAutoStartEnabled,
   setLauncherConfig as updateLauncherConfig,
 } from "@/api/system"
 import {
@@ -42,8 +40,6 @@ export function ConfigPage() {
     useState<LauncherForm>(EMPTY_LAUNCHER_FORM)
   const [launcherBaseline, setLauncherBaseline] =
     useState<LauncherForm>(EMPTY_LAUNCHER_FORM)
-  const [autoStartEnabled, setAutoStartEnabled] = useState(false)
-  const [autoStartBaseline, setAutoStartBaseline] = useState(false)
   const [saving, setSaving] = useState(false)
 
   const { data, isLoading, error } = useQuery({
@@ -60,15 +56,6 @@ export function ConfigPage() {
   const { data: launcherConfig, isLoading: isLauncherLoading } = useQuery({
     queryKey: ["system", "launcher-config"],
     queryFn: getLauncherConfig,
-  })
-
-  const {
-    data: autoStartStatus,
-    isLoading: isAutoStartLoading,
-    error: autoStartError,
-  } = useQuery({
-    queryKey: ["system", "autostart"],
-    queryFn: getAutoStartStatus,
   })
 
   useEffect(() => {
@@ -110,24 +97,10 @@ export function ConfigPage() {
     setLauncherBaseline(parsed)
   }, [launcherConfig])
 
-  useEffect(() => {
-    if (!autoStartStatus) return
-    setAutoStartEnabled(autoStartStatus.enabled)
-    setAutoStartBaseline(autoStartStatus.enabled)
-  }, [autoStartStatus])
-
   const configDirty = JSON.stringify(form) !== JSON.stringify(baseline)
   const launcherDirty =
     JSON.stringify(launcherForm) !== JSON.stringify(launcherBaseline)
-  const autoStartDirty = autoStartEnabled !== autoStartBaseline
-  const isDirty = configDirty || launcherDirty || autoStartDirty
-
-  const autoStartSupported = autoStartStatus?.supported !== false
-  const autoStartHint = autoStartError
-    ? t("pages.config.autostart_load_error")
-    : !autoStartSupported
-      ? t("pages.config.autostart_unsupported")
-      : t("pages.config.autostart_hint")
+  const isDirty = configDirty || launcherDirty
 
   const updateField = <K extends keyof CoreConfigForm>(
     key: K,
@@ -146,7 +119,6 @@ export function ConfigPage() {
   const handleReset = () => {
     setForm(baseline)
     setLauncherForm(launcherBaseline)
-    setAutoStartEnabled(autoStartBaseline)
     toast.info(t("pages.config.reset_success"))
   }
 
@@ -366,16 +338,6 @@ export function ConfigPage() {
         )
       }
 
-      if (autoStartDirty) {
-        if (!autoStartSupported) {
-          throw new Error(t("pages.config.autostart_unsupported"))
-        }
-        const status = await updateAutoStartEnabled(autoStartEnabled)
-        setAutoStartEnabled(status.enabled)
-        setAutoStartBaseline(status.enabled)
-        queryClient.setQueryData(["system", "autostart"], status)
-      }
-
       toast.success(t("pages.config.save_success"))
     } catch (err) {
       toast.error(
@@ -437,19 +399,7 @@ export function ConfigPage() {
                 disabled={saving || isLauncherLoading}
               />
 
-              <DevicesSection
-                form={form}
-                onFieldChange={updateField}
-                autoStartEnabled={autoStartEnabled}
-                autoStartHint={autoStartHint}
-                autoStartDisabled={
-                  isAutoStartLoading ||
-                  Boolean(autoStartError) ||
-                  !autoStartSupported ||
-                  saving
-                }
-                onAutoStartChange={setAutoStartEnabled}
-              />
+              <DevicesSection form={form} onFieldChange={updateField} />
 
               <div className="flex justify-end gap-2">
                 <Button

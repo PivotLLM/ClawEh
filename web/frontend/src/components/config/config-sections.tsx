@@ -785,20 +785,9 @@ export function LauncherSection({
 interface DevicesSectionProps {
   form: CoreConfigForm
   onFieldChange: UpdateCoreField
-  autoStartEnabled: boolean
-  autoStartHint: string
-  autoStartDisabled: boolean
-  onAutoStartChange: (checked: boolean) => void
 }
 
-export function DevicesSection({
-  form,
-  onFieldChange,
-  autoStartEnabled,
-  autoStartHint,
-  autoStartDisabled,
-  onAutoStartChange,
-}: DevicesSectionProps) {
+export function DevicesSection({ form, onFieldChange }: DevicesSectionProps) {
   const { t } = useTranslation()
 
   return (
@@ -817,15 +806,6 @@ export function DevicesSection({
         layout="setting-row"
         checked={form.monitorUSB}
         onCheckedChange={(checked) => onFieldChange("monitorUSB", checked)}
-      />
-
-      <SwitchCardField
-        label={t("pages.config.autostart_label")}
-        hint={autoStartHint}
-        layout="setting-row"
-        checked={autoStartEnabled}
-        disabled={autoStartDisabled}
-        onCheckedChange={onAutoStartChange}
       />
     </ConfigSectionCard>
   )

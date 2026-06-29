@@ -25,6 +25,44 @@ Although the conversation context can be reset at any time, ClawEh is designed p
 - **Web UI** — Manage agents, providers, channels, MCP connections, memory, and configuration without editing JSON manually.
 - **Secure and self-hosted** — Workspace sandboxing, per-agent tool allowlists, and loopback-bound services, delivered as MIT-licensed Go software that you run on your own infrastructure.
 
+## Quickstart
+
+Pre-built binaries are published on the [GitHub Releases page](https://github.com/PivotLLM/ClawEh/releases); you can also build from source.
+
+### 1. Get the binary
+
+**From a release** — download the binary for your platform from [Releases](https://github.com/PivotLLM/ClawEh/releases) and make it executable:
+
+```bash
+chmod +x claw-linux-amd64
+mv claw-linux-amd64 claw
+```
+
+**From source** (requires Go and pnpm):
+
+```bash
+git clone https://github.com/PivotLLM/ClawEh.git
+cd ClawEh
+make build          # builds ./build/claw with the web UI embedded
+```
+
+### 2. Install as a service (Linux / systemd)
+
+Run as your normal user — it prompts for sudo only to write the unit file:
+
+```bash
+./claw install                  # local machine
+./claw install --host 0.0.0.0   # headless: reachable on your LAN
+```
+
+This copies the binary to `~/bin` (or `~/.local/bin`), adds it to your `PATH`, and registers a systemd service that runs ClawEh as your user at boot. The web UI has no authentication, so access is restricted to loopback plus the private-network ranges (RFC1918) by default — override with `--allowed-cidrs` (e.g. a specific subnet, or `0.0.0.0/0` to allow all). Remove everything with `claw uninstall`.
+
+> Not using systemd? Just run `claw` directly — it starts the gateway and web UI on port `18790`.
+
+### 3. Open the web UI and finish setup
+
+Browse to **http://localhost:18790** (or `http://<host>:18790` if you set `--host`). On a fresh install the **setup wizard** launches automatically: pick a provider (or a detected local CLI agent such as Claude Code, Codex, or Gemini CLI), test your API key, choose a default model, and name your first agent. Then you're ready to chat.
+
 ## Features
 
 ### Maestro task orchestration

@@ -31,7 +31,7 @@ func TestConfigWatcher_DebouncesBurstIntoSingleReload(t *testing.T) {
 
 	interval := 10 * time.Millisecond
 	debounce := 120 * time.Millisecond
-	ch, stop := setupConfigWatcherPolling(path, interval, debounce, false)
+	ch, stop, _ := setupConfigWatcherPolling(path, interval, debounce, false)
 	defer stop()
 
 	// Burst of three writes, each spaced under the debounce window so each resets
@@ -63,6 +63,45 @@ func TestConfigWatcher_DebouncesBurstIntoSingleReload(t *testing.T) {
 	}
 }
 
+// TestConfigWatcher_MarkAppliedSuppressesReload verifies that after a change is
+// written and markApplied() is called (as the force-reload path does), the
+// watcher advances its baseline and does NOT fire a redundant reload — the
+// double-reload that was tearing down an active chat after the setup wizard.
+func TestConfigWatcher_MarkAppliedSuppressesReload(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	if err := os.WriteFile(path, []byte(validConfigJSON), 0o600); err != nil {
+		t.Fatalf("seed config: %v", err)
+	}
+
+	interval := 10 * time.Millisecond
+	debounce := 80 * time.Millisecond
+	ch, stop, markApplied := setupConfigWatcherPolling(path, interval, debounce, false)
+	defer stop()
+
+	time.Sleep(3 * interval) // let the watcher capture its baseline
+
+	// Simulate a force-reload: the config changes and the out-of-band path
+	// applies it, then tells the watcher via markApplied().
+	writeConfig(t, path, "force-applied")
+	markApplied()
+
+	// The watcher must not deliver a reload for the already-applied change.
+	select {
+	case <-ch:
+		t.Fatal("watcher fired a redundant reload after markApplied()")
+	case <-time.After(debounce + 200*time.Millisecond):
+	}
+
+	// A genuinely new change after markApplied still triggers a reload.
+	writeConfig(t, path, "later-edit")
+	select {
+	case <-ch:
+	case <-time.After(2 * time.Second):
+		t.Fatal("a new change after markApplied should still reload")
+	}
+}
+
 // TestConfigWatcher_RetriesWhenConsumerBusy verifies that a change which cannot
 // be delivered because the consumer is still draining a previous reload is NOT
 // lost: once the consumer catches up, the pending change is delivered. This
@@ -77,7 +116,7 @@ func TestConfigWatcher_RetriesWhenConsumerBusy(t *testing.T) {
 
 	interval := 10 * time.Millisecond
 	debounce := 60 * time.Millisecond
-	ch, stop := setupConfigWatcherPolling(path, interval, debounce, false)
+	ch, stop, _ := setupConfigWatcherPolling(path, interval, debounce, false)
 	defer stop()
 
 	// Let the watcher capture its baseline against the seed file before the first

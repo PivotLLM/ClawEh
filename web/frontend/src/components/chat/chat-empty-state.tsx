@@ -27,9 +27,14 @@ export function ChatEmptyState({
         <p className="text-muted-foreground mb-4 text-center text-sm">
           {t("chat.empty.noConfiguredModelDescription")}
         </p>
-        <Button asChild variant="secondary" size="sm" className="px-4">
-          <Link to="/models">{t("chat.empty.goToModels")}</Link>
-        </Button>
+        <div className="flex items-center gap-3">
+          <Button asChild size="sm" className="px-4">
+            <Link to="/setup">{t("chat.empty.runSetup")}</Link>
+          </Button>
+          <Button asChild variant="secondary" size="sm" className="px-4">
+            <Link to="/models">{t("chat.empty.goToModels")}</Link>
+          </Button>
+        </div>
       </div>
     )
   }

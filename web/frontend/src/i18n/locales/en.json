@@ -58,6 +58,7 @@
       "noConfiguredModel": "No Model Configured",
       "noConfiguredModelDescription": "You need to configure at least one AI model with an API key before you can start chatting.",
       "goToModels": "Go to Models",
+      "runSetup": "Run setup wizard",
       "noSelectedModel": "No Model Selected",
       "noSelectedModelDescription": "You have configured models, but none is set as default. Select a model before starting chat."
     },
@@ -393,10 +394,6 @@
       "devices_enabled_hint": "Enable hardware-device integrations.",
       "monitor_usb": "Monitor USB",
       "monitor_usb_hint": "Watch USB plug/unplug events when devices are enabled.",
-      "autostart_label": "Launch at login",
-      "autostart_hint": "Start ClawEh Web automatically when you log in.",
-      "autostart_unsupported": "Launch at login is not supported on this platform.",
-      "autostart_load_error": "Failed to load launch-at-login status.",
       "server_port": "Service port",
       "server_port_hint": "HTTP port used by ClawEh Web.",
       "lan_access": "Enable LAN access",
@@ -574,6 +571,67 @@
       "description": "\"{{name}}\" will be permanently removed. This cannot be undone.",
       "confirm": "Delete",
       "error": "Failed to delete provider"
+    }
+  },
+  "setup": {
+    "back": "Back",
+    "next": "Next",
+    "cancel": "Cancel",
+    "finish": "Finish setup",
+    "applying": "Applying configuration and restarting services — this takes a few seconds…",
+    "finishedToast": "Setup complete — you're ready to chat.",
+    "steps": {
+      "welcome": "Welcome",
+      "provider": "Provider",
+      "model": "Model",
+      "agent": "Agent",
+      "review": "Review"
+    },
+    "welcome": {
+      "title": "Let's get you set up",
+      "body": "This short wizard configures the essentials so you can start chatting: an AI provider, a model, and your first agent.",
+      "point1": "Connect one AI provider and verify the API key live.",
+      "point2": "Pick a model to use by default.",
+      "point3": "Create your first agent.",
+      "alreadyConfigured": "ClawEh already has a usable model configured. Continuing will add a new agent and make the model you pick the new default — your existing providers, models, and agents are kept. Cancel to leave your current setup unchanged."
+    },
+    "provider": {
+      "title": "Connect an AI provider",
+      "body": "Choose a provider, paste your API key, and test it. Testing catches a wrong key or endpoint before it causes errors later.",
+      "selectLabel": "Provider",
+      "selectPlaceholder": "Select a provider",
+      "endpoint": "Endpoint",
+      "keyLabel": "API key",
+      "keyPlaceholder": "Paste your API key",
+      "testButton": "Test key",
+      "cliHint": "Local CLI agents (Claude Code, Codex, Gemini) appear below and can be selected when their command is installed — no API key needed.",
+      "cliDetectedHeading": "Detected CLI agents",
+      "cliPickHint": "Installed CLIs are selectable in the dropdown above — no API key needed.",
+      "cliInstalled": "installed",
+      "cliMissing": "not installed",
+      "cliDetected": "Command detected — no API key needed.",
+      "cliNotDetected": "This command isn't installed. Install it and reopen the wizard, or pick another option."
+    },
+    "model": {
+      "title": "Choose a model",
+      "body": "Pick a model offered by this provider, or enter a custom model id. It becomes your default model.",
+      "selectLabel": "Model",
+      "selectPlaceholder": "Select a model",
+      "cliDefaultOption": "Default (use the CLI's built-in model)",
+      "recommended": "Recommended",
+      "customOption": "Custom model…",
+      "customIdLabel": "Model id",
+      "customNameLabel": "Display name",
+      "customNamePlaceholder": "My model"
+    },
+    "agent": {
+      "title": "Create your first agent",
+      "body": "Give your agent a name. It will use the default model and standard tools — you can fine-tune it later on the Agents page.",
+      "nameLabel": "Agent name"
+    },
+    "review": {
+      "title": "Review and finish",
+      "body": "Here's what will be configured. Go back to make changes, or finish to apply."
     }
   }
 }

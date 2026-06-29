@@ -12,6 +12,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 )
 
@@ -19,6 +20,26 @@ import (
 func (h *Handler) registerGatewayRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/gateway/logs", h.handleGatewayLogs)
 	mux.HandleFunc("POST /api/gateway/logs/clear", h.handleGatewayClearLogs)
+	mux.HandleFunc("POST /api/gateway/reload", h.handleGatewayReload)
+}
+
+// handleGatewayReload forces an immediate config reload, bypassing the
+// mtime-debounce so WebUI changes (e.g. finishing the setup wizard) take effect
+// at once instead of ~10-15s later. Blocks until the reload completes.
+//
+//	POST /api/gateway/reload
+func (h *Handler) handleGatewayReload(w http.ResponseWriter, r *http.Request) {
+	fn := h.reloadFunc()
+	if fn == nil {
+		http.Error(w, "reload is not available in this process", http.StatusServiceUnavailable)
+		return
+	}
+	if err := fn(); err != nil {
+		http.Error(w, fmt.Sprintf("reload failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "reloaded"})
 }
 
 // handleGatewayClearLogs is a no-op in the merged binary (logs are emitted to

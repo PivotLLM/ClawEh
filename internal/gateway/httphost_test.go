@@ -5,6 +5,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -22,7 +23,10 @@ import (
 func TestHTTPHostLifecycleIndependentOfChannelManager(t *testing.T) {
 	addr := reserveLocalAddr(t)
 
-	host := newHTTPHost(addr)
+	host, err := newHTTPHost(addr, nil)
+	if err != nil {
+		t.Fatalf("newHTTPHost: %v", err)
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ping", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("pong"))
@@ -61,7 +65,10 @@ func TestHTTPHostLifecycleIndependentOfChannelManager(t *testing.T) {
 func TestHTTPHostSwapMux(t *testing.T) {
 	addr := reserveLocalAddr(t)
 
-	host := newHTTPHost(addr)
+	host, err := newHTTPHost(addr, nil)
+	if err != nil {
+		t.Fatalf("newHTTPHost: %v", err)
+	}
 	first := http.NewServeMux()
 	first.HandleFunc("/v", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("first"))
@@ -88,6 +95,43 @@ func TestHTTPHostSwapMux(t *testing.T) {
 
 	if got := httpGetBody(t, "http://"+addr+"/v"); got != "second" {
 		t.Fatalf("after swap: got %q, want %q (mux swap did not take effect)", got, "second")
+	}
+}
+
+// TestNewHTTPHost_EnforcesAllowlist verifies the listener wraps its mux in the
+// IP allowlist: loopback and in-range peers reach the handler; out-of-range
+// peers get 403 — regardless of bind address.
+func TestNewHTTPHost_EnforcesAllowlist(t *testing.T) {
+	host, err := newHTTPHost("127.0.0.1:0", []string{"192.168.0.0/16"})
+	if err != nil {
+		t.Fatalf("newHTTPHost: %v", err)
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/x", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	host.SetMux(mux)
+
+	cases := []struct {
+		remoteAddr string
+		want       int
+	}{
+		{"127.0.0.1:5000", http.StatusOK},      // loopback always allowed
+		{"192.168.1.10:5000", http.StatusOK},   // in private range
+		{"8.8.8.8:5000", http.StatusForbidden}, // public, blocked
+	}
+	for _, c := range cases {
+		req := httptest.NewRequest(http.MethodGet, "/x", nil)
+		req.RemoteAddr = c.remoteAddr
+		rec := httptest.NewRecorder()
+		host.server.Handler.ServeHTTP(rec, req)
+		if rec.Code != c.want {
+			t.Errorf("%s: status = %d, want %d", c.remoteAddr, rec.Code, c.want)
+		}
+	}
+}
+
+func TestNewHTTPHost_InvalidCIDR(t *testing.T) {
+	if _, err := newHTTPHost("127.0.0.1:0", []string{"not-a-cidr"}); err == nil {
+		t.Fatal("expected error for invalid CIDR")
 	}
 }
 

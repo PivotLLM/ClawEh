@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as SetupRouteImport } from './routes/setup'
 import { Route as ProvidersRouteImport } from './routes/providers'
 import { Route as ModelsRouteImport } from './routes/models'
 import { Route as MemoryRouteImport } from './routes/memory'
@@ -25,6 +26,11 @@ import { Route as AgentToolsRouteImport } from './routes/agent/tools'
 import { Route as AgentSkillsRouteImport } from './routes/agent/skills'
 import { Route as AgentBindingsRouteImport } from './routes/agent/bindings'
 
+const SetupRoute = SetupRouteImport.update({
+  id: '/setup',
+  path: '/setup',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ProvidersRoute = ProvidersRouteImport.update({
   id: '/providers',
   path: '/providers',
@@ -112,6 +118,7 @@ export interface FileRoutesByFullPath {
   '/memory': typeof MemoryRoute
   '/models': typeof ModelsRoute
   '/providers': typeof ProvidersRoute
+  '/setup': typeof SetupRoute
   '/agent/bindings': typeof AgentBindingsRoute
   '/agent/skills': typeof AgentSkillsRoute
   '/agent/tools': typeof AgentToolsRoute
@@ -129,6 +136,7 @@ export interface FileRoutesByTo {
   '/memory': typeof MemoryRoute
   '/models': typeof ModelsRoute
   '/providers': typeof ProvidersRoute
+  '/setup': typeof SetupRoute
   '/agent/bindings': typeof AgentBindingsRoute
   '/agent/skills': typeof AgentSkillsRoute
   '/agent/tools': typeof AgentToolsRoute
@@ -147,6 +155,7 @@ export interface FileRoutesById {
   '/memory': typeof MemoryRoute
   '/models': typeof ModelsRoute
   '/providers': typeof ProvidersRoute
+  '/setup': typeof SetupRoute
   '/agent/bindings': typeof AgentBindingsRoute
   '/agent/skills': typeof AgentSkillsRoute
   '/agent/tools': typeof AgentToolsRoute
@@ -166,6 +175,7 @@ export interface FileRouteTypes {
     | '/memory'
     | '/models'
     | '/providers'
+    | '/setup'
     | '/agent/bindings'
     | '/agent/skills'
     | '/agent/tools'
@@ -183,6 +193,7 @@ export interface FileRouteTypes {
     | '/memory'
     | '/models'
     | '/providers'
+    | '/setup'
     | '/agent/bindings'
     | '/agent/skills'
     | '/agent/tools'
@@ -200,6 +211,7 @@ export interface FileRouteTypes {
     | '/memory'
     | '/models'
     | '/providers'
+    | '/setup'
     | '/agent/bindings'
     | '/agent/skills'
     | '/agent/tools'
@@ -218,10 +230,18 @@ export interface RootRouteChildren {
   MemoryRoute: typeof MemoryRoute
   ModelsRoute: typeof ModelsRoute
   ProvidersRoute: typeof ProvidersRoute
+  SetupRoute: typeof SetupRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/setup': {
+      id: '/setup'
+      path: '/setup'
+      fullPath: '/setup'
+      preLoaderRoute: typeof SetupRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/providers': {
       id: '/providers'
       path: '/providers'
@@ -378,6 +398,7 @@ const rootRouteChildren: RootRouteChildren = {
   MemoryRoute: MemoryRoute,
   ModelsRoute: ModelsRoute,
   ProvidersRoute: ProvidersRoute,
+  SetupRoute: SetupRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

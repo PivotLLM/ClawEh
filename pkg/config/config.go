@@ -113,6 +113,13 @@ type Config struct {
 	MCPHost       MCPHostConfig       `json:"mcp_host,omitempty"`
 	Cooldown      CooldownConfig      `json:"cooldown,omitempty"`
 	Backup        BackupConfig        `json:"backup,omitempty"`
+	// DefaultConfig marks a never-saved, auto-seeded config. DefaultConfig() sets
+	// it true and SeedDefaultConfig() preserves it on disk; the first save through
+	// SaveConfig clears it. The setup wizard uses it (with a "no usable model"
+	// guard) to detect a fresh install and offer onboarding. NOT omitempty: the
+	// false value must be written explicitly, or LoadConfig (which bases off
+	// DefaultConfig()=true) would re-inherit true for a saved config.
+	DefaultConfig bool `json:"default_config"`
 	// ConfigReloadIntervalSeconds controls how often the daemon polls the config
 	// file for changes and triggers a reload. Defaults to
 	// global.DefaultConfigReloadIntervalSeconds; floored at
@@ -1511,7 +1518,22 @@ func (c *Config) migrateChannelConfigs() {
 	}
 }
 
+// SaveConfig persists cfg. Any save through this path marks the config as
+// user-touched (default_config=false), so the setup wizard can tell a fresh,
+// never-saved install from a configured one.
 func SaveConfig(path string, cfg *Config) error {
+	cfg.DefaultConfig = false
+	return writeConfig(path, cfg)
+}
+
+// SeedDefaultConfig writes the initial auto-generated config to disk, preserving
+// the default_config marker (unlike SaveConfig, which clears it). Use only for
+// the first-run seed.
+func SeedDefaultConfig(path string, cfg *Config) error {
+	return writeConfig(path, cfg)
+}
+
+func writeConfig(path string, cfg *Config) error {
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err

@@ -101,13 +101,13 @@ covers this path; see commit `515ed8f` for the merge).
 
 ---
 
-## 8. Autostart / Desktop Integration (Linux)
+## 8. Service Install (Linux / systemd)
 
 | # | Test | Expected |
 |---|------|----------|
-| 8.1 | Enable autostart in settings | Creates `~/.config/autostart/claw.desktop` |
-| 8.2 | Desktop file contents | `Name=ClawEh`, `Exec=claw` (no args), launches the merged binary |
-| 8.3 | Disable autostart | Removes `claw.desktop` |
+| 8.1 | `claw install` as normal user | Copies binary to `~/bin` or `~/.local/bin`, ensures it's on PATH, prompts for sudo, writes `/etc/systemd/system/claw.service` and enables+starts it |
+| 8.2 | Unit contents | `User=`/`Group=` set to the invoking user, `ExecStart=` the installed path, `WantedBy=multi-user.target` |
+| 8.3 | `claw uninstall` | Stops/disables the service and removes the unit |
 
 ---
 

@@ -29,7 +29,7 @@ func LoadConfig() (*config.Config, error) {
 	if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
 		if mkdirErr := os.MkdirAll(filepath.Dir(path), 0o755); mkdirErr == nil {
 			defaultCfg := config.DefaultConfig()
-			_ = config.SaveConfig(path, defaultCfg) // best-effort
+			_ = config.SeedDefaultConfig(path, defaultCfg) // best-effort; keeps default_config marker
 		}
 	}
 	return config.LoadConfig(path)
