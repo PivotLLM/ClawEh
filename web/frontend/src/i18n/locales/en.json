@@ -618,6 +618,7 @@
       "selectLabel": "Model",
       "selectPlaceholder": "Select a model",
       "cliDefaultOption": "Default (use the CLI's built-in model)",
+      "recommended": "Recommended",
       "customOption": "Custom model…",
       "customIdLabel": "Model id",
       "customNameLabel": "Display name",

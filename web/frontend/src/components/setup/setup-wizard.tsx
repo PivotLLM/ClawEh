@@ -55,6 +55,11 @@ const COMMON_PROVIDERS = [
 ]
 
 const CUSTOM_MODEL = "__custom__"
+// Models surfaced as "(Recommended)" in the wizard (and sorted to the top),
+// keyed by provider name → model id.
+const RECOMMENDED_MODEL: Record<string, string> = {
+  "OpenRouter Chat": "deepseek/deepseek-v4-flash",
+}
 // Sentinel for "let the CLI use its own default model" — maps to a model whose
 // id is the CLI protocol (e.g. "gemini-cli"), which the provider treats as
 // "pass no --model arg".
@@ -183,10 +188,22 @@ export function SetupWizard() {
 
   const selectedCli = selectedProvider ? cliFor(selectedProvider.protocol) : undefined
 
-  const presetModels = useMemo(
-    () => models.filter((m) => selectedProvider && m.provider === selectedProvider.name),
-    [models, selectedProvider],
-  )
+  // Recommended model id for the selected provider (shown first + tagged).
+  const recommendedModelId = selectedProvider
+    ? RECOMMENDED_MODEL[selectedProvider.name]
+    : undefined
+
+  const presetModels = useMemo(() => {
+    const list = models.filter(
+      (m) => selectedProvider && m.provider === selectedProvider.name,
+    )
+    // Surface the recommended model at the top of the list.
+    return [...list].sort((a, b) => {
+      const ar = a.model === recommendedModelId ? 0 : 1
+      const br = b.model === recommendedModelId ? 0 : 1
+      return ar - br
+    })
+  }, [models, selectedProvider, recommendedModelId])
 
   const cancel = useCallback(() => {
     try {
@@ -631,6 +648,9 @@ export function SetupWizard() {
                     .map((m) => (
                       <SelectItem key={m.index} value={m.model_name}>
                         {m.model_name} ({m.model})
+                        {m.model === recommendedModelId
+                          ? ` — ${t("setup.model.recommended")}`
+                          : ""}
                       </SelectItem>
                     ))}
                   <SelectItem value={CUSTOM_MODEL}>
