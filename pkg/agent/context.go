@@ -506,11 +506,10 @@ func (cb *ContextBuilder) LoadBootstrapFiles() string {
 // See: https://platform.openai.com/docs/guides/prompt-caching
 func (cb *ContextBuilder) buildDynamicContext(channel, chatID string) string {
 	now := time.Now().Format("2006-01-02 15:04 (Monday)")
-	rt := fmt.Sprintf("%s %s — %s %s, Go %s",
-		global.AppName, global.Version, runtime.GOOS, runtime.GOARCH, runtime.Version())
 
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "## Current Time\n%s\n\n## Runtime\n%s", now, rt)
+	fmt.Fprintf(&sb, "## Current Time\n%s\n\n## Runtime\nServer: %s %s\nOS: %s %s\nGo: %s",
+		now, global.AppName, global.Version, runtime.GOOS, runtime.GOARCH, runtime.Version())
 
 	if channel != "" && chatID != "" {
 		fmt.Fprintf(&sb, "\n\n## Current Session\nChannel: %s\nChat ID: %s", channel, chatID)
