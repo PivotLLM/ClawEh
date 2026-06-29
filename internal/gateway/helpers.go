@@ -223,6 +223,23 @@ func gatewayCmd(debug bool) error {
 		time.Duration(global.ConfigReloadDebounceSeconds)*time.Second, debug)
 	defer stopWatch()
 
+	// Force-reload channel: lets POST /api/gateway/reload apply config changes
+	// immediately, bypassing the mtime-debounce (so the setup wizard / WebUI saves
+	// don't leave the user in a ~10-15s window where the new config isn't live).
+	// The trigger sends a response channel and blocks until the reload completes.
+	forceReload := make(chan chan error, 1)
+	if services.WebServer != nil {
+		services.WebServer.APIHandler().SetReloadTrigger(func() error {
+			done := make(chan error, 1)
+			select {
+			case forceReload <- done:
+				return <-done
+			case <-time.After(5 * time.Second):
+				return fmt.Errorf("gateway busy; reload not accepted")
+			}
+		})
+	}
+
 	// Watch the service-token state file so `claw token` changes activate live
 	// (writes are atomic, so no debounce is needed).
 	svcTokenChan, stopSvcWatch := setupFileChangeWatcher(servicetoken.Path(cfg.DataDir()), reloadInterval)
@@ -244,6 +261,15 @@ func gatewayCmd(debug bool) error {
 			if err != nil {
 				logger.Errorf("Config reload failed: %v", err)
 			}
+
+		case done := <-forceReload:
+			logger.Info("Forced config reload requested via API")
+			newCfg, lerr := config.LoadConfig(configPath)
+			if lerr != nil {
+				done <- lerr
+				break
+			}
+			done <- handleConfigReload(ctx, agentLoop, newCfg, &provider, services, msgBus)
 
 		case <-svcTokenChan:
 			logger.Info("🔑 Service-token file changed, reloading service tokens...")

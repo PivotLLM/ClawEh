@@ -578,6 +578,7 @@
     "next": "Next",
     "cancel": "Cancel",
     "finish": "Finish setup",
+    "applying": "Applying configuration and restarting services — this takes a few seconds…",
     "finishedToast": "Setup complete — you're ready to chat.",
     "steps": {
       "welcome": "Welcome",

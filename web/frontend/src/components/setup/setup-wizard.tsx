@@ -24,7 +24,12 @@ import {
   updateProvider,
   type ProviderInfo,
 } from "@/api/providers"
-import { getSetupStatus, listCLIs, type CLIInfo } from "@/api/system"
+import {
+  getSetupStatus,
+  listCLIs,
+  reloadGateway,
+  type CLIInfo,
+} from "@/api/system"
 import { SETUP_DISMISSED_KEY } from "@/components/setup/dismissed"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -317,6 +322,16 @@ export function SetupWizard() {
       }
 
       await patchAppConfig({ agents: { list } })
+
+      // Force an immediate reload and wait for it, so the user lands in a ready
+      // app instead of the ~10-15s window where the new config isn't live yet.
+      // If the reload endpoint is unavailable, the mtime watcher applies it
+      // shortly anyway, so don't block finishing on an error.
+      try {
+        await reloadGateway()
+      } catch {
+        // fall through — the watcher will pick up the change
+      }
 
       toast.success(t("setup.finishedToast"))
       void navigate({ to: "/" })
@@ -650,6 +665,12 @@ export function SetupWizard() {
             </dl>
             {finishError && (
               <p className="text-destructive text-sm">{finishError}</p>
+            )}
+            {finishing && (
+              <p className="text-muted-foreground flex items-center gap-2 text-sm">
+                <IconLoader2 className="size-4 animate-spin" />
+                {t("setup.applying")}
+              </p>
             )}
           </div>
         )}

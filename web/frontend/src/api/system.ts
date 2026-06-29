@@ -70,3 +70,10 @@ export interface SetupStatus {
 export async function getSetupStatus(): Promise<SetupStatus> {
   return request<SetupStatus>("/api/system/setup-status")
 }
+
+// reloadGateway forces an immediate config reload, bypassing the mtime-debounce.
+// It resolves only once the reload has completed, so callers can wait before
+// directing the user back into the app.
+export async function reloadGateway(): Promise<void> {
+  await request<unknown>("/api/gateway/reload", { method: "POST" })
+}
