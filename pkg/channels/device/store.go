@@ -159,15 +159,11 @@ func unmarshalStrings(s string) []string {
 }
 
 // CreatePending records a pending pairing, replacing any prior pending for the same
-// device id (one pending per device). Returns the generated request id.
+// device id (one pending per device). The request id is STABLE across retries: a
+// device's reconnect loop re-creates its pending every few seconds, so reusing the
+// existing request id keeps it valid for an operator about to approve it (otherwise
+// approve-by-id races the device and fails "not found"). Returns the request id.
 func (s *Store) CreatePending(ctx context.Context, p PendingPairing) (string, error) {
-	if p.RequestID == "" {
-		id, err := randomHex(16)
-		if err != nil {
-			return "", err
-		}
-		p.RequestID = id
-	}
 	if p.CreatedAtMs == 0 {
 		p.CreatedAtMs = nowMs()
 	}
@@ -176,6 +172,23 @@ func (s *Store) CreatePending(ctx context.Context, p PendingPairing) (string, er
 		return "", err
 	}
 	defer func() { _ = tx.Rollback() }()
+
+	var existingID string
+	if qerr := tx.QueryRowContext(ctx,
+		`SELECT request_id FROM pending_pairings WHERE device_id=?`, p.DeviceID).Scan(&existingID); qerr != nil && !errors.Is(qerr, sql.ErrNoRows) {
+		return "", qerr
+	}
+	switch {
+	case existingID != "":
+		p.RequestID = existingID // reuse so the id stays stable across reconnects
+	case p.RequestID == "":
+		id, gerr := randomHex(16)
+		if gerr != nil {
+			return "", gerr
+		}
+		p.RequestID = id
+	}
+
 	if _, err := tx.ExecContext(ctx, `DELETE FROM pending_pairings WHERE device_id=?`, p.DeviceID); err != nil {
 		return "", err
 	}

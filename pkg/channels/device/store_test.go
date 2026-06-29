@@ -38,9 +38,14 @@ func TestPairingLifecycle(t *testing.T) {
 		t.Fatalf("ListPending: %+v err=%v", pend, err)
 	}
 
-	// A second pending for the same device replaces the first.
-	if _, err := s.CreatePending(ctx, PendingPairing{DeviceID: "dev-1", PublicKey: "pk"}); err != nil {
+	// A device's reconnect re-creates its pending; the request id must stay STABLE
+	// (one pending per device) so an operator's approve doesn't race the loop.
+	reqID2, err := s.CreatePending(ctx, PendingPairing{DeviceID: "dev-1", PublicKey: "pk"})
+	if err != nil {
 		t.Fatalf("CreatePending(2): %v", err)
+	}
+	if reqID2 != reqID {
+		t.Fatalf("request id churned across re-create: %s -> %s", reqID, reqID2)
 	}
 	if pend, _ := s.ListPending(ctx); len(pend) != 1 {
 		t.Fatalf("expected 1 pending after replace, got %d", len(pend))
