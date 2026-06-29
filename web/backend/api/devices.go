@@ -3,7 +3,6 @@ package api
 import (
 	"encoding/json"
 	"errors"
-	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -20,7 +19,8 @@ import (
 // rest of /api/* — see web/backend/server.go. Keep them behind the operator auth the
 // setup wizard adds; do not expose this API on an untrusted network.
 func (h *Handler) registerDeviceRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/devices/pair", h.handleDevicePair)
+	mux.HandleFunc("POST /api/devices/pair", h.handleDevicePair)      // provision token + enable + render QR
+	mux.HandleFunc("GET /api/devices/pair", h.handleDevicePairStatus) // read-only current pairing config
 	mux.HandleFunc("GET /api/devices/pending", h.handleDevicePending)
 	mux.HandleFunc("POST /api/devices/pending/{id}/approve", h.handleDeviceApprove)
 	mux.HandleFunc("POST /api/devices/pending/{id}/reject", h.handleDeviceReject)
@@ -52,31 +52,70 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-// handleDevicePair returns the Rabbit R1 setup QR payload (clawdbot-gateway raw JSON).
+// handleDevicePair provisions the device gateway (generates+persists a shared token
+// and enables the channel if needed), reloads the gateway, and returns the Rabbit R1
+// setup payload plus a rendered QR (PNG data-URL + ASCII).
 func (h *Handler) handleDevicePair(w http.ResponseWriter, _ *http.Request) {
+	cfg, _, err := device.EnsureProvisioned(h.configPath)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "provision failed"})
+		return
+	}
+	// Mount/refresh the channel immediately (no manual restart) if the gateway
+	// wired a reload trigger.
+	if reload := h.reloadFunc(); reload != nil {
+		_ = reload()
+	}
+	writeJSON(w, http.StatusOK, h.buildPairResponse(cfg, true))
+}
+
+// handleDevicePairStatus returns the current pairing config without mutating it.
+func (h *Handler) handleDevicePairStatus(w http.ResponseWriter, _ *http.Request) {
 	cfg, err := config.LoadConfig(h.configPath)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "config load failed"})
 		return
 	}
+	writeJSON(w, http.StatusOK, h.buildPairResponse(cfg, false))
+}
+
+// buildPairResponse assembles the setup payload, optional rendered QR, and operator
+// warnings (e.g. loopback bind) from the active config.
+func (h *Handler) buildPairResponse(cfg *config.Config, render bool) map[string]any {
 	port := cfg.Gateway.Port
 	if port == 0 {
 		port = 18790
 	}
-	payload := gatewayproto.NewSetupPayload(lanIPv4s(), port, cfg.Channels.Device.Token, gatewayproto.SetupProtocolWS)
-	encoded, err := payload.Encode()
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "encode failed"})
-		return
+	token := cfg.Channels.Device.Token
+	payload := gatewayproto.NewSetupPayload(device.LANIPv4s(), port, token, gatewayproto.SetupProtocolWS)
+	encoded, _ := payload.Encode()
+
+	warnings := []string{}
+	if device.IsLoopbackHost(cfg.Gateway.Host) {
+		warnings = append(warnings, "Gateway is bound to loopback ("+cfg.Gateway.Host+"); LAN devices cannot connect. Set gateway.host to 0.0.0.0 or a LAN IP.")
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"payload":  encoded, // raw JSON string to render as a QR code
+	if len(payload.IPs) == 0 {
+		warnings = append(warnings, "No routable LAN IPv4 address detected.")
+	}
+
+	out := map[string]any{
+		"payload":  encoded, // raw JSON string the device decodes from the QR
 		"ips":      payload.IPs,
 		"port":     payload.Port,
 		"protocol": payload.Protocol,
-		"hasToken": payload.Token != "",
 		"enabled":  cfg.Channels.Device.Enabled,
-	})
+		"hasToken": token != "",
+		"warnings": warnings,
+	}
+	if render && token != "" {
+		if pngURL, err := device.RenderQRCodePNGDataURL(encoded); err == nil {
+			out["qr_png"] = pngURL
+		}
+		if ascii, err := device.RenderQRCodeASCII(encoded); err == nil {
+			out["qr_ascii"] = ascii
+		}
+	}
+	return out
 }
 
 type pendingDeviceView struct {
@@ -198,41 +237,4 @@ func (h *Handler) handleDeviceRemove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "removed"})
-}
-
-// lanIPv4s returns routable LAN IPv4 addresses (excludes loopback, link-local, and
-// the Docker default bridge), mirroring the Rabbit setup script's IP detection.
-func lanIPv4s() []string {
-	ifaces, err := net.Interfaces()
-	if err != nil {
-		return []string{}
-	}
-	out := []string{}
-	for _, ifc := range ifaces {
-		if ifc.Flags&net.FlagUp == 0 || ifc.Flags&net.FlagLoopback != 0 {
-			continue
-		}
-		addrs, err := ifc.Addrs()
-		if err != nil {
-			continue
-		}
-		for _, a := range addrs {
-			var ip net.IP
-			switch v := a.(type) {
-			case *net.IPNet:
-				ip = v.IP
-			case *net.IPAddr:
-				ip = v.IP
-			}
-			ip4 := ip.To4()
-			if ip4 == nil {
-				continue
-			}
-			if ip4[0] == 127 || (ip4[0] == 169 && ip4[1] == 254) || (ip4[0] == 172 && ip4[1] == 17) {
-				continue
-			}
-			out = append(out, ip4.String())
-		}
-	}
-	return out
 }

@@ -16,6 +16,7 @@ require (
 	github.com/modelcontextprotocol/go-sdk v1.6.1
 	github.com/mymmrac/telego v1.10.0
 	github.com/rs/zerolog v1.35.1
+	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	github.com/slack-go/slack v0.27.0
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1

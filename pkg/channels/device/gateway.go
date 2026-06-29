@@ -111,6 +111,11 @@ func (c *DeviceChannel) Send(_ context.Context, msg bus.OutboundMessage) error {
 // WebhookPath implements channels.WebhookHandler — the shared-mux mount point.
 func (c *DeviceChannel) WebhookPath() string { return c.path }
 
+// ClaimsRootWebSocket implements channels.RootWebSocketClaimer: OpenClaw-protocol
+// devices (e.g. the Rabbit R1) connect to ws://host:port with no path, so the
+// device gateway also handles root-path WebSocket upgrades.
+func (c *DeviceChannel) ClaimsRootWebSocket() bool { return true }
+
 // ServeHTTP upgrades WebSocket requests to the gateway protocol.
 func (c *DeviceChannel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !c.IsRunning() {

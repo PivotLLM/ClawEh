@@ -419,6 +419,21 @@ func (m *Manager) RegisterHandlers(mux *http.ServeMux, healthServer *health.Serv
 	}
 }
 
+// RootWebSocketHandler returns the channel that claims root-path ("/") WebSocket
+// upgrades (e.g. the external-device gateway), or nil if none. The gateway wires
+// this into the shared httpHost so devices connecting to ws://host:port with no
+// path reach the device gateway while HTTP "/" still serves the SPA.
+func (m *Manager) RootWebSocketHandler() http.Handler {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, ch := range m.channels {
+		if c, ok := ch.(RootWebSocketClaimer); ok && c.ClaimsRootWebSocket() {
+			return c
+		}
+	}
+	return nil
+}
+
 func (m *Manager) StartAll(ctx context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

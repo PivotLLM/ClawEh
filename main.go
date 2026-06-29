@@ -15,6 +15,7 @@ import (
 	"github.com/PivotLLM/ClawEh/internal"
 	"github.com/PivotLLM/ClawEh/internal/agent"
 	"github.com/PivotLLM/ClawEh/internal/cron"
+	"github.com/PivotLLM/ClawEh/internal/devicegw"
 	"github.com/PivotLLM/ClawEh/internal/gateway"
 	"github.com/PivotLLM/ClawEh/internal/install"
 	"github.com/PivotLLM/ClawEh/internal/memory"
@@ -55,6 +56,7 @@ func NewClawCommand(binaryName string) *cobra.Command {
 		install.NewUninstallCommand(),
 		test.NewTestCommand(),
 		token.NewTokenCommand(),
+		devicegw.NewDevicesCommand(),
 		version.NewVersionCommand(),
 	)
 
