@@ -3,6 +3,7 @@ import {
   IconArrowsTransferDown,
   IconAtom,
   IconBrain,
+  IconDeviceMobile,
   IconListDetails,
   IconMessageCircle,
   IconPlugConnected,
@@ -150,6 +151,12 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       {
         ...baseNavGroups[3],
         items: [
+          {
+            title: "Devices",
+            url: "/devices",
+            icon: IconDeviceMobile,
+            translateTitle: false,
+          },
           {
             title: "navigation.config",
             url: "/config",

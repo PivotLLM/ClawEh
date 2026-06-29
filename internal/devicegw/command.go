@@ -32,7 +32,7 @@ func NewDevicesCommand() *cobra.Command {
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 	}
-	cmd.AddCommand(newPairCommand(), newListCommand(), newApproveCommand(), newRejectCommand())
+	cmd.AddCommand(newPairCommand(), newListCommand(), newApproveCommand(), newRejectCommand(), newRemoveCommand())
 	return cmd
 }
 
@@ -197,5 +197,27 @@ func reject(requestID string) error {
 		return err
 	}
 	fmt.Printf("Rejected pairing request %s\n", requestID)
+	return nil
+}
+
+func newRemoveCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "remove <device-id>",
+		Short: "Remove a paired device and revoke its tokens",
+		Args:  cobra.ExactArgs(1),
+		RunE:  func(_ *cobra.Command, args []string) error { return remove(args[0]) },
+	}
+}
+
+func remove(deviceID string) error {
+	store, _, err := openStore()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = store.Close() }()
+	if err := store.RemovePaired(context.Background(), deviceID); err != nil {
+		return err
+	}
+	fmt.Printf("Removed device %s (tokens revoked)\n", deviceID)
 	return nil
 }

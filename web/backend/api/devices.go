@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/PivotLLM/ClawEh/pkg/channels/device"
 	"github.com/PivotLLM/ClawEh/pkg/config"
@@ -20,6 +21,7 @@ import (
 func (h *Handler) registerDeviceRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/devices/pair", h.handleDevicePair)      // provision token + enable + render QR
 	mux.HandleFunc("GET /api/devices/pair", h.handleDevicePairStatus) // read-only current pairing config
+	mux.HandleFunc("POST /api/devices/settings", h.handleDeviceSettings)
 	mux.HandleFunc("GET /api/devices/pending", h.handleDevicePending)
 	mux.HandleFunc("POST /api/devices/pending/{id}/approve", h.handleDeviceApprove)
 	mux.HandleFunc("POST /api/devices/pending/{id}/reject", h.handleDeviceReject)
@@ -66,6 +68,47 @@ func (h *Handler) handleDevicePair(w http.ResponseWriter, _ *http.Request) {
 		_ = reload()
 	}
 	writeJSON(w, http.StatusOK, h.buildPairResponse(cfg, true))
+}
+
+// handleDeviceSettings updates the device listener network settings (LAN toggle,
+// External URL, enabled), persists them, reloads the gateway (which re-binds the
+// device listener), and returns the refreshed pairing status.
+func (h *Handler) handleDeviceSettings(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ListenLAN   *bool   `json:"listen_lan"`
+		ExternalURL *string `json:"external_url"`
+		Enabled     *bool   `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
+		return
+	}
+	cfg, err := config.LoadConfig(h.configPath)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "config load failed"})
+		return
+	}
+	if body.ListenLAN != nil {
+		if *body.ListenLAN {
+			cfg.Channels.Device.Host = "0.0.0.0"
+		} else {
+			cfg.Channels.Device.Host = "127.0.0.1"
+		}
+	}
+	if body.ExternalURL != nil {
+		cfg.Channels.Device.ExternalURL = strings.TrimSpace(*body.ExternalURL)
+	}
+	if body.Enabled != nil {
+		cfg.Channels.Device.Enabled = *body.Enabled
+	}
+	if err := config.SaveConfig(h.configPath, cfg); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "config save failed"})
+		return
+	}
+	if reload := h.reloadFunc(); reload != nil {
+		_ = reload()
+	}
+	writeJSON(w, http.StatusOK, h.buildPairResponse(cfg, false))
 }
 
 // handleDevicePairStatus returns the current pairing config without mutating it.
