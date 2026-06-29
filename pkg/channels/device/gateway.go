@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/gorilla/websocket"
 
@@ -137,9 +136,10 @@ func (c *DeviceChannel) Stop(_ context.Context) error {
 		c.cancel()
 	}
 	if c.httpSrv != nil {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = c.httpSrv.Shutdown(shutdownCtx)
+		// Close immediately rather than graceful Shutdown: a live device WebSocket
+		// would otherwise block the shutdown (and a config reload) for seconds. The
+		// device reconnects after the listener re-binds.
+		_ = c.httpSrv.Close()
 	}
 	if c.store != nil {
 		_ = c.store.Close()

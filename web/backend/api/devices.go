@@ -57,15 +57,18 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 // and enables the channel if needed), reloads the gateway, and returns the Rabbit R1
 // setup payload plus a rendered QR (PNG data-URL + ASCII).
 func (h *Handler) handleDevicePair(w http.ResponseWriter, _ *http.Request) {
-	cfg, _, err := device.EnsureProvisioned(h.configPath)
+	cfg, changed, err := device.EnsureProvisioned(h.configPath)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "provision failed"})
 		return
 	}
-	// Mount/refresh the channel immediately (no manual restart) if the gateway
-	// wired a reload trigger.
-	if reload := h.reloadFunc(); reload != nil {
-		_ = reload()
+	// Only reload when provisioning actually changed config (first-time token/enable).
+	// Regenerating the QR for an already-provisioned gateway must NOT bounce the
+	// listener — that caused intermittent failures and dropped the device.
+	if changed {
+		if reload := h.reloadFunc(); reload != nil {
+			_ = reload()
+		}
 	}
 	writeJSON(w, http.StatusOK, h.buildPairResponse(cfg, true))
 }
@@ -88,25 +91,38 @@ func (h *Handler) handleDeviceSettings(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "config load failed"})
 		return
 	}
+	d := &cfg.Channels.Device
+	changed := false
 	if body.ListenLAN != nil {
+		newHost := "127.0.0.1"
 		if *body.ListenLAN {
-			cfg.Channels.Device.Host = "0.0.0.0"
-		} else {
-			cfg.Channels.Device.Host = "127.0.0.1"
+			newHost = "0.0.0.0"
+		}
+		if d.Host != newHost {
+			d.Host = newHost
+			changed = true
 		}
 	}
 	if body.ExternalURL != nil {
-		cfg.Channels.Device.ExternalURL = strings.TrimSpace(*body.ExternalURL)
+		if v := strings.TrimSpace(*body.ExternalURL); v != d.ExternalURL {
+			d.ExternalURL = v
+			changed = true
+		}
 	}
-	if body.Enabled != nil {
-		cfg.Channels.Device.Enabled = *body.Enabled
+	if body.Enabled != nil && d.Enabled != *body.Enabled {
+		d.Enabled = *body.Enabled
+		changed = true
 	}
-	if err := config.SaveConfig(h.configPath, cfg); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "config save failed"})
-		return
-	}
-	if reload := h.reloadFunc(); reload != nil {
-		_ = reload()
+	// Only persist + reload (which re-binds the device listener) when something
+	// actually changed, so saving with no edits is a cheap no-op.
+	if changed {
+		if err := config.SaveConfig(h.configPath, cfg); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "config save failed"})
+			return
+		}
+		if reload := h.reloadFunc(); reload != nil {
+			_ = reload()
+		}
 	}
 	writeJSON(w, http.StatusOK, h.buildPairResponse(cfg, false))
 }
