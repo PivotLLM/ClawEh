@@ -26,9 +26,25 @@ type Config struct {
 	AllowedCIDRs []string `json:"allowed_cidrs,omitempty"`
 }
 
-// Default returns default launcher settings.
+// PrivateNetworkCIDRs is the default IP allowlist: the RFC1918 private ranges.
+// Combined with the always-allowed loopback (see middleware.IPAllowlist), this
+// locks the no-auth WebUI/API to the local machine and the private LAN
+// regardless of the bind address. Set an explicit allowlist (e.g. 0.0.0.0/0) to
+// override.
+var PrivateNetworkCIDRs = []string{
+	"10.0.0.0/8",
+	"172.16.0.0/12",
+	"192.168.0.0/16",
+}
+
+// Default returns default launcher settings, including the private-network IP
+// allowlist so a fresh install is locked down out of the box.
 func Default() Config {
-	return Config{Port: DefaultPort, Public: false}
+	return Config{
+		Port:         DefaultPort,
+		Public:       false,
+		AllowedCIDRs: append([]string(nil), PrivateNetworkCIDRs...),
+	}
 }
 
 // Validate checks if launcher settings are valid.

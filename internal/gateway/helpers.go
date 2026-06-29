@@ -368,7 +368,20 @@ func setupAndStartServices(
 	// rebuild. See rebuildSharedHTTPServer for the swap seam.
 	addr := fmt.Sprintf("%s:%d", cfg.Gateway.Host, cfg.Gateway.Port)
 	services.WebServer = newMergedWebServer(configPath, cfg)
-	services.HTTPHost = newHTTPHost(addr)
+	// IP allowlist for the shared HTTP port. Defaults (via launcherconfig.Default)
+	// to the RFC1918 private ranges, so the no-auth WebUI is reachable only from
+	// loopback + the LAN even when bound to 0.0.0.0.
+	lc, lcErr := launcherconfig.Load(launcherconfig.PathForAppConfig(configPath), launcherconfig.Default())
+	if lcErr != nil {
+		logger.WarnCF("gateway", "Failed to load launcher config; using default network allowlist", map[string]any{"error": lcErr.Error()})
+		lc = launcherconfig.Default()
+	}
+	httpHost, hostErr := newHTTPHost(addr, lc.AllowedCIDRs)
+	if hostErr != nil {
+		return nil, fmt.Errorf("invalid network allowlist %v: %w", lc.AllowedCIDRs, hostErr)
+	}
+	services.HTTPHost = httpHost
+	logger.InfoF("Network allowlist active", map[string]any{"allowed_cidrs": lc.AllowedCIDRs, "loopback": "always allowed"})
 	rebuildSharedHTTPServer(services, cfg.Gateway.Host, cfg.Gateway.Port, services.ChannelManager, services.HTTPHost, agentLoop)
 	services.HTTPHost.Start()
 

@@ -18,6 +18,7 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/config"
 	"github.com/PivotLLM/ClawEh/pkg/fileutil"
 	"github.com/PivotLLM/ClawEh/pkg/global"
+	"github.com/PivotLLM/ClawEh/web/backend/launcherconfig"
 )
 
 const (
@@ -29,6 +30,7 @@ const (
 func NewInstallCommand() *cobra.Command {
 	var host string
 	var port int
+	var allowedCIDRs string
 	cmd := &cobra.Command{
 		Use:   "install",
 		Short: "Install the binary and register a systemd service that starts " + global.AppName + " at boot",
@@ -37,16 +39,18 @@ func NewInstallCommand() *cobra.Command {
 			"account at boot. Writing the service unit requires sudo; you'll be prompted for your\n" +
 			"password. Run this as your normal user, not with sudo.\n\n" +
 			"On a headless host, pass --host 0.0.0.0 so the WebUI is reachable on the network\n" +
-			"(it binds to localhost by default). NOTE: the WebUI has no authentication — only\n" +
-			"expose it on a trusted network or behind an authenticated reverse proxy.",
+			"(it binds to localhost by default). The WebUI has no authentication, but access is\n" +
+			"restricted to loopback + the private-network IP allowlist (RFC1918) by default — use\n" +
+			"--allowed-cidrs to customise it (e.g. a specific subnet, or 0.0.0.0/0 to allow all).",
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return runInstall(host, port)
+			return runInstall(host, port, allowedCIDRs)
 		},
 	}
 	cmd.Flags().StringVar(&host, "host", "", "Bind address for the web/gateway server (e.g. 0.0.0.0 for all interfaces). Empty keeps the current/seeded value.")
 	cmd.Flags().IntVar(&port, "port", 0, "HTTP port for the web/gateway server. 0 keeps the current/seeded value.")
+	cmd.Flags().StringVar(&allowedCIDRs, "allowed-cidrs", "", "Comma-separated CIDR allowlist for the WebUI/API (loopback is always allowed). Empty keeps the default private-network allowlist (RFC1918); use 0.0.0.0/0 to allow all.")
 	return cmd
 }
 
@@ -63,7 +67,7 @@ func NewUninstallCommand() *cobra.Command {
 	}
 }
 
-func runInstall(host string, port int) error {
+func runInstall(host string, port int, allowedCIDRs string) error {
 	if runtime.GOOS != "linux" {
 		return fmt.Errorf("`%s install` is only supported on Linux (systemd); this is %s", serviceName, runtime.GOOS)
 	}
@@ -115,6 +119,14 @@ func runInstall(host string, port int) error {
 	if host != "" || port != 0 {
 		if err := applyServerSettings(host, port); err != nil {
 			return fmt.Errorf("applying server settings: %w", err)
+		}
+	}
+
+	// 3c. Apply a custom IP allowlist if requested (otherwise the runtime default
+	// of RFC1918 private ranges applies).
+	if allowedCIDRs != "" {
+		if err := applyAllowlist(allowedCIDRs); err != nil {
+			return fmt.Errorf("applying allowlist: %w", err)
 		}
 	}
 
@@ -224,9 +236,33 @@ func applyServerSettings(host string, port int) error {
 	}
 	fmt.Printf("Server bind set to %s:%d (%s)\n", cfg.Gateway.Host, cfg.Gateway.Port, path)
 	if isPublicBind(cfg.Gateway.Host) {
-		fmt.Printf("WARNING: %s binds a non-loopback address and the WebUI has NO authentication.\n", global.AppName)
-		fmt.Println("         Restrict access with a firewall or an authenticated reverse proxy.")
+		fmt.Printf("Note: %s has no WebUI authentication. Access is restricted to loopback +\n", global.AppName)
+		fmt.Println("      the private-network IP allowlist (RFC1918). If you widen the allowlist to")
+		fmt.Println("      public ranges, put it behind a firewall or an authenticated reverse proxy.")
 	}
+	return nil
+}
+
+// applyAllowlist writes a custom IP allowlist (comma-separated CIDRs) to the
+// launcher config. launcherconfig.Save validates each CIDR.
+func applyAllowlist(csv string) error {
+	path := launcherconfig.PathForAppConfig(internal.GetConfigPath())
+	cfg, err := launcherconfig.Load(path, launcherconfig.Default())
+	if err != nil {
+		return err
+	}
+	parts := strings.Split(csv, ",")
+	cidrs := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if t := strings.TrimSpace(p); t != "" {
+			cidrs = append(cidrs, t)
+		}
+	}
+	cfg.AllowedCIDRs = cidrs
+	if err := launcherconfig.Save(path, cfg); err != nil {
+		return err
+	}
+	fmt.Printf("Network allowlist set to %v (loopback always allowed) (%s)\n", cfg.AllowedCIDRs, path)
 	return nil
 }
 

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/PivotLLM/ClawEh/pkg/logger"
+	"github.com/PivotLLM/ClawEh/web/backend/middleware"
 )
 
 // httpHost owns the gateway's shared HTTP listener. The listener is started
@@ -19,15 +20,25 @@ type httpHost struct {
 	mux    atomic.Pointer[http.ServeMux]
 }
 
-func newHTTPHost(addr string) *httpHost {
+func newHTTPHost(addr string, allowedCIDRs []string) (*httpHost, error) {
 	h := &httpHost{}
+	// Wrap the dynamic mux dispatch in the IP allowlist so the no-auth WebUI/API
+	// (and everything else on this shared port) is reachable only from loopback
+	// (always allowed) plus the configured private ranges — regardless of the
+	// bind address. The allowlist is fixed for the listener's lifetime; changing
+	// it takes effect on restart. Note: it matches the TCP peer (RemoteAddr), so
+	// behind a reverse proxy enforce access control at the proxy instead.
+	handler, err := middleware.IPAllowlist(allowedCIDRs, http.HandlerFunc(h.serveMux))
+	if err != nil {
+		return nil, err
+	}
 	h.server = &http.Server{
 		Addr:         addr,
-		Handler:      http.HandlerFunc(h.serveHTTP),
+		Handler:      handler,
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 30 * time.Second,
 	}
-	return h
+	return h, nil
 }
 
 // SetMux atomically swaps the handler mux. In-flight requests served by the
@@ -36,7 +47,7 @@ func (h *httpHost) SetMux(mux *http.ServeMux) {
 	h.mux.Store(mux)
 }
 
-func (h *httpHost) serveHTTP(w http.ResponseWriter, r *http.Request) {
+func (h *httpHost) serveMux(w http.ResponseWriter, r *http.Request) {
 	if m := h.mux.Load(); m != nil {
 		m.ServeHTTP(w, r)
 		return
