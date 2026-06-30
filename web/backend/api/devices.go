@@ -10,6 +10,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/pkg/channels/device"
 	"github.com/PivotLLM/ClawEh/pkg/config"
+	"github.com/PivotLLM/ClawEh/pkg/routing"
 )
 
 // registerDeviceRoutes wires the external-device gateway onboarding/management API.
@@ -27,6 +28,7 @@ func (h *Handler) registerDeviceRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/devices/pending/{id}/approve", h.handleDeviceApprove)
 	mux.HandleFunc("POST /api/devices/pending/{id}/reject", h.handleDeviceReject)
 	mux.HandleFunc("GET /api/devices", h.handleDeviceList)
+	mux.HandleFunc("POST /api/devices/{id}/agent", h.handleDeviceAgent)
 	mux.HandleFunc("DELETE /api/devices/{id}", h.handleDeviceRemove)
 }
 
@@ -299,14 +301,37 @@ type pairedDeviceView struct {
 	DeviceID     string   `json:"device_id"`
 	DisplayName  string   `json:"display_name"`
 	Platform     string   `json:"platform"`
+	ClientMode   string   `json:"client_mode"`
 	Roles        []string `json:"roles"`
 	Scopes       []string `json:"scopes"`
+	AgentID      string   `json:"agent_id"` // per-device assigned agent ("" = default)
 	ApprovedAtMs int64    `json:"approved_at_ms"`
 	LastSeenAtMs int64    `json:"last_seen_at_ms"`
 }
 
+// agentOption is a selectable agent for the per-device assistant dropdown.
+type agentOption struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// configuredAgents returns the selectable agents (normalized id + display name).
+func configuredAgents(cfg *config.Config) []agentOption {
+	out := make([]agentOption, 0, len(cfg.Agents.List))
+	for i := range cfg.Agents.List {
+		ac := &cfg.Agents.List[i]
+		id := routing.NormalizeAgentID(ac.ID)
+		name := ac.Name
+		if name == "" {
+			name = id
+		}
+		out = append(out, agentOption{ID: id, Name: name})
+	}
+	return out
+}
+
 func (h *Handler) handleDeviceList(w http.ResponseWriter, r *http.Request) {
-	store, _, err := h.openDeviceStore()
+	store, cfg, err := h.openDeviceStore()
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store open failed"})
 		return
@@ -321,10 +346,40 @@ func (h *Handler) handleDeviceList(w http.ResponseWriter, r *http.Request) {
 	for _, d := range paired {
 		views = append(views, pairedDeviceView{
 			DeviceID: d.DeviceID, DisplayName: d.DisplayName, Platform: d.Platform,
-			Roles: d.Roles, Scopes: d.Scopes, ApprovedAtMs: d.ApprovedAtMs, LastSeenAtMs: d.LastSeenAtMs,
+			ClientMode: d.ClientMode, Roles: d.Roles, Scopes: d.Scopes, AgentID: d.AgentID,
+			ApprovedAtMs: d.ApprovedAtMs, LastSeenAtMs: d.LastSeenAtMs,
 		})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"devices": views})
+	writeJSON(w, http.StatusOK, map[string]any{"devices": views, "agents": configuredAgents(cfg)})
+}
+
+// handleDeviceAgent assigns (or clears) the agent a paired device routes to. Body:
+// {"agent_id": "<id>"} — empty string routes the device to the gateway default. Takes
+// effect on the device's next turn; no reload needed (read live from the store).
+func (h *Handler) handleDeviceAgent(w http.ResponseWriter, r *http.Request) {
+	deviceID := r.PathValue("id")
+	var body struct {
+		AgentID string `json:"agent_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
+		return
+	}
+	store, _, err := h.openDeviceStore()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store open failed"})
+		return
+	}
+	defer func() { _ = store.Close() }()
+	if err := store.SetDeviceAgent(r.Context(), deviceID, strings.TrimSpace(body.AgentID)); err != nil {
+		if errors.Is(err, device.ErrPairedNotFound) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "device not found"})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "update failed"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 func (h *Handler) handleDeviceRemove(w http.ResponseWriter, r *http.Request) {

@@ -32,10 +32,17 @@ export interface PairedDevice {
   device_id: string
   display_name: string
   platform: string
+  client_mode: string
   roles: string[]
   scopes: string[]
+  agent_id: string
   approved_at_ms: number
   last_seen_at_ms: number
+}
+
+export interface AgentOption {
+  id: string
+  name: string
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
@@ -93,7 +100,10 @@ export const rejectDevice = (id: string) =>
   })
 
 export const listPairedDevices = () =>
-  request<{ devices: PairedDevice[] }>("/api/devices")
+  request<{ devices: PairedDevice[]; agents: AgentOption[] }>("/api/devices")
+// assignDeviceAgent sets the agent a device routes to ("" = gateway default).
+export const assignDeviceAgent = (id: string, agentId: string) =>
+  request<unknown>(`/api/devices/${encodeURIComponent(id)}/agent`, jsonPost({ agent_id: agentId }))
 export const removeDevice = (id: string) =>
   request<unknown>(`/api/devices/${encodeURIComponent(id)}`, {
     method: "DELETE",

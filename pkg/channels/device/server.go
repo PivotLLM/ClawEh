@@ -542,10 +542,12 @@ func (s *Server) handleChatSend(lc *liveConn, req gatewayproto.RequestFrame) {
 }
 
 // sessionScopeKey resolves the conversation session a turn runs in. Operator clients
-// send an agent-scoped key (agent:<id>:<peer>:<profile>); it is honored verbatim so
-// each profile is isolated and chat.history reads the same key. Node clients (e.g. the
-// R1) send "main"; isolate them per device under the default agent so two devices do
-// not share one conversation. The agent itself is selected by preresolved_agent_id.
+// send an agent-scoped key (agent:<id>:<peer>:<profile>) — they pick their own agent,
+// so it is honored verbatim (each profile isolated; chat.history reads the same key).
+// Node clients (e.g. the R1) have no picker and send "main"; route them to their
+// per-device assigned agent (set on the WebUI Devices page) or the gateway default,
+// isolated per device so two devices don't share one conversation. The agent is
+// selected via preresolved_agent_id (the key's 2nd segment).
 func (s *Server) sessionScopeKey(lc *liveConn) string {
 	lc.mu.Lock()
 	key := lc.sessionKey
@@ -553,13 +555,17 @@ func (s *Server) sessionScopeKey(lc *liveConn) string {
 	if strings.HasPrefix(key, sessionKeyAgentPrefix) {
 		return key
 	}
-	def := "main"
+	agent := "main"
 	if s.querier != nil {
 		if d := s.querier.DefaultAgentID(); d != "" {
-			def = d
+			agent = d
 		}
 	}
-	return sessionKeyAgentPrefix + def + ":device:" + lc.deviceID
+	// Per-device assignment overrides the default for node clients.
+	if dev, ok, err := s.store.GetPaired(context.Background(), lc.deviceID); err == nil && ok && dev.AgentID != "" {
+		agent = dev.AgentID
+	}
+	return sessionKeyAgentPrefix + agent + ":device:" + lc.deviceID
 }
 
 // agentIDFromSessionKey extracts the selected agent id from an agent-scoped session

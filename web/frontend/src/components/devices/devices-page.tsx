@@ -17,6 +17,7 @@ import { Switch } from "@/components/ui/switch"
 import {
   type DeviceStatus,
   approveDevice,
+  assignDeviceAgent,
   generateDevicePairing,
   getDeviceStatus,
   listPairedDevices,
@@ -160,10 +161,20 @@ export function DevicesPage() {
     },
     onError: (e: Error) => toast.error(e.message),
   })
+  const assignAgentMut = useMutation({
+    mutationFn: ({ id, agentId }: { id: string; agentId: string }) =>
+      assignDeviceAgent(id, agentId),
+    onSuccess: () => {
+      toast.success("Assistant updated")
+      refresh()
+    },
+    onError: (e: Error) => toast.error(e.message),
+  })
 
   const s = status.data
   const pendingList = pending.data?.pending ?? []
   const pairedList = paired.data?.devices ?? []
+  const agentOptions = paired.data?.agents ?? []
 
   return (
     <>
@@ -392,14 +403,38 @@ export function DevicesPage() {
                         {d.device_id.slice(0, 12)}…
                       </div>
                     </div>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => removeMut.mutate(d.device_id)}
-                      disabled={removeMut.isPending}
-                    >
-                      Remove
-                    </Button>
+                    <div className="flex items-center gap-2">
+                      {d.client_mode === "node" ? (
+                        <select
+                          className="border-border bg-background rounded border px-2 py-1 text-sm"
+                          aria-label="Assistant"
+                          value={d.agent_id}
+                          disabled={assignAgentMut.isPending}
+                          onChange={(e) =>
+                            assignAgentMut.mutate({ id: d.device_id, agentId: e.target.value })
+                          }
+                        >
+                          <option value="">Default assistant</option>
+                          {agentOptions.map((a) => (
+                            <option key={a.id} value={a.id}>
+                              {a.name}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <span className="text-muted-foreground text-xs">
+                          assistant chosen in app
+                        </span>
+                      )}
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => removeMut.mutate(d.device_id)}
+                        disabled={removeMut.isPending}
+                      >
+                        Remove
+                      </Button>
+                    </div>
                   </li>
                 ))}
               </ul>

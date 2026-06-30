@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -15,6 +16,9 @@ import (
 
 // ErrPendingNotFound is returned when an approve/reject references an unknown request.
 var ErrPendingNotFound = errors.New("device: pending pairing not found")
+
+// ErrPairedNotFound is returned when an update references an unknown paired device.
+var ErrPairedNotFound = errors.New("device: paired device not found")
 
 // PairedDevice is an approved device identity (auth/identity, not command surface).
 type PairedDevice struct {
@@ -27,6 +31,7 @@ type PairedDevice struct {
 	ClientMode   string
 	Roles        []string
 	Scopes       []string // approved scope baseline
+	AgentID      string   // per-device assigned agent ("" = gateway default)
 	CreatedAtMs  int64
 	ApprovedAtMs int64
 	LastSeenAtMs int64
@@ -74,6 +79,7 @@ CREATE TABLE IF NOT EXISTS paired_devices (
   client_mode     TEXT,
   roles           TEXT,
   scopes          TEXT,
+  agent_id        TEXT NOT NULL DEFAULT '',
   created_at_ms   INTEGER NOT NULL,
   approved_at_ms  INTEGER NOT NULL,
   last_seen_at_ms INTEGER
@@ -124,6 +130,14 @@ func OpenStore(path string) (*Store, error) {
 	if _, err := db.ExecContext(context.Background(), deviceSchema); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("device: schema: %w", err)
+	}
+	// Migration for DBs created before agent_id existed. ADD COLUMN fails with a
+	// "duplicate column" error once applied, which is the steady state — ignore it.
+	if _, err := db.ExecContext(context.Background(),
+		`ALTER TABLE paired_devices ADD COLUMN agent_id TEXT NOT NULL DEFAULT ''`); err != nil &&
+		!strings.Contains(err.Error(), "duplicate column") {
+		_ = db.Close()
+		return nil, fmt.Errorf("device: migrate agent_id: %w", err)
 	}
 	return &Store{db: db}, nil
 }
@@ -332,10 +346,10 @@ func (s *Store) GetPaired(ctx context.Context, deviceID string) (*PairedDevice, 
 	var roles, scopes string
 	var lastSeen sql.NullInt64
 	err := s.db.QueryRowContext(ctx, `SELECT device_id, public_key, display_name, platform, device_family,
-		client_id, client_mode, roles, scopes, created_at_ms, approved_at_ms, last_seen_at_ms
+		client_id, client_mode, roles, scopes, agent_id, created_at_ms, approved_at_ms, last_seen_at_ms
 		FROM paired_devices WHERE device_id=?`, deviceID).Scan(
 		&d.DeviceID, &d.PublicKey, &d.DisplayName, &d.Platform, &d.DeviceFamily, &d.ClientID,
-		&d.ClientMode, &roles, &scopes, &d.CreatedAtMs, &d.ApprovedAtMs, &lastSeen)
+		&d.ClientMode, &roles, &scopes, &d.AgentID, &d.CreatedAtMs, &d.ApprovedAtMs, &lastSeen)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, false, nil
 	}
@@ -351,7 +365,7 @@ func (s *Store) GetPaired(ctx context.Context, deviceID string) (*PairedDevice, 
 // ListPaired returns all paired devices, newest-approved first.
 func (s *Store) ListPaired(ctx context.Context) ([]PairedDevice, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT device_id, public_key, display_name, platform, device_family,
-		client_id, client_mode, roles, scopes, created_at_ms, approved_at_ms, last_seen_at_ms
+		client_id, client_mode, roles, scopes, agent_id, created_at_ms, approved_at_ms, last_seen_at_ms
 		FROM paired_devices ORDER BY approved_at_ms DESC`)
 	if err != nil {
 		return nil, err
@@ -363,7 +377,7 @@ func (s *Store) ListPaired(ctx context.Context) ([]PairedDevice, error) {
 		var roles, scopes string
 		var lastSeen sql.NullInt64
 		if err := rows.Scan(&d.DeviceID, &d.PublicKey, &d.DisplayName, &d.Platform, &d.DeviceFamily,
-			&d.ClientID, &d.ClientMode, &roles, &scopes, &d.CreatedAtMs, &d.ApprovedAtMs, &lastSeen); err != nil {
+			&d.ClientID, &d.ClientMode, &roles, &scopes, &d.AgentID, &d.CreatedAtMs, &d.ApprovedAtMs, &lastSeen); err != nil {
 			return nil, err
 		}
 		d.Roles = unmarshalStrings(roles)
@@ -372,6 +386,21 @@ func (s *Store) ListPaired(ctx context.Context) ([]PairedDevice, error) {
 		out = append(out, d)
 	}
 	return out, rows.Err()
+}
+
+// SetDeviceAgent assigns the agent a paired device's turns route to ("" = gateway
+// default). Returns ErrPairedNotFound if the device isn't paired.
+func (s *Store) SetDeviceAgent(ctx context.Context, deviceID, agentID string) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE paired_devices SET agent_id=? WHERE device_id=?`, agentID, deviceID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrPairedNotFound
+	}
+	return nil
 }
 
 // TokenByValue returns a non-revoked device token by its value, or (nil,false).
