@@ -27,6 +27,35 @@ import {
   saveDeviceSettings,
 } from "@/api/devices"
 
+// copyToClipboard works in both secure and insecure contexts. navigator.clipboard
+// is undefined when the WebUI is served over plain HTTP on a non-localhost host, so
+// fall back to a hidden-textarea + execCommand("copy"). Returns whether it succeeded
+// (so the UI doesn't claim success when nothing was copied).
+async function copyToClipboard(text: string): Promise<boolean> {
+  if (navigator.clipboard && window.isSecureContext) {
+    try {
+      await navigator.clipboard.writeText(text)
+      return true
+    } catch {
+      // fall through to the legacy path
+    }
+  }
+  try {
+    const ta = document.createElement("textarea")
+    ta.value = text
+    ta.style.position = "fixed"
+    ta.style.opacity = "0"
+    document.body.appendChild(ta)
+    ta.focus()
+    ta.select()
+    const ok = document.execCommand("copy")
+    document.body.removeChild(ta)
+    return ok
+  } catch {
+    return false
+  }
+}
+
 export function DevicesPage() {
   const qc = useQueryClient()
   const status = useQuery({ queryKey: ["device-status"], queryFn: getDeviceStatus })
@@ -265,8 +294,11 @@ export function DevicesPage() {
                     variant="outline"
                     size="sm"
                     onClick={() => {
-                      void navigator.clipboard?.writeText(s.word_token)
-                      toast.success("Passphrase copied")
+                      void copyToClipboard(s.word_token).then((ok) =>
+                        ok
+                          ? toast.success("Passphrase copied")
+                          : toast.error("Copy failed — select the text and copy manually"),
+                      )
                     }}
                   >
                     Copy
