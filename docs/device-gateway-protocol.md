@@ -161,6 +161,29 @@ resolve a basic turn.
   inside `message`.
 - `message.text` (flat) sits alongside `message.content[]` blocks; simple clients read either.
 
+## Agent selection & session isolation
+
+Operator clients can pick which agent handles a turn and keep separate conversations:
+
+- **`agents.list`** returns every registered agent as `{id, name}` plus `defaultId`/`mainKey`.
+  Agent ids are lowercased (`Bob` → `bob`). When an agent has no configured name we fall
+  back to its id as the name — operator clients **hide entries without a label**, so a
+  name-less agent would otherwise never appear in the picker.
+- The client encodes the selected agent as the **2nd segment of the session key**:
+  `agent:<selectedId>:<peer>:<profile>` (the clawtotalk app uses `agent:<id>:clawtotalk:primary`,
+  and the sentinel `main` when nothing is selected).
+- On `chat.send`, the gateway derives the **session scope key** and the **agent**:
+  - Operator client (key starts with `agent:`): the key is honored **verbatim** as the
+    conversation session — so each profile is isolated and `chat.history` for that key reads
+    the same conversation. The agent is the 2nd segment (via `preresolved_agent_id`); `main`
+    or an unknown id falls back to the default agent.
+  - Node client (e.g. the R1 sends `main`): isolated **per device** under the default agent,
+    `agent:<defaultId>:device:<deviceId>`, so two devices never share one conversation.
+- Mechanism: the device channel passes the resolved key as `metadata["session_key"]` (honored
+  by `BaseChannel.HandleMessage` → `bus.InboundMessage.SessionKey`) and the agent as
+  `metadata["preresolved_agent_id"]`. The agent loop's `resolveScopeKey` honors any
+  `agent:`-prefixed `SessionKey`; routing logs `matched_by=preresolved` for the chosen agent.
+
 ## Client compatibility findings
 
 Two third-party clients, two different reply contracts — discovered by decompiling the

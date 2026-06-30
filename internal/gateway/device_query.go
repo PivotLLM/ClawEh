@@ -32,6 +32,11 @@ func (q deviceAgentQuerier) Agents() ([]device.DeviceAgentInfo, string, string) 
 	return out, defaultID, routing.BuildAgentMainSessionKey(defaultID)
 }
 
+// DefaultAgentID returns the registry's default agent id.
+func (q deviceAgentQuerier) DefaultAgentID() string {
+	return q.al.GetRegistry().GetDefaultAgentID()
+}
+
 // History returns the user/assistant text turns stored for a session key.
 func (q deviceAgentQuerier) History(sessionKey string) []device.DeviceHistoryMessage {
 	reg := q.al.GetRegistry()

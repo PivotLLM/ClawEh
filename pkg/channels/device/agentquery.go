@@ -24,6 +24,9 @@ type AgentQuerier interface {
 	// key the default agent's main conversation uses (the operator client echoes
 	// this mainKey back as chat.history/chat.send sessionKey).
 	Agents() (agents []DeviceAgentInfo, defaultID string, mainKey string)
+	// DefaultAgentID returns the id of the agent that handles turns when a client
+	// does not select one (used to build a per-device session key for node clients).
+	DefaultAgentID() string
 	// History returns the stored transcript for a session key, oldest first.
 	History(sessionKey string) []DeviceHistoryMessage
 }

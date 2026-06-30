@@ -278,6 +278,12 @@ func (c *BaseChannel) HandleMessage(
 		MediaScope: scope,
 		Metadata:   metadata,
 	}
+	// A channel may pin the conversation session explicitly (the device gateway
+	// uses this to isolate each device/agent and to align with the session a client
+	// reads history from). The agent loop honors an agent-scoped SessionKey.
+	if sk := metadata["session_key"]; sk != "" {
+		msg.SessionKey = sk
+	}
 
 	// Auto-trigger typing indicator, message reaction, and placeholder before publishing.
 	// Each capability is independent — all three may fire for the same message.

@@ -25,6 +25,9 @@ const (
 	// so the device reconnects instead of black-holing its sends.
 	devicePingInterval = 30 * time.Second
 	deviceReadTimeout  = 90 * time.Second
+	// sessionKeyAgentPrefix marks an agent-scoped session key the agent loop honors
+	// verbatim (mirrors pkg/agent's prefix).
+	sessionKeyAgentPrefix = "agent:"
 )
 
 // ServerOptions configures a gateway protocol Server.
@@ -534,14 +537,35 @@ func (s *Server) handleChatSend(lc *liveConn, req gatewayproto.RequestFrame) {
 	// client's transport times out waiting for this frame.
 	_ = lc.cw.writeJSON(gatewayproto.NewOKResponse(req.ID, map[string]any{"runId": runID, "status": "started"}))
 	if s.inbound != nil {
-		go s.inbound(lc.deviceID, lc.chatID, p.Message, runID, agentIDFromSessionKey(p.SessionKey))
+		go s.inbound(lc.deviceID, lc.chatID, p.Message, runID, s.sessionScopeKey(lc))
 	}
 }
 
-// agentIDFromSessionKey extracts the selected agent id from an operator client's
-// session key of the form "agent:<id>:<peer>:<profile>" (the clawtotalk app sets
-// the 2nd segment from its agent picker). Returns "" for the no-selection sentinel
-// "main" or any key that isn't agent-scoped, so the agent loop uses default routing.
+// sessionScopeKey resolves the conversation session a turn runs in. Operator clients
+// send an agent-scoped key (agent:<id>:<peer>:<profile>); it is honored verbatim so
+// each profile is isolated and chat.history reads the same key. Node clients (e.g. the
+// R1) send "main"; isolate them per device under the default agent so two devices do
+// not share one conversation. The agent itself is selected by preresolved_agent_id.
+func (s *Server) sessionScopeKey(lc *liveConn) string {
+	lc.mu.Lock()
+	key := lc.sessionKey
+	lc.mu.Unlock()
+	if strings.HasPrefix(key, sessionKeyAgentPrefix) {
+		return key
+	}
+	def := "main"
+	if s.querier != nil {
+		if d := s.querier.DefaultAgentID(); d != "" {
+			def = d
+		}
+	}
+	return sessionKeyAgentPrefix + def + ":device:" + lc.deviceID
+}
+
+// agentIDFromSessionKey extracts the selected agent id from an agent-scoped session
+// key of the form "agent:<id>:<peer>:<profile>". Returns "" for the no-selection
+// sentinel "main" or any key that isn't agent-scoped, so the agent loop uses default
+// routing.
 func agentIDFromSessionKey(sessionKey string) string {
 	parts := strings.Split(sessionKey, ":")
 	if len(parts) < 2 || parts[0] != "agent" {
