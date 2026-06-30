@@ -21,10 +21,12 @@ func (q deviceAgentQuerier) Agents() ([]device.DeviceAgentInfo, string, string) 
 	ids := reg.ListAgentIDs()
 	out := make([]device.DeviceAgentInfo, 0, len(ids))
 	for _, id := range ids {
-		info := device.DeviceAgentInfo{ID: id}
-		if inst, ok := reg.GetAgent(id); ok {
+		info := device.DeviceAgentInfo{ID: id, Name: id}
+		if inst, ok := reg.GetAgent(id); ok && inst.Name != "" {
 			info.Name = inst.Name
 		}
+		// Always carry a non-empty name: operator clients hide entries without a
+		// display label, so fall back to the id for agents with no configured name.
 		out = append(out, info)
 	}
 	return out, defaultID, routing.BuildAgentMainSessionKey(defaultID)

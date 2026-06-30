@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -38,7 +39,7 @@ type ServerOptions struct {
 
 // InboundFunc submits a device utterance into the agent layer. The channel sets
 // this to bridge into ClawEh's message bus; it is called per chat.send.
-type InboundFunc func(deviceID, chatID, content, idempotencyKey string)
+type InboundFunc func(deviceID, chatID, content, idempotencyKey, agentID string)
 
 // Server speaks the OpenClaw Gateway WebSocket protocol to external devices.
 // It owns the handshake (challenge -> connect -> auth -> signature -> pairing ->
@@ -533,8 +534,24 @@ func (s *Server) handleChatSend(lc *liveConn, req gatewayproto.RequestFrame) {
 	// client's transport times out waiting for this frame.
 	_ = lc.cw.writeJSON(gatewayproto.NewOKResponse(req.ID, map[string]any{"runId": runID, "status": "started"}))
 	if s.inbound != nil {
-		go s.inbound(lc.deviceID, lc.chatID, p.Message, runID)
+		go s.inbound(lc.deviceID, lc.chatID, p.Message, runID, agentIDFromSessionKey(p.SessionKey))
 	}
+}
+
+// agentIDFromSessionKey extracts the selected agent id from an operator client's
+// session key of the form "agent:<id>:<peer>:<profile>" (the clawtotalk app sets
+// the 2nd segment from its agent picker). Returns "" for the no-selection sentinel
+// "main" or any key that isn't agent-scoped, so the agent loop uses default routing.
+func agentIDFromSessionKey(sessionKey string) string {
+	parts := strings.Split(sessionKey, ":")
+	if len(parts) < 2 || parts[0] != "agent" {
+		return ""
+	}
+	id := strings.TrimSpace(parts[1])
+	if id == "" || id == "main" {
+		return ""
+	}
+	return id
 }
 
 // handleNodeEvent handles the node ingress envelope (chat.subscribe / chat.unsubscribe).

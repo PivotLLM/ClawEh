@@ -80,7 +80,7 @@ func NewDeviceChannel(cfg config.DeviceChannelConfig, dataDir string, logMessage
 	}
 	// Bridge each device utterance into the message bus. The agent's reply returns
 	// via Send -> server.DeliverReply.
-	srv.SetInbound(func(deviceID, chatID, content, idempotencyKey string) {
+	srv.SetInbound(func(deviceID, chatID, content, idempotencyKey, agentID string) {
 		ctx := dc.ctx
 		if ctx == nil {
 			ctx = context.Background()
@@ -92,6 +92,11 @@ func NewDeviceChannel(cfg config.DeviceChannelConfig, dataDir string, logMessage
 			CanonicalID: identity.BuildCanonicalID("device", deviceID),
 		}
 		metadata := map[string]string{"platform": "device", "device_id": deviceID}
+		// The operator client encodes its selected agent in the session key; route the
+		// turn to that agent. The loop falls back to default routing if it's unknown.
+		if agentID != "" {
+			metadata["preresolved_agent_id"] = agentID
+		}
 		dc.HandleMessage(ctx, peer, idempotencyKey, deviceID, chatID, content, nil, metadata, sender)
 	})
 	return dc, nil

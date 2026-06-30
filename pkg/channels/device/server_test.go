@@ -222,7 +222,7 @@ func TestHandshakeSharedToken(t *testing.T) {
 // inbound (echo) stands in for the agent loop.
 func TestConversationEcho(t *testing.T) {
 	srv, _, wsURL := newTestServer(t, ServerOptions{ServerVersion: "test-1", AutoApprove: true})
-	srv.SetInbound(func(_, chatID, content, _ string) {
+	srv.SetInbound(func(_, chatID, content, _, _ string) {
 		srv.DeliverReply(chatID, "echo: "+content)
 	})
 
@@ -292,5 +292,22 @@ func TestConversationEcho(t *testing.T) {
 	}
 	if !sawFinal {
 		t.Fatal("never saw chat final event")
+	}
+}
+
+func TestAgentIDFromSessionKey(t *testing.T) {
+	cases := map[string]string{
+		"agent:claw:clawtotalk:primary": "claw",
+		"agent:bob:clawtotalk:primary":  "bob",
+		"agent:main:clawtotalk:primary": "", // no-selection sentinel -> default routing
+		"agent:claw:main":               "claw",
+		"main":                          "", // R1-style key, not agent-scoped
+		"":                              "",
+		"agent:":                        "",
+	}
+	for in, want := range cases {
+		if got := agentIDFromSessionKey(in); got != want {
+			t.Errorf("agentIDFromSessionKey(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
