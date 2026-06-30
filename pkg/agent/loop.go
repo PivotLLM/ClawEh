@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -1115,6 +1116,79 @@ func (al *AgentLoop) transcribeAudioInMessage(ctx context.Context, msg bus.Inbou
 	return msg, true
 }
 
+var receivedFileNameUnsafeRe = regexp.MustCompile(`[^a-zA-Z0-9._-]+`)
+
+// materializeInboundMedia copies any media attached to an inbound message into a
+// "tmp" folder inside the agent's workspace, so the agent's (workspace-sandboxed)
+// file tools can actually read what the user sent. Returns a note to append to the
+// user message naming the workspace-relative paths, or "" if nothing was written.
+// The MediaStore copies still exist (with their own TTL cleanup); these workspace
+// copies are intentionally left for the agent to use.
+func (al *AgentLoop) materializeInboundMedia(msg bus.InboundMessage, agent *AgentInstance) string {
+	if al.mediaStore == nil || len(msg.Media) == 0 || agent == nil || agent.Workspace == "" {
+		return ""
+	}
+	tmpDir := filepath.Join(agent.Workspace, "tmp")
+	if err := os.MkdirAll(tmpDir, 0o700); err != nil {
+		logger.WarnCF("agent", "received media: create tmp dir failed", map[string]any{"error": err.Error()})
+		return ""
+	}
+	var rels []string
+	for _, ref := range msg.Media {
+		src, meta, err := al.mediaStore.ResolveWithMeta(ref)
+		if err != nil {
+			continue
+		}
+		name := receivedFileName(ref, meta.Filename)
+		if err := copyFileContents(src, filepath.Join(tmpDir, name)); err != nil {
+			logger.WarnCF("agent", "received media: copy failed", map[string]any{"ref": ref, "error": err.Error()})
+			continue
+		}
+		rels = append(rels, "tmp/"+name)
+	}
+	if len(rels) == 0 {
+		return ""
+	}
+	return "\n\n[Received attachment(s) saved in your workspace: " + strings.Join(rels, ", ") + "]"
+}
+
+// receivedFileName builds a collision-resistant, sandbox-safe filename from a media
+// ref ("media://<uuid>") and its original filename.
+func receivedFileName(ref, filename string) string {
+	id := strings.TrimPrefix(ref, "media://")
+	if i := strings.IndexByte(id, '-'); i > 0 {
+		id = id[:i] // first uuid segment is enough to disambiguate
+	}
+	base := filepath.Base(strings.TrimSpace(filename))
+	base = receivedFileNameUnsafeRe.ReplaceAllString(base, "_")
+	base = strings.Trim(base, "._")
+	if base == "" {
+		base = "file"
+	}
+	if id == "" {
+		return base
+	}
+	return id + "_" + base
+}
+
+// copyFileContents streams src to dst, creating/truncating dst.
+func copyFileContents(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = in.Close() }()
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
+		return err
+	}
+	return out.Close()
+}
+
 // sendTranscriptionFeedback sends feedback to the user with the result of
 // audio transcription if the option is enabled. It uses Manager.SendMessage
 // which executes synchronously (rate limiting, splitting, retry) so that
@@ -1360,6 +1434,9 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 			userContent = "[From: " + label + "]\n" + msg.Content
 		}
 	}
+	// Drop received attachments into the agent's workspace so its file tools can read
+	// them (the model otherwise only sees an annotation it can't open).
+	userContent += al.materializeInboundMedia(msg, agent)
 
 	opts := processOptions{
 		SessionKey:      sessionKey,
