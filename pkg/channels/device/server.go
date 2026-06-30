@@ -230,15 +230,9 @@ func (s *Server) handshake(r *http.Request, connID, nonce string, raw []byte) (*
 		return nil, &handshakeFail{id: req.ID, err: gatewayproto.NewError(gatewayproto.CodeInvalidRequest, "invalid connect params", nil), code: websocket.ClosePolicyViolation, reason: "invalid handshake"}
 	}
 
-	// Diagnostic: record exactly what a device advertises at connect (no secrets).
-	// Critical for characterizing third-party clients like the Rabbit R1.
-	logger.InfoCF("device", "connect attempt", map[string]any{
+	logger.DebugCF("device", "connect attempt", map[string]any{
 		"clientId": p.Client.ID, "mode": p.Client.Mode, "role": p.Role,
-		"platform": p.Client.Platform, "deviceFamily": p.Client.DeviceFamily,
-		"version": p.Client.Version, "displayName": p.Client.DisplayName,
-		"caps": p.Caps, "commands": p.Commands,
-		"minProtocol": p.MinProtocol, "maxProtocol": p.MaxProtocol,
-		"hasDevice": p.Device != nil, "hasToken": p.Auth != nil && p.Auth.Token != "",
+		"platform": p.Client.Platform, "version": p.Client.Version,
 		"remoteIp": clientIP(r),
 	})
 
