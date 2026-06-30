@@ -1049,6 +1049,10 @@ type DevicesConfig struct {
 type DeviceChannelConfig struct {
 	Enabled bool   `json:"enabled"                env:"CLAW_CHANNELS_DEVICE_ENABLED"`
 	Token   string `json:"token"                  env:"CLAW_CHANNELS_DEVICE_TOKEN"` // shared gateway auth token presented in the QR
+	// WordToken is a human-typeable passphrase (5 BIP39 words) accepted as an
+	// alternative shared token, for clients where the user types the token by hand
+	// instead of scanning the QR. Authenticates equivalently to Token.
+	WordToken string `json:"word_token,omitempty" env:"CLAW_CHANNELS_DEVICE_WORD_TOKEN"`
 	// Host is the device listener bind address: 127.0.0.1 (loopback, default) or
 	// 0.0.0.0 to listen for local-network connections. Port defaults to 8078.
 	Host string `json:"host,omitempty"`

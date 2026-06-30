@@ -22,6 +22,7 @@ func (h *Handler) registerDeviceRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/devices/pair", h.handleDevicePair)      // provision token + enable + render QR
 	mux.HandleFunc("GET /api/devices/pair", h.handleDevicePairStatus) // read-only current pairing config
 	mux.HandleFunc("POST /api/devices/settings", h.handleDeviceSettings)
+	mux.HandleFunc("POST /api/devices/word-token/regenerate", h.handleDeviceWordTokenRegenerate)
 	mux.HandleFunc("GET /api/devices/pending", h.handleDevicePending)
 	mux.HandleFunc("POST /api/devices/pending/{id}/approve", h.handleDeviceApprove)
 	mux.HandleFunc("POST /api/devices/pending/{id}/reject", h.handleDeviceReject)
@@ -127,6 +128,31 @@ func (h *Handler) handleDeviceSettings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, h.buildPairResponse(cfg, false))
 }
 
+// handleDeviceWordTokenRegenerate mints a fresh word passphrase, persists it, reloads
+// the gateway so the new value takes effect, and returns the refreshed pairing status.
+// The long QR token is left untouched.
+func (h *Handler) handleDeviceWordTokenRegenerate(w http.ResponseWriter, _ *http.Request) {
+	cfg, err := config.LoadConfig(h.configPath)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "config load failed"})
+		return
+	}
+	wtok, werr := device.GenerateWordToken()
+	if werr != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "word token generation failed"})
+		return
+	}
+	cfg.Channels.Device.WordToken = wtok
+	if err := config.SaveConfig(h.configPath, cfg); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "config save failed"})
+		return
+	}
+	if reload := h.reloadFunc(); reload != nil {
+		_ = reload()
+	}
+	writeJSON(w, http.StatusOK, h.buildPairResponse(cfg, false))
+}
+
 // handleDevicePairStatus returns the current pairing config without mutating it.
 func (h *Handler) handleDevicePairStatus(w http.ResponseWriter, _ *http.Request) {
 	cfg, err := config.LoadConfig(h.configPath)
@@ -177,6 +203,7 @@ func (h *Handler) buildPairResponse(cfg *config.Config, render bool) map[string]
 		"protocol":     payload.Protocol,
 		"enabled":      dev.Enabled,
 		"hasToken":     token != "",
+		"word_token":   dev.WordToken, // typeable passphrase for clients that enter a token by hand
 		"listen_host":  host,
 		"listen_port":  devicePort,
 		"listen_lan":   !device.IsLoopbackHost(host),

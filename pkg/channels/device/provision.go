@@ -66,6 +66,14 @@ func EnsureProvisioned(configPath string) (cfg *config.Config, changed bool, err
 		cfg.Channels.Device.Token = tok
 		changed = true
 	}
+	if cfg.Channels.Device.WordToken == "" {
+		wtok, werr := GenerateWordToken()
+		if werr != nil {
+			return nil, false, werr
+		}
+		cfg.Channels.Device.WordToken = wtok
+		changed = true
+	}
 	if !cfg.Channels.Device.Enabled {
 		cfg.Channels.Device.Enabled = true
 		changed = true

@@ -21,6 +21,7 @@ import {
   getDeviceStatus,
   listPairedDevices,
   listPendingDevices,
+  regenerateWordToken,
   rejectDevice,
   removeDevice,
   saveDeviceSettings,
@@ -118,6 +119,14 @@ export function DevicesPage() {
     mutationFn: removeDevice,
     onSuccess: () => {
       toast.success("Device removed")
+      refresh()
+    },
+    onError: (e: Error) => toast.error(e.message),
+  })
+  const regenWordMut = useMutation({
+    mutationFn: regenerateWordToken,
+    onSuccess: () => {
+      toast.success("New passphrase generated")
       refresh()
     },
     onError: (e: Error) => toast.error(e.message),
@@ -239,6 +248,38 @@ export function DevicesPage() {
                     </pre>
                   </details>
                 )}
+              </div>
+            )}
+            {s?.word_token && (
+              <div className="border-border space-y-2 rounded border p-3">
+                <Label>Passphrase (for apps that can't scan the QR)</Label>
+                <p className="text-muted-foreground text-sm">
+                  Type this into the app's token / profile-token field. It authenticates the
+                  same as the QR; the device still needs your approval below.
+                </p>
+                <div className="flex items-center gap-2">
+                  <code className="bg-muted flex-1 rounded px-2 py-1 text-sm break-all">
+                    {s.word_token}
+                  </code>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      void navigator.clipboard?.writeText(s.word_token)
+                      toast.success("Passphrase copied")
+                    }}
+                  >
+                    Copy
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => regenWordMut.mutate()}
+                    disabled={regenWordMut.isPending}
+                  >
+                    Regenerate
+                  </Button>
+                </div>
               </div>
             )}
           </CardContent>

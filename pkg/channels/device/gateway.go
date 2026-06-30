@@ -56,6 +56,7 @@ func NewDeviceChannel(cfg config.DeviceChannelConfig, dataDir string, logMessage
 	}
 	srv := NewServer(store, ServerOptions{
 		SharedToken:   cfg.Token,
+		WordToken:     cfg.WordToken,
 		ServerVersion: global.Version,
 		AutoApprove:   cfg.AutoApprove,
 		AllowOrigins:  cfg.AllowOrigins,

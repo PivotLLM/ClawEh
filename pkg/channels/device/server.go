@@ -29,6 +29,7 @@ const (
 // ServerOptions configures a gateway protocol Server.
 type ServerOptions struct {
 	SharedToken   string   // gateway.auth.token; "" disables token auth (loopback dev only)
+	WordToken     string   // human-typeable passphrase accepted alongside SharedToken
 	ServerVersion string   // reported in hello-ok.server.version
 	AutoApprove   bool     // dev/LAN: auto-approve fresh pending pairings
 	AllowOrigins  []string // WS Origin allowlist; empty allows all
@@ -74,6 +75,10 @@ func NewServer(store *Store, opts ServerOptions) *Server {
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  4096,
 			WriteBufferSize: 4096,
+			// Never negotiate permessage-deflate: keep frames plain text so third-party
+			// clients/proxies that handle compression poorly aren't affected. (Gorilla
+			// defaults this off; set explicitly to make the contract clear.)
+			EnableCompression: false,
 			CheckOrigin: func(r *http.Request) bool {
 				if len(allow) == 0 {
 					return true
@@ -89,7 +94,7 @@ func NewServer(store *Store, opts ServerOptions) *Server {
 		},
 		// Advertised surface — kept honest to what is implemented. Expanded by phase.
 		methods: []string{"connect", "health", "chat.send", "node.event"},
-		events:  []string{gatewayproto.EventConnectChallenge, "tick", "chat"},
+		events:  []string{gatewayproto.EventConnectChallenge, "tick", "chat", "agent"},
 	}
 }
 
@@ -137,6 +142,8 @@ func (s *Server) HandleWS(w http.ResponseWriter, r *http.Request) {
 		logger.DebugCF("device", "websocket upgrade failed", map[string]any{"error": err.Error()})
 		return
 	}
+	// Belt-and-suspenders with EnableCompression:false — never compress writes.
+	conn.EnableWriteCompression(false)
 	cw := &connWriter{conn: conn}
 
 	connID := randomToken(16)
@@ -156,9 +163,6 @@ func (s *Server) HandleWS(w http.ResponseWriter, r *http.Request) {
 		_ = conn.Close()
 		return
 	}
-	if s.opts.LogMessages {
-		logger.InfoCF("device", "raw in (connect)", map[string]any{"raw": string(raw)})
-	}
 
 	hello, fail := s.handshake(r, connID, nonce, raw)
 	if fail != nil {
@@ -173,13 +177,7 @@ func (s *Server) HandleWS(w http.ResponseWriter, r *http.Request) {
 		"deviceId": hello.deviceID, "role": hello.role,
 	})
 
-	helloRes := gatewayproto.NewOKResponse(hello.id, hello.payload)
-	if s.opts.LogMessages {
-		if b, mErr := json.Marshal(helloRes); mErr == nil {
-			logger.InfoCF("device", "raw out (hello-ok)", map[string]any{"raw": string(b)})
-		}
-	}
-	if err := cw.writeJSON(helloRes); err != nil {
+	if err := cw.writeJSON(gatewayproto.NewOKResponse(hello.id, hello.payload)); err != nil {
 		_ = conn.Close()
 		return
 	}
@@ -247,11 +245,12 @@ func (s *Server) handshake(r *http.Request, connID, nonce string, raw []byte) (*
 		return nil, &handshakeFail{id: req.ID, err: gatewayproto.NewError(gatewayproto.CodeInvalidRequest, "protocol mismatch", detail), code: websocket.CloseProtocolError, reason: "protocol mismatch"}
 	}
 
-	// Gateway authentication: accept the shared token OR a valid issued device
-	// token. A paired device (e.g. the Rabbit R1) reconnects presenting its device
-	// token rather than the shared secret, so shared-token-only auth would wrongly
-	// reject it. When no shared token is configured (loopback dev), auth is open.
-	if s.opts.SharedToken != "" && !s.authorizeGateway(r.Context(), &p) {
+	// Gateway authentication: accept a configured shared secret (long QR token OR
+	// word passphrase) OR a valid issued device token. A paired device (e.g. the
+	// Rabbit R1) reconnects presenting its device token rather than the shared
+	// secret, so shared-token-only auth would wrongly reject it. When no shared
+	// secret is configured (loopback dev), auth is open.
+	if (s.opts.SharedToken != "" || s.opts.WordToken != "") && !s.authorizeGateway(r.Context(), &p) {
 		if s.opts.LogMessages {
 			logger.WarnCF("device", "gateway auth failed", map[string]any{
 				"clientId":           p.Client.ID,
@@ -361,15 +360,20 @@ func (s *Server) verifyDeviceIdentity(reqID, nonce string, p *gatewayproto.Conne
 	return nil
 }
 
-// authorizeGateway reports whether the connection satisfies gateway auth: either
-// the shared token, or a non-revoked device token we issued (presented in either
-// the token or deviceToken field). Called only when a shared token is configured.
+// authorizeGateway reports whether the connection satisfies gateway auth: either a
+// configured shared secret (the long QR token OR the typeable word passphrase), or a
+// non-revoked device token we issued (presented in either the token or deviceToken
+// field). Called only when token auth is configured.
 func (s *Server) authorizeGateway(ctx context.Context, p *gatewayproto.ConnectParams) bool {
 	if p.Auth == nil {
 		return false
 	}
-	if p.Auth.Token != "" && subtle.ConstantTimeCompare([]byte(p.Auth.Token), []byte(s.opts.SharedToken)) == 1 {
-		return true
+	if p.Auth.Token != "" {
+		for _, secret := range []string{s.opts.SharedToken, s.opts.WordToken} {
+			if secret != "" && subtle.ConstantTimeCompare([]byte(p.Auth.Token), []byte(secret)) == 1 {
+				return true
+			}
+		}
 	}
 	for _, t := range []string{p.Auth.DeviceToken, p.Auth.Token} {
 		if t == "" {
@@ -444,9 +448,6 @@ func (s *Server) serveLoop(ctx context.Context, lc *liveConn) {
 				return
 			}
 			_ = conn.SetReadDeadline(time.Now().Add(deviceReadTimeout))
-			if s.opts.LogMessages {
-				logger.InfoCF("device", "raw in", map[string]any{"deviceId": lc.deviceID, "raw": string(raw)})
-			}
 			var req gatewayproto.RequestFrame
 			if json.Unmarshal(raw, &req) != nil || req.Type != gatewayproto.FrameReq {
 				continue
@@ -475,9 +476,6 @@ func (s *Server) serveLoop(ctx context.Context, lc *liveConn) {
 
 // dispatch routes a post-handshake request frame.
 func (s *Server) dispatch(lc *liveConn, req gatewayproto.RequestFrame) {
-	// Diagnostic: capture which methods a device actually calls post-handshake
-	// (reveals the R1's Talk model — chat.send text loop vs. audio streaming).
-	logger.InfoCF("device", "node request", map[string]any{"method": req.Method, "deviceId": lc.deviceID})
 	switch req.Method {
 	case "health":
 		_ = lc.cw.writeJSON(gatewayproto.NewOKResponse(req.ID, map[string]any{"status": "ok"}))
@@ -508,6 +506,9 @@ func (s *Server) handleChatSend(lc *liveConn, req gatewayproto.RequestFrame) {
 			gatewayproto.NewError(gatewayproto.CodeInvalidRequest, "invalid chat.send params", nil)))
 		return
 	}
+	// runId is the client's idempotencyKey, matching OpenClaw (clientRunId =
+	// p.idempotencyKey): chat events carry this so the client correlates the reply
+	// to the turn it sent.
 	runID := p.IdempotencyKey
 	if runID == "" {
 		runID = randomToken(8)
@@ -527,10 +528,10 @@ func (s *Server) handleChatSend(lc *liveConn, req gatewayproto.RequestFrame) {
 
 	// Acknowledge transport receipt immediately with a non-terminal status, exactly
 	// as OpenClaw does (server-methods/chat.ts ackPayload: {runId, status:"started"}).
-	// The assistant reply is delivered asynchronously via "chat" delta/final events
-	// from DeliverReply; the res must NOT carry the result or block on the run, or a
-	// strict client's transport times out waiting for this frame.
-	s.writeRes(lc, gatewayproto.NewOKResponse(req.ID, map[string]any{"runId": runID, "status": "started"}), "chat.send ack")
+	// The assistant reply is delivered asynchronously via "agent"/"chat" events from
+	// DeliverReply; the res must NOT carry the result or block on the run, or a strict
+	// client's transport times out waiting for this frame.
+	_ = lc.cw.writeJSON(gatewayproto.NewOKResponse(req.ID, map[string]any{"runId": runID, "status": "started"}))
 	if s.inbound != nil {
 		go s.inbound(lc.deviceID, lc.chatID, p.Message, runID)
 	}
@@ -583,23 +584,12 @@ func (s *Server) handleAgentsList(lc *liveConn, req gatewayproto.RequestFrame) {
 		lc.sessionKey = mainKey
 	}
 	lc.mu.Unlock()
-	s.writeRes(lc, gatewayproto.NewOKResponse(req.ID, map[string]any{
+	_ = lc.cw.writeJSON(gatewayproto.NewOKResponse(req.ID, map[string]any{
 		"defaultId": defaultID,
 		"mainKey":   mainKey,
 		"scope":     "global",
 		"agents":    list,
-	}), "agents.list res")
-}
-
-// writeRes writes a response frame, logging the exact bytes when content logging
-// is enabled (debugging third-party client compatibility).
-func (s *Server) writeRes(lc *liveConn, res gatewayproto.ResponseFrame, label string) {
-	if s.opts.LogMessages {
-		if b, err := json.Marshal(res); err == nil {
-			logger.InfoCF("device", "raw out ("+label+")", map[string]any{"deviceId": lc.deviceID, "raw": string(b)})
-		}
-	}
-	_ = lc.cw.writeJSON(res)
+	}))
 }
 
 // handleChatHistory returns the stored transcript for the requested session key,
@@ -633,10 +623,10 @@ func (s *Server) handleChatHistory(lc *liveConn, req gatewayproto.RequestFrame) 
 			"content": []map[string]any{{"type": "text", "text": m.Content}},
 		})
 	}
-	s.writeRes(lc, gatewayproto.NewOKResponse(req.ID, map[string]any{
+	_ = lc.cw.writeJSON(gatewayproto.NewOKResponse(req.ID, map[string]any{
 		"sessionKey": sessionKey,
 		"messages":   messages,
-	}), "chat.history res")
+	}))
 }
 
 // DeliverReply emits a terminal "chat" final event to the device for the given
@@ -648,13 +638,29 @@ func (s *Server) DeliverReply(chatID, content string) bool {
 	}
 	lc := v.(*liveConn)
 	lc.mu.Lock()
-	lc.seq++
-	deltaSeq := lc.seq
-	lc.seq++
-	finalSeq := lc.seq
 	runID := lc.currentRun
 	sessionKey := lc.sessionKey
 	lc.currentRun = ""
+	lc.mu.Unlock()
+	return s.emitChatReply(lc, runID, sessionKey, content)
+}
+
+// emitChatReply delivers a complete assistant reply to one connection. It emits
+// both event families a real OpenClaw gateway produces for a turn:
+//   - "agent" events: stream:"assistant" carrying the text, then stream:"lifecycle"
+//     phase:"end" marking completion. Operator clients (e.g. the clawtotalk app)
+//     accumulate data.text and complete the turn on lifecycle/end.
+//   - "chat" final event: the rendered transcript message, used by node clients
+//     (the Rabbit R1) and OpenClaw-UI-style clients.
+// Frame-level seq is monotonic per connection; agent/chat payload seq is per-run.
+func (s *Server) emitChatReply(lc *liveConn, runID, sessionKey, content string) bool {
+	lc.mu.Lock()
+	lc.seq++
+	chatFrameSeq := lc.seq
+	lc.seq++
+	agentTextFrameSeq := lc.seq
+	lc.seq++
+	agentEndFrameSeq := lc.seq
 	lc.mu.Unlock()
 
 	if s.opts.LogMessages {
@@ -663,47 +669,48 @@ func (s *Server) DeliverReply(chatID, content string) bool {
 		})
 	}
 
-	sendEvent := func(p map[string]any, seq uint64, label string) bool {
-		ev := gatewayproto.NewEvent("chat", p, &seq)
-		if s.opts.LogMessages {
-			if b, err := json.Marshal(ev); err == nil {
-				logger.InfoCF("device", "raw out ("+label+")", map[string]any{"deviceId": lc.deviceID, "raw": string(b)})
-			}
-		}
-		return lc.cw.writeJSON(ev) == nil
+	sendEvent := func(eventName string, p map[string]any, seq uint64) bool {
+		return lc.cw.writeJSON(gatewayproto.NewEvent(eventName, p, &seq)) == nil
 	}
 
-	// OpenClaw streams chat events as one or more state:"delta" chunks (carrying
-	// deltaText) and then a state:"final". Clients that show a thinking indicator
-	// until the first token leave that state on the delta, so a lone final never
-	// clears it. We emit the whole reply as a single delta, then the final.
-	sendEvent(map[string]any{
-		"runId":      runID,
-		"sessionKey": sessionKey,
-		"state":      "delta",
-		"seq":        deltaSeq,
-		"deltaText":  content,
-	}, deltaSeq, "chat delta")
+	ts := time.Now().UnixMilli()
 
-	// Match OpenClaw's broadcastChatFinal message shape exactly: a top-level "text"
-	// alongside the content blocks (simple clients read message.text), plus the
-	// terminal stopReason/usage fields. See server-methods/chat.ts broadcastChatFinal.
-	message := map[string]any{
-		"role":       "assistant",
-		"content":    []map[string]any{{"type": "text", "text": content}},
-		"text":       content,
-		"timestamp":  time.Now().UnixMilli(),
-		"stopReason": "stop",
-		"usage":      map[string]any{"input": 0, "output": 0, "totalTokens": 0},
-	}
-	ok = sendEvent(map[string]any{
+	// "chat" final — transcript message for node/UI clients. usage/stopReason are
+	// payload-level per ChatFinalEventSchema; message carries role+content+flat text.
+	sendEvent("chat", map[string]any{
 		"runId":      runID,
 		"sessionKey": sessionKey,
 		"state":      "final",
-		"seq":        finalSeq,
-		"message":    message,
-	}, finalSeq, "chat final")
-	return ok
+		"seq":        1,
+		"message": map[string]any{
+			"role":      "assistant",
+			"content":   []map[string]any{{"type": "text", "text": content}},
+			"text":      content,
+			"timestamp": ts,
+		},
+		"usage":      map[string]any{"input": 0, "output": 0, "totalTokens": 0},
+		"stopReason": "stop",
+	}, chatFrameSeq)
+
+	// "agent" assistant stream — operator clients read data.text. Matches OpenClaw
+	// emitAcpAssistantDelta: {runId, seq, stream:"assistant", ts, data:{text, delta}}.
+	sendEvent("agent", map[string]any{
+		"runId":  runID,
+		"seq":    1,
+		"stream": "assistant",
+		"ts":     ts,
+		"data":   map[string]any{"text": content, "delta": content},
+	}, agentTextFrameSeq)
+
+	// "agent" lifecycle end — marks the run complete so the operator client resolves
+	// the turn. Matches OpenClaw emitAcpLifecycleEnd: stream:"lifecycle" data.phase:"end".
+	return sendEvent("agent", map[string]any{
+		"runId":  runID,
+		"seq":    2,
+		"stream": "lifecycle",
+		"ts":     ts,
+		"data":   map[string]any{"phase": "end"},
+	}, agentEndFrameSeq)
 }
 
 func randomToken(n int) string {

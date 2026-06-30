@@ -7,6 +7,7 @@ export interface DeviceStatus {
   protocol: string
   enabled: boolean
   hasToken: boolean
+  word_token: string
   listen_host: string
   listen_port: number
   listen_lan: boolean
@@ -74,6 +75,11 @@ export interface DeviceSettings {
 }
 export const saveDeviceSettings = (s: DeviceSettings) =>
   request<DeviceStatus>("/api/devices/settings", jsonPost(s))
+
+// regenerateWordToken mints a fresh typeable passphrase (the long QR token is
+// unchanged) and returns the refreshed status.
+export const regenerateWordToken = () =>
+  request<DeviceStatus>("/api/devices/word-token/regenerate", { method: "POST" })
 
 export const listPendingDevices = () =>
   request<{ pending: PendingDevice[] }>("/api/devices/pending")
