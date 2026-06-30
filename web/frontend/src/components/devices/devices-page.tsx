@@ -155,7 +155,7 @@ export function DevicesPage() {
   const regenWordMut = useMutation({
     mutationFn: regenerateWordToken,
     onSuccess: () => {
-      toast.success("New passphrase generated")
+      toast.success("New profile token generated")
       refresh()
     },
     onError: (e: Error) => toast.error(e.message),
@@ -281,10 +281,10 @@ export function DevicesPage() {
             )}
             {s?.word_token && (
               <div className="border-border space-y-2 rounded border p-3">
-                <Label>Passphrase (for apps that can't scan the QR)</Label>
+                <Label>Profile Token (for apps that can't scan the QR)</Label>
                 <p className="text-muted-foreground text-sm">
-                  Type this into the app's token / profile-token field. It authenticates the
-                  same as the QR; the device still needs your approval below.
+                  Type this into the app's Profile Token field. It authenticates the same as
+                  the QR; the device still needs your approval below.
                 </p>
                 <div className="flex items-center gap-2">
                   <code className="bg-muted flex-1 rounded px-2 py-1 text-sm break-all">
@@ -296,7 +296,7 @@ export function DevicesPage() {
                     onClick={() => {
                       void copyToClipboard(s.word_token).then((ok) =>
                         ok
-                          ? toast.success("Passphrase copied")
+                          ? toast.success("Profile token copied")
                           : toast.error("Copy failed — select the text and copy manually"),
                       )
                     }}
