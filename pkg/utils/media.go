@@ -58,6 +58,14 @@ type DownloadOptions struct {
 	ProxyURL     string
 }
 
+// MediaTempDir is the per-user scratch directory for downloaded media. The uid
+// suffix keeps two claw instances running as different users on one host from
+// colliding on a single 0700 dir (the first user to create it would otherwise
+// lock the others out with "permission denied").
+func MediaTempDir() string {
+	return filepath.Join(os.TempDir(), fmt.Sprintf("claw_media_%d", os.Getuid()))
+}
+
 // DownloadFile downloads a file from URL to a local temp directory.
 // Returns the local file path or empty string on error.
 func DownloadFile(urlStr, filename string, opts DownloadOptions) string {
@@ -69,7 +77,7 @@ func DownloadFile(urlStr, filename string, opts DownloadOptions) string {
 		opts.LoggerPrefix = "utils"
 	}
 
-	mediaDir := filepath.Join(os.TempDir(), "claw_media")
+	mediaDir := MediaTempDir()
 	if err := os.MkdirAll(mediaDir, 0o700); err != nil {
 		logger.ErrorCF(opts.LoggerPrefix, "Failed to create media directory", map[string]any{
 			"error": err.Error(),
