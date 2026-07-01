@@ -99,11 +99,6 @@ func NewWhisperTranscriber(name, apiKey, baseURL, model string) *whisperTranscri
 	}
 }
 
-// NewGroqTranscriber is a preset for the Groq Whisper endpoint.
-func NewGroqTranscriber(apiKey string) *whisperTranscriber {
-	return NewWhisperTranscriber("groq", apiKey, "", "")
-}
-
 func (t *whisperTranscriber) Transcribe(ctx context.Context, audioFilePath string) (*TranscriptionResponse, error) {
 	logger.InfoCF("voice", "Starting transcription", map[string]any{"audio_file": audioFilePath})
 
@@ -414,8 +409,7 @@ func (f *fallbackTranscriber) Transcribe(ctx context.Context, audioFilePath stri
 // DetectTranscriber builds the transcription backend from the enabled voice.stt
 // entries (each usable when it has its own key or can borrow one from a matching
 // provider). Multiple enabled entries form an ordered fallback chain, tried in
-// listed order. When the list yields nothing it falls back to auto-detecting a
-// Groq provider from the model provider list.
+// listed order. No enabled entry means transcription is off.
 func DetectTranscriber(cfg *config.Config) Transcriber {
 	var chain []Transcriber
 	for i := range cfg.Voice.STT {
@@ -431,17 +425,10 @@ func DetectTranscriber(cfg *config.Config) Transcriber {
 	}
 	switch len(chain) {
 	case 0:
-		// fall through to legacy auto-detect below
+		return nil
 	case 1:
 		return chain[0]
 	default:
 		return &fallbackTranscriber{transcribers: chain}
 	}
-	for i := range cfg.Providers {
-		p := &cfg.Providers[i]
-		if p.APIKey != "" && strings.Contains(p.BaseURL, "api.groq.com") {
-			return NewGroqTranscriber(p.APIKey)
-		}
-	}
-	return nil
 }

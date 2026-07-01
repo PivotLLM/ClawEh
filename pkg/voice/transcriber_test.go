@@ -16,8 +16,8 @@ import (
 // Ensure whisperTranscriber satisfies the Transcriber interface at compile time.
 var _ Transcriber = (*whisperTranscriber)(nil)
 
-func TestGroqTranscriberName(t *testing.T) {
-	tr := NewGroqTranscriber("sk-test")
+func TestWhisperTranscriberName(t *testing.T) {
+	tr := NewWhisperTranscriber("groq", "sk-test", "", "")
 	if got := tr.Name(); got != "groq" {
 		t.Errorf("Name() = %q, want %q", got, "groq")
 	}
@@ -36,28 +36,12 @@ func TestDetectTranscriber(t *testing.T) {
 			wantNil: true,
 		},
 		{
-			name: "groq provider key",
+			// A model provider alone no longer enables STT — only voice.stt does
+			// (its key may still be borrowed from a matching provider).
+			name: "provider key alone does not enable STT",
 			cfg: &config.Config{
 				Providers: []config.Provider{
 					{Name: "groq", Protocol: "openai-chat", BaseURL: "https://api.groq.com/openai/v1", APIKey: "sk-groq-direct"},
-				},
-			},
-			wantName: "groq",
-		},
-		{
-			name: "groq provider without key is skipped",
-			cfg: &config.Config{
-				Providers: []config.Provider{
-					{Name: "groq", Protocol: "openai-chat", BaseURL: "https://api.groq.com/openai/v1"},
-				},
-			},
-			wantNil: true,
-		},
-		{
-			name: "non-groq provider with key is ignored",
-			cfg: &config.Config{
-				Providers: []config.Provider{
-					{Name: "openai", Protocol: "openai-chat", BaseURL: "https://api.openai.com/v1", APIKey: "sk-openai"},
 				},
 			},
 			wantNil: true,
@@ -125,8 +109,9 @@ func TestDetectTranscriber(t *testing.T) {
 					},
 				},
 			},
-			// Falls through the stt list, then the legacy scan finds groq.
-			wantName: "groq",
+			// The entry can't resolve a key and an unrelated groq provider does
+			// not enable STT, so nothing is detected.
+			wantNil: true,
 		},
 	}
 
@@ -230,7 +215,7 @@ func TestTranscribe(t *testing.T) {
 		}))
 		defer srv.Close()
 
-		tr := NewGroqTranscriber("sk-test")
+		tr := NewWhisperTranscriber("groq", "sk-test", "", "")
 		tr.apiBase = srv.URL
 
 		resp, err := tr.Transcribe(context.Background(), audioPath)
@@ -251,7 +236,7 @@ func TestTranscribe(t *testing.T) {
 		}))
 		defer srv.Close()
 
-		tr := NewGroqTranscriber("sk-bad")
+		tr := NewWhisperTranscriber("groq", "sk-bad", "", "")
 		tr.apiBase = srv.URL
 
 		_, err := tr.Transcribe(context.Background(), audioPath)
@@ -261,7 +246,7 @@ func TestTranscribe(t *testing.T) {
 	})
 
 	t.Run("missing file", func(t *testing.T) {
-		tr := NewGroqTranscriber("sk-test")
+		tr := NewWhisperTranscriber("groq", "sk-test", "", "")
 		_, err := tr.Transcribe(context.Background(), filepath.Join(tmpDir, "nonexistent.ogg"))
 		if err == nil {
 			t.Fatal("expected error for missing file, got nil")
