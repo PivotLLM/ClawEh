@@ -51,7 +51,8 @@ type MediaCleanerConfig struct {
 }
 
 // FileMediaStore is a pure in-memory implementation of MediaStore.
-// Files are expected to already exist on disk (e.g. in /tmp/claw_media/).
+// Files are expected to already exist on disk (e.g. in the data-dir media
+// staging directory, utils.MediaTempDir()).
 type FileMediaStore struct {
 	mu          sync.RWMutex
 	refs        map[string]mediaEntry

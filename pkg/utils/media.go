@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -58,11 +59,32 @@ type DownloadOptions struct {
 	ProxyURL     string
 }
 
-// MediaTempDir is the per-user scratch directory for downloaded media. The uid
-// suffix keeps two claw instances running as different users on one host from
-// colliding on a single 0700 dir (the first user to create it would otherwise
-// lock the others out with "permission denied").
+var (
+	mediaStagingMu  sync.RWMutex
+	mediaStagingDir string
+)
+
+// SetMediaStagingDir points downloaded media at a directory under the instance
+// data dir (e.g. ~/.claw/media or /opt/claw/media) instead of shared /tmp. The
+// gateway sets this at startup from cfg.DataDir(); empty restores the fallback.
+func SetMediaStagingDir(dir string) {
+	mediaStagingMu.Lock()
+	mediaStagingDir = dir
+	mediaStagingMu.Unlock()
+}
+
+// MediaTempDir is the scratch directory for downloaded media. It uses the
+// configured data-dir staging path when set; otherwise it falls back to a
+// per-user /tmp dir (CLI/tests with no data dir). The uid suffix on the
+// fallback keeps two instances running as different users on one host from
+// colliding on a single 0700 dir ("permission denied" for the second user).
 func MediaTempDir() string {
+	mediaStagingMu.RLock()
+	dir := mediaStagingDir
+	mediaStagingMu.RUnlock()
+	if dir != "" {
+		return dir
+	}
 	return filepath.Join(os.TempDir(), fmt.Sprintf("claw_media_%d", os.Getuid()))
 }
 

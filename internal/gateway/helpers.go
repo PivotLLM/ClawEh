@@ -37,6 +37,7 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/tools"
 	toolsagents "github.com/PivotLLM/ClawEh/pkg/tools/agents"
 	toolschedule "github.com/PivotLLM/ClawEh/pkg/tools/schedule"
+	"github.com/PivotLLM/ClawEh/pkg/utils"
 	"github.com/PivotLLM/ClawEh/pkg/voice"
 	webserver "github.com/PivotLLM/ClawEh/web/backend"
 	"github.com/PivotLLM/ClawEh/web/backend/launcherconfig"
@@ -355,6 +356,11 @@ func setupAndStartServices(
 	services.MountWatcher = mountwatch.New(agentLoop.GetConfig, msgBus, 0)
 	services.MountWatcher.Start()
 	logger.InfoC("mountwatch", "Mount watcher started")
+
+	// Stage downloaded media under the instance data dir (e.g. ~/.claw/media,
+	// /opt/claw/media) rather than shared /tmp, so files stay app-owned and two
+	// instances on one host can't collide on a single dir.
+	utils.SetMediaStagingDir(filepath.Join(cfg.DataDir(), "media"))
 
 	// Create media store for file lifecycle management with TTL cleanup
 	services.MediaStore = media.NewFileMediaStoreWithCleanup(media.MediaCleanerConfig{
