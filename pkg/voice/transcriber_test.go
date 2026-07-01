@@ -3,6 +3,7 @@ package voice
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -68,11 +69,24 @@ func TestDetectTranscriber(t *testing.T) {
 					STT: []config.STTProvider{
 						{Provider: "openai", Enabled: false, APIKey: "sk-off"},
 						{Provider: "openrouter", Enabled: true, APIKey: "sk-or"},
-						{Provider: "groq", Enabled: true, APIKey: "sk-groq"},
+						{Provider: "groq", Enabled: false, APIKey: "sk-groq"},
 					},
 				},
 			},
 			wantName: "openrouter",
+		},
+		{
+			name: "multiple enabled entries form an ordered fallback chain",
+			cfg: &config.Config{
+				Voice: config.VoiceConfig{
+					STT: []config.STTProvider{
+						{Provider: "openrouter", Enabled: true, APIKey: "sk-or"},
+						{Provider: "groq", Enabled: true, APIKey: "sk-groq"},
+					},
+				},
+			},
+			// fallbackTranscriber.Name() joins the chain in order.
+			wantName: "openrouter,groq",
 		},
 		{
 			name: "stt list enabled without key is skipped",
@@ -133,6 +147,62 @@ func TestDetectTranscriber(t *testing.T) {
 			}
 		})
 	}
+}
+
+// stubTranscriber is a Transcriber whose result is fixed for tests.
+type stubTranscriber struct {
+	name string
+	text string
+	err  error
+}
+
+func (s stubTranscriber) Name() string { return s.name }
+func (s stubTranscriber) Transcribe(context.Context, string) (*TranscriptionResponse, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	return &TranscriptionResponse{Text: s.text}, nil
+}
+
+func TestFallbackTranscriber(t *testing.T) {
+	t.Run("uses next when first errors", func(t *testing.T) {
+		f := &fallbackTranscriber{transcribers: []Transcriber{
+			stubTranscriber{name: "a", err: errors.New("boom")},
+			stubTranscriber{name: "b", text: "from b"},
+		}}
+		got, err := f.Transcribe(context.Background(), "x")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got.Text != "from b" {
+			t.Errorf("Text = %q, want %q", got.Text, "from b")
+		}
+	})
+
+	t.Run("empty transcript is a success, not a fallback trigger", func(t *testing.T) {
+		f := &fallbackTranscriber{transcribers: []Transcriber{
+			stubTranscriber{name: "a", text: ""}, // silence
+			stubTranscriber{name: "b", text: "should not reach"},
+		}}
+		got, err := f.Transcribe(context.Background(), "x")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got.Text != "" {
+			t.Errorf("Text = %q, want empty (first transcriber wins)", got.Text)
+		}
+	})
+
+	t.Run("returns last error when all fail", func(t *testing.T) {
+		f := &fallbackTranscriber{transcribers: []Transcriber{
+			stubTranscriber{name: "a", err: errors.New("first")},
+			stubTranscriber{name: "b", err: errors.New("last")},
+		}}
+		_, err := f.Transcribe(context.Background(), "x")
+		if err == nil || err.Error() != "last" {
+			t.Errorf("err = %v, want %q", err, "last")
+		}
+	})
 }
 
 func TestTranscribe(t *testing.T) {

@@ -17,7 +17,6 @@ import (
 
 	"github.com/PivotLLM/ClawEh/pkg/config"
 	"github.com/PivotLLM/ClawEh/pkg/logger"
-	"github.com/PivotLLM/ClawEh/pkg/utils"
 )
 
 type Transcriber interface {
@@ -193,10 +192,9 @@ func (t *whisperTranscriber) Transcribe(ctx context.Context, audioFilePath strin
 	}
 
 	logger.InfoCF("voice", "Transcription completed successfully", map[string]any{
-		"text_length":           len(result.Text),
-		"language":              result.Language,
-		"duration_seconds":      result.Duration,
-		"transcription_preview": utils.Truncate(result.Text, 50),
+		"text_length":      len(result.Text),
+		"language":         result.Language,
+		"duration_seconds": result.Duration,
 	})
 
 	return &result, nil
@@ -300,10 +298,9 @@ func (t *openRouterTranscriber) Transcribe(ctx context.Context, audioFilePath st
 
 	result := &TranscriptionResponse{Text: parsed.Text, Duration: parsed.Usage.Seconds}
 	logger.InfoCF("voice", "Transcription completed successfully", map[string]any{
-		"provider":              "openrouter",
-		"text_length":           len(result.Text),
-		"duration_seconds":      result.Duration,
-		"transcription_preview": utils.Truncate(result.Text, 50),
+		"provider":         "openrouter",
+		"text_length":      len(result.Text),
+		"duration_seconds": result.Duration,
 	})
 	return result, nil
 }
@@ -360,11 +357,51 @@ func resolveSTTCredentials(cfg *config.Config, s *config.STTProvider) (apiKey, b
 	return "", baseURL, model
 }
 
-// DetectTranscriber picks the transcription backend. It prefers the first
-// enabled voice.stt entry with a usable key (its own, or borrowed from a
-// matching provider); when none applies it falls back to auto-detecting a Groq
-// provider from the model provider list.
+// fallbackTranscriber tries an ordered list of transcribers, moving to the next
+// only when one returns an error. An empty transcript is a success (silence),
+// not a trigger for fallback.
+type fallbackTranscriber struct {
+	transcribers []Transcriber
+}
+
+func (f *fallbackTranscriber) Name() string {
+	names := make([]string, len(f.transcribers))
+	for i, t := range f.transcribers {
+		names[i] = t.Name()
+	}
+	return strings.Join(names, ",")
+}
+
+func (f *fallbackTranscriber) Transcribe(ctx context.Context, audioFilePath string) (*TranscriptionResponse, error) {
+	var lastErr error
+	for i, t := range f.transcribers {
+		result, err := t.Transcribe(ctx, audioFilePath)
+		if err == nil {
+			return result, nil
+		}
+		lastErr = err
+		// Don't keep trying after the caller gave up (e.g. turn timeout).
+		if ctx.Err() != nil {
+			break
+		}
+		if i < len(f.transcribers)-1 {
+			logger.WarnCF("voice", "transcriber failed, trying fallback", map[string]any{
+				"failed_provider": t.Name(),
+				"next_provider":   f.transcribers[i+1].Name(),
+				"error":           err.Error(),
+			})
+		}
+	}
+	return nil, lastErr
+}
+
+// DetectTranscriber builds the transcription backend from the enabled voice.stt
+// entries (each usable when it has its own key or can borrow one from a matching
+// provider). Multiple enabled entries form an ordered fallback chain, tried in
+// listed order. When the list yields nothing it falls back to auto-detecting a
+// Groq provider from the model provider list.
 func DetectTranscriber(cfg *config.Config) Transcriber {
+	var chain []Transcriber
 	for i := range cfg.Voice.STT {
 		s := &cfg.Voice.STT[i]
 		if !s.Enabled {
@@ -374,7 +411,15 @@ func DetectTranscriber(cfg *config.Config) Transcriber {
 		if apiKey == "" {
 			continue
 		}
-		return NewTranscriber(s.Provider, apiKey, baseURL, model)
+		chain = append(chain, NewTranscriber(s.Provider, apiKey, baseURL, model))
+	}
+	switch len(chain) {
+	case 0:
+		// fall through to legacy auto-detect below
+	case 1:
+		return chain[0]
+	default:
+		return &fallbackTranscriber{transcribers: chain}
 	}
 	for i := range cfg.Providers {
 		p := &cfg.Providers[i]
