@@ -27,7 +27,9 @@ Upstream picoclaw docs are archived in `historical/`.
 ```
 make test        # runs tests
 ```
-To build and deploy: run `update-claw.sh` (on PATH). It builds the binary, stops claw, installs, and restarts. Do not run build/install commands directly.
+To build and deploy **production**: run `update-claw.sh` (on PATH). It builds the binary, stops the service, installs, and restarts. Do not run build/install commands directly for prod.
+
+Systemd units: `claw-ai.service` is **production** — never build to, install to, or restart it directly; production deploys go through `update-claw.sh` only. `claw-dev.service` is the local **dev** instance for iterating in a developer account; build the binary and restart `claw-dev.service` for local testing. Never touch production or `update-claw.sh` when testing.
 
 ## Key Architecture Notes
 - **Shared modules**: the tool contract lives in `github.com/PivotLLM/toolspec`; the LLM-dispatch core (provider clients + the tool loop) lives in `github.com/PivotLLM/spawnllm`. `pkg/global` and `pkg/providers` are thin alias shims re-exporting them under the historical names, so call sites are unchanged. **Invariant: spawnllm imports only toolspec + stdlib (+ provider SDKs) — never ClawEh.** Tools (incl. the spawn tool) are *injected* as `toolspec.ToolDefinition`s, so the runtime re-entry (spawnllm runs a tool → `agent_spawn` → spawnllm) is not an import cycle; `agent_spawn` being `PrimaryOnly` prevents recursion. Guard: `pkg/providers/cycle_guard_test.go`. Policy (model selection, fallback, cooldown, config, results handling) stays in ClawEh. spawnllm logs route into ClawEh's logger via `installSpawnllmLogging` (`spawnllm/logger.SetBackend`).
