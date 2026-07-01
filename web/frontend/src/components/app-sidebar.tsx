@@ -97,18 +97,6 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             translateTitle: true,
           },
           {
-            title: "navigation.skills",
-            url: "/agent/skills",
-            icon: IconSparkles,
-            translateTitle: true,
-          },
-          {
-            title: "navigation.tools",
-            url: "/agent/tools",
-            icon: IconTools,
-            translateTitle: true,
-          },
-          {
             title: "navigation.bindings",
             url: "/agent/bindings",
             icon: IconArrowsTransferDown,
@@ -120,21 +108,33 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             icon: IconBrain,
             translateTitle: true,
           },
+          {
+            title: "navigation.skills",
+            url: "/agent/skills",
+            icon: IconSparkles,
+            translateTitle: true,
+          },
+          {
+            title: "navigation.tools",
+            url: "/agent/tools",
+            icon: IconTools,
+            translateTitle: true,
+          },
         ],
       },
       {
         ...baseNavGroups[1],
         items: [
           {
-            title: "navigation.models",
-            url: "/models",
-            icon: IconAtom,
-            translateTitle: true,
-          },
-          {
             title: "navigation.providers",
             url: "/providers",
             icon: IconRoute,
+            translateTitle: true,
+          },
+          {
+            title: "navigation.models",
+            url: "/models",
+            icon: IconAtom,
             translateTitle: true,
           },
         ],
@@ -142,12 +142,14 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       {
         label: "navigation.channels_group",
         defaultOpen: false,
-        items: channelItems.map((item) => ({
-          title: item.title,
-          url: item.url,
-          icon: item.icon,
-          translateTitle: false,
-        })),
+        items: channelItems
+          .map((item) => ({
+            title: item.title,
+            url: item.url,
+            icon: item.icon,
+            translateTitle: false,
+          }))
+          .sort((a, b) => a.title.localeCompare(b.title)),
       },
       {
         ...baseNavGroups[3],
