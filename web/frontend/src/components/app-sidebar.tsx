@@ -88,33 +88,6 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         ],
       },
       {
-        ...baseNavGroups[1],
-        items: [
-          {
-            title: "navigation.models",
-            url: "/models",
-            icon: IconAtom,
-            translateTitle: true,
-          },
-          {
-            title: "navigation.providers",
-            url: "/providers",
-            icon: IconRoute,
-            translateTitle: true,
-          },
-        ],
-      },
-      {
-        label: "navigation.channels_group",
-        defaultOpen: false,
-        items: channelItems.map((item) => ({
-          title: item.title,
-          url: item.url,
-          icon: item.icon,
-          translateTitle: false,
-        })),
-      },
-      {
         ...baseNavGroups[2],
         items: [
           {
@@ -148,6 +121,33 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             translateTitle: true,
           },
         ],
+      },
+      {
+        ...baseNavGroups[1],
+        items: [
+          {
+            title: "navigation.models",
+            url: "/models",
+            icon: IconAtom,
+            translateTitle: true,
+          },
+          {
+            title: "navigation.providers",
+            url: "/providers",
+            icon: IconRoute,
+            translateTitle: true,
+          },
+        ],
+      },
+      {
+        label: "navigation.channels_group",
+        defaultOpen: false,
+        items: channelItems.map((item) => ({
+          title: item.title,
+          url: item.url,
+          icon: item.icon,
+          translateTitle: false,
+        })),
       },
       {
         ...baseNavGroups[3],
