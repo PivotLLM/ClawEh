@@ -22,7 +22,7 @@ type sttPresetView struct {
 var sttPresetList = []sttPresetView{
 	{Provider: "groq", BaseURL: "https://api.groq.com/openai/v1", Model: "whisper-large-v3"},
 	{Provider: "openai", BaseURL: "https://api.openai.com/v1", Model: "whisper-1"},
-	{Provider: "openrouter", BaseURL: "https://openrouter.ai/api/v1", Model: "whisper-1"},
+	{Provider: "openrouter", BaseURL: "https://openrouter.ai/api/v1", Model: "openai/whisper-large-v3"},
 }
 
 // registerVoiceRoutes binds speech-to-text configuration endpoints.

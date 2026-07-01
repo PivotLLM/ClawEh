@@ -85,6 +85,35 @@ func TestDetectTranscriber(t *testing.T) {
 			},
 			wantNil: true,
 		},
+		{
+			name: "stt entry borrows key from matching provider",
+			cfg: &config.Config{
+				Providers: []config.Provider{
+					{Name: "or", Protocol: "openai-chat", BaseURL: "https://openrouter.ai/api/v1", APIKey: "sk-or-provider"},
+				},
+				Voice: config.VoiceConfig{
+					STT: []config.STTProvider{
+						{Provider: "openrouter", Enabled: true}, // no key of its own
+					},
+				},
+			},
+			wantName: "openrouter",
+		},
+		{
+			name: "stt entry with no key and no matching provider is skipped",
+			cfg: &config.Config{
+				Providers: []config.Provider{
+					{Name: "groq", Protocol: "openai-chat", BaseURL: "https://api.groq.com/openai/v1", APIKey: "sk-groq"},
+				},
+				Voice: config.VoiceConfig{
+					STT: []config.STTProvider{
+						{Provider: "openrouter", Enabled: true}, // openrouter.ai has no provider key
+					},
+				},
+			},
+			// Falls through the stt list, then the legacy scan finds groq.
+			wantName: "groq",
+		},
 	}
 
 	for _, tc := range tests {
