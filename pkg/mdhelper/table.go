@@ -28,8 +28,8 @@ const (
 // through unchanged.
 //
 // Per-column alignment from the separator row is honored — left, right, and
-// center. A table without a separator row gets a rule inserted after its first
-// row, with every column defaulting to left.
+// center. A table without a separator row has no header, so no rule is inserted;
+// every row is treated as data and every column defaults to left.
 //
 // Example (the fences are added by this function):
 //
@@ -169,8 +169,8 @@ func padCell(cell string, w int, a align) string {
 }
 
 // renderTableBlock turns raw Markdown table lines into aligned, border-free rows:
-// a header, a - rule (replacing the separator row, or inserted after the first
-// row when none is present), then data rows. Columns are padded to display width
+// a header and a - rule where a separator row is present (the rule replaces it),
+// otherwise all rows as data with no rule. Columns are padded to display width
 // (so emoji/CJK align), separated by two spaces; per-column alignment is taken
 // from the separator row.
 func renderTableBlock(tableLines []string) []string {
@@ -238,11 +238,9 @@ func renderTableBlock(tableLines []string) []string {
 	}
 
 	result := make([]string, 0, len(parsed))
-	sepInserted := false
 	for i, cells := range parsed {
 		if isSep[i] {
 			result = append(result, strings.Repeat("-", totalWidth))
-			sepInserted = true
 			continue
 		}
 		parts := make([]string, maxCols)
@@ -258,9 +256,7 @@ func renderTableBlock(tableLines []string) []string {
 		result = append(result, strings.Join(parts, "  "))
 	}
 
-	// No separator row present → insert a rule after the header.
-	if !sepInserted && len(result) > 0 {
-		result = append(result[:1], append([]string{strings.Repeat("-", totalWidth)}, result[1:]...)...)
-	}
+	// A table with no separator row has no header, so no rule is inserted — all
+	// rows are treated as data.
 	return result
 }

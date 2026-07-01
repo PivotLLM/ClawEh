@@ -37,12 +37,11 @@ func TestFormatTables(t *testing.T) {
 				"```",
 		},
 		{
-			name: "table without separator row",
+			name: "table without separator row has no header rule",
 			input: "| Col A | Col B |\n" +
 				"| val1 | val2 |",
 			want: "```\n" +
 				"Col A  Col B\n" +
-				"------------\n" +
 				"val1   val2\n" +
 				"```",
 		},
