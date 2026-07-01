@@ -6,6 +6,7 @@ import {
   IconDeviceMobile,
   IconListDetails,
   IconMessageCircle,
+  IconMicrophone,
   IconPlugConnected,
   IconRoute,
   IconRobot,
@@ -155,6 +156,12 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             title: "Devices",
             url: "/devices",
             icon: IconDeviceMobile,
+            translateTitle: false,
+          },
+          {
+            title: "Speech-to-Text",
+            url: "/voice",
+            icon: IconMicrophone,
             translateTitle: false,
           },
           {

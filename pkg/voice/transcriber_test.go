@@ -12,8 +12,8 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/config"
 )
 
-// Ensure GroqTranscriber satisfies the Transcriber interface at compile time.
-var _ Transcriber = (*GroqTranscriber)(nil)
+// Ensure whisperTranscriber satisfies the Transcriber interface at compile time.
+var _ Transcriber = (*whisperTranscriber)(nil)
 
 func TestGroqTranscriberName(t *testing.T) {
 	tr := NewGroqTranscriber("sk-test")
@@ -57,6 +57,30 @@ func TestDetectTranscriber(t *testing.T) {
 			cfg: &config.Config{
 				Providers: []config.Provider{
 					{Name: "openai", Protocol: "openai-chat", BaseURL: "https://api.openai.com/v1", APIKey: "sk-openai"},
+				},
+			},
+			wantNil: true,
+		},
+		{
+			name: "stt list picks first enabled with key",
+			cfg: &config.Config{
+				Voice: config.VoiceConfig{
+					STT: []config.STTProvider{
+						{Provider: "openai", Enabled: false, APIKey: "sk-off"},
+						{Provider: "openrouter", Enabled: true, APIKey: "sk-or"},
+						{Provider: "groq", Enabled: true, APIKey: "sk-groq"},
+					},
+				},
+			},
+			wantName: "openrouter",
+		},
+		{
+			name: "stt list enabled without key is skipped",
+			cfg: &config.Config{
+				Voice: config.VoiceConfig{
+					STT: []config.STTProvider{
+						{Provider: "openai", Enabled: true},
+					},
 				},
 			},
 			wantNil: true,

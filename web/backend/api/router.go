@@ -98,4 +98,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 
 	// External-device gateway onboarding + pairing management
 	h.registerDeviceRoutes(mux)
+
+	// Speech-to-text (voice transcription) backends
+	h.registerVoiceRoutes(mux)
 }

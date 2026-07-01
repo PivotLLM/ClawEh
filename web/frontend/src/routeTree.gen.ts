@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as VoiceRouteImport } from './routes/voice'
 import { Route as SetupRouteImport } from './routes/setup'
 import { Route as ProvidersRouteImport } from './routes/providers'
 import { Route as ModelsRouteImport } from './routes/models'
@@ -27,6 +28,11 @@ import { Route as AgentToolsRouteImport } from './routes/agent/tools'
 import { Route as AgentSkillsRouteImport } from './routes/agent/skills'
 import { Route as AgentBindingsRouteImport } from './routes/agent/bindings'
 
+const VoiceRoute = VoiceRouteImport.update({
+  id: '/voice',
+  path: '/voice',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SetupRoute = SetupRouteImport.update({
   id: '/setup',
   path: '/setup',
@@ -126,6 +132,7 @@ export interface FileRoutesByFullPath {
   '/models': typeof ModelsRoute
   '/providers': typeof ProvidersRoute
   '/setup': typeof SetupRoute
+  '/voice': typeof VoiceRoute
   '/agent/bindings': typeof AgentBindingsRoute
   '/agent/skills': typeof AgentSkillsRoute
   '/agent/tools': typeof AgentToolsRoute
@@ -145,6 +152,7 @@ export interface FileRoutesByTo {
   '/models': typeof ModelsRoute
   '/providers': typeof ProvidersRoute
   '/setup': typeof SetupRoute
+  '/voice': typeof VoiceRoute
   '/agent/bindings': typeof AgentBindingsRoute
   '/agent/skills': typeof AgentSkillsRoute
   '/agent/tools': typeof AgentToolsRoute
@@ -165,6 +173,7 @@ export interface FileRoutesById {
   '/models': typeof ModelsRoute
   '/providers': typeof ProvidersRoute
   '/setup': typeof SetupRoute
+  '/voice': typeof VoiceRoute
   '/agent/bindings': typeof AgentBindingsRoute
   '/agent/skills': typeof AgentSkillsRoute
   '/agent/tools': typeof AgentToolsRoute
@@ -186,6 +195,7 @@ export interface FileRouteTypes {
     | '/models'
     | '/providers'
     | '/setup'
+    | '/voice'
     | '/agent/bindings'
     | '/agent/skills'
     | '/agent/tools'
@@ -205,6 +215,7 @@ export interface FileRouteTypes {
     | '/models'
     | '/providers'
     | '/setup'
+    | '/voice'
     | '/agent/bindings'
     | '/agent/skills'
     | '/agent/tools'
@@ -224,6 +235,7 @@ export interface FileRouteTypes {
     | '/models'
     | '/providers'
     | '/setup'
+    | '/voice'
     | '/agent/bindings'
     | '/agent/skills'
     | '/agent/tools'
@@ -244,10 +256,18 @@ export interface RootRouteChildren {
   ModelsRoute: typeof ModelsRoute
   ProvidersRoute: typeof ProvidersRoute
   SetupRoute: typeof SetupRoute
+  VoiceRoute: typeof VoiceRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/voice': {
+      id: '/voice'
+      path: '/voice'
+      fullPath: '/voice'
+      preLoaderRoute: typeof VoiceRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/setup': {
       id: '/setup'
       path: '/setup'
@@ -420,6 +440,7 @@ const rootRouteChildren: RootRouteChildren = {
   ModelsRoute: ModelsRoute,
   ProvidersRoute: ProvidersRoute,
   SetupRoute: SetupRoute,
+  VoiceRoute: VoiceRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
