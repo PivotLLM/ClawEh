@@ -71,9 +71,13 @@ Hard-won learnings (don't relearn these):
 - **Agent selection / session isolation:** the client encodes the selected agent as the session
   key's 2nd segment (`agent:<id>:<peer>:<profile>`). Operator keys are honored verbatim
   (per-profile isolation + `chat.history` reads the same key); node clients are isolated
-  per-device (`agent:<defaultId>:device:<deviceId>`). Mechanism: `metadata["session_key"]` +
-  `metadata["preresolved_agent_id"]`. `agents.list` falls back to the id as the display name
-  (clients hide name-less agents).
+  per-device under their assigned (else default) agent (`agent:<agentId>:device:<deviceId>`).
+  Mechanism: `metadata["session_key"]` + `metadata["preresolved_agent_id"]`. `agents.list` falls
+  back to the id as the display name (clients hide name-less agents).
+- **`/agent` command (node clients):** node clients (R1) switch assistants by typing `/agent`
+  (list), `/agent <name-or-id>` (switch), or `/agent default` (reset). `handleChatSend`
+  intercepts it and persists to `paired_devices.agent_id` via `SetDeviceAgent` — the same field
+  `sessionScopeKey` reads, so it survives restarts. Reply goes through the normal event path.
 - No permessage-deflate (disabled end-to-end); the OpenClaw `agent` event schema is
   `{runId, seq, stream, ts, data}` with no top-level `status` (clients default it to "unknown").
 

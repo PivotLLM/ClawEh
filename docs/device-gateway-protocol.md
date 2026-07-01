@@ -198,12 +198,29 @@ Operator clients can pick which agent handles a turn and keep separate conversat
     conversation session — so each profile is isolated and `chat.history` for that key reads
     the same conversation. The agent is the 2nd segment (via `preresolved_agent_id`); `main`
     or an unknown id falls back to the default agent.
-  - Node client (e.g. the R1 sends `main`): isolated **per device** under the default agent,
-    `agent:<defaultId>:device:<deviceId>`, so two devices never share one conversation.
+  - Node client (e.g. the R1 sends `main`): isolated **per device** under the assigned agent
+    (the per-device assignment, else the default), `agent:<agentId>:device:<deviceId>`, so two
+    devices never share one conversation.
 - Mechanism: the device channel passes the resolved key as `metadata["session_key"]` (honored
   by `BaseChannel.HandleMessage` → `bus.InboundMessage.SessionKey`) and the agent as
   `metadata["preresolved_agent_id"]`. The agent loop's `resolveScopeKey` honors any
   `agent:`-prefixed `SessionKey`; routing logs `matched_by=preresolved` for the chosen agent.
+
+### `/agent` command (node clients switch assistants)
+
+A node client like the R1 can't pick an agent in-app, so it switches by **typing** a slash
+command (`handleChatSend` intercepts it and replies as a normal turn — no agent run):
+
+- **`/agent`** (or `/agent list`) — lists configured assistants, marking the current one.
+- **`/agent <name-or-id>`** — switches this device's assigned assistant (case-insensitive match
+  on id or name). Persists via `store.SetDeviceAgent` to the `paired_devices.agent_id` column
+  (`~/.claw/state/gateway.db`), the same field `sessionScopeKey` reads — so the switch takes
+  effect on the **next** turn and **survives restarts / reconnects**.
+- **`/agent default`** (or `reset`) — clears the assignment back to the gateway default.
+
+The device is a dedicated channel, so any configured agent is reachable. The confirmation is
+delivered through the normal reply path (both `agent` + `chat` events), so the R1 speaks and
+displays it. This is the same per-device assignment the WebUI devices page sets via the dropdown.
 
 ## Client compatibility findings
 

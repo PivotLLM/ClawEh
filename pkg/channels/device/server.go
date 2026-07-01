@@ -530,9 +530,116 @@ func (s *Server) handleChatSend(lc *liveConn, req gatewayproto.RequestFrame) {
 	// DeliverReply; the res must NOT carry the result or block on the run, or a strict
 	// client's transport times out waiting for this frame.
 	_ = lc.cw.writeJSON(gatewayproto.NewOKResponse(req.ID, map[string]any{"runId": runID, "status": "started"}))
+
+	// Device text commands (e.g. "/agent bob") are handled here and answered as a
+	// reply event, without running the agent loop.
+	if cmd, arg, ok := parseSlashCommand(p.Message); ok && cmd == "agent" {
+		go s.handleAgentCommand(lc, runID, arg)
+		return
+	}
+
 	if s.inbound != nil {
 		go s.inbound(lc.deviceID, lc.chatID, p.Message, runID, s.sessionScopeKey(lc))
 	}
+}
+
+// parseSlashCommand splits a leading "/cmd arg..." message. ok is false when the
+// message is not a slash command; cmd is lowercased and stripped of the slash.
+func parseSlashCommand(message string) (cmd, arg string, ok bool) {
+	m := strings.TrimSpace(message)
+	if !strings.HasPrefix(m, "/") {
+		return "", "", false
+	}
+	m = m[1:]
+	if i := strings.IndexAny(m, " \t"); i >= 0 {
+		return strings.ToLower(m[:i]), strings.TrimSpace(m[i+1:]), true
+	}
+	return strings.ToLower(m), "", true
+}
+
+// handleAgentCommand answers the "/agent" device command. With no argument it
+// lists the configured assistants (marking the current one); with a name or id it
+// switches this device's assigned assistant via the pairing store so subsequent
+// turns route there (sessionScopeKey reads the assignment). "default"/"reset"
+// clears the assignment back to the gateway default. The device is a dedicated
+// channel, so it may target any configured agent.
+func (s *Server) handleAgentCommand(lc *liveConn, runID, arg string) {
+	ctx := context.Background()
+
+	var agents []DeviceAgentInfo
+	defaultID := ""
+	if s.querier != nil {
+		agents, defaultID, _ = s.querier.Agents()
+	}
+	current := defaultID
+	if dev, ok, err := s.store.GetPaired(ctx, lc.deviceID); err == nil && ok && dev.AgentID != "" {
+		current = dev.AgentID
+	}
+
+	if len(agents) == 0 {
+		s.emitChatReply(lc, runID, s.sessionScopeKey(lc), "No assistants are configured.")
+		return
+	}
+	if arg == "" || strings.EqualFold(arg, "list") {
+		s.emitChatReply(lc, runID, s.sessionScopeKey(lc), formatAgentList(agents, current))
+		return
+	}
+	if strings.EqualFold(arg, "default") || strings.EqualFold(arg, "reset") {
+		if err := s.store.SetDeviceAgent(ctx, lc.deviceID, ""); err != nil {
+			s.emitChatReply(lc, runID, s.sessionScopeKey(lc), "Couldn't reset assistant: "+err.Error())
+			return
+		}
+		s.emitChatReply(lc, runID, s.sessionScopeKey(lc), "Switched to the default assistant.")
+		return
+	}
+
+	targetID, targetName := resolveDeviceAgent(agents, arg)
+	if targetID == "" {
+		s.emitChatReply(lc, runID, s.sessionScopeKey(lc),
+			"No assistant matches \""+arg+"\".\n\n"+formatAgentList(agents, current))
+		return
+	}
+	if err := s.store.SetDeviceAgent(ctx, lc.deviceID, targetID); err != nil {
+		s.emitChatReply(lc, runID, s.sessionScopeKey(lc), "Couldn't switch assistant: "+err.Error())
+		return
+	}
+	// Recompute the scope so the confirmation is tagged with the new assistant.
+	s.emitChatReply(lc, runID, s.sessionScopeKey(lc),
+		"Switched to "+targetName+". New messages will go to this assistant.")
+}
+
+// resolveDeviceAgent matches an argument against agent ids and names
+// (case-insensitive) and returns the canonical id + display name, or "" if none.
+func resolveDeviceAgent(agents []DeviceAgentInfo, arg string) (id, name string) {
+	for _, a := range agents {
+		if strings.EqualFold(a.ID, arg) || strings.EqualFold(a.Name, arg) {
+			return a.ID, agentDisplayName(a)
+		}
+	}
+	return "", ""
+}
+
+// formatAgentList renders the assistant picker text sent back to the device.
+func formatAgentList(agents []DeviceAgentInfo, currentID string) string {
+	var b strings.Builder
+	b.WriteString("Assistants:\n")
+	for _, a := range agents {
+		b.WriteString("• ")
+		b.WriteString(agentDisplayName(a))
+		if a.ID == currentID {
+			b.WriteString(" (current)")
+		}
+		b.WriteString("\n")
+	}
+	b.WriteString("\nSend \"/agent <name>\" to switch, or \"/agent default\" to reset.")
+	return b.String()
+}
+
+func agentDisplayName(a DeviceAgentInfo) string {
+	if a.Name != "" {
+		return a.Name
+	}
+	return a.ID
 }
 
 // sessionScopeKey resolves the conversation session a turn runs in. Operator clients
@@ -693,6 +800,7 @@ func (s *Server) DeliverReply(chatID, content string) bool {
 //     accumulate data.text and complete the turn on lifecycle/end.
 //   - "chat" final event: the rendered transcript message, used by node clients
 //     (the Rabbit R1) and OpenClaw-UI-style clients.
+//
 // Frame-level seq is monotonic per connection; agent/chat payload seq is per-run.
 func (s *Server) emitChatReply(lc *liveConn, runID, sessionKey, content string) bool {
 	lc.mu.Lock()
