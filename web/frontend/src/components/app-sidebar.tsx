@@ -159,7 +159,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             translateTitle: false,
           },
           {
-            title: "Speech-to-Text",
+            title: "Speech",
             url: "/voice",
             icon: IconMicrophone,
             translateTitle: false,

@@ -66,7 +66,7 @@ export function VoicePage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <PageHeader title="Speech-to-Text" />
+      <PageHeader title="Speech" />
 
       <p className="text-muted-foreground px-6 text-sm">
         Transcribe inbound voice messages before they reach the assistant. The
