@@ -89,6 +89,11 @@ func (globalFilesProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 			subdirs := c.Agents.Defaults.WorkspaceReadSubdirs
 			if len(subdirs) > 0 {
 				subdirs = appendIfMissing(subdirs, "tasks")
+				// Inbound attachments are materialized into tmp/ (materializeInboundMedia),
+				// so it must be readable regardless of the configured read subdirs.
+				// Read-only: writes stay confined to the write subdir, so the agent
+				// cannot tamper with received files.
+				subdirs = appendIfMissing(subdirs, "tmp")
 			}
 			SetReadScopeSubdirs(subdirs)
 		}

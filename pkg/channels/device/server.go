@@ -533,15 +533,29 @@ func (s *Server) handleChatSend(lc *liveConn, req gatewayproto.RequestFrame) {
 
 	// Device text commands (e.g. "/agent bob") are handled here and answered as a
 	// reply event, without running the agent loop.
-	if cmd, arg, ok := parseSlashCommand(p.Message); ok && cmd == "agent" {
-		go s.handleAgentCommand(lc, runID, arg)
-		return
+	if cmd, arg, ok := parseSlashCommand(p.Message); ok {
+		switch cmd {
+		case "agent":
+			go s.handleAgentCommand(lc, runID, arg)
+			return
+		case "help":
+			go s.emitChatReply(lc, runID, s.sessionScopeKey(lc), deviceHelpText)
+			return
+		}
 	}
 
 	if s.inbound != nil {
 		go s.inbound(lc.deviceID, lc.chatID, p.Message, runID, s.sessionScopeKey(lc))
 	}
 }
+
+// deviceHelpText lists the slash commands a device user can type.
+const deviceHelpText = "Commands:\n" +
+	"• /agent — list assistants and show the current one\n" +
+	"• /agent <name> — switch to an assistant\n" +
+	"• /agent default — reset to the default assistant\n" +
+	"• /help — show this message\n" +
+	"\nAnything else is sent to the current assistant."
 
 // parseSlashCommand splits a leading "/cmd arg..." message. ok is false when the
 // message is not a slash command; cmd is lowercased and stripped of the slash.

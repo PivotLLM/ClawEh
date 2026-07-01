@@ -1070,15 +1070,21 @@ func (al *AgentLoop) transcribeAudioInMessage(ctx context.Context, msg bus.Inbou
 		return msg, false
 	}
 
-	// Transcribe each audio media ref in order.
+	// Transcribe each audio media ref in order. Non-audio refs (and audio we can't
+	// resolve) pass through in kept for normal attachment handling; transcribed
+	// audio is dropped from Media so it isn't also materialized as a raw file the
+	// model can't use (it becomes a "[voice: ...]" transcript in the content).
 	var transcriptions []string
+	kept := make([]string, 0, len(msg.Media))
 	for _, ref := range msg.Media {
 		path, meta, err := al.mediaStore.ResolveWithMeta(ref)
 		if err != nil {
 			logger.WarnCF("voice", "Failed to resolve media ref", map[string]any{"ref": ref, "error": err})
+			kept = append(kept, ref)
 			continue
 		}
 		if !utils.IsAudioFile(meta.Filename, meta.ContentType) {
+			kept = append(kept, ref)
 			continue
 		}
 		result, err := al.transcriber.Transcribe(ctx, path)
@@ -1093,6 +1099,7 @@ func (al *AgentLoop) transcribeAudioInMessage(ctx context.Context, msg bus.Inbou
 	if len(transcriptions) == 0 {
 		return msg, false
 	}
+	msg.Media = kept
 
 	al.sendTranscriptionFeedback(ctx, msg.Channel, msg.ChatID, msg.MessageID, transcriptions)
 
@@ -1133,6 +1140,8 @@ func (al *AgentLoop) materializeInboundMedia(msg bus.InboundMessage, agent *Agen
 		logger.WarnCF("agent", "received media: create tmp dir failed", map[string]any{"error": err.Error()})
 		return ""
 	}
+	// Bound growth: drop attachments from earlier turns before adding this turn's.
+	sweepReceivedMedia(tmpDir, time.Now())
 	var rels []string
 	for _, ref := range msg.Media {
 		src, meta, err := al.mediaStore.ResolveWithMeta(ref)
@@ -1150,6 +1159,31 @@ func (al *AgentLoop) materializeInboundMedia(msg bus.InboundMessage, agent *Agen
 		return ""
 	}
 	return "\n\n[Received attachment(s) saved in your workspace: " + strings.Join(rels, ", ") + "]"
+}
+
+// receivedMediaTTL bounds how long materialized inbound attachments linger in
+// <workspace>/tmp. They are swept on the next materialize for that agent.
+const receivedMediaTTL = 24 * time.Hour
+
+// sweepReceivedMedia removes files in dir older than receivedMediaTTL so the
+// received-media tmp dir does not grow without bound. Best-effort; errors ignored.
+func sweepReceivedMedia(dir string, now time.Time) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if now.Sub(info.ModTime()) > receivedMediaTTL {
+			_ = os.Remove(filepath.Join(dir, e.Name()))
+		}
+	}
 }
 
 // receivedFileName builds a collision-resistant, sandbox-safe filename from a media

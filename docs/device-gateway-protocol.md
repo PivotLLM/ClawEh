@@ -217,6 +217,7 @@ command (`handleChatSend` intercepts it and replies as a normal turn — no agen
   (`~/.claw/state/gateway.db`), the same field `sessionScopeKey` reads — so the switch takes
   effect on the **next** turn and **survives restarts / reconnects**.
 - **`/agent default`** (or `reset`) — clears the assignment back to the gateway default.
+- **`/help`** — lists the available device commands.
 
 The device is a dedicated channel, so any configured agent is reachable. The confirmation is
 delivered through the normal reply path (both `agent` + `chat` events), so the R1 speaks and
