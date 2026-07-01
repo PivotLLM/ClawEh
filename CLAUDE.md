@@ -54,11 +54,15 @@ Hard-won learnings (don't relearn these):
 - **A turn = immediate ack + async events.** `chat.send` returns `{runId, status:"started"}`
   **immediately** (runId = the client's `idempotencyKey`); the reply is delivered later as
   events. The ack must NOT carry the result or block on the run, or strict clients time out.
-- **Emit BOTH event families.** Node clients (R1) render the **`chat`** final event; operator
-  clients (the Android app) consume only **`agent`** events — they accumulate `data.text` from
-  `stream:"assistant"` and complete the turn on `stream:"lifecycle"` `data.phase:"end"`. The
-  app ignores `chat` entirely. This was found by decompiling the Hermes bundle; matching only
-  OpenClaw's `chat` event is not enough.
+- **Emit BOTH event families.** Operator clients (the Android app) consume only **`agent`**
+  events — they accumulate `data.text` from `stream:"assistant"` and complete the turn on
+  `stream:"lifecycle"` `data.phase:"end"`, ignoring `chat` entirely (found by decompiling the
+  Hermes bundle). The **R1 (node) uses both**: `chat`/`final` for the on-screen transcript and
+  the `agent` `assistant` text for its **speech** pipeline (`lifecycle/end` completes it).
+- **Order: `agent` stream BEFORE `chat` final.** `emitChatReply` emits `agent:assistant` →
+  `agent:lifecycle/end` → `chat:final`. If `chat`/`final` goes first, the R1 marks the turn
+  complete and paints the transcript **without speaking** — reply shows but is silent. Sending
+  the `agent` stream first (real gateway's stream-then-finalize order) makes it speak + display.
 - **Auth:** a long 32-byte token (in the QR, for the R1) OR a typeable 5-word BIP39
   `word_token` passphrase (for apps), both constant-time; plus per-device Ed25519 pairing
   approval (cryptographic — locks to that install). Removing a paired device revokes its tokens.

@@ -119,10 +119,29 @@ as the OpenClaw gateway does it (`server-methods/chat.ts`):
 
 ## Reply events
 
-A real OpenClaw gateway emits **two** event families per turn, and different clients consume
-different ones. ClawEh emits both (`emitChatReply` in `server.go`):
+A real OpenClaw gateway emits **two** event families per turn, and clients consume them
+differently. ClawEh emits both (`emitChatReply` in `server.go`).
 
-### `agent` event (operator/voice clients — e.g. clawtotalk)
+### Emission order matters (R1 speech)
+
+Emit the `agent` stream **first** (assistant text, then lifecycle end), and the `chat` final
+**last**. A node client like the Rabbit R1 uses **both** paths in the same turn:
+
+- `chat`/`final` populates the on-screen conversation transcript.
+- the `agent` `assistant` text feeds its on-device **text-to-speech** pipeline, and
+  `agent` `lifecycle`/`phase:"end"` tells it the reply is complete.
+
+If `chat`/`final` is sent **first**, the R1 treats the turn as complete, paints the transcript,
+and never feeds the trailing `agent` text to speech — the reply appears on screen but is
+**not spoken**. Sending the `agent` stream first (matching a real gateway's stream-then-finalize
+order) makes the R1 both **speak and display**. `emitChatReply` therefore sends
+`agent:assistant` → `agent:lifecycle/end` → `chat:final`.
+
+(ClawEh currently sends the whole reply as one `agent:assistant` delta after the run completes,
+not incrementally. The R1 speaks it fine; true token streaming would only make speech *start*
+sooner.)
+
+### `agent` event (voice/operator clients — the R1's speech pipeline, clawtotalk)
 
 Schema (`AgentEventSchema`): `{runId, seq, stream, ts, data}` (`additionalProperties:false`).
 `stream` is the discriminator; `data` is arbitrary per stream.
@@ -139,12 +158,12 @@ Schema (`AgentEventSchema`): `{runId, seq, stream, ts, data}` (`additionalProper
     "data":{"phase":"end"} },"seq":<frame> }
 ```
 
-Operator clients accumulate `data.text` from `stream:"assistant"` and **complete the turn**
-on `stream:"lifecycle"` with `data.phase:"end"` (or `"error"`). Other OpenClaw streams exist
-(`tool`, `acp`, lifecycle `start`) but only `assistant` + `lifecycle/end` are required to
-resolve a basic turn.
+Voice/operator clients accumulate `data.text` from `stream:"assistant"` (the R1 feeds it to
+its speech pipeline) and **complete the turn** on `stream:"lifecycle"` with `data.phase:"end"`
+(or `"error"`). Other OpenClaw streams exist (`tool`, `acp`, lifecycle `start`) but only
+`assistant` + `lifecycle/end` are required to resolve a basic turn.
 
-### `chat` event (node clients — e.g. Rabbit R1 — and OpenClaw-UI-style clients)
+### `chat` event (node/UI transcript — the R1's on-screen conversation, OpenClaw-UI clients)
 
 ```jsonc
 { "type":"event","event":"chat","payload":{
@@ -160,6 +179,8 @@ resolve a basic turn.
 - `usage` and `stopReason` are **payload-level** fields per `ChatFinalEventSchema`, not nested
   inside `message`.
 - `message.text` (flat) sits alongside `message.content[]` blocks; simple clients read either.
+- Node clients like the R1 render this as the displayed conversation while separately speaking
+  the `agent` `assistant` text — so both families are emitted every turn (see emission order).
 
 ## Agent selection & session isolation
 
