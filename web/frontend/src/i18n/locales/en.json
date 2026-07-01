@@ -337,6 +337,8 @@
       "max_tool_iterations_hint": "Maximum tool-call loops in a single task.",
       "request_timeout": "Request timeout (s)",
       "request_timeout_hint": "Global default seconds to wait for a model response. Per-model timeouts override this (CLI models set it higher). 0 = built-in 120s default.",
+      "turn_timeout": "Turn timeout (s)",
+      "turn_timeout_hint": "Overall wall-clock budget in seconds for a single user turn (across all model calls and tool loops). 0 = built-in 900s (15 min) default.",
       "default_agent": "Default agent",
       "default_agent_hint": "Handles messages that don't match any binding.",
       "default_model": "Default models",

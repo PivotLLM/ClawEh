@@ -148,6 +148,11 @@ export function ConfigPage() {
           "Request timeout (s)",
           { min: 0 },
         )
+        const turnTimeout = parseIntField(
+          form.turnTimeout,
+          "Turn timeout (s)",
+          { min: 0 },
+        )
         const summarizationModels = form.summarizationModels
           .map((m) => m.trim())
           .filter((m) => m.length > 0)
@@ -260,6 +265,7 @@ export function ConfigPage() {
               max_tokens: maxTokens,
               max_tool_iterations: maxToolIterations,
               request_timeout: requestTimeout,
+              turn_timeout: turnTimeout,
               models: defaultModels,
               temperature: defaultTemperaturePayload,
               compress_normal_percent: compressNormalPercent,

@@ -166,6 +166,19 @@ export function AgentDefaultsSection({
         />
       </Field>
 
+      <Field
+        label={t("pages.config.turn_timeout")}
+        hint={t("pages.config.turn_timeout_hint")}
+        layout="setting-row"
+      >
+        <Input
+          type="number"
+          min={0}
+          value={form.turnTimeout}
+          onChange={(e) => onFieldChange("turnTimeout", e.target.value)}
+        />
+      </Field>
+
     </ConfigSectionCard>
   )
 }
