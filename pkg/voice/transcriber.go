@@ -41,32 +41,48 @@ type TranscriptionResponse struct {
 	Duration float64 `json:"duration,omitempty"`
 }
 
-// sttPreset holds the default endpoint and model for a known STT provider.
-type sttPreset struct {
-	baseURL string
-	model   string
+// STTPreset holds the default endpoint and model for a known STT provider.
+type STTPreset struct {
+	Provider string `json:"provider"`
+	BaseURL  string `json:"base_url"`
+	Model    string `json:"model"`
 }
 
-var sttPresets = map[string]sttPreset{
-	"groq":       {"https://api.groq.com/openai/v1", "whisper-large-v3"},
-	"openai":     {"https://api.openai.com/v1", "whisper-1"},
-	"openrouter": {"https://openrouter.ai/api/v1", "openai/whisper-large-v3"},
+// sttPresets is the single source of truth for known provider defaults, ordered
+// for stable UI display. The WebUI reads it via STTPresets.
+var sttPresets = []STTPreset{
+	{"groq", "https://api.groq.com/openai/v1", "whisper-large-v3"},
+	{"openai", "https://api.openai.com/v1", "whisper-1"},
+	{"openrouter", "https://openrouter.ai/api/v1", "openai/whisper-large-v3"},
+}
+
+// STTPresets returns the known provider presets in display order.
+func STTPresets() []STTPreset { return sttPresets }
+
+// presetFor returns the preset for a provider name, or a zero preset if unknown.
+func presetFor(provider string) STTPreset {
+	for _, p := range sttPresets {
+		if p.Provider == provider {
+			return p
+		}
+	}
+	return STTPreset{}
 }
 
 // NewWhisperTranscriber builds a transcriber for an OpenAI-compatible endpoint.
 // Blank baseURL/model fall back to the provider preset (else groq defaults).
 func NewWhisperTranscriber(name, apiKey, baseURL, model string) *whisperTranscriber {
-	preset := sttPresets[name]
+	preset := presetFor(name)
 	if baseURL == "" {
-		baseURL = preset.baseURL
+		baseURL = preset.BaseURL
 		if baseURL == "" {
-			baseURL = sttPresets["groq"].baseURL
+			baseURL = presetFor("groq").BaseURL
 		}
 	}
 	if model == "" {
-		model = preset.model
+		model = preset.Model
 		if model == "" {
-			model = sttPresets["groq"].model
+			model = presetFor("groq").Model
 		}
 	}
 	logger.DebugCF("voice", "Creating transcriber", map[string]any{
@@ -218,12 +234,12 @@ type openRouterTranscriber struct {
 // NewOpenRouterTranscriber builds a transcriber for OpenRouter. Blank
 // baseURL/model fall back to the openrouter preset.
 func NewOpenRouterTranscriber(apiKey, baseURL, model string) *openRouterTranscriber {
-	preset := sttPresets["openrouter"]
+	preset := presetFor("openrouter")
 	if baseURL == "" {
-		baseURL = preset.baseURL
+		baseURL = preset.BaseURL
 	}
 	if model == "" {
-		model = preset.model
+		model = preset.Model
 	}
 	logger.DebugCF("voice", "Creating transcriber", map[string]any{
 		"provider": "openrouter", "base_url": baseURL, "model": model, "has_api_key": apiKey != "",
@@ -333,14 +349,14 @@ func urlHost(raw string) string {
 // enable "openrouter" (or groq/openai) in the Speech list without re-typing a
 // key they already configured as a provider.
 func resolveSTTCredentials(cfg *config.Config, s *config.STTProvider) (apiKey, baseURL, model string) {
-	preset := sttPresets[s.Provider]
+	preset := presetFor(s.Provider)
 	baseURL = s.BaseURL
 	if baseURL == "" {
-		baseURL = preset.baseURL
+		baseURL = preset.BaseURL
 	}
 	model = s.Model
 	if model == "" {
-		model = preset.model
+		model = preset.Model
 	}
 	apiKey = s.APIKey
 	if apiKey != "" {

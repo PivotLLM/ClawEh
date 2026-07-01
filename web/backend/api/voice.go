@@ -7,23 +7,8 @@ import (
 	"strings"
 
 	"github.com/PivotLLM/ClawEh/pkg/config"
+	"github.com/PivotLLM/ClawEh/pkg/voice"
 )
-
-// sttPresetView describes a known provider's default endpoint and model so the
-// UI can pre-fill fields when the operator leaves them blank.
-type sttPresetView struct {
-	Provider string `json:"provider"`
-	BaseURL  string `json:"base_url"`
-	Model    string `json:"model"`
-}
-
-// sttPresets mirrors the presets in pkg/voice so the UI can show defaults
-// without a round-trip. Keep in sync with voice.sttPresets.
-var sttPresetList = []sttPresetView{
-	{Provider: "groq", BaseURL: "https://api.groq.com/openai/v1", Model: "whisper-large-v3"},
-	{Provider: "openai", BaseURL: "https://api.openai.com/v1", Model: "whisper-1"},
-	{Provider: "openrouter", BaseURL: "https://openrouter.ai/api/v1", Model: "openai/whisper-large-v3"},
-}
 
 // registerVoiceRoutes binds speech-to-text configuration endpoints.
 func (h *Handler) registerVoiceRoutes(mux *http.ServeMux) {
@@ -51,7 +36,7 @@ func (h *Handler) handleGetVoiceSTT(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"stt":     out,
-		"presets": sttPresetList,
+		"presets": voice.STTPresets(),
 	})
 }
 
