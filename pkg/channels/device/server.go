@@ -697,11 +697,11 @@ func (s *Server) DeliverReply(chatID, content string) bool {
 func (s *Server) emitChatReply(lc *liveConn, runID, sessionKey, content string) bool {
 	lc.mu.Lock()
 	lc.seq++
-	chatFrameSeq := lc.seq
-	lc.seq++
 	agentTextFrameSeq := lc.seq
 	lc.seq++
 	agentEndFrameSeq := lc.seq
+	lc.seq++
+	chatFrameSeq := lc.seq
 	lc.mu.Unlock()
 
 	if s.opts.LogMessages {
@@ -716,9 +716,34 @@ func (s *Server) emitChatReply(lc *liveConn, runID, sessionKey, content string) 
 
 	ts := time.Now().UnixMilli()
 
+	// Emit the "agent" stream first (assistant text, then lifecycle end), then the
+	// "chat" final. A real gateway streams the assistant events during the run and
+	// finalizes after; sending "chat" final first can make a node client (the R1)
+	// mark the turn complete and skip feeding the agent text to its speech pipeline.
+
+	// "agent" assistant stream — operator/voice clients read data.text/delta. Matches
+	// OpenClaw emitAcpAssistantDelta: {runId, seq, stream:"assistant", ts, data:{text, delta}}.
+	sendEvent("agent", map[string]any{
+		"runId":  runID,
+		"seq":    1,
+		"stream": "assistant",
+		"ts":     ts,
+		"data":   map[string]any{"text": content, "delta": content},
+	}, agentTextFrameSeq)
+
+	// "agent" lifecycle end — marks the run complete so voice/operator clients
+	// resolve the turn. Matches OpenClaw emitAcpLifecycleEnd: stream:"lifecycle" data.phase:"end".
+	sendEvent("agent", map[string]any{
+		"runId":  runID,
+		"seq":    2,
+		"stream": "lifecycle",
+		"ts":     ts,
+		"data":   map[string]any{"phase": "end"},
+	}, agentEndFrameSeq)
+
 	// "chat" final — transcript message for node/UI clients. usage/stopReason are
 	// payload-level per ChatFinalEventSchema; message carries role+content+flat text.
-	sendEvent("chat", map[string]any{
+	return sendEvent("chat", map[string]any{
 		"runId":      runID,
 		"sessionKey": sessionKey,
 		"state":      "final",
@@ -732,26 +757,6 @@ func (s *Server) emitChatReply(lc *liveConn, runID, sessionKey, content string) 
 		"usage":      map[string]any{"input": 0, "output": 0, "totalTokens": 0},
 		"stopReason": "stop",
 	}, chatFrameSeq)
-
-	// "agent" assistant stream — operator clients read data.text. Matches OpenClaw
-	// emitAcpAssistantDelta: {runId, seq, stream:"assistant", ts, data:{text, delta}}.
-	sendEvent("agent", map[string]any{
-		"runId":  runID,
-		"seq":    1,
-		"stream": "assistant",
-		"ts":     ts,
-		"data":   map[string]any{"text": content, "delta": content},
-	}, agentTextFrameSeq)
-
-	// "agent" lifecycle end — marks the run complete so the operator client resolves
-	// the turn. Matches OpenClaw emitAcpLifecycleEnd: stream:"lifecycle" data.phase:"end".
-	return sendEvent("agent", map[string]any{
-		"runId":  runID,
-		"seq":    2,
-		"stream": "lifecycle",
-		"ts":     ts,
-		"data":   map[string]any{"phase": "end"},
-	}, agentEndFrameSeq)
 }
 
 func randomToken(n int) string {
