@@ -32,49 +32,60 @@ func newStreamCoalescer(sink func(string)) *streamCoalescer {
 	return &streamCoalescer{sink: sink}
 }
 
-// Add appends a token delta and flushes the accumulated buffer when it ends at a
-// sentence boundary (. ! ? or newline) or exceeds streamFlushThreshold runes.
+// Add appends a token delta and flushes the accumulated buffer at a good break
+// point (see shouldFlush). A whitespace-only buffer is never flushed on its own —
+// it stays buffered to prepend the next real text, so no empty/blank chunks are
+// emitted.
 func (c *streamCoalescer) Add(delta string) {
 	if delta == "" {
 		return
 	}
 	c.mu.Lock()
 	c.buf.WriteString(delta)
-	if !endsAtBoundary(delta) && c.buf.Len() < streamFlushThreshold {
+	s := c.buf.String()
+	if !shouldFlush(s) || strings.TrimSpace(s) == "" {
 		c.mu.Unlock()
 		return
 	}
-	batch := c.buf.String()
 	c.buf.Reset()
 	c.mu.Unlock()
-	if batch != "" {
-		c.sink(batch)
-	}
+	c.sink(s)
 }
 
-// Flush emits any buffered remainder. Safe to call multiple times (a no-op once
-// the buffer is empty); the turn defers it to release trailing text that never
-// hit a boundary.
+// Flush emits any buffered remainder (skipping a whitespace-only tail). Safe to
+// call multiple times; the turn defers it to release trailing text that never hit
+// a boundary.
 func (c *streamCoalescer) Flush() {
 	c.mu.Lock()
 	batch := c.buf.String()
 	c.buf.Reset()
 	c.mu.Unlock()
-	if batch != "" {
+	if strings.TrimSpace(batch) != "" {
 		c.sink(batch)
 	}
 }
 
-// endsAtBoundary reports whether s ends with a sentence-terminating rune or a
-// newline, the signal to flush a coalesced batch.
-func endsAtBoundary(s string) bool {
-	if s == "" {
+// shouldFlush reports whether the buffered text is at a good place to emit: a
+// newline, the length cap, or a real sentence end. A trailing "." preceded by a
+// digit is treated as a list marker / decimal ("1.", "3.14") — NOT a sentence
+// end — so the number is not split from the text that follows it (which the
+// device would speak as a separate utterance, causing an unnatural pause).
+func shouldFlush(s string) bool {
+	n := len(s)
+	if n == 0 {
 		return false
 	}
-	switch s[len(s)-1] {
-	case '.', '!', '?', '\n':
+	if s[n-1] == '\n' {
 		return true
-	default:
-		return false
 	}
+	if n >= streamFlushThreshold {
+		return true
+	}
+	switch s[n-1] {
+	case '.':
+		return !(n >= 2 && s[n-2] >= '0' && s[n-2] <= '9')
+	case '!', '?':
+		return true
+	}
+	return false
 }

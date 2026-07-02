@@ -352,6 +352,27 @@ func agentAssistantTexts(frames []collectedFrame) []string {
 	return texts
 }
 
+// agentAssistantSeqs extracts the per-run payload seq from every "agent"
+// stream:"assistant" event, in order. Clients key events by (runId, seq), so
+// these must strictly increment across streamed deltas or later ones are dropped.
+func agentAssistantSeqs(frames []collectedFrame) []uint64 {
+	var seqs []uint64
+	for _, f := range frames {
+		if f.Type != gatewayproto.FrameEvent || f.Event != "agent" {
+			continue
+		}
+		var ae struct {
+			Stream string `json:"stream"`
+			Seq    uint64 `json:"seq"`
+		}
+		_ = json.Unmarshal(f.Payload, &ae)
+		if ae.Stream == "assistant" {
+			seqs = append(seqs, ae.Seq)
+		}
+	}
+	return seqs
+}
+
 // chatDeltaTexts extracts deltaText from every "chat" state:"delta" event.
 func chatDeltaTexts(frames []collectedFrame) []string {
 	var deltas []string
@@ -401,14 +422,23 @@ func TestStreamThenFinal(t *testing.T) {
 		t.Fatalf("expected two chat deltas [Hello , world.], got %v", deltas)
 	}
 
-	// Agent assistant events come ONLY from the two streamed deltas (accumulated
-	// text), NOT a third full-text event from emitChatReply.
+	// Agent assistant events come ONLY from the two streamed deltas, NOT a third
+	// full-text event from emitChatReply. data.text carries the per-event increment
+	// (voice clients accumulate across events), so it equals each raw delta.
 	texts := agentAssistantTexts(frames)
 	if len(texts) != 2 {
 		t.Fatalf("expected exactly 2 agent assistant events (from deltas), got %d: %v", len(texts), texts)
 	}
-	if texts[0] != "Hello " || texts[1] != "Hello world." {
-		t.Fatalf("expected accumulated agent texts [Hello , Hello world.], got %v", texts)
+	if texts[0] != "Hello " || texts[1] != "world." {
+		t.Fatalf("expected incremental agent texts [Hello , world.], got %v", texts)
+	}
+
+	// Payload seqs MUST strictly increment across the streamed deltas — reused
+	// seqs make a client drop later events (the bug where voice only spoke the
+	// first chunk). Two deltas → seq 1 then 2.
+	seqs := agentAssistantSeqs(frames)
+	if len(seqs) != 2 || seqs[0] != 1 || seqs[1] != 2 {
+		t.Fatalf("expected agent assistant payload seqs [1 2], got %v", seqs)
 	}
 
 	// The chat final must still carry the full authoritative text.

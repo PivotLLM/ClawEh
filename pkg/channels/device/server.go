@@ -75,6 +75,12 @@ type liveConn struct {
 	// to avoid re-sending the assistant text a streamed run already delivered.
 	streamedRun  string
 	streamedText strings.Builder
+	// Per-run payload seq counters. The chat and agent event streams are numbered
+	// independently within a run; clients key events by (runId, seq), so these MUST
+	// increment across streamed deltas — reusing a seq makes the client drop the
+	// later events as duplicates. Reset when a new chat.send starts a run.
+	chatSeq  uint64
+	agentSeq uint64
 }
 
 // NewServer builds a gateway protocol server backed by the pairing store.
@@ -524,9 +530,11 @@ func (s *Server) handleChatSend(lc *liveConn, req gatewayproto.RequestFrame) {
 		lc.sessionKey = p.SessionKey
 	}
 	lc.currentRun = runID
-	// New run: clear any streaming accumulator from the previous turn.
+	// New run: clear any streaming accumulator + per-run seq counters.
 	lc.streamedRun = ""
 	lc.streamedText.Reset()
+	lc.chatSeq = 0
+	lc.agentSeq = 0
 	lc.mu.Unlock()
 
 	if s.opts.LogMessages {
@@ -833,11 +841,24 @@ func (s *Server) StreamDelta(chatID, delta string) bool {
 	lc.streamedRun = runID
 	lc.streamedText.WriteString(delta)
 	accumulated := lc.streamedText.String()
+	lc.chatSeq++
+	chatPayloadSeq := lc.chatSeq
+	lc.agentSeq++
+	agentPayloadSeq := lc.agentSeq
 	lc.seq++
 	chatFrameSeq := lc.seq
 	lc.seq++
 	agentFrameSeq := lc.seq
 	lc.mu.Unlock()
+
+	if s.opts.LogMessages {
+		// Escape newlines/tabs so a multi-line delta stays on one log line and is
+		// grep-visible (a raw \n would split the entry and hide the text).
+		logDelta := strings.NewReplacer("\n", "\\n", "\r", "\\r", "\t", "\\t").Replace(delta)
+		logger.InfoCF("device", "chat delta out", map[string]any{
+			"deviceId": lc.deviceID, "runId": runID, "delta": logDelta,
+		})
+	}
 
 	ts := time.Now().UnixMilli()
 
@@ -850,7 +871,7 @@ func (s *Server) StreamDelta(chatID, delta string) bool {
 	sendEvent("chat", map[string]any{
 		"runId":     runID,
 		"state":     "delta",
-		"seq":       1,
+		"seq":       chatPayloadSeq,
 		"deltaText": delta,
 		"message": map[string]any{
 			"role":    "assistant",
@@ -859,13 +880,14 @@ func (s *Server) StreamDelta(chatID, delta string) bool {
 		},
 	}, chatFrameSeq)
 
-	// "agent" assistant delta — operator/voice clients accumulate data.text/delta.
+	// "agent" assistant delta — operator/voice clients accumulate data.text across
+	// events, so data.text carries only this increment (not the running total).
 	return sendEvent("agent", map[string]any{
 		"runId":  runID,
-		"seq":    1,
+		"seq":    agentPayloadSeq,
 		"stream": "assistant",
 		"ts":     ts,
-		"data":   map[string]any{"text": accumulated, "delta": delta},
+		"data":   map[string]any{"text": delta, "delta": delta},
 	}, agentFrameSeq)
 }
 
@@ -904,15 +926,21 @@ func (s *Server) emitChatReply(lc *liveConn, runID, sessionKey, content string) 
 	streamed := runID != "" && lc.streamedRun == runID
 	lc.streamedRun = ""
 	lc.streamedText.Reset()
-	var agentTextFrameSeq uint64
+	var agentTextFrameSeq, agentTextPayloadSeq uint64
 	if !streamed {
 		lc.seq++
 		agentTextFrameSeq = lc.seq
+		lc.agentSeq++
+		agentTextPayloadSeq = lc.agentSeq
 	}
 	lc.seq++
 	agentEndFrameSeq := lc.seq
+	lc.agentSeq++
+	agentEndPayloadSeq := lc.agentSeq
 	lc.seq++
 	chatFrameSeq := lc.seq
+	lc.chatSeq++
+	chatPayloadSeq := lc.chatSeq
 	lc.mu.Unlock()
 
 	if s.opts.LogMessages {
@@ -938,7 +966,7 @@ func (s *Server) emitChatReply(lc *liveConn, runID, sessionKey, content string) 
 	if !streamed {
 		sendEvent("agent", map[string]any{
 			"runId":  runID,
-			"seq":    1,
+			"seq":    agentTextPayloadSeq,
 			"stream": "assistant",
 			"ts":     ts,
 			"data":   map[string]any{"text": content, "delta": content},
@@ -949,7 +977,7 @@ func (s *Server) emitChatReply(lc *liveConn, runID, sessionKey, content string) 
 	// resolve the turn. Matches OpenClaw emitAcpLifecycleEnd: stream:"lifecycle" data.phase:"end".
 	sendEvent("agent", map[string]any{
 		"runId":  runID,
-		"seq":    2,
+		"seq":    agentEndPayloadSeq,
 		"stream": "lifecycle",
 		"ts":     ts,
 		"data":   map[string]any{"phase": "end"},
@@ -961,7 +989,7 @@ func (s *Server) emitChatReply(lc *liveConn, runID, sessionKey, content string) 
 		"runId":      runID,
 		"sessionKey": sessionKey,
 		"state":      "final",
-		"seq":        1,
+		"seq":        chatPayloadSeq,
 		"message": map[string]any{
 			"role":      "assistant",
 			"content":   []map[string]any{{"type": "text", "text": content}},

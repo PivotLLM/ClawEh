@@ -54,6 +54,47 @@ func TestCoalescerFlushOnNewline(t *testing.T) {
 	}
 }
 
+// TestCoalescerListMarkerNotSplit guards the fix for the R1 pausing between a
+// list number and its text: a "." after a digit is a list marker/decimal, not a
+// sentence end, so "1." must stay with the item text and flush as one chunk on
+// the newline — not as a lone "1." followed by the text.
+func TestCoalescerListMarkerNotSplit(t *testing.T) {
+	var batches []string
+	c := newStreamCoalescer(func(b string) { batches = append(batches, b) })
+	// Tokens as a provider would stream them.
+	for _, tok := range []string{"1", ".", " Statue", " of", " Liberty", "\n"} {
+		c.Add(tok)
+	}
+	if len(batches) != 1 || batches[0] != "1. Statue of Liberty\n" {
+		t.Fatalf("list item should flush as one chunk [1. Statue of Liberty\\n], got %v", batches)
+	}
+	// A decimal likewise must not split.
+	batches = nil
+	for _, tok := range []string{"pi is 3", ".", "14 roughly\n"} {
+		c.Add(tok)
+	}
+	if len(batches) != 1 || batches[0] != "pi is 3.14 roughly\n" {
+		t.Fatalf("decimal should not split, got %v", batches)
+	}
+}
+
+// TestCoalescerNoWhitespaceOnlyChunk verifies a lone newline/whitespace never
+// flushes as its own (empty-looking) chunk — it stays buffered to prepend the
+// next real text.
+func TestCoalescerNoWhitespaceOnlyChunk(t *testing.T) {
+	var batches []string
+	c := newStreamCoalescer(func(b string) { batches = append(batches, b) })
+	c.Add("\n")  // whitespace-only: must not flush
+	c.Add("   ") // still whitespace-only
+	if len(batches) != 0 {
+		t.Fatalf("whitespace-only buffer must not flush, got %v", batches)
+	}
+	c.Add("Hi.") // now there is content
+	if len(batches) != 1 || batches[0] != "\n   Hi." {
+		t.Fatalf("buffered whitespace should prepend the content, got %v", batches)
+	}
+}
+
 func TestCoalescerFlushOnLength(t *testing.T) {
 	var batches []string
 	c := newStreamCoalescer(func(b string) { batches = append(batches, b) })
