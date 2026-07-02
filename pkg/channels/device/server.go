@@ -851,14 +851,17 @@ func (s *Server) StreamDelta(chatID, delta string) bool {
 	agentFrameSeq := lc.seq
 	lc.mu.Unlock()
 
-	if s.opts.LogMessages {
-		// Escape newlines/tabs so a multi-line delta stays on one log line and is
-		// grep-visible (a raw \n would split the entry and hide the text).
-		logDelta := strings.NewReplacer("\n", "\\n", "\r", "\\r", "\t", "\\t").Replace(delta)
-		logger.InfoCF("device", "chat delta out", map[string]any{
-			"deviceId": lc.deviceID, "runId": runID, "delta": logDelta,
-		})
-	}
+	// Per-delta logging is intentionally disabled — it logs conversation content
+	// and is very chatty (one line per streamed chunk). Uncomment to watch the
+	// stream during testing; newlines/tabs are escaped so a multi-line delta stays
+	// on one grep-visible log line.
+	//
+	// if s.opts.LogMessages {
+	// 	logDelta := strings.NewReplacer("\n", "\\n", "\r", "\\r", "\t", "\\t").Replace(delta)
+	// 	logger.InfoCF("device", "chat delta out", map[string]any{
+	// 		"deviceId": lc.deviceID, "runId": runID, "delta": logDelta,
+	// 	})
+	// }
 
 	ts := time.Now().UnixMilli()
 

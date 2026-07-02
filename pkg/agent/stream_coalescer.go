@@ -10,6 +10,21 @@ import (
 	"sync"
 )
 
+// streamToolNarration controls whether partial assistant text is streamed to
+// streaming-capable channels (the device gateway / R1) as the model generates.
+//
+// When true, every iteration's assistant text is streamed live — including any
+// narration the model emits before a tool call ("Sure, let me check…"), which a
+// voice device will speak. When false, partial streaming is disabled entirely
+// and the full reply is delivered once at the end (via the normal terminal
+// event), so no intermediate narration is spoken.
+//
+// It's an all-or-nothing switch on purpose: once a chunk is streamed it has
+// already been spoken, so there's no clean way to keep live streaming yet
+// suppress only the pre-tool narration. Flip this to false to turn partial
+// streaming off, or lift it into a config option, if the narration is unwanted.
+const streamToolNarration = true
+
 // streamFlushThreshold is the buffered-rune count at which the coalescer flushes
 // even without hitting a sentence boundary. Token deltas arrive as tiny
 // fragments; batching to a sentence or ~this many chars keeps the device gateway

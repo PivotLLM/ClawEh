@@ -2120,7 +2120,7 @@ func (al *AgentLoop) runLLMIteration(
 	// shared by every Chat call in this turn (v1 streams each iteration's assistant
 	// text with no reset). Non-streaming channels get no callback and are unaffected.
 	var streamCoalescer *streamCoalescer
-	if al.channelManager != nil && al.channelManager.SupportsStreaming(opts.Channel) {
+	if streamToolNarration && al.channelManager != nil && al.channelManager.SupportsStreaming(opts.Channel) {
 		channel, chatID := opts.Channel, opts.ChatID
 		streamCoalescer = newStreamCoalescer(func(batch string) {
 			al.channelManager.StreamDelta(channel, chatID, batch)
