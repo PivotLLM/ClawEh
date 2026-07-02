@@ -295,6 +295,175 @@ func TestConversationEcho(t *testing.T) {
 	}
 }
 
+// collectedFrame is a decoded event/response frame captured by readFrames.
+type collectedFrame struct {
+	Type    string          `json:"type"`
+	ID      string          `json:"id"`
+	OK      bool            `json:"ok"`
+	Payload json.RawMessage `json:"payload"`
+	Event   string          `json:"event"`
+}
+
+// readFramesUntilFinal reads frames until it sees a "chat" event with
+// state:"final" (or the deadline elapses), returning every frame read.
+func readFramesUntilFinal(t *testing.T, conn *websocket.Conn) []collectedFrame {
+	t.Helper()
+	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	var frames []collectedFrame
+	for i := 0; i < 30; i++ {
+		var f collectedFrame
+		if err := conn.ReadJSON(&f); err != nil {
+			t.Fatalf("read frame: %v", err)
+		}
+		frames = append(frames, f)
+		if f.Type == gatewayproto.FrameEvent && f.Event == "chat" {
+			var ce struct {
+				State string `json:"state"`
+			}
+			_ = json.Unmarshal(f.Payload, &ce)
+			if ce.State == "final" {
+				return frames
+			}
+		}
+	}
+	t.Fatal("never saw chat final event")
+	return nil
+}
+
+// agentAssistantTexts extracts data.text from every "agent" stream:"assistant"
+// event in frames, in order.
+func agentAssistantTexts(frames []collectedFrame) []string {
+	var texts []string
+	for _, f := range frames {
+		if f.Type != gatewayproto.FrameEvent || f.Event != "agent" {
+			continue
+		}
+		var ae struct {
+			Stream string `json:"stream"`
+			Data   struct {
+				Text string `json:"text"`
+			} `json:"data"`
+		}
+		_ = json.Unmarshal(f.Payload, &ae)
+		if ae.Stream == "assistant" {
+			texts = append(texts, ae.Data.Text)
+		}
+	}
+	return texts
+}
+
+// chatDeltaTexts extracts deltaText from every "chat" state:"delta" event.
+func chatDeltaTexts(frames []collectedFrame) []string {
+	var deltas []string
+	for _, f := range frames {
+		if f.Type != gatewayproto.FrameEvent || f.Event != "chat" {
+			continue
+		}
+		var ce struct {
+			State     string `json:"state"`
+			DeltaText string `json:"deltaText"`
+		}
+		_ = json.Unmarshal(f.Payload, &ce)
+		if ce.State == "delta" {
+			deltas = append(deltas, ce.DeltaText)
+		}
+	}
+	return deltas
+}
+
+// TestStreamThenFinal verifies a run that streamed deltas emits chat delta events
+// and per-delta agent assistant events, then a chat final WITHOUT re-sending the
+// full assistant text as another agent assistant event.
+func TestStreamThenFinal(t *testing.T) {
+	srv, _, wsURL := newTestServer(t, ServerOptions{ServerVersion: "test-1", AutoApprove: true})
+	srv.SetInbound(func(_, chatID, _, _, _ string) {
+		// Stream two partial deltas, then finalize with the full reply.
+		srv.StreamDelta(chatID, "Hello ")
+		srv.StreamDelta(chatID, "world.")
+		srv.DeliverReply(chatID, "Hello world.")
+	})
+
+	em := newEmulator(t)
+	conn, resp := em.open(t, wsURL, "")
+	defer func() { _ = conn.Close() }()
+	if !resp.OK {
+		t.Fatalf("handshake failed: %+v", resp.Error)
+	}
+
+	em.writeReq(t, conn, "s1", "node.event", map[string]any{"event": "chat.subscribe", "payload": map[string]any{"sessionKey": "sess-1"}})
+	em.writeReq(t, conn, "m1", "chat.send", map[string]any{"message": "hi", "sessionKey": "sess-1", "idempotencyKey": "run-1"})
+
+	frames := readFramesUntilFinal(t, conn)
+
+	// Two chat delta events with the raw fragments.
+	deltas := chatDeltaTexts(frames)
+	if len(deltas) != 2 || deltas[0] != "Hello " || deltas[1] != "world." {
+		t.Fatalf("expected two chat deltas [Hello , world.], got %v", deltas)
+	}
+
+	// Agent assistant events come ONLY from the two streamed deltas (accumulated
+	// text), NOT a third full-text event from emitChatReply.
+	texts := agentAssistantTexts(frames)
+	if len(texts) != 2 {
+		t.Fatalf("expected exactly 2 agent assistant events (from deltas), got %d: %v", len(texts), texts)
+	}
+	if texts[0] != "Hello " || texts[1] != "Hello world." {
+		t.Fatalf("expected accumulated agent texts [Hello , Hello world.], got %v", texts)
+	}
+
+	// The chat final must still carry the full authoritative text.
+	var sawFinalText bool
+	for _, f := range frames {
+		if f.Type == gatewayproto.FrameEvent && f.Event == "chat" {
+			var ce struct {
+				State   string `json:"state"`
+				Message struct {
+					Content []struct {
+						Text string `json:"text"`
+					} `json:"content"`
+				} `json:"message"`
+			}
+			_ = json.Unmarshal(f.Payload, &ce)
+			if ce.State == "final" && len(ce.Message.Content) > 0 && ce.Message.Content[0].Text == "Hello world." {
+				sawFinalText = true
+			}
+		}
+	}
+	if !sawFinalText {
+		t.Fatal("chat final did not carry the full reply text")
+	}
+}
+
+// TestNonStreamedRunUnchanged verifies a run that did NOT stream keeps the
+// original emitChatReply behavior: exactly one agent assistant full-text event
+// plus the chat final.
+func TestNonStreamedRunUnchanged(t *testing.T) {
+	srv, _, wsURL := newTestServer(t, ServerOptions{ServerVersion: "test-1", AutoApprove: true})
+	srv.SetInbound(func(_, chatID, content, _, _ string) {
+		srv.DeliverReply(chatID, "echo: "+content)
+	})
+
+	em := newEmulator(t)
+	conn, resp := em.open(t, wsURL, "")
+	defer func() { _ = conn.Close() }()
+	if !resp.OK {
+		t.Fatalf("handshake failed: %+v", resp.Error)
+	}
+
+	em.writeReq(t, conn, "s1", "node.event", map[string]any{"event": "chat.subscribe", "payload": map[string]any{"sessionKey": "sess-1"}})
+	em.writeReq(t, conn, "m1", "chat.send", map[string]any{"message": "ping", "sessionKey": "sess-1", "idempotencyKey": "run-1"})
+
+	frames := readFramesUntilFinal(t, conn)
+
+	if deltas := chatDeltaTexts(frames); len(deltas) != 0 {
+		t.Fatalf("non-streamed run should emit no chat deltas, got %v", deltas)
+	}
+	texts := agentAssistantTexts(frames)
+	if len(texts) != 1 || texts[0] != "echo: ping" {
+		t.Fatalf("expected one agent assistant full-text event [echo: ping], got %v", texts)
+	}
+}
+
 func TestAgentIDFromSessionKey(t *testing.T) {
 	cases := map[string]string{
 		"agent:claw:clawtotalk:primary": "claw",

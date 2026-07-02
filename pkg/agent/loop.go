@@ -2114,6 +2114,22 @@ func (al *AgentLoop) runLLMIteration(
 	emptyRetries := 0
 	degenerate := false
 
+	// Partial-text streaming: if the target channel opts into streaming, install a
+	// coalescing forwarder that batches provider token deltas into sentence/length
+	// chunks and pushes them to the channel as the model generates. The callback is
+	// shared by every Chat call in this turn (v1 streams each iteration's assistant
+	// text with no reset). Non-streaming channels get no callback and are unaffected.
+	var streamCoalescer *streamCoalescer
+	if al.channelManager != nil && al.channelManager.SupportsStreaming(opts.Channel) {
+		channel, chatID := opts.Channel, opts.ChatID
+		streamCoalescer = newStreamCoalescer(func(batch string) {
+			al.channelManager.StreamDelta(channel, chatID, batch)
+		})
+		// Flush any buffered remainder that never hit a boundary before the turn's
+		// terminal reply is published, so no trailing partial text is lost.
+		defer streamCoalescer.Flush()
+	}
+
 	// Inject agent ID into context so provider error log entries can attribute
 	// failures to the specific agent without correlating timestamps.
 	ctx = providers.WithAgentID(ctx, agent.ID)
@@ -2259,6 +2275,12 @@ func (al *AgentLoop) runLLMIteration(
 				logger.WarnCF("agent", "thinking_level is set but current provider does not support it, ignoring",
 					map[string]any{"agent_id": agent.ID, "thinking_level": string(agent.ThinkingLevel)})
 			}
+		}
+		// Opt the provider into per-delta text streaming for this turn. Providers that
+		// don't support it (CLI, Anthropic) ignore the option; the coalescer forwards
+		// batched deltas to the streaming-capable channel.
+		if streamCoalescer != nil {
+			llmOpts[providers.TextDeltaOption] = providers.TextDeltaFunc(streamCoalescer.Add)
 		}
 
 		// activeProvider tracks the protocol name surfaced in the finish event.
