@@ -115,7 +115,8 @@ as the OpenClaw gateway does it (`server-methods/chat.ts`):
    - The ack **must be immediate** and must **not** carry the assistant result; a strict
      client's transport times out waiting for this frame otherwise.
 3. **Server →** the assistant reply arrives **asynchronously** as events keyed by `runId`
-   (see next section). ClawEh has no token streaming, so it emits the whole reply at once.
+   (see next section). For **streaming-capable channels**, partial text is emitted as the model
+   generates it (see *Partial streaming* below); otherwise the whole reply is sent at once.
 
 ## Reply events
 
@@ -137,9 +138,28 @@ and never feeds the trailing `agent` text to speech — the reply appears on scr
 order) makes the R1 both **speak and display**. `emitChatReply` therefore sends
 `agent:assistant` → `agent:lifecycle/end` → `chat:final`.
 
-(ClawEh currently sends the whole reply as one `agent:assistant` delta after the run completes,
-not incrementally. The R1 speaks it fine; true token streaming would only make speech *start*
-sooner.)
+### Partial streaming
+
+When the target channel is **streaming-capable** (implements `StreamCapable` — currently the
+device gateway), ClawEh streams partial assistant text **as the model generates it** instead of
+sending the whole reply at once. The agent loop coalesces provider token deltas into
+sentence/length chunks (`stream_coalescer.go`) and the device emits them incrementally
+(`Server.StreamDelta`): a `chat` `state:"delta"` event (running `message` + the new `deltaText`)
+plus an `agent` `stream:"assistant"` event whose `data.text`/`data.delta` carry **just that
+chunk** (voice/operator clients accumulate across events). Each streamed event uses an
+**incrementing per-run payload `seq`** — clients key events by `(runId, seq)`, so a reused seq
+would be dropped as a duplicate.
+
+The terminal `emitChatReply` still fires `agent:lifecycle/end` and the authoritative `chat:final`,
+but for a **streamed run it skips the full-text `agent:assistant` event** (the deltas already
+delivered the text) so a voice client doesn't speak the reply twice.
+
+Scope: streaming is **opt-in per channel** — non-streaming channels (Telegram/Discord/…) get the
+whole reply once, unchanged. The `streamToolNarration` switch (default on, `stream_coalescer.go`)
+turns partial streaming off entirely if the pre-tool "let me check…" narration a voice device
+speaks is unwanted. **Provider support:** the HTTP providers stream via SSE; the **CLI providers**
+(claude/codex/gemini) run a subprocess to completion and return the whole reply, so they never
+produce partial deltas (the channel then just gets the terminal reply).
 
 ### `agent` event (voice/operator clients — the R1's speech pipeline, clawtotalk)
 
@@ -173,7 +193,9 @@ its speech pipeline) and **complete the turn** on `stream:"lifecycle"` with `dat
     "usage":{"input":0,"output":0,"totalTokens":0},"stopReason":"stop" },"seq":<frame> }
 ```
 
-- `state` is `delta` | `final` | `aborted` | `error`. ClawEh emits a single `final`.
+- `state` is `delta` | `final` | `aborted` | `error`. For a streaming-capable channel ClawEh
+  emits `delta` events as the reply generates (see *Partial streaming*), then the `final`; a
+  non-streamed turn is just the single `final`.
 - `payload.seq` is **per-run** (OpenClaw's `nextChatSeq`): a run's events start at 1. The
   frame-level `seq` stays monotonic per connection.
 - `usage` and `stopReason` are **payload-level** fields per `ChatFinalEventSchema`, not nested

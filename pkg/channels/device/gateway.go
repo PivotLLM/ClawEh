@@ -165,6 +165,18 @@ func (c *DeviceChannel) Stop(_ context.Context) error {
 	return nil
 }
 
+// StreamDelta implements channels.StreamCapable — forwards a partial-assistant-
+// text delta to the connected device as incremental chat/agent stream events.
+// Best-effort: a missing connection is a no-op (the terminal Send remains
+// authoritative).
+func (c *DeviceChannel) StreamDelta(_ context.Context, chatID, delta string) error {
+	if !c.IsRunning() {
+		return channels.ErrNotRunning
+	}
+	c.server.StreamDelta(chatID, delta)
+	return nil
+}
+
 // Send implements channels.Channel — routes an agent reply to the device WS as a
 // terminal chat event, keyed by the inbound chatID ("device:<deviceID>").
 func (c *DeviceChannel) Send(_ context.Context, msg bus.OutboundMessage) error {

@@ -82,6 +82,14 @@ type MessageLengthProvider interface {
 	MaxMessageLength() int
 }
 
+// StreamCapable is an opt-in interface a channel implements to receive partial
+// assistant text as the model generates it. The Manager routes coalesced deltas
+// here via StreamDelta; channels that do not implement it are streamed nothing
+// and behave exactly as before (the terminal reply still arrives via Send).
+type StreamCapable interface {
+	StreamDelta(ctx context.Context, chatID, delta string) error
+}
+
 type BaseChannel struct {
 	config              any
 	bus                 *bus.MessageBus

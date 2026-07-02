@@ -186,6 +186,39 @@ func (m *Manager) StopTyping(channel, chatID string) {
 	}
 }
 
+// SupportsStreaming reports whether the named channel's owner implements
+// StreamCapable. The agent loop uses this to decide whether to install the
+// per-delta streaming callback for a turn; false means the channel is streamed
+// nothing and behaves exactly as before.
+func (m *Manager) SupportsStreaming(channel string) bool {
+	m.mu.RLock()
+	ch, ok := m.channels[channel]
+	m.mu.RUnlock()
+	if !ok {
+		return false
+	}
+	_, ok = ch.(StreamCapable)
+	return ok
+}
+
+// StreamDelta forwards a coalesced partial-assistant-text delta to the named
+// channel if its owner implements StreamCapable; a no-op otherwise. Errors are
+// swallowed: streaming is best-effort progress and the terminal reply (Send)
+// remains authoritative.
+func (m *Manager) StreamDelta(channel, chatID, delta string) {
+	m.mu.RLock()
+	ch, ok := m.channels[channel]
+	m.mu.RUnlock()
+	if !ok {
+		return
+	}
+	sc, ok := ch.(StreamCapable)
+	if !ok {
+		return
+	}
+	_ = sc.StreamDelta(context.Background(), chatID, delta)
+}
+
 // RecordReactionUndo registers a reaction undo function for later invocation.
 // Implements PlaceholderRecorder.
 func (m *Manager) RecordReactionUndo(channel, chatID, messageID string, undo func()) {

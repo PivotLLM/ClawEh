@@ -65,6 +65,14 @@ Hard-won learnings (don't relearn these):
   `agent:lifecycle/end` → `chat:final`. If `chat`/`final` goes first, the R1 marks the turn
   complete and paints the transcript **without speaking** — reply shows but is silent. Sending
   the `agent` stream first (real gateway's stream-then-finalize order) makes it speak + display.
+- **Partial streaming (opt-in per channel).** Streaming-capable channels (`StreamCapable`, the
+  device gateway) get partial text as the model generates: coalesced `chat:delta` + `agent:assistant`
+  deltas, each with an **incrementing per-run payload `seq`** (reused seq → clients drop it as a
+  duplicate; that's why the R1 once spoke only the first chunk). Streamed `agent:assistant`
+  `data.text` carries the **increment**, not the running total. `emitChatReply` skips the full-text
+  `agent:assistant` event for a streamed run (deltas already sent it) — avoids double-speak.
+  `streamToolNarration` (`stream_coalescer.go`, default on) is the off switch. spawnllm HTTP
+  providers stream via SSE; CLI providers return the whole reply (no deltas).
 - **Auth:** a long 32-byte token (in the QR, for the R1) OR a typeable 5-word BIP39
   `word_token` passphrase (for apps), both constant-time; plus per-device Ed25519 pairing
   approval (cryptographic — locks to that install). Removing a paired device revokes its tokens.

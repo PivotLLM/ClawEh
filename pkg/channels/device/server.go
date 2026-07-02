@@ -68,6 +68,19 @@ type liveConn struct {
 	seq        uint64
 	sessionKey string
 	currentRun string
+	// Partial-text streaming state (guarded by mu). streamedRun names the run for
+	// which deltas have been emitted; streamedText accumulates the assistant text
+	// sent so far so each delta event can carry the full running content. Both are
+	// reset when a new chat.send starts a run. emitChatReply consults streamedRun
+	// to avoid re-sending the assistant text a streamed run already delivered.
+	streamedRun  string
+	streamedText strings.Builder
+	// Per-run payload seq counters. The chat and agent event streams are numbered
+	// independently within a run; clients key events by (runId, seq), so these MUST
+	// increment across streamed deltas — reusing a seq makes the client drop the
+	// later events as duplicates. Reset when a new chat.send starts a run.
+	chatSeq  uint64
+	agentSeq uint64
 }
 
 // NewServer builds a gateway protocol server backed by the pairing store.
@@ -492,7 +505,8 @@ func (s *Server) dispatch(lc *liveConn, req gatewayproto.RequestFrame) {
 }
 
 // handleChatSend acks the turn and bridges the transcript into the agent layer.
-// The assistant reply arrives later via DeliverReply (ClawEh has no token streaming).
+// Partial assistant text may arrive via StreamDelta as the model generates; the
+// terminal reply always arrives via DeliverReply.
 func (s *Server) handleChatSend(lc *liveConn, req gatewayproto.RequestFrame) {
 	var p struct {
 		Message        string `json:"message"`
@@ -516,6 +530,11 @@ func (s *Server) handleChatSend(lc *liveConn, req gatewayproto.RequestFrame) {
 		lc.sessionKey = p.SessionKey
 	}
 	lc.currentRun = runID
+	// New run: clear any streaming accumulator + per-run seq counters.
+	lc.streamedRun = ""
+	lc.streamedText.Reset()
+	lc.chatSeq = 0
+	lc.agentSeq = 0
 	lc.mu.Unlock()
 
 	if s.opts.LogMessages {
@@ -791,6 +810,90 @@ func (s *Server) handleChatHistory(lc *liveConn, req gatewayproto.RequestFrame) 
 	}))
 }
 
+// StreamDelta emits an incremental assistant-text update to the device for the
+// given chatID, keyed to the in-flight runId. It accumulates the running text on
+// the connection and emits two events per delta mirroring emitChatReply's shapes:
+//   - a "chat" event state:"delta" carrying deltaText and the accumulated message
+//     content (so a node client can render progressively);
+//   - an "agent" event stream:"assistant" carrying the accumulated text and this
+//     delta (operator/voice clients accumulate data.text).
+//
+// It marks the run as streamed so the terminal emitChatReply does not re-send the
+// assistant text. Returns false when no connection matches or there is no active
+// run (nothing to correlate the delta to).
+func (s *Server) StreamDelta(chatID, delta string) bool {
+	if delta == "" {
+		return false
+	}
+	v, ok := s.conns.Load(chatID)
+	if !ok {
+		return false
+	}
+	lc := v.(*liveConn)
+
+	lc.mu.Lock()
+	runID := lc.currentRun
+	if runID == "" {
+		lc.mu.Unlock()
+		return false
+	}
+	// Adopt the current run for streaming (accumulator was reset on chat.send).
+	lc.streamedRun = runID
+	lc.streamedText.WriteString(delta)
+	accumulated := lc.streamedText.String()
+	lc.chatSeq++
+	chatPayloadSeq := lc.chatSeq
+	lc.agentSeq++
+	agentPayloadSeq := lc.agentSeq
+	lc.seq++
+	chatFrameSeq := lc.seq
+	lc.seq++
+	agentFrameSeq := lc.seq
+	lc.mu.Unlock()
+
+	// Per-delta logging is intentionally disabled — it logs conversation content
+	// and is very chatty (one line per streamed chunk). Uncomment to watch the
+	// stream during testing; newlines/tabs are escaped so a multi-line delta stays
+	// on one grep-visible log line.
+	//
+	// if s.opts.LogMessages {
+	// 	logDelta := strings.NewReplacer("\n", "\\n", "\r", "\\r", "\t", "\\t").Replace(delta)
+	// 	logger.InfoCF("device", "chat delta out", map[string]any{
+	// 		"deviceId": lc.deviceID, "runId": runID, "delta": logDelta,
+	// 	})
+	// }
+
+	ts := time.Now().UnixMilli()
+
+	sendEvent := func(eventName string, p map[string]any, seq uint64) bool {
+		return lc.cw.writeJSON(gatewayproto.NewEvent(eventName, p, &seq)) == nil
+	}
+
+	// "chat" delta — progressive transcript update. Mirrors the final message shape
+	// (role+content+text) but state:"delta" with the new fragment in deltaText.
+	sendEvent("chat", map[string]any{
+		"runId":     runID,
+		"state":     "delta",
+		"seq":       chatPayloadSeq,
+		"deltaText": delta,
+		"message": map[string]any{
+			"role":    "assistant",
+			"content": []map[string]any{{"type": "text", "text": accumulated}},
+			"text":    accumulated,
+		},
+	}, chatFrameSeq)
+
+	// "agent" assistant delta — operator/voice clients accumulate data.text across
+	// events, so data.text carries only this increment (not the running total).
+	return sendEvent("agent", map[string]any{
+		"runId":  runID,
+		"seq":    agentPayloadSeq,
+		"stream": "assistant",
+		"ts":     ts,
+		"data":   map[string]any{"text": delta, "delta": delta},
+	}, agentFrameSeq)
+}
+
 // DeliverReply emits a terminal "chat" final event to the device for the given
 // chatID, carrying the in-flight runId. Returns false if no connection matches.
 func (s *Server) DeliverReply(chatID, content string) bool {
@@ -817,13 +920,30 @@ func (s *Server) DeliverReply(chatID, content string) bool {
 //
 // Frame-level seq is monotonic per connection; agent/chat payload seq is per-run.
 func (s *Server) emitChatReply(lc *liveConn, runID, sessionKey, content string) bool {
+	// A run that already streamed delivered its assistant text via StreamDelta's
+	// "agent" assistant events; re-sending the full text here would make voice
+	// clients speak the reply twice. Skip only the agent assistant full-text event
+	// for such runs — the lifecycle end and the authoritative "chat" final still
+	// fire. Reset the per-run streaming state now that the run is finalized.
 	lc.mu.Lock()
-	lc.seq++
-	agentTextFrameSeq := lc.seq
+	streamed := runID != "" && lc.streamedRun == runID
+	lc.streamedRun = ""
+	lc.streamedText.Reset()
+	var agentTextFrameSeq, agentTextPayloadSeq uint64
+	if !streamed {
+		lc.seq++
+		agentTextFrameSeq = lc.seq
+		lc.agentSeq++
+		agentTextPayloadSeq = lc.agentSeq
+	}
 	lc.seq++
 	agentEndFrameSeq := lc.seq
+	lc.agentSeq++
+	agentEndPayloadSeq := lc.agentSeq
 	lc.seq++
 	chatFrameSeq := lc.seq
+	lc.chatSeq++
+	chatPayloadSeq := lc.chatSeq
 	lc.mu.Unlock()
 
 	if s.opts.LogMessages {
@@ -845,19 +965,22 @@ func (s *Server) emitChatReply(lc *liveConn, runID, sessionKey, content string) 
 
 	// "agent" assistant stream — operator/voice clients read data.text/delta. Matches
 	// OpenClaw emitAcpAssistantDelta: {runId, seq, stream:"assistant", ts, data:{text, delta}}.
-	sendEvent("agent", map[string]any{
-		"runId":  runID,
-		"seq":    1,
-		"stream": "assistant",
-		"ts":     ts,
-		"data":   map[string]any{"text": content, "delta": content},
-	}, agentTextFrameSeq)
+	// Skipped for runs that already streamed the text via StreamDelta.
+	if !streamed {
+		sendEvent("agent", map[string]any{
+			"runId":  runID,
+			"seq":    agentTextPayloadSeq,
+			"stream": "assistant",
+			"ts":     ts,
+			"data":   map[string]any{"text": content, "delta": content},
+		}, agentTextFrameSeq)
+	}
 
 	// "agent" lifecycle end — marks the run complete so voice/operator clients
 	// resolve the turn. Matches OpenClaw emitAcpLifecycleEnd: stream:"lifecycle" data.phase:"end".
 	sendEvent("agent", map[string]any{
 		"runId":  runID,
-		"seq":    2,
+		"seq":    agentEndPayloadSeq,
 		"stream": "lifecycle",
 		"ts":     ts,
 		"data":   map[string]any{"phase": "end"},
@@ -869,7 +992,7 @@ func (s *Server) emitChatReply(lc *liveConn, runID, sessionKey, content string) 
 		"runId":      runID,
 		"sessionKey": sessionKey,
 		"state":      "final",
-		"seq":        1,
+		"seq":        chatPayloadSeq,
 		"message": map[string]any{
 			"role":      "assistant",
 			"content":   []map[string]any{{"type": "text", "text": content}},

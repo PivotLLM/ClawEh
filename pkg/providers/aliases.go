@@ -29,6 +29,11 @@ type (
 	ModelConfig       = spawnllm.ModelConfig
 )
 
+// Token streaming: a caller sets TextDeltaFunc under the TextDeltaOption key in
+// the options map passed to provider.Chat to opt into per-delta assistant text
+// streaming (honored by openai_compat/openai_responses; ignored elsewhere).
+type TextDeltaFunc = spawnllm.TextDeltaFunc
+
 // Protocol DTOs.
 type (
 	Message                = spawnllm.Message
@@ -52,6 +57,10 @@ type (
 )
 
 const (
+	// TextDeltaOption is the options-map key for a providers.TextDeltaFunc; see
+	// TextDeltaFunc above.
+	TextDeltaOption = spawnllm.TextDeltaOption
+
 	FailoverAuth         = spawnllm.FailoverAuth
 	FailoverRateLimit    = spawnllm.FailoverRateLimit
 	FailoverBilling      = spawnllm.FailoverBilling
