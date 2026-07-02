@@ -2,6 +2,9 @@
 
 **ClawEh is a small, fast, self-hosted runtime for personal AI assistants.** Written in Go, it can run one or more agents, each with its own workspace, tools, and persistent memory, and connect them to Telegram, Slack, Discord, the built-in web interface, or external voice/hardware devices (such as the Rabbit R1 and compatible voice apps) via its device gateway.
 
+> ### 🎙️ Talk to your agents on real voice hardware
+> ClawEh's built-in **device gateway** is tested and working with the **Rabbit R1** and the **ClawToTalk app on Android** — pair with a QR code or a typed token, choose which assistant each device talks to, and get replies **streamed live** as they are generated (so the R1 starts speaking sooner). See the [device gateway protocol](docs/device-gateway-protocol.md).
+
 Although the conversation context can be reset at any time, ClawEh is designed primarily for long-running assistants that maintain continuity over time. Its development emphasizes efficient context management, practical persistent memory, security, and a stable, dependable core.
 
 > **Development status:** This application is under active development and I use it on a daily basis for personal and business tasks. It is, however, a work in progress.
