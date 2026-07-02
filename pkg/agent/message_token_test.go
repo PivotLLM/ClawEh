@@ -48,11 +48,12 @@ func TestValidateMessageToken(t *testing.T) {
 	}
 }
 
-// TestHandleExternalMessage_NoStateManager covers the guard that an external message for
-// an agent with no state manager is rejected rather than panicking.
-func TestHandleExternalMessage_NoStateManager(t *testing.T) {
-	al := &AgentLoop{} // no agentStates, no default state
+// TestHandleExternalMessage_NoConfig covers the guard that an external message for
+// an agent loop with no config is rejected rather than panicking. Delivery now
+// resolves the target via CronTarget, so no config means nowhere to deliver.
+func TestHandleExternalMessage_NoConfig(t *testing.T) {
+	al := &AgentLoop{} // no config
 	if err := al.HandleExternalMessage(context.Background(), "ghost", "hello"); err == nil {
-		t.Error("expected an error delivering an external message with no state manager")
+		t.Error("expected an error delivering an external message with no config")
 	}
 }

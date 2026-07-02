@@ -20,6 +20,10 @@ type Handler struct {
 	// goroutine and read on HTTP-handler goroutines.
 	reloadMu      sync.Mutex
 	reloadTrigger func() error
+	// msgTokenLoop is the live AgentLoop the message-token endpoints operate on
+	// (injected via SetMessageTokenLoop). Guarded by reloadMu since it is set at
+	// startup on one goroutine and read on HTTP-handler goroutines.
+	msgTokenLoop messageTokenLoop
 }
 
 // SetReloadTrigger wires the gateway's force-reload function into the handler so
@@ -98,6 +102,9 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 
 	// External-device gateway onboarding + pairing management
 	h.registerDeviceRoutes(mux)
+
+	// Named message-API tokens (per-agent, long-lived webhook tokens)
+	h.registerMessageTokenRoutes(mux)
 
 	// Speech-to-text (voice transcription) backends
 	h.registerVoiceRoutes(mux)

@@ -6,6 +6,7 @@ import { toast } from "sonner"
 
 import { type ModelInfo, getModels } from "@/api/models"
 import { type AgentToolCatalogResponse, getAppConfig, getAgentTools, patchAppConfig } from "@/api/channels"
+import { MessageTokensSection } from "@/components/agents/message-tokens-section"
 import { FallbacksSelect } from "@/components/agents/model-selects"
 import { ToolSelect } from "@/components/agents/tool-select"
 import { PageHeader } from "@/components/page-header"
@@ -691,6 +692,10 @@ function AgentCard({
           <p className="text-muted-foreground text-xs">{t("agents.channelsHint")}</p>
         </div>
       )}
+      </div>
+
+      <div className={settingsCardClass}>
+        <MessageTokensSection agentId={label} />
       </div>
     </div>
   )

@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -82,6 +83,13 @@ func RegisterMessageRoute(server *health.Server, agentLoop *agent.AgentLoop) {
 		if err := agentLoop.HandleExternalMessage(r.Context(), agentID, content); err != nil {
 			logger.WarnCF("message", "Failed to deliver external message",
 				map[string]any{"agent": agentID, "error": err.Error()})
+			// A missing default channel is a configuration precondition, not a
+			// server fault — report it as such (with the reason) so the external
+			// caller can act, instead of a bare 500.
+			if errors.Is(err, agent.ErrNoDefaultChannel) {
+				http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+				return
+			}
 			http.Error(w, "failed to deliver message", http.StatusInternalServerError)
 			return
 		}
