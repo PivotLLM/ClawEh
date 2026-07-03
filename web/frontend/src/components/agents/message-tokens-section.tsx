@@ -6,6 +6,8 @@ import {
   createMessageToken,
   deleteMessageToken,
   listMessageTokens,
+  updateMessageToken,
+  type MessageToken,
 } from "@/api/message-tokens"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -76,6 +78,18 @@ export function MessageTokensSection({ agentId }: { agentId: string }) {
     },
     onError: (e: Error) => toast.error(e.message),
   })
+  const updateMut = useMutation({
+    mutationFn: (v: { id: string; ratePerMin: number; blockMinutes: number }) =>
+      updateMessageToken(agentId, v.id, {
+        ratePerMin: v.ratePerMin,
+        blockMinutes: v.blockMinutes,
+      }),
+    onSuccess: () => {
+      toast.success("Rate limit updated")
+      refresh()
+    },
+    onError: (e: Error) => toast.error(e.message),
+  })
 
   const tokens = q.data?.tokens ?? []
   const base = q.data?.endpoint_base ?? ""
@@ -97,46 +111,16 @@ export function MessageTokensSection({ agentId }: { agentId: string }) {
       ) : (
         <ul className="divide-border/60 divide-y">
           {tokens.map((tk) => (
-            <li
+            <TokenRow
               key={tk.id}
-              className="flex items-center justify-between gap-2 py-2"
-            >
-              <div className="min-w-0 flex-1">
-                <div className="text-sm font-medium">{tk.name || "(unnamed)"}</div>
-                <div className="text-muted-foreground flex items-center gap-2 text-xs">
-                  <code className="bg-muted truncate rounded px-1.5 py-0.5">
-                    {tk.token}
-                  </code>
-                  <span className="shrink-0">
-                    {new Date(tk.created_at_ms).toLocaleString()}
-                  </span>
-                </div>
-              </div>
-              <div className="flex shrink-0 gap-1.5">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => copy(base + tk.token, "Endpoint URL")}
-                >
-                  Copy URL
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => copy(tk.token, "Token")}
-                >
-                  Copy
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => deleteMut.mutate(tk.id)}
-                  disabled={deleteMut.isPending}
-                >
-                  Revoke
-                </Button>
-              </div>
-            </li>
+              tk={tk}
+              base={base}
+              onRevoke={() => deleteMut.mutate(tk.id)}
+              revoking={deleteMut.isPending}
+              onSave={(ratePerMin, blockMinutes) =>
+                updateMut.mutate({ id: tk.id, ratePerMin, blockMinutes })
+              }
+            />
           ))}
         </ul>
       )}
@@ -164,5 +148,110 @@ export function MessageTokensSection({ agentId }: { agentId: string }) {
         </code>
       </div>
     </div>
+  )
+}
+
+// quotaStatus renders a token's live rate-limit state: a block countdown when
+// blocked, otherwise the current window usage against the limit.
+function quotaStatus(tk: MessageToken): string {
+  if (tk.blocked) {
+    const mins = Math.ceil(tk.block_remaining_sec / 60)
+    return `blocked · clears in ${mins}m`
+  }
+  return `${tk.hits_in_window}/${tk.rate_per_min} this minute`
+}
+
+// TokenRow renders one token with its config inputs (req/min, block min, saved
+// on blur) and a live status line. Local input state lets the operator edit
+// without every keystroke firing a PATCH; onSave commits on blur.
+function TokenRow({
+  tk,
+  base,
+  onRevoke,
+  revoking,
+  onSave,
+}: {
+  tk: MessageToken
+  base: string
+  onRevoke: () => void
+  revoking: boolean
+  onSave: (ratePerMin: number, blockMinutes: number) => void
+}) {
+  const [rate, setRate] = useState(String(tk.rate_per_min))
+  const [block, setBlock] = useState(String(tk.block_minutes))
+
+  // Commit only when a value actually changed, so a blur without an edit is a
+  // no-op. A blank/invalid field resolves to 0 = "use the default".
+  const save = () => {
+    const r = Number.parseInt(rate, 10)
+    const b = Number.parseInt(block, 10)
+    const ratePerMin = Number.isFinite(r) && r > 0 ? r : 0
+    const blockMinutes = Number.isFinite(b) && b > 0 ? b : 0
+    if (ratePerMin !== tk.rate_per_min || blockMinutes !== tk.block_minutes) {
+      onSave(ratePerMin, blockMinutes)
+    }
+  }
+
+  return (
+    <li className="flex items-start justify-between gap-2 py-2">
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-medium">{tk.name || "(unnamed)"}</div>
+        <div className="text-muted-foreground flex items-center gap-2 text-xs">
+          <code className="bg-muted truncate rounded px-1.5 py-0.5">
+            {tk.token}
+          </code>
+          <span className="shrink-0">
+            {new Date(tk.created_at_ms).toLocaleString()}
+          </span>
+        </div>
+        <div className="mt-1 flex items-center gap-2 text-xs">
+          <label className="text-muted-foreground flex items-center gap-1">
+            <Input
+              type="number"
+              min={0}
+              value={rate}
+              onChange={(e) => setRate(e.target.value)}
+              onBlur={save}
+              className="h-6 w-14 text-xs"
+            />
+            req/min
+          </label>
+          <label className="text-muted-foreground flex items-center gap-1">
+            <Input
+              type="number"
+              min={0}
+              value={block}
+              onChange={(e) => setBlock(e.target.value)}
+              onBlur={save}
+              className="h-6 w-14 text-xs"
+            />
+            block min
+          </label>
+          <span className={tk.blocked ? "text-destructive" : "text-muted-foreground"}>
+            {quotaStatus(tk)}
+          </span>
+        </div>
+      </div>
+      <div className="flex shrink-0 gap-1.5">
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => copy(base + tk.token, "Endpoint URL")}
+        >
+          Copy URL
+        </Button>
+        <Button size="sm" variant="outline" onClick={() => copy(tk.token, "Token")}>
+          Copy
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={onRevoke}
+          disabled={revoking}
+        >
+          Revoke
+        </Button>
+      </div>
+    </li>
   )
 }

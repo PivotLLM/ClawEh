@@ -48,6 +48,58 @@ func TestValidateMessageToken(t *testing.T) {
 	}
 }
 
+// TestCheckMessageToken_RateLimit exercises the decision surface used by the
+// message route: a named token flooded past its limit becomes RateLimited, a
+// rotating token is never rate-limited, and junk is Invalid.
+func TestCheckMessageToken_RateLimit(t *testing.T) {
+	named, err := msgtoken.NewNamedStore("")
+	if err != nil {
+		t.Fatalf("NewNamedStore: %v", err)
+	}
+	tok, err := named.Create("amber", "gps")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	named.Update("amber", tok.ID, 2, 15) // limit 2/min
+
+	mgr, err := msgtoken.NewManager("dawn", filepath.Join(t.TempDir(), "dawn.json"), 5, 3)
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	defer mgr.Stop()
+
+	al := &AgentLoop{
+		namedTokens:     named,
+		messageManagers: map[string]*msgtoken.Manager{"dawn": mgr},
+	}
+
+	// Within limit → Valid.
+	if _, _, d := al.CheckMessageToken(tok.Token); d != MsgTokenValid {
+		t.Fatalf("1st check decision = %v, want Valid", d)
+	}
+	if _, _, d := al.CheckMessageToken(tok.Token); d != MsgTokenValid {
+		t.Fatalf("2nd check decision = %v, want Valid", d)
+	}
+	// Third trips the limit → RateLimited with a positive retryAfter.
+	agentID, retry, d := al.CheckMessageToken(tok.Token)
+	if d != MsgTokenRateLimited {
+		t.Fatalf("3rd check decision = %v, want RateLimited", d)
+	}
+	if agentID != "amber" || retry <= 0 {
+		t.Fatalf("rate-limited check = (%q,%v), want (amber, >0)", agentID, retry)
+	}
+
+	// Rotating tokens are never rate-limited.
+	if id, _, d := al.CheckMessageToken(mgr.CurrentToken()); d != MsgTokenValid || id != "dawn" {
+		t.Fatalf("rotating check = (%q,%v), want (dawn,Valid)", id, d)
+	}
+
+	// Junk → Invalid.
+	if _, _, d := al.CheckMessageToken("forged"); d != MsgTokenInvalid {
+		t.Fatalf("junk check decision = %v, want Invalid", d)
+	}
+}
+
 // TestHandleExternalMessage_NoConfig covers the guard that an external message for
 // an agent loop with no config is rejected rather than panicking. Delivery now
 // resolves the target via CronTarget, so no config means nowhere to deliver.

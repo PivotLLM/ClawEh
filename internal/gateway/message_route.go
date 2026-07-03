@@ -3,7 +3,9 @@ package gateway
 import (
 	"errors"
 	"io"
+	"math"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/PivotLLM/ClawEh/pkg/agent"
@@ -69,8 +71,21 @@ func RegisterMessageRoute(server *health.Server, agentLoop *agent.AgentLoop) {
 			return
 		}
 
-		agentID, ok := agentLoop.ValidateMessageToken(token)
-		if !ok {
+		agentID, retryAfter, decision := agentLoop.CheckMessageToken(token)
+		switch decision {
+		case agent.MsgTokenRateLimited:
+			// Round the remaining block time UP to whole seconds so Retry-After
+			// never tells the caller to retry before the block actually clears.
+			secs := int(math.Ceil(retryAfter.Seconds()))
+			if secs < 1 {
+				secs = 1
+			}
+			w.Header().Set("Retry-After", strconv.Itoa(secs))
+			logger.WarnCF("message", "Rejected external message: token rate-limited",
+				map[string]any{"agent": agentID, "remote_addr": r.RemoteAddr, "retry_after_s": secs})
+			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+			return
+		case agent.MsgTokenInvalid:
 			logger.WarnCF("message", "Rejected external message with invalid or expired token",
 				map[string]any{"remote_addr": r.RemoteAddr, "body_len": len(content)})
 			http.Error(w, "invalid or expired token", http.StatusUnauthorized)

@@ -5,6 +5,13 @@ export interface MessageToken {
   name: string
   token: string
   created_at_ms: number
+  // Rate-limit config (effective values; 0-in-config resolves to the default).
+  rate_per_min: number
+  block_minutes: number
+  // Live limiter status.
+  blocked: boolean
+  block_remaining_sec: number
+  hits_in_window: number
 }
 
 export interface MessageTokenList {
@@ -42,6 +49,23 @@ export const createMessageToken = (agentId: string, name: string) =>
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name }),
+    },
+  )
+
+export const updateMessageToken = (
+  agentId: string,
+  tokenId: string,
+  cfg: { ratePerMin: number; blockMinutes: number },
+) =>
+  request<unknown>(
+    `/api/agents/${encodeURIComponent(agentId)}/message-tokens/${encodeURIComponent(tokenId)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        rate_per_min: cfg.ratePerMin,
+        block_minutes: cfg.blockMinutes,
+      }),
     },
   )
 

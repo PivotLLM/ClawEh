@@ -462,21 +462,65 @@ func (al *AgentLoop) SetCogmemManager(mgr *consolidate.Manager) {
 // since they are the primary, operator-facing path. Returns ("", false) if no
 // match.
 func (al *AgentLoop) ValidateMessageToken(token string) (string, bool) {
+	agentID, _, _, ok := al.resolveMessageToken(token)
+	return agentID, ok
+}
+
+// resolveMessageToken resolves a token to its owning agent and reports whether
+// it is a named token (which is rate-limited) or a rotating one. named is only
+// meaningful when ok is true. Shared by ValidateMessageToken and
+// CheckMessageToken so both paths agree on which store owns a token.
+func (al *AgentLoop) resolveMessageToken(token string) (agentID, tokenID string, named, ok bool) {
 	al.mu.RLock()
 	managers := al.messageManagers
-	named := al.namedTokens
+	namedStore := al.namedTokens
 	al.mu.RUnlock()
-	if named != nil {
-		if agentID, ok := named.Validate(token); ok {
-			return agentID, true
+	if namedStore != nil {
+		if aid, tid, found := namedStore.ValidateWithID(token); found {
+			return aid, tid, true, true
 		}
 	}
-	for agentID, mgr := range managers {
+	for aid, mgr := range managers {
 		if mgr.Validate(token) {
-			return agentID, true
+			return aid, "", false, true
 		}
 	}
-	return "", false
+	return "", "", false, false
+}
+
+// MsgTokenDecision is the closed set of outcomes for an external-message token
+// check: a valid token, an unknown/expired one, or a named token that is
+// currently rate-limited (blocked).
+type MsgTokenDecision int
+
+const (
+	MsgTokenInvalid MsgTokenDecision = iota
+	MsgTokenValid
+	MsgTokenRateLimited
+)
+
+// CheckMessageToken resolves a token AND applies the per-token rate limit for
+// named tokens. Rotating tokens are never rate-limited (they are short-lived by
+// construction). retryAfter is only meaningful for MsgTokenRateLimited.
+func (al *AgentLoop) CheckMessageToken(token string) (agentID string, retryAfter time.Duration, decision MsgTokenDecision) {
+	aid, tokenID, named, ok := al.resolveMessageToken(token)
+	if !ok {
+		return "", 0, MsgTokenInvalid
+	}
+	if !named {
+		return aid, 0, MsgTokenValid
+	}
+	al.mu.RLock()
+	namedStore := al.namedTokens
+	al.mu.RUnlock()
+	if namedStore == nil {
+		return aid, 0, MsgTokenValid
+	}
+	allowed, ra := namedStore.Allow(aid, tokenID)
+	if !allowed {
+		return aid, ra, MsgTokenRateLimited
+	}
+	return aid, 0, MsgTokenValid
 }
 
 // ListMessageTokens returns the named message-API tokens for an agent.
@@ -512,6 +556,43 @@ func (al *AgentLoop) DeleteMessageToken(agentID, id string) bool {
 		return false
 	}
 	return named.Delete(agentID, id)
+}
+
+// MessageTokenQuota returns the per-token rate-limit status for an agent's named
+// message-API tokens.
+func (al *AgentLoop) MessageTokenQuota(agentID string) []msgtoken.TokenQuota {
+	al.mu.RLock()
+	named := al.namedTokens
+	al.mu.RUnlock()
+	if named == nil {
+		return nil
+	}
+	return named.Quota(agentID)
+}
+
+// ResetMessageTokenBlocks clears active rate-limit blocks for an agent's tokens.
+// An empty name clears all; a name clears just that token. Returns the count
+// cleared.
+func (al *AgentLoop) ResetMessageTokenBlocks(agentID, name string) int {
+	al.mu.RLock()
+	named := al.namedTokens
+	al.mu.RUnlock()
+	if named == nil {
+		return 0
+	}
+	return named.ResetBlocks(agentID, name)
+}
+
+// UpdateMessageToken sets a named token's rate/block config and persists it.
+// Returns true when the token exists.
+func (al *AgentLoop) UpdateMessageToken(agentID, id string, ratePerMin, blockMinutes int) bool {
+	al.mu.RLock()
+	named := al.namedTokens
+	al.mu.RUnlock()
+	if named == nil {
+		return false
+	}
+	return named.Update(agentID, id, ratePerMin, blockMinutes)
 }
 
 // ErrNoDefaultChannel is returned (wrapped) by HandleExternalMessage when the
@@ -3602,6 +3683,27 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 				})
 			}
 			return out
+		}
+		// Token-quota hooks scope to THIS agent by closing over its normalized id
+		// (the same id the named-token store and message API key on).
+		quotaAgentID := routing.NormalizeAgentID(agent.ID)
+		rt.ListTokenQuota = func() []commands.TokenQuotaEntry {
+			snap := al.MessageTokenQuota(quotaAgentID)
+			out := make([]commands.TokenQuotaEntry, 0, len(snap))
+			for _, q := range snap {
+				out = append(out, commands.TokenQuotaEntry{
+					Name:           q.Name,
+					RatePerMin:     q.RatePerMin,
+					BlockMinutes:   q.BlockMinutes,
+					HitsInWindow:   q.HitsInWindow,
+					Blocked:        q.Blocked,
+					BlockRemaining: q.BlockRemaining,
+				})
+			}
+			return out
+		}
+		rt.ResetTokenQuota = func(name string) int {
+			return al.ResetMessageTokenBlocks(quotaAgentID, name)
 		}
 		if opts != nil {
 			sessionKey := opts.SessionKey

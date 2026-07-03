@@ -17,11 +17,15 @@ import (
 type fakeMessageTokenLoop struct {
 	mu     sync.Mutex
 	tokens map[string][]msgtoken.NamedToken
+	hits   map[string]int // tokenID -> hits-in-window, for quota status
 	nextID int
 }
 
 func newFakeMessageTokenLoop() *fakeMessageTokenLoop {
-	return &fakeMessageTokenLoop{tokens: map[string][]msgtoken.NamedToken{}}
+	return &fakeMessageTokenLoop{
+		tokens: map[string][]msgtoken.NamedToken{},
+		hits:   map[string]int{},
+	}
 }
 
 func (f *fakeMessageTokenLoop) ListMessageTokens(agentID string) []msgtoken.NamedToken {
@@ -51,6 +55,36 @@ func (f *fakeMessageTokenLoop) DeleteMessageToken(agentID, id string) bool {
 	for i := range list {
 		if list[i].ID == id {
 			f.tokens[agentID] = append(list[:i], list[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
+func (f *fakeMessageTokenLoop) MessageTokenQuota(agentID string) []msgtoken.TokenQuota {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]msgtoken.TokenQuota, 0, len(f.tokens[agentID]))
+	for _, t := range f.tokens[agentID] {
+		out = append(out, msgtoken.TokenQuota{
+			ID:           t.ID,
+			Name:         t.Name,
+			RatePerMin:   t.EffectiveRatePerMin(),
+			BlockMinutes: t.EffectiveBlockMinutes(),
+			HitsInWindow: f.hits[t.ID],
+		})
+	}
+	return out
+}
+
+func (f *fakeMessageTokenLoop) UpdateMessageToken(agentID, id string, ratePerMin, blockMinutes int) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	list := f.tokens[agentID]
+	for i := range list {
+		if list[i].ID == id {
+			list[i].RatePerMin = ratePerMin
+			list[i].BlockMinutes = blockMinutes
 			return true
 		}
 	}
@@ -163,5 +197,65 @@ func TestMessageTokens_DeleteUnknownToken404(t *testing.T) {
 		"/api/agents/main/message-tokens/nope", nil))
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404 for unknown token; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestMessageTokens_ListIncludesQuotaStatus verifies the list handler zips the
+// config list with the quota snapshot: default rate is surfaced and the live
+// hits-in-window is carried through.
+func TestMessageTokens_ListIncludesQuotaStatus(t *testing.T) {
+	_, mux, loop, cleanup := newMessageTokenTestHandler(t)
+	defer cleanup()
+	tok, _ := loop.CreateMessageToken("main", "gps")
+	loop.hits[tok.ID] = 4
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/agents/main/message-tokens", nil))
+	var out struct {
+		Tokens []messageTokenView `json:"tokens"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(out.Tokens) != 1 {
+		t.Fatalf("tokens = %+v, want 1", out.Tokens)
+	}
+	v := out.Tokens[0]
+	if v.RatePerMin != msgtoken.DefaultRatePerMin || v.BlockMinutes != msgtoken.DefaultBlockMinutes {
+		t.Errorf("defaults not surfaced: rate=%d block=%d", v.RatePerMin, v.BlockMinutes)
+	}
+	if v.HitsInWindow != 4 {
+		t.Errorf("HitsInWindow = %d, want 4", v.HitsInWindow)
+	}
+}
+
+func TestMessageTokens_UpdateConfig(t *testing.T) {
+	_, mux, loop, cleanup := newMessageTokenTestHandler(t)
+	defer cleanup()
+	tok, _ := loop.CreateMessageToken("main", "gps")
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPatch,
+		"/api/agents/main/message-tokens/"+tok.ID,
+		strings.NewReader(`{"rate_per_min":10,"block_minutes":5}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("patch status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	got := loop.ListMessageTokens("main")[0]
+	if got.RatePerMin != 10 || got.BlockMinutes != 5 {
+		t.Errorf("config not applied: %+v", got)
+	}
+}
+
+func TestMessageTokens_UpdateUnknownToken404(t *testing.T) {
+	_, mux, _, cleanup := newMessageTokenTestHandler(t)
+	defer cleanup()
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPatch,
+		"/api/agents/main/message-tokens/nope",
+		strings.NewReader(`{"rate_per_min":10,"block_minutes":5}`)))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body=%s", rec.Code, rec.Body.String())
 	}
 }
