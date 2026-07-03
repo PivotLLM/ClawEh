@@ -84,11 +84,11 @@ export function MessageTokensSection({ agentId }: { agentId: string }) {
   return (
     <div className="space-y-3">
       <div>
-        <p className="text-foreground text-sm font-semibold">Message API tokens</p>
+        <p className="text-foreground text-sm font-semibold">Integration Tokens</p>
         <p className="text-muted-foreground text-xs">
-          Long-lived tokens that let an external app (GPS tracker, alarm, monitor,
-          CI) POST a message to this agent. Delivery behaves like a scheduled event
-          — it goes to the agent's default channel, no conversation required.
+          Long-lived tokens that let an external app POST a message to this agent.
+          Delivery behaves like a scheduled event — it goes to the agent's default
+          channel, no conversation required.
         </p>
       </div>
 

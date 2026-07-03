@@ -618,9 +618,20 @@ func (c *Config) CronTarget(agentID string) (channel, chatID, peerKind string, o
 	return "", "", "", false
 }
 
+// channelSupportsDefaultDelivery reports whether a channel can serve as an
+// agent's default (async) delivery target for cron output and Integration Token
+// messages. webui is excluded: its only address is a per-browser session id
+// minted per connection (webui.go), so it has no durable chat that async output
+// could be delivered to. Delivery targets must be durable channels (Telegram,
+// Slack, Discord, …).
+func channelSupportsDefaultDelivery(channel string) bool {
+	return channel != "webui"
+}
+
 // ValidateBindings rejects an inconsistent binding set: more than one default
-// per agent, or a default binding that does not resolve to a concrete chat
-// (needs Match.Channel + Match.Peer{Kind,ID}) and so could not receive cron output.
+// per agent, a default on a channel with no durable delivery address (webui),
+// or a default that does not resolve to a concrete chat (needs Match.Channel +
+// Match.Peer{Kind,ID} or DeliverTo) and so could not receive cron output.
 func (c *Config) ValidateBindings() error {
 	defaults := map[string]int{}
 	for i := range c.Bindings {
@@ -631,6 +642,9 @@ func (c *Config) ValidateBindings() error {
 		defaults[b.AgentID]++
 		if defaults[b.AgentID] > 1 {
 			return fmt.Errorf("agent %q has more than one default binding", b.AgentID)
+		}
+		if !channelSupportsDefaultDelivery(b.Match.Channel) {
+			return fmt.Errorf("channel %q cannot be an agent's default channel: it has no durable delivery address", b.Match.Channel)
 		}
 		concretePeer := b.Match.Peer != nil && b.Match.Peer.Kind != "" && b.Match.Peer.ID != ""
 		if b.Match.Channel == "" || (!concretePeer && b.DeliverTo == "") {
