@@ -93,7 +93,10 @@ export function MessageTokensSection({ agentId }: { agentId: string }) {
 
   const tokens = q.data?.tokens ?? []
   const base = q.data?.endpoint_base ?? ""
-  const exampleURL = base + (tokens[0]?.token ?? "<token>")
+  // Always show a placeholder rather than a real token — the endpoint is the
+  // same for every token, and interpolating tokens[0] was misleading once a
+  // second token existed.
+  const exampleURL = base + "<token>"
 
   return (
     <div className="space-y-3">
