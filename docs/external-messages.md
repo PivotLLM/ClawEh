@@ -30,9 +30,10 @@ curl -X POST http://localhost:18790/api/message/YOUR_TOKEN \
   --data "The background task has completed. Results: all checks passed."
 ```
 
-**Requirement:** the agent must have had at least one conversation first — the
-reply is routed to the agent's most recent channel, so if it has never spoken
-anywhere there is nowhere to send the response.
+**Requirement:** the agent must have a **default channel** configured (a default
+binding). The message is delivered there as an unsolicited event, so no prior
+conversation is needed; if there is no default channel there is nowhere to
+deliver and the request fails.
 
 ---
 
@@ -77,11 +78,16 @@ access is a [service token](service-tokens.md), not this.)
 
 ## Routing
 
-The message is delivered to the agent's **last active channel** — the most recent
-channel/peer it had a real conversation on (Telegram, Slack, …). The agent replies
-there. The incoming message itself does not appear in the channel, only the
-agent's response. Incoming content is prefixed with the configured security
-marker and treated as untrusted (it must not be obeyed as instructions).
+The message is delivered to the agent's **default channel** (the binding marked
+default in **Agents → Channels**), as an unsolicited event — the same delivery
+path a scheduled/cron job uses. It does **not** continue an existing conversation,
+so the agent no longer needs a prior chat for the endpoint to work. If the agent
+has no default channel the request fails. Incoming content is prefixed with the
+configured security marker and treated as untrusted (it must not be obeyed as
+instructions).
+
+For long-lived, named, per-agent tokens managed in the Web UI, see
+[message-api.md](message-api.md).
 
 ---
 

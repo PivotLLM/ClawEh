@@ -6,6 +6,7 @@ import { toast } from "sonner"
 
 import { type ModelInfo, getModels } from "@/api/models"
 import { type AgentToolCatalogResponse, getAppConfig, getAgentTools, patchAppConfig } from "@/api/channels"
+import { MessageTokensSection } from "@/components/agents/message-tokens-section"
 import { FallbacksSelect } from "@/components/agents/model-selects"
 import { ToolSelect } from "@/components/agents/tool-select"
 import { PageHeader } from "@/components/page-header"
@@ -503,10 +504,17 @@ function AgentCard({
       )}
       </div>
 
+      <div className={settingsCardClass}>
+        <MessageTokensSection agentId={label} />
+      </div>
+
       {onMessageChange !== undefined && (
         <div className={settingsCardClass}>
         <div className="space-y-1.5">
-          <p className="text-foreground text-sm font-semibold">External message API token</p>
+          <p className="text-foreground text-sm font-semibold">Rotating Tokens</p>
+          <p className="text-muted-foreground text-xs">
+            Short-lived token the assistant can share; rotates automatically.
+          </p>
           <div className="flex items-center gap-2">
             <Input
               type="number"
@@ -643,13 +651,19 @@ function AgentCard({
             <p className="text-muted-foreground text-xs">{t("agents.channelsNone")}</p>
           ) : (
             <div className="space-y-1.5">
-              {agentBindings.map((b) => (
+              {agentBindings.map((b) => {
+                // webui has no durable delivery address (its chat id is a
+                // per-browser session), so it cannot be a default channel.
+                const noDefault = b.channel === "webui"
+                return (
                 <div key={b.index} className="flex items-center gap-2 text-xs">
                   <input
                     type="radio"
                     name={`default-channel-${label}`}
                     checked={b.isDefault}
+                    disabled={noDefault}
                     onChange={() => {
+                      if (noDefault) return
                       if (b.hasPeer) {
                         onSetDefaultBinding(b.index)
                         return
@@ -666,7 +680,7 @@ function AgentCard({
                     {b.channel}
                     {b.hasPeer ? ` · ${b.peerKind}:${b.peerID}` : ""}
                   </span>
-                  {!b.hasPeer && (
+                  {!b.hasPeer && !noDefault && (
                     <input
                       type="text"
                       className="border-border/60 bg-background w-28 rounded border px-1.5 py-0.5 font-mono text-xs"
@@ -681,17 +695,22 @@ function AgentCard({
                       }}
                     />
                   )}
+                  {noDefault && (
+                    <span className="text-muted-foreground">— {t("agents.channelsNoDefault")}</span>
+                  )}
                   {b.isDefault && (
                     <span className="text-muted-foreground">— {t("agents.channelsDefault")}</span>
                   )}
                 </div>
-              ))}
+                )
+              })}
             </div>
           )}
           <p className="text-muted-foreground text-xs">{t("agents.channelsHint")}</p>
         </div>
       )}
       </div>
+
     </div>
   )
 }

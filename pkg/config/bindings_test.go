@@ -134,4 +134,13 @@ func TestValidateBindings(t *testing.T) {
 	if err := noPeer.ValidateBindings(); err == nil {
 		t.Error("expected error for default binding without a concrete peer")
 	}
+
+	// webui has no durable delivery address → cannot be a default, even with a
+	// concrete peer (its peer id is an ephemeral per-browser session).
+	webui := &Config{Bindings: []AgentBinding{
+		{AgentID: "a", Default: true, Match: BindingMatch{Channel: "webui", Peer: &PeerMatch{Kind: "direct", ID: "webui:abc"}}},
+	}}
+	if err := webui.ValidateBindings(); err == nil {
+		t.Error("expected error for webui default binding")
+	}
 }

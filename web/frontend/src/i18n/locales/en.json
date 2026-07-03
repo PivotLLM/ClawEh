@@ -16,6 +16,7 @@
     "channelsDefault": "default (cron output goes here)",
     "channelsChatIdPlaceholder": "chat id",
     "channelsNeedChatId": "Enter the chat id to deliver to before setting this channel as default.",
+    "channelsNoDefault": "can't be a default channel (no durable delivery address)",
     "channelsHint": "Pick the default channel where this agent's scheduled (cron) output is delivered. For a channel bound to a specific chat (e.g. a Slack channel) that chat is used. For a channel with no specific chat (e.g. a Telegram bot), enter the chat id to deliver to — this is used for delivery only and does not change who can message the bot."
   },
   "navigation": {

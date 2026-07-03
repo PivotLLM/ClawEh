@@ -410,6 +410,10 @@ func setupAndStartServices(
 	// rebuild. See rebuildSharedHTTPServer for the swap seam.
 	addr := fmt.Sprintf("%s:%d", cfg.Gateway.Host, cfg.Gateway.Port)
 	services.WebServer = newMergedWebServer(configPath, cfg)
+	// Share the agent loop's named message-token store with the WebUI API so
+	// mint/revoke operations mutate the exact instance the message route validates
+	// against (no reload needed for a token to activate/deactivate).
+	services.WebServer.APIHandler().SetMessageTokenLoop(agentLoop)
 	// IP allowlist for the shared HTTP port. Defaults (via launcherconfig.Default)
 	// to the RFC1918 private ranges, so the no-auth WebUI is reachable only from
 	// loopback + the LAN even when bound to 0.0.0.0.

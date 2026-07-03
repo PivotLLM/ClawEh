@@ -32,8 +32,8 @@ type Runtime struct {
 	GetExposeReasoning func() bool
 	SetExposeReasoning func(on bool)
 	ClearHistory       func() error
-	CompactHistory func(ctx context.Context) (report string, err error)
-	ResetCooldown  func()
+	CompactHistory     func(ctx context.Context) (report string, err error)
+	ResetCooldown      func()
 	// ClearCooldown clears the cooldown for a single provider/model and
 	// returns true when an entry existed. Used by `/cooldowns clear <p/m>`
 	// to surface a "no cooldown found" message when the entry was already
@@ -46,6 +46,13 @@ type Runtime struct {
 	// currently in cooldown or billing-disabled. Returns nil on no
 	// implementation; the renderer must handle that as "feature unavailable".
 	ListCooldowns func() []CooldownEntry
+
+	// ListTokenQuota returns the per-token rate-limit status for THIS agent's
+	// named message-API tokens; ResetTokenQuota clears blocks (empty name = all)
+	// and returns the count cleared. Nil when the host has no message-token
+	// store; the /quota renderer treats that as "feature unavailable".
+	ListTokenQuota  func() []TokenQuotaEntry
+	ResetTokenQuota func(name string) int
 
 	Uptime          func() time.Duration
 	GetSessionStats func() (msgCount int, estTokens int, summaryChars int)
@@ -79,6 +86,18 @@ type Runtime struct {
 type ModelEntry struct {
 	Name     string
 	Provider string
+}
+
+// TokenQuotaEntry is one named message-API token's rate-limit status, surfaced
+// by /quota. Decoupled from pkg/msgtoken so the commands package does not import
+// it; the agent loop maps msgtoken.TokenQuota onto this shape.
+type TokenQuotaEntry struct {
+	Name           string
+	RatePerMin     int
+	BlockMinutes   int
+	HitsInWindow   int
+	Blocked        bool
+	BlockRemaining time.Duration
 }
 
 // CooldownEntry is a single row of the process-wide cooldown snapshot

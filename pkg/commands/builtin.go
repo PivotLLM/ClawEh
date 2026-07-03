@@ -20,6 +20,7 @@ func BuiltinDefinitions() []Definition {
 		reasoningCommand(),
 		memoryCommand(),
 		cooldownsCommand(),
+		quotaCommand(),
 		versionCommand(),
 	}
 }

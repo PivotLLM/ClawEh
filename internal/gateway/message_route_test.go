@@ -5,10 +5,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/PivotLLM/ClawEh/pkg/agent"
+	"github.com/PivotLLM/ClawEh/pkg/bus"
 	"github.com/PivotLLM/ClawEh/pkg/config"
 	"github.com/PivotLLM/ClawEh/pkg/health"
+	"github.com/PivotLLM/ClawEh/pkg/providers"
 	webserver "github.com/PivotLLM/ClawEh/web/backend"
 )
 
@@ -127,6 +131,60 @@ func TestRebuildSharedHTTPServer_RegistersCallbackRoute(t *testing.T) {
 	}
 	if got := hitCallback(t, fake.mux); got != http.StatusBadRequest {
 		t.Fatalf("after rebuildSharedHTTPServer: got %d, want %d (404 means the callback route was dropped on reload — the production bug fixed in e32731eb)", got, http.StatusBadRequest)
+	}
+}
+
+// TestMessageRoute_RateLimited429 exercises the full route: a named token
+// flooded past its per-token limit is rejected with 429 and a Retry-After
+// header, while requests within the limit are accepted (202).
+func TestMessageRoute_RateLimited429(t *testing.T) {
+	cfg := &config.Config{
+		Agents: config.AgentsConfig{
+			BaseDir: t.TempDir(),
+			Defaults: config.AgentDefaults{
+				Models:            []string{"test-model"},
+				MaxTokens:         4096,
+				MaxToolIterations: 10,
+			},
+			List: []config.AgentConfig{{ID: "main", Name: "Main", Default: true}},
+		},
+	}
+	al := agent.NewAgentLoop(cfg, bus.NewMessageBus(), providers.NewUnconfiguredProvider(), nil)
+
+	tok, err := al.CreateMessageToken("main", "gps")
+	if err != nil {
+		t.Fatalf("CreateMessageToken: %v", err)
+	}
+	if !al.UpdateMessageToken("main", tok.ID, 1, 15) { // limit 1/min
+		t.Fatal("UpdateMessageToken returned false")
+	}
+
+	server := health.NewServer("127.0.0.1", 0)
+	mux := http.NewServeMux()
+	server.RegisterOnMux(mux)
+	RegisterMessageRoute(server, al)
+
+	post := func() *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/message/"+tok.Token,
+			strings.NewReader("hello"))
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+
+	// First request is within the 1/min limit. Delivery fails (no default
+	// channel) with 422, which still proves the token passed the rate check —
+	// a 429 would mean it was blocked before delivery.
+	if rec := post(); rec.Code == http.StatusTooManyRequests {
+		t.Fatalf("first request got 429, want it to pass the rate check")
+	}
+	// Second request trips the limit → 429 with a Retry-After header.
+	rec := post()
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("second request status = %d, want 429; body=%s", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("Retry-After") == "" {
+		t.Error("429 response missing Retry-After header")
 	}
 }
 

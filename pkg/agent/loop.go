@@ -70,7 +70,13 @@ type AgentLoop struct {
 	// an out-of-credits 402) is skipped by both. Swapped under mu on reload.
 	cooldown        *providers.CooldownTracker
 	messageManagers map[string]*msgtoken.Manager // agentID -> manager (nil entry means disabled)
-	agentStates     map[string]*state.Manager    // agentID -> per-agent state manager
+	// namedTokens holds the long-lived, user-named message-API tokens (one store
+	// for all agents, persisted under state/message-api-tokens.json). It is
+	// separate from the rotating messageManagers: named tokens never expire and
+	// are minted/revoked from the WebUI. The same instance is shared with the API
+	// handler so a mint/revoke is visible to ValidateMessageToken immediately.
+	namedTokens *msgtoken.NamedStore
+	agentStates map[string]*state.Manager // agentID -> per-agent state manager
 	// sessionMus serializes messages within a session (session scope key → *sync.Mutex).
 	// The scope key is resolved via resolveMessageRoute before locking so that
 	// multiple channel:chatID pairs that map to the same agent session share one
@@ -207,6 +213,23 @@ func NewAgentLoop(
 	}
 	messageManagers := buildMessageManagers(registry, cfg)
 
+	// Load the long-lived named message-API token store from the data dir. An
+	// empty data dir (only happens in tests that build a bare Config) yields an
+	// in-memory-only store so nothing is written to a relative path. A load error
+	// (e.g. unreadable state file) is non-fatal: fall back to an empty in-memory
+	// store so the gateway still boots; named tokens are then unusable until the
+	// file is fixed, but rotating tokens and everything else keep working.
+	namedTokenPath := ""
+	if cfg.DataDir() != "" {
+		namedTokenPath = msgtoken.NamedTokenPath(cfg.DataDir())
+	}
+	namedTokens, err := msgtoken.NewNamedStore(namedTokenPath)
+	if err != nil {
+		logger.WarnCF("message", "Failed to load named message-token store, starting empty",
+			map[string]any{"error": err.Error()})
+		namedTokens, _ = msgtoken.NewNamedStore("")
+	}
+
 	al := &AgentLoop{
 		bus:                  msgBus,
 		cfg:                  cfg,
@@ -218,6 +241,7 @@ func NewAgentLoop(
 		dispatcher:           dispatcher,
 		agentStates:          agentStates,
 		messageManagers:      messageManagers,
+		namedTokens:          namedTokens,
 		startedAt:            time.Now(),
 		evictStop:            make(chan struct{}),
 		evictTTL:             defaultEvictTTL,
@@ -432,85 +456,191 @@ func (al *AgentLoop) SetCogmemManager(mgr *consolidate.Manager) {
 	al.cogmemManager = mgr
 }
 
-// ValidateMessageToken checks all message-token managers and returns the agentID
-// whose manager owns the given token. Returns ("", false) if no match.
+// ValidateMessageToken resolves an external-message token to its owning agent. It
+// checks BOTH token mechanisms: the long-lived named tokens (minted in the WebUI)
+// and the short-lived rotating per-agent tokens. Named tokens are checked first
+// since they are the primary, operator-facing path. Returns ("", false) if no
+// match.
 func (al *AgentLoop) ValidateMessageToken(token string) (string, bool) {
-	al.mu.RLock()
-	managers := al.messageManagers
-	al.mu.RUnlock()
-	for agentID, mgr := range managers {
-		if mgr.Validate(token) {
-			return agentID, true
-		}
-	}
-	return "", false
+	agentID, _, _, ok := al.resolveMessageToken(token)
+	return agentID, ok
 }
 
-// HandleExternalMessage delivers a raw external-message body to the agent's last active
-// conversation by publishing it as an inbound bus message.
-func (al *AgentLoop) HandleExternalMessage(ctx context.Context, agentID, body string) error {
-	sm, ok := al.agentStates[agentID]
+// resolveMessageToken resolves a token to its owning agent and reports whether
+// it is a named token (which is rate-limited) or a rotating one. named is only
+// meaningful when ok is true. Shared by ValidateMessageToken and
+// CheckMessageToken so both paths agree on which store owns a token.
+func (al *AgentLoop) resolveMessageToken(token string) (agentID, tokenID string, named, ok bool) {
+	al.mu.RLock()
+	managers := al.messageManagers
+	namedStore := al.namedTokens
+	al.mu.RUnlock()
+	if namedStore != nil {
+		if aid, tid, found := namedStore.ValidateWithID(token); found {
+			return aid, tid, true, true
+		}
+	}
+	for aid, mgr := range managers {
+		if mgr.Validate(token) {
+			return aid, "", false, true
+		}
+	}
+	return "", "", false, false
+}
+
+// MsgTokenDecision is the closed set of outcomes for an external-message token
+// check: a valid token, an unknown/expired one, or a named token that is
+// currently rate-limited (blocked).
+type MsgTokenDecision int
+
+const (
+	MsgTokenInvalid MsgTokenDecision = iota
+	MsgTokenValid
+	MsgTokenRateLimited
+)
+
+// CheckMessageToken resolves a token AND applies the per-token rate limit for
+// named tokens. Rotating tokens are never rate-limited (they are short-lived by
+// construction). retryAfter is only meaningful for MsgTokenRateLimited.
+func (al *AgentLoop) CheckMessageToken(token string) (agentID string, retryAfter time.Duration, decision MsgTokenDecision) {
+	aid, tokenID, named, ok := al.resolveMessageToken(token)
 	if !ok {
-		// Fall back to the default state manager.
-		sm = al.state
+		return "", 0, MsgTokenInvalid
 	}
-	if sm == nil {
-		return fmt.Errorf("no state manager for agent %q", agentID)
+	if !named {
+		return aid, 0, MsgTokenValid
 	}
+	al.mu.RLock()
+	namedStore := al.namedTokens
+	al.mu.RUnlock()
+	if namedStore == nil {
+		return aid, 0, MsgTokenValid
+	}
+	allowed, ra := namedStore.Allow(aid, tokenID)
+	if !allowed {
+		return aid, ra, MsgTokenRateLimited
+	}
+	return aid, 0, MsgTokenValid
+}
 
-	// last_channel is stored as "platform:chatID" — split back into parts.
-	lastChannel := sm.GetLastChannel()
-	if lastChannel == "" {
-		return fmt.Errorf("agent %q has no active conversation", agentID)
+// ListMessageTokens returns the named message-API tokens for an agent.
+func (al *AgentLoop) ListMessageTokens(agentID string) []msgtoken.NamedToken {
+	al.mu.RLock()
+	named := al.namedTokens
+	al.mu.RUnlock()
+	if named == nil {
+		return nil
 	}
-	var channel, chatID string
-	if idx := strings.Index(lastChannel, ":"); idx != -1 {
-		channel = lastChannel[:idx]
-		chatID = lastChannel[idx+1:]
-	} else {
-		channel = lastChannel
-	}
+	return named.List(agentID)
+}
 
-	// Notify the user with the raw message body before applying the security prefix.
-	rawBody := body
-	outbound := bus.OutboundMessage{
-		Channel: channel,
-		ChatID:  chatID,
-		Content: fmt.Sprintf("📥 Message received\n```\n%s\n```", rawBody),
+// CreateMessageToken mints a new named message-API token for an agent and
+// persists it. The returned token includes its plaintext secret.
+func (al *AgentLoop) CreateMessageToken(agentID, name string) (msgtoken.NamedToken, error) {
+	al.mu.RLock()
+	named := al.namedTokens
+	al.mu.RUnlock()
+	if named == nil {
+		return msgtoken.NamedToken{}, fmt.Errorf("named message-token store unavailable")
 	}
-	if err := al.bus.PublishOutbound(ctx, outbound); err != nil {
-		logger.WarnCF("message", "Failed to publish external-message notification to user",
-			map[string]any{
-				"channel":  channel,
-				"chat_id":  chatID,
-				"agent_id": agentID,
-				"error":    err.Error(),
-			})
+	return named.Create(agentID, name)
+}
+
+// DeleteMessageToken revokes a named message-API token by id. Returns true if a
+// token was removed.
+func (al *AgentLoop) DeleteMessageToken(agentID, id string) bool {
+	al.mu.RLock()
+	named := al.namedTokens
+	al.mu.RUnlock()
+	if named == nil {
+		return false
+	}
+	return named.Delete(agentID, id)
+}
+
+// MessageTokenQuota returns the per-token rate-limit status for an agent's named
+// message-API tokens.
+func (al *AgentLoop) MessageTokenQuota(agentID string) []msgtoken.TokenQuota {
+	al.mu.RLock()
+	named := al.namedTokens
+	al.mu.RUnlock()
+	if named == nil {
+		return nil
+	}
+	return named.Quota(agentID)
+}
+
+// ResetMessageTokenBlocks clears active rate-limit blocks for an agent's tokens.
+// An empty name clears all; a name clears just that token. Returns the count
+// cleared.
+func (al *AgentLoop) ResetMessageTokenBlocks(agentID, name string) int {
+	al.mu.RLock()
+	named := al.namedTokens
+	al.mu.RUnlock()
+	if named == nil {
+		return 0
+	}
+	return named.ResetBlocks(agentID, name)
+}
+
+// UpdateMessageToken sets a named token's rate/block config and persists it.
+// Returns true when the token exists.
+func (al *AgentLoop) UpdateMessageToken(agentID, id string, ratePerMin, blockMinutes int) bool {
+	al.mu.RLock()
+	named := al.namedTokens
+	al.mu.RUnlock()
+	if named == nil {
+		return false
+	}
+	return named.Update(agentID, id, ratePerMin, blockMinutes)
+}
+
+// ErrNoDefaultChannel is returned (wrapped) by HandleExternalMessage when the
+// target agent has no default channel binding to deliver an external event to.
+// Callers can errors.Is against it to report a precondition failure (4xx).
+var ErrNoDefaultChannel = errors.New("agent has no default channel")
+
+// HandleExternalMessage delivers a raw external-message body to an agent as an
+// unsolicited event — the same way a cron job fires (see schedule.ExecuteJob). It
+// does NOT continue any existing conversation: it resolves the agent's default
+// channel via CronTarget and publishes an inbound message there, so a monitoring
+// webhook / GPS tracker / alarm reaches the agent even with no active chat.
+//
+// Returns ErrNoDefaultChannel (wrapped) when the agent has no default channel
+// binding, so the HTTP layer can report a precondition (4xx) rather than a 500.
+//
+// The body is wrapped with the security prefix (so the model treats external
+// input with caution) but the raw text is preserved intact. Delivery mirrors cron
+// exactly: same CronTarget resolution and a fixed SenderID so downstream routing
+// and dedupe treat it as a system-originated event.
+func (al *AgentLoop) HandleExternalMessage(_ context.Context, agentID, body string) error {
+	cfg := al.GetConfig()
+	if cfg == nil {
+		return fmt.Errorf("configuration not loaded")
+	}
+	channel, chatID, peerKind, ok := cfg.CronTarget(agentID)
+	if !ok {
+		return fmt.Errorf("%w: agent %q — configure a default channel binding for it", ErrNoDefaultChannel, agentID)
 	}
 
 	prefix := global.DefaultMessagePrefix
-	if al.cfg != nil && al.cfg.Security.MessagePrefix != "" {
-		prefix = al.cfg.Security.MessagePrefix
+	if cfg.Security.MessagePrefix != "" {
+		prefix = cfg.Security.MessagePrefix
 	}
-	inboundBody := prefix + rawBody
 
 	msg := bus.InboundMessage{
 		Channel:  channel,
+		SenderID: "webhook",
 		ChatID:   chatID,
-		Content:  inboundBody,
-		SenderID: "message",
-		Sender: bus.SenderInfo{
-			Platform:    "message",
-			PlatformID:  agentID,
-			CanonicalID: "message:" + agentID,
-			DisplayName: "External message",
-		},
-		SessionKey: routing.BuildAgentMainSessionKey(agentID),
-		Metadata: map[string]string{
-			metadataKeyPreresolvedAgentID: agentID,
-		},
+		Content:  prefix + body,
+		Peer:     bus.Peer{Kind: peerKind, ID: chatID},
 	}
-	return al.bus.PublishInbound(ctx, msg)
+
+	// Publish on a fresh bounded context (not the request context) so a client
+	// that hangs up right after POSTing does not abort delivery — matching cron.
+	pubCtx, pubCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer pubCancel()
+	return al.bus.PublishInbound(pubCtx, msg)
 }
 
 // registerRuntimeTools is the single tool-registration entry point: for every
@@ -3553,6 +3683,27 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 				})
 			}
 			return out
+		}
+		// Token-quota hooks scope to THIS agent by closing over its normalized id
+		// (the same id the named-token store and message API key on).
+		quotaAgentID := routing.NormalizeAgentID(agent.ID)
+		rt.ListTokenQuota = func() []commands.TokenQuotaEntry {
+			snap := al.MessageTokenQuota(quotaAgentID)
+			out := make([]commands.TokenQuotaEntry, 0, len(snap))
+			for _, q := range snap {
+				out = append(out, commands.TokenQuotaEntry{
+					Name:           q.Name,
+					RatePerMin:     q.RatePerMin,
+					BlockMinutes:   q.BlockMinutes,
+					HitsInWindow:   q.HitsInWindow,
+					Blocked:        q.Blocked,
+					BlockRemaining: q.BlockRemaining,
+				})
+			}
+			return out
+		}
+		rt.ResetTokenQuota = func(name string) int {
+			return al.ResetMessageTokenBlocks(quotaAgentID, name)
 		}
 		if opts != nil {
 			sessionKey := opts.SessionKey
