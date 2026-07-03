@@ -6,7 +6,7 @@ Although the conversation context can be reset at any time, ClawEh is designed p
 
 **Latest Changes:**
 
-- ClawEh's built-in **device gateway** is tested and working with the **Rabbit R1** and the **ClawToTalk app on Android** — pair with a QR code or a typed token, choose which assistant each device talks to, and get replies **streamed live** as they are received from the LLM. See the [device gateway protocol](docs/device-gateway-protocol.md) for technical details.
+- ClawEh's built-in **device gateway** is tested and working with the **Rabbit R1** and the **ClawToTalk app on Android**. Pair with a QR code or a typed token, choose which assistant each device talks to, and get replies **streamed live** as they are received from the LLM. See the [device gateway protocol](docs/device-gateway-protocol.md) for technical details.
 - Added long-lived tokens to support inbound webhooks for integration
 - Integrated Maestro orchestration directly into ClawEh
 
