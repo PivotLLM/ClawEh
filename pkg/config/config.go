@@ -247,6 +247,12 @@ type AgentConfig struct {
 	// the entire Maestro toolset, with per-agent data under <workspace>/maestro.
 	Maestro bool `json:"maestro,omitempty"`
 
+	// Fusion is an all-or-nothing toggle for the MCPFusion config-driven REST-API
+	// tool suite. Off by default. When on, the agent gets every tool defined by the
+	// JSON config files under <dataDir>/fusion, with per-agent OAuth tokens keyed by
+	// agent id in the shared fusion token store.
+	Fusion bool `json:"fusion,omitempty"`
+
 	// Cogmem is an all-or-nothing toggle for the cognitive-memory tool suite and
 	// subsystem (prompt injection, archive hook, consolidation). It is an optional
 	// bool so the default is ON: nil (key absent) or true ⇒ enabled; false ⇒
@@ -571,9 +577,20 @@ func (c *Config) AgentHasMaestro(agentID string) bool {
 	return false
 }
 
+// AgentHasFusion reports whether the agent has the Fusion tool suite enabled.
+func (c *Config) AgentHasFusion(agentID string) bool {
+	id := strings.TrimSpace(agentID)
+	for i := range c.Agents.List {
+		if strings.EqualFold(c.Agents.List[i].ID, id) {
+			return c.Agents.List[i].Fusion
+		}
+	}
+	return false
+}
+
 // AgentSuiteEnabled reports whether the named all-or-nothing tool suite is
 // enabled for the agent. Suites are gated as a unit by a per-agent flag rather
-// than the per-tool allowlist. cogmem defaults ON; maestro defaults OFF.
+// than the per-tool allowlist. cogmem defaults ON; maestro and fusion default OFF.
 func (c *Config) AgentSuiteEnabled(agentID, suite string) bool {
 	id := strings.TrimSpace(agentID)
 	for i := range c.Agents.List {
@@ -582,6 +599,8 @@ func (c *Config) AgentSuiteEnabled(agentID, suite string) bool {
 			switch suite {
 			case "maestro":
 				return a.Maestro
+			case "fusion":
+				return a.Fusion
 			case "cogmem":
 				return a.CognitiveMemoryEnabled()
 			default:
@@ -1724,6 +1743,18 @@ func (c *Config) SkillsPath() string {
 // CronPath returns the cron store directory (~/.claw/cron).
 func (c *Config) CronPath() string {
 	return filepath.Join(c.dataDir, "cron")
+}
+
+// FusionPath returns the MCPFusion config directory (~/.claw/fusion), holding the
+// JSON service definitions, an optional env file, and fusion.log.
+func (c *Config) FusionPath() string {
+	return filepath.Join(c.dataDir, "fusion")
+}
+
+// FusionTokensPath returns the shared SQLite store for fusion OAuth tokens and
+// auth codes (~/.claw/state/fusion-tokens.db).
+func (c *Config) FusionTokensPath() string {
+	return filepath.Join(c.dataDir, "state", "fusion-tokens.db")
 }
 
 // BackupConfig controls the nightly configuration backup of key files
