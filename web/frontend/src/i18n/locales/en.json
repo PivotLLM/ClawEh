@@ -9,6 +9,8 @@
     "globalCronHint": "Allow this agent to create and manage scheduled (cron) jobs for OTHER agents, not just itself. Typically only one orchestrator agent needs this.",
     "maestro": "Maestro",
     "maestroHint": "Give this agent the full Maestro task-orchestration tool suite (projects, playbooks, tasks). Data lives under the agent's workspace; tasks run as sub-agents using this agent's models. Off by default.",
+    "fusion": "Fusion (REST-API tools)",
+    "fusionHint": "Give this agent the full MCPFusion config-driven REST-API tool suite. Service definitions live under the data directory's fusion config; per-agent OAuth tokens are keyed by agent id in the shared fusion token store. Off by default.",
     "cogmem": "Cognitive memory",
     "cogmemHint": "The cognitive-memory suite: durable memory tools plus automatic prompt injection and consolidation. All-or-nothing — on by default. Turn off for agents that should run statelessly.",
     "channels": "Default Channel",

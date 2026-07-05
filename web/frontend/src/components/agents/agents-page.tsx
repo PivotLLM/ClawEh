@@ -32,6 +32,7 @@ interface AgentEntry {
   share_common?: boolean
   global_cron?: boolean
   maestro?: boolean
+  fusion?: boolean
   cogmem?: boolean
   mounts?: MountEntry[]
   mcp_tools?: string[]
@@ -108,6 +109,7 @@ function parseAgent(value: unknown): AgentEntry {
     share_common: r.share_common === false ? false : true,
     global_cron: r.global_cron === true,
     maestro: r.maestro === true,
+    fusion: r.fusion === true,
     cogmem: r.cogmem !== false,
     mounts: asArray(r.mounts).map((m) => {
       const mr = asRecord(m)
@@ -253,6 +255,7 @@ interface AgentCardProps {
   shareCommon?: boolean
   globalCron?: boolean
   maestro?: boolean
+  fusion?: boolean
   cogmem?: boolean
   mounts?: MountEntry[]
   onMountsChange?: (mounts: MountEntry[]) => void
@@ -270,6 +273,7 @@ interface AgentCardProps {
   onShareCommonChange?: (share: boolean) => void
   onGlobalCronChange?: (v: boolean) => void
   onMaestroChange?: (v: boolean) => void
+  onFusionChange?: (v: boolean) => void
   onCogmemChange?: (v: boolean) => void
   onDelete?: () => void
   status?: "saving" | "saved" | "error"
@@ -292,6 +296,7 @@ function AgentCard({
   shareCommon = true,
   globalCron = false,
   maestro = false,
+  fusion = false,
   cogmem = true,
   mounts = [],
   onMountsChange = undefined,
@@ -309,6 +314,7 @@ function AgentCard({
   onShareCommonChange = undefined,
   onGlobalCronChange = undefined,
   onMaestroChange = undefined,
+  onFusionChange = undefined,
   onCogmemChange = undefined,
   onDelete,
   status,
@@ -412,7 +418,7 @@ function AgentCard({
             selected={tools}
             catalog={availableTools}
             onChange={onToolsChange}
-            suiteStates={{ maestro, cogmem }}
+            suiteStates={{ maestro, fusion, cogmem }}
           />
         </div>
       )}
@@ -624,6 +630,24 @@ function AgentCard({
         </div>
       )}
 
+      {onFusionChange !== undefined && (
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-foreground text-sm font-semibold">
+              {t("agents.fusion")}
+            </p>
+            <Switch
+              checked={fusion}
+              onCheckedChange={onFusionChange}
+              aria-label={t("agents.fusion")}
+            />
+          </div>
+          <p className="text-muted-foreground text-xs">
+            {t("agents.fusionHint")}
+          </p>
+        </div>
+      )}
+
       {onGlobalCronChange !== undefined && (
         <div className="space-y-1.5">
           <div className="flex items-center justify-between gap-2">
@@ -815,6 +839,7 @@ export function AgentsPage() {
         ...(a.share_common === false ? { share_common: false } : {}),
         ...(a.global_cron ? { global_cron: true } : {}),
         ...(a.maestro ? { maestro: true } : {}),
+        ...(a.fusion ? { fusion: true } : {}),
         ...(a.cogmem === false ? { cogmem: false } : {}),
         // Always sent (like tools/mounts) so clearing the box persists; the
         // backend drops an empty slice on save (omitempty).
@@ -925,6 +950,22 @@ export function AgentsPage() {
     list[index] = { ...list[index], maestro: !list[index].maestro }
     const next: AgentsConfig = { ...agentsCfg, list }
     setSaving(`maestro-${index}`)
+    try {
+      await patchAppConfig(buildPayload(next))
+      setAgentsCfg(next)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to save")
+    } finally {
+      setSaving(null)
+    }
+  }
+
+  // Independent toggle: flip the agent's Fusion tool suite on/off.
+  const handleToggleFusion = async (index: number) => {
+    const list = [...(agentsCfg.list ?? [])]
+    list[index] = { ...list[index], fusion: !list[index].fusion }
+    const next: AgentsConfig = { ...agentsCfg, list }
+    setSaving(`fusion-${index}`)
     try {
       await patchAppConfig(buildPayload(next))
       setAgentsCfg(next)
@@ -1255,6 +1296,8 @@ export function AgentsPage() {
                   onGlobalCronChange={() => handleToggleGlobalCron(i)}
                   maestro={agent.maestro === true}
                   onMaestroChange={() => handleToggleMaestro(i)}
+                  fusion={agent.fusion === true}
+                  onFusionChange={() => handleToggleFusion(i)}
                   cogmem={agent.cogmem !== false}
                   onCogmemChange={() => handleToggleCogmem(i)}
                   mounts={agentMountsEdits[i] ?? []}
@@ -1335,7 +1378,7 @@ export function AgentsPage() {
                             selected={addingTools}
                             catalog={availableTools}
                             onChange={setAddingTools}
-                            suiteStates={{ maestro: false, cogmem: true }}
+                            suiteStates={{ maestro: false, fusion: false, cogmem: true }}
                           />
                         )}
                       </div>

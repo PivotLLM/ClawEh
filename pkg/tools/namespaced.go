@@ -94,7 +94,14 @@ type nsBase struct {
 	def global.ToolDefinition
 }
 
-func (t nsBase) Name() string        { return t.ns + "_" + t.def.Name }
+func (t nsBase) Name() string {
+	// An empty namespace publishes the tool under its own (already-unique) name,
+	// with no "<ns>_" prefix — see BareNamespacedProvider.
+	if t.ns == "" {
+		return t.def.Name
+	}
+	return t.ns + "_" + t.def.Name
+}
 func (t nsBase) Description() string { return t.def.Description }
 func (t nsBase) Parameters() map[string]any {
 	return t.def.Schema()
@@ -148,12 +155,41 @@ func wrapGlobalTool(ns string, def global.ToolDefinition) Tool {
 type namespacedProvider struct {
 	ns string
 	p  global.ToolProvider
+	// bare suppresses the "<ns>_" tool-name prefix while keeping ns as the
+	// suite/catalog identity — for providers whose tool names are already
+	// globally unique (e.g. fusion's service-prefixed names). See toolName.
+	bare bool
 }
 
 // NamespacedProvider mounts a global.ToolProvider under ns. The resulting
 // provider plugs into RegisterProvider/GetProviders exactly like a legacy one.
 func NamespacedProvider(ns string, p global.ToolProvider) ToolProvider {
 	return namespacedProvider{ns: ns, p: p}
+}
+
+// BareNamespacedProvider is like NamespacedProvider but publishes each tool under
+// its own bare name (no "<ns>_" prefix). ns still groups the tools as a suite and
+// names the catalog/config entry; the caller guarantees the tool names are
+// globally unique.
+func BareNamespacedProvider(ns string, p global.ToolProvider) ToolProvider {
+	return namespacedProvider{ns: ns, p: p, bare: true}
+}
+
+// toolName is the published name of a bare tool: bare mode uses it verbatim,
+// otherwise it gets the "<ns>_" prefix.
+func (a namespacedProvider) toolName(bare string) string {
+	if a.bare {
+		return bare
+	}
+	return a.ns + "_" + bare
+}
+
+// namePrefix is the "<ns>" passed to wrapGlobalTool ("" in bare mode).
+func (a namespacedProvider) namePrefix() string {
+	if a.bare {
+		return ""
+	}
+	return a.ns
 }
 
 func (a namespacedProvider) Namespace() string { return a.ns }
@@ -198,7 +234,7 @@ func (a namespacedProvider) Build(deps ToolDeps) []Tool {
 		defs := a.p.RegisterTools(a.toGlobalDeps(deps))
 		out := make([]Tool, 0, len(defs))
 		for _, d := range defs {
-			out = append(out, wrapGlobalTool(a.ns, d))
+			out = append(out, wrapGlobalTool(a.namePrefix(), d))
 		}
 		return out
 	}
@@ -208,10 +244,10 @@ func (a namespacedProvider) Build(deps ToolDeps) []Tool {
 	for _, d := range defs {
 		// Per-tool enabled gate: an explicit override wins, else the tool's own
 		// default-allow. Default-deny tools are not registered unless opted in.
-		if deps.Cfg != nil && !deps.Cfg.Tools.ToolEnabled(a.ns+"_"+d.Name, d.DefaultAllowed()) {
+		if deps.Cfg != nil && !deps.Cfg.Tools.ToolEnabled(a.toolName(d.Name), d.DefaultAllowed()) {
 			continue
 		}
-		out = append(out, wrapGlobalTool(a.ns, d))
+		out = append(out, wrapGlobalTool(a.namePrefix(), d))
 	}
 	return out
 }
