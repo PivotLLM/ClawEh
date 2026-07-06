@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -1282,6 +1283,104 @@ func (c *ModelConfig) Validate() error {
 type GatewayConfig struct {
 	Host string `json:"host" env:"CLAW_GATEWAY_HOST"`
 	Port int    `json:"port" env:"CLAW_GATEWAY_PORT"`
+	// ExternalURL is the base URL advertised to external clients (e.g. the
+	// claw-auth OAuth utility) for reaching this gateway's HTTP API. Empty
+	// derives http://<host>:<port> from the bind address; set it to e.g.
+	// https://claw.example.com when a reverse proxy / TLS terminator sits in
+	// front. See EffectiveExternalURL.
+	ExternalURL string `json:"external_url,omitempty" env:"CLAW_GATEWAY_EXTERNAL_URL"`
+	// AllowedCIDRs is the IP allowlist for the shared HTTP server (WebUI/API +
+	// health). Empty means the private-network default (see PrivateNetworkCIDRs).
+	// Combined with the always-allowed loopback (enforced at bind time), this
+	// locks the no-auth WebUI/API to the local machine and the private LAN
+	// regardless of the bind address. Set an explicit list (e.g. 0.0.0.0/0) to
+	// widen it.
+	AllowedCIDRs []string `json:"allowed_cidrs,omitempty"`
+}
+
+// DefaultGatewayPort is the default port for the merged claw HTTP server
+// (gateway + WebUI on a single mux). It matches DefaultConfig's Gateway.Port.
+const DefaultGatewayPort = 18790
+
+// PrivateNetworkCIDRs is the default IP allowlist: the RFC1918 private ranges.
+// Used when Gateway.AllowedCIDRs is empty so a fresh install is locked to
+// loopback + the private network out of the box.
+var PrivateNetworkCIDRs = []string{
+	"10.0.0.0/8",
+	"172.16.0.0/12",
+	"192.168.0.0/16",
+}
+
+// EffectiveAllowedCIDRs returns the IP allowlist to enforce: the configured
+// AllowedCIDRs when non-empty, otherwise the private-network default. A copy is
+// returned so callers cannot mutate the shared default slice.
+func (g GatewayConfig) EffectiveAllowedCIDRs() []string {
+	if len(g.AllowedCIDRs) > 0 {
+		return append([]string(nil), g.AllowedCIDRs...)
+	}
+	return append([]string(nil), PrivateNetworkCIDRs...)
+}
+
+// ValidateAllowedCIDRs rejects any entry that is not a valid CIDR (matching the
+// validation the retired launcher-config save path enforced).
+func ValidateAllowedCIDRs(cidrs []string) error {
+	for _, c := range cidrs {
+		if _, _, err := net.ParseCIDR(c); err != nil {
+			return fmt.Errorf("invalid CIDR %q", c)
+		}
+	}
+	return nil
+}
+
+// EffectiveExternalURL returns the base URL external clients should use to reach
+// the gateway HTTP API. A non-empty ExternalURL is returned verbatim (operators
+// may point it at an https proxy). Otherwise it derives http://<host>:<port>
+// from the bind address, resolving the LAN IP when bound to 0.0.0.0 so the URL
+// is reachable off-box.
+func (g GatewayConfig) EffectiveExternalURL() string {
+	if g.ExternalURL != "" {
+		return g.ExternalURL
+	}
+
+	host := g.Host
+	switch host {
+	case "", "127.0.0.1", "localhost":
+		host = "127.0.0.1"
+	case "0.0.0.0":
+		// Bind-all ("network access on"): advertise the primary LAN IP so the
+		// URL works from other machines; fall back to loopback if none found.
+		if ip := primaryLANIP(); ip != "" {
+			host = ip
+		} else {
+			host = "127.0.0.1"
+		}
+	}
+
+	return fmt.Sprintf("http://%s:%d", host, g.Port)
+}
+
+// NetworkAccess reports whether the gateway binds to all interfaces (0.0.0.0),
+// i.e. "network access on". Convenience for API/WebUI surfaces.
+func (g GatewayConfig) NetworkAccess() bool {
+	return g.Host == "0.0.0.0"
+}
+
+// primaryLANIP returns the host's first non-loopback private IPv4, or "".
+func primaryLANIP() string {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return ""
+	}
+	for _, a := range addrs {
+		ipnet, ok := a.(*net.IPNet)
+		if !ok || ipnet.IP.IsLoopback() {
+			continue
+		}
+		if ip4 := ipnet.IP.To4(); ip4 != nil && ip4.IsPrivate() {
+			return ip4.String()
+		}
+	}
+	return ""
 }
 
 type ToolDiscoveryConfig struct {
@@ -1553,6 +1652,10 @@ func LoadConfig(path string) (*Config, error) {
 	// Migrate legacy channel config fields to new unified structures
 	cfg.migrateChannelConfigs()
 
+	// Adopt a stale launcher-config.json (the retired separate allowlist file)
+	// into gateway.allowed_cidrs on each load (see migrateLauncherConfig).
+	migrateLauncherConfig(path, cfg)
+
 	// Note: provider/model validation is intentionally NOT fatal here. LoadConfig
 	// returns the full parsed config so the WebUI can display and repair invalid
 	// entries (a bad provider must not make the config unreadable). The gateway
@@ -1586,6 +1689,39 @@ func warnLegacyCompressModel(data []byte) {
 		if len(a.CompressModel) > 0 {
 			logger.WarnCF("config", "ignoring removed field compress_model on agent; configure summarization models globally via summarization.models", map[string]any{"agent_id": a.ID})
 		}
+	}
+}
+
+// migrateLauncherConfig folds the retired launcher-config.json (which held the
+// IP allowlist in a separate file next to config.json) into gateway.allowed_cidrs.
+// It adopts the value into the in-memory config on every load and does NOT persist
+// or delete the stale file: LoadConfig has already overlaid CLAW_* env vars by this
+// point, so writing config.json here would bake env-derived values into the file.
+// Re-adopting each load keeps a custom allowlist alive across restarts; the first
+// WebUI config save persists gateway.allowed_cidrs canonically, after which this
+// no-ops (the gateway block already has an allowlist) and the leftover file is
+// inert. Only runs when the gateway block has no explicit allowlist, so a value
+// already in config.json wins and is not clobbered.
+func migrateLauncherConfig(configPath string, cfg *Config) {
+	if len(cfg.Gateway.AllowedCIDRs) > 0 {
+		return
+	}
+	lcPath := filepath.Join(filepath.Dir(configPath), "launcher-config.json")
+	data, err := os.ReadFile(lcPath)
+	if err != nil {
+		// No legacy file (the common case) — nothing to migrate.
+		return
+	}
+	var legacy struct {
+		AllowedCIDRs []string `json:"allowed_cidrs"`
+	}
+	if err := json.Unmarshal(data, &legacy); err != nil {
+		logger.WarnCF("config", "ignoring unreadable launcher-config.json during migration", map[string]any{"path": lcPath, "error": err.Error()})
+		return
+	}
+	if len(legacy.AllowedCIDRs) > 0 {
+		cfg.Gateway.AllowedCIDRs = legacy.AllowedCIDRs
+		logger.InfoCF("config", "adopted launcher-config.json allowed_cidrs into gateway.allowed_cidrs", map[string]any{"allowed_cidrs": legacy.AllowedCIDRs})
 	}
 }
 

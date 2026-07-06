@@ -1,6 +1,15 @@
 export type JsonRecord = Record<string, unknown>
 
 export interface CoreConfigForm {
+  // Service (gateway.*) — bind host doubles as the network-access toggle
+  // ("0.0.0.0" = on, "127.0.0.1" = off), and is the runtime source of truth for
+  // the WebUI/API listener. Saved via /api/config.
+  gatewayHost: string
+  gatewayPort: string
+  gatewayExternalUrl: string
+  // IP allowlist (gateway.allowed_cidrs), one CIDR per line or comma-separated.
+  // Empty = the private-network default enforced by the backend.
+  allowedCIDRsText: string
   baseDir: string
   commonDir: string
   restrictToWorkspace: boolean
@@ -41,12 +50,6 @@ export interface CoreConfigForm {
   backupRetainDays: string
 }
 
-export interface LauncherForm {
-  port: string
-  publicAccess: boolean
-  allowedCIDRsText: string
-}
-
 export const SESSION_MODE_OPTIONS = [
   {
     value: "unified",
@@ -79,6 +82,10 @@ export const SESSION_MODE_OPTIONS = [
 ] as const
 
 export const EMPTY_FORM: CoreConfigForm = {
+  gatewayHost: "127.0.0.1",
+  gatewayPort: "18790",
+  gatewayExternalUrl: "",
+  allowedCIDRsText: "",
   baseDir: "",
   commonDir: "",
   restrictToWorkspace: true,
@@ -117,15 +124,6 @@ export const EMPTY_FORM: CoreConfigForm = {
   backupRetainDays: "30",
 }
 
-export const EMPTY_LAUNCHER_FORM: LauncherForm = {
-  // The merged claw binary serves the WebUI on the gateway port (default
-  // 18790). Older installs that still had a launcher-config.json on disk
-  // continue to override this via /api/system/launcher-config.
-  port: "18790",
-  publicAccess: false,
-  allowedCIDRsText: "",
-}
-
 function asRecord(value: unknown): JsonRecord {
   if (value && typeof value === "object" && !Array.isArray(value)) {
     return value as JsonRecord
@@ -160,6 +158,7 @@ function asNumberString(value: unknown, fallback: string): string {
 
 export function buildFormFromConfig(config: unknown): CoreConfigForm {
   const root = asRecord(config)
+  const gateway = asRecord(root.gateway)
   const agents = asRecord(root.agents)
   const defaults = asRecord(agents.defaults)
   const summarization = asRecord(root.summarization)
@@ -175,6 +174,10 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
   )
 
   return {
+    gatewayHost: asString(gateway.host) || EMPTY_FORM.gatewayHost,
+    gatewayPort: asNumberString(gateway.port, EMPTY_FORM.gatewayPort),
+    gatewayExternalUrl: asString(gateway.external_url),
+    allowedCIDRsText: asStringArray(gateway.allowed_cidrs).join("\n"),
     baseDir: asString(agents.base_dir),
     commonDir: asString(agents.common_dir),
     restrictToWorkspace:

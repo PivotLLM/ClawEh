@@ -1,4 +1,4 @@
-.PHONY: all build install uninstall uninstall-all clean help test test-race test-coverage test-cover-html test-regression generate vet fmt lint fix deps update-deps check run frontend frontend-deps build-linux-arm build-linux-arm64 build-linux-mipsle build-pi-zero build-all
+.PHONY: all build claw-auth install uninstall uninstall-all clean help test test-race test-coverage test-cover-html test-regression generate vet fmt lint fix deps update-deps check run frontend frontend-deps build-linux-arm build-linux-arm64 build-linux-mipsle build-pi-zero build-all
 
 # Binary names
 BINARY_NAME=claw
@@ -130,6 +130,13 @@ build: $(EMBED_INDEX) generate
 	@$(BUILD_ENV) $(GO) build $(GOFLAGS) $(LDFLAGS) -o $(BINARY_PATH) ./$(CMD_DIR)
 	@echo "Build complete: $(BINARY_PATH)"
 	@ln -sf $(BINARY_NAME)-$(PLATFORM)-$(ARCH) $(BUILD_DIR)/$(BINARY_NAME)
+
+## claw-auth: Build the standalone claw-auth OAuth helper CLI (runs on the user's own computer).
+claw-auth:
+	@echo "Building claw-auth..."
+	@mkdir -p $(BUILD_DIR)
+	@$(GO) build $(GOFLAGS) -o $(BUILD_DIR)/claw-auth ./cmd/claw-auth
+	@echo "Build complete: $(BUILD_DIR)/claw-auth"
 
 ## frontend: Build the SPA into the Go embed source (web/backend/dist).
 frontend: $(EMBED_INDEX)

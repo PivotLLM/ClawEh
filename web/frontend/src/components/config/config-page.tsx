@@ -7,23 +7,17 @@ import { toast } from "sonner"
 
 import { patchAppConfig } from "@/api/channels"
 import {
-  getLauncherConfig,
-  setLauncherConfig as updateLauncherConfig,
-} from "@/api/system"
-import {
   AgentDefaultsSection,
   AgentModelDefaultsSection,
   BackupSection,
   ContextManagementSection,
   DevicesSection,
-  LauncherSection,
   RuntimeSection,
+  ServiceSection,
 } from "@/components/config/config-sections"
 import {
   type CoreConfigForm,
   EMPTY_FORM,
-  EMPTY_LAUNCHER_FORM,
-  type LauncherForm,
   buildFormFromConfig,
   parseCIDRText,
   parseIntField,
@@ -36,11 +30,12 @@ export function ConfigPage() {
   const queryClient = useQueryClient()
   const [form, setForm] = useState<CoreConfigForm>(EMPTY_FORM)
   const [baseline, setBaseline] = useState<CoreConfigForm>(EMPTY_FORM)
-  const [launcherForm, setLauncherForm] =
-    useState<LauncherForm>(EMPTY_LAUNCHER_FORM)
-  const [launcherBaseline, setLauncherBaseline] =
-    useState<LauncherForm>(EMPTY_LAUNCHER_FORM)
   const [saving, setSaving] = useState(false)
+
+  // The address the user is currently reaching the WebUI on. Inherently
+  // reachable from their own machine (where claw-auth runs), so it is the
+  // external-URL default/placeholder for the Service card.
+  const externalUrlPlaceholder = `${window.location.protocol}//${window.location.host}`
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["config"],
@@ -53,17 +48,18 @@ export function ConfigPage() {
     },
   })
 
-  const { data: launcherConfig, isLoading: isLauncherLoading } = useQuery({
-    queryKey: ["system", "launcher-config"],
-    queryFn: getLauncherConfig,
-  })
-
   useEffect(() => {
     if (!data) return
     const parsed = buildFormFromConfig(data)
+    // Seed the external URL with how the user is currently reaching the WebUI so
+    // an unset value persists a reachable default on save (rather than leaving it
+    // to server-side host:port derivation).
+    if (!parsed.gatewayExternalUrl) {
+      parsed.gatewayExternalUrl = externalUrlPlaceholder
+    }
     setForm(parsed)
     setBaseline(parsed)
-  }, [data])
+  }, [data, externalUrlPlaceholder])
 
   // Raw agents.list straight from the loaded config — re-sent verbatim (with the
   // default flag flipped) when the default agent changes, so no agent fields are
@@ -86,21 +82,8 @@ export function ConfigPage() {
     [rawAgentList],
   )
 
-  useEffect(() => {
-    if (!launcherConfig) return
-    const parsed: LauncherForm = {
-      port: String(launcherConfig.port),
-      publicAccess: launcherConfig.public,
-      allowedCIDRsText: (launcherConfig.allowed_cidrs ?? []).join("\n"),
-    }
-    setLauncherForm(parsed)
-    setLauncherBaseline(parsed)
-  }, [launcherConfig])
-
   const configDirty = JSON.stringify(form) !== JSON.stringify(baseline)
-  const launcherDirty =
-    JSON.stringify(launcherForm) !== JSON.stringify(launcherBaseline)
-  const isDirty = configDirty || launcherDirty
+  const isDirty = configDirty
 
   const updateField = <K extends keyof CoreConfigForm>(
     key: K,
@@ -109,16 +92,8 @@ export function ConfigPage() {
     setForm((prev) => ({ ...prev, [key]: value }))
   }
 
-  const updateLauncherField = <K extends keyof LauncherForm>(
-    key: K,
-    value: LauncherForm[K],
-  ) => {
-    setLauncherForm((prev) => ({ ...prev, [key]: value }))
-  }
-
   const handleReset = () => {
     setForm(baseline)
-    setLauncherForm(launcherBaseline)
     toast.info(t("pages.config.reset_success"))
   }
 
@@ -255,7 +230,18 @@ export function ConfigPage() {
             })
           : undefined
 
+        const gatewayPort = parseIntField(form.gatewayPort, "Web port", {
+          min: 1,
+          max: 65535,
+        })
+
         await patchAppConfig({
+          gateway: {
+            host: form.gatewayHost,
+            port: gatewayPort,
+            external_url: form.gatewayExternalUrl.trim(),
+            allowed_cidrs: parseCIDRText(form.allowedCIDRsText),
+          },
           agents: {
             base_dir: baseDir,
             common_dir: form.commonDir.trim(),
@@ -318,32 +304,6 @@ export function ConfigPage() {
         queryClient.invalidateQueries({ queryKey: ["config"] })
       }
 
-      if (launcherDirty) {
-        const port = parseIntField(launcherForm.port, "Service port", {
-          min: 1,
-          max: 65535,
-        })
-        const allowedCIDRs = parseCIDRText(launcherForm.allowedCIDRsText)
-        const savedLauncherConfig = await updateLauncherConfig({
-          port,
-          public: launcherForm.publicAccess,
-          allowed_cidrs: allowedCIDRs,
-        })
-        const parsedLauncher: LauncherForm = {
-          port: String(savedLauncherConfig.port),
-          publicAccess: savedLauncherConfig.public,
-          allowedCIDRsText: (savedLauncherConfig.allowed_cidrs ?? []).join(
-            "\n",
-          ),
-        }
-        setLauncherForm(parsedLauncher)
-        setLauncherBaseline(parsedLauncher)
-        queryClient.setQueryData(
-          ["system", "launcher-config"],
-          savedLauncherConfig,
-        )
-      }
-
       toast.success(t("pages.config.save_success"))
     } catch (err) {
       toast.error(
@@ -385,6 +345,13 @@ export function ConfigPage() {
                 </div>
               )}
 
+              <ServiceSection
+                form={form}
+                onFieldChange={updateField}
+                disabled={saving}
+                externalUrlPlaceholder={externalUrlPlaceholder}
+              />
+
               <AgentDefaultsSection form={form} onFieldChange={updateField} />
 
               <AgentModelDefaultsSection
@@ -398,12 +365,6 @@ export function ConfigPage() {
               <RuntimeSection form={form} onFieldChange={updateField} />
 
             <BackupSection form={form} onFieldChange={updateField} />
-
-              <LauncherSection
-                launcherForm={launcherForm}
-                onFieldChange={updateLauncherField}
-                disabled={saving || isLauncherLoading}
-              />
 
               <DevicesSection form={form} onFieldChange={updateField} />
 

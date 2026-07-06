@@ -4,6 +4,7 @@
 package fusion
 
 import (
+	"net/http"
 	"path/filepath"
 	"sync"
 
@@ -55,7 +56,22 @@ func sharedEngine(c *config.Config) *mcpfusion.Fusion {
 			mcpfusion.WithLogger(lg),
 			mcpfusion.WithDataStore(ds),
 			mcpfusion.WithConfigDir(c.FusionPath()),
+			// External URL + command name are advertised to the claw-auth OAuth
+			// utility so it can reach this gateway's mounted OAuth API.
+			mcpfusion.WithExternalURL(c.Gateway.EffectiveExternalURL()),
+			mcpfusion.WithAuthCommandName("claw-auth"),
 		)
 	})
 	return engine
+}
+
+// OAuthHandler returns the fusion OAuth API handler (with its built-in
+// auth-code -> tenant middleware) for the gateway to mount on the shared HTTP
+// server, or nil when the engine could not be built (so no routes are mounted).
+func OAuthHandler(c *config.Config) http.Handler {
+	e := sharedEngine(c)
+	if e == nil {
+		return nil
+	}
+	return e.OAuthHandler()
 }

@@ -247,7 +247,7 @@ func DefaultConfig() *Config {
 		},
 		Gateway: GatewayConfig{
 			Host: "127.0.0.1",
-			Port: 18790,
+			Port: DefaultGatewayPort,
 		},
 		Tools: ToolsConfig{
 			MediaCleanup: MediaCleanupConfig{

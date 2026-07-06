@@ -159,17 +159,13 @@ func addToolsToServer(
 			continue
 		}
 
-		// External catalogue name: a tool that wraps an upstream MCP server names
-		// itself (e.g. "fusion_trello_search"); everything else is a claw-native
-		// tool, advertised under the reserved "local_" namespace. Built-ins are
-		// "local_*" and upstream tools are "<server>_*", so the two can never
-		// collide; this is decided structurally (ExternalNamer), not by sniffing
-		// the "mcp_" prefix.
+		// External catalogue name: upstream-MCP tools self-name via ExternalNamer
+		// (e.g. "<server>_<tool>", stripping the internal "mcp_" prefix); every
+		// other tool is published under its own registry name (no prefix). Any
+		// collision between two external names is caught by the dedupe guard below.
 		pubName := name
 		if en, ok := tool.(tools.ExternalNamer); ok {
 			pubName = en.ExternalName()
-		} else {
-			pubName = "local_" + name
 		}
 		if prior, dup := published[pubName]; dup {
 			logger.WarnCF("mcpserver", "skipping tool: external name collision",

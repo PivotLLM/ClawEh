@@ -117,7 +117,7 @@ func TestEndpointSchemas_DifferByParam(t *testing.T) {
 		srv := server.NewMCPServer("t", "0")
 		addToolsToServer(srv, mode, regs, []string{"*"}, st, resolver, nil, acl.Default, nil, nil)
 		listed := srv.ListTools()
-		tool, ok := listed["local_read_file"]
+		tool, ok := listed["read_file"]
 		if !ok {
 			t.Fatal("read_file not registered")
 		}
