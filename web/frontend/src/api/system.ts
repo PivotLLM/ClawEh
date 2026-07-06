@@ -57,3 +57,9 @@ export async function getSetupStatus(): Promise<SetupStatus> {
 export async function reloadGateway(): Promise<void> {
   await request<unknown>("/api/gateway/reload", { method: "POST" })
 }
+
+// getVersion returns the running ClawEh build version (for the sidebar footer).
+export async function getVersion(): Promise<string> {
+  const res = await request<{ version: string }>("/api/system/version")
+  return res.version
+}
