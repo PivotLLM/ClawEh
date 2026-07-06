@@ -2,6 +2,8 @@ package mcp
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -303,5 +305,75 @@ func TestClose_IdempotentOnEmptyManager(t *testing.T) {
 	}
 	if err := mgr.Close(); err != nil {
 		t.Fatalf("second close should be idempotent, got: %v", err)
+	}
+}
+
+// newTestMCPServer serves a minimal streamable-HTTP MCP server (one no-op tool)
+// so Sync can exercise a real connect without spawning a subprocess.
+func newTestMCPServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := sdkmcp.NewServer(&sdkmcp.Implementation{Name: "test", Version: "0.0.1"}, nil)
+	sdkmcp.AddTool(srv, &sdkmcp.Tool{Name: "ping", Description: "no-op"},
+		func(context.Context, *sdkmcp.CallToolRequest, struct{}) (*sdkmcp.CallToolResult, struct{}, error) {
+			return &sdkmcp.CallToolResult{}, struct{}{}, nil
+		})
+	handler := sdkmcp.NewStreamableHTTPHandler(
+		func(*http.Request) *sdkmcp.Server { return srv }, nil)
+	ts := httptest.NewServer(handler)
+	t.Cleanup(ts.Close)
+	return ts
+}
+
+// TestSync_ReusesUnchangedReconnectsChanged is the core guarantee behind keeping
+// a long-lived stdio browser alive across reloads: an unchanged server keeps its
+// exact connection, a changed one is reconnected, and a dropped one disconnects.
+func TestSync_ReusesUnchangedReconnectsChanged(t *testing.T) {
+	ts := newTestMCPServer(t)
+	ctx := context.Background()
+	mgr := NewManager()
+	defer func() { _ = mgr.Close() }()
+
+	base := config.MCPConfig{Servers: map[string]config.MCPServerConfig{
+		"svc": {Enabled: true, Type: "http", URL: ts.URL},
+	}}
+
+	if err := mgr.Sync(ctx, base, ""); err != nil {
+		t.Fatalf("initial Sync: %v", err)
+	}
+	conn1, ok := mgr.GetServer("svc")
+	if !ok {
+		t.Fatal("svc should be connected after initial Sync")
+	}
+
+	// Identical config: the live connection must be retained, not replaced.
+	if err := mgr.Sync(ctx, base, ""); err != nil {
+		t.Fatalf("no-op Sync: %v", err)
+	}
+	conn2, ok := mgr.GetServer("svc")
+	if !ok || conn2 != conn1 {
+		t.Fatalf("unchanged server should keep its connection: ok=%v same=%v", ok, conn2 == conn1)
+	}
+
+	// Changed config (new header): the server must be reconnected.
+	changed := config.MCPConfig{Servers: map[string]config.MCPServerConfig{
+		"svc": {Enabled: true, Type: "http", URL: ts.URL, Headers: map[string]string{"X-Env": "b"}},
+	}}
+	if err := mgr.Sync(ctx, changed, ""); err != nil {
+		t.Fatalf("changed Sync: %v", err)
+	}
+	conn3, ok := mgr.GetServer("svc")
+	if !ok || conn3 == conn1 {
+		t.Fatalf("changed server should be reconnected: ok=%v same=%v", ok, conn3 == conn1)
+	}
+
+	// Disabled: the server must be disconnected.
+	disabled := config.MCPConfig{Servers: map[string]config.MCPServerConfig{
+		"svc": {Enabled: false, Type: "http", URL: ts.URL},
+	}}
+	if err := mgr.Sync(ctx, disabled, ""); err != nil {
+		t.Fatalf("disable Sync: %v", err)
+	}
+	if _, ok := mgr.GetServer("svc"); ok {
+		t.Fatal("disabled server should be disconnected")
 	}
 }

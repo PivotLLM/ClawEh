@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -103,6 +104,13 @@ type ServerConnection struct {
 	Client  *mcp.Client
 	Session *mcp.ClientSession
 	Tools   []*mcp.Tool
+	// cfg is the resolved config this connection was established with. Sync
+	// compares it against the reloaded config to decide whether a server actually
+	// changed (reconnect) or was left untouched (keep the live process running).
+	cfg config.MCPServerConfig
+	// cmd is the child process for stdio transports (nil for sse/http). Held so a
+	// disconnect can kill the whole process group, not just the direct child.
+	cmd *exec.Cmd
 }
 
 // Manager manages multiple MCP server connections
@@ -161,24 +169,18 @@ func (m *Manager) LoadFromMCPConfig(
 			defer wg.Done()
 
 			// Resolve relative envFile paths relative to workspace
-			if serverCfg.EnvFile != "" && !filepath.IsAbs(serverCfg.EnvFile) {
-				if workspace == "" {
-					err := fmt.Errorf(
-						"workspace path is empty while resolving relative envFile %q for server %s",
-						serverCfg.EnvFile,
-						name,
-					)
-					logger.ErrorCF("mcp", "Invalid MCP server configuration",
-						map[string]any{
-							"server":   name,
-							"env_file": serverCfg.EnvFile,
-							"error":    err.Error(),
-						})
-					errs <- err
-					return
-				}
-				serverCfg.EnvFile = filepath.Join(workspace, serverCfg.EnvFile)
+			resolved, err := resolveServerEnvFile(name, serverCfg, workspace)
+			if err != nil {
+				logger.ErrorCF("mcp", "Invalid MCP server configuration",
+					map[string]any{
+						"server":   name,
+						"env_file": serverCfg.EnvFile,
+						"error":    err.Error(),
+					})
+				errs <- err
+				return
 			}
+			serverCfg = resolved
 
 			if err := m.ConnectServer(ctx, name, serverCfg); err != nil {
 				logger.ErrorCF("mcp", "Failed to connect to MCP server",
@@ -231,6 +233,28 @@ func (m *Manager) LoadFromMCPConfig(
 	return nil
 }
 
+// resolveServerEnvFile returns a copy of cfg with a relative EnvFile made
+// absolute against the workspace, so stdio servers load env identically
+// regardless of process CWD. The input is not mutated.
+func resolveServerEnvFile(
+	name string,
+	cfg config.MCPServerConfig,
+	workspace string,
+) (config.MCPServerConfig, error) {
+	if cfg.EnvFile == "" || filepath.IsAbs(cfg.EnvFile) {
+		return cfg, nil
+	}
+	if workspace == "" {
+		return cfg, fmt.Errorf(
+			"workspace path is empty while resolving relative envFile %q for server %s",
+			cfg.EnvFile,
+			name,
+		)
+	}
+	cfg.EnvFile = filepath.Join(workspace, cfg.EnvFile)
+	return cfg, nil
+}
+
 // ConnectServer connects to a single MCP server
 func (m *Manager) ConnectServer(
 	ctx context.Context,
@@ -253,6 +277,9 @@ func (m *Manager) ConnectServer(
 	// Create transport based on configuration
 	// Auto-detect transport type if not explicitly specified
 	var transport mcp.Transport
+	// stdioCmd is retained for stdio servers so the connection can later kill the
+	// whole child process group; it stays nil for sse/http transports.
+	var stdioCmd *exec.Cmd
 	transportType := cfg.Type
 
 	// Auto-detect: if URL is provided, use SSE; if command is provided, use stdio
@@ -350,6 +377,10 @@ func (m *Manager) ConnectServer(
 		}
 		cmd.Env = env
 
+		// Own process group so a teardown can kill npx -> node -> browser as a unit.
+		prepareStdioCommand(cmd)
+
+		stdioCmd = cmd
 		transport = &mcp.CommandTransport{Command: cmd}
 	default:
 		return fmt.Errorf(
@@ -403,6 +434,8 @@ func (m *Manager) ConnectServer(
 		Client:  client,
 		Session: session,
 		Tools:   tools,
+		cfg:     cfg,
+		cmd:     stdioCmd,
 	}
 	m.mu.Unlock()
 
@@ -428,6 +461,87 @@ func (m *Manager) GetServer(name string) (*ServerConnection, bool) {
 
 	conn, ok := m.servers[name]
 	return conn, ok
+}
+
+// disconnect closes a single server connection and removes it from the manager,
+// killing the child process group for stdio servers so no grandchild survives to
+// hold a resource lock. Callers must not hold m.mu.
+func (m *Manager) disconnect(name string) {
+	m.mu.Lock()
+	conn, ok := m.servers[name]
+	if ok {
+		delete(m.servers, name)
+	}
+	m.mu.Unlock()
+	if !ok {
+		return
+	}
+	if err := conn.Session.Close(); err != nil {
+		logger.WarnCF("mcp", "Failed to close MCP server connection",
+			map[string]any{"server": name, "error": err.Error()})
+	}
+	terminateStdioProcessTree(conn.cmd)
+}
+
+// Sync reconciles live connections to match mcpCfg without disturbing servers
+// whose configuration is unchanged. On config reload this keeps long-lived stdio
+// servers (e.g. a playwright browser holding a persistent profile) running rather
+// than tearing every server down and relaunching it — the relaunch races the old
+// child's resource locks ("Browser is already in use"). Servers that were removed,
+// disabled, or reconfigured are disconnected; new or changed servers are
+// (re)connected. Returns the joined errors of any failed reconnects.
+func (m *Manager) Sync(
+	ctx context.Context,
+	mcpCfg config.MCPConfig,
+	workspacePath string,
+) error {
+	// Desired = enabled servers, envFile resolved the same way the initial load
+	// resolves it so change-detection compares like with like.
+	desired := make(map[string]config.MCPServerConfig, len(mcpCfg.Servers))
+	for name, serverCfg := range mcpCfg.Servers {
+		if !serverCfg.Enabled {
+			continue
+		}
+		resolved, err := resolveServerEnvFile(name, serverCfg, workspacePath)
+		if err != nil {
+			logger.ErrorCF("mcp", "Invalid MCP server configuration",
+				map[string]any{"server": name, "error": err.Error()})
+			continue
+		}
+		desired[name] = resolved
+	}
+
+	// Drop connections that are gone, disabled, or reconfigured.
+	for name, conn := range m.GetServers() {
+		want, keep := desired[name]
+		if keep && reflect.DeepEqual(conn.cfg, want) {
+			continue
+		}
+		reason := "config-changed"
+		if !keep {
+			reason = "removed-or-disabled"
+		}
+		logger.InfoCF("mcp", "Reconciling MCP server (disconnect)",
+			map[string]any{"server": name, "reason": reason})
+		m.disconnect(name)
+	}
+
+	// (Re)connect servers that are newly desired or were just dropped for a change.
+	var errs []error
+	for name, serverCfg := range desired {
+		if _, ok := m.GetServer(name); ok {
+			continue // unchanged and still connected
+		}
+		if err := m.ConnectServer(ctx, name, serverCfg); err != nil {
+			logger.ErrorCF("mcp", "Failed to connect to MCP server",
+				map[string]any{"server": name, "error": err.Error()})
+			errs = append(errs, fmt.Errorf("server %s: %w", name, err))
+		}
+	}
+	if len(errs) > 0 {
+		return errors.Join(errs...)
+	}
+	return nil
 }
 
 // CallTool calls a tool on a specific server
@@ -501,6 +615,9 @@ func (m *Manager) Close() error {
 				})
 			errs = append(errs, fmt.Errorf("server %s: %w", name, err))
 		}
+		// Safety net: kill any stdio grandchildren (e.g. chromium) the SDK's
+		// direct-child shutdown leaves orphaned, so no profile lock survives.
+		terminateStdioProcessTree(conn.cmd)
 	}
 
 	m.servers = make(map[string]*ServerConnection)

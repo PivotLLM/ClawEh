@@ -50,6 +50,14 @@ func (r *mcpRuntime) takeManager() *mcp.Manager {
 	return manager
 }
 
+// peekManager returns the live manager without clearing it, so a reload can
+// reconcile connections in place instead of tearing everything down.
+func (r *mcpRuntime) peekManager() *mcp.Manager {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.manager
+}
+
 func (r *mcpRuntime) hasManager() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -85,15 +93,43 @@ func (al *AgentLoop) EnsureMCPInitialized(ctx context.Context) error {
 // Must be called after al.cfg/al.registry have been swapped to the new values
 // and before the MCP host server re-enumerates its catalogue.
 func (al *AgentLoop) ReinitMCP(ctx context.Context) {
-	if old := al.mcp.takeManager(); old != nil {
-		if err := old.Close(); err != nil {
-			logger.WarnCF("agent", "Failed to close previous MCP manager on reload",
-				map[string]any{"error": err.Error()})
+	// MCP fully disabled now: tear down whatever is running and clear.
+	if !al.cfg.Tools.MCPClientEffectivelyEnabled() {
+		if old := al.mcp.takeManager(); old != nil {
+			if err := old.Close(); err != nil {
+				logger.WarnCF("agent", "Failed to close previous MCP manager on reload",
+					map[string]any{"error": err.Error()})
+			}
 		}
+		al.mcp.setInitErr(nil)
+		return
 	}
+
 	al.mcp.setInitErr(nil)
-	if mgr := al.connectAndRegisterMCP(ctx); mgr != nil {
-		al.mcp.setManager(mgr)
+
+	mgr := al.mcp.peekManager()
+	if mgr == nil {
+		// No live manager (first enable, or previously disabled): full connect.
+		if fresh := al.connectAndRegisterMCP(ctx); fresh != nil {
+			al.mcp.setManager(fresh)
+		}
+		return
+	}
+
+	// Reuse the live manager: reconcile connections so unchanged servers keep
+	// running (no relaunch, no profile-lock race), then re-register tools onto the
+	// freshly-rebuilt agent registry.
+	if err := mgr.Sync(ctx, al.cfg.Tools.MCP, al.mcpWorkspacePath()); err != nil {
+		logger.WarnCF("agent", "Some MCP servers failed to reconcile on reload",
+			map[string]any{"error": err.Error()})
+	}
+	if err := al.registerMCPToolsFromManager(mgr); err != nil {
+		al.mcp.setInitErr(err)
+		if old := al.mcp.takeManager(); old != nil {
+			if closeErr := old.Close(); closeErr != nil {
+				logger.ErrorCF("agent", "Failed to close MCP manager", map[string]any{"error": closeErr.Error()})
+			}
+		}
 	}
 }
 
@@ -123,13 +159,7 @@ func (al *AgentLoop) connectAndRegisterMCP(ctx context.Context) *mcp.Manager {
 
 	mcpManager := mcp.NewManager()
 
-	defaultAgent := al.registry.GetDefaultAgent()
-	workspacePath := al.cfg.WorkspacePath()
-	if defaultAgent != nil && defaultAgent.Workspace != "" {
-		workspacePath = defaultAgent.Workspace
-	}
-
-	if err := mcpManager.LoadFromMCPConfig(ctx, al.cfg.Tools.MCP, workspacePath); err != nil {
+	if err := mcpManager.LoadFromMCPConfig(ctx, al.cfg.Tools.MCP, al.mcpWorkspacePath()); err != nil {
 		logger.WarnCF("agent", "Failed to load MCP servers, MCP tools will not be available",
 			map[string]any{"error": err.Error()})
 		if closeErr := mcpManager.Close(); closeErr != nil {
@@ -138,8 +168,35 @@ func (al *AgentLoop) connectAndRegisterMCP(ctx context.Context) *mcp.Manager {
 		return nil
 	}
 
-	// Register MCP tools for all agents.
-	servers := mcpManager.GetServers()
+	if err := al.registerMCPToolsFromManager(mcpManager); err != nil {
+		al.mcp.setInitErr(err)
+		if closeErr := mcpManager.Close(); closeErr != nil {
+			logger.ErrorCF("agent", "Failed to close MCP manager", map[string]any{"error": closeErr.Error()})
+		}
+		return nil
+	}
+
+	return mcpManager
+}
+
+// mcpWorkspacePath is the workspace used to resolve relative MCP envFile paths:
+// the default agent's workspace when set, otherwise the global workspace.
+func (al *AgentLoop) mcpWorkspacePath() string {
+	workspacePath := al.cfg.WorkspacePath()
+	if defaultAgent := al.registry.GetDefaultAgent(); defaultAgent != nil && defaultAgent.Workspace != "" {
+		workspacePath = defaultAgent.Workspace
+	}
+	return workspacePath
+}
+
+// registerMCPToolsFromManager registers every connected server's tools onto each
+// agent whose mcp_tools allow-list admits them, and (when enabled) wires the tool
+// discovery helpers. It runs on both first init and after a reload's Sync, since a
+// reload rebuilds the agent registry and the new agents carry no MCP tools until
+// re-registered against the live manager. Returns an error only for an invalid
+// discovery configuration; the caller then tears the manager down.
+func (al *AgentLoop) registerMCPToolsFromManager(mgr *mcp.Manager) error {
+	servers := mgr.GetServers()
 	uniqueTools := 0
 	totalRegistrations := 0
 	agentIDs := al.registry.ListAgentIDs()
@@ -158,7 +215,7 @@ func (al *AgentLoop) connectAndRegisterMCP(ctx context.Context) *mcp.Manager {
 				// matches <server>_<tool> by equality-or-prefix. This is separate
 				// from the generic Tools allowlist so MCP access is per-tool rather
 				// than all-or-nothing per server.
-				mcpTool := tools.NewMCPTool(mcpManager, serverName, tool)
+				mcpTool := tools.NewMCPTool(mgr, serverName, tool)
 
 				if !agent.Config.MCPToolAllowed(mcpTool.Name()) {
 					continue
@@ -196,13 +253,9 @@ func (al *AgentLoop) connectAndRegisterMCP(ctx context.Context) *mcp.Manager {
 
 		// Fail fast: discovery enabled but no search method turned on.
 		if !useBM25 && !useRegex {
-			al.mcp.setInitErr(fmt.Errorf(
+			return fmt.Errorf(
 				"tool discovery is enabled but neither 'use_bm25' nor 'use_regex' is set to true in the configuration",
-			))
-			if closeErr := mcpManager.Close(); closeErr != nil {
-				logger.ErrorCF("agent", "Failed to close MCP manager", map[string]any{"error": closeErr.Error()})
-			}
-			return nil
+			)
 		}
 
 		ttl := al.cfg.Tools.MCP.Discovery.TTL
@@ -234,5 +287,5 @@ func (al *AgentLoop) connectAndRegisterMCP(ctx context.Context) *mcp.Manager {
 		}
 	}
 
-	return mcpManager
+	return nil
 }
