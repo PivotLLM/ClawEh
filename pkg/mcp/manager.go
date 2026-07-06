@@ -132,11 +132,6 @@ func (m *Manager) LoadFromMCPConfig(
 	mcpCfg config.MCPConfig,
 	workspacePath string,
 ) error {
-	if !mcpCfg.Enabled {
-		logger.InfoCF("mcp", "MCP integration is disabled", nil)
-		return nil
-	}
-
 	if len(mcpCfg.Servers) == 0 {
 		logger.InfoCF("mcp", "No MCP servers configured", nil)
 		return nil

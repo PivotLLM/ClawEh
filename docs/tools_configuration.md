@@ -125,9 +125,11 @@ and injected into the context for a configured number of turns (`ttl`).
 
 | Config      | Type   | Default | Description                                  |
 |-------------|--------|---------|----------------------------------------------|
-| `enabled`   | bool   | false   | Enable MCP integration globally              |
 | `discovery` | object | `{}`    | Configuration for Tool Discovery (see below) |
 | `servers`   | object | `{}`    | Map of server name to server config          |
+
+ClawEh connects out to external MCP servers automatically whenever at least one
+configured server has `enabled: true`. There is no separate global on/off flag.
 
 ### Discovery Config (`discovery`)
 
@@ -171,7 +173,6 @@ and injected into the context for a configured number of turns (`ttl`).
 {
   "tools": {
     "mcp": {
-      "enabled": true,
       "servers": {
         "filesystem": {
           "enabled": true,
@@ -194,7 +195,6 @@ and injected into the context for a configured number of turns (`ttl`).
 {
   "tools": {
     "mcp": {
-      "enabled": true,
       "servers": {
         "remote-mcp": {
           "enabled": true,
@@ -219,7 +219,6 @@ dynamically only when requested by the user.*
 {
   "tools": {
     "mcp": {
-      "enabled": true,
       "discovery": {
         "enabled": true,
         "ttl": 5,
@@ -351,7 +350,6 @@ For example:
 - `CLAW_TOOLS_WEB_BRAVE_ENABLED=true`
 - `CLAW_TOOLS_EXEC_ENABLE_DENY_PATTERNS=false`
 - `CLAW_TOOLS_CRON_EXEC_TIMEOUT_MINUTES=10`
-- `CLAW_TOOLS_MCP_ENABLED=true`
 
 Note: Nested map-style config (for example `tools.mcp.servers.<name>.*`) is configured in `config.json` rather than
 environment variables.

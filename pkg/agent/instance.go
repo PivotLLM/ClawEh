@@ -79,7 +79,7 @@ func NewAgentInstance(
 	// shared message tool) are present. Registering here too would double-build
 	// every tool and overwrite it, so we intentionally don't.
 
-	mcpDiscoveryActive := cfg.Tools.MCP.Enabled && cfg.Tools.MCP.Discovery.Enabled
+	mcpDiscoveryActive := cfg.Tools.MCPClientEffectivelyEnabled() && cfg.Tools.MCP.Discovery.Enabled
 	contextBuilder := NewContextBuilder(workspace).WithToolDiscovery(
 		mcpDiscoveryActive && cfg.Tools.MCP.Discovery.UseBM25,
 		mcpDiscoveryActive && cfg.Tools.MCP.Discovery.UseRegex,

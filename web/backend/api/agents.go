@@ -54,7 +54,7 @@ func (h *Handler) handleListAgentTools(w http.ResponseWriter, r *http.Request) {
 
 	// MCP servers: one entry per configured server; selecting it grants mcp_name_* access
 	var mcpServers []agentMCPServer
-	if cfg, err := config.LoadConfig(h.configPath); err == nil && cfg.Tools.MCP.Enabled {
+	if cfg, err := config.LoadConfig(h.configPath); err == nil && cfg.Tools.MCPClientEffectivelyEnabled() {
 		for name := range cfg.Tools.MCP.Servers {
 			mcpServers = append(mcpServers, agentMCPServer{
 				Name:    name,

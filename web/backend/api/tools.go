@@ -169,13 +169,11 @@ func applyConfigKey(cfg *config.Config, key string, enabled bool) error {
 	case "mcp.discovery.use_regex":
 		cfg.Tools.MCP.Discovery.UseRegex = enabled
 		if enabled {
-			cfg.Tools.MCP.Enabled = true
 			cfg.Tools.MCP.Discovery.Enabled = true
 		}
 	case "mcp.discovery.use_bm25":
 		cfg.Tools.MCP.Discovery.UseBM25 = enabled
 		if enabled {
-			cfg.Tools.MCP.Enabled = true
 			cfg.Tools.MCP.Discovery.Enabled = true
 		}
 	default:

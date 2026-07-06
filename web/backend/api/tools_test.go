@@ -26,7 +26,10 @@ func TestHandleListTools(t *testing.T) {
 	cfg.Tools.Cron.Enabled = true
 	cfg.Tools.Skills.Registry.Enabled = true
 	cfg.Tools.Subagent.Enabled = false
-	cfg.Tools.MCP.Enabled = true
+	// MCP client is on iff a server is enabled; that gates the discovery tools.
+	cfg.Tools.MCP.Servers = map[string]config.MCPServerConfig{
+		"s": {Enabled: true, Command: "echo"},
+	}
 	cfg.Tools.MCP.Discovery.Enabled = true
 	cfg.Tools.MCP.Discovery.UseRegex = true
 	cfg.Tools.MCP.Discovery.UseBM25 = false
@@ -133,7 +136,6 @@ func TestHandleUpdateToolState(t *testing.T) {
 	}
 	cfg.Tools.Subagent.Enabled = false
 	cfg.Tools.Cron.Enabled = false
-	cfg.Tools.MCP.Enabled = false
 	cfg.Tools.MCP.Discovery.Enabled = false
 	cfg.Tools.MCP.Discovery.UseRegex = false
 	err = config.SaveConfig(configPath, cfg)
@@ -190,7 +192,7 @@ func TestHandleUpdateToolState(t *testing.T) {
 	if !updated.Tools.Overrides["agent_spawn"] {
 		t.Fatalf("agent_spawn override should be true: %#v", updated.Tools.Overrides)
 	}
-	if !updated.Tools.MCP.Enabled || !updated.Tools.MCP.Discovery.Enabled || !updated.Tools.MCP.Discovery.UseRegex {
+	if !updated.Tools.MCP.Discovery.Enabled || !updated.Tools.MCP.Discovery.UseRegex {
 		t.Fatalf("mcp regex discovery should be enabled: %#v", updated.Tools.MCP)
 	}
 	if !updated.Tools.Overrides["cron_schedule"] {

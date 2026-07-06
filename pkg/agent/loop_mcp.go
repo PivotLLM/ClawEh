@@ -190,7 +190,7 @@ func (al *AgentLoop) connectAndRegisterMCP(ctx context.Context) *mcp.Manager {
 		})
 
 	// Initialize Discovery Tools only if enabled by configuration.
-	if al.cfg.Tools.MCP.Enabled && al.cfg.Tools.MCP.Discovery.Enabled {
+	if al.cfg.Tools.MCPClientEffectivelyEnabled() && al.cfg.Tools.MCP.Discovery.Enabled {
 		useBM25 := al.cfg.Tools.MCP.Discovery.UseBM25
 		useRegex := al.cfg.Tools.MCP.Discovery.UseRegex
 
