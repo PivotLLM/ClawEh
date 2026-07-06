@@ -3,7 +3,7 @@ module github.com/PivotLLM/ClawEh
 go 1.26.0
 
 require (
-	github.com/PivotLLM/MCPFusion v0.0.0-00010101000000-000000000000
+	github.com/PivotLLM/MCPFusion v0.4.0
 	github.com/PivotLLM/Maestro v0.3.7
 	github.com/adhocore/gronx v1.20.0
 	github.com/bwmarrin/discordgo v0.29.0
@@ -51,7 +51,7 @@ require (
 	github.com/xeipuuv/gojsonpointer v0.0.0-20190905194746-02993c407bfb // indirect
 	github.com/xeipuuv/gojsonreference v0.0.0-20180127040603-bd5ef7bd5415 // indirect
 	github.com/xeipuuv/gojsonschema v1.2.0 // indirect
-	go.etcd.io/bbolt v1.4.3 // indirect
+	go.etcd.io/bbolt v1.5.0 // indirect
 	go.mau.fi/util v0.9.10 // indirect
 	go.yaml.in/yaml/v4 v4.0.0-rc.6 // indirect
 	golang.org/x/exp v0.0.0-20260611194520-c48552f49976 // indirect
@@ -96,5 +96,3 @@ require (
 	golang.org/x/sync v0.21.0 // indirect
 	golang.org/x/sys v0.46.0 // indirect
 )
-
-replace github.com/PivotLLM/MCPFusion => /home/eric/source/MCPFusion
