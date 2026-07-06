@@ -45,6 +45,21 @@ func (m *mockAsyncRegistryTool) ExecuteAsync(_ context.Context, args map[string]
 	return m.result
 }
 
+// mockExternalTool mimics an upstream MCP tool: registered under an internal
+// "mcp_"-prefixed name but advertised to models under a bare ExternalName.
+type mockExternalTool struct {
+	mockRegistryTool
+	external string
+}
+
+func (m *mockExternalTool) ExternalName() string { return m.external }
+
+// mockAllowChecker only permits the exact internal names it is given, mirroring
+// how AgentConfig routes bare vs mcp_ names through the real allow-lists.
+type mockAllowChecker struct{ allowed map[string]bool }
+
+func (c mockAllowChecker) IsToolAllowed(name string) bool { return c.allowed[name] }
+
 // --- helpers ---
 
 func newMockTool(name, desc string) *mockRegistryTool {
@@ -79,6 +94,48 @@ func TestToolRegistry_RegisterAndGet(t *testing.T) {
 	}
 	if got.Name() != "echo" {
 		t.Errorf("expected name 'echo', got %q", got.Name())
+	}
+}
+
+// TestExternalName_AdvertisedBareAndDispatched covers the upstream-MCP naming
+// fix: a tool registered as mcp_<server>_<tool> must be advertised to models under
+// its bare ExternalName, and a model calling that bare name must dispatch and be
+// gated on the internal (canonical) name — so the allow-list still routes through
+// the mcp_tools semantics keyed on the mcp_ prefix.
+func TestExternalName_AdvertisedBareAndDispatched(t *testing.T) {
+	r := NewToolRegistry()
+	tool := &mockExternalTool{
+		mockRegistryTool: *newMockTool("mcp_playwright_browser_navigate", "navigate"),
+		external:         "playwright_browser_navigate",
+	}
+	r.Register(tool)
+
+	// Advertised under the bare name.
+	defs := r.ToProviderDefs()
+	var advertised string
+	for _, d := range defs {
+		if d.Function.Description == "navigate" {
+			advertised = d.Function.Name
+		}
+	}
+	if advertised != "playwright_browser_navigate" {
+		t.Fatalf("expected bare advertised name, got %q", advertised)
+	}
+
+	// A call by the bare name is gated on the canonical internal name: the checker
+	// permits only the internal name, and the call must succeed.
+	ctx := WithToolAllowChecker(context.Background(),
+		mockAllowChecker{allowed: map[string]bool{"mcp_playwright_browser_navigate": true}})
+	res := r.ExecuteWithContext(ctx, "playwright_browser_navigate", nil, "", "", nil)
+	if res.IsError {
+		t.Fatalf("bare-name call should dispatch and pass the gate, got error: %s", res.ForLLM)
+	}
+
+	// If the checker denies the canonical name, the bare call is rejected.
+	denyCtx := WithToolAllowChecker(context.Background(),
+		mockAllowChecker{allowed: map[string]bool{}})
+	if res := r.ExecuteWithContext(denyCtx, "playwright_browser_navigate", nil, "", "", nil); !res.IsError {
+		t.Fatal("denied canonical name should reject the bare-name call")
 	}
 }
 

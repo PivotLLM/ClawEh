@@ -177,13 +177,30 @@ func (r *ToolRegistry) Get(name string) (Tool, bool) {
 	return entry.Tool, true
 }
 
-// isSuiteExempt reports whether the named tool was registered as part of an
-// all-or-nothing suite (and thus bypasses the per-tool allowlist).
-func (r *ToolRegistry) isSuiteExempt(name string) bool {
+// resolve maps a model-facing tool name to its registry entry. It first tries the
+// internal registry key; on a miss it matches an MCP tool by its ExternalName —
+// the bare "<server>_<tool>" form advertised to models (see ToProviderDefs) — so a
+// model that calls the tool without claw's internal "mcp_" prefix still dispatches
+// and gates correctly. Returns the entry, the internal (canonical) name to use for
+// allow-list gating, and whether it resolved. Expired hidden tools do not resolve.
+func (r *ToolRegistry) resolve(name string) (*ToolEntry, string, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	entry, ok := r.tools[name]
-	return ok && entry.SuiteExempt
+	if entry, ok := r.tools[name]; ok {
+		if !entry.IsCore && entry.TTL <= 0 {
+			return nil, "", false
+		}
+		return entry, name, true
+	}
+	for internal, entry := range r.tools {
+		if !entry.IsCore && entry.TTL <= 0 {
+			continue
+		}
+		if en, ok := entry.Tool.(ExternalNamer); ok && en.ExternalName() == name {
+			return entry, internal, true
+		}
+	}
+	return nil, "", false
 }
 
 func (r *ToolRegistry) Execute(ctx context.Context, name string, args map[string]any) *ToolResult {
@@ -208,20 +225,9 @@ func (r *ToolRegistry) ExecuteWithContext(
 			"tool": name,
 		})
 
-	// Defense-in-depth: check tool allowlist from context before execution.
-	// Suite tools (cogmem, maestro) are exempt — they are gated as a unit by the
-	// per-agent suite flag at registration, not by the per-tool allowlist.
-	if checker := ToolAllowCheckerFromCtx(ctx); checker != nil && !r.isSuiteExempt(name) {
-		if !checker.IsToolAllowed(name) {
-			logger.WarnCF("tool", "Tool execution denied by agent allowlist",
-				map[string]any{
-					"tool": name,
-				})
-			return ErrorResult(fmt.Sprintf("tool not permitted: %s", name)).WithError(fmt.Errorf("tool not permitted: %s", name))
-		}
-	}
-
-	tool, ok := r.Get(name)
+	// Resolve first so the model may call an MCP tool by its bare ExternalName
+	// (the name it is advertised under) as well as the internal registry key.
+	entry, canonical, ok := r.resolve(name)
 	if !ok {
 		logger.ErrorCF("tool", "Tool not found",
 			map[string]any{
@@ -229,6 +235,23 @@ func (r *ToolRegistry) ExecuteWithContext(
 			})
 		return ErrorResult(fmt.Sprintf("tool %q not found", name)).WithError(fmt.Errorf("tool not found"))
 	}
+
+	// Defense-in-depth: check tool allowlist from context before execution.
+	// Suite tools (cogmem, maestro) are exempt — they are gated as a unit by the
+	// per-agent suite flag at registration, not by the per-tool allowlist. Gate on
+	// the canonical (internal) name so MCP tools route to the mcp_tools allow-list
+	// even when the caller used the bare ExternalName.
+	if checker := ToolAllowCheckerFromCtx(ctx); checker != nil && !entry.SuiteExempt {
+		if !checker.IsToolAllowed(canonical) {
+			logger.WarnCF("tool", "Tool execution denied by agent allowlist",
+				map[string]any{
+					"tool": canonical,
+				})
+			return ErrorResult(fmt.Sprintf("tool not permitted: %s", name)).WithError(fmt.Errorf("tool not permitted: %s", name))
+		}
+	}
+
+	tool := entry.Tool
 
 	// Inject channel/chatID into ctx so tools read them via ToolChannel(ctx)/ToolChatID(ctx).
 	// Always inject — tools validate what they require.
@@ -308,11 +331,35 @@ func (r *ToolRegistry) GetDefinitions() []map[string]any {
 
 // ToProviderDefs converts tool definitions to provider-compatible format.
 // This is the format expected by LLM provider APIs.
+//
+// MCP tools are advertised under their bare ExternalName ("<server>_<tool>") so a
+// model sees a single naming convention across native, fusion, and upstream-MCP
+// tools (matching what the MCP host publishes to CLI clients). Presenting the
+// internal "mcp_" prefix here made it the lone prefixed outlier, so models routinely
+// dropped it and the call was then rejected as unknown/not-permitted. resolve()
+// maps the bare name back for dispatch and gating.
 func (r *ToolRegistry) ToProviderDefs() []providers.ToolDefinition {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
 	sorted := r.sortedToolNames()
+
+	// Precompute collision info so a bare ExternalName is only used when it can't
+	// shadow another tool: skip it if it equals some tool's internal name or if two
+	// tools want the same bare name. Those fall back to the internal name.
+	internalNames := make(map[string]bool, len(sorted))
+	for _, name := range sorted {
+		internalNames[name] = true
+	}
+	extWant := make(map[string]int)
+	for _, name := range sorted {
+		if en, ok := r.tools[name].Tool.(ExternalNamer); ok {
+			if ext := en.ExternalName(); ext != name {
+				extWant[ext]++
+			}
+		}
+	}
+
 	definitions := make([]providers.ToolDefinition, 0, len(sorted))
 	for _, name := range sorted {
 		entry := r.tools[name]
@@ -329,14 +376,20 @@ func (r *ToolRegistry) ToProviderDefs() []providers.ToolDefinition {
 			continue
 		}
 
-		name, _ := fn["name"].(string)
 		desc, _ := fn["description"].(string)
 		params, _ := fn["parameters"].(map[string]any)
+
+		pubName := name
+		if en, ok := entry.Tool.(ExternalNamer); ok {
+			if ext := en.ExternalName(); ext != name && !internalNames[ext] && extWant[ext] == 1 {
+				pubName = ext
+			}
+		}
 
 		definitions = append(definitions, providers.ToolDefinition{
 			Type: "function",
 			Function: providers.ToolFunctionDefinition{
-				Name:        name,
+				Name:        pubName,
 				Description: desc,
 				Parameters:  params,
 			},
@@ -348,8 +401,8 @@ func (r *ToolRegistry) ToProviderDefs() []providers.ToolDefinition {
 // IsPrimaryOnlyTool reports whether the named tool is restricted to primary
 // agents (see PrimaryOnlyTool / IsPrimaryOnly). Unknown tools report false.
 func (r *ToolRegistry) IsPrimaryOnlyTool(name string) bool {
-	if t, ok := r.Get(name); ok {
-		return IsPrimaryOnly(t)
+	if entry, _, ok := r.resolve(name); ok {
+		return IsPrimaryOnly(entry.Tool)
 	}
 	return false
 }

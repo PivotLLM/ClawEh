@@ -3,7 +3,7 @@ module github.com/PivotLLM/ClawEh
 go 1.26.0
 
 require (
-	github.com/PivotLLM/MCPFusion v0.4.0
+	github.com/PivotLLM/MCPFusion v0.4.1
 	github.com/PivotLLM/Maestro v0.3.7
 	github.com/adhocore/gronx v1.20.0
 	github.com/bwmarrin/discordgo v0.29.0
