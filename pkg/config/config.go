@@ -1197,6 +1197,7 @@ type ModelConfig struct {
 	RequestTimeout int               `json:"request_timeout,omitempty"`
 	ThinkingLevel  string            `json:"thinking_level,omitempty"` // Extended thinking: off|low|medium|high|xhigh|adaptive
 	NoTools        bool              `json:"no_tools,omitempty"`       // When true, tools are not passed to this model
+	Vision         bool              `json:"vision,omitempty"`         // When true, images returned by tools (e.g. MCP screenshots) are passed to this model as a follow-up user turn
 	ExtraArgs      []string          `json:"extra_args,omitempty"`     // Additional CLI arguments appended after required flags
 	Env            map[string]string `json:"env,omitempty"`            // Environment variables for CLI-based providers (merged with os.Environ)
 	Enabled        bool              `json:"enabled"`                  // If false, model is skipped in all operations

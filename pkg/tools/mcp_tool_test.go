@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"strings"
 	"testing"
@@ -398,7 +399,7 @@ func TestExtractContentText_TextContent(t *testing.T) {
 		&mcp.TextContent{Text: "Second message"},
 	}
 
-	result := extractContentText(content)
+	result, _ := extractContent(content)
 	expected := "Hello World\nSecond message"
 
 	if result != expected {
@@ -415,13 +416,21 @@ func TestExtractContentText_ImageContent(t *testing.T) {
 		},
 	}
 
-	result := extractContentText(content)
+	result, images := extractContent(content)
 
 	if !strings.Contains(result, "[Image:") {
 		t.Errorf("Expected image indicator, got: %s", result)
 	}
 	if !strings.Contains(result, "image/png") {
 		t.Errorf("Expected MIME type in output, got: %s", result)
+	}
+	// The image must also be captured as a base64 data URI for vision passthrough.
+	if len(images) != 1 {
+		t.Fatalf("expected 1 captured image, got %d", len(images))
+	}
+	want := "data:image/png;base64," + base64.StdEncoding.EncodeToString([]byte("base64data"))
+	if images[0] != want {
+		t.Errorf("image data URI = %q, want %q", images[0], want)
 	}
 }
 
@@ -436,7 +445,7 @@ func TestExtractContentText_MixedContent(t *testing.T) {
 		&mcp.TextContent{Text: "More text"},
 	}
 
-	result := extractContentText(content)
+	result, _ := extractContent(content)
 
 	if !strings.Contains(result, "Description") {
 		t.Errorf("Should contain text content, got: %s", result)
@@ -453,7 +462,7 @@ func TestExtractContentText_MixedContent(t *testing.T) {
 func TestExtractContentText_EmptyContent(t *testing.T) {
 	content := []mcp.Content{}
 
-	result := extractContentText(content)
+	result, _ := extractContent(content)
 
 	if result != "" {
 		t.Errorf("Expected empty string for empty content, got: %s", result)

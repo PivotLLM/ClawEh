@@ -2984,6 +2984,7 @@ func (al *AgentLoop) runLLMIteration(
 
 		// Process results in original order (send to user, save to session)
 		streamActivity := al.GetConfig().Agents.Defaults.StreamToolActivity
+		var toolImages []string // images returned by tools, for vision passthrough
 		for _, r := range agentResults {
 			// Send ForUser content to user immediately if not Silent — only when
 			// streaming tool activity is enabled (otherwise the user receives just
@@ -3049,6 +3050,7 @@ func (al *AgentLoop) runLLMIteration(
 				ToolCallID: r.tc.ID,
 			}
 			messages = append(messages, toolResultMsg)
+			toolImages = append(toolImages, r.result.Images...)
 
 			// Save tool result message through the context manager so that
 			// msgCount is incremented and the message is written to the archive.
@@ -3057,6 +3059,28 @@ func (al *AgentLoop) runLLMIteration(
 					"agent_id": agent.ID,
 					"error":    err.Error(),
 				})
+			}
+		}
+
+		// Vision passthrough: images a tool returned (e.g. an MCP screenshot) can't
+		// ride on the tool message — the OpenAI-compatible API rejects image content
+		// in a tool role — so when the ACTIVE model has vision enabled, hand them to
+		// it as a follow-up user turn. Gated per-model so heavy base64 never goes to
+		// a non-vision model.
+		if len(toolImages) > 0 {
+			if mc, err := al.GetConfig().GetModelConfig(activeModel); err == nil && mc.Vision {
+				imgMsg := providers.Message{
+					Role:    "user",
+					Content: "Image(s) returned by the tool call(s) above:",
+					Media:   toolImages,
+				}
+				messages = append(messages, imgMsg)
+				if err := cm.AddUserMessage(ctx, imgMsg); err != nil {
+					logger.WarnCF("agent", "failed to persist tool image message",
+						map[string]any{"agent_id": agent.ID, "error": err.Error()})
+				}
+				logger.InfoCF("agent", "passed tool image(s) to vision model",
+					map[string]any{"agent_id": agent.ID, "model": activeModel, "images": len(toolImages)})
 			}
 		}
 

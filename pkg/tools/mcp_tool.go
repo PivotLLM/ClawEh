@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
@@ -239,34 +240,41 @@ func (t *MCPTool) Execute(ctx context.Context, args map[string]any) *ToolResult 
 
 	// Handle error result from server
 	if result.IsError {
-		errMsg := extractContentText(result.Content)
+		errMsg, _ := extractContent(result.Content)
 		return ErrorResult(fmt.Sprintf("MCP tool returned error: %s", errMsg)).
 			WithError(fmt.Errorf("MCP tool error: %s", errMsg))
 	}
 
-	// Extract text content from result
-	output := extractContentText(result.Content)
+	// Extract text + any image content. Images are carried on Images (data URIs)
+	// for a vision model to see; the text keeps an "[Image: …]" marker so a
+	// non-vision model still knows an image was returned.
+	output, images := extractContent(result.Content)
 
 	return &ToolResult{
 		ForLLM:  output,
+		Images:  images,
 		IsError: false,
 	}
 }
 
-// extractContentText extracts text from MCP content array
-func extractContentText(content []mcp.Content) string {
+// extractContent splits an MCP content array into the text sent to the model and
+// any images (as "data:<mime>;base64,…" URIs).
+func extractContent(content []mcp.Content) (string, []string) {
 	var parts []string
+	var images []string
 	for _, c := range content {
 		switch v := c.(type) {
 		case *mcp.TextContent:
 			parts = append(parts, v.Text)
 		case *mcp.ImageContent:
-			// For images, just indicate that an image was returned
+			if len(v.Data) > 0 && v.MIMEType != "" {
+				images = append(images, fmt.Sprintf("data:%s;base64,%s", v.MIMEType, base64.StdEncoding.EncodeToString(v.Data)))
+			}
 			parts = append(parts, fmt.Sprintf("[Image: %s]", v.MIMEType))
 		default:
 			// For other content types, use string representation
 			parts = append(parts, fmt.Sprintf("[Content: %T]", v))
 		}
 	}
-	return strings.Join(parts, "\n")
+	return strings.Join(parts, "\n"), images
 }
