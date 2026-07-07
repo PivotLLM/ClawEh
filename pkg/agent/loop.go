@@ -255,7 +255,7 @@ func NewAgentLoop(
 
 	// Register runtime-dependent tools via providers (session closures,
 	// spawn/subagent, msg with shared MessageTool).
-	al.registerRuntimeTools(registry, provider, dispatcher, fallbackChain)
+	al.registerRuntimeTools(registry, provider, dispatcher, fallbackChain, cfg)
 
 	return al
 }
@@ -655,8 +655,11 @@ func (al *AgentLoop) registerRuntimeTools(
 	provider providers.LLMProvider,
 	dispatcher *providers.ProviderDispatcher,
 	fallbackChain *providers.FallbackChain,
+	cfg *config.Config,
 ) {
-	cfg := al.GetConfig()
+	// cfg is passed explicitly (not al.GetConfig()) because on reload
+	// ReloadProviderAndConfig registers tools BEFORE swapping al.cfg, so
+	// al.GetConfig() would return the stale pre-reload config here.
 
 	// Build shared message tool for all agents.
 	var sharedMessageTool tools.Tool
@@ -786,7 +789,7 @@ func (al *AgentLoop) registerRuntimeTools(
 		// Progressive discovery is a single global switch (default off). When on,
 		// native tools and the cogmem suite stay always-on; the fusion/maestro suites
 		// (and MCP tools, in loop_mcp) are hidden behind search_tools.
-		discovery := al.cfg.Tools.Discovery.Enabled
+		discovery := cfg.Tools.Discovery.Enabled
 		currentAgent.DiscoveryActive = discovery
 		if currentAgent.ContextBuilder != nil {
 			currentAgent.ContextBuilder.WithToolDiscovery(discovery)
@@ -818,7 +821,7 @@ func (al *AgentLoop) registerRuntimeTools(
 		}
 
 		if discovery {
-			al.registerDiscoveryMetaTools(currentAgent)
+			al.registerDiscoveryMetaTools(currentAgent, cfg)
 		}
 	}
 
@@ -834,12 +837,12 @@ const suiteCogmem = "cogmem"
 // registerDiscoveryMetaTools registers the search_tools / get_tool_details entry
 // points. They are suite-exempt (gated by the discovery decision, not the per-tool
 // allowlist) and present only when discovery is active for the agent.
-func (al *AgentLoop) registerDiscoveryMetaTools(agent *AgentInstance) {
-	ttl := al.cfg.Tools.Discovery.TTL
+func (al *AgentLoop) registerDiscoveryMetaTools(agent *AgentInstance, cfg *config.Config) {
+	ttl := cfg.Tools.Discovery.TTL
 	if ttl <= 0 {
 		ttl = config.DefaultDiscoveryTTL
 	}
-	maxHits := al.cfg.Tools.Discovery.MaxSearchResults
+	maxHits := cfg.Tools.Discovery.MaxSearchResults
 	if maxHits <= 0 {
 		maxHits = config.DefaultDiscoveryMaxSearchHits
 	}
@@ -1105,7 +1108,7 @@ func (al *AgentLoop) ReloadProviderAndConfig(
 	// and the rebuilt compaction managers.
 	al.cooldown.SetPolicy(cooldownPolicy(cfg))
 	newFallback := providers.NewFallbackChain(al.cooldown)
-	al.registerRuntimeTools(registry, provider, al.dispatcher, newFallback)
+	al.registerRuntimeTools(registry, provider, al.dispatcher, newFallback, cfg)
 
 	// Rebuild callback managers against the new registry/config and wire them onto
 	// the new ContextBuilders. Without this, reloaded agents get no callback token
