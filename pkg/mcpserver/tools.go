@@ -373,7 +373,7 @@ func revealForSession(
 	}
 
 	body, _ := json.Marshal(schema)
-	return fmt.Sprintf("%s\n\nUnlocked `%s` for this session — it now appears in your tool list and is callable.", string(body), advertised), false
+	return fmt.Sprintf("%s\n\nUnlocked `%s` for this session. Your tool list updates one round-trip after unlocking, so call it on your next turn; if that first call reports the tool is unavailable, simply call it again.", string(body), advertised), false
 }
 
 // catalogueToolNames returns the sorted union of tool names across every
