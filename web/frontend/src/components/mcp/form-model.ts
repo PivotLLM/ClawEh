@@ -9,6 +9,12 @@ export interface MCPHostForm {
   // external_tools). Empty ⇒ expose all; entries match by MatchVisibility.
   internalToolPatterns: string[]
   externalToolPatterns: string[]
+  // Progressive tool discovery. discoveryEnabled is the global switch
+  // (tools.discovery.enabled). alwaysShownNamespaces are EXTRA namespaces kept in
+  // tools/list when it's on (search_tools/get_tool_details and cogmem are always
+  // shown by rule).
+  discoveryEnabled: boolean
+  alwaysShownNamespaces: string[]
   // External (upstream) MCP servers claw connects out to (tools.mcp.servers),
   // structured for add/edit/delete in the UI.
   servers: MCPServerForm[]
@@ -50,6 +56,8 @@ export const EMPTY_MCP_FORM: MCPHostForm = {
   endpointPath: "/mcp",
   internalToolPatterns: ["*"],
   externalToolPatterns: ["*"],
+  discoveryEnabled: false,
+  alwaysShownNamespaces: [],
   servers: [],
 }
 
@@ -79,6 +87,7 @@ function asStringArray(value: unknown, fallback: string[]): string[] {
 export function buildMCPFormFromConfig(config: unknown): MCPHostForm {
   const root = asRecord(config)
   const mcp = asRecord(root.mcp_host)
+  const discovery = asRecord(asRecord(root.tools).discovery)
   return {
     enabled: asBool(mcp.enabled, EMPTY_MCP_FORM.enabled),
     autoEnable: asBool(mcp.auto_enable, EMPTY_MCP_FORM.autoEnable),
@@ -86,6 +95,8 @@ export function buildMCPFormFromConfig(config: unknown): MCPHostForm {
     endpointPath: asString(mcp.endpoint_path, EMPTY_MCP_FORM.endpointPath),
     internalToolPatterns: asStringArray(mcp.internal_tools, EMPTY_MCP_FORM.internalToolPatterns),
     externalToolPatterns: asStringArray(mcp.external_tools, EMPTY_MCP_FORM.externalToolPatterns),
+    discoveryEnabled: asBool(discovery.enabled, EMPTY_MCP_FORM.discoveryEnabled),
+    alwaysShownNamespaces: asStringArray(mcp.always_shown_namespaces, EMPTY_MCP_FORM.alwaysShownNamespaces),
     servers: serversFromConfig(config),
   }
 }

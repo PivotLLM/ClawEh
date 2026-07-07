@@ -6,16 +6,13 @@ export interface ToolSelectProps {
   selected: string[]
   catalog: AgentToolCatalogResponse
   onChange: (tools: string[]) => void
-  // suiteStates maps a suite name (e.g. "maestro", "cogmem") to whether it is
-  // enabled for this agent, so the greyed suite rows reflect the live toggle.
-  suiteStates?: Record<string, boolean>
 }
 
-export function ToolSelect({ selected, catalog, onChange, suiteStates }: ToolSelectProps) {
-  // Suite entries (cogmem, maestro) are all-or-nothing and controlled by the
-  // agent's per-suite toggle — they are not part of the per-tool allowlist.
+export function ToolSelect({ selected, catalog, onChange }: ToolSelectProps) {
+  // Only per-tool (native) tools are listed here — these are the tools always in
+  // the agent's context. Suites (cogmem, maestro, fusion) are all-or-nothing and
+  // controlled by their own toggles below, so they are intentionally not shown.
   const perToolTools = catalog.tools.filter((t) => !t.suite)
-  const suiteTools = catalog.tools.filter((t) => t.suite)
 
   // MCP-client tools are no longer part of this per-tool allowlist; they have
   // their own per-tool mcp_tools field (see the MCP access box).
@@ -89,28 +86,7 @@ export function ToolSelect({ selected, catalog, onChange, suiteStates }: ToolSel
         ))}
       </div>
 
-      {suiteTools.length > 0 && (
-        <div className="space-y-0.5">
-          {[...suiteTools].sort((a, b) => a.name.localeCompare(b.name)).map((tool) => {
-            const on = !!suiteStates?.[tool.suite ?? ""]
-            return (
-              <label
-                key={tool.name}
-                className="flex items-center gap-2 select-none opacity-50 cursor-not-allowed"
-                title={`${tool.description} — ${on ? "enabled" : "disabled"} via the agent's ${tool.suite} toggle, not this list.`}
-              >
-                <Checkbox checked={on} disabled />
-                <span className="font-mono text-xs">{tool.name}</span>
-                <span className="text-muted-foreground text-xs">
-                  (suite toggle — {on ? "on" : "off"})
-                </span>
-              </label>
-            )
-          })}
-        </div>
-      )}
-
-      {perToolTools.length === 0 && suiteTools.length === 0 && (
+      {perToolTools.length === 0 && (
         <span className="text-muted-foreground text-xs">No tools available</span>
       )}
     </div>

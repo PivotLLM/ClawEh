@@ -412,13 +412,17 @@ function AgentCard({
       {availableTools.tools.length > 0 && (
         <div className="space-y-1.5">
           <p className={`text-sm font-semibold ${tools.length === 0 ? "text-amber-400" : "text-foreground"}`}>
-            Tools ({tools.length === 0 ? "none — no tool access" : `${tools.includes("*") ? "all" : tools.length} granted`})
+            Always-On Tools ({tools.length === 0 ? "none — no tool access" : `${tools.includes("*") ? "all" : tools.length} granted`})
+          </p>
+          <p className="text-muted-foreground text-xs">
+            Native tools that stay in this agent&apos;s context on every request.
+            Suites (cogmem, maestro, fusion) and MCP access are controlled by their
+            own toggles.
           </p>
           <ToolSelect
             selected={tools}
             catalog={availableTools}
             onChange={onToolsChange}
-            suiteStates={{ maestro, fusion, cogmem }}
           />
         </div>
       )}
@@ -1370,7 +1374,7 @@ export function AgentsPage() {
                             className={`size-3.5 text-muted-foreground opacity-60 transition-transform duration-200 ${addingToolsExpanded ? "rotate-90" : ""}`}
                           />
                           <span className={`text-sm font-semibold ${addingTools.length === 0 ? "text-amber-400" : "text-foreground"}`}>
-                            Tools ({addingTools.length === 0 ? "none — no tool access" : `${addingTools.includes("*") ? "all" : addingTools.length} granted`})
+                            Always-On Tools ({addingTools.length === 0 ? "none — no tool access" : `${addingTools.includes("*") ? "all" : addingTools.length} granted`})
                           </span>
                         </button>
                         {addingToolsExpanded && (
@@ -1378,7 +1382,6 @@ export function AgentsPage() {
                             selected={addingTools}
                             catalog={availableTools}
                             onChange={setAddingTools}
-                            suiteStates={{ maestro: false, fusion: false, cogmem: true }}
                           />
                         )}
                       </div>

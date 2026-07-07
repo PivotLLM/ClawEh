@@ -21,13 +21,12 @@ import (
 )
 
 type ContextBuilder struct {
-	workspace          string
-	skillsLoader       *skills.SkillsLoader
-	skillsFilter       []string
-	memory             *MemoryStore
-	mounts             []config.MountConfig
-	toolDiscoveryBM25  bool
-	toolDiscoveryRegex bool
+	workspace           string
+	skillsLoader        *skills.SkillsLoader
+	skillsFilter        []string
+	memory              *MemoryStore
+	mounts              []config.MountConfig
+	toolDiscoveryActive bool
 
 	// Cache for system prompt to avoid rebuilding on every call.
 	// This fixes issue #607: repeated reprocessing of the entire context.
@@ -48,9 +47,8 @@ type ContextBuilder struct {
 	skillFilesAtCache map[string]time.Time
 }
 
-func (cb *ContextBuilder) WithToolDiscovery(useBM25, useRegex bool) *ContextBuilder {
-	cb.toolDiscoveryBM25 = useBM25
-	cb.toolDiscoveryRegex = useRegex
+func (cb *ContextBuilder) WithToolDiscovery(active bool) *ContextBuilder {
+	cb.toolDiscoveryActive = active
 	return cb
 }
 
@@ -149,22 +147,13 @@ Folders your file tools can reach: %s.
 }
 
 func (cb *ContextBuilder) getDiscoveryRule() string {
-	if !cb.toolDiscoveryBM25 && !cb.toolDiscoveryRegex {
+	if !cb.toolDiscoveryActive {
 		return ""
 	}
 
-	var toolNames []string
-	if cb.toolDiscoveryBM25 {
-		toolNames = append(toolNames, `"find_tools_bm25"`)
-	}
-	if cb.toolDiscoveryRegex {
-		toolNames = append(toolNames, `"find_tools_regex"`)
-	}
-
-	return fmt.Sprintf(
-		`5. **Tool Discovery** - Your visible tools are limited to save memory, but a vast hidden library exists. If you lack the right tool for a task, BEFORE giving up, you MUST search using the %s tool. Do not refuse a request unless the search returns nothing. Found tools will temporarily unlock for your next turn.`,
-		strings.Join(toolNames, " or "),
-	)
+	return `5. **Tool Discovery** - Your visible tools are limited to save memory, but a large hidden library exists (integrations, browsers, task tools, and more). If you lack the right tool for a task, BEFORE giving up, call ` +
+		"`search_tools(query)`" + ` with a natural-language description of what you need. It returns matching tool names; then call ` +
+		"`get_tool_details(name)`" + ` on the one you want to load its schema and unlock it, and call it on your next turn. Do not refuse a request unless the search returns nothing.`
 }
 
 func (cb *ContextBuilder) BuildSystemPrompt() string {

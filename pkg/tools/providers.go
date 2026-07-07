@@ -31,16 +31,11 @@ func GetProviders() []ToolProvider {
 }
 
 // StaticToolDescriptors holds descriptors for tools not owned by any
-// ToolProvider (e.g. discovery tools registered by the MCP layer).
-// These are included when building the default agent allowlist and the GUI
-// catalog alongside provider-owned tools.
-var StaticToolDescriptors = []ToolDescriptor{
-	// Off by default: the find_tools_* discovery helpers are only useful when MCP
-	// tool discovery is enabled (which hides MCP tools behind search). Grant them
-	// explicitly on the agents that need them.
-	{Name: "find_tools_regex", Description: "Discover hidden MCP tools by regex search when tool discovery is enabled.", Category: "discovery", ConfigKey: "mcp.discovery.use_regex", DefaultEnabled: false},
-	{Name: "find_tools_bm25", Description: "Discover hidden MCP tools by semantic ranking when tool discovery is enabled.", Category: "discovery", ConfigKey: "mcp.discovery.use_bm25", DefaultEnabled: false},
-}
+// ToolProvider. The progressive-discovery meta-tools (search_tools /
+// get_tool_details) are intentionally NOT listed: they are not per-tool
+// toggleable, they are registered as a unit whenever an agent's
+// progressive_discovery is on and suppressed otherwise.
+var StaticToolDescriptors = []ToolDescriptor{}
 
 // DefaultEnabledToolNames returns the names of every registered provider-owned
 // tool plus static tool whose descriptor is marked DefaultEnabled. It is the

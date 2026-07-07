@@ -783,33 +783,68 @@ func (al *AgentLoop) registerRuntimeTools(
 			MessageTool:       sharedMessageTool,
 		}
 
+		// Progressive discovery is a single global switch (default off). When on,
+		// native tools and the cogmem suite stay always-on; the fusion/maestro suites
+		// (and MCP tools, in loop_mcp) are hidden behind search_tools.
+		discovery := al.cfg.Tools.Discovery.Enabled
+		currentAgent.DiscoveryActive = discovery
+		if currentAgent.ContextBuilder != nil {
+			currentAgent.ContextBuilder.WithToolDiscovery(discovery)
+		}
+
 		for _, p := range tools.GetProviders() {
 			if ok, _ := p.Available(cfg); !ok {
 				continue
 			}
-			builtTools := p.Build(deps)
-			// All-or-nothing suites (cogmem, maestro) are gated as a unit inside
-			// Build by the per-agent flag, so their tools bypass the per-tool
-			// allowlist — the suite flag is the allow decision.
-			isSuite := false
-			if sp, ok := p.(tools.SuiteProvider); ok && sp.Suite() != "" {
-				isSuite = true
+			suite := ""
+			if sp, ok := p.(tools.SuiteProvider); ok {
+				suite = sp.Suite()
 			}
-			for _, t := range builtTools {
-				if isSuite {
-					// Suite tools are exempt from the per-tool allowlist at both
-					// registration and execution — gate is the suite flag.
+			for _, t := range p.Build(deps) {
+				switch {
+				case suite == "":
+					// Native: always visible, subject to the per-tool allowlist.
+					if agentCfg == nil || agentCfg.IsToolAllowed(t.Name()) {
+						currentAgent.Tools.Register(t)
+					}
+				case suite == suiteCogmem:
+					currentAgent.Tools.RegisterSuite(t) // cogmem: always-on, never hidden
+				case discovery:
+					currentAgent.Tools.RegisterSuiteHidden(t) // fusion/maestro behind discovery
+				default:
 					currentAgent.Tools.RegisterSuite(t)
-				} else if agentCfg == nil || agentCfg.IsToolAllowed(t.Name()) {
-					currentAgent.Tools.Register(t)
 				}
 			}
+		}
+
+		if discovery {
+			al.registerDiscoveryMetaTools(currentAgent)
 		}
 	}
 
 	al.spawnMu.Lock()
 	al.spawnManagers = managers
 	al.spawnMu.Unlock()
+}
+
+// suiteCogmem is the one suite that is never subject to progressive discovery —
+// cognitive memory is fundamental to how the agent works, so it stays always-on.
+const suiteCogmem = "cogmem"
+
+// registerDiscoveryMetaTools registers the search_tools / get_tool_details entry
+// points. They are suite-exempt (gated by the discovery decision, not the per-tool
+// allowlist) and present only when discovery is active for the agent.
+func (al *AgentLoop) registerDiscoveryMetaTools(agent *AgentInstance) {
+	ttl := al.cfg.Tools.Discovery.TTL
+	if ttl <= 0 {
+		ttl = config.DefaultDiscoveryTTL
+	}
+	maxHits := al.cfg.Tools.Discovery.MaxSearchResults
+	if maxHits <= 0 {
+		maxHits = config.DefaultDiscoveryMaxSearchHits
+	}
+	agent.Tools.RegisterSuite(tools.NewSearchTool(agent.Tools, maxHits))
+	agent.Tools.RegisterSuite(tools.NewToolDetailsTool(agent.Tools, ttl))
 }
 
 func (al *AgentLoop) RegisterTool(tool tools.Tool) {

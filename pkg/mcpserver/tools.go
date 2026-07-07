@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -126,6 +127,43 @@ func (t *firstCallTracker) workspace(agentName string) string {
 // is built from the union of every per-agent registry (deduped by name).
 // tools/list never inspects the session_token. Per-agent restrictions are
 // enforced at tools/call via the supplied acl.Policy.
+// discoveryConfig controls progressive tool discovery on the host. When enabled,
+// only baseVisible tools go into tools/list; the rest are revealed per-session by
+// get_tool_details.
+type discoveryConfig struct {
+	enabled     bool
+	alwaysShown []string
+	ttl         int
+}
+
+// baseVisible reports whether a published tool name belongs in the host's initial
+// tools/list. With discovery off, everything is visible. With it on: the
+// search_tools/get_tool_details meta-tools plus any tool whose namespace (prefix
+// before the first underscore) is in alwaysShown.
+func (d discoveryConfig) baseVisible(pubName string) bool {
+	if !d.enabled {
+		return true
+	}
+	// Always shown by rule: the discovery entry points and cognitive memory
+	// (fundamental to the agent — never hidden regardless of config).
+	if pubName == "search_tools" || pubName == "get_tool_details" {
+		return true
+	}
+	ns := pubName
+	if i := strings.IndexByte(pubName, '_'); i > 0 {
+		ns = pubName[:i]
+	}
+	if strings.EqualFold(ns, "cogmem") {
+		return true
+	}
+	for _, a := range d.alwaysShown {
+		if strings.EqualFold(strings.TrimSpace(a), ns) {
+			return true
+		}
+	}
+	return false
+}
+
 func addToolsToServer(
 	srv *server.MCPServer,
 	mode authMode,
@@ -137,6 +175,7 @@ func addToolsToServer(
 	policy acl.Policy,
 	msgBus *bus.MessageBus,
 	activeDispatches *atomic.Int32,
+	disc discoveryConfig,
 ) {
 	if policy == nil {
 		policy = acl.Default
@@ -174,6 +213,13 @@ func addToolsToServer(
 		}
 		published[pubName] = name
 
+		// Progressive discovery: keep only the always-shown namespaces + meta-tools
+		// in the base tools/list. The rest stay callable via search_tools /
+		// get_tool_details, which reveals a tool to the requesting session on demand.
+		if !disc.baseVisible(pubName) {
+			continue
+		}
+
 		params := tool.Parameters()
 		if params == nil {
 			params = map[string]any{"type": "object", "properties": map[string]any{}}
@@ -199,6 +245,30 @@ func addToolsToServer(
 		// Published under the external name; dispatch still resolves the internal one.
 		mcpTool := mcp.NewToolWithRawSchema(pubName, tool.Description(), schemaBytes)
 
+		// get_tool_details, under discovery, gets the reveal handler: it unlocks the
+		// requested tool for THIS session (per-session AddSessionTool + list_changed)
+		// so only the calling client sees it. Everything else uses the plain dispatch.
+		if disc.enabled && name == "get_tool_details" {
+			srv.AddTool(mcpTool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				if activeDispatches != nil {
+					activeDispatches.Add(1)
+					defer activeDispatches.Add(-1)
+				}
+				args := req.GetArguments()
+				if args == nil {
+					args = map[string]any{}
+				}
+				mode.prepareArgs(ctx, args)
+				out, isErr := revealForSession(ctx, srv, mode, args, sessionTokens, resolver, tracker, policy, msgBus, disc.ttl)
+				if isErr {
+					return mcp.NewToolResultError(out), nil
+				}
+				return mcp.NewToolResultText(out), nil
+			})
+			logger.DebugCF("mcpserver", "registered tool", map[string]any{"tool": name})
+			continue
+		}
+
 		toolName := name // capture the INTERNAL name for dispatch
 		srv.AddTool(mcpTool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			if activeDispatches != nil {
@@ -220,6 +290,90 @@ func addToolsToServer(
 		logger.DebugCF("mcpserver", "registered tool",
 			map[string]any{"tool": name})
 	}
+}
+
+// revealForSession implements get_tool_details for the host under progressive
+// discovery. It resolves the calling agent, promotes the requested hidden tool in
+// that agent's registry (so it becomes callable), and registers it as a per-session
+// tool with a client notification, so ONLY this session sees and can call it —
+// per-agent by construction, with no leak into the global catalogue. Returns the
+// tool schema on success.
+func revealForSession(
+	ctx context.Context,
+	srv *server.MCPServer,
+	mode authMode,
+	args map[string]any,
+	sessionTokens *sessionTokenStore,
+	resolver AgentResolver,
+	tracker *firstCallTracker,
+	policy acl.Policy,
+	msgBus *bus.MessageBus,
+	ttl int,
+) (string, bool) {
+	rawSessTok, _ := args[sessionTokenParam].(string)
+	if rawSessTok == "" || sessionTokens == nil {
+		return invalidTokenMessage, true
+	}
+	rec, found := sessionTokens.Resolve(rawSessTok)
+	if !found {
+		return invalidTokenMessage, true
+	}
+	reg, ok := resolver(rec.agentID)
+	if !ok || reg == nil {
+		return fmt.Sprintf("agent %q has no registered tool registry", rec.agentID), true
+	}
+
+	target, _ := args["name"].(string)
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return "get_tool_details requires a 'name' argument (an exact tool name from search_tools).", true
+	}
+
+	// RevealTool only resolves tools registered for THIS agent, so a client can
+	// never unlock a tool its agent isn't granted.
+	schema, advertised, internal, ok := reg.RevealTool(target, ttl)
+	if !ok {
+		return fmt.Sprintf("No tool named %q. Use search_tools to find the correct name.", target), true
+	}
+
+	fn, _ := schema["function"].(map[string]any)
+	desc, _ := fn["description"].(string)
+	params, _ := fn["parameters"].(map[string]any)
+	if params == nil {
+		params = map[string]any{"type": "object", "properties": map[string]any{}}
+	}
+	if mode.injectParam {
+		params = injectSessionTokenParam(params)
+	}
+	schemaBytes, err := json.Marshal(params)
+	if err != nil {
+		return "failed to encode tool schema", true
+	}
+
+	session := server.ClientSessionFromContext(ctx)
+	if session == nil {
+		return "no active MCP session to reveal the tool into", true
+	}
+
+	sessTool := mcp.NewToolWithRawSchema(advertised, desc, schemaBytes)
+	handler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		cargs := req.GetArguments()
+		if cargs == nil {
+			cargs = map[string]any{}
+		}
+		mode.prepareArgs(ctx, cargs)
+		out, isErr := dispatchToolCall(ctx, internal, cargs, sessionTokens, resolver, tracker, policy, msgBus)
+		if isErr {
+			return mcp.NewToolResultError(out), nil
+		}
+		return mcp.NewToolResultText(out), nil
+	}
+	if err := srv.AddSessionTool(session.SessionID(), sessTool, handler); err != nil {
+		return "failed to reveal tool for session: " + err.Error(), true
+	}
+
+	body, _ := json.Marshal(schema)
+	return fmt.Sprintf("%s\n\nUnlocked `%s` for this session — it now appears in your tool list and is callable.", string(body), advertised), false
 }
 
 // catalogueToolNames returns the sorted union of tool names across every

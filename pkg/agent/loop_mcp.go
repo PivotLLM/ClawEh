@@ -8,7 +8,6 @@ package agent
 
 import (
 	"context"
-	"fmt"
 	"sync"
 
 	"github.com/PivotLLM/ClawEh/pkg/logger"
@@ -221,7 +220,10 @@ func (al *AgentLoop) registerMCPToolsFromManager(mgr *mcp.Manager) error {
 					continue
 				}
 
-				if al.cfg.Tools.MCP.Discovery.Enabled {
+				// MCP tools are discovery-eligible: when the agent's effective
+				// discovery is on (decided during provider registration and stored on
+				// the instance), hide them behind search_tools; otherwise advertise.
+				if agent.DiscoveryActive {
 					agent.Tools.RegisterHidden(mcpTool)
 				} else {
 					agent.Tools.Register(mcpTool)
@@ -245,47 +247,6 @@ func (al *AgentLoop) registerMCPToolsFromManager(mgr *mcp.Manager) error {
 			"total_registrations": totalRegistrations,
 			"agent_count":         agentCount,
 		})
-
-	// Initialize Discovery Tools only if enabled by configuration.
-	if al.cfg.Tools.MCPClientEffectivelyEnabled() && al.cfg.Tools.MCP.Discovery.Enabled {
-		useBM25 := al.cfg.Tools.MCP.Discovery.UseBM25
-		useRegex := al.cfg.Tools.MCP.Discovery.UseRegex
-
-		// Fail fast: discovery enabled but no search method turned on.
-		if !useBM25 && !useRegex {
-			return fmt.Errorf(
-				"tool discovery is enabled but neither 'use_bm25' nor 'use_regex' is set to true in the configuration",
-			)
-		}
-
-		ttl := al.cfg.Tools.MCP.Discovery.TTL
-		if ttl <= 0 {
-			ttl = 5 // Default value
-		}
-
-		maxSearchResults := al.cfg.Tools.MCP.Discovery.MaxSearchResults
-		if maxSearchResults <= 0 {
-			maxSearchResults = 5 // Default value
-		}
-
-		logger.InfoCF("agent", "Initializing tool discovery", map[string]any{
-			"bm25": useBM25, "regex": useRegex, "ttl": ttl, "max_results": maxSearchResults,
-		})
-
-		for _, agentID := range agentIDs {
-			agent, ok := al.registry.GetAgent(agentID)
-			if !ok {
-				continue
-			}
-
-			if useRegex && agent.Config.IsToolAllowed("find_tools_regex") {
-				agent.Tools.Register(tools.NewRegexSearchTool(agent.Tools, ttl, maxSearchResults))
-			}
-			if useBM25 && agent.Config.IsToolAllowed("find_tools_bm25") {
-				agent.Tools.Register(tools.NewBM25SearchTool(agent.Tools, ttl, maxSearchResults))
-			}
-		}
-	}
 
 	return nil
 }

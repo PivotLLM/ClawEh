@@ -589,6 +589,15 @@ func (c *Config) AgentHasFusion(agentID string) bool {
 	return false
 }
 
+// DiscoveryTTL is how many turns a promoted tool stays visible; falls back to the
+// default when unset.
+func (c *Config) DiscoveryTTL() int {
+	if c.Tools.Discovery.TTL <= 0 {
+		return DefaultDiscoveryTTL
+	}
+	return c.Tools.Discovery.TTL
+}
+
 // AgentSuiteEnabled reports whether the named all-or-nothing tool suite is
 // enabled for the agent. Suites are gated as a unit by a per-agent flag rather
 // than the per-tool allowlist. cogmem defaults ON; maestro and fusion default OFF.
@@ -1384,12 +1393,23 @@ func primaryLANIP() string {
 }
 
 type ToolDiscoveryConfig struct {
-	Enabled          bool `json:"enabled"            env:"CLAW_TOOLS_DISCOVERY_ENABLED"`
-	TTL              int  `json:"ttl"                env:"CLAW_TOOLS_DISCOVERY_TTL"`
-	MaxSearchResults int  `json:"max_search_results" env:"CLAW_MAX_SEARCH_RESULTS"`
-	UseBM25          bool `json:"use_bm25"           env:"CLAW_TOOLS_DISCOVERY_USE_BM25"`
-	UseRegex         bool `json:"use_regex"          env:"CLAW_TOOLS_DISCOVERY_USE_REGEX"`
+	// Enabled is the single global switch for progressive tool discovery, applied
+	// uniformly to every agent and the MCP host. Default OFF. When on,
+	// discovery-eligible tools (the fusion and maestro suites and all upstream MCP
+	// tools) are hidden behind the search_tools / get_tool_details meta-tools;
+	// native tools and the cogmem suite stay always-on.
+	Enabled bool `json:"enabled" env:"CLAW_TOOLS_DISCOVERY_ENABLED"`
+	// TTL is how many turns a tool stays visible after get_tool_details promotes it
+	// (reset on each use). MaxSearchResults caps search_tools results.
+	TTL              int `json:"ttl"                env:"CLAW_TOOLS_DISCOVERY_TTL"`
+	MaxSearchResults int `json:"max_search_results" env:"CLAW_MAX_SEARCH_RESULTS"`
 }
+
+// Discovery TTL / result defaults, applied when the config value is unset (<= 0).
+const (
+	DefaultDiscoveryTTL           = 5
+	DefaultDiscoveryMaxSearchHits = 10
+)
 
 type ToolConfig struct {
 	Enabled bool `json:"enabled" env:"ENABLED"`
@@ -1500,6 +1520,10 @@ type ToolsConfig struct {
 	Skills       SkillsToolsConfig  `json:"skills"`
 	MediaCleanup MediaCleanupConfig `json:"media_cleanup"`
 	MCP          MCPConfig          `json:"mcp"`
+	// Discovery holds progressive-tool-discovery settings. It applies to all tool
+	// kinds (native, suites, MCP), so it lives at tools.discovery rather than under
+	// tools.mcp.
+	Discovery ToolDiscoveryConfig `json:"discovery"`
 	// ReadFile carries the read-size limit used at tool construction (its enabled
 	// state, like every per-tool toggle, lives in Overrides now).
 	ReadFile ReadFileToolConfig `json:"read_file"                                                envPrefix:"CLAW_TOOLS_READ_FILE_"`
@@ -1555,7 +1579,6 @@ type MCPServerConfig struct {
 
 // MCPConfig defines configuration for all MCP servers
 type MCPConfig struct {
-	Discovery ToolDiscoveryConfig `json:"discovery"`
 	// Servers is a map of server name to server configuration
 	Servers map[string]MCPServerConfig `json:"servers,omitempty"`
 }
@@ -1595,6 +1618,15 @@ type MCPHostConfig struct {
 	// prefix or glob needed). "*" exposes everything; empty exposes nothing.
 	InternalTools []string `json:"internal_tools,omitempty"`
 	ExternalTools []string `json:"external_tools,omitempty"`
+	// AlwaysShownNamespaces lists EXTRA tool namespaces (the prefix before the
+	// first underscore, e.g. "file", "session", "trello") to keep in the host's
+	// tools/list when progressive discovery is on. Everything else is progressive:
+	// hidden from tools/list and reached via search_tools / get_tool_details, which
+	// reveal a tool to the calling session on demand. The search_tools /
+	// get_tool_details meta-tools and the cogmem namespace are always shown by rule
+	// (cognitive memory is fundamental), so they need not be listed here. Only
+	// consulted when tools.discovery.enabled is true.
+	AlwaysShownNamespaces []string `json:"always_shown_namespaces,omitempty"`
 }
 
 func LoadConfig(path string) (*Config, error) {

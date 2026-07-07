@@ -335,14 +335,13 @@ func DefaultConfig() *Config {
 				},
 			},
 			MCP: MCPConfig{
-				Discovery: ToolDiscoveryConfig{
-					Enabled:          false,
-					TTL:              5,
-					MaxSearchResults: 5,
-					UseBM25:          true,
-					UseRegex:         false,
-				},
 				Servers: map[string]MCPServerConfig{},
+			},
+			// Progressive tool discovery: single global switch, default OFF.
+			Discovery: ToolDiscoveryConfig{
+				Enabled:          false,
+				TTL:              DefaultDiscoveryTTL,
+				MaxSearchResults: DefaultDiscoveryMaxSearchHits,
 			},
 			ReadFile: ReadFileToolConfig{
 				Enabled:         true,
@@ -380,6 +379,10 @@ func DefaultConfig() *Config {
 			// (coarsely) what /internal or /mcp advertises.
 			InternalTools: nil,
 			ExternalTools: nil,
+			// Extra namespaces to keep in tools/list when discovery is on. The
+			// search_tools/get_tool_details meta-tools and cogmem are always shown by
+			// rule; this list adds more (e.g. "file", "session"). Default: none.
+			AlwaysShownNamespaces: nil,
 		},
 		ConfigReloadIntervalSeconds: global.DefaultConfigReloadIntervalSeconds,
 	}

@@ -44,6 +44,14 @@ type AgentInstance struct {
 
 	// Config is the agent's configuration, used for per-agent tool allowlists.
 	Config *config.AgentConfig
+
+	// DiscoveryActive is the effective progressive-discovery decision for this
+	// agent (per-agent preference, overridden on by the auto_threshold). AgentLoop
+	// sets it during tool registration; loop_mcp reads it to decide whether MCP
+	// tools are registered hidden. When true, discovery-eligible tools (fusion and
+	// maestro suites, all upstream MCP) are hidden behind search_tools /
+	// get_tool_details; native tools and cogmem stay always-on.
+	DiscoveryActive bool
 }
 
 // NewAgentInstance creates an agent instance from config.
@@ -79,11 +87,9 @@ func NewAgentInstance(
 	// shared message tool) are present. Registering here too would double-build
 	// every tool and overwrite it, so we intentionally don't.
 
-	mcpDiscoveryActive := cfg.Tools.MCPClientEffectivelyEnabled() && cfg.Tools.MCP.Discovery.Enabled
-	contextBuilder := NewContextBuilder(workspace).WithToolDiscovery(
-		mcpDiscoveryActive && cfg.Tools.MCP.Discovery.UseBM25,
-		mcpDiscoveryActive && cfg.Tools.MCP.Discovery.UseRegex,
-	)
+	// Progressive discovery is a single global switch; AgentLoop also sets it during
+	// tool registration (and DiscoveryActive), so this just seeds the context rule.
+	contextBuilder := NewContextBuilder(workspace).WithToolDiscovery(cfg.Tools.Discovery.Enabled)
 	// For named agents, always apply the skills filter — even if empty.
 	// nil filter = no restriction (all skills); empty filter = no skills.
 	// Default/nil agentCfg means the default agent which gets all skills.

@@ -19,20 +19,16 @@ func TestHandleListTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConfig() error = %v", err)
 	}
-	// Per-tool enable state lives in the generic override map now; file_read_bytes is
+	// Per-tool enable state lives in the generic override map now; file_read_lines is
 	// default-allow so it stays enabled, file_write is overridden off, and
 	// skill_find (default-deny) is overridden on.
 	cfg.Tools.Overrides = map[string]bool{"file_write": false, "skill_find": true}
 	cfg.Tools.Cron.Enabled = true
 	cfg.Tools.Skills.Registry.Enabled = true
 	cfg.Tools.Subagent.Enabled = false
-	// MCP client is on iff a server is enabled; that gates the discovery tools.
 	cfg.Tools.MCP.Servers = map[string]config.MCPServerConfig{
 		"s": {Enabled: true, Command: "echo"},
 	}
-	cfg.Tools.MCP.Discovery.Enabled = true
-	cfg.Tools.MCP.Discovery.UseRegex = true
-	cfg.Tools.MCP.Discovery.UseBM25 = false
 	err = config.SaveConfig(configPath, cfg)
 	if err != nil {
 		t.Fatalf("SaveConfig() error = %v", err)
@@ -58,8 +54,12 @@ func TestHandleListTools(t *testing.T) {
 	for _, tool := range resp.Tools {
 		gotTools[tool.Name] = tool
 	}
-	if gotTools["file_read_bytes"].Status != "enabled" {
-		t.Fatalf("file_read_bytes status = %q, want enabled", gotTools["file_read_bytes"].Status)
+	if gotTools["file_read_lines"].Status != "enabled" {
+		t.Fatalf("file_read_lines status = %q, want enabled", gotTools["file_read_lines"].Status)
+	}
+	// Byte-addressed file tools are default-off now (edge-case).
+	if gotTools["file_read_bytes"].Status != "disabled" {
+		t.Fatalf("file_read_bytes status = %q, want disabled (default off)", gotTools["file_read_bytes"].Status)
 	}
 	if gotTools["file_write"].Status != "disabled" {
 		t.Fatalf("file_write status = %q, want disabled", gotTools["file_write"].Status)
@@ -72,24 +72,6 @@ func TestHandleListTools(t *testing.T) {
 	}
 	if gotTools["skill_find"].Status != "enabled" {
 		t.Fatalf("skill_find status = %q, want enabled", gotTools["skill_find"].Status)
-	}
-	if gotTools["find_tools_regex"].Status != "enabled" {
-		t.Fatalf("find_tools_regex status = %q, want enabled", gotTools["find_tools_regex"].Status)
-	}
-	if gotTools["find_tools_regex"].ConfigKey != "mcp.discovery.use_regex" {
-		t.Fatalf(
-			"find_tools_regex config_key = %q, want mcp.discovery.use_regex",
-			gotTools["find_tools_regex"].ConfigKey,
-		)
-	}
-	if gotTools["find_tools_bm25"].Status != "disabled" {
-		t.Fatalf("find_tools_bm25 status = %q, want disabled", gotTools["find_tools_bm25"].Status)
-	}
-	if gotTools["find_tools_bm25"].ConfigKey != "mcp.discovery.use_bm25" {
-		t.Fatalf(
-			"find_tools_bm25 config_key = %q, want mcp.discovery.use_bm25",
-			gotTools["find_tools_bm25"].ConfigKey,
-		)
 	}
 	if gotTools["session_messages"].Status != "enabled" {
 		t.Fatalf("session_messages status = %q, want enabled", gotTools["session_messages"].Status)
@@ -136,8 +118,6 @@ func TestHandleUpdateToolState(t *testing.T) {
 	}
 	cfg.Tools.Subagent.Enabled = false
 	cfg.Tools.Cron.Enabled = false
-	cfg.Tools.MCP.Discovery.Enabled = false
-	cfg.Tools.MCP.Discovery.UseRegex = false
 	err = config.SaveConfig(configPath, cfg)
 	if err != nil {
 		t.Fatalf("SaveConfig() error = %v", err)
@@ -162,13 +142,13 @@ func TestHandleUpdateToolState(t *testing.T) {
 	rec2 := httptest.NewRecorder()
 	req2 := httptest.NewRequest(
 		http.MethodPut,
-		"/api/tools/find_tools_regex/state",
+		"/api/tools/file_read_bytes/state",
 		bytes.NewBufferString(`{"enabled":true}`),
 	)
 	req2.Header.Set("Content-Type", "application/json")
 	mux.ServeHTTP(rec2, req2)
 	if rec2.Code != http.StatusOK {
-		t.Fatalf("regex status = %d, want %d, body=%s", rec2.Code, http.StatusOK, rec2.Body.String())
+		t.Fatalf("file_read_bytes status = %d, want %d, body=%s", rec2.Code, http.StatusOK, rec2.Body.String())
 	}
 
 	rec3 := httptest.NewRecorder()
@@ -192,8 +172,8 @@ func TestHandleUpdateToolState(t *testing.T) {
 	if !updated.Tools.Overrides["agent_spawn"] {
 		t.Fatalf("agent_spawn override should be true: %#v", updated.Tools.Overrides)
 	}
-	if !updated.Tools.MCP.Discovery.Enabled || !updated.Tools.MCP.Discovery.UseRegex {
-		t.Fatalf("mcp regex discovery should be enabled: %#v", updated.Tools.MCP)
+	if !updated.Tools.Overrides["file_read_bytes"] {
+		t.Fatalf("file_read_bytes override should be true: %#v", updated.Tools.Overrides)
 	}
 	if !updated.Tools.Overrides["cron_schedule"] {
 		t.Fatalf("cron_schedule override should be true: %#v", updated.Tools.Overrides)
