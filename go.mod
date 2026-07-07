@@ -64,7 +64,7 @@ require (
 )
 
 require (
-	github.com/PivotLLM/spawnllm v0.1.3
+	github.com/PivotLLM/spawnllm v0.1.4
 	github.com/PivotLLM/toolspec v0.2.0
 	github.com/andybalholm/brotli v1.2.2 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
