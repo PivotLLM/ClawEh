@@ -196,11 +196,15 @@ func (r *ToolRegistry) promoteLocked(names []string, ttl int) int {
 	return len(toPromote)
 }
 
-// pruneLocked hides the lowest-remaining-TTL revealed (non-core, TTL>0) tools
-// until at most visibleBudget remain visible, keeping the fanned-out working set
-// bounded. Ties break by name for deterministic eviction. Just-promoted tools sit
-// at the max TTL, so pruning never evicts what was just revealed. Caller holds
-// r.mu. Returns the number evicted.
+// pruneLocked keeps the total number of tools the model sees at or below
+// visibleBudget. The count includes the always-on (core) tools — native tools,
+// the cogmem suite, and the search_tools/get_tool_details meta-tools — because
+// they occupy the model's tool list too. Core tools can't be hidden, so only
+// revealed (non-core, TTL>0) tools are evicted, lowest-remaining-TTL first (ties
+// broken by name). Just-promoted tools sit at the max TTL, so pruning never
+// evicts what was just revealed. If the always-on set alone meets or exceeds the
+// budget, every revealed tool is hidden (the floor). Caller holds r.mu. Returns
+// the number evicted.
 func (r *ToolRegistry) pruneLocked(visibleBudget int) int {
 	if visibleBudget <= 0 {
 		return 0
@@ -209,24 +213,31 @@ func (r *ToolRegistry) pruneLocked(visibleBudget int) int {
 		name  string
 		entry *ToolEntry
 	}
-	var visible []visibleTool
+	alwaysOn := 0
+	var revealed []visibleTool
 	for name, entry := range r.tools {
-		if !entry.IsCore && entry.TTL > 0 {
-			visible = append(visible, visibleTool{name, entry})
+		switch {
+		case entry.IsCore:
+			alwaysOn++
+		case entry.TTL > 0:
+			revealed = append(revealed, visibleTool{name, entry})
 		}
 	}
-	if len(visible) <= visibleBudget {
+	if alwaysOn+len(revealed) <= visibleBudget {
 		return 0
 	}
-	sort.Slice(visible, func(i, j int) bool {
-		if visible[i].entry.TTL != visible[j].entry.TTL {
-			return visible[i].entry.TTL < visible[j].entry.TTL
+	evict := alwaysOn + len(revealed) - visibleBudget
+	if evict > len(revealed) {
+		evict = len(revealed) // core can't be evicted; revealed floor is 0
+	}
+	sort.Slice(revealed, func(i, j int) bool {
+		if revealed[i].entry.TTL != revealed[j].entry.TTL {
+			return revealed[i].entry.TTL < revealed[j].entry.TTL
 		}
-		return visible[i].name < visible[j].name
+		return revealed[i].name < revealed[j].name
 	})
-	evict := len(visible) - visibleBudget
 	for i := 0; i < evict; i++ {
-		visible[i].entry.TTL = 0
+		revealed[i].entry.TTL = 0
 	}
 	return evict
 }

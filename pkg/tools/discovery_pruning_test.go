@@ -86,6 +86,51 @@ func TestDiscovery_VisibleBudgetTieBreakByName(t *testing.T) {
 	}
 }
 
+// Always-on (core) tools count toward the visible budget: with the budget
+// partly consumed by core tools, fewer revealed tools fit before pruning. Core
+// tools are never evicted.
+func TestDiscovery_VisibleBudgetCountsAlwaysOnTools(t *testing.T) {
+	r := NewToolRegistry()
+	// Two always-on (core) tools.
+	r.Register(&mockTool{name: "core1"})
+	r.Register(&mockTool{name: "core2"})
+	for _, n := range []string{"r_lo", "r_mid", "r_hi"} {
+		r.RegisterHidden(&mockTool{name: n})
+	}
+	r.PromoteTools([]string{"r_lo"}, 1, 0)
+	r.PromoteTools([]string{"r_mid"}, 5, 0)
+	// Budget 4: 2 core + 3 revealed = 5 visible → evict the 1 lowest-TTL revealed.
+	r.PromoteTools([]string{"r_hi"}, 9, 4)
+
+	if got := ttlOf(t, r, "r_lo"); got != 0 {
+		t.Errorf("with 2 always-on tools counted, r_lo should be evicted at budget 4, TTL=%d", got)
+	}
+	for _, n := range []string{"r_mid", "r_hi"} {
+		if ttlOf(t, r, n) == 0 {
+			t.Errorf("%s should remain visible", n)
+		}
+	}
+	// Core tools stay visible regardless of budget pressure.
+	for _, n := range []string{"core1", "core2"} {
+		if _, ok := r.Get(n); !ok {
+			t.Errorf("always-on tool %s must never be evicted", n)
+		}
+	}
+}
+
+// When the always-on set alone meets the budget, every revealed tool is hidden.
+func TestDiscovery_VisibleBudgetAlwaysOnAtCapEvictsAllRevealed(t *testing.T) {
+	r := NewToolRegistry()
+	r.Register(&mockTool{name: "core1"})
+	r.Register(&mockTool{name: "core2"})
+	r.RegisterHidden(&mockTool{name: "r1"})
+	// Budget 2, already 2 core → the revealed tool cannot fit.
+	r.PromoteTools([]string{"r1"}, 9, 2)
+	if got := ttlOf(t, r, "r1"); got != 0 {
+		t.Errorf("revealed tool should be evicted when core fills the budget, TTL=%d", got)
+	}
+}
+
 // A budget of 0 (or negative) disables pruning entirely.
 func TestDiscovery_VisibleBudgetDisabled(t *testing.T) {
 	r := NewToolRegistry()
