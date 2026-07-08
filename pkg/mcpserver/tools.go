@@ -131,9 +131,10 @@ func (t *firstCallTracker) workspace(agentName string) string {
 // only baseVisible tools go into tools/list; the rest are revealed per-session by
 // get_tool_details.
 type discoveryConfig struct {
-	enabled     bool
-	alwaysShown []string
-	ttl         int
+	enabled       bool
+	alwaysShown   []string
+	ttl           int
+	visibleBudget int
 }
 
 // baseVisible reports whether a published tool name belongs in the host's initial
@@ -259,7 +260,7 @@ func addToolsToServer(
 					args = map[string]any{}
 				}
 				mode.prepareArgs(ctx, args)
-				out, isErr := revealForSession(ctx, srv, mode, args, sessionTokens, resolver, tracker, policy, msgBus, disc.ttl)
+				out, isErr := revealForSession(ctx, srv, mode, args, sessionTokens, resolver, tracker, policy, msgBus, disc.ttl, disc.visibleBudget)
 				if isErr {
 					return mcp.NewToolResultError(out), nil
 				}
@@ -308,7 +309,7 @@ func revealForSession(
 	tracker *firstCallTracker,
 	policy acl.Policy,
 	msgBus *bus.MessageBus,
-	ttl int,
+	ttl, visibleBudget int,
 ) (string, bool) {
 	rawSessTok, _ := args[sessionTokenParam].(string)
 	if rawSessTok == "" || sessionTokens == nil {
@@ -331,7 +332,7 @@ func revealForSession(
 
 	// RevealTool only resolves tools registered for THIS agent, so a client can
 	// never unlock a tool its agent isn't granted.
-	schema, advertised, internal, ok := reg.RevealTool(target, ttl)
+	schema, advertised, internal, ok := reg.RevealTool(target, ttl, visibleBudget)
 	if !ok {
 		return fmt.Sprintf("No tool named %q. Use search_tools to find the correct name.", target), true
 	}

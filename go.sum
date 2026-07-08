@@ -1,13 +1,13 @@
 filippo.io/edwards25519 v1.2.0 h1:crnVqOiS4jqYleHd9vaKZ+HKtHfllngJIiOpNpoJsjo=
 filippo.io/edwards25519 v1.2.0/go.mod h1:xzAOLCNug/yB62zG1bQ8uziwrIqIuxhctzJT18Q77mc=
-github.com/PivotLLM/MCPFusion v0.4.2 h1:Ih2WW0ZsNC9evBd1JBCzzgs4vYvfUjd37gdt2O3+bnA=
-github.com/PivotLLM/MCPFusion v0.4.2/go.mod h1:dWkP5v27hZtnexupGCQ9sR/V7T+4nRCqz5kd78jOS0Y=
+github.com/PivotLLM/MCPFusion v0.4.3 h1:68iitwmWzwQzNLXDcSbGuIGwo0f3Dd8Bt0vHb+fH9wE=
+github.com/PivotLLM/MCPFusion v0.4.3/go.mod h1:YWrns44i4hmadPq8g2Ta0pZK1fDDEXxKAQHr0+B0xcI=
 github.com/PivotLLM/Maestro v0.3.7 h1:TDI1foEd7lgwAMvrfRhsSL94T1AUItiKUTo1zXPzIlI=
 github.com/PivotLLM/Maestro v0.3.7/go.mod h1:WHh/T/ofdXxR7xYJKPpuOUyNA9Kr+DkBVWlRWbZq3iM=
 github.com/PivotLLM/spawnllm v0.1.5 h1:8nCc31x2BdijsKBA6iUl/8aCJSM6vNS30P4VfxJh+NI=
 github.com/PivotLLM/spawnllm v0.1.5/go.mod h1:VEq3syYV2jYqeoaNPo89lH9AyA6oDzFj2AIUlPBUfnU=
-github.com/PivotLLM/toolspec v0.2.0 h1:fXbohFXZJi9kGM+3DjeEu8Gv8rIUpVCJ/wMRvU1jRbk=
-github.com/PivotLLM/toolspec v0.2.0/go.mod h1:QA/AiJHJSEwsLGEY0RTGWC124ftNigLIP8pTPj3oVKM=
+github.com/PivotLLM/toolspec v0.3.0 h1:e6WYvIghVgXwJe92rrJfcrydaYdmYe8t4MXs63Ftfac=
+github.com/PivotLLM/toolspec v0.3.0/go.mod h1:QA/AiJHJSEwsLGEY0RTGWC124ftNigLIP8pTPj3oVKM=
 github.com/adhocore/gronx v1.20.0 h1:PD13Mo0wekkZ7ZZR9yb1TqeqTfybs7/K3ez9DmjQwEs=
 github.com/adhocore/gronx v1.20.0/go.mod h1:7oUY1WAU8rEJWmAxXR2DN0JaO4gi9khSgKjiRypqteg=
 github.com/andybalholm/brotli v1.2.2 h1:HzTuoo2ErYQqf5qvcJInB8uvqSVxRttzkFexPWtnceM=

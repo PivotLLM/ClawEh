@@ -813,7 +813,14 @@ func (al *AgentLoop) registerRuntimeTools(
 				case suite == suiteCogmem:
 					currentAgent.Tools.RegisterSuite(t) // cogmem: always-on, never hidden
 				case discovery:
-					currentAgent.Tools.RegisterSuiteHidden(t) // fusion/maestro behind discovery
+					// fusion/maestro behind discovery; carry any reveal-together group
+					// (e.g. a fusion service) so the whole set unlocks in one search.
+					if g, ok := t.(tools.DiscoveryGrouped); ok {
+						group, revealTogether := g.DiscoveryGroup()
+						currentAgent.Tools.RegisterSuiteHiddenGroup(t, group, revealTogether)
+					} else {
+						currentAgent.Tools.RegisterSuiteHidden(t)
+					}
 				default:
 					currentAgent.Tools.RegisterSuite(t)
 				}
@@ -838,16 +845,14 @@ const suiteCogmem = "cogmem"
 // points. They are suite-exempt (gated by the discovery decision, not the per-tool
 // allowlist) and present only when discovery is active for the agent.
 func (al *AgentLoop) registerDiscoveryMetaTools(agent *AgentInstance, cfg *config.Config) {
-	ttl := cfg.Tools.Discovery.TTL
-	if ttl <= 0 {
-		ttl = config.DefaultDiscoveryTTL
-	}
+	ttlMax := cfg.DiscoveryTTLMax()
+	visibleBudget := cfg.DiscoveryVisibleBudget()
 	maxHits := cfg.Tools.Discovery.MaxSearchResults
 	if maxHits <= 0 {
 		maxHits = config.DefaultDiscoveryMaxSearchHits
 	}
 	agent.Tools.RegisterSuite(tools.NewSearchTool(agent.Tools, maxHits))
-	agent.Tools.RegisterSuite(tools.NewToolDetailsTool(agent.Tools, ttl))
+	agent.Tools.RegisterSuite(tools.NewToolDetailsTool(agent.Tools, ttlMax, visibleBudget))
 }
 
 func (al *AgentLoop) RegisterTool(tool tools.Tool) {

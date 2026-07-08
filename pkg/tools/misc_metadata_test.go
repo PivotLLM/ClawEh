@@ -55,7 +55,7 @@ func TestSearchTool_Metadata(t *testing.T) {
 
 func TestToolDetailsTool_Metadata(t *testing.T) {
 	registry := tools.NewToolRegistry()
-	tool := tools.NewToolDetailsTool(registry, 5)
+	tool := tools.NewToolDetailsTool(registry, 5, 0)
 	if tool.Name() != "get_tool_details" {
 		t.Errorf("Name() = %q, want get_tool_details", tool.Name())
 	}

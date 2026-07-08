@@ -67,9 +67,10 @@ type MCPServer struct {
 	// Progressive discovery. When enabled, tools/list is limited to the
 	// alwaysShown namespaces plus the search_tools/get_tool_details meta-tools;
 	// everything else is revealed to a session on demand via get_tool_details.
-	discovery    bool
-	alwaysShown  []string
-	discoveryTTL int
+	discovery             bool
+	alwaysShown           []string
+	discoveryTTL          int
+	discoveryVisibleBudget int
 	listen       string
 	endpointPath string // bearer endpoint (/mcp)
 	internalPath string // session-token-parameter endpoint (/internal)
@@ -147,11 +148,12 @@ func WithEndpointPath(path string) Option {
 // WithDiscovery configures progressive tool discovery for the host: when enabled,
 // tools/list carries only the alwaysShown namespaces + the meta-tools, and hidden
 // tools are revealed per-session by get_tool_details. ttl is the promotion TTL.
-func WithDiscovery(enabled bool, alwaysShown []string, ttl int) Option {
+func WithDiscovery(enabled bool, alwaysShown []string, ttl, visibleBudget int) Option {
 	return func(m *MCPServer) {
 		m.discovery = enabled
 		m.alwaysShown = append([]string(nil), alwaysShown...)
 		m.discoveryTTL = ttl
+		m.discoveryVisibleBudget = visibleBudget
 	}
 }
 
@@ -256,7 +258,7 @@ func New(opts ...Option) (*MCPServer, error) {
 		)
 	}
 
-	disc := discoveryConfig{enabled: m.discovery, alwaysShown: m.alwaysShown, ttl: m.discoveryTTL}
+	disc := discoveryConfig{enabled: m.discovery, alwaysShown: m.alwaysShown, ttl: m.discoveryTTL, visibleBudget: m.discoveryVisibleBudget}
 
 	// /internal — session-token parameter on every tool (ClawEh's CLI providers).
 	internalSrv := newSrv()

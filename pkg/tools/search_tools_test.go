@@ -133,7 +133,7 @@ func TestSearchTool_BM25Mode(t *testing.T) {
 
 func TestToolDetailsTool_RevealsAndPromotes(t *testing.T) {
 	reg := setupPopulatedRegistry()
-	details := NewToolDetailsTool(reg, 4)
+	details := NewToolDetailsTool(reg, 4, 0)
 	ctx := context.Background()
 
 	t.Run("Unknown tool errors", func(t *testing.T) {
@@ -287,7 +287,7 @@ func TestGet_HiddenToolTTLLifecycle(t *testing.T) {
 	}
 
 	// Promote → gettable
-	reg.PromoteTools([]string{"hidden_tool"}, 3)
+	reg.PromoteTools([]string{"hidden_tool"}, 3, 0)
 	_, ok = reg.Get("hidden_tool")
 	if !ok {
 		t.Error("Expected promoted hidden tool to be gettable")
@@ -351,7 +351,7 @@ func TestPromoteTools_ConcurrentWithTickTTL(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		for i := 0; i < 1000; i++ {
-			reg.PromoteTools(names, 5)
+			reg.PromoteTools(names, 5, 0)
 		}
 		close(done)
 	}()

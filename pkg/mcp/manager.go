@@ -416,6 +416,10 @@ func (m *Manager) ConnectServer(
 	return nil
 }
 
+// RevealTogether reports whether this server's tools should reveal as a group
+// under progressive discovery (from its config).
+func (c *ServerConnection) RevealTogether() bool { return c.cfg.RevealTogether }
+
 // GetServers returns all connected servers
 func (m *Manager) GetServers() map[string]*ServerConnection {
 	m.mu.RLock()

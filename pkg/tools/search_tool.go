@@ -110,12 +110,13 @@ func (t *SearchTool) Execute(_ context.Context, args map[string]any) *ToolResult
 // the full schema for a single tool discovered via search_tools and promotes it so
 // it becomes callable for the next TTL turns.
 type ToolDetailsTool struct {
-	registry *ToolRegistry
-	ttl      int
+	registry      *ToolRegistry
+	ttl           int
+	visibleBudget int
 }
 
-func NewToolDetailsTool(r *ToolRegistry, ttl int) *ToolDetailsTool {
-	return &ToolDetailsTool{registry: r, ttl: ttl}
+func NewToolDetailsTool(r *ToolRegistry, ttl, visibleBudget int) *ToolDetailsTool {
+	return &ToolDetailsTool{registry: r, ttl: ttl, visibleBudget: visibleBudget}
 }
 
 func (t *ToolDetailsTool) Name() string { return "get_tool_details" }
@@ -144,7 +145,7 @@ func (t *ToolDetailsTool) Execute(_ context.Context, args map[string]any) *ToolR
 	}
 	name = strings.TrimSpace(name)
 
-	schema, advertised, _, ok := t.registry.revealTool(name, t.ttl)
+	schema, advertised, _, ok := t.registry.revealTool(name, t.ttl, t.visibleBudget)
 	if !ok {
 		return ErrorResult(fmt.Sprintf("No tool named %q. Use search_tools to find the correct name.", name))
 	}

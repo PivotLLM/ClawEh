@@ -136,13 +136,25 @@ configured server has `enabled: true`. There is no separate global on/off flag.
 | Config               | Type | Default | Description                                                                                                                       |
 |----------------------|------|---------|-----------------------------------------------------------------------------------------------------------------------------------|
 | `enabled`            | bool | false   | If true, MCP tools are hidden and loaded on-demand via search. If false, all tools are loaded                                     |
-| `ttl`                | int  | 5       | Number of conversational turns a discovered tool remains unlocked                                                                 |
+| `ttl_max`            | int  | 50      | Longest a revealed tool stays visible without being used, in turns (each use resets it). Idle beyond this and it is hidden again. Legacy key `ttl` is still accepted and normalized to `ttl_max` |
+| `visible_budget`     | int  | 100     | Max revealed tools visible at once. Under the cap every tool lives to `ttl_max`; a new reveal over it hides the lowest-remaining-TTL tools back to the cap |
 | `max_search_results` | int  | 5       | Maximum number of tools returned per search query                                                                                 |
 | `use_bm25`           | bool | true    | Enable the natural language/keyword search tool (`tool_search_tool_bm25`). **Warning**: consumes more resources than regex search |
 | `use_regex`          | bool | false   | Enable the regex pattern search tool (`tool_search_tool_regex`)                                                                   |
 
 > **Note:** If `discovery.enabled` is `true`, you MUST enable at least one search engine (`use_bm25` or `use_regex`),
 > otherwise the application will fail to start.
+
+> **Note:** `discovery` lives at `tools.discovery` (a sibling of `tools.mcp`), because it governs all tool kinds — native, suites, and MCP. A `discovery` block nested under `tools.mcp` is ignored.
+
+#### Reveal a whole set at once (`reveal_together`)
+
+For a small, cohesive group of tools, you can have discovery reveal the **entire group** as soon as any one member is found, saving repeated searches:
+
+- **MCP servers:** set `"reveal_together": true` on the server entry under `tools.mcp.servers` (also toggleable in the WebUI). Revealing one of its tools reveals them all.
+- **Fusion services:** set `"reveal_together": true` in the service's `.json` spec. Not exposed in the WebUI.
+
+Use it only for small services/servers — a large group can exceed `visible_budget` and immediately prune itself.
 
 ### Per-Server Config
 
@@ -218,14 +230,15 @@ dynamically only when requested by the user.*
 ```json
 {
   "tools": {
+    "discovery": {
+      "enabled": true,
+      "ttl_max": 50,
+      "visible_budget": 100,
+      "max_search_results": 5,
+      "use_bm25": true,
+      "use_regex": false
+    },
     "mcp": {
-      "discovery": {
-        "enabled": true,
-        "ttl": 5,
-        "max_search_results": 5,
-        "use_bm25": true,
-        "use_regex": false
-      },
       "servers": {
         "github": {
           "enabled": true,

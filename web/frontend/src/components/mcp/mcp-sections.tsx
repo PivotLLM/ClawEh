@@ -438,6 +438,14 @@ export function ClientServersSection({
                 </Field>
               </>
             )}
+
+            <SwitchCardField
+              label="Reveal together"
+              hint="Under progressive discovery, reveal all of this server's tools as soon as one is found. Use only for small, cohesive servers."
+              checked={s.revealTogether}
+              onCheckedChange={(c) => update(i, { revealTogether: c })}
+              layout="setting-row"
+            />
           </div>
         ))}
 

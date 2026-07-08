@@ -589,13 +589,23 @@ func (c *Config) AgentHasFusion(agentID string) bool {
 	return false
 }
 
-// DiscoveryTTL is how many turns a promoted tool stays visible; falls back to the
-// default when unset.
-func (c *Config) DiscoveryTTL() int {
-	if c.Tools.Discovery.TTL <= 0 {
-		return DefaultDiscoveryTTL
+// DiscoveryTTLMax is the longest a revealed tool stays visible without use, in
+// turns (reset on each use); falls back to the default when unset.
+func (c *Config) DiscoveryTTLMax() int {
+	if c.Tools.Discovery.TTLMax <= 0 {
+		return DefaultDiscoveryTTLMax
 	}
-	return c.Tools.Discovery.TTL
+	return c.Tools.Discovery.TTLMax
+}
+
+// DiscoveryVisibleBudget is the max number of revealed tools allowed visible at
+// once before lowest-TTL-first pruning kicks in; falls back to the default when
+// unset.
+func (c *Config) DiscoveryVisibleBudget() int {
+	if c.Tools.Discovery.VisibleBudget <= 0 {
+		return DefaultDiscoveryVisibleBudget
+	}
+	return c.Tools.Discovery.VisibleBudget
 }
 
 // AgentSuiteEnabled reports whether the named all-or-nothing tool suite is
@@ -1412,15 +1422,39 @@ type ToolDiscoveryConfig struct {
 	// tools) are hidden behind the search_tools / get_tool_details meta-tools;
 	// native tools and the cogmem suite stay always-on.
 	Enabled bool `json:"enabled" env:"CLAW_TOOLS_DISCOVERY_ENABLED"`
-	// TTL is how many turns a tool stays visible after get_tool_details promotes it
-	// (reset on each use). MaxSearchResults caps search_tools results.
-	TTL              int `json:"ttl"                env:"CLAW_TOOLS_DISCOVERY_TTL"`
+	// TTLMax is the longest a revealed tool stays visible without being used, in
+	// turns; each use resets it. A tool idle this many turns is hidden again.
+	TTLMax int `json:"ttl_max" env:"CLAW_TOOLS_DISCOVERY_TTL_MAX"`
+	// VisibleBudget caps how many revealed (non-core) tools may be visible at once.
+	// Under the cap every tool lives to TTLMax; when a new reveal pushes the count
+	// over it, the tools with the smallest remaining TTL are hidden until back at
+	// the cap. Keeps a fanned-out working set bounded without churning small ones.
+	VisibleBudget int `json:"visible_budget" env:"CLAW_TOOLS_DISCOVERY_VISIBLE_BUDGET"`
+	// MaxSearchResults caps search_tools results.
 	MaxSearchResults int `json:"max_search_results" env:"CLAW_MAX_SEARCH_RESULTS"`
 }
 
-// Discovery TTL / result defaults, applied when the config value is unset (<= 0).
+// UnmarshalJSON normalizes the retired "ttl" key onto TTLMax so a config written
+// before the rename keeps working; an explicit "ttl_max" always wins.
+func (d *ToolDiscoveryConfig) UnmarshalJSON(data []byte) error {
+	type alias ToolDiscoveryConfig
+	aux := &struct {
+		LegacyTTL *int `json:"ttl"`
+		*alias
+	}{alias: (*alias)(d)}
+	if err := json.Unmarshal(data, aux); err != nil {
+		return err
+	}
+	if d.TTLMax == 0 && aux.LegacyTTL != nil {
+		d.TTLMax = *aux.LegacyTTL
+	}
+	return nil
+}
+
+// Discovery defaults, applied when the config value is unset (<= 0).
 const (
-	DefaultDiscoveryTTL           = 5
+	DefaultDiscoveryTTLMax        = 50
+	DefaultDiscoveryVisibleBudget = 100
 	DefaultDiscoveryMaxSearchHits = 10
 )
 
@@ -1588,6 +1622,10 @@ type MCPServerConfig struct {
 	URL string `json:"url,omitempty"`
 	// Headers are HTTP headers to send with requests (sse/http only)
 	Headers map[string]string `json:"headers,omitempty"`
+	// RevealTogether, under progressive discovery, reveals all of this server's
+	// tools as soon as one is discovered, so a small cohesive server is unlocked in
+	// a single search instead of tool-by-tool. Ignored when discovery is off.
+	RevealTogether bool `json:"reveal_together,omitempty"`
 }
 
 // MCPConfig defines configuration for all MCP servers

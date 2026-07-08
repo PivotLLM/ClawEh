@@ -527,7 +527,8 @@ func startMCPServer(cfg *config.Config, agentLoop *agent.AgentLoop, msgBus *bus.
 		mcpserver.WithDiscovery(
 			cfg.Tools.Discovery.Enabled,
 			cfg.MCPHost.AlwaysShownNamespaces,
-			cfg.DiscoveryTTL(),
+			cfg.DiscoveryTTLMax(),
+			cfg.DiscoveryVisibleBudget(),
 		),
 	)
 	if err != nil {

@@ -224,7 +224,8 @@ func (al *AgentLoop) registerMCPToolsFromManager(mgr *mcp.Manager) error {
 				// discovery is on (decided during provider registration and stored on
 				// the instance), hide them behind search_tools; otherwise advertise.
 				if agent.DiscoveryActive {
-					agent.Tools.RegisterHidden(mcpTool)
+					// Group by server so a reveal-together server unlocks as a set.
+					agent.Tools.RegisterHiddenGroup(mcpTool, serverName, conn.RevealTogether())
 				} else {
 					agent.Tools.Register(mcpTool)
 				}

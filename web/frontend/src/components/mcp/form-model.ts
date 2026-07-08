@@ -33,6 +33,9 @@ export interface MCPServerForm {
   // http
   url: string
   headers: string // "Header: value" per line
+  // Under progressive discovery, reveal all of this server's tools as soon as one
+  // is discovered (for small, cohesive servers). Ignored when discovery is off.
+  revealTogether: boolean
 }
 
 export function blankServer(): MCPServerForm {
@@ -46,6 +49,7 @@ export function blankServer(): MCPServerForm {
     envFile: "",
     url: "",
     headers: "",
+    revealTogether: false,
   }
 }
 
@@ -150,6 +154,7 @@ export function serversFromConfig(config: unknown): MCPServerForm[] {
       envFile: asString(s.env_file, ""),
       url: asString(s.url, ""),
       headers: recordToLines(s.headers, ": "),
+      revealTogether: asBool(s.reveal_together, false),
     })
   }
   return out
@@ -197,6 +202,7 @@ export function serversToPatch(
       const headers = linesToRecord(s.headers, ":")
       if (Object.keys(headers).length > 0) cfg.headers = headers
     }
+    if (s.revealTogether) cfg.reveal_together = true
     patch[name] = cfg
   }
   for (const s of baseline) {
