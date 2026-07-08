@@ -2,13 +2,12 @@ package tools
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
 	"strings"
 
-	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/mark3labs/mcp-go/mcp"
 )
 
 // MCPManager defines the interface for MCP manager operations
@@ -34,11 +33,11 @@ type ExternalNamer interface {
 type MCPTool struct {
 	manager    MCPManager
 	serverName string
-	tool       *mcp.Tool
+	tool       mcp.Tool
 }
 
 // NewMCPTool creates a new MCP tool wrapper
-func NewMCPTool(manager MCPManager, serverName string, tool *mcp.Tool) *MCPTool {
+func NewMCPTool(manager MCPManager, serverName string, tool mcp.Tool) *MCPTool {
 	return &MCPTool{
 		manager:    manager,
 		serverName: serverName,
@@ -161,69 +160,43 @@ func (t *MCPTool) Description() string {
 	return fmt.Sprintf("[MCP:%s] %s", t.serverName, desc)
 }
 
-// Parameters returns the tool parameters schema
+// Parameters returns the tool parameters schema as a plain JSON Schema object.
+// A verbatim RawInputSchema (if the upstream provided one) wins; otherwise the
+// structured InputSchema is marshaled to a map. An empty schema falls back to
+// the object-with-no-properties shape downstream providers expect.
 func (t *MCPTool) Parameters() map[string]any {
-	// The InputSchema is already a JSON Schema object
-	schema := t.tool.InputSchema
-
-	// Handle nil schema
-	if schema == nil {
-		return map[string]any{
-			"type":       "object",
-			"properties": map[string]any{},
-			"required":   []string{},
-		}
-	}
-
-	// Try direct conversion first (fast path)
-	if schemaMap, ok := schema.(map[string]any); ok {
-		return schemaMap
-	}
-
-	// Handle json.RawMessage and []byte - unmarshal directly
-	var jsonData []byte
-	if rawMsg, ok := schema.(json.RawMessage); ok {
-		jsonData = rawMsg
-	} else if bytes, ok := schema.([]byte); ok {
-		jsonData = bytes
-	}
-
-	if jsonData != nil {
+	if len(t.tool.RawInputSchema) > 0 {
 		var result map[string]any
-		if err := json.Unmarshal(jsonData, &result); err == nil {
+		if err := json.Unmarshal(t.tool.RawInputSchema, &result); err == nil {
 			return result
 		}
-		// Fallback on error
-		return map[string]any{
-			"type":       "object",
-			"properties": map[string]any{},
-			"required":   []string{},
-		}
+		return emptyObjectSchema()
 	}
 
-	// For other types (structs, etc.), convert via JSON marshal/unmarshal
-	var err error
-	jsonData, err = json.Marshal(schema)
+	// An empty Type means the server advertised no input schema.
+	if t.tool.InputSchema.Type == "" {
+		return emptyObjectSchema()
+	}
+
+	data, err := json.Marshal(t.tool.InputSchema)
 	if err != nil {
-		// Fallback to empty schema if marshaling fails
-		return map[string]any{
-			"type":       "object",
-			"properties": map[string]any{},
-			"required":   []string{},
-		}
+		return emptyObjectSchema()
 	}
-
 	var result map[string]any
-	if err := json.Unmarshal(jsonData, &result); err != nil {
-		// Fallback to empty schema if unmarshaling fails
-		return map[string]any{
-			"type":       "object",
-			"properties": map[string]any{},
-			"required":   []string{},
-		}
+	if err := json.Unmarshal(data, &result); err != nil {
+		return emptyObjectSchema()
 	}
-
 	return result
+}
+
+// emptyObjectSchema is the permissive no-argument schema used when an upstream
+// tool advertises no usable input schema.
+func emptyObjectSchema() map[string]any {
+	return map[string]any{
+		"type":       "object",
+		"properties": map[string]any{},
+		"required":   []string{},
+	}
 }
 
 // Execute executes the MCP tool
@@ -264,11 +237,12 @@ func extractContent(content []mcp.Content) (string, []string) {
 	var images []string
 	for _, c := range content {
 		switch v := c.(type) {
-		case *mcp.TextContent:
+		case mcp.TextContent:
 			parts = append(parts, v.Text)
-		case *mcp.ImageContent:
-			if len(v.Data) > 0 && v.MIMEType != "" {
-				images = append(images, fmt.Sprintf("data:%s;base64,%s", v.MIMEType, base64.StdEncoding.EncodeToString(v.Data)))
+		case mcp.ImageContent:
+			// mark3labs ImageContent.Data is already base64-encoded.
+			if v.Data != "" && v.MIMEType != "" {
+				images = append(images, fmt.Sprintf("data:%s;base64,%s", v.MIMEType, v.Data))
 			}
 			parts = append(parts, fmt.Sprintf("[Image: %s]", v.MIMEType))
 		default:

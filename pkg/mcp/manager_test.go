@@ -2,14 +2,14 @@ package mcp
 
 import (
 	"context"
-	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/PivotLLM/ClawEh/pkg/config"
 )
@@ -265,7 +265,7 @@ func TestGetServers_ReturnsCopy(t *testing.T) {
 func TestGetAllTools_FiltersEmptyTools(t *testing.T) {
 	mgr := NewManager()
 	mgr.servers["empty"] = &ServerConnection{Name: "empty", Tools: nil}
-	mgr.servers["with-tools"] = &ServerConnection{Name: "with-tools", Tools: []*sdkmcp.Tool{{}}}
+	mgr.servers["with-tools"] = &ServerConnection{Name: "with-tools", Tools: []mcp.Tool{{}}}
 
 	all := mgr.GetAllTools()
 	if _, ok := all["empty"]; ok {
@@ -312,14 +312,14 @@ func TestClose_IdempotentOnEmptyManager(t *testing.T) {
 // so Sync can exercise a real connect without spawning a subprocess.
 func newTestMCPServer(t *testing.T) *httptest.Server {
 	t.Helper()
-	srv := sdkmcp.NewServer(&sdkmcp.Implementation{Name: "test", Version: "0.0.1"}, nil)
-	sdkmcp.AddTool(srv, &sdkmcp.Tool{Name: "ping", Description: "no-op"},
-		func(context.Context, *sdkmcp.CallToolRequest, struct{}) (*sdkmcp.CallToolResult, struct{}, error) {
-			return &sdkmcp.CallToolResult{}, struct{}{}, nil
-		})
-	handler := sdkmcp.NewStreamableHTTPHandler(
-		func(*http.Request) *sdkmcp.Server { return srv }, nil)
-	ts := httptest.NewServer(handler)
+	srv := server.NewMCPServer("test", "0.0.1")
+	srv.AddTool(
+		mcp.NewTool("ping", mcp.WithDescription("no-op")),
+		func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{}, nil
+		},
+	)
+	ts := httptest.NewServer(server.NewStreamableHTTPServer(srv))
 	t.Cleanup(ts.Close)
 	return ts
 }

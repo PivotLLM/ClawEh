@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,34 +13,13 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/mark3labs/mcp-go/client"
+	"github.com/mark3labs/mcp-go/client/transport"
+	"github.com/mark3labs/mcp-go/mcp"
 
 	"github.com/PivotLLM/ClawEh/pkg/config"
 	"github.com/PivotLLM/ClawEh/pkg/logger"
 )
-
-// headerTransport is an http.RoundTripper that adds custom headers to requests
-type headerTransport struct {
-	base    http.RoundTripper
-	headers map[string]string
-}
-
-func (t *headerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	// Clone the request to avoid modifying the original
-	req = req.Clone(req.Context())
-
-	// Add custom headers
-	for key, value := range t.headers {
-		req.Header.Set(key, value)
-	}
-
-	// Use the base transport
-	base := t.base
-	if base == nil {
-		base = http.DefaultTransport
-	}
-	return base.RoundTrip(req)
-}
 
 // loadEnvFile loads environment variables from a file in .env format
 // Each line should be in the format: KEY=value
@@ -100,10 +78,9 @@ func loadEnvFile(path string) (map[string]string, error) {
 
 // ServerConnection represents a connection to an MCP server
 type ServerConnection struct {
-	Name    string
-	Client  *mcp.Client
-	Session *mcp.ClientSession
-	Tools   []*mcp.Tool
+	Name   string
+	Client *client.Client
+	Tools  []mcp.Tool
 	// cfg is the resolved config this connection was established with. Sync
 	// compares it against the reloaded config to decide whether a server actually
 	// changed (reconnect) or was left untouched (keep the live process running).
@@ -255,6 +232,42 @@ func resolveServerEnvFile(
 	return cfg, nil
 }
 
+// buildStdioEnv assembles the child environment for a stdio server: the parent
+// process environment, overlaid by an optional env file, overlaid by the
+// server's explicit Env map (config wins over file wins over parent).
+func buildStdioEnv(cfg config.MCPServerConfig) ([]string, error) {
+	envMap := make(map[string]string)
+
+	// Start with parent process environment
+	for _, e := range os.Environ() {
+		if idx := strings.Index(e, "="); idx > 0 {
+			envMap[e[:idx]] = e[idx+1:]
+		}
+	}
+
+	// Load environment variables from file if specified
+	if cfg.EnvFile != "" {
+		envVars, err := loadEnvFile(cfg.EnvFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load env file %s: %w", cfg.EnvFile, err)
+		}
+		for k, v := range envVars {
+			envMap[k] = v
+		}
+	}
+
+	// Environment variables from config override those from file
+	for k, v := range cfg.Env {
+		envMap[k] = v
+	}
+
+	env := make([]string, 0, len(envMap))
+	for k, v := range envMap {
+		env = append(env, fmt.Sprintf("%s=%s", k, v))
+	}
+	return env, nil
+}
+
 // ConnectServer connects to a single MCP server
 func (m *Manager) ConnectServer(
 	ctx context.Context,
@@ -268,24 +281,13 @@ func (m *Manager) ConnectServer(
 			"args_count": len(cfg.Args),
 		})
 
-	// Create client
-	client := mcp.NewClient(&mcp.Implementation{
-		Name:    "claw",
-		Version: "1.0.0",
-	}, nil)
-
-	// Create transport based on configuration
-	// Auto-detect transport type if not explicitly specified
-	var transport mcp.Transport
-	// stdioCmd is retained for stdio servers so the connection can later kill the
-	// whole child process group; it stays nil for sse/http transports.
-	var stdioCmd *exec.Cmd
+	// Auto-detect transport when not set: a URL means streamable HTTP (the modern
+	// remote default; a genuine SSE server must be typed "sse" explicitly), a
+	// command means stdio.
 	transportType := cfg.Type
-
-	// Auto-detect: if URL is provided, use SSE; if command is provided, use stdio
 	if transportType == "" {
 		if cfg.URL != "" {
-			transportType = "sse"
+			transportType = "http"
 		} else if cfg.Command != "" {
 			transportType = "stdio"
 		} else {
@@ -293,110 +295,92 @@ func (m *Manager) ConnectServer(
 		}
 	}
 
+	var c *client.Client
+	// stdioCmd is captured (via the stdio CommandFunc) so teardown can kill the
+	// whole child process group; it stays nil for sse/http transports.
+	var stdioCmd *exec.Cmd
+	var err error
+
 	switch transportType {
-	case "sse", "http":
+	case "http":
 		if cfg.URL == "" {
-			return fmt.Errorf("URL is required for SSE/HTTP transport")
+			return fmt.Errorf("URL is required for http transport")
 		}
-		logger.DebugCF("mcp", "Using SSE/HTTP transport",
-			map[string]any{
-				"server": name,
-				"url":    cfg.URL,
-			})
-
-		sseTransport := &mcp.StreamableClientTransport{
-			Endpoint: cfg.URL,
-		}
-
-		// Add custom headers if provided
+		logger.DebugCF("mcp", "Using streamable HTTP transport",
+			map[string]any{"server": name, "url": cfg.URL})
+		var opts []transport.StreamableHTTPCOption
 		if len(cfg.Headers) > 0 {
-			// Create a custom HTTP client with header-injecting transport
-			sseTransport.HTTPClient = &http.Client{
-				Transport: &headerTransport{
-					base:    http.DefaultTransport,
-					headers: cfg.Headers,
-				},
-			}
-			logger.DebugCF("mcp", "Added custom HTTP headers",
-				map[string]any{
-					"server":       name,
-					"header_count": len(cfg.Headers),
-				})
+			opts = append(opts, transport.WithHTTPHeaders(cfg.Headers))
 		}
-
-		transport = sseTransport
+		c, err = client.NewStreamableHttpClient(cfg.URL, opts...)
+		if err != nil {
+			return fmt.Errorf("failed to create HTTP client: %w", err)
+		}
+	case "sse":
+		if cfg.URL == "" {
+			return fmt.Errorf("URL is required for sse transport")
+		}
+		logger.DebugCF("mcp", "Using SSE transport",
+			map[string]any{"server": name, "url": cfg.URL})
+		var opts []transport.ClientOption
+		if len(cfg.Headers) > 0 {
+			opts = append(opts, client.WithHeaders(cfg.Headers))
+		}
+		c, err = client.NewSSEMCPClient(cfg.URL, opts...)
+		if err != nil {
+			return fmt.Errorf("failed to create SSE client: %w", err)
+		}
 	case "stdio":
 		if cfg.Command == "" {
 			return fmt.Errorf("command is required for stdio transport")
 		}
 		logger.DebugCF("mcp", "Using stdio transport",
-			map[string]any{
-				"server":  name,
-				"command": cfg.Command,
-			})
-		// Create command with context
-		cmd := exec.CommandContext(ctx, cfg.Command, cfg.Args...)
-
-		// Build environment variables with proper override semantics
-		// Use a map to ensure config variables override file variables
-		envMap := make(map[string]string)
-
-		// Start with parent process environment
-		for _, e := range cmd.Environ() {
-			if idx := strings.Index(e, "="); idx > 0 {
-				envMap[e[:idx]] = e[idx+1:]
-			}
+			map[string]any{"server": name, "command": cfg.Command})
+		env, envErr := buildStdioEnv(cfg)
+		if envErr != nil {
+			return envErr
 		}
-
-		// Load environment variables from file if specified
-		if cfg.EnvFile != "" {
-			envVars, err := loadEnvFile(cfg.EnvFile)
-			if err != nil {
-				return fmt.Errorf("failed to load env file %s: %w", cfg.EnvFile, err)
-			}
-			for k, v := range envVars {
-				envMap[k] = v
-			}
-			logger.DebugCF("mcp", "Loaded environment variables from file",
-				map[string]any{
-					"server":    name,
-					"envFile":   cfg.EnvFile,
-					"var_count": len(envVars),
-				})
+		// A custom CommandFunc lets us build the subprocess ourselves: own its
+		// process group (so a teardown kills npx -> node -> browser as a unit) and
+		// retain the *exec.Cmd for terminateStdioProcessTree. mark3labs' own Close
+		// only signals the direct child, which would orphan chromium and hold the
+		// profile lock.
+		cmdFunc := func(ctx context.Context, command string, env []string, args []string) (*exec.Cmd, error) {
+			cmd := exec.CommandContext(ctx, command, args...)
+			cmd.Env = env
+			prepareStdioCommand(cmd)
+			stdioCmd = cmd
+			return cmd, nil
 		}
-
-		// Environment variables from config override those from file
-		for k, v := range cfg.Env {
-			envMap[k] = v
-		}
-
-		// Convert map to slice
-		env := make([]string, 0, len(envMap))
-		for k, v := range envMap {
-			env = append(env, fmt.Sprintf("%s=%s", k, v))
-		}
-		cmd.Env = env
-
-		// Own process group so a teardown can kill npx -> node -> browser as a unit.
-		prepareStdioCommand(cmd)
-
-		stdioCmd = cmd
-		transport = &mcp.CommandTransport{Command: cmd}
+		st := transport.NewStdioWithOptions(cfg.Command, env, cfg.Args, transport.WithCommandFunc(cmdFunc))
+		c = client.NewClient(st)
 	default:
 		return fmt.Errorf(
-			"unsupported transport type: %s (supported: stdio, sse, http)",
+			"unsupported transport type: %s (supported: stdio, http, sse)",
 			transportType,
 		)
 	}
 
-	// Connect to server
-	session, err := client.Connect(ctx, transport, nil)
-	if err != nil {
-		return fmt.Errorf("failed to connect: %w", err)
+	// Start the transport (spawns the stdio subprocess / opens the SSE stream),
+	// then run the MCP initialize handshake. On any failure, close the client and
+	// reap any stdio child so a failed connect leaves nothing running.
+	if err = c.Start(ctx); err != nil {
+		_ = c.Close()
+		terminateStdioProcessTree(stdioCmd)
+		return fmt.Errorf("failed to start transport: %w", err)
 	}
 
-	// Get server info
-	initResult := session.InitializeResult()
+	initReq := mcp.InitializeRequest{}
+	initReq.Params.ClientInfo = mcp.Implementation{Name: "claw", Version: "1.0.0"}
+	initReq.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+	initReq.Params.Capabilities = mcp.ClientCapabilities{}
+
+	initResult, err := c.Initialize(ctx, initReq)
+	if err != nil {
+		_ = c.Close()
+		terminateStdioProcessTree(stdioCmd)
+		return fmt.Errorf("failed to connect: %w", err)
+	}
 	logger.InfoCF("mcp", "Connected to MCP server",
 		map[string]any{
 			"server":        name,
@@ -405,37 +389,27 @@ func (m *Manager) ConnectServer(
 			"protocol":      initResult.ProtocolVersion,
 		})
 
-	// List available tools if supported
-	var tools []*mcp.Tool
-	if initResult.Capabilities.Tools != nil {
-		for tool, err := range session.Tools(ctx, nil) {
-			if err != nil {
-				logger.WarnCF("mcp", "Error listing tool",
-					map[string]any{
-						"server": name,
-						"error":  err.Error(),
-					})
-				continue
-			}
-			tools = append(tools, tool)
-		}
-
+	// List available tools. A listing failure is non-fatal: the server is
+	// connected, it simply exposes no callable tools to us this session.
+	var tools []mcp.Tool
+	toolsResult, err := c.ListTools(ctx, mcp.ListToolsRequest{})
+	if err != nil {
+		logger.WarnCF("mcp", "Failed to list tools from MCP server",
+			map[string]any{"server": name, "error": err.Error()})
+	} else {
+		tools = toolsResult.Tools
 		logger.InfoCF("mcp", "Listed tools from MCP server",
-			map[string]any{
-				"server":    name,
-				"toolCount": len(tools),
-			})
+			map[string]any{"server": name, "toolCount": len(tools)})
 	}
 
 	// Store connection
 	m.mu.Lock()
 	m.servers[name] = &ServerConnection{
-		Name:    name,
-		Client:  client,
-		Session: session,
-		Tools:   tools,
-		cfg:     cfg,
-		cmd:     stdioCmd,
+		Name:   name,
+		Client: c,
+		Tools:  tools,
+		cfg:    cfg,
+		cmd:    stdioCmd,
 	}
 	m.mu.Unlock()
 
@@ -476,7 +450,7 @@ func (m *Manager) disconnect(name string) {
 	if !ok {
 		return
 	}
-	if err := conn.Session.Close(); err != nil {
+	if err := conn.Client.Close(); err != nil {
 		logger.WarnCF("mcp", "Failed to close MCP server connection",
 			map[string]any{"server": name, "error": err.Error()})
 	}
@@ -572,12 +546,11 @@ func (m *Manager) CallTool(
 	}
 	defer m.wg.Done()
 
-	params := &mcp.CallToolParams{
-		Name:      toolName,
-		Arguments: arguments,
-	}
+	req := mcp.CallToolRequest{}
+	req.Params.Name = toolName
+	req.Params.Arguments = arguments
 
-	result, err := conn.Session.CallTool(ctx, params)
+	result, err := conn.Client.CallTool(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to call tool: %w", err)
 	}
@@ -607,7 +580,7 @@ func (m *Manager) Close() error {
 
 	var errs []error
 	for name, conn := range m.servers {
-		if err := conn.Session.Close(); err != nil {
+		if err := conn.Client.Close(); err != nil {
 			logger.ErrorCF("mcp", "Failed to close server connection",
 				map[string]any{
 					"server": name,
@@ -615,7 +588,7 @@ func (m *Manager) Close() error {
 				})
 			errs = append(errs, fmt.Errorf("server %s: %w", name, err))
 		}
-		// Safety net: kill any stdio grandchildren (e.g. chromium) the SDK's
+		// Safety net: kill any stdio grandchildren (e.g. chromium) the transport's
 		// direct-child shutdown leaves orphaned, so no profile lock survives.
 		terminateStdioProcessTree(conn.cmd)
 	}
@@ -630,11 +603,11 @@ func (m *Manager) Close() error {
 }
 
 // GetAllTools returns all tools from all connected servers
-func (m *Manager) GetAllTools() map[string][]*mcp.Tool {
+func (m *Manager) GetAllTools() map[string][]mcp.Tool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	result := make(map[string][]*mcp.Tool)
+	result := make(map[string][]mcp.Tool)
 	for name, conn := range m.servers {
 		if len(conn.Tools) > 0 {
 			result[name] = conn.Tools
