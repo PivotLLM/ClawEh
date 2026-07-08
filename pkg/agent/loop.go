@@ -2466,16 +2466,25 @@ func (al *AgentLoop) runLLMIteration(
 					ctx,
 					activeCandidates,
 					func(ctx context.Context, c providers.FallbackCandidate) (*providers.LLMResponse, error) {
+						// Drop image parts for candidates whose model can't accept them.
+						// A screenshot persisted in history would otherwise 404 a
+						// non-vision candidate (e.g. a cheaper default), failing every
+						// turn. Keyed by alias like GetModelConfig/selectCandidates.
+						modelKey := c.Alias
+						if modelKey == "" {
+							modelKey = c.Model
+						}
+						msgs := al.messagesForModel(messages, modelKey)
 						if al.dispatcher != nil {
 							key := c.Alias
 							if key == "" {
 								key = c.Provider + "/" + c.Model
 							}
 							if p, err := al.dispatcher.Get(key); err == nil {
-								return p.Chat(ctx, messages, providerToolDefs, c.Model, llmOpts)
+								return p.Chat(ctx, msgs, providerToolDefs, c.Model, llmOpts)
 							}
 						}
-						return agent.Provider.Chat(ctx, messages, providerToolDefs, c.Model, llmOpts)
+						return agent.Provider.Chat(ctx, msgs, providerToolDefs, c.Model, llmOpts)
 					},
 					al.fallbackNotifier(opts),
 				)
@@ -2523,7 +2532,7 @@ func (al *AgentLoop) runLLMIteration(
 			// resolveRunProvider returns agent.Provider + activeModel as the
 			// last-resort safety net when dispatcher resolution cannot satisfy
 			// the request.
-			return runProvider.Chat(ctx, messages, providerToolDefs, runModel, llmOpts)
+			return runProvider.Chat(ctx, al.messagesForModel(messages, runModel), providerToolDefs, runModel, llmOpts)
 		}
 
 		// Retry loop for context/token errors
@@ -3321,6 +3330,38 @@ func (al *AgentLoop) selectCandidates(
 		model = agent.Model
 	}
 	return reordered, model
+}
+
+// messagesForModel returns messages suitable for the named model (keyed by
+// alias / model_name). Vision-capable models get the slice unchanged; models
+// with vision off or unset get a shallow copy with image Media removed. Some
+// providers (e.g. deepseek via OpenRouter) reject the ENTIRE request with a 404
+// when an image part is present, so a screenshot left in conversation history
+// must not be replayed to a non-vision model. The persisted originals are never
+// mutated, so a later turn on a vision model still surfaces the image. Unknown
+// model is treated as no-vision, matching the tool-image injection default.
+func (al *AgentLoop) messagesForModel(messages []providers.Message, modelKey string) []providers.Message {
+	if mc, err := al.GetConfig().GetModelConfig(modelKey); err == nil && mc != nil {
+		if mc.Vision == config.VisionUserMessage || mc.Vision == config.VisionToolResponse {
+			return messages
+		}
+	}
+	hasMedia := false
+	for i := range messages {
+		if len(messages[i].Media) > 0 {
+			hasMedia = true
+			break
+		}
+	}
+	if !hasMedia {
+		return messages
+	}
+	out := make([]providers.Message, len(messages))
+	copy(out, messages)
+	for i := range out {
+		out[i].Media = nil
+	}
+	return out
 }
 
 // GetStartupInfo returns information about loaded tools and skills for logging.
