@@ -181,11 +181,18 @@ func (r *ToolRegistry) promoteLocked(names []string, ttl int) int {
 		// in one search. Within a group the flag is uniform (one server/service),
 		// so a single pass over siblings suffices.
 		if entry.RevealTogether && entry.Group != "" {
+			members := 0
 			for sibName, sib := range r.tools {
 				if !sib.IsCore && sib.Group == entry.Group {
 					toPromote[sibName] = true
+					members++
 				}
 			}
+			logger.DebugCF("discovery", "reveal-together expanded group",
+				map[string]any{"tool": name, "group": entry.Group, "members": members})
+		} else {
+			logger.DebugCF("discovery", "reveal-together not applied",
+				map[string]any{"tool": name, "group": entry.Group, "reveal_together": entry.RevealTogether})
 		}
 	}
 	for name := range toPromote {
