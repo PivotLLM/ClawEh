@@ -521,3 +521,62 @@ func TestHandleListModels_ReturnsModels(t *testing.T) {
 		t.Fatalf("provider = %q, want openai", resp.Models[0].Provider)
 	}
 }
+
+// TestHandleUpdateModel_VisionRoundTrip verifies the per-model vision enum
+// wiring: PUT persists it, GET exposes it, and a later PUT that omits vision
+// preserves the stored value. That preservation is the property the WebUI edit
+// sheet relies on — handleUpdateModel merge-unmarshals onto the existing entry,
+// so a body without "vision" must not silently clear a configured value.
+func TestHandleUpdateModel_VisionRoundTrip(t *testing.T) {
+	configPath, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	h := NewHandler(configPath)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+
+	put := func(body string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPut, "/api/models/0", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+
+	// PUT with vision set.
+	if rec := put(`{"model_name":"custom-default","model":"gpt-4o","provider":"openai","vision":"user_message"}`); rec.Code != http.StatusOK {
+		t.Fatalf("PUT status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	cfg, err := config.LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	if cfg.Models[0].Vision != config.VisionUserMessage {
+		t.Fatalf("Vision = %q, want %q", cfg.Models[0].Vision, config.VisionUserMessage)
+	}
+
+	// GET must expose it.
+	recGet := httptest.NewRecorder()
+	mux.ServeHTTP(recGet, httptest.NewRequest(http.MethodGet, "/api/models", nil))
+	var listResp struct {
+		Models []map[string]any `json:"models"`
+	}
+	if err := json.Unmarshal(recGet.Body.Bytes(), &listResp); err != nil {
+		t.Fatalf("Unmarshal list: %v", err)
+	}
+	if listResp.Models[0]["vision"] != "user_message" {
+		t.Fatalf("GET vision = %v, want user_message", listResp.Models[0]["vision"])
+	}
+
+	// A later PUT that omits "vision" must preserve the stored value.
+	if rec := put(`{"model_name":"custom-default","model":"gpt-4o","provider":"openai"}`); rec.Code != http.StatusOK {
+		t.Fatalf("PUT(no vision) status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	cfg, err = config.LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	if cfg.Models[0].Vision != config.VisionUserMessage {
+		t.Fatalf("vision not preserved on omit: got %q, want %q", cfg.Models[0].Vision, config.VisionUserMessage)
+	}
+}
