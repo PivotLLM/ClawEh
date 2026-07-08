@@ -5,11 +5,9 @@ package fusion
 
 import (
 	"net/http"
-	"path/filepath"
 	"sync"
 
 	mcpfusion "github.com/PivotLLM/MCPFusion/fusion"
-	"github.com/tenebris-tech/mlogger"
 
 	"github.com/PivotLLM/ClawEh/pkg/config"
 	"github.com/PivotLLM/ClawEh/pkg/logger"
@@ -38,22 +36,14 @@ func sharedEngine(c *config.Config) *mcpfusion.Fusion {
 			return
 		}
 
-		// Fusion logs to its own file so OAuth device-flow debugging is separable
-		// from the main ClawEh log. mlogger.WithLogFile creates the parent dir.
-		logPath := filepath.Join(c.FusionPath(), "fusion.log")
-		lg, err := mlogger.New(mlogger.WithLogFile(logPath), mlogger.WithPrefix("fusion"))
-		if err != nil {
-			// A missing log file must not disable the tools; fusion nil-checks its
-			// logger, so fall back to no logger rather than failing.
-			logger.WarnCF("fusion", "failed to open fusion log; continuing without one",
-				map[string]any{"path": logPath, "error": err.Error()})
-			lg = nil
-		}
-
+		// Fusion events flow into the main ClawEh log (component "fusion") via an
+		// adapter, rather than a separate fusion.log file, so all logging is
+		// unified under ClawEh's format, levels, and rotation.
+		//
 		// Option order matters: WithLogger first, because WithDataStore and
 		// WithConfigDir use f.logger during construction.
 		engine = mcpfusion.New(
-			mcpfusion.WithLogger(lg),
+			mcpfusion.WithLogger(newFusionLogAdapter()),
 			mcpfusion.WithDataStore(ds),
 			mcpfusion.WithConfigDir(c.FusionPath()),
 			// External URL + command name are advertised to the claw-auth OAuth
