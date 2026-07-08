@@ -91,7 +91,11 @@ export function MCPPage() {
     // "tools"; merge whichever blocks are valid this round.
     const toolsPatch: Record<string, unknown> = {}
     if (!listenErr && !pathErr) {
-      toolsPatch.discovery = { enabled: f.discoveryEnabled }
+      toolsPatch.discovery = {
+        enabled: f.discoveryEnabled,
+        ttl_max: f.ttlMax,
+        visible_budget: f.visibleBudget,
+      }
     }
     if (!serversErr) {
       toolsPatch.mcp = {
@@ -192,6 +196,8 @@ export function MCPPage() {
 
               <DiscoverySection
                 discoveryEnabled={form.discoveryEnabled}
+                ttlMax={form.ttlMax}
+                visibleBudget={form.visibleBudget}
                 alwaysShownNamespaces={form.alwaysShownNamespaces}
                 onFieldChange={updateField}
                 onNamespacesChange={(next) =>

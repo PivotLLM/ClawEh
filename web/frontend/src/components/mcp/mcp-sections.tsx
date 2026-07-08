@@ -204,16 +204,20 @@ export function ToolsSection({
 
 interface DiscoverySectionProps {
   discoveryEnabled: boolean
+  ttlMax: number
+  visibleBudget: number
   alwaysShownNamespaces: string[]
   onFieldChange: UpdateMCPField
   onNamespacesChange: (next: string[]) => void
 }
 
 // DiscoverySection edits the global progressive-tool-discovery switch
-// (tools.discovery.enabled) and the extra always-shown namespaces
-// (mcp_host.always_shown_namespaces).
+// (tools.discovery.enabled), its ttl_max / visible_budget tuning, and the extra
+// always-shown namespaces (mcp_host.always_shown_namespaces).
 export function DiscoverySection({
   discoveryEnabled,
+  ttlMax,
+  visibleBudget,
   alwaysShownNamespaces,
   onFieldChange,
   onNamespacesChange,
@@ -242,6 +246,30 @@ export function DiscoverySection({
       />
       {discoveryEnabled && (
         <div className="space-y-3 py-4">
+          <Field
+            label="Max TTL (turns)"
+            hint="Longest a revealed tool stays visible without being used; each use resets it. Default 50."
+            layout="setting-row"
+          >
+            <Input
+              type="number"
+              min={1}
+              value={ttlMax}
+              onChange={(e) => onFieldChange("ttlMax", Number(e.target.value))}
+            />
+          </Field>
+          <Field
+            label="Visible budget"
+            hint="Max revealed tools at once; a new reveal over this hides the lowest-TTL tools first. Default 100."
+            layout="setting-row"
+          >
+            <Input
+              type="number"
+              min={1}
+              value={visibleBudget}
+              onChange={(e) => onFieldChange("visibleBudget", Number(e.target.value))}
+            />
+          </Field>
           <div className="text-muted-foreground text-xs">
             Extra namespaces always shown in the MCP host&apos;s tools/list.
             search_tools, get_tool_details, and cogmem are always shown by rule;

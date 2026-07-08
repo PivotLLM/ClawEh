@@ -14,6 +14,10 @@ export interface MCPHostForm {
   // tools/list when it's on (search_tools/get_tool_details and cogmem are always
   // shown by rule).
   discoveryEnabled: boolean
+  // ttlMax: turns a revealed tool stays visible without use (reset on use).
+  // visibleBudget: max revealed tools before lowest-TTL-first pruning kicks in.
+  ttlMax: number
+  visibleBudget: number
   alwaysShownNamespaces: string[]
   // External (upstream) MCP servers claw connects out to (tools.mcp.servers),
   // structured for add/edit/delete in the UI.
@@ -61,6 +65,8 @@ export const EMPTY_MCP_FORM: MCPHostForm = {
   internalToolPatterns: ["*"],
   externalToolPatterns: ["*"],
   discoveryEnabled: false,
+  ttlMax: 50,
+  visibleBudget: 100,
   alwaysShownNamespaces: [],
   servers: [],
 }
@@ -74,6 +80,11 @@ function asRecord(value: unknown): JsonRecord {
 
 function asString(value: unknown, fallback: string): string {
   return typeof value === "string" && value !== "" ? value : fallback
+}
+
+function asNumber(value: unknown, fallback: number): number {
+  if (typeof value === "number" && Number.isFinite(value)) return value
+  return fallback
 }
 
 function asBool(value: unknown, fallback: boolean): boolean {
@@ -100,6 +111,9 @@ export function buildMCPFormFromConfig(config: unknown): MCPHostForm {
     internalToolPatterns: asStringArray(mcp.internal_tools, EMPTY_MCP_FORM.internalToolPatterns),
     externalToolPatterns: asStringArray(mcp.external_tools, EMPTY_MCP_FORM.externalToolPatterns),
     discoveryEnabled: asBool(discovery.enabled, EMPTY_MCP_FORM.discoveryEnabled),
+    // Honor the legacy "ttl" key as a fallback so an older config still displays.
+    ttlMax: asNumber(discovery.ttl_max ?? discovery.ttl, EMPTY_MCP_FORM.ttlMax),
+    visibleBudget: asNumber(discovery.visible_budget, EMPTY_MCP_FORM.visibleBudget),
     alwaysShownNamespaces: asStringArray(mcp.always_shown_namespaces, EMPTY_MCP_FORM.alwaysShownNamespaces),
     servers: serversFromConfig(config),
   }
