@@ -51,6 +51,7 @@ interface EditForm {
   extraBody: string
   dropParams: string
   noTools: boolean
+  vision: string
   strictAlternation: boolean
 }
 
@@ -84,6 +85,7 @@ export function EditModelSheet({
     extraBody: "",
     dropParams: "",
     noTools: false,
+    vision: "off",
     strictAlternation: false,
   })
   const [providers, setProviders] = useState<ProviderInfo[]>([])
@@ -111,6 +113,7 @@ export function EditModelSheet({
         extraBody: formatExtraBody(model.extra_body),
         dropParams: formatDropParams(model.drop_params),
         noTools: model.no_tools ?? false,
+        vision: model.vision || "off",
         strictAlternation: model.strict_alternation ?? false,
       })
       setSetAsDefault(model.is_default)
@@ -165,6 +168,9 @@ export function EditModelSheet({
         // the old value (omitempty then drops the empty slice on save).
         drop_params: parseDropParams(form.dropParams),
         no_tools: form.noTools,
+        // Always send vision: "off" maps to "" so the backend merge-unmarshal
+        // clears a previously-stored value (omitempty then drops it on save).
+        vision: form.vision === "off" ? "" : form.vision,
         strict_alternation: form.strictAlternation,
       })
       if (setAsDefault && !model.is_default) {
@@ -376,6 +382,25 @@ export function EditModelSheet({
                 checked={!form.noTools}
                 onCheckedChange={(v) => setForm((f) => ({ ...f, noTools: !v }))}
               />
+
+              <Field
+                label="Vision (tool-result images)"
+                hint="Pass images returned by MCP tools (e.g. screenshots) to a vision model. Chat models need 'User message'; Responses models can use 'Tool response'."
+              >
+                <Select
+                  value={form.vision || "off"}
+                  onValueChange={(v) => setForm((f) => ({ ...f, vision: v }))}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="off">Off</SelectItem>
+                    <SelectItem value="user_message">User message</SelectItem>
+                    <SelectItem value="tool_response">Tool response</SelectItem>
+                  </SelectContent>
+                </Select>
+              </Field>
 
               <SwitchCardField
                 label={t("models.field.strictAlternation")}
