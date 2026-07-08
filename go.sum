@@ -4,8 +4,8 @@ github.com/PivotLLM/MCPFusion v0.4.2 h1:Ih2WW0ZsNC9evBd1JBCzzgs4vYvfUjd37gdt2O3+
 github.com/PivotLLM/MCPFusion v0.4.2/go.mod h1:dWkP5v27hZtnexupGCQ9sR/V7T+4nRCqz5kd78jOS0Y=
 github.com/PivotLLM/Maestro v0.3.7 h1:TDI1foEd7lgwAMvrfRhsSL94T1AUItiKUTo1zXPzIlI=
 github.com/PivotLLM/Maestro v0.3.7/go.mod h1:WHh/T/ofdXxR7xYJKPpuOUyNA9Kr+DkBVWlRWbZq3iM=
-github.com/PivotLLM/spawnllm v0.1.4 h1:pADyzCQbavWZPYE6wae8UL9qyghLQlHORCM/JVxOMN4=
-github.com/PivotLLM/spawnllm v0.1.4/go.mod h1:VEq3syYV2jYqeoaNPo89lH9AyA6oDzFj2AIUlPBUfnU=
+github.com/PivotLLM/spawnllm v0.1.5 h1:8nCc31x2BdijsKBA6iUl/8aCJSM6vNS30P4VfxJh+NI=
+github.com/PivotLLM/spawnllm v0.1.5/go.mod h1:VEq3syYV2jYqeoaNPo89lH9AyA6oDzFj2AIUlPBUfnU=
 github.com/PivotLLM/toolspec v0.2.0 h1:fXbohFXZJi9kGM+3DjeEu8Gv8rIUpVCJ/wMRvU1jRbk=
 github.com/PivotLLM/toolspec v0.2.0/go.mod h1:QA/AiJHJSEwsLGEY0RTGWC124ftNigLIP8pTPj3oVKM=
 github.com/adhocore/gronx v1.20.0 h1:PD13Mo0wekkZ7ZZR9yb1TqeqTfybs7/K3ez9DmjQwEs=

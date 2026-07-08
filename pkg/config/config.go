@@ -1179,6 +1179,13 @@ type Provider struct {
 // The model field uses protocol prefix format: [protocol/]model-identifier
 // Supported protocols: openai, anthropic, claude-cli, codex-cli
 // Default protocol is "openai" if no prefix is specified.
+// Vision passthrough modes for ModelConfig.Vision.
+const (
+	VisionOff          = "off"           // default: tool images are not sent to the model
+	VisionUserMessage  = "user_message"  // inject images as a follow-up user turn (Chat Completions)
+	VisionToolResponse = "tool_response" // attach images to the tool result (Responses API only)
+)
+
 type ModelConfig struct {
 	// Required fields
 	ModelName string `json:"model_name"` // User-facing alias for the model
@@ -1190,17 +1197,22 @@ type ModelConfig struct {
 	Workspace   string `json:"workspace,omitempty"`    // Workspace path for CLI-based providers
 
 	// Optional optimizations
-	RPM            int               `json:"rpm,omitempty"`              // Requests per minute limit
-	MaxTokens      int               `json:"max_tokens,omitempty"`       // Maximum tokens per response; overrides agent defaults
-	ContextWindow  int               `json:"context_window,omitempty"`   // Actual model context window size in tokens
-	MaxTokensField string            `json:"max_tokens_field,omitempty"` // Field name for max tokens (e.g., "max_completion_tokens")
-	RequestTimeout int               `json:"request_timeout,omitempty"`
-	ThinkingLevel  string            `json:"thinking_level,omitempty"` // Extended thinking: off|low|medium|high|xhigh|adaptive
-	NoTools        bool              `json:"no_tools,omitempty"`       // When true, tools are not passed to this model
-	Vision         bool              `json:"vision,omitempty"`         // When true, images returned by tools (e.g. MCP screenshots) are passed to this model as a follow-up user turn
-	ExtraArgs      []string          `json:"extra_args,omitempty"`     // Additional CLI arguments appended after required flags
-	Env            map[string]string `json:"env,omitempty"`            // Environment variables for CLI-based providers (merged with os.Environ)
-	Enabled        bool              `json:"enabled"`                  // If false, model is skipped in all operations
+	RPM            int    `json:"rpm,omitempty"`              // Requests per minute limit
+	MaxTokens      int    `json:"max_tokens,omitempty"`       // Maximum tokens per response; overrides agent defaults
+	ContextWindow  int    `json:"context_window,omitempty"`   // Actual model context window size in tokens
+	MaxTokensField string `json:"max_tokens_field,omitempty"` // Field name for max tokens (e.g., "max_completion_tokens")
+	RequestTimeout int    `json:"request_timeout,omitempty"`
+	ThinkingLevel  string `json:"thinking_level,omitempty"` // Extended thinking: off|low|medium|high|xhigh|adaptive
+	NoTools        bool   `json:"no_tools,omitempty"`       // When true, tools are not passed to this model
+	// Vision controls how images returned by tools (e.g. MCP screenshots) reach
+	// this model: "off"/"" (default) drops them; "user_message" injects them as a
+	// follow-up user turn (works on Chat Completions, where tool messages are
+	// text-only); "tool_response" attaches them to the tool result itself (only
+	// valid on the Responses API, whose function_call_output accepts images).
+	Vision    string            `json:"vision,omitempty"`
+	ExtraArgs []string          `json:"extra_args,omitempty"` // Additional CLI arguments appended after required flags
+	Env       map[string]string `json:"env,omitempty"`        // Environment variables for CLI-based providers (merged with os.Environ)
+	Enabled   bool              `json:"enabled"`              // If false, model is skipped in all operations
 
 	// ResponseLogFile, when non-empty, causes every raw HTTP response body from
 	// the openai_compat provider to be appended to the given path. Diagnostic

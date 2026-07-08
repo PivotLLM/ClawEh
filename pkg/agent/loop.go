@@ -2984,7 +2984,13 @@ func (al *AgentLoop) runLLMIteration(
 
 		// Process results in original order (send to user, save to session)
 		streamActivity := al.GetConfig().Agents.Defaults.StreamToolActivity
-		var toolImages []string // images returned by tools, for vision passthrough
+		// Vision passthrough mode for the active model: how images returned by tools
+		// reach it (off / follow-up user turn / on the tool result).
+		visionMode := config.VisionOff
+		if mc, err := al.GetConfig().GetModelConfig(activeModel); err == nil {
+			visionMode = mc.Vision
+		}
+		var toolImages []string // accumulated for VisionUserMessage mode
 		for _, r := range agentResults {
 			// Send ForUser content to user immediately if not Silent — only when
 			// streaming tool activity is enabled (otherwise the user receives just
@@ -3049,8 +3055,16 @@ func (al *AgentLoop) runLLMIteration(
 				Content:    contentForLLM,
 				ToolCallID: r.tc.ID,
 			}
+			switch visionMode {
+			case config.VisionToolResponse:
+				// Attach images to the tool result itself (Responses API).
+				toolResultMsg.Media = r.result.Images
+			case config.VisionUserMessage:
+				// Defer to a follow-up user turn (Chat Completions, where tool
+				// messages are text-only).
+				toolImages = append(toolImages, r.result.Images...)
+			}
 			messages = append(messages, toolResultMsg)
-			toolImages = append(toolImages, r.result.Images...)
 
 			// Save tool result message through the context manager so that
 			// msgCount is incremented and the message is written to the archive.
@@ -3062,26 +3076,21 @@ func (al *AgentLoop) runLLMIteration(
 			}
 		}
 
-		// Vision passthrough: images a tool returned (e.g. an MCP screenshot) can't
-		// ride on the tool message — the OpenAI-compatible API rejects image content
-		// in a tool role — so when the ACTIVE model has vision enabled, hand them to
-		// it as a follow-up user turn. Gated per-model so heavy base64 never goes to
-		// a non-vision model.
+		// VisionUserMessage mode: images can't ride on a tool message on Chat
+		// Completions, so hand them to the model as one follow-up user turn.
 		if len(toolImages) > 0 {
-			if mc, err := al.GetConfig().GetModelConfig(activeModel); err == nil && mc.Vision {
-				imgMsg := providers.Message{
-					Role:    "user",
-					Content: "Image(s) returned by the tool call(s) above:",
-					Media:   toolImages,
-				}
-				messages = append(messages, imgMsg)
-				if err := cm.AddUserMessage(ctx, imgMsg); err != nil {
-					logger.WarnCF("agent", "failed to persist tool image message",
-						map[string]any{"agent_id": agent.ID, "error": err.Error()})
-				}
-				logger.InfoCF("agent", "passed tool image(s) to vision model",
-					map[string]any{"agent_id": agent.ID, "model": activeModel, "images": len(toolImages)})
+			imgMsg := providers.Message{
+				Role:    "user",
+				Content: "Image(s) returned by the tool call(s) above:",
+				Media:   toolImages,
 			}
+			messages = append(messages, imgMsg)
+			if err := cm.AddUserMessage(ctx, imgMsg); err != nil {
+				logger.WarnCF("agent", "failed to persist tool image message",
+					map[string]any{"agent_id": agent.ID, "error": err.Error()})
+			}
+			logger.InfoCF("agent", "passed tool image(s) to vision model (user message)",
+				map[string]any{"agent_id": agent.ID, "model": activeModel, "images": len(toolImages)})
 		}
 
 		// If the model just repeated an identical tool-call batch (it isn't
