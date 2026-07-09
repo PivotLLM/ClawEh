@@ -891,6 +891,10 @@ func (t *WebFetchTool) Execute(ctx context.Context, args map[string]any) *tools.
 	}
 
 	req.Header.Set("User-Agent", userAgent)
+	// Send the headers a real browser sends. Some sites return an empty or
+	// challenge body to requests that look non-browser (a bare User-Agent only).
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
 	resp, err := t.client.Do(req)
 	if err != nil {
 		return tools.ErrorResult(fmt.Sprintf("request failed: %v", err))
@@ -932,6 +936,8 @@ func (t *WebFetchTool) Execute(ctx context.Context, args map[string]any) *tools.
 		extractor = "raw"
 	}
 
+	note := jsRenderedNote(extractor, len(text), len(body))
+
 	truncated := len(text) > maxChars
 	if truncated {
 		text = text[:maxChars]
@@ -945,6 +951,9 @@ func (t *WebFetchTool) Execute(ctx context.Context, args map[string]any) *tools.
 		"length":    len(text),
 		"text":      text,
 	}
+	if note != "" {
+		result["note"] = note
+	}
 
 	resultJSON, _ := json.MarshalIndent(result, "", "  ")
 
@@ -954,6 +963,17 @@ func (t *WebFetchTool) Execute(ctx context.Context, args map[string]any) *tools.
 		ForLLM: string(resultJSON),
 		Silent: true,
 	}
+}
+
+// jsRenderedNote returns a hint (or "") for the fetch result. A substantial HTML
+// body that yields almost no readable text is nearly always a JavaScript-rendered
+// or bot-challenge page; flagging it steers the model to the browser tool instead
+// of concluding the site is broken.
+func jsRenderedNote(extractor string, textLen, bodyLen int) string {
+	if extractor == "text" && textLen < 200 && bodyLen > 1024 {
+		return "Extracted little readable text from a non-trivial HTML page — it is likely JavaScript-rendered or bot-protected. Try the browser tool to load this URL."
+	}
+	return ""
 }
 
 func (t *WebFetchTool) extractText(htmlContent string) string {
