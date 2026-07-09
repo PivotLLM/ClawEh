@@ -9,8 +9,10 @@ import (
 	"strings"
 
 	"github.com/PivotLLM/ClawEh/pkg/agent"
+	"github.com/PivotLLM/ClawEh/pkg/config"
 	"github.com/PivotLLM/ClawEh/pkg/health"
 	"github.com/PivotLLM/ClawEh/pkg/logger"
+	"github.com/PivotLLM/ClawEh/pkg/tools/fusion"
 )
 
 // handlerRegistrar is the channel-manager surface needed to populate the
@@ -42,7 +44,31 @@ func rebuildSharedHTTPServer(services *gatewayServices, host string, port int, c
 	mux := buildMergedMux(services.WebServer)
 	cm.RegisterHandlers(mux, services.HealthServer)
 	RegisterMessageRoute(services.HealthServer, al)
+	// al is always non-nil in production (boot + reload both pass the running
+	// loop); the nil guard covers unit tests that exercise this seam directly.
+	if al != nil {
+		RegisterFusionOAuthRoutes(services.HealthServer, al.GetConfig())
+	}
 	swapper.SetMux(mux)
+}
+
+// RegisterFusionOAuthRoutes mounts the fusion OAuth API on the shared HTTP
+// server so the claw-auth OAuth flow can deliver tokens. Like RegisterMessageRoute
+// it must run on every rebuild (boot + config reload) or the routes silently
+// disappear after a reload. When the fusion engine can't be built the handler is
+// nil and nothing is mounted.
+//
+// The handler carries its own internal mux matching the full request path, so a
+// Go 1.22 subtree prefix ("/api/v1/") suffices. "/ping" is mounted separately
+// because claw-auth pings <external-url>/ping to verify connectivity, and it
+// does not collide with the health server's /health and /ready routes.
+func RegisterFusionOAuthRoutes(server *health.Server, c *config.Config) {
+	h := fusion.OAuthHandler(c)
+	if h == nil {
+		return
+	}
+	server.Handle("/api/v1/", h.ServeHTTP)
+	server.Handle("/ping", h.ServeHTTP)
 }
 
 // RegisterMessageRoute registers POST /api/message/{token} on the shared HTTP

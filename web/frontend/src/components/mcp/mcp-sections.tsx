@@ -202,6 +202,116 @@ export function ToolsSection({
   )
 }
 
+interface DiscoverySectionProps {
+  discoveryEnabled: boolean
+  ttlMax: number
+  visibleBudget: number
+  alwaysShownNamespaces: string[]
+  onFieldChange: UpdateMCPField
+  onNamespacesChange: (next: string[]) => void
+}
+
+// DiscoverySection edits the global progressive-tool-discovery switch
+// (tools.discovery.enabled), its ttl_max / visible_budget tuning, and the extra
+// always-shown namespaces (mcp_host.always_shown_namespaces).
+export function DiscoverySection({
+  discoveryEnabled,
+  ttlMax,
+  visibleBudget,
+  alwaysShownNamespaces,
+  onFieldChange,
+  onNamespacesChange,
+}: DiscoverySectionProps) {
+  const { t } = useTranslation()
+
+  const setAt = (index: number, value: string) => {
+    const next = [...alwaysShownNamespaces]
+    next[index] = value
+    onNamespacesChange(next)
+  }
+  const add = () => onNamespacesChange([...alwaysShownNamespaces, ""])
+  const removeAt = (index: number) =>
+    onNamespacesChange(alwaysShownNamespaces.filter((_, i) => i !== index))
+
+  return (
+    <SectionCard
+      title="Progressive Tool Discovery"
+      description="Hide most tools behind a search so agents and MCP clients start with a small set and load tools on demand. Global switch, off by default."
+    >
+      <SwitchCardField
+        label="Enable progressive discovery"
+        hint="When on, the fusion/maestro suites and upstream MCP tools are hidden and found via search_tools / get_tool_details. Native tools stay in each agent's own context; the MCP host's tools/list shows only the always-shown namespaces below (plus search + cogmem)."
+        checked={discoveryEnabled}
+        onCheckedChange={(checked) => onFieldChange("discoveryEnabled", checked)}
+      />
+      {discoveryEnabled && (
+        <div className="space-y-3 py-4">
+          <Field
+            label="Max TTL (turns)"
+            hint="Longest a revealed tool stays visible without being used; each use resets it. Default 50."
+            layout="setting-row"
+          >
+            <Input
+              type="number"
+              min={1}
+              value={ttlMax}
+              onChange={(e) => onFieldChange("ttlMax", Number(e.target.value))}
+            />
+          </Field>
+          <Field
+            label="Visible budget"
+            hint="Max revealed tools at once; a new reveal over this hides the lowest-TTL tools first. Default 100."
+            layout="setting-row"
+          >
+            <Input
+              type="number"
+              min={1}
+              value={visibleBudget}
+              onChange={(e) => onFieldChange("visibleBudget", Number(e.target.value))}
+            />
+          </Field>
+          <div className="text-muted-foreground text-xs">
+            Extra namespaces always shown in the MCP host&apos;s tools/list.
+            search_tools, get_tool_details, and cogmem are always shown by rule;
+            add more here (e.g. &quot;file&quot;, &quot;session&quot;). Everything
+            else is discovered on demand.
+          </div>
+          <div className="space-y-2">
+            {alwaysShownNamespaces.length === 0 ? (
+              <div className="text-muted-foreground text-xs italic">
+                Only search_tools, get_tool_details, and cogmem are shown up front.
+              </div>
+            ) : (
+              alwaysShownNamespaces.map((ns, idx) => (
+                <div key={idx} className="flex items-center gap-2">
+                  <Input
+                    value={ns}
+                    placeholder="namespace (e.g. file)"
+                    onChange={(e) => setAt(idx, e.target.value)}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    onClick={() => removeAt(idx)}
+                    aria-label={t("common.remove")}
+                  >
+                    <IconTrash className="size-4" />
+                  </Button>
+                </div>
+              ))
+            )}
+            <Button type="button" variant="outline" size="sm" onClick={add}>
+              <IconPlus className="size-4" />
+              Add namespace
+            </Button>
+          </div>
+        </div>
+      )}
+    </SectionCard>
+  )
+}
+
 // ClientServersSection edits the external (upstream) MCP servers claw connects
 // out to (tools.mcp.servers) via form fields — add / edit / delete, no raw JSON.
 export function ClientServersSection({
@@ -356,6 +466,14 @@ export function ClientServersSection({
                 </Field>
               </>
             )}
+
+            <SwitchCardField
+              label="Reveal together"
+              hint="Under progressive discovery, reveal all of this server's tools as soon as one is found. Use only for small, cohesive servers."
+              checked={s.revealTogether}
+              onCheckedChange={(c) => update(i, { revealTogether: c })}
+              layout="setting-row"
+            />
           </div>
         ))}
 

@@ -37,6 +37,7 @@ type modelResponse struct {
 	RequestTimeout int    `json:"request_timeout,omitempty"`
 	ThinkingLevel  string `json:"thinking_level,omitempty"`
 	NoTools        bool   `json:"no_tools,omitempty"`
+	Vision         string `json:"vision,omitempty"`
 	// Shape 3 per-LLM custom fields.
 	ReasoningEffort   string         `json:"reasoning_effort,omitempty"`
 	ExtraBody         map[string]any `json:"extra_body,omitempty"`
@@ -92,6 +93,7 @@ func (h *Handler) handleListModels(w http.ResponseWriter, r *http.Request) {
 			RequestTimeout:    m.RequestTimeout,
 			ThinkingLevel:     m.ThinkingLevel,
 			NoTools:           m.NoTools,
+			Vision:            m.Vision,
 			ReasoningEffort:   m.ReasoningEffort,
 			ExtraBody:         m.ExtraBody,
 			DropParams:        m.DropParams,

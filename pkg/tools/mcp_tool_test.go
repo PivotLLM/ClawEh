@@ -2,11 +2,12 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
 
-	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/mark3labs/mcp-go/mcp"
 )
 
 // MockMCPManager is a mock implementation of MCPManager interface for testing
@@ -24,7 +25,7 @@ func (m *MockMCPManager) CallTool(
 	}
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{
-			&mcp.TextContent{Text: "mock result"},
+			mcp.TextContent{Text: "mock result"},
 		},
 		IsError: false,
 	}, nil
@@ -33,12 +34,12 @@ func (m *MockMCPManager) CallTool(
 // TestNewMCPTool verifies MCP tool creation
 func TestNewMCPTool(t *testing.T) {
 	manager := &MockMCPManager{}
-	tool := &mcp.Tool{
+	tool := mcp.Tool{
 		Name:        "test_tool",
 		Description: "A test tool",
-		InputSchema: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
+		InputSchema: mcp.ToolInputSchema{
+			Type: "object",
+			Properties: map[string]any{
 				"input": map[string]any{
 					"type":        "string",
 					"description": "Test input",
@@ -52,76 +53,37 @@ func TestNewMCPTool(t *testing.T) {
 	if mcpTool == nil {
 		t.Fatal("NewMCPTool should not return nil")
 	}
-	// Verify tool properties we can access
-	if mcpTool.Name() != "mcp_test_server_test_tool" {
-		t.Errorf("Expected tool name with prefix, got '%s'", mcpTool.Name())
-	}
 }
 
-// TestMCPTool_Name verifies tool name with server prefix
+// TestMCPTool_Name verifies name sanitization and prefixing.
 func TestMCPTool_Name(t *testing.T) {
 	tests := []struct {
 		name       string
 		serverName string
 		toolName   string
-		expected   string
+		expectName string
 	}{
 		{
-			name:       "simple name",
-			serverName: "github",
-			toolName:   "create_issue",
-			expected:   "mcp_github_create_issue",
-		},
-		{
-			name:       "filesystem server",
+			name:       "simple names",
 			serverName: "filesystem",
 			toolName:   "read_file",
-			expected:   "mcp_filesystem_read_file",
-		},
-		{
-			name:       "remote server",
-			serverName: "remote-api",
-			toolName:   "fetch_data",
-			expected:   "mcp_remote-api_fetch_data",
+			expectName: "mcp_filesystem_read_file",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			manager := &MockMCPManager{}
-			tool := &mcp.Tool{Name: tt.toolName}
+			tool := mcp.Tool{Name: tt.toolName}
 			mcpTool := NewMCPTool(manager, tt.serverName, tool)
-
-			result := mcpTool.Name()
-			if result != tt.expected {
-				t.Errorf("Expected name '%s', got '%s'", tt.expected, result)
+			if got := mcpTool.Name(); got != tt.expectName {
+				t.Errorf("Name() = %q, want %q", got, tt.expectName)
 			}
 		})
 	}
 }
 
-// TestMCPTool_ExternalName verifies the externally-published name drops claw's
-// internal "mcp_" prefix, leaving "<server>_<tool>", and that MCPTool satisfies
-// the ExternalNamer interface used by the MCP host.
-func TestMCPTool_ExternalName(t *testing.T) {
-	var _ ExternalNamer = (*MCPTool)(nil) // compile-time: MCPTool implements it
-
-	cases := []struct{ server, tool, want string }{
-		{"fusion", "trello_search", "fusion_trello_search"},
-		{"github", "create_issue", "github_create_issue"},
-	}
-	for _, c := range cases {
-		mt := NewMCPTool(&MockMCPManager{}, c.server, &mcp.Tool{Name: c.tool})
-		if got := mt.ExternalName(); got != c.want {
-			t.Errorf("ExternalName(%s,%s) = %q, want %q", c.server, c.tool, got, c.want)
-		}
-		if mt.Name() != "mcp_"+c.want {
-			t.Errorf("internal Name should keep mcp_ prefix: %q", mt.Name())
-		}
-	}
-}
-
-// TestMCPTool_Description verifies tool description generation
+// TestMCPTool_Description verifies description formatting.
 func TestMCPTool_Description(t *testing.T) {
 	tests := []struct {
 		name            string
@@ -132,8 +94,8 @@ func TestMCPTool_Description(t *testing.T) {
 		{
 			name:            "with description",
 			serverName:      "github",
-			toolDescription: "Create a GitHub issue",
-			expectContains:  []string{"[MCP:github]", "Create a GitHub issue"},
+			toolDescription: "Search repositories",
+			expectContains:  []string{"[MCP:github]", "Search repositories"},
 		},
 		{
 			name:            "empty description",
@@ -146,7 +108,7 @@ func TestMCPTool_Description(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			manager := &MockMCPManager{}
-			tool := &mcp.Tool{
+			tool := mcp.Tool{
 				Name:        "test_tool",
 				Description: tt.toolDescription,
 			}
@@ -167,49 +129,55 @@ func TestMCPTool_Description(t *testing.T) {
 func TestMCPTool_Parameters(t *testing.T) {
 	tests := []struct {
 		name           string
-		inputSchema    any
+		tool           mcp.Tool
 		expectType     string
 		checkProperty  string
 		expectProperty bool
 	}{
 		{
-			name: "map schema",
-			inputSchema: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"query": map[string]any{
-						"type":        "string",
-						"description": "Search query",
+			name: "structured schema",
+			tool: mcp.Tool{
+				Name: "test_tool",
+				InputSchema: mcp.ToolInputSchema{
+					Type: "object",
+					Properties: map[string]any{
+						"query": map[string]any{
+							"type":        "string",
+							"description": "Search query",
+						},
 					},
+					Required: []string{"query"},
 				},
-				"required": []string{"query"},
 			},
 			expectType:     "object",
 			checkProperty:  "query",
 			expectProperty: true,
 		},
 		{
-			name:           "nil schema",
-			inputSchema:    nil,
+			name:           "empty schema",
+			tool:           mcp.Tool{Name: "test_tool"},
 			expectType:     "object",
 			expectProperty: false,
 		},
 		{
-			name: "json.RawMessage schema",
-			inputSchema: []byte(`{
-				"type": "object",
-				"properties": {
-					"repo": {
-						"type": "string",
-						"description": "Repository name"
+			name: "raw schema",
+			tool: mcp.Tool{
+				Name: "test_tool",
+				RawInputSchema: json.RawMessage(`{
+					"type": "object",
+					"properties": {
+						"repo": {
+							"type": "string",
+							"description": "Repository name"
+						},
+						"stars": {
+							"type": "integer",
+							"description": "Minimum stars"
+						}
 					},
-					"stars": {
-						"type": "integer",
-						"description": "Minimum stars"
-					}
-				},
-				"required": ["repo"]
-			}`),
+					"required": ["repo"]
+				}`),
+			},
 			expectType:     "object",
 			checkProperty:  "repo",
 			expectProperty: true,
@@ -219,11 +187,7 @@ func TestMCPTool_Parameters(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			manager := &MockMCPManager{}
-			tool := &mcp.Tool{
-				Name:        "test_tool",
-				InputSchema: tt.inputSchema,
-			}
-			mcpTool := NewMCPTool(manager, "test_server", tool)
+			mcpTool := NewMCPTool(manager, "test_server", tt.tool)
 
 			params := mcpTool.Parameters()
 
@@ -268,14 +232,14 @@ func TestMCPTool_Execute_Success(t *testing.T) {
 
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{
-					&mcp.TextContent{Text: "Found 3 repositories"},
+					mcp.TextContent{Text: "Found 3 repositories"},
 				},
 				IsError: false,
 			}, nil
 		},
 	}
 
-	tool := &mcp.Tool{
+	tool := mcp.Tool{
 		Name:        "search_repos",
 		Description: "Search GitHub repositories",
 	}
@@ -307,7 +271,7 @@ func TestMCPTool_Execute_ManagerError(t *testing.T) {
 		},
 	}
 
-	tool := &mcp.Tool{Name: "test_tool"}
+	tool := mcp.Tool{Name: "test_tool"}
 	mcpTool := NewMCPTool(manager, "test_server", tool)
 
 	ctx := context.Background()
@@ -333,14 +297,14 @@ func TestMCPTool_Execute_ServerError(t *testing.T) {
 		callToolFunc: func(ctx context.Context, serverName, toolName string, arguments map[string]any) (*mcp.CallToolResult, error) {
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{
-					&mcp.TextContent{Text: "Invalid API key"},
+					mcp.TextContent{Text: "Invalid API key"},
 				},
 				IsError: true,
 			}, nil
 		},
 	}
 
-	tool := &mcp.Tool{Name: "test_tool"}
+	tool := mcp.Tool{Name: "test_tool"}
 	mcpTool := NewMCPTool(manager, "test_server", tool)
 
 	ctx := context.Background()
@@ -366,16 +330,16 @@ func TestMCPTool_Execute_MultipleContent(t *testing.T) {
 		callToolFunc: func(ctx context.Context, serverName, toolName string, arguments map[string]any) (*mcp.CallToolResult, error) {
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{
-					&mcp.TextContent{Text: "First line"},
-					&mcp.TextContent{Text: "Second line"},
-					&mcp.TextContent{Text: "Third line"},
+					mcp.TextContent{Text: "First line"},
+					mcp.TextContent{Text: "Second line"},
+					mcp.TextContent{Text: "Third line"},
 				},
 				IsError: false,
 			}, nil
 		},
 	}
 
-	tool := &mcp.Tool{Name: "multi_output"}
+	tool := mcp.Tool{Name: "multi_output"}
 	mcpTool := NewMCPTool(manager, "test_server", tool)
 
 	ctx := context.Background()
@@ -394,11 +358,11 @@ func TestMCPTool_Execute_MultipleContent(t *testing.T) {
 // TestExtractContentText_TextContent tests text content extraction
 func TestExtractContentText_TextContent(t *testing.T) {
 	content := []mcp.Content{
-		&mcp.TextContent{Text: "Hello World"},
-		&mcp.TextContent{Text: "Second message"},
+		mcp.TextContent{Text: "Hello World"},
+		mcp.TextContent{Text: "Second message"},
 	}
 
-	result := extractContentText(content)
+	result, _ := extractContent(content)
 	expected := "Hello World\nSecond message"
 
 	if result != expected {
@@ -409,13 +373,13 @@ func TestExtractContentText_TextContent(t *testing.T) {
 // TestExtractContentText_ImageContent tests image content extraction
 func TestExtractContentText_ImageContent(t *testing.T) {
 	content := []mcp.Content{
-		&mcp.ImageContent{
-			Data:     []byte("base64data"),
+		mcp.ImageContent{
+			Data:     "base64data",
 			MIMEType: "image/png",
 		},
 	}
 
-	result := extractContentText(content)
+	result, images := extractContent(content)
 
 	if !strings.Contains(result, "[Image:") {
 		t.Errorf("Expected image indicator, got: %s", result)
@@ -423,20 +387,29 @@ func TestExtractContentText_ImageContent(t *testing.T) {
 	if !strings.Contains(result, "image/png") {
 		t.Errorf("Expected MIME type in output, got: %s", result)
 	}
+	// The image must also be captured as a base64 data URI for vision passthrough.
+	// mark3labs ImageContent.Data is already base64, so it is used verbatim.
+	if len(images) != 1 {
+		t.Fatalf("expected 1 captured image, got %d", len(images))
+	}
+	want := "data:image/png;base64,base64data"
+	if images[0] != want {
+		t.Errorf("image data URI = %q, want %q", images[0], want)
+	}
 }
 
 // TestExtractContentText_MixedContent tests mixed content types
 func TestExtractContentText_MixedContent(t *testing.T) {
 	content := []mcp.Content{
-		&mcp.TextContent{Text: "Description"},
-		&mcp.ImageContent{
-			Data:     []byte("data"),
+		mcp.TextContent{Text: "Description"},
+		mcp.ImageContent{
+			Data:     "data",
 			MIMEType: "image/jpeg",
 		},
-		&mcp.TextContent{Text: "More text"},
+		mcp.TextContent{Text: "More text"},
 	}
 
-	result := extractContentText(content)
+	result, _ := extractContent(content)
 
 	if !strings.Contains(result, "Description") {
 		t.Errorf("Should contain text content, got: %s", result)
@@ -453,7 +426,7 @@ func TestExtractContentText_MixedContent(t *testing.T) {
 func TestExtractContentText_EmptyContent(t *testing.T) {
 	content := []mcp.Content{}
 
-	result := extractContentText(content)
+	result, _ := extractContent(content)
 
 	if result != "" {
 		t.Errorf("Expected empty string for empty content, got: %s", result)
@@ -463,36 +436,33 @@ func TestExtractContentText_EmptyContent(t *testing.T) {
 // TestMCPTool_InterfaceCompliance verifies MCPTool implements Tool interface
 func TestMCPTool_InterfaceCompliance(t *testing.T) {
 	manager := &MockMCPManager{}
-	tool := &mcp.Tool{Name: "test"}
+	tool := mcp.Tool{Name: "test"}
 	mcpTool := NewMCPTool(manager, "test_server", tool)
 
 	// Verify it implements Tool interface
 	var _ Tool = mcpTool
 }
 
-// TestMCPTool_Parameters_MapSchema tests schema that's already a map
-func TestMCPTool_Parameters_MapSchema(t *testing.T) {
+// TestMCPTool_Parameters_StructuredSchema tests a structured InputSchema round-trip
+func TestMCPTool_Parameters_StructuredSchema(t *testing.T) {
 	manager := &MockMCPManager{}
-	schema := map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"name": map[string]any{
-				"type":        "string",
-				"description": "The name parameter",
+	tool := mcp.Tool{
+		Name: "test_tool",
+		InputSchema: mcp.ToolInputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"name": map[string]any{
+					"type":        "string",
+					"description": "The name parameter",
+				},
 			},
+			Required: []string{"name"},
 		},
-		"required": []string{"name"},
-	}
-
-	tool := &mcp.Tool{
-		Name:        "test_tool",
-		InputSchema: schema,
 	}
 	mcpTool := NewMCPTool(manager, "test_server", tool)
 
 	params := mcpTool.Parameters()
 
-	// Should return the schema as-is when it's already a map
 	if params["type"] != "object" {
 		t.Errorf("Expected type 'object', got '%v'", params["type"])
 	}

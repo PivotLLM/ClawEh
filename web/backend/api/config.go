@@ -207,6 +207,11 @@ func validateConfig(cfg *config.Config) []string {
 		errs = append(errs, fmt.Sprintf("gateway.port %d is out of valid range (1-65535)", cfg.Gateway.Port))
 	}
 
+	// Gateway IP allowlist: every entry must be a valid CIDR.
+	if err := config.ValidateAllowedCIDRs(cfg.Gateway.AllowedCIDRs); err != nil {
+		errs = append(errs, "gateway.allowed_cidrs: "+err.Error())
+	}
+
 	// WebUI channel: token required when enabled
 	if cfg.Channels.WebUI.Enabled && cfg.Channels.WebUI.Token == "" {
 		errs = append(errs, "channels.webui.token is required when webui channel is enabled")

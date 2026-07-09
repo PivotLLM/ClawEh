@@ -128,11 +128,13 @@ func (globalFilesProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 		key := op + "_" + unit
 		probe := &rangeEditTool{op: op, unit: unit}
 		return global.ToolDefinition{
-			Name:         key, // namespace "file" → file_<op>_<unit>
-			Description:  probe.Description(),
-			RawSchema:    probe.Parameters(),
-			Category:     "filesystem",
-			DefaultAllow: global.Allow(true),
+			Name:        key, // namespace "file" → file_<op>_<unit>
+			Description: probe.Description(),
+			RawSchema:   probe.Parameters(),
+			Category:    "filesystem",
+			// Byte-addressed edit tools are edge-case; most assistants work in text
+			// (line-addressed). Default them off, enableable per agent.
+			DefaultAllow: global.Allow(unit != "bytes"),
 			Handler: func(call *global.ToolCall) (*global.Result, error) {
 				rt := rangeTools[key]
 				if rt == nil {
@@ -145,11 +147,12 @@ func (globalFilesProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 
 	return []global.ToolDefinition{
 		{
-			Name:         "read_bytes",
-			Description:  (&ReadFileTool{lineMode: false}).Description(),
-			RawSchema:    readBytesSchema,
-			Category:     "filesystem",
-			DefaultAllow: global.Allow(true),
+			Name:        "read_bytes",
+			Description: (&ReadFileTool{lineMode: false}).Description(),
+			RawSchema:   readBytesSchema,
+			Category:    "filesystem",
+			// Edge-case; file_read_lines is the default. Enableable per agent.
+			DefaultAllow: global.Allow(false),
 			Handler: func(call *global.ToolCall) (*global.Result, error) {
 				return tools.ResultToGlobal(readBytes.Execute(call.Ctx, call.Args)), nil
 			},
@@ -198,11 +201,12 @@ func (globalFilesProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 			},
 		},
 		{
-			Name:         "search_bytes",
-			Description:  (&SearchFilesTool{byteMode: true}).Description(),
-			RawSchema:    (&SearchFilesTool{byteMode: true}).Parameters(),
-			Category:     "filesystem",
-			DefaultAllow: global.Allow(true),
+			Name:        "search_bytes",
+			Description: (&SearchFilesTool{byteMode: true}).Description(),
+			RawSchema:   (&SearchFilesTool{byteMode: true}).Parameters(),
+			Category:    "filesystem",
+			// Edge-case; file_search_lines is the default. Enableable per agent.
+			DefaultAllow: global.Allow(false),
 			Handler: func(call *global.ToolCall) (*global.Result, error) {
 				if searchBytes == nil {
 					return tools.ResultToGlobal(tools.ErrorResult("file search is not available")), nil

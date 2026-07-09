@@ -34,6 +34,14 @@ type ToolResult struct {
 	// Media contains media store refs produced by this tool.
 	// When non-empty, the agent will publish these as OutboundMediaMessage.
 	Media []string `json:"media,omitempty"`
+
+	// Images holds base64 data URIs ("data:<mime>;base64,...") the tool returned
+	// for the MODEL to see (e.g. an MCP screenshot). Distinct from Media (which is
+	// sent to the user): when the active model has vision enabled, these are
+	// injected as a follow-up user turn so a vision model can read them. The
+	// OpenAI-compatible API rejects image content in tool messages, so they cannot
+	// ride on the tool result itself.
+	Images []string `json:"images,omitempty"`
 }
 
 // NewToolResult creates a basic ToolResult with content for the LLM.

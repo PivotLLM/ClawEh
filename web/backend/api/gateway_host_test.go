@@ -6,45 +6,28 @@ import (
 	"testing"
 
 	"github.com/PivotLLM/ClawEh/pkg/config"
-	"github.com/PivotLLM/ClawEh/web/backend/launcherconfig"
 )
 
-func TestGatewayHostOverrideUsesExplicitRuntimePublic(t *testing.T) {
+func TestGatewayHostOverrideUsesRuntimePublic(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.json")
-	launcherPath := launcherconfig.PathForAppConfig(configPath)
-	if err := launcherconfig.Save(launcherPath, launcherconfig.Config{
-		Port:   18800,
-		Public: false,
-	}); err != nil {
-		t.Fatalf("launcherconfig.Save() error = %v", err)
-	}
-
 	h := NewHandler(configPath)
-	h.SetServerOptions(18800, true, true, nil)
+	h.SetServerOptions(18800, true)
 
 	if got := h.gatewayHostOverride(); got != "0.0.0.0" {
 		t.Fatalf("gatewayHostOverride() = %q, want %q", got, "0.0.0.0")
 	}
 }
 
-func TestBuildWsURLUsesRequestHostWhenLauncherPublicSaved(t *testing.T) {
+func TestBuildWsURLUsesRequestHostWhenPublic(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.json")
-	launcherPath := launcherconfig.PathForAppConfig(configPath)
-	if err := launcherconfig.Save(launcherPath, launcherconfig.Config{
-		Port:   18800,
-		Public: true,
-	}); err != nil {
-		t.Fatalf("launcherconfig.Save() error = %v", err)
-	}
-
 	h := NewHandler(configPath)
-	h.SetServerOptions(18800, false, false, nil)
+	h.SetServerOptions(18800, true)
 
 	cfg := config.DefaultConfig()
-	cfg.Gateway.Host = "127.0.0.1"
+	cfg.Gateway.Host = "0.0.0.0"
 	cfg.Gateway.Port = 18790
 
-	req := httptest.NewRequest("GET", "http://launcher.local/api/webui/token", nil)
+	req := httptest.NewRequest("GET", "http://claw.local/api/webui/token", nil)
 	req.Host = "192.168.1.9:18800"
 
 	if got := h.buildWsURL(req, cfg); got != "ws://192.168.1.9:18790/webui/ws" {

@@ -15,6 +15,7 @@ import {
 } from "@/components/mcp/form-model"
 import {
   ClientServersSection,
+  DiscoverySection,
   EnableSection,
   ToolsSection,
   TransportSection,
@@ -83,12 +84,26 @@ export function MCPPage() {
         endpoint_path: f.endpointPath.trim(),
         internal_tools: clean(f.internalToolPatterns),
         external_tools: clean(f.externalToolPatterns),
+        always_shown_namespaces: clean(f.alwaysShownNamespaces),
+      }
+    }
+    // tools.discovery.enabled (global switch) and tools.mcp.servers are both under
+    // "tools"; merge whichever blocks are valid this round.
+    const toolsPatch: Record<string, unknown> = {}
+    if (!listenErr && !pathErr) {
+      toolsPatch.discovery = {
+        enabled: f.discoveryEnabled,
+        ttl_max: f.ttlMax,
+        visible_budget: f.visibleBudget,
       }
     }
     if (!serversErr) {
-      patch.tools = {
-        mcp: { servers: serversToPatch(f.servers, baselineRef.current.servers) },
+      toolsPatch.mcp = {
+        servers: serversToPatch(f.servers, baselineRef.current.servers),
       }
+    }
+    if (Object.keys(toolsPatch).length > 0) {
+      patch.tools = toolsPatch
     }
     if (Object.keys(patch).length === 0) {
       setStatus("error")
@@ -177,6 +192,17 @@ export function MCPPage() {
                 note={t("pages.mcp.external_tools_note")}
                 patterns={form.externalToolPatterns}
                 onChange={(next) => updateField("externalToolPatterns", next)}
+              />
+
+              <DiscoverySection
+                discoveryEnabled={form.discoveryEnabled}
+                ttlMax={form.ttlMax}
+                visibleBudget={form.visibleBudget}
+                alwaysShownNamespaces={form.alwaysShownNamespaces}
+                onFieldChange={updateField}
+                onNamespacesChange={(next) =>
+                  updateField("alwaysShownNamespaces", next)
+                }
               />
 
               <ClientServersSection

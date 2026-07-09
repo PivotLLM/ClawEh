@@ -9,21 +9,10 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/config"
 )
 
-func (h *Handler) effectiveLauncherPublic() bool {
-	if h.serverPublicExplicit {
-		return h.serverPublic
-	}
-
-	cfg, err := h.loadLauncherConfig()
-	if err == nil {
-		return cfg.Public
-	}
-
-	return h.serverPublic
-}
-
 func (h *Handler) gatewayHostOverride() string {
-	if h.effectiveLauncherPublic() {
+	// When the gateway binds to all interfaces, advertise the wildcard so
+	// buildWsURL falls back to the request host (a reachable off-box address).
+	if h.serverPublic {
 		return "0.0.0.0"
 	}
 	return ""

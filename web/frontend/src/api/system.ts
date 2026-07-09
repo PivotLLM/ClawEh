@@ -1,9 +1,3 @@
-export interface LauncherConfig {
-  port: number
-  public: boolean
-  allowed_cidrs: string[]
-}
-
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(path, options)
   if (!res.ok) {
@@ -24,20 +18,6 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     throw new Error(message)
   }
   return res.json() as Promise<T>
-}
-
-export async function getLauncherConfig(): Promise<LauncherConfig> {
-  return request<LauncherConfig>("/api/system/launcher-config")
-}
-
-export async function setLauncherConfig(
-  payload: LauncherConfig,
-): Promise<LauncherConfig> {
-  return request<LauncherConfig>("/api/system/launcher-config", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  })
 }
 
 export interface CLIInfo {
@@ -76,4 +56,10 @@ export async function getSetupStatus(): Promise<SetupStatus> {
 // directing the user back into the app.
 export async function reloadGateway(): Promise<void> {
   await request<unknown>("/api/gateway/reload", { method: "POST" })
+}
+
+// getVersion returns the running ClawEh build version (for the sidebar footer).
+export async function getVersion(): Promise<string> {
+  const res = await request<{ version: string }>("/api/system/version")
+  return res.version
 }

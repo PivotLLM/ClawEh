@@ -90,7 +90,7 @@ func TestToolRegistry_HiddenTool_NotCallableAfterTTLExpired(t *testing.T) {
 func TestToolRegistry_HiddenTool_CallableAfterPromotion(t *testing.T) {
 	r := NewToolRegistry()
 	r.RegisterHidden(&mockTool{name: "promoted"})
-	r.PromoteTools([]string{"promoted"}, 2)
+	r.PromoteTools([]string{"promoted"}, 2, 0)
 
 	tool, ok := r.Get("promoted")
 	if !ok {
@@ -104,7 +104,7 @@ func TestToolRegistry_HiddenTool_CallableAfterPromotion(t *testing.T) {
 func TestToolRegistry_TickTTL_DecrementsHiddenTools(t *testing.T) {
 	r := NewToolRegistry()
 	r.RegisterHidden(&mockTool{name: "ticking"})
-	r.PromoteTools([]string{"ticking"}, 1)
+	r.PromoteTools([]string{"ticking"}, 1, 0)
 
 	// After 1 tick, TTL should reach 0.
 	r.TickTTL()

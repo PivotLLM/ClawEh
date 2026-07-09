@@ -7,7 +7,6 @@ import (
 	"github.com/PivotLLM/ClawEh/internal"
 	"github.com/PivotLLM/ClawEh/pkg/config"
 	"github.com/PivotLLM/ClawEh/pkg/global"
-	"github.com/PivotLLM/ClawEh/web/backend/launcherconfig"
 )
 
 func TestBuildUnit_RunsAsUserAndStartsAtBoot(t *testing.T) {
@@ -85,14 +84,13 @@ func TestApplyAllowlist_WritesCIDRs(t *testing.T) {
 	if err := applyAllowlist("192.168.5.0/24, 10.1.0.0/16 ,"); err != nil {
 		t.Fatalf("applyAllowlist: %v", err)
 	}
-	path := launcherconfig.PathForAppConfig(internal.GetConfigPath())
-	cfg, err := launcherconfig.Load(path, launcherconfig.Default())
+	cfg, err := config.LoadConfig(internal.GetConfigPath())
 	if err != nil {
-		t.Fatalf("Load: %v", err)
+		t.Fatalf("LoadConfig: %v", err)
 	}
-	if len(cfg.AllowedCIDRs) != 2 ||
-		cfg.AllowedCIDRs[0] != "192.168.5.0/24" || cfg.AllowedCIDRs[1] != "10.1.0.0/16" {
-		t.Fatalf("AllowedCIDRs = %v, want [192.168.5.0/24 10.1.0.0/16]", cfg.AllowedCIDRs)
+	if len(cfg.Gateway.AllowedCIDRs) != 2 ||
+		cfg.Gateway.AllowedCIDRs[0] != "192.168.5.0/24" || cfg.Gateway.AllowedCIDRs[1] != "10.1.0.0/16" {
+		t.Fatalf("Gateway.AllowedCIDRs = %v, want [192.168.5.0/24 10.1.0.0/16]", cfg.Gateway.AllowedCIDRs)
 	}
 }
 

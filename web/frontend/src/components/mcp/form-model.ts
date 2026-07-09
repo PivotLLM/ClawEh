@@ -9,6 +9,16 @@ export interface MCPHostForm {
   // external_tools). Empty ⇒ expose all; entries match by MatchVisibility.
   internalToolPatterns: string[]
   externalToolPatterns: string[]
+  // Progressive tool discovery. discoveryEnabled is the global switch
+  // (tools.discovery.enabled). alwaysShownNamespaces are EXTRA namespaces kept in
+  // tools/list when it's on (search_tools/get_tool_details and cogmem are always
+  // shown by rule).
+  discoveryEnabled: boolean
+  // ttlMax: turns a revealed tool stays visible without use (reset on use).
+  // visibleBudget: max revealed tools before lowest-TTL-first pruning kicks in.
+  ttlMax: number
+  visibleBudget: number
+  alwaysShownNamespaces: string[]
   // External (upstream) MCP servers claw connects out to (tools.mcp.servers),
   // structured for add/edit/delete in the UI.
   servers: MCPServerForm[]
@@ -27,6 +37,9 @@ export interface MCPServerForm {
   // http
   url: string
   headers: string // "Header: value" per line
+  // Under progressive discovery, reveal all of this server's tools as soon as one
+  // is discovered (for small, cohesive servers). Ignored when discovery is off.
+  revealTogether: boolean
 }
 
 export function blankServer(): MCPServerForm {
@@ -40,6 +53,7 @@ export function blankServer(): MCPServerForm {
     envFile: "",
     url: "",
     headers: "",
+    revealTogether: false,
   }
 }
 
@@ -50,6 +64,10 @@ export const EMPTY_MCP_FORM: MCPHostForm = {
   endpointPath: "/mcp",
   internalToolPatterns: ["*"],
   externalToolPatterns: ["*"],
+  discoveryEnabled: false,
+  ttlMax: 50,
+  visibleBudget: 100,
+  alwaysShownNamespaces: [],
   servers: [],
 }
 
@@ -62,6 +80,11 @@ function asRecord(value: unknown): JsonRecord {
 
 function asString(value: unknown, fallback: string): string {
   return typeof value === "string" && value !== "" ? value : fallback
+}
+
+function asNumber(value: unknown, fallback: number): number {
+  if (typeof value === "number" && Number.isFinite(value)) return value
+  return fallback
 }
 
 function asBool(value: unknown, fallback: boolean): boolean {
@@ -79,6 +102,7 @@ function asStringArray(value: unknown, fallback: string[]): string[] {
 export function buildMCPFormFromConfig(config: unknown): MCPHostForm {
   const root = asRecord(config)
   const mcp = asRecord(root.mcp_host)
+  const discovery = asRecord(asRecord(root.tools).discovery)
   return {
     enabled: asBool(mcp.enabled, EMPTY_MCP_FORM.enabled),
     autoEnable: asBool(mcp.auto_enable, EMPTY_MCP_FORM.autoEnable),
@@ -86,6 +110,11 @@ export function buildMCPFormFromConfig(config: unknown): MCPHostForm {
     endpointPath: asString(mcp.endpoint_path, EMPTY_MCP_FORM.endpointPath),
     internalToolPatterns: asStringArray(mcp.internal_tools, EMPTY_MCP_FORM.internalToolPatterns),
     externalToolPatterns: asStringArray(mcp.external_tools, EMPTY_MCP_FORM.externalToolPatterns),
+    discoveryEnabled: asBool(discovery.enabled, EMPTY_MCP_FORM.discoveryEnabled),
+    // Honor the legacy "ttl" key as a fallback so an older config still displays.
+    ttlMax: asNumber(discovery.ttl_max ?? discovery.ttl, EMPTY_MCP_FORM.ttlMax),
+    visibleBudget: asNumber(discovery.visible_budget, EMPTY_MCP_FORM.visibleBudget),
+    alwaysShownNamespaces: asStringArray(mcp.always_shown_namespaces, EMPTY_MCP_FORM.alwaysShownNamespaces),
     servers: serversFromConfig(config),
   }
 }
@@ -139,6 +168,7 @@ export function serversFromConfig(config: unknown): MCPServerForm[] {
       envFile: asString(s.env_file, ""),
       url: asString(s.url, ""),
       headers: recordToLines(s.headers, ": "),
+      revealTogether: asBool(s.reveal_together, false),
     })
   }
   return out
@@ -186,6 +216,7 @@ export function serversToPatch(
       const headers = linesToRecord(s.headers, ":")
       if (Object.keys(headers).length > 0) cfg.headers = headers
     }
+    if (s.revealTogether) cfg.reveal_together = true
     patch[name] = cfg
   }
   for (const s of baseline) {

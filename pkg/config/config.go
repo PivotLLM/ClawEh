@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -246,6 +247,12 @@ type AgentConfig struct {
 	// suite (projects, playbooks, tasks). Off by default. When on, the agent gets
 	// the entire Maestro toolset, with per-agent data under <workspace>/maestro.
 	Maestro bool `json:"maestro,omitempty"`
+
+	// Fusion is an all-or-nothing toggle for the MCPFusion config-driven REST-API
+	// tool suite. Off by default. When on, the agent gets every tool defined by the
+	// JSON config files under <dataDir>/fusion, with per-agent OAuth tokens keyed by
+	// agent id in the shared fusion token store.
+	Fusion bool `json:"fusion,omitempty"`
 
 	// Cogmem is an all-or-nothing toggle for the cognitive-memory tool suite and
 	// subsystem (prompt injection, archive hook, consolidation). It is an optional
@@ -571,9 +578,39 @@ func (c *Config) AgentHasMaestro(agentID string) bool {
 	return false
 }
 
+// AgentHasFusion reports whether the agent has the Fusion tool suite enabled.
+func (c *Config) AgentHasFusion(agentID string) bool {
+	id := strings.TrimSpace(agentID)
+	for i := range c.Agents.List {
+		if strings.EqualFold(c.Agents.List[i].ID, id) {
+			return c.Agents.List[i].Fusion
+		}
+	}
+	return false
+}
+
+// DiscoveryTTLMax is the longest a revealed tool stays visible without use, in
+// turns (reset on each use); falls back to the default when unset.
+func (c *Config) DiscoveryTTLMax() int {
+	if c.Tools.Discovery.TTLMax <= 0 {
+		return DefaultDiscoveryTTLMax
+	}
+	return c.Tools.Discovery.TTLMax
+}
+
+// DiscoveryVisibleBudget is the max number of revealed tools allowed visible at
+// once before lowest-TTL-first pruning kicks in; falls back to the default when
+// unset.
+func (c *Config) DiscoveryVisibleBudget() int {
+	if c.Tools.Discovery.VisibleBudget <= 0 {
+		return DefaultDiscoveryVisibleBudget
+	}
+	return c.Tools.Discovery.VisibleBudget
+}
+
 // AgentSuiteEnabled reports whether the named all-or-nothing tool suite is
 // enabled for the agent. Suites are gated as a unit by a per-agent flag rather
-// than the per-tool allowlist. cogmem defaults ON; maestro defaults OFF.
+// than the per-tool allowlist. cogmem defaults ON; maestro and fusion default OFF.
 func (c *Config) AgentSuiteEnabled(agentID, suite string) bool {
 	id := strings.TrimSpace(agentID)
 	for i := range c.Agents.List {
@@ -582,6 +619,8 @@ func (c *Config) AgentSuiteEnabled(agentID, suite string) bool {
 			switch suite {
 			case "maestro":
 				return a.Maestro
+			case "fusion":
+				return a.Fusion
 			case "cogmem":
 				return a.CognitiveMemoryEnabled()
 			default:
@@ -1150,6 +1189,13 @@ type Provider struct {
 // The model field uses protocol prefix format: [protocol/]model-identifier
 // Supported protocols: openai, anthropic, claude-cli, codex-cli
 // Default protocol is "openai" if no prefix is specified.
+// Vision passthrough modes for ModelConfig.Vision.
+const (
+	VisionOff          = "off"           // default: tool images are not sent to the model
+	VisionUserMessage  = "user_message"  // inject images as a follow-up user turn (Chat Completions)
+	VisionToolResponse = "tool_response" // attach images to the tool result (Responses API only)
+)
+
 type ModelConfig struct {
 	// Required fields
 	ModelName string `json:"model_name"` // User-facing alias for the model
@@ -1161,16 +1207,22 @@ type ModelConfig struct {
 	Workspace   string `json:"workspace,omitempty"`    // Workspace path for CLI-based providers
 
 	// Optional optimizations
-	RPM            int               `json:"rpm,omitempty"`              // Requests per minute limit
-	MaxTokens      int               `json:"max_tokens,omitempty"`       // Maximum tokens per response; overrides agent defaults
-	ContextWindow  int               `json:"context_window,omitempty"`   // Actual model context window size in tokens
-	MaxTokensField string            `json:"max_tokens_field,omitempty"` // Field name for max tokens (e.g., "max_completion_tokens")
-	RequestTimeout int               `json:"request_timeout,omitempty"`
-	ThinkingLevel  string            `json:"thinking_level,omitempty"` // Extended thinking: off|low|medium|high|xhigh|adaptive
-	NoTools        bool              `json:"no_tools,omitempty"`       // When true, tools are not passed to this model
-	ExtraArgs      []string          `json:"extra_args,omitempty"`     // Additional CLI arguments appended after required flags
-	Env            map[string]string `json:"env,omitempty"`            // Environment variables for CLI-based providers (merged with os.Environ)
-	Enabled        bool              `json:"enabled"`                  // If false, model is skipped in all operations
+	RPM            int    `json:"rpm,omitempty"`              // Requests per minute limit
+	MaxTokens      int    `json:"max_tokens,omitempty"`       // Maximum tokens per response; overrides agent defaults
+	ContextWindow  int    `json:"context_window,omitempty"`   // Actual model context window size in tokens
+	MaxTokensField string `json:"max_tokens_field,omitempty"` // Field name for max tokens (e.g., "max_completion_tokens")
+	RequestTimeout int    `json:"request_timeout,omitempty"`
+	ThinkingLevel  string `json:"thinking_level,omitempty"` // Extended thinking: off|low|medium|high|xhigh|adaptive
+	NoTools        bool   `json:"no_tools,omitempty"`       // When true, tools are not passed to this model
+	// Vision controls how images returned by tools (e.g. MCP screenshots) reach
+	// this model: "off"/"" (default) drops them; "user_message" injects them as a
+	// follow-up user turn (works on Chat Completions, where tool messages are
+	// text-only); "tool_response" attaches them to the tool result itself (only
+	// valid on the Responses API, whose function_call_output accepts images).
+	Vision    string            `json:"vision,omitempty"`
+	ExtraArgs []string          `json:"extra_args,omitempty"` // Additional CLI arguments appended after required flags
+	Env       map[string]string `json:"env,omitempty"`        // Environment variables for CLI-based providers (merged with os.Environ)
+	Enabled   bool              `json:"enabled"`              // If false, model is skipped in all operations
 
 	// ResponseLogFile, when non-empty, causes every raw HTTP response body from
 	// the openai_compat provider to be appended to the given path. Diagnostic
@@ -1263,15 +1315,148 @@ func (c *ModelConfig) Validate() error {
 type GatewayConfig struct {
 	Host string `json:"host" env:"CLAW_GATEWAY_HOST"`
 	Port int    `json:"port" env:"CLAW_GATEWAY_PORT"`
+	// ExternalURL is the base URL advertised to external clients (e.g. the
+	// claw-auth OAuth utility) for reaching this gateway's HTTP API. Empty
+	// derives http://<host>:<port> from the bind address; set it to e.g.
+	// https://claw.example.com when a reverse proxy / TLS terminator sits in
+	// front. See EffectiveExternalURL.
+	ExternalURL string `json:"external_url,omitempty" env:"CLAW_GATEWAY_EXTERNAL_URL"`
+	// AllowedCIDRs is the IP allowlist for the shared HTTP server (WebUI/API +
+	// health). Empty means the private-network default (see PrivateNetworkCIDRs).
+	// Combined with the always-allowed loopback (enforced at bind time), this
+	// locks the no-auth WebUI/API to the local machine and the private LAN
+	// regardless of the bind address. Set an explicit list (e.g. 0.0.0.0/0) to
+	// widen it.
+	AllowedCIDRs []string `json:"allowed_cidrs,omitempty"`
+}
+
+// DefaultGatewayPort is the default port for the merged claw HTTP server
+// (gateway + WebUI on a single mux). It matches DefaultConfig's Gateway.Port.
+const DefaultGatewayPort = 18790
+
+// PrivateNetworkCIDRs is the default IP allowlist: the RFC1918 private ranges.
+// Used when Gateway.AllowedCIDRs is empty so a fresh install is locked to
+// loopback + the private network out of the box.
+var PrivateNetworkCIDRs = []string{
+	"10.0.0.0/8",
+	"172.16.0.0/12",
+	"192.168.0.0/16",
+}
+
+// EffectiveAllowedCIDRs returns the IP allowlist to enforce: the configured
+// AllowedCIDRs when non-empty, otherwise the private-network default. A copy is
+// returned so callers cannot mutate the shared default slice.
+func (g GatewayConfig) EffectiveAllowedCIDRs() []string {
+	if len(g.AllowedCIDRs) > 0 {
+		return append([]string(nil), g.AllowedCIDRs...)
+	}
+	return append([]string(nil), PrivateNetworkCIDRs...)
+}
+
+// ValidateAllowedCIDRs rejects any entry that is not a valid CIDR (matching the
+// validation the retired launcher-config save path enforced).
+func ValidateAllowedCIDRs(cidrs []string) error {
+	for _, c := range cidrs {
+		if _, _, err := net.ParseCIDR(c); err != nil {
+			return fmt.Errorf("invalid CIDR %q", c)
+		}
+	}
+	return nil
+}
+
+// EffectiveExternalURL returns the base URL external clients should use to reach
+// the gateway HTTP API. A non-empty ExternalURL is returned verbatim (operators
+// may point it at an https proxy). Otherwise it derives http://<host>:<port>
+// from the bind address, resolving the LAN IP when bound to 0.0.0.0 so the URL
+// is reachable off-box.
+func (g GatewayConfig) EffectiveExternalURL() string {
+	if g.ExternalURL != "" {
+		return g.ExternalURL
+	}
+
+	host := g.Host
+	switch host {
+	case "", "127.0.0.1", "localhost":
+		host = "127.0.0.1"
+	case "0.0.0.0":
+		// Bind-all ("network access on"): advertise the primary LAN IP so the
+		// URL works from other machines; fall back to loopback if none found.
+		if ip := primaryLANIP(); ip != "" {
+			host = ip
+		} else {
+			host = "127.0.0.1"
+		}
+	}
+
+	return fmt.Sprintf("http://%s:%d", host, g.Port)
+}
+
+// NetworkAccess reports whether the gateway binds to all interfaces (0.0.0.0),
+// i.e. "network access on". Convenience for API/WebUI surfaces.
+func (g GatewayConfig) NetworkAccess() bool {
+	return g.Host == "0.0.0.0"
+}
+
+// primaryLANIP returns the host's first non-loopback private IPv4, or "".
+func primaryLANIP() string {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return ""
+	}
+	for _, a := range addrs {
+		ipnet, ok := a.(*net.IPNet)
+		if !ok || ipnet.IP.IsLoopback() {
+			continue
+		}
+		if ip4 := ipnet.IP.To4(); ip4 != nil && ip4.IsPrivate() {
+			return ip4.String()
+		}
+	}
+	return ""
 }
 
 type ToolDiscoveryConfig struct {
-	Enabled          bool `json:"enabled"            env:"CLAW_TOOLS_DISCOVERY_ENABLED"`
-	TTL              int  `json:"ttl"                env:"CLAW_TOOLS_DISCOVERY_TTL"`
-	MaxSearchResults int  `json:"max_search_results" env:"CLAW_MAX_SEARCH_RESULTS"`
-	UseBM25          bool `json:"use_bm25"           env:"CLAW_TOOLS_DISCOVERY_USE_BM25"`
-	UseRegex         bool `json:"use_regex"          env:"CLAW_TOOLS_DISCOVERY_USE_REGEX"`
+	// Enabled is the single global switch for progressive tool discovery, applied
+	// uniformly to every agent and the MCP host. Default OFF. When on,
+	// discovery-eligible tools (the fusion and maestro suites and all upstream MCP
+	// tools) are hidden behind the search_tools / get_tool_details meta-tools;
+	// native tools and the cogmem suite stay always-on.
+	Enabled bool `json:"enabled" env:"CLAW_TOOLS_DISCOVERY_ENABLED"`
+	// TTLMax is the longest a revealed tool stays visible without being used, in
+	// turns; each use resets it. A tool idle this many turns is hidden again.
+	TTLMax int `json:"ttl_max" env:"CLAW_TOOLS_DISCOVERY_TTL_MAX"`
+	// VisibleBudget caps how many revealed (non-core) tools may be visible at once.
+	// Under the cap every tool lives to TTLMax; when a new reveal pushes the count
+	// over it, the tools with the smallest remaining TTL are hidden until back at
+	// the cap. Keeps a fanned-out working set bounded without churning small ones.
+	VisibleBudget int `json:"visible_budget" env:"CLAW_TOOLS_DISCOVERY_VISIBLE_BUDGET"`
+	// MaxSearchResults caps search_tools results.
+	MaxSearchResults int `json:"max_search_results" env:"CLAW_MAX_SEARCH_RESULTS"`
 }
+
+// UnmarshalJSON normalizes the retired "ttl" key onto TTLMax so a config written
+// before the rename keeps working; an explicit "ttl_max" always wins.
+func (d *ToolDiscoveryConfig) UnmarshalJSON(data []byte) error {
+	type alias ToolDiscoveryConfig
+	aux := &struct {
+		LegacyTTL *int `json:"ttl"`
+		*alias
+	}{alias: (*alias)(d)}
+	if err := json.Unmarshal(data, aux); err != nil {
+		return err
+	}
+	if d.TTLMax == 0 && aux.LegacyTTL != nil {
+		d.TTLMax = *aux.LegacyTTL
+	}
+	return nil
+}
+
+// Discovery defaults, applied when the config value is unset (<= 0).
+const (
+	DefaultDiscoveryTTLMax        = 50
+	DefaultDiscoveryVisibleBudget = 100
+	DefaultDiscoveryMaxSearchHits = 10
+)
 
 type ToolConfig struct {
 	Enabled bool `json:"enabled" env:"ENABLED"`
@@ -1382,6 +1567,10 @@ type ToolsConfig struct {
 	Skills       SkillsToolsConfig  `json:"skills"`
 	MediaCleanup MediaCleanupConfig `json:"media_cleanup"`
 	MCP          MCPConfig          `json:"mcp"`
+	// Discovery holds progressive-tool-discovery settings. It applies to all tool
+	// kinds (native, suites, MCP), so it lives at tools.discovery rather than under
+	// tools.mcp.
+	Discovery ToolDiscoveryConfig `json:"discovery"`
 	// ReadFile carries the read-size limit used at tool construction (its enabled
 	// state, like every per-tool toggle, lives in Overrides now).
 	ReadFile ReadFileToolConfig `json:"read_file"                                                envPrefix:"CLAW_TOOLS_READ_FILE_"`
@@ -1433,31 +1622,21 @@ type MCPServerConfig struct {
 	URL string `json:"url,omitempty"`
 	// Headers are HTTP headers to send with requests (sse/http only)
 	Headers map[string]string `json:"headers,omitempty"`
+	// RevealTogether, under progressive discovery, reveals all of this server's
+	// tools as soon as one is discovered, so a small cohesive server is unlocked in
+	// a single search instead of tool-by-tool. Ignored when discovery is off.
+	RevealTogether bool `json:"reveal_together,omitempty"`
 }
 
 // MCPConfig defines configuration for all MCP servers
 type MCPConfig struct {
-	ToolConfig `                    envPrefix:"CLAW_TOOLS_MCP_"`
-	Discovery  ToolDiscoveryConfig `                                json:"discovery"`
-	// AutoEnable, when true (the default), connects to external MCP servers
-	// automatically whenever at least one configured server is enabled — so a
-	// user need not also flip the master `enabled` flag. Explicit Enabled=true
-	// always wins. Mirrors MCPHostConfig.AutoEnable.
-	AutoEnable bool `json:"auto_enable" env:"CLAW_TOOLS_MCP_AUTO_ENABLE"`
 	// Servers is a map of server name to server configuration
 	Servers map[string]MCPServerConfig `json:"servers,omitempty"`
 }
 
-// MCPClientEffectivelyEnabled reports whether claw should connect out to external
-// MCP servers: the master flag wins, otherwise auto-enable kicks in when any
-// configured server is enabled.
+// MCPClientEffectivelyEnabled reports whether claw should connect out to
+// external MCP servers: true iff at least one configured server is enabled.
 func (t *ToolsConfig) MCPClientEffectivelyEnabled() bool {
-	if t.MCP.Enabled {
-		return true
-	}
-	if !t.MCP.AutoEnable {
-		return false
-	}
 	for _, s := range t.MCP.Servers {
 		if s.Enabled {
 			return true
@@ -1490,6 +1669,15 @@ type MCPHostConfig struct {
 	// prefix or glob needed). "*" exposes everything; empty exposes nothing.
 	InternalTools []string `json:"internal_tools,omitempty"`
 	ExternalTools []string `json:"external_tools,omitempty"`
+	// AlwaysShownNamespaces lists EXTRA tool namespaces (the prefix before the
+	// first underscore, e.g. "file", "session", "trello") to keep in the host's
+	// tools/list when progressive discovery is on. Everything else is progressive:
+	// hidden from tools/list and reached via search_tools / get_tool_details, which
+	// reveal a tool to the calling session on demand. The search_tools /
+	// get_tool_details meta-tools and the cogmem namespace are always shown by rule
+	// (cognitive memory is fundamental), so they need not be listed here. Only
+	// consulted when tools.discovery.enabled is true.
+	AlwaysShownNamespaces []string `json:"always_shown_namespaces,omitempty"`
 }
 
 func LoadConfig(path string) (*Config, error) {
@@ -1534,6 +1722,10 @@ func LoadConfig(path string) (*Config, error) {
 	// Migrate legacy channel config fields to new unified structures
 	cfg.migrateChannelConfigs()
 
+	// Adopt a stale launcher-config.json (the retired separate allowlist file)
+	// into gateway.allowed_cidrs on each load (see migrateLauncherConfig).
+	migrateLauncherConfig(path, cfg)
+
 	// Note: provider/model validation is intentionally NOT fatal here. LoadConfig
 	// returns the full parsed config so the WebUI can display and repair invalid
 	// entries (a bad provider must not make the config unreadable). The gateway
@@ -1567,6 +1759,39 @@ func warnLegacyCompressModel(data []byte) {
 		if len(a.CompressModel) > 0 {
 			logger.WarnCF("config", "ignoring removed field compress_model on agent; configure summarization models globally via summarization.models", map[string]any{"agent_id": a.ID})
 		}
+	}
+}
+
+// migrateLauncherConfig folds the retired launcher-config.json (which held the
+// IP allowlist in a separate file next to config.json) into gateway.allowed_cidrs.
+// It adopts the value into the in-memory config on every load and does NOT persist
+// or delete the stale file: LoadConfig has already overlaid CLAW_* env vars by this
+// point, so writing config.json here would bake env-derived values into the file.
+// Re-adopting each load keeps a custom allowlist alive across restarts; the first
+// WebUI config save persists gateway.allowed_cidrs canonically, after which this
+// no-ops (the gateway block already has an allowlist) and the leftover file is
+// inert. Only runs when the gateway block has no explicit allowlist, so a value
+// already in config.json wins and is not clobbered.
+func migrateLauncherConfig(configPath string, cfg *Config) {
+	if len(cfg.Gateway.AllowedCIDRs) > 0 {
+		return
+	}
+	lcPath := filepath.Join(filepath.Dir(configPath), "launcher-config.json")
+	data, err := os.ReadFile(lcPath)
+	if err != nil {
+		// No legacy file (the common case) — nothing to migrate.
+		return
+	}
+	var legacy struct {
+		AllowedCIDRs []string `json:"allowed_cidrs"`
+	}
+	if err := json.Unmarshal(data, &legacy); err != nil {
+		logger.WarnCF("config", "ignoring unreadable launcher-config.json during migration", map[string]any{"path": lcPath, "error": err.Error()})
+		return
+	}
+	if len(legacy.AllowedCIDRs) > 0 {
+		cfg.Gateway.AllowedCIDRs = legacy.AllowedCIDRs
+		logger.InfoCF("config", "adopted launcher-config.json allowed_cidrs into gateway.allowed_cidrs", map[string]any{"allowed_cidrs": legacy.AllowedCIDRs})
 	}
 }
 
@@ -1724,6 +1949,18 @@ func (c *Config) SkillsPath() string {
 // CronPath returns the cron store directory (~/.claw/cron).
 func (c *Config) CronPath() string {
 	return filepath.Join(c.dataDir, "cron")
+}
+
+// FusionPath returns the MCPFusion config directory (~/.claw/fusion), holding the
+// JSON service definitions, an optional env file, and fusion.log.
+func (c *Config) FusionPath() string {
+	return filepath.Join(c.dataDir, "fusion")
+}
+
+// FusionTokensPath returns the shared SQLite store for fusion OAuth tokens and
+// auth codes (~/.claw/state/fusion-tokens.db).
+func (c *Config) FusionTokensPath() string {
+	return filepath.Join(c.dataDir, "state", "fusion-tokens.db")
 }
 
 // BackupConfig controls the nightly configuration backup of key files
@@ -2070,7 +2307,7 @@ func (t *ToolsConfig) IsToolEnabled(name string) bool {
 	switch name {
 	// Capability gates (off by default; these are not per-tool enables).
 	case "mcp":
-		return t.MCP.Enabled
+		return t.MCPClientEffectivelyEnabled()
 	case "subagent":
 		return t.Subagent.Enabled
 	default:

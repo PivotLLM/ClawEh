@@ -852,9 +852,6 @@ func TestProcessDirectWithChannel_TriggersMCPInitialization(t *testing.T) {
 		},
 		Tools: config.ToolsConfig{
 			MCP: config.MCPConfig{
-				ToolConfig: config.ToolConfig{
-					Enabled: true,
-				},
 				// No servers configured - manager should not be initialized
 			},
 		},

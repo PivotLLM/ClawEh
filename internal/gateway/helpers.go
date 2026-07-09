@@ -40,7 +40,6 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/utils"
 	"github.com/PivotLLM/ClawEh/pkg/voice"
 	webserver "github.com/PivotLLM/ClawEh/web/backend"
-	"github.com/PivotLLM/ClawEh/web/backend/launcherconfig"
 )
 
 // Timeout constants for service operations
@@ -53,9 +52,8 @@ const (
 
 // newMergedWebServer constructs the in-process WebUI server bundle (API
 // handler + embedded SPA) configured against the active config file and the
-// merged binary's actual listen settings. The gateway host/port from
-// cfg.Gateway are the source of truth — the launcher process and its
-// config-as-IPC channel are gone in the merged binary.
+// merged binary's actual listen settings. The gateway host/port and IP
+// allowlist in cfg.Gateway are the single source of truth.
 func newMergedWebServer(configPath string, cfg *config.Config) *webserver.Server {
 	publicBind := cfg != nil && cfg.Gateway.Host == "0.0.0.0"
 	port := 0
@@ -63,7 +61,7 @@ func newMergedWebServer(configPath string, cfg *config.Config) *webserver.Server
 		port = cfg.Gateway.Port
 	}
 	if port == 0 {
-		port = launcherconfig.DefaultPort
+		port = config.DefaultGatewayPort
 	}
 	srv := webserver.New(webserver.Options{
 		ConfigPath: configPath,
@@ -414,20 +412,16 @@ func setupAndStartServices(
 	// mint/revoke operations mutate the exact instance the message route validates
 	// against (no reload needed for a token to activate/deactivate).
 	services.WebServer.APIHandler().SetMessageTokenLoop(agentLoop)
-	// IP allowlist for the shared HTTP port. Defaults (via launcherconfig.Default)
-	// to the RFC1918 private ranges, so the no-auth WebUI is reachable only from
-	// loopback + the LAN even when bound to 0.0.0.0.
-	lc, lcErr := launcherconfig.Load(launcherconfig.PathForAppConfig(configPath), launcherconfig.Default())
-	if lcErr != nil {
-		logger.WarnCF("gateway", "Failed to load launcher config; using default network allowlist", map[string]any{"error": lcErr.Error()})
-		lc = launcherconfig.Default()
-	}
-	httpHost, hostErr := newHTTPHost(addr, lc.AllowedCIDRs)
+	// IP allowlist for the shared HTTP port. Defaults to the RFC1918 private
+	// ranges (see GatewayConfig.EffectiveAllowedCIDRs), so the no-auth WebUI is
+	// reachable only from loopback + the LAN even when bound to 0.0.0.0.
+	allowedCIDRs := cfg.Gateway.EffectiveAllowedCIDRs()
+	httpHost, hostErr := newHTTPHost(addr, allowedCIDRs)
 	if hostErr != nil {
-		return nil, fmt.Errorf("invalid network allowlist %v: %w", lc.AllowedCIDRs, hostErr)
+		return nil, fmt.Errorf("invalid network allowlist %v: %w", allowedCIDRs, hostErr)
 	}
 	services.HTTPHost = httpHost
-	logger.InfoF("Network allowlist active", map[string]any{"allowed_cidrs": lc.AllowedCIDRs, "loopback": "always allowed"})
+	logger.InfoF("Network allowlist active", map[string]any{"allowed_cidrs": allowedCIDRs, "loopback": "always allowed"})
 	rebuildSharedHTTPServer(services, cfg.Gateway.Host, cfg.Gateway.Port, services.ChannelManager, services.HTTPHost, agentLoop)
 	services.HTTPHost.Start()
 
@@ -530,6 +524,12 @@ func startMCPServer(cfg *config.Config, agentLoop *agent.AgentLoop, msgBus *bus.
 		mcpserver.WithInternalAllowlist(mcpVisibilityList(cfg.MCPHost.InternalTools)),
 		mcpserver.WithExternalAllowlist(mcpVisibilityList(cfg.MCPHost.ExternalTools)),
 		mcpserver.WithMessageBus(msgBus),
+		mcpserver.WithDiscovery(
+			cfg.Tools.Discovery.Enabled,
+			cfg.MCPHost.AlwaysShownNamespaces,
+			cfg.DiscoveryTTLMax(),
+			cfg.DiscoveryVisibleBudget(),
+		),
 	)
 	if err != nil {
 		return fmt.Errorf("error creating MCP server: %w", err)

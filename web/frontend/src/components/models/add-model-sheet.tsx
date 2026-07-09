@@ -47,6 +47,7 @@ interface AddForm {
   reasoningEffort: string
   extraBody: string
   dropParams: string
+  vision: string
   strictAlternation: boolean
 }
 
@@ -64,6 +65,7 @@ const EMPTY_ADD_FORM: AddForm = {
   reasoningEffort: "",
   extraBody: "",
   dropParams: "",
+  vision: "off",
   strictAlternation: false,
 }
 
@@ -157,6 +159,7 @@ export function AddModelSheet({
         reasoning_effort: form.reasoningEffort || undefined,
         extra_body: extraBodyParsed.value,
         drop_params: parseDropParams(form.dropParams),
+        vision: form.vision === "off" ? undefined : form.vision,
         strict_alternation: form.strictAlternation,
       })
       if (setAsDefault) {
@@ -395,6 +398,25 @@ export function AddModelSheet({
                   setForm((f) => ({ ...f, strictAlternation: v }))
                 }
               />
+
+              <Field
+                label="Vision (tool-result images)"
+                hint="Pass images returned by MCP tools (e.g. screenshots) to a vision model. Chat models need 'User message'; Responses models can use 'Tool response'."
+              >
+                <Select
+                  value={form.vision || "off"}
+                  onValueChange={(v) => setForm((f) => ({ ...f, vision: v }))}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="off">Off</SelectItem>
+                    <SelectItem value="user_message">User message</SelectItem>
+                    <SelectItem value="tool_response">Tool response</SelectItem>
+                  </SelectContent>
+                </Select>
+              </Field>
 
               <Field
                 label={t("models.field.maxTokensField")}

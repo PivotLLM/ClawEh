@@ -39,32 +39,30 @@ func TestMessageTool_HasSentInRound_Initial(t *testing.T) {
 	}
 }
 
-func TestRegexSearchTool_Metadata(t *testing.T) {
+func TestSearchTool_Metadata(t *testing.T) {
 	registry := tools.NewToolRegistry()
-	tool := tools.NewRegexSearchTool(registry, 3, 10)
-	if tool.Name() != "find_tools_regex" {
-		t.Errorf("Name() = %q, want find_tools_regex", tool.Name())
+	tool := tools.NewSearchTool(registry, 10)
+	if tool.Name() != "search_tools" {
+		t.Errorf("Name() = %q, want search_tools", tool.Name())
 	}
 	if tool.Description() == "" {
 		t.Error("Description() should not be empty")
 	}
-	params := tool.Parameters()
-	if params == nil {
+	if tool.Parameters() == nil {
 		t.Error("Parameters() should not be nil")
 	}
 }
 
-func TestBM25SearchTool_Metadata(t *testing.T) {
+func TestToolDetailsTool_Metadata(t *testing.T) {
 	registry := tools.NewToolRegistry()
-	tool := tools.NewBM25SearchTool(registry, 3, 10)
-	if tool.Name() != "find_tools_bm25" {
-		t.Errorf("Name() = %q, want find_tools_bm25", tool.Name())
+	tool := tools.NewToolDetailsTool(registry, 5, 0)
+	if tool.Name() != "get_tool_details" {
+		t.Errorf("Name() = %q, want get_tool_details", tool.Name())
 	}
 	if tool.Description() == "" {
 		t.Error("Description() should not be empty")
 	}
-	params := tool.Parameters()
-	if params == nil {
+	if tool.Parameters() == nil {
 		t.Error("Parameters() should not be nil")
 	}
 }

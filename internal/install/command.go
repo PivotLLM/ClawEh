@@ -19,7 +19,6 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/config"
 	"github.com/PivotLLM/ClawEh/pkg/fileutil"
 	"github.com/PivotLLM/ClawEh/pkg/global"
-	"github.com/PivotLLM/ClawEh/web/backend/launcherconfig"
 )
 
 const (
@@ -169,7 +168,7 @@ func runInstall(host string, port int, allowedCIDRs string) error {
 // active bind host/port. For an all-interfaces bind it uses the host's primary
 // private IP so a headless user gets a reachable address, not "0.0.0.0".
 func accessURL() string {
-	host, port := "127.0.0.1", launcherconfig.DefaultPort
+	host, port := "127.0.0.1", config.DefaultGatewayPort
 	if cfg, err := config.LoadConfig(internal.GetConfigPath()); err == nil {
 		if cfg.Gateway.Host != "" {
 			host = cfg.Gateway.Host
@@ -289,11 +288,11 @@ func applyServerSettings(host string, port int) error {
 	return nil
 }
 
-// applyAllowlist writes a custom IP allowlist (comma-separated CIDRs) to the
-// launcher config. launcherconfig.Save validates each CIDR.
+// applyAllowlist writes a custom IP allowlist (comma-separated CIDRs) into
+// gateway.allowed_cidrs in config.json. Each CIDR is validated before saving.
 func applyAllowlist(csv string) error {
-	path := launcherconfig.PathForAppConfig(internal.GetConfigPath())
-	cfg, err := launcherconfig.Load(path, launcherconfig.Default())
+	path := internal.GetConfigPath()
+	cfg, err := config.LoadConfig(path)
 	if err != nil {
 		return err
 	}
@@ -304,11 +303,14 @@ func applyAllowlist(csv string) error {
 			cidrs = append(cidrs, t)
 		}
 	}
-	cfg.AllowedCIDRs = cidrs
-	if err := launcherconfig.Save(path, cfg); err != nil {
+	if err := config.ValidateAllowedCIDRs(cidrs); err != nil {
 		return err
 	}
-	fmt.Printf("Network allowlist set to %v (loopback always allowed) (%s)\n", cfg.AllowedCIDRs, path)
+	cfg.Gateway.AllowedCIDRs = cidrs
+	if err := config.SaveConfig(path, cfg); err != nil {
+		return err
+	}
+	fmt.Printf("Network allowlist set to %v (loopback always allowed) (%s)\n", cfg.Gateway.AllowedCIDRs, path)
 	return nil
 }
 

@@ -41,6 +41,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { Switch } from "@/components/ui/switch"
 
 // Providers worth surfacing first in the picker — the rest follow alphabetically.
 const COMMON_PROVIDERS = [
@@ -111,6 +112,14 @@ export function SetupWizard() {
   const [modelChoice, setModelChoice] = useState("") // a model_name, or CUSTOM_MODEL
   const [customModel, setCustomModel] = useState("")
   const [customLabel, setCustomLabel] = useState("")
+
+  // Network step. Defaults are safe: loopback-only bind, standard port, and the
+  // address the user is already reaching the WebUI on as the advertised external
+  // URL (inherently reachable from their machine, where claw-auth runs).
+  const externalUrlDefault = `${window.location.protocol}//${window.location.host}`
+  const [networkAccess, setNetworkAccess] = useState(false)
+  const [gatewayPort, setGatewayPort] = useState("18790")
+  const [externalUrl, setExternalUrl] = useState(externalUrlDefault)
 
   // Agent step.
   const [agentName, setAgentName] = useState("Assistant")
@@ -216,6 +225,7 @@ export function SetupWizard() {
 
   const steps: StepDef[] = [
     { key: "welcome", title: t("setup.steps.welcome") },
+    { key: "network", title: t("setup.steps.network") },
     { key: "provider", title: t("setup.steps.provider") },
     { key: "model", title: t("setup.steps.model") },
     { key: "agent", title: t("setup.steps.agent") },
@@ -361,7 +371,21 @@ export function SetupWizard() {
         list = [...rawList, newAgent]
       }
 
-      await patchAppConfig({ agents: { list } })
+      // Persist the reviewed network defaults alongside the agent list. A blank
+      // or invalid port falls back to the standard 18790 so Next never blocks.
+      const parsedPort = Number.parseInt(gatewayPort, 10)
+      const port =
+        Number.isInteger(parsedPort) && parsedPort >= 1 && parsedPort <= 65535
+          ? parsedPort
+          : 18790
+      await patchAppConfig({
+        gateway: {
+          host: networkAccess ? "0.0.0.0" : "127.0.0.1",
+          port,
+          external_url: externalUrl.trim(),
+        },
+        agents: { list },
+      })
 
       // Force an immediate reload and wait for it, so the user lands in a ready
       // app instead of the ~10-15s window where the new config isn't live yet.
@@ -390,6 +414,9 @@ export function SetupWizard() {
     agentName,
     defaultTools,
     alreadyConfigured,
+    networkAccess,
+    gatewayPort,
+    externalUrl,
     navigate,
     t,
   ])
@@ -453,6 +480,62 @@ export function SetupWizard() {
                 {t("setup.welcome.alreadyConfigured")}
               </div>
             )}
+          </div>
+        )}
+
+        {steps[step].key === "network" && (
+          <div className="space-y-5">
+            <div className="space-y-1">
+              <h1 className="text-xl font-semibold">{t("setup.network.title")}</h1>
+              <p className="text-muted-foreground text-sm">
+                {t("setup.network.body")}
+              </p>
+            </div>
+
+            <div className="border-border/60 bg-card flex items-start justify-between gap-3 rounded-xl border p-4">
+              <div className="min-w-0 space-y-1">
+                <Label>{t("setup.network.accessLabel")}</Label>
+                <p className="text-muted-foreground text-xs leading-normal">
+                  {t("setup.network.accessHint")}
+                </p>
+              </div>
+              <Switch
+                checked={networkAccess}
+                onCheckedChange={setNetworkAccess}
+                aria-label={t("setup.network.accessLabel")}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>{t("setup.network.portLabel")}</Label>
+              <Input
+                type="number"
+                min={1}
+                max={65535}
+                value={gatewayPort}
+                onChange={(e) => setGatewayPort(e.target.value)}
+              />
+              <p className="text-muted-foreground text-xs">
+                {t("setup.network.portHint")}
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label>{t("setup.network.externalLabel")}</Label>
+              <Input
+                type="text"
+                value={externalUrl}
+                placeholder={externalUrlDefault}
+                onChange={(e) => setExternalUrl(e.target.value)}
+              />
+              <p className="text-muted-foreground text-xs">
+                {t("setup.network.externalHint")}
+              </p>
+            </div>
+
+            <p className="text-muted-foreground text-xs">
+              {t("setup.network.restartNote")}
+            </p>
           </div>
         )}
 

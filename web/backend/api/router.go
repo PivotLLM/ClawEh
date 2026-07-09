@@ -4,16 +4,14 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/PivotLLM/ClawEh/web/backend/launcherconfig"
+	"github.com/PivotLLM/ClawEh/pkg/config"
 )
 
 // Handler serves HTTP API requests.
 type Handler struct {
-	configPath           string
-	serverPort           int
-	serverPublic         bool
-	serverPublicExplicit bool
-	serverCIDRs          []string
+	configPath   string
+	serverPort   int
+	serverPublic bool
 
 	// reloadTrigger, when set by the gateway, forces an immediate config reload
 	// (bypassing the mtime-debounce). Guarded because it's set at startup on one
@@ -44,16 +42,16 @@ func (h *Handler) reloadFunc() func() error {
 func NewHandler(configPath string) *Handler {
 	return &Handler{
 		configPath: configPath,
-		serverPort: launcherconfig.DefaultPort,
+		serverPort: config.DefaultGatewayPort,
 	}
 }
 
-// SetServerOptions stores current backend listen options for fallback behavior.
-func (h *Handler) SetServerOptions(port int, public bool, publicExplicit bool, allowedCIDRs []string) {
+// SetServerOptions stores the current backend listen options. serverPublic
+// mirrors the gateway's all-interfaces bind and feeds the WebUI WebSocket URL
+// host (see gateway_host.go); serverPort records the active listen port.
+func (h *Handler) SetServerOptions(port int, public bool) {
 	h.serverPort = port
 	h.serverPublic = public
-	h.serverPublicExplicit = publicExplicit
-	h.serverCIDRs = append([]string(nil), allowedCIDRs...)
 }
 
 // RegisterRoutes binds all API endpoint handlers to the ServeMux.
@@ -88,11 +86,11 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	h.registerSkillRoutes(mux)
 	h.registerToolRoutes(mux)
 
+	// Running ClawEh build version (shown in the WebUI sidebar footer)
+	h.registerVersionRoutes(mux)
+
 	// Agent tool catalog
 	h.registerAgentRoutes(mux)
-
-	// Launcher service parameters (port/public)
-	h.registerLauncherConfigRoutes(mux)
 
 	// CLI-agent detection (claude/codex/gemini on PATH) for the setup wizard
 	h.registerSystemCLIRoutes(mux)

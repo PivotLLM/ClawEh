@@ -255,7 +255,7 @@ func NewAgentLoop(
 
 	// Register runtime-dependent tools via providers (session closures,
 	// spawn/subagent, msg with shared MessageTool).
-	al.registerRuntimeTools(registry, provider, dispatcher, fallbackChain)
+	al.registerRuntimeTools(registry, provider, dispatcher, fallbackChain, cfg)
 
 	return al
 }
@@ -655,8 +655,11 @@ func (al *AgentLoop) registerRuntimeTools(
 	provider providers.LLMProvider,
 	dispatcher *providers.ProviderDispatcher,
 	fallbackChain *providers.FallbackChain,
+	cfg *config.Config,
 ) {
-	cfg := al.GetConfig()
+	// cfg is passed explicitly (not al.GetConfig()) because on reload
+	// ReloadProviderAndConfig registers tools BEFORE swapping al.cfg, so
+	// al.GetConfig() would return the stale pre-reload config here.
 
 	// Build shared message tool for all agents.
 	var sharedMessageTool tools.Tool
@@ -783,33 +786,73 @@ func (al *AgentLoop) registerRuntimeTools(
 			MessageTool:       sharedMessageTool,
 		}
 
+		// Progressive discovery is a single global switch (default off). When on,
+		// native tools and the cogmem suite stay always-on; the fusion/maestro suites
+		// (and MCP tools, in loop_mcp) are hidden behind search_tools.
+		discovery := cfg.Tools.Discovery.Enabled
+		currentAgent.DiscoveryActive = discovery
+		if currentAgent.ContextBuilder != nil {
+			currentAgent.ContextBuilder.WithToolDiscovery(discovery)
+		}
+
 		for _, p := range tools.GetProviders() {
 			if ok, _ := p.Available(cfg); !ok {
 				continue
 			}
-			builtTools := p.Build(deps)
-			// All-or-nothing suites (cogmem, maestro) are gated as a unit inside
-			// Build by the per-agent flag, so their tools bypass the per-tool
-			// allowlist — the suite flag is the allow decision.
-			isSuite := false
-			if sp, ok := p.(tools.SuiteProvider); ok && sp.Suite() != "" {
-				isSuite = true
+			suite := ""
+			if sp, ok := p.(tools.SuiteProvider); ok {
+				suite = sp.Suite()
 			}
-			for _, t := range builtTools {
-				if isSuite {
-					// Suite tools are exempt from the per-tool allowlist at both
-					// registration and execution — gate is the suite flag.
+			for _, t := range p.Build(deps) {
+				switch {
+				case suite == "":
+					// Native: always visible, subject to the per-tool allowlist.
+					if agentCfg == nil || agentCfg.IsToolAllowed(t.Name()) {
+						currentAgent.Tools.Register(t)
+					}
+				case suite == suiteCogmem:
+					currentAgent.Tools.RegisterSuite(t) // cogmem: always-on, never hidden
+				case discovery:
+					// fusion/maestro behind discovery; carry any reveal-together group
+					// (e.g. a fusion service) so the whole set unlocks in one search.
+					if g, ok := t.(tools.DiscoveryGrouped); ok {
+						group, revealTogether := g.DiscoveryGroup()
+						currentAgent.Tools.RegisterSuiteHiddenGroup(t, group, revealTogether)
+					} else {
+						currentAgent.Tools.RegisterSuiteHidden(t)
+					}
+				default:
 					currentAgent.Tools.RegisterSuite(t)
-				} else if agentCfg == nil || agentCfg.IsToolAllowed(t.Name()) {
-					currentAgent.Tools.Register(t)
 				}
 			}
+		}
+
+		if discovery {
+			al.registerDiscoveryMetaTools(currentAgent, cfg)
 		}
 	}
 
 	al.spawnMu.Lock()
 	al.spawnManagers = managers
 	al.spawnMu.Unlock()
+}
+
+// suiteCogmem is the one suite that is never subject to progressive discovery —
+// cognitive memory is fundamental to how the agent works, so it stays always-on.
+const suiteCogmem = "cogmem"
+
+// registerDiscoveryMetaTools registers the search_tools / get_tool_details entry
+// points. They are suite-exempt (gated by the discovery decision, not the per-tool
+// allowlist) and present only when discovery is active for the agent.
+func (al *AgentLoop) registerDiscoveryMetaTools(agent *AgentInstance, cfg *config.Config) {
+	ttlMax := cfg.DiscoveryTTLMax()
+	visibleBudget := cfg.DiscoveryVisibleBudget()
+	maxHits := cfg.Tools.Discovery.MaxSearchResults
+	if maxHits <= 0 {
+		maxHits = config.DefaultDiscoveryMaxSearchHits
+	}
+	agent.Tools.RegisterSuite(tools.NewSearchTool(agent.Tools, maxHits))
+	agent.Tools.RegisterSuite(tools.NewToolDetailsTool(agent.Tools, ttlMax, visibleBudget))
 }
 
 func (al *AgentLoop) RegisterTool(tool tools.Tool) {
@@ -1070,7 +1113,7 @@ func (al *AgentLoop) ReloadProviderAndConfig(
 	// and the rebuilt compaction managers.
 	al.cooldown.SetPolicy(cooldownPolicy(cfg))
 	newFallback := providers.NewFallbackChain(al.cooldown)
-	al.registerRuntimeTools(registry, provider, al.dispatcher, newFallback)
+	al.registerRuntimeTools(registry, provider, al.dispatcher, newFallback, cfg)
 
 	// Rebuild callback managers against the new registry/config and wire them onto
 	// the new ContextBuilders. Without this, reloaded agents get no callback token
@@ -2428,16 +2471,25 @@ func (al *AgentLoop) runLLMIteration(
 					ctx,
 					activeCandidates,
 					func(ctx context.Context, c providers.FallbackCandidate) (*providers.LLMResponse, error) {
+						// Drop image parts for candidates whose model can't accept them.
+						// A screenshot persisted in history would otherwise 404 a
+						// non-vision candidate (e.g. a cheaper default), failing every
+						// turn. Keyed by alias like GetModelConfig/selectCandidates.
+						modelKey := c.Alias
+						if modelKey == "" {
+							modelKey = c.Model
+						}
+						msgs := al.messagesForModel(messages, modelKey)
 						if al.dispatcher != nil {
 							key := c.Alias
 							if key == "" {
 								key = c.Provider + "/" + c.Model
 							}
 							if p, err := al.dispatcher.Get(key); err == nil {
-								return p.Chat(ctx, messages, providerToolDefs, c.Model, llmOpts)
+								return p.Chat(ctx, msgs, providerToolDefs, c.Model, llmOpts)
 							}
 						}
-						return agent.Provider.Chat(ctx, messages, providerToolDefs, c.Model, llmOpts)
+						return agent.Provider.Chat(ctx, msgs, providerToolDefs, c.Model, llmOpts)
 					},
 					al.fallbackNotifier(opts),
 				)
@@ -2485,7 +2537,7 @@ func (al *AgentLoop) runLLMIteration(
 			// resolveRunProvider returns agent.Provider + activeModel as the
 			// last-resort safety net when dispatcher resolution cannot satisfy
 			// the request.
-			return runProvider.Chat(ctx, messages, providerToolDefs, runModel, llmOpts)
+			return runProvider.Chat(ctx, al.messagesForModel(messages, runModel), providerToolDefs, runModel, llmOpts)
 		}
 
 		// Retry loop for context/token errors
@@ -2946,6 +2998,13 @@ func (al *AgentLoop) runLLMIteration(
 
 		// Process results in original order (send to user, save to session)
 		streamActivity := al.GetConfig().Agents.Defaults.StreamToolActivity
+		// Vision passthrough mode for the active model: how images returned by tools
+		// reach it (off / follow-up user turn / on the tool result).
+		visionMode := config.VisionOff
+		if mc, err := al.GetConfig().GetModelConfig(activeModel); err == nil {
+			visionMode = mc.Vision
+		}
+		var toolImages []string // accumulated for VisionUserMessage mode
 		for _, r := range agentResults {
 			// Send ForUser content to user immediately if not Silent — only when
 			// streaming tool activity is enabled (otherwise the user receives just
@@ -3010,6 +3069,15 @@ func (al *AgentLoop) runLLMIteration(
 				Content:    contentForLLM,
 				ToolCallID: r.tc.ID,
 			}
+			switch visionMode {
+			case config.VisionToolResponse:
+				// Attach images to the tool result itself (Responses API).
+				toolResultMsg.Media = r.result.Images
+			case config.VisionUserMessage:
+				// Defer to a follow-up user turn (Chat Completions, where tool
+				// messages are text-only).
+				toolImages = append(toolImages, r.result.Images...)
+			}
 			messages = append(messages, toolResultMsg)
 
 			// Save tool result message through the context manager so that
@@ -3020,6 +3088,23 @@ func (al *AgentLoop) runLLMIteration(
 					"error":    err.Error(),
 				})
 			}
+		}
+
+		// VisionUserMessage mode: images can't ride on a tool message on Chat
+		// Completions, so hand them to the model as one follow-up user turn.
+		if len(toolImages) > 0 {
+			imgMsg := providers.Message{
+				Role:    "user",
+				Content: "Image(s) returned by the tool call(s) above:",
+				Media:   toolImages,
+			}
+			messages = append(messages, imgMsg)
+			if err := cm.AddUserMessage(ctx, imgMsg); err != nil {
+				logger.WarnCF("agent", "failed to persist tool image message",
+					map[string]any{"agent_id": agent.ID, "error": err.Error()})
+			}
+			logger.InfoCF("agent", "passed tool image(s) to vision model (user message)",
+				map[string]any{"agent_id": agent.ID, "model": activeModel, "images": len(toolImages)})
 		}
 
 		// If the model just repeated an identical tool-call batch (it isn't
@@ -3250,6 +3335,38 @@ func (al *AgentLoop) selectCandidates(
 		model = agent.Model
 	}
 	return reordered, model
+}
+
+// messagesForModel returns messages suitable for the named model (keyed by
+// alias / model_name). Vision-capable models get the slice unchanged; models
+// with vision off or unset get a shallow copy with image Media removed. Some
+// providers (e.g. deepseek via OpenRouter) reject the ENTIRE request with a 404
+// when an image part is present, so a screenshot left in conversation history
+// must not be replayed to a non-vision model. The persisted originals are never
+// mutated, so a later turn on a vision model still surfaces the image. Unknown
+// model is treated as no-vision, matching the tool-image injection default.
+func (al *AgentLoop) messagesForModel(messages []providers.Message, modelKey string) []providers.Message {
+	if mc, err := al.GetConfig().GetModelConfig(modelKey); err == nil && mc != nil {
+		if mc.Vision == config.VisionUserMessage || mc.Vision == config.VisionToolResponse {
+			return messages
+		}
+	}
+	hasMedia := false
+	for i := range messages {
+		if len(messages[i].Media) > 0 {
+			hasMedia = true
+			break
+		}
+	}
+	if !hasMedia {
+		return messages
+	}
+	out := make([]providers.Message, len(messages))
+	copy(out, messages)
+	for i := range out {
+		out[i].Media = nil
+	}
+	return out
 }
 
 // GetStartupInfo returns information about loaded tools and skills for logging.

@@ -16,140 +16,159 @@ const (
 	MaxRegexPatternLength = 200
 )
 
-type RegexSearchTool struct {
+// SearchTool (search_tools) is layer 1 of progressive discovery: it returns the
+// names and one-line descriptions of hidden tools matching a query, WITHOUT loading
+// their schemas or unlocking them. The model then calls get_tool_details on a chosen
+// name (layer 2) to load its schema and promote it, then calls it (layer 3). BM25
+// natural-language search is the default; pass regex:true to match a regular
+// expression over tool name/description instead.
+type SearchTool struct {
 	registry         *ToolRegistry
-	ttl              int
-	maxSearchResults int
-}
-
-func NewRegexSearchTool(r *ToolRegistry, ttl int, maxSearchResults int) *RegexSearchTool {
-	return &RegexSearchTool{registry: r, ttl: ttl, maxSearchResults: maxSearchResults}
-}
-
-func (t *RegexSearchTool) Name() string {
-	return "find_tools_regex"
-}
-
-func (t *RegexSearchTool) Description() string {
-	return "Search available hidden tools on-demand using a regex pattern. Returns JSON schemas of discovered tools."
-}
-
-func (t *RegexSearchTool) Parameters() map[string]any {
-	return map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"pattern": map[string]any{
-				"type":        "string",
-				"description": "Regex pattern to match tool name or description",
-			},
-		},
-		"required": []string{"pattern"},
-	}
-}
-
-func (t *RegexSearchTool) Execute(ctx context.Context, args map[string]any) *ToolResult {
-	pattern, ok := args["pattern"].(string)
-	if !ok || strings.TrimSpace(pattern) == "" {
-		// An empty string regex (?i) will match every hidden tool,
-		// dumping massive payloads into the context and burning tokens.
-		return ErrorResult("Missing or invalid 'pattern' argument. Must be a non-empty string.")
-	}
-
-	if len(pattern) > MaxRegexPatternLength {
-		logger.WarnCF("discovery", "Regex pattern rejected (too long)", map[string]any{"len": len(pattern)})
-		return ErrorResult(fmt.Sprintf("Pattern too long: max %d characters allowed", MaxRegexPatternLength))
-	}
-
-	logger.DebugCF("discovery", "Regex search", map[string]any{"pattern": pattern})
-
-	res, err := t.registry.SearchRegex(pattern, t.maxSearchResults)
-	if err != nil {
-		logger.WarnCF("discovery", "Invalid regex pattern", map[string]any{"pattern": pattern, "error": err.Error()})
-		return ErrorResult(fmt.Sprintf("Invalid regex pattern syntax: %v. Please fix your regex and try again.", err))
-	}
-
-	logger.InfoCF("discovery", "Regex search completed", map[string]any{"pattern": pattern, "results": len(res)})
-	return formatDiscoveryResponse(t.registry, res, t.ttl)
-}
-
-type BM25SearchTool struct {
-	registry         *ToolRegistry
-	ttl              int
 	maxSearchResults int
 
-	// Cache: rebuilt only when the registry version changes.
+	// BM25 corpus cache, rebuilt only when the registry version changes.
 	cacheMu      sync.Mutex
 	cachedEngine *bm25CachedEngine
 	cacheVersion uint64
 }
 
-func NewBM25SearchTool(r *ToolRegistry, ttl int, maxSearchResults int) *BM25SearchTool {
-	return &BM25SearchTool{registry: r, ttl: ttl, maxSearchResults: maxSearchResults}
+func NewSearchTool(r *ToolRegistry, maxSearchResults int) *SearchTool {
+	return &SearchTool{registry: r, maxSearchResults: maxSearchResults}
 }
 
-func (t *BM25SearchTool) Name() string {
-	return "find_tools_bm25"
+func (t *SearchTool) Name() string { return "search_tools" }
+
+func (t *SearchTool) Description() string {
+	desc := "Search for available tools by capability. Returns matching tool names and one-line descriptions only — call get_tool_details on a result's name to load its full schema and unlock it before use. Natural-language query by default; set regex:true to match a regular expression if the natural-language search can't find the tool."
+	if ns := t.registry.HiddenNamespaces(); len(ns) > 0 {
+		desc += " Discoverable tool groups: " + strings.Join(ns, ", ") + "."
+	}
+	return desc
 }
 
-func (t *BM25SearchTool) Description() string {
-	return "Search available hidden tools on-demand using natural language query describing the action you need to perform. Returns JSON schemas of discovered tools."
-}
-
-func (t *BM25SearchTool) Parameters() map[string]any {
+func (t *SearchTool) Parameters() map[string]any {
 	return map[string]any{
 		"type": "object",
 		"properties": map[string]any{
 			"query": map[string]any{
 				"type":        "string",
-				"description": "Search query",
+				"description": "What you want to do (natural language), or a regex pattern when regex is true.",
+			},
+			"regex": map[string]any{
+				"type":        "boolean",
+				"description": "Treat query as a regex over tool name/description instead of a natural-language search.",
 			},
 		},
 		"required": []string{"query"},
 	}
 }
 
-func (t *BM25SearchTool) Execute(ctx context.Context, args map[string]any) *ToolResult {
+func (t *SearchTool) Execute(_ context.Context, args map[string]any) *ToolResult {
 	query, ok := args["query"].(string)
 	if !ok || strings.TrimSpace(query) == "" {
-		// An empty string query will match every hidden tool,
-		// dumping massive payloads into the context and burning tokens.
+		// An empty query matches every hidden tool, dumping the whole catalog into
+		// context and burning tokens.
 		return ErrorResult("Missing or invalid 'query' argument. Must be a non-empty string.")
 	}
+	useRegex, _ := args["regex"].(bool)
 
-	logger.DebugCF("discovery", "BM25 search", map[string]any{"query": query})
-
-	cached := t.getOrBuildEngine()
-	if cached == nil {
-		logger.DebugCF("discovery", "BM25 search: no hidden tools available", nil)
-		return SilentResult("No tools found matching the query.")
-	}
-
-	ranked := cached.engine.Search(query, t.maxSearchResults)
-	if len(ranked) == 0 {
-		logger.DebugCF("discovery", "BM25 search: no matches", map[string]any{"query": query})
-		return SilentResult("No tools found matching the query.")
-	}
-
-	results := make([]ToolSearchResult, len(ranked))
-	for i, r := range ranked {
-		results[i] = ToolSearchResult{
-			Name:        r.Document.Name,
-			Description: r.Document.Description,
+	var results []ToolSearchResult
+	if useRegex {
+		if len(query) > MaxRegexPatternLength {
+			return ErrorResult(fmt.Sprintf("Pattern too long: max %d characters allowed", MaxRegexPatternLength))
+		}
+		var err error
+		results, err = t.registry.SearchRegex(query, t.maxSearchResults)
+		if err != nil {
+			return ErrorResult(fmt.Sprintf("Invalid regex pattern syntax: %v. Please fix your regex and try again.", err))
+		}
+	} else if cached := t.getOrBuildEngine(); cached != nil {
+		ranked := cached.engine.Search(query, t.maxSearchResults)
+		results = make([]ToolSearchResult, 0, len(ranked))
+		for _, r := range ranked {
+			results = append(results, ToolSearchResult{Name: r.Document.Name, Description: r.Document.Description})
 		}
 	}
 
-	logger.InfoCF("discovery", "BM25 search completed", map[string]any{"query": query, "results": len(results)})
-	return formatDiscoveryResponse(t.registry, results, t.ttl)
+	if len(results) == 0 {
+		return SilentResult("No tools found matching the query.")
+	}
+
+	logger.InfoCF("discovery", "Tool search completed",
+		map[string]any{"query": query, "regex": useRegex, "results": len(results)})
+
+	b, err := json.Marshal(results)
+	if err != nil {
+		return ErrorResult("Failed to format search results: " + err.Error())
+	}
+	return SilentResult(fmt.Sprintf(
+		"Found %d tool(s):\n%s\n\nCall get_tool_details(name) on the one you need to load its schema and unlock it, then call it.",
+		len(results), string(b)))
 }
 
-// ToolSearchResult represents the result returned to the LLM.
-// Parameters are omitted from the JSON response to save context tokens;
-// the LLM will see full schemas via ToProviderDefs after promotion.
+// ToolDetailsTool (get_tool_details) is layer 2 of progressive discovery: it loads
+// the full schema for a single tool discovered via search_tools and promotes it so
+// it becomes callable for the next TTL turns.
+type ToolDetailsTool struct {
+	registry      *ToolRegistry
+	ttl           int
+	visibleBudget int
+}
+
+func NewToolDetailsTool(r *ToolRegistry, ttl, visibleBudget int) *ToolDetailsTool {
+	return &ToolDetailsTool{registry: r, ttl: ttl, visibleBudget: visibleBudget}
+}
+
+func (t *ToolDetailsTool) Name() string { return "get_tool_details" }
+
+func (t *ToolDetailsTool) Description() string {
+	return "Load the full input schema for a tool found via search_tools and unlock it so you can call it. Pass the exact tool name from the search results."
+}
+
+func (t *ToolDetailsTool) Parameters() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"name": map[string]any{
+				"type":        "string",
+				"description": "Exact tool name from search_tools results.",
+			},
+		},
+		"required": []string{"name"},
+	}
+}
+
+func (t *ToolDetailsTool) Execute(_ context.Context, args map[string]any) *ToolResult {
+	name, ok := args["name"].(string)
+	if !ok || strings.TrimSpace(name) == "" {
+		return ErrorResult("Missing or invalid 'name' argument. Pass an exact tool name from search_tools.")
+	}
+	name = strings.TrimSpace(name)
+
+	schema, advertised, _, ok := t.registry.revealTool(name, t.ttl, t.visibleBudget)
+	if !ok {
+		return ErrorResult(fmt.Sprintf("No tool named %q. Use search_tools to find the correct name.", name))
+	}
+
+	b, err := json.Marshal(schema)
+	if err != nil {
+		return ErrorResult("Failed to format tool schema: " + err.Error())
+	}
+	logger.InfoCF("discovery", "Tool details revealed", map[string]any{"tool": advertised, "ttl": t.ttl})
+	return SilentResult(fmt.Sprintf(
+		"%s\n\nThis tool is now unlocked. Call it as `%s` in your next response.",
+		string(b), advertised))
+}
+
+// ToolSearchResult represents a search hit returned to the LLM. Schemas are omitted
+// to save context tokens; the LLM loads a schema via get_tool_details on demand.
 type ToolSearchResult struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 }
 
+// SearchRegex returns hidden tools whose model-facing name or description matches
+// the (case-insensitive) pattern, up to maxSearchResults.
 func (r *ToolRegistry) SearchRegex(pattern string, maxSearchResults int) ([]ToolSearchResult, error) {
 	if maxSearchResults <= 0 {
 		return nil, nil
@@ -164,54 +183,22 @@ func (r *ToolRegistry) SearchRegex(pattern string, maxSearchResults int) ([]Tool
 	defer r.mu.RUnlock()
 
 	var results []ToolSearchResult
-
 	// Iterate in sorted order for deterministic results across calls.
 	for _, name := range r.sortedToolNames() {
 		entry := r.tools[name]
-		// Search only among the hidden tools (Core tools are already visible)
-		if !entry.IsCore {
-			// Directly call interface methods! No reflection/unmarshalling needed.
-			desc := entry.Tool.Description()
-
-			if regex.MatchString(name) || regex.MatchString(desc) {
-				results = append(results, ToolSearchResult{
-					Name:        name,
-					Description: desc,
-				})
-				if len(results) >= maxSearchResults {
-					break // Stop searching once we hit the max! Saves CPU.
-				}
+		if entry.IsCore {
+			continue // core tools are already visible
+		}
+		adv := advertisedName(entry.Tool, name)
+		desc := entry.Tool.Description()
+		if regex.MatchString(adv) || regex.MatchString(desc) {
+			results = append(results, ToolSearchResult{Name: adv, Description: desc})
+			if len(results) >= maxSearchResults {
+				break
 			}
 		}
 	}
-
 	return results, nil
-}
-
-func formatDiscoveryResponse(registry *ToolRegistry, results []ToolSearchResult, ttl int) *ToolResult {
-	if len(results) == 0 {
-		return SilentResult("No tools found matching the query.")
-	}
-
-	names := make([]string, len(results))
-	for i, r := range results {
-		names[i] = r.Name
-	}
-	registry.PromoteTools(names, ttl)
-	logger.InfoCF("discovery", "Promoted tools", map[string]any{"tools": names, "ttl": ttl})
-
-	b, err := json.Marshal(results)
-	if err != nil {
-		return ErrorResult("Failed to format search results: " + err.Error())
-	}
-
-	msg := fmt.Sprintf(
-		"Found %d tools:\n%s\n\nSUCCESS: These tools have been temporarily UNLOCKED as native tools! In your next response, you can call them directly just like any normal tool",
-		len(results),
-		string(b),
-	)
-
-	return SilentResult(msg)
 }
 
 // Lightweight internal type used as corpus document for BM25.
@@ -225,7 +212,6 @@ type bm25CachedEngine struct {
 	engine *utils.BM25Engine[searchDoc]
 }
 
-// snapshotToSearchDocs converts a HiddenToolSnapshot to BM25 searchDoc slice.
 func snapshotToSearchDocs(snap HiddenToolSnapshot) []searchDoc {
 	docs := make([]searchDoc, len(snap.Docs))
 	for i, d := range snap.Docs {
@@ -234,7 +220,6 @@ func snapshotToSearchDocs(snap HiddenToolSnapshot) []searchDoc {
 	return docs
 }
 
-// buildBM25Engine creates a BM25Engine from a slice of searchDocs.
 func buildBM25Engine(docs []searchDoc) *utils.BM25Engine[searchDoc] {
 	return utils.NewBM25Engine(
 		docs,
@@ -244,10 +229,9 @@ func buildBM25Engine(docs []searchDoc) *utils.BM25Engine[searchDoc] {
 	)
 }
 
-// getOrBuildEngine returns a cached BM25 engine, rebuilding it only when
-// the registry version has changed (new tools registered).
-func (t *BM25SearchTool) getOrBuildEngine() *bm25CachedEngine {
-	// Fast path: optimistic check without locking.
+// getOrBuildEngine returns a cached BM25 engine, rebuilding it only when the
+// registry version has changed (new tools registered).
+func (t *SearchTool) getOrBuildEngine() *bm25CachedEngine {
 	if t.cachedEngine != nil && t.cacheVersion == t.registry.Version() {
 		return t.cachedEngine
 	}
@@ -255,11 +239,9 @@ func (t *BM25SearchTool) getOrBuildEngine() *bm25CachedEngine {
 	t.cacheMu.Lock()
 	defer t.cacheMu.Unlock()
 
-	// Snapshot + version are read under a single registry RLock,
-	// guaranteeing consistency (no TOCTOU).
+	// Snapshot + version are read under a single registry RLock (no TOCTOU).
 	snap := t.registry.SnapshotHiddenTools()
 
-	// Re-check: another goroutine may have rebuilt while we waited for cacheMu.
 	if t.cachedEngine != nil && t.cacheVersion == snap.Version {
 		return t.cachedEngine
 	}
@@ -278,9 +260,8 @@ func (t *BM25SearchTool) getOrBuildEngine() *bm25CachedEngine {
 	return cached
 }
 
-// SearchBM25 ranks hidden tools against query using BM25 via utils.BM25Engine.
-// This non-cached variant rebuilds the engine on every call. Used by tests
-// and any code that doesn't hold a BM25SearchTool instance.
+// SearchBM25 ranks hidden tools against query using BM25. This non-cached variant
+// rebuilds the engine on every call; used by tests and callers without a SearchTool.
 func (r *ToolRegistry) SearchBM25(query string, maxSearchResults int) []ToolSearchResult {
 	snap := r.SnapshotHiddenTools()
 	docs := snapshotToSearchDocs(snap)
@@ -295,10 +276,7 @@ func (r *ToolRegistry) SearchBM25(query string, maxSearchResults int) []ToolSear
 
 	out := make([]ToolSearchResult, len(ranked))
 	for i, r := range ranked {
-		out[i] = ToolSearchResult{
-			Name:        r.Document.Name,
-			Description: r.Document.Description,
-		}
+		out[i] = ToolSearchResult{Name: r.Document.Name, Description: r.Document.Description}
 	}
 	return out
 }

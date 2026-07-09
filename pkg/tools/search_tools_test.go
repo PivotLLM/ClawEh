@@ -50,60 +50,55 @@ func setupPopulatedRegistry() *ToolRegistry {
 	return reg
 }
 
-func TestRegexSearchTool_Execute(t *testing.T) {
+func TestSearchTool_RegexMode(t *testing.T) {
 	reg := setupPopulatedRegistry()
-	tool := NewRegexSearchTool(reg, 5, 10)
+	tool := NewSearchTool(reg, 10)
 	ctx := context.Background()
 
-	t.Run("Empty Pattern Error", func(t *testing.T) {
-		res := tool.Execute(ctx, map[string]any{})
-		if !res.IsError || !strings.Contains(res.ForLLM, "Missing or invalid 'pattern'") {
-			t.Errorf("Expected missing pattern error, got: %v", res.ForLLM)
+	t.Run("Empty Query Error", func(t *testing.T) {
+		res := tool.Execute(ctx, map[string]any{"regex": true})
+		if !res.IsError || !strings.Contains(res.ForLLM, "Missing or invalid 'query'") {
+			t.Errorf("Expected missing query error, got: %v", res.ForLLM)
 		}
 	})
 
 	t.Run("Invalid Regex Syntax", func(t *testing.T) {
-		res := tool.Execute(ctx, map[string]any{"pattern": "[unclosed"})
+		res := tool.Execute(ctx, map[string]any{"query": "[unclosed", "regex": true})
 		if !res.IsError || !strings.Contains(res.ForLLM, "Invalid regex pattern syntax") {
 			t.Errorf("Expected regex syntax error, got: %v", res.ForLLM)
 		}
 	})
 
 	t.Run("No Match Found", func(t *testing.T) {
-		res := tool.Execute(ctx, map[string]any{"pattern": "alien"})
+		res := tool.Execute(ctx, map[string]any{"query": "alien", "regex": true})
 		if res.IsError || !strings.Contains(res.ForLLM, "No tools found matching") {
 			t.Errorf("Expected 'no tools found' message, got: %v", res.ForLLM)
 		}
 	})
 
-	t.Run("Successful Match & Promotion", func(t *testing.T) {
-		res := tool.Execute(ctx, map[string]any{"pattern": "system"})
-
+	t.Run("Match returns names but does NOT promote (3-layer)", func(t *testing.T) {
+		res := tool.Execute(ctx, map[string]any{"query": "system", "regex": true})
 		if res.IsError {
 			t.Fatalf("Unexpected error: %v", res.ForLLM)
 		}
-		if !strings.Contains(res.ForLLM, "SUCCESS: These tools have been temporarily UNLOCKED") {
-			t.Errorf("Expected success string, got: %v", res.ForLLM)
+		if !strings.Contains(res.ForLLM, "get_tool_details") {
+			t.Errorf("Expected search to point at get_tool_details, got: %v", res.ForLLM)
 		}
 		if !strings.Contains(res.ForLLM, "mcp_read_file") {
 			t.Errorf("Expected 'mcp_read_file' in results")
 		}
-
-		// Verify that the TTL has been updated for the tools found
+		// Search must NOT promote — that's get_tool_details' job.
 		reg.mu.RLock()
 		defer reg.mu.RUnlock()
-		if reg.tools["mcp_read_file"].TTL != 5 {
-			t.Errorf("Expected TTL of 'mcp_read_file' to be promoted to 5, got %d", reg.tools["mcp_read_file"].TTL)
-		}
-		if reg.tools["mcp_fetch_net"].TTL != 0 {
-			t.Errorf("Expected 'mcp_fetch_net' to NOT be promoted (TTL=0)")
+		if reg.tools["mcp_read_file"].TTL != 0 {
+			t.Errorf("search_tools must not promote; TTL should stay 0, got %d", reg.tools["mcp_read_file"].TTL)
 		}
 	})
 }
 
-func TestBM25SearchTool_Execute(t *testing.T) {
+func TestSearchTool_BM25Mode(t *testing.T) {
 	reg := setupPopulatedRegistry()
-	tool := NewBM25SearchTool(reg, 3, 10)
+	tool := NewSearchTool(reg, 3)
 	ctx := context.Background()
 
 	t.Run("Empty Query Error", func(t *testing.T) {
@@ -120,31 +115,60 @@ func TestBM25SearchTool_Execute(t *testing.T) {
 		}
 	})
 
-	t.Run("Successful Match & Promotion", func(t *testing.T) {
+	t.Run("Match returns names, no promotion", func(t *testing.T) {
 		res := tool.Execute(ctx, map[string]any{"query": "read files"})
-
 		if res.IsError {
 			t.Fatalf("Unexpected error: %v", res.ForLLM)
 		}
 		if !strings.Contains(res.ForLLM, "mcp_read_file") {
 			t.Errorf("Expected 'mcp_read_file' in BM25 results")
 		}
-
 		reg.mu.RLock()
 		defer reg.mu.RUnlock()
-		if reg.tools["mcp_read_file"].TTL != 3 {
-			t.Errorf("Expected TTL of 'mcp_read_file' to be promoted to 3")
+		if reg.tools["mcp_read_file"].TTL != 0 {
+			t.Errorf("search_tools must not promote; TTL should stay 0")
 		}
 	})
 }
 
-func TestRegexSearchTool_PatternTooLong(t *testing.T) {
+func TestToolDetailsTool_RevealsAndPromotes(t *testing.T) {
 	reg := setupPopulatedRegistry()
-	tool := NewRegexSearchTool(reg, 5, 10)
+	details := NewToolDetailsTool(reg, 4, 0)
+	ctx := context.Background()
+
+	t.Run("Unknown tool errors", func(t *testing.T) {
+		res := details.Execute(ctx, map[string]any{"name": "no_such_tool"})
+		if !res.IsError || !strings.Contains(res.ForLLM, "No tool named") {
+			t.Errorf("Expected unknown-tool error, got: %v", res.ForLLM)
+		}
+	})
+
+	t.Run("Reveals schema and promotes", func(t *testing.T) {
+		res := details.Execute(ctx, map[string]any{"name": "mcp_read_file"})
+		if res.IsError {
+			t.Fatalf("Unexpected error: %v", res.ForLLM)
+		}
+		if !strings.Contains(res.ForLLM, "unlocked") || !strings.Contains(res.ForLLM, "mcp_read_file") {
+			t.Errorf("Expected unlock message with tool name, got: %v", res.ForLLM)
+		}
+		reg.mu.RLock()
+		defer reg.mu.RUnlock()
+		if reg.tools["mcp_read_file"].TTL != 4 {
+			t.Errorf("Expected get_tool_details to promote TTL to 4, got %d", reg.tools["mcp_read_file"].TTL)
+		}
+		if reg.tools["mcp_fetch_net"].TTL != 0 {
+			t.Errorf("Expected 'mcp_fetch_net' to remain hidden (TTL=0)")
+		}
+	})
+}
+
+func TestSearchTool_PatternTooLong(t *testing.T) {
+	reg := setupPopulatedRegistry()
+	tool := NewSearchTool(reg, 10)
 	ctx := context.Background()
 
 	longPattern := strings.Repeat("a", MaxRegexPatternLength+1)
-	res := tool.Execute(ctx, map[string]any{"pattern": longPattern})
+	res := tool.Execute(ctx, map[string]any{"query": longPattern, "regex": true})
 	if !res.IsError || !strings.Contains(res.ForLLM, "Pattern too long") {
 		t.Errorf("Expected pattern too long error, got: %v", res.ForLLM)
 	}
@@ -263,7 +287,7 @@ func TestGet_HiddenToolTTLLifecycle(t *testing.T) {
 	}
 
 	// Promote → gettable
-	reg.PromoteTools([]string{"hidden_tool"}, 3)
+	reg.PromoteTools([]string{"hidden_tool"}, 3, 0)
 	_, ok = reg.Get("hidden_tool")
 	if !ok {
 		t.Error("Expected promoted hidden tool to be gettable")
@@ -290,7 +314,7 @@ func TestBM25CacheInvalidation(t *testing.T) {
 	reg := NewToolRegistry()
 	reg.RegisterHidden(&mockSearchableTool{name: "tool_alpha", desc: "alpha functionality"})
 
-	tool := NewBM25SearchTool(reg, 5, 10)
+	tool := NewSearchTool(reg, 10)
 	ctx := context.Background()
 
 	// First search should find tool_alpha
@@ -327,7 +351,7 @@ func TestPromoteTools_ConcurrentWithTickTTL(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		for i := 0; i < 1000; i++ {
-			reg.PromoteTools(names, 5)
+			reg.PromoteTools(names, 5, 0)
 		}
 		close(done)
 	}()

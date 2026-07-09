@@ -17,6 +17,11 @@ export interface ModelInfo {
   request_timeout?: number
   thinking_level?: string
   no_tools?: boolean
+  // Vision passthrough for MCP tool-result images: "" / "off" drops them,
+  // "user_message" injects them as a follow-up user turn, "tool_response"
+  // attaches them to the tool result. Chat models need "user_message"
+  // (tool-role content is text-only); Responses models can use "tool_response".
+  vision?: string
   // Shape 3 per-LLM custom fields. extra_body accepts an explicit `null` on
   // save to clear a previously-stored value; the backend handler merge-loads
   // the request JSON into the existing entry, so an absent field would

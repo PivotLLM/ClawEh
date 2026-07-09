@@ -54,7 +54,7 @@ func assertHasTool(t *testing.T, names []string, want string) {
 
 // TestRegisterTools_NoDuplicateRegistration guards the consolidation: tools are
 // registered exactly once (no phase-1 + runtime double pass), so no "overwrites
-// existing tool" warnings are emitted, and both a deps-free tool (file_read_bytes) and
+// existing tool" warnings are emitted, and both a deps-free tool (file_read_lines) and
 // a runtime-only tool (session_compact, which needs the CompactFn closure) are
 // present.
 func TestRegisterTools_NoDuplicateRegistration(t *testing.T) {
@@ -70,7 +70,7 @@ func TestRegisterTools_NoDuplicateRegistration(t *testing.T) {
 	}
 
 	names := agentToolNames(t, al)
-	assertHasTool(t, names, "file_read_bytes")       // deps-free provider
+	assertHasTool(t, names, "file_read_lines")       // deps-free provider (default-on)
 	assertHasTool(t, names, "session_compact") // runtime-only (CompactFn closure)
 
 	seen := map[string]bool{}
@@ -100,7 +100,7 @@ func TestReloadProviderAndConfig_RegistersRuntimeTools(t *testing.T) {
 	after := agentToolNames(t, al)
 	// Runtime tools must survive the reload (the regression this fixes).
 	assertHasTool(t, after, "session_compact")
-	assertHasTool(t, after, "file_read_bytes")
+	assertHasTool(t, after, "file_read_lines")
 	if len(after) != len(before) {
 		t.Errorf("tool set changed across reload: before=%d (%v) after=%d (%v)", len(before), before, len(after), after)
 	}

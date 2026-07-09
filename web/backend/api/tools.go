@@ -123,27 +123,8 @@ func resolveToolReasonCode(_ *config.Config, _ tools.ToolDescriptor, _ tools.Too
 	return unavailReason
 }
 
-func resolveStaticToolStatus(cfg *config.Config, d tools.ToolDescriptor) (string, string) {
-	switch d.ConfigKey {
-	case "mcp.discovery.use_regex":
-		return resolveDiscoveryToolSupport(cfg, cfg.Tools.MCP.Discovery.UseRegex)
-	case "mcp.discovery.use_bm25":
-		return resolveDiscoveryToolSupport(cfg, cfg.Tools.MCP.Discovery.UseBM25)
-	}
+func resolveStaticToolStatus(_ *config.Config, _ tools.ToolDescriptor) (string, string) {
 	return "disabled", ""
-}
-
-func resolveDiscoveryToolSupport(cfg *config.Config, methodEnabled bool) (string, string) {
-	if !cfg.Tools.IsToolEnabled("mcp") {
-		return "disabled", ""
-	}
-	if !cfg.Tools.MCP.Discovery.Enabled {
-		return "blocked", "requires_mcp_discovery"
-	}
-	if !methodEnabled {
-		return "disabled", ""
-	}
-	return "enabled", ""
 }
 
 func applyToolState(cfg *config.Config, toolName string, enabled bool) error {
@@ -165,26 +146,11 @@ func applyToolState(cfg *config.Config, toolName string, enabled bool) error {
 }
 
 func applyConfigKey(cfg *config.Config, key string, enabled bool) error {
-	switch key {
-	case "mcp.discovery.use_regex":
-		cfg.Tools.MCP.Discovery.UseRegex = enabled
-		if enabled {
-			cfg.Tools.MCP.Enabled = true
-			cfg.Tools.MCP.Discovery.Enabled = true
-		}
-	case "mcp.discovery.use_bm25":
-		cfg.Tools.MCP.Discovery.UseBM25 = enabled
-		if enabled {
-			cfg.Tools.MCP.Enabled = true
-			cfg.Tools.MCP.Discovery.Enabled = true
-		}
-	default:
-		// Generic override: global-layer tools without a dedicated typed field are
-		// toggled here so the WebUI can manage them dynamically.
-		if cfg.Tools.Overrides == nil {
-			cfg.Tools.Overrides = map[string]bool{}
-		}
-		cfg.Tools.Overrides[key] = enabled
+	// Generic override: global-layer tools without a dedicated typed field are
+	// toggled here so the WebUI can manage them dynamically.
+	if cfg.Tools.Overrides == nil {
+		cfg.Tools.Overrides = map[string]bool{}
 	}
+	cfg.Tools.Overrides[key] = enabled
 	return nil
 }

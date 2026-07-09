@@ -19,17 +19,10 @@ type Options struct {
 	// "current" listen address (e.g. /api/webui/token's ws_url) are accurate.
 	ListenPort int
 
-	// Public mirrors the launcher's --public flag. With the launcher gone the
-	// gateway's own Gateway.Host setting determines bind interface, but the
-	// API still uses this hint to pick between localhost and the LAN host
-	// when constructing the WebUI WebSocket URL.
+	// Public mirrors the gateway's all-interfaces bind (Gateway.Host ==
+	// "0.0.0.0"). The API uses this hint to pick between localhost and the LAN
+	// host when constructing the WebUI WebSocket URL.
 	Public bool
-
-	// AllowedCIDRs is the launcher's IP allowlist. Currently consumed only by
-	// the launcher_config endpoints; the gateway-shared mux does not enforce
-	// it (that would require wrapping the entire mux in middleware, which is
-	// out of scope for the in-process merge).
-	AllowedCIDRs []string
 }
 
 // Server bundles the API handler with its mount-time configuration so callers
@@ -51,7 +44,7 @@ type Server struct {
 // own mutexes for OAuth state and config writes.
 func New(opts Options) *Server {
 	h := api.NewHandler(opts.ConfigPath)
-	h.SetServerOptions(opts.ListenPort, opts.Public, opts.Public, opts.AllowedCIDRs)
+	h.SetServerOptions(opts.ListenPort, opts.Public)
 	return &Server{apiHandler: h, opts: opts}
 }
 

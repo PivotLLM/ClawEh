@@ -2,12 +2,14 @@ package mcp
 
 import (
 	"context"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/PivotLLM/ClawEh/pkg/config"
 )
@@ -194,9 +196,6 @@ func TestLoadFromMCPConfig_EmptyWorkspaceWithRelativeEnvFile(t *testing.T) {
 	mgr := NewManager()
 
 	mcpCfg := config.MCPConfig{
-		ToolConfig: config.ToolConfig{
-			Enabled: true,
-		},
 		Servers: map[string]config.MCPServerConfig{
 			"test-server": {
 				Enabled: true,
@@ -232,20 +231,22 @@ func TestLoadFromMCPConfig_DisabledOrEmptyServers(t *testing.T) {
 
 	err := mgr.LoadFromMCPConfig(
 		context.Background(),
-		config.MCPConfig{ToolConfig: config.ToolConfig{Enabled: false}},
-		"/tmp",
-	)
-	if err != nil {
-		t.Fatalf("expected nil error when MCP disabled, got: %v", err)
-	}
-
-	err = mgr.LoadFromMCPConfig(
-		context.Background(),
-		config.MCPConfig{ToolConfig: config.ToolConfig{Enabled: true}},
+		config.MCPConfig{},
 		"/tmp",
 	)
 	if err != nil {
 		t.Fatalf("expected nil error when no servers configured, got: %v", err)
+	}
+
+	err = mgr.LoadFromMCPConfig(
+		context.Background(),
+		config.MCPConfig{Servers: map[string]config.MCPServerConfig{
+			"disabled": {Enabled: false, Command: "echo"},
+		}},
+		"/tmp",
+	)
+	if err != nil {
+		t.Fatalf("expected nil error when only disabled servers configured, got: %v", err)
 	}
 }
 
@@ -264,7 +265,7 @@ func TestGetServers_ReturnsCopy(t *testing.T) {
 func TestGetAllTools_FiltersEmptyTools(t *testing.T) {
 	mgr := NewManager()
 	mgr.servers["empty"] = &ServerConnection{Name: "empty", Tools: nil}
-	mgr.servers["with-tools"] = &ServerConnection{Name: "with-tools", Tools: []*sdkmcp.Tool{{}}}
+	mgr.servers["with-tools"] = &ServerConnection{Name: "with-tools", Tools: []mcp.Tool{{}}}
 
 	all := mgr.GetAllTools()
 	if _, ok := all["empty"]; ok {
@@ -304,5 +305,75 @@ func TestClose_IdempotentOnEmptyManager(t *testing.T) {
 	}
 	if err := mgr.Close(); err != nil {
 		t.Fatalf("second close should be idempotent, got: %v", err)
+	}
+}
+
+// newTestMCPServer serves a minimal streamable-HTTP MCP server (one no-op tool)
+// so Sync can exercise a real connect without spawning a subprocess.
+func newTestMCPServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := server.NewMCPServer("test", "0.0.1")
+	srv.AddTool(
+		mcp.NewTool("ping", mcp.WithDescription("no-op")),
+		func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{}, nil
+		},
+	)
+	ts := httptest.NewServer(server.NewStreamableHTTPServer(srv))
+	t.Cleanup(ts.Close)
+	return ts
+}
+
+// TestSync_ReusesUnchangedReconnectsChanged is the core guarantee behind keeping
+// a long-lived stdio browser alive across reloads: an unchanged server keeps its
+// exact connection, a changed one is reconnected, and a dropped one disconnects.
+func TestSync_ReusesUnchangedReconnectsChanged(t *testing.T) {
+	ts := newTestMCPServer(t)
+	ctx := context.Background()
+	mgr := NewManager()
+	defer func() { _ = mgr.Close() }()
+
+	base := config.MCPConfig{Servers: map[string]config.MCPServerConfig{
+		"svc": {Enabled: true, Type: "http", URL: ts.URL},
+	}}
+
+	if err := mgr.Sync(ctx, base, ""); err != nil {
+		t.Fatalf("initial Sync: %v", err)
+	}
+	conn1, ok := mgr.GetServer("svc")
+	if !ok {
+		t.Fatal("svc should be connected after initial Sync")
+	}
+
+	// Identical config: the live connection must be retained, not replaced.
+	if err := mgr.Sync(ctx, base, ""); err != nil {
+		t.Fatalf("no-op Sync: %v", err)
+	}
+	conn2, ok := mgr.GetServer("svc")
+	if !ok || conn2 != conn1 {
+		t.Fatalf("unchanged server should keep its connection: ok=%v same=%v", ok, conn2 == conn1)
+	}
+
+	// Changed config (new header): the server must be reconnected.
+	changed := config.MCPConfig{Servers: map[string]config.MCPServerConfig{
+		"svc": {Enabled: true, Type: "http", URL: ts.URL, Headers: map[string]string{"X-Env": "b"}},
+	}}
+	if err := mgr.Sync(ctx, changed, ""); err != nil {
+		t.Fatalf("changed Sync: %v", err)
+	}
+	conn3, ok := mgr.GetServer("svc")
+	if !ok || conn3 == conn1 {
+		t.Fatalf("changed server should be reconnected: ok=%v same=%v", ok, conn3 == conn1)
+	}
+
+	// Disabled: the server must be disconnected.
+	disabled := config.MCPConfig{Servers: map[string]config.MCPServerConfig{
+		"svc": {Enabled: false, Type: "http", URL: ts.URL},
+	}}
+	if err := mgr.Sync(ctx, disabled, ""); err != nil {
+		t.Fatalf("disable Sync: %v", err)
+	}
+	if _, ok := mgr.GetServer("svc"); ok {
+		t.Fatal("disabled server should be disconnected")
 	}
 }

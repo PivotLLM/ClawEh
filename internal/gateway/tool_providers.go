@@ -6,6 +6,7 @@ import (
 	cogmem "github.com/PivotLLM/ClawEh/pkg/tools/cogmem"
 	common "github.com/PivotLLM/ClawEh/pkg/tools/common"
 	"github.com/PivotLLM/ClawEh/pkg/tools/files"
+	fusion "github.com/PivotLLM/ClawEh/pkg/tools/fusion"
 	"github.com/PivotLLM/ClawEh/pkg/tools/hardware"
 	maestro "github.com/PivotLLM/ClawEh/pkg/tools/maestro"
 	"github.com/PivotLLM/ClawEh/pkg/tools/msg"
@@ -30,6 +31,11 @@ func registerToolProviders() {
 	tools.RegisterProvider(tools.NamespacedProvider("cogmem", cogmem.GlobalProvider))
 	tools.RegisterProvider(tools.NamespacedProvider("common", common.GlobalProvider))
 	tools.RegisterProvider(tools.NamespacedProvider("maestro", maestro.GlobalProvider))
+	// Bare names: fusion tool names are already service-prefixed (e.g.
+	// microsoft365_mail_read_inbox), so publish them without a "fusion_" prefix.
+	// "fusion" still identifies the per-agent suite toggle. Service configs must
+	// keep their tool names globally unique.
+	tools.RegisterProvider(tools.BareNamespacedProvider("fusion", fusion.GlobalProvider))
 	// schedule stays catalogue-only: the cron tool is a runtime tool registered
 	// directly via agentLoop.RegisterTool (renamed to cron_schedule).
 	tools.RegisterProvider(schedule.Provider)

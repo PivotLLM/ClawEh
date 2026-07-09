@@ -32,8 +32,10 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarFooter,
   SidebarRail,
 } from "@/components/ui/sidebar"
+import { getVersion } from "@/api/system"
 import { useSidebarChannels } from "@/hooks/use-sidebar-channels"
 
 interface NavItem {
@@ -73,6 +75,15 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const { t } = useTranslation()
   const currentPath = routerState.location.pathname
   const { channelItems } = useSidebarChannels({ t })
+
+  // ClawEh build version, shown in the sidebar footer. Static for the process
+  // lifetime, so fetch once; failures leave the label as just "ClawEh".
+  const [version, setVersion] = React.useState("")
+  React.useEffect(() => {
+    getVersion()
+      .then(setVersion)
+      .catch(() => {})
+  }, [])
 
   const navGroups: NavGroup[] = React.useMemo(() => {
     return [
@@ -248,6 +259,9 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
           </Collapsible>
         ))}
       </SidebarContent>
+      <SidebarFooter className="text-muted-foreground px-3 py-2 text-xs">
+        ClawEh{version ? ` v${version}` : ""}
+      </SidebarFooter>
       <SidebarRail />
     </Sidebar>
   )
