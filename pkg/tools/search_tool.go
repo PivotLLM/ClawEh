@@ -256,10 +256,7 @@ func (t *SearchTool) getOrBuildEngine() *bm25CachedEngine {
 	cached := &bm25CachedEngine{engine: buildBM25Engine(docs)}
 	t.cachedEngine = cached
 	t.cacheVersion = snap.Version
-	// Log the namespaces alongside the doc count so the search_tools header (which
-	// is HiddenNamespaces over this same set) can be verified against the corpus.
-	logger.DebugCF("discovery", "BM25 engine rebuilt",
-		map[string]any{"docs": len(docs), "version": snap.Version, "namespaces": t.registry.HiddenNamespaces()})
+	logger.DebugCF("discovery", "BM25 engine rebuilt", map[string]any{"docs": len(docs), "version": snap.Version})
 	return cached
 }
 
