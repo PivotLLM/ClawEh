@@ -190,9 +190,6 @@ func (r *ToolRegistry) promoteLocked(names []string, ttl int) int {
 			}
 			logger.DebugCF("discovery", "reveal-together expanded group",
 				map[string]any{"tool": name, "group": entry.Group, "members": members})
-		} else {
-			logger.DebugCF("discovery", "reveal-together not applied",
-				map[string]any{"tool": name, "group": entry.Group, "reveal_together": entry.RevealTogether})
 		}
 	}
 	for name := range toPromote {
@@ -596,7 +593,6 @@ func (r *ToolRegistry) ToProviderDefs() []providers.ToolDefinition {
 	}
 
 	definitions := make([]providers.ToolDefinition, 0, len(sorted))
-	var revealedPubNames []string
 	for _, name := range sorted {
 		entry := r.tools[name]
 
@@ -630,16 +626,6 @@ func (r *ToolRegistry) ToProviderDefs() []providers.ToolDefinition {
 				Parameters:  params,
 			},
 		})
-		if !entry.IsCore {
-			revealedPubNames = append(revealedPubNames, pubName)
-		}
-	}
-	// Diagnostic: which discovery-revealed (non-core) tools actually made it into
-	// the provider list this build. Lets a "group revealed but model can't see it"
-	// symptom be read from the log instead of inferred.
-	if len(revealedPubNames) > 0 {
-		logger.DebugCF("discovery", "provider defs: revealed tools",
-			map[string]any{"count": len(revealedPubNames), "tools": revealedPubNames})
 	}
 	return definitions
 }
