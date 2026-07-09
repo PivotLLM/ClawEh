@@ -1635,12 +1635,7 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 			"route_channel": route.Channel,
 		})
 
-	userContent := msg.Content
-	if msg.Peer.Kind == "group" || msg.Peer.Kind == "channel" {
-		if label := senderLabel(msg.Sender); label != "" {
-			userContent = "[From: " + label + "]\n" + msg.Content
-		}
-	}
+	userContent := prependSenderLabel(msg.Content, msg.Sender)
 	// Drop received attachments into the agent's workspace so its file tools can read
 	// them (the model otherwise only sees an annotation it can't open).
 	userContent += al.materializeInboundMedia(msg, agent)
@@ -3949,6 +3944,20 @@ func senderLabel(s bus.SenderInfo) string {
 		return "@" + s.Username
 	}
 	return ""
+}
+
+// prependSenderLabel attributes a message with its sender ("[From: <label>]").
+// Applied to every message, direct chats included: under the default unified
+// session scope, direct and group messages share one session, so a "private"
+// message is just one of several senders in the shared context — the label keeps
+// attribution unambiguous. Cheap, and the clarity is worth the few tokens. No-op
+// when the sender yields no label.
+func prependSenderLabel(content string, s bus.SenderInfo) string {
+	label := senderLabel(s)
+	if label == "" {
+		return content
+	}
+	return "[From: " + label + "]\n" + content
 }
 
 // senderSource returns a human-readable source string for message archiving.
