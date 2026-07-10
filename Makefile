@@ -104,6 +104,8 @@ GOMIPS?=
 BUILD_ENV=GOOS=$(PLATFORM) GOARCH=$(ARCH)$(if $(GOARM), GOARM=$(GOARM))$(if $(GOMIPS), GOMIPS=$(GOMIPS))
 
 BINARY_PATH=$(BUILD_DIR)/$(BINARY_NAME)-$(PLATFORM)-$(ARCH)
+CLAW_AUTH_NAME=claw-auth
+CLAW_AUTH_PATH=$(BUILD_DIR)/$(CLAW_AUTH_NAME)-$(PLATFORM)-$(ARCH)
 
 # Frontend / embedded SPA
 FRONTEND_DIR=web/frontend
@@ -123,20 +125,25 @@ FRONTEND_SOURCES=$(shell find $(FRONTEND_DIR)/src $(FRONTEND_DIR)/public 2>/dev/
 # Default target
 all: build
 
-## build: Build the claw binary (frontend SPA embedded) for current platform.
+## build: Build the claw and claw-auth binaries (frontend SPA embedded) for current platform.
 build: $(EMBED_INDEX) generate
 	@echo "Building $(BINARY_NAME) for $(PLATFORM)/$(ARCH)..."
 	@mkdir -p $(BUILD_DIR)
 	@$(BUILD_ENV) $(GO) build $(GOFLAGS) $(LDFLAGS) -o $(BINARY_PATH) ./$(CMD_DIR)
 	@echo "Build complete: $(BINARY_PATH)"
 	@ln -sf $(BINARY_NAME)-$(PLATFORM)-$(ARCH) $(BUILD_DIR)/$(BINARY_NAME)
+	@echo "Building $(CLAW_AUTH_NAME) for $(PLATFORM)/$(ARCH)..."
+	@$(BUILD_ENV) $(GO) build $(GOFLAGS) $(LDFLAGS) -o $(CLAW_AUTH_PATH) ./cmd/claw-auth
+	@echo "Build complete: $(CLAW_AUTH_PATH)"
+	@ln -sf $(CLAW_AUTH_NAME)-$(PLATFORM)-$(ARCH) $(BUILD_DIR)/$(CLAW_AUTH_NAME)
 
 ## claw-auth: Build the standalone claw-auth OAuth helper CLI (runs on the user's own computer).
 claw-auth:
-	@echo "Building claw-auth..."
+	@echo "Building $(CLAW_AUTH_NAME) for $(PLATFORM)/$(ARCH)..."
 	@mkdir -p $(BUILD_DIR)
-	@$(GO) build $(GOFLAGS) -o $(BUILD_DIR)/claw-auth ./cmd/claw-auth
-	@echo "Build complete: $(BUILD_DIR)/claw-auth"
+	@$(BUILD_ENV) $(GO) build $(GOFLAGS) $(LDFLAGS) -o $(CLAW_AUTH_PATH) ./cmd/claw-auth
+	@echo "Build complete: $(CLAW_AUTH_PATH)"
+	@ln -sf $(CLAW_AUTH_NAME)-$(PLATFORM)-$(ARCH) $(BUILD_DIR)/$(CLAW_AUTH_NAME)
 
 ## frontend: Build the SPA into the Go embed source (web/backend/dist).
 frontend: $(EMBED_INDEX)
