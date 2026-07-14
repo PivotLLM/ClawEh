@@ -6,6 +6,7 @@ import {
   IconBrandSlack,
   IconBrandTelegram,
   IconPlug,
+  IconShieldLock,
 } from "@tabler/icons-react"
 import type { TFunction } from "i18next"
 import * as React from "react"
@@ -21,6 +22,7 @@ import { getChannelDisplayName } from "@/components/channels/channel-display-nam
 const CHANNEL_IMPORTANCE_ORDER = [
   "discord",
   "telegram",
+  "secmsg",
   "slack",
   "line",
   "matrix",
@@ -35,6 +37,7 @@ const CHANNEL_ICON_MAP: Record<
   React.ComponentType<{ className?: string }>
 > = {
   telegram: IconBrandTelegram,
+  secmsg: IconShieldLock,
   discord: IconBrandDiscord,
   slack: IconBrandSlack,
   line: IconBrandLine,

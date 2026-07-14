@@ -134,6 +134,8 @@ github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu
 github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
 github.com/tenebris-tech/mlogger v0.0.4 h1:VUIKWzBjfN2aLYIzcLzYOqp/wa9WzFF7ktNhCBEZ38E=
 github.com/tenebris-tech/mlogger v0.0.4/go.mod h1:OzBSmbdvLvIN9w3sfe7RBQK8nsL80RJdSRpMGnYSuSw=
+github.com/tenebris-tech/secmsg v0.1.0 h1:mMDqzcnOmqoKJxaBRVK3HNe6YMb0JcBA3ldkXnTOrKY=
+github.com/tenebris-tech/secmsg v0.1.0/go.mod h1:+35jIvDIp9a0dZrG3KUpZzhsV+qtVZnNq9Bjt8GMhvo=
 github.com/tenebris-tech/x2md v0.0.3 h1:L7jr34PGGqZGzs2/nz6qnGCZnIX5X9Hhn67bPjB9pvM=
 github.com/tenebris-tech/x2md v0.0.3/go.mod h1:5rWmLDBWr+KpxWX1u2wkUibuUWVFBIVrFUG2Mjk/fok=
 github.com/tidwall/gjson v1.14.2/go.mod h1:/wbyibRr2FHMks5tjHJ5F8dMZh3AcwJEMf5vlfC0lxk=

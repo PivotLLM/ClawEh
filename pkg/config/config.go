@@ -904,6 +904,7 @@ func (d *AgentDefaults) SetDefaultModel(modelName string) {
 
 type ChannelsConfig struct {
 	Telegram []TelegramBotConfig `json:"telegram"`
+	SecMsg   []SecMsgConfig      `json:"secmsg"`
 	Discord  DiscordConfig       `json:"discord"`
 	Slack    SlackConfig         `json:"slack"`
 	Matrix   MatrixConfig        `json:"matrix"`
@@ -1023,6 +1024,61 @@ func (b TelegramBotConfig) ChannelName() string {
 		return "telegram"
 	}
 	return "telegram-" + b.ID
+}
+
+// SecMsgConfig defines one secure-messaging daemon speaking the secmsg JSON-RPC
+// protocol (e.g. sigd for Signal). A single daemon can host several accounts, so
+// each daemon entry lists the accounts to bind; every account becomes its own
+// ClawEh channel (own name, allowlist, and agent binding). The daemon is
+// service-agnostic: ClawEh learns the concrete service from the handshake.
+type SecMsgConfig struct {
+	// Name identifies the daemon connection and is the default prefix for each
+	// account's channel name. Recommended: the service, e.g. "signal". Empty
+	// falls back to "secmsg".
+	Name string `json:"name"`
+	// Enabled gates whether this daemon's accounts are started.
+	Enabled bool `json:"enabled"`
+	// Address is the daemon endpoint (host:port) for the secmsg JSON-RPC socket.
+	Address string `json:"address"`
+	// Accounts are the daemon accounts to bind. Empty means a single channel that
+	// auto-selects the daemon's sole linked account.
+	Accounts []SecMsgAccountConfig `json:"accounts,omitempty"`
+}
+
+// SecMsgAccountConfig binds one account on a daemon to a ClawEh channel.
+type SecMsgAccountConfig struct {
+	// Account is the daemon account id (e.g. "droid1"). Empty auto-selects the
+	// daemon's sole linked account (only valid when the daemon has exactly one).
+	Account string `json:"account,omitempty"`
+	// Name overrides the ClawEh channel name for this account. Empty derives it
+	// as "<daemon-name>-<account>".
+	Name         string              `json:"name,omitempty"`
+	AllowFrom    FlexibleStringSlice `json:"allow_from,omitempty"`
+	GroupTrigger GroupTriggerConfig  `json:"group_trigger,omitempty"`
+}
+
+// BoundAccounts returns the accounts to start, synthesizing a single
+// auto-selecting account when none are configured.
+func (s SecMsgConfig) BoundAccounts() []SecMsgAccountConfig {
+	if len(s.Accounts) == 0 {
+		return []SecMsgAccountConfig{{}}
+	}
+	return s.Accounts
+}
+
+// ChannelName returns the routing identifier for this account's channel.
+func (a SecMsgAccountConfig) ChannelName(daemon SecMsgConfig) string {
+	if a.Name != "" {
+		return a.Name
+	}
+	base := daemon.Name
+	if base == "" {
+		base = "secmsg"
+	}
+	if a.Account == "" {
+		return base
+	}
+	return base + "-" + a.Account
 }
 
 type DiscordConfig struct {

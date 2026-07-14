@@ -85,4 +85,34 @@ export async function getAgentTools(): Promise<AgentToolCatalogResponse> {
   return request<AgentToolCatalogResponse>("/api/agents/tools")
 }
 
+// SecMsgLinkStatus mirrors the backend pairing reply. status is
+// "pending" | "complete" | "error"; qr_png is a PNG data-URL for the pairing URI.
+export interface SecMsgLinkStatus {
+  status: string
+  uri?: string
+  qr_png?: string
+  phone?: string
+  error?: string
+}
+
+// requestSecMsgLink starts device linking for a configured secmsg channel and
+// returns the pairing QR.
+export async function requestSecMsgLink(
+  name: string,
+): Promise<SecMsgLinkStatus> {
+  return request<SecMsgLinkStatus>(
+    `/api/channels/secmsg/${encodeURIComponent(name)}/link`,
+    { method: "POST" },
+  )
+}
+
+// getSecMsgLinkStatus polls current pairing status for a configured channel.
+export async function getSecMsgLinkStatus(
+  name: string,
+): Promise<SecMsgLinkStatus> {
+  return request<SecMsgLinkStatus>(
+    `/api/channels/secmsg/${encodeURIComponent(name)}/link`,
+  )
+}
+
 export type { ChannelsCatalogResponse, ConfigActionResponse }

@@ -22,6 +22,10 @@ type Handler struct {
 	// (injected via SetMessageTokenLoop). Guarded by reloadMu since it is set at
 	// startup on one goroutine and read on HTTP-handler goroutines.
 	msgTokenLoop messageTokenLoop
+	// secmsgLinker resolves a configured secmsg channel name to its live linker
+	// so the WebUI QR pairing panel can reach the running channel instance
+	// (injected via SetSecMsgLinker). Guarded by reloadMu like the fields above.
+	secmsgLinker SecMsgLinkerLookup
 }
 
 // SetReloadTrigger wires the gateway's force-reload function into the handler so
@@ -81,6 +85,9 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 
 	// Channel catalog (for frontend navigation/config pages)
 	h.registerChannelRoutes(mux)
+
+	// SecMsg (secure-messaging daemon) device linking / QR pairing
+	h.registerSecMsgRoutes(mux)
 
 	// Skills and tools support/actions
 	h.registerSkillRoutes(mux)

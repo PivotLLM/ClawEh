@@ -364,6 +364,46 @@ func (m *Manager) initTelegramBot(bot config.TelegramBotConfig) {
 	})
 }
 
+// initSecMsg initializes each configured account on a secure-messaging daemon
+// as its own channel.
+func (m *Manager) initSecMsg(cfg config.SecMsgConfig) {
+	f, ok := getSecMsgFactory()
+	if !ok {
+		logger.WarnCF("channels", "SecMsg factory not registered", map[string]any{
+			"channel": "SecMsg (" + cfg.Name + ")",
+		})
+		return
+	}
+
+	for _, account := range cfg.BoundAccounts() {
+		channelName := account.ChannelName(cfg)
+		displayName := "SecMsg (" + channelName + ")"
+
+		ch, err := f(cfg, account, m.bus)
+		if err != nil {
+			logger.ErrorCF("channels", "Failed to initialize channel", map[string]any{
+				"channel": displayName,
+				"error":   err.Error(),
+			})
+			continue
+		}
+
+		m.injectChannelDependencies(ch)
+
+		if _, exists := m.channels[channelName]; exists {
+			logger.ErrorCF("channels", "Duplicate channel name — skipping account", map[string]any{
+				"channel": displayName,
+				"name":    channelName,
+			})
+			continue
+		}
+		m.channels[channelName] = ch
+		logger.InfoCF("channels", "Channel enabled successfully", map[string]any{
+			"channel": displayName,
+		})
+	}
+}
+
 // warnEmptyAllowFrom logs a warning when a channel is enabled with an empty allow_from list.
 // An empty list now means nobody is allowed — this is almost certainly a misconfiguration.
 func warnEmptyAllowFrom(displayName string, allowFrom []string) {
@@ -380,6 +420,15 @@ func (m *Manager) initChannels() error {
 		if bot.Enabled && bot.Token != "" {
 			warnEmptyAllowFrom("Telegram ("+bot.ID+")", bot.AllowFrom)
 			m.initTelegramBot(bot)
+		}
+	}
+
+	for _, sm := range m.config.Channels.SecMsg {
+		if sm.Enabled && sm.Address != "" {
+			for _, account := range sm.BoundAccounts() {
+				warnEmptyAllowFrom("SecMsg ("+account.ChannelName(sm)+")", account.AllowFrom)
+			}
+			m.initSecMsg(sm)
 		}
 	}
 
