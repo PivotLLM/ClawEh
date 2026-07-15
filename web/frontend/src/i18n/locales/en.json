@@ -177,7 +177,7 @@
     },
     "name": {
       "telegram": "Telegram",
-      "secmsg": "Secure Messaging",
+      "secmsg": "SecMsg",
       "discord": "Discord",
       "slack": "Slack",
       "line": "LINE",
