@@ -1688,6 +1688,18 @@ type MCPServerConfig struct {
 type MCPConfig struct {
 	// Servers is a map of server name to server configuration
 	Servers map[string]MCPServerConfig `json:"servers,omitempty"`
+	// ReconnectCooldownSeconds is the backoff applied to a server after a failed
+	// reconnect, before another reconnect is attempted for it. Prevents hammering a
+	// dead upstream on every call. 0 uses the default (30s).
+	ReconnectCooldownSeconds int `json:"reconnect_cooldown_seconds,omitempty"`
+	// CallTimeoutSeconds is a backstop deadline applied to a tool call only when the
+	// caller's context carries no deadline, so a hung server cannot block forever.
+	// 0 uses the default (300s).
+	CallTimeoutSeconds int `json:"call_timeout_seconds,omitempty"`
+	// LivenessProbeSeconds, when > 0, enables a periodic MCP ping per connected
+	// server at this interval; a failed ping proactively reconnects that server so
+	// the next real call finds a live session. 0 (default) disables probing.
+	LivenessProbeSeconds int `json:"liveness_probe_seconds,omitempty"`
 }
 
 // MCPClientEffectivelyEnabled reports whether claw should connect out to

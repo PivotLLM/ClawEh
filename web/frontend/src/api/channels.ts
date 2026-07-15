@@ -115,4 +115,24 @@ export async function getSecMsgLinkStatus(
   )
 }
 
-export type { ChannelsCatalogResponse, ConfigActionResponse }
+// MCPServerStatus mirrors pkg/mcp.ServerStatus. state is
+// "connected" | "reconnecting" | "cooldown"; cooldown_until is RFC3339 (only for
+// the cooldown state). Servers absent from the response are disconnected.
+export interface MCPServerStatus {
+  name: string
+  state: string
+  transport?: string
+  tool_count: number
+  cooldown_until?: string
+}
+
+interface MCPStatusResponse {
+  servers: MCPServerStatus[]
+}
+
+// getMCPStatus reports the live connection state of outbound MCP servers.
+export async function getMCPStatus(): Promise<MCPStatusResponse> {
+  return request<MCPStatusResponse>("/api/mcp/status")
+}
+
+export type { ChannelsCatalogResponse, ConfigActionResponse, MCPStatusResponse }

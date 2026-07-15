@@ -2,6 +2,8 @@ import { IconPlus, IconTrash } from "@tabler/icons-react"
 import type { ReactNode } from "react"
 import { useTranslation } from "react-i18next"
 
+import type { MCPServerStatus } from "@/api/channels"
+
 import {
   type MCPHostForm,
   type MCPServerForm,
@@ -312,15 +314,119 @@ export function DiscoverySection({
   )
 }
 
+interface ResilienceSectionProps {
+  reconnectCooldownSeconds: number
+  callTimeoutSeconds: number
+  livenessProbeSeconds: number
+  onFieldChange: UpdateMCPField
+}
+
+// ResilienceSection edits how claw handles outbound MCP sessions that drop or hang
+// (tools.mcp.reconnect_cooldown_seconds / call_timeout_seconds /
+// liveness_probe_seconds). Applies to the external servers above.
+export function ResilienceSection({
+  reconnectCooldownSeconds,
+  callTimeoutSeconds,
+  livenessProbeSeconds,
+  onFieldChange,
+}: ResilienceSectionProps) {
+  return (
+    <SectionCard
+      title="Client Resilience"
+      description="How claw recovers when an outbound MCP session to one of the external servers above drops or stops responding."
+    >
+      <Field
+        label="Reconnect cooldown (seconds)"
+        hint="After a failed reconnect, wait this long before retrying that server, so a dead upstream isn't hammered on every call. Default 30."
+        layout="setting-row"
+      >
+        <Input
+          type="number"
+          min={1}
+          value={reconnectCooldownSeconds}
+          onChange={(e) =>
+            onFieldChange("reconnectCooldownSeconds", Number(e.target.value))
+          }
+        />
+      </Field>
+      <Field
+        label="Call timeout backstop (seconds)"
+        hint="Maximum time for a single tool call when the caller sets no deadline of its own, so a hung server can't block forever. Default 300."
+        layout="setting-row"
+      >
+        <Input
+          type="number"
+          min={1}
+          value={callTimeoutSeconds}
+          onChange={(e) =>
+            onFieldChange("callTimeoutSeconds", Number(e.target.value))
+          }
+        />
+      </Field>
+      <Field
+        label="Liveness probe interval (seconds)"
+        hint="0 disables. When set, claw pings each connected server on this interval and reconnects proactively if it stops responding, so the next real call finds a live session."
+        layout="setting-row"
+      >
+        <Input
+          type="number"
+          min={0}
+          value={livenessProbeSeconds}
+          onChange={(e) =>
+            onFieldChange("livenessProbeSeconds", Number(e.target.value))
+          }
+        />
+      </Field>
+    </SectionCard>
+  )
+}
+
+// serverStatusStyle maps a resolved state to its pill label and colors.
+const serverStatusStyle: Record<string, { label: string; className: string }> = {
+  connected: { label: "Connected", className: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" },
+  reconnecting: { label: "Reconnecting…", className: "bg-amber-500/15 text-amber-600 dark:text-amber-400" },
+  cooldown: { label: "Cooldown", className: "bg-destructive/15 text-destructive" },
+  disconnected: { label: "Disconnected", className: "bg-muted text-muted-foreground" },
+  disabled: { label: "Disabled", className: "bg-muted text-muted-foreground" },
+}
+
+// ServerStatusBadge shows a live connection pill. When no live status is known,
+// it falls back to the configured toggle: enabled ⇒ disconnected, off ⇒ disabled.
+function ServerStatusBadge({
+  live,
+  enabled,
+}: {
+  live?: MCPServerStatus
+  enabled: boolean
+}) {
+  const state = live?.state ?? (enabled ? "disconnected" : "disabled")
+  const style = serverStatusStyle[state] ?? serverStatusStyle.disconnected
+  const title =
+    state === "cooldown" && live?.cooldown_until
+      ? `In cooldown until ${new Date(live.cooldown_until).toLocaleTimeString()}`
+      : undefined
+  return (
+    <span
+      title={title}
+      className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium ${style.className}`}
+    >
+      <span className="size-1.5 rounded-full bg-current" />
+      {style.label}
+    </span>
+  )
+}
+
 // ClientServersSection edits the external (upstream) MCP servers claw connects
 // out to (tools.mcp.servers) via form fields — add / edit / delete, no raw JSON.
 export function ClientServersSection({
   servers,
   error,
+  statusByName,
   onChange,
 }: {
   servers: MCPServerForm[]
   error: string | null
+  statusByName: Map<string, MCPServerStatus>
   onChange: (next: MCPServerForm[]) => void
 }) {
   const { t } = useTranslation()
@@ -347,7 +453,11 @@ export function ClientServersSection({
             key={i}
             className="border-border/60 space-y-3 rounded-lg border p-3"
           >
-            <div className="flex justify-end">
+            <div className="flex items-center justify-between">
+              <ServerStatusBadge
+                live={statusByName.get(s.name.trim())}
+                enabled={s.enabled}
+              />
               <Button
                 type="button"
                 variant="outline"

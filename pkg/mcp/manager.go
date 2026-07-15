@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/client/transport"
@@ -88,6 +89,9 @@ type ServerConnection struct {
 	// cmd is the child process for stdio transports (nil for sse/http). Held so a
 	// disconnect can kill the whole process group, not just the direct child.
 	cmd *exec.Cmd
+	// probeStop closes to stop this connection's liveness-probe goroutine (nil when
+	// probing is disabled). Closed exactly once by disconnect or Close.
+	probeStop chan struct{}
 }
 
 // Manager manages multiple MCP server connections
@@ -96,13 +100,51 @@ type Manager struct {
 	mu      sync.RWMutex
 	closed  atomic.Bool    // changed from bool to atomic.Bool to avoid TOCTOU race
 	wg      sync.WaitGroup // tracks in-flight CallTool calls
+
+	// Resilience tuning (see MCPConfig). Defaults set in NewManager; overridden
+	// from config by applyTuning on load/sync.
+	reconnectCooldown time.Duration
+	callTimeout       time.Duration
+	probeInterval     time.Duration // 0 disables liveness probing
+
+	// cooldownUntil tracks, per server, the time before which a reconnect must not
+	// be re-attempted after a failed reconnect. reconnecting tracks servers with a
+	// reconnect in flight (for Status). Both guarded by cooldownMu.
+	cooldownMu    sync.Mutex
+	cooldownUntil map[string]time.Time
+	reconnecting  map[string]bool
+	probeWg       sync.WaitGroup // tracks liveness-probe goroutines
 }
+
+// Default resilience tuning, used when config leaves a value at 0.
+const (
+	defaultReconnectCooldown = 30 * time.Second
+	defaultCallTimeout       = 5 * time.Minute
+)
 
 // NewManager creates a new MCP manager
 func NewManager() *Manager {
 	return &Manager{
-		servers: make(map[string]*ServerConnection),
+		servers:           make(map[string]*ServerConnection),
+		cooldownUntil:     make(map[string]time.Time),
+		reconnecting:      make(map[string]bool),
+		reconnectCooldown: defaultReconnectCooldown,
+		callTimeout:       defaultCallTimeout,
 	}
+}
+
+// applyTuning updates the resilience knobs from config. A zero value keeps the
+// existing default; probeInterval mirrors the config directly so a value of 0
+// disables probing. Called before (re)connecting so new connections pick up the
+// current settings.
+func (m *Manager) applyTuning(mcpCfg config.MCPConfig) {
+	if mcpCfg.ReconnectCooldownSeconds > 0 {
+		m.reconnectCooldown = time.Duration(mcpCfg.ReconnectCooldownSeconds) * time.Second
+	}
+	if mcpCfg.CallTimeoutSeconds > 0 {
+		m.callTimeout = time.Duration(mcpCfg.CallTimeoutSeconds) * time.Second
+	}
+	m.probeInterval = time.Duration(mcpCfg.LivenessProbeSeconds) * time.Second
 }
 
 // LoadFromConfig loads MCP servers from configuration
@@ -117,6 +159,8 @@ func (m *Manager) LoadFromMCPConfig(
 	mcpCfg config.MCPConfig,
 	workspacePath string,
 ) error {
+	m.applyTuning(mcpCfg)
+
 	if len(mcpCfg.Servers) == 0 {
 		logger.InfoCF("mcp", "No MCP servers configured", nil)
 		return nil
@@ -402,15 +446,26 @@ func (m *Manager) ConnectServer(
 			map[string]any{"server": name, "toolCount": len(tools)})
 	}
 
-	// Store connection
+	// Store connection. Guard against a concurrent Close so a reconnect racing
+	// shutdown can't resurrect a server on a closed manager (and leak a probe).
 	m.mu.Lock()
-	m.servers[name] = &ServerConnection{
+	if m.closed.Load() {
+		m.mu.Unlock()
+		_ = c.Close()
+		terminateStdioProcessTree(stdioCmd)
+		return fmt.Errorf("manager is closed")
+	}
+	conn := &ServerConnection{
 		Name:   name,
 		Client: c,
 		Tools:  tools,
 		cfg:    cfg,
 		cmd:    stdioCmd,
 	}
+	if m.probeInterval > 0 {
+		conn.probeStop = m.startProbe(name)
+	}
+	m.servers[name] = conn
 	m.mu.Unlock()
 
 	return nil
@@ -454,6 +509,9 @@ func (m *Manager) disconnect(name string) {
 	if !ok {
 		return
 	}
+	if conn.probeStop != nil {
+		close(conn.probeStop)
+	}
 	if err := conn.Client.Close(); err != nil {
 		logger.WarnCF("mcp", "Failed to close MCP server connection",
 			map[string]any{"server": name, "error": err.Error()})
@@ -473,6 +531,8 @@ func (m *Manager) Sync(
 	mcpCfg config.MCPConfig,
 	workspacePath string,
 ) error {
+	m.applyTuning(mcpCfg)
+
 	// Desired = enabled servers, envFile resolved the same way the initial load
 	// resolves it so change-detection compares like with like.
 	desired := make(map[string]config.MCPServerConfig, len(mcpCfg.Servers))
@@ -550,15 +610,49 @@ func (m *Manager) CallTool(
 	}
 	defer m.wg.Done()
 
+	// Backstop: if the caller supplied no deadline, cap the call so a hung server
+	// cannot block forever. A caller-provided deadline is always honored as-is.
+	callCtx := ctx
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline && m.callTimeout > 0 {
+		var cancel context.CancelFunc
+		callCtx, cancel = context.WithTimeout(ctx, m.callTimeout)
+		defer cancel()
+	}
+
 	req := mcp.CallToolRequest{}
 	req.Params.Name = toolName
 	req.Params.Arguments = arguments
 
-	result, err := conn.Client.CallTool(ctx, req)
-	if err != nil {
+	result, err := conn.Client.CallTool(callCtx, req)
+	if err == nil {
+		return result, nil
+	}
+
+	// Only a connection-level failure (the session dropped) is retried — a normal
+	// tool error is returned as-is so a side-effecting call is never re-run after
+	// the server may already have processed it.
+	if !isConnectionError(err) {
 		return nil, fmt.Errorf("failed to call tool: %w", err)
 	}
 
+	logger.WarnCF("mcp", "MCP tool call failed on a dropped connection; reconnecting and retrying once",
+		map[string]any{"server": serverName, "tool": toolName, "error": err.Error()})
+
+	if rerr := m.reconnect(callCtx, serverName, conn.cfg); rerr != nil {
+		return nil, fmt.Errorf("failed to call tool (reconnect failed): %w", errors.Join(err, rerr))
+	}
+
+	m.mu.RLock()
+	newConn, ok := m.servers[serverName]
+	m.mu.RUnlock()
+	if !ok {
+		return nil, fmt.Errorf("failed to call tool: server %s unavailable after reconnect", serverName)
+	}
+
+	result, err = newConn.Client.CallTool(callCtx, req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call tool (after reconnect): %w", err)
+	}
 	return result, nil
 }
 
@@ -573,6 +667,19 @@ func (m *Manager) Close() error {
 	// Wait for all in-flight CallTool calls to finish before closing sessions
 	// After closed=true is set, no new CallTool can start (they check closed first)
 	m.wg.Wait()
+
+	// Signal every liveness-probe goroutine to stop, then wait for them to exit
+	// before tearing down clients. A probe mid-reconnect sees closed==true and bails
+	// (ConnectServer/reconnect both check it), so no server is resurrected here.
+	m.mu.Lock()
+	for _, conn := range m.servers {
+		if conn.probeStop != nil {
+			close(conn.probeStop)
+			conn.probeStop = nil
+		}
+	}
+	m.mu.Unlock()
+	m.probeWg.Wait()
 
 	m.mu.Lock()
 	defer m.mu.Unlock()

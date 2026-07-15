@@ -414,6 +414,9 @@ func setupAndStartServices(
 	// mint/revoke operations mutate the exact instance the message route validates
 	// against (no reload needed for a token to activate/deactivate).
 	services.WebServer.APIHandler().SetMessageTokenLoop(agentLoop)
+	// Expose the live outbound-MCP connection state to the WebUI MCP page. Reads the
+	// same manager the agent loop owns (reused in place across reloads).
+	services.WebServer.APIHandler().SetMCPStatusLoop(agentLoop)
 	// Let the WebUI QR pairing panel reach a live secmsg channel by name so it can
 	// drive device linking on the running instance (resolved lazily to survive a
 	// Manager rebuild on reload).

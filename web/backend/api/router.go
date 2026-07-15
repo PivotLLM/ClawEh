@@ -26,6 +26,9 @@ type Handler struct {
 	// so the WebUI QR pairing panel can reach the running channel instance
 	// (injected via SetSecMsgLinker). Guarded by reloadMu like the fields above.
 	secmsgLinker SecMsgLinkerLookup
+	// mcpStatusLoop is the live AgentLoop the MCP status endpoint reads outbound
+	// connection state from (injected via SetMCPStatusLoop). Guarded by reloadMu.
+	mcpStatusLoop mcpStatusLoop
 }
 
 // SetReloadTrigger wires the gateway's force-reload function into the handler so
@@ -88,6 +91,9 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 
 	// SecMsg (secure-messaging daemon) device linking / QR pairing
 	h.registerSecMsgRoutes(mux)
+
+	// Outbound MCP client connection status (live health of external servers)
+	h.registerMCPStatusRoutes(mux)
 
 	// Skills and tools support/actions
 	h.registerSkillRoutes(mux)

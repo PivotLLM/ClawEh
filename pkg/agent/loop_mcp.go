@@ -63,6 +63,18 @@ func (r *mcpRuntime) hasManager() bool {
 	return r.manager != nil
 }
 
+// MCPStatus returns the live connection status of every outbound MCP server the
+// loop's manager currently knows about (connected / reconnecting / cooldown).
+// Returns nil when MCP is disabled or not yet initialized; callers merge this
+// against configured servers to show never-connected ones as disconnected.
+func (al *AgentLoop) MCPStatus() []mcp.ServerStatus {
+	mgr := al.mcp.peekManager()
+	if mgr == nil {
+		return nil
+	}
+	return mgr.Status()
+}
+
 // ensureMCPInitialized loads MCP servers/tools exactly once (the startup path),
 // so both Run() and direct agent mode share one initialization. Config reloads
 // use ReinitMCP, which bypasses the once-guard.
