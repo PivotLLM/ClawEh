@@ -1473,11 +1473,19 @@ func primaryLANIP() string {
 
 type ToolDiscoveryConfig struct {
 	// Enabled is the single global switch for progressive tool discovery, applied
-	// uniformly to every agent and the MCP host. Default OFF. When on,
+	// uniformly to every agent's IN-LOOP tool list. Default OFF. When on,
 	// discovery-eligible tools (the fusion and maestro suites and all upstream MCP
 	// tools) are hidden behind the search_tools / get_tool_details meta-tools;
-	// native tools and the cogmem suite stay always-on.
+	// native tools and the cogmem suite stay always-on. The MCP host is never
+	// subject to discovery — external clients always receive the full tool list.
 	Enabled bool `json:"enabled" env:"CLAW_TOOLS_DISCOVERY_ENABLED"`
+	// AlwaysShownNamespaces pins discovery-eligible tool namespaces (matched by
+	// MatchVisibility: "file", "maestro", "fusion", a "<server>" for an upstream MCP
+	// server, or "*") so they stay in the in-loop model's tool list even when
+	// discovery is on, instead of being hidden behind search_tools /
+	// get_tool_details. Native tools and cogmem are always shown by rule and need
+	// not be listed. Empty pins nothing; only consulted when Enabled is true.
+	AlwaysShownNamespaces []string `json:"always_shown_namespaces,omitempty"`
 	// TTLMax is the longest a revealed tool stays visible without being used, in
 	// turns; each use resets it. A tool idle this many turns is hidden again.
 	TTLMax int `json:"ttl_max" env:"CLAW_TOOLS_DISCOVERY_TTL_MAX"`
@@ -1737,15 +1745,15 @@ type MCPHostConfig struct {
 	// prefix or glob needed). "*" exposes everything; empty exposes nothing.
 	InternalTools []string `json:"internal_tools,omitempty"`
 	ExternalTools []string `json:"external_tools,omitempty"`
-	// AlwaysShownNamespaces lists EXTRA tool namespaces (the prefix before the
-	// first underscore, e.g. "file", "session", "trello") to keep in the host's
-	// tools/list when progressive discovery is on. Everything else is progressive:
-	// hidden from tools/list and reached via search_tools / get_tool_details, which
-	// reveal a tool to the calling session on demand. The search_tools /
-	// get_tool_details meta-tools and the cogmem namespace are always shown by rule
-	// (cognitive memory is fundamental), so they need not be listed here. Only
-	// consulted when tools.discovery.enabled is true.
-	AlwaysShownNamespaces []string `json:"always_shown_namespaces,omitempty"`
+}
+
+// AlwaysShownNamespaces returns the discovery-eligible tool namespaces pinned to
+// stay visible to the in-loop model under progressive discovery. Nil-safe.
+func (c *Config) AlwaysShownNamespaces() []string {
+	if c == nil {
+		return nil
+	}
+	return c.Tools.Discovery.AlwaysShownNamespaces
 }
 
 func LoadConfig(path string) (*Config, error) {

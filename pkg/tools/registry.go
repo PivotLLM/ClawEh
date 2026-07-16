@@ -335,6 +335,23 @@ func (r *ToolRegistry) Get(name string) (Tool, bool) {
 	return entry.Tool, true
 }
 
+// GetForHost resolves a registered tool by name REGARDLESS of progressive-
+// discovery visibility (TTL). Progressive discovery is a model-context
+// optimization for the in-loop path only; it must never gate the MCP host, where
+// an external client asks for the full tool list and calls whatever it is
+// authorized for. Authorization on the host path is enforced separately (the ACL
+// policy plus suite/primary-only checks), so this returns any registered tool —
+// visible or currently TTL-hidden. Returns the tool and whether it is registered.
+func (r *ToolRegistry) GetForHost(name string) (Tool, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	entry, ok := r.tools[name]
+	if !ok {
+		return nil, false
+	}
+	return entry.Tool, true
+}
+
 // resolve maps a model-facing tool name to its registry entry. It first tries the
 // internal registry key; on a miss it matches an MCP tool by its ExternalName —
 // the bare "<server>_<tool>" form advertised to models (see ToProviderDefs) — so a
@@ -342,16 +359,23 @@ func (r *ToolRegistry) Get(name string) (Tool, bool) {
 // and gates correctly. Returns the entry, the internal (canonical) name to use for
 // allow-list gating, and whether it resolved. Expired hidden tools do not resolve.
 func (r *ToolRegistry) resolve(name string) (*ToolEntry, string, bool) {
+	return r.resolveWith(name, false)
+}
+
+// resolveWith is resolve with an ignoreTTL switch. The host path passes true so a
+// discovery-hidden (TTL-expired) tool still resolves for execution — progressive
+// discovery never gates the MCP host; authorization there is the ACL policy.
+func (r *ToolRegistry) resolveWith(name string, ignoreTTL bool) (*ToolEntry, string, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	if entry, ok := r.tools[name]; ok {
-		if !entry.IsCore && entry.TTL <= 0 {
+		if !ignoreTTL && !entry.IsCore && entry.TTL <= 0 {
 			return nil, "", false
 		}
 		return entry, name, true
 	}
 	for internal, entry := range r.tools {
-		if !entry.IsCore && entry.TTL <= 0 {
+		if !ignoreTTL && !entry.IsCore && entry.TTL <= 0 {
 			continue
 		}
 		if en, ok := entry.Tool.(ExternalNamer); ok && en.ExternalName() == name {
@@ -409,13 +433,6 @@ func (r *ToolRegistry) revealTool(name string, ttl, visibleBudget int) (schema m
 	return ToolToSchema(tool), advertisedName(tool, in), in, true
 }
 
-// RevealTool is the exported form the MCP host uses to unlock a hidden tool for a
-// session: it promotes the tool (and its reveal-together group, pruned to the
-// visible budget) and returns its schema, advertised name, and internal name.
-func (r *ToolRegistry) RevealTool(name string, ttl, visibleBudget int) (schema map[string]any, advertised, internal string, ok bool) {
-	return r.revealTool(name, ttl, visibleBudget)
-}
-
 func (r *ToolRegistry) Execute(ctx context.Context, name string, args map[string]any) *ToolResult {
 	return r.ExecuteWithContext(ctx, name, args, "", "", nil)
 }
@@ -442,6 +459,32 @@ func (r *ToolRegistry) ExecuteWithContext(
 	channel, chatID string,
 	asyncCallback AsyncCallback,
 ) *ToolResult {
+	return r.executeWithContext(ctx, name, args, channel, chatID, asyncCallback, false)
+}
+
+// ExecuteForHost is ExecuteWithContext for the MCP host path: it resolves the
+// tool regardless of progressive-discovery TTL state, since discovery must never
+// gate the host. Authorization is enforced by the caller's ACL policy; this is
+// not an access-control bypass. The in-loop ExecuteWithContext keeps TTL-gated
+// resolution.
+func (r *ToolRegistry) ExecuteForHost(
+	ctx context.Context,
+	name string,
+	args map[string]any,
+	channel, chatID string,
+	asyncCallback AsyncCallback,
+) *ToolResult {
+	return r.executeWithContext(ctx, name, args, channel, chatID, asyncCallback, true)
+}
+
+func (r *ToolRegistry) executeWithContext(
+	ctx context.Context,
+	name string,
+	args map[string]any,
+	channel, chatID string,
+	asyncCallback AsyncCallback,
+	ignoreTTL bool,
+) *ToolResult {
 	// Tool arguments are intentionally NOT logged: they routinely contain memory
 	// content, file contents, and other user data that must not leak into logs.
 	logger.InfoCF("tool", "Tool execution started",
@@ -451,7 +494,7 @@ func (r *ToolRegistry) ExecuteWithContext(
 
 	// Resolve first so the model may call an MCP tool by its bare ExternalName
 	// (the name it is advertised under) as well as the internal registry key.
-	entry, canonical, ok := r.resolve(name)
+	entry, canonical, ok := r.resolveWith(name, ignoreTTL)
 	if !ok {
 		logger.ErrorCF("tool", "Tool not found",
 			map[string]any{

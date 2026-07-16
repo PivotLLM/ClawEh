@@ -10,9 +10,10 @@ export interface MCPHostForm {
   internalToolPatterns: string[]
   externalToolPatterns: string[]
   // Progressive tool discovery. discoveryEnabled is the global switch
-  // (tools.discovery.enabled). alwaysShownNamespaces are EXTRA namespaces kept in
-  // tools/list when it's on (search_tools/get_tool_details and cogmem are always
-  // shown by rule).
+  // (tools.discovery.enabled). alwaysShownNamespaces (tools.discovery.
+  // always_shown_namespaces) pins EXTRA namespaces to stay visible to the in-loop
+  // model when it's on (native tools, search_tools/get_tool_details, and cogmem
+  // are always shown by rule).
   discoveryEnabled: boolean
   // ttlMax: turns a revealed tool stays visible without use (reset on use).
   // visibleBudget: max revealed tools before lowest-TTL-first pruning kicks in.
@@ -124,7 +125,10 @@ export function buildMCPFormFromConfig(config: unknown): MCPHostForm {
     // Honor the legacy "ttl" key as a fallback so an older config still displays.
     ttlMax: asNumber(discovery.ttl_max ?? discovery.ttl, EMPTY_MCP_FORM.ttlMax),
     visibleBudget: asNumber(discovery.visible_budget, EMPTY_MCP_FORM.visibleBudget),
-    alwaysShownNamespaces: asStringArray(mcp.always_shown_namespaces, EMPTY_MCP_FORM.alwaysShownNamespaces),
+    alwaysShownNamespaces: asStringArray(
+      discovery.always_shown_namespaces,
+      EMPTY_MCP_FORM.alwaysShownNamespaces,
+    ),
     reconnectCooldownSeconds: asNumber(
       mcpClient.reconnect_cooldown_seconds,
       EMPTY_MCP_FORM.reconnectCooldownSeconds,

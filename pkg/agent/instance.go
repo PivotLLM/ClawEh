@@ -52,6 +52,13 @@ type AgentInstance struct {
 	// maestro suites, all upstream MCP) are hidden behind search_tools /
 	// get_tool_details; native tools and cogmem stay always-on.
 	DiscoveryActive bool
+
+	// AlwaysShownNamespaces pins discovery-eligible tool namespaces to always stay
+	// in the model's tool list even when DiscoveryActive is true (matched by
+	// config.MatchVisibility). Set from config alongside DiscoveryActive; read by
+	// both the suite path and loop_mcp so a pinned maestro/fusion/MCP tool is
+	// registered visible (core) instead of hidden. Empty pins nothing.
+	AlwaysShownNamespaces []string
 }
 
 // NewAgentInstance creates an agent instance from config.

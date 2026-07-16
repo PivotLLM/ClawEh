@@ -96,7 +96,6 @@ export function MCPPage() {
         endpoint_path: f.endpointPath.trim(),
         internal_tools: clean(f.internalToolPatterns),
         external_tools: clean(f.externalToolPatterns),
-        always_shown_namespaces: clean(f.alwaysShownNamespaces),
       }
     }
     // tools.discovery.enabled (global switch) and tools.mcp.servers are both under
@@ -107,6 +106,7 @@ export function MCPPage() {
         enabled: f.discoveryEnabled,
         ttl_max: f.ttlMax,
         visible_budget: f.visibleBudget,
+        always_shown_namespaces: clean(f.alwaysShownNamespaces),
       }
     }
     // Client resilience knobs (tools.mcp.*) always save, independent of server

@@ -238,11 +238,11 @@ export function DiscoverySection({
   return (
     <SectionCard
       title="Progressive Tool Discovery"
-      description="Hide most tools behind a search so agents and MCP clients start with a small set and load tools on demand. Global switch, off by default."
+      description="Hide most tools behind a search so the in-loop model starts with a small set and loads tools on demand. Global switch, off by default. MCP clients (CLI providers) always receive the full tool list and are never affected."
     >
       <SwitchCardField
         label="Enable progressive discovery"
-        hint="When on, the fusion/maestro suites and upstream MCP tools are hidden and found via search_tools / get_tool_details. Native tools stay in each agent's own context; the MCP host's tools/list shows only the always-shown namespaces below (plus search + cogmem)."
+        hint="When on, the fusion/maestro suites and upstream MCP tools are hidden from the in-loop model and found via search_tools / get_tool_details. Native tools and cogmem stay always visible; pin extra namespaces below to keep them shown. The MCP host is never subject to discovery — external clients always get the full list."
         checked={discoveryEnabled}
         onCheckedChange={(checked) => onFieldChange("discoveryEnabled", checked)}
       />
@@ -273,15 +273,18 @@ export function DiscoverySection({
             />
           </Field>
           <div className="text-muted-foreground text-xs">
-            Extra namespaces always shown in the MCP host&apos;s tools/list.
-            search_tools, get_tool_details, and cogmem are always shown by rule;
-            add more here (e.g. &quot;file&quot;, &quot;session&quot;). Everything
-            else is discovered on demand.
+            Pinned namespaces: discovery-eligible tools whose namespace is listed
+            here stay visible to the model instead of being hidden behind search.
+            Native tools, cogmem, and the search meta-tools are always shown by
+            rule; add more here (e.g. &quot;maestro&quot;, &quot;fusion&quot;,
+            &quot;file&quot;). Everything else is discovered on demand.
           </div>
           <div className="space-y-2">
             {alwaysShownNamespaces.length === 0 ? (
               <div className="text-muted-foreground text-xs italic">
-                Only search_tools, get_tool_details, and cogmem are shown up front.
+                Nothing pinned: only native tools, cogmem, and the search
+                meta-tools stay visible up front; everything else is discovered on
+                demand.
               </div>
             ) : (
               alwaysShownNamespaces.map((ns, idx) => (

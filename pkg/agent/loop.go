@@ -791,6 +791,7 @@ func (al *AgentLoop) registerRuntimeTools(
 		// (and MCP tools, in loop_mcp) are hidden behind search_tools.
 		discovery := cfg.Tools.Discovery.Enabled
 		currentAgent.DiscoveryActive = discovery
+		currentAgent.AlwaysShownNamespaces = cfg.AlwaysShownNamespaces()
 		if currentAgent.ContextBuilder != nil {
 			currentAgent.ContextBuilder.WithToolDiscovery(discovery)
 		}
@@ -812,9 +813,11 @@ func (al *AgentLoop) registerRuntimeTools(
 					}
 				case suite == suiteCogmem:
 					currentAgent.Tools.RegisterSuite(t) // cogmem: always-on, never hidden
-				case discovery:
+				case discoveryHidesTool(discovery, currentAgent.AlwaysShownNamespaces, t.Name()):
 					// fusion/maestro behind discovery; carry any reveal-together group
 					// (e.g. a fusion service) so the whole set unlocks in one search.
+					// A namespace pinned via always_shown_namespaces skips this and
+					// falls through to RegisterSuite (always visible to the model).
 					if g, ok := t.(tools.DiscoveryGrouped); ok {
 						group, revealTogether := g.DiscoveryGroup()
 						currentAgent.Tools.RegisterSuiteHiddenGroup(t, group, revealTogether)
@@ -822,6 +825,7 @@ func (al *AgentLoop) registerRuntimeTools(
 						currentAgent.Tools.RegisterSuiteHidden(t)
 					}
 				default:
+					// Non-discovery suites, plus discovery-pinned always-shown suites.
 					currentAgent.Tools.RegisterSuite(t)
 				}
 			}
@@ -840,6 +844,14 @@ func (al *AgentLoop) registerRuntimeTools(
 // suiteCogmem is the one suite that is never subject to progressive discovery —
 // cognitive memory is fundamental to how the agent works, so it stays always-on.
 const suiteCogmem = "cogmem"
+
+// discoveryHidesTool reports whether a discovery-eligible tool (a fusion/maestro
+// suite tool or an upstream MCP tool) should be hidden from the in-loop model: it
+// is hidden only when discovery is active AND the tool's namespace is not pinned
+// via always_shown_namespaces. A pinned namespace keeps the tool always visible.
+func discoveryHidesTool(active bool, alwaysShown []string, toolName string) bool {
+	return active && !config.MatchVisibility(alwaysShown, toolName)
+}
 
 // registerDiscoveryMetaTools registers the search_tools / get_tool_details entry
 // points. They are suite-exempt (gated by the discovery decision, not the per-tool

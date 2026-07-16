@@ -235,7 +235,8 @@ func (al *AgentLoop) registerMCPToolsFromManager(mgr *mcp.Manager) error {
 				// MCP tools are discovery-eligible: when the agent's effective
 				// discovery is on (decided during provider registration and stored on
 				// the instance), hide them behind search_tools; otherwise advertise.
-				if agent.DiscoveryActive {
+				// A namespace pinned via always_shown_namespaces stays visible.
+				if discoveryHidesTool(agent.DiscoveryActive, agent.AlwaysShownNamespaces, mcpTool.Name()) {
 					// Group by server so a reveal-together server unlocks as a set.
 					agent.Tools.RegisterHiddenGroup(mcpTool, serverName, conn.RevealTogether())
 				} else {
