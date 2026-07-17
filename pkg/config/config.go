@@ -1040,9 +1040,30 @@ type SecMsgConfig struct {
 	Enabled bool `json:"enabled"`
 	// Address is the daemon endpoint (host:port) for the secmsg JSON-RPC socket.
 	Address string `json:"address"`
-	// Accounts are the daemon accounts to bind. Empty means a single channel that
-	// auto-selects the daemon's sole linked account.
+	// AllowFrom is the daemon-level allowlist inherited by every account. Accounts
+	// discovered from the daemon (when Accounts is empty) bind with this list; an
+	// explicit account entry with its own AllowFrom overrides it.
+	AllowFrom FlexibleStringSlice `json:"allow_from,omitempty"`
+	// GroupTrigger is the daemon-level group-trigger default inherited by every
+	// account, overridable per explicit account entry.
+	GroupTrigger GroupTriggerConfig `json:"group_trigger,omitempty"`
+	// Accounts optionally pins specific accounts to bind with per-account overrides.
+	// Empty means ClawEh discovers the daemon's linked accounts and binds one
+	// channel per account, each inheriting the daemon-level defaults above.
 	Accounts []SecMsgAccountConfig `json:"accounts,omitempty"`
+}
+
+// WithDefaults returns a copy of the account with daemon-level defaults filled in
+// where the account left them unset. Used both for explicit account entries and
+// for accounts synthesized from daemon discovery.
+func (s SecMsgConfig) WithDefaults(a SecMsgAccountConfig) SecMsgAccountConfig {
+	if len(a.AllowFrom) == 0 {
+		a.AllowFrom = s.AllowFrom
+	}
+	if !a.GroupTrigger.MentionOnly && len(a.GroupTrigger.Prefixes) == 0 {
+		a.GroupTrigger = s.GroupTrigger
+	}
+	return a
 }
 
 // SecMsgAccountConfig binds one account on a daemon to a ClawEh channel.
@@ -1055,15 +1076,6 @@ type SecMsgAccountConfig struct {
 	Name         string              `json:"name,omitempty"`
 	AllowFrom    FlexibleStringSlice `json:"allow_from,omitempty"`
 	GroupTrigger GroupTriggerConfig  `json:"group_trigger,omitempty"`
-}
-
-// BoundAccounts returns the accounts to start, synthesizing a single
-// auto-selecting account when none are configured.
-func (s SecMsgConfig) BoundAccounts() []SecMsgAccountConfig {
-	if len(s.Accounts) == 0 {
-		return []SecMsgAccountConfig{{}}
-	}
-	return s.Accounts
 }
 
 // ChannelName returns the routing identifier for this account's channel.

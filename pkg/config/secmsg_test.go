@@ -24,16 +24,33 @@ func TestSecMsgAccountChannelName(t *testing.T) {
 	}
 }
 
-func TestSecMsgBoundAccounts(t *testing.T) {
-	// An empty accounts list synthesizes a single auto-selecting account so a
-	// minimal daemon config still yields one channel.
-	empty := SecMsgConfig{Name: "signal"}.BoundAccounts()
-	if len(empty) != 1 || empty[0].Account != "" {
-		t.Fatalf("empty accounts should synthesize one auto-select account, got %+v", empty)
+func TestSecMsgWithDefaults(t *testing.T) {
+	daemon := SecMsgConfig{
+		Name:         "signal",
+		AllowFrom:    FlexibleStringSlice{"+15551112222"},
+		GroupTrigger: GroupTriggerConfig{MentionOnly: true},
 	}
 
-	two := SecMsgConfig{Accounts: []SecMsgAccountConfig{{Account: "droid1"}, {Account: "droid2"}}}.BoundAccounts()
-	if len(two) != 2 {
-		t.Fatalf("expected 2 accounts, got %d", len(two))
+	// An account that sets nothing inherits the daemon-level defaults — this is
+	// the shape a discovered account arrives in.
+	inherited := daemon.WithDefaults(SecMsgAccountConfig{Account: "droid1"})
+	if len(inherited.AllowFrom) != 1 || inherited.AllowFrom[0] != "+15551112222" {
+		t.Errorf("allow_from not inherited: %+v", inherited.AllowFrom)
+	}
+	if !inherited.GroupTrigger.MentionOnly {
+		t.Errorf("group_trigger not inherited: %+v", inherited.GroupTrigger)
+	}
+
+	// An account with its own values overrides the daemon defaults.
+	override := daemon.WithDefaults(SecMsgAccountConfig{
+		Account:      "droid2",
+		AllowFrom:    FlexibleStringSlice{"+15553334444"},
+		GroupTrigger: GroupTriggerConfig{Prefixes: []string{"!"}},
+	})
+	if len(override.AllowFrom) != 1 || override.AllowFrom[0] != "+15553334444" {
+		t.Errorf("allow_from override lost: %+v", override.AllowFrom)
+	}
+	if override.GroupTrigger.MentionOnly || len(override.GroupTrigger.Prefixes) != 1 {
+		t.Errorf("group_trigger override lost: %+v", override.GroupTrigger)
 	}
 }

@@ -10,4 +10,5 @@ func init() {
 	channels.RegisterSecMsgFactory(func(daemon config.SecMsgConfig, account config.SecMsgAccountConfig, b *bus.MessageBus) (channels.Channel, error) {
 		return NewFromConfig(daemon, account, b)
 	})
+	channels.RegisterSecMsgDiscovery(DiscoverAccounts)
 }

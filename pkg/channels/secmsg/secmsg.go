@@ -41,6 +41,41 @@ const maxMessageLen = 2000
 // dialTimeout bounds a single connect/handshake attempt.
 const dialTimeout = 30 * time.Second
 
+// discoveryTimeout bounds the one-shot dial+StatusAll used to enumerate a
+// daemon's accounts at channel-manager init. Kept short so a daemon that is down
+// at startup does not stall boot; on failure the manager logs and skips the
+// daemon, picking its accounts up on the next reload.
+const discoveryTimeout = 5 * time.Second
+
+// DiscoverAccounts dials the daemon at address, reads its account status, and
+// returns the ids of every linked account. Used by the channel manager to bind
+// one channel per account when no accounts are pinned in config.
+func DiscoverAccounts(ctx context.Context, address string) ([]string, error) {
+	if address == "" {
+		return nil, fmt.Errorf("secmsg: address is required")
+	}
+	ctx, cancel := context.WithTimeout(ctx, discoveryTimeout)
+	defer cancel()
+
+	cl, err := smclient.Dial(address, smclient.WithTimeout(discoveryTimeout))
+	if err != nil {
+		return nil, fmt.Errorf("dial: %w", err)
+	}
+	defer cl.Close()
+
+	all, err := cl.StatusAll(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("status: %w", err)
+	}
+	var linked []string
+	for _, s := range all.Accounts {
+		if s.Linked {
+			linked = append(linked, s.Account)
+		}
+	}
+	return linked, nil
+}
+
 // SecMsgChannel is one connection to one account on one secmsg daemon. A daemon
 // hosting several accounts yields one channel (and one connection) per account.
 type SecMsgChannel struct {

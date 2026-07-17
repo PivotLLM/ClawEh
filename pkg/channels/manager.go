@@ -364,8 +364,10 @@ func (m *Manager) initTelegramBot(bot config.TelegramBotConfig) {
 	})
 }
 
-// initSecMsg initializes each configured account on a secure-messaging daemon
-// as its own channel.
+// initSecMsg initializes each account on a secure-messaging daemon as its own
+// channel. When the daemon config pins no accounts, ClawEh discovers the daemon's
+// linked accounts and binds one channel per account, each inheriting the
+// daemon-level allow_from / group_trigger defaults.
 func (m *Manager) initSecMsg(cfg config.SecMsgConfig) {
 	f, ok := getSecMsgFactory()
 	if !ok {
@@ -375,9 +377,13 @@ func (m *Manager) initSecMsg(cfg config.SecMsgConfig) {
 		return
 	}
 
-	for _, account := range cfg.BoundAccounts() {
+	accounts := m.resolveSecMsgAccounts(cfg)
+
+	for _, account := range accounts {
 		channelName := account.ChannelName(cfg)
 		displayName := "SecMsg (" + channelName + ")"
+
+		warnEmptyAllowFrom(displayName, account.AllowFrom)
 
 		ch, err := f(cfg, account, m.bus)
 		if err != nil {
@@ -404,6 +410,54 @@ func (m *Manager) initSecMsg(cfg config.SecMsgConfig) {
 	}
 }
 
+// resolveSecMsgAccounts returns the accounts to bind for a daemon, applying
+// daemon-level defaults. Pinned accounts are honored as-is; otherwise ClawEh
+// discovers the daemon's linked accounts. A discovery failure (daemon down)
+// binds nothing — the accounts are picked up on the next reload once reachable.
+func (m *Manager) resolveSecMsgAccounts(cfg config.SecMsgConfig) []config.SecMsgAccountConfig {
+	if len(cfg.Accounts) > 0 {
+		out := make([]config.SecMsgAccountConfig, len(cfg.Accounts))
+		for i, a := range cfg.Accounts {
+			out[i] = cfg.WithDefaults(a)
+		}
+		return out
+	}
+
+	discover, ok := getSecMsgDiscovery()
+	if !ok {
+		// No discovery registered: fall back to a single auto-selecting channel.
+		return []config.SecMsgAccountConfig{cfg.WithDefaults(config.SecMsgAccountConfig{})}
+	}
+
+	ids, err := discover(context.Background(), cfg.Address)
+	if err != nil {
+		logger.WarnCF("channels", "SecMsg account discovery failed — binding no accounts (will retry on reload)", map[string]any{
+			"channel": "SecMsg (" + cfg.Name + ")",
+			"address": cfg.Address,
+			"error":   err.Error(),
+		})
+		return nil
+	}
+	if len(ids) == 0 {
+		logger.WarnCF("channels", "SecMsg daemon has no linked accounts — link one via the WebUI", map[string]any{
+			"channel": "SecMsg (" + cfg.Name + ")",
+			"address": cfg.Address,
+		})
+		return nil
+	}
+
+	out := make([]config.SecMsgAccountConfig, len(ids))
+	for i, id := range ids {
+		out[i] = cfg.WithDefaults(config.SecMsgAccountConfig{Account: id})
+	}
+	logger.InfoCF("channels", "SecMsg accounts discovered", map[string]any{
+		"channel":  "SecMsg (" + cfg.Name + ")",
+		"address":  cfg.Address,
+		"accounts": ids,
+	})
+	return out
+}
+
 // warnEmptyAllowFrom logs a warning when a channel is enabled with an empty allow_from list.
 // An empty list now means nobody is allowed — this is almost certainly a misconfiguration.
 func warnEmptyAllowFrom(displayName string, allowFrom []string) {
@@ -425,9 +479,6 @@ func (m *Manager) initChannels() error {
 
 	for _, sm := range m.config.Channels.SecMsg {
 		if sm.Enabled && sm.Address != "" {
-			for _, account := range sm.BoundAccounts() {
-				warnEmptyAllowFrom("SecMsg ("+account.ChannelName(sm)+")", account.AllowFrom)
-			}
 			m.initSecMsg(sm)
 		}
 	}
