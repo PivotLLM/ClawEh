@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 
-import { getAppConfig, patchAppConfig } from "@/api/channels"
+import { getAppConfig, getSecMsgAccounts, patchAppConfig } from "@/api/channels"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -22,6 +22,10 @@ interface Binding {
     peer?: { kind: string; id: string }
   }
   agent_mentions?: string[]
+  // raw is the original config object for this binding, preserved so a save
+  // round-trips fields the UI does not model (default, deliver_to,
+  // deliver_peer_kind, group_trigger, …). Absent for bindings added in the UI.
+  raw?: Record<string, unknown>
 }
 
 // ── config parsers ──────────────────────────────────────────────────────────
@@ -48,8 +52,16 @@ function parseBindings(cfg: unknown): Binding[] {
           : undefined,
       },
       agent_mentions: mentionsRaw.length > 0 ? mentionsRaw : undefined,
+      raw: r,
     }
   })
+}
+
+// secmsgChannelName mirrors config.SecMsgAccountConfig.ChannelName so binding
+// options match the channel names the backend registers per account.
+function secmsgChannelName(daemonName: string, account: string): string {
+  const base = daemonName === "" ? "secmsg" : daemonName
+  return account === "" ? base : `${base}-${account}`
 }
 
 function parseChannelNames(cfg: unknown): string[] {
@@ -71,6 +83,22 @@ function parseChannelNames(cfg: unknown): string[] {
 
   for (const name of ["webui", "slack", "discord", "matrix", "line"]) {
     if (asRecord(channels[name]).enabled === true) names.push(name)
+  }
+
+  // secmsg: one channel per account on each enabled daemon. Pinned accounts come
+  // from config here; discovered accounts are merged in later via a live query
+  // (see loadData), since they are not enumerated in config.
+  for (const d of asArray(channels.secmsg)) {
+    const daemon = asRecord(d)
+    if (daemon.enabled === false || asString(daemon.address) === "") continue
+    const daemonName = asString(daemon.name)
+    for (const a of asArray(daemon.accounts)) {
+      const acct = asRecord(a)
+      const name =
+        asString(acct.name) ||
+        secmsgChannelName(daemonName, asString(acct.account))
+      if (name) names.push(name)
+    }
   }
 
   return names
@@ -123,6 +151,33 @@ export function BindingsPage() {
   const [addPeerId, setAddPeerId] = useState("")
   const [addMentions, setAddMentions] = useState("")
 
+  // mergeSecMsgChannels queries each enabled secmsg daemon for its live accounts
+  // and folds the discovered channel names into the options. Discovered accounts
+  // are not in config, so config parsing alone can't surface them; a daemon
+  // that's offline is simply skipped.
+  const mergeSecMsgChannels = useCallback(async (cfg: unknown) => {
+    const daemons = asArray(asRecord(asRecord(cfg).channels).secmsg)
+      .map(asRecord)
+      .filter((d) => d.enabled !== false && asString(d.address) !== "")
+    const discovered: string[] = []
+    await Promise.all(
+      daemons.map(async (d) => {
+        const daemonName = asString(d.name)
+        try {
+          const r = await getSecMsgAccounts(daemonName || "secmsg")
+          for (const acct of r.accounts) {
+            discovered.push(secmsgChannelName(daemonName, acct))
+          }
+        } catch {
+          // Daemon unreachable — skip; pinned accounts (if any) are still listed.
+        }
+      }),
+    )
+    if (discovered.length > 0) {
+      setChannels((prev) => Array.from(new Set([...prev, ...discovered])).sort())
+    }
+  }, [])
+
   const loadData = useCallback(async () => {
     setLoading(true)
     try {
@@ -131,12 +186,13 @@ export function BindingsPage() {
       setChannels(parseChannelNames(cfg))
       setAgents(parseAgentIds(cfg))
       setFetchError("")
+      void mergeSecMsgChannels(cfg)
     } catch (e) {
       setFetchError(e instanceof Error ? e.message : "Failed to load")
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [mergeSecMsgChannels])
 
   useEffect(() => { void loadData() }, [loadData])
 
@@ -152,20 +208,31 @@ export function BindingsPage() {
     setSaving(label)
     try {
       await patchAppConfig({
-        bindings: next.map((b) => ({
-          agent_id: b.agent_id,
-          match: {
-            channel: b.match.channel,
-            ...(b.match.peer && b.match.peer.kind !== "none"
-              ? {
-                  peer: b.match.peer.id
-                    ? b.match.peer
-                    : { kind: b.match.peer.kind },
-                }
+        bindings: next.map((b) => {
+          // Preserve fields the UI does not model (default, deliver_to,
+          // deliver_peer_kind, group_trigger, …) by spreading the original
+          // object; match and agent_mentions are UI-owned, so rebuild them.
+          const base = b.raw ? { ...b.raw } : {}
+          delete base.match
+          delete base.agent_mentions
+          return {
+            ...base,
+            agent_id: b.agent_id,
+            match: {
+              channel: b.match.channel,
+              ...(b.match.peer && b.match.peer.kind !== "none"
+                ? {
+                    peer: b.match.peer.id
+                      ? b.match.peer
+                      : { kind: b.match.peer.kind },
+                  }
+                : {}),
+            },
+            ...(b.agent_mentions !== undefined
+              ? { agent_mentions: b.agent_mentions }
               : {}),
-          },
-          ...(b.agent_mentions !== undefined ? { agent_mentions: b.agent_mentions } : {}),
-        })),
+          }
+        }),
       })
       toast.success("Saved")
       await loadData()
