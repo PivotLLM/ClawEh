@@ -132,8 +132,8 @@ github.com/stretchr/testify v1.8.4/go.mod h1:sz/lmYIOXD/1dqDmKjjqLyZ2RngseejIcXl
 github.com/stretchr/testify v1.10.0/go.mod h1:r2ic/lqez/lEtzL7wO/rwa5dbSLXVDPFyf8C91i36aY=
 github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu7U=
 github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
-github.com/tenebris-tech/mlogger v0.0.4 h1:VUIKWzBjfN2aLYIzcLzYOqp/wa9WzFF7ktNhCBEZ38E=
-github.com/tenebris-tech/mlogger v0.0.4/go.mod h1:OzBSmbdvLvIN9w3sfe7RBQK8nsL80RJdSRpMGnYSuSw=
+github.com/tenebris-tech/mlogger v0.0.5 h1:WaM7BryR+kF2ueN+RuXdUmyfKtSn3SVF8OGGRAVOqFo=
+github.com/tenebris-tech/mlogger v0.0.5/go.mod h1:OzBSmbdvLvIN9w3sfe7RBQK8nsL80RJdSRpMGnYSuSw=
 github.com/tenebris-tech/secmsg v0.1.1 h1:nljZdgnTcG9r91+eS8Pc4kQ6hFVLjB7n/s9wXlu5yYo=
 github.com/tenebris-tech/secmsg v0.1.1/go.mod h1:+35jIvDIp9a0dZrG3KUpZzhsV+qtVZnNq9Bjt8GMhvo=
 github.com/tenebris-tech/x2md v0.0.3 h1:L7jr34PGGqZGzs2/nz6qnGCZnIX5X9Hhn67bPjB9pvM=
