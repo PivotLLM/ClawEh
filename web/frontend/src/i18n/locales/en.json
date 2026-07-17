@@ -459,8 +459,9 @@
       "backup_now_failed": "Backup failed"
     },
     "logs": {
-      "clear": "Clear logs",
-      "empty": "Waiting for logs..."
+      "empty": "Waiting for logs...",
+      "lines": "Show",
+      "refresh": "Refresh"
     },
     "mcp": {
       "load_error": "Failed to load configuration. Please refresh and try again.",

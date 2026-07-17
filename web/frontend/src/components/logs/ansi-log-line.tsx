@@ -1,19 +1,20 @@
 import { Fragment, useMemo } from "react"
 
-import { parseAnsiSegments, wrapLogLine } from "@/lib/ansi-log"
+import { parseAnsiSegments } from "@/lib/ansi-log"
 
 type AnsiLogLineProps = {
   line: string
-  wrapColumns: number
 }
 
-export function AnsiLogLine({ line, wrapColumns }: AnsiLogLineProps) {
-  const segments = useMemo(() => {
-    return parseAnsiSegments(wrapLogLine(line, wrapColumns))
-  }, [line, wrapColumns])
+export function AnsiLogLine({ line }: AnsiLogLineProps) {
+  const segments = useMemo(() => parseAnsiSegments(line), [line])
 
+  // whitespace-pre-wrap preserves the log's own spacing and wraps at the
+  // container edge; overflow-wrap:anywhere breaks long unbreakable tokens
+  // (UUIDs) only when they would overflow — no newlines are injected into the
+  // text, so lines stay intact for selection/copy.
   return (
-    <div className="break-normal whitespace-pre-wrap">
+    <div className="whitespace-pre-wrap [overflow-wrap:anywhere]">
       {segments.map((segment, index) => (
         <Fragment key={`${index}-${segment.text.length}`}>
           <span style={segment.style}>{segment.text}</span>
