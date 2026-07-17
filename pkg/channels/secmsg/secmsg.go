@@ -294,10 +294,16 @@ func (c *SecMsgChannel) handleMessage(m schema.MessageParams) {
 		DisplayName: m.From.Name,
 	}
 	// Reject before materializing attachments so disallowed senders cost nothing.
+	// Logged at WARN with the copy-paste-ready canonical ID so an operator can
+	// discover a sender's identifier (services differ: UUID, phone, …) simply by
+	// messaging the account once and reading this line, then adding it to
+	// allow_from.
 	if !c.IsAllowedSender(sender) {
-		logger.DebugCF("secmsg", "Message rejected by allowlist", map[string]any{
-			"channel": c.Name(),
-			"from":    m.From.ID,
+		logger.WarnCF("secmsg", "Message from unauthorized sender — add to allow_from to permit", map[string]any{
+			"channel":      c.Name(),
+			"allow_from":   sender.CanonicalID,
+			"platform_id":  sender.PlatformID,
+			"display_name": sender.DisplayName,
 		})
 		return
 	}
@@ -375,14 +381,34 @@ func (c *SecMsgChannel) Send(ctx context.Context, msg bus.OutboundMessage) error
 
 	if groupID, ok := decodeGroupChatID(msg.ChatID); ok {
 		if err := cl.SendGroupMessage(ctx, service, account, groupID, msg.Content); err != nil {
-			return fmt.Errorf("%w: %v", channels.ErrSendFailed, err)
+			return classifySendErr(err)
 		}
 		return nil
 	}
 	if err := cl.SendMessage(ctx, service, account, msg.ChatID, msg.Content); err != nil {
-		return fmt.Errorf("%w: %v", channels.ErrSendFailed, err)
+		return classifySendErr(err)
 	}
 	return nil
+}
+
+// classifySendErr maps a daemon send error to a channel sentinel. A stealth
+// rejection (the account is receive-only) is an expected operator choice, not a
+// fault, so it maps to ErrReceiveOnly (logged at INFO, no retry); everything
+// else is a permanent ErrSendFailed. The underlying error is preserved in the
+// message for diagnostics.
+func classifySendErr(err error) error {
+	code, ok := smclient.RPCErrorCode(err)
+	return sendErrForCode(err, code, ok)
+}
+
+// sendErrForCode is the pure mapping from a (possibly absent) daemon RPC error
+// code to a channel sentinel, split out so it can be unit-tested without a live
+// daemon error.
+func sendErrForCode(err error, code int, hasCode bool) error {
+	if hasCode && code == schema.ErrCodeStealth {
+		return fmt.Errorf("%w: %v", channels.ErrReceiveOnly, err)
+	}
+	return fmt.Errorf("%w: %v", channels.ErrSendFailed, err)
 }
 
 // decodeGroupChatID reports whether a ChatID targets a group and returns the

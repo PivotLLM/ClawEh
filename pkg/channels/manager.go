@@ -804,7 +804,8 @@ func (m *Manager) sendWithRetry(ctx context.Context, name string, w *channelWork
 		}
 
 		// Permanent failures — don't retry
-		if errors.Is(lastErr, ErrNotRunning) || errors.Is(lastErr, ErrSendFailed) {
+		if errors.Is(lastErr, ErrNotRunning) || errors.Is(lastErr, ErrSendFailed) ||
+			errors.Is(lastErr, ErrReceiveOnly) {
 			break
 		}
 
@@ -830,6 +831,17 @@ func (m *Manager) sendWithRetry(ctx context.Context, name string, w *channelWork
 		case <-ctx.Done():
 			return
 		}
+	}
+
+	// Receive-only rejection is an expected operator choice, not a fault — log it
+	// at INFO so it doesn't read as an error.
+	if errors.Is(lastErr, ErrReceiveOnly) {
+		logger.InfoCF("channels", "Reply suppressed: recipient account is receive-only", map[string]any{
+			"channel": name,
+			"chat_id": msg.ChatID,
+			"detail":  lastErr.Error(),
+		})
+		return
 	}
 
 	// All retries exhausted or permanent failure
@@ -965,7 +977,8 @@ func (m *Manager) sendMediaWithRetry(ctx context.Context, name string, w *channe
 		}
 
 		// Permanent failures — don't retry
-		if errors.Is(lastErr, ErrNotRunning) || errors.Is(lastErr, ErrSendFailed) {
+		if errors.Is(lastErr, ErrNotRunning) || errors.Is(lastErr, ErrSendFailed) ||
+			errors.Is(lastErr, ErrReceiveOnly) {
 			break
 		}
 
@@ -991,6 +1004,17 @@ func (m *Manager) sendMediaWithRetry(ctx context.Context, name string, w *channe
 		case <-ctx.Done():
 			return
 		}
+	}
+
+	// Receive-only rejection is an expected operator choice, not a fault — log it
+	// at INFO so it doesn't read as an error.
+	if errors.Is(lastErr, ErrReceiveOnly) {
+		logger.InfoCF("channels", "Reply suppressed: recipient account is receive-only", map[string]any{
+			"channel": name,
+			"chat_id": msg.ChatID,
+			"detail":  lastErr.Error(),
+		})
+		return
 	}
 
 	// All retries exhausted or permanent failure
