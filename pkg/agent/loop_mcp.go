@@ -63,6 +63,18 @@ func (r *mcpRuntime) hasManager() bool {
 	return r.manager != nil
 }
 
+// MCPStatus returns the live connection status of every outbound MCP server the
+// loop's manager currently knows about (connected / reconnecting / cooldown).
+// Returns nil when MCP is disabled or not yet initialized; callers merge this
+// against configured servers to show never-connected ones as disconnected.
+func (al *AgentLoop) MCPStatus() []mcp.ServerStatus {
+	mgr := al.mcp.peekManager()
+	if mgr == nil {
+		return nil
+	}
+	return mgr.Status()
+}
+
 // ensureMCPInitialized loads MCP servers/tools exactly once (the startup path),
 // so both Run() and direct agent mode share one initialization. Config reloads
 // use ReinitMCP, which bypasses the once-guard.
@@ -223,7 +235,8 @@ func (al *AgentLoop) registerMCPToolsFromManager(mgr *mcp.Manager) error {
 				// MCP tools are discovery-eligible: when the agent's effective
 				// discovery is on (decided during provider registration and stored on
 				// the instance), hide them behind search_tools; otherwise advertise.
-				if agent.DiscoveryActive {
+				// A namespace pinned via always_shown_namespaces stays visible.
+				if discoveryHidesTool(agent.DiscoveryActive, agent.AlwaysShownNamespaces, mcpTool.Name()) {
 					// Group by server so a reveal-together server unlocks as a set.
 					agent.Tools.RegisterHiddenGroup(mcpTool, serverName, conn.RevealTogether())
 				} else {

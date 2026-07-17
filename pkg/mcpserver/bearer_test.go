@@ -115,7 +115,7 @@ func TestEndpointSchemas_DifferByParam(t *testing.T) {
 
 	build := func(mode authMode) string {
 		srv := server.NewMCPServer("t", "0")
-		addToolsToServer(srv, mode, regs, []string{"*"}, st, resolver, nil, acl.Default, nil, nil, discoveryConfig{})
+		addToolsToServer(srv, mode, regs, []string{"*"}, st, resolver, nil, acl.Default, nil, nil)
 		listed := srv.ListTools()
 		tool, ok := listed["read_file"]
 		if !ok {

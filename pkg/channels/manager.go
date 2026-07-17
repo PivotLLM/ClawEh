@@ -364,6 +364,100 @@ func (m *Manager) initTelegramBot(bot config.TelegramBotConfig) {
 	})
 }
 
+// initSecMsg initializes each account on a secure-messaging daemon as its own
+// channel. When the daemon config pins no accounts, ClawEh discovers the daemon's
+// linked accounts and binds one channel per account, each inheriting the
+// daemon-level allow_from / group_trigger defaults.
+func (m *Manager) initSecMsg(cfg config.SecMsgConfig) {
+	f, ok := getSecMsgFactory()
+	if !ok {
+		logger.WarnCF("channels", "SecMsg factory not registered", map[string]any{
+			"channel": "SecMsg (" + cfg.Name + ")",
+		})
+		return
+	}
+
+	accounts := m.resolveSecMsgAccounts(cfg)
+
+	for _, account := range accounts {
+		channelName := account.ChannelName(cfg)
+		displayName := "SecMsg (" + channelName + ")"
+
+		warnEmptyAllowFrom(displayName, account.AllowFrom)
+
+		ch, err := f(cfg, account, m.bus)
+		if err != nil {
+			logger.ErrorCF("channels", "Failed to initialize channel", map[string]any{
+				"channel": displayName,
+				"error":   err.Error(),
+			})
+			continue
+		}
+
+		m.injectChannelDependencies(ch)
+
+		if _, exists := m.channels[channelName]; exists {
+			logger.ErrorCF("channels", "Duplicate channel name — skipping account", map[string]any{
+				"channel": displayName,
+				"name":    channelName,
+			})
+			continue
+		}
+		m.channels[channelName] = ch
+		logger.InfoCF("channels", "Channel enabled successfully", map[string]any{
+			"channel": displayName,
+		})
+	}
+}
+
+// resolveSecMsgAccounts returns the accounts to bind for a daemon, applying
+// daemon-level defaults. Pinned accounts are honored as-is; otherwise ClawEh
+// discovers the daemon's linked accounts. A discovery failure (daemon down)
+// binds nothing — the accounts are picked up on the next reload once reachable.
+func (m *Manager) resolveSecMsgAccounts(cfg config.SecMsgConfig) []config.SecMsgAccountConfig {
+	if len(cfg.Accounts) > 0 {
+		out := make([]config.SecMsgAccountConfig, len(cfg.Accounts))
+		for i, a := range cfg.Accounts {
+			out[i] = cfg.WithDefaults(a)
+		}
+		return out
+	}
+
+	discover, ok := getSecMsgDiscovery()
+	if !ok {
+		// No discovery registered: fall back to a single auto-selecting channel.
+		return []config.SecMsgAccountConfig{cfg.WithDefaults(config.SecMsgAccountConfig{})}
+	}
+
+	ids, err := discover(context.Background(), cfg.Address)
+	if err != nil {
+		logger.WarnCF("channels", "SecMsg account discovery failed — binding no accounts (will retry on reload)", map[string]any{
+			"channel": "SecMsg (" + cfg.Name + ")",
+			"address": cfg.Address,
+			"error":   err.Error(),
+		})
+		return nil
+	}
+	if len(ids) == 0 {
+		logger.WarnCF("channels", "SecMsg daemon has no linked accounts — link one via the WebUI", map[string]any{
+			"channel": "SecMsg (" + cfg.Name + ")",
+			"address": cfg.Address,
+		})
+		return nil
+	}
+
+	out := make([]config.SecMsgAccountConfig, len(ids))
+	for i, id := range ids {
+		out[i] = cfg.WithDefaults(config.SecMsgAccountConfig{Account: id})
+	}
+	logger.InfoCF("channels", "SecMsg accounts discovered", map[string]any{
+		"channel":  "SecMsg (" + cfg.Name + ")",
+		"address":  cfg.Address,
+		"accounts": ids,
+	})
+	return out
+}
+
 // warnEmptyAllowFrom logs a warning when a channel is enabled with an empty allow_from list.
 // An empty list now means nobody is allowed — this is almost certainly a misconfiguration.
 func warnEmptyAllowFrom(displayName string, allowFrom []string) {
@@ -380,6 +474,12 @@ func (m *Manager) initChannels() error {
 		if bot.Enabled && bot.Token != "" {
 			warnEmptyAllowFrom("Telegram ("+bot.ID+")", bot.AllowFrom)
 			m.initTelegramBot(bot)
+		}
+	}
+
+	for _, sm := range m.config.Channels.SecMsg {
+		if sm.Enabled && sm.Address != "" {
+			m.initSecMsg(sm)
 		}
 	}
 
@@ -704,7 +804,8 @@ func (m *Manager) sendWithRetry(ctx context.Context, name string, w *channelWork
 		}
 
 		// Permanent failures — don't retry
-		if errors.Is(lastErr, ErrNotRunning) || errors.Is(lastErr, ErrSendFailed) {
+		if errors.Is(lastErr, ErrNotRunning) || errors.Is(lastErr, ErrSendFailed) ||
+			errors.Is(lastErr, ErrReceiveOnly) {
 			break
 		}
 
@@ -730,6 +831,17 @@ func (m *Manager) sendWithRetry(ctx context.Context, name string, w *channelWork
 		case <-ctx.Done():
 			return
 		}
+	}
+
+	// Receive-only rejection is an expected operator choice, not a fault — log it
+	// at INFO so it doesn't read as an error.
+	if errors.Is(lastErr, ErrReceiveOnly) {
+		logger.InfoCF("channels", "Reply suppressed: recipient account is receive-only", map[string]any{
+			"channel": name,
+			"chat_id": msg.ChatID,
+			"detail":  lastErr.Error(),
+		})
+		return
 	}
 
 	// All retries exhausted or permanent failure
@@ -865,7 +977,8 @@ func (m *Manager) sendMediaWithRetry(ctx context.Context, name string, w *channe
 		}
 
 		// Permanent failures — don't retry
-		if errors.Is(lastErr, ErrNotRunning) || errors.Is(lastErr, ErrSendFailed) {
+		if errors.Is(lastErr, ErrNotRunning) || errors.Is(lastErr, ErrSendFailed) ||
+			errors.Is(lastErr, ErrReceiveOnly) {
 			break
 		}
 
@@ -891,6 +1004,17 @@ func (m *Manager) sendMediaWithRetry(ctx context.Context, name string, w *channe
 		case <-ctx.Done():
 			return
 		}
+	}
+
+	// Receive-only rejection is an expected operator choice, not a fault — log it
+	// at INFO so it doesn't read as an error.
+	if errors.Is(lastErr, ErrReceiveOnly) {
+		logger.InfoCF("channels", "Reply suppressed: recipient account is receive-only", map[string]any{
+			"channel": name,
+			"chat_id": msg.ChatID,
+			"detail":  lastErr.Error(),
+		})
+		return
 	}
 
 	// All retries exhausted or permanent failure

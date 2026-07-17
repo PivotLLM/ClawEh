@@ -177,6 +177,7 @@
     },
     "name": {
       "telegram": "Telegram",
+      "secmsg": "SecMsg",
       "discord": "Discord",
       "slack": "Slack",
       "line": "LINE",
@@ -184,6 +185,9 @@
       "matrix": "Matrix"
     },
     "field": {
+      "secmsgName": "Channel Name",
+      "secmsgAddress": "Daemon Address",
+      "secmsgAccount": "Account",
       "token": "Bot Token",
       "tokenPlaceholder": "Enter bot token",
       "botToken": "Bot Token",
@@ -219,6 +223,9 @@
     },
     "form": {
       "desc": {
+        "secmsgName": "Unique name for this connection, used for routing. Recommended: the service name, e.g. \"signal\".",
+        "secmsgAddress": "Host:port of the secure-messaging daemon (e.g. 127.0.0.1:9600).",
+        "secmsgAccount": "Account on the daemon to bind. Leave blank to auto-select the sole linked account.",
         "token": "Bot access token used to connect to the platform API.",
         "botToken": "Bot token used to send and receive messages.",
         "appToken": "App token used for Socket Mode connections.",
@@ -452,8 +459,9 @@
       "backup_now_failed": "Backup failed"
     },
     "logs": {
-      "clear": "Clear logs",
-      "empty": "Waiting for logs..."
+      "empty": "Waiting for logs...",
+      "lines": "Show",
+      "refresh": "Refresh"
     },
     "mcp": {
       "load_error": "Failed to load configuration. Please refresh and try again.",

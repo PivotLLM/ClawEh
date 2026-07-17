@@ -56,12 +56,24 @@ func (fusionLogAdapter) Fatalf(f string, a ...any) {
 	logger.ErrorCF(logComponent, fmt.Sprintf(f, a...), nil)
 }
 
-func (fusionLogAdapter) DebugFields(a ...any)   { logger.DebugCF(logComponent, "", fieldsToMap(a)) }
-func (fusionLogAdapter) InfoFields(a ...any)    { logger.InfoCF(logComponent, "", fieldsToMap(a)) }
-func (fusionLogAdapter) NoticeFields(a ...any)  { logger.InfoCF(logComponent, "", fieldsToMap(a)) }
-func (fusionLogAdapter) WarningFields(a ...any) { logger.WarnCF(logComponent, "", fieldsToMap(a)) }
-func (fusionLogAdapter) ErrorFields(a ...any)   { logger.ErrorCF(logComponent, "", fieldsToMap(a)) }
-func (fusionLogAdapter) FatalFields(a ...any)   { logger.ErrorCF(logComponent, "", fieldsToMap(a)) }
+func (fusionLogAdapter) DebugFields(m string, a ...any) {
+	logger.DebugCF(logComponent, m, fieldsToMap(a))
+}
+func (fusionLogAdapter) InfoFields(m string, a ...any) {
+	logger.InfoCF(logComponent, m, fieldsToMap(a))
+}
+func (fusionLogAdapter) NoticeFields(m string, a ...any) {
+	logger.InfoCF(logComponent, m, fieldsToMap(a))
+}
+func (fusionLogAdapter) WarningFields(m string, a ...any) {
+	logger.WarnCF(logComponent, m, fieldsToMap(a))
+}
+func (fusionLogAdapter) ErrorFields(m string, a ...any) {
+	logger.ErrorCF(logComponent, m, fieldsToMap(a))
+}
+func (fusionLogAdapter) FatalFields(m string, a ...any) {
+	logger.ErrorCF(logComponent, m, fieldsToMap(a))
+}
 
 // FatalExit must not terminate the process: the engine is embedded in ClawEh.
 func (fusionLogAdapter) FatalExit() {

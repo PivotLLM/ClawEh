@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 
-import { patchAppConfig } from "@/api/channels"
+import { getMCPStatus, patchAppConfig } from "@/api/channels"
 import {
   EMPTY_MCP_FORM,
   type MCPHostForm,
@@ -17,6 +17,7 @@ import {
   ClientServersSection,
   DiscoverySection,
   EnableSection,
+  ResilienceSection,
   ToolsSection,
   TransportSection,
 } from "@/components/mcp/mcp-sections"
@@ -46,6 +47,17 @@ export function MCPPage() {
       return res.json()
     },
   })
+
+  // Live connection state of the external MCP servers, polled every 5s. Keyed by
+  // server name; a configured server absent here is treated as disconnected.
+  const { data: statusData } = useQuery({
+    queryKey: ["mcp-status"],
+    queryFn: getMCPStatus,
+    refetchInterval: 5000,
+  })
+  const statusByName = new Map(
+    (statusData?.servers ?? []).map((s) => [s.name, s]),
+  )
 
   useEffect(() => {
     if (!data) return
@@ -84,7 +96,6 @@ export function MCPPage() {
         endpoint_path: f.endpointPath.trim(),
         internal_tools: clean(f.internalToolPatterns),
         external_tools: clean(f.externalToolPatterns),
-        always_shown_namespaces: clean(f.alwaysShownNamespaces),
       }
     }
     // tools.discovery.enabled (global switch) and tools.mcp.servers are both under
@@ -95,13 +106,21 @@ export function MCPPage() {
         enabled: f.discoveryEnabled,
         ttl_max: f.ttlMax,
         visible_budget: f.visibleBudget,
+        always_shown_namespaces: clean(f.alwaysShownNamespaces),
       }
+    }
+    // Client resilience knobs (tools.mcp.*) always save, independent of server
+    // validity — a half-typed server row must not block a cooldown/timeout change.
+    // A JSON merge patch leaves tools.mcp.servers untouched when omitted here.
+    const mcpPatch: Record<string, unknown> = {
+      reconnect_cooldown_seconds: f.reconnectCooldownSeconds,
+      call_timeout_seconds: f.callTimeoutSeconds,
+      liveness_probe_seconds: f.livenessProbeSeconds,
     }
     if (!serversErr) {
-      toolsPatch.mcp = {
-        servers: serversToPatch(f.servers, baselineRef.current.servers),
-      }
+      mcpPatch.servers = serversToPatch(f.servers, baselineRef.current.servers)
     }
+    toolsPatch.mcp = mcpPatch
     if (Object.keys(toolsPatch).length > 0) {
       patch.tools = toolsPatch
     }
@@ -208,7 +227,15 @@ export function MCPPage() {
               <ClientServersSection
                 servers={form.servers}
                 error={serversError}
+                statusByName={statusByName}
                 onChange={(next) => updateField("servers", next)}
+              />
+
+              <ResilienceSection
+                reconnectCooldownSeconds={form.reconnectCooldownSeconds}
+                callTimeoutSeconds={form.callTimeoutSeconds}
+                livenessProbeSeconds={form.livenessProbeSeconds}
+                onFieldChange={updateField}
               />
             </div>
           )}

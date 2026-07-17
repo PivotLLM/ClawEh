@@ -64,13 +64,10 @@ type MCPServer struct {
 	internalAllow   []string                       // tools/list visibility filter for /internal
 	externalAllow   []string                       // tools/list visibility filter for /mcp (bearer)
 
-	// Progressive discovery. When enabled, tools/list is limited to the
-	// alwaysShown namespaces plus the search_tools/get_tool_details meta-tools;
-	// everything else is revealed to a session on demand via get_tool_details.
-	discovery             bool
-	alwaysShown           []string
-	discoveryTTL          int
-	discoveryVisibleBudget int
+	// NOTE: progressive tool discovery is intentionally NOT applied on the host.
+	// It is an in-loop model-context optimization only; the MCP host always
+	// advertises the full allowed catalogue and never TTL-gates a dispatch, so an
+	// external client gets every authorized tool and runs its own tool handling.
 	listen       string
 	endpointPath string // bearer endpoint (/mcp)
 	internalPath string // session-token-parameter endpoint (/internal)
@@ -145,17 +142,6 @@ func WithEndpointPath(path string) Option {
 	}
 }
 
-// WithDiscovery configures progressive tool discovery for the host: when enabled,
-// tools/list carries only the alwaysShown namespaces + the meta-tools, and hidden
-// tools are revealed per-session by get_tool_details. ttl is the promotion TTL.
-func WithDiscovery(enabled bool, alwaysShown []string, ttl, visibleBudget int) Option {
-	return func(m *MCPServer) {
-		m.discovery = enabled
-		m.alwaysShown = append([]string(nil), alwaysShown...)
-		m.discoveryTTL = ttl
-		m.discoveryVisibleBudget = visibleBudget
-	}
-}
 
 // WithInternalAllowlist sets the tools/list visibility filter for the /internal
 // endpoint. Patterns are matched by config.MatchVisibility (equality-or-prefix,
@@ -251,22 +237,18 @@ func New(opts ...Option) (*MCPServer, error) {
 
 	newSrv := func() *server.MCPServer {
 		return server.NewMCPServer(global.AppName, global.Version,
-			// listChanged=true so get_tool_details can reveal a tool to a session and
-			// notify its client to re-fetch tools/list.
 			server.WithToolCapabilities(true),
 			server.WithRecovery(),
 		)
 	}
 
-	disc := discoveryConfig{enabled: m.discovery, alwaysShown: m.alwaysShown, ttl: m.discoveryTTL, visibleBudget: m.discoveryVisibleBudget}
-
 	// /internal — session-token parameter on every tool (ClawEh's CLI providers).
 	internalSrv := newSrv()
-	addToolsToServer(internalSrv, internalAuthMode, m.agentRegistries, m.internalAllow, m.sessionTokens, resolver, tracker, m.policy, m.msgBus, &m.activeDispatches, disc)
+	addToolsToServer(internalSrv, internalAuthMode, m.agentRegistries, m.internalAllow, m.sessionTokens, resolver, tracker, m.policy, m.msgBus, &m.activeDispatches)
 
 	// /mcp — standard bearer endpoint, clean tool schemas (probe / external MCP).
 	bearerSrv := newSrv()
-	addToolsToServer(bearerSrv, bearerAuthMode, m.agentRegistries, m.externalAllow, m.sessionTokens, resolver, tracker, m.policy, m.msgBus, &m.activeDispatches, disc)
+	addToolsToServer(bearerSrv, bearerAuthMode, m.agentRegistries, m.externalAllow, m.sessionTokens, resolver, tracker, m.policy, m.msgBus, &m.activeDispatches)
 
 	internalStreamable := newStreamable(internalSrv, m.internalPath, false)
 	bearerStreamable := newStreamable(bearerSrv, m.endpointPath, true)

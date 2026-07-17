@@ -2,12 +2,16 @@ package mcp
 
 import (
 	"context"
+	"errors"
+	"io"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
@@ -322,6 +326,235 @@ func newTestMCPServer(t *testing.T) *httptest.Server {
 	ts := httptest.NewServer(server.NewStreamableHTTPServer(srv))
 	t.Cleanup(ts.Close)
 	return ts
+}
+
+func TestIsConnectionError(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{"transport closed sentinel", transport.ErrTransportClosed, true},
+		{"wrapped transport closed", errors.Join(errors.New("call failed"), transport.ErrTransportClosed), true},
+		{"io.EOF", io.EOF, true},
+		{"sse connection closed", errors.New("connection has been closed"), true},
+		{"connection refused", errors.New("dial tcp 127.0.0.1:1: connect: connection refused"), true},
+		{"connection reset", errors.New("read: connection reset by peer"), true},
+		{"broken pipe", errors.New("write: broken pipe"), true},
+		{"normal tool error", errors.New("tool returned invalid arguments"), false},
+		{"not found", errors.New("method not found"), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isConnectionError(tc.err); got != tc.want {
+				t.Fatalf("isConnectionError(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestReconnectCooldownGating(t *testing.T) {
+	mgr := NewManager()
+	mgr.reconnectCooldown = time.Minute
+
+	if _, ok := mgr.reconnectCooldownUntil("svc"); ok {
+		t.Fatal("no cooldown expected initially")
+	}
+
+	mgr.markReconnectFailed("svc")
+	if _, ok := mgr.reconnectCooldownUntil("svc"); !ok {
+		t.Fatal("cooldown expected after a failed reconnect")
+	}
+
+	// An expired window must not gate.
+	mgr.cooldownMu.Lock()
+	mgr.cooldownUntil["svc"] = time.Now().Add(-time.Second)
+	mgr.cooldownMu.Unlock()
+	if _, ok := mgr.reconnectCooldownUntil("svc"); ok {
+		t.Fatal("expired cooldown must not gate")
+	}
+
+	mgr.markReconnectFailed("svc")
+	mgr.clearReconnectCooldown("svc")
+	if _, ok := mgr.reconnectCooldownUntil("svc"); ok {
+		t.Fatal("cooldown must clear after a successful reconnect")
+	}
+}
+
+func TestApplyTuning(t *testing.T) {
+	mgr := NewManager()
+	if mgr.reconnectCooldown != defaultReconnectCooldown || mgr.callTimeout != defaultCallTimeout {
+		t.Fatalf("unexpected defaults: cooldown=%v callTimeout=%v", mgr.reconnectCooldown, mgr.callTimeout)
+	}
+	if mgr.probeInterval != 0 {
+		t.Fatalf("probing must default off, got %v", mgr.probeInterval)
+	}
+
+	mgr.applyTuning(config.MCPConfig{
+		ReconnectCooldownSeconds: 5,
+		CallTimeoutSeconds:       12,
+		LivenessProbeSeconds:     7,
+	})
+	if mgr.reconnectCooldown != 5*time.Second {
+		t.Fatalf("cooldown = %v, want 5s", mgr.reconnectCooldown)
+	}
+	if mgr.callTimeout != 12*time.Second {
+		t.Fatalf("callTimeout = %v, want 12s", mgr.callTimeout)
+	}
+	if mgr.probeInterval != 7*time.Second {
+		t.Fatalf("probeInterval = %v, want 7s", mgr.probeInterval)
+	}
+
+	// Zero values keep the durations but still let probing be disabled.
+	mgr.applyTuning(config.MCPConfig{})
+	if mgr.reconnectCooldown != 5*time.Second || mgr.callTimeout != 12*time.Second {
+		t.Fatal("zero config must not clobber existing durations")
+	}
+	if mgr.probeInterval != 0 {
+		t.Fatalf("probeInterval must be disabled by zero, got %v", mgr.probeInterval)
+	}
+}
+
+// TestCallTool_ReconnectsOnConnectionError drives the transparent retry: the live
+// client points at a server that is then shut down (a dropped session), while the
+// server's config points at a healthy server. The failed call must reconnect using
+// that config and succeed on the retry.
+func TestCallTool_ReconnectsOnConnectionError(t *testing.T) {
+	good := newTestMCPServer(t)
+	bad := httptest.NewServer(server.NewStreamableHTTPServer(func() *server.MCPServer {
+		s := server.NewMCPServer("bad", "0.0.1")
+		s.AddTool(mcp.NewTool("ping", mcp.WithDescription("no-op")),
+			func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				return &mcp.CallToolResult{}, nil
+			})
+		return s
+	}()))
+
+	ctx := context.Background()
+	mgr := NewManager()
+	defer func() { _ = mgr.Close() }()
+
+	if err := mgr.ConnectServer(ctx, "svc", config.MCPServerConfig{
+		Enabled: true, Type: "http", URL: bad.URL,
+	}); err != nil {
+		t.Fatalf("initial connect: %v", err)
+	}
+
+	// Repoint config at the healthy server, then kill the one the live client uses.
+	conn, ok := mgr.GetServer("svc")
+	if !ok {
+		t.Fatal("svc should be connected")
+	}
+	conn.cfg.URL = good.URL
+	bad.Close()
+
+	result, err := mgr.CallTool(ctx, "svc", "ping", nil)
+	if err != nil {
+		t.Fatalf("CallTool should recover via reconnect, got: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected a result after reconnect")
+	}
+
+	// The connection must have been replaced by the reconnect.
+	conn2, ok := mgr.GetServer("svc")
+	if !ok || conn2 == conn {
+		t.Fatalf("expected a fresh connection after reconnect: ok=%v same=%v", ok, conn2 == conn)
+	}
+}
+
+// TestReconnect_RespectsCooldown confirms a failed reconnect gates the next one.
+func TestReconnect_RespectsCooldown(t *testing.T) {
+	ctx := context.Background()
+	mgr := NewManager()
+	defer func() { _ = mgr.Close() }()
+
+	badCfg := config.MCPServerConfig{Enabled: true, Type: "http", URL: "http://127.0.0.1:1/mcp"}
+
+	// First attempt actually tries to connect (and fails) → sets cooldown.
+	if err := mgr.reconnect(ctx, "svc", badCfg); err == nil {
+		t.Fatal("expected reconnect to a dead address to fail")
+	}
+	if _, ok := mgr.reconnectCooldownUntil("svc"); !ok {
+		t.Fatal("failed reconnect must set a cooldown")
+	}
+	// Second attempt must be short-circuited by the cooldown.
+	err := mgr.reconnect(ctx, "svc", badCfg)
+	if err == nil || !strings.Contains(err.Error(), "cooldown") {
+		t.Fatalf("expected cooldown short-circuit, got: %v", err)
+	}
+}
+
+// TestProbeOnce_ReconnectsUnresponsiveServer verifies the liveness probe swaps a
+// dead session for a fresh one.
+func TestProbeOnce_ReconnectsUnresponsiveServer(t *testing.T) {
+	good := newTestMCPServer(t)
+	bad := httptest.NewServer(server.NewStreamableHTTPServer(server.NewMCPServer("bad", "0.0.1")))
+
+	ctx := context.Background()
+	mgr := NewManager()
+	mgr.probeInterval = time.Second
+	defer func() { _ = mgr.Close() }()
+
+	if err := mgr.ConnectServer(ctx, "svc", config.MCPServerConfig{
+		Enabled: true, Type: "http", URL: bad.URL,
+	}); err != nil {
+		t.Fatalf("initial connect: %v", err)
+	}
+	conn, _ := mgr.GetServer("svc")
+	conn.cfg.URL = good.URL
+	bad.Close()
+
+	mgr.probeOnce("svc")
+
+	conn2, ok := mgr.GetServer("svc")
+	if !ok || conn2 == conn {
+		t.Fatalf("probe should reconnect a dead server: ok=%v same=%v", ok, conn2 == conn)
+	}
+	if err := conn2.Client.Ping(ctx); err != nil {
+		t.Fatalf("reconnected server should answer ping: %v", err)
+	}
+}
+
+func TestStatus_ReportsConnectedAndCooldown(t *testing.T) {
+	good := newTestMCPServer(t)
+	ctx := context.Background()
+	mgr := NewManager()
+	defer func() { _ = mgr.Close() }()
+
+	if err := mgr.ConnectServer(ctx, "live", config.MCPServerConfig{
+		Enabled: true, Type: "http", URL: good.URL,
+	}); err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	// A server stuck in cooldown after a failed reconnect.
+	mgr.reconnectCooldown = time.Minute
+	if err := mgr.reconnect(ctx, "dead", config.MCPServerConfig{
+		Enabled: true, Type: "http", URL: "http://127.0.0.1:1/mcp",
+	}); err == nil {
+		t.Fatal("expected reconnect to a dead address to fail")
+	}
+
+	byName := make(map[string]ServerStatus)
+	for _, s := range mgr.Status() {
+		byName[s.Name] = s
+	}
+
+	live, ok := byName["live"]
+	if !ok || live.State != StateConnected {
+		t.Fatalf("live server should be connected, got %+v", live)
+	}
+	if live.Transport != "http" || live.ToolCount != 1 {
+		t.Fatalf("live status detail wrong: %+v", live)
+	}
+	dead, ok := byName["dead"]
+	if !ok || dead.State != StateCooldown {
+		t.Fatalf("dead server should be in cooldown, got %+v", dead)
+	}
+	if dead.CooldownUntil.IsZero() {
+		t.Fatal("cooldown status must carry an expiry time")
+	}
 }
 
 // TestSync_ReusesUnchangedReconnectsChanged is the core guarantee behind keeping

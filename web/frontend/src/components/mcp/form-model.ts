@@ -10,15 +10,22 @@ export interface MCPHostForm {
   internalToolPatterns: string[]
   externalToolPatterns: string[]
   // Progressive tool discovery. discoveryEnabled is the global switch
-  // (tools.discovery.enabled). alwaysShownNamespaces are EXTRA namespaces kept in
-  // tools/list when it's on (search_tools/get_tool_details and cogmem are always
-  // shown by rule).
+  // (tools.discovery.enabled). alwaysShownNamespaces (tools.discovery.
+  // always_shown_namespaces) pins EXTRA namespaces to stay visible to the in-loop
+  // model when it's on (native tools, search_tools/get_tool_details, and cogmem
+  // are always shown by rule).
   discoveryEnabled: boolean
   // ttlMax: turns a revealed tool stays visible without use (reset on use).
   // visibleBudget: max revealed tools before lowest-TTL-first pruning kicks in.
   ttlMax: number
   visibleBudget: number
   alwaysShownNamespaces: string[]
+  // Outbound MCP client resilience (tools.mcp.*). reconnectCooldownSeconds and
+  // callTimeoutSeconds fall back to backend defaults (30 / 300) when 0;
+  // livenessProbeSeconds of 0 disables background probing.
+  reconnectCooldownSeconds: number
+  callTimeoutSeconds: number
+  livenessProbeSeconds: number
   // External (upstream) MCP servers claw connects out to (tools.mcp.servers),
   // structured for add/edit/delete in the UI.
   servers: MCPServerForm[]
@@ -68,6 +75,9 @@ export const EMPTY_MCP_FORM: MCPHostForm = {
   ttlMax: 50,
   visibleBudget: 100,
   alwaysShownNamespaces: [],
+  reconnectCooldownSeconds: 30,
+  callTimeoutSeconds: 300,
+  livenessProbeSeconds: 0,
   servers: [],
 }
 
@@ -103,6 +113,7 @@ export function buildMCPFormFromConfig(config: unknown): MCPHostForm {
   const root = asRecord(config)
   const mcp = asRecord(root.mcp_host)
   const discovery = asRecord(asRecord(root.tools).discovery)
+  const mcpClient = asRecord(asRecord(root.tools).mcp)
   return {
     enabled: asBool(mcp.enabled, EMPTY_MCP_FORM.enabled),
     autoEnable: asBool(mcp.auto_enable, EMPTY_MCP_FORM.autoEnable),
@@ -114,7 +125,19 @@ export function buildMCPFormFromConfig(config: unknown): MCPHostForm {
     // Honor the legacy "ttl" key as a fallback so an older config still displays.
     ttlMax: asNumber(discovery.ttl_max ?? discovery.ttl, EMPTY_MCP_FORM.ttlMax),
     visibleBudget: asNumber(discovery.visible_budget, EMPTY_MCP_FORM.visibleBudget),
-    alwaysShownNamespaces: asStringArray(mcp.always_shown_namespaces, EMPTY_MCP_FORM.alwaysShownNamespaces),
+    alwaysShownNamespaces: asStringArray(
+      discovery.always_shown_namespaces,
+      EMPTY_MCP_FORM.alwaysShownNamespaces,
+    ),
+    reconnectCooldownSeconds: asNumber(
+      mcpClient.reconnect_cooldown_seconds,
+      EMPTY_MCP_FORM.reconnectCooldownSeconds,
+    ),
+    callTimeoutSeconds: asNumber(mcpClient.call_timeout_seconds, EMPTY_MCP_FORM.callTimeoutSeconds),
+    livenessProbeSeconds: asNumber(
+      mcpClient.liveness_probe_seconds,
+      EMPTY_MCP_FORM.livenessProbeSeconds,
+    ),
     servers: serversFromConfig(config),
   }
 }

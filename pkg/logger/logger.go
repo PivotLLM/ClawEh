@@ -133,6 +133,14 @@ func GetLevel() LogLevel {
 	return currentLevel
 }
 
+// GetLogFilePath returns the active claw.log path, or "" when file logging is
+// disabled. Used by the WebUI logs endpoint to tail the unified log.
+func GetLogFilePath() string {
+	mu.RLock()
+	defer mu.RUnlock()
+	return logFilePath
+}
+
 // SetLogMessageContent controls whether message body content is included in log entries.
 // When false (default), message text and API request/response bodies are omitted from logs.
 func SetLogMessageContent(enabled bool) {

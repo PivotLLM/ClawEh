@@ -18,6 +18,7 @@ import (
 	_ "github.com/PivotLLM/ClawEh/pkg/channels/discord"
 	_ "github.com/PivotLLM/ClawEh/pkg/channels/line"
 	_ "github.com/PivotLLM/ClawEh/pkg/channels/matrix"
+	_ "github.com/PivotLLM/ClawEh/pkg/channels/secmsg"
 	_ "github.com/PivotLLM/ClawEh/pkg/channels/slack"
 	_ "github.com/PivotLLM/ClawEh/pkg/channels/telegram"
 	_ "github.com/PivotLLM/ClawEh/pkg/channels/webui"
@@ -40,6 +41,7 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/utils"
 	"github.com/PivotLLM/ClawEh/pkg/voice"
 	webserver "github.com/PivotLLM/ClawEh/web/backend"
+	webapi "github.com/PivotLLM/ClawEh/web/backend/api"
 )
 
 // Timeout constants for service operations
@@ -412,6 +414,24 @@ func setupAndStartServices(
 	// mint/revoke operations mutate the exact instance the message route validates
 	// against (no reload needed for a token to activate/deactivate).
 	services.WebServer.APIHandler().SetMessageTokenLoop(agentLoop)
+	// Expose the live outbound-MCP connection state to the WebUI MCP page. Reads the
+	// same manager the agent loop owns (reused in place across reloads).
+	services.WebServer.APIHandler().SetMCPStatusLoop(agentLoop)
+	// Let the WebUI QR pairing panel reach a live secmsg channel by name so it can
+	// drive device linking on the running instance (resolved lazily to survive a
+	// Manager rebuild on reload).
+	services.WebServer.APIHandler().SetSecMsgLinker(func(name string) (webapi.SecMsgLinker, bool) {
+		mgr := services.ChannelManager
+		if mgr == nil {
+			return nil, false
+		}
+		ch, ok := mgr.GetChannel(name)
+		if !ok {
+			return nil, false
+		}
+		linker, ok := ch.(webapi.SecMsgLinker)
+		return linker, ok
+	})
 	// IP allowlist for the shared HTTP port. Defaults to the RFC1918 private
 	// ranges (see GatewayConfig.EffectiveAllowedCIDRs), so the no-auth WebUI is
 	// reachable only from loopback + the LAN even when bound to 0.0.0.0.
@@ -524,12 +544,6 @@ func startMCPServer(cfg *config.Config, agentLoop *agent.AgentLoop, msgBus *bus.
 		mcpserver.WithInternalAllowlist(mcpVisibilityList(cfg.MCPHost.InternalTools)),
 		mcpserver.WithExternalAllowlist(mcpVisibilityList(cfg.MCPHost.ExternalTools)),
 		mcpserver.WithMessageBus(msgBus),
-		mcpserver.WithDiscovery(
-			cfg.Tools.Discovery.Enabled,
-			cfg.MCPHost.AlwaysShownNamespaces,
-			cfg.DiscoveryTTLMax(),
-			cfg.DiscoveryVisibleBudget(),
-		),
 	)
 	if err != nil {
 		return fmt.Errorf("error creating MCP server: %w", err)

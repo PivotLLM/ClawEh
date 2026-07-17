@@ -1,5 +1,4 @@
 import type { CSSProperties } from "react"
-import wrapAnsi from "wrap-ansi"
 
 export type AnsiSegment = {
   style: CSSProperties
@@ -275,16 +274,3 @@ export function parseAnsiSegments(input: string): AnsiSegment[] {
   return segments
 }
 
-export function wrapLogLine(line: string, columns: number): string {
-  const normalized = line.replaceAll("\r\n", "\n").replaceAll("\r", "\n")
-
-  if (columns < 20) {
-    return normalized
-  }
-
-  return wrapAnsi(normalized, columns, {
-    hard: true,
-    trim: false,
-    wordWrap: false,
-  })
-}

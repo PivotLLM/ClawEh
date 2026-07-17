@@ -85,4 +85,69 @@ export async function getAgentTools(): Promise<AgentToolCatalogResponse> {
   return request<AgentToolCatalogResponse>("/api/agents/tools")
 }
 
-export type { ChannelsCatalogResponse, ConfigActionResponse }
+// SecMsgLinkStatus mirrors the backend pairing reply. status is
+// "pending" | "complete" | "error"; qr_png is a PNG data-URL for the pairing URI.
+export interface SecMsgLinkStatus {
+  status: string
+  uri?: string
+  qr_png?: string
+  phone?: string
+  error?: string
+}
+
+// requestSecMsgLink starts device linking for a configured secmsg channel and
+// returns the pairing QR.
+export async function requestSecMsgLink(
+  name: string,
+): Promise<SecMsgLinkStatus> {
+  return request<SecMsgLinkStatus>(
+    `/api/channels/secmsg/${encodeURIComponent(name)}/link`,
+    { method: "POST" },
+  )
+}
+
+// getSecMsgLinkStatus polls current pairing status for a configured channel.
+export async function getSecMsgLinkStatus(
+  name: string,
+): Promise<SecMsgLinkStatus> {
+  return request<SecMsgLinkStatus>(
+    `/api/channels/secmsg/${encodeURIComponent(name)}/link`,
+  )
+}
+
+// SecMsgAccounts is the live account list discovered from a daemon.
+export interface SecMsgAccounts {
+  accounts: string[]
+}
+
+// getSecMsgAccounts queries the daemon live and returns its linked account ids,
+// so the WebUI reflects what the daemon hosts rather than what config enumerates.
+export async function getSecMsgAccounts(
+  name: string,
+): Promise<SecMsgAccounts> {
+  return request<SecMsgAccounts>(
+    `/api/channels/secmsg/${encodeURIComponent(name)}/accounts`,
+  )
+}
+
+// MCPServerStatus mirrors pkg/mcp.ServerStatus. state is
+// "connected" | "reconnecting" | "cooldown"; cooldown_until is RFC3339 (only for
+// the cooldown state). Servers absent from the response are disconnected.
+export interface MCPServerStatus {
+  name: string
+  state: string
+  transport?: string
+  tool_count: number
+  cooldown_until?: string
+}
+
+interface MCPStatusResponse {
+  servers: MCPServerStatus[]
+}
+
+// getMCPStatus reports the live connection state of outbound MCP servers.
+export async function getMCPStatus(): Promise<MCPStatusResponse> {
+  return request<MCPStatusResponse>("/api/mcp/status")
+}
+
+export type { ChannelsCatalogResponse, ConfigActionResponse, MCPStatusResponse }

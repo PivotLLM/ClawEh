@@ -904,6 +904,7 @@ func (d *AgentDefaults) SetDefaultModel(modelName string) {
 
 type ChannelsConfig struct {
 	Telegram []TelegramBotConfig `json:"telegram"`
+	SecMsg   []SecMsgConfig      `json:"secmsg"`
 	Discord  DiscordConfig       `json:"discord"`
 	Slack    SlackConfig         `json:"slack"`
 	Matrix   MatrixConfig        `json:"matrix"`
@@ -1023,6 +1024,73 @@ func (b TelegramBotConfig) ChannelName() string {
 		return "telegram"
 	}
 	return "telegram-" + b.ID
+}
+
+// SecMsgConfig defines one secure-messaging daemon speaking the secmsg JSON-RPC
+// protocol (e.g. sigd for Signal). A single daemon can host several accounts, so
+// each daemon entry lists the accounts to bind; every account becomes its own
+// ClawEh channel (own name, allowlist, and agent binding). The daemon is
+// service-agnostic: ClawEh learns the concrete service from the handshake.
+type SecMsgConfig struct {
+	// Name identifies the daemon connection and is the default prefix for each
+	// account's channel name. Recommended: the service, e.g. "signal". Empty
+	// falls back to "secmsg".
+	Name string `json:"name"`
+	// Enabled gates whether this daemon's accounts are started.
+	Enabled bool `json:"enabled"`
+	// Address is the daemon endpoint (host:port) for the secmsg JSON-RPC socket.
+	Address string `json:"address"`
+	// AllowFrom is the daemon-level allowlist inherited by every account. Accounts
+	// discovered from the daemon (when Accounts is empty) bind with this list; an
+	// explicit account entry with its own AllowFrom overrides it.
+	AllowFrom FlexibleStringSlice `json:"allow_from,omitempty"`
+	// GroupTrigger is the daemon-level group-trigger default inherited by every
+	// account, overridable per explicit account entry.
+	GroupTrigger GroupTriggerConfig `json:"group_trigger,omitempty"`
+	// Accounts optionally pins specific accounts to bind with per-account overrides.
+	// Empty means ClawEh discovers the daemon's linked accounts and binds one
+	// channel per account, each inheriting the daemon-level defaults above.
+	Accounts []SecMsgAccountConfig `json:"accounts,omitempty"`
+}
+
+// WithDefaults returns a copy of the account with daemon-level defaults filled in
+// where the account left them unset. Used both for explicit account entries and
+// for accounts synthesized from daemon discovery.
+func (s SecMsgConfig) WithDefaults(a SecMsgAccountConfig) SecMsgAccountConfig {
+	if len(a.AllowFrom) == 0 {
+		a.AllowFrom = s.AllowFrom
+	}
+	if !a.GroupTrigger.MentionOnly && len(a.GroupTrigger.Prefixes) == 0 {
+		a.GroupTrigger = s.GroupTrigger
+	}
+	return a
+}
+
+// SecMsgAccountConfig binds one account on a daemon to a ClawEh channel.
+type SecMsgAccountConfig struct {
+	// Account is the daemon account id (e.g. "droid1"). Empty auto-selects the
+	// daemon's sole linked account (only valid when the daemon has exactly one).
+	Account string `json:"account,omitempty"`
+	// Name overrides the ClawEh channel name for this account. Empty derives it
+	// as "<daemon-name>-<account>".
+	Name         string              `json:"name,omitempty"`
+	AllowFrom    FlexibleStringSlice `json:"allow_from,omitempty"`
+	GroupTrigger GroupTriggerConfig  `json:"group_trigger,omitempty"`
+}
+
+// ChannelName returns the routing identifier for this account's channel.
+func (a SecMsgAccountConfig) ChannelName(daemon SecMsgConfig) string {
+	if a.Name != "" {
+		return a.Name
+	}
+	base := daemon.Name
+	if base == "" {
+		base = "secmsg"
+	}
+	if a.Account == "" {
+		return base
+	}
+	return base + "-" + a.Account
 }
 
 type DiscordConfig struct {
@@ -1417,11 +1485,19 @@ func primaryLANIP() string {
 
 type ToolDiscoveryConfig struct {
 	// Enabled is the single global switch for progressive tool discovery, applied
-	// uniformly to every agent and the MCP host. Default OFF. When on,
+	// uniformly to every agent's IN-LOOP tool list. Default OFF. When on,
 	// discovery-eligible tools (the fusion and maestro suites and all upstream MCP
 	// tools) are hidden behind the search_tools / get_tool_details meta-tools;
-	// native tools and the cogmem suite stay always-on.
+	// native tools and the cogmem suite stay always-on. The MCP host is never
+	// subject to discovery — external clients always receive the full tool list.
 	Enabled bool `json:"enabled" env:"CLAW_TOOLS_DISCOVERY_ENABLED"`
+	// AlwaysShownNamespaces pins discovery-eligible tool namespaces (matched by
+	// MatchVisibility: "file", "maestro", "fusion", a "<server>" for an upstream MCP
+	// server, or "*") so they stay in the in-loop model's tool list even when
+	// discovery is on, instead of being hidden behind search_tools /
+	// get_tool_details. Native tools and cogmem are always shown by rule and need
+	// not be listed. Empty pins nothing; only consulted when Enabled is true.
+	AlwaysShownNamespaces []string `json:"always_shown_namespaces,omitempty"`
 	// TTLMax is the longest a revealed tool stays visible without being used, in
 	// turns; each use resets it. A tool idle this many turns is hidden again.
 	TTLMax int `json:"ttl_max" env:"CLAW_TOOLS_DISCOVERY_TTL_MAX"`
@@ -1632,6 +1708,18 @@ type MCPServerConfig struct {
 type MCPConfig struct {
 	// Servers is a map of server name to server configuration
 	Servers map[string]MCPServerConfig `json:"servers,omitempty"`
+	// ReconnectCooldownSeconds is the backoff applied to a server after a failed
+	// reconnect, before another reconnect is attempted for it. Prevents hammering a
+	// dead upstream on every call. 0 uses the default (30s).
+	ReconnectCooldownSeconds int `json:"reconnect_cooldown_seconds,omitempty"`
+	// CallTimeoutSeconds is a backstop deadline applied to a tool call only when the
+	// caller's context carries no deadline, so a hung server cannot block forever.
+	// 0 uses the default (300s).
+	CallTimeoutSeconds int `json:"call_timeout_seconds,omitempty"`
+	// LivenessProbeSeconds, when > 0, enables a periodic MCP ping per connected
+	// server at this interval; a failed ping proactively reconnects that server so
+	// the next real call finds a live session. 0 (default) disables probing.
+	LivenessProbeSeconds int `json:"liveness_probe_seconds,omitempty"`
 }
 
 // MCPClientEffectivelyEnabled reports whether claw should connect out to
@@ -1669,15 +1757,15 @@ type MCPHostConfig struct {
 	// prefix or glob needed). "*" exposes everything; empty exposes nothing.
 	InternalTools []string `json:"internal_tools,omitempty"`
 	ExternalTools []string `json:"external_tools,omitempty"`
-	// AlwaysShownNamespaces lists EXTRA tool namespaces (the prefix before the
-	// first underscore, e.g. "file", "session", "trello") to keep in the host's
-	// tools/list when progressive discovery is on. Everything else is progressive:
-	// hidden from tools/list and reached via search_tools / get_tool_details, which
-	// reveal a tool to the calling session on demand. The search_tools /
-	// get_tool_details meta-tools and the cogmem namespace are always shown by rule
-	// (cognitive memory is fundamental), so they need not be listed here. Only
-	// consulted when tools.discovery.enabled is true.
-	AlwaysShownNamespaces []string `json:"always_shown_namespaces,omitempty"`
+}
+
+// AlwaysShownNamespaces returns the discovery-eligible tool namespaces pinned to
+// stay visible to the in-loop model under progressive discovery. Nil-safe.
+func (c *Config) AlwaysShownNamespaces() []string {
+	if c == nil {
+		return nil
+	}
+	return c.Tools.Discovery.AlwaysShownNamespaces
 }
 
 func LoadConfig(path string) (*Config, error) {

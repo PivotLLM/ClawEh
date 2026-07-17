@@ -1,84 +1,31 @@
-import { useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 
-import { clearGatewayLogs, getGatewayLogs } from "@/api/gateway"
+import { getGatewayLogs } from "@/api/gateway"
 
-export function useGatewayLogs() {
+// The logs view is fetched on mount and on explicit refresh only (no polling),
+// so scrolling up to read history is never interrupted by a background update.
+export function useGatewayLogs(lines: number) {
   const [logs, setLogs] = useState<string[]>([])
-  const [clearing, setClearing] = useState(false)
-  const logOffsetRef = useRef(0)
-  const logRunIdRef = useRef(-1)
-  const syncTokenRef = useRef(0)
+  const [error, setError] = useState("")
+  const [loading, setLoading] = useState(false)
 
-  const clearLogs = async () => {
-    setClearing(true)
+  const refresh = useCallback(async () => {
+    setLoading(true)
     try {
-      const data = await clearGatewayLogs()
-      syncTokenRef.current += 1
-      setLogs([])
-      logOffsetRef.current = data.log_total ?? 0
-      if (data.log_run_id !== undefined) {
-        logRunIdRef.current = data.log_run_id
-      }
-    } catch {
-      // Ignore clear failures silently to avoid noisy transient errors.
+      const data = await getGatewayLogs(lines)
+      setLogs(data.logs ?? [])
+      setError(data.error ?? "")
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load logs")
     } finally {
-      setClearing(false)
+      setLoading(false)
     }
-  }
+  }, [lines])
 
+  // Fetch on mount and whenever the requested line count changes.
   useEffect(() => {
-    let mounted = true
-    let timeout: ReturnType<typeof setTimeout>
+    void refresh()
+  }, [refresh])
 
-    const fetchLogs = async () => {
-      if (!mounted) return
-
-      try {
-        const requestToken = syncTokenRef.current
-        const requestOffset = logOffsetRef.current
-        const requestRunId = logRunIdRef.current
-        const data = await getGatewayLogs({
-          log_offset: requestOffset,
-          log_run_id: requestRunId,
-        })
-
-        if (!mounted || requestToken !== syncTokenRef.current) {
-          return
-        }
-
-        if (data.log_run_id !== undefined && data.log_run_id !== requestRunId) {
-          logRunIdRef.current = data.log_run_id
-          logOffsetRef.current = 0
-          if (data.logs) {
-            setLogs(data.logs)
-            logOffsetRef.current = data.log_total || data.logs.length
-          }
-        } else if (data.logs && data.logs.length > 0) {
-          const nextLogs = data.logs
-          setLogs((prev) => [...prev, ...nextLogs])
-          logOffsetRef.current =
-            data.log_total || logOffsetRef.current + nextLogs.length
-        }
-      } catch {
-        // Ignore simple fetch errors during polling.
-      } finally {
-        if (mounted) {
-          timeout = setTimeout(fetchLogs, 1000)
-        }
-      }
-    }
-
-    fetchLogs()
-
-    return () => {
-      mounted = false
-      clearTimeout(timeout)
-    }
-  }, [])
-
-  return {
-    clearLogs,
-    clearing,
-    logs,
-  }
+  return { logs, error, loading, refresh }
 }
