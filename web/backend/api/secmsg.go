@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/PivotLLM/ClawEh/pkg/channels/device"
+	"github.com/PivotLLM/ClawEh/pkg/channels/secmsg"
+	"github.com/PivotLLM/ClawEh/pkg/config"
 
 	"github.com/tenebris-tech/secmsg/schema"
 )
@@ -42,6 +44,54 @@ func (h *Handler) secmsgLinkerRef() SecMsgLinkerLookup {
 func (h *Handler) registerSecMsgRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/channels/secmsg/{name}/link", h.handleSecMsgLinkRequest)
 	mux.HandleFunc("GET /api/channels/secmsg/{name}/link", h.handleSecMsgLinkStatus)
+	mux.HandleFunc("GET /api/channels/secmsg/{name}/accounts", h.handleSecMsgAccounts)
+}
+
+// secmsgAccountsResponse is the shape the WebUI daemon card consumes to show the
+// live account count discovered from the daemon (as opposed to config).
+type secmsgAccountsResponse struct {
+	Accounts []string `json:"accounts"`
+}
+
+// findSecMsgDaemon resolves a daemon by its configured name. The unnamed daemon
+// (empty Name) is addressable as "secmsg", mirroring the frontend's display name.
+func findSecMsgDaemon(cfg *config.Config, name string) (config.SecMsgConfig, bool) {
+	for _, d := range cfg.Channels.SecMsg {
+		effective := d.Name
+		if effective == "" {
+			effective = "secmsg"
+		}
+		if d.Name == name || effective == name {
+			return d, true
+		}
+	}
+	return config.SecMsgConfig{}, false
+}
+
+// handleSecMsgAccounts queries the daemon live and returns its linked account
+// ids, so the WebUI shows what the daemon actually hosts rather than what config
+// enumerates.
+//
+//	GET /api/channels/secmsg/{name}/accounts
+func (h *Handler) handleSecMsgAccounts(w http.ResponseWriter, r *http.Request) {
+	cfg, err := config.LoadConfig(h.configPath)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to load config"})
+		return
+	}
+	daemon, ok := findSecMsgDaemon(cfg, r.PathValue("name"))
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "secmsg daemon not found: " + r.PathValue("name")})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	ids, err := secmsg.DiscoverAccounts(ctx, daemon.Address)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, secmsgAccountsResponse{Accounts: ids})
 }
 
 // secmsgLinkResponse is the shape the WebUI pairing panel consumes. QRPng is a

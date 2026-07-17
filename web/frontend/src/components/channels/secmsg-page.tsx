@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 
-import { getAppConfig, patchAppConfig } from "@/api/channels"
+import { getAppConfig, getSecMsgAccounts, patchAppConfig } from "@/api/channels"
 import { SecMsgForm } from "@/components/channels/channel-forms/secmsg-form"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
@@ -69,7 +69,34 @@ function DaemonCard({
   const configured = asString(daemon.address) !== ""
   const name = asString(daemon.name)
   const displayName = name === "" ? "secmsg" : name
-  const accountCount = asArray(daemon.accounts).length
+
+  // Account count comes from the daemon live (not config): claw discovers the
+  // daemon's linked accounts, so the card reflects what the daemon actually
+  // hosts. null = still loading; "error" = daemon unreachable.
+  const [liveCount, setLiveCount] = useState<number | "error" | null>(null)
+  useEffect(() => {
+    if (isNew) return
+    let cancelled = false
+    getSecMsgAccounts(displayName)
+      .then((r) => {
+        if (!cancelled) setLiveCount(r.accounts.length)
+      })
+      .catch(() => {
+        if (!cancelled) setLiveCount("error")
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [displayName, isNew])
+
+  const accountLabel =
+    liveCount === null
+      ? "…"
+      : liveCount === "error"
+        ? "daemon unreachable"
+        : liveCount === 1
+          ? "1 account"
+          : `${liveCount} accounts`
 
   return (
     <div className="border-border/60 bg-card rounded-xl border">
@@ -97,7 +124,7 @@ function DaemonCard({
             <span>
               {displayName}
               <span className="text-muted-foreground ml-2 font-sans text-xs font-normal">
-                {accountCount === 1 ? "1 account" : `${accountCount} accounts`}
+                {accountLabel}
               </span>
             </span>
           )}

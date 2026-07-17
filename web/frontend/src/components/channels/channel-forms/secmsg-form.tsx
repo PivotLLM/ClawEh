@@ -5,6 +5,7 @@ import { toast } from "sonner"
 
 import {
   type ChannelConfig,
+  getSecMsgAccounts,
   getSecMsgLinkStatus,
   requestSecMsgLink,
   type SecMsgLinkStatus,
@@ -221,6 +222,66 @@ interface SecMsgFormProps {
   isNew: boolean
 }
 
+// DiscoveredAccounts lists the accounts the daemon actually hosts (queried live),
+// each with its own device-linking panel. This is the primary path: point claw
+// at the daemon and it binds one channel per account automatically — no manual
+// account entry required.
+function DiscoveredAccounts({ daemonName }: { daemonName: string }) {
+  const [accounts, setAccounts] = useState<string[] | "error" | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    getSecMsgAccounts(daemonName)
+      .then((r) => {
+        if (!cancelled) setAccounts(r.accounts)
+      })
+      .catch(() => {
+        if (!cancelled) setAccounts("error")
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [daemonName])
+
+  if (accounts === null) {
+    return <p className="text-muted-foreground text-xs">Querying daemon…</p>
+  }
+  if (accounts === "error") {
+    return (
+      <p className="text-muted-foreground text-xs">
+        Daemon unreachable — accounts will appear once it's running. Save the
+        daemon first if you just added it.
+      </p>
+    )
+  }
+  if (accounts.length === 0) {
+    return (
+      <p className="text-muted-foreground text-xs">
+        No linked accounts on this daemon yet. Link a device below to add one.
+      </p>
+    )
+  }
+
+  return (
+    <div className="space-y-3">
+      {accounts.map((id) => (
+        <div
+          key={id}
+          className="border-border/60 bg-muted/20 space-y-3 rounded-lg border p-4"
+        >
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-sm font-semibold">{id}</span>
+            <span className="text-muted-foreground font-mono text-xs">
+              → {accountChannelName(daemonName, id)}
+            </span>
+          </div>
+          <SecMsgLinkPanel channelName={accountChannelName(daemonName, id)} />
+        </div>
+      ))}
+    </div>
+  )
+}
+
 export function SecMsgForm({
   daemonName,
   config,
@@ -229,6 +290,8 @@ export function SecMsgForm({
 }: SecMsgFormProps) {
   const { t } = useTranslation()
   const accounts = asArray(config.accounts).map(asRecord)
+  const groupTrigger = asRecord(config.group_trigger)
+  const [showAdvanced, setShowAdvanced] = useState(accounts.length > 0)
 
   const setAccounts = (next: Record<string, unknown>[]) =>
     onChange("accounts", next)
@@ -253,35 +316,89 @@ export function SecMsgForm({
         />
       </Field>
 
+      <Field
+        label={t("channels.field.allowFrom")}
+        hint="Who may message any account on this daemon. Applies to every discovered account; a pinned account below can override it."
+      >
+        <Input
+          value={asStringArray(config.allow_from).join(", ")}
+          onChange={(e) =>
+            onChange(
+              "allow_from",
+              e.target.value
+                .split(",")
+                .map((s: string) => s.trim())
+                .filter(Boolean),
+            )
+          }
+          placeholder={t("channels.field.allowFromPlaceholder")}
+        />
+      </Field>
+
+      <SwitchCardField
+        label={t("channels.field.mentionOnly")}
+        hint={t("channels.form.desc.mentionOnly")}
+        checked={asBool(groupTrigger.mention_only)}
+        onCheckedChange={(checked) =>
+          onChange("group_trigger", { ...groupTrigger, mention_only: checked })
+        }
+        ariaLabel={t("channels.field.mentionOnly")}
+      />
+
       <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-sm font-medium">Accounts</p>
-            <p className="text-muted-foreground text-xs">
-              One daemon can host several accounts; each becomes its own channel.
-              Leave empty to auto-bind the daemon's sole linked account.
-            </p>
-          </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setAccounts([...accounts, { account: "" }])}
-          >
-            <IconPlus className="size-4" />
-            Add account
-          </Button>
+        <div>
+          <p className="text-sm font-medium">Accounts</p>
+          <p className="text-muted-foreground text-xs">
+            claw discovers this daemon's linked accounts automatically — each
+            becomes its own channel. Link devices below.
+          </p>
         </div>
 
-        {accounts.map((account, i) => (
-          <AccountRow
-            key={i}
-            daemonName={daemonName}
-            account={account}
-            canLink={!isNew}
-            onChange={(key, value) => updateAccount(i, key, value)}
-            onRemove={() => setAccounts(accounts.filter((_, j) => j !== i))}
-          />
-        ))}
+        {isNew ? (
+          <p className="text-muted-foreground text-xs">
+            Save the daemon to discover its accounts.
+          </p>
+        ) : (
+          <DiscoveredAccounts daemonName={daemonName} />
+        )}
+      </div>
+
+      <div className="border-border/40 space-y-3 border-t pt-4">
+        <button
+          type="button"
+          onClick={() => setShowAdvanced((v) => !v)}
+          className="text-muted-foreground hover:text-foreground text-xs font-medium"
+        >
+          {showAdvanced ? "Hide" : "Show"} advanced: pin specific accounts
+        </button>
+
+        {showAdvanced && (
+          <div className="space-y-3">
+            <p className="text-muted-foreground text-xs">
+              Optional. Pin an account to give it a custom name, its own
+              allowlist, or group-trigger settings. Leave empty to let
+              discovery bind every account with the daemon defaults above.
+            </p>
+            {accounts.map((account, i) => (
+              <AccountRow
+                key={i}
+                daemonName={daemonName}
+                account={account}
+                canLink={!isNew}
+                onChange={(key, value) => updateAccount(i, key, value)}
+                onRemove={() => setAccounts(accounts.filter((_, j) => j !== i))}
+              />
+            ))}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setAccounts([...accounts, { account: "" }])}
+            >
+              <IconPlus className="size-4" />
+              Pin account
+            </Button>
+          </div>
+        )}
       </div>
     </div>
   )
