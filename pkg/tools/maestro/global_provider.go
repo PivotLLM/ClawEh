@@ -96,12 +96,9 @@ func (globalMaestroProvider) RegisterTools(deps global.Deps) []global.ToolDefini
 		Host:      mmaestro.HostDeps{Logger: mlog, Dispatcher: disp},
 	})
 
-	// A Maestro task worker is itself a sub-agent, so it must not be able to
-	// re-enter Maestro — mark the whole suite PrimaryOnly (excluded from sub-agent
-	// tool registries, like agent_spawn).
-	for i := range defs {
-		defs[i].PrimaryOnly = true
-	}
+	// Maestro is available to sub-agents too (a worker may run its own taskset);
+	// unbounded re-entry is prevented by MaxSpawnDepth in the Spawner, not by
+	// withholding the tools.
 	logger.InfoCF("maestro", "maestro tools enabled for agent",
 		map[string]any{"agent": deps.AgentID, "tools": len(defs), "base": base, "host_dispatch": disp != nil})
 	return defs

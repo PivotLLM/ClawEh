@@ -779,6 +779,21 @@ func TestDefaultConfig_ConfigReloadInterval(t *testing.T) {
 	}
 }
 
+func TestGetMaxSubagentDepth(t *testing.T) {
+	var d AgentDefaults
+	if got := d.GetMaxSubagentDepth(); got != DefaultMaxSubagentDepth {
+		t.Errorf("unset GetMaxSubagentDepth()=%d, want default %d", got, DefaultMaxSubagentDepth)
+	}
+	d.MaxSubagentDepth = 5
+	if got := d.GetMaxSubagentDepth(); got != 5 {
+		t.Errorf("configured GetMaxSubagentDepth()=%d, want 5", got)
+	}
+	d.MaxSubagentDepth = -2
+	if got := d.GetMaxSubagentDepth(); got != DefaultMaxSubagentDepth {
+		t.Errorf("negative GetMaxSubagentDepth()=%d, want default %d", got, DefaultMaxSubagentDepth)
+	}
+}
+
 func TestTurnToolProgressDefaults(t *testing.T) {
 	var d AgentDefaults // all zero
 	if got := d.GetTurnTimeout(); got != DefaultTurnTimeout {

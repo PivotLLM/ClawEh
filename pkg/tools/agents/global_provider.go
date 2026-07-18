@@ -106,7 +106,8 @@ func (globalAgentProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 			RawSchema:   spawnToolSchema(),
 			Category:    "agents",
 			Async:       true,
-			PrimaryOnly: true, // a sub-agent cannot spawn further sub-agents (no recursion)
+			// Sub-agents may spawn too; runaway recursion is bounded by
+			// MaxSpawnDepth in the Spawner (see depth.go), not by hiding the tool.
 			Handler: func(call *global.ToolCall) (*global.Result, error) {
 				if sp == nil {
 					return &global.Result{IsError: true, ForLLM: "spawn tool not available"}, nil

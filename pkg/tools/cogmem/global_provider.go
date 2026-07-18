@@ -181,20 +181,10 @@ func (globalCogmemProvider) RegisterTools(deps global.Deps) []global.ToolDefinit
 			nil, true, status),
 	}
 
-	// Sub-agents get READ-ONLY cognitive memory: they share the primary's memory
-	// for background but cannot mutate it. Mark the write tools primary-only so a
-	// sub-agent's registry excludes them (the store is also opened read-only for
-	// sub-agents, so a stray write still fails). Read tools (domain_get,
-	// memory_search, domain_list, explain, export, status) remain available.
-	writeTools := map[string]bool{
-		"memory_create": true, "domain_update": true, "memory_retire": true,
-		"memory_confirm": true, "domain_create": true, "domain_archive": true,
-		"domain_migrate": true, "memory_forget": true, "consolidate": true,
-	}
-	for i := range defs {
-		if writeTools[defs[i].Name] {
-			defs[i].PrimaryOnly = true
-		}
-	}
+	// Sub-agents get the full cogmem toolset, including writes. Their memory is a
+	// snapshot copied onto the sub-agent session's own DB and deleted after the
+	// run (see agent.runSubagentTask), so any writes land on that throwaway copy
+	// and the primary's memory is never touched — the isolation, not tool
+	// withholding, is what protects it.
 	return defs
 }

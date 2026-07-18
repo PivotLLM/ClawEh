@@ -20,6 +20,9 @@ import (
 type Spawner struct {
 	mgr            *SubagentManager
 	allowlistCheck func(targetAgentID string) bool
+	// maxDepth is the sub-agent recursion bound; 0 falls back to
+	// DefaultMaxSpawnDepth (see maxSpawnDepth).
+	maxDepth int
 }
 
 // Compile-time checks.
@@ -39,6 +42,18 @@ func (s *Spawner) SetAllowlistChecker(check func(targetAgentID string) bool) {
 	s.allowlistCheck = check
 }
 
+// SetMaxDepth sets the sub-agent recursion bound (agents.defaults.max_subagent_depth).
+// A value <= 0 restores the default (DefaultMaxSpawnDepth).
+func (s *Spawner) SetMaxDepth(d int) { s.maxDepth = d }
+
+// maxSpawnDepth returns the effective recursion bound.
+func (s *Spawner) maxSpawnDepth() int {
+	if s.maxDepth > 0 {
+		return s.maxDepth
+	}
+	return DefaultMaxSpawnDepth
+}
+
 // Spawn launches a worker per req.Mode. See global.Spawner.
 func (s *Spawner) Spawn(ctx context.Context, req global.SpawnRequest) (*global.Result, error) {
 	if s == nil || s.mgr == nil {
@@ -46,6 +61,13 @@ func (s *Spawner) Spawn(ctx context.Context, req global.SpawnRequest) (*global.R
 	}
 	if strings.TrimSpace(req.Task) == "" {
 		return &global.Result{IsError: true, ForLLM: "task is required and must be a non-empty string"}, nil
+	}
+
+	// Bound recursion: a sub-agent already at the depth bound may not spawn deeper.
+	if max := s.maxSpawnDepth(); SpawnDepth(ctx) >= max {
+		return &global.Result{IsError: true, ForLLM: fmt.Sprintf(
+			"maximum sub-agent depth (%d) reached; this task is already nested %d level(s) deep and cannot spawn further sub-agents",
+			max, SpawnDepth(ctx))}, nil
 	}
 
 	// Authorize targeted spawns. Self-spawns are authorized by the caller already
@@ -98,7 +120,7 @@ func (s *Spawner) Spawn(ctx context.Context, req global.SpawnRequest) (*global.R
 				onResult(tools.ResultToGlobal(r))
 			}
 		}
-		id, err := s.mgr.SpawnCallback(req.Task, name, req.TargetAgentID, channel, chatID, req.Model, cb)
+		id, err := s.mgr.SpawnCallback(req.Task, name, req.TargetAgentID, channel, chatID, req.Model, cb, SpawnDepth(ctx))
 		if err != nil {
 			return &global.Result{IsError: true, ForLLM: fmt.Sprintf("failed to spawn subagent: %v", err)}, nil
 		}
@@ -131,6 +153,11 @@ func (s *Spawner) TaskList() ([]global.TaskBrief, error) {
 func (s *Spawner) RunSync(ctx context.Context, task, model string) (string, error) {
 	if s == nil || s.mgr == nil {
 		return "", fmt.Errorf("spawn is not available")
+	}
+	// Bound recursion: a Maestro worker that is itself already at the depth bound
+	// may not dispatch a further layer of workers.
+	if max := s.maxSpawnDepth(); SpawnDepth(ctx) >= max {
+		return "", fmt.Errorf("maximum sub-agent depth (%d) reached; cannot dispatch further sub-agents", max)
 	}
 	return s.mgr.RunSync(ctx, task, "", model)
 }

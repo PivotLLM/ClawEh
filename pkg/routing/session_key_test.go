@@ -16,7 +16,8 @@ func TestBuildAgentServiceSessionKey(t *testing.T) {
 	if got != want {
 		t.Errorf("BuildAgentServiceSessionKey('Sales Bot') = %q, want %q", got, want)
 	}
-	// A service session must be a PRIMARY key so PrimaryOnly tools (Maestro) run.
+	// A service session must be a PRIMARY key (not a subagent key) so it does not
+	// count against the sub-agent spawn-depth bound.
 	if IsSubagentSessionKey(got) {
 		t.Errorf("service session key %q must not be classified as a subagent key", got)
 	}

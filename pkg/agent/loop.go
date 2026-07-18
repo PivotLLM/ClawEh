@@ -764,6 +764,7 @@ func (al *AgentLoop) registerRuntimeTools(
 		})
 		managers[agentID] = spawnMgr
 		spawner := toolsagents.NewSpawner(spawnMgr)
+		spawner.SetMaxDepth(cfg.Agents.Defaults.GetMaxSubagentDepth())
 		spawner.SetAllowlistChecker(func(targetID string) bool {
 			return spawnAllowlist(currentAgentID, targetID)
 		})
@@ -2345,15 +2346,10 @@ func (al *AgentLoop) runLLMIteration(
 				"max":       agent.MaxIterations,
 			})
 
-		// Build tool definitions. Sub-agent sessions are offered the agent's tools
-		// minus PrimaryOnly ones (e.g. agent_spawn, cron_schedule, cogmem writes) —
-		// see IsSubagentSessionKey. Primary sessions are unaffected.
-		var providerToolDefs []providers.ToolDefinition
-		if routing.IsSubagentSessionKey(opts.SessionKey) {
-			providerToolDefs = agent.Tools.ToProviderDefsExcludingPrimaryOnly()
-		} else {
-			providerToolDefs = agent.Tools.ToProviderDefs()
-		}
+		// Build tool definitions. A sub-agent is an instance of the parent and is
+		// offered the parent's full toolset; recursion is bounded by MaxSpawnDepth
+		// in the Spawner, not by withholding tools.
+		providerToolDefs := agent.Tools.ToProviderDefs()
 		if agent.NoTools {
 			providerToolDefs = nil
 		}
@@ -2978,15 +2974,6 @@ func (al *AgentLoop) runLLMIteration(
 					var toolCancel context.CancelFunc
 					execCtx, toolCancel = context.WithTimeout(execCtx, toolTimeout)
 					defer toolCancel()
-				}
-
-				// Defense-in-depth: a sub-agent must never run a PrimaryOnly tool,
-				// even if one slipped into the call list. (The tool list already
-				// excludes them; this rejects any stray attempt.)
-				if routing.IsSubagentSessionKey(opts.SessionKey) && agent.Tools.IsPrimaryOnlyTool(tc.Name) {
-					agentResults[idx].result = tools.ErrorResult(
-						fmt.Sprintf("tool %q is not available to sub-agents", tc.Name))
-					return
 				}
 
 				toolResult := agent.Tools.ExecuteWithContext(

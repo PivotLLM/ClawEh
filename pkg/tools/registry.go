@@ -669,29 +669,6 @@ func (r *ToolRegistry) ToProviderDefs() []providers.ToolDefinition {
 	return definitions
 }
 
-// IsPrimaryOnlyTool reports whether the named tool is restricted to primary
-// agents (see PrimaryOnlyTool / IsPrimaryOnly). Unknown tools report false.
-func (r *ToolRegistry) IsPrimaryOnlyTool(name string) bool {
-	if entry, _, ok := r.resolve(name); ok {
-		return IsPrimaryOnly(entry.Tool)
-	}
-	return false
-}
-
-// ToProviderDefsExcludingPrimaryOnly is ToProviderDefs with primary-only tools
-// removed — the tool list offered to a spawned sub-agent's model.
-func (r *ToolRegistry) ToProviderDefsExcludingPrimaryOnly() []providers.ToolDefinition {
-	all := r.ToProviderDefs()
-	out := make([]providers.ToolDefinition, 0, len(all))
-	for _, d := range all {
-		if r.IsPrimaryOnlyTool(d.Function.Name) {
-			continue
-		}
-		out = append(out, d)
-	}
-	return out
-}
-
 // List returns a list of all registered tool names.
 func (r *ToolRegistry) List() []string {
 	r.mu.RLock()
