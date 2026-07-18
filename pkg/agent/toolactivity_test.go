@@ -17,13 +17,19 @@ func TestToolActivitySummary(t *testing.T) {
 			desc: "read line range",
 			tool: "file_read_lines",
 			args: map[string]any{"path": "files/novels/natalie1/outline.md", "start_line": 1.0, "line_count": 250.0},
-			want: "🔧 file_read 1–250 outline.md",
+			want: "🔧 file_read lines 1–250 outline.md",
 		},
 		{
-			desc: "read no count",
+			desc: "read no count shows full default range",
 			tool: "file_read_lines",
 			args: map[string]any{"path": "outline.md", "start_line": 716.0},
-			want: "🔧 file_read 716 outline.md",
+			want: "🔧 file_read lines 716–965 outline.md",
+		},
+		{
+			desc: "read bytes labelled",
+			tool: "file_read_bytes",
+			args: map[string]any{"path": "outline.md", "offset": 4096.0},
+			want: "🔧 file_read bytes outline.md",
 		},
 		{
 			desc:    "edit lines hides replacement text",

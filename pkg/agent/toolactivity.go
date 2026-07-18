@@ -28,11 +28,11 @@ func toolActivitySummary(name string, args map[string]any) string {
 	switch name {
 	case "file_read_lines":
 		if base := toolArgBase(args, "path"); base != "" {
-			return prefix + "file_read " + readLineRange(args) + " " + base
+			return prefix + "file_read lines " + readLineRange(args) + " " + base
 		}
 	case "file_read_bytes":
 		if base := toolArgBase(args, "path"); base != "" {
-			return prefix + "file_read " + base
+			return prefix + "file_read bytes " + base
 		}
 	case "file_edit_lines", "file_delete_lines", "file_insert_lines":
 		if base := toolArgBase(args, "path"); base != "" {
@@ -140,17 +140,24 @@ func toolArgInt(args map[string]any, key string) (int, bool) {
 	return 0, false
 }
 
-// readLineRange renders a file_read_lines slice as "start–end" (from start_line +
-// line_count) or just "start" when no count is given.
+// defaultReadLineCount mirrors pkg/tools/files' default line_count for
+// file_read_lines, used so the breadcrumb shows the full requested range even
+// when the model omits line_count (kept in sync manually; display-only).
+const defaultReadLineCount = 250
+
+// readLineRange renders a file_read_lines slice as "start–end". When line_count
+// is omitted the tool's default applies, so the breadcrumb shows the full range
+// the model is reading (e.g. start 766 → "766–1015"), not just the start.
 func readLineRange(args map[string]any) string {
 	start, ok := toolArgInt(args, "start_line")
 	if !ok || start <= 0 {
 		start = 1
 	}
-	if count, ok := toolArgInt(args, "line_count"); ok && count > 0 {
-		return fmt.Sprintf("%d–%d", start, start+count-1)
+	count, ok := toolArgInt(args, "line_count")
+	if !ok || count <= 0 {
+		count = defaultReadLineCount
 	}
-	return strconv.Itoa(start)
+	return fmt.Sprintf("%d–%d", start, start+count-1)
 }
 
 // editLineRange renders a range-edit as "start–end" or "start" (or "" when no
