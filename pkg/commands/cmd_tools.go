@@ -19,7 +19,7 @@ func toolsCommand() Definition {
 			arg := nthToken(req.Text, 1)
 			if arg == "" {
 				return req.Reply("Tool activity is currently " + onOff(rt.GetShowToolActivity()) +
-					".\n\nUse /tools on to follow what I'm doing (e.g. \"file_read 1–250 outline.md\"), or /tools off to hide it.")
+					".\n\nUse: /tools [on | off]")
 			}
 
 			on, err := global.YesNo(arg)
