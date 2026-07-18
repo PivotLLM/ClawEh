@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/PivotLLM/ClawEh/pkg/providers"
@@ -116,6 +117,52 @@ func TestEmptyResponse_ReasoningFieldAlsoTriggers(t *testing.T) {
 	}
 	if !degenerate {
 		t.Fatalf("reasoning in the `reasoning` field must also flag degenerate after retries")
+	}
+}
+
+// driveEmptyViaLoop runs a full turn through runAgentLoop with a single empty,
+// normal response and returns the user-facing reply.
+func driveEmptyViaLoop(t *testing.T, isGroup bool) string {
+	t.Helper()
+	al, _, _, _, cleanup := newTestAgentLoop(t)
+	defer cleanup()
+
+	agentInstance := al.registry.GetDefaultAgent()
+	if agentInstance == nil {
+		t.Fatal("no default agent")
+	}
+	agentInstance.Provider = &sequenceProvider{
+		responses: []*providers.LLMResponse{{Content: "", FinishReason: "stop", Normal: true}},
+		errors:    []error{nil},
+	}
+
+	resp, err := al.runAgentLoop(context.Background(), agentInstance, processOptions{
+		SessionKey:   "empty-loop",
+		Channel:      "test",
+		ChatID:       "test-chat",
+		UserMessage:  "go",
+		SendResponse: false,
+		IsGroup:      isGroup,
+	})
+	if err != nil {
+		t.Fatalf("runAgentLoop: %v", err)
+	}
+	return resp
+}
+
+// A direct (non-group) empty response is surfaced to the user rather than
+// swallowed — a degraded fallback model returning nothing must not look like a hang.
+func TestEmptyResponse_DirectAdvisesUser(t *testing.T) {
+	resp := driveEmptyViaLoop(t, false)
+	if !strings.Contains(resp, "empty response") {
+		t.Fatalf("direct empty response must advise the user, got %q", resp)
+	}
+}
+
+// A group empty response stays silent (the message wasn't for this agent).
+func TestEmptyResponse_GroupStaysSilent(t *testing.T) {
+	if resp := driveEmptyViaLoop(t, true); resp != "" {
+		t.Fatalf("group empty response must stay silent, got %q", resp)
 	}
 }
 

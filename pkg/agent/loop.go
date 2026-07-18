@@ -170,6 +170,7 @@ type processOptions struct {
 	ResetSession    bool     // True when this message is a session_clear handoff: reset before handling
 	SenderID        string   // Originating sender identifier for source attribution
 	SenderName      string   // Human-readable sender label (display name + canonical ID)
+	IsGroup         bool     // True when the inbound message came from a group/multi-listener chat
 	IterationsOut   *int     // optional: runAgentLoop writes the LLM iteration count here
 }
 
@@ -1670,6 +1671,7 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 		ResetSession:    msg.Metadata[metaSessionReset] == "true",
 		SenderID:        msg.SenderID,
 		SenderName:      senderSource(msg.SenderID, msg.Sender),
+		IsGroup:         inboundMetadata(msg, "is_group") == "true",
 	}
 
 	// context-dependent commands check their own Runtime fields and report
@@ -1996,15 +1998,14 @@ func (al *AgentLoop) runAgentLoop(
 	// This is controlled by the tool's Silent flag and ForUser content
 
 	// 5. Handle empty response.
-	// Normal termination with no content means the LLM has nothing to say (e.g., message
-	// was @-directed at another agent). Non-normal termination means something went wrong.
 	isSystemError := false
 	if finalContent == "" {
-		// Genuinely nothing to say (empty content AND no reasoning, normal finish)
-		// — e.g. a group message @-directed at another agent. Stay silent, but
-		// always clear the typing indicator so the user is not left waiting.
-		if normal && !degenerate {
-			logger.DebugCF("agent", "LLM returned empty response with normal termination",
+		switch {
+		case normal && !degenerate && opts.IsGroup:
+			// Legitimate silence: an empty, normal reply in a GROUP chat means the
+			// message wasn't for this agent (e.g. @-directed at another). Stay silent
+			// but clear the typing indicator so nobody is left waiting.
+			logger.DebugCF("agent", "empty normal response in group; staying silent",
 				map[string]any{
 					"agent_id":      agent.ID,
 					"session_key":   opts.SessionKey,
@@ -2012,11 +2013,9 @@ func (al *AgentLoop) runAgentLoop(
 				})
 			al.stopTyping(opts.Channel, opts.ChatID)
 			return "", nil
-		}
-		// Degenerate empty (model produced reasoning but no reply, even after
-		// poking) or abnormal termination: the user must still get something.
-		isSystemError = true
-		if degenerate {
+		case degenerate:
+			// Model produced reasoning but no reply, even after poking.
+			isSystemError = true
 			finalContent = "Sorry — I couldn't compose a reply to that. Please try again."
 			logger.WarnCF("agent", "degenerate empty response; sending fallback reply",
 				map[string]any{
@@ -2024,7 +2023,21 @@ func (al *AgentLoop) runAgentLoop(
 					"session_key":   opts.SessionKey,
 					"finish_reason": finishReason,
 				})
-		} else {
+		case normal:
+			// Direct chat, empty-but-normal reply — the user is addressing this agent
+			// and expects an answer, so an empty response is a failure (e.g. a degraded
+			// fallback model returning nothing). Advise rather than swallow it.
+			isSystemError = true
+			finalContent = "The model returned an empty response. This can happen when a fallback model can't handle the request — please try again."
+			logger.WarnCF("agent", "empty response on a direct message; advising the user",
+				map[string]any{
+					"agent_id":      agent.ID,
+					"session_key":   opts.SessionKey,
+					"finish_reason": finishReason,
+				})
+		default:
+			// Abnormal termination.
+			isSystemError = true
 			finalContent = fmt.Sprintf("The AI provider returned an empty response (finish reason: %s). Check provider logs for details.", finishReason)
 		}
 	}
