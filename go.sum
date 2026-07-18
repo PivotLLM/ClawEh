@@ -6,6 +6,8 @@ github.com/PivotLLM/Maestro v0.4.1 h1:LjBQkAJRQ57/t2XBcxpSa1behFFc29WjoMD2iLiIRv
 github.com/PivotLLM/Maestro v0.4.1/go.mod h1:WHh/T/ofdXxR7xYJKPpuOUyNA9Kr+DkBVWlRWbZq3iM=
 github.com/PivotLLM/spawnllm v0.1.5 h1:8nCc31x2BdijsKBA6iUl/8aCJSM6vNS30P4VfxJh+NI=
 github.com/PivotLLM/spawnllm v0.1.5/go.mod h1:VEq3syYV2jYqeoaNPo89lH9AyA6oDzFj2AIUlPBUfnU=
+github.com/PivotLLM/spawnllm v0.1.6 h1:N0KNrKvbu3mbTzlo3PLpyyZ/Yy9FDldxMQnl8hp1uVU=
+github.com/PivotLLM/spawnllm v0.1.6/go.mod h1:VEq3syYV2jYqeoaNPo89lH9AyA6oDzFj2AIUlPBUfnU=
 github.com/PivotLLM/toolspec v0.4.0 h1:/6EZ8XvQoMi6LmFw24gt5UcekuQPoj88evwfMUn5xTU=
 github.com/PivotLLM/toolspec v0.4.0/go.mod h1:QA/AiJHJSEwsLGEY0RTGWC124ftNigLIP8pTPj3oVKM=
 github.com/adhocore/gronx v1.20.0 h1:PD13Mo0wekkZ7ZZR9yb1TqeqTfybs7/K3ez9DmjQwEs=

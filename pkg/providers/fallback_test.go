@@ -169,34 +169,36 @@ func TestFallback_ContextCanceled(t *testing.T) {
 	}
 }
 
-func TestFallback_NonRetriableError(t *testing.T) {
+func TestFallback_FormatErrorFallsBack(t *testing.T) {
+	// A provider-specific 400 (classified as format) must fall back to the next
+	// candidate — e.g. DeepSeek thinking-mode rejects a request another provider
+	// accepts. The first candidate fails "format"; the second succeeds.
 	ct := NewCooldownTracker()
 	fc := NewFallbackChain(ct)
 
 	candidates := []FallbackCandidate{
-		makeCandidate("openai", "gpt-4"),
-		makeCandidate("anthropic", "claude"),
+		makeCandidate("deepseek", "deepseek-v4-pro"),
+		makeCandidate("xai", "grok"),
 	}
 
 	attempt := 0
 	run := func(ctx context.Context, c FallbackCandidate) (*LLMResponse, error) {
 		attempt++
-		return nil, errors.New("string should match pattern")
+		if c.Provider == "deepseek" {
+			return nil, errors.New("string should match pattern") // classifies as format
+		}
+		return &LLMResponse{Content: "grok response", FinishReason: "stop"}, nil
 	}
 
-	_, err := fc.Execute(context.Background(), candidates, run)
-	if err == nil {
-		t.Fatal("expected error for non-retriable")
+	result, err := fc.Execute(context.Background(), candidates, run)
+	if err != nil {
+		t.Fatalf("format error should fall back, got error: %v", err)
 	}
-	var fe *FailoverError
-	if !errors.As(err, &fe) {
-		t.Fatalf("expected FailoverError, got %T", err)
+	if result.Provider != "xai" {
+		t.Errorf("provider = %q, want xai (fell back past the format error)", result.Provider)
 	}
-	if fe.Reason != FailoverFormat {
-		t.Errorf("reason = %q, want format", fe.Reason)
-	}
-	if attempt != 1 {
-		t.Errorf("attempt = %d, want 1 (non-retriable should not try next)", attempt)
+	if attempt != 2 {
+		t.Errorf("attempt = %d, want 2 (format should try the next candidate)", attempt)
 	}
 }
 
