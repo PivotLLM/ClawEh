@@ -41,7 +41,11 @@ func DefaultCooldownPolicy() CooldownPolicy {
 	return CooldownPolicy{
 		BillingAuth: 60 * time.Minute,
 		RateLimit:   10 * time.Minute,
-		BadRequest:  1 * time.Minute,
+		// 400 never cools by default: a bad-request is a request-shape rejection,
+		// not a provider-health signal. Cooling the shared provider+model key would
+		// skip sibling model entries (e.g. a thinking-off variant of the same model)
+		// that would accept the request. Opt in via cooldown.bad_request_minutes.
+		BadRequest:  0,
 		ClientError: 10 * time.Minute,
 		ServerError: 10 * time.Minute,
 	}

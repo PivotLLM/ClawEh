@@ -878,7 +878,10 @@ type CooldownConfig struct {
 const (
 	DefaultCooldownBillingAuthMinutes = 60
 	DefaultCooldownRateLimitMinutes   = 10
-	DefaultCooldownBadRequestMinutes  = 1
+	// 400 defaults to never-cool: a bad-request is a request-shape rejection, so
+	// the fallback should try the next candidate (including a sibling config of the
+	// same provider+model, e.g. thinking-off) instead of parking the model.
+	DefaultCooldownBadRequestMinutes  = 0
 	DefaultCooldownClientErrorMinutes = 10
 	DefaultCooldownServerErrorMinutes = 10
 )

@@ -333,7 +333,7 @@ func TestCooldownPolicy_Categories(t *testing.T) {
 		402: 60 * time.Minute,
 		403: 60 * time.Minute,
 		429: 10 * time.Minute,
-		400: 1 * time.Minute,
+		400: 0, // never cool: fail over to sibling configs instead of parking the model
 		404: 10 * time.Minute,
 		500: 10 * time.Minute,
 		503: 10 * time.Minute,
@@ -344,5 +344,16 @@ func TestCooldownPolicy_Categories(t *testing.T) {
 		if got := p.CategoryCooldown(status); got != want {
 			t.Errorf("CategoryCooldown(%d) = %v, want %v", status, got, want)
 		}
+	}
+}
+
+// TestCooldown_BadRequestDoesNotPark verifies a 400/format failure leaves the
+// model available, so the fallback still tries a sibling config of the same
+// provider+model (e.g. a thinking-off variant) instead of skipping it.
+func TestCooldown_BadRequestDoesNotPark(t *testing.T) {
+	ct := NewCooldownTracker()
+	ct.MarkFailure("Deepseek", "deepseek-v4-pro", FailoverFormat, 400, 0)
+	if !ct.IsAvailable("Deepseek", "deepseek-v4-pro") {
+		t.Fatal("a 400 must not put the model on cooldown (sibling config would be skipped)")
 	}
 }

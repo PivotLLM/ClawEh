@@ -834,8 +834,8 @@ func TestCooldownConfigDurations(t *testing.T) {
 	if c.RateLimit() != 10*time.Minute || c.ClientError() != 10*time.Minute || c.ServerError() != 10*time.Minute {
 		t.Errorf("rate/client/server defaults wrong: %v %v %v", c.RateLimit(), c.ClientError(), c.ServerError())
 	}
-	if c.BadRequest() != 1*time.Minute {
-		t.Errorf("BadRequest default = %v, want 1m", c.BadRequest())
+	if c.BadRequest() != 0 {
+		t.Errorf("BadRequest default = %v, want 0 (never cool)", c.BadRequest())
 	}
 
 	// Explicit value overrides; negative disables.
