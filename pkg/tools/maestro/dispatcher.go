@@ -24,13 +24,15 @@ type dispatcher struct {
 	run global.SyncRunner
 }
 
-// Dispatch runs the task's prompt as a sub-agent and maps the result back.
-func (d *dispatcher) Dispatch(req *mllm.DispatchRequest) (*mllm.DispatchResult, error) {
+// Dispatch runs the task's prompt as a sub-agent and maps the result back. ctx
+// carries the spawning agent's request scope — including its sub-agent depth —
+// so a Maestro worker that dispatches its own tasks stays within MaxSpawnDepth.
+func (d *dispatcher) Dispatch(ctx context.Context, req *mllm.DispatchRequest) (*mllm.DispatchResult, error) {
 	if d == nil || d.run == nil {
 		return &mllm.DispatchResult{ExitCode: 1, Stderr: "host dispatcher not available"}, nil
 	}
 	// Model "" → the spawning agent's own model selection (with fallback).
-	content, err := d.run.RunSync(context.Background(), req.Prompt, "")
+	content, err := d.run.RunSync(ctx, req.Prompt, "")
 	if err != nil {
 		return &mllm.DispatchResult{
 			ExitCode: 1,

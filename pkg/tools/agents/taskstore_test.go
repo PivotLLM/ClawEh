@@ -29,7 +29,7 @@ func TestSpawnCallback_Lifecycle(t *testing.T) {
 
 	done := make(chan *tools.ToolResult, 1)
 	id, err := mgr.SpawnCallback("the work", "job1", "", "cli", "direct", "",
-		func(_ context.Context, r *tools.ToolResult) { done <- r })
+		func(_ context.Context, r *tools.ToolResult) { done <- r }, 0)
 	if err != nil {
 		t.Fatalf("SpawnCallback error: %v", err)
 	}
@@ -77,7 +77,7 @@ func TestTaskList_ReturnsTasks(t *testing.T) {
 	mgr, _ := newTestManager(t)
 	done := make(chan *tools.ToolResult, 1)
 	if _, err := mgr.SpawnCallback("w", "listed", "", "cli", "direct", "",
-		func(_ context.Context, r *tools.ToolResult) { done <- r }); err != nil {
+		func(_ context.Context, r *tools.ToolResult) { done <- r }, 0); err != nil {
 		t.Fatalf("spawn: %v", err)
 	}
 	<-done

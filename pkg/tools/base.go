@@ -154,24 +154,6 @@ type SessionScoped interface {
 	IsSessionScoped() bool
 }
 
-// PrimaryOnlyTool is an optional interface for tools restricted to primary
-// (top-level) agents. A tool reporting IsPrimaryOnly() == true is excluded when
-// a sub-agent's tool registry is built and rejected if a sub-agent attempts it.
-// Global-layer tools set ToolDefinition.PrimaryOnly (propagated by the wrapper);
-// directly-registered tools implement this method.
-type PrimaryOnlyTool interface {
-	IsPrimaryOnly() bool
-}
-
-// IsPrimaryOnly reports whether a tool is restricted to primary agents. Tools
-// that do not implement PrimaryOnlyTool are available to sub-agents (false).
-func IsPrimaryOnly(t Tool) bool {
-	if p, ok := t.(PrimaryOnlyTool); ok {
-		return p.IsPrimaryOnly()
-	}
-	return false
-}
-
 func ToolToSchema(tool Tool) map[string]any {
 	return map[string]any{
 		"type": "function",

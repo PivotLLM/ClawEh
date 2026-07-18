@@ -42,15 +42,16 @@ func TestProvider_GatingAndDispatch(t *testing.T) {
 		})
 	}
 
-	// Enabled agent gets the whole suite, every tool marked PrimaryOnly (a Maestro
-	// task worker is itself a sub-agent and must not re-enter Maestro).
+	// Enabled agent gets the whole suite. Maestro is available to sub-agents too
+	// (a worker may run its own taskset), so no tool is marked PrimaryOnly —
+	// recursion is bounded by MaxSpawnDepth in the Spawner instead.
 	defs := register("alice")
 	if len(defs) == 0 {
 		t.Fatal("alice (maestro on) should get the maestro tool suite")
 	}
 	for _, d := range defs {
-		if !d.PrimaryOnly {
-			t.Errorf("maestro tool %q must be PrimaryOnly", d.Name)
+		if d.PrimaryOnly {
+			t.Errorf("maestro tool %q must NOT be PrimaryOnly (sub-agents may use maestro)", d.Name)
 		}
 	}
 	// The LLM-management tools are dropped when host-dispatched.
@@ -67,7 +68,7 @@ func TestProvider_GatingAndDispatch(t *testing.T) {
 
 	// The dispatcher runs the task prompt through the host runner and maps it back.
 	d := &dispatcher{run: fr}
-	res, err := d.Dispatch(&mllm.DispatchRequest{Prompt: "audit control X"})
+	res, err := d.Dispatch(context.Background(), &mllm.DispatchRequest{Prompt: "audit control X"})
 	if err != nil {
 		t.Fatalf("Dispatch: %v", err)
 	}

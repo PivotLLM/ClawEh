@@ -20,13 +20,14 @@ import (
 // the primary, differing only in a fresh context (the task) and an optional model.
 //
 // Memory: the agent's main-session cogmem is snapshotted onto the sub-agent
-// session's own DB so the worker has the agent's memory as background; cogmem
-// WRITE tools are PrimaryOnly (excluded), so the snapshot is effectively
-// read-only and the primary's memory is never touched. The snapshot is deleted
-// with the session after the run.
+// session's own DB so the worker has the agent's memory as background. The
+// snapshot is a throwaway copy deleted with the session after the run, so any
+// writes the worker makes stay on that copy and never reach the primary's memory.
 //
-// Tools: runAgentLoop offers the agent's tools minus PrimaryOnly ones for a
-// sub-agent session (agent_spawn → no recursion, cron_schedule, cogmem writes).
+// Tools: a sub-agent is an instance of the parent and gets the parent's FULL
+// toolset (including maestro and spawn). Runaway recursion is bounded by
+// MaxSpawnDepth in the Spawner — this worker runs one level deeper than whoever
+// spawned it (see the WithSpawnDepth increment below).
 //
 // Output is captured (SendResponse:false) and returned to the caller (the
 // SubagentManager stores it to a result file / fires the callback).
@@ -69,8 +70,14 @@ func (al *AgentLoop) runSubagentTask(ctx context.Context, agentID, sessionKey, t
 		}
 	}
 
+	// This worker runs one level deeper than the agent that spawned it. Recording
+	// the incremented depth on the loop context bounds any further spawning the
+	// worker itself does (Spawner refuses once depth >= MaxSpawnDepth).
+	ctx = toolsagents.WithSpawnDepth(ctx, toolsagents.SpawnDepth(ctx)+1)
+
 	logger.InfoCF("agent", "subagent.run.start", map[string]any{
-		"agent": agentID, "session_key": sessionKey, "model": model, "task_len": len(task),
+		"agent": agentID, "session_key": sessionKey, "model": model,
+		"task_len": len(task), "depth": toolsagents.SpawnDepth(ctx),
 	})
 
 	var iterations int

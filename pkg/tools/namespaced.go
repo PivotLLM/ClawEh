@@ -110,10 +110,6 @@ func (t nsBase) Execute(ctx context.Context, args map[string]any) *ToolResult {
 	return resultFromGlobal(t.def.Handler(callFromCtx(ctx, args, nil)))
 }
 
-// IsPrimaryOnly propagates ToolDefinition.PrimaryOnly to all wrapper variants
-// (they embed nsBase), so sub-agent registries can exclude these tools.
-func (t nsBase) IsPrimaryOnly() bool { return t.def.PrimaryOnly }
-
 // DiscoveryGroup propagates ToolDefinition.Group/RevealTogether so a hidden tool
 // can be tagged into a reveal-together set (e.g. all tools of one fusion service).
 func (t nsBase) DiscoveryGroup() (group string, revealTogether bool) {

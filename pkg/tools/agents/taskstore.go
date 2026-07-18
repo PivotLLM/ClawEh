@@ -56,6 +56,10 @@ type TaskRecord struct {
 	RetryAfter   int64  `json:"retry_after"` // unix secs; earliest relaunch
 	Error        string `json:"error,omitempty"`
 	ResultsPath  string `json:"results_path"`
+	// SpawnDepth is the sub-agent depth of the agent that spawned this task (0 =
+	// spawned by a primary turn). Persisted so the depth survives the detached
+	// async context and process restarts; the worker runs at SpawnDepth+1.
+	SpawnDepth int `json:"spawn_depth,omitempty"`
 }
 
 // TaskResults is the worker's output payload, persisted to <uuid>-results.json.

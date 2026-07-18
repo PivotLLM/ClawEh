@@ -44,9 +44,10 @@ func BuildAgentMainSessionKey(agentID string) string {
 
 // BuildAgentServiceSessionKey returns "agent:<agentId>:service" — the dedicated,
 // headless session a long-lived MCP service token resolves to. It is a primary
-// session key (not a subagent key), so PrimaryOnly tools run, and it is distinct
-// from any conversation session, so service-token callers cannot read the
-// agent's real conversations. See docs/service-tokens.md.
+// session key (not a subagent key), so it does not count against the sub-agent
+// spawn-depth bound, and it is distinct from any conversation session, so
+// service-token callers cannot read the agent's real conversations. See
+// docs/service-tokens.md.
 func BuildAgentServiceSessionKey(agentID string) string {
 	return fmt.Sprintf("agent:%s:service", NormalizeAgentID(agentID))
 }

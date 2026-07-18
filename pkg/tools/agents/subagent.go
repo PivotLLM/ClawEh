@@ -290,6 +290,7 @@ func (sm *SubagentManager) RegisterTool(tool tools.Tool) {
 func (sm *SubagentManager) SpawnCallback(
 	task, name, agentID, originChannel, originChatID, model string,
 	cb tools.AsyncCallback,
+	parentDepth int,
 ) (string, error) {
 	if strings.TrimSpace(task) == "" {
 		return "", fmt.Errorf("task is required")
@@ -310,6 +311,7 @@ func (sm *SubagentManager) SpawnCallback(
 		CreatedAt:    nowRFC(),
 		RetryAfter:   now + retryDelaySecs(),
 		ResultsPath:  relResultsPath(id),
+		SpawnDepth:   parentDepth,
 	}
 	dir := sm.tasksDir()
 	if err := writeStatus(dir, rec); err != nil {
@@ -354,7 +356,10 @@ func (sm *SubagentManager) runRecord(rec *TaskRecord, cb tools.AsyncCallback, re
 	// keyed by the task UUID (deterministic, so a relaunch reuses + recleans it).
 	if sm.runFull != nil {
 		target := sm.targetAgent(rec.AgentID)
-		content, iterations, err := sm.runFull(context.Background(), target, subagentSessionKey(target, rec.UUID), taskText, rec.Model)
+		// Restore the spawning agent's depth onto the detached context so the
+		// worker (and any layer it spawns) stays within MaxSpawnDepth.
+		runCtx := WithSpawnDepth(context.Background(), rec.SpawnDepth)
+		content, iterations, err := sm.runFull(runCtx, target, subagentSessionKey(target, rec.UUID), taskText, rec.Model)
 		if err != nil {
 			sm.finalize(rec, "", 0, err, cb)
 			return
