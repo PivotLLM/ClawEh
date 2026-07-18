@@ -1,5 +1,5 @@
 import { IconLoader2, IconPlus, IconTrash } from "@tabler/icons-react"
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 
@@ -9,6 +9,8 @@ import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
+
+type SaveStatus = "saving" | "saved" | "error" | null
 
 type BotConfig = Record<string, unknown>
 
@@ -121,7 +123,6 @@ function BotCard({
           <Switch
             checked={asBool(bot.enabled)}
             onCheckedChange={onToggleEnabled}
-            disabled={saving}
             aria-label={asBool(bot.enabled) ? "Disable bot" : "Enable bot"}
           />
         )}
@@ -162,12 +163,21 @@ function BotCard({
           />
 
           <div className="flex justify-end gap-2 border-t border-border/40 pt-4">
-            <Button variant="outline" onClick={onCollapse} disabled={saving}>
-              {t("common.cancel")}
-            </Button>
-            <Button onClick={onSave} disabled={saving}>
-              {saving ? t("common.saving") : t("common.save")}
-            </Button>
+            {isNew ? (
+              <>
+                <Button variant="outline" onClick={onCollapse} disabled={saving}>
+                  {t("common.cancel")}
+                </Button>
+                <Button onClick={onSave} disabled={saving}>
+                  {saving ? t("common.saving") : t("common.save")}
+                </Button>
+              </>
+            ) : (
+              // Existing bots auto-save on edit; this just collapses the card.
+              <Button variant="outline" onClick={onCollapse}>
+                {t("common.done")}
+              </Button>
+            )}
           </div>
         </div>
       )}
@@ -181,9 +191,16 @@ export function TelegramBotsPage() {
   const [fetchError, setFetchError] = useState("")
   const [bots, setBots] = useState<BotConfig[]>([])
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null)
+  // `saving` gates the explicit Add-bot flow; `status` drives the auto-save hint.
   const [saving, setSaving] = useState(false)
+  const [status, setStatus] = useState<SaveStatus>(null)
   const [isAdding, setIsAdding] = useState(false)
   const [newBot, setNewBot] = useState<BotConfig>(newEmptyBot())
+
+  const botsRef = useRef<BotConfig[]>(bots)
+  botsRef.current = bots
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const savedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
   const loadData = useCallback(async () => {
     setLoading(true)
@@ -204,25 +221,47 @@ export function TelegramBotsPage() {
     void loadData()
   }, [loadData])
 
+  // Clear pending timers on unmount.
+  useEffect(
+    () => () => {
+      clearTimeout(saveTimer.current)
+      clearTimeout(savedTimer.current)
+    },
+    [],
+  )
+
   const buildBotsPayload = (editedBots: BotConfig[]) =>
     editedBots.map(editStateToBot)
 
-  const handleSaveBot = async () => {
-    const updated = [...bots]
-    setSaving(true)
+  // saveBots persists a bots array immediately. It does NOT refetch, so a token
+  // being typed in an existing card is never blanked mid-edit. Any pending
+  // debounce is cancelled first so a toggle/delete isn't followed by a stale save.
+  const saveBots = async (list: BotConfig[]) => {
+    clearTimeout(saveTimer.current)
+    setStatus("saving")
     try {
       await patchAppConfig({
-        channels: { telegram: buildBotsPayload(updated) },
+        channels: { telegram: buildBotsPayload(list) },
       })
-      toast.success(t("channels.page.saveSuccess"))
-      setExpandedIndex(null)
-      await loadData()
+      setStatus("saved")
+      clearTimeout(savedTimer.current)
+      savedTimer.current = setTimeout(() => setStatus(null), 2000)
     } catch (e) {
-      const message = e instanceof Error ? e.message : t("channels.page.saveError")
-      toast.error(message)
-    } finally {
-      setSaving(false)
+      setStatus("error")
+      toast.error(e instanceof Error ? e.message : t("channels.page.saveError"))
     }
+  }
+
+  const saveBotsRef = useRef(saveBots)
+  saveBotsRef.current = saveBots
+
+  // Debounced auto-save for existing-bot field edits.
+  const scheduleSave = () => {
+    clearTimeout(saveTimer.current)
+    saveTimer.current = setTimeout(
+      () => void saveBotsRef.current(botsRef.current),
+      600,
+    )
   }
 
   const handleBotChange = (index: number, key: string, value: unknown) => {
@@ -231,42 +270,20 @@ export function TelegramBotsPage() {
       next[index] = { ...next[index], [key]: value }
       return next
     })
+    scheduleSave()
   }
 
-  const handleToggleBotEnabled = async (index: number, enabled: boolean) => {
-    const updated = bots.map((b, i) =>
-      i === index ? { ...b, enabled } : b
-    )
-    setSaving(true)
-    try {
-      await patchAppConfig({
-        channels: { telegram: buildBotsPayload(updated) },
-      })
-      await loadData()
-    } catch (e) {
-      const message = e instanceof Error ? e.message : t("channels.page.saveError")
-      toast.error(message)
-    } finally {
-      setSaving(false)
-    }
+  const handleToggleBotEnabled = (index: number, enabled: boolean) => {
+    const updated = bots.map((b, i) => (i === index ? { ...b, enabled } : b))
+    setBots(updated)
+    void saveBots(updated)
   }
 
-  const handleDeleteBot = async (index: number) => {
+  const handleDeleteBot = (index: number) => {
     const updated = bots.filter((_, i) => i !== index)
-    setSaving(true)
-    try {
-      await patchAppConfig({
-        channels: { telegram: buildBotsPayload(updated) },
-      })
-      toast.success(t("channels.page.saveSuccess"))
-      setExpandedIndex(null)
-      await loadData()
-    } catch (e) {
-      const message = e instanceof Error ? e.message : t("channels.page.saveError")
-      toast.error(message)
-    } finally {
-      setSaving(false)
-    }
+    setBots(updated)
+    setExpandedIndex(null)
+    void saveBots(updated)
   }
 
   const handleAddBot = async () => {
@@ -291,6 +308,17 @@ export function TelegramBotsPage() {
   return (
     <div className="flex h-full flex-col">
       <PageHeader title={t("channels.name.telegram")}>
+        {status && (
+          <span
+            className={`text-xs ${status === "error" ? "text-destructive" : status === "saved" ? "text-emerald-500" : "text-muted-foreground"}`}
+          >
+            {status === "saving"
+              ? "Saving…"
+              : status === "saved"
+                ? "Saved ✓"
+                : "Save failed"}
+          </span>
+        )}
         <Button
           size="sm"
           variant="outline"
@@ -333,18 +361,15 @@ export function TelegramBotsPage() {
                 bot={bot}
                 isExpanded={expandedIndex === i}
                 isNew={false}
-                saving={saving}
+                saving={false}
                 onExpand={() => {
                   setExpandedIndex(i)
                   setIsAdding(false)
                 }}
-                onCollapse={() => {
-                  setExpandedIndex(null)
-                  void loadData()
-                }}
+                onCollapse={() => setExpandedIndex(null)}
                 onChange={(key, value) => handleBotChange(i, key, value)}
                 onToggleEnabled={(enabled) => handleToggleBotEnabled(i, enabled)}
-                onSave={() => handleSaveBot()}
+                onSave={() => {}}
                 onDelete={() => handleDeleteBot(i)}
               />
             ))}

@@ -1,7 +1,6 @@
 import { IconLoader2 } from "@tabler/icons-react"
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
-import { toast } from "sonner"
 
 import {
   type ChannelConfig,
@@ -16,8 +15,9 @@ import { GenericForm } from "@/components/channels/channel-forms/generic-form"
 import { SlackForm } from "@/components/channels/channel-forms/slack-form"
 import { TelegramForm } from "@/components/channels/channel-forms/telegram-form"
 import { PageHeader } from "@/components/page-header"
-import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
+
+type SaveStatus = "saving" | "saved" | "error" | null
 
 interface ChannelConfigPageProps {
   channelName: string
@@ -160,15 +160,24 @@ export function ChannelConfigPage({ channelName }: ChannelConfigPageProps) {
   const { t } = useTranslation()
 
   const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
+  const [status, setStatus] = useState<SaveStatus>(null)
   const [fetchError, setFetchError] = useState("")
   const [serverError, setServerError] = useState("")
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
 
   const [channel, setChannel] = useState<SupportedChannel | null>(null)
-  const [baseConfig, setBaseConfig] = useState<ChannelConfig>({})
   const [editConfig, setEditConfig] = useState<ChannelConfig>({})
   const [enabled, setEnabled] = useState(false)
+
+  // Refs so the debounced save reads current values without being re-created.
+  const channelRef = useRef<SupportedChannel | null>(null)
+  channelRef.current = channel
+  const editConfigRef = useRef<ChannelConfig>(editConfig)
+  editConfigRef.current = editConfig
+  const enabledRef = useRef(enabled)
+  enabledRef.current = enabled
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const savedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
   const loadData = useCallback(async () => {
     setLoading(true)
@@ -195,7 +204,6 @@ export function ChannelConfigPage({ channelName }: ChannelConfigPageProps) {
       const normalized = normalizeConfig(raw)
 
       setChannel(matched)
-      setBaseConfig(normalized)
       setEditConfig(buildEditConfig(normalized))
       setEnabled(asBool(normalized.enabled))
       setFetchError("")
@@ -211,6 +219,15 @@ export function ChannelConfigPage({ channelName }: ChannelConfigPageProps) {
   useEffect(() => {
     loadData()
   }, [loadData])
+
+  // Clear pending timers on unmount / channel switch.
+  useEffect(
+    () => () => {
+      clearTimeout(saveTimer.current)
+      clearTimeout(savedTimer.current)
+    },
+    [],
+  )
 
   const savePayload = useMemo(() => {
     if (!channel) return null
@@ -239,64 +256,76 @@ export function ChannelConfigPage({ channelName }: ChannelConfigPageProps) {
     [channelName],
   )
 
-  const handleChange = useCallback((key: string, value: unknown) => {
-    const normalizedKey = key.startsWith("_") ? key.slice(1) : key
-    setEditConfig((prev) => ({ ...prev, [key]: value }))
-    setFieldErrors((prev) => {
-      if (!(key in prev) && !(normalizedKey in prev)) {
-        return prev
+  // doSave persists the current channel config. It does NOT refetch afterwards,
+  // so a masked secret the user is mid-typing is not blanked. A required field is
+  // only enforced when the channel is enabled — a disabled channel may be saved
+  // incomplete while it is being set up.
+  const doSave = async () => {
+    const channel = channelRef.current
+    if (!channel) return
+    const payload = buildSavePayload(editConfigRef.current, enabledRef.current)
+
+    if (enabledRef.current) {
+      const missing = getRequiredFieldKeys(channel.name).filter((key) =>
+        isMissingRequiredValue(payload[key]),
+      )
+      if (missing.length > 0) {
+        const requiredFieldError = t("channels.validation.requiredField")
+        const nextFieldErrors: Record<string, string> = {}
+        for (const key of missing) nextFieldErrors[key] = requiredFieldError
+        setFieldErrors(nextFieldErrors)
+        setStatus("error")
+        return
       }
-      const next = { ...prev }
-      delete next[key]
-      delete next[normalizedKey]
-      return next
-    })
-  }, [])
-
-  const handleReset = () => {
-    setEditConfig(buildEditConfig(baseConfig))
-    setEnabled(asBool(baseConfig.enabled))
-    setServerError("")
-    setFieldErrors({})
-  }
-
-  const handleSave = async () => {
-    if (!channel || !savePayload) return
-
-    const missingRequiredFields = requiredKeys.filter((key) =>
-      isMissingRequiredValue(savePayload[key]),
-    )
-    if (missingRequiredFields.length > 0) {
-      const requiredFieldError = t("channels.validation.requiredField")
-      const nextFieldErrors: Record<string, string> = {}
-      for (const key of missingRequiredFields) {
-        nextFieldErrors[key] = requiredFieldError
-      }
-      setFieldErrors(nextFieldErrors)
-      setServerError("")
-      return
     }
 
-    setSaving(true)
-    setServerError("")
     setFieldErrors({})
+    setServerError("")
+    setStatus("saving")
     try {
       await patchAppConfig({
         channels: {
-          [channel.config_key]: savePayload,
+          [channel.config_key]: payload,
         },
       })
-      toast.success(t("channels.page.saveSuccess"))
-      await loadData()
+      setStatus("saved")
+      clearTimeout(savedTimer.current)
+      savedTimer.current = setTimeout(() => setStatus(null), 2000)
     } catch (e) {
       const message =
         e instanceof Error ? e.message : t("channels.page.saveError")
       setServerError(message)
-      toast.error(message)
-    } finally {
-      setSaving(false)
+      setStatus("error")
     }
   }
+
+  // Keep a ref to the latest doSave so the (stable) debounced scheduler always
+  // runs the current closure rather than one captured on first render.
+  const doSaveRef = useRef(doSave)
+  doSaveRef.current = doSave
+
+  const scheduleSave = useCallback(() => {
+    clearTimeout(saveTimer.current)
+    saveTimer.current = setTimeout(() => void doSaveRef.current(), 600)
+  }, [])
+
+  const handleChange = useCallback(
+    (key: string, value: unknown) => {
+      const normalizedKey = key.startsWith("_") ? key.slice(1) : key
+      setEditConfig((prev) => ({ ...prev, [key]: value }))
+      setFieldErrors((prev) => {
+        if (!(key in prev) && !(normalizedKey in prev)) {
+          return prev
+        }
+        const next = { ...prev }
+        delete next[key]
+        delete next[normalizedKey]
+        return next
+      })
+      scheduleSave()
+    },
+    [scheduleSave],
+  )
 
   const renderForm = () => {
     if (!channel) return null
@@ -363,7 +392,19 @@ export function ChannelConfigPage({ channelName }: ChannelConfigPageProps) {
             </div>
           ) : undefined
         }
-      />
+      >
+        {status && (
+          <span
+            className={`text-xs ${status === "error" ? "text-destructive" : status === "saved" ? "text-emerald-500" : "text-muted-foreground"}`}
+          >
+            {status === "saving"
+              ? "Saving…"
+              : status === "saved"
+                ? "Saved ✓"
+                : "Save failed"}
+          </span>
+        )}
+      </PageHeader>
 
       <div className="flex min-h-0 flex-1 justify-center overflow-y-auto px-4 pb-8 sm:px-6">
         {loading ? (
@@ -398,7 +439,13 @@ export function ChannelConfigPage({ channelName }: ChannelConfigPageProps) {
               <p className="text-sm font-medium">
                 {t("channels.page.enableLabel")}
               </p>
-              <Switch checked={enabled} onCheckedChange={setEnabled} />
+              <Switch
+                checked={enabled}
+                onCheckedChange={(v) => {
+                  setEnabled(v)
+                  scheduleSave()
+                }}
+              />
             </div>
 
             {renderForm()}
@@ -406,15 +453,6 @@ export function ChannelConfigPage({ channelName }: ChannelConfigPageProps) {
             {serverError && (
               <p className="text-destructive text-sm">{serverError}</p>
             )}
-
-            <div className="border-border/60 flex justify-end gap-2 border-t py-4">
-              <Button variant="outline" onClick={handleReset} disabled={saving}>
-                {t("common.reset")}
-              </Button>
-              <Button onClick={handleSave} disabled={saving}>
-                {saving ? t("common.saving") : t("common.save")}
-              </Button>
-            </div>
           </div>
         )}
       </div>

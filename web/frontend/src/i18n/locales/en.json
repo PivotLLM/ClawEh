@@ -78,7 +78,8 @@
     "saving": "Saving...",
     "reset": "Reset",
     "remove": "Remove",
-    "confirm": "Confirm"
+    "confirm": "Confirm",
+    "done": "Done"
   },
   "labels": {
     "loading": "Loading..."

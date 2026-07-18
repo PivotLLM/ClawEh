@@ -1,9 +1,8 @@
-import { IconCode, IconDeviceFloppy } from "@tabler/icons-react"
-import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { IconCode } from "@tabler/icons-react"
+import { useQuery } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
-import { toast } from "sonner"
 
 import { patchAppConfig } from "@/api/channels"
 import {
@@ -25,12 +24,25 @@ import {
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 
+type SaveStatus = "saving" | "saved" | "error" | null
+
 export function ConfigPage() {
   const { t } = useTranslation()
-  const queryClient = useQueryClient()
   const [form, setForm] = useState<CoreConfigForm>(EMPTY_FORM)
-  const [baseline, setBaseline] = useState<CoreConfigForm>(EMPTY_FORM)
-  const [saving, setSaving] = useState(false)
+  const [status, setStatus] = useState<SaveStatus>(null)
+  // Message for a validation failure (e.g. a bad number), shown inline instead of
+  // toast-spamming on every debounced attempt.
+  const [saveError, setSaveError] = useState<string | null>(null)
+
+  // Refs so the debounced save reads current values and diffs against the last
+  // persisted snapshot (baselineRef) — used to detect a default-agent change,
+  // which requires re-sending the whole agents.list (arrays are replaced
+  // wholesale by the merge patch, not deep-merged).
+  const formRef = useRef<CoreConfigForm>(form)
+  formRef.current = form
+  const baselineRef = useRef<CoreConfigForm>(EMPTY_FORM)
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const savedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
   // The address the user is currently reaching the WebUI on. Inherently
   // reachable from their own machine (where claw-auth runs), so it is the
@@ -58,8 +70,17 @@ export function ConfigPage() {
       parsed.gatewayExternalUrl = externalUrlPlaceholder
     }
     setForm(parsed)
-    setBaseline(parsed)
+    baselineRef.current = parsed
   }, [data, externalUrlPlaceholder])
+
+  // Clear pending timers on unmount so a debounced save can't fire after teardown.
+  useEffect(
+    () => () => {
+      clearTimeout(saveTimer.current)
+      clearTimeout(savedTimer.current)
+    },
+    [],
+  )
 
   // Raw agents.list straight from the loaded config — re-sent verbatim (with the
   // default flag flipped) when the default agent changes, so no agent fields are
@@ -82,26 +103,28 @@ export function ConfigPage() {
     [rawAgentList],
   )
 
-  const configDirty = JSON.stringify(form) !== JSON.stringify(baseline)
-  const isDirty = configDirty
-
   const updateField = <K extends keyof CoreConfigForm>(
     key: K,
     value: CoreConfigForm[K],
   ) => {
     setForm((prev) => ({ ...prev, [key]: value }))
+    scheduleSave()
   }
 
-  const handleReset = () => {
-    setForm(baseline)
-    toast.info(t("pages.config.reset_success"))
+  const scheduleSave = () => {
+    clearTimeout(saveTimer.current)
+    saveTimer.current = setTimeout(() => void doSave(), 600)
   }
 
-  const handleSave = async () => {
+  // doSave validates the current form and, if valid, sends one JSON merge patch.
+  // A validation failure (e.g. a non-numeric field) surfaces inline via saveError
+  // and skips the patch — no toast spam while the user is mid-edit. It does not
+  // refetch config, so edits made during the save are preserved.
+  const doSave = async () => {
+    const form = formRef.current
+    let patch: Record<string, unknown>
     try {
-      setSaving(true)
-
-      if (configDirty) {
+      {
         // base_dir may be blank — the backend then defaults to <data_dir>/agents.
         const baseDir = form.baseDir.trim()
         const sessionMode = form.sessionMode.trim()
@@ -222,7 +245,8 @@ export function ConfigPage() {
         )
         // Re-send the full agents.list with default flags flipped only when the
         // default agent actually changed (the patch replaces the array wholesale).
-        const defaultAgentChanged = form.defaultAgentId !== baseline.defaultAgentId
+        const defaultAgentChanged =
+          form.defaultAgentId !== baselineRef.current.defaultAgentId
         const agentListPayload = defaultAgentChanged
           ? rawAgentList.map((a) => {
               const next = { ...a }
@@ -240,7 +264,7 @@ export function ConfigPage() {
           max: 65535,
         })
 
-        await patchAppConfig({
+        patch = {
           gateway: {
             host: form.gatewayHost,
             port: gatewayPort,
@@ -306,35 +330,52 @@ export function ConfigPage() {
             at: form.backupAt.trim() || "03:00",
             retain_days: parseIntField(form.backupRetainDays, "Backup retention days", { min: 1 }),
           },
-        })
-
-        setBaseline(form)
-        queryClient.invalidateQueries({ queryKey: ["config"] })
+        }
       }
-
-      toast.success(t("pages.config.save_success"))
     } catch (err) {
-      toast.error(
-        err instanceof Error ? err.message : t("pages.config.save_error"),
-      )
-    } finally {
-      setSaving(false)
+      // Validation error (parseIntField etc.) — show it, don't patch.
+      setStatus("error")
+      setSaveError(err instanceof Error ? err.message : String(err))
+      return
+    }
+
+    setSaveError(null)
+    setStatus("saving")
+    try {
+      await patchAppConfig(patch)
+      baselineRef.current = form
+      setStatus("saved")
+      clearTimeout(savedTimer.current)
+      savedTimer.current = setTimeout(() => setStatus(null), 2000)
+    } catch (err) {
+      setStatus("error")
+      setSaveError(err instanceof Error ? err.message : t("pages.config.save_error"))
     }
   }
 
   return (
     <div className="flex h-full flex-col">
-      <PageHeader
-        title={t("navigation.config")}
-        children={
+      <PageHeader title={t("navigation.config")}>
+        <div className="flex items-center gap-3">
+          {status && (
+            <span
+              className={`text-xs ${status === "error" ? "text-destructive" : status === "saved" ? "text-emerald-500" : "text-muted-foreground"}`}
+            >
+              {status === "saving"
+                ? "Saving…"
+                : status === "saved"
+                  ? "Saved ✓"
+                  : "Save failed"}
+            </span>
+          )}
           <Button variant="outline" asChild>
             <Link to="/config/raw">
               <IconCode className="size-4" />
               {t("pages.config.open_raw")}
             </Link>
           </Button>
-        }
-      />
+        </div>
+      </PageHeader>
       <div className="flex-1 overflow-auto p-3 lg:p-6">
         <div className="w-full max-w-[1000px] space-y-6">
           {isLoading ? (
@@ -347,16 +388,15 @@ export function ConfigPage() {
             </div>
           ) : (
             <div className="space-y-6">
-              {isDirty && (
-                <div className="bg-yellow-50 px-3 py-2 text-sm text-yellow-700">
-                  {t("pages.config.unsaved_changes")}
+              {saveError && (
+                <div className="bg-destructive/10 text-destructive px-3 py-2 text-sm">
+                  {saveError}
                 </div>
               )}
 
               <ServiceSection
                 form={form}
                 onFieldChange={updateField}
-                disabled={saving}
                 externalUrlPlaceholder={externalUrlPlaceholder}
               />
 
@@ -375,20 +415,6 @@ export function ConfigPage() {
             <BackupSection form={form} onFieldChange={updateField} />
 
               <DevicesSection form={form} onFieldChange={updateField} />
-
-              <div className="flex justify-end gap-2">
-                <Button
-                  variant="outline"
-                  onClick={handleReset}
-                  disabled={!isDirty || saving}
-                >
-                  {t("common.reset")}
-                </Button>
-                <Button onClick={handleSave} disabled={!isDirty || saving}>
-                  <IconDeviceFloppy className="size-4" />
-                  {saving ? t("common.saving") : t("common.save")}
-                </Button>
-              </div>
             </div>
           )}
         </div>

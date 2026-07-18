@@ -1,5 +1,5 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { useEffect, useState } from "react"
+import { useQuery } from "@tanstack/react-query"
+import { useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
 
 import { PageHeader } from "@/components/page-header"
@@ -23,12 +23,13 @@ import {
 
 const PROVIDER_CHOICES = ["groq", "openai", "openrouter", "custom"]
 
+type SaveStatus = "saving" | "saved" | "error" | null
+
 function presetFor(presets: STTPreset[], provider: string): STTPreset | undefined {
   return presets.find((p) => p.provider === provider)
 }
 
 export function VoicePage() {
-  const qc = useQueryClient()
   const stt = useQuery({ queryKey: ["voice-stt"], queryFn: getVoiceSTT })
 
   const [rows, setRows] = useState<STTProvider[]>([])
@@ -40,33 +41,84 @@ export function VoicePage() {
 
   const presets = stt.data?.presets ?? []
 
-  const saveMut = useMutation({
-    mutationFn: () => saveVoiceSTT(rows),
-    onSuccess: async () => {
-      toast.success("Speech-to-text settings saved")
-      await qc.invalidateQueries({ queryKey: ["voice-stt"] })
+  const [status, setStatus] = useState<SaveStatus>(null)
+  // Refs let the debounced save read the latest rows; synced in an effect (not
+  // during render) to satisfy react-hooks/refs.
+  const rowsRef = useRef<STTProvider[]>(rows)
+  useEffect(() => {
+    rowsRef.current = rows
+  }, [rows])
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const savedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+
+  useEffect(
+    () => () => {
+      clearTimeout(saveTimer.current)
+      clearTimeout(savedTimer.current)
     },
-    onError: (e: Error) => toast.error(e.message),
+    [],
+  )
+
+  // doSave persists the whole backend list (a full-replace PUT). It does NOT
+  // refetch afterwards, so an api_key being typed is not blanked mid-edit.
+  const doSave = async () => {
+    setStatus("saving")
+    try {
+      await saveVoiceSTT(rowsRef.current)
+      setStatus("saved")
+      clearTimeout(savedTimer.current)
+      savedTimer.current = setTimeout(() => setStatus(null), 2000)
+    } catch (e) {
+      setStatus("error")
+      toast.error(e instanceof Error ? e.message : "Save failed")
+    }
+  }
+  const doSaveRef = useRef(doSave)
+  useEffect(() => {
+    doSaveRef.current = doSave
   })
 
-  const update = (i: number, patch: Partial<STTProvider>) =>
-    setRows((prev) => prev.map((r, idx) => (idx === i ? { ...r, ...patch } : r)))
+  const scheduleSave = () => {
+    clearTimeout(saveTimer.current)
+    saveTimer.current = setTimeout(() => void doSaveRef.current(), 600)
+  }
 
-  const addRow = () =>
+  const update = (i: number, patch: Partial<STTProvider>) => {
+    setRows((prev) => prev.map((r, idx) => (idx === i ? { ...r, ...patch } : r)))
+    scheduleSave()
+  }
+
+  const addRow = () => {
     setRows((prev) => [
       ...prev,
       { provider: "groq", enabled: prev.length === 0, api_key: "", base_url: "", model: "" },
     ])
+    scheduleSave()
+  }
 
-  const removeRow = (i: number) =>
+  const removeRow = (i: number) => {
     setRows((prev) => prev.filter((_, idx) => idx !== i))
+    scheduleSave()
+  }
 
   // The first enabled backend with a key is the one actually used to transcribe.
   const activeIndex = rows.findIndex((r) => r.enabled)
 
   return (
     <div className="flex flex-col gap-6">
-      <PageHeader title="Speech" />
+      <PageHeader title="Speech">
+        {status && (
+          <span
+            className={`text-xs ${status === "error" ? "text-destructive" : status === "saved" ? "text-emerald-500" : "text-muted-foreground"}`}
+          >
+            {status === "saving"
+              ? "Saving…"
+              : status === "saved"
+                ? "Saved ✓"
+                : "Save failed"}
+          </span>
+        )}
+      </PageHeader>
 
       <p className="text-muted-foreground px-6 text-sm">
         Transcribe inbound voice messages before they reach the assistant. The
@@ -170,12 +222,6 @@ export function VoicePage() {
           <div className="flex items-center gap-3">
             <Button variant="outline" onClick={addRow}>
               Add backend
-            </Button>
-            <Button
-              onClick={() => saveMut.mutate()}
-              disabled={saveMut.isPending}
-            >
-              {saveMut.isPending ? "Saving…" : "Save"}
             </Button>
           </div>
         </CardContent>

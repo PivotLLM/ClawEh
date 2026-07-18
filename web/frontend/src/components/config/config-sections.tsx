@@ -800,7 +800,9 @@ export function BackupSection({ form, onFieldChange }: BackupSectionProps) {
 interface ServiceSectionProps {
   form: CoreConfigForm
   onFieldChange: UpdateCoreField
-  disabled: boolean
+  // Optional: disables the inputs while a save is in flight. Unused under
+  // auto-save (fields stay live); defaults to false.
+  disabled?: boolean
   // Address the user is currently reaching the WebUI on
   // (`${protocol}//${host}`), used as the external-URL placeholder/default.
   externalUrlPlaceholder: string
@@ -813,7 +815,7 @@ interface ServiceSectionProps {
 export function ServiceSection({
   form,
   onFieldChange,
-  disabled,
+  disabled = false,
   externalUrlPlaceholder,
 }: ServiceSectionProps) {
   const { t } = useTranslation()

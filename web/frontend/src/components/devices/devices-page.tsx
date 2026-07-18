@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
 
 import { PageHeader } from "@/components/page-header"
@@ -73,6 +73,33 @@ export function DevicesPage() {
   const [extTls, setExtTls] = useState(false)
   const [qr, setQr] = useState<DeviceStatus | null>(null)
 
+  // Auto-save state for the Network card. Refs mirror the fields so the debounced
+  // save reads current values; timers drive the "Saving… / Saved ✓" hint. Refs are
+  // synced in an effect (not during render) to satisfy react-hooks/refs.
+  type SaveStatus = "saving" | "saved" | "error" | null
+  const [netStatus, setNetStatus] = useState<SaveStatus>(null)
+  const lanRef = useRef(lan)
+  const extHostRef = useRef(extHost)
+  const extPortRef = useRef(extPort)
+  const extTlsRef = useRef(extTls)
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const savedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+
+  useEffect(() => {
+    lanRef.current = lan
+    extHostRef.current = extHost
+    extPortRef.current = extPort
+    extTlsRef.current = extTls
+  }, [lan, extHost, extPort, extTls])
+
+  useEffect(
+    () => () => {
+      clearTimeout(saveTimer.current)
+      clearTimeout(savedTimer.current)
+    },
+    [],
+  )
+
   useEffect(() => {
     if (!status.data) return
     setLan(status.data.listen_lan)
@@ -95,13 +122,14 @@ export function DevicesPage() {
     }
   }, [status.data])
 
-  // Compose the stored external_url from the host/port/TLS fields. Empty host means
-  // "direct LAN" (auto-detect), so external_url is cleared.
+  // Compose the stored external_url from the current host/port/TLS values (read via
+  // refs so the debounced save sees the latest). Empty host means "direct LAN"
+  // (auto-detect), so external_url is cleared.
   const buildExternalURL = () => {
-    const host = extHost.trim()
+    const host = extHostRef.current.trim()
     if (host === "") return ""
-    const scheme = extTls ? "https" : "http"
-    const port = extPort.trim()
+    const scheme = extTlsRef.current ? "https" : "http"
+    const port = extPortRef.current.trim()
     return port ? `${scheme}://${host}:${port}` : `${scheme}://${host}`
   }
 
@@ -111,20 +139,39 @@ export function DevicesPage() {
     void qc.invalidateQueries({ queryKey: ["device-pending"] })
   }
 
+  // doSave persists the Network card. It does NOT refetch device-status, so a host
+  // being typed is not reverted mid-edit; the "currently listening" line refreshes
+  // on the next navigation.
+  const doSave = async () => {
+    setNetStatus("saving")
+    try {
+      await saveDeviceSettings({
+        listen_lan: lanRef.current,
+        external_url: buildExternalURL(),
+      })
+      setNetStatus("saved")
+      clearTimeout(savedTimer.current)
+      savedTimer.current = setTimeout(() => setNetStatus(null), 2000)
+    } catch (e) {
+      setNetStatus("error")
+      toast.error(e instanceof Error ? e.message : "Save failed")
+    }
+  }
+  const doSaveRef = useRef(doSave)
+  useEffect(() => {
+    doSaveRef.current = doSave
+  })
+
+  const scheduleNetSave = () => {
+    clearTimeout(saveTimer.current)
+    saveTimer.current = setTimeout(() => void doSaveRef.current(), 600)
+  }
+
   const genMut = useMutation({
     mutationFn: generateDevicePairing,
     onSuccess: (d) => {
       setQr(d)
       toast.success("Pairing QR generated")
-      refresh()
-    },
-    onError: (e: Error) => toast.error(e.message),
-  })
-  const saveMut = useMutation({
-    mutationFn: () =>
-      saveDeviceSettings({ listen_lan: lan, external_url: buildExternalURL() }),
-    onSuccess: () => {
-      toast.success("Network settings saved")
       refresh()
     },
     onError: (e: Error) => toast.error(e.message),
@@ -178,7 +225,19 @@ export function DevicesPage() {
 
   return (
     <>
-      <PageHeader title="Devices" />
+      <PageHeader title="Devices">
+        {netStatus && (
+          <span
+            className={`text-xs ${netStatus === "error" ? "text-destructive" : netStatus === "saved" ? "text-emerald-500" : "text-muted-foreground"}`}
+          >
+            {netStatus === "saving"
+              ? "Saving…"
+              : netStatus === "saved"
+                ? "Saved ✓"
+                : "Save failed"}
+          </span>
+        )}
+      </PageHeader>
       <div className="space-y-6 overflow-y-auto px-6 pb-8">
         {/* Network */}
         <Card>
@@ -207,7 +266,14 @@ export function DevicesPage() {
                   (0.0.0.0).
                 </p>
               </div>
-              <Switch id="lan-switch" checked={lan} onCheckedChange={setLan} />
+              <Switch
+                id="lan-switch"
+                checked={lan}
+                onCheckedChange={(v) => {
+                  setLan(v)
+                  scheduleNetSave()
+                }}
+              />
             </div>
             <div className="space-y-2">
               <Label>External address (reverse proxy / tunnel)</Label>
@@ -216,18 +282,31 @@ export function DevicesPage() {
                   className="flex-1"
                   placeholder="host or IP (blank = direct LAN)"
                   value={extHost}
-                  onChange={(e) => setExtHost(e.target.value)}
+                  onChange={(e) => {
+                    setExtHost(e.target.value)
+                    scheduleNetSave()
+                  }}
                 />
                 <Input
                   className="w-28"
                   placeholder="port"
                   inputMode="numeric"
                   value={extPort}
-                  onChange={(e) => setExtPort(e.target.value)}
+                  onChange={(e) => {
+                    setExtPort(e.target.value)
+                    scheduleNetSave()
+                  }}
                 />
               </div>
               <div className="flex items-center gap-2">
-                <Switch id="tls-switch" checked={extTls} onCheckedChange={setExtTls} />
+                <Switch
+                  id="tls-switch"
+                  checked={extTls}
+                  onCheckedChange={(v) => {
+                    setExtTls(v)
+                    scheduleNetSave()
+                  }}
+                />
                 <Label htmlFor="tls-switch">Use TLS (secure wss connection)</Label>
               </div>
               <p className="text-muted-foreground text-sm">
@@ -244,9 +323,6 @@ export function DevicesPage() {
               </ul>
             ) : null}
             <div className="flex items-center gap-3">
-              <Button onClick={() => saveMut.mutate()} disabled={saveMut.isPending}>
-                Save network settings
-              </Button>
               <a href="/config" className="text-muted-foreground text-sm underline">
                 Advanced config
               </a>
