@@ -2360,6 +2360,11 @@ func (al *AgentLoop) runLLMIteration(
 		logger.InfoCF("agent", "Dispatching to model", fields)
 	}
 
+	// One notifier for the whole turn so its de-dup memory spans all tool
+	// iterations: a primary that fails over on every iteration (e.g. a model that
+	// 400s each call) posts its heads-up once, not once per iteration.
+	turnNotifier := al.fallbackNotifier(opts)
+
 	for iteration < agent.MaxIterations {
 		iteration++
 
@@ -2518,7 +2523,7 @@ func (al *AgentLoop) runLLMIteration(
 						}
 						return agent.Provider.Chat(ctx, msgs, providerToolDefs, c.Model, llmOpts)
 					},
-					al.fallbackNotifier(opts),
+					turnNotifier,
 				)
 				if fbErr != nil {
 					return nil, fbErr

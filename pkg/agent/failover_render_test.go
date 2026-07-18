@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PivotLLM/ClawEh/pkg/bus"
 	"github.com/PivotLLM/ClawEh/pkg/providers"
 )
 
@@ -68,6 +69,65 @@ func TestFormatFallbackNotice(t *testing.T) {
 	// period + newline before "Trying".
 	if !strings.Contains(got, "HTTP 402") || !strings.Contains(got, ").\nTrying smart…") {
 		t.Fatalf("notice unexpected: %q", got)
+	}
+}
+
+// A single notifier de-duplicates identical notices across a turn: a primary that
+// fails over the same way on every tool iteration posts its heads-up once.
+func TestFallbackNotifier_DedupsAcrossTurn(t *testing.T) {
+	al, _, msgBus, _, cleanup := newTestAgentLoop(t)
+	defer cleanup()
+
+	notifier := al.fallbackNotifier(processOptions{Channel: "test", ChatID: "chat"})
+	if notifier == nil {
+		t.Fatal("expected a notifier")
+	}
+
+	collected := make(chan bus.OutboundMessage, 16)
+	subCtx, subCancel := context.WithCancel(context.Background())
+	defer subCancel()
+	go func() {
+		for {
+			msg, ok := msgBus.SubscribeOutbound(subCtx)
+			if !ok {
+				return
+			}
+			collected <- msg
+		}
+	}()
+
+	failA := providers.FallbackAttempt{
+		Model: "deepseek-v4-pro", Alias: "DeepSeek 4 Pro",
+		Reason: providers.FailoverFormat,
+		Error:  &providers.FailoverError{Reason: providers.FailoverFormat, Status: 400},
+	}
+	nextW := providers.FallbackCandidate{Model: "deepseek-v4-pro", Alias: "DeepSeek V4 Pro Writing"}
+	failB := providers.FallbackAttempt{
+		Model: "grok", Alias: "Grok",
+		Reason: providers.FailoverRateLimit,
+		Error:  &providers.FailoverError{Reason: providers.FailoverRateLimit, Status: 429},
+	}
+
+	notifier(failA, nextW) // published
+	notifier(failA, nextW) // duplicate → suppressed
+	notifier(failA, nextW) // duplicate → suppressed
+	notifier(failB, nextW) // distinct → published
+
+	var seen []bus.OutboundMessage
+	deadline := time.After(2 * time.Second)
+	for len(seen) < 2 {
+		select {
+		case m := <-collected:
+			seen = append(seen, m)
+		case <-deadline:
+			t.Fatalf("timed out; got %d notices, want 2", len(seen))
+		}
+	}
+	// No third notice — the duplicates must have been suppressed.
+	select {
+	case m := <-collected:
+		t.Fatalf("dedup failed; got an extra notice: %q", m.Content)
+	case <-time.After(200 * time.Millisecond):
 	}
 }
 

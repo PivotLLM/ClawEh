@@ -62,8 +62,17 @@ func (al *AgentLoop) fallbackNotifier(opts processOptions) providers.FallbackNot
 	if opts.Channel == "" || opts.Channel == "system" || opts.ChatID == "" {
 		return nil
 	}
+	// De-duplicate identical notices across the turn: a primary that fails over the
+	// same way on every tool iteration (e.g. a model that 400s each call) would
+	// otherwise repeat its heads-up per iteration. One notifier spans the turn (see
+	// runLLMIteration), so this memory suppresses the repeats.
+	seen := make(map[string]bool)
 	return func(failed providers.FallbackAttempt, next providers.FallbackCandidate) {
 		notice := formatFallbackNotice(failed, next)
+		if seen[notice] {
+			return
+		}
+		seen[notice] = true
 		pubCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := al.bus.PublishOutbound(pubCtx, bus.OutboundMessage{
