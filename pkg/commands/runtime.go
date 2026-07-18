@@ -31,6 +31,11 @@ type Runtime struct {
 	// does not support it.
 	GetExposeReasoning func() bool
 	SetExposeReasoning func(on bool)
+	// GetShowToolActivity / SetShowToolActivity read and toggle whether this session
+	// posts a one-line breadcrumb for each tool call (/tools). Nil when the host
+	// does not support it.
+	GetShowToolActivity func() bool
+	SetShowToolActivity func(on bool)
 	ClearHistory       func() error
 	CompactHistory     func(ctx context.Context) (report string, err error)
 	ResetCooldown      func()

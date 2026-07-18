@@ -892,6 +892,9 @@ type CompactionState struct {
 	// ExposeReasoning, when true, delivers the model's reasoning to the user for
 	// this session (toggled via /reasoning). Default false.
 	ExposeReasoning bool `json:"expose_reasoning,omitempty"`
+	// ShowToolActivity, when true, posts a one-line breadcrumb for each tool call
+	// to the user for this session (toggled via /tools). Default false.
+	ShowToolActivity bool `json:"show_tool_activity,omitempty"`
 }
 
 // GetCompactionState reads the compaction counters from the session meta file.

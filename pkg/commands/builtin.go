@@ -18,6 +18,7 @@ func BuiltinDefinitions() []Definition {
 		retryCommand(),
 		statusCommand(),
 		reasoningCommand(),
+		toolsCommand(),
 		memoryCommand(),
 		cooldownsCommand(),
 		quotaCommand(),

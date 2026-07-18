@@ -99,6 +99,11 @@ type AgentLoop struct {
 	exposeReasoningMu    sync.Mutex
 	exposeReasoningCache map[string]bool
 
+	// showToolActivity caches the per-session "post tool-call breadcrumbs" flag
+	// (write-through to CompactionState). Same key scheme as activeModelIdx.
+	showToolActivityMu    sync.Mutex
+	showToolActivityCache map[string]bool
+
 	// sessionTokenIssuer issues and revokes per-session MCP tokens. Wired in
 	// from the MCP server at startup via SetSessionTokenIssuer; nil when the
 	// MCP host is not configured.
@@ -248,7 +253,8 @@ func NewAgentLoop(
 		evictTTL:             defaultEvictTTL,
 		evictInterval:        defaultEvictInterval,
 		activeModelIdx:       make(map[string]int),
-		exposeReasoningCache: make(map[string]bool),
+		exposeReasoningCache:  make(map[string]bool),
+		showToolActivityCache: make(map[string]bool),
 		taskLive:             toolsagents.NewLiveSet(),
 		spawnManagers:        make(map[string]*toolsagents.SubagentManager),
 		superStop:            make(chan struct{}),
@@ -2365,6 +2371,11 @@ func (al *AgentLoop) runLLMIteration(
 	// 400s each call) posts its heads-up once, not once per iteration.
 	turnNotifier := al.fallbackNotifier(opts)
 
+	// Follow-along breadcrumbs (/tools on): post a one-line note per tool call.
+	// Resolved once per turn — a user chat, not the internal "system" channel.
+	showToolActivity := opts.Channel != "" && opts.Channel != "system" && opts.ChatID != "" &&
+		al.getShowToolActivity(agent, opts.SessionKey)
+
 	for iteration < agent.MaxIterations {
 		iteration++
 
@@ -2913,6 +2924,20 @@ func (al *AgentLoop) runLLMIteration(
 		for i, tc := range normalizedToolCalls {
 			agentResults[i].tc = tc
 
+			// Follow-along breadcrumb (/tools on): a one-line, privacy-safe note per
+			// tool call, published in dispatch order before the tool runs.
+			if showToolActivity {
+				if line := toolCallBreadcrumb(tc); line != "" {
+					bcCtx, bcCancel := context.WithTimeout(context.Background(), 5*time.Second)
+					_ = al.bus.PublishOutbound(bcCtx, bus.OutboundMessage{
+						Channel: opts.Channel,
+						ChatID:  opts.ChatID,
+						Content: line,
+					})
+					bcCancel()
+				}
+			}
+
 			wg.Add(1)
 			go func(idx int, tc providers.ToolCall) {
 				defer wg.Done()
@@ -3368,6 +3393,54 @@ func (al *AgentLoop) setExposeReasoning(agent *AgentInstance, sessionKey string,
 	}
 }
 
+// getShowToolActivity returns whether the session posts a one-line breadcrumb for
+// each tool call, loading it from the session store on a cache miss. Default false.
+func (al *AgentLoop) getShowToolActivity(agent *AgentInstance, sessionKey string) bool {
+	key := activeModelCacheKey(agent.ID, sessionKey)
+
+	al.showToolActivityMu.Lock()
+	if v, ok := al.showToolActivityCache[key]; ok {
+		al.showToolActivityMu.Unlock()
+		return v
+	}
+	al.showToolActivityMu.Unlock()
+
+	v := false
+	if store, ok := agent.Sessions.(compactionStateStore); ok {
+		if st, err := store.GetCompactionState(sessionKey); err == nil {
+			v = st.ShowToolActivity
+		}
+	}
+
+	al.showToolActivityMu.Lock()
+	al.showToolActivityCache[key] = v
+	al.showToolActivityMu.Unlock()
+	return v
+}
+
+// setShowToolActivity sets the session's show-tool-activity flag, updating the
+// cache and persisting it through CompactionState (best-effort).
+func (al *AgentLoop) setShowToolActivity(agent *AgentInstance, sessionKey string, v bool) {
+	key := activeModelCacheKey(agent.ID, sessionKey)
+	al.showToolActivityMu.Lock()
+	al.showToolActivityCache[key] = v
+	al.showToolActivityMu.Unlock()
+
+	if store, ok := agent.Sessions.(compactionStateStore); ok {
+		st, err := store.GetCompactionState(sessionKey)
+		if err != nil {
+			logger.WarnCF("agent", "show tool activity: load compaction state failed",
+				map[string]any{"session_key": sessionKey, "error": err.Error()})
+			return
+		}
+		st.ShowToolActivity = v
+		if err := store.SetCompactionState(sessionKey, st); err != nil {
+			logger.WarnCF("agent", "show tool activity: persist failed",
+				map[string]any{"session_key": sessionKey, "error": err.Error()})
+		}
+	}
+}
+
 // selectCandidates returns the model candidates and resolved model name to use
 // for a conversation turn, honouring the session's active model selection.
 //
@@ -3775,6 +3848,19 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 				return
 			}
 			al.setExposeReasoning(agent, opts.SessionKey, on)
+		}
+
+		rt.GetShowToolActivity = func() bool {
+			if opts == nil {
+				return false
+			}
+			return al.getShowToolActivity(agent, opts.SessionKey)
+		}
+		rt.SetShowToolActivity = func(on bool) {
+			if opts == nil {
+				return
+			}
+			al.setShowToolActivity(agent, opts.SessionKey, on)
 		}
 
 		rt.ClearHistory = func() error {
