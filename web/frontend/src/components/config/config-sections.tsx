@@ -195,21 +195,31 @@ interface ContextManagementSectionProps {
   onFieldChange: UpdateCoreField
 }
 
-interface SummarizationModelsFieldProps {
+interface ModelChainFieldProps {
   value: string[]
   onChange: (next: string[]) => void
+  label: string
+  hint: string
+  emptyText: string
+  addText: string
+  moveUpTitle: string
+  removeTitle: string
 }
 
-// SummarizationModelsField edits the ordered global summarization model list.
-// Models are tried in order during context compaction; the agent's own model is
-// always appended as a final fallback at runtime, so an empty list is valid.
-// Mirrors the agent fallback-model UI: a themed Select adds models and each
-// chosen model is an ordered row with move-up / remove controls.
-function SummarizationModelsField({
+// ModelChainField edits an ordered list of configured models (tried in order).
+// A themed Select adds models and each chosen model is an ordered row with
+// move-up / remove controls. Reused by the summarization and vision model
+// chains — both are side-model lists selected from the configured models.
+function ModelChainField({
   value,
   onChange,
-}: SummarizationModelsFieldProps) {
-  const { t } = useTranslation()
+  label,
+  hint,
+  emptyText,
+  addText,
+  moveUpTitle,
+  removeTitle,
+}: ModelChainFieldProps) {
   const { configuredModels } = useChatModels()
   const available = [...configuredModels].sort((a, b) =>
     a.model_name.localeCompare(b.model_name),
@@ -231,15 +241,10 @@ function SummarizationModelsField({
   }
 
   return (
-    <Field
-      label={t("pages.config.summarization_models")}
-      hint={t("pages.config.summarization_models_hint")}
-    >
+    <Field label={label} hint={hint}>
       <div className="flex flex-col gap-1.5">
         {value.length === 0 && (
-          <p className="text-muted-foreground text-sm">
-            {t("pages.config.summarization_models_empty")}
-          </p>
+          <p className="text-muted-foreground text-sm">{emptyText}</p>
         )}
         {value.map((model, index) => (
           <div key={model} className="flex items-center gap-1.5">
@@ -256,7 +261,7 @@ function SummarizationModelsField({
               onClick={() => moveUp(index)}
               disabled={index === 0}
               className="text-muted-foreground size-6"
-              title={t("pages.config.summarization_models_move_up")}
+              title={moveUpTitle}
             >
               ↑
             </Button>
@@ -266,7 +271,7 @@ function SummarizationModelsField({
               size="icon-sm"
               onClick={() => removeAt(index)}
               className="text-muted-foreground hover:text-destructive size-6"
-              title={t("pages.config.summarization_models_remove")}
+              title={removeTitle}
             >
               ×
             </Button>
@@ -275,9 +280,7 @@ function SummarizationModelsField({
         {remaining.length > 0 && (
           <Select value="" onValueChange={add}>
             <SelectTrigger className="h-8 text-sm">
-              <SelectValue
-                placeholder={t("pages.config.summarization_models_add")}
-              />
+              <SelectValue placeholder={addText} />
             </SelectTrigger>
             <SelectContent>
               {remaining.map((m) => (
@@ -290,6 +293,50 @@ function SummarizationModelsField({
         )}
       </div>
     </Field>
+  )
+}
+
+interface ModelListFieldProps {
+  value: string[]
+  onChange: (next: string[]) => void
+}
+
+// SummarizationModelsField: the ordered global summarization/memory model chain.
+// Models are tried in order during context compaction; the agent's own model is
+// always appended as a final fallback at runtime, so an empty list is valid.
+function SummarizationModelsField({ value, onChange }: ModelListFieldProps) {
+  const { t } = useTranslation()
+  return (
+    <ModelChainField
+      value={value}
+      onChange={onChange}
+      label={t("pages.config.summarization_models")}
+      hint={t("pages.config.summarization_models_hint")}
+      emptyText={t("pages.config.summarization_models_empty")}
+      addText={t("pages.config.summarization_models_add")}
+      moveUpTitle={t("pages.config.summarization_models_move_up")}
+      removeTitle={t("pages.config.summarization_models_remove")}
+    />
+  )
+}
+
+// VisionModelsField: the ordered global vision-describe model chain. When an
+// agent's model can't see images, images are dispatched to the first working
+// model here for a text description (fallbacks tried in order). Empty = off
+// (images are dropped for non-vision models, as before).
+function VisionModelsField({ value, onChange }: ModelListFieldProps) {
+  const { t } = useTranslation()
+  return (
+    <ModelChainField
+      value={value}
+      onChange={onChange}
+      label={t("pages.config.vision_models")}
+      hint={t("pages.config.vision_models_hint")}
+      emptyText={t("pages.config.vision_models_empty")}
+      addText={t("pages.config.vision_models_add")}
+      moveUpTitle={t("pages.config.vision_models_move_up")}
+      removeTitle={t("pages.config.vision_models_remove")}
+    />
   )
 }
 
@@ -373,6 +420,11 @@ export function AgentModelDefaultsSection({
       <SummarizationModelsField
         value={form.summarizationModels}
         onChange={(next) => onFieldChange("summarizationModels", next)}
+      />
+
+      <VisionModelsField
+        value={form.visionModels}
+        onChange={(next) => onFieldChange("visionModels", next)}
       />
 
       <SwitchCardField

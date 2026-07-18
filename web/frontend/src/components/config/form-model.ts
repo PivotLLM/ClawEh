@@ -26,6 +26,7 @@ export interface CoreConfigForm {
   defaultModels: string[]
   defaultTemperature: string
   summarizationModels: string[]
+  visionModels: string[]
   summarizationDebugCapture: boolean
   compressNormalPercent: string
   compressSafetyPercent: string
@@ -101,6 +102,7 @@ export const EMPTY_FORM: CoreConfigForm = {
   defaultModels: [],
   defaultTemperature: "",
   summarizationModels: [],
+  visionModels: [],
   summarizationDebugCapture: false,
   compressNormalPercent: "0",
   compressSafetyPercent: "0",
@@ -210,6 +212,12 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
     defaultTemperature:
       typeof defaults.temperature === "number" ? String(defaults.temperature) : "",
     summarizationModels: asStringArray(summarization.models),
+    // vision_model + vision_model_fallbacks are one ordered chain in the UI:
+    // index 0 is vision_model, the rest are the fallbacks.
+    visionModels: [
+      asString(defaults.vision_model),
+      ...asStringArray(defaults.vision_model_fallbacks),
+    ].filter(Boolean),
     summarizationDebugCapture: asBool(summarization.debug_capture),
     compressNormalPercent: asNumberString(
       defaults.compress_normal_percent,
