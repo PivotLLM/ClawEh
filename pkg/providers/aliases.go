@@ -15,6 +15,15 @@ package providers
 
 import "github.com/PivotLLM/spawnllm"
 
+// MessageTypeToolError is a ClawEh-side Message.Type annotation marking a
+// role="tool" result whose tool reported an error. Message.Type is not sent to
+// LLM providers (the adapters build requests from Role/Content/ToolCalls only),
+// so it is a safe internal marker — cf. the "callback" Type used on user
+// messages. The eviction sweep uses it to tell a failed write (which left the
+// file unchanged) from one that actually modified it, so a failed edit does not
+// evict the read the model needs to correct it.
+const MessageTypeToolError = "tool_error"
+
 // Interfaces + concrete provider types.
 type (
 	LLMProvider       = spawnllm.LLMProvider

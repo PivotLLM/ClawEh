@@ -3080,6 +3080,11 @@ func (al *AgentLoop) runLLMIteration(
 				Content:    contentForLLM,
 				ToolCallID: r.tc.ID,
 			}
+			// Mark failed tool results so the eviction sweep never treats a failed
+			// write (file unchanged) as superseding the read it needs to correct it.
+			if r.result.IsError {
+				toolResultMsg.Type = providers.MessageTypeToolError
+			}
 			switch visionMode {
 			case config.VisionToolResponse:
 				// Attach images to the tool result itself (Responses API).

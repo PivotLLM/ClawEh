@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/PivotLLM/ClawEh/pkg/logger"
@@ -24,20 +25,25 @@ import (
 //
 // Turn age is 1-based: the newest turn group is age 1.
 //
-//   - Superseded (a later read of the same resource, or a → evicted at any age
-//     later write/edit to it)                                and any size.
-//   - Age <= ProtectTurns (and not superseded)            → never evicted.
-//   - Age > EvictTurns                                    → evicted (any size).
-//   - Budget valve: if reader-result bytes still exceed   → largest-first eviction
-//     BudgetBytes, evict more (age > ProtectTurns)          until under budget.
+//   - Superseded & age > ProtectTurns                     → evicted (stale duplicate).
+//   - Superseded & age <= ProtectTurns                    → kept, but a budget
+//     (a later read of the SAME slice, or a later            candidate (reclaimed
+//     SUCCESSFUL write to the file)                          under memory pressure).
+//   - Not superseded & age <= ProtectTurns                → never evicted.
+//   - Not superseded & age > EvictTurns                   → evicted (any size).
+//   - Budget valve: if reader-result bytes exceed         → evict superseded-first,
+//     BudgetBytes, evict candidates                          then largest-first.
 //
-// Supersession is checked before the protect window because a stale duplicate
-// the agent has already re-read is pure bloat regardless of recency; the
-// most-recent read of each resource is never superseded, so the active view is
-// always retained. The protect window therefore guards only the age and budget
-// tiers (in practice, mainly the budget valve, which can otherwise fire at any
-// age). Shedding large reads under memory pressure is the budget valve's job —
-// evicting them on age alone would just force re-reads when there is room.
+// Supersession respects the protect window: a read the model touched in the last
+// ProtectTurns is part of the active working set and is kept even when superseded
+// (so it can read a file once and make several edits), but it becomes a budget
+// candidate so a suddenly-bloated context can still reclaim it. Two refinements
+// keep supersession honest: it is range-aware (reading a different page of a large
+// file does not evict the earlier page — see readerSliceKey), and only a
+// *successful* write supersedes (a failed edit leaves the file unchanged, so it
+// must not evict the read the model needs). Beyond the window, superseded reads
+// and reads older than EvictTurns are dropped, and the budget valve sheds the
+// rest — so nothing becomes immortal.
 type EvictionPolicy struct {
 	Enabled      bool
 	ProtectTurns int
@@ -118,8 +124,24 @@ var evictionReaderArg = map[string]string{
 	"web_fetch":       "url",
 }
 
+// evictionReaderRangeArg maps a paginated reader tool to the argument that names
+// the start of the slice it read. Reads of the SAME file at different starts are
+// distinct pages, not duplicates, so read-vs-read supersession keys on
+// path+start — otherwise reading page 2 of a large file would evict page 1.
+var evictionReaderRangeArg = map[string]string{
+	"file_read_lines": "start_line",
+	"file_read_bytes": "offset",
+}
+
+// evictionReaderRangeDefault is the implied slice start when the range arg is
+// omitted (file_read_lines defaults start_line=1; file_read_bytes offset=0).
+var evictionReaderRangeDefault = map[string]int64{
+	"file_read_lines": 1,
+	"file_read_bytes": 0,
+}
+
 // evictionWriterArg maps a writer tool to the argument naming the resource it
-// mutates. A write supersedes any earlier read of the same resource.
+// mutates. A successful write supersedes any earlier read of the same resource.
 var evictionWriterArg = map[string]string{
 	"file_write":        "path",
 	"file_edit":         "path",
@@ -186,6 +208,48 @@ func writerResource(tool string, args map[string]any) (string, bool) {
 	return v, v != ""
 }
 
+// readerSliceKey returns the read-vs-read supersession key: the resource path
+// plus, for paginated readers, the slice start — so distinct pages of one file
+// coexist and only a re-read of the SAME page supersedes. Non-paginated readers
+// (file_list, web_fetch) key on the bare resource. Write-invalidation still keys
+// on the bare path (any edit invalidates every cached page of that file).
+func readerSliceKey(tool string, args map[string]any) (string, bool) {
+	res, ok := readerResource(tool, args)
+	if !ok {
+		return "", false
+	}
+	rangeArg, paged := evictionReaderRangeArg[tool]
+	if !paged {
+		return res, true
+	}
+	start := evictionReaderRangeDefault[tool]
+	if args != nil {
+		if v, present := args[rangeArg]; present {
+			start = toInt64(v)
+		}
+	}
+	return fmt.Sprintf("%s#%d", res, start), true
+}
+
+// toInt64 coerces a JSON-decoded numeric arg (float64 by default) to int64.
+func toInt64(v any) int64 {
+	switch n := v.(type) {
+	case float64:
+		return int64(n)
+	case int64:
+		return n
+	case int:
+		return int64(n)
+	case json.Number:
+		i, _ := n.Int64()
+		return i
+	case string:
+		i, _ := strconv.ParseInt(strings.TrimSpace(n), 10, 64)
+		return i
+	}
+	return 0
+}
+
 // evictionBudgetBytes resolves the reader-bytes budget: the configured value, or
 // ~40% of the context window (converted tokens→bytes) when unset.
 func (m *Manager) evictionBudgetBytes() int {
@@ -221,8 +285,12 @@ func (m *Manager) SweepEvictions(_ context.Context) []EvictionEvent {
 	}
 
 	msgs := make([]providers.Message, len(stored))
+	toolErr := make([]bool, len(stored))
 	for i := range stored {
 		msgs[i] = stored[i].Message
+		// A failed tool result is marked with Message.Type (set by the agent loop);
+		// used below so a failed write does not supersede the read it needs.
+		toolErr[i] = stored[i].Message.Type == providers.MessageTypeToolError
 	}
 
 	// 1-based turn-group age per message index (newest group = 1).
@@ -241,30 +309,52 @@ func (m *Manager) SweepEvictions(_ context.Context) []EvictionEvent {
 	// resource for supersession. Assistant tool calls precede their results, so
 	// callByID is populated before a result references it.
 	callByID := make(map[string]toolMeta, len(msgs))
-	maxReadIdx := map[string]int{}
-	maxWriteIdx := map[string]int{}
+	maxReadIdx := map[string]int{}  // keyed by slice (path#start) for read-vs-read
+	maxWriteIdx := map[string]int{} // keyed by path for write-invalidation
+	errByCallID := make(map[string]bool)
+	type pendingWrite struct {
+		res    string
+		idx    int
+		callID string
+	}
+	var writes []pendingWrite
 	for idx, mm := range msgs {
 		for _, tc := range mm.ToolCalls {
 			name, args := normToolCall(tc)
 			callByID[tc.ID] = toolMeta{tool: name, args: args}
 			if res, ok := writerResource(name, args); ok {
-				if cur, k := maxWriteIdx[res]; !k || idx > cur {
-					maxWriteIdx[res] = idx
-				}
+				// Defer recording the write until its result's error status is known.
+				writes = append(writes, pendingWrite{res: res, idx: idx, callID: tc.ID})
 			}
 		}
 		if mm.Role == "tool" && mm.ToolCallID != "" {
+			errByCallID[mm.ToolCallID] = toolErr[idx]
 			meta := callByID[mm.ToolCallID]
-			if res, ok := readerResource(meta.tool, meta.args); ok {
-				if cur, k := maxReadIdx[res]; !k || idx > cur {
-					maxReadIdx[res] = idx
+			if key, ok := readerSliceKey(meta.tool, meta.args); ok {
+				if cur, k := maxReadIdx[key]; !k || idx > cur {
+					maxReadIdx[key] = idx
 				}
 			}
 		}
 	}
+	// A write supersedes earlier reads of the file only if it actually modified it.
+	// A failed edit (e.g. "old_text not found") leaves the file unchanged, so it
+	// must not evict the read the model needs to build a correct edit — that is
+	// exactly the loop this guards against.
+	for _, wr := range writes {
+		if errByCallID[wr.callID] {
+			continue // failed write: no supersession
+		}
+		if cur, k := maxWriteIdx[wr.res]; !k || wr.idx > cur {
+			maxWriteIdx[wr.res] = wr.idx
+		}
+	}
 
 	// Classify each reader tool-result message.
-	type cand struct{ idx, size int }
+	type cand struct {
+		idx, size  int
+		superseded bool
+	}
 	marks := map[int]string{}
 	var budgetCands []cand
 	remainingReaderBytes := 0
@@ -278,30 +368,40 @@ func (m *Manager) SweepEvictions(_ context.Context) []EvictionEvent {
 		if !ok {
 			continue // not a re-retrievable reader → never evicted
 		}
+		sliceKey, _ := readerSliceKey(meta.tool, meta.args)
 		size := len(mm.Content)
 		if size == 0 {
 			continue
 		}
 
-		// Supersession ignores the protect window: a read with a strictly-later
-		// read of the same resource (or a later write/edit to it) is a stale
-		// duplicate the agent has already replaced — keeping it, however recent,
-		// only bloats the window. The most-recent read of each resource is never
-		// superseded, so the agent never loses its current view of a file.
+		// Superseded = a strictly-later read of the SAME slice (a genuine re-read of
+		// that page), or a later SUCCESSFUL write to the file. Range-aware: reading
+		// a different page of the same file is not a duplicate, and a failed write
+		// does not count (see maxWriteIdx above).
 		superseded := false
-		if r, k := maxReadIdx[res]; k && r > idx {
+		if r, k := maxReadIdx[sliceKey]; k && r > idx {
 			superseded = true
 		}
 		if w, k := maxWriteIdx[res]; k && w > idx {
 			superseded = true
 		}
+
+		a := ages[idx]
 		if superseded {
-			marks[idx] = "superseded"
+			// Past the working-set window a superseded read is a pure stale
+			// duplicate — drop it now. Within the window keep it (the model may
+			// still be editing against it), but demote it to a budget candidate so a
+			// suddenly-bloated context can still reclaim it under memory pressure.
+			if a > p.ProtectTurns {
+				marks[idx] = "superseded"
+				continue
+			}
+			budgetCands = append(budgetCands, cand{idx: idx, size: size, superseded: true})
+			remainingReaderBytes += size
 			continue
 		}
 
-		// All remaining tiers respect the protect window (the recent working set).
-		a := ages[idx]
+		// Non-superseded reads respect the protect window (the recent working set).
 		if a <= p.ProtectTurns {
 			remainingReaderBytes += size // protected: stays in window
 			continue
@@ -314,15 +414,24 @@ func (m *Manager) SweepEvictions(_ context.Context) []EvictionEvent {
 		remainingReaderBytes += size // candidate stays unless budget evicts it
 	}
 
-	// Budget valve: evict largest-first among the remaining candidates until the
-	// reader-byte total is under budget.
+	// Budget valve: when reader bytes exceed budget, evict superseded duplicates
+	// first (least valuable), then largest-first, until back under budget.
 	if budget := m.evictionBudgetBytes(); budget > 0 && remainingReaderBytes > budget {
-		sort.Slice(budgetCands, func(i, j int) bool { return budgetCands[i].size > budgetCands[j].size })
+		sort.Slice(budgetCands, func(i, j int) bool {
+			if budgetCands[i].superseded != budgetCands[j].superseded {
+				return budgetCands[i].superseded
+			}
+			return budgetCands[i].size > budgetCands[j].size
+		})
 		for _, c := range budgetCands {
 			if remainingReaderBytes <= budget {
 				break
 			}
-			marks[c.idx] = "budget"
+			if c.superseded {
+				marks[c.idx] = "superseded"
+			} else {
+				marks[c.idx] = "budget"
+			}
 			remainingReaderBytes -= c.size
 		}
 	}
