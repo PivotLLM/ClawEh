@@ -65,6 +65,48 @@ func TestFallback_NotifyFiresBetweenCandidates(t *testing.T) {
 	}
 }
 
+func TestFallback_NotifyFiresOnCooldownSkip(t *testing.T) {
+	ct := NewCooldownTracker()
+	// Pre-cool the middle candidate so it is skipped rather than tried.
+	ct.MarkFailure("anthropic", "claude", FailoverRateLimit, 429, 0)
+	fc := NewFallbackChain(ct)
+
+	candidates := []FallbackCandidate{
+		makeCandidate("openai", "gpt-4"),
+		makeCandidate("anthropic", "claude"),
+		makeCandidate("xai", "grok"),
+	}
+	run := func(ctx context.Context, c FallbackCandidate) (*LLMResponse, error) {
+		if c.Provider == "openai" {
+			return nil, errors.New("rate limit exceeded") // fails, retriable
+		}
+		return &LLMResponse{Content: "ok", FinishReason: "stop"}, nil // grok succeeds
+	}
+
+	type note struct {
+		trans   string
+		skipped bool
+	}
+	var notes []note
+	notify := func(failed FallbackAttempt, next FallbackCandidate) {
+		notes = append(notes, note{failed.Model + "->" + next.Model, failed.Skipped})
+	}
+	if _, err := fc.ExecuteWithNotify(context.Background(), candidates, run, notify); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// gpt-4 fails → trying claude; claude skipped (cooldown) → trying grok; grok ok.
+	// The skip must NOT be silent — the user was just told "Trying claude…".
+	if len(notes) != 2 {
+		t.Fatalf("notices = %+v, want 2 (failure + skip)", notes)
+	}
+	if notes[0] != (note{"gpt-4->claude", false}) {
+		t.Errorf("notice[0] = %+v, want {gpt-4->claude false}", notes[0])
+	}
+	if notes[1] != (note{"claude->grok", true}) {
+		t.Errorf("notice[1] = %+v, want {claude->grok true} (skip announced)", notes[1])
+	}
+}
+
 func TestFallback_NotifyNotCalledOnLastCandidate(t *testing.T) {
 	ct := NewCooldownTracker()
 	fc := NewFallbackChain(ct)

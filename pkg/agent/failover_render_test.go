@@ -70,3 +70,20 @@ func TestFormatFallbackNotice(t *testing.T) {
 		t.Fatalf("notice unexpected: %q", got)
 	}
 }
+
+// A cooldown-skipped candidate renders a "skipped (in cooldown)" heads-up (using
+// its alias) rather than an HTTP-error line, so the skip is never silent.
+func TestFormatFallbackNotice_Skip(t *testing.T) {
+	skipped := providers.FallbackAttempt{
+		Model:   "deepseek-v4-pro",
+		Alias:   "DeepSeek V4 Pro Writing",
+		Skipped: true,
+		Reason:  providers.FailoverRateLimit,
+	}
+	next := providers.FallbackCandidate{Model: "abliterated-model", Alias: "Abliteration"}
+	got := formatFallbackNotice(skipped, next)
+	if !strings.Contains(got, "DeepSeek V4 Pro Writing skipped (in cooldown)") ||
+		!strings.Contains(got, "Trying Abliteration…") {
+		t.Fatalf("skip notice unexpected: %q", got)
+	}
+}
