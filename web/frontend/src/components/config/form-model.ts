@@ -19,6 +19,7 @@ export interface CoreConfigForm {
   maxToolIterations: string
   requestTimeout: string
   turnTimeout: string
+  maxSubagentDepth: string
   // Agent defaults (agents.defaults.models / .temperature) and the default-agent
   // id (agents.list[].default). Consolidated here from the Agents page.
   defaultAgentId: string
@@ -95,6 +96,7 @@ export const EMPTY_FORM: CoreConfigForm = {
   maxToolIterations: "50",
   requestTimeout: "300",
   turnTimeout: "900",
+  maxSubagentDepth: "3",
   defaultAgentId: "",
   defaultModels: [],
   defaultTemperature: "",
@@ -199,6 +201,10 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
     ),
     requestTimeout: asNumberString(defaults.request_timeout, EMPTY_FORM.requestTimeout),
     turnTimeout: asNumberString(defaults.turn_timeout, EMPTY_FORM.turnTimeout),
+    maxSubagentDepth: asNumberString(
+      defaults.max_subagent_depth,
+      EMPTY_FORM.maxSubagentDepth,
+    ),
     defaultAgentId,
     defaultModels: asStringArray(defaults.models),
     defaultTemperature:

@@ -173,6 +173,19 @@ export function AgentDefaultsSection({
         />
       </Field>
 
+      <Field
+        label={t("pages.config.max_subagent_depth")}
+        hint={t("pages.config.max_subagent_depth_hint")}
+        layout="setting-row"
+      >
+        <Input
+          type="number"
+          min={1}
+          value={form.maxSubagentDepth}
+          onChange={(e) => onFieldChange("maxSubagentDepth", e.target.value)}
+        />
+      </Field>
+
     </ConfigSectionCard>
   )
 }

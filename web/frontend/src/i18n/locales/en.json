@@ -349,6 +349,8 @@
       "request_timeout_hint": "Global default seconds to wait for a model response. Per-model timeouts override this (CLI models set it higher). 0 = built-in 120s default.",
       "turn_timeout": "Turn timeout (s)",
       "turn_timeout_hint": "Overall wall-clock budget in seconds for a single user turn (across all model calls and tool loops). 0 = built-in 900s (15 min) default.",
+      "max_subagent_depth": "Max sub-agent depth",
+      "max_subagent_depth_hint": "How many levels of sub-agents may nest (a primary agent's workers are level 1, their workers level 2, …). A spawn or Maestro dispatch is refused beyond this depth. Applies to agent_spawn and Maestro. Blank/0 = default 3.",
       "default_agent": "Default agent",
       "default_agent_hint": "Handles messages that don't match any binding.",
       "default_model": "Default models",

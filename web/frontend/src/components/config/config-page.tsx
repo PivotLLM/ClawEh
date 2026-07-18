@@ -128,6 +128,11 @@ export function ConfigPage() {
           "Turn timeout (s)",
           { min: 0 },
         )
+        const maxSubagentDepth = parseIntField(
+          form.maxSubagentDepth,
+          "Max sub-agent depth",
+          { min: 1 },
+        )
         const summarizationModels = form.summarizationModels
           .map((m) => m.trim())
           .filter((m) => m.length > 0)
@@ -250,6 +255,7 @@ export function ConfigPage() {
               stream_tool_activity: form.streamToolActivity,
               max_tokens: maxTokens,
               max_tool_iterations: maxToolIterations,
+              max_subagent_depth: maxSubagentDepth,
               request_timeout: requestTimeout,
               turn_timeout: turnTimeout,
               models: defaultModels,
