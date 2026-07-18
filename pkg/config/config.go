@@ -736,6 +736,11 @@ type AgentDefaults struct {
 	// deadline elapses is cancelled and reported as a timeout to the model, which
 	// can then continue the turn. 0 falls back to DefaultToolTimeout.
 	ToolTimeout int `json:"tool_timeout,omitempty"          env:"CLAW_AGENTS_DEFAULTS_TOOL_TIMEOUT"`
+	// MaxSubagentDepth bounds sub-agent recursion: a primary turn is depth 0, its
+	// spawned workers depth 1, theirs depth 2, and so on; a spawn is refused once
+	// the spawning agent is already at this depth. 0 falls back to
+	// DefaultMaxSubagentDepth. Applies to both agent_spawn and maestro dispatch.
+	MaxSubagentDepth int `json:"max_subagent_depth,omitempty"    env:"CLAW_AGENTS_DEFAULTS_MAX_SUBAGENT_DEPTH"`
 	// ProgressInterval is how often (seconds) a long-running turn emits a
 	// lightweight progress update so it never looks dead. 0 falls back to
 	// DefaultProgressInterval; a negative value disables progress updates.
@@ -795,6 +800,19 @@ const (
 	DefaultToolTimeout      = 5 * time.Minute
 	DefaultProgressInterval = 30 * time.Second
 )
+
+// DefaultMaxSubagentDepth is the sub-agent recursion bound used when
+// AgentDefaults.MaxSubagentDepth is unset (0).
+const DefaultMaxSubagentDepth = 3
+
+// GetMaxSubagentDepth returns the configured sub-agent recursion bound, or
+// DefaultMaxSubagentDepth when unset (0) or negative.
+func (d *AgentDefaults) GetMaxSubagentDepth() int {
+	if d.MaxSubagentDepth > 0 {
+		return d.MaxSubagentDepth
+	}
+	return DefaultMaxSubagentDepth
+}
 
 // GetTurnTimeout returns the overall turn budget: the configured value (seconds)
 // or DefaultTurnTimeout when unset (0).

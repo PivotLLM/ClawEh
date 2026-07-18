@@ -764,6 +764,7 @@ func (al *AgentLoop) registerRuntimeTools(
 		})
 		managers[agentID] = spawnMgr
 		spawner := toolsagents.NewSpawner(spawnMgr)
+		spawner.SetMaxDepth(cfg.Agents.Defaults.GetMaxSubagentDepth())
 		spawner.SetAllowlistChecker(func(targetID string) bool {
 			return spawnAllowlist(currentAgentID, targetID)
 		})

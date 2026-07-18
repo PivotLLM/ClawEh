@@ -5,15 +5,17 @@ package agents
 
 import "context"
 
-// MaxSpawnDepth bounds sub-agent recursion. A primary (top-level) agent turn is
-// depth 0; the sub-agents it spawns run at depth 1, theirs at depth 2, and so
-// on. A spawn is refused once the spawning agent is already AT MaxSpawnDepth.
+// DefaultMaxSpawnDepth bounds sub-agent recursion when the operator has not
+// configured a value. A primary (top-level) agent turn is depth 0; the
+// sub-agents it spawns run at depth 1, theirs at depth 2, and so on. A spawn is
+// refused once the spawning agent is already AT the effective bound.
 //
 // This replaces the old blanket PrimaryOnly restriction (effectively "depth <=
 // 1"): sub-agents now inherit the parent's full toolset and may themselves
 // spawn / re-enter Maestro, but only to a bounded depth, so a runaway
-// spawn→spawn→… (or maestro→maestro→…) chain cannot occur.
-const MaxSpawnDepth = 3
+// spawn→spawn→… (or maestro→maestro→…) chain cannot occur. The operator can tune
+// the bound via agents.defaults.max_subagent_depth (see Spawner.SetMaxDepth).
+const DefaultMaxSpawnDepth = 3
 
 type spawnDepthKey struct{}
 
