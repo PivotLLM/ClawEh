@@ -38,6 +38,7 @@ func (globalFilesProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 	var (
 		readBytes   *ReadFileTool
 		readLines   *ReadFileTool
+		viewImage   *ViewImageTool
 		write       *WriteFileTool
 		list        *ListDirTool
 		edit        *EditFileTool
@@ -105,6 +106,7 @@ func (globalFilesProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 
 		readBytes = NewReadFileTool(workspace, readRestrict, maxReadFileSize, allowReadPaths)
 		readLines = NewReadLinesTool(workspace, readRestrict, maxReadFileSize, allowReadPaths)
+		viewImage = NewViewImageTool(workspace, readRestrict, allowReadPaths)
 		searchLines = NewSearchLinesTool(workspace, readRestrict, allowReadPaths)
 		searchBytes = NewSearchBytesTool(workspace, readRestrict, allowReadPaths)
 		write = NewWriteFileToolScoped(workspace, restrict, writeSubdir, allowWritePaths)
@@ -165,6 +167,16 @@ func (globalFilesProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 			DefaultAllow: global.Allow(true),
 			Handler: func(call *global.ToolCall) (*global.Result, error) {
 				return tools.ResultToGlobal(readLines.Execute(call.Ctx, call.Args)), nil
+			},
+		},
+		{
+			Name:         "view_image",
+			Description:  (&ViewImageTool{}).Description(),
+			RawSchema:    (&ViewImageTool{}).Parameters(),
+			Category:     "filesystem",
+			DefaultAllow: global.Allow(true),
+			Handler: func(call *global.ToolCall) (*global.Result, error) {
+				return tools.ResultToGlobal(viewImage.Execute(call.Ctx, call.Args)), nil
 			},
 		},
 		{

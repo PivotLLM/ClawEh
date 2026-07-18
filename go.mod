@@ -22,6 +22,7 @@ require (
 	github.com/stretchr/testify v1.11.1
 	github.com/tenebris-tech/mlogger v0.0.5
 	github.com/tenebris-tech/secmsg v0.1.1
+	golang.org/x/image v0.44.0
 	golang.org/x/time v0.15.0
 	gopkg.in/yaml.v3 v3.0.1
 	maunium.net/go/mautrix v0.29.0
@@ -62,7 +63,7 @@ require (
 
 require (
 	github.com/PivotLLM/spawnllm v0.1.5
-	github.com/PivotLLM/toolspec v0.3.0
+	github.com/PivotLLM/toolspec v0.4.0
 	github.com/andybalholm/brotli v1.2.2 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/buger/jsonparser v1.2.0 // indirect

@@ -17,6 +17,12 @@ const EnvVarHome = "CLAW_HOME"
 // agent-level nor agent_defaults temperature is configured.
 const DefaultTemperature = 0.2
 
+// ImageDownscaleMaxEdgePx is the longest-edge pixel threshold for the
+// file_view_image tool: an image whose longest edge exceeds this is downscaled
+// so its longest edge becomes exactly this value (preserving aspect ratio),
+// cutting vision-token cost. Smaller images pass through untouched.
+const ImageDownscaleMaxEdgePx = 2048
+
 const DefaultLogFile = true
 const DefaultLogConsole = true
 const DefaultLogLevel = "info"
