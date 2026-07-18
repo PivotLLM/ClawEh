@@ -722,6 +722,14 @@ type AgentDefaults struct {
 	Models               []string `json:"models,omitempty"`
 	ImageModel           string   `json:"image_model,omitempty"           env:"CLAW_AGENTS_DEFAULTS_IMAGE_MODEL"`
 	ImageModelFallbacks  []string `json:"image_model_fallbacks,omitempty"`
+	// VisionModel is the side-model used to describe images for a text-only
+	// primary model (vision off): when the active model can't see images, they
+	// are dispatched to this model for a one-shot text description that is then
+	// injected so the active model still benefits from them. Unset = feature off
+	// (images are dropped, as before). VisionModelFallbacks are tried in order
+	// when the primary vision model fails.
+	VisionModel          string   `json:"vision_model,omitempty"          env:"CLAW_AGENTS_DEFAULTS_VISION_MODEL"`
+	VisionModelFallbacks []string `json:"vision_model_fallbacks,omitempty"`
 	// RequestTimeout is the global default request timeout (seconds) applied to
 	// any model whose own request_timeout is 0. Default 300; CLI models override
 	// it higher (e.g. 3600). 0 falls back to the built-in 120s HTTP default.
@@ -2270,6 +2278,8 @@ func (c *Config) RenameModelReferences(oldName, newName string) {
 	renameInSlice(c.Agents.Defaults.Models, oldName, newName)
 	c.Agents.Defaults.ImageModel = renameScalar(c.Agents.Defaults.ImageModel, oldName, newName)
 	renameInSlice(c.Agents.Defaults.ImageModelFallbacks, oldName, newName)
+	c.Agents.Defaults.VisionModel = renameScalar(c.Agents.Defaults.VisionModel, oldName, newName)
+	renameInSlice(c.Agents.Defaults.VisionModelFallbacks, oldName, newName)
 	renameInSlice(c.Summarization.Models, oldName, newName)
 	for i := range c.Agents.List {
 		renameInSlice(c.Agents.List[i].Models, oldName, newName)

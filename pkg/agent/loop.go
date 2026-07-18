@@ -689,6 +689,11 @@ func (al *AgentLoop) registerRuntimeTools(
 		currentAgent := agentInst
 		agentCfg := currentAgent.Config
 
+		// Wire the vision-describe side-model chain onto the instance (no-op when
+		// no vision model is configured). cfg is passed explicitly because on
+		// reload al.cfg is still the pre-reload config at this point.
+		al.wireVisionClients(cfg, currentAgent)
+
 		// Build candidate resolver for spawn.
 		candidateResolver := func(targetAgentID string) ([]providers.FallbackCandidate, bool) {
 			target, ok := registry.GetAgent(targetAgentID)
@@ -1925,6 +1930,12 @@ func (al *AgentLoop) runAgentLoop(
 		}
 		if len(opts.Media) > 0 {
 			userMsg.Media = opts.Media
+			// Flow B: text-only primary + vision side-model configured → describe
+			// the inbound image(s) once here and fold the description into the
+			// message text (clearing Media), so every dispatch iteration carries
+			// usable text instead of an image the model can't see. No-op for
+			// vision-capable primaries and when vision is not configured.
+			al.describeInboundMedia(ctx, agent, &userMsg)
 		}
 		if err := cm.AddUserMessage(ctx, userMsg); err != nil {
 			logger.WarnCF("agent", "Failed to add user message to context manager",
@@ -2999,6 +3010,12 @@ func (al *AgentLoop) runLLMIteration(
 			visionMode = mc.Vision
 		}
 		var toolImages []string // accumulated for VisionUserMessage mode
+		// Accumulated for VisionOff mode: tool images that would otherwise be
+		// dropped are dispatched to the vision side-model (Flow A). offFocus
+		// collects the image tools' ForLLM text (which carries any file_view_image
+		// focus line) to steer the description.
+		var offImages []string
+		var offFocus []string
 		for _, r := range agentResults {
 			// Send ForUser content to user immediately if not Silent — only when
 			// streaming tool activity is enabled (otherwise the user receives just
@@ -3071,6 +3088,15 @@ func (al *AgentLoop) runLLMIteration(
 				// Defer to a follow-up user turn (Chat Completions, where tool
 				// messages are text-only).
 				toolImages = append(toolImages, r.result.Images...)
+			default:
+				// VisionOff: the model can't see images. Accumulate them for the
+				// vision side-model (Flow A) instead of dropping them silently.
+				if len(r.result.Images) > 0 {
+					offImages = append(offImages, r.result.Images...)
+					if f := strings.TrimSpace(r.result.ForLLM); f != "" {
+						offFocus = append(offFocus, f)
+					}
+				}
 			}
 			messages = append(messages, toolResultMsg)
 
@@ -3099,6 +3125,31 @@ func (al *AgentLoop) runLLMIteration(
 			}
 			logger.InfoCF("agent", "passed tool image(s) to vision model (user message)",
 				map[string]any{"agent_id": agent.ID, "model": activeModel, "images": len(toolImages)})
+		}
+
+		// Flow A: the active model is text-only and a vision side-model is
+		// configured — describe the tool image(s) that would otherwise be dropped
+		// and inject the description as a follow-up user turn so the model can use
+		// it. Gated on VisionClients so an unconfigured deployment keeps today's
+		// silent-drop behavior.
+		if visionMode == config.VisionOff && len(agent.VisionClients) > 0 && len(offImages) > 0 {
+			focusParts := offFocus
+			if lu := strings.TrimSpace(opts.UserMessage); lu != "" {
+				focusParts = append(focusParts, "User's request: "+lu)
+			}
+			desc, ok := al.describeImages(ctx, agent, offImages, strings.Join(focusParts, "\n"))
+			content := "An image was returned by a tool, but this model cannot view images and no description could be produced."
+			if ok {
+				content = "Image(s) described for you (this model cannot view images):\n" + desc
+			}
+			descMsg := providers.Message{Role: "user", Content: content}
+			messages = append(messages, descMsg)
+			if err := cm.AddUserMessage(ctx, descMsg); err != nil {
+				logger.WarnCF("agent", "failed to persist vision-describe message",
+					map[string]any{"agent_id": agent.ID, "error": err.Error()})
+			}
+			logger.InfoCF("agent", "injected vision description for non-vision model",
+				map[string]any{"agent_id": agent.ID, "model": activeModel, "images": len(offImages), "described": ok})
 		}
 
 		// If the model just repeated an identical tool-call batch (it isn't

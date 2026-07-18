@@ -112,3 +112,27 @@ func TestViewImage_RejectsOversized(t *testing.T) {
 		t.Fatalf("expected size-limit rejection, got %+v", res)
 	}
 }
+
+// The optional focus arg is accepted and surfaced as a parseable ForLLM line so
+// the vision-describe side-model (Flow A) can prioritize it.
+func TestViewImage_FocusReflectedInForLLM(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "img.png"), makePNG(t, 50, 50), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tool := NewViewImageTool(dir, true)
+
+	res := tool.Execute(context.Background(), map[string]any{"path": "img.png", "focus": "count the cats"})
+	if res.IsError {
+		t.Fatalf("unexpected error: %+v", res)
+	}
+	if !strings.Contains(res.ForLLM, "Focus: count the cats") {
+		t.Fatalf("focus not reflected in ForLLM: %q", res.ForLLM)
+	}
+
+	// No focus => no Focus line.
+	res2 := tool.Execute(context.Background(), map[string]any{"path": "img.png"})
+	if strings.Contains(res2.ForLLM, "Focus:") {
+		t.Fatalf("unexpected Focus line without focus arg: %q", res2.ForLLM)
+	}
+}

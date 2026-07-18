@@ -72,6 +72,10 @@ func (t *ViewImageTool) Parameters() map[string]any {
 				"type":        "string",
 				"description": "Path to the image file, relative to the workspace (or an allowed absolute path).",
 			},
+			"focus": map[string]any{
+				"type":        "string",
+				"description": "Optional: what to look for / the question to answer about the image.",
+			},
 		},
 		"required": []string{"path"},
 	}
@@ -104,8 +108,16 @@ func (t *ViewImageTool) Execute(_ context.Context, args map[string]any) *tools.T
 	}
 
 	dataURL, w, h, note := imageToDataURL(data, kind.MIME.Value)
+	forLLM := fmt.Sprintf("[viewing image %s — %d×%d%s]", filepath.Base(path), w, h, note)
+	// A focus is surfaced in ForLLM as a parseable line so the vision-describe
+	// side-model (Flow A, for text-only models) can prioritize it.
+	if focus, ok := args["focus"].(string); ok {
+		if focus = strings.TrimSpace(focus); focus != "" {
+			forLLM += "\nFocus: " + focus
+		}
+	}
 	return &tools.ToolResult{
-		ForLLM: fmt.Sprintf("[viewing image %s — %d×%d%s]", filepath.Base(path), w, h, note),
+		ForLLM: forLLM,
 		Images: []string{dataURL},
 	}
 }
