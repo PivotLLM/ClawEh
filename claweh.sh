@@ -5,9 +5,16 @@
 #   curl -fsSL https://raw.githubusercontent.com/PivotLLM/ClawEh/main/claweh.sh | sh
 #
 # Environment overrides:
-#   CLAWEH_VERSION       release tag to install (e.g. v0.4.52); default: latest
+#   CLAWEH_VERSION       release tag to install (e.g. v0.4.53); default: latest
 #   CLAWEH_INSTALL_DIR   directory to install the binary into; default:
 #                        /usr/local/bin (falls back to ~/.local/bin if unwritable)
+#
+# Only the `claw` binary (and license notices) is installed — the data directory
+# (~/.claw) is never touched. To try a build without disturbing an existing
+# install, point it at a throwaway dir and check the version:
+#
+#   CLAWEH_INSTALL_DIR="$HOME/claw-test/bin" sh -c "$(curl -fsSL .../claweh.sh)"
+#   ~/claw-test/bin/claw version
 #
 # Supports Linux and macOS on amd64 (x86_64) and arm64 (aarch64 / Apple Silicon).
 set -eu

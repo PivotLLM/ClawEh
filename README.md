@@ -133,7 +133,33 @@ ClawEh began as a fork of [PicoClaw](https://github.com/sipeed/picoclaw), chosen
 
 ## Binary distribution
 
-To assist users who are not interested in compiling it themselves, I will be uploading recommended builds to GitHub for a variety of platforms. If you'd like another 
+For users who are not interested in compiling it themselves, prebuilt (and, on
+macOS, signed) builds are published to [GitHub Releases](https://github.com/PivotLLM/ClawEh/releases)
+for Linux and macOS on amd64 and arm64. Install with:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/PivotLLM/ClawEh/main/claweh.sh | sh
+```
+
+This downloads the `claw` binary for your platform and installs it to
+`/usr/local/bin` (falling back to `~/.local/bin`), together with the license and
+third-party notices. It installs **only the binary** — it never touches your data
+directory (`~/.claw`), so it is safe to re-run to upgrade.
+
+Environment overrides:
+
+- `CLAWEH_VERSION` — install a specific release tag (e.g. `v0.4.53`); default: latest.
+- `CLAWEH_INSTALL_DIR` — install into a custom directory. Handy for **trying a
+  build without disturbing an existing install**:
+
+  ```sh
+  CLAWEH_INSTALL_DIR="$HOME/claw-test/bin" \
+    sh -c "$(curl -fsSL https://raw.githubusercontent.com/PivotLLM/ClawEh/main/claweh.sh)"
+  ~/claw-test/bin/claw version
+  ```
+
+If you'd like a platform that isn't listed, please open an issue — or build it
+yourself (see [Building](#building)).
 
 ## Prerequisites
 
