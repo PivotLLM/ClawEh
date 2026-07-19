@@ -78,11 +78,30 @@ func TestToolActivitySummary(t *testing.T) {
 			want:    "🔧 `cogmem_memory_create`",
 		},
 		{
-			desc:    "unknown tool shows name only, no args",
+			desc:    "secret-keyed arg is never shown",
 			tool:    "some_unknown_tool",
 			args:    map[string]any{"secret_arg": "leak me"},
 			want:    "🔧 `some_unknown_tool`",
 			notWant: "leak me",
+		},
+		{
+			desc: "get_tool_details shows the target tool name",
+			tool: "mcp__claw__get_tool_details",
+			args: map[string]any{"name": "wxca_city_get"},
+			want: "🔧 `get_tool_details` `wxca_city_get`",
+		},
+		{
+			desc: "mcp tool shows short scalar args in key order",
+			tool: "mcp__wx__wxca_city_hourly",
+			args: map[string]any{"city": "Ottawa", "hours": 24.0},
+			want: "🔧 `wxca_city_hourly` `Ottawa` `24`",
+		},
+		{
+			desc:    "generic detail skips content and over-long args",
+			tool:    "some_tool",
+			args:    map[string]any{"city": "Ottawa", "content": "a body", "note": strings.Repeat("x", 60)},
+			want:    "🔧 `some_tool` `Ottawa`",
+			notWant: "body",
 		},
 	}
 

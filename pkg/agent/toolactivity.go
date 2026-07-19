@@ -3,8 +3,10 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/url"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -66,9 +68,81 @@ func toolActivitySummary(name string, args map[string]any) string {
 			return head + " " + code(h)
 		}
 	}
-	// Unknown tool (or a known one missing its path arg): just the name — no args,
-	// so no chance of leaking content from an unknown tool's arguments.
+	// Unknown/MCP tool: append a short, privacy-safe summary of its scalar args
+	// (e.g. "get_tool_details wxca_city_get", "metar_get CYOW") so the user gets
+	// basic detail without leaking contents or secrets.
+	if detail := toolArgDetail(args); detail != "" {
+		return head + " " + detail
+	}
 	return head
+}
+
+const (
+	maxDetailArgs     = 3  // most breadcrumbs need only the primary identifier(s)
+	maxDetailValueLen = 40 // longer string values are likely content, not an identifier
+)
+
+// sensitiveArgKeyParts are case-insensitive substrings of arg keys whose values
+// must never appear in a breadcrumb — credentials and content bodies.
+var sensitiveArgKeyParts = []string{
+	"pass", "secret", "token", "cred", "apikey", "api_key", "auth",
+	"content", "body", "old_text", "new_text", "replace", "html", "markdown", "payload",
+}
+
+// toolArgDetail renders up to maxDetailArgs short scalar arg VALUES (string/
+// number/bool, in stable key order) for the generic breadcrumb, each backticked.
+// Secret/content-bearing keys are skipped and over-long strings are dropped, so
+// credentials and bodies never leak.
+func toolArgDetail(args map[string]any) string {
+	if len(args) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(args))
+	for k := range args {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	parts := make([]string, 0, maxDetailArgs)
+	for _, k := range keys {
+		if len(parts) >= maxDetailArgs {
+			break
+		}
+		if isSensitiveArgKey(k) {
+			continue
+		}
+		switch v := args[k].(type) {
+		case string:
+			s := strings.TrimSpace(v)
+			if s == "" || len([]rune(s)) > maxDetailValueLen {
+				continue
+			}
+			parts = append(parts, code(s))
+		case float64:
+			parts = append(parts, code(trimFloat(v)))
+		case bool:
+			parts = append(parts, code(strconv.FormatBool(v)))
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+func isSensitiveArgKey(key string) bool {
+	k := strings.ToLower(key)
+	for _, p := range sensitiveArgKeyParts {
+		if strings.Contains(k, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// trimFloat renders a JSON number without a trailing ".0" for whole values.
+func trimFloat(f float64) string {
+	if f == math.Trunc(f) && !math.IsInf(f, 0) {
+		return strconv.FormatInt(int64(f), 10)
+	}
+	return strconv.FormatFloat(f, 'g', -1, 64)
 }
 
 // code wraps an identifier in backticks so channel markdown renderers treat it as
