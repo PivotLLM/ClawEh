@@ -2244,7 +2244,7 @@ func summarizeEvictions(events []llmcontext.EvictionEvent) string {
 		}
 		parts = append(parts, fmt.Sprintf("%s ×%d", capEvictResource(res), counts[res]))
 	}
-	return fmt.Sprintf("[Context: evicted %d read(s), freed %s — %s]",
+	return fmt.Sprintf("🧹 Context evicted %d read(s) %s — %s",
 		len(events), humanBytes(totalBytes), strings.Join(parts, ", "))
 }
 
@@ -2255,12 +2255,15 @@ func humanBytes(n int) string {
 	return fmt.Sprintf("%d B", n)
 }
 
+// capEvictResource shortens an evicted resource for the notice: the file basename
+// (paths are noise in a one-line notice), capped for a very long name.
 func capEvictResource(s string) string {
-	const max = 64
-	if len(s) <= max {
-		return s
+	base := filepath.Base(s)
+	const max = 48
+	if len(base) > max {
+		return base[:max-1] + "…"
 	}
-	return s[:max-1] + "…"
+	return base
 }
 
 // evictionNotifyUser reports whether the agent's resolved eviction policy has

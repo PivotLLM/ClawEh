@@ -17,7 +17,7 @@ func TestSummarizeEvictions(t *testing.T) {
 			ev = append(ev, llmcontext.EvictionEvent{Tool: "file_read_bytes", Resource: "files/novels/outline.md", Bytes: 65692, Reason: "superseded"})
 		}
 		got := summarizeEvictions(ev)
-		want := "[Context: evicted 8 read(s), freed 513 KB — files/novels/outline.md ×8]"
+		want := "🧹 Context evicted 8 read(s) 513 KB — outline.md ×8"
 		if got != want {
 			t.Fatalf("got %q\nwant %q", got, want)
 		}
@@ -33,7 +33,7 @@ func TestSummarizeEvictions(t *testing.T) {
 		if !strings.Contains(got, "a.md ×2") || !strings.Contains(got, "b.md ×1") {
 			t.Fatalf("missing per-resource counts: %q", got)
 		}
-		if !strings.HasPrefix(got, "[Context: evicted 3 read(s), freed 300 B") {
+		if !strings.HasPrefix(got, "🧹 Context evicted 3 read(s) 300 B") {
 			t.Fatalf("bad header/bytes: %q", got)
 		}
 	})
