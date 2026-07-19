@@ -56,6 +56,7 @@ type sessionMeta struct {
 	CoolingSinceCount           int       `json:"cooling_since_count,omitempty"`
 	ActiveModelIndex            int       `json:"active_model_index,omitempty"`
 	ExposeReasoning             bool      `json:"expose_reasoning,omitempty"`
+	ShowToolActivity            bool      `json:"show_tool_activity,omitempty"`
 
 	// PendingTurn is true while an LLM turn is in flight for this session.
 	// Set before the LLM call; cleared when the final response is persisted.
@@ -892,6 +893,9 @@ type CompactionState struct {
 	// ExposeReasoning, when true, delivers the model's reasoning to the user for
 	// this session (toggled via /reasoning). Default false.
 	ExposeReasoning bool `json:"expose_reasoning,omitempty"`
+	// ShowToolActivity, when true, posts a one-line breadcrumb for each tool call
+	// to the user for this session (toggled via /tools). Default false.
+	ShowToolActivity bool `json:"show_tool_activity,omitempty"`
 }
 
 // GetCompactionState reads the compaction counters from the session meta file.
@@ -913,6 +917,7 @@ func (s *JSONLStore) GetCompactionState(sessionKey string) (CompactionState, err
 		SummaryModel:                meta.SummaryModel,
 		ActiveModelIndex:            meta.ActiveModelIndex,
 		ExposeReasoning:             meta.ExposeReasoning,
+		ShowToolActivity:            meta.ShowToolActivity,
 	}, nil
 }
 
@@ -934,6 +939,7 @@ func (s *JSONLStore) SetCompactionState(sessionKey string, state CompactionState
 	meta.SummaryModel = state.SummaryModel
 	meta.ActiveModelIndex = state.ActiveModelIndex
 	meta.ExposeReasoning = state.ExposeReasoning
+	meta.ShowToolActivity = state.ShowToolActivity
 	meta.UpdatedAt = time.Now()
 	return s.writeMeta(sessionKey, meta)
 }

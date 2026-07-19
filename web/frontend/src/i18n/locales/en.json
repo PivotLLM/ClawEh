@@ -78,7 +78,8 @@
     "saving": "Saving...",
     "reset": "Reset",
     "remove": "Remove",
-    "confirm": "Confirm"
+    "confirm": "Confirm",
+    "done": "Done"
   },
   "labels": {
     "loading": "Loading..."
@@ -362,6 +363,12 @@
       "summarization_models_add": "Add model",
       "summarization_models_remove": "Remove",
       "summarization_models_move_up": "Move up",
+      "vision_models": "Vision models",
+      "vision_models_hint": "Models tried in order to describe images for agents whose own model can't see them (e.g. DeepSeek). When an agent is given an image, it's sent to the first working model here for a text description. Leave empty to drop images for non-vision models (default).",
+      "vision_models_empty": "No vision models configured — images are dropped for models that can't see them.",
+      "vision_models_add": "Add model",
+      "vision_models_remove": "Remove",
+      "vision_models_move_up": "Move up",
       "summarization_debug_capture": "Debug capture",
       "summarization_debug_capture_hint": "Write the verbatim request and response of every summarization call to compact.jsonl in the agent's workspace. Debugging only — leave off in normal use.",
       "compress_normal_percent": "Normal compression threshold",

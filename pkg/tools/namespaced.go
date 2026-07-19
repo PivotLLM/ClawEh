@@ -36,6 +36,7 @@ func resultFromGlobal(r *global.Result, err error) *ToolResult {
 		IsError: r.IsError,
 		Async:   r.Async,
 		Media:   r.Media,
+		Images:  r.Images,
 		Err:     r.Err,
 	}
 	if err != nil {
@@ -64,6 +65,7 @@ func ResultToGlobal(r *ToolResult) *global.Result {
 		IsError: r.IsError,
 		Async:   r.Async,
 		Media:   r.Media,
+		Images:  r.Images,
 		Err:     r.Err,
 	}
 }

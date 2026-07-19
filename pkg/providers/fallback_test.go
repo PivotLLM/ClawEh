@@ -65,6 +65,48 @@ func TestFallback_NotifyFiresBetweenCandidates(t *testing.T) {
 	}
 }
 
+func TestFallback_NotifyFiresOnCooldownSkip(t *testing.T) {
+	ct := NewCooldownTracker()
+	// Pre-cool the middle candidate so it is skipped rather than tried.
+	ct.MarkFailure("anthropic", "claude", FailoverRateLimit, 429, 0)
+	fc := NewFallbackChain(ct)
+
+	candidates := []FallbackCandidate{
+		makeCandidate("openai", "gpt-4"),
+		makeCandidate("anthropic", "claude"),
+		makeCandidate("xai", "grok"),
+	}
+	run := func(ctx context.Context, c FallbackCandidate) (*LLMResponse, error) {
+		if c.Provider == "openai" {
+			return nil, errors.New("rate limit exceeded") // fails, retriable
+		}
+		return &LLMResponse{Content: "ok", FinishReason: "stop"}, nil // grok succeeds
+	}
+
+	type note struct {
+		trans   string
+		skipped bool
+	}
+	var notes []note
+	notify := func(failed FallbackAttempt, next FallbackCandidate) {
+		notes = append(notes, note{failed.Model + "->" + next.Model, failed.Skipped})
+	}
+	if _, err := fc.ExecuteWithNotify(context.Background(), candidates, run, notify); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// gpt-4 fails → trying claude; claude skipped (cooldown) → trying grok; grok ok.
+	// The skip must NOT be silent — the user was just told "Trying claude…".
+	if len(notes) != 2 {
+		t.Fatalf("notices = %+v, want 2 (failure + skip)", notes)
+	}
+	if notes[0] != (note{"gpt-4->claude", false}) {
+		t.Errorf("notice[0] = %+v, want {gpt-4->claude false}", notes[0])
+	}
+	if notes[1] != (note{"claude->grok", true}) {
+		t.Errorf("notice[1] = %+v, want {claude->grok true} (skip announced)", notes[1])
+	}
+}
+
 func TestFallback_NotifyNotCalledOnLastCandidate(t *testing.T) {
 	ct := NewCooldownTracker()
 	fc := NewFallbackChain(ct)
@@ -169,34 +211,36 @@ func TestFallback_ContextCanceled(t *testing.T) {
 	}
 }
 
-func TestFallback_NonRetriableError(t *testing.T) {
+func TestFallback_FormatErrorFallsBack(t *testing.T) {
+	// A provider-specific 400 (classified as format) must fall back to the next
+	// candidate — e.g. DeepSeek thinking-mode rejects a request another provider
+	// accepts. The first candidate fails "format"; the second succeeds.
 	ct := NewCooldownTracker()
 	fc := NewFallbackChain(ct)
 
 	candidates := []FallbackCandidate{
-		makeCandidate("openai", "gpt-4"),
-		makeCandidate("anthropic", "claude"),
+		makeCandidate("deepseek", "deepseek-v4-pro"),
+		makeCandidate("xai", "grok"),
 	}
 
 	attempt := 0
 	run := func(ctx context.Context, c FallbackCandidate) (*LLMResponse, error) {
 		attempt++
-		return nil, errors.New("string should match pattern")
+		if c.Provider == "deepseek" {
+			return nil, errors.New("string should match pattern") // classifies as format
+		}
+		return &LLMResponse{Content: "grok response", FinishReason: "stop"}, nil
 	}
 
-	_, err := fc.Execute(context.Background(), candidates, run)
-	if err == nil {
-		t.Fatal("expected error for non-retriable")
+	result, err := fc.Execute(context.Background(), candidates, run)
+	if err != nil {
+		t.Fatalf("format error should fall back, got error: %v", err)
 	}
-	var fe *FailoverError
-	if !errors.As(err, &fe) {
-		t.Fatalf("expected FailoverError, got %T", err)
+	if result.Provider != "xai" {
+		t.Errorf("provider = %q, want xai (fell back past the format error)", result.Provider)
 	}
-	if fe.Reason != FailoverFormat {
-		t.Errorf("reason = %q, want format", fe.Reason)
-	}
-	if attempt != 1 {
-		t.Errorf("attempt = %d, want 1 (non-retriable should not try next)", attempt)
+	if attempt != 2 {
+		t.Errorf("attempt = %d, want 2 (format should try the next candidate)", attempt)
 	}
 }
 

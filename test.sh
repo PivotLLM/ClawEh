@@ -442,6 +442,7 @@ PY
     "internal_tools": [
       "file_read_bytes",
       "file_read_lines",
+      "file_view_image",
       "file_write",
       "file_edit",
       "file_edit_lines",
@@ -554,6 +555,12 @@ EOF
                             fi
                         done
                     done
+
+                    # Drop a tiny valid 1x1 PNG so file_view_image has a real
+                    # image to view (hermetic success probe).
+                    mkdir -p "$INTEG_HOME/agents/default/files"
+                    printf '%s' 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==' \
+                        | base64 -d > "$INTEG_HOME/agents/default/files/probe.png" 2>/dev/null || true
                     echo ""
 
                     # Run the probe-driven test against this ephemeral instance.

@@ -1,11 +1,14 @@
 # ClawEh: Yet another claw - Canadian style
 
-**ClawEh is a small, fast, self-hosted runtime for personal AI assistants.** Written in Go, it can run one or more agents, each with its own workspace, tools, and persistent memory. Agents can be connected to Telegram, Slack, Discord, the built-in web interface, and external devices  such as the Rabbit R1 and compatible voice apps via its device gateway.
+**ClawEh is a small, fast, self-hosted runtime for personal AI assistants.** Written in Go, it can run one or more agents, each with its own workspace, tools, and persistent memory. Agents can be connected to Telegram, Slack, Discord, Signal (through a secure-messaging daemon), the built-in web interface, and external devices  such as the Rabbit R1 and compatible voice apps via its device gateway.
 
 Although the conversation context can be reset at any time, ClawEh is designed primarily for long-running assistants that maintain continuity over time. Its development emphasizes efficient context management, practical persistent memory, security, and a stable, dependable core.
 
 **Latest Changes:**
 
+- Added a **Signal messaging channel**. Point ClawEh at a running secure-messaging daemon (e.g. `sigd`) and it **auto-discovers** the daemon's linked accounts, binding one channel per account — no manual account entry required. Reconnects automatically if the daemon restarts.
+- Added **image / vision support**. A new `file_view_image` tool lets a vision-capable model view an image from the workspace (large images are auto-downscaled). For text-only models, an optional **global vision model** can be configured to describe inbound images, screenshots, and viewed image files automatically.
+- **Sub-agents can now delegate further work.** The old blanket "primary-only" restriction has been retired: a sub-agent inherits the parent's full toolset (including memory, scheduled jobs, spawning, and Maestro) and may itself spawn or re-enter Maestro, bounded by a configurable `max_subagent_depth` (default 3) so runaway recursion cannot occur.
 - ClawEh's built-in **device gateway** is tested and working with the **Rabbit R1** and the **ClawToTalk app on Android**. Pair with a QR code or a typed token, choose which assistant each device talks to, and get replies **streamed live** as they are received from the LLM. See the [device gateway protocol](docs/device-gateway-protocol.md) for technical details.
 - Added long-lived tokens to support inbound webhooks for integration
 - Integrated Maestro orchestration directly into ClawEh
@@ -20,7 +23,7 @@ Although the conversation context can be reset at any time, ClawEh is designed p
 - **Self-hosted** — Workspace sandboxing, per-agent tool allowlists, and loopback-bound services, delivered as MIT-licensed Go software that you run on your own infrastructure.
 - **Strong security posture** — Only essential features are enabled by default, with fine-grained access controls for tools, files, agents, and external services.
 - **Broad LLM support** — Connect to OpenRouter, Anthropic, OpenAI, Google Gemini, AWS, x.ai, and others, or use CLI agents such as Claude Code, Codex, and Gemini CLI. Configurable fallback chains and cooldowns improve availability.
-- **Messaging channels** — Connect agents to Telegram, Slack, Discord, and the built-in web interface, with configurable per-agent routing. Additional channels are under consideration.
+- **Messaging channels** — Connect agents to Telegram, Slack, Discord, Signal, and the built-in web interface, with configurable per-agent routing. The Signal channel connects to a secure-messaging daemon and auto-discovers its linked accounts. Additional channels are under consideration.
 - **Cognitive memory** — Each agent can maintain persistent memory that updates in the background, distilling conversations into structured, de-duplicated facts and automatically recalling relevant information for future prompts.
 - **Smart context management** — Automatic summarization and compaction, combined with per-turn eviction of stale tool output, keep long-running conversations responsive and within model context limits.
 - **External voice/hardware devices** — A built-in device gateway speaks the OpenClaw Gateway WebSocket protocol, so hardware and voice clients can pair (QR or typed token) and talk to your agents. Tested with the **Rabbit R1** and the **"Claw to Talk" voice app**. Each device can be pointed at a chosen assistant (or the default) from the Web UI.
@@ -30,6 +33,7 @@ Although the conversation context can be reset at any time, ClawEh is designed p
 - **Maestro built in** — Orchestrate complex, multi-step work using projects, playbooks, and resumable task lists.
 - **MCP server and client** — ClawEh provides its internal tools directly to API-based LLMs and exposes them through MCP to CLI agents. It can also connect to upstream MCP servers over stdio or HTTP, with granular control over which tools each agent may use.
 - **File tools** — Sandboxed tools for reading, searching, and editing files by line or byte, along with move and delete operations and an optional shared directory for exchanging files between agents.
+- **Image & vision** — A `file_view_image` tool lets vision-capable models view workspace images (auto-downscaled when large). Text-only models can be paired with an optional global vision model that describes inbound images, screenshots, and viewed image files for them automatically.
 - **Inbound webhooks** - Long-lived tokens allow external applications to send messages to a specific agent.
 - **Agent callbacks** - Agents can optionally have a time-limited callback token automatically injected into their prompts to facilitate callback scenarios.
 - **Web UI** — Manage agents, providers, channels, MCP connections, memory, and configuration without editing JSON manually.
@@ -258,7 +262,7 @@ Without this, a person's Telegram ID and Slack ID are treated as two separate pe
 
 **One-shot tasks without context**
 
-In `unified` mode every conversation adds to the shared memory. If you want the agent to handle a task in isolation, without drawing on prior chat history and without polluting the main conversation, ask it to use the `spawn` tool. A spawned sub-agent is a **copy of the agent** (same workspace, tools, MCP, prompt, and a read-only snapshot of its memory) running on the given task in a separate session, optionally on a different model. It completes the work and reports back; nothing from that exchange appears in or affects the main conversation, and it cannot write the agent's memory, schedule jobs, or spawn further sub-agents. See [docs/subagents.md](docs/subagents.md).
+In `unified` mode every conversation adds to the shared memory. If you want the agent to handle a task in isolation, without drawing on prior chat history and without polluting the main conversation, ask it to use the `spawn` tool. A spawned sub-agent is a **copy of the agent** (same workspace, tools, MCP, prompt, and a read-only snapshot of its memory) running on the given task in a separate session, optionally on a different model. It completes the work and reports back; nothing from that exchange appears in or affects the main conversation. A sub-agent inherits the parent's full toolset and may itself spawn or orchestrate further sub-agents, bounded by `agents.defaults.max_subagent_depth` (default 3) so recursion cannot run away. See [docs/subagents.md](docs/subagents.md).
 
 **Security: access control**
 

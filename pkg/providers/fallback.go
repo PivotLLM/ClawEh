@@ -45,6 +45,7 @@ type FallbackResult struct {
 type FallbackAttempt struct {
 	Provider string
 	Model    string
+	Alias    string // human-readable model name (config model_name), when known
 	Error    error
 	Reason   FailoverReason
 	Duration time.Duration
@@ -197,6 +198,7 @@ func (fc *FallbackChain) ExecuteWithNotify(
 			result.Attempts = append(result.Attempts, FallbackAttempt{
 				Provider: candidate.Provider,
 				Model:    candidate.Model,
+				Alias:    candidate.Alias,
 				Skipped:  true,
 				Reason:   FailoverRateLimit,
 				Error: fmt.Errorf(
@@ -206,6 +208,11 @@ func (fc *FallbackChain) ExecuteWithNotify(
 					remaining.Round(time.Second),
 				),
 			})
+			// Heads-up that a cooled-down candidate is being skipped, naming the next
+			// in line — otherwise an earlier "Trying <this>…" is silently contradicted.
+			if notify != nil && i+1 < len(candidates) {
+				notify(result.Attempts[len(result.Attempts)-1], candidates[i+1])
+			}
 			continue
 		}
 
@@ -292,6 +299,7 @@ func (fc *FallbackChain) ExecuteWithNotify(
 		result.Attempts = append(result.Attempts, FallbackAttempt{
 			Provider: candidate.Provider,
 			Model:    candidate.Model,
+			Alias:    candidate.Alias,
 			Error:    failErr,
 			Reason:   failErr.Reason,
 			Duration: elapsed,

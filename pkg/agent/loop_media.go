@@ -93,6 +93,41 @@ func resolveMediaRefs(messages []providers.Message, store media.MediaStore, maxS
 	return result
 }
 
+// resolveImageDataURIs resolves media refs to base64 image data URLs for the
+// vision-describe side-model, skipping non-image refs. Already-encoded
+// data:image/ URIs pass through unchanged. Uses the same store + size limit as
+// resolveMediaRefs.
+func (al *AgentLoop) resolveImageDataURIs(refs []string) []string {
+	store := al.mediaStore
+	maxSize := al.GetConfig().Agents.Defaults.GetMaxMediaSize()
+	var out []string
+	for _, ref := range refs {
+		if strings.HasPrefix(ref, "data:image/") {
+			out = append(out, ref)
+			continue
+		}
+		if store == nil || !strings.HasPrefix(ref, "media://") {
+			continue
+		}
+		localPath, meta, err := store.ResolveWithMeta(ref)
+		if err != nil {
+			continue
+		}
+		info, err := os.Stat(localPath)
+		if err != nil {
+			continue
+		}
+		mime := detectMIME(localPath, meta)
+		if !strings.HasPrefix(mime, "image/") {
+			continue
+		}
+		if u := encodeImageToDataURL(localPath, mime, info, maxSize); u != "" {
+			out = append(out, u)
+		}
+	}
+	return out
+}
+
 // detectMIME determines the MIME type from metadata or magic-bytes detection.
 // Returns empty string if detection fails.
 func detectMIME(localPath string, meta media.MediaMeta) string {

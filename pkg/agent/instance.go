@@ -42,6 +42,16 @@ type AgentInstance struct {
 	SkillsFilter   []string
 	Candidates     []providers.FallbackCandidate
 
+	// VisionClients is the ordered vision-describe side-model chain (from
+	// AgentDefaults.VisionModel + VisionModelFallbacks). When the active model is
+	// text-only and images are encountered, they are dispatched to these clients
+	// (first success wins) for a one-shot text description instead of being
+	// dropped. Empty = feature off. Wired by AgentLoop.registerRuntimeTools.
+	VisionClients []llmcontext.LLMClient
+	// EffectiveVisionModel is the first (primary) vision-describe model name, for
+	// logging. Empty when no vision model is configured.
+	EffectiveVisionModel string
+
 	// Config is the agent's configuration, used for per-agent tool allowlists.
 	Config *config.AgentConfig
 

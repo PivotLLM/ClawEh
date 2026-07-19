@@ -216,7 +216,8 @@ func replaceEditContent(content []byte, oldText, newText string) ([]byte, error)
 	contentStr := string(content)
 
 	if !strings.Contains(contentStr, oldText) {
-		return nil, fmt.Errorf("old_text not found in file. Make sure it matches exactly")
+		return nil, fmt.Errorf("old_text not found — it must match the file exactly, including whitespace and indentation. " +
+			"If you have the line numbers from file_read_lines, use file_edit_lines(path, start[, end], replace) instead")
 	}
 
 	count := strings.Count(contentStr, oldText)

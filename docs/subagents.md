@@ -33,36 +33,38 @@ way the result includes the worker's **iteration count**.
 
 A sub-agent runs through the **full agent pipeline**, so it inherits:
 
-- **Tools** — the agent's full tool registry, **minus primary-only tools** (see
-  below). Includes file tools, web, MCP/fusion tools, etc.
+- **Tools** — the agent's **complete tool registry**, the same tools the primary
+  holds: file tools, web, MCP/fusion tools, `cron_schedule`, `agent_spawn`,
+  Maestro, and the cognitive-memory tools. There is no primary-only exclusion
+  (see [Recursion bound](#recursion-bound) below for the one limit that applies).
 - **Files** — read-write `files/` and read-only `skills/`, the same as the
   primary.
 - **Identity / prompt** — the same curated `SOUL.md` / `AGENTS.md` /
   `IDENTITY.md` / `USER.md` / `MEMORY.md` context.
-- **Memory (read-only)** — at spawn time the agent's cognitive memory
-  (`cogmem`) is **snapshotted** onto the sub-agent's own private database, so the
-  worker has the agent's domains, preferences, and project state as background. It
-  can **read** memory (`cogmem_memory_search`, `cogmem_domain_get`, …) but
-  **cannot write** it — the write tools are primary-only. The snapshot is a copy,
-  so the worker never affects the primary's memory, and it is deleted when the
-  worker finishes. Workers report findings back in their result; the **primary**
-  decides what to persist to memory.
+- **Memory** — at spawn time the agent's cognitive memory (`cogmem`) is
+  **snapshotted** onto the sub-agent's own private database, so the worker has the
+  agent's domains, preferences, and project state as background. The worker can
+  read memory (`cogmem_memory_search`, `cogmem_domain_get`, …) **and** the write
+  tools are available to it, but the snapshot is a **throwaway copy** deleted with
+  the session when the worker finishes — so any writes it makes stay on that copy
+  and **never reach the primary's memory**. Workers report findings back in their
+  result; the **primary** decides what to persist.
 
-## What a sub-agent cannot do (primary-only)
+## Recursion bound
 
-These tools are marked `PrimaryOnly` and are **excluded from sub-agents** —
-enforced both for API-model agents (the tool is not offered and is rejected if
-attempted) and for CLI-model agents that reach tools over MCP (the MCP dispatch
-rejects them):
+Sub-agents may themselves spawn (`agent_spawn`) or orchestrate work through
+Maestro, but only to a bounded depth so a runaway `spawn → spawn → …` (or
+`maestro → maestro → …`) chain cannot occur. This replaces the old blanket
+"primary-only" restriction (which was effectively "depth ≤ 1").
 
-- **`agent_spawn`** — a sub-agent cannot spawn further sub-agents (no recursion).
-- **`cron_schedule`** — a transient worker cannot create/manage scheduled jobs.
-- **cognitive-memory write tools** — `cogmem_memory_create`,
-  `cogmem_domain_update`, `cogmem_domain_create`, `cogmem_domain_archive`,
-  `cogmem_domain_migrate`, `cogmem_memory_retire`, `cogmem_memory_confirm`,
-  `cogmem_memory_forget`, `cogmem_consolidate` (read tools remain available).
-
-(See `docs/tool-providers.md` for how to mark a new tool primary-only.)
+- A **primary** (top-level) turn runs at depth 0; the sub-agents it spawns run at
+  depth 1, theirs at depth 2, and so on.
+- A spawn or a Maestro dispatch is **refused once the spawning agent is already at
+  the bound** (`depth >= max`). Both `agent_spawn` and Maestro task dispatch share
+  the same depth counter, so mixing them cannot bypass it.
+- The bound is `agents.defaults.max_subagent_depth` (default **3**, minimum 1),
+  configurable in the Web UI. It is enforced uniformly for API-model agents and
+  for CLI-model agents that reach tools over MCP.
 
 ## Sessions, cleanup, and isolation
 

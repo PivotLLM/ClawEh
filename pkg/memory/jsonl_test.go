@@ -1225,3 +1225,46 @@ func TestSetHistory_StampsCreatedAt(t *testing.T) {
 		}
 	}
 }
+
+// TestCompactionState_PersistsToggles verifies the per-session /tools and
+// /reasoning flags survive a store reopen (i.e. a process restart), round-tripping
+// through the on-disk session meta.
+func TestCompactionState_PersistsToggles(t *testing.T) {
+	dir := t.TempDir()
+	const key = "agent:wendy:main"
+
+	store, err := NewJSONLStore(dir)
+	if err != nil {
+		t.Fatalf("NewJSONLStore: %v", err)
+	}
+	// Create the session so its meta exists.
+	if _, err := store.AddFullMessage(context.Background(), key, providers.Message{Role: "user", Content: "hi"}); err != nil {
+		t.Fatalf("AddFullMessage: %v", err)
+	}
+
+	st, err := store.GetCompactionState(key)
+	if err != nil {
+		t.Fatalf("GetCompactionState: %v", err)
+	}
+	st.ShowToolActivity = true
+	st.ExposeReasoning = true
+	if err := store.SetCompactionState(key, st); err != nil {
+		t.Fatalf("SetCompactionState: %v", err)
+	}
+
+	// Reopen the store (simulate a restart) and read back from disk.
+	store2, err := NewJSONLStore(dir)
+	if err != nil {
+		t.Fatalf("reopen NewJSONLStore: %v", err)
+	}
+	got, err := store2.GetCompactionState(key)
+	if err != nil {
+		t.Fatalf("GetCompactionState after reopen: %v", err)
+	}
+	if !got.ShowToolActivity {
+		t.Error("ShowToolActivity did not persist across restart")
+	}
+	if !got.ExposeReasoning {
+		t.Error("ExposeReasoning did not persist across restart")
+	}
+}

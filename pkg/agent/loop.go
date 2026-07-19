@@ -99,6 +99,11 @@ type AgentLoop struct {
 	exposeReasoningMu    sync.Mutex
 	exposeReasoningCache map[string]bool
 
+	// showToolActivity caches the per-session "post tool-call breadcrumbs" flag
+	// (write-through to CompactionState). Same key scheme as activeModelIdx.
+	showToolActivityMu    sync.Mutex
+	showToolActivityCache map[string]bool
+
 	// sessionTokenIssuer issues and revokes per-session MCP tokens. Wired in
 	// from the MCP server at startup via SetSessionTokenIssuer; nil when the
 	// MCP host is not configured.
@@ -170,6 +175,7 @@ type processOptions struct {
 	ResetSession    bool     // True when this message is a session_clear handoff: reset before handling
 	SenderID        string   // Originating sender identifier for source attribution
 	SenderName      string   // Human-readable sender label (display name + canonical ID)
+	IsGroup         bool     // True when the inbound message came from a group/multi-listener chat
 	IterationsOut   *int     // optional: runAgentLoop writes the LLM iteration count here
 }
 
@@ -247,7 +253,8 @@ func NewAgentLoop(
 		evictTTL:             defaultEvictTTL,
 		evictInterval:        defaultEvictInterval,
 		activeModelIdx:       make(map[string]int),
-		exposeReasoningCache: make(map[string]bool),
+		exposeReasoningCache:  make(map[string]bool),
+		showToolActivityCache: make(map[string]bool),
 		taskLive:             toolsagents.NewLiveSet(),
 		spawnManagers:        make(map[string]*toolsagents.SubagentManager),
 		superStop:            make(chan struct{}),
@@ -688,6 +695,11 @@ func (al *AgentLoop) registerRuntimeTools(
 		}
 		currentAgent := agentInst
 		agentCfg := currentAgent.Config
+
+		// Wire the vision-describe side-model chain onto the instance (no-op when
+		// no vision model is configured). cfg is passed explicitly because on
+		// reload al.cfg is still the pre-reload config at this point.
+		al.wireVisionClients(cfg, currentAgent)
 
 		// Build candidate resolver for spawn.
 		candidateResolver := func(targetAgentID string) ([]providers.FallbackCandidate, bool) {
@@ -1665,6 +1677,7 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 		ResetSession:    msg.Metadata[metaSessionReset] == "true",
 		SenderID:        msg.SenderID,
 		SenderName:      senderSource(msg.SenderID, msg.Sender),
+		IsGroup:         inboundMetadata(msg, "is_group") == "true",
 	}
 
 	// context-dependent commands check their own Runtime fields and report
@@ -1925,6 +1938,12 @@ func (al *AgentLoop) runAgentLoop(
 		}
 		if len(opts.Media) > 0 {
 			userMsg.Media = opts.Media
+			// Flow B: text-only primary + vision side-model configured → describe
+			// the inbound image(s) once here and fold the description into the
+			// message text (clearing Media), so every dispatch iteration carries
+			// usable text instead of an image the model can't see. No-op for
+			// vision-capable primaries and when vision is not configured.
+			al.describeInboundMedia(ctx, agent, &userMsg)
 		}
 		if err := cm.AddUserMessage(ctx, userMsg); err != nil {
 			logger.WarnCF("agent", "Failed to add user message to context manager",
@@ -1985,15 +2004,14 @@ func (al *AgentLoop) runAgentLoop(
 	// This is controlled by the tool's Silent flag and ForUser content
 
 	// 5. Handle empty response.
-	// Normal termination with no content means the LLM has nothing to say (e.g., message
-	// was @-directed at another agent). Non-normal termination means something went wrong.
 	isSystemError := false
 	if finalContent == "" {
-		// Genuinely nothing to say (empty content AND no reasoning, normal finish)
-		// — e.g. a group message @-directed at another agent. Stay silent, but
-		// always clear the typing indicator so the user is not left waiting.
-		if normal && !degenerate {
-			logger.DebugCF("agent", "LLM returned empty response with normal termination",
+		switch {
+		case normal && !degenerate && opts.IsGroup:
+			// Legitimate silence: an empty, normal reply in a GROUP chat means the
+			// message wasn't for this agent (e.g. @-directed at another). Stay silent
+			// but clear the typing indicator so nobody is left waiting.
+			logger.DebugCF("agent", "empty normal response in group; staying silent",
 				map[string]any{
 					"agent_id":      agent.ID,
 					"session_key":   opts.SessionKey,
@@ -2001,11 +2019,9 @@ func (al *AgentLoop) runAgentLoop(
 				})
 			al.stopTyping(opts.Channel, opts.ChatID)
 			return "", nil
-		}
-		// Degenerate empty (model produced reasoning but no reply, even after
-		// poking) or abnormal termination: the user must still get something.
-		isSystemError = true
-		if degenerate {
+		case degenerate:
+			// Model produced reasoning but no reply, even after poking.
+			isSystemError = true
 			finalContent = "Sorry — I couldn't compose a reply to that. Please try again."
 			logger.WarnCF("agent", "degenerate empty response; sending fallback reply",
 				map[string]any{
@@ -2013,7 +2029,21 @@ func (al *AgentLoop) runAgentLoop(
 					"session_key":   opts.SessionKey,
 					"finish_reason": finishReason,
 				})
-		} else {
+		case normal:
+			// Direct chat, empty-but-normal reply — the user is addressing this agent
+			// and expects an answer, so an empty response is a failure (e.g. a degraded
+			// fallback model returning nothing). Advise rather than swallow it.
+			isSystemError = true
+			finalContent = "The model returned an empty response. This can happen when a fallback model can't handle the request — please try again."
+			logger.WarnCF("agent", "empty response on a direct message; advising the user",
+				map[string]any{
+					"agent_id":      agent.ID,
+					"session_key":   opts.SessionKey,
+					"finish_reason": finishReason,
+				})
+		default:
+			// Abnormal termination.
+			isSystemError = true
 			finalContent = fmt.Sprintf("The AI provider returned an empty response (finish reason: %s). Check provider logs for details.", finishReason)
 		}
 	}
@@ -2336,6 +2366,16 @@ func (al *AgentLoop) runLLMIteration(
 		logger.InfoCF("agent", "Dispatching to model", fields)
 	}
 
+	// One notifier for the whole turn so its de-dup memory spans all tool
+	// iterations: a primary that fails over on every iteration (e.g. a model that
+	// 400s each call) posts its heads-up once, not once per iteration.
+	turnNotifier := al.fallbackNotifier(opts)
+
+	// Follow-along breadcrumbs (/tools on): post a one-line note per tool call.
+	// Resolved once per turn — a user chat, not the internal "system" channel.
+	showToolActivity := opts.Channel != "" && opts.Channel != "system" && opts.ChatID != "" &&
+		al.getShowToolActivity(agent, opts.SessionKey)
+
 	for iteration < agent.MaxIterations {
 		iteration++
 
@@ -2494,7 +2534,7 @@ func (al *AgentLoop) runLLMIteration(
 						}
 						return agent.Provider.Chat(ctx, msgs, providerToolDefs, c.Model, llmOpts)
 					},
-					al.fallbackNotifier(opts),
+					turnNotifier,
 				)
 				if fbErr != nil {
 					return nil, fbErr
@@ -2884,6 +2924,20 @@ func (al *AgentLoop) runLLMIteration(
 		for i, tc := range normalizedToolCalls {
 			agentResults[i].tc = tc
 
+			// Follow-along breadcrumb (/tools on): a one-line, privacy-safe note per
+			// tool call, published in dispatch order before the tool runs.
+			if showToolActivity {
+				if line := toolCallBreadcrumb(tc); line != "" {
+					bcCtx, bcCancel := context.WithTimeout(context.Background(), 5*time.Second)
+					_ = al.bus.PublishOutbound(bcCtx, bus.OutboundMessage{
+						Channel: opts.Channel,
+						ChatID:  opts.ChatID,
+						Content: line,
+					})
+					bcCancel()
+				}
+			}
+
 			wg.Add(1)
 			go func(idx int, tc providers.ToolCall) {
 				defer wg.Done()
@@ -2999,6 +3053,12 @@ func (al *AgentLoop) runLLMIteration(
 			visionMode = mc.Vision
 		}
 		var toolImages []string // accumulated for VisionUserMessage mode
+		// Accumulated for VisionOff mode: tool images that would otherwise be
+		// dropped are dispatched to the vision side-model (Flow A). offFocus
+		// collects the image tools' ForLLM text (which carries any file_view_image
+		// focus line) to steer the description.
+		var offImages []string
+		var offFocus []string
 		for _, r := range agentResults {
 			// Send ForUser content to user immediately if not Silent — only when
 			// streaming tool activity is enabled (otherwise the user receives just
@@ -3063,6 +3123,11 @@ func (al *AgentLoop) runLLMIteration(
 				Content:    contentForLLM,
 				ToolCallID: r.tc.ID,
 			}
+			// Mark failed tool results so the eviction sweep never treats a failed
+			// write (file unchanged) as superseding the read it needs to correct it.
+			if r.result.IsError {
+				toolResultMsg.Type = providers.MessageTypeToolError
+			}
 			switch visionMode {
 			case config.VisionToolResponse:
 				// Attach images to the tool result itself (Responses API).
@@ -3071,6 +3136,15 @@ func (al *AgentLoop) runLLMIteration(
 				// Defer to a follow-up user turn (Chat Completions, where tool
 				// messages are text-only).
 				toolImages = append(toolImages, r.result.Images...)
+			default:
+				// VisionOff: the model can't see images. Accumulate them for the
+				// vision side-model (Flow A) instead of dropping them silently.
+				if len(r.result.Images) > 0 {
+					offImages = append(offImages, r.result.Images...)
+					if f := strings.TrimSpace(r.result.ForLLM); f != "" {
+						offFocus = append(offFocus, f)
+					}
+				}
 			}
 			messages = append(messages, toolResultMsg)
 
@@ -3099,6 +3173,31 @@ func (al *AgentLoop) runLLMIteration(
 			}
 			logger.InfoCF("agent", "passed tool image(s) to vision model (user message)",
 				map[string]any{"agent_id": agent.ID, "model": activeModel, "images": len(toolImages)})
+		}
+
+		// Flow A: the active model is text-only and a vision side-model is
+		// configured — describe the tool image(s) that would otherwise be dropped
+		// and inject the description as a follow-up user turn so the model can use
+		// it. Gated on VisionClients so an unconfigured deployment keeps today's
+		// silent-drop behavior.
+		if visionMode == config.VisionOff && len(agent.VisionClients) > 0 && len(offImages) > 0 {
+			focusParts := offFocus
+			if lu := strings.TrimSpace(opts.UserMessage); lu != "" {
+				focusParts = append(focusParts, "User's request: "+lu)
+			}
+			desc, ok := al.describeImages(ctx, agent, offImages, strings.Join(focusParts, "\n"))
+			content := "An image was returned by a tool, but this model cannot view images and no description could be produced."
+			if ok {
+				content = "Image(s) described for you (this model cannot view images):\n" + desc
+			}
+			descMsg := providers.Message{Role: "user", Content: content}
+			messages = append(messages, descMsg)
+			if err := cm.AddUserMessage(ctx, descMsg); err != nil {
+				logger.WarnCF("agent", "failed to persist vision-describe message",
+					map[string]any{"agent_id": agent.ID, "error": err.Error()})
+			}
+			logger.InfoCF("agent", "injected vision description for non-vision model",
+				map[string]any{"agent_id": agent.ID, "model": activeModel, "images": len(offImages), "described": ok})
 		}
 
 		// If the model just repeated an identical tool-call batch (it isn't
@@ -3289,6 +3388,54 @@ func (al *AgentLoop) setExposeReasoning(agent *AgentInstance, sessionKey string,
 		st.ExposeReasoning = v
 		if err := store.SetCompactionState(sessionKey, st); err != nil {
 			logger.WarnCF("agent", "expose reasoning: persist failed",
+				map[string]any{"session_key": sessionKey, "error": err.Error()})
+		}
+	}
+}
+
+// getShowToolActivity returns whether the session posts a one-line breadcrumb for
+// each tool call, loading it from the session store on a cache miss. Default false.
+func (al *AgentLoop) getShowToolActivity(agent *AgentInstance, sessionKey string) bool {
+	key := activeModelCacheKey(agent.ID, sessionKey)
+
+	al.showToolActivityMu.Lock()
+	if v, ok := al.showToolActivityCache[key]; ok {
+		al.showToolActivityMu.Unlock()
+		return v
+	}
+	al.showToolActivityMu.Unlock()
+
+	v := false
+	if store, ok := agent.Sessions.(compactionStateStore); ok {
+		if st, err := store.GetCompactionState(sessionKey); err == nil {
+			v = st.ShowToolActivity
+		}
+	}
+
+	al.showToolActivityMu.Lock()
+	al.showToolActivityCache[key] = v
+	al.showToolActivityMu.Unlock()
+	return v
+}
+
+// setShowToolActivity sets the session's show-tool-activity flag, updating the
+// cache and persisting it through CompactionState (best-effort).
+func (al *AgentLoop) setShowToolActivity(agent *AgentInstance, sessionKey string, v bool) {
+	key := activeModelCacheKey(agent.ID, sessionKey)
+	al.showToolActivityMu.Lock()
+	al.showToolActivityCache[key] = v
+	al.showToolActivityMu.Unlock()
+
+	if store, ok := agent.Sessions.(compactionStateStore); ok {
+		st, err := store.GetCompactionState(sessionKey)
+		if err != nil {
+			logger.WarnCF("agent", "show tool activity: load compaction state failed",
+				map[string]any{"session_key": sessionKey, "error": err.Error()})
+			return
+		}
+		st.ShowToolActivity = v
+		if err := store.SetCompactionState(sessionKey, st); err != nil {
+			logger.WarnCF("agent", "show tool activity: persist failed",
 				map[string]any{"session_key": sessionKey, "error": err.Error()})
 		}
 	}
@@ -3701,6 +3848,19 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 				return
 			}
 			al.setExposeReasoning(agent, opts.SessionKey, on)
+		}
+
+		rt.GetShowToolActivity = func() bool {
+			if opts == nil {
+				return false
+			}
+			return al.getShowToolActivity(agent, opts.SessionKey)
+		}
+		rt.SetShowToolActivity = func(on bool) {
+			if opts == nil {
+				return
+			}
+			al.setShowToolActivity(agent, opts.SessionKey, on)
 		}
 
 		rt.ClearHistory = func() error {

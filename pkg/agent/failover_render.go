@@ -62,8 +62,17 @@ func (al *AgentLoop) fallbackNotifier(opts processOptions) providers.FallbackNot
 	if opts.Channel == "" || opts.Channel == "system" || opts.ChatID == "" {
 		return nil
 	}
+	// De-duplicate identical notices across the turn: a primary that fails over the
+	// same way on every tool iteration (e.g. a model that 400s each call) would
+	// otherwise repeat its heads-up per iteration. One notifier spans the turn (see
+	// runLLMIteration), so this memory suppresses the repeats.
+	seen := make(map[string]bool)
 	return func(failed providers.FallbackAttempt, next providers.FallbackCandidate) {
 		notice := formatFallbackNotice(failed, next)
+		if seen[notice] {
+			return
+		}
+		seen[notice] = true
 		pubCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := al.bus.PublishOutbound(pubCtx, bus.OutboundMessage{
@@ -77,15 +86,25 @@ func (al *AgentLoop) fallbackNotifier(opts processOptions) providers.FallbackNot
 	}
 }
 
-// formatFallbackNotice builds the mid-chain heads-up, e.g.
-// "⚠️ grok-2 error HTTP 402 (out of credits).\nTrying gpt-4o…".
+// formatFallbackNotice builds the mid-chain heads-up. For a failure, e.g.
+// "⚠️ grok-2 error HTTP 402 (out of credits).\nTrying gpt-4o…"; for a
+// cooldown-skipped candidate, "⚠️ DeepSeek V4 Pro Writing skipped (in cooldown).
+// \nTrying Abliteration…" — so a skip is never silent after an earlier
+// "Trying <this>…".
 func formatFallbackNotice(failed providers.FallbackAttempt, next providers.FallbackCandidate) string {
 	nextName := next.Alias
 	if nextName == "" {
 		nextName = next.Model
 	}
+	failedName := failed.Alias
+	if failedName == "" {
+		failedName = failed.Model
+	}
+	if failed.Skipped {
+		return fmt.Sprintf("⚠️ %s skipped (in cooldown).\nTrying %s…", failedName, nextName)
+	}
 	return fmt.Sprintf("⚠️ %s.\nTrying %s…",
-		attemptDescription(failed.Model, failoverStatus(failed.Error), failed.Reason),
+		attemptDescription(failedName, failoverStatus(failed.Error), failed.Reason),
 		nextName,
 	)
 }
