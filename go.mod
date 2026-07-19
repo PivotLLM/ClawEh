@@ -14,7 +14,7 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/h2non/filetype v1.1.3
 	github.com/mark3labs/mcp-go v0.56.0
-	github.com/mymmrac/telego v1.11.0
+	github.com/mymmrac/telego v1.11.1
 	github.com/rs/zerolog v1.35.1
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	github.com/slack-go/slack v0.27.0
@@ -56,7 +56,7 @@ require (
 	golang.org/x/exp v0.0.0-20260718201538-764159d718ef // indirect
 	golang.org/x/text v0.40.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
-	modernc.org/libc v1.74.2 // indirect
+	modernc.org/libc v1.74.3 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )
