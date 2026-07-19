@@ -4,18 +4,29 @@
 
 Although the conversation context can be reset at any time, ClawEh is designed primarily for long-running assistants that maintain continuity over time. Its development emphasizes efficient context management, practical persistent memory, security, and a stable, dependable core.
 
+**Quickstart**: A tutorial can be found at
+
+https://github.com/PivotLLM/Tutorials/blob/main/docs/claweh-quickstart.md
+
+---
+
 **Latest Changes:**
 
-- Added a **Signal messaging channel**. Point ClawEh at a running secure-messaging daemon (e.g. `sigd`) and it **auto-discovers** the daemon's linked accounts, binding one channel per account — no manual account entry required. Reconnects automatically if the daemon restarts.
 - Added **image / vision support**. A new `file_view_image` tool lets a vision-capable model view an image from the workspace (large images are auto-downscaled). For text-only models, an optional **global vision model** can be configured to describe inbound images, screenshots, and viewed image files automatically.
 - **Sub-agents can now delegate further work.** The old blanket "primary-only" restriction has been retired: a sub-agent inherits the parent's full toolset (including memory, scheduled jobs, spawning, and Maestro) and may itself spawn or re-enter Maestro, bounded by a configurable `max_subagent_depth` (default 3) so runaway recursion cannot occur.
 - ClawEh's built-in **device gateway** is tested and working with the **Rabbit R1** and the **ClawToTalk app on Android**. Pair with a QR code or a typed token, choose which assistant each device talks to, and get replies **streamed live** as they are received from the LLM. See the [device gateway protocol](docs/device-gateway-protocol.md) for technical details.
 - Added long-lived tokens to support inbound webhooks for integration
 - Integrated Maestro orchestration directly into ClawEh
 
+---
+
 **Development status:** This application is a work in progress.
 
-> **Web interface & authentication:** Like many "claw"-style apps intended for single-user use on a personal machine, ClawEh serves its web interface on localhost (loopback) and does not currently require authentication. This causes security challange for those who wish to run ClawEh on a VM or other headless system. Migrating to HTTPS with authentication seems obvious, but many users would end up requiring a self-signed certicate and be plagued by browser warnings. We are evaluating appropriate approaches for a future version and welcome input.
+---
+
+**Web interface & authentication:** Like many "claw"-style apps intended for single-user use on a personal machine, ClawEh serves its web interface on localhost (loopback) and does not currently require authentication. This causes security challange for those who wish to run ClawEh on a VM or other headless system. Migrating to HTTPS with authentication seems obvious, but many users would end up requiring a self-signed certicate and be plagued by browser warnings. We are evaluating appropriate approaches for a future version and welcome input.
+
+---
 
 **Feature overview:**
 
@@ -38,9 +49,13 @@ Although the conversation context can be reset at any time, ClawEh is designed p
 - **Agent callbacks** - Agents can optionally have a time-limited callback token automatically injected into their prompts to facilitate callback scenarios.
 - **Web UI** — Manage agents, providers, channels, MCP connections, memory, and configuration without editing JSON manually.
 
+---
+
 ## Quickstart
 
 **This is a new feature. Please let me know if you encounter any issues.**
+
+You can find a [brief tutorial here](https://github.com/PivotLLM/Tutorials/blob/main/docs/claweh-quickstart.md).
 
 Pre-built binaries are published on the [GitHub Releases page](https://github.com/PivotLLM/ClawEh/releases); you can also build from source.
 
