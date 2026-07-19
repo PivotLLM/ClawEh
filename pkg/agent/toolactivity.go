@@ -25,60 +25,50 @@ func toolActivitySummary(name string, args map[string]any) string {
 	}
 	const prefix = "🔧 "
 
-	// Identifiers (tool name, file basename, host) are wrapped in backticks so
-	// Telegram's markdown→HTML converter renders them as literal <code> and does
-	// NOT interpret embedded underscores as italics (which silently ate the
-	// underscores in e.g. cogmem_memory_create). See code().
+	// Always show the ACTUAL (namespace-stripped) tool name, backticked so channel
+	// markdown renderers keep its underscores literal (Telegram's converter would
+	// otherwise italicise a _paired_ underscore and drop it). Known tools append a
+	// compact, privacy-safe detail (line/byte range, file basename, URL host) —
+	// never file or memory contents, edit text, or query strings.
+	head := prefix + code(name)
+
 	switch name {
 	case "file_read_lines":
 		if base := toolArgBase(args, "path"); base != "" {
-			return prefix + "file_read lines " + readLineRange(args) + " " + code(base)
-		}
-	case "file_read_bytes":
-		if base := toolArgBase(args, "path"); base != "" {
-			return prefix + "file_read bytes " + code(base)
+			return head + " " + readLineRange(args) + " " + code(base)
 		}
 	case "file_edit_lines", "file_delete_lines", "file_insert_lines":
 		if base := toolArgBase(args, "path"); base != "" {
-			verb := map[string]string{
-				"file_edit_lines":   "file_edit",
-				"file_delete_lines": "file_delete",
-				"file_insert_lines": "file_insert",
-			}[name]
-			r := editLineRange(args)
-			if r != "" {
-				r = " " + r
+			if r := editLineRange(args); r != "" {
+				return head + " " + r + " " + code(base)
 			}
-			return prefix + verb + r + " " + code(base)
+			return head + " " + code(base)
 		}
-	case "file_edit", "file_write", "file_append", "file_delete":
+	case "file_read_bytes", "file_edit", "file_write", "file_append",
+		"file_delete", "file_search_lines", "file_search_bytes":
 		if base := toolArgBase(args, "path"); base != "" {
-			return prefix + name + " " + code(base)
+			return head + " " + code(base)
 		}
 	case "file_list":
 		base := toolArgBase(args, "path")
 		if base == "" {
 			base = "."
 		}
-		return prefix + "file_list " + code(base)
-	case "file_search_lines", "file_search_bytes":
-		if base := toolArgBase(args, "path"); base != "" {
-			return prefix + "file_search " + code(base)
-		}
+		return head + " " + code(base)
 	case "file_move", "file_copy":
 		src := toolArgBase(args, "source_path")
 		dst := toolArgBase(args, "destination_path")
 		if src != "" || dst != "" {
-			return prefix + name + " " + code(src) + " → " + code(dst)
+			return head + " " + code(src) + " → " + code(dst)
 		}
 	case "web_fetch":
 		if h := urlHost(toolArgStr(args, "url")); h != "" {
-			return prefix + "web_fetch " + code(h)
+			return head + " " + code(h)
 		}
 	}
-	// Generic fallback: just the (namespace-stripped) tool name — no args, so no
-	// chance of leaking content from an unknown tool's arguments.
-	return prefix + code(name)
+	// Unknown tool (or a known one missing its path arg): just the name — no args,
+	// so no chance of leaking content from an unknown tool's arguments.
+	return head
 }
 
 // code wraps an identifier in backticks so channel markdown renderers treat it as
