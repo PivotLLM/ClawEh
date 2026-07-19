@@ -25,14 +25,18 @@ func toolActivitySummary(name string, args map[string]any) string {
 	}
 	const prefix = "🔧 "
 
+	// Identifiers (tool name, file basename, host) are wrapped in backticks so
+	// Telegram's markdown→HTML converter renders them as literal <code> and does
+	// NOT interpret embedded underscores as italics (which silently ate the
+	// underscores in e.g. cogmem_memory_create). See code().
 	switch name {
 	case "file_read_lines":
 		if base := toolArgBase(args, "path"); base != "" {
-			return prefix + "file_read lines " + readLineRange(args) + " " + base
+			return prefix + "file_read lines " + readLineRange(args) + " " + code(base)
 		}
 	case "file_read_bytes":
 		if base := toolArgBase(args, "path"); base != "" {
-			return prefix + "file_read bytes " + base
+			return prefix + "file_read bytes " + code(base)
 		}
 	case "file_edit_lines", "file_delete_lines", "file_insert_lines":
 		if base := toolArgBase(args, "path"); base != "" {
@@ -45,36 +49,43 @@ func toolActivitySummary(name string, args map[string]any) string {
 			if r != "" {
 				r = " " + r
 			}
-			return prefix + verb + r + " " + base
+			return prefix + verb + r + " " + code(base)
 		}
 	case "file_edit", "file_write", "file_append", "file_delete":
 		if base := toolArgBase(args, "path"); base != "" {
-			return prefix + name + " " + base
+			return prefix + name + " " + code(base)
 		}
 	case "file_list":
 		base := toolArgBase(args, "path")
 		if base == "" {
 			base = "."
 		}
-		return prefix + "file_list " + base
+		return prefix + "file_list " + code(base)
 	case "file_search_lines", "file_search_bytes":
 		if base := toolArgBase(args, "path"); base != "" {
-			return prefix + "file_search " + base
+			return prefix + "file_search " + code(base)
 		}
 	case "file_move", "file_copy":
 		src := toolArgBase(args, "source_path")
 		dst := toolArgBase(args, "destination_path")
 		if src != "" || dst != "" {
-			return prefix + name + " " + src + " → " + dst
+			return prefix + name + " " + code(src) + " → " + code(dst)
 		}
 	case "web_fetch":
 		if h := urlHost(toolArgStr(args, "url")); h != "" {
-			return prefix + "web_fetch " + h
+			return prefix + "web_fetch " + code(h)
 		}
 	}
 	// Generic fallback: just the (namespace-stripped) tool name — no args, so no
 	// chance of leaking content from an unknown tool's arguments.
-	return prefix + name
+	return prefix + code(name)
+}
+
+// code wraps an identifier in backticks so channel markdown renderers treat it as
+// literal inline code — protecting underscores and other markdown-significant
+// characters in tool/file names from being interpreted as formatting.
+func code(s string) string {
+	return "`" + s + "`"
 }
 
 // toolCallBreadcrumb extracts the (name, args) from a stored ToolCall and renders
