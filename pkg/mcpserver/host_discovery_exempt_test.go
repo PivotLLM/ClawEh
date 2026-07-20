@@ -45,14 +45,14 @@ func TestHost_ListsAndDispatchesTTLHiddenSuiteTool(t *testing.T) {
 
 	// (a) tools/list on the host includes the hidden suite tool.
 	srv := server.NewMCPServer("t", "0")
-	addToolsToServer(srv, bearerAuthMode, regs, []string{"*"}, st, resolver, nil, acl.Default, nil, nil)
+	addToolsToServer(srv, bearerAuthMode, regs, []string{"*"}, st, resolver, nil, acl.Default, nil, nil, nil)
 	if _, ok := srv.ListTools()["maestro_file_list"]; !ok {
 		t.Fatal("host catalogue must list the discovery-hidden suite tool")
 	}
 
 	// (b) dispatch succeeds instead of returning tool_not_in_registry.
 	out, isErr := dispatchToolCall(context.Background(), "maestro_file_list",
-		map[string]any{"session_token": tok}, st, resolver, nil, acl.Default, nil)
+		map[string]any{"session_token": tok}, st, resolver, nil, acl.Default, nil, nil)
 	if isErr {
 		t.Fatalf("host dispatch of a hidden suite tool must succeed, got error: %s", out)
 	}

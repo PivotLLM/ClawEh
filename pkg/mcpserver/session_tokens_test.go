@@ -361,7 +361,7 @@ func TestDispatch_SessionScopedToolValidToken(t *testing.T) {
 			"session_token": sessTok,
 			"seq":           float64(1),
 		},
-		st, resolverFor(regs), nil, nil, nil)
+		st, resolverFor(regs), nil, nil, nil, nil)
 	if isErr {
 		t.Fatalf("expected success, got error: %s", out)
 	}
@@ -396,7 +396,7 @@ func TestDispatch_SessionScopedToolMissingToken(t *testing.T) {
 	// Missing session_token — dispatch must reject.
 	out, isErr := dispatchToolCall(context.Background(), "get_session_messages",
 		map[string]any{},
-		st, resolverFor(regs), nil, nil, nil)
+		st, resolverFor(regs), nil, nil, nil, nil)
 	if !isErr {
 		t.Fatalf("expected rejection for missing session_token, got: %s", out)
 	}
@@ -424,7 +424,7 @@ func TestDispatch_SessionScopedToolInvalidToken(t *testing.T) {
 	bogus := sessionTokenPrefix + strings.Repeat("a", 64)
 	out, isErr := dispatchToolCall(context.Background(), "get_session_messages",
 		map[string]any{"session_token": bogus},
-		st, resolverFor(regs), nil, nil, nil)
+		st, resolverFor(regs), nil, nil, nil, nil)
 	if !isErr {
 		t.Fatalf("expected rejection for invalid session_token, got: %s", out)
 	}
@@ -462,7 +462,7 @@ func TestDispatch_SessionTokenRoutesToCorrectAgent(t *testing.T) {
 	// Bob's token dispatches to bob's registry.
 	out, isErr := dispatchToolCall(context.Background(), "get_session_messages",
 		map[string]any{"session_token": bobSessTok},
-		st, resolverFor(regs), nil, nil, nil)
+		st, resolverFor(regs), nil, nil, nil, nil)
 	if isErr {
 		t.Fatalf("expected success for bob, got: %s", out)
 	}
@@ -476,7 +476,7 @@ func TestDispatch_SessionTokenRoutesToCorrectAgent(t *testing.T) {
 	// Alice's token dispatches to alice's registry.
 	out, isErr = dispatchToolCall(context.Background(), "get_session_messages",
 		map[string]any{"session_token": aliceSessTok},
-		st, resolverFor(regs), nil, nil, nil)
+		st, resolverFor(regs), nil, nil, nil, nil)
 	if isErr {
 		t.Fatalf("expected success for alice, got: %s", out)
 	}
@@ -514,7 +514,7 @@ func TestDispatch_SessionScopedInterfaceInjectsKey(t *testing.T) {
 
 			out, isErr := dispatchToolCall(context.Background(), name,
 				map[string]any{"session_token": tok},
-				st, resolverFor(regs), nil, nil, nil)
+				st, resolverFor(regs), nil, nil, nil, nil)
 			if isErr {
 				t.Fatalf("expected success, got error: %s", out)
 			}
@@ -548,7 +548,7 @@ func TestDispatch_NonSessionScopedToolDoesNotGetSessionKey(t *testing.T) {
 
 	out, isErr := dispatchToolCall(context.Background(), "read_file",
 		map[string]any{"session_token": tok, "path": "x"},
-		st, resolverFor(regs), nil, nil, nil)
+		st, resolverFor(regs), nil, nil, nil, nil)
 	if isErr {
 		t.Fatalf("expected success, got error: %s", out)
 	}
@@ -586,7 +586,7 @@ func TestDispatch_AllToolsRequireSessionToken(t *testing.T) {
 	// With valid session_token — must succeed.
 	out, isErr := dispatchToolCall(context.Background(), "read_file",
 		map[string]any{"session_token": tok, "path": "file.txt"},
-		st, resolverFor(regs), nil, nil, nil)
+		st, resolverFor(regs), nil, nil, nil, nil)
 	if isErr {
 		t.Fatalf("expected success with valid session_token, got error: %s", out)
 	}
@@ -597,7 +597,7 @@ func TestDispatch_AllToolsRequireSessionToken(t *testing.T) {
 	// Without session_token — must be rejected.
 	out, isErr = dispatchToolCall(context.Background(), "read_file",
 		map[string]any{"path": "file.txt"},
-		st, resolverFor(regs), nil, nil, nil)
+		st, resolverFor(regs), nil, nil, nil, nil)
 	if !isErr {
 		t.Fatalf("expected rejection without session_token, got success: %s", out)
 	}
