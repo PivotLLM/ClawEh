@@ -42,7 +42,7 @@ func TestDispatch_ValidTokenRoutesToAgentRegistry(t *testing.T) {
 	bobTok := st.Issue("bob", "test:bob:main", "/tmp/archive/bob")
 
 	out, isErr := dispatchToolCall(context.Background(), "read_file",
-		map[string]any{"session_token": aliceTok, "path": "x"}, st, resolverFor(regs), nil, nil, nil)
+		map[string]any{"session_token": aliceTok, "path": "x"}, st, resolverFor(regs), nil, nil, nil, nil)
 	if isErr {
 		t.Fatalf("unexpected error: %s", out)
 	}
@@ -57,7 +57,7 @@ func TestDispatch_ValidTokenRoutesToAgentRegistry(t *testing.T) {
 	}
 
 	out, isErr = dispatchToolCall(context.Background(), "read_file",
-		map[string]any{"session_token": bobTok, "path": "x"}, st, resolverFor(regs), nil, nil, nil)
+		map[string]any{"session_token": bobTok, "path": "x"}, st, resolverFor(regs), nil, nil, nil, nil)
 	if isErr {
 		t.Fatalf("unexpected error: %s", out)
 	}
@@ -73,7 +73,7 @@ func TestDispatch_EmptyTokenRejected(t *testing.T) {
 	st := newSessionTokenStore()
 	st.Issue("alice", "test:alice:main", "/tmp/archive/alice")
 	out, isErr := dispatchToolCall(context.Background(), "read_file",
-		map[string]any{}, st, resolverFor(nil), nil, nil, nil)
+		map[string]any{}, st, resolverFor(nil), nil, nil, nil, nil)
 	if !isErr {
 		t.Fatal("expected error for missing token")
 	}
@@ -87,7 +87,7 @@ func TestDispatch_UnknownTokenRejected(t *testing.T) {
 	st.Issue("alice", "test:alice:main", "/tmp/archive/alice")
 	bogus := sessionTokenPrefix + strings.Repeat("a", 64)
 	out, isErr := dispatchToolCall(context.Background(), "read_file",
-		map[string]any{"session_token": bogus}, st, resolverFor(nil), nil, nil, nil)
+		map[string]any{"session_token": bogus}, st, resolverFor(nil), nil, nil, nil, nil)
 	if !isErr {
 		t.Fatal("expected error for unknown token")
 	}
@@ -107,7 +107,7 @@ func TestDispatch_MalformedTokenRejected(t *testing.T) {
 	}
 	for _, c := range cases {
 		out, isErr := dispatchToolCall(context.Background(), "read_file",
-			map[string]any{"session_token": c}, st, resolverFor(nil), nil, nil, nil)
+			map[string]any{"session_token": c}, st, resolverFor(nil), nil, nil, nil, nil)
 		if !isErr {
 			t.Errorf("token %q expected to be rejected", c)
 			continue
@@ -122,7 +122,7 @@ func TestDispatch_SubagentSentinelReturnsHelpfulError(t *testing.T) {
 	st := newSessionTokenStore()
 	st.Issue("alice", "test:alice:main", "/tmp/archive/alice")
 	out, isErr := dispatchToolCall(context.Background(), "read_file",
-		map[string]any{"session_token": agenttoken.SubagentSentinel}, st, resolverFor(nil), nil, nil, nil)
+		map[string]any{"session_token": agenttoken.SubagentSentinel}, st, resolverFor(nil), nil, nil, nil, nil)
 	if !isErr {
 		t.Fatal("expected error for sentinel token")
 	}
@@ -143,7 +143,7 @@ func TestDispatch_RedactsTokensInOutput(t *testing.T) {
 	regs := map[string]*tools.ToolRegistry{"alice": newRegistryWith(leaky)}
 
 	out, isErr := dispatchToolCall(context.Background(), "read_file",
-		map[string]any{"session_token": tok}, st, resolverFor(regs), nil, nil, nil)
+		map[string]any{"session_token": tok}, st, resolverFor(regs), nil, nil, nil, nil)
 	if isErr {
 		t.Fatalf("unexpected error: %s", out)
 	}
@@ -173,7 +173,7 @@ func TestDispatch_RelativePathOutsideWorkspaceRejected(t *testing.T) {
 
 	out, isErr := dispatchToolCall(context.Background(), "file_read_bytes",
 		map[string]any{"session_token": tok, "path": "../etc/passwd"},
-		st, resolverFor(map[string]*tools.ToolRegistry{"alice": reg}), nil, nil, nil)
+		st, resolverFor(map[string]*tools.ToolRegistry{"alice": reg}), nil, nil, nil, nil)
 	if !isErr {
 		t.Fatalf("expected workspace-escape rejection, got success: %s", out)
 	}

@@ -135,6 +135,7 @@ func addToolsToServer(
 	tracker *firstCallTracker,
 	policy acl.Policy,
 	msgBus *bus.MessageBus,
+	toolActivity ToolActivityNotifier,
 	activeDispatches *atomic.Int32,
 ) {
 	if policy == nil {
@@ -213,7 +214,7 @@ func addToolsToServer(
 				args = map[string]any{}
 			}
 			mode.prepareArgs(ctx, args)
-			out, isErr := dispatchToolCall(ctx, toolName, args, sessionTokens, resolver, tracker, policy, msgBus)
+			out, isErr := dispatchToolCall(ctx, toolName, args, sessionTokens, resolver, tracker, policy, msgBus, toolActivity)
 			if isErr {
 				return mcp.NewToolResultError(out), nil
 			}
@@ -292,6 +293,7 @@ func dispatchToolCall(
 	tracker *firstCallTracker,
 	policy acl.Policy,
 	msgBus *bus.MessageBus,
+	toolActivity ToolActivityNotifier,
 ) (string, bool) {
 	rawSessTok, _ := args[sessionTokenParam].(string)
 	delete(args, sessionTokenParam)
@@ -367,6 +369,15 @@ func dispatchToolCall(
 
 	if tracker != nil {
 		tracker.record(agentName)
+	}
+
+	// Follow-along breadcrumb (/tools on): a one-line, privacy-safe note published
+	// to the originating user before the tool runs — parity with the agent loop, so
+	// tool calls made by CLI providers over MCP are no longer silent.
+	if toolActivity != nil {
+		if line := toolActivity(agentName, rec.sessionKey, toolName, args); line != "" {
+			publishMCPToolActivity(ctx, msgBus, rec, toolName, line)
+		}
 	}
 
 	// Async completion handler: when a background tool (e.g. agent_spawn in
@@ -450,6 +461,25 @@ func publishMCPAsyncToLLM(msgBus *bus.MessageBus, rec sessionRecord, toolName st
 			"channel":     rec.channel,
 			"content_len": len(content),
 		})
+}
+
+// publishMCPToolActivity sends a "/tools on" breadcrumb line to the originating
+// user's channel/chatID over the outbound bus. No-op when the bus is absent or the
+// session has no recorded source (best-effort, like the ForUser side channel).
+func publishMCPToolActivity(ctx context.Context, msgBus *bus.MessageBus, rec sessionRecord, toolName, line string) {
+	if msgBus == nil || rec.channel == "" || rec.chatID == "" || line == "" {
+		return
+	}
+	pubCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := msgBus.PublishOutbound(pubCtx, bus.OutboundMessage{
+		Channel: rec.channel,
+		ChatID:  rec.chatID,
+		Content: line,
+	}); err != nil {
+		logger.WarnCF("mcpserver", "mcp.toolactivity.publish_failed",
+			map[string]any{"tool": toolName, "agent": rec.agentID, "error": err.Error()})
+	}
 }
 
 // publishMCPForUser sends a tool's ForUser payload to the originating user's

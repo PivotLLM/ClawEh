@@ -544,6 +544,7 @@ func startMCPServer(cfg *config.Config, agentLoop *agent.AgentLoop, msgBus *bus.
 		mcpserver.WithInternalAllowlist(mcpVisibilityList(cfg.MCPHost.InternalTools)),
 		mcpserver.WithExternalAllowlist(mcpVisibilityList(cfg.MCPHost.ExternalTools)),
 		mcpserver.WithMessageBus(msgBus),
+		mcpserver.WithToolActivityNotifier(agentLoop.ToolActivityLine),
 	)
 	if err != nil {
 		return fmt.Errorf("error creating MCP server: %w", err)

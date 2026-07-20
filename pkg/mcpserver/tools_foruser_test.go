@@ -53,7 +53,7 @@ func TestDispatch_ForUserPublishedToOriginatingChannel(t *testing.T) {
 	}()
 
 	out, isErr := dispatchToolCall(context.Background(), "write_file",
-		map[string]any{"session_token": tok}, st, resolverFor(regs), nil, nil, msgBus)
+		map[string]any{"session_token": tok}, st, resolverFor(regs), nil, nil, msgBus, nil)
 	if isErr {
 		t.Fatalf("expected success, got error: %s", out)
 	}
@@ -116,7 +116,7 @@ func TestDispatch_SilentToolResultIsNotPublished(t *testing.T) {
 	}()
 
 	out, isErr := dispatchToolCall(context.Background(), "write_file",
-		map[string]any{"session_token": tok}, st, resolverFor(regs), nil, nil, msgBus)
+		map[string]any{"session_token": tok}, st, resolverFor(regs), nil, nil, msgBus, nil)
 	if isErr {
 		t.Fatalf("expected success, got error: %s", out)
 	}
@@ -175,7 +175,7 @@ func TestDispatch_ForUserDroppedWhenNoActiveChannel(t *testing.T) {
 	}()
 
 	out, isErr := dispatchToolCall(context.Background(), "write_file",
-		map[string]any{"session_token": tok}, st, resolverFor(regs), nil, nil, msgBus)
+		map[string]any{"session_token": tok}, st, resolverFor(regs), nil, nil, msgBus, nil)
 	if isErr {
 		t.Fatalf("expected success despite missing channel, got error: %s", out)
 	}
@@ -244,7 +244,7 @@ func TestDispatch_MCPResponseContainsOnlyForLLM(t *testing.T) {
 	}()
 
 	out, isErr := dispatchToolCall(context.Background(), "write_file",
-		map[string]any{"session_token": tok}, st, resolverFor(regs), nil, nil, msgBus)
+		map[string]any{"session_token": tok}, st, resolverFor(regs), nil, nil, msgBus, nil)
 	if isErr {
 		t.Fatalf("expected success, got error: %s", out)
 	}

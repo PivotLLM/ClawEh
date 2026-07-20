@@ -72,10 +72,11 @@ type MCPServer struct {
 	endpointPath string // bearer endpoint (/mcp)
 	internalPath string // session-token-parameter endpoint (/internal)
 
-	sessionTokens *sessionTokenStore // SST-prefixed per-session tokens for session-scoped tools
-	workspaces    map[string]string  // agentID → workspace (for boot/first-call logging)
-	policy        acl.Policy         // per-agent tools/call ACL; defaults to acl.Default
-	msgBus        *bus.MessageBus    // outbound publish target for tool ForUser payloads (optional)
+	sessionTokens *sessionTokenStore   // SST-prefixed per-session tokens for session-scoped tools
+	workspaces    map[string]string    // agentID → workspace (for boot/first-call logging)
+	policy        acl.Policy           // per-agent tools/call ACL; defaults to acl.Default
+	msgBus        *bus.MessageBus      // outbound publish target for tool ForUser payloads (optional)
+	toolActivity  ToolActivityNotifier // "/tools on" breadcrumb renderer for MCP-routed calls (optional)
 
 	httpServer *http.Server
 	streamable *server.StreamableHTTPServer
@@ -87,6 +88,13 @@ type MCPServer struct {
 	// srv is kept for test introspection.
 	srv *server.MCPServer
 }
+
+// ToolActivityNotifier renders the one-line "/tools on" breadcrumb for a tool
+// call about to be dispatched over the MCP path, or "" to emit nothing (tool
+// activity off for the session, unknown agent, or no summary). Rendering and the
+// per-session toggle live behind this callback (in the agent loop); the MCP
+// server only publishes the returned line to the session's originating user.
+type ToolActivityNotifier func(agentID, sessionKey, toolName string, args map[string]any) string
 
 // Option configures an MCPServer.
 type Option func(*MCPServer)
@@ -142,7 +150,6 @@ func WithEndpointPath(path string) Option {
 	}
 }
 
-
 // WithInternalAllowlist sets the tools/list visibility filter for the /internal
 // endpoint. Patterns are matched by config.MatchVisibility (equality-or-prefix,
 // underscores collapsed, leading mcp_ stripped; "*" = all). An empty/nil list
@@ -186,6 +193,15 @@ func WithAllowlist(names []string) Option {
 // with a log line; the MCP response envelope is unaffected.
 func WithMessageBus(b *bus.MessageBus) Option {
 	return func(m *MCPServer) { m.msgBus = b }
+}
+
+// WithToolActivityNotifier supplies the "/tools on" breadcrumb renderer. When set
+// (and a message bus is present), each MCP-routed tool call publishes the returned
+// one-liner to the session's originating user before the tool runs — so tool calls
+// made by CLI providers surface the same way loop-dispatched ones do. When nil or
+// the notifier returns "", nothing is published.
+func WithToolActivityNotifier(n ToolActivityNotifier) Option {
+	return func(m *MCPServer) { m.toolActivity = n }
 }
 
 // WithACLPolicy installs a per-agent ACL policy consulted on every
@@ -244,11 +260,11 @@ func New(opts ...Option) (*MCPServer, error) {
 
 	// /internal — session-token parameter on every tool (ClawEh's CLI providers).
 	internalSrv := newSrv()
-	addToolsToServer(internalSrv, internalAuthMode, m.agentRegistries, m.internalAllow, m.sessionTokens, resolver, tracker, m.policy, m.msgBus, &m.activeDispatches)
+	addToolsToServer(internalSrv, internalAuthMode, m.agentRegistries, m.internalAllow, m.sessionTokens, resolver, tracker, m.policy, m.msgBus, m.toolActivity, &m.activeDispatches)
 
 	// /mcp — standard bearer endpoint, clean tool schemas (probe / external MCP).
 	bearerSrv := newSrv()
-	addToolsToServer(bearerSrv, bearerAuthMode, m.agentRegistries, m.externalAllow, m.sessionTokens, resolver, tracker, m.policy, m.msgBus, &m.activeDispatches)
+	addToolsToServer(bearerSrv, bearerAuthMode, m.agentRegistries, m.externalAllow, m.sessionTokens, resolver, tracker, m.policy, m.msgBus, m.toolActivity, &m.activeDispatches)
 
 	internalStreamable := newStreamable(internalSrv, m.internalPath, false)
 	bearerStreamable := newStreamable(bearerSrv, m.endpointPath, true)

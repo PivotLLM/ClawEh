@@ -36,7 +36,7 @@ func TestDispatch_SuccessEmitsAuthorizedInfoPerCall(t *testing.T) {
 
 	for i := 0; i < 2; i++ {
 		out, isErr := dispatchToolCall(context.Background(), "read_file",
-			map[string]any{"session_token": tok, "path": "x"}, st, resolverFor(regs), tracker, nil, nil)
+			map[string]any{"session_token": tok, "path": "x"}, st, resolverFor(regs), tracker, nil, nil, nil)
 		if isErr {
 			t.Fatalf("call %d unexpected error: %s", i, out)
 		}
@@ -73,7 +73,7 @@ func TestDispatch_SubagentSentinelEmitsWarn(t *testing.T) {
 	st.Issue("alice", "test:alice:main", "/tmp/archive/alice")
 
 	out, isErr := dispatchToolCall(context.Background(), "read_file",
-		map[string]any{"session_token": agenttoken.SubagentSentinel}, st, resolverFor(nil), nil, nil, nil)
+		map[string]any{"session_token": agenttoken.SubagentSentinel}, st, resolverFor(nil), nil, nil, nil, nil)
 	if !isErr {
 		t.Fatalf("expected rejection, got: %s", out)
 	}
@@ -116,7 +116,7 @@ func TestDispatch_InvalidTokenEmitsWarn(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			buf.Reset()
 			out, isErr := dispatchToolCall(context.Background(), "read_file",
-				map[string]any{"session_token": c.tok}, st, resolverFor(nil), nil, nil, nil)
+				map[string]any{"session_token": c.tok}, st, resolverFor(nil), nil, nil, nil, nil)
 			if !isErr {
 				t.Fatalf("expected rejection, got: %s", out)
 			}
@@ -155,7 +155,7 @@ func TestDispatch_NoRegistryEmitsWarn(t *testing.T) {
 	st, tok := seedSessionToken("alice")
 	// resolverFor(nil) returns ok=false for every name -> no_registry path.
 	out, isErr := dispatchToolCall(context.Background(), "read_file",
-		map[string]any{"session_token": tok}, st, resolverFor(nil), nil, nil, nil)
+		map[string]any{"session_token": tok}, st, resolverFor(nil), nil, nil, nil, nil)
 	if !isErr {
 		t.Fatalf("expected rejection, got: %s", out)
 	}
