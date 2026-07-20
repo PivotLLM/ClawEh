@@ -38,11 +38,21 @@ import {
 import { getVersion } from "@/api/system"
 import { useSidebarChannels } from "@/hooks/use-sidebar-channels"
 
+interface NavSubItem {
+  title: string
+  url: string
+  translateTitle?: boolean
+}
+
 interface NavItem {
   title: string
   url: string
   icon: React.ComponentType<{ className?: string }>
   translateTitle?: boolean
+  // When present, the item renders as a nested collapsible whose children are
+  // sub-links (e.g. MCP → Config / Servers). `url` is used only to compute the
+  // active/expanded state, not as a link.
+  children?: NavSubItem[]
 }
 
 interface NavGroup {
@@ -188,6 +198,18 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             url: "/mcp",
             icon: IconPlugConnected,
             translateTitle: true,
+            children: [
+              {
+                title: "navigation.mcp_config",
+                url: "/mcp/config",
+                translateTitle: true,
+              },
+              {
+                title: "navigation.mcp_servers",
+                url: "/mcp/servers",
+                translateTitle: true,
+              },
+            ],
           },
           {
             title: "navigation.logs",
@@ -227,6 +249,74 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                         currentPath === item.url ||
                         (item.url !== "/" &&
                           currentPath.startsWith(`${item.url}/`))
+
+                      // Items with children render as a nested collapsible whose
+                      // sub-links are the actual navigation targets. The parent is
+                      // a toggle, not a link.
+                      if (item.children && item.children.length > 0) {
+                        return (
+                          <Collapsible
+                            key={item.title}
+                            defaultOpen={isActive}
+                            className="group/sub"
+                          >
+                            <SidebarMenuItem>
+                              <SidebarMenuButton
+                                asChild
+                                isActive={isActive}
+                                className={`h-9 px-3 ${isActive ? "text-foreground font-medium" : "text-muted-foreground hover:bg-muted/60"}`}
+                              >
+                                <CollapsibleTrigger className="w-full cursor-pointer">
+                                  <item.icon
+                                    className={`size-4 ${isActive ? "opacity-100" : "opacity-60"}`}
+                                  />
+                                  <span
+                                    className={
+                                      isActive ? "opacity-100" : "opacity-80"
+                                    }
+                                  >
+                                    {item.translateTitle === false
+                                      ? item.title
+                                      : t(item.title)}
+                                  </span>
+                                  <IconChevronRight className="ml-auto size-3.5 opacity-50 transition-transform duration-200 group-data-[state=open]/sub:rotate-90" />
+                                </CollapsibleTrigger>
+                              </SidebarMenuButton>
+                            </SidebarMenuItem>
+                            <CollapsibleContent>
+                              <SidebarMenu className="border-border/40 ml-5 border-l pl-1">
+                                {item.children.map((child) => {
+                                  const childActive = currentPath === child.url
+                                  return (
+                                    <SidebarMenuItem key={child.title}>
+                                      <SidebarMenuButton
+                                        asChild
+                                        isActive={childActive}
+                                        className={`h-8 px-3 text-sm ${childActive ? "bg-accent/80 text-foreground font-medium" : "text-muted-foreground hover:bg-muted/60"}`}
+                                      >
+                                        <Link to={child.url}>
+                                          <span
+                                            className={
+                                              childActive
+                                                ? "opacity-100"
+                                                : "opacity-80"
+                                            }
+                                          >
+                                            {child.translateTitle === false
+                                              ? child.title
+                                              : t(child.title)}
+                                          </span>
+                                        </Link>
+                                      </SidebarMenuButton>
+                                    </SidebarMenuItem>
+                                  )
+                                })}
+                              </SidebarMenu>
+                            </CollapsibleContent>
+                          </Collapsible>
+                        )
+                      }
+
                       return (
                         <SidebarMenuItem key={item.title}>
                           <SidebarMenuButton

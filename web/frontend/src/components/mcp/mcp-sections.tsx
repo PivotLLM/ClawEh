@@ -7,7 +7,6 @@ import type { MCPServerStatus } from "@/api/channels"
 import {
   type MCPHostForm,
   type MCPServerForm,
-  blankServer,
   validateEndpointPath,
   validateListen,
 } from "@/components/mcp/form-model"
@@ -395,7 +394,7 @@ const serverStatusStyle: Record<string, { label: string; className: string }> = 
 
 // ServerStatusBadge shows a live connection pill. When no live status is known,
 // it falls back to the configured toggle: enabled ⇒ disconnected, off ⇒ disabled.
-function ServerStatusBadge({
+export function ServerStatusBadge({
   live,
   enabled,
 }: {
@@ -419,184 +418,130 @@ function ServerStatusBadge({
   )
 }
 
-// ClientServersSection edits the external (upstream) MCP servers claw connects
-// out to (tools.mcp.servers) via form fields — add / edit / delete, no raw JSON.
-export function ClientServersSection({
-  servers,
-  error,
-  statusByName,
+// ServerFields renders the editable fields for a single external (upstream) MCP
+// server (tools.mcp.servers). The parent (MCP Servers page) owns selection, the
+// status badge, add and remove — this is just the field stack, so it can live in
+// a two-column list/detail layout like the Agents page.
+export function ServerFields({
+  server: s,
   onChange,
 }: {
-  servers: MCPServerForm[]
-  error: string | null
-  statusByName: Map<string, MCPServerStatus>
-  onChange: (next: MCPServerForm[]) => void
+  server: MCPServerForm
+  onChange: (patch: Partial<MCPServerForm>) => void
 }) {
   const { t } = useTranslation()
 
-  const update = (i: number, patch: Partial<MCPServerForm>) => {
-    onChange(servers.map((s, idx) => (idx === i ? { ...s, ...patch } : s)))
-  }
-  const remove = (i: number) => onChange(servers.filter((_, idx) => idx !== i))
-  const add = () => onChange([...servers, blankServer()])
-
   return (
-    <SectionCard
-      title={t("pages.mcp.sections.client")}
-      description={t("pages.mcp.client_hint")}
-    >
-      <div className="space-y-4 pt-2">
-        {servers.length === 0 && (
-          <div className="text-muted-foreground text-sm">
-            {t("pages.mcp.client_empty")}
-          </div>
-        )}
-        {servers.map((s, i) => (
-          <div
-            key={i}
-            className="border-border/60 space-y-3 rounded-lg border p-3"
+    <div className="space-y-3">
+      <Field label={t("pages.mcp.server_name")} layout="setting-row">
+        <Input
+          value={s.name}
+          onChange={(e) => onChange({ name: e.target.value })}
+          placeholder={t("pages.mcp.server_name_ph")}
+          className="font-mono"
+        />
+      </Field>
+
+      <Field label={t("pages.mcp.server_type")} layout="setting-row">
+        <Select
+          value={s.type}
+          onValueChange={(v) => onChange({ type: v as "stdio" | "http" })}
+        >
+          <SelectTrigger className="w-full">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="http">http</SelectItem>
+            <SelectItem value="stdio">stdio</SelectItem>
+          </SelectContent>
+        </Select>
+      </Field>
+
+      <SwitchCardField
+        label={t("pages.mcp.server_enabled")}
+        checked={s.enabled}
+        onCheckedChange={(c) => onChange({ enabled: c })}
+        layout="setting-row"
+      />
+
+      {s.type === "http" ? (
+        <>
+          <Field label={t("pages.mcp.server_url")} layout="setting-row">
+            <Input
+              value={s.url}
+              onChange={(e) => onChange({ url: e.target.value })}
+              placeholder="http://127.0.0.1:9999/mcp"
+              className="font-mono"
+            />
+          </Field>
+          <Field
+            label={t("pages.mcp.server_headers")}
+            hint={t("pages.mcp.server_headers_hint")}
+            layout="setting-row"
           >
-            <div className="flex items-center justify-between">
-              <ServerStatusBadge
-                live={statusByName.get(s.name.trim())}
-                enabled={s.enabled}
-              />
-              <Button
-                type="button"
-                variant="outline"
-                size="icon"
-                aria-label={t("common.remove")}
-                onClick={() => remove(i)}
-              >
-                <IconTrash className="size-4" />
-              </Button>
-            </div>
-
-            <Field label={t("pages.mcp.server_name")} layout="setting-row">
-              <Input
-                value={s.name}
-                onChange={(e) => update(i, { name: e.target.value })}
-                placeholder={t("pages.mcp.server_name_ph")}
-                className="font-mono"
-              />
-            </Field>
-
-            <Field label={t("pages.mcp.server_type")} layout="setting-row">
-              <Select
-                value={s.type}
-                onValueChange={(v) => update(i, { type: v as "stdio" | "http" })}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="http">http</SelectItem>
-                  <SelectItem value="stdio">stdio</SelectItem>
-                </SelectContent>
-              </Select>
-            </Field>
-
-            <SwitchCardField
-              label={t("pages.mcp.server_enabled")}
-              checked={s.enabled}
-              onCheckedChange={(c) => update(i, { enabled: c })}
-              layout="setting-row"
+            <Textarea
+              value={s.headers}
+              onChange={(e) => onChange({ headers: e.target.value })}
+              placeholder={"Authorization: Bearer xyz"}
+              className="min-h-[60px] font-mono text-xs"
+              spellCheck={false}
             />
-
-            {s.type === "http" ? (
-              <>
-                <Field label={t("pages.mcp.server_url")} layout="setting-row">
-                  <Input
-                    value={s.url}
-                    onChange={(e) => update(i, { url: e.target.value })}
-                    placeholder="http://127.0.0.1:9999/mcp"
-                    className="font-mono"
-                  />
-                </Field>
-                <Field
-                  label={t("pages.mcp.server_headers")}
-                  hint={t("pages.mcp.server_headers_hint")}
-                  layout="setting-row"
-                >
-                  <Textarea
-                    value={s.headers}
-                    onChange={(e) => update(i, { headers: e.target.value })}
-                    placeholder={"Authorization: Bearer xyz"}
-                    className="min-h-[60px] font-mono text-xs"
-                    spellCheck={false}
-                  />
-                </Field>
-              </>
-            ) : (
-              <>
-                <Field
-                  label={t("pages.mcp.server_command")}
-                  layout="setting-row"
-                >
-                  <Input
-                    value={s.command}
-                    onChange={(e) => update(i, { command: e.target.value })}
-                    placeholder="npx"
-                    className="font-mono"
-                  />
-                </Field>
-                <Field
-                  label={t("pages.mcp.server_args")}
-                  hint={t("pages.mcp.server_args_hint")}
-                  layout="setting-row"
-                >
-                  <Textarea
-                    value={s.args}
-                    onChange={(e) => update(i, { args: e.target.value })}
-                    placeholder={"-y\n@modelcontextprotocol/server-foo"}
-                    className="min-h-[60px] font-mono text-xs"
-                    spellCheck={false}
-                  />
-                </Field>
-                <Field
-                  label={t("pages.mcp.server_env")}
-                  hint={t("pages.mcp.server_env_hint")}
-                  layout="setting-row"
-                >
-                  <Textarea
-                    value={s.env}
-                    onChange={(e) => update(i, { env: e.target.value })}
-                    placeholder={"API_KEY=..."}
-                    className="min-h-[60px] font-mono text-xs"
-                    spellCheck={false}
-                  />
-                </Field>
-                <Field
-                  label={t("pages.mcp.server_env_file")}
-                  layout="setting-row"
-                >
-                  <Input
-                    value={s.envFile}
-                    onChange={(e) => update(i, { envFile: e.target.value })}
-                    placeholder="/path/to/.env"
-                    className="font-mono"
-                  />
-                </Field>
-              </>
-            )}
-
-            <SwitchCardField
-              label="Reveal together"
-              hint="Under progressive discovery, reveal all of this server's tools as soon as one is found. Use only for small, cohesive servers."
-              checked={s.revealTogether}
-              onCheckedChange={(c) => update(i, { revealTogether: c })}
-              layout="setting-row"
+          </Field>
+        </>
+      ) : (
+        <>
+          <Field label={t("pages.mcp.server_command")} layout="setting-row">
+            <Input
+              value={s.command}
+              onChange={(e) => onChange({ command: e.target.value })}
+              placeholder="npx"
+              className="font-mono"
             />
-          </div>
-        ))}
+          </Field>
+          <Field
+            label={t("pages.mcp.server_args")}
+            hint={t("pages.mcp.server_args_hint")}
+            layout="setting-row"
+          >
+            <Textarea
+              value={s.args}
+              onChange={(e) => onChange({ args: e.target.value })}
+              placeholder={"-y\n@modelcontextprotocol/server-foo"}
+              className="min-h-[60px] font-mono text-xs"
+              spellCheck={false}
+            />
+          </Field>
+          <Field
+            label={t("pages.mcp.server_env")}
+            hint={t("pages.mcp.server_env_hint")}
+            layout="setting-row"
+          >
+            <Textarea
+              value={s.env}
+              onChange={(e) => onChange({ env: e.target.value })}
+              placeholder={"API_KEY=..."}
+              className="min-h-[60px] font-mono text-xs"
+              spellCheck={false}
+            />
+          </Field>
+          <Field label={t("pages.mcp.server_env_file")} layout="setting-row">
+            <Input
+              value={s.envFile}
+              onChange={(e) => onChange({ envFile: e.target.value })}
+              placeholder="/path/to/.env"
+              className="font-mono"
+            />
+          </Field>
+        </>
+      )}
 
-        {error && <div className="text-destructive text-xs">{error}</div>}
-
-        <Button type="button" variant="outline" size="sm" onClick={add}>
-          <IconPlus className="size-4" />
-          {t("pages.mcp.server_add")}
-        </Button>
-      </div>
-    </SectionCard>
+      <SwitchCardField
+        label="Reveal together"
+        hint="Under progressive discovery, reveal all of this server's tools as soon as one is found. Use only for small, cohesive servers."
+        checked={s.revealTogether}
+        onCheckedChange={(c) => onChange({ revealTogether: c })}
+        layout="setting-row"
+      />
+    </div>
   )
 }

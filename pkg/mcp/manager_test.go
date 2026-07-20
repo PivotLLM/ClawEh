@@ -610,3 +610,75 @@ func TestSync_ReusesUnchangedReconnectsChanged(t *testing.T) {
 		t.Fatal("disabled server should be disconnected")
 	}
 }
+
+// TestRetryDisconnected_ConnectsDesiredServer verifies that a desired server which
+// is not yet connected (the "initial connect failed, upstream now reachable" case)
+// gets connected by RetryDisconnected, which returns its name so the caller can
+// register its tools.
+func TestRetryDisconnected_ConnectsDesiredServer(t *testing.T) {
+	ts := newTestMCPServer(t)
+	ctx := context.Background()
+	mgr := NewManager()
+	defer func() { _ = mgr.Close() }()
+
+	mgr.setDesired(map[string]config.MCPServerConfig{
+		"svc": {Enabled: true, Type: "http", URL: ts.URL},
+	})
+	if _, ok := mgr.GetServer("svc"); ok {
+		t.Fatal("svc should not be connected before RetryDisconnected")
+	}
+
+	got := mgr.RetryDisconnected(ctx)
+	if len(got) != 1 || got[0] != "svc" {
+		t.Fatalf("RetryDisconnected = %v, want [svc]", got)
+	}
+	if _, ok := mgr.GetServer("svc"); !ok {
+		t.Fatal("svc should be connected after RetryDisconnected")
+	}
+}
+
+// TestRetryDisconnected_SkipsConnectedAndCoolsDownFailures verifies that
+// RetryDisconnected connects reachable desired servers, cools down failed ones, and
+// on a subsequent pass skips both the already-connected and the cooling-down server.
+func TestRetryDisconnected_SkipsConnectedAndCoolsDownFailures(t *testing.T) {
+	ctx := context.Background()
+	mgr := NewManager()
+	mgr.reconnectCooldown = time.Minute
+	defer func() { _ = mgr.Close() }()
+
+	up := newTestMCPServer(t)
+	// A server whose port is closed → connection refused on connect.
+	down := httptest.NewServer(server.NewStreamableHTTPServer(server.NewMCPServer("down", "0.0.1")))
+	downURL := down.URL
+	down.Close()
+
+	mgr.setDesired(map[string]config.MCPServerConfig{
+		"up":   {Enabled: true, Type: "http", URL: up.URL},
+		"down": {Enabled: true, Type: "http", URL: downURL},
+	})
+
+	first := mgr.RetryDisconnected(ctx)
+	if !containsStr(first, "up") {
+		t.Fatalf("expected 'up' to connect, got %v", first)
+	}
+	if containsStr(first, "down") {
+		t.Fatalf("'down' must not report connected, got %v", first)
+	}
+	if _, cooling := mgr.reconnectCooldownUntil("down"); !cooling {
+		t.Fatal("'down' should be in cooldown after a failed connect")
+	}
+
+	// Second pass: 'up' is connected (skipped), 'down' is cooling down (skipped).
+	if second := mgr.RetryDisconnected(ctx); len(second) != 0 {
+		t.Fatalf("second pass should connect nothing, got %v", second)
+	}
+}
+
+func containsStr(s []string, v string) bool {
+	for _, x := range s {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}

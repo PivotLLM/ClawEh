@@ -22,6 +22,8 @@ import { Route as AgentsRouteImport } from './routes/agents'
 import { Route as AgentRouteImport } from './routes/agent'
 import { Route as ChannelsRouteRouteImport } from './routes/channels/route'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as McpServersRouteImport } from './routes/mcp/servers'
+import { Route as McpConfigRouteImport } from './routes/mcp/config'
 import { Route as ConfigRawRouteImport } from './routes/config.raw'
 import { Route as ChannelsNameRouteImport } from './routes/channels/$name'
 import { Route as AgentToolsRouteImport } from './routes/agent/tools'
@@ -93,6 +95,16 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const McpServersRoute = McpServersRouteImport.update({
+  id: '/servers',
+  path: '/servers',
+  getParentRoute: () => McpRoute,
+} as any)
+const McpConfigRoute = McpConfigRouteImport.update({
+  id: '/config',
+  path: '/config',
+  getParentRoute: () => McpRoute,
+} as any)
 const ConfigRawRoute = ConfigRawRouteImport.update({
   id: '/raw',
   path: '/raw',
@@ -127,7 +139,7 @@ export interface FileRoutesByFullPath {
   '/config': typeof ConfigRouteWithChildren
   '/devices': typeof DevicesRoute
   '/logs': typeof LogsRoute
-  '/mcp': typeof McpRoute
+  '/mcp': typeof McpRouteWithChildren
   '/memory': typeof MemoryRoute
   '/models': typeof ModelsRoute
   '/providers': typeof ProvidersRoute
@@ -138,6 +150,8 @@ export interface FileRoutesByFullPath {
   '/agent/tools': typeof AgentToolsRoute
   '/channels/$name': typeof ChannelsNameRoute
   '/config/raw': typeof ConfigRawRoute
+  '/mcp/config': typeof McpConfigRoute
+  '/mcp/servers': typeof McpServersRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -147,7 +161,7 @@ export interface FileRoutesByTo {
   '/config': typeof ConfigRouteWithChildren
   '/devices': typeof DevicesRoute
   '/logs': typeof LogsRoute
-  '/mcp': typeof McpRoute
+  '/mcp': typeof McpRouteWithChildren
   '/memory': typeof MemoryRoute
   '/models': typeof ModelsRoute
   '/providers': typeof ProvidersRoute
@@ -158,6 +172,8 @@ export interface FileRoutesByTo {
   '/agent/tools': typeof AgentToolsRoute
   '/channels/$name': typeof ChannelsNameRoute
   '/config/raw': typeof ConfigRawRoute
+  '/mcp/config': typeof McpConfigRoute
+  '/mcp/servers': typeof McpServersRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -168,7 +184,7 @@ export interface FileRoutesById {
   '/config': typeof ConfigRouteWithChildren
   '/devices': typeof DevicesRoute
   '/logs': typeof LogsRoute
-  '/mcp': typeof McpRoute
+  '/mcp': typeof McpRouteWithChildren
   '/memory': typeof MemoryRoute
   '/models': typeof ModelsRoute
   '/providers': typeof ProvidersRoute
@@ -179,6 +195,8 @@ export interface FileRoutesById {
   '/agent/tools': typeof AgentToolsRoute
   '/channels/$name': typeof ChannelsNameRoute
   '/config/raw': typeof ConfigRawRoute
+  '/mcp/config': typeof McpConfigRoute
+  '/mcp/servers': typeof McpServersRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -201,6 +219,8 @@ export interface FileRouteTypes {
     | '/agent/tools'
     | '/channels/$name'
     | '/config/raw'
+    | '/mcp/config'
+    | '/mcp/servers'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -221,6 +241,8 @@ export interface FileRouteTypes {
     | '/agent/tools'
     | '/channels/$name'
     | '/config/raw'
+    | '/mcp/config'
+    | '/mcp/servers'
   id:
     | '__root__'
     | '/'
@@ -241,6 +263,8 @@ export interface FileRouteTypes {
     | '/agent/tools'
     | '/channels/$name'
     | '/config/raw'
+    | '/mcp/config'
+    | '/mcp/servers'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -251,7 +275,7 @@ export interface RootRouteChildren {
   ConfigRoute: typeof ConfigRouteWithChildren
   DevicesRoute: typeof DevicesRoute
   LogsRoute: typeof LogsRoute
-  McpRoute: typeof McpRoute
+  McpRoute: typeof McpRouteWithChildren
   MemoryRoute: typeof MemoryRoute
   ModelsRoute: typeof ModelsRoute
   ProvidersRoute: typeof ProvidersRoute
@@ -352,6 +376,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/mcp/servers': {
+      id: '/mcp/servers'
+      path: '/servers'
+      fullPath: '/mcp/servers'
+      preLoaderRoute: typeof McpServersRouteImport
+      parentRoute: typeof McpRoute
+    }
+    '/mcp/config': {
+      id: '/mcp/config'
+      path: '/config'
+      fullPath: '/mcp/config'
+      preLoaderRoute: typeof McpConfigRouteImport
+      parentRoute: typeof McpRoute
+    }
     '/config/raw': {
       id: '/config/raw'
       path: '/raw'
@@ -427,6 +465,18 @@ const ConfigRouteChildren: ConfigRouteChildren = {
 const ConfigRouteWithChildren =
   ConfigRoute._addFileChildren(ConfigRouteChildren)
 
+interface McpRouteChildren {
+  McpConfigRoute: typeof McpConfigRoute
+  McpServersRoute: typeof McpServersRoute
+}
+
+const McpRouteChildren: McpRouteChildren = {
+  McpConfigRoute: McpConfigRoute,
+  McpServersRoute: McpServersRoute,
+}
+
+const McpRouteWithChildren = McpRoute._addFileChildren(McpRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ChannelsRouteRoute: ChannelsRouteRouteWithChildren,
@@ -435,7 +485,7 @@ const rootRouteChildren: RootRouteChildren = {
   ConfigRoute: ConfigRouteWithChildren,
   DevicesRoute: DevicesRoute,
   LogsRoute: LogsRoute,
-  McpRoute: McpRoute,
+  McpRoute: McpRouteWithChildren,
   MemoryRoute: MemoryRoute,
   ModelsRoute: ModelsRoute,
   ProvidersRoute: ProvidersRoute,

@@ -123,6 +123,10 @@ type AgentLoop struct {
 	evictTTL      time.Duration
 	evictInterval time.Duration
 
+	// mcpRetryStop is closed by Close() to stop the background MCP reconnect loop
+	// (mcpRetryLoop), which recovers servers whose initial connect failed.
+	mcpRetryStop chan struct{}
+
 	// Background-task supervision. taskLive is the process-shared running-task
 	// set, shared by every per-agent SubagentManager (across reloads) so the
 	// supervisor never relaunches a task that is still running. spawnManagers maps
@@ -250,6 +254,7 @@ func NewAgentLoop(
 		namedTokens:          namedTokens,
 		startedAt:            time.Now(),
 		evictStop:            make(chan struct{}),
+		mcpRetryStop:         make(chan struct{}),
 		evictTTL:             defaultEvictTTL,
 		evictInterval:        defaultEvictInterval,
 		activeModelIdx:       make(map[string]int),
@@ -276,6 +281,10 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 
 	// Start the background context-manager eviction goroutine.
 	go al.evictContextManagers()
+
+	// Start the background MCP reconnect loop, which recovers desired servers whose
+	// initial connect failed (so a transiently-down upstream needs no restart).
+	go al.mcpRetryLoop(ctx)
 
 	// Start the background task supervisor: periodically relaunches interrupted
 	// callback tasks (.run markers with no live worker).
@@ -417,6 +426,12 @@ func (al *AgentLoop) Close() {
 		// already closed
 	default:
 		close(al.evictStop)
+	}
+	select {
+	case <-al.mcpRetryStop:
+		// already closed
+	default:
+		close(al.mcpRetryStop)
 	}
 	select {
 	case <-al.superStop:

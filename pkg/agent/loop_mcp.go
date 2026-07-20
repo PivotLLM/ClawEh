@@ -9,6 +9,7 @@ package agent
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/PivotLLM/ClawEh/pkg/logger"
 	"github.com/PivotLLM/ClawEh/pkg/mcp"
@@ -171,12 +172,12 @@ func (al *AgentLoop) connectAndRegisterMCP(ctx context.Context) *mcp.Manager {
 	mcpManager := mcp.NewManager()
 
 	if err := mcpManager.LoadFromMCPConfig(ctx, al.cfg.Tools.MCP, al.mcpWorkspacePath()); err != nil {
-		logger.WarnCF("agent", "Failed to load MCP servers, MCP tools will not be available",
+		// A failed initial connect is NOT fatal: keep the manager alive so the
+		// background retry loop (mcpRetryLoop) can reconnect these servers without a
+		// restart. Its desired set was recorded before the connect attempts, and
+		// registerMCPToolsFromManager below simply registers nothing for now.
+		logger.WarnCF("agent", "Some MCP servers failed initial connect; retrying in background",
 			map[string]any{"error": err.Error()})
-		if closeErr := mcpManager.Close(); closeErr != nil {
-			logger.ErrorCF("agent", "Failed to close MCP manager", map[string]any{"error": closeErr.Error()})
-		}
-		return nil
 	}
 
 	if err := al.registerMCPToolsFromManager(mcpManager); err != nil {
@@ -210,57 +211,99 @@ func (al *AgentLoop) registerMCPToolsFromManager(mgr *mcp.Manager) error {
 	servers := mgr.GetServers()
 	uniqueTools := 0
 	totalRegistrations := 0
-	agentIDs := al.registry.ListAgentIDs()
-	agentCount := len(agentIDs)
 
 	for serverName, conn := range servers {
 		uniqueTools += len(conn.Tools)
-		for _, tool := range conn.Tools {
-			for _, agentID := range agentIDs {
-				agent, ok := al.registry.GetAgent(agentID)
-				if !ok {
-					continue
-				}
-
-				// Gate on the dedicated per-agent MCP allow-list (mcp_tools), which
-				// matches <server>_<tool> by equality-or-prefix. This is separate
-				// from the generic Tools allowlist so MCP access is per-tool rather
-				// than all-or-nothing per server.
-				mcpTool := tools.NewMCPTool(mgr, serverName, tool)
-
-				if !agent.Config.MCPToolAllowed(mcpTool.Name()) {
-					continue
-				}
-
-				// MCP tools are discovery-eligible: when the agent's effective
-				// discovery is on (decided during provider registration and stored on
-				// the instance), hide them behind search_tools; otherwise advertise.
-				// A namespace pinned via always_shown_namespaces stays visible.
-				if discoveryHidesTool(agent.DiscoveryActive, agent.AlwaysShownNamespaces, mcpTool.Name()) {
-					// Group by server so a reveal-together server unlocks as a set.
-					agent.Tools.RegisterHiddenGroup(mcpTool, serverName, conn.RevealTogether())
-				} else {
-					agent.Tools.Register(mcpTool)
-				}
-
-				totalRegistrations++
-				logger.DebugCF("agent", "Registered MCP tool",
-					map[string]any{
-						"agent_id": agentID,
-						"server":   serverName,
-						"tool":     tool.Name,
-						"name":     mcpTool.Name(),
-					})
-			}
-		}
+		totalRegistrations += al.registerMCPServerTools(mgr, serverName, conn)
 	}
 	logger.InfoCF("agent", "MCP tools registered successfully",
 		map[string]any{
 			"server_count":        len(servers),
 			"unique_tools":        uniqueTools,
 			"total_registrations": totalRegistrations,
-			"agent_count":         agentCount,
+			"agent_count":         len(al.GetRegistry().ListAgentIDs()),
 		})
 
 	return nil
+}
+
+// registerMCPServerTools registers one server's tools onto every agent whose
+// mcp_tools allow-list admits them, returning the number of registrations. Split
+// out so the background retry loop can register just the servers it reconnects
+// (registering all servers would re-register — and log-warn over — live ones).
+func (al *AgentLoop) registerMCPServerTools(mgr *mcp.Manager, serverName string, conn *mcp.ServerConnection) int {
+	registrations := 0
+	reg := al.GetRegistry()
+	for _, tool := range conn.Tools {
+		for _, agentID := range reg.ListAgentIDs() {
+			agent, ok := reg.GetAgent(agentID)
+			if !ok {
+				continue
+			}
+
+			// Gate on the dedicated per-agent MCP allow-list (mcp_tools), which
+			// matches <server>_<tool> by equality-or-prefix. This is separate
+			// from the generic Tools allowlist so MCP access is per-tool rather
+			// than all-or-nothing per server.
+			mcpTool := tools.NewMCPTool(mgr, serverName, tool)
+
+			if !agent.Config.MCPToolAllowed(mcpTool.Name()) {
+				continue
+			}
+
+			// MCP tools are discovery-eligible: when the agent's effective
+			// discovery is on (decided during provider registration and stored on
+			// the instance), hide them behind search_tools; otherwise advertise.
+			// A namespace pinned via always_shown_namespaces stays visible.
+			if discoveryHidesTool(agent.DiscoveryActive, agent.AlwaysShownNamespaces, mcpTool.Name()) {
+				// Group by server so a reveal-together server unlocks as a set.
+				agent.Tools.RegisterHiddenGroup(mcpTool, serverName, conn.RevealTogether())
+			} else {
+				agent.Tools.Register(mcpTool)
+			}
+
+			registrations++
+			logger.DebugCF("agent", "Registered MCP tool",
+				map[string]any{
+					"agent_id": agentID,
+					"server":   serverName,
+					"tool":     tool.Name,
+					"name":     mcpTool.Name(),
+				})
+		}
+	}
+	return registrations
+}
+
+// mcpRetryInterval is how often the background loop retries connecting desired MCP
+// servers that are not currently connected. The per-server reconnect cooldown gates
+// the actual attempts, so this only needs to be responsive, not aggressive.
+const mcpRetryInterval = 15 * time.Second
+
+// mcpRetryLoop periodically reconnects desired MCP servers that are not currently
+// connected — e.g. a server whose initial connect failed because the upstream was
+// briefly down or the row was saved mid-edit — and registers the tools of any that
+// come up. Runs until mcpRetryStop is closed. Complements the probe-driven
+// reconnect, which only covers servers that were once connected.
+func (al *AgentLoop) mcpRetryLoop(ctx context.Context) {
+	ticker := time.NewTicker(mcpRetryInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-al.mcpRetryStop:
+			return
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			mgr := al.mcp.peekManager()
+			if mgr == nil {
+				continue
+			}
+			for _, name := range mgr.RetryDisconnected(ctx) {
+				if conn, ok := mgr.GetServer(name); ok {
+					al.registerMCPServerTools(mgr, name, conn)
+				}
+			}
+		}
+	}
 }
