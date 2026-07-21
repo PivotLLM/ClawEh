@@ -170,6 +170,7 @@ func DefaultConfig() *Config {
 			{Name: "Claude CLI", Protocol: "claude-cli"},
 			{Name: "Codex CLI", Protocol: "codex-cli"},
 			{Name: "Gemini CLI", Protocol: "gemini-cli"},
+			{Name: "Cursor CLI", Protocol: "cursor-cli"},
 
 			{Name: "OpenAI", Protocol: "openai-chat", BaseURL: "https://api.openai.com/v1"},
 			{Name: "Anthropic", Protocol: "anthropic", BaseURL: "https://api.anthropic.com/v1"},
@@ -208,6 +209,8 @@ func DefaultConfig() *Config {
 			// without it, newer Gemini CLI refuses to run in an "untrusted" folder and
 			// overrides --yolo back to manual approval. See geminicli.com trusted-folders.
 			{ModelName: "Gemini CLI", Model: "gemini-2.5-pro", Provider: "Gemini CLI", RequestTimeout: 3600, ExtraArgs: []string{"--yolo"}, Env: map[string]string{"GEMINI_CLI_TRUST_WORKSPACE": "true"}, Enabled: false},
+			// --yolo runs the Cursor agent without approval prompts (headless use).
+			{ModelName: "Cursor CLI", Model: "cursor-cli", Provider: "Cursor CLI", RequestTimeout: 3600, ExtraArgs: []string{"--yolo"}, Enabled: false},
 
 			// HTTP providers.
 			{ModelName: "OpenAI GPT 5.5", Model: "gpt-5.5", Provider: "OpenAI", DropParams: []string{"temperature"}, Enabled: false},

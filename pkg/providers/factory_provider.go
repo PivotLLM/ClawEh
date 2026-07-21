@@ -100,6 +100,9 @@ func CreateProviderFromConfig(model *config.ModelConfig, prov *config.Provider) 
 	case "gemini-cli":
 		return newCLIProvider(NewGeminiCliProvider, NewGeminiCliProviderWithTimeout, model, prov), modelID, nil
 
+	case "cursor-cli":
+		return newCLIProvider(NewCursorCliProvider, NewCursorCliProviderWithTimeout, model, prov), modelID, nil
+
 	default:
 		return nil, "", fmt.Errorf("provider %q: unknown protocol %q", prov.Name, prov.Protocol)
 	}
