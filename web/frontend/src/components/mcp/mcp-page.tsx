@@ -1,20 +1,16 @@
-import { useQuery } from "@tanstack/react-query"
-import { useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 
-import { getMCPStatus, patchAppConfig } from "@/api/channels"
+import { getAppConfig, patchAppConfig } from "@/api/channels"
 import {
   EMPTY_MCP_FORM,
   type MCPHostForm,
   buildMCPFormFromConfig,
-  serversToPatch,
   validateEndpointPath,
   validateListen,
-  validateServers,
 } from "@/components/mcp/form-model"
 import {
-  ClientServersSection,
   DiscoverySection,
   EnableSection,
   ResilienceSection,
@@ -25,46 +21,43 @@ import { PageHeader } from "@/components/page-header"
 
 type SaveStatus = "saving" | "saved" | "error" | null
 
-export function MCPPage() {
+// MCPConfigPage edits the global MCP settings — host transport, tool visibility,
+// discovery, and client resilience. The external server list lives on its own
+// page (MCPServersPage); this page never touches tools.mcp.servers.
+export function MCPConfigPage() {
   const { t } = useTranslation()
   const [form, setForm] = useState<MCPHostForm>(EMPTY_MCP_FORM)
   const [status, setStatus] = useState<SaveStatus>(null)
 
-  // baselineRef tracks the last-saved form so server diffs (serversToPatch) are
-  // computed against what's actually persisted. formRef mirrors the latest form
-  // so the debounced save reads current values.
-  const baselineRef = useRef<MCPHostForm>(EMPTY_MCP_FORM)
+  // formRef mirrors the latest form so the debounced save reads current values.
   const formRef = useRef<MCPHostForm>(form)
-  formRef.current = form
+  useEffect(() => {
+    formRef.current = form
+  }, [form])
   const saveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const savedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
-  const { data, isLoading, error } = useQuery({
-    queryKey: ["config"],
-    queryFn: async () => {
-      const res = await fetch("/api/config")
-      if (!res.ok) throw new Error("Failed to load config")
-      return res.json()
-    },
-  })
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState("")
 
-  // Live connection state of the external MCP servers, polled every 5s. Keyed by
-  // server name; a configured server absent here is treated as disconnected.
-  const { data: statusData } = useQuery({
-    queryKey: ["mcp-status"],
-    queryFn: getMCPStatus,
-    refetchInterval: 5000,
-  })
-  const statusByName = new Map(
-    (statusData?.servers ?? []).map((s) => [s.name, s]),
-  )
+  // Seed the editable form from the config via an async callback (not a
+  // synchronous setState in an effect) — the repo's pattern for query→form state.
+  const loadData = useCallback(async () => {
+    setLoading(true)
+    try {
+      const cfg = await getAppConfig()
+      setForm(buildMCPFormFromConfig(cfg))
+      setLoadError("")
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : "Failed to load")
+    } finally {
+      setLoading(false)
+    }
+  }, [])
 
   useEffect(() => {
-    if (!data) return
-    const parsed = buildMCPFormFromConfig(data)
-    setForm(parsed)
-    baselineRef.current = parsed
-  }, [data])
+    void loadData()
+  }, [loadData])
 
   // Clear timers on unmount.
   useEffect(
@@ -77,15 +70,14 @@ export function MCPPage() {
 
   const clean = (ps: string[]) => ps.map((p) => p.trim()).filter((p) => p !== "")
 
-  // doSave persists whatever is currently valid. Validation-gated per block so a
-  // half-typed server never blocks saving a visibility/toggle change, and an
-  // invalid listen/endpoint never blocks the servers. Does NOT refetch config, so
-  // in-progress edits (e.g. an empty pattern row) survive.
+  // doSave persists whatever is currently valid. Validation-gated per block so an
+  // invalid listen/endpoint never blocks a visibility/discovery/resilience change.
+  // Does NOT touch tools.mcp.servers (owned by the Servers page) and does NOT
+  // refetch config, so in-progress edits survive.
   const doSave = async () => {
     const f = formRef.current
     const listenErr = validateListen(f.listen)
     const pathErr = validateEndpointPath(f.endpointPath)
-    const serversErr = validateServers(f.servers)
 
     const patch: Record<string, unknown> = {}
     if (!listenErr && !pathErr) {
@@ -98,8 +90,8 @@ export function MCPPage() {
         external_tools: clean(f.externalToolPatterns),
       }
     }
-    // tools.discovery.enabled (global switch) and tools.mcp.servers are both under
-    // "tools"; merge whichever blocks are valid this round.
+    // tools.discovery + tools.mcp resilience knobs. A JSON merge patch leaves
+    // tools.mcp.servers untouched because we never include that key here.
     const toolsPatch: Record<string, unknown> = {}
     if (!listenErr && !pathErr) {
       toolsPatch.discovery = {
@@ -109,21 +101,13 @@ export function MCPPage() {
         always_shown_namespaces: clean(f.alwaysShownNamespaces),
       }
     }
-    // Client resilience knobs (tools.mcp.*) always save, independent of server
-    // validity — a half-typed server row must not block a cooldown/timeout change.
-    // A JSON merge patch leaves tools.mcp.servers untouched when omitted here.
-    const mcpPatch: Record<string, unknown> = {
+    toolsPatch.mcp = {
       reconnect_cooldown_seconds: f.reconnectCooldownSeconds,
       call_timeout_seconds: f.callTimeoutSeconds,
       liveness_probe_seconds: f.livenessProbeSeconds,
     }
-    if (!serversErr) {
-      mcpPatch.servers = serversToPatch(f.servers, baselineRef.current.servers)
-    }
-    toolsPatch.mcp = mcpPatch
-    if (Object.keys(toolsPatch).length > 0) {
-      patch.tools = toolsPatch
-    }
+    patch.tools = toolsPatch
+
     if (Object.keys(patch).length === 0) {
       setStatus("error")
       return
@@ -132,13 +116,7 @@ export function MCPPage() {
     setStatus("saving")
     try {
       await patchAppConfig(patch)
-      // Advance the saved baseline; keep the prior servers baseline if we didn't
-      // persist servers this round (so the next diff is still correct).
-      baselineRef.current = {
-        ...f,
-        servers: serversErr ? baselineRef.current.servers : f.servers,
-      }
-      if (listenErr || pathErr || serversErr) {
+      if (listenErr || pathErr) {
         setStatus("error")
       } else {
         setStatus("saved")
@@ -164,11 +142,9 @@ export function MCPPage() {
     scheduleSave()
   }
 
-  const serversError = validateServers(form.servers)
-
   return (
     <div className="flex h-full flex-col">
-      <PageHeader title={t("navigation.mcp")}>
+      <PageHeader title={t("navigation.mcp_config")}>
         {status && (
           <span
             className={`text-xs ${status === "error" ? "text-destructive" : status === "saved" ? "text-emerald-500" : "text-muted-foreground"}`}
@@ -183,11 +159,11 @@ export function MCPPage() {
       </PageHeader>
       <div className="flex-1 overflow-auto p-3 lg:p-6">
         <div className="w-full max-w-[1000px] space-y-6">
-          {isLoading ? (
+          {loading ? (
             <div className="text-muted-foreground py-6 text-sm">
               {t("labels.loading")}
             </div>
-          ) : error ? (
+          ) : loadError ? (
             <div className="text-destructive py-6 text-sm">
               {t("pages.mcp.load_error")}
             </div>
@@ -222,13 +198,6 @@ export function MCPPage() {
                 onNamespacesChange={(next) =>
                   updateField("alwaysShownNamespaces", next)
                 }
-              />
-
-              <ClientServersSection
-                servers={form.servers}
-                error={serversError}
-                statusByName={statusByName}
-                onChange={(next) => updateField("servers", next)}
               />
 
               <ResilienceSection

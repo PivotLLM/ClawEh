@@ -114,6 +114,12 @@ type Manager struct {
 	cooldownUntil map[string]time.Time
 	reconnecting  map[string]bool
 	probeWg       sync.WaitGroup // tracks liveness-probe goroutines
+
+	// desired is the set of servers that should be connected (enabled, envFile
+	// resolved), refreshed on every load/sync. RetryDisconnected uses it to
+	// reconnect servers whose initial connect failed, without a restart.
+	desiredMu sync.Mutex
+	desired   map[string]config.MCPServerConfig
 }
 
 // Default resilience tuning, used when config leaves a value at 0.
@@ -128,6 +134,7 @@ func NewManager() *Manager {
 		servers:           make(map[string]*ServerConnection),
 		cooldownUntil:     make(map[string]time.Time),
 		reconnecting:      make(map[string]bool),
+		desired:           make(map[string]config.MCPServerConfig),
 		reconnectCooldown: defaultReconnectCooldown,
 		callTimeout:       defaultCallTimeout,
 	}
@@ -160,6 +167,9 @@ func (m *Manager) LoadFromMCPConfig(
 	workspacePath string,
 ) error {
 	m.applyTuning(mcpCfg)
+	// Record the desired set up front so the background retry loop can recover any
+	// server that fails its initial connect below, without a restart.
+	m.setDesired(resolveDesired(mcpCfg, workspacePath))
 
 	if len(mcpCfg.Servers) == 0 {
 		logger.InfoCF("mcp", "No MCP servers configured", nil)
@@ -519,6 +529,81 @@ func (m *Manager) disconnect(name string) {
 	terminateStdioProcessTree(conn.cmd)
 }
 
+// resolveDesired computes the set of servers that should be connected: enabled
+// servers with their envFile resolved the same way the initial load resolves it,
+// so change-detection and reconnection compare like with like. Servers with an
+// invalid config are logged and skipped (they can never connect).
+func resolveDesired(mcpCfg config.MCPConfig, workspacePath string) map[string]config.MCPServerConfig {
+	desired := make(map[string]config.MCPServerConfig, len(mcpCfg.Servers))
+	for name, serverCfg := range mcpCfg.Servers {
+		if !serverCfg.Enabled {
+			continue
+		}
+		resolved, err := resolveServerEnvFile(name, serverCfg, workspacePath)
+		if err != nil {
+			logger.ErrorCF("mcp", "Invalid MCP server configuration",
+				map[string]any{"server": name, "error": err.Error()})
+			continue
+		}
+		desired[name] = resolved
+	}
+	return desired
+}
+
+// setDesired records the current desired-server set for RetryDisconnected.
+func (m *Manager) setDesired(desired map[string]config.MCPServerConfig) {
+	m.desiredMu.Lock()
+	m.desired = desired
+	m.desiredMu.Unlock()
+}
+
+// RetryDisconnected attempts to connect any desired (enabled) server that is not
+// currently connected and not in reconnect cooldown, returning the names that
+// newly connected so the caller can register their tools. It exists so a server
+// whose *initial* connect failed (upstream briefly down, or a config saved
+// mid-edit) recovers automatically without a restart — the initial-connect
+// analogue of the probe-driven reconnect that already covers drop-after-connect.
+func (m *Manager) RetryDisconnected(ctx context.Context) []string {
+	if m.closed.Load() {
+		return nil
+	}
+	m.desiredMu.Lock()
+	desired := make(map[string]config.MCPServerConfig, len(m.desired))
+	for k, v := range m.desired {
+		desired[k] = v
+	}
+	m.desiredMu.Unlock()
+
+	var connected []string
+	for name, serverCfg := range desired {
+		if _, ok := m.GetServer(name); ok {
+			continue // already connected
+		}
+		if _, cooling := m.reconnectCooldownUntil(name); cooling {
+			continue // still in post-failure cooldown
+		}
+		m.setReconnecting(name, true)
+		cctx, cancel := context.WithTimeout(ctx, m.callTimeout)
+		err := m.ConnectServer(cctx, name, serverCfg)
+		cancel()
+		m.setReconnecting(name, false)
+		if err != nil {
+			m.markReconnectFailed(name)
+			logger.WarnCF("mcp", "MCP background connect failed; server in cooldown",
+				map[string]any{
+					"server":         name,
+					"error":          err.Error(),
+					"cooldown_until": m.now().Add(m.reconnectCooldown).Format(time.RFC3339),
+				})
+			continue
+		}
+		m.clearReconnectCooldown(name)
+		logger.InfoCF("mcp", "MCP server connected on retry", map[string]any{"server": name})
+		connected = append(connected, name)
+	}
+	return connected
+}
+
 // Sync reconciles live connections to match mcpCfg without disturbing servers
 // whose configuration is unchanged. On config reload this keeps long-lived stdio
 // servers (e.g. a playwright browser holding a persistent profile) running rather
@@ -535,19 +620,8 @@ func (m *Manager) Sync(
 
 	// Desired = enabled servers, envFile resolved the same way the initial load
 	// resolves it so change-detection compares like with like.
-	desired := make(map[string]config.MCPServerConfig, len(mcpCfg.Servers))
-	for name, serverCfg := range mcpCfg.Servers {
-		if !serverCfg.Enabled {
-			continue
-		}
-		resolved, err := resolveServerEnvFile(name, serverCfg, workspacePath)
-		if err != nil {
-			logger.ErrorCF("mcp", "Invalid MCP server configuration",
-				map[string]any{"server": name, "error": err.Error()})
-			continue
-		}
-		desired[name] = resolved
-	}
+	desired := resolveDesired(mcpCfg, workspacePath)
+	m.setDesired(desired)
 
 	// Drop connections that are gone, disabled, or reconfigured.
 	for name, conn := range m.GetServers() {

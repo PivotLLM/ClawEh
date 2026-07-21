@@ -17,11 +17,14 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 // getGatewayLogs fetches the last `lines` entries of the unified claw.log.
+// cache: "no-store" so an explicit Refresh always hits the server for live data
+// rather than returning a browser-cached response for the (unchanging) URL.
 export async function getGatewayLogs(
   lines: number,
 ): Promise<GatewayLogsResponse> {
   return request<GatewayLogsResponse>(
     `/api/gateway/logs?lines=${encodeURIComponent(lines)}`,
+    { cache: "no-store" },
   )
 }
 
