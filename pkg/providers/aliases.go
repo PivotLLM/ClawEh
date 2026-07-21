@@ -35,6 +35,7 @@ type (
 	ClaudeCliProvider = spawnllm.ClaudeCliProvider
 	CodexCliProvider  = spawnllm.CodexCliProvider
 	GeminiCliProvider = spawnllm.GeminiCliProvider
+	CursorCliProvider = spawnllm.CursorCliProvider
 	ModelConfig       = spawnllm.ModelConfig
 )
 
@@ -90,6 +91,8 @@ var (
 	NewCodexCliProviderWithTimeout  = spawnllm.NewCodexCliProviderWithTimeout
 	NewGeminiCliProvider            = spawnllm.NewGeminiCliProvider
 	NewGeminiCliProviderWithTimeout = spawnllm.NewGeminiCliProviderWithTimeout
+	NewCursorCliProvider            = spawnllm.NewCursorCliProvider
+	NewCursorCliProviderWithTimeout = spawnllm.NewCursorCliProviderWithTimeout
 
 	ModelKey                = spawnllm.ModelKey
 	splitModelKey           = spawnllm.SplitModelKey

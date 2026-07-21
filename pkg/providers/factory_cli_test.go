@@ -49,6 +49,28 @@ func TestCreateProvider_ClaudeCliDefaultWorkspace(t *testing.T) {
 		t.Errorf("workspace = %q, want %q (default)", cliProvider.Workspace(), ".")
 	}
 }
+func TestCreateProvider_CursorCli(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Providers = []config.Provider{{Name: "cursor-cli", Protocol: "cursor-cli"}}
+	cfg.Models = []config.ModelConfig{
+		{ModelName: "cursor", Model: "cursor-cli", Provider: "cursor-cli", Workspace: "/test/ws", Enabled: true},
+	}
+	cfg.Agents.Defaults.SetDefaultModel("cursor")
+
+	provider, _, err := CreateProvider(cfg)
+	if err != nil {
+		t.Fatalf("CreateProvider(cursor-cli) error = %v", err)
+	}
+
+	cliProvider, ok := provider.(*CursorCliProvider)
+	if !ok {
+		t.Fatalf("CreateProvider(cursor-cli) returned %T, want *CursorCliProvider", provider)
+	}
+	if cliProvider.Workspace() != "/test/ws" {
+		t.Errorf("workspace = %q, want %q", cliProvider.Workspace(), "/test/ws")
+	}
+}
+
 func TestCreateProvider_GeminiCli(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Providers = []config.Provider{{Name: "gemini-cli", Protocol: "gemini-cli"}}

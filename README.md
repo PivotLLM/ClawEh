@@ -33,7 +33,7 @@ https://github.com/PivotLLM/Tutorials/blob/main/docs/claweh-quickstart.md
 - **Multi-agent architecture** — Run multiple named agents, each with its own workspace, models, tools, system prompt, memory, and channel bindings.
 - **Self-hosted** — Workspace sandboxing, per-agent tool allowlists, and loopback-bound services, delivered as MIT-licensed Go software that you run on your own infrastructure.
 - **Strong security posture** — Only essential features are enabled by default, with fine-grained access controls for tools, files, agents, and external services.
-- **Broad LLM support** — Connect to OpenRouter, Anthropic, OpenAI, Google Gemini, AWS, x.ai, and others, or use CLI agents such as Claude Code, Codex, and Gemini CLI. Configurable fallback chains and cooldowns improve availability.
+- **Broad LLM support** — Connect to OpenRouter, Anthropic, OpenAI, Google Gemini, AWS, x.ai, and others, or use CLI agents such as Claude Code, Codex, Gemini CLI, and Cursor CLI. Configurable fallback chains and cooldowns improve availability.
 - **Messaging channels** — Connect agents to Telegram, Slack, Discord, Signal, and the built-in web interface, with configurable per-agent routing. The Signal channel connects to a secure-messaging daemon and auto-discovers its linked accounts. Additional channels are under consideration.
 - **Cognitive memory** — Each agent can maintain persistent memory that updates in the background, distilling conversations into structured, de-duplicated facts and automatically recalling relevant information for future prompts.
 - **Smart context management** — Automatic summarization and compaction, combined with per-turn eviction of stale tool output, keep long-running conversations responsive and within model context limits.
@@ -91,7 +91,7 @@ This copies the binary to `~/bin` (or `~/.local/bin`), adds it to your `PATH`, a
 
 ### 3. Open the web UI and finish setup
 
-Browse to **http://localhost:18790** (or `http://<host>:18790` if you set `--host`). On a fresh install the **setup wizard** launches automatically: pick a provider (or a detected local CLI agent such as Claude Code, Codex, or Gemini CLI), test your API key, choose a default model, and name your first agent. Then you're ready to chat.
+Browse to **http://localhost:18790** (or `http://<host>:18790` if you set `--host`). On a fresh install the **setup wizard** launches automatically: pick a provider (or a detected local CLI agent such as Claude Code, Codex, Gemini CLI, or Cursor CLI), test your API key, choose a default model, and name your first agent. Then you're ready to chat.
 
 ## Features
 
@@ -553,7 +553,7 @@ These tools are available to the LLM in both access paths described in the next 
 
 ## MCP server (claw as an MCP host)
 
-ClawEh can expose a subset of its host-side tools to MCP-compatible clients over a Streamable HTTP transport. This is primarily intended for CLI providers (Claude Code, Codex CLI, Gemini CLI) so they can call claw's tools natively instead of printing tool-call JSON in their prose — which historically caused runaway outer loops, since those CLIs are themselves agentic and return a single final answer per invocation.
+ClawEh can expose a subset of its host-side tools to MCP-compatible clients over a Streamable HTTP transport. This is primarily intended for CLI providers (Claude Code, Codex CLI, Gemini CLI, Cursor CLI) so they can call claw's tools natively instead of printing tool-call JSON in their prose — which historically caused runaway outer loops, since those CLIs are themselves agentic and return a single final answer per invocation.
 
 ### Tool access paths
 
@@ -567,7 +567,7 @@ All tools are available on this path, including the session tools (`session_comp
 
 **Path 2 — MCP HTTP server (CLI providers)**
 
-For CLI providers (`claude-cli`, `codex-cli`, `gemini-cli`), the CLI subprocess has no access to claw's internal session state. Tools are called via the MCP HTTP server at `http://127.0.0.1:5911/internal`. Every tool call on this path carries a `session_token` parameter — a short-lived `SST<64hex>` token injected into the agent's system prompt at session start. The MCP server resolves this token to the correct agent and session, then executes the tool.
+For CLI providers (`claude-cli`, `codex-cli`, `gemini-cli`, `cursor-cli`), the CLI subprocess has no access to claw's internal session state. Tools are called via the MCP HTTP server at `http://127.0.0.1:5911/internal`. Every tool call on this path carries a `session_token` parameter — a short-lived `SST<64hex>` token injected into the agent's system prompt at session start. The MCP server resolves this token to the correct agent and session, then executes the tool.
 
 For session-scoped tools, the MCP server uses the session token to inject the session key into the execution context. The session tools implement the `SessionScoped` interface, so the dispatcher injects the key automatically — no hardcoded list to maintain.
 
@@ -577,9 +577,9 @@ For session-scoped tools, the MCP server uses the session token to inject the se
 | Session context | Implicit (agent loop) | `session_token` parameter |
 | Session tools available | All six | All six |
 
-> **Important:** CLI providers (`claude-cli`, `codex-cli`, `gemini-cli`) no longer receive tool descriptions in their prompt. Each invocation runs as a single agentic turn, and the CLI reaches claw's tools only via MCP. **You must register claw as an MCP server in each CLI you intend to use** — see [Client configuration](#client-configuration) below. Without that step, the CLI will still answer prompts, but it will have no access to claw's filesystem, web, or other host-side tools.
+> **Important:** CLI providers (`claude-cli`, `codex-cli`, `gemini-cli`, `cursor-cli`) no longer receive tool descriptions in their prompt. Each invocation runs as a single agentic turn, and the CLI reaches claw's tools only via MCP. **You must register claw as an MCP server in each CLI you intend to use** — see [Client configuration](#client-configuration) below. Without that step, the CLI will still answer prompts, but it will have no access to claw's filesystem, web, or other host-side tools.
 
-The server auto-starts whenever any enabled model in `models` uses a `*-cli` protocol (`claude-cli`, `codex-cli`, `gemini-cli`), since those CLIs depend on MCP for native tool calls. Set `enabled: true` to force it on regardless, or `auto_enable: false` to opt out of the auto-start. Full config shape with defaults:
+The server auto-starts whenever any enabled model in `models` uses a `*-cli` protocol (`claude-cli`, `codex-cli`, `gemini-cli`, `cursor-cli`), since those CLIs depend on MCP for native tool calls. Set `enabled: true` to force it on regardless, or `auto_enable: false` to opt out of the auto-start. Full config shape with defaults:
 
 ```json
 {
@@ -613,7 +613,7 @@ Claw can also connect **outward** to third-party (upstream) MCP servers and make
 Both provider types get the external tools **through claw** — full feature parity, no per-CLI setup:
 
 - **Direct API providers** (`anthropic`, `openai`, `openai-compat`, `gemini`): claw lists the upstream tools, presents them to the model alongside its own, and proxies each call.
-- **CLI providers** (`claude-cli`, `codex-cli`, `gemini-cli`): claw aggregates the external tools into its own MCP host, so a CLI that already talks to claw (see [Client configuration](#client-configuration)) sees them too — claw proxies the calls. (If you instead want a CLI to reach an external server *directly*, configure it in that CLI's own MCP config.)
+- **CLI providers** (`claude-cli`, `codex-cli`, `gemini-cli`, `cursor-cli`): claw aggregates the external tools into its own MCP host, so a CLI that already talks to claw (see [Client configuration](#client-configuration)) sees them too — claw proxies the calls. (If you instead want a CLI to reach an external server *directly*, configure it in that CLI's own MCP config.)
 
 Per-agent tool allowlists apply: allow an external server's tools with the `mcp_<server>_*` pattern (or `*`).
 
@@ -637,6 +637,8 @@ The `set-mcp.sh` script in the repo root registers (or refreshes) claw in whiche
 > **Port:** the script's URL must match the MCP host `listen` port in your config (`tools → mcp_host → listen`). **If you change that port, update the script** — edit `CLAW_MCP_URL` at the top, or run `CLAW_MCP_URL=http://127.0.0.1:<port>/internal ./set-mcp.sh`.
 
 The per-CLI commands it runs are below if you prefer to do it by hand.
+
+> **Cursor CLI:** `set-mcp.sh` does not register Cursor. To give the Cursor agent access to claw's tools, add claw as an MCP server in Cursor's own MCP config (e.g. `~/.cursor/mcp.json`), pointing at the same `/internal` endpoint.
 
 #### Claude Code
 

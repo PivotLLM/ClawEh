@@ -2174,6 +2174,7 @@ var validProtocols = map[string]struct{}{
 	"claude-cli":         {},
 	"codex-cli":          {},
 	"gemini-cli":         {},
+	"cursor-cli":         {},
 }
 
 // httpProtocols are the protocols that require a base_url.
@@ -2189,7 +2190,7 @@ var httpProtocols = map[string]struct{}{
 // which authenticates out-of-band and needs no API key.
 func IsCLIProtocol(protocol string) bool {
 	switch protocol {
-	case "claude-cli", "codex-cli", "gemini-cli":
+	case "claude-cli", "codex-cli", "gemini-cli", "cursor-cli":
 		return true
 	default:
 		return false
