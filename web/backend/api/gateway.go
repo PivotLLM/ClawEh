@@ -71,6 +71,9 @@ func (h *Handler) handleGatewayLogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+	// Live data: never serve a cached copy, so the Refresh button always reflects
+	// the current log rather than a browser-cached response for this URL.
+	w.Header().Set("Cache-Control", "no-store")
 	path := logger.GetLogFilePath()
 	if path == "" {
 		json.NewEncoder(w).Encode(map[string]any{
