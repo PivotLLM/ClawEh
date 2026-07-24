@@ -47,6 +47,7 @@ func NewClawCommand(binaryName string) *cobra.Command {
 	cmd.AddCommand(
 		agent.NewAgentCommand(),
 		defaultCmd,
+		gateway.NewACPCommand(),
 		status.NewStatusCommand(),
 		cron.NewCronCommand(),
 		skills.NewSkillsCommand(),

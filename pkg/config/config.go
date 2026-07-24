@@ -1204,7 +1204,8 @@ type DeviceChannelConfig struct {
 	// instead of scanning the QR. Authenticates equivalently to Token.
 	WordToken string `json:"word_token,omitempty" env:"CLAW_CHANNELS_DEVICE_WORD_TOKEN"`
 	// Host is the device listener bind address: 127.0.0.1 (loopback, default) or
-	// 0.0.0.0 to listen for local-network connections. Port defaults to 8078.
+	// 0.0.0.0 to listen for local-network connections. Port defaults to
+	// device.DefaultDevicePort (18791) when unset.
 	Host string `json:"host,omitempty"`
 	Port int    `json:"port,omitempty"`
 	// AllowedCIDRs restricts which client IPs may reach the device listener. Empty

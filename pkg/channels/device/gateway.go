@@ -70,8 +70,18 @@ func NewDeviceChannel(cfg config.DeviceChannelConfig, dataDir string, logMessage
 	if port == 0 {
 		port = DefaultDevicePort
 	}
+	// The device gateway already authenticates every connection (shared/device
+	// token + Ed25519 pairing approval + optional CIDR allowlist), so an unset
+	// sender allow-list means "allow any paired device" rather than "deny all" —
+	// otherwise a correctly paired device (e.g. the R1) is silently dropped at
+	// HandleMessage. Set allow_from explicitly to restrict which paired devices
+	// may talk to an agent.
+	allowFrom := cfg.AllowFrom
+	if len(allowFrom) == 0 {
+		allowFrom = []string{"*"}
+	}
 	dc := &DeviceChannel{
-		BaseChannel:  channels.NewBaseChannel("device", cfg, b, cfg.AllowFrom),
+		BaseChannel:  channels.NewBaseChannel("device", cfg, b, allowFrom),
 		server:       srv,
 		store:        store,
 		host:         host,
@@ -101,6 +111,10 @@ func NewDeviceChannel(cfg config.DeviceChannelConfig, dataDir string, logMessage
 				metadata["preresolved_agent_id"] = agentID
 			}
 		}
+		logger.InfoCF("device", "inbound → bus", map[string]any{
+			"deviceId": deviceID, "chatId": chatID, "sessionKey": sessionKey,
+			"preresolvedAgent": metadata["preresolved_agent_id"], "chars": len(content),
+		})
 		dc.HandleMessage(ctx, peer, idempotencyKey, deviceID, chatID, content, nil, metadata, sender)
 	})
 	return dc, nil

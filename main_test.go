@@ -33,6 +33,7 @@ func TestNewClawCommand(t *testing.T) {
 	assert.Nil(t, cmd.PersistentPostRun)
 
 	allowedCommands := []string{
+		"acp",
 		"agent",
 		"cron",
 		"devices",
