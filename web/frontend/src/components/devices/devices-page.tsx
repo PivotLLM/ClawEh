@@ -335,7 +335,7 @@ export function DevicesPage() {
           <CardHeader>
             <CardTitle>Pair a device</CardTitle>
             <CardDescription>
-              Generate a QR code, then scan it with your device (e.g. the Rabbit R1).
+              Generate a QR code, then scan it with your device.
               The first connection appears below for approval.
             </CardDescription>
           </CardHeader>

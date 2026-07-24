@@ -168,11 +168,15 @@ install: build
 	@chmod +x $(INSTALL_BIN_DIR)/$(BINARY_NAME)$(INSTALL_TMP_SUFFIX)
 	@mv -f $(INSTALL_BIN_DIR)/$(BINARY_NAME)$(INSTALL_TMP_SUFFIX) $(INSTALL_BIN_DIR)/$(BINARY_NAME)
 	@echo "Installed: $(INSTALL_BIN_DIR)/$(BINARY_NAME)"
+	@# Symlink so `openclaw acp` resolves to claw (rabbit-agent spawns `openclaw acp`).
+	@ln -sf $(BINARY_NAME) $(INSTALL_BIN_DIR)/openclaw
+	@echo "Symlinked: $(INSTALL_BIN_DIR)/openclaw -> $(BINARY_NAME)"
 
 ## uninstall: Remove claw from system
 uninstall:
 	@echo "Uninstalling $(BINARY_NAME)..."
 	@rm -f $(INSTALL_BIN_DIR)/$(BINARY_NAME)
+	@rm -f $(INSTALL_BIN_DIR)/openclaw
 	@echo "Removed binaries from $(INSTALL_BIN_DIR)"
 	@echo "Note: Data directory $(CLAW_HOME) was not removed. Run 'make uninstall-all' to remove everything."
 
