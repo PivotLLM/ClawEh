@@ -18,6 +18,8 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/global"
 	"github.com/PivotLLM/ClawEh/pkg/identity"
 	"github.com/PivotLLM/ClawEh/pkg/logger"
+	"github.com/PivotLLM/ClawEh/pkg/media"
+	"github.com/PivotLLM/ClawEh/pkg/utils"
 )
 
 // DefaultDevicePort is the device gateway's own listen port when unset. It sits
@@ -90,7 +92,7 @@ func NewDeviceChannel(cfg config.DeviceChannelConfig, dataDir string, logMessage
 	}
 	// Bridge each device utterance into the message bus. The agent's reply returns
 	// via Send -> server.DeliverReply.
-	srv.SetInbound(func(deviceID, chatID, content, idempotencyKey, sessionKey string) {
+	srv.SetInbound(func(deviceID, chatID, content, idempotencyKey, sessionKey string, attachments []InboundAttachment) {
 		ctx := dc.ctx
 		if ctx == nil {
 			ctx = context.Background()
@@ -111,13 +113,83 @@ func NewDeviceChannel(cfg config.DeviceChannelConfig, dataDir string, logMessage
 				metadata["preresolved_agent_id"] = agentID
 			}
 		}
+		// Persist inline attachments (photos) to the media store; the agent loop
+		// materializes the refs and its vision-describe path handles non-vision models.
+		mediaRefs := dc.storeInboundAttachments(chatID, idempotencyKey, attachments)
 		logger.InfoCF("device", "inbound → bus", map[string]any{
 			"deviceId": deviceID, "chatId": chatID, "sessionKey": sessionKey,
-			"preresolvedAgent": metadata["preresolved_agent_id"], "chars": len(content),
+			"preresolvedAgent": metadata["preresolved_agent_id"], "chars": len(content), "media": len(mediaRefs),
 		})
-		dc.HandleMessage(ctx, peer, idempotencyKey, deviceID, chatID, content, nil, metadata, sender)
+		dc.HandleMessage(ctx, peer, idempotencyKey, deviceID, chatID, content, mediaRefs, metadata, sender)
 	})
 	return dc, nil
+}
+
+// storeInboundAttachments writes each decoded attachment to the media staging
+// dir and registers it in the media store, returning the resulting "media://"
+// refs (scoped to this turn so they're cleaned up with it). Best-effort: a
+// missing store or a failed write drops that attachment with a warning.
+func (c *DeviceChannel) storeInboundAttachments(chatID, messageID string, atts []InboundAttachment) []string {
+	if len(atts) == 0 {
+		return nil
+	}
+	store := c.GetMediaStore()
+	if store == nil {
+		logger.WarnCF("device", "media store unavailable; dropping attachments", map[string]any{"chatId": chatID, "count": len(atts)})
+		return nil
+	}
+	mediaDir := utils.MediaTempDir()
+	if err := os.MkdirAll(mediaDir, 0o700); err != nil {
+		logger.WarnCF("device", "create media dir failed; dropping attachments", map[string]any{"dir": mediaDir, "error": err.Error()})
+		return nil
+	}
+	scope := channels.BuildMediaScope("device", chatID, messageID)
+	refs := make([]string, 0, len(atts))
+	for i, a := range atts {
+		ext := extForMIME(a.MimeType)
+		f, err := os.CreateTemp(mediaDir, "device-media-*"+ext)
+		if err != nil {
+			logger.WarnCF("device", "attachment temp file failed", map[string]any{"error": err.Error()})
+			continue
+		}
+		_, werr := f.Write(a.Data)
+		_ = f.Close()
+		if werr != nil {
+			_ = os.Remove(f.Name())
+			logger.WarnCF("device", "attachment write failed", map[string]any{"error": werr.Error()})
+			continue
+		}
+		name := a.Name
+		if name == "" {
+			name = "attachment-" + strconv.Itoa(i) + ext
+		}
+		ref, serr := store.Store(f.Name(), media.MediaMeta{Filename: name, ContentType: a.MimeType, Source: "device"}, scope)
+		if serr != nil {
+			logger.WarnCF("device", "media store failed for attachment", map[string]any{"error": serr.Error()})
+			continue
+		}
+		refs = append(refs, ref)
+	}
+	return refs
+}
+
+// extForMIME maps a few common attachment MIME types to a file extension so the
+// stored file (and downstream MIME sniffing) behaves. Defaults to ".bin".
+func extForMIME(mime string) string {
+	switch strings.ToLower(strings.TrimSpace(mime)) {
+	case "image/jpeg", "image/jpg":
+		return ".jpg"
+	case "image/png":
+		return ".png"
+	case "image/gif":
+		return ".gif"
+	case "image/webp":
+		return ".webp"
+	case "image/heic":
+		return ".heic"
+	default:
+		return ".bin"
+	}
 }
 
 // SetAgentQuerier wires the read-only agent/session accessor into the protocol

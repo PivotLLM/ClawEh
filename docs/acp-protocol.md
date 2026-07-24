@@ -87,10 +87,19 @@ logging goes to `$CLAW_HOME/logs/claw.log`.
 3. Approve the pending device with `claw devices` (list → approve).
 4. Re-run `claw acp` — it connects and serves.
 
+## Content types
+
+- **Text and images.** `text` blocks form the message; `image` blocks (base64,
+  as the R1 sends photos) are forwarded to the gateway as `chat.send`
+  `attachments`. The device server decodes them, saves each to the media store,
+  and passes `media://` refs to the agent loop — which materializes them and, via
+  the existing vision-describe path, sends them to a vision model (or describes
+  them with the configured `vision_model` side-model if the agent's model is not
+  vision-capable). `audio`/`resource` blocks are still ignored (the R1's voice
+  already arrives as text via rabbit-agent's STT).
+
 ## Limitations (v1)
 
-- **Text only.** Only `text` prompt content blocks are forwarded; image/audio/
-  resource blocks are ignored. `promptCapabilities` is advertised empty.
 - **One conversation per bridge.** The bridge connects as a single node device, so
   all ACP sessions map to that device's `main` conversation (matching how the R1
   behaves today). Per-ACP-session isolation is not implemented.

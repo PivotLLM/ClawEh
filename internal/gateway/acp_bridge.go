@@ -115,15 +115,17 @@ func (br *acpBridge) Prompt(ctx context.Context, req acplib.PromptRequest) (*acp
 	br.mu.Unlock()
 
 	text := acpPromptText(req.Prompt)
-	// Always log what the ACP client actually sent, so voice/other non-text prompts
-	// are visible (they'd otherwise vanish here in this text-only v1).
+	attachments := acpPromptAttachments(req.Prompt)
+	// Always log what the ACP client actually sent, so voice/photo/other prompts
+	// are visible.
 	logger.InfoCF("acp", "prompt received", map[string]any{
 		"sessionId": sessionID,
 		"blocks":    summarizeBlocks(req.Prompt),
 		"textChars": len(text),
+		"images":    len(attachments),
 	})
-	if strings.TrimSpace(text) == "" {
-		logger.WarnCF("acp", "prompt has no text content — nothing forwarded (v1 forwards text blocks only)", map[string]any{
+	if strings.TrimSpace(text) == "" && len(attachments) == 0 {
+		logger.WarnCF("acp", "prompt has no text or image content — nothing forwarded", map[string]any{
 			"sessionId": sessionID,
 			"blocks":    summarizeBlocks(req.Prompt),
 		})
@@ -146,11 +148,19 @@ func (br *acpBridge) Prompt(ctx context.Context, req acplib.PromptRequest) (*acp
 	// The gateway isolates a node client's conversation per device; sessionKey
 	// "main" is what the R1 sends. The bridge is one device, so all ACP sessions
 	// share that per-device conversation (matches the R1's own behavior today).
-	ack, err := br.client.ChatSend(ctx, protocol.ChatSendParams{
+	params := protocol.ChatSendParams{
 		SessionKey:     "main",
 		Message:        text,
 		IdempotencyKey: runID,
-	})
+	}
+	if len(attachments) > 0 {
+		if raw, merr := json.Marshal(attachments); merr == nil {
+			params.Attachments = raw
+		} else {
+			logger.WarnCF("acp", "failed to encode image attachments; sending text only", map[string]any{"error": merr.Error()})
+		}
+	}
+	ack, err := br.client.ChatSend(ctx, params)
 	if err != nil {
 		logger.ErrorCF("acp", "gateway chat.send failed", map[string]any{"runId": runID, "error": err.Error()})
 		return nil, fmt.Errorf("gateway chat.send: %w", err)
@@ -378,6 +388,33 @@ func summarizeBlocks(blocks []acplib.ContentBlock) []string {
 		default:
 			out = append(out, b.Type)
 		}
+	}
+	return out
+}
+
+// acpImageAttachment is the chat.send attachment shape the device gateway parses:
+// a base64 image payload with its MIME type. JSON tags match the device server's
+// chat.send `attachments` schema.
+type acpImageAttachment struct {
+	MimeType string `json:"mimeType"`
+	Name     string `json:"name,omitempty"`
+	Data     string `json:"data"` // base64 (as ACP already provides it)
+}
+
+// acpPromptAttachments pulls image content blocks out of an ACP prompt (v1
+// forwards images only; audio/resource blocks are ignored). ACP already carries
+// image data as base64, so it passes straight through.
+func acpPromptAttachments(blocks []acplib.ContentBlock) []acpImageAttachment {
+	var out []acpImageAttachment
+	for _, b := range blocks {
+		if b.Type != "image" || b.Data == "" {
+			continue
+		}
+		name := ""
+		if b.Name != nil {
+			name = *b.Name
+		}
+		out = append(out, acpImageAttachment{MimeType: b.MimeType, Name: name, Data: b.Data})
 	}
 	return out
 }

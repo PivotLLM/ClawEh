@@ -220,16 +220,64 @@ func TestACPBridgeStrayEventIgnored(t *testing.T) {
 	}
 }
 
-func TestACPBridgePromptEmptyText(t *testing.T) {
-	br := newACPBridge(&fakeGateway{})
+// TestACPBridgePromptWithImage confirms an image content block is forwarded to
+// the gateway as a chat.send attachment (base64 passes through), and that an
+// image-only prompt (no text) still forwards.
+func TestACPBridgePromptWithImage(t *testing.T) {
+	fg := &fakeGateway{}
+	br := newACPBridge(fg)
+	br.setNotifier(&captureNotifier{})
+
+	done := make(chan *acplib.PromptResponse, 1)
+	go func() {
+		resp, _ := br.Prompt(context.Background(), acplib.PromptRequest{
+			SessionID: "acp-img",
+			Prompt: []acplib.ContentBlock{
+				{Type: "image", MimeType: "image/jpeg", Data: "aGVsbG8="}, // no text block
+			},
+		})
+		done <- resp
+	}()
+	runID := fg.lastRunID(t)
+	br.handleGatewayEvent(chatEvent(runID, "final"))
+	waitResp(t, done)
+
+	fg.mu.Lock()
+	defer fg.mu.Unlock()
+	if len(fg.sends) != 1 {
+		t.Fatalf("want 1 chat.send, got %d", len(fg.sends))
+	}
+	if len(fg.sends[0].Attachments) == 0 {
+		t.Fatal("expected attachments on the chat.send, got none")
+	}
+	var atts []acpImageAttachment
+	if err := json.Unmarshal(fg.sends[0].Attachments, &atts); err != nil {
+		t.Fatalf("unmarshal attachments: %v (raw=%s)", err, fg.sends[0].Attachments)
+	}
+	if len(atts) != 1 || atts[0].MimeType != "image/jpeg" || atts[0].Data != "aGVsbG8=" {
+		t.Fatalf("unexpected attachments: %+v", atts)
+	}
+}
+
+// TestACPBridgePromptNothingForwardable returns end_turn immediately when a
+// prompt carries neither text nor an image (audio/resource blocks are ignored),
+// without forwarding to the gateway or blocking.
+func TestACPBridgePromptNothingForwardable(t *testing.T) {
+	fg := &fakeGateway{}
+	br := newACPBridge(fg)
 	resp, err := br.Prompt(context.Background(), acplib.PromptRequest{
-		SessionID: "acp-3", Prompt: []acplib.ContentBlock{{Type: "image", Data: "x"}},
+		SessionID: "acp-3", Prompt: []acplib.ContentBlock{{Type: "audio", Data: "x"}},
 	})
 	if err != nil {
 		t.Fatalf("Prompt: %v", err)
 	}
 	if resp.StopReason != acplib.StopReasonEndTurn {
 		t.Fatalf("stopReason = %q, want end_turn", resp.StopReason)
+	}
+	fg.mu.Lock()
+	defer fg.mu.Unlock()
+	if len(fg.sends) != 0 {
+		t.Fatalf("expected no chat.send for a non-forwardable prompt, got %d", len(fg.sends))
 	}
 }
 
