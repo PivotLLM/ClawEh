@@ -1,6 +1,8 @@
 # ClawEh: Yet another claw - Canadian style
 
-**ClawEh is a small, fast, self-hosted runtime for personal AI assistants.** Written in Go, it can run one or more agents, each with its own workspace, tools, and persistent memory. Agents can be connected to Telegram, Slack, Discord, Signal (through a secure-messaging daemon), the built-in web interface, and external devices  such as the Rabbit R1 and compatible voice apps via its device gateway.
+**ClawEh is a small, fast, self-hosted runtime for personal AI assistants.** 
+
+Written in Go, it can run one or more agents, each with its own workspace, tools, and persistent memory. Agents can be connected to Telegram, Slack, Discord, Signal (through a secure-messaging daemon), the built-in web interface, and external devices such as the Rabbit R1 and compatible voice apps.
 
 Although the conversation context can be reset at any time, ClawEh is designed primarily for long-running assistants that maintain continuity over time. Its development emphasizes efficient context management, practical persistent memory, security, and a stable, dependable core.
 
@@ -12,10 +14,10 @@ https://github.com/PivotLLM/Tutorials/blob/main/docs/claweh-quickstart.md
 
 **Latest Changes:**
 
-- **Rabbit R1 via the Agent Client Protocol (ACP).** The current Rabbit R1 **Rabbit Agent** no longer connects to the gateway over the network — it launches `openclaw` locally, which speaks the **Agent Client Protocol** (JSON-RPC 2.0 over stdin/stdout) and bridges each turn to the running ClawEh gateway. ClawEh provides this as `claw acp` (installed as an `openclaw` symlink), so the R1 pairs automatically and chats — now including **photos** as well as voice and text (images are handled by a vision-capable model, or described by the configured vision model). See the [ACP bridge protocol](docs/acp-protocol.md) for details. **Note:** updating ClawEh restarts the gateway, which drops the bridge — so `openclaw` must be restarted (or the device rebooted) afterward to reconnect. How that is handled is up to the Rabbit Agent.
+- **Rabbit R1 via the Agent Client Protocol (ACP).** The current **Rabbit Agent**  launches `openclaw` locally, which speaks the **Agent Client Protocol** (JSON-RPC 2.0 over stdin/stdout) and bridges each turn to the running ClawEh gateway. ClawEh provides this as `claw acp` (installed as an `openclaw` symlink), so the R1 pairs automatically. Text, voice, and images are supported. (Images are handled by a vision-capable model if required). **Note:** updating ClawEh restarts the gateway, which drops the bridge — so `openclaw` must be restarted (or the host rebooted) afterward to reconnect.
 - Added **image / vision support**. A new `file_view_image` tool lets a vision-capable model view an image from the workspace (large images are auto-downscaled). For text-only models, an optional **global vision model** can be configured to describe inbound images, screenshots, and viewed image files automatically.
 - **Sub-agents can now delegate further work.** The old blanket "primary-only" restriction has been retired: a sub-agent inherits the parent's full toolset (including memory, scheduled jobs, spawning, and Maestro) and may itself spawn or re-enter Maestro, bounded by a configurable `max_subagent_depth` (default 3) so runaway recursion cannot occur.
-- ClawEh's built-in **device gateway** is tested and working with the **Rabbit R1** and the **ClawToTalk app on Android**. Pair with a QR code or a typed token, choose which assistant each device talks to, and get replies **streamed live** as they are received from the LLM. See the [device gateway protocol](docs/device-gateway-protocol.md) for technical details.
+- ClawEh's built-in **device gateway** is tested and working with ~~the **Rabbit R1** and~~ the **ClawToTalk app on Android**. Pair with a QR code or a typed token, choose which assistant each device talks to, and get replies **streamed live** as they are received from the LLM. See the [device gateway protocol](docs/device-gateway-protocol.md) for technical details.
 - Added long-lived tokens to support inbound webhooks for integration
 - Integrated Maestro orchestration directly into ClawEh
 
