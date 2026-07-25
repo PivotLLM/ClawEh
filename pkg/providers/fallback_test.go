@@ -360,6 +360,41 @@ func TestFallback_UnclassifiedError(t *testing.T) {
 	}
 }
 
+// Claude Code exits with "Not logged in · Please run /login" (exit 1). That must
+// classify as auth so the fallback chain continues to the next candidate.
+func TestFallback_ClaudeSignInError(t *testing.T) {
+	ct := NewCooldownTracker()
+	fc := NewFallbackChain(ct)
+
+	candidates := []FallbackCandidate{
+		makeCandidate("claude-cli", "claude"),
+		makeCandidate("openai", "gpt-4"),
+	}
+
+	attempt := 0
+	run := func(ctx context.Context, c FallbackCandidate) (*LLMResponse, error) {
+		attempt++
+		if c.Provider == "claude-cli" {
+			return nil, errors.New("claude cli error: Not logged in · Please run /login")
+		}
+		return &LLMResponse{Content: "ok", FinishReason: "stop"}, nil
+	}
+
+	result, err := fc.Execute(context.Background(), candidates, run)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if attempt != 2 {
+		t.Errorf("attempt = %d, want 2 (should fallback after Claude sign-in)", attempt)
+	}
+	if result.Provider != "openai" || result.Response.Content != "ok" {
+		t.Errorf("got %s/%q, want openai/ok", result.Provider, result.Response.Content)
+	}
+	if len(result.Attempts) != 1 || result.Attempts[0].Reason != FailoverAuth {
+		t.Errorf("first attempt reason = %v, want auth", result.Attempts)
+	}
+}
+
 func TestFallback_SuccessResetsCooldown(t *testing.T) {
 	ct := NewCooldownTracker()
 	fc := NewFallbackChain(ct)
