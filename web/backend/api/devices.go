@@ -57,7 +57,7 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 }
 
 // handleDevicePair provisions the device gateway (generates+persists a shared token
-// and enables the channel if needed), reloads the gateway, and returns the Rabbit R1
+// and enables the channel if needed), reloads the gateway, and returns the device
 // setup payload plus a rendered QR (PNG data-URL + ASCII).
 func (h *Handler) handleDevicePair(w http.ResponseWriter, _ *http.Request) {
 	cfg, changed, err := device.EnsureProvisioned(h.configPath)

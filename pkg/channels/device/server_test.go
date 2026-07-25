@@ -222,7 +222,7 @@ func TestHandshakeSharedToken(t *testing.T) {
 // inbound (echo) stands in for the agent loop.
 func TestConversationEcho(t *testing.T) {
 	srv, _, wsURL := newTestServer(t, ServerOptions{ServerVersion: "test-1", AutoApprove: true})
-	srv.SetInbound(func(_, chatID, content, _, _ string) {
+	srv.SetInbound(func(_, chatID, content, _, _ string, _ []InboundAttachment) {
 		srv.DeliverReply(chatID, "echo: "+content)
 	})
 
@@ -397,7 +397,7 @@ func chatDeltaTexts(frames []collectedFrame) []string {
 // full assistant text as another agent assistant event.
 func TestStreamThenFinal(t *testing.T) {
 	srv, _, wsURL := newTestServer(t, ServerOptions{ServerVersion: "test-1", AutoApprove: true})
-	srv.SetInbound(func(_, chatID, _, _, _ string) {
+	srv.SetInbound(func(_, chatID, _, _, _ string, _ []InboundAttachment) {
 		// Stream two partial deltas, then finalize with the full reply.
 		srv.StreamDelta(chatID, "Hello ")
 		srv.StreamDelta(chatID, "world.")
@@ -469,7 +469,7 @@ func TestStreamThenFinal(t *testing.T) {
 // plus the chat final.
 func TestNonStreamedRunUnchanged(t *testing.T) {
 	srv, _, wsURL := newTestServer(t, ServerOptions{ServerVersion: "test-1", AutoApprove: true})
-	srv.SetInbound(func(_, chatID, content, _, _ string) {
+	srv.SetInbound(func(_, chatID, content, _, _ string, _ []InboundAttachment) {
 		srv.DeliverReply(chatID, "echo: "+content)
 	})
 

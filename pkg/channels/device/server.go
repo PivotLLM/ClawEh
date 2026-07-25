@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
@@ -40,9 +41,18 @@ type ServerOptions struct {
 	LogMessages   bool     // log full inbound/outbound message content (logging.log_message_content)
 }
 
+// InboundAttachment is a decoded binary attachment (e.g. a photo) sent with a
+// chat.send. The channel saves it to the media store and forwards a ref so the
+// agent loop (and its vision-describe path) can consume it.
+type InboundAttachment struct {
+	MimeType string
+	Name     string
+	Data     []byte
+}
+
 // InboundFunc submits a device utterance into the agent layer. The channel sets
 // this to bridge into ClawEh's message bus; it is called per chat.send.
-type InboundFunc func(deviceID, chatID, content, idempotencyKey, agentID string)
+type InboundFunc func(deviceID, chatID, content, idempotencyKey, agentID string, attachments []InboundAttachment)
 
 // Server speaks the OpenClaw Gateway WebSocket protocol to external devices.
 // It owns the handshake (challenge -> connect -> auth -> signature -> pairing ->
@@ -512,6 +522,11 @@ func (s *Server) handleChatSend(lc *liveConn, req gatewayproto.RequestFrame) {
 		Message        string `json:"message"`
 		SessionKey     string `json:"sessionKey"`
 		IdempotencyKey string `json:"idempotencyKey"`
+		Attachments    []struct {
+			MimeType string `json:"mimeType"`
+			Name     string `json:"name"`
+			Data     string `json:"data"` // base64
+		} `json:"attachments"`
 	}
 	if json.Unmarshal(req.Params, &p) != nil {
 		_ = lc.cw.writeJSON(gatewayproto.NewErrorResponse(req.ID,
@@ -563,10 +578,32 @@ func (s *Server) handleChatSend(lc *liveConn, req gatewayproto.RequestFrame) {
 		}
 	}
 
+	// Decode inline attachments (e.g. photos). Oversized or undecodable entries are
+	// skipped with a warning rather than failing the turn.
+	var attachments []InboundAttachment
+	for i, a := range p.Attachments {
+		raw, derr := base64.StdEncoding.DecodeString(a.Data)
+		if derr != nil || len(raw) == 0 {
+			logger.WarnCF("device", "chat.send: undecodable attachment; skipping",
+				map[string]any{"deviceId": lc.deviceID, "index": i, "mime": a.MimeType})
+			continue
+		}
+		if len(raw) > maxDeviceAttachmentBytes {
+			logger.WarnCF("device", "chat.send: attachment too large; skipping",
+				map[string]any{"deviceId": lc.deviceID, "index": i, "bytes": len(raw), "max": maxDeviceAttachmentBytes})
+			continue
+		}
+		attachments = append(attachments, InboundAttachment{MimeType: a.MimeType, Name: a.Name, Data: raw})
+	}
+
 	if s.inbound != nil {
-		go s.inbound(lc.deviceID, lc.chatID, p.Message, runID, s.sessionScopeKey(lc))
+		go s.inbound(lc.deviceID, lc.chatID, p.Message, runID, s.sessionScopeKey(lc), attachments)
 	}
 }
+
+// maxDeviceAttachmentBytes caps a single decoded inbound attachment to keep a
+// malicious/oversized chat.send from ballooning memory. Photos are well under it.
+const maxDeviceAttachmentBytes = 25 << 20 // 25 MiB
 
 // deviceHelpText lists the slash commands a device user can type.
 const deviceHelpText = "Commands:\n" +

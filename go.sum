@@ -8,6 +8,8 @@ github.com/PivotLLM/spawnllm v0.1.7 h1:Hc83Vf53td3uH7NbdckVDHxnflDvljJlBAFE/GSTU
 github.com/PivotLLM/spawnllm v0.1.7/go.mod h1:VEq3syYV2jYqeoaNPo89lH9AyA6oDzFj2AIUlPBUfnU=
 github.com/PivotLLM/toolspec v0.4.0 h1:/6EZ8XvQoMi6LmFw24gt5UcekuQPoj88evwfMUn5xTU=
 github.com/PivotLLM/toolspec v0.4.0/go.mod h1:QA/AiJHJSEwsLGEY0RTGWC124ftNigLIP8pTPj3oVKM=
+github.com/a3tai/openclaw-go v1.20260325.0 h1:bYZV2zSgI01tSwWJc9DKMlOGku5ydMAkhgt/SL5kxCc=
+github.com/a3tai/openclaw-go v1.20260325.0/go.mod h1:vqVf2vLrPXMSHt/6QAlHFeChM2yDawOn1C9QDVFZyuo=
 github.com/adhocore/gronx v1.20.0 h1:PD13Mo0wekkZ7ZZR9yb1TqeqTfybs7/K3ez9DmjQwEs=
 github.com/adhocore/gronx v1.20.0/go.mod h1:7oUY1WAU8rEJWmAxXR2DN0JaO4gi9khSgKjiRypqteg=
 github.com/andybalholm/brotli v1.2.2 h1:HzTuoo2ErYQqf5qvcJInB8uvqSVxRttzkFexPWtnceM=

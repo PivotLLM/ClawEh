@@ -802,6 +802,12 @@ func restartServices(
 	}
 	al.SetChannelManager(services.ChannelManager)
 
+	// Re-inject the device agent querier: the channel manager (and thus the device
+	// channel) is rebuilt on every reload, so without this the device channel loses
+	// its querier after the first config reload and sessionScopeKey falls back to a
+	// bogus "main" agent id — breaking device/ACP turn routing.
+	injectDeviceAgentQuerier(services.ChannelManager, al)
+
 	enabledChannels := services.ChannelManager.GetEnabledChannels()
 	if len(enabledChannels) > 0 {
 		logger.InfoCF("channels", "Channels enabled", map[string]any{"channels": enabledChannels})

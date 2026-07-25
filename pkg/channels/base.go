@@ -258,10 +258,17 @@ func (c *BaseChannel) HandleMessage(
 	}
 	if sender.CanonicalID != "" || sender.PlatformID != "" {
 		if !c.IsAllowedSender(sender) {
+			logger.DebugCF("channels", "inbound rejected by allow-list", map[string]any{
+				"channel": c.name, "chat_id": chatID, "canonical_id": sender.CanonicalID,
+				"platform_id": sender.PlatformID, "allow_list_len": len(c.allowList),
+			})
 			return
 		}
 	} else {
 		if !c.IsAllowed(senderID) {
+			logger.DebugCF("channels", "inbound rejected by allow-list", map[string]any{
+				"channel": c.name, "chat_id": chatID, "sender_id": senderID, "allow_list_len": len(c.allowList),
+			})
 			return
 		}
 	}

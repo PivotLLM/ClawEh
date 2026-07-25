@@ -5,6 +5,7 @@ go 1.26.0
 require (
 	github.com/PivotLLM/MCPFusion v0.4.3
 	github.com/PivotLLM/Maestro v0.4.1
+	github.com/a3tai/openclaw-go v1.20260325.0
 	github.com/adhocore/gronx v1.20.0
 	github.com/bwmarrin/discordgo v0.29.0
 	github.com/caarlos0/env/v11 v11.4.1
