@@ -16,8 +16,14 @@ func TestAccessibleFolders(t *testing.T) {
 	}
 
 	// Mounts default to read-only; only Writable mounts show read/write.
-	cb.mounts = []config.MountConfig{{Name: "notes"}, {Name: ""}, {Name: "data", Writable: true}}
-	want := "files/ (read/write), skills/ (read-only), notes/ (external, read-only), data/ (external, read/write)"
+	// Maestro is in-workspace, so it is not labeled "external".
+	cb.mounts = []config.MountConfig{
+		{Name: "notes"},
+		{Name: ""},
+		{Name: "data", Writable: true},
+		{Name: "maestro", Writable: true},
+	}
+	want := "files/ (read/write), skills/ (read-only), notes/ (external, read-only), data/ (external, read/write), maestro/ (read/write)"
 	if got := cb.accessibleFolders(); got != want {
 		t.Fatalf("with mounts = %q, want %q", got, want)
 	}

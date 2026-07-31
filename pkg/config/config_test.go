@@ -610,7 +610,7 @@ func TestMCPHost_DefaultAutoEnable(t *testing.T) {
 }
 
 func TestValidateMountName(t *testing.T) {
-	ok := []string{"notes", "notes-eric", "a1", "X-9"}
+	ok := []string{"notes", "notes-eric", "a1", "X-9", "maestro"}
 	bad := []string{"notes eric", "notes/sub", "notes.md", "no_tes", "", "files", "skills", "tasks", "common", "Files"}
 	for _, n := range ok {
 		if err := ValidateMountName(n); err != nil {
@@ -621,6 +621,40 @@ func TestValidateMountName(t *testing.T) {
 		if err := ValidateMountName(n); err == nil {
 			t.Errorf("ValidateMountName(%q) should have failed", n)
 		}
+	}
+}
+
+func TestAgentConfig_EffectiveMounts_Maestro(t *testing.T) {
+	ws := t.TempDir()
+	a := &AgentConfig{ID: "alice", Maestro: true}
+	got := a.EffectiveMounts(ws)
+	if len(got) != 1 || got[0].Name != MaestroMountName || !got[0].Writable {
+		t.Fatalf("expected auto writable maestro mount, got %+v", got)
+	}
+	wantPath, _ := filepath.Abs(MaestroDataDir(ws))
+	if got[0].Path != wantPath {
+		t.Fatalf("path = %q, want %q", got[0].Path, wantPath)
+	}
+
+	// Maestro off → no auto mount.
+	a.Maestro = false
+	if got := a.EffectiveMounts(ws); len(got) != 0 {
+		t.Fatalf("maestro off: expected no mounts, got %+v", got)
+	}
+
+	// Explicit maestro mount wins (not duplicated, keeps operator Writable=false).
+	a.Maestro = true
+	a.Mounts = []MountConfig{{Name: "maestro", Path: "/tmp/custom", Writable: false}}
+	got = a.EffectiveMounts(ws)
+	if len(got) != 1 || got[0].Path != "/tmp/custom" || got[0].Writable {
+		t.Fatalf("explicit maestro mount should win, got %+v", got)
+	}
+
+	// Other mounts preserved alongside auto maestro.
+	a.Mounts = []MountConfig{{Name: "notes", Path: "/tmp/notes", Writable: true}}
+	got = a.EffectiveMounts(ws)
+	if len(got) != 2 || got[0].Name != "notes" || got[1].Name != MaestroMountName || !got[1].Writable {
+		t.Fatalf("expected notes + auto maestro, got %+v", got)
 	}
 }
 

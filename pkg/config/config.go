@@ -245,7 +245,9 @@ type AgentConfig struct {
 
 	// Maestro is an all-or-nothing toggle for the Maestro task-orchestration tool
 	// suite (projects, playbooks, tasks). Off by default. When on, the agent gets
-	// the entire Maestro toolset, with per-agent data under <workspace>/maestro.
+	// the entire Maestro toolset, with per-agent data under <workspace>/maestro,
+	// and that directory is auto-mounted read/write for native file_* tools as
+	// maestro/ (unless the agent already defines a mount named "maestro").
 	Maestro bool `json:"maestro,omitempty"`
 
 	// Fusion is an all-or-nothing toggle for the MCPFusion config-driven REST-API
@@ -342,6 +344,44 @@ func ValidateMountName(name string) error {
 		return fmt.Errorf("mount name %q is reserved", name)
 	}
 	return nil
+}
+
+// MaestroMountName is the top-level file-tool path for Maestro data when the
+// suite is enabled (peer of files/ and skills/).
+const MaestroMountName = "maestro"
+
+// MaestroDataDir is the on-disk Maestro tree for an agent workspace.
+func MaestroDataDir(workspace string) string {
+	return filepath.Join(workspace, MaestroMountName)
+}
+
+// EffectiveMounts returns the agent's configured mounts, plus an auto-injected
+// read/write mount of <workspace>/maestro when Maestro is enabled and the agent
+// has not already defined a mount named "maestro". The returned Path for the
+// auto mount is absolute when workspace is non-empty. Does not create the
+// directory — the files provider does that when installing mounts.
+func (a *AgentConfig) EffectiveMounts(workspace string) []MountConfig {
+	if a == nil {
+		return nil
+	}
+	out := append([]MountConfig(nil), a.Mounts...)
+	if !a.Maestro || strings.TrimSpace(workspace) == "" {
+		return out
+	}
+	for _, m := range out {
+		if strings.EqualFold(strings.TrimSpace(m.Name), MaestroMountName) {
+			return out
+		}
+	}
+	abs := MaestroDataDir(workspace)
+	if a, err := filepath.Abs(abs); err == nil {
+		abs = a
+	}
+	return append(out, MountConfig{
+		Name:     MaestroMountName,
+		Path:     abs,
+		Writable: true,
+	})
 }
 
 // ContextEvictionConfig controls the per-turn, LLM-free eviction sweep that
