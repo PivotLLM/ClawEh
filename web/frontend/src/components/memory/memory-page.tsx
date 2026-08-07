@@ -53,6 +53,11 @@ function MemoryRow({
         <span>prio {m.priority}</span>
         {m.origin && <span>from {m.origin}</span>}
         <span>{m.source}</span>
+        {m.file_ref && (
+          <span title="Full contents of this file are injected into context with this memory">
+            file {m.file_ref}
+          </span>
+        )}
         <span>{new Date(m.updated).toLocaleString()}</span>
       </div>
     </div>

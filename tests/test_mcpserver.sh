@@ -60,7 +60,7 @@ BEARER_URL="${SERVER_URL}${BEARER_ENDPOINT}"
 # (subagent capability) and hw_i2c/hw_spi (Linux + I2C/SPI devices) are also
 # exposed but only probed when actually present in the catalogue, so this script
 # stays portable.
-EXPECTED_TOOLS="file_read_bytes file_read_lines file_view_image file_write file_edit file_edit_lines file_edit_bytes file_insert_lines file_insert_bytes file_delete_lines file_delete_bytes file_append file_list file_search_lines file_search_bytes file_copy file_delete file_move web_fetch web_search msg_send msg_send_file session_messages session_search session_compact session_info session_summary_list session_summary_get session_clear shell_exec skill_find skill_install cron_schedule cogmem_domain_get cogmem_memory_search cogmem_domain_list cogmem_explain cogmem_memory_create cogmem_domain_update cogmem_memory_retire cogmem_memory_confirm cogmem_domain_create cogmem_domain_archive cogmem_domain_migrate cogmem_memory_forget cogmem_consolidate cogmem_status cogmem_export common_list common_get common_put common_delete"
+EXPECTED_TOOLS="file_read_bytes file_read_lines file_view_image file_write file_edit file_edit_lines file_edit_bytes file_insert_lines file_insert_bytes file_delete_lines file_delete_bytes file_append file_list file_search_lines file_search_bytes file_copy file_delete file_move web_fetch web_search msg_send msg_send_file session_messages session_search session_compact session_info session_summary_list session_summary_get session_clear shell_exec skill_find skill_install cron_schedule cogmem_domain_get cogmem_memory_search cogmem_domain_list cogmem_explain cogmem_memory_create cogmem_memory_attach cogmem_domain_update cogmem_memory_retire cogmem_memory_confirm cogmem_domain_create cogmem_domain_archive cogmem_domain_migrate cogmem_memory_forget cogmem_consolidate cogmem_status cogmem_export common_list common_get common_put common_delete"
 EXPECTED_TOOL_COUNT=38
 
 # Namespace prefixes that must have at least one tool in the catalogue.
@@ -434,6 +434,7 @@ check_tool "1.11" "session_compact"
 check_tool "1.12" "session_info"
 check_tool "1.13" "cogmem_domain_create"
 check_tool "1.14" "cogmem_memory_create"
+check_tool "1.14b" "cogmem_memory_attach"
 check_tool "1.15" "cogmem_status"
 check_tool "1.16" "cogmem_memory_confirm"
 check_tool "1.17" "cogmem_domain_migrate"
@@ -660,6 +661,34 @@ else
     # a durable hook — no pre-existing id required, so it succeeds deterministically.
     run_test_ok_auth "4c.2 cogmem_memory_create records a hook (domain_hint)" \
         "cogmem_memory_create" "{\"domain_hint\":\"$COGMEM_DOMAIN\",\"type\":\"fact\",\"text\":\"$COGMEM_HOOK_TEXT\"}"
+
+    # A memory may carry a pointer to a markdown file whose full contents are
+    # injected into context with it. The path must be readable through the file
+    # tools, so seed one in files/ first.
+    COGMEM_DOC_REL="files/claw_mcp_voice_$$.md"
+    run_test_ok_auth "4c.2a file_write seeds a markdown doc for the attachment probe" \
+        "file_write" "{\"path\":\"$COGMEM_DOC_REL\",\"content\":\"# Voice\nShort sentences.\"}"
+
+    run_test_ok_auth "4c.2b cogmem_memory_create attaches a readable markdown file" \
+        "cogmem_memory_create" "{\"domain_hint\":\"$COGMEM_DOMAIN\",\"type\":\"rule\",\"text\":\"voice doc $$\",\"file\":\"$COGMEM_DOC_REL\"}" \
+        "Attached $COGMEM_DOC_REL"
+
+    # An attachment the agent cannot read (outside the read scope) must be
+    # rejected at create time rather than stored and failing silently later.
+    run_test_err_auth "4c.2c cogmem_memory_create rejects an unreadable attachment" \
+        "cogmem_memory_create" "{\"domain_hint\":\"$COGMEM_DOMAIN\",\"type\":\"rule\",\"text\":\"bad attach $$\",\"file\":\"/etc/hosts.md\"}"
+
+    # Non-markdown attachments are rejected by extension.
+    run_test_err_auth "4c.2d cogmem_memory_create rejects a non-markdown attachment" \
+        "cogmem_memory_create" "{\"domain_hint\":\"$COGMEM_DOMAIN\",\"type\":\"rule\",\"text\":\"bad ext $$\",\"file\":\"$SCRATCH_REL\"}"
+
+    # memory_attach repoints an existing memory's document in place; the probe
+    # reuses the doc seeded above, then detaches it.
+    run_test_not_auth_err "4c.2e cogmem_memory_attach — token accepted" \
+        "cogmem_memory_attach" "{\"id\":\"hMCPtest\",\"file\":\"$COGMEM_DOC_REL\"}"
+
+    run_test_err_auth "4c.2f cogmem_memory_attach rejects an unreadable file" \
+        "cogmem_memory_attach" '{"id":"hMCPtest","file":"/etc/hosts.md"}'
 
     # list_domains must now report at least the domain(s) created above.
     run_test_ok_auth "4c.3 cogmem_domain_list lists domains" \

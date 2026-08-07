@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/PivotLLM/ClawEh/pkg/cogmem"
+	"github.com/PivotLLM/ClawEh/pkg/cogmem/attachfile"
 	"github.com/PivotLLM/ClawEh/pkg/cogmem/consolidate"
 	"github.com/PivotLLM/ClawEh/pkg/cogmem/store"
 	"github.com/PivotLLM/ClawEh/pkg/config"
@@ -94,29 +95,33 @@ func (al *AgentLoop) wireCognitiveMemory(agent *AgentInstance, sessionKey string
 			return nil
 		}
 		st = s
-		comp = cogmem.New(s, memoryComposerOptions(mem)...)
+		opts := append(memoryComposerOptions(mem),
+			cogmem.WithAttachmentLoader(attachfile.NewLoader(cfg, agent.ID, agent.Workspace)))
+		comp = cogmem.New(s, opts...)
 		return comp
 	}
 
-	mgr.SetMemoryBlocks(func(_ string, recentTools []string, routeText string) (stable, routed string) {
+	mgr.SetMemoryBlocks(func(_ string, recentTools []string, routeText string) (stable, routed, attachments string) {
 		c := ensure()
 		if c == nil {
-			return "", ""
+			return "", "", ""
 		}
-		ctx := context.Background()
-		s, _, err := c.StableBlock(ctx)
+		res, err := c.Compose(context.Background(), cogmem.RouteRequest{
+			RecentTools: recentTools,
+			RouteText:   routeText,
+			Trace:       mem.Prompt.IncludeDebugTrace,
+		})
 		if err != nil {
-			logger.WarnCF("cogmem", "stable block failed", map[string]any{
+			logger.WarnCF("cogmem", "memory compose failed", map[string]any{
 				"agent_id": agent.ID, "session_key": sessionKey, "error": err.Error(),
 			})
 		}
-		rr, err := c.RoutedBlock(ctx, cogmem.RouteRequest{RecentTools: recentTools, RouteText: routeText, Trace: mem.Prompt.IncludeDebugTrace})
-		if err != nil {
-			logger.WarnCF("cogmem", "routed block failed", map[string]any{
-				"agent_id": agent.ID, "session_key": sessionKey, "error": err.Error(),
+		if res.Attachments != "" {
+			logger.DebugCF("cogmem", "attached documents injected", map[string]any{
+				"agent_id": agent.ID, "session_key": sessionKey, "bytes": len(res.Attachments),
 			})
 		}
-		return s, rr.Text
+		return res.Stable, res.Routed, res.Attachments
 	})
 
 	return func() {
@@ -146,6 +151,12 @@ func memoryComposerOptions(mem config.MemoryConfig) []cogmem.Option {
 	}
 	if mem.Prompt.PendingSurface != "" {
 		opts = append(opts, cogmem.WithPendingSurface(mem.Prompt.PendingSurface))
+	}
+	if mem.Prompt.FileMaxBytes > 0 {
+		opts = append(opts, cogmem.WithFileMaxBytes(mem.Prompt.FileMaxBytes))
+	}
+	if mem.Prompt.FileTotalMaxBytes > 0 {
+		opts = append(opts, cogmem.WithFileTotalMaxBytes(mem.Prompt.FileTotalMaxBytes))
 	}
 	return opts
 }

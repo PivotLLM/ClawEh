@@ -13,9 +13,20 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/PivotLLM/ClawEh/pkg/cogmem/attachfile"
 	"github.com/PivotLLM/ClawEh/pkg/cogmem/store"
+	"github.com/PivotLLM/ClawEh/pkg/config"
 	"github.com/PivotLLM/ClawEh/pkg/global"
 )
+
+// fileSuffix tags a rendered memory with the markdown file attached to it, so a
+// listing shows which memories carry a document.
+func fileSuffix(ref string) string {
+	if ref = strings.TrimSpace(ref); ref == "" {
+		return ""
+	}
+	return " [file: " + ref + "]"
+}
 
 // handlerFunc is the inner handler shape: it receives the opened store plus the
 // call, and returns the model-facing text or an error. wrap() handles store
@@ -146,7 +157,7 @@ func getDomain(s *store.Store, call *global.ToolCall) (string, error) {
 	} else {
 		fmt.Fprintf(&b, "Memories (%d active):\n", len(d.Memories))
 		for _, h := range d.Memories {
-			fmt.Fprintf(&b, "  %s [%s] (conf=%.2f) %s\n", h.ID, h.Type, h.Confidence, h.Text)
+			fmt.Fprintf(&b, "  %s [%s] (conf=%.2f) %s%s\n", h.ID, h.Type, h.Confidence, h.Text, fileSuffix(h.FileRef))
 		}
 	}
 	return b.String(), nil
@@ -168,7 +179,7 @@ func search(s *store.Store, call *global.ToolCall) (string, error) {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%d active memories matching %q:\n", len(hooks), query)
 	for _, h := range hooks {
-		fmt.Fprintf(&b, "  %s [%s] (domain=%s, conf=%.2f) %s\n", h.ID, h.Type, h.DomainID, h.Confidence, h.Text)
+		fmt.Fprintf(&b, "  %s [%s] (domain=%s, conf=%.2f) %s%s\n", h.ID, h.Type, h.DomainID, h.Confidence, h.Text, fileSuffix(h.FileRef))
 	}
 	return b.String(), nil
 }
@@ -245,6 +256,9 @@ func explainMemory(h store.Memory) string {
 	fmt.Fprintf(&b, "Memory %s (domain %s)\n", h.ID, h.DomainID)
 	fmt.Fprintf(&b, "  type=%s status=%s confidence=%.2f source=%s origin=%s\n", h.Type, h.Status, h.Confidence, h.Source, h.Origin)
 	fmt.Fprintf(&b, "  text: %s\n", h.Text)
+	if h.FileRef != "" {
+		fmt.Fprintf(&b, "  attached file: %s (full contents load into context with this memory)\n", h.FileRef)
+	}
 	if h.SourceSeqStart != nil && h.SourceSeqEnd != nil {
 		fmt.Fprintf(&b, "  evidence: seq %d..%d\n", *h.SourceSeqStart, *h.SourceSeqEnd)
 	}
@@ -257,11 +271,32 @@ func explainMemory(h store.Memory) string {
 	return b.String()
 }
 
-func remember(s *store.Store, call *global.ToolCall) (string, error) {
+// rememberWith builds the memory_create handler, closing over what it needs to
+// validate an attached markdown file against the agent's read permissions.
+func rememberWith(cfg *config.Config, workspace string) handlerFunc {
+	return func(s *store.Store, call *global.ToolCall) (string, error) {
+		return remember(s, call, cfg, workspace)
+	}
+}
+
+func remember(s *store.Store, call *global.ToolCall, cfg *config.Config, workspace string) (string, error) {
 	mtype := argStr(call, "type")
 	text := argStr(call, "text")
 	if mtype == "" || text == "" {
 		return "", errors.New("type and text are required")
+	}
+
+	// Validate the attachment before storing anything: a pointer the agent cannot
+	// read must fail here, in front of the user, rather than degrade every later
+	// prompt into an "attachment unavailable" note.
+	fileRef := argStr(call, "file")
+	var fileSize int64
+	if fileRef != "" {
+		size, err := attachfile.Check(cfg, workspace, fileRef)
+		if err != nil {
+			return "", fmt.Errorf("attachment rejected: %w", err)
+		}
+		fileSize = size
 	}
 
 	domainID := argStr(call, "domain_id")
@@ -312,11 +347,16 @@ func remember(s *store.Store, call *global.ToolCall) (string, error) {
 		Confidence: argFloat(call, "confidence", 0.9),
 		Source:     store.SourceToolWrite,
 		Origin:     store.OriginChat,
+		FileRef:    fileRef,
 	})
 	if err != nil {
 		return "", mapErr(err, domainID)
 	}
-	return fmt.Sprintf("Stored memory %s in domain %s (type=%s, status=%s).", h.ID, domainID, h.Type, h.Status), nil
+	msg := fmt.Sprintf("Stored memory %s in domain %s (type=%s, status=%s).", h.ID, domainID, h.Type, h.Status)
+	if fileRef != "" {
+		msg += fmt.Sprintf(" Attached %s (%d bytes); its full contents load into context whenever this memory does.", fileRef, fileSize)
+	}
+	return msg, nil
 }
 
 func updateDomain(s *store.Store, call *global.ToolCall) (string, error) {
@@ -411,6 +451,38 @@ func retireHook(s *store.Store, call *global.ToolCall) (string, error) {
 		return "", mapErr(err, id)
 	}
 	return fmt.Sprintf("Retired memory %s.", id), nil
+}
+
+// attachFileWith builds the memory_attach handler, closing over what it needs to
+// validate the file against the agent's read permissions.
+func attachFileWith(cfg *config.Config, workspace string) handlerFunc {
+	return func(s *store.Store, call *global.ToolCall) (string, error) {
+		id := argStr(call, "id")
+		if id == "" {
+			return "", errors.New("id is required")
+		}
+		// An absent "file" argument is a detach, same as an empty one: there is
+		// nothing else this tool could mean without it.
+		ref := argStr(call, "file")
+
+		var size int64
+		if ref != "" {
+			n, err := attachfile.Check(cfg, workspace, ref)
+			if err != nil {
+				return "", fmt.Errorf("attachment rejected: %w", err)
+			}
+			size = n
+		}
+
+		m, err := s.SetMemoryFileRef(call.Ctx, s.DB(), id, ref)
+		if err != nil {
+			return "", mapErr(err, id)
+		}
+		if ref == "" {
+			return fmt.Sprintf("Detached the file from memory %s; it no longer loads a document into context.", m.ID), nil
+		}
+		return fmt.Sprintf("Attached %s (%d bytes) to memory %s; its full contents load into context whenever this memory does.", m.FileRef, size, m.ID), nil
+	}
 }
 
 func confirmHook(s *store.Store, call *global.ToolCall) (string, error) {

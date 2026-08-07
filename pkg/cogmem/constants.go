@@ -11,6 +11,12 @@ const (
 	defaultMaxChars      = 4000
 	defaultMinConfidence = 0.65
 	defaultPendingMax    = 8
+
+	// Attachment budgets (bytes). Sized so a real reference document — a writing
+	// voice guide, a playbook — is injected whole; truncation is a safety valve
+	// against a runaway file, not the expected path.
+	defaultFileMaxBytes      = 256 * 1024
+	defaultFileTotalMaxBytes = 512 * 1024
 )
 
 // Lexical-routing tuning (RoutedBlock matches the latest user message against

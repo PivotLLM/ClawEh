@@ -366,6 +366,12 @@ func (s *Store) ensureMemoryColumns(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if !have["file_ref"] {
+		if _, err := s.db.ExecContext(ctx,
+			`ALTER TABLE memories ADD COLUMN file_ref TEXT NOT NULL DEFAULT ''`); err != nil {
+			return err
+		}
+	}
 	if have["origin"] {
 		return nil
 	}

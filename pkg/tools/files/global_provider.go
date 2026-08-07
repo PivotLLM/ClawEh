@@ -3,7 +3,6 @@ package files
 import (
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/PivotLLM/ClawEh/pkg/config"
@@ -57,17 +56,10 @@ func (globalFilesProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 		// construct ALL six tools here (no IsToolEnabled / isToolAllowed gate).
 		workspace := cd.Workspace
 		restrict := c.Agents.Defaults.RestrictToWorkspace
-		readRestrict := restrict && !c.Agents.Defaults.AllowReadOutsideWorkspace
-
-		allowReadPaths := compilePatterns(c.Tools.AllowReadPaths)
+		// Shared with pkg/tools/files.Reader (cogmem attachments) so tools and
+		// non-tool readers enforce one identical read policy.
+		readRestrict, allowReadPaths := ReadPolicy(c)
 		allowWritePaths := compilePatterns(c.Tools.AllowWritePaths)
-
-		// Always allow reading from the global skills directory.
-		if skillsPath := c.SkillsPath(); skillsPath != "" {
-			if re, err := regexp.Compile("^" + regexp.QuoteMeta(skillsPath) + "/"); err == nil {
-				allowReadPaths = append(allowReadPaths, re)
-			}
-		}
 
 		maxReadFileSize := c.Tools.ReadFile.MaxReadFileSize
 

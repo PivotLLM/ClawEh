@@ -54,6 +54,7 @@ func DefaultConfig() *Config {
 					Prompt: MemoryPromptConfig{
 						TopKDomains: 3, MaxChars: 4000, MinConfidence: 0.65,
 						IncludeDebugTrace: false, PendingSurface: "ask", PendingMax: 8,
+						FileMaxBytes: 256 * 1024, FileTotalMaxBytes: 512 * 1024,
 					},
 					Consolidation: MemoryConsolidationConfig{
 						EveryNMessages: 50, IdleMinutes: 60, Nightly: true, NightlyAt: "03:20",
