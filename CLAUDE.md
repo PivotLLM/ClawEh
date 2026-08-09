@@ -76,12 +76,19 @@ Hard-won learnings (don't relearn these):
 - **Auth:** a long 32-byte token (in the QR, for the R1) OR a typeable 5-word BIP39
   `word_token` passphrase (for apps), both constant-time; plus per-device Ed25519 pairing
   approval (cryptographic — locks to that install). Removing a paired device revokes its tokens.
-- **Agent selection / session isolation:** the client encodes the selected agent as the session
-  key's 2nd segment (`agent:<id>:<peer>:<profile>`). Operator keys are honored verbatim
-  (per-profile isolation + `chat.history` reads the same key); node clients are isolated
-  per-device under their assigned (else default) agent (`agent:<agentId>:device:<deviceId>`).
-  Mechanism: `metadata["session_key"]` + `metadata["preresolved_agent_id"]`. `agents.list` falls
-  back to the id as the display name (clients hide name-less agents).
+- **Agent selection / session scope:** the client encodes the selected agent as the session
+  key's 2nd segment (`agent:<id>:<peer>:<profile>`); node clients send the `main` sentinel and
+  use their per-device assignment (else the default agent). Which *conversation* the turn joins
+  is decided by `session.session_scope`, not by the transport: under **`unified` (default) a
+  device joins the selected agent's main session** (`agent:<id>:main`) — one agent, one history,
+  one memory across the R1, the app, Slack, Telegram, and MCP service tokens. Isolating modes
+  keep the old behavior (operator keys verbatim; node clients per-device). `chat.history`
+  resolves through the same rule as `chat.send`. Single source of truth:
+  `routing.ResolveDeviceSessionKey` / `routing.ResolveServiceSessionKey`; mechanism:
+  `metadata["session_key"]` + `metadata["preresolved_agent_id"]`. `agents.list` falls back to
+  the id as the display name (clients hide name-less agents).
+  **Isolation is a property of the agent** — a separate agent (optionally `cogmem: false`), not
+  a separate channel.
 - **`/agent` command (node clients):** node clients (R1) switch assistants by typing `/agent`
   (list), `/agent <name-or-id>` (switch), or `/agent default` (reset). `handleChatSend`
   intercepts it and persists to `paired_devices.agent_id` via `SetDeviceAgent` — the same field

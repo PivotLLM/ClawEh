@@ -16,6 +16,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/pkg/gatewayproto"
 	"github.com/PivotLLM/ClawEh/pkg/logger"
+	"github.com/PivotLLM/ClawEh/pkg/routing"
 )
 
 const (
@@ -712,47 +713,49 @@ func agentDisplayName(a DeviceAgentInfo) string {
 	return a.ID
 }
 
-// sessionScopeKey resolves the conversation session a turn runs in. Operator clients
-// send an agent-scoped key (agent:<id>:<peer>:<profile>) — they pick their own agent,
-// so it is honored verbatim (each profile isolated; chat.history reads the same key).
-// Node clients (e.g. the R1) have no picker and send "main"; route them to their
-// per-device assigned agent (set on the WebUI Devices page) or the gateway default,
-// isolated per device so two devices don't share one conversation. The agent is
-// selected via preresolved_agent_id (the key's 2nd segment).
+// sessionScopeKey resolves the conversation session a turn runs in, from the key
+// the client declared on this connection. See sessionScopeKeyFor.
 func (s *Server) sessionScopeKey(lc *liveConn) string {
 	lc.mu.Lock()
 	key := lc.sessionKey
 	lc.mu.Unlock()
-	if strings.HasPrefix(key, sessionKeyAgentPrefix) {
-		return key
-	}
-	agent := "main"
-	if s.querier != nil {
-		if d := s.querier.DefaultAgentID(); d != "" {
-			agent = d
-		}
-	}
-	// Per-device assignment overrides the default for node clients.
-	if dev, ok, err := s.store.GetPaired(context.Background(), lc.deviceID); err == nil && ok && dev.AgentID != "" {
-		agent = dev.AgentID
-	}
-	return sessionKeyAgentPrefix + agent + ":device:" + lc.deviceID
+	return s.sessionScopeKeyFor(lc, key)
 }
 
-// agentIDFromSessionKey extracts the selected agent id from an agent-scoped session
-// key of the form "agent:<id>:<peer>:<profile>". Returns "" for the no-selection
-// sentinel "main" or any key that isn't agent-scoped, so the agent loop uses default
-// routing.
-func agentIDFromSessionKey(sessionKey string) string {
-	parts := strings.Split(sessionKey, ":")
-	if len(parts) < 2 || parts[0] != "agent" {
-		return ""
+// sessionScopeKeyFor resolves the conversation session for a client-supplied key.
+// Both chat.send and chat.history go through it, so a device always reads the
+// transcript it writes.
+//
+// Under UNIFIED sessions (the default) a device joins the selected agent's main
+// conversation: the R1, the phone app, Slack and Telegram are one assistant with
+// one history, one tool surface, and one memory. Tell her something on the R1 and
+// she knows it in Slack. Isolation is a property of the agent — to keep a device
+// separate, give it its own agent.
+//
+// Under an isolating mode the previous behavior stands: operator clients keep
+// their own agent-scoped key (agent:<id>:<peer>:<profile>, one conversation per
+// profile) and node clients get a per-device session so two devices never share
+// a transcript.
+//
+// The agent itself is chosen the same way in both modes: an operator client picks
+// it via the key's 2nd segment; a node client (e.g. the R1) has no picker, so it
+// falls back to its per-device assignment (WebUI Devices page / "/agent") and
+// then to the gateway default. The choice reaches the loop as
+// preresolved_agent_id.
+func (s *Server) sessionScopeKeyFor(lc *liveConn, requested string) string {
+	fallback := "main"
+	mode := ""
+	if s.querier != nil {
+		if d := s.querier.DefaultAgentID(); d != "" {
+			fallback = d
+		}
+		mode = s.querier.SessionMode()
 	}
-	id := strings.TrimSpace(parts[1])
-	if id == "" || id == "main" {
-		return ""
+	// Per-device assignment overrides the gateway default for node clients.
+	if dev, ok, err := s.store.GetPaired(context.Background(), lc.deviceID); err == nil && ok && dev.AgentID != "" {
+		fallback = dev.AgentID
 	}
-	return id
+	return routing.ResolveDeviceSessionKey(routing.SessionScope(mode), requested, fallback, lc.deviceID)
 }
 
 // handleNodeEvent handles the node ingress envelope (chat.subscribe / chat.unsubscribe).
@@ -833,6 +836,10 @@ func (s *Server) handleChatHistory(lc *liveConn, req gatewayproto.RequestFrame) 
 		sessionKey = lc.sessionKey
 		lc.mu.Unlock()
 	}
+	// Resolve through the same rule chat.send uses, so a client reads the
+	// transcript its turns are written to — under unified that is the agent's
+	// main conversation, not the key the client happens to have asked for.
+	sessionKey = s.sessionScopeKeyFor(lc, sessionKey)
 	history := s.querier.History(sessionKey)
 	messages := make([]map[string]any, 0, len(history))
 	for _, m := range history {

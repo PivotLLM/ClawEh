@@ -19,6 +19,7 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/identity"
 	"github.com/PivotLLM/ClawEh/pkg/logger"
 	"github.com/PivotLLM/ClawEh/pkg/media"
+	"github.com/PivotLLM/ClawEh/pkg/routing"
 	"github.com/PivotLLM/ClawEh/pkg/utils"
 )
 
@@ -109,7 +110,7 @@ func NewDeviceChannel(cfg config.DeviceChannelConfig, dataDir string, logMessage
 		// loop falls back to default routing when it's "main"/unknown.
 		if sessionKey != "" {
 			metadata["session_key"] = sessionKey
-			if agentID := agentIDFromSessionKey(sessionKey); agentID != "" {
+			if agentID := routing.AgentIDFromSessionKey(sessionKey); agentID != "" {
 				metadata["preresolved_agent_id"] = agentID
 			}
 		}

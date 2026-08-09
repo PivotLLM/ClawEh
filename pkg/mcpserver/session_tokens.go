@@ -57,14 +57,39 @@ type sessionRecord struct {
 type sessionTokenStore struct {
 	mu     sync.RWMutex
 	tokens map[string]sessionRecord // token → record
-	bySess map[string]string        // sessionKey → token (for revocation by session key)
+	bySess map[string]string        // conversation sessionKey → token (rotation/revocation)
+	// bySvc indexes long-lived service tokens by agent id. They are tracked
+	// separately from bySess because under unified sessions a service token
+	// resolves to the agent's MAIN session, which already has a conversation
+	// token: several tokens may name one session, and rotating the conversation
+	// token must not disturb the service token (or vice versa).
+	bySvc map[string]string // agentID → service token
+
+	// sessionMode is the configured session scope. Unified means one agent has
+	// one session, whatever is driving it — see routing.ResolveServiceSessionKey.
+	sessionMode routing.SessionScope
 }
 
 func newSessionTokenStore() *sessionTokenStore {
 	return &sessionTokenStore{
 		tokens: make(map[string]sessionRecord),
 		bySess: make(map[string]string),
+		bySvc:  make(map[string]string),
 	}
+}
+
+// setSessionMode records the configured session scope. Called from New via
+// WithSessionMode before the server serves traffic.
+func (s *sessionTokenStore) setSessionMode(mode routing.SessionScope) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sessionMode = mode
+}
+
+// serviceSessionKey is the session a service token for agentID operates on.
+// Caller must hold at least a read lock.
+func (s *sessionTokenStore) serviceSessionKey(agentID string) string {
+	return routing.ResolveServiceSessionKey(s.sessionMode, agentID)
 }
 
 // Issue generates a new token for the given session and stores the mapping.
@@ -131,11 +156,14 @@ func (s *sessionTokenStore) Register(token, agentID, sessionKey, archiveDir stri
 // evicted, because no ContextManager ever uses the service session key. The
 // caller supplies the exact token (minted/persisted by the `claw token` CLI).
 func (s *sessionTokenStore) RegisterService(token, agentID, archiveDir string) {
-	sessionKey := routing.BuildAgentServiceSessionKey(agentID)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if old, ok := s.bySess[sessionKey]; ok {
+	sessionKey := s.serviceSessionKey(agentID)
+	// Replace this agent's previous service token, and only that: the session's
+	// conversation token (bySess) is a separate credential and stays put, so
+	// registering a service token can never revoke the agent's own token.
+	if old, ok := s.bySvc[agentID]; ok {
 		delete(s.tokens, old)
 	}
 	s.tokens[token] = sessionRecord{
@@ -144,7 +172,7 @@ func (s *sessionTokenStore) RegisterService(token, agentID, archiveDir string) {
 		archiveDir: archiveDir,
 		pinned:     true,
 	}
-	s.bySess[sessionKey] = token
+	s.bySvc[agentID] = token
 	logger.InfoCF("mcpserver", "service token registered",
 		map[string]any{"agent": agentID, "session": sessionKey})
 }
@@ -158,12 +186,12 @@ func (s *sessionTokenStore) SyncServiceTokens(tokens map[string]string, archiveD
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Drop every existing service token (identified by its service session key).
-	for tok, rec := range s.tokens {
-		if rec.sessionKey == routing.BuildAgentServiceSessionKey(rec.agentID) {
-			delete(s.tokens, tok)
-			delete(s.bySess, rec.sessionKey)
-		}
+	// Drop every existing service token. They are indexed by agent, so this never
+	// touches a conversation token — which matters under unified sessions, where
+	// a service token and the agent's own token name the same session.
+	for agentID, tok := range s.bySvc {
+		delete(s.tokens, tok)
+		delete(s.bySvc, agentID)
 	}
 	// Register the current set.
 	for agentID, tok := range tokens {
@@ -171,9 +199,13 @@ func (s *sessionTokenStore) SyncServiceTokens(tokens map[string]string, archiveD
 		if archiveDir == "" {
 			continue
 		}
-		sessionKey := routing.BuildAgentServiceSessionKey(agentID)
-		s.tokens[tok] = sessionRecord{agentID: agentID, sessionKey: sessionKey, archiveDir: archiveDir, pinned: true}
-		s.bySess[sessionKey] = tok
+		s.tokens[tok] = sessionRecord{
+			agentID:    agentID,
+			sessionKey: s.serviceSessionKey(agentID),
+			archiveDir: archiveDir,
+			pinned:     true,
+		}
+		s.bySvc[agentID] = tok
 	}
 }
 
@@ -230,6 +262,7 @@ func (s *sessionTokenStore) RevokeAgent(agentID string) {
 			delete(s.tokens, tok)
 		}
 	}
+	delete(s.bySvc, agentID)
 }
 
 // generateSessionToken returns "SST" + 64 lowercase hex characters (32 random bytes).

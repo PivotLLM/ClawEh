@@ -16,6 +16,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/PivotLLM/ClawEh/pkg/gatewayproto"
+	"github.com/PivotLLM/ClawEh/pkg/routing"
 )
 
 // emulator is a minimal OpenClaw-protocol device client used to exercise the
@@ -494,6 +495,10 @@ func TestNonStreamedRunUnchanged(t *testing.T) {
 	}
 }
 
+// The agent selection carried by real client keys (the Android app sends
+// agent:<id>:clawtotalk:<profile>; the R1 sends the bare "main" sentinel) is
+// parsed by routing.AgentIDFromSessionKey. Kept here with device-shaped inputs
+// because these are the keys this gateway actually receives.
 func TestAgentIDFromSessionKey(t *testing.T) {
 	cases := map[string]string{
 		"agent:claw:clawtotalk:primary": "claw",
@@ -505,8 +510,8 @@ func TestAgentIDFromSessionKey(t *testing.T) {
 		"agent:":                        "",
 	}
 	for in, want := range cases {
-		if got := agentIDFromSessionKey(in); got != want {
-			t.Errorf("agentIDFromSessionKey(%q) = %q, want %q", in, got, want)
+		if got := routing.AgentIDFromSessionKey(in); got != want {
+			t.Errorf("AgentIDFromSessionKey(%q) = %q, want %q", in, got, want)
 		}
 	}
 }
