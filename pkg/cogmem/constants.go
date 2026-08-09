@@ -32,3 +32,6 @@ const (
 	PendingSurfaceAsk        = "ask"         // show the digest so the agent can confirm
 	PendingSurfaceExportOnly = "export_only" // keep out of the prompt; export only
 )
+
+// maxHeadlineChars caps the memory text quoted in an attached document's header.
+const maxHeadlineChars = 120

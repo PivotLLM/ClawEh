@@ -204,8 +204,8 @@ func (c *Composer) stableBlock(ctx context.Context) (string, int64, []refSite, e
 		}
 		fmt.Fprintf(&b, "COGMEM domain %s is sticky:\n\n", d.Name)
 		for _, h := range hooks {
-			fmt.Fprintf(&b, "- %s%s%s\n", h.Text, attachmentMarker(h.FileRef), originSuffix(h.Origin))
-			refs = collectRef(refs, h.ID, h.FileRef)
+			fmt.Fprintf(&b, "- %s%s\n", h.Text, originSuffix(h.Origin))
+			refs = collectRef(refs, memoryRef{memoryID: h.ID, text: h.Text, ref: h.FileRef})
 		}
 		b.WriteString("\n")
 	}
@@ -222,7 +222,8 @@ func (c *Composer) stableBlock(ctx context.Context) (string, int64, []refSite, e
 			for _, h := range fresh {
 				// The reference is named but deliberately not loaded: an
 				// unconfirmed memory should not pull a document into every prompt.
-				fmt.Fprintf(&b, "- (%s) %s%s\n", h.ID, h.Text, attachmentMarker(h.FileRef))
+				fmt.Fprintf(&b, "- (%s) %s\n", h.ID, h.Text)
+				refs = collectRef(refs, memoryRef{memoryID: h.ID, text: h.Text, ref: h.FileRef, pending: true})
 			}
 			b.WriteString("\n")
 		}
@@ -334,7 +335,7 @@ func (c *Composer) routedBlock(ctx context.Context, req RouteRequest) (RoutedRes
 		// their documents attached — a domain dropped by the char budget must not
 		// smuggle a 250 KB file into the prompt.
 		for _, h := range hooks {
-			refs = collectRef(refs, h.ID, h.FileRef)
+			refs = collectRef(refs, memoryRef{memoryID: h.ID, text: h.Text, ref: h.FileRef})
 		}
 		res.Loaded = append(res.Loaded, d.ID)
 		// Mark the domain active when it was loaded because it was genuinely
@@ -546,7 +547,7 @@ func renderDomain(d store.Domain, hooks []store.Memory) string {
 		}
 	}
 	for _, h := range hooks {
-		fmt.Fprintf(&b, "- (%s) %s%s%s\n", h.ID, h.Text, attachmentMarker(h.FileRef), originSuffix(h.Origin))
+		fmt.Fprintf(&b, "- (%s) %s%s\n", h.ID, h.Text, originSuffix(h.Origin))
 	}
 	b.WriteString("\n")
 	return b.String()

@@ -56,24 +56,56 @@ func WithFileTotalMaxBytes(n int) Option {
 // attachments block can be assembled after both blocks are composed.
 type refSite struct {
 	memoryID string
+	text     string // the memory's text, so the document can say what it belongs to
 	ref      string
+	pending  bool // memory is unconfirmed: name the document, do not load it
 }
 
-// collectRef appends a memory's file reference to sites when it has one.
-func collectRef(sites []refSite, memoryID, ref string) []refSite {
-	if ref = strings.TrimSpace(ref); ref == "" {
-		return sites
+// collectRef appends a memory's file reference to sites when it has one. The
+// memory line itself carries no marker — a filename sitting next to a memory,
+// far above the text it names, reads as a citation rather than an inclusion.
+// The path appears once, in the attachments section, attached to its content.
+func collectRef(sites []refSite, m memoryRef) []refSite {
+	if ref := strings.TrimSpace(m.ref); ref != "" {
+		m.ref = ref
+		sites = append(sites, refSite(m))
 	}
-	return append(sites, refSite{memoryID: memoryID, ref: ref})
+	return sites
 }
 
-// attachmentMarker is the inline tag appended to a memory line that carries a
-// file pointer, telling the model the document is present and under which name.
-func attachmentMarker(ref string) string {
-	if ref = strings.TrimSpace(ref); ref == "" {
-		return ""
+// memoryRef is the collectRef argument set, named so call sites read clearly.
+type memoryRef struct {
+	memoryID string
+	text     string
+	ref      string
+	pending  bool
+}
+
+// memoryHeadline shortens a memory's text to a single quotable line for the
+// document header.
+func memoryHeadline(s string) string {
+	s = oneLine(s)
+	if len(s) > maxHeadlineChars {
+		s = strings.TrimSpace(s[:maxHeadlineChars]) + "…"
 	}
-	return " [attached document: " + ref + "]"
+	return s
+}
+
+// provenance names the memory (or memories) a document belongs to. With a
+// single owner it quotes the memory text, which is what actually answers "why
+// am I being shown this document?" — an opaque id alone does not.
+func provenance(owners []refSite) string {
+	if len(owners) == 1 {
+		if t := memoryHeadline(owners[0].text); t != "" {
+			return fmt.Sprintf("From memory %s (%q)", owners[0].memoryID, t)
+		}
+		return "From memory " + owners[0].memoryID
+	}
+	ids := make([]string, 0, len(owners))
+	for _, o := range owners {
+		ids = append(ids, o.memoryID)
+	}
+	return "From memories " + strings.Join(ids, ", ")
 }
 
 // attachmentsBlock renders the full contents of every distinct file referenced
@@ -89,27 +121,44 @@ func (c *Composer) attachmentsBlock(sites []refSite) string {
 		return ""
 	}
 
-	// Dedup by path, keeping first-referenced order and collecting every memory
-	// id that points at it (one shared doc, one copy in the prompt).
+	// Dedup by path, keeping first-referenced order and merging every memory that
+	// points at it (one shared doc, one copy in the prompt). A document is only
+	// withheld as pending when every memory naming it is unconfirmed — one
+	// confirmed owner is reason enough to load it.
 	order := make([]string, 0, len(sites))
-	byRef := make(map[string][]string, len(sites))
+	byRef := make(map[string][]refSite, len(sites))
 	for _, s := range sites {
 		if _, seen := byRef[s.ref]; !seen {
 			order = append(order, s.ref)
 		}
-		byRef[s.ref] = append(byRef[s.ref], s.memoryID)
+		byRef[s.ref] = append(byRef[s.ref], s)
 	}
 
 	remaining := c.opt.fileTotalMaxBytes
 	var b strings.Builder
 	for _, ref := range order {
-		ids := byRef[ref]
-		sort.Strings(ids)
-		owner := "memory " + strings.Join(ids, ", ")
+		owners := byRef[ref]
+		sort.SliceStable(owners, func(i, j int) bool { return owners[i].memoryID < owners[j].memoryID })
+		pending := true
+		for _, o := range owners {
+			if !o.pending {
+				pending = false
+				break
+			}
+		}
+
+		fmt.Fprintf(&b, "### Attached: %s\n", ref)
+
+		// An unconfirmed memory names its document but does not spend context on
+		// it: one line saying so, and nothing else.
+		if pending {
+			fmt.Fprintf(&b, "%s — pending confirmation, so its contents are not loaded. Confirm the memory to include this document.\n\n", provenance(owners))
+			continue
+		}
 
 		if remaining <= 0 {
-			fmt.Fprintf(&b, "## %s (%s)\n\nNot included: the per-turn attachment budget (%d bytes) is exhausted. Read the file directly if you need it.\n\n",
-				ref, owner, c.opt.fileTotalMaxBytes)
+			fmt.Fprintf(&b, "%s — not included: the per-turn attachment budget (%d bytes) is exhausted. Read the file directly if you need it.\n\n",
+				provenance(owners), c.opt.fileTotalMaxBytes)
 			continue
 		}
 		limit := c.opt.fileMaxBytes
@@ -119,16 +168,12 @@ func (c *Composer) attachmentsBlock(sites []refSite) string {
 
 		att, err := c.opt.loadAttachment(ref, limit)
 		if err != nil {
-			fmt.Fprintf(&b, "## %s (%s)\n\nNot included: %s\n\n", ref, owner, oneLine(err.Error()))
+			fmt.Fprintf(&b, "%s — not included: %s\n\n", provenance(owners), oneLine(err.Error()))
 			continue
 		}
 		remaining -= len(att.Content)
 
-		fmt.Fprintf(&b, "## %s (%s", ref, owner)
-		if att.Size > 0 {
-			fmt.Fprintf(&b, ", %d bytes", att.Size)
-		}
-		b.WriteString(")\n\n")
+		fmt.Fprintf(&b, "%s, %d bytes, current as of this turn.\n\n", provenance(owners), att.Size)
 		if att.Truncated {
 			fmt.Fprintf(&b, "[TRUNCATED: showing the first %d of %d bytes. The rest of this document is NOT below — read the file directly if you need it.]\n\n",
 				len(att.Content), att.Size)
