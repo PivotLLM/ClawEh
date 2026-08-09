@@ -124,8 +124,14 @@ type Memory struct {
 	SourceSeqEnd       *int64
 	SupersedesMemoryID *string
 	RetireReason       *string
-	CreatedAt          time.Time
-	UpdatedAt          time.Time
+	// FileRef optionally points at a markdown file whose full contents are
+	// attached to the prompt whenever this memory is rendered. It is an
+	// agent-relative path (e.g. "files/voice.md", "maestro/style.md"); the store
+	// never touches the filesystem — resolution and the permission check belong
+	// to the caller (see cogmem.AttachmentLoader).
+	FileRef   string
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // Evidence references the archive seq range that justifies a memory change.

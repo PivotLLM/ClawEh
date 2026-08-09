@@ -4,7 +4,7 @@
 package store
 
 // schemaVersion is the current migration version. Bump when DDL changes.
-const schemaVersion = 3
+const schemaVersion = 4
 
 // schema is the full DDL for a .cogmem.db. All statements are idempotent so
 // migrate() can run it on every open. No FTS, no vector columns.
@@ -56,6 +56,10 @@ CREATE TABLE IF NOT EXISTS memories (
   source_seq_end     INTEGER,
   supersedes_memory_id TEXT,
   retire_reason      TEXT,
+  -- Optional pointer to a markdown file whose full contents are injected into
+  -- the prompt whenever this memory is rendered. Path is agent-relative and is
+  -- resolved (and permission-checked) by the caller, not here.
+  file_ref           TEXT NOT NULL DEFAULT '',
   created_at         INTEGER NOT NULL,
   updated_at         INTEGER NOT NULL
 );

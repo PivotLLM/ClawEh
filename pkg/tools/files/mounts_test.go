@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/PivotLLM/ClawEh/pkg/config"
 )
 
 func TestMounts_ReadWriteDeleteWithinMount(t *testing.T) {
@@ -133,3 +135,67 @@ func TestMounts_HidesClawMarkerFromList(t *testing.T) {
 		t.Fatalf(".claw marker must be hidden from listings: %s", res.ForLLM)
 	}
 }
+
+// When Maestro is enabled, resolveAgentMounts auto-creates <workspace>/maestro
+// and exposes it as a writable maestro/ mount so file_* can shuttle content.
+func TestResolveAgentMounts_AutoMaestro(t *testing.T) {
+	ws := t.TempDir()
+	_ = os.MkdirAll(filepath.Join(ws, "files"), 0o755)
+
+	agent := &config.AgentConfig{ID: "alice", Maestro: true}
+	specs := resolveAgentMounts(agent, ws)
+	if len(specs) != 1 || specs[0].Name != "maestro" || !specs[0].Writable {
+		t.Fatalf("expected writable maestro mount, got %+v", specs)
+	}
+	if _, err := os.Stat(filepath.Join(ws, "maestro")); err != nil {
+		t.Fatalf("maestro dir should be created: %v", err)
+	}
+
+	// Round-trip: write a report under maestro/, move it into files/.
+	SetMountsForWorkspace(ws, specs)
+	defer SetMountsForWorkspace(ws, nil)
+	SetReadScopeSubdirs([]string{"files", "skills", "tasks", "tmp"})
+	defer SetReadScopeSubdirs(nil)
+
+	reportDir := filepath.Join(ws, "maestro", "projects", "demo", "reports")
+	if err := os.MkdirAll(reportDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(reportDir, "out.md"), []byte("report"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	mv := NewMoveFileToolScoped(ws, true, "files")
+	if res := mv.Execute(ctx, map[string]any{
+		"source_path":      "maestro/projects/demo/reports/out.md",
+		"destination_path": "files/out.md",
+	}); res.IsError {
+		t.Fatalf("move maestro → files: %s", res.ForLLM)
+	}
+	if b, err := os.ReadFile(filepath.Join(ws, "files", "out.md")); err != nil || string(b) != "report" {
+		t.Fatalf("files/out.md = %q err=%v", b, err)
+	}
+	if _, err := os.Stat(filepath.Join(reportDir, "out.md")); !os.IsNotExist(err) {
+		t.Fatalf("source should be gone after move")
+	}
+
+	// Reverse: files → maestro.
+	if err := os.WriteFile(filepath.Join(ws, "files", "in.md"), []byte("input"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if res := mv.Execute(ctx, map[string]any{
+		"source_path":      "files/in.md",
+		"destination_path": "maestro/projects/demo/files/imported/in.md",
+	}); res.IsError {
+		t.Fatalf("move files → maestro: %s", res.ForLLM)
+	}
+	if b, err := os.ReadFile(filepath.Join(ws, "maestro", "projects", "demo", "files", "imported", "in.md")); err != nil || string(b) != "input" {
+		t.Fatalf("maestro import path = %q err=%v", b, err)
+	}
+
+	// Maestro off → no auto mount.
+	if got := resolveAgentMounts(&config.AgentConfig{ID: "bob"}, ws); len(got) != 0 {
+		t.Fatalf("maestro off: expected nil, got %+v", got)
+	}
+}
+

@@ -93,12 +93,12 @@ type Manager struct {
 	// Nil for every non-cognitive agent → identical behavior to before.
 	archiveAppendHook func(seq int64, msg providers.Message)
 
-	// memoryBlocks, when non-nil, returns the cognitive-memory STABLE and ROUTED
-	// prompt blocks for the session. Set by the agent loop for cognitive agents
-	// only; Build injects the blocks into the system message when non-empty.
-	// recentTools (newest-first, capped) feeds tool-trigger routing; routeText is
-	// the latest user message for lexical routing.
-	memoryBlocks func(sessionKey string, recentTools []string, routeText string) (stable, routed string)
+	// memoryBlocks, when non-nil, returns the cognitive-memory STABLE, ROUTED and
+	// ATTACHMENTS prompt blocks for the session. Set by the agent loop for
+	// cognitive agents only; Build injects the blocks into the system message
+	// when non-empty. recentTools (newest-first, capped) feeds tool-trigger
+	// routing; routeText is the latest user message for lexical routing.
+	memoryBlocks func(sessionKey string, recentTools []string, routeText string) (stable, routed, attachments string)
 
 	// recentTools is a small newest-first ring of recently-invoked tool names,
 	// fed by RecordToolUse and read at Build time so cognitive memory can auto-load
@@ -735,12 +735,12 @@ func (m *Manager) SetProtectUnconsolidated(v bool) {
 	m.protectUnconsolidated = v
 }
 
-// SetMemoryBlocks installs a callback that returns the cognitive-memory STABLE
-// and ROUTED prompt blocks for the session. Build injects them into the system
-// message when either is non-empty. The callback receives the newest-first
+// SetMemoryBlocks installs a callback that returns the cognitive-memory STABLE,
+// ROUTED and ATTACHMENTS prompt blocks for the session. Build injects them into
+// the system message when non-empty. The callback receives the newest-first
 // recent-tool ring (tool-trigger routing) and the latest user message (lexical
 // routing). Passing nil disables injection.
-func (m *Manager) SetMemoryBlocks(fn func(sessionKey string, recentTools []string, routeText string) (stable, routed string)) {
+func (m *Manager) SetMemoryBlocks(fn func(sessionKey string, recentTools []string, routeText string) (stable, routed, attachments string)) {
 	m.memoryBlocks = fn
 }
 
@@ -828,12 +828,24 @@ func (m *Manager) Build(_ context.Context) ([]providers.Message, error) {
 	// msgs[0].Content for adapters that ignore SystemParts, matching the
 	// session-token injection above.
 	if m.memoryBlocks != nil && len(msgs) > 0 && msgs[0].Role == "system" {
-		stable, routed := m.memoryBlocks(m.sessionKey, m.recentToolsSnapshot(), latestUserText(history))
+		stable, routed, attachments := m.memoryBlocks(m.sessionKey, m.recentToolsSnapshot(), latestUserText(history))
 		if stable != "" {
 			msgs[0].Content += "\n\n---\n\n" + stable
 			msgs[0].SystemParts = append(msgs[0].SystemParts, providers.ContentBlock{
 				Type:         "text",
 				Text:         stable,
+				CacheControl: &providers.CacheControl{Type: "ephemeral"},
+			})
+		}
+		// Attached documents are large and change only when the underlying file
+		// changes, so they get their own cacheable part — after the stable block
+		// (so a routing change that swaps documents never invalidates it) and
+		// before the routed block (which must stay the un-cached tail).
+		if attachments != "" {
+			msgs[0].Content += "\n\n---\n\n" + attachments
+			msgs[0].SystemParts = append(msgs[0].SystemParts, providers.ContentBlock{
+				Type:         "text",
+				Text:         attachments,
 				CacheControl: &providers.CacheControl{Type: "ephemeral"},
 			})
 		}

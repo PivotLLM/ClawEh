@@ -80,3 +80,19 @@ func TestSeedDefaultConfig_PreservesMarker(t *testing.T) {
 		t.Error("a seeded config must load with DefaultConfig=true")
 	}
 }
+
+// Memory file attachments are budgeted independently of the routed block's
+// character cap: a referenced document is injected whole, so a zero here would
+// silently disable attachments.
+func TestDefaultConfig_MemoryAttachmentBudgets(t *testing.T) {
+	p := DefaultConfig().Agents.Defaults.Memory.Prompt
+	if p.FileMaxBytes != 256*1024 {
+		t.Fatalf("FileMaxBytes = %d, want %d", p.FileMaxBytes, 256*1024)
+	}
+	if p.FileTotalMaxBytes != 512*1024 {
+		t.Fatalf("FileTotalMaxBytes = %d, want %d", p.FileTotalMaxBytes, 512*1024)
+	}
+	if p.FileTotalMaxBytes < p.FileMaxBytes {
+		t.Fatal("per-turn budget must be at least one full attachment")
+	}
+}

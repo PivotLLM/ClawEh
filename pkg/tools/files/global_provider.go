@@ -3,7 +3,6 @@ package files
 import (
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/PivotLLM/ClawEh/pkg/config"
@@ -57,17 +56,10 @@ func (globalFilesProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 		// construct ALL six tools here (no IsToolEnabled / isToolAllowed gate).
 		workspace := cd.Workspace
 		restrict := c.Agents.Defaults.RestrictToWorkspace
-		readRestrict := restrict && !c.Agents.Defaults.AllowReadOutsideWorkspace
-
-		allowReadPaths := compilePatterns(c.Tools.AllowReadPaths)
+		// Shared with pkg/tools/files.Reader (cogmem attachments) so tools and
+		// non-tool readers enforce one identical read policy.
+		readRestrict, allowReadPaths := ReadPolicy(c)
 		allowWritePaths := compilePatterns(c.Tools.AllowWritePaths)
-
-		// Always allow reading from the global skills directory.
-		if skillsPath := c.SkillsPath(); skillsPath != "" {
-			if re, err := regexp.Compile("^" + regexp.QuoteMeta(skillsPath) + "/"); err == nil {
-				allowReadPaths = append(allowReadPaths, re)
-			}
-		}
 
 		maxReadFileSize := c.Tools.ReadFile.MaxReadFileSize
 
@@ -99,10 +91,11 @@ func (globalFilesProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 			SetReadScopeSubdirs(subdirs)
 		}
 
-		// External mounts (per agent): expose extra top-level dirs beside files/.
-		// Must be registered before constructing the tools, which capture their
-		// fileSystem (mount-aware) at build time.
-		SetMountsForWorkspace(workspace, resolveAgentMounts(cd.AgentCfg))
+		// External mounts (per agent) plus auto maestro/ when the suite is on:
+		// expose extra top-level dirs beside files/. Must be registered before
+		// constructing the tools, which capture their fileSystem (mount-aware)
+		// at build time.
+		SetMountsForWorkspace(workspace, resolveAgentMounts(cd.AgentCfg, workspace))
 
 		readBytes = NewReadFileTool(workspace, readRestrict, maxReadFileSize, allowReadPaths)
 		readLines = NewReadLinesTool(workspace, readRestrict, maxReadFileSize, allowReadPaths)
@@ -331,22 +324,39 @@ var readLinesSchema = map[string]any{
 	"required": []string{"path"},
 }
 
-// resolveAgentMounts validates an agent's mount config into usable specs. Invalid
-// entries (bad name, missing/non-directory path, duplicate) are dropped with a
-// WARN so one broken mount can't take the agent down.
-func resolveAgentMounts(agentCfg *config.AgentConfig) []MountSpec {
-	if agentCfg == nil || len(agentCfg.Mounts) == 0 {
+// resolveAgentMounts validates an agent's effective mounts (configured + auto
+// Maestro when enabled) into usable specs. Invalid entries (bad name,
+// missing/non-directory path, duplicate) are dropped with a WARN so one broken
+// mount can't take the agent down. The auto Maestro mount creates
+// <workspace>/maestro if needed.
+func resolveAgentMounts(agentCfg *config.AgentConfig, workspace string) []MountSpec {
+	if agentCfg == nil {
+		return nil
+	}
+	// Ensure the auto Maestro tree exists before Stat validation.
+	if agentCfg.Maestro && strings.TrimSpace(workspace) != "" {
+		base := config.MaestroDataDir(workspace)
+		if err := os.MkdirAll(base, 0o755); err != nil {
+			logger.WarnCF("tools", "failed to create maestro data dir for mount", map[string]any{
+				"path":  base,
+				"error": err.Error(),
+			})
+		}
+	}
+	mounts := agentCfg.EffectiveMounts(workspace)
+	if len(mounts) == 0 {
 		return nil
 	}
 	var specs []MountSpec
 	seen := map[string]bool{}
-	for _, mc := range agentCfg.Mounts {
+	for _, mc := range mounts {
 		name := strings.TrimSpace(mc.Name)
 		if err := config.ValidateMountName(name); err != nil {
 			logger.WarnCF("tools", "skipping invalid mount", map[string]any{"name": name, "error": err.Error()})
 			continue
 		}
-		if seen[name] {
+		key := strings.ToLower(name)
+		if seen[key] {
 			logger.WarnCF("tools", "skipping duplicate mount name", map[string]any{"name": name})
 			continue
 		}
@@ -360,7 +370,7 @@ func resolveAgentMounts(agentCfg *config.AgentConfig) []MountSpec {
 			logger.WarnCF("tools", "skipping mount: not an existing directory", map[string]any{"name": name, "path": abs})
 			continue
 		}
-		seen[name] = true
+		seen[key] = true
 		specs = append(specs, MountSpec{Name: name, Path: abs, Writable: mc.Writable})
 	}
 	return specs

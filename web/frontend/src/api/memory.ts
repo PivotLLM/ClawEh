@@ -16,6 +16,7 @@ export interface MemoryMemory {
   priority: number
   source: string
   origin: string
+  file_ref: string
   created: string
   updated: string
 }

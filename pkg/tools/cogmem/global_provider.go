@@ -17,6 +17,7 @@
 package cogmem
 
 import (
+	"github.com/PivotLLM/ClawEh/pkg/config"
 	"github.com/PivotLLM/ClawEh/pkg/global"
 	"github.com/PivotLLM/ClawEh/pkg/tools"
 )
@@ -56,6 +57,9 @@ func (globalCogmemProvider) RegisterTools(deps global.Deps) []global.ToolDefinit
 	// during cataloguing.
 	cd, _ := deps.Host.(tools.ToolDeps)
 	workspace := cd.Workspace
+	// Config is needed to validate a memory's file attachment against the agent's
+	// read permissions; nil during deps-free enumeration, where no handler runs.
+	cfg, _ := deps.Cfg.(*config.Config)
 
 	def := func(name, desc string, params []global.Parameter, allow bool, h handlerFunc) global.ToolDefinition {
 		return global.ToolDefinition{
@@ -107,7 +111,8 @@ func (globalCogmemProvider) RegisterTools(deps global.Deps) []global.ToolDefinit
 				{Name: "confidence", Type: "number", Required: false, Description: "Confidence 0..1 (default 0.9)."},
 				{Name: "status", Type: "string", Required: false, Description: "active (default), or review to hold it as pending (unconfirmed) until the user confirms.",
 					Enum: []any{"active", "review"}},
-			}, true, remember),
+				{Name: "file", Type: "string", Required: false, Description: "Optional path to a markdown file (e.g. \"files/voice.md\", \"maestro/style-guide.md\") whose FULL contents are injected into your context whenever this memory is in context. Use it for reference material too long to put in the memory text, such as a writing-voice description; keep the memory text as a one-line description of what the document is and when to use it. The path must be one you can read with the file tools, and the file is read fresh each turn."},
+			}, true, rememberWith(cfg, workspace)),
 
 		def("domain_update",
 			"Update a domain — a patch: pass only the fields you want to change (rename, summary, state, sticky, triggers). No version needed.",
@@ -122,6 +127,13 @@ func (globalCogmemProvider) RegisterTools(deps global.Deps) []global.ToolDefinit
 				{Name: "set_triggers", Type: "string", Required: false, Description: "Replace tool triggers: comma-separated name fragments that auto-load this domain whenever you use a tool whose name contains one (substring, case-insensitive). E.g. \"mail,github\"; for an MCP server use its name (\"github\" matches mcp_github_*). Empty string clears."},
 				{Name: "set_keyword_triggers", Type: "array", Items: "string", Required: false, Description: "Replace keyword triggers: words/phrases that load this domain when they appear in the incoming message (whole-phrase, word-boundary). Prefer multi-word phrases like \"morning routine\" over common single words. Empty list clears."},
 			}, true, updateDomain),
+
+		def("memory_attach",
+			"Attach a markdown file to an existing memory, or detach the current one. The attached file's FULL contents load into your context whenever that memory does. Use this to point a memory at a different document (e.g. the file moved or was rewritten) or to remove the document while keeping the memory — memory text itself is not editable; retire and re-create for that.",
+			[]global.Parameter{
+				{Name: "id", Type: "string", Required: true, Description: "Memory id."},
+				{Name: "file", Type: "string", Required: false, Description: "Path to a markdown file you can read with the file tools (e.g. \"files/voice.md\", \"maestro/style-guide.md\"). Omit or pass an empty string to detach the current file."},
+			}, true, attachFileWith(cfg, workspace)),
 
 		def("memory_retire",
 			"Retire a memory so it is no longer used (it stays in the audit history). To change a memory, retire the old one and create a new one. Also use this to reject a pending (unconfirmed) memory when the user declines it.",

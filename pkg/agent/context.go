@@ -60,7 +60,7 @@ func (cb *ContextBuilder) WithMounts(mounts []config.MountConfig) *ContextBuilde
 }
 
 // accessibleFolders is the short list of top-level folders the file tools can
-// reach: files/ and skills/ always, plus each configured mount.
+// reach: files/ and skills/ always, plus each configured (or auto Maestro) mount.
 func (cb *ContextBuilder) accessibleFolders() string {
 	parts := []string{"files/ (read/write)", "skills/ (read-only)"}
 	for _, m := range cb.mounts {
@@ -72,7 +72,13 @@ func (cb *ContextBuilder) accessibleFolders() string {
 		if m.Writable {
 			access = "read/write"
 		}
-		parts = append(parts, fmt.Sprintf("%s/ (external, %s)", name, access))
+		// Maestro's tree lives inside the agent workspace; other mounts are
+		// typically external host paths.
+		if strings.EqualFold(name, config.MaestroMountName) {
+			parts = append(parts, fmt.Sprintf("%s/ (%s)", name, access))
+		} else {
+			parts = append(parts, fmt.Sprintf("%s/ (external, %s)", name, access))
+		}
 	}
 	return strings.Join(parts, ", ")
 }

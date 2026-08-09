@@ -25,6 +25,7 @@ type AddMemoryParams struct {
 	SourceSeqStart     *int64
 	SourceSeqEnd       *int64
 	SupersedesMemoryID *string
+	FileRef            string
 }
 
 // AddMemory inserts a hook, assigns a short id, and bumps stable_rev when the hook
@@ -45,11 +46,11 @@ func (s *Store) AddMemory(ctx context.Context, q DBTX, p AddMemoryParams) (Memor
 	_, err = q.ExecContext(ctx, `
 		INSERT INTO memories(id, domain_id, type, text, status, confidence, priority,
 		                  source, origin, source_session, source_seq_start, source_seq_end,
-		                  supersedes_memory_id, created_at, updated_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		                  supersedes_memory_id, file_ref, created_at, updated_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		id, p.DomainID, string(p.Type), p.Text, string(p.Status), p.Confidence,
 		p.Priority, string(p.Source), string(normalizeOrigin(p.Origin)), p.SourceSession, p.SourceSeqStart,
-		p.SourceSeqEnd, p.SupersedesMemoryID, ts, ts)
+		p.SourceSeqEnd, p.SupersedesMemoryID, strings.TrimSpace(p.FileRef), ts, ts)
 	if err != nil {
 		return Memory{}, fmt.Errorf("cogmem: add hook: %w", err)
 	}
@@ -108,12 +109,51 @@ func (s *Store) DeleteMemory(ctx context.Context, q DBTX, id string) error {
 }
 
 // SupersedeMemory retires oldID and adds a replacement hook linked back to it.
+// An attached file carries forward unless the replacement names its own: a
+// consolidation pass that rewords a memory must not silently detach the document
+// the memory exists to point at.
 func (s *Store) SupersedeMemory(ctx context.Context, q DBTX, oldID string, p AddMemoryParams) (Memory, error) {
+	if strings.TrimSpace(p.FileRef) == "" {
+		if old, err := s.GetMemory(ctx, q, oldID); err == nil {
+			p.FileRef = old.FileRef
+		}
+	}
 	if err := s.RetireMemory(ctx, q, oldID, "superseded"); err != nil {
 		return Memory{}, err
 	}
 	p.SupersedesMemoryID = &oldID
 	return s.AddMemory(ctx, q, p)
+}
+
+// SetMemoryFileRef attaches a markdown file to an existing memory, or detaches
+// the current one when ref is empty. The path is stored verbatim (trimmed); the
+// caller validates it against the agent's read permissions.
+//
+// This is the one in-place edit cogmem allows on a memory. Text is immutable by
+// design (retire + recreate keeps the audit trail honest), but a document
+// pointer has to be repointable: the file it names can move, and detaching it
+// should not cost the memory its id and history.
+func (s *Store) SetMemoryFileRef(ctx context.Context, q DBTX, id, ref string) (Memory, error) {
+	h, err := s.GetMemory(ctx, q, id)
+	if err != nil {
+		return Memory{}, err
+	}
+	sticky, err := s.domainSticky(ctx, q, h.DomainID)
+	if err != nil {
+		return Memory{}, err
+	}
+	if _, err := q.ExecContext(ctx,
+		`UPDATE memories SET file_ref=?, updated_at=? WHERE id=?`,
+		strings.TrimSpace(ref), now(), id); err != nil {
+		return Memory{}, fmt.Errorf("cogmem: set memory file ref: %w", err)
+	}
+	_ = s.Touch(ctx, q, h.DomainID)
+	if affectsStable(sticky, h.Status) {
+		if err := bumpStableRev(ctx, q); err != nil {
+			return Memory{}, err
+		}
+	}
+	return s.GetMemory(ctx, q, id)
 }
 
 // PromoteMemory moves a review hook to active (confirmation).
@@ -221,7 +261,7 @@ func affectsStable(sticky bool, st Status) bool {
 const memorySelect = `
 	SELECT id, domain_id, type, text, status, confidence, priority, source, origin,
 	       source_session, source_seq_start, source_seq_end, supersedes_memory_id,
-	       retire_reason, created_at, updated_at
+	       retire_reason, file_ref, created_at, updated_at
 	FROM memories`
 
 func scanMemory(sc scanner) (Memory, error) {
@@ -232,7 +272,7 @@ func scanMemory(sc scanner) (Memory, error) {
 	)
 	err := sc.Scan(&h.ID, &h.DomainID, &kind, &h.Text, &status, &h.Confidence,
 		&h.Priority, &source, &origin, &h.SourceSession, &h.SourceSeqStart, &h.SourceSeqEnd,
-		&h.SupersedesMemoryID, &h.RetireReason, &createdAt, &updatedAt)
+		&h.SupersedesMemoryID, &h.RetireReason, &h.FileRef, &createdAt, &updatedAt)
 	if err != nil {
 		return Memory{}, err
 	}

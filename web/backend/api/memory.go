@@ -41,6 +41,7 @@ type memoryMemory struct {
 	Priority   int     `json:"priority"`
 	Source     string  `json:"source"`
 	Origin     string  `json:"origin"`
+	FileRef    string  `json:"file_ref"`
 	Created    string  `json:"created"`
 	Updated    string  `json:"updated"`
 }
@@ -177,6 +178,7 @@ func toMemoryMemory(m cogmemstore.Memory) memoryMemory {
 		Priority:   m.Priority,
 		Source:     string(m.Source),
 		Origin:     string(m.Origin),
+		FileRef:    m.FileRef,
 		Created:    m.CreatedAt.Format(time.RFC3339),
 		Updated:    m.UpdatedAt.Format(time.RFC3339),
 	}

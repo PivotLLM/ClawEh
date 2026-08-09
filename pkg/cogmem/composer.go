@@ -31,6 +31,13 @@ type options struct {
 	minConfidence  float64 // hide active hooks below this
 	pendingMax     int     // pending digest cap
 	pendingSurface string  // PendingSurfaceAsk | PendingSurfaceExportOnly
+
+	// File attachments (memories carrying a FileRef). Budgets are independent of
+	// maxChars: a referenced document is injected whole, not squeezed into the
+	// routed block's line budget.
+	loadAttachment    AttachmentLoader
+	fileMaxBytes      int // per attachment
+	fileTotalMaxBytes int // all attachments in one turn
 }
 
 // Option configures a Composer (functional options pattern, per dev standards).
@@ -98,11 +105,13 @@ type Composer struct {
 // New returns a Composer over st with the given options applied over defaults.
 func New(st *store.Store, opts ...Option) *Composer {
 	o := options{
-		topKDomains:    defaultTopKDomains,
-		maxChars:       defaultMaxChars,
-		minConfidence:  defaultMinConfidence,
-		pendingMax:     defaultPendingMax,
-		pendingSurface: PendingSurfaceAsk,
+		topKDomains:       defaultTopKDomains,
+		maxChars:          defaultMaxChars,
+		minConfidence:     defaultMinConfidence,
+		pendingMax:        defaultPendingMax,
+		pendingSurface:    PendingSurfaceAsk,
+		fileMaxBytes:      defaultFileMaxBytes,
+		fileTotalMaxBytes: defaultFileTotalMaxBytes,
 	}
 	for _, fn := range opts {
 		fn(&o)
@@ -151,10 +160,18 @@ type RoutedResult struct {
 // store's stable_rev for cache keying. Returns "" (and the rev) when there is no
 // learned content yet.
 func (c *Composer) StableBlock(ctx context.Context) (string, int64, error) {
+	text, rev, _, err := c.stableBlock(ctx)
+	return text, rev, err
+}
+
+// stableBlock is StableBlock plus the file references carried by the memories it
+// rendered, for the attachments block (see Compose).
+func (c *Composer) stableBlock(ctx context.Context) (string, int64, []refSite, error) {
 	db := c.st.DB()
+	var refs []refSite
 	rev, err := c.st.StableRev(ctx)
 	if err != nil {
-		return "", 0, err
+		return "", 0, nil, err
 	}
 	var b strings.Builder
 
@@ -162,7 +179,7 @@ func (c *Composer) StableBlock(ctx context.Context) (string, int64, error) {
 	// domain it's seeing and why; higher StickyPriority first, then name.
 	active, err := c.st.ListDomains(ctx, db, store.StatusActive)
 	if err != nil {
-		return "", rev, err
+		return "", rev, nil, err
 	}
 	var sticky []store.Domain
 	for _, d := range active {
@@ -179,7 +196,7 @@ func (c *Composer) StableBlock(ctx context.Context) (string, int64, error) {
 	for _, d := range sticky {
 		hooks, err := c.st.ListMemories(ctx, db, d.ID, store.StatusActive)
 		if err != nil {
-			return "", rev, err
+			return "", rev, nil, err
 		}
 		hooks = filterConfidence(hooks, c.opt.minConfidence)
 		if len(hooks) == 0 {
@@ -188,6 +205,7 @@ func (c *Composer) StableBlock(ctx context.Context) (string, int64, error) {
 		fmt.Fprintf(&b, "COGMEM domain %s is sticky:\n\n", d.Name)
 		for _, h := range hooks {
 			fmt.Fprintf(&b, "- %s%s\n", h.Text, originSuffix(h.Origin))
+			refs = collectRef(refs, memoryRef{memoryID: h.ID, text: h.Text, ref: h.FileRef})
 		}
 		b.WriteString("\n")
 	}
@@ -197,12 +215,15 @@ func (c *Composer) StableBlock(ctx context.Context) (string, int64, error) {
 	if c.opt.pendingSurface != PendingSurfaceExportOnly {
 		pend, err := c.st.ListPending(ctx, db, c.opt.pendingMax)
 		if err != nil {
-			return "", rev, err
+			return "", rev, nil, err
 		}
 		if fresh := c.unshownPending(pend); len(fresh) > 0 {
 			b.WriteString("## Pending (unconfirmed — do not act on as rules). Ask the user to confirm; on \"yes\" call cogmem_memory_confirm with the id, on \"no\" call cogmem_memory_retire.\n")
 			for _, h := range fresh {
+				// The reference is named but deliberately not loaded: an
+				// unconfirmed memory should not pull a document into every prompt.
 				fmt.Fprintf(&b, "- (%s) %s\n", h.ID, h.Text)
+				refs = collectRef(refs, memoryRef{memoryID: h.ID, text: h.Text, ref: h.FileRef, pending: true})
 			}
 			b.WriteString("\n")
 		}
@@ -227,16 +248,24 @@ func (c *Composer) StableBlock(ctx context.Context) (string, int64, error) {
 	if out != "" {
 		out = "# Learned Memory\n\n" + out
 	}
-	return out, rev, nil
+	return out, rev, refs, nil
 }
 
 // RoutedBlock renders the most-recently-active topic domain(s), up to TopKDomains
 // and within MaxChars.
 func (c *Composer) RoutedBlock(ctx context.Context, req RouteRequest) (RoutedResult, error) {
+	res, _, err := c.routedBlock(ctx, req)
+	return res, err
+}
+
+// routedBlock is RoutedBlock plus the file references carried by the memories it
+// rendered, for the attachments block (see Compose).
+func (c *Composer) routedBlock(ctx context.Context, req RouteRequest) (RoutedResult, []refSite, error) {
 	db := c.st.DB()
+	var refs []refSite
 	active, err := c.st.ListDomains(ctx, db, store.StatusActive)
 	if err != nil {
-		return RoutedResult{}, err
+		return RoutedResult{}, nil, err
 	}
 	var topics []store.Domain
 	for _, d := range active {
@@ -294,7 +323,7 @@ func (c *Composer) RoutedBlock(ctx context.Context, req RouteRequest) (RoutedRes
 		d := cand.d
 		hooks, err := c.st.ListMemories(ctx, db, d.ID, store.StatusActive)
 		if err != nil {
-			return RoutedResult{}, err
+			return RoutedResult{}, nil, err
 		}
 		hooks = filterConfidence(hooks, c.opt.minConfidence)
 		section := renderDomain(d, hooks)
@@ -302,6 +331,12 @@ func (c *Composer) RoutedBlock(ctx context.Context, req RouteRequest) (RoutedRes
 			break
 		}
 		b.WriteString(section)
+		// Only memories in a domain that actually made it into the block get
+		// their documents attached — a domain dropped by the char budget must not
+		// smuggle a 250 KB file into the prompt.
+		for _, h := range hooks {
+			refs = collectRef(refs, memoryRef{memoryID: h.ID, text: h.Text, ref: h.FileRef})
+		}
 		res.Loaded = append(res.Loaded, d.ID)
 		// Mark the domain active when it was loaded because it was genuinely
 		// relevant (a tool, keyword, or lexical match) — not when it was only
@@ -315,7 +350,44 @@ func (c *Composer) RoutedBlock(ctx context.Context, req RouteRequest) (RoutedRes
 		}
 	}
 	res.Text = strings.TrimRight(b.String(), "\n")
-	return res, nil
+	return res, refs, nil
+}
+
+// Result is one turn's composed memory: the cacheable stable block, the
+// per-turn routed block, and the attachments block holding the full contents of
+// any markdown files the rendered memories point at.
+type Result struct {
+	Stable      string
+	Rev         int64
+	Routed      string
+	Attachments string
+	Loaded      []string
+	Trace       []DomainSelection
+}
+
+// Compose builds all three blocks for one turn. It is the entry point the agent
+// wiring uses; StableBlock/RoutedBlock remain for callers that want one block.
+// Attachment loading happens once here, after both blocks are rendered, so a
+// file referenced by several in-context memories is injected exactly once.
+//
+// Block errors are returned, but a composed-so-far Result is still returned with
+// them: a failure to read one part of memory should degrade the prompt, not
+// blank it.
+func (c *Composer) Compose(ctx context.Context, req RouteRequest) (Result, error) {
+	var res Result
+	stable, rev, stableRefs, sErr := c.stableBlock(ctx)
+	res.Stable, res.Rev = stable, rev
+
+	routed, routedRefs, rErr := c.routedBlock(ctx, req)
+	res.Routed, res.Loaded, res.Trace = routed.Text, routed.Loaded, routed.Trace
+
+	// Sticky memories first: their documents get first claim on the shared budget.
+	res.Attachments = c.attachmentsBlock(append(stableRefs, routedRefs...))
+
+	if sErr != nil {
+		return res, sErr
+	}
+	return res, rErr
 }
 
 // candidate is one routed-block selection: a domain plus the signal that chose it.
