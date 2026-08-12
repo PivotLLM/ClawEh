@@ -41,7 +41,9 @@ func (globalAgentProvider) Available(cfg any) (bool, string) {
 const spawnToolDescription = "Spawn a subagent to handle a task. Use 'mode' to choose how it runs: " +
 	"'callback' (default) runs it in the background and notifies you when done with a pointer to a result file " +
 	"in your workspace (read it with your file tools, or poll agent_status); 'wait' runs it to completion and " +
-	"returns the result immediately. Callback mode requires 'name', a short identifier for the task."
+	"returns the result immediately. Callback mode requires 'name', a short identifier for the task. " +
+	"'media' attaches media:// refs (from '[attachment ref(s): …]' markers in the conversation) to the subagent's " +
+	"initial message — useful to hand an image you cannot view to a vision-capable agent or model for analysis."
 
 func spawnToolSchema() map[string]any {
 	return map[string]any{
@@ -67,6 +69,11 @@ func spawnToolSchema() map[string]any {
 			"model": map[string]any{
 				"type":        "string",
 				"description": "Optional model for the subagent to run, by its model name. Must be one of the configured models for the executing agent (yourself on a self-spawn, or the target agent). Omit to use that agent's default model. Useful to run a heavier model for a demanding subtask while you stay on a lighter one.",
+			},
+			"media": map[string]any{
+				"type":        "array",
+				"items":       map[string]any{"type": "string"},
+				"description": "Optional media:// refs (from '[attachment ref(s): …]' markers in the conversation) to attach to the subagent's initial message. Use with a vision-capable agent_id/model to have an image you cannot view analyzed for you.",
 			},
 		},
 		"required": []string{"task"},
@@ -117,6 +124,10 @@ func (globalAgentProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 				agentID, _ := call.Args["agent_id"].(string)
 				modeStr, _ := call.Args["mode"].(string)
 				model, _ := call.Args["model"].(string)
+				media, badMedia := parseMediaArg(call.Args["media"])
+				if badMedia != "" {
+					return &global.Result{IsError: true, ForLLM: badMedia}, nil
+				}
 
 				mode, onResult := resolveSpawnMode(modeStr, call)
 				return sp.Spawn(call.Ctx, global.SpawnRequest{
@@ -126,6 +137,7 @@ func (globalAgentProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 					Label:         name,
 					TargetAgentID: agentID,
 					Model:         model,
+					Media:         media,
 					Channel:       call.Channel,
 					ChatID:        call.ChatID,
 					OnResult:      onResult,
@@ -171,6 +183,28 @@ func (globalAgentProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 			},
 		},
 	}
+}
+
+// parseMediaArg converts the tool's "media" argument (a JSON array of strings)
+// into a ref slice. Returns a non-empty error string on malformed input or a
+// non-media:// entry so the model gets actionable feedback.
+func parseMediaArg(v any) ([]string, string) {
+	if v == nil {
+		return nil, ""
+	}
+	items, ok := v.([]any)
+	if !ok {
+		return nil, "media must be an array of media:// ref strings"
+	}
+	var out []string
+	for _, item := range items {
+		s, ok := item.(string)
+		if !ok || !strings.HasPrefix(s, "media://") {
+			return nil, fmt.Sprintf("invalid media entry %v: each entry must be a media:// ref (see '[attachment ref(s): …]' markers)", item)
+		}
+		out = append(out, s)
+	}
+	return out, ""
 }
 
 // resolveSpawnMode maps the tool's "mode" argument to a global.SpawnMode and, for

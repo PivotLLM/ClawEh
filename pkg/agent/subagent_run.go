@@ -31,13 +31,24 @@ import (
 //
 // Output is captured (SendResponse:false) and returned to the caller (the
 // SubagentManager stores it to a result file / fires the callback).
-func (al *AgentLoop) runSubagentTask(ctx context.Context, agentID, sessionKey, task, model string) (string, int, error) {
+func (al *AgentLoop) runSubagentTask(ctx context.Context, agentID, sessionKey, task, model string, media []string) (string, int, error) {
 	agent, ok := al.GetRegistry().GetAgent(agentID)
 	if !ok || agent == nil {
 		return "", 0, fmt.Errorf("subagent: agent %q not found", agentID)
 	}
 	if !routing.IsSubagentSessionKey(sessionKey) {
 		return "", 0, fmt.Errorf("subagent: %q is not a sub-agent session key", sessionKey)
+	}
+
+	// Validate attached media refs up front so a typo'd or expired ref fails the
+	// spawn loudly instead of the worker silently seeing nothing.
+	for _, ref := range media {
+		if al.mediaStore == nil {
+			return "", 0, fmt.Errorf("subagent: media refs passed but no media store is configured")
+		}
+		if _, err := al.mediaStore.Resolve(ref); err != nil {
+			return "", 0, fmt.Errorf("subagent: media ref %s not found (expired or invalid) — it cannot be attached", ref)
+		}
 	}
 
 	// Snapshot the agent's main-session memory into this sub-agent session's DB so
@@ -77,7 +88,7 @@ func (al *AgentLoop) runSubagentTask(ctx context.Context, agentID, sessionKey, t
 
 	logger.InfoCF("agent", "subagent.run.start", map[string]any{
 		"agent": agentID, "session_key": sessionKey, "model": model,
-		"task_len": len(task), "depth": toolsagents.SpawnDepth(ctx),
+		"task_len": len(task), "media": len(media), "depth": toolsagents.SpawnDepth(ctx),
 	})
 
 	var iterations int
@@ -86,6 +97,7 @@ func (al *AgentLoop) runSubagentTask(ctx context.Context, agentID, sessionKey, t
 		Channel:       "subagent",
 		ChatID:        sessionKey,
 		UserMessage:   task,
+		Media:         media,
 		SendResponse:  false,
 		IterationsOut: &iterations,
 	})
@@ -105,6 +117,7 @@ func (al *AgentLoop) runSubagentTask(ctx context.Context, agentID, sessionKey, t
 // its DB handles) and removes the ephemeral session DB files. Best-effort.
 func (al *AgentLoop) cleanupSubagentSession(agent *AgentInstance, sessionKey string) {
 	al.dropContextManager(agent, sessionKey)
+	al.releaseSessionPins(sessionKey)
 	base := cogmemstore.SanitizeSessionKey(sessionKey)
 	dir := cogmemstore.SessionDBPath(agent.Workspace, sessionKey)
 	sessionsDir := dir[:len(dir)-len(base)-len(".cogmem.db")]

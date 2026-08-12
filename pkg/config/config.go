@@ -771,8 +771,8 @@ type AgentDefaults struct {
 	// primary model (vision off): when the active model can't see images, they
 	// are dispatched to this model for a one-shot text description that is then
 	// injected so the active model still benefits from them. Unset = feature off
-	// (images are dropped, as before). VisionModelFallbacks are tried in order
-	// when the primary vision model fails.
+	// (images are dropped from dispatch, with a hidden-attachment note).
+	// VisionModelFallbacks are tried in order when the primary vision model fails.
 	VisionModel          string   `json:"vision_model,omitempty"          env:"CLAW_AGENTS_DEFAULTS_VISION_MODEL"`
 	VisionModelFallbacks []string `json:"vision_model_fallbacks,omitempty"`
 	// RequestTimeout is the global default request timeout (seconds) applied to

@@ -36,6 +36,20 @@ type MediaStore interface {
 	ReleaseAll(scope string) error
 }
 
+// RefPinner is an optional MediaStore capability: pin refs so TTL cleanup skips
+// them while at least one owner (a session key) holds the pin. Hosts recover it
+// from a MediaStore via type assertion.
+type RefPinner interface {
+	// Pin marks ref as pinned by owner. Unknown refs return an error.
+	Pin(ref, owner string) error
+	// SetPins reconciles owner's pin set to exactly refs: new refs are pinned
+	// (unknown ones skipped — they may have already expired), refs no longer
+	// present are unpinned and become subject to normal TTL cleanup.
+	SetPins(owner string, refs []string)
+	// ReleasePins drops all pins held by owner.
+	ReleasePins(owner string)
+}
+
 // mediaEntry holds the path and metadata for a stored media file.
 type mediaEntry struct {
 	path     string
@@ -58,6 +72,10 @@ type FileMediaStore struct {
 	refs        map[string]mediaEntry
 	scopeToRefs map[string]map[string]struct{}
 	refToScope  map[string]string
+	// Pin bookkeeping (see RefPinner): a ref is exempt from CleanExpired while
+	// at least one owner (session key) pins it. Lazily initialized.
+	pinOwners map[string]map[string]struct{} // ref → owners
+	ownerPins map[string]map[string]struct{} // owner → refs
 
 	cleanerCfg MediaCleanerConfig
 	stop       chan struct{}
@@ -153,6 +171,9 @@ func (s *FileMediaStore) ReleaseAll(scope string) error {
 		}
 		delete(s.refs, ref)
 		delete(s.refToScope, ref)
+		for owner := range s.pinOwners[ref] {
+			s.unpinLocked(ref, owner)
+		}
 	}
 	delete(s.scopeToRefs, scope)
 	s.mu.Unlock()
@@ -168,6 +189,86 @@ func (s *FileMediaStore) ReleaseAll(scope string) error {
 	}
 
 	return nil
+}
+
+// Compile-time check: FileMediaStore provides the optional pin capability.
+var _ RefPinner = (*FileMediaStore)(nil)
+
+// pinLocked records owner's pin on ref. Caller holds s.mu.
+func (s *FileMediaStore) pinLocked(ref, owner string) {
+	if s.pinOwners == nil {
+		s.pinOwners = make(map[string]map[string]struct{})
+	}
+	if s.ownerPins == nil {
+		s.ownerPins = make(map[string]map[string]struct{})
+	}
+	if s.pinOwners[ref] == nil {
+		s.pinOwners[ref] = make(map[string]struct{})
+	}
+	s.pinOwners[ref][owner] = struct{}{}
+	if s.ownerPins[owner] == nil {
+		s.ownerPins[owner] = make(map[string]struct{})
+	}
+	s.ownerPins[owner][ref] = struct{}{}
+}
+
+// unpinLocked removes owner's pin on ref. Caller holds s.mu.
+func (s *FileMediaStore) unpinLocked(ref, owner string) {
+	if owners, ok := s.pinOwners[ref]; ok {
+		delete(owners, owner)
+		if len(owners) == 0 {
+			delete(s.pinOwners, ref)
+		}
+	}
+	if refs, ok := s.ownerPins[owner]; ok {
+		delete(refs, ref)
+		if len(refs) == 0 {
+			delete(s.ownerPins, owner)
+		}
+	}
+}
+
+// Pin implements RefPinner. Unknown refs return an error so callers get loud
+// feedback for typos/expired refs.
+func (s *FileMediaStore) Pin(ref, owner string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.refs[ref]; !ok {
+		return fmt.Errorf("media store: unknown ref: %s", ref)
+	}
+	s.pinLocked(ref, owner)
+	return nil
+}
+
+// SetPins implements RefPinner: reconcile owner's pins to exactly refs.
+// Unknown refs are skipped (they may have expired before pinning).
+func (s *FileMediaStore) SetPins(owner string, refs []string) {
+	want := make(map[string]struct{}, len(refs))
+	for _, r := range refs {
+		want[r] = struct{}{}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for ref := range s.ownerPins[owner] {
+		if _, keep := want[ref]; !keep {
+			s.unpinLocked(ref, owner)
+		}
+	}
+	for ref := range want {
+		if _, ok := s.refs[ref]; ok {
+			s.pinLocked(ref, owner)
+		}
+	}
+}
+
+// ReleasePins implements RefPinner: drop all pins held by owner. Unpinned
+// entries past MaxAge are removed by the next cleanup sweep.
+func (s *FileMediaStore) ReleasePins(owner string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for ref := range s.ownerPins[owner] {
+		s.unpinLocked(ref, owner)
+	}
 }
 
 // CleanExpired removes all entries older than MaxAge.
@@ -190,6 +291,11 @@ func (s *FileMediaStore) CleanExpired() int {
 
 	for ref, entry := range s.refs {
 		if entry.storedAt.Before(cutoff) {
+			// Pinned refs are referenced by a live session's history; skip them
+			// until every owner releases the pin.
+			if len(s.pinOwners[ref]) > 0 {
+				continue
+			}
 			expired = append(expired, expiredEntry{ref: ref, path: entry.path})
 
 			if scope, ok := s.refToScope[ref]; ok {

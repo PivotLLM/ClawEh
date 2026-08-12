@@ -42,8 +42,9 @@ type SpawnRequest struct {
 	Label         string // optional display label (used by wait mode)
 	TargetAgentID string // "" ⇒ self-spawn (caller's own agent)
 	Model         string // optional model (alias) for the sub-agent; must be one of the executing agent's configured models. "" ⇒ that agent's default.
-	Channel       string // originating channel (for attribution / callback routing)
-	ChatID        string // originating chat id
+	Media         []string // optional media:// refs attached to the worker's initial message (e.g. hand an image to a vision-capable agent)
+	Channel       string   // originating channel (for attribution / callback routing)
+	ChatID        string   // originating chat id
 	// OnResult receives the compact completion pointer for SpawnCallback. Ignored
 	// for SpawnAndWait. The host supplies it; a nil OnResult is fine — the worker
 	// still runs and is tracked, the push is simply skipped (the result remains in

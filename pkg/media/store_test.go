@@ -528,3 +528,144 @@ func TestRefToScopeConsistency(t *testing.T) {
 		t.Error("refToScope should still contain ref3")
 	}
 }
+
+func TestPinExemptsFromCleanExpired(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now()
+	store := NewFileMediaStoreWithCleanup(MediaCleanerConfig{
+		Enabled: true,
+		MaxAge:  10 * time.Minute,
+	})
+
+	store.nowFunc = func() time.Time { return now.Add(-20 * time.Minute) }
+	pinnedPath := createTempFile(t, dir, "pinned.jpg")
+	pinnedRef, err := store.Store(pinnedPath, MediaMeta{Source: "test"}, "scope1")
+	if err != nil {
+		t.Fatalf("Store failed: %v", err)
+	}
+	unpinnedPath := createTempFile(t, dir, "unpinned.jpg")
+	unpinnedRef, err := store.Store(unpinnedPath, MediaMeta{Source: "test"}, "scope1")
+	if err != nil {
+		t.Fatalf("Store failed: %v", err)
+	}
+
+	if err := store.Pin(pinnedRef, "agent:alice:main"); err != nil {
+		t.Fatalf("Pin failed: %v", err)
+	}
+
+	store.nowFunc = func() time.Time { return now }
+	if removed := store.CleanExpired(); removed != 1 {
+		t.Errorf("CleanExpired removed %d entries, want 1", removed)
+	}
+	if _, err := store.Resolve(pinnedRef); err != nil {
+		t.Errorf("pinned ref should survive cleanup: %v", err)
+	}
+	if _, err := os.Stat(pinnedPath); err != nil {
+		t.Errorf("pinned file should survive cleanup: %v", err)
+	}
+	if _, err := store.Resolve(unpinnedRef); err == nil {
+		t.Error("unpinned expired ref should have been removed")
+	}
+
+	// Releasing the pin makes the entry expire on the next sweep.
+	store.ReleasePins("agent:alice:main")
+	if removed := store.CleanExpired(); removed != 1 {
+		t.Errorf("CleanExpired after release removed %d entries, want 1", removed)
+	}
+	if _, err := store.Resolve(pinnedRef); err == nil {
+		t.Error("ref should be removed after its pin is released")
+	}
+}
+
+func TestPinUnknownRefErrors(t *testing.T) {
+	store := NewFileMediaStore()
+	if err := store.Pin("media://does-not-exist", "agent:alice:main"); err == nil {
+		t.Error("Pin of unknown ref should return an error")
+	}
+}
+
+func TestPinMultipleOwners(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now()
+	store := NewFileMediaStoreWithCleanup(MediaCleanerConfig{
+		Enabled: true,
+		MaxAge:  10 * time.Minute,
+	})
+	store.nowFunc = func() time.Time { return now.Add(-20 * time.Minute) }
+	path := createTempFile(t, dir, "shared.jpg")
+	ref, err := store.Store(path, MediaMeta{Source: "test"}, "scope1")
+	if err != nil {
+		t.Fatalf("Store failed: %v", err)
+	}
+	if err := store.Pin(ref, "session-a"); err != nil {
+		t.Fatalf("Pin failed: %v", err)
+	}
+	if err := store.Pin(ref, "session-b"); err != nil {
+		t.Fatalf("Pin failed: %v", err)
+	}
+
+	store.nowFunc = func() time.Time { return now }
+	store.ReleasePins("session-a")
+	if removed := store.CleanExpired(); removed != 0 {
+		t.Errorf("ref pinned by session-b should survive; removed %d", removed)
+	}
+	store.ReleasePins("session-b")
+	if removed := store.CleanExpired(); removed != 1 {
+		t.Errorf("ref should expire after all pins released; removed %d", removed)
+	}
+}
+
+func TestSetPinsReconciles(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now()
+	store := NewFileMediaStoreWithCleanup(MediaCleanerConfig{
+		Enabled: true,
+		MaxAge:  10 * time.Minute,
+	})
+	store.nowFunc = func() time.Time { return now.Add(-20 * time.Minute) }
+	refA, err := store.Store(createTempFile(t, dir, "a.jpg"), MediaMeta{Source: "test"}, "scope1")
+	if err != nil {
+		t.Fatalf("Store failed: %v", err)
+	}
+	refB, err := store.Store(createTempFile(t, dir, "b.jpg"), MediaMeta{Source: "test"}, "scope1")
+	if err != nil {
+		t.Fatalf("Store failed: %v", err)
+	}
+
+	const owner = "agent:alice:main"
+	store.SetPins(owner, []string{refA, refB, "media://already-gone"})
+	store.nowFunc = func() time.Time { return now }
+	if removed := store.CleanExpired(); removed != 0 {
+		t.Errorf("both pinned refs should survive; removed %d", removed)
+	}
+
+	// Reconcile down to refA only: refB becomes reapable.
+	store.SetPins(owner, []string{refA})
+	if removed := store.CleanExpired(); removed != 1 {
+		t.Errorf("unpinned refB should be removed; removed %d", removed)
+	}
+	if _, err := store.Resolve(refA); err != nil {
+		t.Errorf("refA should still resolve: %v", err)
+	}
+	if _, err := store.Resolve(refB); err == nil {
+		t.Error("refB should have been removed")
+	}
+}
+
+func TestReleaseAllClearsPins(t *testing.T) {
+	dir := t.TempDir()
+	store := NewFileMediaStore()
+	ref, err := store.Store(createTempFile(t, dir, "c.jpg"), MediaMeta{Source: "test"}, "scope1")
+	if err != nil {
+		t.Fatalf("Store failed: %v", err)
+	}
+	if err := store.Pin(ref, "session-a"); err != nil {
+		t.Fatalf("Pin failed: %v", err)
+	}
+	if err := store.ReleaseAll("scope1"); err != nil {
+		t.Fatalf("ReleaseAll failed: %v", err)
+	}
+	if len(store.pinOwners) != 0 || len(store.ownerPins) != 0 {
+		t.Errorf("pin bookkeeping should be empty after ReleaseAll; got %v / %v", store.pinOwners, store.ownerPins)
+	}
+}

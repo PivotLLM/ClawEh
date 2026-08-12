@@ -64,7 +64,8 @@ func (al *AgentLoop) buildVisionLLMClient(cfg *config.Config, agent *AgentInstan
 // AgentDefaults.VisionModel + VisionModelFallbacks and stores it on the
 // instance. Called once per agent from registerRuntimeTools (initial construction
 // and config reload). No configured vision model leaves VisionClients empty,
-// which keeps the feature off (images are dropped, as before).
+// which keeps the feature off (images are dropped from dispatch, with a
+// hidden-attachment note from messagesForModel).
 func (al *AgentLoop) wireVisionClients(cfg *config.Config, agent *AgentInstance) {
 	names := resolveVisionModelChain(cfg.Agents.Defaults.VisionModel, cfg.Agents.Defaults.VisionModelFallbacks)
 	var clients []llmcontext.LLMClient

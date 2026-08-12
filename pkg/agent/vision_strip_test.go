@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/PivotLLM/ClawEh/pkg/config"
@@ -51,9 +52,13 @@ func TestMessagesForModel_NonVisionStripsImagesWithoutMutating(t *testing.T) {
 		if out[1].Media != nil {
 			t.Errorf("%s: expected images stripped, got Media=%v", model, out[1].Media)
 		}
-		// Text (incl. the [Image: …] marker) is preserved; only bytes are dropped.
-		if out[1].Content != "[Image: image/png]" {
+		// Text (incl. the [Image: …] marker) is preserved and a hidden-attachment
+		// note is appended so the model knows something was stripped.
+		if !strings.HasPrefix(out[1].Content, "[Image: image/png]") {
 			t.Errorf("%s: text should be preserved, got %q", model, out[1].Content)
+		}
+		if !strings.Contains(out[1].Content, "1 attachment(s) on this message are hidden") {
+			t.Errorf("%s: expected hidden-attachment note, got %q", model, out[1].Content)
 		}
 		// The caller's history must not be mutated: a later vision turn still sees it.
 		if len(msgs[1].Media) != 1 {
