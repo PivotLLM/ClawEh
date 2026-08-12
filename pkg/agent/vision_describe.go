@@ -103,7 +103,10 @@ func (al *AgentLoop) modelHasVision(modelKey string) bool {
 // visionDescribeSystemPrompt instructs the side-model to produce a description a
 // text-only model can consume.
 const visionDescribeSystemPrompt = "You are a vision assistant for a text-only model. " +
-	"Describe the following image(s) accurately and concisely. " +
+	"Describe the following image(s) accurately. " +
+	"If the image contains text (a screenshot, document, sign, code, error message), " +
+	"transcribe the text verbatim and completely — the text content is more important " +
+	"than visual description. Otherwise describe the visual content concisely. " +
 	"If a focus is given, prioritize it."
 
 // describeImages dispatches the given image data URIs to the agent's vision
@@ -117,7 +120,7 @@ func (al *AgentLoop) describeImages(ctx context.Context, agent *AgentInstance, i
 		return "", false
 	}
 
-	userContent := "Describe the image(s)."
+	userContent := "Describe the image(s). Transcribe any text in them verbatim."
 	if f := strings.TrimSpace(focus); f != "" {
 		userContent = f
 	}
