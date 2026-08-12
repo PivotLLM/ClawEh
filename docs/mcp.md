@@ -74,9 +74,12 @@ at.
 - Issuance: `Issue()` mints per-session tokens; `Register()` pre-mints a known
   token (used for tests); `RegisterService()` registers a long-lived per-agent
   **service token** for the `/mcp` bearer endpoint — the natural fit for "one
-  identity per connection" — bound to a dedicated headless `agent:<id>:service`
-  session. See [service-tokens.md](service-tokens.md). For a `probe` run, register
-  a known token and hand it to `probe` as the bearer.
+  identity per connection". Its session follows `session_scope`: the agent's main
+  session under the default `unified` (one agent, one conversation, one memory —
+  so the token carries the agent's privileges), a dedicated headless
+  `agent:<id>:service` session under an isolating mode. See
+  [service-tokens.md](service-tokens.md). For a `probe` run, register a known
+  token and hand it to `probe` as the bearer.
 - Cross-agent protection still applies: a token that resolves to one agent cannot
   act as another, on either endpoint.
 

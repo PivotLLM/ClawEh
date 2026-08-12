@@ -37,6 +37,7 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/global"
 	"github.com/PivotLLM/ClawEh/pkg/logger"
 	"github.com/PivotLLM/ClawEh/pkg/mcpserver/acl"
+	"github.com/PivotLLM/ClawEh/pkg/routing"
 	"github.com/PivotLLM/ClawEh/pkg/tools"
 	"github.com/mark3labs/mcp-go/server"
 )
@@ -202,6 +203,14 @@ func WithMessageBus(b *bus.MessageBus) Option {
 // the notifier returns "", nothing is published.
 func WithToolActivityNotifier(n ToolActivityNotifier) Option {
 	return func(m *MCPServer) { m.toolActivity = n }
+}
+
+// WithSessionMode tells the server which session scope is configured. Under the
+// unified default a long-lived service token operates on the agent's MAIN
+// session — one agent, one conversation, one memory, whatever is driving it —
+// rather than on a headless session of its own. See docs/service-tokens.md.
+func WithSessionMode(mode string) Option {
+	return func(m *MCPServer) { m.sessionTokens.setSessionMode(routing.SessionScope(mode)) }
 }
 
 // WithACLPolicy installs a per-agent ACL policy consulted on every

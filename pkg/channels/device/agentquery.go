@@ -27,6 +27,10 @@ type AgentQuerier interface {
 	// DefaultAgentID returns the id of the agent that handles turns when a client
 	// does not select one (used to build a per-device session key for node clients).
 	DefaultAgentID() string
+	// SessionMode returns the configured session mode ("unified", "per-user", …).
+	// Under unified, device turns join the selected agent's main conversation
+	// instead of getting a device-scoped session of their own.
+	SessionMode() string
 	// History returns the stored transcript for a session key, oldest first.
 	History(sessionKey string) []DeviceHistoryMessage
 }

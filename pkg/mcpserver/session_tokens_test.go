@@ -8,17 +8,20 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/PivotLLM/ClawEh/pkg/routing"
 	"github.com/PivotLLM/ClawEh/pkg/tools"
 )
 
 // --- sessionTokenStore unit tests ---
 
-// TestRegisterService_BindsHeadlessServiceSession verifies a service token
-// resolves to the agent's dedicated service session (not its conversation
-// session), and that normal session activity on the main session does not rotate
-// or disturb it.
-func TestRegisterService_BindsHeadlessServiceSession(t *testing.T) {
-	s := newSessionTokenStore()
+// TestRegisterService_UnifiedBindsMainSession verifies the default (unified)
+// contract: a service token drives the agent's MAIN session, so an external
+// integration reads and writes the same conversation, tools, and memory as every
+// other channel. One agent, one session — isolation is achieved with a separate
+// agent, not a separate door.
+func TestRegisterService_UnifiedBindsMainSession(t *testing.T) {
+	s := newSessionTokenStore() // zero mode == unified
+
 	s.RegisterService("SSTservice", "alice", "/ws/alice/sessions")
 
 	rec, ok := s.Resolve("SSTservice")
@@ -28,17 +31,94 @@ func TestRegisterService_BindsHeadlessServiceSession(t *testing.T) {
 	if rec.agentID != "alice" {
 		t.Errorf("agentID = %q, want alice", rec.agentID)
 	}
+	if rec.sessionKey != "agent:alice:main" {
+		t.Errorf("sessionKey = %q, want agent:alice:main", rec.sessionKey)
+	}
+}
+
+// TestRegisterService_IsolatingModeKeepsHeadlessSession verifies that when
+// sessions are NOT unified, a service token keeps its dedicated headless session
+// and cannot reach the agent's conversation.
+func TestRegisterService_IsolatingModeKeepsHeadlessSession(t *testing.T) {
+	s := newSessionTokenStore()
+	s.setSessionMode(routing.SessionScopePerUser)
+
+	s.RegisterService("SSTservice", "alice", "/ws/alice/sessions")
+
+	rec, ok := s.Resolve("SSTservice")
+	if !ok {
+		t.Fatal("service token did not resolve")
+	}
 	if rec.sessionKey != "agent:alice:service" {
 		t.Errorf("sessionKey = %q, want agent:alice:service", rec.sessionKey)
 	}
 	if rec.channel != "" || rec.chatID != "" {
 		t.Errorf("service session must be headless, got channel=%q chatID=%q", rec.channel, rec.chatID)
 	}
+}
 
-	// Conversation activity on the MAIN session must not touch the service token.
-	s.Issue("alice", "agent:alice:main", "/ws/alice/sessions")
+// TestServiceAndConversationTokensCoexist is the security-critical property of
+// binding a service token to the main session: the two credentials name one
+// session but stay distinct. Issuing the conversation token must not hand back
+// the long-lived service token (which would print a standing bearer secret into
+// the agent's system prompt), and neither may revoke the other.
+func TestServiceAndConversationTokensCoexist(t *testing.T) {
+	s := newSessionTokenStore()
+
+	s.RegisterService("SSTservice", "alice", "/ws/alice/sessions")
+	convTok := s.Issue("alice", "agent:alice:main", "/ws/alice/sessions")
+
+	if convTok == "SSTservice" {
+		t.Fatal("Issue returned the long-lived service token; it would leak into the system prompt")
+	}
+	if convTok == "" {
+		t.Fatal("no conversation token issued for the main session")
+	}
 	if _, ok := s.Resolve("SSTservice"); !ok {
-		t.Error("service token was disturbed by main-session activity")
+		t.Error("service token was revoked by conversation-token issuance")
+	}
+	if _, ok := s.Resolve(convTok); !ok {
+		t.Error("conversation token did not resolve")
+	}
+
+	// Both must land on the same session — that is the point of unified.
+	svc, _ := s.Resolve("SSTservice")
+	conv, _ := s.Resolve(convTok)
+	if svc.sessionKey != conv.sessionKey {
+		t.Errorf("service session %q != conversation session %q", svc.sessionKey, conv.sessionKey)
+	}
+
+	// Rotation of the conversation token leaves the service token alone.
+	convTok2 := s.Issue("alice", "agent:alice:main", "/ws/alice/sessions")
+	if _, ok := s.Resolve("SSTservice"); !ok {
+		t.Error("service token was disturbed by conversation-token rotation")
+	}
+	if _, ok := s.Resolve(convTok2); !ok {
+		t.Error("rotated conversation token did not resolve")
+	}
+
+	// Session eviction/clear revokes the conversation token only: the service
+	// token is immune to eviction by construction.
+	s.Revoke("agent:alice:main")
+	if _, ok := s.Resolve("SSTservice"); !ok {
+		t.Error("service token must survive eviction of the conversation session")
+	}
+}
+
+// A service token is dropped when its agent is removed.
+func TestRevokeAgentDropsServiceToken(t *testing.T) {
+	s := newSessionTokenStore()
+	s.RegisterService("SSTservice", "alice", "/ws/alice/sessions")
+
+	s.RevokeAgent("alice")
+
+	if _, ok := s.Resolve("SSTservice"); ok {
+		t.Error("service token should be revoked with its agent")
+	}
+	// The index must be clean too: a re-registered token still resolves.
+	s.RegisterService("SSTagain", "alice", "/ws/alice/sessions")
+	if _, ok := s.Resolve("SSTagain"); !ok {
+		t.Error("service token could not be re-registered after agent removal")
 	}
 }
 
@@ -53,7 +133,7 @@ func TestRegisterService_NotRotated(t *testing.T) {
 		t.Error("old service token should be replaced on re-register")
 	}
 	rec, ok := s.Resolve("SSTtwo")
-	if !ok || rec.sessionKey != "agent:alice:service" {
+	if !ok || rec.sessionKey != "agent:alice:main" {
 		t.Errorf("new service token missing or wrong session: %+v ok=%v", rec, ok)
 	}
 }

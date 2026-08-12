@@ -204,9 +204,10 @@ its speech pipeline) and **complete the turn** on `stream:"lifecycle"` with `dat
 - Node clients like the R1 render this as the displayed conversation while separately speaking
   the `agent` `assistant` text — so both families are emitted every turn (see emission order).
 
-## Agent selection & session isolation
+## Agent selection & session scope
 
-Operator clients can pick which agent handles a turn and keep separate conversations:
+A client picks **which agent** handles a turn; the configured `session.session_scope`
+decides **which conversation** that turn joins. The two are independent.
 
 - **`agents.list`** returns every registered agent as `{id, name}` plus `defaultId`/`mainKey`.
   Agent ids are lowercased (`Bob` → `bob`). When an agent has no configured name we fall
@@ -214,19 +215,26 @@ Operator clients can pick which agent handles a turn and keep separate conversat
   name-less agent would otherwise never appear in the picker.
 - The client encodes the selected agent as the **2nd segment of the session key**:
   `agent:<selectedId>:<peer>:<profile>` (the clawtotalk app uses `agent:<id>:clawtotalk:primary`,
-  and the sentinel `main` when nothing is selected).
-- On `chat.send`, the gateway derives the **session scope key** and the **agent**:
-  - Operator client (key starts with `agent:`): the key is honored **verbatim** as the
-    conversation session — so each profile is isolated and `chat.history` for that key reads
-    the same conversation. The agent is the 2nd segment (via `preresolved_agent_id`); `main`
-    or an unknown id falls back to the default agent.
-  - Node client (e.g. the R1 sends `main`): isolated **per device** under the assigned agent
-    (the per-device assignment, else the default), `agent:<agentId>:device:<deviceId>`, so two
-    devices never share one conversation.
-- Mechanism: the device channel passes the resolved key as `metadata["session_key"]` (honored
-  by `BaseChannel.HandleMessage` → `bus.InboundMessage.SessionKey`) and the agent as
-  `metadata["preresolved_agent_id"]`. The agent loop's `resolveScopeKey` honors any
-  `agent:`-prefixed `SessionKey`; routing logs `matched_by=preresolved` for the chosen agent.
+  and the sentinel `main` when nothing is selected). A node client (the R1) has no picker and
+  sends `main`; its agent comes from the per-device assignment, else the gateway default.
+- **`unified` (the default): the device joins the selected agent's MAIN conversation**,
+  `agent:<agentId>:main`. There is no device-scoped or profile-scoped session — the R1, the
+  phone app, Slack, and Telegram are one assistant with one history, one tool set, and one
+  memory. Tell her something on the R1 and she knows it in Slack. **Isolation is a property
+  of the agent**: to keep a device separate, point it at a different agent (`/agent <name>`
+  or the WebUI Devices page) rather than expecting the transport to isolate it.
+- **Isolating modes (`per-user`, `per-platform`, `per-account`)** keep the previous behavior:
+  an operator client's key is honored **verbatim** (one conversation per profile), and a node
+  client gets `agent:<agentId>:device:<deviceId>` so two devices never share a transcript.
+- `chat.history` resolves through the **same** rule as `chat.send`, so a client always reads
+  the transcript its turns are written to — under `unified` a client asking for its own
+  profile key is answered with the agent's main conversation.
+- Mechanism: `Server.sessionScopeKeyFor` → `routing.ResolveDeviceSessionKey(mode, requested,
+  fallbackAgent, deviceID)`. The device channel passes the resolved key as
+  `metadata["session_key"]` (honored by `BaseChannel.HandleMessage` →
+  `bus.InboundMessage.SessionKey`) and the agent as `metadata["preresolved_agent_id"]`. The
+  agent loop's `resolveScopeKey` honors any `agent:`-prefixed `SessionKey`; routing logs
+  `matched_by=preresolved` for the chosen agent.
 
 ### `/agent` command (node clients switch assistants)
 
@@ -236,7 +244,7 @@ command (`handleChatSend` intercepts it and replies as a normal turn — no agen
 - **`/agent`** (or `/agent list`) — lists configured assistants, marking the current one.
 - **`/agent <name-or-id>`** — switches this device's assigned assistant (case-insensitive match
   on id or name). Persists via `store.SetDeviceAgent` to the `paired_devices.agent_id` column
-  (`~/.claw/state/gateway.db`), the same field `sessionScopeKey` reads — so the switch takes
+  (`~/.claw/state/gateway.db`), the same field session-scope resolution reads — so the switch takes
   effect on the **next** turn and **survives restarts / reconnects**.
 - **`/agent default`** (or `reset`) — clears the assignment back to the gateway default.
 - **`/help`** — lists the available device commands.

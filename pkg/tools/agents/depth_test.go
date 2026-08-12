@@ -78,6 +78,7 @@ func TestDepthPropagation_AcrossAsyncDetach(t *testing.T) {
 	var mu sync.Mutex
 	var gotDepth int
 	done := make(chan struct{})
+	finished := make(chan struct{})
 
 	mgr := NewSubagentManager(SubagentManagerConfig{
 		Workspace: t.TempDir(),
@@ -97,6 +98,7 @@ func TestDepthPropagation_AcrossAsyncDetach(t *testing.T) {
 	// which this fake runFull stands in for).
 	if _, err := sp.Spawn(WithSpawnDepth(context.Background(), 2), global.SpawnRequest{
 		Mode: global.SpawnCallback, Name: "n", Task: "t",
+		OnResult: func(*global.Result) { close(finished) },
 	}); err != nil {
 		t.Fatalf("Spawn: %v", err)
 	}
@@ -105,6 +107,13 @@ func TestDepthPropagation_AcrossAsyncDetach(t *testing.T) {
 	case <-done:
 	case <-time.After(3 * time.Second):
 		t.Fatal("runFull was not invoked")
+	}
+	// Wait for the detached worker to finalize (results file written) before the
+	// test returns, or t.TempDir cleanup races with those writes.
+	select {
+	case <-finished:
+	case <-time.After(3 * time.Second):
+		t.Fatal("task did not finalize")
 	}
 	mu.Lock()
 	d := gotDepth

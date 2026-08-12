@@ -43,13 +43,76 @@ func BuildAgentMainSessionKey(agentID string) string {
 }
 
 // BuildAgentServiceSessionKey returns "agent:<agentId>:service" — the dedicated,
-// headless session a long-lived MCP service token resolves to. It is a primary
-// session key (not a subagent key), so it does not count against the sub-agent
-// spawn-depth bound, and it is distinct from any conversation session, so
-// service-token callers cannot read the agent's real conversations. See
-// docs/service-tokens.md.
+// headless session a long-lived MCP service token resolves to when sessions are
+// NOT unified. It is a primary session key (not a subagent key), so it does not
+// count against the sub-agent spawn-depth bound. See docs/service-tokens.md.
 func BuildAgentServiceSessionKey(agentID string) string {
 	return fmt.Sprintf("agent:%s:service", NormalizeAgentID(agentID))
+}
+
+// IsUnified reports whether a session mode collapses every surface onto the
+// agent's main session. The empty mode is unified — it is the default everywhere
+// a mode is read, and an unset config must not silently isolate anything.
+func IsUnified(mode SessionScope) bool {
+	return mode == "" || mode == SessionScopeUnified
+}
+
+// ResolveServiceSessionKey returns the session a long-lived MCP service token
+// operates on. Under unified sessions that is the agent's main conversation:
+// unified means one agent with one conversation, one tool surface, and one
+// memory, whatever is driving it. Under an isolating mode it is the dedicated
+// headless service session.
+//
+// Isolation is a property of the AGENT, not of the door someone came through —
+// to keep an integration separate, give it its own agent.
+func ResolveServiceSessionKey(mode SessionScope, agentID string) string {
+	if IsUnified(mode) {
+		return BuildAgentMainSessionKey(agentID)
+	}
+	return BuildAgentServiceSessionKey(agentID)
+}
+
+// ResolveDeviceSessionKey returns the conversation a device-gateway turn runs in.
+//
+// Under unified sessions every device shares the selected agent's main
+// conversation — the R1, the phone app, Slack, and Telegram are the same
+// assistant with the same history and the same memory. Under an isolating mode
+// each device keeps its own conversation (two devices never share a transcript).
+//
+// requested is the client-supplied key: operator clients pick their own agent
+// (and, when isolating, their own profile), so an agent-scoped request selects
+// the agent. Node clients send the "main" sentinel and fall back to fallbackAgent
+// (their per-device assignment, else the gateway default).
+func ResolveDeviceSessionKey(mode SessionScope, requested, fallbackAgent, deviceID string) string {
+	agentID := AgentIDFromSessionKey(requested)
+	if agentID == "" {
+		agentID = fallbackAgent
+	}
+	if IsUnified(mode) {
+		return BuildAgentMainSessionKey(agentID)
+	}
+	// Honor an operator client's own key verbatim so its chat.history reads the
+	// same profile-scoped conversation it writes.
+	if AgentIDFromSessionKey(requested) != "" {
+		return requested
+	}
+	return fmt.Sprintf("agent:%s:device:%s", NormalizeAgentID(agentID), deviceID)
+}
+
+// AgentIDFromSessionKey extracts the agent id from an agent-scoped session key
+// ("agent:<id>:..."). It returns "" for the bare "main" sentinel a node client
+// sends and for any key that is not agent-scoped, so the caller falls back to
+// its own default.
+func AgentIDFromSessionKey(sessionKey string) string {
+	parts := strings.Split(strings.TrimSpace(sessionKey), ":")
+	if len(parts) < 2 || parts[0] != "agent" {
+		return ""
+	}
+	id := strings.TrimSpace(parts[1])
+	if id == "" || id == DefaultMainKey {
+		return ""
+	}
+	return id
 }
 
 // BuildAgentPeerSessionKey constructs a session key based on agent, channel, peer, and DM scope.

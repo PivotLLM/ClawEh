@@ -272,12 +272,20 @@ ClawEh supports a wide range of LLM providers. It is your responsibility to ensu
 
 | Mode | Memory per | Description |
 |---|---|---|
-| `unified` | Agent | One shared memory for the entire agent, across all users, channels, and platforms. |
+| `unified` | Agent | One shared session for the entire agent, across every user, channel, platform, device, and integration. |
 | `per-user` | Person | Each person gets their own private memory. Recognises the same person across platforms if `identity_links` are configured; otherwise each platform ID is a separate person |
 | `per-platform` | Person × platform | Each person has a separate memory per platform. Slack and Telegram are independent conversations even for the same person |
 | `per-account` | Person × platform × bot | Like `per-platform`, but also separates by bot account. Relevant only when multiple bots on the same platform are routed to the same agent |
 
 The default is `unified`.
+
+**`unified` means unified — every channel, without exception**
+
+In `unified` mode an agent has exactly one session, and everything that reaches that agent joins it: chat channels (Telegram, Slack, Discord, the WebUI), paired hardware and voice clients on the device gateway (the Rabbit R1, the Claw to Talk app), and external integrations holding a long-lived MCP service token. All of them share **one conversation, one tool set, and one memory**. Tell Amber from your R1 that dinner is at six, ask her from Slack, and she answers six.
+
+There is no per-channel or per-device carve-out, and no way to make one channel private by connecting through a different door. **If you want isolation, create a separate agent** and control what that agent can reach — its own workspace, its own tools, its own bindings. If an agent should not accumulate memory at all, disable cognitive memory for it (`cogmem: false`). Those are the supported ways to separate things; the transport you happen to speak through is not one.
+
+The isolating modes below divide an agent's sessions by person, platform, or account. They apply to chat channels; the device gateway keeps a per-device conversation and a service token keeps its own headless session under those modes, so two devices never share a transcript.
 
 **Choosing a mode**
 
@@ -486,7 +494,7 @@ claw token revoke <agent>   # remove it
 claw token list             # list agents that have one (tokens are not shown)
 ```
 
-Use the token as an `Authorization: Bearer` header on `/mcp`, or as the `session_token` parameter on `/internal` — both resolve identically. A service token is **headless and isolated**: it resolves to a dedicated `agent:<id>:service` session, so it cannot read the agent's real conversations, and a tool's user-facing output is dropped (only the model-facing result returns to the caller). Tokens are stored at `$CLAW_HOME/state/service-tokens.json` (`0o600`); a running gateway picks up the change automatically within a few seconds. See [docs/service-tokens.md](docs/service-tokens.md).
+Use the token as an `Authorization: Bearer` header on `/mcp`, or as the `session_token` parameter on `/internal` — both resolve identically. A service token is **headless**: a tool's user-facing output is dropped and only the model-facing result returns to the caller. Which session it drives follows `session_scope` like every other surface — under the default `unified` it drives the agent's **main** session, so the integration shares the agent's conversation, tools, and memory, and **the token is as privileged as the agent itself**. Under an isolating mode it gets a dedicated `agent:<id>:service` session that cannot read the agent's conversations. If an integration must be walled off, give it its own agent rather than relying on the session mode. Tokens are stored at `$CLAW_HOME/state/service-tokens.json` (`0o600`); a running gateway picks up the change automatically within a few seconds. See [docs/service-tokens.md](docs/service-tokens.md).
 
 ## Context management
 
