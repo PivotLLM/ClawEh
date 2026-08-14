@@ -46,6 +46,10 @@ type TaskRecord struct {
 	Mode         string `json:"mode"`
 	Task         string `json:"task"`
 	Model        string `json:"model,omitempty"` // requested model (alias); "" = agent default
+	// Media holds media:// refs attached to the worker's initial message. Refs
+	// are in-memory store entries, so a supervisor relaunch after a process
+	// restart will fail ref resolution — the task then errors with a clear message.
+	Media []string `json:"media,omitempty"`
 	Channel      string `json:"channel"`
 	ChatID       string `json:"chat_id"`
 	Status       string `json:"status"`

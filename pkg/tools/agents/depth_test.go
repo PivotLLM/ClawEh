@@ -83,7 +83,7 @@ func TestDepthPropagation_AcrossAsyncDetach(t *testing.T) {
 	mgr := NewSubagentManager(SubagentManagerConfig{
 		Workspace: t.TempDir(),
 		Live:      NewLiveSet(),
-		RunFull: func(ctx context.Context, _, _, _, _ string) (string, int, error) {
+		RunFull: func(ctx context.Context, _, _, _, _ string, _ []string) (string, int, error) {
 			mu.Lock()
 			gotDepth = SpawnDepth(ctx)
 			mu.Unlock()

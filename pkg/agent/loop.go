@@ -1929,6 +1929,8 @@ func (al *AgentLoop) runAgentLoop(
 				"error":       err.Error(),
 			})
 		}
+		// The cleared history no longer references any media; let its files age out.
+		al.releaseSessionPins(opts.SessionKey)
 		al.mu.RLock()
 		sti := al.sessionTokenIssuer
 		al.mu.RUnlock()
@@ -1959,6 +1961,15 @@ func (al *AgentLoop) runAgentLoop(
 			// usable text instead of an image the model can't see. No-op for
 			// vision-capable primaries and when vision is not configured.
 			al.describeInboundMedia(ctx, agent, &userMsg)
+			// Keep the media:// refs visible in the stored text and pin them for
+			// this session so TTL cleanup doesn't reap files the history still
+			// references. The refs are actionable: agent_spawn's media parameter
+			// accepts them, so even a text-only primary can hand the original
+			// attachment to a vision-capable worker.
+			if refs := mediaRefsIn(opts.Media); len(refs) > 0 {
+				al.pinSessionMediaRefs(opts.SessionKey, refs)
+				userMsg.Content = appendMediaRefMarker(userMsg.Content, refs)
+			}
 		}
 		if err := cm.AddUserMessage(ctx, userMsg); err != nil {
 			logger.WarnCF("agent", "Failed to add user message to context manager",
@@ -1981,6 +1992,11 @@ func (al *AgentLoop) runAgentLoop(
 		logger.WarnCF("agent", "CheckAndCompress failed (continuing with current slice)",
 			map[string]any{"error": buildErr.Error(), "session": opts.SessionKey})
 	}
+
+	// Reconcile media pins to what the (possibly compacted) context still
+	// references — refs compacted out of the context become reapable. Must run
+	// before resolveMediaRefs replaces refs with data URLs in the dispatch copy.
+	al.reconcileSessionPins(opts.SessionKey, messages)
 
 	// Resolve media:// refs: images→base64 data URLs, non-images→local paths in content
 	cfg := al.GetConfig()
@@ -3196,8 +3212,8 @@ func (al *AgentLoop) runLLMIteration(
 		// Flow A: the active model is text-only and a vision side-model is
 		// configured — describe the tool image(s) that would otherwise be dropped
 		// and inject the description as a follow-up user turn so the model can use
-		// it. Gated on VisionClients so an unconfigured deployment keeps today's
-		// silent-drop behavior.
+		// it. Gated on VisionClients so an unconfigured deployment gets no
+		// description — just the hidden-attachment note from messagesForModel.
 		if visionMode == config.VisionOff && len(agent.VisionClients) > 0 && len(offImages) > 0 {
 			focusParts := offFocus
 			if lu := strings.TrimSpace(opts.UserMessage); lu != "" {
@@ -3539,7 +3555,16 @@ func (al *AgentLoop) messagesForModel(messages []providers.Message, modelKey str
 	out := make([]providers.Message, len(messages))
 	copy(out, messages)
 	for i := range out {
+		if len(out[i].Media) == 0 {
+			continue
+		}
+		n := len(out[i].Media)
 		out[i].Media = nil
+		// Say so instead of stripping silently: the model should know the message
+		// carried attachments it cannot see (any media:// refs remain in the text
+		// via the attachment marker and can be delegated via agent_spawn).
+		out[i].Content = strings.TrimRight(out[i].Content, "\n") +
+			fmt.Sprintf("\n[%d attachment(s) on this message are hidden — the current model cannot view images]", n)
 	}
 	return out
 }

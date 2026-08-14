@@ -60,7 +60,7 @@ type SubagentManager struct {
 	// MCP, snapshotted memory) on the task in an isolated sub-agent session, and
 	// returns the final response. Injected by the host (the agent loop). When set,
 	// it is used instead of the lightweight standalone tool loop.
-	runFull func(ctx context.Context, agentID, sessionKey, task, model string) (string, int, error)
+	runFull func(ctx context.Context, agentID, sessionKey, task, model string, media []string) (string, int, error)
 }
 
 // SubagentManagerConfig holds all configuration for constructing a SubagentManager.
@@ -89,7 +89,7 @@ type SubagentManagerConfig struct {
 	// RunFull runs the target agent's full pipeline on the task in an isolated
 	// sub-agent session (see SubagentManager.runFull). Required for spawning to
 	// behave as "a copy of the agent with fresh context."
-	RunFull func(ctx context.Context, agentID, sessionKey, task, model string) (string, int, error)
+	RunFull func(ctx context.Context, agentID, sessionKey, task, model string, media []string) (string, int, error)
 }
 
 func NewSubagentManager(cfg SubagentManagerConfig) *SubagentManager {
@@ -289,6 +289,7 @@ func (sm *SubagentManager) RegisterTool(tool tools.Tool) {
 // Returns the task uuid.
 func (sm *SubagentManager) SpawnCallback(
 	task, name, agentID, originChannel, originChatID, model string,
+	media []string,
 	cb tools.AsyncCallback,
 	parentDepth int,
 ) (string, error) {
@@ -305,6 +306,7 @@ func (sm *SubagentManager) SpawnCallback(
 		Mode:         "callback",
 		Task:         task,
 		Model:        model,
+		Media:        media,
 		Channel:      originChannel,
 		ChatID:       originChatID,
 		Status:       StatusRunning,
@@ -359,7 +361,7 @@ func (sm *SubagentManager) runRecord(rec *TaskRecord, cb tools.AsyncCallback, re
 		// Restore the spawning agent's depth onto the detached context so the
 		// worker (and any layer it spawns) stays within MaxSpawnDepth.
 		runCtx := WithSpawnDepth(context.Background(), rec.SpawnDepth)
-		content, iterations, err := sm.runFull(runCtx, target, subagentSessionKey(target, rec.UUID), taskText, rec.Model)
+		content, iterations, err := sm.runFull(runCtx, target, subagentSessionKey(target, rec.UUID), taskText, rec.Model, rec.Media)
 		if err != nil {
 			sm.finalize(rec, "", 0, err, cb)
 			return
@@ -610,7 +612,7 @@ func (sm *SubagentManager) RunSync(ctx context.Context, task, agentID, model str
 	logger.InfoCF("subagent", "subagent.runsync.launched", map[string]any{
 		"uuid": id, "agent": target, "owner": sm.ownerAgentID, "model": model, "task_len": len(task),
 	})
-	content, iterations, err := sm.runFull(ctx, target, subagentSessionKey(target, id), task, model)
+	content, iterations, err := sm.runFull(ctx, target, subagentSessionKey(target, id), task, model, nil)
 	if err != nil {
 		logger.WarnCF("subagent", "subagent.runsync.failed", map[string]any{
 			"uuid": id, "agent": target, "error": err.Error(),
@@ -626,6 +628,7 @@ func (sm *SubagentManager) RunSync(ctx context.Context, task, agentID, model str
 func (sm *SubagentManager) Run(
 	ctx context.Context,
 	task, label, agentID, channel, chatID, model string,
+	media []string,
 ) (*tools.ToolResult, error) {
 	if strings.TrimSpace(task) == "" {
 		return nil, fmt.Errorf("task is required")
@@ -648,6 +651,7 @@ func (sm *SubagentManager) Run(
 		Mode:         "wait",
 		Task:         task,
 		Model:        model,
+		Media:        media,
 		Channel:      channel,
 		ChatID:       chatID,
 		Status:       StatusRunning,
@@ -662,7 +666,7 @@ func (sm *SubagentManager) Run(
 			"uuid": id, "label": labelStr, "agent": target,
 			"owner": sm.ownerAgentID, "mode": "wait", "model": model, "channel": channel,
 		})
-		content, iterations, err := sm.runFull(ctx, target, subagentSessionKey(target, id), task, model)
+		content, iterations, err := sm.runFull(ctx, target, subagentSessionKey(target, id), task, model, media)
 		if err != nil {
 			logger.WarnCF("subagent", "subagent.run.failed", map[string]any{
 				"uuid": id, "label": labelStr, "agent": target, "mode": "wait", "error": err.Error(),
@@ -680,7 +684,7 @@ func (sm *SubagentManager) Run(
 	// runner is injected — e.g. unit tests / embedding hosts).
 	messages := []providers.Message{
 		{Role: "system", Content: subagentSystemPrompt()},
-		{Role: "user", Content: task},
+		{Role: "user", Content: task, Media: media},
 	}
 	sm.mu.RLock()
 	loopCfg := sm.resolveLoopConfig(agentID, model)

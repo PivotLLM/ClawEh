@@ -20,12 +20,12 @@ func TestRun_RoutesContentToFileWithCallbackBlock(t *testing.T) {
 		Workspace:     ws,
 		Live:          NewLiveSet(),
 		CallerAgentID: "penny",
-		RunFull: func(_ context.Context, _, _, _, _ string) (string, int, error) {
+		RunFull: func(_ context.Context, _, _, _, _ string, _ []string) (string, int, error) {
 			return "SENSITIVE WORKER OUTPUT", 2, nil
 		},
 	})
 
-	res, err := mgr.Run(context.Background(), "do work", "job", "", "cli", "direct", "")
+	res, err := mgr.Run(context.Background(), "do work", "job", "", "cli", "direct", "", nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -71,7 +71,7 @@ func TestRun_UsesRunFullWithSubagentSession(t *testing.T) {
 		Workspace:     t.TempDir(),
 		Live:          NewLiveSet(),
 		CallerAgentID: "penny",
-		RunFull: func(_ context.Context, agentID, sessionKey, task, model string) (string, int, error) {
+		RunFull: func(_ context.Context, agentID, sessionKey, task, model string, _ []string) (string, int, error) {
 			mu.Lock()
 			defer mu.Unlock()
 			callCount++
@@ -80,7 +80,7 @@ func TestRun_UsesRunFullWithSubagentSession(t *testing.T) {
 		},
 	})
 
-	res, err := mgr.Run(context.Background(), "write chapter 4", "chap", "", "cli", "direct", "Pro")
+	res, err := mgr.Run(context.Background(), "write chapter 4", "chap", "", "cli", "direct", "Pro", nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -113,5 +113,35 @@ func TestRun_UsesRunFullWithSubagentSession(t *testing.T) {
 	}
 	if !strings.Contains(res.ForLLM, "SECURITY") {
 		t.Errorf("result should carry the untrusted-data security warning, got: %q", res.ForLLM)
+	}
+}
+
+// TestRun_PassesMediaToRunFull verifies wait-mode spawn hands attached media
+// refs through to the full-pipeline runner.
+func TestRun_PassesMediaToRunFull(t *testing.T) {
+	var (
+		mu       sync.Mutex
+		gotMedia []string
+	)
+	mgr := NewSubagentManager(SubagentManagerConfig{
+		Workspace:     t.TempDir(),
+		Live:          NewLiveSet(),
+		CallerAgentID: "penny",
+		RunFull: func(_ context.Context, _, _, _, _ string, media []string) (string, int, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			gotMedia = media
+			return "looked at it", 1, nil
+		},
+	})
+
+	refs := []string{"media://11111111-1111-1111-1111-111111111111"}
+	if _, err := mgr.Run(context.Background(), "describe the image", "img", "", "cli", "direct", "", refs); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(gotMedia) != 1 || gotMedia[0] != refs[0] {
+		t.Errorf("media not passed through: %v", gotMedia)
 	}
 }
