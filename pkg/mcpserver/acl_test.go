@@ -84,7 +84,7 @@ func TestDispatch_ACLDenyBlocksAndEmitsWarn(t *testing.T) {
 	if rf.calls != 0 {
 		t.Errorf("tool ran despite ACL deny: calls=%d", rf.calls)
 	}
-	if !strings.Contains(out, "agent not authorized") {
+	if out != tools.NotEnabledMessage("read_file") {
 		t.Errorf("unexpected deny message: %s", out)
 	}
 

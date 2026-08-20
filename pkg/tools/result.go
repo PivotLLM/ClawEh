@@ -1,6 +1,9 @@
 package tools
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"fmt"
+)
 
 // ToolResult represents the structured return value from tool execution.
 // It provides clear semantics for different types of results and supports
@@ -109,6 +112,23 @@ func ErrorResult(message string) *ToolResult {
 		IsError: true,
 		Async:   false,
 	}
+}
+
+// NotEnabledMessage is returned when the caller is authenticated but the
+// resolved agent may not use the tool — either it is absent from that agent's
+// registry or an ACL policy refused it. The wording is deliberately
+// instructive (mirroring mcpserver's invalidTokenMessage): tools/list publishes
+// the union of every agent's registry, so a model routinely sees tools it
+// cannot call and must read this refusal as a configuration decision rather
+// than a fault — otherwise it retries or improvises a workaround instead of
+// telling the user. It does not disclose which of the two causes applied.
+func NotEnabledMessage(name string) string {
+	return fmt.Sprintf(
+		"Permission denied: the tool %q is not enabled for this agent. "+
+			"This is a configured access restriction, not a bug or an outage. "+
+			"Do not retry this call, and do not attempt to work around it by other means. "+
+			"If this tool is needed, tell the user it must be enabled for this agent.",
+		name)
 }
 
 // UserResult creates a ToolResult with content for both LLM and user.

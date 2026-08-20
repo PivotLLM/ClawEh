@@ -514,7 +514,7 @@ func (r *ToolRegistry) executeWithContext(
 				map[string]any{
 					"tool": canonical,
 				})
-			return ErrorResult(fmt.Sprintf("tool not permitted: %s", name)).WithError(fmt.Errorf("tool not permitted: %s", name))
+			return ErrorResult(NotEnabledMessage(name)).WithError(fmt.Errorf("tool not permitted: %s", name))
 		}
 	}
 

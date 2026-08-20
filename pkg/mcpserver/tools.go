@@ -30,11 +30,6 @@ const invalidTokenMessage = "invalid or missing session_token; supply your assig
 // subagentMessage is returned when the literal sub-agent sentinel is used.
 const subagentMessage = "sub-agents are not granted claw MCP access; use the harness filesystem tools against your assigned working directory."
 
-// aclDeniedMessage is returned when the per-agent ACL refuses a tool call
-// for an otherwise-valid token. The wording avoids leaking why a specific
-// (agent, tool) pair was denied.
-const aclDeniedMessage = "agent not authorized for this tool"
-
 // AgentResolver returns the per-agent tool registry for a given agent name,
 // or (nil, false) when the agent is unknown.
 type AgentResolver func(agentName string) (*tools.ToolRegistry, bool)
@@ -341,7 +336,7 @@ func dispatchToolCall(
 	if !toolOK {
 		logger.WarnCF("mcpserver", "MCP tool not in agent registry",
 			map[string]any{"agent": agentName, "tool": toolName, "reason": "tool_not_in_registry"})
-		return aclDeniedMessage, true
+		return tools.NotEnabledMessage(toolName), true
 	}
 
 	if policy == nil {
@@ -350,7 +345,7 @@ func dispatchToolCall(
 	if !policy.IsAllowed(agentName, toolName) {
 		logger.WarnCF("mcpserver", "MCP tool denied",
 			map[string]any{"agent": agentName, "tool": toolName, "reason": "acl_denied"})
-		return aclDeniedMessage, true
+		return tools.NotEnabledMessage(toolName), true
 	}
 
 	// Session-scoped tools call tools.ToolSessionKey(ctx); inject the resolved
