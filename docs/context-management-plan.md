@@ -129,20 +129,23 @@ changed), with sizes clustering at ~69 KB and ~39–46 KB — a stable core plus
 that comes and goes. The sticky/routed split therefore self-tunes: whatever is marked
 sticky gets cached, and `set_sticky` on the domain is the operator's lever.
 
-### Work items
+### Work items — all implemented
 
-1. `time_now` tool — ISO timestamp, timezone, day-of-week.
-2. Date line into the static prompt; remove the timestamp from `buildDynamicContext`.
-3. `cachedDate` invalidation in `BuildSystemPromptWithCache` + tests (the existing cache
-   keys on file mtime only, so a date would otherwise go stale silently).
-4. Split `attachmentsBlock` by owner block, preserving dedup and the shared sticky-first
-   budget.
-5. STABLE + sticky attachments stay in the prefix; ROUTED + routed attachments move onto
-   the current user message, ephemeral and never persisted.
-6. Split the attachment-bytes log line by provenance so the sticky/routed division is
-   observable.
-7. Tests: injected block never reaches the store; budget still shared and sticky-first;
-   a document cited from both blocks appears exactly once.
+| # | Item | Commit |
+|---|---|---|
+| 0 | Remove the dead `cache_control` / `SystemParts` plumbing and the comment that made the timestamp look safe | `Remove dead cache_control plumbing…` |
+| 1 | `time_now` tool (date, time, zone, offset, epoch) | `Add the time_now tool` |
+| 2 | Date line into the static prompt; timestamp out of `buildDynamicContext` | `Replace the per-minute clock…` |
+| 3 | `cachedDate` invalidation in `BuildSystemPromptWithCache` | same |
+| 4 | `attachmentsBlock` split by owner, dedup and shared sticky-first budget preserved | `Move routed cognitive memory…` |
+| 5 | STABLE + sticky attachments stay in the prefix; ROUTED + routed attachments ride the current turn, ephemeral | same |
+| 6 | Attachment-bytes log split by provenance | same |
+| 7 | Tests: never persisted, budget shared, shared document appears once | across the above |
+
+Key tests to keep: `TestBuildMessages_NoPerTurnVolatility` (two builds 90s apart must be
+byte-identical), `TestRoutedMemory_NeverPersisted` (the injected block must not reach the
+store — the failure is silent and cumulative), `TestDateAnchor_RollsOverAtMidnight`,
+`TestAttachmentBudgetSharedAcrossPartitions`.
 
 ---
 
@@ -222,5 +225,7 @@ are currently defeated by the same timestamp.
     single request field rather than block surgery.
 
 Items 8–10 are **not** in this branch: they live in spawnllm, which per project policy must
-track a released version rather than a local `replace`.
+track a released version rather than a local `replace`. They are written up in full, with
+the verified API parameters and the pitfalls, in **`docs/spawnllm-caching.md`** — which
+assumes a user may run Claude over the API and the CLI at the same time.
 
