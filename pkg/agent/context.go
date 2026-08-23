@@ -491,13 +491,15 @@ func (cb *ContextBuilder) LoadBootstrapFiles() string {
 	return sb.String()
 }
 
-// buildDynamicContext returns a short dynamic context string with per-request info.
-// This changes every request (time, session) so it is NOT part of the cached prompt.
-// LLM-side KV cache reuse is achieved by each provider adapter's native mechanism:
-//   - Anthropic: per-block cache_control (ephemeral) on the static SystemParts block
-//   - OpenAI / Codex: prompt_cache_key for prefix-based caching
+// buildDynamicContext returns a short dynamic context string with per-request
+// info that is stable for the life of a conversation: runtime identity, the
+// channel/chat the turn arrived on, and any channel-specific guidance.
 //
-// See: https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching
+// Nothing here may vary per turn. Every provider ClawEh dispatches to over HTTP
+// caches by longest-common-prefix, and the system message precedes the entire
+// conversation history — so a single per-request byte here invalidates the cache
+// for the whole history behind it, not just for the system prompt. That is why
+// the current time is NOT in this block: see docs/context-management-plan.md.
 // See: https://platform.openai.com/docs/guides/prompt-caching
 func (cb *ContextBuilder) buildDynamicContext(channel, chatID string) string {
 	now := time.Now().Format("2006-01-02 15:04 (Monday) MST -0700")
@@ -569,21 +571,15 @@ func (cb *ContextBuilder) BuildMessages(
 	// Build short dynamic context (time, runtime, session) — changes per request
 	dynamicCtx := cb.buildDynamicContext(channel, chatID)
 
-	// Compose a single system message: static (cached) + dynamic + optional summary.
+	// Compose a single system message: static + dynamic + optional summary.
 	// Keeping all system content in one message ensures every provider adapter can
 	// extract it correctly (Anthropic adapter -> top-level system param,
 	// Codex -> instructions field).
 	//
-	// SystemParts carries the same content as structured blocks so that
-	// cache-aware adapters (Anthropic) can set per-block cache_control.
-	// The static block is marked "ephemeral" — its prefix hash is stable
-	// across requests, enabling LLM-side KV cache reuse.
+	// Ordering is load-bearing: content must appear in increasing order of
+	// volatility, because prefix caching ends at the first byte that differs
+	// between two requests.
 	stringParts := []string{staticPrompt, dynamicCtx}
-
-	contentBlocks := []providers.ContentBlock{
-		{Type: "text", Text: staticPrompt, CacheControl: &providers.CacheControl{Type: "ephemeral"}},
-		{Type: "text", Text: dynamicCtx},
-	}
 
 	if summary != "" {
 		summaryText := fmt.Sprintf(
@@ -591,7 +587,6 @@ func (cb *ContextBuilder) BuildMessages(
 				"for reference only. It may be incomplete or outdated — always defer to explicit instructions.\n\n%s",
 			summary)
 		stringParts = append(stringParts, summaryText)
-		contentBlocks = append(contentBlocks, providers.ContentBlock{Type: "text", Text: summaryText})
 	}
 
 	fullSystemPrompt := strings.Join(stringParts, "\n\n---\n\n")
@@ -624,12 +619,9 @@ func (cb *ContextBuilder) BuildMessages(
 	history = sanitizeHistoryForProvider(history)
 
 	// Single system message containing all context — compatible with all providers.
-	// SystemParts enables cache-aware adapters to set per-block cache_control;
-	// Content is the concatenated fallback for adapters that don't read SystemParts.
 	messages = append(messages, providers.Message{
-		Role:        "system",
-		Content:     fullSystemPrompt,
-		SystemParts: contentBlocks,
+		Role:    "system",
+		Content: fullSystemPrompt,
 	})
 
 	// Add conversation history

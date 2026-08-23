@@ -432,10 +432,8 @@ func estimateTokens(msgs []providers.Message) int {
 //   - ResponsesReasoning, the opaque OpenAI Responses reasoning items replayed
 //     before this turn's function_call items.
 //
-// Two fields are deliberately NOT counted. SystemParts is a structured mirror of
-// text already appended to Content by Build(), so counting it would double-count
-// the system prompt. Attachments are archive-side metadata and are never sent to
-// the LLM. Media is counted per item (mediaTokensPerItem) rather than by the
+// Attachments are deliberately NOT counted: they are archive-side metadata and
+// are never sent to the LLM. Media is counted per item (mediaTokensPerItem) rather than by the
 // length of its data: URI, because providers bill images by resolution tiles and
 // a base64 payload's rune count overstates that by orders of magnitude.
 func estimateTokensWith(msgs []providers.Message, charsPerToken, safetyMargin float64) int {
@@ -1023,46 +1021,15 @@ func (m *Manager) Build(_ context.Context) ([]providers.Message, error) {
 				"the literal string below as the `session_token` parameter.\n\nsession_token: %s",
 			m.sessionToken)
 		msgs[0].Content += "\n\n---\n\n" + sessionTokenSection
-		msgs[0].SystemParts = append(msgs[0].SystemParts, providers.ContentBlock{
-			Type: "text",
-			Text: sessionTokenSection,
-		})
 	}
 
 	// Inject cognitive-memory blocks (cognitive agents only; nil otherwise).
-	// The STABLE block is cacheable (cache_control: ephemeral) and goes after the
-	// static/dynamic prompt; the ROUTED block is per-turn-varying and trails
-	// un-cached so it never invalidates the cached prefix. Both are mirrored into
-	// msgs[0].Content for adapters that ignore SystemParts, matching the
-	// session-token injection above.
 	if m.memoryBlocks != nil && len(msgs) > 0 && msgs[0].Role == "system" {
 		stable, routed, attachments := m.memoryBlocks(m.sessionKey, m.recentToolsSnapshot(), latestUserText(history))
-		if stable != "" {
-			msgs[0].Content += "\n\n---\n\n" + stable
-			msgs[0].SystemParts = append(msgs[0].SystemParts, providers.ContentBlock{
-				Type:         "text",
-				Text:         stable,
-				CacheControl: &providers.CacheControl{Type: "ephemeral"},
-			})
-		}
-		// Attached documents are large and change only when the underlying file
-		// changes, so they get their own cacheable part — after the stable block
-		// (so a routing change that swaps documents never invalidates it) and
-		// before the routed block (which must stay the un-cached tail).
-		if attachments != "" {
-			msgs[0].Content += "\n\n---\n\n" + attachments
-			msgs[0].SystemParts = append(msgs[0].SystemParts, providers.ContentBlock{
-				Type:         "text",
-				Text:         attachments,
-				CacheControl: &providers.CacheControl{Type: "ephemeral"},
-			})
-		}
-		if routed != "" {
-			msgs[0].Content += "\n\n---\n\n" + routed
-			msgs[0].SystemParts = append(msgs[0].SystemParts, providers.ContentBlock{
-				Type: "text",
-				Text: routed,
-			})
+		for _, block := range []string{stable, attachments, routed} {
+			if block != "" {
+				msgs[0].Content += "\n\n---\n\n" + block
+			}
 		}
 	}
 

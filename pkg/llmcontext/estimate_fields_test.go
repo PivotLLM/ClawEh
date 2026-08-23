@@ -42,19 +42,21 @@ func TestEstimate_CountsResponsesReasoning(t *testing.T) {
 }
 
 // TestEstimate_IgnoresSystemPartsAndAttachments pins the two fields that must
-// NOT be counted. Build() mirrors every SystemParts block into Content, so
-// counting both would double-count the system prompt; attachments are archive
-// metadata that never reach the LLM.
+// NOT be counted. Attachments are archive-side metadata populated by the media
+// path and never sent to the LLM. SystemParts is no longer populated by ClawEh
+// at all — every wired adapter strips it — but the field still exists on the
+// wire type, so this guards against a future caller reintroducing it as a
+// mirror of Content and silently double-counting the system prompt.
 func TestEstimate_IgnoresSystemPartsAndAttachments(t *testing.T) {
 	body := strings.Repeat("s", 400)
 	msgs := []providers.Message{{
 		Role:        "system",
-		Content:     body, // the mirror Build() writes
+		Content:     body, // what is actually sent
 		SystemParts: []protocoltypes.ContentBlock{{Type: "text", Text: body}},
 		Attachments: []protocoltypes.MessageAttachment{{Filename: strings.Repeat("f", 400), Size: 1}},
 	}}
 	if got, want := estimateTokens(msgs), 100; got != want {
-		t.Errorf("got %d, want %d (Content only — SystemParts mirrors it, attachments are not sent)", got, want)
+		t.Errorf("got %d, want %d (Content only — neither SystemParts nor attachments reach the LLM)", got, want)
 	}
 }
 
