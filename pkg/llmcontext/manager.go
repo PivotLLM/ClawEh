@@ -93,12 +93,21 @@ type Manager struct {
 	// Nil for every non-cognitive agent → identical behavior to before.
 	archiveAppendHook func(seq int64, msg providers.Message)
 
-	// memoryBlocks, when non-nil, returns the cognitive-memory STABLE, ROUTED and
-	// ATTACHMENTS prompt blocks for the session. Set by the agent loop for
-	// cognitive agents only; Build injects the blocks into the system message
-	// when non-empty. recentTools (newest-first, capped) feeds tool-trigger
-	// routing; routeText is the latest user message for lexical routing.
-	memoryBlocks func(sessionKey string, recentTools []string, routeText string) (stable, routed, attachments string)
+	// memoryBlocks, when non-nil, returns the cognitive-memory STABLE and ROUTED
+	// prompt blocks for the session (each already carrying its own attached
+	// documents). Set by the agent loop for cognitive agents only.
+	//
+	// The two go to different places. STABLE is always-on identity content and
+	// joins the system message, where it is part of the cached prefix. ROUTED is
+	// selected per turn from the latest user message and recent tools, so it must
+	// NOT sit in the system message: that precedes the whole conversation, and
+	// anything varying there invalidates the cached prefix for the entire history
+	// behind it. It rides on the current turn instead — which also puts it beside
+	// the question it was routed for.
+	//
+	// recentTools (newest-first, capped) feeds tool-trigger routing; routeText is
+	// the latest user message for lexical routing.
+	memoryBlocks func(sessionKey string, recentTools []string, routeText string) (stable, routed string)
 
 	// recentTools is a small newest-first ring of recently-invoked tool names,
 	// fed by RecordToolUse and read at Build time so cognitive memory can auto-load
@@ -946,7 +955,7 @@ func (m *Manager) SetProtectUnconsolidated(v bool) {
 // the system message when non-empty. The callback receives the newest-first
 // recent-tool ring (tool-trigger routing) and the latest user message (lexical
 // routing). Passing nil disables injection.
-func (m *Manager) SetMemoryBlocks(fn func(sessionKey string, recentTools []string, routeText string) (stable, routed, attachments string)) {
+func (m *Manager) SetMemoryBlocks(fn func(sessionKey string, recentTools []string, routeText string) (stable, routed string)) {
 	m.memoryBlocks = fn
 }
 
@@ -1025,12 +1034,11 @@ func (m *Manager) Build(_ context.Context) ([]providers.Message, error) {
 
 	// Inject cognitive-memory blocks (cognitive agents only; nil otherwise).
 	if m.memoryBlocks != nil && len(msgs) > 0 && msgs[0].Role == "system" {
-		stable, routed, attachments := m.memoryBlocks(m.sessionKey, m.recentToolsSnapshot(), latestUserText(history))
-		for _, block := range []string{stable, attachments, routed} {
-			if block != "" {
-				msgs[0].Content += "\n\n---\n\n" + block
-			}
+		stable, routed := m.memoryBlocks(m.sessionKey, m.recentToolsSnapshot(), latestUserText(history))
+		if stable != "" {
+			msgs[0].Content += "\n\n---\n\n" + stable
 		}
+		attachRoutedMemory(msgs, routed)
 	}
 
 	// Record what this build added on top of raw history so the history-only
@@ -1039,6 +1047,35 @@ func (m *Manager) Build(_ context.Context) ([]providers.Message, error) {
 	m.recordBuiltOverhead(msgs, history)
 
 	return msgs, nil
+}
+
+// attachRoutedMemory folds the per-turn memory block into the LAST user message
+// of the built slice, in place.
+//
+// It is deliberately not its own message: a trailing user block would put two
+// user turns back to back (which some providers merge or reject), and a trailing
+// system message is not accepted by every adapter. Folding it into the existing
+// turn sidesteps both and keeps the block fixed for every iteration of the turn,
+// so within-turn caching still works.
+//
+// The mutation is safe and must stay confined to the built slice: msgs comes
+// from GetHistory, which returns a copy, and nothing writes it back. If this
+// block ever reached the store, history would accumulate one stale memory dump
+// per turn — silently and cumulatively.
+//
+// With no user message (a turn that opens on tool plumbing) the block is
+// dropped rather than forced somewhere invalid; the next user turn re-routes it.
+func attachRoutedMemory(msgs []providers.Message, routed string) {
+	if routed == "" {
+		return
+	}
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role != "user" {
+			continue
+		}
+		msgs[i].Content += "\n\n---\n\n" + routed
+		return
+	}
 }
 
 // latestUserText returns the content of the most recent user-role message in

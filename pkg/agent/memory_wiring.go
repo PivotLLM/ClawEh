@@ -6,6 +6,7 @@ package agent
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/PivotLLM/ClawEh/pkg/cogmem"
@@ -101,10 +102,10 @@ func (al *AgentLoop) wireCognitiveMemory(agent *AgentInstance, sessionKey string
 		return comp
 	}
 
-	mgr.SetMemoryBlocks(func(_ string, recentTools []string, routeText string) (stable, routed, attachments string) {
+	mgr.SetMemoryBlocks(func(_ string, recentTools []string, routeText string) (stable, routed string) {
 		c := ensure()
 		if c == nil {
-			return "", "", ""
+			return "", ""
 		}
 		res, err := c.Compose(context.Background(), cogmem.RouteRequest{
 			RecentTools: recentTools,
@@ -116,12 +117,20 @@ func (al *AgentLoop) wireCognitiveMemory(agent *AgentInstance, sessionKey string
 				"agent_id": agent.ID, "session_key": sessionKey, "error": err.Error(),
 			})
 		}
-		if res.Attachments != "" {
+		if res.Attachments != "" || res.RoutedAttachments != "" {
+			// Split by provenance: sticky bytes ride in the cached prompt and are
+			// paid for once, routed bytes ride with the turn and are paid for
+			// every time. One combined figure hides which is which.
 			logger.DebugCF("cogmem", "attached documents injected", map[string]any{
-				"agent_id": agent.ID, "session_key": sessionKey, "bytes": len(res.Attachments),
+				"agent_id":     agent.ID,
+				"session_key":  sessionKey,
+				"sticky_bytes": len(res.Attachments),
+				"routed_bytes": len(res.RoutedAttachments),
 			})
 		}
-		return res.Stable, res.Routed, res.Attachments
+		// Sticky documents belong with the stable block; routed documents belong
+		// with the routed block, whose memory ids their headers cite.
+		return joinBlocks(res.Stable, res.Attachments), joinBlocks(res.Routed, res.RoutedAttachments)
 	})
 
 	return func() {
@@ -159,4 +168,16 @@ func memoryComposerOptions(mem config.MemoryConfig) []cogmem.Option {
 		opts = append(opts, cogmem.WithFileTotalMaxBytes(mem.Prompt.FileTotalMaxBytes))
 	}
 	return opts
+}
+
+// joinBlocks concatenates non-empty prompt blocks with the separator used
+// throughout the system prompt.
+func joinBlocks(blocks ...string) string {
+	out := make([]string, 0, len(blocks))
+	for _, b := range blocks {
+		if b != "" {
+			out = append(out, b)
+		}
+	}
+	return strings.Join(out, "\n\n---\n\n")
 }
