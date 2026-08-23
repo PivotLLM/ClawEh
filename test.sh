@@ -502,7 +502,8 @@ PY
       "common_list",
       "common_get",
       "common_put",
-      "common_delete"
+      "common_delete",
+      "time_now"
     ]
   }
 }

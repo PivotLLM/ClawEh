@@ -14,6 +14,7 @@ import (
 	"github.com/PivotLLM/ClawEh/pkg/tools/session"
 	"github.com/PivotLLM/ClawEh/pkg/tools/shell"
 	"github.com/PivotLLM/ClawEh/pkg/tools/skills"
+	"github.com/PivotLLM/ClawEh/pkg/tools/timetool"
 	toolsweb "github.com/PivotLLM/ClawEh/pkg/tools/web"
 )
 
@@ -30,6 +31,7 @@ func registerToolProviders() {
 	tools.RegisterProvider(tools.NamespacedProvider("msg", msg.GlobalProvider))
 	tools.RegisterProvider(tools.NamespacedProvider("cogmem", cogmem.GlobalProvider))
 	tools.RegisterProvider(tools.NamespacedProvider("common", common.GlobalProvider))
+	tools.RegisterProvider(tools.NamespacedProvider("time", timetool.GlobalProvider))
 	tools.RegisterProvider(tools.NamespacedProvider("maestro", maestro.GlobalProvider))
 	// Bare names: fusion tool names are already service-prefixed (e.g.
 	// microsoft365_mail_read_inbox), so publish them without a "fusion_" prefix.
