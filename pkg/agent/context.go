@@ -35,6 +35,16 @@ type ContextBuilder struct {
 	cachedSystemPrompt string
 	cachedAt           time.Time // max observed mtime across tracked paths at cache build time
 
+	// cachedDate is the date string baked into the cached prompt. The prompt
+	// carries today's date, which no file mtime reflects, so without this the
+	// cache would keep serving yesterday's date indefinitely — a silent wrong
+	// answer, and precisely the failure the date anchor exists to prevent.
+	cachedDate string
+
+	// now is the clock used for the date line, injectable for tests. nil means
+	// time.Now.
+	now func() time.Time
+
 	// existedAtCache tracks which source file paths existed the last time the
 	// cache was built. This lets sourceFilesChanged detect files that are newly
 	// created (didn't exist at cache time, now exist) or deleted (existed at
@@ -119,6 +129,30 @@ func NewContextBuilder(workspace string) *ContextBuilder {
 	}
 }
 
+// currentDate renders today's date for the system prompt, together with a
+// pointer to the tool that supplies the time.
+//
+// Deliberately DAY granularity. This string sits in the cached prefix, ahead of
+// the whole conversation, and every HTTP provider ClawEh dispatches to caches by
+// longest-common-prefix — at minute granularity the prefix breaks on nearly
+// every turn, taking the entire history with it. Measured against production
+// logs, first-dispatch cache hit rates were 5.6% and 1.6% for the two busiest
+// agents while later dispatches inside the same minute ran 70-89%.
+//
+// The date is still worth its once-a-day invalidation: a model given no date
+// does not ask for one, it answers from its training cutoff.
+func (cb *ContextBuilder) currentDate() string {
+	return cb.clock().Format("Monday, Jan 2, 2006")
+}
+
+// clock returns the time source for the date line.
+func (cb *ContextBuilder) clock() time.Time {
+	if cb.now != nil {
+		return cb.now()
+	}
+	return time.Now()
+}
+
 func (cb *ContextBuilder) getIdentity() string {
 	workspacePath, _ := filepath.Abs(filepath.Join(cb.workspace))
 	toolDiscovery := cb.getDiscoveryRule()
@@ -190,6 +224,13 @@ The following skills extend your capabilities. To use a skill, read its SKILL.md
 		parts = append(parts, "# Memory\n\n"+memoryContext)
 	}
 
+	// Today's date, last in the static prompt so everything above it stays
+	// byte-identical across the day boundary. The tool pointer matters: without
+	// it a date-only anchor reads as authoritative for the time of day too.
+	parts = append(parts, fmt.Sprintf(
+		"# Date\n\nToday is %s — call `time_now` if you need the current time, timezone, or a precise timestamp.",
+		cb.currentDate()))
+
 	// The external-message endpoint (POST /api/message/{token}) and its rotating
 	// tokens still exist (see internal/gateway/message_route.go) so a future
 	// "notify an agent" feature can use them, but the agent is no longer told
@@ -229,9 +270,11 @@ func (cb *ContextBuilder) BuildSystemPromptWithCache() string {
 	// rebuild. The alternative (baseline after build) risks caching stale
 	// content with a too-new baseline, making the staleness invisible.
 	baseline := cb.buildCacheBaseline()
+	date := cb.currentDate()
 	prompt := cb.BuildSystemPrompt()
 	cb.cachedSystemPrompt = prompt
 	cb.cachedAt = baseline.maxMtime
+	cb.cachedDate = date
 	cb.existedAtCache = baseline.existed
 	cb.skillFilesAtCache = baseline.skillFiles
 
@@ -252,6 +295,7 @@ func (cb *ContextBuilder) InvalidateCache() {
 
 	cb.cachedSystemPrompt = ""
 	cb.cachedAt = time.Time{}
+	cb.cachedDate = ""
 	cb.existedAtCache = nil
 	cb.skillFilesAtCache = nil
 
@@ -353,6 +397,14 @@ func (cb *ContextBuilder) buildCacheBaseline() cacheBaseline {
 // which already holds RLock or Lock).
 func (cb *ContextBuilder) sourceFilesChangedLocked() bool {
 	if cb.cachedAt.IsZero() {
+		return true
+	}
+
+	// The prompt carries today's date, which no file mtime reflects. Checked
+	// first because it is a string compare, and because a stale date is the one
+	// staleness here that produces a confidently wrong answer rather than a
+	// merely outdated one.
+	if cb.cachedDate != cb.currentDate() {
 		return true
 	}
 
@@ -502,11 +554,9 @@ func (cb *ContextBuilder) LoadBootstrapFiles() string {
 // the current time is NOT in this block: see docs/context-management-plan.md.
 // See: https://platform.openai.com/docs/guides/prompt-caching
 func (cb *ContextBuilder) buildDynamicContext(channel, chatID string) string {
-	now := time.Now().Format("2006-01-02 15:04 (Monday) MST -0700")
-
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "## Current Time\n%s\n\n## Runtime\nServer: %s %s\nOS: %s %s\nGo: %s",
-		now, global.AppName, global.Version, runtime.GOOS, runtime.GOARCH, runtime.Version())
+	fmt.Fprintf(&sb, "## Runtime\nServer: %s %s\nOS: %s %s\nGo: %s",
+		global.AppName, global.Version, runtime.GOOS, runtime.GOARCH, runtime.Version())
 
 	if channel != "" && chatID != "" {
 		fmt.Fprintf(&sb, "\n\n## Current Session\nChannel: %s\nChat ID: %s", channel, chatID)
