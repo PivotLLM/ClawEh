@@ -284,6 +284,14 @@ type AgentConfig struct {
 	// fiction topics). Resolution order: agent-specific → global → agent's model.
 	SummarizationModels []string `json:"summarization_models,omitempty"`
 
+	// Compression is the per-agent context-compaction policy, overriding the
+	// defaults block field by field. See CompressionConfig.
+	Compression *CompressionConfig `json:"compression,omitempty"`
+
+	// Legacy flat compress_* keys. Retained ONLY as an inlet for
+	// migrateCompressionConfigs, which folds them into Compression at load time
+	// and clears them; nothing else in the codebase reads them. Delete once
+	// deployed configs have been rewritten.
 	CompressMinPercent         *int     `json:"compress_min_percent,omitempty"`
 	CompressNormalPercent      *int     `json:"compress_normal_percent,omitempty"`
 	CompressSafetyPercent      *int     `json:"compress_safety_percent,omitempty"`
@@ -292,11 +300,12 @@ type AgentConfig struct {
 	CompressRetainMinMessages  *int     `json:"compress_retain_min_messages,omitempty"`
 	CompressCharsPerToken      *float64 `json:"compress_chars_per_token,omitempty"`
 	CompressTokenSafetyMargin  *float64 `json:"compress_token_safety_margin,omitempty"`
-	ArchiveMessageCount        *int     `json:"archive_message_count,omitempty"`
-	ArchiveDays                *int     `json:"archive_days,omitempty"`
-	SummaryMaxCount            *int     `json:"summary_max_count,omitempty"`
-	SummaryRetentionDays       *int     `json:"summary_retention_days,omitempty"`
-	ArchiveContentMaxBytes     *int     `json:"archive_content_max_bytes,omitempty"`
+
+	ArchiveMessageCount    *int `json:"archive_message_count,omitempty"`
+	ArchiveDays            *int `json:"archive_days,omitempty"`
+	SummaryMaxCount        *int `json:"summary_max_count,omitempty"`
+	SummaryRetentionDays   *int `json:"summary_retention_days,omitempty"`
+	ArchiveContentMaxBytes *int `json:"archive_content_max_bytes,omitempty"`
 
 	// ContextEviction overrides the per-turn tool-result eviction policy for
 	// this agent. Unset fields fall back to the defaults block, then to the
@@ -389,6 +398,156 @@ func (a *AgentConfig) EffectiveMounts(workspace string) []MountConfig {
 	})
 }
 
+// CompressionConfig is the context-compaction policy for an agent, split into
+// the three things it actually controls. The flat compress_* keys it replaces
+// mixed all three under one prefix, which is how compress_message_threshold came
+// to be documented as firing "regardless of context %" when the percentage floor
+// gated it all along.
+//
+//   - Trigger: WHEN a compaction runs.
+//   - Retain:  WHAT survives it.
+//   - Estimate: how token cost is measured, which every threshold is relative to.
+//
+// Every field is a pointer so a per-agent block overrides the defaults block
+// field by field, and so 0 can mean "off" rather than "unset" — the plain-int
+// form could not express disabling a trigger at the defaults level.
+type CompressionConfig struct {
+	Trigger  *CompressionTriggerConfig  `json:"trigger,omitempty"`
+	Retain   *CompressionRetainConfig   `json:"retain,omitempty"`
+	Estimate *CompressionEstimateConfig `json:"estimate,omitempty"`
+
+	// TargetPercent is the compaction loop's stop condition: keep summarizing
+	// until the live window is below this percentage of the context window. It
+	// belongs to neither group — it is not a trigger and not a retention bound.
+	// nil derives it from Trigger.NormalPercent, as the code always has.
+	TargetPercent *int `json:"target_percent,omitempty"`
+}
+
+// CompressionTriggerConfig decides when a compaction runs. The percentage and
+// count triggers are gated by MinPercent; Days is not, because a low-volume
+// session never reaches any percentage and its history would otherwise sit in
+// the window indefinitely.
+type CompressionTriggerConfig struct {
+	// MinPercent is the floor below which the percentage and count triggers
+	// never fire. nil => 20.
+	MinPercent *int `json:"min_percent,omitempty"`
+	// NormalPercent is the routine compaction threshold. nil => 50.
+	NormalPercent *int `json:"normal_percent,omitempty"`
+	// SafetyPercent is the emergency threshold, checked mid-turn as well as at
+	// the turn boundary, and not gated by MinPercent. nil => 80.
+	SafetyPercent *int `json:"safety_percent,omitempty"`
+	// MessageCount fires after this many new messages since the last compaction.
+	// nil => 100, 0 => off.
+	MessageCount *int `json:"message_count,omitempty"`
+	// Days fires once the oldest message in the live window is older than this,
+	// bypassing MinPercent. Set it HIGHER than Retain.MaxAgeDays: the gap is what
+	// stops the session pinning to the trigger boundary and re-compacting on
+	// every message. nil => 7, 0 => off.
+	Days *int `json:"days,omitempty"`
+}
+
+// CompressionRetainConfig decides what survives a compaction. Every bound here
+// is subject to MinMessages and to the rule that the most recent user message is
+// never archived.
+type CompressionRetainConfig struct {
+	// TokenPercent is the retained tail budget as a percentage of the context
+	// window. Must be clearly below Trigger.MinPercent. nil => 10.
+	TokenPercent *int `json:"token_percent,omitempty"`
+	// MaxTokens is an absolute ceiling on the retained tail, applied alongside
+	// TokenPercent (the smaller wins). Percentages scale with the window, so a
+	// million-token model otherwise inherits a budget tuned for 128k.
+	// nil/0 => no absolute cap.
+	MaxTokens *int `json:"max_tokens,omitempty"`
+	// MaxAgeDays caps the age of the retained tail; anything older is
+	// summarized. nil => 5, 0 => off.
+	MaxAgeDays *int `json:"max_age_days,omitempty"`
+	// MinMessages is the floor that overrides every other bound. nil => 2.
+	MinMessages *int `json:"min_messages,omitempty"`
+}
+
+// CompressionEstimateConfig tunes how token cost is estimated from text. Every
+// percentage threshold is relative to this, so it is the highest-leverage and
+// most dangerous block to change.
+type CompressionEstimateConfig struct {
+	// CharsPerToken is the divisor turning runes into tokens. Lower estimates
+	// more tokens per character (more conservative). nil => 4.0.
+	CharsPerToken *float64 `json:"chars_per_token,omitempty"`
+	// TokenSafetyMargin multiplies the estimate so it errs high. nil => 1.0.
+	TokenSafetyMargin *float64 `json:"token_safety_margin,omitempty"`
+}
+
+// EffectiveCompression returns the compaction policy for an agent: the defaults
+// block with any per-agent block overlaid field by field. Either may be nil.
+func (a *AgentConfig) EffectiveCompression(defaults *CompressionConfig) *CompressionConfig {
+	out := &CompressionConfig{}
+	out.overlay(defaults)
+	if a != nil {
+		out.overlay(a.Compression)
+	}
+	return out
+}
+
+// overlay merges src into c, leaving fields src does not set untouched.
+func (c *CompressionConfig) overlay(src *CompressionConfig) {
+	if src == nil {
+		return
+	}
+	if src.TargetPercent != nil {
+		c.TargetPercent = src.TargetPercent
+	}
+	if src.Trigger != nil {
+		if c.Trigger == nil {
+			c.Trigger = &CompressionTriggerConfig{}
+		}
+		t, s := c.Trigger, src.Trigger
+		if s.MinPercent != nil {
+			t.MinPercent = s.MinPercent
+		}
+		if s.NormalPercent != nil {
+			t.NormalPercent = s.NormalPercent
+		}
+		if s.SafetyPercent != nil {
+			t.SafetyPercent = s.SafetyPercent
+		}
+		if s.MessageCount != nil {
+			t.MessageCount = s.MessageCount
+		}
+		if s.Days != nil {
+			t.Days = s.Days
+		}
+	}
+	if src.Retain != nil {
+		if c.Retain == nil {
+			c.Retain = &CompressionRetainConfig{}
+		}
+		r, s := c.Retain, src.Retain
+		if s.TokenPercent != nil {
+			r.TokenPercent = s.TokenPercent
+		}
+		if s.MaxTokens != nil {
+			r.MaxTokens = s.MaxTokens
+		}
+		if s.MaxAgeDays != nil {
+			r.MaxAgeDays = s.MaxAgeDays
+		}
+		if s.MinMessages != nil {
+			r.MinMessages = s.MinMessages
+		}
+	}
+	if src.Estimate != nil {
+		if c.Estimate == nil {
+			c.Estimate = &CompressionEstimateConfig{}
+		}
+		e, s := c.Estimate, src.Estimate
+		if s.CharsPerToken != nil {
+			e.CharsPerToken = s.CharsPerToken
+		}
+		if s.TokenSafetyMargin != nil {
+			e.TokenSafetyMargin = s.TokenSafetyMargin
+		}
+	}
+}
+
 // ContextEvictionConfig controls the per-turn, LLM-free eviction sweep that
 // collapses re-retrievable tool results (file reads, web fetches) in the live
 // window to a placeholder so long sessions rarely trigger summarization
@@ -401,6 +560,11 @@ type ContextEvictionConfig struct {
 	EvictTurns   *int  `json:"evict_turns,omitempty"`   // nil => 10
 	BudgetBytes  *int  `json:"budget_bytes,omitempty"`  // nil => derived (~40% of window)
 	NotifyUser   *bool `json:"notify_user,omitempty"`   // nil => off
+	// ArgBytes is the size at which an aged-out tool-call ARGUMENT (a file_write
+	// body, an edit's replacement text) is replaced by a placeholder. Arguments
+	// are counted in full by the token estimator but live on the assistant
+	// message, so the reader sweep never reached them. nil => 1024, 0 => off.
+	ArgBytes *int `json:"arg_bytes,omitempty"`
 }
 
 // IsEnabled returns true if the agent is enabled (nil means enabled by default).
@@ -797,26 +961,34 @@ type AgentDefaults struct {
 	// ProgressInterval is how often (seconds) a long-running turn emits a
 	// lightweight progress update so it never looks dead. 0 falls back to
 	// DefaultProgressInterval; a negative value disables progress updates.
-	ProgressInterval           int      `json:"progress_interval,omitempty"     env:"CLAW_AGENTS_DEFAULTS_PROGRESS_INTERVAL"`
-	MaxTokens                  int      `json:"max_tokens"                      env:"CLAW_AGENTS_DEFAULTS_MAX_TOKENS"`
-	Temperature                *float64 `json:"temperature,omitempty"           env:"CLAW_AGENTS_DEFAULTS_TEMPERATURE"`
-	MaxToolIterations          int      `json:"max_tool_iterations"             env:"CLAW_AGENTS_DEFAULTS_MAX_TOOL_ITERATIONS"`
-	ContextWindow              int      `json:"context_window,omitempty"        env:"CLAW_AGENTS_DEFAULTS_CONTEXT_WINDOW"`
-	MaxMediaSize               int      `json:"max_media_size,omitempty"        env:"CLAW_AGENTS_DEFAULTS_MAX_MEDIA_SIZE"`
-	CompressMinPercent         int      `json:"compress_min_percent,omitempty"          env:"CLAW_AGENTS_DEFAULTS_COMPRESS_MIN_PERCENT"`
-	CompressNormalPercent      int      `json:"compress_normal_percent,omitempty"       env:"CLAW_AGENTS_DEFAULTS_COMPRESS_NORMAL_PERCENT"`
-	CompressSafetyPercent      int      `json:"compress_safety_percent,omitempty"       env:"CLAW_AGENTS_DEFAULTS_COMPRESS_SAFETY_PERCENT"`
-	CompressMessageThreshold   int      `json:"compress_message_threshold,omitempty"    env:"CLAW_AGENTS_DEFAULTS_COMPRESS_MESSAGE_THRESHOLD"`
-	CompressRetainTokenPercent int      `json:"compress_retain_token_percent,omitempty" env:"CLAW_AGENTS_DEFAULTS_COMPRESS_RETAIN_TOKEN_PERCENT"`
-	CompressRetainMinMessages  int      `json:"compress_retain_min_messages,omitempty"  env:"CLAW_AGENTS_DEFAULTS_COMPRESS_RETAIN_MIN_MESSAGES"`
-	CompressCharsPerToken      float64  `json:"compress_chars_per_token,omitempty"      env:"CLAW_AGENTS_DEFAULTS_COMPRESS_CHARS_PER_TOKEN"`
-	CompressTokenSafetyMargin  float64  `json:"compress_token_safety_margin,omitempty"  env:"CLAW_AGENTS_DEFAULTS_COMPRESS_TOKEN_SAFETY_MARGIN"`
-	ArchiveMessageCount        int      `json:"archive_message_count,omitempty"         env:"CLAW_AGENTS_DEFAULTS_ARCHIVE_MESSAGE_COUNT"`
-	ArchiveDays                int      `json:"archive_days,omitempty"                  env:"CLAW_AGENTS_DEFAULTS_ARCHIVE_DAYS"`
-	SummaryMaxCount            int      `json:"summary_max_count,omitempty"             env:"CLAW_AGENTS_DEFAULTS_SUMMARY_MAX_COUNT"`
-	SummaryRetentionDays       int      `json:"summary_retention_days,omitempty"        env:"CLAW_AGENTS_DEFAULTS_SUMMARY_RETENTION_DAYS"`
-	ArchiveContentMaxBytes     int      `json:"archive_content_max_bytes,omitempty"     env:"CLAW_AGENTS_DEFAULTS_ARCHIVE_CONTENT_MAX_BYTES"`
-	DefaultTools               []string `json:"default_tools,omitempty"`
+	ProgressInterval  int      `json:"progress_interval,omitempty"     env:"CLAW_AGENTS_DEFAULTS_PROGRESS_INTERVAL"`
+	MaxTokens         int      `json:"max_tokens"                      env:"CLAW_AGENTS_DEFAULTS_MAX_TOKENS"`
+	Temperature       *float64 `json:"temperature,omitempty"           env:"CLAW_AGENTS_DEFAULTS_TEMPERATURE"`
+	MaxToolIterations int      `json:"max_tool_iterations"             env:"CLAW_AGENTS_DEFAULTS_MAX_TOOL_ITERATIONS"`
+	ContextWindow     int      `json:"context_window,omitempty"        env:"CLAW_AGENTS_DEFAULTS_CONTEXT_WINDOW"`
+	MaxMediaSize      int      `json:"max_media_size,omitempty"        env:"CLAW_AGENTS_DEFAULTS_MAX_MEDIA_SIZE"`
+	// Compression is the default context-compaction policy for every agent
+	// (overridable per agent via AgentConfig.Compression). See CompressionConfig.
+	Compression *CompressionConfig `json:"compression,omitempty"`
+
+	// Legacy flat compress_* keys — see the matching note on AgentConfig. All
+	// pointers so migrateCompressionConfigs can tell "unset" from "set to 0";
+	// the old plain-int form could not express "off".
+	CompressMinPercent         *int     `json:"compress_min_percent,omitempty"`
+	CompressNormalPercent      *int     `json:"compress_normal_percent,omitempty"`
+	CompressSafetyPercent      *int     `json:"compress_safety_percent,omitempty"`
+	CompressMessageThreshold   *int     `json:"compress_message_threshold,omitempty"`
+	CompressRetainTokenPercent *int     `json:"compress_retain_token_percent,omitempty"`
+	CompressRetainMinMessages  *int     `json:"compress_retain_min_messages,omitempty"`
+	CompressCharsPerToken      *float64 `json:"compress_chars_per_token,omitempty"`
+	CompressTokenSafetyMargin  *float64 `json:"compress_token_safety_margin,omitempty"`
+
+	ArchiveMessageCount    int      `json:"archive_message_count,omitempty"         env:"CLAW_AGENTS_DEFAULTS_ARCHIVE_MESSAGE_COUNT"`
+	ArchiveDays            int      `json:"archive_days,omitempty"                  env:"CLAW_AGENTS_DEFAULTS_ARCHIVE_DAYS"`
+	SummaryMaxCount        int      `json:"summary_max_count,omitempty"             env:"CLAW_AGENTS_DEFAULTS_SUMMARY_MAX_COUNT"`
+	SummaryRetentionDays   int      `json:"summary_retention_days,omitempty"        env:"CLAW_AGENTS_DEFAULTS_SUMMARY_RETENTION_DAYS"`
+	ArchiveContentMaxBytes int      `json:"archive_content_max_bytes,omitempty"     env:"CLAW_AGENTS_DEFAULTS_ARCHIVE_CONTENT_MAX_BYTES"`
+	DefaultTools           []string `json:"default_tools,omitempty"`
 
 	// ContextEviction is the default per-turn tool-result eviction policy
 	// (overridable per agent via AgentConfig.ContextEviction).
@@ -1885,6 +2057,9 @@ func LoadConfig(path string) (*Config, error) {
 	// Migrate legacy channel config fields to new unified structures
 	cfg.migrateChannelConfigs()
 
+	// Fold legacy flat compress_* keys into the nested compression block.
+	cfg.migrateCompressionConfigs()
+
 	// Adopt a stale launcher-config.json (the retired separate allowlist file)
 	// into gateway.allowed_cidrs on each load (see migrateLauncherConfig).
 	migrateLauncherConfig(path, cfg)
@@ -1956,6 +2131,121 @@ func migrateLauncherConfig(configPath string, cfg *Config) {
 		cfg.Gateway.AllowedCIDRs = legacy.AllowedCIDRs
 		logger.InfoCF("config", "adopted launcher-config.json allowed_cidrs into gateway.allowed_cidrs", map[string]any{"allowed_cidrs": legacy.AllowedCIDRs})
 	}
+}
+
+// migrateCompressionConfigs folds the retired flat compress_* keys into the
+// nested compression block and clears them, so a config written before the
+// split keeps working instead of silently reverting to built-in defaults on the
+// next deploy. Each migrated key is logged once at WARN with its new location;
+// rewrite config.json and the warnings stop. An explicitly-set nested value
+// always wins — migration only fills gaps.
+//
+// This is a transitional shim. Once deployed configs are rewritten, delete it
+// along with the legacy fields it reads.
+func (c *Config) migrateCompressionConfigs() {
+	migrated := map[string]string{}
+
+	fold := func(scope string, dst **CompressionConfig, legacy legacyCompressKeys) {
+		if legacy.empty() {
+			return
+		}
+		if *dst == nil {
+			*dst = &CompressionConfig{}
+		}
+		cfg := *dst
+		if cfg.Trigger == nil {
+			cfg.Trigger = &CompressionTriggerConfig{}
+		}
+		if cfg.Retain == nil {
+			cfg.Retain = &CompressionRetainConfig{}
+		}
+		if cfg.Estimate == nil {
+			cfg.Estimate = &CompressionEstimateConfig{}
+		}
+		note := func(from, to string) { migrated[scope+"."+from] = to }
+		if legacy.Min != nil && cfg.Trigger.MinPercent == nil {
+			cfg.Trigger.MinPercent = legacy.Min
+			note("compress_min_percent", "compression.trigger.min_percent")
+		}
+		if legacy.Normal != nil && cfg.Trigger.NormalPercent == nil {
+			cfg.Trigger.NormalPercent = legacy.Normal
+			note("compress_normal_percent", "compression.trigger.normal_percent")
+		}
+		if legacy.Safety != nil && cfg.Trigger.SafetyPercent == nil {
+			cfg.Trigger.SafetyPercent = legacy.Safety
+			note("compress_safety_percent", "compression.trigger.safety_percent")
+		}
+		if legacy.MessageThreshold != nil && cfg.Trigger.MessageCount == nil {
+			cfg.Trigger.MessageCount = legacy.MessageThreshold
+			note("compress_message_threshold", "compression.trigger.message_count")
+		}
+		if legacy.RetainPercent != nil && cfg.Retain.TokenPercent == nil {
+			cfg.Retain.TokenPercent = legacy.RetainPercent
+			note("compress_retain_token_percent", "compression.retain.token_percent")
+		}
+		if legacy.RetainMinMessages != nil && cfg.Retain.MinMessages == nil {
+			cfg.Retain.MinMessages = legacy.RetainMinMessages
+			note("compress_retain_min_messages", "compression.retain.min_messages")
+		}
+		if legacy.CharsPerToken != nil && cfg.Estimate.CharsPerToken == nil {
+			cfg.Estimate.CharsPerToken = legacy.CharsPerToken
+			note("compress_chars_per_token", "compression.estimate.chars_per_token")
+		}
+		if legacy.SafetyMargin != nil && cfg.Estimate.TokenSafetyMargin == nil {
+			cfg.Estimate.TokenSafetyMargin = legacy.SafetyMargin
+			note("compress_token_safety_margin", "compression.estimate.token_safety_margin")
+		}
+	}
+
+	d := &c.Agents.Defaults
+	fold("agents.defaults", &d.Compression, legacyCompressKeys{
+		Min: d.CompressMinPercent, Normal: d.CompressNormalPercent,
+		Safety: d.CompressSafetyPercent, MessageThreshold: d.CompressMessageThreshold,
+		RetainPercent: d.CompressRetainTokenPercent, RetainMinMessages: d.CompressRetainMinMessages,
+		CharsPerToken: d.CompressCharsPerToken, SafetyMargin: d.CompressTokenSafetyMargin,
+	})
+	d.CompressMinPercent, d.CompressNormalPercent = nil, nil
+	d.CompressSafetyPercent, d.CompressMessageThreshold = nil, nil
+	d.CompressRetainTokenPercent, d.CompressRetainMinMessages = nil, nil
+	d.CompressCharsPerToken, d.CompressTokenSafetyMargin = nil, nil
+
+	for i := range c.Agents.List {
+		a := &c.Agents.List[i]
+		fold("agents."+a.ID, &a.Compression, legacyCompressKeys{
+			Min: a.CompressMinPercent, Normal: a.CompressNormalPercent,
+			Safety: a.CompressSafetyPercent, MessageThreshold: a.CompressMessageThreshold,
+			RetainPercent: a.CompressRetainTokenPercent, RetainMinMessages: a.CompressRetainMinMessages,
+			CharsPerToken: a.CompressCharsPerToken, SafetyMargin: a.CompressTokenSafetyMargin,
+		})
+		a.CompressMinPercent, a.CompressNormalPercent = nil, nil
+		a.CompressSafetyPercent, a.CompressMessageThreshold = nil, nil
+		a.CompressRetainTokenPercent, a.CompressRetainMinMessages = nil, nil
+		a.CompressCharsPerToken, a.CompressTokenSafetyMargin = nil, nil
+	}
+
+	if len(migrated) > 0 {
+		logger.WarnCF("config", "migrated legacy compress_* keys into the nested compression block; update config.json to silence this",
+			map[string]any{"migrated": migrated})
+	}
+}
+
+// legacyCompressKeys is the flat compress_* set as it appeared on both
+// AgentConfig and AgentDefaults, gathered so one fold routine serves each.
+type legacyCompressKeys struct {
+	Min               *int
+	Normal            *int
+	Safety            *int
+	MessageThreshold  *int
+	RetainPercent     *int
+	RetainMinMessages *int
+	CharsPerToken     *float64
+	SafetyMargin      *float64
+}
+
+func (l legacyCompressKeys) empty() bool {
+	return l.Min == nil && l.Normal == nil && l.Safety == nil && l.MessageThreshold == nil &&
+		l.RetainPercent == nil && l.RetainMinMessages == nil &&
+		l.CharsPerToken == nil && l.SafetyMargin == nil
 }
 
 func (c *Config) migrateChannelConfigs() {

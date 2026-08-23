@@ -105,6 +105,19 @@ type Manager struct {
 	// domains whose triggers match a tool the agent just used. Guarded by recentMu.
 	recentMu    sync.Mutex
 	recentTools []string
+
+	// toolDefTokens is the estimated token cost of the tool schemas sent with
+	// every request. The agent loop sets it per turn via SetToolDefinitionTokens;
+	// the Manager cannot derive it because it never sees the toolset. Counted by
+	// contextTokens so the triggers measure the real request, not just history.
+	toolDefTokens int
+
+	// builtOverheadTokens is the measured token cost of everything Build() adds
+	// on top of raw history — the system prompt, the rendered summary, the
+	// injected memory blocks. Recorded by Build() and reused by the history-only
+	// trigger paths, which would otherwise ignore it entirely. Zero until the
+	// first Build of a session.
+	builtOverheadTokens int
 }
 
 // maxRecentTools bounds the recent-tool ring used for tool-trigger memory routing.
@@ -147,6 +160,53 @@ func New(
 		logger.WarnCF("llmcontext", "compress_min_percent >= compress_normal_percent; clamping min to normal/2",
 			map[string]any{"min": cfg.minPercent, "normal": cfg.normalPercent})
 		cfg.minPercent = cfg.normalPercent / 2
+	}
+
+	// (d) retain ≥ min → WARN + clamp to min/2.
+	//
+	// The retained tail is what a compaction leaves behind, and minPercent is the
+	// floor below which compaction refuses to fire. When they are equal every
+	// pass shaves back to exactly the floor, the next message crosses it again,
+	// and the session pins to the boundary forever — compacting constantly while
+	// never getting smaller. The tail must land clearly below the floor so each
+	// pass buys real headroom.
+	if cfg.retainTokenPercent >= cfg.minPercent {
+		logger.WarnCF("llmcontext", "compress retain_token_percent >= trigger min_percent; clamping retain to min/2 (equal values pin the session to the floor and compact on every message)",
+			map[string]any{"retain": cfg.retainTokenPercent, "min": cfg.minPercent})
+		cfg.retainTokenPercent = cfg.minPercent / 2
+	}
+
+	// (e) trigger.days < retain.max_age_days → WARN + clamp trigger up.
+	//
+	// Firing before anything is old enough to cut produces a pass that summarizes
+	// nothing. Equal values are legal but degenerate for the same reason as (d):
+	// the tail sits exactly at the trigger age, so it re-fires as soon as the
+	// oldest message ages another instant.
+	if cfg.triggerDays > 0 && cfg.retainMaxAgeDays > 0 {
+		switch {
+		case cfg.triggerDays < cfg.retainMaxAgeDays:
+			logger.WarnCF("llmcontext", "compress trigger.days < retain.max_age_days; clamping trigger up (it would fire with nothing old enough to summarize)",
+				map[string]any{"trigger_days": cfg.triggerDays, "retain_max_age_days": cfg.retainMaxAgeDays})
+			cfg.triggerDays = cfg.retainMaxAgeDays
+		case cfg.triggerDays == cfg.retainMaxAgeDays:
+			logger.WarnCF("llmcontext", "compress trigger.days == retain.max_age_days; the session will re-compact as soon as the tail ages, set trigger.days higher for hysteresis",
+				map[string]any{"days": cfg.triggerDays})
+		}
+	}
+
+	// (f) every retention bound disabled → WARN.
+	//
+	// Each bound can legitimately be 0: retaining by age alone, or by tokens
+	// alone, are both sensible. Turning off all three is not — the tail becomes
+	// unbounded and compaction can never shrink the window, which presents as
+	// "compaction is broken" rather than as a configuration choice.
+	if cfg.retainTokenPercent <= 0 && cfg.retainMaxTokens <= 0 && cfg.retainMaxAgeDays <= 0 {
+		logger.WarnCF("llmcontext", "every compression retain bound is disabled; the live window is unbounded and compaction cannot shrink it",
+			map[string]any{
+				"retain_token_percent": cfg.retainTokenPercent,
+				"retain_max_tokens":    cfg.retainMaxTokens,
+				"retain_max_age_days":  cfg.retainMaxAgeDays,
+			})
 	}
 
 	// Resolve compression clients: prefer explicit list, fall back to primary llm.
@@ -269,8 +329,7 @@ func (m *Manager) PreDispatchCheck(ctx context.Context, current []providers.Mess
 		return current, nil
 	}
 	history := m.store.GetHistory(m.sessionKey)
-	tokens := m.estTokens(history)
-	contextPct := float64(tokens) * 100.0 / float64(m.cfg.contextWindow)
+	contextPct := m.contextPercent(history)
 
 	// Emergency only: defer first-stage compaction to the turn boundary.
 	if contextPct < float64(m.cfg.safetyPercent) {
@@ -317,7 +376,10 @@ func (m *Manager) CheckAndCompress(ctx context.Context, built []providers.Messag
 		return built, nil
 	}
 
-	tokens := m.estTokens(built) + m.cfg.overheadTokens
+	// `built` already contains the system prompt and rendered summary, so add
+	// only the parts it cannot carry: the reserve and the tool schemas. Adding
+	// builtOverheadTokens here would double-count them.
+	tokens := m.estTokens(built) + m.cfg.overheadTokens + m.toolDefTokens
 	contextPct := float64(tokens) * 100.0 / float64(m.cfg.contextWindow)
 
 	// Emergency only: defer first-stage compaction to the turn boundary.
@@ -355,9 +417,27 @@ func estimateTokens(msgs []providers.Message) int {
 }
 
 // estimateTokensWith estimates token count by dividing the total rune count by
-// charsPerToken and inflating by safetyMargin. It counts both message Content
-// and the JSON-serialized arguments of any ToolCalls, so tool-call turns are
-// not under-counted. Non-positive tuning values fall back to the defaults.
+// charsPerToken and inflating by safetyMargin. Non-positive tuning values fall
+// back to the defaults.
+//
+// It counts every field that is actually replayed to the provider on the next
+// request:
+//
+//   - Content.
+//   - The JSON-serialized arguments of any ToolCalls, so tool-call turns are not
+//     under-counted (a file_write payload lives here, not in Content).
+//   - ReasoningContent, which openai_compat serializes back for every historical
+//     assistant message. Omitting it understated reasoning-model sessions by
+//     roughly half.
+//   - ResponsesReasoning, the opaque OpenAI Responses reasoning items replayed
+//     before this turn's function_call items.
+//
+// Two fields are deliberately NOT counted. SystemParts is a structured mirror of
+// text already appended to Content by Build(), so counting it would double-count
+// the system prompt. Attachments are archive-side metadata and are never sent to
+// the LLM. Media is counted per item (mediaTokensPerItem) rather than by the
+// length of its data: URI, because providers bill images by resolution tiles and
+// a base64 payload's rune count overstates that by orders of magnitude.
 func estimateTokensWith(msgs []providers.Message, charsPerToken, safetyMargin float64) int {
 	if charsPerToken <= 0 {
 		charsPerToken = defaultCharsPerToken
@@ -366,21 +446,102 @@ func estimateTokensWith(msgs []providers.Message, charsPerToken, safetyMargin fl
 		safetyMargin = defaultTokenSafetyMargin
 	}
 	total := 0
+	mediaItems := 0
 	for _, m := range msgs {
 		total += len([]rune(m.Content))
+		total += len([]rune(m.ReasoningContent))
 		if len(m.ToolCalls) > 0 {
 			if data, err := json.Marshal(m.ToolCalls); err == nil {
 				total += len([]rune(string(data)))
 			}
 		}
+		for _, r := range m.ResponsesReasoning {
+			total += len([]rune(string(r)))
+		}
+		mediaItems += len(m.Media)
 	}
-	return int(float64(total) / charsPerToken * safetyMargin)
+	return int(float64(total)/charsPerToken*safetyMargin) + mediaItems*mediaTokensPerItem
 }
 
 // estTokens estimates token count for msgs using this Manager's configured
 // chars-per-token divisor and safety margin.
 func (m *Manager) estTokens(msgs []providers.Message) int {
 	return estimateTokensWith(msgs, m.cfg.charsPerToken, m.cfg.tokenSafetyMargin)
+}
+
+// EstimateToolDefinitionTokens estimates the token cost of a tool-schema set as
+// the provider will serialize it. Callers pass the same slice they hand to the
+// provider, so the figure tracks the real request rather than a fixed guess.
+// Returns 0 on a marshalling failure — an under-count is preferable to a panic
+// on a path that runs every turn.
+func EstimateToolDefinitionTokens(defs []providers.ToolDefinition) int {
+	if len(defs) == 0 {
+		return 0
+	}
+	data, err := json.Marshal(defs)
+	if err != nil {
+		return 0
+	}
+	return int(float64(len([]rune(string(data)))) / defaultCharsPerToken)
+}
+
+// SetToolDefinitionTokens records the estimated token cost of the tool schemas
+// accompanying each request. The agent loop calls this once per turn; the
+// Manager has no other way to learn it, and 46 tool definitions are worth tens
+// of thousands of tokens. Negative values are ignored.
+func (m *Manager) SetToolDefinitionTokens(n int) {
+	if n < 0 {
+		return
+	}
+	m.toolDefTokens = n
+}
+
+// recordBuiltOverhead stores the token cost of everything Build() adds on top of
+// raw history (system prompt, rendered summary, memory blocks) so the
+// history-only trigger paths can account for it. Called by Build().
+func (m *Manager) recordBuiltOverhead(built, history []providers.Message) {
+	overhead := m.estTokens(built) - m.estTokens(history)
+	if overhead < 0 {
+		overhead = 0
+	}
+	m.builtOverheadTokens = overhead
+}
+
+// nonHistoryTokens is everything in a dispatch that is not the stored history:
+// the configured reserve (completion budget), the tool schemas, and the measured
+// Build() overhead. All three trigger paths add it so they agree on what
+// "percent of the context window" means.
+func (m *Manager) nonHistoryTokens() int {
+	return m.cfg.overheadTokens + m.toolDefTokens + m.builtOverheadTokens
+}
+
+// contextTokens estimates the full request cost for a given stored history: the
+// history itself plus everything Build() and the provider add around it.
+func (m *Manager) contextTokens(history []providers.Message) int {
+	return m.estTokens(history) + m.nonHistoryTokens()
+}
+
+// contextPercent expresses contextTokens as a percentage of the context window.
+// Returns 0 when no window is configured (callers treat that as "no limit").
+func (m *Manager) contextPercent(history []providers.Message) float64 {
+	if m.cfg.contextWindow <= 0 {
+		return 0
+	}
+	return float64(m.contextTokens(history)) * 100.0 / float64(m.cfg.contextWindow)
+}
+
+// oldestAge returns the age of the oldest message in the live window, and false
+// when the window is empty or carries no usable timestamp. System messages are
+// skipped: a session's system message is rewritten in place and its age says
+// nothing about how stale the conversation is.
+func oldestAge(stored []memory.StoredMessage, now time.Time) (time.Duration, bool) {
+	for _, sm := range stored {
+		if sm.Role == "system" || sm.CreatedAt.IsZero() {
+			continue
+		}
+		return now.Sub(sm.CreatedAt), true
+	}
+	return 0, false
 }
 
 // getOrOpenArchive returns the ArchiveStore for this session, opening it lazily
@@ -511,12 +672,25 @@ func (m *Manager) archiveAppend(seq int64, msg providers.Message) {
 }
 
 // archiveContentMaxBytes is the default maximum number of content bytes stored
-// per message in the archive. Messages whose Content exceeds this limit are
-// truncated before writing; the LLM already saw the full content in the
-// active context window, so only a compact summary is needed for history.
-// Tool results that contain large file payloads are the primary use-case.
+// per message in the archive for TOOL results. Messages whose Content exceeds
+// this limit are truncated before writing; the LLM already saw the full content
+// in the active context window, so only a compact summary is needed for history.
+// Tool results that contain large file payloads are the primary use-case, and
+// they are re-retrievable — the file is still on disk.
 // Override per-agent via WithArchiveContentMaxBytes.
 const archiveContentMaxBytes = 4096
+
+// archiveConversationMaxBytes is the cap applied to user and assistant messages
+// instead. Conversation is not re-retrievable and it is what the archive exists
+// to preserve — it also feeds cognitive-memory consolidation, which distils
+// long-term memory from these rows, so a clipped instruction yields a memory
+// built on a fragment. Measured across production archives, user and assistant
+// content sits at ~1.2KB and ~2.7KB at the 99th percentile: a 4KB cap sits just
+// inside the distribution and clips only the longest, most substantive turns,
+// while this cap clears it entirely at a cost of a few hundred KB per archive.
+// Tool results keep the tighter cap because they carry the real bulk (a single
+// production row measured 5.7MB).
+const archiveConversationMaxBytes = 16384
 
 // archiveContentLimit returns the effective per-message archive content cap,
 // falling back to archiveContentMaxBytes when unconfigured.
@@ -532,6 +706,12 @@ func (m *Manager) archiveContentLimit() int {
 func archiveTruncateContent(msg providers.Message, maxBytes int) providers.Message {
 	if maxBytes <= 0 {
 		maxBytes = archiveContentMaxBytes
+	}
+	// Conversation gets the larger cap; tool results keep the configured one.
+	// An explicit per-agent setting above the conversation cap wins for both,
+	// so raising the limit never silently lowers it for user/assistant text.
+	if msg.Role != "tool" && maxBytes < archiveConversationMaxBytes {
+		maxBytes = archiveConversationMaxBytes
 	}
 	if len(msg.Content) <= maxBytes {
 		return msg
@@ -600,16 +780,13 @@ func (m *Manager) compress(ctx context.Context, safetyNet bool) error {
 	}
 
 	history := m.store.GetHistory(m.sessionKey)
-	tokens := m.estTokens(history)
-	contextPct := 0.0
-	if m.cfg.contextWindow > 0 {
-		contextPct = float64(tokens) * 100.0 / float64(m.cfg.contextWindow)
-	}
 	logger.InfoCF("llmcontext", "compression triggered", map[string]any{
-		"session_key": m.sessionKey,
-		"safety_net":  safetyNet,
-		"context_pct": contextPct,
-		"msg_count":   m.msgCount,
+		"session_key":     m.sessionKey,
+		"safety_net":      safetyNet,
+		"context_pct":     m.contextPercent(history),
+		"history_tokens":  m.estTokens(history),
+		"overhead_tokens": m.nonHistoryTokens(),
+		"msg_count":       m.msgCount,
 	})
 	if m.compressHook != nil {
 		m.compressedAtCount = m.msgCount
@@ -668,21 +845,38 @@ func (m *Manager) recordCompactionOutcome(err error) {
 // triggerCheck runs the unified compression trigger. Called at the end of
 // AddUserMessage and AddAssistantMessage.
 func (m *Manager) triggerCheck(ctx context.Context) error {
-	history := m.store.GetHistory(m.sessionKey)
-	tokens := m.estTokens(history)
 	if m.cfg.contextWindow <= 0 {
 		return nil
 	}
-	contextPct := float64(tokens) * 100.0 / float64(m.cfg.contextWindow)
+	// GetHistoryWithSeqs costs the same as GetHistory (both re-read and re-parse
+	// the whole session file) and carries the CreatedAt stamps the age trigger
+	// needs, so take the timestamped form and derive the plain slice from it.
+	stored := m.store.GetHistoryWithSeqs(m.sessionKey)
+	history := storedToPlain(stored)
+	contextPct := m.contextPercent(history)
 
-	// Floor: no compression regardless of other triggers.
-	if contextPct < float64(m.cfg.minPercent) {
-		return nil
-	}
-
-	// Safety net overrides everything.
+	// Safety net overrides everything, floor included.
 	if contextPct >= float64(m.cfg.safetyPercent) {
 		return m.compress(ctx, true)
+	}
+
+	// Age trigger: fires regardless of how little of the window the history
+	// occupies, and so must be evaluated BEFORE the percentage floor. This is the
+	// only trigger that reaches a low-volume session — one that never approaches
+	// any percentage threshold and whose message count creeps up too slowly to
+	// matter will otherwise keep weeks-old messages in the window indefinitely.
+	if m.ageTriggered(stored) {
+		logger.InfoCF("llmcontext", "compaction age trigger fired", map[string]any{
+			"session_key":  m.sessionKey,
+			"trigger_days": m.cfg.triggerDays,
+			"context_pct":  contextPct,
+		})
+		return m.compress(ctx, false)
+	}
+
+	// Floor: no compression regardless of the remaining triggers.
+	if contextPct < float64(m.cfg.minPercent) {
+		return nil
 	}
 
 	// Cooldown suppresses normal and count triggers.
@@ -701,6 +895,20 @@ func (m *Manager) triggerCheck(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// ageTriggered reports whether the oldest live message has passed triggerDays.
+// The cooldown deliberately does not suppress it: cooling is counted in messages
+// and a session quiet enough to age out is, by definition, not producing them.
+func (m *Manager) ageTriggered(stored []memory.StoredMessage) bool {
+	if m.cfg.triggerDays <= 0 {
+		return false
+	}
+	age, ok := oldestAge(stored, time.Now())
+	if !ok {
+		return false
+	}
+	return age >= time.Duration(m.cfg.triggerDays)*24*time.Hour
 }
 
 // SetTestCompressHook sets a hook function that is called whenever compress()
@@ -857,6 +1065,11 @@ func (m *Manager) Build(_ context.Context) ([]providers.Message, error) {
 			})
 		}
 	}
+
+	// Record what this build added on top of raw history so the history-only
+	// trigger paths can charge for it. Build is read-only with respect to the
+	// store; this is in-memory bookkeeping only.
+	m.recordBuiltOverhead(msgs, history)
 
 	return msgs, nil
 }

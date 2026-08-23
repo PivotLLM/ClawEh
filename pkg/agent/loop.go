@@ -241,28 +241,28 @@ func NewAgentLoop(
 	}
 
 	al := &AgentLoop{
-		bus:                  msgBus,
-		cfg:                  cfg,
-		registry:             registry,
-		state:                stateManager,
-		fallback:             fallbackChain,
-		cooldown:             cooldown,
-		cmdRegistry:          commands.NewRegistry(commands.BuiltinDefinitions()),
-		dispatcher:           dispatcher,
-		agentStates:          agentStates,
-		messageManagers:      messageManagers,
-		namedTokens:          namedTokens,
-		startedAt:            time.Now(),
-		evictStop:            make(chan struct{}),
-		mcpRetryStop:         make(chan struct{}),
-		evictTTL:             defaultEvictTTL,
-		evictInterval:        defaultEvictInterval,
-		activeModelIdx:       make(map[string]int),
+		bus:                   msgBus,
+		cfg:                   cfg,
+		registry:              registry,
+		state:                 stateManager,
+		fallback:              fallbackChain,
+		cooldown:              cooldown,
+		cmdRegistry:           commands.NewRegistry(commands.BuiltinDefinitions()),
+		dispatcher:            dispatcher,
+		agentStates:           agentStates,
+		messageManagers:       messageManagers,
+		namedTokens:           namedTokens,
+		startedAt:             time.Now(),
+		evictStop:             make(chan struct{}),
+		mcpRetryStop:          make(chan struct{}),
+		evictTTL:              defaultEvictTTL,
+		evictInterval:         defaultEvictInterval,
+		activeModelIdx:        make(map[string]int),
 		exposeReasoningCache:  make(map[string]bool),
 		showToolActivityCache: make(map[string]bool),
-		taskLive:             toolsagents.NewLiveSet(),
-		spawnManagers:        make(map[string]*toolsagents.SubagentManager),
-		superStop:            make(chan struct{}),
+		taskLive:              toolsagents.NewLiveSet(),
+		spawnManagers:         make(map[string]*toolsagents.SubagentManager),
+		superStop:             make(chan struct{}),
 	}
 
 	// Register runtime-dependent tools via providers (session closures,
@@ -2427,6 +2427,11 @@ func (al *AgentLoop) runLLMIteration(
 		if agent.NoTools {
 			providerToolDefs = nil
 		}
+		// Tell the context manager what the tool schemas cost. It never sees the
+		// toolset, so without this every compaction trigger measures stored
+		// history alone and ignores a fixed per-request cost that, for a
+		// 46-tool agent, runs to tens of thousands of tokens.
+		cm.SetToolDefinitionTokens(llmcontext.EstimateToolDefinitionTokens(providerToolDefs))
 
 		// Per-turn context eviction sweep (LLM-free): collapse stale, superseded,
 		// or oversized re-retrievable tool results (file reads, web fetches) in the

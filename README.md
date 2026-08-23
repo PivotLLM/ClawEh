@@ -502,9 +502,9 @@ Each agent session maintains a persistent SQLite archive of every message it sen
 
 ### How it works
 
-1. **Archive** — every message is written to a per-session SQLite database (WAL mode, FTS5 index) with a sequence number and timestamp. Tool result content larger than 4 096 bytes is truncated before archiving so that large file reads don't produce unbounded blobs.
+1. **Archive** — every message is written to a per-session SQLite database (WAL mode, FTS5 index) with a sequence number and timestamp. **Tool result** content larger than 4 096 bytes is truncated before archiving so that large file reads don't produce unbounded blobs; **user and assistant** content gets a larger 16 384-byte cap, because conversation is not re-retrievable and it is what cognitive-memory consolidation reads.
 
-2. **Compression trigger** — after each LLM turn, claw estimates the token usage of the current context window. Compression is triggered when usage crosses configurable thresholds (default: compress at 50 %, safety compress at 80 %). A minimum message count (default: 20) prevents compressing very short conversations.
+2. **Compression trigger** — after each LLM turn, claw estimates the token usage of the current request (stored history plus the tool schemas, the rendered summary and the system prompt) and compacts when any trigger fires: a percentage of the context window, a message count, or the **age of the oldest message in the window**. The percentage and count triggers are gated by a floor (`trigger.min_percent`); the age trigger and the emergency threshold are not, which is what ages out a low-volume session that never approaches any percentage.
 
 3. **Summarisation** — the oldest messages above a retained tail are sent to a summarisation model (defaults to the agent's primary model). The summary is structured JSON covering topics, decisions, key moments, and a retrievable history index. The rendered summary is injected at the top of the context window on every subsequent turn, and begins with the date range and message numbers it covers so the LLM can orient itself after compaction.
 
@@ -516,11 +516,23 @@ Each agent session maintains a persistent SQLite archive of every message it sen
 
 Context management options live in the agent config block (or `agents.defaults`):
 
+Compaction itself is configured under a `compression` block, split by what each setting controls: `trigger` decides **when** a compaction runs, `retain` decides **what survives** it, and `estimate` tunes how token cost is measured (every percentage is relative to it). Each field is optional; omitting one keeps the built-in default.
+
 | Field | Default | Description |
 |---|---|---|
 | `context_window` | `128000` | Model context window in tokens. Used to compute compression thresholds. |
-| `compress_chars_per_token` | `4.0` | Characters-per-token divisor for the token estimate. Lower values estimate more tokens (more conservative); tune toward `3.5` for code/JSON-heavy sessions. |
-| `compress_token_safety_margin` | `1.0` | Multiplier applied to every token estimate so it errs high, triggering compression earlier. `1.1` inflates the estimate by 10%. |
+| `compression.trigger.min_percent` | `20` | Floor below which the percentage and count triggers never fire. The age trigger and `safety_percent` ignore it. |
+| `compression.trigger.normal_percent` | `50` | Routine compaction threshold, as a percentage of the context window. |
+| `compression.trigger.safety_percent` | `80` | Emergency threshold. Also checked mid-turn, between tool iterations. |
+| `compression.trigger.message_count` | `100` | Compact after this many new messages since the last compaction. `0` disables it. |
+| `compression.trigger.days` | `7` | Compact once the oldest message in the window is this old, regardless of how little of the window it occupies. Keep it **above** `retain.max_age_days`. `0` disables it. |
+| `compression.retain.token_percent` | `10` | Retained tail budget, as a percentage of the context window. Must be below `trigger.min_percent`, or every pass lands back on the floor and immediately re-fires. |
+| `compression.retain.max_tokens` | `0` (no cap) | Absolute ceiling on the retained tail, applied alongside the percentage (the smaller wins). Worth setting on large-context models, where a percentage tuned for 128 k retains far more than intended. |
+| `compression.retain.max_age_days` | `5` | Trim the retained tail back to this age. Lower spends fewer tokens per request; higher keeps more history in context. `0` disables it. |
+| `compression.retain.min_messages` | `2` | Floor that overrides every other retention bound. The most recent user message is always kept as well. |
+| `compression.target_percent` | derived | Stop condition for the compaction loop. Unset derives it from `trigger.normal_percent`. |
+| `compression.estimate.chars_per_token` | `4.0` | Characters-per-token divisor for the token estimate. Lower values estimate more tokens (more conservative); tune toward `3.5` for code/JSON-heavy sessions. |
+| `compression.estimate.token_safety_margin` | `1.0` | Multiplier applied to every token estimate so it errs high, triggering compression earlier. `1.1` inflates the estimate by 10%. |
 | `archive_message_count` | `0` (unlimited) | Keep at most this many recent messages per session — also the retrieval/citation window. Oldest beyond *n* are pruned. `0` = unlimited; falls back to `archive_days`. |
 | `archive_days` | `0` (unlimited) | Permanently delete archived messages older than *n* days. `0` = no age limit. |
 | `summary_max_count` | `0` (unlimited) | Keep at most this many recent context summaries. `0` = unlimited; falls back to `summary_retention_days`. |
@@ -538,12 +550,20 @@ Example (per-agent override):
   "model": "claude-opus-4-7",
   "context_window": 200000,
   "archive_message_count": 2000,
+  "compression": {
+    "trigger": { "days": 7 },
+    "retain": { "max_age_days": 5, "max_tokens": 40000 }
+  },
   "compress_model": {
     "model": "claude-haiku-4-5",
     "provider": "anthropic"
   }
 }
 ```
+
+> The flat `compress_*` keys this block replaces are migrated automatically on
+> load and logged at WARN with their new locations. Rewrite `config.json` in the
+> nested form to silence the warning.
 
 ### Session tools
 

@@ -50,6 +50,13 @@ type EvictionPolicy struct {
 	EvictTurns   int
 	BudgetBytes  int  // 0 => derived from contextWindow (~40%)
 	NotifyUser   bool // emit a one-line in-conversation notice per eviction
+
+	// ArgBytes is the size at which a tool-call ARGUMENT becomes evictable once
+	// it is older than EvictTurns. Arguments live in the assistant message's
+	// ToolCalls, not in a tool result, so the reader sweep never touched them —
+	// yet a file_write payload is counted in full by the token estimator and can
+	// dominate the window. 0 disables argument eviction.
+	ArgBytes int
 }
 
 // DefaultEvictionPolicy returns the built-in defaults: enabled, protect the last
@@ -62,8 +69,15 @@ func DefaultEvictionPolicy() EvictionPolicy {
 		EvictTurns:   10,
 		BudgetBytes:  0,
 		NotifyUser:   false,
+		ArgBytes:     defaultEvictionArgBytes,
 	}
 }
+
+// defaultEvictionArgBytes is the threshold above which an aged-out tool-call
+// argument is replaced by a placeholder. Set well above ordinary arguments
+// (paths, queries, flags) so only genuine payloads — the body of a file_write,
+// the replacement text of an edit — are ever touched.
+const defaultEvictionArgBytes = 1024
 
 // EvictionEvent records a single tool-result eviction performed by the sweep.
 // It is returned to the agent loop for optional in-conversation notification and
@@ -114,14 +128,119 @@ func isEvicted(content string) bool {
 	return strings.HasPrefix(content, evictionMarker)
 }
 
+// evictionArgPlaceholder replaces the value of an oversized tool-call argument.
+// It names the tool, the argument, and the resource the call acted on so the
+// model can recover the content the same way it recovers an evicted read: by
+// going back to the file. Kept short — the point is to free the window.
+func evictionArgPlaceholder(tool, arg, resource string, bytes int) string {
+	where := resource
+	if where == "" {
+		where = "(unknown)"
+	}
+	return fmt.Sprintf("%s %s.%s for %s (%d bytes) — argument evicted to save context; re-read the resource if you need it again]",
+		evictionMarker, tool, arg, capResource(where, evictionResourceCap), bytes)
+}
+
+// argEviction records one oversized tool-call argument replaced by the sweep.
+type argEviction struct {
+	callIdx  int // index into the message's ToolCalls
+	arg      string
+	tool     string
+	resource string
+	bytes    int
+}
+
+// evictLargeArgs rewrites every argument in tc larger than minBytes to a
+// placeholder, returning the evictions performed. It is deliberately keyed on
+// SIZE rather than on a per-tool map of payload argument names: the tools that
+// bloat the window most are not all native (an MCP document tool's body argument
+// costs exactly as much as file_write's content), and a size rule covers every
+// writer, present and future, without a registry to keep in sync. Small
+// identifying arguments — path, url, query, flags — fall far below the threshold
+// and are never touched, so the placeholder can still say what the call acted on.
+//
+// The rewrite goes through a parsed map and is re-marshalled, so the stored
+// arguments remain valid JSON; a provider replaying the message sees a
+// well-formed (if abbreviated) tool call rather than a truncated string.
+func evictLargeArgs(tc *providers.ToolCall, minBytes int) []argEviction {
+	if minBytes <= 0 || tc.Function == nil {
+		return nil
+	}
+	name, args := normToolCall(*tc)
+	if len(args) == 0 {
+		return nil
+	}
+	resource, _ := writerResource(name, args)
+	if resource == "" {
+		resource, _ = readerResource(name, args)
+	}
+
+	var out []argEviction
+	for _, key := range sortedArgKeys(args) {
+		v, ok := args[key].(string)
+		if !ok || len(v) <= minBytes || isEvicted(v) {
+			continue
+		}
+		out = append(out, argEviction{arg: key, tool: name, resource: resource, bytes: len(v)})
+		args[key] = evictionArgPlaceholder(name, key, resource, len(v))
+	}
+	if len(out) == 0 {
+		return nil
+	}
+
+	data, err := json.Marshal(args)
+	if err != nil {
+		return nil // leave the call untouched rather than persist something broken
+	}
+	tc.Function.Arguments = string(data)
+	// The runtime Arguments map is json:"-" and so is not persisted, but it is
+	// read by normToolCall in preference to the serialized form — keep the two in
+	// step or the next sweep would see the original size and re-evict forever.
+	if tc.Arguments != nil {
+		tc.Arguments = args
+	}
+	return out
+}
+
+// sortedArgKeys returns the argument names in a stable order so a sweep produces
+// deterministic events regardless of Go's map iteration order.
+func sortedArgKeys(args map[string]any) []string {
+	keys := make([]string, 0, len(args))
+	for k := range args {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 // evictionReaderArg maps a re-retrievable reader tool to the argument naming the
 // resource it read. Only these tools are ever evicted — their content can be
 // recovered by calling the tool again.
 var evictionReaderArg = map[string]string{
-	"file_read_bytes": "path",
-	"file_read_lines": "path",
-	"file_list":       "path",
-	"web_fetch":       "url",
+	"file_read_bytes":   "path",
+	"file_read_lines":   "path",
+	"file_list":         "path",
+	"file_search_lines": "path",
+	"file_search_bytes": "path",
+	"web_fetch":         "url",
+}
+
+// evictionReaderResourceDefault supplies the implied resource for readers whose
+// resource argument is optional. The search tools default to the workspace root
+// when path is omitted, so without this a repository-wide search — typically the
+// largest result of the three — would be the one result never evicted.
+var evictionReaderResourceDefault = map[string]string{
+	"file_search_lines": ".",
+	"file_search_bytes": ".",
+}
+
+// evictionReaderKeyArg names a STRING argument that distinguishes two reads of
+// the same resource, the string analogue of evictionReaderRangeArg. Two searches
+// of one tree with different queries return different content, so keying on the
+// bare path would make the second silently evict the first.
+var evictionReaderKeyArg = map[string]string{
+	"file_search_lines": "query",
+	"file_search_bytes": "query",
 }
 
 // evictionReaderRangeArg maps a paginated reader tool to the argument that names
@@ -195,6 +314,9 @@ func readerResource(tool string, args map[string]any) (string, bool) {
 	}
 	v, _ := args[arg].(string)
 	v = strings.TrimSpace(v)
+	if v == "" {
+		v = evictionReaderResourceDefault[tool]
+	}
 	return v, v != ""
 }
 
@@ -217,6 +339,10 @@ func readerSliceKey(tool string, args map[string]any) (string, bool) {
 	res, ok := readerResource(tool, args)
 	if !ok {
 		return "", false
+	}
+	if keyArg, keyed := evictionReaderKeyArg[tool]; keyed {
+		discriminator, _ := args[keyArg].(string)
+		return res + "#" + discriminator, true
 	}
 	rangeArg, paged := evictionReaderRangeArg[tool]
 	if !paged {
@@ -436,13 +562,55 @@ func (m *Manager) SweepEvictions(_ context.Context) []EvictionEvent {
 		}
 	}
 
-	if len(marks) == 0 {
+	// Tool-call ARGUMENT eviction. Independent of the reader classification
+	// above: arguments live on the assistant message, are counted in full by the
+	// token estimator, and have no result message to collapse. Age is the only
+	// gate — a write's content is recoverable from disk the moment it succeeds,
+	// so anything past EvictTurns is safe to drop. Deliberately outside the
+	// budget valve, which accounts for reader bytes only.
+	argMarks := make(map[int][]argEviction)
+	if p.ArgBytes > 0 {
+		for idx := range msgs {
+			if ages[idx] <= p.EvictTurns || len(stored[idx].Message.ToolCalls) == 0 {
+				continue
+			}
+			for c := range stored[idx].Message.ToolCalls {
+				evicted := evictLargeArgs(&stored[idx].Message.ToolCalls[c], p.ArgBytes)
+				for _, e := range evicted {
+					e.callIdx = c
+					argMarks[idx] = append(argMarks[idx], e)
+				}
+			}
+		}
+	}
+
+	if len(marks) == 0 && len(argMarks) == 0 {
 		return nil
 	}
 
 	// Apply in history order so events and the rewritten content are deterministic.
-	events := make([]EvictionEvent, 0, len(marks))
+	events := make([]EvictionEvent, 0, len(marks)+len(argMarks))
 	for idx := range msgs {
+		for _, ae := range argMarks[idx] {
+			ev := EvictionEvent{
+				Seq:      stored[idx].Seq,
+				Tool:     ae.tool,
+				Resource: ae.resource,
+				Bytes:    ae.bytes,
+				AgeTurns: ages[idx],
+				Reason:   "args",
+			}
+			events = append(events, ev)
+			logger.DebugCF("llmcontext", "evicted tool call argument", map[string]any{
+				"session_key": m.sessionKey,
+				"seq":         ev.Seq,
+				"tool":        ev.Tool,
+				"argument":    ae.arg,
+				"resource":    ev.Resource,
+				"bytes":       ev.Bytes,
+				"age_turns":   ev.AgeTurns,
+			})
+		}
 		reason, ok := marks[idx]
 		if !ok {
 			continue

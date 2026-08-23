@@ -34,6 +34,13 @@ export interface CoreConfigForm {
   compressMessageThreshold: string
   compressRetainTokenPercent: string
   compressRetainMinMessages: string
+  // Age-based compaction. compressTriggerDays fires a compaction once the oldest
+  // live message passes it; compressRetainMaxAgeDays is how far back the
+  // retained tail is then cut to. Keep the trigger HIGHER than the retain cap —
+  // the gap is what stops a session re-compacting on every message.
+  compressTriggerDays: string
+  compressRetainMaxAgeDays: string
+  compressRetainMaxTokens: string
   archiveMessageCount: string
   archiveDays: string
   summaryMaxCount: string
@@ -104,12 +111,18 @@ export const EMPTY_FORM: CoreConfigForm = {
   summarizationModels: [],
   visionModels: [],
   summarizationDebugCapture: false,
-  compressNormalPercent: "0",
-  compressSafetyPercent: "0",
-  compressMinPercent: "0",
-  compressMessageThreshold: "0",
-  compressRetainTokenPercent: "0",
-  compressRetainMinMessages: "0",
+  // Compaction fields use "" for "not configured" so the payload can omit them.
+  // 0 is a real value here — it disables a trigger — and must be distinguishable
+  // from a box the operator never filled in.
+  compressNormalPercent: "",
+  compressSafetyPercent: "",
+  compressMinPercent: "",
+  compressMessageThreshold: "",
+  compressRetainTokenPercent: "",
+  compressRetainMinMessages: "",
+  compressTriggerDays: "",
+  compressRetainMaxAgeDays: "",
+  compressRetainMaxTokens: "",
   archiveMessageCount: "0",
   archiveDays: "0",
   summaryMaxCount: "0",
@@ -165,6 +178,11 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
   const gateway = asRecord(root.gateway)
   const agents = asRecord(root.agents)
   const defaults = asRecord(agents.defaults)
+  // agents.defaults.compression.{trigger,retain}; the flat compress_* keys this
+  // replaced are migrated server-side on load, so only the nested form is read.
+  const compression = asRecord(defaults.compression)
+  const compressionTrigger = asRecord(compression.trigger)
+  const compressionRetain = asRecord(compression.retain)
   const summarization = asRecord(root.summarization)
   const session = asRecord(root.session)
   const devices = asRecord(root.devices)
@@ -220,28 +238,40 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
     ].filter(Boolean),
     summarizationDebugCapture: asBool(summarization.debug_capture),
     compressNormalPercent: asNumberString(
-      defaults.compress_normal_percent,
+      compressionTrigger.normal_percent,
       EMPTY_FORM.compressNormalPercent,
     ),
     compressSafetyPercent: asNumberString(
-      defaults.compress_safety_percent,
+      compressionTrigger.safety_percent,
       EMPTY_FORM.compressSafetyPercent,
     ),
     compressMinPercent: asNumberString(
-      defaults.compress_min_percent,
+      compressionTrigger.min_percent,
       EMPTY_FORM.compressMinPercent,
     ),
     compressMessageThreshold: asNumberString(
-      defaults.compress_message_threshold,
+      compressionTrigger.message_count,
       EMPTY_FORM.compressMessageThreshold,
     ),
+    compressTriggerDays: asNumberString(
+      compressionTrigger.days,
+      EMPTY_FORM.compressTriggerDays,
+    ),
     compressRetainTokenPercent: asNumberString(
-      defaults.compress_retain_token_percent,
+      compressionRetain.token_percent,
       EMPTY_FORM.compressRetainTokenPercent,
     ),
     compressRetainMinMessages: asNumberString(
-      defaults.compress_retain_min_messages,
+      compressionRetain.min_messages,
       EMPTY_FORM.compressRetainMinMessages,
+    ),
+    compressRetainMaxAgeDays: asNumberString(
+      compressionRetain.max_age_days,
+      EMPTY_FORM.compressRetainMaxAgeDays,
+    ),
+    compressRetainMaxTokens: asNumberString(
+      compressionRetain.max_tokens,
+      EMPTY_FORM.compressRetainMaxTokens,
     ),
     archiveMessageCount: asNumberString(
       defaults.archive_message_count,
@@ -321,4 +351,36 @@ export function parseCIDRText(raw: string): string[] {
     .split(/[\n,]/)
     .map((v) => v.trim())
     .filter((v) => v.length > 0)
+}
+
+// parseOptionalIntField parses a compaction field that may be left blank.
+// Blank means "not configured" and is omitted from the payload so the backend
+// default applies; an explicit 0 is a real value (it disables a trigger) and is
+// sent through. Without the distinction, opening the config page and saving it
+// untouched would silently turn every count- and age-based trigger off.
+export function parseOptionalIntField(
+  rawValue: string,
+  label: string,
+  options: { min?: number; max?: number } = {},
+): number | undefined {
+  if (rawValue.trim() === "") {
+    return undefined
+  }
+  return parseIntField(rawValue, label, options)
+}
+
+// nullableInts converts undefined ("not configured") to null for the config
+// PATCH endpoint, which is JSON Merge Patch (RFC 7396): an OMITTED key means
+// "leave the existing value alone", while an explicit null DELETES it. Blanking
+// a field in the UI has to delete the key so the backend default applies again —
+// omitting it would silently keep the old value. The save handler persists the
+// decoded struct rather than the merged map, so the nulls never reach the file.
+export function nullableInts(
+  obj: Record<string, number | undefined>,
+): Record<string, number | null> {
+  const out: Record<string, number | null> = {}
+  for (const [k, v] of Object.entries(obj)) {
+    out[k] = v === undefined ? null : v
+  }
+  return out
 }

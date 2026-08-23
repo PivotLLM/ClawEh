@@ -28,6 +28,12 @@ type ContextManager interface {
 	// recent-tool ring used for tool-trigger cognitive-memory routing. No-op when
 	// cognitive memory is not in use.
 	RecordToolUse(names ...string)
+
+	// SetToolDefinitionTokens records the estimated token cost of the tool
+	// schemas sent with each request, which the Manager cannot see for itself.
+	// Counted by every compaction trigger so they measure the real request
+	// rather than stored history alone.
+	SetToolDefinitionTokens(n int)
 	// PreDispatchCheck runs the compression trigger check and, if compression
 	// fires and succeeds, rebuilds the message slice via Build() and returns it.
 	// If no compression is needed, returns current unchanged.

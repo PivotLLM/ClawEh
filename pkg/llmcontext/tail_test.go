@@ -7,10 +7,46 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/PivotLLM/ClawEh/pkg/memory"
 	"github.com/PivotLLM/ClawEh/pkg/providers"
 	"github.com/PivotLLM/spawnllm/protocoltypes"
 )
+
+// testNow is the fixed clock every age-sensitive tail test measures against, so
+// results never depend on when the suite runs.
+var testNow = time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
+
+// storedAt wraps plain messages as StoredMessage with per-message ages in days
+// before testNow. A missing age entry means "just now". Passing no ages at all
+// makes every message current, which is what the non-age tests want.
+func storedAt(msgs []providers.Message, agesDays ...int) []memory.StoredMessage {
+	out := make([]memory.StoredMessage, len(msgs))
+	for i, m := range msgs {
+		age := 0
+		if i < len(agesDays) {
+			age = agesDays[i]
+		}
+		out[i] = memory.StoredMessage{
+			Seq:       int64(i + 1),
+			CreatedAt: testNow.AddDate(0, 0, -age),
+			Message:   m,
+		}
+	}
+	return out
+}
+
+// selectTailMsgs runs selectTail with no age cap over messages that are all
+// current, returning just the retained messages. Most tail behaviour is
+// age-independent, so this keeps those tests focused on budget and floor.
+func selectTailMsgs(history []providers.Message, budget, minMessages int) []providers.Message {
+	tail, _ := selectTail(storedAt(history), budget, minMessages, 0, testNow, estimateTokens)
+	if len(tail) == 0 {
+		return nil
+	}
+	return storedToPlain(tail)
+}
 
 func msg(role, content string) providers.Message {
 	return providers.Message{Role: role, Content: content}
@@ -47,7 +83,7 @@ func TestSelectTail_BudgetRetention(t *testing.T) {
 		msg("assistant", "ok"),        // fits
 	}
 	// Budget of 10 tokens; only "hi"+"ok" fit (each ~1 token).
-	got := selectTail(history, 10, 0, estimateTokens)
+	got := selectTailMsgs(history, 10, 0)
 	if len(got) != 2 {
 		t.Fatalf("want 2 messages, got %d", len(got))
 	}
@@ -67,7 +103,7 @@ func TestSelectTail_MinFloorOverride(t *testing.T) {
 		msg("assistant", fmt.Sprintf("%0200d", 4)), // distinct
 	}
 	// Budget of 1 token — nothing fits — but floor is 3.
-	got := selectTail(history, 1, 3, estimateTokens)
+	got := selectTailMsgs(history, 1, 3)
 	if len(got) < 3 {
 		t.Fatalf("want at least 3 messages due to floor, got %d", len(got))
 	}
@@ -83,7 +119,7 @@ func TestSelectTail_ToolGroupKeptWhole(t *testing.T) {
 		msg("user", "follow up"),
 	}
 	// Budget large enough to fit everything.
-	got := selectTail(history, 10000, 0, estimateTokens)
+	got := selectTailMsgs(history, 10000, 0)
 	if len(got) != 4 {
 		t.Fatalf("want 4 messages, got %d", len(got))
 	}
@@ -101,7 +137,7 @@ func TestSelectTail_ToolGroupDroppedWhole(t *testing.T) {
 		toolResultMsg(longTool, "tc1"),
 		msg("user", "after"),
 	}
-	got := selectTail(history, 10, 0, estimateTokens)
+	got := selectTailMsgs(history, 10, 0)
 	// Only "after" fits; the tool group (tc1 + result) must not be partially included.
 	for _, m := range got {
 		if m.ToolCallID == "tc1" || (len(m.ToolCalls) > 0 && m.ToolCalls[0].ID == "tc1") {
@@ -123,7 +159,7 @@ func TestSelectTail_LeadingToolGroupTrimmed(t *testing.T) {
 	}
 	// Budget fits everything by tokens, but force the floor so all groups are
 	// collected — then the leading tool group must still be trimmed.
-	got := selectTail(history, 10000, 0, estimateTokens)
+	got := selectTailMsgs(history, 10000, 0)
 	if len(got) == 0 {
 		t.Fatal("expected a non-empty tail")
 	}
@@ -135,7 +171,7 @@ func TestSelectTail_LeadingToolGroupTrimmed(t *testing.T) {
 	// Now make the cut land mid-group: only the tool result + final user fit by
 	// budget, so resolveGroup pulls in the assistant — the whole leading group
 	// must be trimmed, leaving just the clean trailing user message.
-	got2 := selectTail(history[1:], 10000, 0, estimateTokens) // [toolcall, toolresult, user]
+	got2 := selectTailMsgs(history[1:], 10000, 0) // [toolcall, toolresult, user]
 	if len(got2) != 1 || got2[0].Content != "recent question" {
 		t.Fatalf("expected only the trailing user message, got %+v", got2)
 	}
@@ -151,7 +187,7 @@ func TestSelectTail_NoiseCollapsed(t *testing.T) {
 		msg("assistant", "hi"), // duplicate of history[1]
 		msg("user", "different"),
 	}
-	got := selectTail(history, 10000, 0, estimateTokens)
+	got := selectTailMsgs(history, 10000, 0)
 	// Collapsed: only one "hello" user and one "hi" assistant should survive each.
 	userCount := 0
 	for _, m := range got {
@@ -185,7 +221,7 @@ func TestSelectTail_CronNoiseCollapsed(t *testing.T) {
 		wrap("11:00", "run backup"), // same payload — noise
 		msg("assistant", "done"),
 	}
-	got := selectTail(history, 10000, 0, estimateTokens)
+	got := selectTailMsgs(history, 10000, 0)
 	cronCount := 0
 	for _, m := range got {
 		if strings.HasPrefix(m.Content, testCronPrefix) {
@@ -199,7 +235,7 @@ func TestSelectTail_CronNoiseCollapsed(t *testing.T) {
 
 // TestSelectTail_EmptyHistory returns nil for an empty input.
 func TestSelectTail_EmptyHistory(t *testing.T) {
-	got := selectTail(nil, 1000, 2, estimateTokens)
+	got := selectTailMsgs(nil, 1000, 2)
 	if got != nil {
 		t.Errorf("want nil, got %v", got)
 	}
@@ -212,7 +248,7 @@ func TestSelectTail_ZeroBudget(t *testing.T) {
 		msg("assistant", "b"),
 		msg("user", "c"),
 	}
-	got := selectTail(history, 0, 0, estimateTokens)
+	got := selectTailMsgs(history, 0, 0)
 	if len(got) != 3 {
 		t.Errorf("zero budget should keep all messages, got %d", len(got))
 	}
