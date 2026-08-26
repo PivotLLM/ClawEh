@@ -386,7 +386,7 @@
       "compress_retain_max_age_days": "Tail age limit (days)",
       "compress_retain_max_age_days_hint": "How far back the kept messages are trimmed to when a compaction runs. Lower = fewer tokens per request; higher = more history in context. 0 = off, blank = use default (5).",
       "compress_retain_max_tokens": "Tail token ceiling",
-      "compress_retain_max_tokens_hint": "Hard cap on the kept messages, applied alongside the percentage below (whichever is smaller wins). Use it on large-context models, where a percentage alone keeps far more than intended. 0 = no cap.",
+      "compress_retain_max_tokens_hint": "Hard cap on the kept messages, applied alongside the percentage below (whichever is smaller wins). Matters on large-context models, where a percentage alone keeps far more than intended; a no-op on smaller ones. 0 = no cap, blank = use default (40000).",
       "compress_retain_token_percent": "Tail window size (%)",
       "compress_retain_token_percent_hint": "% of context window kept as recent uncompressed messages. Must be below the minimum context threshold, or every compaction lands right back on the floor and fires again. Blank = use default (10%).",
       "compress_retain_min_messages": "Minimum tail messages",

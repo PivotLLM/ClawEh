@@ -527,7 +527,7 @@ Compaction itself is configured under a `compression` block, split by what each 
 | `compression.trigger.message_count` | `100` | Compact after this many new messages since the last compaction. `0` disables it. |
 | `compression.trigger.days` | `7` | Compact once the oldest message in the window is this old, regardless of how little of the window it occupies. Keep it **above** `retain.max_age_days`. `0` disables it. |
 | `compression.retain.token_percent` | `10` | Retained tail budget, as a percentage of the context window. Must be below `trigger.min_percent`, or every pass lands back on the floor and immediately re-fires. |
-| `compression.retain.max_tokens` | `0` (no cap) | Absolute ceiling on the retained tail, applied alongside the percentage (the smaller wins). Worth setting on large-context models, where a percentage tuned for 128 k retains far more than intended. |
+| `compression.retain.max_tokens` | `40000` | Absolute ceiling on the retained tail, applied alongside the percentage (the smaller wins). The percentage scales with the window, so without this a million-token model keeps 100 k of tail purely because it can. A no-op on 128 k models, where the percentage already binds tighter. `0` disables it. |
 | `compression.retain.max_age_days` | `5` | Trim the retained tail back to this age. Lower spends fewer tokens per request; higher keeps more history in context. `0` disables it. |
 | `compression.retain.min_messages` | `2` | Floor that overrides every other retention bound. The most recent user message is always kept as well. |
 | `compression.target_percent` | derived | Stop condition for the compaction loop. Unset derives it from `trigger.normal_percent`. |

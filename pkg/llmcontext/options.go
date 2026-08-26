@@ -43,6 +43,24 @@ const (
 	// session to the trigger boundary and re-firing on every message.
 	defaultRetainMaxAgeDays = 5
 
+	// defaultRetainMaxTokens is an absolute ceiling on the retained tail, applied
+	// alongside the percentage budget (the smaller wins).
+	//
+	// It exists because the percentage scales with the context window: 10% of a
+	// 128k model is 12.8k tokens, but 10% of a million-token model is 100k, and
+	// nothing about a larger window makes a larger tail more useful. On the
+	// production instance this figure binds only on the two large-window agents
+	// and is a no-op for the 128k ones, where the percentage already binds
+	// tighter.
+	//
+	// Sized deliberately rather than aggressively. Once the request prefix is
+	// stable the retained tail is cached and bills at a fraction of full price,
+	// so trimming it buys far less than it did when every turn re-sent the whole
+	// window — and the messages it trims are the RECENT ones. 40k keeps a few
+	// hundred messages of working context for a busy agent while capturing most
+	// of the available saving.
+	defaultRetainMaxTokens = 40000
+
 	// mediaTokensPerItem is the flat token cost charged per media item by the
 	// estimator. Providers bill images by resolution tiles, so the rune length
 	// of a base64 data: URI overstates the real cost by orders of magnitude;
@@ -143,6 +161,7 @@ func defaultManagerConfig() managerConfig {
 		retainTokenPercent:  defaultRetainTokenPercent,
 		retainMinMessages:   defaultRetainMinMessages,
 		retainMaxAgeDays:    defaultRetainMaxAgeDays,
+		retainMaxTokens:     defaultRetainMaxTokens,
 		triggerDays:         defaultTriggerDays,
 		archiveMessageCount: defaultArchiveMessageCount,
 		contextWindow:       128000,

@@ -52,19 +52,28 @@ accounts for ~48% of amber's and ~61% of wendy's full-price input tokens.
 - **WebUI** exposes the new settings; blank means "not configured" and sends `null`
   (merge-patch deletes the key) so saving an untouched page cannot disable a trigger.
 
-### Outstanding decision
+### `retain.max_tokens` — settled at 40 000
 
-`retain.max_tokens` defaults to `0` (off). Without it, a large-window agent's tail is
-still bounded only by a percentage of a very large number — amber retains 451 messages /
-72 k tokens after compaction because neither the 5-day cap nor 10% of 1 M binds.
+The percentage budget scales with the window, so a million-token model keeps 100 k of tail
+purely because it can. The absolute cap is the backstop.
 
-| budget | amber | wendy | dawn |
-|---|---|---|---|
-| 10 k | 67 | 35 | 182 |
-| 20 k | 135 | 77 | 256 |
-| 40 k | 239 | 81 | 256 |
+**The caching fix changed this number.** At 20 000 — recommended while cross-turn caching
+was broken and every tail token was re-billed at full price — the trade was clearly worth
+it. With the prefix stable the tail is cached and bills at a fraction, so trimming it buys
+roughly a tenth of what it did, while still costing the *most recent* messages.
 
-Recommendation: **20 000**. No-op for 128 k models (10% = 12 800 already binds tighter).
+Measured against the live instance (5-day slice, after the percentage budget applies):
+
+| agent | window | tail today | at 40 k | at 20 k | effective saving 40 k / 20 k |
+|---|---|---|---|---|---|
+| amber | 1 M | 75.6 k (440 msgs) | 263 msgs | 160 msgs | 4.0 M / 6.2 M per month |
+| wendy | 900 k | 90 k (137 msgs) | 58 msgs | 26 msgs | 5.8 M / 8.1 M per month |
+| dawn | 128 k | 12.8 k (238 msgs) | no-op | no-op | — |
+
+Going from 40 k to 20 k buys another ~4.5 M effective tokens and costs amber 103 recent
+messages and wendy 32 — leaving wendy 26 messages, a few exchanges for an agent mid-chapter.
+Not worth it now that those tokens are cached. 40 k captures most of the saving and stays a
+no-op on the 128 k agents.
 
 ---
 

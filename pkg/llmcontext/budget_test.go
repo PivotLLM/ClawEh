@@ -107,15 +107,33 @@ func TestRetainBudget_PercentWinsWhenSmaller(t *testing.T) {
 	}
 }
 
-// TestRetainBudget_CapDisabled is the off path.
+// TestRetainBudget_CapDisabled is the off path: an explicit 0 removes the
+// absolute ceiling and leaves the percentage in charge.
 func TestRetainBudget_CapDisabled(t *testing.T) {
 	mgr := newTestManager(newMockStore(),
 		WithContextWindow(1_000_000),
 		WithMinPercent(20),
 		WithRetainTokenPercent(10),
+		WithRetainMaxTokens(0),
 	)
 	if got, want := mgr.retainBudgetTokens(), 100_000; got != want {
-		t.Errorf("retainBudgetTokens = %d, want %d (no absolute cap set)", got, want)
+		t.Errorf("retainBudgetTokens = %d, want %d (absolute cap explicitly disabled)", got, want)
+	}
+}
+
+// TestRetainBudget_DefaultCapBindsOnLargeWindows pins the reason the default
+// exists: the percentage scales with the window, so without an absolute ceiling
+// a million-token model retains 100k of tail purely because it can. It must stay
+// a no-op on small windows, where the percentage already binds tighter.
+func TestRetainBudget_DefaultCapBindsOnLargeWindows(t *testing.T) {
+	large := newTestManager(newMockStore(), WithContextWindow(1_000_000), WithMinPercent(20))
+	if got, want := large.retainBudgetTokens(), defaultRetainMaxTokens; got != want {
+		t.Errorf("1M window: retainBudgetTokens = %d, want %d (absolute cap binds)", got, want)
+	}
+
+	small := newTestManager(newMockStore(), WithContextWindow(128_000), WithMinPercent(20))
+	if got, want := small.retainBudgetTokens(), 128_000*defaultRetainTokenPercent/100; got != want {
+		t.Errorf("128k window: retainBudgetTokens = %d, want %d (percentage binds tighter)", got, want)
 	}
 }
 
