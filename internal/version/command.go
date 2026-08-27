@@ -5,7 +5,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/PivotLLM/ClawEh/pkg/config"
 	"github.com/PivotLLM/ClawEh/pkg/global"
 )
 
@@ -23,8 +22,8 @@ func NewVersionCommand() *cobra.Command {
 }
 
 func printVersion() {
-	fmt.Printf("%s %s\n", global.AppName, config.FormatVersion())
-	build, goVer := config.FormatBuildInfo()
+	fmt.Printf("%s %s\n", global.AppName, global.FormatVersion())
+	build, goVer := global.FormatBuildInfo()
 	if build != "" {
 		fmt.Printf("  Build: %s\n", build)
 	}

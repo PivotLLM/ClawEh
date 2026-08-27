@@ -156,7 +156,7 @@ func (cb *ContextBuilder) clock() time.Time {
 func (cb *ContextBuilder) getIdentity() string {
 	workspacePath, _ := filepath.Abs(filepath.Join(cb.workspace))
 	toolDiscovery := cb.getDiscoveryRule()
-	version := config.FormatVersion()
+	version := global.FormatVersion()
 
 	// The agent's file tools are scoped to files/ (read/write) and skills/ (read);
 	// its config (AGENTS/SOUL/IDENTITY/USER/MEMORY) is injected into this prompt.

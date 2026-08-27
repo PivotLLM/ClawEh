@@ -6,13 +6,17 @@ BUILD_DIR=build
 CMD_DIR=.
 MAIN_GO=main.go
 
-# Version
-VERSION?=$(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
-GIT_COMMIT=$(shell git rev-parse --short=8 HEAD 2>/dev/null || echo "dev")
+# Build metadata. The VERSION itself is NOT injected: it is the const in
+# pkg/global/version.go and is a property of the source, not of the machine that
+# compiled it. Only the commit, timestamp and toolchain are stamped in, and
+# FormatVersion appends them. Injecting a git-describe string here is what used
+# to make `claw version` report the last tag plus a commit count while the rest
+# of the app reported the constant.
+GIT_COMMIT=$(shell git rev-parse --short=8 HEAD 2>/dev/null || echo "unknown")
 BUILD_TIME=$(shell date +%FT%T%z)
 GO_VERSION=$(shell $(GO) version | awk '{print $$3}')
-CONFIG_PKG=github.com/PivotLLM/ClawEh/pkg/config
-LDFLAGS=-ldflags "-X $(CONFIG_PKG).Version=$(VERSION) -X $(CONFIG_PKG).GitCommit=$(GIT_COMMIT) -X $(CONFIG_PKG).BuildTime=$(BUILD_TIME) -X $(CONFIG_PKG).GoVersion=$(GO_VERSION) -s -w"
+GLOBAL_PKG=github.com/PivotLLM/ClawEh/pkg/global
+LDFLAGS=-ldflags "-X $(GLOBAL_PKG).GitCommit=$(GIT_COMMIT) -X $(GLOBAL_PKG).BuildTime=$(BUILD_TIME) -X $(GLOBAL_PKG).GoVersion=$(GO_VERSION) -s -w"
 
 # Go variables
 GO?=CGO_ENABLED=0 go
@@ -352,7 +356,6 @@ help:
 	@echo "  GOARM / GOMIPS          # Optional sub-arch (e.g. GOARM=7, GOMIPS=softfloat)"
 	@echo "  INSTALL_PREFIX          # Installation prefix (default: ~/.local)"
 	@echo "  CLAW_HOME               # Data directory (default: ~/.claw)"
-	@echo "  VERSION                 # Version string (default: git describe)"
 	@echo ""
 	@echo "Current Configuration:"
 	@echo "  Platform: $(PLATFORM)/$(ARCH)"
