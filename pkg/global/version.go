@@ -16,7 +16,7 @@ const AppTagLine = "Personal AI Assistant"
 // AppCopyright is displayed at start
 const AppCopyright = "Copyright (c) 2026 Tenebris Technologies Inc.\nSome code Copyright (c) 2026 PicoClaw contributors."
 
-// version is the current release version of ClawEh, and the single source of
+// Version is the current release version of ClawEh, and the single source of
 // truth for it. Bump it here; nothing else defines a version.
 //
 // It is deliberately a const, so it cannot be overwritten at link time. The
@@ -24,9 +24,10 @@ const AppCopyright = "Copyright (c) 2026 Tenebris Technologies Inc.\nSome code C
 // GetVersion appends it — the version itself is a property of the source, not
 // of the machine that compiled it.
 //
-// Unexported so that every caller goes through GetVersion or GetVersionShort.
-// Bare access is what let the same binary render the version two different ways.
-const version = "0.4.68"
+// Exported because external tooling (the build/release scripts) reads it from
+// this file. In Go code prefer GetVersion or GetVersionShort: reading the const
+// directly is what let one binary render its version two different ways.
+const Version = "0.4.68"
 
 // Build-time metadata, injected via ldflags by the Makefile:
 //
@@ -54,15 +55,15 @@ var (
 // The commit is the half that identifies the exact source, so it must travel
 // with the number rather than beside it.
 //
-// Use this or GetVersionShort; never read the version const directly. Mixing
+// Use this or GetVersionShort rather than the Version const. Mixing
 // them is how the app came to report a bare number in some places and a
 // decorated one in others, making two log lines from one binary look like two
 // builds.
 func GetVersion() string {
 	if GitCommit == "" {
-		return version
+		return Version
 	}
-	return version + "-" + GitCommit
+	return Version + "-" + GitCommit
 }
 
 // GetVersionShort returns just the release number — "0.4.68" — with no build
@@ -75,7 +76,7 @@ func GetVersion() string {
 // concrete case — paired R1 and Android clients read that field, and software
 // we do not control could break on a suffix.
 func GetVersionShort() string {
-	return version
+	return Version
 }
 
 // FormatBuildInfo returns the build timestamp and the Go toolchain version.
