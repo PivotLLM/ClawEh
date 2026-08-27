@@ -718,19 +718,31 @@ func sanitizeHistoryForProvider(history []providers.Message) []providers.Message
 				dropLeadingTool++
 				continue
 			}
-			// Walk backwards to find the nearest assistant message,
-			// skipping over any preceding tool messages (multi-tool-call case).
-			foundAssistant := false
+			// Walk backwards to the nearest assistant message, skipping over any
+			// preceding tool results (the parallel-tool-call case), and require
+			// that THIS result answers one of the calls that assistant actually
+			// declared.
+			//
+			// Matching the id matters, not merely finding an assistant that made
+			// some call: a result whose id belongs to a dropped assistant turn
+			// would otherwise be accepted on the strength of an unrelated
+			// neighbour, and strict providers reject it — DeepSeek answers 400
+			// with "Messages with role 'tool' must be a response to a preceding
+			// message with 'tool_calls'", which kills every turn until the
+			// message ages out of the window.
+			open := map[string]bool{}
 			for i := len(sanitized) - 1; i >= 0; i-- {
 				if sanitized[i].Role == "tool" {
 					continue
 				}
-				if sanitized[i].Role == "assistant" && len(sanitized[i].ToolCalls) > 0 {
-					foundAssistant = true
+				if sanitized[i].Role == "assistant" {
+					for _, tc := range sanitized[i].ToolCalls {
+						open[tc.ID] = true
+					}
 				}
 				break
 			}
-			if !foundAssistant {
+			if !open[msg.ToolCallID] {
 				dropOrphanTool++
 				continue
 			}

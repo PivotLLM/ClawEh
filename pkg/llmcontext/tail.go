@@ -185,7 +185,22 @@ func collapseStoredNoise(msgs []memory.StoredMessage) []memory.StoredMessage {
 }
 
 // isTailNoise returns true if m is a noise duplicate given the current state.
+//
+// Tool plumbing is never noise, whatever its text. An assistant message that
+// makes a tool call carries empty Content, so a run of them looks like a run of
+// identical messages to the content comparison below — collapsing one drops the
+// tool_calls it declared and orphans the tool results that follow, which strict
+// providers reject outright ("Messages with role 'tool' must be a response to a
+// preceding message with 'tool_calls'"). Tool results are excluded for the
+// mirror reason: two calls to one tool can legitimately return the same text,
+// and dropping the second breaks the assistant message that expects it.
+//
+// Noise collapse exists for repeated conversational text — cron wrappers, a user
+// sending the same thing twice — not for structural messages.
 func isTailNoise(m providers.Message, lastByRole map[string]string, lastCron string) bool {
+	if len(m.ToolCalls) > 0 || m.ToolCallID != "" {
+		return false
+	}
 	if key, ok := cronmsg.CollapseKey(m.Content); ok {
 		return key != "" && key == lastCron
 	}

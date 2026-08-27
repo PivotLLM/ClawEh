@@ -290,3 +290,79 @@ func TestResolveGroup_UnmatchedToolCall(t *testing.T) {
 		t.Errorf("want {1,1} for unmatched tool call, got %+v", g)
 	}
 }
+
+// TestSelectTail_ToolPlumbingIsNeverNoise is the regression guard for a
+// production 400. Assistant messages that make a tool call carry empty Content,
+// so a run of them looked like a run of identical messages to the noise
+// comparison. Collapsing one dropped the tool_calls it declared and orphaned the
+// tool results that followed, and DeepSeek rejected the whole request:
+// "Messages with role 'tool' must be a response to a preceding message with
+// 'tool_calls'". Every turn failed until the message aged out of the window.
+func TestSelectTail_ToolPlumbingIsNeverNoise(t *testing.T) {
+	history := []providers.Message{
+		msg("user", "store three facts"),
+		toolCallMsg("", "tc1"), // empty content — the shape that looked like noise
+		toolResultMsg("stored fact one", "tc1"),
+		toolCallMsg("", "tc2"),
+		toolResultMsg("stored fact two", "tc2"),
+		toolCallMsg("", "tc3"),
+		toolResultMsg("stored fact three", "tc3"),
+	}
+
+	got := selectTailMsgs(history, 0, 0)
+
+	if len(got) != len(history) {
+		t.Fatalf("expected all %d messages retained, got %d — tool plumbing was collapsed", len(history), len(got))
+	}
+	// Every tool result must still have its declaring assistant present.
+	declared := map[string]bool{}
+	for _, m := range got {
+		for _, tc := range m.ToolCalls {
+			declared[tc.ID] = true
+		}
+	}
+	for _, m := range got {
+		if m.Role == "tool" && !declared[m.ToolCallID] {
+			t.Errorf("tool result %q orphaned — its assistant turn was collapsed away", m.ToolCallID)
+		}
+	}
+}
+
+// TestSelectTail_IdenticalToolResultsBothKept is the mirror case: two calls to
+// one tool can legitimately return the same text, and dropping the second
+// breaks the assistant message that expects a result for it.
+func TestSelectTail_IdenticalToolResultsBothKept(t *testing.T) {
+	history := []providers.Message{
+		msg("user", "check twice"),
+		toolCallMsg("", "a"),
+		toolResultMsg("same output", "a"),
+		toolCallMsg("", "b"),
+		toolResultMsg("same output", "b"),
+	}
+
+	got := selectTailMsgs(history, 0, 0)
+
+	results := 0
+	for _, m := range got {
+		if m.Role == "tool" {
+			results++
+		}
+	}
+	if results != 2 {
+		t.Errorf("expected both identical tool results kept, got %d", results)
+	}
+}
+
+// TestSelectTail_ConversationalNoiseStillCollapses confirms the narrowing did
+// not disable noise collapse for what it is actually for.
+func TestSelectTail_ConversationalNoiseStillCollapses(t *testing.T) {
+	history := []providers.Message{
+		msg("user", "same thing"),
+		msg("user", "same thing"),
+		msg("assistant", "ok"),
+	}
+	got := selectTailMsgs(history, 0, 0)
+	if len(got) != 2 {
+		t.Errorf("expected the duplicate user message collapsed, got %d messages", len(got))
+	}
+}
