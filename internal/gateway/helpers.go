@@ -125,7 +125,7 @@ func gatewayCmd(debug bool) error {
 	}
 	defer releaseLock(lockFile)
 
-	logger.InfoCF("gateway", "Starting", map[string]any{"app": global.AppName, "version": global.Version})
+	logger.InfoCF("gateway", "Starting", map[string]any{"app": global.AppName, "version": global.GetVersion()})
 
 	configPath := internal.GetConfigPath()
 	cfg, err := internal.LoadConfig()

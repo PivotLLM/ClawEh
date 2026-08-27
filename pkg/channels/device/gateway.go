@@ -58,8 +58,10 @@ func NewDeviceChannel(cfg config.DeviceChannelConfig, dataDir string, logMessage
 		return nil, err
 	}
 	srv := NewServer(store, ServerOptions{
-		SharedToken:   cfg.Token,
-		WordToken:     cfg.WordToken,
+		SharedToken: cfg.Token,
+		WordToken:   cfg.WordToken,
+		// Protocol handshake: bare semver. Paired devices (the R1, the Android
+		// app) read this field; a build suffix could break a version comparison.
 		ServerVersion: global.Version,
 		AutoApprove:   cfg.AutoApprove,
 		AllowOrigins:  cfg.AllowOrigins,

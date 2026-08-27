@@ -109,7 +109,7 @@ func acpCmd(debug bool, wsURL string, autoPair bool) error {
 	deviceToken := idStore.LoadDeviceToken()
 
 	logger.InfoCF("acp", "Starting ACP↔gateway bridge", map[string]any{
-		"app": global.AppName, "version": global.Version, "url": wsURL, "deviceId": id.DeviceID,
+		"app": global.AppName, "version": global.GetVersion(), "url": wsURL, "deviceId": id.DeviceID,
 	})
 	// Human-facing progress goes to stderr — stdout is the ACP protocol wire, so it
 	// must stay clean. ACP clients (rabbit-agent) read stdout only and ignore this.
@@ -127,7 +127,8 @@ func acpCmd(debug bool, wsURL string, autoPair bool) error {
 			gateway.WithToken(authToken),
 			gateway.WithRole(protocol.RoleNode),
 			gateway.WithClientInfo(protocol.ClientInfo{
-				ID:       protocol.ClientIDGateway,
+				ID: protocol.ClientIDGateway,
+				// Protocol handshake: bare semver (see pkg/global.GetVersion).
 				Version:  global.Version,
 				Platform: "go",
 				Mode:     protocol.ClientModeNode,

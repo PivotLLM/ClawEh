@@ -55,7 +55,7 @@ func (t *SessionInfoTool) Execute(ctx context.Context, _ map[string]any) *tools.
 		return tools.ErrorResult("session info error: " + err.Error())
 	}
 	// Static server identity so "connection info" reports the running build.
-	info.Server = global.AppName + " " + global.Version
+	info.Server = global.AppName + " " + global.GetVersion()
 	info.OS = runtime.GOOS + "/" + runtime.GOARCH
 	out, _ := json.Marshal(info)
 	return &tools.ToolResult{ForLLM: string(out)}

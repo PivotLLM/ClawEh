@@ -15,7 +15,7 @@ func versionCommand() Definition {
 		Handler: func(_ context.Context, req Request, _ *Runtime) error {
 			msg := fmt.Sprintf("%s %s\n%s\n%s",
 				global.AppName,
-				global.Version,
+				global.GetVersion(),
 				global.AppTagLine,
 				global.AppCopyright,
 			)

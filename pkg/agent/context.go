@@ -156,7 +156,7 @@ func (cb *ContextBuilder) clock() time.Time {
 func (cb *ContextBuilder) getIdentity() string {
 	workspacePath, _ := filepath.Abs(filepath.Join(cb.workspace))
 	toolDiscovery := cb.getDiscoveryRule()
-	version := global.FormatVersion()
+	version := global.GetVersion()
 
 	// The agent's file tools are scoped to files/ (read/write) and skills/ (read);
 	// its config (AGENTS/SOUL/IDENTITY/USER/MEMORY) is injected into this prompt.
@@ -556,7 +556,7 @@ func (cb *ContextBuilder) LoadBootstrapFiles() string {
 func (cb *ContextBuilder) buildDynamicContext(channel, chatID string) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "## Runtime\nServer: %s %s\nOS: %s %s\nGo: %s",
-		global.AppName, global.Version, runtime.GOOS, runtime.GOARCH, runtime.Version())
+		global.AppName, global.GetVersion(), runtime.GOOS, runtime.GOARCH, runtime.Version())
 
 	if channel != "" && chatID != "" {
 		fmt.Fprintf(&sb, "\n\n## Current Session\nChannel: %s\nChat ID: %s", channel, chatID)

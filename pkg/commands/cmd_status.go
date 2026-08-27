@@ -37,7 +37,7 @@ func statusCommand() Definition {
 func buildStatusReply(req Request, rt *Runtime) string {
 	var body strings.Builder
 
-	fmt.Fprintf(&body, "Version: %s\n", global.Version)
+	fmt.Fprintf(&body, "Version: %s\n", global.GetVersion())
 
 	if rt != nil && rt.Uptime != nil {
 		d := rt.Uptime().Truncate(time.Second)

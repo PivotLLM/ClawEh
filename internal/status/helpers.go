@@ -18,7 +18,7 @@ func statusCmd() {
 	configPath := internal.GetConfigPath()
 
 	fmt.Println("Status")
-	fmt.Printf("Version: %s\n", global.FormatVersion())
+	fmt.Printf("Version: %s\n", global.GetVersion())
 	build, _ := global.FormatBuildInfo()
 	if build != "" {
 		fmt.Printf("Build: %s\n", build)

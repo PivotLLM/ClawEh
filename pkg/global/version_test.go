@@ -20,28 +20,28 @@ import (
 func TestVersion_IsTheOnlySourceOfTruth(t *testing.T) {
 	assert.NotEmpty(t, Version)
 	assert.NotEqual(t, "dev", Version, "Version must be a real release number, not a build-time placeholder")
-	assert.True(t, strings.HasPrefix(FormatVersion(), Version),
-		"FormatVersion must lead with the constant, decorating it at most")
+	assert.True(t, strings.HasPrefix(GetVersion(), Version),
+		"GetVersion must lead with the constant, decorating it at most")
 }
 
-// TestFormatVersion_NoGitCommit covers a plain `go build`, where nothing is
+// TestGetVersion_NoGitCommit covers a plain `go build`, where nothing is
 // stamped in: the bare version, with no empty parenthetical trailing it.
-func TestFormatVersion_NoGitCommit(t *testing.T) {
+func TestGetVersion_NoGitCommit(t *testing.T) {
 	old := GitCommit
 	t.Cleanup(func() { GitCommit = old })
 
 	GitCommit = ""
-	assert.Equal(t, Version, FormatVersion())
+	assert.Equal(t, Version, GetVersion())
 }
 
-// TestFormatVersion_WithGitCommit covers a Makefile build, where the commit is
+// TestGetVersion_WithGitCommit covers a Makefile build, where the commit is
 // appended to identify the exact source a binary came from.
-func TestFormatVersion_WithGitCommit(t *testing.T) {
+func TestGetVersion_WithGitCommit(t *testing.T) {
 	old := GitCommit
 	t.Cleanup(func() { GitCommit = old })
 
 	GitCommit = "abc123"
-	assert.Equal(t, Version+" (git: abc123)", FormatVersion())
+	assert.Equal(t, Version+" (git: abc123)", GetVersion())
 }
 
 func TestFormatBuildInfo_UsesStampedValues(t *testing.T) {
@@ -80,4 +80,19 @@ func TestFormatBuildInfo_GoVersionFallsBackToRuntime(t *testing.T) {
 	build, goVer := FormatBuildInfo()
 	assert.Equal(t, "x", build)
 	assert.Equal(t, runtime.Version(), goVer)
+}
+
+// TestGetVersion_IsWhatDisplaySitesShow is the point of having one helper: every
+// human- or model-facing surface must render the same string. Reading Version
+// directly is what let two log lines from one binary look like two builds.
+func TestGetVersion_IsWhatDisplaySitesShow(t *testing.T) {
+	old := GitCommit
+	t.Cleanup(func() { GitCommit = old })
+
+	GitCommit = "deadbeef"
+	want := GetVersion()
+
+	assert.Equal(t, want, GetVersion(), "GetVersion must be stable across calls")
+	assert.Contains(t, want, Version, "the release version must always be present")
+	assert.Contains(t, want, "deadbeef", "the stamped commit must be present when set")
 }

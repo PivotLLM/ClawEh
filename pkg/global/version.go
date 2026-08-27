@@ -21,7 +21,7 @@ const AppCopyright = "Copyright (c) 2026 Tenebris Technologies Inc.\nSome code C
 //
 // It is deliberately a const, so it cannot be overwritten at link time. The
 // build stamps BUILD METADATA (commit, timestamp, toolchain) via ldflags and
-// FormatVersion appends it — the version itself is a property of the source,
+// GetVersion appends it — the version itself is a property of the source,
 // not of the machine that compiled it.
 const Version = "0.4.68"
 
@@ -39,9 +39,21 @@ var (
 	GoVersion string // Go toolchain used for the build
 )
 
-// FormatVersion returns the release version with the build commit appended when
-// one was stamped in, e.g. "0.4.68 (git: c331081b)".
-func FormatVersion() string {
+// GetVersion returns the one version string the application shows anywhere a
+// human or a model will read it: logs, the CLI, the WebUI, the system prompt,
+// session_info. It is the release version with the build commit appended when
+// one was stamped in — "0.4.68 (git: c331081b)", or bare "0.4.68" from a plain
+// `go build`.
+//
+// Use this rather than reading Version directly. Mixing the two is how the app
+// came to report a bare number in some places and a decorated one in others,
+// which makes two log lines from the same binary look like two builds.
+//
+// The exception is a PROTOCOL handshake — the MCP serverInfo, the ACP
+// Implementation, the device gateway's ServerVersion. Those identify the build
+// to another program rather than to a person, and a client is entitled to
+// compare or parse them, so they send the bare Version const.
+func GetVersion() string {
 	if GitCommit == "" {
 		return Version
 	}

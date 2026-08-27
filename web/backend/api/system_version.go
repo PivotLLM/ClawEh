@@ -13,5 +13,5 @@ func (h *Handler) registerVersionRoutes(mux *http.ServeMux) {
 }
 
 func (h *Handler) handleVersion(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"version": global.Version})
+	writeJSON(w, http.StatusOK, map[string]string{"version": global.GetVersion()})
 }
