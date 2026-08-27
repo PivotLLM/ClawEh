@@ -8,6 +8,7 @@ export interface ProviderInfo {
   api_key: string
   proxy?: string
   strict_compat?: boolean
+  require_reasoning_content?: boolean
   no_parallel_tool_calls?: boolean
   response_format_json?: boolean
   command?: string

@@ -2561,7 +2561,7 @@ func (al *AgentLoop) runLLMIteration(
 						if modelKey == "" {
 							modelKey = c.Model
 						}
-						msgs := al.messagesForModel(messages, modelKey)
+						msgs := al.messagesForModel(messages, modelKey, len(providerToolDefs) > 0)
 						if al.dispatcher != nil {
 							key := c.Alias
 							if key == "" {
@@ -2619,7 +2619,7 @@ func (al *AgentLoop) runLLMIteration(
 			// resolveRunProvider returns agent.Provider + activeModel as the
 			// last-resort safety net when dispatcher resolution cannot satisfy
 			// the request.
-			return runProvider.Chat(ctx, al.messagesForModel(messages, runModel), providerToolDefs, runModel, llmOpts)
+			return runProvider.Chat(ctx, al.messagesForModel(messages, runModel, len(providerToolDefs) > 0), providerToolDefs, runModel, llmOpts)
 		}
 
 		// Retry loop for context/token errors
@@ -3541,8 +3541,74 @@ func (al *AgentLoop) selectCandidates(
 // must not be replayed to a non-vision model. The persisted originals are never
 // mutated, so a later turn on a vision model still surfaces the image. Unknown
 // model is treated as no-vision, matching the tool-image injection default.
-func (al *AgentLoop) messagesForModel(messages []providers.Message, modelKey string) []providers.Message {
-	if mc, err := al.GetConfig().GetModelConfig(modelKey); err == nil && mc != nil {
+// reasoningPlaceholder is what backfillReasoningContent writes into an empty
+// reasoning_content. A single space, deliberately: DeepSeek V4 Pro rejects the
+// empty string as "not passed back", so the value must be non-empty, and
+// anything longer would be fabricated reasoning the model never produced.
+const reasoningPlaceholder = " "
+
+// backfillReasoningContent gives every assistant message a non-empty
+// reasoning_content when the target provider demands one.
+//
+// DeepSeek V4 thinking mode requires the field on every assistant message in
+// history whenever the request carries tools — including turns that made no tool
+// call — and answers 400 without it. Messages written by a model that records no
+// reasoning (any CLI provider, or the same model with thinking off) therefore
+// wedge a session the moment it is pointed at DeepSeek: the same history replays
+// every turn and is rejected every turn, and the fallback chain cannot rescue it
+// because a 400 is not retriable.
+//
+// Three conditions, all necessary:
+//   - the provider opts in via require_reasoning_content;
+//   - the request carries tools, since without them DeepSeek ignores the field
+//     entirely and there is nothing to satisfy;
+//   - the message is an assistant turn whose reasoning_content is empty. Real
+//     reasoning is never touched, so a thinking model's own output round-trips
+//     unchanged.
+//
+// The input slice is not modified: callers share `messages` across fallback
+// candidates, and one candidate's wire quirk must not follow the history to the
+// next.
+func (al *AgentLoop) backfillReasoningContent(
+	messages []providers.Message,
+	mc *config.ModelConfig,
+	mcErr error,
+	hasTools bool,
+) []providers.Message {
+	if !hasTools || mcErr != nil || mc == nil || mc.Provider == "" {
+		return messages
+	}
+	prov, err := al.GetConfig().GetProvider(mc.Provider)
+	if err != nil || prov == nil || !prov.RequireReasoningContent {
+		return messages
+	}
+
+	// Copy lazily: most turns need no backfill at all once a thinking model has
+	// been running, and copying the whole slice per dispatch is wasted work.
+	out := messages
+	copied := false
+	for i := range messages {
+		if messages[i].Role != "assistant" || messages[i].ReasoningContent != "" {
+			continue
+		}
+		if !copied {
+			out = make([]providers.Message, len(messages))
+			copy(out, messages)
+			copied = true
+		}
+		out[i].ReasoningContent = reasoningPlaceholder
+	}
+	return out
+}
+
+func (al *AgentLoop) messagesForModel(messages []providers.Message, modelKey string, hasTools bool) []providers.Message {
+	mc, mcErr := al.GetConfig().GetModelConfig(modelKey)
+
+	// Reasoning backfill runs first and independently of the media rules below:
+	// it is a wire-contract requirement, not a capability downgrade.
+	messages = al.backfillReasoningContent(messages, mc, mcErr, hasTools)
+
+	if mcErr == nil && mc != nil {
 		if mc.Vision == config.VisionUserMessage || mc.Vision == config.VisionToolResponse {
 			return messages
 		}

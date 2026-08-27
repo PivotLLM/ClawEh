@@ -41,6 +41,7 @@ interface AddForm {
   proxy: string
   command: string
   strictCompat: boolean
+  requireReasoningContent: boolean
   noParallelToolCalls: boolean
   responseFormatJSON: boolean
 }
@@ -53,6 +54,7 @@ const EMPTY_ADD_FORM: AddForm = {
   proxy: "",
   command: "",
   strictCompat: false,
+  requireReasoningContent: false,
   noParallelToolCalls: false,
   responseFormatJSON: false,
 }
@@ -130,6 +132,7 @@ export function AddProviderSheet({
         proxy: form.proxy.trim() || undefined,
         command: cliProto ? form.command.trim() || undefined : undefined,
         strict_compat: form.strictCompat,
+        require_reasoning_content: form.requireReasoningContent,
         no_parallel_tool_calls: form.noParallelToolCalls,
         response_format_json: form.responseFormatJSON,
       })
@@ -262,6 +265,15 @@ export function AddProviderSheet({
                 checked={form.strictCompat}
                 onCheckedChange={(v) =>
                   setForm((f) => ({ ...f, strictCompat: v }))
+                }
+              />
+
+              <SwitchCardField
+                label={t("providers.field.requireReasoningContent")}
+                hint={t("providers.field.requireReasoningContentHint")}
+                checked={form.requireReasoningContent}
+                onCheckedChange={(v) =>
+                  setForm((f) => ({ ...f, requireReasoningContent: v }))
                 }
               />
 

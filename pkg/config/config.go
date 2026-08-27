@@ -1492,9 +1492,25 @@ type Provider struct {
 	APIKey   string `json:"api_key,omitempty"`
 	Proxy    string `json:"proxy,omitempty"`
 	// Endpoint-scoped openai-compat knobs.
-	StrictCompat        bool `json:"strict_compat,omitempty"`
-	NoParallelToolCalls bool `json:"no_parallel_tool_calls,omitempty"`
-	ResponseFormatJSON  bool `json:"response_format_json,omitempty"`
+	StrictCompat bool `json:"strict_compat,omitempty"`
+	// RequireReasoningContent backfills a placeholder into reasoning_content on
+	// assistant messages that carry none, for endpoints that reject history
+	// missing the field. It is the exact opposite of StrictCompat, which strips
+	// the field for endpoints that reject its presence — set one or the other,
+	// never both.
+	//
+	// The case this exists for is DeepSeek V4 thinking mode: when a request
+	// includes tools, DeepSeek requires reasoning_content on every assistant
+	// message in history and answers 400 otherwise, even for turns that made no
+	// tool call. Without the backfill, switching an agent from a CLI model (which
+	// records no reasoning) to DeepSeek wedges the session — every turn replays
+	// the same reasoning-less history and every turn is rejected.
+	//
+	// Only ever ADDS a placeholder where the field is empty; real reasoning is
+	// passed through untouched.
+	RequireReasoningContent bool `json:"require_reasoning_content,omitempty"`
+	NoParallelToolCalls     bool `json:"no_parallel_tool_calls,omitempty"`
+	ResponseFormatJSON      bool `json:"response_format_json,omitempty"`
 	// Command overrides the binary path for CLI protocols (claude-cli, etc.).
 	Command string `json:"command,omitempty"`
 }

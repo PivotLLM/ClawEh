@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/PivotLLM/ClawEh/pkg/config"
@@ -163,5 +164,56 @@ func TestPatchCompression_SaveRewritesLegacyKeys(t *testing.T) {
 	c := cfg.Agents.Defaults.Compression
 	if c == nil || c.Trigger == nil || c.Trigger.MinPercent == nil || *c.Trigger.MinPercent != 25 {
 		t.Fatalf("the migrated value was lost instead of being rewritten nested: %+v", c)
+	}
+}
+
+// TestProviderRequireReasoningContent_RoundTrips covers the read-back path for
+// the flag: writes decode straight into config.Provider, but the list response
+// is a separate DTO, so a field missing there would silently reset the checkbox
+// every time an operator opened the edit sheet.
+func TestProviderRequireReasoningContent_RoundTrips(t *testing.T) {
+	configPath, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	h := NewHandler(configPath)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+
+	rec := httptest.NewRecorder()
+	body := `{"name":"ds","protocol":"openai-chat","base_url":"https://api.deepseek.com",` +
+		`"api_key":"k","require_reasoning_content":true}`
+	req := httptest.NewRequest(http.MethodPost, "/api/providers", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK && rec.Code != http.StatusCreated {
+		t.Fatalf("create provider: status %d, body=%s", rec.Code, rec.Body.String())
+	}
+
+	// Persisted?
+	cfg, err := config.LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	var found *config.Provider
+	for i := range cfg.Providers {
+		if cfg.Providers[i].Name == "ds" {
+			found = &cfg.Providers[i]
+		}
+	}
+	if found == nil {
+		t.Fatal("provider not persisted")
+	}
+	if !found.RequireReasoningContent {
+		t.Error("require_reasoning_content did not persist")
+	}
+
+	// Readable back through the list endpoint?
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/providers", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list providers: status %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), `"require_reasoning_content":true`) {
+		t.Errorf("flag missing from the list response — the edit sheet would reset it:\n%s", rec.Body.String())
 	}
 }

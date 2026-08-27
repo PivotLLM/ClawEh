@@ -238,3 +238,65 @@ track a released version rather than a local `replace`. They are written up in f
 the verified API parameters and the pitfalls, in **`docs/spawnllm-caching.md`** — which
 assumes a user may run Claude over the API and the CLI at the same time.
 
+
+---
+
+## Part 4 — Cross-model history compatibility (`require_reasoning_content`)
+
+Discovered while working out whether the reasoning tokens the estimator now counts
+could simply be dropped instead. They cannot.
+
+### The contract
+
+DeepSeek's thinking-mode documentation makes the requirement **conditional on `tools`**:
+
+- No `tools` in the request — `reasoning_content` "does not need to participate in the
+  context concatenation"; it is accepted and ignored.
+- `tools` in the request — it "must participate in the context concatenation and must be
+  passed back to the API in all subsequent user interaction turns — **even if the model did
+  not perform a tool call in that turn**."
+
+ClawEh sends 46–67 tools on every dispatch, so it is always in the strict case.
+
+Two further points, from field reports rather than the docs: V4 Pro **rejects the empty
+string** (`""` reads as "not passed back"), so a placeholder must be non-empty — a single
+space works and invents no reasoning. And the requirement covers every assistant message,
+including tool-call-only and synthetic ones, which is where most clients got caught.
+
+Note the contract **inverted between generations**: `deepseek-reasoner` (R1) returned 400
+if `reasoning_content` was passed *in*. V4 returns 400 if it is left *out*.
+
+### The failure it prevents
+
+Run an agent on a CLI model (which records no reasoning), then point it at DeepSeek. Every
+assistant message in history lacks the field, so every turn is rejected — and the next turn
+replays the same history and is rejected again. The fallback chain cannot rescue it,
+because a 400 is not retriable. Before this flag the only escapes were `/clear` or waiting
+for compaction to age the messages out.
+
+### The design, and the one that was rejected
+
+`require_reasoning_content` is a provider-level boolean sitting beside `strict_compat`.
+The two are exact opposites — strip the field for endpoints that reject its presence,
+backfill it for endpoints that reject its absence.
+
+A general "required fields with configurable placeholders" mechanism was considered and
+rejected:
+
+- The rule is **conditional on `tools`**, which a flat field list cannot express.
+- The placeholder is **not a free choice**: `""` fails and `" "` works, so a configurable
+  value recreates the exact 400 the feature exists to prevent, reported from somewhere far
+  from the config.
+- It is **not parallel to anything that exists**. `drop_params` is general but operates on
+  top-level request-body keys (`delete(requestBody, k)`); the per-message precedent is
+  `strict_compat`, a *named boolean* with a hardcoded field set.
+
+If more such quirks appear, the right generalization is a named quirk list (an enum of
+known compat behaviours), not free-text field/placeholder pairs.
+
+### Where it runs
+
+`AgentLoop.backfillReasoningContent`, called from `messagesForModel` — the point both
+dispatch paths (fallback chain and direct) converge on. It copies lazily and never mutates
+the input slice, because the same history is handed to each fallback candidate in turn and
+one candidate's wire quirk must not follow it to the next.
