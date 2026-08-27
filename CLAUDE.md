@@ -109,7 +109,7 @@ Hard-won learnings (don't relearn these):
 - **Never create, move, or delete git tags.** Tags are cut by the user's build
   process when binaries are uploaded — they are release markers, not commit
   markers. Bumping `pkg/global/version.go` is a normal code change and is fine
-  when asked; tagging that version is not. The build no longer derives a version
+  when asked (the const is `global.AppVersion`); tagging that version is not. The build no longer derives a version
   from `git describe` — `pkg/global/version.go` is the single source of truth,
   and the Makefile stamps only build metadata (commit, timestamp, toolchain).
   In Go code read it through `global.GetVersion()` (display: `0.4.68-59301cab`)
