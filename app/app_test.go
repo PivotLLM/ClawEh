@@ -36,7 +36,26 @@ func TestVersion_IsASingleToken(t *testing.T) {
 	assert.NotContains(t, got, " ", "version must be one unbroken token")
 	assert.NotContains(t, got, "(", "no parentheses — they invite truncation")
 	assert.Len(t, strings.Fields(got), 1, "must survive being copied as a single word")
-	assert.Equal(t, version+"-abc12345", got)
+	assert.Equal(t, version+"+abc12345", got)
+}
+
+// TestVersion_UsesBuildMetadataSeparator pins the separator against SemVer's
+// two meanings. "+" is build metadata, which the spec requires be ignored when
+// comparing versions, so 0.4.69+abc compares EQUAL to 0.4.69. "-" would be a
+// pre-release identifier, making the stamped build compare LOWER than the plain
+// release and claim to be something that came before it.
+func TestVersion_UsesBuildMetadataSeparator(t *testing.T) {
+	old := gitCommit
+	t.Cleanup(func() { gitCommit = old })
+
+	gitCommit = "abc12345"
+	got := Version()
+
+	assert.Contains(t, got, "+", "the commit must attach as SemVer build metadata")
+	assert.NotContains(t, strings.TrimPrefix(got, version), "-",
+		"a hyphen would make this a pre-release, sorting below the release itself")
+	assert.Equal(t, version, strings.SplitN(got, "+", 2)[0],
+		"everything before the + must be the untouched release number")
 }
 
 // TestVersion_UnstampedBuildIsBare covers a plain `go build`: no commit, so no
@@ -47,7 +66,7 @@ func TestVersion_UnstampedBuildIsBare(t *testing.T) {
 
 	gitCommit = ""
 	assert.Equal(t, version, Version())
-	assert.NotContains(t, Version(), "-")
+	assert.NotContains(t, Version(), "+", "no dangling separator when nothing is stamped in")
 }
 
 // TestSemVer_IsPlainSemver pins the protocol contract: no build metadata, ever.
@@ -60,7 +79,7 @@ func TestSemVer_IsPlainSemver(t *testing.T) {
 	gitCommit = "abc12345"
 
 	assert.Equal(t, version, SemVer())
-	assert.NotContains(t, SemVer(), "-", "no build suffix on the protocol form")
+	assert.NotContains(t, SemVer(), "+", "no build metadata on the protocol form")
 	assert.NotEqual(t, Version(), SemVer(), "the two forms differ once a commit is stamped")
 }
 

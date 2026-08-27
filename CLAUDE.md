@@ -114,7 +114,8 @@ Hard-won learnings (don't relearn these):
   copyright, version) and is the single source of truth, with the Makefile
   stamping only build metadata (commit, timestamp, toolchain).
   Everything there is unexported: read it through `app.Version()` (display:
-  `0.4.68-27691883`), `app.SemVer()` (protocol handshakes: `0.4.68`),
+  `0.4.69+58d98993` — "+" is SemVer build metadata, ignored when comparing),
+  `app.SemVer()` (protocol handshakes: `0.4.69`),
   `app.Name()`, `app.TagLine()`, `app.Copyright()`. Build tooling greps the
   `version = "..."` line. See `~/.claude/standards/go-standards.md`
   § Versioning and Copyright.

@@ -58,23 +58,30 @@ func TagLine() string { return tagLine }
 // Copyright returns the copyright notice.
 func Copyright() string { return copyright }
 
-// Version returns the build's full identity: the release number joined to the
-// build commit with a hyphen — "0.4.68-2769188" — or bare "0.4.68" when nothing
-// was stamped in.
+// Version returns the build's full identity: the release number followed by the
+// build commit as SemVer build metadata — "0.4.69+27691883" — or bare "0.4.69"
+// when nothing was stamped in.
 //
 // This is the form for anywhere a human or a model reads it: startup banner,
 // version command, logs, diagnostics, the system prompt. It is one unbroken
-// token on purpose. Rendered as "0.4.68 (git: 2769188)" it gets copied into a
-// bug report as "0.4.68" — the space reads as the end of the value — so the half
+// token on purpose. Rendered as "0.4.69 (git: 27691883)" it gets copied into a
+// bug report as "0.4.69" — the space reads as the end of the value — so the half
 // that identifies the exact source is the half that gets dropped.
+//
+// The separator is "+", not "-", because SemVer gives the two different
+// meanings. "+" introduces build metadata, which the spec requires be IGNORED
+// when comparing versions, so "0.4.69+27691883" compares equal to "0.4.69" — it
+// is that release, built from that commit. "-" would introduce a PRE-RELEASE
+// identifier, making it compare LOWER than "0.4.69" and claiming to be something
+// that came before the release rather than an instance of it.
 func Version() string {
 	if gitCommit == "" {
 		return version
 	}
-	return version + "-" + gitCommit
+	return version + "+" + gitCommit
 }
 
-// SemVer returns the release number alone — "0.4.68" — with no build metadata.
+// SemVer returns the release number alone — "0.4.69" — with no build metadata.
 //
 // Named for why you would want it rather than for its shape: this is the
 // parseable form, for protocol handshakes another program may compare (MCP
