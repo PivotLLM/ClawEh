@@ -3,7 +3,7 @@ package api
 import (
 	"net/http"
 
-	"github.com/PivotLLM/ClawEh/pkg/global"
+	"github.com/PivotLLM/ClawEh/app"
 )
 
 // registerVersionRoutes exposes the running ClawEh build version so the WebUI can
@@ -13,5 +13,5 @@ func (h *Handler) registerVersionRoutes(mux *http.ServeMux) {
 }
 
 func (h *Handler) handleVersion(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"version": global.GetVersion()})
+	writeJSON(w, http.StatusOK, map[string]string{"version": app.Version()})
 }

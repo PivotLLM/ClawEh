@@ -13,7 +13,7 @@ import (
 	acplib "github.com/a3tai/openclaw-go/acp"
 	"github.com/a3tai/openclaw-go/protocol"
 
-	"github.com/PivotLLM/ClawEh/pkg/global"
+	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/pkg/logger"
 )
 
@@ -80,7 +80,7 @@ func (br *acpBridge) Initialize(_ context.Context, _ acplib.InitializeRequest) (
 	return &acplib.InitializeResponse{
 		ProtocolVersion: acplib.ProtocolVersion,
 		// Protocol handshake: bare semver (see pkg/global.GetVersion).
-		AgentInfo: &acplib.Implementation{Name: strings.ToLower(global.AppName), Version: global.GetVersionShort()},
+		AgentInfo: &acplib.Implementation{Name: strings.ToLower(app.Name()), Version: app.SemVer()},
 		AgentCapabilities: &acplib.AgentCapabilities{
 			LoadSession:        false,
 			PromptCapabilities: &acplib.PromptCapabilities{},

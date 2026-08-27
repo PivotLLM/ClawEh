@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/pkg/config"
-	"github.com/PivotLLM/ClawEh/pkg/global"
 	"github.com/PivotLLM/ClawEh/pkg/logger"
 	"github.com/PivotLLM/ClawEh/pkg/providers"
 	"github.com/PivotLLM/ClawEh/pkg/skills"
@@ -156,7 +156,7 @@ func (cb *ContextBuilder) clock() time.Time {
 func (cb *ContextBuilder) getIdentity() string {
 	workspacePath, _ := filepath.Abs(filepath.Join(cb.workspace))
 	toolDiscovery := cb.getDiscoveryRule()
-	version := global.GetVersion()
+	version := app.Version()
 
 	// The agent's file tools are scoped to files/ (read/write) and skills/ (read);
 	// its config (AGENTS/SOUL/IDENTITY/USER/MEMORY) is injected into this prompt.
@@ -556,7 +556,7 @@ func (cb *ContextBuilder) LoadBootstrapFiles() string {
 func (cb *ContextBuilder) buildDynamicContext(channel, chatID string) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "## Runtime\nServer: %s %s\nOS: %s %s\nGo: %s",
-		global.AppName, global.GetVersion(), runtime.GOOS, runtime.GOARCH, runtime.Version())
+		app.Name(), app.Version(), runtime.GOOS, runtime.GOARCH, runtime.Version())
 
 	if channel != "" && chatID != "" {
 		fmt.Fprintf(&sb, "\n\n## Current Session\nChannel: %s\nChat ID: %s", channel, chatID)

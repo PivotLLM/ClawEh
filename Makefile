@@ -7,7 +7,7 @@ CMD_DIR=.
 MAIN_GO=main.go
 
 # Build metadata. The VERSION itself is NOT injected: it is the const in
-# pkg/global/version.go and is a property of the source, not of the machine that
+# app/app.go and is a property of the source, not of the machine that
 # compiled it. Only the commit, timestamp and toolchain are stamped in, and
 # FormatVersion appends them. Injecting a git-describe string here is what used
 # to make `claw version` report the last tag plus a commit count while the rest
@@ -15,8 +15,8 @@ MAIN_GO=main.go
 GIT_COMMIT=$(shell git rev-parse --short=8 HEAD 2>/dev/null || echo "unknown")
 BUILD_TIME=$(shell date +%FT%T%z)
 GO_VERSION=$(shell $(GO) version | awk '{print $$3}')
-GLOBAL_PKG=github.com/PivotLLM/ClawEh/pkg/global
-LDFLAGS=-ldflags "-X $(GLOBAL_PKG).GitCommit=$(GIT_COMMIT) -X $(GLOBAL_PKG).BuildTime=$(BUILD_TIME) -X $(GLOBAL_PKG).GoVersion=$(GO_VERSION) -s -w"
+APP_PKG=github.com/PivotLLM/ClawEh/app
+LDFLAGS=-ldflags "-X $(APP_PKG).gitCommit=$(GIT_COMMIT) -X $(APP_PKG).buildTime=$(BUILD_TIME) -X $(APP_PKG).goVersion=$(GO_VERSION) -s -w"
 
 # Go variables
 GO?=CGO_ENABLED=0 go

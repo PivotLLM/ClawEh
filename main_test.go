@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/PivotLLM/ClawEh/pkg/global"
+	"github.com/PivotLLM/ClawEh/app"
 )
 
 func TestNewClawCommand(t *testing.T) {
@@ -16,7 +16,7 @@ func TestNewClawCommand(t *testing.T) {
 	require.NotNil(t, cmd)
 
 	assert.Equal(t, "claw", cmd.Use)
-	assert.Equal(t, global.AppTagLine, cmd.Short)
+	assert.Equal(t, app.TagLine(), cmd.Short)
 
 	assert.True(t, cmd.HasSubCommands())
 	assert.True(t, cmd.HasAvailableSubCommands())

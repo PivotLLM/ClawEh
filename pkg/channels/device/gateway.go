@@ -12,10 +12,10 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/pkg/bus"
 	"github.com/PivotLLM/ClawEh/pkg/channels"
 	"github.com/PivotLLM/ClawEh/pkg/config"
-	"github.com/PivotLLM/ClawEh/pkg/global"
 	"github.com/PivotLLM/ClawEh/pkg/identity"
 	"github.com/PivotLLM/ClawEh/pkg/logger"
 	"github.com/PivotLLM/ClawEh/pkg/media"
@@ -62,7 +62,7 @@ func NewDeviceChannel(cfg config.DeviceChannelConfig, dataDir string, logMessage
 		WordToken:   cfg.WordToken,
 		// Protocol handshake: bare semver. Paired devices (the R1, the Android
 		// app) read this field; a build suffix could break a version comparison.
-		ServerVersion: global.GetVersionShort(),
+		ServerVersion: app.SemVer(),
 		AutoApprove:   cfg.AutoApprove,
 		AllowOrigins:  cfg.AllowOrigins,
 		LogMessages:   logMessages,

@@ -15,6 +15,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/internal"
 	"github.com/PivotLLM/ClawEh/pkg/config"
 	"github.com/PivotLLM/ClawEh/pkg/fileutil"
@@ -33,9 +34,9 @@ func NewInstallCommand() *cobra.Command {
 	var allowedCIDRs string
 	cmd := &cobra.Command{
 		Use:   "install",
-		Short: "Install the binary and register a systemd service that starts " + global.AppName + " at boot",
+		Short: "Install the binary and register a systemd service that starts " + app.Name() + " at boot",
 		Long: "Copies the running binary to ~/bin (or ~/.local/bin), ensures that directory is on\n" +
-			"your PATH, and writes a systemd system service that runs " + global.AppName + " as your user\n" +
+			"your PATH, and writes a systemd system service that runs " + app.Name() + " as your user\n" +
 			"account at boot. Writing the service unit requires sudo; you'll be prompted for your\n" +
 			"password. Run this as your normal user, not with sudo.\n\n" +
 			"On a headless host, pass --host 0.0.0.0 so the WebUI is reachable on the network\n" +
@@ -156,7 +157,7 @@ func runInstall(host string, port int, allowedCIDRs string) error {
 		return fmt.Errorf("installing systemd service: %w", err)
 	}
 
-	fmt.Printf("\n%s is installed and running.\n", global.AppName)
+	fmt.Printf("\n%s is installed and running.\n", app.Name())
 	fmt.Printf("  Open:   %s\n", accessURL())
 	fmt.Printf("  Status: systemctl status %s\n", serviceName)
 	fmt.Printf("  Logs:   journalctl -u %s -f   (or %s/logs/claw.log)\n", serviceName, dataDir(u.HomeDir))
@@ -237,7 +238,7 @@ func runUninstall() error {
 func buildUnit(username, group, execPath, binDir string) string {
 	var b strings.Builder
 	b.WriteString("[Unit]\n")
-	b.WriteString("Description=" + global.AppName + " — " + global.AppTagLine + "\n")
+	b.WriteString("Description=" + app.Name() + " — " + app.TagLine() + "\n")
 	b.WriteString("After=network-online.target\n")
 	b.WriteString("Wants=network-online.target\n\n")
 
@@ -281,7 +282,7 @@ func applyServerSettings(host string, port int) error {
 	}
 	fmt.Printf("Server bind set to %s:%d (%s)\n", cfg.Gateway.Host, cfg.Gateway.Port, path)
 	if isPublicBind(cfg.Gateway.Host) {
-		fmt.Printf("Note: %s has no WebUI authentication. Access is restricted to loopback +\n", global.AppName)
+		fmt.Printf("Note: %s has no WebUI authentication. Access is restricted to loopback +\n", app.Name())
 		fmt.Println("      the private-network IP allowlist (RFC1918). If you widen the allowlist to")
 		fmt.Println("      public ranges, put it behind a firewall or an authenticated reverse proxy.")
 	}

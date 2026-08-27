@@ -33,8 +33,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/pkg/bus"
-	"github.com/PivotLLM/ClawEh/pkg/global"
 	"github.com/PivotLLM/ClawEh/pkg/logger"
 	"github.com/PivotLLM/ClawEh/pkg/mcpserver/acl"
 	"github.com/PivotLLM/ClawEh/pkg/routing"
@@ -261,9 +261,9 @@ func New(opts ...Option) (*MCPServer, error) {
 	}
 
 	newSrv := func() *server.MCPServer {
-		// Protocol handshake: bare semver, not global.GetVersion(). A client may
+		// Protocol handshake: bare semver, not app.Version(). A client may
 		// compare serverInfo.version, so it must not carry a build suffix.
-		return server.NewMCPServer(global.AppName, global.GetVersionShort(),
+		return server.NewMCPServer(app.Name(), app.SemVer(),
 			server.WithToolCapabilities(true),
 			server.WithRecovery(),
 		)

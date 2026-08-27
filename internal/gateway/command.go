@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/PivotLLM/ClawEh/pkg/global"
+	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/pkg/logger"
 	"github.com/PivotLLM/ClawEh/pkg/utils"
 )
@@ -18,7 +18,7 @@ func NewGatewayCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:          "gateway",
 		Aliases:      []string{"g"},
-		Short:        "Start " + global.AppName + " gateway",
+		Short:        "Start " + app.Name() + " gateway",
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		PreRunE: func(_ *cobra.Command, _ []string) error {
