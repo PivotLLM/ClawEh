@@ -1486,8 +1486,12 @@ type LoggingConfig struct {
 // protocol, the base URL, the credentials, and endpoint-scoped quirks. Models
 // reference a provider by Name; the WebUI groups models by provider.
 type Provider struct {
-	Name     string `json:"name"`     // Unique identifier referenced by ModelConfig.Provider
-	Protocol string `json:"protocol"` // Wire format: openai, anthropic, anthropic-messages, azure, claude-cli, codex-cli, gemini-cli
+	Name string `json:"name"` // Unique identifier referenced by ModelConfig.Provider
+	// Protocol is the wire format: openai-chat, openai-responses, azure,
+	// anthropic, anthropic-messages, claude-cli, codex-cli, gemini-cli,
+	// cursor-cli. "anthropic" and "anthropic-messages" are the same thing —
+	// Anthropic speaks one wire format — and both reach the Messages adapter.
+	Protocol string `json:"protocol"`
 	BaseURL  string `json:"base_url,omitempty"`
 	APIKey   string `json:"api_key,omitempty"`
 	Proxy    string `json:"proxy,omitempty"`

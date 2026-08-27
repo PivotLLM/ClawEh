@@ -18,8 +18,7 @@ caching and needs nothing here. The API route currently gets no caching at all.
 | `openai-chat` | `openai_compat` | automatic prefix match by the provider; `prompt_cache_key` sent only to OpenAI/Azure |
 | `openai-responses` | `openai_responses` | automatic prefix match |
 | `azure` | `azure` | automatic prefix match |
-| `anthropic` | `openai_compat` ⚠️ | **none** — strips `SystemParts`, and Anthropic never caches implicitly |
-| `anthropic-messages` | `anthropic_messages` | **none** — flattens system to a string, no `cache_control` anywhere |
+| `anthropic` / `anthropic-messages` | `anthropic_messages` | **none** — flattens system to a string, no `cache_control` anywhere |
 | `claude-cli` etc. | CLI providers | handled by the CLI itself; out of scope |
 
 There is a `spawnllm/anthropic` package that *does* read
@@ -95,17 +94,17 @@ prompt invalidates system + messages; changing `tool_choice` or toggling thinkin
 invalidates messages only. So per-request `tool_choice` is cheap; a per-request
 tool list is catastrophic.
 
-## Work item 2 — fix `protocol: "anthropic"`
+## Work item 2 — fix `protocol: "anthropic"` — **DONE**
 
-`factory_provider.go:82` maps `"anthropic"` to `NewHTTPProviderWithOptions`,
-i.e. the OpenAI-compatible provider. Anyone who writes `"protocol": "anthropic"`
-expecting the Anthropic API silently gets an OpenAI-shaped request with
-`SystemParts` stripped.
+`factory_provider.go` mapped `"anthropic"` to the OpenAI-compatible provider, so
+a config naming it sent an OpenAI-shaped request to `api.anthropic.com` with
+`SystemParts` stripped. Both names appear in the WebUI's protocol dropdown, so
+picking the broken one looked like a preference rather than a bug.
 
-Either route it to the real Anthropic adapter or reject it at config validation
-with a message naming `anthropic-messages`. Silently doing something else is the
-worst of the three options. (This one is a **ClawEh** change; it is listed here
-because it is discovered from the same trace.)
+Fixed in ClawEh: `"anthropic"` and `"anthropic-messages"` both reach the
+Messages adapter. Note this means such a provider now inherits the gap described
+in work item 1 — it will speak the right protocol, but without cache
+breakpoints, so every turn is uncached until that item is done.
 
 ## Work item 3 — custom headers, for `x-grok-conv-id`
 
