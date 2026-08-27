@@ -80,7 +80,7 @@ func (br *acpBridge) Initialize(_ context.Context, _ acplib.InitializeRequest) (
 	return &acplib.InitializeResponse{
 		ProtocolVersion: acplib.ProtocolVersion,
 		// Protocol handshake: bare semver (see pkg/global.GetVersion).
-		AgentInfo: &acplib.Implementation{Name: strings.ToLower(global.AppName), Version: global.Version},
+		AgentInfo: &acplib.Implementation{Name: strings.ToLower(global.AppName), Version: global.GetVersionShort()},
 		AgentCapabilities: &acplib.AgentCapabilities{
 			LoadSession:        false,
 			PromptCapabilities: &acplib.PromptCapabilities{},

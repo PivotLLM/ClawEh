@@ -112,6 +112,9 @@ Hard-won learnings (don't relearn these):
   when asked; tagging that version is not. The build no longer derives a version
   from `git describe` — `pkg/global/version.go` is the single source of truth,
   and the Makefile stamps only build metadata (commit, timestamp, toolchain).
+  Read it through `global.GetVersion()` (display: `0.4.68-de37faf1`) or
+  `global.GetVersionShort()` (protocol handshakes: `0.4.68`); the const itself is
+  unexported so there is no third way.
 - Always compile after edits before declaring done: `go build ./...` for Go changes, and `cd web/frontend && pnpm run build:backend` for frontend/TypeScript changes. The frontend bundle lands in `web/backend/dist`, which is embedded by `web/backend/embed.go` into the merged claw binary.
 - When investigating a problem, report findings and wait for approval before implementing.
 - Keep responses short and direct — no preamble or summaries.

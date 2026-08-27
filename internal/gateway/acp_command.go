@@ -129,7 +129,7 @@ func acpCmd(debug bool, wsURL string, autoPair bool) error {
 			gateway.WithClientInfo(protocol.ClientInfo{
 				ID: protocol.ClientIDGateway,
 				// Protocol handshake: bare semver (see pkg/global.GetVersion).
-				Version:  global.Version,
+				Version:  global.GetVersionShort(),
 				Platform: "go",
 				Mode:     protocol.ClientModeNode,
 			}),

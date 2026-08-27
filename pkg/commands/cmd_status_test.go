@@ -49,8 +49,8 @@ func TestStatus_BasicFields(t *testing.T) {
 		t.Errorf("reply missing header %q\n%s", wantHeader, reply)
 	}
 	// Version appears on its own labelled line
-	if !strings.Contains(reply, "Version: "+global.Version) {
-		t.Errorf("reply missing 'Version: %s'\n%s", global.Version, reply)
+	if !strings.Contains(reply, "Version: "+global.GetVersion()) {
+		t.Errorf("reply missing 'Version: %s'\n%s", global.GetVersion(), reply)
 	}
 	// Uptime — Truncate to seconds, value as "2h13m0s"
 	if !strings.Contains(reply, "Uptime: 2h13m0s") {
@@ -248,7 +248,7 @@ func TestStatus_ExactShape(t *testing.T) {
 	}
 
 	wantBody := []string{
-		"Version: " + global.Version,
+		"Version: " + global.GetVersion(),
 		"Uptime: 59m38s",
 		"Agent: Amber",
 		"Model: DeepSeek-V4-Flash",

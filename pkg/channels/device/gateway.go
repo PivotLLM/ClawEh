@@ -62,7 +62,7 @@ func NewDeviceChannel(cfg config.DeviceChannelConfig, dataDir string, logMessage
 		WordToken:   cfg.WordToken,
 		// Protocol handshake: bare semver. Paired devices (the R1, the Android
 		// app) read this field; a build suffix could break a version comparison.
-		ServerVersion: global.Version,
+		ServerVersion: global.GetVersionShort(),
 		AutoApprove:   cfg.AutoApprove,
 		AllowOrigins:  cfg.AllowOrigins,
 		LogMessages:   logMessages,

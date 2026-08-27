@@ -16,14 +16,17 @@ const AppTagLine = "Personal AI Assistant"
 // AppCopyright is displayed at start
 const AppCopyright = "Copyright (c) 2026 Tenebris Technologies Inc.\nSome code Copyright (c) 2026 PicoClaw contributors."
 
-// Version is the current release version of ClawEh, and the single source of
+// version is the current release version of ClawEh, and the single source of
 // truth for it. Bump it here; nothing else defines a version.
 //
 // It is deliberately a const, so it cannot be overwritten at link time. The
 // build stamps BUILD METADATA (commit, timestamp, toolchain) via ldflags and
-// GetVersion appends it — the version itself is a property of the source,
-// not of the machine that compiled it.
-const Version = "0.4.68"
+// GetVersion appends it — the version itself is a property of the source, not
+// of the machine that compiled it.
+//
+// Unexported so that every caller goes through GetVersion or GetVersionShort.
+// Bare access is what let the same binary render the version two different ways.
+const version = "0.4.68"
 
 // Build-time metadata, injected via ldflags by the Makefile:
 //
@@ -41,23 +44,38 @@ var (
 
 // GetVersion returns the one version string the application shows anywhere a
 // human or a model will read it: logs, the CLI, the WebUI, the system prompt,
-// session_info. It is the release version with the build commit appended when
-// one was stamped in — "0.4.68 (git: c331081b)", or bare "0.4.68" from a plain
-// `go build`.
+// session_info. It is the release version joined to the build commit with a
+// hyphen — "0.4.68-c331081b" — or bare "0.4.68" from a plain `go build` with
+// nothing stamped in.
 //
-// Use this rather than reading Version directly. Mixing the two is how the app
-// came to report a bare number in some places and a decorated one in others,
-// which makes two log lines from the same binary look like two builds.
+// The format is a single unbroken token on purpose. A version rendered as
+// "0.4.68 (git: c331081b)" gets copied into a bug report as "0.4.68", because
+// the space reads as the end of the value and the parenthetical as an aside.
+// The commit is the half that identifies the exact source, so it must travel
+// with the number rather than beside it.
 //
-// The exception is a PROTOCOL handshake — the MCP serverInfo, the ACP
-// Implementation, the device gateway's ServerVersion. Those identify the build
-// to another program rather than to a person, and a client is entitled to
-// compare or parse them, so they send the bare Version const.
+// Use this or GetVersionShort; never read the version const directly. Mixing
+// them is how the app came to report a bare number in some places and a
+// decorated one in others, making two log lines from one binary look like two
+// builds.
 func GetVersion() string {
 	if GitCommit == "" {
-		return Version
+		return version
 	}
-	return Version + " (git: " + GitCommit + ")"
+	return version + "-" + GitCommit
+}
+
+// GetVersionShort returns just the release number — "0.4.68" — with no build
+// metadata attached.
+//
+// It exists for PROTOCOL handshakes: the MCP serverInfo, the ACP Implementation
+// fields, the device gateway's ServerVersion. Those identify the build to
+// another program rather than to a person, and a client is entitled to compare
+// or parse them, so they must stay a plain semver. The device gateway is the
+// concrete case — paired R1 and Android clients read that field, and software
+// we do not control could break on a suffix.
+func GetVersionShort() string {
+	return version
 }
 
 // FormatBuildInfo returns the build timestamp and the Go toolchain version.

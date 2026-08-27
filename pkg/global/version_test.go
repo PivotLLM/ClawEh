@@ -18,9 +18,9 @@ import (
 // version` reported the last git tag plus a commit count while the startup log,
 // the MCP server identity and the system prompt reported this constant.
 func TestVersion_IsTheOnlySourceOfTruth(t *testing.T) {
-	assert.NotEmpty(t, Version)
-	assert.NotEqual(t, "dev", Version, "Version must be a real release number, not a build-time placeholder")
-	assert.True(t, strings.HasPrefix(GetVersion(), Version),
+	assert.NotEmpty(t, version)
+	assert.NotEqual(t, "dev", version, "version must be a real release number, not a build-time placeholder")
+	assert.True(t, strings.HasPrefix(GetVersion(), version),
 		"GetVersion must lead with the constant, decorating it at most")
 }
 
@@ -31,7 +31,7 @@ func TestGetVersion_NoGitCommit(t *testing.T) {
 	t.Cleanup(func() { GitCommit = old })
 
 	GitCommit = ""
-	assert.Equal(t, Version, GetVersion())
+	assert.Equal(t, version, GetVersion())
 }
 
 // TestGetVersion_WithGitCommit covers a Makefile build, where the commit is
@@ -41,7 +41,7 @@ func TestGetVersion_WithGitCommit(t *testing.T) {
 	t.Cleanup(func() { GitCommit = old })
 
 	GitCommit = "abc123"
-	assert.Equal(t, Version+" (git: abc123)", GetVersion())
+	assert.Equal(t, version+"-abc123", GetVersion())
 }
 
 func TestFormatBuildInfo_UsesStampedValues(t *testing.T) {
@@ -93,6 +93,38 @@ func TestGetVersion_IsWhatDisplaySitesShow(t *testing.T) {
 	want := GetVersion()
 
 	assert.Equal(t, want, GetVersion(), "GetVersion must be stable across calls")
-	assert.Contains(t, want, Version, "the release version must always be present")
+	assert.Contains(t, want, version, "the release version must always be present")
 	assert.Contains(t, want, "deadbeef", "the stamped commit must be present when set")
+}
+
+// TestGetVersion_IsASingleToken is the reason for the hyphen. Rendered as
+// "0.4.68 (git: abc)", a version gets pasted into a bug report as "0.4.68" —
+// the space reads as the end of the value and the parenthetical as an aside,
+// so the half that identifies the exact source is the half that gets dropped.
+func TestGetVersion_IsASingleToken(t *testing.T) {
+	old := GitCommit
+	t.Cleanup(func() { GitCommit = old })
+
+	GitCommit = "abc123"
+	got := GetVersion()
+
+	assert.NotContains(t, got, " ", "version must be one unbroken token")
+	assert.NotContains(t, got, "(", "no parentheses — they invite truncation")
+	assert.Equal(t, 1, len(strings.Fields(got)), "must survive being copied as a single word")
+	assert.Equal(t, version+"-abc123", got)
+}
+
+// TestGetVersionShort_IsPlainSemver pins the protocol contract: no build
+// metadata, ever. Paired R1 and Android clients read the device gateway's
+// ServerVersion, and a suffix could break a comparison in software we do not
+// control.
+func TestGetVersionShort_IsPlainSemver(t *testing.T) {
+	old := GitCommit
+	t.Cleanup(func() { GitCommit = old })
+
+	GitCommit = "abc123"
+
+	assert.Equal(t, version, GetVersionShort())
+	assert.NotContains(t, GetVersionShort(), "-", "no build suffix on the protocol form")
+	assert.NotEqual(t, GetVersion(), GetVersionShort(), "the two forms differ once a commit is stamped")
 }

@@ -263,7 +263,7 @@ func New(opts ...Option) (*MCPServer, error) {
 	newSrv := func() *server.MCPServer {
 		// Protocol handshake: bare semver, not global.GetVersion(). A client may
 		// compare serverInfo.version, so it must not carry a build suffix.
-		return server.NewMCPServer(global.AppName, global.Version,
+		return server.NewMCPServer(global.AppName, global.GetVersionShort(),
 			server.WithToolCapabilities(true),
 			server.WithRecovery(),
 		)
