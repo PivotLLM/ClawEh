@@ -1,6 +1,6 @@
 module github.com/PivotLLM/ClawEh
 
-go 1.26.0
+go 1.26.7
 
 require (
 	github.com/PivotLLM/MCPFusion v0.4.3
@@ -15,7 +15,7 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/h2non/filetype v1.1.3
 	github.com/mark3labs/mcp-go v0.58.0
-	github.com/mymmrac/telego v1.11.2
+	github.com/mymmrac/telego v1.12.1
 	github.com/rs/zerolog v1.35.1
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	github.com/slack-go/slack v0.29.0
