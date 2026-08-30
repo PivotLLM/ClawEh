@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/PivotLLM/ClawEh/pkg/config"
-	"github.com/PivotLLM/ClawEh/pkg/voice"
+	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/voice"
 )
 
 // registerVoiceRoutes binds speech-to-text configuration endpoints.

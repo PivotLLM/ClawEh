@@ -248,7 +248,7 @@ cycles:
   `toolspec` + stdlib; it never imports a host. Policy — model selection,
   fallback, cooldown, config, results handling — stays in ClawEh.
 
-`pkg/global` and `pkg/providers` are thin alias shims re-exporting these modules,
+`global` and `providers` are thin alias shims re-exporting these modules,
 so a normal `go build` fetches them by version tag; no extra setup is needed.
 
 ## Running

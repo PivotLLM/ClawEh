@@ -85,7 +85,7 @@ Request order is `tools` → `system` → `messages`. Prefix caching matches the
 common token prefix, so **anything volatile in the system message invalidates the entire
 conversation history behind it**.
 
-`BuildMessages` (`pkg/agent/context.go:560`) plus `Manager.Build` currently produce:
+`BuildMessages` (`agent/context.go:560`) plus `Manager.Build` currently produce:
 
 ```
 static prompt → TIME (minute granularity) → summary →

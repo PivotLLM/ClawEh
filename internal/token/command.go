@@ -11,10 +11,10 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/internal"
-	"github.com/PivotLLM/ClawEh/pkg/config"
-	"github.com/PivotLLM/ClawEh/pkg/routing"
-	"github.com/PivotLLM/ClawEh/pkg/servicetoken"
+	"github.com/PivotLLM/ClawEh/routing"
+	"github.com/PivotLLM/ClawEh/servicetoken"
 )
 
 // NewTokenCommand returns the `claw token` command group.

@@ -143,7 +143,7 @@ linters:
         path: _test\.go$
       - linters:
           - nolintlint
-        path: 'pkg/tools/(i2c\.go|spi\.go)$'
+        path: 'tools/(i2c\.go|spi\.go)$'
 
 issues:
   max-issues-per-linter: 0

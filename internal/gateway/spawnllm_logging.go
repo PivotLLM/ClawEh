@@ -6,7 +6,7 @@
 package gateway
 
 import (
-	"github.com/PivotLLM/ClawEh/pkg/logger"
+	"github.com/PivotLLM/ClawEh/logger"
 	spawnlog "github.com/PivotLLM/spawnllm/logger"
 )
 

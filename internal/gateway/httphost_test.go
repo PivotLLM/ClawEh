@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/PivotLLM/ClawEh/pkg/bus"
-	"github.com/PivotLLM/ClawEh/pkg/channels"
-	"github.com/PivotLLM/ClawEh/pkg/config"
+	"github.com/PivotLLM/ClawEh/bus"
+	"github.com/PivotLLM/ClawEh/channels"
+	"github.com/PivotLLM/ClawEh/config"
 )
 
 // TestHTTPHostLifecycleIndependentOfChannelManager asserts that the shared

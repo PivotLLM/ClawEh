@@ -14,7 +14,7 @@ import (
 	"github.com/a3tai/openclaw-go/protocol"
 
 	"github.com/PivotLLM/ClawEh/app"
-	"github.com/PivotLLM/ClawEh/pkg/logger"
+	"github.com/PivotLLM/ClawEh/logger"
 )
 
 // gatewaySender is the slice of the OpenClaw gateway client the bridge needs. It
@@ -79,7 +79,7 @@ func (br *acpBridge) setNotifier(n acpNotifier) { br.notifier = n }
 func (br *acpBridge) Initialize(_ context.Context, _ acplib.InitializeRequest) (*acplib.InitializeResponse, error) {
 	return &acplib.InitializeResponse{
 		ProtocolVersion: acplib.ProtocolVersion,
-		// Protocol handshake: bare semver (see pkg/global.GetVersion).
+		// Protocol handshake: bare semver (see global.GetVersion).
 		AgentInfo: &acplib.Implementation{Name: strings.ToLower(app.Name()), Version: app.SemVer()},
 		AgentCapabilities: &acplib.AgentCapabilities{
 			LoadSession:        false,

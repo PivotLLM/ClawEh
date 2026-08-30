@@ -3,15 +3,15 @@ package gateway
 import (
 	"strings"
 
-	"github.com/PivotLLM/ClawEh/pkg/agent"
-	"github.com/PivotLLM/ClawEh/pkg/channels"
-	"github.com/PivotLLM/ClawEh/pkg/channels/device"
-	"github.com/PivotLLM/ClawEh/pkg/routing"
+	"github.com/PivotLLM/ClawEh/agent"
+	"github.com/PivotLLM/ClawEh/channels"
+	"github.com/PivotLLM/ClawEh/channels/device"
+	"github.com/PivotLLM/ClawEh/routing"
 )
 
 // deviceAgentQuerier adapts the agent loop to the device channel's read-only
-// AgentQuerier. It lives here (not in pkg/channels/device) because pkg/agent
-// imports pkg/channels, so the device package cannot import pkg/agent.
+// AgentQuerier. It lives here (not in channels/device) because agent
+// imports channels, so the device package cannot import agent.
 type deviceAgentQuerier struct{ al *agent.AgentLoop }
 
 // Agents lists configured agents plus the default agent's id and main session key.

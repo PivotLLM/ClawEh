@@ -8,7 +8,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/PivotLLM/ClawEh/pkg/config"
+	"github.com/PivotLLM/ClawEh/config"
 )
 
 func TestHandleListTools(t *testing.T) {

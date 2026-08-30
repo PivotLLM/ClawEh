@@ -11,8 +11,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/PivotLLM/ClawEh/cogmem/store"
 	"github.com/PivotLLM/ClawEh/internal"
-	"github.com/PivotLLM/ClawEh/pkg/cogmem/store"
 )
 
 // NewMemoryCommand builds the `claw memory` command group.

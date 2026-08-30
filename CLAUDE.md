@@ -16,9 +16,9 @@ ClawEh is an independent Go project forked from sipeed/picoclaw on 2026-03-20.
   API, and the embedded frontend all share one process and one HTTP mux on
   `cfg.Gateway.Port` (default `18790`). There is no longer a separate
   `claw-launcher` / `claw-web` binary.
-- Data dir constant: `global.DefaultDataDir` = `.claw` (pkg/global/defaults.go)
+- Data dir constant: `global.DefaultDataDir` = `.claw` (global/defaults.go)
 - Env override constant: `global.EnvVarHome` = `CLAW_HOME`
-- Version/name constants: pkg/global/version.go
+- Version/name constants: global/version.go
 
 This is **not** a picoclaw fork for upstream PR purposes — it is an independent project.
 Upstream picoclaw docs are archived in `historical/`.
@@ -32,7 +32,7 @@ To build and deploy **production**: run `update-claw.sh` (on PATH). It builds th
 Systemd units: `claw-ai.service` is **production** — never build to, install to, or restart it directly; production deploys go through `update-claw.sh` only. `claw-dev.service` is the local **dev** instance for iterating in a developer account; build the binary and restart `claw-dev.service` for local testing. Never touch production or `update-claw.sh` when testing.
 
 ## Key Architecture Notes
-- **Shared modules**: the tool contract lives in `github.com/PivotLLM/toolspec`; the LLM-dispatch core (provider clients + the tool loop) lives in `github.com/PivotLLM/spawnllm`. `pkg/global` and `pkg/providers` are thin alias shims re-exporting them under the historical names, so call sites are unchanged. **Invariant: spawnllm imports only toolspec + stdlib (+ provider SDKs) — never ClawEh.** Tools (incl. the spawn tool) are *injected* as `toolspec.ToolDefinition`s, so the runtime re-entry (spawnllm runs a tool → `agent_spawn` → spawnllm) is not an import cycle; `agent_spawn` being `PrimaryOnly` prevents recursion. Guard: `pkg/providers/cycle_guard_test.go`. Policy (model selection, fallback, cooldown, config, results handling) stays in ClawEh. spawnllm logs route into ClawEh's logger via `installSpawnllmLogging` (`spawnllm/logger.SetBackend`).
+- **Shared modules**: the tool contract lives in `github.com/PivotLLM/toolspec`; the LLM-dispatch core (provider clients + the tool loop) lives in `github.com/PivotLLM/spawnllm`. `global` and `providers` are thin alias shims re-exporting them under the historical names, so call sites are unchanged. **Invariant: spawnllm imports only toolspec + stdlib (+ provider SDKs) — never ClawEh.** Tools (incl. the spawn tool) are *injected* as `toolspec.ToolDefinition`s, so the runtime re-entry (spawnllm runs a tool → `agent_spawn` → spawnllm) is not an import cycle; `agent_spawn` being `PrimaryOnly` prevents recursion. Guard: `providers/cycle_guard_test.go`. Policy (model selection, fallback, cooldown, config, results handling) stays in ClawEh. spawnllm logs route into ClawEh's logger via `installSpawnllmLogging` (`spawnllm/logger.SetBackend`).
 - **Providers**: claude-cli, codex-cli, gemini-cli use subprocess execution. Timeout via `request_timeout` per-model config → `WithTimeout` constructors in factory. The client implementations live in spawnllm; ClawEh's `factory_provider.go`/`dispatch.go`/`fallback.go`/`cooldown.go` map config → providers and own the policy.
 - **Cron**: mtime-based reload from disk; only saves when jobs are due. Prevents CLI/service race.
 - **Error classifier**: uses `errors.Is(err, context.DeadlineExceeded)` to trigger fallback chain.
@@ -42,7 +42,7 @@ Systemd units: `claw-ai.service` is **production** — never build to, install t
 
 ## Device Gateway (external devices: Rabbit R1, voice apps)
 Speaks the **OpenClaw Gateway WebSocket protocol** so hardware/voice clients pair and chat.
-Code: `pkg/channels/device/` (protocol in `server.go`, listener/bus bridge in `gateway.go`,
+Code: `channels/device/` (protocol in `server.go`, listener/bus bridge in `gateway.go`,
 read surface in `agentquery.go`); agent-loop wiring in `internal/gateway/device_query.go`.
 **Full protocol + findings: `docs/device-gateway-protocol.md`.** Own listener on
 `channels.device` (default port `18791`), separate from the WebUI/admin port.
@@ -108,7 +108,7 @@ Hard-won learnings (don't relearn these):
 - Never push directly to main — use feature branches + PRs.
 - **Never create, move, or delete git tags.** Tags are cut by the user's build
   process when binaries are uploaded — they are release markers, not commit
-  markers. Bumping `pkg/global/version.go` is a normal code change and is fine
+  markers. Bumping `global/version.go` is a normal code change and is fine
   when asked; tagging that version is not. The build does not derive a version
   from `git describe` — `app/app.go` holds the identity (name, tagline,
   copyright, version) and is the single source of truth, with the Makefile

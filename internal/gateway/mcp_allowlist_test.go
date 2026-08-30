@@ -3,7 +3,7 @@ package gateway
 import (
 	"testing"
 
-	"github.com/PivotLLM/ClawEh/pkg/config"
+	"github.com/PivotLLM/ClawEh/config"
 )
 
 // TestMCPVisibilityList verifies per-endpoint visibility resolution: an explicit

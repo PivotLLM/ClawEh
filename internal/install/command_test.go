@@ -4,9 +4,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/internal"
-	"github.com/PivotLLM/ClawEh/pkg/config"
-	"github.com/PivotLLM/ClawEh/pkg/global"
 )
 
 func TestBuildUnit_RunsAsUserAndStartsAtBoot(t *testing.T) {

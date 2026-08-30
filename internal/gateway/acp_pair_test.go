@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/PivotLLM/ClawEh/pkg/channels/device"
+	"github.com/PivotLLM/ClawEh/channels/device"
 )
 
 // TestAutoApproveLocalDevice verifies the bridge self-pairs its own pending

@@ -249,10 +249,10 @@ export function serversToPatch(
   return patch
 }
 
-// matchToolPattern mirrors pkg/config.MatchToolPattern: "*" matches all,
+// matchToolPattern mirrors config.MatchToolPattern: "*" matches all,
 // entries ending in "*" are case-insensitive prefix matches, otherwise
 // case-insensitive exact match.
-// matchVisibility mirrors pkg/config.MatchVisibility: collapse underscore runs,
+// matchVisibility mirrors config.MatchVisibility: collapse underscore runs,
 // strip a leading mcp_, then an entry matches by equality-or-prefix. "*" = all;
 // a trailing glob is tolerated ("fusion_*" == "fusion_").
 export function matchVisibility(patterns: string[], name: string): boolean {

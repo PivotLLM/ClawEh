@@ -1,6 +1,6 @@
 import type { TFunction } from "i18next"
 
-// Mirror of pkg/config/config.go reservedRequestBodyKeys. Keep in sync.
+// Mirror of config/config.go reservedRequestBodyKeys. Keep in sync.
 export const RESERVED_REQUEST_BODY_KEYS: readonly string[] = [
   "model",
   "messages",

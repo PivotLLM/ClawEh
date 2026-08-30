@@ -259,8 +259,8 @@ populates what it can and leaves cache fields zero.
 Both events use the `agent` log facility at INFO level via
 `logger.InfoCF("agent", ..., fields)`. They are emitted by the **agent loop
 call-site wrapper** that wraps the `callLLM` closure in
-`pkg/agent/loop.go` (around line 1451), and by the equivalent loop in
-`pkg/tools/toolloop.go`. Providers themselves do **not** emit dispatch /
+`agent/loop.go` (around line 1451), and by the equivalent loop in
+`tools/toolloop.go`. Providers themselves do **not** emit dispatch /
 finish events — they only populate `DispatchStatus`. This keeps the
 single-source-of-truth at the call site and avoids double-logging when
 fallback retries through multiple providers.
@@ -356,26 +356,26 @@ End-to-end:
 
 - `spawnllm/protocoltypes/types.go` — add `DispatchStatus`, add
   `Status *DispatchStatus` to `LLMResponse`.
-- `pkg/providers/claude_cli_provider.go` — populate `Status`; remove the
+- `providers/claude_cli_provider.go` — populate `Status`; remove the
   redundant "claude-cli response" INFO log (downgrade to DEBUG).
-- `pkg/providers/codex_cli_provider.go` — same.
-- `pkg/providers/gemini_cli_provider.go` — same.
+- `providers/codex_cli_provider.go` — same.
+- `providers/gemini_cli_provider.go` — same.
 - `spawnllm/anthropic_messages/provider.go` — extend `usageInfo`; set
   `Status`.
 - `spawnllm/anthropic/provider.go` — set `Status` (including streaming
   path that aggregates `message_delta` usage).
-- `pkg/providers/bedrock/provider_bedrock.go` — set `Status`.
+- `providers/bedrock/provider_bedrock.go` — set `Status`.
 - `spawnllm/common/common.go` — extend `ParseResponse` to surface
   `model` and `cached_tokens`; partial `Status` population (caller fills
   duration + success).
 - `spawnllm/openai_compat/provider.go` — fill `Status.Success`,
   `DurationMs`.
 - `spawnllm/azure/provider.go` — same.
-- `pkg/providers/http_provider.go`, `legacy_provider.go`,
+- `providers/http_provider.go`, `legacy_provider.go`,
   `claude_provider.go` — minor — pass through.
-- `pkg/agent/loop.go` — emit `"LLM dispatch"` and `"LLM finish"` events;
+- `agent/loop.go` — emit `"LLM dispatch"` and `"LLM finish"` events;
   remove "LLM call succeeded".
-- `pkg/tools/toolloop.go` — same logging change.
+- `tools/toolloop.go` — same logging change.
 - Provider tests for every file above.
 
 ## Non-goals

@@ -8,9 +8,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/PivotLLM/ClawEh/pkg/channels/device"
-	"github.com/PivotLLM/ClawEh/pkg/channels/secmsg"
-	"github.com/PivotLLM/ClawEh/pkg/config"
+	"github.com/PivotLLM/ClawEh/channels/device"
+	"github.com/PivotLLM/ClawEh/channels/secmsg"
+	"github.com/PivotLLM/ClawEh/config"
 
 	"github.com/tenebris-tech/secmsg/schema"
 )

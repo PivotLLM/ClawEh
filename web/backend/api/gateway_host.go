@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/PivotLLM/ClawEh/pkg/config"
+	"github.com/PivotLLM/ClawEh/config"
 )
 
 func (h *Handler) gatewayHostOverride() string {

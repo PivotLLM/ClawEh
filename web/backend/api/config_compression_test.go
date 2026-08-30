@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/PivotLLM/ClawEh/pkg/config"
+	"github.com/PivotLLM/ClawEh/config"
 )
 
 // patchConfig applies a merge patch through the real handler and returns the

@@ -8,9 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/PivotLLM/ClawEh/pkg/channels/device"
-	"github.com/PivotLLM/ClawEh/pkg/config"
-	"github.com/PivotLLM/ClawEh/pkg/routing"
+	"github.com/PivotLLM/ClawEh/channels/device"
+	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/routing"
 )
 
 // registerDeviceRoutes wires the external-device gateway onboarding/management API.

@@ -17,10 +17,10 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/PivotLLM/ClawEh/app"
+	"github.com/PivotLLM/ClawEh/channels/device"
+	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/internal"
-	"github.com/PivotLLM/ClawEh/pkg/channels/device"
-	"github.com/PivotLLM/ClawEh/pkg/global"
-	"github.com/PivotLLM/ClawEh/pkg/logger"
+	"github.com/PivotLLM/ClawEh/logger"
 )
 
 // NewACPCommand builds the `claw acp` subcommand: an Agent Client Protocol (ACP)
@@ -129,7 +129,7 @@ func acpCmd(debug bool, wsURL string, autoPair bool) error {
 			gateway.WithRole(protocol.RoleNode),
 			gateway.WithClientInfo(protocol.ClientInfo{
 				ID: protocol.ClientIDGateway,
-				// Protocol handshake: bare semver (see pkg/global.GetVersion).
+				// Protocol handshake: bare semver (see global.GetVersion).
 				Version:  app.SemVer(),
 				Platform: "go",
 				Mode:     protocol.ClientModeNode,

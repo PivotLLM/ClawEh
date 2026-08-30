@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/PivotLLM/ClawEh/pkg/config"
-	"github.com/PivotLLM/ClawEh/pkg/tools"
+	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/tools"
 )
 
-// staticToolDescriptors aliases the canonical list in pkg/tools so the gateway
+// staticToolDescriptors aliases the canonical list in tools so the gateway
 // and the API layer always agree on which tools are default-enabled.
 var staticToolDescriptors = tools.StaticToolDescriptors
 

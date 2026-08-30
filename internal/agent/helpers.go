@@ -11,11 +11,11 @@ import (
 
 	"github.com/ergochat/readline"
 
+	"github.com/PivotLLM/ClawEh/agent"
+	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/internal"
-	"github.com/PivotLLM/ClawEh/pkg/agent"
-	"github.com/PivotLLM/ClawEh/pkg/bus"
-	"github.com/PivotLLM/ClawEh/pkg/logger"
-	"github.com/PivotLLM/ClawEh/pkg/providers"
+	"github.com/PivotLLM/ClawEh/logger"
+	"github.com/PivotLLM/ClawEh/providers"
 )
 
 func agentCmd(message, sessionKey, model string, debug bool) error {

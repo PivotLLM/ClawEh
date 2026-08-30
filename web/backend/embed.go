@@ -11,7 +11,7 @@ import (
 	"path"
 	"strings"
 
-	"github.com/PivotLLM/ClawEh/pkg/logger"
+	"github.com/PivotLLM/ClawEh/logger"
 )
 
 //go:embed all:dist

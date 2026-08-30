@@ -765,7 +765,7 @@ else
         "time_now" '{}' "rfc3339"
     run_test_ok_auth "4e.2 time_now converts to a named timezone" \
         "time_now" '{"timezone":"UTC"}' "UTC+00:00"
-    # The unknown-timezone path is covered by a unit test in pkg/tools/timetool;
+    # The unknown-timezone path is covered by a unit test in tools/timetool;
     # it is hermetic, so there is nothing environmental for this suite to add.
 
 fi  # end SESSION_TOKEN block

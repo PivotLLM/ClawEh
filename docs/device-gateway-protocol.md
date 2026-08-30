@@ -5,7 +5,7 @@ hardware/voice clients (e.g. the Rabbit R1, the "Claw to Talk" Android app) can 
 converse with an agent. This documents the wire protocol as ClawEh implements it, plus the
 client-compatibility findings that shaped it.
 
-Implementation: `pkg/channels/device/` (`server.go` owns the protocol; `gateway.go` the
+Implementation: `channels/device/` (`server.go` owns the protocol; `gateway.go` the
 listener/bus bridge; `agentquery.go` the read surface). Agent-loop wiring:
 `internal/gateway/device_query.go`.
 
@@ -90,7 +90,7 @@ All frames are JSON text frames. Three top-level shapes (discriminated by `type`
 | `chat.history` | stored transcript for a session key (operator clients) |
 
 `agents.list` / `chat.history` are served from a read-only `AgentQuerier` over the agent loop
-(injected from `internal/gateway`, keeping `pkg/channels` free of a `pkg/agent` import cycle).
+(injected from `internal/gateway`, keeping `channels` free of a `agent` import cycle).
 
 ## The `chat.send` turn lifecycle
 

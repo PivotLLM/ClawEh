@@ -10,8 +10,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/PivotLLM/ClawEh/pkg/config"
-	"github.com/PivotLLM/ClawEh/pkg/skills"
+	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/skills"
 )
 
 type skillSupportResponse struct {

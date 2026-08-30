@@ -1,0 +1,58 @@
+// ClawEh
+// License: MIT
+
+package llmcontext
+
+import (
+	"context"
+	"time"
+
+	"github.com/PivotLLM/ClawEh/providers"
+)
+
+// LLMClient calls an LLM and returns a single response.
+type LLMClient interface {
+	Complete(ctx context.Context, messages []providers.Message) (LLMReply, error)
+}
+
+// LLMReply is the result of one LLMClient.Complete call. FinishReason carries the
+// provider's stop reason (e.g. "stop", "length", "refusal", "content_filter")
+// when available, so the summarizer can distinguish a content refusal from a
+// transient error. It is "" when the provider does not report one.
+type LLMReply struct {
+	Content      string
+	FinishReason string
+}
+
+// ModelChain records which LLM chain is configured for compression (for stats and logging).
+type ModelChain struct {
+	Primary   string   `json:"primary,omitempty"`
+	Fallbacks []string `json:"fallbacks,omitempty"`
+}
+
+// ContextStats holds observable state for a session's context.
+type ContextStats struct {
+	TotalMessages       int
+	MeaningfulMessages  int
+	EstimatedTokens     int
+	ContextWindowPct    float64
+	LastCompressedAt    time.Time
+	LastCompressionGain float64
+	CompressionCooling  bool
+	CoolingSinceCount   int
+	// SummaryTokens is the estimated token count of the stored summary (runes/4).
+	// Zero when no summary has been generated.
+	SummaryTokens int
+}
+
+// MessageBuilder builds the full message slice sent to an LLM, including the
+// system prompt, history, optional summary, and current message.
+// agent.ContextBuilder satisfies this interface via structural typing.
+type MessageBuilder interface {
+	BuildMessages(
+		history []providers.Message,
+		summary, currentMessage string,
+		media []string,
+		channel, chatID string,
+	) []providers.Message
+}

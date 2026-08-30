@@ -130,7 +130,7 @@ export async function getSecMsgAccounts(
   )
 }
 
-// MCPServerStatus mirrors pkg/mcp.ServerStatus. state is
+// MCPServerStatus mirrors mcp.ServerStatus. state is
 // "connected" | "reconnecting" | "cooldown"; cooldown_until is RFC3339 (only for
 // the cooldown state). Servers absent from the response are disconnected.
 export interface MCPServerStatus {

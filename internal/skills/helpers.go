@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/internal"
-	"github.com/PivotLLM/ClawEh/pkg/config"
-	"github.com/PivotLLM/ClawEh/pkg/skills"
-	"github.com/PivotLLM/ClawEh/pkg/utils"
+	"github.com/PivotLLM/ClawEh/skills"
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 const skillsSearchMaxResults = 20

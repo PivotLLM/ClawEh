@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/PivotLLM/ClawEh/pkg/config"
+	"github.com/PivotLLM/ClawEh/config"
 )
 
 // registerProviderRoutes binds named-provider management endpoints.

@@ -6,7 +6,7 @@ once makes its tools available to **both** transports:
 
 - **Internal tool calling** — the agent loop builds a per-agent tool registry and
   passes the tools to the LLM.
-- **The MCP server** — `pkg/mcpserver` is handed the same per-agent registries,
+- **The MCP server** — `mcpserver` is handed the same per-agent registries,
   so every tool is also exposed over MCP (`/mcp`).
 
 It also feeds the WebUI tool catalogue. You write a module once; all three get it.
@@ -16,23 +16,23 @@ It also feeds the WebUI tool catalogue. You write a module once; all three get i
 ## 1. Architecture
 
 ```
-your package (pkg/tools/<ns>/)        ← implements global.ToolProvider, BARE tool names
+your package (tools/<ns>/)        ← implements global.ToolProvider, BARE tool names
         │  RegisterTools(deps) []ToolDefinition
         ▼
-pkg/global  (transport-neutral, stdlib-only)
+global  (transport-neutral, stdlib-only)
         │  ToolProvider / ToolDefinition / Parameter / ToolCall / Result / Deps
         ▼
-pkg/tools.NamespacedProvider("<ns>", pkg.GlobalProvider)   ← applies the "<ns>_" prefix
+tools.NamespacedProvider("<ns>", pkg.GlobalProvider)   ← applies the "<ns>_" prefix
         │  bridges global.* into the legacy tools.Tool / tools.ToolProvider world
         ▼
-pkg/tools registry  (RegisterProvider / GetProviders)
+tools registry  (RegisterProvider / GetProviders)
         ├──► agent loop  → per-agent *tools.ToolRegistry  → LLM tool calling
-        ├──► pkg/mcpserver (WithAgentRegistries)           → MCP /mcp
+        ├──► mcpserver (WithAgentRegistries)               → MCP /mcp
         └──► web/backend/api/tools.go (Describe)           → WebUI catalogue
 ```
 
 Key idea: a tool package is **transport-neutral and dependency-free** (it imports
-only `pkg/global`, which itself imports only the standard library). The package
+only `global`, which itself imports only the standard library). The package
 returns tools with **bare names** (`"read_bytes"`). The *aggregator* mounts the package
 under a **namespace** (`"file"`), and the published tool name is
 `"<namespace>_<bare>"` (`"file_read_bytes"`). Namespacing lives in the aggregator, not
@@ -58,7 +58,7 @@ To add an internal module you (a) add its import and (b) add one
 
 ---
 
-## 2. Core types (`pkg/global/tools.go`)
+## 2. Core types (`global/tools.go`)
 
 ```go
 // A package implements this. deps is injected at build time.
@@ -174,17 +174,17 @@ Detection is uniform: `tools.IsPrimaryOnly(t)` returns true for either form
 
 ### Step 1 — create the package
 
-`pkg/tools/<ns>/` (short namespace, e.g. `weather`). Implement
+`tools/<ns>/` (short namespace, e.g. `weather`). Implement
 `global.ToolProvider` on an exported zero-value, and optionally `global.HostMeta`:
 
 ```go
-// pkg/tools/weather/global_provider.go
+// tools/weather/global_provider.go
 package weather
 
 import (
     "fmt"
 
-    "github.com/PivotLLM/ClawEh/pkg/global"
+    "github.com/PivotLLM/ClawEh/global"
 )
 
 // GlobalProvider is the exported entry point the aggregator mounts.
@@ -229,7 +229,7 @@ func (globalWeatherProvider) RegisterTools(deps global.Deps) []global.ToolDefini
 In `internal/gateway/tool_providers.go`:
 
 ```go
-import "github.com/PivotLLM/ClawEh/pkg/tools/weather"
+import "github.com/PivotLLM/ClawEh/tools/weather"
 
 func registerToolProviders() {
     // … existing …
@@ -264,7 +264,7 @@ network/hardware/LLM tools.
   `tools.ToolDeps` via `deps.Host`; recover it with
   `cd, _ := deps.Host.(tools.ToolDeps)` (gives `Workspace`, `AgentCfg`,
   `Dispatcher`, session closures, etc.). A pure module that needs none of that
-  imports only `pkg/global`.
+  imports only `global`.
 - **Session-scoped tools** set `SessionScoped: true` and read `call.Session`.
 - **Async tools** set `Async: true`, return `Result{Async: true}` immediately,
   and deliver the late result via `call.Notify(...)` — but check `call.Notify != nil`
@@ -276,10 +276,10 @@ network/hardware/LLM tools.
 
 ## 5. Importing as an external module
 
-`pkg/global` is intentionally dependency-free (standard library + `context`
+`global` is intentionally dependency-free (standard library + `context`
 only), so the `ToolProvider`/`ToolDefinition` contract can be vendored or
 imported by another codebase (e.g. Maestro/MCPFusion) without pulling in Claw.
-A package written against `pkg/global` alone — no `pkg/tools`, `pkg/config`, etc.
+A package written against `global` alone — no `tools`, `config`, etc.
 — is portable: any host that can adapt `global.ToolProvider` into its own
 registry can mount it. Claw's adapter is `tools.NamespacedProvider`; another host
 would supply its own equivalent.
@@ -313,7 +313,7 @@ The three modes are: `SpawnDetached` (fire-and-forget, result discarded),
 `SpawnCallback` (fire-and-forget; the worker's result is delivered to
 `OnResult` when it finishes — wire it to `call.Notify` to surface it on the
 originating channel), and `SpawnAndWait` (run to completion and return the
-worker's `Result` synchronously). `Spawner` lives in `pkg/global` (stdlib-only),
+worker's `Result` synchronously). `Spawner` lives in `global` (stdlib-only),
 so an external module can depend on it without importing the rest of Claw; the
 host supplies the concrete implementation.
 
@@ -323,13 +323,13 @@ host supplies the concrete implementation.
 
 | Thing | Location |
 |---|---|
-| Transport-neutral types | `pkg/global/tools.go` |
-| Namespacing bridge | `pkg/tools/namespaced.go` (`NamespacedProvider`) |
-| Registry | `pkg/tools/providers.go` (`RegisterProvider` / `GetProviders`) |
+| Transport-neutral types | `global/tools.go` |
+| Namespacing bridge | `tools/namespaced.go` (`NamespacedProvider`) |
+| Registry | `tools/providers.go` (`RegisterProvider` / `GetProviders`) |
 | **Aggregator (wire new modules here)** | `internal/gateway/tool_providers.go` |
-| Per-module entry points | `pkg/tools/<ns>/global_provider.go` (`var GlobalProvider`) |
-| Sub-agent restriction | `ToolDefinition.PrimaryOnly` / `tools.IsPrimaryOnly` (`pkg/tools/base.go`) |
-| Host deps available to handlers | `pkg/tools` `ToolDeps` (via `deps.Host`) |
-| MCP exposure | `pkg/mcpserver` (`WithAgentRegistries`) |
+| Per-module entry points | `tools/<ns>/global_provider.go` (`var GlobalProvider`) |
+| Sub-agent restriction | `ToolDefinition.PrimaryOnly` / `tools.IsPrimaryOnly` (`tools/base.go`) |
+| Host deps available to handlers | `tools` `ToolDeps` (via `deps.Host`) |
+| MCP exposure | `mcpserver` (`WithAgentRegistries`) |
 | WebUI catalogue | `web/backend/api/tools.go` (`Describe`) |
 | Test probes | `test.sh`, `tests/test_mcpserver.sh` |

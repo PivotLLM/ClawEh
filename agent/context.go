@@ -1,0 +1,919 @@
+package agent
+
+import (
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"runtime"
+	"slices"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/PivotLLM/ClawEh/app"
+	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/logger"
+	"github.com/PivotLLM/ClawEh/providers"
+	"github.com/PivotLLM/ClawEh/skills"
+	"github.com/PivotLLM/ClawEh/utils"
+)
+
+type ContextBuilder struct {
+	workspace           string
+	skillsLoader        *skills.SkillsLoader
+	skillsFilter        []string
+	memory              *MemoryStore
+	mounts              []config.MountConfig
+	toolDiscoveryActive bool
+
+	// Cache for system prompt to avoid rebuilding on every call.
+	// This fixes issue #607: repeated reprocessing of the entire context.
+	// The cache auto-invalidates when workspace source files change (mtime check).
+	systemPromptMutex  sync.RWMutex
+	cachedSystemPrompt string
+	cachedAt           time.Time // max observed mtime across tracked paths at cache build time
+
+	// cachedDate is the date string baked into the cached prompt. The prompt
+	// carries today's date, which no file mtime reflects, so without this the
+	// cache would keep serving yesterday's date indefinitely — a silent wrong
+	// answer, and precisely the failure the date anchor exists to prevent.
+	cachedDate string
+
+	// now is the clock used for the date line, injectable for tests. nil means
+	// time.Now.
+	now func() time.Time
+
+	// existedAtCache tracks which source file paths existed the last time the
+	// cache was built. This lets sourceFilesChanged detect files that are newly
+	// created (didn't exist at cache time, now exist) or deleted (existed at
+	// cache time, now gone) — both of which should trigger a cache rebuild.
+	existedAtCache map[string]bool
+
+	// skillFilesAtCache snapshots the skill tree file set and mtimes at cache
+	// build time. This catches nested file creations/deletions/mtime changes
+	// that may not update the top-level skill root directory mtime.
+	skillFilesAtCache map[string]time.Time
+}
+
+func (cb *ContextBuilder) WithToolDiscovery(active bool) *ContextBuilder {
+	cb.toolDiscoveryActive = active
+	return cb
+}
+
+// WithMounts records the agent's external folder mounts so the system prompt can
+// tell the agent which top-level folders it can reach.
+func (cb *ContextBuilder) WithMounts(mounts []config.MountConfig) *ContextBuilder {
+	cb.mounts = mounts
+	return cb
+}
+
+// accessibleFolders is the short list of top-level folders the file tools can
+// reach: files/ and skills/ always, plus each configured (or auto Maestro) mount.
+func (cb *ContextBuilder) accessibleFolders() string {
+	parts := []string{"files/ (read/write)", "skills/ (read-only)"}
+	for _, m := range cb.mounts {
+		name := strings.TrimSpace(m.Name)
+		if name == "" {
+			continue
+		}
+		access := "read-only"
+		if m.Writable {
+			access = "read/write"
+		}
+		// Maestro's tree lives inside the agent workspace; other mounts are
+		// typically external host paths.
+		if strings.EqualFold(name, config.MaestroMountName) {
+			parts = append(parts, fmt.Sprintf("%s/ (%s)", name, access))
+		} else {
+			parts = append(parts, fmt.Sprintf("%s/ (external, %s)", name, access))
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
+// WithSkillsFilter restricts which skills are available to this agent.
+// An empty or nil filter means all skills are available.
+// Each pattern may use '*' as a wildcard (e.g. "fetch-*").
+func (cb *ContextBuilder) WithSkillsFilter(filter []string) *ContextBuilder {
+	cb.skillsFilter = filter
+	return cb
+}
+
+func getGlobalConfigDir() string {
+	if home := os.Getenv("CLAW_HOME"); home != "" {
+		return home
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".claw")
+}
+
+func NewContextBuilder(workspace string) *ContextBuilder {
+	// builtin skills: skills directory in current project
+	// Use the skills/ directory under the current working directory
+	builtinSkillsDir := strings.TrimSpace(os.Getenv("CLAW_BUILTIN_SKILLS"))
+	if builtinSkillsDir == "" {
+		wd, _ := os.Getwd()
+		builtinSkillsDir = filepath.Join(wd, "skills")
+	}
+	globalSkillsDir := filepath.Join(getGlobalConfigDir(), "skills")
+
+	return &ContextBuilder{
+		workspace:    workspace,
+		skillsLoader: skills.NewSkillsLoader(workspace, globalSkillsDir, builtinSkillsDir),
+		memory:       NewMemoryStore(workspace),
+	}
+}
+
+// currentDate renders today's date for the system prompt, together with a
+// pointer to the tool that supplies the time.
+//
+// Deliberately DAY granularity. This string sits in the cached prefix, ahead of
+// the whole conversation, and every HTTP provider ClawEh dispatches to caches by
+// longest-common-prefix — at minute granularity the prefix breaks on nearly
+// every turn, taking the entire history with it. Measured against production
+// logs, first-dispatch cache hit rates were 5.6% and 1.6% for the two busiest
+// agents while later dispatches inside the same minute ran 70-89%.
+//
+// The date is still worth its once-a-day invalidation: a model given no date
+// does not ask for one, it answers from its training cutoff.
+func (cb *ContextBuilder) currentDate() string {
+	return cb.clock().Format("Monday, Jan 2, 2006")
+}
+
+// clock returns the time source for the date line.
+func (cb *ContextBuilder) clock() time.Time {
+	if cb.now != nil {
+		return cb.now()
+	}
+	return time.Now()
+}
+
+func (cb *ContextBuilder) getIdentity() string {
+	workspacePath, _ := filepath.Abs(filepath.Join(cb.workspace))
+	toolDiscovery := cb.getDiscoveryRule()
+	version := app.Version()
+
+	// The agent's file tools are scoped to files/ (read/write) and skills/ (read);
+	// its config (AGENTS/SOUL/IDENTITY/USER/MEMORY) is injected into this prompt.
+	return fmt.Sprintf(
+		`# claw (%s)
+
+You are a helpful AI assistant.
+
+## Workspace
+Your working area is %s/files — write drafts and outputs there. Your configuration
+and memory are already included in this prompt; you do not need to read workspace files.
+Folders your file tools can reach: %s.
+
+## Important Rules
+
+1. **ALWAYS use tools** - When you need to perform an action (schedule reminders, send messages, execute commands, etc.), you MUST call the appropriate tool. Do NOT just say you'll do it or pretend to do it.
+
+2. **Be helpful and accurate** - When using tools, briefly explain what you're doing.
+
+   **Declining to respond** - If you should not reply at all — for example a group message clearly directed at someone else — reply with exactly !none (and nothing else). Do NOT return an empty message: an empty reply is treated as an error and you will be asked to try again. Replying !none tells the system you intentionally have nothing to say.
+
+3. **Memory (cogmem)** - The cogmem_* tools are your long-term memory: use them to record anything worth remembering and to search for what you need. It is organized into **domains** (containers of related memories), each with a unique name. A domain is either **sticky** (included in EVERY prompt; global rules, preferences, and standing facts — the pre-existing **General** domain is sticky) or non-sticky (a topic/project, loaded only when relevant). Each domain holds one or more **memories**, each typed as a **fact** (something true), **preference** (how the user likes things done), or **rule** (a hard directive). Record with cogmem_memory_create — with no domain argument it lands in sticky **General** (always in context); pass a domain_hint or domain_id for a topic domain. A domain can auto-load by context two ways: **tool triggers** (tool-name substrings — e.g. mcp_<server> for a whole MCP server) load it when you use a matching tool, and **keyword triggers** (words/phrases) load it when one appears in the incoming message, including a scheduled (cron) message — prefer multi-word phrases so common words don't over-match. Memory also updates on its own: a background process saves and refines memories from your conversations and loads the relevant ones into each prompt — so it may include things you did not save yourself. Because only relevant memories are loaded, use cogmem_memory_search to look things up before answering anything that may depend on past context you cannot currently see. Your file tools can reach the folders listed in the Workspace section above; your config files (AGENTS/SOUL/IDENTITY/USER/MEMORY) are already in this prompt — you cannot read or edit them.
+
+4. **Context summaries** - Conversation summaries provided as context are approximate references only. They may be incomplete or outdated. Always defer to explicit user instructions over summary content.
+
+%s`,
+		version, workspacePath, cb.accessibleFolders(), toolDiscovery)
+}
+
+func (cb *ContextBuilder) getDiscoveryRule() string {
+	if !cb.toolDiscoveryActive {
+		return ""
+	}
+
+	return `5. **Tool Discovery** - Your visible tools are limited to save memory, but a large hidden library exists (integrations, browsers, task tools, and more). If you lack the right tool for a task, BEFORE giving up, call ` +
+		"`search_tools(query)`" + ` with a natural-language description of what you need. It returns matching tool names; then call ` +
+		"`get_tool_details(name)`" + ` on the one you want to load its schema and unlock it, and call it on your next turn. Do not refuse a request unless the search returns nothing.`
+}
+
+func (cb *ContextBuilder) BuildSystemPrompt() string {
+	parts := []string{}
+
+	// Core identity section
+	parts = append(parts, cb.getIdentity())
+
+	// Bootstrap files
+	bootstrapContent := cb.LoadBootstrapFiles()
+	if bootstrapContent != "" {
+		parts = append(parts, bootstrapContent)
+	}
+
+	// Skills - show summary, AI can read full content with read_file tool
+	skillsSummary := cb.skillsLoader.BuildSkillsSummaryForSkills(cb.filteredSkills())
+	if skillsSummary != "" {
+		parts = append(parts, fmt.Sprintf(`# Skills
+
+The following skills extend your capabilities. To use a skill, read its SKILL.md file using the read_file tool.
+
+%s`, skillsSummary))
+	}
+
+	// Memory context
+	memoryContext := cb.memory.GetMemoryContext()
+	if memoryContext != "" {
+		parts = append(parts, "# Memory\n\n"+memoryContext)
+	}
+
+	// Today's date, last in the static prompt so everything above it stays
+	// byte-identical across the day boundary. The tool pointer matters: without
+	// it a date-only anchor reads as authoritative for the time of day too.
+	parts = append(parts, fmt.Sprintf(
+		"# Date\n\nToday is %s — call `time_now` if you need the current time, timezone, or a precise timestamp.",
+		cb.currentDate()))
+
+	// The external-message endpoint (POST /api/message/{token}) and its rotating
+	// tokens still exist (see internal/gateway/message_route.go) so a future
+	// "notify an agent" feature can use them, but the agent is no longer told
+	// about them — Maestro and agent_spawn deliver completions in-process via
+	// ToolCall.Notify, so there is nothing for the agent to hand out.
+
+	// Join with "---" separator
+	return strings.Join(parts, "\n\n---\n\n")
+}
+
+// BuildSystemPromptWithCache returns the cached system prompt if available
+// and source files haven't changed, otherwise builds and caches it.
+// Source file changes are detected via mtime checks (cheap stat calls).
+func (cb *ContextBuilder) BuildSystemPromptWithCache() string {
+	// Try read lock first — fast path when cache is valid
+	cb.systemPromptMutex.RLock()
+	if cb.cachedSystemPrompt != "" && !cb.sourceFilesChangedLocked() {
+		result := cb.cachedSystemPrompt
+		cb.systemPromptMutex.RUnlock()
+		return result
+	}
+	cb.systemPromptMutex.RUnlock()
+
+	// Acquire write lock for building
+	cb.systemPromptMutex.Lock()
+	defer cb.systemPromptMutex.Unlock()
+
+	// Double-check: another goroutine may have rebuilt while we waited
+	if cb.cachedSystemPrompt != "" && !cb.sourceFilesChangedLocked() {
+		return cb.cachedSystemPrompt
+	}
+
+	// Snapshot the baseline (existence + max mtime) BEFORE building the prompt.
+	// This way cachedAt reflects the pre-build state: if a file is modified
+	// during BuildSystemPrompt, its new mtime will be > baseline.maxMtime,
+	// so the next sourceFilesChangedLocked check will correctly trigger a
+	// rebuild. The alternative (baseline after build) risks caching stale
+	// content with a too-new baseline, making the staleness invisible.
+	baseline := cb.buildCacheBaseline()
+	date := cb.currentDate()
+	prompt := cb.BuildSystemPrompt()
+	cb.cachedSystemPrompt = prompt
+	cb.cachedAt = baseline.maxMtime
+	cb.cachedDate = date
+	cb.existedAtCache = baseline.existed
+	cb.skillFilesAtCache = baseline.skillFiles
+
+	logger.DebugCF("agent", "System prompt cached",
+		map[string]any{
+			"length": len(prompt),
+		})
+
+	return prompt
+}
+
+// InvalidateCache clears the cached system prompt.
+// Normally not needed because the cache auto-invalidates via mtime checks,
+// but this is useful for tests or explicit reload commands.
+func (cb *ContextBuilder) InvalidateCache() {
+	cb.systemPromptMutex.Lock()
+	defer cb.systemPromptMutex.Unlock()
+
+	cb.cachedSystemPrompt = ""
+	cb.cachedAt = time.Time{}
+	cb.cachedDate = ""
+	cb.existedAtCache = nil
+	cb.skillFilesAtCache = nil
+
+	logger.DebugCF("agent", "System prompt cache invalidated", nil)
+}
+
+// sourcePaths returns non-skill workspace source files tracked for cache
+// invalidation (bootstrap files + memory). Skill roots are handled separately
+// because they require both directory-level and recursive file-level checks.
+func (cb *ContextBuilder) sourcePaths() []string {
+	return []string{
+		filepath.Join(cb.workspace, "AGENTS.md"),
+		filepath.Join(cb.workspace, "SOUL.md"),
+		filepath.Join(cb.workspace, "USER.md"),
+		filepath.Join(cb.workspace, "IDENTITY.md"),
+		filepath.Join(cb.workspace, "MEMORY.md"),
+		filepath.Join(cb.workspace, "state", "message-tokens.json"),
+	}
+}
+
+// skillRoots returns all skill root directories that can affect
+// BuildSkillsSummary output (workspace/global/builtin).
+func (cb *ContextBuilder) skillRoots() []string {
+	if cb.skillsLoader == nil {
+		return []string{filepath.Join(cb.workspace, "skills")}
+	}
+
+	roots := cb.skillsLoader.SkillRoots()
+	if len(roots) == 0 {
+		return []string{filepath.Join(cb.workspace, "skills")}
+	}
+	return roots
+}
+
+// cacheBaseline holds the file existence snapshot and the latest observed
+// mtime across all tracked paths. Used as the cache reference point.
+type cacheBaseline struct {
+	existed    map[string]bool
+	skillFiles map[string]time.Time
+	maxMtime   time.Time
+}
+
+// buildCacheBaseline records which tracked paths currently exist and computes
+// the latest mtime across all tracked files + skills directory contents.
+// Called under write lock when the cache is built.
+func (cb *ContextBuilder) buildCacheBaseline() cacheBaseline {
+	skillRoots := cb.skillRoots()
+
+	// All paths whose existence we track: source files + all skill roots.
+	allPaths := append(cb.sourcePaths(), skillRoots...)
+
+	existed := make(map[string]bool, len(allPaths))
+	skillFiles := make(map[string]time.Time)
+	var maxMtime time.Time
+
+	for _, p := range allPaths {
+		info, err := os.Stat(p)
+		existed[p] = err == nil
+		if err == nil && info.ModTime().After(maxMtime) {
+			maxMtime = info.ModTime()
+		}
+	}
+
+	// Walk all skill roots recursively to snapshot skill files and mtimes.
+	// Use os.Stat (not d.Info) for consistency with sourceFilesChanged checks.
+	for _, root := range skillRoots {
+		_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
+			if walkErr == nil && !d.IsDir() {
+				if info, err := os.Stat(path); err == nil {
+					skillFiles[path] = info.ModTime()
+					if info.ModTime().After(maxMtime) {
+						maxMtime = info.ModTime()
+					}
+				}
+			}
+			return nil
+		})
+	}
+
+	// If no tracked files exist yet (empty workspace), maxMtime is zero.
+	// Use a very old non-zero time so that:
+	// 1. cachedAt.IsZero() won't trigger perpetual rebuilds.
+	// 2. Any real file created afterwards has mtime > cachedAt, so it
+	//    will be detected by fileChangedSince (unlike time.Now() which
+	//    could race with a file whose mtime <= Now).
+	if maxMtime.IsZero() {
+		maxMtime = time.Unix(1, 0)
+	}
+
+	return cacheBaseline{existed: existed, skillFiles: skillFiles, maxMtime: maxMtime}
+}
+
+// sourceFilesChangedLocked checks whether any workspace source file has been
+// modified, created, or deleted since the cache was last built.
+//
+// IMPORTANT: The caller MUST hold at least a read lock on systemPromptMutex.
+// Go's sync.RWMutex is not reentrant, so this function must NOT acquire the
+// lock itself (it would deadlock when called from BuildSystemPromptWithCache
+// which already holds RLock or Lock).
+func (cb *ContextBuilder) sourceFilesChangedLocked() bool {
+	if cb.cachedAt.IsZero() {
+		return true
+	}
+
+	// The prompt carries today's date, which no file mtime reflects. Checked
+	// first because it is a string compare, and because a stale date is the one
+	// staleness here that produces a confidently wrong answer rather than a
+	// merely outdated one.
+	if cb.cachedDate != cb.currentDate() {
+		return true
+	}
+
+	// Check tracked source files (bootstrap + memory).
+	if slices.ContainsFunc(cb.sourcePaths(), cb.fileChangedSince) {
+		return true
+	}
+
+	// --- Skill roots (workspace/global/builtin) ---
+	//
+	// For each root:
+	// 1. Creation/deletion and root directory mtime changes are tracked by fileChangedSince.
+	// 2. Nested file create/delete/mtime changes are tracked by the skill file snapshot.
+	for _, root := range cb.skillRoots() {
+		if cb.fileChangedSince(root) {
+			return true
+		}
+	}
+	if skillFilesChangedSince(cb.skillRoots(), cb.skillFilesAtCache) {
+		return true
+	}
+
+	return false
+}
+
+// fileChangedSince returns true if a tracked source file has been modified,
+// newly created, or deleted since the cache was built.
+//
+// Four cases:
+//   - existed at cache time, exists now -> check mtime
+//   - existed at cache time, gone now   -> changed (deleted)
+//   - absent at cache time,  exists now -> changed (created)
+//   - absent at cache time,  gone now   -> no change
+func (cb *ContextBuilder) fileChangedSince(path string) bool {
+	// Defensive: if existedAtCache was never initialized, treat as changed
+	// so the cache rebuilds rather than silently serving stale data.
+	if cb.existedAtCache == nil {
+		return true
+	}
+
+	existedBefore := cb.existedAtCache[path]
+	info, err := os.Stat(path)
+	existsNow := err == nil
+
+	if existedBefore != existsNow {
+		return true // file was created or deleted
+	}
+	if !existsNow {
+		return false // didn't exist before, doesn't exist now
+	}
+	return info.ModTime().After(cb.cachedAt)
+}
+
+// errWalkStop is a sentinel error used to stop filepath.WalkDir early.
+// Using a dedicated error (instead of fs.SkipAll) makes the early-exit
+// intent explicit and avoids the nilerr linter warning that would fire
+// if the callback returned nil when its err parameter is non-nil.
+var errWalkStop = errors.New("walk stop")
+
+// skillFilesChangedSince compares the current recursive skill file tree
+// against the cache-time snapshot. Any create/delete/mtime drift invalidates
+// the cache.
+func skillFilesChangedSince(skillRoots []string, filesAtCache map[string]time.Time) bool {
+	// Defensive: if the snapshot was never initialized, force rebuild.
+	if filesAtCache == nil {
+		return true
+	}
+
+	// Check cached files still exist and keep the same mtime.
+	for path, cachedMtime := range filesAtCache {
+		info, err := os.Stat(path)
+		if err != nil {
+			// A previously tracked file disappeared (or became inaccessible):
+			// either way, cached skill summary may now be stale.
+			return true
+		}
+		if !info.ModTime().Equal(cachedMtime) {
+			return true
+		}
+	}
+
+	// Check no new files appeared under any skill root.
+	changed := false
+	for _, root := range skillRoots {
+		if strings.TrimSpace(root) == "" {
+			continue
+		}
+
+		err := filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				// Treat unexpected walk errors as changed to avoid stale cache.
+				if !os.IsNotExist(walkErr) {
+					changed = true
+					return errWalkStop
+				}
+				return nil
+			}
+			if d.IsDir() {
+				return nil
+			}
+			if _, ok := filesAtCache[path]; !ok {
+				changed = true
+				return errWalkStop
+			}
+			return nil
+		})
+
+		if changed {
+			return true
+		}
+		if err != nil && !errors.Is(err, errWalkStop) && !os.IsNotExist(err) {
+			logger.DebugCF("agent", "skills walk error", map[string]any{"error": err.Error()})
+			return true
+		}
+	}
+
+	return false
+}
+
+func (cb *ContextBuilder) LoadBootstrapFiles() string {
+	bootstrapFiles := []string{
+		"AGENTS.md",
+		"SOUL.md",
+		"USER.md",
+		"IDENTITY.md",
+	}
+
+	var sb strings.Builder
+	for _, filename := range bootstrapFiles {
+		filePath := filepath.Join(cb.workspace, filename)
+		if data, err := os.ReadFile(filePath); err == nil {
+			fmt.Fprintf(&sb, "## %s\n\n%s\n\n", filename, data)
+		}
+	}
+
+	return sb.String()
+}
+
+// buildDynamicContext returns a short dynamic context string with per-request
+// info that is stable for the life of a conversation: runtime identity, the
+// channel/chat the turn arrived on, and any channel-specific guidance.
+//
+// Nothing here may vary per turn. Every provider ClawEh dispatches to over HTTP
+// caches by longest-common-prefix, and the system message precedes the entire
+// conversation history — so a single per-request byte here invalidates the cache
+// for the whole history behind it, not just for the system prompt. That is why
+// the current time is NOT in this block: see docs/context-management-plan.md.
+// See: https://platform.openai.com/docs/guides/prompt-caching
+func (cb *ContextBuilder) buildDynamicContext(channel, chatID string) string {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "## Runtime\nServer: %s %s\nOS: %s %s\nGo: %s",
+		app.Name(), app.Version(), runtime.GOOS, runtime.GOARCH, runtime.Version())
+
+	if channel != "" && chatID != "" {
+		fmt.Fprintf(&sb, "\n\n## Current Session\nChannel: %s\nChat ID: %s", channel, chatID)
+	}
+
+	// Channel-specific guidance from <workspace>/channel-<channel>.md (seeded from
+	// templates, user-editable). Injected here (not in the cached static prompt)
+	// because it varies by channel while the static prompt is shared per agent.
+	if extra := cb.loadChannelPrompt(channel); extra != "" {
+		fmt.Fprintf(&sb, "\n\n%s", extra)
+	}
+
+	return sb.String()
+}
+
+// loadChannelPrompt returns the contents of <workspace>/channel-<channel>.md, or
+// "" if there is none. The channel name is sanitized to a safe filename token.
+func (cb *ContextBuilder) loadChannelPrompt(channel string) string {
+	safe := sanitizeChannelName(channel)
+	if safe == "" {
+		return ""
+	}
+	data, err := os.ReadFile(filepath.Join(cb.workspace, "channel-"+safe+".md"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+// sanitizeChannelName keeps only [A-Za-z0-9_-] so the channel name can't escape
+// the workspace via path traversal.
+func sanitizeChannelName(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if r == '-' || r == '_' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func (cb *ContextBuilder) BuildMessages(
+	history []providers.Message,
+	summary string,
+	currentMessage string,
+	media []string,
+	channel, chatID string,
+) []providers.Message {
+	messages := []providers.Message{}
+
+	// The static part (identity, bootstrap, skills, memory) is cached locally to
+	// avoid repeated file I/O and string building on every call (fixes issue #607).
+	// Dynamic parts (time, session, summary) are appended per request.
+	// Everything is sent as a single system message for provider compatibility:
+	// - Anthropic adapter extracts messages[0] (Role=="system") and maps its content
+	//   to the top-level "system" parameter in the Messages API request. A single
+	//   contiguous system block makes this extraction straightforward.
+	// - Codex maps only the first system message to its instructions field.
+	// - OpenAI-compat passes messages through as-is.
+	staticPrompt := cb.BuildSystemPromptWithCache()
+
+	// Build short dynamic context (time, runtime, session) — changes per request
+	dynamicCtx := cb.buildDynamicContext(channel, chatID)
+
+	// Compose a single system message: static + dynamic + optional summary.
+	// Keeping all system content in one message ensures every provider adapter can
+	// extract it correctly (Anthropic adapter -> top-level system param,
+	// Codex -> instructions field).
+	//
+	// Ordering is load-bearing: content must appear in increasing order of
+	// volatility, because prefix caching ends at the first byte that differs
+	// between two requests.
+	stringParts := []string{staticPrompt, dynamicCtx}
+
+	if summary != "" {
+		summaryText := fmt.Sprintf(
+			"CONTEXT_SUMMARY: The following is an approximate summary of prior conversation "+
+				"for reference only. It may be incomplete or outdated — always defer to explicit instructions.\n\n%s",
+			summary)
+		stringParts = append(stringParts, summaryText)
+	}
+
+	fullSystemPrompt := strings.Join(stringParts, "\n\n---\n\n")
+
+	// Log system prompt summary for debugging (debug mode only).
+	// Read cachedSystemPrompt under lock to avoid a data race with
+	// concurrent InvalidateCache / BuildSystemPromptWithCache writes.
+	cb.systemPromptMutex.RLock()
+	isCached := cb.cachedSystemPrompt != ""
+	cb.systemPromptMutex.RUnlock()
+
+	logger.DebugCF("agent", "System prompt built",
+		map[string]any{
+			"static_chars":  len(staticPrompt),
+			"dynamic_chars": len(dynamicCtx),
+			"total_chars":   len(fullSystemPrompt),
+			"has_summary":   summary != "",
+			"cached":        isCached,
+		})
+
+	// Log preview of system prompt — gated behind log_message_content for privacy
+	if logger.GetLogMessageContent() {
+		preview := utils.Truncate(fullSystemPrompt, 500)
+		logger.DebugCF("agent", "System prompt preview",
+			map[string]any{
+				"preview": preview,
+			})
+	}
+
+	history = sanitizeHistoryForProvider(history)
+
+	// Single system message containing all context — compatible with all providers.
+	messages = append(messages, providers.Message{
+		Role:    "system",
+		Content: fullSystemPrompt,
+	})
+
+	// Add conversation history
+	messages = append(messages, history...)
+
+	// Add current user message
+	if strings.TrimSpace(currentMessage) != "" {
+		msg := providers.Message{
+			Role:    "user",
+			Content: currentMessage,
+		}
+		if len(media) > 0 {
+			msg.Media = media
+		}
+		messages = append(messages, msg)
+	}
+
+	return messages
+}
+
+func sanitizeHistoryForProvider(history []providers.Message) []providers.Message {
+	if len(history) == 0 {
+		return history
+	}
+
+	// Drop reasons are counted and logged once at the end rather than per message,
+	// because a single post-compaction boundary can orphan several leading
+	// tool-call turns and would otherwise spam one DBG line each, every dispatch.
+	var dropSystem, dropLeadingTool, dropOrphanTool, dropAsstStart, dropAsstBadPred, dropIncompleteGroup int
+
+	sanitized := make([]providers.Message, 0, len(history))
+	for _, msg := range history {
+		switch msg.Role {
+		case "system":
+			// Drop system messages from history. BuildMessages always
+			// constructs its own single system message (static + dynamic +
+			// summary); extra system messages would break providers that
+			// only accept one (Anthropic, Codex).
+			dropSystem++
+			continue
+
+		case "tool":
+			if len(sanitized) == 0 {
+				dropLeadingTool++
+				continue
+			}
+			// Walk backwards to the nearest assistant message, skipping over any
+			// preceding tool results (the parallel-tool-call case), and require
+			// that THIS result answers one of the calls that assistant actually
+			// declared.
+			//
+			// Matching the id matters, not merely finding an assistant that made
+			// some call: a result whose id belongs to a dropped assistant turn
+			// would otherwise be accepted on the strength of an unrelated
+			// neighbour, and strict providers reject it — DeepSeek answers 400
+			// with "Messages with role 'tool' must be a response to a preceding
+			// message with 'tool_calls'", which kills every turn until the
+			// message ages out of the window.
+			open := map[string]bool{}
+			for i := len(sanitized) - 1; i >= 0; i-- {
+				if sanitized[i].Role == "tool" {
+					continue
+				}
+				if sanitized[i].Role == "assistant" {
+					for _, tc := range sanitized[i].ToolCalls {
+						open[tc.ID] = true
+					}
+				}
+				break
+			}
+			if !open[msg.ToolCallID] {
+				dropOrphanTool++
+				continue
+			}
+			sanitized = append(sanitized, msg)
+
+		case "assistant":
+			if len(msg.ToolCalls) > 0 {
+				if len(sanitized) == 0 {
+					dropAsstStart++
+					continue
+				}
+				prev := sanitized[len(sanitized)-1]
+				if prev.Role != "user" && prev.Role != "tool" {
+					dropAsstBadPred++
+					continue
+				}
+			}
+			sanitized = append(sanitized, msg)
+
+		default:
+			sanitized = append(sanitized, msg)
+		}
+	}
+
+	// Second pass: ensure every assistant message with tool_calls has matching
+	// tool result messages following it. This is required by strict providers
+	// like DeepSeek that enforce: "An assistant message with 'tool_calls' must
+	// be followed by tool messages responding to each 'tool_call_id'."
+	final := make([]providers.Message, 0, len(sanitized))
+	for i := 0; i < len(sanitized); i++ {
+		msg := sanitized[i]
+		if msg.Role == "assistant" && len(msg.ToolCalls) > 0 {
+			// Collect expected tool_call IDs
+			expected := make(map[string]bool, len(msg.ToolCalls))
+			for _, tc := range msg.ToolCalls {
+				expected[tc.ID] = false
+			}
+
+			// Check following messages for matching tool results
+			toolMsgCount := 0
+			for j := i + 1; j < len(sanitized); j++ {
+				if sanitized[j].Role != "tool" {
+					break
+				}
+				toolMsgCount++
+				if _, exists := expected[sanitized[j].ToolCallID]; exists {
+					expected[sanitized[j].ToolCallID] = true
+				}
+			}
+
+			// If any tool_call_id is missing, drop this assistant message and its partial tool messages
+			allFound := true
+			for _, found := range expected {
+				if !found {
+					allFound = false
+					dropIncompleteGroup++
+					break
+				}
+			}
+
+			if !allFound {
+				// Skip this assistant message and its tool messages
+				i += toolMsgCount
+				continue
+			}
+		}
+		final = append(final, msg)
+	}
+
+	if n := dropSystem + dropLeadingTool + dropOrphanTool + dropAsstStart + dropAsstBadPred + dropIncompleteGroup; n > 0 {
+		logger.DebugCF("agent", "Sanitized history for provider", map[string]any{
+			"dropped_total":         n,
+			"system":                dropSystem,
+			"leading_tool_orphans":  dropLeadingTool,
+			"orphan_tool":           dropOrphanTool,
+			"assistant_at_start":    dropAsstStart,
+			"assistant_bad_pred":    dropAsstBadPred,
+			"incomplete_tool_group": dropIncompleteGroup,
+			"kept":                  len(final),
+		})
+	}
+
+	return final
+}
+
+func (cb *ContextBuilder) AddToolResult(
+	messages []providers.Message,
+	toolCallID, toolName, result string,
+) []providers.Message {
+	messages = append(messages, providers.Message{
+		Role:       "tool",
+		Content:    result,
+		ToolCallID: toolCallID,
+	})
+	return messages
+}
+
+func (cb *ContextBuilder) AddAssistantMessage(
+	messages []providers.Message,
+	content string,
+	toolCalls []map[string]any,
+) []providers.Message {
+	msg := providers.Message{
+		Role:    "assistant",
+		Content: content,
+	}
+	// Always add assistant message, whether or not it has tool calls
+	messages = append(messages, msg)
+	return messages
+}
+
+// matchSkillFilter returns true if name matches any pattern in the filter.
+// An empty filter matches everything. '*' is a wildcard suffix/prefix/infix.
+func matchSkillFilter(name string, filter []string) bool {
+	if len(filter) == 0 {
+		return true
+	}
+	for _, pattern := range filter {
+		if matchGlob(pattern, name) {
+			return true
+		}
+	}
+	return false
+}
+
+// matchGlob matches name against a glob pattern supporting '*' wildcards.
+func matchGlob(pattern, name string) bool {
+	if pattern == "*" {
+		return true
+	}
+	// Split pattern on '*' and verify parts appear in order.
+	parts := strings.SplitN(pattern, "*", 2)
+	if len(parts) == 1 {
+		return pattern == name
+	}
+	prefix, suffix := parts[0], parts[1]
+	if !strings.HasPrefix(name, prefix) {
+		return false
+	}
+	return strings.HasSuffix(name, suffix)
+}
+
+// filteredSkills returns the skills available to this agent, respecting the filter.
+// A nil filter means no restriction (all skills). An empty non-nil filter means no skills.
+func (cb *ContextBuilder) filteredSkills() []skills.SkillInfo {
+	all := cb.skillsLoader.ListSkills()
+	if cb.skillsFilter == nil {
+		return all
+	}
+	if len(cb.skillsFilter) == 0 {
+		return nil
+	}
+	result := make([]skills.SkillInfo, 0, len(all))
+	for _, s := range all {
+		if matchSkillFilter(s.Name, cb.skillsFilter) {
+			result = append(result, s)
+		}
+	}
+	return result
+}
+
+// GetSkillsInfo returns information about loaded skills.
+func (cb *ContextBuilder) GetSkillsInfo() map[string]any {
+	allSkills := cb.filteredSkills()
+	skillNames := make([]string, 0, len(allSkills))
+	for _, s := range allSkills {
+		skillNames = append(skillNames, s.Name)
+	}
+	return map[string]any{
+		"total":     len(allSkills),
+		"available": len(allSkills),
+		"names":     skillNames,
+	}
+}

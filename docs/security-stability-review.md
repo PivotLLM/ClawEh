@@ -25,7 +25,7 @@ Edge TLS (Cloudflare Tunnel, nginx, Tailscale) is the supported HTTPS path today
 
 ### WebUI chat — `/webui/ws`
 
-**Yes, the upgrade requires a token.** `WebUIChannel.handleWebSocket` rejects the connection unless `authenticate` succeeds (`pkg/channels/webui/webui.go`):
+**Yes, the upgrade requires a token.** `WebUIChannel.handleWebSocket` rejects the connection unless `authenticate` succeeds (`channels/webui/webui.go`):
 
 - `Authorization: Bearer <token>`, or
 - `?token=` when `channels.webui.allow_token_query` is enabled.
@@ -192,11 +192,11 @@ Prefer storing a **hash** (argon2id or bcrypt), not a plaintext password. Settin
 | Topic | Primary locations |
 |-------|-------------------|
 | Shared HTTP host (no TLS today) | `internal/gateway/httphost.go` |
-| CIDR allowlist | `web/backend/middleware/access_control.go`, `pkg/config/config.go` (`GatewayConfig.AllowedCIDRs`) |
+| CIDR allowlist | `web/backend/middleware/access_control.go`, `config/config.go` (`GatewayConfig.AllowedCIDRs`) |
 | Unauthenticated config API | `web/backend/api/config.go` |
 | WebUI WS token API | `web/backend/api/webui.go` |
-| WebUI WS authenticate | `pkg/channels/webui/webui.go` |
-| Device gateway auth | `pkg/channels/device/server.go`, `pkg/channels/device/gateway.go` |
-| MCP auth (do not change) | `pkg/mcpserver/` |
+| WebUI WS authenticate | `channels/webui/webui.go` |
+| Device gateway auth | `channels/device/server.go`, `channels/device/gateway.go` |
+| MCP auth (do not change) | `mcpserver/` |
 | Remote access docs | `docs/remote-access.md` |
 | Documented no-auth posture | `README.md` (security section) |

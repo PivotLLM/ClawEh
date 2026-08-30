@@ -8,11 +8,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/PivotLLM/ClawEh/pkg/agent"
-	"github.com/PivotLLM/ClawEh/pkg/config"
-	"github.com/PivotLLM/ClawEh/pkg/health"
-	"github.com/PivotLLM/ClawEh/pkg/logger"
-	"github.com/PivotLLM/ClawEh/pkg/tools/fusion"
+	"github.com/PivotLLM/ClawEh/agent"
+	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/health"
+	"github.com/PivotLLM/ClawEh/logger"
+	"github.com/PivotLLM/ClawEh/tools/fusion"
 )
 
 // handlerRegistrar is the channel-manager surface needed to populate the
@@ -79,7 +79,7 @@ func RegisterFusionOAuthRoutes(server *health.Server, c *config.Config) {
 // disappears and every request returns 404. Returns 401 when no valid token is
 // found.
 //
-// The token is a rotating per-agent token (pkg/msgtoken). Today the agent is not
+// The token is a rotating per-agent token (msgtoken). Today the agent is not
 // told about it, so the endpoint is dormant; it exists so a future "notify an
 // agent" feature can use it without re-deriving this delivery path.
 func RegisterMessageRoute(server *health.Server, agentLoop *agent.AgentLoop) {

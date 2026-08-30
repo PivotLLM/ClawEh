@@ -9,19 +9,19 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/PivotLLM/ClawEh/pkg/agent"
-	"github.com/PivotLLM/ClawEh/pkg/cogmem/consolidate"
-	"github.com/PivotLLM/ClawEh/pkg/cogmem/store"
-	"github.com/PivotLLM/ClawEh/pkg/config"
-	"github.com/PivotLLM/ClawEh/pkg/logger"
-	"github.com/PivotLLM/ClawEh/pkg/memory"
-	"github.com/PivotLLM/ClawEh/pkg/routing"
-	cogmemtools "github.com/PivotLLM/ClawEh/pkg/tools/cogmem"
+	"github.com/PivotLLM/ClawEh/agent"
+	"github.com/PivotLLM/ClawEh/cogmem/consolidate"
+	"github.com/PivotLLM/ClawEh/cogmem/store"
+	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/logger"
+	"github.com/PivotLLM/ClawEh/memory"
+	"github.com/PivotLLM/ClawEh/routing"
+	cogmemtools "github.com/PivotLLM/ClawEh/tools/cogmem"
 )
 
-// archiveSource adapts a read-only pkg/memory archive to
+// archiveSource adapts a read-only memory archive to
 // consolidate.MessageSource. It lives in the gateway (not in
-// pkg/cogmem/consolidate) so the worker carries no dependency on pkg/memory.
+// cogmem/consolidate) so the worker carries no dependency on memory.
 type archiveSource struct {
 	a *memory.ArchiveStore
 }

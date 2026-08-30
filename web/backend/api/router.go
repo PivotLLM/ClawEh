@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/PivotLLM/ClawEh/pkg/config"
+	"github.com/PivotLLM/ClawEh/config"
 )
 
 // Handler serves HTTP API requests.

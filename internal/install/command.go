@@ -16,10 +16,10 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/PivotLLM/ClawEh/app"
+	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/fileutil"
+	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/internal"
-	"github.com/PivotLLM/ClawEh/pkg/config"
-	"github.com/PivotLLM/ClawEh/pkg/fileutil"
-	"github.com/PivotLLM/ClawEh/pkg/global"
 )
 
 const (

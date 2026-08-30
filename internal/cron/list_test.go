@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/PivotLLM/ClawEh/pkg/cron"
+	"github.com/PivotLLM/ClawEh/cron"
 )
 
 func TestNewListSubcommand(t *testing.T) {

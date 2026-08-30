@@ -80,7 +80,7 @@ Changes are written to the state file; a running gateway picks them up
 automatically within a few seconds (a file watcher re-syncs the live store).
 
 ## Implementation checklist
-- [x] `pkg/servicetoken`: state-file format + `Load`/`Save`/`Generate`/`Path`,
+- [x] `servicetoken`: state-file format + `Load`/`Save`/`Generate`/`Path`,
       no mcp-go dependency (importable by both the gateway and the CLI).
 - [x] `routing.BuildAgentServiceSessionKey(agentID)` → `agent:<id>:service`;
       confirm it is **not** classified as a subagent key.
@@ -98,7 +98,7 @@ automatically within a few seconds (a file watcher re-syncs the live store).
       for the `/mcp` bearer endpoint.
 
 ### Tests
-- [x] `pkg/servicetoken`: `Load`/`Save` round-trip; `Generate` format (`SST`+64hex);
+- [x] `servicetoken`: `Load`/`Save` round-trip; `Generate` format (`SST`+64hex);
       `Load` of a missing file returns empty, not an error.
 - [x] `routing`: `BuildAgentServiceSessionKey` is primary (not a subagent key).
 - [x] `mcpserver`: `RegisterService` resolves to the main session under

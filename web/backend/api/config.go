@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/internal/backup"
-	"github.com/PivotLLM/ClawEh/pkg/config"
 )
 
 // registerConfigRoutes binds configuration management endpoints to the ServeMux.
