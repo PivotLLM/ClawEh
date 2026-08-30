@@ -204,79 +204,6 @@
       "reasoning_channel_id": ""
     }
   },
-  "providers": {
-    "_comment": "DEPRECATED: Use model_list instead. This will be removed in a future version",
-    "anthropic": {
-      "api_key": "",
-      "api_base": ""
-    },
-    "openai": {
-      "api_key": "",
-      "api_base": "",
-      "web_search": true
-    },
-    "openrouter": {
-      "api_key": "sk-or-v1-xxx",
-      "api_base": ""
-    },
-    "groq": {
-      "api_key": "gsk_xxx",
-      "api_base": ""
-    },
-    "zhipu": {
-      "api_key": "YOUR_ZHIPU_API_KEY",
-      "api_base": ""
-    },
-    "gemini": {
-      "api_key": "",
-      "api_base": ""
-    },
-    "vllm": {
-      "api_key": "",
-      "api_base": ""
-    },
-    "nvidia": {
-      "api_key": "nvapi-xxx",
-      "api_base": "",
-      "proxy": "http://127.0.0.1:7890"
-    },
-    "moonshot": {
-      "api_key": "sk-xxx",
-      "api_base": ""
-    },
-    "qwen": {
-      "api_key": "sk-xxx",
-      "api_base": ""
-    },
-    "ollama": {
-      "api_key": "",
-      "api_base": "http://localhost:11434/v1"
-    },
-    "cerebras": {
-      "api_key": "",
-      "api_base": ""
-    },
-    "volcengine": {
-      "api_key": "",
-      "api_base": ""
-    },
-    "mistral": {
-      "api_key": "",
-      "api_base": "https://api.mistral.ai/v1"
-    },
-    "avian": {
-      "api_key": "",
-      "api_base": "https://api.avian.io/v1"
-    },
-    "longcat": {
-      "api_key": "",
-      "api_base": "https://api.longcat.chat/openai"
-    },
-    "modelscope": {
-      "api_key": "",
-      "api_base": "https://api-inference.modelscope.cn/v1"
-    }
-  },
   "tools": {
     "allow_read_paths": null,
     "allow_write_paths": null,
@@ -326,15 +253,15 @@
       "enabled": true,
       "exec_timeout_minutes": 5
     },
+    "discovery": {
+      "enabled": false,
+      "always_shown_namespaces": [],
+      "ttl_max": 50,
+      "visible_budget": 100,
+      "max_search_results": 5
+    },
     "mcp": {
       "enabled": false,
-      "discovery": {
-        "enabled": false,
-        "ttl": 5,
-        "max_search_results": 5,
-        "use_bm25": true,
-        "use_regex": false
-      },
       "servers": {
         "context7": {
           "enabled": false,

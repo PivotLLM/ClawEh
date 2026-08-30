@@ -53,8 +53,8 @@ FULL_URL="${SERVER_URL}${ENDPOINT}"
 BEARER_URL="${SERVER_URL}${BEARER_ENDPOINT}"
 
 # All tools the test config exposes — the source of truth for count/catalogue checks.
-# Note: find_tools_regex and find_tools_bm25 are omitted here because they only register
-# when tools.mcp.discovery.enabled=true, which the test config does not set.
+# Note: search_tools and get_tool_details are omitted here because they only register
+# when tools.discovery.enabled=true, which the test config does not set.
 # Every tool the test config exposes that is guaranteed to register (no live
 # model required). agent_spawn/agent_status/agent_list (subagent capability) are
 # also exposed but only probed when actually present in the catalogue, so this
@@ -440,8 +440,8 @@ check_tool "1.15" "cogmem_status"
 check_tool "1.16" "cogmem_memory_confirm"
 check_tool "1.17" "cogmem_domain_migrate"
 check_tool "1.18" "time_now"
-# find_tools_regex and find_tools_bm25 are only registered when
-# tools.mcp.discovery.enabled=true — not set in the standard test config.
+# search_tools and get_tool_details are only registered when
+# tools.discovery.enabled=true — not set in the standard test config.
 
 #-------------------------------------------------------------------------------
 # Section 2: Unauthenticated rejection

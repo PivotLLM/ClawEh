@@ -1,6 +1,6 @@
 # Context management: findings and plan
 
-Branch: `feature/context-management`.
+Status: **both parts implemented and merged** (`fd93096`, PR #44).
 
 Two separate problems, found while investigating "a compaction covered more than two
 weeks of chat and still left over 100 messages":
@@ -9,7 +9,7 @@ weeks of chat and still left over 100 messages":
    and the budget was never reached. *(implemented, tests passing)*
 2. **Prompt caching is broken for every HTTP provider** — a minute-granularity
    timestamp sits ahead of the conversation history in the request, so the cached
-   prefix ends before the history begins. *(not started)*
+   prefix ends before the history begins. *(implemented, tests passing)*
 
 Problem 2 is worth more than problem 1: measured over 31 days of production logs it
 accounts for ~48% of amber's and ~61% of wendy's full-price input tokens.
@@ -77,7 +77,7 @@ no-op on the 128 k agents.
 
 ---
 
-## Part 2 — Prompt caching (not started)
+## Part 2 — Prompt caching (implemented)
 
 ### The mechanism
 

@@ -20,89 +20,66 @@ This is intended for services that do not allow or limit device authentication f
 ## Installation
 
 ```bash
-# From the MCPFusion project root
-cd cmd/fusion-oauth
-go build -o fusion-oauth .
+# From the ClawEh project root
+make claw-auth
+```
+
+The binary is written to `build/claw-auth`. To build it by hand instead:
+
+```bash
+go build -o claw-auth ./cmd/claw-auth
 ```
 
 ## Quick Start
 
 1. **List available providers:**
 ```bash
-./fusion-oauth -list
+claw-auth -list
 ```
 
 2. **Authenticate with Google:**
 ```bash
-./fusion-oauth -service google -fusion http://10.0.0.1:8080 -token <your-mcp-token>
+claw-auth -service google -fusion http://10.0.0.1:8080 -token <your-mcp-token>
 ```
 
 3. **Authenticate with GitHub:**
 ```bash
-./fusion-oauth -service github -fusion https://mcp.example.com -token <your-mcp-token>
+claw-auth -service github -fusion https://mcp.example.com -token <your-mcp-token>
 ```
 
 ## Command Line Options
 
 ```bash
-Usage: fusion-oauth [OPTIONS]
+Usage: claw-auth [OPTIONS]
 
 Options:
   -service string        OAuth service provider (e.g., google, github, dropbox)
-  -fusion string         MCPFusion server URL (e.g., http://10.0.0.1:8080)
+  -fusion string         MCPFusion server URL (e.g., http://10.0.0.1:8888)
   -token string          MCPFusion API token for authentication
-  -config string         Configuration file path
-  -timeout duration      OAuth flow timeout (default 10m0s)
   -verbose               Enable verbose logging
+  -debug                 Enable debug logging (includes HTTP request/response details)
   -version               Show version information
   -list                  List available OAuth providers
 ```
 
 ## Configuration
 
-### Environment Variables
+`claw-auth` takes **no configuration file and reads no environment variables**. The
+OAuth application credentials (client ID, client secret, scopes, and any tenant ID)
+are held by the MCPFusion server and fetched over the API at run time, so the only
+things you supply are the server URL and an API token:
 
-Set the following environment variables for each service:
-
-**Google:**
 ```bash
-export GOOGLE_CLIENT_ID="your-google-client-id"
-export GOOGLE_CLIENT_SECRET="your-google-client-secret"
+claw-auth -service google -fusion http://10.0.0.1:8080 -token <your-mcp-token>
 ```
 
-**GitHub:**
-```bash
-export GITHUB_CLIENT_ID="your-github-client-id"
-export GITHUB_CLIENT_SECRET="your-github-client-secret"
-```
+The server decides how a service authenticates. If it returns a `user_credentials`
+auth config for the service, `claw-auth` runs that flow; otherwise it falls back to
+the registered local OAuth provider (see [OAuth Flows](#oauth-flows) below), using
+the client ID and secret the server supplied.
 
-**Microsoft 365:**
-```bash
-export MS365_CLIENT_ID="your-ms365-client-id"
-export MS365_TENANT_ID="your-ms365-tenant-id"
-```
-
-### Configuration File
-
-Create a `config.json` file based on the provided `config.example.json`:
-
-```json
-{
-  "services": {
-    "google": {
-      "display_name": "Google APIs",
-      "client_id": "${GOOGLE_CLIENT_ID}",
-      "client_secret": "${GOOGLE_CLIENT_SECRET}"
-    }
-  },
-  "timeout": "10m"
-}
-```
-
-Use the configuration file:
-```bash
-./fusion-oauth -config config.json -service google -fusion http://10.0.0.1:8080 -token <token>
-```
+Configure the OAuth application itself (client ID / secret / scopes) on the
+MCPFusion server, not here.
 
 ## OAuth Flows
 
@@ -129,14 +106,14 @@ To add a new OAuth provider:
 
 1. **Create provider package:**
 ```bash
-mkdir cmd/fusion-oauth/providers/newservice
+mkdir cmd/claw-auth/providers/newservice
 ```
 
 2. **Implement provider interface:**
 ```go
 package newservice
 
-import "github.com/PivotLLM/MCPFusion/cmd/auth/providers"
+import "github.com/PivotLLM/ClawEh/cmd/claw-auth/providers"
 
 type Provider struct {
     // Provider-specific fields
@@ -206,7 +183,7 @@ The tool integrates with MCPFusion through several API endpoints:
 
 Enable verbose logging for detailed information:
 ```bash
-./fusion-oauth -verbose -service google -fusion http://10.0.0.1:8080 -token <token>
+claw-auth -verbose -service google -fusion http://10.0.0.1:8080 -token <token>
 ```
 
 ## Development
@@ -228,12 +205,12 @@ go test -integration ./...
 
 ```bash
 # Build for current platform
-go build -o fusion-oauth .
+go build -o claw-auth ./cmd/claw-auth
 
 # Build for multiple platforms
-GOOS=linux GOARCH=amd64 go build -o fusion-oauth-linux-amd64 .
-GOOS=windows GOARCH=amd64 go build -o fusion-oauth-windows-amd64.exe .
-GOOS=darwin GOARCH=amd64 go build -o fusion-oauth-darwin-amd64 .
+GOOS=linux GOARCH=amd64 go build -o claw-auth-linux-amd64 ./cmd/claw-auth
+GOOS=windows GOARCH=amd64 go build -o claw-auth-windows-amd64.exe ./cmd/claw-auth
+GOOS=darwin GOARCH=amd64 go build -o claw-auth-darwin-amd64 ./cmd/claw-auth
 ```
 
 ## License
