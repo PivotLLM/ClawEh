@@ -20,16 +20,20 @@ func (h *Handler) registerProviderRoutes(mux *http.ServeMux) {
 }
 
 type providerResponse struct {
-	Index               int    `json:"index"`
-	Name                string `json:"name"`
-	Protocol            string `json:"protocol"`
-	BaseURL             string `json:"base_url,omitempty"`
-	APIKey              string `json:"api_key"`
-	Proxy               string `json:"proxy,omitempty"`
-	StrictCompat        bool   `json:"strict_compat,omitempty"`
-	NoParallelToolCalls bool   `json:"no_parallel_tool_calls,omitempty"`
-	ResponseFormatJSON  bool   `json:"response_format_json,omitempty"`
-	Command             string `json:"command,omitempty"`
+	Index        int    `json:"index"`
+	Name         string `json:"name"`
+	Protocol     string `json:"protocol"`
+	BaseURL      string `json:"base_url,omitempty"`
+	APIKey       string `json:"api_key"`
+	Proxy        string `json:"proxy,omitempty"`
+	StrictCompat bool   `json:"strict_compat,omitempty"`
+	// RequireReasoningContent is the inverse of StrictCompat: some endpoints
+	// (DeepSeek V4 thinking mode) reject history that is MISSING
+	// reasoning_content rather than history that carries it.
+	RequireReasoningContent bool   `json:"require_reasoning_content,omitempty"`
+	NoParallelToolCalls     bool   `json:"no_parallel_tool_calls,omitempty"`
+	ResponseFormatJSON      bool   `json:"response_format_json,omitempty"`
+	Command                 string `json:"command,omitempty"`
 	// ModelCount is how many models entries reference this provider — used
 	// by the WebUI to warn before deleting an in-use provider.
 	ModelCount int `json:"model_count"`
@@ -51,17 +55,18 @@ func (h *Handler) handleListProviders(w http.ResponseWriter, r *http.Request) {
 	for i := range cfg.Providers {
 		p := &cfg.Providers[i]
 		out = append(out, providerResponse{
-			Index:               i,
-			Name:                p.Name,
-			Protocol:            p.Protocol,
-			BaseURL:             p.BaseURL,
-			APIKey:              maskAPIKey(p.APIKey),
-			Proxy:               p.Proxy,
-			StrictCompat:        p.StrictCompat,
-			NoParallelToolCalls: p.NoParallelToolCalls,
-			ResponseFormatJSON:  p.ResponseFormatJSON,
-			Command:             p.Command,
-			ModelCount:          counts[p.Name],
+			Index:                   i,
+			Name:                    p.Name,
+			Protocol:                p.Protocol,
+			BaseURL:                 p.BaseURL,
+			APIKey:                  maskAPIKey(p.APIKey),
+			Proxy:                   p.Proxy,
+			StrictCompat:            p.StrictCompat,
+			RequireReasoningContent: p.RequireReasoningContent,
+			NoParallelToolCalls:     p.NoParallelToolCalls,
+			ResponseFormatJSON:      p.ResponseFormatJSON,
+			Command:                 p.Command,
+			ModelCount:              counts[p.Name],
 		})
 	}
 

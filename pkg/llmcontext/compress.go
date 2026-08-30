@@ -108,8 +108,10 @@ func (m *Manager) doCompress(ctx context.Context, safetyNet bool) error {
 
 	conversation := storedToPlain(storedConversation)
 	tokensBeforeCompress := m.estTokens(conversation)
-	targetPct := float64(m.cfg.normalPercent) * defaultCompressTargetFactor
-	budget := m.cfg.contextWindow * m.cfg.retainTokenPercent / 100
+	targetPct := m.compressTargetPercent()
+	budget := m.retainBudgetTokens()
+	maxAge := m.retainMaxAge()
+	now := time.Now()
 
 	archiveMin, archiveMax := m.archiveWindow()
 	existingSummary, _ := unmarshalSummary(m.store.GetSummary(m.sessionKey))
@@ -147,29 +149,29 @@ func (m *Manager) doCompress(ctx context.Context, safetyNet bool) error {
 			break // exhausted both standard and aggressive prompt types
 		}
 
-		tail := selectTail(currentConversation, budget, m.cfg.retainMinMessages, m.estTokens)
-		tailStart := len(currentConversation) - len(tail)
+		storedTail, tailStart := selectTail(currentStored, budget, m.cfg.retainMinMessages, maxAge, now, m.estTokens)
 		// Never archive past the most recent user message: the live window must
 		// always retain the latest user turn. Otherwise the next dispatch sends a
 		// payload of only system+assistant+tool messages, which strict providers
 		// reject with "messages must contain at least one item with role='user'"
-		// (a non-retriable 400 that kills the turn).
+		// (a non-retriable 400 that kills the turn). This clamp overrides the age
+		// cap too: an old-but-latest user message is still the anchor of the turn.
 		if lu := lastUserStoredIndex(currentStored); lu >= 0 && lu < tailStart {
 			tailStart = lu
-			tail = currentConversation[tailStart:] // keep tail/tailStart consistent
+			storedTail = currentStored[tailStart:] // keep tail/tailStart consistent
 		}
 		// Never empty the live window. In a long in-flight tool-call sequence the
 		// retained tail can be all tool plumbing, which selectTail trims away to
 		// nothing; with no user/clean anchor to clamp to that would archive the
 		// whole conversation and leave a system-only payload (the model loses the
 		// entire thread mid-turn). Keep at least the last turn group instead.
-		if tailStart >= len(currentConversation) && len(currentConversation) > 0 {
-			g := resolveGroup(currentConversation, len(currentConversation)-1)
+		if tailStart >= len(currentStored) && len(currentStored) > 0 {
+			g := resolveGroup(currentConversation, len(currentStored)-1)
 			tailStart = g.start
-			tail = currentConversation[tailStart:]
+			storedTail = currentStored[tailStart:]
 			logger.WarnCF("llmcontext", "compaction would empty the live window; retaining the last turn group", map[string]any{
 				"session_key": m.sessionKey,
-				"kept":        len(tail),
+				"kept":        len(storedTail),
 			})
 		}
 		toSummarize := currentStored[:tailStart]
@@ -190,8 +192,8 @@ func (m *Manager) doCompress(ctx context.Context, safetyNet bool) error {
 
 		llmSucceeded = true
 		latestSummary = newSummary
-		currentStored = currentStored[tailStart:]
-		currentConversation = tail
+		currentStored = storedTail
+		currentConversation = storedToPlain(storedTail)
 
 		tokensCurrent := m.estTokens(currentConversation)
 		if m.cfg.contextWindow > 0 {
@@ -231,6 +233,46 @@ func (m *Manager) doCompress(ctx context.Context, safetyNet bool) error {
 	}
 	m.lastReport = m.buildReport(rec, beforeMsgs, beforeBytes, dateFrom, dateTo, err)
 	return err
+}
+
+// compressTargetPercent is the compaction loop's stop condition: iterate until
+// the live window falls below this percentage of the context window. An explicit
+// targetPercent wins; otherwise it is derived from normalPercent, preserving the
+// historic behaviour for configs that do not set it.
+//
+// Note the derived value interacts with the retain budget: with the defaults
+// (normal 50 → target 25, retain 10) the first pass already lands under target,
+// so the loop exits after one iteration by design.
+func (m *Manager) compressTargetPercent() float64 {
+	if m.cfg.targetPercent > 0 {
+		return float64(m.cfg.targetPercent)
+	}
+	return float64(m.cfg.normalPercent) * defaultCompressTargetFactor
+}
+
+// retainBudgetTokens resolves the token budget for the retained tail: the
+// percentage of the context window, capped by the absolute retainMaxTokens when
+// set. The absolute cap exists because percentages scale with the window — a
+// 1M-token model would otherwise inherit a tail budget tuned for 128k and retain
+// an enormous amount purely because it can. Returns 0 (no budget check) only
+// when no window is configured and no absolute cap is set.
+func (m *Manager) retainBudgetTokens() int {
+	budget := 0
+	if m.cfg.contextWindow > 0 {
+		budget = m.cfg.contextWindow * m.cfg.retainTokenPercent / 100
+	}
+	if limit := m.cfg.retainMaxTokens; limit > 0 && (budget <= 0 || limit < budget) {
+		budget = limit
+	}
+	return budget
+}
+
+// retainMaxAge resolves the age cap for the retained tail. Zero disables it.
+func (m *Manager) retainMaxAge() time.Duration {
+	if m.cfg.retainMaxAgeDays <= 0 {
+		return 0
+	}
+	return time.Duration(m.cfg.retainMaxAgeDays) * 24 * time.Hour
 }
 
 // filterRefusedClients returns the subset of clients whose model has not refused

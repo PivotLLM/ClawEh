@@ -6,9 +6,19 @@
       "max_tokens": 8192,
       "temperature": 0.7,
       "max_tool_iterations": 20,
-      "compress_normal_percent": 50,
-      "compress_safety_percent": 80,
-      "compress_message_threshold": 20
+      "compression": {
+        "trigger": {
+          "normal_percent": 50,
+          "safety_percent": 80,
+          "message_count": 100,
+          "days": 7
+        },
+        "retain": {
+          "token_percent": 10,
+          "max_tokens": 40000,
+          "max_age_days": 5
+        }
+      }
     },
     "list": [
       {

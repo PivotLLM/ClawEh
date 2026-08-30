@@ -515,6 +515,49 @@ export function ContextManagementSection({
       </Field>
 
       <Field
+        label={t("pages.config.compress_trigger_days")}
+        hint={t("pages.config.compress_trigger_days_hint")}
+        layout="setting-row"
+      >
+        <Input
+          type="number"
+          min={0}
+          value={form.compressTriggerDays}
+          onChange={(e) => onFieldChange("compressTriggerDays", e.target.value)}
+        />
+      </Field>
+
+      <Field
+        label={t("pages.config.compress_retain_max_age_days")}
+        hint={t("pages.config.compress_retain_max_age_days_hint")}
+        layout="setting-row"
+      >
+        <Input
+          type="number"
+          min={0}
+          value={form.compressRetainMaxAgeDays}
+          onChange={(e) =>
+            onFieldChange("compressRetainMaxAgeDays", e.target.value)
+          }
+        />
+      </Field>
+
+      <Field
+        label={t("pages.config.compress_retain_max_tokens")}
+        hint={t("pages.config.compress_retain_max_tokens_hint")}
+        layout="setting-row"
+      >
+        <Input
+          type="number"
+          min={0}
+          value={form.compressRetainMaxTokens}
+          onChange={(e) =>
+            onFieldChange("compressRetainMaxTokens", e.target.value)
+          }
+        />
+      </Field>
+
+      <Field
         label={t("pages.config.compress_retain_token_percent")}
         hint={t("pages.config.compress_retain_token_percent_hint")}
         layout="setting-row"

@@ -357,12 +357,18 @@ func (c *Composer) routedBlock(ctx context.Context, req RouteRequest) (RoutedRes
 // per-turn routed block, and the attachments block holding the full contents of
 // any markdown files the rendered memories point at.
 type Result struct {
-	Stable      string
-	Rev         int64
-	Routed      string
+	Stable string
+	Rev    int64
+	Routed string
+	// Attachments holds documents owned by STABLE memories: they belong with the
+	// stable block, wherever the caller places it.
 	Attachments string
-	Loaded      []string
-	Trace       []DomainSelection
+	// RoutedAttachments holds documents owned only by ROUTED memories, so they
+	// can travel with the routed block rather than being stranded away from the
+	// memory whose id their header cites.
+	RoutedAttachments string
+	Loaded            []string
+	Trace             []DomainSelection
 }
 
 // Compose builds all three blocks for one turn. It is the entry point the agent
@@ -382,7 +388,10 @@ func (c *Composer) Compose(ctx context.Context, req RouteRequest) (Result, error
 	res.Routed, res.Loaded, res.Trace = routed.Text, routed.Loaded, routed.Trace
 
 	// Sticky memories first: their documents get first claim on the shared budget.
-	res.Attachments = c.attachmentsBlock(append(stableRefs, routedRefs...))
+	// The two partitions travel to different places in the request (stable stays
+	// in the cached prompt, routed rides with the current turn), so each document
+	// is rendered alongside the memory that names it.
+	res.Attachments, res.RoutedAttachments = c.attachmentsBlock(stableRefs, routedRefs)
 
 	if sErr != nil {
 		return res, sErr

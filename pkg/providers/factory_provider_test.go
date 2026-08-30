@@ -6,6 +6,7 @@
 package providers
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -311,5 +312,44 @@ func TestCreateProviderFromConfig_Azure(t *testing.T) {
 	}
 	if modelID != "my-gpt5-deployment" {
 		t.Errorf("modelID = %q, want %q", modelID, "my-gpt5-deployment")
+	}
+}
+
+// TestCreateProviderFromConfig_AnthropicProtocolsAreEquivalent pins the fix for
+// a silent misroute: "anthropic" used to build the OpenAI-compatible provider,
+// so a config naming it sent an OpenAI-shaped body to api.anthropic.com and had
+// SystemParts stripped on the way out. Both names are offered in the WebUI's
+// protocol dropdown, so picking the wrong one looked like a preference rather
+// than a bug — and the failure only surfaces the first time a fallback chain
+// actually reaches that model.
+func TestCreateProviderFromConfig_AnthropicProtocolsAreEquivalent(t *testing.T) {
+	build := func(protocol string) LLMProvider {
+		t.Helper()
+		p, _, err := CreateProviderFromConfig(
+			&config.ModelConfig{ModelName: "m", Model: "claude-sonnet-4.6", Provider: "anthropic"},
+			&config.Provider{
+				Name:     "anthropic",
+				Protocol: protocol,
+				BaseURL:  "https://api.anthropic.com/v1",
+				APIKey:   "test-key",
+			},
+		)
+		if err != nil {
+			t.Fatalf("%s: CreateProviderFromConfig() error = %v", protocol, err)
+		}
+		return p
+	}
+
+	legacy := build("anthropic")
+	explicit := build("anthropic-messages")
+
+	if got, want := fmt.Sprintf("%T", legacy), fmt.Sprintf("%T", explicit); got != want {
+		t.Errorf("protocol \"anthropic\" built %s, but \"anthropic-messages\" built %s — "+
+			"Anthropic speaks one wire format and both names must reach the same adapter", got, want)
+	}
+	// Guard the specific regression: neither may resolve to the OpenAI-compatible
+	// provider, which is what silently broke Anthropic requests.
+	if got := fmt.Sprintf("%T", legacy); strings.Contains(strings.ToLower(got), "openai") {
+		t.Errorf("anthropic protocol resolved to an OpenAI-compatible provider: %s", got)
 	}
 }

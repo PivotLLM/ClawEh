@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/internal"
-	"github.com/PivotLLM/ClawEh/pkg/config"
 )
 
 func statusCmd() {
@@ -18,8 +18,8 @@ func statusCmd() {
 	configPath := internal.GetConfigPath()
 
 	fmt.Println("Status")
-	fmt.Printf("Version: %s\n", config.FormatVersion())
-	build, _ := config.FormatBuildInfo()
+	fmt.Printf("Version: %s\n", app.Version())
+	build, _ := app.BuildInfo()
 	if build != "" {
 		fmt.Printf("Build: %s\n", build)
 	}

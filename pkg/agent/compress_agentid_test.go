@@ -26,6 +26,7 @@ type capturingContextManager struct {
 	preDispatchCheckAgentID    string
 	checkAndCompressAgentID    string
 	addAssistantMessageAgentID string
+	toolDefTokens              int
 }
 
 func (c *capturingContextManager) capture(field *string, ctx context.Context) {
@@ -50,7 +51,8 @@ func (c *capturingContextManager) AddToolCallMessage(_ context.Context, _ provid
 func (c *capturingContextManager) AddToolResult(_ context.Context, _ providers.Message) error {
 	return nil
 }
-func (c *capturingContextManager) RecordToolUse(_ ...string) {}
+func (c *capturingContextManager) RecordToolUse(_ ...string)     {}
+func (c *capturingContextManager) SetToolDefinitionTokens(n int) { c.toolDefTokens = n }
 func (c *capturingContextManager) PreDispatchCheck(ctx context.Context, current []providers.Message) ([]providers.Message, error) {
 	c.capture(&c.preDispatchCheckAgentID, ctx)
 	return current, nil

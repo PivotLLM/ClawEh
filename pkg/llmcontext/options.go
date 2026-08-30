@@ -9,11 +9,16 @@ import "github.com/PivotLLM/ClawEh/pkg/providers"
 type Option func(*managerConfig)
 
 const (
-	defaultMinPercent            = 20
-	defaultNormalPercent         = 50
-	defaultSafetyPercent         = 80
-	defaultMessageThreshold      = 100
-	defaultRetainTokenPercent    = 20
+	defaultMinPercent       = 20
+	defaultNormalPercent    = 50
+	defaultSafetyPercent    = 80
+	defaultMessageThreshold = 100
+	// defaultRetainTokenPercent must stay clearly BELOW defaultMinPercent. When
+	// the retained tail is the same size as the floor that gates compaction,
+	// every pass shaves back to exactly the floor and the next message crosses it
+	// again — the session compacts constantly without ever shrinking. See
+	// validation rule (d) in New().
+	defaultRetainTokenPercent    = 10
 	defaultRetainMinMessages     = 2
 	defaultMinCompressionGain    = 0.05
 	defaultCooldownMessages      = 5
@@ -26,6 +31,42 @@ const (
 	defaultCharsPerToken         = 4.0
 	defaultTokenSafetyMargin     = 1.0
 
+	// defaultTriggerDays fires compaction once the oldest message in the live
+	// window is older than this many days, regardless of how little of the
+	// context window it occupies. Without it a low-volume session never reaches
+	// any percentage threshold and its history sits in the window indefinitely.
+	defaultTriggerDays = 7
+	// defaultRetainMaxAgeDays caps the age of the retained tail: compaction
+	// summarizes anything older, subject to retainMinMessages and the
+	// last-user-message clamp. It is deliberately LOWER than defaultTriggerDays
+	// so each pass buys (trigger - retain) days of quiet instead of pinning the
+	// session to the trigger boundary and re-firing on every message.
+	defaultRetainMaxAgeDays = 5
+
+	// defaultRetainMaxTokens is an absolute ceiling on the retained tail, applied
+	// alongside the percentage budget (the smaller wins).
+	//
+	// It exists because the percentage scales with the context window: 10% of a
+	// 128k model is 12.8k tokens, but 10% of a million-token model is 100k, and
+	// nothing about a larger window makes a larger tail more useful. On the
+	// production instance this figure binds only on the two large-window agents
+	// and is a no-op for the 128k ones, where the percentage already binds
+	// tighter.
+	//
+	// Sized deliberately rather than aggressively. Once the request prefix is
+	// stable the retained tail is cached and bills at a fraction of full price,
+	// so trimming it buys far less than it did when every turn re-sent the whole
+	// window — and the messages it trims are the RECENT ones. 40k keeps a few
+	// hundred messages of working context for a busy agent while capturing most
+	// of the available saving.
+	defaultRetainMaxTokens = 40000
+
+	// mediaTokensPerItem is the flat token cost charged per media item by the
+	// estimator. Providers bill images by resolution tiles, so the rune length
+	// of a base64 data: URI overstates the real cost by orders of magnitude;
+	// a fixed per-item figure is far closer than either counting or ignoring it.
+	mediaTokensPerItem = 1500
+
 	// defaultMaxConsecutiveCompactFailures is the number of consecutive failed
 	// automatic compactions after which the automatic compaction path is
 	// suppressed for a session (the failure circuit breaker trips).
@@ -37,12 +78,27 @@ const (
 
 // managerConfig holds resolved configuration for a Manager.
 type managerConfig struct {
-	minPercent          int
-	normalPercent       int
-	safetyPercent       int
-	messageThreshold    int
-	retainTokenPercent  int
-	retainMinMessages   int
+	minPercent         int
+	normalPercent      int
+	safetyPercent      int
+	messageThreshold   int
+	retainTokenPercent int
+	retainMinMessages  int
+	// targetPercent is the stop condition for the compaction loop: iterate until
+	// the live window is below this percentage of the context window. 0 derives
+	// it from normalPercent (see compressTargetPercent), preserving the historic
+	// normalPercent*0.5 behaviour for configs that do not set it.
+	targetPercent int
+	// retainMaxTokens is an absolute ceiling on the retained tail, applied
+	// alongside retainTokenPercent (the smaller wins). Percentages alone scale
+	// with the window, so a 1M-token model inherits a tail budget tuned for
+	// 128k and keeps an absurd absolute amount. 0 disables the cap.
+	retainMaxTokens int
+	// retainMaxAgeDays caps the age of the retained tail. 0 disables the cap.
+	retainMaxAgeDays int
+	// triggerDays fires compaction when the oldest live message exceeds this
+	// age, bypassing minPercent. 0 disables the trigger.
+	triggerDays         int
 	compressModel       ModelChain
 	compressClients     []LLMClient
 	archiveMessageCount int
@@ -104,6 +160,9 @@ func defaultManagerConfig() managerConfig {
 		messageThreshold:    defaultMessageThreshold,
 		retainTokenPercent:  defaultRetainTokenPercent,
 		retainMinMessages:   defaultRetainMinMessages,
+		retainMaxAgeDays:    defaultRetainMaxAgeDays,
+		retainMaxTokens:     defaultRetainMaxTokens,
+		triggerDays:         defaultTriggerDays,
 		archiveMessageCount: defaultArchiveMessageCount,
 		contextWindow:       128000,
 		overheadTokens:      defaultOverheadTokens,
@@ -142,6 +201,33 @@ func WithRetainTokenPercent(pct int) Option {
 
 func WithRetainMinMessages(n int) Option {
 	return func(c *managerConfig) { c.retainMinMessages = n }
+}
+
+// WithTargetPercent sets the compaction loop's stop condition: iterate until the
+// live window falls below this percentage of the context window. 0 restores the
+// derived default (normalPercent * defaultCompressTargetFactor).
+func WithTargetPercent(pct int) Option {
+	return func(c *managerConfig) { c.targetPercent = pct }
+}
+
+// WithRetainMaxTokens sets an absolute ceiling on the retained tail, applied
+// alongside the percentage budget (the smaller wins). 0 disables the cap.
+func WithRetainMaxTokens(n int) Option {
+	return func(c *managerConfig) { c.retainMaxTokens = n }
+}
+
+// WithRetainMaxAgeDays caps the age of the retained tail. Anything older is
+// summarized, subject to the retainMinMessages floor and the last-user-message
+// clamp. 0 disables the cap.
+func WithRetainMaxAgeDays(d int) Option {
+	return func(c *managerConfig) { c.retainMaxAgeDays = d }
+}
+
+// WithTriggerDays fires compaction once the oldest live message is older than d
+// days. Unlike the percentage and count triggers it bypasses minPercent, so a
+// low-volume session still ages out. 0 disables the trigger.
+func WithTriggerDays(d int) Option {
+	return func(c *managerConfig) { c.triggerDays = d }
 }
 
 // WithCompressModel records the model chain for stats and logging only.
@@ -282,4 +368,52 @@ func WithCompressionProfileDir(dir string) Option {
 // Empty (the default) disables the dumps.
 func WithCompressFailureDumpDir(dir string) Option {
 	return func(c *managerConfig) { c.compressFailureDumpDir = dir }
+}
+
+// CompressionSettings is a read-only snapshot of the compaction knobs an Option
+// set resolves to. It exists so callers that translate configuration into
+// Options — and the tests that guard them — can verify what those Options
+// actually say, without reaching into Manager's unexported state.
+type CompressionSettings struct {
+	MinPercent         int
+	NormalPercent      int
+	SafetyPercent      int
+	TargetPercent      int
+	MessageThreshold   int
+	TriggerDays        int
+	RetainTokenPercent int
+	RetainMaxTokens    int
+	RetainMaxAgeDays   int
+	RetainMinMessages  int
+	ContextWindow      int
+	OverheadTokens     int
+	CharsPerToken      float64
+	TokenSafetyMargin  float64
+}
+
+// SettingsFromOptions applies opts over the package defaults and reports the
+// result. It deliberately performs none of New()'s validation clamps: it answers
+// "what did these options ask for", which is the question a configuration
+// mapper needs answered. New() remains the only place policy is enforced.
+func SettingsFromOptions(opts ...Option) CompressionSettings {
+	cfg := defaultManagerConfig()
+	for _, o := range opts {
+		o(&cfg)
+	}
+	return CompressionSettings{
+		MinPercent:         cfg.minPercent,
+		NormalPercent:      cfg.normalPercent,
+		SafetyPercent:      cfg.safetyPercent,
+		TargetPercent:      cfg.targetPercent,
+		MessageThreshold:   cfg.messageThreshold,
+		TriggerDays:        cfg.triggerDays,
+		RetainTokenPercent: cfg.retainTokenPercent,
+		RetainMaxTokens:    cfg.retainMaxTokens,
+		RetainMaxAgeDays:   cfg.retainMaxAgeDays,
+		RetainMinMessages:  cfg.retainMinMessages,
+		ContextWindow:      cfg.contextWindow,
+		OverheadTokens:     cfg.overheadTokens,
+		CharsPerToken:      cfg.charsPerToken,
+		TokenSafetyMargin:  cfg.tokenSafetyMargin,
+	}
 }

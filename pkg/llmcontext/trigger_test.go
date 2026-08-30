@@ -10,6 +10,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/pkg/memory"
 	"github.com/PivotLLM/ClawEh/pkg/providers"
+	"github.com/PivotLLM/ClawEh/pkg/session"
 )
 
 // mockStore is a minimal in-memory SessionStore for trigger tests.
@@ -79,8 +80,13 @@ func (s *mockStore) GetHistoryWithSeqs(key string) []memory.StoredMessage {
 
 // newTestManager creates a Manager with the given options and returns the
 // concrete *Manager so tests can call SetTestCompressHook.
-func newTestManager(store *mockStore, opts ...Option) *Manager {
-	cm := New("test-session", store, nil, nil, opts...)
+func newTestManager(store session.SessionStore, opts ...Option) *Manager {
+	// Zero the fixed per-request reserve by default. These tests use tiny
+	// context windows (1000-10000 tokens) to make the trigger arithmetic legible,
+	// and the real 4000-token reserve would dominate every one of them. Tests
+	// that care about the reserve pass WithOverheadTokens explicitly — options
+	// are applied in order, so a later one wins.
+	cm := New("test-session", store, nil, nil, append([]Option{WithOverheadTokens(0)}, opts...)...)
 	return cm.(*Manager)
 }
 

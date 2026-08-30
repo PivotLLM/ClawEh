@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/PivotLLM/ClawEh/pkg/global"
+	"github.com/PivotLLM/ClawEh/app"
 )
 
 func TestStatus_BasicFields(t *testing.T) {
@@ -44,13 +44,13 @@ func TestStatus_BasicFields(t *testing.T) {
 	}
 
 	// Header is "<AppName> Status"
-	wantHeader := global.AppName + " Status"
+	wantHeader := app.Name() + " Status"
 	if !strings.Contains(reply, wantHeader) {
 		t.Errorf("reply missing header %q\n%s", wantHeader, reply)
 	}
 	// Version appears on its own labelled line
-	if !strings.Contains(reply, "Version: "+global.Version) {
-		t.Errorf("reply missing 'Version: %s'\n%s", global.Version, reply)
+	if !strings.Contains(reply, "Version: "+app.Version()) {
+		t.Errorf("reply missing 'Version: %s'\n%s", app.Version(), reply)
 	}
 	// Uptime — Truncate to seconds, value as "2h13m0s"
 	if !strings.Contains(reply, "Uptime: 2h13m0s") {
@@ -163,7 +163,7 @@ func TestStatus_GracefulDegradation(t *testing.T) {
 		t.Fatal("expected non-empty reply for graceful degradation")
 	}
 	// Header must still be present.
-	if !strings.Contains(reply, global.AppName) {
+	if !strings.Contains(reply, app.Name()) {
 		t.Errorf("reply missing app name when sources nil\n%s", reply)
 	}
 	// Channel comes from req.Channel directly, not from rt.
@@ -225,7 +225,7 @@ func TestStatus_ExactShape(t *testing.T) {
 	if lines[0] != "```" {
 		t.Errorf("line 1 = %q, want opening code fence ```", lines[0])
 	}
-	wantHeader := global.AppName + " Status"
+	wantHeader := app.Name() + " Status"
 	if lines[1] != wantHeader {
 		t.Errorf("line 2 = %q, want %q", lines[1], wantHeader)
 	}
@@ -248,7 +248,7 @@ func TestStatus_ExactShape(t *testing.T) {
 	}
 
 	wantBody := []string{
-		"Version: " + global.Version,
+		"Version: " + app.Version(),
 		"Uptime: 59m38s",
 		"Agent: Amber",
 		"Model: DeepSeek-V4-Flash",

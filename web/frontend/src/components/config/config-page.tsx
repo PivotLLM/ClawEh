@@ -20,6 +20,8 @@ import {
   buildFormFromConfig,
   parseCIDRText,
   parseIntField,
+  parseOptionalIntField,
+  nullableInts,
 } from "@/components/config/form-model"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
@@ -175,36 +177,65 @@ export function ConfigPage() {
           }
           defaultTemperaturePayload = tp
         }
-        const compressNormalPercent = parseIntField(
+        const compressNormalPercent = parseOptionalIntField(
           form.compressNormalPercent,
           "Normal compression threshold",
           { min: 0, max: 100 },
         )
-        const compressSafetyPercent = parseIntField(
+        const compressSafetyPercent = parseOptionalIntField(
           form.compressSafetyPercent,
           "Emergency compression threshold",
           { min: 0, max: 100 },
         )
-        const compressMinPercent = parseIntField(
+        const compressMinPercent = parseOptionalIntField(
           form.compressMinPercent,
           "Minimum context threshold",
           { min: 0, max: 100 },
         )
-        const compressMessageThreshold = parseIntField(
+        const compressMessageThreshold = parseOptionalIntField(
           form.compressMessageThreshold,
           "Message count threshold",
           { min: 0 },
         )
-        const compressRetainTokenPercent = parseIntField(
+        const compressRetainTokenPercent = parseOptionalIntField(
           form.compressRetainTokenPercent,
           "Tail window size",
           { min: 0, max: 100 },
         )
-        const compressRetainMinMessages = parseIntField(
+        const compressRetainMinMessages = parseOptionalIntField(
           form.compressRetainMinMessages,
           "Minimum tail messages",
           { min: 0 },
         )
+        const compressTriggerDays = parseOptionalIntField(
+          form.compressTriggerDays,
+          "Age compaction trigger (days)",
+          { min: 0 },
+        )
+        const compressRetainMaxAgeDays = parseOptionalIntField(
+          form.compressRetainMaxAgeDays,
+          "Tail age limit (days)",
+          { min: 0 },
+        )
+        const compressRetainMaxTokens = parseOptionalIntField(
+          form.compressRetainMaxTokens,
+          "Tail token ceiling",
+          { min: 0 },
+        )
+        // The trigger must sit above the retain cap or a compaction fires with
+        // nothing old enough to summarize. The backend clamps this too, but
+        // catching it here tells the operator instead of silently correcting.
+        if (
+          compressTriggerDays !== undefined &&
+          compressRetainMaxAgeDays !== undefined &&
+          compressTriggerDays > 0 &&
+          compressRetainMaxAgeDays > 0 &&
+          compressTriggerDays < compressRetainMaxAgeDays
+        ) {
+          throw new Error(
+            "Age compaction trigger must be greater than or equal to the tail age limit.",
+          )
+        }
         const archiveMessageCount = parseIntField(
           form.archiveMessageCount,
           "Archive message count",
@@ -286,12 +317,21 @@ export function ConfigPage() {
               vision_model: form.visionModels[0] ?? "",
               vision_model_fallbacks: form.visionModels.slice(1),
               temperature: defaultTemperaturePayload,
-              compress_normal_percent: compressNormalPercent,
-              compress_safety_percent: compressSafetyPercent,
-              compress_min_percent: compressMinPercent,
-              compress_message_threshold: compressMessageThreshold,
-              compress_retain_token_percent: compressRetainTokenPercent,
-              compress_retain_min_messages: compressRetainMinMessages,
+              compression: {
+                trigger: nullableInts({
+                  normal_percent: compressNormalPercent,
+                  safety_percent: compressSafetyPercent,
+                  min_percent: compressMinPercent,
+                  message_count: compressMessageThreshold,
+                  days: compressTriggerDays,
+                }),
+                retain: nullableInts({
+                  token_percent: compressRetainTokenPercent,
+                  min_messages: compressRetainMinMessages,
+                  max_age_days: compressRetainMaxAgeDays,
+                  max_tokens: compressRetainMaxTokens,
+                }),
+              },
               archive_message_count: archiveMessageCount,
               archive_days: archiveDays,
               summary_max_count: summaryMaxCount,

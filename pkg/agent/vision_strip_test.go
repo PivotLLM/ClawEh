@@ -33,7 +33,7 @@ func msgsWithImage() []providers.Message {
 func TestMessagesForModel_VisionModelKeepsImages(t *testing.T) {
 	al := visionStripLoop()
 	for _, model := range []string{"gpt5", "gpt5-resp"} {
-		out := al.messagesForModel(msgsWithImage(), model)
+		out := al.messagesForModel(msgsWithImage(), model, false)
 		if len(out[1].Media) != 1 {
 			t.Errorf("%s: expected image kept, got Media=%v", model, out[1].Media)
 		}
@@ -47,7 +47,7 @@ func TestMessagesForModel_NonVisionStripsImagesWithoutMutating(t *testing.T) {
 	al := visionStripLoop()
 	for _, model := range []string{"deepseek", "noflag", "unknown-model"} {
 		msgs := msgsWithImage()
-		out := al.messagesForModel(msgs, model)
+		out := al.messagesForModel(msgs, model, false)
 
 		if out[1].Media != nil {
 			t.Errorf("%s: expected images stripped, got Media=%v", model, out[1].Media)
@@ -72,7 +72,7 @@ func TestMessagesForModel_NonVisionStripsImagesWithoutMutating(t *testing.T) {
 func TestMessagesForModel_NoImagesReturnsSameSlice(t *testing.T) {
 	al := visionStripLoop()
 	msgs := []providers.Message{{Role: "user", Content: "no images here"}}
-	out := al.messagesForModel(msgs, "deepseek")
+	out := al.messagesForModel(msgs, "deepseek", false)
 	if &out[0] != &msgs[0] {
 		t.Error("expected the same backing slice when there are no images to strip")
 	}

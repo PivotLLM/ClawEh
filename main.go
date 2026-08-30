@@ -12,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/internal"
 	"github.com/PivotLLM/ClawEh/internal/agent"
 	"github.com/PivotLLM/ClawEh/internal/cron"
@@ -25,7 +26,6 @@ import (
 	"github.com/PivotLLM/ClawEh/internal/test"
 	"github.com/PivotLLM/ClawEh/internal/token"
 	"github.com/PivotLLM/ClawEh/internal/version"
-	"github.com/PivotLLM/ClawEh/pkg/global"
 )
 
 func NewClawCommand(binaryName string) *cobra.Command {
@@ -36,7 +36,7 @@ func NewClawCommand(binaryName string) *cobra.Command {
 	defaultCmd := gateway.NewGatewayCommand()
 	cmd := &cobra.Command{
 		Use:          binaryName,
-		Short:        global.AppTagLine,
+		Short:        app.TagLine(),
 		Args:         defaultCmd.Args,
 		SilenceUsage: true,
 		PreRunE:      defaultCmd.PreRunE,

@@ -106,6 +106,19 @@ Hard-won learnings (don't relearn these):
 ## Workflow Rules
 - Never commit or push without explicit user instruction.
 - Never push directly to main — use feature branches + PRs.
+- **Never create, move, or delete git tags.** Tags are cut by the user's build
+  process when binaries are uploaded — they are release markers, not commit
+  markers. Bumping `pkg/global/version.go` is a normal code change and is fine
+  when asked; tagging that version is not. The build does not derive a version
+  from `git describe` — `app/app.go` holds the identity (name, tagline,
+  copyright, version) and is the single source of truth, with the Makefile
+  stamping only build metadata (commit, timestamp, toolchain).
+  Everything there is unexported: read it through `app.Version()` (display:
+  `0.4.69+58d98993` — "+" is SemVer build metadata, ignored when comparing),
+  `app.SemVer()` (protocol handshakes: `0.4.69`),
+  `app.Name()`, `app.TagLine()`, `app.Copyright()`. Build tooling greps the
+  `version = "..."` line. See `~/.claude/standards/go-standards.md`
+  § Versioning and Copyright.
 - Always compile after edits before declaring done: `go build ./...` for Go changes, and `cd web/frontend && pnpm run build:backend` for frontend/TypeScript changes. The frontend bundle lands in `web/backend/dist`, which is embedded by `web/backend/embed.go` into the merged claw binary.
 - When investigating a problem, report findings and wait for approval before implementing.
 - Keep responses short and direct — no preamble or summaries.

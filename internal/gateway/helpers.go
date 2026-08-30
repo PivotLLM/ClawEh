@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/internal"
 	"github.com/PivotLLM/ClawEh/pkg/agent"
 	"github.com/PivotLLM/ClawEh/pkg/bus"
@@ -125,7 +126,7 @@ func gatewayCmd(debug bool) error {
 	}
 	defer releaseLock(lockFile)
 
-	logger.InfoCF("gateway", "Starting", map[string]any{"app": global.AppName, "version": global.Version})
+	logger.InfoCF("gateway", "Starting", map[string]any{"app": app.Name(), "version": app.Version()})
 
 	configPath := internal.GetConfigPath()
 	cfg, err := internal.LoadConfig()

@@ -101,6 +101,10 @@ func makeConversation(pairs int, charsPerMessage int) []providers.Message {
 func newCompressManager(store *compressTestStore, clients []LLMClient, opts ...Option) *Manager {
 	baseOpts := []Option{
 		WithContextWindow(10000),
+		// Tests below reason in exact token terms against a small window; the
+		// real per-request reserve would swamp it. TestTriggers_CountReserve
+		// covers the reserve itself.
+		WithOverheadTokens(0),
 		WithNormalPercent(50),
 		WithSafetyPercent(80),
 		WithRetainTokenPercent(20),

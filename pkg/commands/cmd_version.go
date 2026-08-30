@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/PivotLLM/ClawEh/pkg/global"
+	"github.com/PivotLLM/ClawEh/app"
 )
 
 func versionCommand() Definition {
@@ -14,10 +14,10 @@ func versionCommand() Definition {
 		Usage:       "/version",
 		Handler: func(_ context.Context, req Request, _ *Runtime) error {
 			msg := fmt.Sprintf("%s %s\n%s\n%s",
-				global.AppName,
-				global.Version,
-				global.AppTagLine,
-				global.AppCopyright,
+				app.Name(),
+				app.Version(),
+				app.TagLine(),
+				app.Copyright(),
 			)
 			return req.Reply(msg)
 		},

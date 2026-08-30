@@ -79,15 +79,15 @@ func CreateProviderFromConfig(model *config.ModelConfig, prov *config.Provider) 
 	case "azure":
 		return azure.NewProviderWithTimeout(prov.APIKey, prov.BaseURL, prov.Proxy, model.RequestTimeout), modelID, nil
 
-	case "anthropic":
+	// "anthropic" and "anthropic-messages" are the same thing: Anthropic speaks
+	// one wire format, the Messages API. "anthropic" previously routed to the
+	// OpenAI-compatible provider, so a config naming it sent an OpenAI-shaped
+	// request to api.anthropic.com and had SystemParts stripped on the way out —
+	// wrong, and silently so, since the protocol name is in the WebUI's dropdown
+	// alongside the one that works.
+	case "anthropic", "anthropic-messages":
 		if prov.APIKey == "" {
-			return nil, "", fmt.Errorf("provider %q: api_key required for anthropic protocol", prov.Name)
-		}
-		return NewHTTPProviderWithOptions(prov.APIKey, prov.BaseURL, prov.Proxy, compatOpts(model, prov)...), modelID, nil
-
-	case "anthropic-messages":
-		if prov.APIKey == "" {
-			return nil, "", fmt.Errorf("provider %q: api_key required for anthropic-messages protocol", prov.Name)
+			return nil, "", fmt.Errorf("provider %q: api_key required for %s protocol", prov.Name, prov.Protocol)
 		}
 		return anthropicmessages.NewProviderWithTimeout(prov.APIKey, prov.BaseURL, model.RequestTimeout), modelID, nil
 

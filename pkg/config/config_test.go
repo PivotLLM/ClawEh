@@ -438,15 +438,15 @@ func TestLoadConfig_WebToolsProxy(t *testing.T) {
 	}
 }
 
-// TestDefaultConfig_SummarizationThresholds verifies compress field defaults
+// TestDefaultConfig_SummarizationThresholds verifies the compaction block is
+// left entirely unset by default, so every threshold comes from llmcontext.
 func TestDefaultConfig_SummarizationThresholds(t *testing.T) {
 	cfg := DefaultConfig()
-	// New compress fields default to 0 (= use llmcontext defaults).
-	if cfg.Agents.Defaults.CompressNormalPercent != 0 {
-		t.Errorf("CompressNormalPercent = %d, want 0 (use llmcontext default)", cfg.Agents.Defaults.CompressNormalPercent)
+	if cfg.Agents.Defaults.Compression != nil {
+		t.Errorf("Agents.Defaults.Compression = %+v, want nil (use llmcontext defaults)", cfg.Agents.Defaults.Compression)
 	}
-	if cfg.Agents.Defaults.CompressMessageThreshold != 0 {
-		t.Errorf("CompressMessageThreshold = %d, want 0 (use llmcontext default)", cfg.Agents.Defaults.CompressMessageThreshold)
+	if got := (&AgentConfig{}).EffectiveCompression(cfg.Agents.Defaults.Compression); got.Trigger != nil || got.Retain != nil {
+		t.Errorf("EffectiveCompression on an empty config = %+v, want no trigger/retain overrides", got)
 	}
 }
 

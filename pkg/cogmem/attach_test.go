@@ -94,11 +94,17 @@ func TestAttachmentFromRoutedDomain(t *testing.T) {
 	if strings.Contains(res.Routed, "maestro/style.md") {
 		t.Fatalf("routed memory line should carry no file marker:\n%s", res.Routed)
 	}
-	if !strings.Contains(res.Attachments, "### Attached: maestro/style.md") {
-		t.Fatalf("attachments block missing header:\n%s", res.Attachments)
+	// A routed domain's document belongs to the ROUTED partition: the two blocks
+	// travel to different places in the request, and the document header cites
+	// the memory's id, so it has to sit with that memory.
+	if !strings.Contains(res.RoutedAttachments, "### Attached: maestro/style.md") {
+		t.Fatalf("routed attachments missing header:\n%s", res.RoutedAttachments)
 	}
-	if !strings.Contains(res.Attachments, "mount-sourced doc") {
-		t.Fatalf("attachments block missing mount content:\n%s", res.Attachments)
+	if !strings.Contains(res.RoutedAttachments, "mount-sourced doc") {
+		t.Fatalf("routed attachments missing mount content:\n%s", res.RoutedAttachments)
+	}
+	if res.Attachments != "" {
+		t.Fatalf("no sticky memory owns a file, so the stable partition should be empty:\n%s", res.Attachments)
 	}
 }
 
@@ -353,5 +359,87 @@ func TestDroppedRoutedDomainDoesNotAttach(t *testing.T) {
 	}
 	if len(fl.calls) != 1 {
 		t.Fatalf("only the rendered domain's document should load, got %v", fl.calls)
+	}
+}
+
+// TestAttachmentSharedByBothBlocks covers a document cited from a sticky AND a
+// routed memory. It must appear exactly once — duplicating it would double its
+// cost — and it goes with the stable partition, which keeps it in the cached
+// part of the request. Its provenance still names both owners, so the routed
+// memory is not orphaned.
+func TestAttachmentSharedByBothBlocks(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	db := s.DB()
+
+	gen, _ := s.GeneralDomain(ctx, db)
+	sticky, _ := s.AddMemory(ctx, db, store.AddMemoryParams{
+		DomainID: gen.ID, Type: store.TypeRule, Text: "Always use the house voice.",
+		Status: store.StatusActive, Confidence: 0.9, Source: store.SourceUserExplicit,
+		FileRef: "files/voice.md",
+	})
+	topic, _ := s.CreateDomain(ctx, db, store.CreateDomainParams{AgentID: "a", Name: "Writing"})
+	routed, _ := s.AddMemory(ctx, db, store.AddMemoryParams{
+		DomainID: topic.ID, Type: store.TypeRule, Text: "Chapter drafts follow the voice guide.",
+		Status: store.StatusActive, Confidence: 0.9, Source: store.SourceUserExplicit,
+		FileRef: "files/voice.md",
+	})
+
+	fl := &fakeLoader{files: map[string]string{"files/voice.md": "VOICEBODY"}}
+	res := composeWith(t, s, WithAttachmentLoader(fl.load))
+
+	total := strings.Count(res.Attachments, "VOICEBODY") + strings.Count(res.RoutedAttachments, "VOICEBODY")
+	if total != 1 {
+		t.Fatalf("shared document should appear exactly once, got %d copies\nstable:\n%s\nrouted:\n%s",
+			total, res.Attachments, res.RoutedAttachments)
+	}
+	if !strings.Contains(res.Attachments, "VOICEBODY") {
+		t.Errorf("a document with a sticky owner belongs in the stable (cached) partition:\n%s", res.Attachments)
+	}
+	// Provenance names both owners so the routed memory can still be tied to it.
+	for _, id := range []string{sticky.ID, routed.ID} {
+		if !strings.Contains(res.Attachments, id) {
+			t.Errorf("provenance should name owner %s:\n%s", id, res.Attachments)
+		}
+	}
+}
+
+// TestAttachmentBudgetSharedAcrossPartitions guards the property the split could
+// most easily break: one budget spent sticky-first, not one budget per
+// partition. Rendering them independently would silently double the per-turn
+// attachment cost.
+func TestAttachmentBudgetSharedAcrossPartitions(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	db := s.DB()
+
+	gen, _ := s.GeneralDomain(ctx, db)
+	_, _ = s.AddMemory(ctx, db, store.AddMemoryParams{
+		DomainID: gen.ID, Type: store.TypeRule, Text: "Sticky rule.",
+		Status: store.StatusActive, Confidence: 0.9, Source: store.SourceUserExplicit,
+		FileRef: "files/first.md",
+	})
+	topic, _ := s.CreateDomain(ctx, db, store.CreateDomainParams{AgentID: "a", Name: "Writing"})
+	_, _ = s.AddMemory(ctx, db, store.AddMemoryParams{
+		DomainID: topic.ID, Type: store.TypeRule, Text: "Routed rule.",
+		Status: store.StatusActive, Confidence: 0.9, Source: store.SourceUserExplicit,
+		FileRef: "files/second.md",
+	})
+
+	fl := &fakeLoader{files: map[string]string{
+		"files/first.md":  strings.Repeat("A", 50),
+		"files/second.md": strings.Repeat("B", 50),
+	}}
+	// Budget fits the first document only.
+	res := composeWith(t, s, WithAttachmentLoader(fl.load), WithFileTotalMaxBytes(50))
+
+	if !strings.Contains(res.Attachments, strings.Repeat("A", 50)) {
+		t.Errorf("sticky document should get first claim on the shared budget:\n%s", res.Attachments)
+	}
+	if strings.Contains(res.RoutedAttachments, strings.Repeat("B", 50)) {
+		t.Errorf("routed document should not fit — the budget is shared, not per-partition:\n%s", res.RoutedAttachments)
+	}
+	if !strings.Contains(res.RoutedAttachments, "budget") {
+		t.Errorf("the dropped document should say why it is missing:\n%s", res.RoutedAttachments)
 	}
 }

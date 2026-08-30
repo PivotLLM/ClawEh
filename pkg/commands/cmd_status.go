@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/PivotLLM/ClawEh/pkg/global"
+	"github.com/PivotLLM/ClawEh/app"
 )
 
 func statusCommand() Definition {
@@ -37,7 +37,7 @@ func statusCommand() Definition {
 func buildStatusReply(req Request, rt *Runtime) string {
 	var body strings.Builder
 
-	fmt.Fprintf(&body, "Version: %s\n", global.Version)
+	fmt.Fprintf(&body, "Version: %s\n", app.Version())
 
 	if rt != nil && rt.Uptime != nil {
 		d := rt.Uptime().Truncate(time.Second)
@@ -118,7 +118,7 @@ func buildStatusReply(req Request, rt *Runtime) string {
 
 	var out strings.Builder
 	out.WriteString("```\n")
-	fmt.Fprintf(&out, "%s Status\n", global.AppName)
+	fmt.Fprintf(&out, "%s Status\n", app.Name())
 	out.WriteString("\n")
 	out.WriteString(bodyText)
 	out.WriteString("\n```")

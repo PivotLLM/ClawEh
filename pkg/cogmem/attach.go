@@ -109,34 +109,53 @@ func provenance(owners []refSite) string {
 }
 
 // attachmentsBlock renders the full contents of every distinct file referenced
-// by the memories in this turn's blocks. Files are loaded in the order they were
-// referenced (sticky memories first, then routed), deduped by path, each capped
-// at fileMaxBytes and collectively at fileTotalMaxBytes.
+// by the memories in this turn's blocks, partitioned by which block owns them.
+//
+// The split exists because the two blocks no longer sit together in the request:
+// the stable block stays in the cached system prompt while the routed block
+// travels to the current turn. A document is headed "From memory <id>", so
+// separating it from the memory that names it would leave the model resolving
+// that reference across the whole conversation. Documents therefore follow their
+// owner. A file cited from BOTH blocks goes with the stable partition, which
+// keeps the "one document, one copy" invariant and keeps it cached.
+//
+// Files are loaded in reference order (sticky memories first, then routed),
+// deduped by path, each capped at fileMaxBytes and collectively at
+// fileTotalMaxBytes — one budget shared across both partitions, spent in that
+// order, so sticky documents keep their first claim on it.
 //
 // Anything not injected is stated explicitly — truncated, unreadable, or budget-
 // dropped — so the model knows to reach for the file tools instead of assuming
 // it has the whole document.
-func (c *Composer) attachmentsBlock(sites []refSite) string {
-	if len(sites) == 0 || c.opt.loadAttachment == nil {
-		return ""
+func (c *Composer) attachmentsBlock(stableSites, routedSites []refSite) (stable, routed string) {
+	if c.opt.loadAttachment == nil || (len(stableSites) == 0 && len(routedSites) == 0) {
+		return "", ""
 	}
 
 	// Dedup by path, keeping first-referenced order and merging every memory that
 	// points at it (one shared doc, one copy in the prompt). A document is only
 	// withheld as pending when every memory naming it is unconfirmed — one
 	// confirmed owner is reason enough to load it.
-	order := make([]string, 0, len(sites))
-	byRef := make(map[string][]refSite, len(sites))
-	for _, s := range sites {
+	order := make([]string, 0, len(stableSites)+len(routedSites))
+	byRef := make(map[string][]refSite, len(order))
+	fromStable := make(map[string]bool, len(stableSites))
+	for i, s := range append(append([]refSite{}, stableSites...), routedSites...) {
 		if _, seen := byRef[s.ref]; !seen {
 			order = append(order, s.ref)
 		}
 		byRef[s.ref] = append(byRef[s.ref], s)
+		if i < len(stableSites) {
+			fromStable[s.ref] = true
+		}
 	}
 
 	remaining := c.opt.fileTotalMaxBytes
-	var b strings.Builder
+	var stableB, routedB strings.Builder
 	for _, ref := range order {
+		b := &routedB
+		if fromStable[ref] {
+			b = &stableB
+		}
 		owners := byRef[ref]
 		sort.SliceStable(owners, func(i, j int) bool { return owners[i].memoryID < owners[j].memoryID })
 		pending := true
@@ -147,17 +166,17 @@ func (c *Composer) attachmentsBlock(sites []refSite) string {
 			}
 		}
 
-		fmt.Fprintf(&b, "### Attached: %s\n", ref)
+		fmt.Fprintf(b, "### Attached: %s\n", ref)
 
 		// An unconfirmed memory names its document but does not spend context on
 		// it: one line saying so, and nothing else.
 		if pending {
-			fmt.Fprintf(&b, "%s — pending confirmation, so its contents are not loaded. Confirm the memory to include this document.\n\n", provenance(owners))
+			fmt.Fprintf(b, "%s — pending confirmation, so its contents are not loaded. Confirm the memory to include this document.\n\n", provenance(owners))
 			continue
 		}
 
 		if remaining <= 0 {
-			fmt.Fprintf(&b, "%s — not included: the per-turn attachment budget (%d bytes) is exhausted. Read the file directly if you need it.\n\n",
+			fmt.Fprintf(b, "%s — not included: the per-turn attachment budget (%d bytes) is exhausted. Read the file directly if you need it.\n\n",
 				provenance(owners), c.opt.fileTotalMaxBytes)
 			continue
 		}
@@ -168,21 +187,26 @@ func (c *Composer) attachmentsBlock(sites []refSite) string {
 
 		att, err := c.opt.loadAttachment(ref, limit)
 		if err != nil {
-			fmt.Fprintf(&b, "%s — not included: %s\n\n", provenance(owners), oneLine(err.Error()))
+			fmt.Fprintf(b, "%s — not included: %s\n\n", provenance(owners), oneLine(err.Error()))
 			continue
 		}
 		remaining -= len(att.Content)
 
-		fmt.Fprintf(&b, "%s, %d bytes, current as of this turn.\n\n", provenance(owners), att.Size)
+		fmt.Fprintf(b, "%s, %d bytes, current as of this turn.\n\n", provenance(owners), att.Size)
 		if att.Truncated {
-			fmt.Fprintf(&b, "[TRUNCATED: showing the first %d of %d bytes. The rest of this document is NOT below — read the file directly if you need it.]\n\n",
+			fmt.Fprintf(b, "[TRUNCATED: showing the first %d of %d bytes. The rest of this document is NOT below — read the file directly if you need it.]\n\n",
 				len(att.Content), att.Size)
 		}
 		b.WriteString(strings.TrimRight(att.Content, "\n"))
 		b.WriteString("\n\n")
 	}
 
-	out := strings.TrimRight(b.String(), "\n")
+	return attachmentsHeader(stableB.String()), attachmentsHeader(routedB.String())
+}
+
+// attachmentsHeader wraps one rendered partition, or returns "" when empty.
+func attachmentsHeader(body string) string {
+	out := strings.TrimRight(body, "\n")
 	if out == "" {
 		return ""
 	}

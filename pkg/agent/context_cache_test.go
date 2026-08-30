@@ -100,13 +100,25 @@ func TestSingleSystemMessage(t *testing.T) {
 				t.Errorf("last message should be user, got %s", msgs[len(msgs)-1].Role)
 			}
 
-			// System message must contain identity (static) and time (dynamic)
+			// System message must contain identity, the date anchor, and the
+			// per-conversation runtime block. It must NOT contain a clock: a
+			// per-minute value here sits ahead of the whole conversation and
+			// breaks prefix caching for the entire history behind it.
 			sys := msgs[0].Content
 			if !strings.Contains(sys, "claw") {
 				t.Error("system message missing identity")
 			}
-			if !strings.Contains(sys, "Current Time") {
-				t.Error("system message missing dynamic time context")
+			if !strings.Contains(sys, "Today is ") {
+				t.Error("system message missing the date anchor")
+			}
+			if !strings.Contains(sys, "time_now") {
+				t.Error("date anchor must point at the time_now tool")
+			}
+			if !strings.Contains(sys, "## Runtime") {
+				t.Error("system message missing runtime context")
+			}
+			if strings.Contains(sys, "Current Time") {
+				t.Error("system prompt must not carry a clock — it breaks the cached prefix")
 			}
 
 			// Summary handling
