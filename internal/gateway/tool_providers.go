@@ -7,7 +7,6 @@ import (
 	common "github.com/PivotLLM/ClawEh/tools/common"
 	"github.com/PivotLLM/ClawEh/tools/files"
 	fusion "github.com/PivotLLM/ClawEh/tools/fusion"
-	"github.com/PivotLLM/ClawEh/tools/hardware"
 	maestro "github.com/PivotLLM/ClawEh/tools/maestro"
 	"github.com/PivotLLM/ClawEh/tools/msg"
 	"github.com/PivotLLM/ClawEh/tools/schedule"
@@ -27,7 +26,6 @@ func registerToolProviders() {
 	tools.RegisterProvider(tools.NamespacedProvider("shell", shell.GlobalProvider))
 	tools.RegisterProvider(tools.NamespacedProvider("skill", skills.GlobalProvider))
 	tools.RegisterProvider(tools.NamespacedProvider("agent", agents.GlobalProvider))
-	tools.RegisterProvider(tools.NamespacedProvider("hw", hardware.GlobalProvider))
 	tools.RegisterProvider(tools.NamespacedProvider("msg", msg.GlobalProvider))
 	tools.RegisterProvider(tools.NamespacedProvider("cogmem", cogmem.GlobalProvider))
 	tools.RegisterProvider(tools.NamespacedProvider("common", common.GlobalProvider))

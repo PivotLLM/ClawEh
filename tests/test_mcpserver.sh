@@ -56,10 +56,9 @@ BEARER_URL="${SERVER_URL}${BEARER_ENDPOINT}"
 # Note: find_tools_regex and find_tools_bm25 are omitted here because they only register
 # when tools.mcp.discovery.enabled=true, which the test config does not set.
 # Every tool the test config exposes that is guaranteed to register (no live
-# model and no specific hardware required). agent_spawn/agent_status/agent_list
-# (subagent capability) and hw_i2c/hw_spi (Linux + I2C/SPI devices) are also
-# exposed but only probed when actually present in the catalogue, so this script
-# stays portable.
+# model required). agent_spawn/agent_status/agent_list (subagent capability) are
+# also exposed but only probed when actually present in the catalogue, so this
+# script stays portable.
 EXPECTED_TOOLS="file_read_bytes file_read_lines file_view_image file_write file_edit file_edit_lines file_edit_bytes file_insert_lines file_insert_bytes file_delete_lines file_delete_bytes file_append file_list file_search_lines file_search_bytes file_copy file_delete file_move web_fetch web_search msg_send msg_send_file session_messages session_search session_compact session_info session_summary_list session_summary_get session_clear shell_exec skill_find skill_install cron_schedule cogmem_domain_get cogmem_memory_search cogmem_domain_list cogmem_explain cogmem_memory_create cogmem_memory_attach cogmem_domain_update cogmem_memory_retire cogmem_memory_confirm cogmem_domain_create cogmem_domain_archive cogmem_domain_migrate cogmem_memory_forget cogmem_consolidate cogmem_status cogmem_export common_list common_get common_put common_delete time_now"
 EXPECTED_TOOL_COUNT=38
 
@@ -589,9 +588,9 @@ else
 
     #---------------------------------------------------------------------------
     # Section 4b: Every remaining provider tool. These reach out to the network
-    # (web, skill), need a live model (agent), or touch hardware (hw), so we use
-    # graceful-error probes — the call must be accepted and the tool must respond
-    # (success OR a clean tool-level error), not fail at the transport/auth layer.
+    # (web, skill) or need a live model (agent), so we use graceful-error probes
+    # — the call must be accepted and the tool must respond (success OR a clean
+    # tool-level error), not fail at the transport/auth layer.
     #---------------------------------------------------------------------------
 
     print_section "4b. Remaining provider tools (graceful probes)"
@@ -623,10 +622,10 @@ else
         "cron_schedule" '{}'
 
     # Tools that only register on certain hosts (agent tools need the subagent
-    # capability; hw needs Linux + I2C/SPI devices). Probe them only when the
-    # catalogue lists them. Empty args are fine — these probes assert the session
-    # token is accepted, not that the call succeeds (agent_status needs a uuid).
-    for opt_tool in agent_spawn agent_status agent_list hw_i2c hw_spi; do
+    # capability). Probe them only when the catalogue lists them. Empty args are
+    # fine — these probes assert the session token is accepted, not that the call
+    # succeeds (agent_status needs a uuid).
+    for opt_tool in agent_spawn agent_status agent_list; do
         if echo "$LIST_OUT" | grep -qw "$opt_tool"; then
             run_test_not_auth_err "4b.* $opt_tool — token accepted" "$opt_tool" '{}'
         else

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"runtime"
 	"testing"
 
 	"github.com/PivotLLM/ClawEh/config"
@@ -78,33 +77,6 @@ func TestHandleListTools(t *testing.T) {
 	}
 	if gotTools["session_search"].Status != "enabled" {
 		t.Fatalf("session_search status = %q, want enabled", gotTools["session_search"].Status)
-	}
-	if runtime.GOOS == "linux" {
-		if gotTools["hw_i2c"].Status != "disabled" {
-			t.Fatalf("hw_i2c status = %q, want disabled on linux when config is off", gotTools["hw_i2c"].Status)
-		}
-	} else {
-		rec = httptest.NewRecorder()
-		req = httptest.NewRequest(http.MethodGet, "/api/tools", nil)
-		mux.ServeHTTP(rec, req)
-		if rec.Code != http.StatusOK {
-			t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
-		}
-
-		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-			t.Fatalf("Unmarshal() error = %v", err)
-		}
-		gotTools = make(map[string]toolSupportItem, len(resp.Tools))
-		for _, tool := range resp.Tools {
-			gotTools[tool.Name] = tool
-		}
-
-		if gotTools["hw_i2c"].Status != "blocked" || gotTools["hw_i2c"].ReasonCode != "requires_linux" {
-			t.Fatalf("hw_i2c = %#v, want blocked/requires_linux", gotTools["hw_i2c"])
-		}
-		if gotTools["hw_spi"].Status != "blocked" || gotTools["hw_spi"].ReasonCode != "requires_linux" {
-			t.Fatalf("hw_spi = %#v, want blocked/requires_linux", gotTools["hw_spi"])
-		}
 	}
 }
 

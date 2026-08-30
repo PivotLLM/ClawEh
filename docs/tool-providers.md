@@ -245,7 +245,7 @@ allowlist), over MCP, and in the WebUI catalogue.
 `test.sh` / `tests/test_mcpserver.sh` exercise every MCP tool with the external
 `probe` binary. Add your tool to the gateway test config's exposed tool list and
 add a probe case — success for hermetic tools, a graceful-error probe for
-network/hardware/LLM tools.
+network/LLM tools.
 
 ---
 

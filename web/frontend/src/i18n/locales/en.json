@@ -320,12 +320,10 @@
           "communication": "Communication",
           "skills": "Skills",
           "agents": "Agents",
-          "hardware": "Hardware",
           "discovery": "Discovery",
           "context": "Context"
         },
         "reasons": {
-          "requires_linux": "This tool only works on Linux hosts with the required device files exposed.",
           "requires_skills": "Enable `tools.skills` before this skill-registry tool can be used.",
           "requires_subagent": "Enable `tools.subagent` before the spawn tool can delegate work.",
           "requires_mcp_discovery": "Enable `tools.mcp.discovery` before MCP discovery tools become available."

@@ -107,8 +107,8 @@ func buildToolSupport(cfg *config.Config) []toolSupportItem {
 }
 
 // resolveToolStatus derives the GUI status from the provider availability and the
-// per-tool enabled state. Capability/environment gates (skills registry, subagent,
-// Linux-only hardware) are reported by each provider's Available as unavailReason.
+// per-tool enabled state. Capability/environment gates (skills registry, subagent)
+// are reported by each provider's Available as unavailReason.
 func resolveToolStatus(cfg *config.Config, d tools.ToolDescriptor, _ tools.ToolProvider, unavailReason string) string {
 	if unavailReason != "" {
 		return "blocked"
