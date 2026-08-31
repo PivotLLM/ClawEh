@@ -107,9 +107,15 @@ GOARM?=
 GOMIPS?=
 BUILD_ENV=GOOS=$(PLATFORM) GOARCH=$(ARCH)$(if $(GOARM), GOARM=$(GOARM))$(if $(GOMIPS), GOMIPS=$(GOMIPS))
 
-BINARY_PATH=$(BUILD_DIR)/$(BINARY_NAME)-$(PLATFORM)-$(ARCH)
+# Windows executables need the .exe suffix. Without it `make build
+# PLATFORM=windows` produces an extensionless binary that Windows will not run
+# and that jsign will not sign. The build-all target has always hardcoded the
+# suffix; this makes the parameterised build agree with it.
+EXE=$(if $(filter windows,$(PLATFORM)),.exe)
+
+BINARY_PATH=$(BUILD_DIR)/$(BINARY_NAME)-$(PLATFORM)-$(ARCH)$(EXE)
 CLAW_AUTH_NAME=claw-auth
-CLAW_AUTH_PATH=$(BUILD_DIR)/$(CLAW_AUTH_NAME)-$(PLATFORM)-$(ARCH)
+CLAW_AUTH_PATH=$(BUILD_DIR)/$(CLAW_AUTH_NAME)-$(PLATFORM)-$(ARCH)$(EXE)
 
 # Frontend / embedded SPA
 FRONTEND_DIR=web/frontend
@@ -135,11 +141,11 @@ build: $(EMBED_INDEX) generate
 	@mkdir -p $(BUILD_DIR)
 	@$(BUILD_ENV) $(GO) build $(GOFLAGS) $(LDFLAGS) -o $(BINARY_PATH) ./$(CMD_DIR)
 	@echo "Build complete: $(BINARY_PATH)"
-	@ln -sf $(BINARY_NAME)-$(PLATFORM)-$(ARCH) $(BUILD_DIR)/$(BINARY_NAME)
+	@ln -sf $(notdir $(BINARY_PATH)) $(BUILD_DIR)/$(BINARY_NAME)$(EXE)
 	@echo "Building $(CLAW_AUTH_NAME) for $(PLATFORM)/$(ARCH)..."
 	@$(BUILD_ENV) $(GO) build $(GOFLAGS) $(LDFLAGS) -o $(CLAW_AUTH_PATH) ./cmd/claw-auth
 	@echo "Build complete: $(CLAW_AUTH_PATH)"
-	@ln -sf $(CLAW_AUTH_NAME)-$(PLATFORM)-$(ARCH) $(BUILD_DIR)/$(CLAW_AUTH_NAME)
+	@ln -sf $(notdir $(CLAW_AUTH_PATH)) $(BUILD_DIR)/$(CLAW_AUTH_NAME)$(EXE)
 
 ## claw-auth: Build the standalone claw-auth OAuth helper CLI (runs on the user's own computer).
 claw-auth:
@@ -147,7 +153,7 @@ claw-auth:
 	@mkdir -p $(BUILD_DIR)
 	@$(BUILD_ENV) $(GO) build $(GOFLAGS) $(LDFLAGS) -o $(CLAW_AUTH_PATH) ./cmd/claw-auth
 	@echo "Build complete: $(CLAW_AUTH_PATH)"
-	@ln -sf $(CLAW_AUTH_NAME)-$(PLATFORM)-$(ARCH) $(BUILD_DIR)/$(CLAW_AUTH_NAME)
+	@ln -sf $(notdir $(CLAW_AUTH_PATH)) $(BUILD_DIR)/$(CLAW_AUTH_NAME)$(EXE)
 
 ## frontend: Build the SPA into the Go embed source (web/backend/dist).
 frontend: $(EMBED_INDEX)
