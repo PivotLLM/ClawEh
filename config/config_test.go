@@ -862,8 +862,8 @@ func TestTurnToolProgressDefaults(t *testing.T) {
 func TestCooldownConfigDurations(t *testing.T) {
 	// All zero → built-in defaults (minutes).
 	var c CooldownConfig
-	if c.BillingAuth() != 60*time.Minute {
-		t.Errorf("BillingAuth default = %v, want 60m", c.BillingAuth())
+	if c.BillingAuth() != 30*time.Minute {
+		t.Errorf("BillingAuth default = %v, want 30m", c.BillingAuth())
 	}
 	if c.RateLimit() != 10*time.Minute || c.ClientError() != 10*time.Minute || c.ServerError() != 10*time.Minute {
 		t.Errorf("rate/client/server defaults wrong: %v %v %v", c.RateLimit(), c.ClientError(), c.ServerError())

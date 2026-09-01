@@ -39,7 +39,10 @@ type CooldownPolicy struct {
 // DefaultCooldownPolicy is used when no config-derived policy is supplied.
 func DefaultCooldownPolicy() CooldownPolicy {
 	return CooldownPolicy{
-		BillingAuth: 60 * time.Minute,
+		// Doubles as the recheck interval: long enough not to hammer an exhausted
+		// account, short enough that a top-up is picked up promptly. Keep in step
+		// with config.DefaultCooldownBillingAuthMinutes.
+		BillingAuth: 30 * time.Minute,
 		RateLimit:   10 * time.Minute,
 		// 400 never cools by default: a bad-request is a request-shape rejection,
 		// not a provider-health signal. Cooling the shared provider+model key would

@@ -65,20 +65,23 @@ func TestCooldown_Escalation(t *testing.T) {
 }
 
 // TestCooldown_BillingSkipsEscalation verifies billing/auth go straight to the
-// full category cooldown (default 60m) on the FIRST failure — no 1/3/5 ramp,
-// since an out-of-credits model won't recover in minutes.
+// full category cooldown on the FIRST failure — no 1/3/5 ramp, since an
+// out-of-credits model won't recover in minutes. The exact default duration is
+// pinned by TestCooldownPolicy_Categories; this test only asserts the shape.
 func TestCooldown_BillingSkipsEscalation(t *testing.T) {
+	settled := DefaultCooldownPolicy().BillingAuth
+
 	ct, _ := newTestTracker(time.Now())
-	mark(ct, "openai", testModel, FailoverBilling) // first failure → 60m
-	if got := ct.CooldownRemaining("openai", testModel); got != 60*time.Minute {
-		t.Fatalf("first billing cooldown = %v, want 60m (no escalation)", got)
+	mark(ct, "openai", testModel, FailoverBilling) // first failure → settled
+	if got := ct.CooldownRemaining("openai", testModel); got != settled {
+		t.Fatalf("first billing cooldown = %v, want %v (no escalation)", got, settled)
 	}
 
 	// Auth (401/403) behaves the same.
 	ct2, _ := newTestTracker(time.Now())
 	mark(ct2, "openai", testModel, FailoverAuth)
-	if got := ct2.CooldownRemaining("openai", testModel); got != 60*time.Minute {
-		t.Fatalf("first auth cooldown = %v, want 60m", got)
+	if got := ct2.CooldownRemaining("openai", testModel); got != settled {
+		t.Fatalf("first auth cooldown = %v, want %v", got, settled)
 	}
 
 	// A transient category (rate-limit) still escalates 1m on the first failure.
@@ -131,20 +134,24 @@ func TestCooldown_RetryAfterHonored(t *testing.T) {
 func TestCooldown_SetPolicyPreservesState(t *testing.T) {
 	now := time.Now()
 	ct, current := newTestTracker(now)
-	mark(ct, "openai", testModel, FailoverBilling) // parked 60m
+	settled := DefaultCooldownPolicy().BillingAuth
+	mark(ct, "openai", testModel, FailoverBilling) // parked for `settled`
 	if ct.IsAvailable("openai", testModel) {
 		t.Fatal("model should be parked after billing failure")
 	}
 
-	// Reload: refresh the policy (different durations) — state must persist.
-	ct.SetPolicy(CooldownPolicy{BillingAuth: 30 * time.Minute, RateLimit: time.Minute})
+	// Reload: refresh the policy with a much SHORTER billing cooldown — the
+	// already-running entry must keep its original expiry, not adopt the new one.
+	shorter := settled / 6
+	ct.SetPolicy(CooldownPolicy{BillingAuth: shorter, RateLimit: time.Minute})
 	if ct.IsAvailable("openai", testModel) {
 		t.Fatal("model must remain parked across a policy refresh (reload)")
 	}
-	// Still parked well into the original 60m window.
-	*current = now.Add(40 * time.Minute)
+	// Past the new (shorter) policy but still inside the original window.
+	*current = now.Add(settled - time.Minute)
 	if ct.IsAvailable("openai", testModel) {
-		t.Fatal("existing cooldown (60m) must not be shortened by the new policy")
+		t.Fatalf("existing cooldown (%v) must not be shortened to %v by the new policy",
+			settled, shorter)
 	}
 }
 
@@ -329,9 +336,9 @@ func TestCooldown_MultipleModels(t *testing.T) {
 func TestCooldownPolicy_Categories(t *testing.T) {
 	p := DefaultCooldownPolicy()
 	cases := map[int]time.Duration{
-		401: 60 * time.Minute,
-		402: 60 * time.Minute,
-		403: 60 * time.Minute,
+		401: 30 * time.Minute,
+		402: 30 * time.Minute,
+		403: 30 * time.Minute,
 		429: 10 * time.Minute,
 		400: 0, // never cool: fail over to sibling configs instead of parking the model
 		404: 10 * time.Minute,

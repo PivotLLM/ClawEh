@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -239,6 +240,131 @@ func TestRenderBillingError_LabelUsesFailureRecordProvider(t *testing.T) {
 		if !strings.Contains(got, attemptProviderB) {
 			t.Errorf("FallbackExhaustedError: missing per-attempt provider %q in %q",
 				attemptProviderB, got)
+		}
+	}
+}
+
+// realOpenRouter402Body is the verbatim shape OpenRouter returned during the
+// 2026-08-31 credit exhaustion (key id and user id scrubbed). It carries NO
+// billing_url — the actionable link lives in error.metadata.remedy_hint, which
+// is why the rendered notice used to have no "Top up:" line at all.
+const realOpenRouter402Body = `{"error":{"message":"This request requires more credits, or fewer max_tokens. You requested up to 32768 tokens, but can only afford 5142. To increase, visit https://openrouter.ai/workspaces/default/keys/KEYID and adjust the key's daily limit","code":402,"metadata":{"limit_source":"openrouter_credits","remedy_hint":"Add credits at https://openrouter.ai/settings/credits, or lower max_tokens / prompt size to fit your remaining balance.","provider_name":null,"previous_errors":[]}},"user_id":"user_X"}`
+
+func TestSniffBillingURL_OpenRouterRemedyHint(t *testing.T) {
+	got := sniffBillingURL(realOpenRouter402Body)
+	want := "https://openrouter.ai/settings/credits"
+	if got != want {
+		t.Fatalf("got %q, want %q (trailing comma must be trimmed)", got, want)
+	}
+}
+
+// The same body truncated mid-document (as common.HandleErrorResponse delivers
+// it) must still yield the hint via the raw scan — this is the shape the
+// incident actually produced, where the cut landed well past remedy_hint.
+func TestSniffBillingURL_OpenRouterTruncated(t *testing.T) {
+	cut := strings.Index(realOpenRouter402Body, `"provider_name"`) + 10
+	truncated := realOpenRouter402Body[:cut]
+	if json.Valid([]byte(truncated)) {
+		t.Fatal("fixture is meant to be invalid JSON")
+	}
+	got := sniffBillingURL(truncated)
+	want := "https://openrouter.ai/settings/credits"
+	if got != want {
+		t.Fatalf("truncated body: got %q, want %q", got, want)
+	}
+}
+
+// A cut landing INSIDE the hint never yields half a URL: the hint is discarded
+// (the billing_url scan's long-standing contract) and the sniff degrades to the
+// complete URL in error.message, which sits earlier in the body.
+func TestSniffBillingURL_TruncatedInsideRemedyHint(t *testing.T) {
+	cut := strings.Index(realOpenRouter402Body, "settings/credits") + 8
+	truncated := realOpenRouter402Body[:cut]
+	got := sniffBillingURL(truncated)
+	want := "https://openrouter.ai/workspaces/default/keys/KEYID"
+	if got != want {
+		t.Fatalf("got %q, want the message URL %q", got, want)
+	}
+}
+
+// Both candidate URLs cut off → no link at all, rather than a broken one.
+func TestSniffBillingURL_TruncatedBeforeAnyURL(t *testing.T) {
+	cut := strings.Index(realOpenRouter402Body, "https://") + 20
+	if got := sniffBillingURL(realOpenRouter402Body[:cut]); got != "" {
+		t.Fatalf("got %q, want empty when every URL is cut mid-value", got)
+	}
+}
+
+// With no remedy hint, fall back to the URL in error.message.
+func TestSniffBillingURL_MessageURLFallback(t *testing.T) {
+	body := `{"error":{"message":"Out of credits. To increase, visit https://openrouter.ai/workspaces/default/keys/KEYID and adjust the key's daily limit","code":402}}`
+	want := "https://openrouter.ai/workspaces/default/keys/KEYID"
+	if got := sniffBillingURL(body); got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+// An explicit billing_url still wins over the hint and the message.
+func TestSniffBillingURL_BillingURLWinsOverHint(t *testing.T) {
+	body := `{"error":{"billing_url":"https://explicit/top-up","message":"see https://in-message","metadata":{"remedy_hint":"Add credits at https://in-hint, or lower max_tokens."}}}`
+	if got := sniffBillingURL(body); got != "https://explicit/top-up" {
+		t.Fatalf("got %q, want the explicit billing_url", got)
+	}
+}
+
+// A message with no URL at all yields nothing (no "Top up:" line).
+func TestSniffBillingURL_MessageWithoutURL(t *testing.T) {
+	body := `{"error":{"message":"insufficient quota","code":402}}`
+	if got := sniffBillingURL(body); got != "" {
+		t.Fatalf("got %q, want empty", got)
+	}
+}
+
+// End-to-end: the incident's error now renders with an actionable link.
+func TestRenderBillingError_OpenRouterEndToEnd(t *testing.T) {
+	err := &providers.FailoverError{
+		Reason:   providers.FailoverBilling,
+		Provider: "OpenRouter Chat DS",
+		Model:    "deepseek/deepseek-v4-flash",
+		Wrapped:  &common.HTTPStatusError{StatusCode: 402, BodyPreview: realOpenRouter402Body},
+	}
+	got := renderBillingError(err)
+	want := "Out of credits on OpenRouter Chat DS/deepseek/deepseek-v4-flash. " +
+		"Top up: https://openrouter.ai/settings/credits"
+	if got != want {
+		t.Fatalf("\n got %q\nwant %q", got, want)
+	}
+}
+
+func TestFirstURL(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"", ""},
+		{"no url here", ""},
+		{"Add credits at https://a/b, or lower max_tokens.", "https://a/b"},
+		{"visit https://a/b and adjust", "https://a/b"},
+		{"see (http://a/b).", "http://a/b"},
+		{`{"u":"https://a/b"}`, "https://a/b"},
+		{"trailing period https://a/b.", "https://a/b"},
+	}
+	for _, c := range cases {
+		if got := firstURL(c.in); got != c.want {
+			t.Errorf("firstURL(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestValueAfterKey(t *testing.T) {
+	cases := []struct{ body, key, want string }{
+		{`{"a":"x"}`, "a", "x"},
+		{`{"a" : "x"}`, "a", "x"},       // whitespace around the colon
+		{`{"a":1}`, "a", ""},            // non-string value
+		{`{"b":"x"}`, "a", ""},          // absent
+		{`{"a":"trunc`, "a", ""},        // truncated mid-value
+		{`{"a":"x","a":"y"}`, "a", "x"}, // first occurrence wins
+	}
+	for _, c := range cases {
+		if got := valueAfterKey(c.body, c.key); got != c.want {
+			t.Errorf("valueAfterKey(%q,%q) = %q, want %q", c.body, c.key, got, c.want)
 		}
 	}
 }

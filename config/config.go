@@ -1090,10 +1090,13 @@ type CooldownConfig struct {
 	ServerErrorMinutes int `json:"server_error_minutes,omitempty" env:"CLAW_COOLDOWN_SERVER_ERROR_MINUTES"`
 }
 
-// Cooldown category defaults (minutes). Billing/auth is long because the operator
-// usually has to top up or rotate a key; the rest are short.
+// Cooldown category defaults (minutes). Billing/auth is the longest because the
+// operator usually has to top up or rotate a key, but it is still bounded at 30
+// minutes: it doubles as the recheck interval, so a longer value means a
+// resolved billing problem goes unnoticed for that much longer. A rejected 402
+// costs a round trip and no inference, so probing more often is cheap.
 const (
-	DefaultCooldownBillingAuthMinutes = 60
+	DefaultCooldownBillingAuthMinutes = 30
 	DefaultCooldownRateLimitMinutes   = 10
 	// 400 defaults to never-cool: a bad-request is a request-shape rejection, so
 	// the fallback should try the next candidate (including a sibling config of the
