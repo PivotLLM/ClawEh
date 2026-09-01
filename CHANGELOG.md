@@ -29,7 +29,9 @@ on, and breaking one is a deliberate decision rather than a free move.
   disk, so reading the config, editing it and writing it back does not destroy
   the credentials you never saw. Setting a genuinely new credential still writes
   through. Masking is driven by the JSON field name, so a credential added later
-  is covered from the day it appears.
+  is covered from the day it appears; list entries are matched by identity
+  (`id`, `name`, `model_name`, `account`) so deleting or reordering bots,
+  providers or models cannot move a credential onto the wrong entry.
 - **The device gateway compares shared tokens in constant time with respect to
   length.** `subtle.ConstantTimeCompare` returns early when lengths differ, so
   the comparison leaked the secret's length. Both sides are now hashed to a fixed

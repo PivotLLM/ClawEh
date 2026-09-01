@@ -64,10 +64,14 @@ func maskSecrets(v any) {
 // not overwrite real keys with "****". A value is only restored when it still
 // looks masked; a genuinely new credential is written through untouched.
 //
-// Objects are matched by key and arrays by index, which mirrors what the
-// per-provider endpoint already does (web/backend/api/providers.go). Reordering
-// an array in the same request that keeps a masked value is therefore not
-// supported — set the credential explicitly in that case.
+// Objects are matched by key. Array elements are matched by identity — the
+// first of "id", "name", "model_name" or "account" that both sides carry —
+// falling back to position only when neither side has one.
+//
+// Position alone is not safe here. The WebUI reads the masked config, edits a
+// list and writes the whole list back, so deleting the first Telegram bot would
+// otherwise restore the deleted bot's token onto the survivor that took its
+// index: a silent credential swap, not a visible failure.
 func unmaskSecrets(incoming, stored any) {
 	switch in := incoming.(type) {
 	case map[string]any:
@@ -93,11 +97,57 @@ func unmaskSecrets(incoming, stored any) {
 			return
 		}
 		for i, item := range in {
-			if i < len(st) {
-				unmaskSecrets(item, st[i])
+			if prev, found := matchStoredElement(item, st, i); found {
+				unmaskSecrets(item, prev)
 			}
 		}
 	}
+}
+
+// identityKeys are the fields that name an element of a config array, in the
+// order they are tried. Every secret-carrying list in the config has one:
+// providers use "name", telegram bots "id", models "model_name", secmsg
+// accounts "account".
+var identityKeys = []string{"id", "name", "model_name", "account"}
+
+// matchStoredElement finds item's counterpart in stored. It prefers an identity
+// match so that reordering or deleting list entries cannot move a credential
+// onto the wrong element, and falls back to position only when neither side
+// carries an identity field.
+func matchStoredElement(item any, stored []any, idx int) (any, bool) {
+	obj, ok := item.(map[string]any)
+	if !ok {
+		if idx < len(stored) {
+			return stored[idx], true
+		}
+		return nil, false
+	}
+
+	for _, key := range identityKeys {
+		want, isStr := obj[key].(string)
+		if !isStr || want == "" {
+			continue
+		}
+		for _, candidate := range stored {
+			cobj, isObj := candidate.(map[string]any)
+			if !isObj {
+				continue
+			}
+			if got, isStr := cobj[key].(string); isStr && got == want {
+				return candidate, true
+			}
+		}
+		// The element names itself but no stored element matches: it is new, so
+		// there is nothing to restore from. Returning here rather than falling
+		// through to the positional match is the point — position would hand it
+		// some other element's credential.
+		return nil, false
+	}
+
+	if idx < len(stored) {
+		return stored[idx], true
+	}
+	return nil, false
 }
 
 // isMasked reports whether s carries the mask marker written by maskAPIKey.

@@ -200,3 +200,134 @@ func TestMaskSecrets_LeavesNonStringsAlone(t *testing.T) {
 		t.Error("token was not masked")
 	}
 }
+
+// telegramFixture writes a config with two named Telegram bots, the shape the
+// WebUI edits as a list.
+func telegramFixture(t *testing.T) (string, *http.ServeMux) {
+	t.Helper()
+	cfg := config.DefaultConfig()
+	cfg.Models = []config.ModelConfig{{ModelName: "m", Model: "gpt-4o", Provider: "OpenAI", Enabled: true}}
+	cfg.Channels.Telegram = []config.TelegramBotConfig{
+		{ID: "alpha", Enabled: true, Token: "111:ALPHA-TOKEN-SECRET"},
+		{ID: "bravo", Enabled: true, Token: "222:BRAVO-TOKEN-SECRET"},
+	}
+	dir := t.TempDir()
+	p := filepath.Join(dir, "config.json")
+	b, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h := NewHandler(p)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+	return p, mux
+}
+
+// maskedTelegramList returns the masked telegram array as the WebUI receives it.
+func maskedTelegramList(t *testing.T, mux *http.ServeMux) []any {
+	t.Helper()
+	var got map[string]any
+	if err := json.Unmarshal([]byte(getConfigBody(t, mux)), &got); err != nil {
+		t.Fatal(err)
+	}
+	return got["channels"].(map[string]any)["telegram"].([]any)
+}
+
+func patchTelegram(t *testing.T, mux *http.ServeMux, list []any) {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{"channels": map[string]any{"telegram": list}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPatch, "/api/config", bytes.NewReader(body)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PATCH = %d, body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func tokenFor(t *testing.T, path, id string) string {
+	t.Helper()
+	cfg, err := config.LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, b := range cfg.Channels.Telegram {
+		if b.ID == id {
+			return b.Token
+		}
+	}
+	return ""
+}
+
+// TestUnmask_DeletingListEntryKeepsTokensWithTheirOwners is the regression guard
+// for a credential swap. The WebUI reads the masked config, edits a list and
+// writes the whole list back; matching stored entries by position meant deleting
+// the first bot restored the deleted bot's token onto whichever bot inherited
+// index 0 — silently, and with a real credential rather than a visible error.
+func TestUnmask_DeletingListEntryKeepsTokensWithTheirOwners(t *testing.T) {
+	p, mux := telegramFixture(t)
+	list := maskedTelegramList(t, mux)
+
+	patchTelegram(t, mux, []any{list[1]}) // drop "alpha", keep "bravo"
+
+	if got := tokenFor(t, p, "bravo"); got != "222:BRAVO-TOKEN-SECRET" {
+		t.Fatalf("bravo token = %q, want its own token — a positional match would give it alpha's", got)
+	}
+	if got := tokenFor(t, p, "alpha"); got != "" {
+		t.Fatalf("alpha still present with token %q, want it deleted", got)
+	}
+}
+
+// TestUnmask_ReorderingListKeepsTokensWithTheirOwners covers the same hazard
+// from the other direction.
+func TestUnmask_ReorderingListKeepsTokensWithTheirOwners(t *testing.T) {
+	p, mux := telegramFixture(t)
+	list := maskedTelegramList(t, mux)
+
+	patchTelegram(t, mux, []any{list[1], list[0]}) // swap the order
+
+	if got := tokenFor(t, p, "alpha"); got != "111:ALPHA-TOKEN-SECRET" {
+		t.Errorf("alpha token = %q, want its own", got)
+	}
+	if got := tokenFor(t, p, "bravo"); got != "222:BRAVO-TOKEN-SECRET" {
+		t.Errorf("bravo token = %q, want its own", got)
+	}
+}
+
+// TestUnmask_NewListEntryKeepsItsOwnToken checks that an entry with no stored
+// counterpart is written through rather than inheriting a neighbour's secret.
+func TestUnmask_NewListEntryKeepsItsOwnToken(t *testing.T) {
+	p, mux := telegramFixture(t)
+	list := maskedTelegramList(t, mux)
+
+	added := map[string]any{"id": "charlie", "enabled": true, "token": "333:CHARLIE-NEW-TOKEN"}
+	patchTelegram(t, mux, []any{added, list[0], list[1]})
+
+	for id, want := range map[string]string{
+		"charlie": "333:CHARLIE-NEW-TOKEN",
+		"alpha":   "111:ALPHA-TOKEN-SECRET",
+		"bravo":   "222:BRAVO-TOKEN-SECRET",
+	} {
+		if got := tokenFor(t, p, id); got != want {
+			t.Errorf("%s token = %q, want %q", id, got, want)
+		}
+	}
+}
+
+// TestUnmask_EditingOneFieldKeepsTheToken is the ordinary WebUI save: change an
+// unrelated setting on a bot and its credential must survive.
+func TestUnmask_EditingOneFieldKeepsTheToken(t *testing.T) {
+	p, mux := telegramFixture(t)
+	list := maskedTelegramList(t, mux)
+
+	list[0].(map[string]any)["enabled"] = false
+	patchTelegram(t, mux, list)
+
+	if got := tokenFor(t, p, "alpha"); got != "111:ALPHA-TOKEN-SECRET" {
+		t.Fatalf("alpha token = %q, want it preserved across an unrelated edit", got)
+	}
+}

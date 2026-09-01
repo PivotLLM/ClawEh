@@ -19,6 +19,11 @@ can be exposed to the network without exposing the unauthenticated WebUI.
 - Default port: `18791` (`DefaultDevicePort`). The test instance uses `8078`.
 - `allowed_cidrs` empty ⇒ any client IP (loopback always allowed); the gateway is itself
   authenticated, so the allowlist is optional defense-in-depth.
+  **Note the asymmetry with `gateway.allowed_cidrs`**, where empty means *loopback
+  only*. The defaults differ because the surfaces do: this listener authenticates
+  every client (shared token, then Ed25519 pairing), while the WebUI/API behind
+  `gateway.allowed_cidrs` has no operator auth at all, so reachability is the only
+  gate it has. Both accept `"*"` for any address.
 - Auth (`authorizeGateway`): accepts a configured shared secret OR a non-revoked
   per-device token. Two shared secrets are accepted, both constant-time:
   - `token` — a long 32-byte hex token, embedded in the **QR** (scanned by the R1).
