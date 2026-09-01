@@ -154,7 +154,7 @@ func (cb *ContextBuilder) clock() time.Time {
 }
 
 func (cb *ContextBuilder) getIdentity() string {
-	workspacePath, _ := filepath.Abs(filepath.Join(cb.workspace))
+	workspacePath, _ := filepath.Abs(cb.workspace)
 	toolDiscovery := cb.getDiscoveryRule()
 	version := app.Version()
 
@@ -423,11 +423,7 @@ func (cb *ContextBuilder) sourceFilesChangedLocked() bool {
 			return true
 		}
 	}
-	if skillFilesChangedSince(cb.skillRoots(), cb.skillFilesAtCache) {
-		return true
-	}
-
-	return false
+	return skillFilesChangedSince(cb.skillRoots(), cb.skillFilesAtCache)
 }
 
 // fileChangedSince returns true if a tracked source file has been modified,

@@ -194,9 +194,7 @@ func listDomains(s *store.Store, call *global.ToolCall) (string, error) {
 		return "", err
 	}
 	var out []store.Domain
-	for _, d := range domains {
-		out = append(out, d)
-	}
+	out = append(out, domains...)
 	if len(out) == 0 {
 		return "No domains.", nil
 	}

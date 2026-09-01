@@ -1146,7 +1146,7 @@ func (m *Manager) ForceCompress(_ context.Context) error {
 	i := len(conversation) - 1
 	for i >= 0 {
 		g := resolveGroup(conversation, i)
-		groups = append(groups, groupSpan{g.start, g.end})
+		groups = append(groups, groupSpan(g))
 		i = g.start - 1
 	}
 	// groups[0] is the current (most recent) turn group.

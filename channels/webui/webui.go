@@ -129,8 +129,8 @@ func (c *WebUIChannel) WebhookPath() string { return "/webui/" }
 func (c *WebUIChannel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/webui")
 
-	switch {
-	case path == "/ws" || path == "/ws/":
+	switch path {
+	case "/ws", "/ws/":
 		c.handleWebSocket(w, r)
 	default:
 		http.NotFound(w, r)

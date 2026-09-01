@@ -88,14 +88,14 @@ func buildTxt(reason string, meta map[string]any, input, output json.RawMessage)
 	written := map[string]bool{"reason": true}
 	for _, k := range orderedKeys {
 		if v, ok := meta[k]; ok {
-			sb.WriteString(fmt.Sprintf("%s: %v\n", k, v))
+			fmt.Fprintf(&sb, "%s: %v\n", k, v)
 			written[k] = true
 		}
 	}
 	// Any remaining keys not in the ordered list.
 	for k, v := range meta {
 		if !written[k] {
-			sb.WriteString(fmt.Sprintf("%s: %v\n", k, v))
+			fmt.Fprintf(&sb, "%s: %v\n", k, v)
 		}
 	}
 

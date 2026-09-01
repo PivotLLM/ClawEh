@@ -434,7 +434,7 @@ func (p *PerplexitySearchProvider) Search(ctx context.Context, query string, cou
 		}
 
 		if resp.StatusCode != http.StatusOK {
-			lastErr = fmt.Errorf("Perplexity API error: %s", string(body))
+			lastErr = fmt.Errorf("perplexity API error: %s", string(body))
 			if resp.StatusCode == http.StatusTooManyRequests ||
 				resp.StatusCode == http.StatusUnauthorized ||
 				resp.StatusCode == http.StatusForbidden ||
@@ -516,12 +516,12 @@ func (p *SearXNGSearchProvider) Search(ctx context.Context, query string, count 
 
 	// Format results in standard format
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("Results for: %s (via SearXNG)\n", query))
+	fmt.Fprintf(&b, "Results for: %s (via SearXNG)\n", query)
 	for i, r := range result.Results {
-		b.WriteString(fmt.Sprintf("%d. %s\n", i+1, r.Title))
-		b.WriteString(fmt.Sprintf("   %s\n", r.URL))
+		fmt.Fprintf(&b, "%d. %s\n", i+1, r.Title)
+		fmt.Fprintf(&b, "   %s\n", r.URL)
 		if r.Content != "" {
-			b.WriteString(fmt.Sprintf("   %s\n", r.Content))
+			fmt.Fprintf(&b, "   %s\n", r.Content)
 		}
 	}
 

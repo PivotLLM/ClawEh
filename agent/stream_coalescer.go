@@ -98,7 +98,7 @@ func shouldFlush(s string) bool {
 	}
 	switch s[n-1] {
 	case '.':
-		return !(n >= 2 && s[n-2] >= '0' && s[n-2] <= '9')
+		return n < 2 || s[n-2] < '0' || s[n-2] > '9'
 	case '!', '?':
 		return true
 	}

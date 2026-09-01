@@ -144,6 +144,9 @@ func BuildAgentPeerSessionKey(params SessionKeyParams) string {
 		peerID = strings.ToLower(peerID)
 
 		switch sessionScope {
+		case SessionScopeUnified:
+			// Unified sessions do not split by peer; fall through to the
+			// agent-wide key built below.
 		case SessionScopePerAccount:
 			if peerID != "" {
 				channel := normalizeChannel(params.Channel)

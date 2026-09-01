@@ -406,9 +406,9 @@ func classifySendErr(err error) error {
 // daemon error.
 func sendErrForCode(err error, code int, hasCode bool) error {
 	if hasCode && code == schema.ErrCodeStealth {
-		return fmt.Errorf("%w: %v", channels.ErrReceiveOnly, err)
+		return fmt.Errorf("%w: %w", channels.ErrReceiveOnly, err)
 	}
-	return fmt.Errorf("%w: %v", channels.ErrSendFailed, err)
+	return fmt.Errorf("%w: %w", channels.ErrSendFailed, err)
 }
 
 // decodeGroupChatID reports whether a ChatID targets a group and returns the

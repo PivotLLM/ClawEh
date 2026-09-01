@@ -5,6 +5,7 @@ package llmcontext
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -142,7 +143,7 @@ func TestCompress_NoAgeCapRetainsEverything(t *testing.T) {
 		}
 		return
 	}
-	if err != ErrNothingToCompress {
+	if !errors.Is(err, ErrNothingToCompress) {
 		t.Fatalf("expected ErrNothingToCompress with no age cap, got %v", err)
 	}
 }
@@ -169,7 +170,7 @@ func TestCompress_AgeCapKeepsLatestUserMessage(t *testing.T) {
 	mgr.store = store
 	mgr.msgCount = len(history)
 
-	if err := mgr.doCompress(context.Background(), false); err != nil && err != ErrNothingToCompress {
+	if err := mgr.doCompress(context.Background(), false); err != nil && !errors.Is(err, ErrNothingToCompress) {
 		t.Fatalf("doCompress: %v", err)
 	}
 

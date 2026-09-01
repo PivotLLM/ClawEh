@@ -3,6 +3,7 @@ package agent
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -98,7 +99,7 @@ func interactiveMode(agentLoop *agent.AgentLoop, sessionKey string) {
 	for {
 		line, err := rl.Readline()
 		if err != nil {
-			if err == readline.ErrInterrupt || err == io.EOF {
+			if errors.Is(err, readline.ErrInterrupt) || errors.Is(err, io.EOF) {
 				fmt.Println("\nGoodbye!")
 				return
 			}
@@ -133,7 +134,7 @@ func simpleInteractiveMode(agentLoop *agent.AgentLoop, sessionKey string) {
 		fmt.Print("You: ")
 		line, err := reader.ReadString('\n')
 		if err != nil {
-			if err == io.EOF {
+			if errors.Is(err, io.EOF) {
 				fmt.Println("\nGoodbye!")
 				return
 			}

@@ -519,7 +519,7 @@ func freshID(ctx context.Context, q DBTX, prefix, table string) (string, error) 
 		}
 		var x int
 		err = q.QueryRowContext(ctx, "SELECT 1 FROM "+table+" WHERE id=?", id).Scan(&x)
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return id, nil
 		}
 		if err != nil {

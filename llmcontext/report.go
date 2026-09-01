@@ -68,15 +68,15 @@ func (r *CompactionReport) String() string {
 		if a.Detail != "" {
 			status = fmt.Sprintf("%s (%s)", a.Status, a.Detail)
 		}
-		b.WriteString(fmt.Sprintf("\nModel %s: %s", a.Model, status))
+		fmt.Fprintf(&b, "\nModel %s: %s", a.Model, status)
 	}
 
 	b.WriteString("\n")
 	switch r.Outcome {
 	case "success":
-		b.WriteString(fmt.Sprintf("Compacted to %d messages (%s)", r.AfterMsgs, formatBytes(r.AfterBytes)))
+		fmt.Fprintf(&b, "Compacted to %d messages (%s)", r.AfterMsgs, formatBytes(r.AfterBytes))
 	case "partial":
-		b.WriteString(fmt.Sprintf("Partially compacted (still above safety threshold) — %d messages (%s)", r.AfterMsgs, formatBytes(r.AfterBytes)))
+		fmt.Fprintf(&b, "Partially compacted (still above safety threshold) — %d messages (%s)", r.AfterMsgs, formatBytes(r.AfterBytes))
 	case "nothing":
 		b.WriteString("Nothing to compress — already compact.")
 	default:

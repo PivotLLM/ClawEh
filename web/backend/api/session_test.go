@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -44,25 +45,25 @@ func TestHandleListSessions_JSONLStorage(t *testing.T) {
 	}
 
 	sessionKey := webuiSessionPrefix + "history-jsonl"
-	if _, err := store.AddFullMessage(nil, sessionKey, providers.Message{
+	if _, err := store.AddFullMessage(context.TODO(), sessionKey, providers.Message{
 		Role:    "user",
 		Content: "Explain why the history API is empty after migration.",
 	}); err != nil {
 		t.Fatalf("AddFullMessage(user) error = %v", err)
 	}
-	if _, err := store.AddFullMessage(nil, sessionKey, providers.Message{
+	if _, err := store.AddFullMessage(context.TODO(), sessionKey, providers.Message{
 		Role:    "assistant",
 		Content: "Because the API still reads only legacy JSON session files.",
 	}); err != nil {
 		t.Fatalf("AddFullMessage(assistant) error = %v", err)
 	}
-	if _, err := store.AddFullMessage(nil, sessionKey, providers.Message{
+	if _, err := store.AddFullMessage(context.TODO(), sessionKey, providers.Message{
 		Role:    "tool",
 		Content: "ignored",
 	}); err != nil {
 		t.Fatalf("AddFullMessage(tool) error = %v", err)
 	}
-	if err := store.SetSummary(nil, sessionKey, "JSONL-backed session"); err != nil {
+	if err := store.SetSummary(context.TODO(), sessionKey, "JSONL-backed session"); err != nil {
 		t.Fatalf("SetSummary() error = %v", err)
 	}
 
@@ -110,14 +111,14 @@ func TestHandleListSessions_TitleUsesTrimmedSummary(t *testing.T) {
 	}
 
 	sessionKey := webuiSessionPrefix + "summary-title"
-	if _, err := store.AddFullMessage(nil, sessionKey, providers.Message{
+	if _, err := store.AddFullMessage(context.TODO(), sessionKey, providers.Message{
 		Role:    "user",
 		Content: "fallback preview",
 	}); err != nil {
 		t.Fatalf("AddFullMessage() error = %v", err)
 	}
 	if err := store.SetSummary(
-		nil,
+		context.TODO(),
 		sessionKey,
 		"  This summary is intentionally longer than sixty characters so it must be truncated in the history menu.  ",
 	); err != nil {
@@ -171,11 +172,11 @@ func TestHandleGetSession_JSONLStorage(t *testing.T) {
 		{Role: "assistant", Content: "second"},
 		{Role: "tool", Content: "ignored"},
 	} {
-		if _, err := store.AddFullMessage(nil, sessionKey, msg); err != nil {
+		if _, err := store.AddFullMessage(context.TODO(), sessionKey, msg); err != nil {
 			t.Fatalf("AddFullMessage() error = %v", err)
 		}
 	}
-	if err := store.SetSummary(nil, sessionKey, "detail summary"); err != nil {
+	if err := store.SetSummary(context.TODO(), sessionKey, "detail summary"); err != nil {
 		t.Fatalf("SetSummary() error = %v", err)
 	}
 
@@ -230,13 +231,13 @@ func TestHandleDeleteSession_JSONLStorage(t *testing.T) {
 	}
 
 	sessionKey := webuiSessionPrefix + "delete-jsonl"
-	if _, err := store.AddFullMessage(nil, sessionKey, providers.Message{
+	if _, err := store.AddFullMessage(context.TODO(), sessionKey, providers.Message{
 		Role:    "user",
 		Content: "delete me",
 	}); err != nil {
 		t.Fatalf("AddFullMessage() error = %v", err)
 	}
-	if err := store.SetSummary(nil, sessionKey, "delete summary"); err != nil {
+	if err := store.SetSummary(context.TODO(), sessionKey, "delete summary"); err != nil {
 		t.Fatalf("SetSummary() error = %v", err)
 	}
 

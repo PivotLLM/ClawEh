@@ -2,6 +2,7 @@ package device
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 )
@@ -59,7 +60,7 @@ func TestPairingLifecycle(t *testing.T) {
 	if pend, _ := s.ListPending(ctx); len(pend) != 0 {
 		t.Fatalf("expected 0 pending after reject")
 	}
-	if err := s.Reject(ctx, "nonexistent"); err != ErrPendingNotFound {
+	if err := s.Reject(ctx, "nonexistent"); !errors.Is(err, ErrPendingNotFound) {
 		t.Fatalf("Reject unknown: want ErrPendingNotFound got %v", err)
 	}
 }
@@ -117,7 +118,7 @@ func TestApproveMintsTokensAndPairs(t *testing.T) {
 
 func TestApproveUnknownRequest(t *testing.T) {
 	s := openTestStore(t)
-	if _, _, err := s.Approve(context.Background(), "nope", nil, nil); err != ErrPendingNotFound {
+	if _, _, err := s.Approve(context.Background(), "nope", nil, nil); !errors.Is(err, ErrPendingNotFound) {
 		t.Fatalf("want ErrPendingNotFound, got %v", err)
 	}
 }

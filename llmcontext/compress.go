@@ -1106,10 +1106,8 @@ func (m *Manager) persistStoredResult(sysMsg *memory.StoredMessage, conv []memor
 // conv until the estimated token count drops below safetyPercent or conv reaches
 // retainMinMessages.
 func (m *Manager) dropOldestStoredGroups(_ context.Context, conv []memory.StoredMessage) []memory.StoredMessage {
-	for {
-		if len(conv) <= m.cfg.retainMinMessages {
-			break
-		}
+	for len(conv) > m.cfg.retainMinMessages {
+
 		plain := storedToPlain(conv)
 		tokens := m.estTokens(plain)
 		pct := 0.0

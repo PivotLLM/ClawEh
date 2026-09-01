@@ -63,7 +63,7 @@ func buildHistory(specs ...turnSpec) []memory.StoredMessage {
 func markToolError(h []memory.StoredMessage, id string) {
 	for i := range h {
 		if h[i].Role == "tool" && h[i].ToolCallID == id {
-			h[i].Message.Type = providers.MessageTypeToolError
+			h[i].Type = providers.MessageTypeToolError
 		}
 	}
 }
@@ -285,7 +285,7 @@ func TestSweep_Budget(t *testing.T) {
 		turnSpec{tool: "file_read_bytes", id: "a", args: map[string]any{"path": "a.md"}, content: strings.Repeat("x", 250)}, // age 6
 		turnSpec{tool: "file_read_bytes", id: "b", args: map[string]any{"path": "b.md"}, content: strings.Repeat("x", 200)}, // age 5
 		turnSpec{tool: "file_read_bytes", id: "c", args: map[string]any{"path": "c.md"}, content: strings.Repeat("x", 150)}, // age 4
-		turnSpec{text: "1"}, turnSpec{text: "2"}, turnSpec{text: "3"},                                                 // ages 1-3 protected, no reader bytes
+		turnSpec{text: "1"}, turnSpec{text: "2"}, turnSpec{text: "3"}, // ages 1-3 protected, no reader bytes
 	))
 	events := newEvictMgr(store, p).SweepEvictions(context.Background())
 	if len(events) != 2 {
@@ -417,7 +417,7 @@ func TestSweep_DifferentSlicesCoexist(t *testing.T) {
 	// C: reading a different page (start_line) of the same file is not a duplicate;
 	// both pages survive, so a large file read in chunks stays available to edit.
 	store := newSeqStore(buildHistory(
-		turnSpec{tool: "file_read_lines", id: "p1", args: map[string]any{"path": "big.md", "start_line": 1.0}, content: strings.Repeat("x", 500)},   // age 5, page 1
+		turnSpec{tool: "file_read_lines", id: "p1", args: map[string]any{"path": "big.md", "start_line": 1.0}, content: strings.Repeat("x", 500)}, // age 5, page 1
 		turnSpec{text: "1"}, turnSpec{text: "2"}, turnSpec{text: "3"},
 		turnSpec{tool: "file_read_lines", id: "p2", args: map[string]any{"path": "big.md", "start_line": 716.0}, content: strings.Repeat("y", 500)}, // age 1, page 2
 	))

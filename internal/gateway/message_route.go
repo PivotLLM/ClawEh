@@ -99,6 +99,8 @@ func RegisterMessageRoute(server *health.Server, agentLoop *agent.AgentLoop) {
 
 		agentID, retryAfter, decision := agentLoop.CheckMessageToken(token)
 		switch decision {
+		case agent.MsgTokenValid:
+			// Accepted — fall through to delivery below.
 		case agent.MsgTokenRateLimited:
 			// Round the remaining block time UP to whole seconds so Retry-After
 			// never tells the caller to retry before the block actually clears.

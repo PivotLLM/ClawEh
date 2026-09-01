@@ -2,6 +2,7 @@ package bus
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -81,7 +82,7 @@ func TestPublishInbound_ContextCancel(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error from canceled context, got nil")
 	}
-	if err != context.Canceled {
+	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context.Canceled, got %v", err)
 	}
 }
@@ -91,7 +92,7 @@ func TestPublishInbound_BusClosed(t *testing.T) {
 	mb.Close()
 
 	err := mb.PublishInbound(context.Background(), InboundMessage{Content: "test"})
-	if err != ErrBusClosed {
+	if !errors.Is(err, ErrBusClosed) {
 		t.Fatalf("expected ErrBusClosed, got %v", err)
 	}
 }
@@ -101,7 +102,7 @@ func TestPublishOutbound_BusClosed(t *testing.T) {
 	mb.Close()
 
 	err := mb.PublishOutbound(context.Background(), OutboundMessage{Content: "test"})
-	if err != ErrBusClosed {
+	if !errors.Is(err, ErrBusClosed) {
 		t.Fatalf("expected ErrBusClosed, got %v", err)
 	}
 }
@@ -208,7 +209,7 @@ func TestPublishInbound_FullBuffer(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when buffer is full and context times out")
 	}
-	if err != context.DeadlineExceeded {
+	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("expected context.DeadlineExceeded, got %v", err)
 	}
 }
@@ -223,7 +224,7 @@ func TestCloseIdempotent(t *testing.T) {
 
 	// After close, publish should return ErrBusClosed
 	err := mb.PublishInbound(context.Background(), InboundMessage{Content: "test"})
-	if err != ErrBusClosed {
+	if !errors.Is(err, ErrBusClosed) {
 		t.Fatalf("expected ErrBusClosed after multiple closes, got %v", err)
 	}
 }

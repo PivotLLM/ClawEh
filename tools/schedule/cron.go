@@ -290,8 +290,8 @@ func (t *CronTool) listJobs(agentID string) *tools.ToolResult {
 		if !j.Enabled {
 			state = "disabled"
 		}
-		result.WriteString(fmt.Sprintf("- %s (id: %s, %s, %s, next: %s)\n",
-			j.Name, j.ID, formatSchedule(j), state, formatNextRun(j)))
+		fmt.Fprintf(&result, "- %s (id: %s, %s, %s, next: %s)\n",
+			j.Name, j.ID, formatSchedule(j), state, formatNextRun(j))
 	}
 
 	return tools.SilentResult(result.String())

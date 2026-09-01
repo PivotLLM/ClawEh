@@ -78,10 +78,8 @@ func (p *Provider) ValidateConfiguration(config *providers.ServiceConfig) error 
 		return fmt.Errorf("client_id is required for Google OAuth")
 	}
 
-	// Client secret is not required for device flow but recommended for auth code flow
-	if config.ClientSecret == "" {
-		// This is acceptable for device flow, but we should warn
-	}
+	// ClientSecret is deliberately not required: the device flow does not use one.
+	// The authorization-code flow does, and ExchangeCode fails without it there.
 
 	// Validate scopes format
 	if config.Scopes != "" {

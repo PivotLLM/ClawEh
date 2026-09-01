@@ -241,7 +241,7 @@ func (s *Store) Touch(ctx context.Context, q DBTX, id string) error {
 func (s *Store) GetDomain(ctx context.Context, q DBTX, id string, withMemories bool) (Domain, error) {
 	row := q.QueryRowContext(ctx, domainSelect+` WHERE id=?`, id)
 	d, err := scanDomain(row)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return Domain{}, ErrNotFound
 	}
 	if err != nil {
@@ -264,7 +264,7 @@ func (s *Store) DomainByName(ctx context.Context, q DBTX, name string) (Domain, 
 		domainSelect+` WHERE status=? AND lower(trim(name))=lower(trim(?)) ORDER BY id LIMIT 1`,
 		string(StatusActive), name)
 	d, err := scanDomain(row)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return Domain{}, ErrNotFound
 	}
 	return d, err
@@ -277,7 +277,7 @@ func (s *Store) GeneralDomain(ctx context.Context, q DBTX) (Domain, error) {
 		domainSelect+` WHERE lower(trim(name))='general' AND status=? ORDER BY id LIMIT 1`,
 		string(StatusActive))
 	d, err := scanDomain(row)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return Domain{}, ErrNotFound
 	}
 	return d, err

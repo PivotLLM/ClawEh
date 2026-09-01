@@ -3,8 +3,8 @@ package msg
 import (
 	"context"
 
-	"github.com/PivotLLM/ClawEh/tools"
 	"errors"
+	"github.com/PivotLLM/ClawEh/tools"
 	"testing"
 )
 
@@ -75,8 +75,8 @@ func TestMessageTool_Execute_IgnoresSuppliedChannel(t *testing.T) {
 	ctx := tools.WithToolContext(context.Background(), "session-channel", "session-chat-id")
 	args := map[string]any{
 		"content": "Test message",
-		"channel": "other-channel",  // must be ignored
-		"chat_id": "other-chat-id",  // must be ignored
+		"channel": "other-channel", // must be ignored
+		"chat_id": "other-chat-id", // must be ignored
 	}
 
 	result := tool.Execute(ctx, args)
@@ -128,7 +128,7 @@ func TestMessageTool_Execute_SendFailure(t *testing.T) {
 	if result.Err == nil {
 		t.Error("Expected Err to be set")
 	}
-	if result.Err != sendErr {
+	if !errors.Is(result.Err, sendErr) {
 		t.Errorf("Expected Err to be sendErr, got %v", result.Err)
 	}
 }

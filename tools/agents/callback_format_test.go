@@ -18,7 +18,7 @@ func TestCompletionResult_OrderModeSecurity(t *testing.T) {
 	res := sm.completionResult(rec)
 	fu := res.ForUser
 	iAgent, iStatus, iTask := strings.Index(fu, "Agent:"), strings.Index(fu, "Status:"), strings.Index(fu, "Task '")
-	if iAgent < 0 || iStatus < 0 || iTask < 0 || !(iAgent < iStatus && iStatus < iTask) {
+	if iAgent < 0 || iStatus < 0 || iTask < 0 || (iAgent >= iStatus || iStatus >= iTask) {
 		t.Errorf("expected order Agent < Status < Task, got:\n%s", fu)
 	}
 	if !strings.Contains(fu, "(background)") {

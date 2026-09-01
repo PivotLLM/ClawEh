@@ -6,6 +6,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"testing"
 )
@@ -172,7 +173,7 @@ func TestSetMemoryFileRefBumpsStableRev(t *testing.T) {
 
 func TestSetMemoryFileRefUnknownMemory(t *testing.T) {
 	s := openTest(t)
-	if _, err := s.SetMemoryFileRef(context.Background(), s.DB(), "hNOPE1", "files/x.md"); err != ErrNotFound {
+	if _, err := s.SetMemoryFileRef(context.Background(), s.DB(), "hNOPE1", "files/x.md"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
 	}
 }

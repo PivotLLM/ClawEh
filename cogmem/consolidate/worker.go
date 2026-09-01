@@ -165,7 +165,7 @@ func (w *Worker) RunOnce(ctx context.Context, p RunParams) (RunResult, error) {
 		if !MeaningfulRole(m.Role) {
 			continue
 		}
-		msgs = append(msgs, Message{Seq: m.Seq, Role: m.Role, Text: m.Text})
+		msgs = append(msgs, Message(m))
 	}
 
 	batch, lastSeq, more := SelectBatch(msgs, w.batchOpts)

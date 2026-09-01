@@ -207,8 +207,8 @@ func appendFile(sysFs fileSystem, path, appendContent string) error {
 		return err
 	}
 
-	newContent := append(content, []byte(appendContent)...)
-	return sysFs.WriteFile(path, newContent)
+	content = append(content, []byte(appendContent)...)
+	return sysFs.WriteFile(path, content)
 }
 
 // replaceEditContent handles the core logic of finding and replacing a single occurrence of oldText.

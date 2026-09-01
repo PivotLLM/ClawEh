@@ -96,6 +96,8 @@ func main() {
 	defer cancel()
 
 	if err := executeOAuthFlow(ctx, cfg, &flags, registry); err != nil {
+		cancel() // log.Fatalf does not run deferred calls, so release the context here
+		//nolint:gocritic // exitAfterDefer: the deferred cancel is called explicitly above
 		log.Fatalf("OAuth flow failed: %v", err)
 	}
 }
@@ -583,10 +585,11 @@ func (e *OAuthFlowExecutor) buildAuthorizationURL(config *providers.ServiceConfi
 	params.Set("code_challenge_method", "S256")
 
 	// Add service-specific parameters
-	if config.ServiceName == "google" {
+	switch config.ServiceName {
+	case "google":
 		params.Set("access_type", "offline")
 		params.Set("prompt", "consent")
-	} else if config.ServiceName == "microsoft365" {
+	case "microsoft365":
 		params.Set("prompt", "consent")
 	}
 

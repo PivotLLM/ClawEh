@@ -86,6 +86,9 @@ func (c *SlackChannel) Start(ctx context.Context) error {
 	go c.eventLoop()
 
 	go func() {
+		// RunContext loops until it fails, so it never returns nil; the guard is
+		// kept so this still reads correctly if that ever changes upstream.
+		//nolint:staticcheck // SA4023: comparison is always true today, by design
 		if err := c.socketClient.RunContext(c.ctx); err != nil {
 			if c.ctx.Err() == nil {
 				logger.ErrorCF("slack", "Socket Mode connection error", map[string]any{
@@ -304,7 +307,7 @@ func (c *SlackChannel) eventLoop() {
 			if !ok {
 				return
 			}
-			switch event.Type {
+			switch event.Type { //nolint:exhaustive // only the event types this channel acts on
 			case socketmode.EventTypeEventsAPI:
 				c.handleEventsAPI(event)
 			case socketmode.EventTypeSlashCommand:

@@ -5,6 +5,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -97,11 +98,11 @@ func TestCreateDuplicateNameRejected(t *testing.T) {
 	if _, err := s.CreateDomain(ctx, s.DB(), CreateDomainParams{AgentID: "a", Name: "Dup"}); err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if _, err := s.CreateDomain(ctx, s.DB(), CreateDomainParams{AgentID: "a", Name: "  dup  "}); err != ErrDuplicateName {
+	if _, err := s.CreateDomain(ctx, s.DB(), CreateDomainParams{AgentID: "a", Name: "  dup  "}); !errors.Is(err, ErrDuplicateName) {
 		t.Fatalf("duplicate create err = %v, want ErrDuplicateName", err)
 	}
 	// The seeded "General" name is also taken.
-	if _, err := s.CreateDomain(ctx, s.DB(), CreateDomainParams{AgentID: "a", Name: "general"}); err != ErrDuplicateName {
+	if _, err := s.CreateDomain(ctx, s.DB(), CreateDomainParams{AgentID: "a", Name: "general"}); !errors.Is(err, ErrDuplicateName) {
 		t.Fatalf("duplicate General err = %v, want ErrDuplicateName", err)
 	}
 }
@@ -308,7 +309,7 @@ func TestSeedGeneralOnce(t *testing.T) {
 		t.Fatalf("reopen: %v", err)
 	}
 	defer s2.Close()
-	if _, err := s2.GeneralDomain(ctx, s2.DB()); err != ErrNotFound {
+	if _, err := s2.GeneralDomain(ctx, s2.DB()); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("General was re-seeded after deletion (err=%v); seed must run only once", err)
 	}
 }
@@ -335,7 +336,7 @@ func TestMigrateDomain(t *testing.T) {
 	if moved != 2 {
 		t.Fatalf("moved = %d, want 2", moved)
 	}
-	if _, err := s.GetDomain(ctx, db, from.ID, false); err != ErrNotFound {
+	if _, err := s.GetDomain(ctx, db, from.ID, false); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("source domain survived migrate (err=%v)", err)
 	}
 	mems, _ := s.ListMemories(ctx, db, to.ID, StatusActive)
@@ -424,7 +425,7 @@ func TestDomainUpdatePatch(t *testing.T) {
 		t.Fatalf("after sticky patch: sticky=%v version=%d", got.Sticky(), got.Version)
 	}
 	// Rename onto an existing name is rejected.
-	if err := s.UpdateDomain(ctx, s.DB(), d.ID, UpdateDomainParams{Name: strptr("General")}); err != ErrDuplicateName {
+	if err := s.UpdateDomain(ctx, s.DB(), d.ID, UpdateDomainParams{Name: strptr("General")}); !errors.Is(err, ErrDuplicateName) {
 		t.Fatalf("rename collision err = %v, want ErrDuplicateName", err)
 	}
 }
@@ -486,10 +487,10 @@ func TestDeleteMemory(t *testing.T) {
 	if err := s.DeleteMemory(ctx, s.DB(), m.ID); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
-	if _, err := s.GetMemory(ctx, s.DB(), m.ID); err != ErrNotFound {
+	if _, err := s.GetMemory(ctx, s.DB(), m.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("memory survived delete (err=%v)", err)
 	}
-	if err := s.DeleteMemory(ctx, s.DB(), m.ID); err != ErrNotFound {
+	if err := s.DeleteMemory(ctx, s.DB(), m.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("second delete err = %v, want ErrNotFound", err)
 	}
 }

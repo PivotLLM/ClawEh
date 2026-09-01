@@ -416,7 +416,7 @@ func (m *Manager) SweepEvictions(_ context.Context) []EvictionEvent {
 		msgs[i] = stored[i].Message
 		// A failed tool result is marked with Message.Type (set by the agent loop);
 		// used below so a failed write does not supersede the read it needs.
-		toolErr[i] = stored[i].Message.Type == providers.MessageTypeToolError
+		toolErr[i] = stored[i].Type == providers.MessageTypeToolError
 	}
 
 	// 1-based turn-group age per message index (newest group = 1).
@@ -571,11 +571,11 @@ func (m *Manager) SweepEvictions(_ context.Context) []EvictionEvent {
 	argMarks := make(map[int][]argEviction)
 	if p.ArgBytes > 0 {
 		for idx := range msgs {
-			if ages[idx] <= p.EvictTurns || len(stored[idx].Message.ToolCalls) == 0 {
+			if ages[idx] <= p.EvictTurns || len(stored[idx].ToolCalls) == 0 {
 				continue
 			}
-			for c := range stored[idx].Message.ToolCalls {
-				evicted := evictLargeArgs(&stored[idx].Message.ToolCalls[c], p.ArgBytes)
+			for c := range stored[idx].ToolCalls {
+				evicted := evictLargeArgs(&stored[idx].ToolCalls[c], p.ArgBytes)
 				for _, e := range evicted {
 					e.callIdx = c
 					argMarks[idx] = append(argMarks[idx], e)
@@ -626,7 +626,7 @@ func (m *Manager) SweepEvictions(_ context.Context) []EvictionEvent {
 			AgeTurns: ages[idx],
 			Reason:   reason,
 		}
-		stored[idx].Message.Content = evictionPlaceholder(meta.tool, res, ev.Bytes)
+		stored[idx].Content = evictionPlaceholder(meta.tool, res, ev.Bytes)
 		events = append(events, ev)
 		logger.DebugCF("llmcontext", "evicted tool result", map[string]any{
 			"session_key": m.sessionKey,

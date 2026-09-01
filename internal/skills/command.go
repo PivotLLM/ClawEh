@@ -6,7 +6,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/internal"
 	"github.com/PivotLLM/ClawEh/skills"
 )
@@ -65,9 +64,7 @@ func NewSkillsCommand() *cobra.Command {
 		return d.skillsLoader, nil
 	}
 
-	cfgFn := func() (*config.Config, error) {
-		return internal.LoadConfig()
-	}
+	cfgFn := internal.LoadConfig
 
 	cmd.AddCommand(
 		newListCommand(loaderFn),

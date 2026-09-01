@@ -108,7 +108,7 @@ func NewManager(agentID, storePath string, windowMinutes, windowCount int) (*Man
 			case <-time.After(delay):
 				m.mu.Lock()
 				m.rotate()
-				m.save() //nolint:errcheck — logged inside save
+				m.save() //nolint:errcheck // logged inside save
 				m.mu.Unlock()
 			}
 		}

@@ -6,6 +6,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -178,7 +179,7 @@ func (s *Store) PromoteMemory(ctx context.Context, q DBTX, id string) error {
 func (s *Store) GetMemory(ctx context.Context, q DBTX, id string) (Memory, error) {
 	row := q.QueryRowContext(ctx, memorySelect+` WHERE id=?`, id)
 	h, err := scanMemory(row)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return Memory{}, ErrNotFound
 	}
 	return h, err

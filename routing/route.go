@@ -45,7 +45,7 @@ func NewRouteResolver(cfg *config.Config) *RouteResolver {
 		default:
 			logger.WarnCF("routing", "Unrecognized session mode — falling back to unified",
 				map[string]any{"mode": mode})
-			mode = mode + " (unrecognized, using unified)"
+			mode += " (unrecognized, using unified)"
 		}
 	}
 	logger.InfoCF("routing", "Session mode active", map[string]any{"mode": mode})
@@ -175,7 +175,7 @@ func matchesAccountID(matchAccountID, actual string) bool {
 	if trimmed == "*" {
 		return true
 	}
-	return strings.ToLower(trimmed) == strings.ToLower(actual)
+	return strings.EqualFold(trimmed, actual)
 }
 
 func (r *RouteResolver) findPeerMatch(bindings []config.AgentBinding, peer *RoutePeer) *config.AgentBinding {
