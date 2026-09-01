@@ -19,7 +19,10 @@ Three common approaches are below. All of them work because both surfaces are
 ordinary HTTP + WebSocket; you are just publishing a port.
 
 > **Security note:** The WebUI and API have **no authentication** — access control
-> is the bind address plus `gateway.allowed_cidrs` only. Whichever method you
+> is the bind address plus `gateway.allowed_cidrs`, which are two independent
+> gates. `allowed_cidrs` is empty by default, meaning **loopback only**: binding
+> to `0.0.0.0` alone will not serve a network client, and you must add the
+> networks you want to reach it from. Whichever method you
 > choose, treat an exposed WebUI endpoint as sensitive and restrict access at the
 > edge (client certificates, SSO, an allowlist, or a private overlay network)
 > until in-app auth is in place. The device gateway authenticates every client, so

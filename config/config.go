@@ -1660,11 +1660,14 @@ type GatewayConfig struct {
 	// front. See EffectiveExternalURL.
 	ExternalURL string `json:"external_url,omitempty" env:"CLAW_GATEWAY_EXTERNAL_URL"`
 	// AllowedCIDRs is the IP allowlist for the shared HTTP server (WebUI/API +
-	// health). Empty means the private-network default (see PrivateNetworkCIDRs).
-	// Combined with the always-allowed loopback (enforced at bind time), this
-	// locks the no-auth WebUI/API to the local machine and the private LAN
-	// regardless of the bind address. Set an explicit list (e.g. 0.0.0.0/0) to
-	// widen it.
+	// health). Empty means loopback only: the WebUI and /api/* have no operator
+	// authentication, so nothing off-box reaches them until an allowlist is set
+	// deliberately. Binding to 0.0.0.0 does not by itself widen access — the
+	// allowlist is a second, independent gate.
+	//
+	// To reach it from elsewhere, list the networks explicitly, e.g.
+	// ["192.168.1.0/24"], the RFC1918 set (see PrivateNetworkCIDRs), or
+	// ["0.0.0.0/0"] to allow any address. Loopback is always allowed.
 	AllowedCIDRs []string `json:"allowed_cidrs,omitempty"`
 }
 
@@ -1672,23 +1675,26 @@ type GatewayConfig struct {
 // (gateway + WebUI on a single mux). It matches DefaultConfig's Gateway.Port.
 const DefaultGatewayPort = 18790
 
-// PrivateNetworkCIDRs is the default IP allowlist: the RFC1918 private ranges.
-// Used when Gateway.AllowedCIDRs is empty so a fresh install is locked to
-// loopback + the private network out of the box.
+// PrivateNetworkCIDRs is the RFC1918 private range set, offered as a
+// ready-made allowlist for a LAN install (`claw install --allowed-cidrs`, or
+// the WebUI). It is NOT a default: an empty Gateway.AllowedCIDRs means loopback
+// only. See EffectiveAllowedCIDRs.
 var PrivateNetworkCIDRs = []string{
 	"10.0.0.0/8",
 	"172.16.0.0/12",
 	"192.168.0.0/16",
 }
 
-// EffectiveAllowedCIDRs returns the IP allowlist to enforce: the configured
-// AllowedCIDRs when non-empty, otherwise the private-network default. A copy is
-// returned so callers cannot mutate the shared default slice.
+// EffectiveAllowedCIDRs returns the IP allowlist to enforce for the shared HTTP
+// port. Nil means loopback only, which is the out-of-the-box posture: the
+// WebUI/API carry no operator auth, so an install grants no off-box access
+// until someone asks for it. A copy is returned so callers cannot mutate the
+// configured slice.
 func (g GatewayConfig) EffectiveAllowedCIDRs() []string {
-	if len(g.AllowedCIDRs) > 0 {
-		return append([]string(nil), g.AllowedCIDRs...)
+	if len(g.AllowedCIDRs) == 0 {
+		return nil
 	}
-	return append([]string(nil), PrivateNetworkCIDRs...)
+	return append([]string(nil), g.AllowedCIDRs...)
 }
 
 // ValidateAllowedCIDRs rejects any entry that is not a valid CIDR (matching the

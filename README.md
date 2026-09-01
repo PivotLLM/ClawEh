@@ -88,7 +88,7 @@ Run as your normal user — it prompts for sudo only to write the unit file:
 ./claw install --host 0.0.0.0   # headless: reachable on your LAN
 ```
 
-This copies the binary to `~/bin` (or `~/.local/bin`), adds it to your `PATH`, and registers a systemd service that runs ClawEh as your user at boot. The web UI has no authentication, so access is restricted to loopback plus the private-network ranges (RFC1918) by default — override with `--allowed-cidrs` (e.g. a specific subnet, or `0.0.0.0/0` to allow all). Remove everything with `claw uninstall`.
+This copies the binary to `~/bin` (or `~/.local/bin`), adds it to your `PATH`, and registers a systemd service that runs ClawEh as your user at boot. The web UI has no authentication, so access is **loopback-only by default**: binding to `0.0.0.0` makes it listen on the network, but nothing off-box is served until you also say who may connect. Pass `--allowed-cidrs` for that — e.g. `--host 0.0.0.0 --allowed-cidrs 192.168.1.0/24` for a LAN, the three RFC1918 ranges for any private network, or `0.0.0.0/0` for any address. Loopback is always allowed. Remove everything with `claw uninstall`.
 
 > Not using systemd? Just run `claw` directly — it starts the gateway and web UI on port `18790`.
 
@@ -335,7 +335,7 @@ On platforms like Telegram where bots are publicly discoverable by username, thi
 
 ClawEh is intended to function as personal assistant that runs on a computer the user controls. It is not designed or intended to provide any kind of public service. The current web interface uses HTTP and has no authentication, and therefore should not be exposed to untrusted networks. We strongly recommend running it on `localhost` only. We are aware that many people wish to run a "claw" application on a headless computer and are considering the right path forward.
 
-The web management API has no authentication layer. Any client that can reach the management port can add or modify model configurations (including API keys and endpoints), read session history, and start or stop the gateway process. Access control relies entirely on the listen address (localhost-only by default) and, when running in public mode, the IP allowlist. Do not run with `-public` and an empty `allowed_cidrs` list on any network where untrusted hosts could reach the port.
+The web management API has no authentication layer. Any client that can reach the management port can add or modify model configurations (including API keys and endpoints), read session history, and start or stop the gateway process. Access control relies entirely on the listen address (localhost-only by default) and the IP allowlist, which are two independent gates: an empty `gateway.allowed_cidrs` serves loopback only, whatever the bind address. Widen it deliberately, and prefer a specific subnet over `0.0.0.0/0` on any network where untrusted hosts could reach the port.
 
 In general, Claw should be operated as a local, user-controlled tool, not as an internet-facing application.
 

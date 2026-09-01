@@ -6,7 +6,12 @@ import (
 	"testing"
 )
 
-func TestIPAllowlist_EmptyCIDRsAllowsAll(t *testing.T) {
+// TestIPAllowlist_EmptyCIDRsRejectsNonLoopback pins the current contract: an
+// empty allowlist is loopback-only. This replaces a test that asserted the
+// opposite (empty = allow all) — the behaviour changed in 0.4.71 because the
+// handler behind this middleware is the unauthenticated WebUI/API, and a config
+// that merely omits the key must not expose it to the network.
+func TestIPAllowlist_EmptyCIDRsRejectsNonLoopback(t *testing.T) {
 	h, err := IPAllowlist(nil, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -19,8 +24,8 @@ func TestIPAllowlist_EmptyCIDRsAllowsAll(t *testing.T) {
 	req.RemoteAddr = "203.0.113.5:1234"
 	h.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	if rec.Code == http.StatusOK {
+		t.Fatalf("status = %d, want a rejection: an empty allowlist must be loopback-only", rec.Code)
 	}
 }
 

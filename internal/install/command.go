@@ -39,10 +39,12 @@ func NewInstallCommand() *cobra.Command {
 			"your PATH, and writes a systemd system service that runs " + app.Name() + " as your user\n" +
 			"account at boot. Writing the service unit requires sudo; you'll be prompted for your\n" +
 			"password. Run this as your normal user, not with sudo.\n\n" +
-			"On a headless host, pass --host 0.0.0.0 so the WebUI is reachable on the network\n" +
-			"(it binds to localhost by default). The WebUI has no authentication, but access is\n" +
-			"restricted to loopback + the private-network IP allowlist (RFC1918) by default — use\n" +
-			"--allowed-cidrs to customise it (e.g. a specific subnet, or 0.0.0.0/0 to allow all).",
+			"On a headless host, pass --host 0.0.0.0 so the WebUI listens on the network, AND\n" +
+			"--allowed-cidrs to say who may reach it — binding alone is not enough. The WebUI has\n" +
+			"no authentication, so access defaults to loopback only; without an allowlist a\n" +
+			"network client is refused even when the port is open. Example:\n" +
+			"  --host 0.0.0.0 --allowed-cidrs 192.168.1.0/24\n" +
+			"Use 0.0.0.0/0 to allow any address (understand what that exposes first).",
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		RunE: func(_ *cobra.Command, _ []string) error {
@@ -51,7 +53,10 @@ func NewInstallCommand() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&host, "host", "", "Bind address for the web/gateway server (e.g. 0.0.0.0 for all interfaces). Empty keeps the current/seeded value.")
 	cmd.Flags().IntVar(&port, "port", 0, "HTTP port for the web/gateway server. 0 keeps the current/seeded value.")
-	cmd.Flags().StringVar(&allowedCIDRs, "allowed-cidrs", "", "Comma-separated CIDR allowlist for the WebUI/API (loopback is always allowed). Empty keeps the default private-network allowlist (RFC1918); use 0.0.0.0/0 to allow all.")
+	cmd.Flags().StringVar(&allowedCIDRs, "allowed-cidrs", "",
+		"Comma-separated CIDR allowlist for the WebUI/API; loopback is always allowed. "+
+			"Empty means loopback only. Use e.g. 192.168.1.0/24 for a LAN, "+
+			"10.0.0.0/8,172.16.0.0/12,192.168.0.0/16 for all private ranges, or 0.0.0.0/0 for any address.")
 	return cmd
 }
 

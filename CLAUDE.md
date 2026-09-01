@@ -18,6 +18,38 @@ assumption that breaking it is fine. Both are now decisions for the user:
 Version lives in `app/app.go`; bumping it is a normal change, tagging is not
 (see Workflow Rules).
 
+## Changelog — update it as part of the change, not afterwards
+
+`CHANGELOG.md` follows Keep a Changelog. A change that alters what an operator
+or integrator sees is **not complete until its entry is written**, in the same
+commit as the code. Treat it exactly like the tests: not a separate chore.
+
+**Write an entry when the change touches** a config key (added, renamed,
+removed, or its default), a tool name or its arguments, an HTTP/MCP/gateway
+request or response shape, a CLI command or flag, a default that alters
+behaviour on upgrade, a security-relevant behaviour, or a user-visible message.
+
+**Do not write an entry for** refactors, moved packages, added or changed tests,
+internal comments, or anything else invisible from outside the repository. A
+changelog padded with churn stops being read, which costs more than a missing
+line.
+
+Rules:
+
+- Add to `## [Unreleased]` unless the user is cutting a release now. Replace the
+  "Nothing yet." placeholder rather than leaving it above real entries.
+- Use the Keep a Changelog headings, in this order, omitting empty ones:
+  `Security`, `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`.
+- Prefix anything that breaks an existing install with **BREAKING**, and give the
+  migration in the entry: the config to set, the command to run, the value that
+  restores the old behaviour. A reader hitting it after an upgrade must be able
+  to act without reading the diff.
+- Write for someone who has not seen the code. Name the config key or tool, say
+  what changed, and say why it matters — not the function you edited.
+- When cutting a release, rename `[Unreleased]` to the version, bump
+  `app/app.go`, add a fresh empty `[Unreleased]`, and update the link refs at the
+  bottom of the file. Do not create the git tag (see Workflow Rules).
+
 ## What This Is
 ClawEh is an independent Go project forked from sipeed/picoclaw on 2026-03-20.
 - Module: `github.com/PivotLLM/ClawEh`

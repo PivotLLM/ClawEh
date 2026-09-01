@@ -7,18 +7,23 @@ import (
 )
 
 func TestEffectiveAllowedCIDRs(t *testing.T) {
-	t.Run("empty falls back to private-network default", func(t *testing.T) {
+	// Empty means loopback only. It must NOT fall back to the RFC1918 set: the
+	// WebUI/API behind this allowlist has no operator auth, so a config that
+	// omits the key must not hand the LAN read/write access to it.
+	t.Run("empty means loopback only", func(t *testing.T) {
 		g := GatewayConfig{}
+		if got := g.EffectiveAllowedCIDRs(); len(got) != 0 {
+			t.Fatalf("EffectiveAllowedCIDRs() = %v, want empty (loopback only)", got)
+		}
+	})
+
+	t.Run("private ranges are opt-in, not a default", func(t *testing.T) {
+		g := GatewayConfig{AllowedCIDRs: PrivateNetworkCIDRs}
 		got := g.EffectiveAllowedCIDRs()
 		if len(got) != len(PrivateNetworkCIDRs) {
 			t.Fatalf("EffectiveAllowedCIDRs() = %v, want %v", got, PrivateNetworkCIDRs)
 		}
-		for i, c := range PrivateNetworkCIDRs {
-			if got[i] != c {
-				t.Errorf("index %d = %q, want %q", i, got[i], c)
-			}
-		}
-		// Must be a copy: mutating the result must not corrupt the shared default.
+		// Must be a copy: mutating the result must not corrupt the shared slice.
 		got[0] = "0.0.0.0/0"
 		if PrivateNetworkCIDRs[0] == "0.0.0.0/0" {
 			t.Fatal("EffectiveAllowedCIDRs() aliased PrivateNetworkCIDRs")

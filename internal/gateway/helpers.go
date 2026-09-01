@@ -433,16 +433,28 @@ func setupAndStartServices(
 		linker, ok := ch.(webapi.SecMsgLinker)
 		return linker, ok
 	})
-	// IP allowlist for the shared HTTP port. Defaults to the RFC1918 private
-	// ranges (see GatewayConfig.EffectiveAllowedCIDRs), so the no-auth WebUI is
-	// reachable only from loopback + the LAN even when bound to 0.0.0.0.
+	// IP allowlist for the shared HTTP port. Empty means loopback only (see
+	// GatewayConfig.EffectiveAllowedCIDRs), so the no-auth WebUI grants no
+	// off-box access until an allowlist is configured, whatever the bind address.
 	allowedCIDRs := cfg.Gateway.EffectiveAllowedCIDRs()
 	httpHost, hostErr := newHTTPHost(addr, allowedCIDRs)
 	if hostErr != nil {
 		return nil, fmt.Errorf("invalid network allowlist %v: %w", allowedCIDRs, hostErr)
 	}
 	services.HTTPHost = httpHost
-	logger.InfoF("Network allowlist active", map[string]any{"allowed_cidrs": allowedCIDRs, "loopback": "always allowed"})
+	if len(allowedCIDRs) == 0 {
+		logger.InfoF("Network allowlist active", map[string]any{"allowed_cidrs": "none (loopback only)"})
+		// Binding off-box without an allowlist is almost always a surprise: the
+		// listener accepts the connection and the allowlist then rejects it, which
+		// looks like the port being closed. Say so once, at startup.
+		if h := cfg.Gateway.Host; h != "" && h != "127.0.0.1" && h != "localhost" && h != "::1" {
+			logger.WarnF("Gateway is bound off-box but the network allowlist is empty, so only loopback will be served. "+
+				"Set gateway.allowed_cidrs (e.g. your LAN subnet, or 0.0.0.0/0 to allow any address) to reach it from elsewhere.",
+				map[string]any{"host": h})
+		}
+	} else {
+		logger.InfoF("Network allowlist active", map[string]any{"allowed_cidrs": allowedCIDRs, "loopback": "always allowed"})
+	}
 	rebuildSharedHTTPServer(services, cfg.Gateway.Host, cfg.Gateway.Port, services.ChannelManager, services.HTTPHost, agentLoop)
 	services.HTTPHost.Start()
 

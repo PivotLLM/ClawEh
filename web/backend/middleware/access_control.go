@@ -10,11 +10,16 @@ import (
 // IPAllowlist restricts access to requests from configured CIDR ranges.
 // Loopback addresses are always allowed for local administration.
 // Empty CIDR list means no restriction.
+// IPAllowlist gates next on the client's source address. Loopback is always
+// allowed; every other address must fall inside one of allowedCIDRs.
+//
+// An empty allowedCIDRs means LOOPBACK ONLY, not allow-all. This is deliberate:
+// the handler behind it is the unauthenticated WebUI/API, so the failure mode of
+// the opposite reading — a config that omits the key silently exposing config
+// and credentials to the whole network — is far worse than an install that has
+// to be told who may connect. Pass []string{"0.0.0.0/0"} (and "::/0" for IPv6)
+// to allow any address.
 func IPAllowlist(allowedCIDRs []string, next http.Handler) (http.Handler, error) {
-	if len(allowedCIDRs) == 0 {
-		return next, nil
-	}
-
 	nets := make([]*net.IPNet, 0, len(allowedCIDRs))
 	for _, cidr := range allowedCIDRs {
 		_, ipNet, err := net.ParseCIDR(cidr)
