@@ -183,13 +183,7 @@ func TestHandlePatchConfig_UnreadableConfigReturns500(t *testing.T) {
 }
 
 func TestValidateConfig_TelegramBotMissingToken(t *testing.T) {
-	cfg := config.DefaultConfig()
-	cfg.Models = []config.ModelConfig{{
-		ModelName: "m",
-		Model:     "gpt-4o",
-		Provider:  "openai",
-		Enabled:   true,
-	}}
+	cfg := validConfigForValidation()
 	cfg.Channels.Telegram = []config.TelegramBotConfig{{
 		ID:      "bot1",
 		Enabled: true,
@@ -212,19 +206,13 @@ func TestValidateConfig_TelegramBotMissingToken(t *testing.T) {
 }
 
 func TestValidateConfig_DiscordMissingToken(t *testing.T) {
-	cfg := config.DefaultConfig()
-	cfg.Models = []config.ModelConfig{{
-		ModelName: "m",
-		Model:     "gpt-4o",
-		Provider:  "openai",
-		Enabled:   true,
-	}}
+	cfg := validConfigForValidation()
 	cfg.Channels.Discord.Enabled = true
 	cfg.Channels.Discord.Token = ""
 
 	errs := validateConfig(cfg)
-	if len(errs) == 0 {
-		t.Fatal("expected validation errors for enabled discord without token")
+	if !anyContains(errs, "channels.discord.token") {
+		t.Fatalf("errs = %v, want an error naming channels.discord.token", errs)
 	}
 }
 
@@ -282,4 +270,181 @@ func containsStr(s, sub string) bool {
 			}
 			return false
 		}())
+}
+
+// validConfigForValidation returns a config that validateConfig accepts, so each
+// test below can introduce exactly one defect and attribute the resulting error
+// to it. Guarded by TestValidateConfig_BaselineIsValid.
+func validConfigForValidation() *config.Config {
+	cfg := config.DefaultConfig()
+	cfg.Models = []config.ModelConfig{{
+		ModelName: "m",
+		Model:     "gpt-4o",
+		Provider:  "OpenAI", // must match a DefaultConfig provider name exactly
+		Enabled:   true,
+	}}
+	return cfg
+}
+
+// TestValidateConfig_BaselineIsValid anchors the negative tests below. Without
+// it a change that made validateConfig reject everything would leave them all
+// passing for the wrong reason.
+func TestValidateConfig_BaselineIsValid(t *testing.T) {
+	if errs := validateConfig(validConfigForValidation()); len(errs) != 0 {
+		t.Fatalf("baseline config should validate cleanly, got %v", errs)
+	}
+}
+
+// TestValidateConfig_NoAgents covers the agents.list rule.
+func TestValidateConfig_NoAgents(t *testing.T) {
+	cfg := validConfigForValidation()
+	cfg.Agents.List = nil
+
+	errs := validateConfig(cfg)
+	if !anyContains(errs, "agents.list") {
+		t.Fatalf("errs = %v, want an error naming agents.list", errs)
+	}
+}
+
+// TestValidateConfig_SurfacesModelErrors checks that validateConfig propagates
+// ValidateModels. Before these tests existed this branch was exercised only by
+// accident: the fixtures named the provider "openai" when DefaultConfig calls it
+// "OpenAI", so every one of them tripped "provider not found" on the way past.
+// Fixing the fixtures removed that accidental coverage, so the branch is now
+// asserted on purpose.
+func TestValidateConfig_SurfacesModelErrors(t *testing.T) {
+	cfg := validConfigForValidation()
+	cfg.Models[0].Provider = "no-such-provider"
+
+	errs := validateConfig(cfg)
+	if !anyContains(errs, "no-such-provider") {
+		t.Fatalf("errs = %v, want an error naming the unknown provider", errs)
+	}
+}
+
+// TestValidateConfig_SurfacesBindingErrors checks that validateConfig propagates
+// ValidateBindings. ValidateBindings is covered by its own tests in the config
+// package; what is asserted here is the wiring, which those cannot see. Two
+// default bindings for one agent is the simplest way to trip it.
+func TestValidateConfig_SurfacesBindingErrors(t *testing.T) {
+	cfg := validConfigForValidation()
+	cfg.Bindings = []config.AgentBinding{
+		{AgentID: "alice", Match: config.BindingMatch{Channel: "telegram"}, Default: true, DeliverTo: "1"},
+		{AgentID: "alice", Match: config.BindingMatch{Channel: "telegram"}, Default: true, DeliverTo: "2"},
+	}
+
+	errs := validateConfig(cfg)
+	if !anyContains(errs, "more than one default binding") {
+		t.Fatalf("errs = %v, want the duplicate-default binding error", errs)
+	}
+}
+
+// TestValidateConfig_SurfacesCIDRErrors checks that validateConfig propagates
+// config.ValidateAllowedCIDRs — again the wiring, not the validator itself.
+func TestValidateConfig_SurfacesCIDRErrors(t *testing.T) {
+	cfg := validConfigForValidation()
+	cfg.Gateway.AllowedCIDRs = []string{"192.168.1.0/24", "not-a-cidr"}
+
+	errs := validateConfig(cfg)
+	if !anyContains(errs, "gateway.allowed_cidrs") {
+		t.Fatalf("errs = %v, want an error naming gateway.allowed_cidrs", errs)
+	}
+}
+
+// TestValidateConfig_MCPHostListen covers the mcp_host.listen rule, including
+// that an empty value is skipped rather than rejected.
+func TestValidateConfig_MCPHostListen(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		listen  string
+		wantErr bool
+	}{
+		{"empty is skipped", "", false},
+		{"missing port", "127.0.0.1", true},
+		{"trailing colon", "127.0.0.1:", true},
+		{"non-integer port", "127.0.0.1:abc", true},
+		{"port above range", "127.0.0.1:70000", true},
+		{"port zero", "127.0.0.1:0", true},
+		{"valid", "127.0.0.1:5911", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := validConfigForValidation()
+			cfg.MCPHost.Listen = tc.listen
+
+			errs := validateConfig(cfg)
+			got := anyContains(errs, "mcp_host.listen")
+			if got != tc.wantErr {
+				t.Fatalf("listen=%q produced %v; want mcp_host.listen error = %v", tc.listen, errs, tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestValidateConfig_MCPHostEndpointPath covers the endpoint_path leading-slash
+// rule, including that an empty value is skipped.
+func TestValidateConfig_MCPHostEndpointPath(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		path    string
+		wantErr bool
+	}{
+		{"empty is skipped", "", false},
+		{"no leading slash", "mcp", true},
+		{"valid", "/mcp", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := validConfigForValidation()
+			cfg.MCPHost.EndpointPath = tc.path
+
+			errs := validateConfig(cfg)
+			got := anyContains(errs, "endpoint_path")
+			if got != tc.wantErr {
+				t.Fatalf("endpoint_path=%q produced %v; want endpoint_path error = %v", tc.path, errs, tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestValidateListenAddr covers the helper directly, including the three error
+// returns validateConfig only reaches through mcp_host.listen.
+func TestValidateListenAddr(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		in      string
+		wantErr string // substring; empty means the input must be accepted
+	}{
+		{"host and port", "127.0.0.1:5911", ""},
+		{"all interfaces", "0.0.0.0:18790", ""},
+		{"hostname", "localhost:80", ""},
+		{"port only, leading colon", ":5911", "host:port"},
+		{"no colon", "127.0.0.1", "host:port"},
+		{"trailing colon", "127.0.0.1:", "host:port"},
+		{"empty", "", "host:port"},
+		{"non-integer port", "127.0.0.1:port", "not an integer"},
+		{"port zero", "127.0.0.1:0", "out of valid range"},
+		{"port above 65535", "127.0.0.1:65536", "out of valid range"},
+		{"negative port", "127.0.0.1:-1", "out of valid range"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateListenAddr(tc.in)
+			switch {
+			case tc.wantErr == "" && err != nil:
+				t.Fatalf("validateListenAddr(%q) = %v, want nil", tc.in, err)
+			case tc.wantErr != "" && err == nil:
+				t.Fatalf("validateListenAddr(%q) = nil, want an error containing %q", tc.in, tc.wantErr)
+			case tc.wantErr != "" && !containsStr(err.Error(), tc.wantErr):
+				t.Fatalf("validateListenAddr(%q) = %q, want it to contain %q", tc.in, err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// anyContains reports whether any error message contains sub.
+func anyContains(errs []string, sub string) bool {
+	for _, e := range errs {
+		if containsStr(e, sub) {
+			return true
+		}
+	}
+	return false
 }
