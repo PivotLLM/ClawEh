@@ -52,8 +52,8 @@ func TestFallback_NotifyFiresBetweenCandidates(t *testing.T) {
 	}
 
 	var notices []string
-	notify := func(failed FallbackAttempt, next FallbackCandidate) {
-		notices = append(notices, failed.Model+"->"+next.Model)
+	notify := func(passed []FallbackAttempt, next FallbackCandidate) {
+		notices = append(notices, passed[0].Model+"->"+next.Model)
 	}
 	if _, err := fc.ExecuteWithNotify(context.Background(), candidates, run, notify); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -88,8 +88,8 @@ func TestFallback_NotifyFiresOnCooldownSkip(t *testing.T) {
 		skipped bool
 	}
 	var notes []note
-	notify := func(failed FallbackAttempt, next FallbackCandidate) {
-		notes = append(notes, note{failed.Model + "->" + next.Model, failed.Skipped})
+	notify := func(passed []FallbackAttempt, next FallbackCandidate) {
+		notes = append(notes, note{passed[0].Model + "->" + next.Model, passed[0].Skipped})
 	}
 	if _, err := fc.ExecuteWithNotify(context.Background(), candidates, run, notify); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -115,7 +115,7 @@ func TestFallback_NotifyNotCalledOnLastCandidate(t *testing.T) {
 		return nil, errors.New("rate limit exceeded")
 	}
 	called := false
-	notify := func(failed FallbackAttempt, next FallbackCandidate) { called = true }
+	notify := func(passed []FallbackAttempt, next FallbackCandidate) { called = true }
 	if _, err := fc.ExecuteWithNotify(context.Background(), candidates, run, notify); err == nil {
 		t.Fatal("expected exhausted error")
 	}
@@ -672,5 +672,101 @@ func TestFallbackExhaustedError_Message(t *testing.T) {
 	msg := e.Error()
 	if msg == "" {
 		t.Error("expected non-empty error message")
+	}
+}
+
+// A run of consecutive cooldown skips is announced as ONE notice carrying every
+// skipped attempt, not one notice per model: a provider whose whole block is
+// parked (e.g. every OpenRouter model out of credits) must not spam the chat.
+func TestFallback_CoalescesConsecutiveCooldownSkips(t *testing.T) {
+	ct := NewCooldownTracker()
+	// All three OpenRouter-ish candidates parked for billing.
+	ct.MarkFailure("or", "deepseek-flash", FailoverBilling, 402, 0)
+	ct.MarkFailure("or", "deepseek-pro", FailoverBilling, 402, 0)
+	ct.MarkFailure("or", "glm", FailoverBilling, 402, 0)
+	fc := NewFallbackChain(ct)
+
+	candidates := []FallbackCandidate{
+		makeCandidate("or", "deepseek-flash"),
+		makeCandidate("or", "deepseek-pro"),
+		makeCandidate("or", "glm"),
+		makeCandidate("xai", "grok"),
+	}
+
+	var batches [][]FallbackAttempt
+	var nexts []string
+	notify := func(passed []FallbackAttempt, next FallbackCandidate) {
+		batches = append(batches, passed)
+		nexts = append(nexts, next.Model)
+	}
+	if _, err := fc.ExecuteWithNotify(context.Background(), candidates, successRun("ok"), notify); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(batches) != 1 {
+		t.Fatalf("got %d notices, want 1 coalesced notice", len(batches))
+	}
+	if len(batches[0]) != 3 {
+		t.Fatalf("coalesced notice carried %d attempts, want 3", len(batches[0]))
+	}
+	if nexts[0] != "grok" {
+		t.Errorf("next = %q, want grok", nexts[0])
+	}
+	for i, a := range batches[0] {
+		if !a.Skipped {
+			t.Errorf("attempt[%d] not marked skipped", i)
+		}
+		// The real cause must survive the skip — not a rate-limit placeholder.
+		if a.Reason != FailoverBilling {
+			t.Errorf("attempt[%d] reason = %q, want %q", i, a.Reason, FailoverBilling)
+		}
+		if a.Remaining <= 0 {
+			t.Errorf("attempt[%d] Remaining = %v, want > 0", i, a.Remaining)
+		}
+	}
+}
+
+// A trailing run of skips (nothing left to try) produces no notice — the
+// exhausted error carries it instead.
+func TestFallback_NoNotifyWhenTrailingSkipsExhaustChain(t *testing.T) {
+	ct := NewCooldownTracker()
+	ct.MarkFailure("or", "glm", FailoverBilling, 402, 0)
+	fc := NewFallbackChain(ct)
+
+	candidates := []FallbackCandidate{
+		makeCandidate("openai", "gpt-4"),
+		makeCandidate("or", "glm"),
+	}
+	run := func(ctx context.Context, c FallbackCandidate) (*LLMResponse, error) {
+		return nil, errors.New("rate limit exceeded")
+	}
+	var notices int
+	notify := func(passed []FallbackAttempt, next FallbackCandidate) { notices++ }
+	if _, err := fc.ExecuteWithNotify(context.Background(), candidates, run, notify); err == nil {
+		t.Fatal("expected exhausted error")
+	}
+	// gpt-4 failed → "Trying glm…" is the one notice; glm's skip is trailing and
+	// surfaces via the returned error.
+	if notices != 1 {
+		t.Fatalf("notices = %d, want 1", notices)
+	}
+}
+
+// The skip's reason comes from the tracker, so a billing park is not mislabelled
+// as a rate limit (the bug that made "in cooldown" uninformative).
+func TestFallback_SkipCarriesTrackerReason(t *testing.T) {
+	ct := NewCooldownTracker()
+	ct.MarkFailure("or", "glm", FailoverBilling, 402, 0)
+	fc := NewFallbackChain(ct)
+
+	candidates := []FallbackCandidate{makeCandidate("or", "glm"), makeCandidate("xai", "grok")}
+	result, err := fc.ExecuteWithNotify(context.Background(), candidates, successRun("ok"), nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Attempts) != 1 || !result.Attempts[0].Skipped {
+		t.Fatalf("attempts = %+v, want one skipped", result.Attempts)
+	}
+	if got := result.Attempts[0].Reason; got != FailoverBilling {
+		t.Fatalf("skip reason = %q, want %q", got, FailoverBilling)
 	}
 }

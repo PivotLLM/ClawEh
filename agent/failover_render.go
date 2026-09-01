@@ -67,9 +67,9 @@ func (al *AgentLoop) fallbackNotifier(opts processOptions) providers.FallbackNot
 	// otherwise repeat its heads-up per iteration. One notifier spans the turn (see
 	// runLLMIteration), so this memory suppresses the repeats.
 	seen := make(map[string]bool)
-	return func(failed providers.FallbackAttempt, next providers.FallbackCandidate) {
-		notice := formatFallbackNotice(failed, next)
-		if seen[notice] {
+	return func(passed []providers.FallbackAttempt, next providers.FallbackCandidate) {
+		notice := formatFallbackNotice(passed, next)
+		if notice == "" || seen[notice] {
 			return
 		}
 		seen[notice] = true
@@ -86,27 +86,107 @@ func (al *AgentLoop) fallbackNotifier(opts processOptions) providers.FallbackNot
 	}
 }
 
-// formatFallbackNotice builds the mid-chain heads-up. For a failure, e.g.
-// "⚠️ grok-2 error HTTP 402 (out of credits).\nTrying gpt-4o…"; for a
-// cooldown-skipped candidate, "⚠️ DeepSeek V4 Pro Writing skipped (in cooldown).
-// \nTrying Abliteration…" — so a skip is never silent after an earlier
-// "Trying <this>…".
-func formatFallbackNotice(failed providers.FallbackAttempt, next providers.FallbackCandidate) string {
-	nextName := next.Alias
-	if nextName == "" {
-		nextName = next.Model
+// formatFallbackNotice builds the mid-chain heads-up for the candidates the
+// chain just moved past. For a failure, e.g. "⚠️ grok-2 error HTTP 402 (out of
+// credits).\nTrying gpt-4o…"; for cooldown skips, ONE line naming the cause,
+// e.g. "⚠️ 3 models unavailable — out of credits (retry in up to 58m). Using
+// Grok Medium." — so a skip is never silent after an earlier "Trying <this>…"
+// but a fully-parked provider costs one line per turn, not one per model.
+func formatFallbackNotice(passed []providers.FallbackAttempt, next providers.FallbackCandidate) string {
+	if len(passed) == 0 {
+		return ""
 	}
-	failedName := failed.Alias
-	if failedName == "" {
-		failedName = failed.Model
+	nextName := candidateName(next)
+	if passed[0].Skipped {
+		return formatSkipNotice(passed, nextName)
 	}
-	if failed.Skipped {
-		return fmt.Sprintf("⚠️ %s skipped (in cooldown).\nTrying %s…", failedName, nextName)
-	}
+	failed := passed[0]
 	return fmt.Sprintf("⚠️ %s.\nTrying %s…",
-		attemptDescription(failedName, failoverStatus(failed.Error), failed.Reason),
+		attemptDescription(attemptName(failed), failoverStatus(failed.Error), failed.Reason),
 		nextName,
 	)
+}
+
+// formatSkipNotice collapses a run of cooldown-skipped candidates into a single
+// line that names WHY they are parked — "in cooldown" on its own tells the user
+// nothing actionable, which is the whole point of carrying the tracker's reason
+// through the skip.
+func formatSkipNotice(skipped []providers.FallbackAttempt, nextName string) string {
+	reasons := distinctReasons(skipped)
+	cause := strings.Join(reasons, ", ")
+	if cause == "" {
+		cause = "in cooldown"
+	}
+
+	var longest time.Duration
+	for _, a := range skipped {
+		if a.Remaining > longest {
+			longest = a.Remaining
+		}
+	}
+	retry := ""
+	if r := formatRemaining(longest); r != "" {
+		if len(skipped) == 1 {
+			retry = fmt.Sprintf(" (retry in %s)", r)
+		} else {
+			retry = fmt.Sprintf(" (retry in up to %s)", r)
+		}
+	}
+
+	if len(skipped) == 1 {
+		return fmt.Sprintf("⚠️ %s unavailable — %s%s. Using %s.",
+			attemptName(skipped[0]), cause, retry, nextName)
+	}
+	return fmt.Sprintf("⚠️ %d models unavailable — %s%s. Using %s.",
+		len(skipped), cause, retry, nextName)
+}
+
+// distinctReasons lists the human-readable failure reasons across a batch of
+// skipped attempts, in first-seen order and without repeats, so a mixed batch
+// reads "out of credits, rate limited" rather than repeating one cause N times.
+func distinctReasons(attempts []providers.FallbackAttempt) []string {
+	seen := make(map[string]bool, len(attempts))
+	var out []string
+	for _, a := range attempts {
+		if a.Reason == "" {
+			continue
+		}
+		text := providers.ReasonText(a.Reason)
+		if seen[text] {
+			continue
+		}
+		seen[text] = true
+		out = append(out, text)
+	}
+	return out
+}
+
+// formatRemaining renders a cooldown remainder compactly ("42m", "30s").
+// Returns "" for a non-positive duration so the caller can omit the clause.
+func formatRemaining(d time.Duration) string {
+	if d <= 0 {
+		return ""
+	}
+	if d.Round(time.Second) < time.Minute {
+		return fmt.Sprintf("%ds", int(d.Round(time.Second)/time.Second))
+	}
+	return fmt.Sprintf("%dm", int(d.Round(time.Minute)/time.Minute))
+}
+
+// candidateName prefers the user-facing alias over the wire model id.
+func candidateName(c providers.FallbackCandidate) string {
+	if c.Alias != "" {
+		return c.Alias
+	}
+	return c.Model
+}
+
+// attemptName prefers the user-facing alias over the wire model id.
+func attemptName(a providers.FallbackAttempt) string {
+	if a.Alias != "" {
+		return a.Alias
+	}
+	return a.Model
 }
 
 // renderFailoverError formats a provider failover failure with the HTTP status

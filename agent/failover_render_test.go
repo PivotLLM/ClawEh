@@ -64,7 +64,7 @@ func TestFormatFallbackNotice(t *testing.T) {
 		Error:  &providers.FailoverError{Reason: providers.FailoverBilling, Status: 402},
 	}
 	next := providers.FallbackCandidate{Model: "gpt-4o", Alias: "smart"}
-	got := formatFallbackNotice(failed, next)
+	got := formatFallbackNotice([]providers.FallbackAttempt{failed}, next)
 	// Alias preferred for the next model; HTTP code surfaced for the failed one;
 	// period + newline before "Trying".
 	if !strings.Contains(got, "HTTP 402") || !strings.Contains(got, ").\nTrying smart…") {
@@ -108,10 +108,12 @@ func TestFallbackNotifier_DedupsAcrossTurn(t *testing.T) {
 		Error:  &providers.FailoverError{Reason: providers.FailoverRateLimit, Status: 429},
 	}
 
-	notifier(failA, nextW) // published
-	notifier(failA, nextW) // duplicate → suppressed
-	notifier(failA, nextW) // duplicate → suppressed
-	notifier(failB, nextW) // distinct → published
+	batchA := []providers.FallbackAttempt{failA}
+	batchB := []providers.FallbackAttempt{failB}
+	notifier(batchA, nextW) // published
+	notifier(batchA, nextW) // duplicate → suppressed
+	notifier(batchA, nextW) // duplicate → suppressed
+	notifier(batchB, nextW) // distinct → published
 
 	var seen []bus.OutboundMessage
 	deadline := time.After(2 * time.Second)
@@ -131,19 +133,90 @@ func TestFallbackNotifier_DedupsAcrossTurn(t *testing.T) {
 	}
 }
 
-// A cooldown-skipped candidate renders a "skipped (in cooldown)" heads-up (using
-// its alias) rather than an HTTP-error line, so the skip is never silent.
+// A single cooldown-skipped candidate names the CAUSE and the retry time (using
+// its alias), so the skip is neither silent nor uninformative.
 func TestFormatFallbackNotice_Skip(t *testing.T) {
 	skipped := providers.FallbackAttempt{
-		Model:   "deepseek-v4-pro",
-		Alias:   "DeepSeek V4 Pro Writing",
-		Skipped: true,
-		Reason:  providers.FailoverRateLimit,
+		Model:     "deepseek-v4-pro",
+		Alias:     "DeepSeek V4 Pro Writing",
+		Skipped:   true,
+		Reason:    providers.FailoverRateLimit,
+		Remaining: 9 * time.Minute,
 	}
 	next := providers.FallbackCandidate{Model: "abliterated-model", Alias: "Abliteration"}
-	got := formatFallbackNotice(skipped, next)
-	if !strings.Contains(got, "DeepSeek V4 Pro Writing skipped (in cooldown)") ||
-		!strings.Contains(got, "Trying Abliteration…") {
-		t.Fatalf("skip notice unexpected: %q", got)
+	got := formatFallbackNotice([]providers.FallbackAttempt{skipped}, next)
+	want := "⚠️ DeepSeek V4 Pro Writing unavailable — rate limited (retry in 9m). Using Abliteration."
+	if got != want {
+		t.Fatalf("skip notice:\n got %q\nwant %q", got, want)
+	}
+}
+
+// A run of skips collapses to ONE line that names the cause — the fix for a
+// wall of "skipped (in cooldown)" on every turn while OpenRouter is out of
+// credits.
+func TestFormatFallbackNotice_SkipBatchCoalesced(t *testing.T) {
+	skips := []providers.FallbackAttempt{
+		{Model: "deepseek-v4-flash", Alias: "OR Chat DeepSeek V4 Flash", Skipped: true,
+			Reason: providers.FailoverBilling, Remaining: 41 * time.Minute},
+		{Model: "deepseek-v4-pro", Alias: "OR Chat DeepSeek V4 Pro", Skipped: true,
+			Reason: providers.FailoverBilling, Remaining: 58 * time.Minute},
+		{Model: "glm-5.2", Alias: "OR GLM 5.2", Skipped: true,
+			Reason: providers.FailoverBilling, Remaining: 12 * time.Minute},
+	}
+	next := providers.FallbackCandidate{Model: "grok-medium", Alias: "Grok Medium"}
+	got := formatFallbackNotice(skips, next)
+	want := "⚠️ 3 models unavailable — out of credits (retry in up to 58m). Using Grok Medium."
+	if got != want {
+		t.Fatalf("batch skip notice:\n got %q\nwant %q", got, want)
+	}
+}
+
+// Mixed causes across a batch are listed once each, in first-seen order.
+func TestFormatFallbackNotice_SkipBatchMixedReasons(t *testing.T) {
+	skips := []providers.FallbackAttempt{
+		{Model: "a", Skipped: true, Reason: providers.FailoverBilling, Remaining: time.Minute},
+		{Model: "b", Skipped: true, Reason: providers.FailoverRateLimit, Remaining: 2 * time.Minute},
+		{Model: "c", Skipped: true, Reason: providers.FailoverBilling, Remaining: time.Minute},
+	}
+	got := formatFallbackNotice(skips, providers.FallbackCandidate{Model: "grok"})
+	want := "⚠️ 3 models unavailable — out of credits, rate limited (retry in up to 2m). Using grok."
+	if got != want {
+		t.Fatalf("mixed-reason notice:\n got %q\nwant %q", got, want)
+	}
+}
+
+// With no recorded reason (and no remaining), the notice degrades to the plain
+// "in cooldown" wording rather than inventing a cause.
+func TestFormatFallbackNotice_SkipUnknownReason(t *testing.T) {
+	skips := []providers.FallbackAttempt{{Model: "a", Skipped: true}}
+	got := formatFallbackNotice(skips, providers.FallbackCandidate{Model: "grok"})
+	want := "⚠️ a unavailable — in cooldown. Using grok."
+	if got != want {
+		t.Fatalf("unknown-reason notice:\n got %q\nwant %q", got, want)
+	}
+}
+
+func TestFormatFallbackNotice_Empty(t *testing.T) {
+	if got := formatFallbackNotice(nil, providers.FallbackCandidate{Model: "grok"}); got != "" {
+		t.Fatalf("empty batch = %q, want empty", got)
+	}
+}
+
+func TestFormatRemaining(t *testing.T) {
+	cases := []struct {
+		in   time.Duration
+		want string
+	}{
+		{0, ""},
+		{-time.Minute, ""},
+		{30 * time.Second, "30s"},
+		{90 * time.Second, "2m"},
+		{42 * time.Minute, "42m"},
+		{time.Hour, "60m"},
+	}
+	for _, c := range cases {
+		if got := formatRemaining(c.in); got != c.want {
+			t.Errorf("formatRemaining(%v) = %q, want %q", c.in, got, c.want)
+		}
 	}
 }

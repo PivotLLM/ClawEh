@@ -2591,10 +2591,12 @@ func (al *AgentLoop) runLLMIteration(
 							if attempt.Skipped {
 								logger.WarnCF("agent", "Fallback: skipped candidate (cooldown)",
 									map[string]any{
-										"agent_id": agent.ID,
-										"provider": attempt.Provider,
-										"model":    attempt.Model,
-										"error":    attempt.Error,
+										"agent_id":  agent.ID,
+										"provider":  attempt.Provider,
+										"model":     attempt.Model,
+										"reason":    attempt.Reason,
+										"remaining": attempt.Remaining.Round(time.Second),
+										"error":     attempt.Error,
 									})
 							} else {
 								logger.WarnCF("agent", "Fallback: candidate failed",

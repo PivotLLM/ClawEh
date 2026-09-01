@@ -357,3 +357,30 @@ func TestCooldown_BadRequestDoesNotPark(t *testing.T) {
 		t.Fatal("a 400 must not put the model on cooldown (sibling config would be skipped)")
 	}
 }
+
+// LastReason surfaces the cause of the current cooldown so a skip can name it.
+func TestCooldownTracker_LastReason(t *testing.T) {
+	ct := NewCooldownTracker()
+
+	// Unknown model: no reason.
+	if got := ct.LastReason("or", "glm"); got != "" {
+		t.Fatalf("LastReason on unknown model = %q, want empty", got)
+	}
+
+	ct.MarkFailure("or", "glm", FailoverBilling, 402, 0)
+	if got := ct.LastReason("or", "glm"); got != FailoverBilling {
+		t.Fatalf("LastReason = %q, want %q", got, FailoverBilling)
+	}
+
+	// Most recent failure wins over an earlier one of a different kind.
+	ct.MarkFailure("or", "glm", FailoverOverloaded, 503, 0)
+	if got := ct.LastReason("or", "glm"); got != FailoverOverloaded {
+		t.Fatalf("LastReason = %q, want %q", got, FailoverOverloaded)
+	}
+
+	// A success clears it.
+	ct.MarkSuccess("or", "glm")
+	if got := ct.LastReason("or", "glm"); got != "" {
+		t.Fatalf("LastReason after success = %q, want empty", got)
+	}
+}

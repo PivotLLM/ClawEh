@@ -218,6 +218,24 @@ func (ct *CooldownTracker) CooldownRemaining(provider, model string) time.Durati
 	return 0
 }
 
+// LastReason returns the classified reason for a model's most recent failure —
+// the cause of its current cooldown. Returns "" when the model has no recorded
+// failure. Callers use it so a cooldown skip can say WHY the model is parked
+// ("out of credits") instead of the uninformative bare "in cooldown".
+func (ct *CooldownTracker) LastReason(provider, model string) FailoverReason {
+	ct.mu.RLock()
+	defer ct.mu.RUnlock()
+
+	entry := ct.entries[ModelKey(provider, model)]
+	if entry == nil {
+		return ""
+	}
+	if entry.LastReason != "" {
+		return entry.LastReason
+	}
+	return dominantReason(entry.FailureCounts)
+}
+
 // ErrorCount returns the current error count for a model.
 func (ct *CooldownTracker) ErrorCount(provider, model string) int {
 	ct.mu.RLock()
@@ -356,4 +374,3 @@ func (ct *CooldownTracker) getOrCreate(key string) *cooldownEntry {
 	}
 	return entry
 }
-

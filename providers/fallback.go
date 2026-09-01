@@ -50,6 +50,10 @@ type FallbackAttempt struct {
 	Reason   FailoverReason
 	Duration time.Duration
 	Skipped  bool // true if skipped due to cooldown
+	// Remaining is how long the model stays parked. Set only on skipped
+	// attempts, so callers can say "retry in 42m" without re-querying the
+	// tracker.
+	Remaining time.Duration
 }
 
 // NewFallbackChain creates a new fallback chain with the given cooldown tracker.
@@ -156,12 +160,16 @@ func ResolveCandidatesWithLookup(
 //   - Retriable errors trigger fallback to next candidate.
 //   - Success marks provider as good (resets cooldown).
 //   - If all fail, returns aggregate error with all attempts.
-// FallbackNotify is an optional callback invoked when a candidate fails and the
-// chain is about to try the next one. `failed` is the attempt that just failed;
-// `next` is the candidate that will be tried next. It lets the caller surface a
-// user-facing heads-up ("X failed, trying Y…"). Never called for the final
-// candidate (that surfaces as the returned error instead).
-type FallbackNotify func(failed FallbackAttempt, next FallbackCandidate)
+//
+// FallbackNotify is an optional callback invoked when the chain moves past one
+// or more candidates. `passed` holds the attempts just moved past — either a
+// single failed attempt, or a run of consecutive cooldown skips coalesced into
+// one call so a chain whose whole head is parked costs one notice instead of
+// one per model. `next` is the candidate that will be tried next. It lets the
+// caller surface a user-facing heads-up ("X failed, trying Y…"). Never called
+// for the final candidate (that surfaces as the returned error instead), nor
+// for a trailing run of skips (likewise carried by the returned error).
+type FallbackNotify func(passed []FallbackAttempt, next FallbackCandidate)
 
 func (fc *FallbackChain) Execute(
 	ctx context.Context,
@@ -186,21 +194,29 @@ func (fc *FallbackChain) ExecuteWithNotify(
 		Attempts: make([]FallbackAttempt, 0, len(candidates)),
 	}
 
+	// Cooldown skips accumulate here and are announced as one notice when the
+	// chain reaches a candidate it will actually run (see below).
+	var pendingSkips []FallbackAttempt
+
 	for i, candidate := range candidates {
 		// Check context before each attempt.
 		if ctx.Err() == context.Canceled {
 			return nil, context.Canceled
 		}
 
-		// Check cooldown (per provider+model).
+		// Check cooldown (per provider+model). The reason comes from the tracker,
+		// not a placeholder: a model parked for billing must not be reported as
+		// rate-limited, because "in cooldown" alone tells the user nothing about
+		// what to fix.
 		if !fc.cooldown.IsAvailable(candidate.Provider, candidate.Model) {
 			remaining := fc.cooldown.CooldownRemaining(candidate.Provider, candidate.Model)
 			result.Attempts = append(result.Attempts, FallbackAttempt{
-				Provider: candidate.Provider,
-				Model:    candidate.Model,
-				Alias:    candidate.Alias,
-				Skipped:  true,
-				Reason:   FailoverRateLimit,
+				Provider:  candidate.Provider,
+				Model:     candidate.Model,
+				Alias:     candidate.Alias,
+				Skipped:   true,
+				Reason:    fc.cooldown.LastReason(candidate.Provider, candidate.Model),
+				Remaining: remaining,
 				Error: fmt.Errorf(
 					"%s/%s in cooldown (%s remaining)",
 					candidate.Provider,
@@ -208,13 +224,19 @@ func (fc *FallbackChain) ExecuteWithNotify(
 					remaining.Round(time.Second),
 				),
 			})
-			// Heads-up that a cooled-down candidate is being skipped, naming the next
-			// in line — otherwise an earlier "Trying <this>…" is silently contradicted.
-			if notify != nil && i+1 < len(candidates) {
-				notify(result.Attempts[len(result.Attempts)-1], candidates[i+1])
-			}
+			// Held back rather than announced one-by-one: consecutive skips are
+			// flushed as a single notice once we reach a candidate we will actually
+			// run, so an out-of-credits provider block costs one line per turn.
+			pendingSkips = append(pendingSkips, result.Attempts[len(result.Attempts)-1])
 			continue
 		}
+
+		// About to actually run this candidate: announce any skips that got us
+		// here, so an earlier "Trying <that>…" is never silently contradicted.
+		if notify != nil && len(pendingSkips) > 0 {
+			notify(pendingSkips, candidate)
+		}
+		pendingSkips = nil
 
 		// Execute the run function with one bounded same-model retry on a
 		// short Retry-After hint.
@@ -312,7 +334,7 @@ func (fc *FallbackChain) ExecuteWithNotify(
 
 		// Heads-up to the caller: this model failed and we're moving to the next.
 		if notify != nil {
-			notify(result.Attempts[len(result.Attempts)-1], candidates[i+1])
+			notify(result.Attempts[len(result.Attempts)-1:], candidates[i+1])
 		}
 	}
 

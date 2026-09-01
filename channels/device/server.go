@@ -3,6 +3,7 @@ package device
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
@@ -391,8 +392,23 @@ func (s *Server) authorizeGateway(ctx context.Context, p *gatewayproto.ConnectPa
 		return false
 	}
 	if p.Auth.Token != "" {
+		// Compare digests, not the raw strings. subtle.ConstantTimeCompare returns
+		// early when the lengths differ, so feeding it the secrets directly makes
+		// the call's duration depend on the secret's length. Hashing first pins
+		// both operands to 32 bytes, so the length branch never fires and the
+		// comparison is constant-time with respect to the whole input, not just
+		// its contents.
+		got := sha256.Sum256([]byte(p.Auth.Token))
 		for _, secret := range []string{s.opts.SharedToken, s.opts.WordToken} {
-			if secret != "" && subtle.ConstantTimeCompare([]byte(p.Auth.Token), []byte(secret)) == 1 {
+			// An unset secret must never authenticate. The outer Token != ""
+			// check already makes this unreachable (no non-empty token hashes to
+			// sha256("")), but hashing removes the length mismatch that used to
+			// reject it implicitly, so keep the intent explicit here.
+			if secret == "" {
+				continue
+			}
+			want := sha256.Sum256([]byte(secret))
+			if subtle.ConstantTimeCompare(got[:], want[:]) == 1 {
 				return true
 			}
 		}
