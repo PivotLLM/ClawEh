@@ -105,7 +105,11 @@ linters:
       line-length: 120
       tab-width: 4
     misspell:
-      locale: US
+      # No locale. Canadian English takes British -our/-re ("behaviour",
+      # "centre") but American -ize ("synthesized"), so neither US nor UK fits:
+      # US flagged 111 Commonwealth spellings, UK flagged 416 -ize endings.
+      # Unset, misspell reports only unambiguous typos, which is what we want.
+      locale: ""
     mnd:
       checks:
         - argument

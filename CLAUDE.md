@@ -1,7 +1,22 @@
 # ClawEh — Project Instructions for Claude Code
 
 ## Project Status
-**Unreleased** — no backwards compatibility required. Remove deprecated code rather than retaining it.
+**Released.** Config schemas, tool names, API shapes, and the device-gateway
+protocol are now things other people depend on.
+
+This reverses the previous policy, under which deprecated code was removed on
+sight. Do **not** write compatibility shims, migration paths, or aliases on your
+own initiative, and do **not** remove or rename something released on the
+assumption that breaking it is fine. Both are now decisions for the user:
+
+- Before adding backwards-compatible handling (accepting an old config key,
+  keeping a renamed field working, tolerating an old protocol version), **ask
+  first.** Compatibility code is load-bearing once written and rarely removed.
+- Before a breaking change (renaming a config key or tool, changing a JSON
+  shape, dropping a flag or endpoint), **ask first**, and say what would break.
+
+Version lives in `app/app.go`; bumping it is a normal change, tagging is not
+(see Workflow Rules).
 
 ## What This Is
 ClawEh is an independent Go project forked from sipeed/picoclaw on 2026-03-20.

@@ -50,8 +50,16 @@ func (h *Handler) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Credentials are masked here: this endpoint has no operator auth, so the
+	// response must not be a dump of every key the gateway holds. PUT and PATCH
+	// restore masked values from disk, so a read-edit-write round trip is safe.
+	out, err := maskedConfigJSON(cfg)
+	if err != nil {
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(cfg); err != nil {
+	if _, err := w.Write(out); err != nil {
 		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
 	}
 }
@@ -66,6 +74,15 @@ func (h *Handler) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer r.Body.Close()
+
+	// A client that read the masked config and is writing it back sends "****"
+	// in place of each credential; swap those for the stored values so the round
+	// trip does not destroy them.
+	if current, cerr := config.LoadConfig(h.configPath); cerr == nil {
+		if restored, rerr := restoreMaskedSecrets(body, current); rerr == nil {
+			body = restored
+		}
+	}
 
 	var cfg config.Config
 	if err := json.Unmarshal(body, &cfg); err != nil {
@@ -146,6 +163,9 @@ func (h *Handler) handlePatchConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to parse current config", http.StatusInternalServerError)
 		return
 	}
+
+	// Restore any credential the client echoed back masked, before merging.
+	unmaskSecrets(patch, base)
 
 	// Recursively merge patch into base
 	mergeMap(base, patch)
