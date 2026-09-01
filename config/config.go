@@ -1666,14 +1666,21 @@ type GatewayConfig struct {
 	// allowlist is a second, independent gate.
 	//
 	// To reach it from elsewhere, list the networks explicitly, e.g.
-	// ["192.168.1.0/24"], the RFC1918 set (see PrivateNetworkCIDRs), or
-	// ["0.0.0.0/0"] to allow any address. Loopback is always allowed.
+	// ["192.168.1.0/24"] or the RFC1918 set (see PrivateNetworkCIDRs). Use
+	// ["*"] (AllowAnyAddress) to allow any address in either family — note that
+	// "0.0.0.0/0" is an IPv4 prefix and still refuses IPv6 clients. Loopback is
+	// always allowed.
 	AllowedCIDRs []string `json:"allowed_cidrs,omitempty"`
 }
 
 // DefaultGatewayPort is the default port for the merged claw HTTP server
 // (gateway + WebUI on a single mux). It matches DefaultConfig's Gateway.Port.
 const DefaultGatewayPort = 18790
+
+// AllowAnyAddress is the Gateway.AllowedCIDRs entry meaning "any client
+// address, IPv4 or IPv6". Mirrors middleware.AllowAnyAddress; declared here so
+// the config package does not depend on the HTTP middleware.
+const AllowAnyAddress = "*"
 
 // PrivateNetworkCIDRs is the RFC1918 private range set, offered as a
 // ready-made allowlist for a LAN install (`claw install --allowed-cidrs`, or
@@ -1701,6 +1708,11 @@ func (g GatewayConfig) EffectiveAllowedCIDRs() []string {
 // validation the retired launcher-config save path enforced).
 func ValidateAllowedCIDRs(cidrs []string) error {
 	for _, c := range cidrs {
+		// "*" means any address, in either family — see middleware.AllowAnyAddress.
+		// It is not a CIDR, so it has to be accepted before parsing.
+		if strings.TrimSpace(c) == AllowAnyAddress {
+			continue
+		}
 		if _, _, err := net.ParseCIDR(c); err != nil {
 			return fmt.Errorf("invalid CIDR %q", c)
 		}

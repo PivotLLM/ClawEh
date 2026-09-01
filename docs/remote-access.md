@@ -22,7 +22,9 @@ ordinary HTTP + WebSocket; you are just publishing a port.
 > is the bind address plus `gateway.allowed_cidrs`, which are two independent
 > gates. `allowed_cidrs` is empty by default, meaning **loopback only**: binding
 > to `0.0.0.0` alone will not serve a network client, and you must add the
-> networks you want to reach it from. Whichever method you
+> networks you want to reach it from — a subnet such as `192.168.1.0/24`, or `*`
+> for any address. Use `*` rather than `0.0.0.0/0` when you mean "everything":
+> that is an IPv4 prefix, so it still refuses IPv6 clients. Whichever method you
 > choose, treat an exposed WebUI endpoint as sensitive and restrict access at the
 > edge (client certificates, SSO, an allowlist, or a private overlay network)
 > until in-app auth is in place. The device gateway authenticates every client, so
@@ -140,7 +142,7 @@ Notes:
   [Device gateway](#device-gateway) below).
 - ClawEh's built-in IP allowlist matches the TCP peer, which behind NGINX is
   NGINX itself. Enforce access control at NGINX, and allow NGINX's source address
-  in ClawEh's `--allowed-cidrs` (or set `0.0.0.0/0` and rely on NGINX).
+  in ClawEh's `--allowed-cidrs` (or set `*` and rely on NGINX).
 - If a WebSocket Origin allowlist is configured, include your public origin
   (e.g. `https://claw.example.com`).
 

@@ -35,6 +35,16 @@ on, and breaking one is a deliberate decision rather than a free move.
   the comparison leaked the secret's length. Both sides are now hashed to a fixed
   width first.
 
+### Added
+
+- **`gateway.allowed_cidrs` accepts `"*"`, meaning any address in either
+  family.** `0.0.0.0/0` is the obvious thing to reach for and does not mean
+  that — it is an IPv4 prefix, so on a dual-stack host it still refuses IPv6
+  clients, which reads as the allowlist simply not working. CIDRs continue to
+  mean exactly what they say (`0.0.0.0/0` is all IPv4, `::/0` is all IPv6);
+  `"*"` is the unambiguous way to open it to everything, spelled the same as the
+  wildcards in `allow_from` and `allow_origins`.
+
 ### Changed
 
 - **BREAKING — an empty `gateway.allowed_cidrs` now means loopback only.** It
@@ -51,9 +61,9 @@ on, and breaking one is a deliberate decision rather than a free move.
   ```
 
   Use the three RFC1918 ranges (`10.0.0.0/8`, `172.16.0.0/12`,
-  `192.168.0.0/16`) to restore the previous behaviour exactly, or `0.0.0.0/0` to
-  allow any address. Loopback is always allowed. `claw install --allowed-cidrs`
-  sets the same field, and the gateway logs a warning at startup when it is bound
+  `192.168.0.0/16`) to restore the previous behaviour exactly, or `"*"` to allow
+  any address. Loopback is always allowed. `claw install --allowed-cidrs` sets
+  the same field, and the gateway logs a warning at startup when it is bound
   off-box with an empty allowlist.
 
 ### Removed

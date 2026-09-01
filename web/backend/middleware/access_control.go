@@ -17,16 +17,36 @@ import (
 // the handler behind it is the unauthenticated WebUI/API, so the failure mode of
 // the opposite reading — a config that omits the key silently exposing config
 // and credentials to the whole network — is far worse than an install that has
-// to be told who may connect. Pass []string{"0.0.0.0/0"} (and "::/0" for IPv6)
-// to allow any address.
+// to be told who may connect.
+//
+// The entry "*" means any address, in either family. It exists because
+// "0.0.0.0/0" is a natural thing to reach for and does NOT mean that: it is an
+// IPv4 prefix, so an IPv6 client is still refused by it, and on a dual-stack
+// host that reads as the allowlist simply not working. CIDRs are left meaning
+// exactly what they say — widening 0.0.0.0/0 to cover IPv6 would fail open,
+// which is the wrong direction to guess in — so "*" is the explicit way to say
+// "everything", matching allow_from and allow_origins elsewhere in the config.
+// AllowAnyAddress is the allowlist entry meaning "any client address, IPv4 or
+// IPv6". Spelled the same way as the wildcards in allow_from and allow_origins.
+const AllowAnyAddress = "*"
+
 func IPAllowlist(allowedCIDRs []string, next http.Handler) (http.Handler, error) {
 	nets := make([]*net.IPNet, 0, len(allowedCIDRs))
+	allowAny := false
 	for _, cidr := range allowedCIDRs {
+		if strings.TrimSpace(cidr) == AllowAnyAddress {
+			allowAny = true
+			continue
+		}
 		_, ipNet, err := net.ParseCIDR(cidr)
 		if err != nil {
 			return nil, fmt.Errorf("invalid CIDR %q: %w", cidr, err)
 		}
 		nets = append(nets, ipNet)
+	}
+
+	if allowAny {
+		return next, nil
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

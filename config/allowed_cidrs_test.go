@@ -120,3 +120,32 @@ func TestMigrateLauncherConfig(t *testing.T) {
 		}
 	})
 }
+
+// TestValidateAllowedCIDRs_AcceptsWildcard covers the "allow any address" entry.
+// It is not a CIDR, so validation has to let it through explicitly or an
+// operator cannot save the one value that means "open this up".
+func TestValidateAllowedCIDRs_AcceptsWildcard(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		cidrs   []string
+		wantErr bool
+	}{
+		{"wildcard alone", []string{AllowAnyAddress}, false},
+		{"wildcard with a CIDR", []string{"192.168.1.0/24", AllowAnyAddress}, false},
+		{"wildcard with surrounding space", []string{" * "}, false},
+		{"plain CIDRs", []string{"10.0.0.0/8", "::/0"}, false},
+		{"empty list", nil, false},
+		{"a real typo is still rejected", []string{"192.168.1.0/24", "not-a-cidr"}, true},
+		{"a partial wildcard is not the wildcard", []string{"*.*.*.*"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateAllowedCIDRs(tc.cidrs)
+			if tc.wantErr && err == nil {
+				t.Fatalf("ValidateAllowedCIDRs(%v) = nil, want an error", tc.cidrs)
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("ValidateAllowedCIDRs(%v) = %v, want nil", tc.cidrs, err)
+			}
+		})
+	}
+}

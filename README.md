@@ -88,7 +88,7 @@ Run as your normal user — it prompts for sudo only to write the unit file:
 ./claw install --host 0.0.0.0   # headless: reachable on your LAN
 ```
 
-This copies the binary to `~/bin` (or `~/.local/bin`), adds it to your `PATH`, and registers a systemd service that runs ClawEh as your user at boot. The web UI has no authentication, so access is **loopback-only by default**: binding to `0.0.0.0` makes it listen on the network, but nothing off-box is served until you also say who may connect. Pass `--allowed-cidrs` for that — e.g. `--host 0.0.0.0 --allowed-cidrs 192.168.1.0/24` for a LAN, the three RFC1918 ranges for any private network, or `0.0.0.0/0` for any address. Loopback is always allowed. Remove everything with `claw uninstall`.
+This copies the binary to `~/bin` (or `~/.local/bin`), adds it to your `PATH`, and registers a systemd service that runs ClawEh as your user at boot. The web UI has no authentication, so access is **loopback-only by default**: binding to `0.0.0.0` makes it listen on the network, but nothing off-box is served until you also say who may connect. Pass `--allowed-cidrs` for that — e.g. `--host 0.0.0.0 --allowed-cidrs 192.168.1.0/24` for a LAN, the three RFC1918 ranges for any private network, or `*` for any address. (Use `*`, not `0.0.0.0/0`, to allow everything: that is an IPv4 prefix and still refuses IPv6 clients.) Loopback is always allowed. Remove everything with `claw uninstall`.
 
 > Not using systemd? Just run `claw` directly — it starts the gateway and web UI on port `18790`.
 

@@ -44,7 +44,8 @@ func NewInstallCommand() *cobra.Command {
 			"no authentication, so access defaults to loopback only; without an allowlist a\n" +
 			"network client is refused even when the port is open. Example:\n" +
 			"  --host 0.0.0.0 --allowed-cidrs 192.168.1.0/24\n" +
-			"Use 0.0.0.0/0 to allow any address (understand what that exposes first).",
+			"Use '*' to allow any address (understand what that exposes first). Note 0.0.0.0/0\n" +
+			"is an IPv4 prefix and still refuses IPv6 clients; '*' covers both families.",
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		RunE: func(_ *cobra.Command, _ []string) error {
@@ -56,7 +57,8 @@ func NewInstallCommand() *cobra.Command {
 	cmd.Flags().StringVar(&allowedCIDRs, "allowed-cidrs", "",
 		"Comma-separated CIDR allowlist for the WebUI/API; loopback is always allowed. "+
 			"Empty means loopback only. Use e.g. 192.168.1.0/24 for a LAN, "+
-			"10.0.0.0/8,172.16.0.0/12,192.168.0.0/16 for all private ranges, or 0.0.0.0/0 for any address.")
+			"10.0.0.0/8,172.16.0.0/12,192.168.0.0/16 for all private ranges, or '*' for any address "+
+			"(0.0.0.0/0 covers IPv4 only).")
 	return cmd
 }
 
