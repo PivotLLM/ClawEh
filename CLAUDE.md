@@ -42,8 +42,9 @@ read surface in `agentquery.go`); agent-loop wiring in `internal/gateway/device_
 **Full protocol + findings: `docs/device-gateway-protocol.md`.** Own listener on
 `channels.device` (default port `18791`), separate from the WebUI/admin port.
 
-Status: **working** with the Rabbit R1 (`mode=node`) and the "Claw to Talk" Android app
-(`com.alvin.clawtotalk`, `mode=cli`/operator) on a local test instance. When testing against a
+Status: **working** with the Rabbit R1 (through the Rabbit agent; the gateway sees a
+`mode=node` client) and the "Claw to Talk" Android app (`com.alvin.clawtotalk`,
+`mode=cli`/operator) on a local test instance. When testing against a
 non-prod instance, build and restart that instance's service directly; never touch the
 production install or `update-claw.sh`.
 
