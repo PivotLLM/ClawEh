@@ -263,6 +263,13 @@ The WebUI is served on `http://localhost:18790` — open that URL in a browser
 to reach the chat interface and configuration console. The port is
 configurable via `gateway.port` in `~/.claw/config.json`.
 
+On the first run ClawEh writes a complete `~/.claw/config.json` (mode `0600`)
+if none exists, with every section present and the full set of known models and
+providers listed. That generated file is the reference for what is
+configurable — there is no separate example config to fall out of date with the
+code. Edit it in the web console under **Config**, or by hand; the topic docs in
+[`docs/`](docs/) cover individual sections in more detail.
+
 ## Terms of Use and Compliance
 ClawEh supports a wide range of LLM providers. It is your responsibility to ensure that your use of any provider, API, service, or model is consistent with the applicable terms of service, acceptable use policies, contracts, and legal requirements. This includes use-case restrictions, data handling obligations, and any prohibition on accessing non-public or undocumented APIs. We have removed support for some providers where we determined the implementation could not reasonably be used without violating the provider's terms. We welcome feedback from any LLM providers on this topic.
 
