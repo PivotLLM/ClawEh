@@ -209,4 +209,3 @@ func (w *Watcher) notify(cfg *config.Config, agentID, relPath string) {
 			map[string]any{"agent_id": agentID, "error": err.Error()})
 	}
 }
-

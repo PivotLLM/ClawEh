@@ -198,4 +198,3 @@ func TestResolveAgentMounts_AutoMaestro(t *testing.T) {
 		t.Fatalf("maestro off: expected nil, got %+v", got)
 	}
 }
-

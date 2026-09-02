@@ -12,9 +12,9 @@ import (
 
 // recoveryTestStore is a minimal in-memory SessionStore for recovery tests.
 type recoveryTestStore struct {
-	history         []providers.Message
-	clearCalled     bool
-	pendingCleared  string
+	history        []providers.Message
+	clearCalled    bool
+	pendingCleared string
 }
 
 func (s *recoveryTestStore) GetHistory(_ string) []providers.Message {
@@ -27,12 +27,12 @@ func (s *recoveryTestStore) SetHistory(_ string, h []providers.Message) {
 	copy(cp, h)
 	s.history = cp
 }
-func (s *recoveryTestStore) AddMessage(_, _, _ string)                    {}
+func (s *recoveryTestStore) AddMessage(_, _, _ string)                          {}
 func (s *recoveryTestStore) AddFullMessage(_ string, _ providers.Message) int64 { return 0 }
-func (s *recoveryTestStore) GetSummary(_ string) string                   { return "" }
-func (s *recoveryTestStore) SetSummary(_, _ string)                       {}
-func (s *recoveryTestStore) TruncateHistory(_ string, _ int)              {}
-func (s *recoveryTestStore) SetPendingTurn(_ string) error                { return nil }
+func (s *recoveryTestStore) GetSummary(_ string) string                         { return "" }
+func (s *recoveryTestStore) SetSummary(_, _ string)                             {}
+func (s *recoveryTestStore) TruncateHistory(_ string, _ int)                    {}
+func (s *recoveryTestStore) SetPendingTurn(_ string) error                      { return nil }
 func (s *recoveryTestStore) ClearPendingTurn(key string) error {
 	s.clearCalled = true
 	s.pendingCleared = key

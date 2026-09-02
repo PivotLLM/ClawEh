@@ -49,17 +49,17 @@ type TaskRecord struct {
 	// Media holds media:// refs attached to the worker's initial message. Refs
 	// are in-memory store entries, so a supervisor relaunch after a process
 	// restart will fail ref resolution — the task then errors with a clear message.
-	Media []string `json:"media,omitempty"`
-	Channel      string `json:"channel"`
-	ChatID       string `json:"chat_id"`
-	Status       string `json:"status"`
-	CreatedAt    string `json:"created_at"`
-	StartedAt    string `json:"started_at,omitempty"`
-	FinishedAt   string `json:"finished_at,omitempty"`
-	Restarts     int    `json:"restarts"`
-	RetryAfter   int64  `json:"retry_after"` // unix secs; earliest relaunch
-	Error        string `json:"error,omitempty"`
-	ResultsPath  string `json:"results_path"`
+	Media       []string `json:"media,omitempty"`
+	Channel     string   `json:"channel"`
+	ChatID      string   `json:"chat_id"`
+	Status      string   `json:"status"`
+	CreatedAt   string   `json:"created_at"`
+	StartedAt   string   `json:"started_at,omitempty"`
+	FinishedAt  string   `json:"finished_at,omitempty"`
+	Restarts    int      `json:"restarts"`
+	RetryAfter  int64    `json:"retry_after"` // unix secs; earliest relaunch
+	Error       string   `json:"error,omitempty"`
+	ResultsPath string   `json:"results_path"`
 	// SpawnDepth is the sub-agent depth of the agent that spawned this task (0 =
 	// spawned by a primary turn). Persisted so the depth survives the detached
 	// async context and process restarts; the worker runs at SpawnDepth+1.

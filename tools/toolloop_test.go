@@ -41,8 +41,8 @@ type mockTool struct {
 	result *ToolResult
 }
 
-func (t *mockTool) Name() string              { return t.name }
-func (t *mockTool) Description() string       { return "mock tool " + t.name }
+func (t *mockTool) Name() string               { return t.name }
+func (t *mockTool) Description() string        { return "mock tool " + t.name }
 func (t *mockTool) Parameters() map[string]any { return map[string]any{"type": "object"} }
 func (t *mockTool) Execute(ctx context.Context, args map[string]any) *ToolResult {
 	if t.result != nil {

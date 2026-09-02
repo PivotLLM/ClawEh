@@ -6,8 +6,8 @@ import "fmt"
 
 // Logger implements common Logger interface
 type Logger struct {
-	component        string
-	levels           map[int]LogLevel
+	component string
+	levels    map[int]LogLevel
 	// contentSensitive marks this logger as one whose Debug output may contain
 	// message content (e.g. API request/response bodies). When true, Debug and
 	// Debugf calls are suppressed unless log_message_content is enabled.

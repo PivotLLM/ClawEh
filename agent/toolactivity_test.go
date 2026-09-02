@@ -72,10 +72,10 @@ func TestToolActivitySummary(t *testing.T) {
 			want: "🔧 `browser_click`",
 		},
 		{
-			desc:    "underscored tool name is backticked (not italicised by telegram)",
-			tool:    "mcp__claw__cogmem_memory_create",
-			args:    nil,
-			want:    "🔧 `cogmem_memory_create`",
+			desc: "underscored tool name is backticked (not italicised by telegram)",
+			tool: "mcp__claw__cogmem_memory_create",
+			args: nil,
+			want: "🔧 `cogmem_memory_create`",
 		},
 		{
 			desc:    "secret-keyed arg is never shown",

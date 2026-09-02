@@ -41,16 +41,16 @@ type CurrentState struct {
 
 // DomainView is a compact projection of a domain for the model.
 type DomainView struct {
-	ID       string            `json:"id"`
-	Sticky   bool              `json:"sticky"`
-	Name     string            `json:"name"`
-	Status   string            `json:"status"`
-	Version  int64             `json:"version"`
-	Summary  string            `json:"summary"`
-	State    store.DomainState `json:"state"`
-	Triggers string            `json:"triggers,omitempty"`
-	KeywordTriggers string      `json:"keyword_triggers,omitempty"`
-	Memories []MemoryView      `json:"memories"`
+	ID              string            `json:"id"`
+	Sticky          bool              `json:"sticky"`
+	Name            string            `json:"name"`
+	Status          string            `json:"status"`
+	Version         int64             `json:"version"`
+	Summary         string            `json:"summary"`
+	State           store.DomainState `json:"state"`
+	Triggers        string            `json:"triggers,omitempty"`
+	KeywordTriggers string            `json:"keyword_triggers,omitempty"`
+	Memories        []MemoryView      `json:"memories"`
 }
 
 // MemoryView is a compact projection of a hook for the model.

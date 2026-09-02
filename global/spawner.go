@@ -37,11 +37,11 @@ func (m SpawnMode) String() string {
 // SpawnRequest describes one worker launch.
 type SpawnRequest struct {
 	Mode          SpawnMode
-	Task          string // the worker's instructions (required)
-	Name          string // short label; required for callback mode (human handle)
-	Label         string // optional display label (used by wait mode)
-	TargetAgentID string // "" ⇒ self-spawn (caller's own agent)
-	Model         string // optional model (alias) for the sub-agent; must be one of the executing agent's configured models. "" ⇒ that agent's default.
+	Task          string   // the worker's instructions (required)
+	Name          string   // short label; required for callback mode (human handle)
+	Label         string   // optional display label (used by wait mode)
+	TargetAgentID string   // "" ⇒ self-spawn (caller's own agent)
+	Model         string   // optional model (alias) for the sub-agent; must be one of the executing agent's configured models. "" ⇒ that agent's default.
 	Media         []string // optional media:// refs attached to the worker's initial message (e.g. hand an image to a vision-capable agent)
 	Channel       string   // originating channel (for attribution / callback routing)
 	ChatID        string   // originating chat id

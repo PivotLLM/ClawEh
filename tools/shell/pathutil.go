@@ -40,4 +40,3 @@ func isWithinWorkspace(candidate, workspace string) bool {
 	rel, err := filepath.Rel(filepath.Clean(workspace), filepath.Clean(candidate))
 	return err == nil && filepath.IsLocal(rel)
 }
-

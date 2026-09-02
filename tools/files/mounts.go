@@ -179,4 +179,3 @@ func (m *mountFs) Open(path string) (fs.File, error) {
 	}
 	return m.inner.Open(path)
 }
-

@@ -9,8 +9,8 @@ import (
 
 	"github.com/PivotLLM/ClawEh/tools"
 	toolsfiles "github.com/PivotLLM/ClawEh/tools/files"
-	toolsshell "github.com/PivotLLM/ClawEh/tools/shell"
 	toolssession "github.com/PivotLLM/ClawEh/tools/session"
+	toolsshell "github.com/PivotLLM/ClawEh/tools/shell"
 )
 
 // TestMain registers the tool providers needed by agent-package tests.

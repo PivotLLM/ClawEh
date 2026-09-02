@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/PivotLLM/ClawEh/memory"
-	"github.com/PivotLLM/ClawEh/tools"
 	"github.com/PivotLLM/ClawEh/providers"
+	"github.com/PivotLLM/ClawEh/tools"
 )
 
 // writeArchive creates a .archive.db file in dir and populates it with msgs.

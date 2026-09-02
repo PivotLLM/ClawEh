@@ -70,7 +70,7 @@ func TestRegisterTools_NoDuplicateRegistration(t *testing.T) {
 	}
 
 	names := agentToolNames(t, al)
-	assertHasTool(t, names, "file_read_lines")       // deps-free provider (default-on)
+	assertHasTool(t, names, "file_read_lines") // deps-free provider (default-on)
 	assertHasTool(t, names, "session_compact") // runtime-only (CompactFn closure)
 
 	seen := map[string]bool{}

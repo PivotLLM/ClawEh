@@ -36,9 +36,9 @@ type Runtime struct {
 	// does not support it.
 	GetShowToolActivity func() bool
 	SetShowToolActivity func(on bool)
-	ClearHistory       func() error
-	CompactHistory     func(ctx context.Context) (report string, err error)
-	ResetCooldown      func()
+	ClearHistory        func() error
+	CompactHistory      func(ctx context.Context) (report string, err error)
+	ResetCooldown       func()
 	// ClearCooldown clears the cooldown for a single provider/model and
 	// returns true when an entry existed. Used by `/cooldowns clear <p/m>`
 	// to surface a "no cooldown found" message when the entry was already
