@@ -409,6 +409,7 @@ PY
     "tool_overrides": {
       "shell_exec": true,
       "file_read_bytes": true,
+      "file_count": true,
       "file_edit_bytes": true,
       "file_insert_bytes": true,
       "file_delete_bytes": true,
@@ -445,6 +446,7 @@ PY
     "internal_tools": [
       "file_read_bytes",
       "file_read_lines",
+      "file_count",
       "file_view_image",
       "file_write",
       "file_edit",

@@ -70,6 +70,17 @@ on, and breaking one is a deliberate decision rather than a free move.
 
 ### Added
 
+- **`file_count` — line, word, character and byte counts for a file, like
+  `wc`.** Useful for sizing a file before reading it, and cheap enough to use as
+  a change signal. Counts match `wc` exactly, verified in the tests against the
+  real binary: `lines` is the newline count, so a file whose last line is
+  unterminated reports one fewer than you would count by eye — `final_newline`
+  in the result says which case you are in. `characters` counts Unicode
+  characters and `bytes` counts bytes, which differ for non-ASCII text. The file
+  is streamed, so it works on files too large for the read tools, and a file
+  that is not valid UTF-8 is measured rather than rejected, with `invalid_utf8`
+  marking the character count as untrustworthy.
+
 - **Watch jobs: cron that only wakes the agent when something changed.**
   `cron_schedule` accepts `watch_tool`, `watch_args` and `watch_fields`. The
   named tool is called on the schedule **with no model in the loop**; the values

@@ -45,6 +45,7 @@ func (globalFilesProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 		cp          *CopyFileTool
 		del         *DeleteFileTool
 		mv          *MoveFileTool
+		count       *CountFileTool
 		searchLines *SearchFilesTool
 		searchBytes *SearchFilesTool
 		rangeTools  map[string]*rangeEditTool
@@ -100,6 +101,7 @@ func (globalFilesProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 		readBytes = NewReadFileTool(workspace, readRestrict, maxReadFileSize, allowReadPaths)
 		readLines = NewReadLinesTool(workspace, readRestrict, maxReadFileSize, allowReadPaths)
 		viewImage = NewViewImageTool(workspace, readRestrict, allowReadPaths)
+		count = NewCountFileTool(workspace, readRestrict, allowReadPaths)
 		searchLines = NewSearchLinesTool(workspace, readRestrict, allowReadPaths)
 		searchBytes = NewSearchBytesTool(workspace, readRestrict, allowReadPaths)
 		write = NewWriteFileToolScoped(workspace, restrict, writeSubdir, allowWritePaths)
@@ -160,6 +162,16 @@ func (globalFilesProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 			DefaultAllow: global.Allow(true),
 			Handler: func(call *global.ToolCall) (*global.Result, error) {
 				return tools.ResultToGlobal(readLines.Execute(call.Ctx, call.Args)), nil
+			},
+		},
+		{
+			Name:         "count",
+			Description:  (&CountFileTool{}).Description(),
+			RawSchema:    (&CountFileTool{}).Parameters(),
+			Category:     "filesystem",
+			DefaultAllow: global.Allow(true),
+			Handler: func(call *global.ToolCall) (*global.Result, error) {
+				return tools.ResultToGlobal(count.Execute(call.Ctx, call.Args)), nil
 			},
 		},
 		{
