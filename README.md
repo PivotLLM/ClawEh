@@ -88,7 +88,19 @@ Run as your normal user — it prompts for sudo only to write the unit file:
 ./claw install --host 0.0.0.0   # headless: reachable on your LAN
 ```
 
-This copies the binary to `~/bin` (or `~/.local/bin`), adds it to your `PATH`, and registers a systemd service that runs ClawEh as your user at boot. The web UI has no authentication, so access is **loopback-only by default**: binding to `0.0.0.0` makes it listen on the network, but nothing off-box is served until you also say who may connect. Pass `--allowed-cidrs` for that — e.g. `--host 0.0.0.0 --allowed-cidrs 192.168.1.0/24` for a LAN, the three RFC1918 ranges for any private network, or `*` for any address. (Use `*`, not `0.0.0.0/0`, to allow everything: that is an IPv4 prefix and still refuses IPv6 clients.) Loopback is always allowed. Remove everything with `claw uninstall`.
+This copies the binary to `~/bin` (or `~/.local/bin`), adds it to your `PATH`, symlinks `openclaw` alongside it (for the Rabbit R1 — see [External devices](#external-devices)), and registers a systemd service that runs ClawEh as your user at boot. Remove everything with `claw uninstall`.
+
+**Headless or remote host?** The web UI has no authentication yet, so it is **loopback-only by default** and two things are needed to reach it from elsewhere: a bind address *and* an allowlist saying who may connect. `claw install` refuses `--host` without `--allowed-cidrs` rather than leaving you with a port that listens and then rejects everything:
+
+```bash
+claw install --host 0.0.0.0 --allowed-cidrs 192.168.1.0/24   # your LAN subnet — recommended
+claw install --host 0.0.0.0 --allowed-cidrs private          # all RFC1918 private ranges
+claw install --host 0.0.0.0 --allowed-cidrs any              # any address — see the warning below
+```
+
+`private` and `any` are shorthands; you can also give explicit CIDRs, comma-separated. Loopback is always allowed, so a local-only install needs none of this. You can change it later in the web UI under **Config → Service**, or with `gateway.allowed_cidrs`.
+
+> Prefer the narrowest range that works. Until operator authentication and TLS land, anyone inside the allowlist can read and change your configuration — put ClawEh behind a VPN or reverse proxy with its own auth if it must be reachable from an untrusted network. See [Remote access](docs/remote-access.md).
 
 > Not using systemd? Just run `claw` directly — it starts the gateway and web UI on port `18790`.
 
@@ -144,6 +156,69 @@ mix: `file_read_lines`/`_bytes`, `file_search_lines`/`_bytes`, the positional
 `file_edit_lines`/`insert`/`delete` (line and byte variants), plus `file_edit`
 (exact-text replace), `file_write`, `file_append`, `file_copy`, `file_move` (works
 across mounts), and `file_delete` (requires `sure=true`; refuses to delete backups).
+
+## External devices
+
+Two different transports reach your agents from outside the machine. They are
+separate listeners with separate credentials, and which one a client uses is not
+a choice you make — it depends on the client.
+
+| | Device gateway | ACP bridge |
+|---|---|---|
+| Used by | ClawToTalk (Android), OpenClaw-compatible apps | Rabbit R1 |
+| Port | `channels.device.port`, default **18791** | none — stdio, no listener |
+| Protocol | OpenClaw Gateway WebSocket | Agent Client Protocol (JSON-RPC 2.0 over stdio) |
+| Auth | shared token or 5-word passphrase, then Ed25519 pairing | inherits the device gateway's, over loopback |
+
+Neither uses the web UI's chat socket (`/webui/ws` on port 18790). That one is
+for the browser console only.
+
+### Device gateway — apps
+
+ClawEh speaks the **OpenClaw Gateway WebSocket protocol** on its own listener, so
+OpenClaw-compatible clients work without modification. Pair by scanning a QR code
+or typing a five-word passphrase, then approve the device in the web UI. Each
+device can be pointed at a chosen assistant, and replies stream live as the model
+produces them.
+
+`channels.device.allowed_cidrs` is empty by default here, meaning any address —
+unlike the web UI's allowlist. That is deliberate: this listener authenticates
+every client, so reachability is not the only thing standing between a stranger
+and your agents. See [the protocol notes](docs/device-gateway-protocol.md).
+
+### ACP bridge — the Rabbit R1
+
+The R1 does **not** connect over the network. Its `rabbit-agent` spawns a local
+helper process and talks to it over a pipe, so ClawEh has to be something
+`rabbit-agent` can launch:
+
+```
+rabbit-agent ──ACP over stdio──► openclaw acp ──WebSocket on 127.0.0.1:18791──► the running gateway
+                                 (a symlink to claw)                            (device gateway)
+```
+
+`rabbit-agent` is configured to spawn `openclaw acp`. Installing ClawEh creates
+an `openclaw` symlink next to the `claw` binary — `claw install` and
+`make install` both do this — so that command resolves to ClawEh. `claw acp` is a
+stateless translator: it holds no agent loop, and simply converts each ACP prompt
+into a device-gateway turn against the **already-running** gateway on loopback.
+There is only ever one ClawEh instance.
+
+Because the bridge connects as a device, it uses the same credentials and pairing
+as any other client, and pairs only once: its Ed25519 identity and issued token
+persist in `$CLAW_HOME/state/acp-bridge/`, so the short-lived processes
+`rabbit-agent` spawns do not re-pair every time.
+
+Two practical consequences:
+
+- **The gateway must already be running.** The bridge is a translator, not a
+  server; it connects to the gateway rather than starting one.
+- **Restarting the gateway drops the bridge.** Upgrading ClawEh restarts the
+  service, so `openclaw` has to be restarted afterwards (or the host rebooted)
+  before the R1 reconnects.
+
+Full details, including the turn lifecycle and the JSON-RPC wire format, are in
+[docs/acp-protocol.md](docs/acp-protocol.md).
 
 ## Why ClawEh exists
 

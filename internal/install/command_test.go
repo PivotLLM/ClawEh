@@ -1,6 +1,8 @@
 package install
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -146,5 +148,86 @@ func TestShellQuote(t *testing.T) {
 		if got := shellQuote(in); got != want {
 			t.Errorf("shellQuote(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// TestParseAllowlist covers the --allowed-cidrs aliases. They exist so the
+// headless case does not require remembering three RFC1918 prefixes, which is
+// where operators otherwise reach for 0.0.0.0/0.
+func TestParseAllowlist(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   string
+		want []string
+	}{
+		{"private alias", "private", config.PrivateNetworkCIDRs},
+		{"lan alias", "lan", config.PrivateNetworkCIDRs},
+		{"any alias", "any", []string{config.AllowAnyAddress}},
+		{"all alias", "all", []string{config.AllowAnyAddress}},
+		{"alias is case-insensitive", "PRIVATE", config.PrivateNetworkCIDRs},
+		{"alias tolerates spacing", "  any  ", []string{config.AllowAnyAddress}},
+		{"single cidr", "192.168.1.0/24", []string{"192.168.1.0/24"}},
+		{"comma separated", "10.0.0.0/8, 192.168.1.0/24", []string{"10.0.0.0/8", "192.168.1.0/24"}},
+		{"wildcard passes through", "*", []string{"*"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := parseAllowlist(tc.in)
+			if len(got) != len(tc.want) {
+				t.Fatalf("parseAllowlist(%q) = %v, want %v", tc.in, got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Fatalf("parseAllowlist(%q) = %v, want %v", tc.in, got, tc.want)
+				}
+			}
+		})
+	}
+
+	// An alias must not alias the shared slice, or a later edit would corrupt it.
+	got := parseAllowlist("private")
+	got[0] = "0.0.0.0/0"
+	if config.PrivateNetworkCIDRs[0] == "0.0.0.0/0" {
+		t.Fatal("parseAllowlist aliased config.PrivateNetworkCIDRs")
+	}
+}
+
+// TestIsNetworkBind pins which bind addresses count as off-box, since that is
+// what gates the install-time refusal.
+func TestIsNetworkBind(t *testing.T) {
+	for _, h := range []string{"", "127.0.0.1", "localhost", "::1", "[::1]", " 127.0.0.1 "} {
+		if isNetworkBind(h) {
+			t.Errorf("isNetworkBind(%q) = true, want false", h)
+		}
+	}
+	for _, h := range []string{"0.0.0.0", "::", "192.168.1.10", "10.0.0.5"} {
+		if !isNetworkBind(h) {
+			t.Errorf("isNetworkBind(%q) = false, want true", h)
+		}
+	}
+}
+
+// TestLinkOpenClawAlias covers the symlink the Rabbit R1 needs: rabbit-agent
+// spawns `openclaw acp`, so an install that omits it leaves the R1 unable to
+// connect even though everything else works.
+func TestLinkOpenClawAlias(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "claw"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := linkOpenClawAlias(dir, "claw"); err != nil {
+		t.Fatalf("linkOpenClawAlias() error = %v", err)
+	}
+	link := filepath.Join(dir, "openclaw")
+	target, err := os.Readlink(link)
+	if err != nil {
+		t.Fatalf("openclaw is not a symlink: %v", err)
+	}
+	if target != "claw" {
+		t.Fatalf("openclaw -> %q, want %q (relative, so moving the dir keeps it valid)", target, "claw")
+	}
+
+	// Re-running install must replace an existing link rather than failing.
+	if err := linkOpenClawAlias(dir, "claw"); err != nil {
+		t.Fatalf("second linkOpenClawAlias() error = %v, want it to replace the existing link", err)
 	}
 }

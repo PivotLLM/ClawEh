@@ -39,6 +39,17 @@ on, and breaking one is a deliberate decision rather than a free move.
 
 ### Added
 
+- **`claw install` now creates the `openclaw` symlink.** The Rabbit R1's
+  `rabbit-agent` spawns `openclaw acp`, so the binary has to exist under that
+  name. Only `make install` did this before, which meant an install from a
+  release binary silently lacked the R1 path. Also documented: the README now
+  has an **External devices** section covering both transports — the device
+  gateway that OpenClaw-compatible apps such as ClawToTalk connect to, and the
+  stdio ACP bridge the R1 uses — and how the bridge reaches the running gateway
+  over loopback.
+- **`--allowed-cidrs` accepts `private` and `any` as shorthands** for the RFC1918
+  ranges and for any address, so the common headless choices do not require
+  remembering three prefixes.
 - **`gateway.allowed_cidrs` accepts `"*"`, meaning any address in either
   family.** `0.0.0.0/0` is the obvious thing to reach for and does not mean
   that — it is an IPv4 prefix, so on a dual-stack host it still refuses IPv6
@@ -49,6 +60,11 @@ on, and breaking one is a deliberate decision rather than a free move.
 
 ### Changed
 
+- **`claw install` refuses a non-loopback `--host` without `--allowed-cidrs`.**
+  That combination produces an install which listens on the network and then
+  refuses every connection from it — indistinguishable from a firewall problem.
+  It now fails at install time with the flags to fix it. An install whose config
+  already carries an allowlist is unaffected.
 - **BREAKING — an empty `gateway.allowed_cidrs` now means loopback only.** It
   previously fell back to the RFC1918 private ranges, so an install bound to
   `0.0.0.0` served the whole local network by default. Binding address and

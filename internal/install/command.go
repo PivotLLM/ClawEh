@@ -56,9 +56,9 @@ func NewInstallCommand() *cobra.Command {
 	cmd.Flags().IntVar(&port, "port", 0, "HTTP port for the web/gateway server. 0 keeps the current/seeded value.")
 	cmd.Flags().StringVar(&allowedCIDRs, "allowed-cidrs", "",
 		"Comma-separated CIDR allowlist for the WebUI/API; loopback is always allowed. "+
-			"Empty means loopback only. Use e.g. 192.168.1.0/24 for a LAN, "+
-			"10.0.0.0/8,172.16.0.0/12,192.168.0.0/16 for all private ranges, or '*' for any address "+
-			"(0.0.0.0/0 covers IPv4 only).")
+			"Empty means loopback only. Give explicit CIDRs (192.168.1.0/24), or a shorthand: "+
+			"'private' for the RFC1918 ranges, 'any' for any address. "+
+			"Required when --host is not loopback.")
 	return cmd
 }
 
@@ -117,6 +117,19 @@ func runInstall(host string, port int, allowedCIDRs string) error {
 	}
 	fmt.Printf("Installed binary: %s\n", targetBin)
 
+	// 2b. Symlink openclaw -> claw. rabbit-agent on the Rabbit R1 spawns
+	// `openclaw acp`, so the binary has to be reachable under that name for the
+	// R1 to connect. `make install` does this too; without it here, an install
+	// from a release binary silently lacks the R1 path.
+	if err := linkOpenClawAlias(binDir, serviceName); err != nil {
+		// Not fatal: everything except the R1's ACP bridge works without it.
+		fmt.Printf("Warning: could not create the openclaw alias (%v).\n"+
+			"  The Rabbit R1 spawns `openclaw acp`; without this link it cannot connect.\n", err)
+	} else {
+		fmt.Printf("Installed alias:  %s -> %s (for the Rabbit R1's `openclaw acp`)\n",
+			filepath.Join(binDir, openClawAlias), serviceName)
+	}
+
 	// 3. Ensure the bin dir is on PATH for interactive shells.
 	if note := ensurePath(binDir); note != "" {
 		fmt.Println(note)
@@ -130,8 +143,24 @@ func runInstall(host string, port int, allowedCIDRs string) error {
 		}
 	}
 
-	// 3c. Apply a custom IP allowlist if requested (otherwise the runtime default
-	// of RFC1918 private ranges applies).
+	// 3c. Apply the IP allowlist. Binding off-box without one produces an install
+	// that listens on the network and then refuses every connection from it, which
+	// looks like a firewall problem rather than a configuration choice. Fail here,
+	// where the operator is standing right next to it and can fix it in one flag,
+	// rather than at 3am on a headless box.
+	if allowedCIDRs == "" && isNetworkBind(host) {
+		if existing, err := currentAllowlist(); err == nil && len(existing) == 0 {
+			return fmt.Errorf(
+				"--host %s makes %s listen on the network, but the allowlist is empty, "+
+					"so every off-box connection would still be refused.\n"+
+					"Pass --allowed-cidrs as well:\n"+
+					"  --allowed-cidrs 192.168.1.0/24   your LAN subnet (recommended)\n"+
+					"  --allowed-cidrs private          all RFC1918 private ranges\n"+
+					"  --allowed-cidrs any              any address — the WebUI has no password yet\n"+
+					"Loopback is always allowed, so --host 127.0.0.1 needs none of this",
+				host, serviceName)
+		}
+	}
 	if allowedCIDRs != "" {
 		if err := applyAllowlist(allowedCIDRs); err != nil {
 			return fmt.Errorf("applying allowlist: %w", err)
@@ -298,11 +327,54 @@ func applyServerSettings(host string, port int) error {
 
 // applyAllowlist writes a custom IP allowlist (comma-separated CIDRs) into
 // gateway.allowed_cidrs in config.json. Each CIDR is validated before saving.
-func applyAllowlist(csv string) error {
-	path := internal.GetConfigPath()
-	cfg, err := config.LoadConfig(path)
-	if err != nil {
+// openClawAlias is the name rabbit-agent spawns (`openclaw acp`). ClawEh serves
+// ACP from the same binary, so the alias is a symlink rather than a second build.
+const openClawAlias = "openclaw"
+
+// linkOpenClawAlias points <binDir>/openclaw at the installed binary. The link is
+// relative so it survives the directory being moved, and is replaced if present.
+func linkOpenClawAlias(binDir, target string) error {
+	link := filepath.Join(binDir, openClawAlias)
+	if err := os.Remove(link); err != nil && !os.IsNotExist(err) {
 		return err
+	}
+	return os.Symlink(target, link)
+}
+
+// isNetworkBind reports whether host makes the gateway listen beyond loopback.
+func isNetworkBind(host string) bool {
+	switch strings.TrimSpace(host) {
+	case "", "127.0.0.1", "localhost", "::1", "[::1]":
+		return false
+	default:
+		return true
+	}
+}
+
+// currentAllowlist reads the allowlist already in the config, so an operator
+// re-running install on a host that is already configured is not blocked.
+func currentAllowlist() ([]string, error) {
+	cfg, err := config.LoadConfig(internal.GetConfigPath())
+	if err != nil {
+		return nil, err
+	}
+	return cfg.Gateway.AllowedCIDRs, nil
+}
+
+// allowlistAliases expand to a full CIDR list, so the common headless choices do
+// not require remembering three RFC1918 prefixes.
+var allowlistAliases = map[string][]string{
+	"private": config.PrivateNetworkCIDRs,
+	"lan":     config.PrivateNetworkCIDRs,
+	"any":     {config.AllowAnyAddress},
+	"all":     {config.AllowAnyAddress},
+}
+
+// parseAllowlist turns the --allowed-cidrs value into a CIDR list, expanding an
+// alias if one was given.
+func parseAllowlist(csv string) []string {
+	if expanded, ok := allowlistAliases[strings.ToLower(strings.TrimSpace(csv))]; ok {
+		return append([]string(nil), expanded...)
 	}
 	parts := strings.Split(csv, ",")
 	cidrs := make([]string, 0, len(parts))
@@ -311,6 +383,16 @@ func applyAllowlist(csv string) error {
 			cidrs = append(cidrs, t)
 		}
 	}
+	return cidrs
+}
+
+func applyAllowlist(csv string) error {
+	path := internal.GetConfigPath()
+	cfg, err := config.LoadConfig(path)
+	if err != nil {
+		return err
+	}
+	cidrs := parseAllowlist(csv)
 	if err := config.ValidateAllowedCIDRs(cidrs); err != nil {
 		return err
 	}
