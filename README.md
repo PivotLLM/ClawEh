@@ -98,7 +98,16 @@ claw install --host 0.0.0.0 --allowed-cidrs private          # all RFC1918 priva
 claw install --host 0.0.0.0 --allowed-cidrs any              # any address — see the warning below
 ```
 
-`private` and `any` are shorthands; you can also give explicit CIDRs, comma-separated. Loopback is always allowed, so a local-only install needs none of this. You can change it later in the web UI under **Config → Service**, or with `gateway.allowed_cidrs`.
+`private` and `any` are shorthands; you can also give explicit CIDRs, comma-separated. Loopback is always allowed, so a local-only install needs none of this. You can change it later in the web UI under **Config → Service**, with `gateway.allowed_cidrs`, or — if the allowlist is what is keeping you out of the web UI — with `claw network` on the host itself:
+
+```bash
+claw network --show             # what is allowed right now
+claw network                    # allow the private LAN ranges
+claw network 192.168.1.0/24     # or one subnet
+claw network none               # back to loopback only
+```
+
+`claw network` writes the config and exits, so it is safe to run while ClawEh is running; the gateway applies the new allowlist on its next config reload — about 15 seconds — without a restart.
 
 > Prefer the narrowest range that works. Until operator authentication and TLS land, anyone inside the allowlist can read and change your configuration — put ClawEh behind a VPN or reverse proxy with its own auth if it must be reachable from an untrusted network. See [Remote access](docs/remote-access.md).
 

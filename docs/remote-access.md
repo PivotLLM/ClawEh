@@ -24,7 +24,9 @@ ordinary HTTP + WebSocket; you are just publishing a port.
 > to `0.0.0.0` alone will not serve a network client, and you must add the
 > networks you want to reach it from — a subnet such as `192.168.1.0/24`, or `*`
 > for any address. Use `*` rather than `0.0.0.0/0` when you mean "everything":
-> that is an IPv4 prefix, so it still refuses IPv6 clients. Whichever method you
+> that is an IPv4 prefix, so it still refuses IPv6 clients. `claw network` sets
+> this from a shell on the host without editing the config, and a running gateway
+> applies it on its next config reload (about 15 seconds). Whichever method you
 > choose, treat an exposed WebUI endpoint as sensitive and restrict access at the
 > edge (client certificates, SSO, an allowlist, or a private overlay network)
 > until in-app auth is in place. The device gateway authenticates every client, so

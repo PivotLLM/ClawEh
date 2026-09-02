@@ -21,6 +21,7 @@ import (
 	"github.com/PivotLLM/ClawEh/internal/install"
 	"github.com/PivotLLM/ClawEh/internal/memory"
 	"github.com/PivotLLM/ClawEh/internal/model"
+	"github.com/PivotLLM/ClawEh/internal/network"
 	"github.com/PivotLLM/ClawEh/internal/skills"
 	"github.com/PivotLLM/ClawEh/internal/status"
 	"github.com/PivotLLM/ClawEh/internal/test"
@@ -55,6 +56,7 @@ func NewClawCommand(binaryName string) *cobra.Command {
 		model.NewModelCommand(),
 		install.NewInstallCommand(),
 		install.NewUninstallCommand(),
+		network.NewNetworkCommand(),
 		test.NewTestCommand(),
 		token.NewTokenCommand(),
 		devicegw.NewDevicesCommand(),

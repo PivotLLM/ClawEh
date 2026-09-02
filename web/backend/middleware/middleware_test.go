@@ -134,12 +134,9 @@ func TestResponseRecorder_FlushDelegates(t *testing.T) {
 }
 
 func TestIPAllowlist_RejectsOutsideCIDR_APIPathReturnsJSON(t *testing.T) {
-	h, err := IPAllowlist([]string{"192.168.1.0/24"}, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	h := newAllowlistHandler(t, []string{"192.168.1.0/24"}, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
-	if err != nil {
-		t.Fatalf("IPAllowlist() error = %v", err)
-	}
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
@@ -159,12 +156,9 @@ func TestIPAllowlist_RejectsOutsideCIDR_APIPathReturnsJSON(t *testing.T) {
 }
 
 func TestIPAllowlist_RejectsNonAPIPath_PlainText(t *testing.T) {
-	h, err := IPAllowlist([]string{"192.168.1.0/24"}, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	h := newAllowlistHandler(t, []string{"192.168.1.0/24"}, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
-	if err != nil {
-		t.Fatalf("IPAllowlist() error = %v", err)
-	}
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -177,12 +171,9 @@ func TestIPAllowlist_RejectsNonAPIPath_PlainText(t *testing.T) {
 }
 
 func TestIPAllowlist_UnparsableRemoteAddr(t *testing.T) {
-	h, err := IPAllowlist([]string{"192.168.1.0/24"}, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	h := newAllowlistHandler(t, []string{"192.168.1.0/24"}, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
-	if err != nil {
-		t.Fatalf("IPAllowlist() error = %v", err)
-	}
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/config", nil)

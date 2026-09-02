@@ -12,7 +12,41 @@ observe does not need an entry.
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- **`claw network` — set who may reach the WebUI/API without editing
+  config.json.** The recovery path for an install that listens on the network
+  and then refuses every connection from it, which is what an empty
+  `gateway.allowed_cidrs` looks like from a browser. With no argument it allows
+  the private LAN ranges; it also takes a comma-separated CIDR list or one of
+  `private`, `any`, `none`. `claw network --show` prints the current allowlist
+  and changes nothing.
+
+  ```
+  claw network                    # 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
+  claw network 192.168.1.0/24     # one subnet
+  claw network any                # any address — the WebUI has no password
+  claw network none               # back to loopback only
+  ```
+
+  It writes the config and exits, so it is safe to run against a running
+  gateway.
+
+### Changed
+
+- **`gateway.allowed_cidrs` now applies without a restart.** The allowlist was
+  fixed for the lifetime of the listener, so widening it after locking yourself
+  out meant restarting the service. A running gateway now picks the change up
+  on its next config reload — about 15 seconds with the default interval and
+  debounce — and because the listener is not recreated, open WebUI WebSocket
+  connections survive it. An allowlist that
+  fails to parse is refused and the running one is kept, rather than the reload
+  dropping access to loopback.
+- **The startup warning for a network bind with an empty allowlist now names the
+  fix.** It previously suggested `0.0.0.0/0` for "any address", which is an IPv4
+  prefix — it still refuses IPv6 clients, which on a dual-stack host reads as the
+  allowlist being broken. It now points at `claw network` and, for the
+  allow-everything case, at `"*"`, which covers both families.
 
 ## [0.4.72]
 

@@ -27,10 +27,7 @@ func TestIPAllowlist_EmptyMeansLoopbackOnly(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			served := false
-			h, err := IPAllowlist(nil, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { served = true }))
-			if err != nil {
-				t.Fatal(err)
-			}
+			h := newAllowlistHandler(t, nil, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { served = true }))
 			req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
 			req.RemoteAddr = tc.remoteAddr
 			h.ServeHTTP(httptest.NewRecorder(), req)
@@ -61,10 +58,7 @@ func TestIPAllowlist_ExplicitCIDRsWiden(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			served := false
-			h, err := IPAllowlist(tc.cidrs, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { served = true }))
-			if err != nil {
-				t.Fatal(err)
-			}
+			h := newAllowlistHandler(t, tc.cidrs, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { served = true }))
 			req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
 			req.RemoteAddr = tc.remoteAddr
 			h.ServeHTTP(httptest.NewRecorder(), req)
@@ -102,10 +96,7 @@ func TestIPAllowlist_WildcardAllowsAnyAddress(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			served := false
-			h, err := IPAllowlist(tc.cidrs, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { served = true }))
-			if err != nil {
-				t.Fatal(err)
-			}
+			h := newAllowlistHandler(t, tc.cidrs, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { served = true }))
 			req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
 			req.RemoteAddr = tc.remoteAddr
 			h.ServeHTTP(httptest.NewRecorder(), req)

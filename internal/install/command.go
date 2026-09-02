@@ -20,6 +20,7 @@ import (
 	"github.com/PivotLLM/ClawEh/fileutil"
 	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/internal"
+	"github.com/PivotLLM/ClawEh/internal/network"
 )
 
 const (
@@ -149,7 +150,7 @@ func runInstall(host string, port int, allowedCIDRs string) error {
 	// where the operator is standing right next to it and can fix it in one flag,
 	// rather than at 3am on a headless box.
 	if allowedCIDRs == "" && isNetworkBind(host) {
-		if existing, err := currentAllowlist(); err == nil && len(existing) == 0 {
+		if existing, err := network.CurrentAllowlist(); err == nil && len(existing) == 0 {
 			return fmt.Errorf(
 				"--host %s makes %s listen on the network, but the allowlist is empty, "+
 					"so every off-box connection would still be refused.\n"+
@@ -351,56 +352,13 @@ func isNetworkBind(host string) bool {
 	}
 }
 
-// currentAllowlist reads the allowlist already in the config, so an operator
-// re-running install on a host that is already configured is not blocked.
-func currentAllowlist() ([]string, error) {
-	cfg, err := config.LoadConfig(internal.GetConfigPath())
-	if err != nil {
-		return nil, err
-	}
-	return cfg.Gateway.AllowedCIDRs, nil
-}
-
-// allowlistAliases expand to a full CIDR list, so the common headless choices do
-// not require remembering three RFC1918 prefixes.
-var allowlistAliases = map[string][]string{
-	"private": config.PrivateNetworkCIDRs,
-	"lan":     config.PrivateNetworkCIDRs,
-	"any":     {config.AllowAnyAddress},
-	"all":     {config.AllowAnyAddress},
-}
-
-// parseAllowlist turns the --allowed-cidrs value into a CIDR list, expanding an
-// alias if one was given.
-func parseAllowlist(csv string) []string {
-	if expanded, ok := allowlistAliases[strings.ToLower(strings.TrimSpace(csv))]; ok {
-		return append([]string(nil), expanded...)
-	}
-	parts := strings.Split(csv, ",")
-	cidrs := make([]string, 0, len(parts))
-	for _, p := range parts {
-		if t := strings.TrimSpace(p); t != "" {
-			cidrs = append(cidrs, t)
-		}
-	}
-	return cidrs
-}
-
 func applyAllowlist(csv string) error {
-	path := internal.GetConfigPath()
-	cfg, err := config.LoadConfig(path)
+	cidrs := network.ParseAllowlist(csv)
+	path, err := network.ApplyAllowlist(cidrs)
 	if err != nil {
 		return err
 	}
-	cidrs := parseAllowlist(csv)
-	if err := config.ValidateAllowedCIDRs(cidrs); err != nil {
-		return err
-	}
-	cfg.Gateway.AllowedCIDRs = cidrs
-	if err := config.SaveConfig(path, cfg); err != nil {
-		return err
-	}
-	fmt.Printf("Network allowlist set to %v (loopback always allowed) (%s)\n", cfg.Gateway.AllowedCIDRs, path)
+	fmt.Printf("Network allowlist set to %s (loopback always allowed) (%s)\n", network.Describe(cidrs), path)
 	return nil
 }
 

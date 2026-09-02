@@ -442,19 +442,7 @@ func setupAndStartServices(
 		return nil, fmt.Errorf("invalid network allowlist %v: %w", allowedCIDRs, hostErr)
 	}
 	services.HTTPHost = httpHost
-	if len(allowedCIDRs) == 0 {
-		logger.InfoF("Network allowlist active", map[string]any{"allowed_cidrs": "none (loopback only)"})
-		// Binding off-box without an allowlist is almost always a surprise: the
-		// listener accepts the connection and the allowlist then rejects it, which
-		// looks like the port being closed. Say so once, at startup.
-		if h := cfg.Gateway.Host; h != "" && h != "127.0.0.1" && h != "localhost" && h != "::1" {
-			logger.WarnF("Gateway is bound off-box but the network allowlist is empty, so only loopback will be served. "+
-				"Set gateway.allowed_cidrs (e.g. your LAN subnet, or 0.0.0.0/0 to allow any address) to reach it from elsewhere.",
-				map[string]any{"host": h})
-		}
-	} else {
-		logger.InfoF("Network allowlist active", map[string]any{"allowed_cidrs": allowedCIDRs, "loopback": "always allowed"})
-	}
+	logAllowlist(allowedCIDRs, cfg.Gateway.Host)
 	rebuildSharedHTTPServer(services, cfg.Gateway.Host, cfg.Gateway.Port, services.ChannelManager, services.HTTPHost, agentLoop)
 	services.HTTPHost.Start()
 
@@ -835,6 +823,20 @@ func restartServices(
 	// config reload (investigation 7a5377d9, option #1).
 	rebuildSharedHTTPServer(services, cfg.Gateway.Host, cfg.Gateway.Port, services.ChannelManager, services.HTTPHost, al)
 
+	// Re-apply the IP allowlist on the live listener. This is what makes
+	// `claw network` a recovery path: an operator locked out by an empty
+	// allowlist can widen it and be let in within the reload interval, without a
+	// restart. A rejected allowlist leaves the running one in place — a typo must
+	// not silently drop access to loopback.
+	if services.HTTPHost != nil {
+		allowedCIDRs := cfg.Gateway.EffectiveAllowedCIDRs()
+		if err := services.HTTPHost.SetAllowlist(allowedCIDRs); err != nil {
+			logger.WarnF("Invalid network allowlist in reloaded config; keeping the previous one", map[string]any{"error": err.Error()})
+		} else {
+			logAllowlist(allowedCIDRs, cfg.Gateway.Host)
+		}
+	}
+
 	if err := services.ChannelManager.StartAll(runCtx); err != nil {
 		return fmt.Errorf("error restarting channels: %w", err)
 	}
@@ -1072,4 +1074,29 @@ func setupCronTool(
 	}
 
 	return cronService, cronTool
+}
+
+// logAllowlist reports the effective IP allowlist at startup and after a reload.
+// Binding off-box without one is almost always a surprise: the listener accepts
+// the connection and the allowlist then rejects it, which looks like the port
+// being closed rather than a configuration choice — so say so, and say how to
+// fix it without hunting through config.json.
+func logAllowlist(allowedCIDRs []string, host string) {
+	if len(allowedCIDRs) > 0 {
+		logger.InfoF("Network allowlist active", map[string]any{"allowed_cidrs": allowedCIDRs, "loopback": "always allowed"})
+		return
+	}
+	logger.InfoF("Network allowlist active", map[string]any{"allowed_cidrs": "none (loopback only)"})
+	if host == "" || host == "127.0.0.1" || host == "localhost" || host == "::1" {
+		return
+	}
+	// "*" rather than 0.0.0.0/0: the latter is an IPv4 prefix and still refuses
+	// IPv6 clients, which on a dual-stack host reads as the allowlist being
+	// broken. See middleware.AllowAnyAddress.
+	logger.WarnF("Gateway is bound off-box but the network allowlist is empty, so only loopback will be served. "+
+		"Run `"+internal.BinaryName+" network` to allow the private LAN ranges, "+
+		"`"+internal.BinaryName+" network <cidr>` for a specific subnet, or "+
+		"`"+internal.BinaryName+" network any` for any address (note 0.0.0.0/0 covers IPv4 only; use \"*\"). "+
+		"A running gateway applies the change on its next config reload, about 15 seconds.",
+		map[string]any{"host": host})
 }
