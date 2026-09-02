@@ -30,7 +30,7 @@ const (
 	// version is the release number, bare semver. Bump it here; nothing else
 	// defines a version. Build tooling reads this line, so keep it a single
 	// `const`-style assignment on one line.
-	version = "0.4.71"
+	version = "0.4.72"
 )
 
 // Build metadata, injected via ldflags by the Makefile:

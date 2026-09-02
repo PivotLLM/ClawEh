@@ -8,7 +8,7 @@ import (
 
 // TestIPAllowlist_EmptyCIDRsRejectsNonLoopback pins the current contract: an
 // empty allowlist is loopback-only. This replaces a test that asserted the
-// opposite (empty = allow all) — the behaviour changed in 0.4.71 because the
+// opposite (empty = allow all) — the behaviour changed in 0.4.72 because the
 // handler behind this middleware is the unauthenticated WebUI/API, and a config
 // that merely omits the key must not expose it to the network.
 func TestIPAllowlist_EmptyCIDRsRejectsNonLoopback(t *testing.T) {

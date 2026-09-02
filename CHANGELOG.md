@@ -14,7 +14,7 @@ observe does not need an entry.
 
 Nothing yet.
 
-## [0.4.71]
+## [0.4.72]
 
 First release under the stable-compatibility policy: config schemas, tool names,
 API shapes, and the device-gateway protocol are now things other installs depend
@@ -180,5 +180,5 @@ on, and breaking one is a deliberate decision rather than a free move.
   MCPFusion server. It also called the binary `fusion-oauth` throughout.
 - A skills error lost its wrapped cause and read `skills directoryw %v`.
 
-[Unreleased]: https://github.com/PivotLLM/ClawEh/compare/0.4.71...HEAD
-[0.4.71]: https://github.com/PivotLLM/ClawEh/compare/0.4.70...0.4.71
+[Unreleased]: https://github.com/PivotLLM/ClawEh/compare/0.4.72...HEAD
+[0.4.72]: https://github.com/PivotLLM/ClawEh/compare/0.4.70...0.4.72
