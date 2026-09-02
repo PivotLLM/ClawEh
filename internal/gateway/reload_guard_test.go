@@ -67,12 +67,28 @@ func TestReloadReAppliesTheAllowlist(t *testing.T) {
 	}
 }
 
+// TestReloadRebuildsTheMountWatcher guards both halves of the panic fixed
+// alongside it: stopAndCleanupServices stops the watcher on every reload, so if
+// restartServices does not build a new one, mount notifications die silently
+// after the first reload — and the old code then closed an already-closed
+// channel on the second, taking the process down.
+func TestReloadRebuildsTheMountWatcher(t *testing.T) {
+	body := restartServicesBody(t)
+	if !strings.Contains(body, "mountwatch.New") {
+		t.Fatal("restartServices no longer rebuilds services.MountWatcher; mount notifications stop after the first config reload")
+	}
+	if !strings.Contains(body, "services.MountWatcher.Start") {
+		t.Fatal("restartServices builds a mount watcher but never starts it")
+	}
+}
+
 // TestReloadRebuildsTheServicesItStops keeps the two halves of a reload in step:
 // anything stopAndCleanupServices tears down has to be rebuilt here, which is
 // exactly the invariant the mount watcher broke.
 func TestReloadRebuildsTheServicesItStops(t *testing.T) {
 	body := restartServicesBody(t)
 	for _, want := range []string{
+		"mountwatch.New",      // mount watcher
 		"channels.NewManager", // channel manager
 		"devices.NewService",  // device service
 		"setupCronTool",       // cron

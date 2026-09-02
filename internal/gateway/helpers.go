@@ -775,6 +775,13 @@ func restartServices(
 	}
 	logger.InfoC("cron", "Cron service restarted")
 
+	// Re-create the mount watcher. stopAndCleanupServices stopped the old one, so
+	// without this a reload would silently end mount notifications for the rest of
+	// the process's life — and every service around it is rebuilt the same way.
+	services.MountWatcher = mountwatch.New(al.GetConfig, msgBus, 0)
+	services.MountWatcher.Start()
+	logger.InfoC("mountwatch", "Mount watcher restarted")
+
 	// Stop the old media store before creating a new one
 	if fms, ok := services.MediaStore.(*media.FileMediaStore); ok {
 		fms.Stop()

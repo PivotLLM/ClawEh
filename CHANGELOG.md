@@ -48,6 +48,17 @@ observe does not need an entry.
   allowlist being broken. It now points at `claw network` and, for the
   allow-everything case, at `"*"`, which covers both families.
 
+### Fixed
+
+- **The gateway no longer crashes on the second config reload.** Any two config
+  changes in the life of a process — two saves from the WebUI, two `claw network`
+  runs, an edit to config.json followed by another — killed it with
+  `panic: close of closed channel`. The mount watcher was stopped on every
+  reload but only ever created at startup, so the second stop closed an
+  already-closed channel. It is now rebuilt on reload like every other service,
+  which also fixes the quieter half of the bug: after the first reload, external
+  mount notifications had stopped firing for the rest of the process's life.
+
 ## [0.4.72]
 
 First release under the stable-compatibility policy: config schemas, tool names,

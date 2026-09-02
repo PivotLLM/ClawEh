@@ -34,6 +34,7 @@ type Watcher struct {
 	bus      *bus.MessageBus
 	interval time.Duration
 	stop     chan struct{}
+	stopOnce sync.Once
 	wg       sync.WaitGroup
 }
 
@@ -50,11 +51,15 @@ func (w *Watcher) Start() {
 	go w.run()
 }
 
+// Stop halts the scan loop and waits for it to exit. It is safe to call more
+// than once: the gateway's shutdown path runs on every config reload as well as
+// at exit, and a second close of the stop channel would panic the process
+// rather than log anything.
 func (w *Watcher) Stop() {
 	if w == nil {
 		return
 	}
-	close(w.stop)
+	w.stopOnce.Do(func() { close(w.stop) })
 	w.wg.Wait()
 }
 
