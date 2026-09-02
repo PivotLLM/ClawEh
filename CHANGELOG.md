@@ -32,6 +32,37 @@ on, and breaking one is a deliberate decision rather than a free move.
   is covered from the day it appears; list entries are matched by identity
   (`id`, `name`, `model_name`, `account`) so deleting or reordering bots,
   providers or models cannot move a credential onto the wrong entry.
+- **The WebUI chat socket no longer disables its origin check, and no longer
+  puts the token in the URL.** Setup wrote `channels.webui.allow_origins: ["*"]`
+  into every install so a frontend dev server on port 5173 could connect — a
+  development convenience that shipped to production and switched off the only
+  defence against cross-site WebSocket hijacking, since CORS does not apply to
+  WebSockets. It also set `allow_token_query: true`, putting the token in the
+  URL where proxies, access logs, `Referer` headers and browser history record
+  it. Setup no longer writes either.
+
+  Empty `allow_origins` now means **same origin** (the `Origin` host must match
+  the `Host` requested) rather than "allow any", which works however the
+  operator reaches the UI — localhost, a LAN address, or a proxied hostname. An
+  explicit list is still honoured verbatim, `"*"` included, which is what a
+  frontend dev server needs.
+
+  The browser now sends the token as a WebSocket subprotocol
+  (`["claw-token", "<token>"]`) instead of a query parameter, because the
+  browser WebSocket API cannot set an `Authorization` header. The server echoes
+  only the `claw-token` marker, never the token. `Authorization: Bearer` still
+  works for non-browser clients, and `allow_token_query` still works if set
+  explicitly.
+
+  **This affects `/webui/ws` only** — the browser console's chat socket. The
+  device gateway on port 18791, which ClawToTalk and other OpenClaw-compatible
+  apps use, authenticates inside the protocol rather than at the HTTP handshake
+  and is untouched.
+
+  **Existing installs carry `allow_origins: ["*"]` from a previous setup run.**
+  Clear it (`"allow_origins": []` under `channels.webui`, or the Channels page)
+  to pick up same-origin checking; nothing clears it for you.
+
 - **The device gateway compares shared tokens in constant time with respect to
   length.** `subtle.ConstantTimeCompare` returns early when lengths differ, so
   the comparison leaked the secret's length. Both sides are now hashed to a fixed

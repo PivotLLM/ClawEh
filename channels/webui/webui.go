@@ -2,9 +2,11 @@ package webui
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -58,6 +60,52 @@ type WebUIChannel struct {
 	cancel      context.CancelFunc
 }
 
+// TokenSubprotocol is the WebSocket subprotocol name that marks the second
+// offered subprotocol as the channel token. A browser cannot set an
+// Authorization header on a WebSocket handshake, so this is how the token
+// reaches the server without going in the URL, where it would be captured by
+// access logs, Referer headers and browser history.
+//
+// The client offers ["claw-token", "<token>"]; the server echoes only
+// "claw-token", never the token.
+const TokenSubprotocol = "claw-token"
+
+// originAllowed implements the WebSocket origin policy, which is what stands
+// between this socket and a cross-site WebSocket hijack: any page in the
+// browser can open a WebSocket to localhost, and unlike fetch, it is not
+// stopped by CORS.
+//
+// An empty allowOrigins means SAME ORIGIN — the Origin's host must match the
+// Host the request was sent to. Same-origin rather than a fixed list because
+// the operator may reach the UI as localhost, a LAN address, or a proxied
+// hostname, and all of those are legitimately "this UI talking to itself".
+// A request with no Origin header at all is not a browser, so it is allowed and
+// left to token authentication.
+//
+// An explicit list is honoured verbatim, with "*" still meaning any origin —
+// which is what a frontend dev server on another port needs.
+func originAllowed(r *http.Request, allowOrigins []string) bool {
+	origin := r.Header.Get("Origin")
+
+	if len(allowOrigins) > 0 {
+		for _, allowed := range allowOrigins {
+			if allowed == "*" || allowed == origin {
+				return true
+			}
+		}
+		return false
+	}
+
+	if origin == "" {
+		return true // not a browser; the token is the gate
+	}
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(u.Host, r.Host)
+}
+
 // NewWebUIChannel creates a new WebUI channel.
 func NewWebUIChannel(cfg config.WebUIConfig, messageBus *bus.MessageBus) (*WebUIChannel, error) {
 	if cfg.Token == "" {
@@ -67,24 +115,18 @@ func NewWebUIChannel(cfg config.WebUIConfig, messageBus *bus.MessageBus) (*WebUI
 	base := channels.NewBaseChannel("webui", cfg, messageBus, cfg.AllowFrom)
 
 	allowOrigins := cfg.AllowOrigins
-	checkOrigin := func(r *http.Request) bool {
-		if len(allowOrigins) == 0 {
-			return true // allow all if not configured
-		}
-		origin := r.Header.Get("Origin")
-		for _, allowed := range allowOrigins {
-			if allowed == "*" || allowed == origin {
-				return true
-			}
-		}
-		return false
-	}
 
 	return &WebUIChannel{
 		BaseChannel: base,
 		config:      cfg,
 		upgrader: websocket.Upgrader{
-			CheckOrigin:     checkOrigin,
+			CheckOrigin: func(r *http.Request) bool { return originAllowed(r, allowOrigins) },
+			// The browser WebSocket API cannot set request headers, so the token
+			// travels as a subprotocol instead of a query parameter (see
+			// authenticate). Advertising the name here makes gorilla echo it in
+			// the handshake response — required, or the browser aborts the
+			// connection — while the token itself, offered second, is not echoed.
+			Subprotocols:    []string{TokenSubprotocol},
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
 		},
@@ -298,7 +340,18 @@ func (c *WebUIChannel) authenticate(r *http.Request) bool {
 		}
 	}
 
-	// Check query parameter only when explicitly allowed
+	// Subprotocol form, used by the browser: ["claw-token", "<token>"].
+	for _, proto := range websocket.Subprotocols(r) {
+		if proto == TokenSubprotocol {
+			continue
+		}
+		if subtle.ConstantTimeCompare([]byte(proto), []byte(token)) == 1 {
+			return true
+		}
+	}
+
+	// Query parameter, only when explicitly allowed. Off by default: a token in
+	// a URL is recorded by proxies, access logs and browser history.
 	if c.config.AllowTokenQuery {
 		if r.URL.Query().Get("token") == token {
 			return true
