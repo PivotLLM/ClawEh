@@ -34,6 +34,21 @@ observe does not need an entry.
 
 ### Changed
 
+- **The version now carries a build number: `0.4.72+d4812df7 [20260902155301]`.**
+  The commit identifies which source a binary came from, but a hash has no
+  order, so it cannot answer "is the copy I am running newer than the one I just
+  built?" — and a rebuild of the same commit is indistinguishable without it. The
+  build number is the UTC link time (`yyyymmddhhmmss`), which always increases,
+  compares correctly as plain text, and needs no version bump to change. It
+  appears everywhere the version does: `claw version`, `claw status`, the startup
+  log, the WebUI footer, `GET /api/system/version`, and the agent's system
+  prompt.
+
+  The release number and commit stay one unbroken token before the space, so a
+  version truncated on paste still identifies its source. `SemVer()` is
+  unchanged — bare `0.4.72` — so MCP, ACP and device-gateway handshakes, and the
+  release tag, are untouched. A plain `go build` with no ldflags still reports a
+  bare version.
 - **`gateway.allowed_cidrs` now applies without a restart.** The allowlist was
   fixed for the lifetime of the listener, so widening it after locking yourself
   out meant restarting the service. A running gateway now picks the change up

@@ -15,8 +15,16 @@ MAIN_GO=main.go
 GIT_COMMIT=$(shell git rev-parse --short=8 HEAD 2>/dev/null || echo "unknown")
 BUILD_TIME=$(shell date +%FT%T%z)
 GO_VERSION=$(shell $(GO) version | awk '{print $$3}')
+# BUILD_NUMBER orders builds; GIT_COMMIT identifies their source. The commit
+# cannot answer "is the copy I am running newer than the one I just built?" —
+# a hash has no order — so a rebuild of the same commit is indistinguishable
+# without this. UTC, because local time repeats an hour twice a year and a
+# newer build would sort older. Assigned with := so one `make build-all`
+# stamps ONE number across every platform: with a recursive `=` the shell
+# re-runs per expansion and each target would land a second or two apart.
+BUILD_NUMBER:=$(shell date -u +%Y%m%d%H%M%S)
 APP_PKG=github.com/PivotLLM/ClawEh/app
-LDFLAGS=-ldflags "-X $(APP_PKG).gitCommit=$(GIT_COMMIT) -X $(APP_PKG).buildTime=$(BUILD_TIME) -X $(APP_PKG).goVersion=$(GO_VERSION) -s -w"
+LDFLAGS=-ldflags "-X $(APP_PKG).gitCommit=$(GIT_COMMIT) -X $(APP_PKG).buildTime=$(BUILD_TIME) -X $(APP_PKG).goVersion=$(GO_VERSION) -X $(APP_PKG).buildNumber=$(BUILD_NUMBER) -s -w"
 
 # Go variables
 GO?=CGO_ENABLED=0 go
