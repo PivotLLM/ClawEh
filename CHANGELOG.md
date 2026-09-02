@@ -70,6 +70,29 @@ on, and breaking one is a deliberate decision rather than a free move.
 
 ### Added
 
+- **Watch jobs: cron that only wakes the agent when something changed.**
+  `cron_schedule` accepts `watch_tool`, `watch_args` and `watch_fields`. The
+  named tool is called on the schedule **with no model in the loop**; the values
+  at `watch_fields` are fingerprinted and compared with the previous run, and
+  `message` is delivered only when they move. Polling "is there new mail?" no
+  longer costs an LLM turn per check to conclude nothing happened.
+
+  `watch_fields` are dot-paths into the tool's result. A path crossing a list
+  applies to every element and collects the results, so `messages.id` is the set
+  of ids currently present. Naming fields rather than hashing the whole result is
+  what stops a probe firing on unread counts, timestamps and reordering. Omitting
+  them compares the entire result.
+
+  Behaviour worth knowing: the first run records a baseline **silently**, so
+  creating a watch does not immediately report everything that already exists.
+  A failed probe leaves the fingerprint untouched — advancing it would swallow
+  the change that happened while the probe was broken — and after five
+  consecutive failures the agent is told once, because a probe that has gone
+  blind otherwise looks exactly like a quiet one. Probes run against the owning
+  agent's tool registry, resolved on every run so a tool revoked in config stops
+  being probed, and session-scoped tools are refused since a probe has no
+  conversation to act on. Each probe is bounded at 60 seconds.
+
 - **`claw install` now creates the `openclaw` symlink.** The Rabbit R1's
   `rabbit-agent` spawns `openclaw acp`, so the binary has to exist under that
   name. Only `make install` did this before, which meant an install from a

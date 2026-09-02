@@ -26,11 +26,22 @@ type CronTool struct {
 	// getConfig returns the live config (re-read on each call so default-channel
 	// changes and global_cron grants take effect without restart).
 	getConfig func() *config.Config
+	// agentTools resolves an agent's tool registry, for watch probes. Resolved
+	// per run rather than captured once, so a tool revoked in config stops being
+	// probed. Nil disables watch jobs rather than failing the whole cron service.
+	agentTools func(agentID string) *tools.ToolRegistry
 }
 
 // NewCronTool creates a new CronTool. getConfig must return the current config.
 func NewCronTool(cronService *cron.CronService, msgBus *bus.MessageBus, getConfig func() *config.Config) *CronTool {
 	return &CronTool{cronService: cronService, msgBus: msgBus, getConfig: getConfig}
+}
+
+// SetAgentTools wires the per-agent tool registry lookup that watch probes need.
+// Injected after construction because the agent registry is built later than the
+// cron service.
+func (t *CronTool) SetAgentTools(fn func(agentID string) *tools.ToolRegistry) {
+	t.agentTools = fn
 }
 
 // config returns the live config, or nil if unavailable.
@@ -90,6 +101,19 @@ func (t *CronTool) Parameters() map[string]any {
 			"cron_expr": map[string]any{
 				"type":        "string",
 				"description": "Cron expression for calendar schedules (e.g. '0 9 * * *' for daily at 9am).",
+			},
+			"watch_tool": map[string]any{
+				"type":        "string",
+				"description": "Optional. Makes this a change watch instead of an unconditional reminder: the named tool is called on the schedule WITHOUT waking a model, and 'message' is only delivered when the watched fields change. Use the published tool name, e.g. 'google_gmail_messages_list'. The tool must be one you are allowed to use and must not be session-scoped.",
+			},
+			"watch_args": map[string]any{
+				"type":        "object",
+				"description": "Arguments passed to watch_tool, exactly as you would pass them when calling it yourself.",
+			},
+			"watch_fields": map[string]any{
+				"type":        "array",
+				"items":       map[string]any{"type": "string"},
+				"description": "Dot-paths into watch_tool's result naming the values that decide 'changed', e.g. ['messages.id']. A path crossing a list applies to every element and collects the results, so 'messages.id' is the set of ids currently present. Choose fields that only move when something you care about happens — watching a whole result also catches unread counts and timestamps, which fire constantly. Omit to compare the entire result.",
 			},
 			"job_id": map[string]any{
 				"type":        "string",
@@ -231,10 +255,19 @@ func (t *CronTool) addJob(args map[string]any, agentID string) *tools.ToolResult
 	// Job name = a short preview of the message (max 30 chars).
 	messagePreview := utils.Truncate(message, 30)
 
+	watch, werr := parseWatchArgs(args)
+	if werr != nil {
+		return tools.ErrorResult(werr.Error())
+	}
+
 	// Destination (channel/chat) is left empty: ExecuteJob resolves the target
 	// agent's default channel at fire time, so changing the default redirects
 	// existing jobs.
-	job, err := t.cronService.AddJob(messagePreview, schedule, message, "agent", "", "", "")
+	mode := "agent"
+	if watch != nil {
+		mode = "watch"
+	}
+	job, err := t.cronService.AddJob(messagePreview, schedule, message, mode, "", "", "")
 	if err != nil {
 		return tools.ErrorResult(fmt.Sprintf("Error adding job: %v", err))
 	}
@@ -242,8 +275,15 @@ func (t *CronTool) addJob(args map[string]any, agentID string) *tools.ToolResult
 	// Address the job to the target agent: its default channel is the delivery
 	// destination and it (or an authorized agent) manages the job.
 	job.AgentID = agentID
+	job.Payload.Watch = watch
 	t.cronService.UpdateJob(job)
 
+	if watch != nil {
+		return tools.SilentResult(fmt.Sprintf(
+			"Watch added for %s: %s (id: %s). It calls %q on the schedule and only messages you when %s change. "+
+				"The first run records a baseline silently.",
+			agentID, job.Name, job.ID, watch.Tool, describeFields(watch.Fields)))
+	}
 	return tools.SilentResult(fmt.Sprintf("Cron job added for %s: %s (id: %s)", agentID, job.Name, job.ID))
 }
 
@@ -403,13 +443,25 @@ func (t *CronTool) ExecuteJob(ctx context.Context, job *cron.CronJob) string {
 		}
 	}
 
+	// A watch job asks a tool whether anything changed and stays silent when
+	// nothing did. This is the whole point: the model is never woken to discover
+	// that there is no new mail.
+	message := job.Payload.Message
+	if job.Payload.Watch != nil {
+		outcome := t.runWatch(ctx, job)
+		if !outcome.Changed {
+			return "no change"
+		}
+		message = outcome.Message
+	}
+
 	// Inject the message inbound to the agent's default channel/chat — the same
 	// routing a live user message gets — so the agent processes it and replies there.
 	msg := bus.InboundMessage{
 		Channel:  channel,
 		SenderID: "cron",
 		ChatID:   chatID,
-		Content:  cronmsg.Build(job.Fingerprint, fireTime, job.Payload.Message),
+		Content:  cronmsg.Build(job.Fingerprint, fireTime, message),
 		Peer:     bus.Peer{Kind: peerKind, ID: chatID},
 	}
 	pubCtx, pubCancel := context.WithTimeout(context.Background(), 5*time.Second)

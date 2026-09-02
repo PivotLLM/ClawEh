@@ -24,13 +24,39 @@ type CronSchedule struct {
 	TZ      string `json:"tz,omitempty"`
 }
 
+// CronWatch turns a job into a change probe: instead of waking the agent on a
+// schedule, the job calls a tool, decides from the result whether anything
+// changed, and only then delivers Message.
+//
+// The point is cost. Polling "is there new mail?" by waking the model, having it
+// call a tool and conclude nothing happened, is the expensive way to learn
+// nothing. The probe runs without a model in the loop.
+type CronWatch struct {
+	// Tool is the published tool name to call, e.g. "google_gmail_messages_list".
+	Tool string `json:"tool"`
+	// Args are the parameters passed to the tool, verbatim.
+	Args map[string]any `json:"args,omitempty"`
+	// Fields are dot-paths into the tool's JSON result naming the values that
+	// decide "changed", e.g. ["messages.id"]. A path crossing an array fans out
+	// over its elements and collects them, so "messages.id" is every id in the
+	// list. Empty means the whole result is compared.
+	//
+	// Naming fields rather than hashing the whole result is what keeps a probe
+	// from firing on incidental churn — an unread badge, a relative timestamp,
+	// a reordering — none of which mean new mail arrived.
+	Fields []string `json:"fields,omitempty"`
+}
+
 type CronPayload struct {
-	Mode     string `json:"mode"` // "agent" | "isolated" | "deliver" | "command"
+	Mode     string `json:"mode"` // "agent" | "isolated" | "deliver" | "command" | "watch"
 	Message  string `json:"message"`
 	Command  string `json:"command,omitempty"`
 	Channel  string `json:"channel,omitempty"`
 	To       string `json:"to,omitempty"`
 	PeerKind string `json:"peer_kind,omitempty"` // "channel" (default) or "direct"
+	// Watch, when set, makes this a change probe rather than an unconditional
+	// wake-up. Mode is "watch".
+	Watch *CronWatch `json:"watch,omitempty"`
 }
 
 type CronJobState struct {
@@ -38,6 +64,16 @@ type CronJobState struct {
 	LastRunAtMS *int64 `json:"lastRunAtMs,omitempty"`
 	LastStatus  string `json:"lastStatus,omitempty"`
 	LastError   string `json:"lastError,omitempty"`
+	// WatchDigest is the fingerprint of the watched fields as of the last
+	// successful probe. Empty means no baseline yet: the first probe records one
+	// and stays silent, so creating a watch does not immediately report
+	// everything that already exists as "new".
+	WatchDigest string `json:"watchDigest,omitempty"`
+	// WatchFailures counts consecutive probe errors. It exists so a probe that
+	// starts failing is not mistaken for a probe that sees no change — silence
+	// caused by a broken credential looks exactly like silence caused by an
+	// empty inbox.
+	WatchFailures int `json:"watchFailures,omitempty"`
 }
 
 type CronJob struct {
@@ -78,6 +114,25 @@ type CronStore struct {
 }
 
 type JobHandler func(job *CronJob) (string, error)
+
+// UpdateWatchState persists the outcome of a watch probe. It is called from the
+// job handler, which runs without the service lock held, and only touches the
+// two watch fields so the post-run state update (last run, status, next run)
+// still applies on top.
+func (cs *CronService) UpdateWatchState(jobID, digest string, failures int) error {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+
+	for i := range cs.store.Jobs {
+		if cs.store.Jobs[i].ID != jobID {
+			continue
+		}
+		cs.store.Jobs[i].State.WatchDigest = digest
+		cs.store.Jobs[i].State.WatchFailures = failures
+		return cs.saveStoreUnsafe()
+	}
+	return fmt.Errorf("cron: job %q not found", jobID)
+}
 
 type CronService struct {
 	storePath   string

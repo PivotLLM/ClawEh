@@ -1046,6 +1046,23 @@ func setupCronTool(
 		cronTool = toolschedule.NewCronTool(cronService, msgBus, agentLoop.GetConfig)
 	}
 
+	// Wire watch probes to the owning agent's tool registry, resolved per run so
+	// a tool revoked in config stops being probed rather than staying live from
+	// whenever the watch was created.
+	if cronTool != nil {
+		cronTool.SetAgentTools(func(agentID string) *tools.ToolRegistry {
+			reg := agentLoop.GetRegistry()
+			if reg == nil {
+				return nil
+			}
+			inst, ok := reg.GetAgent(agentID)
+			if !ok || inst == nil {
+				return nil
+			}
+			return inst.Tools
+		})
+	}
+
 	// Set onJob handler
 	if cronTool != nil {
 		cronService.SetOnJob(func(job *cron.CronJob) (string, error) {
