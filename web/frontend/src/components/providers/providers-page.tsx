@@ -1,5 +1,6 @@
 import { IconLoader2, IconPlus } from "@tabler/icons-react"
-import { useCallback, useEffect, useState } from "react"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { useState } from "react"
 import { useTranslation } from "react-i18next"
 
 import { type ProviderInfo, getProviders } from "@/api/providers"
@@ -13,33 +14,34 @@ import { ProviderCard } from "./provider-card"
 
 export function ProvidersPage() {
   const { t } = useTranslation()
-  const [providers, setProviders] = useState<ProviderInfo[]>([])
-  const [loading, setLoading] = useState(true)
-  const [fetchError, setFetchError] = useState("")
+  const queryClient = useQueryClient()
 
   const [editing, setEditing] = useState<ProviderInfo | null>(null)
   const [deleting, setDeleting] = useState<ProviderInfo | null>(null)
   const [addOpen, setAddOpen] = useState(false)
 
-  const fetchProviders = useCallback(async () => {
-    try {
+  const {
+    data: providers = [],
+    isPending: loading,
+    error,
+  } = useQuery({
+    queryKey: ["providers"],
+    queryFn: async () => {
       const data = await getProviders()
       // Display alphabetically by name; each entry keeps its backend index so
       // edit/delete still target the correct config slot.
-      setProviders(
-        [...data.providers].sort((a, b) => a.name.localeCompare(b.name)),
-      )
-      setFetchError("")
-    } catch (e) {
-      setFetchError(e instanceof Error ? e.message : t("providers.loadError"))
-    } finally {
-      setLoading(false)
-    }
-  }, [t])
+      return [...data.providers].sort((a, b) => a.name.localeCompare(b.name))
+    },
+  })
+  const fetchError = error
+    ? error instanceof Error
+      ? error.message
+      : t("providers.loadError")
+    : ""
 
-  useEffect(() => {
-    fetchProviders()
-  }, [fetchProviders])
+  const refresh = () => {
+    void queryClient.invalidateQueries({ queryKey: ["providers"] })
+  }
 
   return (
     <div className="flex h-full flex-col">
@@ -97,20 +99,20 @@ export function ProvidersPage() {
         provider={editing}
         open={editing !== null}
         onClose={() => setEditing(null)}
-        onSaved={fetchProviders}
+        onSaved={refresh}
       />
 
       <AddProviderSheet
         open={addOpen}
         onClose={() => setAddOpen(false)}
-        onSaved={fetchProviders}
+        onSaved={refresh}
         existingNames={providers.map((p) => p.name)}
       />
 
       <DeleteProviderDialog
         provider={deleting}
         onClose={() => setDeleting(null)}
-        onDeleted={fetchProviders}
+        onDeleted={refresh}
       />
     </div>
   )

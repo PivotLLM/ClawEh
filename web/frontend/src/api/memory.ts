@@ -61,7 +61,8 @@ export async function getMemoryStores(): Promise<MemoryStoreItem[]> {
 
 export async function getMemoryStore(id: string): Promise<MemoryDetail> {
   const res = await fetch(`/api/memory/${encodeURIComponent(id)}`)
-  if (!res.ok) throw new Error(`Failed to fetch memory store ${id}: ${res.status}`)
+  if (!res.ok)
+    throw new Error(`Failed to fetch memory store ${id}: ${res.status}`)
   return res.json()
 }
 
@@ -73,7 +74,8 @@ export async function deleteMemoryDomain(
     `/api/memory/${encodeURIComponent(storeId)}/domains/${encodeURIComponent(domainId)}`,
     { method: "DELETE" },
   )
-  if (!res.ok) throw new Error(`Failed to delete domain ${domainId}: ${res.status}`)
+  if (!res.ok)
+    throw new Error(`Failed to delete domain ${domainId}: ${res.status}`)
 }
 
 export async function deleteMemoryItem(
@@ -84,5 +86,6 @@ export async function deleteMemoryItem(
     `/api/memory/${encodeURIComponent(storeId)}/memories/${encodeURIComponent(memoryId)}`,
     { method: "DELETE" },
   )
-  if (!res.ok) throw new Error(`Failed to delete memory ${memoryId}: ${res.status}`)
+  if (!res.ok)
+    throw new Error(`Failed to delete memory ${memoryId}: ${res.status}`)
 }

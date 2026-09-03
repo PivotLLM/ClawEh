@@ -3,7 +3,6 @@ import type { ReactNode } from "react"
 import { useTranslation } from "react-i18next"
 
 import type { MCPServerStatus } from "@/api/channels"
-
 import {
   type MCPHostForm,
   type MCPServerForm,
@@ -193,7 +192,12 @@ export function ToolsSection({
               </div>
             ))
           )}
-          <Button type="button" variant="outline" size="sm" onClick={addPattern}>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={addPattern}
+          >
             <IconPlus className="size-4" />
             {t("pages.mcp.tools_add_pattern")}
           </Button>
@@ -243,7 +247,9 @@ export function DiscoverySection({
         label="Enable progressive discovery"
         hint="When on, the fusion/maestro suites and upstream MCP tools are hidden from the in-loop model and found via search_tools / get_tool_details. Native tools and cogmem stay always visible; pin extra namespaces below to keep them shown. The MCP host is never subject to discovery — external clients always get the full list."
         checked={discoveryEnabled}
-        onCheckedChange={(checked) => onFieldChange("discoveryEnabled", checked)}
+        onCheckedChange={(checked) =>
+          onFieldChange("discoveryEnabled", checked)
+        }
       />
       {discoveryEnabled && (
         <div className="space-y-3 py-4">
@@ -268,22 +274,25 @@ export function DiscoverySection({
               type="number"
               min={1}
               value={visibleBudget}
-              onChange={(e) => onFieldChange("visibleBudget", Number(e.target.value))}
+              onChange={(e) =>
+                onFieldChange("visibleBudget", Number(e.target.value))
+              }
             />
           </Field>
           <div className="text-muted-foreground text-xs">
-            Pinned namespaces: discovery-eligible tools whose namespace is listed
-            here stay visible to the model instead of being hidden behind search.
-            Native tools, cogmem, and the search meta-tools are always shown by
-            rule; add more here (e.g. &quot;maestro&quot;, &quot;fusion&quot;,
-            &quot;file&quot;). Everything else is discovered on demand.
+            Pinned namespaces: discovery-eligible tools whose namespace is
+            listed here stay visible to the model instead of being hidden behind
+            search. Native tools, cogmem, and the search meta-tools are always
+            shown by rule; add more here (e.g. &quot;maestro&quot;,
+            &quot;fusion&quot;, &quot;file&quot;). Everything else is discovered
+            on demand.
           </div>
           <div className="space-y-2">
             {alwaysShownNamespaces.length === 0 ? (
               <div className="text-muted-foreground text-xs italic">
                 Nothing pinned: only native tools, cogmem, and the search
-                meta-tools stay visible up front; everything else is discovered on
-                demand.
+                meta-tools stay visible up front; everything else is discovered
+                on demand.
               </div>
             ) : (
               alwaysShownNamespaces.map((ns, idx) => (
@@ -384,13 +393,29 @@ export function ResilienceSection({
 }
 
 // serverStatusStyle maps a resolved state to its pill label and colors.
-const serverStatusStyle: Record<string, { label: string; className: string }> = {
-  connected: { label: "Connected", className: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" },
-  reconnecting: { label: "Reconnecting…", className: "bg-amber-500/15 text-amber-600 dark:text-amber-400" },
-  cooldown: { label: "Cooldown", className: "bg-destructive/15 text-destructive" },
-  disconnected: { label: "Disconnected", className: "bg-muted text-muted-foreground" },
-  disabled: { label: "Disabled", className: "bg-muted text-muted-foreground" },
-}
+const serverStatusStyle: Record<string, { label: string; className: string }> =
+  {
+    connected: {
+      label: "Connected",
+      className: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
+    },
+    reconnecting: {
+      label: "Reconnecting…",
+      className: "bg-amber-500/15 text-amber-600 dark:text-amber-400",
+    },
+    cooldown: {
+      label: "Cooldown",
+      className: "bg-destructive/15 text-destructive",
+    },
+    disconnected: {
+      label: "Disconnected",
+      className: "bg-muted text-muted-foreground",
+    },
+    disabled: {
+      label: "Disabled",
+      className: "bg-muted text-muted-foreground",
+    },
+  }
 
 // ServerStatusBadge shows a live connection pill. When no live status is known,
 // it falls back to the configured toggle: enabled ⇒ disconnected, off ⇒ disabled.

@@ -1,6 +1,6 @@
 import type { AgentToolCatalogResponse } from "@/api/channels"
-import { Checkbox } from "@/components/ui/checkbox"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 
 export interface ToolSelectProps {
   selected: string[]
@@ -49,7 +49,7 @@ export function ToolSelect({ selected, catalog, onChange }: ToolSelectProps) {
           variant="outline"
           size="sm"
           onClick={handleDefault}
-          className="h-6 text-xs px-2"
+          className="h-6 px-2 text-xs"
         >
           Default
         </Button>
@@ -58,36 +58,40 @@ export function ToolSelect({ selected, catalog, onChange }: ToolSelectProps) {
           variant="outline"
           size="sm"
           onClick={handleClear}
-          className="h-6 text-xs px-2"
+          className="h-6 px-2 text-xs"
         >
           Clear
         </Button>
       </div>
 
       {noneSelected && (
-        <p className="text-amber-400 text-xs font-medium">
+        <p className="text-xs font-medium text-amber-400">
           No tools selected — this agent has no tool access.
         </p>
       )}
 
       <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 md:grid-cols-3">
-        {[...perToolTools].sort((a, b) => a.name.localeCompare(b.name)).map((tool) => (
-          <label
-            key={tool.name}
-            className="flex items-center gap-2 cursor-pointer select-none"
-            title={tool.description}
-          >
-            <Checkbox
-              checked={isChecked(tool.name)}
-              onCheckedChange={() => handleToggle(tool.name)}
-            />
-            <span className="font-mono text-xs">{tool.name}</span>
-          </label>
-        ))}
+        {[...perToolTools]
+          .sort((a, b) => a.name.localeCompare(b.name))
+          .map((tool) => (
+            <label
+              key={tool.name}
+              className="flex cursor-pointer items-center gap-2 select-none"
+              title={tool.description}
+            >
+              <Checkbox
+                checked={isChecked(tool.name)}
+                onCheckedChange={() => handleToggle(tool.name)}
+              />
+              <span className="font-mono text-xs">{tool.name}</span>
+            </label>
+          ))}
       </div>
 
       {perToolTools.length === 0 && (
-        <span className="text-muted-foreground text-xs">No tools available</span>
+        <span className="text-muted-foreground text-xs">
+          No tools available
+        </span>
       )}
     </div>
   )

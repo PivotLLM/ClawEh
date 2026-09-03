@@ -11,7 +11,11 @@ interface ProviderCardProps {
   onDelete: (provider: ProviderInfo) => void
 }
 
-export function ProviderCard({ provider, onEdit, onDelete }: ProviderCardProps) {
+export function ProviderCard({
+  provider,
+  onEdit,
+  onDelete,
+}: ProviderCardProps) {
   const { t } = useTranslation()
   const cli = isCliProtocol(provider.protocol)
   const configured = cli ? Boolean(provider.command) : Boolean(provider.api_key)

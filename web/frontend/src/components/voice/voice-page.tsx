@@ -2,6 +2,12 @@ import { useQuery } from "@tanstack/react-query"
 import { useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
 
+import {
+  type STTPreset,
+  type STTProvider,
+  getVoiceSTT,
+  saveVoiceSTT,
+} from "@/api/voice"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 import {
@@ -14,30 +20,30 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
-import {
-  type STTPreset,
-  type STTProvider,
-  getVoiceSTT,
-  saveVoiceSTT,
-} from "@/api/voice"
 
 const PROVIDER_CHOICES = ["groq", "openai", "openrouter", "custom"]
 
 type SaveStatus = "saving" | "saved" | "error" | null
 
-function presetFor(presets: STTPreset[], provider: string): STTPreset | undefined {
+function presetFor(
+  presets: STTPreset[],
+  provider: string,
+): STTPreset | undefined {
   return presets.find((p) => p.provider === provider)
 }
 
 export function VoicePage() {
   const stt = useQuery({ queryKey: ["voice-stt"], queryFn: getVoiceSTT })
 
+  // Editable copy of the fetched rows, reseeded whenever a fresh fetch lands.
+  // Adjusted during render rather than in an effect so a refetch never paints
+  // the previous rows for a frame before correcting itself.
   const [rows, setRows] = useState<STTProvider[]>([])
-  useEffect(() => {
-    if (stt.data) {
-      setRows(stt.data.stt)
-    }
-  }, [stt.data])
+  const [syncedData, setSyncedData] = useState(stt.data)
+  if (stt.data && stt.data !== syncedData) {
+    setSyncedData(stt.data)
+    setRows(stt.data.stt)
+  }
 
   const presets = stt.data?.presets ?? []
 
@@ -49,7 +55,9 @@ export function VoicePage() {
     rowsRef.current = rows
   }, [rows])
   const saveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
-  const savedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const savedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
+  )
 
   useEffect(
     () => () => {
@@ -84,14 +92,22 @@ export function VoicePage() {
   }
 
   const update = (i: number, patch: Partial<STTProvider>) => {
-    setRows((prev) => prev.map((r, idx) => (idx === i ? { ...r, ...patch } : r)))
+    setRows((prev) =>
+      prev.map((r, idx) => (idx === i ? { ...r, ...patch } : r)),
+    )
     scheduleSave()
   }
 
   const addRow = () => {
     setRows((prev) => [
       ...prev,
-      { provider: "groq", enabled: prev.length === 0, api_key: "", base_url: "", model: "" },
+      {
+        provider: "groq",
+        enabled: prev.length === 0,
+        api_key: "",
+        base_url: "",
+        model: "",
+      },
     ])
     scheduleSave()
   }
@@ -129,9 +145,9 @@ export function VoicePage() {
         <CardHeader>
           <CardTitle>Transcription backends</CardTitle>
           <CardDescription>
-            Any OpenAI-compatible Whisper endpoint (Groq, OpenAI, OpenRouter, or a
-            custom host). Leave the endpoint and model blank to use the provider
-            default.
+            Any OpenAI-compatible Whisper endpoint (Groq, OpenAI, OpenRouter, or
+            a custom host). Leave the endpoint and model blank to use the
+            provider default.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
@@ -179,7 +195,9 @@ export function VoicePage() {
                       <select
                         className="border-input bg-background h-9 rounded-md border px-3 text-sm"
                         value={row.provider}
-                        onChange={(e) => update(i, { provider: e.target.value })}
+                        onChange={(e) =>
+                          update(i, { provider: e.target.value })
+                        }
                       >
                         {PROVIDER_CHOICES.map((p) => (
                           <option key={p} value={p}>
@@ -202,7 +220,9 @@ export function VoicePage() {
                       <Input
                         value={row.base_url ?? ""}
                         placeholder={preset?.base_url ?? "https://.../v1"}
-                        onChange={(e) => update(i, { base_url: e.target.value })}
+                        onChange={(e) =>
+                          update(i, { base_url: e.target.value })
+                        }
                       />
                     </div>
                     <div className="flex flex-col gap-1.5">

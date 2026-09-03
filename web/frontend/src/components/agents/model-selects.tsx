@@ -18,7 +18,12 @@ interface ModelSelectProps {
   placeholder?: string
 }
 
-export function ModelSelect({ value, models, onChange, placeholder }: ModelSelectProps) {
+export function ModelSelect({
+  value,
+  models,
+  onChange,
+  placeholder,
+}: ModelSelectProps) {
   const configured = models
     .filter((m) => m.configured && m.enabled)
     .sort((a, b) => a.model_name.localeCompare(b.model_name))
@@ -26,12 +31,17 @@ export function ModelSelect({ value, models, onChange, placeholder }: ModelSelec
   const noToolsWarning = selectedModel?.no_tools === true
   return (
     <div className="space-y-1.5">
-      <Select value={value || "__none__"} onValueChange={(v) => onChange(v === "__none__" ? "" : v)}>
+      <Select
+        value={value || "__none__"}
+        onValueChange={(v) => onChange(v === "__none__" ? "" : v)}
+      >
         <SelectTrigger className="w-full">
           <SelectValue placeholder={placeholder ?? "Select model"} />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="__none__">{placeholder ?? "No model override"}</SelectItem>
+          <SelectItem value="__none__">
+            {placeholder ?? "No model override"}
+          </SelectItem>
           {configured.map((m) => (
             <SelectItem key={m.index} value={m.model_name}>
               {m.model_name}
@@ -40,7 +50,7 @@ export function ModelSelect({ value, models, onChange, placeholder }: ModelSelec
         </SelectContent>
       </Select>
       {noToolsWarning && (
-        <p className="text-amber-600 dark:text-amber-400 text-xs flex items-center gap-1">
+        <p className="flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400">
           <span>&#9888;</span>
           Tools are disabled for {selectedModel.model_name}
         </p>
@@ -57,7 +67,13 @@ interface FallbacksSelectProps {
   addPlaceholder?: string
 }
 
-export function FallbacksSelect({ fallbacks, primary, models, onChange, addPlaceholder }: FallbacksSelectProps) {
+export function FallbacksSelect({
+  fallbacks,
+  primary,
+  models,
+  onChange,
+  addPlaceholder,
+}: FallbacksSelectProps) {
   const available = models
     .filter((m) => m.configured && m.enabled && m.model_name !== primary)
     .sort((a, b) => a.model_name.localeCompare(b.model_name))
@@ -84,7 +100,9 @@ export function FallbacksSelect({ fallbacks, primary, models, onChange, addPlace
     <div className="space-y-1.5">
       {fallbacks.map((fb, i) => (
         <div key={fb} className="flex items-center gap-1.5">
-          <span className="text-muted-foreground w-4 text-center text-xs">{i + 1}</span>
+          <span className="text-muted-foreground w-4 text-center text-xs">
+            {i + 1}
+          </span>
           <span className="border-border/50 bg-muted/40 flex-1 rounded px-2 py-1 font-mono text-xs">
             {fb}
           </span>
@@ -124,7 +142,9 @@ export function FallbacksSelect({ fallbacks, primary, models, onChange, addPlace
         </Select>
       )}
       {fallbacks.length === 0 && remaining.length === 0 && (
-        <p className="text-muted-foreground text-xs">No other configured models available.</p>
+        <p className="text-muted-foreground text-xs">
+          No other configured models available.
+        </p>
       )}
     </div>
   )

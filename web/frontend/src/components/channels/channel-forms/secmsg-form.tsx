@@ -5,10 +5,10 @@ import { toast } from "sonner"
 
 import {
   type ChannelConfig,
+  type SecMsgLinkStatus,
   getSecMsgAccounts,
   getSecMsgLinkStatus,
   requestSecMsgLink,
-  type SecMsgLinkStatus,
 } from "@/api/channels"
 import { Field, SwitchCardField } from "@/components/shared-form"
 import { Button } from "@/components/ui/button"
@@ -376,8 +376,8 @@ export function SecMsgForm({
           <div className="space-y-3">
             <p className="text-muted-foreground text-xs">
               Optional. Pin an account to give it a custom name, its own
-              allowlist, or group-trigger settings. Leave empty to let
-              discovery bind every account with the daemon defaults above.
+              allowlist, or group-trigger settings. Leave empty to let discovery
+              bind every account with the daemon defaults above.
             </p>
             {accounts.map((account, i) => (
               <AccountRow

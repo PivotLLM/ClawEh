@@ -1,4 +1,5 @@
 import { IconLoader2 } from "@tabler/icons-react"
+import { useQuery } from "@tanstack/react-query"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 
@@ -149,76 +150,69 @@ function isMissingRequiredValue(value: unknown): boolean {
   return false
 }
 
-
-const CHANNELS_WITHOUT_DOCS = new Set([
-  "webui",
-  "wecom",
-  "matrix",
-])
+const CHANNELS_WITHOUT_DOCS = new Set(["webui", "wecom", "matrix"])
 
 export function ChannelConfigPage({ channelName }: ChannelConfigPageProps) {
   const { t } = useTranslation()
 
-  const [loading, setLoading] = useState(true)
   const [status, setStatus] = useState<SaveStatus>(null)
-  const [fetchError, setFetchError] = useState("")
   const [serverError, setServerError] = useState("")
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
 
-  const [channel, setChannel] = useState<SupportedChannel | null>(null)
   const [editConfig, setEditConfig] = useState<ChannelConfig>({})
   const [enabled, setEnabled] = useState(false)
 
-  // Refs so the debounced save reads current values without being re-created.
-  const channelRef = useRef<SupportedChannel | null>(null)
-  channelRef.current = channel
-  const editConfigRef = useRef<ChannelConfig>(editConfig)
-  editConfigRef.current = editConfig
-  const enabledRef = useRef(enabled)
-  enabledRef.current = enabled
   const saveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
-  const savedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const savedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
+  )
 
-  const loadData = useCallback(async () => {
-    setLoading(true)
-    try {
+  const {
+    data: loaded,
+    isPending: loading,
+    error: loadError,
+  } = useQuery({
+    queryKey: ["channel-config", channelName],
+    queryFn: async () => {
       const [catalog, appConfig] = await Promise.all([
         getChannelsCatalog(),
         getAppConfig(),
       ])
       const matched =
         catalog.channels.find((item) => item.name === channelName) ?? null
-
       if (!matched) {
-        setChannel(null)
-        setFetchError(
-          t("channels.page.notFound", {
-            name: channelName,
-          }),
-        )
-        return
+        throw new Error(t("channels.page.notFound", { name: channelName }))
       }
-
       const channelsConfig = asRecord(asRecord(appConfig).channels)
       const raw = asRecord(channelsConfig[matched.config_key])
       const normalized = normalizeConfig(raw)
+      return {
+        channel: matched,
+        editConfig: buildEditConfig(normalized),
+        enabled: asBool(normalized.enabled),
+      }
+    },
+  })
 
-      setChannel(matched)
-      setEditConfig(buildEditConfig(normalized))
-      setEnabled(asBool(normalized.enabled))
-      setFetchError("")
-      setServerError("")
-      setFieldErrors({})
-    } catch (e) {
-      setFetchError(e instanceof Error ? e.message : t("channels.loadError"))
-    } finally {
-      setLoading(false)
-    }
-  }, [channelName, t])
+  const channel = loaded?.channel ?? null
+  const fetchError = loadError
+    ? loadError instanceof Error
+      ? loadError.message
+      : t("channels.loadError")
+    : ""
 
-  useEffect(() => {
-    loadData()
-  }, [loadData])
+  // Seed the editable copies when a fetch lands. Adjusted during render rather
+  // than in an effect so the form is never painted empty for a frame, and never
+  // clobbers what the user has typed since — this fires only when a genuinely
+  // new fetch result arrives.
+  const [syncedLoad, setSyncedLoad] = useState(loaded)
+  if (loaded && loaded !== syncedLoad) {
+    setSyncedLoad(loaded)
+    setEditConfig(loaded.editConfig)
+    setEnabled(loaded.enabled)
+    setServerError("")
+    setFieldErrors({})
+  }
 
   // Clear pending timers on unmount / channel switch.
   useEffect(
@@ -261,11 +255,10 @@ export function ChannelConfigPage({ channelName }: ChannelConfigPageProps) {
   // only enforced when the channel is enabled — a disabled channel may be saved
   // incomplete while it is being set up.
   const doSave = async () => {
-    const channel = channelRef.current
     if (!channel) return
-    const payload = buildSavePayload(editConfigRef.current, enabledRef.current)
+    const payload = buildSavePayload(editConfig, enabled)
 
-    if (enabledRef.current) {
+    if (enabled) {
       const missing = getRequiredFieldKeys(channel.name).filter((key) =>
         isMissingRequiredValue(payload[key]),
       )
@@ -299,10 +292,17 @@ export function ChannelConfigPage({ channelName }: ChannelConfigPageProps) {
     }
   }
 
-  // Keep a ref to the latest doSave so the (stable) debounced scheduler always
-  // runs the current closure rather than one captured on first render.
+  // The debounced scheduler has to stay stable across keystrokes, but the timer
+  // it sets must run the newest closure — so doSave is reached through a ref.
+  // The ref is updated in an effect rather than during render: a render-phase
+  // ref write is a side effect in render, which is not safe under concurrent
+  // rendering and is what react-hooks/refs objects to. This also replaces three
+  // separate value refs (channel, editConfig, enabled) that existed only to feed
+  // this one closure; it now reads them directly.
   const doSaveRef = useRef(doSave)
-  doSaveRef.current = doSave
+  useEffect(() => {
+    doSaveRef.current = doSave
+  })
 
   const scheduleSave = useCallback(() => {
     clearTimeout(saveTimer.current)

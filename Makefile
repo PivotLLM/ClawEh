@@ -1,4 +1,4 @@
-.PHONY: all build claw-auth install uninstall uninstall-all clean help test test-race test-coverage test-cover-html test-regression generate vet fmt lint fix deps update-deps check run frontend frontend-deps build-linux-arm build-linux-arm64 build-linux-mipsle build-pi-zero build-all
+.PHONY: all build claw-auth install uninstall uninstall-all clean help test test-race test-coverage test-cover-html test-regression generate vet fmt lint fix deps update-deps check run frontend frontend-deps frontend-lint frontend-test build-linux-arm build-linux-arm64 build-linux-mipsle build-pi-zero build-all
 
 # Binary names
 BINARY_NAME=claw
@@ -268,6 +268,16 @@ vet: generate
 test: generate
 	@$(GO) test ./...
 
+## frontend-lint: Lint and typecheck the SPA (eslint + tsc)
+frontend-lint: $(FRONTEND_NODE_MODULES)
+	@echo "Linting frontend..."
+	@cd $(FRONTEND_DIR) && pnpm exec tsc -b --noEmit && pnpm run lint
+
+## frontend-test: Run the SPA unit tests (vitest)
+frontend-test: $(FRONTEND_NODE_MODULES)
+	@echo "Testing frontend..."
+	@cd $(FRONTEND_DIR) && pnpm run test
+
 ## test-race: Run full test suite with race detector
 test-race: generate
 	@go test -race -count=1 -timeout=300s ./...
@@ -328,7 +338,11 @@ update-deps:
 	@$(GO) mod tidy
 
 ## check: Run fmt, vet, and tests
-check: fmt vet test
+# frontend-lint and frontend-test are part of check, not of `test`: `test` is
+# the fast Go-only loop, while check is the gate before calling something done.
+# Without them a red eslint sat unnoticed long enough to grow from 7 problems
+# to 35 the moment a plugin was updated.
+check: fmt vet test frontend-lint frontend-test
 
 ## run: Build and run claw
 run: build

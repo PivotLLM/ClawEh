@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import { useTranslation } from "react-i18next"
 
 import type { ChannelConfig } from "@/api/channels"
@@ -34,7 +34,9 @@ function asBool(value: unknown): boolean {
 }
 
 function asNumberString(value: unknown): string {
-  return typeof value === "number" && Number.isFinite(value) ? String(value) : ""
+  return typeof value === "number" && Number.isFinite(value)
+    ? String(value)
+    : ""
 }
 
 export function TelegramForm({
@@ -44,12 +46,19 @@ export function TelegramForm({
   fieldErrors = {},
 }: TelegramFormProps) {
   const { t } = useTranslation()
-  const [allowFromDraft, setAllowFromDraft] = useState(() =>
-    asStringArray(config.allow_from).join(", "),
-  )
-  useEffect(() => {
-    setAllowFromDraft(asStringArray(config.allow_from).join(", "))
-  }, [config.allow_from])
+  // The draft is a free-text mirror of the allow_from array, resynced when the
+  // array actually changes value. Adjusted during render, and compared by the
+  // joined STRING rather than by the array identity the old effect depended on.
+  // That identity changed on every keystroke, because typing rebuilds the array
+  // through onChange — so the effect re-ran and overwrote the draft with the
+  // reparsed value, eating a trailing "," or space the moment it was typed.
+  const allowFromValue = asStringArray(config.allow_from).join(", ")
+  const [allowFromDraft, setAllowFromDraft] = useState(allowFromValue)
+  const [syncedAllowFrom, setSyncedAllowFrom] = useState(allowFromValue)
+  if (allowFromValue !== syncedAllowFrom) {
+    setSyncedAllowFrom(allowFromValue)
+    setAllowFromDraft(allowFromValue)
+  }
 
   const typingConfig = asRecord(config.typing)
   const placeholderConfig = asRecord(config.placeholder)

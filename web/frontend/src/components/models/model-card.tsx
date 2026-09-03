@@ -133,7 +133,7 @@ export function ModelCard({
           )}
           {model.no_tools ? (
             <span
-              className="text-amber-600 dark:text-amber-400 flex items-center gap-1 text-[11px]"
+              className="flex items-center gap-1 text-[11px] text-amber-600 dark:text-amber-400"
               title={t("models.status.noTools")}
             >
               <IconToolsOff className="size-3" />
@@ -144,7 +144,11 @@ export function ModelCard({
         <Switch
           checked={model.enabled}
           onCheckedChange={() => onToggleEnabled(model)}
-          aria-label={model.enabled ? t("models.action.disable") : t("models.action.enable")}
+          aria-label={
+            model.enabled
+              ? t("models.action.disable")
+              : t("models.action.enable")
+          }
         />
       </div>
     </div>

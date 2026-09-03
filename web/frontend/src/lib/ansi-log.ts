@@ -273,4 +273,3 @@ export function parseAnsiSegments(input: string): AnsiSegment[] {
 
   return segments
 }
-

@@ -293,6 +293,54 @@ INTEGRATION_PASSED=true
 INTEGRATION_PASS_COUNT=0
 INTEGRATION_FAIL_COUNT=0
 
+# Frontend gates. The SPA is compiled into the Go binary, so a broken lint or a
+# failing SPA test ships in the release just as surely as a Go failure does —
+# but nothing here checked it, and a red eslint sat unnoticed long enough to
+# grow from 7 problems to 35 the moment a plugin was updated.
+#
+# Skipped, not failed, when pnpm or node_modules are absent: a Go-only checkout
+# must still be able to run this suite.
+FRONTEND_RAN=false
+FRONTEND_PASSED=true
+FRONTEND_SKIP_REASON=""
+FRONTEND_DIR="$SCRIPT_DIR/web/frontend"
+
+echo ""
+echo "${BOLD}============================================${NC}"
+echo "${BOLD}   FRONTEND (lint, typecheck, unit tests)${NC}"
+echo "${BOLD}============================================${NC}"
+echo ""
+
+if ! command -v pnpm >/dev/null 2>&1; then
+    FRONTEND_SKIP_REASON="pnpm not on PATH"
+elif [ ! -d "$FRONTEND_DIR/node_modules" ]; then
+    FRONTEND_SKIP_REASON="node_modules missing (run: make frontend-deps)"
+fi
+
+if [ -n "$FRONTEND_SKIP_REASON" ]; then
+    echo "${DIM}Skipped: ${FRONTEND_SKIP_REASON}${NC}"
+else
+    FRONTEND_RAN=true
+    if (cd "$FRONTEND_DIR" && pnpm exec tsc -b --noEmit); then
+        echo "${GREEN}  typecheck passed${NC}"
+    else
+        echo "${RED}  typecheck FAILED${NC}"
+        FRONTEND_PASSED=false
+    fi
+    if (cd "$FRONTEND_DIR" && pnpm run lint); then
+        echo "${GREEN}  lint passed${NC}"
+    else
+        echo "${RED}  lint FAILED${NC}"
+        FRONTEND_PASSED=false
+    fi
+    if (cd "$FRONTEND_DIR" && pnpm run test); then
+        echo "${GREEN}  unit tests passed${NC}"
+    else
+        echo "${RED}  unit tests FAILED${NC}"
+        FRONTEND_PASSED=false
+    fi
+fi
+
 if ! $SKIP_INTEGRATION; then
     echo ""
     echo "${BOLD}============================================${NC}"
@@ -678,6 +726,15 @@ fi
 
 if $RUN_RACE; then
     echo "Race:        ${GREEN}enabled${NC}"
+fi
+
+if ! $FRONTEND_RAN; then
+    echo "Frontend:    ${DIM}skipped (${FRONTEND_SKIP_REASON})${NC}"
+elif $FRONTEND_PASSED; then
+    echo "Frontend:    ${GREEN}passed${NC} (typecheck, lint, unit tests)"
+else
+    echo "Frontend:    ${RED}failed${NC}"
+    OVERALL_PASS=false
 fi
 
 if $SKIP_INTEGRATION; then

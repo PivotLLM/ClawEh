@@ -2,18 +2,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
 
-import { PageHeader } from "@/components/page-header"
-import { Button } from "@/components/ui/button"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Switch } from "@/components/ui/switch"
 import {
   type DeviceStatus,
   approveDevice,
@@ -27,6 +15,18 @@ import {
   removeDevice,
   saveDeviceSettings,
 } from "@/api/devices"
+import { PageHeader } from "@/components/page-header"
+import { Button } from "@/components/ui/button"
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Switch } from "@/components/ui/switch"
 
 // copyToClipboard works in both secure and insecure contexts. navigator.clipboard
 // is undefined when the WebUI is served over plain HTTP on a non-localhost host, so
@@ -59,13 +59,19 @@ async function copyToClipboard(text: string): Promise<boolean> {
 
 export function DevicesPage() {
   const qc = useQueryClient()
-  const status = useQuery({ queryKey: ["device-status"], queryFn: getDeviceStatus })
+  const status = useQuery({
+    queryKey: ["device-status"],
+    queryFn: getDeviceStatus,
+  })
   const pending = useQuery({
     queryKey: ["device-pending"],
     queryFn: listPendingDevices,
     refetchInterval: 3000,
   })
-  const paired = useQuery({ queryKey: ["device-paired"], queryFn: listPairedDevices })
+  const paired = useQuery({
+    queryKey: ["device-paired"],
+    queryFn: listPairedDevices,
+  })
 
   const [lan, setLan] = useState(false)
   const [extHost, setExtHost] = useState("")
@@ -83,7 +89,9 @@ export function DevicesPage() {
   const extPortRef = useRef(extPort)
   const extTlsRef = useRef(extTls)
   const saveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
-  const savedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const savedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
+  )
 
   useEffect(() => {
     lanRef.current = lan
@@ -100,27 +108,31 @@ export function DevicesPage() {
     [],
   )
 
-  useEffect(() => {
-    if (!status.data) return
+  // Seed the editable fields when a status fetch lands. Adjusted during render
+  // rather than in an effect so the form is never painted with the previous
+  // values for a frame, and it fires only for a genuinely new result.
+  const [syncedStatus, setSyncedStatus] = useState(status.data)
+  if (status.data && status.data !== syncedStatus) {
+    setSyncedStatus(status.data)
     setLan(status.data.listen_lan)
     const url = status.data.external_url
     if (!url) {
       setExtHost("")
       setExtPort("")
       setExtTls(false)
-      return
+    } else {
+      try {
+        const u = new URL(url)
+        setExtHost(u.hostname)
+        setExtPort(u.port)
+        setExtTls(u.protocol === "https:" || u.protocol === "wss:")
+      } catch {
+        setExtHost(url)
+        setExtPort("")
+        setExtTls(false)
+      }
     }
-    try {
-      const u = new URL(url)
-      setExtHost(u.hostname)
-      setExtPort(u.port)
-      setExtTls(u.protocol === "https:" || u.protocol === "wss:")
-    } catch {
-      setExtHost(url)
-      setExtPort("")
-      setExtTls(false)
-    }
-  }, [status.data])
+  }
 
   // Compose the stored external_url from the current host/port/TLS values (read via
   // refs so the debounced save sees the latest). Empty host means "direct LAN"
@@ -244,7 +256,8 @@ export function DevicesPage() {
           <CardHeader>
             <CardTitle>Network</CardTitle>
             <CardDescription>
-              The device gateway listens on its own port, separate from the WebUI.
+              The device gateway listens on its own port, separate from the
+              WebUI.
               {s && (
                 <>
                   {" "}
@@ -260,7 +273,9 @@ export function DevicesPage() {
           <CardContent className="space-y-4">
             <div className="flex items-center justify-between gap-4">
               <div>
-                <Label htmlFor="lan-switch">Listen for local network connections</Label>
+                <Label htmlFor="lan-switch">
+                  Listen for local network connections
+                </Label>
                 <p className="text-muted-foreground text-sm">
                   Off = loopback only (127.0.0.1). On = reachable from your LAN
                   (0.0.0.0).
@@ -307,12 +322,15 @@ export function DevicesPage() {
                     scheduleNetSave()
                   }}
                 />
-                <Label htmlFor="tls-switch">Use TLS (secure wss connection)</Label>
+                <Label htmlFor="tls-switch">
+                  Use TLS (secure wss connection)
+                </Label>
               </div>
               <p className="text-muted-foreground text-sm">
-                What devices are told to connect to. Leave host blank for direct LAN
-                access (auto-detected). Set these when a reverse proxy or tunnel fronts
-                the gateway — with TLS on, the host must match the proxy's certificate.
+                What devices are told to connect to. Leave host blank for direct
+                LAN access (auto-detected). Set these when a reverse proxy or
+                tunnel fronts the gateway — with TLS on, the host must match the
+                proxy's certificate.
               </p>
             </div>
             {s?.warnings?.length ? (
@@ -323,7 +341,10 @@ export function DevicesPage() {
               </ul>
             ) : null}
             <div className="flex items-center gap-3">
-              <a href="/config" className="text-muted-foreground text-sm underline">
+              <a
+                href="/config"
+                className="text-muted-foreground text-sm underline"
+              >
                 Advanced config
               </a>
             </div>
@@ -335,8 +356,8 @@ export function DevicesPage() {
           <CardHeader>
             <CardTitle>Pair a device</CardTitle>
             <CardDescription>
-              Generate a QR code, then scan it with your device.
-              The first connection appears below for approval.
+              Generate a QR code, then scan it with your device. The first
+              connection appears below for approval.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -370,8 +391,9 @@ export function DevicesPage() {
               <div className="border-border space-y-2 rounded border p-3">
                 <Label>Profile Token (for apps that can't scan the QR)</Label>
                 <p className="text-muted-foreground text-sm">
-                  Type this into the app's Profile Token field. It authenticates the same as
-                  the QR; the device still needs your approval below.
+                  Type this into the app's Profile Token field. It authenticates
+                  the same as the QR; the device still needs your approval
+                  below.
                 </p>
                 <div className="flex items-center gap-2">
                   <code className="bg-muted flex-1 rounded px-2 py-1 text-sm break-all">
@@ -384,7 +406,9 @@ export function DevicesPage() {
                       void copyToClipboard(s.word_token).then((ok) =>
                         ok
                           ? toast.success("Profile token copied")
-                          : toast.error("Copy failed — select the text and copy manually"),
+                          : toast.error(
+                              "Copy failed — select the text and copy manually",
+                            ),
                       )
                     }}
                   >
@@ -414,7 +438,9 @@ export function DevicesPage() {
           </CardHeader>
           <CardContent>
             {pendingList.length === 0 ? (
-              <p className="text-muted-foreground text-sm">No pending devices.</p>
+              <p className="text-muted-foreground text-sm">
+                No pending devices.
+              </p>
             ) : (
               <ul className="divide-border divide-y">
                 {pendingList.map((p) => (
@@ -427,7 +453,8 @@ export function DevicesPage() {
                         {p.display_name || p.client_id || "Unknown device"}
                       </div>
                       <div className="text-muted-foreground truncate text-xs">
-                        {p.platform} · role {p.role} · {p.device_id.slice(0, 12)}…
+                        {p.platform} · role {p.role} ·{" "}
+                        {p.device_id.slice(0, 12)}…
                       </div>
                     </div>
                     <div className="flex shrink-0 gap-2">
@@ -458,11 +485,15 @@ export function DevicesPage() {
         <Card>
           <CardHeader>
             <CardTitle>Paired devices</CardTitle>
-            <CardDescription>Approved devices. Remove to revoke access.</CardDescription>
+            <CardDescription>
+              Approved devices. Remove to revoke access.
+            </CardDescription>
           </CardHeader>
           <CardContent>
             {pairedList.length === 0 ? (
-              <p className="text-muted-foreground text-sm">No paired devices.</p>
+              <p className="text-muted-foreground text-sm">
+                No paired devices.
+              </p>
             ) : (
               <ul className="divide-border divide-y">
                 {pairedList.map((d) => (
@@ -487,7 +518,10 @@ export function DevicesPage() {
                           value={d.agent_id}
                           disabled={assignAgentMut.isPending}
                           onChange={(e) =>
-                            assignAgentMut.mutate({ id: d.device_id, agentId: e.target.value })
+                            assignAgentMut.mutate({
+                              id: d.device_id,
+                              agentId: e.target.value,
+                            })
                           }
                         >
                           <option value="">Default assistant</option>

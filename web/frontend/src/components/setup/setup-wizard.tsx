@@ -12,23 +12,23 @@ import { toast } from "sonner"
 
 import { getAgentTools, getAppConfig, patchAppConfig } from "@/api/channels"
 import {
+  type ModelInfo,
   addModel,
   getModels,
   setDefaultModel,
   updateModel,
-  type ModelInfo,
 } from "@/api/models"
 import {
+  type ProviderInfo,
   getProviders,
   testProvider,
   updateProvider,
-  type ProviderInfo,
 } from "@/api/providers"
 import {
+  type CLIInfo,
   getSetupStatus,
   listCLIs,
   reloadGateway,
-  type CLIInfo,
 } from "@/api/system"
 import { SETUP_DISMISSED_KEY } from "@/components/setup/dismissed"
 import { Button } from "@/components/ui/button"
@@ -195,7 +195,9 @@ export function SetupWizard() {
     [clis],
   )
 
-  const selectedCli = selectedProvider ? cliFor(selectedProvider.protocol) : undefined
+  const selectedCli = selectedProvider
+    ? cliFor(selectedProvider.protocol)
+    : undefined
 
   // Recommended model id for the selected provider (shown first + tagged).
   const recommendedModelId = selectedProvider
@@ -223,14 +225,19 @@ export function SetupWizard() {
     void navigate({ to: "/" })
   }, [navigate])
 
-  const steps: StepDef[] = [
-    { key: "welcome", title: t("setup.steps.welcome") },
-    { key: "network", title: t("setup.steps.network") },
-    { key: "provider", title: t("setup.steps.provider") },
-    { key: "model", title: t("setup.steps.model") },
-    { key: "agent", title: t("setup.steps.agent") },
-    { key: "review", title: t("setup.steps.review") },
-  ]
+  // Memoised because a useMemo further down depends on it: rebuilt every render
+  // it would defeat that memo entirely. Only the translations can change it.
+  const steps: StepDef[] = useMemo(
+    () => [
+      { key: "welcome", title: t("setup.steps.welcome") },
+      { key: "network", title: t("setup.steps.network") },
+      { key: "provider", title: t("setup.steps.provider") },
+      { key: "model", title: t("setup.steps.model") },
+      { key: "agent", title: t("setup.steps.agent") },
+      { key: "review", title: t("setup.steps.review") },
+    ],
+    [t],
+  )
 
   // Re-test is required whenever the provider or key changes.
   const resetTest = useCallback(() => {
@@ -250,7 +257,9 @@ export function SetupWizard() {
       })
       if (res.ok) {
         setTestState("ok")
-      } else if (/cannot|can't|detection|azure|not be|deployment/i.test(res.message)) {
+      } else if (
+        /cannot|can't|detection|azure|not be|deployment/i.test(res.message)
+      ) {
         // Not live-testable (e.g. Azure) — let the user proceed with a warning.
         setTestState("warn")
       } else {
@@ -354,13 +363,19 @@ export function SetupWizard() {
       if (!alreadyConfigured && defaultIdx >= 0) {
         list = rawList.map((a, i) =>
           i === defaultIdx
-            ? { ...a, name: agentName.trim(), models: [defaultName], tools: defaultTools }
+            ? {
+                ...a,
+                name: agentName.trim(),
+                models: [defaultName],
+                tools: defaultTools,
+              }
             : a,
         )
       } else {
         const existingIds = new Set(rawList.map((a) => String(a.id ?? "")))
         let id = slugify(agentName)
-        for (let n = 2; existingIds.has(id); n++) id = `${slugify(agentName)}-${n}`
+        for (let n = 2; existingIds.has(id); n++)
+          id = `${slugify(agentName)}-${n}`
         const newAgent: Record<string, unknown> = {
           id,
           name: agentName.trim(),
@@ -449,7 +464,9 @@ export function SetupWizard() {
             </span>
             <span
               className={
-                i === step ? "font-medium" : "text-muted-foreground hidden sm:inline"
+                i === step
+                  ? "font-medium"
+                  : "text-muted-foreground hidden sm:inline"
               }
             >
               {s.title}
@@ -468,7 +485,9 @@ export function SetupWizard() {
       <div className="flex-1">
         {steps[step].key === "welcome" && (
           <div className="space-y-3">
-            <h1 className="text-2xl font-semibold">{t("setup.welcome.title")}</h1>
+            <h1 className="text-2xl font-semibold">
+              {t("setup.welcome.title")}
+            </h1>
             <p className="text-muted-foreground">{t("setup.welcome.body")}</p>
             <ul className="text-muted-foreground list-disc space-y-1 pl-5 text-sm">
               <li>{t("setup.welcome.point1")}</li>
@@ -486,7 +505,9 @@ export function SetupWizard() {
         {steps[step].key === "network" && (
           <div className="space-y-5">
             <div className="space-y-1">
-              <h1 className="text-xl font-semibold">{t("setup.network.title")}</h1>
+              <h1 className="text-xl font-semibold">
+                {t("setup.network.title")}
+              </h1>
               <p className="text-muted-foreground text-sm">
                 {t("setup.network.body")}
               </p>
@@ -542,7 +563,9 @@ export function SetupWizard() {
         {steps[step].key === "provider" && (
           <div className="space-y-5">
             <div className="space-y-1">
-              <h1 className="text-xl font-semibold">{t("setup.provider.title")}</h1>
+              <h1 className="text-xl font-semibold">
+                {t("setup.provider.title")}
+              </h1>
               <p className="text-muted-foreground text-sm">
                 {t("setup.provider.body")}
               </p>
@@ -559,11 +582,15 @@ export function SetupWizard() {
                   // CLIs need no specific model — default the choice to the
                   // CLI's built-in model so the user can just continue.
                   const p = allProviders.find((x) => x.name === v)
-                  setModelChoice(p?.protocol.endsWith("-cli") ? CLI_DEFAULT : "")
+                  setModelChoice(
+                    p?.protocol.endsWith("-cli") ? CLI_DEFAULT : "",
+                  )
                 }}
               >
                 <SelectTrigger>
-                  <SelectValue placeholder={t("setup.provider.selectPlaceholder")} />
+                  <SelectValue
+                    placeholder={t("setup.provider.selectPlaceholder")}
+                  />
                 </SelectTrigger>
                 <SelectContent>
                   {apiProviders.map((p) => (
@@ -633,7 +660,9 @@ export function SetupWizard() {
                       {t("setup.provider.cliDetected")}
                     </p>
                     {selectedCli.version && (
-                      <p className="text-muted-foreground">{selectedCli.version}</p>
+                      <p className="text-muted-foreground">
+                        {selectedCli.version}
+                      </p>
                     )}
                     {selectedCli.path && (
                       <p className="text-muted-foreground font-mono text-xs">
@@ -688,7 +717,9 @@ export function SetupWizard() {
                     </span>
                   )}
                   {testState === "warn" && (
-                    <span className="text-muted-foreground text-sm">{testMessage}</span>
+                    <span className="text-muted-foreground text-sm">
+                      {testMessage}
+                    </span>
                   )}
                   {testState === "fail" && (
                     <span className="text-destructive flex items-center gap-1 text-sm">
@@ -704,15 +735,21 @@ export function SetupWizard() {
         {steps[step].key === "model" && (
           <div className="space-y-5">
             <div className="space-y-1">
-              <h1 className="text-xl font-semibold">{t("setup.model.title")}</h1>
-              <p className="text-muted-foreground text-sm">{t("setup.model.body")}</p>
+              <h1 className="text-xl font-semibold">
+                {t("setup.model.title")}
+              </h1>
+              <p className="text-muted-foreground text-sm">
+                {t("setup.model.body")}
+              </p>
             </div>
 
             <div className="space-y-2">
               <Label>{t("setup.model.selectLabel")}</Label>
               <Select value={modelChoice} onValueChange={setModelChoice}>
                 <SelectTrigger>
-                  <SelectValue placeholder={t("setup.model.selectPlaceholder")} />
+                  <SelectValue
+                    placeholder={t("setup.model.selectPlaceholder")}
+                  />
                 </SelectTrigger>
                 <SelectContent>
                   {isCliProvider && (
@@ -769,8 +806,12 @@ export function SetupWizard() {
         {steps[step].key === "agent" && (
           <div className="space-y-5">
             <div className="space-y-1">
-              <h1 className="text-xl font-semibold">{t("setup.agent.title")}</h1>
-              <p className="text-muted-foreground text-sm">{t("setup.agent.body")}</p>
+              <h1 className="text-xl font-semibold">
+                {t("setup.agent.title")}
+              </h1>
+              <p className="text-muted-foreground text-sm">
+                {t("setup.agent.body")}
+              </p>
             </div>
             <div className="space-y-2">
               <Label>{t("setup.agent.nameLabel")}</Label>
@@ -785,16 +826,24 @@ export function SetupWizard() {
         {steps[step].key === "review" && (
           <div className="space-y-5">
             <div className="space-y-1">
-              <h1 className="text-xl font-semibold">{t("setup.review.title")}</h1>
-              <p className="text-muted-foreground text-sm">{t("setup.review.body")}</p>
+              <h1 className="text-xl font-semibold">
+                {t("setup.review.title")}
+              </h1>
+              <p className="text-muted-foreground text-sm">
+                {t("setup.review.body")}
+              </p>
             </div>
             <dl className="border-border/60 divide-border/60 divide-y rounded-xl border text-sm">
               <div className="flex justify-between p-3">
-                <dt className="text-muted-foreground">{t("setup.steps.provider")}</dt>
+                <dt className="text-muted-foreground">
+                  {t("setup.steps.provider")}
+                </dt>
                 <dd className="font-medium">{providerName}</dd>
               </div>
               <div className="flex justify-between p-3">
-                <dt className="text-muted-foreground">{t("setup.steps.model")}</dt>
+                <dt className="text-muted-foreground">
+                  {t("setup.steps.model")}
+                </dt>
                 <dd className="font-medium">
                   {modelChoice === CLI_DEFAULT
                     ? t("setup.model.cliDefaultOption")
@@ -804,7 +853,9 @@ export function SetupWizard() {
                 </dd>
               </div>
               <div className="flex justify-between p-3">
-                <dt className="text-muted-foreground">{t("setup.steps.agent")}</dt>
+                <dt className="text-muted-foreground">
+                  {t("setup.steps.agent")}
+                </dt>
                 <dd className="font-medium">{agentName.trim()}</dd>
               </div>
             </dl>

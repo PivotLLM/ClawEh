@@ -1,14 +1,10 @@
 import { IconLoader2 } from "@tabler/icons-react"
-import { useEffect, useMemo, useState } from "react"
+import { useQuery } from "@tanstack/react-query"
+import { useMemo, useState } from "react"
 import { useTranslation } from "react-i18next"
 
 import { type ModelInfo, setDefaultModel, updateModel } from "@/api/models"
-import { type ProviderInfo, getProviders } from "@/api/providers"
-import {
-  AdvancedSection,
-  Field,
-  SwitchCardField,
-} from "@/components/shared-form"
+import { getProviders } from "@/api/providers"
 import {
   REASONING_EFFORT_OPTIONS,
   formatDropParams,
@@ -16,6 +12,11 @@ import {
   parseDropParams,
   parseExtraBody,
 } from "@/components/models/model-config-fields"
+import {
+  AdvancedSection,
+  Field,
+  SwitchCardField,
+} from "@/components/shared-form"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
@@ -88,45 +89,53 @@ export function EditModelSheet({
     vision: "off",
     strictAlternation: false,
   })
-  const [providers, setProviders] = useState<ProviderInfo[]>([])
   const [saving, setSaving] = useState(false)
   const [setAsDefault, setSetAsDefault] = useState(false)
   const [error, setError] = useState("")
 
-  useEffect(() => {
-    if (model) {
-      setForm({
-        name: model.model_name ?? "",
-        modelId: model.model ?? "",
-        provider: model.provider ?? "",
-        connectMode: model.connect_mode ?? "",
-        workspace: model.workspace ?? "",
-        rpm: model.rpm ? String(model.rpm) : "",
-        maxTokens: model.max_tokens ? String(model.max_tokens) : "",
-        contextWindow: model.context_window ? String(model.context_window) : "",
-        maxTokensField: model.max_tokens_field ?? "",
-        requestTimeout: model.request_timeout
-          ? String(model.request_timeout)
-          : "",
-        thinkingLevel: model.thinking_level ?? "",
-        reasoningEffort: model.reasoning_effort ?? "",
-        extraBody: formatExtraBody(model.extra_body),
-        dropParams: formatDropParams(model.drop_params),
-        noTools: model.no_tools ?? false,
-        vision: model.vision || "off",
-        strictAlternation: model.strict_alternation ?? false,
-      })
-      setSetAsDefault(model.is_default)
-      setError("")
-      getProviders()
-        .then((data) =>
-          setProviders(
-            [...data.providers].sort((a, b) => a.name.localeCompare(b.name)),
-          ),
-        )
-        .catch(() => setProviders([]))
-    }
-  }, [model])
+  // The provider list shares a cache key with the providers page, so opening
+  // this sheet usually costs nothing. An error leaves the list empty, which is
+  // what the previous hand-rolled catch did.
+  const { data: providers = [] } = useQuery({
+    queryKey: ["providers"],
+    queryFn: async () => {
+      const data = await getProviders()
+      return [...data.providers].sort((a, b) => a.name.localeCompare(b.name))
+    },
+    enabled: model !== null,
+  })
+
+  // Reload the form when a different model is selected. Adjusted during render
+  // rather than in an effect: an effect would paint the previous model's values
+  // for one frame first. Keying the component would be the other option, but
+  // the key would also change on close, unmounting the sheet mid-animation.
+  const [syncedModel, setSyncedModel] = useState(model)
+  if (model && model !== syncedModel) {
+    setSyncedModel(model)
+    setForm({
+      name: model.model_name ?? "",
+      modelId: model.model ?? "",
+      provider: model.provider ?? "",
+      connectMode: model.connect_mode ?? "",
+      workspace: model.workspace ?? "",
+      rpm: model.rpm ? String(model.rpm) : "",
+      maxTokens: model.max_tokens ? String(model.max_tokens) : "",
+      contextWindow: model.context_window ? String(model.context_window) : "",
+      maxTokensField: model.max_tokens_field ?? "",
+      requestTimeout: model.request_timeout
+        ? String(model.request_timeout)
+        : "",
+      thinkingLevel: model.thinking_level ?? "",
+      reasoningEffort: model.reasoning_effort ?? "",
+      extraBody: formatExtraBody(model.extra_body),
+      dropParams: formatDropParams(model.drop_params),
+      noTools: model.no_tools ?? false,
+      vision: model.vision || "off",
+      strictAlternation: model.strict_alternation ?? false,
+    })
+    setSetAsDefault(model.is_default)
+    setError("")
+  }
 
   const setField =
     (key: keyof EditForm) => (e: React.ChangeEvent<HTMLInputElement>) =>
@@ -151,7 +160,9 @@ export function EditModelSheet({
         workspace: form.workspace || undefined,
         rpm: form.rpm ? Number(form.rpm) : undefined,
         max_tokens: form.maxTokens ? Number(form.maxTokens) : undefined,
-        context_window: form.contextWindow ? Number(form.contextWindow) : undefined,
+        context_window: form.contextWindow
+          ? Number(form.contextWindow)
+          : undefined,
         max_tokens_field: form.maxTokensField || undefined,
         request_timeout: form.requestTimeout
           ? Number(form.requestTimeout)
@@ -324,7 +335,11 @@ export function EditModelSheet({
                 hint={t("models.field.reasoningEffortHint")}
               >
                 <Select
-                  value={form.reasoningEffort === "" ? "__unset__" : form.reasoningEffort}
+                  value={
+                    form.reasoningEffort === ""
+                      ? "__unset__"
+                      : form.reasoningEffort
+                  }
                   onValueChange={(v) =>
                     setForm((f) => ({
                       ...f,

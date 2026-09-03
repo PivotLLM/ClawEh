@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useQuery } from "@tanstack/react-query"
+import { useEffect, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 
@@ -35,29 +36,30 @@ export function MCPConfigPage() {
     formRef.current = form
   }, [form])
   const saveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
-  const savedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const savedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
+  )
 
-  const [loading, setLoading] = useState(true)
-  const [loadError, setLoadError] = useState("")
+  const {
+    data: fetchedConfig,
+    isPending: loading,
+    error: loadQueryError,
+  } = useQuery({ queryKey: ["app-config"], queryFn: getAppConfig })
 
-  // Seed the editable form from the config via an async callback (not a
-  // synchronous setState in an effect) — the repo's pattern for query→form state.
-  const loadData = useCallback(async () => {
-    setLoading(true)
-    try {
-      const cfg = await getAppConfig()
-      setForm(buildMCPFormFromConfig(cfg))
-      setLoadError("")
-    } catch (e) {
-      setLoadError(e instanceof Error ? e.message : "Failed to load")
-    } finally {
-      setLoading(false)
-    }
-  }, [])
+  const loadError = loadQueryError
+    ? loadQueryError instanceof Error
+      ? loadQueryError.message
+      : "Failed to load"
+    : ""
 
-  useEffect(() => {
-    void loadData()
-  }, [loadData])
+  // Seed the editable form when a fetch lands. Adjusted during render rather
+  // than in an effect so the form is never painted empty for a frame, and it
+  // fires only for a genuinely new fetch result — never clobbering edits since.
+  const [syncedConfig, setSyncedConfig] = useState(fetchedConfig)
+  if (fetchedConfig && fetchedConfig !== syncedConfig) {
+    setSyncedConfig(fetchedConfig)
+    setForm(buildMCPFormFromConfig(fetchedConfig))
+  }
 
   // Clear timers on unmount.
   useEffect(
@@ -68,7 +70,8 @@ export function MCPConfigPage() {
     [],
   )
 
-  const clean = (ps: string[]) => ps.map((p) => p.trim()).filter((p) => p !== "")
+  const clean = (ps: string[]) =>
+    ps.map((p) => p.trim()).filter((p) => p !== "")
 
   // doSave persists whatever is currently valid. Validation-gated per block so an
   // invalid listen/endpoint never blocks a visibility/discovery/resilience change.

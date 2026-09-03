@@ -86,6 +86,11 @@ observe does not need an entry.
   and a session that had gone away was never reconnected — the failure stayed
   invisible until a real tool call hit it. The probe now issues a `ListTools`
   round trip, which reaches the server on every protocol version.
+- **Typing a channel's `allow_from` list no longer eats trailing separators.**
+  The WebUI field resynced itself from the parsed value on every keystroke, so a
+  `,` or space typed to start the next entry disappeared as soon as it was
+  entered, and the entry had to be worked around rather than typed. Affects the
+  Telegram, Slack and generic channel forms.
 
 ## [0.4.72]
 

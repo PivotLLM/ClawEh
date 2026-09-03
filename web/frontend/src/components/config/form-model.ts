@@ -65,7 +65,8 @@ export const SESSION_MODE_OPTIONS = [
     labelKey: "pages.config.session_mode_unified",
     labelDefault: "Unified",
     descKey: "pages.config.session_mode_unified_desc",
-    descDefault: "One shared memory for the entire agent, across all users and channels.",
+    descDefault:
+      "One shared memory for the entire agent, across all users and channels.",
   },
   {
     value: "per-user",
@@ -192,7 +193,10 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
 
   const agentList = Array.isArray(agents.list) ? agents.list : []
   const defaultAgentId = asString(
-    (agentList.find((a) => asRecord(a).default === true) as { id?: unknown } | undefined)?.id,
+    (
+      agentList.find((a) => asRecord(a).default === true) as
+        { id?: unknown } | undefined
+    )?.id,
   )
 
   return {
@@ -219,7 +223,10 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
       defaults.max_tool_iterations,
       EMPTY_FORM.maxToolIterations,
     ),
-    requestTimeout: asNumberString(defaults.request_timeout, EMPTY_FORM.requestTimeout),
+    requestTimeout: asNumberString(
+      defaults.request_timeout,
+      EMPTY_FORM.requestTimeout,
+    ),
     turnTimeout: asNumberString(defaults.turn_timeout, EMPTY_FORM.turnTimeout),
     maxSubagentDepth: asNumberString(
       defaults.max_subagent_depth,
@@ -228,7 +235,9 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
     defaultAgentId,
     defaultModels: asStringArray(defaults.models),
     defaultTemperature:
-      typeof defaults.temperature === "number" ? String(defaults.temperature) : "",
+      typeof defaults.temperature === "number"
+        ? String(defaults.temperature)
+        : "",
     summarizationModels: asStringArray(summarization.models),
     // vision_model + vision_model_fallbacks are one ordered chain in the UI:
     // index 0 is vision_model, the rest are the fallbacks.
@@ -277,10 +286,7 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
       defaults.archive_message_count,
       EMPTY_FORM.archiveMessageCount,
     ),
-    archiveDays: asNumberString(
-      defaults.archive_days,
-      EMPTY_FORM.archiveDays,
-    ),
+    archiveDays: asNumberString(defaults.archive_days, EMPTY_FORM.archiveDays),
     summaryMaxCount: asNumberString(
       defaults.summary_max_count,
       EMPTY_FORM.summaryMaxCount,
@@ -290,7 +296,8 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
       EMPTY_FORM.summaryRetentionDays,
     ),
     evictionEnabled: asRecord(defaults.context_eviction).enabled !== false, // on by default
-    evictionNotifyUser: asRecord(defaults.context_eviction).notify_user === true,
+    evictionNotifyUser:
+      asRecord(defaults.context_eviction).notify_user === true,
     evictionProtectTurns: asNumberString(
       asRecord(defaults.context_eviction).protect_turns,
       EMPTY_FORM.evictionProtectTurns,

@@ -16,7 +16,12 @@ export const RESERVED_REQUEST_BODY_KEYS: readonly string[] = [
   "n",
 ] as const
 
-export const REASONING_EFFORT_OPTIONS = ["none", "low", "medium", "high"] as const
+export const REASONING_EFFORT_OPTIONS = [
+  "none",
+  "low",
+  "medium",
+  "high",
+] as const
 
 export type ExtraBodyParseResult =
   | { value: Record<string, unknown> | undefined; error: undefined }
@@ -51,11 +56,7 @@ export function parseExtraBody(
     return { value: undefined, error: t("models.field.extraBodyInvalidJSON") }
   }
 
-  if (
-    parsed === null ||
-    typeof parsed !== "object" ||
-    Array.isArray(parsed)
-  ) {
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
     return { value: undefined, error: t("models.field.extraBodyNotObject") }
   }
 
@@ -78,9 +79,7 @@ export function parseExtraBody(
 
 // formatDropParams renders a saved drop_params list as a comma-separated string
 // for the text input. An empty / absent list collapses to "".
-export function formatDropParams(
-  params: string[] | null | undefined,
-): string {
+export function formatDropParams(params: string[] | null | undefined): string {
   if (!params || params.length === 0) return ""
   return params.join(", ")
 }

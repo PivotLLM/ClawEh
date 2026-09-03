@@ -1,7 +1,7 @@
 import { toast } from "sonner"
 
-import { getWebUIToken } from "@/api/webui"
 import { getSessionHistory } from "@/api/sessions"
+import { getWebUIToken } from "@/api/webui"
 import i18n from "@/i18n"
 import {
   clearStoredSessionId,
@@ -14,7 +14,6 @@ import { type ChatMessage, getChatState, updateChatStore } from "@/store/chat"
 // TOKEN_SUBPROTOCOL must match channels/webui.TokenSubprotocol. It marks the
 // second offered subprotocol as the channel token.
 const TOKEN_SUBPROTOCOL = "claw-token"
-
 
 interface WebUIMessage {
   type: string

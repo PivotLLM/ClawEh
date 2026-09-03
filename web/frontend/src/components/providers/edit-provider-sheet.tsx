@@ -1,5 +1,5 @@
 import { IconLoader2 } from "@tabler/icons-react"
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import { useTranslation } from "react-i18next"
 
 import { type ProviderInfo, updateProvider } from "@/api/providers"
@@ -68,7 +68,7 @@ export function EditProviderSheet({
     proxy: "",
     command: "",
     strictCompat: false,
-  requireReasoningContent: false,
+    requireReasoningContent: false,
     noParallelToolCalls: false,
     responseFormatJSON: false,
   })
@@ -77,23 +77,29 @@ export function EditProviderSheet({
   const cli = isCliProtocol(form.protocol)
   const configured = Boolean(provider?.api_key)
 
-  useEffect(() => {
-    if (provider) {
-      setForm({
-        name: provider.name,
-        protocol: provider.protocol,
-        baseURL: provider.base_url ?? "",
-        apiKey: "",
-        proxy: provider.proxy ?? "",
-        command: provider.command ?? "",
-        strictCompat: provider.strict_compat ?? false,
-        requireReasoningContent: provider.require_reasoning_content ?? false,
-        noParallelToolCalls: provider.no_parallel_tool_calls ?? false,
-        responseFormatJSON: provider.response_format_json ?? false,
-      })
-      setError("")
-    }
-  }, [provider])
+  // Reload the form when a different provider is selected. Adjusted during
+  // render rather than in an effect: an effect would paint the previous
+  // provider's values for one frame first, and React re-runs this render
+  // immediately without showing the intermediate result. Keying the component
+  // would be the other option, but the key would also change on close, which
+  // unmounts the sheet mid-animation.
+  const [syncedProvider, setSyncedProvider] = useState(provider)
+  if (provider && provider !== syncedProvider) {
+    setSyncedProvider(provider)
+    setForm({
+      name: provider.name,
+      protocol: provider.protocol,
+      baseURL: provider.base_url ?? "",
+      apiKey: "",
+      proxy: provider.proxy ?? "",
+      command: provider.command ?? "",
+      strictCompat: provider.strict_compat ?? false,
+      requireReasoningContent: provider.require_reasoning_content ?? false,
+      noParallelToolCalls: provider.no_parallel_tool_calls ?? false,
+      responseFormatJSON: provider.response_format_json ?? false,
+    })
+    setError("")
+  }
 
   const setField =
     (key: keyof EditForm) => (e: React.ChangeEvent<HTMLInputElement>) =>
@@ -170,11 +176,13 @@ export function EditProviderSheet({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {[...PROTOCOL_OPTIONS].sort((a, b) => a.localeCompare(b)).map((opt) => (
-                    <SelectItem key={opt} value={opt}>
-                      {opt}
-                    </SelectItem>
-                  ))}
+                  {[...PROTOCOL_OPTIONS]
+                    .sort((a, b) => a.localeCompare(b))
+                    .map((opt) => (
+                      <SelectItem key={opt} value={opt}>
+                        {opt}
+                      </SelectItem>
+                    ))}
                 </SelectContent>
               </Select>
             </Field>

@@ -1,6 +1,6 @@
 import { IconPlus, IconRefresh, IconTrash } from "@tabler/icons-react"
 import { useQuery } from "@tanstack/react-query"
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 
@@ -52,8 +52,6 @@ export function MCPServersPage() {
   const [servers, setServers] = useState<MCPServerForm[]>([])
   const [selectedIdx, setSelectedIdx] = useState(-1)
   const [status, setStatus] = useState<SaveStatus>(null)
-  const [loading, setLoading] = useState(true)
-  const [loadError, setLoadError] = useState("")
   const [applying, setApplying] = useState(false)
 
   // serversRef mirrors the latest list so debounced saves and handlers compute
@@ -64,9 +62,13 @@ export function MCPServersPage() {
     serversRef.current = servers
   }, [servers])
   const baselineRef = useRef<MCPServerForm[]>([])
-  const initedRef = useRef(false)
+  // State, not a ref: the initial selection is decided during render, and a
+  // render-phase ref write is a side effect in render.
+  const [inited, setInited] = useState(false)
   const saveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
-  const savedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const savedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
+  )
 
   // Live connection state, polled every 5s. Keyed by server name; a configured
   // server absent here is treated as disconnected.
@@ -79,29 +81,39 @@ export function MCPServersPage() {
     (statusData?.servers ?? []).map((s) => [s.name, s]),
   )
 
-  // Seed the editable list from config via an async callback (not a synchronous
-  // setState in an effect) — the repo's pattern for query→form state.
-  const loadData = useCallback(async () => {
-    setLoading(true)
-    try {
-      const next = serversFromConfig(await getAppConfig())
-      setServers(next)
-      baselineRef.current = next
-      if (!initedRef.current) {
-        initedRef.current = true
-        setSelectedIdx(next.length > 0 ? 0 : -1)
-      }
-      setLoadError("")
-    } catch (e) {
-      setLoadError(e instanceof Error ? e.message : "Failed to load")
-    } finally {
-      setLoading(false)
+  const {
+    data: fetchedConfig,
+    isPending: loading,
+    error: loadQueryError,
+  } = useQuery({ queryKey: ["app-config"], queryFn: getAppConfig })
+
+  const loadError = loadQueryError
+    ? loadQueryError instanceof Error
+      ? loadQueryError.message
+      : "Failed to load"
+    : ""
+
+  // Seed the editable list when a fetch lands. Adjusted during render rather
+  // than in an effect so the list is never painted empty for a frame, and it
+  // fires only for a genuinely new fetch result — never clobbering edits since.
+  // baselineRef is mirrored from state in the effect below rather than written
+  // here, because a render-phase ref write is a side effect in render.
+  const [syncedConfig, setSyncedConfig] = useState(fetchedConfig)
+  const [baseline, setBaseline] = useState<MCPServerForm[]>([])
+  if (fetchedConfig && fetchedConfig !== syncedConfig) {
+    setSyncedConfig(fetchedConfig)
+    const next = serversFromConfig(fetchedConfig)
+    setServers(next)
+    setBaseline(next)
+    if (!inited) {
+      setInited(true)
+      setSelectedIdx(next.length > 0 ? 0 : -1)
     }
-  }, [])
+  }
 
   useEffect(() => {
-    void loadData()
-  }, [loadData])
+    baselineRef.current = baseline
+  })
 
   // Clear timers on unmount.
   useEffect(
@@ -123,7 +135,7 @@ export function MCPServersPage() {
       await patchAppConfig({
         tools: { mcp: { servers: serversToPatch(cur, baselineRef.current) } },
       })
-      baselineRef.current = cur
+      setBaseline(cur)
       setStatus("saved")
       clearTimeout(savedTimer.current)
       savedTimer.current = setTimeout(() => setStatus(null), 2000)
@@ -202,7 +214,9 @@ export function MCPServersPage() {
             disabled={applying}
             title={t("pages.mcp.apply_hint")}
           >
-            <IconRefresh className={`size-4 ${applying ? "animate-spin" : ""}`} />
+            <IconRefresh
+              className={`size-4 ${applying ? "animate-spin" : ""}`}
+            />
             {t("pages.mcp.apply_now")}
           </Button>
           <Button size="sm" variant="outline" onClick={addServer}>
@@ -212,7 +226,7 @@ export function MCPServersPage() {
         </div>
       </PageHeader>
 
-      <div className="min-h-0 flex flex-1">
+      <div className="flex min-h-0 flex-1">
         {/* Left rail: one entry per server. Selecting one shows just its fields. */}
         {!loading && !loadError && servers.length > 0 && (
           <nav className="border-border/60 w-52 shrink-0 space-y-0.5 overflow-y-auto border-r px-2 py-4">

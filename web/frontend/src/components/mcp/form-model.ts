@@ -119,12 +119,24 @@ export function buildMCPFormFromConfig(config: unknown): MCPHostForm {
     autoEnable: asBool(mcp.auto_enable, EMPTY_MCP_FORM.autoEnable),
     listen: asString(mcp.listen, EMPTY_MCP_FORM.listen),
     endpointPath: asString(mcp.endpoint_path, EMPTY_MCP_FORM.endpointPath),
-    internalToolPatterns: asStringArray(mcp.internal_tools, EMPTY_MCP_FORM.internalToolPatterns),
-    externalToolPatterns: asStringArray(mcp.external_tools, EMPTY_MCP_FORM.externalToolPatterns),
-    discoveryEnabled: asBool(discovery.enabled, EMPTY_MCP_FORM.discoveryEnabled),
+    internalToolPatterns: asStringArray(
+      mcp.internal_tools,
+      EMPTY_MCP_FORM.internalToolPatterns,
+    ),
+    externalToolPatterns: asStringArray(
+      mcp.external_tools,
+      EMPTY_MCP_FORM.externalToolPatterns,
+    ),
+    discoveryEnabled: asBool(
+      discovery.enabled,
+      EMPTY_MCP_FORM.discoveryEnabled,
+    ),
     // Honor the legacy "ttl" key as a fallback so an older config still displays.
     ttlMax: asNumber(discovery.ttl_max ?? discovery.ttl, EMPTY_MCP_FORM.ttlMax),
-    visibleBudget: asNumber(discovery.visible_budget, EMPTY_MCP_FORM.visibleBudget),
+    visibleBudget: asNumber(
+      discovery.visible_budget,
+      EMPTY_MCP_FORM.visibleBudget,
+    ),
     alwaysShownNamespaces: asStringArray(
       discovery.always_shown_namespaces,
       EMPTY_MCP_FORM.alwaysShownNamespaces,
@@ -133,7 +145,10 @@ export function buildMCPFormFromConfig(config: unknown): MCPHostForm {
       mcpClient.reconnect_cooldown_seconds,
       EMPTY_MCP_FORM.reconnectCooldownSeconds,
     ),
-    callTimeoutSeconds: asNumber(mcpClient.call_timeout_seconds, EMPTY_MCP_FORM.callTimeoutSeconds),
+    callTimeoutSeconds: asNumber(
+      mcpClient.call_timeout_seconds,
+      EMPTY_MCP_FORM.callTimeoutSeconds,
+    ),
     livenessProbeSeconds: asNumber(
       mcpClient.liveness_probe_seconds,
       EMPTY_MCP_FORM.livenessProbeSeconds,
@@ -147,7 +162,9 @@ export function buildMCPFormFromConfig(config: unknown): MCPHostForm {
 function recordToLines(v: unknown, sep: string): string {
   const r = asRecord(v)
   return Object.entries(r)
-    .map(([k, val]) => `${k}${sep}${typeof val === "string" ? val : String(val)}`)
+    .map(
+      ([k, val]) => `${k}${sep}${typeof val === "string" ? val : String(val)}`,
+    )
     .join("\n")
 }
 
@@ -185,7 +202,9 @@ export function serversFromConfig(config: unknown): MCPServerForm[] {
       type,
       command: asString(s.command, ""),
       args: Array.isArray(s.args)
-        ? (s.args as unknown[]).filter((a): a is string => typeof a === "string").join("\n")
+        ? (s.args as unknown[])
+            .filter((a): a is string => typeof a === "string")
+            .join("\n")
         : "",
       env: recordToLines(s.env, "="),
       envFile: asString(s.env_file, ""),

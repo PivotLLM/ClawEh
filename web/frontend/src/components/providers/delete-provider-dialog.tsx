@@ -1,5 +1,5 @@
 import { IconLoader2 } from "@tabler/icons-react"
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import { useTranslation } from "react-i18next"
 
 import { type ProviderInfo, deleteProvider } from "@/api/providers"
@@ -29,9 +29,14 @@ export function DeleteProviderDialog({
   const [deleting, setDeleting] = useState(false)
   const [error, setError] = useState("")
 
-  useEffect(() => {
-    if (provider) setError("")
-  }, [provider])
+  // Clear a stale error when a different provider is targeted. Adjusted during
+  // render rather than in an effect so the previous provider's error is never
+  // shown against the new one, even for a frame.
+  const [syncedProvider, setSyncedProvider] = useState(provider)
+  if (provider && provider !== syncedProvider) {
+    setSyncedProvider(provider)
+    setError("")
+  }
 
   const handleConfirm = async () => {
     if (!provider) return
@@ -50,10 +55,7 @@ export function DeleteProviderDialog({
   }
 
   return (
-    <AlertDialog
-      open={provider !== null}
-      onOpenChange={(v) => !v && onClose()}
-    >
+    <AlertDialog open={provider !== null} onOpenChange={(v) => !v && onClose()}>
       <AlertDialogContent size="sm">
         <AlertDialogHeader>
           <AlertDialogTitle>{t("providers.delete.title")}</AlertDialogTitle>

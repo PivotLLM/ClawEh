@@ -1,5 +1,6 @@
 import { IconLoader2, IconPlus, IconTrash } from "@tabler/icons-react"
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { useEffect, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 
@@ -104,7 +105,11 @@ function BotCard({
             "h-2 w-2 shrink-0 rounded-full",
             configured ? "bg-green-500" : "bg-muted-foreground/25",
           ].join(" ")}
-          title={configured ? t("models.status.configured") : t("models.status.unconfigured")}
+          title={
+            configured
+              ? t("models.status.configured")
+              : t("models.status.unconfigured")
+          }
         />
         <span className="min-w-0 flex-1 truncate font-mono text-sm font-semibold">
           {isNew ? (
@@ -145,10 +150,12 @@ function BotCard({
       </div>
 
       {isExpanded && (
-        <div className="border-border/40 border-t px-4 py-4 space-y-4">
+        <div className="border-border/40 space-y-4 border-t px-4 py-4">
           {isNew && (
             <div className="flex items-center justify-between">
-              <span className="text-sm font-medium">{t("channels.page.enableLabel")}</span>
+              <span className="text-sm font-medium">
+                {t("channels.page.enableLabel")}
+              </span>
               <Switch
                 checked={asBool(bot.enabled)}
                 onCheckedChange={(v) => onChange("enabled", v)}
@@ -162,10 +169,14 @@ function BotCard({
             isEdit={configured && !isNew}
           />
 
-          <div className="flex justify-end gap-2 border-t border-border/40 pt-4">
+          <div className="border-border/40 flex justify-end gap-2 border-t pt-4">
             {isNew ? (
               <>
-                <Button variant="outline" onClick={onCollapse} disabled={saving}>
+                <Button
+                  variant="outline"
+                  onClick={onCollapse}
+                  disabled={saving}
+                >
                   {t("common.cancel")}
                 </Button>
                 <Button onClick={onSave} disabled={saving}>
@@ -187,8 +198,6 @@ function BotCard({
 
 export function TelegramBotsPage() {
   const { t } = useTranslation()
-  const [loading, setLoading] = useState(true)
-  const [fetchError, setFetchError] = useState("")
   const [bots, setBots] = useState<BotConfig[]>([])
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null)
   // `saving` gates the explicit Add-bot flow; `status` drives the auto-save hint.
@@ -197,29 +206,47 @@ export function TelegramBotsPage() {
   const [isAdding, setIsAdding] = useState(false)
   const [newBot, setNewBot] = useState<BotConfig>(newEmptyBot())
 
-  const botsRef = useRef<BotConfig[]>(bots)
-  botsRef.current = bots
   const saveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
-  const savedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const savedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
+  )
 
-  const loadData = useCallback(async () => {
-    setLoading(true)
-    try {
+  const queryClient = useQueryClient()
+
+  const {
+    data: fetched,
+    isPending: loading,
+    error: loadError,
+  } = useQuery({
+    queryKey: ["telegram-bots"],
+    queryFn: async () => {
       const appConfig = await getAppConfig()
       const channelsConfig = asRecord(asRecord(appConfig).channels)
-      const rawBots = asArray(channelsConfig["telegram"])
-      setBots(rawBots.map(botToEditState))
-      setFetchError("")
-    } catch (e) {
-      setFetchError(e instanceof Error ? e.message : t("channels.loadError"))
-    } finally {
-      setLoading(false)
-    }
-  }, [t])
+      return asArray(channelsConfig["telegram"]).map(botToEditState)
+    },
+  })
 
-  useEffect(() => {
-    void loadData()
-  }, [loadData])
+  // Kept as a named refresh so the post-save call sites read unchanged; it now
+  // invalidates the cache instead of refetching by hand.
+  const loadData = async () => {
+    await queryClient.invalidateQueries({ queryKey: ["telegram-bots"] })
+  }
+
+  const fetchError = loadError
+    ? loadError instanceof Error
+      ? loadError.message
+      : t("channels.loadError")
+    : ""
+
+  // Seed the editable list when a fetch lands. Adjusted during render rather
+  // than in an effect so the list is never painted empty for a frame, and it
+  // fires only when a genuinely new fetch result arrives — never clobbering
+  // edits made since.
+  const [syncedFetch, setSyncedFetch] = useState(fetched)
+  if (fetched && fetched !== syncedFetch) {
+    setSyncedFetch(fetched)
+    setBots(fetched)
+  }
 
   // Clear pending timers on unmount.
   useEffect(
@@ -252,8 +279,23 @@ export function TelegramBotsPage() {
     }
   }
 
+  // Both refs exist because the debounce fires long after the handler that
+  // scheduled it: the timer must run the newest saver against the newest
+  // bots, and the handler calls setBots() immediately before scheduleSave(),
+  // so the bots value in that closure is still the previous one. Reading
+  // through refs at fire time is what makes the save use what the user actually
+  // typed.
+  //
+  // The writes happen in an effect rather than during render. A render-phase
+  // ref write is a side effect in render — unsafe under concurrent rendering,
+  // and what react-hooks/refs flags. The effect runs after paint, hundreds of
+  // milliseconds before the 600 ms debounce fires, so the values are current.
+  const botsRef = useRef<BotConfig[]>(bots)
   const saveBotsRef = useRef(saveBots)
-  saveBotsRef.current = saveBots
+  useEffect(() => {
+    botsRef.current = bots
+    saveBotsRef.current = saveBots
+  })
 
   // Debounced auto-save for existing-bot field edits.
   const scheduleSave = () => {
@@ -298,7 +340,8 @@ export function TelegramBotsPage() {
       setNewBot(newEmptyBot())
       await loadData()
     } catch (e) {
-      const message = e instanceof Error ? e.message : t("channels.page.saveError")
+      const message =
+        e instanceof Error ? e.message : t("channels.page.saveError")
       toast.error(message)
     } finally {
       setSaving(false)
@@ -334,7 +377,7 @@ export function TelegramBotsPage() {
       </PageHeader>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-8 sm:px-6">
-        <div className="w-full max-w-250 pt-4 space-y-3">
+        <div className="w-full max-w-250 space-y-3 pt-4">
           {loading && (
             <div className="flex items-center justify-center py-20">
               <IconLoader2 className="text-muted-foreground size-6 animate-spin" />
@@ -368,7 +411,9 @@ export function TelegramBotsPage() {
                 }}
                 onCollapse={() => setExpandedIndex(null)}
                 onChange={(key, value) => handleBotChange(i, key, value)}
-                onToggleEnabled={(enabled) => handleToggleBotEnabled(i, enabled)}
+                onToggleEnabled={(enabled) =>
+                  handleToggleBotEnabled(i, enabled)
+                }
                 onSave={() => {}}
                 onDelete={() => handleDeleteBot(i)}
               />

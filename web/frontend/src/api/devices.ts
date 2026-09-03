@@ -86,7 +86,9 @@ export const saveDeviceSettings = (s: DeviceSettings) =>
 // regenerateWordToken mints a fresh typeable passphrase (the long QR token is
 // unchanged) and returns the refreshed status.
 export const regenerateWordToken = () =>
-  request<DeviceStatus>("/api/devices/word-token/regenerate", { method: "POST" })
+  request<DeviceStatus>("/api/devices/word-token/regenerate", {
+    method: "POST",
+  })
 
 export const listPendingDevices = () =>
   request<{ pending: PendingDevice[] }>("/api/devices/pending")
@@ -103,7 +105,10 @@ export const listPairedDevices = () =>
   request<{ devices: PairedDevice[]; agents: AgentOption[] }>("/api/devices")
 // assignDeviceAgent sets the agent a device routes to ("" = gateway default).
 export const assignDeviceAgent = (id: string, agentId: string) =>
-  request<unknown>(`/api/devices/${encodeURIComponent(id)}/agent`, jsonPost({ agent_id: agentId }))
+  request<unknown>(
+    `/api/devices/${encodeURIComponent(id)}/agent`,
+    jsonPost({ agent_id: agentId }),
+  )
 export const removeDevice = (id: string) =>
   request<unknown>(`/api/devices/${encodeURIComponent(id)}`, {
     method: "DELETE",

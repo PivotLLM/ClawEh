@@ -1,12 +1,12 @@
-import { useState, type ReactNode } from "react"
+import { type ReactNode, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 
+import { FallbacksSelect } from "@/components/agents/model-selects"
 import {
   type CoreConfigForm,
   SESSION_MODE_OPTIONS,
 } from "@/components/config/form-model"
-import { FallbacksSelect } from "@/components/agents/model-selects"
 import { Field, SwitchCardField } from "@/components/shared-form"
 import { Button } from "@/components/ui/button"
 import {
@@ -185,7 +185,6 @@ export function AgentDefaultsSection({
           onChange={(e) => onFieldChange("maxSubagentDepth", e.target.value)}
         />
       </Field>
-
     </ConfigSectionCard>
   )
 }
@@ -390,7 +389,10 @@ export function AgentModelDefaultsSection({
 
       <Field
         label={t("pages.config.default_model")}
-        hint={t("pages.config.default_model_models_hint", "Models tried in order; index 0 first.")}
+        hint={t(
+          "pages.config.default_model_models_hint",
+          "Models tried in order; index 0 first.",
+        )}
       >
         <FallbacksSelect
           fallbacks={form.defaultModels}
@@ -493,9 +495,7 @@ export function ContextManagementSection({
           min={0}
           max={100}
           value={form.compressMinPercent}
-          onChange={(e) =>
-            onFieldChange("compressMinPercent", e.target.value)
-          }
+          onChange={(e) => onFieldChange("compressMinPercent", e.target.value)}
         />
       </Field>
 
@@ -597,9 +597,7 @@ export function ContextManagementSection({
           type="number"
           min={0}
           value={form.archiveMessageCount}
-          onChange={(e) =>
-            onFieldChange("archiveMessageCount", e.target.value)
-          }
+          onChange={(e) => onFieldChange("archiveMessageCount", e.target.value)}
         />
       </Field>
 
@@ -625,9 +623,7 @@ export function ContextManagementSection({
           type="number"
           min={0}
           value={form.summaryMaxCount}
-          onChange={(e) =>
-            onFieldChange("summaryMaxCount", e.target.value)
-          }
+          onChange={(e) => onFieldChange("summaryMaxCount", e.target.value)}
         />
       </Field>
 
@@ -697,9 +693,7 @@ export function ContextManagementSection({
           type="number"
           min={0}
           value={form.evictionBudgetBytes}
-          onChange={(e) =>
-            onFieldChange("evictionBudgetBytes", e.target.value)
-          }
+          onChange={(e) => onFieldChange("evictionBudgetBytes", e.target.value)}
         />
       </Field>
     </ConfigSectionCard>
@@ -784,9 +778,13 @@ export function BackupSection({ form, onFieldChange }: BackupSectionProps) {
       const res = await fetch("/api/backup", { method: "POST" })
       if (!res.ok) throw new Error(await res.text())
       const data = (await res.json()) as { folder?: string; files?: number }
-      toast.success(t("pages.config.backup_now_done", { folder: data.folder ?? "" }))
+      toast.success(
+        t("pages.config.backup_now_done", { folder: data.folder ?? "" }),
+      )
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : t("pages.config.backup_now_failed"))
+      toast.error(
+        e instanceof Error ? e.message : t("pages.config.backup_now_failed"),
+      )
     } finally {
       setRunning(false)
     }
@@ -833,7 +831,9 @@ export function BackupSection({ form, onFieldChange }: BackupSectionProps) {
         layout="setting-row"
       >
         <Button variant="outline" onClick={runNow} disabled={running}>
-          {running ? t("pages.config.backup_now_running") : t("pages.config.backup_now")}
+          {running
+            ? t("pages.config.backup_now_running")
+            : t("pages.config.backup_now")}
         </Button>
       </Field>
     </ConfigSectionCard>

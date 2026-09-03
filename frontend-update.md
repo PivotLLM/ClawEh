@@ -1,0 +1,178 @@
+# Frontend — update and cleanup tracker
+
+Working list for bringing `web/frontend` up to date and clearing the issues found
+in the 2026-09-02 audit. Tick items off here as they land; delete the file when
+everything is done.
+
+The stack itself is **not** in question. React 19 + Vite + TypeScript, TanStack
+Router/Query, Tailwind 4, Radix via shadcn, jotai, i18next is the current
+mainstream choice for this shape of app, and it is the right one here: the SPA is
+embedded in the Go binary (`web/backend/embed.go`) and served from the gateway's
+own mux, so anything needing a Node runtime in production — Next.js, Remix,
+SvelteKit, Nuxt — would be a step backwards. Every item below is about how the
+stack is *used*, not which stack it is.
+
+Legend: `[ ]` todo · `[x]` done · `[~]` accepted, no action planned
+
+---
+
+## Done — 2026-09-02
+
+- [x] **Security audit 87 → 1.** Was 6 low / 44 moderate / 36 high / 1 critical,
+      all through build-time tooling, none reaching the shipped bundle.
+      In-range `pnpm update` cleared them: `vite` 7.3.1 → 7.3.6 (`server.fs.deny`
+      bypass, dev-server arbitrary file read), `@tanstack/router-plugin` (the
+      critical `seroval` deserialization type confusion), plus `postcss` and
+      `nanoid` transitively.
+- [x] **Removed `wrap-ansi`** from `dependencies` — a terminal ANSI line-wrapper
+      in a browser app, referenced nowhere but its own declaration.
+- [x] **Moved to `devDependencies`:** `shadcn` (a scaffolding CLI, imported by
+      nothing, and the entry point for 45 of the 87 advisories via `express` /
+      `hono` / `@modelcontextprotocol/sdk`), `@tailwindcss/vite`, `tailwindcss`,
+      `@tanstack/react-router-devtools`. Runtime deps 26 → 21.
+- [x] **In-range minor/patch updates** for everything else: `radix-ui`
+      1.4.3 → 1.6.7, `shadcn` 4.0.5 → 4.20.1, `jotai` 2.18 → 2.20.3, `react`
+      19.2.0 → 19.2.8, `tailwindcss` 4.2.1 → 4.3.3, and others.
+
+### Confirmed clean — no action needed
+
+Checked during the audit; recorded so nobody re-checks them:
+
+- No source maps in the shipped bundle.
+- TanStack devtools is imported in `src/routes/__root.tsx` but **tree-shaken out**
+  of production — zero occurrences in any built asset.
+- No `dangerouslySetInnerHTML`, `eval`, or `new Function`.
+- `react-markdown` runs without `rehype-raw`, so there is no raw-HTML injection
+  path through chat content.
+- No secrets in source. `localStorage` holds only the last session id and the
+  theme; no tokens (`src/lib/claw-chat-state.ts`, `src/hooks/use-theme.ts`).
+- All `target="_blank"` links carry `rel="noreferrer"`.
+
+---
+
+## 1. Lint — DONE, 35 → 0
+
+`pnpm lint` was failing before this work started (7 problems);
+`eslint-plugin-react-hooks` 7.0.1 → 7.1.1 added the `react-hooks/refs` rule and
+tightened `set-state-in-effect`, surfacing the rest. All 35 were real findings,
+and all 35 are fixed. What was found, and how each family was resolved:
+
+| Rule | Count | What it means |
+|---|---|---|
+| `react-hooks/set-state-in-effect` | 24 | `setState` called synchronously in an effect body → cascading renders |
+| `react-hooks/refs` | 10 | `ref.current = value` assigned during render |
+| `react-hooks/exhaustive-deps` | 1 | missing effect dependency |
+
+- [x] **`set-state-in-effect` — the mount-fetch family (majority).**
+      `useEffect(() => { void loadData() }, [loadData])` in
+      `bindings-page`, `devices-page`, `memory-page`, `mcp-page`,
+      `mcp-servers-page`, `models-page`, `providers-page`, `voice-page`,
+      `agents-page`, and the model/provider sheets and dialogs. These are
+      hand-rolled data fetching, so they were fixed by item 2 rather than
+      locally.
+- [x] **`set-state-in-effect` — the derived-state family.**
+      `agents-page.tsx:1095` (`if (selectedId !== "") setSelectedId("")`) and the
+      `channel-forms/*` reset effects. Resolved by deriving during render (the
+      agent rail selection is now computed, not written back) or by React's
+      documented render-phase adjustment, never by suppressing the rule.
+
+      The `channel-forms/*` fix also removed a latent bug: those effects
+      depended on the `config.allow_from` **array identity**, which typing
+      rebuilt on every keystroke, so the draft was overwritten with the
+      reparsed value and a trailing `,` or space vanished as it was typed. The
+      replacement compares the joined string, so it only resyncs on a real
+      change.
+- [x] **`react-hooks/refs` — 10 sites.** `channel-config-page.tsx:174,176,178,305`,
+      `secmsg-page.tsx:217,282`, `telegram-bots-page.tsx:201`,
+      `agents-page.tsx:1116`, `config-page.tsx`. All are the same deliberate
+      trick — *"refs so the debounced save reads current values without being
+      re-created"*. The ref WRITES moved into an effect; the reads stayed at
+      fire time, which is what makes the debounce save what the user actually
+      typed. This mattered: the handler calls `setState()` immediately before
+      `scheduleSave()`, so capturing the render variable instead would have
+      saved the previous value. `useEffectEvent` (React 19.2) looks like the
+      right tool and is not — it may only be called from effects and effect
+      events, never from a `setTimeout`.
+- [x] **`exhaustive-deps`** — `setup-wizard.tsx`: the `steps` array is now memoised, so the `useMemo` that depends on it is not defeated every render.
+- [x] `pnpm lint` and `tsc -b --noEmit` are both clean; item 3 keeps them that way.
+
+## 2. Adopt TanStack Query on the pages that hand-roll fetching — DONE
+
+`@tanstack/react-query` is already a dependency and already used by some hooks,
+but the large pages fetch with `useEffect` + `useState` instead. That is the root
+cause of most of item 1, and it also means no caching, no request dedupe, no
+retry, and hand-written loading/error state in every page.
+
+- [x] Converted to `useQuery`: providers, models, agents, bindings, channel-config, secmsg, telegram-bots, mcp, mcp-servers, gateway-logs. The provider list is shared by cache key, so opening a model sheet costs no request.
+- [x] The paired `loading`/`fetchError` state is gone from each; bindings lost three pieces of state entirely (bindings/channels/agents are now derived).
+- [x] Verified in a real browser — see item 6.
+
+## 3. Wire the frontend into the build gates — DONE
+
+Nothing in `Makefile` or `test.sh` runs the frontend lint or typecheck, which is
+why 7 lint errors sat unnoticed until a plugin update turned them into 35.
+
+- [x] `make frontend-lint` (tsc + eslint) and `make frontend-test` (vitest).
+- [x] `make check` runs both; `test.sh` has a FRONTEND section that fails the suite, and reports `Frontend: passed/failed/skipped` in the summary. It skips (not fails) without pnpm or node_modules, so a Go-only checkout still runs. It earned its keep immediately: the first run caught two type errors in the new tests.
+- [x] Landed green.
+
+## 4. Frontend tests — STARTED
+
+Was 20,359 lines of TypeScript with zero test files. The chat controller and the
+session/token handling are load-bearing, so they went first. Component tests are
+still absent.
+
+- [x] Vitest + jsdom added (`pnpm test`). React Testing Library is NOT added yet — nothing renders components in a test so far, and an unused dependency is the thing this audit just spent effort removing. Add it with the first component test.
+- [x] 23 tests across both. `claw-chat-state`: storage round-trip, whitespace-only and empty values, localStorage being unavailable, all three session-id generation paths (incl. the v4 bit-twiddling in the getRandomValues fallback), and the seconds/milliseconds threshold. `claw-chat-controller`: the token travels as a subprotocol and never appears in the URL, the `claw-token` marker matches the Go side, loopback ws_url rewriting on and off localhost, no socket without a token, no double-connect. Mutation-checked: reverting to `?token=` fails two tests.
+- [x] Wired into `test.sh` and `make check`.
+
+## 5. Decompose `agents-page.tsx` (1419 lines) — still to do
+
+Far past the point where a component is readable, and it is where the worst of
+item 1 lives — the ref-during-render trick and the derived-state effect are both
+symptoms of one component holding too much. Second and third largest are
+`config-sections.tsx` (959) and `setup-wizard.tsx` (856); same treatment, lower
+priority.
+
+- [ ] Split by concern: the agent list/selection, each editor tab
+      (models/skills/tools/MCP tools), and the save/debounce logic as a hook.
+- [ ] Move the shared edit state into a hook rather than a wide ref.
+
+## 6. Browser verification — DONE
+
+- [x] All 17 routes driven in headless Chromium against a real gateway: every page renders (content length + first line captured), no blank pages, no unhandled exceptions. NOTE: the Playwright **MCP** tools could not be used — they require an `SST…` session token that a Claude Code session does not have. Driven through the locally installed Playwright package instead, pointed at the `chromium-1200` build already in `~/.cache/ms-playwright`.
+- [x] Console clean on every page except `/devices`, which intermittently (1 run in 3) gets a 500 from `GET /api/devices` with `{"error":"store open failed"}`. Pre-existing and **backend**, not frontend: `web/backend/api/devices.go` opens and closes its own SQLite handle to `state/gateway.db` per request, and the page fires several device requests at once. Sequential and `curl`-burst requests always succeed; a browser reproduces it. Not fixed here — separate issue.
+
+## 7. Framework majors — a separate, deliberate pass
+
+Do these one at a time with a build and a browser check after each. Not to be
+folded into a security or lint cleanup.
+
+- [ ] `vite` 7.3.6 → 8.2.2
+- [ ] `eslint` 9.39.5 → 10.9.1 (+ `@eslint/js` 10, `globals` 17)
+- [ ] `typescript` 5.9.3 → 7.0.2
+- [ ] `i18next` 25 → 26 and `react-i18next` 16 → 17 (do together)
+- [ ] `@types/node` 24 → 26
+- [ ] `@vitejs/plugin-react` 5 → 6
+- [ ] `eslint-plugin-react-refresh` 0.4 → 0.5, `prettier-plugin-tailwindcss` 0.7 → 0.8
+
+## 8. Bundle size
+
+The main chunk is 576 kB (190 kB gzipped); everything else is under 160 kB.
+
+- [ ] Find what is landing in the entry chunk that should be route-split.
+- [ ] Low priority — the bundle is served from localhost or a LAN, not the open
+      internet.
+
+---
+
+## Accepted, no action planned
+
+- [~] **`esbuild` advisory (low), via `vite → tsx`.** Arbitrary file read from
+      the *dev server*, *on Windows only*. No in-range fix exists. ClawEh neither
+      builds nor runs on Windows, and this cannot affect the shipped binary.
+      Forcing it with a pnpm `override` would pin a transitive dependency
+      indefinitely for a non-issue; revisit when `vite` pulls a patched `tsx`.
+- [~] **`src/routeTree.gen.ts` churn.** The newer `@tanstack/router-plugin`
+      emits imports in a different order, so the generated file shows ~173
+      changed lines with no semantic change. It is regenerated on every build.

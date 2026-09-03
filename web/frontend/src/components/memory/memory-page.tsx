@@ -1,6 +1,6 @@
 import { IconBrain, IconChevronRight, IconTrash } from "@tabler/icons-react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import { useTranslation } from "react-i18next"
 
 import {
@@ -20,7 +20,7 @@ import {
 
 function Pill({ children }: { children: React.ReactNode }) {
   return (
-    <span className="bg-muted text-muted-foreground rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide">
+    <span className="bg-muted text-muted-foreground rounded px-1.5 py-0.5 text-[10px] font-medium tracking-wide uppercase">
       {children}
     </span>
   )
@@ -102,7 +102,9 @@ function DomainCard({
       </div>
       <CollapsibleContent className="px-3 pb-2">
         {d.summary && (
-          <p className="text-muted-foreground mb-2 text-xs italic">{d.summary}</p>
+          <p className="text-muted-foreground mb-2 text-xs italic">
+            {d.summary}
+          </p>
         )}
         {d.triggers && (
           <p className="text-muted-foreground mb-2 text-[11px]">
@@ -143,45 +145,53 @@ export function MemoryPage() {
     queryFn: getMemoryStores,
   })
 
-  useEffect(() => {
-    if (!selected && stores && stores.length > 0) {
-      setSelected(stores[0].id)
-    }
-  }, [stores, selected])
+  // Default to the first store once the list arrives. Derived during render
+  // rather than written back through an effect: an effect would render once
+  // with nothing selected, then again with the default, and the detail query
+  // below would be skipped on that first pass for no reason.
+  const activeStore = selected ?? stores?.[0]?.id ?? null
 
   const { data: detail, isLoading: detailLoading } = useQuery({
-    queryKey: ["memory-store", selected],
-    queryFn: () => getMemoryStore(selected as string),
-    enabled: selected !== null,
+    queryKey: ["memory-store", activeStore],
+    queryFn: () => getMemoryStore(activeStore as string),
+    enabled: activeStore !== null,
   })
 
   const qc = useQueryClient()
   const refresh = () => {
-    qc.invalidateQueries({ queryKey: ["memory-store", selected] })
+    qc.invalidateQueries({ queryKey: ["memory-store", activeStore] })
     qc.invalidateQueries({ queryKey: ["memory-stores"] })
   }
 
   const handleDeleteDomain = async (d: MemoryDomain) => {
-    if (selected === null) return
-    if (!window.confirm(`Delete domain "${d.name}" and all ${d.memories.length} of its memories? This cannot be undone.`)) {
+    if (activeStore === null) return
+    if (
+      !window.confirm(
+        `Delete domain "${d.name}" and all ${d.memories.length} of its memories? This cannot be undone.`,
+      )
+    ) {
       return
     }
     try {
-      await deleteMemoryDomain(selected, d.id)
+      await deleteMemoryDomain(activeStore, d.id)
       refresh()
     } catch (e) {
-      window.alert(`Failed to delete domain: ${e instanceof Error ? e.message : e}`)
+      window.alert(
+        `Failed to delete domain: ${e instanceof Error ? e.message : e}`,
+      )
     }
   }
 
   const handleDeleteMemory = async (m: MemoryMemory) => {
-    if (selected === null) return
+    if (activeStore === null) return
     if (!window.confirm("Delete this memory? This cannot be undone.")) return
     try {
-      await deleteMemoryItem(selected, m.id)
+      await deleteMemoryItem(activeStore, m.id)
       refresh()
     } catch (e) {
-      window.alert(`Failed to delete memory: ${e instanceof Error ? e.message : e}`)
+      window.alert(
+        `Failed to delete memory: ${e instanceof Error ? e.message : e}`,
+      )
     }
   }
 
@@ -206,9 +216,7 @@ export function MemoryPage() {
                   key={s.id}
                   onClick={() => setSelected(s.id)}
                   className={`flex w-full flex-col items-start rounded-md px-2 py-1.5 text-left text-sm ${
-                    selected === s.id
-                      ? "bg-muted"
-                      : "hover:bg-muted/50"
+                    activeStore === s.id ? "bg-muted" : "hover:bg-muted/50"
                   }`}
                 >
                   <span className="flex w-full items-center gap-1.5">
@@ -226,7 +234,7 @@ export function MemoryPage() {
 
         {/* Detail */}
         <div className="flex-1 overflow-auto p-4">
-          {selected === null ? (
+          {activeStore === null ? (
             <div className="text-muted-foreground text-sm">
               {t("pages.memory.select_prompt")}
             </div>
@@ -258,7 +266,9 @@ export function MemoryPage() {
                     {detail.last_run.ops_applied})
                   </span>
                 ) : (
-                  <span>{t("pages.memory.last_run")}: {t("pages.memory.never")}</span>
+                  <span>
+                    {t("pages.memory.last_run")}: {t("pages.memory.never")}
+                  </span>
                 )}
               </div>
 
