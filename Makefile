@@ -282,12 +282,17 @@ frontend-typecheck: $(FRONTEND_NODE_MODULES)
 # build. Set OXLINT to point at a specific binary.
 #
 # Rules and ignores live in web/frontend/.oxlintrc.json, so a bare `oxlint`
-# invocation matches what this target does. Warnings do NOT fail the build yet
-# (no --deny-warnings); turn that on once the warning set is reliably zero.
+# invocation matches what this target does. No path argument: that lints the
+# whole project (134 files) rather than src alone (132), picking up
+# vite.config.ts and anything else at the root.
+#
+# --deny-warnings makes a warning fail the build. oxlint exits 0 on warnings by
+# default, which would make this target incapable of ever failing — a gate that
+# cannot fail is not a gate. The warning set was zero when this was turned on.
 frontend-lint:
 	@if command -v $(OXLINT) >/dev/null 2>&1; then \
 		echo "Linting frontend with oxlint..."; \
-		cd $(FRONTEND_DIR) && $(OXLINT) src; \
+		cd $(FRONTEND_DIR) && $(OXLINT) --deny-warnings; \
 	else \
 		echo "oxlint not installed - skipping frontend lint (npm i -g oxlint)"; \
 	fi

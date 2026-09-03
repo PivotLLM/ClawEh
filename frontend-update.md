@@ -247,8 +247,23 @@ a silent skip is how the old lint rotted from 7 problems to 35.
       `passed` / `FAILED` / `skipped: oxlint not installed` in the summary.
 - [x] `.oxlintrc.json` carries the plugins, rules and ignores, so a bare
       `oxlint src` matches exactly what the gates run.
-- [ ] Add `--deny-warnings` once the warning set is reliably zero. It is zero
-      today, but nothing yet stops it drifting.
+- [x] `--deny-warnings` is on in both gates. oxlint exits 0 on warnings by
+      default, so without it the check could never fail and was decorative.
+      Both gates also lint the WHOLE project rather than `src` alone (134 files
+      vs 132), which picks up `vite.config.ts` and anything else at the root.
+
+      **How to check the current warning count:**
+
+      ```
+      cd web/frontend && oxlint            # human output, exit 1 on any warning
+      cd web/frontend && oxlint --format=json | jq '.number_of_files, (.diagnostics|length)'
+      make frontend-lint                   # what the gate runs
+      ```
+
+      Verified the gate can actually fail, not just pass: a file with one
+      `setState`-in-effect was planted, `make frontend-lint` exited 1 and
+      `test.sh` reported `lint FAILED` / `Frontend: failed`; removing it
+      restored green.
 
 **Coverage check — the rules that mattered are still enforced.** Verified
 empirically against a file written to violate each one, not assumed from docs:

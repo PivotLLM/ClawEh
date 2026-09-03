@@ -303,6 +303,9 @@ INTEGRATION_FAIL_COUNT=0
 # either way. A silent skip is how a red lint went unnoticed long enough to grow
 # from 7 problems to 35. Set OXLINT to point at a specific binary.
 #
+# --deny-warnings: oxlint exits 0 on warnings by default, so without it this
+# check could never fail and would be decorative.
+#
 # Skipped, not failed, when pnpm or node_modules are absent: a Go-only checkout
 # must still be able to run this suite.
 FRONTEND_RAN=false
@@ -342,7 +345,7 @@ else
 
     OXLINT_BIN="${OXLINT:-oxlint}"
     if command -v "$OXLINT_BIN" >/dev/null 2>&1; then
-        if (cd "$FRONTEND_DIR" && "$OXLINT_BIN" src); then
+        if (cd "$FRONTEND_DIR" && "$OXLINT_BIN" --deny-warnings); then
             echo "${GREEN}  lint passed${NC}"
             LINT_STATUS="passed"
         else
