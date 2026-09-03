@@ -219,7 +219,22 @@ folded into a security or lint cleanup.
 
 - [x] `vite` 7.3.6 → 8.2.2 (with `@vitejs/plugin-react` 6 and `vitest` 5)
 - [x] `eslint` 9.39.5 → 10.9.1 (+ `@eslint/js` 10, `globals` 17, `eslint-plugin-react-refresh` 0.5)
-- [ ] `typescript` 5.9.3 → 7.0.2
+- [~] **`typescript` 5.9.3 → 7.0.2 — BLOCKED, attempted and reverted.**
+      TypeScript 7 itself was fine: after removing `baseUrl` (which TS 7 removed
+      — the `paths` were already tsconfig-relative, so nothing else changed) the
+      whole project typechecked clean, and in 0.65s. The blocker is downstream:
+
+          typescript-eslint does not support TS 7.0.
+
+      `typescript-eslint` 8.69 refuses to load against TS 7 and there is no
+      release that does yet (upstream issue 10940). The documented workaround is
+      to install TypeScript 6 side by side purely for the linter. Losing lint —
+      a gate only just wired into `make check` and `test.sh` — to gain build
+      speed is the wrong trade, and two TypeScript versions in one tree to dodge
+      it is worse. Revisit when typescript-eslint ships TS 7 support.
+
+      The `baseUrl` removal was kept: it is valid on 5.9 too and is one less
+      thing to do next time.
 - [ ] `i18next` 25 → 26 and `react-i18next` 16 → 17 (do together)
 - [ ] `@types/node` 24 → 26
 - [ ] `@vitejs/plugin-react` 5 → 6

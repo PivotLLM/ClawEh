@@ -20,7 +20,10 @@ export default defineConfig({
   ],
   resolve: {
     alias: {
-      "@": path.resolve(__dirname, "./src"),
+      // import.meta.dirname, not __dirname: vite 8 warns that __dirname is
+      // unsupported by the native config loader, which becomes the default in a
+      // future major.
+      "@": path.resolve(import.meta.dirname, "./src"),
     },
   },
   build: {
