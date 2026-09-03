@@ -10,12 +10,13 @@ import (
 	"time"
 
 	"github.com/mark3labs/mcp-go/client/transport"
+	"github.com/mark3labs/mcp-go/mcp"
 
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/logger"
 )
 
-// probeTimeoutCap bounds a single liveness ping regardless of the probe interval,
+// probeTimeoutCap bounds a single liveness probe regardless of the probe interval,
 // so a stalled server is declared dead promptly rather than after the full interval.
 const probeTimeoutCap = 10 * time.Second
 
@@ -238,9 +239,25 @@ func (m *Manager) startProbe(name string) chan struct{} {
 	return stop
 }
 
-// probeOnce pings a server; on failure it proactively reconnects so the next real
-// call finds a live session. Cooldown gating inside reconnect prevents a flapping
-// server from being reconnected on every tick.
+// probeOnce asks a server for its tool list; on failure it proactively reconnects
+// so the next real call finds a live session. Cooldown gating inside reconnect
+// prevents a flapping server from being reconnected on every tick.
+//
+// ListTools rather than Ping, which is the obvious choice and is now the wrong
+// one. As of mark3labs/mcp-go v1.0.0, Client.Ping returns nil WITHOUT contacting
+// the server whenever the negotiated protocol is modern (>= 2026-07-28):
+//
+//	func (c *Client) Ping(ctx context.Context) error {
+//		if c.isModern() { return nil }
+//		...
+//	}
+//
+// Against a modern server that made this probe unconditionally report health, so
+// a dead session was never detected and never reconnected — the failure stayed
+// invisible until a real tool call hit it. ListTools is a genuine round trip on
+// every protocol version, it is the same call ConnectServer already makes, and
+// its result is discarded here: this asks "does the session still answer?", not
+// "what changed?". Tool inventory is refreshed by reconnect.
 func (m *Manager) probeOnce(name string) {
 	m.mu.RLock()
 	conn, ok := m.servers[name]
@@ -253,8 +270,8 @@ func (m *Manager) probeOnce(name string) {
 	if timeout <= 0 || timeout > probeTimeoutCap {
 		timeout = probeTimeoutCap
 	}
-	pingCtx, cancel := context.WithTimeout(context.Background(), timeout)
-	err := conn.Client.Ping(pingCtx)
+	probeCtx, cancel := context.WithTimeout(context.Background(), timeout)
+	_, err := conn.Client.ListTools(probeCtx, mcp.ListToolsRequest{})
 	cancel()
 	if err == nil {
 		return

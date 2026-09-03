@@ -488,6 +488,20 @@ func TestReconnect_RespectsCooldown(t *testing.T) {
 
 // TestProbeOnce_ReconnectsUnresponsiveServer verifies the liveness probe swaps a
 // dead session for a fresh one.
+//
+// This test is also the guard on HOW the probe asks. It failed when mcp-go went
+// to v1.0.0, because Client.Ping there returns nil without contacting the server
+// on any modern protocol (>= 2026-07-28):
+//
+//	func (c *Client) Ping(ctx context.Context) error {
+//		if c.isModern() { return nil }
+//		...
+//	}
+//
+// A Ping-based probe therefore reports every server healthy forever, and a dead
+// session is never reconnected — invisible in production until a real tool call
+// fails. If probeOnce is ever switched back to Ping, this test fails again. Do
+// not "fix" it by relaxing the assertion.
 func TestProbeOnce_ReconnectsUnresponsiveServer(t *testing.T) {
 	good := newTestMCPServer(t)
 	bad := httptest.NewServer(server.NewStreamableHTTPServer(server.NewMCPServer("bad", "0.0.1")))

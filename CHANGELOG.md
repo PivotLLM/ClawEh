@@ -79,6 +79,13 @@ observe does not need an entry.
   already-closed channel. It is now rebuilt on reload like every other service,
   which also fixes the quieter half of the bug: after the first reload, external
   mount notifications had stopped firing for the rest of the process's life.
+- **A dead MCP server is detected and reconnected again.** The liveness probe
+  asked `Client.Ping`, which in `mark3labs/mcp-go` v1.0.0 returns success
+  *without contacting the server* whenever the negotiated protocol is modern
+  (2026-07-28 or later). Every MCP server therefore reported healthy forever,
+  and a session that had gone away was never reconnected — the failure stayed
+  invisible until a real tool call hit it. The probe now issues a `ListTools`
+  round trip, which reaches the server on every protocol version.
 
 ## [0.4.72]
 
