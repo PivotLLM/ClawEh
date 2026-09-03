@@ -126,17 +126,45 @@ still absent.
 - [x] 23 tests across both. `claw-chat-state`: storage round-trip, whitespace-only and empty values, localStorage being unavailable, all three session-id generation paths (incl. the v4 bit-twiddling in the getRandomValues fallback), and the seconds/milliseconds threshold. `claw-chat-controller`: the token travels as a subprotocol and never appears in the URL, the `claw-token` marker matches the Go side, loopback ws_url rewriting on and off localhost, no socket without a token, no double-connect. Mutation-checked: reverting to `?token=` fails two tests.
 - [x] Wired into `test.sh` and `make check`.
 
-## 5. Decompose `agents-page.tsx` (1419 lines) — still to do
+## 5. Decompose `agents-page.tsx` — DONE, 1619 → 625
 
-Far past the point where a component is readable, and it is where the worst of
-item 1 lives — the ref-during-render trick and the derived-state effect are both
-symptoms of one component holding too much. Second and third largest are
-`config-sections.tsx` (959) and `setup-wizard.tsx` (856); same treatment, lower
-priority.
+Split by concern, no behaviour change:
 
-- [ ] Split by concern: the agent list/selection, each editor tab
-      (models/skills/tools/MCP tools), and the save/debounce logic as a hook.
-- [ ] Move the shared edit state into a hook rather than a wide ref.
+| File | Lines | What |
+|---|---|---|
+| `agent-model.ts` | 210 | types, parsing, helpers — no React |
+| `use-agent-autosave.ts` | 171 | edit buffers, debounce, save status |
+| `agent-card.tsx` | 591 | one agent's editor |
+| `skills-select.tsx` | 58 | skills picker |
+| `agents-page.tsx` | 625 | list, rail, add/delete, config patching |
+
+- [x] Split by concern, following the conventions already in the tree
+      (`config/form-model.ts`, `models/model-card.tsx`).
+- [x] **Nine parallel edit arrays collapsed into one `AgentEdits[]`.** They were
+      `agentModelsEdits`, `agentSkillsEdits`, `agentToolsEdits`,
+      `agentMessageEdits`, `agentTemperatureEdits`, `agentSummarizationEdits`,
+      `agentShareCommonEdits`, `agentMountsEdits`, `agentMCPToolsEdits` — each
+      indexed by agent position, each with its own setState, all nine mirrored
+      into a nine-field ref and threaded through an eleven-parameter save
+      function. Nothing but care kept them the same length and order.
+- [x] The nine-field `latestRef` is gone; one ref holds one array.
+- [x] The card wiring dropped from ~90 lines of near-identical
+      `setX(prev => {...}); scheduleSaveAgent(i)` blocks to ~20 lines of
+      `edit(i, { field: value })`.
+- [x] The save/status cycle is broken properly: the hook owns save status and
+      reseed suppression, so the page's save handler needs nothing back from the
+      hook. The first attempt used a hoisted function declaration and the React
+      Compiler lint rejected it — correctly, since hoisting does not make a
+      value update over time.
+
+Verified in a browser, not just by types: edited temperature and MCP access on
+one agent and confirmed both persisted to `/api/config`; added a second agent,
+which sorts ahead of the first and shifts every index, and confirmed the buffers
+realigned — the moved agent kept its values and the new one showed none. Console
+clean throughout.
+
+Still oversized, lower priority: `config-sections.tsx` (959) and
+`setup-wizard.tsx` (856).
 
 ## 6. Browser verification — DONE
 
