@@ -194,18 +194,36 @@ Still oversized but not urgent: nothing above 600 lines outside `agent-card.tsx`
 - [x] All 17 routes driven in headless Chromium against a real gateway: every page renders (content length + first line captured), no blank pages, no unhandled exceptions. NOTE: the Playwright **MCP** tools could not be used — they require an `SST…` session token that a Claude Code session does not have. Driven through the locally installed Playwright package instead, pointed at the `chromium-1200` build already in `~/.cache/ms-playwright`.
 - [x] Console clean on every page except `/devices`, which intermittently (1 run in 3) gets a 500 from `GET /api/devices` with `{"error":"store open failed"}`. Pre-existing and **backend**, not frontend: `web/backend/api/devices.go` opens and closes its own SQLite handle to `state/gateway.db` per request, and the page fires several device requests at once. Sequential and `curl`-burst requests always succeed; a browser reproduces it. Not fixed here — separate issue.
 
+## 7a. Route components defined inline — 8 fast-refresh warnings
+
+`eslint-plugin-react-refresh` 0.5 warns on eight route files that DEFINE their
+component inline instead of importing it: `__root.tsx`, `agent.tsx`,
+`skills.tsx`, `tools.tsx`, `channels/$name.tsx`, `channels/route.tsx`,
+`config.tsx`, `mcp.tsx`. Fast refresh cannot reach a component the file does not
+export, so editing one of them full-reloads the page instead of hot-swapping.
+
+The other route files already do it right — `agents.tsx` is three lines that
+import `AgentsPage` — so the fix is to follow the convention the codebase
+already has, not to silence the rule. `allowExportNames: ["Route"]` does NOT
+help; the warning is about the inline component, not the `Route` export.
+
+Warnings only: `pnpm lint` still exits 0.
+
+- [ ] Move the eight inline route components into `src/components/…` and import
+      them, matching `agents.tsx`.
+
 ## 7. Framework majors — a separate, deliberate pass
 
 Do these one at a time with a build and a browser check after each. Not to be
 folded into a security or lint cleanup.
 
-- [ ] `vite` 7.3.6 → 8.2.2
-- [ ] `eslint` 9.39.5 → 10.9.1 (+ `@eslint/js` 10, `globals` 17)
+- [x] `vite` 7.3.6 → 8.2.2 (with `@vitejs/plugin-react` 6 and `vitest` 5)
+- [x] `eslint` 9.39.5 → 10.9.1 (+ `@eslint/js` 10, `globals` 17, `eslint-plugin-react-refresh` 0.5)
 - [ ] `typescript` 5.9.3 → 7.0.2
 - [ ] `i18next` 25 → 26 and `react-i18next` 16 → 17 (do together)
 - [ ] `@types/node` 24 → 26
 - [ ] `@vitejs/plugin-react` 5 → 6
-- [ ] `eslint-plugin-react-refresh` 0.4 → 0.5, `prettier-plugin-tailwindcss` 0.7 → 0.8
+- [ ] `prettier-plugin-tailwindcss` 0.7 → 0.8
 
 ## 8. Bundle size
 
