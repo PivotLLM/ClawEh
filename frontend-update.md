@@ -163,8 +163,31 @@ which sorts ahead of the first and shifts every index, and confirmed the buffers
 realigned — the moved agent kept its values and the new one showed none. Console
 clean throughout.
 
-Still oversized, lower priority: `config-sections.tsx` (959) and
-`setup-wizard.tsx` (856).
+### The other two oversized files — also done
+
+`config-sections.tsx` (959) → nine files under `config/sections/`, largest 272:
+`section-card.tsx` (ConfigSectionCard + the shared `UpdateCoreField` type),
+`model-fields.tsx` (the three model pickers), and one file per exported section.
+`config-page.tsx` imports them directly; no barrel was left behind. Verified as a
+pure move: all eleven declarations present, and the normalised content differs
+from the original by one character — a prettier line-wrap where adding `export`
+pushed a signature past 80 columns.
+
+`setup-wizard.tsx` (856 → 570) → one presentational component per step under
+`setup/steps/`, plus `wizard-model.ts` for the shared constants, types and
+`slugify`. `SetupWizard` still owns every piece of state and all the async work
+(loading, provider test, finish); the steps only receive what they render.
+
+Verified by walking the whole wizard in a browser, which is the only way to catch
+a mis-threaded setter — types cannot: set the port and toggled network access,
+navigated forward and back and confirmed both survived; selected a CLI provider
+and confirmed the API-key field disappeared, Next enabled, and the model step
+switched to the CLI default (all four state writes in the extracted
+`handleProviderChange`); named the agent and confirmed the review step showed
+provider, model and agent name correctly. Console clean.
+
+Still oversized but not urgent: nothing above 600 lines outside `agent-card.tsx`
+(591).
 
 ## 6. Browser verification — DONE
 

@@ -6,15 +6,6 @@ import { useTranslation } from "react-i18next"
 
 import { patchAppConfig } from "@/api/channels"
 import {
-  AgentDefaultsSection,
-  AgentModelDefaultsSection,
-  BackupSection,
-  ContextManagementSection,
-  DevicesSection,
-  RuntimeSection,
-  ServiceSection,
-} from "@/components/config/config-sections"
-import {
   type CoreConfigForm,
   EMPTY_FORM,
   buildFormFromConfig,
@@ -23,6 +14,13 @@ import {
   parseIntField,
   parseOptionalIntField,
 } from "@/components/config/form-model"
+import { AgentDefaultsSection } from "@/components/config/sections/agent-defaults-section"
+import { AgentModelDefaultsSection } from "@/components/config/sections/agent-model-defaults-section"
+import { BackupSection } from "@/components/config/sections/backup-section"
+import { ContextManagementSection } from "@/components/config/sections/context-management-section"
+import { DevicesSection } from "@/components/config/sections/devices-section"
+import { RuntimeSection } from "@/components/config/sections/runtime-section"
+import { ServiceSection } from "@/components/config/sections/service-section"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 
