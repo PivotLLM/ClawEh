@@ -1,8 +1,24 @@
 # Frontend — update and cleanup tracker
 
 Working list for bringing `web/frontend` up to date and clearing the issues found
-in the 2026-09-02 audit. Tick items off here as they land; delete the file when
-everything is done.
+in the 2026-09-02 audit.
+
+**Everything on this list is done.** What remains for the frontend is not on it,
+because it is a different kind of work and is deliberately deferred:
+
+- **TLS.** The WebUI is served over plain HTTP. Today the answer is a reverse
+  proxy in front; built-in TLS is not implemented.
+- **Operator authentication.** The WebUI and `/api/*` have no login. Access
+  control is the bind address plus `gateway.allowed_cidrs`, which is why an
+  empty allowlist means loopback only and why `claw install` refuses a
+  non-loopback `--host` without one.
+
+Both are described in README.md (§ Security) and docs/remote-access.md. Until
+they land, anyone who can reach the port can read and change the configuration,
+including provider API keys.
+
+The rest of this file is the record of what was done and why — worth keeping
+while the branch is in review, and safe to delete once it is merged.
 
 The stack itself is **not** in question. React 19 + Vite + TypeScript, TanStack
 Router/Query, Tailwind 4, Radix via shadcn, jotai, i18next is the current
@@ -133,8 +149,18 @@ still absent.
 - [x] Vitest + jsdom added (`pnpm test`). React Testing Library is NOT added yet — nothing renders components in a test so far, and an unused dependency is the thing this audit just spent effort removing. Add it with the first component test.
 - [x] 23 tests across both. `claw-chat-state`: storage round-trip, whitespace-only and empty values, localStorage being unavailable, all three session-id generation paths (incl. the v4 bit-twiddling in the getRandomValues fallback), and the seconds/milliseconds threshold. `claw-chat-controller`: the token travels as a subprotocol and never appears in the URL, the `claw-token` marker matches the Go side, loopback ws_url rewriting on and off localhost, no socket without a token, no double-connect. Mutation-checked: reverting to `?token=` fails two tests.
 - [x] Wired into `test.sh` and `make check`.
-- [ ] Component tests: add React Testing Library with the first one. Nothing
-      renders a component in a test yet, so RTL is deliberately not installed.
+- [x] React Testing Library added, with 12 tests for `useAgentAutosave` — the
+      hook that replaced the nine parallel edit arrays, and the piece with the
+      most behaviour to get wrong. They cover the debounce (nothing before the
+      delay, one save after), coalescing three rapid edits into a single save
+      carrying the LAST value, per-agent independence, saving/saved/error
+      status, reseeding when the agent list changes, and — the one that matters
+      most — not clobbering an edit made while a save was in flight.
+
+      Writing them surfaced a real constraint that was not written down: the
+      hook reseeds on the `agents` array IDENTITY, so a caller passing a fresh
+      literal each render loops forever ("Too many re-renders"). `AgentsPage`
+      passes state and is fine; the requirement is now documented on the hook.
 
 ## 5. Decompose `agents-page.tsx` — DONE, 1619 → 625
 
@@ -323,15 +349,28 @@ cycle in the autosave hook — that specific class is no longer caught.
   typed through `vi.mocked()`; type parameters on the `vi.fn()` factories would
   add noise and no safety.
 
-## 8. Bundle size
+## 8. Bundle size — DONE
 
-The main chunk is 576 kB (190 kB gzipped); everything else is under 160 kB.
+The entry chunk was 562 kB, and `chunkSizeWarningLimit: 2048` in `vite.config.ts`
+was suppressing vite's warning about it — a 4x regression would have been needed
+before anyone heard a word.
 
-- [ ] Find what is landing in the entry chunk that should be route-split.
-- [ ] Low priority — the bundle is served from localhost or a LAN, not the open
-      internet.
+- [x] The limit is back to vite's default 500 kB, so growth is reported.
+- [x] Vendor code is split into cacheable groups with rolldown's
+      `advancedChunks`, so the warning is genuinely resolved rather than muted:
 
----
+      | chunk    | size     | gzip    |
+      |----------|----------|---------|
+      | react    | 189.6 kB | 59.6 kB |
+      | app      | 161.2 kB | 51.4 kB |
+      | markdown | 154.0 kB | 45.8 kB |
+      | radix    | 138.1 kB | 43.1 kB |
+      | tanstack | 111.2 kB | 36.2 kB |
+      | i18n     |  48.1 kB | 15.7 kB |
+
+      Total bytes are unchanged; what improves is cache granularity — an app
+      change no longer invalidates 562 kB of vendor code — and the largest chunk
+      is now comfortably under the limit, so the warning means something again.
 
 ## Accepted, no action planned
 

@@ -27,7 +27,32 @@ export default defineConfig({
     },
   },
   build: {
-    chunkSizeWarningLimit: 2048,
+    chunkSizeWarningLimit: 500,
+    rolldownOptions: {
+      output: {
+        advancedChunks: {
+          groups: [
+            {
+              name: "react",
+              test: /node_modules[\\/](react|react-dom|scheduler)[\\/]/,
+            },
+            { name: "tanstack", test: /node_modules[\\/]@tanstack[\\/]/ },
+            {
+              name: "radix",
+              test: /node_modules[\\/](radix-ui|@radix-ui)[\\/]/,
+            },
+            {
+              name: "markdown",
+              test: /node_modules[\\/](react-markdown|remark-.*|micromark.*|mdast-.*|hast-.*|unified|unist-.*|vfile.*|character-entities.*|decode-named-character-reference|property-information|space-separated-tokens|comma-separated-tokens|html-url-attributes|trim-lines|zwitch|longest-streak|ccount|markdown-table|escape-string-regexp|bail|is-plain-obj|trough|devlop|estree-util-is-identifier-name)[\\/]/,
+            },
+            {
+              name: "i18n",
+              test: /node_modules[\\/](i18next|react-i18next|i18next-browser-languagedetector|void-elements|html-parse-stringify)[\\/]/,
+            },
+          ],
+        },
+      },
+    },
   },
   test: {
     // jsdom, not node: the modules under test reach for localStorage, crypto

@@ -71,6 +71,12 @@ export interface UseAgentAutosave {
  * Status and reseed suppression are owned here rather than exposed, so onSave
  * needs nothing back from this hook. That is what keeps the two from referring
  * to each other in a cycle the caller has to break with hoisting or a ref.
+ *
+ * `agents` MUST BE A STABLE REFERENCE across renders. The reseed below triggers
+ * on the array's identity, so a fresh literal each render — `list ?? []` where
+ * `list` is undefined, say — reseeds on every render forever, and React stops it
+ * with "Too many re-renders". Hold it in state or memoise it. (AgentsPage passes
+ * `agentsCfg.list`, which is state and therefore stable.)
  */
 export function useAgentAutosave(
   agents: AgentEntry[],
