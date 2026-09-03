@@ -1,4 +1,4 @@
-.PHONY: all build claw-auth install uninstall uninstall-all clean help test test-race test-coverage test-cover-html test-regression generate vet fmt lint fix deps update-deps check run frontend frontend-deps frontend-typecheck frontend-test build-linux-arm build-linux-arm64 build-linux-mipsle build-pi-zero build-all
+.PHONY: all build claw-auth install uninstall uninstall-all clean help test test-race test-coverage test-cover-html test-regression generate vet fmt lint fix deps update-deps check run frontend frontend-deps frontend-typecheck frontend-lint frontend-test build-linux-arm build-linux-arm64 build-linux-mipsle build-pi-zero build-all
 
 # Binary names
 BINARY_NAME=claw
@@ -28,6 +28,8 @@ LDFLAGS=-ldflags "-X $(APP_PKG).gitCommit=$(GIT_COMMIT) -X $(APP_PKG).buildTime=
 
 # Go variables
 GO?=CGO_ENABLED=0 go
+# oxlint is a global install, not a project dependency; override to pin a path.
+OXLINT?=oxlint
 GOFLAGS?=-v -tags stdjson
 
 # Patch MIPS LE ELF e_flags (offset 36) for NaN2008-only kernels (e.g. Ingenic X2600).
@@ -269,14 +271,26 @@ test: generate
 	@$(GO) test ./...
 
 ## frontend-typecheck: Typecheck the SPA (tsc)
-#
-# Typecheck only: eslint was removed pending a replacement linter, so nothing
-# here currently enforces the react-hooks rules (setState-in-effect, refs during
-# render) that this codebase has had real bugs from. Restore a lint step here
-# when the new linter lands.
 frontend-typecheck: $(FRONTEND_NODE_MODULES)
 	@echo "Typechecking frontend..."
 	@cd $(FRONTEND_DIR) && pnpm exec tsc -b --noEmit
+
+## frontend-lint: Lint the SPA with oxlint (skipped if oxlint is not installed)
+#
+# oxlint is installed globally rather than as a project dependency, so this
+# skips instead of failing when it is absent — a checkout without it must still
+# build. Set OXLINT to point at a specific binary.
+#
+# Rules and ignores live in web/frontend/.oxlintrc.json, so a bare `oxlint`
+# invocation matches what this target does. Warnings do NOT fail the build yet
+# (no --deny-warnings); turn that on once the warning set is reliably zero.
+frontend-lint:
+	@if command -v $(OXLINT) >/dev/null 2>&1; then \
+		echo "Linting frontend with oxlint..."; \
+		cd $(FRONTEND_DIR) && $(OXLINT) src; \
+	else \
+		echo "oxlint not installed - skipping frontend lint (npm i -g oxlint)"; \
+	fi
 
 ## frontend-test: Run the SPA unit tests (vitest)
 frontend-test: $(FRONTEND_NODE_MODULES)
@@ -347,7 +361,7 @@ update-deps:
 # is the fast Go-only loop, while check is the gate before calling something
 # done. Without a frontend gate here, a red frontend sat unnoticed long enough
 # to grow from 7 problems to 35 the moment a plugin was updated.
-check: fmt vet test frontend-typecheck frontend-test
+check: fmt vet test frontend-typecheck frontend-lint frontend-test
 
 ## run: Build and run claw
 run: build

@@ -119,32 +119,29 @@ export function SkillsPage() {
 
   return (
     <div className="flex h-full flex-col">
-      <PageHeader
-        title={t("navigation.skills")}
-        children={
-          <>
-            <input
-              ref={importInputRef}
-              type="file"
-              accept=".md,text/markdown,text/plain"
-              className="hidden"
-              onChange={handleImportFileChange}
-            />
-            <Button
-              variant="outline"
-              onClick={handleImportClick}
-              disabled={importMutation.isPending}
-            >
-              {importMutation.isPending ? (
-                <IconLoader2 className="size-4 animate-spin" />
-              ) : (
-                <IconPlus className="size-4" />
-              )}
-              {t("pages.agent.skills.import")}
-            </Button>
-          </>
-        }
-      />
+      <PageHeader title={t("navigation.skills")}>
+        <>
+          <input
+            ref={importInputRef}
+            type="file"
+            accept=".md,text/markdown,text/plain"
+            className="hidden"
+            onChange={handleImportFileChange}
+          />
+          <Button
+            variant="outline"
+            onClick={handleImportClick}
+            disabled={importMutation.isPending}
+          >
+            {importMutation.isPending ? (
+              <IconLoader2 className="size-4 animate-spin" />
+            ) : (
+              <IconPlus className="size-4" />
+            )}
+            {t("pages.agent.skills.import")}
+          </Button>
+        </>
+      </PageHeader>
 
       <div className="flex-1 overflow-auto px-6 py-3">
         <div className="w-full max-w-6xl space-y-6">

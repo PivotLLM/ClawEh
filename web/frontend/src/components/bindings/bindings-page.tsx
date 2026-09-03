@@ -391,7 +391,9 @@ export function BindingsPage() {
                         <th className="text-muted-foreground px-4 py-2.5 text-left text-xs font-medium">
                           Agent Mentions
                         </th>
-                        <th className="px-4 py-2.5" />
+                        <th className="px-4 py-2.5">
+                          <span className="sr-only">Actions</span>
+                        </th>
                       </tr>
                     </thead>
                     <tbody>
@@ -425,6 +427,11 @@ export function BindingsPage() {
                                     if (e.key === "Enter") saveMentions(i)
                                     if (e.key === "Escape") cancelEditMentions()
                                   }}
+                                  // Deliberate: this input only exists because
+                                  // the user just clicked to edit this row, so
+                                  // focus belongs here. Removing it would make
+                                  // every edit take an extra click.
+                                  // oxlint-disable-next-line no-autofocus
                                   autoFocus
                                 />
                                 <Button

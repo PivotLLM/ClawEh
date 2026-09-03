@@ -194,28 +194,53 @@ Still oversized but not urgent: nothing above 600 lines outside `agent-card.tsx`
 - [x] All 17 routes driven in headless Chromium against a real gateway: every page renders (content length + first line captured), no blank pages, no unhandled exceptions. NOTE: the Playwright **MCP** tools could not be used — they require an `SST…` session token that a Claude Code session does not have. Driven through the locally installed Playwright package instead, pointed at the `chromium-1200` build already in `~/.cache/ms-playwright`.
 - [x] Console clean on every page except `/devices`, which intermittently (1 run in 3) gets a 500 from `GET /api/devices` with `{"error":"store open failed"}`. Pre-existing and **backend**, not frontend: `web/backend/api/devices.go` opens and closes its own SQLite handle to `state/gateway.db` per request, and the page fires several device requests at once. Sequential and `curl`-burst requests always succeed; a browser reproduces it. Not fixed here — separate issue.
 
-## 7b. No linter — eslint removed, replacement pending
+## 7b. Linter — oxlint, replacing eslint — DONE
 
-**There is currently no linter.** eslint and its plugins were removed
-deliberately (it blocked TypeScript 7, and a different linter is being chosen).
-`tsc` and the vitest suite still gate the build via `make check` and `test.sh`;
-nothing else does.
+eslint was removed because typescript-eslint blocks TypeScript 7. oxlint 1.81
+replaces it. It is installed **globally**, not as a project dependency, so both
+gates skip rather than fail when it is absent — but they say so out loud, because
+a silent skip is how the old lint rotted from 7 problems to 35.
 
-What that costs, concretely: `eslint-plugin-react-hooks` is what found all 35
-problems fixed earlier in this file, including the two classes this codebase has
-produced real bugs from — `setState` called synchronously in an effect, and
-`ref.current` written during render. Nothing catches a regression of either now.
-The React Compiler rules that rejected a genuine
-`accessed before it is declared` cycle are also gone.
+- [x] `make frontend-lint` (skips with a message if oxlint is missing;
+      `OXLINT=/path/to/oxlint` overrides the binary), wired into `make check`.
+- [x] `test.sh` runs it in the FRONTEND section and reports
+      `passed` / `FAILED` / `skipped: oxlint not installed` in the summary.
+- [x] `.oxlintrc.json` carries the plugins, rules and ignores, so a bare
+      `oxlint src` matches exactly what the gates run.
+- [ ] Add `--deny-warnings` once the warning set is reliably zero. It is zero
+      today, but nothing yet stops it drifting.
 
-- [ ] Choose and wire a replacement linter (oxlint and Biome are the usual
-      candidates for a Vite/React tree; both are much faster than eslint and
-      neither currently has full react-hooks/React Compiler rule parity — check
-      that before committing to one).
-- [ ] Re-add a lint step to `make check` and to the FRONTEND section of
-      `test.sh`; both currently say in a comment that it is missing.
-- [ ] Re-check the eight inline route components below once a linter can see
-      them again.
+**Coverage check — the rules that mattered are still enforced.** Verified
+empirically against a file written to violate each one, not assumed from docs:
+
+| Rule | Caught? |
+|---|---|
+| `react(set-state-in-effect)` | yes — found 24 of the original 35 |
+| `react(refs)` — `ref.current` written during render | yes — the agents-page bug |
+| `react-hooks(exhaustive-deps)` | yes |
+
+Two caveats worth knowing. The react plugin is **off by default**: a bare
+`oxlint src` with no config reports nothing at all on this codebase, which is
+why the settings live in `.oxlintrc.json`. And oxlint does not appear to carry
+the React Compiler rules that rejected the "accessed before it is declared"
+cycle in the autosave hook — that specific class is no longer caught.
+
+**Findings fixed while adopting it:**
+
+- `react(no-children-prop)` ×2 — `logs-page.tsx` and `skills-page.tsx` passed
+  `children` to `PageHeader` as a prop; every other caller nests it. Now nested.
+- `jsx-a11y(control-has-associated-label)` — the bindings table's actions column
+  was an empty `<th />`, announced as nothing. Now carries an `sr-only` label.
+- `jsx-a11y(label-has-associated-control)` ×4 — **false positives**. Those
+  labels do wrap their control; oxlint cannot see through `Switch`/`Input`
+  because they are custom components. Resolved by listing them in
+  `controlComponents`, not by changing correct code.
+- `jsx-a11y(no-autofocus)` — kept. The input only exists because the user just
+  clicked to edit that row, so focus belongs there; removing it would add a
+  click to every edit. Disabled inline with that reasoning.
+- `vitest(require-mock-type-parameters)` ×4 — rule turned off. The mocks are
+  typed through `vi.mocked()`; type parameters on the `vi.fn()` factories would
+  add noise and no safety.
 
 ## 7a. Route components defined inline — 8 fast-refresh warnings
 
@@ -230,8 +255,8 @@ import `AgentsPage` — so the fix is to follow the convention the codebase
 already has, not to silence the rule. `allowExportNames: ["Route"]` does NOT
 help; the warning is about the inline component, not the `Route` export.
 
-Warnings only, and NOT currently detected at all — the rule came from eslint,
-which has since been removed (see 7b).
+Warnings only. NOTE: oxlint does not carry this rule, so these are no longer
+reported at all — the finding stands on its own merits, not on a linter.
 
 - [ ] Move the eight inline route components into `src/components/…` and import
       them, matching `agents.tsx`.

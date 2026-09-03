@@ -298,20 +298,22 @@ INTEGRATION_FAIL_COUNT=0
 # — but nothing here checked it, and a red frontend sat unnoticed long enough to
 # grow from 7 problems to 35 the moment a plugin was updated.
 #
-# NOTE: there is no lint step. eslint was removed pending a replacement linter,
-# so nothing currently enforces the react-hooks rules this codebase has had real
-# bugs from. Add the new linter here when it lands.
+# Linting is oxlint, installed globally rather than as a project dependency, so
+# it is reported as SKIPPED rather than failing when absent — but reported
+# either way. A silent skip is how a red lint went unnoticed long enough to grow
+# from 7 problems to 35. Set OXLINT to point at a specific binary.
 #
 # Skipped, not failed, when pnpm or node_modules are absent: a Go-only checkout
 # must still be able to run this suite.
 FRONTEND_RAN=false
 FRONTEND_PASSED=true
 FRONTEND_SKIP_REASON=""
+LINT_STATUS="not run"
 FRONTEND_DIR="$SCRIPT_DIR/web/frontend"
 
 echo ""
 echo "${BOLD}============================================${NC}"
-echo "${BOLD}   FRONTEND (typecheck, unit tests)${NC}"
+echo "${BOLD}   FRONTEND (typecheck, lint, unit tests)${NC}"
 echo "${BOLD}============================================${NC}"
 echo ""
 
@@ -336,6 +338,21 @@ else
     else
         echo "${RED}  unit tests FAILED${NC}"
         FRONTEND_PASSED=false
+    fi
+
+    OXLINT_BIN="${OXLINT:-oxlint}"
+    if command -v "$OXLINT_BIN" >/dev/null 2>&1; then
+        if (cd "$FRONTEND_DIR" && "$OXLINT_BIN" src); then
+            echo "${GREEN}  lint passed${NC}"
+            LINT_STATUS="passed"
+        else
+            echo "${RED}  lint FAILED${NC}"
+            LINT_STATUS="failed"
+            FRONTEND_PASSED=false
+        fi
+    else
+        echo "${DIM}  lint skipped: oxlint not installed (npm i -g oxlint)${NC}"
+        LINT_STATUS="skipped"
     fi
 fi
 
@@ -729,7 +746,11 @@ fi
 if ! $FRONTEND_RAN; then
     echo "Frontend:    ${DIM}skipped (${FRONTEND_SKIP_REASON})${NC}"
 elif $FRONTEND_PASSED; then
-    echo "Frontend:    ${GREEN}passed${NC} (typecheck, unit tests)"
+    if [ "$LINT_STATUS" = "skipped" ]; then
+        echo "Frontend:    ${GREEN}passed${NC} (typecheck, unit tests) ${DIM}— lint skipped: oxlint not installed${NC}"
+    else
+        echo "Frontend:    ${GREEN}passed${NC} (typecheck, lint, unit tests)"
+    fi
 else
     echo "Frontend:    ${RED}failed${NC}"
     OVERALL_PASS=false
