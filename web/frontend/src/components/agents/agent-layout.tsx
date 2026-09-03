@@ -1,0 +1,13 @@
+import { Navigate, Outlet, useRouterState } from "@tanstack/react-router"
+
+export function AgentLayout() {
+  const pathname = useRouterState({
+    select: (state) => state.location.pathname,
+  })
+
+  if (pathname === "/agent") {
+    return <Navigate to="/agent/skills" />
+  }
+
+  return <Outlet />
+}

@@ -1,19 +1,7 @@
-import { Outlet, createFileRoute, useRouterState } from "@tanstack/react-router"
+import { createFileRoute } from "@tanstack/react-router"
 
-import { ConfigPage } from "@/components/config/config-page"
+import { ConfigLayout } from "@/components/config/config-layout"
 
 export const Route = createFileRoute("/config")({
-  component: ConfigRouteLayout,
+  component: ConfigLayout,
 })
-
-function ConfigRouteLayout() {
-  const pathname = useRouterState({
-    select: (state) => state.location.pathname,
-  })
-
-  if (pathname === "/config") {
-    return <ConfigPage />
-  }
-
-  return <Outlet />
-}

@@ -36,6 +36,10 @@ export default defineConfig({
     environment: "jsdom",
     include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
     restoreMocks: true,
+    // Fails a test on any console.error/warn — see src/test-setup.ts. React
+    // reports most real problems that way and then carries on, so without it a
+    // test can pass while the component under test is complaining.
+    setupFiles: ["./src/test-setup.ts"],
   },
   server: {
     proxy: {

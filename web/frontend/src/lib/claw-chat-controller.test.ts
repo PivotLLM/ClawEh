@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { getWebUIToken } from "@/api/webui"
 
+import { expectConsole } from "../test-setup"
 import { connectChat, disconnectChat } from "./claw-chat-controller"
 
 vi.mock("@/api/webui", () => ({ getWebUIToken: vi.fn() }))
@@ -123,6 +124,9 @@ describe("connectChat token handling", () => {
   // would fail the handshake and start the reconnect loop against a server that
   // is working exactly as intended.
   it("does not open a socket when no token is issued", async () => {
+    // The controller logs this deliberately; declared so the console guard in
+    // test-setup.ts treats it as expected rather than as a failure.
+    expectConsole(/No webui token available/)
     vi.mocked(getWebUIToken).mockResolvedValue({
       token: "",
       ws_url: "ws://x/y",

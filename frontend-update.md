@@ -122,6 +122,14 @@ Was 20,359 lines of TypeScript with zero test files. The chat controller and the
 session/token handling are load-bearing, so they went first. Component tests are
 still absent.
 
+- [x] **Console output fails a test.** `src/test-setup.ts` traps
+      `console.error`/`console.warn` and throws, because React reports most real
+      problems that way — invalid hook usage, updates outside `act()`, updates
+      to an unmounted component — and then carries on, so a test can be green
+      while the component is complaining. Output that IS expected gets declared
+      with `expectConsole(/…/)` rather than silently tolerated; the no-token
+      controller test uses it. Verified it fails on a planted `console.warn`
+      and a planted `console.error`.
 - [x] Vitest + jsdom added (`pnpm test`). React Testing Library is NOT added yet — nothing renders components in a test so far, and an unused dependency is the thing this audit just spent effort removing. Add it with the first component test.
 - [x] 23 tests across both. `claw-chat-state`: storage round-trip, whitespace-only and empty values, localStorage being unavailable, all three session-id generation paths (incl. the v4 bit-twiddling in the getRandomValues fallback), and the seconds/milliseconds threshold. `claw-chat-controller`: the token travels as a subprotocol and never appears in the URL, the `claw-token` marker matches the Go side, loopback ws_url rewriting on and off localhost, no socket without a token, no double-connect. Mutation-checked: reverting to `?token=` fails two tests.
 - [x] Wired into `test.sh` and `make check`.
@@ -237,8 +245,20 @@ help; the warning is about the inline component, not the `Route` export.
 Warnings only. NOTE: oxlint does not carry this rule, so these are no longer
 reported at all — the finding stands on its own merits, not on a linter.
 
-- [ ] Move the eight inline route components into `src/components/…` and import
-      them, matching `agents.tsx`.
+- [x] Done. All eight route files are now 7 lines (5 for `__root.tsx`), each
+      importing its component. New components: `root-layout.tsx`,
+      `agents/agent-layout.tsx`, `channels/channel-page.tsx`,
+      `channels/channels-layout.tsx`, `config/config-layout.tsx`,
+      `mcp/mcp-layout.tsx`. `agent/skills.tsx` and `agent/tools.tsx` had no
+      component worth moving — their inline components were bare pass-throughs,
+      so they now point at `SkillsPage` / `ToolsPage` directly.
+
+      One non-verbatim change: `channels/$name.tsx` read its param through
+      `Route.useParams()`, which is unavailable once the component leaves the
+      route file (importing `Route` back would be circular). It now uses
+      `useParams({ from: "/channels/$name" })` — the documented equivalent,
+      still typed against the generated route tree. Verified in a browser
+      against two different channels to confirm it is genuinely param-driven.
 
 ## 7b. Linter — oxlint, replacing eslint — DONE
 
