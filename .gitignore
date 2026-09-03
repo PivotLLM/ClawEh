@@ -63,3 +63,6 @@ dist/
 !web/backend/dist/
 web/backend/dist/*
 !web/backend/dist/.gitkeep
+
+# Playwright MCP session output (page snapshots, console logs).
+.playwright-mcp/
