@@ -34,6 +34,12 @@ observe does not need an entry.
 
 ### Changed
 
+- **Built with Go 1.27.1, and all Go dependencies updated to their latest
+  releases.** Notable bumps: `github.com/mark3labs/mcp-go` 0.58.0 → 1.0.0,
+  `modernc.org/sqlite` 1.57.0 → 1.58.0, `github.com/anthropics/anthropic-sdk-go`
+  1.68.0 → 1.69.0, and `golang.org/x/crypto` 0.55.0 → 0.56.0. No config, tool,
+  API or protocol behaviour changes with it; the `go` directive in `go.mod`
+  stays at 1.26.7, so building from source still works with an older toolchain.
 - **The version now carries a build number: `0.4.72+d4812df7 [20260902155301]`.**
   The commit identifies which source a binary came from, but a hash has no
   order, so it cannot answer "is the copy I am running newer than the one I just
