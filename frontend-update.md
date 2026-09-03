@@ -210,7 +210,14 @@ folded into a security or lint cleanup.
       that does (upstream issue 10940). Resolved by removing eslint and moving
       to oxlint (7b) rather than by waiting.
 
-- [ ] `i18next` 25 → 26 and `react-i18next` 16 → 17 (do together)
+- [x] `i18next` 25 → 26 and `react-i18next` 16 → 17. No code changes needed.
+      A browser sweep for untranslated keys (i18next renders the key verbatim
+      when lookup fails) found a PRE-EXISTING gap, not a regression: the tool
+      catalog defines `common` and `memory` categories that `en.json` had no
+      labels for, so the Tools page printed
+      `pages.agent.tools.categories.common` as a heading. Both added.
+      `discovery` is defined in `en.json` but matches no backend category —
+      stale, left alone.
 - [ ] `@types/node` 24 → 26
 - [ ] `@types/react-dom` 19.2.5 → 19.2.7 (patch, trivial)
 - [ ] `prettier-plugin-tailwindcss` 0.7 → 0.8

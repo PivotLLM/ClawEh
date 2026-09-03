@@ -254,6 +254,11 @@ on, and breaking one is a deliberate decision rather than a free move.
   retry, and a database that stays on the rollback journal is logged rather than
   failing the open. The API also keeps one database handle for the process
   instead of opening and closing one per request.
+- **The agent Tools page no longer shows a raw translation key as a heading.**
+  Tools in the `common` and `memory` categories were grouped under
+  `pages.agent.tools.categories.common` and `….memory`, because the catalog
+  defines those categories and the UI had no labels for them. They now read
+  "Common Directory" and "Memory".
 - **Typing a channel's `allow_from` list no longer eats trailing separators.**
   The WebUI field resynced itself from the parsed value on every keystroke, so a
   `,` or space typed to start the next entry disappeared as soon as it was

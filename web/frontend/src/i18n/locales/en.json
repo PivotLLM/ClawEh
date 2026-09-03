@@ -321,7 +321,9 @@
           "skills": "Skills",
           "agents": "Agents",
           "discovery": "Discovery",
-          "context": "Context"
+          "context": "Context",
+          "common": "Common Directory",
+          "memory": "Memory"
         },
         "reasons": {
           "requires_skills": "Enable `tools.skills` before this skill-registry tool can be used.",
