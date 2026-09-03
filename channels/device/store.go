@@ -12,6 +12,8 @@ import (
 	"time"
 
 	_ "modernc.org/sqlite"
+
+	"github.com/PivotLLM/ClawEh/logger"
 )
 
 // ErrPendingNotFound is returned when an approve/reject references an unknown request.
@@ -110,13 +112,22 @@ CREATE TABLE IF NOT EXISTS pending_pairings (
 `
 
 // OpenStore opens (or creates) the device pairing DB with WAL mode (pure-Go sqlite).
+// Converting a fresh database to WAL can lose a race with another connection
+// doing the same thing. The window is one connection's schema setup, so a short
+// bounded retry covers it without delaying a genuinely locked database.
+const (
+	walConvertAttempts = 5
+	walConvertBackoff  = 40 * time.Millisecond
+)
+
 func OpenStore(path string) (*Store, error) {
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, fmt.Errorf("device: open %s: %w", path, err)
 	}
+	// busy_timeout first: it is a connection setting that takes no lock, and
+	// every statement after it inherits the wait.
 	pragmas := []string{
-		"PRAGMA journal_mode=WAL",
 		"PRAGMA busy_timeout=5000",
 		"PRAGMA foreign_keys=ON",
 		"PRAGMA synchronous=NORMAL",
@@ -126,6 +137,10 @@ func OpenStore(path string) (*Store, error) {
 			_ = db.Close()
 			return nil, fmt.Errorf("device: %q: %w", p, err)
 		}
+	}
+	if err := ensureWAL(db); err != nil {
+		_ = db.Close()
+		return nil, err
 	}
 	if _, err := db.ExecContext(context.Background(), deviceSchema); err != nil {
 		_ = db.Close()
@@ -143,6 +158,64 @@ func OpenStore(path string) (*Store, error) {
 }
 
 // Close closes the database.
+// ensureWAL puts the database in WAL mode, tolerating a concurrent converter.
+//
+// This is deliberately not a plain `PRAGMA journal_mode=WAL` in the list above,
+// which is what it used to be and what caused an intermittent 500 on the WebUI
+// devices page — roughly one gateway restart in three:
+//
+//	device: "PRAGMA journal_mode=WAL": database is locked (5) (SQLITE_BUSY)
+//
+// Two things make that pragma different from the others:
+//
+//  1. CONVERTING a database to WAL needs an exclusive lock, so it loses to any
+//     connection holding a write lock — the device channel opening the same file
+//     at startup, racing this admin API.
+//  2. busy_timeout does NOT cover it. SQLite returns SQLITE_BUSY immediately
+//     rather than invoking the busy handler, so no amount of reordering or
+//     waiting configuration helps. Measured: it fails in under 200µs with a 5 s
+//     busy_timeout in force.
+//
+// The mode is a property of the FILE, not of the connection, and it persists.
+// So: read it, and only convert when it is not already WAL — which is a fresh
+// database, and only there can two openers genuinely meet. In that case the
+// loser retries briefly, by which point the winner has converted the file and
+// the read confirms it. If it still cannot be established, the open proceeds
+// anyway: a rollback-journal database is slower under concurrency but entirely
+// correct, and failing the open outright is what produced the 500.
+func ensureWAL(db *sql.DB) error {
+	ctx := context.Background()
+
+	current := func() (string, error) {
+		var mode string
+		err := db.QueryRowContext(ctx, "PRAGMA journal_mode").Scan(&mode)
+		return strings.ToLower(mode), err
+	}
+
+	mode, err := current()
+	if err != nil {
+		return fmt.Errorf("device: read journal_mode: %w", err)
+	}
+	if mode == "wal" {
+		return nil
+	}
+
+	for attempt := 0; attempt < walConvertAttempts; attempt++ {
+		if _, err := db.ExecContext(ctx, "PRAGMA journal_mode=WAL"); err == nil {
+			return nil
+		}
+		// Someone else may have converted it while this attempt was refused.
+		if mode, err := current(); err == nil && mode == "wal" {
+			return nil
+		}
+		time.Sleep(walConvertBackoff)
+	}
+
+	logger.WarnCF("device", "could not switch pairing DB to WAL; continuing on the rollback journal",
+		map[string]any{"attempts": walConvertAttempts})
+	return nil
+}
+
 func (s *Store) Close() error { return s.db.Close() }
 
 func nowMs() int64 { return time.Now().UnixMilli() }

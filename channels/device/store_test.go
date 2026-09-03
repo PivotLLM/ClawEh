@@ -2,9 +2,11 @@ package device
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func openTestStore(t *testing.T) *Store {
@@ -120,5 +122,96 @@ func TestApproveUnknownRequest(t *testing.T) {
 	s := openTestStore(t)
 	if _, _, err := s.Approve(context.Background(), "nope", nil, nil); !errors.Is(err, ErrPendingNotFound) {
 		t.Fatalf("want ErrPendingNotFound, got %v", err)
+	}
+}
+
+// TestOpenStoreUnderContention is the regression guard for an intermittent 500
+// on the WebUI devices page: `store open failed`, roughly one gateway restart in
+// three. The captured error was:
+//
+//	device: "PRAGMA journal_mode=WAL": database is locked (SQLITE_BUSY)
+//
+// The cause was pragma ORDER. CONVERTING a database to WAL takes an exclusive
+// lock, and journal_mode was set before busy_timeout — so while another
+// connection held a write lock on the same file, the open failed INSTANTLY
+// instead of waiting. busy_timeout needs no lock, so it must come first, and it
+// then covers everything after it.
+//
+// Reproducing it needs a database that is NOT already in WAL mode, which is the
+// state a fresh install is in on the very first open — precisely the startup
+// race between the device channel and this API. Against an already-WAL file the
+// pragma is a no-op and nothing contends, which is why this only ever bit on
+// some restarts.
+func TestOpenStoreUnderContention(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "gateway.db")
+
+	// A rollback-journal database, i.e. what OpenStore meets before anything has
+	// converted it. Opened directly so this stays non-WAL.
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("raw open: %v", err)
+	}
+	defer func() { _ = raw.Close() }()
+	ctx := context.Background()
+	for _, p := range []string{"PRAGMA journal_mode=DELETE", "PRAGMA busy_timeout=5000"} {
+		if _, err := raw.ExecContext(ctx, p); err != nil {
+			t.Fatalf("%s: %v", p, err)
+		}
+	}
+	if _, err := raw.ExecContext(ctx, `CREATE TABLE seed (id INTEGER PRIMARY KEY)`); err != nil {
+		t.Fatalf("seed table: %v", err)
+	}
+
+	// Hold a write lock, so the racing open must wait for it.
+	tx, err := raw.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO seed (id) VALUES (1)`); err != nil {
+		t.Fatalf("write inside tx: %v", err)
+	}
+
+	released := make(chan struct{})
+	go func() {
+		time.Sleep(150 * time.Millisecond)
+		_ = tx.Commit()
+		close(released)
+	}()
+
+	start := time.Now()
+	racer, err := OpenStore(path)
+	elapsed := time.Since(start)
+	<-released
+	if err != nil {
+		t.Fatalf("OpenStore lost to a held write lock after %v: %v\n"+
+			"busy_timeout must be set BEFORE journal_mode, or converting to WAL fails instantly",
+			elapsed, err)
+	}
+	_ = racer.Close()
+}
+
+// TestOpenStoreSetsBusyTimeoutFirst pins the ordering directly, so the reason
+// survives even if the contention test above is ever weakened or made lenient.
+func TestOpenStoreSetsBusyTimeoutFirst(t *testing.T) {
+	store, err := OpenStore(filepath.Join(t.TempDir(), "gateway.db"))
+	if err != nil {
+		t.Fatalf("OpenStore: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	var timeout int
+	if err := store.db.QueryRow("PRAGMA busy_timeout").Scan(&timeout); err != nil {
+		t.Fatalf("read busy_timeout: %v", err)
+	}
+	if timeout <= 0 {
+		t.Fatalf("busy_timeout = %d, want a positive value: without it a contended open fails instantly", timeout)
+	}
+
+	var mode string
+	if err := store.db.QueryRow("PRAGMA journal_mode").Scan(&mode); err != nil {
+		t.Fatalf("read journal_mode: %v", err)
+	}
+	if mode != "wal" {
+		t.Fatalf("journal_mode = %q, want wal", mode)
 	}
 }

@@ -1,0 +1,26 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - link [ref=e7] [cursor=pointer]:
+      - /url: /
+      - img "Logo" [ref=e8]
+    - generic [ref=e9]:
+      - link [ref=e10] [cursor=pointer]:
+        - /url: https://github.com/PivotLLM/ClawEh
+      - button [ref=e11]
+  - generic [ref=e12]:
+    - generic [ref=e16]:
+      - generic [ref=e17]:
+        - button "Chat" [ref=e20] [cursor=pointer]
+        - button "Agents" [ref=e26] [cursor=pointer]
+        - button "Models" [ref=e32] [cursor=pointer]
+        - button "Channels" [ref=e38] [cursor=pointer]
+        - button "Services" [ref=e44] [cursor=pointer]
+      - generic [ref=e48]: ClawEh
+      - button "Toggle Sidebar" [ref=e49]
+    - main [ref=e51]:
+      - generic [ref=e53]:
+        - generic [ref=e54]:
+          - button "Toggle Sidebar" [ref=e55]
+          - heading "Agents" [level=2] [ref=e57]
+        - button "Add Agent" [ref=e59]
+  - region "Notifications alt+T"

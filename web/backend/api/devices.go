@@ -10,6 +10,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/channels/device"
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/routing"
 )
 
@@ -32,8 +33,17 @@ func (h *Handler) registerDeviceRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/devices/{id}", h.handleDeviceRemove)
 }
 
-// openDeviceStore opens the gateway pairing DB at the configured data dir. The
-// channel and this admin API share the same WAL database file.
+// deviceStoreFor returns the cached pairing-DB handle, opening it on first use.
+// The channel and this admin API share the same WAL database file.
+//
+// Cached rather than opened per request. Every open re-ran the WAL pragma, the
+// CREATE TABLE schema and an ALTER TABLE that is expected to fail once applied —
+// on every single request — and raced the device channel for the same file. The
+// caller must NOT close what it gets back; the handle lives for the process.
+//
+// The config is still loaded per call, because callers use it for live values
+// and it is cheap. A data dir change (config reload) reopens against the new
+// path rather than serving the old database.
 func (h *Handler) openDeviceStore() (*device.Store, *config.Config, error) {
 	cfg, err := config.LoadConfig(h.configPath)
 	if err != nil {
@@ -43,11 +53,35 @@ func (h *Handler) openDeviceStore() (*device.Store, *config.Config, error) {
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		return nil, nil, err
 	}
-	store, err := device.OpenStore(filepath.Join(stateDir, "gateway.db"))
+	path := filepath.Join(stateDir, "gateway.db")
+
+	h.deviceMu.Lock()
+	defer h.deviceMu.Unlock()
+
+	if h.deviceStore != nil && h.deviceStorePath == path {
+		return h.deviceStore, cfg, nil
+	}
+	if h.deviceStore != nil {
+		_ = h.deviceStore.Close()
+		h.deviceStore = nil
+		h.deviceStorePath = ""
+	}
+	store, err := device.OpenStore(path)
 	if err != nil {
 		return nil, nil, err
 	}
+	h.deviceStore, h.deviceStorePath = store, path
 	return store, cfg, nil
+}
+
+// deviceStoreUnavailable reports a store-open failure. The error is LOGGED but
+// not returned to the client: /api/* carries no operator authentication and the
+// error text contains filesystem paths. It was previously discarded entirely,
+// which is why an intermittent SQLITE_BUSY on this endpoint left no trace
+// anywhere and needed a patched binary to identify.
+func deviceStoreUnavailable(w http.ResponseWriter, err error) {
+	logger.ErrorCF("api", "device store unavailable", map[string]any{"error": err.Error()})
+	writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store open failed"})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -237,10 +271,9 @@ type pendingDeviceView struct {
 func (h *Handler) handleDevicePending(w http.ResponseWriter, r *http.Request) {
 	store, _, err := h.openDeviceStore()
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store open failed"})
+		deviceStoreUnavailable(w, err)
 		return
 	}
-	defer func() { _ = store.Close() }()
 	pending, err := store.ListPending(r.Context())
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "list failed"})
@@ -268,10 +301,9 @@ func (h *Handler) resolvePending(w http.ResponseWriter, r *http.Request, approve
 	requestID := r.PathValue("id")
 	store, _, err := h.openDeviceStore()
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store open failed"})
+		deviceStoreUnavailable(w, err)
 		return
 	}
-	defer func() { _ = store.Close() }()
 
 	if approve {
 		dev, _, aerr := store.Approve(r.Context(), requestID, nil, nil)
@@ -333,10 +365,9 @@ func configuredAgents(cfg *config.Config) []agentOption {
 func (h *Handler) handleDeviceList(w http.ResponseWriter, r *http.Request) {
 	store, cfg, err := h.openDeviceStore()
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store open failed"})
+		deviceStoreUnavailable(w, err)
 		return
 	}
-	defer func() { _ = store.Close() }()
 	paired, err := store.ListPaired(r.Context())
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "list failed"})
@@ -367,10 +398,9 @@ func (h *Handler) handleDeviceAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	store, _, err := h.openDeviceStore()
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store open failed"})
+		deviceStoreUnavailable(w, err)
 		return
 	}
-	defer func() { _ = store.Close() }()
 	if err := store.SetDeviceAgent(r.Context(), deviceID, strings.TrimSpace(body.AgentID)); err != nil {
 		if errors.Is(err, device.ErrPairedNotFound) {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "device not found"})
@@ -386,10 +416,9 @@ func (h *Handler) handleDeviceRemove(w http.ResponseWriter, r *http.Request) {
 	deviceID := r.PathValue("id")
 	store, _, err := h.openDeviceStore()
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store open failed"})
+		deviceStoreUnavailable(w, err)
 		return
 	}
-	defer func() { _ = store.Close() }()
 	if err := store.RemovePaired(r.Context(), deviceID); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "remove failed"})
 		return

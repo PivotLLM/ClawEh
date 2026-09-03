@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"sync"
 
+	"github.com/PivotLLM/ClawEh/channels/device"
 	"github.com/PivotLLM/ClawEh/config"
 )
 
@@ -29,6 +30,15 @@ type Handler struct {
 	// mcpStatusLoop is the live AgentLoop the MCP status endpoint reads outbound
 	// connection state from (injected via SetMCPStatusLoop). Guarded by reloadMu.
 	mcpStatusLoop mcpStatusLoop
+
+	// deviceStore caches the pairing DB handle. It used to be opened and closed
+	// per request, which re-ran the WAL pragma, the schema and a failing
+	// ALTER TABLE on every call and raced the device channel for the same file.
+	// deviceStorePath records which file the cached handle belongs to, so a data
+	// dir change on config reload reopens rather than serving the old database.
+	deviceMu        sync.Mutex
+	deviceStore     *device.Store
+	deviceStorePath string
 }
 
 // SetReloadTrigger wires the gateway's force-reload function into the handler so

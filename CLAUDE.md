@@ -36,8 +36,10 @@ line.
 
 Rules:
 
-- Add to `## [Unreleased]` unless the user is cutting a release now. Replace the
-  "Nothing yet." placeholder rather than leaving it above real entries.
+- Add to the section for the version **currently in development** — the topmost
+  `## [x.y.z]`, which is the version in `app/app.go`. There is no `[Unreleased]`
+  section; do not create one. Entries accumulate under that version heading
+  until the user cuts the release.
 - Use the Keep a Changelog headings, in this order, omitting empty ones:
   `Security`, `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`.
 - Prefix anything that breaks an existing install with **BREAKING**, and give the
@@ -46,9 +48,15 @@ Rules:
   to act without reading the diff.
 - Write for someone who has not seen the code. Name the config key or tool, say
   what changed, and say why it matters — not the function you edited.
-- When cutting a release, rename `[Unreleased]` to the version, bump
-  `app/app.go`, add a fresh empty `[Unreleased]`, and update the link refs at the
-  bottom of the file. Do not create the git tag (see Workflow Rules).
+- Releases are cut by the user on macOS (the macOS binaries are signed there),
+  not on this machine and not by you. Do not create the git tag (see Workflow
+  Rules).
+- **After a release is cut, the version must be bumped before the next entry is
+  written** — otherwise new work accumulates under a heading that has already
+  shipped. When you are asked to record a change and the topmost version has
+  already been released, say so and remind the user to bump `version` in
+  `app/app.go`; the new section, and the link refs at the bottom of the file,
+  follow that bump.
 
 ## What This Is
 ClawEh is an independent Go project forked from sipeed/picoclaw on 2026-03-20.

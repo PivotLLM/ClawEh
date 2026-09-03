@@ -10,88 +10,6 @@ Entries describe what changed for someone **running or integrating with** ClawEh
 internal refactors behind them. A change nobody outside the repository can
 observe does not need an entry.
 
-## [Unreleased]
-
-### Added
-
-- **`claw network` — set who may reach the WebUI/API without editing
-  config.json.** The recovery path for an install that listens on the network
-  and then refuses every connection from it, which is what an empty
-  `gateway.allowed_cidrs` looks like from a browser. With no argument it allows
-  the private LAN ranges; it also takes a comma-separated CIDR list or one of
-  `private`, `any`, `none`. `claw network --show` prints the current allowlist
-  and changes nothing.
-
-  ```
-  claw network                    # 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
-  claw network 192.168.1.0/24     # one subnet
-  claw network any                # any address — the WebUI has no password
-  claw network none               # back to loopback only
-  ```
-
-  It writes the config and exits, so it is safe to run against a running
-  gateway.
-
-### Changed
-
-- **Built with Go 1.27.1, and all Go dependencies updated to their latest
-  releases.** Notable bumps: `github.com/mark3labs/mcp-go` 0.58.0 → 1.0.0,
-  `modernc.org/sqlite` 1.57.0 → 1.58.0, `github.com/anthropics/anthropic-sdk-go`
-  1.68.0 → 1.69.0, and `golang.org/x/crypto` 0.55.0 → 0.56.0. No config, tool,
-  API or protocol behaviour changes with it; the `go` directive in `go.mod`
-  stays at 1.26.7, so building from source still works with an older toolchain.
-- **The version now carries a build number: `0.4.72+d4812df7 [20260902155301]`.**
-  The commit identifies which source a binary came from, but a hash has no
-  order, so it cannot answer "is the copy I am running newer than the one I just
-  built?" — and a rebuild of the same commit is indistinguishable without it. The
-  build number is the UTC link time (`yyyymmddhhmmss`), which always increases,
-  compares correctly as plain text, and needs no version bump to change. It
-  appears everywhere the version does: `claw version`, `claw status`, the startup
-  log, the WebUI footer, `GET /api/system/version`, and the agent's system
-  prompt.
-
-  The release number and commit stay one unbroken token before the space, so a
-  version truncated on paste still identifies its source. `SemVer()` is
-  unchanged — bare `0.4.72` — so MCP, ACP and device-gateway handshakes, and the
-  release tag, are untouched. A plain `go build` with no ldflags still reports a
-  bare version.
-- **`gateway.allowed_cidrs` now applies without a restart.** The allowlist was
-  fixed for the lifetime of the listener, so widening it after locking yourself
-  out meant restarting the service. A running gateway now picks the change up
-  on its next config reload — about 15 seconds with the default interval and
-  debounce — and because the listener is not recreated, open WebUI WebSocket
-  connections survive it. An allowlist that
-  fails to parse is refused and the running one is kept, rather than the reload
-  dropping access to loopback.
-- **The startup warning for a network bind with an empty allowlist now names the
-  fix.** It previously suggested `0.0.0.0/0` for "any address", which is an IPv4
-  prefix — it still refuses IPv6 clients, which on a dual-stack host reads as the
-  allowlist being broken. It now points at `claw network` and, for the
-  allow-everything case, at `"*"`, which covers both families.
-
-### Fixed
-
-- **The gateway no longer crashes on the second config reload.** Any two config
-  changes in the life of a process — two saves from the WebUI, two `claw network`
-  runs, an edit to config.json followed by another — killed it with
-  `panic: close of closed channel`. The mount watcher was stopped on every
-  reload but only ever created at startup, so the second stop closed an
-  already-closed channel. It is now rebuilt on reload like every other service,
-  which also fixes the quieter half of the bug: after the first reload, external
-  mount notifications had stopped firing for the rest of the process's life.
-- **A dead MCP server is detected and reconnected again.** The liveness probe
-  asked `Client.Ping`, which in `mark3labs/mcp-go` v1.0.0 returns success
-  *without contacting the server* whenever the negotiated protocol is modern
-  (2026-07-28 or later). Every MCP server therefore reported healthy forever,
-  and a session that had gone away was never reconnected — the failure stayed
-  invisible until a real tool call hit it. The probe now issues a `ListTools`
-  round trip, which reaches the server on every protocol version.
-- **Typing a channel's `allow_from` list no longer eats trailing separators.**
-  The WebUI field resynced itself from the parsed value on every keystroke, so a
-  `,` or space typed to start the next entry disappeared as soon as it was
-  entered, and the entry had to be worked around rather than typed. Affects the
-  Telegram, Slack and generic channel forms.
-
 ## [0.4.72]
 
 First release under the stable-compatibility policy: config schemas, tool names,
@@ -201,6 +119,24 @@ on, and breaking one is a deliberate decision rather than a free move.
   `"*"` is the unambiguous way to open it to everything, spelled the same as the
   wildcards in `allow_from` and `allow_origins`.
 
+- **`claw network` — set who may reach the WebUI/API without editing
+  config.json.** The recovery path for an install that listens on the network
+  and then refuses every connection from it, which is what an empty
+  `gateway.allowed_cidrs` looks like from a browser. With no argument it allows
+  the private LAN ranges; it also takes a comma-separated CIDR list or one of
+  `private`, `any`, `none`. `claw network --show` prints the current allowlist
+  and changes nothing.
+
+  ```
+  claw network                    # 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
+  claw network 192.168.1.0/24     # one subnet
+  claw network any                # any address — the WebUI has no password
+  claw network none               # back to loopback only
+  ```
+
+  It writes the config and exits, so it is safe to run against a running
+  gateway.
+
 ### Changed
 
 - **`claw install` refuses a non-loopback `--host` without `--allowed-cidrs`.**
@@ -226,6 +162,41 @@ on, and breaking one is a deliberate decision rather than a free move.
   any address. Loopback is always allowed. `claw install --allowed-cidrs` sets
   the same field, and the gateway logs a warning at startup when it is bound
   off-box with an empty allowlist.
+
+- **Built with Go 1.27.1, and all Go dependencies updated to their latest
+  releases.** Notable bumps: `github.com/mark3labs/mcp-go` 0.58.0 → 1.0.0,
+  `modernc.org/sqlite` 1.57.0 → 1.58.0, `github.com/anthropics/anthropic-sdk-go`
+  1.68.0 → 1.69.0, and `golang.org/x/crypto` 0.55.0 → 0.56.0. No config, tool,
+  API or protocol behaviour changes with it; the `go` directive in `go.mod`
+  stays at 1.26.7, so building from source still works with an older toolchain.
+- **The version now carries a build number: `0.4.72+d4812df7 [20260902155301]`.**
+  The commit identifies which source a binary came from, but a hash has no
+  order, so it cannot answer "is the copy I am running newer than the one I just
+  built?" — and a rebuild of the same commit is indistinguishable without it. The
+  build number is the UTC link time (`yyyymmddhhmmss`), which always increases,
+  compares correctly as plain text, and needs no version bump to change. It
+  appears everywhere the version does: `claw version`, `claw status`, the startup
+  log, the WebUI footer, `GET /api/system/version`, and the agent's system
+  prompt.
+
+  The release number and commit stay one unbroken token before the space, so a
+  version truncated on paste still identifies its source. `SemVer()` is
+  unchanged — bare `0.4.72` — so MCP, ACP and device-gateway handshakes, and the
+  release tag, are untouched. A plain `go build` with no ldflags still reports a
+  bare version.
+- **`gateway.allowed_cidrs` now applies without a restart.** The allowlist was
+  fixed for the lifetime of the listener, so widening it after locking yourself
+  out meant restarting the service. A running gateway now picks the change up
+  on its next config reload — about 15 seconds with the default interval and
+  debounce — and because the listener is not recreated, open WebUI WebSocket
+  connections survive it. An allowlist that
+  fails to parse is refused and the running one is kept, rather than the reload
+  dropping access to loopback.
+- **The startup warning for a network bind with an empty allowlist now names the
+  fix.** It previously suggested `0.0.0.0/0` for "any address", which is an IPv4
+  prefix — it still refuses IPv6 clients, which on a dual-stack host reads as the
+  allowlist being broken. It now points at `claw network` and, for the
+  allow-everything case, at `"*"`, which covers both families.
 
 ### Removed
 
@@ -257,6 +228,36 @@ on, and breaking one is a deliberate decision rather than a free move.
   file that `claw-auth` has never read; OAuth client credentials come from the
   MCPFusion server. It also called the binary `fusion-oauth` throughout.
 - A skills error lost its wrapped cause and read `skills directoryw %v`.
+- **The gateway no longer crashes on the second config reload.** Any two config
+  changes in the life of a process — two saves from the WebUI, two `claw network`
+  runs, an edit to config.json followed by another — killed it with
+  `panic: close of closed channel`. The mount watcher was stopped on every
+  reload but only ever created at startup, so the second stop closed an
+  already-closed channel. It is now rebuilt on reload like every other service,
+  which also fixes the quieter half of the bug: after the first reload, external
+  mount notifications had stopped firing for the rest of the process's life.
+- **A dead MCP server is detected and reconnected again.** The liveness probe
+  asked `Client.Ping`, which in `mark3labs/mcp-go` v1.0.0 returns success
+  *without contacting the server* whenever the negotiated protocol is modern
+  (2026-07-28 or later). Every MCP server therefore reported healthy forever,
+  and a session that had gone away was never reconnected — the failure stayed
+  invisible until a real tool call hit it. The probe now issues a `ListTools`
+  round trip, which reaches the server on every protocol version.
+- **The WebUI devices page no longer fails intermittently with
+  `store open failed`.** Roughly one gateway restart in three, `GET /api/devices`
+  returned a 500 and the page showed an error. Opening the device pairing
+  database re-set `journal_mode=WAL` on every call, and CONVERTING a database to
+  WAL takes an exclusive lock that `busy_timeout` does not cover — SQLite
+  returns `SQLITE_BUSY` immediately — so the admin API lost the race against the
+  device channel opening the same file at startup. The mode is a property of the
+  file and now it is only converted when it is not already WAL, with a short
+  retry, and a database that stays on the rollback journal is logged rather than
+  failing the open. The API also keeps one database handle for the process
+  instead of opening and closing one per request.
+- **Typing a channel's `allow_from` list no longer eats trailing separators.**
+  The WebUI field resynced itself from the parsed value on every keystroke, so a
+  `,` or space typed to start the next entry disappeared as soon as it was
+  entered, and the entry had to be worked around rather than typed. Affects the
+  Telegram, Slack and generic channel forms.
 
-[Unreleased]: https://github.com/PivotLLM/ClawEh/compare/0.4.72...HEAD
 [0.4.72]: https://github.com/PivotLLM/ClawEh/compare/0.4.70...0.4.72
