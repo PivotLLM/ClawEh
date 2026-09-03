@@ -53,17 +53,27 @@ describe("stored session id", () => {
   // Private-browsing modes and blocked site data make localStorage throw or be
   // absent entirely. Chat must still work; only the "resume last session"
   // convenience is lost.
+  // localStorage is a getter-only property on the jsdom window, so it is
+  // replaced by redefining it rather than assigning — the same shape an
+  // environment without storage presents. (Plain assignment worked under the
+  // older jsdom that vitest 4 pulled in; vitest 5 throws.)
   it("survives localStorage being unavailable", () => {
-    const original = globalThis.localStorage
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    ;(globalThis as any).localStorage = undefined
+    const descriptor = Object.getOwnPropertyDescriptor(
+      globalThis,
+      "localStorage",
+    )
+    Object.defineProperty(globalThis, "localStorage", {
+      value: undefined,
+      configurable: true,
+    })
     try {
       expect(readStoredSessionId()).toBe("")
       expect(() => writeStoredSessionId("abc")).not.toThrow()
       expect(() => clearStoredSessionId()).not.toThrow()
     } finally {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ;(globalThis as any).localStorage = original
+      if (descriptor) {
+        Object.defineProperty(globalThis, "localStorage", descriptor)
+      }
     }
   })
 })
