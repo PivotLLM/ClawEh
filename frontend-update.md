@@ -194,6 +194,29 @@ Still oversized but not urgent: nothing above 600 lines outside `agent-card.tsx`
 - [x] All 17 routes driven in headless Chromium against a real gateway: every page renders (content length + first line captured), no blank pages, no unhandled exceptions. NOTE: the Playwright **MCP** tools could not be used — they require an `SST…` session token that a Claude Code session does not have. Driven through the locally installed Playwright package instead, pointed at the `chromium-1200` build already in `~/.cache/ms-playwright`.
 - [x] Console clean on every page except `/devices`, which intermittently (1 run in 3) gets a 500 from `GET /api/devices` with `{"error":"store open failed"}`. Pre-existing and **backend**, not frontend: `web/backend/api/devices.go` opens and closes its own SQLite handle to `state/gateway.db` per request, and the page fires several device requests at once. Sequential and `curl`-burst requests always succeed; a browser reproduces it. Not fixed here — separate issue.
 
+## 7b. No linter — eslint removed, replacement pending
+
+**There is currently no linter.** eslint and its plugins were removed
+deliberately (it blocked TypeScript 7, and a different linter is being chosen).
+`tsc` and the vitest suite still gate the build via `make check` and `test.sh`;
+nothing else does.
+
+What that costs, concretely: `eslint-plugin-react-hooks` is what found all 35
+problems fixed earlier in this file, including the two classes this codebase has
+produced real bugs from — `setState` called synchronously in an effect, and
+`ref.current` written during render. Nothing catches a regression of either now.
+The React Compiler rules that rejected a genuine
+`accessed before it is declared` cycle are also gone.
+
+- [ ] Choose and wire a replacement linter (oxlint and Biome are the usual
+      candidates for a Vite/React tree; both are much faster than eslint and
+      neither currently has full react-hooks/React Compiler rule parity — check
+      that before committing to one).
+- [ ] Re-add a lint step to `make check` and to the FRONTEND section of
+      `test.sh`; both currently say in a comment that it is missing.
+- [ ] Re-check the eight inline route components below once a linter can see
+      them again.
+
 ## 7a. Route components defined inline — 8 fast-refresh warnings
 
 `eslint-plugin-react-refresh` 0.5 warns on eight route files that DEFINE their
@@ -207,7 +230,8 @@ import `AgentsPage` — so the fix is to follow the convention the codebase
 already has, not to silence the rule. `allowExportNames: ["Route"]` does NOT
 help; the warning is about the inline component, not the `Route` export.
 
-Warnings only: `pnpm lint` still exits 0.
+Warnings only, and NOT currently detected at all — the rule came from eslint,
+which has since been removed (see 7b).
 
 - [ ] Move the eight inline route components into `src/components/…` and import
       them, matching `agents.tsx`.
@@ -219,22 +243,13 @@ folded into a security or lint cleanup.
 
 - [x] `vite` 7.3.6 → 8.2.2 (with `@vitejs/plugin-react` 6 and `vitest` 5)
 - [x] `eslint` 9.39.5 → 10.9.1 (+ `@eslint/js` 10, `globals` 17, `eslint-plugin-react-refresh` 0.5)
-- [~] **`typescript` 5.9.3 → 7.0.2 — BLOCKED, attempted and reverted.**
-      TypeScript 7 itself was fine: after removing `baseUrl` (which TS 7 removed
-      — the `paths` were already tsconfig-relative, so nothing else changed) the
-      whole project typechecked clean, and in 0.65s. The blocker is downstream:
+- [x] **`typescript` 5.9.3 → 7.0.2 — done, by removing eslint.** TS 7 removed
+      `baseUrl` (the `paths` were already tsconfig-relative, so nothing else
+      changed) and typechecks the whole project in 0.65s. The blocker was
+      `typescript-eslint`, which refuses to load against TS 7 and has no release
+      that does (upstream issue 10940). Resolved by the decision below rather
+      than by waiting.
 
-          typescript-eslint does not support TS 7.0.
-
-      `typescript-eslint` 8.69 refuses to load against TS 7 and there is no
-      release that does yet (upstream issue 10940). The documented workaround is
-      to install TypeScript 6 side by side purely for the linter. Losing lint —
-      a gate only just wired into `make check` and `test.sh` — to gain build
-      speed is the wrong trade, and two TypeScript versions in one tree to dodge
-      it is worse. Revisit when typescript-eslint ships TS 7 support.
-
-      The `baseUrl` removal was kept: it is valid on 5.9 too and is one less
-      thing to do next time.
 - [ ] `i18next` 25 → 26 and `react-i18next` 16 → 17 (do together)
 - [ ] `@types/node` 24 → 26
 - [ ] `@vitejs/plugin-react` 5 → 6

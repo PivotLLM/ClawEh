@@ -293,10 +293,14 @@ INTEGRATION_PASSED=true
 INTEGRATION_PASS_COUNT=0
 INTEGRATION_FAIL_COUNT=0
 
-# Frontend gates. The SPA is compiled into the Go binary, so a broken lint or a
-# failing SPA test ships in the release just as surely as a Go failure does —
-# but nothing here checked it, and a red eslint sat unnoticed long enough to
+# Frontend gates. The SPA is compiled into the Go binary, so a broken typecheck
+# or a failing SPA test ships in the release just as surely as a Go failure does
+# — but nothing here checked it, and a red frontend sat unnoticed long enough to
 # grow from 7 problems to 35 the moment a plugin was updated.
+#
+# NOTE: there is no lint step. eslint was removed pending a replacement linter,
+# so nothing currently enforces the react-hooks rules this codebase has had real
+# bugs from. Add the new linter here when it lands.
 #
 # Skipped, not failed, when pnpm or node_modules are absent: a Go-only checkout
 # must still be able to run this suite.
@@ -307,7 +311,7 @@ FRONTEND_DIR="$SCRIPT_DIR/web/frontend"
 
 echo ""
 echo "${BOLD}============================================${NC}"
-echo "${BOLD}   FRONTEND (lint, typecheck, unit tests)${NC}"
+echo "${BOLD}   FRONTEND (typecheck, unit tests)${NC}"
 echo "${BOLD}============================================${NC}"
 echo ""
 
@@ -325,12 +329,6 @@ else
         echo "${GREEN}  typecheck passed${NC}"
     else
         echo "${RED}  typecheck FAILED${NC}"
-        FRONTEND_PASSED=false
-    fi
-    if (cd "$FRONTEND_DIR" && pnpm run lint); then
-        echo "${GREEN}  lint passed${NC}"
-    else
-        echo "${RED}  lint FAILED${NC}"
         FRONTEND_PASSED=false
     fi
     if (cd "$FRONTEND_DIR" && pnpm run test); then
@@ -731,7 +729,7 @@ fi
 if ! $FRONTEND_RAN; then
     echo "Frontend:    ${DIM}skipped (${FRONTEND_SKIP_REASON})${NC}"
 elif $FRONTEND_PASSED; then
-    echo "Frontend:    ${GREEN}passed${NC} (typecheck, lint, unit tests)"
+    echo "Frontend:    ${GREEN}passed${NC} (typecheck, unit tests)"
 else
     echo "Frontend:    ${RED}failed${NC}"
     OVERALL_PASS=false
