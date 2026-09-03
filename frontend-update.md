@@ -125,6 +125,8 @@ still absent.
 - [x] Vitest + jsdom added (`pnpm test`). React Testing Library is NOT added yet — nothing renders components in a test so far, and an unused dependency is the thing this audit just spent effort removing. Add it with the first component test.
 - [x] 23 tests across both. `claw-chat-state`: storage round-trip, whitespace-only and empty values, localStorage being unavailable, all three session-id generation paths (incl. the v4 bit-twiddling in the getRandomValues fallback), and the seconds/milliseconds threshold. `claw-chat-controller`: the token travels as a subprotocol and never appears in the URL, the `claw-token` marker matches the Go side, loopback ws_url rewriting on and off localhost, no socket without a token, no double-connect. Mutation-checked: reverting to `?token=` fails two tests.
 - [x] Wired into `test.sh` and `make check`.
+- [ ] Component tests: add React Testing Library with the first one. Nothing
+      renders a component in a test yet, so RTL is deliberately not installed.
 
 ## 5. Decompose `agents-page.tsx` — DONE, 1619 → 625
 
@@ -194,6 +196,44 @@ Still oversized but not urgent: nothing above 600 lines outside `agent-card.tsx`
 - [x] All 17 routes driven in headless Chromium against a real gateway: every page renders (content length + first line captured), no blank pages, no unhandled exceptions. NOTE: the Playwright **MCP** tools could not be used — they require an `SST…` session token that a Claude Code session does not have. Driven through the locally installed Playwright package instead, pointed at the `chromium-1200` build already in `~/.cache/ms-playwright`.
 - [x] Console clean on every page except `/devices`, which intermittently (1 run in 3) gets a 500 from `GET /api/devices` with `{"error":"store open failed"}`. Pre-existing and **backend**, not frontend: `web/backend/api/devices.go` opens and closes its own SQLite handle to `state/gateway.db` per request, and the page fires several device requests at once. Sequential and `curl`-burst requests always succeed; a browser reproduces it. Not fixed here — separate issue.
 
+## 7. Framework majors — a separate, deliberate pass
+
+Do these one at a time with a build and a browser check after each. Not to be
+folded into a security or lint cleanup.
+
+- [x] `vite` 7.3.6 → 8.2.2 (with `@vitejs/plugin-react` 6 and `vitest` 5)
+- [x] `eslint` 9.39.5 → 10.9.1 (+ `@eslint/js` 10, `globals` 17, `eslint-plugin-react-refresh` 0.5)
+- [x] **`typescript` 5.9.3 → 7.0.2 — done, by removing eslint.** TS 7 removed
+      `baseUrl` (the `paths` were already tsconfig-relative, so nothing else
+      changed) and typechecks the whole project in 0.65s. The blocker was
+      `typescript-eslint`, which refuses to load against TS 7 and has no release
+      that does (upstream issue 10940). Resolved by removing eslint and moving
+      to oxlint (7b) rather than by waiting.
+
+- [ ] `i18next` 25 → 26 and `react-i18next` 16 → 17 (do together)
+- [ ] `@types/node` 24 → 26
+- [ ] `@types/react-dom` 19.2.5 → 19.2.7 (patch, trivial)
+- [ ] `prettier-plugin-tailwindcss` 0.7 → 0.8
+
+## 7a. Route components defined inline — 8 fast-refresh warnings
+
+`eslint-plugin-react-refresh` 0.5 warns on eight route files that DEFINE their
+component inline instead of importing it: `__root.tsx`, `agent.tsx`,
+`skills.tsx`, `tools.tsx`, `channels/$name.tsx`, `channels/route.tsx`,
+`config.tsx`, `mcp.tsx`. Fast refresh cannot reach a component the file does not
+export, so editing one of them full-reloads the page instead of hot-swapping.
+
+The other route files already do it right — `agents.tsx` is three lines that
+import `AgentsPage` — so the fix is to follow the convention the codebase
+already has, not to silence the rule. `allowExportNames: ["Route"]` does NOT
+help; the warning is about the inline component, not the `Route` export.
+
+Warnings only. NOTE: oxlint does not carry this rule, so these are no longer
+reported at all — the finding stands on its own merits, not on a linter.
+
+- [ ] Move the eight inline route components into `src/components/…` and import
+      them, matching `agents.tsx`.
+
 ## 7b. Linter — oxlint, replacing eslint — DONE
 
 eslint was removed because typescript-eslint blocks TypeScript 7. oxlint 1.81
@@ -241,44 +281,6 @@ cycle in the autosave hook — that specific class is no longer caught.
 - `vitest(require-mock-type-parameters)` ×4 — rule turned off. The mocks are
   typed through `vi.mocked()`; type parameters on the `vi.fn()` factories would
   add noise and no safety.
-
-## 7a. Route components defined inline — 8 fast-refresh warnings
-
-`eslint-plugin-react-refresh` 0.5 warns on eight route files that DEFINE their
-component inline instead of importing it: `__root.tsx`, `agent.tsx`,
-`skills.tsx`, `tools.tsx`, `channels/$name.tsx`, `channels/route.tsx`,
-`config.tsx`, `mcp.tsx`. Fast refresh cannot reach a component the file does not
-export, so editing one of them full-reloads the page instead of hot-swapping.
-
-The other route files already do it right — `agents.tsx` is three lines that
-import `AgentsPage` — so the fix is to follow the convention the codebase
-already has, not to silence the rule. `allowExportNames: ["Route"]` does NOT
-help; the warning is about the inline component, not the `Route` export.
-
-Warnings only. NOTE: oxlint does not carry this rule, so these are no longer
-reported at all — the finding stands on its own merits, not on a linter.
-
-- [ ] Move the eight inline route components into `src/components/…` and import
-      them, matching `agents.tsx`.
-
-## 7. Framework majors — a separate, deliberate pass
-
-Do these one at a time with a build and a browser check after each. Not to be
-folded into a security or lint cleanup.
-
-- [x] `vite` 7.3.6 → 8.2.2 (with `@vitejs/plugin-react` 6 and `vitest` 5)
-- [x] `eslint` 9.39.5 → 10.9.1 (+ `@eslint/js` 10, `globals` 17, `eslint-plugin-react-refresh` 0.5)
-- [x] **`typescript` 5.9.3 → 7.0.2 — done, by removing eslint.** TS 7 removed
-      `baseUrl` (the `paths` were already tsconfig-relative, so nothing else
-      changed) and typechecks the whole project in 0.65s. The blocker was
-      `typescript-eslint`, which refuses to load against TS 7 and has no release
-      that does (upstream issue 10940). Resolved by the decision below rather
-      than by waiting.
-
-- [ ] `i18next` 25 → 26 and `react-i18next` 16 → 17 (do together)
-- [ ] `@types/node` 24 → 26
-- [ ] `@vitejs/plugin-react` 5 → 6
-- [ ] `prettier-plugin-tailwindcss` 0.7 → 0.8
 
 ## 8. Bundle size
 
