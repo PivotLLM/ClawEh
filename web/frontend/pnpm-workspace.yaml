@@ -1,0 +1,18 @@
+# pnpm 10 reads these settings here, not from the "pnpm" field in package.json.
+# `pnpm why` warns loudly about the old location, and the old keys are on their
+# way out, so they live here instead.
+
+# Only esbuild may run install scripts; everything else is blocked by default.
+onlyBuiltDependencies:
+  - esbuild
+
+ignoredBuiltDependencies:
+  - msw
+
+overrides:
+  # vite 8 pulls tsx, which pins an esbuild in the range affected by
+  # GHSA-g7r4-m6w7-qqqr (arbitrary file read from the dev server, Windows only).
+  # vite itself already uses a patched 0.28.x, so forcing the range collapses the
+  # tree to that single version rather than adding one. Drop this override once
+  # vite ships a tsx that depends on >=0.28.1 on its own.
+  esbuild: ">=0.28.1"

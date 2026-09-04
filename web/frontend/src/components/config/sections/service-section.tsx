@@ -12,9 +12,6 @@ import { Textarea } from "@/components/ui/textarea"
 interface ServiceSectionProps {
   form: CoreConfigForm
   onFieldChange: UpdateCoreField
-  // Optional: disables the inputs while a save is in flight. Unused under
-  // auto-save (fields stay live); defaults to false.
-  disabled?: boolean
   // Address the user is currently reaching the WebUI on
   // (`${protocol}//${host}`), used as the external-URL placeholder/default.
   externalUrlPlaceholder: string
@@ -27,7 +24,6 @@ interface ServiceSectionProps {
 export function ServiceSection({
   form,
   onFieldChange,
-  disabled = false,
   externalUrlPlaceholder,
 }: ServiceSectionProps) {
   const { t } = useTranslation()
@@ -39,7 +35,6 @@ export function ServiceSection({
         hint={t("pages.config.network_access_hint")}
         layout="setting-row"
         checked={form.gatewayHost === "0.0.0.0"}
-        disabled={disabled}
         onCheckedChange={(checked) =>
           onFieldChange("gatewayHost", checked ? "0.0.0.0" : "127.0.0.1")
         }
@@ -55,7 +50,6 @@ export function ServiceSection({
           min={1}
           max={65535}
           value={form.gatewayPort}
-          disabled={disabled}
           onChange={(e) => onFieldChange("gatewayPort", e.target.value)}
         />
       </Field>
@@ -68,7 +62,6 @@ export function ServiceSection({
         <Input
           type="text"
           value={form.gatewayExternalUrl}
-          disabled={disabled}
           placeholder={externalUrlPlaceholder}
           onChange={(e) => onFieldChange("gatewayExternalUrl", e.target.value)}
         />
@@ -88,7 +81,6 @@ export function ServiceSection({
       >
         <Textarea
           value={form.allowedCIDRsText}
-          disabled={disabled}
           placeholder={t("pages.config.allowed_cidrs_placeholder")}
           className="min-h-[88px]"
           onChange={(e) => onFieldChange("allowedCIDRsText", e.target.value)}

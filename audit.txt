@@ -1,0 +1,2 @@
+ WARN  POST https://registry.npmjs.org/-/npm/v1/security/audits/quick error (ERR_SOCKET_TIMEOUT). Will retry in 10 seconds. 2 retries left.
+ WARN  POST https://registry.npmjs.org/-/npm/v1/security/audits/quick error (ERR_SOCKET_TIMEOUT). Will retry in 1 minute. 1 retries left.
