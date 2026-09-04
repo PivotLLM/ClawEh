@@ -66,3 +66,6 @@ web/backend/dist/*
 
 # Playwright MCP session output (page snapshots, console logs).
 .playwright-mcp/
+
+# Scratch audit output (pnpm audit > audit.txt); not source.
+audit.txt

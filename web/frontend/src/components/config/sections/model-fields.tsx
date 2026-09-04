@@ -1,3 +1,4 @@
+import { useMemo } from "react"
 import { useTranslation } from "react-i18next"
 
 import { Field } from "@/components/shared-form"
@@ -37,10 +38,19 @@ function ModelChainField({
   removeTitle,
 }: ModelChainFieldProps) {
   const { configuredModels } = useChatModels()
-  const available = [...configuredModels].sort((a, b) =>
-    a.model_name.localeCompare(b.model_name),
+  // Memoised: this component re-renders on every keystroke in the chain, and
+  // both the copy-and-sort and the filter allocated fresh arrays each time.
+  const available = useMemo(
+    () =>
+      [...configuredModels].sort((a, b) =>
+        a.model_name.localeCompare(b.model_name),
+      ),
+    [configuredModels],
   )
-  const remaining = available.filter((m) => !value.includes(m.model_name))
+  const remaining = useMemo(
+    () => available.filter((m) => !value.includes(m.model_name)),
+    [available, value],
+  )
 
   const moveUp = (i: number) => {
     if (i === 0) return
