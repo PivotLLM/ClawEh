@@ -3,8 +3,12 @@
 Working list for bringing `web/frontend` up to date and clearing the issues found
 in the 2026-09-02 audit.
 
-**Everything on this list is done.** What remains for the frontend is not on it,
-because it is a different kind of work and is deliberately deferred:
+**Every item on this list is done.** Two smaller things noticed along the way
+were deliberately left alone and are recorded near the bottom, under "Noticed
+while working, not acted on".
+
+What remains for the frontend proper is not on this list at all, because it is a
+different kind of work and is deliberately deferred:
 
 - **TLS.** The WebUI is served over plain HTTP. Today the answer is a reverse
   proxy in front; built-in TLS is not implemented.
@@ -132,11 +136,11 @@ why 7 lint errors sat unnoticed until a plugin update turned them into 35.
 - [x] `make check` runs both; `test.sh` has a FRONTEND section that fails the suite, and reports `Frontend: passed/failed/skipped` in the summary. It skips (not fails) without pnpm or node_modules, so a Go-only checkout still runs. It earned its keep immediately: the first run caught two type errors in the new tests.
 - [x] Landed green.
 
-## 4. Frontend tests — STARTED
+## 4. Frontend tests — DONE
 
-Was 20,359 lines of TypeScript with zero test files. The chat controller and the
-session/token handling are load-bearing, so they went first. Component tests are
-still absent.
+Was 20,359 lines of TypeScript with zero test files. 35 tests now: the chat
+controller and session/token handling first, because they are load-bearing, then
+`useAgentAutosave`.
 
 - [x] **Console output fails a test.** `src/test-setup.ts` traps
       `console.error`/`console.warn` and throws, because React reports most real
@@ -255,16 +259,16 @@ Done one at a time, each with a build and a browser check, as intended.
 - [x] `@types/react-dom` 19.2.5 → 19.2.7
 - [x] `prettier-plugin-tailwindcss` 0.7.4 → 0.8.1 — no reformatting churn this time; `prettier --check` was clean immediately.
 
-## 7a. Route components defined inline — 8 fast-refresh warnings
+## 7a. Route components defined inline — DONE
 
-`eslint-plugin-react-refresh` 0.5 warns on eight route files that DEFINE their
+`eslint-plugin-react-refresh` 0.5 warned on eight route files that DEFINED their
 component inline instead of importing it: `__root.tsx`, `agent.tsx`,
 `skills.tsx`, `tools.tsx`, `channels/$name.tsx`, `channels/route.tsx`,
 `config.tsx`, `mcp.tsx`. Fast refresh cannot reach a component the file does not
-export, so editing one of them full-reloads the page instead of hot-swapping.
+export, so editing one of them full-reloaded the page instead of hot-swapping.
 
-The other route files already do it right — `agents.tsx` is three lines that
-import `AgentsPage` — so the fix is to follow the convention the codebase
+The other route files already did it right — `agents.tsx` is three lines that
+import `AgentsPage` — so the fix was to follow the convention the codebase
 already has, not to silence the rule. `allowExportNames: ["Route"]` does NOT
 help; the warning is about the inline component, not the `Route` export.
 
@@ -371,6 +375,25 @@ before anyone heard a word.
       Total bytes are unchanged; what improves is cache granularity — an app
       change no longer invalidates 562 kB of vendor code — and the largest chunk
       is now comfortably under the limit, so the warning means something again.
+
+## Noticed while working, not acted on
+
+Neither is a defect today; both are recorded so the next person does not have to
+rediscover them, and neither was fixed because it is unrelated to the work that
+surfaced it.
+
+- **`ServiceSectionProps.disabled` is dead.** Declared, defaulted to `false`,
+  and wired to all four Service inputs — and passed by nobody, so the inputs can
+  never be disabled. Its own comment says "Unused under auto-save". Either wire
+  it up or delete the prop and the four attributes.
+  (`src/components/config/sections/service-section.tsx`)
+- **`ModelChainField` sorts `configuredModels` on every render** rather than in a
+  `useMemo`. Harmless at the current list sizes and lint-clean, but it is an
+  allocation per render in a component that re-renders on every keystroke.
+  (`src/components/config/sections/model-fields.tsx`)
+- **`discovery` in `en.json` matches no backend tool category.** Stale label, no
+  effect. Removing it is safe whenever someone is in that file.
+  (`src/i18n/locales/en.json`)
 
 ## Accepted, no action planned
 
