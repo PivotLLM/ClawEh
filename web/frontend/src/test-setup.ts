@@ -1,4 +1,14 @@
+import { cleanup } from "@testing-library/react"
 import { afterEach, beforeEach, vi } from "vitest"
+
+// Unmount anything a test rendered.
+//
+// Testing Library registers this itself, but only when it can find the test
+// framework's globals — and this project imports describe/it/expect explicitly
+// rather than setting `globals: true`. Without it every render stacks up in the
+// same document and queries start finding two of everything, which reads as a
+// duplicate-element bug in the component rather than a leak in the harness.
+afterEach(cleanup)
 
 // Fail a test on any console.error or console.warn.
 //
