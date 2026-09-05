@@ -154,6 +154,40 @@ Hard-won learnings (don't relearn these):
 - **MCP integration tests are part of the suite.** `test.sh` runs `tests/test_mcpserver.sh` via the external `probe` binary against an ephemeral gateway. Every provider tool must be exposed in the test config and probed: success for hermetic tools, graceful-error probes for network/LLM tools (web, skill, agent_spawn). Add a probe case when you add a tool.
 - After implementing, do a final grep for the old name/symbol to confirm nothing stale remains in code, tests, scripts, or docs.
 
+### WebUI regression suite — run it for any significant frontend change
+
+`make test` and `test.sh` do NOT exercise the running WebUI. A browser suite
+does, and it must be run for any significant change to `web/frontend`, to the
+`/api/*` handlers behind it, or to anything that alters gateway startup,
+readiness or config reload:
+
+```
+make build && cp build/claw ~/bin/claw && sudo systemctl restart claw-dev
+until curl -sf http://127.0.0.1:8077/ready >/dev/null; do sleep 1; done
+node tests/frontend-e2e.mjs
+```
+
+- **The plan is `docs/webui-test-plan.md`** — 64 numbered steps, each with a
+  process and an expected result, followable by hand. `tests/frontend-e2e.mjs`
+  executes it and prints the same step IDs. Keep the two in step: a step added
+  to one belongs in the other.
+- **Dev only.** Groups F and G write configuration (they create an agent and
+  edit a field, and revert both). The runner refuses port 18790 unless
+  `--allow-prod` is given. Never point it at production.
+- **Wait for `/ready`, not `/health`.** `/health` answers as soon as the port
+  is open; `/ready` waits for the channels. Starting early makes steps fail for
+  no reason.
+- **When a step fails, decide first whether the PLAN or the PRODUCT is wrong.**
+  Both happen. It has caught real defects (`/ready` stuck at 503 forever, an
+  unlabelled delete button) and has itself been wrong (sidebar entries are
+  disclosure controls, not links; the agent rail labels by `name || id`).
+  Fixing a correct test to match broken behaviour is the one outcome to avoid.
+- **If you are unsure whether a change is significant enough to warrant a run,
+  ask the user.** It takes a couple of minutes; a silent WebUI regression does
+  not announce itself.
+- Ordinary Go-only changes do not need it. `make check` also runs the frontend
+  typecheck, oxlint and vitest, none of which load a page.
+
 ## Workflow Rules
 - Never commit or push without explicit user instruction.
 - Never push directly to main — use feature branches + PRs.
