@@ -3,8 +3,8 @@ package skills
 import (
 	"github.com/spf13/cobra"
 
+	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/internal"
-	"github.com/PivotLLM/ClawEh/pkg/config"
 )
 
 func newInstallBuiltinCommand(cfgFn func() (*config.Config, error)) *cobra.Command {

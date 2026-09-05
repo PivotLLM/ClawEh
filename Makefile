@@ -1,4 +1,4 @@
-.PHONY: all build claw-auth install uninstall uninstall-all clean help test test-race test-coverage test-cover-html test-regression generate vet fmt lint fix deps update-deps check run frontend frontend-deps build-linux-arm build-linux-arm64 build-linux-mipsle build-pi-zero build-all
+.PHONY: all build claw-auth install uninstall uninstall-all clean help test test-race test-coverage test-cover-html test-regression generate vet fmt lint fix deps update-deps check run frontend frontend-deps frontend-typecheck frontend-lint frontend-test build-linux-arm build-linux-arm64 build-linux-mipsle build-pi-zero build-all
 
 # Binary names
 BINARY_NAME=claw
@@ -15,11 +15,21 @@ MAIN_GO=main.go
 GIT_COMMIT=$(shell git rev-parse --short=8 HEAD 2>/dev/null || echo "unknown")
 BUILD_TIME=$(shell date +%FT%T%z)
 GO_VERSION=$(shell $(GO) version | awk '{print $$3}')
+# BUILD_NUMBER orders builds; GIT_COMMIT identifies their source. The commit
+# cannot answer "is the copy I am running newer than the one I just built?" —
+# a hash has no order — so a rebuild of the same commit is indistinguishable
+# without this. UTC, because local time repeats an hour twice a year and a
+# newer build would sort older. Assigned with := so one `make build-all`
+# stamps ONE number across every platform: with a recursive `=` the shell
+# re-runs per expansion and each target would land a second or two apart.
+BUILD_NUMBER:=$(shell date -u +%Y%m%d%H%M%S)
 APP_PKG=github.com/PivotLLM/ClawEh/app
-LDFLAGS=-ldflags "-X $(APP_PKG).gitCommit=$(GIT_COMMIT) -X $(APP_PKG).buildTime=$(BUILD_TIME) -X $(APP_PKG).goVersion=$(GO_VERSION) -s -w"
+LDFLAGS=-ldflags "-X $(APP_PKG).gitCommit=$(GIT_COMMIT) -X $(APP_PKG).buildTime=$(BUILD_TIME) -X $(APP_PKG).goVersion=$(GO_VERSION) -X $(APP_PKG).buildNumber=$(BUILD_NUMBER) -s -w"
 
 # Go variables
 GO?=CGO_ENABLED=0 go
+# oxlint is a global install, not a project dependency; override to pin a path.
+OXLINT?=oxlint
 GOFLAGS?=-v -tags stdjson
 
 # Patch MIPS LE ELF e_flags (offset 36) for NaN2008-only kernels (e.g. Ingenic X2600).
@@ -266,6 +276,38 @@ vet: generate
 test: generate
 	@$(GO) test ./...
 
+## frontend-typecheck: Typecheck the SPA (tsc)
+frontend-typecheck: $(FRONTEND_NODE_MODULES)
+	@echo "Typechecking frontend..."
+	@cd $(FRONTEND_DIR) && pnpm exec tsc -b --noEmit
+
+## frontend-lint: Lint the SPA with oxlint (skipped if oxlint is not installed)
+#
+# oxlint is installed globally rather than as a project dependency, so this
+# skips instead of failing when it is absent — a checkout without it must still
+# build. Set OXLINT to point at a specific binary.
+#
+# Rules and ignores live in web/frontend/.oxlintrc.json, so a bare `oxlint`
+# invocation matches what this target does. No path argument: that lints the
+# whole project (134 files) rather than src alone (132), picking up
+# vite.config.ts and anything else at the root.
+#
+# --deny-warnings makes a warning fail the build. oxlint exits 0 on warnings by
+# default, which would make this target incapable of ever failing — a gate that
+# cannot fail is not a gate. The warning set was zero when this was turned on.
+frontend-lint:
+	@if command -v $(OXLINT) >/dev/null 2>&1; then \
+		echo "Linting frontend with oxlint..."; \
+		cd $(FRONTEND_DIR) && $(OXLINT) --deny-warnings; \
+	else \
+		echo "oxlint not installed - skipping frontend lint (npm i -g oxlint)"; \
+	fi
+
+## frontend-test: Run the SPA unit tests (vitest)
+frontend-test: $(FRONTEND_NODE_MODULES)
+	@echo "Testing frontend..."
+	@cd $(FRONTEND_DIR) && pnpm run test
+
 ## test-race: Run full test suite with race detector
 test-race: generate
 	@go test -race -count=1 -timeout=300s ./...
@@ -326,7 +368,11 @@ update-deps:
 	@$(GO) mod tidy
 
 ## check: Run fmt, vet, and tests
-check: fmt vet test
+# frontend-typecheck and frontend-test are part of check, not of `test`: `test`
+# is the fast Go-only loop, while check is the gate before calling something
+# done. Without a frontend gate here, a red frontend sat unnoticed long enough
+# to grow from 7 problems to 35 the moment a plugin was updated.
+check: fmt vet test frontend-typecheck frontend-lint frontend-test
 
 ## run: Build and run claw
 run: build

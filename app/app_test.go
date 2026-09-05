@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -22,21 +23,22 @@ func TestVersion_IsTheOnlySourceOfTruth(t *testing.T) {
 	assert.Equal(t, version, SemVer())
 }
 
-// TestVersion_IsASingleToken is the reason for the hyphen. Rendered as
+// TestVersion_ReleaseAndCommitAreOneToken is the reason for the "+". Rendered as
 // "0.4.68 (git: abc)", a version gets pasted into a bug report as "0.4.68" — the
 // space reads as the end of the value and the parenthetical as an aside, so the
-// half identifying the exact source is the half that gets dropped.
-func TestVersion_IsASingleToken(t *testing.T) {
-	old := gitCommit
-	t.Cleanup(func() { gitCommit = old })
+// half identifying the exact source is the half that gets dropped. The release
+// and the commit therefore have to survive as a single word, whatever else the
+// string carries.
+func TestVersion_ReleaseAndCommitAreOneToken(t *testing.T) {
+	og, ob := gitCommit, buildNumber
+	t.Cleanup(func() { gitCommit, buildNumber = og, ob })
 
-	gitCommit = "abc12345"
+	gitCommit, buildNumber = "abc12345", "20260902155301"
 	got := Version()
 
-	assert.NotContains(t, got, " ", "version must be one unbroken token")
 	assert.NotContains(t, got, "(", "no parentheses — they invite truncation")
-	assert.Len(t, strings.Fields(got), 1, "must survive being copied as a single word")
-	assert.Equal(t, version+"+abc12345", got)
+	assert.Equal(t, version+"+abc12345", strings.Fields(got)[0],
+		"truncating at the first space must still leave the release and the commit")
 }
 
 // TestVersion_UsesBuildMetadataSeparator pins the separator against SemVer's
@@ -52,6 +54,7 @@ func TestVersion_UsesBuildMetadataSeparator(t *testing.T) {
 	got := Version()
 
 	assert.Contains(t, got, "+", "the commit must attach as SemVer build metadata")
+	got = strings.Fields(got)[0]
 	assert.NotContains(t, strings.TrimPrefix(got, version), "-",
 		"a hyphen would make this a pre-release, sorting below the release itself")
 	assert.Equal(t, version, strings.SplitN(got, "+", 2)[0],
@@ -61,26 +64,30 @@ func TestVersion_UsesBuildMetadataSeparator(t *testing.T) {
 // TestVersion_UnstampedBuildIsBare covers a plain `go build`: no commit, so no
 // trailing hyphen dangling off the number.
 func TestVersion_UnstampedBuildIsBare(t *testing.T) {
-	old := gitCommit
-	t.Cleanup(func() { gitCommit = old })
+	og, ob := gitCommit, buildNumber
+	t.Cleanup(func() { gitCommit, buildNumber = og, ob })
 
-	gitCommit = ""
+	gitCommit, buildNumber = "", ""
 	assert.Equal(t, version, Version())
 	assert.NotContains(t, Version(), "+", "no dangling separator when nothing is stamped in")
+	assert.NotContains(t, Version(), "[", "no empty brackets when no build number is stamped in")
+	assert.Empty(t, Build())
 }
 
 // TestSemVer_IsPlainSemver pins the protocol contract: no build metadata, ever.
 // Paired R1 and Android clients read the device gateway's ServerVersion, and a
 // suffix could break a comparison in software we do not control.
 func TestSemVer_IsPlainSemver(t *testing.T) {
-	old := gitCommit
-	t.Cleanup(func() { gitCommit = old })
+	og, ob := gitCommit, buildNumber
+	t.Cleanup(func() { gitCommit, buildNumber = og, ob })
 
-	gitCommit = "abc12345"
+	gitCommit, buildNumber = "abc12345", "20260902155301"
 
 	assert.Equal(t, version, SemVer())
 	assert.NotContains(t, SemVer(), "+", "no build metadata on the protocol form")
-	assert.NotEqual(t, Version(), SemVer(), "the two forms differ once a commit is stamped")
+	assert.NotContains(t, SemVer(), "[", "no build number on the protocol form")
+	assert.NotContains(t, SemVer(), " ", "the protocol form is a single bare token")
+	assert.NotEqual(t, Version(), SemVer(), "the two forms differ once a build is stamped")
 }
 
 // TestIdentityAccessors covers the remaining identity, which has no interesting
@@ -114,4 +121,63 @@ func TestBuildInfo_FallsBackForToolchainOnly(t *testing.T) {
 	b, g := BuildInfo()
 	assert.Empty(t, b)
 	assert.Equal(t, runtime.Version(), g)
+}
+
+// TestVersion_CarriesTheBuildNumber is the point of the whole thing: the number
+// has to be visible wherever the version is, because the surfaces that matter
+// (the startup log, `claw version`, the WebUI footer) all render Version() and
+// nothing else.
+func TestVersion_CarriesTheBuildNumber(t *testing.T) {
+	og, ob := gitCommit, buildNumber
+	t.Cleanup(func() { gitCommit, buildNumber = og, ob })
+
+	gitCommit, buildNumber = "abc12345", "20260902155301"
+
+	assert.Equal(t, version+"+abc12345 [20260902155301]", Version())
+	assert.Equal(t, "20260902155301", Build())
+}
+
+// TestVersion_BuildNumberWithoutCommit covers a build stamped by something that
+// sets only the number: the brackets still attach cleanly to a bare release
+// rather than dangling off a stray "+".
+func TestVersion_BuildNumberWithoutCommit(t *testing.T) {
+	og, ob := gitCommit, buildNumber
+	t.Cleanup(func() { gitCommit, buildNumber = og, ob })
+
+	gitCommit, buildNumber = "", "20260902155301"
+
+	assert.Equal(t, version+" [20260902155301]", Version())
+	assert.NotContains(t, Version(), "+", "no separator for a commit that was never stamped")
+}
+
+// TestBuildNumbersSortLexically is the property that makes the number worth
+// having: string comparison has to match chronological order, because that is
+// how anyone reads two of them side by side. Fixed-width zero-padded UTC
+// yyyymmddhhmmss is what guarantees it — a shorter or unpadded format (say
+// unix seconds, or a local-time rendering) would break at a digit boundary or
+// at a DST change.
+func TestBuildNumbersSortLexically(t *testing.T) {
+	ordered := []string{
+		"20260101000000",
+		"20260902094117",
+		"20260902155301",
+		"20260902155302",
+		"20261231235959",
+		"20270101000000",
+	}
+	for i := 1; i < len(ordered); i++ {
+		assert.Less(t, ordered[i-1], ordered[i],
+			"build numbers must compare in the same order as the clock, or they cannot be read at a glance")
+		assert.Len(t, ordered[i], len(ordered[0]), "every build number must be the same width")
+	}
+}
+
+// TestBuildNumberShapeMatchesTheMakefile pins the format the Makefile stamps
+// (date -u +%Y%m%d%H%M%S). If that format is ever changed to something narrower
+// — minutes, or a local-time value — this fails rather than silently producing
+// build numbers that tie or go backwards.
+func TestBuildNumberShapeMatchesTheMakefile(t *testing.T) {
+	stamped := time.Date(2026, 9, 2, 15, 53, 1, 0, time.UTC).Format("20060102150405")
+	assert.Equal(t, "20260902155301", stamped)
+	assert.Len(t, stamped, 14, "seconds resolution: two rebuilds inside a minute must differ")
 }

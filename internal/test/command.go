@@ -9,9 +9,9 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/internal"
-	"github.com/PivotLLM/ClawEh/pkg/config"
-	"github.com/PivotLLM/ClawEh/pkg/providers"
+	"github.com/PivotLLM/ClawEh/providers"
 )
 
 const testPrompt = `Reply with only the single word: OK`

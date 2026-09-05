@@ -87,8 +87,10 @@ hosts:
 
 - Start the gateway with `--host 0.0.0.0` (or set `gateway.host`) so it listens on
   the LAN.
-- Keep the network allowlist (`--allowed-cidrs`) tight — only the source ranges
-  that must reach the endpoint.
+- Set the network allowlist (`--allowed-cidrs` / `gateway.allowed_cidrs`). This is
+  required, not just advisable: it is empty by default, which means loopback only,
+  so binding to `0.0.0.0` alone still refuses every off-box post. Keep it tight —
+  only the source ranges that must reach the endpoint.
 - Prefer putting the gateway behind a TLS-terminating reverse proxy for any access
   beyond the local network; the token is bearer access control, not a substitute
   for transport security.

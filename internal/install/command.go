@@ -16,10 +16,11 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/PivotLLM/ClawEh/app"
+	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/fileutil"
+	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/internal"
-	"github.com/PivotLLM/ClawEh/pkg/config"
-	"github.com/PivotLLM/ClawEh/pkg/fileutil"
-	"github.com/PivotLLM/ClawEh/pkg/global"
+	"github.com/PivotLLM/ClawEh/internal/network"
 )
 
 const (
@@ -39,10 +40,13 @@ func NewInstallCommand() *cobra.Command {
 			"your PATH, and writes a systemd system service that runs " + app.Name() + " as your user\n" +
 			"account at boot. Writing the service unit requires sudo; you'll be prompted for your\n" +
 			"password. Run this as your normal user, not with sudo.\n\n" +
-			"On a headless host, pass --host 0.0.0.0 so the WebUI is reachable on the network\n" +
-			"(it binds to localhost by default). The WebUI has no authentication, but access is\n" +
-			"restricted to loopback + the private-network IP allowlist (RFC1918) by default — use\n" +
-			"--allowed-cidrs to customise it (e.g. a specific subnet, or 0.0.0.0/0 to allow all).",
+			"On a headless host, pass --host 0.0.0.0 so the WebUI listens on the network, AND\n" +
+			"--allowed-cidrs to say who may reach it — binding alone is not enough. The WebUI has\n" +
+			"no authentication, so access defaults to loopback only; without an allowlist a\n" +
+			"network client is refused even when the port is open. Example:\n" +
+			"  --host 0.0.0.0 --allowed-cidrs 192.168.1.0/24\n" +
+			"Use '*' to allow any address (understand what that exposes first). Note 0.0.0.0/0\n" +
+			"is an IPv4 prefix and still refuses IPv6 clients; '*' covers both families.",
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		RunE: func(_ *cobra.Command, _ []string) error {
@@ -51,7 +55,11 @@ func NewInstallCommand() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&host, "host", "", "Bind address for the web/gateway server (e.g. 0.0.0.0 for all interfaces). Empty keeps the current/seeded value.")
 	cmd.Flags().IntVar(&port, "port", 0, "HTTP port for the web/gateway server. 0 keeps the current/seeded value.")
-	cmd.Flags().StringVar(&allowedCIDRs, "allowed-cidrs", "", "Comma-separated CIDR allowlist for the WebUI/API (loopback is always allowed). Empty keeps the default private-network allowlist (RFC1918); use 0.0.0.0/0 to allow all.")
+	cmd.Flags().StringVar(&allowedCIDRs, "allowed-cidrs", "",
+		"Comma-separated CIDR allowlist for the WebUI/API; loopback is always allowed. "+
+			"Empty means loopback only. Give explicit CIDRs (192.168.1.0/24), or a shorthand: "+
+			"'private' for the RFC1918 ranges, 'any' for any address. "+
+			"Required when --host is not loopback.")
 	return cmd
 }
 
@@ -110,6 +118,19 @@ func runInstall(host string, port int, allowedCIDRs string) error {
 	}
 	fmt.Printf("Installed binary: %s\n", targetBin)
 
+	// 2b. Symlink openclaw -> claw. rabbit-agent on the Rabbit R1 spawns
+	// `openclaw acp`, so the binary has to be reachable under that name for the
+	// R1 to connect. `make install` does this too; without it here, an install
+	// from a release binary silently lacks the R1 path.
+	if err := linkOpenClawAlias(binDir, serviceName); err != nil {
+		// Not fatal: everything except the R1's ACP bridge works without it.
+		fmt.Printf("Warning: could not create the openclaw alias (%v).\n"+
+			"  The Rabbit R1 spawns `openclaw acp`; without this link it cannot connect.\n", err)
+	} else {
+		fmt.Printf("Installed alias:  %s -> %s (for the Rabbit R1's `openclaw acp`)\n",
+			filepath.Join(binDir, openClawAlias), serviceName)
+	}
+
 	// 3. Ensure the bin dir is on PATH for interactive shells.
 	if note := ensurePath(binDir); note != "" {
 		fmt.Println(note)
@@ -123,8 +144,24 @@ func runInstall(host string, port int, allowedCIDRs string) error {
 		}
 	}
 
-	// 3c. Apply a custom IP allowlist if requested (otherwise the runtime default
-	// of RFC1918 private ranges applies).
+	// 3c. Apply the IP allowlist. Binding off-box without one produces an install
+	// that listens on the network and then refuses every connection from it, which
+	// looks like a firewall problem rather than a configuration choice. Fail here,
+	// where the operator is standing right next to it and can fix it in one flag,
+	// rather than at 3am on a headless box.
+	if allowedCIDRs == "" && isNetworkBind(host) {
+		if existing, err := network.CurrentAllowlist(); err == nil && len(existing) == 0 {
+			return fmt.Errorf(
+				"--host %s makes %s listen on the network, but the allowlist is empty, "+
+					"so every off-box connection would still be refused.\n"+
+					"Pass --allowed-cidrs as well:\n"+
+					"  --allowed-cidrs 192.168.1.0/24   your LAN subnet (recommended)\n"+
+					"  --allowed-cidrs private          all RFC1918 private ranges\n"+
+					"  --allowed-cidrs any              any address — the WebUI has no password yet\n"+
+					"Loopback is always allowed, so --host 127.0.0.1 needs none of this",
+				host, serviceName)
+		}
+	}
 	if allowedCIDRs != "" {
 		if err := applyAllowlist(allowedCIDRs); err != nil {
 			return fmt.Errorf("applying allowlist: %w", err)
@@ -291,27 +328,37 @@ func applyServerSettings(host string, port int) error {
 
 // applyAllowlist writes a custom IP allowlist (comma-separated CIDRs) into
 // gateway.allowed_cidrs in config.json. Each CIDR is validated before saving.
+// openClawAlias is the name rabbit-agent spawns (`openclaw acp`). ClawEh serves
+// ACP from the same binary, so the alias is a symlink rather than a second build.
+const openClawAlias = "openclaw"
+
+// linkOpenClawAlias points <binDir>/openclaw at the installed binary. The link is
+// relative so it survives the directory being moved, and is replaced if present.
+func linkOpenClawAlias(binDir, target string) error {
+	link := filepath.Join(binDir, openClawAlias)
+	if err := os.Remove(link); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return os.Symlink(target, link)
+}
+
+// isNetworkBind reports whether host makes the gateway listen beyond loopback.
+func isNetworkBind(host string) bool {
+	switch strings.TrimSpace(host) {
+	case "", "127.0.0.1", "localhost", "::1", "[::1]":
+		return false
+	default:
+		return true
+	}
+}
+
 func applyAllowlist(csv string) error {
-	path := internal.GetConfigPath()
-	cfg, err := config.LoadConfig(path)
+	cidrs := network.ParseAllowlist(csv)
+	path, err := network.ApplyAllowlist(cidrs)
 	if err != nil {
 		return err
 	}
-	parts := strings.Split(csv, ",")
-	cidrs := make([]string, 0, len(parts))
-	for _, p := range parts {
-		if t := strings.TrimSpace(p); t != "" {
-			cidrs = append(cidrs, t)
-		}
-	}
-	if err := config.ValidateAllowedCIDRs(cidrs); err != nil {
-		return err
-	}
-	cfg.Gateway.AllowedCIDRs = cidrs
-	if err := config.SaveConfig(path, cfg); err != nil {
-		return err
-	}
-	fmt.Printf("Network allowlist set to %v (loopback always allowed) (%s)\n", cfg.Gateway.AllowedCIDRs, path)
+	fmt.Printf("Network allowlist set to %s (loopback always allowed) (%s)\n", network.Describe(cidrs), path)
 	return nil
 }
 

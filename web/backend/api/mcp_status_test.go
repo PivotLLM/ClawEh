@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/PivotLLM/ClawEh/pkg/mcp"
+	"github.com/PivotLLM/ClawEh/mcp"
 )
 
 type fakeMCPStatusLoop struct {

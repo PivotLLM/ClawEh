@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"time"
 
-	"github.com/PivotLLM/ClawEh/pkg/logger"
+	"github.com/PivotLLM/ClawEh/logger"
 )
 
 // datedLogRe matches a rolled daily log such as "20260616-claw.log" or

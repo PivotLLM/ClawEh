@@ -1,9 +1,10 @@
 import { IconLoader2 } from "@tabler/icons-react"
-import { useEffect, useMemo, useState } from "react"
+import { useQuery } from "@tanstack/react-query"
+import { useMemo, useState } from "react"
 import { useTranslation } from "react-i18next"
 
 import { addModel, setDefaultModel } from "@/api/models"
-import { type ProviderInfo, getProviders } from "@/api/providers"
+import { getProviders } from "@/api/providers"
 import {
   REASONING_EFFORT_OPTIONS,
   parseDropParams,
@@ -84,7 +85,6 @@ export function AddModelSheet({
 }: AddModelSheetProps) {
   const { t } = useTranslation()
   const [form, setForm] = useState<AddForm>(EMPTY_ADD_FORM)
-  const [providers, setProviders] = useState<ProviderInfo[]>([])
   const [saving, setSaving] = useState(false)
   const [setAsDefault, setSetAsDefault] = useState(false)
   const [fieldErrors, setFieldErrors] = useState<
@@ -92,21 +92,31 @@ export function AddModelSheet({
   >({})
   const [serverError, setServerError] = useState("")
 
-  useEffect(() => {
+  // The provider list shares a cache key with the providers page, so opening
+  // this sheet usually costs nothing. An error leaves the list empty, which is
+  // what the previous hand-rolled catch did.
+  const { data: providers = [] } = useQuery({
+    queryKey: ["providers"],
+    queryFn: async () => {
+      const data = await getProviders()
+      return [...data.providers].sort((a, b) => a.name.localeCompare(b.name))
+    },
+    enabled: open,
+  })
+
+  // Start from an empty form each time the sheet is opened. Adjusted during
+  // render rather than in an effect so the previous attempt's values and errors
+  // are never visible on reopen.
+  const [wasOpen, setWasOpen] = useState(open)
+  if (open !== wasOpen) {
+    setWasOpen(open)
     if (open) {
       setForm(EMPTY_ADD_FORM)
       setSetAsDefault(false)
       setFieldErrors({})
       setServerError("")
-      getProviders()
-        .then((data) =>
-          setProviders(
-            [...data.providers].sort((a, b) => a.name.localeCompare(b.name)),
-          ),
-        )
-        .catch(() => setProviders([]))
     }
-  }, [open])
+  }
 
   const validate = (): boolean => {
     const errors: Partial<Record<keyof AddForm, string>> = {}
@@ -150,7 +160,9 @@ export function AddModelSheet({
         connect_mode: form.connectMode.trim() || undefined,
         workspace: form.workspace.trim() || undefined,
         rpm: form.rpm ? Number(form.rpm) : undefined,
-        context_window: form.contextWindow ? Number(form.contextWindow) : undefined,
+        context_window: form.contextWindow
+          ? Number(form.contextWindow)
+          : undefined,
         max_tokens_field: form.maxTokensField.trim() || undefined,
         request_timeout: form.requestTimeout
           ? Number(form.requestTimeout)
@@ -235,8 +247,13 @@ export function AddModelSheet({
                   }
                 }}
               >
-                <SelectTrigger className="w-full" aria-invalid={!!fieldErrors.provider}>
-                  <SelectValue placeholder={t("models.field.providerPlaceholder")} />
+                <SelectTrigger
+                  className="w-full"
+                  aria-invalid={!!fieldErrors.provider}
+                >
+                  <SelectValue
+                    placeholder={t("models.field.providerPlaceholder")}
+                  />
                 </SelectTrigger>
                 <SelectContent>
                   {providers.map((p) => (
@@ -247,7 +264,9 @@ export function AddModelSheet({
                 </SelectContent>
               </Select>
               {fieldErrors.provider && (
-                <p className="text-destructive text-xs">{fieldErrors.provider}</p>
+                <p className="text-destructive text-xs">
+                  {fieldErrors.provider}
+                </p>
               )}
             </Field>
 
@@ -337,7 +356,9 @@ export function AddModelSheet({
               >
                 <Select
                   value={
-                    form.reasoningEffort === "" ? "__unset__" : form.reasoningEffort
+                    form.reasoningEffort === ""
+                      ? "__unset__"
+                      : form.reasoningEffort
                   }
                   onValueChange={(v) =>
                     setForm((f) => ({

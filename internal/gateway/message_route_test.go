@@ -8,11 +8,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/PivotLLM/ClawEh/pkg/agent"
-	"github.com/PivotLLM/ClawEh/pkg/bus"
-	"github.com/PivotLLM/ClawEh/pkg/config"
-	"github.com/PivotLLM/ClawEh/pkg/health"
-	"github.com/PivotLLM/ClawEh/pkg/providers"
+	"github.com/PivotLLM/ClawEh/agent"
+	"github.com/PivotLLM/ClawEh/bus"
+	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/health"
+	"github.com/PivotLLM/ClawEh/providers"
 	webserver "github.com/PivotLLM/ClawEh/web/backend"
 )
 

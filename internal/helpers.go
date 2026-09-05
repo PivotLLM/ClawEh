@@ -4,7 +4,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/PivotLLM/ClawEh/pkg/config"
+	"github.com/PivotLLM/ClawEh/config"
 )
 
 // BinaryName is set from main() to filepath.Base(os.Args[0]).

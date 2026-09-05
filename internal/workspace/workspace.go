@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/PivotLLM/ClawEh/pkg/logger"
+	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/templates"
 )
 

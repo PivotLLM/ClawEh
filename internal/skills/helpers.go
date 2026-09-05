@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/internal"
-	"github.com/PivotLLM/ClawEh/pkg/config"
-	"github.com/PivotLLM/ClawEh/pkg/skills"
-	"github.com/PivotLLM/ClawEh/pkg/utils"
+	"github.com/PivotLLM/ClawEh/skills"
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 const skillsSearchMaxResults = 20
@@ -71,6 +71,7 @@ func skillsInstallFromRegistry(cfg *config.Config, registryName, slug string) er
 
 	registry := registryMgr.GetRegistry(registryName)
 	if registry == nil {
+		//nolint:staticcheck // ST1005: user-facing CLI message, formatted for the terminal
 		return fmt.Errorf("✗  registry '%s' not found or not enabled. check your config.json.", registryName)
 	}
 
@@ -84,7 +85,7 @@ func skillsInstallFromRegistry(cfg *config.Config, registryName, slug string) er
 	defer cancel()
 
 	if err = os.MkdirAll(cfg.SkillsPath(), 0o755); err != nil {
-		return fmt.Errorf("\u2717 failed to create skills directory: %v", err)
+		return fmt.Errorf("\u2717 failed to create skills directory: %w", err)
 	}
 
 	result, err := registry.DownloadAndInstall(ctx, slug, "", targetDir)
@@ -102,6 +103,7 @@ func skillsInstallFromRegistry(cfg *config.Config, registryName, slug string) er
 			fmt.Printf("\u2717 Failed to remove partial install: %v\n", rmErr)
 		}
 
+		//nolint:staticcheck // ST1005: user-facing CLI message, formatted for the terminal
 		return fmt.Errorf("\u2717 Skill '%s' is flagged as malicious and cannot be installed.\n", slug)
 	}
 

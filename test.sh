@@ -293,6 +293,72 @@ INTEGRATION_PASSED=true
 INTEGRATION_PASS_COUNT=0
 INTEGRATION_FAIL_COUNT=0
 
+# Frontend gates. The SPA is compiled into the Go binary, so a broken typecheck
+# or a failing SPA test ships in the release just as surely as a Go failure does
+# — but nothing here checked it, and a red frontend sat unnoticed long enough to
+# grow from 7 problems to 35 the moment a plugin was updated.
+#
+# Linting is oxlint, installed globally rather than as a project dependency, so
+# it is reported as SKIPPED rather than failing when absent — but reported
+# either way. A silent skip is how a red lint went unnoticed long enough to grow
+# from 7 problems to 35. Set OXLINT to point at a specific binary.
+#
+# --deny-warnings: oxlint exits 0 on warnings by default, so without it this
+# check could never fail and would be decorative.
+#
+# Skipped, not failed, when pnpm or node_modules are absent: a Go-only checkout
+# must still be able to run this suite.
+FRONTEND_RAN=false
+FRONTEND_PASSED=true
+FRONTEND_SKIP_REASON=""
+LINT_STATUS="not run"
+FRONTEND_DIR="$SCRIPT_DIR/web/frontend"
+
+echo ""
+echo "${BOLD}============================================${NC}"
+echo "${BOLD}   FRONTEND (typecheck, lint, unit tests)${NC}"
+echo "${BOLD}============================================${NC}"
+echo ""
+
+if ! command -v pnpm >/dev/null 2>&1; then
+    FRONTEND_SKIP_REASON="pnpm not on PATH"
+elif [ ! -d "$FRONTEND_DIR/node_modules" ]; then
+    FRONTEND_SKIP_REASON="node_modules missing (run: make frontend-deps)"
+fi
+
+if [ -n "$FRONTEND_SKIP_REASON" ]; then
+    echo "${DIM}Skipped: ${FRONTEND_SKIP_REASON}${NC}"
+else
+    FRONTEND_RAN=true
+    if (cd "$FRONTEND_DIR" && pnpm exec tsc -b --noEmit); then
+        echo "${GREEN}  typecheck passed${NC}"
+    else
+        echo "${RED}  typecheck FAILED${NC}"
+        FRONTEND_PASSED=false
+    fi
+    if (cd "$FRONTEND_DIR" && pnpm run test); then
+        echo "${GREEN}  unit tests passed${NC}"
+    else
+        echo "${RED}  unit tests FAILED${NC}"
+        FRONTEND_PASSED=false
+    fi
+
+    OXLINT_BIN="${OXLINT:-oxlint}"
+    if command -v "$OXLINT_BIN" >/dev/null 2>&1; then
+        if (cd "$FRONTEND_DIR" && "$OXLINT_BIN" --deny-warnings); then
+            echo "${GREEN}  lint passed${NC}"
+            LINT_STATUS="passed"
+        else
+            echo "${RED}  lint FAILED${NC}"
+            LINT_STATUS="failed"
+            FRONTEND_PASSED=false
+        fi
+    else
+        echo "${DIM}  lint skipped: oxlint not installed (npm i -g oxlint)${NC}"
+        LINT_STATUS="skipped"
+    fi
+fi
+
 if ! $SKIP_INTEGRATION; then
     echo ""
     echo "${BOLD}============================================${NC}"
@@ -409,6 +475,7 @@ PY
     "tool_overrides": {
       "shell_exec": true,
       "file_read_bytes": true,
+      "file_count": true,
       "file_edit_bytes": true,
       "file_insert_bytes": true,
       "file_delete_bytes": true,
@@ -420,8 +487,6 @@ PY
       "agent_status": true,
       "agent_list": true,
       "session_clear": true,
-      "hw_i2c": true,
-      "hw_spi": true,
       "cogmem_domain_get": true,
       "cogmem_memory_search": true,
       "cogmem_domain_list": true,
@@ -447,6 +512,7 @@ PY
     "internal_tools": [
       "file_read_bytes",
       "file_read_lines",
+      "file_count",
       "file_view_image",
       "file_write",
       "file_edit",
@@ -481,8 +547,6 @@ PY
       "agent_spawn",
       "agent_status",
       "agent_list",
-      "hw_i2c",
-      "hw_spi",
       "cogmem_domain_get",
       "cogmem_memory_search",
       "cogmem_domain_list",
@@ -680,6 +744,19 @@ fi
 
 if $RUN_RACE; then
     echo "Race:        ${GREEN}enabled${NC}"
+fi
+
+if ! $FRONTEND_RAN; then
+    echo "Frontend:    ${DIM}skipped (${FRONTEND_SKIP_REASON})${NC}"
+elif $FRONTEND_PASSED; then
+    if [ "$LINT_STATUS" = "skipped" ]; then
+        echo "Frontend:    ${GREEN}passed${NC} (typecheck, unit tests) ${DIM}— lint skipped: oxlint not installed${NC}"
+    else
+        echo "Frontend:    ${GREEN}passed${NC} (typecheck, lint, unit tests)"
+    fi
+else
+    echo "Frontend:    ${RED}failed${NC}"
+    OVERALL_PASS=false
 fi
 
 if $SKIP_INTEGRATION; then

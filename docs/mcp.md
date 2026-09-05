@@ -5,7 +5,7 @@ Status: **implemented**. This document specifies how ClawEh's MCP server accepts
 model, so that standard MCP clients and a comprehensive `probe`-based test suite
 (mirroring Maestro's) can exercise every tool, while preserving ClawEh's
 multi-assistant routing. `/mcp` is the bearer endpoint; `/internal` carries the
-session-token parameter. See `pkg/mcpserver/{mcpserver,tools,bearer}.go`.
+session-token parameter. See `mcpserver/{mcpserver,tools,bearer}.go`.
 
 ## Why two models
 

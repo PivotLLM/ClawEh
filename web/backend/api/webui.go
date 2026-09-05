@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/PivotLLM/ClawEh/pkg/config"
+	"github.com/PivotLLM/ClawEh/config"
 )
 
 // registerWebUIRoutes binds WebUI Channel management endpoints to the ServeMux.
@@ -85,16 +85,15 @@ func (h *Handler) EnsureWebUIChannel() (bool, error) {
 		changed = true
 	}
 
-	if !cfg.Channels.WebUI.AllowTokenQuery {
-		cfg.Channels.WebUI.AllowTokenQuery = true
-		changed = true
-	}
-
-	// Make sure origins are allowed (frontend might be running on a different port like 5173 during dev)
-	if len(cfg.Channels.WebUI.AllowOrigins) == 0 {
-		cfg.Channels.WebUI.AllowOrigins = []string{"*"}
-		changed = true
-	}
+	// AllowTokenQuery and AllowOrigins are deliberately NOT forced here.
+	//
+	// Setup used to set AllowTokenQuery=true and AllowOrigins=["*"], the latter so
+	// a frontend dev server on :5173 could connect — a development convenience
+	// written into every production install. The browser now sends the token as a
+	// WebSocket subprotocol (webui.TokenSubprotocol), so query tokens are not
+	// needed, and an empty AllowOrigins means same-origin, which is what the
+	// bundled UI always is. Running the frontend from a dev server is the case
+	// that needs AllowOrigins set explicitly, and that is a deliberate act.
 
 	// Without allow_from, IsAllowedSender returns false and silently drops every message.
 	if len(cfg.Channels.WebUI.AllowFrom) == 0 {

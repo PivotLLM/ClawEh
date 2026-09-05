@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/PivotLLM/ClawEh/pkg/config"
+	"github.com/PivotLLM/ClawEh/config"
 )
 
 // registerModelRoutes binds model list management endpoints to the ServeMux.

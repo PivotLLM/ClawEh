@@ -19,7 +19,10 @@ export const Route = createFileRoute("/")({
     try {
       needsSetup = (await getSetupStatus()).needs_setup
     } catch {
-      needsSetup = false // don't redirect on a fetch error
+      // Leave needsSetup false: a transient API error must never redirect the
+      // user away from chat. (Re-assigning false here was redundant — the
+      // initialiser already covers it — and eslint 10's no-useless-assignment
+      // says so.)
     }
     if (needsSetup) throw redirect({ to: "/setup" })
   },

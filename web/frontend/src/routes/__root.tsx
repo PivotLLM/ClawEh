@@ -1,21 +1,5 @@
-import { Outlet, createRootRoute } from "@tanstack/react-router"
-import { TanStackRouterDevtools } from "@tanstack/react-router-devtools"
-import { useEffect } from "react"
+import { createRootRoute } from "@tanstack/react-router"
 
-import { AppLayout } from "@/components/app-layout"
-import { initializeChatStore } from "@/lib/claw-chat-controller"
-
-const RootLayout = () => {
-  useEffect(() => {
-    initializeChatStore()
-  }, [])
-
-  return (
-    <AppLayout>
-      <Outlet />
-      <TanStackRouterDevtools />
-    </AppLayout>
-  )
-}
+import { RootLayout } from "@/components/root-layout"
 
 export const Route = createRootRoute({ component: RootLayout })

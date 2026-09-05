@@ -1,5 +1,6 @@
 import { IconLoader2, IconPlus, IconTrash } from "@tabler/icons-react"
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { useEffect, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 
@@ -181,7 +182,11 @@ function DaemonCard({
           <div className="border-border/40 flex justify-end gap-2 border-t pt-4">
             {isNew ? (
               <>
-                <Button variant="outline" onClick={onCollapse} disabled={saving}>
+                <Button
+                  variant="outline"
+                  onClick={onCollapse}
+                  disabled={saving}
+                >
                   {t("common.cancel")}
                 </Button>
                 <Button onClick={onSave} disabled={saving}>
@@ -203,8 +208,6 @@ function DaemonCard({
 
 export function SecMsgPage() {
   const { t } = useTranslation()
-  const [loading, setLoading] = useState(true)
-  const [fetchError, setFetchError] = useState("")
   const [daemons, setDaemons] = useState<DaemonConfig[]>([])
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null)
   // `saving` gates the explicit Add-daemon flow; `status` drives the auto-save hint.
@@ -213,28 +216,47 @@ export function SecMsgPage() {
   const [isAdding, setIsAdding] = useState(false)
   const [newDaemon, setNewDaemon] = useState<DaemonConfig>(newEmptyDaemon())
 
-  const daemonsRef = useRef<DaemonConfig[]>(daemons)
-  daemonsRef.current = daemons
   const saveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
-  const savedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const savedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
+  )
 
-  const loadData = useCallback(async () => {
-    setLoading(true)
-    try {
+  const queryClient = useQueryClient()
+
+  const {
+    data: fetched,
+    isPending: loading,
+    error: loadError,
+  } = useQuery({
+    queryKey: ["secmsg-daemons"],
+    queryFn: async () => {
       const appConfig = await getAppConfig()
       const channelsConfig = asRecord(asRecord(appConfig).channels)
-      setDaemons(asArray(channelsConfig["secmsg"]).map(asRecord))
-      setFetchError("")
-    } catch (e) {
-      setFetchError(e instanceof Error ? e.message : t("channels.loadError"))
-    } finally {
-      setLoading(false)
-    }
-  }, [t])
+      return asArray(channelsConfig["secmsg"]).map(asRecord)
+    },
+  })
 
-  useEffect(() => {
-    void loadData()
-  }, [loadData])
+  // Kept as a named refresh so the post-save call sites read unchanged; it now
+  // invalidates the cache instead of refetching by hand.
+  const loadData = async () => {
+    await queryClient.invalidateQueries({ queryKey: ["secmsg-daemons"] })
+  }
+
+  const fetchError = loadError
+    ? loadError instanceof Error
+      ? loadError.message
+      : t("channels.loadError")
+    : ""
+
+  // Seed the editable list when a fetch lands. Adjusted during render rather
+  // than in an effect so the list is never painted empty for a frame, and it
+  // fires only when a genuinely new fetch result arrives — never clobbering
+  // edits made since.
+  const [syncedFetch, setSyncedFetch] = useState(fetched)
+  if (fetched && fetched !== syncedFetch) {
+    setSyncedFetch(fetched)
+    setDaemons(fetched)
+  }
 
   // Clear pending timers on unmount.
   useEffect(
@@ -278,8 +300,23 @@ export function SecMsgPage() {
     }
   }
 
+  // Both refs exist because the debounce fires long after the handler that
+  // scheduled it: the timer must run the newest saver against the newest
+  // daemons, and the handler calls setDaemons() immediately before scheduleSave(),
+  // so the daemons value in that closure is still the previous one. Reading
+  // through refs at fire time is what makes the save use what the user actually
+  // typed.
+  //
+  // The writes happen in an effect rather than during render. A render-phase
+  // ref write is a side effect in render — unsafe under concurrent rendering,
+  // and what react-hooks/refs flags. The effect runs after paint, hundreds of
+  // milliseconds before the 600 ms debounce fires, so the values are current.
+  const daemonsRef = useRef<DaemonConfig[]>(daemons)
   const saveDaemonsRef = useRef(saveDaemons)
-  saveDaemonsRef.current = saveDaemons
+  useEffect(() => {
+    daemonsRef.current = daemons
+    saveDaemonsRef.current = saveDaemons
+  })
 
   const scheduleSave = () => {
     clearTimeout(saveTimer.current)
@@ -312,7 +349,9 @@ export function SecMsgPage() {
   }
 
   const handleAdd = async () => {
-    if (await persist([...daemons, newDaemon], t("channels.page.saveSuccess"))) {
+    if (
+      await persist([...daemons, newDaemon], t("channels.page.saveSuccess"))
+    ) {
       setIsAdding(false)
       setNewDaemon(newEmptyDaemon())
     }

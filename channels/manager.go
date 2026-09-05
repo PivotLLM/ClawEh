@@ -1,0 +1,1194 @@
+// ClawEh - Personal AI Assistant
+// Inspired by and based on nanobot: https://github.com/HKUDS/nanobot
+// License: MIT
+//
+// Copyright (c) 2026 PicoClaw contributors
+
+package channels
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"math"
+	"net/http"
+	"strings"
+	"sync"
+	"time"
+
+	"golang.org/x/time/rate"
+
+	"github.com/PivotLLM/ClawEh/bus"
+	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/constants"
+	"github.com/PivotLLM/ClawEh/health"
+	"github.com/PivotLLM/ClawEh/logger"
+	"github.com/PivotLLM/ClawEh/media"
+)
+
+const (
+	defaultChannelQueueSize = 16
+	defaultRateLimit        = 10 // default 10 msg/s
+	maxRetries              = 3
+	rateLimitDelay          = 1 * time.Second
+	baseBackoff             = 500 * time.Millisecond
+	maxBackoff              = 8 * time.Second
+
+	janitorInterval = 10 * time.Second
+	typingStopTTL   = 5 * time.Minute
+	placeholderTTL  = 10 * time.Minute
+
+	// Channel start retry constants
+	startRetryBase     = 5 * time.Second
+	startRetryMax      = 5 * time.Minute
+	startRetryMaxCount = 10
+)
+
+// typingEntry wraps a typing stop function with a creation timestamp for TTL eviction.
+type typingEntry struct {
+	stop      func()
+	createdAt time.Time
+}
+
+// reactionEntry wraps a reaction undo function with a creation timestamp for TTL eviction.
+type reactionEntry struct {
+	undo      func()
+	createdAt time.Time
+}
+
+// placeholderEntry wraps a placeholder ID with a creation timestamp for TTL eviction.
+type placeholderEntry struct {
+	id        string
+	createdAt time.Time
+}
+
+// channelRateConfig maps channel name to per-second rate limit.
+var channelRateConfig = map[string]float64{
+	"telegram": 20,
+	"discord":  1,
+	"slack":    1,
+	"matrix":   2,
+	"line":     10,
+}
+
+type channelWorker struct {
+	ch         Channel
+	queue      chan bus.OutboundMessage
+	mediaQueue chan bus.OutboundMediaMessage
+	done       chan struct{}
+	mediaDone  chan struct{}
+	limiter    *rate.Limiter
+}
+
+type Manager struct {
+	channels      map[string]Channel
+	workers       map[string]*channelWorker
+	bus           *bus.MessageBus
+	config        *config.Config
+	mediaStore    media.MediaStore
+	dispatchTask  *asyncTask
+	mu            sync.RWMutex
+	placeholders  sync.Map // "channel:chatID" → placeholderID (string)
+	typingStops   sync.Map // "channel:chatID" → func()
+	reactionUndos sync.Map // "channel:chatID" → reactionEntry
+}
+
+// stopAllTimeout bounds how long StopAll will wait for channels to stop.
+// It is a var so tests can override it.
+var stopAllTimeout = 15 * time.Second
+
+type asyncTask struct {
+	cancel context.CancelFunc
+}
+
+// RecordPlaceholder registers a placeholder message for later editing.
+// Implements PlaceholderRecorder.
+func (m *Manager) RecordPlaceholder(channel, chatID, placeholderID string) {
+	key := channel + ":" + chatID
+	m.placeholders.Store(key, placeholderEntry{id: placeholderID, createdAt: time.Now()})
+}
+
+// UpdatePlaceholder edits the active placeholder for channel/chatID in place to
+// show progress on a long-running turn. Unlike preSend it does NOT consume the
+// placeholder (the final reply still edits it) and does NOT stop typing. It is a
+// no-op when there is no recorded placeholder or the channel cannot edit
+// messages. Returns true when the placeholder was updated.
+func (m *Manager) UpdatePlaceholder(ctx context.Context, channel, chatID, text string) bool {
+	key := channel + ":" + chatID
+	v, ok := m.placeholders.Load(key)
+	if !ok {
+		return false
+	}
+	entry, ok := v.(placeholderEntry)
+	if !ok || entry.id == "" {
+		return false
+	}
+	m.mu.RLock()
+	ch, ok := m.channels[channel]
+	m.mu.RUnlock()
+	if !ok {
+		return false
+	}
+	editor, ok := ch.(MessageEditor)
+	if !ok {
+		return false
+	}
+	if err := editor.EditMessage(ctx, chatID, entry.id, text); err != nil {
+		return false
+	}
+	return true
+}
+
+// SendPlaceholder sends a "Thinking…" placeholder for the given channel/chatID
+// and records it for later editing. Returns true if a placeholder was sent.
+func (m *Manager) SendPlaceholder(ctx context.Context, channel, chatID string) bool {
+	m.mu.RLock()
+	ch, ok := m.channels[channel]
+	m.mu.RUnlock()
+	if !ok {
+		return false
+	}
+	pc, ok := ch.(PlaceholderCapable)
+	if !ok {
+		return false
+	}
+	phID, err := pc.SendPlaceholder(ctx, chatID)
+	if err != nil || phID == "" {
+		return false
+	}
+	m.RecordPlaceholder(channel, chatID, phID)
+	return true
+}
+
+// RecordTypingStop registers a typing stop function for later invocation.
+// Implements PlaceholderRecorder.
+func (m *Manager) RecordTypingStop(channel, chatID string, stop func()) {
+	key := channel + ":" + chatID
+	entry := typingEntry{stop: stop, createdAt: time.Now()}
+	if previous, loaded := m.typingStops.Swap(key, entry); loaded {
+		if oldEntry, ok := previous.(typingEntry); ok && oldEntry.stop != nil {
+			oldEntry.stop()
+		}
+	}
+}
+
+// StopTyping ends the typing indicator for a channel/chatID without sending a
+// message. Normally typing is stopped in preSend when an outbound reply is sent,
+// but a turn that produces no reply (e.g. an empty model response) must still
+// clear the indicator so the user is not left waiting. Idempotent and a no-op
+// when no typing indicator is active.
+func (m *Manager) StopTyping(channel, chatID string) {
+	key := channel + ":" + chatID
+	if v, loaded := m.typingStops.LoadAndDelete(key); loaded {
+		if entry, ok := v.(typingEntry); ok && entry.stop != nil {
+			entry.stop()
+		}
+	}
+}
+
+// SupportsStreaming reports whether the named channel's owner implements
+// StreamCapable. The agent loop uses this to decide whether to install the
+// per-delta streaming callback for a turn; false means the channel is streamed
+// nothing and behaves exactly as before.
+func (m *Manager) SupportsStreaming(channel string) bool {
+	m.mu.RLock()
+	ch, ok := m.channels[channel]
+	m.mu.RUnlock()
+	if !ok {
+		return false
+	}
+	_, ok = ch.(StreamCapable)
+	return ok
+}
+
+// StreamDelta forwards a coalesced partial-assistant-text delta to the named
+// channel if its owner implements StreamCapable; a no-op otherwise. Errors are
+// swallowed: streaming is best-effort progress and the terminal reply (Send)
+// remains authoritative.
+func (m *Manager) StreamDelta(channel, chatID, delta string) {
+	m.mu.RLock()
+	ch, ok := m.channels[channel]
+	m.mu.RUnlock()
+	if !ok {
+		return
+	}
+	sc, ok := ch.(StreamCapable)
+	if !ok {
+		return
+	}
+	_ = sc.StreamDelta(context.Background(), chatID, delta)
+}
+
+// RecordReactionUndo registers a reaction undo function for later invocation.
+// Implements PlaceholderRecorder.
+func (m *Manager) RecordReactionUndo(channel, chatID, messageID string, undo func()) {
+	key := channel + ":" + chatID + ":" + messageID
+	m.reactionUndos.Store(key, reactionEntry{undo: undo, createdAt: time.Now()})
+}
+
+// preSend handles typing stop, reaction undo, and placeholder editing before sending a message.
+// Returns true if the message was edited into a placeholder (skip Send).
+func (m *Manager) preSend(ctx context.Context, name string, msg bus.OutboundMessage, ch Channel) bool {
+	key := name + ":" + msg.ChatID
+
+	// 1. Stop typing
+	if v, loaded := m.typingStops.LoadAndDelete(key); loaded {
+		if entry, ok := v.(typingEntry); ok {
+			entry.stop() // idempotent, safe
+		}
+	}
+
+	// 2. Undo reaction
+	undoKey := name + ":" + msg.ChatID + ":" + msg.OriginalMessageID
+	if v, loaded := m.reactionUndos.LoadAndDelete(undoKey); loaded {
+		if entry, ok := v.(reactionEntry); ok {
+			entry.undo() // idempotent, safe
+		}
+	}
+
+	// 3. Try editing placeholder
+	if v, loaded := m.placeholders.LoadAndDelete(key); loaded {
+		if entry, ok := v.(placeholderEntry); ok && entry.id != "" {
+			if editor, ok := ch.(MessageEditor); ok {
+				if err := editor.EditMessage(ctx, msg.ChatID, entry.id, msg.Content); err == nil {
+					return true // edited successfully, skip Send
+				}
+				// edit failed → fall through to normal Send
+			}
+		}
+	}
+
+	return false
+}
+
+func NewManager(cfg *config.Config, messageBus *bus.MessageBus, store media.MediaStore) (*Manager, error) {
+	m := &Manager{
+		channels:   make(map[string]Channel),
+		workers:    make(map[string]*channelWorker),
+		bus:        messageBus,
+		config:     cfg,
+		mediaStore: store,
+	}
+
+	if err := m.initChannels(); err != nil {
+		return nil, err
+	}
+
+	return m, nil
+}
+
+// injectChannelDependencies injects optional dependencies (MediaStore, PlaceholderRecorder,
+// Owner) into a channel if it implements the corresponding setter interfaces.
+func (m *Manager) injectChannelDependencies(ch Channel) {
+	if m.mediaStore != nil {
+		if setter, ok := ch.(interface{ SetMediaStore(s media.MediaStore) }); ok {
+			setter.SetMediaStore(m.mediaStore)
+		}
+	}
+	if setter, ok := ch.(interface{ SetPlaceholderRecorder(r PlaceholderRecorder) }); ok {
+		setter.SetPlaceholderRecorder(m)
+	}
+	if setter, ok := ch.(interface{ SetOwner(ch Channel) }); ok {
+		setter.SetOwner(ch)
+	}
+}
+
+// initChannel is a helper that looks up a factory by name and creates the channel.
+func (m *Manager) initChannel(name, displayName string) {
+	f, ok := getFactory(name)
+	if !ok {
+		logger.WarnCF("channels", "Factory not registered", map[string]any{
+			"channel": displayName,
+		})
+		return
+	}
+	logger.DebugCF("channels", "Attempting to initialize channel", map[string]any{
+		"channel": displayName,
+	})
+	ch, err := f(m.config, m.bus)
+	if err != nil {
+		logger.ErrorCF("channels", "Failed to initialize channel", map[string]any{
+			"channel": displayName,
+			"error":   err.Error(),
+		})
+	} else {
+		m.injectChannelDependencies(ch)
+		m.channels[name] = ch
+		logger.InfoCF("channels", "Channel enabled successfully", map[string]any{
+			"channel": displayName,
+		})
+	}
+}
+
+// initTelegramBot initializes a single named Telegram bot and registers it as a channel.
+func (m *Manager) initTelegramBot(bot config.TelegramBotConfig) {
+	channelName := bot.ChannelName()
+	displayName := "Telegram"
+	if bot.ID != "" && bot.ID != "default" {
+		displayName = "Telegram (" + bot.ID + ")"
+	}
+
+	logger.DebugCF("channels", "Attempting to initialize channel", map[string]any{
+		"channel": displayName,
+	})
+
+	f, ok := getTelegramBotFactory()
+	if !ok {
+		logger.WarnCF("channels", "Telegram bot factory not registered", map[string]any{
+			"channel": displayName,
+		})
+		return
+	}
+
+	ch, err := f(bot, m.bus)
+	if err != nil {
+		logger.ErrorCF("channels", "Failed to initialize channel", map[string]any{
+			"channel": displayName,
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	m.injectChannelDependencies(ch)
+
+	if _, exists := m.channels[channelName]; exists {
+		logger.ErrorCF("channels", "Duplicate channel name — skipping bot", map[string]any{
+			"channel": displayName,
+			"name":    channelName,
+		})
+		return
+	}
+	m.channels[channelName] = ch
+	logger.InfoCF("channels", "Channel enabled successfully", map[string]any{
+		"channel": displayName,
+	})
+}
+
+// initSecMsg initializes each account on a secure-messaging daemon as its own
+// channel. When the daemon config pins no accounts, ClawEh discovers the daemon's
+// linked accounts and binds one channel per account, each inheriting the
+// daemon-level allow_from / group_trigger defaults.
+func (m *Manager) initSecMsg(cfg config.SecMsgConfig) {
+	f, ok := getSecMsgFactory()
+	if !ok {
+		logger.WarnCF("channels", "SecMsg factory not registered", map[string]any{
+			"channel": "SecMsg (" + cfg.Name + ")",
+		})
+		return
+	}
+
+	accounts := m.resolveSecMsgAccounts(cfg)
+
+	for _, account := range accounts {
+		channelName := account.ChannelName(cfg)
+		displayName := "SecMsg (" + channelName + ")"
+
+		warnEmptyAllowFrom(displayName, account.AllowFrom)
+
+		ch, err := f(cfg, account, m.bus)
+		if err != nil {
+			logger.ErrorCF("channels", "Failed to initialize channel", map[string]any{
+				"channel": displayName,
+				"error":   err.Error(),
+			})
+			continue
+		}
+
+		m.injectChannelDependencies(ch)
+
+		if _, exists := m.channels[channelName]; exists {
+			logger.ErrorCF("channels", "Duplicate channel name — skipping account", map[string]any{
+				"channel": displayName,
+				"name":    channelName,
+			})
+			continue
+		}
+		m.channels[channelName] = ch
+		logger.InfoCF("channels", "Channel enabled successfully", map[string]any{
+			"channel": displayName,
+		})
+	}
+}
+
+// resolveSecMsgAccounts returns the accounts to bind for a daemon, applying
+// daemon-level defaults. Pinned accounts are honored as-is; otherwise ClawEh
+// discovers the daemon's linked accounts. A discovery failure (daemon down)
+// binds nothing — the accounts are picked up on the next reload once reachable.
+func (m *Manager) resolveSecMsgAccounts(cfg config.SecMsgConfig) []config.SecMsgAccountConfig {
+	if len(cfg.Accounts) > 0 {
+		out := make([]config.SecMsgAccountConfig, len(cfg.Accounts))
+		for i, a := range cfg.Accounts {
+			out[i] = cfg.WithDefaults(a)
+		}
+		return out
+	}
+
+	discover, ok := getSecMsgDiscovery()
+	if !ok {
+		// No discovery registered: fall back to a single auto-selecting channel.
+		return []config.SecMsgAccountConfig{cfg.WithDefaults(config.SecMsgAccountConfig{})}
+	}
+
+	ids, err := discover(context.Background(), cfg.Address)
+	if err != nil {
+		logger.WarnCF("channels", "SecMsg account discovery failed — binding no accounts (will retry on reload)", map[string]any{
+			"channel": "SecMsg (" + cfg.Name + ")",
+			"address": cfg.Address,
+			"error":   err.Error(),
+		})
+		return nil
+	}
+	if len(ids) == 0 {
+		logger.WarnCF("channels", "SecMsg daemon has no linked accounts — link one via the WebUI", map[string]any{
+			"channel": "SecMsg (" + cfg.Name + ")",
+			"address": cfg.Address,
+		})
+		return nil
+	}
+
+	out := make([]config.SecMsgAccountConfig, len(ids))
+	for i, id := range ids {
+		out[i] = cfg.WithDefaults(config.SecMsgAccountConfig{Account: id})
+	}
+	logger.InfoCF("channels", "SecMsg accounts discovered", map[string]any{
+		"channel":  "SecMsg (" + cfg.Name + ")",
+		"address":  cfg.Address,
+		"accounts": ids,
+	})
+	return out
+}
+
+// warnEmptyAllowFrom logs a warning when a channel is enabled with an empty allow_from list.
+// An empty list now means nobody is allowed — this is almost certainly a misconfiguration.
+func warnEmptyAllowFrom(displayName string, allowFrom []string) {
+	if len(allowFrom) == 0 {
+		logger.WarnCF("channels", "Channel enabled with empty allow_from — nobody will be able to connect. Add user IDs or \"*\" to allow all.",
+			map[string]any{"channel": displayName})
+	}
+}
+
+func (m *Manager) initChannels() error {
+	logger.InfoC("channels", "Initializing channel manager")
+
+	for _, bot := range m.config.Channels.Telegram {
+		if bot.Enabled && bot.Token != "" {
+			warnEmptyAllowFrom("Telegram ("+bot.ID+")", bot.AllowFrom)
+			m.initTelegramBot(bot)
+		}
+	}
+
+	for _, sm := range m.config.Channels.SecMsg {
+		if sm.Enabled && sm.Address != "" {
+			m.initSecMsg(sm)
+		}
+	}
+
+	if m.config.Channels.Discord.Enabled && m.config.Channels.Discord.Token != "" {
+		warnEmptyAllowFrom("Discord", m.config.Channels.Discord.AllowFrom)
+		m.initChannel("discord", "Discord")
+	}
+
+	if m.config.Channels.Slack.Enabled && m.config.Channels.Slack.BotToken != "" {
+		warnEmptyAllowFrom("Slack", m.config.Channels.Slack.AllowFrom)
+		m.initChannel("slack", "Slack")
+	}
+
+	if m.config.Channels.Matrix.Enabled &&
+		m.config.Channels.Matrix.Homeserver != "" &&
+		m.config.Channels.Matrix.UserID != "" &&
+		m.config.Channels.Matrix.AccessToken != "" {
+		warnEmptyAllowFrom("Matrix", m.config.Channels.Matrix.AllowFrom)
+		m.initChannel("matrix", "Matrix")
+	}
+
+	if m.config.Channels.LINE.Enabled && m.config.Channels.LINE.ChannelAccessToken != "" {
+		warnEmptyAllowFrom("LINE", m.config.Channels.LINE.AllowFrom)
+		m.initChannel("line", "LINE")
+	}
+
+	if m.config.Channels.WebUI.Enabled && m.config.Channels.WebUI.Token != "" {
+		warnEmptyAllowFrom("WebUI", m.config.Channels.WebUI.AllowFrom)
+		m.initChannel("webui", "WebUI")
+	}
+
+	if m.config.Channels.Device.Enabled {
+		warnEmptyAllowFrom("Device", m.config.Channels.Device.AllowFrom)
+		m.initChannel("device", "Device Gateway")
+	}
+
+	logger.InfoCF("channels", "Channel initialization completed", map[string]any{
+		"enabled_channels": len(m.channels),
+	})
+
+	return nil
+}
+
+// RegisterHandlers registers channel webhook handlers, channel health
+// endpoints, and the supplied health.Server's /health and /ready endpoints on
+// the given mux. The Manager does NOT own the listener: the gateway-level
+// httpHost owns the listener and swaps mux instances across config reloads, so
+// in-flight WebUI WebSocket connections and other long-lived HTTP traffic
+// survive a Manager rebuild.
+func (m *Manager) RegisterHandlers(mux *http.ServeMux, healthServer *health.Server) {
+	if healthServer != nil {
+		healthServer.RegisterOnMux(mux)
+	}
+
+	for name, ch := range m.channels {
+		if wh, ok := ch.(WebhookHandler); ok {
+			mux.Handle(wh.WebhookPath(), wh)
+			logger.InfoCF("channels", "Webhook handler registered", map[string]any{
+				"channel": name,
+				"path":    wh.WebhookPath(),
+			})
+		}
+		if hc, ok := ch.(HealthChecker); ok {
+			mux.HandleFunc(hc.HealthPath(), hc.HealthHandler)
+			logger.InfoCF("channels", "Health endpoint registered", map[string]any{
+				"channel": name,
+				"path":    hc.HealthPath(),
+			})
+		}
+	}
+}
+
+func (m *Manager) StartAll(ctx context.Context) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if len(m.channels) == 0 {
+		logger.WarnC("channels", "No channels enabled")
+		return errors.New("no channels enabled")
+	}
+
+	logger.InfoC("channels", "Starting all channels")
+
+	dispatchCtx, cancel := context.WithCancel(ctx)
+	m.dispatchTask = &asyncTask{cancel: cancel}
+
+	for name, channel := range m.channels {
+		logger.InfoCF("channels", "Starting channel", map[string]any{
+			"channel": name,
+		})
+		if err := channel.Start(ctx); err != nil {
+			logger.ErrorCF("channels", "Failed to start channel — will retry in background", map[string]any{
+				"channel": name,
+				"error":   err.Error(),
+			})
+			go m.retryChannelStart(dispatchCtx, name, channel)
+			continue
+		}
+		// Lazily create worker only after channel starts successfully
+		w := newChannelWorker(name, channel)
+		m.workers[name] = w
+		go m.runWorker(dispatchCtx, name, w)
+		go m.runMediaWorker(dispatchCtx, name, w)
+	}
+
+	// Start the dispatcher that reads from the bus and routes to workers
+	go m.dispatchOutbound(dispatchCtx)
+	go m.dispatchOutboundMedia(dispatchCtx)
+
+	// Start the TTL janitor that cleans up stale typing/placeholder entries
+	go m.runTTLJanitor(dispatchCtx)
+
+	logger.InfoC("channels", "All channels started")
+	return nil
+}
+
+// retryChannelStart retries channel.Start in the background using exponential backoff.
+// On success it creates a worker and starts runWorker/runMediaWorker goroutines.
+// dispatchCtx must be the cancellable context created in StartAll.
+func (m *Manager) retryChannelStart(dispatchCtx context.Context, name string, channel Channel) {
+	backoff := startRetryBase
+	for attempt := 1; attempt <= startRetryMaxCount; attempt++ {
+		select {
+		case <-dispatchCtx.Done():
+			return
+		case <-time.After(backoff):
+		}
+
+		logger.InfoCF("channels", "Retrying channel start", map[string]any{
+			"channel": name,
+			"attempt": attempt,
+		})
+
+		if err := channel.Start(dispatchCtx); err != nil {
+			logger.WarnCF("channels", "Channel start retry failed", map[string]any{
+				"channel": name,
+				"attempt": attempt,
+				"error":   err.Error(),
+			})
+			if attempt == startRetryMaxCount {
+				logger.ErrorCF("channels", "Channel permanently failed to start after max retries", map[string]any{
+					"channel": name,
+					"retries": startRetryMaxCount,
+				})
+				return
+			}
+			backoff *= 2
+			if backoff > startRetryMax {
+				backoff = startRetryMax
+			}
+			continue
+		}
+
+		// Channel started — create and register the worker.
+		w := newChannelWorker(name, channel)
+		m.mu.Lock()
+		m.workers[name] = w
+		m.mu.Unlock()
+
+		go m.runWorker(dispatchCtx, name, w)
+		go m.runMediaWorker(dispatchCtx, name, w)
+
+		logger.InfoCF("channels", "Channel started successfully after retry", map[string]any{
+			"channel": name,
+			"attempt": attempt,
+		})
+		return
+	}
+}
+
+func (m *Manager) StopAll(ctx context.Context) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	logger.InfoC("channels", "Stopping all channels")
+
+	// Cancel dispatcher
+	if m.dispatchTask != nil {
+		m.dispatchTask.cancel()
+		m.dispatchTask = nil
+	}
+
+	// Close all worker queues and wait for them to drain
+	for _, w := range m.workers {
+		if w != nil {
+			close(w.queue)
+		}
+	}
+	for _, w := range m.workers {
+		if w != nil {
+			<-w.done
+		}
+	}
+	// Close all media worker queues and wait for them to drain
+	for _, w := range m.workers {
+		if w != nil {
+			close(w.mediaQueue)
+		}
+	}
+	for _, w := range m.workers {
+		if w != nil {
+			<-w.mediaDone
+		}
+	}
+
+	// Stop all channels in parallel under a single deadline. Telegram's Stop
+	// can block up to its pollExitTimeout; running stops sequentially would
+	// make total elapsed time the sum of every channel's worst case, which
+	// stalls config reloads (see investigation 7a5377d9).
+	stopCtx, cancel := context.WithTimeout(ctx, stopAllTimeout)
+	defer cancel()
+
+	var wg sync.WaitGroup
+	var errMu sync.Mutex
+	var stopErrs []error
+	for name, channel := range m.channels {
+		wg.Add(1)
+		go func(name string, channel Channel) {
+			defer wg.Done()
+			logger.InfoCF("channels", "Stopping channel", map[string]any{
+				"channel": name,
+			})
+			if err := channel.Stop(stopCtx); err != nil {
+				logger.ErrorCF("channels", "Error stopping channel", map[string]any{
+					"channel": name,
+					"error":   err.Error(),
+				})
+				errMu.Lock()
+				stopErrs = append(stopErrs, fmt.Errorf("%s: %w", name, err))
+				errMu.Unlock()
+			}
+		}(name, channel)
+	}
+	wg.Wait()
+
+	logger.InfoC("channels", "All channels stopped")
+	if len(stopErrs) > 0 {
+		return errors.Join(stopErrs...)
+	}
+	return nil
+}
+
+// newChannelWorker creates a channelWorker with a rate limiter configured
+// for the given channel name.
+func newChannelWorker(name string, ch Channel) *channelWorker {
+	rateVal := float64(defaultRateLimit)
+	if r, ok := channelRateConfig[name]; ok {
+		rateVal = r
+	} else {
+		// Named channel variants (e.g. "telegram-amber") inherit the base channel's rate.
+		for prefix, r := range channelRateConfig {
+			if strings.HasPrefix(name, prefix+"-") {
+				rateVal = r
+				break
+			}
+		}
+	}
+	burst := int(math.Max(1, math.Ceil(rateVal/2)))
+
+	return &channelWorker{
+		ch:         ch,
+		queue:      make(chan bus.OutboundMessage, defaultChannelQueueSize),
+		mediaQueue: make(chan bus.OutboundMediaMessage, defaultChannelQueueSize),
+		done:       make(chan struct{}),
+		mediaDone:  make(chan struct{}),
+		limiter:    rate.NewLimiter(rate.Limit(rateVal), burst),
+	}
+}
+
+// runWorker processes outbound messages for a single channel, splitting
+// messages that exceed the channel's maximum message length.
+func (m *Manager) runWorker(ctx context.Context, name string, w *channelWorker) {
+	defer close(w.done)
+	for {
+		select {
+		case msg, ok := <-w.queue:
+			if !ok {
+				return
+			}
+			maxLen := 0
+			if mlp, ok := w.ch.(MessageLengthProvider); ok {
+				maxLen = mlp.MaxMessageLength()
+			}
+			if maxLen > 0 && len([]rune(msg.Content)) > maxLen {
+				chunks := SplitMessage(msg.Content, maxLen)
+				for _, chunk := range chunks {
+					chunkMsg := msg
+					chunkMsg.Content = chunk
+					m.sendWithRetry(ctx, name, w, chunkMsg)
+				}
+			} else {
+				m.sendWithRetry(ctx, name, w, msg)
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// sendWithRetry sends a message through the channel with rate limiting and
+// retry logic. It classifies errors to determine the retry strategy:
+//   - ErrNotRunning / ErrSendFailed: permanent, no retry
+//   - ErrRateLimit: fixed delay retry
+//   - ErrTemporary / unknown: exponential backoff retry
+func (m *Manager) sendWithRetry(ctx context.Context, name string, w *channelWorker, msg bus.OutboundMessage) {
+	// Rate limit: wait for token
+	if err := w.limiter.Wait(ctx); err != nil {
+		// ctx canceled, shutting down
+		return
+	}
+
+	// Pre-send: stop typing and try to edit placeholder
+	if m.preSend(ctx, name, msg, w.ch) {
+		return // placeholder was edited successfully, skip Send
+	}
+
+	var lastErr error
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		lastErr = w.ch.Send(ctx, msg)
+		if lastErr == nil {
+			return
+		}
+
+		// Permanent failures — don't retry
+		if errors.Is(lastErr, ErrNotRunning) || errors.Is(lastErr, ErrSendFailed) ||
+			errors.Is(lastErr, ErrReceiveOnly) {
+			break
+		}
+
+		// Last attempt exhausted — don't sleep
+		if attempt == maxRetries {
+			break
+		}
+
+		// Rate limit error — fixed delay
+		if errors.Is(lastErr, ErrRateLimit) {
+			select {
+			case <-time.After(rateLimitDelay):
+				continue
+			case <-ctx.Done():
+				return
+			}
+		}
+
+		// ErrTemporary or unknown error — exponential backoff
+		backoff := min(time.Duration(float64(baseBackoff)*math.Pow(2, float64(attempt))), maxBackoff)
+		select {
+		case <-time.After(backoff):
+		case <-ctx.Done():
+			return
+		}
+	}
+
+	// Receive-only rejection is an expected operator choice, not a fault — log it
+	// at INFO so it doesn't read as an error.
+	if errors.Is(lastErr, ErrReceiveOnly) {
+		logger.InfoCF("channels", "Reply suppressed: recipient account is receive-only", map[string]any{
+			"channel": name,
+			"chat_id": msg.ChatID,
+			"detail":  lastErr.Error(),
+		})
+		return
+	}
+
+	// All retries exhausted or permanent failure
+	logger.ErrorCF("channels", "Send failed", map[string]any{
+		"channel": name,
+		"chat_id": msg.ChatID,
+		"error":   lastErr.Error(),
+		"retries": maxRetries,
+	})
+}
+
+func dispatchLoop[M any](
+	ctx context.Context,
+	m *Manager,
+	subscribe func(context.Context) (M, bool),
+	getChannel func(M) string,
+	enqueue func(context.Context, *channelWorker, M) bool,
+	startMsg, stopMsg, unknownMsg, noWorkerMsg string,
+) {
+	logger.InfoC("channels", startMsg)
+
+	for {
+		msg, ok := subscribe(ctx)
+		if !ok {
+			logger.InfoC("channels", stopMsg)
+			return
+		}
+
+		channel := getChannel(msg)
+
+		// Silently skip internal channels
+		if constants.IsInternalChannel(channel) {
+			continue
+		}
+
+		m.mu.RLock()
+		_, exists := m.channels[channel]
+		w, wExists := m.workers[channel]
+		m.mu.RUnlock()
+
+		if !exists {
+			logger.WarnCF("channels", unknownMsg, map[string]any{"channel": channel})
+			continue
+		}
+
+		if wExists && w != nil {
+			if !enqueue(ctx, w, msg) {
+				return
+			}
+		} else if exists {
+			logger.WarnCF("channels", noWorkerMsg, map[string]any{"channel": channel})
+		}
+	}
+}
+
+func (m *Manager) dispatchOutbound(ctx context.Context) {
+	dispatchLoop(
+		ctx, m,
+		m.bus.SubscribeOutbound,
+		func(msg bus.OutboundMessage) string { return msg.Channel },
+		func(ctx context.Context, w *channelWorker, msg bus.OutboundMessage) bool {
+			select {
+			case w.queue <- msg:
+				return true
+			case <-ctx.Done():
+				return false
+			}
+		},
+		"Outbound dispatcher started",
+		"Outbound dispatcher stopped",
+		"Unknown channel for outbound message",
+		"Channel has no active worker, skipping message",
+	)
+}
+
+func (m *Manager) dispatchOutboundMedia(ctx context.Context) {
+	dispatchLoop(
+		ctx, m,
+		m.bus.SubscribeOutboundMedia,
+		func(msg bus.OutboundMediaMessage) string { return msg.Channel },
+		func(ctx context.Context, w *channelWorker, msg bus.OutboundMediaMessage) bool {
+			select {
+			case w.mediaQueue <- msg:
+				return true
+			case <-ctx.Done():
+				return false
+			}
+		},
+		"Outbound media dispatcher started",
+		"Outbound media dispatcher stopped",
+		"Unknown channel for outbound media message",
+		"Channel has no active worker, skipping media message",
+	)
+}
+
+// runMediaWorker processes outbound media messages for a single channel.
+func (m *Manager) runMediaWorker(ctx context.Context, name string, w *channelWorker) {
+	defer close(w.mediaDone)
+	for {
+		select {
+		case msg, ok := <-w.mediaQueue:
+			if !ok {
+				return
+			}
+			m.sendMediaWithRetry(ctx, name, w, msg)
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// sendMediaWithRetry sends a media message through the channel with rate limiting and
+// retry logic. If the channel does not implement MediaSender, it silently skips.
+func (m *Manager) sendMediaWithRetry(ctx context.Context, name string, w *channelWorker, msg bus.OutboundMediaMessage) {
+	ms, ok := w.ch.(MediaSender)
+	if !ok {
+		logger.DebugCF("channels", "Channel does not support MediaSender, skipping media", map[string]any{
+			"channel": name,
+		})
+		return
+	}
+
+	// Rate limit: wait for token
+	if err := w.limiter.Wait(ctx); err != nil {
+		return
+	}
+
+	var lastErr error
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		lastErr = ms.SendMedia(ctx, msg)
+		if lastErr == nil {
+			return
+		}
+
+		// Permanent failures — don't retry
+		if errors.Is(lastErr, ErrNotRunning) || errors.Is(lastErr, ErrSendFailed) ||
+			errors.Is(lastErr, ErrReceiveOnly) {
+			break
+		}
+
+		// Last attempt exhausted — don't sleep
+		if attempt == maxRetries {
+			break
+		}
+
+		// Rate limit error — fixed delay
+		if errors.Is(lastErr, ErrRateLimit) {
+			select {
+			case <-time.After(rateLimitDelay):
+				continue
+			case <-ctx.Done():
+				return
+			}
+		}
+
+		// ErrTemporary or unknown error — exponential backoff
+		backoff := min(time.Duration(float64(baseBackoff)*math.Pow(2, float64(attempt))), maxBackoff)
+		select {
+		case <-time.After(backoff):
+		case <-ctx.Done():
+			return
+		}
+	}
+
+	// Receive-only rejection is an expected operator choice, not a fault — log it
+	// at INFO so it doesn't read as an error.
+	if errors.Is(lastErr, ErrReceiveOnly) {
+		logger.InfoCF("channels", "Reply suppressed: recipient account is receive-only", map[string]any{
+			"channel": name,
+			"chat_id": msg.ChatID,
+			"detail":  lastErr.Error(),
+		})
+		return
+	}
+
+	// All retries exhausted or permanent failure
+	logger.ErrorCF("channels", "SendMedia failed", map[string]any{
+		"channel": name,
+		"chat_id": msg.ChatID,
+		"error":   lastErr.Error(),
+		"retries": maxRetries,
+	})
+}
+
+// runTTLJanitor periodically scans the typingStops and placeholders maps
+// and evicts entries that have exceeded their TTL. This prevents memory
+// accumulation when outbound paths fail to trigger preSend (e.g. LLM errors).
+func (m *Manager) runTTLJanitor(ctx context.Context) {
+	ticker := time.NewTicker(janitorInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			m.typingStops.Range(func(key, value any) bool {
+				if entry, ok := value.(typingEntry); ok {
+					if now.Sub(entry.createdAt) > typingStopTTL {
+						if _, loaded := m.typingStops.LoadAndDelete(key); loaded {
+							entry.stop() // idempotent, safe
+						}
+					}
+				}
+				return true
+			})
+			m.reactionUndos.Range(func(key, value any) bool {
+				if entry, ok := value.(reactionEntry); ok {
+					if now.Sub(entry.createdAt) > typingStopTTL {
+						if _, loaded := m.reactionUndos.LoadAndDelete(key); loaded {
+							entry.undo() // idempotent, safe
+						}
+					}
+				}
+				return true
+			})
+			m.placeholders.Range(func(key, value any) bool {
+				if entry, ok := value.(placeholderEntry); ok {
+					if now.Sub(entry.createdAt) > placeholderTTL {
+						m.placeholders.Delete(key)
+					}
+				}
+				return true
+			})
+		}
+	}
+}
+
+func (m *Manager) GetChannel(name string) (Channel, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	channel, ok := m.channels[name]
+	return channel, ok
+}
+
+func (m *Manager) GetStatus() map[string]any {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	status := make(map[string]any)
+	for name, channel := range m.channels {
+		status[name] = map[string]any{
+			"enabled": true,
+			"running": channel.IsRunning(),
+		}
+	}
+	return status
+}
+
+func (m *Manager) GetEnabledChannels() []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	names := make([]string, 0, len(m.channels))
+	for name := range m.channels {
+		names = append(names, name)
+	}
+	return names
+}
+
+// Channel returns the enabled channel registered under name, if any. Used by the
+// gateway wiring to inject late dependencies into a specific channel.
+func (m *Manager) Channel(name string) (Channel, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	ch, ok := m.channels[name]
+	return ch, ok
+}
+
+func (m *Manager) RegisterChannel(name string, channel Channel) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.channels[name] = channel
+}
+
+func (m *Manager) UnregisterChannel(name string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if w, ok := m.workers[name]; ok && w != nil {
+		close(w.queue)
+		<-w.done
+		close(w.mediaQueue)
+		<-w.mediaDone
+	}
+	delete(m.workers, name)
+	delete(m.channels, name)
+}
+
+// SendMessage sends an outbound message synchronously through the channel
+// worker's rate limiter and retry logic. It blocks until the message is
+// delivered (or all retries are exhausted), which preserves ordering when
+// a subsequent operation depends on the message having been sent.
+func (m *Manager) SendMessage(ctx context.Context, msg bus.OutboundMessage) error {
+	m.mu.RLock()
+	_, exists := m.channels[msg.Channel]
+	w, wExists := m.workers[msg.Channel]
+	m.mu.RUnlock()
+
+	if !exists {
+		return fmt.Errorf("channel %s not found", msg.Channel)
+	}
+	if !wExists || w == nil {
+		return fmt.Errorf("channel %s has no active worker", msg.Channel)
+	}
+
+	maxLen := 0
+	if mlp, ok := w.ch.(MessageLengthProvider); ok {
+		maxLen = mlp.MaxMessageLength()
+	}
+	if maxLen > 0 && len([]rune(msg.Content)) > maxLen {
+		for _, chunk := range SplitMessage(msg.Content, maxLen) {
+			chunkMsg := msg
+			chunkMsg.Content = chunk
+			m.sendWithRetry(ctx, msg.Channel, w, chunkMsg)
+		}
+	} else {
+		m.sendWithRetry(ctx, msg.Channel, w, msg)
+	}
+	return nil
+}
+
+func (m *Manager) SendToChannel(ctx context.Context, channelName, chatID, content string) error {
+	m.mu.RLock()
+	_, exists := m.channels[channelName]
+	w, wExists := m.workers[channelName]
+	m.mu.RUnlock()
+
+	if !exists {
+		return fmt.Errorf("channel %s not found", channelName)
+	}
+
+	msg := bus.OutboundMessage{
+		Channel: channelName,
+		ChatID:  chatID,
+		Content: content,
+	}
+
+	if wExists && w != nil {
+		select {
+		case w.queue <- msg:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+
+	// Fallback: direct send (should not happen)
+	channel, _ := m.channels[channelName]
+	return channel.Send(ctx, msg)
+}

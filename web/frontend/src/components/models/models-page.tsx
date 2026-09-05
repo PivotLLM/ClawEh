@@ -1,8 +1,14 @@
 import { IconLoader2, IconPlus, IconStar } from "@tabler/icons-react"
-import { useCallback, useEffect, useState } from "react"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { useState } from "react"
 import { useTranslation } from "react-i18next"
 
-import { type ModelInfo, getModels, setDefaultModel, updateModel } from "@/api/models"
+import {
+  type ModelInfo,
+  getModels,
+  setDefaultModel,
+  updateModel,
+} from "@/api/models"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 
@@ -21,9 +27,7 @@ interface ProviderGroup {
 
 export function ModelsPage() {
   const { t } = useTranslation()
-  const [models, setModels] = useState<ModelInfo[]>([])
-  const [loading, setLoading] = useState(true)
-  const [fetchError, setFetchError] = useState("")
+  const queryClient = useQueryClient()
 
   const [editingModel, setEditingModel] = useState<ModelInfo | null>(null)
   const [deletingModel, setDeletingModel] = useState<ModelInfo | null>(null)
@@ -32,29 +36,33 @@ export function ModelsPage() {
     null,
   )
 
-  const fetchModels = useCallback(async () => {
-    try {
+  const {
+    data: models = [],
+    isPending: loading,
+    error,
+  } = useQuery({
+    queryKey: ["models"],
+    queryFn: async () => {
       const data = await getModels()
       // Sort by provider, then alphabetically by model name within each
       // provider. The provider groups are ordered alphabetically below; this
       // keeps each group's models in alphabetical order.
-      const sorted = [...data.models].sort((a, b) => {
+      return [...data.models].sort((a, b) => {
         const byProvider = (a.provider || "").localeCompare(b.provider || "")
         if (byProvider !== 0) return byProvider
         return a.model_name.localeCompare(b.model_name)
       })
-      setModels(sorted)
-      setFetchError("")
-    } catch (e) {
-      setFetchError(e instanceof Error ? e.message : t("models.loadError"))
-    } finally {
-      setLoading(false)
-    }
-  }, [t])
+    },
+  })
+  const fetchError = error
+    ? error instanceof Error
+      ? error.message
+      : t("models.loadError")
+    : ""
 
-  useEffect(() => {
-    fetchModels()
-  }, [fetchModels])
+  const fetchModels = async () => {
+    await queryClient.invalidateQueries({ queryKey: ["models"] })
+  }
 
   const handleToggleEnabled = async (model: ModelInfo) => {
     try {

@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/PivotLLM/ClawEh/pkg/config"
-	"github.com/PivotLLM/ClawEh/pkg/providers"
+	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/providers"
 )
 
 // registerSessionRoutes binds session list and detail endpoints to the ServeMux.
@@ -23,7 +23,7 @@ func (h *Handler) registerSessionRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/sessions/{id}", h.handleDeleteSession)
 }
 
-// sessionFile mirrors the on-disk session JSON structure from pkg/session.
+// sessionFile mirrors the on-disk session JSON structure from session.
 type sessionFile struct {
 	Key      string              `json:"key"`
 	Messages []providers.Message `json:"messages"`

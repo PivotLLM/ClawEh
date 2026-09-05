@@ -93,7 +93,7 @@ export function ToolsPage() {
                         return (
                           <Card
                             key={tool.name}
-                            className="gap-4 border border-border/60 bg-card"
+                            className="border-border/60 bg-card gap-4 border"
                             size="sm"
                           >
                             <CardHeader>

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/PivotLLM/ClawEh/pkg/logger"
+	"github.com/PivotLLM/ClawEh/logger"
 )
 
 // JSONContentType sets the Content-Type header to application/json for

@@ -33,6 +33,8 @@ coverage.html
 
 # OS
 .DS_Store
+# macOS AppleDouble resource forks (created when the tree is touched over SMB/AFP)
+._*
 
 # Ralph workspace
 ralph/
@@ -61,3 +63,9 @@ dist/
 !web/backend/dist/
 web/backend/dist/*
 !web/backend/dist/.gitkeep
+
+# Playwright MCP session output (page snapshots, console logs).
+.playwright-mcp/
+
+# Scratch audit output (pnpm audit > audit.txt); not source.
+audit.txt

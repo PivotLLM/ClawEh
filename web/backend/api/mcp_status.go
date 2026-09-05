@@ -6,12 +6,12 @@ package api
 import (
 	"net/http"
 
-	"github.com/PivotLLM/ClawEh/pkg/mcp"
+	"github.com/PivotLLM/ClawEh/mcp"
 )
 
 // mcpStatusLoop is the slice of the running AgentLoop the MCP status endpoint
 // needs. Injected via SetMCPStatusLoop so this package stays decoupled from
-// pkg/agent and always reads the live manager (valid across config reloads,
+// agent and always reads the live manager (valid across config reloads,
 // which reuse the manager in place).
 type mcpStatusLoop interface {
 	MCPStatus() []mcp.ServerStatus

@@ -1,22 +1,7 @@
-import {
-  Navigate,
-  Outlet,
-  createFileRoute,
-  useRouterState,
-} from "@tanstack/react-router"
+import { createFileRoute } from "@tanstack/react-router"
+
+import { ChannelsLayout } from "@/components/channels/channels-layout"
 
 export const Route = createFileRoute("/channels")({
   component: ChannelsLayout,
 })
-
-function ChannelsLayout() {
-  const pathname = useRouterState({
-    select: (state) => state.location.pathname,
-  })
-
-  if (pathname === "/channels") {
-    return <Navigate to="/channels/$name" params={{ name: "webui" }} />
-  }
-
-  return <Outlet />
-}

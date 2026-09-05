@@ -6,23 +6,21 @@ import { useTranslation } from "react-i18next"
 
 import { patchAppConfig } from "@/api/channels"
 import {
-  AgentDefaultsSection,
-  AgentModelDefaultsSection,
-  BackupSection,
-  ContextManagementSection,
-  DevicesSection,
-  RuntimeSection,
-  ServiceSection,
-} from "@/components/config/config-sections"
-import {
   type CoreConfigForm,
   EMPTY_FORM,
   buildFormFromConfig,
+  nullableInts,
   parseCIDRText,
   parseIntField,
   parseOptionalIntField,
-  nullableInts,
 } from "@/components/config/form-model"
+import { AgentDefaultsSection } from "@/components/config/sections/agent-defaults-section"
+import { AgentModelDefaultsSection } from "@/components/config/sections/agent-model-defaults-section"
+import { BackupSection } from "@/components/config/sections/backup-section"
+import { ContextManagementSection } from "@/components/config/sections/context-management-section"
+import { DevicesSection } from "@/components/config/sections/devices-section"
+import { RuntimeSection } from "@/components/config/sections/runtime-section"
+import { ServiceSection } from "@/components/config/sections/service-section"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 
@@ -40,11 +38,20 @@ export function ConfigPage() {
   // persisted snapshot (baselineRef) — used to detect a default-agent change,
   // which requires re-sending the whole agents.list (arrays are replaced
   // wholesale by the merge patch, not deep-merged).
+  // formRef is written in an effect, not during render: a render-phase ref
+  // write is a side effect in render, unsafe under concurrent rendering. The
+  // debounce that reads it fires 600 ms later, long after the effect.
   const formRef = useRef<CoreConfigForm>(form)
-  formRef.current = form
+  // The baseline is state, mirrored into a ref for the debounced save to read
+  // at fire time. State rather than a bare ref because it is written from two
+  // places — seeding on fetch (during render) and after a successful save — and
+  // a render-phase ref write is a side effect in render.
+  const [baseline, setBaseline] = useState<CoreConfigForm>(EMPTY_FORM)
   const baselineRef = useRef<CoreConfigForm>(EMPTY_FORM)
   const saveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
-  const savedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const savedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
+  )
 
   // The address the user is currently reaching the WebUI on. Inherently
   // reachable from their own machine (where claw-auth runs), so it is the
@@ -63,7 +70,16 @@ export function ConfigPage() {
   })
 
   useEffect(() => {
-    if (!data) return
+    formRef.current = form
+    baselineRef.current = baseline
+  })
+
+  // Seed the form when a fetch lands. Adjusted during render rather than in an
+  // effect so the form is never painted empty for a frame, and it fires only
+  // when a genuinely new fetch result arrives — never clobbering edits since.
+  const [syncedData, setSyncedData] = useState(data)
+  if (data && data !== syncedData) {
+    setSyncedData(data)
     const parsed = buildFormFromConfig(data)
     // Seed the external URL with how the user is currently reaching the WebUI so
     // an unset value persists a reachable default on save (rather than leaving it
@@ -72,8 +88,8 @@ export function ConfigPage() {
       parsed.gatewayExternalUrl = externalUrlPlaceholder
     }
     setForm(parsed)
-    baselineRef.current = parsed
-  }, [data, externalUrlPlaceholder])
+    setBaseline(parsed)
+  }
 
   // Clear pending timers on unmount so a debounced save can't fire after teardown.
   useEffect(
@@ -99,7 +115,10 @@ export function ConfigPage() {
     () =>
       rawAgentList
         .filter((a) => a.enabled !== false)
-        .map((a) => ({ id: String(a.id ?? ""), name: a.name ? String(a.name) : undefined }))
+        .map((a) => ({
+          id: String(a.id ?? ""),
+          name: a.name ? String(a.name) : undefined,
+        }))
         .filter((a) => a.id)
         .sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id)),
     [rawAgentList],
@@ -173,7 +192,9 @@ export function ConfigPage() {
         if (tempRaw !== "") {
           const tp = Number(tempRaw)
           if (Number.isNaN(tp) || tp < 0 || tp > 2) {
-            throw new Error("Default temperature must be a number between 0 and 2.")
+            throw new Error(
+              "Default temperature must be a number between 0 and 2.",
+            )
           }
           defaultTemperaturePayload = tp
         }
@@ -368,7 +389,11 @@ export function ConfigPage() {
           backup: {
             enabled: form.backupEnabled,
             at: form.backupAt.trim() || "03:00",
-            retain_days: parseIntField(form.backupRetainDays, "Backup retention days", { min: 1 }),
+            retain_days: parseIntField(
+              form.backupRetainDays,
+              "Backup retention days",
+              { min: 1 },
+            ),
           },
         }
       }
@@ -383,13 +408,15 @@ export function ConfigPage() {
     setStatus("saving")
     try {
       await patchAppConfig(patch)
-      baselineRef.current = form
+      setBaseline(form)
       setStatus("saved")
       clearTimeout(savedTimer.current)
       savedTimer.current = setTimeout(() => setStatus(null), 2000)
     } catch (err) {
       setStatus("error")
-      setSaveError(err instanceof Error ? err.message : t("pages.config.save_error"))
+      setSaveError(
+        err instanceof Error ? err.message : t("pages.config.save_error"),
+      )
     }
   }
 
@@ -448,11 +475,14 @@ export function ConfigPage() {
                 agentOptions={agentOptions}
               />
 
-              <ContextManagementSection form={form} onFieldChange={updateField} />
+              <ContextManagementSection
+                form={form}
+                onFieldChange={updateField}
+              />
 
               <RuntimeSection form={form} onFieldChange={updateField} />
 
-            <BackupSection form={form} onFieldChange={updateField} />
+              <BackupSection form={form} onFieldChange={updateField} />
 
               <DevicesSection form={form} onFieldChange={updateField} />
             </div>

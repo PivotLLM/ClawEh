@@ -8,8 +8,10 @@ linters:
     - cyclop
     - depguard
     - dupword
+    - gomodguard
     - err113
     - exhaustruct
+    - exhaustruct_v5
     - funcorder
     - gochecknoglobals
     - godot
@@ -26,20 +28,38 @@ linters:
     - wsl
     - wsl_v5
 
-    # TODO: Disabled, because they are failing at the moment, we should fix them and enable (step by step)
+    # Deferred deliberately, with reasons. Re-enabling any of these is a
+    # project rather than a cleanup:
+    #
+    # gocyclo: 36 functions exceed the threshold, topped by
+    #   (*AgentLoop).runLLMIteration at complexity 135. Refactoring those is a
+    #   behavioural change to the agent loop, not a lint fix.
+    # errcheck (1197) / gosec (420): both worth doing, both large enough to
+    #   need their own branch and review.
+    # revive: configured enable-all-rules below, which yields ~1970 hits. Needs
+    #   a curated rule set before it is useful.
+    # goconst (1497) / mnd (340) / lll (198) / paralleltest (2460): high-volume
+    #   style opinions the project has not adopted.
+    # gochecknoinits: every hit is a channel's init.go self-registering with the
+    #   channel registry (plus logger). That is the plugin pattern the package
+    #   layout is built on; removing it means reworking channel registration.
+    # nilnil: the production hits would each need a new sentinel error, which is
+    #   an API change per call site, not a cleanup.
+    # unparam: mostly test helpers with deliberately uniform signatures, plus
+    #   always-nil error returns kept for interface symmetry. Worth a pass, but
+    #   it changes function signatures, so not alongside a config change.
+    - gochecknoinits
+    - nilnil
+    - unparam
     - contextcheck
     - embeddedstructfieldcheck
     - errcheck
     - errchkjson
-    - errorlint
-    - exhaustive
     - forbidigo
     - forcetypeassert
     - funlen
-    - gochecknoinits
     - gocognit
     - goconst
-    - gocritic
     - gocyclo
     - godox
     - gosec
@@ -49,15 +69,12 @@ linters:
     - mnd
     - modernize
     - nestif
-    - nilnil
     - paralleltest
     - perfsprint
     - revive
-    - staticcheck
     - tagalign
     - testifylint
     - thelper
-    - unparam
     - usestdlibvars
     - usetesting
   settings:
@@ -71,6 +88,13 @@ linters:
       statements: 40
     gocognit:
       min-complexity: 25
+    gocritic:
+      disabled-checks:
+        # Style-only, and Go's own stdlib uses if/else chains freely. Rewriting
+        # 14 of them would be churn without changing behaviour; the checks that
+        # find real problems (badCall, appendAssign, exitAfterDefer, …) stay on.
+        - ifElseChain
+        - elseif
     gocyclo:
       min-complexity: 20
     govet:
@@ -81,7 +105,11 @@ linters:
       line-length: 120
       tab-width: 4
     misspell:
-      locale: US
+      # No locale. Canadian English takes British -our/-re ("behaviour",
+      # "centre") but American -ize ("synthesized"), so neither US nor UK fits:
+      # US flagged 111 Commonwealth spellings, UK flagged 416 -ize endings.
+      # Unset, misspell reports only unambiguous typos, which is what we want.
+      locale: ""
     mnd:
       checks:
         - argument
@@ -141,9 +169,6 @@ linters:
           - gocognit
           - gocyclo
         path: _test\.go$
-      - linters:
-          - nolintlint
-        path: 'pkg/tools/(i2c\.go|spi\.go)$'
 
 issues:
   max-issues-per-linter: 0

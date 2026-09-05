@@ -23,42 +23,39 @@ export function LogsPage() {
 
   return (
     <div className="flex h-full flex-col">
-      <PageHeader
-        title={t("navigation.logs")}
-        children={
-          <div className="flex items-center gap-2">
-            <span className="text-muted-foreground text-sm">
-              {t("pages.logs.lines")}
-            </span>
-            <Select
-              value={String(lines)}
-              onValueChange={(v) => setLines(Number(v))}
-            >
-              <SelectTrigger className="w-28">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {LINE_OPTIONS.map((n) => (
-                  <SelectItem key={n} value={String(n)}>
-                    {n}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => void refresh()}
-              disabled={loading}
-            >
-              <IconRefresh
-                className={`size-4 ${loading ? "animate-spin" : ""}`}
-              />
-              {t("pages.logs.refresh")}
-            </Button>
-          </div>
-        }
-      />
+      <PageHeader title={t("navigation.logs")}>
+        <div className="flex items-center gap-2">
+          <span className="text-muted-foreground text-sm">
+            {t("pages.logs.lines")}
+          </span>
+          <Select
+            value={String(lines)}
+            onValueChange={(v) => setLines(Number(v))}
+          >
+            <SelectTrigger className="w-28">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {LINE_OPTIONS.map((n) => (
+                <SelectItem key={n} value={String(n)}>
+                  {n}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void refresh()}
+            disabled={loading}
+          >
+            <IconRefresh
+              className={`size-4 ${loading ? "animate-spin" : ""}`}
+            />
+            {t("pages.logs.refresh")}
+          </Button>
+        </div>
+      </PageHeader>
 
       <div className="flex flex-1 flex-col gap-4 overflow-hidden p-4 sm:p-8">
         {error && (

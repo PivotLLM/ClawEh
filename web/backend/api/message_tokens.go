@@ -9,14 +9,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/PivotLLM/ClawEh/pkg/config"
-	"github.com/PivotLLM/ClawEh/pkg/msgtoken"
-	"github.com/PivotLLM/ClawEh/pkg/routing"
+	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/msgtoken"
+	"github.com/PivotLLM/ClawEh/routing"
 )
 
 // messageTokenLoop is the slice of the running AgentLoop the message-token API
 // needs. It is injected via SetMessageTokenLoop so this package stays decoupled
-// from pkg/agent, and — critically — so the API mutates the SAME named-token
+// from agent, and — critically — so the API mutates the SAME named-token
 // store instance the gateway validates against, making a mint/revoke effective
 // with no reload.
 type messageTokenLoop interface {

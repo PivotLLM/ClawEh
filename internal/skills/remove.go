@@ -4,7 +4,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/PivotLLM/ClawEh/internal"
-	"github.com/PivotLLM/ClawEh/pkg/skills"
+	"github.com/PivotLLM/ClawEh/skills"
 )
 
 func newRemoveCommand(installerFn func() (*skills.SkillInstaller, error)) *cobra.Command {

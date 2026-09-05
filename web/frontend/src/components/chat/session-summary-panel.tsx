@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next"
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 
-// Summary schema mirrors pkg/llmcontext.Summary (JSON tags).
+// Summary schema mirrors llmcontext.Summary (JSON tags).
 interface SeqRange {
   seq_start: number
   seq_end?: number

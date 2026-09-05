@@ -9,75 +9,30 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as VoiceRouteImport } from './routes/voice'
-import { Route as SetupRouteImport } from './routes/setup'
-import { Route as ProvidersRouteImport } from './routes/providers'
-import { Route as ModelsRouteImport } from './routes/models'
-import { Route as MemoryRouteImport } from './routes/memory'
-import { Route as McpRouteImport } from './routes/mcp'
-import { Route as LogsRouteImport } from './routes/logs'
-import { Route as DevicesRouteImport } from './routes/devices'
-import { Route as ConfigRouteImport } from './routes/config'
-import { Route as AgentsRouteImport } from './routes/agents'
-import { Route as AgentRouteImport } from './routes/agent'
-import { Route as ChannelsRouteRouteImport } from './routes/channels/route'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as McpServersRouteImport } from './routes/mcp/servers'
-import { Route as McpConfigRouteImport } from './routes/mcp/config'
-import { Route as ConfigRawRouteImport } from './routes/config.raw'
-import { Route as ChannelsNameRouteImport } from './routes/channels/$name'
-import { Route as AgentToolsRouteImport } from './routes/agent/tools'
-import { Route as AgentSkillsRouteImport } from './routes/agent/skills'
+import { Route as AgentRouteImport } from './routes/agent'
+import { Route as AgentsRouteImport } from './routes/agents'
+import { Route as ChannelsRouteRouteImport } from './routes/channels/route'
+import { Route as ConfigRouteImport } from './routes/config'
+import { Route as DevicesRouteImport } from './routes/devices'
+import { Route as LogsRouteImport } from './routes/logs'
+import { Route as McpRouteImport } from './routes/mcp'
+import { Route as MemoryRouteImport } from './routes/memory'
+import { Route as ModelsRouteImport } from './routes/models'
+import { Route as ProvidersRouteImport } from './routes/providers'
+import { Route as SetupRouteImport } from './routes/setup'
+import { Route as VoiceRouteImport } from './routes/voice'
 import { Route as AgentBindingsRouteImport } from './routes/agent/bindings'
+import { Route as AgentSkillsRouteImport } from './routes/agent/skills'
+import { Route as AgentToolsRouteImport } from './routes/agent/tools'
+import { Route as ChannelsNameRouteImport } from './routes/channels/$name'
+import { Route as ConfigRawRouteImport } from './routes/config.raw'
+import { Route as McpConfigRouteImport } from './routes/mcp/config'
+import { Route as McpServersRouteImport } from './routes/mcp/servers'
 
-const VoiceRoute = VoiceRouteImport.update({
-  id: '/voice',
-  path: '/voice',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const SetupRoute = SetupRouteImport.update({
-  id: '/setup',
-  path: '/setup',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ProvidersRoute = ProvidersRouteImport.update({
-  id: '/providers',
-  path: '/providers',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ModelsRoute = ModelsRouteImport.update({
-  id: '/models',
-  path: '/models',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const MemoryRoute = MemoryRouteImport.update({
-  id: '/memory',
-  path: '/memory',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const McpRoute = McpRouteImport.update({
-  id: '/mcp',
-  path: '/mcp',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const LogsRoute = LogsRouteImport.update({
-  id: '/logs',
-  path: '/logs',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DevicesRoute = DevicesRouteImport.update({
-  id: '/devices',
-  path: '/devices',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ConfigRoute = ConfigRouteImport.update({
-  id: '/config',
-  path: '/config',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AgentsRoute = AgentsRouteImport.update({
-  id: '/agents',
-  path: '/agents',
+const IndexRoute = IndexRouteImport.update({
+  id: '/',
+  path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AgentRoute = AgentRouteImport.update({
@@ -85,39 +40,64 @@ const AgentRoute = AgentRouteImport.update({
   path: '/agent',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AgentsRoute = AgentsRouteImport.update({
+  id: '/agents',
+  path: '/agents',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ChannelsRouteRoute = ChannelsRouteRouteImport.update({
   id: '/channels',
   path: '/channels',
   getParentRoute: () => rootRouteImport,
 } as any)
-const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const McpServersRoute = McpServersRouteImport.update({
-  id: '/servers',
-  path: '/servers',
-  getParentRoute: () => McpRoute,
-} as any)
-const McpConfigRoute = McpConfigRouteImport.update({
+const ConfigRoute = ConfigRouteImport.update({
   id: '/config',
   path: '/config',
-  getParentRoute: () => McpRoute,
+  getParentRoute: () => rootRouteImport,
 } as any)
-const ConfigRawRoute = ConfigRawRouteImport.update({
-  id: '/raw',
-  path: '/raw',
-  getParentRoute: () => ConfigRoute,
+const DevicesRoute = DevicesRouteImport.update({
+  id: '/devices',
+  path: '/devices',
+  getParentRoute: () => rootRouteImport,
 } as any)
-const ChannelsNameRoute = ChannelsNameRouteImport.update({
-  id: '/$name',
-  path: '/$name',
-  getParentRoute: () => ChannelsRouteRoute,
+const LogsRoute = LogsRouteImport.update({
+  id: '/logs',
+  path: '/logs',
+  getParentRoute: () => rootRouteImport,
 } as any)
-const AgentToolsRoute = AgentToolsRouteImport.update({
-  id: '/tools',
-  path: '/tools',
+const McpRoute = McpRouteImport.update({
+  id: '/mcp',
+  path: '/mcp',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MemoryRoute = MemoryRouteImport.update({
+  id: '/memory',
+  path: '/memory',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ModelsRoute = ModelsRouteImport.update({
+  id: '/models',
+  path: '/models',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ProvidersRoute = ProvidersRouteImport.update({
+  id: '/providers',
+  path: '/providers',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SetupRoute = SetupRouteImport.update({
+  id: '/setup',
+  path: '/setup',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const VoiceRoute = VoiceRouteImport.update({
+  id: '/voice',
+  path: '/voice',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AgentBindingsRoute = AgentBindingsRouteImport.update({
+  id: '/bindings',
+  path: '/bindings',
   getParentRoute: () => AgentRoute,
 } as any)
 const AgentSkillsRoute = AgentSkillsRouteImport.update({
@@ -125,10 +105,30 @@ const AgentSkillsRoute = AgentSkillsRouteImport.update({
   path: '/skills',
   getParentRoute: () => AgentRoute,
 } as any)
-const AgentBindingsRoute = AgentBindingsRouteImport.update({
-  id: '/bindings',
-  path: '/bindings',
+const AgentToolsRoute = AgentToolsRouteImport.update({
+  id: '/tools',
+  path: '/tools',
   getParentRoute: () => AgentRoute,
+} as any)
+const ChannelsNameRoute = ChannelsNameRouteImport.update({
+  id: '/$name',
+  path: '/$name',
+  getParentRoute: () => ChannelsRouteRoute,
+} as any)
+const ConfigRawRoute = ConfigRawRouteImport.update({
+  id: '/raw',
+  path: '/raw',
+  getParentRoute: () => ConfigRoute,
+} as any)
+const McpConfigRoute = McpConfigRouteImport.update({
+  id: '/config',
+  path: '/config',
+  getParentRoute: () => McpRoute,
+} as any)
+const McpServersRoute = McpServersRouteImport.update({
+  id: '/servers',
+  path: '/servers',
+  getParentRoute: () => McpRoute,
 } as any)
 
 export interface FileRoutesByFullPath {
@@ -285,74 +285,11 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/voice': {
-      id: '/voice'
-      path: '/voice'
-      fullPath: '/voice'
-      preLoaderRoute: typeof VoiceRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/setup': {
-      id: '/setup'
-      path: '/setup'
-      fullPath: '/setup'
-      preLoaderRoute: typeof SetupRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/providers': {
-      id: '/providers'
-      path: '/providers'
-      fullPath: '/providers'
-      preLoaderRoute: typeof ProvidersRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/models': {
-      id: '/models'
-      path: '/models'
-      fullPath: '/models'
-      preLoaderRoute: typeof ModelsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/memory': {
-      id: '/memory'
-      path: '/memory'
-      fullPath: '/memory'
-      preLoaderRoute: typeof MemoryRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/mcp': {
-      id: '/mcp'
-      path: '/mcp'
-      fullPath: '/mcp'
-      preLoaderRoute: typeof McpRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/logs': {
-      id: '/logs'
-      path: '/logs'
-      fullPath: '/logs'
-      preLoaderRoute: typeof LogsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/devices': {
-      id: '/devices'
-      path: '/devices'
-      fullPath: '/devices'
-      preLoaderRoute: typeof DevicesRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/config': {
-      id: '/config'
-      path: '/config'
-      fullPath: '/config'
-      preLoaderRoute: typeof ConfigRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/agents': {
-      id: '/agents'
-      path: '/agents'
-      fullPath: '/agents'
-      preLoaderRoute: typeof AgentsRouteImport
+    '/': {
+      id: '/'
+      path: '/'
+      fullPath: '/'
+      preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/agent': {
@@ -362,6 +299,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AgentRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/agents': {
+      id: '/agents'
+      path: '/agents'
+      fullPath: '/agents'
+      preLoaderRoute: typeof AgentsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/channels': {
       id: '/channels'
       path: '/channels'
@@ -369,46 +313,74 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChannelsRouteRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/': {
-      id: '/'
-      path: '/'
-      fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
+    '/config': {
+      id: '/config'
+      path: '/config'
+      fullPath: '/config'
+      preLoaderRoute: typeof ConfigRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/mcp/servers': {
-      id: '/mcp/servers'
-      path: '/servers'
-      fullPath: '/mcp/servers'
-      preLoaderRoute: typeof McpServersRouteImport
-      parentRoute: typeof McpRoute
+    '/devices': {
+      id: '/devices'
+      path: '/devices'
+      fullPath: '/devices'
+      preLoaderRoute: typeof DevicesRouteImport
+      parentRoute: typeof rootRouteImport
     }
-    '/mcp/config': {
-      id: '/mcp/config'
-      path: '/config'
-      fullPath: '/mcp/config'
-      preLoaderRoute: typeof McpConfigRouteImport
-      parentRoute: typeof McpRoute
+    '/logs': {
+      id: '/logs'
+      path: '/logs'
+      fullPath: '/logs'
+      preLoaderRoute: typeof LogsRouteImport
+      parentRoute: typeof rootRouteImport
     }
-    '/config/raw': {
-      id: '/config/raw'
-      path: '/raw'
-      fullPath: '/config/raw'
-      preLoaderRoute: typeof ConfigRawRouteImport
-      parentRoute: typeof ConfigRoute
+    '/mcp': {
+      id: '/mcp'
+      path: '/mcp'
+      fullPath: '/mcp'
+      preLoaderRoute: typeof McpRouteImport
+      parentRoute: typeof rootRouteImport
     }
-    '/channels/$name': {
-      id: '/channels/$name'
-      path: '/$name'
-      fullPath: '/channels/$name'
-      preLoaderRoute: typeof ChannelsNameRouteImport
-      parentRoute: typeof ChannelsRouteRoute
+    '/memory': {
+      id: '/memory'
+      path: '/memory'
+      fullPath: '/memory'
+      preLoaderRoute: typeof MemoryRouteImport
+      parentRoute: typeof rootRouteImport
     }
-    '/agent/tools': {
-      id: '/agent/tools'
-      path: '/tools'
-      fullPath: '/agent/tools'
-      preLoaderRoute: typeof AgentToolsRouteImport
+    '/models': {
+      id: '/models'
+      path: '/models'
+      fullPath: '/models'
+      preLoaderRoute: typeof ModelsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/providers': {
+      id: '/providers'
+      path: '/providers'
+      fullPath: '/providers'
+      preLoaderRoute: typeof ProvidersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/setup': {
+      id: '/setup'
+      path: '/setup'
+      fullPath: '/setup'
+      preLoaderRoute: typeof SetupRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/voice': {
+      id: '/voice'
+      path: '/voice'
+      fullPath: '/voice'
+      preLoaderRoute: typeof VoiceRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/agent/bindings': {
+      id: '/agent/bindings'
+      path: '/bindings'
+      fullPath: '/agent/bindings'
+      preLoaderRoute: typeof AgentBindingsRouteImport
       parentRoute: typeof AgentRoute
     }
     '/agent/skills': {
@@ -418,12 +390,40 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AgentSkillsRouteImport
       parentRoute: typeof AgentRoute
     }
-    '/agent/bindings': {
-      id: '/agent/bindings'
-      path: '/bindings'
-      fullPath: '/agent/bindings'
-      preLoaderRoute: typeof AgentBindingsRouteImport
+    '/agent/tools': {
+      id: '/agent/tools'
+      path: '/tools'
+      fullPath: '/agent/tools'
+      preLoaderRoute: typeof AgentToolsRouteImport
       parentRoute: typeof AgentRoute
+    }
+    '/channels/$name': {
+      id: '/channels/$name'
+      path: '/$name'
+      fullPath: '/channels/$name'
+      preLoaderRoute: typeof ChannelsNameRouteImport
+      parentRoute: typeof ChannelsRouteRoute
+    }
+    '/config/raw': {
+      id: '/config/raw'
+      path: '/raw'
+      fullPath: '/config/raw'
+      preLoaderRoute: typeof ConfigRawRouteImport
+      parentRoute: typeof ConfigRoute
+    }
+    '/mcp/config': {
+      id: '/mcp/config'
+      path: '/config'
+      fullPath: '/mcp/config'
+      preLoaderRoute: typeof McpConfigRouteImport
+      parentRoute: typeof McpRoute
+    }
+    '/mcp/servers': {
+      id: '/mcp/servers'
+      path: '/servers'
+      fullPath: '/mcp/servers'
+      preLoaderRoute: typeof McpServersRouteImport
+      parentRoute: typeof McpRoute
     }
   }
 }

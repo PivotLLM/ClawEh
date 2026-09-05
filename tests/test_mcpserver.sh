@@ -53,14 +53,13 @@ FULL_URL="${SERVER_URL}${ENDPOINT}"
 BEARER_URL="${SERVER_URL}${BEARER_ENDPOINT}"
 
 # All tools the test config exposes — the source of truth for count/catalogue checks.
-# Note: find_tools_regex and find_tools_bm25 are omitted here because they only register
-# when tools.mcp.discovery.enabled=true, which the test config does not set.
+# Note: search_tools and get_tool_details are omitted here because they only register
+# when tools.discovery.enabled=true, which the test config does not set.
 # Every tool the test config exposes that is guaranteed to register (no live
-# model and no specific hardware required). agent_spawn/agent_status/agent_list
-# (subagent capability) and hw_i2c/hw_spi (Linux + I2C/SPI devices) are also
-# exposed but only probed when actually present in the catalogue, so this script
-# stays portable.
-EXPECTED_TOOLS="file_read_bytes file_read_lines file_view_image file_write file_edit file_edit_lines file_edit_bytes file_insert_lines file_insert_bytes file_delete_lines file_delete_bytes file_append file_list file_search_lines file_search_bytes file_copy file_delete file_move web_fetch web_search msg_send msg_send_file session_messages session_search session_compact session_info session_summary_list session_summary_get session_clear shell_exec skill_find skill_install cron_schedule cogmem_domain_get cogmem_memory_search cogmem_domain_list cogmem_explain cogmem_memory_create cogmem_memory_attach cogmem_domain_update cogmem_memory_retire cogmem_memory_confirm cogmem_domain_create cogmem_domain_archive cogmem_domain_migrate cogmem_memory_forget cogmem_consolidate cogmem_status cogmem_export common_list common_get common_put common_delete time_now"
+# model required). agent_spawn/agent_status/agent_list (subagent capability) are
+# also exposed but only probed when actually present in the catalogue, so this
+# script stays portable.
+EXPECTED_TOOLS="file_read_bytes file_read_lines file_count file_view_image file_write file_edit file_edit_lines file_edit_bytes file_insert_lines file_insert_bytes file_delete_lines file_delete_bytes file_append file_list file_search_lines file_search_bytes file_copy file_delete file_move web_fetch web_search msg_send msg_send_file session_messages session_search session_compact session_info session_summary_list session_summary_get session_clear shell_exec skill_find skill_install cron_schedule cogmem_domain_get cogmem_memory_search cogmem_domain_list cogmem_explain cogmem_memory_create cogmem_memory_attach cogmem_domain_update cogmem_memory_retire cogmem_memory_confirm cogmem_domain_create cogmem_domain_archive cogmem_domain_migrate cogmem_memory_forget cogmem_consolidate cogmem_status cogmem_export common_list common_get common_put common_delete time_now"
 EXPECTED_TOOL_COUNT=38
 
 # Namespace prefixes that must have at least one tool in the catalogue.
@@ -353,14 +352,15 @@ if [ -n "$GATEWAY_URL" ]; then
 
     echo "  0.3 Gateway /ready responds"
     READY_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$GATEWAY_URL/ready" 2>/dev/null)
-    # 200 = ready, 503 = endpoint reachable but not ready (e.g. no model configured).
-    # Both are valid responses from a running gateway; a connection failure would
-    # produce an empty string or non-numeric code.
-    if [ "$READY_CODE" = "200" ] || [ "$READY_CODE" = "503" ]; then
-        echo "    ${GREEN}PASS${NC}: /ready responded with $READY_CODE (endpoint reachable)"
+    # A running gateway with its channels started must report 200. This used to
+    # accept 503 as well, on the theory that it meant "reachable but not ready" —
+    # which masked the fact that /ready answered 503 for the entire life of every
+    # process, because nothing ever set the readiness flag.
+    if [ "$READY_CODE" = "200" ]; then
+        echo "    ${GREEN}PASS${NC}: /ready responded 200 (ready)"
         PASS_COUNT=$((PASS_COUNT + 1))
     else
-        echo "    ${RED}FAIL${NC}: /ready did not respond (got '$READY_CODE')"
+        echo "    ${RED}FAIL${NC}: /ready returned '$READY_CODE', want 200"
         FAIL_COUNT=$((FAIL_COUNT + 1))
     fi
 fi
@@ -414,6 +414,7 @@ check_tool() {
 check_tool "1.1"  "file_read_bytes"
 check_tool "1.1b" "file_read_lines"
 check_tool "1.1c" "file_view_image"
+check_tool "1.1d" "file_count"
 check_tool "1.2"  "file_write"
 check_tool "1.3"  "file_edit"
 check_tool "1.3a" "file_edit_lines"
@@ -441,8 +442,8 @@ check_tool "1.15" "cogmem_status"
 check_tool "1.16" "cogmem_memory_confirm"
 check_tool "1.17" "cogmem_domain_migrate"
 check_tool "1.18" "time_now"
-# find_tools_regex and find_tools_bm25 are only registered when
-# tools.mcp.discovery.enabled=true — not set in the standard test config.
+# search_tools and get_tool_details are only registered when
+# tools.discovery.enabled=true — not set in the standard test config.
 
 #-------------------------------------------------------------------------------
 # Section 2: Unauthenticated rejection
@@ -504,6 +505,9 @@ else
 
     run_test_ok_auth "3.5 file_read_bytes shows appended content" \
         "file_read_bytes" "{\"path\":\"$SCRATCH_REL\"}" "$APPENDED"
+
+    run_test_ok_auth "3.5a2 file_count reports wc-style counts" \
+        "file_count" "{\"path\":\"$SCRATCH_REL\"}" "\"lines\":"
 
     run_test_ok_auth "3.5b file_read_lines returns numbered lines" \
         "file_read_lines" "{\"path\":\"$SCRATCH_REL\",\"start_line\":1,\"line_count\":1}" "1: "
@@ -589,9 +593,9 @@ else
 
     #---------------------------------------------------------------------------
     # Section 4b: Every remaining provider tool. These reach out to the network
-    # (web, skill), need a live model (agent), or touch hardware (hw), so we use
-    # graceful-error probes — the call must be accepted and the tool must respond
-    # (success OR a clean tool-level error), not fail at the transport/auth layer.
+    # (web, skill) or need a live model (agent), so we use graceful-error probes
+    # — the call must be accepted and the tool must respond (success OR a clean
+    # tool-level error), not fail at the transport/auth layer.
     #---------------------------------------------------------------------------
 
     print_section "4b. Remaining provider tools (graceful probes)"
@@ -623,10 +627,10 @@ else
         "cron_schedule" '{}'
 
     # Tools that only register on certain hosts (agent tools need the subagent
-    # capability; hw needs Linux + I2C/SPI devices). Probe them only when the
-    # catalogue lists them. Empty args are fine — these probes assert the session
-    # token is accepted, not that the call succeeds (agent_status needs a uuid).
-    for opt_tool in agent_spawn agent_status agent_list hw_i2c hw_spi; do
+    # capability). Probe them only when the catalogue lists them. Empty args are
+    # fine — these probes assert the session token is accepted, not that the call
+    # succeeds (agent_status needs a uuid).
+    for opt_tool in agent_spawn agent_status agent_list; do
         if echo "$LIST_OUT" | grep -qw "$opt_tool"; then
             run_test_not_auth_err "4b.* $opt_tool — token accepted" "$opt_tool" '{}'
         else
@@ -765,7 +769,7 @@ else
         "time_now" '{}' "rfc3339"
     run_test_ok_auth "4e.2 time_now converts to a named timezone" \
         "time_now" '{"timezone":"UTC"}' "UTC+00:00"
-    # The unknown-timezone path is covered by a unit test in pkg/tools/timetool;
+    # The unknown-timezone path is covered by a unit test in tools/timetool;
     # it is hermetic, so there is nothing environmental for this suite to add.
 
 fi  # end SESSION_TOKEN block

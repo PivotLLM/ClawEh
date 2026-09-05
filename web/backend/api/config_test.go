@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/PivotLLM/ClawEh/pkg/config"
+	"github.com/PivotLLM/ClawEh/config"
 )
 
 func TestHandleUpdateConfig_AppliesExecAllowRemoteDefaultWhenOmitted(t *testing.T) {

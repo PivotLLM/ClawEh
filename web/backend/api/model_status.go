@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/PivotLLM/ClawEh/pkg/config"
+	"github.com/PivotLLM/ClawEh/config"
 )
 
 const modelProbeTimeout = 800 * time.Millisecond

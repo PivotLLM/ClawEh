@@ -1,5 +1,12 @@
-import { IconEdit, IconLoader2, IconPlus, IconTrash, IconX } from "@tabler/icons-react"
-import { useCallback, useEffect, useState } from "react"
+import {
+  IconEdit,
+  IconLoader2,
+  IconPlus,
+  IconTrash,
+  IconX,
+} from "@tabler/icons-react"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { useMemo, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 
@@ -31,11 +38,16 @@ interface Binding {
 // ── config parsers ──────────────────────────────────────────────────────────
 
 function asRecord(v: unknown): Record<string, unknown> {
-  if (v && typeof v === "object" && !Array.isArray(v)) return v as Record<string, unknown>
+  if (v && typeof v === "object" && !Array.isArray(v))
+    return v as Record<string, unknown>
   return {}
 }
-function asArray(v: unknown): unknown[] { return Array.isArray(v) ? v : [] }
-function asString(v: unknown): string { return typeof v === "string" ? v : "" }
+function asArray(v: unknown): unknown[] {
+  return Array.isArray(v) ? v : []
+}
+function asString(v: unknown): string {
+  return typeof v === "string" ? v : ""
+}
 
 function parseBindings(cfg: unknown): Binding[] {
   return asArray(asRecord(cfg).bindings).map((b) => {
@@ -73,7 +85,8 @@ function parseChannelNames(cfg: unknown): string[] {
     const b = asRecord(bot)
     if (b.enabled !== false) {
       const id = asString(b.id)
-      const channelName = (!id || id === "default") ? "telegram" : `telegram-${id}`
+      const channelName =
+        !id || id === "default" ? "telegram" : `telegram-${id}`
       if (!telegramSeen.has(channelName)) {
         telegramSeen.add(channelName)
         names.push(channelName)
@@ -121,7 +134,10 @@ function peerLabel(peer?: { kind: string; id: string }): string {
 }
 
 function parseMentionsInput(s: string): string[] {
-  return s.split(/[\s,]+/).map((x) => x.trim()).filter(Boolean)
+  return s
+    .split(/[\s,]+/)
+    .map((x) => x.trim())
+    .filter(Boolean)
 }
 
 // ── peer type for the add form ──────────────────────────────────────────────
@@ -131,12 +147,8 @@ type SlackPeerType = "none" | "channel" | "direct"
 // ── component ───────────────────────────────────────────────────────────────
 
 export function BindingsPage() {
+  const queryClient = useQueryClient()
   const { t } = useTranslation()
-  const [loading, setLoading] = useState(true)
-  const [fetchError, setFetchError] = useState("")
-  const [bindings, setBindings] = useState<Binding[]>([])
-  const [channels, setChannels] = useState<string[]>([])
-  const [agents, setAgents] = useState<string[]>([])
   const [saving, setSaving] = useState<string | null>(null)
 
   // inline edit state
@@ -151,50 +163,70 @@ export function BindingsPage() {
   const [addPeerId, setAddPeerId] = useState("")
   const [addMentions, setAddMentions] = useState("")
 
-  // mergeSecMsgChannels queries each enabled secmsg daemon for its live accounts
-  // and folds the discovered channel names into the options. Discovered accounts
-  // are not in config, so config parsing alone can't surface them; a daemon
-  // that's offline is simply skipped.
-  const mergeSecMsgChannels = useCallback(async (cfg: unknown) => {
-    const daemons = asArray(asRecord(asRecord(cfg).channels).secmsg)
-      .map(asRecord)
-      .filter((d) => d.enabled !== false && asString(d.address) !== "")
-    const discovered: string[] = []
-    await Promise.all(
-      daemons.map(async (d) => {
-        const daemonName = asString(d.name)
-        try {
-          const r = await getSecMsgAccounts(daemonName || "secmsg")
-          for (const acct of r.accounts) {
-            discovered.push(secmsgChannelName(daemonName, acct))
+  const {
+    data: cfg,
+    isPending: loading,
+    error: loadError,
+  } = useQuery({ queryKey: ["app-config"], queryFn: getAppConfig })
+
+  // Each enabled secmsg daemon is asked for its live accounts, and the
+  // discovered channel names are folded into the options. Discovered accounts
+  // are not in config, so config parsing alone cannot surface them; a daemon
+  // that is offline is simply skipped.
+  //
+  // A SECOND query rather than part of the one above, deliberately: an
+  // unreachable daemon must not hold up the page. The bindings list renders as
+  // soon as the config lands, and the discovered names appear when they arrive
+  // — which is what the old fire-and-forget `void mergeSecMsgChannels(cfg)`
+  // achieved, without the extra state write.
+  const { data: discovered = [] } = useQuery({
+    queryKey: ["secmsg-channels"],
+    enabled: cfg !== undefined,
+    queryFn: async () => {
+      const daemons = asArray(asRecord(asRecord(cfg).channels).secmsg)
+        .map(asRecord)
+        .filter((d) => d.enabled !== false && asString(d.address) !== "")
+      const names: string[] = []
+      await Promise.all(
+        daemons.map(async (d) => {
+          const daemonName = asString(d.name)
+          try {
+            const r = await getSecMsgAccounts(daemonName || "secmsg")
+            for (const acct of r.accounts) {
+              names.push(secmsgChannelName(daemonName, acct))
+            }
+          } catch {
+            // Daemon unreachable — skip; pinned accounts (if any) still list.
           }
-        } catch {
-          // Daemon unreachable — skip; pinned accounts (if any) are still listed.
-        }
-      }),
-    )
-    if (discovered.length > 0) {
-      setChannels((prev) => Array.from(new Set([...prev, ...discovered])).sort())
-    }
-  }, [])
+        }),
+      )
+      return names
+    },
+  })
 
-  const loadData = useCallback(async () => {
-    setLoading(true)
-    try {
-      const cfg = await getAppConfig()
-      setBindings(parseBindings(cfg))
-      setChannels(parseChannelNames(cfg))
-      setAgents(parseAgentIds(cfg))
-      setFetchError("")
-      void mergeSecMsgChannels(cfg)
-    } catch (e) {
-      setFetchError(e instanceof Error ? e.message : "Failed to load")
-    } finally {
-      setLoading(false)
-    }
-  }, [mergeSecMsgChannels])
+  const fetchError = loadError
+    ? loadError instanceof Error
+      ? loadError.message
+      : "Failed to load"
+    : ""
 
-  useEffect(() => { void loadData() }, [loadData])
+  // Derived straight from the queries — these were three pieces of state whose
+  // only writer was the loader, which is the definition of derived data.
+  const bindings = useMemo(() => (cfg ? parseBindings(cfg) : []), [cfg])
+  const agents = useMemo(() => (cfg ? parseAgentIds(cfg) : []), [cfg])
+  const channels = useMemo(
+    () =>
+      Array.from(
+        new Set([...(cfg ? parseChannelNames(cfg) : []), ...discovered]),
+      ).sort(),
+    [cfg, discovered],
+  )
+
+  // Kept as a named refresh so the post-save call sites read unchanged.
+  const loadData = async () => {
+    await queryClient.invalidateQueries({ queryKey: ["app-config"] })
+    await queryClient.invalidateQueries({ queryKey: ["secmsg-channels"] })
+  }
 
   const isSlack = addChannel === "slack"
 
@@ -244,7 +276,10 @@ export function BindingsPage() {
   }
 
   const handleDelete = (index: number) => {
-    void saveBindings(bindings.filter((_, i) => i !== index), `delete-${index}`)
+    void saveBindings(
+      bindings.filter((_, i) => i !== index),
+      `delete-${index}`,
+    )
   }
 
   const startEditMentions = (index: number) => {
@@ -262,7 +297,7 @@ export function BindingsPage() {
     const next = bindings.map((b, i) =>
       i === index
         ? { ...b, agent_mentions: mentions.length > 0 ? mentions : undefined }
-        : b
+        : b,
     )
     void saveBindings(next, `mentions-${index}`).then(() => {
       setEditIdx(null)
@@ -271,8 +306,14 @@ export function BindingsPage() {
   }
 
   const handleAdd = () => {
-    if (!addChannel.trim()) { toast.error("Channel is required"); return }
-    if (!addAgent.trim()) { toast.error("Agent is required"); return }
+    if (!addChannel.trim()) {
+      toast.error("Channel is required")
+      return
+    }
+    if (!addAgent.trim()) {
+      toast.error("Agent is required")
+      return
+    }
     if (isSlack && addPeerType === "channel" && !addPeerId.trim()) {
       toast.error("Slack channel ID is required")
       return
@@ -312,7 +353,7 @@ export function BindingsPage() {
       </PageHeader>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-8 sm:px-6">
-        <div className="w-full max-w-250 pt-4 space-y-3">
+        <div className="w-full max-w-250 space-y-3 pt-4">
           {loading && (
             <div className="flex items-center justify-center py-20">
               <IconLoader2 className="text-muted-foreground size-6 animate-spin" />
@@ -328,45 +369,69 @@ export function BindingsPage() {
           {!loading && !fetchError && (
             <>
               {/* Bindings table */}
-              <div className="border-border/60 bg-card rounded-xl border overflow-hidden">
+              <div className="border-border/60 bg-card overflow-hidden rounded-xl border">
                 {bindings.length === 0 ? (
-                  <p className="text-muted-foreground px-4 py-6 text-sm text-center">
-                    No bindings configured — all messages route to the default agent.
+                  <p className="text-muted-foreground px-4 py-6 text-center text-sm">
+                    No bindings configured — all messages route to the default
+                    agent.
                   </p>
                 ) : (
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-border/40 border-b">
-                        <th className="text-muted-foreground px-4 py-2.5 text-left text-xs font-medium">Channel</th>
-                        <th className="text-muted-foreground px-4 py-2.5 text-left text-xs font-medium">Peer</th>
-                        <th className="text-muted-foreground px-4 py-2.5 text-left text-xs font-medium">Agent</th>
-                        <th className="text-muted-foreground px-4 py-2.5 text-left text-xs font-medium">Agent Mentions</th>
-                        <th className="px-4 py-2.5" />
+                        <th className="text-muted-foreground px-4 py-2.5 text-left text-xs font-medium">
+                          Channel
+                        </th>
+                        <th className="text-muted-foreground px-4 py-2.5 text-left text-xs font-medium">
+                          Peer
+                        </th>
+                        <th className="text-muted-foreground px-4 py-2.5 text-left text-xs font-medium">
+                          Agent
+                        </th>
+                        <th className="text-muted-foreground px-4 py-2.5 text-left text-xs font-medium">
+                          Agent Mentions
+                        </th>
+                        <th className="px-4 py-2.5">
+                          <span className="sr-only">Actions</span>
+                        </th>
                       </tr>
                     </thead>
                     <tbody>
                       {bindings.map((b, i) => (
                         <tr
                           key={i}
-                          className="border-border/30 hover:bg-muted/20 border-b last:border-0 transition-colors"
+                          className="border-border/30 hover:bg-muted/20 border-b transition-colors last:border-0"
                         >
-                          <td className="px-4 py-2.5 font-mono text-xs">{b.match.channel}</td>
-                          <td className="px-4 py-2.5 text-muted-foreground font-mono text-xs">
-                            {peerLabel(b.match.peer) || <span className="opacity-40">—</span>}
+                          <td className="px-4 py-2.5 font-mono text-xs">
+                            {b.match.channel}
                           </td>
-                          <td className="px-4 py-2.5 font-mono text-xs">{b.agent_id}</td>
+                          <td className="text-muted-foreground px-4 py-2.5 font-mono text-xs">
+                            {peerLabel(b.match.peer) || (
+                              <span className="opacity-40">—</span>
+                            )}
+                          </td>
+                          <td className="px-4 py-2.5 font-mono text-xs">
+                            {b.agent_id}
+                          </td>
                           <td className="px-4 py-2.5 text-xs">
                             {editIdx === i ? (
                               <div className="flex items-center gap-1.5">
                                 <Input
                                   value={editMentions}
-                                  onChange={(e) => setEditMentions(e.target.value)}
+                                  onChange={(e) =>
+                                    setEditMentions(e.target.value)
+                                  }
                                   placeholder="e.g. amber, karen"
                                   className="h-7 font-mono text-xs"
                                   onKeyDown={(e) => {
                                     if (e.key === "Enter") saveMentions(i)
                                     if (e.key === "Escape") cancelEditMentions()
                                   }}
+                                  // Deliberate: this input only exists because
+                                  // the user just clicked to edit this row, so
+                                  // focus belongs here. Removing it would make
+                                  // every edit take an extra click.
+                                  // oxlint-disable-next-line no-autofocus
                                   autoFocus
                                 />
                                 <Button
@@ -379,7 +444,9 @@ export function BindingsPage() {
                                   {saving === `mentions-${i}` ? (
                                     <IconLoader2 className="size-3.5 animate-spin" />
                                   ) : (
-                                    <span className="text-xs font-medium">Save</span>
+                                    <span className="text-xs font-medium">
+                                      Save
+                                    </span>
                                   )}
                                 </Button>
                                 <Button
@@ -392,8 +459,9 @@ export function BindingsPage() {
                                 </Button>
                               </div>
                             ) : (
-                              <div className="flex items-center gap-1.5 group/mentions">
-                                {b.agent_mentions && b.agent_mentions.length > 0 ? (
+                              <div className="group/mentions flex items-center gap-1.5">
+                                {b.agent_mentions &&
+                                b.agent_mentions.length > 0 ? (
                                   <span className="text-muted-foreground font-mono">
                                     {b.agent_mentions.join(", ")}
                                   </span>
@@ -403,7 +471,7 @@ export function BindingsPage() {
                                 <button
                                   type="button"
                                   onClick={() => startEditMentions(i)}
-                                  className="text-muted-foreground hover:text-foreground opacity-0 group-hover/mentions:opacity-100 transition-opacity cursor-pointer bg-transparent"
+                                  className="text-muted-foreground hover:text-foreground cursor-pointer bg-transparent opacity-0 transition-opacity group-hover/mentions:opacity-100"
                                 >
                                   <IconEdit className="size-3.5" />
                                 </button>
@@ -434,13 +502,15 @@ export function BindingsPage() {
 
               {/* Add binding form */}
               {showAdd && (
-                <div className="border-border/60 bg-card rounded-xl border p-4 space-y-3">
+                <div className="border-border/60 bg-card space-y-3 rounded-xl border p-4">
                   <span className="text-sm font-semibold">New Binding</span>
 
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     {/* Channel */}
                     <div className="space-y-1.5">
-                      <p className="text-muted-foreground text-xs font-medium">Channel</p>
+                      <p className="text-muted-foreground text-xs font-medium">
+                        Channel
+                      </p>
                       {channels.length > 0 ? (
                         <Select
                           value={addChannel || "__none__"}
@@ -454,10 +524,16 @@ export function BindingsPage() {
                             <SelectValue placeholder="Select channel" />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="__none__">Select channel</SelectItem>
-                            {[...channels].sort((a, b) => a.localeCompare(b)).map((ch) => (
-                              <SelectItem key={ch} value={ch}>{ch}</SelectItem>
-                            ))}
+                            <SelectItem value="__none__">
+                              Select channel
+                            </SelectItem>
+                            {[...channels]
+                              .sort((a, b) => a.localeCompare(b))
+                              .map((ch) => (
+                                <SelectItem key={ch} value={ch}>
+                                  {ch}
+                                </SelectItem>
+                              ))}
                           </SelectContent>
                         </Select>
                       ) : (
@@ -471,20 +547,30 @@ export function BindingsPage() {
 
                     {/* Agent */}
                     <div className="space-y-1.5">
-                      <p className="text-muted-foreground text-xs font-medium">Agent</p>
+                      <p className="text-muted-foreground text-xs font-medium">
+                        Agent
+                      </p>
                       {agents.length > 0 ? (
                         <Select
                           value={addAgent || "__none__"}
-                          onValueChange={(v) => setAddAgent(v === "__none__" ? "" : v)}
+                          onValueChange={(v) =>
+                            setAddAgent(v === "__none__" ? "" : v)
+                          }
                         >
                           <SelectTrigger className="w-full">
                             <SelectValue placeholder="Select agent" />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="__none__">Select agent</SelectItem>
-                            {[...agents].sort((x, y) => x.localeCompare(y)).map((a) => (
-                              <SelectItem key={a} value={a}>{a}</SelectItem>
-                            ))}
+                            <SelectItem value="__none__">
+                              Select agent
+                            </SelectItem>
+                            {[...agents]
+                              .sort((x, y) => x.localeCompare(y))
+                              .map((a) => (
+                                <SelectItem key={a} value={a}>
+                                  {a}
+                                </SelectItem>
+                              ))}
                           </SelectContent>
                         </Select>
                       ) : (
@@ -500,7 +586,9 @@ export function BindingsPage() {
                   {/* Slack peer — only shown when channel is slack */}
                   {isSlack && (
                     <div className="space-y-1.5">
-                      <p className="text-muted-foreground text-xs font-medium">Slack routing</p>
+                      <p className="text-muted-foreground text-xs font-medium">
+                        Slack routing
+                      </p>
                       <div className="flex flex-wrap gap-2">
                         {(
                           [
@@ -512,12 +600,15 @@ export function BindingsPage() {
                           <button
                             key={value}
                             type="button"
-                            onClick={() => { setAddPeerType(value); setAddPeerId("") }}
+                            onClick={() => {
+                              setAddPeerType(value)
+                              setAddPeerId("")
+                            }}
                             className={[
-                              "rounded-md border px-2.5 py-1 text-xs font-medium transition-colors cursor-pointer",
+                              "cursor-pointer rounded-md border px-2.5 py-1 text-xs font-medium transition-colors",
                               addPeerType === value
                                 ? "border-primary/50 bg-secondary text-foreground"
-                                : "border-border/50 bg-transparent text-muted-foreground hover:border-border hover:text-foreground",
+                                : "border-border/50 text-muted-foreground hover:border-border hover:text-foreground bg-transparent",
                             ].join(" ")}
                           >
                             {label}
@@ -529,7 +620,7 @@ export function BindingsPage() {
                           value={addPeerId}
                           onChange={(e) => setAddPeerId(e.target.value)}
                           placeholder="Slack channel ID (e.g. C0ANLEQP5GQ)"
-                          className="font-mono text-xs mt-1.5"
+                          className="mt-1.5 font-mono text-xs"
                         />
                       )}
                     </div>
@@ -538,7 +629,11 @@ export function BindingsPage() {
                   {/* Agent mentions */}
                   <div className="space-y-1.5">
                     <p className="text-muted-foreground text-xs font-medium">
-                      Agent mentions <span className="opacity-60">(optional — comma-separated agent IDs that can be @mentioned to reroute)</span>
+                      Agent mentions{" "}
+                      <span className="opacity-60">
+                        (optional — comma-separated agent IDs that can be
+                        @mentioned to reroute)
+                      </span>
                     </p>
                     <Input
                       value={addMentions}
@@ -565,8 +660,13 @@ export function BindingsPage() {
                     </Button>
                     <Button onClick={handleAdd} disabled={saving === "add"}>
                       {saving === "add" ? (
-                        <><IconLoader2 className="size-4 animate-spin" /> Adding...</>
-                      ) : "Add"}
+                        <>
+                          <IconLoader2 className="size-4 animate-spin" />{" "}
+                          Adding...
+                        </>
+                      ) : (
+                        "Add"
+                      )}
                     </Button>
                   </div>
                 </div>

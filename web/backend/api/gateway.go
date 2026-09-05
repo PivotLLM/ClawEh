@@ -17,7 +17,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/PivotLLM/ClawEh/pkg/logger"
+	"github.com/PivotLLM/ClawEh/logger"
 )
 
 // Log-tail bounds for the WebUI logs endpoint.

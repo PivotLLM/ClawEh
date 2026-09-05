@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"sort"
 
-	"github.com/PivotLLM/ClawEh/pkg/config"
-	"github.com/PivotLLM/ClawEh/pkg/tools"
+	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/tools"
 )
 
 type agentToolEntry struct {

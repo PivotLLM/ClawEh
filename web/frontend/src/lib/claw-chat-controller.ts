@@ -1,7 +1,7 @@
 import { toast } from "sonner"
 
-import { getWebUIToken } from "@/api/webui"
 import { getSessionHistory } from "@/api/sessions"
+import { getWebUIToken } from "@/api/webui"
 import i18n from "@/i18n"
 import {
   clearStoredSessionId,
@@ -10,6 +10,10 @@ import {
   readStoredSessionId,
 } from "@/lib/claw-chat-state"
 import { type ChatMessage, getChatState, updateChatStore } from "@/store/chat"
+
+// TOKEN_SUBPROTOCOL must match channels/webui.TokenSubprotocol. It marks the
+// second offered subprotocol as the channel token.
+const TOKEN_SUBPROTOCOL = "claw-token"
 
 interface WebUIMessage {
   type: string
@@ -182,8 +186,12 @@ export async function connectChat() {
       console.warn("Could not parse ws_url:", error)
     }
 
-    const url = `${finalWsUrl}?token=${encodeURIComponent(token)}&session_id=${encodeURIComponent(activeSessionIdRef)}`
-    const socket = new WebSocket(url)
+    // The token travels as a WebSocket subprotocol rather than a query parameter:
+    // the browser WebSocket API cannot set an Authorization header, and a token in
+    // the URL is captured by access logs, Referer headers and browser history. The
+    // server echoes only the "claw-token" marker, never the token itself.
+    const url = `${finalWsUrl}?session_id=${encodeURIComponent(activeSessionIdRef)}`
+    const socket = new WebSocket(url, [TOKEN_SUBPROTOCOL, token])
 
     if (generation !== connectionGeneration) {
       socket.close()

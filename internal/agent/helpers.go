@@ -3,6 +3,7 @@ package agent
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -11,11 +12,11 @@ import (
 
 	"github.com/ergochat/readline"
 
+	"github.com/PivotLLM/ClawEh/agent"
+	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/internal"
-	"github.com/PivotLLM/ClawEh/pkg/agent"
-	"github.com/PivotLLM/ClawEh/pkg/bus"
-	"github.com/PivotLLM/ClawEh/pkg/logger"
-	"github.com/PivotLLM/ClawEh/pkg/providers"
+	"github.com/PivotLLM/ClawEh/logger"
+	"github.com/PivotLLM/ClawEh/providers"
 )
 
 func agentCmd(message, sessionKey, model string, debug bool) error {
@@ -98,7 +99,7 @@ func interactiveMode(agentLoop *agent.AgentLoop, sessionKey string) {
 	for {
 		line, err := rl.Readline()
 		if err != nil {
-			if err == readline.ErrInterrupt || err == io.EOF {
+			if errors.Is(err, readline.ErrInterrupt) || errors.Is(err, io.EOF) {
 				fmt.Println("\nGoodbye!")
 				return
 			}
@@ -133,7 +134,7 @@ func simpleInteractiveMode(agentLoop *agent.AgentLoop, sessionKey string) {
 		fmt.Print("You: ")
 		line, err := reader.ReadString('\n')
 		if err != nil {
-			if err == io.EOF {
+			if errors.Is(err, io.EOF) {
 				fmt.Println("\nGoodbye!")
 				return
 			}

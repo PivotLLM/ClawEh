@@ -1,31 +1,38 @@
-import { useCallback, useEffect, useState } from "react"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 
 import { getGatewayLogs } from "@/api/gateway"
 
 // The logs view is fetched on mount and on explicit refresh only (no polling),
 // so scrolling up to read history is never interrupted by a background update.
+// staleTime: Infinity is what enforces that — without it Query would refetch on
+// window focus and yank the view.
 export function useGatewayLogs(lines: number) {
-  const [logs, setLogs] = useState<string[]>([])
-  const [error, setError] = useState("")
-  const [loading, setLoading] = useState(false)
+  const queryClient = useQueryClient()
 
-  const refresh = useCallback(async () => {
-    setLoading(true)
-    try {
-      const data = await getGatewayLogs(lines)
-      setLogs(data.logs ?? [])
-      setError(data.error ?? "")
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load logs")
-    } finally {
-      setLoading(false)
-    }
-  }, [lines])
+  const { data, error, isFetching } = useQuery({
+    queryKey: ["gateway-logs", lines],
+    queryFn: async () => {
+      const res = await getGatewayLogs(lines)
+      return { logs: res.logs ?? [], error: res.error ?? "" }
+    },
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+  })
 
-  // Fetch on mount and whenever the requested line count changes.
-  useEffect(() => {
-    void refresh()
-  }, [refresh])
+  const refresh = async () => {
+    await queryClient.invalidateQueries({ queryKey: ["gateway-logs", lines] })
+  }
 
-  return { logs, error, loading, refresh }
+  return {
+    logs: data?.logs ?? [],
+    // A transport failure and a gateway-reported error land in the same field,
+    // as they did before: the view shows one error line either way.
+    error: error
+      ? error instanceof Error
+        ? error.message
+        : "Failed to load logs"
+      : (data?.error ?? ""),
+    loading: isFetching,
+    refresh,
+  }
 }

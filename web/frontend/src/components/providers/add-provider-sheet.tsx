@@ -1,5 +1,5 @@
 import { IconLoader2 } from "@tabler/icons-react"
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import { useTranslation } from "react-i18next"
 
 import { addProvider } from "@/api/providers"
@@ -85,13 +85,18 @@ export function AddProviderSheet({
   )
   const cli = isCliProtocol(form.protocol)
 
-  useEffect(() => {
+  // Start from an empty form each time the sheet is opened. Adjusted during
+  // render rather than in an effect so the previous attempt's values and errors
+  // are never visible on reopen.
+  const [wasOpen, setWasOpen] = useState(open)
+  if (open !== wasOpen) {
+    setWasOpen(open)
     if (open) {
       setForm(EMPTY_ADD_FORM)
       setFieldErrors({})
       setServerError("")
     }
-  }, [open])
+  }
 
   const validate = (): boolean => {
     const errors: Partial<Record<keyof AddForm, string>> = {}
@@ -102,7 +107,8 @@ export function AddProviderSheet({
       errors.name = t("providers.add.errorDuplicateName")
     }
     if (isCliProtocol(form.protocol)) {
-      if (!form.command.trim()) errors.command = t("providers.add.errorRequired")
+      if (!form.command.trim())
+        errors.command = t("providers.add.errorRequired")
     } else if (requiresBaseURL(form.protocol) && !form.baseURL.trim()) {
       errors.baseURL = t("providers.add.errorRequired")
     }
@@ -185,19 +191,19 @@ export function AddProviderSheet({
             >
               <Select
                 value={form.protocol}
-                onValueChange={(v) =>
-                  setForm((f) => ({ ...f, protocol: v }))
-                }
+                onValueChange={(v) => setForm((f) => ({ ...f, protocol: v }))}
               >
                 <SelectTrigger className="w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {[...PROTOCOL_OPTIONS].sort((a, b) => a.localeCompare(b)).map((opt) => (
-                    <SelectItem key={opt} value={opt}>
-                      {opt}
-                    </SelectItem>
-                  ))}
+                  {[...PROTOCOL_OPTIONS]
+                    .sort((a, b) => a.localeCompare(b))
+                    .map((opt) => (
+                      <SelectItem key={opt} value={opt}>
+                        {opt}
+                      </SelectItem>
+                    ))}
                 </SelectContent>
               </Select>
             </Field>
@@ -257,7 +263,6 @@ export function AddProviderSheet({
                   placeholder="http://127.0.0.1:7890"
                 />
               </Field>
-
 
               <SwitchCardField
                 label={t("providers.field.strictCompat")}

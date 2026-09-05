@@ -30,7 +30,7 @@ const (
 	// version is the release number, bare semver. Bump it here; nothing else
 	// defines a version. Build tooling reads this line, so keep it a single
 	// `const`-style assignment on one line.
-	version = "0.4.70"
+	version = "0.4.72"
 )
 
 // Build metadata, injected via ldflags by the Makefile:
@@ -38,15 +38,17 @@ const (
 //	-X github.com/PivotLLM/ClawEh/app.gitCommit=<sha8>
 //	-X github.com/PivotLLM/ClawEh/app.buildTime=<rfc3339>
 //	-X github.com/PivotLLM/ClawEh/app.goVersion=<go version>
+//	-X github.com/PivotLLM/ClawEh/app.buildNumber=<utc yyyymmddhhmmss>
 //
 // Unexported: `go tool link -X` sets package-level string vars by symbol name
-// and does not care about case, so privacy costs nothing here. All three are
+// and does not care about case, so privacy costs nothing here. All four are
 // empty under a plain `go build`, which is fine — they only decorate the
 // version, never replace it.
 var (
-	gitCommit string
-	buildTime string
-	goVersion string
+	gitCommit   string
+	buildTime   string
+	goVersion   string
+	buildNumber string
 )
 
 // Name returns the product name.
@@ -58,15 +60,20 @@ func TagLine() string { return tagLine }
 // Copyright returns the copyright notice.
 func Copyright() string { return copyright }
 
-// Version returns the build's full identity: the release number followed by the
-// build commit as SemVer build metadata — "0.4.69+27691883" — or bare "0.4.69"
-// when nothing was stamped in.
+// Version returns the build's full identity: the release number, the build
+// commit as SemVer build metadata, and the build number in brackets —
+// "0.4.69+27691883 [20260902155301]" — degrading to "0.4.69+27691883" or bare
+// "0.4.69" as those are stamped in.
 //
 // This is the form for anywhere a human or a model reads it: startup banner,
-// version command, logs, diagnostics, the system prompt. It is one unbroken
-// token on purpose. Rendered as "0.4.69 (git: 27691883)" it gets copied into a
-// bug report as "0.4.69" — the space reads as the end of the value — so the half
-// that identifies the exact source is the half that gets dropped.
+// version command, logs, diagnostics, the system prompt, the WebUI footer.
+//
+// The release and the commit are one unbroken token on purpose. Rendered as
+// "0.4.69 (git: 27691883)" it gets copied into a bug report as "0.4.69" — the
+// space reads as the end of the value — so the half that identifies the exact
+// source is the half that gets dropped. The build number is deliberately on the
+// far side of the space: truncating there still leaves the commit attached, and
+// the number answers a different question anyway (see Build).
 //
 // The separator is "+", not "-", because SemVer gives the two different
 // meanings. "+" introduces build metadata, which the spec requires be IGNORED
@@ -75,11 +82,33 @@ func Copyright() string { return copyright }
 // identifier, making it compare LOWER than "0.4.69" and claiming to be something
 // that came before the release rather than an instance of it.
 func Version() string {
-	if gitCommit == "" {
-		return version
+	v := version
+	if gitCommit != "" {
+		v += "+" + gitCommit
 	}
-	return version + "+" + gitCommit
+	if buildNumber != "" {
+		v += " [" + buildNumber + "]"
+	}
+	return v
 }
+
+// Build returns the build number: the UTC time the binary was linked, as
+// yyyymmddhhmmss, or "" under a plain `go build`.
+//
+// It exists because the commit hash cannot answer "is the copy I am running
+// newer than the one I built last?". A hash identifies source exactly but has no
+// order, so telling two builds apart at a glance means looking each one up. This
+// number only orders builds — it says nothing about which source they came from,
+// which is the commit's job — but ordering is the whole point: 20260902155301
+// is plainly later than 20260902094117.
+//
+// A timestamp rather than a counter because a counter needs stored state, and a
+// commit count does not move when the same commit is rebuilt — exactly the case
+// worth catching while iterating against a running install. Seconds rather than
+// minutes because two rebuilds inside one minute is ordinary. UTC because local
+// time runs backwards an hour twice a year, which would make a newer build look
+// older.
+func Build() string { return buildNumber }
 
 // SemVer returns the release number alone — "0.4.69" — with no build metadata.
 //

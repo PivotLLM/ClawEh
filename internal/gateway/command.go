@@ -7,8 +7,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/PivotLLM/ClawEh/app"
-	"github.com/PivotLLM/ClawEh/pkg/logger"
-	"github.com/PivotLLM/ClawEh/pkg/utils"
+	"github.com/PivotLLM/ClawEh/logger"
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 func NewGatewayCommand() *cobra.Command {

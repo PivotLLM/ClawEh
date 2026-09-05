@@ -122,15 +122,13 @@ export interface SecMsgAccounts {
 
 // getSecMsgAccounts queries the daemon live and returns its linked account ids,
 // so the WebUI reflects what the daemon hosts rather than what config enumerates.
-export async function getSecMsgAccounts(
-  name: string,
-): Promise<SecMsgAccounts> {
+export async function getSecMsgAccounts(name: string): Promise<SecMsgAccounts> {
   return request<SecMsgAccounts>(
     `/api/channels/secmsg/${encodeURIComponent(name)}/accounts`,
   )
 }
 
-// MCPServerStatus mirrors pkg/mcp.ServerStatus. state is
+// MCPServerStatus mirrors mcp.ServerStatus. state is
 // "connected" | "reconnecting" | "cooldown"; cooldown_until is RFC3339 (only for
 // the cooldown state). Servers absent from the response are disconnected.
 export interface MCPServerStatus {

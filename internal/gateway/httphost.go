@@ -6,39 +6,54 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/PivotLLM/ClawEh/pkg/logger"
+	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/web/backend/middleware"
 )
 
 // httpHost owns the gateway's shared HTTP listener. The listener is started
 // once at gateway boot and stays up across config reloads; on reload the
-// handler mux is swapped atomically via SetMux. This keeps WebUI WebSocket
-// connections, channel webhooks, the WebUI API, and the callback route alive
-// while the channel manager and other services are rebuilt.
+// handler mux is swapped atomically via SetMux and the IP allowlist via
+// SetAllowlist. This keeps WebUI WebSocket connections, channel webhooks, the
+// WebUI API, and the callback route alive while the channel manager and other
+// services are rebuilt.
 type httpHost struct {
 	server *http.Server
 	mux    atomic.Pointer[http.ServeMux]
+	allow  atomic.Pointer[middleware.Allowlist]
 }
 
 func newHTTPHost(addr string, allowedCIDRs []string) (*httpHost, error) {
 	h := &httpHost{}
 	// Wrap the dynamic mux dispatch in the IP allowlist so the no-auth WebUI/API
 	// (and everything else on this shared port) is reachable only from loopback
-	// (always allowed) plus the configured private ranges — regardless of the
-	// bind address. The allowlist is fixed for the listener's lifetime; changing
-	// it takes effect on restart. Note: it matches the TCP peer (RemoteAddr), so
-	// behind a reverse proxy enforce access control at the proxy instead.
-	handler, err := middleware.IPAllowlist(allowedCIDRs, http.HandlerFunc(h.serveMux))
-	if err != nil {
+	// (always allowed) plus the configured networks — regardless of the bind
+	// address. The allowlist is read per request through h.allow, so SetAllowlist
+	// can change it on a live listener. Note: it matches the TCP peer
+	// (RemoteAddr), so behind a reverse proxy enforce access control at the proxy
+	// instead.
+	if err := h.SetAllowlist(allowedCIDRs); err != nil {
 		return nil, err
 	}
 	h.server = &http.Server{
 		Addr:         addr,
-		Handler:      handler,
+		Handler:      middleware.IPAllowlist(h.allow.Load, http.HandlerFunc(h.serveMux)),
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 30 * time.Second,
 	}
 	return h, nil
+}
+
+// SetAllowlist compiles cidrs and swaps the result in for subsequent requests.
+// An empty list means loopback only. Invalid input returns an error and leaves
+// the current allowlist untouched, so a bad edit during a config reload cannot
+// widen or drop access as a side effect.
+func (h *httpHost) SetAllowlist(cidrs []string) error {
+	list, err := middleware.CompileAllowlist(cidrs)
+	if err != nil {
+		return err
+	}
+	h.allow.Store(list)
+	return nil
 }
 
 // SetMux atomically swaps the handler mux. In-flight requests served by the

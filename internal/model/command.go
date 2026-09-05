@@ -5,8 +5,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/internal"
-	"github.com/PivotLLM/ClawEh/pkg/config"
 )
 
 // LocalModel is a special model name that indicates that the model is local and with or without api_key.

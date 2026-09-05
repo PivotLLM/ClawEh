@@ -3,11 +3,11 @@ import { useState } from "react"
 import { toast } from "sonner"
 
 import {
+  type MessageToken,
   createMessageToken,
   deleteMessageToken,
   listMessageTokens,
   updateMessageToken,
-  type MessageToken,
 } from "@/api/message-tokens"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -101,11 +101,13 @@ export function MessageTokensSection({ agentId }: { agentId: string }) {
   return (
     <div className="space-y-3">
       <div>
-        <p className="text-foreground text-sm font-semibold">Integration Tokens</p>
+        <p className="text-foreground text-sm font-semibold">
+          Integration Tokens
+        </p>
         <p className="text-muted-foreground text-xs">
-          Long-lived tokens that let an external app POST a message to this agent.
-          Delivery behaves like a scheduled event — it goes to the agent's default
-          channel, no conversation required.
+          Long-lived tokens that let an external app POST a message to this
+          agent. Delivery behaves like a scheduled event — it goes to the
+          agent's default channel, no conversation required.
         </p>
       </div>
 
@@ -145,7 +147,9 @@ export function MessageTokensSection({ agentId }: { agentId: string }) {
       </div>
 
       <div className="space-y-1">
-        <p className="text-muted-foreground text-xs">Endpoint (POST the message body):</p>
+        <p className="text-muted-foreground text-xs">
+          Endpoint (POST the message body):
+        </p>
         <code className="bg-muted block overflow-x-auto rounded px-2 py-1 text-xs">
           {exampleURL}
         </code>
@@ -230,7 +234,11 @@ function TokenRow({
             />
             block min
           </label>
-          <span className={tk.blocked ? "text-destructive" : "text-muted-foreground"}>
+          <span
+            className={
+              tk.blocked ? "text-destructive" : "text-muted-foreground"
+            }
+          >
             {quotaStatus(tk)}
           </span>
         </div>
@@ -243,7 +251,11 @@ function TokenRow({
         >
           Copy URL
         </Button>
-        <Button size="sm" variant="outline" onClick={() => copy(tk.token, "Token")}>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => copy(tk.token, "Token")}
+        >
           Copy
         </Button>
         <Button

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/PivotLLM/ClawEh/pkg/config"
+	"github.com/PivotLLM/ClawEh/config"
 )
 
 func resetModelProbeHooks(t *testing.T) {

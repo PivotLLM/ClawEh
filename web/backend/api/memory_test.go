@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	cogmemstore "github.com/PivotLLM/ClawEh/pkg/cogmem/store"
+	cogmemstore "github.com/PivotLLM/ClawEh/cogmem/store"
 )
 
 // seedCogmemDB creates a .cogmem.db in the agent sessions dir with one active

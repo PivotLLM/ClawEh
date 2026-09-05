@@ -8,8 +8,8 @@ import {
   IconMessageCircle,
   IconMicrophone,
   IconPlugConnected,
-  IconRoute,
   IconRobot,
+  IconRoute,
   IconSettings,
   IconSparkles,
   IconTools,
@@ -18,6 +18,7 @@ import { Link, useRouterState } from "@tanstack/react-router"
 import * as React from "react"
 import { useTranslation } from "react-i18next"
 
+import { getVersion } from "@/api/system"
 import {
   Collapsible,
   CollapsibleContent,
@@ -26,16 +27,15 @@ import {
 import {
   Sidebar,
   SidebarContent,
+  SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
   SidebarGroupLabel,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarFooter,
   SidebarRail,
 } from "@/components/ui/sidebar"
-import { getVersion } from "@/api/system"
 import { useSidebarChannels } from "@/hooks/use-sidebar-channels"
 
 interface NavSubItem {

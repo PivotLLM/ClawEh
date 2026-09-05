@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	cogmemstore "github.com/PivotLLM/ClawEh/pkg/cogmem/store"
+	cogmemstore "github.com/PivotLLM/ClawEh/cogmem/store"
 )
 
 const cogmemDBSuffix = ".cogmem.db"
@@ -63,7 +63,11 @@ type memoryRun struct {
 	Status     string `json:"status"`
 	OpsApplied int    `json:"ops_applied"`
 	StartedAt  string `json:"started_at"`
-	Error      string `json:"error,omitempty"`
+	// Error is why the run failed; Note is information about a run that
+	// succeeded (an auto-repair, say). Separate fields so the UI can style
+	// them differently — a note rendered as an error reads as a fault.
+	Error string `json:"error,omitempty"`
+	Note  string `json:"note,omitempty"`
 }
 
 type memoryDetailResponse struct {
@@ -260,6 +264,7 @@ func (h *Handler) handleGetMemoryStore(w http.ResponseWriter, r *http.Request) {
 			OpsApplied: run.OpsApplied,
 			StartedAt:  run.StartedAt.Format(time.RFC3339),
 			Error:      run.Error,
+			Note:       run.Note,
 		}
 	}
 

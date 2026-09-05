@@ -3,7 +3,6 @@ import {
   IconArrowRight,
   IconCheck,
   IconLoader2,
-  IconX,
 } from "@tabler/icons-react"
 import { useNavigate } from "@tanstack/react-router"
 import { useCallback, useEffect, useMemo, useState } from "react"
@@ -12,76 +11,41 @@ import { toast } from "sonner"
 
 import { getAgentTools, getAppConfig, patchAppConfig } from "@/api/channels"
 import {
+  type ModelInfo,
   addModel,
   getModels,
   setDefaultModel,
   updateModel,
-  type ModelInfo,
 } from "@/api/models"
 import {
+  type ProviderInfo,
   getProviders,
   testProvider,
   updateProvider,
-  type ProviderInfo,
 } from "@/api/providers"
 import {
+  type CLIInfo,
   getSetupStatus,
   listCLIs,
   reloadGateway,
-  type CLIInfo,
 } from "@/api/system"
 import { SETUP_DISMISSED_KEY } from "@/components/setup/dismissed"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
+import { AgentStep } from "@/components/setup/steps/agent-step"
+import { ModelStep } from "@/components/setup/steps/model-step"
+import { NetworkStep } from "@/components/setup/steps/network-step"
+import { ProviderStep } from "@/components/setup/steps/provider-step"
+import { ReviewStep } from "@/components/setup/steps/review-step"
+import { WelcomeStep } from "@/components/setup/steps/welcome-step"
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
-import { Switch } from "@/components/ui/switch"
-
-// Providers worth surfacing first in the picker — the rest follow alphabetically.
-const COMMON_PROVIDERS = [
-  "OpenAI",
-  "Anthropic",
-  "Google API",
-  "OpenRouter Chat",
-  "Groq",
-  "DeepSeek",
-  "Mistral",
-  "Ollama",
-]
-
-const CUSTOM_MODEL = "__custom__"
-// Models surfaced as "(Recommended)" in the wizard (and sorted to the top),
-// keyed by provider name → model id.
-const RECOMMENDED_MODEL: Record<string, string> = {
-  "OpenRouter Chat": "deepseek/deepseek-v4-flash",
-}
-// Sentinel for "let the CLI use its own default model" — maps to a model whose
-// id is the CLI protocol (e.g. "gemini-cli"), which the provider treats as
-// "pass no --model arg".
-const CLI_DEFAULT = "__cli_default__"
-
-type TestState = "idle" | "testing" | "ok" | "warn" | "fail"
-
-// slugify turns an agent display name into a stable id (lowercase, dash-joined).
-function slugify(name: string): string {
-  return (
-    name
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "") || "agent"
-  )
-}
-
-interface StepDef {
-  key: string
-  title: string
-}
+  CLI_DEFAULT,
+  COMMON_PROVIDERS,
+  CUSTOM_MODEL,
+  RECOMMENDED_MODEL,
+  type StepDef,
+  type TestState,
+  slugify,
+} from "@/components/setup/wizard-model"
+import { Button } from "@/components/ui/button"
 
 export function SetupWizard() {
   const { t } = useTranslation()
@@ -195,7 +159,9 @@ export function SetupWizard() {
     [clis],
   )
 
-  const selectedCli = selectedProvider ? cliFor(selectedProvider.protocol) : undefined
+  const selectedCli = selectedProvider
+    ? cliFor(selectedProvider.protocol)
+    : undefined
 
   // Recommended model id for the selected provider (shown first + tagged).
   const recommendedModelId = selectedProvider
@@ -223,20 +189,46 @@ export function SetupWizard() {
     void navigate({ to: "/" })
   }, [navigate])
 
-  const steps: StepDef[] = [
-    { key: "welcome", title: t("setup.steps.welcome") },
-    { key: "network", title: t("setup.steps.network") },
-    { key: "provider", title: t("setup.steps.provider") },
-    { key: "model", title: t("setup.steps.model") },
-    { key: "agent", title: t("setup.steps.agent") },
-    { key: "review", title: t("setup.steps.review") },
-  ]
+  // Memoised because a useMemo further down depends on it: rebuilt every render
+  // it would defeat that memo entirely. Only the translations can change it.
+  const steps: StepDef[] = useMemo(
+    () => [
+      { key: "welcome", title: t("setup.steps.welcome") },
+      { key: "network", title: t("setup.steps.network") },
+      { key: "provider", title: t("setup.steps.provider") },
+      { key: "model", title: t("setup.steps.model") },
+      { key: "agent", title: t("setup.steps.agent") },
+      { key: "review", title: t("setup.steps.review") },
+    ],
+    [t],
+  )
 
   // Re-test is required whenever the provider or key changes.
   const resetTest = useCallback(() => {
     setTestState("idle")
     setTestMessage("")
   }, [])
+
+  const handleProviderChange = useCallback(
+    (v: string) => {
+      setProviderName(v)
+      setApiKey("")
+      resetTest()
+      // CLIs need no specific model — default the choice to the
+      // CLI's built-in model so the user can just continue.
+      const p = allProviders.find((x) => x.name === v)
+      setModelChoice(p?.protocol.endsWith("-cli") ? CLI_DEFAULT : "")
+    },
+    [allProviders, resetTest],
+  )
+
+  const handleApiKeyChange = useCallback(
+    (v: string) => {
+      setApiKey(v)
+      resetTest()
+    },
+    [resetTest],
+  )
 
   const runTest = useCallback(async () => {
     if (!selectedProvider) return
@@ -250,7 +242,9 @@ export function SetupWizard() {
       })
       if (res.ok) {
         setTestState("ok")
-      } else if (/cannot|can't|detection|azure|not be|deployment/i.test(res.message)) {
+      } else if (
+        /cannot|can't|detection|azure|not be|deployment/i.test(res.message)
+      ) {
         // Not live-testable (e.g. Azure) — let the user proceed with a warning.
         setTestState("warn")
       } else {
@@ -354,13 +348,19 @@ export function SetupWizard() {
       if (!alreadyConfigured && defaultIdx >= 0) {
         list = rawList.map((a, i) =>
           i === defaultIdx
-            ? { ...a, name: agentName.trim(), models: [defaultName], tools: defaultTools }
+            ? {
+                ...a,
+                name: agentName.trim(),
+                models: [defaultName],
+                tools: defaultTools,
+              }
             : a,
         )
       } else {
         const existingIds = new Set(rawList.map((a) => String(a.id ?? "")))
         let id = slugify(agentName)
-        for (let n = 2; existingIds.has(id); n++) id = `${slugify(agentName)}-${n}`
+        for (let n = 2; existingIds.has(id); n++)
+          id = `${slugify(agentName)}-${n}`
         const newAgent: Record<string, unknown> = {
           id,
           name: agentName.trim(),
@@ -449,7 +449,9 @@ export function SetupWizard() {
             </span>
             <span
               className={
-                i === step ? "font-medium" : "text-muted-foreground hidden sm:inline"
+                i === step
+                  ? "font-medium"
+                  : "text-muted-foreground hidden sm:inline"
               }
             >
               {s.title}
@@ -467,357 +469,69 @@ export function SetupWizard() {
 
       <div className="flex-1">
         {steps[step].key === "welcome" && (
-          <div className="space-y-3">
-            <h1 className="text-2xl font-semibold">{t("setup.welcome.title")}</h1>
-            <p className="text-muted-foreground">{t("setup.welcome.body")}</p>
-            <ul className="text-muted-foreground list-disc space-y-1 pl-5 text-sm">
-              <li>{t("setup.welcome.point1")}</li>
-              <li>{t("setup.welcome.point2")}</li>
-              <li>{t("setup.welcome.point3")}</li>
-            </ul>
-            {alreadyConfigured && (
-              <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-700 dark:text-amber-300">
-                {t("setup.welcome.alreadyConfigured")}
-              </div>
-            )}
-          </div>
+          <WelcomeStep alreadyConfigured={alreadyConfigured} />
         )}
 
         {steps[step].key === "network" && (
-          <div className="space-y-5">
-            <div className="space-y-1">
-              <h1 className="text-xl font-semibold">{t("setup.network.title")}</h1>
-              <p className="text-muted-foreground text-sm">
-                {t("setup.network.body")}
-              </p>
-            </div>
-
-            <div className="border-border/60 bg-card flex items-start justify-between gap-3 rounded-xl border p-4">
-              <div className="min-w-0 space-y-1">
-                <Label>{t("setup.network.accessLabel")}</Label>
-                <p className="text-muted-foreground text-xs leading-normal">
-                  {t("setup.network.accessHint")}
-                </p>
-              </div>
-              <Switch
-                checked={networkAccess}
-                onCheckedChange={setNetworkAccess}
-                aria-label={t("setup.network.accessLabel")}
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label>{t("setup.network.portLabel")}</Label>
-              <Input
-                type="number"
-                min={1}
-                max={65535}
-                value={gatewayPort}
-                onChange={(e) => setGatewayPort(e.target.value)}
-              />
-              <p className="text-muted-foreground text-xs">
-                {t("setup.network.portHint")}
-              </p>
-            </div>
-
-            <div className="space-y-2">
-              <Label>{t("setup.network.externalLabel")}</Label>
-              <Input
-                type="text"
-                value={externalUrl}
-                placeholder={externalUrlDefault}
-                onChange={(e) => setExternalUrl(e.target.value)}
-              />
-              <p className="text-muted-foreground text-xs">
-                {t("setup.network.externalHint")}
-              </p>
-            </div>
-
-            <p className="text-muted-foreground text-xs">
-              {t("setup.network.restartNote")}
-            </p>
-          </div>
+          <NetworkStep
+            networkAccess={networkAccess}
+            setNetworkAccess={setNetworkAccess}
+            gatewayPort={gatewayPort}
+            setGatewayPort={setGatewayPort}
+            externalUrl={externalUrl}
+            setExternalUrl={setExternalUrl}
+            externalUrlDefault={externalUrlDefault}
+          />
         )}
 
         {steps[step].key === "provider" && (
-          <div className="space-y-5">
-            <div className="space-y-1">
-              <h1 className="text-xl font-semibold">{t("setup.provider.title")}</h1>
-              <p className="text-muted-foreground text-sm">
-                {t("setup.provider.body")}
-              </p>
-            </div>
-
-            <div className="space-y-2">
-              <Label>{t("setup.provider.selectLabel")}</Label>
-              <Select
-                value={providerName}
-                onValueChange={(v) => {
-                  setProviderName(v)
-                  setApiKey("")
-                  resetTest()
-                  // CLIs need no specific model — default the choice to the
-                  // CLI's built-in model so the user can just continue.
-                  const p = allProviders.find((x) => x.name === v)
-                  setModelChoice(p?.protocol.endsWith("-cli") ? CLI_DEFAULT : "")
-                }}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder={t("setup.provider.selectPlaceholder")} />
-                </SelectTrigger>
-                <SelectContent>
-                  {apiProviders.map((p) => (
-                    <SelectItem key={p.index} value={p.name}>
-                      {p.name}
-                    </SelectItem>
-                  ))}
-                  {cliProviders.map((p) => {
-                    const info = cliFor(p.protocol)
-                    return (
-                      <SelectItem
-                        key={p.index}
-                        value={p.name}
-                        disabled={!info?.installed}
-                      >
-                        {p.name}
-                        {info?.installed
-                          ? ` — ${t("setup.provider.cliInstalled")}`
-                          : ` — ${t("setup.provider.cliMissing")}`}
-                      </SelectItem>
-                    )
-                  })}
-                </SelectContent>
-              </Select>
-              <p className="text-muted-foreground text-xs">
-                {t("setup.provider.cliHint")}
-              </p>
-            </div>
-
-            {clis.length > 0 && (
-              <div className="border-border/60 bg-card space-y-2 rounded-xl border p-4 text-sm">
-                <p className="font-medium">
-                  {t("setup.provider.cliDetectedHeading")}
-                </p>
-                {clis.map((c) => (
-                  <div
-                    key={c.protocol}
-                    className="flex items-center justify-between gap-3"
-                  >
-                    <span className="flex items-center gap-2">
-                      {c.installed ? (
-                        <IconCheck className="size-4 text-emerald-600 dark:text-emerald-400" />
-                      ) : (
-                        <IconX className="text-muted-foreground size-4" />
-                      )}
-                      {c.label}
-                    </span>
-                    <span className="text-muted-foreground truncate text-xs">
-                      {c.installed
-                        ? c.version || c.path
-                        : t("setup.provider.cliMissing")}
-                    </span>
-                  </div>
-                ))}
-                <p className="text-muted-foreground text-xs">
-                  {t("setup.provider.cliPickHint")}
-                </p>
-              </div>
-            )}
-
-            {selectedProvider && isCliProvider && (
-              <div className="border-border/60 bg-card space-y-1 rounded-xl border p-4 text-sm">
-                {selectedCli?.installed ? (
-                  <>
-                    <p className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
-                      <IconCheck className="size-4" />
-                      {t("setup.provider.cliDetected")}
-                    </p>
-                    {selectedCli.version && (
-                      <p className="text-muted-foreground">{selectedCli.version}</p>
-                    )}
-                    {selectedCli.path && (
-                      <p className="text-muted-foreground font-mono text-xs">
-                        {selectedCli.path}
-                      </p>
-                    )}
-                  </>
-                ) : (
-                  <p className="text-destructive flex items-center gap-1">
-                    <IconX className="size-4" />
-                    {t("setup.provider.cliNotDetected")}
-                  </p>
-                )}
-              </div>
-            )}
-
-            {selectedProvider && !isCliProvider && (
-              <>
-                {selectedProvider.base_url && (
-                  <p className="text-muted-foreground text-xs">
-                    {t("setup.provider.endpoint")}: {selectedProvider.base_url}
-                  </p>
-                )}
-                <div className="space-y-2">
-                  <Label>{t("setup.provider.keyLabel")}</Label>
-                  <Input
-                    type="password"
-                    value={apiKey}
-                    autoComplete="off"
-                    placeholder={t("setup.provider.keyPlaceholder")}
-                    onChange={(e) => {
-                      setApiKey(e.target.value)
-                      resetTest()
-                    }}
-                  />
-                </div>
-
-                <div className="flex items-center gap-3">
-                  <Button
-                    variant="outline"
-                    onClick={runTest}
-                    disabled={testState === "testing"}
-                  >
-                    {testState === "testing" ? (
-                      <IconLoader2 className="size-4 animate-spin" />
-                    ) : null}
-                    {t("setup.provider.testButton")}
-                  </Button>
-                  {testState === "ok" && (
-                    <span className="flex items-center gap-1 text-sm text-emerald-600 dark:text-emerald-400">
-                      <IconCheck className="size-4" /> {testMessage}
-                    </span>
-                  )}
-                  {testState === "warn" && (
-                    <span className="text-muted-foreground text-sm">{testMessage}</span>
-                  )}
-                  {testState === "fail" && (
-                    <span className="text-destructive flex items-center gap-1 text-sm">
-                      <IconX className="size-4" /> {testMessage}
-                    </span>
-                  )}
-                </div>
-              </>
-            )}
-          </div>
+          <ProviderStep
+            providerName={providerName}
+            onProviderChange={handleProviderChange}
+            apiProviders={apiProviders}
+            cliProviders={cliProviders}
+            cliFor={cliFor}
+            clis={clis}
+            selectedProvider={selectedProvider}
+            isCliProvider={isCliProvider}
+            selectedCli={selectedCli}
+            apiKey={apiKey}
+            onApiKeyChange={handleApiKeyChange}
+            runTest={runTest}
+            testState={testState}
+            testMessage={testMessage}
+          />
         )}
 
         {steps[step].key === "model" && (
-          <div className="space-y-5">
-            <div className="space-y-1">
-              <h1 className="text-xl font-semibold">{t("setup.model.title")}</h1>
-              <p className="text-muted-foreground text-sm">{t("setup.model.body")}</p>
-            </div>
-
-            <div className="space-y-2">
-              <Label>{t("setup.model.selectLabel")}</Label>
-              <Select value={modelChoice} onValueChange={setModelChoice}>
-                <SelectTrigger>
-                  <SelectValue placeholder={t("setup.model.selectPlaceholder")} />
-                </SelectTrigger>
-                <SelectContent>
-                  {isCliProvider && (
-                    <SelectItem value={CLI_DEFAULT}>
-                      {t("setup.model.cliDefaultOption")}
-                    </SelectItem>
-                  )}
-                  {presetModels
-                    // For CLIs, hide the sentinel "no-model" presets — the
-                    // Default option above covers them.
-                    .filter(
-                      (m) =>
-                        !isCliProvider ||
-                        m.model !== selectedProvider?.protocol,
-                    )
-                    .map((m) => (
-                      <SelectItem key={m.index} value={m.model_name}>
-                        {m.model_name} ({m.model})
-                        {m.model === recommendedModelId
-                          ? ` — ${t("setup.model.recommended")}`
-                          : ""}
-                      </SelectItem>
-                    ))}
-                  <SelectItem value={CUSTOM_MODEL}>
-                    {t("setup.model.customOption")}
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            {modelChoice === CUSTOM_MODEL && (
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="space-y-2">
-                  <Label>{t("setup.model.customIdLabel")}</Label>
-                  <Input
-                    value={customModel}
-                    placeholder="gpt-4o"
-                    onChange={(e) => setCustomModel(e.target.value)}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>{t("setup.model.customNameLabel")}</Label>
-                  <Input
-                    value={customLabel}
-                    placeholder={t("setup.model.customNamePlaceholder")}
-                    onChange={(e) => setCustomLabel(e.target.value)}
-                  />
-                </div>
-              </div>
-            )}
-          </div>
+          <ModelStep
+            modelChoice={modelChoice}
+            setModelChoice={setModelChoice}
+            isCliProvider={isCliProvider}
+            selectedProvider={selectedProvider}
+            presetModels={presetModels}
+            recommendedModelId={recommendedModelId}
+            customModel={customModel}
+            setCustomModel={setCustomModel}
+            customLabel={customLabel}
+            setCustomLabel={setCustomLabel}
+          />
         )}
 
         {steps[step].key === "agent" && (
-          <div className="space-y-5">
-            <div className="space-y-1">
-              <h1 className="text-xl font-semibold">{t("setup.agent.title")}</h1>
-              <p className="text-muted-foreground text-sm">{t("setup.agent.body")}</p>
-            </div>
-            <div className="space-y-2">
-              <Label>{t("setup.agent.nameLabel")}</Label>
-              <Input
-                value={agentName}
-                onChange={(e) => setAgentName(e.target.value)}
-              />
-            </div>
-          </div>
+          <AgentStep agentName={agentName} setAgentName={setAgentName} />
         )}
 
         {steps[step].key === "review" && (
-          <div className="space-y-5">
-            <div className="space-y-1">
-              <h1 className="text-xl font-semibold">{t("setup.review.title")}</h1>
-              <p className="text-muted-foreground text-sm">{t("setup.review.body")}</p>
-            </div>
-            <dl className="border-border/60 divide-border/60 divide-y rounded-xl border text-sm">
-              <div className="flex justify-between p-3">
-                <dt className="text-muted-foreground">{t("setup.steps.provider")}</dt>
-                <dd className="font-medium">{providerName}</dd>
-              </div>
-              <div className="flex justify-between p-3">
-                <dt className="text-muted-foreground">{t("setup.steps.model")}</dt>
-                <dd className="font-medium">
-                  {modelChoice === CLI_DEFAULT
-                    ? t("setup.model.cliDefaultOption")
-                    : modelChoice === CUSTOM_MODEL
-                      ? customLabel.trim() || customModel.trim()
-                      : modelChoice}
-                </dd>
-              </div>
-              <div className="flex justify-between p-3">
-                <dt className="text-muted-foreground">{t("setup.steps.agent")}</dt>
-                <dd className="font-medium">{agentName.trim()}</dd>
-              </div>
-            </dl>
-            {finishError && (
-              <p className="text-destructive text-sm">{finishError}</p>
-            )}
-            {finishing && (
-              <p className="text-muted-foreground flex items-center gap-2 text-sm">
-                <IconLoader2 className="size-4 animate-spin" />
-                {t("setup.applying")}
-              </p>
-            )}
-          </div>
+          <ReviewStep
+            providerName={providerName}
+            modelChoice={modelChoice}
+            customLabel={customLabel}
+            customModel={customModel}
+            agentName={agentName}
+            finishError={finishError}
+            finishing={finishing}
+          />
         )}
       </div>
 

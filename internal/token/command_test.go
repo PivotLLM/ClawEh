@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/PivotLLM/ClawEh/pkg/servicetoken"
+	"github.com/PivotLLM/ClawEh/servicetoken"
 )
 
 // setupHome points CLAW_HOME at a temp dir with a minimal two-agent config and

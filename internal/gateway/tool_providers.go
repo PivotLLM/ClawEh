@@ -1,21 +1,20 @@
 package gateway
 
 import (
-	"github.com/PivotLLM/ClawEh/pkg/tools"
-	"github.com/PivotLLM/ClawEh/pkg/tools/agents"
-	cogmem "github.com/PivotLLM/ClawEh/pkg/tools/cogmem"
-	common "github.com/PivotLLM/ClawEh/pkg/tools/common"
-	"github.com/PivotLLM/ClawEh/pkg/tools/files"
-	fusion "github.com/PivotLLM/ClawEh/pkg/tools/fusion"
-	"github.com/PivotLLM/ClawEh/pkg/tools/hardware"
-	maestro "github.com/PivotLLM/ClawEh/pkg/tools/maestro"
-	"github.com/PivotLLM/ClawEh/pkg/tools/msg"
-	"github.com/PivotLLM/ClawEh/pkg/tools/schedule"
-	"github.com/PivotLLM/ClawEh/pkg/tools/session"
-	"github.com/PivotLLM/ClawEh/pkg/tools/shell"
-	"github.com/PivotLLM/ClawEh/pkg/tools/skills"
-	"github.com/PivotLLM/ClawEh/pkg/tools/timetool"
-	toolsweb "github.com/PivotLLM/ClawEh/pkg/tools/web"
+	"github.com/PivotLLM/ClawEh/tools"
+	"github.com/PivotLLM/ClawEh/tools/agents"
+	cogmem "github.com/PivotLLM/ClawEh/tools/cogmem"
+	common "github.com/PivotLLM/ClawEh/tools/common"
+	"github.com/PivotLLM/ClawEh/tools/files"
+	fusion "github.com/PivotLLM/ClawEh/tools/fusion"
+	maestro "github.com/PivotLLM/ClawEh/tools/maestro"
+	"github.com/PivotLLM/ClawEh/tools/msg"
+	"github.com/PivotLLM/ClawEh/tools/schedule"
+	"github.com/PivotLLM/ClawEh/tools/session"
+	"github.com/PivotLLM/ClawEh/tools/shell"
+	"github.com/PivotLLM/ClawEh/tools/skills"
+	"github.com/PivotLLM/ClawEh/tools/timetool"
+	toolsweb "github.com/PivotLLM/ClawEh/tools/web"
 )
 
 // registerToolProviders registers all tool providers in the global registry.
@@ -27,7 +26,6 @@ func registerToolProviders() {
 	tools.RegisterProvider(tools.NamespacedProvider("shell", shell.GlobalProvider))
 	tools.RegisterProvider(tools.NamespacedProvider("skill", skills.GlobalProvider))
 	tools.RegisterProvider(tools.NamespacedProvider("agent", agents.GlobalProvider))
-	tools.RegisterProvider(tools.NamespacedProvider("hw", hardware.GlobalProvider))
 	tools.RegisterProvider(tools.NamespacedProvider("msg", msg.GlobalProvider))
 	tools.RegisterProvider(tools.NamespacedProvider("cogmem", cogmem.GlobalProvider))
 	tools.RegisterProvider(tools.NamespacedProvider("common", common.GlobalProvider))

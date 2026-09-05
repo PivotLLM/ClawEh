@@ -4,9 +4,9 @@ import (
 	"context"
 	"time"
 
+	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/internal/backup"
-	"github.com/PivotLLM/ClawEh/pkg/config"
-	"github.com/PivotLLM/ClawEh/pkg/logger"
+	"github.com/PivotLLM/ClawEh/logger"
 )
 
 // startBackupScheduler runs the optional nightly backup. It ticks once a minute

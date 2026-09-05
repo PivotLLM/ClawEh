@@ -1,12 +1,14 @@
 package install
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/internal"
-	"github.com/PivotLLM/ClawEh/pkg/config"
-	"github.com/PivotLLM/ClawEh/pkg/global"
 )
 
 func TestBuildUnit_RunsAsUserAndStartsAtBoot(t *testing.T) {
@@ -146,5 +148,46 @@ func TestShellQuote(t *testing.T) {
 		if got := shellQuote(in); got != want {
 			t.Errorf("shellQuote(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// TestIsNetworkBind pins which bind addresses count as off-box, since that is
+// what gates the install-time refusal.
+func TestIsNetworkBind(t *testing.T) {
+	for _, h := range []string{"", "127.0.0.1", "localhost", "::1", "[::1]", " 127.0.0.1 "} {
+		if isNetworkBind(h) {
+			t.Errorf("isNetworkBind(%q) = true, want false", h)
+		}
+	}
+	for _, h := range []string{"0.0.0.0", "::", "192.168.1.10", "10.0.0.5"} {
+		if !isNetworkBind(h) {
+			t.Errorf("isNetworkBind(%q) = false, want true", h)
+		}
+	}
+}
+
+// TestLinkOpenClawAlias covers the symlink the Rabbit R1 needs: rabbit-agent
+// spawns `openclaw acp`, so an install that omits it leaves the R1 unable to
+// connect even though everything else works.
+func TestLinkOpenClawAlias(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "claw"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := linkOpenClawAlias(dir, "claw"); err != nil {
+		t.Fatalf("linkOpenClawAlias() error = %v", err)
+	}
+	link := filepath.Join(dir, "openclaw")
+	target, err := os.Readlink(link)
+	if err != nil {
+		t.Fatalf("openclaw is not a symlink: %v", err)
+	}
+	if target != "claw" {
+		t.Fatalf("openclaw -> %q, want %q (relative, so moving the dir keeps it valid)", target, "claw")
+	}
+
+	// Re-running install must replace an existing link rather than failing.
+	if err := linkOpenClawAlias(dir, "claw"); err != nil {
+		t.Fatalf("second linkOpenClawAlias() error = %v, want it to replace the existing link", err)
 	}
 }

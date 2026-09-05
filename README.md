@@ -17,7 +17,7 @@ https://github.com/PivotLLM/Tutorials/blob/main/docs/claweh-quickstart.md
 - **Rabbit R1 via the Agent Client Protocol (ACP).** The current **Rabbit Agent**  launches `openclaw` locally, which speaks the **Agent Client Protocol** (JSON-RPC 2.0 over stdin/stdout) and bridges each turn to the running ClawEh gateway. ClawEh provides this as `claw acp` (installed as an `openclaw` symlink), so the R1 pairs automatically. Text, voice, and images are supported. (Images are handled by a vision-capable model if required). **Note:** updating ClawEh restarts the gateway, which drops the bridge — so `openclaw` must be restarted (or the host rebooted) afterward to reconnect.
 - Added **image / vision support**. A new `file_view_image` tool lets a vision-capable model view an image from the workspace (large images are auto-downscaled). For text-only models, an optional **global vision model** can be configured to describe inbound images, screenshots, and viewed image files automatically.
 - **Sub-agents can now delegate further work.** The old blanket "primary-only" restriction has been retired: a sub-agent inherits the parent's full toolset (including memory, scheduled jobs, spawning, and Maestro) and may itself spawn or re-enter Maestro, bounded by a configurable `max_subagent_depth` (default 3) so runaway recursion cannot occur.
-- ClawEh's built-in **device gateway** is tested and working with ~~the **Rabbit R1** and~~ the **ClawToTalk app on Android**. Pair with a QR code or a typed token, choose which assistant each device talks to, and get replies **streamed live** as they are received from the LLM. See the [device gateway protocol](docs/device-gateway-protocol.md) for technical details.
+- ClawEh's built-in **device gateway** is tested and working with the **Rabbit R1** (through the Rabbit agent) and the **ClawToTalk app on Android**. Pair with a QR code or a typed token, choose which assistant each device talks to, and get replies **streamed live** as they are received from the LLM. See the [device gateway protocol](docs/device-gateway-protocol.md) for technical details.
 - Added long-lived tokens to support inbound webhooks for integration
 - Integrated Maestro orchestration directly into ClawEh
 
@@ -40,7 +40,7 @@ https://github.com/PivotLLM/Tutorials/blob/main/docs/claweh-quickstart.md
 - **Messaging channels** — Connect agents to Telegram, Slack, Discord, Signal, and the built-in web interface, with configurable per-agent routing. The Signal channel connects to a secure-messaging daemon and auto-discovers its linked accounts. Additional channels are under consideration.
 - **Cognitive memory** — Each agent can maintain persistent memory that updates in the background, distilling conversations into structured, de-duplicated facts and automatically recalling relevant information for future prompts.
 - **Smart context management** — Automatic summarization and compaction, combined with per-turn eviction of stale tool output, keep long-running conversations responsive and within model context limits.
-- **External voice/hardware devices** — A built-in device gateway speaks the OpenClaw Gateway WebSocket protocol, so hardware and voice clients can pair (QR or typed token) and talk to your agents. Tested with the **Rabbit R1** and the **"Claw to Talk" voice app**. Each device can be pointed at a chosen assistant (or the default) from the Web UI. The current Rabbit R1 Rabbit Agent connects instead via the **Agent Client Protocol (ACP)**: it launches `openclaw` locally, which bridges to the gateway over stdio and supports voice, text, and photos.
+- **External voice/hardware devices** — A built-in device gateway speaks the OpenClaw Gateway WebSocket protocol, so hardware and voice clients can pair (QR or typed token) and talk to your agents. Tested with the **Rabbit R1** and the **"Claw to Talk" voice app**. Each device can be pointed at a chosen assistant (or the default) from the Web UI. The R1 connects through the Rabbit agent, which supports voice, text, and photos; see [ACP](docs/acp-protocol.md) for how that path works.
 - **Message history** — Configurable retention and a searchable archive of past messages, organized by session.
 - **Directory mounts** — Give an agent read-only or read-write access to selected directories, with optional notifications when new files appear.
 - **Scheduled jobs** — Run cron-based recurring tasks, scheduled jobs, and reminders.
@@ -88,7 +88,28 @@ Run as your normal user — it prompts for sudo only to write the unit file:
 ./claw install --host 0.0.0.0   # headless: reachable on your LAN
 ```
 
-This copies the binary to `~/bin` (or `~/.local/bin`), adds it to your `PATH`, and registers a systemd service that runs ClawEh as your user at boot. The web UI has no authentication, so access is restricted to loopback plus the private-network ranges (RFC1918) by default — override with `--allowed-cidrs` (e.g. a specific subnet, or `0.0.0.0/0` to allow all). Remove everything with `claw uninstall`.
+This copies the binary to `~/bin` (or `~/.local/bin`), adds it to your `PATH`, symlinks `openclaw` alongside it (for the Rabbit R1 — see [External devices](#external-devices)), and registers a systemd service that runs ClawEh as your user at boot. Remove everything with `claw uninstall`.
+
+**Headless or remote host?** The web UI has no authentication yet, so it is **loopback-only by default** and two things are needed to reach it from elsewhere: a bind address *and* an allowlist saying who may connect. `claw install` refuses `--host` without `--allowed-cidrs` rather than leaving you with a port that listens and then rejects everything:
+
+```bash
+claw install --host 0.0.0.0 --allowed-cidrs 192.168.1.0/24   # your LAN subnet — recommended
+claw install --host 0.0.0.0 --allowed-cidrs private          # all RFC1918 private ranges
+claw install --host 0.0.0.0 --allowed-cidrs any              # any address — see the warning below
+```
+
+`private` and `any` are shorthands; you can also give explicit CIDRs, comma-separated. Loopback is always allowed, so a local-only install needs none of this. You can change it later in the web UI under **Config → Service**, with `gateway.allowed_cidrs`, or — if the allowlist is what is keeping you out of the web UI — with `claw network` on the host itself:
+
+```bash
+claw network --show             # what is allowed right now
+claw network                    # allow the private LAN ranges
+claw network 192.168.1.0/24     # or one subnet
+claw network none               # back to loopback only
+```
+
+`claw network` writes the config and exits, so it is safe to run while ClawEh is running; the gateway applies the new allowlist on its next config reload — about 15 seconds — without a restart.
+
+> Prefer the narrowest range that works. Until operator authentication and TLS land, anyone inside the allowlist can read and change your configuration — put ClawEh behind a VPN or reverse proxy with its own auth if it must be reachable from an untrusted network. See [Remote access](docs/remote-access.md).
 
 > Not using systemd? Just run `claw` directly — it starts the gateway and web UI on port `18790`.
 
@@ -144,6 +165,69 @@ mix: `file_read_lines`/`_bytes`, `file_search_lines`/`_bytes`, the positional
 `file_edit_lines`/`insert`/`delete` (line and byte variants), plus `file_edit`
 (exact-text replace), `file_write`, `file_append`, `file_copy`, `file_move` (works
 across mounts), and `file_delete` (requires `sure=true`; refuses to delete backups).
+
+## External devices
+
+Two different transports reach your agents from outside the machine. They are
+separate listeners with separate credentials, and which one a client uses is not
+a choice you make — it depends on the client.
+
+| | Device gateway | ACP bridge |
+|---|---|---|
+| Used by | ClawToTalk (Android), OpenClaw-compatible apps | Rabbit R1 |
+| Port | `channels.device.port`, default **18791** | none — stdio, no listener |
+| Protocol | OpenClaw Gateway WebSocket | Agent Client Protocol (JSON-RPC 2.0 over stdio) |
+| Auth | shared token or 5-word passphrase, then Ed25519 pairing | inherits the device gateway's, over loopback |
+
+Neither uses the web UI's chat socket (`/webui/ws` on port 18790). That one is
+for the browser console only.
+
+### Device gateway — apps
+
+ClawEh speaks the **OpenClaw Gateway WebSocket protocol** on its own listener, so
+OpenClaw-compatible clients work without modification. Pair by scanning a QR code
+or typing a five-word passphrase, then approve the device in the web UI. Each
+device can be pointed at a chosen assistant, and replies stream live as the model
+produces them.
+
+`channels.device.allowed_cidrs` is empty by default here, meaning any address —
+unlike the web UI's allowlist. That is deliberate: this listener authenticates
+every client, so reachability is not the only thing standing between a stranger
+and your agents. See [the protocol notes](docs/device-gateway-protocol.md).
+
+### ACP bridge — the Rabbit R1
+
+The R1 does **not** connect over the network. Its `rabbit-agent` spawns a local
+helper process and talks to it over a pipe, so ClawEh has to be something
+`rabbit-agent` can launch:
+
+```
+rabbit-agent ──ACP over stdio──► openclaw acp ──WebSocket on 127.0.0.1:18791──► the running gateway
+                                 (a symlink to claw)                            (device gateway)
+```
+
+`rabbit-agent` is configured to spawn `openclaw acp`. Installing ClawEh creates
+an `openclaw` symlink next to the `claw` binary — `claw install` and
+`make install` both do this — so that command resolves to ClawEh. `claw acp` is a
+stateless translator: it holds no agent loop, and simply converts each ACP prompt
+into a device-gateway turn against the **already-running** gateway on loopback.
+There is only ever one ClawEh instance.
+
+Because the bridge connects as a device, it uses the same credentials and pairing
+as any other client, and pairs only once: its Ed25519 identity and issued token
+persist in `$CLAW_HOME/state/acp-bridge/`, so the short-lived processes
+`rabbit-agent` spawns do not re-pair every time.
+
+Two practical consequences:
+
+- **The gateway must already be running.** The bridge is a translator, not a
+  server; it connects to the gateway rather than starting one.
+- **Restarting the gateway drops the bridge.** Upgrading ClawEh restarts the
+  service, so `openclaw` has to be restarted afterwards (or the host rebooted)
+  before the R1 reconnects.
+
+Full details, including the turn lifecycle and the JSON-RPC wire format, are in
+[docs/acp-protocol.md](docs/acp-protocol.md).
 
 ## Why ClawEh exists
 
@@ -248,7 +332,7 @@ cycles:
   `toolspec` + stdlib; it never imports a host. Policy — model selection,
   fallback, cooldown, config, results handling — stays in ClawEh.
 
-`pkg/global` and `pkg/providers` are thin alias shims re-exporting these modules,
+`global` and `providers` are thin alias shims re-exporting these modules,
 so a normal `go build` fetches them by version tag; no extra setup is needed.
 
 ## Running
@@ -262,6 +346,13 @@ claw
 The WebUI is served on `http://localhost:18790` — open that URL in a browser
 to reach the chat interface and configuration console. The port is
 configurable via `gateway.port` in `~/.claw/config.json`.
+
+On the first run ClawEh writes a complete `~/.claw/config.json` (mode `0600`)
+if none exists, with every section present and the full set of known models and
+providers listed. That generated file is the reference for what is
+configurable — there is no separate example config to fall out of date with the
+code. Edit it in the web console under **Config**, or by hand; the topic docs in
+[`docs/`](docs/) cover individual sections in more detail.
 
 ## Terms of Use and Compliance
 ClawEh supports a wide range of LLM providers. It is your responsibility to ensure that your use of any provider, API, service, or model is consistent with the applicable terms of service, acceptable use policies, contracts, and legal requirements. This includes use-case restrictions, data handling obligations, and any prohibition on accessing non-public or undocumented APIs. We have removed support for some providers where we determined the implementation could not reasonably be used without violating the provider's terms. We welcome feedback from any LLM providers on this topic.
@@ -328,7 +419,7 @@ On platforms like Telegram where bots are publicly discoverable by username, thi
 
 ClawEh is intended to function as personal assistant that runs on a computer the user controls. It is not designed or intended to provide any kind of public service. The current web interface uses HTTP and has no authentication, and therefore should not be exposed to untrusted networks. We strongly recommend running it on `localhost` only. We are aware that many people wish to run a "claw" application on a headless computer and are considering the right path forward.
 
-The web management API has no authentication layer. Any client that can reach the management port can add or modify model configurations (including API keys and endpoints), read session history, and start or stop the gateway process. Access control relies entirely on the listen address (localhost-only by default) and, when running in public mode, the IP allowlist. Do not run with `-public` and an empty `allowed_cidrs` list on any network where untrusted hosts could reach the port.
+The web management API has no authentication layer. Any client that can reach the management port can add or modify model configurations (including API keys and endpoints), read session history, and start or stop the gateway process. Access control relies entirely on the listen address (localhost-only by default) and the IP allowlist, which are two independent gates: an empty `gateway.allowed_cidrs` serves loopback only, whatever the bind address. Widen it deliberately, and prefer a specific subnet over `*` (any address) on any network where untrusted hosts could reach the port.
 
 In general, Claw should be operated as a local, user-controlled tool, not as an internet-facing application.
 
@@ -802,7 +893,7 @@ Before starting this project, I contributed a number of fixes and improvements u
 ## Copyright and license
 
 Copyright (c) 2026 Tenebris Technologies Inc.
-Somce code Copyright (c) 2026 PicoClaw contributors 
+Some code Copyright (c) 2026 PicoClaw contributors
 
 This software is licensed under the MIT License. Please see `LICENSE` for details.
 

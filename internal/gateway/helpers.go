@@ -10,37 +10,37 @@ import (
 	"sync"
 	"time"
 
+	"github.com/PivotLLM/ClawEh/agent"
 	"github.com/PivotLLM/ClawEh/app"
+	"github.com/PivotLLM/ClawEh/bus"
+	"github.com/PivotLLM/ClawEh/channels"
+	_ "github.com/PivotLLM/ClawEh/channels/device"
+	_ "github.com/PivotLLM/ClawEh/channels/discord"
+	_ "github.com/PivotLLM/ClawEh/channels/line"
+	_ "github.com/PivotLLM/ClawEh/channels/matrix"
+	_ "github.com/PivotLLM/ClawEh/channels/secmsg"
+	_ "github.com/PivotLLM/ClawEh/channels/slack"
+	_ "github.com/PivotLLM/ClawEh/channels/telegram"
+	_ "github.com/PivotLLM/ClawEh/channels/webui"
+	"github.com/PivotLLM/ClawEh/cogmem/consolidate"
+	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/cron"
+	"github.com/PivotLLM/ClawEh/devices"
+	"github.com/PivotLLM/ClawEh/global"
+	"github.com/PivotLLM/ClawEh/health"
 	"github.com/PivotLLM/ClawEh/internal"
-	"github.com/PivotLLM/ClawEh/pkg/agent"
-	"github.com/PivotLLM/ClawEh/pkg/bus"
-	"github.com/PivotLLM/ClawEh/pkg/channels"
-	_ "github.com/PivotLLM/ClawEh/pkg/channels/device"
-	_ "github.com/PivotLLM/ClawEh/pkg/channels/discord"
-	_ "github.com/PivotLLM/ClawEh/pkg/channels/line"
-	_ "github.com/PivotLLM/ClawEh/pkg/channels/matrix"
-	_ "github.com/PivotLLM/ClawEh/pkg/channels/secmsg"
-	_ "github.com/PivotLLM/ClawEh/pkg/channels/slack"
-	_ "github.com/PivotLLM/ClawEh/pkg/channels/telegram"
-	_ "github.com/PivotLLM/ClawEh/pkg/channels/webui"
-	"github.com/PivotLLM/ClawEh/pkg/cogmem/consolidate"
-	"github.com/PivotLLM/ClawEh/pkg/config"
-	"github.com/PivotLLM/ClawEh/pkg/cron"
-	"github.com/PivotLLM/ClawEh/pkg/devices"
-	"github.com/PivotLLM/ClawEh/pkg/global"
-	"github.com/PivotLLM/ClawEh/pkg/health"
-	"github.com/PivotLLM/ClawEh/pkg/logger"
-	"github.com/PivotLLM/ClawEh/pkg/mcpserver"
-	"github.com/PivotLLM/ClawEh/pkg/media"
-	"github.com/PivotLLM/ClawEh/pkg/mountwatch"
-	"github.com/PivotLLM/ClawEh/pkg/providers"
-	"github.com/PivotLLM/ClawEh/pkg/servicetoken"
-	"github.com/PivotLLM/ClawEh/pkg/state"
-	"github.com/PivotLLM/ClawEh/pkg/tools"
-	toolsagents "github.com/PivotLLM/ClawEh/pkg/tools/agents"
-	toolschedule "github.com/PivotLLM/ClawEh/pkg/tools/schedule"
-	"github.com/PivotLLM/ClawEh/pkg/utils"
-	"github.com/PivotLLM/ClawEh/pkg/voice"
+	"github.com/PivotLLM/ClawEh/logger"
+	"github.com/PivotLLM/ClawEh/mcpserver"
+	"github.com/PivotLLM/ClawEh/media"
+	"github.com/PivotLLM/ClawEh/mountwatch"
+	"github.com/PivotLLM/ClawEh/providers"
+	"github.com/PivotLLM/ClawEh/servicetoken"
+	"github.com/PivotLLM/ClawEh/state"
+	"github.com/PivotLLM/ClawEh/tools"
+	toolsagents "github.com/PivotLLM/ClawEh/tools/agents"
+	toolschedule "github.com/PivotLLM/ClawEh/tools/schedule"
+	"github.com/PivotLLM/ClawEh/utils"
+	"github.com/PivotLLM/ClawEh/voice"
 	webserver "github.com/PivotLLM/ClawEh/web/backend"
 	webapi "github.com/PivotLLM/ClawEh/web/backend/api"
 )
@@ -433,22 +433,30 @@ func setupAndStartServices(
 		linker, ok := ch.(webapi.SecMsgLinker)
 		return linker, ok
 	})
-	// IP allowlist for the shared HTTP port. Defaults to the RFC1918 private
-	// ranges (see GatewayConfig.EffectiveAllowedCIDRs), so the no-auth WebUI is
-	// reachable only from loopback + the LAN even when bound to 0.0.0.0.
+	// IP allowlist for the shared HTTP port. Empty means loopback only (see
+	// GatewayConfig.EffectiveAllowedCIDRs), so the no-auth WebUI grants no
+	// off-box access until an allowlist is configured, whatever the bind address.
 	allowedCIDRs := cfg.Gateway.EffectiveAllowedCIDRs()
 	httpHost, hostErr := newHTTPHost(addr, allowedCIDRs)
 	if hostErr != nil {
 		return nil, fmt.Errorf("invalid network allowlist %v: %w", allowedCIDRs, hostErr)
 	}
 	services.HTTPHost = httpHost
-	logger.InfoF("Network allowlist active", map[string]any{"allowed_cidrs": allowedCIDRs, "loopback": "always allowed"})
+	logAllowlist(allowedCIDRs, cfg.Gateway.Host)
 	rebuildSharedHTTPServer(services, cfg.Gateway.Host, cfg.Gateway.Port, services.ChannelManager, services.HTTPHost, agentLoop)
 	services.HTTPHost.Start()
 
 	if err := services.ChannelManager.StartAll(context.Background()); err != nil {
 		return nil, fmt.Errorf("error starting channels: %w", err)
 	}
+
+	// The listener is up and the channels are running, which is what /ready
+	// means. It has to be set here rather than left to health.Server.Start():
+	// that method marks ready as a side effect of starting the health server's
+	// OWN listener, and the merged binary never uses it — the handlers are
+	// registered onto the shared mux instead. Without this, /ready answered 503
+	// for the entire life of the process.
+	markReady(services, true)
 
 	logger.InfoF("Health endpoints available", map[string]any{"health": fmt.Sprintf("http://%s:%d/health", cfg.Gateway.Host, cfg.Gateway.Port), "ready": fmt.Sprintf("http://%s:%d/ready", cfg.Gateway.Host, cfg.Gateway.Port)})
 
@@ -630,6 +638,7 @@ func stopAndCleanupServices(
 			logger.WarnCF("mcpserver", "MCP server shutdown error", map[string]any{"error": err.Error()})
 		}
 	}
+	markReady(services, false)
 	if services.ChannelManager != nil {
 		services.ChannelManager.StopAll(shutdownCtx)
 	}
@@ -775,6 +784,13 @@ func restartServices(
 	}
 	logger.InfoC("cron", "Cron service restarted")
 
+	// Re-create the mount watcher. stopAndCleanupServices stopped the old one, so
+	// without this a reload would silently end mount notifications for the rest of
+	// the process's life — and every service around it is rebuilt the same way.
+	services.MountWatcher = mountwatch.New(al.GetConfig, msgBus, 0)
+	services.MountWatcher.Start()
+	logger.InfoC("mountwatch", "Mount watcher restarted")
+
 	// Stop the old media store before creating a new one
 	if fms, ok := services.MediaStore.(*media.FileMediaStore); ok {
 		fms.Stop()
@@ -823,9 +839,26 @@ func restartServices(
 	// config reload (investigation 7a5377d9, option #1).
 	rebuildSharedHTTPServer(services, cfg.Gateway.Host, cfg.Gateway.Port, services.ChannelManager, services.HTTPHost, al)
 
+	// Re-apply the IP allowlist on the live listener. This is what makes
+	// `claw network` a recovery path: an operator locked out by an empty
+	// allowlist can widen it and be let in within the reload interval, without a
+	// restart. A rejected allowlist leaves the running one in place — a typo must
+	// not silently drop access to loopback.
+	if services.HTTPHost != nil {
+		allowedCIDRs := cfg.Gateway.EffectiveAllowedCIDRs()
+		if err := services.HTTPHost.SetAllowlist(allowedCIDRs); err != nil {
+			logger.WarnF("Invalid network allowlist in reloaded config; keeping the previous one", map[string]any{"error": err.Error()})
+		} else {
+			logAllowlist(allowedCIDRs, cfg.Gateway.Host)
+		}
+	}
+
 	if err := services.ChannelManager.StartAll(runCtx); err != nil {
 		return fmt.Errorf("error restarting channels: %w", err)
 	}
+	// rebuildSharedHTTPServer creates a fresh health.Server, which starts
+	// not-ready, so readiness is re-asserted after every reload.
+	markReady(services, true)
 	logger.InfoCF("channels", "Channels restarted", map[string]any{"health": fmt.Sprintf("http://%s:%d/health", cfg.Gateway.Host, cfg.Gateway.Port)})
 
 	// Re-create device service with new config
@@ -1034,6 +1067,23 @@ func setupCronTool(
 		cronTool = toolschedule.NewCronTool(cronService, msgBus, agentLoop.GetConfig)
 	}
 
+	// Wire watch probes to the owning agent's tool registry, resolved per run so
+	// a tool revoked in config stops being probed rather than staying live from
+	// whenever the watch was created.
+	if cronTool != nil {
+		cronTool.SetAgentTools(func(agentID string) *tools.ToolRegistry {
+			reg := agentLoop.GetRegistry()
+			if reg == nil {
+				return nil
+			}
+			inst, ok := reg.GetAgent(agentID)
+			if !ok || inst == nil {
+				return nil
+			}
+			return inst.Tools
+		})
+	}
+
 	// Set onJob handler
 	if cronTool != nil {
 		cronService.SetOnJob(func(job *cron.CronJob) (string, error) {
@@ -1043,4 +1093,42 @@ func setupCronTool(
 	}
 
 	return cronService, cronTool
+}
+
+// markReady flips the readiness flag the /ready endpoint reports. Guarded
+// because the health server is nil until the shared HTTP server is first built,
+// and is replaced on every config reload.
+func markReady(services *gatewayServices, ready bool) {
+	logger.InfoF("DEBUG markReady", map[string]any{
+		"ready": ready, "services_nil": services == nil,
+		"health_nil": services == nil || services.HealthServer == nil,
+		"ptr":        fmt.Sprintf("%p", services.HealthServer)})
+	if services != nil && services.HealthServer != nil {
+		services.HealthServer.SetReady(ready)
+	}
+}
+
+// logAllowlist reports the effective IP allowlist at startup and after a reload.
+// Binding off-box without one is almost always a surprise: the listener accepts
+// the connection and the allowlist then rejects it, which looks like the port
+// being closed rather than a configuration choice — so say so, and say how to
+// fix it without hunting through config.json.
+func logAllowlist(allowedCIDRs []string, host string) {
+	if len(allowedCIDRs) > 0 {
+		logger.InfoF("Network allowlist active", map[string]any{"allowed_cidrs": allowedCIDRs, "loopback": "always allowed"})
+		return
+	}
+	logger.InfoF("Network allowlist active", map[string]any{"allowed_cidrs": "none (loopback only)"})
+	if host == "" || host == "127.0.0.1" || host == "localhost" || host == "::1" {
+		return
+	}
+	// "*" rather than 0.0.0.0/0: the latter is an IPv4 prefix and still refuses
+	// IPv6 clients, which on a dual-stack host reads as the allowlist being
+	// broken. See middleware.AllowAnyAddress.
+	logger.WarnF("Gateway is bound off-box but the network allowlist is empty, so only loopback will be served. "+
+		"Run `"+internal.BinaryName+" network` to allow the private LAN ranges, "+
+		"`"+internal.BinaryName+" network <cidr>` for a specific subnet, or "+
+		"`"+internal.BinaryName+" network any` for any address (note 0.0.0.0/0 covers IPv4 only; use \"*\"). "+
+		"A running gateway applies the change on its next config reload, about 15 seconds.",
+		map[string]any{"host": host})
 }
