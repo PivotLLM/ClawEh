@@ -58,7 +58,6 @@ type refSite struct {
 	memoryID string
 	text     string // the memory's text, so the document can say what it belongs to
 	ref      string
-	pending  bool // memory is unconfirmed: name the document, do not load it
 }
 
 // collectRef appends a memory's file reference to sites when it has one. The
@@ -78,7 +77,6 @@ type memoryRef struct {
 	memoryID string
 	text     string
 	ref      string
-	pending  bool
 }
 
 // memoryHeadline shortens a memory's text to a single quotable line for the
@@ -133,9 +131,7 @@ func (c *Composer) attachmentsBlock(stableSites, routedSites []refSite) (stable,
 	}
 
 	// Dedup by path, keeping first-referenced order and merging every memory that
-	// points at it (one shared doc, one copy in the prompt). A document is only
-	// withheld as pending when every memory naming it is unconfirmed — one
-	// confirmed owner is reason enough to load it.
+	// points at it (one shared doc, one copy in the prompt).
 	order := make([]string, 0, len(stableSites)+len(routedSites))
 	byRef := make(map[string][]refSite, len(order))
 	fromStable := make(map[string]bool, len(stableSites))
@@ -158,22 +154,8 @@ func (c *Composer) attachmentsBlock(stableSites, routedSites []refSite) (stable,
 		}
 		owners := byRef[ref]
 		sort.SliceStable(owners, func(i, j int) bool { return owners[i].memoryID < owners[j].memoryID })
-		pending := true
-		for _, o := range owners {
-			if !o.pending {
-				pending = false
-				break
-			}
-		}
 
 		fmt.Fprintf(b, "### Attached: %s\n", ref)
-
-		// An unconfirmed memory names its document but does not spend context on
-		// it: one line saying so, and nothing else.
-		if pending {
-			fmt.Fprintf(b, "%s — pending confirmation, so its contents are not loaded. Confirm the memory to include this document.\n\n", provenance(owners))
-			continue
-		}
 
 		if remaining <= 0 {
 			fmt.Fprintf(b, "%s — not included: the per-turn attachment budget (%d bytes) is exhausted. Read the file directly if you need it.\n\n",

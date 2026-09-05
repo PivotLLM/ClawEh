@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/PivotLLM/ClawEh/cogmem/portable"
 	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/tools"
 )
@@ -129,66 +130,73 @@ func TestRememberWithDomainHint(t *testing.T) {
 	}
 }
 
-func TestSearchActiveVsReview(t *testing.T) {
+// Search excludes events unless asked, which is the whole retrieval path for
+// them: an event is never loaded into the prompt, so if search cannot reach it
+// nothing can.
+func TestSearchExcludesEventsUnlessAsked(t *testing.T) {
 	h, _ := buildHandlers(t)
 	res := run(t, h["domain_create"], newCall(testSession, map[string]any{"name": "p"}))
 	domainID := extractID(t, res.ForLLM, "d")
 
-	// active hook
 	run(t, h["memory_create"], newCall(testSession, map[string]any{
-		"domain_id": domainID, "type": "fact", "text": "active widget", "status": "active",
+		"domain_id": domainID, "type": "fact", "text": "standing widget",
 	}))
-	// review hook
 	run(t, h["memory_create"], newCall(testSession, map[string]any{
-		"domain_id": domainID, "type": "fact", "text": "review widget", "status": "review",
+		"domain_id": domainID, "type": "event", "text": "widget shipped Sep 4",
 	}))
 
 	res = run(t, h["memory_search"], newCall(testSession, map[string]any{"query": "widget"}))
-	if !strings.Contains(res.ForLLM, "active widget") {
-		t.Fatalf("search missed active hook: %s", res.ForLLM)
+	if !strings.Contains(res.ForLLM, "standing widget") {
+		t.Fatalf("search missed the standing memory: %s", res.ForLLM)
 	}
-	if strings.Contains(res.ForLLM, "review widget") {
-		t.Fatalf("search returned review hook: %s", res.ForLLM)
+	if strings.Contains(res.ForLLM, "widget shipped") {
+		t.Fatalf("event returned without include_events: %s", res.ForLLM)
+	}
+
+	res = run(t, h["memory_search"], newCall(testSession, map[string]any{
+		"query": "widget", "include_events": true,
+	}))
+	if !strings.Contains(res.ForLLM, "widget shipped") {
+		t.Fatalf("include_events did not reach the event: %s", res.ForLLM)
 	}
 }
 
-func TestConfirmPromotesReviewMemory(t *testing.T) {
+// Creating an event tells the assistant it will not be in context, because the
+// alternative is a memory it believes it stored and then never sees again.
+func TestCreateEventExplainsItIsSearchOnly(t *testing.T) {
 	h, _ := buildHandlers(t)
-	res := run(t, h["domain_create"], newCall(testSession, map[string]any{"name": "p"}))
-	domainID := extractID(t, res.ForLLM, "d")
-
-	// A review (pending) memory is not returned by active search.
-	res = run(t, h["memory_create"], newCall(testSession, map[string]any{
-		"domain_id": domainID, "type": "fact", "text": "pending widget", "status": "review",
+	res := run(t, h["memory_create"], newCall(testSession, map[string]any{
+		"type": "event", "text": "oversight run at 07:40",
 	}))
 	if res.IsError {
-		t.Fatalf("memory_create error: %s", res.ForLLM)
+		t.Fatalf("memory_create(event) error: %s", res.ForLLM)
 	}
-	memoryID := extractID(t, res.ForLLM, "h")
-
-	res = run(t, h["memory_search"], newCall(testSession, map[string]any{"query": "widget"}))
-	if strings.Contains(res.ForLLM, memoryID) {
-		t.Fatalf("review hook found in active search before confirm: %s", res.ForLLM)
-	}
-
-	// memory_confirm promotes it to active.
-	res = run(t, h["memory_confirm"], newCall(testSession, map[string]any{"id": memoryID}))
-	if res.IsError {
-		t.Fatalf("memory_confirm error: %s", res.ForLLM)
-	}
-
-	// now active search finds it.
-	res = run(t, h["memory_search"], newCall(testSession, map[string]any{"query": "widget"}))
-	if !strings.Contains(res.ForLLM, memoryID) {
-		t.Fatalf("confirmed hook not found in active search: %s", res.ForLLM)
+	if !strings.Contains(res.ForLLM, "not loaded into your context") {
+		t.Fatalf("event creation should say it is search-only: %s", res.ForLLM)
 	}
 }
 
-func TestConfirmRequiresID(t *testing.T) {
+// An unrecognised type is rejected rather than coerced. Type decides whether a
+// memory is in the prompt at all, so a silent fallback would either hide it or
+// expose it, both invisibly.
+func TestCreateRejectsUnknownType(t *testing.T) {
 	h, _ := buildHandlers(t)
-	res := run(t, h["memory_confirm"], newCall(testSession, map[string]any{}))
+	res := run(t, h["memory_create"], newCall(testSession, map[string]any{
+		"type": "observation", "text": "x",
+	}))
 	if !res.IsError {
-		t.Fatalf("expected error for missing id, got: %s", res.ForLLM)
+		t.Fatalf("unknown type accepted: %s", res.ForLLM)
+	}
+	if !strings.Contains(res.ForLLM, "operational") || !strings.Contains(res.ForLLM, "event") {
+		t.Fatalf("rejection should name the valid types: %s", res.ForLLM)
+	}
+}
+
+// memory_confirm is gone with the review status it promoted from.
+func TestConfirmToolIsGone(t *testing.T) {
+	h, _ := buildHandlers(t)
+	if _, ok := h["memory_confirm"]; ok {
+		t.Error("memory_confirm still registered: the review status it promoted from no longer exists")
 	}
 }
 
@@ -260,9 +268,11 @@ func TestStatusAndConsolidate(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("status error: %s", res.ForLLM)
 	}
-	if !strings.Contains(res.ForLLM, "Pending (review) memories: 0") ||
-		!strings.Contains(res.ForLLM, "Last consolidation run: none") {
+	if !strings.Contains(res.ForLLM, "Last consolidation run: none") {
 		t.Fatalf("unexpected status: %s", res.ForLLM)
+	}
+	if strings.Contains(res.ForLLM, "Pending") {
+		t.Fatalf("status still reports pending memories, which no longer exist: %s", res.ForLLM)
 	}
 
 	res = run(t, h["consolidate"], newCall(testSession, nil))
@@ -271,7 +281,10 @@ func TestStatusAndConsolidate(t *testing.T) {
 	}
 }
 
-func TestExportMemory(t *testing.T) {
+// The export is YAML that can be read back, not Markdown that could only be
+// looked at. This test round-trips it: what comes out of the tool must parse as
+// a memory document and still contain what went in.
+func TestExportMemoryRoundTrips(t *testing.T) {
 	h, ws := buildHandlers(t)
 	res := run(t, h["domain_create"], newCall(testSession, map[string]any{
 		"name":             "BioTech",
@@ -282,23 +295,57 @@ func TestExportMemory(t *testing.T) {
 	run(t, h["memory_create"], newCall(testSession, map[string]any{
 		"domain_id": domainID, "type": "fact", "text": "the report targets Q3",
 	}))
+	run(t, h["memory_create"], newCall(testSession, map[string]any{
+		"domain_id": domainID, "type": "event", "text": "results published Sep 4",
+	}))
 
 	res = run(t, h["export"], newCall(testSession, nil))
-	if res.IsError || !strings.Contains(res.ForLLM, "MEMORY_EXPORT.md") {
+	if res.IsError || !strings.Contains(res.ForLLM, "MEMORY_EXPORT.yaml") {
 		t.Fatalf("unexpected export result: %s", res.ForLLM)
 	}
-	data, err := os.ReadFile(filepath.Join(ws, "files", "MEMORY_EXPORT.md"))
+	data, err := os.ReadFile(filepath.Join(ws, "files", exportFilename))
 	if err != nil {
 		t.Fatalf("read export: %v", err)
 	}
-	body := string(data)
-	for _, want := range []string{
-		"# Cognitive Memory Export", "## Topics", "BioTech", "the report targets Q3",
-		"Tool triggers", "google_gmail", "Keyword triggers", "biotech report",
-	} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("export missing %q:\n%s", want, body)
+
+	doc, err := portable.Unmarshal(data)
+	if err != nil {
+		t.Fatalf("export does not parse as a memory document: %v\n%s", err, data)
+	}
+	if doc.FormatVersion != portable.FormatVersion {
+		t.Errorf("format_version = %d, want %d", doc.FormatVersion, portable.FormatVersion)
+	}
+
+	var found, foundEvent bool
+	for _, d := range doc.Domains {
+		if d.Name != "BioTech" {
+			continue
 		}
+		if d.Triggers != "google_gmail" {
+			t.Errorf("triggers = %q, want google_gmail", d.Triggers)
+		}
+		if !strings.Contains(d.KeywordTriggers, "biotech report") {
+			t.Errorf("keyword_triggers = %q, want it to include the phrase", d.KeywordTriggers)
+		}
+		for _, m := range d.Memories {
+			switch m.Text {
+			case "the report targets Q3":
+				found = true
+			case "results published Sep 4":
+				foundEvent = true
+				if m.Type != "event" {
+					t.Errorf("event exported with type %q", m.Type)
+				}
+			}
+		}
+	}
+	if !found {
+		t.Errorf("export lost the standing memory:\n%s", data)
+	}
+	// An export is a backup, so it holds everything — including the memories
+	// that are deliberately absent from the prompt.
+	if !foundEvent {
+		t.Errorf("export omitted the event memory:\n%s", data)
 	}
 }
 

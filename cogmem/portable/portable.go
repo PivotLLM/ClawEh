@@ -293,16 +293,30 @@ func Import(ctx context.Context, st *store.Store, doc Document, mode ImportMode,
 				continue
 			}
 			seen[text] = true
-			if _, err := st.AddMemory(ctx, st.DB(), store.AddMemoryParams{
+			// Always added active, then retired if the document says so. Retiring
+			// through RetireMemory is what carries the reason across and writes the
+			// audit event; inserting straight into the retired status would drop
+			// both, so a restored memory would lose why it was retired.
+			added, err := st.AddMemory(ctx, st.DB(), store.AddMemoryParams{
 				DomainID:   target.ID,
 				Type:       memoryType(m.Type),
 				Text:       text,
-				Status:     memoryStatus(m.Status),
+				Status:     store.StatusActive,
 				Confidence: m.Confidence,
 				Origin:     store.Origin(m.Origin),
 				FileRef:    m.FileRef,
-			}); err != nil {
+			})
+			if err != nil {
 				return res, fmt.Errorf("cogmem: import: add memory to %s: %w", target.ID, err)
+			}
+			if memoryStatus(m.Status) == store.StatusRetired {
+				reason := m.RetireReason
+				if reason == "" {
+					reason = "retired before export"
+				}
+				if err := st.RetireMemory(ctx, st.DB(), added.ID, reason); err != nil {
+					return res, fmt.Errorf("cogmem: import: retire %s: %w", added.ID, err)
+				}
 			}
 			res.MemoriesCreated++
 		}

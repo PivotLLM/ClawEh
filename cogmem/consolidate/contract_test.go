@@ -15,7 +15,7 @@ import (
 func sampleInput() Input {
 	return Input{
 		CurrentState: CurrentState{Domains: []DomainView{{
-			ID: "d4", Name: "Layout", Status: "active", Version: 2,
+			ID: "d4", Name: "Layout", Version: 2,
 			Memories: []MemoryView{{ID: "h9", Type: "rule", Text: "Never use the color blue.", Confidence: 0.9}},
 		}}},
 		NewMessages: []Message{{Seq: 512, Role: "user", Text: "Actually, use blue for the layout."}},
@@ -27,8 +27,7 @@ func TestValidateHappyPath(t *testing.T) {
 	out := Output{
 		MemoryOps: []MemoryOp{{
 			Op: "supersede", OldID: "h9", Domain: "d4", Type: "rule",
-			Text: "Use blue for the layout.", Confidence: 0.95, Status: "active",
-			Source: "user_explicit", Evidence: ev(512, 512),
+			Text: "Use blue for the layout.", Confidence: 0.95, Evidence: ev(512, 512),
 		}},
 		ConflictLedger: []LedgerEntry{{Resolved: "x", Reason: "y", Evidence: ev(512, 512)}},
 	}
@@ -40,12 +39,23 @@ func TestValidateHappyPath(t *testing.T) {
 func TestValidateRejections(t *testing.T) {
 	in := sampleInput()
 	cases := map[string]Output{
-		"evidence out of range": {MemoryOps: []MemoryOp{{Op: "add", Domain: "d4", Type: "fact", Text: "ok", Source: "user_explicit", Status: "active", Evidence: ev(999, 999)}}},
-		"unknown domain":        {MemoryOps: []MemoryOp{{Op: "add", Domain: "dX", Type: "fact", Text: "ok", Source: "user_explicit", Status: "active", Evidence: ev(512, 512)}}},
+		"evidence out of range": {MemoryOps: []MemoryOp{{Op: "add", Domain: "d4", Type: "fact", Text: "ok", Evidence: ev(999, 999)}}},
+		"unknown domain":        {MemoryOps: []MemoryOp{{Op: "add", Domain: "dX", Type: "fact", Text: "ok", Evidence: ev(512, 512)}}},
 		"unknown retire id":     {MemoryOps: []MemoryOp{{Op: "retire", ID: "hZ", Reason: "x", Evidence: ev(512, 512)}}},
-		"invalid kind":          {MemoryOps: []MemoryOp{{Op: "add", Domain: "d4", Type: "bogus", Text: "ok", Source: "user_explicit", Status: "active", Evidence: ev(512, 512)}}},
-		"inferred active":       {MemoryOps: []MemoryOp{{Op: "add", Domain: "d4", Type: "fact", Text: "ok", Source: "assistant_inferred", Status: "active", Evidence: ev(512, 512)}}},
+		"invalid kind":          {MemoryOps: []MemoryOp{{Op: "add", Domain: "d4", Type: "bogus", Text: "ok", Evidence: ev(512, 512)}}},
 		"create no tmp_id":      {DomainOps: []DomainOp{{Op: "create", Name: "X", Evidence: ev(512, 512)}}},
+		// Type is REQUIRED, not merely valid-if-present. The old contract
+		// checked each field only when it was non-empty, so an op that named no
+		// type and no status and no source passed every guard and was then
+		// filled in with defaults — assistant_inferred + active, the one
+		// combination the rules forbade.
+		"missing type": {MemoryOps: []MemoryOp{{Op: "add", Domain: "d4", Text: "ok", Evidence: ev(512, 512)}}},
+		"empty text":   {MemoryOps: []MemoryOp{{Op: "add", Domain: "d4", Type: "fact", Evidence: ev(512, 512)}}},
+		// review was a memory status and never a domain one; the domain
+		// lifecycle is active/archived.
+		"domain status review": {DomainOps: []DomainOp{{
+			Op: "create", TmpID: "t1", Name: "X", Status: "review", Evidence: ev(512, 512),
+		}}},
 	}
 	for name, out := range cases {
 		if err := out.Validate(in); err == nil {
@@ -54,11 +64,26 @@ func TestValidateRejections(t *testing.T) {
 	}
 }
 
+// The two types added with the redesign must be accepted: event (never loaded
+// into the prompt) and operational (the assistant's own housekeeping).
+func TestValidateAcceptsEventAndOperational(t *testing.T) {
+	in := sampleInput()
+	for _, typ := range []string{"fact", "preference", "rule", "event", "operational"} {
+		out := Output{MemoryOps: []MemoryOp{{
+			Op: "add", Domain: "d4", Type: typ, Text: "ok",
+			Confidence: 0.9, Evidence: ev(512, 512),
+		}}}
+		if err := out.Validate(in); err != nil {
+			t.Errorf("type %q rejected: %v", typ, err)
+		}
+	}
+}
+
 func TestValidateTmpIDReference(t *testing.T) {
 	in := sampleInput()
 	out := Output{
-		DomainOps: []DomainOp{{Op: "create", TmpID: "t1", Name: "New", Status: "active", Evidence: ev(512, 512)}},
-		MemoryOps: []MemoryOp{{Op: "add", Domain: "t1", Type: "fact", Text: "a fact", Source: "user_explicit", Status: "active", Evidence: ev(512, 512)}},
+		DomainOps: []DomainOp{{Op: "create", TmpID: "t1", Name: "New", Evidence: ev(512, 512)}},
+		MemoryOps: []MemoryOp{{Op: "add", Domain: "t1", Type: "fact", Text: "a fact", Evidence: ev(512, 512)}},
 	}
 	if err := out.Validate(in); err != nil {
 		t.Fatalf("tmp_id reference rejected: %v", err)
@@ -140,36 +165,28 @@ func TestLoadPrompt(t *testing.T) {
 
 func ev(a, b int64) store.Evidence { return store.Evidence{SeqStart: a, SeqEnd: b} }
 
-// TestOutput_Normalize_DowngradesInferredActive verifies the safe repair: an
-// inferred item marked active is downgraded to review (so the batch is kept and
-// the item goes to pending confirmation), while explicit items are untouched.
-func TestOutput_Normalize_DowngradesInferredActive(t *testing.T) {
+// Normalize no longer repairs anything. The one repair it had downgraded an
+// inferred memory the model marked active to review, and both the status field
+// and the review state are gone — the model states type and nothing else, so
+// there is no longer a field it can set to a value needing correction.
+//
+// The function survives because the repair-and-note path is the right shape for
+// the next safely-correctable deviation, and its callers already handle an empty
+// result. This test pins that it reports no notes and mutates nothing.
+func TestOutput_Normalize_IsANoOp(t *testing.T) {
 	out := Output{MemoryOps: []MemoryOp{
-		{Op: "add", Domain: "d1", Type: "fact", Text: "guessed", Source: "assistant_inferred", Status: "active"},
-		{Op: "add", Domain: "d1", Type: "fact", Text: "stated", Source: "user_explicit", Status: "active"},
-		{Op: "supersede", OldID: "h1", Domain: "d1", Type: "rule", Text: "guess2", Source: "assistant_inferred", Status: "active"},
-		{Op: "add", Domain: "d1", Type: "fact", Text: "already review", Source: "assistant_inferred", Status: "review"},
+		{Op: "add", Domain: "d1", Type: "fact", Text: "a"},
+		{Op: "add", Domain: "d1", Type: "event", Text: "b"},
+		{Op: "supersede", OldID: "h1", Domain: "d1", Type: "operational", Text: "c"},
 	}}
+	before := append([]MemoryOp(nil), out.MemoryOps...)
 
-	notes := out.Normalize()
-
-	if out.MemoryOps[0].Status != "review" {
-		t.Errorf("inferred add should be downgraded to review, got %q", out.MemoryOps[0].Status)
+	if notes := out.Normalize(); len(notes) != 0 {
+		t.Errorf("Normalize reported %d notes, want none: %v", len(notes), notes)
 	}
-	if out.MemoryOps[1].Status != "active" {
-		t.Errorf("user_explicit add must be untouched, got %q", out.MemoryOps[1].Status)
-	}
-	if out.MemoryOps[2].Status != "review" {
-		t.Errorf("inferred supersede should be downgraded to review, got %q", out.MemoryOps[2].Status)
-	}
-	if len(notes) != 2 {
-		t.Errorf("expected 2 repair notes, got %d: %v", len(notes), notes)
-	}
-
-	// The repaired batch must no longer trip the inferred-active rule.
-	for i, op := range out.MemoryOps {
-		if op.Source == "assistant_inferred" && op.Status == "active" {
-			t.Errorf("memory_ops[%d] still inferred+active after Normalize", i)
+	for i := range before {
+		if out.MemoryOps[i] != before[i] {
+			t.Errorf("memory_ops[%d] was mutated: %+v -> %+v", i, before[i], out.MemoryOps[i])
 		}
 	}
 }

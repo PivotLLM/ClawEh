@@ -50,7 +50,7 @@ func TestAttachmentFromStickyMemory(t *testing.T) {
 	gen, _ := s.GeneralDomain(ctx, db)
 	m, err := s.AddMemory(ctx, db, store.AddMemoryParams{
 		DomainID: gen.ID, Type: store.TypeRule, Text: "Write in my voice.",
-		Status: store.StatusActive, Confidence: 0.9, Source: store.SourceUserExplicit,
+		Status: store.StatusActive, Confidence: 0.9,
 		FileRef: "files/voice.md",
 	})
 	if err != nil {
@@ -84,7 +84,7 @@ func TestAttachmentFromRoutedDomain(t *testing.T) {
 	d, _ := s.CreateDomain(ctx, db, store.CreateDomainParams{AgentID: "a", Name: "Writing"})
 	_, _ = s.AddMemory(ctx, db, store.AddMemoryParams{
 		DomainID: d.ID, Type: store.TypeRule, Text: "Voice guide.",
-		Status: store.StatusActive, Confidence: 0.9, Source: store.SourceUserExplicit,
+		Status: store.StatusActive, Confidence: 0.9,
 		FileRef: "maestro/style.md",
 	})
 
@@ -116,7 +116,7 @@ func TestAttachmentDedupedAcrossMemories(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		_, _ = s.AddMemory(ctx, db, store.AddMemoryParams{
 			DomainID: gen.ID, Type: store.TypeFact, Text: fmt.Sprintf("note %d", i),
-			Status: store.StatusActive, Confidence: 0.9, Source: store.SourceUserExplicit,
+			Status: store.StatusActive, Confidence: 0.9,
 			FileRef: "files/voice.md",
 		})
 	}
@@ -139,7 +139,7 @@ func TestAttachmentTruncationIsAnnounced(t *testing.T) {
 	gen, _ := s.GeneralDomain(ctx, db)
 	_, _ = s.AddMemory(ctx, db, store.AddMemoryParams{
 		DomainID: gen.ID, Type: store.TypeRule, Text: "big doc",
-		Status: store.StatusActive, Confidence: 0.9, Source: store.SourceUserExplicit,
+		Status: store.StatusActive, Confidence: 0.9,
 		FileRef: "files/big.md",
 	})
 
@@ -156,26 +156,33 @@ func TestAttachmentBudgetExhaustionIsAnnounced(t *testing.T) {
 	ctx := context.Background()
 	db := s.DB()
 	gen, _ := s.GeneralDomain(ctx, db)
-	// Priority orders the render, so "a" is loaded first and eats the budget.
+	// Which of the two loads first is not fixed: memories render in id order and
+	// ids are random. The invariant under test is the budget, not the order — one
+	// document fits, the other is announced as excluded rather than silently
+	// dropped. (This used to pin the order with Priority, a field that was
+	// written, returned by the API, and read by nothing.)
 	_, _ = s.AddMemory(ctx, db, store.AddMemoryParams{
-		DomainID: gen.ID, Type: store.TypeFact, Text: "first", Priority: 2,
-		Status: store.StatusActive, Confidence: 0.9, Source: store.SourceUserExplicit,
+		DomainID: gen.ID, Type: store.TypeFact, Text: "first",
+		Status: store.StatusActive, Confidence: 0.9,
 		FileRef: "files/a.md",
 	})
 	_, _ = s.AddMemory(ctx, db, store.AddMemoryParams{
-		DomainID: gen.ID, Type: store.TypeFact, Text: "second", Priority: 1,
-		Status: store.StatusActive, Confidence: 0.9, Source: store.SourceUserExplicit,
+		DomainID: gen.ID, Type: store.TypeFact, Text: "second",
+		Status: store.StatusActive, Confidence: 0.9,
 		FileRef: "files/b.md",
 	})
 
 	fl := &fakeLoader{files: map[string]string{
 		"files/a.md": strings.Repeat("a", 50),
-		"files/b.md": "never included",
+		"files/b.md": strings.Repeat("b", 50),
 	}}
 	res := composeWith(t, s, WithAttachmentLoader(fl.load), WithFileTotalMaxBytes(50))
 
-	if strings.Contains(res.Attachments, "never included") {
-		t.Fatalf("second document should not fit the budget:\n%s", res.Attachments)
+	loadedA := strings.Contains(res.Attachments, strings.Repeat("a", 50))
+	loadedB := strings.Contains(res.Attachments, strings.Repeat("b", 50))
+	if loadedA == loadedB {
+		t.Fatalf("exactly one document should fit a 50-byte budget (a=%v b=%v):\n%s",
+			loadedA, loadedB, res.Attachments)
 	}
 	if !strings.Contains(res.Attachments, "not included: the per-turn attachment budget (50 bytes) is exhausted") {
 		t.Fatalf("expected budget notice:\n%s", res.Attachments)
@@ -189,7 +196,7 @@ func TestUnreadableAttachmentIsReportedNotSilent(t *testing.T) {
 	gen, _ := s.GeneralDomain(ctx, db)
 	_, _ = s.AddMemory(ctx, db, store.AddMemoryParams{
 		DomainID: gen.ID, Type: store.TypeRule, Text: "voice",
-		Status: store.StatusActive, Confidence: 0.9, Source: store.SourceUserExplicit,
+		Status: store.StatusActive, Confidence: 0.9,
 		FileRef: "/etc/shadow.md",
 	})
 
@@ -203,71 +210,6 @@ func TestUnreadableAttachmentIsReportedNotSilent(t *testing.T) {
 
 // A pending memory's document is named in the attachments section with a single
 // line explaining why it is absent — never its contents.
-func TestPendingMemoryDocumentIsNamedButNotLoaded(t *testing.T) {
-	s := newStore(t)
-	ctx := context.Background()
-	db := s.DB()
-	gen, _ := s.GeneralDomain(ctx, db)
-	m, _ := s.AddMemory(ctx, db, store.AddMemoryParams{
-		DomainID: gen.ID, Type: store.TypeRule, Text: "maybe my voice",
-		Status: store.StatusReview, Confidence: 0.6, Source: store.SourceAssistantInferred,
-		FileRef: "files/voice.md",
-	})
-
-	fl := &fakeLoader{files: map[string]string{"files/voice.md": "BODY"}}
-	res := composeWith(t, s, WithAttachmentLoader(fl.load))
-
-	if strings.Contains(res.Stable, "files/voice.md") {
-		t.Fatalf("pending memory line should carry no file marker:\n%s", res.Stable)
-	}
-	if !strings.Contains(res.Attachments, "### Attached: files/voice.md") {
-		t.Fatalf("pending document should still be named:\n%s", res.Attachments)
-	}
-	want := "From memory " + m.ID + ` ("maybe my voice") — pending confirmation, so its contents are not loaded.`
-	if !strings.Contains(res.Attachments, want) {
-		t.Fatalf("expected the pending one-liner %q:\n%s", want, res.Attachments)
-	}
-	if strings.Contains(res.Attachments, "BODY") {
-		t.Fatalf("unconfirmed memory must not inject its document:\n%s", res.Attachments)
-	}
-	if len(fl.calls) != 0 {
-		t.Fatalf("unconfirmed memory must not load its document, got %v", fl.calls)
-	}
-}
-
-// One confirmed owner is enough: a document named by both a pending and an
-// active memory loads normally.
-func TestSharedDocumentLoadsWhenAnyOwnerIsConfirmed(t *testing.T) {
-	s := newStore(t)
-	ctx := context.Background()
-	db := s.DB()
-	gen, _ := s.GeneralDomain(ctx, db)
-	_, _ = s.AddMemory(ctx, db, store.AddMemoryParams{
-		DomainID: gen.ID, Type: store.TypeRule, Text: "confirmed voice rule",
-		Status: store.StatusActive, Confidence: 0.9, Source: store.SourceUserExplicit,
-		FileRef: "files/voice.md",
-	})
-	_, _ = s.AddMemory(ctx, db, store.AddMemoryParams{
-		DomainID: gen.ID, Type: store.TypeRule, Text: "inferred voice rule",
-		Status: store.StatusReview, Confidence: 0.6, Source: store.SourceAssistantInferred,
-		FileRef: "files/voice.md",
-	})
-
-	fl := &fakeLoader{files: map[string]string{"files/voice.md": "BODY"}}
-	res := composeWith(t, s, WithAttachmentLoader(fl.load))
-
-	if !strings.Contains(res.Attachments, "BODY") {
-		t.Fatalf("document with a confirmed owner should load:\n%s", res.Attachments)
-	}
-	if !strings.Contains(res.Attachments, "From memories ") {
-		t.Fatalf("expected both owning memories to be named:\n%s", res.Attachments)
-	}
-	if strings.Contains(res.Attachments, "pending confirmation") {
-		t.Fatalf("should not be withheld as pending:\n%s", res.Attachments)
-	}
-}
-
-// A long memory text is trimmed to one line in the document header.
 func TestDocumentHeaderTrimsLongMemoryText(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
@@ -276,7 +218,7 @@ func TestDocumentHeaderTrimsLongMemoryText(t *testing.T) {
 	long := strings.Repeat("word ", 60) + "\nsecond line"
 	_, _ = s.AddMemory(ctx, db, store.AddMemoryParams{
 		DomainID: gen.ID, Type: store.TypeRule, Text: long,
-		Status: store.StatusActive, Confidence: 0.9, Source: store.SourceUserExplicit,
+		Status: store.StatusActive, Confidence: 0.9,
 		FileRef: "files/voice.md",
 	})
 
@@ -301,7 +243,7 @@ func TestNoLoaderMeansNoAttachmentsBlock(t *testing.T) {
 	gen, _ := s.GeneralDomain(ctx, db)
 	_, _ = s.AddMemory(ctx, db, store.AddMemoryParams{
 		DomainID: gen.ID, Type: store.TypeRule, Text: "voice",
-		Status: store.StatusActive, Confidence: 0.9, Source: store.SourceUserExplicit,
+		Status: store.StatusActive, Confidence: 0.9,
 		FileRef: "files/voice.md",
 	})
 
@@ -322,7 +264,7 @@ func TestMemoryWithoutFileRefAddsNothing(t *testing.T) {
 	gen, _ := s.GeneralDomain(ctx, db)
 	_, _ = s.AddMemory(ctx, db, store.AddMemoryParams{
 		DomainID: gen.ID, Type: store.TypePreference, Text: "Be concise.",
-		Status: store.StatusActive, Confidence: 0.9, Source: store.SourceUserExplicit,
+		Status: store.StatusActive, Confidence: 0.9,
 	})
 
 	fl := &fakeLoader{files: map[string]string{}}
@@ -348,7 +290,7 @@ func TestDroppedRoutedDomainDoesNotAttach(t *testing.T) {
 		})
 		_, _ = s.AddMemory(ctx, db, store.AddMemoryParams{
 			DomainID: d.ID, Type: store.TypeFact, Text: name + " note",
-			Status: store.StatusActive, Confidence: 0.9, Source: store.SourceUserExplicit,
+			Status: store.StatusActive, Confidence: 0.9,
 			FileRef: "files/" + strings.ToLower(name) + ".md",
 		})
 	}
@@ -377,13 +319,13 @@ func TestAttachmentSharedByBothBlocks(t *testing.T) {
 	gen, _ := s.GeneralDomain(ctx, db)
 	sticky, _ := s.AddMemory(ctx, db, store.AddMemoryParams{
 		DomainID: gen.ID, Type: store.TypeRule, Text: "Always use the house voice.",
-		Status: store.StatusActive, Confidence: 0.9, Source: store.SourceUserExplicit,
+		Status: store.StatusActive, Confidence: 0.9,
 		FileRef: "files/voice.md",
 	})
 	topic, _ := s.CreateDomain(ctx, db, store.CreateDomainParams{AgentID: "a", Name: "Writing"})
 	routed, _ := s.AddMemory(ctx, db, store.AddMemoryParams{
 		DomainID: topic.ID, Type: store.TypeRule, Text: "Chapter drafts follow the voice guide.",
-		Status: store.StatusActive, Confidence: 0.9, Source: store.SourceUserExplicit,
+		Status: store.StatusActive, Confidence: 0.9,
 		FileRef: "files/voice.md",
 	})
 
@@ -418,13 +360,13 @@ func TestAttachmentBudgetSharedAcrossPartitions(t *testing.T) {
 	gen, _ := s.GeneralDomain(ctx, db)
 	_, _ = s.AddMemory(ctx, db, store.AddMemoryParams{
 		DomainID: gen.ID, Type: store.TypeRule, Text: "Sticky rule.",
-		Status: store.StatusActive, Confidence: 0.9, Source: store.SourceUserExplicit,
+		Status: store.StatusActive, Confidence: 0.9,
 		FileRef: "files/first.md",
 	})
 	topic, _ := s.CreateDomain(ctx, db, store.CreateDomainParams{AgentID: "a", Name: "Writing"})
 	_, _ = s.AddMemory(ctx, db, store.AddMemoryParams{
 		DomainID: topic.ID, Type: store.TypeRule, Text: "Routed rule.",
-		Status: store.StatusActive, Confidence: 0.9, Source: store.SourceUserExplicit,
+		Status: store.StatusActive, Confidence: 0.9,
 		FileRef: "files/second.md",
 	})
 

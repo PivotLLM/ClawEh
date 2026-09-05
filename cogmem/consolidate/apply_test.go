@@ -25,14 +25,13 @@ func TestApplySupersedeEndToEnd(t *testing.T) {
 	})
 	h, _ := st.AddMemory(ctx, st.DB(), store.AddMemoryParams{
 		DomainID: d.ID, Type: store.TypeRule, Text: "Never use the color blue.",
-		Status: store.StatusActive, Confidence: 0.9, Source: store.SourceUserExplicit,
+		Status: store.StatusActive, Confidence: 0.9,
 	})
 
 	out := Output{
 		MemoryOps: []MemoryOp{{
 			Op: "supersede", OldID: h.ID, Domain: d.ID, Type: "rule",
-			Text: "Use blue for the layout.", Confidence: 0.95, Status: "active",
-			Source: "user_explicit", Evidence: store.Evidence{SeqStart: 512, SeqEnd: 512},
+			Text: "Use blue for the layout.", Confidence: 0.95, Evidence: store.Evidence{SeqStart: 512, SeqEnd: 512},
 		}},
 		ConflictLedger: []LedgerEntry{{Resolved: "swapped blue rule", Reason: "user said so", Evidence: store.Evidence{SeqStart: 512, SeqEnd: 512}}},
 	}
@@ -60,8 +59,8 @@ func TestApplyCreateWithTmpID(t *testing.T) {
 	defer st.Close()
 
 	out := Output{
-		DomainOps: []DomainOp{{Op: "create", TmpID: "t1", Name: "New Project", Summary: "x", Status: "active", Evidence: store.Evidence{SeqStart: 1, SeqEnd: 1}}},
-		MemoryOps: []MemoryOp{{Op: "add", Domain: "t1", Type: "fact", Text: "a durable fact", Confidence: 0.9, Status: "active", Source: "user_explicit", Evidence: store.Evidence{SeqStart: 1, SeqEnd: 1}}},
+		DomainOps: []DomainOp{{Op: "create", TmpID: "t1", Name: "New Project", Summary: "x", Evidence: store.Evidence{SeqStart: 1, SeqEnd: 1}}},
+		MemoryOps: []MemoryOp{{Op: "add", Domain: "t1", Type: "fact", Text: "a durable fact", Confidence: 0.9, Evidence: store.Evidence{SeqStart: 1, SeqEnd: 1}}},
 	}
 	n, err := Apply(ctx, st, out, ApplyContext{AgentID: "alice", Actor: "sleep_cycle"})
 	if err != nil {
@@ -95,7 +94,7 @@ func TestApplySetsTriggers(t *testing.T) {
 	out := Output{
 		DomainOps: []DomainOp{{
 			Op: "create", TmpID: "t1", Name: "Email", Summary: "mail",
-			Triggers: "google_gmail, microsoft365_mail", Status: "active",
+			Triggers: "google_gmail, microsoft365_mail",
 			Evidence: store.Evidence{SeqStart: 1, SeqEnd: 1},
 		}},
 	}
@@ -128,8 +127,8 @@ func TestApplySetsKeywordTriggers(t *testing.T) {
 	out := Output{
 		DomainOps: []DomainOp{{
 			Op: "create", TmpID: "t1", Name: "Daily Ops", Summary: "ops",
-			KeywordTriggers: "Morning Routine, weekly report", Status: "active",
-			Evidence: store.Evidence{SeqStart: 1, SeqEnd: 1},
+			KeywordTriggers: "Morning Routine, weekly report",
+			Evidence:        store.Evidence{SeqStart: 1, SeqEnd: 1},
 		}},
 	}
 	if _, err := Apply(ctx, st, out, ApplyContext{AgentID: "alice", Actor: "sleep_cycle"}); err != nil {
@@ -164,7 +163,7 @@ func TestApplyStickyCreateAndUpdate(t *testing.T) {
 	createOut := Output{
 		DomainOps: []DomainOp{{
 			Op: "create", TmpID: "t1", Name: "House Rules", Summary: "global",
-			Sticky: &yes, Status: "active", Evidence: store.Evidence{SeqStart: 1, SeqEnd: 1},
+			Sticky: &yes, Evidence: store.Evidence{SeqStart: 1, SeqEnd: 1},
 		}},
 	}
 	if _, err := Apply(ctx, st, createOut, ApplyContext{AgentID: "alice", Actor: "sleep_cycle"}); err != nil {

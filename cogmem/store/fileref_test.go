@@ -21,7 +21,7 @@ func TestMemoryFileRefRoundTrip(t *testing.T) {
 	}
 	m, err := s.AddMemory(ctx, db, AddMemoryParams{
 		DomainID: d.ID, Type: TypeRule, Text: "Use my voice.",
-		Status: StatusActive, Confidence: 0.9, Source: SourceUserExplicit,
+		Status: StatusActive, Confidence: 0.9,
 		FileRef: "  files/voice.md  ",
 	})
 	if err != nil {
@@ -50,7 +50,7 @@ func TestMemoryWithoutFileRefIsEmpty(t *testing.T) {
 	d, _ := s.CreateDomain(ctx, db, CreateDomainParams{AgentID: "a", Name: "Plain"})
 	m, err := s.AddMemory(ctx, db, AddMemoryParams{
 		DomainID: d.ID, Type: TypeFact, Text: "no doc",
-		Status: StatusActive, Confidence: 0.9, Source: SourceUserExplicit,
+		Status: StatusActive, Confidence: 0.9,
 	})
 	if err != nil {
 		t.Fatalf("add: %v", err)
@@ -69,13 +69,13 @@ func TestSupersedeCarriesFileRefForward(t *testing.T) {
 	d, _ := s.CreateDomain(ctx, db, CreateDomainParams{AgentID: "a", Name: "Writing"})
 	old, _ := s.AddMemory(ctx, db, AddMemoryParams{
 		DomainID: d.ID, Type: TypeRule, Text: "Use my voice.",
-		Status: StatusActive, Confidence: 0.9, Source: SourceUserExplicit,
+		Status: StatusActive, Confidence: 0.9,
 		FileRef: "files/voice.md",
 	})
 
 	kept, err := s.SupersedeMemory(ctx, db, old.ID, AddMemoryParams{
 		DomainID: d.ID, Type: TypeRule, Text: "Write in the user's voice.",
-		Status: StatusActive, Confidence: 0.9, Source: SourceAssistantInferred,
+		Status: StatusActive, Confidence: 0.9,
 	})
 	if err != nil {
 		t.Fatalf("supersede: %v", err)
@@ -86,7 +86,7 @@ func TestSupersedeCarriesFileRefForward(t *testing.T) {
 
 	replaced, err := s.SupersedeMemory(ctx, db, kept.ID, AddMemoryParams{
 		DomainID: d.ID, Type: TypeRule, Text: "New doc.",
-		Status: StatusActive, Confidence: 0.9, Source: SourceAssistantInferred,
+		Status: StatusActive, Confidence: 0.9,
 		FileRef: "files/voice-v2.md",
 	})
 	if err != nil {
@@ -106,7 +106,7 @@ func TestSetMemoryFileRefAttachesAndDetaches(t *testing.T) {
 	d, _ := s.CreateDomain(ctx, db, CreateDomainParams{AgentID: "a", Name: "Writing"})
 	m, err := s.AddMemory(ctx, db, AddMemoryParams{
 		DomainID: d.ID, Type: TypeRule, Text: "Use my voice.",
-		Status: StatusActive, Confidence: 0.9, Source: SourceUserExplicit,
+		Status: StatusActive, Confidence: 0.9,
 	})
 	if err != nil {
 		t.Fatalf("add: %v", err)
@@ -152,7 +152,7 @@ func TestSetMemoryFileRefBumpsStableRev(t *testing.T) {
 	}
 	m, _ := s.AddMemory(ctx, db, AddMemoryParams{
 		DomainID: gen.ID, Type: TypeRule, Text: "Use my voice.",
-		Status: StatusActive, Confidence: 0.9, Source: SourceUserExplicit,
+		Status: StatusActive, Confidence: 0.9,
 	})
 
 	before, err := s.StableRev(ctx)

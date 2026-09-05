@@ -43,7 +43,6 @@ func seedCogmemDB(t *testing.T, configPath string) string {
 		Text:       "launch date is in the fall",
 		Status:     cogmemstore.StatusActive,
 		Confidence: 0.9,
-		Source:     cogmemstore.SourceUserExplicit,
 	}); err != nil {
 		t.Fatalf("AddMemory() error = %v", err)
 	}

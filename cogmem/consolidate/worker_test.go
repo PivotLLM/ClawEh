@@ -93,7 +93,7 @@ func seedDomain(t *testing.T, s *store.Store) (string, string) {
 	}
 	h, err := s.AddMemory(ctx, s.DB(), store.AddMemoryParams{
 		DomainID: d.ID, Type: store.TypeRule, Text: "Run make test after changes.",
-		Status: store.StatusActive, Confidence: 0.9, Source: store.SourceUserExplicit,
+		Status: store.StatusActive, Confidence: 0.9,
 	})
 	if err != nil {
 		t.Fatalf("seed hook: %v", err)
