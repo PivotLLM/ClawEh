@@ -10,6 +10,84 @@ Entries describe what changed for someone **running or integrating with** ClawEh
 internal refactors behind them. A change nobody outside the repository can
 observe does not need an entry.
 
+## [0.5.0]
+
+Cognitive memory redesign. The classification the model had to reason about at
+every write shrinks to one field, the confirmation gate that was never used is
+gone, and memory gains a type for things that happened — kept out of the prompt
+and reachable by search.
+
+### Removed
+
+- **BREAKING: the `cogmem_memory_confirm` tool is gone.** Memories were written
+  as `review` and waited for the assistant to ask you to confirm them. In
+  practice it never asked: across seven agents, 244 memories were pending, the
+  oldest 77 days, with zero confirmations. The gate is removed rather than left
+  as dead weight. Nothing to migrate — confirmation was the only thing the tool
+  did, and the memories it was gating are now active.
+- **BREAKING: the config keys `memory.prompt.pending_surface` and
+  `memory.prompt.pending_max` are gone.** They controlled the pending digest,
+  which no longer exists. Remove them from your config; an unknown key is
+  ignored, so nothing breaks if you leave them.
+- **BREAKING: memories no longer have a `source` field.** It recorded whether
+  the model believed a memory came from you or was inferred, gated nothing, and
+  never reached the prompt. `origin` (`chat`, `consolidation`, `user`) records
+  where a memory actually came from and is shown to both you and the assistant.
+  Dropped from the database, `GET /api/memory/{id}` and the memory page.
+- **BREAKING: memories no longer have a `priority` field.** It was stored and
+  returned by the API and never read by anything.
+
+### Added
+
+- **Two new memory types.** `event` for something observed at a point in time —
+  a trip, a delivery status, a scheduled run — and `operational` for the
+  assistant's own housekeeping, such as where it files things and how it works.
+  The full set is now `fact`, `preference`, `rule`, `event`, `operational`.
+- **`event` memories stay out of the prompt.** They go stale and accumulate
+  without bound, so they are never loaded automatically. Each domain reports how
+  many it holds (`42 event memories in this domain — search to retrieve`) and
+  `cogmem_memory_search` reaches them with `include_events: true`.
+- **The WebUI memory page is now a curation surface.** Change a memory's type,
+  retire and restore it, show retired memories, select many rows and retype,
+  retire or delete them together, and add a memory or a domain by hand. A
+  memory you add yourself is recorded with `origin: user`, which the assistant
+  sees.
+- **YAML export and import.** `GET /api/memory/{id}/export` downloads a full
+  dump — domains, memories, every field, with a format version — and import
+  loads one back in **merge** mode (add what is missing) or **replace** mode
+  (wipe and load). IDs are re-minted on import, so a dump can be loaded into a
+  different agent to seed it.
+- **An automatic snapshot before every schema migration.** The database is
+  copied to `<name>.pre-v<N>.db` beside itself before a migration runs, so an
+  upgrade is recoverable without preparation.
+
+### Changed
+
+- **BREAKING: `cogmem_export` writes YAML, not Markdown.** The output moves from
+  `files/MEMORY_EXPORT.md` to `files/MEMORY_EXPORT.yaml` and is the same format
+  the WebUI exports — which means it can be read back. The Markdown projection
+  could only be looked at.
+- **Memory lines in the prompt now show their type**, so the assistant can tell
+  a standing rule from a stale observation: `- (rule) Do not use the word
+  "thuddy."` Previously only the text was shown.
+- **The prompt tag `[source: …]` is now `[origin: …]`.** It always rendered
+  `origin`; with no `source` field left, the old label was actively misleading.
+- **Consolidation states a memory's type and nothing else.** It no longer sets
+  `status` (there is no longer a choice) or `source` (gone), and an operation
+  that omits a required field is rejected rather than silently defaulted.
+
+### Fixed
+
+- **An operation that omitted both `status` and `source` was accepted and then
+  defaulted to a combination the rules forbid** — `assistant_inferred` with
+  `active`. Every guard tested for the fields being *wrong*, not missing. The
+  fields are gone and the remaining ones are checked for presence.
+- **Memories in `review` were unreachable.** They were excluded from the prompt,
+  excluded from `cogmem_memory_search`, and excluded from the WebUI, and the
+  digest that was meant to surface them showed a fixed top-eight by confidence —
+  so 236 of the 244 had never been seen by anything. They are now active and
+  visible.
+
 ## [0.4.72]
 
 First release under the stable-compatibility policy: config schemas, tool names,
@@ -285,4 +363,5 @@ on, and breaking one is a deliberate decision rather than a free move.
   entered, and the entry had to be worked around rather than typed. Affects the
   Telegram, Slack and generic channel forms.
 
+[0.5.0]: https://github.com/PivotLLM/ClawEh/compare/0.4.72...0.5.0
 [0.4.72]: https://github.com/PivotLLM/ClawEh/compare/0.4.70...0.4.72
