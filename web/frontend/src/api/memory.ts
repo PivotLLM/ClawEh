@@ -38,7 +38,10 @@ export interface MemoryRun {
   status: string
   ops_applied: number
   started_at: string
+  /** Why the run failed. Absent on a successful run. */
   error?: string
+  /** Information about a run that SUCCEEDED, e.g. an auto-repair. */
+  note?: string
 }
 
 export interface MemoryDetail {

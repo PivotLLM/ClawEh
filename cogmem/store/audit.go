@@ -47,12 +47,12 @@ func (s *Store) RecordRun(ctx context.Context, q DBTX, r Run) error {
 	_, err := q.ExecContext(ctx, `
 		INSERT INTO consolidation_runs(id, trigger, model, seq_start, seq_end,
 		                               input_tokens, output_tokens, status,
-		                               ops_applied, error, prompt_hash,
+		                               ops_applied, error, note, prompt_hash,
 		                               started_at, finished_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		r.ID, r.Trigger, r.Model, r.SeqStart, r.SeqEnd, r.InputTokens,
 		r.OutputTokens, r.Status, r.OpsApplied, nullStr(r.Error),
-		nullStr(r.PromptHash), started.Unix(), finished)
+		nullStr(r.Note), nullStr(r.PromptHash), started.Unix(), finished)
 	return err
 }
 
@@ -60,18 +60,19 @@ func (s *Store) RecordRun(ctx context.Context, q DBTX, r Run) error {
 // ok=false when no run has been recorded yet.
 func (s *Store) LastRun(ctx context.Context, q DBTX) (r Run, ok bool, err error) {
 	var (
-		seqStart, seqEnd   *int64
-		inTok, outTok      *int
-		errStr, promptHash *string
-		startedAt          int64
-		finishedAt         *int64
+		seqStart, seqEnd *int64
+		inTok, outTok    *int
+		errStr, noteStr  *string
+		promptHash       *string
+		startedAt        int64
+		finishedAt       *int64
 	)
 	row := q.QueryRowContext(ctx, `
 		SELECT id, trigger, model, seq_start, seq_end, input_tokens, output_tokens,
-		       status, ops_applied, error, prompt_hash, started_at, finished_at
+		       status, ops_applied, error, note, prompt_hash, started_at, finished_at
 		FROM consolidation_runs ORDER BY started_at DESC, id DESC LIMIT 1`)
 	err = row.Scan(&r.ID, &r.Trigger, &r.Model, &seqStart, &seqEnd, &inTok, &outTok,
-		&r.Status, &r.OpsApplied, &errStr, &promptHash, &startedAt, &finishedAt)
+		&r.Status, &r.OpsApplied, &errStr, &noteStr, &promptHash, &startedAt, &finishedAt)
 	if err == sql.ErrNoRows {
 		return Run{}, false, nil
 	}
@@ -88,6 +89,9 @@ func (s *Store) LastRun(ctx context.Context, q DBTX) (r Run, ok bool, err error)
 	}
 	if errStr != nil {
 		r.Error = *errStr
+	}
+	if noteStr != nil {
+		r.Note = *noteStr
 	}
 	if promptHash != nil {
 		r.PromptHash = *promptHash

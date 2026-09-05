@@ -278,6 +278,16 @@ export function MemoryPage() {
                 </div>
               )}
 
+              {/* A note describes a run that SUCCEEDED — most often a contract
+                  deviation the consolidator safely repaired. Muted, not
+                  destructive: these used to share the error field and were
+                  painted red, which read as a failure when nothing had failed. */}
+              {detail.last_run?.note && (
+                <div className="text-muted-foreground text-xs">
+                  {detail.last_run.note}
+                </div>
+              )}
+
               {detail.domains.map((d) => (
                 <DomainCard
                   key={d.id}

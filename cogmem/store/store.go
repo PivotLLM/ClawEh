@@ -116,6 +116,9 @@ func (s *Store) migrate(ctx context.Context) error {
 	if err := s.ensureDomainColumns(ctx); err != nil {
 		return fmt.Errorf("cogmem: ensure domain columns: %w", err)
 	}
+	if err := s.ensureRunColumns(ctx); err != nil {
+		return err
+	}
 	if err := s.ensureMemoryColumns(ctx); err != nil {
 		return fmt.Errorf("cogmem: ensure memory columns: %w", err)
 	}
@@ -355,6 +358,40 @@ func (s *Store) ensureDomainColumns(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// ensureRunColumns adds the note column to a pre-existing consolidation_runs
+// table and moves the notes already stranded in `error` across.
+//
+// Notes describe a run that SUCCEEDED (an auto-repair, say) and used to be
+// written into `error` for want of anywhere else, which made the memory page
+// render a success in red. Adding the column alone would leave every historical
+// note where it is, so the red text would persist until the next consolidation
+// run — the complaint that prompted this.
+//
+// The backfill is deliberately narrow: only rows that are BOTH status='ok' AND
+// prefixed 'auto-repaired:'. That pair is unambiguous — it is the exact string
+// the worker wrote, on runs it recorded as successful — so no genuine failure
+// can be swept up by it. Anything else in `error` is left alone.
+//
+// Idempotent: the ALTER is guarded, and the UPDATE matches nothing once run.
+func (s *Store) ensureRunColumns(ctx context.Context) error {
+	have, err := s.columnSet(ctx, "consolidation_runs")
+	if err != nil {
+		return err
+	}
+	if have["note"] {
+		return nil
+	}
+	if _, err := s.db.ExecContext(ctx,
+		`ALTER TABLE consolidation_runs ADD COLUMN note TEXT`); err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `
+		UPDATE consolidation_runs
+		   SET note = error, error = NULL
+		 WHERE status = 'ok' AND error LIKE 'auto-repaired:%'`)
+	return err
 }
 
 // ensureMemoryColumns adds the origin column to a pre-existing memories table and

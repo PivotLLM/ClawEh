@@ -243,6 +243,15 @@ on, and breaking one is a deliberate decision rather than a free move.
   and a session that had gone away was never reconnected — the failure stayed
   invisible until a real tool call hit it. The probe now issues a `ListTools`
   round trip, which reaches the server on every protocol version.
+- **A successful memory consolidation no longer looks like a failure.** When the
+  memory model proposed an inferred item as `active` instead of `review`, ClawEh
+  corrected it, saved the memories correctly, and recorded a note saying so —
+  but the note was stored in the run's `error` field, so the memory page showed
+  it in red on a run that had actually succeeded. Runs now carry a separate
+  `note`, shown as ordinary text; `error` means the run failed. Existing
+  databases are migrated on open, and notes already stranded in `error` on
+  successful runs are moved across, so the red text clears immediately rather
+  than after the next run.
 - **The WebUI devices page no longer fails intermittently with
   `store open failed`.** Roughly one gateway restart in three, `GET /api/devices`
   returned a 500 and the page showed an error. Opening the device pairing

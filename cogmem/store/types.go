@@ -166,8 +166,15 @@ type Run struct {
 	OutputTokens int
 	Status       string // ok, invalid_json, aborted, error
 	OpsApplied   int
-	Error        string
-	PromptHash   string
-	StartedAt    time.Time
-	FinishedAt   *time.Time
+	// Error is why the run FAILED. Leave it empty on a successful run.
+	Error string
+	// Note is something worth telling the operator about a run that
+	// SUCCEEDED — e.g. a contract deviation that was safely auto-repaired.
+	// Kept separate from Error so the UI can show it without dressing a
+	// success up as a failure, which is exactly what happened when the two
+	// shared one column.
+	Note       string
+	PromptHash string
+	StartedAt  time.Time
+	FinishedAt *time.Time
 }

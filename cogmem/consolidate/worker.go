@@ -210,7 +210,7 @@ func (w *Worker) RunOnce(ctx context.Context, p RunParams) (RunResult, error) {
 		// The caller exhausted its model chain without a usable, parseable
 		// response. err is a clean, human-readable message (never a raw
 		// JSON-parser error) — see ModelCaller.
-		w.recordRun(ctx, p, model, "error", 0, consolidated+1, lastSeq, inputTokens, 0, err.Error(), started)
+		w.recordRun(ctx, p, model, "error", 0, consolidated+1, lastSeq, inputTokens, 0, err.Error(), "", started)
 		result.Status = "error"
 		return result, fmt.Errorf("consolidate: model call: %w", err)
 	}
@@ -221,7 +221,7 @@ func (w *Worker) RunOnce(ctx context.Context, p RunParams) (RunResult, error) {
 		// Defensive: ModelCaller guarantees parseable raw, so this is
 		// unreachable in practice. Never surface the raw parser error to the
 		// user (e.g. "unexpected end of JSON input") — record a clean message.
-		w.recordRun(ctx, p, model, "invalid_json", 0, consolidated+1, lastSeq, inputTokens, outputTokens, "memory model output was not valid JSON", started)
+		w.recordRun(ctx, p, model, "invalid_json", 0, consolidated+1, lastSeq, inputTokens, outputTokens, "memory model output was not valid JSON", "", started)
 		w.dump(p, system, string(userJSON), raw, 0)
 		result.Status = "invalid_json"
 		return result, nil
@@ -234,7 +234,7 @@ func (w *Worker) RunOnce(ctx context.Context, p RunParams) (RunResult, error) {
 	repairs := out.Normalize()
 
 	if verr := out.Validate(in); verr != nil {
-		w.recordRun(ctx, p, model, "aborted", 0, consolidated+1, lastSeq, inputTokens, outputTokens, verr.Error(), started)
+		w.recordRun(ctx, p, model, "aborted", 0, consolidated+1, lastSeq, inputTokens, outputTokens, verr.Error(), "", started)
 		w.dump(p, system, string(userJSON), raw, 0)
 		result.Status = "aborted"
 		return result, nil
@@ -247,7 +247,7 @@ func (w *Worker) RunOnce(ctx context.Context, p RunParams) (RunResult, error) {
 		Model:      model,
 	})
 	if err != nil {
-		w.recordRun(ctx, p, model, "error", applied, consolidated+1, lastSeq, inputTokens, outputTokens, err.Error(), started)
+		w.recordRun(ctx, p, model, "error", applied, consolidated+1, lastSeq, inputTokens, outputTokens, err.Error(), "", started)
 		result.Status = "error"
 		return result, fmt.Errorf("consolidate: apply: %w", err)
 	}
@@ -265,18 +265,14 @@ func (w *Worker) RunOnce(ctx context.Context, p RunParams) (RunResult, error) {
 			markErr = "mark consolidated: " + err.Error()
 		}
 	}
-	// Surface any auto-repairs on the (successful) run record so they're visible
-	// on the memory page rather than hidden.
-	runNote := markErr
+	// Auto-repairs are a NOTE: the run succeeded and the deviation was safely
+	// corrected. markErr is a real error — the run itself was fine, but the
+	// best-effort archive flagging genuinely failed — so it stays in Error.
+	runNote := ""
 	if len(repairs) > 0 {
-		note := "auto-repaired: " + strings.Join(repairs, "; ")
-		if runNote != "" {
-			runNote = note + "; " + runNote
-		} else {
-			runNote = note
-		}
+		runNote = "auto-repaired: " + strings.Join(repairs, "; ")
 	}
-	w.recordRun(ctx, p, model, "ok", applied, consolidated+1, lastSeq, inputTokens, outputTokens, runNote, started)
+	w.recordRun(ctx, p, model, "ok", applied, consolidated+1, lastSeq, inputTokens, outputTokens, markErr, runNote, started)
 	w.dump(p, system, string(userJSON), raw, applied)
 
 	result.Applied = applied
@@ -320,7 +316,11 @@ func (w *Worker) currentState(ctx context.Context) CurrentState {
 	return cs
 }
 
-func (w *Worker) recordRun(ctx context.Context, p RunParams, model, status string, applied int, seqStart, seqEnd int64, inTok, outTok int, errMsg string, started time.Time) {
+// recordRun writes the run record. errMsg is why the run FAILED; note is
+// something worth reporting about a run that SUCCEEDED. They are separate
+// arguments on purpose: passing a note as an error is what made the memory page
+// show a successful auto-repair in red.
+func (w *Worker) recordRun(ctx context.Context, p RunParams, model, status string, applied int, seqStart, seqEnd int64, inTok, outTok int, errMsg, note string, started time.Time) {
 	finished := time.Now()
 	_ = w.st.RecordRun(ctx, w.st.DB(), store.Run{
 		Trigger:      p.Trigger,
@@ -332,6 +332,7 @@ func (w *Worker) recordRun(ctx context.Context, p RunParams, model, status strin
 		Status:       status,
 		OpsApplied:   applied,
 		Error:        errMsg,
+		Note:         note,
 		StartedAt:    started,
 		FinishedAt:   &finished,
 	})
