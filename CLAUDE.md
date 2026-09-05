@@ -167,13 +167,14 @@ until curl -sf http://127.0.0.1:8077/ready >/dev/null; do sleep 1; done
 node tests/frontend-e2e.mjs
 ```
 
-- **The plan is `docs/webui-test-plan.md`** — 64 numbered steps, each with a
+- **The plan is `docs/webui-test-plan.md`** — 76 numbered steps, each with a
   process and an expected result, followable by hand. `tests/frontend-e2e.mjs`
   executes it and prints the same step IDs. Keep the two in step: a step added
   to one belongs in the other.
-- **Dev only.** Groups F and G write configuration (they create an agent and
-  edit a field, and revert both). The runner refuses port 18790 unless
-  `--allow-prod` is given. Never point it at production.
+- **Dev only.** Groups F, G and N write (F creates an agent, G edits a config
+  field, N creates a memory domain and curates inside it). All three revert what
+  they change. The runner refuses port 18790 unless `--allow-prod` is given.
+  Never point it at production.
 - **Wait for `/ready`, not `/health`.** `/health` answers as soon as the port
   is open; `/ready` waits for the channels. Starting early makes steps fail for
   no reason.

@@ -623,6 +623,192 @@ if (useGroup("K", "Logs, MCP, memory, voice")) {
   })
 }
 
+// N. Memory curation
+//
+// Writes to a memory store: it creates a domain called `e2e-probe`, adds
+// memories to it, retypes and retires them, and deletes the domain at the end.
+// It never touches a domain it did not create, so an agent's real memory is not
+// at risk — but it is still a write, which is why this runner refuses
+// production.
+if (useGroup("N", "Memory curation")) {
+  // Pick a store to work in. Any will do; the probe domain is self-contained.
+  const stores = (await api("/api/memory")).json?.sessions ?? []
+  const store = stores[0]?.id
+  const domainURL = store ? `/api/memory/${store}/domains` : null
+  let probeDomain = null
+  const probeMemories = []
+
+  await check(1, "a memory store is available to curate", async () => {
+    assert(store, "no cognitive-memory databases found; N is skipped downstream")
+    return store
+  })
+
+  await check(2, "create a domain through the API the page uses", async () => {
+    assert(store, "no store")
+    const res = await api(domainURL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "e2e-probe", summary: "created by the e2e run" }),
+    })
+    assert(res.status === 201, `create domain: ${res.status} ${res.text}`)
+    probeDomain = res.json.id
+    return probeDomain
+  })
+
+  await check(3, "a hand-written memory is recorded with origin=user", async () => {
+    assert(probeDomain, "no probe domain")
+    // origin=user is the one piece of provenance that is verifiable rather than
+    // self-reported, and nothing could write it before this change.
+    const res = await api(`/api/memory/${store}/domains/${probeDomain}/memories`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "fact", text: "e2e probe fact" }),
+    })
+    assert(res.status === 201, `create memory: ${res.status} ${res.text}`)
+    assert(res.json.origin === "user", `origin = ${res.json.origin}, want user`)
+    assert(res.json.confidence === 1, `confidence = ${res.json.confidence}, want 1`)
+    probeMemories.push(res.json.id)
+    return `${res.json.id} origin=${res.json.origin}`
+  })
+
+  await check(4, "an unknown memory type is rejected", async () => {
+    const res = await api(`/api/memory/${store}/domains/${probeDomain}/memories`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "observation", text: "nope" }),
+    })
+    assert(res.status === 400, `status = ${res.status}, want 400`)
+  })
+
+  await check(5, "retype a memory to event", async () => {
+    const id = probeMemories[0]
+    const res = await api(`/api/memory/${store}/memories/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "event" }),
+    })
+    assert(res.status === 200, `patch: ${res.status} ${res.text}`)
+    assert(res.json.type === "event", `type = ${res.json.type}`)
+  })
+
+  await check(6, "retire a memory, and see it only with include_retired", async () => {
+    const id = probeMemories[0]
+    const res = await api(`/api/memory/${store}/memories/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "retired" }),
+    })
+    assert(res.status === 200, `retire: ${res.status} ${res.text}`)
+
+    const find = (doc) =>
+      (doc.json.domains ?? [])
+        .find((d) => d.id === probeDomain)
+        ?.memories.some((m) => m.id === id) ?? false
+
+    assert(!find(await api(`/api/memory/${store}`)), "retired memory still listed by default")
+    assert(
+      find(await api(`/api/memory/${store}?include_retired=1`)),
+      "retired memory unreachable even with include_retired — it could never be restored",
+    )
+  })
+
+  await check(7, "restore it", async () => {
+    const id = probeMemories[0]
+    const res = await api(`/api/memory/${store}/memories/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "active" }),
+    })
+    assert(res.status === 200, `restore: ${res.status} ${res.text}`)
+    assert(res.json.status === "active", `status = ${res.json.status}`)
+  })
+
+  await check(8, "bulk retype applies to every selected id", async () => {
+    // Add two more so the bulk action has something to work over.
+    for (const text of ["e2e probe two", "e2e probe three"]) {
+      const r = await api(`/api/memory/${store}/domains/${probeDomain}/memories`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "fact", text }),
+      })
+      assert(r.status === 201, `seed: ${r.status} ${r.text}`)
+      probeMemories.push(r.json.id)
+    }
+    const res = await api(`/api/memory/${store}/bulk`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "retype", type: "operational", ids: probeMemories }),
+    })
+    assert(res.status === 200, `bulk: ${res.status} ${res.text}`)
+    assert(res.json.changed === probeMemories.length,
+      `changed = ${res.json.changed}, want ${probeMemories.length}`)
+    return `${res.json.changed} retyped`
+  })
+
+  await check(9, "a bad id fails on its own without aborting the batch", async () => {
+    const res = await api(`/api/memory/${store}/bulk`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "retire", ids: [probeMemories[0], "hNOPE"] }),
+    })
+    assert(res.status === 200, `bulk: ${res.status} ${res.text}`)
+    assert(res.json.changed === 1, `changed = ${res.json.changed}, want 1`)
+    assert(res.json.failed?.hNOPE, "the bad id was not reported")
+    // Put it back for the export check below.
+    await api(`/api/memory/${store}/memories/${probeMemories[0]}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "active" }),
+    })
+  })
+
+  await check(10, "export downloads a YAML document that import can read", async () => {
+    const res = await fetch(`${BASE}/api/memory/${store}/export`)
+    assert(res.status === 200, `export: ${res.status}`)
+    const ct = res.headers.get("content-type") ?? ""
+    assert(ct.includes("yaml"), `content-type = ${ct}`)
+    const body = await res.text()
+    assert(body.includes("format_version"), "no format_version in the export")
+    assert(body.includes("e2e probe fact"), "the export is missing a memory that exists")
+
+    // Merge-importing what was just exported must change nothing.
+    const back = await fetch(`${BASE}/api/memory/${store}/import?mode=merge`, {
+      method: "POST",
+      headers: { "Content-Type": "application/yaml" },
+      body,
+    })
+    assert(back.status === 200, `import: ${back.status}`)
+    const result = await back.json()
+    assert(result.memories_created === 0,
+      `re-importing created ${result.memories_created} duplicates, want none`)
+    return `${body.length} bytes, ${result.memories_skipped} already present`
+  })
+
+  await check(11, "the memory page renders the probe domain and its controls", async () => {
+    const { ctx, page, problems } = await open("/memory")
+    // The page defaults to the first store, which may not be the one seeded.
+    const rows = await page.locator("[data-testid=memory-row]").count()
+    const domains = await page.locator("[data-testid=memory-domain]").count()
+    await ctx.close()
+    assert(problems.length === 0, `console: ${problems[0]}`)
+    assert(domains > 0, "no domains rendered on the memory page")
+    return `${domains} domains, ${rows} rows`
+  })
+
+  await check(12, "clean up the probe domain", async () => {
+    assert(probeDomain, "no probe domain to remove")
+    const res = await api(`/api/memory/${store}/domains/${probeDomain}`, {
+      method: "DELETE",
+    })
+    assert(res.status === 204, `delete: ${res.status} ${res.text}`)
+    const after = await api(`/api/memory/${store}?include_retired=1`)
+    assert(
+      !(after.json.domains ?? []).some((d) => d.id === probeDomain),
+      "the probe domain survived cleanup",
+    )
+  })
+}
+
 // L. Setup wizard
 if (useGroup("L", "Setup wizard")) {
   await check(1, "wizard walks all six steps and reflects the choices", async () => {
