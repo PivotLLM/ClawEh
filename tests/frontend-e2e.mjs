@@ -784,18 +784,133 @@ if (useGroup("N", "Memory curation")) {
     return `${body.length} bytes, ${result.memories_skipped} already present`
   })
 
-  await check(11, "the memory page renders the probe domain and its controls", async () => {
-    const { ctx, page, problems } = await open("/memory")
-    // The page defaults to the first store, which may not be the one seeded.
-    const rows = await page.locator("[data-testid=memory-row]").count()
-    const domains = await page.locator("[data-testid=memory-domain]").count()
+  // Steps 2-10 drive the API the page calls. 11-15 drive the PAGE, because a
+  // control can be wired correctly and still not work: the type picker is a
+  // portalled listbox, and the bulk bar only exists once something is selected.
+  // Unit tests render these in jsdom, which is not the same as clicking them.
+
+  /** Opens /memory on the probe's store and returns its domain card. */
+  async function openProbe() {
+    const o = await open("/memory")
+    await o.page.locator(`[data-store-id="${store}"]`).click()
+    const card = o.page.locator(
+      `[data-testid=memory-domain][data-domain-name="e2e-probe"]`,
+    )
+    await card.waitFor({ state: "visible", timeout: 10000 })
+    return { ...o, card }
+  }
+
+  /** Reads a memory's type back from the API, so the assertion is against what
+   *  was stored rather than what the page is showing. */
+  async function typeOf(id) {
+    const doc = await api(`/api/memory/${store}?include_retired=1`)
+    for (const d of doc.json.domains ?? []) {
+      for (const m of d.memories) if (m.id === id) return m.type
+    }
+    return null
+  }
+
+  await check(11, "the memory page renders the probe domain", async () => {
+    const { ctx, page, problems, card } = await openProbe()
+    const rows = await card.locator("[data-testid=memory-row]").count()
     await ctx.close()
     assert(problems.length === 0, `console: ${problems[0]}`)
-    assert(domains > 0, "no domains rendered on the memory page")
-    return `${domains} domains, ${rows} rows`
+    assert(rows === 3, `${rows} rows in the probe domain, want 3`)
+    return `${rows} rows`
   })
 
-  await check(12, "clean up the probe domain", async () => {
+  await check(12, "retype a memory from the dropdown on its row", async () => {
+    const { ctx, page, problems, card } = await openProbe()
+    const row = card.locator("[data-testid=memory-row]").first()
+    const id = await row.getAttribute("data-memory-id")
+
+    await row.locator("button[role=combobox]").click()
+    await page.locator('[role=option]:has-text("preference")').first().click()
+    // The row re-renders from the refetch, so wait on the stored value.
+    await page.waitForTimeout(1500)
+    await ctx.close()
+
+    assert(problems.length === 0, `console: ${problems[0]}`)
+    const got = await typeOf(id)
+    assert(got === "preference", `stored type = ${got}, want preference`)
+    return `${id} -> preference`
+  })
+
+  await check(13, "selecting rows reveals the bulk bar, which retypes them", async () => {
+    const { ctx, page, problems, card } = await openProbe()
+    assert(
+      (await page.locator("[data-testid=bulk-bar]").count()) === 0,
+      "the bulk bar is visible with nothing selected",
+    )
+
+    const rows = card.locator("[data-testid=memory-row]")
+    const ids = []
+    for (const i of [0, 1]) {
+      const row = rows.nth(i)
+      ids.push(await row.getAttribute("data-memory-id"))
+      await row.locator("button[role=checkbox]").click()
+    }
+    const bar = page.locator("[data-testid=bulk-bar]")
+    await bar.waitFor({ state: "visible", timeout: 5000 })
+
+    await bar.locator("button[role=combobox]").click()
+    await page.locator('[role=option]:has-text("event")').first().click()
+    await page.waitForTimeout(1500)
+    await ctx.close()
+
+    assert(problems.length === 0, `console: ${problems[0]}`)
+    for (const id of ids) {
+      const got = await typeOf(id)
+      assert(got === "event", `${id} stored as ${got}, want event`)
+    }
+    return `${ids.length} rows retyped through the bulk bar`
+  })
+
+  await check(14, "add a memory through the page, tagged origin=user", async () => {
+    const { ctx, page, problems, card } = await openProbe()
+    await card.getByRole("button", { name: /Add a memory to e2e-probe/i }).click()
+    const form = page.locator("[data-testid=add-memory-form]")
+    await form.waitFor({ state: "visible", timeout: 5000 })
+
+    await form.locator("textarea").fill("written from the browser")
+    await form.getByRole("button", { name: "Add", exact: true }).click()
+    await page.waitForTimeout(1500)
+    await ctx.close()
+
+    assert(problems.length === 0, `console: ${problems[0]}`)
+    const doc = await api(`/api/memory/${store}`)
+    const probe = (doc.json.domains ?? []).find((d) => d.name === "e2e-probe")
+    const added = probe?.memories.find((m) => m.text === "written from the browser")
+    assert(added, "the memory added through the page is not in the store")
+    assert(added.origin === "user", `origin = ${added.origin}, want user`)
+    return `${added.id} origin=user`
+  })
+
+  await check(15, "retire from the row, then reveal it with show-retired", async () => {
+    const { ctx, page, problems, card } = await openProbe()
+    const row = card.locator("[data-testid=memory-row]").first()
+    const id = await row.getAttribute("data-memory-id")
+    await row.getByRole("button", { name: /Retire this memory/i }).click()
+    await page.waitForTimeout(1500)
+
+    // Gone from the default view — and reachable again behind the toggle,
+    // without which a retired memory could never be restored.
+    let visible = await card
+      .locator(`[data-memory-id="${id}"]`)
+      .count()
+    assert(visible === 0, "the retired memory is still listed by default")
+
+    await page.getByRole("button", { name: /Show retired/i }).click()
+    await page.waitForTimeout(1500)
+    visible = await page.locator(`[data-memory-id="${id}"]`).count()
+    await ctx.close()
+
+    assert(problems.length === 0, `console: ${problems[0]}`)
+    assert(visible === 1, "show-retired did not reveal the retired memory")
+    return `${id} retired and recovered`
+  })
+
+  await check(16, "clean up the probe domain", async () => {
     assert(probeDomain, "no probe domain to remove")
     const res = await api(`/api/memory/${store}/domains/${probeDomain}`, {
       method: "DELETE",

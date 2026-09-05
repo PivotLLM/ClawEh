@@ -162,8 +162,12 @@ and deletes it at the end. Nothing outside that domain is touched.
 | N8 | Add two more, then `POST /api/memory/{id}/bulk` with `retype` to `operational` over all three | `200` and `changed` equals the number sent. Bulk is on the critical path: a production store can hold hundreds of near-identical recurring notes |
 | N9 | `POST` a bulk `retire` over one good id and `hNOPE` | `200`, `changed: 1`, and `failed` names `hNOPE`. One bad id must not abort a batch of hundreds |
 | N10 | `GET /api/memory/{id}/export`, then `POST` the body back to `/import?mode=merge` | The export is YAML carrying `format_version`, and merge-importing it creates **0** memories — the same document imported twice must change nothing |
-| N11 | Load `/memory` in a browser | Domains and memory rows render, no console errors |
-| N12 | `DELETE /api/memory/{id}/domains/{domain}` | `204`, and the probe domain is gone even with `include_retired=1` |
+| N11 | Load `/memory`, click the probe's store in the sidebar | The `e2e-probe` domain renders with its 3 memories, no console errors |
+| N12 | Open the type dropdown on the first row and pick `preference` | The **stored** type changes, read back from the API. Steps 2–10 drive the API; from here the checks drive the page, because a control can be wired correctly and still not work — the type picker is a portalled listbox and jsdom is not a browser |
+| N13 | Tick two rows, then use **Change type…** on the bar that appears | The bulk bar is absent with nothing selected, appears once a row is ticked, and retypes every selected id |
+| N14 | **Add memory** on the domain, type some text, **Add** | The memory is in the store with `origin: "user"` |
+| N15 | Retire a row, then click **Show retired** | It disappears from the default view and comes back behind the toggle. Without that it could never be restored |
+| N16 | `DELETE /api/memory/{id}/domains/{domain}` | `204`, and the probe domain is gone even with `include_retired=1` |
 
 ---
 

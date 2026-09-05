@@ -198,6 +198,7 @@ export function MemoryPage() {
               {stores.map((s) => (
                 <button
                   key={s.id}
+                  data-store-id={s.id}
                   onClick={() => {
                     setSelected(s.id)
                     clearSelection()
