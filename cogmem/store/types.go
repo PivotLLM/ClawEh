@@ -15,36 +15,53 @@ type Status string
 
 const (
 	StatusActive   Status = "active"   // used in prompts
-	StatusReview   Status = "review"   // unconfirmed; pending digest only
 	StatusArchived Status = "archived" // domains
 	StatusRetired  Status = "retired"  // memories
-	StatusRejected Status = "rejected" // memories
 )
 
-// MemoryType classifies a memory. The set is deliberately small: what a memory
-// is (fact), how the user wants things done (preference), or a hard directive
-// (rule). Volatile project status lives on the domain's state, not here.
+// MemoryType classifies a memory, and is the only classification the model is
+// asked for. Four of the five are standing knowledge and load into the prompt;
+// TypeEvent is the exception and never does. Volatile project status lives on
+// the domain's state, not here.
 type MemoryType string
 
 const (
-	TypeFact       MemoryType = "fact"
+	// TypeFact is something true: "Eric lives in Ottawa."
+	TypeFact MemoryType = "fact"
+	// TypePreference is how the user likes things done.
 	TypePreference MemoryType = "preference"
-	TypeRule       MemoryType = "rule"
+	// TypeRule is a hard directive governing output or behaviour toward the
+	// user: "Do not use the word thuddy."
+	TypeRule MemoryType = "rule"
+	// TypeEvent is something observed at a point in time — a trip, a delivery
+	// status, a scheduled run. It goes stale immediately and accumulates without
+	// bound, so it is NEVER loaded into the prompt: domains report how many they
+	// hold and it is reached through search. This is the one type that changes
+	// behaviour rather than merely describing.
+	TypeEvent MemoryType = "event"
+	// TypeOperational is the assistant's own housekeeping: where it files
+	// things, how it works, rules it sets for its own method. The discriminator
+	// against TypeRule is who it serves — a rule governs behaviour toward the
+	// user, operational is the assistant's own bookkeeping.
+	TypeOperational MemoryType = "operational"
 )
 
-// Source records how a memory item came to exist.
-type Source string
+// ValidMemoryTypes reports whether t is one of the five known types.
+func ValidMemoryTypes(t MemoryType) bool {
+	switch t {
+	case TypeFact, TypePreference, TypeRule, TypeEvent, TypeOperational:
+		return true
+	default:
+		return false
+	}
+}
 
-const (
-	SourceUserExplicit      Source = "user_explicit"
-	SourceAssistantInferred Source = "assistant_inferred"
-	SourceToolWrite         Source = "tool_write"
-	SourceMigration         Source = "migration"
-)
+// Prompt reports whether a memory of this type is loaded into the prompt as
+// standing knowledge. Everything except TypeEvent is.
+func (t MemoryType) Prompt() bool { return t != TypeEvent }
 
-// Origin records which actor created a memory, independent of Source (which
-// records provenance). Surfaced to the user and into the prompt so the
-// assistant knows where a memory came from.
+// Origin records which actor created a memory. Surfaced to the user and into
+// the prompt so the assistant knows where a memory came from.
 type Origin string
 
 const (
@@ -116,8 +133,6 @@ type Memory struct {
 	Text               string
 	Status             Status
 	Confidence         float64
-	Priority           int
-	Source             Source
 	Origin             Origin
 	SourceSession      *string
 	SourceSeqStart     *int64

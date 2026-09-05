@@ -195,8 +195,6 @@ type MemoryPromptConfig struct {
 	MaxChars          int     `json:"max_chars"`
 	MinConfidence     float64 `json:"min_confidence"`
 	IncludeDebugTrace bool    `json:"include_debug_trace"`
-	PendingSurface    string  `json:"pending_surface"` // "ask" | "export_only"
-	PendingMax        int     `json:"pending_max"`
 	// Budgets for markdown files attached to memories (memory.file_ref). These
 	// are separate from MaxChars: an attached document is injected whole, not
 	// squeezed into the routed block's line budget.

@@ -16,12 +16,22 @@ import (
 
 const cogmemDBSuffix = ".cogmem.db"
 
-// registerMemoryRoutes binds read-only cognitive-memory browser endpoints.
+// registerMemoryRoutes binds the cognitive-memory browsing and curation
+// endpoints. Curation is the point: the model chooses a memory's type when it
+// writes and gets it wrong often enough — a trip log filed as a fact, its own
+// bookkeeping filed as a rule — that correcting it by hand has to be practical,
+// including in bulk.
 func (h *Handler) registerMemoryRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/memory", h.handleListMemoryStores)
 	mux.HandleFunc("GET /api/memory/{id}", h.handleGetMemoryStore)
 	mux.HandleFunc("DELETE /api/memory/{id}/domains/{domainID}", h.handleDeleteDomain)
 	mux.HandleFunc("DELETE /api/memory/{id}/memories/{memoryID}", h.handleDeleteMemory)
+	mux.HandleFunc("PATCH /api/memory/{id}/memories/{memoryID}", h.handlePatchMemory)
+	mux.HandleFunc("POST /api/memory/{id}/domains", h.handleCreateDomain)
+	mux.HandleFunc("POST /api/memory/{id}/domains/{domainID}/memories", h.handleCreateMemory)
+	mux.HandleFunc("POST /api/memory/{id}/bulk", h.handleBulkMemories)
+	mux.HandleFunc("GET /api/memory/{id}/export", h.handleExportMemory)
+	mux.HandleFunc("POST /api/memory/{id}/import", h.handleImportMemory)
 }
 
 // memoryStoreItem is one per-session cognitive-memory database in the list view.
@@ -38,8 +48,6 @@ type memoryMemory struct {
 	Text       string  `json:"text"`
 	Status     string  `json:"status"`
 	Confidence float64 `json:"confidence"`
-	Priority   int     `json:"priority"`
-	Source     string  `json:"source"`
 	Origin     string  `json:"origin"`
 	FileRef    string  `json:"file_ref"`
 	Created    string  `json:"created"`
@@ -75,10 +83,9 @@ type memoryDetailResponse struct {
 	Agent          string         `json:"agent"`
 	ActiveDomains  int            `json:"active_domains"`
 	ActiveMemories int            `json:"active_memories"`
-	Pending        int            `json:"pending"`
+	RetiredCount   int            `json:"retired_count"`
 	LastRun        *memoryRun     `json:"last_run"`
 	Domains        []memoryDomain `json:"domains"`
-	PendingList    []memoryMemory `json:"pending_list"`
 }
 
 // domainLastUsed renders a domain's last-active time as RFC3339, or "" when it
@@ -179,8 +186,6 @@ func toMemoryMemory(m cogmemstore.Memory) memoryMemory {
 		Text:       m.Text,
 		Status:     string(m.Status),
 		Confidence: m.Confidence,
-		Priority:   m.Priority,
-		Source:     string(m.Source),
 		Origin:     string(m.Origin),
 		FileRef:    m.FileRef,
 		Created:    m.CreatedAt.Format(time.RFC3339),
@@ -188,10 +193,14 @@ func toMemoryMemory(m cogmemstore.Memory) memoryMemory {
 	}
 }
 
-// handleGetMemoryStore returns the active domains, their memories, the pending
-// digest, and the last consolidation run for one session's database. Read-only.
+// handleGetMemoryStore returns a session's domains, their memories, and the
+// last consolidation run.
 //
-//	GET /api/memory/{id}
+// Retired memories are included only with ?include_retired=1. They are the
+// minority and would otherwise bury the active ones, but they have to be
+// reachable: restoring one is impossible if it cannot be seen.
+//
+//	GET /api/memory/{id}[?include_retired=1]
 func (h *Handler) handleGetMemoryStore(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
@@ -220,7 +229,13 @@ func (h *Handler) handleGetMemoryStore(w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()
 	db := s.DB()
 
-	resp := memoryDetailResponse{ID: id, Agent: agent, Domains: []memoryDomain{}, PendingList: []memoryMemory{}}
+	includeRetired := r.URL.Query().Get("include_retired") != ""
+	statuses := []cogmemstore.Status{cogmemstore.StatusActive}
+	if includeRetired {
+		statuses = append(statuses, cogmemstore.StatusRetired)
+	}
+
+	resp := memoryDetailResponse{ID: id, Agent: agent, Domains: []memoryDomain{}}
 
 	domains, err := s.ListDomains(ctx, db, cogmemstore.StatusActive)
 	if err != nil {
@@ -229,7 +244,7 @@ func (h *Handler) handleGetMemoryStore(w http.ResponseWriter, r *http.Request) {
 	}
 	resp.ActiveDomains = len(domains)
 	for _, d := range domains {
-		mems, _ := s.ListMemories(ctx, db, d.ID, cogmemstore.StatusActive)
+		mems, _ := s.ListMemories(ctx, db, d.ID, statuses...)
 		dm := memoryDomain{
 			ID:              d.ID,
 			Sticky:          d.Sticky(),
@@ -243,18 +258,20 @@ func (h *Handler) handleGetMemoryStore(w http.ResponseWriter, r *http.Request) {
 		}
 		for _, m := range mems {
 			dm.Memories = append(dm.Memories, toMemoryMemory(m))
+			switch m.Status {
+			case cogmemstore.StatusRetired:
+				resp.RetiredCount++
+			default:
+				resp.ActiveMemories++
+			}
 		}
-		resp.ActiveMemories += len(mems)
 		resp.Domains = append(resp.Domains, dm)
 	}
 
-	if pending, err := s.ListPending(ctx, db, 100); err == nil {
-		for _, m := range pending {
-			resp.PendingList = append(resp.PendingList, toMemoryMemory(m))
-		}
-	}
-	if n, err := s.PendingCount(ctx, db); err == nil {
-		resp.Pending = n
+	// Retired memories are counted even when they are not listed, so the UI can
+	// offer to show them without a second request.
+	if !includeRetired {
+		resp.RetiredCount = countRetired(ctx, s, domains)
 	}
 
 	if run, ok, err := s.LastRun(ctx, db); err == nil && ok {

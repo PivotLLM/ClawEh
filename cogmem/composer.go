@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"sync"
 	"unicode"
 
 	"github.com/PivotLLM/ClawEh/cogmem/store"
@@ -26,11 +25,9 @@ import (
 // options tune composition (mirrors memory.prompt config); set via functional
 // options on New.
 type options struct {
-	topKDomains    int     // routed domains to pre-load
-	maxChars       int     // routed block budget
-	minConfidence  float64 // hide active hooks below this
-	pendingMax     int     // pending digest cap
-	pendingSurface string  // PendingSurfaceAsk | PendingSurfaceExportOnly
+	topKDomains   int     // routed domains to pre-load
+	maxChars      int     // routed block budget
+	minConfidence float64 // hide active hooks below this
 
 	// File attachments (memories carrying a FileRef). Budgets are independent of
 	// maxChars: a referenced document is injected whole, not squeezed into the
@@ -70,36 +67,11 @@ func WithMinConfidence(c float64) Option {
 	}
 }
 
-// WithPendingMax caps the pending-confirmation digest.
-func WithPendingMax(n int) Option {
-	return func(o *options) {
-		if n > 0 {
-			o.pendingMax = n
-		}
-	}
-}
-
-// WithPendingSurface selects PendingSurfaceAsk or PendingSurfaceExportOnly.
-func WithPendingSurface(s string) Option {
-	return func(o *options) {
-		if s != "" {
-			o.pendingSurface = s
-		}
-	}
-}
-
 // Composer reads a session's cogmem store. A Composer instance is scoped to a
-// single session (see agent/memory_wiring.go), so its in-memory
-// shownPending set throttles the pending-confirmation digest to once per
-// session per memory: each review memory is surfaced for confirmation exactly
-// once, and re-surfaces only if a new pending memory appears later in the
-// session.
+// single session (see agent/memory_wiring.go).
 type Composer struct {
 	st  *store.Store
 	opt options
-
-	mu           sync.Mutex
-	shownPending map[string]bool
 }
 
 // New returns a Composer over st with the given options applied over defaults.
@@ -108,31 +80,13 @@ func New(st *store.Store, opts ...Option) *Composer {
 		topKDomains:       defaultTopKDomains,
 		maxChars:          defaultMaxChars,
 		minConfidence:     defaultMinConfidence,
-		pendingMax:        defaultPendingMax,
-		pendingSurface:    PendingSurfaceAsk,
 		fileMaxBytes:      defaultFileMaxBytes,
 		fileTotalMaxBytes: defaultFileTotalMaxBytes,
 	}
 	for _, fn := range opts {
 		fn(&o)
 	}
-	return &Composer{st: st, opt: o, shownPending: make(map[string]bool)}
-}
-
-// unshownPending returns the pending memories not yet surfaced this session,
-// marking them surfaced. Throttles the digest so the agent asks about each
-// pending memory only once.
-func (c *Composer) unshownPending(pend []store.Memory) []store.Memory {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	var out []store.Memory
-	for _, h := range pend {
-		if !c.shownPending[h.ID] {
-			out = append(out, h)
-			c.shownPending[h.ID] = true
-		}
-	}
-	return out
+	return &Composer{st: st, opt: o}
 }
 
 // RouteRequest carries the per-turn routing inputs.
@@ -194,39 +148,27 @@ func (c *Composer) stableBlock(ctx context.Context) (string, int64, []refSite, e
 		return sticky[i].Name < sticky[j].Name
 	})
 	for _, d := range sticky {
-		hooks, err := c.st.ListMemories(ctx, db, d.ID, store.StatusActive)
+		hooks, err := c.st.ListPromptMemories(ctx, db, d.ID)
 		if err != nil {
 			return "", rev, nil, err
 		}
 		hooks = filterConfidence(hooks, c.opt.minConfidence)
-		if len(hooks) == 0 {
+		events, err := c.st.CountEvents(ctx, db, d.ID)
+		if err != nil {
+			return "", rev, nil, err
+		}
+		if len(hooks) == 0 && events == 0 {
 			continue
 		}
 		fmt.Fprintf(&b, "COGMEM domain %s is sticky:\n\n", d.Name)
 		for _, h := range hooks {
-			fmt.Fprintf(&b, "- %s%s\n", h.Text, originSuffix(h.Origin))
+			fmt.Fprintf(&b, "- %s %s%s\n", typePrefix(h.Type), h.Text, originSuffix(h.Origin))
 			refs = collectRef(refs, memoryRef{memoryID: h.ID, text: h.Text, ref: h.FileRef})
 		}
+		if line := eventLine(events); line != "" {
+			b.WriteString(line)
+		}
 		b.WriteString("\n")
-	}
-
-	// Pending (unconfirmed) digest — surfaced once per session per memory so the
-	// agent asks the user to confirm without nagging on every turn.
-	if c.opt.pendingSurface != PendingSurfaceExportOnly {
-		pend, err := c.st.ListPending(ctx, db, c.opt.pendingMax)
-		if err != nil {
-			return "", rev, nil, err
-		}
-		if fresh := c.unshownPending(pend); len(fresh) > 0 {
-			b.WriteString("## Pending (unconfirmed — do not act on as rules). Ask the user to confirm; on \"yes\" call cogmem_memory_confirm with the id, on \"no\" call cogmem_memory_retire.\n")
-			for _, h := range fresh {
-				// The reference is named but deliberately not loaded: an
-				// unconfirmed memory should not pull a document into every prompt.
-				fmt.Fprintf(&b, "- (%s) %s\n", h.ID, h.Text)
-				refs = collectRef(refs, memoryRef{memoryID: h.ID, text: h.Text, ref: h.FileRef, pending: true})
-			}
-			b.WriteString("\n")
-		}
 	}
 
 	// Domain index (routed, active non-sticky topic domains), stable sort by id.
@@ -321,12 +263,16 @@ func (c *Composer) routedBlock(ctx context.Context, req RouteRequest) (RoutedRes
 	var res RoutedResult
 	for _, cand := range ordered {
 		d := cand.d
-		hooks, err := c.st.ListMemories(ctx, db, d.ID, store.StatusActive)
+		hooks, err := c.st.ListPromptMemories(ctx, db, d.ID)
 		if err != nil {
 			return RoutedResult{}, nil, err
 		}
 		hooks = filterConfidence(hooks, c.opt.minConfidence)
-		section := renderDomain(d, hooks)
+		events, err := c.st.CountEvents(ctx, db, d.ID)
+		if err != nil {
+			return RoutedResult{}, nil, err
+		}
+		section := renderDomain(d, hooks, events)
 		if b.Len()+len(section) > c.opt.maxChars && b.Len() > 0 {
 			break
 		}
@@ -453,7 +399,9 @@ func (c *Composer) lexicalCandidates(ctx context.Context, topics []store.Domain,
 	}
 	for _, t := range terms {
 		// Memory-text matches via the indexed substring scan (returns DomainID).
-		rows, err := c.st.SearchMemories(ctx, db, t, lexicalSearchLimit)
+		// Events are excluded: routing decides which domain is relevant to the
+		// turn, and a domain full of trip logs would win on volume alone.
+		rows, err := c.st.SearchMemories(ctx, db, t, lexicalSearchLimit, false)
 		if err == nil {
 			for _, h := range rows {
 				bump(h.DomainID, t)
@@ -520,18 +468,46 @@ var routeStopwords = map[string]bool{
 // originSuffix tags a memory line with where it came from, so the assistant
 // knows its provenance. Chat-origin (the agent's own notes) is the unremarkable
 // default and gets no tag; user- and consolidation-origin are flagged.
+//
+// The tag says "origin", not "source": it has always rendered Origin, and the
+// separate source field it was named after no longer exists.
 func originSuffix(o store.Origin) string {
 	switch o {
 	case store.OriginUser:
-		return " [source: user]"
+		return " [origin: user]"
 	case store.OriginConsolidation:
-		return " [source: consolidation]"
+		return " [origin: consolidation]"
 	default:
 		return ""
 	}
 }
 
-func renderDomain(d store.Domain, hooks []store.Memory) string {
+// typePrefix labels a memory line with its type, so the assistant can tell a
+// standing rule from a preference or its own bookkeeping. Without it every
+// memory reads as an undifferentiated assertion, which is why type was worth
+// storing but not worth acting on.
+func typePrefix(t store.MemoryType) string {
+	if t == "" {
+		return "(fact)"
+	}
+	return "(" + string(t) + ")"
+}
+
+// eventLine reports how many event memories a domain holds. Events never load
+// into the prompt — they go stale and accumulate without bound — so the count
+// is how the assistant learns they exist and that search will reach them.
+func eventLine(n int) string {
+	switch {
+	case n <= 0:
+		return ""
+	case n == 1:
+		return "(1 event memory in this domain — search to retrieve)\n"
+	default:
+		return fmt.Sprintf("(%d event memories in this domain — search to retrieve)\n", n)
+	}
+}
+
+func renderDomain(d store.Domain, hooks []store.Memory, events int) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "## Active Context: %s · %s\n", d.ID, d.Name)
 	if s := oneLine(d.Summary); s != "" {
@@ -556,7 +532,10 @@ func renderDomain(d store.Domain, hooks []store.Memory) string {
 		}
 	}
 	for _, h := range hooks {
-		fmt.Fprintf(&b, "- (%s) %s%s\n", h.ID, h.Text, originSuffix(h.Origin))
+		fmt.Fprintf(&b, "- (%s) %s %s%s\n", h.ID, typePrefix(h.Type), h.Text, originSuffix(h.Origin))
+	}
+	if line := eventLine(events); line != "" {
+		b.WriteString(line)
 	}
 	b.WriteString("\n")
 	return b.String()

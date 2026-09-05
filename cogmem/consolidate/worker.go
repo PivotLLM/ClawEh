@@ -281,11 +281,11 @@ func (w *Worker) RunOnce(ctx context.Context, p RunParams) (RunResult, error) {
 	return result, nil
 }
 
-// currentState projects the active+review domains and their active hooks into
-// the compact view the model sees.
+// currentState projects the active domains and their active memories into the
+// compact view the model sees.
 func (w *Worker) currentState(ctx context.Context) CurrentState {
 	cs := CurrentState{}
-	domains, err := w.st.ListDomains(ctx, w.st.DB(), store.StatusActive, store.StatusReview)
+	domains, err := w.st.ListDomains(ctx, w.st.DB(), store.StatusActive)
 	if err != nil {
 		return cs
 	}
@@ -301,7 +301,10 @@ func (w *Worker) currentState(ctx context.Context) CurrentState {
 			Triggers:        d.Triggers,
 			KeywordTriggers: d.KeywordTriggers,
 		}
-		hooks, err := w.st.ListMemories(ctx, w.st.DB(), d.ID, store.StatusActive)
+		// Prompt memories only: the model de-duplicates against what it sees, and
+		// a domain holding hundreds of event memories would crowd out everything
+		// else in the state view.
+		hooks, err := w.st.ListPromptMemories(ctx, w.st.DB(), d.ID)
 		if err == nil {
 			for _, h := range hooks {
 				dv.Memories = append(dv.Memories, MemoryView{

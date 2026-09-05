@@ -136,14 +136,19 @@ func Apply(ctx context.Context, st *store.Store, out Output, ac ApplyContext) (i
 	return applied, err
 }
 
+// memoryParams builds the store write for one model operation.
+//
+// Status is not taken from the model: a consolidated memory is active, and the
+// only other status (retired) is a lifecycle transition the model reaches
+// through a retire op rather than by asking for it at creation. Type is the one
+// classification the model states, and Validate has already checked it.
 func memoryParams(domainID string, op MemoryOp) store.AddMemoryParams {
 	return store.AddMemoryParams{
 		DomainID:       domainID,
 		Type:           store.MemoryType(op.Type),
 		Text:           op.Text,
-		Status:         store.Status(orDefault(op.Status, "active")),
+		Status:         store.StatusActive,
 		Confidence:     op.Confidence,
-		Source:         store.Source(orDefault(op.Source, "assistant_inferred")),
 		Origin:         store.OriginConsolidation,
 		SourceSeqStart: i64ptr(op.Evidence.SeqStart),
 		SourceSeqEnd:   i64ptr(op.Evidence.SeqEnd),

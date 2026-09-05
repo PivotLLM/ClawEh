@@ -169,11 +169,17 @@ func search(s *store.Store, call *global.ToolCall) (string, error) {
 		return "", errors.New("query is required")
 	}
 	limit := argInt(call, "limit", 20)
-	hooks, err := s.SearchMemories(call.Ctx, s.DB(), query, limit)
+	includeEvents := argBool(call, "include_events", false)
+	hooks, err := s.SearchMemories(call.Ctx, s.DB(), query, limit, includeEvents)
 	if err != nil {
 		return "", err
 	}
 	if len(hooks) == 0 {
+		if !includeEvents {
+			return fmt.Sprintf("No active memories match %q. Event memories were not "+
+				"searched — retry with include_events if this is a question about "+
+				"something that happened.", query), nil
+		}
 		return fmt.Sprintf("No active memories match %q.", query), nil
 	}
 	var b strings.Builder
@@ -252,7 +258,7 @@ func explainDomain(d store.Domain) string {
 func explainMemory(h store.Memory) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Memory %s (domain %s)\n", h.ID, h.DomainID)
-	fmt.Fprintf(&b, "  type=%s status=%s confidence=%.2f source=%s origin=%s\n", h.Type, h.Status, h.Confidence, h.Source, h.Origin)
+	fmt.Fprintf(&b, "  type=%s status=%s confidence=%.2f origin=%s\n", h.Type, h.Status, h.Confidence, h.Origin)
 	fmt.Fprintf(&b, "  text: %s\n", h.Text)
 	if h.FileRef != "" {
 		fmt.Fprintf(&b, "  attached file: %s (full contents load into context with this memory)\n", h.FileRef)
@@ -282,6 +288,13 @@ func remember(s *store.Store, call *global.ToolCall, cfg *config.Config, workspa
 	text := argStr(call, "text")
 	if mtype == "" || text == "" {
 		return "", errors.New("type and text are required")
+	}
+	// Type decides whether the memory is in the prompt every turn or reachable
+	// only by search, so an unrecognised one is rejected rather than coerced.
+	if !store.ValidMemoryTypes(store.MemoryType(mtype)) {
+		return "", fmt.Errorf("unknown memory type %q: use fact, preference, rule, "+
+			"operational (your own housekeeping) or event (something that happened "+
+			"at a point in time)", mtype)
 	}
 
 	// Validate the attachment before storing anything: a pointer the agent cannot
@@ -333,24 +346,27 @@ func remember(s *store.Store, call *global.ToolCall, cfg *config.Config, workspa
 		}
 	}
 
-	status := store.Status(argStr(call, "status"))
-	if status == "" {
-		status = store.StatusActive
-	}
+	// Status is not an argument. A memory the assistant chooses to write is
+	// active; retiring one is a separate, deliberate act through memory_retire.
+	// Letting it be set here is what allowed every tool-written memory to land
+	// active by default with no thought given to it.
 	h, err := s.AddMemory(call.Ctx, s.DB(), store.AddMemoryParams{
 		DomainID:   domainID,
 		Type:       store.MemoryType(mtype),
 		Text:       text,
-		Status:     status,
+		Status:     store.StatusActive,
 		Confidence: argFloat(call, "confidence", 0.9),
-		Source:     store.SourceToolWrite,
 		Origin:     store.OriginChat,
 		FileRef:    fileRef,
 	})
 	if err != nil {
 		return "", mapErr(err, domainID)
 	}
-	msg := fmt.Sprintf("Stored memory %s in domain %s (type=%s, status=%s).", h.ID, domainID, h.Type, h.Status)
+	msg := fmt.Sprintf("Stored memory %s in domain %s (type=%s).", h.ID, domainID, h.Type)
+	if h.Type == store.TypeEvent {
+		msg += " Event memories are not loaded into your context — retrieve it with" +
+			" memory_search using include_events."
+	}
 	if fileRef != "" {
 		msg += fmt.Sprintf(" Attached %s (%d bytes); its full contents load into context whenever this memory does.", fileRef, fileSize)
 	}
@@ -419,7 +435,7 @@ func updateDomain(s *store.Store, call *global.ToolCall) (string, error) {
 }
 
 // exportMemory writes the agent's entire active memory as one Markdown document
-// to files/MEMORY_EXPORT.md (its writable area) and reports the path and counts.
+// to files/MEMORY_EXPORT.yaml (its writable area) and reports the path and counts.
 func exportMemory(s *store.Store, call *global.ToolCall) (string, error) {
 	doc, nDomains, nMemories, err := renderFullExport(call.Ctx, s)
 	if err != nil {
@@ -432,11 +448,12 @@ func exportMemory(s *store.Store, call *global.ToolCall) (string, error) {
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return "", fmt.Errorf("failed to prepare export directory: %w", err)
 	}
-	outPath := filepath.Join(outDir, "MEMORY_EXPORT.md")
+	outPath := filepath.Join(outDir, exportFilename)
 	if err := os.WriteFile(outPath, []byte(doc), 0o644); err != nil {
 		return "", fmt.Errorf("failed to write export: %w", err)
 	}
-	return fmt.Sprintf("Exported %d domain(s) and %d memory(ies) to files/MEMORY_EXPORT.md.", nDomains, nMemories), nil
+	return fmt.Sprintf("Exported %d domain(s) and %d memory(ies) to files/%s.",
+		nDomains, nMemories, exportFilename), nil
 }
 
 func retireHook(s *store.Store, call *global.ToolCall) (string, error) {
@@ -481,17 +498,6 @@ func attachFileWith(cfg *config.Config, workspace string) handlerFunc {
 		}
 		return fmt.Sprintf("Attached %s (%d bytes) to memory %s; its full contents load into context whenever this memory does.", m.FileRef, size, m.ID), nil
 	}
-}
-
-func confirmHook(s *store.Store, call *global.ToolCall) (string, error) {
-	id := argStr(call, "id")
-	if id == "" {
-		return "", errors.New("id is required")
-	}
-	if err := s.PromoteMemory(call.Ctx, s.DB(), id); err != nil {
-		return "", mapErr(err, id)
-	}
-	return fmt.Sprintf("Confirmed memory %s (now active).", id), nil
 }
 
 func createDomain(s *store.Store, call *global.ToolCall) (string, error) {
@@ -549,7 +555,9 @@ func forget(s *store.Store, call *global.ToolCall) (string, error) {
 		return "", errors.New("query is required")
 	}
 	domainFilter := argStr(call, "domain_id")
-	hooks, err := s.SearchMemories(call.Ctx, s.DB(), query, 100)
+	// Events included: forgetting is about removing something the user asked to
+	// be rid of, and an event is as forgettable as anything else.
+	hooks, err := s.SearchMemories(call.Ctx, s.DB(), query, 100, true)
 	if err != nil {
 		return "", err
 	}
@@ -581,12 +589,6 @@ func consolidate(_ *store.Store, call *global.ToolCall) (string, error) {
 func status(s *store.Store, call *global.ToolCall) (string, error) {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Cognitive memory database: %s (healthy)\n", s.Path())
-
-	pending, err := s.PendingCount(call.Ctx, s.DB())
-	if err != nil {
-		return "", err
-	}
-	fmt.Fprintf(&b, "Pending (review) memories: %d\n", pending)
 
 	run, ok, err := s.LastRun(call.Ctx, s.DB())
 	if err != nil {

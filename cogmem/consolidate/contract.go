@@ -93,13 +93,14 @@ type DomainOp struct {
 
 // MemoryOp is an add/supersede/retire operation on a hook.
 type MemoryOp struct {
-	Op         string         `json:"op"`
-	Domain     string         `json:"domain,omitempty"` // existing domain id or a tmp_id
-	OldID      string         `json:"old_id,omitempty"`
-	Type       string         `json:"type,omitempty"`
+	Op     string `json:"op"`
+	Domain string `json:"domain,omitempty"` // existing domain id or a tmp_id
+	OldID  string `json:"old_id,omitempty"`
+	// Type is the one classification the model states. Status is derived (a
+	// consolidated memory is active) and there is no longer a source field, so
+	// this is the whole of the model's judgement about what a memory is.
+	Type       string         `json:"type"`
 	Text       string         `json:"text,omitempty"`
-	Status     string         `json:"status,omitempty"`
-	Source     string         `json:"source,omitempty"`
 	Confidence float64        `json:"confidence,omitempty"`
 	ID         string         `json:"id,omitempty"` // for retire
 	Reason     string         `json:"reason,omitempty"`
@@ -113,11 +114,14 @@ type LedgerEntry struct {
 	Evidence store.Evidence `json:"evidence"`
 }
 
-var (
-	validMemoryTypes = map[string]bool{"fact": true, "preference": true, "rule": true}
-	validStatuses    = map[string]bool{"active": true, "review": true}
-	validSources     = map[string]bool{"user_explicit": true, "assistant_inferred": true}
-)
+var validMemoryTypes = map[string]bool{
+	"fact": true, "preference": true, "rule": true, "event": true, "operational": true,
+}
+
+// validDomainStatuses is the domain lifecycle, which is separate from a
+// memory's: a domain is active or archived. It previously also accepted
+// "review", which was a memory status that a domain could never usefully hold.
+var validDomainStatuses = map[string]bool{"active": true, "archived": true}
 
 // maxTriggersLen caps the comma-delimited tool-trigger string a domain op may set.
 const maxTriggersLen = 512
@@ -177,7 +181,7 @@ func (o Output) Validate(in Input) error {
 			if strings.TrimSpace(op.Name) == "" {
 				return fmt.Errorf("domain_ops[%d]: create needs a name", i)
 			}
-			if op.Status != "" && !validStatuses[op.Status] {
+			if op.Status != "" && !validDomainStatuses[op.Status] {
 				return fmt.Errorf("domain_ops[%d]: invalid status %q", i, op.Status)
 			}
 			tmpIDs[op.TmpID] = true
@@ -203,21 +207,18 @@ func (o Output) Validate(in Input) error {
 			if !domainIDs[op.Domain] && !tmpIDs[op.Domain] {
 				return fmt.Errorf("memory_ops[%d]: unknown domain %q", i, op.Domain)
 			}
+			// Required, not merely valid-if-present. The previous contract
+			// checked each field only when it was non-empty, so an op that
+			// omitted everything passed every guard and was then filled in with
+			// defaults the rules forbade.
+			if op.Type == "" {
+				return fmt.Errorf("memory_ops[%d]: missing type", i)
+			}
 			if !validMemoryTypes[op.Type] {
 				return fmt.Errorf("memory_ops[%d]: invalid type %q", i, op.Type)
 			}
 			if strings.TrimSpace(op.Text) == "" {
 				return fmt.Errorf("memory_ops[%d]: empty text", i)
-			}
-			if op.Status != "" && !validStatuses[op.Status] {
-				return fmt.Errorf("memory_ops[%d]: invalid status %q", i, op.Status)
-			}
-			if op.Source != "" && !validSources[op.Source] {
-				return fmt.Errorf("memory_ops[%d]: invalid source %q", i, op.Source)
-			}
-			// Inferred items must be review (rule 5).
-			if op.Source == "assistant_inferred" && op.Status == "active" {
-				return fmt.Errorf("memory_ops[%d]: inferred item must be status=review", i)
 			}
 			if op.Op == "supersede" && !memoryIDs[op.OldID] {
 				return fmt.Errorf("memory_ops[%d]: supersede unknown old_id %q", i, op.OldID)
@@ -244,24 +245,19 @@ func (o Output) Validate(in Input) error {
 // batch (which would silently drop real memories). It returns a human-readable
 // note per repair, for the run record/log.
 //
-// Current repairs:
-//   - An inferred memory the model marked status=active is downgraded to
-//     status=review — its correct, more conservative state. It then flows
-//     through the normal pending-confirmation path instead of the whole batch
-//     being aborted.
+// There are currently no repairs. The one that existed downgraded an inferred
+// memory the model had marked active to review, and both the status field and
+// the review state are gone — the model no longer states anything that can be
+// wrong in a way an automatic correction could fix.
 //
-// Genuinely ambiguous violations (unknown domain, invalid type, empty text,
-// dangling supersede/retire references) are deliberately NOT repaired — Validate
-// still rejects those, since there is no safe automatic correction.
+// The function is kept because the repair-and-note path is the right shape for
+// the next contract deviation that turns out to be safely correctable, and its
+// callers (the worker's run record, the memory page's note field) already
+// handle an empty result.
+//
+// Genuinely ambiguous violations (unknown domain, missing or invalid type, empty
+// text, dangling supersede/retire references) are NOT repaired — Validate
+// rejects those, since there is no safe automatic correction.
 func (o *Output) Normalize() []string {
-	var notes []string
-	for i := range o.MemoryOps {
-		op := &o.MemoryOps[i]
-		if (op.Op == "add" || op.Op == "supersede") &&
-			op.Source == "assistant_inferred" && op.Status == "active" {
-			op.Status = "review"
-			notes = append(notes, fmt.Sprintf("memory_ops[%d]: inferred item active→review", i))
-		}
-	}
-	return notes
+	return nil
 }

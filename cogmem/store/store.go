@@ -90,6 +90,20 @@ func (s *Store) Path() string { return s.path }
 func (s *Store) Close() error { return s.db.Close() }
 
 func (s *Store) migrate(ctx context.Context) error {
+	// What this database was last migrated to. 0 for a database written before
+	// the version was recorded, and for one that does not exist yet.
+	from, err := s.recordedVersion(ctx)
+	if err != nil {
+		return fmt.Errorf("cogmem: read schema version: %w", err)
+	}
+	// Snapshot before touching anything. A no-op for a database that is being
+	// created, or one already at the current version, so the cost is paid once
+	// per upgrade rather than on every open.
+	if from < schemaVersion {
+		if err := s.snapshotBeforeMigration(ctx, from); err != nil {
+			return fmt.Errorf("cogmem: pre-migration snapshot: %w", err)
+		}
+	}
 	// Legacy rename (hook→memory, kind→type) must run BEFORE the schema DDL, or
 	// CREATE TABLE IF NOT EXISTS memories would make a fresh empty table beside
 	// the existing data. Idempotent and a no-op on fresh databases.
@@ -108,11 +122,6 @@ func (s *Store) migrate(ctx context.Context) error {
 			return fmt.Errorf("cogmem: seed meta %q: %w", k, err)
 		}
 	}
-	if _, err := s.db.ExecContext(ctx,
-		`INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(?,?)`,
-		schemaVersion, now()); err != nil {
-		return fmt.Errorf("cogmem: record migration: %w", err)
-	}
 	if err := s.ensureDomainColumns(ctx); err != nil {
 		return fmt.Errorf("cogmem: ensure domain columns: %w", err)
 	}
@@ -128,8 +137,106 @@ func (s *Store) migrate(ctx context.Context) error {
 	if err := s.normalizeStickyColumn(ctx); err != nil {
 		return fmt.Errorf("cogmem: normalize sticky column: %w", err)
 	}
+	// v6: the review status and the source/priority columns go. Both steps are
+	// idempotent and probe rather than trusting the recorded version, because
+	// databases written before the version was recorded report 0 regardless of
+	// what they actually contain.
+	if err := s.retireReviewStatus(ctx); err != nil {
+		return fmt.Errorf("cogmem: retire review status: %w", err)
+	}
+	if err := s.dropLegacyMemoryColumns(ctx); err != nil {
+		return fmt.Errorf("cogmem: drop legacy memory columns: %w", err)
+	}
 	if err := s.seedGeneralOnce(ctx); err != nil {
 		return fmt.Errorf("cogmem: seed general domain: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx,
+		`INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(?,?)`,
+		schemaVersion, now()); err != nil {
+		return fmt.Errorf("cogmem: record migration: %w", err)
+	}
+	return nil
+}
+
+// recordedVersion returns the highest version in schema_migrations, or 0 when
+// the table does not exist yet (a database being created, or one written before
+// the version was tracked).
+func (s *Store) recordedVersion(ctx context.Context) (int, error) {
+	var n sql.NullInt64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT MAX(version) FROM schema_migrations`).Scan(&n)
+	if err != nil {
+		// No such table: nothing has been recorded, which is what 0 means.
+		if strings.Contains(err.Error(), "no such table") {
+			return 0, nil
+		}
+		return 0, err
+	}
+	if !n.Valid {
+		return 0, nil
+	}
+	return int(n.Int64), nil
+}
+
+// snapshotBeforeMigration writes a consistent copy of the database to
+// <path>.pre-v<from>.db before a migration runs, so an upgrade is recoverable
+// without the operator having prepared for it.
+//
+// VACUUM INTO rather than a file copy: it takes a read transaction and writes a
+// single self-contained file, so it captures anything still sitting in the WAL.
+// A plain copy of the .db alone can miss committed data entirely.
+//
+// No-op when there is nothing to lose (no memories table yet — a database being
+// created) and when the snapshot already exists (VACUUM INTO refuses to
+// overwrite, which is the behaviour we want: the first snapshot at a given
+// version is the one taken before any changes).
+func (s *Store) snapshotBeforeMigration(ctx context.Context, from int) error {
+	have, err := s.tableExists(ctx, "memories")
+	if err != nil || !have {
+		return err
+	}
+	dst := fmt.Sprintf("%s.pre-v%d.db", s.path, from)
+	if _, err := os.Stat(dst); err == nil {
+		return nil // already snapshotted at this version
+	}
+	if _, err := s.db.ExecContext(ctx, `VACUUM INTO ?`, dst); err != nil {
+		return fmt.Errorf("VACUUM INTO %s: %w", dst, err)
+	}
+	return nil
+}
+
+// retireReviewStatus promotes every memory left in the removed "review" status
+// to active. Review meant "written but unconfirmed", and the confirmation it
+// waited for never came: those memories were excluded from the prompt, from
+// search and from the WebUI, so they were unreachable by anything. Making them
+// active is what removing the gate means.
+func (s *Store) retireReviewStatus(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE memories SET status='active' WHERE status='review'`)
+	return err
+}
+
+// dropLegacyMemoryColumns removes memories.source and memories.priority.
+//
+// Neither drove behaviour. source recorded whether the model believed a memory
+// came from the user or was inferred — it gated only the review rule, which is
+// gone, and never reached the prompt (the [source: ...] tag renders origin).
+// priority was written and returned by the API and read by nothing.
+//
+// Must run AFTER ensureMemoryColumns, which backfills origin FROM source.
+func (s *Store) dropLegacyMemoryColumns(ctx context.Context) error {
+	have, err := s.columnSet(ctx, "memories")
+	if err != nil {
+		return err
+	}
+	for _, col := range []string{"source", "priority"} {
+		if !have[col] {
+			continue
+		}
+		if _, err := s.db.ExecContext(ctx,
+			`ALTER TABLE memories DROP COLUMN `+col); err != nil {
+			return fmt.Errorf("drop %s: %w", col, err)
+		}
 	}
 	return nil
 }
@@ -416,7 +523,12 @@ func (s *Store) ensureMemoryColumns(ctx context.Context) error {
 		`ALTER TABLE memories ADD COLUMN origin TEXT NOT NULL DEFAULT 'chat'`); err != nil {
 		return err
 	}
-	// Backfill from source (rows default to 'chat' from the ALTER above).
+	// Backfill from source (rows default to 'chat' from the ALTER above). A
+	// database already migrated past v6 has no source column, and nothing to
+	// backfill from.
+	if !have["source"] {
+		return nil
+	}
 	if _, err := s.db.ExecContext(ctx,
 		`UPDATE memories SET origin='consolidation' WHERE source IN ('user_explicit','assistant_inferred')`); err != nil {
 		return err
