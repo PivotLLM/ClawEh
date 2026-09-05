@@ -6,8 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/PivotLLM/ClawEh/providers"
 	"github.com/PivotLLM/spawnllm/common"
+
+	"github.com/PivotLLM/ClawEh/providers"
 )
 
 func TestRenderBillingError_Nil(t *testing.T) {

@@ -20,6 +20,7 @@ func (writeFileSilentTool) Description() string { return "noop write_file for re
 func (writeFileSilentTool) Parameters() map[string]any {
 	return map[string]any{"type": "object", "properties": map[string]any{}}
 }
+
 func (writeFileSilentTool) Execute(_ context.Context, _ map[string]any) *ToolResult {
 	return &ToolResult{ForLLM: "ok", Silent: true}
 }

@@ -12,9 +12,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/PivotLLM/ClawEh/cogmem/store"
 	"github.com/PivotLLM/ClawEh/logger"
-	"github.com/google/uuid"
 )
 
 // leaseTTL bounds how long a single RunOnce may hold the per-archive lease.

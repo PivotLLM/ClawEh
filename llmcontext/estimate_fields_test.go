@@ -8,8 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/PivotLLM/ClawEh/providers"
 	"github.com/PivotLLM/spawnllm/protocoltypes"
+
+	"github.com/PivotLLM/ClawEh/providers"
 )
 
 // TestEstimate_CountsReasoningContent is the regression guard for the estimator

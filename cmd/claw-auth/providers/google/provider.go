@@ -125,7 +125,7 @@ func (p *Provider) CustomizeTokenRequest(params map[string]string, config *provi
 	return nil
 }
 
-func (p *Provider) ProcessTokenResponse(response map[string]interface{}) (*providers.TokenInfo, error) {
+func (p *Provider) ProcessTokenResponse(response map[string]any) (*providers.TokenInfo, error) {
 	tokenInfo := &providers.TokenInfo{}
 
 	// Extract access token (required)

@@ -17,17 +17,20 @@ func TestResolveCompressModelChain(t *testing.T) {
 		{"agent only", []string{"a1"}, nil, []string{"a1"}},
 		{
 			"agent first then global",
-			[]string{"a1", "a2"}, []string{"g1", "g2"},
+			[]string{"a1", "a2"},
+			[]string{"g1", "g2"},
 			[]string{"a1", "a2", "g1", "g2"},
 		},
 		{
 			"dedup keeps first occurrence and order",
-			[]string{"x", "a1"}, []string{"g1", "x", "g2"},
+			[]string{"x", "a1"},
+			[]string{"g1", "x", "g2"},
 			[]string{"x", "a1", "g1", "g2"},
 		},
 		{
 			"blank entries skipped",
-			[]string{"", " a1 "}, []string{" ", "g1"},
+			[]string{"", " a1 "},
+			[]string{" ", "g1"},
 			[]string{"a1", "g1"},
 		},
 	}

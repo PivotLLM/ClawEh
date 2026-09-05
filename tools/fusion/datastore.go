@@ -10,9 +10,8 @@ import (
 	"os"
 	"path/filepath"
 
-	_ "modernc.org/sqlite"
-
 	"github.com/PivotLLM/toolspec"
+	_ "modernc.org/sqlite"
 )
 
 // sqliteDataStore implements toolspec.DataStore over a single shared SQLite file.

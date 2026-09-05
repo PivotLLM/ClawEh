@@ -10,10 +10,9 @@ import (
 
 	"github.com/h2non/filetype"
 
-	"github.com/PivotLLM/ClawEh/tools"
-
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/media"
+	"github.com/PivotLLM/ClawEh/tools"
 )
 
 // SendFileTool allows the LLM to send a local file (image, document, etc.)

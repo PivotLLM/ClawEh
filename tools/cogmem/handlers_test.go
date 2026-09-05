@@ -292,8 +292,10 @@ func TestExportMemory(t *testing.T) {
 		t.Fatalf("read export: %v", err)
 	}
 	body := string(data)
-	for _, want := range []string{"# Cognitive Memory Export", "## Topics", "BioTech", "the report targets Q3",
-		"Tool triggers", "google_gmail", "Keyword triggers", "biotech report"} {
+	for _, want := range []string{
+		"# Cognitive Memory Export", "## Topics", "BioTech", "the report targets Q3",
+		"Tool triggers", "google_gmail", "Keyword triggers", "biotech report",
+	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("export missing %q:\n%s", want, body)
 		}

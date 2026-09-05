@@ -426,8 +426,10 @@ func friendlyMode(mode string) string {
 // callbackRule delimits the user-facing CALLBACK block so a completion is
 // unmistakable in chat. Plain box-drawing text renders identically on every
 // channel (no reliance on markdown horizontal rules).
-const callbackRuleStart = "━━━\nTASK NOTIFICATION"
-const callbackRuleEnd = "━━━"
+const (
+	callbackRuleStart = "━━━\nTASK NOTIFICATION"
+	callbackRuleEnd   = "━━━"
+)
 
 // completionResult builds the completion notification delivered on every spawn,
 // for both the user and the LLM. It NEVER carries the sub-agent's own output —

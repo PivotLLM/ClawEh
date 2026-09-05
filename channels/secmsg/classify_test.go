@@ -4,9 +4,9 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/PivotLLM/ClawEh/channels"
-
 	"github.com/tenebris-tech/secmsg/schema"
+
+	"github.com/PivotLLM/ClawEh/channels"
 )
 
 func TestSendErrForCode(t *testing.T) {

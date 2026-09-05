@@ -15,15 +15,15 @@ import (
 	"sync"
 	"time"
 
+	smclient "github.com/tenebris-tech/secmsg/client"
+	"github.com/tenebris-tech/secmsg/schema"
+
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/channels"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/identity"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/media"
-
-	smclient "github.com/tenebris-tech/secmsg/client"
-	"github.com/tenebris-tech/secmsg/schema"
 )
 
 // groupChatPrefix marks an outbound ChatID as a group target. The bus carries

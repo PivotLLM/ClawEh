@@ -52,6 +52,7 @@ func (s *mockStore) SetHistory(key string, h []providers.Message) {
 	copy(cp, h)
 	s.history[key] = cp
 }
+
 func (s *mockStore) TruncateHistory(key string, keepLast int) {
 	h := s.history[key]
 	if keepLast <= 0 {

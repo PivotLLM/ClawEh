@@ -9,8 +9,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/spawnllm/openai_responses"
+
+	"github.com/PivotLLM/ClawEh/config"
 )
 
 // TestCreateProviderFromConfig_OpenAIResponses verifies the factory routes the

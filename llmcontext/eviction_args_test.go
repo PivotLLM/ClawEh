@@ -231,8 +231,10 @@ func TestEvictLargeArgs_KeepsRuntimeMapInStep(t *testing.T) {
 // TestEvictLargeArgs_NoFunctionForm is a defensive path: a call with no
 // persisted Function form has nothing to rewrite.
 func TestEvictLargeArgs_NoFunctionForm(t *testing.T) {
-	tc := providers.ToolCall{ID: "x", Name: "file_write",
-		Arguments: map[string]any{"content": strings.Repeat("p", 4_000)}}
+	tc := providers.ToolCall{
+		ID: "x", Name: "file_write",
+		Arguments: map[string]any{"content": strings.Repeat("p", 4_000)},
+	}
 	if got := evictLargeArgs(&tc, 1024); got != nil {
 		t.Errorf("expected no evictions without a Function form, got %+v", got)
 	}

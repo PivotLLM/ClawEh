@@ -41,13 +41,16 @@ func (c *capturingContextManager) AddUserMessage(ctx context.Context, _ provider
 	c.capture(&c.addUserMsgAgentID, ctx)
 	return nil
 }
+
 func (c *capturingContextManager) AddAssistantMessage(ctx context.Context, _ providers.Message) error {
 	c.capture(&c.addAssistantMessageAgentID, ctx)
 	return nil
 }
+
 func (c *capturingContextManager) AddToolCallMessage(_ context.Context, _ providers.Message) error {
 	return nil
 }
+
 func (c *capturingContextManager) AddToolResult(_ context.Context, _ providers.Message) error {
 	return nil
 }
@@ -57,6 +60,7 @@ func (c *capturingContextManager) PreDispatchCheck(ctx context.Context, current 
 	c.capture(&c.preDispatchCheckAgentID, ctx)
 	return current, nil
 }
+
 func (c *capturingContextManager) CheckAndCompress(ctx context.Context, built []providers.Message) ([]providers.Message, error) {
 	c.capture(&c.checkAndCompressAgentID, ctx)
 	return built, nil
@@ -68,6 +72,7 @@ func (c *capturingContextManager) Build(ctx context.Context) ([]providers.Messag
 	c.capture(&c.buildAgentID, ctx)
 	return []providers.Message{{Role: "user", Content: "hi"}}, nil
 }
+
 func (c *capturingContextManager) SweepEvictions(_ context.Context) []llmcontext.EvictionEvent {
 	return nil
 }

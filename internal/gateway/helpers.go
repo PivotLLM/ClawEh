@@ -1102,7 +1102,8 @@ func markReady(services *gatewayServices, ready bool) {
 	logger.InfoF("DEBUG markReady", map[string]any{
 		"ready": ready, "services_nil": services == nil,
 		"health_nil": services == nil || services.HealthServer == nil,
-		"ptr":        fmt.Sprintf("%p", services.HealthServer)})
+		"ptr":        fmt.Sprintf("%p", services.HealthServer),
+	})
 	if services != nil && services.HealthServer != nil {
 		services.HealthServer.SetReady(ready)
 	}

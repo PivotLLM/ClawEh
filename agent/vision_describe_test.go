@@ -148,6 +148,7 @@ func (flowAImageTool) Description() string { return "returns an image" }
 func (flowAImageTool) Parameters() map[string]any {
 	return map[string]any{"type": "object", "properties": map[string]any{}}
 }
+
 func (flowAImageTool) Execute(_ context.Context, _ map[string]any) *tools.ToolResult {
 	return &tools.ToolResult{
 		ForLLM: "[viewing image cat.png]\nFocus: count the cats",

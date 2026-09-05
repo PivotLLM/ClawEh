@@ -83,7 +83,7 @@ func TestFatalWritesToAllSinksBeforeExit(t *testing.T) {
 	SetErrorLogLevel(WARN)
 
 	// Stub the exit so the process survives and we can inspect the sinks.
-	var exitCode = -1
+	exitCode := -1
 	prev := osExit
 	osExit = func(code int) { exitCode = code }
 	defer func() { osExit = prev }()

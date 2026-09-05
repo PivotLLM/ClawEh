@@ -287,16 +287,16 @@ type ServiceConfigResponse struct {
 
 // ServiceConfigData represents the service configuration data returned by the server
 type ServiceConfigData struct {
-	ServiceName    string                 `json:"service_name,omitempty"`
-	OAuthAvailable bool                   `json:"oauth_available,omitempty"`
-	AuthTypeStr    string                 `json:"auth_type,omitempty"`
-	ClientID       string                 `json:"client_id,omitempty"`
-	ClientSecret   string                 `json:"client_secret,omitempty"`
-	Scopes         string                 `json:"scopes,omitempty"`
-	Instructions   string                 `json:"instructions,omitempty"`
-	Fields         []CredentialField      `json:"fields,omitempty"`
-	Endpoints      map[string]string      `json:"endpoints,omitempty"`
-	Extra          map[string]interface{} `json:"-"`
+	ServiceName    string            `json:"service_name,omitempty"`
+	OAuthAvailable bool              `json:"oauth_available,omitempty"`
+	AuthTypeStr    string            `json:"auth_type,omitempty"`
+	ClientID       string            `json:"client_id,omitempty"`
+	ClientSecret   string            `json:"client_secret,omitempty"`
+	Scopes         string            `json:"scopes,omitempty"`
+	Instructions   string            `json:"instructions,omitempty"`
+	Fields         []CredentialField `json:"fields,omitempty"`
+	Endpoints      map[string]string `json:"endpoints,omitempty"`
+	Extra          map[string]any    `json:"-"`
 }
 
 // CredentialField represents a field definition for user_credentials auth

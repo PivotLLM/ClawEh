@@ -7,9 +7,10 @@ import (
 	"context"
 	"testing"
 
+	"github.com/mark3labs/mcp-go/server"
+
 	"github.com/PivotLLM/ClawEh/mcpserver/acl"
 	"github.com/PivotLLM/ClawEh/tools"
-	"github.com/mark3labs/mcp-go/server"
 )
 
 // regWithHiddenSuiteTool returns a registry holding one suite tool registered

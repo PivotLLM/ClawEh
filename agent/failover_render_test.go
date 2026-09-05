@@ -26,10 +26,14 @@ func TestAttemptDescriptionIncludesHTTPStatus(t *testing.T) {
 
 func TestRenderFailoverErrorExhausted(t *testing.T) {
 	err := &providers.FallbackExhaustedError{Attempts: []providers.FallbackAttempt{
-		{Provider: "x", Model: "grok-2", Reason: providers.FailoverBilling,
-			Error: &providers.FailoverError{Reason: providers.FailoverBilling, Status: 402}},
-		{Provider: "y", Model: "gpt-4o", Reason: providers.FailoverOverloaded,
-			Error: &providers.FailoverError{Reason: providers.FailoverOverloaded, Status: 529}},
+		{
+			Provider: "x", Model: "grok-2", Reason: providers.FailoverBilling,
+			Error: &providers.FailoverError{Reason: providers.FailoverBilling, Status: 402},
+		},
+		{
+			Provider: "y", Model: "gpt-4o", Reason: providers.FailoverOverloaded,
+			Error: &providers.FailoverError{Reason: providers.FailoverOverloaded, Status: 529},
+		},
 	}}
 	out := renderFailoverError(err)
 	if !strings.Contains(out, "HTTP 402") || !strings.Contains(out, "grok-2") {
@@ -156,12 +160,18 @@ func TestFormatFallbackNotice_Skip(t *testing.T) {
 // credits.
 func TestFormatFallbackNotice_SkipBatchCoalesced(t *testing.T) {
 	skips := []providers.FallbackAttempt{
-		{Model: "deepseek-v4-flash", Alias: "OR Chat DeepSeek V4 Flash", Skipped: true,
-			Reason: providers.FailoverBilling, Remaining: 41 * time.Minute},
-		{Model: "deepseek-v4-pro", Alias: "OR Chat DeepSeek V4 Pro", Skipped: true,
-			Reason: providers.FailoverBilling, Remaining: 58 * time.Minute},
-		{Model: "glm-5.2", Alias: "OR GLM 5.2", Skipped: true,
-			Reason: providers.FailoverBilling, Remaining: 12 * time.Minute},
+		{
+			Model: "deepseek-v4-flash", Alias: "OR Chat DeepSeek V4 Flash", Skipped: true,
+			Reason: providers.FailoverBilling, Remaining: 41 * time.Minute,
+		},
+		{
+			Model: "deepseek-v4-pro", Alias: "OR Chat DeepSeek V4 Pro", Skipped: true,
+			Reason: providers.FailoverBilling, Remaining: 58 * time.Minute,
+		},
+		{
+			Model: "glm-5.2", Alias: "OR GLM 5.2", Skipped: true,
+			Reason: providers.FailoverBilling, Remaining: 12 * time.Minute,
+		},
 	}
 	next := providers.FallbackCandidate{Model: "grok-medium", Alias: "Grok Medium"}
 	got := formatFallbackNotice(skips, next)

@@ -9,9 +9,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PivotLLM/spawnllm/protocoltypes"
+
 	"github.com/PivotLLM/ClawEh/memory"
 	"github.com/PivotLLM/ClawEh/providers"
-	"github.com/PivotLLM/spawnllm/protocoltypes"
 )
 
 // testNow is the fixed clock every age-sensitive tail test measures against, so

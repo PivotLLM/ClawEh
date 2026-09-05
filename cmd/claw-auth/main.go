@@ -165,7 +165,6 @@ func decodeAuthBlob(blob string) (*authCodeBlob, error) {
 }
 
 func registerProviders(registry *providers.ProviderRegistry) error {
-
 	// Register Google OAuth provider
 	googleProvider := google.NewProvider()
 	if err := registry.Register(googleProvider); err != nil {
@@ -717,7 +716,7 @@ func (e *OAuthFlowExecutor) exchangeCodeForTokens(code, redirectURI, codeVerifie
 	}
 
 	// Parse token response
-	var tokenResponse map[string]interface{}
+	var tokenResponse map[string]any
 	if err := json.Unmarshal(body, &tokenResponse); err != nil {
 		return nil, fmt.Errorf("failed to parse token response: %w", err)
 	}

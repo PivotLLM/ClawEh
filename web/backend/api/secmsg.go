@@ -8,11 +8,11 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/tenebris-tech/secmsg/schema"
+
 	"github.com/PivotLLM/ClawEh/channels/device"
 	"github.com/PivotLLM/ClawEh/channels/secmsg"
 	"github.com/PivotLLM/ClawEh/config"
-
-	"github.com/tenebris-tech/secmsg/schema"
 )
 
 // SecMsgLinker is the slice of a running secmsg channel the WebUI pairing panel

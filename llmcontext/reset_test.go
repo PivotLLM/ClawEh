@@ -244,7 +244,8 @@ func newResetManagerWithStore(store interface {
 	ListPendingSessions() ([]string, error)
 	Save(key string) error
 	Close() error
-}, sessionKey string, opts ...Option) *Manager {
+}, sessionKey string, opts ...Option,
+) *Manager {
 	baseOpts := []Option{
 		WithContextWindow(10000),
 		WithNormalPercent(90),

@@ -2,10 +2,10 @@ package msg
 
 import (
 	"context"
-
 	"errors"
-	"github.com/PivotLLM/ClawEh/tools"
 	"testing"
+
+	"github.com/PivotLLM/ClawEh/tools"
 )
 
 func TestMessageTool_Execute_Success(t *testing.T) {

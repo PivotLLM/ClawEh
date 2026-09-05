@@ -40,8 +40,11 @@ func TestSummarizeEvictions(t *testing.T) {
 
 	t.Run("caps to top resources with +N more", func(t *testing.T) {
 		ev := []llmcontext.EvictionEvent{
-			{Resource: "a", Bytes: 1}, {Resource: "b", Bytes: 1},
-			{Resource: "c", Bytes: 1}, {Resource: "d", Bytes: 1}, {Resource: "e", Bytes: 1},
+			{Resource: "a", Bytes: 1},
+			{Resource: "b", Bytes: 1},
+			{Resource: "c", Bytes: 1},
+			{Resource: "d", Bytes: 1},
+			{Resource: "e", Bytes: 1},
 		}
 		got := summarizeEvictions(ev)
 		if !strings.Contains(got, "+2 more") {

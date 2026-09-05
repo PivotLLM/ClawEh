@@ -1120,15 +1120,19 @@ func minutesOrDefault(v, def int) time.Duration {
 func (c CooldownConfig) BillingAuth() time.Duration {
 	return minutesOrDefault(c.BillingAuthMinutes, DefaultCooldownBillingAuthMinutes)
 }
+
 func (c CooldownConfig) RateLimit() time.Duration {
 	return minutesOrDefault(c.RateLimitMinutes, DefaultCooldownRateLimitMinutes)
 }
+
 func (c CooldownConfig) BadRequest() time.Duration {
 	return minutesOrDefault(c.BadRequestMinutes, DefaultCooldownBadRequestMinutes)
 }
+
 func (c CooldownConfig) ClientError() time.Duration {
 	return minutesOrDefault(c.ClientErrorMinutes, DefaultCooldownClientErrorMinutes)
 }
+
 func (c CooldownConfig) ServerError() time.Duration {
 	return minutesOrDefault(c.ServerErrorMinutes, DefaultCooldownServerErrorMinutes)
 }

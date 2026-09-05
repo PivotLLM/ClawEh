@@ -47,7 +47,7 @@ type OAuthProvider interface {
 	CustomizeTokenRequest(params map[string]string, config *ServiceConfig) error
 
 	// ProcessTokenResponse allows providers to process and validate token responses
-	ProcessTokenResponse(response map[string]interface{}) (*TokenInfo, error)
+	ProcessTokenResponse(response map[string]any) (*TokenInfo, error)
 
 	// GetUserInfo retrieves user information using the access token (for verification)
 	GetUserInfo(ctx context.Context, token *TokenInfo) (*UserInfo, error)

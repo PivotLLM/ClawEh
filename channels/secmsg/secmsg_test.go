@@ -5,10 +5,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tenebris-tech/secmsg/schema"
+
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/channels"
-
-	"github.com/tenebris-tech/secmsg/schema"
 )
 
 // newTestChannel builds a channel wired to a real bus with a fixed resolved

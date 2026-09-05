@@ -62,10 +62,14 @@ func TestSweep_DifferentQueriesDoNotSupersede(t *testing.T) {
 	p := basePolicy()
 	p.ProtectTurns = 0 // remove the protect window so only supersession matters
 	store := newSeqStore(buildHistory(
-		turnSpec{tool: "file_search_lines", id: "q1",
-			args: map[string]any{"query": "alice", "path": "novels/"}, content: strings.Repeat("a", 500)},
-		turnSpec{tool: "file_search_lines", id: "q2",
-			args: map[string]any{"query": "bob", "path": "novels/"}, content: strings.Repeat("b", 500)},
+		turnSpec{
+			tool: "file_search_lines", id: "q1",
+			args: map[string]any{"query": "alice", "path": "novels/"}, content: strings.Repeat("a", 500),
+		},
+		turnSpec{
+			tool: "file_search_lines", id: "q2",
+			args: map[string]any{"query": "bob", "path": "novels/"}, content: strings.Repeat("b", 500),
+		},
 	))
 
 	events := newEvictMgr(store, p).SweepEvictions(context.Background())
@@ -86,10 +90,14 @@ func TestSweep_SameQuerySupersedes(t *testing.T) {
 	p := basePolicy()
 	p.ProtectTurns = 0
 	store := newSeqStore(buildHistory(
-		turnSpec{tool: "file_search_lines", id: "q1",
-			args: map[string]any{"query": "alice", "path": "novels/"}, content: strings.Repeat("a", 500)},
-		turnSpec{tool: "file_search_lines", id: "q2",
-			args: map[string]any{"query": "alice", "path": "novels/"}, content: strings.Repeat("a", 500)},
+		turnSpec{
+			tool: "file_search_lines", id: "q1",
+			args: map[string]any{"query": "alice", "path": "novels/"}, content: strings.Repeat("a", 500),
+		},
+		turnSpec{
+			tool: "file_search_lines", id: "q2",
+			args: map[string]any{"query": "alice", "path": "novels/"}, content: strings.Repeat("a", 500),
+		},
 	))
 
 	newEvictMgr(store, p).SweepEvictions(context.Background())
@@ -108,10 +116,14 @@ func TestSweep_WriteInvalidatesSearch(t *testing.T) {
 	p := basePolicy()
 	p.ProtectTurns = 0
 	store := newSeqStore(buildHistory(
-		turnSpec{tool: "file_search_lines", id: "s1",
-			args: map[string]any{"query": "alice", "path": "novels/ch1.md"}, content: strings.Repeat("a", 500)},
-		turnSpec{tool: "file_write", id: "w1",
-			args: map[string]any{"path": "novels/ch1.md", "content": "new"}, content: "ok"},
+		turnSpec{
+			tool: "file_search_lines", id: "s1",
+			args: map[string]any{"query": "alice", "path": "novels/ch1.md"}, content: strings.Repeat("a", 500),
+		},
+		turnSpec{
+			tool: "file_write", id: "w1",
+			args: map[string]any{"path": "novels/ch1.md", "content": "new"}, content: "ok",
+		},
 	))
 
 	newEvictMgr(store, p).SweepEvictions(context.Background())

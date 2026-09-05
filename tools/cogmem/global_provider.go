@@ -31,6 +31,7 @@ type globalCogmemProvider struct{}
 // available (the store is created on demand); access is gated per-agent via the
 // tool allowlist.
 func (globalCogmemProvider) Namespace() string { return "cogmem" }
+
 func (globalCogmemProvider) Description() string {
 	return "Cognitive memory: durable domains and hooks"
 }
@@ -90,8 +91,10 @@ func (globalCogmemProvider) RegisterTools(deps global.Deps) []global.ToolDefinit
 		def("domain_list",
 			"List memory domains (id, name, summary, status; sticky ones are marked). Optionally filter by status. To see everything you're tracking, list with no filter.",
 			[]global.Parameter{
-				{Name: "status", Type: "string", Required: false, Description: "Filter by status.",
-					Enum: []any{"active", "review", "archived"}},
+				{
+					Name: "status", Type: "string", Required: false, Description: "Filter by status.",
+					Enum: []any{"active", "review", "archived"},
+				},
 			}, true, listDomains),
 
 		def("explain",
@@ -105,12 +108,16 @@ func (globalCogmemProvider) RegisterTools(deps global.Deps) []global.ToolDefinit
 			[]global.Parameter{
 				{Name: "domain_id", Type: "string", Required: false, Description: "Target domain id. If omitted and no domain_hint is given, records to the sticky General domain."},
 				{Name: "domain_hint", Type: "string", Required: false, Description: "A domain name: an existing domain with that name is reused, otherwise a new (non-sticky) one is created. Omit to use General."},
-				{Name: "type", Type: "string", Required: true, Description: "Memory type: fact (something true), preference (how the user likes things done), or rule (a hard directive).",
-					Enum: []any{"fact", "preference", "rule"}},
+				{
+					Name: "type", Type: "string", Required: true, Description: "Memory type: fact (something true), preference (how the user likes things done), or rule (a hard directive).",
+					Enum: []any{"fact", "preference", "rule"},
+				},
 				{Name: "text", Type: "string", Required: true, Description: "The memory content to store."},
 				{Name: "confidence", Type: "number", Required: false, Description: "Confidence 0..1 (default 0.9)."},
-				{Name: "status", Type: "string", Required: false, Description: "active (default), or review to hold it as pending (unconfirmed) until the user confirms.",
-					Enum: []any{"active", "review"}},
+				{
+					Name: "status", Type: "string", Required: false, Description: "active (default), or review to hold it as pending (unconfirmed) until the user confirms.",
+					Enum: []any{"active", "review"},
+				},
 				{Name: "file", Type: "string", Required: false, Description: "Optional path to a markdown file (e.g. \"files/voice.md\", \"maestro/style-guide.md\") whose FULL contents are injected into your context whenever this memory is in context. Use it for reference material too long to put in the memory text, such as a writing-voice description; keep the memory text as a one-line description of what the document is and when to use it. The path must be one you can read with the file tools, and the file is read fresh each turn."},
 			}, true, rememberWith(cfg, workspace)),
 

@@ -180,7 +180,6 @@ formatters:
     - gofmt
     - gofumpt
     - goimports
-    - golines
   settings:
     gci:
       sections:
@@ -195,5 +194,3 @@ formatters:
           replacement: "any"
         - pattern: "a[b:len(a)]"
           replacement: "a[b:]"
-    golines:
-      max-len: 120

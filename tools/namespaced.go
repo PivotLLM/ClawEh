@@ -108,6 +108,7 @@ func (t nsBase) Description() string { return t.def.Description }
 func (t nsBase) Parameters() map[string]any {
 	return t.def.Schema()
 }
+
 func (t nsBase) Execute(ctx context.Context, args map[string]any) *ToolResult {
 	return resultFromGlobal(t.def.Handler(callFromCtx(ctx, args, nil)))
 }

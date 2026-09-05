@@ -6,11 +6,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/PivotLLM/ClawEh/bus"
-	"github.com/PivotLLM/ClawEh/channels"
-
 	smclient "github.com/tenebris-tech/secmsg/client"
 	"github.com/tenebris-tech/secmsg/schema"
+
+	"github.com/PivotLLM/ClawEh/bus"
+	"github.com/PivotLLM/ClawEh/channels"
 )
 
 // TestLive exercises the real connect/handshake/subscribe path against a running

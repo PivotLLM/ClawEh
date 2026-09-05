@@ -144,13 +144,13 @@ func TestProviderDispatcher_Get_FlushRace(t *testing.T) {
 }
 
 // Compile-time check: claude-cli provider satisfies LLMProvider.
-var _ providers.LLMProvider = (func() providers.LLMProvider {
+var _ providers.LLMProvider = func() providers.LLMProvider {
 	p, _, _ := providers.CreateProviderFromConfig(
 		&config.ModelConfig{Model: "x", Provider: "claude-cli"},
 		&config.Provider{Name: "claude-cli", Protocol: "claude-cli"},
 	)
 	return p
-})()
+}()
 
 // TestClaudeCliProvider_Chat is a lightweight smoke test confirming the
 // claude-cli provider (used in dispatcher tests) satisfies the interface.

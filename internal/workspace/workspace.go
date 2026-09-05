@@ -66,7 +66,6 @@ func Populate(workspace string) {
 		}
 		return os.WriteFile(dest, data, 0o644)
 	})
-
 	if err != nil {
 		logger.WarnCF("workspace", "Failed to populate workspace templates",
 			map[string]any{"dir": workspace, "error": err.Error()})

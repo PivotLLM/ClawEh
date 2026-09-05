@@ -1572,6 +1572,7 @@ func (m *mockEchoTool) Parameters() map[string]any {
 		},
 	}
 }
+
 func (m *mockEchoTool) Execute(_ context.Context, args map[string]any) *tools.ToolResult {
 	text, _ := args["text"].(string)
 	if text == "" {

@@ -25,6 +25,7 @@ type globalCommonProvider struct{}
 
 // Namespace/Description/Available satisfy global.HostMeta.
 func (globalCommonProvider) Namespace() string { return "common" }
+
 func (globalCommonProvider) Description() string {
 	return "Shared common-directory read/write operations"
 }

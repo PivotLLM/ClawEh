@@ -342,8 +342,10 @@ func TestDroppedRoutedDomainDoesNotAttach(t *testing.T) {
 	db := s.DB()
 	// Two topic domains; maxChars is tight enough that only the first section fits.
 	for _, name := range []string{"First", "Second"} {
-		d, _ := s.CreateDomain(ctx, db, store.CreateDomainParams{AgentID: "a", Name: name,
-			Summary: strings.Repeat("summary ", 20)})
+		d, _ := s.CreateDomain(ctx, db, store.CreateDomainParams{
+			AgentID: "a", Name: name,
+			Summary: strings.Repeat("summary ", 20),
+		})
 		_, _ = s.AddMemory(ctx, db, store.AddMemoryParams{
 			DomainID: d.ID, Type: store.TypeFact, Text: name + " note",
 			Status: store.StatusActive, Confidence: 0.9, Source: store.SourceUserExplicit,

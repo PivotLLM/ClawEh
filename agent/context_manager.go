@@ -9,13 +9,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/PivotLLM/spawnllm/openai_compat"
+
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/constants"
 	"github.com/PivotLLM/ClawEh/llmcontext"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/providers"
-	"github.com/PivotLLM/spawnllm/openai_compat"
 )
 
 // providerLLMClient adapts providers.LLMProvider to llmcontext.LLMClient so

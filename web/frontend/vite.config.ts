@@ -30,7 +30,7 @@ export default defineConfig({
     chunkSizeWarningLimit: 500,
     rolldownOptions: {
       output: {
-        advancedChunks: {
+        codeSplitting: {
           groups: [
             {
               name: "react",

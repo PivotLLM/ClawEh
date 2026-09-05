@@ -42,8 +42,10 @@ func TestDefaultBindingAndCronTarget(t *testing.T) {
 func TestCronTargetDeliverTo(t *testing.T) {
 	// A Telegram-style default: channel-only binding (no peer) + explicit DeliverTo.
 	c := &Config{Bindings: []AgentBinding{
-		{AgentID: "penny", Default: true, DeliverTo: "12345",
-			Match: BindingMatch{Channel: "telegram-Penny"}},
+		{
+			AgentID: "penny", Default: true, DeliverTo: "12345",
+			Match: BindingMatch{Channel: "telegram-Penny"},
+		},
 	}}
 	ch, chat, kind, ok := c.CronTarget("penny")
 	if !ok || ch != "telegram-Penny" || chat != "12345" || kind != "direct" {
@@ -86,8 +88,10 @@ func TestValidateBindings_DeliverToSatisfiesDefault(t *testing.T) {
 func TestCronTargetCaseInsensitive(t *testing.T) {
 	c := &Config{
 		Bindings: []AgentBinding{
-			{AgentID: "Karen", Default: true,
-				Match: BindingMatch{Channel: "slack", Peer: &PeerMatch{Kind: "channel", ID: "C0AMNPSSQRK"}}},
+			{
+				AgentID: "Karen", Default: true,
+				Match: BindingMatch{Channel: "slack", Peer: &PeerMatch{Kind: "channel", ID: "C0AMNPSSQRK"}},
+			},
 		},
 		Agents: AgentsConfig{List: []AgentConfig{{ID: "Karen", GlobalCron: true}}},
 	}

@@ -9,11 +9,12 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/PivotLLM/ClawEh/config"
 	anthropicmessages "github.com/PivotLLM/spawnllm/anthropic_messages"
 	"github.com/PivotLLM/spawnllm/azure"
 	"github.com/PivotLLM/spawnllm/openai_compat"
 	"github.com/PivotLLM/spawnllm/openai_responses"
+
+	"github.com/PivotLLM/ClawEh/config"
 )
 
 // compatOpts builds the openai_compat options from the endpoint-scoped provider

@@ -21,6 +21,7 @@ func (m *mockDisplayTool) Description() string { return "Returns ForUser content
 func (m *mockDisplayTool) Parameters() map[string]any {
 	return map[string]any{"type": "object", "properties": map[string]any{}}
 }
+
 func (m *mockDisplayTool) Execute(_ context.Context, _ map[string]any) *tools.ToolResult {
 	return &tools.ToolResult{
 		ForLLM:  "ok",

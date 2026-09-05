@@ -62,6 +62,7 @@ func (s *seqStore) SetHistory(_ string, h []providers.Message) {
 	}
 	s.stored = stored
 }
+
 func (s *seqStore) SetHistoryWithSeqs(_ string, h []memory.StoredMessage) {
 	cp := make([]memory.StoredMessage, len(h))
 	copy(cp, h)

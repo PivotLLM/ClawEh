@@ -23,12 +23,15 @@ type trackingContextManager struct {
 func (m *trackingContextManager) AddUserMessage(_ context.Context, _ providers.Message) error {
 	return nil
 }
+
 func (m *trackingContextManager) AddAssistantMessage(_ context.Context, _ providers.Message) error {
 	return nil
 }
+
 func (m *trackingContextManager) AddToolCallMessage(_ context.Context, _ providers.Message) error {
 	return nil
 }
+
 func (m *trackingContextManager) AddToolResult(_ context.Context, _ providers.Message) error {
 	return nil
 }
@@ -37,6 +40,7 @@ func (m *trackingContextManager) SetToolDefinitionTokens(_ int) {}
 func (m *trackingContextManager) PreDispatchCheck(_ context.Context, current []providers.Message) ([]providers.Message, error) {
 	return current, nil
 }
+
 func (m *trackingContextManager) CheckAndCompress(_ context.Context, built []providers.Message) ([]providers.Message, error) {
 	return built, nil
 }
@@ -46,6 +50,7 @@ func (m *trackingContextManager) SetSessionToken(_ string)   {}
 func (m *trackingContextManager) Build(_ context.Context) ([]providers.Message, error) {
 	return nil, nil
 }
+
 func (m *trackingContextManager) SweepEvictions(_ context.Context) []llmcontext.EvictionEvent {
 	return nil
 }

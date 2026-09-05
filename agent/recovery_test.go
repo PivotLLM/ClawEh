@@ -22,6 +22,7 @@ func (s *recoveryTestStore) GetHistory(_ string) []providers.Message {
 	copy(cp, s.history)
 	return cp
 }
+
 func (s *recoveryTestStore) SetHistory(_ string, h []providers.Message) {
 	cp := make([]providers.Message, len(h))
 	copy(cp, h)
@@ -46,6 +47,7 @@ func (s *recoveryTestStore) GetHistoryWithSeqs(_ string) []memory.StoredMessage 
 	}
 	return stored
 }
+
 func (s *recoveryTestStore) ListPendingSessions() ([]string, error) {
 	return nil, nil
 }

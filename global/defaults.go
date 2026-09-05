@@ -23,10 +23,12 @@ const DefaultTemperature = 0.2
 // cutting vision-token cost. Smaller images pass through untouched.
 const ImageDownscaleMaxEdgePx = 2048
 
-const DefaultLogFile = true
-const DefaultLogConsole = true
-const DefaultLogLevel = "info"
-const DefaultLogJSON = false
+const (
+	DefaultLogFile    = true
+	DefaultLogConsole = true
+	DefaultLogLevel   = "info"
+	DefaultLogJSON    = false
+)
 
 // DefaultLogRetentionDays is how many days of rolled daily logs to keep.
 // 0 means keep forever (no deletion).

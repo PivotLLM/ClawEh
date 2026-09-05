@@ -9,24 +9,22 @@ import (
 	"encoding/base64"
 	"fmt"
 	"image"
+	// Register image decoders. png/jpeg/gif are stdlib; webp comes from x/image.
+	_ "image/gif"
 	"image/jpeg"
+	_ "image/jpeg"
 	"image/png"
+	_ "image/png"
 	"path/filepath"
 	"regexp"
 	"strings"
 
-	"github.com/PivotLLM/ClawEh/global"
-	"github.com/PivotLLM/ClawEh/tools"
-
 	"github.com/h2non/filetype"
 	xdraw "golang.org/x/image/draw"
-
-	// Register image decoders. png/jpeg/gif are stdlib; webp comes from x/image.
-	_ "image/gif"
-	_ "image/jpeg"
-	_ "image/png"
-
 	_ "golang.org/x/image/webp"
+
+	"github.com/PivotLLM/ClawEh/global"
+	"github.com/PivotLLM/ClawEh/tools"
 )
 
 // MaxViewImageSize caps the source image file file_view_image will load, in

@@ -27,6 +27,7 @@ func TestCreateProvider_ClaudeCli(t *testing.T) {
 		t.Errorf("workspace = %q, want %q", cliProvider.Workspace(), "/test/ws")
 	}
 }
+
 func TestCreateProvider_ClaudeCliDefaultWorkspace(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Providers = []config.Provider{{Name: "claude-cli", Protocol: "claude-cli"}}
@@ -49,6 +50,7 @@ func TestCreateProvider_ClaudeCliDefaultWorkspace(t *testing.T) {
 		t.Errorf("workspace = %q, want %q (default)", cliProvider.Workspace(), ".")
 	}
 }
+
 func TestCreateProvider_CursorCli(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Providers = []config.Provider{{Name: "cursor-cli", Protocol: "cursor-cli"}}
@@ -96,6 +98,7 @@ func TestCreateProvider_GeminiCli(t *testing.T) {
 		t.Errorf("modelID = %q, want %q", modelID, "gemini-cli")
 	}
 }
+
 func TestCreateProvider_GeminiCliWithModel(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Providers = []config.Provider{{Name: "gemini-cli", Protocol: "gemini-cli"}}
@@ -116,6 +119,7 @@ func TestCreateProvider_GeminiCliWithModel(t *testing.T) {
 		t.Errorf("modelID = %q, want %q", modelID, "gemini-2.5-flash")
 	}
 }
+
 func TestCreateProvider_GeminiCliDefaultWorkspace(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Agents.BaseDir = "" // clear base dir so the "." fallback is exercised

@@ -42,6 +42,7 @@ func (n *noopWriteFile) Description() string { return "noop write_file for redac
 func (n *noopWriteFile) Parameters() map[string]any {
 	return map[string]any{"type": "object", "properties": map[string]any{}}
 }
+
 func (n *noopWriteFile) Execute(_ context.Context, _ map[string]any) *tools.ToolResult {
 	return &tools.ToolResult{ForLLM: "ok", Silent: true}
 }

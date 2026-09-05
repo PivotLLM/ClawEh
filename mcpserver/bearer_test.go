@@ -11,9 +11,10 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/mark3labs/mcp-go/server"
+
 	"github.com/PivotLLM/ClawEh/mcpserver/acl"
 	"github.com/PivotLLM/ClawEh/tools"
-	"github.com/mark3labs/mcp-go/server"
 )
 
 func TestExtractBearer(t *testing.T) {

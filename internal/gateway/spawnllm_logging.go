@@ -6,8 +6,9 @@
 package gateway
 
 import (
-	"github.com/PivotLLM/ClawEh/logger"
 	spawnlog "github.com/PivotLLM/spawnllm/logger"
+
+	"github.com/PivotLLM/ClawEh/logger"
 )
 
 // spawnllmLogBackend routes spawnllm's provider/dispatch logs into ClawEh's

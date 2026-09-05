@@ -50,7 +50,7 @@ func TestTrigger_AgeFiresBelowFloor(t *testing.T) {
 		WithRetainMaxAgeDays(5),
 	)
 
-	var safetyNet, called = false, false
+	safetyNet, called := false, false
 	mgr.SetTestCompressHook(func(s bool) { called, safetyNet = true, s })
 
 	store.ages[0] = 30 * 24 * time.Hour // oldest message is a month old

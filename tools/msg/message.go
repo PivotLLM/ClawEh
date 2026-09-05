@@ -3,8 +3,9 @@ package msg
 import (
 	"context"
 	"fmt"
-	"github.com/PivotLLM/ClawEh/tools"
 	"sync/atomic"
+
+	"github.com/PivotLLM/ClawEh/tools"
 )
 
 type SendCallback func(channel, chatID, content string) error

@@ -40,18 +40,23 @@ func (fusionLogAdapter) Fatal(m string)   { logger.ErrorCF(logComponent, m, nil)
 func (fusionLogAdapter) Debugf(f string, a ...any) {
 	logger.DebugCF(logComponent, fmt.Sprintf(f, a...), nil)
 }
+
 func (fusionLogAdapter) Infof(f string, a ...any) {
 	logger.InfoCF(logComponent, fmt.Sprintf(f, a...), nil)
 }
+
 func (fusionLogAdapter) Noticef(f string, a ...any) {
 	logger.InfoCF(logComponent, fmt.Sprintf(f, a...), nil)
 }
+
 func (fusionLogAdapter) Warningf(f string, a ...any) {
 	logger.WarnCF(logComponent, fmt.Sprintf(f, a...), nil)
 }
+
 func (fusionLogAdapter) Errorf(f string, a ...any) {
 	logger.ErrorCF(logComponent, fmt.Sprintf(f, a...), nil)
 }
+
 func (fusionLogAdapter) Fatalf(f string, a ...any) {
 	logger.ErrorCF(logComponent, fmt.Sprintf(f, a...), nil)
 }
@@ -59,18 +64,23 @@ func (fusionLogAdapter) Fatalf(f string, a ...any) {
 func (fusionLogAdapter) DebugFields(m string, a ...any) {
 	logger.DebugCF(logComponent, m, fieldsToMap(a))
 }
+
 func (fusionLogAdapter) InfoFields(m string, a ...any) {
 	logger.InfoCF(logComponent, m, fieldsToMap(a))
 }
+
 func (fusionLogAdapter) NoticeFields(m string, a ...any) {
 	logger.InfoCF(logComponent, m, fieldsToMap(a))
 }
+
 func (fusionLogAdapter) WarningFields(m string, a ...any) {
 	logger.WarnCF(logComponent, m, fieldsToMap(a))
 }
+
 func (fusionLogAdapter) ErrorFields(m string, a ...any) {
 	logger.ErrorCF(logComponent, m, fieldsToMap(a))
 }
+
 func (fusionLogAdapter) FatalFields(m string, a ...any) {
 	logger.ErrorCF(logComponent, m, fieldsToMap(a))
 }
