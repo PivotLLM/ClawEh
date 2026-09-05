@@ -151,7 +151,7 @@ a transient worker must not have:
 - **`cron_schedule`** — a worker should not create/manage scheduled jobs.
 - **cognitive-memory WRITE tools** (`cogmem_memory_create`, `cogmem_domain_update`,
   `cogmem_domain_create`, `cogmem_domain_archive`, `cogmem_domain_migrate`,
-  `cogmem_memory_retire`, `cogmem_memory_confirm`, `cogmem_memory_forget`,
+  `cogmem_memory_retire`, `cogmem_memory_forget`,
   `cogmem_consolidate`) — sub-agents get **read-only** memory: they share the
   primary's memory for background but cannot mutate it. The read tools
   (`cogmem_domain_get`, `cogmem_memory_search`, `cogmem_domain_list`,

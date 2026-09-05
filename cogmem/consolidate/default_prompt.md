@@ -16,10 +16,33 @@ You receive one JSON object with:
 
 # WHAT IS MEMORY
 A domain is a container; the memories inside it are durable, reusable knowledge
-that should change future behavior. A memory has exactly one type:
-- `fact` — something true (about the user, a project, the world).
+that should change future behavior. A memory has exactly one type, and the type
+is the ONLY classification you state — status is not yours to choose.
+
+Four types are standing knowledge and load into the assistant's context:
+- `fact` — something true, and still true next month (about the user, a
+  project, the world).
 - `preference` — how the user likes things done.
-- `rule` — a hard directive the assistant must follow.
+- `rule` — a hard directive governing the assistant's output or behaviour
+  toward the user.
+- `operational` — the assistant's OWN housekeeping: where it files things, how
+  it works, a procedure it follows. The test against `rule` is who it serves —
+  a rule governs behaviour toward the user, operational is bookkeeping.
+  "Do not use the word thuddy" is a rule. "Outline beats live in files/, not in
+  memory" is operational.
+
+One type is different:
+- `event` — something that happened at a point in time, or a status as of a
+  date: a trip, a delivery, a scheduled run, "as of Sep 4 the report is
+  pending". **Event memories are NEVER loaded into the prompt.** The domain
+  reports how many it holds and they are retrieved by search.
+
+Use `event` for anything carrying a timestamp or that will be stale next week.
+This matters: a recurring note recorded as a `fact` is in every prompt forever,
+and one production agent accumulated 279 near-identical ones that way. If you
+find yourself writing "as of", a date, or a status that will change, it is an
+event.
+
 Volatile project status (current blockers, next actions) is NOT a memory — it
 lives on the domain's `state` fields, updated via a domain `update`.
 Reject: greetings, filler, jokes; turn-only instructions; tentative guesses later
@@ -67,11 +90,13 @@ add / supersede / retire; or do nothing.
 2. Resolve contradictions; never keep both. Supersede or retire the stale memory
    and record it in `conflict_ledger`.
 3. Recency: a newer explicit instruction overrides an older one at the same scope.
-4. Explicit beats inferred.
-5. Inferred items (the user did not state them) MUST be `"status":"review"`. Only
-   information the user explicitly stated may be `"status":"active"`.
+4. Explicit beats inferred: when the user stated something and you inferred
+   something else, keep what they stated.
+5. Anything time-stamped or soon-stale is `"type":"event"`, not `"fact"`.
 6. Curated layer wins: never contradict `curated`.
 7. Confidence in [0,1]: ~0.95 for explicit statements, lower for inferences.
+8. `type` is required on every add and supersede. There is no `status` and no
+   `source` field — do not emit them.
 
 # OUTPUT SCHEMA
 Return exactly this shape (keys must exist; arrays may be empty):
@@ -79,7 +104,7 @@ Return exactly this shape (keys must exist; arrays may be empty):
 {
   "domain_ops": [
     { "op": "create", "tmp_id": "t1", "name": "string (unique)",
-      "sticky": false, "summary": "one line", "status": "active|review",
+      "sticky": false, "summary": "one line", "status": "active|archived",
       "triggers": "substr1,substr2 (optional)",
       "keyword_triggers": "phrase one,phrase two (optional)",
       "evidence": { "seq_start": 0, "seq_end": 0 } },
@@ -94,13 +119,12 @@ Return exactly this shape (keys must exist; arrays may be empty):
   ],
   "memory_ops": [
     { "op": "add", "domain": "d7|t1",
-      "type": "fact|preference|rule",
-      "text": "string", "confidence": 0.95, "status": "active|review",
-      "source": "user_explicit|assistant_inferred",
+      "type": "fact|preference|rule|operational|event",
+      "text": "string", "confidence": 0.95,
       "evidence": { "seq_start": 0, "seq_end": 0 } },
     { "op": "supersede", "old_id": "h31", "domain": "d7", "type": "rule",
-      "text": "new statement", "confidence": 0.95, "status": "active",
-      "source": "user_explicit", "evidence": { "seq_start": 0, "seq_end": 0 } },
+      "text": "new statement", "confidence": 0.95,
+      "evidence": { "seq_start": 0, "seq_end": 0 } },
     { "op": "retire", "id": "h12", "reason": "string",
       "evidence": { "seq_start": 0, "seq_end": 0 } }
   ],
