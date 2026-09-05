@@ -150,6 +150,12 @@ export function AgentCard({
               variant="ghost"
               size="icon-sm"
               onClick={onDelete}
+              // Icon-only, so it needs an explicit name: without one a screen
+              // reader announces nothing at all, and the button that DELETES AN
+              // AGENT is the last place to leave unlabelled. The enable switch
+              // beside it is already labelled the same way.
+              aria-label={`Delete agent ${label}`}
+              title={`Delete agent ${label}`}
               className="text-muted-foreground hover:text-destructive hover:bg-destructive/10"
             >
               <IconTrash className="size-3.5" />

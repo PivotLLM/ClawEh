@@ -243,6 +243,17 @@ on, and breaking one is a deliberate decision rather than a free move.
   and a session that had gone away was never reconnected — the failure stayed
   invisible until a real tool call hit it. The probe now issues a `ListTools`
   round trip, which reaches the server on every protocol version.
+- **`/ready` now reports ready.** It answered `503 not ready` for the entire
+  life of every process. The readiness flag was only ever set by
+  `health.Server.Start()`, which starts the health server's own listener — and
+  the merged binary does not use it, registering the handlers on the shared mux
+  instead. Readiness is now set once the listener is up and the channels have
+  started, re-set after a config reload, and cleared on shutdown. `/health` is
+  unchanged and still answers as soon as the port is open; the difference
+  between the two is the point of having both.
+- **The delete button on an agent card has an accessible name.** It was
+  icon-only with no `aria-label`, so a screen reader announced nothing on the
+  control that deletes an agent.
 - **A successful memory consolidation no longer looks like a failure.** When the
   memory model proposed an inferred item as `active` instead of `review`, ClawEh
   corrected it, saved the memories correctly, and recorded a note saying so —

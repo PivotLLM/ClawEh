@@ -450,6 +450,14 @@ func setupAndStartServices(
 		return nil, fmt.Errorf("error starting channels: %w", err)
 	}
 
+	// The listener is up and the channels are running, which is what /ready
+	// means. It has to be set here rather than left to health.Server.Start():
+	// that method marks ready as a side effect of starting the health server's
+	// OWN listener, and the merged binary never uses it — the handlers are
+	// registered onto the shared mux instead. Without this, /ready answered 503
+	// for the entire life of the process.
+	markReady(services, true)
+
 	logger.InfoF("Health endpoints available", map[string]any{"health": fmt.Sprintf("http://%s:%d/health", cfg.Gateway.Host, cfg.Gateway.Port), "ready": fmt.Sprintf("http://%s:%d/ready", cfg.Gateway.Host, cfg.Gateway.Port)})
 
 	// Setup state manager and device service
@@ -630,6 +638,7 @@ func stopAndCleanupServices(
 			logger.WarnCF("mcpserver", "MCP server shutdown error", map[string]any{"error": err.Error()})
 		}
 	}
+	markReady(services, false)
 	if services.ChannelManager != nil {
 		services.ChannelManager.StopAll(shutdownCtx)
 	}
@@ -847,6 +856,9 @@ func restartServices(
 	if err := services.ChannelManager.StartAll(runCtx); err != nil {
 		return fmt.Errorf("error restarting channels: %w", err)
 	}
+	// rebuildSharedHTTPServer creates a fresh health.Server, which starts
+	// not-ready, so readiness is re-asserted after every reload.
+	markReady(services, true)
 	logger.InfoCF("channels", "Channels restarted", map[string]any{"health": fmt.Sprintf("http://%s:%d/health", cfg.Gateway.Host, cfg.Gateway.Port)})
 
 	// Re-create device service with new config
@@ -1081,6 +1093,19 @@ func setupCronTool(
 	}
 
 	return cronService, cronTool
+}
+
+// markReady flips the readiness flag the /ready endpoint reports. Guarded
+// because the health server is nil until the shared HTTP server is first built,
+// and is replaced on every config reload.
+func markReady(services *gatewayServices, ready bool) {
+	logger.InfoF("DEBUG markReady", map[string]any{
+		"ready": ready, "services_nil": services == nil,
+		"health_nil": services == nil || services.HealthServer == nil,
+		"ptr":        fmt.Sprintf("%p", services.HealthServer)})
+	if services != nil && services.HealthServer != nil {
+		services.HealthServer.SetReady(ready)
+	}
 }
 
 // logAllowlist reports the effective IP allowlist at startup and after a reload.

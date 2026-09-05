@@ -352,14 +352,15 @@ if [ -n "$GATEWAY_URL" ]; then
 
     echo "  0.3 Gateway /ready responds"
     READY_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$GATEWAY_URL/ready" 2>/dev/null)
-    # 200 = ready, 503 = endpoint reachable but not ready (e.g. no model configured).
-    # Both are valid responses from a running gateway; a connection failure would
-    # produce an empty string or non-numeric code.
-    if [ "$READY_CODE" = "200" ] || [ "$READY_CODE" = "503" ]; then
-        echo "    ${GREEN}PASS${NC}: /ready responded with $READY_CODE (endpoint reachable)"
+    # A running gateway with its channels started must report 200. This used to
+    # accept 503 as well, on the theory that it meant "reachable but not ready" —
+    # which masked the fact that /ready answered 503 for the entire life of every
+    # process, because nothing ever set the readiness flag.
+    if [ "$READY_CODE" = "200" ]; then
+        echo "    ${GREEN}PASS${NC}: /ready responded 200 (ready)"
         PASS_COUNT=$((PASS_COUNT + 1))
     else
-        echo "    ${RED}FAIL${NC}: /ready did not respond (got '$READY_CODE')"
+        echo "    ${RED}FAIL${NC}: /ready returned '$READY_CODE', want 200"
         FAIL_COUNT=$((FAIL_COUNT + 1))
     fi
 fi
