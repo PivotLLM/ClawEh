@@ -190,3 +190,29 @@ func TestOutput_Normalize_IsANoOp(t *testing.T) {
 		}
 	}
 }
+
+// An override prompt seeded by an older ClawEh keeps working — it names types
+// that still exist — so it degrades silently: the agent simply never records an
+// event or operational memory, and nothing says so. PromptIsStale is what makes
+// that visible.
+func TestPromptIsStale(t *testing.T) {
+	if PromptIsStale(DefaultPrompt()) {
+		t.Error("the shipped prompt reports itself as stale")
+	}
+	old := `# WHAT IS MEMORY
+A memory has exactly one type:
+- ` + "`fact`" + ` — something true.
+- ` + "`preference`" + ` — how the user likes things done.
+- ` + "`rule`" + ` — a hard directive.
+"status": "active|review", "source": "user_explicit|assistant_inferred"`
+	if !PromptIsStale(old) {
+		t.Error("a pre-redesign prompt was not detected as stale")
+	}
+	// A genuinely customised prompt that teaches the current types is not stale,
+	// however much else the operator changed.
+	custom := "Record an event for anything time-stamped, and operational for " +
+		"your own bookkeeping. Never record anything about medical matters."
+	if PromptIsStale(custom) {
+		t.Error("a customised prompt naming the current types was called stale")
+	}
+}

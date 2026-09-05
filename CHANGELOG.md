@@ -72,6 +72,22 @@ and reachable by search.
   "thuddy."` Previously only the text was shown.
 - **The prompt tag `[source: …]` is now `[origin: …]`.** It always rendered
   `origin`; with no `source` field left, the old label was actively misleading.
+- **BREAKING: existing agents keep their old consolidation prompt, and must be
+  updated by hand.** Each agent workspace holds a `COGMEM.md` seeded from the
+  shipped template and never overwritten afterwards — which is the point of it,
+  but means an upgraded install keeps the prompt it was seeded with. That prompt
+  still produces valid output, so nothing fails: the agent simply never records
+  an `event` or `operational` memory, and the most useful part of this release
+  never reaches it. Delete the seeded copies to pick up the current prompt:
+
+  ```
+  rm ~/.claw/agents/*/COGMEM.md      # or $CLAW_HOME/agents/*/COGMEM.md
+  ```
+
+  They are re-seeded from the new template on the next start. **If you have
+  edited one, keep it and add the new types yourself** — the file is yours.
+  ClawEh now logs a warning naming any agent whose prompt predates the new
+  types, so a missed one is visible rather than silent.
 - **Consolidation states a memory's type and nothing else.** It no longer sets
   `status` (there is no longer a choice) or `source` (gone), and an operation
   that omits a required field is rejected rather than silently defaulted.

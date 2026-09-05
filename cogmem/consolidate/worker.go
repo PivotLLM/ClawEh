@@ -193,7 +193,17 @@ func (w *Worker) RunOnce(ctx context.Context, p RunParams) (RunResult, error) {
 		NewMessages:  batch,
 	}
 
-	system, _ := LoadPrompt(PromptPath(p.Workspace))
+	promptPath := PromptPath(p.Workspace)
+	system, usedOverride := LoadPrompt(promptPath)
+	// An override seeded by an older ClawEh still validates — it names types
+	// that still exist — so it fails silently rather than loudly: the agent
+	// simply never records an event or operational memory. Say so.
+	if usedOverride && PromptIsStale(system) {
+		logger.WarnCF("cogmem", "Per-agent consolidation prompt predates the current memory types; "+
+			"this agent will never record event or operational memories. Delete the file to pick up "+
+			"the current prompt, or add the new types to it.",
+			map[string]any{"path": promptPath})
+	}
 	userJSON, err := json.Marshal(in)
 	if err != nil {
 		return RunResult{}, fmt.Errorf("consolidate: marshal input: %w", err)

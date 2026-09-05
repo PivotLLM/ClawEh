@@ -7,6 +7,7 @@ import (
 	_ "embed"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // defaultPrompt is the built-in consolidation system prompt. The editable
@@ -33,4 +34,28 @@ func LoadPrompt(path string) (prompt string, usedOverride bool) {
 		}
 	}
 	return defaultPrompt, false
+}
+
+// contractMarkers are vocabulary the current contract requires the prompt to
+// teach. A prompt missing them predates the memory-type redesign.
+var contractMarkers = []string{"event", "operational"}
+
+// PromptIsStale reports whether an override prompt predates the current
+// contract, and is deliberately conservative: it only looks for vocabulary the
+// current prompt cannot do without.
+//
+// This matters because the override is seeded into every workspace and then
+// never overwritten — that is the point of it, but it means an install that
+// upgrades keeps whatever prompt it was seeded with. A stale one still produces
+// VALID output (it names types that still exist), so nothing rejects it and
+// nothing fails. It simply never writes an `event` or `operational` memory, and
+// the operator has no way to notice that the most useful part of their upgrade
+// is not reaching that agent. Hence a warning rather than silence.
+func PromptIsStale(prompt string) bool {
+	for _, m := range contractMarkers {
+		if !strings.Contains(prompt, m) {
+			return true
+		}
+	}
+	return false
 }
