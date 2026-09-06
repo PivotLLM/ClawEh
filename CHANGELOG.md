@@ -63,10 +63,13 @@ and reachable by search.
   an `event`, "we go to the KOA every Labour Day" is a `fact` — and a second
   knob would reopen the multi-field guesswork the type redesign closed.
 - **The WebUI memory page is now a curation surface.** Change a memory's type,
-  retire and restore it, show retired memories, select many rows — or a whole domain at
-  once from its header — and retype, retire or delete them together, and add a memory or a domain by hand. A
-  memory you add yourself is recorded with `origin: user`, which the assistant
-  sees.
+  retire and restore it, show retired memories, and add a memory or a domain by
+  hand. A memory you add yourself is recorded with `origin: user`, which the
+  assistant sees.
+- **Bulk curation.** Select many memories — or a whole domain at once from its
+  header — and retype, retire, restore or delete them together. A domain that
+  accumulated several hundred near-identical entries is the case the page exists
+  for, and one row at a time is not a job anyone starts.
 - **YAML export and import.** `GET /api/memory/{id}/export` downloads a full
   dump — domains, memories, every field, with a format version — and import
   loads one back in **merge** mode (add what is missing) or **replace** mode
