@@ -161,6 +161,58 @@ func TestSearchExcludesEventsUnlessAsked(t *testing.T) {
 	}
 }
 
+// When nothing else matches, events are searched anyway.
+//
+// Events are held back so a routine lookup is not buried under hundreds of
+// recurring notes — but with no other results there is nothing to bury, and
+// excluding them only turns a findable memory into "not found". Asked when a
+// trip happened, a live agent called this tool four times with identical
+// arguments, never added include_events, and gave up while the answer sat in
+// the store. Retrieval must not depend on the model remembering a flag.
+func TestSearchFallsBackToEventsWhenNothingElseMatches(t *testing.T) {
+	h, _ := buildHandlers(t)
+	res := run(t, h["domain_create"], newCall(testSession, map[string]any{"name": "trips"}))
+	domainID := extractID(t, res.ForLLM, "d")
+	run(t, h["memory_create"], newCall(testSession, map[string]any{
+		"domain_id": domainID, "type": "event", "text": "drove to the KOA on Sep 4",
+	}))
+
+	// No standing memory mentions the KOA, so the fallback is the only way this
+	// is ever found — and the caller is told why it is seeing events.
+	res = run(t, h["memory_search"], newCall(testSession, map[string]any{"query": "KOA"}))
+	if res.IsError {
+		t.Fatalf("search error: %s", res.ForLLM)
+	}
+	if !strings.Contains(res.ForLLM, "drove to the KOA") {
+		t.Fatalf("fallback did not reach the event: %s", res.ForLLM)
+	}
+	if !strings.Contains(res.ForLLM, "no standing memories matched") {
+		t.Fatalf("result does not say why events were searched: %s", res.ForLLM)
+	}
+}
+
+// The fallback must not fire when a standing memory DID match: that is the case
+// the exclusion exists for, and quietly appending events would defeat it.
+func TestSearchDoesNotFallBackWhenSomethingMatched(t *testing.T) {
+	h, _ := buildHandlers(t)
+	res := run(t, h["domain_create"], newCall(testSession, map[string]any{"name": "trips"}))
+	domainID := extractID(t, res.ForLLM, "d")
+	run(t, h["memory_create"], newCall(testSession, map[string]any{
+		"domain_id": domainID, "type": "fact", "text": "the KOA is near Gananoque",
+	}))
+	run(t, h["memory_create"], newCall(testSession, map[string]any{
+		"domain_id": domainID, "type": "event", "text": "drove to the KOA on Sep 4",
+	}))
+
+	res = run(t, h["memory_search"], newCall(testSession, map[string]any{"query": "KOA"}))
+	if !strings.Contains(res.ForLLM, "near Gananoque") {
+		t.Fatalf("search missed the standing memory: %s", res.ForLLM)
+	}
+	if strings.Contains(res.ForLLM, "drove to the KOA") {
+		t.Fatalf("events leaked in although a standing memory matched: %s", res.ForLLM)
+	}
+}
+
 // Creating an event tells the assistant it will not be in context, because the
 // alternative is a memory it believes it stored and then never sees again.
 func TestCreateEventExplainsItIsSearchOnly(t *testing.T) {

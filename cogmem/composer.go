@@ -495,15 +495,23 @@ func typePrefix(t store.MemoryType) string {
 
 // eventLine reports how many event memories a domain holds. Events never load
 // into the prompt — they go stale and accumulate without bound — so the count
-// is how the assistant learns they exist and that search will reach them.
+// is how the assistant learns they exist and how to reach them.
+//
+// It names the tool AND the argument on purpose. An earlier version said only
+// "search to retrieve", and a live agent asked about an event called
+// cogmem_memory_search four times with identical arguments, never adding
+// include_events, and gave up. Search excludes events by default, so without
+// the flag the count line advertises memories the assistant then cannot find —
+// worse than not mentioning them at all.
 func eventLine(n int) string {
 	switch {
 	case n <= 0:
 		return ""
 	case n == 1:
-		return "(1 event memory in this domain — search to retrieve)\n"
+		return "(1 event memory here — cogmem_memory_search with include_events:true to read it)\n"
 	default:
-		return fmt.Sprintf("(%d event memories in this domain — search to retrieve)\n", n)
+		return fmt.Sprintf(
+			"(%d event memories here — cogmem_memory_search with include_events:true to read them)\n", n)
 	}
 }
 

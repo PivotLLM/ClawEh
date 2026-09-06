@@ -96,8 +96,15 @@ func TestStableBlockExcludesEventsAndReportsTheirCount(t *testing.T) {
 			t.Fatalf("event %q reached the prompt:\n%s", ev, txt)
 		}
 	}
-	if !strings.Contains(txt, "2 event memories in this domain — search to retrieve") {
+	// The line must name the tool and the argument. Saying only "search to
+	// retrieve" sent a live agent into four identical searches without
+	// include_events before it gave up — the count advertised memories it could
+	// not then find.
+	if !strings.Contains(txt, "2 event memories here") {
 		t.Fatalf("event count line missing:\n%s", txt)
+	}
+	if !strings.Contains(txt, "include_events:true") {
+		t.Fatalf("event count line does not name the flag needed to read them:\n%s", txt)
 	}
 }
 

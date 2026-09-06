@@ -38,7 +38,7 @@ Four types are standing knowledge and load into context normally:
 
 The fifth is different:
 
-- **event** — something that happened at a point in time, or a status as of a date: a trip, a delivery, a scheduled run. **Event memories are never loaded into the prompt.** Each domain reports how many it holds (`42 event memories in this domain — search to retrieve`) and the assistant reaches them with `cogmem_memory_search` using `include_events`.
+- **event** — something that happened at a point in time, or a status as of a date: a trip, a delivery, a scheduled run. **Event memories are never loaded into the prompt.** Each domain reports how many it holds (`42 event memories here — cogmem_memory_search with include_events:true to read them`) and that is how the assistant reaches them.
 
 That distinction is the one that does real work. Anything time-stamped goes stale immediately and accumulates without bound — a scheduled job writing one note per run produces hundreds of near-identical lines — and as a `fact` every one of them would sit in every prompt forever. As an `event` they stay searchable without crowding out the standing knowledge.
 

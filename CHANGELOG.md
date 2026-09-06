@@ -45,8 +45,8 @@ and reachable by search.
   The full set is now `fact`, `preference`, `rule`, `event`, `operational`.
 - **`event` memories stay out of the prompt.** They go stale and accumulate
   without bound, so they are never loaded automatically. Each domain reports how
-  many it holds (`42 event memories in this domain — search to retrieve`) and
-  `cogmem_memory_search` reaches them with `include_events: true`.
+  many it holds and names the call that reads them, and `cogmem_memory_search`
+  reaches them with `include_events: true`.
 - **The WebUI memory page is now a curation surface.** Change a memory's type,
   retire and restore it, show retired memories, select many rows and retype,
   retire or delete them together, and add a memory or a domain by hand. A

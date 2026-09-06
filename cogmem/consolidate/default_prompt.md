@@ -35,7 +35,8 @@ One type is different:
 - `event` — something that happened at a point in time, or a status as of a
   date: a trip, a delivery, a scheduled run, "as of Sep 4 the report is
   pending". **Event memories are NEVER loaded into the prompt.** The domain
-  reports how many it holds and they are retrieved by search.
+  reports how many it holds and they are read with cogmem_memory_search using
+  include_events:true.
 
 Use `event` for anything carrying a timestamp or that will be stale next week.
 This matters: a recurring note recorded as a `fact` is in every prompt forever,

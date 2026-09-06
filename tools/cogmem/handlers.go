@@ -174,16 +174,33 @@ func search(s *store.Store, call *global.ToolCall) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if len(hooks) == 0 {
-		if !includeEvents {
-			return fmt.Sprintf("No active memories match %q. Event memories were not "+
-				"searched — retry with include_events if this is a question about "+
-				"something that happened.", query), nil
+	// Nothing matched, and events were held back. Events are excluded by default
+	// so a routine lookup is not buried under hundreds of recurring notes — but
+	// with no other results there is nothing to bury, so excluding them can only
+	// turn a findable memory into "not found".
+	//
+	// This is not a nicety. Asked when a trip happened, a live agent called this
+	// tool four times with identical arguments, never added include_events, and
+	// gave up — with the answer sitting in the store the whole time. Retrieval
+	// must not depend on the model remembering a flag.
+	fellBack := false
+	if len(hooks) == 0 && !includeEvents {
+		hooks, err = s.SearchMemories(call.Ctx, s.DB(), query, limit, true)
+		if err != nil {
+			return "", err
 		}
+		fellBack = len(hooks) > 0
+	}
+	if len(hooks) == 0 {
 		return fmt.Sprintf("No active memories match %q.", query), nil
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "%d active memories matching %q:\n", len(hooks), query)
+	if fellBack {
+		fmt.Fprintf(&b, "%d event memories matching %q (no standing memories matched, "+
+			"so event memories were searched too):\n", len(hooks), query)
+	} else {
+		fmt.Fprintf(&b, "%d active memories matching %q:\n", len(hooks), query)
+	}
 	for _, h := range hooks {
 		fmt.Fprintf(&b, "  %s [%s] (domain=%s, conf=%.2f) %s%s\n", h.ID, h.Type, h.DomainID, h.Confidence, h.Text, fileSuffix(h.FileRef))
 	}
