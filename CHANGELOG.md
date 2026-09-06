@@ -59,7 +59,15 @@ and reachable by search.
   different agent to seed it.
 - **An automatic snapshot before every schema migration.** The database is
   copied to `<name>.pre-v<N>.db` beside itself before a migration runs, so an
-  upgrade is recoverable without preparation.
+  upgrade is recoverable without preparation. The snapshot is named for the
+  version the store came *from*, which can differ between agents.
+- **Cognitive-memory databases are migrated when the agent loads**, at startup
+  and on config reload, rather than whenever each session next happens to be
+  opened. Lazy migration spread a schema change across hours of ordinary use
+  with no point an operator could call it done, and left a store belonging to an
+  agent nobody talked to that day on the old schema indefinitely. Each upgrade
+  is logged with its versions and the snapshot path, and a database that cannot
+  be migrated is reported at startup instead of surfacing mid-conversation.
 
 ### Changed
 
