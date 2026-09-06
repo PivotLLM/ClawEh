@@ -881,3 +881,64 @@ func TestCooldownConfigDurations(t *testing.T) {
 		t.Errorf("negative RateLimit should disable (0), got %v", c.RateLimit())
 	}
 }
+
+// Per-agent retention layers on top of the resolved memory config rather than
+// replacing it. AgentConfig.Memory overrides the defaults WHOLESALE, so putting
+// retention inside it would silently zero the agent's prompt budgets — which is
+// exactly the kind of thing nobody notices until the prompts get worse.
+func TestEffectiveMemoryLayersPerAgentRetention(t *testing.T) {
+	defaults := AgentDefaults{Memory: MemoryConfig{
+		Prompt:    MemoryPromptConfig{TopKDomains: 3, MaxChars: 4000, MinConfidence: 0.65},
+		Retention: MemoryRetentionConfig{EventDays: 30, RetiredDays: 90},
+	}}
+
+	// No agent override: defaults straight through.
+	got := defaults.EffectiveMemory(nil)
+	if got.Retention.EventDays != 30 || got.Prompt.MaxChars != 4000 {
+		t.Errorf("nil agent: got %+v", got)
+	}
+
+	// Agent shortens its own event window; the prompt budgets survive.
+	three := 3
+	got = defaults.EffectiveMemory(&AgentConfig{EventRetentionDays: &three})
+	if got.Retention.EventDays != 3 {
+		t.Errorf("EventDays = %d, want the agent's 3", got.Retention.EventDays)
+	}
+	if got.Retention.RetiredDays != 90 {
+		t.Errorf("RetiredDays = %d, want the default 90", got.Retention.RetiredDays)
+	}
+	if got.Prompt.MaxChars != 4000 || got.Prompt.TopKDomains != 3 {
+		t.Errorf("prompt budgets were lost setting retention: %+v", got.Prompt)
+	}
+
+	// Negative means keep forever, and must survive resolution as a negative so
+	// EffectiveEventDays can turn it into "no sweep".
+	never := -1
+	got = defaults.EffectiveMemory(&AgentConfig{RetiredRetentionDays: &never})
+	if got.Retention.RetiredDays != -1 {
+		t.Errorf("RetiredDays = %d, want -1 preserved", got.Retention.RetiredDays)
+	}
+	if got.Retention.EffectiveRetiredDays() != 0 {
+		t.Errorf("EffectiveRetiredDays = %d, want 0 (no sweep)", got.Retention.EffectiveRetiredDays())
+	}
+}
+
+// An unset field means the documented default, and that resolution lives in one
+// place so a memory never disappears for a reason spread across two files.
+func TestRetentionDefaults(t *testing.T) {
+	var r MemoryRetentionConfig
+	if got := r.EffectiveEventDays(); got != DefaultEventRetentionDays {
+		t.Errorf("unset EventDays = %d, want %d", got, DefaultEventRetentionDays)
+	}
+	if got := r.EffectiveRetiredDays(); got != DefaultRetiredRetentionDays {
+		t.Errorf("unset RetiredDays = %d, want %d", got, DefaultRetiredRetentionDays)
+	}
+	r = MemoryRetentionConfig{EventDays: 7, RetiredDays: 14}
+	if r.EffectiveEventDays() != 7 || r.EffectiveRetiredDays() != 14 {
+		t.Errorf("explicit values not honoured: %+v", r)
+	}
+	r = MemoryRetentionConfig{EventDays: -1, RetiredDays: -5}
+	if r.EffectiveEventDays() != 0 || r.EffectiveRetiredDays() != 0 {
+		t.Errorf("negative should mean never (0 days): %+v", r)
+	}
+}

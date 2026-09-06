@@ -47,9 +47,24 @@ and reachable by search.
   without bound, so they are never loaded automatically. Each domain reports how
   many it holds and names the call that reads them, and `cogmem_memory_search`
   reaches them with `include_events: true`.
+- **Memory retention.** `event` memories are deleted after **30 days** and
+  retired memories **90 days** after they were retired, both overridable per
+  agent on the Agents page (blank = the default, `-1` = keep forever). Events
+  stop being useful long before they stop accumulating — one agent recorded an
+  hourly "nothing changed" note and reached 300 rows — and retiring leaves the
+  row behind, so a store that retires steadily grows forever while showing
+  nothing for it. **Only those two are ever deleted by age:** a `fact`,
+  `preference`, `rule` or `operational` memory is permanent, so no retention
+  policy can silently drop a standing instruction. The sweep runs as part of
+  consolidation and logs what it removed.
+
+  Retention is deliberately not something the model sets per memory. It already
+  makes that judgement by choosing the type — "I drove to the KOA on 4 Sep" is
+  an `event`, "we go to the KOA every Labour Day" is a `fact` — and a second
+  knob would reopen the multi-field guesswork the type redesign closed.
 - **The WebUI memory page is now a curation surface.** Change a memory's type,
-  retire and restore it, show retired memories, select many rows and retype,
-  retire or delete them together, and add a memory or a domain by hand. A
+  retire and restore it, show retired memories, select many rows — or a whole domain at
+  once from its header — and retype, retire or delete them together, and add a memory or a domain by hand. A
   memory you add yourself is recorded with `origin: user`, which the assistant
   sees.
 - **YAML export and import.** `GET /api/memory/{id}/export` downloads a full

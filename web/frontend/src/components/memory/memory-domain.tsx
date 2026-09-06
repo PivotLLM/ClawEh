@@ -157,11 +157,18 @@ export function DomainCard({
   d,
   onDeleteDomain,
   onAddMemory,
+  onSelectAll,
+  allSelected,
+  someSelected,
   rowActions,
 }: {
   d: MemoryDomain
   onDeleteDomain: (d: MemoryDomain) => void
   onAddMemory: (d: MemoryDomain) => void
+  /** Select or clear every memory in this domain at once. */
+  onSelectAll: (d: MemoryDomain, selected: boolean) => void
+  allSelected: boolean
+  someSelected: boolean
   rowActions: (m: MemoryMemory) => MemoryRowActions
 }) {
   const { t } = useTranslation()
@@ -179,6 +186,17 @@ export function DomainCard({
       data-domain-name={d.name}
     >
       <div className="flex w-full items-center gap-2 px-3 py-2">
+        {/* Select every memory in the domain. Without it, correcting a domain
+            that accumulated hundreds of near-identical entries means hundreds of
+            clicks, which is not a job anyone starts. */}
+        <Checkbox
+          checked={allSelected ? true : someSelected ? "indeterminate" : false}
+          onCheckedChange={(v) => onSelectAll(d, v !== false)}
+          aria-label={t("pages.memory.select_all_in", { name: d.name })}
+          title={t("pages.memory.select_all_hint")}
+          disabled={d.memories.length === 0}
+          className="shrink-0"
+        />
         <CollapsibleTrigger className="flex flex-1 items-center gap-2 text-left">
           <IconChevronRight
             className={`size-4 transition-transform ${open ? "rotate-90" : ""}`}

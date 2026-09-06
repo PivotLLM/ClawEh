@@ -19,7 +19,10 @@
     "channelsChatIdPlaceholder": "chat id",
     "channelsNeedChatId": "Enter the chat id to deliver to before setting this channel as default.",
     "channelsNoDefault": "can't be a default channel (no durable delivery address)",
-    "channelsHint": "Pick the default channel where this agent's scheduled (cron) output is delivered. For a channel bound to a specific chat (e.g. a Slack channel) that chat is used. For a channel with no specific chat (e.g. a Telegram bot), enter the chat id to deliver to — this is used for delivery only and does not change who can message the bot."
+    "channelsHint": "Pick the default channel where this agent's scheduled (cron) output is delivered. For a channel bound to a specific chat (e.g. a Slack channel) that chat is used. For a channel with no specific chat (e.g. a Telegram bot), enter the chat id to deliver to — this is used for delivery only and does not change who can message the bot.",
+    "eventRetention": "Event memory retention (days)",
+    "retiredRetention": "Retired memory retention (days)",
+    "retentionHint": "(blank = {{days}}, -1 = keep forever)"
   },
   "navigation": {
     "chat": "Chat",
@@ -601,7 +604,9 @@
       "err_bulk": "Bulk action failed",
       "err_add_memory": "Failed to add memory",
       "err_add_domain": "Failed to add domain",
-      "err_import": "Import failed"
+      "err_import": "Import failed",
+      "select_all_in": "Select every memory in {{name}}",
+      "select_all_hint": "Select every memory in this domain"
     }
   },
   "providers": {

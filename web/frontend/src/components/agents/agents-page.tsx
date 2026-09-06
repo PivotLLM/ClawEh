@@ -133,6 +133,12 @@ export function AgentsPage() {
               }
             : null,
         ...(a.temperature !== undefined ? { temperature: a.temperature } : {}),
+        ...(a.event_retention_days !== undefined
+          ? { event_retention_days: a.event_retention_days }
+          : {}),
+        ...(a.retired_retention_days !== undefined
+          ? { retired_retention_days: a.retired_retention_days }
+          : {}),
         ...(a.summarization_models && a.summarization_models.length > 0
           ? { summarization_models: a.summarization_models }
           : {}),
@@ -173,6 +179,8 @@ export function AgentsPage() {
             }
           : null,
       temperature: edits.temperature,
+      event_retention_days: edits.eventRetentionDays,
+      retired_retention_days: edits.retiredRetentionDays,
       summarization_models:
         edits.summarizationModels.length > 0
           ? edits.summarizationModels
@@ -494,6 +502,14 @@ export function AgentsPage() {
                         edit(i, { message: { mins, count } })
                       }
                       onTemperatureChange={(tp) => edit(i, { temperature: tp })}
+                      eventRetentionDays={e.eventRetentionDays}
+                      onEventRetentionDaysChange={(v) =>
+                        edit(i, { eventRetentionDays: v })
+                      }
+                      retiredRetentionDays={e.retiredRetentionDays}
+                      onRetiredRetentionDaysChange={(v) =>
+                        edit(i, { retiredRetentionDays: v })
+                      }
                       summarizationModels={e.summarizationModels}
                       onSummarizationModelsChange={(sm) =>
                         edit(i, { summarizationModels: sm })

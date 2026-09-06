@@ -147,6 +147,9 @@ describe("DomainCard", () => {
         })}
         onDeleteDomain={vi.fn()}
         onAddMemory={vi.fn()}
+        onSelectAll={vi.fn()}
+        allSelected={false}
+        someSelected={false}
         rowActions={() => actions()}
       />,
     )
@@ -162,10 +165,95 @@ describe("DomainCard", () => {
         d={domain({ memories: [memory()] })}
         onDeleteDomain={vi.fn()}
         onAddMemory={vi.fn()}
+        onSelectAll={vi.fn()}
+        allSelected={false}
+        someSelected={false}
         rowActions={() => actions()}
       />,
     )
     expect(screen.queryByText(/event_count/)).toBeNull()
+  })
+
+  // Correcting a domain that accumulated hundreds of near-identical entries is
+  // the case this page exists for. One row at a time is not a job anyone
+  // starts, so the domain header selects the lot.
+  it("selects and clears every memory in the domain", () => {
+    const onSelectAll = vi.fn()
+    const d = domain({
+      memories: [memory({ id: "h1" }), memory({ id: "h2" })],
+    })
+    const { rerender } = render(
+      <DomainCard
+        d={d}
+        onDeleteDomain={vi.fn()}
+        onAddMemory={vi.fn()}
+        onSelectAll={onSelectAll}
+        allSelected={false}
+        someSelected={false}
+        rowActions={() => actions()}
+      />,
+    )
+    fireEvent.click(screen.getByLabelText("pages.memory.select_all_in"))
+    expect(onSelectAll).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "d1" }),
+      true,
+    )
+
+    // Once everything is selected the same control clears it.
+    onSelectAll.mockClear()
+    rerender(
+      <DomainCard
+        d={d}
+        onDeleteDomain={vi.fn()}
+        onAddMemory={vi.fn()}
+        onSelectAll={onSelectAll}
+        allSelected={true}
+        someSelected={true}
+        rowActions={() => actions()}
+      />,
+    )
+    fireEvent.click(screen.getByLabelText("pages.memory.select_all_in"))
+    expect(onSelectAll).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "d1" }),
+      false,
+    )
+  })
+
+  // A partial selection must not read as "none selected", or clicking the
+  // header would silently deselect the rows already chosen.
+  it("shows a partial selection as indeterminate", () => {
+    render(
+      <DomainCard
+        d={domain({ memories: [memory({ id: "h1" }), memory({ id: "h2" })] })}
+        onDeleteDomain={vi.fn()}
+        onAddMemory={vi.fn()}
+        onSelectAll={vi.fn()}
+        allSelected={false}
+        someSelected={true}
+        rowActions={() => actions()}
+      />,
+    )
+    const box = screen.getByLabelText("pages.memory.select_all_in")
+    expect(box.getAttribute("data-state")).toBe("indeterminate")
+  })
+
+  it("disables select-all on an empty domain", () => {
+    render(
+      <DomainCard
+        d={domain({ memories: [] })}
+        onDeleteDomain={vi.fn()}
+        onAddMemory={vi.fn()}
+        onSelectAll={vi.fn()}
+        allSelected={false}
+        someSelected={false}
+        rowActions={() => actions()}
+      />,
+    )
+    expect(
+      screen
+        .getByLabelText("pages.memory.select_all_in")
+        .hasAttribute("disabled"),
+    ).toBe(true)
   })
 
   it("adds a memory to this domain and deletes the domain", () => {
@@ -176,6 +264,9 @@ describe("DomainCard", () => {
         d={domain()}
         onDeleteDomain={onDelete}
         onAddMemory={onAdd}
+        onSelectAll={vi.fn()}
+        allSelected={false}
+        someSelected={false}
         rowActions={() => actions()}
       />,
     )

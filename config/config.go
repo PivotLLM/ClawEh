@@ -221,6 +221,56 @@ type MemoryConsolidationConfig struct {
 // MemoryRetentionConfig guards unconsolidated archive messages from pruning.
 type MemoryRetentionConfig struct {
 	ProtectUnconsolidated bool `json:"protect_unconsolidated"`
+
+	// EventDays is how long an `event` memory is kept before it is deleted.
+	// Events are things that happened at a point in time — a trip, a delivery,
+	// a scheduled run — and they stop being useful long before they stop
+	// accumulating: one agent recorded an hourly "nothing changed" note and
+	// reached 300 of them.
+	//
+	// 0 uses DefaultEventRetentionDays; -1 keeps them forever. Only `event`
+	// memories are ever deleted by age — a fact, preference, rule or
+	// operational note is permanent, so no policy here can silently drop a
+	// standing instruction.
+	EventDays int `json:"event_days,omitempty" env:"CLAW_MEMORY_RETENTION_EVENT_DAYS"`
+
+	// RetiredDays is how long a retired memory is kept before it is deleted.
+	// Retiring takes a memory out of use but leaves the row, so a store that
+	// retires steadily grows forever while showing nothing for it.
+	//
+	// 0 uses DefaultRetiredRetentionDays; -1 keeps them forever. Measured from
+	// when the memory was retired, not when it was created.
+	RetiredDays int `json:"retired_days,omitempty" env:"CLAW_MEMORY_RETENTION_RETIRED_DAYS"`
+}
+
+// Retention defaults. Deliberately not configurable: they are the meaning of an
+// unset field, and a default that can itself be changed is one more thing to
+// reason about when a memory disappears.
+const (
+	DefaultEventRetentionDays   = 30
+	DefaultRetiredRetentionDays = 90
+)
+
+// EffectiveEventDays resolves EventDays: 0 means the default, negative means
+// never expire (reported as 0 days, which callers treat as "no sweep").
+func (r MemoryRetentionConfig) EffectiveEventDays() int {
+	return resolveRetention(r.EventDays, DefaultEventRetentionDays)
+}
+
+// EffectiveRetiredDays resolves RetiredDays the same way.
+func (r MemoryRetentionConfig) EffectiveRetiredDays() int {
+	return resolveRetention(r.RetiredDays, DefaultRetiredRetentionDays)
+}
+
+func resolveRetention(v, def int) int {
+	switch {
+	case v == 0:
+		return def
+	case v < 0:
+		return 0 // never expire
+	default:
+		return v
+	}
 }
 
 // MemoryExportConfig controls the read-only GENERATED_*.md export.
@@ -299,10 +349,21 @@ type AgentConfig struct {
 	CompressCharsPerToken      *float64 `json:"compress_chars_per_token,omitempty"`
 	CompressTokenSafetyMargin  *float64 `json:"compress_token_safety_margin,omitempty"`
 
-	ArchiveMessageCount    *int `json:"archive_message_count,omitempty"`
-	ArchiveDays            *int `json:"archive_days,omitempty"`
-	SummaryMaxCount        *int `json:"summary_max_count,omitempty"`
-	SummaryRetentionDays   *int `json:"summary_retention_days,omitempty"`
+	ArchiveMessageCount  *int `json:"archive_message_count,omitempty"`
+	ArchiveDays          *int `json:"archive_days,omitempty"`
+	SummaryMaxCount      *int `json:"summary_max_count,omitempty"`
+	SummaryRetentionDays *int `json:"summary_retention_days,omitempty"`
+
+	// EventRetentionDays and RetiredRetentionDays override the memory retention
+	// windows for this agent alone. nil uses agents.defaults; 0 means the
+	// built-in default; negative keeps forever.
+	//
+	// Scalars here rather than inside Memory because AgentConfig.Memory
+	// overrides the defaults WHOLESALE — setting retention through it would
+	// silently zero this agent's prompt budgets. They are applied on top of the
+	// resolved MemoryConfig by EffectiveMemory.
+	EventRetentionDays     *int `json:"event_retention_days,omitempty"`
+	RetiredRetentionDays   *int `json:"retired_retention_days,omitempty"`
 	ArchiveContentMaxBytes *int `json:"archive_content_max_bytes,omitempty"`
 
 	// ContextEviction overrides the per-turn tool-result eviction policy for
@@ -1000,10 +1061,21 @@ type AgentDefaults struct {
 // EffectiveMemory returns the memory config for an agent: the per-agent block
 // if present, otherwise the defaults.
 func (d AgentDefaults) EffectiveMemory(a *AgentConfig) MemoryConfig {
+	mem := d.Memory
 	if a != nil && a.Memory != nil {
-		return *a.Memory
+		mem = *a.Memory
 	}
-	return d.Memory
+	// Per-agent retention is layered on afterwards, so an agent can shorten its
+	// own window without taking over the whole memory block.
+	if a != nil {
+		if a.EventRetentionDays != nil {
+			mem.Retention.EventDays = *a.EventRetentionDays
+		}
+		if a.RetiredRetentionDays != nil {
+			mem.Retention.RetiredDays = *a.RetiredRetentionDays
+		}
+	}
+	return mem
 }
 
 const DefaultMaxMediaSize = 20 * 1024 * 1024 // 20 MB

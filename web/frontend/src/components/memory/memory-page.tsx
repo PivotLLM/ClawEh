@@ -89,6 +89,20 @@ export function MemoryPage() {
     })
   }
 
+  // Select or clear a whole domain at once. Correcting a domain that has
+  // accumulated hundreds of near-identical entries is the case this page exists
+  // for, and one row at a time is not a job anyone starts.
+  const handleSelectAll = (d: MemoryDomain, on: boolean) => {
+    setPicked((prev) => {
+      const next = new Set(prev)
+      for (const m of d.memories) {
+        if (on) next.add(m.id)
+        else next.delete(m.id)
+      }
+      return next
+    })
+  }
+
   const rowActions = (m: MemoryMemory): MemoryRowActions => ({
     selected: picked.has(m.id),
     busy,
@@ -343,6 +357,12 @@ export function MemoryPage() {
                   d={d}
                   onDeleteDomain={handleDeleteDomain}
                   onAddMemory={setAddingTo}
+                  onSelectAll={handleSelectAll}
+                  allSelected={
+                    d.memories.length > 0 &&
+                    d.memories.every((m) => picked.has(m.id))
+                  }
+                  someSelected={d.memories.some((m) => picked.has(m.id))}
                   rowActions={rowActions}
                 />
               ))}
