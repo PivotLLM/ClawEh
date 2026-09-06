@@ -836,7 +836,7 @@ if (useGroup("N", "Memory curation")) {
     return `${id} -> preference`
   })
 
-  await check(13, "selecting rows reveals the bulk bar, which retypes them", async () => {
+  await check(13, "select the whole domain from its header, then retype it", async () => {
     const { ctx, page, problems, card } = await openProbe()
     assert(
       (await page.locator("[data-testid=bulk-bar]").count()) === 0,
@@ -845,11 +845,14 @@ if (useGroup("N", "Memory curation")) {
 
     const rows = card.locator("[data-testid=memory-row]")
     const ids = []
-    for (const i of [0, 1]) {
-      const row = rows.nth(i)
-      ids.push(await row.getAttribute("data-memory-id"))
-      await row.locator("button[role=checkbox]").click()
+    for (let i = 0; i < (await rows.count()); i++) {
+      ids.push(await rows.nth(i).getAttribute("data-memory-id"))
     }
+    // The domain header selects the lot. Retyping a domain of several hundred
+    // entries one row at a time is not a job anyone starts, which is what made
+    // the bulk actions much less useful than they looked.
+    await card.locator("button[role=checkbox]").first().click()
+
     const bar = page.locator("[data-testid=bulk-bar]")
     await bar.waitFor({ state: "visible", timeout: 5000 })
 
@@ -863,7 +866,7 @@ if (useGroup("N", "Memory curation")) {
       const got = await typeOf(id)
       assert(got === "event", `${id} stored as ${got}, want event`)
     }
-    return `${ids.length} rows retyped through the bulk bar`
+    return `${ids.length} rows selected from the header and retyped`
   })
 
   await check(14, "add a memory through the page, tagged origin=user", async () => {

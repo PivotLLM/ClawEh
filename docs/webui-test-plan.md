@@ -164,7 +164,7 @@ and deletes it at the end. Nothing outside that domain is touched.
 | N10 | `GET /api/memory/{id}/export`, then `POST` the body back to `/import?mode=merge` | The export is YAML carrying `format_version`, and merge-importing it creates **0** memories — the same document imported twice must change nothing |
 | N11 | Load `/memory`, click the probe's store in the sidebar | The `e2e-probe` domain renders with its 3 memories, no console errors |
 | N12 | Open the type dropdown on the first row and pick `preference` | The **stored** type changes, read back from the API. Steps 2–10 drive the API; from here the checks drive the page, because a control can be wired correctly and still not work — the type picker is a portalled listbox and jsdom is not a browser |
-| N13 | Tick two rows, then use **Change type…** on the bar that appears | The bulk bar is absent with nothing selected, appears once a row is ticked, and retypes every selected id |
+| N13 | Tick the checkbox in the **domain header**, then use **Change type…** on the bar that appears | The bulk bar is absent with nothing selected; the header checkbox selects every memory in the domain, and the bar retypes them all. Retyping a domain of several hundred entries one row at a time is not a job anyone starts, which is what made the bulk actions much less useful than they looked |
 | N14 | **Add memory** on the domain, type some text, **Add** | The memory is in the store with `origin: "user"` |
 | N15 | Retire a row, then click **Show retired** | It disappears from the default view and comes back behind the toggle. Without that it could never be restored |
 | N16 | `DELETE /api/memory/{id}/domains/{domain}` | `204`, and the probe domain is gone even with `include_retired=1` |
