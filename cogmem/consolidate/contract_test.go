@@ -216,3 +216,74 @@ A memory has exactly one type:
 		t.Error("a customised prompt naming the current types was called stale")
 	}
 }
+
+// A retire may carry no evidence, because it removes a memory that already
+// exists rather than asserting anything a message would have to justify.
+//
+// This is what makes housekeeping possible at all: merging two memories that
+// say the same thing, or dropping one a newer memory contradicts, is tidying
+// the current conversation never raised and so cannot cite. Requiring evidence
+// there made every such op invalid — and one invalid op rejects the whole
+// payload, so an agent following the rule would have aborted entire runs.
+func TestRetireMayOmitEvidence(t *testing.T) {
+	in := sampleInput()
+	out := Output{MemoryOps: []MemoryOp{
+		{Op: "retire", ID: "h9", Reason: "duplicate of h31"},
+	}}
+	if err := out.Validate(in); err != nil {
+		t.Fatalf("retire without evidence rejected: %v", err)
+	}
+}
+
+// Evidence given on a retire is still checked: omitting it is allowed, but
+// pointing at a range outside the batch is a mistake either way.
+func TestRetireWithBadEvidenceIsStillRejected(t *testing.T) {
+	in := sampleInput()
+	out := Output{MemoryOps: []MemoryOp{
+		{Op: "retire", ID: "h9", Reason: "x", Evidence: ev(999, 999)},
+	}}
+	if err := out.Validate(in); err == nil {
+		t.Error("out-of-range evidence on a retire was accepted")
+	}
+}
+
+// The exemption is for retire ONLY. An add or supersede writes text, which is
+// exactly what the evidence rule exists to keep anchored to a real message.
+func TestAddAndSupersedeStillRequireEvidence(t *testing.T) {
+	in := sampleInput()
+	for _, op := range []MemoryOp{
+		{Op: "add", Domain: "d4", Type: "fact", Text: "invented"},
+		{Op: "supersede", OldID: "h9", Domain: "d4", Type: "rule", Text: "invented"},
+	} {
+		out := Output{MemoryOps: []MemoryOp{op}}
+		if err := out.Validate(in); err == nil {
+			t.Errorf("%s without evidence was accepted", op.Op)
+		}
+	}
+}
+
+// A retire still has to name a memory that exists — the id check is what makes
+// dropping the evidence requirement safe.
+func TestRetireStillNeedsAKnownID(t *testing.T) {
+	in := sampleInput()
+	out := Output{MemoryOps: []MemoryOp{{Op: "retire", ID: "hNOPE", Reason: "x"}}}
+	if err := out.Validate(in); err == nil {
+		t.Error("retire of an unknown memory was accepted")
+	}
+}
+
+// The shipped prompt must actually ask for the housekeeping, and must ask for
+// it the safe way: retiring duplicates rather than rewriting several distinct
+// memories into one vaguer summary.
+func TestDefaultPromptAsksForHousekeeping(t *testing.T) {
+	p := DefaultPrompt()
+	for _, want := range []string{
+		"Tidy the domains you touch",
+		"may omit `evidence`",
+		"Retire; do not rewrite",
+	} {
+		if !strings.Contains(p, want) {
+			t.Errorf("prompt is missing %q", want)
+		}
+	}
+}

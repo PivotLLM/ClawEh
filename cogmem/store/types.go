@@ -155,6 +155,12 @@ type Evidence struct {
 	SeqEnd   int64 `json:"seq_end"`
 }
 
+// IsZero reports whether no evidence was given. A memory op that only removes
+// something — a retire — is allowed to carry none, because the evidence rule
+// exists to stop the model asserting content no message supports, and a retire
+// asserts nothing.
+func (e Evidence) IsZero() bool { return e.SeqStart == 0 && e.SeqEnd == 0 }
+
 // Event is one row of the append-only audit ledger.
 type Event struct {
 	ID         string

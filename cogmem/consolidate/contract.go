@@ -199,8 +199,22 @@ func (o Output) Validate(in Input) error {
 	}
 
 	for i, op := range o.MemoryOps {
-		if err := evOK(op.Evidence); err != nil {
-			return fmt.Errorf("memory_ops[%d]: %w", i, err)
+		// Evidence is required for anything that WRITES text, because that is
+		// what the rule is for: no asserted memory without a message justifying
+		// it. A retire asserts nothing — it removes a memory that already
+		// exists, and its id must already be known — so it may carry no
+		// evidence at all.
+		//
+		// This is what lets the model tidy: merging two memories that say the
+		// same thing, or dropping one a newer memory contradicts, is housekeeping
+		// the current conversation did not raise and so cannot cite. Requiring
+		// evidence there would have made every such op invalid, and one invalid
+		// op rejects the whole payload — so the model would have aborted entire
+		// runs trying to follow the rule.
+		if op.Op != "retire" || !op.Evidence.IsZero() {
+			if err := evOK(op.Evidence); err != nil {
+				return fmt.Errorf("memory_ops[%d]: %w", i, err)
+			}
 		}
 		switch op.Op {
 		case "add", "supersede":

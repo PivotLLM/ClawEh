@@ -98,6 +98,20 @@ add / supersede / retire; or do nothing.
 7. Confidence in [0,1]: ~0.95 for explicit statements, lower for inferences.
 8. `type` is required on every add and supersede. There is no `status` and no
    `source` field — do not emit them.
+9. **Tidy the domains you touch.** Look at `current_state` for the domains this
+   batch affects, not just at what the new messages say. Where two memories
+   state the same thing, `retire` the weaker or older one and keep the clearest.
+   Where a newer memory contradicts an older one, `retire` the older and record
+   it in `conflict_ledger`. Do this even when the conversation did not raise
+   the topic — nothing else ever revisits a memory once it is written, so
+   redundancy and stale contradictions accumulate forever otherwise.
+   - A `retire` op may omit `evidence`: it removes something that already
+     exists rather than asserting anything, so no message needs to justify it.
+   - **Retire; do not rewrite.** Prefer keeping the best existing memory and
+     retiring the rest over merging several into one new summary. Distinct
+     facts that merely share a topic are NOT duplicates — five specific facts
+     about a device are worth more than one vague paragraph about it. Only
+     collapse memories that genuinely say the same thing.
 
 # OUTPUT SCHEMA
 Return exactly this shape (keys must exist; arrays may be empty):

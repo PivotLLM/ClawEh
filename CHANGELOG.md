@@ -47,6 +47,19 @@ and reachable by search.
   without bound, so they are never loaded automatically. Each domain reports how
   many it holds and names the call that reads them, and `cogmem_memory_search`
   reaches them with `include_events: true`.
+- **Consolidation now tidies the domains it touches.** Where two memories say
+  the same thing it retires the weaker one, and where a newer memory
+  contradicts an older one it retires the older and records it in the conflict
+  ledger — even when the conversation did not raise the topic. Nothing
+  previously revisited a memory once written: de-duplication only ever ran
+  against the current batch, so redundancy and stale contradictions
+  accumulated indefinitely. One production agent had two active rules giving
+  opposite instructions about the same notifications.
+
+  It retires rather than rewrites, on purpose: several specific facts that
+  merely share a topic are worth more than one vague paragraph, so only
+  memories that genuinely say the same thing are collapsed. Automatic
+  de-duplication by exact text match still runs as well.
 - **Memory retention.** `event` memories are deleted after **30 days** and
   retired memories **90 days** after they were retired, both overridable per
   agent on the Agents page (blank = the default, `-1` = keep forever). Events
@@ -88,6 +101,15 @@ and reachable by search.
   be migrated is reported at startup instead of surfacing mid-conversation.
 
 ### Changed
+
+- **A `retire` operation may omit its `evidence`.** Every memory operation had
+  to cite a message in the current batch, which is right for anything that
+  writes text — the rule exists to keep asserted memories anchored to something
+  the user actually said. A retire asserts nothing and names a memory that must
+  already exist, and housekeeping is by definition not raised by the current
+  conversation, so the requirement made every tidy-up operation invalid. A
+  single invalid operation rejects the whole payload, so an agent following the
+  new rule above would have aborted entire consolidation runs.
 
 - **BREAKING: `cogmem_export` writes YAML, not Markdown.** The output moves from
   `files/MEMORY_EXPORT.md` to `files/MEMORY_EXPORT.yaml` and is the same format
