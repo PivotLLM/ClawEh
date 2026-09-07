@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/PivotLLM/ClawEh/agent"
@@ -259,8 +260,14 @@ func gatewayCmd(debug bool) error {
 	svcTokenChan, stopSvcWatch := setupFileChangeWatcher(servicetoken.Path(cfg.DataDir()), reloadInterval)
 	defer stopSvcWatch()
 
+	// SIGTERM as well as SIGINT. systemd sends SIGTERM to stop a unit, and its
+	// default disposition kills the process outright — so registering only
+	// os.Interrupt meant every `systemctl stop` and `restart` skipped the
+	// shutdown below entirely: channels were never stopped cleanly, in-flight
+	// work was never drained, and gracefulShutdownTimeout was dead code on the
+	// only path production actually uses.
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
 	// Main event loop - wait for signals or config/token changes
 	for {

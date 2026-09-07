@@ -68,16 +68,15 @@ and reachable by search.
   merely share a topic are worth more than one vague paragraph, so only
   memories that genuinely say the same thing are collapsed. Automatic
   de-duplication by exact text match still runs as well.
-- **`claw status` reports whether the gateway is running, and its RAM.** It
-  could previously answer neither: it reads configuration from disk and never
-  looked at the process, so it described an installation rather than a running
-  system.
+- **`claw status` reports whether ClawEh is running, and its RAM.** It could
+  previously answer neither: it reads configuration from disk and never looked
+  at the process, so it described an installation rather than a running system.
 
   ```
-  Gateway:         running (pid 1690872), 40.4 MB RAM
+  ClawEh:          running (pid 1690872), 40.4 MB RAM
   ```
 
-  The gateway writes `claw.pid` into its data directory at startup and removes
+  ClawEh writes `claw.pid` into its data directory at startup and removes
   it on clean shutdown. The data directory is the scope that matters — one
   binary runs several instances on a host, and the command has already resolved
   `CLAW_HOME` to find the config, so it reports on the instance you asked
@@ -203,6 +202,13 @@ and reachable by search.
 
 ### Fixed
 
+- **`systemctl stop` and `systemctl restart` now shut ClawEh down gracefully.**
+  Only `SIGINT` was handled, and systemd sends `SIGTERM`, whose default
+  disposition kills the process outright — so every stop and restart skipped
+  shutdown entirely: channels were never stopped cleanly, in-flight work was
+  never drained, and the 15-second graceful-shutdown timeout was dead code on
+  the one path production actually uses. Pressing Ctrl-C in a foreground run
+  always worked, which is why it went unnoticed.
 - **An operation that omitted both `status` and `source` was accepted and then
   defaulted to a combination the rules forbid** — `assistant_inferred` with
   `active`. Every guard tested for the fields being *wrong*, not missing. The
