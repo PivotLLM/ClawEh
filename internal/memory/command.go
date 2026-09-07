@@ -33,7 +33,7 @@ func newPurgeCommand() *cobra.Command {
 		Long: "Purges everything that is not current active memory from every " +
 			"assistant's cognitive-memory databases: each domain whose status is " +
 			"not active (and all of its memories), plus every non-active memory " +
-			"(retired, superseded, review). Active memories in active domains are " +
+			"(retired or superseded). Active memories in active domains are " +
 			"kept.\n\nWithout --confirm this is a DRY RUN that only reports what " +
 			"would be removed.",
 		Args: cobra.NoArgs,

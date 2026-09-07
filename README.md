@@ -134,11 +134,15 @@ Long-running agents need to get smarter over time instead of relying on hand-edi
 
 The seeded **`General`** sticky domain holds global rules and standing facts; memory domains are auto-load by relevance using **recency**, **lexical match** (salient words in the latest message), **tool triggers** (a domain loads when the agent uses a matching tool — e.g. an "email" domain on `google_gmail`), and **keyword triggers** (phrases in the incoming message. This significantly improves agent performance without relying on external embedding services or vector databases.
 
-When the agent infers something uncertain, it stores it as a **pending** memory and
-asks you to confirm in chat (reply "yes" to keep it, "no" to drop it). Use **`claw
-memory purge`** to clear everything that isn't current active memory — a dry run by
-default; add `--confirm` to delete and vacuum. Stop the gateway first so you're not
-racing live agents:
+The **memory page in the Web UI** is where you correct what an assistant filed:
+change a memory's type, retire and restore, select a whole domain and retype or
+delete it in one go, or add a memory by hand (recorded as `origin: user`, which
+the assistant is told outranks its own inferences). The whole store exports and
+imports as YAML. Full details in **[docs/memory.md](docs/memory.md)**.
+
+Use **`claw memory purge`** to clear everything that isn't current active memory
+— a dry run by default; add `--confirm` to delete and vacuum. Stop the gateway
+first so you're not racing live agents:
 
 ```bash
 claw memory purge             # dry run — review the counts
