@@ -18,8 +18,12 @@ export function ProviderCard({
 }: ProviderCardProps) {
   const { t } = useTranslation()
   const cli = isCliProtocol(provider.protocol)
-  const configured = cli ? Boolean(provider.command) : Boolean(provider.api_key)
-  const detail = cli ? provider.command : provider.base_url
+  // `ready` is the backend's answer, not a guess from the config: for a CLI
+  // provider it means the binary actually resolves, which a blank command does
+  // and a stale path does not.
+  const detail = cli
+    ? (provider.command ?? provider.resolved_command)
+    : provider.base_url
 
   return (
     <div className="group/card hover:bg-muted/30 border-border/60 bg-card relative flex w-full max-w-[36rem] flex-col gap-3 justify-self-start rounded-xl border p-4 transition-colors hover:shadow-xs">
@@ -28,7 +32,7 @@ export function ProviderCard({
           <span
             className={[
               "mt-0.5 h-2 w-2 shrink-0 rounded-full",
-              configured ? "bg-green-500" : "bg-muted-foreground/25",
+              provider.ready ? "bg-green-500" : "bg-muted-foreground/25",
             ].join(" ")}
           />
           <span className="text-foreground truncate text-sm font-semibold">
@@ -68,19 +72,17 @@ export function ProviderCard({
       )}
 
       <div className="flex items-center justify-between gap-2">
-        {!cli ? (
-          configured ? (
-            <span className="text-muted-foreground/70 flex items-center gap-1 text-[11px]">
-              <IconKey className="size-3" />
-              {t("providers.status.configured")}
-            </span>
-          ) : (
-            <span className="text-muted-foreground/50 text-[11px]">
-              {t("providers.status.unconfigured")}
-            </span>
-          )
+        {provider.ready ? (
+          <span className="text-muted-foreground/70 flex items-center gap-1 text-[11px]">
+            {/* The key icon says how an HTTP provider is configured. A CLI
+                provider has no key, so it gets the same label without it. */}
+            {!cli && <IconKey className="size-3" />}
+            {t("providers.status.configured")}
+          </span>
         ) : (
-          <span className="text-muted-foreground/50 text-[11px]" />
+          <span className="text-muted-foreground/50 text-[11px]">
+            {t("providers.status.unconfigured")}
+          </span>
         )}
         <span className="text-muted-foreground/70 text-[11px]">
           {t("providers.modelCount", { count: provider.model_count })}

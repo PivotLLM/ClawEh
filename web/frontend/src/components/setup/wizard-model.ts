@@ -17,7 +17,7 @@ export const RECOMMENDED_MODEL: Record<string, string> = {
   "OpenRouter Chat": "deepseek/deepseek-v4-flash",
 }
 // Sentinel for "let the CLI use its own default model" — maps to a model whose
-// id is the CLI protocol (e.g. "gemini-cli"), which the provider treats as
+// id is the CLI protocol (e.g. "antigravity-cli"), which the provider treats as
 // "pass no --model arg".
 export const CLI_DEFAULT = "__cli_default__"
 

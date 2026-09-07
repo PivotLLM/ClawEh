@@ -33,13 +33,27 @@ type statusResponse struct {
 	// MemoryBytes is resident set size — the physical RAM the process holds.
 	// Not virtual size, which for a Go process counts over a gigabyte of
 	// reserved address space and would badly misrepresent the number.
+	//
+	// The Go heap is deliberately not reported alongside it. It is a subset of
+	// this figure, usually a small one (the mapped binary dominates), and this
+	// page is for "how big is it", not for diagnosing the allocator.
 	MemoryBytes int64 `json:"memory_bytes"`
-	// HeapBytes is what Go itself has in use, which explains how much of the
-	// resident figure is the program rather than its mapped binary.
-	HeapBytes  int64 `json:"heap_bytes"`
-	Goroutines int   `json:"goroutines"`
+	Goroutines  int   `json:"goroutines"`
 
-	Agents    int `json:"agents"`
+	// GoVersion and the platform fields identify what this binary is, which is
+	// the first thing anyone asks for in a bug report.
+	GoVersion string `json:"go_version,omitempty"`
+	OS        string `json:"os"`
+	Arch      string `json:"arch"`
+	// OSName is a human name for the operating system ("Ubuntu 24.04.4 LTS",
+	// "macOS"), best-effort and empty when the host does not say.
+	OSName string `json:"os_name,omitempty"`
+
+	Agents int `json:"agents"`
+	// Models counts enabled models, and Providers counts providers that are
+	// actually usable — the same rule the Providers page draws its green dot
+	// from. Totals including disabled and unconfigured entries would answer a
+	// question nobody is asking of a status page.
 	Models    int `json:"models"`
 	Providers int `json:"providers"`
 	Channels  int `json:"channels"`
@@ -66,21 +80,23 @@ func (h *Handler) handleSystemStatus(w http.ResponseWriter, r *http.Request) {
 		PID:           os.Getpid(),
 		Goroutines:    runtime.NumGoroutine(),
 	}
-	resp.Build, _ = app.BuildInfo()
+	resp.Build, resp.GoVersion = app.BuildInfo()
+	resp.OS, resp.Arch = runtime.GOOS, runtime.GOARCH
+	resp.OSName = osName()
 
 	// Reporting on ourselves, so no pid file and no staleness question.
 	if rss, ok := pidfile.RSSBytes(os.Getpid()); ok {
 		resp.MemoryBytes = rss
 	}
-	var ms runtime.MemStats
-	runtime.ReadMemStats(&ms)
-	resp.HeapBytes = int64(ms.HeapInuse)
-
 	// Config counts are best-effort: an unreadable config should still leave a
 	// page that answers "is it up, and how big".
 	if cfg, err := config.LoadConfig(h.configPath); err == nil {
 		resp.Agents = len(cfg.Agents.List)
-		resp.Providers = len(cfg.Providers)
+		for i := range cfg.Providers {
+			if providerReady(&cfg.Providers[i]) {
+				resp.Providers++
+			}
+		}
 		for i := range cfg.Models {
 			if cfg.Models[i].Enabled {
 				resp.Models++

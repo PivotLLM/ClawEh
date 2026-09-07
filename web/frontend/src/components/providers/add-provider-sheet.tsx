@@ -106,10 +106,14 @@ export function AddProviderSheet({
     } else if (existingNames.some((n) => n.trim() === name)) {
       errors.name = t("providers.add.errorDuplicateName")
     }
-    if (isCliProtocol(form.protocol)) {
-      if (!form.command.trim())
-        errors.command = t("providers.add.errorRequired")
-    } else if (requiresBaseURL(form.protocol) && !form.baseURL.trim()) {
+    // A CLI provider needs no command: left blank, the backend runs the
+    // protocol's default binary off PATH, which survives a CLI being upgraded
+    // out from under a hard-coded path.
+    if (
+      !isCliProtocol(form.protocol) &&
+      requiresBaseURL(form.protocol) &&
+      !form.baseURL.trim()
+    ) {
       errors.baseURL = t("providers.add.errorRequired")
     }
     setFieldErrors(errors)
@@ -216,15 +220,8 @@ export function AddProviderSheet({
                 <Input
                   value={form.command}
                   onChange={setField("command")}
-                  placeholder="/usr/local/bin/claude"
                   className="font-mono text-sm"
-                  aria-invalid={!!fieldErrors.command}
                 />
-                {fieldErrors.command && (
-                  <p className="text-destructive text-xs">
-                    {fieldErrors.command}
-                  </p>
-                )}
               </Field>
             ) : (
               <>

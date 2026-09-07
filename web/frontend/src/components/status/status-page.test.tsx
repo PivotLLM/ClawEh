@@ -36,7 +36,10 @@ const sample = {
   uptime: "1h1m1s",
   pid: 4242,
   memory_bytes: 66_100_000,
-  heap_bytes: 8_000_000,
+  go_version: "go1.27.1",
+  os: "linux",
+  arch: "amd64",
+  os_name: "Ubuntu 24.04.4 LTS",
   goroutines: 39,
   agents: 7,
   models: 3,
@@ -66,6 +69,45 @@ describe("StatusPage", () => {
     expect(screen.getByText("0.5.0+abc")).toBeTruthy()
   })
 
+  it("names the host in one line, and falls back when it has no name", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: true, json: async () => sample }),
+    )
+    const { unmount } = renderPage()
+    await waitFor(() =>
+      expect(screen.getByText("Ubuntu 24.04.4 LTS on amd64")).toBeTruthy(),
+    )
+    expect(screen.getByText("go1.27.1")).toBeTruthy()
+    unmount()
+
+    // A host that publishes no pretty name still has to produce a usable line
+    // rather than " on amd64".
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ ...sample, os_name: "" }),
+      }),
+    )
+    renderPage()
+    await waitFor(() => expect(screen.getByText("linux on amd64")).toBeTruthy())
+  })
+
+  it("leaves the allocator out of it", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: true, json: async () => sample }),
+    )
+    renderPage()
+    // The Go heap is a subset of RSS and a diagnostic detail; this page answers
+    // "how big is it", so the memory tile carries no second figure.
+    await waitFor(() => expect(screen.getByText("63.0 MB")).toBeTruthy())
+    expect(screen.getByTestId("status-memory").textContent).toBe(
+      "pages.status.memory63.0 MB",
+    )
+  })
+
   it("reports a failure instead of rendering zeroes", async () => {
     vi.stubGlobal(
       "fetch",
@@ -76,7 +118,7 @@ describe("StatusPage", () => {
     renderPage()
 
     // A status page that silently shows 0 MB and 0 assistants would read as a
-    // broken gateway rather than a failed request.
+    // dead instance rather than a failed request.
     await waitFor(() =>
       expect(screen.getByText("pages.status.load_error")).toBeTruthy(),
     )

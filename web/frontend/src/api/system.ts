@@ -29,7 +29,7 @@ export interface CLIInfo {
   version?: string
 }
 
-// listCLIs reports which known CLI agents (claude/codex/gemini) are installed on
+// listCLIs reports which known CLI agents (claude/codex/agy/cursor) are installed on
 // the host, so the setup wizard can show what's available without the user
 // configuring a CLI whose binary isn't on PATH.
 export async function listCLIs(): Promise<CLIInfo[]> {
@@ -73,11 +73,15 @@ export interface SystemStatus {
   pid: number
   /** Resident set size: the physical RAM the process holds. */
   memory_bytes: number
-  /** What Go itself has in use, i.e. how much of the resident figure is the
-   *  program rather than its mapped binary. */
-  heap_bytes: number
+  go_version?: string
+  os: string
+  arch: string
+  // os_name is a human OS name ("Ubuntu 24.04.4 LTS"), empty when the host
+  // does not say — fall back to os.
+  os_name?: string
   goroutines: number
   agents: number
+  /** Enabled models, and providers that are actually usable — not totals. */
   models: number
   providers: number
   channels: number

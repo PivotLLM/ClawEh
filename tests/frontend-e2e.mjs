@@ -567,6 +567,43 @@ if (useGroup("I", "Models and providers")) {
     assert(open1 > 0, "sheet did not open")
     assert(problems.length === 0, `console errors: ${problems[0]}`)
   })
+  await check(4, "every provider card says whether it is configured", async () => {
+    const { ctx, page, problems } = await open("/providers")
+    await page.getByText(/Configured|Not configured/).first().waitFor({
+      state: "visible",
+      timeout: 10000,
+    })
+    const labels = await page.getByText(/^(Configured|Not configured)$/).count()
+    await ctx.close()
+    const providers = (await api("/api/providers")).json?.providers ?? []
+
+    assert(problems.length === 0, `console errors: ${problems[0]}`)
+    // CLI cards used to render an empty span here, so a CLI provider was the
+    // one kind whose card never said what it was. Every card labels itself now.
+    assert(
+      labels === providers.length,
+      `${labels} configured/not-configured labels for ${providers.length} providers`,
+    )
+    return `${labels} labelled`
+  })
+  await check(5, "the wire-protocol picker offers antigravity, not gemini", async () => {
+    const { ctx, page, problems } = await open("/providers")
+    await page.getByRole("button", { name: /Add Provider/i }).first().click()
+    await page.waitForTimeout(700)
+    // Radix renders the options into a portal only once the trigger is opened.
+    await page.locator("[data-slot=select-trigger]").first().click()
+    await page.waitForTimeout(500)
+    const options = await page.locator("[role=option]").allInnerTexts()
+    await page.keyboard.press("Escape")
+    await ctx.close()
+
+    assert(problems.length === 0, `console errors: ${problems[0]}`)
+    assert(options.includes("antigravity-cli"), `no antigravity-cli among ${options.join(", ")}`)
+    // Google deprecated the Gemini CLI. Existing configs naming it keep working
+    // as an alias, but nothing new should be created with it.
+    assert(!options.includes("gemini-cli"), "the picker still offers the deprecated gemini-cli")
+    return options.join(", ")
+  })
 }
 
 // J. Devices — the store-open regression
@@ -647,11 +684,17 @@ if (useGroup("O", "Status page")) {
       st.agents === (cfg.agents?.list?.length ?? 0),
       `agents = ${st.agents}, config lists ${cfg.agents?.list?.length}`,
     )
+    // Models are counted as *enabled*, and providers as *configured*, so
+    // neither is the length of its config list — a status page reporting 40
+    // models when 3 can run answers a question nobody asked. O6 checks the
+    // provider figure against the rule the Providers page draws its dot from.
+    const enabled = (cfg.models ?? []).filter((m) => m.enabled).length
+    assert(st.models === enabled, `models = ${st.models}, config enables ${enabled}`)
     assert(
-      st.providers === (cfg.providers?.length ?? 0),
-      `providers = ${st.providers}, config lists ${cfg.providers?.length}`,
+      st.providers <= (cfg.providers?.length ?? 0),
+      `providers configured = ${st.providers}, more than the ${cfg.providers?.length} configured`,
     )
-    return `${st.agents} assistants, ${st.providers} providers, ${st.channels} channels`
+    return `${st.agents} assistants, ${st.models} models, ${st.providers} providers, ${st.channels} channels`
   })
 
   await check(3, "the sidebar links to it from the bottom", async () => {
@@ -687,6 +730,51 @@ if (useGroup("O", "Status page")) {
     assert(/\d/.test(assistants), `assistants tile reads ${JSON.stringify(assistants)}`)
     assert(/\d/.test(uptime), `uptime tile reads ${JSON.stringify(uptime)}`)
     return memory.replace(/\s+/g, " ")
+  })
+
+  await check(5, "the detail box identifies the build and the host", async () => {
+    const { ctx, page, problems } = await open("/status")
+    const detail = page.locator("[data-testid=status-detail]")
+    await detail.waitFor({ state: "visible", timeout: 10000 })
+    const text = (await detail.innerText()).replace(/\s+/g, " ").trim()
+    const memory = (await page
+      .locator("[data-testid=status-memory]")
+      .innerText()).trim()
+    await ctx.close()
+
+    assert(problems.length === 0, `console: ${problems[0]}`)
+    // "Compiler go1.27.1" and "Environment Ubuntu 24.04.4 LTS on amd64" — the
+    // two lines anyone filing a bug is asked for first.
+    assert(/go1\.\d+/.test(text), `no Go version in the detail box: ${text}`)
+    assert(/ on (amd64|arm64|386|arm)\b/.test(text), `no environment line: ${text}`)
+    // The Go heap is a subset of RSS and a diagnostic detail; this page reports
+    // how big the process is, so the memory tile carries one figure only.
+    assert(!/heap/i.test(memory), `the memory tile still shows a heap figure: ${memory}`)
+    return text.slice(0, 120)
+  })
+
+  await check(6, "providers configured agrees with the Providers page", async () => {
+    const status = (await api("/api/system/status")).json
+    const providers = (await api("/api/providers")).json?.providers ?? []
+    const ready = providers.filter((p) => p.ready).length
+    // Both surfaces read the same backend rule, so a mismatch means one of them
+    // went back to guessing from the config — which is exactly the bug that
+    // showed a green dot for a CLI path that no longer existed.
+    assert(
+      status.providers === ready,
+      `status says ${status.providers} providers configured, /api/providers says ${ready}`,
+    )
+    // A CLI provider with no command must still resolve, or the seeded config
+    // would report itself as unusable out of the box.
+    for (const p of providers) {
+      if (p.ready && !p.command) {
+        assert(
+          p.protocol.endsWith("-cli") ? Boolean(p.resolved_command) : true,
+          `${p.name} is ready with no command and no resolved binary`,
+        )
+      }
+    }
+    return `${ready} of ${providers.length} configured`
   })
 }
 

@@ -71,10 +71,15 @@ and reachable by search.
 - **A Status page in the Web UI**, reached from a **Status** entry at the bottom
   of the sidebar — outside the collapsible groups, since it describes the
   running process rather than a section of the configuration, and it is what you
-  open when something feels wrong. It shows uptime, memory, the number of
-  assistants, channels, enabled models and providers, goroutines, pid, version,
-  build, and whether the MCP host is running. Backed by a new
+  open when something feels wrong. It shows uptime, memory, and the number of
+  assistants, channels, enabled models, configured providers and goroutines,
+  over a detail box carrying the pid, version, build, Go toolchain, host OS and
+  architecture, and whether the MCP host is running. Backed by a new
   `GET /api/system/status`, polled every five seconds so the figures stay live.
+
+  Models are counted as *enabled* and providers as *configured*, not as the
+  length of their config lists: an install carrying 40 model definitions of
+  which 3 can run is described by the 3.
 - **`/status` in chat now reports memory.** The command runs inside the process,
   so it reports on itself — which also means you can ask an assistant how much
   RAM it is using without shell access to the host.
@@ -212,6 +217,29 @@ and reachable by search.
 
 ### Fixed
 
+- **The Providers page called a CLI provider configured whenever a path was
+  filled in, without checking that the binary was there.** A provider pinned to
+  a CLI that had since been upgraded or uninstalled showed a green dot and
+  "Configured" while every request through it failed. The reverse was worse: a
+  CLI provider with the **Command** field left blank — which is how the seeded
+  config ships, and the more robust choice, since it follows the CLI across
+  upgrades — showed as unconfigured even though it worked. The dot and the label
+  now mean the binary actually resolves, decided in the ClawEh process against
+  the `PATH` its subprocesses are launched with, and the card names the binary a
+  blank command resolved to. CLI cards also carry a **Configured** /
+  **Not configured** label at all: they previously rendered an empty space where
+  every other card said what it was.
+- **Adding a CLI provider no longer demands a command.** The field was
+  mandatory, which forced a hard-coded path on every new CLI provider — the one
+  configuration that breaks when the CLI is upgraded. Leave it blank and ClawEh
+  runs the protocol's default binary from `PATH`. The field also no longer shows
+  `/usr/local/bin/claude` as a placeholder, which suggested a path was expected
+  and named the wrong CLI for three of the four protocols.
+- **The wire-protocol picker offered `gemini-cli` and not `antigravity-cli`,**
+  so there was no way to add an Antigravity provider through the Web UI. It now
+  offers `antigravity-cli`; a provider already configured as `gemini-cli` keeps
+  working — the backend treats it as an alias for the same binary — and still
+  renders as a CLI provider.
 - **`systemctl stop` and `systemctl restart` now shut ClawEh down gracefully.**
   Only `SIGINT` was handled, and systemd sends `SIGTERM`, whose default
   disposition kills the process outright — so every stop and restart skipped

@@ -195,7 +195,6 @@ export function EditProviderSheet({
                 <Input
                   value={form.command}
                   onChange={setField("command")}
-                  placeholder="/usr/local/bin/claude"
                   className="font-mono text-sm"
                 />
               </Field>

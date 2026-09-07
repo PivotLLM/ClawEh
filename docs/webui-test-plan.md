@@ -115,6 +115,8 @@ Creates an agent called `e2e-probe` and deletes it at the end.
 | I1 | Load `/models` | Lists the models from `GET /api/models` |
 | I2 | Load `/providers` | Lists the providers from `GET /api/providers` |
 | I3 | `/models` → **Add Model**, then Escape | The sheet opens and closes with no console error |
+| I4 | Load `/providers` and count the **Configured** / **Not configured** labels | Every card carries one, CLI cards included — they used to render an empty span. "Configured" means the backend resolved the provider: an API key for HTTP, a binary that is actually there for a CLI, so a stale path reads *Not configured* and a blank one that resolves reads *Configured* |
+| I5 | `/providers` → **Add Provider** → open the wire-protocol picker | `antigravity-cli` is offered and `gemini-cli` is not. Google deprecated the Gemini CLI; a config still naming it keeps working as an alias, but nothing new should be created with it |
 
 ## J. Devices
 
@@ -174,9 +176,11 @@ and deletes it at the end. Nothing outside that domain is touched.
 | ID | Process | Expected |
 |---|---|---|
 | O1 | `curl $BASE/api/system/status` | `200`, carrying `version`, `uptime`, `pid`, `memory_bytes` and `agents`. `memory_bytes` is resident set size — between 1 MB and 2 GB. A gigabyte-scale figure means `VmSize` was read instead of `VmRSS`, which for a Go process counts over a gigabyte of reserved address space |
-| O2 | Compare the counts against `GET /api/config` | `agents` and `providers` match what the configuration lists |
+| O2 | Compare the counts against `GET /api/config` | `agents` matches what the configuration lists. `models` counts only **enabled** models, and `providers` only **configured** ones, so neither equals the length of its config list |
 | O3 | Load `/`, click **Status** in the sidebar | The link is in the sidebar **footer** — below the collapsible groups, so it is reachable without opening a disclosure — and navigates to `/status` with no console errors |
 | O4 | Load `/status` | The memory, assistants and uptime tiles all render live figures; memory reads as a size with a unit |
+| O5 | Load `/status` and read the lower detail box | It carries a **Compiler** line (`go1.27.1`) and an **Environment** line (`Ubuntu 24.04.4 LTS on amd64`, falling back to `linux on amd64` on a host that publishes no name). The memory tile shows one figure — no Go heap: the heap is a subset of RSS and a diagnostic detail, and this page reports how big the process is |
+| O6 | Compare `providers` from `GET /api/system/status` against the `ready` flags in `GET /api/providers` | The two agree. Both read one backend rule — an API key for HTTP providers, a binary that actually resolves for CLI ones — so a mismatch means one surface went back to guessing from the config. Any CLI provider that is `ready` with no `command` set reports the binary it resolved to |
 
 ---
 

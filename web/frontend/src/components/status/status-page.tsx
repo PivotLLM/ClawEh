@@ -4,6 +4,17 @@ import { useTranslation } from "react-i18next"
 import { type SystemStatus, getSystemStatus } from "@/api/system"
 import { PageHeader } from "@/components/page-header"
 
+/**
+ * environment names the host in one line — "Ubuntu 24.04.4 LTS on amd64".
+ *
+ * The backend supplies a human OS name where the host offers one and leaves it
+ * empty otherwise, so fall back to the Go platform string ("linux on amd64").
+ * Identifying the exact distro or Mac model is not worth the machinery.
+ */
+function environment(data: SystemStatus): string {
+  return `${data.os_name || data.os} on ${data.arch}`
+}
+
 /** Renders a byte count in the unit a person would quote it in. */
 function humanBytes(n: number): string {
   if (n <= 0) return "—"
@@ -80,9 +91,6 @@ export function StatusPage() {
                 testId="status-memory"
                 label={t("pages.status.memory")}
                 value={humanBytes(data.memory_bytes)}
-                hint={t("pages.status.heap", {
-                  value: humanBytes(data.heap_bytes),
-                })}
               />
               <Stat
                 testId="status-assistants"
@@ -101,7 +109,6 @@ export function StatusPage() {
                 testId="status-models"
                 label={t("pages.status.models")}
                 value={data.models}
-                hint={t("pages.status.enabled")}
               />
               <Stat
                 testId="status-providers"
@@ -127,6 +134,8 @@ export function StatusPage() {
               {[
                 [t("pages.status.version"), data.version],
                 [t("pages.status.build"), data.build || "—"],
+                [t("pages.status.compiler"), data.go_version || "—"],
+                [t("pages.status.environment"), environment(data)],
                 [
                   t("pages.status.mcp_host"),
                   data.mcp_host ? t("labels.yes") : t("labels.no"),

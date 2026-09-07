@@ -34,6 +34,14 @@ type providerResponse struct {
 	NoParallelToolCalls     bool   `json:"no_parallel_tool_calls,omitempty"`
 	ResponseFormatJSON      bool   `json:"response_format_json,omitempty"`
 	Command                 string `json:"command,omitempty"`
+	// Ready is whether the provider is usable as configured: an API key for
+	// HTTP providers, a binary that actually resolves for CLI ones. The check
+	// belongs here rather than in the browser — only this process knows the
+	// PATH its CLI subprocesses will be launched with.
+	Ready bool `json:"ready"`
+	// ResolvedCommand is where a CLI provider's binary was found, so the card
+	// can say which one it will run when the command field is left blank.
+	ResolvedCommand string `json:"resolved_command,omitempty"`
 	// ModelCount is how many models entries reference this provider — used
 	// by the WebUI to warn before deleting an in-use provider.
 	ModelCount int `json:"model_count"`
@@ -66,6 +74,8 @@ func (h *Handler) handleListProviders(w http.ResponseWriter, r *http.Request) {
 			NoParallelToolCalls:     p.NoParallelToolCalls,
 			ResponseFormatJSON:      p.ResponseFormatJSON,
 			Command:                 p.Command,
+			Ready:                   providerReady(p),
+			ResolvedCommand:         resolvedCLICommand(p),
 			ModelCount:              counts[p.Name],
 		})
 	}

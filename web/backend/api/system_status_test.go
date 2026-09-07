@@ -51,9 +51,15 @@ func TestSystemStatus(t *testing.T) {
 		if got.MemoryBytes > 2<<30 {
 			t.Errorf("memory_bytes = %d — that looks like VmSize, not VmRSS", got.MemoryBytes)
 		}
-		if got.HeapBytes > got.MemoryBytes {
-			t.Errorf("heap %d exceeds resident %d, which cannot be", got.HeapBytes, got.MemoryBytes)
-		}
+	}
+
+	// Identity of the binary, for a bug report. GOOS/GOARCH are compiled in and
+	// always present; the human OS name is best-effort and may be empty.
+	if got.OS == "" || got.Arch == "" {
+		t.Errorf("platform = %q/%q, want both set", got.OS, got.Arch)
+	}
+	if got.GoVersion == "" {
+		t.Error("go_version is empty; BuildInfo falls back to runtime.Version()")
 	}
 }
 
