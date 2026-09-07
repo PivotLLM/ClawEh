@@ -19,7 +19,7 @@ var knownCLIs = []struct {
 }{
 	{"claude-cli", "Claude Code", "claude"},
 	{"codex-cli", "Codex", "codex"},
-	{"gemini-cli", "Gemini CLI", "gemini"},
+	{"antigravity-cli", "Antigravity", "agy"},
 	{"cursor-cli", "Cursor", "cursor-agent"},
 }
 

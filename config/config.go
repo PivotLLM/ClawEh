@@ -1565,7 +1565,7 @@ type LoggingConfig struct {
 type Provider struct {
 	Name string `json:"name"` // Unique identifier referenced by ModelConfig.Provider
 	// Protocol is the wire format: openai-chat, openai-responses, azure,
-	// anthropic, anthropic-messages, claude-cli, codex-cli, gemini-cli,
+	// anthropic, anthropic-messages, claude-cli, codex-cli, antigravity-cli,
 	// cursor-cli. "anthropic" and "anthropic-messages" are the same thing —
 	// Anthropic speaks one wire format — and both reach the Messages adapter.
 	Protocol string `json:"protocol"`
@@ -1599,7 +1599,7 @@ type Provider struct {
 // ModelConfig represents a model-centric provider configuration.
 // It allows adding new providers (especially OpenAI-compatible ones) via configuration only.
 // The model field uses protocol prefix format: [protocol/]model-identifier
-// Supported protocols: openai, anthropic, claude-cli, codex-cli
+// Supported protocols: openai, anthropic, claude-cli, codex-cli, antigravity-cli
 // Default protocol is "openai" if no prefix is specified.
 // Vision passthrough modes for ModelConfig.Vision.
 const (
@@ -2097,13 +2097,14 @@ func (t *ToolsConfig) MCPClientEffectivelyEnabled() bool {
 
 // MCPHostConfig defines configuration for the MCP server claw exposes
 // (claw acting as an MCP server), used by CLI providers (claude-cli,
-// codex-cli, gemini-cli) so they can call claw's host-side tools natively
+// codex-cli, antigravity-cli, cursor-cli) so they can call claw's host-side tools natively
 // instead of emitting tool-call JSON in their prose. The allowlist is
 // global — applied once for all CLI clients, not per-LLM.
 type MCPHostConfig struct {
 	Enabled bool `json:"enabled"                     env:"CLAW_MCP_HOST_ENABLED"`
 	// AutoEnable, when true, starts the MCP host automatically whenever any
 	// enabled model in ModelList uses a *-cli protocol (claude-cli, codex-cli,
+	// antigravity-cli,
 	// gemini-cli). Those CLIs depend on MCP to call claw's host-side tools.
 	// Explicit Enabled=true always wins.
 	AutoEnable   bool   `json:"auto_enable"             env:"CLAW_MCP_HOST_AUTO_ENABLE"`
@@ -2624,8 +2625,11 @@ var validProtocols = map[string]struct{}{
 	"anthropic-messages": {},
 	"claude-cli":         {},
 	"codex-cli":          {},
-	"gemini-cli":         {},
-	"cursor-cli":         {},
+	"antigravity-cli":    {},
+	// Retained alias: Google deprecated the Gemini CLI in favour of
+	// Antigravity, and a released config naming this must keep validating.
+	"gemini-cli": {},
+	"cursor-cli": {},
 }
 
 // httpProtocols are the protocols that require a base_url.
@@ -2641,7 +2645,10 @@ var httpProtocols = map[string]struct{}{
 // which authenticates out-of-band and needs no API key.
 func IsCLIProtocol(protocol string) bool {
 	switch protocol {
-	case "claude-cli", "codex-cli", "gemini-cli", "cursor-cli":
+	// "gemini-cli" is retained as an alias for "antigravity-cli": Google
+	// deprecated the Gemini CLI, and a config still naming it must keep
+	// starting the MCP host, or its CLI would silently lose every claw tool.
+	case "claude-cli", "codex-cli", "antigravity-cli", "gemini-cli", "cursor-cli":
 		return true
 	default:
 		return false

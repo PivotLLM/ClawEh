@@ -98,8 +98,11 @@ func CreateProviderFromConfig(model *config.ModelConfig, prov *config.Provider) 
 	case "codex-cli":
 		return newCLIProvider(NewCodexCliProvider, NewCodexCliProviderWithTimeout, model, prov), modelID, nil
 
-	case "gemini-cli":
-		return newCLIProvider(NewGeminiCliProvider, NewGeminiCliProviderWithTimeout, model, prov), modelID, nil
+	// "gemini-cli" is an alias, not a second provider: Google deprecated the
+	// Gemini CLI in favour of Antigravity, so a config still naming it keeps
+	// starting and runs agy instead of failing on an unknown protocol.
+	case "antigravity-cli", "gemini-cli":
+		return newCLIProvider(NewAntigravityCliProvider, NewAntigravityCliProviderWithTimeout, model, prov), modelID, nil
 
 	case "cursor-cli":
 		return newCLIProvider(NewCursorCliProvider, NewCursorCliProviderWithTimeout, model, prov), modelID, nil

@@ -481,7 +481,7 @@ func setupAndStartServices(
 		logger.WarnCF("mcpserver", "MCP client initialization reported an error", map[string]any{"error": err.Error()})
 	}
 
-	// Start the MCP server so CLI providers (claude-cli/codex-cli/gemini-cli)
+	// Start the MCP server so CLI providers (claude-cli/codex-cli/antigravity-cli/cursor-cli)
 	// can call claw's host-side tools natively over MCP.
 	if err := startMCPServer(cfg, agentLoop, msgBus, services); err != nil {
 		return nil, err

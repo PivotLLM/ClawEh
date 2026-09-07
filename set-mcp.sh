@@ -1,9 +1,13 @@
 #!/bin/sh
 #
 # set-mcp.sh — register (or refresh) the ClawEh MCP server in whichever local AI
-# CLIs are installed: Gemini CLI (gemini), Codex CLI (codex), and Claude Code
+# CLIs are installed: Antigravity (agy), Codex CLI (codex), and Claude Code
 # (claude). Run it after installing/updating any of those CLIs, or after changing
 # the ClawEh MCP port. CLIs that are not on your PATH are skipped.
+#
+# Cursor is deliberately not handled here: it has no `mcp add` subcommand and is
+# configured by editing ~/.cursor/mcp.json, so this script reports what to add
+# rather than rewriting a file it does not own.
 #
 # ENDPOINT — ClawEh exposes two MCP endpoints (see docs/mcp.md):
 #     /mcp       standard bearer auth (Authorization: Bearer <token>)
@@ -29,14 +33,14 @@ echo ""
 # Each CLI is refreshed one at a time (remove, then add, then list) and only when
 # its binary is on the PATH.
 
-if have gemini; then
-    echo "== Gemini CLI =="
-    gemini mcp remove claw --scope user 2>/dev/null || true
-    gemini mcp add claw "$CLAW_MCP_URL" --scope user --transport http
-    gemini mcp list
+if have agy; then
+    echo "== Antigravity =="
+    agy mcp remove claw 2>/dev/null || true
+    agy mcp add claw "$CLAW_MCP_URL" --type http
+    agy mcp list
     echo ""
 else
-    echo "== Gemini CLI: 'gemini' not on PATH — skipping =="
+    echo "== Antigravity: 'agy' not on PATH — skipping =="
     echo ""
 fi
 
@@ -63,3 +67,10 @@ else
 fi
 
 echo "Done."
+
+if have cursor-agent || have agent; then
+    echo "== Cursor: no 'mcp add' subcommand — configure it by hand =="
+    echo "   Add this to ~/.cursor/mcp.json under \"mcpServers\":"
+    echo "     \"claw\": { \"url\": \"$CLAW_MCP_URL\" }"
+    echo ""
+fi

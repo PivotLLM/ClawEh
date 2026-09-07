@@ -170,7 +170,7 @@ func DefaultConfig() *Config {
 			// override the path. base_url is unused for CLI protocols.
 			{Name: "Claude CLI", Protocol: "claude-cli"},
 			{Name: "Codex CLI", Protocol: "codex-cli"},
-			{Name: "Gemini CLI", Protocol: "gemini-cli"},
+			{Name: "Antigravity CLI", Protocol: "antigravity-cli"},
 			{Name: "Cursor CLI", Protocol: "cursor-cli"},
 
 			{Name: "OpenAI", Protocol: "openai-chat", BaseURL: "https://api.openai.com/v1"},
@@ -206,10 +206,12 @@ func DefaultConfig() *Config {
 			{ModelName: "Claude CLI", Model: "claude-cli", Provider: "Claude CLI", RequestTimeout: 3600, ExtraArgs: []string{"--dangerously-skip-permissions", "--no-chrome"}, Env: map[string]string{"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"}, Enabled: false},
 			{ModelName: "Claude CLI Opus", Model: "claude-opus-4-7", Provider: "Claude CLI", RequestTimeout: 3600, ExtraArgs: []string{"--dangerously-skip-permissions", "--no-chrome"}, Env: map[string]string{"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"}, Enabled: false},
 			{ModelName: "Codex CLI", Model: "codex-cli", Provider: "Codex CLI", RequestTimeout: 3600, ExtraArgs: []string{"--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check"}, Enabled: false},
-			// GEMINI_CLI_TRUST_WORKSPACE=true is required for headless/automated use:
-			// without it, newer Gemini CLI refuses to run in an "untrusted" folder and
-			// overrides --yolo back to manual approval. See geminicli.com trusted-folders.
-			{ModelName: "Gemini CLI", Model: "gemini-2.5-pro", Provider: "Gemini CLI", RequestTimeout: 3600, ExtraArgs: []string{"--yolo"}, Env: map[string]string{"GEMINI_CLI_TRUST_WORKSPACE": "true"}, Enabled: false},
+			// Antigravity (binary "agy") replaces the deprecated Gemini CLI.
+			// --dangerously-skip-permissions auto-approves tool use, which headless
+			// operation needs. The prompt is piped on stdin and the provider never
+			// passes -p/--print: with either, agy reads the prompt from argv and
+			// ignores stdin.
+			{ModelName: "Antigravity CLI", Model: "antigravity-cli", Provider: "Antigravity CLI", RequestTimeout: 3600, ExtraArgs: []string{"--dangerously-skip-permissions"}, Enabled: false},
 			// --yolo runs the Cursor agent without approval prompts (headless use).
 			{ModelName: "Cursor CLI", Model: "cursor-cli", Provider: "Cursor CLI", RequestTimeout: 3600, ExtraArgs: []string{"--yolo"}, Enabled: false},
 

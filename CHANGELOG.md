@@ -110,6 +110,20 @@ and reachable by search.
 
 ### Changed
 
+- **BREAKING: the Gemini CLI provider is replaced by Antigravity (`agy`).**
+  Google has deprecated the Gemini CLI. The `antigravity-cli` protocol takes its
+  place, seeded as the **Antigravity CLI** provider and model, and the setup
+  wizard detects `agy` alongside the other CLI agents.
+
+  **`gemini-cli` remains accepted as an alias** and now runs `agy`, so an
+  existing configuration keeps starting, keeps auto-starting the MCP host, and
+  keeps working. New configurations should use `antigravity-cli`. The seeded
+  Gemini model and its `GEMINI_CLI_TRUST_WORKSPACE` environment variable are
+  gone; if you had customised that model, point it at the new provider.
+
+  `set-mcp.sh` now registers claw with `agy mcp add` instead of `gemini mcp add`,
+  and reports what to add for Cursor, which has no `mcp add` subcommand and is
+  configured through `~/.cursor/mcp.json`.
 - **A `retire` operation may omit its `evidence`.** Every memory operation had
   to cite a message in the current batch, which is right for anything that
   writes text — the rule exists to keep asserted memories anchored to something
