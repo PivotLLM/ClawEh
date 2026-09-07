@@ -145,21 +145,89 @@ func TestSelectBatchAlwaysProgresses(t *testing.T) {
 	}
 }
 
-func TestLoadPrompt(t *testing.T) {
-	p, used := LoadPrompt("")
-	if used || !strings.Contains(p, "Consolidation Engine") {
-		t.Fatalf("default prompt not loaded (used=%v)", used)
+// The contract is embedded and cannot be replaced. Per-agent instructions are
+// APPENDED to it, so a change to the schema or the core rules reaches every
+// agent at once instead of stopping at whatever version each workspace happened
+// to be seeded with.
+func TestBuildPromptAppendsAgentInstructions(t *testing.T) {
+	// No file: the contract alone.
+	got, res := BuildPrompt("")
+	if got != DefaultPrompt() || res.Appended || res.Ignored {
+		t.Fatalf("empty path: appended=%v ignored=%v", res.Appended, res.Ignored)
 	}
-	f := filepath.Join(t.TempDir(), "p.md")
-	_ = os.WriteFile(f, []byte("CUSTOM PROMPT"), 0o600)
-	p2, used2 := LoadPrompt(f)
-	if !used2 || p2 != "CUSTOM PROMPT" {
-		t.Fatalf("override not loaded (used=%v p=%q)", used2, p2)
+
+	// A missing file is not an error either.
+	got, res = BuildPrompt(filepath.Join(t.TempDir(), "missing.md"))
+	if got != DefaultPrompt() || res.Appended {
+		t.Fatalf("missing file: appended=%v", res.Appended)
 	}
-	// Unreadable override → fall back to default.
-	p3, used3 := LoadPrompt(filepath.Join(t.TempDir(), "missing.md"))
-	if used3 || !strings.Contains(p3, "Consolidation Engine") {
-		t.Fatalf("missing override should fall back to default")
+
+	// Real instructions are added, and the contract survives intact.
+	f := filepath.Join(t.TempDir(), "COGMEM.md")
+	if err := os.WriteFile(f, []byte("Never record anything about medical matters."), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	got, res = BuildPrompt(f)
+	if !res.Appended {
+		t.Error("instructions were not appended")
+	}
+	if !strings.Contains(got, "Never record anything about medical matters.") {
+		t.Error("the agent's instructions are missing from the prompt")
+	}
+	if !strings.Contains(got, "# OUTPUT SCHEMA") || !strings.Contains(got, "# CORE RULES") {
+		t.Error("the contract was lost when instructions were appended")
+	}
+	if !strings.Contains(got, "the contract wins") {
+		t.Error("precedence is not stated, so a conflicting instruction has no resolution")
+	}
+
+	// Whitespace only is the same as nothing.
+	blank := filepath.Join(t.TempDir(), "COGMEM.md")
+	if err := os.WriteFile(blank, []byte("\n  \n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if _, res := BuildPrompt(blank); res.Appended {
+		t.Error("a whitespace-only file was treated as instructions")
+	}
+}
+
+// Every workspace was seeded with a copy of the engine prompt. Appending one
+// would give the model the whole old prompt — including a second, contradictory
+// output schema — bolted onto the current one, which is worse than the
+// wholesale override this replaces. Such a file is ignored, and the caller is
+// told why so an operator can act on it.
+func TestBuildPromptIgnoresACopyOfTheEnginePrompt(t *testing.T) {
+	f := filepath.Join(t.TempDir(), "COGMEM.md")
+	if err := os.WriteFile(f, []byte(DefaultPrompt()), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	got, res := BuildPrompt(f)
+	if !res.Ignored {
+		t.Fatal("a copy of the engine prompt was appended rather than ignored")
+	}
+	if res.Appended {
+		t.Error("Ignored and Appended are both set")
+	}
+	if res.Reason == "" {
+		t.Error("no reason given, so the warning cannot say what to do about it")
+	}
+	if got != DefaultPrompt() {
+		t.Error("the prompt was altered even though the file was ignored")
+	}
+	// Only ONE schema section, so the model is never shown two contracts.
+	if n := strings.Count(got, "# OUTPUT SCHEMA"); n != 1 {
+		t.Errorf("prompt contains %d output schemas, want 1", n)
+	}
+
+	// An edited copy that still carries the schema is caught the same way: what
+	// makes it unusable is the duplicated contract, not being byte-identical.
+	edited := filepath.Join(t.TempDir(), "COGMEM.md")
+	if err := os.WriteFile(edited,
+		[]byte("Be sparing.\n"+DefaultPrompt()), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if _, res := BuildPrompt(edited); !res.Ignored {
+		t.Error("an edited copy carrying the schema was appended")
 	}
 }
 
@@ -188,32 +256,6 @@ func TestOutput_Normalize_IsANoOp(t *testing.T) {
 		if out.MemoryOps[i] != before[i] {
 			t.Errorf("memory_ops[%d] was mutated: %+v -> %+v", i, before[i], out.MemoryOps[i])
 		}
-	}
-}
-
-// An override prompt seeded by an older ClawEh keeps working — it names types
-// that still exist — so it degrades silently: the agent simply never records an
-// event or operational memory, and nothing says so. PromptIsStale is what makes
-// that visible.
-func TestPromptIsStale(t *testing.T) {
-	if PromptIsStale(DefaultPrompt()) {
-		t.Error("the shipped prompt reports itself as stale")
-	}
-	old := `# WHAT IS MEMORY
-A memory has exactly one type:
-- ` + "`fact`" + ` — something true.
-- ` + "`preference`" + ` — how the user likes things done.
-- ` + "`rule`" + ` — a hard directive.
-"status": "active|review", "source": "user_explicit|assistant_inferred"`
-	if !PromptIsStale(old) {
-		t.Error("a pre-redesign prompt was not detected as stale")
-	}
-	// A genuinely customised prompt that teaches the current types is not stale,
-	// however much else the operator changed.
-	custom := "Record an event for anything time-stamped, and operational for " +
-		"your own bookkeeping. Never record anything about medical matters."
-	if PromptIsStale(custom) {
-		t.Error("a customised prompt naming the current types was called stale")
 	}
 }
 
@@ -285,5 +327,38 @@ func TestDefaultPromptAsksForHousekeeping(t *testing.T) {
 		if !strings.Contains(p, want) {
 			t.Errorf("prompt is missing %q", want)
 		}
+	}
+}
+
+// A conflict-ledger entry may omit evidence, for the same reason a retire may:
+// it records a decision rather than asserting a memory, and a housekeeping
+// resolution has no message in the batch to cite.
+//
+// This is not hypothetical. Rule 9 asked a live agent to tidy a domain; it did,
+// filed the resolution in the ledger as instructed, and the whole payload was
+// rejected for `evidence [0,0] outside batch` — losing the entire consolidation
+// run rather than the single entry.
+func TestConflictLedgerMayOmitEvidence(t *testing.T) {
+	in := sampleInput()
+	out := Output{
+		MemoryOps: []MemoryOp{{Op: "retire", ID: "h9", Reason: "contradicted by h31"}},
+		ConflictLedger: []LedgerEntry{{
+			Resolved: "retired h9; h31 is the current instruction",
+			Reason:   "h31 is newer and says the opposite",
+		}},
+	}
+	if err := out.Validate(in); err != nil {
+		t.Fatalf("housekeeping resolution rejected: %v", err)
+	}
+}
+
+// Evidence given on a ledger entry is still checked.
+func TestConflictLedgerWithBadEvidenceIsStillRejected(t *testing.T) {
+	in := sampleInput()
+	out := Output{ConflictLedger: []LedgerEntry{
+		{Resolved: "x", Reason: "y", Evidence: ev(999, 999)},
+	}}
+	if err := out.Validate(in); err == nil {
+		t.Error("out-of-range ledger evidence was accepted")
 	}
 }

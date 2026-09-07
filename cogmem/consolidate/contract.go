@@ -247,6 +247,19 @@ func (o Output) Validate(in Input) error {
 	}
 
 	for i, e := range o.ConflictLedger {
+		// Optional for the same reason as a retire: a ledger entry RECORDS a
+		// decision, it does not assert a memory. When the decision is
+		// housekeeping — two stored memories contradict each other, and the
+		// stale one goes — there is no message in this batch to cite, because
+		// the conversation never raised it.
+		//
+		// Found the hard way: rule 9 asked the model to tidy, it did, it filed
+		// the resolution in the ledger as instructed, and the whole payload was
+		// rejected for evidence [0,0]. One invalid entry aborts the run, so the
+		// agent lost the entire consolidation rather than the one entry.
+		if e.Evidence.IsZero() {
+			continue
+		}
 		if err := evOK(e.Evidence); err != nil {
 			return fmt.Errorf("conflict_ledger[%d]: %w", i, err)
 		}

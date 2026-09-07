@@ -111,6 +111,26 @@ and reachable by search.
   single invalid operation rejects the whole payload, so an agent following the
   new rule above would have aborted entire consolidation runs.
 
+- **BREAKING: the consolidation prompt is no longer overridable.** A workspace
+  `COGMEM.md` used to replace it wholesale. Its contents are now **appended** to
+  the built-in prompt instead, so the file holds instructions for that assistant
+  — what to record, what to leave alone — while the rules and the output schema
+  stay with the engine.
+
+  The old arrangement made the machine contract operator-editable and froze it
+  at whatever version each workspace was seeded with, so a change to the schema
+  reached no existing agent. That survived by luck rather than design: a
+  required field the old copy did not emit would have failed validation on every
+  operation, and one invalid operation rejects the whole payload — silent, total
+  consolidation failure across every agent, visible only in run records.
+
+  **A `COGMEM.md` that is a copy of the built-in prompt is ignored**, with a
+  warning naming the file, because appending one would show the model two
+  contradictory output schemas. Every workspace seeded by an earlier version
+  contains exactly that, so those agents fall back to the built-in prompt with
+  no action needed: reduce the file to your own instructions, or delete it. New
+  workspaces are seeded with a short commented stub instead of a copy of the
+  prompt.
 - **BREAKING: `cogmem_export` writes YAML, not Markdown.** The output moves from
   `files/MEMORY_EXPORT.md` to `files/MEMORY_EXPORT.yaml` and is the same format
   the WebUI exports — which means it can be read back. The Markdown projection

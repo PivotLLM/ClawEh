@@ -3,10 +3,11 @@
 
 package consolidate
 
-// PromptFilename is the per-agent consolidation prompt. It is seeded into each
+// PromptFilename holds per-agent memory instructions. It is seeded into each
 // agent workspace by internal/workspace.Populate (write-if-missing) and is
-// operator-editable; the worker loads <workspace>/COGMEM.md and falls back to
-// the embedded default when absent.
+// operator-editable. Its contents are APPENDED to the embedded consolidation
+// prompt, which owns the rules and the output schema and is not overridable —
+// see BuildPrompt.
 const PromptFilename = "COGMEM.md"
 
 // Batching defaults. These are levers, surfaced per-agent via config and the
