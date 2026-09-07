@@ -77,7 +77,7 @@ type ToolDefinition struct {
 
     SessionScoped bool          // needs ToolCall.Session populated
     Async         bool          // may use ToolCall.Notify / return Result.Async
-    PrimaryOnly   bool          // primary agents only; excluded from sub-agents
+    PrimaryOnly   bool          // vestigial: declared by toolspec, not enforced
 
     DefaultAllow *bool          // nil/false ⇒ DENY by default; Allow(true) ⇒ on
     Category     string         // GUI grouping (defaults to namespace)
@@ -138,35 +138,35 @@ hand-written schema.
 config (`tools.tool_overrides["<ns>_<name>"] = true`). So new tools are off by
 default until you opt in or the operator turns them on.
 
-### Primary-only (sub-agent restriction)
+### Sub-agents and the full toolset
 
-`PrimaryOnly: true` marks a tool as available only to a **primary** (top-level)
-agent — never to a spawned **sub-agent**. When a sub-agent's tool registry is
-built, primary-only tools are excluded, and execution rejects them as
-defense-in-depth (regardless of the per-agent allowlist). Set it for capabilities
-a transient worker must not have:
+**A sub-agent inherits the parent's full toolset.** There is no per-tool
+sub-agent restriction: nothing is withheld from a worker because of what it is.
 
-- **`agent_spawn`** — prevents a sub-agent from spawning further sub-agents
-  (no recursion).
-- **`cron_schedule`** — a worker should not create/manage scheduled jobs.
-- **cognitive-memory WRITE tools** (`cogmem_memory_create`, `cogmem_domain_update`,
-  `cogmem_domain_create`, `cogmem_domain_archive`, `cogmem_domain_migrate`,
-  `cogmem_memory_retire`, `cogmem_memory_forget`,
-  `cogmem_consolidate`) — sub-agents get **read-only** memory: they share the
-  primary's memory for background but cannot mutate it. The read tools
-  (`cogmem_domain_get`, `cogmem_memory_search`, `cogmem_domain_list`,
-  `cogmem_explain`, `cogmem_export`, `cogmem_status`) stay available.
+`ToolDefinition.PrimaryOnly` still exists in `toolspec` and is vestigial —
+**ClawEh does not read it**, so setting it has no effect. It once marked tools a
+spawned worker could not have, which was effectively a depth limit of one, and
+it was replaced by a real one: `agents.defaults.max_subagent_depth` (default 3,
+`tools/agents/depth.go`). A primary turn is depth 0, the sub-agents it spawns run
+at depth 1, and a spawn is refused once the spawning agent is already at the
+bound. Sub-agents may therefore spawn further sub-agents and re-enter Maestro,
+but a runaway chain cannot occur.
 
-How to set it, by layer:
+Two things that used to be handled by withholding tools are now handled where
+they belong:
 
-- **Global-layer tools** (a `ToolProvider`): set `PrimaryOnly: true` on the
-  `ToolDefinition`. The namespaced wrapper propagates it automatically.
-- **Directly-registered tools** (implement `tools.Tool` and registered via
-  `AgentLoop.RegisterTool`): implement the optional interface
-  `IsPrimaryOnly() bool { return true }`.
+- **Recursion** is bounded by depth, as above, rather than by denying
+  `agent_spawn`. Workers that legitimately need to fan out can.
+- **Memory** is isolated by *scope*, not by tool availability. At spawn time the
+  parent's cognitive memory is snapshotted onto the sub-agent's own private
+  database, and the worker gets the memory **write** tools as well as the read
+  ones — sub-agents specifically need them. The snapshot is a throwaway copy,
+  deleted with the session when the worker finishes, so anything it writes stays
+  on that copy and never reaches the parent's memory. See
+  [docs/subagents.md](subagents.md).
 
-Detection is uniform: `tools.IsPrimaryOnly(t)` returns true for either form
-(tools that don't opt in are available to sub-agents).
+There is correspondingly no `tools.IsPrimaryOnly` helper: it was removed with
+the mechanism.
 
 ---
 
@@ -328,7 +328,7 @@ host supplies the concrete implementation.
 | Registry | `tools/providers.go` (`RegisterProvider` / `GetProviders`) |
 | **Aggregator (wire new modules here)** | `internal/gateway/tool_providers.go` |
 | Per-module entry points | `tools/<ns>/global_provider.go` (`var GlobalProvider`) |
-| Sub-agent restriction | `ToolDefinition.PrimaryOnly` / `tools.IsPrimaryOnly` (`tools/base.go`) |
+| Sub-agent recursion bound | `agents.defaults.max_subagent_depth` (`tools/agents/depth.go`) |
 | Host deps available to handlers | `tools` `ToolDeps` (via `deps.Host`) |
 | MCP exposure | `mcpserver` (`WithAgentRegistries`) |
 | WebUI catalogue | `web/backend/api/tools.go` (`Describe`) |
