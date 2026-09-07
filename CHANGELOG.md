@@ -68,6 +68,25 @@ and reachable by search.
   merely share a topic are worth more than one vague paragraph, so only
   memories that genuinely say the same thing are collapsed. Automatic
   de-duplication by exact text match still runs as well.
+- **`claw status` reports whether the gateway is running, and its RAM.** It
+  could previously answer neither: it reads configuration from disk and never
+  looked at the process, so it described an installation rather than a running
+  system.
+
+  ```
+  Gateway:         running (pid 1690872), 40.4 MB RAM
+  ```
+
+  The gateway writes `claw.pid` into its data directory at startup and removes
+  it on clean shutdown. The data directory is the scope that matters — one
+  binary runs several instances on a host, and the command has already resolved
+  `CLAW_HOME` to find the config, so it reports on the instance you asked
+  about. A stale file left by a hard kill reads as "not running": the process
+  must still exist *and* still be claw, because pids are recycled.
+
+  The figure is resident set size, the same number `ps` reports as RSS — not
+  virtual size, which for a Go process includes a gigabyte of reserved address
+  space and would suggest the gateway is enormous when it is not.
 - **Memory retention.** `event` memories are deleted after **30 days** and
   retired memories **90 days** after they were retired, both overridable per
   agent on the Agents page (blank = the default, `-1` = keep forever). Events

@@ -29,6 +29,7 @@ import (
 	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/health"
 	"github.com/PivotLLM/ClawEh/internal"
+	"github.com/PivotLLM/ClawEh/internal/pidfile"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/mcpserver"
 	"github.com/PivotLLM/ClawEh/media"
@@ -207,6 +208,16 @@ func gatewayCmd(debug bool) error {
 	if err != nil {
 		return err
 	}
+
+	// Record the pid so `claw status` can find THIS instance. Scoped to the data
+	// directory because one binary runs several gateways on a host, and a CLI
+	// command already resolves CLAW_HOME to find the config. Non-fatal: a
+	// gateway that cannot write the file should still serve.
+	if err := pidfile.Write(cfg.DataDir()); err != nil {
+		logger.WarnCF("gateway", "could not write the pid file; `claw status` will not see this instance",
+			map[string]any{"error": err.Error()})
+	}
+	defer pidfile.Remove(cfg.DataDir())
 
 	logger.InfoF("Gateway started", map[string]any{"addr": fmt.Sprintf("%s:%d", cfg.Gateway.Host, cfg.Gateway.Port)})
 
