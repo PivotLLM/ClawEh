@@ -604,6 +604,30 @@ EOF
                     echo "${GREEN}Gateway ready on 127.0.0.1:$MCP_PORT/mcp${NC}"
                     echo ""
 
+                    # ---- PID file: written at startup ----
+                    #
+                    # `claw status` finds a running instance through this file,
+                    # so if it is absent or wrong the command silently reports
+                    # "not running" on a healthy system.
+                    echo "${BOLD}--- PID file ---${NC}"
+                    echo ""
+                    if [ -f "$INTEG_HOME/claw.pid" ]; then
+                        PIDFILE_CONTENT=$(cat "$INTEG_HOME/claw.pid" 2>/dev/null | tr -d ' \n')
+                        if [ "$PIDFILE_CONTENT" = "$INTEG_PID" ]; then
+                            echo "  ${GREEN}PASS${NC}: claw.pid written at startup (pid $PIDFILE_CONTENT)"
+                            INTEGRATION_PASS_COUNT=$((INTEGRATION_PASS_COUNT + 1))
+                        else
+                            echo "  ${RED}FAIL${NC}: claw.pid says '$PIDFILE_CONTENT', gateway is $INTEG_PID"
+                            INTEGRATION_FAIL_COUNT=$((INTEGRATION_FAIL_COUNT + 1))
+                            INTEGRATION_PASSED=false
+                        fi
+                    else
+                        echo "  ${RED}FAIL${NC}: claw.pid not written at startup"
+                        INTEGRATION_FAIL_COUNT=$((INTEGRATION_FAIL_COUNT + 1))
+                        INTEGRATION_PASSED=false
+                    fi
+                    echo ""
+
                     # ---- Workspace population: initial startup ----
                     echo "${BOLD}--- Workspace population (initial startup) ---${NC}"
                     echo ""
@@ -655,13 +679,40 @@ EOF
                     echo "${BOLD}--- Workspace population (restart after deletion) ---${NC}"
                     echo ""
 
-                    # Stop the current gateway.
+                    # Stop the current gateway with SIGTERM — what systemd
+                    # sends, and the signal a service actually has to handle.
                     kill -TERM "$INTEG_PID" 2>/dev/null
+                    TERM_CLEAN=false
                     for _ in $(seq 1 20); do
-                        kill -0 "$INTEG_PID" 2>/dev/null || break
+                        if ! kill -0 "$INTEG_PID" 2>/dev/null; then
+                            TERM_CLEAN=true
+                            break
+                        fi
                         sleep 0.25
                     done
                     kill -KILL "$INTEG_PID" 2>/dev/null || true
+
+                    # SIGTERM must run the shutdown path, not kill outright.
+                    #
+                    # Go's default disposition for an unregistered SIGTERM is to
+                    # terminate immediately, so this is not hypothetical: only
+                    # SIGINT was handled once, and every systemctl stop skipped
+                    # shutdown entirely. The pid file is the visible proof —
+                    # it is removed by a deferred cleanup that a hard kill never
+                    # reaches.
+                    if ! $TERM_CLEAN; then
+                        echo "  ${RED}FAIL${NC}: gateway did not exit within 5s of SIGTERM"
+                        INTEGRATION_FAIL_COUNT=$((INTEGRATION_FAIL_COUNT + 1))
+                        INTEGRATION_PASSED=false
+                    elif [ -f "$INTEG_HOME/claw.pid" ]; then
+                        echo "  ${RED}FAIL${NC}: claw.pid survived SIGTERM — shutdown did not run"
+                        INTEGRATION_FAIL_COUNT=$((INTEGRATION_FAIL_COUNT + 1))
+                        INTEGRATION_PASSED=false
+                    else
+                        echo "  ${GREEN}PASS${NC}: SIGTERM ran graceful shutdown (claw.pid removed)"
+                        INTEGRATION_PASS_COUNT=$((INTEGRATION_PASS_COUNT + 1))
+                    fi
+                    echo ""
 
                     # Delete alice's workspace — simulates adding a fresh agent.
                     rm -rf "$INTEG_HOME/agents/alice"
