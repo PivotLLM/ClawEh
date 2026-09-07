@@ -68,6 +68,16 @@ and reachable by search.
   merely share a topic are worth more than one vague paragraph, so only
   memories that genuinely say the same thing are collapsed. Automatic
   de-duplication by exact text match still runs as well.
+- **A Status page in the Web UI**, reached from a **Status** entry at the bottom
+  of the sidebar — outside the collapsible groups, since it describes the
+  running process rather than a section of the configuration, and it is what you
+  open when something feels wrong. It shows uptime, memory, the number of
+  assistants, channels, enabled models and providers, goroutines, pid, version,
+  build, and whether the MCP host is running. Backed by a new
+  `GET /api/system/status`, polled every five seconds so the figures stay live.
+- **`/status` in chat now reports memory.** The command runs inside the process,
+  so it reports on itself — which also means you can ask an assistant how much
+  RAM it is using without shell access to the host.
 - **`claw status` reports whether ClawEh is running, and its RAM.** It could
   previously answer neither: it reads configuration from disk and never looked
   at the process, so it described an installation rather than a running system.

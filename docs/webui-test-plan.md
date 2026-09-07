@@ -46,10 +46,10 @@ until curl -sf http://127.0.0.1:8077/ready >/dev/null; do sleep 1; done
 
 ## B. Route smoke
 
-**Process.** Load each of the 17 routes in a browser with the console open:
+**Process.** Load each of the 18 routes in a browser with the console open:
 `/`, `/agents`, `/agent/bindings`, `/agent/tools`, `/agent/skills`, `/channels`,
 `/config`, `/config/raw`, `/devices`, `/logs`, `/mcp`, `/mcp/servers`, `/memory`,
-`/models`, `/providers`, `/voice`, `/setup`.
+`/models`, `/providers`, `/voice`, `/setup`, `/status`.
 
 **Expected.** Each renders substantive content (>40 characters of text) and logs
 **no console errors**. A blank page or a red console entry is a failure.
@@ -67,7 +67,7 @@ until curl -sf http://127.0.0.1:8077/ready >/dev/null; do sleep 1; done
 
 | ID | Process | Expected |
 |---|---|---|
-| D1 | Load all 17 routes; scan the rendered text for anything shaped like a translation key (`pages.…`, `navigation.…`) | None found. i18next renders the key verbatim when a lookup fails, so a leaked key is the only visible symptom of a broken locale |
+| D1 | Load all 18 routes; scan the rendered text for anything shaped like a translation key (`pages.…`, `navigation.…`) | None found. i18next renders the key verbatim when a lookup fails, so a leaked key is the only visible symptom of a broken locale |
 | D2 | Load `/agent/tools` | No heading reads `…categories.<name>`. Tool categories come from the backend catalog; a category with no label in `en.json` shows as a raw key |
 
 ## E. Chat and WebSocket auth
@@ -168,6 +168,15 @@ and deletes it at the end. Nothing outside that domain is touched.
 | N14 | **Add memory** on the domain, type some text, **Add** | The memory is in the store with `origin: "user"` |
 | N15 | Retire a row, then click **Show retired** | It disappears from the default view and comes back behind the toggle. Without that it could never be restored |
 | N16 | `DELETE /api/memory/{id}/domains/{domain}` | `204`, and the probe domain is gone even with `include_retired=1` |
+
+## O. Status page
+
+| ID | Process | Expected |
+|---|---|---|
+| O1 | `curl $BASE/api/system/status` | `200`, carrying `version`, `uptime`, `pid`, `memory_bytes` and `agents`. `memory_bytes` is resident set size — between 1 MB and 2 GB. A gigabyte-scale figure means `VmSize` was read instead of `VmRSS`, which for a Go process counts over a gigabyte of reserved address space |
+| O2 | Compare the counts against `GET /api/config` | `agents` and `providers` match what the configuration lists |
+| O3 | Load `/`, click **Status** in the sidebar | The link is in the sidebar **footer** — below the collapsible groups, so it is reachable without opening a disclosure — and navigates to `/status` with no console errors |
+| O4 | Load `/status` | The memory, assistants and uptime tiles all render live figures; memory reads as a size with a unit |
 
 ---
 

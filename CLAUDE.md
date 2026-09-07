@@ -167,7 +167,7 @@ until curl -sf http://127.0.0.1:8077/ready >/dev/null; do sleep 1; done
 node tests/frontend-e2e.mjs
 ```
 
-- **The plan is `docs/webui-test-plan.md`** — 80 numbered steps, each with a
+- **The plan is `docs/webui-test-plan.md`** — 85 numbered checks, each with a
   process and an expected result, followable by hand. `tests/frontend-e2e.mjs`
   executes it and prints the same step IDs. Keep the two in step: a step added
   to one belongs in the other.

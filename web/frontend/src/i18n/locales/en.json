@@ -41,7 +41,8 @@
     "mcp_config": "Config",
     "mcp_servers": "Servers",
     "logs": "Logs",
-    "memory": "Memory"
+    "memory": "Memory",
+    "status": "Status"
   },
   "chat": {
     "welcome": "How can I help you today?",
@@ -88,7 +89,9 @@
   },
   "labels": {
     "loading": "Loading...",
-    "cancel": "Cancel"
+    "cancel": "Cancel",
+    "yes": "Yes",
+    "no": "No"
   },
   "models": {
     "description": "Configure API keys for AI providers. Only configured models are available for chat.",
@@ -607,6 +610,23 @@
       "err_import": "Import failed",
       "select_all_in": "Select every memory in {{name}}",
       "select_all_hint": "Select every memory in this domain"
+    },
+    "status": {
+      "load_error": "Failed to load status.",
+      "uptime": "Uptime",
+      "memory": "Memory",
+      "heap": "{{value}} Go heap",
+      "assistants": "Assistants",
+      "channels": "Channels",
+      "models": "Models",
+      "enabled": "enabled",
+      "providers": "Providers",
+      "goroutines": "Goroutines",
+      "pid": "PID",
+      "version": "Version",
+      "build": "Build",
+      "mcp_host": "MCP host",
+      "cli_providers": "CLI providers"
     }
   },
   "providers": {

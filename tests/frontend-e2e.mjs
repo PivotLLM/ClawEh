@@ -149,6 +149,7 @@ const ROUTES = [
   "/providers",
   "/voice",
   "/setup",
+  "/status",
 ]
 
 // A leaked i18n key: i18next renders the key verbatim when lookup fails.
@@ -620,6 +621,72 @@ if (useGroup("K", "Logs, MCP, memory, voice")) {
       assert(body.length > 80, `${p} nearly empty`)
       assert(problems.length === 0, `${p} console: ${problems[0]}`)
     }
+  })
+}
+
+// O. Status page
+if (useGroup("O", "Status page")) {
+  await check(1, "the status API reports the running process", async () => {
+    const { status, json } = await api("/api/system/status")
+    assert(status === 200, `status = ${status}`)
+    for (const k of ["version", "uptime", "pid", "memory_bytes", "agents"]) {
+      assert(json[k] !== undefined, `field ${k} missing from the response`)
+    }
+    // Resident set size, not virtual: a Go process reserves over a gigabyte of
+    // address space, so a gigabyte-scale answer means VmSize was read instead.
+    assert(json.memory_bytes > 1e6, `memory_bytes = ${json.memory_bytes}, implausibly small`)
+    assert(json.memory_bytes < 2e9, `memory_bytes = ${json.memory_bytes} — that looks like VmSize`)
+    assert(json.pid > 0, `pid = ${json.pid}`)
+    return `${(json.memory_bytes / 1048576).toFixed(1)} MB, ${json.agents} assistants, up ${json.uptime}`
+  })
+
+  await check(2, "counts match the configuration", async () => {
+    const { json: st } = await api("/api/system/status")
+    const cfg = await config()
+    assert(
+      st.agents === (cfg.agents?.list?.length ?? 0),
+      `agents = ${st.agents}, config lists ${cfg.agents?.list?.length}`,
+    )
+    assert(
+      st.providers === (cfg.providers?.length ?? 0),
+      `providers = ${st.providers}, config lists ${cfg.providers?.length}`,
+    )
+    return `${st.agents} assistants, ${st.providers} providers, ${st.channels} channels`
+  })
+
+  await check(3, "the sidebar links to it from the bottom", async () => {
+    const { ctx, page, problems } = await open("/")
+    const link = page.locator("[data-testid=nav-status]")
+    await link.waitFor({ state: "visible", timeout: 10000 });
+    // It sits in the footer, below the collapsible groups — reachable without
+    // opening a disclosure, which is the point of putting it there.
+    const inFooter = await link.evaluate((el) =>
+      Boolean(el.closest("[data-slot=sidebar-footer]")),
+    )
+    await link.click()
+    await page.waitForTimeout(1500)
+    const path = new URL(page.url()).pathname
+    await ctx.close()
+    assert(problems.length === 0, `console: ${problems[0]}`)
+    assert(inFooter, "the Status link is not in the sidebar footer")
+    assert(path === "/status", `clicking Status went to ${path}`)
+  })
+
+  await check(4, "the page renders live figures", async () => {
+    const { ctx, page, problems } = await open("/status")
+    await page.locator("[data-testid=status-grid]").waitFor({ state: "visible", timeout: 10000 })
+    const read = async (id) =>
+      (await page.locator(`[data-testid=${id}]`).innerText()).trim()
+    const memory = await read("status-memory")
+    const assistants = await read("status-assistants")
+    const uptime = await read("status-uptime")
+    await ctx.close()
+
+    assert(problems.length === 0, `console: ${problems[0]}`)
+    assert(/\d+(\.\d+)?\s*(KB|MB|GB)/.test(memory), `memory tile reads ${JSON.stringify(memory)}`)
+    assert(/\d/.test(assistants), `assistants tile reads ${JSON.stringify(assistants)}`)
+    assert(/\d/.test(uptime), `uptime tile reads ${JSON.stringify(uptime)}`)
+    return memory.replace(/\s+/g, " ")
   })
 }
 

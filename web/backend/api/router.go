@@ -117,6 +117,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 
 	// CLI-agent detection (claude/codex/gemini on PATH) for the setup wizard
 	h.registerSystemCLIRoutes(mux)
+	h.registerSystemStatusRoutes(mux)
 
 	// First-run setup status (drives the wizard redirect)
 	h.registerSetupStatusRoutes(mux)

@@ -3,10 +3,12 @@ package commands
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/PivotLLM/ClawEh/app"
+	"github.com/PivotLLM/ClawEh/internal/pidfile"
 )
 
 func statusCommand() Definition {
@@ -42,6 +44,13 @@ func buildStatusReply(req Request, rt *Runtime) string {
 	if rt != nil && rt.Uptime != nil {
 		d := rt.Uptime().Truncate(time.Second)
 		fmt.Fprintf(&body, "Uptime: %s\n", d.String())
+	}
+	// Resident set size. This command runs inside the gateway, so it reports on
+	// itself — no pid file, no staleness, and it works over chat when the host
+	// shell is not to hand. Not virtual size, which for a Go process counts
+	// over a gigabyte of reserved address space.
+	if rss, ok := pidfile.RSSBytes(os.Getpid()); ok {
+		fmt.Fprintf(&body, "Memory: %.1f MB\n", float64(rss)/(1024*1024))
 	}
 	if rt != nil && rt.AgentName != "" {
 		fmt.Fprintf(&body, "Agent: %s\n", rt.AgentName)

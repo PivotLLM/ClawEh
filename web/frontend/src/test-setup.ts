@@ -10,6 +10,28 @@ import { afterEach, beforeEach, vi } from "vitest"
 // duplicate-element bug in the component rather than a leak in the harness.
 afterEach(cleanup)
 
+// jsdom implements no media queries, and window.matchMedia is simply absent.
+// Anything rendering the sidebar reaches for it through the mobile-breakpoint
+// hook and dies with "matchMedia is not a function" — a harness gap that reads
+// like a component bug. Stubbed here so each component test does not have to
+// rediscover it. Reports "does not match", i.e. the desktop layout.
+if (typeof window !== "undefined" && !window.matchMedia) {
+  Object.defineProperty(window, "matchMedia", {
+    writable: true,
+    configurable: true,
+    value: (query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      addListener: () => {},
+      removeListener: () => {},
+      dispatchEvent: () => false,
+    }),
+  })
+}
+
 // Fail a test on any console.error or console.warn.
 //
 // This is the guard against slow rot. React reports most of its real problems —

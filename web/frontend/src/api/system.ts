@@ -63,3 +63,30 @@ export async function getVersion(): Promise<string> {
   const res = await request<{ version: string }>("/api/system/version")
   return res.version
 }
+
+/** Runtime state of the running ClawEh process, for the Status page. */
+export interface SystemStatus {
+  version: string
+  build?: string
+  uptime_seconds: number
+  uptime: string
+  pid: number
+  /** Resident set size: the physical RAM the process holds. */
+  memory_bytes: number
+  /** What Go itself has in use, i.e. how much of the resident figure is the
+   *  program rather than its mapped binary. */
+  heap_bytes: number
+  goroutines: number
+  agents: number
+  models: number
+  providers: number
+  channels: number
+  cli_providers: boolean
+  mcp_host: boolean
+}
+
+export async function getSystemStatus(): Promise<SystemStatus> {
+  const res = await fetch("/api/system/status")
+  if (!res.ok) throw new Error(`Failed to fetch status: ${res.status}`)
+  return res.json()
+}
