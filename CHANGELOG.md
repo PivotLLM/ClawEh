@@ -95,7 +95,7 @@ and reachable by search.
 
   The figure is resident set size, the same number `ps` reports as RSS — not
   virtual size, which for a Go process includes a gigabyte of reserved address
-  space and would suggest the gateway is enormous when it is not.
+  space and would suggest ClawEh is enormous when it is not.
 - **Memory retention.** `event` memories are deleted after **30 days** and
   retired memories **90 days** after they were retired, both overridable per
   agent on the Agents page (blank = the default, `-1` = keep forever). Events

@@ -617,7 +617,7 @@ EOF
                             echo "  ${GREEN}PASS${NC}: claw.pid written at startup (pid $PIDFILE_CONTENT)"
                             INTEGRATION_PASS_COUNT=$((INTEGRATION_PASS_COUNT + 1))
                         else
-                            echo "  ${RED}FAIL${NC}: claw.pid says '$PIDFILE_CONTENT', gateway is $INTEG_PID"
+                            echo "  ${RED}FAIL${NC}: claw.pid says '$PIDFILE_CONTENT', process is $INTEG_PID"
                             INTEGRATION_FAIL_COUNT=$((INTEGRATION_FAIL_COUNT + 1))
                             INTEGRATION_PASSED=false
                         fi
@@ -679,7 +679,7 @@ EOF
                     echo "${BOLD}--- Workspace population (restart after deletion) ---${NC}"
                     echo ""
 
-                    # Stop the current gateway with SIGTERM — what systemd
+                    # Stop the running instance with SIGTERM — what systemd
                     # sends, and the signal a service actually has to handle.
                     kill -TERM "$INTEG_PID" 2>/dev/null
                     TERM_CLEAN=false
@@ -701,7 +701,7 @@ EOF
                     # it is removed by a deferred cleanup that a hard kill never
                     # reaches.
                     if ! $TERM_CLEAN; then
-                        echo "  ${RED}FAIL${NC}: gateway did not exit within 5s of SIGTERM"
+                        echo "  ${RED}FAIL${NC}: ClawEh did not exit within 5s of SIGTERM"
                         INTEGRATION_FAIL_COUNT=$((INTEGRATION_FAIL_COUNT + 1))
                         INTEGRATION_PASSED=false
                     elif [ -f "$INTEG_HOME/claw.pid" ]; then

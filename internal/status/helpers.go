@@ -77,7 +77,7 @@ func statusCmd() {
 // rather than a running system.
 //
 // The instance is found through the PID file in the data directory, which is
-// what makes the answer specific — one binary runs several gateways on a host,
+// what makes the answer specific — one binary runs several instances on a host,
 // and this command already resolved CLAW_HOME to find the config, so it reports
 // on the instance the caller is actually asking about.
 func printProcess(dataDir string) {
@@ -93,7 +93,7 @@ func printProcess(dataDir string) {
 	if rss, ok := pidfile.RSSBytes(pid); ok {
 		// Resident set size: the physical RAM the process occupies. Not VmSize,
 		// which for a Go process counts over a gigabyte of reserved address
-		// space and would make the gateway look enormous when it is not.
+		// space and would make ClawEh look enormous when it is not.
 		line += fmt.Sprintf(", %s RAM", humanBytes(rss))
 	}
 	fmt.Println(line)

@@ -45,7 +45,7 @@ func buildStatusReply(req Request, rt *Runtime) string {
 		d := rt.Uptime().Truncate(time.Second)
 		fmt.Fprintf(&body, "Uptime: %s\n", d.String())
 	}
-	// Resident set size. This command runs inside the gateway, so it reports on
+	// Resident set size. This command runs inside ClawEh itself, so it reports on
 	// itself — no pid file, no staleness, and it works over chat when the host
 	// shell is not to hand. Not virtual size, which for a Go process counts
 	// over a gigabyte of reserved address space.

@@ -1,9 +1,9 @@
-// ClawEh - gateway PID file
+// ClawEh - process PID file
 // License: MIT
 //
 // Copyright (c) 2026 Tenebris Technologies Inc.
 
-// Package pidfile records the running gateway's process id in its data
+// Package pidfile records the running ClawEh process id in its data
 // directory, so a separate `claw` invocation can find the instance it belongs
 // to and report on it.
 //
@@ -30,8 +30,8 @@ const Name = "claw.pid"
 func Path(dataDir string) string { return filepath.Join(dataDir, Name) }
 
 // Write records the current process id. A failure is returned rather than
-// fatal: the PID file is a convenience for reporting, and a gateway that cannot
-// write one should still start.
+// fatal: the PID file is a convenience for reporting, and an instance that
+// cannot write one should still start.
 func Write(dataDir string) error {
 	if dataDir == "" {
 		return fmt.Errorf("pidfile: no data directory")
@@ -56,7 +56,7 @@ func Remove(dataDir string) {
 }
 
 // Read returns the pid recorded for a data directory and whether that process
-// is a LIVE gateway.
+// is a LIVE ClawEh process.
 //
 // Both checks matter. A kill -9 leaves the file behind, and pids are recycled,
 // so a file alone proves nothing: the process must still exist AND still be
@@ -103,8 +103,7 @@ func isClaw(pid int) bool {
 //
 // VmRSS is the same figure ps reports as RSS; they are not different metrics.
 // Deliberately NOT VmSize, which for a Go process includes over a gigabyte of
-// reserved address space and would suggest the gateway is enormous when it is
-// not.
+// reserved address space and would suggest ClawEh is enormous when it is not.
 func RSSBytes(pid int) (int64, bool) {
 	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/status", pid))
 	if err != nil {
