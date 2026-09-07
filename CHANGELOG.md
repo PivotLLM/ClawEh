@@ -47,6 +47,14 @@ and reachable by search.
   without bound, so they are never loaded automatically. Each domain reports how
   many it holds and names the call that reads them, and `cogmem_memory_search`
   reaches them with `include_events: true`.
+- **Consolidation can tell which of two conflicting memories is newer.** Each
+  memory it reviews now carries `age_days` — how long ago it was asserted — and
+  they are listed oldest first. Previously it saw no time at all, so the rule
+  that a newer instruction overrides an older one could not be applied to
+  anything already stored: asked to resolve a contradiction, an assistant would
+  correctly decline to guess which of two opposing instructions was current, and
+  both stayed in its prompt indefinitely. Days rather than a timestamp, because
+  the question is only which is newer.
 - **Consolidation now tidies the domains it touches.** Where two memories say
   the same thing it retires the weaker one, and where a newer memory
   contradicts an older one it retires the older and records it in the conflict

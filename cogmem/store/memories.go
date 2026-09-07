@@ -242,9 +242,14 @@ func (s *Store) ListMemories(ctx context.Context, q DBTX, domainID string, statu
 
 // ListPromptMemories returns a domain's active memories that belong in the
 // prompt — every type except TypeEvent. This is the composer's read path.
+//
+// Oldest first. Ids are random, so ordering by id was effectively arbitrary and
+// not even stable between stores; chronological order makes the rendered block
+// stable and puts the newest statement on a topic last, which is where a reader
+// looks for the current one.
 func (s *Store) ListPromptMemories(ctx context.Context, q DBTX, domainID string) ([]Memory, error) {
 	return s.queryMemories(ctx, q,
-		memorySelect+` WHERE domain_id=? AND status=? AND type<>? ORDER BY id`,
+		memorySelect+` WHERE domain_id=? AND status=? AND type<>? ORDER BY created_at, id`,
 		domainID, string(StatusActive), string(TypeEvent))
 }
 

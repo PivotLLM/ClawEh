@@ -4,6 +4,7 @@
 package consolidate
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -360,5 +361,43 @@ func TestConflictLedgerWithBadEvidenceIsStillRejected(t *testing.T) {
 	}}
 	if err := out.Validate(in); err == nil {
 		t.Error("out-of-range ledger evidence was accepted")
+	}
+}
+
+// The model must be able to tell which of two contradicting memories is newer.
+//
+// current_state carried no time at all, so rule 3 — a newer instruction
+// overrides an older one — was unenforceable against stored memories. Asked to
+// resolve a contradiction between two rules, a live agent deduplicated
+// correctly and then, rightly, declined to guess which conflicting instruction
+// was current. age_days is what it was missing.
+func TestPromptExplainsAgeDays(t *testing.T) {
+	p := DefaultPrompt()
+	for _, want := range []string{
+		"`age_days`",
+		"listed oldest first",
+		"smaller `age_days` is the",
+	} {
+		if !strings.Contains(p, want) {
+			t.Errorf("prompt does not explain %q", want)
+		}
+	}
+}
+
+// Days, not a timestamp: the question is which is newer, and a small integer
+// answers it without the model doing date arithmetic.
+func TestMemoryViewCarriesAgeInDays(t *testing.T) {
+	b, err := json.Marshal(MemoryView{ID: "h1", Type: "rule", Text: "x", Confidence: 0.9, AgeDays: 180})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	got := string(b)
+	if !strings.Contains(got, `"age_days":180`) {
+		t.Errorf("age_days missing from the wire format: %s", got)
+	}
+	for _, unwanted := range []string{"created", "timestamp", "T00:00"} {
+		if strings.Contains(got, unwanted) {
+			t.Errorf("view carries %q; days were chosen over a timestamp: %s", unwanted, got)
+		}
 	}
 }

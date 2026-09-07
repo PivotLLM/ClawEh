@@ -167,3 +167,41 @@ func TestPurgeKeepsEverythingWhenDisabled(t *testing.T) {
 		t.Error("a 10-year-old event was deleted with retention disabled")
 	}
 }
+
+// Prompt memories come back oldest first.
+//
+// Ids are random, so ordering by id was arbitrary and not even stable between
+// stores. Chronological order makes the rendered block stable and puts the
+// newest statement on a topic last, which is where a reader looks for the
+// current one — and it backs up the age_days signal the consolidation prompt
+// now relies on to resolve contradictions.
+func TestPromptMemoriesAreOldestFirst(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	d, _ := s.CreateDomain(ctx, s.DB(), CreateDomainParams{AgentID: "a", Name: "Ops"})
+
+	oldest := add(t, s, d.ID, TypeRule, "the original instruction")
+	middle := add(t, s, d.ID, TypeRule, "a revision")
+	newest := add(t, s, d.ID, TypeRule, "the current instruction")
+	age(t, s, oldest.ID, 100)
+	age(t, s, middle.ID, 50)
+	age(t, s, newest.ID, 1)
+
+	got, err := s.ListPromptMemories(ctx, s.DB(), d.ID)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	want := []string{
+		"the original instruction",
+		"a revision",
+		"the current instruction",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d memories, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i].Text != want[i] {
+			t.Errorf("position %d = %q, want %q (oldest first)", i, got[i].Text, want[i])
+		}
+	}
+}

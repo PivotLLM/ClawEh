@@ -331,6 +331,7 @@ func (w *Worker) currentState(ctx context.Context) CurrentState {
 					Type:       string(h.Type),
 					Text:       h.Text,
 					Confidence: h.Confidence,
+					AgeDays:    int(time.Since(h.CreatedAt).Hours() / 24),
 				})
 			}
 		}

@@ -59,6 +59,21 @@ type MemoryView struct {
 	Type       string  `json:"type"`
 	Text       string  `json:"text"`
 	Confidence float64 `json:"confidence"`
+	// AgeDays is how long ago this memory was asserted, so the model can tell
+	// which of two contradicting memories is the newer one.
+	//
+	// Without it, rule 3 — a newer instruction overrides an older one — was
+	// unenforceable against stored memories: the view carried no time at all,
+	// so a live agent asked to resolve a contradiction correctly declined to
+	// guess. Days rather than a timestamp because the question is "which is
+	// newer", and a small integer answers it without the model doing date
+	// arithmetic it is bad at.
+	//
+	// Measured from creation, not last update: updating moves when a memory is
+	// retyped or has a document attached, neither of which says anything about
+	// when the claim was made. Consolidation supersedes rather than edits, so a
+	// re-asserted memory gets a fresh creation time.
+	AgeDays int `json:"age_days"`
 }
 
 // Message is one archive message in the batch.

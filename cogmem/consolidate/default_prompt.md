@@ -90,7 +90,11 @@ add / supersede / retire; or do nothing.
 1. De-duplicate: if already in `curated` or `current_state`, do nothing.
 2. Resolve contradictions; never keep both. Supersede or retire the stale memory
    and record it in `conflict_ledger`.
-3. Recency: a newer explicit instruction overrides an older one at the same scope.
+3. Recency: a newer explicit instruction overrides an older one at the same
+   scope. Each memory in `current_state` carries `age_days` — how long ago it
+   was asserted — and they are listed oldest first. When two memories conflict
+   and nothing else separates them, the one with the smaller `age_days` is the
+   current instruction and the other is stale.
 4. Explicit beats inferred: when the user stated something and you inferred
    something else, keep what they stated.
 5. Anything time-stamped or soon-stale is `"type":"event"`, not `"fact"`.
@@ -101,9 +105,9 @@ add / supersede / retire; or do nothing.
 9. **Tidy the domains you touch.** Look at `current_state` for the domains this
    batch affects, not just at what the new messages say. Where two memories
    state the same thing, `retire` the weaker or older one and keep the clearest.
-   Where a newer memory contradicts an older one, `retire` the older and record
-   it in `conflict_ledger`. Do this even when the conversation did not raise
-   the topic — nothing else ever revisits a memory once it is written, so
+   Where a newer memory contradicts an older one, `retire` the older (the
+   larger `age_days`) and record it in `conflict_ledger`. Do this even when the
+   conversation did not raise the topic — nothing else ever revisits a memory once it is written, so
    redundancy and stale contradictions accumulate forever otherwise.
    - A `retire` op may omit `evidence`: it removes something that already
      exists rather than asserting anything, so no message needs to justify it.
