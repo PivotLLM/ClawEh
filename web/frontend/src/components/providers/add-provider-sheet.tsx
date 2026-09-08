@@ -254,54 +254,59 @@ export function AddProviderSheet({
               </>
             )}
 
-            <AdvancedSection>
-              <Field
-                label={t("providers.field.proxy")}
-                hint={t("providers.field.proxyHint")}
-              >
-                <Input
-                  value={form.proxy}
-                  onChange={setField("proxy")}
-                  placeholder="http://127.0.0.1:7890"
+            {/* HTTP wire knobs only; the CLI factory reads none of them. The
+                picker offers no CLI protocols, so this is unreachable today —
+                guarded so it stays correct if one is ever added back. */}
+            {!cli && (
+              <AdvancedSection>
+                <Field
+                  label={t("providers.field.proxy")}
+                  hint={t("providers.field.proxyHint")}
+                >
+                  <Input
+                    value={form.proxy}
+                    onChange={setField("proxy")}
+                    placeholder="http://127.0.0.1:7890"
+                  />
+                </Field>
+
+                <SwitchCardField
+                  label={t("providers.field.strictCompat")}
+                  hint={t("providers.field.strictCompatHint")}
+                  checked={form.strictCompat}
+                  onCheckedChange={(v) =>
+                    setForm((f) => ({ ...f, strictCompat: v }))
+                  }
                 />
-              </Field>
 
-              <SwitchCardField
-                label={t("providers.field.strictCompat")}
-                hint={t("providers.field.strictCompatHint")}
-                checked={form.strictCompat}
-                onCheckedChange={(v) =>
-                  setForm((f) => ({ ...f, strictCompat: v }))
-                }
-              />
+                <SwitchCardField
+                  label={t("providers.field.requireReasoningContent")}
+                  hint={t("providers.field.requireReasoningContentHint")}
+                  checked={form.requireReasoningContent}
+                  onCheckedChange={(v) =>
+                    setForm((f) => ({ ...f, requireReasoningContent: v }))
+                  }
+                />
 
-              <SwitchCardField
-                label={t("providers.field.requireReasoningContent")}
-                hint={t("providers.field.requireReasoningContentHint")}
-                checked={form.requireReasoningContent}
-                onCheckedChange={(v) =>
-                  setForm((f) => ({ ...f, requireReasoningContent: v }))
-                }
-              />
+                <SwitchCardField
+                  label={t("providers.field.noParallelToolCalls")}
+                  hint={t("providers.field.noParallelToolCallsHint")}
+                  checked={form.noParallelToolCalls}
+                  onCheckedChange={(v) =>
+                    setForm((f) => ({ ...f, noParallelToolCalls: v }))
+                  }
+                />
 
-              <SwitchCardField
-                label={t("providers.field.noParallelToolCalls")}
-                hint={t("providers.field.noParallelToolCallsHint")}
-                checked={form.noParallelToolCalls}
-                onCheckedChange={(v) =>
-                  setForm((f) => ({ ...f, noParallelToolCalls: v }))
-                }
-              />
-
-              <SwitchCardField
-                label={t("providers.field.responseFormatJSON")}
-                hint={t("providers.field.responseFormatJSONHint")}
-                checked={form.responseFormatJSON}
-                onCheckedChange={(v) =>
-                  setForm((f) => ({ ...f, responseFormatJSON: v }))
-                }
-              />
-            </AdvancedSection>
+                <SwitchCardField
+                  label={t("providers.field.responseFormatJSON")}
+                  hint={t("providers.field.responseFormatJSONHint")}
+                  checked={form.responseFormatJSON}
+                  onCheckedChange={(v) =>
+                    setForm((f) => ({ ...f, responseFormatJSON: v }))
+                  }
+                />
+              </AdvancedSection>
+            )}
 
             {serverError && (
               <p className="text-destructive bg-destructive/10 rounded-md px-3 py-2 text-sm">

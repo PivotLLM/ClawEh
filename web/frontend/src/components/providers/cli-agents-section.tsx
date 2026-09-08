@@ -118,6 +118,7 @@ function CLIRow({
   onEdit: () => void
 }) {
   const { t } = useTranslation()
+  const args = [...cli.required_args, ...(cli.extra_args ?? [])]
 
   return (
     <div
@@ -145,6 +146,14 @@ function CLIRow({
             ? (cli.path ?? cli.binary)
             : t("providers.cli.notFound", { binary: cli.binary })}
         </div>
+        {/* These flags auto-approve tool use. Someone deciding whether to run a
+            CLI unattended is entitled to read them here rather than find them
+            in a process listing. */}
+        {args.length > 0 && (
+          <div className="text-muted-foreground/70 truncate font-mono text-xs">
+            {t("providers.cli.args", { args: args.join(" ") })}
+          </div>
+        )}
       </div>
 
       {/* A switch governing several models must say so before it is flipped. */}

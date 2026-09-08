@@ -641,6 +641,50 @@ if (useGroup("I", "Models and providers")) {
     )
     return `${cards} API cards, ${cliProviders.length} CLI providers in the section`
   })
+
+  await check(8, "a CLI row shows the flags it will run with", async () => {
+    const clis = (await api("/api/system/clis")).json ?? []
+    const withArgs = clis.find((c) => (c.required_args ?? []).length > 0)
+    const { ctx, page, problems } = await open("/providers")
+    await page.locator("[data-testid=cli-agents]").waitFor({ state: "visible", timeout: 10000 })
+    const row = await page
+      .locator(`[data-testid=cli-row-${withArgs.protocol}]`)
+      .innerText()
+    await ctx.close()
+
+    assert(problems.length === 0, `console errors: ${problems[0]}`)
+    // These auto-approve tool use. Someone deciding whether to run a CLI
+    // unattended should read them here, not find them in a process listing.
+    for (const arg of withArgs.required_args) {
+      assert(row.includes(arg), `${withArgs.protocol} row does not show ${arg}: ${row}`)
+    }
+    return withArgs.required_args.join(" ")
+  })
+
+  await check(9, "a CLI provider is not offered HTTP-only switches", async () => {
+    const clis = (await api("/api/system/clis")).json ?? []
+    const configured = clis.find((c) => c.configured)
+    const { ctx, page, problems } = await open("/providers")
+    await page.locator("[data-testid=cli-agents]").waitFor({ state: "visible", timeout: 10000 })
+    await page.locator(`[data-testid=cli-edit-${configured.protocol}]`).click()
+    await page.waitForTimeout(700)
+    const sheet = await page.locator("[data-slot=sheet-content]").innerText()
+    await page.keyboard.press("Escape")
+    await ctx.close()
+
+    assert(problems.length === 0, `console errors: ${problems[0]}`)
+    // strict_compat, require_reasoning_content, no_parallel_tool_calls,
+    // response_format_json and proxy are HTTP wire knobs the CLI factory never
+    // reads. Rendered here they were controls that did nothing, and an off
+    // switch reads as a feature available but disabled — which is how
+    // response_format_json came to look like the reason a CLI was not
+    // returning JSON. (It always does: --output-format json is in the argv.)
+    for (const gone of ["Strict", "Reasoning", "Parallel", "JSON", "Proxy"]) {
+      assert(!sheet.includes(gone), `the CLI edit sheet still offers ${gone}: ${sheet}`)
+    }
+    assert(/Command/i.test(sheet), "the CLI edit sheet lost its Command field")
+    return configured.protocol
+  })
 }
 
 // J. Devices — the store-open regression

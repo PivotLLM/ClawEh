@@ -119,6 +119,8 @@ Creates an agent called `e2e-probe` and deletes it at the end.
 | I5 | `/providers` → **Add Provider** → open the wire-protocol picker | No `*-cli` protocol is offered. A CLI is added by its switch in the **Local CLI agents** section; building one by hand here would produce a provider the section does not show and the grid filters out |
 | I6 | Load `/providers` and count the rows in **Local CLI agents** | One row and one switch per supported CLI from `GET /api/system/clis`, whether or not the binary is installed. A CLI the host lacks is greyed out and says so — hiding it would look like ClawEh does not support it |
 | I7 | Compare the provider cards against `GET /api/providers` | The grid holds only the non-CLI providers. CLI providers appear in the section above and nowhere else: one CLI is one thing to the person using it, and showing it twice under two controls is what made it confusing |
+| I8 | Load `/providers` and read a CLI row | It shows the flags ClawEh will pass — `--dangerously-skip-permissions`, `--yolo` and the like. They auto-approve tool use, so someone deciding whether to run a CLI unattended reads them here rather than finding them in a process listing |
+| I9 | `/providers` → edit a configured CLI from its row | The sheet offers the Command field and **no** advanced section. Proxy, `strict_compat`, `require_reasoning_content`, `no_parallel_tool_calls` and `response_format_json` are HTTP wire knobs the CLI factory never reads; shown here they were controls that did nothing, and an off switch reads as a feature available but disabled — which is how `response_format_json` came to look like the reason a CLI was not returning JSON. It always does: `--output-format json` is in the argv, not the config |
 
 ## J. Devices
 

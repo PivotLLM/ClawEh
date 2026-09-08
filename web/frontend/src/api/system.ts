@@ -36,6 +36,10 @@ export interface CLIInfo {
   /** Models running through this CLI, and how many of them are enabled. */
   models: number
   models_enabled: number
+  /** Arguments ClawEh passes on every invocation of this CLI. */
+  required_args: string[]
+  /** What this CLI's models add on top, deduplicated across them. */
+  extra_args?: string[]
 }
 
 // listCLIs reports every supported CLI agent (claude/codex/agy/cursor): whether

@@ -31,6 +31,7 @@ function cli(over: Partial<CLIInfo> = {}): CLIInfo {
     provider_index: -1,
     models: 0,
     models_enabled: 0,
+    required_args: ["--dangerously-skip-permissions"],
     ...over,
   }
 }
@@ -87,6 +88,16 @@ describe("CLIAgentsSection", () => {
     renderSection([cli({ configured: true, models: 1, models_enabled: 1, enabled: true })])
     await screen.findByTestId("cli-row-antigravity-cli")
     expect(screen.queryByText(/modelCount/)).toBeNull()
+  })
+
+  it("shows the flags it will run with, so nobody has to guess", async () => {
+    // These auto-approve tool use. Someone deciding whether to switch a CLI on
+    // is entitled to read them here rather than find them in a process listing.
+    renderSection([
+      cli({ required_args: ["--yolo"], extra_args: ["--verbose"] }),
+    ])
+    const row = await screen.findByTestId("cli-row-antigravity-cli")
+    expect(row.textContent).toContain("--yolo --verbose")
   })
 
   it("offers editing only once a provider exists", async () => {

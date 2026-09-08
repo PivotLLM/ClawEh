@@ -58,6 +58,11 @@ and reachable by search.
   could not be set through the Web UI at all (see the `extra_args` entry under
   Fixed), so a CLI model created in the browser could not be made to work.
 
+  Each row shows the arguments ClawEh will pass — `--dangerously-skip-permissions`,
+  `--yolo` and the like — plus anything the CLI's models add. Those flags
+  auto-approve tool use, and someone deciding whether to run a CLI unattended
+  should be able to read them rather than find them in a process listing.
+
   CLI providers now appear only in this section, and the wire-protocol picker
   under **Add Provider** no longer offers `*-cli` protocols. Editing one — to
   pin an explicit binary path, say — is still available from its row.
@@ -270,6 +275,17 @@ and reachable by search.
   permanent by the next save. **Check your `providers` for `strict_compat` or
   `no_parallel_tool_calls` on an endpoint that should not have them** if you
   have ever deleted a provider; remove the key and restart.
+
+- **A CLI provider was offered five settings that do nothing.** Proxy,
+  `strict_compat`, `require_reasoning_content`, `no_parallel_tool_calls` and
+  `response_format_json` are HTTP wire knobs, and the CLI factory reads none of
+  them — a CLI provider is built from its command, workspace, arguments and
+  environment alone. Shown on a CLI form they were five controls with no effect,
+  and an off switch reads as a feature that is available and disabled: it made
+  `response_format_json` look like the reason a CLI was not returning JSON. It
+  always does. `--output-format json` (`--json` for Codex) is in the arguments
+  ClawEh passes, not in the configuration, and never was optional. The advanced
+  section is now hidden for CLI providers.
 
 - **The Providers page called a CLI provider configured whenever a path was
   filled in, without checking that the binary was there.** A provider pinned to

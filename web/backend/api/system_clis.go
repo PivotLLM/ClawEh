@@ -50,6 +50,14 @@ type cliInfo struct {
 	// switch governing several of them does not hide what it is about to do.
 	Models        int `json:"models"`
 	ModelsEnabled int `json:"models_enabled"`
+	// RequiredArgs are the arguments ClawEh passes on every invocation of this
+	// CLI. Reported so they can be shown rather than merely happen: they
+	// auto-approve tool use, which is a thing an operator is entitled to see
+	// before switching a CLI on, and not something to discover from a process
+	// listing.
+	RequiredArgs []string `json:"required_args"`
+	// ExtraArgs are what the CLI's models add on top, deduplicated across them.
+	ExtraArgs []string `json:"extra_args,omitempty"`
 }
 
 func (h *Handler) registerSystemCLIRoutes(mux *http.ServeMux) {
@@ -70,18 +78,32 @@ func (h *Handler) handleListCLIs(w http.ResponseWriter, r *http.Request) {
 
 	out := make([]cliInfo, 0, len(config.CLIAgents))
 	for _, c := range config.CLIAgents {
-		info := cliInfo{Protocol: c.Protocol, Label: c.Label, Binary: c.Binary, ProviderIndex: -1}
+		info := cliInfo{
+			Protocol:      c.Protocol,
+			Label:         c.Label,
+			Binary:        c.Binary,
+			ProviderIndex: -1,
+			RequiredArgs:  c.RequiredArgs,
+		}
 		if p, err := exec.LookPath(c.Binary); err == nil {
 			info.Installed = true
 			info.Path = p
 			info.Version = cliVersion(c.Binary)
 		}
+		seenExtra := map[string]struct{}{}
 		for _, m := range cliModels(cfg, c.Protocol) {
 			info.Configured = true
 			info.Models++
 			if m.Enabled {
 				info.ModelsEnabled++
 				info.Enabled = true
+			}
+			for _, a := range m.ExtraArgs {
+				if _, dup := seenExtra[a]; dup {
+					continue
+				}
+				seenExtra[a] = struct{}{}
+				info.ExtraArgs = append(info.ExtraArgs, a)
 			}
 		}
 		if idx := cliProviderIndex(cfg, c.Protocol); idx >= 0 {

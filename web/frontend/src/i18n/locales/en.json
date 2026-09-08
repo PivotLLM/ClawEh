@@ -640,6 +640,7 @@
       "title": "Local CLI agents",
       "description": "Coding agents installed on this machine. Switching one on sets up everything it needs; switching it off disables every model that runs through it.",
       "notFound": "{{binary}} not found on PATH",
+      "args": "Runs with {{args}}",
       "modelCount": "{{enabled}} of {{count}} models on",
       "toggleError": "Failed to change the CLI agent"
     },
