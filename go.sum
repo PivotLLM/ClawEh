@@ -6,6 +6,8 @@ github.com/PivotLLM/Maestro v0.4.1 h1:LjBQkAJRQ57/t2XBcxpSa1behFFc29WjoMD2iLiIRv
 github.com/PivotLLM/Maestro v0.4.1/go.mod h1:WHh/T/ofdXxR7xYJKPpuOUyNA9Kr+DkBVWlRWbZq3iM=
 github.com/PivotLLM/spawnllm v0.1.11 h1:4MrMk47+eS6EXVRTcyYonAQZNFWDgmu8hz+fGlGXjDM=
 github.com/PivotLLM/spawnllm v0.1.11/go.mod h1:VEq3syYV2jYqeoaNPo89lH9AyA6oDzFj2AIUlPBUfnU=
+github.com/PivotLLM/spawnllm v0.1.12 h1:ItzPMrabt/xDayEt8VglCjusTvScPjZ2sCG7FpkF6s4=
+github.com/PivotLLM/spawnllm v0.1.12/go.mod h1:VEq3syYV2jYqeoaNPo89lH9AyA6oDzFj2AIUlPBUfnU=
 github.com/PivotLLM/toolspec v0.4.0 h1:/6EZ8XvQoMi6LmFw24gt5UcekuQPoj88evwfMUn5xTU=
 github.com/PivotLLM/toolspec v0.4.0/go.mod h1:QA/AiJHJSEwsLGEY0RTGWC124ftNigLIP8pTPj3oVKM=
 github.com/a3tai/openclaw-go v1.20260325.0 h1:bYZV2zSgI01tSwWJc9DKMlOGku5ydMAkhgt/SL5kxCc=

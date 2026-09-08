@@ -81,6 +81,15 @@ func TestCLIAgents_CatalogueIsComplete(t *testing.T) {
 		if len(c.RequiredArgs) == 0 {
 			t.Errorf("%s has no required arguments; every CLI needs its permission flag", c.Protocol)
 		}
+		// The base arguments are what makes the CLI answer in JSON at all. A
+		// row without them would show the operator a command line shorter than
+		// the one being run, which is the failure this field exists to prevent.
+		if len(c.BaseArgs) == 0 {
+			t.Errorf("%s publishes no base arguments", c.Protocol)
+		}
+		if !slices.Contains(c.BaseArgs, "json") && !slices.Contains(c.BaseArgs, "--json") {
+			t.Errorf("%s base args %v request no JSON output", c.Protocol, c.BaseArgs)
+		}
 		if c.RequestTimeout <= 0 {
 			t.Errorf("%s has no request timeout", c.Protocol)
 		}

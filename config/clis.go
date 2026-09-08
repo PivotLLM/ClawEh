@@ -1,5 +1,7 @@
 package config
 
+import "github.com/PivotLLM/spawnllm"
+
 // CLI agents — the local binaries ClawEh can drive as providers.
 //
 // Each of these needs a provider entry, a model entry, and a handful of flags
@@ -22,6 +24,18 @@ type CLIAgent struct {
 	// Binary is the executable to look for on PATH when a provider sets no
 	// explicit command.
 	Binary string
+	// BaseArgs are the arguments the provider itself always passes: print the
+	// answer, encode it as JSON, and (where the CLI needs saying) read the
+	// prompt from stdin. Not configurable and never were, which is precisely
+	// why they have to be shown — an operator asking what ClawEh runs on their
+	// machine is owed the whole command line, not the part that lives in
+	// config. Taken from spawnllm, which builds the invocation from the same
+	// values, so the two cannot drift.
+	BaseArgs []string
+	// TrailingArgs come after everything else, matching the real invocation:
+	// the CLIs that need telling to read the prompt from stdin take that marker
+	// last, after the model flag.
+	TrailingArgs []string
 	// RequiredArgs are passed on every invocation. These are not preferences:
 	// without them the CLI stops to ask for approval it cannot receive, and
 	// answers nothing. A model's extra_args are appended to these.
@@ -43,6 +57,8 @@ var CLIAgents = []CLIAgent{
 		Protocol:       "claude-cli",
 		Label:          "Claude CLI",
 		Binary:         "claude",
+		BaseArgs:       spawnllm.ClaudeCliBaseArgs(),
+		TrailingArgs:   []string{spawnllm.StdinArg},
 		RequiredArgs:   []string{"--dangerously-skip-permissions", "--no-chrome"},
 		Env:            map[string]string{"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"},
 		RequestTimeout: 3600,
@@ -51,6 +67,8 @@ var CLIAgents = []CLIAgent{
 		Protocol:       "codex-cli",
 		Label:          "Codex CLI",
 		Binary:         "codex",
+		BaseArgs:       spawnllm.CodexCliBaseArgs(),
+		TrailingArgs:   []string{spawnllm.StdinArg},
 		RequiredArgs:   []string{"--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check"},
 		RequestTimeout: 3600,
 	},
@@ -61,6 +79,7 @@ var CLIAgents = []CLIAgent{
 		Protocol:       "antigravity-cli",
 		Label:          "Antigravity CLI",
 		Binary:         "agy",
+		BaseArgs:       spawnllm.AntigravityCliBaseArgs(),
 		RequiredArgs:   []string{"--dangerously-skip-permissions"},
 		RequestTimeout: 3600,
 	},
@@ -68,6 +87,7 @@ var CLIAgents = []CLIAgent{
 		Protocol:       "cursor-cli",
 		Label:          "Cursor CLI",
 		Binary:         "cursor-agent",
+		BaseArgs:       spawnllm.CursorCliBaseArgs(),
 		RequiredArgs:   []string{"--yolo"},
 		RequestTimeout: 3600,
 	},

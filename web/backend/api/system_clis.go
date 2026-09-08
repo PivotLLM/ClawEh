@@ -50,14 +50,17 @@ type cliInfo struct {
 	// switch governing several of them does not hide what it is about to do.
 	Models        int `json:"models"`
 	ModelsEnabled int `json:"models_enabled"`
-	// RequiredArgs are the arguments ClawEh passes on every invocation of this
-	// CLI. Reported so they can be shown rather than merely happen: they
-	// auto-approve tool use, which is a thing an operator is entitled to see
-	// before switching a CLI on, and not something to discover from a process
-	// listing.
+	// BaseArgs are the arguments the provider always passes — headless mode,
+	// JSON output, read from stdin. RequiredArgs are the permission flags.
+	// Both are reported so the row can show the whole command line: an operator
+	// asking what ClawEh runs on their machine is owed all of it, not the part
+	// that happens to live in config.
+	BaseArgs     []string `json:"base_args"`
 	RequiredArgs []string `json:"required_args"`
 	// ExtraArgs are what the CLI's models add on top, deduplicated across them.
 	ExtraArgs []string `json:"extra_args,omitempty"`
+	// TrailingArgs come last, after the model flag — the stdin marker.
+	TrailingArgs []string `json:"trailing_args,omitempty"`
 }
 
 func (h *Handler) registerSystemCLIRoutes(mux *http.ServeMux) {
@@ -83,7 +86,9 @@ func (h *Handler) handleListCLIs(w http.ResponseWriter, r *http.Request) {
 			Label:         c.Label,
 			Binary:        c.Binary,
 			ProviderIndex: -1,
+			BaseArgs:      c.BaseArgs,
 			RequiredArgs:  c.RequiredArgs,
+			TrailingArgs:  c.TrailingArgs,
 		}
 		if p, err := exec.LookPath(c.Binary); err == nil {
 			info.Installed = true

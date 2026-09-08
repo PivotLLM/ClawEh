@@ -58,10 +58,13 @@ and reachable by search.
   could not be set through the Web UI at all (see the `extra_args` entry under
   Fixed), so a CLI model created in the browser could not be made to work.
 
-  Each row shows the arguments ClawEh will pass — `--dangerously-skip-permissions`,
-  `--yolo` and the like — plus anything the CLI's models add. Those flags
-  auto-approve tool use, and someone deciding whether to run a CLI unattended
-  should be able to read them rather than find them in a process listing.
+  Each row shows the **whole command line**, in the order it is built: the
+  flags the provider always passes (`-p --output-format json`, and the stdin
+  marker), the permission flags (`--dangerously-skip-permissions`, `--yolo`),
+  and anything the CLI's models add in `extra_args`. Some of it auto-approves
+  tool use, and none of it appeared anywhere before — the transport flags are
+  not configurable and so were invisible. Someone asking what ClawEh runs on
+  their machine is owed all of it, not the part that happens to live in config.
 
   CLI providers now appear only in this section, and the wire-protocol picker
   under **Add Provider** no longer offers `*-cli` protocols. Editing one — to
@@ -275,6 +278,16 @@ and reachable by search.
   permanent by the next save. **Check your `providers` for `strict_compat` or
   `no_parallel_tool_calls` on an endpoint that should not have them** if you
   have ever deleted a provider; remove the key and restart.
+
+- **The model count is shown on every configured CLI row.** It was omitted
+  where a CLI had a single model, which left it printed for one CLI and absent
+  for the rest — read as a fault rather than as brevity.
+
+- **Plural translations never selected their plural form.** Keys carrying a
+  `_plural` sibling — the pre-v21 i18next convention — are silently ignored by
+  the version in use, which wants `_other`. Provider cards read "2 model", and
+  the new CLI rows inherited it. Both fixed, with a test that fails on any
+  `_plural` key left in the catalogue.
 
 - **A CLI provider was offered five settings that do nothing.** Proxy,
   `strict_compat`, `require_reasoning_content`, `no_parallel_tool_calls` and

@@ -118,7 +118,16 @@ function CLIRow({
   onEdit: () => void
 }) {
   const { t } = useTranslation()
-  const args = [...cli.required_args, ...(cli.extra_args ?? [])]
+  // The whole command line, in the order it is actually built: the provider's
+  // own flags, the permission flags, whatever the models add, then the stdin
+  // marker. Showing only the configured part would answer "what runs on my
+  // machine" with the smaller half of the truth.
+  const args = [
+    ...cli.base_args,
+    ...cli.required_args,
+    ...(cli.extra_args ?? []),
+    ...(cli.trailing_args ?? []),
+  ]
 
   return (
     <div
@@ -146,9 +155,9 @@ function CLIRow({
             ? (cli.path ?? cli.binary)
             : t("providers.cli.notFound", { binary: cli.binary })}
         </div>
-        {/* These flags auto-approve tool use. Someone deciding whether to run a
-            CLI unattended is entitled to read them here rather than find them
-            in a process listing. */}
+        {/* Some of these auto-approve tool use. Someone deciding whether to run
+            a CLI unattended is entitled to read the command line here rather
+            than find it in a process listing. */}
         {args.length > 0 && (
           <div className="text-muted-foreground/70 truncate font-mono text-xs">
             {t("providers.cli.args", { args: args.join(" ") })}
@@ -156,8 +165,10 @@ function CLIRow({
         )}
       </div>
 
-      {/* A switch governing several models must say so before it is flipped. */}
-      {cli.models > 1 && (
+      {/* Shown on every configured row, not only where the switch governs
+          several models. Printing it for Claude's three and omitting it for the
+          others read as a fault rather than as brevity. */}
+      {cli.models > 0 && (
         <span className="text-muted-foreground shrink-0 text-xs">
           {t("providers.cli.modelCount", {
             count: cli.models,

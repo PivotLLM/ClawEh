@@ -31,6 +31,7 @@ function cli(over: Partial<CLIInfo> = {}): CLIInfo {
     provider_index: -1,
     models: 0,
     models_enabled: 0,
+    base_args: ["--output-format", "json"],
     required_args: ["--dangerously-skip-permissions"],
     ...over,
   }
@@ -70,22 +71,37 @@ describe("CLIAgentsSection", () => {
 
   it("shows the resolved path once installed", async () => {
     renderSection([cli({ path: "/home/eric/.local/bin/agy" })])
-    expect(
-      await screen.findByText("/home/eric/.local/bin/agy"),
-    ).toBeTruthy()
+    expect(await screen.findByText("/home/eric/.local/bin/agy")).toBeTruthy()
   })
 
   it("says how many models a switch governs when it is more than one", async () => {
     // Turning the CLI off disables all of them, so the count must be visible
     // before the switch is flipped, not after.
     renderSection([
-      cli({ protocol: "claude-cli", configured: true, models: 3, models_enabled: 2, enabled: true }),
+      cli({
+        protocol: "claude-cli",
+        configured: true,
+        models: 3,
+        models_enabled: 2,
+        enabled: true,
+      }),
     ])
     expect(await screen.findByText(/modelCount/)).toBeTruthy()
   })
 
-  it("does not clutter a single-model row with a count", async () => {
-    renderSection([cli({ configured: true, models: 1, models_enabled: 1, enabled: true })])
+  it("shows the count on a single-model row too", async () => {
+    // Printing it for a CLI with three models and omitting it for the rest
+    // reads as a fault rather than as brevity.
+    renderSection([
+      cli({ configured: true, models: 1, models_enabled: 1, enabled: true }),
+    ])
+    expect(await screen.findByText(/modelCount/)).toBeTruthy()
+  })
+
+  it("shows no count for a CLI that is not configured", async () => {
+    // Nothing to count, and "0 of 0" is noise on a row whose point is that it
+    // has not been set up.
+    renderSection([cli({ configured: false, models: 0 })])
     await screen.findByTestId("cli-row-antigravity-cli")
     expect(screen.queryByText(/modelCount/)).toBeNull()
   })
@@ -94,10 +110,19 @@ describe("CLIAgentsSection", () => {
     // These auto-approve tool use. Someone deciding whether to switch a CLI on
     // is entitled to read them here rather than find them in a process listing.
     renderSection([
-      cli({ required_args: ["--yolo"], extra_args: ["--verbose"] }),
+      cli({
+        base_args: ["-p", "--output-format", "json"],
+        required_args: ["--yolo"],
+        extra_args: ["--verbose"],
+        trailing_args: ["-"],
+      }),
     ])
     const row = await screen.findByTestId("cli-row-antigravity-cli")
-    expect(row.textContent).toContain("--yolo --verbose")
+    // The whole command line, in invocation order — the provider's own flags
+    // included, not just the ones that live in config.
+    expect(row.textContent).toContain(
+      "-p --output-format json --yolo --verbose -",
+    )
   })
 
   it("offers editing only once a provider exists", async () => {
@@ -113,7 +138,9 @@ describe("CLIAgentsSection", () => {
   it("surfaces a failure rather than silently leaving the switch unchanged", async () => {
     listCLIs.mockResolvedValue([cli()])
     setCLIEnabled.mockRejectedValue(new Error("config is read-only"))
-    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
     render(
       <QueryClientProvider client={qc}>
         <CLIAgentsSection providers={[]} onEdit={() => {}} />

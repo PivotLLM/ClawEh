@@ -612,7 +612,6 @@ if (useGroup("I", "Models and providers")) {
     await page.locator("[data-testid=cli-agents]").waitFor({ state: "visible", timeout: 10000 })
     const rows = await page.locator("[data-testid^=cli-row-]").count()
     const switches = await page.locator("[data-testid^=cli-switch-]").count()
-    await ctx.close()
 
     assert(problems.length === 0, `console errors: ${problems[0]}`)
     assert(clis.length >= 4, `only ${clis.length} CLIs in the catalogue`)
@@ -620,6 +619,16 @@ if (useGroup("I", "Models and providers")) {
     // ClawEh does not support it.
     assert(rows === clis.length, `${rows} rows for ${clis.length} supported CLIs`)
     assert(switches === clis.length, `${switches} switches for ${rows} rows`)
+    // Every configured row carries its model count, not only one governing
+    // several models: printing it for some CLIs and not others read as a fault.
+    for (const c of clis.filter((x) => x.configured)) {
+      const row = await page.locator(`[data-testid=cli-row-${c.protocol}]`).innerText()
+      assert(
+        new RegExp(`${c.models_enabled} of ${c.models} models? on`).test(row),
+        `${c.protocol} row shows no model count: ${JSON.stringify(row)}`,
+      )
+    }
+    await ctx.close()
     return `${rows} CLIs, ${clis.filter((c) => c.installed).length} installed`
   })
 
@@ -642,7 +651,7 @@ if (useGroup("I", "Models and providers")) {
     return `${cards} API cards, ${cliProviders.length} CLI providers in the section`
   })
 
-  await check(8, "a CLI row shows the flags it will run with", async () => {
+  await check(8, "a CLI row shows the whole command line", async () => {
     const clis = (await api("/api/system/clis")).json ?? []
     const withArgs = clis.find((c) => (c.required_args ?? []).length > 0)
     const { ctx, page, problems } = await open("/providers")
@@ -653,12 +662,22 @@ if (useGroup("I", "Models and providers")) {
     await ctx.close()
 
     assert(problems.length === 0, `console errors: ${problems[0]}`)
-    // These auto-approve tool use. Someone deciding whether to run a CLI
-    // unattended should read them here, not find them in a process listing.
-    for (const arg of withArgs.required_args) {
+    // The provider's own flags as well as the configured ones: an operator
+    // asking what runs on their machine is owed the whole command line, not
+    // the part that happens to live in config. Some of it auto-approves tool
+    // use, which is the part worth reading before switching a CLI on.
+    const all = [
+      ...withArgs.base_args,
+      ...withArgs.required_args,
+      ...(withArgs.extra_args ?? []),
+      ...(withArgs.trailing_args ?? []),
+    ]
+    assert(withArgs.base_args.length > 0, `${withArgs.protocol} publishes no base args`)
+    for (const arg of all) {
       assert(row.includes(arg), `${withArgs.protocol} row does not show ${arg}: ${row}`)
     }
-    return withArgs.required_args.join(" ")
+    assert(row.includes(all.join(" ")), `row does not show them in invocation order: ${row}`)
+    return all.join(" ")
   })
 
   await check(9, "a CLI provider is not offered HTTP-only switches", async () => {

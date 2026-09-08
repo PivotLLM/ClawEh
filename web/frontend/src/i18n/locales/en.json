@@ -634,14 +634,15 @@
     "loadError": "Failed to load providers",
     "empty": "No providers configured yet.",
     "modelCount": "{{count}} model",
-    "modelCount_plural": "{{count}} models",
+    "modelCount_other": "{{count}} models",
     "apiTitle": "API providers",
     "cli": {
       "title": "Local CLI agents",
       "description": "Coding agents installed on this machine. Switching one on sets up everything it needs; switching it off disables every model that runs through it.",
       "notFound": "{{binary}} not found on PATH",
-      "args": "Runs with {{args}}",
-      "modelCount": "{{enabled}} of {{count}} models on",
+      "args": "Args: {{args}}",
+      "modelCount": "{{enabled}} of {{count}} model on",
+      "modelCount_other": "{{enabled}} of {{count}} models on",
       "toggleError": "Failed to change the CLI agent"
     },
     "status": {
