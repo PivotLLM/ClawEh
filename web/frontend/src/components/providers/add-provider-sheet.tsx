@@ -201,7 +201,12 @@ export function AddProviderSheet({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {[...PROTOCOL_OPTIONS]
+                  {/* CLI protocols are absent on purpose: the Local CLI agents
+                      section owns them, and adding a second provider for a CLI
+                      here would produce one the section does not show and the
+                      grid filters out. The edit sheet still lists them, so an
+                      existing CLI provider stays editable. */}
+                  {PROTOCOL_OPTIONS.filter((opt) => !isCliProtocol(opt))
                     .sort((a, b) => a.localeCompare(b))
                     .map((opt) => (
                       <SelectItem key={opt} value={opt}>

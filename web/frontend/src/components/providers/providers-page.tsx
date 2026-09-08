@@ -8,9 +8,11 @@ import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 
 import { AddProviderSheet } from "./add-provider-sheet"
+import { CLIAgentsSection } from "./cli-agents-section"
 import { DeleteProviderDialog } from "./delete-provider-dialog"
 import { EditProviderSheet } from "./edit-provider-sheet"
 import { ProviderCard } from "./provider-card"
+import { isCliProtocol } from "./provider-config-fields"
 
 export function ProvidersPage() {
   const { t } = useTranslation()
@@ -38,6 +40,11 @@ export function ProvidersPage() {
       ? error.message
       : t("providers.loadError")
     : ""
+
+  // CLI providers are presented by the section above, so the grid is the HTTP
+  // ones. isCliProtocol still counts the deprecated gemini-cli alias as a CLI,
+  // so an upgraded config does not show it in both places.
+  const apiProviders = providers.filter((p) => !isCliProtocol(p.protocol))
 
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ["providers"] })
@@ -73,15 +80,25 @@ export function ProvidersPage() {
           </div>
         )}
 
+        {/* CLI providers appear only here, not as cards below: one CLI is one
+            thing to the person using it, and showing it twice under two
+            different controls is what made it confusing. */}
+        {!loading && !fetchError && (
+          <CLIAgentsSection providers={providers} onEdit={setEditing} />
+        )}
+
         {!loading && !fetchError && (
           <div className="py-6">
-            {providers.length === 0 ? (
+            <h2 className="text-foreground mb-3 text-sm font-semibold">
+              {t("providers.apiTitle")}
+            </h2>
+            {apiProviders.length === 0 ? (
               <p className="text-muted-foreground text-sm">
                 {t("providers.empty")}
               </p>
             ) : (
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                {providers.map((provider) => (
+                {apiProviders.map((provider) => (
                   <ProviderCard
                     key={provider.index}
                     provider={provider}

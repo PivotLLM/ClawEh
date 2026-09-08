@@ -27,13 +27,37 @@ export interface CLIInfo {
   installed: boolean
   path?: string
   version?: string
+  /** Whether any model reaching this CLI is enabled — what the switch shows. */
+  enabled: boolean
+  /** Whether a provider for this CLI exists at all. */
+  configured: boolean
+  /** Config index of that provider, for the edit sheet. -1 when there is none. */
+  provider_index: number
+  /** Models running through this CLI, and how many of them are enabled. */
+  models: number
+  models_enabled: number
 }
 
-// listCLIs reports which known CLI agents (claude/codex/agy/cursor) are installed on
-// the host, so the setup wizard can show what's available without the user
-// configuring a CLI whose binary isn't on PATH.
+// listCLIs reports every supported CLI agent (claude/codex/agy/cursor): whether
+// its binary is installed, and how it is currently configured. Rows come back
+// for CLIs that are not installed too — the Providers page greys those out, and
+// the setup wizard offers only the installed ones.
 export async function listCLIs(): Promise<CLIInfo[]> {
   return request<CLIInfo[]>("/api/system/clis")
+}
+
+// setCLIEnabled turns a CLI agent on or off. On creates the provider and model
+// if they are missing; off disables every model reaching that CLI. Nothing is
+// deleted either way, so the switch is reversible.
+export async function setCLIEnabled(
+  protocol: string,
+  enabled: boolean,
+): Promise<void> {
+  await request(`/api/system/clis/${encodeURIComponent(protocol)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled }),
+  })
 }
 
 export interface SetupStatus {

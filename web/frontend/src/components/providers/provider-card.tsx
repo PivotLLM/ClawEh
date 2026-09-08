@@ -26,7 +26,10 @@ export function ProviderCard({
     : provider.base_url
 
   return (
-    <div className="group/card hover:bg-muted/30 border-border/60 bg-card relative flex w-full max-w-[36rem] flex-col gap-3 justify-self-start rounded-xl border p-4 transition-colors hover:shadow-xs">
+    <div
+      data-testid="provider-card"
+      className="group/card hover:bg-muted/30 border-border/60 bg-card relative flex w-full max-w-[36rem] flex-col gap-3 justify-self-start rounded-xl border p-4 transition-colors hover:shadow-xs"
+    >
       <div className="flex items-start justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
           <span

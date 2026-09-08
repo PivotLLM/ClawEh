@@ -39,6 +39,29 @@ and reachable by search.
 
 ### Added
 
+- **A Local CLI agents section on the Providers page, with one switch each.**
+  Claude, Codex, Antigravity and Cursor are listed whether or not their binary
+  is installed — a CLI ClawEh supports but the host lacks is a different thing
+  from one it does not support, so a missing one is greyed out and names the
+  binary it looked for. The switch is the whole setup:
+
+  - **On** creates the provider and a model if they are missing, with the
+    protocol's own request timeout and a model id that lets the CLI choose its
+    own model. An existing model is enabled in place, keeping whatever has been
+    set on it — a switch is not a reset.
+  - **Off** disables every model that runs through that CLI, not just one, so a
+    switch carrying the CLI's name means the CLI. Nothing is deleted either way,
+    so switching back on finds what it left behind.
+
+  Setting one up by hand previously meant creating a provider on one page and a
+  model on another, and knowing four values that appear in no form. One of them
+  could not be set through the Web UI at all (see the `extra_args` entry under
+  Fixed), so a CLI model created in the browser could not be made to work.
+
+  CLI providers now appear only in this section, and the wire-protocol picker
+  under **Add Provider** no longer offers `*-cli` protocols. Editing one — to
+  pin an explicit binary path, say — is still available from its row.
+
 - **Two new memory types.** `event` for something observed at a point in time —
   a trip, a delivery status, a scheduled run — and `operational` for the
   assistant's own housekeeping, such as where it files things and how it works.
@@ -216,6 +239,37 @@ and reachable by search.
   that omits a required field is rejected rather than silently defaulted.
 
 ### Fixed
+
+- **BREAKING: CLI models no longer need `extra_args` set, and the flags are now
+  supplied automatically.** Every CLI agent needs a flag to run unattended
+  (`--dangerously-skip-permissions`, `--yolo`, and so on). It was stored on each
+  model, could not be set anywhere in the Web UI, and left out it failed
+  silently: the CLI auto-denies the tool call it cannot prompt for and reports a
+  completed turn with an empty answer, so the assistant answers chat and goes
+  mute the moment it tries to do anything. ClawEh now supplies each protocol's
+  required flags itself and appends whatever `extra_args` adds, so a model
+  written before this — or added through the Web UI — works without being
+  edited. A model that already lists the flag does not get it twice.
+
+  The breaking part is that the flags can no longer be removed by clearing
+  `extra_args`. If you deliberately run a CLI sandboxed, say so and we will add
+  the opt-out.
+
+- **A CLI that refused a tool call reported success and said nothing.** The
+  Antigravity CLI returns `status: SUCCESS` with an empty response and a
+  `denied_actions` list when it is not allowed to act; ClawEh did not know the
+  field existed and handed the empty answer on with no error and nothing in the
+  log. It now fails with the refused action and the flag that fixes it.
+
+- **BREAKING: deleting a provider silently changed the settings of others.**
+  Configuration is loaded by overlaying the file onto the built-in defaults, and
+  deleting a provider shifted every later entry onto a different default, which
+  it then inherited unset fields from. Deleting `OpenAI` gave `OpenRouter Chat`
+  Groq's `no_parallel_tool_calls` and `NVIDIA` OpenRouter Strict's
+  `strict_compat` — wire-behaviour changes to providers nobody touched, made
+  permanent by the next save. **Check your `providers` for `strict_compat` or
+  `no_parallel_tool_calls` on an endpoint that should not have them** if you
+  have ever deleted a provider; remove the key and restart.
 
 - **The Providers page called a CLI provider configured whenever a path was
   filled in, without checking that the binary was there.** A provider pinned to

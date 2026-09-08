@@ -574,19 +574,18 @@ if (useGroup("I", "Models and providers")) {
       timeout: 10000,
     })
     const labels = await page.getByText(/^(Configured|Not configured)$/).count()
+    const cards = await page.locator("[data-testid=provider-card]").count()
     await ctx.close()
-    const providers = (await api("/api/providers")).json?.providers ?? []
 
     assert(problems.length === 0, `console errors: ${problems[0]}`)
-    // CLI cards used to render an empty span here, so a CLI provider was the
-    // one kind whose card never said what it was. Every card labels itself now.
-    assert(
-      labels === providers.length,
-      `${labels} configured/not-configured labels for ${providers.length} providers`,
-    )
+    // Every card says what it is. The label is the backend's `ready`, so it
+    // means the API key is set or the CLI binary actually resolves — not merely
+    // that some string was filled in.
+    assert(cards > 0, "no provider cards rendered")
+    assert(labels === cards, `${labels} configured/not-configured labels for ${cards} cards`)
     return `${labels} labelled`
   })
-  await check(5, "the wire-protocol picker offers antigravity, not gemini", async () => {
+  await check(5, "the wire-protocol picker leaves CLIs to their own section", async () => {
     const { ctx, page, problems } = await open("/providers")
     await page.getByRole("button", { name: /Add Provider/i }).first().click()
     await page.waitForTimeout(700)
@@ -598,11 +597,49 @@ if (useGroup("I", "Models and providers")) {
     await ctx.close()
 
     assert(problems.length === 0, `console errors: ${problems[0]}`)
-    assert(options.includes("antigravity-cli"), `no antigravity-cli among ${options.join(", ")}`)
-    // Google deprecated the Gemini CLI. Existing configs naming it keep working
-    // as an alias, but nothing new should be created with it.
-    assert(!options.includes("gemini-cli"), "the picker still offers the deprecated gemini-cli")
+    assert(options.length > 0, "the protocol picker is empty")
+    // A CLI is added by its switch, not by building a provider by hand. Adding
+    // a second CLI provider here would produce one the section does not show
+    // and the grid filters out.
+    const cli = options.filter((o) => o.endsWith("-cli"))
+    assert(cli.length === 0, `the picker still offers CLI protocols: ${cli.join(", ")}`)
     return options.join(", ")
+  })
+
+  await check(6, "every supported CLI has a row, installed or not", async () => {
+    const clis = (await api("/api/system/clis")).json ?? []
+    const { ctx, page, problems } = await open("/providers")
+    await page.locator("[data-testid=cli-agents]").waitFor({ state: "visible", timeout: 10000 })
+    const rows = await page.locator("[data-testid^=cli-row-]").count()
+    const switches = await page.locator("[data-testid^=cli-switch-]").count()
+    await ctx.close()
+
+    assert(problems.length === 0, `console errors: ${problems[0]}`)
+    assert(clis.length >= 4, `only ${clis.length} CLIs in the catalogue`)
+    // A CLI the host lacks is still listed, greyed: hiding it would look like
+    // ClawEh does not support it.
+    assert(rows === clis.length, `${rows} rows for ${clis.length} supported CLIs`)
+    assert(switches === clis.length, `${switches} switches for ${rows} rows`)
+    return `${rows} CLIs, ${clis.filter((c) => c.installed).length} installed`
+  })
+
+  await check(7, "CLI providers appear in the section, not in the grid", async () => {
+    const providers = (await api("/api/providers")).json?.providers ?? []
+    const cliProviders = providers.filter((p) => p.protocol.endsWith("-cli"))
+    const { ctx, page, problems } = await open("/providers")
+    await page.locator("[data-testid=cli-agents]").waitFor({ state: "visible", timeout: 10000 })
+    await page.waitForTimeout(500)
+    const cards = await page.locator("[data-testid=provider-card]").count()
+    await ctx.close()
+
+    assert(problems.length === 0, `console errors: ${problems[0]}`)
+    // One CLI is one thing to the person using it; showing it twice under two
+    // different controls is what made it confusing.
+    assert(
+      cards === providers.length - cliProviders.length,
+      `${cards} cards for ${providers.length} providers minus ${cliProviders.length} CLI ones`,
+    )
+    return `${cards} API cards, ${cliProviders.length} CLI providers in the section`
   })
 }
 

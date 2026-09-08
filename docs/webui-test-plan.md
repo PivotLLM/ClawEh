@@ -115,8 +115,10 @@ Creates an agent called `e2e-probe` and deletes it at the end.
 | I1 | Load `/models` | Lists the models from `GET /api/models` |
 | I2 | Load `/providers` | Lists the providers from `GET /api/providers` |
 | I3 | `/models` → **Add Model**, then Escape | The sheet opens and closes with no console error |
-| I4 | Load `/providers` and count the **Configured** / **Not configured** labels | Every card carries one, CLI cards included — they used to render an empty span. "Configured" means the backend resolved the provider: an API key for HTTP, a binary that is actually there for a CLI, so a stale path reads *Not configured* and a blank one that resolves reads *Configured* |
-| I5 | `/providers` → **Add Provider** → open the wire-protocol picker | `antigravity-cli` is offered and `gemini-cli` is not. Google deprecated the Gemini CLI; a config still naming it keeps working as an alias, but nothing new should be created with it |
+| I4 | Load `/providers` and count the **Configured** / **Not configured** labels | Every card in the API grid carries one. "Configured" is the backend's answer, not a guess from the config: an API key for an HTTP provider, and for a CLI a binary that actually resolves — so a stale path reads *Not configured* and a blank one that resolves reads *Configured* |
+| I5 | `/providers` → **Add Provider** → open the wire-protocol picker | No `*-cli` protocol is offered. A CLI is added by its switch in the **Local CLI agents** section; building one by hand here would produce a provider the section does not show and the grid filters out |
+| I6 | Load `/providers` and count the rows in **Local CLI agents** | One row and one switch per supported CLI from `GET /api/system/clis`, whether or not the binary is installed. A CLI the host lacks is greyed out and says so — hiding it would look like ClawEh does not support it |
+| I7 | Compare the provider cards against `GET /api/providers` | The grid holds only the non-CLI providers. CLI providers appear in the section above and nowhere else: one CLI is one thing to the person using it, and showing it twice under two controls is what made it confusing |
 
 ## J. Devices
 

@@ -635,6 +635,14 @@
     "empty": "No providers configured yet.",
     "modelCount": "{{count}} model",
     "modelCount_plural": "{{count}} models",
+    "apiTitle": "API providers",
+    "cli": {
+      "title": "Local CLI agents",
+      "description": "Coding agents installed on this machine. Switching one on sets up everything it needs; switching it off disables every model that runs through it.",
+      "notFound": "{{binary}} not found on PATH",
+      "modelCount": "{{enabled}} of {{count}} models on",
+      "toggleError": "Failed to change the CLI agent"
+    },
     "status": {
       "configured": "Configured",
       "unconfigured": "Not configured"

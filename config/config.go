@@ -2159,6 +2159,16 @@ func LoadConfig(path string) (*Config, error) {
 	if len(tmp.Agents.List) > 0 {
 		cfg.Agents.List = nil
 	}
+	// Providers need the same treatment, and for a sharper reason: deleting one
+	// shifts every later entry down an index, so each would be decoded onto a
+	// *different* default and silently inherit the omitempty flags that default
+	// happened to set. Deleting "OpenAI" gave OpenRouter Chat Groq's
+	// no_parallel_tool_calls and NVIDIA OpenRouter Strict's strict_compat —
+	// wire-behaviour changes to providers the user never touched, made
+	// permanent by the next save.
+	if len(tmp.Providers) > 0 {
+		cfg.Providers = nil
+	}
 
 	if err := json.Unmarshal(data, cfg); err != nil {
 		return nil, err

@@ -113,8 +113,16 @@ func CreateProviderFromConfig(model *config.ModelConfig, prov *config.Provider) 
 }
 
 // newCLIProvider builds a subprocess CLI provider, applying the request timeout
-// when set. The binary path comes from the provider (Command); workspace and
-// CLI args/env come from the model.
+// when set. The binary path comes from the provider (Command); the workspace
+// comes from the model.
+//
+// Arguments and environment are the protocol's required ones plus whatever the
+// model adds. They are supplied here rather than stored on every model because
+// leaving out a CLI's permission flag is invisible: the CLI auto-denies the
+// tool call it cannot prompt for and returns success with an empty answer, so
+// the assistant goes silent instead of reporting a problem. Any model written
+// before this — or added through the WebUI, which has no field for them — works
+// without being edited.
 func newCLIProvider[T LLMProvider](
 	plain func(command, workspace string, extraArgs []string, env map[string]string) T,
 	withTimeout func(command, workspace string, timeout time.Duration, extraArgs []string, env map[string]string) T,
@@ -125,8 +133,10 @@ func newCLIProvider[T LLMProvider](
 	if workspace == "" {
 		workspace = "."
 	}
+	args := config.CLIArgs(prov.Protocol, model.ExtraArgs)
+	env := config.CLIEnv(prov.Protocol, model.Env)
 	if model.RequestTimeout > 0 {
-		return withTimeout(prov.Command, workspace, time.Duration(model.RequestTimeout)*time.Second, model.ExtraArgs, model.Env)
+		return withTimeout(prov.Command, workspace, time.Duration(model.RequestTimeout)*time.Second, args, env)
 	}
-	return plain(prov.Command, workspace, model.ExtraArgs, model.Env)
+	return plain(prov.Command, workspace, args, env)
 }

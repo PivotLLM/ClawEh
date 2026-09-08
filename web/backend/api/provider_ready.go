@@ -72,19 +72,12 @@ func resolveCLIBinary(protocol, command string) (string, bool) {
 }
 
 // defaultCLIBinary maps a CLI protocol to the binary it runs when no command is
-// configured, sourced from knownCLIs so the Providers page, the Status page and
-// the setup wizard's installed-CLI list cannot drift apart.
+// configured, sourced from the CLI catalogue so the Providers page, the Status
+// page and the CLI section cannot drift apart. The catalogue resolves the
+// deprecated gemini-cli alias to Antigravity's binary.
 func defaultCLIBinary(protocol string) string {
-	for _, c := range knownCLIs {
-		if c.Protocol == protocol {
-			return c.Binary
-		}
-	}
-	// gemini-cli is an accepted alias for antigravity-cli and so is absent from
-	// knownCLIs; resolve it to the same binary rather than reporting a provider
-	// an upgraded install still names as unusable.
-	if protocol == "gemini-cli" {
-		return defaultCLIBinary("antigravity-cli")
+	if agent := config.CLIAgentByProtocol(protocol); agent != nil {
+		return agent.Binary
 	}
 	return ""
 }
