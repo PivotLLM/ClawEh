@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/PivotLLM/ClawEh/config"
@@ -239,4 +240,45 @@ func TestListCLIs_ReportsConfiguredState(t *testing.T) {
 			}
 		}
 	}
+}
+
+// The row prints required + extra, so an extra that repeats a required flag
+// printed it twice ("--yolo --yolo"). The invocation was always right —
+// config.CLIArgs deduplicates — which is exactly why the display drifting from
+// it went unnoticed.
+func TestListCLIs_DoesNotRepeatAFlagTheProtocolAlreadySupplies(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Providers = []config.Provider{{Name: "Cursor CLI", Protocol: "cursor-cli"}}
+	cfg.Models = []config.ModelConfig{
+		// As the seeded models ship: carrying the required flag explicitly.
+		{ModelName: "a", Model: "cursor-cli", Provider: "Cursor CLI", ExtraArgs: []string{"--yolo"}, Enabled: true},
+		{ModelName: "b", Model: "cursor-x", Provider: "Cursor CLI", ExtraArgs: []string{"--yolo", "--verbose"}, Enabled: true},
+	}
+	h, _ := writeConfig(t, cfg)
+
+	rec := httptest.NewRecorder()
+	h.handleListCLIs(rec, httptest.NewRequest(http.MethodGet, "/api/system/clis", nil))
+	var got []cliInfo
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, c := range got {
+		if c.Protocol != "cursor-cli" {
+			continue
+		}
+		// Only the genuinely additional flag is reported as extra.
+		if len(c.ExtraArgs) != 1 || c.ExtraArgs[0] != "--verbose" {
+			t.Errorf("extra_args = %v, want just [--verbose]", c.ExtraArgs)
+		}
+		// What the row renders must match what the process is actually run
+		// with, which is the one thing this display exists to tell the user.
+		shown := append(append([]string{}, c.RequiredArgs...), c.ExtraArgs...)
+		want := config.CLIArgs("cursor-cli", []string{"--yolo", "--verbose"})
+		if !slices.Equal(shown, want) {
+			t.Errorf("row shows %v, invocation uses %v", shown, want)
+		}
+		return
+	}
+	t.Fatal("no cursor-cli row")
 }

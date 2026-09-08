@@ -90,7 +90,15 @@ func (h *Handler) handleListCLIs(w http.ResponseWriter, r *http.Request) {
 			info.Path = p
 			info.Version = cliVersion(c.Binary)
 		}
-		seenExtra := map[string]struct{}{}
+		// Seeded with the required arguments: a model that lists a flag the
+		// protocol already supplies is not adding anything, and reporting it
+		// again printed "--yolo --yolo". The invocation itself was always
+		// correct — config.CLIArgs deduplicates — so this was the display
+		// disagreeing with the command line.
+		seenExtra := make(map[string]struct{}, len(c.RequiredArgs))
+		for _, a := range c.RequiredArgs {
+			seenExtra[a] = struct{}{}
+		}
 		for _, m := range cliModels(cfg, c.Protocol) {
 			info.Configured = true
 			info.Models++
