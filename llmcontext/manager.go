@@ -46,6 +46,20 @@ type Manager struct {
 	consecutiveCompactFailures int
 	breakerTrippedUntilCount   int // 0 = not tripped
 
+	// ageTriggerFloor is the oldest live timestamp left behind by the last
+	// age-triggered pass, and suppresses the age trigger until the window moves
+	// past it. In-memory: a restart costs at most one extra pass, and only for a
+	// session dormant enough to age out in the first place.
+	//
+	// Compaction cannot always cut back to the age cap. retainMinMessages keeps
+	// the last messages whatever their age, and the last-user clamp keeps the
+	// latest user turn even when it is older than the cap — deliberately, since
+	// a payload with no user message is a non-retriable 400. A session dormant
+	// past trigger.days therefore comes back with an over-age message the pass
+	// was never going to remove, and without this the very next message would
+	// trigger another pass against the same boundary, and the next, and the next.
+	ageTriggerFloor time.Time
+
 	// compression clients resolved at construction time
 	compressClients []LLMClient
 
@@ -551,6 +565,19 @@ func oldestAge(stored []memory.StoredMessage, now time.Time) (time.Duration, boo
 	return 0, false
 }
 
+// oldestCreatedAt returns the timestamp of the oldest live message, skipping
+// system messages for the same reason oldestAge does: a session's system message
+// is rewritten in place and its age says nothing about the conversation.
+func oldestCreatedAt(stored []memory.StoredMessage) (time.Time, bool) {
+	for _, sm := range stored {
+		if sm.Role == "system" || sm.CreatedAt.IsZero() {
+			continue
+		}
+		return sm.CreatedAt, true
+	}
+	return time.Time{}, false
+}
+
 // getOrOpenArchive returns the ArchiveStore for this session, opening it lazily
 // on first call. Returns nil when archiveDir is empty or the open fails.
 func (m *Manager) getOrOpenArchive() *memory.ArchiveStore {
@@ -878,7 +905,9 @@ func (m *Manager) triggerCheck(ctx context.Context) error {
 			"trigger_days": m.cfg.triggerDays,
 			"context_pct":  contextPct,
 		})
-		return m.compress(ctx, false)
+		err := m.compress(ctx, false)
+		m.noteAgeTriggerBoundary()
+		return err
 	}
 
 	// Floor: no compression regardless of the remaining triggers.
@@ -911,11 +940,46 @@ func (m *Manager) ageTriggered(stored []memory.StoredMessage) bool {
 	if m.cfg.triggerDays <= 0 {
 		return false
 	}
-	age, ok := oldestAge(stored, time.Now())
+	now := time.Now()
+	age, ok := oldestAge(stored, now)
 	if !ok {
 		return false
 	}
-	return age >= time.Duration(m.cfg.triggerDays)*24*time.Hour
+	if age < time.Duration(m.cfg.triggerDays)*24*time.Hour {
+		return false
+	}
+	// Already compacted against this boundary and it did not move: the message
+	// still holding it is one the pass chose to keep, and running again would
+	// summarize nothing and keep summarizing nothing on every message that
+	// follows. Wait for the window to move past it instead.
+	if oldest, ok := oldestCreatedAt(stored); ok &&
+		!m.ageTriggerFloor.IsZero() && !oldest.After(m.ageTriggerFloor) {
+		return false
+	}
+	return true
+}
+
+// noteAgeTriggerBoundary records where an age-triggered pass left the window, so
+// the trigger does not fire again until something older than that has gone.
+// Clears the floor once the window is back inside the trigger age, which is the
+// ordinary outcome — the floor exists for the pass that could not get there.
+func (m *Manager) noteAgeTriggerBoundary() {
+	stored := m.store.GetHistoryWithSeqs(m.sessionKey)
+	oldest, ok := oldestCreatedAt(stored)
+	if !ok {
+		m.ageTriggerFloor = time.Time{}
+		return
+	}
+	if time.Since(oldest) < time.Duration(m.cfg.triggerDays)*24*time.Hour {
+		m.ageTriggerFloor = time.Time{}
+		return
+	}
+	m.ageTriggerFloor = oldest
+	logger.InfoCF("llmcontext", "compaction left a message older than the trigger; suppressing the age trigger until the window moves past it", map[string]any{
+		"session_key":  m.sessionKey,
+		"trigger_days": m.cfg.triggerDays,
+		"oldest_age":   time.Since(oldest).Round(time.Hour).String(),
+	})
 }
 
 // SetTestCompressHook sets a hook function that is called whenever compress()

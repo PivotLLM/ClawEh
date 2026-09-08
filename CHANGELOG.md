@@ -279,6 +279,20 @@ and reachable by search.
   `no_parallel_tool_calls` on an endpoint that should not have them** if you
   have ever deleted a provider; remove the key and restart.
 
+- **A dormant agent compacted twice in a row on waking.** Compaction has an age
+  trigger — it fires once the oldest message in the live window passes
+  `trigger.days` (7), however little of the window that window holds. The pass
+  cannot always cut back to the retention age cap (5 days): the last messages are
+  kept whatever their age, and the latest user turn is kept even when it is over
+  the cap, deliberately, since a request with no user message is rejected
+  outright. A session dormant past the trigger therefore comes back holding a
+  message the pass was never going to remove, and the next message fired another
+  pass against the same boundary — on production, a second compaction 109
+  seconds after the first, summarizing 36 tokens. The age trigger now waits for
+  the window to move past a boundary it has already compacted against. Nothing
+  to change: the intended gap between trigger and retention (2 days of quiet)
+  now holds in the case where it did not.
+
 - **The model count is shown on every configured CLI row.** It was omitted
   where a CLI had a single model, which left it printed for one CLI and absent
   for the rest — read as a fault rather than as brevity.

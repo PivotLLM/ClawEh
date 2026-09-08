@@ -18,18 +18,26 @@ import (
 type agingStore struct {
 	*mockStore
 	ages map[int]time.Duration // index → age of that message; missing = now
+	// base is fixed at construction so a given message keeps a stable
+	// CreatedAt across reads, as a stored message does. Deriving it from
+	// time.Now() per read made the same message look a few microseconds newer
+	// every time, which is indistinguishable from the window moving on.
+	base time.Time
 }
 
 func newAgingStore() *agingStore {
-	return &agingStore{mockStore: newMockStore(), ages: map[int]time.Duration{}}
+	return &agingStore{
+		mockStore: newMockStore(),
+		ages:      map[int]time.Duration{},
+		base:      time.Now(),
+	}
 }
 
 func (s *agingStore) GetHistoryWithSeqs(key string) []memory.StoredMessage {
 	src := s.history[key]
 	out := make([]memory.StoredMessage, len(src))
-	now := time.Now()
 	for i, msg := range src {
-		out[i] = memory.StoredMessage{Seq: int64(i + 1), CreatedAt: now.Add(-s.ages[i]), Message: msg}
+		out[i] = memory.StoredMessage{Seq: int64(i + 1), CreatedAt: s.base.Add(-s.ages[i]), Message: msg}
 	}
 	return out
 }
@@ -210,5 +218,106 @@ func TestSelectTail_ZeroTimestampNotAged(t *testing.T) {
 	tail, _ := selectTail(stored, 0, 0, time.Hour, testNow, estimateTokens)
 	if len(tail) != 2 {
 		t.Errorf("zero timestamps must never be treated as old; got %d messages", len(tail))
+	}
+}
+
+// TestTrigger_AgeDoesNotRefireAgainstTheSameBoundary is the production symptom:
+// an agent dormant for weeks compacted twice within two minutes, the second pass
+// summarizing 36 tokens.
+//
+// Compaction cannot always cut back to the age cap. retainMinMessages keeps the
+// last messages whatever their age, and the last-user clamp keeps the latest
+// user turn even when it is over the cap — deliberately, since a payload with no
+// user message is a non-retriable 400. So a session dormant past trigger.days
+// comes back with an over-age message the pass was never going to remove, and
+// the next message would trigger another pass against the same boundary.
+//
+// The compress hook stands in for exactly that: it runs the pass without
+// removing anything, leaving the window as the real retention rules left it.
+func TestTrigger_AgeDoesNotRefireAgainstTheSameBoundary(t *testing.T) {
+	store := newAgingStore()
+	mgr := newTestManager(store,
+		WithContextWindow(1_000_000),
+		WithMinPercent(20),
+		WithMessageThreshold(0),
+		WithTriggerDays(7),
+		WithRetainMaxAgeDays(5),
+	)
+
+	calls := 0
+	mgr.SetTestCompressHook(func(bool) { calls++ })
+
+	store.ages[0] = 30 * 24 * time.Hour
+	for i := range 4 {
+		if err := mgr.AddUserMessage(context.Background(), msgWithContent("hi")); err != nil {
+			t.Fatalf("message %d: %v", i, err)
+		}
+	}
+
+	if calls != 1 {
+		t.Errorf("compacted %d times against one unchanged boundary, want 1", calls)
+	}
+}
+
+// The suppression must lift once the window genuinely moves on, or a session
+// that ages out again would never compact a second time.
+func TestTrigger_AgeFiresAgainOnceTheWindowMovesPast(t *testing.T) {
+	store := newAgingStore()
+	mgr := newTestManager(store,
+		WithContextWindow(1_000_000),
+		WithMinPercent(20),
+		WithMessageThreshold(0),
+		WithTriggerDays(7),
+		WithRetainMaxAgeDays(5),
+	)
+
+	calls := 0
+	mgr.SetTestCompressHook(func(bool) { calls++ })
+
+	store.ages[0] = 30 * 24 * time.Hour
+	if err := mgr.AddUserMessage(context.Background(), msgWithContent("hi")); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("first pass did not fire: calls=%d", calls)
+	}
+
+	// The pass finally clears the month-old message, and what it leaves behind is
+	// itself over the trigger age — a later boundary, so a new pass is owed.
+	store.history["test-session"] = store.history["test-session"][1:]
+	delete(store.ages, 0)
+	store.ages[0] = 20 * 24 * time.Hour
+
+	if err := mgr.AddUserMessage(context.Background(), msgWithContent("hi")); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 {
+		t.Errorf("calls=%d, want 2: the boundary moved and the window is still over the trigger age", calls)
+	}
+}
+
+// A pass that does bring the window back inside the trigger age must clear the
+// suppression outright, leaving the trigger armed for the next time.
+func TestTrigger_AgeSuppressionClearsWhenTheWindowComesBack(t *testing.T) {
+	store := newAgingStore()
+	mgr := newTestManager(store,
+		WithContextWindow(1_000_000),
+		WithMinPercent(20),
+		WithMessageThreshold(0),
+		WithTriggerDays(7),
+		WithRetainMaxAgeDays(5),
+	)
+	mgr.SetTestCompressHook(func(bool) {
+		// A real pass: everything over the cap is archived.
+		store.history["test-session"] = store.history["test-session"][1:]
+		delete(store.ages, 0)
+	})
+
+	store.ages[0] = 30 * 24 * time.Hour
+	if err := mgr.AddUserMessage(context.Background(), msgWithContent("hi")); err != nil {
+		t.Fatal(err)
+	}
+	if !mgr.ageTriggerFloor.IsZero() {
+		t.Errorf("floor = %v, want cleared once the window is inside the trigger age", mgr.ageTriggerFloor)
 	}
 }
