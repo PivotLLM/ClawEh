@@ -142,8 +142,87 @@ on each other's shared session state.
 | `channel` | string | Channel to deliver to (e.g. `"slack"`, `"telegram-Amber"`) |
 | `to` | string | Channel or user ID to deliver to (e.g. a Slack channel ID `C0ABC123` or user ID `U0ABC123`) |
 | `peer_kind` | string | `"channel"` (default) or `"direct"` — see [peer_kind](#peer_kind) |
+| `watch` | object | Optional probe. When present the job only delivers `message` if the watched values changed — see [Watch jobs](#watch-jobs) |
 
 > Legacy payloads may also contain `mode` and `command`; both are ignored.
+
+---
+
+## Watch jobs
+
+An ordinary job delivers its message every time it fires. A **watch job** calls a
+tool first and delivers the message **only if the result changed**.
+
+The probe runs **with no model in the loop**. That is the whole point: polling
+"is there new mail?" by waking the model, having it call a tool and having it
+conclude nothing happened costs an LLM turn per check to learn nothing.
+
+Add one by passing three extra arguments to `cron_schedule add` — so an agent
+can set up its own watch:
+
+| Argument | Type | Description |
+|---|---|---|
+| `watch_tool` | string | The published tool name to call, e.g. `google_gmail_messages_list` |
+| `watch_args` | object | Its parameters, passed verbatim |
+| `watch_fields` | list of strings | Dot-paths naming the values that decide "changed" |
+
+```
+Every 15 minutes, check for new mail and tell me about it.
+  watch_tool:   google_gmail_messages_list
+  watch_args:   {"query": "is:unread", "max_results": 20}
+  watch_fields: ["messages.id"]
+```
+
+`watch_tool` is required if either of the others is given: `watch_args` or
+`watch_fields` on their own is a half-written watch, and is rejected rather than
+quietly creating a plain reminder.
+
+### Choosing the fields
+
+`watch_fields` are dot-paths into the tool's JSON result. **A path crossing a
+list applies to every element and collects the results**, so `messages.id` is the
+set of ids currently present — which is the shape a change probe actually needs.
+
+Naming fields is what makes a watch usable. Comparing the whole result fires on
+incidental churn: an unread badge, a relative timestamp, a reordering — none of
+which mean anything arrived. Omitting `watch_fields` compares the entire result
+and is a deliberate choice, not a default worth relying on.
+
+A path that does not resolve yields nothing, and that counts as a change: a field
+disappearing is a state worth detecting, not a broken job.
+
+### What happens on each run
+
+- **First successful probe records a baseline silently.** Creating a watch does
+  not immediately report the entire existing inbox.
+- **Unchanged:** nothing is delivered and no model runs. The job is, in effect,
+  free.
+- **Changed:** `message` is delivered as usual, followed by the values the
+  watched fields now read.
+- **Probe failed:** the fingerprint is left untouched — advancing it would
+  swallow the change that happened while the probe was broken — and the failure
+  is logged and retried. After **five consecutive failures** the agent is told
+  once, because a probe broken for five runs is not quiet, it is blind.
+
+Each probe is bounded by a **60-second timeout**, so a hung tool cannot
+accumulate run after run.
+
+### What can be probed
+
+The probe resolves the **owning agent's** tool registry, re-checked on every run
+rather than captured when the watch was created — a tool revoked in config stops
+being probed. Two consequences:
+
+- A tool the agent is not allowed to use cannot be watched.
+- **Session-scoped tools cannot be probed.** They need a conversation to act on
+  and a probe has none; handing them an empty session key would read from the
+  wrong place.
+
+Both are checked when the probe runs, not when the watch is created — the
+registry is what changes underneath a job. A watch naming a tool the agent
+cannot use therefore fails on every run, and surfaces through the same
+five-failure notice as any other broken probe rather than being refused up
+front. Only the shape of the arguments is validated at creation.
 
 ---
 
