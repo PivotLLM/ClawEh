@@ -367,12 +367,34 @@ update-deps:
 	@$(GO) get -u ./...
 	@$(GO) mod tidy
 
-## check: Run fmt, vet, and tests
-# frontend-typecheck and frontend-test are part of check, not of `test`: `test`
-# is the fast Go-only loop, while check is the gate before calling something
-# done. Without a frontend gate here, a red frontend sat unnoticed long enough
-# to grow from 7 problems to 35 the moment a plugin was updated.
-check: fmt vet test frontend-typecheck frontend-lint frontend-test
+## fmt-check: Verify formatting without rewriting anything (`make fmt` fixes)
+fmt-check:
+	@echo "Checking formatting..."
+	@$(GOLANGCI_LINT) fmt --diff
+
+## check: The full gate — formatting, vet, and the complete suite
+#
+# One entry point, not two. `test.sh` already runs the Go suite with -race and a
+# coverage gate, the frontend typecheck/lint/unit tests, the MCP server tests
+# against an ephemeral gateway, and the workspace integration checks (pid file,
+# SIGTERM shutdown, workspace re-population) — none of which `go test ./...`
+# reaches. It does not run fmt or vet, and check did not run the integration
+# tests, so neither was a superset of the other and "I ran the tests" meant two
+# different things depending on who said it.
+#
+# Safe to gate a pipeline with: it rewrites nothing (fmt-check reports a diff
+# rather than applying it), needs no running service, disables colour when
+# stdout is not a terminal, and exits non-zero on any failure — including a
+# missing `probe`, which fails rather than skipping quietly.
+#
+# The one thing it cannot cover is the browser suite, which needs a running
+# instance to drive: see `make check-webui`.
+check: fmt-check vet
+	@./test.sh
+
+## check-webui: Browser regression suite (requires a running dev instance)
+check-webui:
+	@node tests/frontend-e2e.mjs
 
 ## run: Build and run claw
 run: build

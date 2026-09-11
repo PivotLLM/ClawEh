@@ -75,7 +75,12 @@ Upstream picoclaw docs are not carried in this repo.
 
 ## Build & Install
 ```
-make test        # runs tests
+make build       # build the binary (embeds the frontend bundle)
+make check       # the full gate: fmt, vet, the Go suite with -race and a
+                 # coverage floor, the frontend checks, the MCP server tests and
+                 # the workspace integration checks. Rewrites nothing and exits
+                 # non-zero on any failure, so a pipeline can gate on it.
+make test        # just `go test ./...` — the fast loop while iterating
 ```
 To build and deploy **production**: run `update-claw.sh` (on PATH). It builds the binary, stops the service, installs, and restarts. Do not run build/install commands directly for prod.
 
@@ -148,23 +153,23 @@ Hard-won learnings (don't relearn these):
   `{runId, seq, stream, ts, data}` with no top-level `status` (clients default it to "unknown").
 
 ## Testing — always keep tests in sync (do not skip this)
-- A change is not done until its tests are updated AND passing. Run `make test` after every change.
+- A change is not done until its tests are updated AND passing. Run `make check` before calling anything done — it is the whole suite and the thing a pipeline would gate on. `make test` is the fast Go-only loop for iterating.
 - **Add tests for new behavior.** New config flags, gating, and branches need a test for both the on and off paths — not just a tweak that makes existing tests compile.
 - **Keep test fixtures in sync with renames/refactors.** When tool names, config keys, or APIs change, grep the whole repo (including `*_test.go`, `test.sh`, `tests/`) and update every reference. A rename that compiles can still break integration tests.
-- **MCP integration tests are part of the suite.** `test.sh` runs `tests/test_mcpserver.sh` via the external `probe` binary against an ephemeral gateway. Every provider tool must be exposed in the test config and probed: success for hermetic tools, graceful-error probes for network/LLM tools (web, skill, agent_spawn). Add a probe case when you add a tool.
+- **MCP integration tests are part of the suite.** `make check` runs `test.sh`, which runs `tests/test_mcpserver.sh` via the external `probe` binary against an ephemeral gateway. Every provider tool must be exposed in the test config and probed: success for hermetic tools, graceful-error probes for network/LLM tools (web, skill, agent_spawn). Add a probe case when you add a tool.
 - After implementing, do a final grep for the old name/symbol to confirm nothing stale remains in code, tests, scripts, or docs.
 
 ### WebUI regression suite — run it for any significant frontend change
 
-`make test` and `test.sh` do NOT exercise the running WebUI. A browser suite
-does, and it must be run for any significant change to `web/frontend`, to the
-`/api/*` handlers behind it, or to anything that alters gateway startup,
-readiness or config reload:
+`make check` does not load a page. The browser suite is a separate target
+because it needs a live instance to drive, and it must be run for any
+significant change to `web/frontend`, to the `/api/*` handlers behind it, or to
+anything that alters gateway startup, readiness or config reload:
 
 ```
 make build && cp build/claw ~/bin/claw && sudo systemctl restart claw-dev
 until curl -sf http://127.0.0.1:8077/ready >/dev/null; do sleep 1; done
-node tests/frontend-e2e.mjs
+make check-webui
 ```
 
 - **The plan is `docs/webui-test-plan.md`** — 93 numbered checks, each with a
@@ -186,8 +191,8 @@ node tests/frontend-e2e.mjs
 - **If you are unsure whether a change is significant enough to warrant a run,
   ask the user.** It takes a couple of minutes; a silent WebUI regression does
   not announce itself.
-- Ordinary Go-only changes do not need it. `make check` also runs the frontend
-  typecheck, oxlint and vitest, none of which load a page.
+- Ordinary Go-only changes do not need it. `make check` already runs the
+  frontend typecheck, oxlint and vitest, none of which load a page.
 
 ## Workflow Rules
 - Never commit or push without explicit user instruction.
