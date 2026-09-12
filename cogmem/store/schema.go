@@ -3,8 +3,14 @@
 
 package store
 
-// schemaVersion is the current migration version. Bump when DDL changes.
-const schemaVersion = 5
+// schemaVersion is the current migration version. Bump when DDL changes, and
+// add the corresponding step to migrateFrom in store.go — the recorded version
+// drives which steps run, so a bump without a step silently does nothing.
+//
+// 6: dropped memories.source and memories.priority, and retired the "review"
+//
+//	status. See docs/cogmem-redesign-plan.md.
+const schemaVersion = 6
 
 // schema is the full DDL for a .cogmem.db. All statements are idempotent so
 // migrate() can run it on every open. No FTS, no vector columns.
@@ -48,8 +54,6 @@ CREATE TABLE IF NOT EXISTS memories (
   text               TEXT NOT NULL,
   status             TEXT NOT NULL,
   confidence         REAL NOT NULL,
-  priority           INTEGER NOT NULL DEFAULT 0,
-  source             TEXT NOT NULL,
   origin             TEXT NOT NULL DEFAULT 'chat',
   source_session     TEXT,
   source_seq_start   INTEGER,

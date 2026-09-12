@@ -37,8 +37,9 @@ uses) on a stable footing.
     session mode for that — under `unified` there is deliberately no carve-out.
 - **Headless either way.** No bound user channel → a tool's `ForUser` output is
   dropped; only `ForLLM` returns to the caller. It is a **primary** session key
-  (not `subagent:…`), so `PrimaryOnly` tools — notably the Maestro suite — run.
-  Cross-agent rejection still applies: the token resolves to exactly one agent.
+  (not `subagent:…`), so it starts at sub-agent depth 0 and may spawn workers up
+  to `agents.defaults.max_subagent_depth`. Cross-agent rejection still applies:
+  the token resolves to exactly one agent.
 - **Immune to rotation and eviction by construction.** Service tokens are indexed
   by agent, separately from conversation tokens, so the two coexist even when
   they name the same session: issuing or rotating the agent's own session token

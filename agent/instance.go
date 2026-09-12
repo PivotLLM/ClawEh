@@ -2,11 +2,13 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 
+	cogmemstore "github.com/PivotLLM/ClawEh/cogmem/store"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/global"
 	agentws "github.com/PivotLLM/ClawEh/internal/workspace"
@@ -71,6 +73,25 @@ type AgentInstance struct {
 	AlwaysShownNamespaces []string
 }
 
+// migrateCogmemStores upgrades every cognitive-memory database belonging to one
+// agent, logging what changed. A store that cannot be migrated is reported and
+// skipped: the others still upgrade, and the failure is visible at startup
+// rather than surfacing mid-conversation.
+func migrateCogmemStores(agentID, sessionsDir string) {
+	for _, r := range cogmemstore.MigrateDir(sessionsDir) {
+		switch {
+		case r.Err != nil:
+			logger.ErrorCF("cogmem", "Failed to migrate cognitive-memory database",
+				map[string]any{"agent": agentID, "path": r.Path, "error": r.Err.Error()})
+		case r.Migrated():
+			logger.InfoCF("cogmem", "Migrated cognitive-memory database", map[string]any{
+				"agent": agentID, "path": r.Path, "from": r.From, "to": r.To,
+				"snapshot": fmt.Sprintf("%s.pre-v%d.db", r.Path, r.From),
+			})
+		}
+	}
+}
+
 // NewAgentInstance creates an agent instance from config.
 func NewAgentInstance(
 	agentCfg *config.AgentConfig,
@@ -96,6 +117,18 @@ func NewAgentInstance(
 	toolsRegistry := tools.NewToolRegistry()
 
 	sessionsDir := filepath.Join(workspace, "sessions")
+
+	// Migrate this agent's cognitive-memory databases now, rather than leaving
+	// each to be upgraded whenever its session next happens to be opened. Lazy
+	// migration spreads a schema change across hours of ordinary use with no
+	// point an operator can call it done, and leaves a store belonging to an
+	// agent nobody talks to that day on the old schema indefinitely.
+	migrateID := ""
+	if agentCfg != nil {
+		migrateID = agentCfg.ID
+	}
+	migrateCogmemStores(migrateID, sessionsDir)
+
 	sessions := initSessionStore(sessionsDir)
 
 	// The registry starts empty. Tools are registered exactly once — after

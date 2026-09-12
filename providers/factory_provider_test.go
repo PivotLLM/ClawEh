@@ -185,8 +185,8 @@ func TestCreateProviderFromConfig_GeminiCLI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateProviderFromConfig() error = %v", err)
 	}
-	if _, ok := provider.(*GeminiCliProvider); !ok {
-		t.Fatalf("expected *GeminiCliProvider, got %T", provider)
+	if _, ok := provider.(*AntigravityCliProvider); !ok {
+		t.Fatalf("expected *AntigravityCliProvider, got %T", provider)
 	}
 	if modelID != "gemini-2.5-flash" {
 		t.Errorf("modelID = %q, want %q", modelID, "gemini-2.5-flash")

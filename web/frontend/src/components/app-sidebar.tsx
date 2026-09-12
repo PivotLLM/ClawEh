@@ -1,5 +1,6 @@
 import { IconChevronRight } from "@tabler/icons-react"
 import {
+  IconActivityHeartbeat,
   IconArrowsTransferDown,
   IconAtom,
   IconBrain,
@@ -349,8 +350,28 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
           </Collapsible>
         ))}
       </SidebarContent>
-      <SidebarFooter className="text-muted-foreground px-3 py-2 text-xs">
-        ClawEh{version ? ` v${version}` : ""}
+      {/* Status sits below the collapsible groups rather than inside one: it
+          describes the running process as a whole, not a section of the
+          configuration, and it is what you reach for when something feels
+          wrong — so it should not be behind a disclosure. */}
+      <SidebarFooter className="gap-0 p-0">
+        <SidebarMenu className="px-2 pb-1">
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              asChild
+              isActive={currentPath === "/status"}
+              tooltip={t("navigation.status")}
+            >
+              <Link to="/status" data-testid="nav-status">
+                <IconActivityHeartbeat className="size-4" />
+                <span>{t("navigation.status")}</span>
+              </Link>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
+        <div className="text-muted-foreground px-3 pb-2 text-xs">
+          ClawEh{version ? ` v${version}` : ""}
+        </div>
       </SidebarFooter>
       <SidebarRail />
     </Sidebar>

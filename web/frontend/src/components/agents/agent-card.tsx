@@ -33,6 +33,8 @@ export interface AgentCardProps {
   messageWindowMinutes?: number
   messageWindowCount?: number
   temperature?: number
+  eventRetentionDays?: number
+  retiredRetentionDays?: number
   summarizationModels?: string[]
   shareCommon?: boolean
   globalCron?: boolean
@@ -50,6 +52,8 @@ export interface AgentCardProps {
   onSkillsChange: (skills: string[]) => void
   onToolsChange: (tools: string[]) => void
   onMessageChange?: (mins: number, count: number) => void
+  onEventRetentionDaysChange?: (v: number | undefined) => void
+  onRetiredRetentionDaysChange?: (v: number | undefined) => void
   onTemperatureChange?: (t: number | undefined) => void
   onSummarizationModelsChange?: (models: string[]) => void
   onShareCommonChange?: (share: boolean) => void
@@ -74,6 +78,8 @@ export function AgentCard({
   messageWindowMinutes = 0,
   messageWindowCount = 2,
   temperature = undefined,
+  eventRetentionDays = undefined,
+  retiredRetentionDays = undefined,
   summarizationModels = [],
   shareCommon = true,
   globalCron = false,
@@ -91,6 +97,8 @@ export function AgentCard({
   onSkillsChange,
   onToolsChange,
   onMessageChange,
+  onEventRetentionDaysChange = undefined,
+  onRetiredRetentionDaysChange = undefined,
   onTemperatureChange = undefined,
   onSummarizationModelsChange = undefined,
   onShareCommonChange = undefined,
@@ -414,6 +422,67 @@ export function AgentCard({
               />
               <span className="text-muted-foreground text-xs">
                 (0–2, blank = use default)
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* Memory retention. Events are things that happened at a point in
+            time; they are never in the prompt, but they accumulate — an hourly
+            "nothing changed" note reached 300 rows on one agent. Retiring a
+            memory leaves the row behind, so a store that retires steadily grows
+            forever while showing nothing for it. Only these two are ever
+            deleted by age: a fact, preference, rule or operational note is
+            permanent. */}
+        {onEventRetentionDaysChange !== undefined && (
+          <div className="space-y-1.5">
+            <p className="text-foreground text-sm font-semibold">
+              {t("agents.eventRetention")}
+            </p>
+            <div className="flex items-center gap-2">
+              <Input
+                type="number"
+                min={-1}
+                step={1}
+                value={eventRetentionDays ?? ""}
+                onChange={(e) => {
+                  const v = e.target.value
+                  onEventRetentionDaysChange(
+                    v === "" ? undefined : parseInt(v, 10),
+                  )
+                }}
+                className="h-7 w-20 text-xs"
+                placeholder="30"
+              />
+              <span className="text-muted-foreground text-xs">
+                {t("agents.retentionHint", { days: 30 })}
+              </span>
+            </div>
+          </div>
+        )}
+
+        {onRetiredRetentionDaysChange !== undefined && (
+          <div className="space-y-1.5">
+            <p className="text-foreground text-sm font-semibold">
+              {t("agents.retiredRetention")}
+            </p>
+            <div className="flex items-center gap-2">
+              <Input
+                type="number"
+                min={-1}
+                step={1}
+                value={retiredRetentionDays ?? ""}
+                onChange={(e) => {
+                  const v = e.target.value
+                  onRetiredRetentionDaysChange(
+                    v === "" ? undefined : parseInt(v, 10),
+                  )
+                }}
+                className="h-7 w-20 text-xs"
+                placeholder="90"
+              />
+              <span className="text-muted-foreground text-xs">
+                {t("agents.retentionHint", { days: 90 })}
               </span>
             </div>
           </div>

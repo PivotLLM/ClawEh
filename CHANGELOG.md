@@ -10,6 +10,350 @@ Entries describe what changed for someone **running or integrating with** ClawEh
 internal refactors behind them. A change nobody outside the repository can
 observe does not need an entry.
 
+## [0.5.0]
+
+Cognitive memory redesign. The classification the model had to reason about at
+every write shrinks to one field, the confirmation gate that was never used is
+gone, and memory gains a type for things that happened — kept out of the prompt
+and reachable by search.
+
+### Removed
+
+- **BREAKING: the `cogmem_memory_confirm` tool is gone.** Memories were written
+  as `review` and waited for the assistant to ask you to confirm them. In
+  practice it never asked: across seven agents, 244 memories were pending, the
+  oldest 77 days, with zero confirmations. The gate is removed rather than left
+  as dead weight. Nothing to migrate — confirmation was the only thing the tool
+  did, and the memories it was gating are now active.
+- **BREAKING: the config keys `memory.prompt.pending_surface` and
+  `memory.prompt.pending_max` are gone.** They controlled the pending digest,
+  which no longer exists. Remove them from your config; an unknown key is
+  ignored, so nothing breaks if you leave them.
+- **BREAKING: memories no longer have a `source` field.** It recorded whether
+  the model believed a memory came from you or was inferred, gated nothing, and
+  never reached the prompt. `origin` (`chat`, `consolidation`, `user`) records
+  where a memory actually came from and is shown to both you and the assistant.
+  Dropped from the database, `GET /api/memory/{id}` and the memory page.
+- **BREAKING: memories no longer have a `priority` field.** It was stored and
+  returned by the API and never read by anything.
+
+### Added
+
+- **A Local CLI agents section on the Providers page, with one switch each.**
+  Claude, Codex, Antigravity and Cursor are listed whether or not their binary
+  is installed — a CLI ClawEh supports but the host lacks is a different thing
+  from one it does not support, so a missing one is greyed out and names the
+  binary it looked for. The switch is the whole setup:
+
+  - **On** creates the provider and a model if they are missing, with the
+    protocol's own request timeout and a model id that lets the CLI choose its
+    own model. An existing model is enabled in place, keeping whatever has been
+    set on it — a switch is not a reset.
+  - **Off** disables every model that runs through that CLI, not just one, so a
+    switch carrying the CLI's name means the CLI. Nothing is deleted either way,
+    so switching back on finds what it left behind.
+
+  Setting one up by hand previously meant creating a provider on one page and a
+  model on another, and knowing four values that appear in no form. One of them
+  could not be set through the Web UI at all (see the `extra_args` entry under
+  Fixed), so a CLI model created in the browser could not be made to work.
+
+  Each row shows the **whole command line**, in the order it is built: the
+  flags the provider always passes (`-p --output-format json`, and the stdin
+  marker), the permission flags (`--dangerously-skip-permissions`, `--yolo`),
+  and anything the CLI's models add in `extra_args`. Some of it auto-approves
+  tool use, and none of it appeared anywhere before — the transport flags are
+  not configurable and so were invisible. Someone asking what ClawEh runs on
+  their machine is owed all of it, not the part that happens to live in config.
+
+  CLI providers now appear only in this section, and the wire-protocol picker
+  under **Add Provider** no longer offers `*-cli` protocols. Editing one — to
+  pin an explicit binary path, say — is still available from its row.
+
+- **Two new memory types.** `event` for something observed at a point in time —
+  a trip, a delivery status, a scheduled run — and `operational` for the
+  assistant's own housekeeping, such as where it files things and how it works.
+  The full set is now `fact`, `preference`, `rule`, `event`, `operational`.
+- **`event` memories stay out of the prompt.** They go stale and accumulate
+  without bound, so they are never loaded automatically. Each domain reports how
+  many it holds and names the call that reads them, and `cogmem_memory_search`
+  reaches them with `include_events: true`.
+- **Consolidation can tell which of two conflicting memories is newer.** Each
+  memory it reviews now carries `age_days` — how long ago it was asserted — and
+  they are listed oldest first. Previously it saw no time at all, so the rule
+  that a newer instruction overrides an older one could not be applied to
+  anything already stored: asked to resolve a contradiction, an assistant would
+  correctly decline to guess which of two opposing instructions was current, and
+  both stayed in its prompt indefinitely. Days rather than a timestamp, because
+  the question is only which is newer.
+- **Consolidation now tidies the domains it touches.** Where two memories say
+  the same thing it retires the weaker one, and where a newer memory
+  contradicts an older one it retires the older and records it in the conflict
+  ledger — even when the conversation did not raise the topic. Nothing
+  previously revisited a memory once written: de-duplication only ever ran
+  against the current batch, so redundancy and stale contradictions
+  accumulated indefinitely. One production agent had two active rules giving
+  opposite instructions about the same notifications.
+
+  It retires rather than rewrites, on purpose: several specific facts that
+  merely share a topic are worth more than one vague paragraph, so only
+  memories that genuinely say the same thing are collapsed. Automatic
+  de-duplication by exact text match still runs as well.
+- **A Status page in the Web UI**, reached from a **Status** entry at the bottom
+  of the sidebar — outside the collapsible groups, since it describes the
+  running process rather than a section of the configuration, and it is what you
+  open when something feels wrong. It shows uptime, memory, and the number of
+  assistants, channels, enabled models, configured providers and goroutines,
+  over a detail box carrying the pid, version, build, Go toolchain, host OS and
+  architecture, and whether the MCP host is running. Backed by a new
+  `GET /api/system/status`, polled every five seconds so the figures stay live.
+
+  Models are counted as *enabled* and providers as *configured*, not as the
+  length of their config lists: an install carrying 40 model definitions of
+  which 3 can run is described by the 3.
+- **`/status` in chat now reports memory.** The command runs inside the process,
+  so it reports on itself — which also means you can ask an assistant how much
+  RAM it is using without shell access to the host.
+- **`claw status` reports whether ClawEh is running, and its RAM.** It could
+  previously answer neither: it reads configuration from disk and never looked
+  at the process, so it described an installation rather than a running system.
+
+  ```
+  ClawEh:          running (pid 1690872), 40.4 MB RAM
+  ```
+
+  ClawEh writes `claw.pid` into its data directory at startup and removes
+  it on clean shutdown. The data directory is the scope that matters — one
+  binary runs several instances on a host, and the command has already resolved
+  `CLAW_HOME` to find the config, so it reports on the instance you asked
+  about. A stale file left by a hard kill reads as "not running": the process
+  must still exist *and* still be claw, because pids are recycled.
+
+  The figure is resident set size, the same number `ps` reports as RSS — not
+  virtual size, which for a Go process includes a gigabyte of reserved address
+  space and would suggest ClawEh is enormous when it is not.
+- **Memory retention.** `event` memories are deleted after **30 days** and
+  retired memories **90 days** after they were retired, both overridable per
+  agent on the Agents page (blank = the default, `-1` = keep forever). Events
+  stop being useful long before they stop accumulating — one agent recorded an
+  hourly "nothing changed" note and reached 300 rows — and retiring leaves the
+  row behind, so a store that retires steadily grows forever while showing
+  nothing for it. **Only those two are ever deleted by age:** a `fact`,
+  `preference`, `rule` or `operational` memory is permanent, so no retention
+  policy can silently drop a standing instruction. The sweep runs as part of
+  consolidation and logs what it removed.
+
+  Retention is deliberately not something the model sets per memory. It already
+  makes that judgement by choosing the type — "I drove to the KOA on 4 Sep" is
+  an `event`, "we go to the KOA every Labour Day" is a `fact` — and a second
+  knob would reopen the multi-field guesswork the type redesign closed.
+- **The WebUI memory page is now a curation surface.** Change a memory's type,
+  retire and restore it, show retired memories, and add a memory or a domain by
+  hand. A memory you add yourself is recorded with `origin: user`, which the
+  assistant sees.
+- **Bulk curation.** Select many memories — or a whole domain at once from its
+  header — and retype, retire, restore or delete them together. A domain that
+  accumulated several hundred near-identical entries is the case the page exists
+  for, and one row at a time is not a job anyone starts.
+- **YAML export and import.** `GET /api/memory/{id}/export` downloads a full
+  dump — domains, memories, every field, with a format version — and import
+  loads one back in **merge** mode (add what is missing) or **replace** mode
+  (wipe and load). IDs are re-minted on import, so a dump can be loaded into a
+  different agent to seed it.
+- **An automatic snapshot before every schema migration.** The database is
+  copied to `<name>.pre-v<N>.db` beside itself before a migration runs, so an
+  upgrade is recoverable without preparation. The snapshot is named for the
+  version the store came *from*, which can differ between agents.
+- **Cognitive-memory databases are migrated when the agent loads**, at startup
+  and on config reload, rather than whenever each session next happens to be
+  opened. Lazy migration spread a schema change across hours of ordinary use
+  with no point an operator could call it done, and left a store belonging to an
+  agent nobody talked to that day on the old schema indefinitely. Each upgrade
+  is logged with its versions and the snapshot path, and a database that cannot
+  be migrated is reported at startup instead of surfacing mid-conversation.
+
+### Changed
+
+- **BREAKING: the Gemini CLI provider is replaced by Antigravity (`agy`).**
+  Google has deprecated the Gemini CLI. The `antigravity-cli` protocol takes its
+  place, seeded as the **Antigravity CLI** provider and model, and the setup
+  wizard detects `agy` alongside the other CLI agents.
+
+  **`gemini-cli` remains accepted as an alias** and now runs `agy`, so an
+  existing configuration keeps starting, keeps auto-starting the MCP host, and
+  keeps working. New configurations should use `antigravity-cli`. The seeded
+  Gemini model and its `GEMINI_CLI_TRUST_WORKSPACE` environment variable are
+  gone; if you had customised that model, point it at the new provider.
+
+  `set-mcp.sh` now registers claw with `agy mcp add` instead of `gemini mcp add`,
+  and reports what to add for Cursor, which has no `mcp add` subcommand and is
+  configured through `~/.cursor/mcp.json`.
+- **A `retire` operation may omit its `evidence`.** Every memory operation had
+  to cite a message in the current batch, which is right for anything that
+  writes text — the rule exists to keep asserted memories anchored to something
+  the user actually said. A retire asserts nothing and names a memory that must
+  already exist, and housekeeping is by definition not raised by the current
+  conversation, so the requirement made every tidy-up operation invalid. A
+  single invalid operation rejects the whole payload, so an agent following the
+  new rule above would have aborted entire consolidation runs.
+
+- **BREAKING: the consolidation prompt is no longer overridable.** A workspace
+  `COGMEM.md` used to replace it wholesale. Its contents are now **appended** to
+  the built-in prompt instead, so the file holds instructions for that assistant
+  — what to record, what to leave alone — while the rules and the output schema
+  stay with the engine.
+
+  The old arrangement made the machine contract operator-editable and froze it
+  at whatever version each workspace was seeded with, so a change to the schema
+  reached no existing agent. That survived by luck rather than design: a
+  required field the old copy did not emit would have failed validation on every
+  operation, and one invalid operation rejects the whole payload — silent, total
+  consolidation failure across every agent, visible only in run records.
+
+  **A `COGMEM.md` that is a copy of the built-in prompt is ignored**, with a
+  warning naming the file, because appending one would show the model two
+  contradictory output schemas. Every workspace seeded by an earlier version
+  contains exactly that, so those agents fall back to the built-in prompt with
+  no action needed: reduce the file to your own instructions, or delete it. New
+  workspaces are seeded with a short commented stub instead of a copy of the
+  prompt.
+- **BREAKING: `cogmem_export` writes YAML, not Markdown.** The output moves from
+  `files/MEMORY_EXPORT.md` to `files/MEMORY_EXPORT.yaml` and is the same format
+  the WebUI exports — which means it can be read back. The Markdown projection
+  could only be looked at.
+- **Memory lines in the prompt now show their type**, so the assistant can tell
+  a standing rule from a stale observation: `- (rule) Do not use the word
+  "thuddy."` Previously only the text was shown.
+- **The prompt tag `[source: …]` is now `[origin: …]`.** It always rendered
+  `origin`; with no `source` field left, the old label was actively misleading.
+- **BREAKING: existing agents keep their old consolidation prompt, and must be
+  updated by hand.** Each agent workspace holds a `COGMEM.md` seeded from the
+  shipped template and never overwritten afterwards — which is the point of it,
+  but means an upgraded install keeps the prompt it was seeded with. That prompt
+  still produces valid output, so nothing fails: the agent simply never records
+  an `event` or `operational` memory, and the most useful part of this release
+  never reaches it. Delete the seeded copies to pick up the current prompt:
+
+  ```
+  rm ~/.claw/agents/*/COGMEM.md      # or $CLAW_HOME/agents/*/COGMEM.md
+  ```
+
+  They are re-seeded from the new template on the next start. **If you have
+  edited one, keep it and add the new types yourself** — the file is yours.
+  ClawEh now logs a warning naming any agent whose prompt predates the new
+  types, so a missed one is visible rather than silent.
+- **Consolidation states a memory's type and nothing else.** It no longer sets
+  `status` (there is no longer a choice) or `source` (gone), and an operation
+  that omits a required field is rejected rather than silently defaulted.
+
+### Fixed
+
+- **BREAKING: CLI models no longer need `extra_args` set, and the flags are now
+  supplied automatically.** Every CLI agent needs a flag to run unattended
+  (`--dangerously-skip-permissions`, `--yolo`, and so on). It was stored on each
+  model, could not be set anywhere in the Web UI, and left out it failed
+  silently: the CLI auto-denies the tool call it cannot prompt for and reports a
+  completed turn with an empty answer, so the assistant answers chat and goes
+  mute the moment it tries to do anything. ClawEh now supplies each protocol's
+  required flags itself and appends whatever `extra_args` adds, so a model
+  written before this — or added through the Web UI — works without being
+  edited. A model that already lists the flag does not get it twice.
+
+  The breaking part is that the flags can no longer be removed by clearing
+  `extra_args`. If you deliberately run a CLI sandboxed, say so and we will add
+  the opt-out.
+
+- **A CLI that refused a tool call reported success and said nothing.** The
+  Antigravity CLI returns `status: SUCCESS` with an empty response and a
+  `denied_actions` list when it is not allowed to act; ClawEh did not know the
+  field existed and handed the empty answer on with no error and nothing in the
+  log. It now fails with the refused action and the flag that fixes it.
+
+- **BREAKING: deleting a provider silently changed the settings of others.**
+  Configuration is loaded by overlaying the file onto the built-in defaults, and
+  deleting a provider shifted every later entry onto a different default, which
+  it then inherited unset fields from. Deleting `OpenAI` gave `OpenRouter Chat`
+  Groq's `no_parallel_tool_calls` and `NVIDIA` OpenRouter Strict's
+  `strict_compat` — wire-behaviour changes to providers nobody touched, made
+  permanent by the next save. **Check your `providers` for `strict_compat` or
+  `no_parallel_tool_calls` on an endpoint that should not have them** if you
+  have ever deleted a provider; remove the key and restart.
+
+- **A dormant agent compacted twice in a row on waking.** Compaction has an age
+  trigger — it fires once the oldest message in the live window passes
+  `trigger.days` (7), however little of the window that window holds. The pass
+  cannot always cut back to the retention age cap (5 days): the last messages are
+  kept whatever their age, and the latest user turn is kept even when it is over
+  the cap, deliberately, since a request with no user message is rejected
+  outright. A session dormant past the trigger therefore comes back holding a
+  message the pass was never going to remove, and the next message fired another
+  pass against the same boundary — on production, a second compaction 109
+  seconds after the first, summarizing 36 tokens. The age trigger now waits for
+  the window to move past a boundary it has already compacted against. Nothing
+  to change: the intended gap between trigger and retention (2 days of quiet)
+  now holds in the case where it did not.
+
+- **The model count is shown on every configured CLI row.** It was omitted
+  where a CLI had a single model, which left it printed for one CLI and absent
+  for the rest — read as a fault rather than as brevity.
+
+- **Plural translations never selected their plural form.** Keys carrying a
+  `_plural` sibling — the pre-v21 i18next convention — are silently ignored by
+  the version in use, which wants `_other`. Provider cards read "2 model", and
+  the new CLI rows inherited it. Both fixed, with a test that fails on any
+  `_plural` key left in the catalogue.
+
+- **A CLI provider was offered five settings that do nothing.** Proxy,
+  `strict_compat`, `require_reasoning_content`, `no_parallel_tool_calls` and
+  `response_format_json` are HTTP wire knobs, and the CLI factory reads none of
+  them — a CLI provider is built from its command, workspace, arguments and
+  environment alone. Shown on a CLI form they were five controls with no effect,
+  and an off switch reads as a feature that is available and disabled: it made
+  `response_format_json` look like the reason a CLI was not returning JSON. It
+  always does. `--output-format json` (`--json` for Codex) is in the arguments
+  ClawEh passes, not in the configuration, and never was optional. The advanced
+  section is now hidden for CLI providers.
+
+- **The Providers page called a CLI provider configured whenever a path was
+  filled in, without checking that the binary was there.** A provider pinned to
+  a CLI that had since been upgraded or uninstalled showed a green dot and
+  "Configured" while every request through it failed. The reverse was worse: a
+  CLI provider with the **Command** field left blank — which is how the seeded
+  config ships, and the more robust choice, since it follows the CLI across
+  upgrades — showed as unconfigured even though it worked. The dot and the label
+  now mean the binary actually resolves, decided in the ClawEh process against
+  the `PATH` its subprocesses are launched with, and the card names the binary a
+  blank command resolved to. CLI cards also carry a **Configured** /
+  **Not configured** label at all: they previously rendered an empty space where
+  every other card said what it was.
+- **Adding a CLI provider no longer demands a command.** The field was
+  mandatory, which forced a hard-coded path on every new CLI provider — the one
+  configuration that breaks when the CLI is upgraded. Leave it blank and ClawEh
+  runs the protocol's default binary from `PATH`. The field also no longer shows
+  `/usr/local/bin/claude` as a placeholder, which suggested a path was expected
+  and named the wrong CLI for three of the four protocols.
+- **The wire-protocol picker offered `gemini-cli` and not `antigravity-cli`,**
+  so there was no way to add an Antigravity provider through the Web UI. It now
+  offers `antigravity-cli`; a provider already configured as `gemini-cli` keeps
+  working — the backend treats it as an alias for the same binary — and still
+  renders as a CLI provider.
+- **`systemctl stop` and `systemctl restart` now shut ClawEh down gracefully.**
+  Only `SIGINT` was handled, and systemd sends `SIGTERM`, whose default
+  disposition kills the process outright — so every stop and restart skipped
+  shutdown entirely: channels were never stopped cleanly, in-flight work was
+  never drained, and the 15-second graceful-shutdown timeout was dead code on
+  the one path production actually uses. Pressing Ctrl-C in a foreground run
+  always worked, which is why it went unnoticed.
+- **An operation that omitted both `status` and `source` was accepted and then
+  defaulted to a combination the rules forbid** — `assistant_inferred` with
+  `active`. Every guard tested for the fields being *wrong*, not missing. The
+  fields are gone and the remaining ones are checked for presence.
+- **Memories in `review` were unreachable.** They were excluded from the prompt,
+  excluded from `cogmem_memory_search`, and excluded from the WebUI, and the
+  digest that was meant to surface them showed a fixed top-eight by confidence —
+  so 236 of the 244 had never been seen by anything. They are now active and
+  visible.
+
 ## [0.4.72]
 
 First release under the stable-compatibility policy: config schemas, tool names,
@@ -285,4 +629,5 @@ on, and breaking one is a deliberate decision rather than a free move.
   entered, and the entry had to be worked around rather than typed. Affects the
   Telegram, Slack and generic channel forms.
 
+[0.5.0]: https://github.com/PivotLLM/ClawEh/compare/0.4.72...0.5.0
 [0.4.72]: https://github.com/PivotLLM/ClawEh/compare/0.4.70...0.4.72

@@ -59,6 +59,21 @@ type MemoryView struct {
 	Type       string  `json:"type"`
 	Text       string  `json:"text"`
 	Confidence float64 `json:"confidence"`
+	// AgeDays is how long ago this memory was asserted, so the model can tell
+	// which of two contradicting memories is the newer one.
+	//
+	// Without it, rule 3 — a newer instruction overrides an older one — was
+	// unenforceable against stored memories: the view carried no time at all,
+	// so a live agent asked to resolve a contradiction correctly declined to
+	// guess. Days rather than a timestamp because the question is "which is
+	// newer", and a small integer answers it without the model doing date
+	// arithmetic it is bad at.
+	//
+	// Measured from creation, not last update: updating moves when a memory is
+	// retyped or has a document attached, neither of which says anything about
+	// when the claim was made. Consolidation supersedes rather than edits, so a
+	// re-asserted memory gets a fresh creation time.
+	AgeDays int `json:"age_days"`
 }
 
 // Message is one archive message in the batch.
@@ -93,13 +108,14 @@ type DomainOp struct {
 
 // MemoryOp is an add/supersede/retire operation on a hook.
 type MemoryOp struct {
-	Op         string         `json:"op"`
-	Domain     string         `json:"domain,omitempty"` // existing domain id or a tmp_id
-	OldID      string         `json:"old_id,omitempty"`
-	Type       string         `json:"type,omitempty"`
+	Op     string `json:"op"`
+	Domain string `json:"domain,omitempty"` // existing domain id or a tmp_id
+	OldID  string `json:"old_id,omitempty"`
+	// Type is the one classification the model states. Status is derived (a
+	// consolidated memory is active) and there is no longer a source field, so
+	// this is the whole of the model's judgement about what a memory is.
+	Type       string         `json:"type"`
 	Text       string         `json:"text,omitempty"`
-	Status     string         `json:"status,omitempty"`
-	Source     string         `json:"source,omitempty"`
 	Confidence float64        `json:"confidence,omitempty"`
 	ID         string         `json:"id,omitempty"` // for retire
 	Reason     string         `json:"reason,omitempty"`
@@ -113,11 +129,14 @@ type LedgerEntry struct {
 	Evidence store.Evidence `json:"evidence"`
 }
 
-var (
-	validMemoryTypes = map[string]bool{"fact": true, "preference": true, "rule": true}
-	validStatuses    = map[string]bool{"active": true, "review": true}
-	validSources     = map[string]bool{"user_explicit": true, "assistant_inferred": true}
-)
+var validMemoryTypes = map[string]bool{
+	"fact": true, "preference": true, "rule": true, "event": true, "operational": true,
+}
+
+// validDomainStatuses is the domain lifecycle, which is separate from a
+// memory's: a domain is active or archived. It previously also accepted
+// "review", which was a memory status that a domain could never usefully hold.
+var validDomainStatuses = map[string]bool{"active": true, "archived": true}
 
 // maxTriggersLen caps the comma-delimited tool-trigger string a domain op may set.
 const maxTriggersLen = 512
@@ -177,7 +196,7 @@ func (o Output) Validate(in Input) error {
 			if strings.TrimSpace(op.Name) == "" {
 				return fmt.Errorf("domain_ops[%d]: create needs a name", i)
 			}
-			if op.Status != "" && !validStatuses[op.Status] {
+			if op.Status != "" && !validDomainStatuses[op.Status] {
 				return fmt.Errorf("domain_ops[%d]: invalid status %q", i, op.Status)
 			}
 			tmpIDs[op.TmpID] = true
@@ -195,29 +214,40 @@ func (o Output) Validate(in Input) error {
 	}
 
 	for i, op := range o.MemoryOps {
-		if err := evOK(op.Evidence); err != nil {
-			return fmt.Errorf("memory_ops[%d]: %w", i, err)
+		// Evidence is required for anything that WRITES text, because that is
+		// what the rule is for: no asserted memory without a message justifying
+		// it. A retire asserts nothing — it removes a memory that already
+		// exists, and its id must already be known — so it may carry no
+		// evidence at all.
+		//
+		// This is what lets the model tidy: merging two memories that say the
+		// same thing, or dropping one a newer memory contradicts, is housekeeping
+		// the current conversation did not raise and so cannot cite. Requiring
+		// evidence there would have made every such op invalid, and one invalid
+		// op rejects the whole payload — so the model would have aborted entire
+		// runs trying to follow the rule.
+		if op.Op != "retire" || !op.Evidence.IsZero() {
+			if err := evOK(op.Evidence); err != nil {
+				return fmt.Errorf("memory_ops[%d]: %w", i, err)
+			}
 		}
 		switch op.Op {
 		case "add", "supersede":
 			if !domainIDs[op.Domain] && !tmpIDs[op.Domain] {
 				return fmt.Errorf("memory_ops[%d]: unknown domain %q", i, op.Domain)
 			}
+			// Required, not merely valid-if-present. The previous contract
+			// checked each field only when it was non-empty, so an op that
+			// omitted everything passed every guard and was then filled in with
+			// defaults the rules forbade.
+			if op.Type == "" {
+				return fmt.Errorf("memory_ops[%d]: missing type", i)
+			}
 			if !validMemoryTypes[op.Type] {
 				return fmt.Errorf("memory_ops[%d]: invalid type %q", i, op.Type)
 			}
 			if strings.TrimSpace(op.Text) == "" {
 				return fmt.Errorf("memory_ops[%d]: empty text", i)
-			}
-			if op.Status != "" && !validStatuses[op.Status] {
-				return fmt.Errorf("memory_ops[%d]: invalid status %q", i, op.Status)
-			}
-			if op.Source != "" && !validSources[op.Source] {
-				return fmt.Errorf("memory_ops[%d]: invalid source %q", i, op.Source)
-			}
-			// Inferred items must be review (rule 5).
-			if op.Source == "assistant_inferred" && op.Status == "active" {
-				return fmt.Errorf("memory_ops[%d]: inferred item must be status=review", i)
 			}
 			if op.Op == "supersede" && !memoryIDs[op.OldID] {
 				return fmt.Errorf("memory_ops[%d]: supersede unknown old_id %q", i, op.OldID)
@@ -232,6 +262,19 @@ func (o Output) Validate(in Input) error {
 	}
 
 	for i, e := range o.ConflictLedger {
+		// Optional for the same reason as a retire: a ledger entry RECORDS a
+		// decision, it does not assert a memory. When the decision is
+		// housekeeping — two stored memories contradict each other, and the
+		// stale one goes — there is no message in this batch to cite, because
+		// the conversation never raised it.
+		//
+		// Found the hard way: rule 9 asked the model to tidy, it did, it filed
+		// the resolution in the ledger as instructed, and the whole payload was
+		// rejected for evidence [0,0]. One invalid entry aborts the run, so the
+		// agent lost the entire consolidation rather than the one entry.
+		if e.Evidence.IsZero() {
+			continue
+		}
 		if err := evOK(e.Evidence); err != nil {
 			return fmt.Errorf("conflict_ledger[%d]: %w", i, err)
 		}
@@ -244,24 +287,19 @@ func (o Output) Validate(in Input) error {
 // batch (which would silently drop real memories). It returns a human-readable
 // note per repair, for the run record/log.
 //
-// Current repairs:
-//   - An inferred memory the model marked status=active is downgraded to
-//     status=review — its correct, more conservative state. It then flows
-//     through the normal pending-confirmation path instead of the whole batch
-//     being aborted.
+// There are currently no repairs. The one that existed downgraded an inferred
+// memory the model had marked active to review, and both the status field and
+// the review state are gone — the model no longer states anything that can be
+// wrong in a way an automatic correction could fix.
 //
-// Genuinely ambiguous violations (unknown domain, invalid type, empty text,
-// dangling supersede/retire references) are deliberately NOT repaired — Validate
-// still rejects those, since there is no safe automatic correction.
+// The function is kept because the repair-and-note path is the right shape for
+// the next contract deviation that turns out to be safely correctable, and its
+// callers (the worker's run record, the memory page's note field) already
+// handle an empty result.
+//
+// Genuinely ambiguous violations (unknown domain, missing or invalid type, empty
+// text, dangling supersede/retire references) are NOT repaired — Validate
+// rejects those, since there is no safe automatic correction.
 func (o *Output) Normalize() []string {
-	var notes []string
-	for i := range o.MemoryOps {
-		op := &o.MemoryOps[i]
-		if (op.Op == "add" || op.Op == "supersede") &&
-			op.Source == "assistant_inferred" && op.Status == "active" {
-			op.Status = "review"
-			notes = append(notes, fmt.Sprintf("memory_ops[%d]: inferred item active→review", i))
-		}
-	}
-	return notes
+	return nil
 }

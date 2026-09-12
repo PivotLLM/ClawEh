@@ -101,14 +101,6 @@ func (s *Store) LastRun(ctx context.Context, q DBTX) (r Run, ok bool, err error)
 	return r, true, nil
 }
 
-// PendingCount returns the number of review-status hooks awaiting confirmation.
-func (s *Store) PendingCount(ctx context.Context, q DBTX) (int, error) {
-	var n int
-	err := q.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM memories WHERE status=?`, string(StatusReview)).Scan(&n)
-	return n, err
-}
-
 // ConsolidationState is the per-archive watermark/trigger bookkeeping.
 type ConsolidationState struct {
 	ArchivePath     string

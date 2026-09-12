@@ -12,11 +12,13 @@ node tests/frontend-e2e.mjs --base http://host:port
 
 ## Before you start
 
-**Run it against a dev instance, never production.** Groups F and G write
-configuration. Both revert what they change — the agent created in F is deleted,
-and the field edited in G is restored to the value read beforehand — but a
-crash mid-run would leave the change behind. The runner refuses port 18790
-unless `--allow-prod` is passed.
+**Run it against a dev instance, never production.** Groups F, G and N write.
+All three revert what they change — the agent created in F is deleted, the field
+edited in G is restored to the value read beforehand, and the memory domain N
+creates is deleted at the end — but a crash mid-run would leave the change
+behind. N only ever touches the `e2e-probe` domain it created, so an agent's
+real memory is not at risk, but it is still a write. The runner refuses port
+18790 unless `--allow-prod` is passed.
 
 | Requirement | Notes |
 |---|---|
@@ -44,10 +46,10 @@ until curl -sf http://127.0.0.1:8077/ready >/dev/null; do sleep 1; done
 
 ## B. Route smoke
 
-**Process.** Load each of the 17 routes in a browser with the console open:
+**Process.** Load each of the 18 routes in a browser with the console open:
 `/`, `/agents`, `/agent/bindings`, `/agent/tools`, `/agent/skills`, `/channels`,
 `/config`, `/config/raw`, `/devices`, `/logs`, `/mcp`, `/mcp/servers`, `/memory`,
-`/models`, `/providers`, `/voice`, `/setup`.
+`/models`, `/providers`, `/voice`, `/setup`, `/status`.
 
 **Expected.** Each renders substantive content (>40 characters of text) and logs
 **no console errors**. A blank page or a red console entry is a failure.
@@ -65,7 +67,7 @@ until curl -sf http://127.0.0.1:8077/ready >/dev/null; do sleep 1; done
 
 | ID | Process | Expected |
 |---|---|---|
-| D1 | Load all 17 routes; scan the rendered text for anything shaped like a translation key (`pages.…`, `navigation.…`) | None found. i18next renders the key verbatim when a lookup fails, so a leaked key is the only visible symptom of a broken locale |
+| D1 | Load all 18 routes; scan the rendered text for anything shaped like a translation key (`pages.…`, `navigation.…`) | None found. i18next renders the key verbatim when a lookup fails, so a leaked key is the only visible symptom of a broken locale |
 | D2 | Load `/agent/tools` | No heading reads `…categories.<name>`. Tool categories come from the backend catalog; a category with no label in `en.json` shows as a raw key |
 
 ## E. Chat and WebSocket auth
@@ -113,6 +115,12 @@ Creates an agent called `e2e-probe` and deletes it at the end.
 | I1 | Load `/models` | Lists the models from `GET /api/models` |
 | I2 | Load `/providers` | Lists the providers from `GET /api/providers` |
 | I3 | `/models` → **Add Model**, then Escape | The sheet opens and closes with no console error |
+| I4 | Load `/providers` and count the **Configured** / **Not configured** labels | Every card in the API grid carries one. "Configured" is the backend's answer, not a guess from the config: an API key for an HTTP provider, and for a CLI a binary that actually resolves — so a stale path reads *Not configured* and a blank one that resolves reads *Configured* |
+| I5 | `/providers` → **Add Provider** → open the wire-protocol picker | No `*-cli` protocol is offered. A CLI is added by its switch in the **Local CLI agents** section; building one by hand here would produce a provider the section does not show and the grid filters out |
+| I6 | Load `/providers` and count the rows in **Local CLI agents** | One row and one switch per supported CLI from `GET /api/system/clis`, whether or not the binary is installed. A CLI the host lacks is greyed out and says so — hiding it would look like ClawEh does not support it. Every **configured** row shows its model count (`1 of 1 model on`, `3 of 3 models on`), including CLIs with a single model: printing it for some and not others reads as a fault |
+| I7 | Compare the provider cards against `GET /api/providers` | The grid holds only the non-CLI providers. CLI providers appear in the section above and nowhere else: one CLI is one thing to the person using it, and showing it twice under two controls is what made it confusing |
+| I8 | Load `/providers` and read a CLI row | **Args:** lists the whole command line in invocation order — the provider's own flags (`-p --output-format json`), the permission flags (`--dangerously-skip-permissions`, `--yolo`), whatever the models add, then the stdin marker. Not just the configured part: someone asking what ClawEh runs on their machine is owed all of it, and some of it auto-approves tool use |
+| I9 | `/providers` → edit a configured CLI from its row | The sheet offers the Command field and **no** advanced section. Proxy, `strict_compat`, `require_reasoning_content`, `no_parallel_tool_calls` and `response_format_json` are HTTP wire knobs the CLI factory never reads; shown here they were controls that did nothing, and an off switch reads as a feature available but disabled — which is how `response_format_json` came to look like the reason a CLI was not returning JSON. It always does: `--output-format json` is in the argv, not the config |
 
 ## J. Devices
 
@@ -142,6 +150,41 @@ Creates an agent called `e2e-probe` and deletes it at the end.
 |---|---|---|
 | M1–M11 | `curl -o /dev/null -w '%{http_code}' $BASE<path>` for `/api/system/version`, `/api/config`, `/api/models`, `/api/providers`, `/api/agents/tools`, `/api/skills`, `/api/devices`, `/api/devices/pending`, `/api/webui/token`, `/health`, `/ready` | All `200`. `/ready` returning 503 after startup means the readiness flag was never set |
 | M90 | `curl $BASE/api/config` and search for credentials | Every `api_key` is masked. `/api/*` has no operator authentication, so an unmasked credential here is readable by anything that can reach the port |
+
+## N. Memory curation
+
+Creates a domain called `e2e-probe` in the first memory store, works inside it,
+and deletes it at the end. Nothing outside that domain is touched.
+
+| ID | Process | Expected |
+|---|---|---|
+| N1 | `curl $BASE/api/memory` | At least one cognitive-memory database is listed. An install with none skips the rest of the group |
+| N2 | `POST /api/memory/{id}/domains` with `{"name":"e2e-probe"}` | `201`, and the response carries the new domain id |
+| N3 | `POST /api/memory/{id}/domains/{domain}/memories` with a fact | `201`, `origin: "user"` and `confidence: 1`. That origin is the one piece of provenance that is verifiable rather than the model's self-report, and nothing could write it before this existed |
+| N4 | Post a memory with `"type":"observation"` | `400`. Type decides whether a memory is in the prompt at all, so an unrecognised one must be refused, not coerced |
+| N5 | `PATCH` the memory to `{"type":"event"}` | `200` and the type changes. This is the correction the page exists for |
+| N6 | `PATCH` it to `{"status":"retired"}`, then read the store with and without `?include_retired=1` | Absent by default, present with the flag. If a retired memory cannot be seen it can never be restored |
+| N7 | `PATCH` it back to `{"status":"active"}` | `200`, status active |
+| N8 | Add two more, then `POST /api/memory/{id}/bulk` with `retype` to `operational` over all three | `200` and `changed` equals the number sent. Bulk is on the critical path: a production store can hold hundreds of near-identical recurring notes |
+| N9 | `POST` a bulk `retire` over one good id and `hNOPE` | `200`, `changed: 1`, and `failed` names `hNOPE`. One bad id must not abort a batch of hundreds |
+| N10 | `GET /api/memory/{id}/export`, then `POST` the body back to `/import?mode=merge` | The export is YAML carrying `format_version`, and merge-importing it creates **0** memories — the same document imported twice must change nothing |
+| N11 | Load `/memory`, click the probe's store in the sidebar | The `e2e-probe` domain renders with its 3 memories, no console errors |
+| N12 | Open the type dropdown on the first row and pick `preference` | The **stored** type changes, read back from the API. Steps 2–10 drive the API; from here the checks drive the page, because a control can be wired correctly and still not work — the type picker is a portalled listbox and jsdom is not a browser |
+| N13 | Tick the checkbox in the **domain header**, then use **Change type…** on the bar that appears | The bulk bar is absent with nothing selected; the header checkbox selects every memory in the domain, and the bar retypes them all. Retyping a domain of several hundred entries one row at a time is not a job anyone starts, which is what made the bulk actions much less useful than they looked |
+| N14 | **Add memory** on the domain, type some text, **Add** | The memory is in the store with `origin: "user"` |
+| N15 | Retire a row, then click **Show retired** | It disappears from the default view and comes back behind the toggle. Without that it could never be restored |
+| N16 | `DELETE /api/memory/{id}/domains/{domain}` | `204`, and the probe domain is gone even with `include_retired=1` |
+
+## O. Status page
+
+| ID | Process | Expected |
+|---|---|---|
+| O1 | `curl $BASE/api/system/status` | `200`, carrying `version`, `uptime`, `pid`, `memory_bytes` and `agents`. `memory_bytes` is resident set size — between 1 MB and 2 GB. A gigabyte-scale figure means `VmSize` was read instead of `VmRSS`, which for a Go process counts over a gigabyte of reserved address space |
+| O2 | Compare the counts against `GET /api/config` | `agents` matches what the configuration lists. `models` counts only **enabled** models, and `providers` only **configured** ones, so neither equals the length of its config list |
+| O3 | Load `/`, click **Status** in the sidebar | The link is in the sidebar **footer** — below the collapsible groups, so it is reachable without opening a disclosure — and navigates to `/status` with no console errors |
+| O4 | Load `/status` | The memory, assistants and uptime tiles all render live figures; memory reads as a size with a unit |
+| O5 | Load `/status` and read the lower detail box | It carries a **Compiler** line (`go1.27.1`) and an **Environment** line (`Ubuntu 24.04.4 LTS on amd64`, falling back to `linux on amd64` on a host that publishes no name). The memory tile shows one figure — no Go heap: the heap is a subset of RSS and a diagnostic detail, and this page reports how big the process is |
+| O6 | Compare `providers` from `GET /api/system/status` against the `ready` flags in `GET /api/providers` | The two agree. Both read one backend rule — an API key for HTTP providers, a binary that actually resolves for CLI ones — so a mismatch means one surface went back to guessing from the config. Any CLI provider that is `ready` with no `command` set reports the binary it resolved to |
 
 ---
 

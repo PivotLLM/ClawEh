@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/PivotLLM/ClawEh/agent"
@@ -29,6 +30,7 @@ import (
 	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/health"
 	"github.com/PivotLLM/ClawEh/internal"
+	"github.com/PivotLLM/ClawEh/internal/pidfile"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/mcpserver"
 	"github.com/PivotLLM/ClawEh/media"
@@ -208,6 +210,16 @@ func gatewayCmd(debug bool) error {
 		return err
 	}
 
+	// Record the pid so `claw status` can find THIS instance. Scoped to the data
+	// directory because one binary runs several gateways on a host, and a CLI
+	// command already resolves CLAW_HOME to find the config. Non-fatal: a
+	// gateway that cannot write the file should still serve.
+	if err := pidfile.Write(cfg.DataDir()); err != nil {
+		logger.WarnCF("gateway", "could not write the pid file; `claw status` will not see this instance",
+			map[string]any{"error": err.Error()})
+	}
+	defer pidfile.Remove(cfg.DataDir())
+
 	logger.InfoF("Gateway started", map[string]any{"addr": fmt.Sprintf("%s:%d", cfg.Gateway.Host, cfg.Gateway.Port)})
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -248,8 +260,14 @@ func gatewayCmd(debug bool) error {
 	svcTokenChan, stopSvcWatch := setupFileChangeWatcher(servicetoken.Path(cfg.DataDir()), reloadInterval)
 	defer stopSvcWatch()
 
+	// SIGTERM as well as SIGINT. systemd sends SIGTERM to stop a unit, and its
+	// default disposition kills the process outright — so registering only
+	// os.Interrupt meant every `systemctl stop` and `restart` skipped the
+	// shutdown below entirely: channels were never stopped cleanly, in-flight
+	// work was never drained, and gracefulShutdownTimeout was dead code on the
+	// only path production actually uses.
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
 	// Main event loop - wait for signals or config/token changes
 	for {
@@ -481,7 +499,7 @@ func setupAndStartServices(
 		logger.WarnCF("mcpserver", "MCP client initialization reported an error", map[string]any{"error": err.Error()})
 	}
 
-	// Start the MCP server so CLI providers (claude-cli/codex-cli/gemini-cli)
+	// Start the MCP server so CLI providers (claude-cli/codex-cli/antigravity-cli/cursor-cli)
 	// can call claw's host-side tools natively over MCP.
 	if err := startMCPServer(cfg, agentLoop, msgBus, services); err != nil {
 		return nil, err

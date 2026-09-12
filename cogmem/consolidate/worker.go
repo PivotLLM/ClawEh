@@ -61,6 +61,12 @@ type Worker struct {
 	debugDump      string
 	modelName      string
 
+	// Retention windows in days; 0 means keep forever. Applied on each run,
+	// because consolidation is already the regular sweep over a store and a
+	// second scheduler for a delete this cheap would earn nothing.
+	eventDays   int
+	retiredDays int
+
 	// markConsolidated, when set, flags archive messages up to a seq as
 	// consolidated after a successful apply + watermark advance. Best-effort:
 	// the cogmem.db watermark remains the source of truth, so a mark failure is
@@ -83,6 +89,12 @@ func WithAutoPromote(v bool) Option { return func(w *Worker) { w.autoPromote = v
 
 // WithDebugDump writes the system/user/raw payloads of each run to dir.
 func WithDebugDump(dir string) Option { return func(w *Worker) { w.debugDump = dir } }
+
+// WithRetention sets how long event and retired memories are kept, in days.
+// 0 for either means keep forever.
+func WithRetention(eventDays, retiredDays int) Option {
+	return func(w *Worker) { w.eventDays, w.retiredDays = eventDays, retiredDays }
+}
 
 // WithModelName records a human-readable model name in consolidation runs.
 func WithModelName(name string) Option { return func(w *Worker) { w.modelName = name } }
@@ -187,13 +199,20 @@ func (w *Worker) RunOnce(ctx context.Context, p RunParams) (RunResult, error) {
 		})
 	}
 
+	w.applyRetention(ctx, p.SessionKey)
+
 	in := Input{
 		Curated:      ReadCurated(p.Workspace),
 		CurrentState: w.currentState(ctx),
 		NewMessages:  batch,
 	}
 
-	system, _ := LoadPrompt(PromptPath(p.Workspace))
+	promptPath := PromptPath(p.Workspace)
+	system, prompt := BuildPrompt(promptPath)
+	if prompt.Ignored {
+		logger.WarnCF("cogmem", "Ignoring per-agent consolidation instructions: "+prompt.Reason,
+			map[string]any{"path": promptPath})
+	}
 	userJSON, err := json.Marshal(in)
 	if err != nil {
 		return RunResult{}, fmt.Errorf("consolidate: marshal input: %w", err)
@@ -281,11 +300,11 @@ func (w *Worker) RunOnce(ctx context.Context, p RunParams) (RunResult, error) {
 	return result, nil
 }
 
-// currentState projects the active+review domains and their active hooks into
-// the compact view the model sees.
+// currentState projects the active domains and their active memories into the
+// compact view the model sees.
 func (w *Worker) currentState(ctx context.Context) CurrentState {
 	cs := CurrentState{}
-	domains, err := w.st.ListDomains(ctx, w.st.DB(), store.StatusActive, store.StatusReview)
+	domains, err := w.st.ListDomains(ctx, w.st.DB(), store.StatusActive)
 	if err != nil {
 		return cs
 	}
@@ -301,7 +320,10 @@ func (w *Worker) currentState(ctx context.Context) CurrentState {
 			Triggers:        d.Triggers,
 			KeywordTriggers: d.KeywordTriggers,
 		}
-		hooks, err := w.st.ListMemories(ctx, w.st.DB(), d.ID, store.StatusActive)
+		// Prompt memories only: the model de-duplicates against what it sees, and
+		// a domain holding hundreds of event memories would crowd out everything
+		// else in the state view.
+		hooks, err := w.st.ListPromptMemories(ctx, w.st.DB(), d.ID)
 		if err == nil {
 			for _, h := range hooks {
 				dv.Memories = append(dv.Memories, MemoryView{
@@ -309,12 +331,43 @@ func (w *Worker) currentState(ctx context.Context) CurrentState {
 					Type:       string(h.Type),
 					Text:       h.Text,
 					Confidence: h.Confidence,
+					AgeDays:    int(time.Since(h.CreatedAt).Hours() / 24),
 				})
 			}
 		}
 		cs.Domains = append(cs.Domains, dv)
 	}
 	return cs
+}
+
+// applyRetention deletes memories that have aged out.
+//
+// Events go because they stop being useful long before they stop accumulating —
+// an hourly "nothing changed" note reached 300 rows on one agent. Retired
+// memories go because retiring leaves the row behind, so a store that retires
+// steadily grows forever while showing nothing for it.
+//
+// Best-effort and non-fatal: a purge failure must never stop the consolidation
+// run that was actually asked for.
+func (w *Worker) applyRetention(ctx context.Context, sessionKey string) {
+	if n, err := w.st.PurgeExpiredEvents(ctx, w.st.DB(), w.eventDays); err != nil {
+		logger.WarnCF("cogmem", "purge expired events failed", map[string]any{
+			"session_key": sessionKey, "error": err.Error(),
+		})
+	} else if n > 0 {
+		logger.InfoCF("cogmem", "consolidation: deleted expired event memories", map[string]any{
+			"session_key": sessionKey, "deleted": n, "older_than_days": w.eventDays,
+		})
+	}
+	if n, err := w.st.PurgeRetiredMemories(ctx, w.st.DB(), w.retiredDays); err != nil {
+		logger.WarnCF("cogmem", "purge retired memories failed", map[string]any{
+			"session_key": sessionKey, "error": err.Error(),
+		})
+	} else if n > 0 {
+		logger.InfoCF("cogmem", "consolidation: deleted retired memories", map[string]any{
+			"session_key": sessionKey, "deleted": n, "retired_more_than_days_ago": w.retiredDays,
+		})
+	}
 }
 
 // recordRun writes the run record. errMsg is why the run FAILED; note is

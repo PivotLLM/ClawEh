@@ -106,10 +106,14 @@ export function AddProviderSheet({
     } else if (existingNames.some((n) => n.trim() === name)) {
       errors.name = t("providers.add.errorDuplicateName")
     }
-    if (isCliProtocol(form.protocol)) {
-      if (!form.command.trim())
-        errors.command = t("providers.add.errorRequired")
-    } else if (requiresBaseURL(form.protocol) && !form.baseURL.trim()) {
+    // A CLI provider needs no command: left blank, the backend runs the
+    // protocol's default binary off PATH, which survives a CLI being upgraded
+    // out from under a hard-coded path.
+    if (
+      !isCliProtocol(form.protocol) &&
+      requiresBaseURL(form.protocol) &&
+      !form.baseURL.trim()
+    ) {
       errors.baseURL = t("providers.add.errorRequired")
     }
     setFieldErrors(errors)
@@ -197,7 +201,12 @@ export function AddProviderSheet({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {[...PROTOCOL_OPTIONS]
+                  {/* CLI protocols are absent on purpose: the Local CLI agents
+                      section owns them, and adding a second provider for a CLI
+                      here would produce one the section does not show and the
+                      grid filters out. The edit sheet still lists them, so an
+                      existing CLI provider stays editable. */}
+                  {PROTOCOL_OPTIONS.filter((opt) => !isCliProtocol(opt))
                     .sort((a, b) => a.localeCompare(b))
                     .map((opt) => (
                       <SelectItem key={opt} value={opt}>
@@ -216,15 +225,8 @@ export function AddProviderSheet({
                 <Input
                   value={form.command}
                   onChange={setField("command")}
-                  placeholder="/usr/local/bin/claude"
                   className="font-mono text-sm"
-                  aria-invalid={!!fieldErrors.command}
                 />
-                {fieldErrors.command && (
-                  <p className="text-destructive text-xs">
-                    {fieldErrors.command}
-                  </p>
-                )}
               </Field>
             ) : (
               <>
@@ -252,54 +254,59 @@ export function AddProviderSheet({
               </>
             )}
 
-            <AdvancedSection>
-              <Field
-                label={t("providers.field.proxy")}
-                hint={t("providers.field.proxyHint")}
-              >
-                <Input
-                  value={form.proxy}
-                  onChange={setField("proxy")}
-                  placeholder="http://127.0.0.1:7890"
+            {/* HTTP wire knobs only; the CLI factory reads none of them. The
+                picker offers no CLI protocols, so this is unreachable today —
+                guarded so it stays correct if one is ever added back. */}
+            {!cli && (
+              <AdvancedSection>
+                <Field
+                  label={t("providers.field.proxy")}
+                  hint={t("providers.field.proxyHint")}
+                >
+                  <Input
+                    value={form.proxy}
+                    onChange={setField("proxy")}
+                    placeholder="http://127.0.0.1:7890"
+                  />
+                </Field>
+
+                <SwitchCardField
+                  label={t("providers.field.strictCompat")}
+                  hint={t("providers.field.strictCompatHint")}
+                  checked={form.strictCompat}
+                  onCheckedChange={(v) =>
+                    setForm((f) => ({ ...f, strictCompat: v }))
+                  }
                 />
-              </Field>
 
-              <SwitchCardField
-                label={t("providers.field.strictCompat")}
-                hint={t("providers.field.strictCompatHint")}
-                checked={form.strictCompat}
-                onCheckedChange={(v) =>
-                  setForm((f) => ({ ...f, strictCompat: v }))
-                }
-              />
+                <SwitchCardField
+                  label={t("providers.field.requireReasoningContent")}
+                  hint={t("providers.field.requireReasoningContentHint")}
+                  checked={form.requireReasoningContent}
+                  onCheckedChange={(v) =>
+                    setForm((f) => ({ ...f, requireReasoningContent: v }))
+                  }
+                />
 
-              <SwitchCardField
-                label={t("providers.field.requireReasoningContent")}
-                hint={t("providers.field.requireReasoningContentHint")}
-                checked={form.requireReasoningContent}
-                onCheckedChange={(v) =>
-                  setForm((f) => ({ ...f, requireReasoningContent: v }))
-                }
-              />
+                <SwitchCardField
+                  label={t("providers.field.noParallelToolCalls")}
+                  hint={t("providers.field.noParallelToolCallsHint")}
+                  checked={form.noParallelToolCalls}
+                  onCheckedChange={(v) =>
+                    setForm((f) => ({ ...f, noParallelToolCalls: v }))
+                  }
+                />
 
-              <SwitchCardField
-                label={t("providers.field.noParallelToolCalls")}
-                hint={t("providers.field.noParallelToolCallsHint")}
-                checked={form.noParallelToolCalls}
-                onCheckedChange={(v) =>
-                  setForm((f) => ({ ...f, noParallelToolCalls: v }))
-                }
-              />
-
-              <SwitchCardField
-                label={t("providers.field.responseFormatJSON")}
-                hint={t("providers.field.responseFormatJSONHint")}
-                checked={form.responseFormatJSON}
-                onCheckedChange={(v) =>
-                  setForm((f) => ({ ...f, responseFormatJSON: v }))
-                }
-              />
-            </AdvancedSection>
+                <SwitchCardField
+                  label={t("providers.field.responseFormatJSON")}
+                  hint={t("providers.field.responseFormatJSONHint")}
+                  checked={form.responseFormatJSON}
+                  onCheckedChange={(v) =>
+                    setForm((f) => ({ ...f, responseFormatJSON: v }))
+                  }
+                />
+              </AdvancedSection>
+            )}
 
             {serverError && (
               <p className="text-destructive bg-destructive/10 rounded-md px-3 py-2 text-sm">

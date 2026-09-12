@@ -3773,10 +3773,6 @@ func (al *AgentLoop) cogmemSessionStatus(agent *AgentInstance, sessionKey string
 	fmt.Fprintf(&b, "Active domains: %d\n", len(active))
 	fmt.Fprintf(&b, "Active memories: %d\n", memCount)
 
-	if pending, perr := s.PendingCount(ctx, db); perr == nil {
-		fmt.Fprintf(&b, "Pending (review): %d\n", pending)
-	}
-
 	run, ok, _ := s.LastRun(ctx, db)
 	if !ok {
 		b.WriteString("Last consolidation: none yet")

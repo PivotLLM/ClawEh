@@ -82,10 +82,11 @@ func (globalCogmemProvider) RegisterTools(deps global.Deps) []global.ToolDefinit
 			}, true, getDomain),
 
 		def("memory_search",
-			"Search your active memories by a word or phrase in their text (case-insensitive). Use it to look something up when the answer may be in memory but is not currently shown in your context.",
+			"Search your active memories by a word or phrase in their text (case-insensitive). Use it to look something up when the answer may be in memory but is not currently shown in your context. Event memories are excluded unless you pass include_events — they are never in your context, so search is the ONLY way to reach them.",
 			[]global.Parameter{
 				{Name: "query", Type: "string", Required: true, Description: "Word or phrase to match against memory text."},
 				{Name: "limit", Type: "integer", Required: false, Description: "Max results (default 20)."},
+				{Name: "include_events", Type: "boolean", Required: false, Description: "Include event memories (things that happened at a point in time: trips, deliveries, scheduled runs). Default false. Set true when the question is about the past — \"when did we last…\", \"what happened on…\"."},
 			}, true, search),
 
 		def("domain_list",
@@ -93,31 +94,27 @@ func (globalCogmemProvider) RegisterTools(deps global.Deps) []global.ToolDefinit
 			[]global.Parameter{
 				{
 					Name: "status", Type: "string", Required: false, Description: "Filter by status.",
-					Enum: []any{"active", "review", "archived"},
+					Enum: []any{"active", "archived"},
 				},
 			}, true, listDomains),
 
 		def("explain",
-			"Summarize the status, source, and evidence of a domain or memory id.",
+			"Summarize the status, origin, and evidence of a domain or memory id.",
 			[]global.Parameter{
 				{Name: "id", Type: "string", Required: true, Description: "A domain id (d…) or memory id (h…)."},
 			}, true, explain),
 
 		def("memory_create",
-			"Record a durable memory (a fact, preference, or rule). With NO domain_id and NO domain_hint it records to your sticky 'General' domain (global rules/preferences/facts always in context). Give a domain_hint to use (or create) a topic domain by name, or a domain_id to target a specific one.",
+			"Record a memory. With NO domain_id and NO domain_hint it records to your sticky 'General' domain (always in context). Give a domain_hint to use (or create) a topic domain by name, or a domain_id to target a specific one. Choose the type carefully — it decides whether the memory is in your context every turn or only reachable by search.",
 			[]global.Parameter{
 				{Name: "domain_id", Type: "string", Required: false, Description: "Target domain id. If omitted and no domain_hint is given, records to the sticky General domain."},
 				{Name: "domain_hint", Type: "string", Required: false, Description: "A domain name: an existing domain with that name is reused, otherwise a new (non-sticky) one is created. Omit to use General."},
 				{
-					Name: "type", Type: "string", Required: true, Description: "Memory type: fact (something true), preference (how the user likes things done), or rule (a hard directive).",
-					Enum: []any{"fact", "preference", "rule"},
+					Name: "type", Type: "string", Required: true, Description: "fact = something true that stays true. preference = how the user likes things done. rule = a hard directive governing your output or behaviour toward the user. operational = your OWN housekeeping: where you file things, how you work, a rule you set for your own method. event = something that happened at a point in time (a trip, a delivery, a scheduled run, a status as of a date). Use event for anything with a timestamp or that will be stale next week — events are NEVER loaded into your context and are reached only by memory_search, which is what keeps recurring notes from crowding out everything else.",
+					Enum: []any{"fact", "preference", "rule", "operational", "event"},
 				},
 				{Name: "text", Type: "string", Required: true, Description: "The memory content to store."},
 				{Name: "confidence", Type: "number", Required: false, Description: "Confidence 0..1 (default 0.9)."},
-				{
-					Name: "status", Type: "string", Required: false, Description: "active (default), or review to hold it as pending (unconfirmed) until the user confirms.",
-					Enum: []any{"active", "review"},
-				},
 				{Name: "file", Type: "string", Required: false, Description: "Optional path to a markdown file (e.g. \"files/voice.md\", \"maestro/style-guide.md\") whose FULL contents are injected into your context whenever this memory is in context. Use it for reference material too long to put in the memory text, such as a writing-voice description; keep the memory text as a one-line description of what the document is and when to use it. The path must be one you can read with the file tools, and the file is read fresh each turn."},
 			}, true, rememberWith(cfg, workspace)),
 
@@ -143,17 +140,11 @@ func (globalCogmemProvider) RegisterTools(deps global.Deps) []global.ToolDefinit
 			}, true, attachFileWith(cfg, workspace)),
 
 		def("memory_retire",
-			"Retire a memory so it is no longer used (it stays in the audit history). To change a memory, retire the old one and create a new one. Also use this to reject a pending (unconfirmed) memory when the user declines it.",
+			"Retire a memory so it is no longer used (it stays in the audit history). To change a memory, retire the old one and create a new one.",
 			[]global.Parameter{
 				{Name: "id", Type: "string", Required: true, Description: "Memory id."},
 				{Name: "reason", Type: "string", Required: true, Description: "Why it is being retired."},
 			}, true, retireHook),
-
-		def("memory_confirm",
-			"Confirm a pending (unconfirmed) memory, promoting it from review to active so it is used in prompting. Call this when the user confirms a memory from the pending digest.",
-			[]global.Parameter{
-				{Name: "id", Type: "string", Required: true, Description: "Pending memory id (from the pending digest)."},
-			}, true, confirmHook),
 
 		def("domain_create",
 			"Create a new memory domain and return its assigned id. A domain groups related memories; register each ongoing project/topic as its own domain. Names must be unique — creating one with an existing name returns an error (reuse or rename instead).",
@@ -192,11 +183,11 @@ func (globalCogmemProvider) RegisterTools(deps global.Deps) []global.ToolDefinit
 			}, true, consolidate),
 
 		def("export",
-			"Dump the agent's entire active memory (all domains and their memories, plus pending items) to a single Markdown file at files/MEMORY_EXPORT.md, and report the path and counts.",
+			"Dump the agent's entire memory — every domain and memory, with all their fields — to files/MEMORY_EXPORT.yaml, and report the path and counts. The format can be read back in, so it works as a backup or to hand your memory to another assistant.",
 			nil, true, exportMemory),
 
 		def("status",
-			"Report memory status: database path, the last background update, and the number of pending (unconfirmed) memories.",
+			"Report memory status: database path, the last background update, and how many domains and memories are held.",
 			nil, true, status),
 	}
 

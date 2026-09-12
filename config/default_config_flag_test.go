@@ -2,6 +2,7 @@ package config
 
 import (
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -47,21 +48,50 @@ func TestDefaultConfig_DefaultAgentInheritsDefaultTools(t *testing.T) {
 	}
 }
 
-func TestDefaultConfig_GeminiCLITrustsWorkspace(t *testing.T) {
-	// Newer Gemini CLI refuses to run headless in an "untrusted" folder, so the
-	// seeded model must set GEMINI_CLI_TRUST_WORKSPACE=true or tool calls fail.
+func TestDefaultConfig_SeedsAntigravityNotGemini(t *testing.T) {
+	// Google deprecated the Gemini CLI in favour of Antigravity (binary "agy"),
+	// so the seeded model and provider are Antigravity. The old GEMINI_CLI_*
+	// workspace-trust env var goes with it.
 	cfg := DefaultConfig()
-	var found bool
-	for _, m := range cfg.Models {
-		if m.ModelName == "Gemini CLI" {
-			found = true
-			if m.Env["GEMINI_CLI_TRUST_WORKSPACE"] != "true" {
-				t.Errorf("Gemini CLI model env = %v, want GEMINI_CLI_TRUST_WORKSPACE=true", m.Env)
-			}
+
+	var model *ModelConfig
+	for i := range cfg.Models {
+		switch cfg.Models[i].ModelName {
+		case "Antigravity CLI":
+			model = &cfg.Models[i]
+		case "Gemini CLI":
+			t.Errorf("a Gemini CLI model is still seeded: %+v", cfg.Models[i])
 		}
 	}
-	if !found {
-		t.Fatal("seeded Gemini CLI model not found")
+	if model == nil {
+		t.Fatal("seeded Antigravity CLI model not found")
+	}
+	if model.Provider != "Antigravity CLI" {
+		t.Errorf("provider = %q, want %q", model.Provider, "Antigravity CLI")
+	}
+	// Headless operation needs approval bypass, exactly as the other CLI models do.
+	if !slices.Contains(model.ExtraArgs, "--dangerously-skip-permissions") {
+		t.Errorf("extra_args = %v, want --dangerously-skip-permissions", model.ExtraArgs)
+	}
+	// -p / --print must never be seeded: with either, agy reads the prompt from
+	// argv and ignores stdin, silently dropping the conversation.
+	for _, a := range model.ExtraArgs {
+		if a == "-p" || a == "--print" || a == "--prompt" {
+			t.Errorf("extra_args contains %q, which makes agy ignore stdin", a)
+		}
+	}
+
+	var proto string
+	for _, p := range cfg.Providers {
+		if p.Name == "Antigravity CLI" {
+			proto = p.Protocol
+		}
+		if p.Protocol == "gemini-cli" {
+			t.Errorf("a gemini-cli provider is still seeded: %+v", p)
+		}
+	}
+	if proto != "antigravity-cli" {
+		t.Errorf("Antigravity provider protocol = %q, want antigravity-cli", proto)
 	}
 }
 

@@ -36,11 +36,10 @@ func TestStableBlockContent(t *testing.T) {
 	ctx := context.Background()
 	db := s.DB()
 	base, _ := s.GeneralDomain(ctx, db) // the seeded always-on general domain
-	_, _ = s.AddMemory(ctx, db, store.AddMemoryParams{DomainID: base.ID, Type: store.TypePreference, Text: "Be concise.", Status: store.StatusActive, Confidence: 0.95, Source: store.SourceUserExplicit})
+	_, _ = s.AddMemory(ctx, db, store.AddMemoryParams{DomainID: base.ID, Type: store.TypePreference, Text: "Be concise.", Status: store.StatusActive, Confidence: 0.95})
 	proj, _ := s.CreateDomain(ctx, db, store.CreateDomainParams{AgentID: "a", Name: "Website Redesign", Summary: "CSS grid migration"})
 	_ = proj
-	// A pending (review) inference.
-	_, _ = s.AddMemory(ctx, db, store.AddMemoryParams{DomainID: base.ID, Type: store.TypePreference, Text: "Prefers tabs.", Status: store.StatusReview, Confidence: 0.6, Source: store.SourceAssistantInferred})
+	_, _ = s.AddMemory(ctx, db, store.AddMemoryParams{DomainID: base.ID, Type: store.TypeRule, Text: "Prefers tabs.", Status: store.StatusActive, Confidence: 0.9})
 
 	c := New(s)
 	txt, rev, err := c.StableBlock(ctx)
@@ -50,51 +49,87 @@ func TestStableBlockContent(t *testing.T) {
 	if rev == 0 {
 		t.Fatalf("expected non-zero stable_rev")
 	}
-	for _, want := range []string{"Be concise.", "Pending (unconfirmed", "Prefers tabs.", "COGMEM domain General is sticky", "Topics (index)", "Website Redesign"} {
+	for _, want := range []string{"Be concise.", "Prefers tabs.", "COGMEM domain General is sticky", "Topics (index)", "Website Redesign"} {
 		if !strings.Contains(txt, want) {
 			t.Fatalf("stable block missing %q:\n%s", want, txt)
 		}
 	}
+	// Type is rendered, so the assistant can tell a rule from a preference.
+	// Without it every memory reads as an undifferentiated assertion, which is
+	// why type was worth storing but not worth acting on.
+	for _, want := range []string{"(preference) Be concise.", "(rule) Prefers tabs."} {
+		if !strings.Contains(txt, want) {
+			t.Fatalf("stable block missing type-prefixed line %q:\n%s", want, txt)
+		}
+	}
 }
 
-func TestPendingDigestThrottledToOncePerSession(t *testing.T) {
+// Events never reach the prompt. The domain says how many it holds instead, so
+// they stay out of the way without becoming invisible — the failure mode of the
+// review status they replace, where 236 of 244 memories were unreachable by any
+// path at all.
+func TestStableBlockExcludesEventsAndReportsTheirCount(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
 	db := s.DB()
 	base, _ := s.GeneralDomain(ctx, db)
-	_, _ = s.AddMemory(ctx, db, store.AddMemoryParams{DomainID: base.ID, Type: store.TypePreference, Text: "Prefers tabs.", Status: store.StatusReview, Confidence: 0.6, Source: store.SourceAssistantInferred})
+	_, _ = s.AddMemory(ctx, db, store.AddMemoryParams{
+		DomainID: base.ID, Type: store.TypeFact, Text: "Home is Ottawa.",
+		Status: store.StatusActive, Confidence: 0.9,
+	})
+	for _, txt := range []string{"Drove to the KOA Sep 4.", "Drove home Sep 7."} {
+		_, _ = s.AddMemory(ctx, db, store.AddMemoryParams{
+			DomainID: base.ID, Type: store.TypeEvent, Text: txt,
+			Status: store.StatusActive, Confidence: 0.9,
+		})
+	}
 
-	c := New(s)
-
-	// First call surfaces the pending digest.
-	first, _, err := c.StableBlock(ctx)
+	txt, _, err := New(s).StableBlock(ctx)
 	if err != nil {
-		t.Fatalf("first stable block: %v", err)
+		t.Fatalf("stable block: %v", err)
 	}
-	if !strings.Contains(first, "Prefers tabs.") || !strings.Contains(first, "Pending") {
-		t.Fatalf("first call should surface pending:\n%s", first)
+	if !strings.Contains(txt, "Home is Ottawa.") {
+		t.Fatalf("standing fact missing:\n%s", txt)
 	}
+	for _, ev := range []string{"Drove to the KOA", "Drove home"} {
+		if strings.Contains(txt, ev) {
+			t.Fatalf("event %q reached the prompt:\n%s", ev, txt)
+		}
+	}
+	// The line must name the tool and the argument. Saying only "search to
+	// retrieve" sent a live agent into four identical searches without
+	// include_events before it gave up — the count advertised memories it could
+	// not then find.
+	if !strings.Contains(txt, "2 event memories here") {
+		t.Fatalf("event count line missing:\n%s", txt)
+	}
+	if !strings.Contains(txt, "include_events:true") {
+		t.Fatalf("event count line does not name the flag needed to read them:\n%s", txt)
+	}
+}
 
-	// Second call (same session/composer) must not re-surface the same pending memory.
-	second, _, err := c.StableBlock(ctx)
-	if err != nil {
-		t.Fatalf("second stable block: %v", err)
-	}
-	if strings.Contains(second, "Prefers tabs.") {
-		t.Fatalf("second call should not re-surface already-asked pending memory:\n%s", second)
-	}
+// The prompt tag says "origin", not "source". It always rendered Origin, and
+// the separate source field it was named after no longer exists — leaving the
+// old label would name a field that is gone.
+func TestOriginTagNamesOrigin(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	db := s.DB()
+	base, _ := s.GeneralDomain(ctx, db)
+	_, _ = s.AddMemory(ctx, db, store.AddMemoryParams{
+		DomainID: base.ID, Type: store.TypeFact, Text: "Typed by hand.",
+		Status: store.StatusActive, Confidence: 1.0, Origin: store.OriginUser,
+	})
 
-	// A newly added pending memory IS surfaced on the next call.
-	_, _ = s.AddMemory(ctx, db, store.AddMemoryParams{DomainID: base.ID, Type: store.TypeFact, Text: "Uses Linux.", Status: store.StatusReview, Confidence: 0.6, Source: store.SourceAssistantInferred})
-	third, _, err := c.StableBlock(ctx)
+	txt, _, err := New(s).StableBlock(ctx)
 	if err != nil {
-		t.Fatalf("third stable block: %v", err)
+		t.Fatalf("stable block: %v", err)
 	}
-	if !strings.Contains(third, "Uses Linux.") {
-		t.Fatalf("third call should surface the new pending memory:\n%s", third)
+	if !strings.Contains(txt, "[origin: user]") {
+		t.Fatalf("expected [origin: user] tag:\n%s", txt)
 	}
-	if strings.Contains(third, "Prefers tabs.") {
-		t.Fatalf("third call should not re-surface the old pending memory:\n%s", third)
+	if strings.Contains(txt, "[source:") {
+		t.Fatalf("stale [source:] tag still rendered:\n%s", txt)
 	}
 }
 
@@ -108,7 +143,7 @@ func TestRoutedBlockToolTrigger(t *testing.T) {
 		Triggers: "google_gmail,microsoft365_mail",
 	})
 	other, _ := s.CreateDomain(ctx, db, store.CreateDomainParams{AgentID: "a", Name: "Other", Summary: "misc"})
-	_, _ = s.AddMemory(ctx, db, store.AddMemoryParams{DomainID: email.ID, Type: store.TypePreference, Text: "Archive newsletters.", Status: store.StatusActive, Confidence: 0.9, Source: store.SourceUserExplicit})
+	_, _ = s.AddMemory(ctx, db, store.AddMemoryParams{DomainID: email.ID, Type: store.TypePreference, Text: "Archive newsletters.", Status: store.StatusActive, Confidence: 0.9})
 	// "Other" is the most recently touched, so recency alone would rank it first.
 	_ = s.Touch(ctx, db, email.ID)
 	_ = s.Touch(ctx, db, other.ID)
@@ -210,7 +245,7 @@ func TestRoutedBlockLexicalMatch(t *testing.T) {
 	// "BioTech" is older/less recent; "Other" is the most recently touched.
 	bio, _ := s.CreateDomain(ctx, db, store.CreateDomainParams{AgentID: "a", Name: "BioTech", Summary: "research report"})
 	other, _ := s.CreateDomain(ctx, db, store.CreateDomainParams{AgentID: "a", Name: "Other", Summary: "misc"})
-	_, _ = s.AddMemory(ctx, db, store.AddMemoryParams{DomainID: bio.ID, Type: store.TypeFact, Text: "The biotech report targets Q3.", Status: store.StatusActive, Confidence: 0.9, Source: store.SourceUserExplicit})
+	_, _ = s.AddMemory(ctx, db, store.AddMemoryParams{DomainID: bio.ID, Type: store.TypeFact, Text: "The biotech report targets Q3.", Status: store.StatusActive, Confidence: 0.9})
 	_ = s.Touch(ctx, db, bio.ID)
 	_ = s.Touch(ctx, db, other.ID)
 
@@ -275,7 +310,7 @@ func TestRoutedBlockRecency(t *testing.T) {
 	db := s.DB()
 	d1, _ := s.CreateDomain(ctx, db, store.CreateDomainParams{AgentID: "a", Name: "Old", Summary: "old"})
 	d2, _ := s.CreateDomain(ctx, db, store.CreateDomainParams{AgentID: "a", Name: "Recent", Summary: "recent"})
-	_, _ = s.AddMemory(ctx, db, store.AddMemoryParams{DomainID: d2.ID, Type: store.TypeFact, Text: "key fact", Status: store.StatusActive, Confidence: 0.9, Source: store.SourceUserExplicit})
+	_, _ = s.AddMemory(ctx, db, store.AddMemoryParams{DomainID: d2.ID, Type: store.TypeFact, Text: "key fact", Status: store.StatusActive, Confidence: 0.9})
 	// Make d2 strictly more recent than d1 (seconds granularity): age d1 back, d2 = now.
 	old := time.Now().Add(-1 * time.Hour).Unix()
 	if _, err := db.ExecContext(ctx, `UPDATE domains SET last_active_at=? WHERE id=?`, old, d1.ID); err != nil {
@@ -310,7 +345,7 @@ func TestRoutedBlockKeywordTrigger(t *testing.T) {
 		AgentID: "a", Name: "Daily Ops",
 		KeywordTriggers: "morning routine",
 	})
-	_, _ = s.AddMemory(ctx, db, store.AddMemoryParams{DomainID: wf.ID, Type: store.TypeRule, Text: "Review the calendar.", Status: store.StatusActive, Confidence: 0.9, Source: store.SourceUserExplicit})
+	_, _ = s.AddMemory(ctx, db, store.AddMemoryParams{DomainID: wf.ID, Type: store.TypeRule, Text: "Review the calendar.", Status: store.StatusActive, Confidence: 0.9})
 	other, _ := s.CreateDomain(ctx, db, store.CreateDomainParams{AgentID: "a", Name: "Other", Summary: "misc"})
 	_ = s.Touch(ctx, db, wf.ID)
 	_ = s.Touch(ctx, db, other.ID) // Other is the most recent

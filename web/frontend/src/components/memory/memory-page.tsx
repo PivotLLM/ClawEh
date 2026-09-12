@@ -1,4 +1,4 @@
-import { IconBrain, IconChevronRight, IconTrash } from "@tabler/icons-react"
+import { IconBrain } from "@tabler/icons-react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useState } from "react"
 import { useTranslation } from "react-i18next"
@@ -6,139 +6,38 @@ import { useTranslation } from "react-i18next"
 import {
   type MemoryDomain,
   type MemoryMemory,
+  type MemoryType,
+  bulkMemoryAction,
+  createMemoryDomain,
+  createMemoryItem,
   deleteMemoryDomain,
   deleteMemoryItem,
   getMemoryStore,
   getMemoryStores,
+  importMemory,
+  patchMemoryItem,
 } from "@/api/memory"
-import { PageHeader } from "@/components/page-header"
 import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible"
-
-function Pill({ children }: { children: React.ReactNode }) {
-  return (
-    <span className="bg-muted text-muted-foreground rounded px-1.5 py-0.5 text-[10px] font-medium tracking-wide uppercase">
-      {children}
-    </span>
-  )
-}
-
-function MemoryRow({
-  m,
-  onDelete,
-}: {
-  m: MemoryMemory
-  onDelete?: () => void
-}) {
-  return (
-    <div className="border-border/40 border-b py-2 last:border-0">
-      <div className="flex items-start gap-2">
-        <Pill>{m.type}</Pill>
-        <span className="flex-1 text-sm">{m.text}</span>
-        {onDelete && (
-          <button
-            onClick={onDelete}
-            title="Delete this memory"
-            className="text-muted-foreground hover:text-destructive shrink-0"
-          >
-            <IconTrash className="size-3.5" />
-          </button>
-        )}
-      </div>
-      <div className="text-muted-foreground mt-1 flex gap-3 text-[11px]">
-        <span>conf {m.confidence.toFixed(2)}</span>
-        <span>prio {m.priority}</span>
-        {m.origin && <span>from {m.origin}</span>}
-        <span>{m.source}</span>
-        {m.file_ref && (
-          <span title="Full contents of this file are injected into context with this memory">
-            file {m.file_ref}
-          </span>
-        )}
-        <span>{new Date(m.updated).toLocaleString()}</span>
-      </div>
-    </div>
-  )
-}
-
-function DomainCard({
-  d,
-  onDeleteDomain,
-  onDeleteMemory,
-}: {
-  d: MemoryDomain
-  onDeleteDomain: (d: MemoryDomain) => void
-  onDeleteMemory: (m: MemoryMemory) => void
-}) {
-  const { t } = useTranslation()
-  const [open, setOpen] = useState(true)
-  return (
-    <Collapsible
-      open={open}
-      onOpenChange={setOpen}
-      className="border-border rounded-lg border"
-    >
-      <div className="flex w-full items-center gap-2 px-3 py-2">
-        <CollapsibleTrigger className="flex flex-1 items-center gap-2 text-left">
-          <IconChevronRight
-            className={`size-4 transition-transform ${open ? "rotate-90" : ""}`}
-          />
-          <span className="font-medium">{d.name}</span>
-          {d.sticky && <Pill>{t("pages.memory.sticky")}</Pill>}
-          <span className="text-muted-foreground ml-auto text-xs">
-            {t("pages.memory.memory_count", { count: d.memories.length })}
-          </span>
-        </CollapsibleTrigger>
-        <button
-          onClick={() => onDeleteDomain(d)}
-          title="Delete this domain and all its memories"
-          className="text-muted-foreground hover:text-destructive shrink-0"
-        >
-          <IconTrash className="size-4" />
-        </button>
-      </div>
-      <CollapsibleContent className="px-3 pb-2">
-        {d.summary && (
-          <p className="text-muted-foreground mb-2 text-xs italic">
-            {d.summary}
-          </p>
-        )}
-        {d.triggers && (
-          <p className="text-muted-foreground mb-2 text-[11px]">
-            {t("pages.memory.triggers")}: {d.triggers}
-          </p>
-        )}
-        {d.keyword_triggers && (
-          <p className="text-muted-foreground mb-2 text-[11px]">
-            {t("pages.memory.keyword_triggers")}: {d.keyword_triggers}
-          </p>
-        )}
-        {d.last_used && (
-          <p className="text-muted-foreground mb-2 text-[11px]">
-            {t("pages.memory.last_used")}:{" "}
-            {new Date(d.last_used).toLocaleDateString()}
-          </p>
-        )}
-        {d.memories.length === 0 ? (
-          <p className="text-muted-foreground text-xs">
-            {t("pages.memory.no_memories")}
-          </p>
-        ) : (
-          d.memories.map((m) => (
-            <MemoryRow key={m.id} m={m} onDelete={() => onDeleteMemory(m)} />
-          ))
-        )}
-      </CollapsibleContent>
-    </Collapsible>
-  )
-}
+  DomainCard,
+  type MemoryRowActions,
+} from "@/components/memory/memory-domain"
+import {
+  AddDomainForm,
+  AddMemoryForm,
+  BulkBar,
+  TransferControls,
+} from "@/components/memory/memory-toolbar"
+import { PageHeader } from "@/components/page-header"
+import { Button } from "@/components/ui/button"
 
 export function MemoryPage() {
   const { t } = useTranslation()
   const [selected, setSelected] = useState<string | null>(null)
+  const [showRetired, setShowRetired] = useState(false)
+  const [picked, setPicked] = useState<Set<string>>(new Set())
+  const [addingTo, setAddingTo] = useState<MemoryDomain | null>(null)
+  const [addingDomain, setAddingDomain] = useState(false)
+  const [busy, setBusy] = useState(false)
 
   const { data: stores, isLoading: storesLoading } = useQuery({
     queryKey: ["memory-stores"],
@@ -152,8 +51,8 @@ export function MemoryPage() {
   const activeStore = selected ?? stores?.[0]?.id ?? null
 
   const { data: detail, isLoading: detailLoading } = useQuery({
-    queryKey: ["memory-store", activeStore],
-    queryFn: () => getMemoryStore(activeStore as string),
+    queryKey: ["memory-store", activeStore, showRetired],
+    queryFn: () => getMemoryStore(activeStore as string, showRetired),
     enabled: activeStore !== null,
   })
 
@@ -163,36 +62,135 @@ export function MemoryPage() {
     qc.invalidateQueries({ queryKey: ["memory-stores"] })
   }
 
-  const handleDeleteDomain = async (d: MemoryDomain) => {
-    if (activeStore === null) return
+  /** Runs a mutation, reports what went wrong, and always refreshes. Every
+   *  action here is a write against a store the assistant may also be writing,
+   *  so the page re-reads rather than patching its own copy. */
+  const act = async (what: string, fn: () => Promise<unknown>) => {
+    setBusy(true)
+    try {
+      await fn()
+      refresh()
+    } catch (e) {
+      window.alert(`${what}: ${e instanceof Error ? e.message : e}`)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const pickedIDs = () => [...picked]
+  const clearSelection = () => setPicked(new Set())
+
+  const handleSelect = (m: MemoryMemory, on: boolean) => {
+    setPicked((prev) => {
+      const next = new Set(prev)
+      if (on) next.add(m.id)
+      else next.delete(m.id)
+      return next
+    })
+  }
+
+  // Select or clear a whole domain at once. Correcting a domain that has
+  // accumulated hundreds of near-identical entries is the case this page exists
+  // for, and one row at a time is not a job anyone starts.
+  const handleSelectAll = (d: MemoryDomain, on: boolean) => {
+    setPicked((prev) => {
+      const next = new Set(prev)
+      for (const m of d.memories) {
+        if (on) next.add(m.id)
+        else next.delete(m.id)
+      }
+      return next
+    })
+  }
+
+  const rowActions = (m: MemoryMemory): MemoryRowActions => ({
+    selected: picked.has(m.id),
+    busy,
+    onSelect: handleSelect,
+    onRetype: (mem, type) =>
+      void act(t("pages.memory.err_retype"), () =>
+        patchMemoryItem(activeStore as string, mem.id, { type }),
+      ),
+    onSetStatus: (mem, status) =>
+      void act(t("pages.memory.err_status"), () =>
+        patchMemoryItem(activeStore as string, mem.id, { status }),
+      ),
+    onDelete: (mem) => {
+      if (!window.confirm(t("pages.memory.confirm_delete_memory"))) return
+      void act(t("pages.memory.err_delete"), async () => {
+        await deleteMemoryItem(activeStore as string, mem.id)
+        handleSelect(mem, false)
+      })
+    },
+  })
+
+  const handleDeleteDomain = (d: MemoryDomain) => {
     if (
       !window.confirm(
-        `Delete domain "${d.name}" and all ${d.memories.length} of its memories? This cannot be undone.`,
+        t("pages.memory.confirm_delete_domain", {
+          name: d.name,
+          count: d.memories.length,
+        }),
       )
     ) {
       return
     }
-    try {
-      await deleteMemoryDomain(activeStore, d.id)
-      refresh()
-    } catch (e) {
-      window.alert(
-        `Failed to delete domain: ${e instanceof Error ? e.message : e}`,
-      )
-    }
+    void act(t("pages.memory.err_delete_domain"), () =>
+      deleteMemoryDomain(activeStore as string, d.id),
+    )
   }
 
-  const handleDeleteMemory = async (m: MemoryMemory) => {
-    if (activeStore === null) return
-    if (!window.confirm("Delete this memory? This cannot be undone.")) return
-    try {
-      await deleteMemoryItem(activeStore, m.id)
-      refresh()
-    } catch (e) {
-      window.alert(
-        `Failed to delete memory: ${e instanceof Error ? e.message : e}`,
+  const bulk = (
+    action: "retype" | "retire" | "restore" | "delete",
+    type?: MemoryType,
+  ) => {
+    const ids = pickedIDs()
+    if (ids.length === 0) return
+    if (
+      action === "delete" &&
+      !window.confirm(
+        t("pages.memory.confirm_bulk_delete", { count: ids.length }),
       )
+    ) {
+      return
     }
+    void act(t("pages.memory.err_bulk"), async () => {
+      const res = await bulkMemoryAction(activeStore as string, {
+        action,
+        type,
+        ids,
+      })
+      clearSelection()
+      if (res.failed && Object.keys(res.failed).length > 0) {
+        // Reported rather than thrown: a bulk action over hundreds of rows
+        // partially succeeds, and the operator needs to know which part.
+        window.alert(
+          t("pages.memory.bulk_partial", {
+            changed: res.changed,
+            failed: Object.keys(res.failed).length,
+          }),
+        )
+      }
+    })
+  }
+
+  const handleImport = (yaml: string, mode: "merge" | "replace") => {
+    if (
+      mode === "replace" &&
+      !window.confirm(t("pages.memory.confirm_replace"))
+    ) {
+      return
+    }
+    void act(t("pages.memory.err_import"), async () => {
+      const res = await importMemory(activeStore as string, yaml, mode)
+      window.alert(
+        t("pages.memory.import_done", {
+          created: res.memories_created,
+          skipped: res.memories_skipped,
+          domains: res.domains_created,
+        }),
+      )
+    })
   }
 
   return (
@@ -214,7 +212,11 @@ export function MemoryPage() {
               {stores.map((s) => (
                 <button
                   key={s.id}
-                  onClick={() => setSelected(s.id)}
+                  data-store-id={s.id}
+                  onClick={() => {
+                    setSelected(s.id)
+                    clearSelection()
+                  }}
                   className={`flex w-full flex-col items-start rounded-md px-2 py-1.5 text-left text-sm ${
                     activeStore === s.id ? "bg-muted" : "hover:bg-muted/50"
                   }`}
@@ -255,9 +257,6 @@ export function MemoryPage() {
                 <span>
                   {t("pages.memory.active_memories")}: {detail.active_memories}
                 </span>
-                <span>
-                  {t("pages.memory.pending")}: {detail.pending}
-                </span>
                 {detail.last_run ? (
                   <span>
                     {t("pages.memory.last_run")}:{" "}
@@ -288,32 +287,85 @@ export function MemoryPage() {
                 </div>
               )}
 
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  size="sm"
+                  variant={showRetired ? "secondary" : "outline"}
+                  onClick={() => setShowRetired((v) => !v)}
+                >
+                  {showRetired
+                    ? t("pages.memory.hide_retired")
+                    : t("pages.memory.show_retired", {
+                        count: detail.retired_count,
+                      })}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setAddingDomain(true)}
+                >
+                  {t("pages.memory.add_domain")}
+                </Button>
+                <TransferControls
+                  storeId={activeStore}
+                  busy={busy}
+                  onImport={handleImport}
+                />
+              </div>
+
+              <BulkBar
+                count={picked.size}
+                busy={busy}
+                onRetype={(ty) => bulk("retype", ty)}
+                onRetire={() => bulk("retire")}
+                onRestore={() => bulk("restore")}
+                onDelete={() => bulk("delete")}
+                onClear={clearSelection}
+              />
+
+              {addingDomain && (
+                <AddDomainForm
+                  busy={busy}
+                  onCancel={() => setAddingDomain(false)}
+                  onSubmit={(name, sticky) => {
+                    setAddingDomain(false)
+                    void act(t("pages.memory.err_add_domain"), () =>
+                      createMemoryDomain(activeStore, { name, sticky }),
+                    )
+                  }}
+                />
+              )}
+
+              {addingTo && (
+                <AddMemoryForm
+                  domain={addingTo}
+                  busy={busy}
+                  onCancel={() => setAddingTo(null)}
+                  onSubmit={(type, text) => {
+                    const domainID = addingTo.id
+                    setAddingTo(null)
+                    void act(t("pages.memory.err_add_memory"), () =>
+                      createMemoryItem(activeStore, domainID, { type, text }),
+                    )
+                  }}
+                />
+              )}
+
               {detail.domains.map((d) => (
                 <DomainCard
                   key={d.id}
                   d={d}
                   onDeleteDomain={handleDeleteDomain}
-                  onDeleteMemory={handleDeleteMemory}
+                  onAddMemory={setAddingTo}
+                  onSelectAll={handleSelectAll}
+                  allSelected={
+                    d.memories.length > 0 &&
+                    d.memories.every((m) => picked.has(m.id))
+                  }
+                  someSelected={d.memories.some((m) => picked.has(m.id))}
+                  rowActions={rowActions}
                 />
               ))}
-
-              {detail.pending_list.length > 0 && (
-                <div className="border-border rounded-lg border">
-                  <div className="border-border border-b px-3 py-2 font-medium">
-                    {t("pages.memory.pending_review")} (
-                    {detail.pending_list.length})
-                  </div>
-                  <div className="px-3 pb-2">
-                    {detail.pending_list.map((m) => (
-                      <MemoryRow
-                        key={m.id}
-                        m={m}
-                        onDelete={() => handleDeleteMemory(m)}
-                      />
-                    ))}
-                  </div>
-                </div>
-              )}
             </div>
           )}
         </div>

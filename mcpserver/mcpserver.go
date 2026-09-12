@@ -3,7 +3,7 @@
 //
 // Package mcpserver exposes claw host-side tools to MCP-compatible clients
 // over a Streamable HTTP transport. It lets CLI providers (claude-cli,
-// codex-cli, gemini-cli) natively call claw tools via MCP — the correct
+// codex-cli, antigravity-cli, cursor-cli) natively call claw tools via MCP — the correct
 // alternative to having the CLI emit tool-call JSON in its prose (which
 // created infinite outer loops, since CLIs are themselves agentic).
 //

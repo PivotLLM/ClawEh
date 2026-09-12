@@ -158,6 +158,12 @@ func workerOptions(mem config.MemoryConfig, workspace string) []consolidate.Opti
 		consolidate.WithBatchOptions(bo),
 		consolidate.WithProposeDomains(mem.Consolidation.ProposeDomains),
 		consolidate.WithAutoPromote(mem.Consolidation.AutoPromote),
+		// Resolved here rather than in the worker so an unset field means the
+		// documented default in exactly one place.
+		consolidate.WithRetention(
+			mem.Retention.EffectiveEventDays(),
+			mem.Retention.EffectiveRetiredDays(),
+		),
 	}
 	if mem.Consolidation.DebugDump {
 		opts = append(opts, consolidate.WithDebugDump(filepath.Join(workspace, "cogmem-dumps")))

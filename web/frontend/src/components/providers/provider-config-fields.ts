@@ -1,5 +1,9 @@
 // Shared definitions for the provider management UI.
 
+// PROTOCOL_OPTIONS is what the wire-protocol picker offers. "gemini-cli" is
+// deliberately absent: Google deprecated the Gemini CLI and it now runs
+// Antigravity. Existing configs naming it keep working — the backend treats it
+// as an alias — but nothing new should be created with it.
 export const PROTOCOL_OPTIONS = [
   "openai-chat",
   "openai-responses",
@@ -8,15 +12,19 @@ export const PROTOCOL_OPTIONS = [
   "anthropic-messages",
   "claude-cli",
   "codex-cli",
-  "gemini-cli",
+  "antigravity-cli",
   "cursor-cli",
 ] as const
 
 export type Protocol = (typeof PROTOCOL_OPTIONS)[number]
 
+// CLI_PROTOCOLS still includes the "gemini-cli" alias, unlike the picker: a
+// provider already carrying it must keep rendering as a CLI card, with a
+// command field rather than a base URL and API key.
 const CLI_PROTOCOLS: ReadonlySet<string> = new Set([
   "claude-cli",
   "codex-cli",
+  "antigravity-cli",
   "gemini-cli",
   "cursor-cli",
 ])

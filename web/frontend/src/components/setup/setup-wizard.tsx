@@ -298,7 +298,7 @@ export function SetupWizard() {
       let defaultName = ""
       if (modelChoice === CLI_DEFAULT) {
         // The CLI's built-in model: a model whose id is the CLI protocol
-        // sentinel (e.g. "gemini-cli"), which makes the provider pass no
+        // sentinel (e.g. "antigravity-cli"), which makes the provider pass no
         // --model arg. Reuse a seeded sentinel model if one exists.
         const sentinel = selectedProvider.protocol
         const existing = presetModels.find((m) => m.model === sentinel)

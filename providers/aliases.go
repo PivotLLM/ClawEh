@@ -26,17 +26,17 @@ const MessageTypeToolError = "tool_error"
 
 // Interfaces + concrete provider types.
 type (
-	LLMProvider       = spawnllm.LLMProvider
-	StatefulProvider  = spawnllm.StatefulProvider
-	ThinkingCapable   = spawnllm.ThinkingCapable
-	CLIProvider       = spawnllm.CLIProvider
-	HTTPProvider      = spawnllm.HTTPProvider
-	ClaudeProvider    = spawnllm.ClaudeProvider
-	ClaudeCliProvider = spawnllm.ClaudeCliProvider
-	CodexCliProvider  = spawnllm.CodexCliProvider
-	GeminiCliProvider = spawnllm.GeminiCliProvider
-	CursorCliProvider = spawnllm.CursorCliProvider
-	ModelConfig       = spawnllm.ModelConfig
+	LLMProvider            = spawnllm.LLMProvider
+	StatefulProvider       = spawnllm.StatefulProvider
+	ThinkingCapable        = spawnllm.ThinkingCapable
+	CLIProvider            = spawnllm.CLIProvider
+	HTTPProvider           = spawnllm.HTTPProvider
+	ClaudeProvider         = spawnllm.ClaudeProvider
+	ClaudeCliProvider      = spawnllm.ClaudeCliProvider
+	CodexCliProvider       = spawnllm.CodexCliProvider
+	AntigravityCliProvider = spawnllm.AntigravityCliProvider
+	CursorCliProvider      = spawnllm.CursorCliProvider
+	ModelConfig            = spawnllm.ModelConfig
 )
 
 // Token streaming: a caller sets TextDeltaFunc under the TextDeltaOption key in
@@ -83,16 +83,16 @@ const (
 
 // Constructors + helpers.
 var (
-	NewHTTPProviderWithOptions      = spawnllm.NewHTTPProviderWithOptions
-	NewUnconfiguredProvider         = spawnllm.NewUnconfiguredProvider
-	NewClaudeCliProvider            = spawnllm.NewClaudeCliProvider
-	NewClaudeCliProviderWithTimeout = spawnllm.NewClaudeCliProviderWithTimeout
-	NewCodexCliProvider             = spawnllm.NewCodexCliProvider
-	NewCodexCliProviderWithTimeout  = spawnllm.NewCodexCliProviderWithTimeout
-	NewGeminiCliProvider            = spawnllm.NewGeminiCliProvider
-	NewGeminiCliProviderWithTimeout = spawnllm.NewGeminiCliProviderWithTimeout
-	NewCursorCliProvider            = spawnllm.NewCursorCliProvider
-	NewCursorCliProviderWithTimeout = spawnllm.NewCursorCliProviderWithTimeout
+	NewHTTPProviderWithOptions           = spawnllm.NewHTTPProviderWithOptions
+	NewUnconfiguredProvider              = spawnllm.NewUnconfiguredProvider
+	NewClaudeCliProvider                 = spawnllm.NewClaudeCliProvider
+	NewClaudeCliProviderWithTimeout      = spawnllm.NewClaudeCliProviderWithTimeout
+	NewCodexCliProvider                  = spawnllm.NewCodexCliProvider
+	NewCodexCliProviderWithTimeout       = spawnllm.NewCodexCliProviderWithTimeout
+	NewAntigravityCliProvider            = spawnllm.NewAntigravityCliProvider
+	NewAntigravityCliProviderWithTimeout = spawnllm.NewAntigravityCliProviderWithTimeout
+	NewCursorCliProvider                 = spawnllm.NewCursorCliProvider
+	NewCursorCliProviderWithTimeout      = spawnllm.NewCursorCliProviderWithTimeout
 
 	ModelKey                = spawnllm.ModelKey
 	splitModelKey           = spawnllm.SplitModelKey

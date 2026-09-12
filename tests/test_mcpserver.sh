@@ -59,7 +59,7 @@ BEARER_URL="${SERVER_URL}${BEARER_ENDPOINT}"
 # model required). agent_spawn/agent_status/agent_list (subagent capability) are
 # also exposed but only probed when actually present in the catalogue, so this
 # script stays portable.
-EXPECTED_TOOLS="file_read_bytes file_read_lines file_count file_view_image file_write file_edit file_edit_lines file_edit_bytes file_insert_lines file_insert_bytes file_delete_lines file_delete_bytes file_append file_list file_search_lines file_search_bytes file_copy file_delete file_move web_fetch web_search msg_send msg_send_file session_messages session_search session_compact session_info session_summary_list session_summary_get session_clear shell_exec skill_find skill_install cron_schedule cogmem_domain_get cogmem_memory_search cogmem_domain_list cogmem_explain cogmem_memory_create cogmem_memory_attach cogmem_domain_update cogmem_memory_retire cogmem_memory_confirm cogmem_domain_create cogmem_domain_archive cogmem_domain_migrate cogmem_memory_forget cogmem_consolidate cogmem_status cogmem_export common_list common_get common_put common_delete time_now"
+EXPECTED_TOOLS="file_read_bytes file_read_lines file_count file_view_image file_write file_edit file_edit_lines file_edit_bytes file_insert_lines file_insert_bytes file_delete_lines file_delete_bytes file_append file_list file_search_lines file_search_bytes file_copy file_delete file_move web_fetch web_search msg_send msg_send_file session_messages session_search session_compact session_info session_summary_list session_summary_get session_clear shell_exec skill_find skill_install cron_schedule cogmem_domain_get cogmem_memory_search cogmem_domain_list cogmem_explain cogmem_memory_create cogmem_memory_attach cogmem_domain_update cogmem_memory_retire cogmem_domain_create cogmem_domain_archive cogmem_domain_migrate cogmem_memory_forget cogmem_consolidate cogmem_status cogmem_export common_list common_get common_put common_delete time_now"
 EXPECTED_TOOL_COUNT=38
 
 # Namespace prefixes that must have at least one tool in the catalogue.
@@ -439,7 +439,6 @@ check_tool "1.13" "cogmem_domain_create"
 check_tool "1.14" "cogmem_memory_create"
 check_tool "1.14b" "cogmem_memory_attach"
 check_tool "1.15" "cogmem_status"
-check_tool "1.16" "cogmem_memory_confirm"
 check_tool "1.17" "cogmem_domain_migrate"
 check_tool "1.18" "time_now"
 # search_tools and get_tool_details are only registered when
@@ -738,9 +737,11 @@ else
     run_test_not_auth_err "4c.12 cogmem_consolidate — token accepted (queued/accepted)" \
         "cogmem_consolidate" '{"scope":"probe"}'
 
-    # export: dumps active memory to files/MEMORY_EXPORT.md — hermetic, succeeds with auth.
-    run_test_ok_auth "4c.13 cogmem_export writes a Markdown dump" \
-        "cogmem_export" '{}' "MEMORY_EXPORT.md"
+    # export: dumps the whole store to files/MEMORY_EXPORT.yaml — hermetic,
+    # succeeds with auth. YAML rather than Markdown because the dump can be read
+    # back: it is a backup, not a report.
+    run_test_ok_auth "4c.13 cogmem_export writes a YAML dump" \
+        "cogmem_export" '{}' "MEMORY_EXPORT.yaml"
 
     # Section 4d: Shared common-directory tools (common_*). Hermetic and
     # deterministic. common_put copies the scratch file (under files/, created in

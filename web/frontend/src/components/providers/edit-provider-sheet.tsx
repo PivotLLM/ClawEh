@@ -195,7 +195,6 @@ export function EditProviderSheet({
                 <Input
                   value={form.command}
                   onChange={setField("command")}
-                  placeholder="/usr/local/bin/claude"
                   className="font-mono text-sm"
                 />
               </Field>
@@ -229,54 +228,64 @@ export function EditProviderSheet({
               </>
             )}
 
-            <AdvancedSection>
-              <Field
-                label={t("providers.field.proxy")}
-                hint={t("providers.field.proxyHint")}
-              >
-                <Input
-                  value={form.proxy}
-                  onChange={setField("proxy")}
-                  placeholder="http://127.0.0.1:7890"
+            {/* Every switch below is an HTTP wire knob, and the CLI factory
+                reads none of them — a CLI provider is built from its command,
+                workspace, arguments and environment alone, and proxy is only
+                applied on the HTTP branches. Rendered for a CLI they were five
+                controls that did nothing, and an off switch reads as a feature
+                available but disabled, which is how response_format_json came
+                to look like the reason a CLI was not returning JSON. (It always
+                does: --output-format json is in the argv, not the config.) */}
+            {!cli && (
+              <AdvancedSection>
+                <Field
+                  label={t("providers.field.proxy")}
+                  hint={t("providers.field.proxyHint")}
+                >
+                  <Input
+                    value={form.proxy}
+                    onChange={setField("proxy")}
+                    placeholder="http://127.0.0.1:7890"
+                  />
+                </Field>
+
+                <SwitchCardField
+                  label={t("providers.field.strictCompat")}
+                  hint={t("providers.field.strictCompatHint")}
+                  checked={form.strictCompat}
+                  onCheckedChange={(v) =>
+                    setForm((f) => ({ ...f, strictCompat: v }))
+                  }
                 />
-              </Field>
 
-              <SwitchCardField
-                label={t("providers.field.strictCompat")}
-                hint={t("providers.field.strictCompatHint")}
-                checked={form.strictCompat}
-                onCheckedChange={(v) =>
-                  setForm((f) => ({ ...f, strictCompat: v }))
-                }
-              />
+                <SwitchCardField
+                  label={t("providers.field.requireReasoningContent")}
+                  hint={t("providers.field.requireReasoningContentHint")}
+                  checked={form.requireReasoningContent}
+                  onCheckedChange={(v) =>
+                    setForm((f) => ({ ...f, requireReasoningContent: v }))
+                  }
+                />
 
-              <SwitchCardField
-                label={t("providers.field.requireReasoningContent")}
-                hint={t("providers.field.requireReasoningContentHint")}
-                checked={form.requireReasoningContent}
-                onCheckedChange={(v) =>
-                  setForm((f) => ({ ...f, requireReasoningContent: v }))
-                }
-              />
+                <SwitchCardField
+                  label={t("providers.field.noParallelToolCalls")}
+                  hint={t("providers.field.noParallelToolCallsHint")}
+                  checked={form.noParallelToolCalls}
+                  onCheckedChange={(v) =>
+                    setForm((f) => ({ ...f, noParallelToolCalls: v }))
+                  }
+                />
 
-              <SwitchCardField
-                label={t("providers.field.noParallelToolCalls")}
-                hint={t("providers.field.noParallelToolCallsHint")}
-                checked={form.noParallelToolCalls}
-                onCheckedChange={(v) =>
-                  setForm((f) => ({ ...f, noParallelToolCalls: v }))
-                }
-              />
-
-              <SwitchCardField
-                label={t("providers.field.responseFormatJSON")}
-                hint={t("providers.field.responseFormatJSONHint")}
-                checked={form.responseFormatJSON}
-                onCheckedChange={(v) =>
-                  setForm((f) => ({ ...f, responseFormatJSON: v }))
-                }
-              />
-            </AdvancedSection>
+                <SwitchCardField
+                  label={t("providers.field.responseFormatJSON")}
+                  hint={t("providers.field.responseFormatJSONHint")}
+                  checked={form.responseFormatJSON}
+                  onCheckedChange={(v) =>
+                    setForm((f) => ({ ...f, responseFormatJSON: v }))
+                  }
+                />
+              </AdvancedSection>
+            )}
 
             {error && (
               <p className="text-destructive bg-destructive/10 rounded-md px-3 py-2 text-sm">

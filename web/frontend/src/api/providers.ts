@@ -12,6 +12,13 @@ export interface ProviderInfo {
   no_parallel_tool_calls?: boolean
   response_format_json?: boolean
   command?: string
+  // ready is whether the provider is usable as configured — an API key for HTTP
+  // providers, a binary that actually resolves for CLI ones. The backend decides
+  // this: only it knows the PATH its CLI subprocesses are launched with.
+  ready: boolean
+  // resolved_command is where a CLI provider's binary was found, so a blank
+  // command can still show which one it will run.
+  resolved_command?: string
   // model_count is how many models reference this provider.
   model_count: number
 }

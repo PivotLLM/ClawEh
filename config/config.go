@@ -195,8 +195,6 @@ type MemoryPromptConfig struct {
 	MaxChars          int     `json:"max_chars"`
 	MinConfidence     float64 `json:"min_confidence"`
 	IncludeDebugTrace bool    `json:"include_debug_trace"`
-	PendingSurface    string  `json:"pending_surface"` // "ask" | "export_only"
-	PendingMax        int     `json:"pending_max"`
 	// Budgets for markdown files attached to memories (memory.file_ref). These
 	// are separate from MaxChars: an attached document is injected whole, not
 	// squeezed into the routed block's line budget.
@@ -223,6 +221,56 @@ type MemoryConsolidationConfig struct {
 // MemoryRetentionConfig guards unconsolidated archive messages from pruning.
 type MemoryRetentionConfig struct {
 	ProtectUnconsolidated bool `json:"protect_unconsolidated"`
+
+	// EventDays is how long an `event` memory is kept before it is deleted.
+	// Events are things that happened at a point in time — a trip, a delivery,
+	// a scheduled run — and they stop being useful long before they stop
+	// accumulating: one agent recorded an hourly "nothing changed" note and
+	// reached 300 of them.
+	//
+	// 0 uses DefaultEventRetentionDays; -1 keeps them forever. Only `event`
+	// memories are ever deleted by age — a fact, preference, rule or
+	// operational note is permanent, so no policy here can silently drop a
+	// standing instruction.
+	EventDays int `json:"event_days,omitempty" env:"CLAW_MEMORY_RETENTION_EVENT_DAYS"`
+
+	// RetiredDays is how long a retired memory is kept before it is deleted.
+	// Retiring takes a memory out of use but leaves the row, so a store that
+	// retires steadily grows forever while showing nothing for it.
+	//
+	// 0 uses DefaultRetiredRetentionDays; -1 keeps them forever. Measured from
+	// when the memory was retired, not when it was created.
+	RetiredDays int `json:"retired_days,omitempty" env:"CLAW_MEMORY_RETENTION_RETIRED_DAYS"`
+}
+
+// Retention defaults. Deliberately not configurable: they are the meaning of an
+// unset field, and a default that can itself be changed is one more thing to
+// reason about when a memory disappears.
+const (
+	DefaultEventRetentionDays   = 30
+	DefaultRetiredRetentionDays = 90
+)
+
+// EffectiveEventDays resolves EventDays: 0 means the default, negative means
+// never expire (reported as 0 days, which callers treat as "no sweep").
+func (r MemoryRetentionConfig) EffectiveEventDays() int {
+	return resolveRetention(r.EventDays, DefaultEventRetentionDays)
+}
+
+// EffectiveRetiredDays resolves RetiredDays the same way.
+func (r MemoryRetentionConfig) EffectiveRetiredDays() int {
+	return resolveRetention(r.RetiredDays, DefaultRetiredRetentionDays)
+}
+
+func resolveRetention(v, def int) int {
+	switch {
+	case v == 0:
+		return def
+	case v < 0:
+		return 0 // never expire
+	default:
+		return v
+	}
 }
 
 // MemoryExportConfig controls the read-only GENERATED_*.md export.
@@ -301,10 +349,21 @@ type AgentConfig struct {
 	CompressCharsPerToken      *float64 `json:"compress_chars_per_token,omitempty"`
 	CompressTokenSafetyMargin  *float64 `json:"compress_token_safety_margin,omitempty"`
 
-	ArchiveMessageCount    *int `json:"archive_message_count,omitempty"`
-	ArchiveDays            *int `json:"archive_days,omitempty"`
-	SummaryMaxCount        *int `json:"summary_max_count,omitempty"`
-	SummaryRetentionDays   *int `json:"summary_retention_days,omitempty"`
+	ArchiveMessageCount  *int `json:"archive_message_count,omitempty"`
+	ArchiveDays          *int `json:"archive_days,omitempty"`
+	SummaryMaxCount      *int `json:"summary_max_count,omitempty"`
+	SummaryRetentionDays *int `json:"summary_retention_days,omitempty"`
+
+	// EventRetentionDays and RetiredRetentionDays override the memory retention
+	// windows for this agent alone. nil uses agents.defaults; 0 means the
+	// built-in default; negative keeps forever.
+	//
+	// Scalars here rather than inside Memory because AgentConfig.Memory
+	// overrides the defaults WHOLESALE — setting retention through it would
+	// silently zero this agent's prompt budgets. They are applied on top of the
+	// resolved MemoryConfig by EffectiveMemory.
+	EventRetentionDays     *int `json:"event_retention_days,omitempty"`
+	RetiredRetentionDays   *int `json:"retired_retention_days,omitempty"`
 	ArchiveContentMaxBytes *int `json:"archive_content_max_bytes,omitempty"`
 
 	// ContextEviction overrides the per-turn tool-result eviction policy for
@@ -1002,10 +1061,21 @@ type AgentDefaults struct {
 // EffectiveMemory returns the memory config for an agent: the per-agent block
 // if present, otherwise the defaults.
 func (d AgentDefaults) EffectiveMemory(a *AgentConfig) MemoryConfig {
+	mem := d.Memory
 	if a != nil && a.Memory != nil {
-		return *a.Memory
+		mem = *a.Memory
 	}
-	return d.Memory
+	// Per-agent retention is layered on afterwards, so an agent can shorten its
+	// own window without taking over the whole memory block.
+	if a != nil {
+		if a.EventRetentionDays != nil {
+			mem.Retention.EventDays = *a.EventRetentionDays
+		}
+		if a.RetiredRetentionDays != nil {
+			mem.Retention.RetiredDays = *a.RetiredRetentionDays
+		}
+	}
+	return mem
 }
 
 const DefaultMaxMediaSize = 20 * 1024 * 1024 // 20 MB
@@ -1495,7 +1565,7 @@ type LoggingConfig struct {
 type Provider struct {
 	Name string `json:"name"` // Unique identifier referenced by ModelConfig.Provider
 	// Protocol is the wire format: openai-chat, openai-responses, azure,
-	// anthropic, anthropic-messages, claude-cli, codex-cli, gemini-cli,
+	// anthropic, anthropic-messages, claude-cli, codex-cli, antigravity-cli,
 	// cursor-cli. "anthropic" and "anthropic-messages" are the same thing —
 	// Anthropic speaks one wire format — and both reach the Messages adapter.
 	Protocol string `json:"protocol"`
@@ -1529,7 +1599,7 @@ type Provider struct {
 // ModelConfig represents a model-centric provider configuration.
 // It allows adding new providers (especially OpenAI-compatible ones) via configuration only.
 // The model field uses protocol prefix format: [protocol/]model-identifier
-// Supported protocols: openai, anthropic, claude-cli, codex-cli
+// Supported protocols: openai, anthropic, claude-cli, codex-cli, antigravity-cli
 // Default protocol is "openai" if no prefix is specified.
 // Vision passthrough modes for ModelConfig.Vision.
 const (
@@ -2027,13 +2097,14 @@ func (t *ToolsConfig) MCPClientEffectivelyEnabled() bool {
 
 // MCPHostConfig defines configuration for the MCP server claw exposes
 // (claw acting as an MCP server), used by CLI providers (claude-cli,
-// codex-cli, gemini-cli) so they can call claw's host-side tools natively
+// codex-cli, antigravity-cli, cursor-cli) so they can call claw's host-side tools natively
 // instead of emitting tool-call JSON in their prose. The allowlist is
 // global — applied once for all CLI clients, not per-LLM.
 type MCPHostConfig struct {
 	Enabled bool `json:"enabled"                     env:"CLAW_MCP_HOST_ENABLED"`
 	// AutoEnable, when true, starts the MCP host automatically whenever any
 	// enabled model in ModelList uses a *-cli protocol (claude-cli, codex-cli,
+	// antigravity-cli,
 	// gemini-cli). Those CLIs depend on MCP to call claw's host-side tools.
 	// Explicit Enabled=true always wins.
 	AutoEnable   bool   `json:"auto_enable"             env:"CLAW_MCP_HOST_AUTO_ENABLE"`
@@ -2087,6 +2158,16 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	if len(tmp.Agents.List) > 0 {
 		cfg.Agents.List = nil
+	}
+	// Providers need the same treatment, and for a sharper reason: deleting one
+	// shifts every later entry down an index, so each would be decoded onto a
+	// *different* default and silently inherit the omitempty flags that default
+	// happened to set. Deleting "OpenAI" gave OpenRouter Chat Groq's
+	// no_parallel_tool_calls and NVIDIA OpenRouter Strict's strict_compat —
+	// wire-behaviour changes to providers the user never touched, made
+	// permanent by the next save.
+	if len(tmp.Providers) > 0 {
+		cfg.Providers = nil
 	}
 
 	if err := json.Unmarshal(data, cfg); err != nil {
@@ -2554,8 +2635,11 @@ var validProtocols = map[string]struct{}{
 	"anthropic-messages": {},
 	"claude-cli":         {},
 	"codex-cli":          {},
-	"gemini-cli":         {},
-	"cursor-cli":         {},
+	"antigravity-cli":    {},
+	// Retained alias: Google deprecated the Gemini CLI in favour of
+	// Antigravity, and a released config naming this must keep validating.
+	"gemini-cli": {},
+	"cursor-cli": {},
 }
 
 // httpProtocols are the protocols that require a base_url.
@@ -2571,7 +2655,10 @@ var httpProtocols = map[string]struct{}{
 // which authenticates out-of-band and needs no API key.
 func IsCLIProtocol(protocol string) bool {
 	switch protocol {
-	case "claude-cli", "codex-cli", "gemini-cli", "cursor-cli":
+	// "gemini-cli" is retained as an alias for "antigravity-cli": Google
+	// deprecated the Gemini CLI, and a config still naming it must keep
+	// starting the MCP host, or its CLI would silently lose every claw tool.
+	case "claude-cli", "codex-cli", "antigravity-cli", "gemini-cli", "cursor-cli":
 		return true
 	default:
 		return false

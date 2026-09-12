@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/PivotLLM/ClawEh/config"
 )
 
 func TestHandleListCLIs(t *testing.T) {
@@ -21,13 +23,13 @@ func TestHandleListCLIs(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(got) != len(knownCLIs) {
-		t.Fatalf("got %d entries, want %d", len(got), len(knownCLIs))
+	if len(got) != len(config.CLIAgents) {
+		t.Fatalf("got %d entries, want %d", len(got), len(config.CLIAgents))
 	}
 	for i, c := range got {
-		if c.Protocol != knownCLIs[i].Protocol || c.Label != knownCLIs[i].Label || c.Binary != knownCLIs[i].Binary {
+		if c.Protocol != config.CLIAgents[i].Protocol || c.Label != config.CLIAgents[i].Label || c.Binary != config.CLIAgents[i].Binary {
 			t.Errorf("entry %d = %+v, want protocol/label/binary %q/%q/%q",
-				i, c, knownCLIs[i].Protocol, knownCLIs[i].Label, knownCLIs[i].Binary)
+				i, c, config.CLIAgents[i].Protocol, config.CLIAgents[i].Label, config.CLIAgents[i].Binary)
 		}
 		// An installed CLI must report its resolved path; a missing one must not
 		// claim a path. (Version is best-effort, so it's not asserted.)

@@ -20,6 +20,11 @@ export interface AgentEntry {
   tools?: string[]
   message?: MessageConfig | null
   temperature?: number
+  /** Days an `event` memory is kept. undefined = agents.defaults; 0 = the
+   *  built-in default; negative = keep forever. */
+  event_retention_days?: number
+  /** Days a retired memory is kept after it was retired. Same convention. */
+  retired_retention_days?: number
   summarization_models?: string[]
   share_common?: boolean
   global_cron?: boolean
@@ -110,6 +115,14 @@ export function parseAgent(value: unknown): AgentEntry {
           }
         : null,
     temperature: typeof r.temperature === "number" ? r.temperature : undefined,
+    event_retention_days:
+      typeof r.event_retention_days === "number"
+        ? r.event_retention_days
+        : undefined,
+    retired_retention_days:
+      typeof r.retired_retention_days === "number"
+        ? r.retired_retention_days
+        : undefined,
     summarization_models: asArray(r.summarization_models)
       .map(asString)
       .filter(Boolean),

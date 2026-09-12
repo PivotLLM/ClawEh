@@ -149,6 +149,7 @@ const ROUTES = [
   "/providers",
   "/voice",
   "/setup",
+  "/status",
 ]
 
 // A leaked i18n key: i18next renders the key verbatim when lookup fails.
@@ -566,6 +567,143 @@ if (useGroup("I", "Models and providers")) {
     assert(open1 > 0, "sheet did not open")
     assert(problems.length === 0, `console errors: ${problems[0]}`)
   })
+  await check(4, "every provider card says whether it is configured", async () => {
+    const { ctx, page, problems } = await open("/providers")
+    await page.getByText(/Configured|Not configured/).first().waitFor({
+      state: "visible",
+      timeout: 10000,
+    })
+    const labels = await page.getByText(/^(Configured|Not configured)$/).count()
+    const cards = await page.locator("[data-testid=provider-card]").count()
+    await ctx.close()
+
+    assert(problems.length === 0, `console errors: ${problems[0]}`)
+    // Every card says what it is. The label is the backend's `ready`, so it
+    // means the API key is set or the CLI binary actually resolves — not merely
+    // that some string was filled in.
+    assert(cards > 0, "no provider cards rendered")
+    assert(labels === cards, `${labels} configured/not-configured labels for ${cards} cards`)
+    return `${labels} labelled`
+  })
+  await check(5, "the wire-protocol picker leaves CLIs to their own section", async () => {
+    const { ctx, page, problems } = await open("/providers")
+    await page.getByRole("button", { name: /Add Provider/i }).first().click()
+    await page.waitForTimeout(700)
+    // Radix renders the options into a portal only once the trigger is opened.
+    await page.locator("[data-slot=select-trigger]").first().click()
+    await page.waitForTimeout(500)
+    const options = await page.locator("[role=option]").allInnerTexts()
+    await page.keyboard.press("Escape")
+    await ctx.close()
+
+    assert(problems.length === 0, `console errors: ${problems[0]}`)
+    assert(options.length > 0, "the protocol picker is empty")
+    // A CLI is added by its switch, not by building a provider by hand. Adding
+    // a second CLI provider here would produce one the section does not show
+    // and the grid filters out.
+    const cli = options.filter((o) => o.endsWith("-cli"))
+    assert(cli.length === 0, `the picker still offers CLI protocols: ${cli.join(", ")}`)
+    return options.join(", ")
+  })
+
+  await check(6, "every supported CLI has a row, installed or not", async () => {
+    const clis = (await api("/api/system/clis")).json ?? []
+    const { ctx, page, problems } = await open("/providers")
+    await page.locator("[data-testid=cli-agents]").waitFor({ state: "visible", timeout: 10000 })
+    const rows = await page.locator("[data-testid^=cli-row-]").count()
+    const switches = await page.locator("[data-testid^=cli-switch-]").count()
+
+    assert(problems.length === 0, `console errors: ${problems[0]}`)
+    assert(clis.length >= 4, `only ${clis.length} CLIs in the catalogue`)
+    // A CLI the host lacks is still listed, greyed: hiding it would look like
+    // ClawEh does not support it.
+    assert(rows === clis.length, `${rows} rows for ${clis.length} supported CLIs`)
+    assert(switches === clis.length, `${switches} switches for ${rows} rows`)
+    // Every configured row carries its model count, not only one governing
+    // several models: printing it for some CLIs and not others read as a fault.
+    for (const c of clis.filter((x) => x.configured)) {
+      const row = await page.locator(`[data-testid=cli-row-${c.protocol}]`).innerText()
+      assert(
+        new RegExp(`${c.models_enabled} of ${c.models} models? on`).test(row),
+        `${c.protocol} row shows no model count: ${JSON.stringify(row)}`,
+      )
+    }
+    await ctx.close()
+    return `${rows} CLIs, ${clis.filter((c) => c.installed).length} installed`
+  })
+
+  await check(7, "CLI providers appear in the section, not in the grid", async () => {
+    const providers = (await api("/api/providers")).json?.providers ?? []
+    const cliProviders = providers.filter((p) => p.protocol.endsWith("-cli"))
+    const { ctx, page, problems } = await open("/providers")
+    await page.locator("[data-testid=cli-agents]").waitFor({ state: "visible", timeout: 10000 })
+    await page.waitForTimeout(500)
+    const cards = await page.locator("[data-testid=provider-card]").count()
+    await ctx.close()
+
+    assert(problems.length === 0, `console errors: ${problems[0]}`)
+    // One CLI is one thing to the person using it; showing it twice under two
+    // different controls is what made it confusing.
+    assert(
+      cards === providers.length - cliProviders.length,
+      `${cards} cards for ${providers.length} providers minus ${cliProviders.length} CLI ones`,
+    )
+    return `${cards} API cards, ${cliProviders.length} CLI providers in the section`
+  })
+
+  await check(8, "a CLI row shows the whole command line", async () => {
+    const clis = (await api("/api/system/clis")).json ?? []
+    const withArgs = clis.find((c) => (c.required_args ?? []).length > 0)
+    const { ctx, page, problems } = await open("/providers")
+    await page.locator("[data-testid=cli-agents]").waitFor({ state: "visible", timeout: 10000 })
+    const row = await page
+      .locator(`[data-testid=cli-row-${withArgs.protocol}]`)
+      .innerText()
+    await ctx.close()
+
+    assert(problems.length === 0, `console errors: ${problems[0]}`)
+    // The provider's own flags as well as the configured ones: an operator
+    // asking what runs on their machine is owed the whole command line, not
+    // the part that happens to live in config. Some of it auto-approves tool
+    // use, which is the part worth reading before switching a CLI on.
+    const all = [
+      ...withArgs.base_args,
+      ...withArgs.required_args,
+      ...(withArgs.extra_args ?? []),
+      ...(withArgs.trailing_args ?? []),
+    ]
+    assert(withArgs.base_args.length > 0, `${withArgs.protocol} publishes no base args`)
+    for (const arg of all) {
+      assert(row.includes(arg), `${withArgs.protocol} row does not show ${arg}: ${row}`)
+    }
+    assert(row.includes(all.join(" ")), `row does not show them in invocation order: ${row}`)
+    return all.join(" ")
+  })
+
+  await check(9, "a CLI provider is not offered HTTP-only switches", async () => {
+    const clis = (await api("/api/system/clis")).json ?? []
+    const configured = clis.find((c) => c.configured)
+    const { ctx, page, problems } = await open("/providers")
+    await page.locator("[data-testid=cli-agents]").waitFor({ state: "visible", timeout: 10000 })
+    await page.locator(`[data-testid=cli-edit-${configured.protocol}]`).click()
+    await page.waitForTimeout(700)
+    const sheet = await page.locator("[data-slot=sheet-content]").innerText()
+    await page.keyboard.press("Escape")
+    await ctx.close()
+
+    assert(problems.length === 0, `console errors: ${problems[0]}`)
+    // strict_compat, require_reasoning_content, no_parallel_tool_calls,
+    // response_format_json and proxy are HTTP wire knobs the CLI factory never
+    // reads. Rendered here they were controls that did nothing, and an off
+    // switch reads as a feature available but disabled — which is how
+    // response_format_json came to look like the reason a CLI was not
+    // returning JSON. (It always does: --output-format json is in the argv.)
+    for (const gone of ["Strict", "Reasoning", "Parallel", "JSON", "Proxy"]) {
+      assert(!sheet.includes(gone), `the CLI edit sheet still offers ${gone}: ${sheet}`)
+    }
+    assert(/Command/i.test(sheet), "the CLI edit sheet lost its Command field")
+    return configured.protocol
+  })
 }
 
 // J. Devices — the store-open regression
@@ -620,6 +758,427 @@ if (useGroup("K", "Logs, MCP, memory, voice")) {
       assert(body.length > 80, `${p} nearly empty`)
       assert(problems.length === 0, `${p} console: ${problems[0]}`)
     }
+  })
+}
+
+// O. Status page
+if (useGroup("O", "Status page")) {
+  await check(1, "the status API reports the running process", async () => {
+    const { status, json } = await api("/api/system/status")
+    assert(status === 200, `status = ${status}`)
+    for (const k of ["version", "uptime", "pid", "memory_bytes", "agents"]) {
+      assert(json[k] !== undefined, `field ${k} missing from the response`)
+    }
+    // Resident set size, not virtual: a Go process reserves over a gigabyte of
+    // address space, so a gigabyte-scale answer means VmSize was read instead.
+    assert(json.memory_bytes > 1e6, `memory_bytes = ${json.memory_bytes}, implausibly small`)
+    assert(json.memory_bytes < 2e9, `memory_bytes = ${json.memory_bytes} — that looks like VmSize`)
+    assert(json.pid > 0, `pid = ${json.pid}`)
+    return `${(json.memory_bytes / 1048576).toFixed(1)} MB, ${json.agents} assistants, up ${json.uptime}`
+  })
+
+  await check(2, "counts match the configuration", async () => {
+    const { json: st } = await api("/api/system/status")
+    const cfg = await config()
+    assert(
+      st.agents === (cfg.agents?.list?.length ?? 0),
+      `agents = ${st.agents}, config lists ${cfg.agents?.list?.length}`,
+    )
+    // Models are counted as *enabled*, and providers as *configured*, so
+    // neither is the length of its config list — a status page reporting 40
+    // models when 3 can run answers a question nobody asked. O6 checks the
+    // provider figure against the rule the Providers page draws its dot from.
+    const enabled = (cfg.models ?? []).filter((m) => m.enabled).length
+    assert(st.models === enabled, `models = ${st.models}, config enables ${enabled}`)
+    assert(
+      st.providers <= (cfg.providers?.length ?? 0),
+      `providers configured = ${st.providers}, more than the ${cfg.providers?.length} configured`,
+    )
+    return `${st.agents} assistants, ${st.models} models, ${st.providers} providers, ${st.channels} channels`
+  })
+
+  await check(3, "the sidebar links to it from the bottom", async () => {
+    const { ctx, page, problems } = await open("/")
+    const link = page.locator("[data-testid=nav-status]")
+    await link.waitFor({ state: "visible", timeout: 10000 });
+    // It sits in the footer, below the collapsible groups — reachable without
+    // opening a disclosure, which is the point of putting it there.
+    const inFooter = await link.evaluate((el) =>
+      Boolean(el.closest("[data-slot=sidebar-footer]")),
+    )
+    await link.click()
+    await page.waitForTimeout(1500)
+    const path = new URL(page.url()).pathname
+    await ctx.close()
+    assert(problems.length === 0, `console: ${problems[0]}`)
+    assert(inFooter, "the Status link is not in the sidebar footer")
+    assert(path === "/status", `clicking Status went to ${path}`)
+  })
+
+  await check(4, "the page renders live figures", async () => {
+    const { ctx, page, problems } = await open("/status")
+    await page.locator("[data-testid=status-grid]").waitFor({ state: "visible", timeout: 10000 })
+    const read = async (id) =>
+      (await page.locator(`[data-testid=${id}]`).innerText()).trim()
+    const memory = await read("status-memory")
+    const assistants = await read("status-assistants")
+    const uptime = await read("status-uptime")
+    await ctx.close()
+
+    assert(problems.length === 0, `console: ${problems[0]}`)
+    assert(/\d+(\.\d+)?\s*(KB|MB|GB)/.test(memory), `memory tile reads ${JSON.stringify(memory)}`)
+    assert(/\d/.test(assistants), `assistants tile reads ${JSON.stringify(assistants)}`)
+    assert(/\d/.test(uptime), `uptime tile reads ${JSON.stringify(uptime)}`)
+    return memory.replace(/\s+/g, " ")
+  })
+
+  await check(5, "the detail box identifies the build and the host", async () => {
+    const { ctx, page, problems } = await open("/status")
+    const detail = page.locator("[data-testid=status-detail]")
+    await detail.waitFor({ state: "visible", timeout: 10000 })
+    const text = (await detail.innerText()).replace(/\s+/g, " ").trim()
+    const memory = (await page
+      .locator("[data-testid=status-memory]")
+      .innerText()).trim()
+    await ctx.close()
+
+    assert(problems.length === 0, `console: ${problems[0]}`)
+    // "Compiler go1.27.1" and "Environment Ubuntu 24.04.4 LTS on amd64" — the
+    // two lines anyone filing a bug is asked for first.
+    assert(/go1\.\d+/.test(text), `no Go version in the detail box: ${text}`)
+    assert(/ on (amd64|arm64|386|arm)\b/.test(text), `no environment line: ${text}`)
+    // The Go heap is a subset of RSS and a diagnostic detail; this page reports
+    // how big the process is, so the memory tile carries one figure only.
+    assert(!/heap/i.test(memory), `the memory tile still shows a heap figure: ${memory}`)
+    return text.slice(0, 120)
+  })
+
+  await check(6, "providers configured agrees with the Providers page", async () => {
+    const status = (await api("/api/system/status")).json
+    const providers = (await api("/api/providers")).json?.providers ?? []
+    const ready = providers.filter((p) => p.ready).length
+    // Both surfaces read the same backend rule, so a mismatch means one of them
+    // went back to guessing from the config — which is exactly the bug that
+    // showed a green dot for a CLI path that no longer existed.
+    assert(
+      status.providers === ready,
+      `status says ${status.providers} providers configured, /api/providers says ${ready}`,
+    )
+    // A CLI provider with no command must still resolve, or the seeded config
+    // would report itself as unusable out of the box.
+    for (const p of providers) {
+      if (p.ready && !p.command) {
+        assert(
+          p.protocol.endsWith("-cli") ? Boolean(p.resolved_command) : true,
+          `${p.name} is ready with no command and no resolved binary`,
+        )
+      }
+    }
+    return `${ready} of ${providers.length} configured`
+  })
+}
+
+// N. Memory curation
+//
+// Writes to a memory store: it creates a domain called `e2e-probe`, adds
+// memories to it, retypes and retires them, and deletes the domain at the end.
+// It never touches a domain it did not create, so an agent's real memory is not
+// at risk — but it is still a write, which is why this runner refuses
+// production.
+if (useGroup("N", "Memory curation")) {
+  // Pick a store to work in. Any will do; the probe domain is self-contained.
+  const stores = (await api("/api/memory")).json?.sessions ?? []
+  const store = stores[0]?.id
+  const domainURL = store ? `/api/memory/${store}/domains` : null
+  let probeDomain = null
+  const probeMemories = []
+
+  await check(1, "a memory store is available to curate", async () => {
+    assert(store, "no cognitive-memory databases found; N is skipped downstream")
+    return store
+  })
+
+  await check(2, "create a domain through the API the page uses", async () => {
+    assert(store, "no store")
+    const res = await api(domainURL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "e2e-probe", summary: "created by the e2e run" }),
+    })
+    assert(res.status === 201, `create domain: ${res.status} ${res.text}`)
+    probeDomain = res.json.id
+    return probeDomain
+  })
+
+  await check(3, "a hand-written memory is recorded with origin=user", async () => {
+    assert(probeDomain, "no probe domain")
+    // origin=user is the one piece of provenance that is verifiable rather than
+    // self-reported, and nothing could write it before this change.
+    const res = await api(`/api/memory/${store}/domains/${probeDomain}/memories`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "fact", text: "e2e probe fact" }),
+    })
+    assert(res.status === 201, `create memory: ${res.status} ${res.text}`)
+    assert(res.json.origin === "user", `origin = ${res.json.origin}, want user`)
+    assert(res.json.confidence === 1, `confidence = ${res.json.confidence}, want 1`)
+    probeMemories.push(res.json.id)
+    return `${res.json.id} origin=${res.json.origin}`
+  })
+
+  await check(4, "an unknown memory type is rejected", async () => {
+    const res = await api(`/api/memory/${store}/domains/${probeDomain}/memories`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "observation", text: "nope" }),
+    })
+    assert(res.status === 400, `status = ${res.status}, want 400`)
+  })
+
+  await check(5, "retype a memory to event", async () => {
+    const id = probeMemories[0]
+    const res = await api(`/api/memory/${store}/memories/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "event" }),
+    })
+    assert(res.status === 200, `patch: ${res.status} ${res.text}`)
+    assert(res.json.type === "event", `type = ${res.json.type}`)
+  })
+
+  await check(6, "retire a memory, and see it only with include_retired", async () => {
+    const id = probeMemories[0]
+    const res = await api(`/api/memory/${store}/memories/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "retired" }),
+    })
+    assert(res.status === 200, `retire: ${res.status} ${res.text}`)
+
+    const find = (doc) =>
+      (doc.json.domains ?? [])
+        .find((d) => d.id === probeDomain)
+        ?.memories.some((m) => m.id === id) ?? false
+
+    assert(!find(await api(`/api/memory/${store}`)), "retired memory still listed by default")
+    assert(
+      find(await api(`/api/memory/${store}?include_retired=1`)),
+      "retired memory unreachable even with include_retired — it could never be restored",
+    )
+  })
+
+  await check(7, "restore it", async () => {
+    const id = probeMemories[0]
+    const res = await api(`/api/memory/${store}/memories/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "active" }),
+    })
+    assert(res.status === 200, `restore: ${res.status} ${res.text}`)
+    assert(res.json.status === "active", `status = ${res.json.status}`)
+  })
+
+  await check(8, "bulk retype applies to every selected id", async () => {
+    // Add two more so the bulk action has something to work over.
+    for (const text of ["e2e probe two", "e2e probe three"]) {
+      const r = await api(`/api/memory/${store}/domains/${probeDomain}/memories`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "fact", text }),
+      })
+      assert(r.status === 201, `seed: ${r.status} ${r.text}`)
+      probeMemories.push(r.json.id)
+    }
+    const res = await api(`/api/memory/${store}/bulk`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "retype", type: "operational", ids: probeMemories }),
+    })
+    assert(res.status === 200, `bulk: ${res.status} ${res.text}`)
+    assert(res.json.changed === probeMemories.length,
+      `changed = ${res.json.changed}, want ${probeMemories.length}`)
+    return `${res.json.changed} retyped`
+  })
+
+  await check(9, "a bad id fails on its own without aborting the batch", async () => {
+    const res = await api(`/api/memory/${store}/bulk`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "retire", ids: [probeMemories[0], "hNOPE"] }),
+    })
+    assert(res.status === 200, `bulk: ${res.status} ${res.text}`)
+    assert(res.json.changed === 1, `changed = ${res.json.changed}, want 1`)
+    assert(res.json.failed?.hNOPE, "the bad id was not reported")
+    // Put it back for the export check below.
+    await api(`/api/memory/${store}/memories/${probeMemories[0]}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "active" }),
+    })
+  })
+
+  await check(10, "export downloads a YAML document that import can read", async () => {
+    const res = await fetch(`${BASE}/api/memory/${store}/export`)
+    assert(res.status === 200, `export: ${res.status}`)
+    const ct = res.headers.get("content-type") ?? ""
+    assert(ct.includes("yaml"), `content-type = ${ct}`)
+    const body = await res.text()
+    assert(body.includes("format_version"), "no format_version in the export")
+    assert(body.includes("e2e probe fact"), "the export is missing a memory that exists")
+
+    // Merge-importing what was just exported must change nothing.
+    const back = await fetch(`${BASE}/api/memory/${store}/import?mode=merge`, {
+      method: "POST",
+      headers: { "Content-Type": "application/yaml" },
+      body,
+    })
+    assert(back.status === 200, `import: ${back.status}`)
+    const result = await back.json()
+    assert(result.memories_created === 0,
+      `re-importing created ${result.memories_created} duplicates, want none`)
+    return `${body.length} bytes, ${result.memories_skipped} already present`
+  })
+
+  // Steps 2-10 drive the API the page calls. 11-15 drive the PAGE, because a
+  // control can be wired correctly and still not work: the type picker is a
+  // portalled listbox, and the bulk bar only exists once something is selected.
+  // Unit tests render these in jsdom, which is not the same as clicking them.
+
+  /** Opens /memory on the probe's store and returns its domain card. */
+  async function openProbe() {
+    const o = await open("/memory")
+    await o.page.locator(`[data-store-id="${store}"]`).click()
+    const card = o.page.locator(
+      `[data-testid=memory-domain][data-domain-name="e2e-probe"]`,
+    )
+    await card.waitFor({ state: "visible", timeout: 10000 })
+    return { ...o, card }
+  }
+
+  /** Reads a memory's type back from the API, so the assertion is against what
+   *  was stored rather than what the page is showing. */
+  async function typeOf(id) {
+    const doc = await api(`/api/memory/${store}?include_retired=1`)
+    for (const d of doc.json.domains ?? []) {
+      for (const m of d.memories) if (m.id === id) return m.type
+    }
+    return null
+  }
+
+  await check(11, "the memory page renders the probe domain", async () => {
+    const { ctx, page, problems, card } = await openProbe()
+    const rows = await card.locator("[data-testid=memory-row]").count()
+    await ctx.close()
+    assert(problems.length === 0, `console: ${problems[0]}`)
+    assert(rows === 3, `${rows} rows in the probe domain, want 3`)
+    return `${rows} rows`
+  })
+
+  await check(12, "retype a memory from the dropdown on its row", async () => {
+    const { ctx, page, problems, card } = await openProbe()
+    const row = card.locator("[data-testid=memory-row]").first()
+    const id = await row.getAttribute("data-memory-id")
+
+    await row.locator("button[role=combobox]").click()
+    await page.locator('[role=option]:has-text("preference")').first().click()
+    // The row re-renders from the refetch, so wait on the stored value.
+    await page.waitForTimeout(1500)
+    await ctx.close()
+
+    assert(problems.length === 0, `console: ${problems[0]}`)
+    const got = await typeOf(id)
+    assert(got === "preference", `stored type = ${got}, want preference`)
+    return `${id} -> preference`
+  })
+
+  await check(13, "select the whole domain from its header, then retype it", async () => {
+    const { ctx, page, problems, card } = await openProbe()
+    assert(
+      (await page.locator("[data-testid=bulk-bar]").count()) === 0,
+      "the bulk bar is visible with nothing selected",
+    )
+
+    const rows = card.locator("[data-testid=memory-row]")
+    const ids = []
+    for (let i = 0; i < (await rows.count()); i++) {
+      ids.push(await rows.nth(i).getAttribute("data-memory-id"))
+    }
+    // The domain header selects the lot. Retyping a domain of several hundred
+    // entries one row at a time is not a job anyone starts, which is what made
+    // the bulk actions much less useful than they looked.
+    await card.locator("button[role=checkbox]").first().click()
+
+    const bar = page.locator("[data-testid=bulk-bar]")
+    await bar.waitFor({ state: "visible", timeout: 5000 })
+
+    await bar.locator("button[role=combobox]").click()
+    await page.locator('[role=option]:has-text("event")').first().click()
+    await page.waitForTimeout(1500)
+    await ctx.close()
+
+    assert(problems.length === 0, `console: ${problems[0]}`)
+    for (const id of ids) {
+      const got = await typeOf(id)
+      assert(got === "event", `${id} stored as ${got}, want event`)
+    }
+    return `${ids.length} rows selected from the header and retyped`
+  })
+
+  await check(14, "add a memory through the page, tagged origin=user", async () => {
+    const { ctx, page, problems, card } = await openProbe()
+    await card.getByRole("button", { name: /Add a memory to e2e-probe/i }).click()
+    const form = page.locator("[data-testid=add-memory-form]")
+    await form.waitFor({ state: "visible", timeout: 5000 })
+
+    await form.locator("textarea").fill("written from the browser")
+    await form.getByRole("button", { name: "Add", exact: true }).click()
+    await page.waitForTimeout(1500)
+    await ctx.close()
+
+    assert(problems.length === 0, `console: ${problems[0]}`)
+    const doc = await api(`/api/memory/${store}`)
+    const probe = (doc.json.domains ?? []).find((d) => d.name === "e2e-probe")
+    const added = probe?.memories.find((m) => m.text === "written from the browser")
+    assert(added, "the memory added through the page is not in the store")
+    assert(added.origin === "user", `origin = ${added.origin}, want user`)
+    return `${added.id} origin=user`
+  })
+
+  await check(15, "retire from the row, then reveal it with show-retired", async () => {
+    const { ctx, page, problems, card } = await openProbe()
+    const row = card.locator("[data-testid=memory-row]").first()
+    const id = await row.getAttribute("data-memory-id")
+    await row.getByRole("button", { name: /Retire this memory/i }).click()
+    await page.waitForTimeout(1500)
+
+    // Gone from the default view — and reachable again behind the toggle,
+    // without which a retired memory could never be restored.
+    let visible = await card
+      .locator(`[data-memory-id="${id}"]`)
+      .count()
+    assert(visible === 0, "the retired memory is still listed by default")
+
+    await page.getByRole("button", { name: /Show retired/i }).click()
+    await page.waitForTimeout(1500)
+    visible = await page.locator(`[data-memory-id="${id}"]`).count()
+    await ctx.close()
+
+    assert(problems.length === 0, `console: ${problems[0]}`)
+    assert(visible === 1, "show-retired did not reveal the retired memory")
+    return `${id} retired and recovered`
+  })
+
+  await check(16, "clean up the probe domain", async () => {
+    assert(probeDomain, "no probe domain to remove")
+    const res = await api(`/api/memory/${store}/domains/${probeDomain}`, {
+      method: "DELETE",
+    })
+    assert(res.status === 204, `delete: ${res.status} ${res.text}`)
+    const after = await api(`/api/memory/${store}?include_retired=1`)
+    assert(
+      !(after.json.domains ?? []).some((d) => d.id === probeDomain),
+      "the probe domain survived cleanup",
+    )
   })
 }
 

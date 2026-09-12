@@ -27,13 +27,45 @@ export interface CLIInfo {
   installed: boolean
   path?: string
   version?: string
+  /** Whether any model reaching this CLI is enabled — what the switch shows. */
+  enabled: boolean
+  /** Whether a provider for this CLI exists at all. */
+  configured: boolean
+  /** Config index of that provider, for the edit sheet. -1 when there is none. */
+  provider_index: number
+  /** Models running through this CLI, and how many of them are enabled. */
+  models: number
+  models_enabled: number
+  /** Headless mode, JSON output — what the provider always passes. */
+  base_args: string[]
+  /** The permission flags ClawEh passes on every invocation. */
+  required_args: string[]
+  /** What this CLI's models add on top, deduplicated across them. */
+  extra_args?: string[]
+  /** Last, after the model flag: the stdin marker. */
+  trailing_args?: string[]
 }
 
-// listCLIs reports which known CLI agents (claude/codex/gemini) are installed on
-// the host, so the setup wizard can show what's available without the user
-// configuring a CLI whose binary isn't on PATH.
+// listCLIs reports every supported CLI agent (claude/codex/agy/cursor): whether
+// its binary is installed, and how it is currently configured. Rows come back
+// for CLIs that are not installed too — the Providers page greys those out, and
+// the setup wizard offers only the installed ones.
 export async function listCLIs(): Promise<CLIInfo[]> {
   return request<CLIInfo[]>("/api/system/clis")
+}
+
+// setCLIEnabled turns a CLI agent on or off. On creates the provider and model
+// if they are missing; off disables every model reaching that CLI. Nothing is
+// deleted either way, so the switch is reversible.
+export async function setCLIEnabled(
+  protocol: string,
+  enabled: boolean,
+): Promise<void> {
+  await request(`/api/system/clis/${encodeURIComponent(protocol)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled }),
+  })
 }
 
 export interface SetupStatus {
@@ -62,4 +94,35 @@ export async function reloadGateway(): Promise<void> {
 export async function getVersion(): Promise<string> {
   const res = await request<{ version: string }>("/api/system/version")
   return res.version
+}
+
+/** Runtime state of the running ClawEh process, for the Status page. */
+export interface SystemStatus {
+  version: string
+  build?: string
+  uptime_seconds: number
+  uptime: string
+  pid: number
+  /** Resident set size: the physical RAM the process holds. */
+  memory_bytes: number
+  go_version?: string
+  os: string
+  arch: string
+  // os_name is a human OS name ("Ubuntu 24.04.4 LTS"), empty when the host
+  // does not say — fall back to os.
+  os_name?: string
+  goroutines: number
+  agents: number
+  /** Enabled models, and providers that are actually usable — not totals. */
+  models: number
+  providers: number
+  channels: number
+  cli_providers: boolean
+  mcp_host: boolean
+}
+
+export async function getSystemStatus(): Promise<SystemStatus> {
+  const res = await fetch("/api/system/status")
+  if (!res.ok) throw new Error(`Failed to fetch status: ${res.status}`)
+  return res.json()
 }

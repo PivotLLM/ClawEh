@@ -207,7 +207,7 @@ func TestNormalizeLegacyTypes(t *testing.T) {
 	// Two domains + a memory, then force legacy string values directly.
 	topic, _ := s.CreateDomain(ctx, s.DB(), CreateDomainParams{AgentID: "a", Name: "P"})
 	legacyGen, _ := s.CreateDomain(ctx, s.DB(), CreateDomainParams{AgentID: "a", Name: "LegacyGlobal"})
-	m, _ := s.AddMemory(ctx, s.DB(), AddMemoryParams{DomainID: topic.ID, Type: TypeFact, Text: "x", Status: StatusActive, Confidence: 0.9, Source: SourceUserExplicit})
+	m, _ := s.AddMemory(ctx, s.DB(), AddMemoryParams{DomainID: topic.ID, Type: TypeFact, Text: "x", Status: StatusActive, Confidence: 0.9})
 	if _, err := s.DB().ExecContext(ctx, `UPDATE memories SET type='lesson' WHERE id=?`, m.ID); err != nil {
 		t.Fatalf("force legacy memory type: %v", err)
 	}
@@ -247,7 +247,7 @@ func TestDedupeActiveMemories(t *testing.T) {
 	other, _ := s.CreateDomain(ctx, db, CreateDomainParams{AgentID: "a", Name: "Q"})
 
 	add := func(domainID, text string) {
-		_, _ = s.AddMemory(ctx, db, AddMemoryParams{DomainID: domainID, Type: TypeFact, Text: text, Status: StatusActive, Confidence: 0.9, Source: SourceUserExplicit})
+		_, _ = s.AddMemory(ctx, db, AddMemoryParams{DomainID: domainID, Type: TypeFact, Text: text, Status: StatusActive, Confidence: 0.9})
 	}
 	// Three identical "The Frame" in domain d (the runaway-loop case) + one unique.
 	add(d.ID, "The Frame")
@@ -323,7 +323,7 @@ func TestMigrateDomain(t *testing.T) {
 	from, _ := s.CreateDomain(ctx, db, CreateDomainParams{AgentID: "a", Name: "From"})
 	to, _ := s.CreateDomain(ctx, db, CreateDomainParams{AgentID: "a", Name: "To"})
 	add := func(domainID, text string) {
-		_, _ = s.AddMemory(ctx, db, AddMemoryParams{DomainID: domainID, Type: TypeFact, Text: text, Status: StatusActive, Confidence: 0.9, Source: SourceUserExplicit})
+		_, _ = s.AddMemory(ctx, db, AddMemoryParams{DomainID: domainID, Type: TypeFact, Text: text, Status: StatusActive, Confidence: 0.9})
 	}
 	add(from.ID, "a")
 	add(from.ID, "b")
@@ -352,12 +352,12 @@ func TestPurgeNonActive(t *testing.T) {
 
 	// Active topic domain with an active + a retired memory.
 	keep, _ := s.CreateDomain(ctx, db, CreateDomainParams{AgentID: "a", Name: "Keep", Status: StatusActive})
-	_, _ = s.AddMemory(ctx, db, AddMemoryParams{DomainID: keep.ID, Type: TypeFact, Text: "active fact", Status: StatusActive, Confidence: 0.9, Source: SourceUserExplicit})
-	_, _ = s.AddMemory(ctx, db, AddMemoryParams{DomainID: keep.ID, Type: TypeFact, Text: "old fact", Status: StatusRetired, Confidence: 0.9, Source: SourceUserExplicit})
+	_, _ = s.AddMemory(ctx, db, AddMemoryParams{DomainID: keep.ID, Type: TypeFact, Text: "active fact", Status: StatusActive, Confidence: 0.9})
+	_, _ = s.AddMemory(ctx, db, AddMemoryParams{DomainID: keep.ID, Type: TypeFact, Text: "old fact", Status: StatusRetired, Confidence: 0.9})
 
 	// Archived domain with a (still-active) memory — both should go.
 	arch, _ := s.CreateDomain(ctx, db, CreateDomainParams{AgentID: "a", Name: "Arch", Status: StatusActive})
-	_, _ = s.AddMemory(ctx, db, AddMemoryParams{DomainID: arch.ID, Type: TypeFact, Text: "archived domain fact", Status: StatusActive, Confidence: 0.9, Source: SourceUserExplicit})
+	_, _ = s.AddMemory(ctx, db, AddMemoryParams{DomainID: arch.ID, Type: TypeFact, Text: "archived domain fact", Status: StatusActive, Confidence: 0.9})
 	if err := s.ArchiveDomain(ctx, db, arch.ID); err != nil {
 		t.Fatalf("archive: %v", err)
 	}
@@ -441,7 +441,7 @@ func TestHookLifecycleAndStableRev(t *testing.T) {
 
 	h, err := s.AddMemory(ctx, s.DB(), AddMemoryParams{
 		DomainID: base.ID, Type: TypeRule, Text: "Never use blue.",
-		Status: StatusActive, Confidence: 0.95, Source: SourceUserExplicit,
+		Status: StatusActive, Confidence: 0.95,
 	})
 	if err != nil {
 		t.Fatalf("add hook: %v", err)
@@ -456,7 +456,7 @@ func TestHookLifecycleAndStableRev(t *testing.T) {
 	// Supersede.
 	h2, err := s.SupersedeMemory(ctx, s.DB(), h.ID, AddMemoryParams{
 		DomainID: base.ID, Type: TypeRule, Text: "Use blue for the layout.",
-		Status: StatusActive, Confidence: 0.95, Source: SourceUserExplicit,
+		Status: StatusActive, Confidence: 0.95,
 	})
 	if err != nil {
 		t.Fatalf("supersede: %v", err)
@@ -482,7 +482,7 @@ func TestDeleteMemory(t *testing.T) {
 	d, _ := s.CreateDomain(ctx, s.DB(), CreateDomainParams{AgentID: "a", Name: "P"})
 	m, _ := s.AddMemory(ctx, s.DB(), AddMemoryParams{
 		DomainID: d.ID, Type: TypeFact, Text: "delete me", Status: StatusActive,
-		Confidence: 0.9, Source: SourceToolWrite,
+		Confidence: 0.9,
 	})
 	if err := s.DeleteMemory(ctx, s.DB(), m.ID); err != nil {
 		t.Fatalf("delete: %v", err)
@@ -504,7 +504,7 @@ func TestMemoryOriginRoundTrip(t *testing.T) {
 
 	withOrigin, _ := s.AddMemory(ctx, s.DB(), AddMemoryParams{
 		DomainID: d.ID, Type: TypeFact, Text: "from a human", Status: StatusActive,
-		Confidence: 0.9, Source: SourceUserExplicit, Origin: OriginUser,
+		Confidence: 0.9, Origin: OriginUser,
 	})
 	if withOrigin.Origin != OriginUser {
 		t.Fatalf("origin = %q, want user", withOrigin.Origin)
@@ -513,7 +513,7 @@ func TestMemoryOriginRoundTrip(t *testing.T) {
 	// Origin unset → defaults to chat.
 	noOrigin, _ := s.AddMemory(ctx, s.DB(), AddMemoryParams{
 		DomainID: d.ID, Type: TypeFact, Text: "agent note", Status: StatusActive,
-		Confidence: 0.9, Source: SourceToolWrite,
+		Confidence: 0.9,
 	})
 	if noOrigin.Origin != OriginChat {
 		t.Fatalf("default origin = %q, want chat", noOrigin.Origin)
@@ -525,24 +525,101 @@ func TestMemoryOriginRoundTrip(t *testing.T) {
 	}
 }
 
-func TestSearchAndPending(t *testing.T) {
+// Search reaches active memories, and reaches events only when asked.
+//
+// Events are the one type kept out of the prompt, so search is the ONLY way to
+// retrieve one. Excluding them by default keeps an ordinary lookup from being
+// buried under recurring notes — one production agent holds 279 of them in a
+// single domain — and the flag is the whole retrieval path when the question is
+// actually about the past.
+func TestSearchExcludesEventsUnlessAsked(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()
 	d, _ := s.CreateDomain(ctx, s.DB(), CreateDomainParams{AgentID: "a", Name: "P"})
-	_, _ = s.AddMemory(ctx, s.DB(), AddMemoryParams{DomainID: d.ID, Type: TypeFact, Text: "The BioTech report targets Q3.", Status: StatusActive, Confidence: 0.9, Source: SourceUserExplicit})
-	_, _ = s.AddMemory(ctx, s.DB(), AddMemoryParams{DomainID: d.ID, Type: TypeFact, Text: "Eric likes terse output.", Status: StatusReview, Confidence: 0.6, Source: SourceAssistantInferred})
+	_, _ = s.AddMemory(ctx, s.DB(), AddMemoryParams{
+		DomainID: d.ID, Type: TypeFact, Text: "The BioTech report targets Q3.",
+		Status: StatusActive, Confidence: 0.9,
+	})
+	_, _ = s.AddMemory(ctx, s.DB(), AddMemoryParams{
+		DomainID: d.ID, Type: TypeEvent, Text: "BioTech status as of Sep 4: shipped.",
+		Status: StatusActive, Confidence: 0.9,
+	})
 
-	hits, err := s.SearchMemories(ctx, s.DB(), "biotech", 10)
-	if err != nil || len(hits) != 1 {
-		t.Fatalf("search biotech: %v hits=%d", err, len(hits))
+	hits, err := s.SearchMemories(ctx, s.DB(), "biotech", 10, false)
+	if err != nil {
+		t.Fatalf("search: %v", err)
 	}
-	// Review hook is not returned by active search.
-	if h, _ := s.SearchMemories(ctx, s.DB(), "terse", 10); len(h) != 0 {
-		t.Fatalf("review hook leaked into active search")
+	if len(hits) != 1 || hits[0].Type != TypeFact {
+		t.Fatalf("default search returned %d hits (%+v), want just the fact", len(hits), hits)
 	}
-	pend, err := s.ListPending(ctx, s.DB(), 8)
-	if err != nil || len(pend) != 1 || pend[0].Text != "Eric likes terse output." {
-		t.Fatalf("pending = %+v err=%v", pend, err)
+
+	hits, err = s.SearchMemories(ctx, s.DB(), "biotech", 10, true)
+	if err != nil {
+		t.Fatalf("search with events: %v", err)
+	}
+	if len(hits) != 2 {
+		t.Fatalf("include_events returned %d hits, want both", len(hits))
+	}
+
+	// A retired memory stays out of both.
+	m, _ := s.AddMemory(ctx, s.DB(), AddMemoryParams{
+		DomainID: d.ID, Type: TypeFact, Text: "BioTech was cancelled.",
+		Status: StatusActive, Confidence: 0.9,
+	})
+	if err := s.RetireMemory(ctx, s.DB(), m.ID, "superseded"); err != nil {
+		t.Fatalf("retire: %v", err)
+	}
+	if h, _ := s.SearchMemories(ctx, s.DB(), "cancelled", 10, true); len(h) != 0 {
+		t.Fatalf("retired memory leaked into search: %+v", h)
+	}
+}
+
+// The composer's read path excludes events; the domain reports their count
+// instead, so they stay out of the prompt without disappearing.
+func TestPromptMemoriesExcludeEventsAndCountThem(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	d, _ := s.CreateDomain(ctx, s.DB(), CreateDomainParams{AgentID: "a", Name: "Trips"})
+	for _, tc := range []struct {
+		typ  MemoryType
+		text string
+	}{
+		{TypeFact, "Home is Ottawa."},
+		{TypeRule, "Do not use the word thuddy."},
+		{TypeOperational, "Craft rules live at files/craft.md."},
+		{TypeEvent, "Drove to the KOA on Sep 4."},
+		{TypeEvent, "Drove home on Sep 7."},
+	} {
+		if _, err := s.AddMemory(ctx, s.DB(), AddMemoryParams{
+			DomainID: d.ID, Type: tc.typ, Text: tc.text,
+			Status: StatusActive, Confidence: 0.9,
+		}); err != nil {
+			t.Fatalf("add %s: %v", tc.typ, err)
+		}
+	}
+
+	prompt, err := s.ListPromptMemories(ctx, s.DB(), d.ID)
+	if err != nil {
+		t.Fatalf("ListPromptMemories: %v", err)
+	}
+	if len(prompt) != 3 {
+		t.Fatalf("prompt memories = %d, want 3 (events excluded): %+v", len(prompt), prompt)
+	}
+	for _, m := range prompt {
+		if m.Type == TypeEvent {
+			t.Errorf("event %s reached the prompt path", m.ID)
+		}
+	}
+
+	n, err := s.CountEvents(ctx, s.DB(), d.ID)
+	if err != nil || n != 2 {
+		t.Fatalf("CountEvents = %d (err %v), want 2", n, err)
+	}
+
+	// ListMemories is the operator's view and shows everything.
+	all, err := s.ListMemories(ctx, s.DB(), d.ID, StatusActive)
+	if err != nil || len(all) != 5 {
+		t.Fatalf("ListMemories = %d (err %v), want all 5", len(all), err)
 	}
 }
 

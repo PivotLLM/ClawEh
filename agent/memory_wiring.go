@@ -155,12 +155,6 @@ func memoryComposerOptions(mem config.MemoryConfig) []cogmem.Option {
 	if mem.Prompt.MinConfidence > 0 {
 		opts = append(opts, cogmem.WithMinConfidence(mem.Prompt.MinConfidence))
 	}
-	if mem.Prompt.PendingMax > 0 {
-		opts = append(opts, cogmem.WithPendingMax(mem.Prompt.PendingMax))
-	}
-	if mem.Prompt.PendingSurface != "" {
-		opts = append(opts, cogmem.WithPendingSurface(mem.Prompt.PendingSurface))
-	}
 	if mem.Prompt.FileMaxBytes > 0 {
 		opts = append(opts, cogmem.WithFileMaxBytes(mem.Prompt.FileMaxBytes))
 	}

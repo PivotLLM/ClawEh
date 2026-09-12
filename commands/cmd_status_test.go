@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -246,6 +247,34 @@ func TestStatus_ExactShape(t *testing.T) {
 	if fenceCount != 2 {
 		t.Errorf("got %d fence lines, want exactly 2", fenceCount)
 	}
+
+	// The Memory line carries a live measurement, so it is checked by shape
+	// rather than value and removed before the exact comparison below. It is
+	// absent on a platform without /proc, which is why this is conditional
+	// rather than a fixed row in wantBody.
+	var memLines []string
+	kept := lines[:0:0]
+	for _, l := range lines {
+		if strings.HasPrefix(l, "Memory: ") {
+			memLines = append(memLines, l)
+			continue
+		}
+		kept = append(kept, l)
+	}
+	if len(memLines) > 1 {
+		t.Errorf("got %d Memory lines, want at most 1: %v", len(memLines), memLines)
+	}
+	for _, l := range memLines {
+		var mb float64
+		if _, err := fmt.Sscanf(l, "Memory: %f MB", &mb); err != nil {
+			t.Errorf("Memory line %q is not \"Memory: <n> MB\": %v", l, err)
+		} else if mb <= 0 || mb > 4096 {
+			// A Go test binary is megabytes resident. A gigabytes-scale answer
+			// would mean VmSize had been read instead of VmRSS.
+			t.Errorf("Memory = %.1f MB, which is not a plausible RSS", mb)
+		}
+	}
+	lines = kept
 
 	wantBody := []string{
 		"Version: " + app.Version(),

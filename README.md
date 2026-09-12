@@ -36,7 +36,7 @@ https://github.com/PivotLLM/Tutorials/blob/main/docs/claweh-quickstart.md
 - **Multi-agent architecture** — Run multiple named agents, each with its own workspace, models, tools, system prompt, memory, and channel bindings.
 - **Self-hosted** — Workspace sandboxing, per-agent tool allowlists, and loopback-bound services, delivered as MIT-licensed Go software that you run on your own infrastructure.
 - **Strong security posture** — Only essential features are enabled by default, with fine-grained access controls for tools, files, agents, and external services.
-- **Broad LLM support** — Connect to OpenRouter, Anthropic, OpenAI, Google Gemini, AWS, x.ai, and others, or use CLI agents such as Claude Code, Codex, Gemini CLI, and Cursor CLI. Configurable fallback chains and cooldowns improve availability.
+- **Broad LLM support** — Connect to OpenRouter, Anthropic, OpenAI, Google Gemini, AWS, x.ai, and others, or use CLI agents such as Claude Code, Codex, Antigravity, and Cursor CLI. Configurable fallback chains and cooldowns improve availability.
 - **Messaging channels** — Connect agents to Telegram, Slack, Discord, Signal, and the built-in web interface, with configurable per-agent routing. The Signal channel connects to a secure-messaging daemon and auto-discovers its linked accounts. Additional channels are under consideration.
 - **Cognitive memory** — Each agent can maintain persistent memory that updates in the background, distilling conversations into structured, de-duplicated facts and automatically recalling relevant information for future prompts.
 - **Smart context management** — Automatic summarization and compaction, combined with per-turn eviction of stale tool output, keep long-running conversations responsive and within model context limits.
@@ -115,7 +115,7 @@ claw network none               # back to loopback only
 
 ### 3. Open the web UI and finish setup
 
-Browse to **http://localhost:18790** (or `http://<host>:18790` if you set `--host`). On a fresh install the **setup wizard** launches automatically: pick a provider (or a detected local CLI agent such as Claude Code, Codex, Gemini CLI, or Cursor CLI), test your API key, choose a default model, and name your first agent. Then you're ready to chat.
+Browse to **http://localhost:18790** (or `http://<host>:18790` if you set `--host`). On a fresh install the **setup wizard** launches automatically: pick a provider (or a detected local CLI agent such as Claude Code, Codex, Antigravity, or Cursor CLI), test your API key, choose a default model, and name your first agent. Then you're ready to chat.
 
 ## Features
 
@@ -130,15 +130,19 @@ ClawEh is both an MCP **server** — exposing its tools to CLI-based agents — 
 Two mechanisms keep long sessions inside the model's window. **Eviction** is a per-turn, LLM-free sweep that collapses re-retrievable tool results (file reads, web fetches) to a short placeholder once the agent has moved on. By evicting stale data before every dispatch, summarization fires far less often. **Compression** summarizes older conversation when the window fills. It can be tailored per agent with a `COMPRESSION.md` in the workspace. See [docs/context-eviction.md](docs/context-eviction.md).
 
 ### Cognitive memory
-Long-running agents need to get smarter over time instead of relying on hand-edited prompt files. Each session has a small SQLite memory database. Memory is organized as **domains** — named containers that are either **sticky** (always in the prompt) or routed topics — holding **memories**, each a `fact`, `preference`, or `rule`. A background "sleep cycle" reviews new conversation and distills it into structured, de-duplicated, contradiction-resolved memories, and the relevant pieces are composed into the prompt each turn. Consolidation reuses your configured **Memory models**, and its prompt lives in an editable `COGMEM.md` in the workspace. 
+Long-running agents need to get smarter over time instead of relying on hand-edited prompt files. Each session has a small SQLite memory database. Memory is organized as **domains** — named containers that are either **sticky** (always in the prompt) or routed topics — holding **memories**, each a `fact`, `preference`, `rule`, `operational` (the assistant's own housekeeping) or `event`. Events are things that happened at a point in time; they are never loaded into the prompt, are reached by search, and are deleted after 30 days, so a scheduled job cannot bury an assistant in its own status reports. A background "sleep cycle" reviews new conversation and distills it into structured, de-duplicated, contradiction-resolved memories, and the relevant pieces are composed into the prompt each turn. Consolidation reuses your configured **Memory models**; its rules and output format are built in, and a per-agent `COGMEM.md` in the workspace adds instructions for that assistant. 
 
 The seeded **`General`** sticky domain holds global rules and standing facts; memory domains are auto-load by relevance using **recency**, **lexical match** (salient words in the latest message), **tool triggers** (a domain loads when the agent uses a matching tool — e.g. an "email" domain on `google_gmail`), and **keyword triggers** (phrases in the incoming message. This significantly improves agent performance without relying on external embedding services or vector databases.
 
-When the agent infers something uncertain, it stores it as a **pending** memory and
-asks you to confirm in chat (reply "yes" to keep it, "no" to drop it). Use **`claw
-memory purge`** to clear everything that isn't current active memory — a dry run by
-default; add `--confirm` to delete and vacuum. Stop the gateway first so you're not
-racing live agents:
+The **memory page in the Web UI** is where you correct what an assistant filed:
+change a memory's type, retire and restore, select a whole domain and retype or
+delete it in one go, or add a memory by hand (recorded as `origin: user`, which
+the assistant is told outranks its own inferences). The whole store exports and
+imports as YAML. Full details in **[docs/memory.md](docs/memory.md)**.
+
+Use **`claw memory purge`** to clear everything that isn't current active memory
+— a dry run by default; add `--confirm` to delete and vacuum. Stop the gateway
+first so you're not racing live agents:
 
 ```bash
 claw memory purge             # dry run — review the counts
@@ -328,7 +332,7 @@ cycles:
   external hosts implement this.
 - **[`spawnllm`](https://github.com/PivotLLM/spawnllm)** — the LLM-dispatch core:
   the provider clients (OpenAI-chat/responses, Azure, Anthropic, and the
-  claude/codex/gemini CLIs) plus the API tool-call loop. spawnllm imports only
+  claude/codex/agy CLIs) plus the API tool-call loop. spawnllm imports only
   `toolspec` + stdlib; it never imports a host. Policy — model selection,
   fallback, cooldown, config, results handling — stays in ClawEh.
 
@@ -675,7 +679,7 @@ These tools are available to the LLM in both access paths described in the next 
 
 ## MCP server (claw as an MCP host)
 
-ClawEh can expose a subset of its host-side tools to MCP-compatible clients over a Streamable HTTP transport. This is primarily intended for CLI providers (Claude Code, Codex CLI, Gemini CLI, Cursor CLI) so they can call claw's tools natively instead of printing tool-call JSON in their prose — which historically caused runaway outer loops, since those CLIs are themselves agentic and return a single final answer per invocation.
+ClawEh can expose a subset of its host-side tools to MCP-compatible clients over a Streamable HTTP transport. This is primarily intended for CLI providers (Claude Code, Codex CLI, Antigravity, Cursor CLI) so they can call claw's tools natively instead of printing tool-call JSON in their prose — which historically caused runaway outer loops, since those CLIs are themselves agentic and return a single final answer per invocation.
 
 ### Tool access paths
 
@@ -689,7 +693,7 @@ All tools are available on this path, including the session tools (`session_comp
 
 **Path 2 — MCP HTTP server (CLI providers)**
 
-For CLI providers (`claude-cli`, `codex-cli`, `gemini-cli`, `cursor-cli`), the CLI subprocess has no access to claw's internal session state. Tools are called via the MCP HTTP server at `http://127.0.0.1:5911/internal`. Every tool call on this path carries a `session_token` parameter — a short-lived `SST<64hex>` token injected into the agent's system prompt at session start. The MCP server resolves this token to the correct agent and session, then executes the tool.
+For CLI providers (`claude-cli`, `codex-cli`, `antigravity-cli`, `cursor-cli`), the CLI subprocess has no access to claw's internal session state. Tools are called via the MCP HTTP server at `http://127.0.0.1:5911/internal`. Every tool call on this path carries a `session_token` parameter — a short-lived `SST<64hex>` token injected into the agent's system prompt at session start. The MCP server resolves this token to the correct agent and session, then executes the tool.
 
 For session-scoped tools, the MCP server uses the session token to inject the session key into the execution context. The session tools implement the `SessionScoped` interface, so the dispatcher injects the key automatically — no hardcoded list to maintain.
 
@@ -699,9 +703,9 @@ For session-scoped tools, the MCP server uses the session token to inject the se
 | Session context | Implicit (agent loop) | `session_token` parameter |
 | Session tools available | All six | All six |
 
-> **Important:** CLI providers (`claude-cli`, `codex-cli`, `gemini-cli`, `cursor-cli`) no longer receive tool descriptions in their prompt. Each invocation runs as a single agentic turn, and the CLI reaches claw's tools only via MCP. **You must register claw as an MCP server in each CLI you intend to use** — see [Client configuration](#client-configuration) below. Without that step, the CLI will still answer prompts, but it will have no access to claw's filesystem, web, or other host-side tools.
+> **Important:** CLI providers (`claude-cli`, `codex-cli`, `antigravity-cli`, `cursor-cli`) no longer receive tool descriptions in their prompt. Each invocation runs as a single agentic turn, and the CLI reaches claw's tools only via MCP. **You must register claw as an MCP server in each CLI you intend to use** — see [Client configuration](#client-configuration) below. Without that step, the CLI will still answer prompts, but it will have no access to claw's filesystem, web, or other host-side tools.
 
-The server auto-starts whenever any enabled model in `models` uses a `*-cli` protocol (`claude-cli`, `codex-cli`, `gemini-cli`, `cursor-cli`), since those CLIs depend on MCP for native tool calls. Set `enabled: true` to force it on regardless, or `auto_enable: false` to opt out of the auto-start. Full config shape with defaults:
+The server auto-starts whenever any enabled model in `models` uses a `*-cli` protocol (`claude-cli`, `codex-cli`, `antigravity-cli`, `cursor-cli`), since those CLIs depend on MCP for native tool calls. Set `enabled: true` to force it on regardless, or `auto_enable: false` to opt out of the auto-start. Full config shape with defaults:
 
 ```json
 {
@@ -735,7 +739,7 @@ Claw can also connect **outward** to third-party (upstream) MCP servers and make
 Both provider types get the external tools **through claw** — full feature parity, no per-CLI setup:
 
 - **Direct API providers** (`anthropic`, `openai`, `openai-compat`, `gemini`): claw lists the upstream tools, presents them to the model alongside its own, and proxies each call.
-- **CLI providers** (`claude-cli`, `codex-cli`, `gemini-cli`, `cursor-cli`): claw aggregates the external tools into its own MCP host, so a CLI that already talks to claw (see [Client configuration](#client-configuration)) sees them too — claw proxies the calls. (If you instead want a CLI to reach an external server *directly*, configure it in that CLI's own MCP config.)
+- **CLI providers** (`claude-cli`, `codex-cli`, `antigravity-cli`, `cursor-cli`): claw aggregates the external tools into its own MCP host, so a CLI that already talks to claw (see [Client configuration](#client-configuration)) sees them too — claw proxies the calls. (If you instead want a CLI to reach an external server *directly*, configure it in that CLI's own MCP config.)
 
 Per-agent tool allowlists apply: allow an external server's tools with the `mcp_<server>_*` pattern (or `*`).
 
@@ -750,7 +754,7 @@ See [docs/mcp.md](docs/mcp.md) for the full design.
 
 #### Quick setup — `set-mcp.sh`
 
-The `set-mcp.sh` script in the repo root registers (or refreshes) claw in whichever of Gemini CLI, Codex CLI, and Claude Code are **installed on your PATH** — the rest are skipped. It removes and re-adds each CLI one at a time, pointing them at the `/internal` endpoint:
+The `set-mcp.sh` script in the repo root registers (or refreshes) claw in whichever of Antigravity, Codex CLI, and Claude Code are **installed on your PATH** — the rest are skipped. It removes and re-adds each CLI one at a time, pointing them at the `/internal` endpoint:
 
 ```bash
 ./set-mcp.sh
@@ -797,36 +801,33 @@ This writes the entry to `~/.codex/config.toml`. You can also edit the file dire
 url = "http://127.0.0.1:5911/internal"
 ```
 
-#### Gemini CLI
+#### Antigravity
 
-[Gemini CLI](https://github.com/google-gemini/gemini-cli) supports MCP servers via the `gemini mcp add` command or by editing `~/.gemini/settings.json` directly.
-
-```bash
-gemini mcp add claw http://127.0.0.1:5911/internal --scope user --transport http
-```
-
-Omit `--scope user` to configure claw at the project level instead.
-
-> **Warning:** The `--trust` flag grants Gemini CLI unrestricted access to all MCP tools without prompting for permission. Only use `--trust` in controlled environments where you fully trust the MCP server and its tools.
-
-To grant access to all tools without prompting (use with caution — see warning above):
+[Antigravity](https://antigravity.google) (binary `agy`) replaces the Gemini CLI, which Google has deprecated. It supports MCP servers via `agy mcp add`.
 
 ```bash
-gemini mcp add claw http://127.0.0.1:5911/internal --scope user --transport http --trust
+agy mcp add claw http://127.0.0.1:5911/internal --type http
 ```
 
-Alternatively, add the following to `~/.gemini/settings.json`:
+`agy mcp list` shows what is registered, and `agy mcp remove claw` undoes it.
+
+ClawEh still accepts `gemini-cli` as a provider protocol — it is an alias that runs `agy` — so an existing configuration keeps starting after an upgrade. New configurations should use `antigravity-cli`.
+
+#### Cursor CLI
+
+Cursor has no `mcp add` subcommand; it reads `~/.cursor/mcp.json` (or `.cursor/mcp.json` in a project). Add claw under `mcpServers`:
 
 ```json
 {
   "mcpServers": {
     "claw": {
-      "url": "http://127.0.0.1:5911/internal",
-      "type": "http"
+      "url": "http://127.0.0.1:5911/internal"
     }
   }
 }
 ```
+
+`cursor-agent mcp list` shows what it picked up.
 
 #### Clients without HTTP transport support
 

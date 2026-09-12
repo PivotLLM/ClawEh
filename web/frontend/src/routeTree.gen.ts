@@ -21,6 +21,7 @@ import { Route as MemoryRouteImport } from './routes/memory'
 import { Route as ModelsRouteImport } from './routes/models'
 import { Route as ProvidersRouteImport } from './routes/providers'
 import { Route as SetupRouteImport } from './routes/setup'
+import { Route as StatusRouteImport } from './routes/status'
 import { Route as VoiceRouteImport } from './routes/voice'
 import { Route as AgentBindingsRouteImport } from './routes/agent/bindings'
 import { Route as AgentSkillsRouteImport } from './routes/agent/skills'
@@ -90,6 +91,11 @@ const SetupRoute = SetupRouteImport.update({
   path: '/setup',
   getParentRoute: () => rootRouteImport,
 } as any)
+const StatusRoute = StatusRouteImport.update({
+  id: '/status',
+  path: '/status',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const VoiceRoute = VoiceRouteImport.update({
   id: '/voice',
   path: '/voice',
@@ -144,6 +150,7 @@ export interface FileRoutesByFullPath {
   '/models': typeof ModelsRoute
   '/providers': typeof ProvidersRoute
   '/setup': typeof SetupRoute
+  '/status': typeof StatusRoute
   '/voice': typeof VoiceRoute
   '/agent/bindings': typeof AgentBindingsRoute
   '/agent/skills': typeof AgentSkillsRoute
@@ -166,6 +173,7 @@ export interface FileRoutesByTo {
   '/models': typeof ModelsRoute
   '/providers': typeof ProvidersRoute
   '/setup': typeof SetupRoute
+  '/status': typeof StatusRoute
   '/voice': typeof VoiceRoute
   '/agent/bindings': typeof AgentBindingsRoute
   '/agent/skills': typeof AgentSkillsRoute
@@ -189,6 +197,7 @@ export interface FileRoutesById {
   '/models': typeof ModelsRoute
   '/providers': typeof ProvidersRoute
   '/setup': typeof SetupRoute
+  '/status': typeof StatusRoute
   '/voice': typeof VoiceRoute
   '/agent/bindings': typeof AgentBindingsRoute
   '/agent/skills': typeof AgentSkillsRoute
@@ -213,6 +222,7 @@ export interface FileRouteTypes {
     | '/models'
     | '/providers'
     | '/setup'
+    | '/status'
     | '/voice'
     | '/agent/bindings'
     | '/agent/skills'
@@ -235,6 +245,7 @@ export interface FileRouteTypes {
     | '/models'
     | '/providers'
     | '/setup'
+    | '/status'
     | '/voice'
     | '/agent/bindings'
     | '/agent/skills'
@@ -257,6 +268,7 @@ export interface FileRouteTypes {
     | '/models'
     | '/providers'
     | '/setup'
+    | '/status'
     | '/voice'
     | '/agent/bindings'
     | '/agent/skills'
@@ -280,6 +292,7 @@ export interface RootRouteChildren {
   ModelsRoute: typeof ModelsRoute
   ProvidersRoute: typeof ProvidersRoute
   SetupRoute: typeof SetupRoute
+  StatusRoute: typeof StatusRoute
   VoiceRoute: typeof VoiceRoute
 }
 
@@ -367,6 +380,13 @@ declare module '@tanstack/react-router' {
       path: '/setup'
       fullPath: '/setup'
       preLoaderRoute: typeof SetupRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/status': {
+      id: '/status'
+      path: '/status'
+      fullPath: '/status'
+      preLoaderRoute: typeof StatusRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/voice': {
@@ -490,6 +510,7 @@ const rootRouteChildren: RootRouteChildren = {
   ModelsRoute: ModelsRoute,
   ProvidersRoute: ProvidersRoute,
   SetupRoute: SetupRoute,
+  StatusRoute: StatusRoute,
   VoiceRoute: VoiceRoute,
 }
 export const routeTree = rootRouteImport
