@@ -1,0 +1,64 @@
+#
+# B9 build and release description
+#
+
+name:   ClawEh
+module: github.com/PivotLLM/ClawEh
+github: PivotLLM/ClawEh
+
+# The version is a const in the source, never derived from git describe: it is a
+# property of the source, not of the machine that built it.
+version:
+  file:    app/app.go
+  pattern: 'version\s*=\s*"([^"]+)"'
+  format:  '{1}'
+
+go_min:      "1.26"
+govulncheck: true
+
+licenses:
+  enabled:  true
+  template: license.tmpl
+  ignore:   github.com/PivotLLM/ClawEh
+  out:      OPEN-SOURCE-LICENSES.txt
+
+build:
+  clean_once: true
+  command: 'make build PLATFORM={os} ARCH={arch}'
+  # No Windows. ClawEh does not support it, and it could not be built anyway:
+  # github.com/PivotLLM/Maestro's llm/client.go uses syscall.Setpgid and
+  # syscall.Kill without build tags, so the dependency does not compile for
+  # GOOS=windows. Nothing Windows has ever been released.
+  targets:
+    - darwin/amd64
+    - darwin/arm64
+    - linux/386
+    - linux/amd64
+    - linux/arm64
+
+artifacts:
+  - name: claw
+    from: 'build/claw-{os}-{arch}'
+    macos_bundle_id: com.tenebris.claweh
+  - name: claw-auth
+    from: 'build/claw-auth-{os}-{arch}'
+    macos_bundle_id: com.tenebris.claweh
+
+package:
+  extra_files:
+    - {from: LICENSE, as: LICENSE.txt}
+    - {from: '{staging}/OPEN-SOURCE-LICENSES.txt', as: OPEN-SOURCE-LICENSES.txt}
+  per_platform:
+    enabled: true
+    # CONTRACT: version-free, so /releases/latest/download resolves. claweh.sh
+    # fetches exactly these names.
+    # Binaries are renamed to their bare `name` inside the archive.
+    asset: 'claw-{os}-{arch}.tar.gz'
+  bundle:
+    # Dropped: the installer prefers the per-platform archives.
+    enabled: false
+
+release:
+  tag:   '{version}'
+  title: 'v{tag}'
+  notes: 'Linux and macOS binaries (macOS binaries are signed)'
