@@ -29,11 +29,11 @@ func setupCogmemConsolidation(cfg *config.Config, agentLoop *agent.AgentLoop) *c
 	}
 
 	factory := func(j consolidate.Job) (*consolidate.Worker, error) {
-		inst, ok := agentLoop.GetRegistry().GetAgent(j.AgentID)
+		inst, ok := agentLoop.GetRegistry().GetAgent(j.ID)
 		if !ok || inst == nil || inst.Config == nil || !inst.Config.CognitiveMemoryEnabled() {
-			return nil, fmt.Errorf("cogmem: agent %q not cognitive", j.AgentID)
+			return nil, fmt.Errorf("cogmem: agent %q not cognitive", j.ID)
 		}
-		st, err := store.Open(store.SessionDBPath(j.Workspace, j.SessionKey))
+		st, err := store.Open(store.DBPath(j.Dir))
 		if err != nil {
 			return nil, fmt.Errorf("cogmem: open store: %w", err)
 		}
@@ -69,9 +69,9 @@ func setupCogmemConsolidation(cfg *config.Config, agentLoop *agent.AgentLoop) *c
 			return
 		}
 		mgr.Enqueue(consolidate.Job{
-			AgentID:    agentID,
-			SessionKey: sessionKey,
-			Workspace:  inst.Workspace,
+			ID:        agentID,
+			Dir:       cogmemhost.Dir(inst.Workspace),
+			Workspace: inst.Workspace,
 		}, "manual")
 	})
 

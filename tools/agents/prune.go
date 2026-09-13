@@ -17,20 +17,18 @@ import (
 // SanitizeSessionKey turns into "agent_<id>_subagent_<uuid>".
 const subagentSessionMarker = "_subagent_"
 
-// PruneOrphanSubagentSessions deletes leftover sub-agent session DB files
-// (cogmem snapshot + conversation archive, with their -wal/-shm) under
-// <workspace>/sessions whose mtime is older than olderThan. Sub-agent sessions
-// are cleaned up immediately on normal completion; this reclaims files left by a
-// crash mid-run, after a grace window so their artefacts can be inspected first.
-// Returns the number of files removed. Intended to run once at startup.
+// PruneOrphanSubagentSessions deletes leftover sub-agent session files: the
+// conversation archive (with its -wal/-shm) under <workspace>/sessions, and the
+// memory snapshot directory under <workspace>/cogmem/subagents, whose mtime is
+// older than olderThan. Sub-agent sessions are cleaned up immediately on
+// normal completion; this reclaims what a crash mid-run left behind, after a
+// grace window so the artefacts can be inspected first. Returns the number of
+// entries removed. Intended to run once at startup.
 func PruneOrphanSubagentSessions(workspace string, olderThan time.Duration, now time.Time) int {
-	dir := filepath.Join(workspace, "sessions")
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return 0 // no sessions dir (or unreadable) → nothing to prune
-	}
 	cutoff := now.Add(-olderThan)
 	removed := 0
+	dir := filepath.Join(workspace, "sessions")
+	entries, _ := os.ReadDir(dir) // no sessions dir (or unreadable) → nothing there to prune
 	for _, e := range entries {
 		if e.IsDir() || !strings.Contains(e.Name(), subagentSessionMarker) {
 			continue
@@ -41,6 +39,20 @@ func PruneOrphanSubagentSessions(workspace string, olderThan time.Duration, now 
 		}
 		if err := os.Remove(filepath.Join(dir, e.Name())); err == nil {
 			removed++
+		}
+	}
+	// Sub-agent memory snapshots live in their own directories under
+	// <workspace>/cogmem/subagents; a crashed run leaves one behind.
+	snapDir := filepath.Join(workspace, "cogmem", "subagents")
+	if snaps, err := os.ReadDir(snapDir); err == nil {
+		for _, e := range snaps {
+			info, err := e.Info()
+			if err != nil || !e.IsDir() || !info.ModTime().Before(cutoff) {
+				continue
+			}
+			if err := os.RemoveAll(filepath.Join(snapDir, e.Name())); err == nil {
+				removed++
+			}
 		}
 	}
 	if removed > 0 {

@@ -14,6 +14,7 @@ import (
 
 	cogmemstore "github.com/PivotLLM/cogmem/store"
 
+	"github.com/PivotLLM/ClawEh/cogmemhost"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/memory"
 )
@@ -217,9 +218,9 @@ func (al *AgentLoop) cogmemSessionStatus(agent *AgentInstance, sessionKey string
 	if agent == nil || agent.Config == nil || !agent.Config.CognitiveMemoryEnabled() {
 		return ""
 	}
-	path := cogmemstore.SessionDBPath(agent.Workspace, sessionKey)
+	path := cogmemstore.DBPath(cogmemhost.Dir(agent.Workspace))
 	if _, err := os.Stat(path); err != nil {
-		return "No cognitive-memory database for this session yet."
+		return "No cognitive-memory database for this assistant yet."
 	}
 	s, err := cogmemstore.Open(path)
 	if err != nil {

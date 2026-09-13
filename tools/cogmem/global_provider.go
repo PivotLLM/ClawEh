@@ -9,9 +9,9 @@
 // aggregator publishes them under the "cogmem" namespace as
 // "cogmem_domain_get" and so on.
 //
-// Every tool is session-scoped: it operates on the per-session .cogmem.db
-// resolved from the workspace and ToolCall.Session. Cognitive memory is ON by
-// default: every agent gets these tools unless its `cogmem` flag is false.
+// Every tool operates on the agent's one memory, <workspace>/cogmem, shared by
+// all of its sessions. Cognitive memory is ON by default: every agent gets
+// these tools unless its `cogmem` flag is false.
 package cogmem
 
 import (
@@ -63,6 +63,7 @@ func (globalCogmemProvider) RegisterTools(deps global.Deps) []global.ToolDefinit
 	cfg, _ := deps.Cfg.(*config.Config)
 
 	host := cogmemtools.Host{
+		Dir:       cogmemhost.Dir(workspace),
 		Workspace: workspace,
 		CheckAttachment: func(ref string) (int64, error) {
 			return cogmemhost.Check(cfg, workspace, ref)

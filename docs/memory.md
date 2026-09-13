@@ -6,8 +6,10 @@ preferences, rules, the assistant's own working notes, and a searchable record
 of things that happened. Memories are grouped by topic — a **domain** — so
 global information stays separate from project detail.
 
-Each session has its own SQLite database, `<session>.cogmem.db`, in the agent's
-`sessions/` directory.
+Each assistant has one memory, shared by every session it holds: a SQLite
+database at `cogmem/cogmem.db` in the agent's workspace. The `cogmem/`
+directory is self-contained, so it survives clearing the sessions, can be
+backed up on its own, and can be copied to a new assistant.
 
 ## Domains
 

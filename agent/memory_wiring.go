@@ -34,14 +34,21 @@ func (al *AgentLoop) wireCognitiveMemory(agent *AgentInstance, sessionKey string
 
 	mem := cfg.Agents.Defaults.EffectiveMemory(agent.Config)
 	perMessageChars := mem.Consolidation.PerMessageChars
+	// One memory per agent, shared by every session. A sub-agent works on a
+	// throwaway snapshot in its own directory (see runSubagentTask).
+	ephemeral := routing.IsSubagentSessionKey(sessionKey)
+	dir, id := cogmemhost.Dir(agent.Workspace), agent.ID
+	if ephemeral {
+		dir, id = cogmemhost.SubagentDir(agent.Workspace, sessionKey), agent.ID+" (sub-agent)"
+	}
 	return cogmem.NewSession(cogmem.SessionOptions{
-		AgentID:    agent.ID,
-		SessionKey: sessionKey,
-		Workspace:  agent.Workspace,
-		Ephemeral:  routing.IsSubagentSessionKey(sessionKey),
-		Settings:   cogmemhost.Settings(mem),
-		Loader:     cogmemhost.NewLoader(cfg, agent.ID, agent.Workspace),
-		Manager:    cogMgr,
+		ID:        id,
+		Dir:       dir,
+		Workspace: agent.Workspace,
+		Ephemeral: ephemeral,
+		Settings:  cogmemhost.Settings(mem),
+		Loader:    cogmemhost.NewLoader(cfg, agent.ID, agent.Workspace),
+		Manager:   cogMgr,
 		OnOpen: func(ctx context.Context, st *store.Store) {
 			backfillInbox(ctx, st, agent.ID, agent.Workspace, sessionKey, perMessageChars)
 		},

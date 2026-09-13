@@ -28,6 +28,26 @@ behalf, and an assistant is only told about memory when it actually has it.
 - **Assistants without cognitive memory are no longer told how to use it.**
   The memory rule in the system prompt is emitted only for agents that have
   `cogmem` on. Agents with it on receive byte-identical prompt text.
+- **BREAKING: each assistant now has one memory, at `cogmem/cogmem.db` in its
+  workspace, shared by every session it holds.** Memory used to be one file
+  per session under `sessions/`, so under the isolating session modes
+  (`session.mode` of `per-user`, `per-platform`, `per-account`) an assistant
+  kept a separate memory per person or platform; it now keeps one, which is
+  what "isolation is a property of the agent" always meant. The `cogmem/`
+  directory is self-contained: it survives deleting the sessions, can be
+  backed up on its own, and can be copied to a new assistant. Migration is a
+  one-time step, with the service stopped, for each agent workspace:
+
+  ```
+  mkdir -p <workspace>/cogmem
+  mv <workspace>/sessions/agent_<id>_main.cogmem.db <workspace>/cogmem/cogmem.db
+  ```
+
+  (move the `-wal` and `-shm` siblings too if present). A workspace with no
+  such file needs nothing; memory starts empty on first use. Other per-session
+  memory files, if any, hold separate memories that cannot be merged
+  automatically; import them through the memory page if you want them. The
+  memory page's store ids are now agent names rather than session file names.
 - **Cognitive memory now lives in its own module, `github.com/PivotLLM/cogmem`.**
   ClawEh embeds it; nothing changes on disk, in the tools or in the API. The
   `cogmem_consolidate` tool's reply when no background worker is running now

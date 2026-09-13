@@ -5,19 +5,21 @@ package agent
 
 import (
 	"context"
+	"os"
 	"testing"
 	"time"
 
 	"github.com/PivotLLM/cogmem"
 	"github.com/PivotLLM/cogmem/store"
 
+	"github.com/PivotLLM/ClawEh/cogmemhost"
 	"github.com/PivotLLM/ClawEh/memory"
 	"github.com/PivotLLM/ClawEh/providers"
 )
 
 func openSessionStore(t *testing.T, agent *AgentInstance, key string) *store.Store {
 	t.Helper()
-	s, err := store.Open(store.SessionDBPath(agent.Workspace, key))
+	s, err := store.Open(store.DBPath(cogmemhost.Dir(agent.Workspace)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +61,10 @@ func TestMemorySession_BackfillsInboxFromArchiveOnce(t *testing.T) {
 	ctx := context.Background()
 
 	// A store that consolidated through seq 1 before the inbox existed.
-	pre, err := store.Open(store.SessionDBPath(agent.Workspace, key))
+	if err := os.MkdirAll(cogmemhost.Dir(agent.Workspace), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pre, err := store.Open(store.DBPath(cogmemhost.Dir(agent.Workspace)))
 	if err != nil {
 		t.Fatal(err)
 	}
