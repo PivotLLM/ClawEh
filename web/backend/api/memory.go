@@ -289,8 +289,8 @@ func (h *Handler) handleGetMemoryStore(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
-// openMemoryForWrite validates the {id} path value, locates the session's
-// .cogmem.db, and opens it. On any failure it writes the HTTP error and returns
+// openMemoryForWrite validates the {id} path value, locates the agent's
+// memory store, and opens it. On any failure it writes the HTTP error and returns
 // ok=false. The caller must Close the returned store.
 func (h *Handler) openMemoryForWrite(w http.ResponseWriter, r *http.Request) (*cogmemstore.Store, bool) {
 	id := r.PathValue("id")

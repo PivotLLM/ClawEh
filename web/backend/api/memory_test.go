@@ -12,7 +12,7 @@ import (
 	cogmemstore "github.com/PivotLLM/cogmem/store"
 )
 
-// seedCogmemDB creates a .cogmem.db in the agent sessions dir with one active
+// seedCogmemDB creates the agent's memory store (cogmem/cogmem.db) with one active
 // project domain holding a single fact memory, returning the store id (filename
 // base) the API uses.
 func seedCogmemDB(t *testing.T, configPath string) string {

@@ -186,7 +186,7 @@ func sanitizeKey(key string) string {
 }
 
 // SanitizeSessionKey is the single filename rule for every per-session file
-// (.jsonl, .meta.json, .archive.db, .cogmem.db): ':' '/' '\' become '_'. Every
+// (.jsonl, .meta.json, .archive.db): ':' '/' '\' become '_'. Every
 // package that names a session file must use it rather than carry a copy.
 func SanitizeSessionKey(key string) string { return sanitizeKey(key) }
 
