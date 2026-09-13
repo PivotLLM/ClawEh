@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	cogmemstore "github.com/PivotLLM/ClawEh/cogmem/store"
+	cogmemstore "github.com/PivotLLM/cogmem/store"
 )
 
 const cogmemDBSuffix = ".cogmem.db"

@@ -21,6 +21,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/PivotLLM/cogmem"
+
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/constants"
@@ -167,7 +169,7 @@ func (al *AgentLoop) runAgentLoop(
 			logger.WarnCF("agent", "Failed to add user message to context manager",
 				map[string]any{"error": err.Error(), "session": opts.SessionKey})
 		}
-		mem.Observe(ctx, seq, userMsg)
+		mem.Observe(ctx, seq, userMsg.Role, userMsg.Content)
 	}
 
 	// 3. Assemble the request: eviction sweep, safety-net compaction on both
@@ -269,7 +271,7 @@ func (al *AgentLoop) runAgentLoop(
 	if !isSystemError {
 		finalMsg := providers.Message{Role: "assistant", Content: finalContent}
 		if seq, err := cm.AddAssistantMessage(ctx, finalMsg); err == nil {
-			mem.Observe(ctx, seq, finalMsg)
+			mem.Observe(ctx, seq, finalMsg.Role, finalMsg.Content)
 		} else {
 			logger.WarnCF("agent", "Failed to add assistant message to context manager",
 				map[string]any{"error": err.Error(), "session": opts.SessionKey})
@@ -503,7 +505,7 @@ func (al *AgentLoop) evictionNotifyUser(agent *AgentInstance) bool {
 // assembleRequest builds the per-dispatch request for the context manager:
 // the cost of the tool schemas this dispatch will send, and the memory blocks
 // recalled for routeText (the user's message for this turn). mem may be nil.
-func (al *AgentLoop) assembleRequest(ctx context.Context, agent *AgentInstance, mem *memorySession, routeText string) llmcontext.AssembleRequest {
+func (al *AgentLoop) assembleRequest(ctx context.Context, agent *AgentInstance, mem *cogmem.Session, routeText string) llmcontext.AssembleRequest {
 	defs := agent.Tools.ToProviderDefs()
 	if agent.NoTools {
 		defs = nil
@@ -513,10 +515,10 @@ func (al *AgentLoop) assembleRequest(ctx context.Context, agent *AgentInstance, 
 
 // assembleRequestWithDefs is assembleRequest for a caller that already holds
 // this dispatch's tool definitions.
-func (al *AgentLoop) assembleRequestWithDefs(ctx context.Context, _ *AgentInstance, mem *memorySession, routeText string, defs []providers.ToolDefinition) llmcontext.AssembleRequest {
+func (al *AgentLoop) assembleRequestWithDefs(ctx context.Context, _ *AgentInstance, mem *cogmem.Session, routeText string, defs []providers.ToolDefinition) llmcontext.AssembleRequest {
 	return llmcontext.AssembleRequest{
 		ToolDefinitionTokens: llmcontext.EstimateToolDefinitionTokens(defs),
-		Injections:           mem.Recall(ctx, routeText),
+		Injections:           recallInjections(ctx, mem, routeText),
 	}
 }
 
@@ -526,7 +528,7 @@ func (al *AgentLoop) runLLMIteration(
 	messages []providers.Message,
 	opts processOptions,
 	cm llmcontext.ContextManager,
-	mem *memorySession,
+	mem *cogmem.Session,
 ) (string, bool, bool, string, int, error) {
 	iteration := 0
 	var finalContent string
@@ -1140,7 +1142,7 @@ func (al *AgentLoop) runLLMIteration(
 				"error":    err.Error(),
 			})
 		} else {
-			mem.Observe(ctx, seq, assistantMsg)
+			mem.Observe(ctx, seq, assistantMsg.Role, assistantMsg.Content)
 		}
 
 		// Execute tool calls in parallel
@@ -1394,7 +1396,7 @@ func (al *AgentLoop) runLLMIteration(
 					"error":    err.Error(),
 				})
 			} else {
-				mem.Observe(ctx, seq, toolResultMsg)
+				mem.Observe(ctx, seq, toolResultMsg.Role, toolResultMsg.Content)
 			}
 		}
 
@@ -1411,7 +1413,7 @@ func (al *AgentLoop) runLLMIteration(
 				logger.WarnCF("agent", "failed to persist tool image message",
 					map[string]any{"agent_id": agent.ID, "error": err.Error()})
 			} else {
-				mem.Observe(ctx, seq, imgMsg)
+				mem.Observe(ctx, seq, imgMsg.Role, imgMsg.Content)
 			}
 			logger.InfoCF("agent", "passed tool image(s) to vision model (user message)",
 				map[string]any{"agent_id": agent.ID, "model": activeModel, "images": len(toolImages)})
@@ -1438,7 +1440,7 @@ func (al *AgentLoop) runLLMIteration(
 				logger.WarnCF("agent", "failed to persist vision-describe message",
 					map[string]any{"agent_id": agent.ID, "error": err.Error()})
 			} else {
-				mem.Observe(ctx, seq, descMsg)
+				mem.Observe(ctx, seq, descMsg.Role, descMsg.Content)
 			}
 			logger.InfoCF("agent", "injected vision description for non-vision model",
 				map[string]any{"agent_id": agent.ID, "model": activeModel, "images": len(offImages), "described": ok})

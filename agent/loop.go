@@ -13,9 +13,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/PivotLLM/cogmem/consolidate"
+
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/channels"
-	"github.com/PivotLLM/ClawEh/cogmem/consolidate"
 	"github.com/PivotLLM/ClawEh/commands"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/logger"

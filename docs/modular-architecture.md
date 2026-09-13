@@ -648,7 +648,7 @@ and the engine no longer knows the file exists.
 | `agent/context_manager.go` chain resolution | host `Summarizer` in `agent` model policy |
 | `agent/memory_wiring.go`, `internal/gateway/cogmem.go` | cogmem `memory.Provider` (module `github.com/PivotLLM/cogmem`) |
 | `cogmem/*`, `tools/cogmem` | the cogmem module: store, composer, consolidation, portable, tools |
-| `cogmem/attachfile` | stays in ClawEh as the `AttachmentLoader` implementation |
+| `cogmem/attachfile` | `cogmemhost/` in ClawEh: the `AttachmentLoader`, the logging bridge, the config → `Settings` mapping |
 | `tools/session` | `context.Engine.Tools()` over the archive API |
 | `agent/loop.go` `runAgentLoop`, `runLLMIteration` | `agent.Runner` |
 | `agent/loop.go` bus, routing, mentions, commands, session tokens | stay in ClawEh, call `Runner.Turn` |
@@ -680,6 +680,11 @@ parity test:
 - `agent/loop.go` split by concern into `loop_inbound.go`, `loop_turn.go`,
   `loop_tools.go`, `loop_message_tokens.go`, `loop_transcribe.go`,
   `loop_session_state.go` and `loop_commands.go`, with no API change.
+- Cogmem extracted to `github.com/PivotLLM/cogmem` v0.0.1: `store`,
+  `consolidate`, `portable`, `tools` (toolspec definitions over a `Host`
+  struct), `logger` (host-injectable backend), and the root package with the
+  composer, `Session`, `Settings` and `Guidance()`. ClawEh keeps the host side
+  in `cogmemhost/` and mounts the tools from `tools/cogmem`.
 
 ---
 

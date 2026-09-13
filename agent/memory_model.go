@@ -9,7 +9,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/PivotLLM/ClawEh/cogmem/consolidate"
+	"github.com/PivotLLM/cogmem/consolidate"
+
 	"github.com/PivotLLM/ClawEh/llmcontext"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/providers"

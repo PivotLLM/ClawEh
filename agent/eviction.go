@@ -8,6 +8,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/PivotLLM/cogmem"
+
 	"github.com/PivotLLM/ClawEh/llmcontext"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/session"
@@ -28,7 +30,7 @@ type cmEntry struct {
 	refcount     atomic.Int32
 	// mem is the session's cognitive-memory view; nil for non-cognitive agents.
 	// Closed on eviction/drain to release the per-session store handle.
-	mem *memorySession
+	mem *cogmem.Session
 }
 
 // forgetSessionState drops per-session in-memory caches in the session store

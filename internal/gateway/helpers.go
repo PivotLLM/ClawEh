@@ -11,6 +11,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/PivotLLM/cogmem/consolidate"
+
 	"github.com/PivotLLM/ClawEh/agent"
 	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/bus"
@@ -23,7 +25,7 @@ import (
 	_ "github.com/PivotLLM/ClawEh/channels/slack"
 	_ "github.com/PivotLLM/ClawEh/channels/telegram"
 	_ "github.com/PivotLLM/ClawEh/channels/webui"
-	"github.com/PivotLLM/ClawEh/cogmem/consolidate"
+	"github.com/PivotLLM/ClawEh/cogmemhost"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/cron"
 	"github.com/PivotLLM/ClawEh/devices"
@@ -121,6 +123,7 @@ func gatewayCmd(debug bool) error {
 	}
 	// Route spawnllm's provider/dispatch logs into ClawEh's logger.
 	installSpawnllmLogging()
+	cogmemhost.InstallLogging()
 
 	lockFile, err := acquireLock(baseDir)
 	if err != nil {

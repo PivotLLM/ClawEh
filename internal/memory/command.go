@@ -9,9 +9,9 @@ import (
 	"fmt"
 	"path/filepath"
 
+	"github.com/PivotLLM/cogmem/store"
 	"github.com/spf13/cobra"
 
-	"github.com/PivotLLM/ClawEh/cogmem/store"
 	"github.com/PivotLLM/ClawEh/internal"
 )
 

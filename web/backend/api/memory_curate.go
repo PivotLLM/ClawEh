@@ -15,8 +15,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/PivotLLM/ClawEh/cogmem/portable"
-	cogmemstore "github.com/PivotLLM/ClawEh/cogmem/store"
+	"github.com/PivotLLM/cogmem/portable"
+	cogmemstore "github.com/PivotLLM/cogmem/store"
 )
 
 // maxImportBytes caps an uploaded memory document. A real export of the largest

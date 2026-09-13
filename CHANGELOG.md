@@ -28,6 +28,10 @@ behalf, and an assistant is only told about memory when it actually has it.
 - **Assistants without cognitive memory are no longer told how to use it.**
   The memory rule in the system prompt is emitted only for agents that have
   `cogmem` on. Agents with it on receive byte-identical prompt text.
+- **Cognitive memory now lives in its own module, `github.com/PivotLLM/cogmem`.**
+  ClawEh embeds it; nothing changes on disk, in the tools or in the API. The
+  `cogmem_consolidate` tool's reply when no background worker is running now
+  says so plainly instead of "queued (worker not yet running)".
 - **Safety-net compaction now measures the whole request on every dispatch.**
   Between tool calls, the emergency compaction check considered stored history
   alone; it now also counts the system prompt, memory blocks and tool schemas,

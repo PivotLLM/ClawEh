@@ -8,8 +8,9 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/PivotLLM/ClawEh/cogmem"
-	cogmemstore "github.com/PivotLLM/ClawEh/cogmem/store"
+	"github.com/PivotLLM/cogmem"
+	cogmemstore "github.com/PivotLLM/cogmem/store"
+
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/global"
 	agentws "github.com/PivotLLM/ClawEh/internal/workspace"

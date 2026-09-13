@@ -1,14 +1,15 @@
 // ClawEh - Cognitive Memory
 // License: MIT
 
-package consolidate_test
+package templates_test
 
 import (
 	"os"
 	"strings"
 	"testing"
 
-	"github.com/PivotLLM/ClawEh/cogmem/consolidate"
+	"github.com/PivotLLM/cogmem/consolidate"
+
 	"github.com/PivotLLM/ClawEh/templates"
 )
 

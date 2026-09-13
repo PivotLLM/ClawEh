@@ -6,12 +6,12 @@ package gateway
 import (
 	"context"
 	"fmt"
-	"path/filepath"
-	"time"
+
+	"github.com/PivotLLM/cogmem/consolidate"
+	"github.com/PivotLLM/cogmem/store"
 
 	"github.com/PivotLLM/ClawEh/agent"
-	"github.com/PivotLLM/ClawEh/cogmem/consolidate"
-	"github.com/PivotLLM/ClawEh/cogmem/store"
+	"github.com/PivotLLM/ClawEh/cogmemhost"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/routing"
@@ -38,28 +38,14 @@ func setupCogmemConsolidation(cfg *config.Config, agentLoop *agent.AgentLoop) *c
 			return nil, fmt.Errorf("cogmem: open store: %w", err)
 		}
 
-		mem := cfg.Agents.Defaults.EffectiveMemory(inst.Config)
+		settings := cogmemhost.Settings(cfg.Agents.Defaults.EffectiveMemory(inst.Config))
 		caller := agentLoop.NewMemoryModelCaller(inst)
-		return consolidate.NewWorker(st, caller, workerOptions(mem, j.Workspace)...), nil
+		return consolidate.NewWorker(st, caller, settings.WorkerOptions(j.Workspace)...), nil
 	}
 
 	// Thresholds from the default agent's effective memory config. (Triggers are
 	// process-global; per-agent batch levers are applied in the factory.)
-	mem := defaultEffectiveMemory(cfg, agentLoop)
-	var mopts []consolidate.ManagerOption
-	if mem.Consolidation.EveryNMessages > 0 {
-		mopts = append(mopts, consolidate.WithEveryNMessages(mem.Consolidation.EveryNMessages))
-	}
-	if mem.Consolidation.IdleMinutes > 0 {
-		mopts = append(mopts, consolidate.WithIdle(time.Duration(mem.Consolidation.IdleMinutes)*time.Minute))
-	}
-	if mem.Consolidation.Nightly {
-		at := mem.Consolidation.NightlyAt
-		if at == "" {
-			at = "03:00"
-		}
-		mopts = append(mopts, consolidate.WithNightlyAt(at), consolidate.WithNightlyJitter(15*time.Minute))
-	}
+	mopts := cogmemhost.Settings(defaultEffectiveMemory(cfg, agentLoop)).ManagerOptions()
 
 	mgr := consolidate.NewManager(factory, mopts...)
 	mgr.Start(context.Background())
@@ -91,35 +77,6 @@ func setupCogmemConsolidation(cfg *config.Config, agentLoop *agent.AgentLoop) *c
 
 	logger.InfoC("cogmem", "cognitive-memory consolidation manager started")
 	return mgr
-}
-
-// workerOptions translates a MemoryConfig into consolidate.Worker options.
-func workerOptions(mem config.MemoryConfig, workspace string) []consolidate.Option {
-	bo := consolidate.DefaultBatchOptions()
-	if mem.Consolidation.MaxBatchMessages > 0 {
-		bo.MaxMessages = mem.Consolidation.MaxBatchMessages
-	}
-	if mem.Consolidation.MaxInputTokens > 0 {
-		bo.MaxInputTokens = mem.Consolidation.MaxInputTokens
-	}
-	if mem.Consolidation.PerMessageChars > 0 {
-		bo.PerMessageChars = mem.Consolidation.PerMessageChars
-	}
-	opts := []consolidate.Option{
-		consolidate.WithBatchOptions(bo),
-		consolidate.WithProposeDomains(mem.Consolidation.ProposeDomains),
-		consolidate.WithAutoPromote(mem.Consolidation.AutoPromote),
-		// Resolved here rather than in the worker so an unset field means the
-		// documented default in exactly one place.
-		consolidate.WithRetention(
-			mem.Retention.EffectiveEventDays(),
-			mem.Retention.EffectiveRetiredDays(),
-		),
-	}
-	if mem.Consolidation.DebugDump {
-		opts = append(opts, consolidate.WithDebugDump(filepath.Join(workspace, "cogmem-dumps")))
-	}
-	return opts
 }
 
 // anyCognitiveAgent reports whether at least one registered agent is allowed the

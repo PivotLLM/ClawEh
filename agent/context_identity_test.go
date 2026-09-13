@@ -9,8 +9,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/PivotLLM/cogmem"
+
 	"github.com/PivotLLM/ClawEh/app"
-	"github.com/PivotLLM/ClawEh/cogmem"
 )
 
 // legacyIdentity is the identity section exactly as it was rendered before the

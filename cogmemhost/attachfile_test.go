@@ -1,7 +1,7 @@
 // ClawEh - Cognitive Memory
 // License: MIT
 
-package attachfile
+package cogmemhost
 
 import (
 	"os"

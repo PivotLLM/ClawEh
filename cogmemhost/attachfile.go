@@ -9,14 +9,15 @@
 //
 // It is imported by the agent wiring (per-turn loading) and by the cogmem tools
 // (create-time validation) so both apply one identical rule.
-package attachfile
+package cogmemhost
 
 import (
 	"fmt"
 	"path/filepath"
 	"strings"
 
-	"github.com/PivotLLM/ClawEh/cogmem"
+	"github.com/PivotLLM/cogmem"
+
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/tools/files"

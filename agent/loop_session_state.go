@@ -12,7 +12,8 @@ import (
 	"os"
 	"strings"
 
-	cogmemstore "github.com/PivotLLM/ClawEh/cogmem/store"
+	cogmemstore "github.com/PivotLLM/cogmem/store"
+
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/memory"
 )

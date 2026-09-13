@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/PivotLLM/cogmem"
 	"github.com/PivotLLM/spawnllm/openai_compat"
 
 	"github.com/PivotLLM/ClawEh/bus"
@@ -233,7 +234,7 @@ func (al *AgentLoop) getContextManager(agent *AgentInstance, sessionKey string) 
 //
 // The returned release function must be deferred by the caller to decrement the
 // reference count. The eviction goroutine skips entries with refcount > 0.
-func (al *AgentLoop) getSessionContext(agent *AgentInstance, sessionKey string) (llmcontext.ContextManager, *memorySession, func()) {
+func (al *AgentLoop) getSessionContext(agent *AgentInstance, sessionKey string) (llmcontext.ContextManager, *cogmem.Session, func()) {
 	key := agent.ID + ":" + sessionKey
 
 	// Fast path: entry already exists.

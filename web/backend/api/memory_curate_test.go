@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/PivotLLM/ClawEh/cogmem/portable"
-	cogmemstore "github.com/PivotLLM/ClawEh/cogmem/store"
+	"github.com/PivotLLM/cogmem/portable"
+	cogmemstore "github.com/PivotLLM/cogmem/store"
 )
 
 // curateEnv seeds a store and returns its id plus a mux, for the curation
