@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -86,7 +85,7 @@ func (t *SessionHistorySearchTool) Execute(ctx context.Context, args map[string]
 		limit = 100
 	}
 
-	archivePath := filepath.Join(t.sessionsDir, archiveSanitizeKey(sessionKey)+".archive.db")
+	archivePath := memory.ArchivePath(t.sessionsDir, sessionKey)
 	a, openErr := memory.OpenReadOnly(archivePath)
 	if openErr != nil {
 		if errors.Is(openErr, memory.ErrArchiveUnavailable) {

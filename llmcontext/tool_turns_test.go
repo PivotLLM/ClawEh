@@ -47,7 +47,7 @@ func TestAddToolCallMessage_IncrementsMsgCount(t *testing.T) {
 		},
 	}
 
-	if err := mgr.AddToolCallMessage(context.Background(), msg); err != nil {
+	if _, err := mgr.AddToolCallMessage(context.Background(), msg); err != nil {
 		t.Fatalf("AddToolCallMessage returned error: %v", err)
 	}
 
@@ -77,7 +77,7 @@ func TestAddToolResult_IncrementsMsgCount(t *testing.T) {
 		ToolCallID: "tc1",
 	}
 
-	if err := mgr.AddToolResult(context.Background(), msg); err != nil {
+	if _, err := mgr.AddToolResult(context.Background(), msg); err != nil {
 		t.Fatalf("AddToolResult returned error: %v", err)
 	}
 
@@ -115,10 +115,10 @@ func TestToolTurnPair_MsgCountIncrementsByTwo(t *testing.T) {
 		ToolCallID: "tc1",
 	}
 
-	if err := mgr.AddToolCallMessage(context.Background(), toolCallMsg); err != nil {
+	if _, err := mgr.AddToolCallMessage(context.Background(), toolCallMsg); err != nil {
 		t.Fatalf("AddToolCallMessage: %v", err)
 	}
-	if err := mgr.AddToolResult(context.Background(), toolResultMsg); err != nil {
+	if _, err := mgr.AddToolResult(context.Background(), toolResultMsg); err != nil {
 		t.Fatalf("AddToolResult: %v", err)
 	}
 

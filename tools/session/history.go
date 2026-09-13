@@ -8,8 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/PivotLLM/ClawEh/memory"
@@ -69,7 +67,7 @@ func (t *SessionHistoryTool) Execute(ctx context.Context, args map[string]any) *
 		return tools.ErrorResult(err.Error())
 	}
 
-	archivePath := filepath.Join(t.sessionsDir, archiveSanitizeKey(sessionKey)+".archive.db")
+	archivePath := memory.ArchivePath(t.sessionsDir, sessionKey)
 	a, openErr := memory.OpenReadOnly(archivePath)
 	if openErr != nil {
 		if errors.Is(openErr, memory.ErrArchiveUnavailable) {
@@ -208,13 +206,4 @@ func intArg(args map[string]any, key string) (int64, bool) {
 		return i, e == nil
 	}
 	return 0, false
-}
-
-// archiveSanitizeKey converts a session key to a safe filename.
-// Must match sanitizeKey in memory/jsonl.go.
-func archiveSanitizeKey(key string) string {
-	s := strings.ReplaceAll(key, ":", "_")
-	s = strings.ReplaceAll(s, "/", "_")
-	s = strings.ReplaceAll(s, "\\", "_")
-	return s
 }

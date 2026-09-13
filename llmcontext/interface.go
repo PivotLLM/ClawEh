@@ -9,84 +9,103 @@ import (
 	"github.com/PivotLLM/ClawEh/providers"
 )
 
-// ContextManager owns the full lifecycle of a session's conversational context:
-// storage coordination, context building, compression triggers, and statistics.
-type ContextManager interface {
-	// AddUserMessage appends a user message and triggers compression if needed.
-	AddUserMessage(ctx context.Context, msg providers.Message) error
-	// AddAssistantMessage appends an assistant message and triggers compression if needed.
-	AddAssistantMessage(ctx context.Context, msg providers.Message) error
-	// AddToolCallMessage records the assistant turn containing tool calls.
-	// Writes to session store and archive. Increments msgCount.
-	// Does NOT trigger compression (deferred to PreDispatchCheck).
-	AddToolCallMessage(ctx context.Context, msg providers.Message) error
-	// AddToolResult records a tool result message.
-	// Writes to session store and archive. Increments msgCount.
-	// Does NOT trigger compression (deferred to PreDispatchCheck).
-	AddToolResult(ctx context.Context, msg providers.Message) error
-	// RecordToolUse records the names of tools the LLM just invoked, feeding the
-	// recent-tool ring used for tool-trigger cognitive-memory routing. No-op when
-	// cognitive memory is not in use.
-	RecordToolUse(names ...string)
+// Placement says where an injected block lands in the assembled request.
+type Placement int
 
-	// SetToolDefinitionTokens records the estimated token cost of the tool
-	// schemas sent with each request, which the Manager cannot see for itself.
-	// Counted by every compaction trigger so they measure the real request
-	// rather than stored history alone.
-	SetToolDefinitionTokens(n int)
-	// PreDispatchCheck runs the compression trigger check and, if compression
-	// fires and succeeds, rebuilds the message slice via Build() and returns it.
-	// If no compression is needed, returns current unchanged.
-	// Returns ErrCompressionFailed if compression was attempted but failed;
-	// callers may proceed with the stale slice in that case (best-effort).
-	PreDispatchCheck(ctx context.Context, current []providers.Message) ([]providers.Message, error)
-	// CheckAndCompress estimates the post-Build token count (including the
-	// configured overhead for system prompt, tool definitions, and completion budget)
-	// and compresses if the adjusted total exceeds the normal or safety threshold.
-	// ToolCalls arguments are included in the token estimate (not just Content).
-	// If compression fires and succeeds, rebuilds via Build() and returns the fresh
-	// slice. Returns the input unchanged if no compression is needed.
-	// The cooldown mechanism prevents double-firing when PreDispatchCheck already
-	// ran on the same turn.
-	CheckAndCompress(ctx context.Context, built []providers.Message) ([]providers.Message, error)
-	// SetSystemPrompt sets the static system prompt injected at Build time.
-	SetSystemPrompt(prompt string)
-	// SetCallContext records the channel and chatID for the current call so that
-	// Build() can pass them to the MessageBuilder's system-prompt construction.
+const (
+	// PlaceSystemStable appends the block to the system message. Use it for
+	// content that is the same on every turn of a session: it joins the cached
+	// prompt prefix and is paid for once.
+	PlaceSystemStable Placement = iota
+	// PlaceCurrentUser folds the block into the latest user message. Use it for
+	// content selected per turn: anything that varies must not sit ahead of the
+	// history, or it invalidates the cached prefix for all of it.
+	PlaceCurrentUser
+)
+
+// Injection is a block of prompt text a memory system (or any other caller)
+// asks the manager to place in the assembled request. The manager places it,
+// counts it against the budget, and never persists it: an injection lives only
+// in the built slice.
+type Injection struct {
+	Placement Placement
+	Text      string
+}
+
+// AssembleRequest carries what the manager cannot see for itself when it
+// builds the request for one model call.
+type AssembleRequest struct {
+	// ToolDefinitionTokens is the estimated cost of the tool schemas the caller
+	// will send with the request. Counted by every compaction trigger so they
+	// measure the real request rather than stored history alone.
+	ToolDefinitionTokens int
+	// Injections are placed into the built slice in order.
+	Injections []Injection
+}
+
+// Assembly is the result of one Assemble call.
+type Assembly struct {
+	// Messages is the full slice ready to send to the model, system message first.
+	Messages []providers.Message
+	// Evictions lists the LLM-free evictions the sweep performed before the
+	// build (also DEBUG-logged), so the caller can surface a one-line notice.
+	Evictions []EvictionEvent
+	// Compacted reports that a safety-net compaction ran during this call.
+	Compacted bool
+}
+
+// Changed reports whether stored history was rewritten by this call, by
+// eviction or compaction, so a caller holding an earlier slice must take the
+// fresh one.
+func (a Assembly) Changed() bool { return len(a.Evictions) > 0 || a.Compacted }
+
+// ContextManager owns the lifecycle of a session's conversational context:
+// storage, the archive, context assembly, compaction, and statistics.
+//
+// The turn shape is: Add* the inbound message, Assemble before every model
+// call, Add* what the model and the tools produced, repeat. Each Add returns
+// the transcript seq the message was stored under, which is the number the
+// rest of the system (summaries, session tools, memory evidence) cites.
+type ContextManager interface {
+	// AddUserMessage appends a user message and runs the turn-boundary
+	// compaction check.
+	AddUserMessage(ctx context.Context, msg providers.Message) (int64, error)
+	// AddAssistantMessage appends an assistant message and runs the
+	// turn-boundary compaction check.
+	AddAssistantMessage(ctx context.Context, msg providers.Message) (int64, error)
+	// AddToolCallMessage records the assistant turn containing tool calls.
+	// No compaction check: that is deferred to the next Assemble.
+	AddToolCallMessage(ctx context.Context, msg providers.Message) (int64, error)
+	// AddToolResult records a tool result message. No compaction check.
+	AddToolResult(ctx context.Context, msg providers.Message) (int64, error)
+
+	// Assemble builds the request for one model call. It runs the LLM-free
+	// eviction sweep, the emergency compaction checks (before the build on
+	// stored history, after it on the built request), and places the
+	// injections. It is safe to call once per iteration of a tool-using turn.
+	Assemble(ctx context.Context, req AssembleRequest) (Assembly, error)
+
+	// SetCallContext records the channel and chatID for the current call so
+	// the system prompt receives the correct session context.
 	SetCallContext(channel, chatID string)
 	// SetSessionToken sets the per-session MCP session token injected into the
-	// system prompt by Build(). The LLM must supply this token as the
-	// session_token parameter on session-scoped mcp__claw__* tool calls.
-	// An empty token disables injection.
+	// system prompt. An empty token disables injection.
 	SetSessionToken(token string)
-	// Build returns the full message slice ready to send to the LLM.
-	Build(ctx context.Context) ([]providers.Message, error)
-	// SweepEvictions runs the per-turn, LLM-free eviction pass: it collapses
-	// stale/superseded/oversized re-retrievable tool results (file reads, web
-	// fetches) in the live window to a short placeholder, rewriting stored
-	// history in place. It returns the evictions performed (also DEBUG-logged)
-	// so the caller can optionally surface a one-line notice. No-op when the
-	// eviction policy is disabled.
-	SweepEvictions(ctx context.Context) []EvictionEvent
-	// Compact triggers a normal LLM-based compression pass on demand, identical
-	// to the path taken when the regular compression threshold is crossed.
+
+	// Compact triggers a normal LLM-based compression pass on demand.
 	Compact(ctx context.Context) error
-	// LastCompactionReport returns the report from the most recent compaction
-	// pass (manual or automatic), or nil if none has run.
+	// LastCompactionReport returns the report from the most recent pass, or nil.
 	LastCompactionReport() *CompactionReport
-	// RenderedSummary returns the current session summary rendered as Markdown
-	// (the block Build injects into the system prompt), or "" when none.
+	// RenderedSummary returns the current session summary as Markdown, or "".
 	RenderedSummary() string
 	// ForceCompress aggressively reduces context when the hard limit is hit.
 	ForceCompress(ctx context.Context) error
 	// Stats returns the current observable state of this context.
 	Stats() ContextStats
-	// Reset clears all history, summary, in-memory compression state, and
-	// deletes the archive for this session. The session can continue normally
-	// after Reset; archive and state are recreated on demand.
+	// Reset clears the live history, summary and in-memory compression state.
+	// The archive is preserved. The session can continue normally after Reset.
 	Reset(ctx context.Context) error
-	// Close flushes durable compaction state and closes the archive connection.
-	// After Close the manager must not be used. It is called by the AgentLoop
-	// eviction goroutine and during shutdown to release all held resources.
+	// Close flushes durable compaction state and closes the archive. After
+	// Close the manager must not be used.
 	Close(ctx context.Context) error
 }

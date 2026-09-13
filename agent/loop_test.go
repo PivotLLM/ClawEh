@@ -1510,7 +1510,7 @@ func TestRunLLMIteration_ContextCancelDuringBackoff(t *testing.T) {
 	go func() {
 		cm, releaseTestCM := al.getContextManager(agent, opts.SessionKey)
 		defer releaseTestCM()
-		_, _, _, _, _, err := al.runLLMIteration(ctx, agent, messages, opts, cm)
+		_, _, _, _, _, err := al.runLLMIteration(ctx, agent, messages, opts, cm, nil)
 		done <- result{err: err}
 	}()
 
@@ -1724,7 +1724,7 @@ func TestRunLLMIteration_ToolCalls_ThenFinalResponse(t *testing.T) {
 
 	cm, releaseTestCM := al.getContextManager(agent, opts.SessionKey)
 	defer releaseTestCM()
-	content, _, _, _, iterations, err := al.runLLMIteration(context.Background(), agent, messages, opts, cm)
+	content, _, _, _, iterations, err := al.runLLMIteration(context.Background(), agent, messages, opts, cm, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1786,7 +1786,7 @@ func TestRunLLMIteration_MaxIterations(t *testing.T) {
 
 	cm, releaseTestCM := al.getContextManager(agent, opts.SessionKey)
 	defer releaseTestCM()
-	content, _, _, _, iterations, err := al.runLLMIteration(context.Background(), agent, messages, opts, cm)
+	content, _, _, _, iterations, err := al.runLLMIteration(context.Background(), agent, messages, opts, cm, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -2092,7 +2092,7 @@ func TestRunLLMIteration_ContextWindowError_Retry(t *testing.T) {
 
 	cm, releaseTestCM := al.getContextManager(agent, opts.SessionKey)
 	defer releaseTestCM()
-	content, _, _, _, _, err := al.runLLMIteration(context.Background(), agent, messages, opts, cm)
+	content, _, _, _, _, err := al.runLLMIteration(context.Background(), agent, messages, opts, cm, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

@@ -8,8 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -88,11 +86,6 @@ type Manager struct {
 	archive   *memory.ArchiveStore
 	archiveMu sync.Mutex
 
-	// protectUnconsolidated, when true, is propagated to the archive on open so
-	// retention pruning never removes messages not yet consolidated. Set via
-	// SetProtectUnconsolidated by the cognitive-memory wiring; default false.
-	protectUnconsolidated bool
-
 	// sessionToken is the SST-prefixed per-session MCP token injected into the
 	// system prompt by Build() so the LLM can call session-scoped tools. Set
 	// via SetSessionToken; empty means no injection.
@@ -100,34 +93,6 @@ type Manager struct {
 
 	// compressHook is called by compress() when non-nil. Only for testing.
 	compressHook func(safetyNet bool)
-
-	// archiveAppendHook, when non-nil, is invoked at the end of archiveAppend
-	// with the seq and message just archived. The agent loop sets a closure
-	// (cognitive agents only) that notifies the cogmem consolidation manager.
-	// Nil for every non-cognitive agent → identical behavior to before.
-	archiveAppendHook func(seq int64, msg providers.Message)
-
-	// memoryBlocks, when non-nil, returns the cognitive-memory STABLE and ROUTED
-	// prompt blocks for the session (each already carrying its own attached
-	// documents). Set by the agent loop for cognitive agents only.
-	//
-	// The two go to different places. STABLE is always-on identity content and
-	// joins the system message, where it is part of the cached prefix. ROUTED is
-	// selected per turn from the latest user message and recent tools, so it must
-	// NOT sit in the system message: that precedes the whole conversation, and
-	// anything varying there invalidates the cached prefix for the entire history
-	// behind it. It rides on the current turn instead — which also puts it beside
-	// the question it was routed for.
-	//
-	// recentTools (newest-first, capped) feeds tool-trigger routing; routeText is
-	// the latest user message for lexical routing.
-	memoryBlocks func(sessionKey string, recentTools []string, routeText string) (stable, routed string)
-
-	// recentTools is a small newest-first ring of recently-invoked tool names,
-	// fed by RecordToolUse and read at Build time so cognitive memory can auto-load
-	// domains whose triggers match a tool the agent just used. Guarded by recentMu.
-	recentMu    sync.Mutex
-	recentTools []string
 
 	// toolDefTokens is the estimated token cost of the tool schemas sent with
 	// every request. The agent loop sets it per turn via SetToolDefinitionTokens;
@@ -142,9 +107,6 @@ type Manager struct {
 	// first Build of a session.
 	builtOverheadTokens int
 }
-
-// maxRecentTools bounds the recent-tool ring used for tool-trigger memory routing.
-const maxRecentTools = 8
 
 // New constructs a ContextManager. Options are applied over package defaults.
 // Validation order: (a) zero percent → default; (b) safety ≤ normal → WARN;
@@ -282,7 +244,7 @@ func (m *Manager) SetCallContext(channel, chatID string) {
 	m.chatID = chatID
 }
 
-func (m *Manager) AddUserMessage(ctx context.Context, msg providers.Message) error {
+func (m *Manager) AddUserMessage(ctx context.Context, msg providers.Message) (int64, error) {
 	seq := m.store.AddFullMessage(m.sessionKey, msg)
 	m.archiveAppend(seq, msg)
 	m.msgCount++
@@ -293,10 +255,10 @@ func (m *Manager) AddUserMessage(ctx context.Context, msg providers.Message) err
 			"error":       err.Error(),
 		})
 	}
-	return nil
+	return seq, nil
 }
 
-func (m *Manager) AddAssistantMessage(ctx context.Context, msg providers.Message) error {
+func (m *Manager) AddAssistantMessage(ctx context.Context, msg providers.Message) (int64, error) {
 	seq := m.store.AddFullMessage(m.sessionKey, msg)
 	m.archiveAppend(seq, msg)
 	m.msgCount++
@@ -307,125 +269,132 @@ func (m *Manager) AddAssistantMessage(ctx context.Context, msg providers.Message
 			"error":       err.Error(),
 		})
 	}
-	return nil
+	return seq, nil
 }
 
 // AddToolCallMessage records the assistant turn containing tool calls.
 // Writes to session store and archive. Increments msgCount.
-// Does NOT trigger a compression check — compression is deferred to PreDispatchCheck
-// so that the check runs once per dispatch rather than after every tool-call message.
-func (m *Manager) AddToolCallMessage(_ context.Context, msg providers.Message) error {
+// Does NOT trigger a compression check — compression is deferred to the next
+// Assemble so that the check runs once per dispatch rather than after every
+// tool-call message.
+func (m *Manager) AddToolCallMessage(_ context.Context, msg providers.Message) (int64, error) {
 	seq := m.store.AddFullMessage(m.sessionKey, msg)
 	m.archiveAppend(seq, msg)
 	m.msgCount++
-	return nil
+	return seq, nil
 }
 
 // AddToolResult records a tool result message.
 // Writes to session store and archive. Increments msgCount.
-// Does NOT trigger a compression check — compression is deferred to PreDispatchCheck.
-func (m *Manager) AddToolResult(_ context.Context, msg providers.Message) error {
+// Does NOT trigger a compression check — compression is deferred to the next
+// Assemble.
+func (m *Manager) AddToolResult(_ context.Context, msg providers.Message) (int64, error) {
 	seq := m.store.AddFullMessage(m.sessionKey, msg)
 	m.archiveAppend(seq, msg)
 	m.msgCount++
-	return nil
+	return seq, nil
 }
 
-// PreDispatchCheck runs the mid-turn compression trigger and, if compression
-// fires and succeeds, rebuilds the message slice via Build() and returns the
-// fresh slice. If no compression is needed, returns current unchanged. If
-// compression fails, logs the error and returns (current, ErrCompressionFailed)
-// so the caller can proceed with the stale slice (best-effort).
+// Assemble is the single per-dispatch entry point: eviction sweep, emergency
+// compaction before and after the build, and injection placement, in that
+// order. See ContextManager.Assemble.
 //
-// This runs at the top of every tool-call iteration, so it is restricted to the
-// emergency safety-net trigger (contextPct >= safetyPercent): only an imminent
-// context-window overflow may compact between iterations. First-stage compaction
-// (normal-percent and message-count) is deferred to the turn boundary, where
-// triggerCheck handles it on AddUserMessage / AddAssistantMessage — so it never
-// fires mid-turn and posts a compaction notice in the middle of a tool-using turn.
-//
-// Build() is idempotent and has no write side-effects: it reads from the store and
-// assembles the message slice without modifying any persistent state. It is safe to
-// call multiple times within a single turn.
-func (m *Manager) PreDispatchCheck(ctx context.Context, current []providers.Message) ([]providers.Message, error) {
+// The two emergency checks are kept distinct on purpose. The pre-build check
+// measures stored history and catches a turn whose tool results have grown
+// past the safety line; the post-build check measures the actual request
+// (system prompt, summary, injections, tool schemas, completion reserve) and
+// catches the case where history alone is under the line but the request is
+// not. When the first one compacts, the second is skipped for this call: the
+// pass just ran against the same window and would only report nothing to do.
+func (m *Manager) Assemble(ctx context.Context, req AssembleRequest) (Assembly, error) {
+	m.SetToolDefinitionTokens(req.ToolDefinitionTokens)
+	out := Assembly{Evictions: m.SweepEvictions(ctx)}
+
+	if m.emergencyCompactOnHistory(ctx) {
+		out.Compacted = true
+	}
+	msgs, err := m.build(req.Injections)
+	if err != nil {
+		return out, err
+	}
+	if !out.Compacted && m.emergencyCompactOnBuilt(ctx, msgs) {
+		out.Compacted = true
+		if msgs, err = m.build(req.Injections); err != nil {
+			return out, err
+		}
+	}
+	out.Messages = msgs
+	return out, nil
+}
+
+// emergencyCompactOnHistory runs the safety-net compaction when stored history
+// alone is already past the safety line. Returns whether a pass ran and
+// succeeded; a failure is logged and the caller proceeds with what it has.
+func (m *Manager) emergencyCompactOnHistory(ctx context.Context) bool {
 	if m.cfg.contextWindow <= 0 {
-		return current, nil
+		return false
 	}
 	history := m.store.GetHistory(m.sessionKey)
-	contextPct := m.contextPercent(history)
+	if m.contextPercent(history) < float64(m.cfg.safetyPercent) {
+		return false
+	}
+	if err := m.compress(ctx, true); err != nil && !errors.Is(err, ErrNothingToCompress) {
+		logger.WarnCF("llmcontext", "pre-build safety compaction failed (continuing)", map[string]any{
+			"session_key": m.sessionKey,
+			"error":       err.Error(),
+		})
+		return false
+	}
+	return true
+}
 
-	// Emergency only: defer first-stage compaction to the turn boundary.
-	if contextPct < float64(m.cfg.safetyPercent) {
+// emergencyCompactOnBuilt runs the safety-net compaction when the built request
+// plus the reserve and the tool schemas is past the safety line. Returns
+// whether a pass ran and succeeded.
+func (m *Manager) emergencyCompactOnBuilt(ctx context.Context, built []providers.Message) bool {
+	if m.cfg.contextWindow <= 0 {
+		return false
+	}
+	// `built` already carries the system prompt, summary and injections, so add
+	// only what it cannot: the reserve and the tool schemas.
+	tokens := m.estTokens(built) + m.cfg.overheadTokens + m.toolDefTokens
+	if float64(tokens)*100.0/float64(m.cfg.contextWindow) < float64(m.cfg.safetyPercent) {
+		return false
+	}
+	if err := m.compress(ctx, true); err != nil && !errors.Is(err, ErrNothingToCompress) {
+		logger.WarnCF("llmcontext", "post-build safety compaction failed (continuing)", map[string]any{
+			"session_key": m.sessionKey,
+			"error":       err.Error(),
+		})
+		return false
+	}
+	return true
+}
+
+// PreDispatchCheck is the history-only emergency check: it compacts when
+// stored history is past the safety line and returns a fresh build, else
+// current unchanged. Assemble runs the same check; this remains for callers
+// and tests that drive the primitives one at a time.
+func (m *Manager) PreDispatchCheck(ctx context.Context, current []providers.Message) ([]providers.Message, error) {
+	if !m.emergencyCompactOnHistory(ctx) {
 		return current, nil
 	}
-
-	if err := m.compress(ctx, true); err != nil && !errors.Is(err, ErrNothingToCompress) {
-		logger.WarnCF("llmcontext", "PreDispatchCheck: compression failed (continuing with stale slice)", map[string]any{
-			"session_key": m.sessionKey,
-			"error":       err.Error(),
-		})
-		return current, ErrCompressionFailed
-	}
-
-	// Compression succeeded — rebuild to get a fresh slice that reflects the new
-	// history state. Build() is read-only with no write side-effects.
 	built, err := m.Build(ctx)
 	if err != nil {
-		logger.WarnCF("llmcontext", "PreDispatchCheck: Build after compression failed", map[string]any{
-			"session_key": m.sessionKey,
-			"error":       err.Error(),
-		})
 		return current, err
 	}
 	return built, nil
 }
 
-// CheckAndCompress estimates the post-Build token count (Message.Content plus
-// serialized ToolCalls arguments) and adds the configured overhead to account
-// for system prompt, rendered summary, tool definitions, and completion budget.
-// It runs once, after Build and before the first dispatch of a turn.
-//
-// It is restricted to the emergency safety-net trigger (adjusted total >=
-// safetyPercent): its purpose is to avoid sending an over-window request on the
-// first dispatch when stored history is within threshold but the rendered request
-// (system prompt + tool defs + completion budget) pushes the total over. First-stage
-// compaction (normal-percent and message-count) is handled at the turn boundary by
-// triggerCheck, not here, so it never fires while a request is being assembled.
-//
-// If compression fires and succeeds, a fresh message slice is produced via Build()
-// and returned. If no compression is needed the input slice is returned unchanged.
+// CheckAndCompress is the built-request emergency check: it compacts when the
+// built slice plus reserve and tool schemas is past the safety line and returns
+// a fresh build, else built unchanged. Assemble runs the same check.
 func (m *Manager) CheckAndCompress(ctx context.Context, built []providers.Message) ([]providers.Message, error) {
-	if m.cfg.contextWindow <= 0 {
+	if !m.emergencyCompactOnBuilt(ctx, built) {
 		return built, nil
 	}
-
-	// `built` already contains the system prompt and rendered summary, so add
-	// only the parts it cannot carry: the reserve and the tool schemas. Adding
-	// builtOverheadTokens here would double-count them.
-	tokens := m.estTokens(built) + m.cfg.overheadTokens + m.toolDefTokens
-	contextPct := float64(tokens) * 100.0 / float64(m.cfg.contextWindow)
-
-	// Emergency only: defer first-stage compaction to the turn boundary.
-	if contextPct < float64(m.cfg.safetyPercent) {
-		return built, nil
-	}
-
-	if err := m.compress(ctx, true); err != nil && !errors.Is(err, ErrNothingToCompress) {
-		logger.WarnCF("llmcontext", "CheckAndCompress: compression failed (continuing with input slice)", map[string]any{
-			"session_key": m.sessionKey,
-			"error":       err.Error(),
-		})
-		return built, ErrCompressionFailed
-	}
-
-	// Compression succeeded — rebuild to get a fresh slice reflecting the new
-	// history state.
 	fresh, err := m.Build(ctx)
 	if err != nil {
-		logger.WarnCF("llmcontext", "CheckAndCompress: Build after compression failed", map[string]any{
-			"session_key": m.sessionKey,
-			"error":       err.Error(),
-		})
 		return built, err
 	}
 	return fresh, nil
@@ -589,8 +558,7 @@ func (m *Manager) getOrOpenArchive() *memory.ArchiveStore {
 	if m.archive != nil {
 		return m.archive
 	}
-	sanitized := sanitizeSessionKey(m.sessionKey)
-	path := filepath.Join(m.cfg.archiveDir, sanitized+".archive.db")
+	path := memory.ArchivePath(m.cfg.archiveDir, m.sessionKey)
 	store, err := memory.Open(path)
 	if err != nil && !errors.Is(err, memory.ErrArchiveUnavailable) {
 		logger.WarnCF("llmcontext", "archive open failed", map[string]any{
@@ -598,9 +566,6 @@ func (m *Manager) getOrOpenArchive() *memory.ArchiveStore {
 			"path":        path,
 			"error":       err.Error(),
 		})
-	}
-	if store != nil {
-		store.SetProtectUnconsolidated(m.protectUnconsolidated)
 	}
 	m.archive = store
 	// Apply retention once per manager lifecycle, on the path that actually opens
@@ -698,11 +663,6 @@ func (m *Manager) archiveAppend(seq int64, msg providers.Message) {
 			"error":       err.Error(),
 		})
 	}
-	// Notify the cognitive-memory consolidation manager (cognitive agents only;
-	// nil for everyone else). Best-effort and non-blocking by contract.
-	if m.archiveAppendHook != nil {
-		m.archiveAppendHook(seq, msg)
-	}
 }
 
 // archiveContentMaxBytes is the default maximum number of content bytes stored
@@ -754,15 +714,6 @@ func archiveTruncateContent(msg providers.Message, maxBytes int) providers.Messa
 	msg.Content = msg.Content[:maxBytes] +
 		fmt.Sprintf("\n[content truncated: %d bytes total, first %d shown]", original, maxBytes)
 	return msg
-}
-
-// sanitizeSessionKey converts a session key to a safe filename component,
-// matching the logic in memory.sanitizeKey.
-func sanitizeSessionKey(key string) string {
-	s := strings.ReplaceAll(key, ":", "_")
-	s = strings.ReplaceAll(s, "/", "_")
-	s = strings.ReplaceAll(s, "\\", "_")
-	return s
 }
 
 // archiveWindow returns the effective [minSeq, maxSeq] range of retrievable
@@ -988,81 +939,22 @@ func (m *Manager) SetTestCompressHook(fn func(safetyNet bool)) {
 	m.compressHook = fn
 }
 
-func (m *Manager) SetSystemPrompt(_ string) {
-	// Phase 0: no-op; ContextBuilder owns the system prompt.
-}
-
 // SetSessionToken stores the per-session MCP token for injection into the
 // system prompt by Build(). Calling with an empty string disables injection.
 func (m *Manager) SetSessionToken(token string) {
 	m.sessionToken = token
 }
 
-// SetArchiveAppendHook installs a callback invoked at the end of every
-// archiveAppend with the seq and message just written. Used by the agent loop
-// (cognitive agents only) to notify the cogmem consolidation manager. Passing
-// nil disables it.
-func (m *Manager) SetArchiveAppendHook(fn func(seq int64, msg providers.Message)) {
-	m.archiveAppendHook = fn
-}
-
-// SetProtectUnconsolidated enables the archive retention guard for this
-// session. When true, the archive (once opened) refuses to prune messages that
-// have not yet been consolidated. Must be called before the archive is first
-// opened (i.e. during wiring) to take effect. Default false.
-func (m *Manager) SetProtectUnconsolidated(v bool) {
-	m.protectUnconsolidated = v
-}
-
-// SetMemoryBlocks installs a callback that returns the cognitive-memory STABLE,
-// ROUTED and ATTACHMENTS prompt blocks for the session. Build injects them into
-// the system message when non-empty. The callback receives the newest-first
-// recent-tool ring (tool-trigger routing) and the latest user message (lexical
-// routing). Passing nil disables injection.
-func (m *Manager) SetMemoryBlocks(fn func(sessionKey string, recentTools []string, routeText string) (stable, routed string)) {
-	m.memoryBlocks = fn
-}
-
-// RecordToolUse records the names of tools the LLM just invoked into the recent
-// ring (newest-first, deduped, capped at maxRecentTools). Read at Build time so
-// cognitive memory can auto-load domains whose triggers match a recent tool.
-func (m *Manager) RecordToolUse(names ...string) {
-	if len(names) == 0 {
-		return
-	}
-	m.recentMu.Lock()
-	defer m.recentMu.Unlock()
-	for _, n := range names {
-		if n == "" {
-			continue
-		}
-		// Move-to-front: drop any existing entry so the ring holds distinct names.
-		out := m.recentTools[:0]
-		for _, e := range m.recentTools {
-			if e != n {
-				out = append(out, e)
-			}
-		}
-		m.recentTools = append([]string{n}, out...)
-	}
-	if len(m.recentTools) > maxRecentTools {
-		m.recentTools = m.recentTools[:maxRecentTools]
-	}
-}
-
-// recentToolsSnapshot returns a copy of the recent-tool ring (newest-first).
-func (m *Manager) recentToolsSnapshot() []string {
-	m.recentMu.Lock()
-	defer m.recentMu.Unlock()
-	if len(m.recentTools) == 0 {
-		return nil
-	}
-	out := make([]string, len(m.recentTools))
-	copy(out, m.recentTools)
-	return out
-}
-
+// Build assembles the request with no injections. Assemble is the per-dispatch
+// entry point; Build remains for callers and tests that want the bare slice.
 func (m *Manager) Build(_ context.Context) ([]providers.Message, error) {
+	return m.build(nil)
+}
+
+// build assembles the full message slice: system prompt (with the rendered
+// summary or the archive-bounds note), history, the session token, and the
+// injections placed where they belong.
+func (m *Manager) build(injections []Injection) ([]providers.Message, error) {
 	if m.builder == nil {
 		return []providers.Message{}, nil
 	}
@@ -1096,13 +988,21 @@ func (m *Manager) Build(_ context.Context) ([]providers.Message, error) {
 		msgs[0].Content += "\n\n---\n\n" + sessionTokenSection
 	}
 
-	// Inject cognitive-memory blocks (cognitive agents only; nil otherwise).
-	if m.memoryBlocks != nil && len(msgs) > 0 && msgs[0].Role == "system" {
-		stable, routed := m.memoryBlocks(m.sessionKey, m.recentToolsSnapshot(), latestUserText(history))
-		if stable != "" {
-			msgs[0].Content += "\n\n---\n\n" + stable
+	// Place the injections. Stable content joins the system message, where it
+	// is part of the cached prefix; per-turn content rides on the latest user
+	// message so it never sits ahead of the history.
+	for _, inj := range injections {
+		if inj.Text == "" {
+			continue
 		}
-		attachRoutedMemory(msgs, routed)
+		switch inj.Placement {
+		case PlaceCurrentUser:
+			attachRoutedMemory(msgs, inj.Text)
+		default:
+			if len(msgs) > 0 && msgs[0].Role == "system" {
+				msgs[0].Content += "\n\n---\n\n" + inj.Text
+			}
+		}
 	}
 
 	// Record what this build added on top of raw history so the history-only
@@ -1140,18 +1040,6 @@ func attachRoutedMemory(msgs []providers.Message, routed string) {
 		msgs[i].Content += "\n\n---\n\n" + routed
 		return
 	}
-}
-
-// latestUserText returns the content of the most recent user-role message in
-// history (the human's intent for this turn), used for lexical memory routing.
-// Returns "" when none — e.g. the turn ends on a tool result.
-func latestUserText(history []providers.Message) string {
-	for i := len(history) - 1; i >= 0; i-- {
-		if history[i].Role == "user" {
-			return history[i].Content
-		}
-	}
-	return ""
 }
 
 // Compact triggers a normal LLM-based compression pass, identical to what

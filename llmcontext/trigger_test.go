@@ -116,7 +116,7 @@ func TestTrigger_BelowFloor(t *testing.T) {
 	ctx := context.Background()
 	// Add 10 messages with tiny content well below floor.
 	for i := 0; i < 10; i++ {
-		if err := mgr.AddUserMessage(ctx, msgWithContent("hi")); err != nil {
+		if _, err := mgr.AddUserMessage(ctx, msgWithContent("hi")); err != nil {
 			t.Fatalf("AddUserMessage error: %v", err)
 		}
 	}
@@ -148,7 +148,7 @@ func TestTrigger_CountTriggered(t *testing.T) {
 	// 100-char content → 25 tokens each; 5 msgs → 125 tokens → 12.5% → above 10% floor.
 	content := strings.Repeat("x", 100)
 	for i := 0; i < 5; i++ {
-		if err := mgr.AddUserMessage(ctx, msgWithContent(content)); err != nil {
+		if _, err := mgr.AddUserMessage(ctx, msgWithContent(content)); err != nil {
 			t.Fatalf("AddUserMessage error: %v", err)
 		}
 	}
@@ -183,7 +183,7 @@ func TestTrigger_NormalPercentTriggered(t *testing.T) {
 	// Add a message large enough to cross normalPercent (50% of 1000 = 500 tokens).
 	// 2100 chars → 2100/4 = 525 tokens → 52.5%.
 	bigContent := strings.Repeat("a", 2100)
-	if err := mgr.AddUserMessage(ctx, msgWithContent(bigContent)); err != nil {
+	if _, err := mgr.AddUserMessage(ctx, msgWithContent(bigContent)); err != nil {
 		t.Fatalf("AddUserMessage error: %v", err)
 	}
 
@@ -215,7 +215,7 @@ func TestTrigger_SafetyNetTriggered(t *testing.T) {
 	ctx := context.Background()
 	// 3300 chars → 825 tokens → 82.5% → crosses safetyPercent=80.
 	bigContent := strings.Repeat("a", 3300)
-	if err := mgr.AddUserMessage(ctx, msgWithContent(bigContent)); err != nil {
+	if _, err := mgr.AddUserMessage(ctx, msgWithContent(bigContent)); err != nil {
 		t.Fatalf("AddUserMessage error: %v", err)
 	}
 
@@ -250,7 +250,7 @@ func TestTrigger_CountResetAfterCompress(t *testing.T) {
 
 	// First batch: 5 messages → compress fires once.
 	for i := 0; i < 5; i++ {
-		if err := mgr.AddUserMessage(ctx, msgWithContent(content)); err != nil {
+		if _, err := mgr.AddUserMessage(ctx, msgWithContent(content)); err != nil {
 			t.Fatalf("AddUserMessage error: %v", err)
 		}
 	}
@@ -260,7 +260,7 @@ func TestTrigger_CountResetAfterCompress(t *testing.T) {
 
 	// Add 4 more messages: should NOT trigger (count since last compress = 4 < 5).
 	for i := 0; i < 4; i++ {
-		if err := mgr.AddUserMessage(ctx, msgWithContent(content)); err != nil {
+		if _, err := mgr.AddUserMessage(ctx, msgWithContent(content)); err != nil {
 			t.Fatalf("AddUserMessage error: %v", err)
 		}
 	}
@@ -269,7 +269,7 @@ func TestTrigger_CountResetAfterCompress(t *testing.T) {
 	}
 
 	// The 5th message since last compress should fire again.
-	if err := mgr.AddUserMessage(ctx, msgWithContent(content)); err != nil {
+	if _, err := mgr.AddUserMessage(ctx, msgWithContent(content)); err != nil {
 		t.Fatalf("AddUserMessage error: %v", err)
 	}
 	if callCount != 2 {
@@ -291,7 +291,7 @@ func TestTrigger_NoContextWindow(t *testing.T) {
 
 	ctx := context.Background()
 	for i := 0; i < 5; i++ {
-		if err := mgr.AddUserMessage(ctx, msgWithContent("hello")); err != nil {
+		if _, err := mgr.AddUserMessage(ctx, msgWithContent("hello")); err != nil {
 			t.Fatalf("AddUserMessage error: %v", err)
 		}
 	}

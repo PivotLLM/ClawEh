@@ -196,7 +196,7 @@ func TestFlowA_InjectsDescriptionForNonVisionModel(t *testing.T) {
 
 	_, _, _, _, _, err := al.runLLMIteration(
 		context.Background(), agent,
-		[]providers.Message{{Role: "user", Content: "how many cats?"}}, opts, cm,
+		[]providers.Message{{Role: "user", Content: "how many cats?"}}, opts, cm, nil,
 	)
 	if err != nil {
 		t.Fatalf("runLLMIteration: %v", err)

@@ -218,9 +218,13 @@ type MemoryConsolidationConfig struct {
 	MaxRuntimeSecs   int    `json:"max_runtime_seconds"`
 }
 
-// MemoryRetentionConfig guards unconsolidated archive messages from pruning.
+// MemoryRetentionConfig bounds how long transient memory rows are kept.
 type MemoryRetentionConfig struct {
-	ProtectUnconsolidated bool `json:"protect_unconsolidated"`
+	// Deprecated: no effect. Cognitive memory keeps its own copy of
+	// unconsolidated messages (the store's inbox), so the session archive no
+	// longer needs guarding from retention pruning. Accepted so existing
+	// configs still load; ignored.
+	ProtectUnconsolidated bool `json:"protect_unconsolidated,omitempty"`
 
 	// EventDays is how long an `event` memory is kept before it is deleted.
 	// Events are things that happened at a point in time — a trip, a delivery,

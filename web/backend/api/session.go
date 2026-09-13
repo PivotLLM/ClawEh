@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/memory"
 	"github.com/PivotLLM/ClawEh/providers"
 )
 
@@ -82,8 +83,11 @@ func extractWebUISessionIDFromSanitizedKey(key string) (string, bool) {
 	return "", false
 }
 
+// sanitizeSessionKey names a session's files the way the store writes them.
+// It delegates to memory.SanitizeSessionKey so a key containing '/' (a Telegram
+// forum thread, a Slack thread) resolves to the file that actually exists.
 func sanitizeSessionKey(key string) string {
-	return strings.ReplaceAll(key, ":", "_")
+	return memory.SanitizeSessionKey(key)
 }
 
 func (h *Handler) readLegacySession(dir, sessionID string) (sessionFile, error) {

@@ -18,6 +18,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/global"
+	"github.com/PivotLLM/ClawEh/providers"
 )
 
 // ---- Result conversion -----------------------------------------------------
@@ -78,6 +79,7 @@ func callFromCtx(ctx context.Context, args map[string]any, notify func(*global.R
 	return &global.ToolCall{
 		Ctx:     ctx,
 		Args:    args,
+		AgentID: providers.AgentIDFromContext(ctx),
 		Session: ToolSessionKey(ctx),
 		Channel: ToolChannel(ctx),
 		ChatID:  ToolChatID(ctx),

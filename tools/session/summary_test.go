@@ -5,7 +5,6 @@ package session
 
 import (
 	"context"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -17,7 +16,7 @@ import (
 func writeArchiveSummaries(t *testing.T, sessionKey string, recs []memory.SummaryRecord) string {
 	t.Helper()
 	dir := t.TempDir()
-	path := filepath.Join(dir, archiveSanitizeKey(sessionKey)+".archive.db")
+	path := memory.ArchivePath(dir, sessionKey)
 	a, err := memory.Open(path)
 	if err != nil {
 		t.Fatalf("Open: %v", err)

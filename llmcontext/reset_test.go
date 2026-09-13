@@ -124,7 +124,7 @@ func TestReset_PreservesArchiveFile(t *testing.T) {
 	mgr.archiveAppend(1, providers.Message{Role: "user", Content: "hello"})
 
 	// Confirm the file exists.
-	sanitized := sanitizeSessionKey(key)
+	sanitized := memory.SanitizeSessionKey(key)
 	archivePath := filepath.Join(archiveDir, sanitized+".archive.db")
 	if _, err := os.Stat(archivePath); os.IsNotExist(err) {
 		t.Fatal("precondition: archive file should exist before Reset")

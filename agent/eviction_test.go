@@ -20,40 +20,27 @@ type trackingContextManager struct {
 	closed atomic.Bool
 }
 
-func (m *trackingContextManager) AddUserMessage(_ context.Context, _ providers.Message) error {
-	return nil
+func (m *trackingContextManager) AddUserMessage(_ context.Context, _ providers.Message) (int64, error) {
+	return 0, nil
 }
 
-func (m *trackingContextManager) AddAssistantMessage(_ context.Context, _ providers.Message) error {
-	return nil
+func (m *trackingContextManager) AddAssistantMessage(_ context.Context, _ providers.Message) (int64, error) {
+	return 0, nil
 }
 
-func (m *trackingContextManager) AddToolCallMessage(_ context.Context, _ providers.Message) error {
-	return nil
+func (m *trackingContextManager) AddToolCallMessage(_ context.Context, _ providers.Message) (int64, error) {
+	return 0, nil
 }
 
-func (m *trackingContextManager) AddToolResult(_ context.Context, _ providers.Message) error {
-	return nil
-}
-func (m *trackingContextManager) RecordToolUse(_ ...string)     {}
-func (m *trackingContextManager) SetToolDefinitionTokens(_ int) {}
-func (m *trackingContextManager) PreDispatchCheck(_ context.Context, current []providers.Message) ([]providers.Message, error) {
-	return current, nil
+func (m *trackingContextManager) AddToolResult(_ context.Context, _ providers.Message) (int64, error) {
+	return 0, nil
 }
 
-func (m *trackingContextManager) CheckAndCompress(_ context.Context, built []providers.Message) ([]providers.Message, error) {
-	return built, nil
+func (m *trackingContextManager) Assemble(_ context.Context, _ llmcontext.AssembleRequest) (llmcontext.Assembly, error) {
+	return llmcontext.Assembly{}, nil
 }
-func (m *trackingContextManager) SetSystemPrompt(_ string)   {}
-func (m *trackingContextManager) SetCallContext(_, _ string) {}
-func (m *trackingContextManager) SetSessionToken(_ string)   {}
-func (m *trackingContextManager) Build(_ context.Context) ([]providers.Message, error) {
-	return nil, nil
-}
-
-func (m *trackingContextManager) SweepEvictions(_ context.Context) []llmcontext.EvictionEvent {
-	return nil
-}
+func (m *trackingContextManager) SetCallContext(_, _ string)                         {}
+func (m *trackingContextManager) SetSessionToken(_ string)                           {}
 func (m *trackingContextManager) Compact(_ context.Context) error                    { return nil }
 func (m *trackingContextManager) LastCompactionReport() *llmcontext.CompactionReport { return nil }
 func (m *trackingContextManager) RenderedSummary() string                            { return "" }

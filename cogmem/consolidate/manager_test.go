@@ -36,7 +36,7 @@ func TestOnMessageFiresAtThreshold(t *testing.T) {
 	m.Start(context.Background())
 	defer m.Stop()
 
-	job := Job{AgentID: "a", SessionKey: "s", ArchivePath: "/tmp/s.archive.db"}
+	job := Job{AgentID: "a", SessionKey: "s", Workspace: "/tmp"}
 	m.OnMessage(job) // 1
 	m.OnMessage(job) // 2
 	select {
@@ -64,7 +64,7 @@ func TestEnqueueRunsJob(t *testing.T) {
 	m.Start(context.Background())
 	defer m.Stop()
 
-	job := Job{AgentID: "a", SessionKey: "s", ArchivePath: "/tmp/s.archive.db"}
+	job := Job{AgentID: "a", SessionKey: "s", Workspace: "/tmp"}
 	m.Enqueue(job, "manual")
 	select {
 	case got := <-done:
@@ -97,10 +97,10 @@ func TestConcurrencyCapRespected(t *testing.T) {
 	m.Start(context.Background())
 	defer m.Stop()
 
-	// Enqueue 5 jobs on DISTINCT archives (per-archive de-dup would otherwise
-	// collapse same-archive jobs).
+	// Enqueue 5 jobs on DISTINCT sessions (per-store de-dup would otherwise
+	// collapse same-session jobs).
 	for i := 0; i < 5; i++ {
-		m.Enqueue(Job{ArchivePath: string(rune('a'+i)) + ".db"}, "manual")
+		m.Enqueue(Job{SessionKey: string(rune('a' + i)), Workspace: "/tmp"}, "manual")
 	}
 
 	// Wait until at least 2 are running.
@@ -119,7 +119,7 @@ func TestConcurrencyCapRespected(t *testing.T) {
 	close(release)
 }
 
-func TestPerArchiveDedup(t *testing.T) {
+func TestPerStoreDedup(t *testing.T) {
 	var calls int32
 	release := make(chan struct{})
 	started := make(chan struct{}, 1)
@@ -135,7 +135,7 @@ func TestPerArchiveDedup(t *testing.T) {
 	m.Start(context.Background())
 	defer m.Stop()
 
-	job := Job{ArchivePath: "/same.db"}
+	job := Job{SessionKey: "same", Workspace: "/tmp"}
 	m.Enqueue(job, "manual")
 	<-started // first run is now in-flight
 	// Subsequent enqueues for the same archive must not start a second run.

@@ -34,7 +34,7 @@ func driveEmptyResponse(t *testing.T, responses []*providers.LLMResponse) (strin
 
 	finalContent, _, degenerate, _, _, err := al.runLLMIteration(
 		context.Background(), agentInstance,
-		[]providers.Message{{Role: "user", Content: "go"}}, opts, cm,
+		[]providers.Message{{Role: "user", Content: "go"}}, opts, cm, nil,
 	)
 	if err != nil {
 		t.Fatalf("runLLMIteration: %v", err)

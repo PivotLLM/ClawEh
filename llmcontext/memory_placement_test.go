@@ -24,12 +24,26 @@ func (stubBuilder) BuildMessages(history []providers.Message, summary, current s
 	return out
 }
 
-// memMgr builds a Manager wired to a store and a memory-block callback.
-func memMgr(t *testing.T, store *mockStore, stable, routed string) *Manager {
+// memMgr builds a Manager over a store; assemble places the two memory blocks
+// the way the agent loop does, stable in the system message and routed on the
+// current turn.
+type memMgr struct {
+	*Manager
+	stable, routed string
+}
+
+func newMemMgr(t *testing.T, store *mockStore, stable, routed string) memMgr {
 	t.Helper()
 	m := New("test-session", store, stubBuilder{}, nil, WithContextWindow(100_000)).(*Manager)
-	m.SetMemoryBlocks(func(string, []string, string) (string, string) { return stable, routed })
-	return m
+	return memMgr{Manager: m, stable: stable, routed: routed}
+}
+
+func (m memMgr) Build(ctx context.Context) ([]providers.Message, error) {
+	asm, err := m.Assemble(ctx, AssembleRequest{Injections: []Injection{
+		{Placement: PlaceSystemStable, Text: m.stable},
+		{Placement: PlaceCurrentUser, Text: m.routed},
+	}})
+	return asm.Messages, err
 }
 
 // TestRoutedMemory_RidesOnTheCurrentTurn is the placement this change exists
@@ -44,7 +58,7 @@ func TestRoutedMemory_RidesOnTheCurrentTurn(t *testing.T) {
 		{Role: "user", Content: "current question"},
 	})
 
-	msgs, err := memMgr(t, store, "STABLEBLOCK", "ROUTEDBLOCK").Build(context.Background())
+	msgs, err := newMemMgr(t, store, "STABLEBLOCK", "ROUTEDBLOCK").Build(context.Background())
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -76,7 +90,7 @@ func TestRoutedMemory_NeverPersisted(t *testing.T) {
 	store := newMockStore()
 	store.SetHistory("test-session", []providers.Message{{Role: "user", Content: "question"}})
 
-	mgr := memMgr(t, store, "STABLEBLOCK", "ROUTEDBLOCK")
+	mgr := newMemMgr(t, store, "STABLEBLOCK", "ROUTEDBLOCK")
 	for i := 0; i < 3; i++ {
 		if _, err := mgr.Build(context.Background()); err != nil {
 			t.Fatalf("Build: %v", err)
@@ -96,7 +110,7 @@ func TestRoutedMemory_NeverPersisted(t *testing.T) {
 func TestRoutedMemory_StableAcrossRepeatedBuilds(t *testing.T) {
 	store := newMockStore()
 	store.SetHistory("test-session", []providers.Message{{Role: "user", Content: "question"}})
-	mgr := memMgr(t, store, "STABLEBLOCK", "ROUTEDBLOCK")
+	mgr := newMemMgr(t, store, "STABLEBLOCK", "ROUTEDBLOCK")
 
 	first, _ := mgr.Build(context.Background())
 	second, _ := mgr.Build(context.Background())
@@ -119,7 +133,7 @@ func TestRoutedMemory_NoUserTurnDropsBlock(t *testing.T) {
 		{Role: "tool", ToolCallID: "t1", Content: "tool output"},
 	})
 
-	msgs, err := memMgr(t, store, "STABLEBLOCK", "ROUTEDBLOCK").Build(context.Background())
+	msgs, err := newMemMgr(t, store, "STABLEBLOCK", "ROUTEDBLOCK").Build(context.Background())
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}

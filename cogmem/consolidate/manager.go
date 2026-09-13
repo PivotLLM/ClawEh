@@ -9,24 +9,26 @@ import (
 	"sync"
 	"time"
 
+	"github.com/PivotLLM/ClawEh/cogmem/store"
 	"github.com/PivotLLM/ClawEh/logger"
-	"github.com/PivotLLM/ClawEh/routing"
 )
 
-// Job identifies a single session whose archive may need consolidation. It
+// Job identifies a single session whose inbox may need consolidation. It
 // carries everything a WorkerFactory needs to build a Worker; the manager is
-// otherwise decoupled from the store, archive, and provider packages.
+// otherwise decoupled from the store and provider packages.
 type Job struct {
-	AgentID     string
-	SessionKey  string
-	Workspace   string
-	ArchivePath string
+	AgentID    string
+	SessionKey string
+	Workspace  string
 }
 
-// WorkerFactory builds a Worker for a Job. The gateway supplies it: it opens
-// the cogmem store at SessionDBPath, adapts the session archive to a
-// MessageSource, and selects the agent's ModelCaller. Returning an error skips
-// the job (logged, not fatal).
+// key is the per-store identity the manager de-duplicates on: two jobs for the
+// same session database are the same job.
+func (j Job) key() string { return store.SessionDBPath(j.Workspace, j.SessionKey) }
+
+// WorkerFactory builds a Worker for a Job. The host supplies it: it opens the
+// cogmem store at SessionDBPath and selects the agent's ModelCaller. Returning
+// an error skips the job (logged, not fatal).
 type WorkerFactory func(Job) (*Worker, error)
 
 // managerOptions tune the Manager's triggers and concurrency.
@@ -105,8 +107,8 @@ type Manager struct {
 	opt     managerOptions
 
 	mu       sync.Mutex
-	sessions map[string]*sessionState // keyed by ArchivePath
-	inflight map[string]bool          // ArchivePath currently running (de-dup)
+	sessions map[string]*sessionState // keyed by Job.key()
+	inflight map[string]bool          // Job.key() currently running (de-dup)
 
 	queue   chan queued
 	sem     chan struct{}
@@ -184,22 +186,20 @@ func (m *Manager) Stop() {
 
 // OnMessage records a meaningful message for a session and enqueues a
 // message-count run when the threshold is reached. It is non-blocking and safe
-// to call from the hot path.
+// to call from the hot path. The host decides which sessions are eligible (it
+// does not call this for ephemeral sub-agent sessions, whose memory is a
+// throwaway snapshot).
 func (m *Manager) OnMessage(job Job) {
-	if job.ArchivePath == "" {
+	if job.SessionKey == "" {
 		return
 	}
-	// Sub-agent sessions are ephemeral (a snapshot of the primary's memory, deleted
-	// when the worker finishes); never consolidate them.
-	if routing.IsSubagentSessionKey(job.SessionKey) {
-		return
-	}
+	key := job.key()
 	now := m.now()
 	m.mu.Lock()
-	st := m.sessions[job.ArchivePath]
+	st := m.sessions[key]
 	if st == nil {
 		st = &sessionState{job: job}
-		m.sessions[job.ArchivePath] = st
+		m.sessions[key] = st
 	}
 	st.job = job
 	st.count++
@@ -220,15 +220,16 @@ func (m *Manager) OnMessage(job Job) {
 // Non-blocking: if the queue is full the job is dropped with a WARN (a later
 // trigger will re-enqueue).
 func (m *Manager) Enqueue(job Job, trigger string) {
-	if job.ArchivePath == "" {
+	if job.SessionKey == "" {
 		return
 	}
+	key := job.key()
 	// Ensure the session is known so nightly/idle can find it later.
 	m.mu.Lock()
-	if _, ok := m.sessions[job.ArchivePath]; !ok {
-		m.sessions[job.ArchivePath] = &sessionState{job: job, lastActivity: m.now()}
+	if _, ok := m.sessions[key]; !ok {
+		m.sessions[key] = &sessionState{job: job, lastActivity: m.now()}
 	} else {
-		m.sessions[job.ArchivePath].job = job
+		m.sessions[key].job = job
 	}
 	m.mu.Unlock()
 
@@ -241,10 +242,9 @@ func (m *Manager) Enqueue(job Job, trigger string) {
 		})
 	default:
 		logger.WarnCF("cogmem", "consolidation queue full; dropping job", map[string]any{
-			"agent_id":     job.AgentID,
-			"session_key":  job.SessionKey,
-			"archive_path": job.ArchivePath,
-			"trigger":      trigger,
+			"agent_id":    job.AgentID,
+			"session_key": job.SessionKey,
+			"trigger":     trigger,
 		})
 	}
 }
@@ -261,7 +261,7 @@ func (m *Manager) dispatchLoop(ctx context.Context) {
 			return
 		case q := <-m.queue:
 			m.mu.Lock()
-			if m.inflight[q.job.ArchivePath] {
+			if m.inflight[q.job.key()] {
 				m.mu.Unlock()
 				logger.DebugCF("cogmem", "consolidation job skipped; run already in flight", map[string]any{
 					"agent_id":    q.job.AgentID,
@@ -270,17 +270,17 @@ func (m *Manager) dispatchLoop(ctx context.Context) {
 				})
 				continue // already running; the in-flight run drains More itself
 			}
-			m.inflight[q.job.ArchivePath] = true
+			m.inflight[q.job.key()] = true
 			m.mu.Unlock()
 
 			// Acquire a pool slot; release inflight if we're shutting down.
 			select {
 			case m.sem <- struct{}{}:
 			case <-m.stop:
-				m.clearInflight(q.job.ArchivePath)
+				m.clearInflight(q.job.key())
 				return
 			case <-ctx.Done():
-				m.clearInflight(q.job.ArchivePath)
+				m.clearInflight(q.job.key())
 				return
 			}
 
@@ -288,16 +288,16 @@ func (m *Manager) dispatchLoop(ctx context.Context) {
 			go func(q queued) {
 				defer m.wg.Done()
 				defer func() { <-m.sem }()
-				defer m.clearInflight(q.job.ArchivePath)
+				defer m.clearInflight(q.job.key())
 				m.runFn(ctx, q.job, q.trigger)
 			}(q)
 		}
 	}
 }
 
-func (m *Manager) clearInflight(archivePath string) {
+func (m *Manager) clearInflight(key string) {
 	m.mu.Lock()
-	delete(m.inflight, archivePath)
+	delete(m.inflight, key)
 	m.mu.Unlock()
 }
 
@@ -307,10 +307,9 @@ func (m *Manager) runJob(ctx context.Context, j Job, trigger string) {
 	w, err := m.factory(j)
 	if err != nil {
 		logger.WarnCF("cogmem", "consolidation worker factory failed", map[string]any{
-			"agent_id":     j.AgentID,
-			"session_key":  j.SessionKey,
-			"archive_path": j.ArchivePath,
-			"error":        err.Error(),
+			"agent_id":    j.AgentID,
+			"session_key": j.SessionKey,
+			"error":       err.Error(),
 		})
 		return
 	}
@@ -328,20 +327,18 @@ func (m *Manager) runJob(ctx context.Context, j Job, trigger string) {
 		default:
 		}
 		res, err := w.RunOnce(ctx, RunParams{
-			AgentID:     j.AgentID,
-			SessionKey:  j.SessionKey,
-			Workspace:   j.Workspace,
-			ArchivePath: j.ArchivePath,
-			Trigger:     trigger,
+			AgentID:    j.AgentID,
+			SessionKey: j.SessionKey,
+			Workspace:  j.Workspace,
+			Trigger:    trigger,
 		})
 		if err != nil {
 			logger.WarnCF("cogmem", "consolidation run failed", map[string]any{
-				"agent_id":     j.AgentID,
-				"session_key":  j.SessionKey,
-				"archive_path": j.ArchivePath,
-				"trigger":      trigger,
-				"status":       res.Status,
-				"error":        err.Error(),
+				"agent_id":    j.AgentID,
+				"session_key": j.SessionKey,
+				"trigger":     trigger,
+				"status":      res.Status,
+				"error":       err.Error(),
 			})
 			return
 		}

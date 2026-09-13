@@ -62,7 +62,7 @@ func TestTrigger_AgeFiresBelowFloor(t *testing.T) {
 	mgr.SetTestCompressHook(func(s bool) { called, safetyNet = true, s })
 
 	store.ages[0] = 30 * 24 * time.Hour // oldest message is a month old
-	if err := mgr.AddUserMessage(context.Background(), msgWithContent("hi")); err != nil {
+	if _, err := mgr.AddUserMessage(context.Background(), msgWithContent("hi")); err != nil {
 		t.Fatalf("AddUserMessage: %v", err)
 	}
 
@@ -89,7 +89,7 @@ func TestTrigger_AgeDoesNotFireWhenFresh(t *testing.T) {
 	mgr.SetTestCompressHook(func(_ bool) { called = true })
 
 	store.ages[0] = 2 * 24 * time.Hour // well inside the trigger
-	if err := mgr.AddUserMessage(context.Background(), msgWithContent("hi")); err != nil {
+	if _, err := mgr.AddUserMessage(context.Background(), msgWithContent("hi")); err != nil {
 		t.Fatalf("AddUserMessage: %v", err)
 	}
 	if called {
@@ -111,7 +111,7 @@ func TestTrigger_AgeDisabled(t *testing.T) {
 	mgr.SetTestCompressHook(func(_ bool) { called = true })
 
 	store.ages[0] = 365 * 24 * time.Hour
-	if err := mgr.AddUserMessage(context.Background(), msgWithContent("hi")); err != nil {
+	if _, err := mgr.AddUserMessage(context.Background(), msgWithContent("hi")); err != nil {
 		t.Fatalf("AddUserMessage: %v", err)
 	}
 	if called {
@@ -138,7 +138,7 @@ func TestTrigger_AgeIgnoresSystemMessage(t *testing.T) {
 	called := false
 	mgr.SetTestCompressHook(func(_ bool) { called = true })
 
-	if err := mgr.AddUserMessage(context.Background(), msgWithContent("hi")); err != nil {
+	if _, err := mgr.AddUserMessage(context.Background(), msgWithContent("hi")); err != nil {
 		t.Fatalf("AddUserMessage: %v", err)
 	}
 	if called {
@@ -249,7 +249,7 @@ func TestTrigger_AgeDoesNotRefireAgainstTheSameBoundary(t *testing.T) {
 
 	store.ages[0] = 30 * 24 * time.Hour
 	for i := range 4 {
-		if err := mgr.AddUserMessage(context.Background(), msgWithContent("hi")); err != nil {
+		if _, err := mgr.AddUserMessage(context.Background(), msgWithContent("hi")); err != nil {
 			t.Fatalf("message %d: %v", i, err)
 		}
 	}
@@ -275,7 +275,7 @@ func TestTrigger_AgeFiresAgainOnceTheWindowMovesPast(t *testing.T) {
 	mgr.SetTestCompressHook(func(bool) { calls++ })
 
 	store.ages[0] = 30 * 24 * time.Hour
-	if err := mgr.AddUserMessage(context.Background(), msgWithContent("hi")); err != nil {
+	if _, err := mgr.AddUserMessage(context.Background(), msgWithContent("hi")); err != nil {
 		t.Fatal(err)
 	}
 	if calls != 1 {
@@ -288,7 +288,7 @@ func TestTrigger_AgeFiresAgainOnceTheWindowMovesPast(t *testing.T) {
 	delete(store.ages, 0)
 	store.ages[0] = 20 * 24 * time.Hour
 
-	if err := mgr.AddUserMessage(context.Background(), msgWithContent("hi")); err != nil {
+	if _, err := mgr.AddUserMessage(context.Background(), msgWithContent("hi")); err != nil {
 		t.Fatal(err)
 	}
 	if calls != 2 {
@@ -314,7 +314,7 @@ func TestTrigger_AgeSuppressionClearsWhenTheWindowComesBack(t *testing.T) {
 	})
 
 	store.ages[0] = 30 * 24 * time.Hour
-	if err := mgr.AddUserMessage(context.Background(), msgWithContent("hi")); err != nil {
+	if _, err := mgr.AddUserMessage(context.Background(), msgWithContent("hi")); err != nil {
 		t.Fatal(err)
 	}
 	if !mgr.ageTriggerFloor.IsZero() {

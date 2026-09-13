@@ -38,7 +38,7 @@ func TestCompact_PersistsSummaryToArchive(t *testing.T) {
 	}
 
 	// Open the archive and confirm exactly one summary row was persisted.
-	archivePath := filepath.Join(archiveDir, sanitizeSessionKey("sess")+".archive.db")
+	archivePath := memory.ArchivePath(archiveDir, "sess")
 	a, err := memory.OpenReadOnly(archivePath)
 	if err != nil {
 		t.Fatalf("OpenReadOnly archive: %v", err)

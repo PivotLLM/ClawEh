@@ -1894,8 +1894,9 @@ func (al *AgentLoop) runAgentLoop(
 	// before reaching that point, so we set it once here at the top.
 	ctx = providers.WithAgentID(ctx, agent.ID)
 
-	// 1. Get or create the ContextManager for this session.
-	cm, releaseCtxMgr := al.getContextManager(agent, opts.SessionKey)
+	// 1. Get or create the ContextManager (and the cognitive-memory session, nil
+	// for agents without it) for this session.
+	cm, mem, releaseCtxMgr := al.getSessionContext(agent, opts.SessionKey)
 	defer releaseCtxMgr()
 	cm.SetCallContext(opts.Channel, opts.ChatID)
 
@@ -1971,27 +1972,22 @@ func (al *AgentLoop) runAgentLoop(
 				userMsg.Content = appendMediaRefMarker(userMsg.Content, refs)
 			}
 		}
-		if err := cm.AddUserMessage(ctx, userMsg); err != nil {
+		seq, err := cm.AddUserMessage(ctx, userMsg)
+		if err != nil {
 			logger.WarnCF("agent", "Failed to add user message to context manager",
 				map[string]any{"error": err.Error(), "session": opts.SessionKey})
 		}
+		mem.Observe(ctx, seq, userMsg)
 	}
 
-	// 3. Build messages from current history + session context.
-	messages, buildErr := cm.Build(ctx)
+	// 3. Assemble the request: eviction sweep, safety-net compaction on both
+	// stored history and the built request, and memory placement. Routed
+	// memory is selected from the message the user just sent.
+	asm, buildErr := cm.Assemble(ctx, al.assembleRequest(ctx, agent, mem, opts.UserMessage))
 	if buildErr != nil {
-		return "", fmt.Errorf("context manager build: %w", buildErr)
+		return "", fmt.Errorf("context manager assemble: %w", buildErr)
 	}
-
-	// Post-Build emergency check: include overhead (system prompt, tool defs,
-	// completion budget) to catch cases where stored history is within threshold
-	// but the full request would exceed the context window. Like PreDispatchCheck,
-	// this only fires at the safety-net level; first-stage compaction happens at
-	// the turn boundary (AddUserMessage / AddAssistantMessage), not here.
-	if messages, buildErr = cm.CheckAndCompress(ctx, messages); buildErr != nil {
-		logger.WarnCF("agent", "CheckAndCompress failed (continuing with current slice)",
-			map[string]any{"error": buildErr.Error(), "session": opts.SessionKey})
-	}
+	messages := asm.Messages
 
 	// Reconcile media pins to what the (possibly compacted) context still
 	// references — refs compacted out of the context become reapable. Must run
@@ -2016,7 +2012,7 @@ func (al *AgentLoop) runAgentLoop(
 	}()
 
 	// 4. Run LLM iteration loop
-	finalContent, normal, degenerate, finishReason, iteration, err := al.runLLMIteration(ctx, agent, messages, opts, cm)
+	finalContent, normal, degenerate, finishReason, iteration, err := al.runLLMIteration(ctx, agent, messages, opts, cm, mem)
 	if err != nil {
 		return "", err
 	}
@@ -2081,7 +2077,10 @@ func (al *AgentLoop) runAgentLoop(
 
 	// 6. Save final assistant message to session (skip system error strings)
 	if !isSystemError {
-		if err := cm.AddAssistantMessage(ctx, providers.Message{Role: "assistant", Content: finalContent}); err != nil {
+		finalMsg := providers.Message{Role: "assistant", Content: finalContent}
+		if seq, err := cm.AddAssistantMessage(ctx, finalMsg); err == nil {
+			mem.Observe(ctx, seq, finalMsg)
+		} else {
 			logger.WarnCF("agent", "Failed to add assistant message to context manager",
 				map[string]any{"error": err.Error(), "session": opts.SessionKey})
 		}
@@ -2311,12 +2310,33 @@ func (al *AgentLoop) evictionNotifyUser(agent *AgentInstance) bool {
 	return p.NotifyUser
 }
 
+// assembleRequest builds the per-dispatch request for the context manager:
+// the cost of the tool schemas this dispatch will send, and the memory blocks
+// recalled for routeText (the user's message for this turn). mem may be nil.
+func (al *AgentLoop) assembleRequest(ctx context.Context, agent *AgentInstance, mem *memorySession, routeText string) llmcontext.AssembleRequest {
+	defs := agent.Tools.ToProviderDefs()
+	if agent.NoTools {
+		defs = nil
+	}
+	return al.assembleRequestWithDefs(ctx, agent, mem, routeText, defs)
+}
+
+// assembleRequestWithDefs is assembleRequest for a caller that already holds
+// this dispatch's tool definitions.
+func (al *AgentLoop) assembleRequestWithDefs(ctx context.Context, _ *AgentInstance, mem *memorySession, routeText string, defs []providers.ToolDefinition) llmcontext.AssembleRequest {
+	return llmcontext.AssembleRequest{
+		ToolDefinitionTokens: llmcontext.EstimateToolDefinitionTokens(defs),
+		Injections:           mem.Recall(ctx, routeText),
+	}
+}
+
 func (al *AgentLoop) runLLMIteration(
 	ctx context.Context,
 	agent *AgentInstance,
 	messages []providers.Message,
 	opts processOptions,
 	cm llmcontext.ContextManager,
+	mem *memorySession,
 ) (string, bool, bool, string, int, error) {
 	iteration := 0
 	var finalContent string
@@ -2427,37 +2447,22 @@ func (al *AgentLoop) runLLMIteration(
 		if agent.NoTools {
 			providerToolDefs = nil
 		}
-		// Tell the context manager what the tool schemas cost. It never sees the
-		// toolset, so without this every compaction trigger measures stored
-		// history alone and ignores a fixed per-request cost that, for a
-		// 46-tool agent, runs to tens of thousands of tokens.
-		cm.SetToolDefinitionTokens(llmcontext.EstimateToolDefinitionTokens(providerToolDefs))
-
-		// Per-turn context eviction sweep (LLM-free): collapse stale, superseded,
-		// or oversized re-retrievable tool results (file reads, web fetches) in the
-		// live window to a placeholder. Runs before PreDispatchCheck so cheap
-		// eviction relieves window pressure first and summarization compaction
-		// fires far less often. Every eviction is DEBUG-logged inside the sweep;
-		// when the agent's policy has notify_user on, a one-line notice is also
-		// surfaced in the conversation.
-		if events := cm.SweepEvictions(ctx); len(events) > 0 {
-			if rebuilt, berr := cm.Build(ctx); berr == nil {
-				messages = rebuilt
-			}
-			evictedThisTurn = append(evictedThisTurn, events...)
-		}
-
-		// Run pre-dispatch compression check. If tool-call messages or tool results
-		// pushed the context over the threshold, compress now and use the rebuilt
-		// slice so the provider never receives a stale pre-compression slice.
-		{
-			var preErr error
-			messages, preErr = cm.PreDispatchCheck(ctx, messages)
-			if preErr != nil && !errors.Is(preErr, llmcontext.ErrCompressionFailed) {
-				logger.WarnCF("agent", "PreDispatchCheck unexpected error", map[string]any{
-					"agent_id": agent.ID,
-					"error":    preErr.Error(),
-				})
+		// Assemble for this dispatch: the LLM-free eviction sweep first (cheap
+		// relief so summarization fires far less often), then the safety-net
+		// compaction checks, then memory placement. The slice in hand is kept
+		// unless stored history was rewritten — it carries this turn's unsaved
+		// steering messages and already-resolved media — so only a changed
+		// assembly replaces it. Tool-schema cost rides on the request so every
+		// trigger measures the real request and not stored history alone.
+		if asm, aerr := cm.Assemble(ctx, al.assembleRequestWithDefs(ctx, agent, mem, opts.UserMessage, providerToolDefs)); aerr != nil {
+			logger.WarnCF("agent", "assemble failed (continuing with current slice)", map[string]any{
+				"agent_id": agent.ID,
+				"error":    aerr.Error(),
+			})
+		} else {
+			evictedThisTurn = append(evictedThisTurn, asm.Evictions...)
+			if asm.Changed() {
+				messages = asm.Messages
 			}
 		}
 
@@ -2709,8 +2714,8 @@ func (al *AgentLoop) runLLMIteration(
 						map[string]any{"error": ferr.Error(), "session": opts.SessionKey})
 				}
 				comprMgr.SetCallContext(opts.Channel, opts.ChatID)
-				if rebuilt, berr := comprMgr.Build(ctx); berr == nil {
-					messages = rebuilt
+				if asm, berr := comprMgr.Assemble(ctx, al.assembleRequestWithDefs(ctx, agent, mem, opts.UserMessage, providerToolDefs)); berr == nil {
+					messages = asm.Messages
 				}
 
 				// If compression didn't reduce message count, history is already minimal.
@@ -2870,9 +2875,9 @@ func (al *AgentLoop) runLLMIteration(
 		}
 
 		// Feed the recent-tool ring so cognitive memory can auto-load domains whose
-		// triggers match a tool the agent just used; the next build (same turn,
+		// triggers match a tool the agent just used; the next assembly (same turn,
 		// after tool results) picks it up. No-op for non-cognitive agents.
-		cm.RecordToolUse(toolNames...)
+		mem.RecordToolUse(toolNames...)
 		logger.InfoCF("agent", "LLM requested tool calls",
 			map[string]any{
 				"agent_id":  agent.ID,
@@ -2939,11 +2944,13 @@ func (al *AgentLoop) runLLMIteration(
 
 		// Save assistant message with tool calls through the context manager so
 		// that msgCount is incremented and the message is written to the archive.
-		if err := cm.AddToolCallMessage(ctx, assistantMsg); err != nil {
+		if seq, err := cm.AddToolCallMessage(ctx, assistantMsg); err != nil {
 			logger.WarnCF("agent", "AddToolCallMessage failed", map[string]any{
 				"agent_id": agent.ID,
 				"error":    err.Error(),
 			})
+		} else {
+			mem.Observe(ctx, seq, assistantMsg)
 		}
 
 		// Execute tool calls in parallel
@@ -3191,11 +3198,13 @@ func (al *AgentLoop) runLLMIteration(
 
 			// Save tool result message through the context manager so that
 			// msgCount is incremented and the message is written to the archive.
-			if err := cm.AddToolResult(ctx, toolResultMsg); err != nil {
+			if seq, err := cm.AddToolResult(ctx, toolResultMsg); err != nil {
 				logger.WarnCF("agent", "AddToolResult failed", map[string]any{
 					"agent_id": agent.ID,
 					"error":    err.Error(),
 				})
+			} else {
+				mem.Observe(ctx, seq, toolResultMsg)
 			}
 		}
 
@@ -3208,9 +3217,11 @@ func (al *AgentLoop) runLLMIteration(
 				Media:   toolImages,
 			}
 			messages = append(messages, imgMsg)
-			if err := cm.AddUserMessage(ctx, imgMsg); err != nil {
+			if seq, err := cm.AddUserMessage(ctx, imgMsg); err != nil {
 				logger.WarnCF("agent", "failed to persist tool image message",
 					map[string]any{"agent_id": agent.ID, "error": err.Error()})
+			} else {
+				mem.Observe(ctx, seq, imgMsg)
 			}
 			logger.InfoCF("agent", "passed tool image(s) to vision model (user message)",
 				map[string]any{"agent_id": agent.ID, "model": activeModel, "images": len(toolImages)})
@@ -3233,9 +3244,11 @@ func (al *AgentLoop) runLLMIteration(
 			}
 			descMsg := providers.Message{Role: "user", Content: content}
 			messages = append(messages, descMsg)
-			if err := cm.AddUserMessage(ctx, descMsg); err != nil {
+			if seq, err := cm.AddUserMessage(ctx, descMsg); err != nil {
 				logger.WarnCF("agent", "failed to persist vision-describe message",
 					map[string]any{"agent_id": agent.ID, "error": err.Error()})
+			} else {
+				mem.Observe(ctx, seq, descMsg)
 			}
 			logger.InfoCF("agent", "injected vision description for non-vision model",
 				map[string]any{"agent_id": agent.ID, "model": activeModel, "images": len(offImages), "described": ok})
@@ -4178,13 +4191,8 @@ func sessionChannelsForAgent(bindings []config.AgentBinding, agentID string) []s
 }
 
 // archiveDBPath returns the on-disk path of the SQLite archive for a session.
-// Must stay in sync with llmcontext.sanitizeSessionKey and the
-// archive-open path in llmcontext/Manager.getOrOpenArchive.
 func archiveDBPath(workspace, sessionKey string) string {
-	sanitized := strings.ReplaceAll(sessionKey, ":", "_")
-	sanitized = strings.ReplaceAll(sanitized, "/", "_")
-	sanitized = strings.ReplaceAll(sanitized, "\\", "_")
-	return filepath.Join(workspace, "sessions", sanitized+".archive.db")
+	return memory.ArchivePath(filepath.Join(workspace, "sessions"), sessionKey)
 }
 
 func mapCommandError(result commands.ExecuteResult) string {

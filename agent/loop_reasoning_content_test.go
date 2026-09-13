@@ -40,7 +40,7 @@ func runReasoningOnlyTurn(t *testing.T, showAsContent bool) string {
 
 	finalContent, _, _, _, _, err := al.runLLMIteration(
 		context.Background(), agentInstance,
-		[]providers.Message{{Role: "user", Content: "go"}}, opts, cm,
+		[]providers.Message{{Role: "user", Content: "go"}}, opts, cm, nil,
 	)
 	if err != nil {
 		t.Fatalf("runLLMIteration: %v", err)

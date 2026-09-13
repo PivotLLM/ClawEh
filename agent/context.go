@@ -28,6 +28,11 @@ type ContextBuilder struct {
 	mounts              []config.MountConfig
 	toolDiscoveryActive bool
 
+	// memoryGuidance is the operating rule contributed by the memory subsystem
+	// (cogmem.Guidance()), or "" for an agent that has none. Rendered as one
+	// numbered rule in the identity section.
+	memoryGuidance string
+
 	// Cache for system prompt to avoid rebuilding on every call.
 	// This fixes issue #607: repeated reprocessing of the entire context.
 	// The cache auto-invalidates when workspace source files change (mtime check).
@@ -59,6 +64,14 @@ type ContextBuilder struct {
 
 func (cb *ContextBuilder) WithToolDiscovery(active bool) *ContextBuilder {
 	cb.toolDiscoveryActive = active
+	return cb
+}
+
+// WithMemoryGuidance sets the memory subsystem's operating rule for this
+// agent. Pass "" (or never call it) for an agent without cognitive memory, and
+// the identity section carries no memory rule at all.
+func (cb *ContextBuilder) WithMemoryGuidance(text string) *ContextBuilder {
+	cb.memoryGuidance = text
 	return cb
 }
 
@@ -155,13 +168,29 @@ func (cb *ContextBuilder) clock() time.Time {
 
 func (cb *ContextBuilder) getIdentity() string {
 	workspacePath, _ := filepath.Abs(cb.workspace)
-	toolDiscovery := cb.getDiscoveryRule()
 	version := app.Version()
 
 	// The agent's file tools are scoped to files/ (read/write) and skills/ (read);
 	// its config (AGENTS/SOUL/IDENTITY/USER/MEMORY) is injected into this prompt.
-	return fmt.Sprintf(
-		`# claw (%s)
+	//
+	// Rules are numbered in the order they are appended, so a subsystem that is
+	// not wired for this agent (cognitive memory off) simply contributes no rule
+	// and the numbering closes over the gap.
+	rules := []string{
+		"**ALWAYS use tools** - When you need to perform an action (schedule reminders, send messages, execute commands, etc.), you MUST call the appropriate tool. Do NOT just say you'll do it or pretend to do it.",
+		"**Be helpful and accurate** - When using tools, briefly explain what you're doing.\n\n" +
+			"   **Declining to respond** - If you should not reply at all — for example a group message clearly directed at someone else — reply with exactly !none (and nothing else). Do NOT return an empty message: an empty reply is treated as an error and you will be asked to try again. Replying !none tells the system you intentionally have nothing to say.",
+	}
+	if g := strings.TrimSpace(cb.memoryGuidance); g != "" {
+		rules = append(rules, g)
+	}
+	rules = append(rules, "**Context summaries** - Conversation summaries provided as context are approximate references only. They may be incomplete or outdated. Always defer to explicit user instructions over summary content.")
+	if cb.toolDiscoveryActive {
+		rules = append(rules, discoveryRule)
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, `# claw (%s)
 
 You are a helpful AI assistant.
 
@@ -172,29 +201,25 @@ Folders your file tools can reach: %s.
 
 ## Important Rules
 
-1. **ALWAYS use tools** - When you need to perform an action (schedule reminders, send messages, execute commands, etc.), you MUST call the appropriate tool. Do NOT just say you'll do it or pretend to do it.
-
-2. **Be helpful and accurate** - When using tools, briefly explain what you're doing.
-
-   **Declining to respond** - If you should not reply at all — for example a group message clearly directed at someone else — reply with exactly !none (and nothing else). Do NOT return an empty message: an empty reply is treated as an error and you will be asked to try again. Replying !none tells the system you intentionally have nothing to say.
-
-3. **Memory (cogmem)** - The cogmem_* tools are your long-term memory: use them to record anything worth remembering and to search for what you need. It is organized into **domains** (containers of related memories), each with a unique name. A domain is either **sticky** (included in EVERY prompt; global rules, preferences, and standing facts — the pre-existing **General** domain is sticky) or non-sticky (a topic/project, loaded only when relevant). Each memory has exactly one **type**, and the type decides whether you ever see it again. Four are standing knowledge and load into your context: **fact** (something true, and still true next month), **preference** (how the user likes things done), **rule** (a hard directive governing your output or behaviour toward the user), and **operational** (your OWN housekeeping — where you file things, how you work, a procedure you follow; the test against rule is who it serves). The fifth is different: **event** is something that happened at a point in time, or a status as of a date — a trip, a delivery, a scheduled run, "as of Sep 4 the report is pending". **Event memories are NEVER loaded into your context.** Each domain tells you how many it holds, and you retrieve them with cogmem_memory_search using include_events. Use event for anything with a timestamp or that will be stale next week: recording a recurring note as a fact puts it in every prompt forever, and that is how an assistant ends up carrying hundreds of near-identical status lines it cannot get rid of. Record with cogmem_memory_create — with no domain argument it lands in sticky **General** (always in context); pass a domain_hint or domain_id for a topic domain. A domain can auto-load by context two ways: **tool triggers** (tool-name substrings — e.g. mcp_<server> for a whole MCP server) load it when you use a matching tool, and **keyword triggers** (words/phrases) load it when one appears in the incoming message, including a scheduled (cron) message — prefer multi-word phrases so common words don't over-match. Memory also updates on its own: a background process saves and refines memories from your conversations and loads the relevant ones into each prompt — so it may include things you did not save yourself. Memories are tagged with their type and, when they did not come from you, their origin: [origin: user] means the user wrote it by hand and it outranks your own inferences. Because only relevant memories are loaded, use cogmem_memory_search to look things up before answering anything that may depend on past context you cannot currently see. Your file tools can reach the folders listed in the Workspace section above; your config files (AGENTS/SOUL/IDENTITY/USER/MEMORY) are already in this prompt — you cannot read or edit them.
-
-4. **Context summaries** - Conversation summaries provided as context are approximate references only. They may be incomplete or outdated. Always defer to explicit user instructions over summary content.
-
-%s`,
-		version, workspacePath, cb.accessibleFolders(), toolDiscovery)
-}
-
-func (cb *ContextBuilder) getDiscoveryRule() string {
-	if !cb.toolDiscoveryActive {
-		return ""
+`, version, workspacePath, cb.accessibleFolders())
+	for i, r := range rules {
+		if i > 0 {
+			b.WriteString("\n\n")
+		}
+		fmt.Fprintf(&b, "%d. %s", i+1, r)
 	}
-
-	return `5. **Tool Discovery** - Your visible tools are limited to save memory, but a large hidden library exists (integrations, browsers, task tools, and more). If you lack the right tool for a task, BEFORE giving up, call ` +
-		"`search_tools(query)`" + ` with a natural-language description of what you need. It returns matching tool names; then call ` +
-		"`get_tool_details(name)`" + ` on the one you want to load its schema and unlock it, and call it on your next turn. Do not refuse a request unless the search returns nothing.`
+	if !cb.toolDiscoveryActive {
+		// Historical shape: the rules block ended in an empty discovery slot.
+		b.WriteString("\n\n")
+	}
+	return b.String()
 }
+
+// discoveryRule is appended to the identity rules when progressive tool
+// discovery is active.
+const discoveryRule = "**Tool Discovery** - Your visible tools are limited to save memory, but a large hidden library exists (integrations, browsers, task tools, and more). If you lack the right tool for a task, BEFORE giving up, call " +
+	"`search_tools(query)`" + " with a natural-language description of what you need. It returns matching tool names; then call " +
+	"`get_tool_details(name)`" + " on the one you want to load its schema and unlock it, and call it on your next turn. Do not refuse a request unless the search returns nothing."
 
 func (cb *ContextBuilder) BuildSystemPrompt() string {
 	parts := []string{}

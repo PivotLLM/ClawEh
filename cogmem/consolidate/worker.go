@@ -21,21 +21,22 @@ import (
 // leaseTTL bounds how long a single RunOnce may hold the per-archive lease.
 const leaseTTL = 10 * time.Minute
 
-// SourceMessage is one message pulled from the session archive.
-type SourceMessage struct {
-	Seq  int64
-	Role string
-	Text string
-}
-
-// MessageSource is the read side of the session archive. It is deliberately
-// decoupled from memory so the worker carries no dependency on the archive
-// implementation; the gateway adapts its archive to this interface.
-type MessageSource interface {
-	// Bounds returns the lowest and highest seq present in the archive.
-	Bounds() (minSeq, maxSeq int64, err error)
-	// Range returns messages with seq in [minSeq, maxSeq] in ascending order.
-	Range(minSeq, maxSeq int64) ([]SourceMessage, error)
+// Observe records one conversation message into the store's inbox so the next
+// consolidation run can read it. It is the host's per-message call: the host
+// appends the message to its own transcript, gets a seq, and hands a copy here.
+// Only meaningful roles (user, assistant) are kept — tool plumbing never reaches
+// the model — and the text is capped at perMessageChars (0 = uncapped) so the
+// inbox holds what a run would send, not whole file dumps. Returns whether the
+// message was stored.
+func Observe(ctx context.Context, st *store.Store, seq int64, role, text string, perMessageChars int) (bool, error) {
+	if !MeaningfulRole(role) {
+		return false, nil
+	}
+	text, _ = TruncateText(text, perMessageChars)
+	if err := st.AppendInbox(ctx, st.DB(), seq, role, text); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // ModelCaller invokes the configured memory model with a system prompt and a
@@ -49,10 +50,10 @@ type ModelCaller interface {
 	Consolidate(ctx context.Context, systemPrompt, userJSON string) (raw string, model string, err error)
 }
 
-// Worker runs the consolidation "sleep cycle" against one store + archive pair.
+// Worker runs the consolidation "sleep cycle" against one store: it drains the
+// store's inbox into memory operations.
 type Worker struct {
 	st    *store.Store
-	src   MessageSource
 	model ModelCaller
 
 	batchOpts      BatchOptions
@@ -66,12 +67,6 @@ type Worker struct {
 	// second scheduler for a delete this cheap would earn nothing.
 	eventDays   int
 	retiredDays int
-
-	// markConsolidated, when set, flags archive messages up to a seq as
-	// consolidated after a successful apply + watermark advance. Best-effort:
-	// the cogmem.db watermark remains the source of truth, so a mark failure is
-	// logged in the run record but never rolls back the run.
-	markConsolidated func(uptoSeq int64) error
 }
 
 // Option configures a Worker (functional-options pattern, per dev standards).
@@ -99,19 +94,10 @@ func WithRetention(eventDays, retiredDays int) Option {
 // WithModelName records a human-readable model name in consolidation runs.
 func WithModelName(name string) Option { return func(w *Worker) { w.modelName = name } }
 
-// WithMarkConsolidated installs a best-effort callback invoked after a
-// successful apply + watermark advance with the highest consolidated seq, so
-// the writable archive can flag those rows and allow retention pruning to
-// reclaim them. A callback error is recorded in the run but never rolls back.
-func WithMarkConsolidated(fn func(uptoSeq int64) error) Option {
-	return func(w *Worker) { w.markConsolidated = fn }
-}
-
-// NewWorker builds a Worker over a store, an archive source, and a model caller.
-func NewWorker(st *store.Store, src MessageSource, model ModelCaller, opts ...Option) *Worker {
+// NewWorker builds a Worker over a store and a model caller.
+func NewWorker(st *store.Store, model ModelCaller, opts ...Option) *Worker {
 	w := &Worker{
 		st:        st,
-		src:       src,
 		model:     model,
 		batchOpts: DefaultBatchOptions(),
 	}
@@ -123,11 +109,10 @@ func NewWorker(st *store.Store, src MessageSource, model ModelCaller, opts ...Op
 
 // RunParams identifies one consolidation run.
 type RunParams struct {
-	AgentID     string
-	SessionKey  string
-	Workspace   string
-	ArchivePath string
-	Trigger     string // message, idle, nightly, manual
+	AgentID    string
+	SessionKey string
+	Workspace  string
+	Trigger    string // message, idle, nightly, manual
 }
 
 // RunResult reports the outcome of a single RunOnce.
@@ -139,12 +124,15 @@ type RunResult struct {
 	SeqEnd   int64
 }
 
-// RunOnce performs one consolidation pass: it leases the archive, selects the
-// next batch of un-consolidated messages, asks the model to propose memory
-// operations, validates them against the contract, and applies the valid result
-// in one transaction. The watermark advances only on a successful apply.
+// leaseName guards a store against two concurrent runs. One store, one lease.
+const leaseName = "consolidate:" + store.InboxStateKey
+
+// RunOnce performs one consolidation pass: it leases the store, selects the
+// next batch of inbox messages past the watermark, asks the model to propose
+// memory operations, validates them against the contract, and applies the
+// valid result in one transaction. The watermark advances only on a successful
+// apply, and only then is the covered part of the inbox deleted.
 func (w *Worker) RunOnce(ctx context.Context, p RunParams) (RunResult, error) {
-	leaseName := "consolidate:" + p.ArchivePath
 	owner := w.leaseOwner(p.AgentID)
 	ok, err := w.st.AcquireLease(ctx, w.st.DB(), leaseName, owner, leaseTTL)
 	if err != nil {
@@ -155,30 +143,32 @@ func (w *Worker) RunOnce(ctx context.Context, p RunParams) (RunResult, error) {
 	}
 	defer func() { _ = w.st.ReleaseLease(ctx, w.st.DB(), leaseName, owner) }()
 
-	state, err := w.st.GetState(ctx, w.st.DB(), p.ArchivePath)
+	state, err := w.st.GetState(ctx, w.st.DB(), store.InboxStateKey)
 	if err != nil {
 		return RunResult{}, fmt.Errorf("consolidate: get state: %w", err)
 	}
 	consolidated := state.ConsolidatedSeq
 
-	_, maxSeq, err := w.src.Bounds()
+	_, maxSeq, err := w.st.InboxBounds(ctx, w.st.DB())
 	if err != nil {
-		return RunResult{}, fmt.Errorf("consolidate: archive bounds: %w", err)
+		return RunResult{}, fmt.Errorf("consolidate: inbox bounds: %w", err)
 	}
 	if maxSeq <= consolidated {
 		return RunResult{Status: "idle", SeqStart: consolidated + 1}, nil
 	}
 
-	src, err := w.src.Range(consolidated+1, maxSeq)
+	src, err := w.st.InboxRange(ctx, w.st.DB(), consolidated+1, maxSeq)
 	if err != nil {
-		return RunResult{}, fmt.Errorf("consolidate: archive range: %w", err)
+		return RunResult{}, fmt.Errorf("consolidate: inbox range: %w", err)
 	}
 	msgs := make([]Message, 0, len(src))
 	for _, m := range src {
+		// Observe already filtered roles; a row written by an older host is
+		// filtered again here so the model never sees plumbing.
 		if !MeaningfulRole(m.Role) {
 			continue
 		}
-		msgs = append(msgs, Message(m))
+		msgs = append(msgs, Message{Seq: m.Seq, Role: m.Role, Text: m.Text})
 	}
 
 	batch, lastSeq, more := SelectBatch(msgs, w.batchOpts)
@@ -272,27 +262,25 @@ func (w *Worker) RunOnce(ctx context.Context, p RunParams) (RunResult, error) {
 		return result, fmt.Errorf("consolidate: apply: %w", err)
 	}
 
-	if err := w.st.SetWatermark(ctx, w.st.DB(), p.ArchivePath, lastSeq, maxSeq); err != nil {
+	if err := w.st.SetWatermark(ctx, w.st.DB(), store.InboxStateKey, lastSeq, maxSeq); err != nil {
 		return result, fmt.Errorf("consolidate: set watermark: %w", err)
 	}
 
-	// Best-effort: flag the now-consolidated archive rows so retention pruning
-	// may reclaim them. A failure is recorded but does not roll back the run —
-	// the cogmem.db watermark is the source of truth.
-	markErr := ""
-	if w.markConsolidated != nil {
-		if err := w.markConsolidated(lastSeq); err != nil {
-			markErr = "mark consolidated: " + err.Error()
-		}
+	// The watermark is the source of truth; the inbox rows behind it are now
+	// just weight. Best-effort: a delete failure is recorded on the run but the
+	// run itself stands, and the next run's delete covers the same rows again.
+	drainErr := ""
+	if _, err := w.st.DeleteInboxThrough(ctx, w.st.DB(), lastSeq); err != nil {
+		drainErr = "drain inbox: " + err.Error()
 	}
 	// Auto-repairs are a NOTE: the run succeeded and the deviation was safely
-	// corrected. markErr is a real error — the run itself was fine, but the
-	// best-effort archive flagging genuinely failed — so it stays in Error.
+	// corrected. drainErr is a real error — the run itself was fine, but the
+	// cleanup genuinely failed — so it stays in Error.
 	runNote := ""
 	if len(repairs) > 0 {
 		runNote = "auto-repaired: " + strings.Join(repairs, "; ")
 	}
-	w.recordRun(ctx, p, model, "ok", applied, consolidated+1, lastSeq, inputTokens, outputTokens, markErr, runNote, started)
+	w.recordRun(ctx, p, model, "ok", applied, consolidated+1, lastSeq, inputTokens, outputTokens, drainErr, runNote, started)
 	w.dump(p, system, string(userJSON), raw, applied)
 
 	result.Applied = applied

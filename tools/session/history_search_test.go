@@ -163,7 +163,7 @@ func TestSearchTool_SQLInjection(t *testing.T) {
 	_ = tool.Execute(ctx, map[string]any{"query": "x'; DROP TABLE messages; --"})
 
 	// Verify the table is still intact by opening the archive directly.
-	archivePath := dir + "/" + archiveSanitizeKey("injsess") + ".archive.db"
+	archivePath := memory.ArchivePath(dir, "injsess")
 	a, err := memory.Open(archivePath)
 	if err != nil {
 		t.Fatalf("archive open after injection attempt: %v", err)

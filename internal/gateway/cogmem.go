@@ -14,31 +14,9 @@ import (
 	"github.com/PivotLLM/ClawEh/cogmem/store"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/logger"
-	"github.com/PivotLLM/ClawEh/memory"
 	"github.com/PivotLLM/ClawEh/routing"
 	cogmemtools "github.com/PivotLLM/ClawEh/tools/cogmem"
 )
-
-// archiveSource adapts a read-only memory archive to
-// consolidate.MessageSource. It lives in the gateway (not in
-// cogmem/consolidate) so the worker carries no dependency on memory.
-type archiveSource struct {
-	a *memory.ArchiveStore
-}
-
-func (s archiveSource) Bounds() (int64, int64, error) { return s.a.Bounds() }
-
-func (s archiveSource) Range(minSeq, maxSeq int64) ([]consolidate.SourceMessage, error) {
-	rows, err := s.a.QueryRange(minSeq, maxSeq)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]consolidate.SourceMessage, 0, len(rows))
-	for _, r := range rows {
-		out = append(out, consolidate.SourceMessage{Seq: r.Seq, Role: r.Role, Text: r.Content})
-	}
-	return out, nil
-}
 
 // setupCogmemConsolidation builds and starts the cognitive-memory consolidation
 // manager and installs the cogmem_consolidate tool trigger. It is inert unless
@@ -59,34 +37,10 @@ func setupCogmemConsolidation(cfg *config.Config, agentLoop *agent.AgentLoop) *c
 		if err != nil {
 			return nil, fmt.Errorf("cogmem: open store: %w", err)
 		}
-		ar, err := memory.OpenReadOnly(j.ArchivePath)
-		if err != nil {
-			_ = st.Close()
-			return nil, fmt.Errorf("cogmem: open archive: %w", err)
-		}
 
 		mem := cfg.Agents.Defaults.EffectiveMemory(inst.Config)
 		caller := agentLoop.NewMemoryModelCaller(inst)
-		opts := workerOptions(mem, j.Workspace)
-
-		// Wire the retention-guard mark: after a successful run advances the
-		// watermark, flag the consolidated archive rows so pruning may reclaim
-		// them. Opens a short-lived writable archive per call (WAL allows the
-		// concurrent ContextManager writer; this only flips a flag on committed
-		// rows). Best-effort — the worker logs a mark error without rolling back.
-		markPath := filepath.Join(j.Workspace, "sessions",
-			store.SanitizeSessionKey(j.SessionKey)+".archive.db")
-		opts = append(opts, consolidate.WithMarkConsolidated(func(uptoSeq int64) error {
-			wa, err := memory.Open(markPath)
-			if err != nil {
-				return err
-			}
-			defer func() { _ = wa.Close() }()
-			return wa.MarkConsolidated(uptoSeq)
-		}))
-
-		w := consolidate.NewWorker(st, archiveSource{a: ar}, caller, opts...)
-		return w, nil
+		return consolidate.NewWorker(st, caller, workerOptions(mem, j.Workspace)...), nil
 	}
 
 	// Thresholds from the default agent's effective memory config. (Triggers are
@@ -128,13 +82,10 @@ func setupCogmemConsolidation(cfg *config.Config, agentLoop *agent.AgentLoop) *c
 			})
 			return
 		}
-		archivePath := filepath.Join(inst.Workspace, "sessions",
-			store.SanitizeSessionKey(sessionKey)+".archive.db")
 		mgr.Enqueue(consolidate.Job{
-			AgentID:     agentID,
-			SessionKey:  sessionKey,
-			Workspace:   inst.Workspace,
-			ArchivePath: archivePath,
+			AgentID:    agentID,
+			SessionKey: sessionKey,
+			Workspace:  inst.Workspace,
 		}, "manual")
 	})
 

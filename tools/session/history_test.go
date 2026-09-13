@@ -17,7 +17,7 @@ import (
 // writeArchive creates a .archive.db file in dir and populates it with msgs.
 func writeArchive(t *testing.T, dir, sessionKey string, msgs []memory.StoredMessage) string {
 	t.Helper()
-	filename := archiveSanitizeKey(sessionKey) + ".archive.db"
+	filename := memory.SanitizeSessionKey(sessionKey) + ".archive.db"
 	path := filepath.Join(dir, filename)
 	a, err := memory.Open(path)
 	if err != nil {

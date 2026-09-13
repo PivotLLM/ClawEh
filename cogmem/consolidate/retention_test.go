@@ -78,7 +78,8 @@ func TestRunOnce_AppliesRetention(t *testing.T) {
 	backdate(t, s, freshEvent.ID, 2)
 	backdate(t, s, freshRetired.ID, 10)
 
-	w := NewWorker(s, &fakeSource{msgs: sampleMessages()},
+	seedInbox(t, s, sampleMessages())
+	w := NewWorker(s,
 		&fakeModel{raw: `{"domain_ops":[],"memory_ops":[],"conflict_ledger":[]}`},
 		WithRetention(30, 90))
 	if _, err := w.RunOnce(ctx, params()); err != nil {
@@ -121,7 +122,8 @@ func TestRunOnce_RetentionDisabledKeepsEverything(t *testing.T) {
 	backdate(t, s, ancientEvent.ID, 3650)
 	backdate(t, s, ancientRetired.ID, 3650)
 
-	w := NewWorker(s, &fakeSource{msgs: sampleMessages()},
+	seedInbox(t, s, sampleMessages())
+	w := NewWorker(s,
 		&fakeModel{raw: `{"domain_ops":[],"memory_ops":[],"conflict_ledger":[]}`},
 		WithRetention(0, 0))
 	if _, err := w.RunOnce(ctx, params()); err != nil {

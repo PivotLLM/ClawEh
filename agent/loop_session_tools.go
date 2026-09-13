@@ -5,8 +5,6 @@ package agent
 
 import (
 	"encoding/json"
-	"path/filepath"
-	"strings"
 
 	"github.com/PivotLLM/ClawEh/memory"
 	"github.com/PivotLLM/ClawEh/tools"
@@ -46,11 +44,7 @@ func buildSessionInfo(al *AgentLoop, agent *AgentInstance, sessionKey string) (*
 		}
 	}
 
-	archivePath := filepath.Join(
-		agent.Workspace,
-		"sessions",
-		sessionKeyToFilename(sessionKey)+".archive.db",
-	)
+	archivePath := archiveDBPath(agent.Workspace, sessionKey)
 	if a, openErr := memory.OpenReadOnly(archivePath); openErr == nil {
 		defer a.Close()
 		minSeq, maxSeq, boundsErr := a.Bounds()
@@ -70,13 +64,4 @@ func buildSessionInfo(al *AgentLoop, agent *AgentInstance, sessionKey string) (*
 	}
 
 	return info, nil
-}
-
-// sessionKeyToFilename converts a session key to a safe filename component,
-// matching the sanitizeKey logic in memory/jsonl.go.
-func sessionKeyToFilename(key string) string {
-	s := strings.ReplaceAll(key, ":", "_")
-	s = strings.ReplaceAll(s, "/", "_")
-	s = strings.ReplaceAll(s, "\\", "_")
-	return s
 }

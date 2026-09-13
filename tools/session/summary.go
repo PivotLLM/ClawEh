@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"github.com/PivotLLM/ClawEh/llmcontext"
@@ -59,7 +58,7 @@ func (t *SessionSummaryListTool) Execute(ctx context.Context, args map[string]an
 		return tools.ErrorResult("session key not available")
 	}
 
-	archivePath := filepath.Join(t.sessionsDir, archiveSanitizeKey(sessionKey)+".archive.db")
+	archivePath := memory.ArchivePath(t.sessionsDir, sessionKey)
 	a, openErr := memory.OpenReadOnly(archivePath)
 	if openErr != nil {
 		if errors.Is(openErr, memory.ErrArchiveUnavailable) {
@@ -163,7 +162,7 @@ func (t *SessionSummaryGetTool) Execute(ctx context.Context, args map[string]any
 		return tools.ErrorResult("id parameter is required")
 	}
 
-	archivePath := filepath.Join(t.sessionsDir, archiveSanitizeKey(sessionKey)+".archive.db")
+	archivePath := memory.ArchivePath(t.sessionsDir, sessionKey)
 	a, openErr := memory.OpenReadOnly(archivePath)
 	if openErr != nil {
 		if errors.Is(openErr, memory.ErrArchiveUnavailable) {

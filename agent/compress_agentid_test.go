@@ -22,9 +22,7 @@ import (
 type capturingContextManager struct {
 	mu                         sync.Mutex
 	addUserMsgAgentID          string
-	buildAgentID               string
-	preDispatchCheckAgentID    string
-	checkAndCompressAgentID    string
+	assembleAgentID            string
 	addAssistantMessageAgentID string
 	toolDefTokens              int
 }
@@ -37,45 +35,33 @@ func (c *capturingContextManager) capture(field *string, ctx context.Context) {
 	}
 }
 
-func (c *capturingContextManager) AddUserMessage(ctx context.Context, _ providers.Message) error {
+func (c *capturingContextManager) AddUserMessage(ctx context.Context, _ providers.Message) (int64, error) {
 	c.capture(&c.addUserMsgAgentID, ctx)
-	return nil
+	return 1, nil
 }
 
-func (c *capturingContextManager) AddAssistantMessage(ctx context.Context, _ providers.Message) error {
+func (c *capturingContextManager) AddAssistantMessage(ctx context.Context, _ providers.Message) (int64, error) {
 	c.capture(&c.addAssistantMessageAgentID, ctx)
-	return nil
+	return 2, nil
 }
 
-func (c *capturingContextManager) AddToolCallMessage(_ context.Context, _ providers.Message) error {
-	return nil
+func (c *capturingContextManager) AddToolCallMessage(_ context.Context, _ providers.Message) (int64, error) {
+	return 3, nil
 }
 
-func (c *capturingContextManager) AddToolResult(_ context.Context, _ providers.Message) error {
-	return nil
-}
-func (c *capturingContextManager) RecordToolUse(_ ...string)     {}
-func (c *capturingContextManager) SetToolDefinitionTokens(n int) { c.toolDefTokens = n }
-func (c *capturingContextManager) PreDispatchCheck(ctx context.Context, current []providers.Message) ([]providers.Message, error) {
-	c.capture(&c.preDispatchCheckAgentID, ctx)
-	return current, nil
+func (c *capturingContextManager) AddToolResult(_ context.Context, _ providers.Message) (int64, error) {
+	return 4, nil
 }
 
-func (c *capturingContextManager) CheckAndCompress(ctx context.Context, built []providers.Message) ([]providers.Message, error) {
-	c.capture(&c.checkAndCompressAgentID, ctx)
-	return built, nil
+func (c *capturingContextManager) Assemble(ctx context.Context, req llmcontext.AssembleRequest) (llmcontext.Assembly, error) {
+	c.capture(&c.assembleAgentID, ctx)
+	c.mu.Lock()
+	c.toolDefTokens = req.ToolDefinitionTokens
+	c.mu.Unlock()
+	return llmcontext.Assembly{Messages: []providers.Message{{Role: "user", Content: "hi"}}}, nil
 }
-func (c *capturingContextManager) SetSystemPrompt(_ string)   {}
-func (c *capturingContextManager) SetCallContext(_, _ string) {}
-func (c *capturingContextManager) SetSessionToken(_ string)   {}
-func (c *capturingContextManager) Build(ctx context.Context) ([]providers.Message, error) {
-	c.capture(&c.buildAgentID, ctx)
-	return []providers.Message{{Role: "user", Content: "hi"}}, nil
-}
-
-func (c *capturingContextManager) SweepEvictions(_ context.Context) []llmcontext.EvictionEvent {
-	return nil
-}
+func (c *capturingContextManager) SetCallContext(_, _ string)                         {}
+func (c *capturingContextManager) SetSessionToken(_ string)                           {}
 func (c *capturingContextManager) Compact(_ context.Context) error                    { return nil }
 func (c *capturingContextManager) LastCompactionReport() *llmcontext.CompactionReport { return nil }
 func (c *capturingContextManager) RenderedSummary() string                            { return "" }
@@ -111,9 +97,9 @@ func (p *finalLLMProvider) GetDefaultModel() string { return "test-final" }
 
 // TestRunAgentLoop_PropagatesAgentIDForCompression verifies that runAgentLoop
 // attaches the agent ID to ctx before reaching any compression-capable entry
-// point. PreDispatchCheck, CheckAndCompress, and AddUserMessage (which holds
-// the in-loop triggerCheck path) must all see agent_id when the loop runs,
-// otherwise compression error logs lose the agent attribution Eric saw.
+// point. Assemble and AddUserMessage (which holds the in-loop triggerCheck
+// path) must both see agent_id when the loop runs, otherwise compression error
+// logs lose the agent attribution Eric saw.
 func TestRunAgentLoop_PropagatesAgentIDForCompression(t *testing.T) {
 	al, _, _, _, cleanup := newTestAgentLoop(t)
 	defer cleanup()
@@ -156,9 +142,7 @@ func TestRunAgentLoop_PropagatesAgentIDForCompression(t *testing.T) {
 		got  string
 	}{
 		{"AddUserMessage (triggerCheck path)", stub.addUserMsgAgentID},
-		{"Build", stub.buildAgentID},
-		{"CheckAndCompress", stub.checkAndCompressAgentID},
-		{"PreDispatchCheck", stub.preDispatchCheckAgentID},
+		{"Assemble", stub.assembleAgentID},
 	}
 	for _, c := range checks {
 		if c.got != agent.ID {

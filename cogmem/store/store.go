@@ -150,6 +150,9 @@ func (s *Store) migrate(ctx context.Context) error {
 	if err := s.seedGeneralOnce(ctx); err != nil {
 		return fmt.Errorf("cogmem: seed general domain: %w", err)
 	}
+	if err := s.collapseConsolidationState(ctx); err != nil {
+		return fmt.Errorf("cogmem: collapse consolidation state: %w", err)
+	}
 	if _, err := s.db.ExecContext(ctx,
 		`INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(?,?)`,
 		schemaVersion, now()); err != nil {
@@ -239,6 +242,56 @@ func (s *Store) dropLegacyMemoryColumns(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// collapseConsolidationState (v7) folds the archive-path-keyed watermark rows
+// into the single InboxStateKey row. The highest consolidated seq wins: it is
+// the point up to which memory already reflects the conversation, and the
+// host's one-time inbox backfill starts just past it. Idempotent: a store that
+// already has the row is left alone, and a fresh store has nothing to fold.
+func (s *Store) collapseConsolidationState(ctx context.Context) error {
+	// Databases from before the version was recorded can carry a
+	// consolidation_state table without the columns later code writes; add them
+	// so the single-row shape below (and SetWatermark) always has a home.
+	cols, err := s.columnSet(ctx, "consolidation_state")
+	if err != nil {
+		return err
+	}
+	for col, ddl := range map[string]string{
+		"last_seen_seq": "INTEGER NOT NULL DEFAULT 0",
+		"updated_at":    "INTEGER NOT NULL DEFAULT 0",
+	} {
+		if cols[col] {
+			continue
+		}
+		if _, err := s.db.ExecContext(ctx,
+			`ALTER TABLE consolidation_state ADD COLUMN `+col+` `+ddl); err != nil {
+			return fmt.Errorf("add %s: %w", col, err)
+		}
+	}
+	var have int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM consolidation_state WHERE archive_path = ?`, InboxStateKey).Scan(&have); err != nil {
+		return err
+	}
+	if have > 0 {
+		return nil
+	}
+	var seq, seen sql.NullInt64
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT MAX(consolidated_seq), MAX(last_seen_seq) FROM consolidation_state`).Scan(&seq, &seen); err != nil {
+		return err
+	}
+	if !seq.Valid {
+		return nil // nothing was ever consolidated
+	}
+	if _, err := s.db.ExecContext(ctx, `
+		INSERT INTO consolidation_state(archive_path, consolidated_seq, last_seen_seq, meaningful_count, last_run_at, updated_at)
+		VALUES(?,?,?,0,NULL,?)`, InboxStateKey, seq.Int64, seen.Int64, now()); err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `DELETE FROM consolidation_state WHERE archive_path != ?`, InboxStateKey)
+	return err
 }
 
 // DedupeActiveMemories retires active memories that exactly duplicate an earlier

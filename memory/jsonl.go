@@ -185,6 +185,17 @@ func sanitizeKey(key string) string {
 	return s
 }
 
+// SanitizeSessionKey is the single filename rule for every per-session file
+// (.jsonl, .meta.json, .archive.db, .cogmem.db): ':' '/' '\' become '_'. Every
+// package that names a session file must use it rather than carry a copy.
+func SanitizeSessionKey(key string) string { return sanitizeKey(key) }
+
+// ArchivePath returns the SQLite archive path for a session under dir
+// (normally <workspace>/sessions): <dir>/<sanitized-key>.archive.db.
+func ArchivePath(dir, sessionKey string) string {
+	return filepath.Join(dir, sanitizeKey(sessionKey)+".archive.db")
+}
+
 // getNoiseCache returns the noise cache for the given session key, creating
 // one if it does not exist. The noise cache contents are only accessed while
 // holding the per-session lock; noiseMu protects the map itself.

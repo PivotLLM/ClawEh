@@ -5,7 +5,6 @@ package agent
 
 import (
 	"context"
-	"path/filepath"
 	"strings"
 	"sync"
 
@@ -16,130 +15,257 @@ import (
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/llmcontext"
 	"github.com/PivotLLM/ClawEh/logger"
+	"github.com/PivotLLM/ClawEh/memory"
 	"github.com/PivotLLM/ClawEh/providers"
+	"github.com/PivotLLM/ClawEh/routing"
 )
 
-// wireCognitiveMemory installs the cognitive-memory archive hook and per-turn
-// prompt-injection closure on the ContextManager — but ONLY for cognitive
-// agents (those allowed the cogmem tools). For every other agent it returns nil
-// immediately and the ContextManager is untouched, preserving identical
-// behavior to before.
+// maxRecentTools bounds the recent-tool ring used for tool-trigger memory routing.
+const maxRecentTools = 8
+
+// memorySession is one agent session's view of cognitive memory. The loop
+// hands it a copy of every message (Observe), tells it which tools ran
+// (RecordToolUse), and asks it for the blocks to place in the next request
+// (Recall). It knows nothing about the context manager, and the context
+// manager knows nothing about it: the loop is the only thing that holds both.
 //
-// The returned cleanup func (nil for non-cognitive agents) closes the lazily
-// opened per-session cogmem store; the cmEntry calls it on eviction/drain.
-func (al *AgentLoop) wireCognitiveMemory(agent *AgentInstance, sessionKey string, cm llmcontext.ContextManager) func() {
-	// GATE 1: agent must be allowed the cogmem tools.
+// A nil *memorySession is valid and does nothing, so callers need no guard for
+// agents without cognitive memory.
+type memorySession struct {
+	agentID    string
+	sessionKey string
+	workspace  string
+	dbPath     string
+	// ephemeral is a sub-agent session: its store is a throwaway snapshot, so
+	// nothing is fed to consolidation and no inbox is kept.
+	ephemeral bool
+
+	mem    config.MemoryConfig
+	loader cogmem.AttachmentLoader
+	cogMgr *consolidate.Manager
+
+	mu     sync.Mutex
+	st     *store.Store
+	comp   *cogmem.Composer
+	opened bool
+
+	recentMu    sync.Mutex
+	recentTools []string
+}
+
+// wireCognitiveMemory builds the memory session for a cognitive agent, or
+// returns nil for every other agent. The returned session's Close releases the
+// lazily opened per-session store; the cmEntry calls it on eviction/drain.
+func (al *AgentLoop) wireCognitiveMemory(agent *AgentInstance, sessionKey string) *memorySession {
 	if agent == nil || agent.Config == nil || !agent.Config.CognitiveMemoryEnabled() {
 		return nil
 	}
-	// GATE 2: the concrete manager must expose the wiring setters.
-	mgr, ok := cm.(*llmcontext.Manager)
-	if !ok {
-		return nil
-	}
-
-	dbPath := store.SessionDBPath(agent.Workspace, sessionKey)
-	archivePath := filepath.Join(agent.Workspace, "sessions",
-		store.SanitizeSessionKey(sessionKey)+".archive.db")
-
 	cfg := al.GetConfig()
 	if cfg == nil {
 		return nil
 	}
-	mem := cfg.Agents.Defaults.EffectiveMemory(agent.Config)
-
-	// Retention guard: protect not-yet-consolidated archive messages from
-	// pruning for cognitive agents when configured (default true).
-	mgr.SetProtectUnconsolidated(mem.Retention.ProtectUnconsolidated)
-
-	// Archive hook: notify the consolidation manager on every archive write.
 	al.mu.RLock()
 	cogMgr := al.cogmemManager
 	al.mu.RUnlock()
-	if cogMgr != nil {
-		job := consolidate.Job{
-			AgentID:     agent.ID,
-			SessionKey:  sessionKey,
-			Workspace:   agent.Workspace,
-			ArchivePath: archivePath,
+
+	return &memorySession{
+		agentID:    agent.ID,
+		sessionKey: sessionKey,
+		workspace:  agent.Workspace,
+		dbPath:     store.SessionDBPath(agent.Workspace, sessionKey),
+		ephemeral:  routing.IsSubagentSessionKey(sessionKey),
+		mem:        cfg.Agents.Defaults.EffectiveMemory(agent.Config),
+		loader:     attachfile.NewLoader(cfg, agent.ID, agent.Workspace),
+		cogMgr:     cogMgr,
+	}
+}
+
+// ensure opens the per-session store and composer once, guarded so concurrent
+// callers share one handle. Returns nil when the open failed (logged once).
+func (m *memorySession) ensure() *store.Store {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.opened {
+		return m.st
+	}
+	m.opened = true
+	s, err := store.Open(m.dbPath)
+	if err != nil {
+		logger.WarnCF("cogmem", "open session store failed", map[string]any{
+			"agent_id":    m.agentID,
+			"session_key": m.sessionKey,
+			"path":        m.dbPath,
+			"error":       err.Error(),
+		})
+		return nil
+	}
+	m.st = s
+	m.comp = cogmem.New(s, append(memoryComposerOptions(m.mem), cogmem.WithAttachmentLoader(m.loader))...)
+	if !m.ephemeral {
+		m.backfillInbox(s)
+	}
+	return s
+}
+
+// backfillInbox runs once per store: messages archived before the store kept
+// its own inbox, and not yet consolidated, are copied in so the upgrade loses
+// nothing to memory. Later stores find the flag set and skip it.
+func (m *memorySession) backfillInbox(s *store.Store) {
+	ctx := context.Background()
+	done, err := s.InboxBackfilled(ctx)
+	if err != nil || done {
+		return
+	}
+	state, err := s.GetState(ctx, s.DB(), store.InboxStateKey)
+	if err != nil {
+		return
+	}
+	copied := 0
+	if a, err := memory.OpenReadOnly(archiveDBPath(m.workspace, m.sessionKey)); err == nil {
+		defer a.Close()
+		if _, maxSeq, err := a.Bounds(); err == nil && maxSeq > state.ConsolidatedSeq {
+			rows, err := a.QueryRange(state.ConsolidatedSeq+1, maxSeq)
+			if err == nil {
+				for _, r := range rows {
+					if ok, err := consolidate.Observe(ctx, s, r.Seq, r.Role, r.Content, m.mem.Consolidation.PerMessageChars); err != nil {
+						logger.WarnCF("cogmem", "inbox backfill append failed", map[string]any{
+							"session_key": m.sessionKey, "seq": r.Seq, "error": err.Error(),
+						})
+						return // leave the flag unset so the next open retries
+					} else if ok {
+						copied++
+					}
+				}
+			}
 		}
-		mgr.SetArchiveAppendHook(func(_ int64, _ providers.Message) {
-			cogMgr.OnMessage(job)
+	}
+	if err := s.SetInboxBackfilled(ctx); err != nil {
+		return
+	}
+	if copied > 0 {
+		logger.InfoCF("cogmem", "inbox backfilled from session archive", map[string]any{
+			"agent_id": m.agentID, "session_key": m.sessionKey, "messages": copied,
 		})
 	}
+}
 
-	// Prompt injection: a per-session lazily opened store + composer, guarded by
-	// a mutex so concurrent Build calls share one handle. The store is closed by
-	// the returned cleanup.
-	var (
-		mu     sync.Mutex
-		st     *store.Store
-		comp   *cogmem.Composer
-		opened bool
-	)
-
-	ensure := func() *cogmem.Composer {
-		mu.Lock()
-		defer mu.Unlock()
-		if opened {
-			return comp // may be nil if the open failed
-		}
-		opened = true
-		s, err := store.Open(dbPath)
-		if err != nil {
-			logger.WarnCF("cogmem", "open session store for prompt injection failed", map[string]any{
-				"agent_id":    agent.ID,
-				"session_key": sessionKey,
-				"path":        dbPath,
-				"error":       err.Error(),
-			})
-			return nil
-		}
-		st = s
-		opts := append(memoryComposerOptions(mem),
-			cogmem.WithAttachmentLoader(attachfile.NewLoader(cfg, agent.ID, agent.Workspace)))
-		comp = cogmem.New(s, opts...)
-		return comp
+// Observe hands the memory system a copy of a message the loop just stored
+// under seq. It lands in the store's inbox for the next consolidation run and
+// nudges the run's message-count trigger. Best-effort: a failure is logged and
+// never affects the turn.
+func (m *memorySession) Observe(ctx context.Context, seq int64, msg providers.Message) {
+	if m == nil || m.ephemeral || seq <= 0 {
+		return
 	}
-
-	mgr.SetMemoryBlocks(func(_ string, recentTools []string, routeText string) (stable, routed string) {
-		c := ensure()
-		if c == nil {
-			return "", ""
-		}
-		res, err := c.Compose(context.Background(), cogmem.RouteRequest{
-			RecentTools: recentTools,
-			RouteText:   routeText,
-			Trace:       mem.Prompt.IncludeDebugTrace,
+	s := m.ensure()
+	if s == nil {
+		return
+	}
+	stored, err := consolidate.Observe(ctx, s, seq, msg.Role, msg.Content, m.mem.Consolidation.PerMessageChars)
+	if err != nil {
+		logger.WarnCF("cogmem", "observe message failed", map[string]any{
+			"agent_id": m.agentID, "session_key": m.sessionKey, "seq": seq, "error": err.Error(),
 		})
-		if err != nil {
-			logger.WarnCF("cogmem", "memory compose failed", map[string]any{
-				"agent_id": agent.ID, "session_key": sessionKey, "error": err.Error(),
-			})
+		return
+	}
+	if stored && m.cogMgr != nil {
+		m.cogMgr.OnMessage(consolidate.Job{
+			AgentID:    m.agentID,
+			SessionKey: m.sessionKey,
+			Workspace:  m.workspace,
+		})
+	}
+}
+
+// RecordToolUse feeds the recent-tool ring (newest-first, deduped, capped) so
+// Recall can auto-load domains whose triggers match a tool the agent just used.
+func (m *memorySession) RecordToolUse(names ...string) {
+	if m == nil || len(names) == 0 {
+		return
+	}
+	m.recentMu.Lock()
+	defer m.recentMu.Unlock()
+	for _, n := range names {
+		if n == "" {
+			continue
 		}
-		if res.Attachments != "" || res.RoutedAttachments != "" {
-			// Split by provenance: sticky bytes ride in the cached prompt and are
-			// paid for once, routed bytes ride with the turn and are paid for
-			// every time. One combined figure hides which is which.
-			logger.DebugCF("cogmem", "attached documents injected", map[string]any{
-				"agent_id":     agent.ID,
-				"session_key":  sessionKey,
-				"sticky_bytes": len(res.Attachments),
-				"routed_bytes": len(res.RoutedAttachments),
-			})
+		out := m.recentTools[:0]
+		for _, e := range m.recentTools {
+			if e != n {
+				out = append(out, e)
+			}
 		}
-		// Sticky documents belong with the stable block; routed documents belong
-		// with the routed block, whose memory ids their headers cite.
-		return joinBlocks(res.Stable, res.Attachments), joinBlocks(res.Routed, res.RoutedAttachments)
+		m.recentTools = append([]string{n}, out...)
+	}
+	if len(m.recentTools) > maxRecentTools {
+		m.recentTools = m.recentTools[:maxRecentTools]
+	}
+}
+
+func (m *memorySession) recentToolsSnapshot() []string {
+	m.recentMu.Lock()
+	defer m.recentMu.Unlock()
+	if len(m.recentTools) == 0 {
+		return nil
+	}
+	out := make([]string, len(m.recentTools))
+	copy(out, m.recentTools)
+	return out
+}
+
+// Recall returns the blocks to place in the next request: the STABLE block
+// (sticky domains, topic index, their attached documents) for the system
+// message, and the ROUTED block (domains selected from routeText and the recent
+// tools, with their documents) for the current turn. Nil when there is nothing
+// to inject or the store could not be opened.
+func (m *memorySession) Recall(ctx context.Context, routeText string) []llmcontext.Injection {
+	if m == nil || m.ensure() == nil {
+		return nil
+	}
+	res, err := m.comp.Compose(ctx, cogmem.RouteRequest{
+		RecentTools: m.recentToolsSnapshot(),
+		RouteText:   routeText,
+		Trace:       m.mem.Prompt.IncludeDebugTrace,
 	})
+	if err != nil {
+		logger.WarnCF("cogmem", "memory compose failed", map[string]any{
+			"agent_id": m.agentID, "session_key": m.sessionKey, "error": err.Error(),
+		})
+	}
+	if res.Attachments != "" || res.RoutedAttachments != "" {
+		// Split by provenance: sticky bytes ride in the cached prompt and are
+		// paid for once, routed bytes ride with the turn and are paid for
+		// every time. One combined figure hides which is which.
+		logger.DebugCF("cogmem", "attached documents injected", map[string]any{
+			"agent_id":     m.agentID,
+			"session_key":  m.sessionKey,
+			"sticky_bytes": len(res.Attachments),
+			"routed_bytes": len(res.RoutedAttachments),
+		})
+	}
+	// Sticky documents belong with the stable block; routed documents belong
+	// with the routed block, whose memory ids their headers cite.
+	var out []llmcontext.Injection
+	if stable := joinBlocks(res.Stable, res.Attachments); stable != "" {
+		out = append(out, llmcontext.Injection{Placement: llmcontext.PlaceSystemStable, Text: stable})
+	}
+	if routed := joinBlocks(res.Routed, res.RoutedAttachments); routed != "" {
+		out = append(out, llmcontext.Injection{Placement: llmcontext.PlaceCurrentUser, Text: routed})
+	}
+	return out
+}
 
-	return func() {
-		mu.Lock()
-		defer mu.Unlock()
-		if st != nil {
-			_ = st.Close()
-			st = nil
-		}
+// Close releases the store handle. Safe on nil and when never opened.
+func (m *memorySession) Close() {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.st != nil {
+		_ = m.st.Close()
+		m.st = nil
+		m.comp = nil
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/PivotLLM/ClawEh/cogmem"
 	cogmemstore "github.com/PivotLLM/ClawEh/cogmem/store"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/global"
@@ -140,6 +141,10 @@ func NewAgentInstance(
 	// Progressive discovery is a single global switch; AgentLoop also sets it during
 	// tool registration (and DiscoveryActive), so this just seeds the context rule.
 	contextBuilder := NewContextBuilder(workspace).WithToolDiscovery(cfg.Tools.Discovery.Enabled)
+	if agentCfg.CognitiveMemoryEnabled() {
+		// Only an agent that has the subsystem is told how to use it.
+		contextBuilder = contextBuilder.WithMemoryGuidance(cogmem.Guidance())
+	}
 	// For named agents, always apply the skills filter — even if empty.
 	// nil filter = no restriction (all skills); empty filter = no skills.
 	// Default/nil agentCfg means the default agent which gets all skills.

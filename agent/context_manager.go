@@ -218,13 +218,22 @@ func (al *AgentLoop) buildDefaultCompressLLMClient(agent *AgentInstance, session
 	return &providerLLMClient{provider: agent.Provider, model: primary, requestJSONObject: true}
 }
 
-// getContextManager returns the ContextManager for the given agent+session pair,
-// creating and caching it on first access. The returned manager is shared across
-// all calls for the same (agentID, sessionKey) tuple.
+// getContextManager returns the ContextManager for the given agent+session
+// pair. See getSessionContext; this is the form for callers that do not touch
+// memory (compact, clear, session info).
+func (al *AgentLoop) getContextManager(agent *AgentInstance, sessionKey string) (llmcontext.ContextManager, func()) {
+	cm, _, release := al.getSessionContext(agent, sessionKey)
+	return cm, release
+}
+
+// getSessionContext returns the ContextManager and the cognitive-memory session
+// for the given agent+session pair, creating and caching them on first access.
+// Both are shared across all calls for the same (agentID, sessionKey) tuple;
+// the memory session is nil for agents without cognitive memory.
 //
 // The returned release function must be deferred by the caller to decrement the
 // reference count. The eviction goroutine skips entries with refcount > 0.
-func (al *AgentLoop) getContextManager(agent *AgentInstance, sessionKey string) (llmcontext.ContextManager, func()) {
+func (al *AgentLoop) getSessionContext(agent *AgentInstance, sessionKey string) (llmcontext.ContextManager, *memorySession, func()) {
 	key := agent.ID + ":" + sessionKey
 
 	// Fast path: entry already exists.
@@ -233,7 +242,7 @@ func (al *AgentLoop) getContextManager(agent *AgentInstance, sessionKey string) 
 		entry.refcount.Add(1)
 		entry.lastAccessed = time.Now()
 		release := func() { entry.refcount.Add(-1) }
-		return entry.cm, release
+		return entry.cm, entry.mem, release
 	}
 
 	// Slow path: create a new ContextManager and wrap it in a cmEntry.
@@ -341,16 +350,16 @@ func (al *AgentLoop) getContextManager(agent *AgentInstance, sessionKey string) 
 		}
 	}
 
-	// Cognitive-memory wiring — cognitive agents ONLY. For every other agent this
-	// is a no-op (returns nil) and the manager behaves exactly as before.
-	cmCleanup := al.wireCognitiveMemory(agent, sessionKey, cm)
+	// Cognitive-memory session — cognitive agents ONLY; nil for every other
+	// agent, and every method on a nil session is a no-op.
+	mem := al.wireCognitiveMemory(agent, sessionKey)
 
 	newEntry := &cmEntry{
 		cm:           cm,
 		sessionKey:   sessionKey,
 		store:        agent.Sessions,
 		lastAccessed: time.Now(),
-		cleanup:      cmCleanup,
+		mem:          mem,
 	}
 	newEntry.refcount.Store(1)
 
@@ -362,17 +371,15 @@ func (al *AgentLoop) getContextManager(agent *AgentInstance, sessionKey string) 
 		if sti != nil {
 			sti.Revoke(sessionKey)
 		}
-		// Release the cogmem store handle we opened for the discarded CM.
-		if cmCleanup != nil {
-			cmCleanup()
-		}
+		// Release the cogmem store handle we may have opened for the discarded CM.
+		mem.Close()
 		entry := actual.(*cmEntry)
 		entry.refcount.Add(1)
 		entry.lastAccessed = time.Now()
 		release := func() { entry.refcount.Add(-1) }
-		return entry.cm, release
+		return entry.cm, entry.mem, release
 	}
 
 	release := func() { newEntry.refcount.Add(-1) }
-	return newEntry.cm, release
+	return newEntry.cm, newEntry.mem, release
 }

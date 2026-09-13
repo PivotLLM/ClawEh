@@ -10,7 +10,11 @@ package store
 // 6: dropped memories.source and memories.priority, and retired the "review"
 //
 //	status. See docs/cogmem-redesign-plan.md.
-const schemaVersion = 6
+//
+// 7: added the inbox table. Consolidation reads the store's own copy of the
+// conversation instead of the session archive, so the store depends on nothing
+// outside itself; consolidation_state collapses to the single InboxStateKey row.
+const schemaVersion = 7
 
 // schema is the full DDL for a .cogmem.db. All statements are idempotent so
 // migrate() can run it on every open. No FTS, no vector columns.
@@ -77,6 +81,17 @@ CREATE TABLE IF NOT EXISTS consolidation_state (
   meaningful_count INTEGER NOT NULL DEFAULT 0,
   last_run_at      INTEGER,
   updated_at       INTEGER NOT NULL
+);
+
+-- The store's own copy of conversation messages not yet consolidated. Written
+-- by the host as each message is spoken (AppendInbox), drained by the
+-- consolidation worker once a run has covered them. seq is the host's
+-- transcript number, shared with the evidence ranges memories cite.
+CREATE TABLE IF NOT EXISTS inbox (
+  seq        INTEGER PRIMARY KEY,
+  role       TEXT NOT NULL,
+  text       TEXT NOT NULL,
+  created_at INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS memory_events (
