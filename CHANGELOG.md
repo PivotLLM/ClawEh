@@ -39,12 +39,14 @@ behalf, and an assistant is only told about memory when it actually has it.
   mid-way compacts before the request is sent instead of relying on the
   provider's context-exceeded retry.
 
-### Deprecated
+### Removed
 
-- **`memory.retention.protect_unconsolidated` has no effect.** The archive no
-  longer needs guarding from retention pruning, because memory keeps its own
-  copy of what it has not yet consolidated. The key is still accepted so
-  existing configs load; remove it at your convenience.
+- **BREAKING: the config key `memory.retention.protect_unconsolidated` is
+  gone.** It guarded the session archive from retention pruning until memory
+  had consolidated a message. Memory now keeps its own copy of what it has not
+  yet consolidated, so there is nothing left to guard. Migration: delete the
+  key from `config.json`; leaving it in place is harmless, an unknown key is
+  ignored on load.
 
 ### Fixed
 

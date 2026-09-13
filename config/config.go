@@ -220,12 +220,6 @@ type MemoryConsolidationConfig struct {
 
 // MemoryRetentionConfig bounds how long transient memory rows are kept.
 type MemoryRetentionConfig struct {
-	// Deprecated: no effect. Cognitive memory keeps its own copy of
-	// unconsolidated messages (the store's inbox), so the session archive no
-	// longer needs guarding from retention pruning. Accepted so existing
-	// configs still load; ignored.
-	ProtectUnconsolidated bool `json:"protect_unconsolidated,omitempty"`
-
 	// EventDays is how long an `event` memory is kept before it is deleted.
 	// Events are things that happened at a point in time — a trip, a delivery,
 	// a scheduled run — and they stop being useful long before they stop
