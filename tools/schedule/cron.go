@@ -37,6 +37,7 @@ type CronTool struct {
 	listenMu   sync.Mutex
 	listeners  map[string]*listener
 	listenStop context.CancelFunc
+	listenKick chan struct{}
 	listenWG   sync.WaitGroup
 }
 
@@ -309,6 +310,7 @@ func (t *CronTool) addJob(args map[string]any, agentID string) *tools.ToolResult
 	job.AgentID = agentID
 	job.Payload.Watch = watch
 	t.cronService.UpdateJob(job)
+	t.kickListeners()
 
 	if listen {
 		return tools.SilentResult(fmt.Sprintf(
@@ -418,6 +420,7 @@ func (t *CronTool) removeJob(args map[string]any, agentID string) *tools.ToolRes
 	if err != nil {
 		return tools.ErrorResult(fmt.Sprintf("Failed to remove job %s: %v", jobID, err))
 	}
+	t.kickListeners()
 	if removed {
 		return tools.SilentResult(fmt.Sprintf("Cron job removed: %s", jobID))
 	}
@@ -441,6 +444,7 @@ func (t *CronTool) enableJob(args map[string]any, enable bool, agentID string) *
 	if job == nil {
 		return tools.ErrorResult(fmt.Sprintf("Job %s not found", jobID))
 	}
+	t.kickListeners()
 
 	status := "enabled"
 	if !enable {

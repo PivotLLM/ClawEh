@@ -452,6 +452,13 @@ PY
       }
     ]
   },
+  "bindings": [
+    {
+      "agent_id": "main",
+      "default": true,
+      "match": { "channel": "cli", "peer": { "kind": "channel", "id": "integration-probe" } }
+    }
+  ],
   "channels": {
     "webui": {
       "enabled": true,
@@ -665,6 +672,7 @@ EOF
                        SERVICE_TOKEN="$TEST_SERVICE_TOKEN" \
                        CONFIG_FILE="$INTEG_HOME/config.json" \
                        GATEWAY_URL="http://127.0.0.1:$GATEWAY_PORT" \
+                       GATEWAY_LOG="$INTEG_LOG" \
                        bash "$INTEGRATION_SCRIPT"; then
                         echo "${GREEN}MCP server integration tests passed.${NC}"
                     else

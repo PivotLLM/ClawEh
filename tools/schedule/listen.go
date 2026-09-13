@@ -75,6 +75,9 @@ func (t *CronTool) StartListeners(ctx context.Context) {
 	}
 	supCtx, cancel := context.WithCancel(ctx)
 	t.listenStop = cancel
+	if t.listenKick == nil {
+		t.listenKick = make(chan struct{}, 1)
+	}
 	t.listenWG.Add(1)
 	go func() {
 		defer t.listenWG.Done()
@@ -87,9 +90,29 @@ func (t *CronTool) StartListeners(ctx context.Context) {
 				return
 			case <-ticker.C:
 				t.reconcileListeners(supCtx)
+			case <-t.listenKick:
+				t.reconcileListeners(supCtx)
 			}
 		}
 	}()
+}
+
+// kickListeners asks the supervisor to reconcile now rather than at the next
+// tick. The tool calls it after add/remove/enable/disable so a listener starts
+// or stops as soon as the job changes; the ticker still covers edits made by
+// the CLI or a config reload. Non-blocking, and a no-op when not started.
+func (t *CronTool) kickListeners() {
+	t.listenMu.Lock()
+	kick := t.listenKick
+	started := t.listenStop != nil
+	t.listenMu.Unlock()
+	if !started || kick == nil {
+		return
+	}
+	select {
+	case kick <- struct{}{}:
+	default: // a reconcile is already pending
+	}
 }
 
 // StopListeners stops the supervisor and every listener and waits for them.

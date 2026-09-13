@@ -256,6 +256,44 @@ func TestListen_ReconcileStopsDisabledJobs(t *testing.T) {
 	waitFor(func() bool { return running() == 1 }, "listener not restarted after enable")
 }
 
+// TestListen_ToolActionsReconcileImmediately: with the ticker effectively off,
+// a listener still starts on add and stops on remove, because the tool kicks
+// the supervisor.
+func TestListen_ToolActionsReconcileImmediately(t *testing.T) {
+	tool := &scriptedTool{}
+	ct, _ := newListenEnv(t, tool)
+	listenReconcileInterval = time.Hour
+
+	ct.StartListeners(context.Background())
+	defer ct.StopListeners()
+
+	running := func() int {
+		ct.listenMu.Lock()
+		defer ct.listenMu.Unlock()
+		return len(ct.listeners)
+	}
+	waitFor := func(cond func() bool, what string) {
+		t.Helper()
+		deadline := time.Now().Add(3 * time.Second)
+		for time.Now().Before(deadline) {
+			if cond() {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		t.Fatal(what)
+	}
+
+	job := addListenJob(t, ct, nil)
+	waitFor(func() bool { return running() == 1 && tool.callCount() >= 1 }, "listener did not start on add")
+
+	res := ct.Execute(agentCtx("amber"), map[string]any{"action": "remove", "job_id": job.ID})
+	if res.IsError {
+		t.Fatalf("remove: %s", res.ForLLM)
+	}
+	waitFor(func() bool { return running() == 0 }, "listener did not stop on remove")
+}
+
 // TestListen_ExecuteJobIsANoOp: the scheduler never fires a listen job, and
 // if asked to it does nothing.
 func TestListen_ExecuteJobIsANoOp(t *testing.T) {
