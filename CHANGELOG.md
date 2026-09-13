@@ -16,6 +16,20 @@ Cognitive memory stands on its own. It keeps its own copy of the conversation
 until it has learned from it, so nothing else has to hold messages on its
 behalf, and an assistant is only told about memory when it actually has it.
 
+### Added
+
+- **Listen jobs: a persistent callback from a long-poll tool.** `cron_schedule
+  add` with `listen: true` and a `watch_tool` keeps the tool running in the
+  background: call it, wait for it to return (an event, a dropped connection,
+  or `watch_timeout_seconds`, default 300), and call it again at once. Whenever
+  the `watch_fields` are present and carry a new value, `message` is delivered
+  to the agent followed by the tool's full result, introduced as
+  `<tool> returned the following:`. An absent field is "no data", not a
+  change; a repeated event is not delivered twice, across restarts; failures
+  retry with backoff and are reported after five in a row. Jobs of schedule
+  kind `listen` have no next run and show as `listen (continuous)`. See
+  docs/cron.md, "Listen jobs".
+
 ### Changed
 
 - **Cognitive memory no longer reads the session archive.** Each message is

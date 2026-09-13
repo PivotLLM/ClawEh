@@ -96,6 +96,7 @@ func buildMergedMux(srv *webserver.Server) *http.ServeMux {
 // gatewayServices holds references to all running services
 type gatewayServices struct {
 	CronService    *cron.CronService
+	CronTool       *toolschedule.CronTool
 	MountWatcher   *mountwatch.Watcher
 	MediaStore     media.MediaStore
 	ChannelManager *channels.Manager
@@ -373,6 +374,10 @@ func setupAndStartServices(
 		return nil, fmt.Errorf("error starting cron service: %w", err)
 	}
 	logger.InfoC("cron", "Cron service started")
+	services.CronTool = cronTool
+	if cronTool != nil {
+		cronTool.StartListeners(context.Background())
+	}
 
 	// Watch notify-enabled external mounts for new files (cron-style notices).
 	services.MountWatcher = mountwatch.New(agentLoop.GetConfig, msgBus, 0)
@@ -669,6 +674,9 @@ func stopAndCleanupServices(
 	if services.MountWatcher != nil {
 		services.MountWatcher.Stop()
 	}
+	if services.CronTool != nil {
+		services.CronTool.StopListeners()
+	}
 	if services.CronService != nil {
 		services.CronService.Stop()
 	}
@@ -804,6 +812,10 @@ func restartServices(
 		return fmt.Errorf("error restarting cron service: %w", err)
 	}
 	logger.InfoC("cron", "Cron service restarted")
+	services.CronTool = cronTool
+	if cronTool != nil {
+		cronTool.StartListeners(context.Background())
+	}
 
 	// Re-create the mount watcher. stopAndCleanupServices stopped the old one, so
 	// without this a reload would silently end mount notifications for the rest of

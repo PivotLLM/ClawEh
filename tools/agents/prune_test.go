@@ -20,10 +20,11 @@ func TestPruneOrphanSubagentSessions(t *testing.T) {
 		}
 		return p
 	}
-	oldSub := write("agent_penny_subagent_abc.cogmem.db")
-	oldSubArch := write("agent_penny_subagent_abc.archive.db")
-	recentSub := write("agent_penny_subagent_def.cogmem.db")
-	mainSession := write("agent_penny_main.cogmem.db") // must never be touched
+	oldSub := write("agent_penny_subagent_abc.archive.db")
+	oldSubArch := write("agent_penny_subagent_abc.archive.db-wal")
+	recentSub := write("agent_penny_subagent_def.archive.db")
+	mainSession := write("agent_penny_main.archive.db")      // must never be touched
+	legacyMem := write("agent_penny_subagent_abc.cogmem.db") // not ours: memory never lived here after 0.5.1
 
 	now := time.Now()
 	// Age the two "old" sub-agent files past 24h; leave the recent one fresh.
@@ -55,6 +56,9 @@ func TestPruneOrphanSubagentSessions(t *testing.T) {
 	}
 	if _, err := os.Stat(oldSnap); err == nil {
 		t.Fatal("stale snapshot directory not removed")
+	}
+	if _, err := os.Stat(legacyMem); err != nil {
+		t.Fatal("prune must only touch the files a sub-agent session writes today")
 	}
 	if _, err := os.Stat(freshSnap); err != nil {
 		t.Fatal("fresh snapshot directory must survive")

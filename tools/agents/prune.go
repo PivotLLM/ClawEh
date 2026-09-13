@@ -17,6 +17,23 @@ import (
 // SanitizeSessionKey turns into "agent_<id>_subagent_<uuid>".
 const subagentSessionMarker = "_subagent_"
 
+// subagentSessionSuffixes are the files a sub-agent session leaves under
+// sessions/: its conversation archive and SQLite's sidecars. Memory lives in
+// its own snapshot directory (see below), never here.
+var subagentSessionSuffixes = []string{".archive.db", ".archive.db-wal", ".archive.db-shm"}
+
+func isSubagentSessionFile(name string) bool {
+	if !strings.Contains(name, subagentSessionMarker) {
+		return false
+	}
+	for _, suffix := range subagentSessionSuffixes {
+		if strings.HasSuffix(name, suffix) {
+			return true
+		}
+	}
+	return false
+}
+
 // PruneOrphanSubagentSessions deletes leftover sub-agent session files: the
 // conversation archive (with its -wal/-shm) under <workspace>/sessions, and the
 // memory snapshot directory under <workspace>/cogmem/subagents, whose mtime is
@@ -30,7 +47,7 @@ func PruneOrphanSubagentSessions(workspace string, olderThan time.Duration, now 
 	dir := filepath.Join(workspace, "sessions")
 	entries, _ := os.ReadDir(dir) // no sessions dir (or unreadable) → nothing there to prune
 	for _, e := range entries {
-		if e.IsDir() || !strings.Contains(e.Name(), subagentSessionMarker) {
+		if e.IsDir() || !isSubagentSessionFile(e.Name()) {
 			continue
 		}
 		info, err := e.Info()

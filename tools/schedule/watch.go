@@ -236,6 +236,14 @@ func (t *CronTool) runWatch(ctx context.Context, job *cron.CronJob) watchOutcome
 // that agent is allowed to use, re-checked on every run rather than only when
 // the watch was created — a tool revoked in config must stop being probed.
 func (t *CronTool) probe(ctx context.Context, agentID string, w *cron.CronWatch) (string, error) {
+	probeCtx, cancel := context.WithTimeout(ctx, watchProbeTimeout)
+	defer cancel()
+	return t.probeWithContext(probeCtx, agentID, w)
+}
+
+// probeWithContext is probe without the fixed timeout: the caller's ctx bounds
+// the call. Listen jobs use it with their own, longer wait.
+func (t *CronTool) probeWithContext(ctx context.Context, agentID string, w *cron.CronWatch) (string, error) {
 	if t.agentTools == nil {
 		return "", fmt.Errorf("watch jobs are not available: no tool registry wired")
 	}
@@ -243,21 +251,15 @@ func (t *CronTool) probe(ctx context.Context, agentID string, w *cron.CronWatch)
 	if registry == nil {
 		return "", fmt.Errorf("agent %q has no tool registry", agentID)
 	}
-
 	tool, ok := registry.GetForHost(w.Tool)
 	if !ok {
 		return "", fmt.Errorf("tool %q is not available to agent %q", w.Tool, agentID)
 	}
-	// Session-scoped tools need a conversation to act on; a probe has none, and
-	// silently handing them an empty session key would read from the wrong place.
 	if scoped, isScoped := tool.(tools.SessionScoped); isScoped && scoped.IsSessionScoped() {
 		return "", fmt.Errorf("tool %q is session-scoped and cannot be used as a watch probe", w.Tool)
 	}
 
-	probeCtx, cancel := context.WithTimeout(ctx, watchProbeTimeout)
-	defer cancel()
-
-	res := registry.ExecuteForHost(probeCtx, w.Tool, w.Args, "", "", nil)
+	res := registry.ExecuteForHost(ctx, w.Tool, w.Args, "", "", nil)
 	if res == nil {
 		return "", fmt.Errorf("tool %q returned no result", w.Tool)
 	}

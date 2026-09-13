@@ -26,6 +26,8 @@ func cronListCmd(storePath string) {
 			schedule = fmt.Sprintf("every %ds", *job.Schedule.EveryMS/1000)
 		} else if job.Schedule.Kind == "cron" {
 			schedule = job.Schedule.Expr
+		} else if job.Schedule.Kind == cron.KindListen {
+			schedule = "listen (continuous)"
 		} else {
 			schedule = "one-time"
 		}
