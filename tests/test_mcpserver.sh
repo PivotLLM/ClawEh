@@ -49,6 +49,7 @@ SESSION_TOKEN="${SESSION_TOKEN:-}"
 SERVICE_TOKEN="${SERVICE_TOKEN:-}"   # optional: long-lived per-agent service token
 CONFIG_FILE="${CONFIG_FILE:-}"     # optional: path to config file for reload test
 GATEWAY_URL="${GATEWAY_URL:-}"     # optional: gateway base URL for /health and /ready checks
+GATEWAY_LOG="${GATEWAY_LOG:-}"     # optional: the gateway's log file, for background-behaviour checks
 FULL_URL="${SERVER_URL}${ENDPOINT}"
 BEARER_URL="${SERVER_URL}${BEARER_ENDPOINT}"
 
@@ -772,6 +773,84 @@ else
         "time_now" '{"timezone":"UTC"}' "UTC+00:00"
     # The unknown-timezone path is covered by a unit test in tools/timetool;
     # it is hermetic, so there is nothing environmental for this suite to add.
+
+    #---------------------------------------------------------------------------
+    # Section 4f: A listen job is a persistent callback: one cron_schedule call
+    # creates it, and from then on the gateway calls the watched tool in the
+    # background and delivers each new result to the agent with no further
+    # calls from anyone. time_now is the probe: it is hermetic and its result
+    # changes every second, so a listener on it must deliver repeatedly. The
+    # proof of "background" is in the gateway log: deliveries recorded after
+    # the add returned and before anything else was called.
+    #
+    # Runs with the SERVICE token over the bearer endpoint: cron_schedule
+    # derives the calling agent from the session key, which a service token
+    # resolves to the agent's main session (the test SST token is registered
+    # under a synthetic key). That is also the real shape of this feature —
+    # an external client such as Claude Code arming a callback for an agent.
+    # Needs GATEWAY_LOG, SERVICE_TOKEN and BEARER_ENDPOINT.
+    #---------------------------------------------------------------------------
+
+    if [ -n "$GATEWAY_LOG" ] && [ -r "$GATEWAY_LOG" ] && [ -n "$SERVICE_TOKEN" ] && [ -n "$BEARER_ENDPOINT" ]; then
+        print_section "4f. Listen job (background callback, service token)"
+
+        probe_call_service() {
+            "$PROBE_PATH" -url "$BEARER_URL" -transport http \
+                -headers "Authorization:Bearer ${SERVICE_TOKEN}" \
+                -call "$1" -params "$2" 2>&1
+        }
+
+        echo "  4f.1 cron_schedule add listen — listener created"
+        LISTEN_ADD=$(probe_call_service "cron_schedule" "{\"action\":\"add\",\"message\":\"listen probe $$\",\"listen\":true,\"watch_tool\":\"time_now\",\"watch_timeout_seconds\":5}")
+        LISTEN_ID=$(printf '%s' "$LISTEN_ADD" | grep -o 'id: [A-Za-z0-9_-]*' | head -1 | cut -d' ' -f2)
+        if echo "$LISTEN_ADD" | grep -q "Listener added" && [ -n "$LISTEN_ID" ]; then
+            echo "    ${GREEN}PASS${NC}: listener $LISTEN_ID created"
+            TIER2_PASS=$((TIER2_PASS + 1)); PASS_COUNT=$((PASS_COUNT + 1))
+        else
+            echo "    ${RED}FAIL${NC}: add did not create a listener"
+            echo "    Output: $(printf '%s' "$LISTEN_ADD" | grep -A3 'Tool Call Result' | tail -3)"
+            TIER2_FAIL=$((TIER2_FAIL + 1)); FAIL_COUNT=$((FAIL_COUNT + 1))
+        fi
+
+        echo "  4f.2 listener delivers repeatedly in the background (no further calls)"
+        sleep 7
+        LISTEN_STARTED=$(grep -c "listen: started" "$GATEWAY_LOG" || true)
+        LISTEN_DELIVERED=$(grep -c "listen: event delivered" "$GATEWAY_LOG" || true)
+        if [ "$LISTEN_STARTED" -ge 1 ] && [ "$LISTEN_DELIVERED" -ge 2 ]; then
+            echo "    ${GREEN}PASS${NC}: $LISTEN_DELIVERED deliveries logged while nothing was called"
+            TIER2_PASS=$((TIER2_PASS + 1)); PASS_COUNT=$((PASS_COUNT + 1))
+        else
+            echo "    ${RED}FAIL${NC}: started=$LISTEN_STARTED delivered=$LISTEN_DELIVERED (want >=1 and >=2)"
+            grep "listen:" "$GATEWAY_LOG" | tail -5 | sed 's/^/    /'
+            TIER2_FAIL=$((TIER2_FAIL + 1)); FAIL_COUNT=$((FAIL_COUNT + 1))
+        fi
+
+        echo "  4f.3 cron_schedule list — shows the listener as continuous"
+        LISTEN_LIST=$(probe_call_service "cron_schedule" '{"action":"list"}')
+        if echo "$LISTEN_LIST" | grep -q "listen (continuous)"; then
+            echo "    ${GREEN}PASS${NC}: listed as continuous"
+            TIER2_PASS=$((TIER2_PASS + 1)); PASS_COUNT=$((PASS_COUNT + 1))
+        else
+            echo "    ${RED}FAIL${NC}: listener not listed as continuous"
+            echo "    Output: $(printf '%s' "$LISTEN_LIST" | grep -A4 'Tool Call Result' | tail -4)"
+            TIER2_FAIL=$((TIER2_FAIL + 1)); FAIL_COUNT=$((FAIL_COUNT + 1))
+        fi
+
+        echo "  4f.4 cron_schedule remove — listener stops at once"
+        LISTEN_RM=$(probe_call_service "cron_schedule" "{\"action\":\"remove\",\"job_id\":\"$LISTEN_ID\"}")
+        sleep 3
+        LISTEN_STOPPED=$(grep -c "listen: stopped" "$GATEWAY_LOG" || true)
+        if echo "$LISTEN_RM" | grep -q "removed" && [ "$LISTEN_STOPPED" -ge 1 ]; then
+            echo "    ${GREEN}PASS${NC}: listener stopped after removal"
+            TIER2_PASS=$((TIER2_PASS + 1)); PASS_COUNT=$((PASS_COUNT + 1))
+        else
+            echo "    ${RED}FAIL${NC}: remove output or stop line missing (stopped=$LISTEN_STOPPED)"
+            echo "    Output: $(printf '%s' "$LISTEN_RM" | grep -A3 'Tool Call Result' | tail -3)"
+            TIER2_FAIL=$((TIER2_FAIL + 1)); FAIL_COUNT=$((FAIL_COUNT + 1))
+        fi
+    else
+        echo "  4f.* listen job checks skipped (need GATEWAY_LOG, SERVICE_TOKEN and BEARER_ENDPOINT)"
+    fi
 
 fi  # end SESSION_TOKEN block
 

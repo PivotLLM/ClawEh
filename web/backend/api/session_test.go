@@ -1,18 +1,17 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"testing"
 
+	"github.com/PivotLLM/ctxengine/memory"
+	"github.com/PivotLLM/ctxengine/session"
+
 	"github.com/PivotLLM/ClawEh/config"
-	"github.com/PivotLLM/ClawEh/memory"
 	"github.com/PivotLLM/ClawEh/providers"
-	"github.com/PivotLLM/ClawEh/session"
 )
 
 func sessionsTestDir(t *testing.T, configPath string) string {
@@ -34,43 +33,47 @@ func sessionsTestDir(t *testing.T, configPath string) string {
 	return dir
 }
 
-func TestHandleListSessions_JSONLStorage(t *testing.T) {
+// seedSession writes messages and a summary for sessionKey through the real
+// store, then closes it so the handlers read a quiescent DB the way they do
+// in production (the gateway holds its own handle; the WebUI opens read-only).
+func seedSession(t *testing.T, dir, sessionKey, summary string, msgs ...providers.Message) {
+	t.Helper()
+
+	store, err := session.NewSQLiteStore(dir)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
+	for _, msg := range msgs {
+		store.AddFullMessage(sessionKey, msg)
+	}
+	if summary != "" {
+		store.SetSummary(sessionKey, summary)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+}
+
+func newSessionsMux(t *testing.T, configPath string) *http.ServeMux {
+	t.Helper()
+	h := NewHandler(configPath)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+	return mux
+}
+
+func TestHandleListSessions_ArchiveDB(t *testing.T) {
 	configPath, cleanup := setupTestEnv(t)
 	defer cleanup()
 
 	dir := sessionsTestDir(t, configPath)
-	store, err := memory.NewJSONLStore(dir)
-	if err != nil {
-		t.Fatalf("NewJSONLStore() error = %v", err)
-	}
+	seedSession(t, dir, webuiSessionPrefix+"history-db", "DB-backed session",
+		providers.Message{Role: "user", Content: "Explain why the history API is empty after migration."},
+		providers.Message{Role: "assistant", Content: "Because the API still reads only legacy JSON session files."},
+		providers.Message{Role: "tool", Content: "ignored"},
+	)
 
-	sessionKey := webuiSessionPrefix + "history-jsonl"
-	if _, err := store.AddFullMessage(context.TODO(), sessionKey, providers.Message{
-		Role:    "user",
-		Content: "Explain why the history API is empty after migration.",
-	}); err != nil {
-		t.Fatalf("AddFullMessage(user) error = %v", err)
-	}
-	if _, err := store.AddFullMessage(context.TODO(), sessionKey, providers.Message{
-		Role:    "assistant",
-		Content: "Because the API still reads only legacy JSON session files.",
-	}); err != nil {
-		t.Fatalf("AddFullMessage(assistant) error = %v", err)
-	}
-	if _, err := store.AddFullMessage(context.TODO(), sessionKey, providers.Message{
-		Role:    "tool",
-		Content: "ignored",
-	}); err != nil {
-		t.Fatalf("AddFullMessage(tool) error = %v", err)
-	}
-	if err := store.SetSummary(context.TODO(), sessionKey, "JSONL-backed session"); err != nil {
-		t.Fatalf("SetSummary() error = %v", err)
-	}
-
-	h := NewHandler(configPath)
-	mux := http.NewServeMux()
-	h.RegisterRoutes(mux)
-
+	mux := newSessionsMux(t, configPath)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/sessions", nil)
 	mux.ServeHTTP(rec, req)
@@ -86,17 +89,46 @@ func TestHandleListSessions_JSONLStorage(t *testing.T) {
 	if len(items) != 1 {
 		t.Fatalf("len(items) = %d, want 1", len(items))
 	}
-	if items[0].ID != "history-jsonl" {
-		t.Fatalf("items[0].ID = %q, want %q", items[0].ID, "history-jsonl")
+	if items[0].ID != "history-db" {
+		t.Fatalf("items[0].ID = %q, want %q", items[0].ID, "history-db")
 	}
 	if items[0].MessageCount != 2 {
 		t.Fatalf("items[0].MessageCount = %d, want 2", items[0].MessageCount)
 	}
-	if items[0].Title != "JSONL-backed session" {
-		t.Fatalf("items[0].Title = %q, want %q", items[0].Title, "JSONL-backed session")
+	if items[0].Title != "DB-backed session" {
+		t.Fatalf("items[0].Title = %q, want %q", items[0].Title, "DB-backed session")
 	}
 	if items[0].Preview != "Explain why the history API is empty after migration." {
 		t.Fatalf("items[0].Preview = %q", items[0].Preview)
+	}
+	if items[0].Created == "" || items[0].Updated == "" {
+		t.Fatalf("items[0] timestamps empty: %+v", items[0])
+	}
+}
+
+func TestHandleListSessions_IgnoresNonWebUISessions(t *testing.T) {
+	configPath, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	dir := sessionsTestDir(t, configPath)
+	seedSession(t, dir, "agent:main:telegram:direct:12345", "telegram chat",
+		providers.Message{Role: "user", Content: "not for the webui"},
+	)
+	seedSession(t, dir, webuiSessionPrefix+"mine", "",
+		providers.Message{Role: "user", Content: "mine"},
+	)
+
+	mux := newSessionsMux(t, configPath)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/sessions", nil)
+	mux.ServeHTTP(rec, req)
+
+	var items []sessionListItem
+	if err := json.Unmarshal(rec.Body.Bytes(), &items); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if len(items) != 1 || items[0].ID != "mine" {
+		t.Fatalf("items = %+v, want only the webui session", items)
 	}
 }
 
@@ -105,30 +137,12 @@ func TestHandleListSessions_TitleUsesTrimmedSummary(t *testing.T) {
 	defer cleanup()
 
 	dir := sessionsTestDir(t, configPath)
-	store, err := memory.NewJSONLStore(dir)
-	if err != nil {
-		t.Fatalf("NewJSONLStore() error = %v", err)
-	}
-
-	sessionKey := webuiSessionPrefix + "summary-title"
-	if _, err := store.AddFullMessage(context.TODO(), sessionKey, providers.Message{
-		Role:    "user",
-		Content: "fallback preview",
-	}); err != nil {
-		t.Fatalf("AddFullMessage() error = %v", err)
-	}
-	if err := store.SetSummary(
-		context.TODO(),
-		sessionKey,
+	seedSession(t, dir, webuiSessionPrefix+"summary-title",
 		"  This summary is intentionally longer than sixty characters so it must be truncated in the history menu.  ",
-	); err != nil {
-		t.Fatalf("SetSummary() error = %v", err)
-	}
+		providers.Message{Role: "user", Content: "fallback preview"},
+	)
 
-	h := NewHandler(configPath)
-	mux := http.NewServeMux()
-	h.RegisterRoutes(mux)
-
+	mux := newSessionsMux(t, configPath)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/sessions", nil)
 	mux.ServeHTTP(rec, req)
@@ -156,36 +170,20 @@ func TestHandleListSessions_TitleUsesTrimmedSummary(t *testing.T) {
 	}
 }
 
-func TestHandleGetSession_JSONLStorage(t *testing.T) {
+func TestHandleGetSession_ArchiveDB(t *testing.T) {
 	configPath, cleanup := setupTestEnv(t)
 	defer cleanup()
 
 	dir := sessionsTestDir(t, configPath)
-	store, err := memory.NewJSONLStore(dir)
-	if err != nil {
-		t.Fatalf("NewJSONLStore() error = %v", err)
-	}
+	seedSession(t, dir, webuiSessionPrefix+"detail-db", "detail summary",
+		providers.Message{Role: "user", Content: "first"},
+		providers.Message{Role: "assistant", Content: "second"},
+		providers.Message{Role: "tool", Content: "ignored"},
+	)
 
-	sessionKey := webuiSessionPrefix + "detail-jsonl"
-	for _, msg := range []providers.Message{
-		{Role: "user", Content: "first"},
-		{Role: "assistant", Content: "second"},
-		{Role: "tool", Content: "ignored"},
-	} {
-		if _, err := store.AddFullMessage(context.TODO(), sessionKey, msg); err != nil {
-			t.Fatalf("AddFullMessage() error = %v", err)
-		}
-	}
-	if err := store.SetSummary(context.TODO(), sessionKey, "detail summary"); err != nil {
-		t.Fatalf("SetSummary() error = %v", err)
-	}
-
-	h := NewHandler(configPath)
-	mux := http.NewServeMux()
-	h.RegisterRoutes(mux)
-
+	mux := newSessionsMux(t, configPath)
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/sessions/detail-jsonl", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/sessions/detail-db", nil)
 	mux.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -195,6 +193,8 @@ func TestHandleGetSession_JSONLStorage(t *testing.T) {
 	var resp struct {
 		ID       string `json:"id"`
 		Summary  string `json:"summary"`
+		Created  string `json:"created"`
+		Updated  string `json:"updated"`
 		Messages []struct {
 			Role    string `json:"role"`
 			Content string `json:"content"`
@@ -203,11 +203,14 @@ func TestHandleGetSession_JSONLStorage(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("Unmarshal() error = %v", err)
 	}
-	if resp.ID != "detail-jsonl" {
-		t.Fatalf("resp.ID = %q, want %q", resp.ID, "detail-jsonl")
+	if resp.ID != "detail-db" {
+		t.Fatalf("resp.ID = %q, want %q", resp.ID, "detail-db")
 	}
 	if resp.Summary != "detail summary" {
 		t.Fatalf("resp.Summary = %q, want %q", resp.Summary, "detail summary")
+	}
+	if resp.Created == "" || resp.Updated == "" {
+		t.Fatalf("timestamps empty: created=%q updated=%q", resp.Created, resp.Updated)
 	}
 	if len(resp.Messages) != 2 {
 		t.Fatalf("len(resp.Messages) = %d, want 2", len(resp.Messages))
@@ -220,86 +223,85 @@ func TestHandleGetSession_JSONLStorage(t *testing.T) {
 	}
 }
 
-func TestHandleDeleteSession_JSONLStorage(t *testing.T) {
+func TestHandleGetSession_NotFound(t *testing.T) {
+	configPath, cleanup := setupTestEnv(t)
+	defer cleanup()
+	sessionsTestDir(t, configPath)
+
+	mux := newSessionsMux(t, configPath)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/sessions/does-not-exist", nil)
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusNotFound, rec.Body.String())
+	}
+}
+
+func TestHandleDeleteSession_RemovesWholeDB(t *testing.T) {
 	configPath, cleanup := setupTestEnv(t)
 	defer cleanup()
 
 	dir := sessionsTestDir(t, configPath)
-	store, err := memory.NewJSONLStore(dir)
-	if err != nil {
-		t.Fatalf("NewJSONLStore() error = %v", err)
+	sessionKey := webuiSessionPrefix + "delete-db"
+	seedSession(t, dir, sessionKey, "delete summary",
+		providers.Message{Role: "user", Content: "delete me"},
+	)
+	dbPath := memory.ArchivePath(dir, sessionKey)
+	if _, err := os.Stat(dbPath); err != nil {
+		t.Fatalf("expected %s to exist before delete: %v", dbPath, err)
 	}
 
-	sessionKey := webuiSessionPrefix + "delete-jsonl"
-	if _, err := store.AddFullMessage(context.TODO(), sessionKey, providers.Message{
-		Role:    "user",
-		Content: "delete me",
-	}); err != nil {
-		t.Fatalf("AddFullMessage() error = %v", err)
-	}
-	if err := store.SetSummary(context.TODO(), sessionKey, "delete summary"); err != nil {
-		t.Fatalf("SetSummary() error = %v", err)
-	}
-
-	h := NewHandler(configPath)
-	mux := http.NewServeMux()
-	h.RegisterRoutes(mux)
-
+	mux := newSessionsMux(t, configPath)
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodDelete, "/api/sessions/delete-jsonl", nil)
+	req := httptest.NewRequest(http.MethodDelete, "/api/sessions/delete-db", nil)
 	mux.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusNoContent, rec.Body.String())
 	}
 
-	base := filepath.Join(dir, sanitizeSessionKey(sessionKey))
-	for _, path := range []string{base + ".jsonl", base + ".meta.json"} {
+	for _, path := range []string{dbPath, dbPath + "-wal", dbPath + "-shm"} {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Fatalf("expected %s to be removed, stat err = %v", path, err)
 		}
 	}
-}
 
-func TestHandleGetSession_LegacyJSONFallback(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
-
-	dir := sessionsTestDir(t, configPath)
-	manager := session.NewSessionManager(dir)
-	sessionKey := webuiSessionPrefix + "legacy-json"
-	manager.AddMessage(sessionKey, "user", "legacy user")
-	manager.AddMessage(sessionKey, "assistant", "legacy assistant")
-	if err := manager.Save(sessionKey); err != nil {
-		t.Fatalf("Save() error = %v", err)
-	}
-
-	h := NewHandler(configPath)
-	mux := http.NewServeMux()
-	h.RegisterRoutes(mux)
-
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/sessions/legacy-json", nil)
+	// Deleting again finds nothing.
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodDelete, "/api/sessions/delete-db", nil)
 	mux.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("second delete status = %d, want %d", rec.Code, http.StatusNotFound)
 	}
 }
 
-func TestHandleSessions_FiltersEmptyJSONLFiles(t *testing.T) {
+// A DB that holds a state row but no messages and no summary (a turn that
+// started and stored nothing) must be filtered from the list and 404 on get.
+func TestHandleSessions_FiltersEmptySessionDBs(t *testing.T) {
 	configPath, cleanup := setupTestEnv(t)
 	defer cleanup()
 
 	dir := sessionsTestDir(t, configPath)
-	base := filepath.Join(dir, sanitizeSessionKey(webuiSessionPrefix+"empty-jsonl"))
-	if err := os.WriteFile(base+".jsonl", []byte{}, 0o644); err != nil {
-		t.Fatalf("WriteFile(jsonl) error = %v", err)
+	sessionKey := webuiSessionPrefix + "empty-db"
+	store, err := session.NewSQLiteStore(dir)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
+	if err := store.SetPendingTurn(sessionKey); err != nil {
+		t.Fatalf("SetPendingTurn() error = %v", err)
+	}
+	if err := store.ClearPendingTurn(sessionKey); err != nil {
+		t.Fatalf("ClearPendingTurn() error = %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if _, err := os.Stat(memory.ArchivePath(dir, sessionKey)); err != nil {
+		t.Fatalf("expected the session DB to exist: %v", err)
 	}
 
-	h := NewHandler(configPath)
-	mux := http.NewServeMux()
-	h.RegisterRoutes(mux)
+	mux := newSessionsMux(t, configPath)
 
 	listRec := httptest.NewRecorder()
 	listReq := httptest.NewRequest(http.MethodGet, "/api/sessions", nil)
@@ -318,7 +320,7 @@ func TestHandleSessions_FiltersEmptyJSONLFiles(t *testing.T) {
 	}
 
 	detailRec := httptest.NewRecorder()
-	detailReq := httptest.NewRequest(http.MethodGet, "/api/sessions/empty-jsonl", nil)
+	detailReq := httptest.NewRequest(http.MethodGet, "/api/sessions/empty-db", nil)
 	mux.ServeHTTP(detailRec, detailReq)
 
 	if detailRec.Code != http.StatusNotFound {

@@ -2,7 +2,8 @@ package tools
 
 import (
 	"context"
-	"time"
+
+	sessiontools "github.com/PivotLLM/ctxengine/tools"
 )
 
 type Message struct {
@@ -60,24 +61,10 @@ type ToolFunctionDefinition struct {
 	Parameters  map[string]any `json:"parameters"`
 }
 
-// SessionInfo holds the structured data returned by the session_info tool.
-type SessionInfo struct {
-	Server              string           `json:"server,omitempty"` // e.g. "ClawEh 0.4.8"
-	OS                  string           `json:"os,omitempty"`     // e.g. "linux/amd64"
-	SessionKey          string           `json:"session_key"`
-	StartedAt           *time.Time       `json:"started_at,omitempty"`
-	Channel             string           `json:"channel,omitempty"`
-	ContextMessageCount int              `json:"context_message_count"`
-	ArchiveMinSeq       int64            `json:"archive_min_seq"`
-	ArchiveMaxSeq       int64            `json:"archive_max_seq"`
-	TotalArchived       int64            `json:"total_archived"`
-	SummaryCovers       *SummaryCoverage `json:"summary_covers,omitempty"`
-	LastCompressedAt    *time.Time       `json:"last_compressed_at,omitempty"`
-}
-
-// SummaryCoverage describes the seq range covered by the current summary.
-type SummaryCoverage struct {
-	SeqStart    int64      `json:"seq_start"`
-	SeqEnd      int64      `json:"seq_end"`
-	GeneratedAt *time.Time `json:"generated_at,omitempty"`
-}
+// SessionInfo and SummaryCoverage are defined by the session tools package
+// (tools/session/sessiontools); the aliases keep the historical names for the
+// agent loop, which produces them via ToolDeps.SessionInfoFn.
+type (
+	SessionInfo     = sessiontools.SessionInfo
+	SummaryCoverage = sessiontools.SummaryCoverage
+)

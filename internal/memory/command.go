@@ -7,11 +7,13 @@ package memory
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 
+	"github.com/PivotLLM/cogmem/store"
 	"github.com/spf13/cobra"
 
-	"github.com/PivotLLM/ClawEh/cogmem/store"
+	"github.com/PivotLLM/ClawEh/cogmemhost"
 	"github.com/PivotLLM/ClawEh/internal"
 )
 
@@ -53,8 +55,12 @@ func runPurge(confirm bool) error {
 
 	var dbs []string
 	for _, dir := range cfg.AgentSessionDirs() {
-		matches, _ := filepath.Glob(filepath.Join(dir, "*.cogmem.db"))
-		dbs = append(dbs, matches...)
+		// Each agent's memory is <workspace>/cogmem/cogmem.db; the sessions dir
+		// is the workspace's child, so its parent is the workspace.
+		path := store.DBPath(cogmemhost.Dir(filepath.Dir(dir)))
+		if _, err := os.Stat(path); err == nil {
+			dbs = append(dbs, path)
+		}
 	}
 	if len(dbs) == 0 {
 		fmt.Println("No cognitive-memory databases found.")

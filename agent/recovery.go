@@ -3,9 +3,10 @@ package agent
 import (
 	"context"
 
+	"github.com/PivotLLM/ctxengine/session"
+
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/logger"
-	"github.com/PivotLLM/ClawEh/session"
 )
 
 // recoverPendingTurns iterates over all agents and re-queues any sessions

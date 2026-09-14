@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/PivotLLM/ClawEh/bus"
@@ -30,6 +31,14 @@ type CronTool struct {
 	// per run rather than captured once, so a tool revoked in config stops being
 	// probed. Nil disables watch jobs rather than failing the whole cron service.
 	agentTools func(agentID string) *tools.ToolRegistry
+
+	// Listen jobs: one goroutine per enabled job, kept in step with the store
+	// by a supervisor. See listen.go.
+	listenMu   sync.Mutex
+	listeners  map[string]*listener
+	listenStop context.CancelFunc
+	listenKick chan struct{}
+	listenWG   sync.WaitGroup
 }
 
 // NewCronTool creates a new CronTool. getConfig must return the current config.
@@ -73,7 +82,7 @@ func (t *CronTool) Name() string {
 
 // Description returns the tool description
 func (t *CronTool) Description() string {
-	return "Schedule a message for later — a reminder or a recurring task. When the user asks to be reminded or to schedule something, you MUST call this tool. When the job fires, the message is delivered to the target agent's default channel (configured by the operator — you do not choose where it goes); by default the target is you. Use 'at_seconds' for a one-time reminder (e.g. 'in 10 minutes' → at_seconds=600), 'every_seconds' for a simple recurring interval (e.g. 'every 2 hours' → every_seconds=7200), or 'cron_expr' for calendar schedules (e.g. '0 9 * * *' for daily at 9am). Use 'list'/'get' to review jobs and 'remove'/'enable'/'disable' to manage them. The optional 'agent' parameter schedules for another agent (only permitted for authorized agents)."
+	return "Schedule a message for later — a reminder or a recurring task. When the user asks to be reminded or to schedule something, you MUST call this tool. When the job fires, the message is delivered to the target agent's default channel (configured by the operator — you do not choose where it goes); by default the target is you. Use 'at_seconds' for a one-time reminder (e.g. 'in 10 minutes' → at_seconds=600), 'every_seconds' for a simple recurring interval (e.g. 'every 2 hours' → every_seconds=7200), or 'cron_expr' for calendar schedules (e.g. '0 9 * * *' for daily at 9am). With 'watch_tool' the job becomes a change probe; with 'listen' it becomes a persistent callback that keeps a long-poll tool running and delivers each new event. Use 'list'/'get' to review jobs and 'remove'/'enable'/'disable' to manage them. The optional 'agent' parameter schedules for another agent (only permitted for authorized agents)."
 }
 
 // Parameters returns the tool parameters schema
@@ -114,6 +123,18 @@ func (t *CronTool) Parameters() map[string]any {
 				"type":        "array",
 				"items":       map[string]any{"type": "string"},
 				"description": "Dot-paths into watch_tool's result naming the values that decide 'changed', e.g. ['messages.id']. A path crossing a list applies to every element and collects the results, so 'messages.id' is the set of ids currently present. Choose fields that only move when something you care about happens — watching a whole result also catches unread counts and timestamps, which fire constantly. Omit to compare the entire result.",
+			},
+			"listen": map[string]any{
+				"type":        "boolean",
+				"description": "Optional. With watch_tool, makes the job a persistent callback instead of a scheduled probe: the tool is called continuously in the background and each call waits for it to return (an event, a dropped connection, or the timeout), then it is called again at once. Whenever the watched fields are present, 'message' is delivered followed by the tool's full result — every time, identical results included, unless suppress_repeats is set. Use it for long-poll event tools such as documents_event_wait. Takes no schedule: do not pass at_seconds, every_seconds or cron_expr.",
+			},
+			"watch_timeout_seconds": map[string]any{
+				"type":        "integer",
+				"description": "Optional, for listen jobs: how long one call may wait for an event before it is dropped and made again (default 300).",
+			},
+			"suppress_repeats": map[string]any{
+				"type":        "boolean",
+				"description": "Optional, for listen jobs. By default every result with the watched fields present is delivered, even one identical to the last — each occurrence may matter, e.g. a document edited several times in a row. Set true for a source that replays its latest event on every reconnect, so an identical result is delivered once.",
 			},
 			"job_id": map[string]any{
 				"type":        "string",
@@ -223,6 +244,7 @@ func (t *CronTool) addJob(args map[string]any, agentID string) *tools.ToolResult
 	atSeconds, hasAt := args["at_seconds"].(float64)
 	everySeconds, hasEvery := args["every_seconds"].(float64)
 	cronExpr, hasCron := args["cron_expr"].(string)
+	listen, _ := args["listen"].(bool)
 
 	// Fix: type assertions return true for zero values, need additional validity checks
 	// This prevents LLMs that fill unused optional parameters with defaults (0) from triggering wrong type
@@ -230,8 +252,13 @@ func (t *CronTool) addJob(args map[string]any, agentID string) *tools.ToolResult
 	hasEvery = hasEvery && everySeconds > 0
 	hasCron = hasCron && cronExpr != ""
 
-	// Priority: at_seconds > every_seconds > cron_expr
-	if hasAt {
+	// Priority: listen > at_seconds > every_seconds > cron_expr
+	if listen {
+		if hasAt || hasEvery || hasCron {
+			return tools.ErrorResult("a listen job runs continuously and takes no schedule; drop at_seconds/every_seconds/cron_expr")
+		}
+		schedule = cron.CronSchedule{Kind: cron.KindListen}
+	} else if hasAt {
 		atMS := time.Now().UnixMilli() + int64(atSeconds)*1000
 		schedule = cron.CronSchedule{
 			Kind: "at",
@@ -249,7 +276,7 @@ func (t *CronTool) addJob(args map[string]any, agentID string) *tools.ToolResult
 			Expr: cronExpr,
 		}
 	} else {
-		return tools.ErrorResult("one of at_seconds, every_seconds, or cron_expr is required")
+		return tools.ErrorResult("one of at_seconds, every_seconds, cron_expr, or listen is required")
 	}
 
 	// Job name = a short preview of the message (max 30 chars).
@@ -259,12 +286,25 @@ func (t *CronTool) addJob(args map[string]any, agentID string) *tools.ToolResult
 	if werr != nil {
 		return tools.ErrorResult(werr.Error())
 	}
+	if listen {
+		if watch == nil {
+			return tools.ErrorResult("listen requires watch_tool: the tool to keep calling")
+		}
+		if secs, ok := args["watch_timeout_seconds"].(float64); ok && secs > 0 {
+			watch.TimeoutSec = int(secs)
+		}
+		if suppress, ok := args["suppress_repeats"].(bool); ok && suppress {
+			watch.SuppressRepeats = true
+		}
+	}
 
 	// Destination (channel/chat) is left empty: ExecuteJob resolves the target
 	// agent's default channel at fire time, so changing the default redirects
 	// existing jobs.
 	mode := "agent"
-	if watch != nil {
+	if listen {
+		mode = cron.KindListen
+	} else if watch != nil {
 		mode = "watch"
 	}
 	job, err := t.cronService.AddJob(messagePreview, schedule, message, mode, "", "", "")
@@ -277,7 +317,17 @@ func (t *CronTool) addJob(args map[string]any, agentID string) *tools.ToolResult
 	job.AgentID = agentID
 	job.Payload.Watch = watch
 	t.cronService.UpdateJob(job)
+	t.kickListeners()
 
+	if listen {
+		when := fmt.Sprintf("every time it returns with %s present, repeats included", describeFields(watch.Fields))
+		if watch.SuppressRepeats {
+			when = fmt.Sprintf("each time %s carry a new value", describeFields(watch.Fields))
+		}
+		return tools.SilentResult(fmt.Sprintf(
+			"Listener added for %s: %s (id: %s). It keeps %q running in the background and messages you with the full result %s.",
+			agentID, job.Name, job.ID, watch.Tool, when))
+	}
 	if watch != nil {
 		return tools.SilentResult(fmt.Sprintf(
 			"Watch added for %s: %s (id: %s). It calls %q on the schedule and only messages you when %s change. "+
@@ -296,6 +346,8 @@ func formatSchedule(j *cron.CronJob) string {
 		return j.Schedule.Expr
 	case j.Schedule.Kind == "at":
 		return "one-time"
+	case j.Schedule.Kind == cron.KindListen:
+		return "listen (continuous)"
 	default:
 		return "unknown"
 	}
@@ -379,6 +431,7 @@ func (t *CronTool) removeJob(args map[string]any, agentID string) *tools.ToolRes
 	if err != nil {
 		return tools.ErrorResult(fmt.Sprintf("Failed to remove job %s: %v", jobID, err))
 	}
+	t.kickListeners()
 	if removed {
 		return tools.SilentResult(fmt.Sprintf("Cron job removed: %s", jobID))
 	}
@@ -402,6 +455,7 @@ func (t *CronTool) enableJob(args map[string]any, enable bool, agentID string) *
 	if job == nil {
 		return tools.ErrorResult(fmt.Sprintf("Job %s not found", jobID))
 	}
+	t.kickListeners()
 
 	status := "enabled"
 	if !enable {
@@ -412,8 +466,30 @@ func (t *CronTool) enableJob(args map[string]any, enable bool, agentID string) *
 
 // ExecuteJob executes a cron job through the agent
 func (t *CronTool) ExecuteJob(ctx context.Context, job *cron.CronJob) string {
-	fireTime := time.Now()
+	// A listen job has no scheduled fire: its loop delivers on its own.
+	if job.Schedule.Kind == cron.KindListen {
+		return "listen job; delivered by its listener"
+	}
 
+	// A watch job asks a tool whether anything changed and stays silent when
+	// nothing did. This is the whole point: the model is never woken to discover
+	// that there is no new mail.
+	message := job.Payload.Message
+	if job.Payload.Watch != nil {
+		outcome := t.runWatch(ctx, job)
+		if !outcome.Changed {
+			return "no change"
+		}
+		message = outcome.Message
+	}
+	return t.deliver(ctx, job, cronmsg.Build(job.Fingerprint, time.Now(), message))
+}
+
+// deliver injects content inbound to the job's destination — the same routing
+// a live user message gets — so the agent processes it and replies there. The
+// caller chooses the envelope: a cron fire (cronmsg.Build) or a monitor event
+// (cronmsg.BuildEvent).
+func (t *CronTool) deliver(_ context.Context, job *cron.CronJob, content string) string {
 	// Resolve the destination. Agent-addressed jobs (created via the tool) deliver
 	// to the target agent's default channel, resolved live so a changed default
 	// redirects the job; the resolved (channel, chat, peer) are the binding's own
@@ -443,25 +519,11 @@ func (t *CronTool) ExecuteJob(ctx context.Context, job *cron.CronJob) string {
 		}
 	}
 
-	// A watch job asks a tool whether anything changed and stays silent when
-	// nothing did. This is the whole point: the model is never woken to discover
-	// that there is no new mail.
-	message := job.Payload.Message
-	if job.Payload.Watch != nil {
-		outcome := t.runWatch(ctx, job)
-		if !outcome.Changed {
-			return "no change"
-		}
-		message = outcome.Message
-	}
-
-	// Inject the message inbound to the agent's default channel/chat — the same
-	// routing a live user message gets — so the agent processes it and replies there.
 	msg := bus.InboundMessage{
 		Channel:  channel,
 		SenderID: "cron",
 		ChatID:   chatID,
-		Content:  cronmsg.Build(job.Fingerprint, fireTime, message),
+		Content:  content,
 		Peer:     bus.Peer{Kind: peerKind, ID: chatID},
 	}
 	pubCtx, pubCancel := context.WithTimeout(context.Background(), 5*time.Second)

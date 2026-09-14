@@ -6,12 +6,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/PivotLLM/ClawEh/cogmem/portable"
-	cogmemstore "github.com/PivotLLM/ClawEh/cogmem/store"
+	"github.com/PivotLLM/cogmem/portable"
+	cogmemstore "github.com/PivotLLM/cogmem/store"
 )
 
 // curateEnv seeds a store and returns its id plus a mux, for the curation
@@ -23,9 +24,13 @@ func curateEnv(t *testing.T) (string, *http.ServeMux, string) {
 	t.Cleanup(cleanup)
 
 	dir := sessionsTestDir(t, configPath)
-	sessionKey := "agent:main:webui:direct:webui:curate-test"
-	id := cogmemstore.SanitizeSessionKey(sessionKey)
-	path := filepath.Join(dir, id+".cogmem.db")
+	// The memory is per agent: <workspace>/cogmem/cogmem.db, and the store id
+	// the API uses is the workspace name.
+	id := filepath.Base(filepath.Dir(dir))
+	path := memoryDBForSessionsDir(dir)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
 
 	s, err := cogmemstore.Open(path)
 	if err != nil {

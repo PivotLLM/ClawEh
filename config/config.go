@@ -218,10 +218,8 @@ type MemoryConsolidationConfig struct {
 	MaxRuntimeSecs   int    `json:"max_runtime_seconds"`
 }
 
-// MemoryRetentionConfig guards unconsolidated archive messages from pruning.
+// MemoryRetentionConfig bounds how long transient memory rows are kept.
 type MemoryRetentionConfig struct {
-	ProtectUnconsolidated bool `json:"protect_unconsolidated"`
-
 	// EventDays is how long an `event` memory is kept before it is deleted.
 	// Events are things that happened at a point in time — a trip, a delivery,
 	// a scheduled run — and they stop being useful long before they stop
@@ -612,7 +610,7 @@ func (c *CompressionConfig) overlay(src *CompressionConfig) {
 // window to a placeholder so long sessions rarely trigger summarization
 // compaction. All fields are pointers so a per-agent block overrides the
 // defaults block field by field; an unset field falls back to the built-in
-// default (see llmcontext.DefaultEvictionPolicy).
+// default (see ctxengine.DefaultEvictionPolicy).
 type ContextEvictionConfig struct {
 	Enabled      *bool `json:"enabled,omitempty"`       // nil => enabled
 	ProtectTurns *int  `json:"protect_turns,omitempty"` // nil => 3

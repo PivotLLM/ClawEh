@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
-	cogmemstore "github.com/PivotLLM/ClawEh/cogmem/store"
-)
+	cogmemstore "github.com/PivotLLM/cogmem/store"
 
-const cogmemDBSuffix = ".cogmem.db"
+	"github.com/PivotLLM/ClawEh/cogmemhost"
+)
 
 // registerMemoryRoutes binds the cognitive-memory browsing and curation
 // endpoints. Curation is the point: the model chooses a memory's type when it
@@ -115,8 +115,16 @@ func agentForSessionsDir(dir string) string {
 	return filepath.Base(filepath.Dir(dir))
 }
 
-// handleListMemoryStores lists every per-session cognitive-memory database
-// across all configured agent workspaces.
+// memoryDBForSessionsDir returns the agent's memory database for a sessions
+// directory: the memory is <workspace>/cogmem/cogmem.db and the sessions
+// directory is the workspace's child.
+func memoryDBForSessionsDir(dir string) string {
+	return cogmemstore.DBPath(cogmemhost.Dir(filepath.Dir(dir)))
+}
+
+// handleListMemoryStores lists every agent's cognitive-memory database. One
+// agent has one memory, so the store id is the agent's workspace name. The
+// response key is "sessions" for compatibility with the page that reads it.
 //
 //	GET /api/memory
 func (h *Handler) handleListMemoryStores(w http.ResponseWriter, r *http.Request) {
@@ -129,32 +137,21 @@ func (h *Handler) handleListMemoryStores(w http.ResponseWriter, r *http.Request)
 	items := []memoryStoreItem{}
 	seen := make(map[string]struct{})
 	for _, dir := range dirs {
-		entries, err := os.ReadDir(dir)
+		agent := agentForSessionsDir(dir)
+		if _, dup := seen[agent]; dup {
+			continue
+		}
+		info, err := os.Stat(memoryDBForSessionsDir(dir))
 		if err != nil {
 			continue
 		}
-		agent := agentForSessionsDir(dir)
-		for _, entry := range entries {
-			name := entry.Name()
-			if entry.IsDir() || !strings.HasSuffix(name, cogmemDBSuffix) {
-				continue
-			}
-			id := strings.TrimSuffix(name, cogmemDBSuffix)
-			if _, dup := seen[id]; dup {
-				continue
-			}
-			info, err := entry.Info()
-			if err != nil {
-				continue
-			}
-			seen[id] = struct{}{}
-			items = append(items, memoryStoreItem{
-				ID:        id,
-				Agent:     agent,
-				Updated:   info.ModTime().Format(time.RFC3339),
-				SizeBytes: info.Size(),
-			})
-		}
+		seen[agent] = struct{}{}
+		items = append(items, memoryStoreItem{
+			ID:        agent,
+			Agent:     agent,
+			Updated:   info.ModTime().Format(time.RFC3339),
+			SizeBytes: info.Size(),
+		})
 	}
 
 	sortMemoryStores(items)
@@ -163,17 +160,20 @@ func (h *Handler) handleListMemoryStores(w http.ResponseWriter, r *http.Request)
 	json.NewEncoder(w).Encode(map[string]any{"sessions": items})
 }
 
-// findMemoryDB locates the .cogmem.db for a sanitized session id across all
-// agent workspaces, returning its path and owning agent id.
+// findMemoryDB locates the memory database for a store id (an agent's
+// workspace name), returning its path and the agent id.
 func (h *Handler) findMemoryDB(id string) (path, agent string, ok bool) {
 	dirs, err := h.sessionsDirs()
 	if err != nil {
 		return "", "", false
 	}
 	for _, dir := range dirs {
-		p := filepath.Join(dir, id+cogmemDBSuffix)
+		if agentForSessionsDir(dir) != id {
+			continue
+		}
+		p := memoryDBForSessionsDir(dir)
 		if _, err := os.Stat(p); err == nil {
-			return p, agentForSessionsDir(dir), true
+			return p, id, true
 		}
 	}
 	return "", "", false
@@ -289,8 +289,8 @@ func (h *Handler) handleGetMemoryStore(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
-// openMemoryForWrite validates the {id} path value, locates the session's
-// .cogmem.db, and opens it. On any failure it writes the HTTP error and returns
+// openMemoryForWrite validates the {id} path value, locates the agent's
+// memory store, and opens it. On any failure it writes the HTTP error and returns
 // ok=false. The caller must Close the returned store.
 func (h *Handler) openMemoryForWrite(w http.ResponseWriter, r *http.Request) (*cogmemstore.Store, bool) {
 	id := r.PathValue("id")

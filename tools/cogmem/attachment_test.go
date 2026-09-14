@@ -4,6 +4,7 @@
 package cogmem
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +15,27 @@ import (
 	"github.com/PivotLLM/ClawEh/tools"
 	toolfiles "github.com/PivotLLM/ClawEh/tools/files"
 )
+
+const testSession = "chan:123"
+
+func newCall(session string, args map[string]any) *global.ToolCall {
+	if args == nil {
+		args = map[string]any{}
+	}
+	return &global.ToolCall{Ctx: context.Background(), Args: args, AgentID: "alice", Session: session}
+}
+
+func run(t *testing.T, h global.ToolHandler, call *global.ToolCall) *global.Result {
+	t.Helper()
+	res, err := h(call)
+	if err != nil {
+		t.Fatalf("handler returned go error: %v", err)
+	}
+	if res == nil {
+		t.Fatal("nil result")
+	}
+	return res
+}
 
 // buildHandlersWithFiles builds the cogmem handlers against a workspace whose
 // reads are confined to files/, matching the default agent posture. Attachment

@@ -8,9 +8,21 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/PivotLLM/ctxengine"
 )
 
 // atDate returns a ContextBuilder whose date line is pinned to a fixed clock.
+// layersText joins the layer texts the way the engine composes the system
+// message, so a comparison sees every byte the model would.
+func layersText(layers []ctxengine.Layer) string {
+	parts := make([]string, 0, len(layers))
+	for _, l := range layers {
+		parts = append(parts, l.Text)
+	}
+	return strings.Join(parts, "\n\n---\n\n")
+}
+
 func atDate(t *testing.T, workspace string, clock *time.Time) *ContextBuilder {
 	t.Helper()
 	cb := NewContextBuilder(workspace)
@@ -70,19 +82,19 @@ func TestDateAnchor_StableWithinTheDay(t *testing.T) {
 	}
 }
 
-// TestBuildMessages_NoPerTurnVolatility walks the assembled system message for
-// anything that changes between two turns seconds apart. Whatever is found here
-// costs the cache the whole conversation history, not just itself.
-func TestBuildMessages_NoPerTurnVolatility(t *testing.T) {
+// TestPromptLayers_NoPerTurnVolatility walks the prompt layers for anything
+// that changes between two turns seconds apart. Whatever is found here costs
+// the cache the whole conversation history, not just itself.
+func TestPromptLayers_NoPerTurnVolatility(t *testing.T) {
 	dir := setupWorkspace(t, map[string]string{"IDENTITY.md": "# Identity"})
 	defer os.RemoveAll(dir)
 
 	clock := time.Date(2026, 2, 12, 8, 0, 0, 0, time.UTC)
 	cb := atDate(t, dir, &clock)
 
-	first := cb.BuildMessages(nil, "", "hello", nil, "webui", "chat1")[0].Content
+	first := layersText(cb.PromptLayers("webui", "chat1"))
 	clock = clock.Add(90 * time.Second)
-	second := cb.BuildMessages(nil, "", "hello again", nil, "webui", "chat1")[0].Content
+	second := layersText(cb.PromptLayers("webui", "chat1"))
 
 	if first != second {
 		t.Errorf("system message changed between turns 90s apart:\n--- first ---\n%s\n--- second ---\n%s", first, second)

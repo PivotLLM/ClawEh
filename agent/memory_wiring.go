@@ -5,173 +5,114 @@ package agent
 
 import (
 	"context"
-	"path/filepath"
-	"strings"
-	"sync"
 
-	"github.com/PivotLLM/ClawEh/cogmem"
-	"github.com/PivotLLM/ClawEh/cogmem/attachfile"
-	"github.com/PivotLLM/ClawEh/cogmem/consolidate"
-	"github.com/PivotLLM/ClawEh/cogmem/store"
-	"github.com/PivotLLM/ClawEh/config"
-	"github.com/PivotLLM/ClawEh/llmcontext"
+	"github.com/PivotLLM/cogmem"
+	"github.com/PivotLLM/cogmem/consolidate"
+	"github.com/PivotLLM/cogmem/store"
+	"github.com/PivotLLM/ctxengine"
+	"github.com/PivotLLM/ctxengine/memory"
+
+	"github.com/PivotLLM/ClawEh/cogmemhost"
 	"github.com/PivotLLM/ClawEh/logger"
-	"github.com/PivotLLM/ClawEh/providers"
+	"github.com/PivotLLM/ClawEh/routing"
 )
 
-// wireCognitiveMemory installs the cognitive-memory archive hook and per-turn
-// prompt-injection closure on the ContextManager — but ONLY for cognitive
-// agents (those allowed the cogmem tools). For every other agent it returns nil
-// immediately and the ContextManager is untouched, preserving identical
-// behavior to before.
-//
-// The returned cleanup func (nil for non-cognitive agents) closes the lazily
-// opened per-session cogmem store; the cmEntry calls it on eviction/drain.
-func (al *AgentLoop) wireCognitiveMemory(agent *AgentInstance, sessionKey string, cm llmcontext.ContextManager) func() {
-	// GATE 1: agent must be allowed the cogmem tools.
+// wireCognitiveMemory builds the cogmem session for a cognitive agent, or
+// returns nil for every other agent (and every method on a nil session is a
+// no-op). The cmEntry closes it on eviction/drain.
+func (al *AgentLoop) wireCognitiveMemory(agent *AgentInstance, sessionKey string) *cogmem.Session {
 	if agent == nil || agent.Config == nil || !agent.Config.CognitiveMemoryEnabled() {
 		return nil
 	}
-	// GATE 2: the concrete manager must expose the wiring setters.
-	mgr, ok := cm.(*llmcontext.Manager)
-	if !ok {
-		return nil
-	}
-
-	dbPath := store.SessionDBPath(agent.Workspace, sessionKey)
-	archivePath := filepath.Join(agent.Workspace, "sessions",
-		store.SanitizeSessionKey(sessionKey)+".archive.db")
-
 	cfg := al.GetConfig()
 	if cfg == nil {
 		return nil
 	}
-	mem := cfg.Agents.Defaults.EffectiveMemory(agent.Config)
-
-	// Retention guard: protect not-yet-consolidated archive messages from
-	// pruning for cognitive agents when configured (default true).
-	mgr.SetProtectUnconsolidated(mem.Retention.ProtectUnconsolidated)
-
-	// Archive hook: notify the consolidation manager on every archive write.
 	al.mu.RLock()
 	cogMgr := al.cogmemManager
 	al.mu.RUnlock()
-	if cogMgr != nil {
-		job := consolidate.Job{
-			AgentID:     agent.ID,
-			SessionKey:  sessionKey,
-			Workspace:   agent.Workspace,
-			ArchivePath: archivePath,
-		}
-		mgr.SetArchiveAppendHook(func(_ int64, _ providers.Message) {
-			cogMgr.OnMessage(job)
-		})
+
+	mem := cfg.Agents.Defaults.EffectiveMemory(agent.Config)
+	perMessageChars := mem.Consolidation.PerMessageChars
+	// One memory per agent, shared by every session. A sub-agent works on a
+	// throwaway snapshot in its own directory (see runSubagentTask).
+	ephemeral := routing.IsSubagentSessionKey(sessionKey)
+	dir, id := cogmemhost.Dir(agent.Workspace), agent.ID
+	if ephemeral {
+		dir, id = cogmemhost.SubagentDir(agent.Workspace, sessionKey), agent.ID+" (sub-agent)"
 	}
-
-	// Prompt injection: a per-session lazily opened store + composer, guarded by
-	// a mutex so concurrent Build calls share one handle. The store is closed by
-	// the returned cleanup.
-	var (
-		mu     sync.Mutex
-		st     *store.Store
-		comp   *cogmem.Composer
-		opened bool
-	)
-
-	ensure := func() *cogmem.Composer {
-		mu.Lock()
-		defer mu.Unlock()
-		if opened {
-			return comp // may be nil if the open failed
-		}
-		opened = true
-		s, err := store.Open(dbPath)
-		if err != nil {
-			logger.WarnCF("cogmem", "open session store for prompt injection failed", map[string]any{
-				"agent_id":    agent.ID,
-				"session_key": sessionKey,
-				"path":        dbPath,
-				"error":       err.Error(),
-			})
-			return nil
-		}
-		st = s
-		opts := append(memoryComposerOptions(mem),
-			cogmem.WithAttachmentLoader(attachfile.NewLoader(cfg, agent.ID, agent.Workspace)))
-		comp = cogmem.New(s, opts...)
-		return comp
-	}
-
-	mgr.SetMemoryBlocks(func(_ string, recentTools []string, routeText string) (stable, routed string) {
-		c := ensure()
-		if c == nil {
-			return "", ""
-		}
-		res, err := c.Compose(context.Background(), cogmem.RouteRequest{
-			RecentTools: recentTools,
-			RouteText:   routeText,
-			Trace:       mem.Prompt.IncludeDebugTrace,
-		})
-		if err != nil {
-			logger.WarnCF("cogmem", "memory compose failed", map[string]any{
-				"agent_id": agent.ID, "session_key": sessionKey, "error": err.Error(),
-			})
-		}
-		if res.Attachments != "" || res.RoutedAttachments != "" {
-			// Split by provenance: sticky bytes ride in the cached prompt and are
-			// paid for once, routed bytes ride with the turn and are paid for
-			// every time. One combined figure hides which is which.
-			logger.DebugCF("cogmem", "attached documents injected", map[string]any{
-				"agent_id":     agent.ID,
-				"session_key":  sessionKey,
-				"sticky_bytes": len(res.Attachments),
-				"routed_bytes": len(res.RoutedAttachments),
-			})
-		}
-		// Sticky documents belong with the stable block; routed documents belong
-		// with the routed block, whose memory ids their headers cite.
-		return joinBlocks(res.Stable, res.Attachments), joinBlocks(res.Routed, res.RoutedAttachments)
+	return cogmem.NewSession(cogmem.SessionOptions{
+		ID:        id,
+		Dir:       dir,
+		Workspace: agent.Workspace,
+		Ephemeral: ephemeral,
+		Settings:  cogmemhost.Settings(mem),
+		Loader:    cogmemhost.NewLoader(cfg, agent.ID, agent.Workspace),
+		Manager:   cogMgr,
+		OnOpen: func(ctx context.Context, st *store.Store) {
+			backfillInbox(ctx, st, agent.ID, agent.Workspace, sessionKey, perMessageChars)
+		},
 	})
+}
 
-	return func() {
-		mu.Lock()
-		defer mu.Unlock()
-		if st != nil {
-			_ = st.Close()
-			st = nil
+// backfillInbox runs once per store: messages archived before the store kept
+// its own inbox, and not yet consolidated, are copied in so the upgrade loses
+// nothing to memory. Later opens find the flag set and skip it. Host-side by
+// design: only ClawEh knows about the session archive.
+func backfillInbox(ctx context.Context, st *store.Store, agentID, workspace, sessionKey string, perMessageChars int) {
+	done, err := st.InboxBackfilled(ctx)
+	if err != nil || done {
+		return
+	}
+	state, err := st.GetState(ctx, st.DB(), store.InboxStateKey)
+	if err != nil {
+		return
+	}
+	copied := 0
+	if a, err := memory.OpenReadOnly(archiveDBPath(workspace, sessionKey)); err == nil {
+		defer a.Close()
+		if _, maxSeq, err := a.Bounds(); err == nil && maxSeq > state.ConsolidatedSeq {
+			rows, err := a.QueryRange(state.ConsolidatedSeq+1, maxSeq)
+			if err == nil {
+				for _, r := range rows {
+					ok, err := consolidate.Observe(ctx, st, r.Seq, r.Role, r.Content, perMessageChars)
+					if err != nil {
+						logger.WarnCF("cogmem", "inbox backfill append failed", map[string]any{
+							"session_key": sessionKey, "seq": r.Seq, "error": err.Error(),
+						})
+						return // leave the flag unset so the next open retries
+					}
+					if ok {
+						copied++
+					}
+				}
+			}
 		}
+	}
+	if err := st.SetInboxBackfilled(ctx); err != nil {
+		return
+	}
+	if copied > 0 {
+		logger.InfoCF("cogmem", "inbox backfilled from session archive", map[string]any{
+			"agent_id": agentID, "session_key": sessionKey, "messages": copied,
+		})
 	}
 }
 
-// memoryComposerOptions translates a MemoryConfig into cogmem.Composer options.
-func memoryComposerOptions(mem config.MemoryConfig) []cogmem.Option {
-	var opts []cogmem.Option
-	if mem.Prompt.TopKDomains > 0 {
-		opts = append(opts, cogmem.WithTopKDomains(mem.Prompt.TopKDomains))
+// recallInjections asks memory for this dispatch's blocks and maps them onto
+// the context manager's placements. Nil for agents without memory.
+func recallInjections(ctx context.Context, mem *cogmem.Session, routeText string) []ctxengine.Injection {
+	rec := mem.Recall(ctx, routeText)
+	if len(rec) == 0 {
+		return nil
 	}
-	if mem.Prompt.MaxChars > 0 {
-		opts = append(opts, cogmem.WithMaxChars(mem.Prompt.MaxChars))
-	}
-	if mem.Prompt.MinConfidence > 0 {
-		opts = append(opts, cogmem.WithMinConfidence(mem.Prompt.MinConfidence))
-	}
-	if mem.Prompt.FileMaxBytes > 0 {
-		opts = append(opts, cogmem.WithFileMaxBytes(mem.Prompt.FileMaxBytes))
-	}
-	if mem.Prompt.FileTotalMaxBytes > 0 {
-		opts = append(opts, cogmem.WithFileTotalMaxBytes(mem.Prompt.FileTotalMaxBytes))
-	}
-	return opts
-}
-
-// joinBlocks concatenates non-empty prompt blocks with the separator used
-// throughout the system prompt.
-func joinBlocks(blocks ...string) string {
-	out := make([]string, 0, len(blocks))
-	for _, b := range blocks {
-		if b != "" {
-			out = append(out, b)
+	out := make([]ctxengine.Injection, 0, len(rec))
+	for _, r := range rec {
+		p := ctxengine.PlaceSystemStable
+		if r.Placement == cogmem.PlaceCurrentUser {
+			p = ctxengine.PlaceCurrentUser
 		}
+		out = append(out, ctxengine.Injection{Placement: p, Text: r.Text})
 	}
-	return strings.Join(out, "\n\n---\n\n")
+	return out
 }

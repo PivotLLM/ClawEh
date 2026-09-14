@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/PivotLLM/ClawEh/config"
-	"github.com/PivotLLM/ClawEh/llmcontext"
 	"github.com/PivotLLM/ClawEh/providers"
 	"github.com/PivotLLM/ClawEh/tools"
 )
@@ -25,7 +24,7 @@ type stubVisionClient struct {
 	calls    int
 }
 
-func (s *stubVisionClient) Complete(_ context.Context, msgs []providers.Message) (llmcontext.LLMReply, error) {
+func (s *stubVisionClient) Complete(_ context.Context, msgs []providers.Message) (visionReply, error) {
 	s.calls++
 	for _, m := range msgs {
 		if len(m.Media) > 0 {
@@ -33,9 +32,9 @@ func (s *stubVisionClient) Complete(_ context.Context, msgs []providers.Message)
 		}
 	}
 	if s.err != nil {
-		return llmcontext.LLMReply{}, s.err
+		return visionReply{}, s.err
 	}
-	return llmcontext.LLMReply{Content: s.reply}, nil
+	return visionReply{Content: s.reply}, nil
 }
 
 func (s *stubVisionClient) Model() string { return s.model }
@@ -43,7 +42,7 @@ func (s *stubVisionClient) Model() string { return s.model }
 func TestDescribeImages_ReturnsDescription(t *testing.T) {
 	al := &AgentLoop{cfg: &config.Config{}}
 	stub := &stubVisionClient{reply: "a red square", model: "vmodel"}
-	agent := &AgentInstance{ID: "a1", VisionClients: []llmcontext.LLMClient{stub}}
+	agent := &AgentInstance{ID: "a1", VisionClients: []visionClient{stub}}
 
 	desc, ok := al.describeImages(context.Background(), agent, []string{"data:image/png;base64,AAA"}, "what color is it")
 	if !ok || desc != "a red square" {
@@ -70,7 +69,7 @@ func TestDescribeImages_FallsThroughChain(t *testing.T) {
 	al := &AgentLoop{cfg: &config.Config{}}
 	bad := &stubVisionClient{err: errors.New("boom"), model: "bad"}
 	good := &stubVisionClient{reply: "a blue circle", model: "good"}
-	agent := &AgentInstance{ID: "a1", VisionClients: []llmcontext.LLMClient{bad, good}}
+	agent := &AgentInstance{ID: "a1", VisionClients: []visionClient{bad, good}}
 
 	desc, ok := al.describeImages(context.Background(), agent, []string{"data:image/png;base64,AAA"}, "")
 	if !ok || desc != "a blue circle" {
@@ -88,7 +87,7 @@ func TestDescribeInboundMedia_NonVisionPrimaryFoldsDescription(t *testing.T) {
 		Models: []config.ModelConfig{{ModelName: "deepseek", Enabled: true, Vision: config.VisionOff}},
 	}}
 	stub := &stubVisionClient{reply: "a cat on a mat"}
-	agent := &AgentInstance{ID: "a1", Model: "deepseek", VisionClients: []llmcontext.LLMClient{stub}}
+	agent := &AgentInstance{ID: "a1", Model: "deepseek", VisionClients: []visionClient{stub}}
 
 	userMsg := providers.Message{Role: "user", Content: "what is this", Media: []string{"data:image/png;base64,AAA"}}
 	al.describeInboundMedia(context.Background(), agent, &userMsg)
@@ -110,7 +109,7 @@ func TestDescribeInboundMedia_VisionPrimaryUntouched(t *testing.T) {
 		Models: []config.ModelConfig{{ModelName: "gpt5", Enabled: true, Vision: config.VisionUserMessage}},
 	}}
 	stub := &stubVisionClient{reply: "should not be called"}
-	agent := &AgentInstance{ID: "a1", Model: "gpt5", VisionClients: []llmcontext.LLMClient{stub}}
+	agent := &AgentInstance{ID: "a1", Model: "gpt5", VisionClients: []visionClient{stub}}
 
 	userMsg := providers.Message{Role: "user", Content: "hi", Media: []string{"data:image/png;base64,AAA"}}
 	al.describeInboundMedia(context.Background(), agent, &userMsg)
@@ -172,7 +171,7 @@ func TestFlowA_InjectsDescriptionForNonVisionModel(t *testing.T) {
 		agent.Config.Tools = []string{"*"}
 	}
 	stub := &stubVisionClient{reply: "two cats", model: "vmodel"}
-	agent.VisionClients = []llmcontext.LLMClient{stub}
+	agent.VisionClients = []visionClient{stub}
 
 	// Iteration 1: call the image tool. Iteration 2: plain final answer.
 	resps := []*providers.LLMResponse{
@@ -196,7 +195,7 @@ func TestFlowA_InjectsDescriptionForNonVisionModel(t *testing.T) {
 
 	_, _, _, _, _, err := al.runLLMIteration(
 		context.Background(), agent,
-		[]providers.Message{{Role: "user", Content: "how many cats?"}}, opts, cm,
+		[]providers.Message{{Role: "user", Content: "how many cats?"}}, opts, cm, nil,
 	)
 	if err != nil {
 		t.Fatalf("runLLMIteration: %v", err)

@@ -11,11 +11,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PivotLLM/ctxengine"
+
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/channels"
 	"github.com/PivotLLM/ClawEh/commands"
 	"github.com/PivotLLM/ClawEh/config"
-	"github.com/PivotLLM/ClawEh/llmcontext"
 	"github.com/PivotLLM/ClawEh/media"
 	"github.com/PivotLLM/ClawEh/providers"
 	"github.com/PivotLLM/ClawEh/routing"
@@ -56,7 +57,7 @@ func newTestAgentLoop(
 	}
 	msgBus = bus.NewMessageBus()
 	provider = &mockProvider{}
-	al = NewAgentLoop(cfg, msgBus, provider, nil)
+	al = mustNewAgentLoop(t, cfg, msgBus, provider, nil)
 	return al, cfg, msgBus, provider, func() { os.RemoveAll(tmpDir) }
 }
 
@@ -71,7 +72,7 @@ func TestRecordLastChannel(t *testing.T) {
 	if got := al.state.GetLastChannel(); got != testChannel {
 		t.Errorf("Expected channel '%s', got '%s'", testChannel, got)
 	}
-	al2 := NewAgentLoop(cfg, msgBus, provider, nil)
+	al2 := mustNewAgentLoop(t, cfg, msgBus, provider, nil)
 	if got := al2.state.GetLastChannel(); got != testChannel {
 		t.Errorf("Expected persistent channel '%s', got '%s'", testChannel, got)
 	}
@@ -88,7 +89,7 @@ func TestRecordLastChatID(t *testing.T) {
 	if got := al.state.GetLastChatID(); got != testChatID {
 		t.Errorf("Expected chat ID '%s', got '%s'", testChatID, got)
 	}
-	al2 := NewAgentLoop(cfg, msgBus, provider, nil)
+	al2 := mustNewAgentLoop(t, cfg, msgBus, provider, nil)
 	if got := al2.state.GetLastChatID(); got != testChatID {
 		t.Errorf("Expected persistent chat ID '%s', got '%s'", testChatID, got)
 	}
@@ -120,7 +121,7 @@ func TestNewAgentLoop_StateInitialized(t *testing.T) {
 	// Create agent loop
 	msgBus := bus.NewMessageBus()
 	provider := &mockProvider{}
-	al := NewAgentLoop(cfg, msgBus, provider, nil)
+	al := mustNewAgentLoop(t, cfg, msgBus, provider, nil)
 
 	// Verify state manager is initialized
 	if al.state == nil {
@@ -163,7 +164,7 @@ func TestToolRegistry_ToolRegistration(t *testing.T) {
 
 	msgBus := bus.NewMessageBus()
 	provider := &mockProvider{}
-	al := NewAgentLoop(cfg, msgBus, provider, nil)
+	al := mustNewAgentLoop(t, cfg, msgBus, provider, nil)
 
 	// Register a custom tool
 	customTool := &mockCustomTool{}
@@ -226,7 +227,7 @@ func TestToolRegistry_GetDefinitions(t *testing.T) {
 
 	msgBus := bus.NewMessageBus()
 	provider := &mockProvider{}
-	al := NewAgentLoop(cfg, msgBus, provider, nil)
+	al := mustNewAgentLoop(t, cfg, msgBus, provider, nil)
 
 	// Register a test tool and verify it shows up in startup info
 	testTool := &mockCustomTool{}
@@ -266,7 +267,7 @@ func TestAgentLoop_GetStartupInfo(t *testing.T) {
 
 	msgBus := bus.NewMessageBus()
 	provider := &mockProvider{}
-	al := NewAgentLoop(cfg, msgBus, provider, nil)
+	al := mustNewAgentLoop(t, cfg, msgBus, provider, nil)
 
 	info := al.GetStartupInfo()
 
@@ -313,7 +314,7 @@ func TestAgentLoop_Stop(t *testing.T) {
 
 	msgBus := bus.NewMessageBus()
 	provider := &mockProvider{}
-	al := NewAgentLoop(cfg, msgBus, provider, nil)
+	al := mustNewAgentLoop(t, cfg, msgBus, provider, nil)
 
 	// Note: running is only set to true when Run() is called
 	// We can't test that without starting the event loop
@@ -436,7 +437,7 @@ func TestProcessMessage_UsesRouteSessionKey(t *testing.T) {
 
 	msgBus := bus.NewMessageBus()
 	provider := &simpleMockProvider{response: "ok"}
-	al := NewAgentLoop(cfg, msgBus, provider, nil)
+	al := mustNewAgentLoop(t, cfg, msgBus, provider, nil)
 
 	msg := bus.InboundMessage{
 		Channel:  "telegram",
@@ -498,7 +499,7 @@ func TestProcessMessage_CommandOutcomes(t *testing.T) {
 
 	msgBus := bus.NewMessageBus()
 	provider := &countingMockProvider{response: "LLM reply"}
-	al := NewAgentLoop(cfg, msgBus, provider, nil)
+	al := mustNewAgentLoop(t, cfg, msgBus, provider, nil)
 	helper := testHelper{al: al}
 
 	baseMsg := bus.InboundMessage{
@@ -585,7 +586,7 @@ func TestProcessMessage_ModelSelectListConsistency(t *testing.T) {
 
 	msgBus := bus.NewMessageBus()
 	provider := &countingMockProvider{response: "LLM reply"}
-	al := NewAgentLoop(cfg, msgBus, provider, nil)
+	al := mustNewAgentLoop(t, cfg, msgBus, provider, nil)
 	helper := testHelper{al: al}
 
 	modelResp := helper.executeAndGetResponse(t, context.Background(), bus.InboundMessage{
@@ -645,7 +646,7 @@ func TestToolResult_SilentToolDoesNotSendUserMessage(t *testing.T) {
 
 	msgBus := bus.NewMessageBus()
 	provider := &simpleMockProvider{response: "File operation complete"}
-	al := NewAgentLoop(cfg, msgBus, provider, nil)
+	al := mustNewAgentLoop(t, cfg, msgBus, provider, nil)
 	helper := testHelper{al: al}
 
 	// ReadFileTool returns SilentResult, which should not send user message
@@ -690,7 +691,7 @@ func TestToolResult_UserFacingToolDoesSendMessage(t *testing.T) {
 
 	msgBus := bus.NewMessageBus()
 	provider := &simpleMockProvider{response: "Command output: hello world"}
-	al := NewAgentLoop(cfg, msgBus, provider, nil)
+	al := mustNewAgentLoop(t, cfg, msgBus, provider, nil)
 	helper := testHelper{al: al}
 
 	// ExecTool returns UserResult, which should send user message
@@ -772,7 +773,7 @@ func TestAgentLoop_ContextExhaustionRetry(t *testing.T) {
 		successResp: "Recovered from context error",
 	}
 
-	al := NewAgentLoop(cfg, msgBus, provider, nil)
+	al := mustNewAgentLoop(t, cfg, msgBus, provider, nil)
 
 	// Inject some history to simulate a full context
 	sessionKey := "test-session-context"
@@ -859,7 +860,7 @@ func TestProcessDirectWithChannel_TriggersMCPInitialization(t *testing.T) {
 
 	msgBus := bus.NewMessageBus()
 	provider := &mockProvider{}
-	al := NewAgentLoop(cfg, msgBus, provider, nil)
+	al := mustNewAgentLoop(t, cfg, msgBus, provider, nil)
 	defer al.Close()
 
 	if al.mcp.hasManager() {
@@ -902,7 +903,7 @@ func TestTargetReasoningChannelID_AllChannels(t *testing.T) {
 		},
 	}
 
-	al := NewAgentLoop(cfg, bus.NewMessageBus(), &mockProvider{}, nil)
+	al := mustNewAgentLoop(t, cfg, bus.NewMessageBus(), &mockProvider{}, nil)
 	chManager, err := channels.NewManager(&config.Config{}, bus.NewMessageBus(), nil)
 	if err != nil {
 		t.Fatalf("Failed to create channel manager: %v", err)
@@ -956,7 +957,7 @@ func TestHandleReasoning(t *testing.T) {
 			},
 		}
 		msgBus := bus.NewMessageBus()
-		return NewAgentLoop(cfg, msgBus, &mockProvider{}, nil), msgBus
+		return mustNewAgentLoop(t, cfg, msgBus, &mockProvider{}, nil), msgBus
 	}
 
 	t.Run("skips when any required field is empty", func(t *testing.T) {
@@ -1390,9 +1391,9 @@ func TestForceCompression_WithSystemPrompt(t *testing.T) {
 	}
 	agent.Sessions.SetHistory(sessionKey, history)
 
-	mgr := llmcontext.New(sessionKey, agent.Sessions, agent.ContextBuilder, nil,
-		llmcontext.WithContextWindow(400),
-		llmcontext.WithSafetyPercent(80),
+	mgr := ctxengine.New(sessionKey, agent.Sessions,
+		ctxengine.WithContextWindow(400),
+		ctxengine.WithSafetyPercent(80),
 	)
 	if err := mgr.ForceCompress(context.Background()); err != nil {
 		t.Fatalf("ForceCompress returned unexpected error: %v", err)
@@ -1438,9 +1439,9 @@ func TestForceCompression_NoSystemPrompt(t *testing.T) {
 	}
 	agent.Sessions.SetHistory(sessionKey, history)
 
-	mgr := llmcontext.New(sessionKey, agent.Sessions, agent.ContextBuilder, nil,
-		llmcontext.WithContextWindow(400),
-		llmcontext.WithSafetyPercent(80),
+	mgr := ctxengine.New(sessionKey, agent.Sessions,
+		ctxengine.WithContextWindow(400),
+		ctxengine.WithSafetyPercent(80),
 	)
 	if err := mgr.ForceCompress(context.Background()); err != nil {
 		t.Fatalf("ForceCompress returned unexpected error: %v", err)
@@ -1510,7 +1511,7 @@ func TestRunLLMIteration_ContextCancelDuringBackoff(t *testing.T) {
 	go func() {
 		cm, releaseTestCM := al.getContextManager(agent, opts.SessionKey)
 		defer releaseTestCM()
-		_, _, _, _, _, err := al.runLLMIteration(ctx, agent, messages, opts, cm)
+		_, _, _, _, _, err := al.runLLMIteration(ctx, agent, messages, opts, cm, nil)
 		done <- result{err: err}
 	}()
 
@@ -1724,7 +1725,7 @@ func TestRunLLMIteration_ToolCalls_ThenFinalResponse(t *testing.T) {
 
 	cm, releaseTestCM := al.getContextManager(agent, opts.SessionKey)
 	defer releaseTestCM()
-	content, _, _, _, iterations, err := al.runLLMIteration(context.Background(), agent, messages, opts, cm)
+	content, _, _, _, iterations, err := al.runLLMIteration(context.Background(), agent, messages, opts, cm, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1786,7 +1787,7 @@ func TestRunLLMIteration_MaxIterations(t *testing.T) {
 
 	cm, releaseTestCM := al.getContextManager(agent, opts.SessionKey)
 	defer releaseTestCM()
-	content, _, _, _, iterations, err := al.runLLMIteration(context.Background(), agent, messages, opts, cm)
+	content, _, _, _, iterations, err := al.runLLMIteration(context.Background(), agent, messages, opts, cm, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1993,7 +1994,7 @@ func TestResolveSystemMessageTarget(t *testing.T) {
 			},
 		},
 	}
-	al := NewAgentLoop(cfg, bus.NewMessageBus(), &mockProvider{}, nil)
+	al := mustNewAgentLoop(t, cfg, bus.NewMessageBus(), &mockProvider{}, nil)
 
 	// Originator known: route to that agent (Dawn) in the carried session.
 	dawnSession := routing.BuildAgentMainSessionKey("dawn")
@@ -2092,7 +2093,7 @@ func TestRunLLMIteration_ContextWindowError_Retry(t *testing.T) {
 
 	cm, releaseTestCM := al.getContextManager(agent, opts.SessionKey)
 	defer releaseTestCM()
-	content, _, _, _, _, err := al.runLLMIteration(context.Background(), agent, messages, opts, cm)
+	content, _, _, _, _, err := al.runLLMIteration(context.Background(), agent, messages, opts, cm, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -2403,7 +2404,7 @@ func TestResolveMessageRoute_PreresolvedAgentID(t *testing.T) {
 		},
 	}
 
-	al := NewAgentLoop(cfg, bus.NewMessageBus(), &mockProvider{}, nil)
+	al := mustNewAgentLoop(t, cfg, bus.NewMessageBus(), &mockProvider{}, nil)
 
 	// Baseline: without preresolved metadata, a direct peer with ID "dawn"
 	// falls through to Penny's account-level binding. This is the old bug.

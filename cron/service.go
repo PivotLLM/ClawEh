@@ -16,6 +16,13 @@ import (
 	"github.com/PivotLLM/ClawEh/logger"
 )
 
+// KindListen is the schedule kind of a listen job: it has no next run because
+// it never stops. The job's watch tool is called continuously in the
+// background (a long-poll or event-wait tool), and each result that carries a
+// new value for the watched fields is delivered to the agent. See
+// tools/schedule/listen.go.
+const KindListen = "listen"
+
 type CronSchedule struct {
 	Kind    string `json:"kind"`
 	AtMS    *int64 `json:"atMs,omitempty"`
@@ -45,6 +52,17 @@ type CronWatch struct {
 	// from firing on incidental churn — an unread badge, a relative timestamp,
 	// a reordering — none of which mean new mail arrived.
 	Fields []string `json:"fields,omitempty"`
+	// TimeoutSec bounds one call of the tool for a listen job: how long the
+	// long-poll may wait for an event before the call is dropped and made
+	// again. 0 means the default (5 minutes). Scheduled watches ignore it and
+	// use their fixed 60-second probe timeout.
+	TimeoutSec int `json:"timeoutSec,omitempty"`
+	// SuppressRepeats, for a listen job, withholds a result whose watched
+	// fields match the last delivered event. Off by default: every result with
+	// the fields present is delivered, because each occurrence may matter (a
+	// document edited several times in a row). Turn it on for a source that
+	// replays its latest event on every reconnect.
+	SuppressRepeats bool `json:"suppressRepeats,omitempty"`
 }
 
 type CronPayload struct {

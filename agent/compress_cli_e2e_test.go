@@ -12,16 +12,17 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/PivotLLM/ClawEh/llmcontext"
+	"github.com/PivotLLM/ctxengine"
+	"github.com/PivotLLM/ctxengine/session"
+
 	"github.com/PivotLLM/ClawEh/providers"
-	"github.com/PivotLLM/ClawEh/session"
 )
 
 // TestCompress_E2E_ClaudeCLIReceivesFortification locks in the full compression
-// dispatch chain: Manager.doCompress → providerLLMClient.Complete →
-// ClaudeCliProvider.Chat. The provider's stdin must carry the JSON-object
-// fortification because providerLLMClient passes ResponseFormatJSONObjectOption
-// through the options map. Without that wiring this test fails — see the
+// dispatch chain: Manager.doCompress → compressModelCaller.Complete →
+// providerLLMClient.chat → ClaudeCliProvider.Chat. The provider's stdin must
+// carry the JSON-object fortification because the caller passes the engine's
+// JSONObject request through as ResponseFormatJSONObjectOption. Without that wiring this test fails — see the
 // mutation evidence captured in the worker report.
 func TestCompress_E2E_ClaudeCLIReceivesFortification(t *testing.T) {
 	if runtime.GOOS == "windows" {
@@ -45,7 +46,11 @@ EOFMOCK
 	client := &providerLLMClient{provider: cli, model: "claude-cli", requestJSONObject: true}
 
 	sessionKey := "e2e-compress"
-	store := session.NewSessionManager("")
+	store, err := session.NewSQLiteStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewSQLiteStore: %v", err)
+	}
+	defer store.Close()
 	// Six distinct messages large enough that selectTail cannot retain them all
 	// at the default 20% retain budget against a 1000-token context window;
 	// the older half is handed to the compression LLM (i.e. the mock CLI).
@@ -58,13 +63,11 @@ EOFMOCK
 			fmt.Sprintf("msg %d payload %s", i, strings.Repeat("token ", 200)))
 	}
 
-	cm := llmcontext.New(
+	cm := ctxengine.New(
 		sessionKey,
 		store,
-		nil,
-		nil,
-		llmcontext.WithContextWindow(1000),
-		llmcontext.WithCompressLLM(client),
+		ctxengine.WithContextWindow(1000),
+		ctxengine.WithModelCaller(&compressModelCaller{clients: []*providerLLMClient{client}}),
 	)
 	if err := cm.Compact(context.Background()); err != nil {
 		t.Fatalf("Compact: %v", err)

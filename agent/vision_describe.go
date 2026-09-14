@@ -8,10 +8,39 @@ import (
 	"strings"
 
 	"github.com/PivotLLM/ClawEh/config"
-	"github.com/PivotLLM/ClawEh/llmcontext"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/providers"
 )
+
+// visionClient is one vision-describe side-model: a one-shot chat call against
+// a resolved provider+model that returns the model's text.
+type visionClient interface {
+	Complete(ctx context.Context, messages []providers.Message) (visionReply, error)
+}
+
+// visionReply is the text a visionClient produced.
+type visionReply struct {
+	Content string
+}
+
+// providerVisionClient dispatches a describe call through a resolved provider.
+type providerVisionClient struct {
+	provider providers.LLMProvider
+	model    string
+}
+
+// Model returns the model name, used to label log lines.
+func (c *providerVisionClient) Model() string { return c.model }
+
+func (c *providerVisionClient) Complete(ctx context.Context, messages []providers.Message) (visionReply, error) {
+	// No response-format option: a describe call wants free-form prose, not a
+	// JSON object.
+	resp, err := c.provider.Chat(ctx, messages, nil, c.model, nil)
+	if err != nil {
+		return visionReply{}, err
+	}
+	return visionReply{Content: resp.Content}, nil
+}
 
 // resolveVisionModelChain returns the ordered, de-duplicated vision-describe
 // model chain: the agent-defaults VisionModel first, then VisionModelFallbacks.
@@ -22,14 +51,14 @@ func resolveVisionModelChain(model string, fallbacks []string) []string {
 	return resolveCompressModelChain([]string{model}, fallbacks)
 }
 
-// buildVisionLLMClient resolves a configured vision model reference into an
-// LLMClient dispatched through the per-model dispatcher, mirroring
-// buildCompressLLMClient. Unlike compression there is NO agent-primary
+// buildVisionLLMClient resolves a configured vision model reference into a
+// visionClient dispatched through the per-model dispatcher, mirroring
+// resolveCompressClient. Unlike compression there is NO agent-primary
 // last-resort fallback: the whole point is that the primary is text-only, so an
 // unresolvable vision model is skipped (returns ok=false) rather than routed
 // through the non-vision provider. cfg is passed explicitly because this runs
 // during registerRuntimeTools, before al.cfg is swapped on reload.
-func (al *AgentLoop) buildVisionLLMClient(cfg *config.Config, agent *AgentInstance, visionModelName string) (llmcontext.LLMClient, bool) {
+func (al *AgentLoop) buildVisionLLMClient(cfg *config.Config, agent *AgentInstance, visionModelName string) (visionClient, bool) {
 	alias, modelID, ok := resolveCompressModelTarget(cfg, visionModelName)
 	if !ok || al.dispatcher == nil {
 		logger.WarnCF("agent", "vision model not found in enabled models; skipping", map[string]any{
@@ -55,9 +84,7 @@ func (al *AgentLoop) buildVisionLLMClient(cfg *config.Config, agent *AgentInstan
 		"alias":     alias,
 		"model":     modelID,
 	})
-	// requestJSONObject stays false: a describe call wants free-form prose, not a
-	// JSON object.
-	return &providerLLMClient{provider: p, model: modelID, providerName: compressProviderName(cfg, alias)}, true
+	return &providerVisionClient{provider: p, model: modelID}, true
 }
 
 // wireVisionClients builds the agent's vision-describe chain from the global
@@ -68,7 +95,7 @@ func (al *AgentLoop) buildVisionLLMClient(cfg *config.Config, agent *AgentInstan
 // hidden-attachment note from messagesForModel).
 func (al *AgentLoop) wireVisionClients(cfg *config.Config, agent *AgentInstance) {
 	names := resolveVisionModelChain(cfg.Agents.Defaults.VisionModel, cfg.Agents.Defaults.VisionModelFallbacks)
-	var clients []llmcontext.LLMClient
+	var clients []visionClient
 	effective := ""
 	for _, name := range names {
 		client, ok := al.buildVisionLLMClient(cfg, agent, name)

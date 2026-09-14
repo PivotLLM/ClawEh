@@ -108,11 +108,8 @@ func TestBuildCompressLLMClient_UsesDispatcher(t *testing.T) {
 		Model:    "sonnet-4-5",
 	}
 
-	client := al.buildCompressLLMClient(agent, "test-compress-model", "sess-1")
-	plc, ok := client.(*providerLLMClient)
-	if !ok {
-		t.Fatalf("expected *providerLLMClient, got %T", client)
-	}
+	client := al.resolveCompressClient(agent, "test-compress-model", "sess-1")
+	plc := client
 	if plc.provider == nil {
 		t.Fatal("provider is nil")
 	}
@@ -143,11 +140,8 @@ func TestBuildCompressLLMClient_FallbackToAgentProvider(t *testing.T) {
 		Provider: primary,
 	}
 
-	client := al.buildCompressLLMClient(agent, "unknown-model", "sess-2")
-	plc, ok := client.(*providerLLMClient)
-	if !ok {
-		t.Fatalf("expected *providerLLMClient, got %T", client)
-	}
+	client := al.resolveCompressClient(agent, "unknown-model", "sess-2")
+	plc := client
 	if plc.provider != providers.LLMProvider(primary) {
 		t.Fatal("expected fallback to agent.Provider when dispatcher cannot resolve compress_model")
 	}
@@ -199,11 +193,8 @@ func TestBuildDefaultCompressLLMClient_UsesDispatcherForPrimary(t *testing.T) {
 		},
 	}
 
-	client := al.buildDefaultCompressLLMClient(agent, "sess-default")
-	plc, ok := client.(*providerLLMClient)
-	if !ok {
-		t.Fatalf("expected *providerLLMClient, got %T", client)
-	}
+	client := al.resolveDefaultCompressClient(agent, "sess-default")
+	plc := client
 	if plc.provider == nil {
 		t.Fatal("provider is nil")
 	}
@@ -236,11 +227,8 @@ func TestBuildDefaultCompressLLMClient_FallbackWhenPrimaryUnresolved(t *testing.
 		Model:    "no-such-model",
 	}
 
-	client := al.buildDefaultCompressLLMClient(agent, "sess-default-fallback")
-	plc, ok := client.(*providerLLMClient)
-	if !ok {
-		t.Fatalf("expected *providerLLMClient, got %T", client)
-	}
+	client := al.resolveDefaultCompressClient(agent, "sess-default-fallback")
+	plc := client
 	if plc.provider != providers.LLMProvider(primary) {
 		t.Fatal("expected fallback to agent.Provider when dispatcher cannot resolve the primary model")
 	}
@@ -270,8 +258,8 @@ func TestBuildCompressLLMClient_NilDispatcher(t *testing.T) {
 	al := &AgentLoop{cfg: cfg, dispatcher: nil}
 	agent := &AgentInstance{ID: "nil-d", Provider: primary}
 
-	client := al.buildCompressLLMClient(agent, "y", "sess-3")
-	plc := client.(*providerLLMClient)
+	client := al.resolveCompressClient(agent, "y", "sess-3")
+	plc := client
 	if plc.provider != providers.LLMProvider(primary) {
 		t.Fatal("expected fallback to agent.Provider when dispatcher is nil")
 	}

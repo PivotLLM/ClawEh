@@ -10,7 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/PivotLLM/ClawEh/llmcontext"
+	"github.com/PivotLLM/ctxengine"
+
 	"github.com/PivotLLM/ClawEh/providers"
 )
 
@@ -20,53 +21,38 @@ type trackingContextManager struct {
 	closed atomic.Bool
 }
 
-func (m *trackingContextManager) AddUserMessage(_ context.Context, _ providers.Message) error {
-	return nil
+func (m *trackingContextManager) AddUserMessage(_ context.Context, _ providers.Message) (int64, error) {
+	return 0, nil
 }
 
-func (m *trackingContextManager) AddAssistantMessage(_ context.Context, _ providers.Message) error {
-	return nil
+func (m *trackingContextManager) AddAssistantMessage(_ context.Context, _ providers.Message) (int64, error) {
+	return 0, nil
 }
 
-func (m *trackingContextManager) AddToolCallMessage(_ context.Context, _ providers.Message) error {
-	return nil
+func (m *trackingContextManager) AddToolCallMessage(_ context.Context, _ providers.Message) (int64, error) {
+	return 0, nil
 }
 
-func (m *trackingContextManager) AddToolResult(_ context.Context, _ providers.Message) error {
-	return nil
-}
-func (m *trackingContextManager) RecordToolUse(_ ...string)     {}
-func (m *trackingContextManager) SetToolDefinitionTokens(_ int) {}
-func (m *trackingContextManager) PreDispatchCheck(_ context.Context, current []providers.Message) ([]providers.Message, error) {
-	return current, nil
+func (m *trackingContextManager) AddToolResult(_ context.Context, _ providers.Message) (int64, error) {
+	return 0, nil
 }
 
-func (m *trackingContextManager) CheckAndCompress(_ context.Context, built []providers.Message) ([]providers.Message, error) {
-	return built, nil
+func (m *trackingContextManager) Assemble(_ context.Context, _ ctxengine.AssembleRequest) (ctxengine.Assembly, error) {
+	return ctxengine.Assembly{}, nil
 }
-func (m *trackingContextManager) SetSystemPrompt(_ string)   {}
-func (m *trackingContextManager) SetCallContext(_, _ string) {}
-func (m *trackingContextManager) SetSessionToken(_ string)   {}
-func (m *trackingContextManager) Build(_ context.Context) ([]providers.Message, error) {
-	return nil, nil
-}
-
-func (m *trackingContextManager) SweepEvictions(_ context.Context) []llmcontext.EvictionEvent {
-	return nil
-}
-func (m *trackingContextManager) Compact(_ context.Context) error                    { return nil }
-func (m *trackingContextManager) LastCompactionReport() *llmcontext.CompactionReport { return nil }
-func (m *trackingContextManager) RenderedSummary() string                            { return "" }
-func (m *trackingContextManager) ForceCompress(_ context.Context) error              { return nil }
-func (m *trackingContextManager) Stats() llmcontext.ContextStats                     { return llmcontext.ContextStats{} }
-func (m *trackingContextManager) Reset(_ context.Context) error                      { return nil }
+func (m *trackingContextManager) Compact(_ context.Context) error                   { return nil }
+func (m *trackingContextManager) LastCompactionReport() *ctxengine.CompactionReport { return nil }
+func (m *trackingContextManager) RenderedSummary() string                           { return "" }
+func (m *trackingContextManager) ForceCompress(_ context.Context) error             { return nil }
+func (m *trackingContextManager) Stats() ctxengine.ContextStats                     { return ctxengine.ContextStats{} }
+func (m *trackingContextManager) Reset(_ context.Context) error                     { return nil }
 func (m *trackingContextManager) Close(_ context.Context) error {
 	m.closed.Store(true)
 	return nil
 }
 
 // makeEntry is a test helper that inserts a cmEntry directly into the sync.Map.
-func makeEntry(al *AgentLoop, key string, cm llmcontext.ContextManager, lastAccessed time.Time, refcount int32) *cmEntry {
+func makeEntry(al *AgentLoop, key string, cm ctxengine.ContextManager, lastAccessed time.Time, refcount int32) *cmEntry {
 	entry := &cmEntry{
 		cm:           cm,
 		lastAccessed: lastAccessed,

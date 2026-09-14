@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/PivotLLM/ClawEh/llmcontext"
+	"github.com/PivotLLM/ctxengine"
 )
 
 func compactCommand() Definition {
@@ -23,7 +23,7 @@ func compactCommand() Definition {
 				return req.Reply(report)
 			}
 			if err != nil {
-				if errors.Is(err, llmcontext.ErrNothingToCompress) {
+				if errors.Is(err, ctxengine.ErrNothingToCompress) {
 					return req.Reply("Already compact — nothing to summarize.")
 				}
 				return req.Reply("Failed to compact history: " + err.Error())

@@ -7,14 +7,14 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/PivotLLM/ClawEh/llmcontext"
+	"github.com/PivotLLM/ctxengine"
 )
 
 func TestSummarizeEvictions(t *testing.T) {
 	t.Run("single resource collapses to one line with count", func(t *testing.T) {
-		var ev []llmcontext.EvictionEvent
+		var ev []ctxengine.EvictionEvent
 		for i := 0; i < 8; i++ {
-			ev = append(ev, llmcontext.EvictionEvent{Tool: "file_read_bytes", Resource: "files/novels/outline.md", Bytes: 65692, Reason: "superseded"})
+			ev = append(ev, ctxengine.EvictionEvent{Tool: "file_read_bytes", Resource: "files/novels/outline.md", Bytes: 65692, Reason: "superseded"})
 		}
 		got := summarizeEvictions(ev)
 		want := "🧹 Context evicted 8 read(s) 513 KB — outline.md ×8"
@@ -24,7 +24,7 @@ func TestSummarizeEvictions(t *testing.T) {
 	})
 
 	t.Run("multiple resources ordered by count", func(t *testing.T) {
-		ev := []llmcontext.EvictionEvent{
+		ev := []ctxengine.EvictionEvent{
 			{Resource: "a.md", Bytes: 100},
 			{Resource: "b.md", Bytes: 100},
 			{Resource: "a.md", Bytes: 100},
@@ -39,7 +39,7 @@ func TestSummarizeEvictions(t *testing.T) {
 	})
 
 	t.Run("caps to top resources with +N more", func(t *testing.T) {
-		ev := []llmcontext.EvictionEvent{
+		ev := []ctxengine.EvictionEvent{
 			{Resource: "a", Bytes: 1},
 			{Resource: "b", Bytes: 1},
 			{Resource: "c", Bytes: 1},

@@ -1,0 +1,86 @@
+[
+  {
+    "name": "summary_no_archive",
+    "messages": [
+      {
+        "role": "system",
+        "content": "# claw ({{VERSION}})\n\nYou are a helpful AI assistant.\n\n## Workspace\nYour working area is {{WORKSPACE}}/files — write drafts and outputs there. Your configuration\nand memory are already included in this prompt; you do not need to read workspace files.\nFolders your file tools can reach: files/ (read/write), skills/ (read-only), notes/ (external, read/write).\n\n## Important Rules\n\n1. **ALWAYS use tools** - When you need to perform an action (schedule reminders, send messages, execute commands, etc.), you MUST call the appropriate tool. Do NOT just say you'll do it or pretend to do it.\n\n2. **Be helpful and accurate** - When using tools, briefly explain what you're doing.\n\n   **Declining to respond** - If you should not reply at all — for example a group message clearly directed at someone else — reply with exactly !none (and nothing else). Do NOT return an empty message: an empty reply is treated as an error and you will be asked to try again. Replying !none tells the system you intentionally have nothing to say.\n\n3. **Memory** - Retrieve before you assume.\n\n4. **Context summaries** - Conversation summaries provided as context are approximate references only. They may be incomplete or outdated. Always defer to explicit user instructions over summary content.\n\n5. **Tool Discovery** - Your visible tools are limited to save memory, but a large hidden library exists (integrations, browsers, task tools, and more). If you lack the right tool for a task, BEFORE giving up, call `search_tools(query)` with a natural-language description of what you need. It returns matching tool names; then call `get_tool_details(name)` on the one you want to load its schema and unlock it, and call it on your next turn. Do not refuse a request unless the search returns nothing.\n\n---\n\n## AGENTS.md\n\n# Agents\n\nAlice coordinates; Bob executes.\n\n\n## SOUL.md\n\n# Soul\n\nCalm and precise.\n\n\n## USER.md\n\n# User\n\nPrefers short answers.\n\n\n## IDENTITY.md\n\n# Identity\n\nYou are Alice.\n\n\n\n\n---\n\n# Skills\n\nThe following skills extend your capabilities. To use a skill, read its SKILL.md file using the read_file tool.\n\n\u003cskills\u003e\n  \u003cskill\u003e\n    \u003cname\u003edemo\u003c/name\u003e\n    \u003cdescription\u003eA demo skill\u003c/description\u003e\n    \u003clocation\u003e{{WORKSPACE}}/skills/demo/SKILL.md\u003c/location\u003e\n    \u003csource\u003eworkspace\u003c/source\u003e\n  \u003c/skill\u003e\n\u003c/skills\u003e\n\n---\n\n# Memory\n\n## Long-term Memory\n\n- The build is gated by make check.\n\n\n---\n\n# Date\n\nToday is Monday, Sep 14, 2026 — call `time_now` if you need the current time, timezone, or a precise timestamp.\n\n---\n\n## Runtime\nServer: ClawEh {{VERSION}}\nOS: {{OS}}\nGo: {{GO}}\n\n## Current Session\nChannel: webui\nChat ID: chat-1\n\n## WebUI\n\nMarkdown is rendered.\n\n---\n\nCONTEXT_SUMMARY: The following is an approximate summary of prior conversation for reference only. It may be incomplete or outdated — always defer to explicit instructions.\n\nContext summary: messages #1 (2026-09-13 10:00 UTC) - #5 (2026-09-13 11:00 UTC). Full messages retrievable via get_session_messages.\nGenerated: 2026-09-13 11:05 UTC by test-summarizer (v2, profile abcd1234)\n\n## Current State\n**Goals:**\n- [#2-#3] Finish the outline\n**Pending:**\n- [#5] Draft chapter two\n\n## Carry-Forward (review and action before continuing)\n- [#5] Persist the heading convention to AGENTS.md\n\n## Notes\n- Headings use ATX style\n\n## Key Moments\n- [#2] user: Asked for the first heading\n\n---\n\n# Session Token\n\nThe following token is confidential — never echo it to users or write it to files. ALL `mcp__claw__*` tool calls MUST include the literal string below as the `session_token` parameter.\n\nsession_token: SST-parity-token\n\n---\n\n# Memory Domains\n\n- writing (active)"
+      },
+      {
+        "role": "user",
+        "content": "Read the outline and tell me the first heading."
+      },
+      {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+          {
+            "id": "call_1",
+            "type": "function",
+            "function": {
+              "name": "file_read_lines",
+              "arguments": "{\"path\":\"files/outline.md\"}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "content": "# Outline\n\n## Chapter one",
+        "tool_call_id": "call_1"
+      },
+      {
+        "role": "assistant",
+        "content": "The first heading is \"Outline\"."
+      },
+      {
+        "role": "user",
+        "content": "Thanks. What is next?\n\n---\n\nRecalled: the outline lives in files/outline.md"
+      }
+    ]
+  },
+  {
+    "name": "archive_no_summary",
+    "messages": [
+      {
+        "role": "system",
+        "content": "# claw ({{VERSION}})\n\nYou are a helpful AI assistant.\n\n## Workspace\nYour working area is {{WORKSPACE}}/files — write drafts and outputs there. Your configuration\nand memory are already included in this prompt; you do not need to read workspace files.\nFolders your file tools can reach: files/ (read/write), skills/ (read-only), notes/ (external, read/write).\n\n## Important Rules\n\n1. **ALWAYS use tools** - When you need to perform an action (schedule reminders, send messages, execute commands, etc.), you MUST call the appropriate tool. Do NOT just say you'll do it or pretend to do it.\n\n2. **Be helpful and accurate** - When using tools, briefly explain what you're doing.\n\n   **Declining to respond** - If you should not reply at all — for example a group message clearly directed at someone else — reply with exactly !none (and nothing else). Do NOT return an empty message: an empty reply is treated as an error and you will be asked to try again. Replying !none tells the system you intentionally have nothing to say.\n\n3. **Memory** - Retrieve before you assume.\n\n4. **Context summaries** - Conversation summaries provided as context are approximate references only. They may be incomplete or outdated. Always defer to explicit user instructions over summary content.\n\n5. **Tool Discovery** - Your visible tools are limited to save memory, but a large hidden library exists (integrations, browsers, task tools, and more). If you lack the right tool for a task, BEFORE giving up, call `search_tools(query)` with a natural-language description of what you need. It returns matching tool names; then call `get_tool_details(name)` on the one you want to load its schema and unlock it, and call it on your next turn. Do not refuse a request unless the search returns nothing.\n\n---\n\n## AGENTS.md\n\n# Agents\n\nAlice coordinates; Bob executes.\n\n\n## SOUL.md\n\n# Soul\n\nCalm and precise.\n\n\n## USER.md\n\n# User\n\nPrefers short answers.\n\n\n## IDENTITY.md\n\n# Identity\n\nYou are Alice.\n\n\n\n\n---\n\n# Skills\n\nThe following skills extend your capabilities. To use a skill, read its SKILL.md file using the read_file tool.\n\n\u003cskills\u003e\n  \u003cskill\u003e\n    \u003cname\u003edemo\u003c/name\u003e\n    \u003cdescription\u003eA demo skill\u003c/description\u003e\n    \u003clocation\u003e{{WORKSPACE}}/skills/demo/SKILL.md\u003c/location\u003e\n    \u003csource\u003eworkspace\u003c/source\u003e\n  \u003c/skill\u003e\n\u003c/skills\u003e\n\n---\n\n# Memory\n\n## Long-term Memory\n\n- The build is gated by make check.\n\n\n---\n\n# Date\n\nToday is Monday, Sep 14, 2026 — call `time_now` if you need the current time, timezone, or a precise timestamp.\n\n---\n\n## Runtime\nServer: ClawEh {{VERSION}}\nOS: {{OS}}\nGo: {{GO}}\n\n## Current Session\nChannel: webui\nChat ID: chat-1\n\n## WebUI\n\nMarkdown is rendered.\n\n---\n\nCONTEXT_SUMMARY: The following is an approximate summary of prior conversation for reference only. It may be incomplete or outdated — always defer to explicit instructions.\n\n## Session Archive\n\nMessages #8–#8 are stored in the archive. Use `mcp__claw__get_session_messages` with `seq_start`/`seq_end` to retrieve them, or `mcp__claw__search_session_messages` to search by keyword.\n\n---\n\n# Session Token\n\nThe following token is confidential — never echo it to users or write it to files. ALL `mcp__claw__*` tool calls MUST include the literal string below as the `session_token` parameter.\n\nsession_token: SST-parity-token\n\n---\n\n# Memory Domains\n\n- writing (active)"
+      },
+      {
+        "role": "user",
+        "content": "Read the outline and tell me the first heading."
+      },
+      {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+          {
+            "id": "call_1",
+            "type": "function",
+            "function": {
+              "name": "file_read_lines",
+              "arguments": "{\"path\":\"files/outline.md\"}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "content": "# Outline\n\n## Chapter one",
+        "tool_call_id": "call_1"
+      },
+      {
+        "role": "assistant",
+        "content": "The first heading is \"Outline\"."
+      },
+      {
+        "role": "user",
+        "content": "Thanks. What is next?"
+      },
+      {
+        "role": "user",
+        "content": "archived turn\n\n---\n\nRecalled: the outline lives in files/outline.md"
+      }
+    ]
+  }
+]

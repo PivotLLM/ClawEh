@@ -149,7 +149,10 @@ func TestMessageRoute_RateLimited429(t *testing.T) {
 			List: []config.AgentConfig{{ID: "main", Name: "Main", Default: true}},
 		},
 	}
-	al := agent.NewAgentLoop(cfg, bus.NewMessageBus(), providers.NewUnconfiguredProvider(), nil)
+	al, err := agent.NewAgentLoop(cfg, bus.NewMessageBus(), providers.NewUnconfiguredProvider(), nil)
+	if err != nil {
+		t.Fatalf("NewAgentLoop: %v", err)
+	}
 
 	tok, err := al.CreateMessageToken("main", "gps")
 	if err != nil {

@@ -10,6 +10,182 @@ Entries describe what changed for someone **running or integrating with** ClawEh
 internal refactors behind them. A change nobody outside the repository can
 observe does not need an entry.
 
+## [0.5.3]
+
+### Changed
+
+- **Third-party dependencies updated** (Anthropic SDK 1.72, `golang.org/x`
+  libraries, fasthttp, gomarkdown and others). No behaviour change intended.
+
+### Fixed
+
+- **Cognitive-memory tools reject wrong-typed arguments instead of guessing.**
+  A string `"true"` for `set_sticky` used to clear stickiness; a non-integer
+  `limit` was silently rounded. Each `cogmem_*` tool now returns an error that
+  names the argument and the type it expects. `cogmem_domain_migrate` names the
+  destination when it is unknown, `cogmem_domain_list` rejects a status other
+  than `active` or `archived`, `cogmem_memory_forget` rejects an unknown domain
+  and retires every match rather than the first hundred, `cogmem_domain_update`
+  clears the summary on an empty `set_summary` and rejects an empty `set_name`,
+  and `cogmem_status` reports the domain and memory counts its description
+  promised.
+- **Memory import is idempotent and reaches archived domains.** Importing a
+  portable memory document a second time no longer re-creates domains that were
+  archived in the meantime; a matched domain takes the document's fields, and a
+  memory the document marks retired is retired in the store. The import result
+  gains `domains_updated` and `memories_retired` counts.
+- **Memory store connections all carry their settings.** Only the first pooled
+  SQLite connection used to receive the busy timeout and foreign-key setting,
+  so a contended write on another connection could fail at once with
+  `SQLITE_BUSY`. Every connection now gets them.
+- **A failed consolidation records no applied changes.** The run's transaction
+  rolled back, but the run record still claimed the operations it had tried.
+  Archiving a domain is logged as an `archive` audit event rather than
+  `update`, and an archived domain's `archived_at` follows a status change made
+  through `cogmem_domain_update`.
+
+## [0.5.2]
+
+Cognitive memory stands on its own. It keeps its own copy of the conversation
+until it has learned from it, so nothing else has to hold messages on its
+behalf, and an assistant is only told about memory when it actually has it.
+
+### Added
+
+- **Listen jobs: a persistent callback from a long-poll tool.** `cron_schedule
+  add` with `listen: true` and a `watch_tool` keeps the tool running in the
+  background: call it, wait for it to return (an event, a dropped connection,
+  or `watch_timeout_seconds`, default 300), and call it again at once. Whenever
+  the `watch_fields` are present, `message` is delivered to the agent followed
+  by the tool's full result, in an envelope that names the source (`The
+  following event was received by a continuous monitor at <time>:` then
+  `<tool> returned the following:`), distinct from the cron-fire envelope so
+  events are never deduplicated as repeated fires. Every result with the
+  fields present is delivered, identical or not; `suppress_repeats: true`
+  withholds a result identical to the last delivered event, for a source that
+  replays it on every reconnect. An absent field is "no data", not a change;
+  failures retry with backoff and are reported after five in a row. Jobs of
+  schedule kind `listen` have no next run and show as `listen (continuous)`.
+  See docs/cron.md, "Listen jobs".
+
+### Changed
+
+- **Cognitive memory no longer reads the session archive.** Each message is
+  handed to memory as it is spoken and held in the memory store's own inbox
+  until the next background consolidation run covers it, then dropped. The
+  archive is no longer marked or guarded on memory's behalf. On the first turn
+  after upgrading, messages already archived but not yet consolidated are
+  copied into the inbox once, so nothing spoken before the upgrade is lost to
+  memory. Nothing to configure.
+- **Assistants without cognitive memory are no longer told how to use it.**
+  The memory rule in the system prompt is emitted only for agents that have
+  `cogmem` on. Agents with it on receive byte-identical prompt text.
+- **BREAKING: each assistant now has one memory, at `cogmem/cogmem.db` in its
+  workspace, shared by every session it holds.** Memory used to be one file
+  per session under `sessions/`, so under the isolating session modes
+  (`session.mode` of `per-user`, `per-platform`, `per-account`) an assistant
+  kept a separate memory per person or platform; it now keeps one, which is
+  what "isolation is a property of the agent" always meant. The `cogmem/`
+  directory is self-contained: it survives deleting the sessions, can be
+  backed up on its own, and can be copied to a new assistant. Migration is a
+  one-time step, with the service stopped, for each agent workspace:
+
+  ```
+  mkdir -p <workspace>/cogmem
+  mv <workspace>/sessions/agent_<id>_main.cogmem.db <workspace>/cogmem/cogmem.db
+  ```
+
+  (move the `-wal` and `-shm` siblings too if present). A workspace with no
+  such file needs nothing; memory starts empty on first use. Other per-session
+  memory files, if any, hold separate memories that cannot be merged
+  automatically; import them through the memory page if you want them. The
+  memory page's store ids are now agent names rather than session file names.
+- **BREAKING: each session's live window and state now live inside its
+  `<key>.archive.db`.** The `<key>.jsonl` window and `<key>.meta.json` state
+  files are no longer read or written; the archive DB a session already had
+  now holds them too, so there is one file per session under `sessions/`.
+  Migration is a one-time step, with the service stopped:
+
+  ```
+  claw sessions migrate
+  ```
+
+  It folds every `.jsonl` + `.meta.json` pair in each assistant's sessions
+  directory into that session's archive DB, prints one line per session, and
+  renames the sources to `*.migrated`; delete those once you have verified
+  the conversations. It refuses to run while the gateway is up and is safe
+  to re-run (already-migrated sessions are skipped). The gateway refuses to
+  start while unmigrated `.meta.json` files remain in any assistant's
+  sessions directory, naming the directory and this command, so a start
+  before the migration cannot strand the old history. Deleting a
+  conversation from the WebUI now removes the whole session store, archive
+  included, rather than only the live window.
+- **The context engine now lives in its own module, `github.com/PivotLLM/ctxengine`.**
+  Transcript, archive, assembly, eviction, compaction and the `session_*`
+  tools moved out of ClawEh unchanged; the assembled prompt is byte-identical
+  (held by a golden test) and nothing changes on disk, in tool names or in
+  the HTTP API. Compaction and cognitive-memory consolidation now share one
+  model caller, so the summarization chain, its fallbacks and cooldowns
+  behave the same for both.
+- **Cognitive memory now lives in its own module, `github.com/PivotLLM/cogmem`.**
+  ClawEh embeds it; nothing changes on disk, in the tools or in the API. The
+  `cogmem_consolidate` tool's reply when no background worker is running now
+  says so plainly instead of "queued (worker not yet running)".
+- **Safety-net compaction now measures the whole request on every dispatch.**
+  Between tool calls, the emergency compaction check considered stored history
+  alone; it now also counts the system prompt, memory blocks and tool schemas,
+  as the turn-start check always did. A turn that grows past the safety line
+  mid-way compacts before the request is sent instead of relying on the
+  provider's context-exceeded retry.
+
+### Removed
+
+- **Legacy `.json` session files are no longer read or migrated.** Sessions
+  from before the JSONL store (a single `<key>.json` per session) were being
+  converted on startup and read by the WebUI history as a fallback; both
+  paths are gone. Any such file still on disk is ignored.
+- **BREAKING: the config key `memory.retention.protect_unconsolidated` is
+  gone.** It guarded the session archive from retention pruning until memory
+  had consolidated a message. Memory now keeps its own copy of what it has not
+  yet consolidated, so there is nothing left to guard. Migration: delete the
+  key from `config.json`; leaving it in place is harmless, an unknown key is
+  ignored on load.
+
+### Fixed
+
+- **Per-session settings survive compaction.** `/model`, `/reasoning` and
+  `/tools` choices are stored in the same record as the compaction counters,
+  and every compaction, clean shutdown and `/clear` used to overwrite that
+  record wholesale, so a restart after a compaction forgot them. The context
+  engine now rewrites only the fields it owns.
+- **Repeated scheduled fires no longer count towards compaction after a
+  restart.** The store counted a repeated cron fire as noise, but the engine
+  kept its own count of every message and wrote it over the store's on
+  compaction and shutdown. The store's count is now the only one.
+- **Context-window recovery keeps message numbers and no longer strands
+  results.** When a provider rejected a request as too large, the recovery path
+  renumbered the retained messages past the archive, so `session_messages`
+  could not fetch what the live window showed and the next summary's
+  references were dropped as out of range. It also removed a tool-call turn
+  while leaving its results behind. Recovery now drops whole turn groups,
+  keeps their numbers, and truncates an oversized tool result in the current
+  turn instead of giving up, so the retry can succeed.
+- **A failed summarisation no longer duplicates the previous summary in the
+  archive's checkpoint log.** When every summarisation model fails, the engine
+  keeps the existing summary and trims the window; it used to record that
+  summary as a new checkpoint each time.
+- **Cross-agent session scoping and isolation fixes.** When mentioning an agent
+  on a channel bound to another agent, mention extraction now runs before route
+  resolution, preventing session key inheritance or cross-agent tool access.
+  Session key resolution rejects foreign-scoped agent keys. Supervised background
+  task restarts now preserve the originating owner agent ID and session key so
+  task results are not routed to the default agent. `msg_send_file` verifies
+  symlink resolution against the workspace to prevent sandbox escape.
+- **Session files for keys containing `/` or `\` now resolve in the WebUI.** A
+  Telegram forum thread or a Slack thread produces such a key. Every session
+  file is named by one shared rule; the WebUI session view carried its own copy
+  that only replaced `:`, so it looked for a file that did not exist.
+
 ## [0.5.0]
 
 Cognitive memory redesign. The classification the model had to reason about at
@@ -629,5 +805,7 @@ on, and breaking one is a deliberate decision rather than a free move.
   entered, and the entry had to be worked around rather than typed. Affects the
   Telegram, Slack and generic channel forms.
 
+[0.5.3]: https://github.com/PivotLLM/ClawEh/compare/0.5.2...0.5.3
+[0.5.2]: https://github.com/PivotLLM/ClawEh/compare/0.5.0...0.5.2
 [0.5.0]: https://github.com/PivotLLM/ClawEh/compare/0.4.72...0.5.0
 [0.4.72]: https://github.com/PivotLLM/ClawEh/compare/0.4.70...0.4.72

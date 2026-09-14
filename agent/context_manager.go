@@ -5,23 +5,28 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
+	"github.com/PivotLLM/cogmem"
+	"github.com/PivotLLM/ctxengine"
 	"github.com/PivotLLM/spawnllm/openai_compat"
 
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/constants"
-	"github.com/PivotLLM/ClawEh/llmcontext"
+	"github.com/PivotLLM/ClawEh/cronmsg"
+	"github.com/PivotLLM/ClawEh/dump"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/providers"
 )
 
-// providerLLMClient adapts providers.LLMProvider to llmcontext.LLMClient so
-// the ContextManager can use the agent's configured provider for compression
-// LLM calls without depending on the concrete provider type.
+// providerLLMClient is one resolved provider+model pair of the summarization
+// chain; compressModelCaller walks a list of them.
 //
 // requestJSONObject, when true, asks the underlying provider to honour
 // response_format={"type":"json_object"} on the outbound request. The
@@ -43,18 +48,91 @@ func (c *providerLLMClient) Model() string { return c.model }
 // tracker). Empty when unknown (last-resort fallback client).
 func (c *providerLLMClient) CooldownProvider() string { return c.providerName }
 
-func (c *providerLLMClient) Complete(ctx context.Context, messages []providers.Message) (llmcontext.LLMReply, error) {
+// chat dispatches one call to the resolved provider, requesting a JSON-object
+// response format when jsonObject is set.
+func (c *providerLLMClient) chat(ctx context.Context, messages []providers.Message, jsonObject bool) (*providers.LLMResponse, error) {
 	var opts map[string]any
-	if c.requestJSONObject {
+	if jsonObject {
 		opts = map[string]any{
 			openai_compat.ResponseFormatJSONObjectOption: true,
 		}
 	}
-	resp, err := c.provider.Chat(ctx, messages, nil, c.model, opts)
-	if err != nil {
-		return llmcontext.LLMReply{}, err
+	return c.provider.Chat(ctx, messages, nil, c.model, opts)
+}
+
+// compressModelCaller is the host's ctxengine.ModelCaller: it walks the
+// agent's summarization chain in order (agent summarization_models → global
+// summarization.models → the agent's primary model), skipping models the
+// engine excluded and models the shared cooldown tracker has parked, and
+// returns the first reply together with the model that produced it. A
+// transport error moves on to the next model and marks the failure against
+// the cooldown policy, so an out-of-credits summarizer is not hammered on
+// every compaction; the last error is returned when every model fails.
+type compressModelCaller struct {
+	clients  []*providerLLMClient
+	cooldown *providers.CooldownTracker
+	// agentID and sessionKey label the log lines.
+	agentID, sessionKey string
+}
+
+// Complete implements ctxengine.ModelCaller.
+func (c *compressModelCaller) Complete(ctx context.Context, req ctxengine.ModelRequest) (ctxengine.ModelReply, error) {
+	content, finishReason, model, err := c.complete(ctx, req.System, req.User, req.JSONObject, req.Exclude)
+	return ctxengine.ModelReply{Content: content, FinishReason: finishReason, Model: model}, err
+}
+
+// complete is the chain walk itself, in plain types so another caller shape
+// (the cognitive-memory consolidation model) can wrap it without an import.
+// It returns the reply and the model that served it; on failure the model is
+// the last one tried (or "" when nothing was), so a report can still name it.
+func (c *compressModelCaller) complete(ctx context.Context, system, user string, jsonObject bool, exclude []string) (content, finishReason, model string, err error) {
+	messages := []providers.Message{
+		{Role: "system", Content: system},
+		{Role: "user", Content: user},
 	}
-	return llmcontext.LLMReply{Content: resp.Content, FinishReason: resp.FinishReason}, nil
+	var lastErr error
+	lastModel := ""
+	excluded, cooling := 0, 0
+	for _, cl := range c.clients {
+		if cl.model != "" && slices.Contains(exclude, cl.model) {
+			excluded++
+			continue
+		}
+		if c.cooldown != nil && cl.model != "" && !c.cooldown.IsAvailable(cl.providerName, cl.model) {
+			cooling++
+			logger.InfoCF("llmcontext", "compression model in cooldown; skipping", map[string]any{
+				"agent_id":  c.agentID,
+				"session":   c.sessionKey,
+				"model":     cl.model,
+				"remaining": c.cooldown.CooldownRemaining(cl.providerName, cl.model).Round(time.Second).String(),
+			})
+			continue
+		}
+		resp, chatErr := cl.chat(ctx, messages, jsonObject)
+		if chatErr != nil {
+			lastErr, lastModel = chatErr, cl.model
+			// Record the failure against the shared cooldown policy; statuses
+			// that never cool (413, no HTTP status) are ignored internally.
+			if fe := providers.ClassifyError(chatErr, "", cl.model); fe != nil && c.cooldown != nil {
+				c.cooldown.MarkFailure(cl.providerName, cl.model, fe.Reason, fe.Status, fe.RetryAfter)
+			}
+			logger.WarnCF("llmcontext", "compression model call failed; trying next in chain", map[string]any{
+				"agent_id": c.agentID,
+				"session":  c.sessionKey,
+				"model":    cl.model,
+				"error":    chatErr.Error(),
+			})
+			continue
+		}
+		if c.cooldown != nil {
+			c.cooldown.MarkSuccess(cl.providerName, cl.model) // reset any prior cooldown/escalation
+		}
+		return resp.Content, resp.FinishReason, cl.model, nil
+	}
+	if lastErr != nil {
+		return "", "", lastModel, lastErr
+	}
+	return "", "", "", fmt.Errorf("%w: %d excluded, %d in cooldown", ctxengine.ErrNoModel, excluded, cooling)
 }
 
 // resolveCompressModelTarget resolves a configured compress_model reference into
@@ -132,15 +210,9 @@ func resolveCompressModelTarget(cfg *config.Config, raw string) (alias, modelID 
 	return "", "", false
 }
 
-// buildCompressLLMClient returns the LLMClient used to drive context-window
-// compression for the given agent. When the configured compress_model resolves
-// against the loaded models, the per-protocol provider is constructed via
-// the dispatcher so non-default protocols (anthropic, openai, openrouter, xai…)
-// don't get accidentally routed through the shared agent.Provider — which on a
-// "claude-cli" default tries to shell out to claude-cli for every compression
-// pass regardless of the compress_model setting. Falls back to agent.Provider
-// only when the dispatcher cannot satisfy the request.
-func (al *AgentLoop) buildCompressLLMClient(agent *AgentInstance, compressModelName, sessionKey string) llmcontext.LLMClient {
+// resolveCompressClient resolves one summarization model to a concrete client
+// for the chain walker.
+func (al *AgentLoop) resolveCompressClient(agent *AgentInstance, compressModelName, sessionKey string) *providerLLMClient {
 	cfg := al.GetConfig()
 	alias, modelID, ok := resolveCompressModelTarget(cfg, compressModelName)
 	if ok && al.dispatcher != nil {
@@ -179,18 +251,9 @@ func (al *AgentLoop) buildCompressLLMClient(agent *AgentInstance, compressModelN
 	return &providerLLMClient{provider: agent.Provider, model: compressModelName, requestJSONObject: true}
 }
 
-// buildDefaultCompressLLMClient returns the compression LLM client used when
-// compress_model is not configured. It defaults to the agent's primary model
-// and resolves it through the per-model dispatcher, mirroring the explicit
-// compress_model path. This prevents compression from silently routing
-// through the shared agent.Provider — which on a "claude-cli" default would
-// shell out to claude-cli for every compression call regardless of the
-// agent's actual primary protocol (e.g. an agent with model.primary =
-// "openai/grok-4.3" would otherwise see compression dispatched to
-// claude-cli and 404 because grok-4.3 isn't a Claude model). Falls back to
-// agent.Provider only when the dispatcher cannot satisfy the agent's
-// primary model.
-func (al *AgentLoop) buildDefaultCompressLLMClient(agent *AgentInstance, sessionKey string) llmcontext.LLMClient {
+// resolveDefaultCompressClient resolves the agent's primary model to a concrete
+// client, the chain walker's last resort.
+func (al *AgentLoop) resolveDefaultCompressClient(agent *AgentInstance, sessionKey string) *providerLLMClient {
 	cfg := al.GetConfig()
 	primary := strings.TrimSpace(agent.Model)
 	if primary != "" && al.dispatcher != nil {
@@ -218,35 +281,14 @@ func (al *AgentLoop) buildDefaultCompressLLMClient(agent *AgentInstance, session
 	return &providerLLMClient{provider: agent.Provider, model: primary, requestJSONObject: true}
 }
 
-// getContextManager returns the ContextManager for the given agent+session pair,
-// creating and caching it on first access. The returned manager is shared across
-// all calls for the same (agentID, sessionKey) tuple.
-//
-// The returned release function must be deferred by the caller to decrement the
-// reference count. The eviction goroutine skips entries with refcount > 0.
-func (al *AgentLoop) getContextManager(agent *AgentInstance, sessionKey string) (llmcontext.ContextManager, func()) {
-	key := agent.ID + ":" + sessionKey
-
-	// Fast path: entry already exists.
-	if v, ok := al.contextManagers.Load(key); ok {
-		entry := v.(*cmEntry)
-		entry.refcount.Add(1)
-		entry.lastAccessed = time.Now()
-		release := func() { entry.refcount.Add(-1) }
-		return entry.cm, release
-	}
-
-	// Slow path: create a new ContextManager and wrap it in a cmEntry.
-
-	// Primary LLM client used for normal dispatch and as fallback for compression.
-	llmClient := &providerLLMClient{provider: agent.Provider, model: agent.Model}
-
-	// Resolve the summarization model chain. Order: the agent's own
-	// summarization_models (optional) first, then the global
-	// cfg.Summarization.Models, then the agent's primary model (appended below
-	// as a last-resort fallback). Per-agent models let an agent use specialised
-	// summarizers when the default ones refuse its content. See
-	// buildCompressLLMClient / buildDefaultCompressLLMClient for per-entry rules.
+// newCompressModelCaller builds the summarization ModelCaller for an agent and
+// session: the agent's own summarization_models first, then the global
+// cfg.Summarization.Models, then the agent's primary model as a last-resort
+// fallback so summarization still works when the lists are empty or every
+// configured model fails. Cooldowns are shared with the main fallback chain
+// so a model parked by either path (e.g. an out-of-credits 402) is skipped by
+// both. Also returns the effective (first) model name for the summary stamp.
+func (al *AgentLoop) newCompressModelCaller(agent *AgentInstance, sessionKey string) (*compressModelCaller, string) {
 	var agentModels, globalModels []string
 	if agent.Config != nil {
 		agentModels = agent.Config.SummarizationModels
@@ -255,19 +297,16 @@ func (al *AgentLoop) getContextManager(agent *AgentInstance, sessionKey string) 
 		globalModels = cfg.Summarization.Models
 	}
 
-	var compressClients []llmcontext.LLMClient
-	effectiveCompressModel := ""
+	var clients []*providerLLMClient
+	effective := ""
 	chainNames := resolveCompressModelChain(agentModels, globalModels)
 	for _, name := range chainNames {
-		if effectiveCompressModel == "" {
-			effectiveCompressModel = name
+		if effective == "" {
+			effective = name
 		}
-		compressClients = append(compressClients, al.buildCompressLLMClient(agent, name, sessionKey))
+		clients = append(clients, al.resolveCompressClient(agent, name, sessionKey))
 	}
-	// Always append the agent's primary model as the final fallback, so
-	// summarization still works when the global list is empty or every
-	// configured model fails to produce an acceptable summary.
-	compressClients = append(compressClients, al.buildDefaultCompressLLMClient(agent, sessionKey))
+	clients = append(clients, al.resolveDefaultCompressClient(agent, sessionKey))
 
 	// One clear line (in claw.log) showing the whole compression chain that will
 	// be tried in order — the per-client detail above goes to the structured log
@@ -278,23 +317,68 @@ func (al *AgentLoop) getContextManager(agent *AgentInstance, sessionKey string) 
 		"chain":    append(append([]string{}, chainNames...), agent.Model+" (agent default)"),
 	})
 
-	// Stamp the compaction summary with the effective compress model so the
-	// rendered "Generated: <time> by <model>" line is populated (used for
-	// debugging compression quality). Falls back to the agent's primary model
-	// when no summarization models are configured — that is the model the
-	// appended default compress client actually runs against.
-	if effectiveCompressModel == "" {
-		effectiveCompressModel = strings.TrimSpace(agent.Model)
+	// The rendered "Generated: <time> by <model>" line names the effective
+	// compress model; it falls back to the agent's primary model when no
+	// summarization models are configured — that is the model the appended
+	// default client actually runs against.
+	if effective == "" {
+		effective = strings.TrimSpace(agent.Model)
 	}
+	return &compressModelCaller{
+		clients:    clients,
+		cooldown:   al.cooldownTracker(),
+		agentID:    agent.ID,
+		sessionKey: sessionKey,
+	}, effective
+}
+
+// getContextManager returns the ContextManager for the given agent+session
+// pair. See getSessionContext; this is the form for callers that do not touch
+// memory (compact, clear, session info).
+func (al *AgentLoop) getContextManager(agent *AgentInstance, sessionKey string) (ctxengine.ContextManager, func()) {
+	cm, _, release := al.getSessionContext(agent, sessionKey)
+	return cm, release
+}
+
+// getSessionContext returns the ContextManager and the cognitive-memory session
+// for the given agent+session pair, creating and caching them on first access.
+// Both are shared across all calls for the same (agentID, sessionKey) tuple;
+// the memory session is nil for agents without cognitive memory.
+//
+// The returned release function must be deferred by the caller to decrement the
+// reference count. The eviction goroutine skips entries with refcount > 0.
+func (al *AgentLoop) getSessionContext(agent *AgentInstance, sessionKey string) (ctxengine.ContextManager, *cogmem.Session, func()) {
+	key := agent.ID + ":" + sessionKey
+
+	// Fast path: entry already exists.
+	if v, ok := al.contextManagers.Load(key); ok {
+		entry := v.(*cmEntry)
+		entry.refcount.Add(1)
+		entry.lastAccessed = time.Now()
+		release := func() { entry.refcount.Add(-1) }
+		return entry.cm, entry.mem, release
+	}
+
+	// Slow path: create a new ContextManager and wrap it in a cmEntry.
+
+	// The summarization model chain. Per-agent models let an agent use
+	// specialised summarizers when the default ones refuse its content; see
+	// resolveCompressClient / resolveDefaultCompressClient for per-entry rules.
+	caller, effectiveCompressModel := al.newCompressModelCaller(agent, sessionKey)
 
 	// Global debug-capture flag: when on, the manager writes the verbatim
 	// request/response of each summarization call to <workspace>/compact.jsonl.
+	// Failed summarization attempts are dumped to logs/dumps when enabled.
 	debugCapture := false
-	failureDumpDir := ""
+	var failureDump ctxengine.FailureDumpFunc
 	if cfg := al.GetConfig(); cfg != nil {
 		debugCapture = cfg.Summarization.DebugCapture
-		if cfg.Logging.DumpFailedCompressions {
-			failureDumpDir = al.dumpsDir
+		if cfg.Logging.DumpFailedCompressions && al.dumpsDir != "" {
+			dumpsDir := al.dumpsDir
+			failureDump = func(kind string, meta map[string]any, input, output string) error {
+				_, err := dump.Write(dumpsDir, kind, meta, json.RawMessage(input), json.RawMessage(output))
+				return err
+			}
 		}
 	}
 
@@ -315,43 +399,44 @@ func (al *AgentLoop) getContextManager(agent *AgentInstance, sessionKey string) 
 	// The archive directory is the sessions directory within the agent workspace.
 	// We derive it from the workspace the same way initSessionStore does.
 	archiveDir := filepath.Join(agent.Workspace, "sessions")
-	opts := append([]llmcontext.Option{
-		llmcontext.WithContextWindow(agent.ContextWindow),
-		llmcontext.WithArchiveDir(archiveDir),
-		llmcontext.WithCompressLLM(compressClients...),
-		llmcontext.WithCompressModel(llmcontext.ModelChain{Primary: effectiveCompressModel}),
-		llmcontext.WithCompressionProfileDir(agent.Workspace),
-		llmcontext.WithCompactDebug(debugCapture),
-		llmcontext.WithCompressFailureDumpDir(failureDumpDir),
-		llmcontext.WithCompactionReporter(reporter),
-		llmcontext.WithCooldownTracker(al.cooldownTracker()),
+	opts := append([]ctxengine.Option{
+		ctxengine.WithContextWindow(agent.ContextWindow),
+		ctxengine.WithArchiveDir(archiveDir),
+		ctxengine.WithModelCaller(caller),
+		ctxengine.WithCompressModel(ctxengine.ModelChain{Primary: effectiveCompressModel}),
+		ctxengine.WithCompressionProfileDir(agent.Workspace),
+		ctxengine.WithCompactDebug(debugCapture),
+		ctxengine.WithFailureDump(failureDump),
+		ctxengine.WithCompactionReporter(reporter),
+		// Repeated fires of one scheduled job differ only by timestamp; the
+		// engine collapses them by the cron collapse key.
+		ctxengine.WithNoiseKey(cronmsg.CollapseKey),
 	}, agent.CompressOpts...)
-	cm := llmcontext.New(sessionKey, agent.Sessions, agent.ContextBuilder, llmClient, opts...)
+	cm := ctxengine.New(sessionKey, agent.Sessions, opts...)
 
 	// Issue a session token so session-scoped MCP tools can identify this session.
-	// The token is injected into the system prompt via cm.SetSessionToken so the
-	// LLM receives it on every Build() call.
+	// The loop renders it into the system prompt (sessionTokenLayer) on every
+	// dispatch, so it lives on the entry.
 	al.mu.RLock()
 	sti := al.sessionTokenIssuer
 	al.mu.RUnlock()
+	token := ""
 	if sti != nil {
-		tok := sti.Issue(agent.ID, sessionKey, archiveDir)
-		if tok != "" {
-			cm.SetSessionToken(tok)
-		}
+		token = sti.Issue(agent.ID, sessionKey, archiveDir)
 	}
 
-	// Cognitive-memory wiring — cognitive agents ONLY. For every other agent this
-	// is a no-op (returns nil) and the manager behaves exactly as before.
-	cmCleanup := al.wireCognitiveMemory(agent, sessionKey, cm)
+	// Cognitive-memory session — cognitive agents ONLY; nil for every other
+	// agent, and every method on a nil session is a no-op.
+	mem := al.wireCognitiveMemory(agent, sessionKey)
 
 	newEntry := &cmEntry{
 		cm:           cm,
 		sessionKey:   sessionKey,
 		store:        agent.Sessions,
 		lastAccessed: time.Now(),
-		cleanup:      cmCleanup,
+		mem:          mem,
 	}
+	newEntry.setToken(token)
 	newEntry.refcount.Store(1)
 
 	actual, loaded := al.contextManagers.LoadOrStore(key, newEntry)
@@ -362,17 +447,15 @@ func (al *AgentLoop) getContextManager(agent *AgentInstance, sessionKey string) 
 		if sti != nil {
 			sti.Revoke(sessionKey)
 		}
-		// Release the cogmem store handle we opened for the discarded CM.
-		if cmCleanup != nil {
-			cmCleanup()
-		}
+		// Release the cogmem store handle we may have opened for the discarded CM.
+		mem.Close()
 		entry := actual.(*cmEntry)
 		entry.refcount.Add(1)
 		entry.lastAccessed = time.Now()
 		release := func() { entry.refcount.Add(-1) }
-		return entry.cm, release
+		return entry.cm, entry.mem, release
 	}
 
 	release := func() { newEntry.refcount.Add(-1) }
-	return newEntry.cm, release
+	return newEntry.cm, newEntry.mem, release
 }

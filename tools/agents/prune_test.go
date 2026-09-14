@@ -20,10 +20,11 @@ func TestPruneOrphanSubagentSessions(t *testing.T) {
 		}
 		return p
 	}
-	oldSub := write("agent_penny_subagent_abc.cogmem.db")
-	oldSubArch := write("agent_penny_subagent_abc.archive.db")
-	recentSub := write("agent_penny_subagent_def.cogmem.db")
-	mainSession := write("agent_penny_main.cogmem.db") // must never be touched
+	oldSub := write("agent_penny_subagent_abc.archive.db")
+	oldSubArch := write("agent_penny_subagent_abc.archive.db-wal")
+	recentSub := write("agent_penny_subagent_def.archive.db")
+	mainSession := write("agent_penny_main.archive.db")      // must never be touched
+	legacyMem := write("agent_penny_subagent_abc.cogmem.db") // not ours: memory never lived here after 0.5.2
 
 	now := time.Now()
 	// Age the two "old" sub-agent files past 24h; leave the recent one fresh.
@@ -34,9 +35,33 @@ func TestPruneOrphanSubagentSessions(t *testing.T) {
 		}
 	}
 
+	// A stale memory snapshot directory and a fresh one.
+	oldSnap := filepath.Join(ws, "cogmem", "subagents", "agent_penny_subagent_abc")
+	freshSnap := filepath.Join(ws, "cogmem", "subagents", "agent_penny_subagent_def")
+	for _, d := range []string{oldSnap, freshSnap} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(d, "cogmem.db"), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Chtimes(oldSnap, old, old); err != nil {
+		t.Fatal(err)
+	}
+
 	removed := PruneOrphanSubagentSessions(ws, 24*time.Hour, now)
-	if removed != 2 {
-		t.Fatalf("removed = %d, want 2", removed)
+	if removed != 3 {
+		t.Fatalf("removed = %d, want 3 (two files and one snapshot directory)", removed)
+	}
+	if _, err := os.Stat(oldSnap); err == nil {
+		t.Fatal("stale snapshot directory not removed")
+	}
+	if _, err := os.Stat(legacyMem); err != nil {
+		t.Fatal("prune must only touch the files a sub-agent session writes today")
+	}
+	if _, err := os.Stat(freshSnap); err != nil {
+		t.Fatal("fresh snapshot directory must survive")
 	}
 	for _, p := range []string{oldSub, oldSubArch} {
 		if _, err := os.Stat(p); !os.IsNotExist(err) {

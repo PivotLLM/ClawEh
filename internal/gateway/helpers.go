@@ -11,6 +11,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/PivotLLM/cogmem/consolidate"
+
 	"github.com/PivotLLM/ClawEh/agent"
 	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/bus"
@@ -23,7 +25,7 @@ import (
 	_ "github.com/PivotLLM/ClawEh/channels/slack"
 	_ "github.com/PivotLLM/ClawEh/channels/telegram"
 	_ "github.com/PivotLLM/ClawEh/channels/webui"
-	"github.com/PivotLLM/ClawEh/cogmem/consolidate"
+	"github.com/PivotLLM/ClawEh/cogmemhost"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/cron"
 	"github.com/PivotLLM/ClawEh/devices"
@@ -94,6 +96,7 @@ func buildMergedMux(srv *webserver.Server) *http.ServeMux {
 // gatewayServices holds references to all running services
 type gatewayServices struct {
 	CronService    *cron.CronService
+	CronTool       *toolschedule.CronTool
 	MountWatcher   *mountwatch.Watcher
 	MediaStore     media.MediaStore
 	ChannelManager *channels.Manager
@@ -121,6 +124,7 @@ func gatewayCmd(debug bool) error {
 	}
 	// Route spawnllm's provider/dispatch logs into ClawEh's logger.
 	installSpawnllmLogging()
+	cogmemhost.InstallLogging()
 
 	lockFile, err := acquireLock(baseDir)
 	if err != nil {
@@ -186,7 +190,10 @@ func gatewayCmd(debug bool) error {
 
 	dispatcher := providers.NewProviderDispatcher(cfg)
 	msgBus := bus.NewMessageBus()
-	agentLoop := agent.NewAgentLoop(cfg, msgBus, provider, dispatcher)
+	agentLoop, err := agent.NewAgentLoop(cfg, msgBus, provider, dispatcher)
+	if err != nil {
+		return fmt.Errorf("error creating agent loop: %w", err)
+	}
 
 	dumpsDir := filepath.Join(internal.GetClawHome(), "logs", "dumps")
 	agentLoop.SetDumpsDir(dumpsDir)
@@ -370,6 +377,10 @@ func setupAndStartServices(
 		return nil, fmt.Errorf("error starting cron service: %w", err)
 	}
 	logger.InfoC("cron", "Cron service started")
+	services.CronTool = cronTool
+	if cronTool != nil {
+		cronTool.StartListeners(context.Background())
+	}
 
 	// Watch notify-enabled external mounts for new files (cron-style notices).
 	services.MountWatcher = mountwatch.New(agentLoop.GetConfig, msgBus, 0)
@@ -666,6 +677,9 @@ func stopAndCleanupServices(
 	if services.MountWatcher != nil {
 		services.MountWatcher.Stop()
 	}
+	if services.CronTool != nil {
+		services.CronTool.StopListeners()
+	}
 	if services.CronService != nil {
 		services.CronService.Stop()
 	}
@@ -801,6 +815,10 @@ func restartServices(
 		return fmt.Errorf("error restarting cron service: %w", err)
 	}
 	logger.InfoC("cron", "Cron service restarted")
+	services.CronTool = cronTool
+	if cronTool != nil {
+		cronTool.StartListeners(context.Background())
+	}
 
 	// Re-create the mount watcher. stopAndCleanupServices stopped the old one, so
 	// without this a reload would silently end mount notifications for the rest of

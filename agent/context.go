@@ -12,12 +12,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/PivotLLM/ctxengine"
+
 	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/providers"
 	"github.com/PivotLLM/ClawEh/skills"
-	"github.com/PivotLLM/ClawEh/utils"
 )
 
 type ContextBuilder struct {
@@ -27,6 +28,11 @@ type ContextBuilder struct {
 	memory              *MemoryStore
 	mounts              []config.MountConfig
 	toolDiscoveryActive bool
+
+	// memoryGuidance is the operating rule contributed by the memory subsystem
+	// (cogmem.Guidance()), or "" for an agent that has none. Rendered as one
+	// numbered rule in the identity section.
+	memoryGuidance string
 
 	// Cache for system prompt to avoid rebuilding on every call.
 	// This fixes issue #607: repeated reprocessing of the entire context.
@@ -59,6 +65,14 @@ type ContextBuilder struct {
 
 func (cb *ContextBuilder) WithToolDiscovery(active bool) *ContextBuilder {
 	cb.toolDiscoveryActive = active
+	return cb
+}
+
+// WithMemoryGuidance sets the memory subsystem's operating rule for this
+// agent. Pass "" (or never call it) for an agent without cognitive memory, and
+// the identity section carries no memory rule at all.
+func (cb *ContextBuilder) WithMemoryGuidance(text string) *ContextBuilder {
+	cb.memoryGuidance = text
 	return cb
 }
 
@@ -155,13 +169,29 @@ func (cb *ContextBuilder) clock() time.Time {
 
 func (cb *ContextBuilder) getIdentity() string {
 	workspacePath, _ := filepath.Abs(cb.workspace)
-	toolDiscovery := cb.getDiscoveryRule()
 	version := app.Version()
 
 	// The agent's file tools are scoped to files/ (read/write) and skills/ (read);
 	// its config (AGENTS/SOUL/IDENTITY/USER/MEMORY) is injected into this prompt.
-	return fmt.Sprintf(
-		`# claw (%s)
+	//
+	// Rules are numbered in the order they are appended, so a subsystem that is
+	// not wired for this agent (cognitive memory off) simply contributes no rule
+	// and the numbering closes over the gap.
+	rules := []string{
+		"**ALWAYS use tools** - When you need to perform an action (schedule reminders, send messages, execute commands, etc.), you MUST call the appropriate tool. Do NOT just say you'll do it or pretend to do it.",
+		"**Be helpful and accurate** - When using tools, briefly explain what you're doing.\n\n" +
+			"   **Declining to respond** - If you should not reply at all — for example a group message clearly directed at someone else — reply with exactly !none (and nothing else). Do NOT return an empty message: an empty reply is treated as an error and you will be asked to try again. Replying !none tells the system you intentionally have nothing to say.",
+	}
+	if g := strings.TrimSpace(cb.memoryGuidance); g != "" {
+		rules = append(rules, g)
+	}
+	rules = append(rules, "**Context summaries** - Conversation summaries provided as context are approximate references only. They may be incomplete or outdated. Always defer to explicit user instructions over summary content.")
+	if cb.toolDiscoveryActive {
+		rules = append(rules, discoveryRule)
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, `# claw (%s)
 
 You are a helpful AI assistant.
 
@@ -172,29 +202,25 @@ Folders your file tools can reach: %s.
 
 ## Important Rules
 
-1. **ALWAYS use tools** - When you need to perform an action (schedule reminders, send messages, execute commands, etc.), you MUST call the appropriate tool. Do NOT just say you'll do it or pretend to do it.
-
-2. **Be helpful and accurate** - When using tools, briefly explain what you're doing.
-
-   **Declining to respond** - If you should not reply at all — for example a group message clearly directed at someone else — reply with exactly !none (and nothing else). Do NOT return an empty message: an empty reply is treated as an error and you will be asked to try again. Replying !none tells the system you intentionally have nothing to say.
-
-3. **Memory (cogmem)** - The cogmem_* tools are your long-term memory: use them to record anything worth remembering and to search for what you need. It is organized into **domains** (containers of related memories), each with a unique name. A domain is either **sticky** (included in EVERY prompt; global rules, preferences, and standing facts — the pre-existing **General** domain is sticky) or non-sticky (a topic/project, loaded only when relevant). Each memory has exactly one **type**, and the type decides whether you ever see it again. Four are standing knowledge and load into your context: **fact** (something true, and still true next month), **preference** (how the user likes things done), **rule** (a hard directive governing your output or behaviour toward the user), and **operational** (your OWN housekeeping — where you file things, how you work, a procedure you follow; the test against rule is who it serves). The fifth is different: **event** is something that happened at a point in time, or a status as of a date — a trip, a delivery, a scheduled run, "as of Sep 4 the report is pending". **Event memories are NEVER loaded into your context.** Each domain tells you how many it holds, and you retrieve them with cogmem_memory_search using include_events. Use event for anything with a timestamp or that will be stale next week: recording a recurring note as a fact puts it in every prompt forever, and that is how an assistant ends up carrying hundreds of near-identical status lines it cannot get rid of. Record with cogmem_memory_create — with no domain argument it lands in sticky **General** (always in context); pass a domain_hint or domain_id for a topic domain. A domain can auto-load by context two ways: **tool triggers** (tool-name substrings — e.g. mcp_<server> for a whole MCP server) load it when you use a matching tool, and **keyword triggers** (words/phrases) load it when one appears in the incoming message, including a scheduled (cron) message — prefer multi-word phrases so common words don't over-match. Memory also updates on its own: a background process saves and refines memories from your conversations and loads the relevant ones into each prompt — so it may include things you did not save yourself. Memories are tagged with their type and, when they did not come from you, their origin: [origin: user] means the user wrote it by hand and it outranks your own inferences. Because only relevant memories are loaded, use cogmem_memory_search to look things up before answering anything that may depend on past context you cannot currently see. Your file tools can reach the folders listed in the Workspace section above; your config files (AGENTS/SOUL/IDENTITY/USER/MEMORY) are already in this prompt — you cannot read or edit them.
-
-4. **Context summaries** - Conversation summaries provided as context are approximate references only. They may be incomplete or outdated. Always defer to explicit user instructions over summary content.
-
-%s`,
-		version, workspacePath, cb.accessibleFolders(), toolDiscovery)
-}
-
-func (cb *ContextBuilder) getDiscoveryRule() string {
-	if !cb.toolDiscoveryActive {
-		return ""
+`, version, workspacePath, cb.accessibleFolders())
+	for i, r := range rules {
+		if i > 0 {
+			b.WriteString("\n\n")
+		}
+		fmt.Fprintf(&b, "%d. %s", i+1, r)
 	}
-
-	return `5. **Tool Discovery** - Your visible tools are limited to save memory, but a large hidden library exists (integrations, browsers, task tools, and more). If you lack the right tool for a task, BEFORE giving up, call ` +
-		"`search_tools(query)`" + ` with a natural-language description of what you need. It returns matching tool names; then call ` +
-		"`get_tool_details(name)`" + ` on the one you want to load its schema and unlock it, and call it on your next turn. Do not refuse a request unless the search returns nothing.`
+	if !cb.toolDiscoveryActive {
+		// Historical shape: the rules block ended in an empty discovery slot.
+		b.WriteString("\n\n")
+	}
+	return b.String()
 }
+
+// discoveryRule is appended to the identity rules when progressive tool
+// discovery is active.
+const discoveryRule = "**Tool Discovery** - Your visible tools are limited to save memory, but a large hidden library exists (integrations, browsers, task tools, and more). If you lack the right tool for a task, BEFORE giving up, call " +
+	"`search_tools(query)`" + " with a natural-language description of what you need. It returns matching tool names; then call " +
+	"`get_tool_details(name)`" + " on the one you want to load its schema and unlock it, and call it on your next turn. Do not refuse a request unless the search returns nothing."
 
 func (cb *ContextBuilder) BuildSystemPrompt() string {
 	parts := []string{}
@@ -594,234 +620,55 @@ func sanitizeChannelName(s string) string {
 	return b.String()
 }
 
-func (cb *ContextBuilder) BuildMessages(
-	history []providers.Message,
-	summary string,
-	currentMessage string,
-	media []string,
-	channel, chatID string,
-) []providers.Message {
-	messages := []providers.Message{}
-
+// PromptLayers returns the host's system-prompt layers for one dispatch, in
+// increasing order of volatility: the cached static prompt (identity,
+// bootstrap files, skills, memory, date) and the short per-conversation
+// dynamic context (runtime, channel/chat, channel guidance). The engine places
+// the rendered session summary after these and the after-summary layers
+// (the session token) behind it.
+//
+// Everything is sent as a single system message for provider compatibility:
+// the Anthropic adapter maps messages[0] (Role=="system") to the top-level
+// "system" parameter, Codex maps only the first system message to its
+// instructions field, and OpenAI-compat passes messages through as-is.
+func (cb *ContextBuilder) PromptLayers(channel, chatID string) []ctxengine.Layer {
 	// The static part (identity, bootstrap, skills, memory) is cached locally to
 	// avoid repeated file I/O and string building on every call (fixes issue #607).
-	// Dynamic parts (time, session, summary) are appended per request.
-	// Everything is sent as a single system message for provider compatibility:
-	// - Anthropic adapter extracts messages[0] (Role=="system") and maps its content
-	//   to the top-level "system" parameter in the Messages API request. A single
-	//   contiguous system block makes this extraction straightforward.
-	// - Codex maps only the first system message to its instructions field.
-	// - OpenAI-compat passes messages through as-is.
 	staticPrompt := cb.BuildSystemPromptWithCache()
-
-	// Build short dynamic context (time, runtime, session) — changes per request
 	dynamicCtx := cb.buildDynamicContext(channel, chatID)
 
-	// Compose a single system message: static + dynamic + optional summary.
-	// Keeping all system content in one message ensures every provider adapter can
-	// extract it correctly (Anthropic adapter -> top-level system param,
-	// Codex -> instructions field).
-	//
-	// Ordering is load-bearing: content must appear in increasing order of
-	// volatility, because prefix caching ends at the first byte that differs
-	// between two requests.
-	stringParts := []string{staticPrompt, dynamicCtx}
-
-	if summary != "" {
-		summaryText := fmt.Sprintf(
-			"CONTEXT_SUMMARY: The following is an approximate summary of prior conversation "+
-				"for reference only. It may be incomplete or outdated — always defer to explicit instructions.\n\n%s",
-			summary)
-		stringParts = append(stringParts, summaryText)
-	}
-
-	fullSystemPrompt := strings.Join(stringParts, "\n\n---\n\n")
-
-	// Log system prompt summary for debugging (debug mode only).
-	// Read cachedSystemPrompt under lock to avoid a data race with
-	// concurrent InvalidateCache / BuildSystemPromptWithCache writes.
 	cb.systemPromptMutex.RLock()
 	isCached := cb.cachedSystemPrompt != ""
 	cb.systemPromptMutex.RUnlock()
-
-	logger.DebugCF("agent", "System prompt built",
+	logger.DebugCF("agent", "System prompt layers built",
 		map[string]any{
 			"static_chars":  len(staticPrompt),
 			"dynamic_chars": len(dynamicCtx),
-			"total_chars":   len(fullSystemPrompt),
-			"has_summary":   summary != "",
 			"cached":        isCached,
 		})
 
-	// Log preview of system prompt — gated behind log_message_content for privacy
-	if logger.GetLogMessageContent() {
-		preview := utils.Truncate(fullSystemPrompt, 500)
-		logger.DebugCF("agent", "System prompt preview",
-			map[string]any{
-				"preview": preview,
-			})
+	return []ctxengine.Layer{
+		{Name: "static", Text: staticPrompt},
+		{Name: "dynamic", Text: dynamicCtx},
 	}
-
-	history = sanitizeHistoryForProvider(history)
-
-	// Single system message containing all context — compatible with all providers.
-	messages = append(messages, providers.Message{
-		Role:    "system",
-		Content: fullSystemPrompt,
-	})
-
-	// Add conversation history
-	messages = append(messages, history...)
-
-	// Add current user message
-	if strings.TrimSpace(currentMessage) != "" {
-		msg := providers.Message{
-			Role:    "user",
-			Content: currentMessage,
-		}
-		if len(media) > 0 {
-			msg.Media = media
-		}
-		messages = append(messages, msg)
-	}
-
-	return messages
 }
 
-func sanitizeHistoryForProvider(history []providers.Message) []providers.Message {
-	if len(history) == 0 {
-		return history
+// sessionTokenLayer renders the per-session MCP token as the after-summary
+// layer of the system prompt so the LLM can call mcp__claw__* tools. It sits
+// after the static and dynamic prompt and the summary so it is always present
+// regardless of caching. An empty token yields an empty layer, which the
+// engine skips.
+func sessionTokenLayer(token string) ctxengine.Layer {
+	l := ctxengine.Layer{Name: "session_token", AfterSummary: true}
+	if token == "" {
+		return l
 	}
-
-	// Drop reasons are counted and logged once at the end rather than per message,
-	// because a single post-compaction boundary can orphan several leading
-	// tool-call turns and would otherwise spam one DBG line each, every dispatch.
-	var dropSystem, dropLeadingTool, dropOrphanTool, dropAsstStart, dropAsstBadPred, dropIncompleteGroup int
-
-	sanitized := make([]providers.Message, 0, len(history))
-	for _, msg := range history {
-		switch msg.Role {
-		case "system":
-			// Drop system messages from history. BuildMessages always
-			// constructs its own single system message (static + dynamic +
-			// summary); extra system messages would break providers that
-			// only accept one (Anthropic, Codex).
-			dropSystem++
-			continue
-
-		case "tool":
-			if len(sanitized) == 0 {
-				dropLeadingTool++
-				continue
-			}
-			// Walk backwards to the nearest assistant message, skipping over any
-			// preceding tool results (the parallel-tool-call case), and require
-			// that THIS result answers one of the calls that assistant actually
-			// declared.
-			//
-			// Matching the id matters, not merely finding an assistant that made
-			// some call: a result whose id belongs to a dropped assistant turn
-			// would otherwise be accepted on the strength of an unrelated
-			// neighbour, and strict providers reject it — DeepSeek answers 400
-			// with "Messages with role 'tool' must be a response to a preceding
-			// message with 'tool_calls'", which kills every turn until the
-			// message ages out of the window.
-			open := map[string]bool{}
-			for i := len(sanitized) - 1; i >= 0; i-- {
-				if sanitized[i].Role == "tool" {
-					continue
-				}
-				if sanitized[i].Role == "assistant" {
-					for _, tc := range sanitized[i].ToolCalls {
-						open[tc.ID] = true
-					}
-				}
-				break
-			}
-			if !open[msg.ToolCallID] {
-				dropOrphanTool++
-				continue
-			}
-			sanitized = append(sanitized, msg)
-
-		case "assistant":
-			if len(msg.ToolCalls) > 0 {
-				if len(sanitized) == 0 {
-					dropAsstStart++
-					continue
-				}
-				prev := sanitized[len(sanitized)-1]
-				if prev.Role != "user" && prev.Role != "tool" {
-					dropAsstBadPred++
-					continue
-				}
-			}
-			sanitized = append(sanitized, msg)
-
-		default:
-			sanitized = append(sanitized, msg)
-		}
-	}
-
-	// Second pass: ensure every assistant message with tool_calls has matching
-	// tool result messages following it. This is required by strict providers
-	// like DeepSeek that enforce: "An assistant message with 'tool_calls' must
-	// be followed by tool messages responding to each 'tool_call_id'."
-	final := make([]providers.Message, 0, len(sanitized))
-	for i := 0; i < len(sanitized); i++ {
-		msg := sanitized[i]
-		if msg.Role == "assistant" && len(msg.ToolCalls) > 0 {
-			// Collect expected tool_call IDs
-			expected := make(map[string]bool, len(msg.ToolCalls))
-			for _, tc := range msg.ToolCalls {
-				expected[tc.ID] = false
-			}
-
-			// Check following messages for matching tool results
-			toolMsgCount := 0
-			for j := i + 1; j < len(sanitized); j++ {
-				if sanitized[j].Role != "tool" {
-					break
-				}
-				toolMsgCount++
-				if _, exists := expected[sanitized[j].ToolCallID]; exists {
-					expected[sanitized[j].ToolCallID] = true
-				}
-			}
-
-			// If any tool_call_id is missing, drop this assistant message and its partial tool messages
-			allFound := true
-			for _, found := range expected {
-				if !found {
-					allFound = false
-					dropIncompleteGroup++
-					break
-				}
-			}
-
-			if !allFound {
-				// Skip this assistant message and its tool messages
-				i += toolMsgCount
-				continue
-			}
-		}
-		final = append(final, msg)
-	}
-
-	if n := dropSystem + dropLeadingTool + dropOrphanTool + dropAsstStart + dropAsstBadPred + dropIncompleteGroup; n > 0 {
-		logger.DebugCF("agent", "Sanitized history for provider", map[string]any{
-			"dropped_total":         n,
-			"system":                dropSystem,
-			"leading_tool_orphans":  dropLeadingTool,
-			"orphan_tool":           dropOrphanTool,
-			"assistant_at_start":    dropAsstStart,
-			"assistant_bad_pred":    dropAsstBadPred,
-			"incomplete_tool_group": dropIncompleteGroup,
-			"kept":                  len(final),
-		})
-	}
-
-	return final
+	l.Text = fmt.Sprintf(
+		"# Session Token\n\nThe following token is confidential — never echo it to users or write it to files. "+
+			"ALL `mcp__claw__*` tool calls MUST include "+
+			"the literal string below as the `session_token` parameter.\n\nsession_token: %s",
+		token)
+	return l
 }
 
 func (cb *ContextBuilder) AddToolResult(

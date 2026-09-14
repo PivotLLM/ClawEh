@@ -15,8 +15,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/PivotLLM/ClawEh/cogmem/portable"
-	cogmemstore "github.com/PivotLLM/ClawEh/cogmem/store"
+	"github.com/PivotLLM/cogmem/portable"
+	cogmemstore "github.com/PivotLLM/cogmem/store"
 )
 
 // maxImportBytes caps an uploaded memory document. A real export of the largest
@@ -140,12 +140,10 @@ func (h *Handler) handleCreateDomain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	d, err := s.CreateDomain(context.Background(), s.DB(), cogmemstore.CreateDomainParams{
-		AgentID:    r.PathValue("id"),
-		SessionKey: r.PathValue("id"),
-		Sticky:     req.Sticky,
-		Name:       strings.TrimSpace(req.Name),
-		Status:     cogmemstore.StatusActive,
-		Summary:    req.Summary,
+		Sticky:  req.Sticky,
+		Name:    strings.TrimSpace(req.Name),
+		Status:  cogmemstore.StatusActive,
+		Summary: req.Summary,
 	})
 	if err != nil {
 		// A duplicate name is the expected mistake and deserves its own status.
@@ -362,8 +360,7 @@ func (h *Handler) handleImportMemory(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	id := r.PathValue("id")
-	res, err := portable.Import(context.Background(), s, doc, mode, id, id)
+	res, err := portable.Import(context.Background(), s, doc, mode)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

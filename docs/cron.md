@@ -117,7 +117,7 @@ on each other's shared session state.
 
 | Field | Type | Description |
 |---|---|---|
-| `kind` | string | `"cron"`, `"every"`, or `"at"` |
+| `kind` | string | `"cron"`, `"every"`, `"at"`, or `"listen"` (continuous, no next run — see [Listen jobs](#listen-jobs)) |
 | `expr` | string | Cron expression — used when `kind` is `"cron"` (e.g. `"0 8 * * *"` for 8am daily) |
 | `everyMs` | int | Interval in milliseconds — used when `kind` is `"every"` (e.g. `3600000` for every hour) |
 | `atMs` | int | One-time fire time as Unix timestamp (ms) — used when `kind` is `"at"` |
@@ -142,7 +142,7 @@ on each other's shared session state.
 | `channel` | string | Channel to deliver to (e.g. `"slack"`, `"telegram-Amber"`) |
 | `to` | string | Channel or user ID to deliver to (e.g. a Slack channel ID `C0ABC123` or user ID `U0ABC123`) |
 | `peer_kind` | string | `"channel"` (default) or `"direct"` — see [peer_kind](#peer_kind) |
-| `watch` | object | Optional probe. When present the job only delivers `message` if the watched values changed — see [Watch jobs](#watch-jobs) |
+| `watch` | object | Optional probe. When present the job only delivers `message` if the watched values changed — see [Watch jobs](#watch-jobs). With a `listen` schedule it is the tool the listener keeps calling — see [Listen jobs](#listen-jobs) |
 
 > Legacy payloads may also contain `mode` and `command`; both are ignored.
 
@@ -223,6 +223,79 @@ registry is what changes underneath a job. A watch naming a tool the agent
 cannot use therefore fails on every run, and surfaces through the same
 five-failure notice as any other broken probe rather than being refused up
 front. Only the shape of the arguments is validated at creation.
+
+---
+
+## Listen jobs
+
+A watch job asks a tool a question on a timer. A **listen job** keeps the tool
+running: it calls the tool, waits for it to return, and calls it again at once,
+for as long as the job is enabled. That turns a long-poll or event-wait tool,
+such as `documents_event_wait`, into a persistent callback into the agent, with
+no model in the loop until there is something to say.
+
+Add one by passing `listen: true` to `cron_schedule add` together with the
+watch arguments. A listen job takes no schedule: `at_seconds`, `every_seconds`
+and `cron_expr` are rejected.
+
+| Argument | Type | Description |
+|---|---|---|
+| `listen` | bool | Makes the job a listener |
+| `watch_tool` | string | The tool to keep calling (required) |
+| `watch_args` | object | Its parameters, passed verbatim |
+| `watch_fields` | list of strings | Dot-paths that must be present, and whose values decide "new" |
+| `watch_timeout_seconds` | int | How long one call may wait for an event before it is dropped and made again (default 300) |
+| `suppress_repeats` | bool | Withhold a result identical to the last delivered event (default false: every result with the fields present is delivered) |
+
+```
+Tell me whenever a document event arrives.
+  listen:       true
+  watch_tool:   documents_event_wait
+  watch_args:   {"folder": "inbox"}
+  watch_fields: ["event.id"]
+```
+
+### What happens on each call
+
+Each call runs in the background with a timeout of `watch_timeout_seconds`.
+When it returns:
+
+- **An event.** If every watched field is present, `message` is delivered
+  followed by the tool's full result, introduced as `documents_event_wait
+  returned the following:`. The agent gets the whole payload, not just the
+  fields, so it need not call the tool again to learn what happened. A result
+  identical to the last one is delivered too: each occurrence may matter, such
+  as a document edited several times in a row. For a source that replays its
+  latest event on every reconnect, set `suppress_repeats` and an identical
+  result is delivered once; the last delivered fingerprint survives a restart.
+  The envelope says where it came from,
+  `The following event was received by a continuous monitor at <time>:`, not
+  "a cron job that fired", and it is not treated as a cron message: repeated
+  fires of one scheduled job are deduplicated and collapsed, but each event a
+  monitor delivers is distinct and is kept like any other message.
+- **No data.** If a watched field is absent, nothing is delivered. This is the
+  opposite of a scheduled watch, where a vanished field counts as a change: a
+  long-poll that returns empty-handed must not wake the agent. With no
+  `watch_fields`, any non-empty result is an event.
+- **Timed out.** The wait ran out with nothing to report. Not a failure; the
+  tool is called again.
+- **Failed.** The call errored, for example because the connection dropped.
+  The listener retries with a growing delay (5 seconds doubling to a cap of 5
+  minutes), and after **five consecutive failures** the agent is told once.
+
+Calls are never made more often than every 2 seconds, so a tool that returns
+instantly with nothing cannot spin the loop.
+
+### Lifecycle
+
+Listeners are started when the gateway starts and reconciled with the job
+store every 10 seconds, so a listen job added, edited, disabled or removed
+through the tool, the CLI or a config reload takes effect within that window.
+An edited job (new tool, arguments, fields or message) restarts its listener;
+an untouched one keeps running. Listen jobs appear in `list` with the schedule
+`listen (continuous)` and no next run. The same rules as watch jobs apply to
+what can be listened to: the owning agent's registry, re-checked on every
+call, and no session-scoped tools.
 
 ---
 

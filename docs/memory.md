@@ -6,8 +6,10 @@ preferences, rules, the assistant's own working notes, and a searchable record
 of things that happened. Memories are grouped by topic — a **domain** — so
 global information stays separate from project detail.
 
-Each session has its own SQLite database, `<session>.cogmem.db`, in the agent's
-`sessions/` directory.
+Each assistant has one memory, shared by every session it holds: a SQLite
+database at `cogmem/cogmem.db` in the agent's workspace. The `cogmem/`
+directory is self-contained, so it survives clearing the sessions, can be
+backed up on its own, and can be copied to a new assistant.
 
 ## Domains
 
@@ -141,7 +143,9 @@ In the background, a "sleep cycle" reviews the conversation and distils it into
 memories — noticing patterns, extracting detail, and preserving things the
 assistant did not think to save at the time. It runs on a message count, after
 an idle period, and nightly (`memory.consolidation.*`), and reuses the agent's
-configured summarization models.
+configured summarization models. Memory keeps its own copy of each message as
+it is spoken, inside the memory database, and drops it once a run has covered
+it — so it never depends on the session archive or its retention settings.
 
 It states a memory's **type** and nothing else. Status is not its to choose, and
 there is no per-memory retention or provenance argument: giving it more fields

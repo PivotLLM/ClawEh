@@ -1,23 +1,24 @@
 package agent
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 
-	cogmemstore "github.com/PivotLLM/ClawEh/cogmem/store"
+	"github.com/PivotLLM/cogmem"
+	"github.com/PivotLLM/ctxengine"
+	"github.com/PivotLLM/ctxengine/session"
+
+	"github.com/PivotLLM/ClawEh/cogmemhost"
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/cronmsg"
 	"github.com/PivotLLM/ClawEh/global"
 	agentws "github.com/PivotLLM/ClawEh/internal/workspace"
-	"github.com/PivotLLM/ClawEh/llmcontext"
 	"github.com/PivotLLM/ClawEh/logger"
-	"github.com/PivotLLM/ClawEh/memory"
 	"github.com/PivotLLM/ClawEh/providers"
 	"github.com/PivotLLM/ClawEh/routing"
-	"github.com/PivotLLM/ClawEh/session"
 	"github.com/PivotLLM/ClawEh/tools"
 )
 
@@ -35,7 +36,7 @@ type AgentInstance struct {
 	ThinkingLevel  ThinkingLevel
 	NoTools        bool
 	ContextWindow  int
-	CompressOpts   []llmcontext.Option
+	CompressOpts   []ctxengine.Option
 	Provider       providers.LLMProvider
 	Sessions       session.SessionStore
 	ContextBuilder *ContextBuilder
@@ -49,7 +50,7 @@ type AgentInstance struct {
 	// text-only and images are encountered, they are dispatched to these clients
 	// (first success wins) for a one-shot text description instead of being
 	// dropped. Empty = feature off. Wired by AgentLoop.registerRuntimeTools.
-	VisionClients []llmcontext.LLMClient
+	VisionClients []visionClient
 	// EffectiveVisionModel is the first (primary) vision-describe model name, for
 	// logging. Empty when no vision model is configured.
 	EffectiveVisionModel string
@@ -73,32 +74,13 @@ type AgentInstance struct {
 	AlwaysShownNamespaces []string
 }
 
-// migrateCogmemStores upgrades every cognitive-memory database belonging to one
-// agent, logging what changed. A store that cannot be migrated is reported and
-// skipped: the others still upgrade, and the failure is visible at startup
-// rather than surfacing mid-conversation.
-func migrateCogmemStores(agentID, sessionsDir string) {
-	for _, r := range cogmemstore.MigrateDir(sessionsDir) {
-		switch {
-		case r.Err != nil:
-			logger.ErrorCF("cogmem", "Failed to migrate cognitive-memory database",
-				map[string]any{"agent": agentID, "path": r.Path, "error": r.Err.Error()})
-		case r.Migrated():
-			logger.InfoCF("cogmem", "Migrated cognitive-memory database", map[string]any{
-				"agent": agentID, "path": r.Path, "from": r.From, "to": r.To,
-				"snapshot": fmt.Sprintf("%s.pre-v%d.db", r.Path, r.From),
-			})
-		}
-	}
-}
-
 // NewAgentInstance creates an agent instance from config.
 func NewAgentInstance(
 	agentCfg *config.AgentConfig,
 	defaults *config.AgentDefaults,
 	cfg *config.Config,
 	provider providers.LLMProvider,
-) *AgentInstance {
+) (*AgentInstance, error) {
 	workspace := resolveAgentWorkspace(agentCfg, cfg.BaseDir())
 
 	agentws.Populate(workspace)
@@ -118,28 +100,36 @@ func NewAgentInstance(
 
 	sessionsDir := filepath.Join(workspace, "sessions")
 
-	// Migrate this agent's cognitive-memory databases now, rather than leaving
-	// each to be upgraded whenever its session next happens to be opened. Lazy
-	// migration spreads a schema change across hours of ordinary use with no
-	// point an operator can call it done, and leaves a store belonging to an
-	// agent nobody talks to that day on the old schema indefinitely.
-	migrateID := ""
-	if agentCfg != nil {
+	// Bring this agent's cognitive memory to the current layout and schema now,
+	// rather than leaving it to be upgraded whenever it next happens to be
+	// opened. Lazy migration spreads a schema change across hours of ordinary
+	// use with no point an operator can call it done, and leaves a store
+	// belonging to an agent nobody talks to that day on the old schema
+	// indefinitely.
+	migrateID := routing.DefaultAgentID
+	if agentCfg != nil && agentCfg.ID != "" {
 		migrateID = agentCfg.ID
 	}
-	migrateCogmemStores(migrateID, sessionsDir)
+	cogmemhost.Migrate(migrateID, workspace)
 
-	sessions := initSessionStore(sessionsDir)
+	sessions, err := initSessionStore(sessionsDir)
+	if err != nil {
+		return nil, err
+	}
 
 	// The registry starts empty. Tools are registered exactly once — after
 	// construction by AgentLoop.registerRuntimeTools, and again on config reload —
 	// so the full runtime deps (session closures, the sub-agent spawner, and the
-	// shared message tool) are present. Registering here too would double-build
+	// per-agent message tool) are present. Registering here too would double-build
 	// every tool and overwrite it, so we intentionally don't.
 
 	// Progressive discovery is a single global switch; AgentLoop also sets it during
 	// tool registration (and DiscoveryActive), so this just seeds the context rule.
 	contextBuilder := NewContextBuilder(workspace).WithToolDiscovery(cfg.Tools.Discovery.Enabled)
+	if agentCfg.CognitiveMemoryEnabled() {
+		// Only an agent that has the subsystem is told how to use it.
+		contextBuilder = contextBuilder.WithMemoryGuidance(cogmem.Guidance())
+	}
 	// For named agents, always apply the skills filter — even if empty.
 	// nil filter = no restriction (all skills); empty filter = no skills.
 	// Default/nil agentCfg means the default agent which gets all skills.
@@ -208,7 +198,7 @@ func NewAgentInstance(
 	// For count fields: 0 = explicitly disabled (valid to pass).
 	resolveIntOpt := resolveAgentIntOpt
 
-	var compressOpts []llmcontext.Option
+	var compressOpts []ctxengine.Option
 
 	// Compaction policy: defaults block overlaid by the per-agent block, then
 	// mapped to llmcontext options. Only fields the merged config actually sets
@@ -222,7 +212,7 @@ func NewAgentInstance(
 		}
 		return nil
 	}(), defaults.ArchiveMessageCount); ok {
-		compressOpts = append(compressOpts, llmcontext.WithArchiveMessageCount(v))
+		compressOpts = append(compressOpts, ctxengine.WithArchiveMessageCount(v))
 	}
 	if v, ok := resolveIntOpt(func() *int {
 		if agentCfg != nil {
@@ -230,7 +220,7 @@ func NewAgentInstance(
 		}
 		return nil
 	}(), defaults.ArchiveDays); ok {
-		compressOpts = append(compressOpts, llmcontext.WithArchiveDays(v))
+		compressOpts = append(compressOpts, ctxengine.WithArchiveDays(v))
 	}
 	if v, ok := resolveIntOpt(func() *int {
 		if agentCfg != nil {
@@ -238,7 +228,7 @@ func NewAgentInstance(
 		}
 		return nil
 	}(), defaults.SummaryMaxCount); ok {
-		compressOpts = append(compressOpts, llmcontext.WithSummaryMaxCount(v))
+		compressOpts = append(compressOpts, ctxengine.WithSummaryMaxCount(v))
 	}
 	if v, ok := resolveIntOpt(func() *int {
 		if agentCfg != nil {
@@ -246,7 +236,7 @@ func NewAgentInstance(
 		}
 		return nil
 	}(), defaults.SummaryRetentionDays); ok {
-		compressOpts = append(compressOpts, llmcontext.WithSummaryRetentionDays(v))
+		compressOpts = append(compressOpts, ctxengine.WithSummaryRetentionDays(v))
 	}
 	if v, ok := resolveIntOpt(func() *int {
 		if agentCfg != nil {
@@ -254,17 +244,17 @@ func NewAgentInstance(
 		}
 		return nil
 	}(), defaults.ArchiveContentMaxBytes); ok {
-		compressOpts = append(compressOpts, llmcontext.WithArchiveContentMaxBytes(v))
+		compressOpts = append(compressOpts, ctxengine.WithArchiveContentMaxBytes(v))
 	}
 
 	// Resolve the per-turn eviction policy: built-in defaults, overlaid by the
 	// defaults config block, overlaid by the per-agent block (field by field).
-	evPolicy := llmcontext.DefaultEvictionPolicy()
+	evPolicy := ctxengine.DefaultEvictionPolicy()
 	applyEvictionConfig(&evPolicy, defaults.ContextEviction)
 	if agentCfg != nil {
 		applyEvictionConfig(&evPolicy, agentCfg.ContextEviction)
 	}
-	compressOpts = append(compressOpts, llmcontext.WithEvictionPolicy(evPolicy))
+	compressOpts = append(compressOpts, ctxengine.WithEvictionPolicy(evPolicy))
 
 	// Resolve fallback candidates
 	modelCfg := providers.ModelConfig{Models: models}
@@ -328,7 +318,7 @@ func NewAgentInstance(
 		SkillsFilter:   skillsFilter,
 		Candidates:     candidates,
 		Config:         agentCfg,
-	}
+	}, nil
 }
 
 // resolveAgentWorkspace determines the workspace directory for an agent:
@@ -383,32 +373,45 @@ func (a *AgentInstance) Close() error {
 	return nil
 }
 
-// initSessionStore creates the session persistence backend.
-// It uses the JSONL store by default and auto-migrates legacy JSON sessions.
-// Falls back to SessionManager if the JSONL store cannot be initialized or
-// if migration fails (which indicates the store cannot write reliably).
-func initSessionStore(dir string) session.SessionStore {
-	store, err := memory.NewJSONLStore(dir)
+// initSessionStore opens the per-session SQLite store under dir. The live
+// window and the session state live in each session's archive DB alongside
+// the archived messages, so there is one store, one seq space, and one place
+// recovery reads.
+func initSessionStore(dir string) (session.SessionStore, error) {
+	if err := refuseUnmigratedSessions(dir); err != nil {
+		return nil, err
+	}
+	store, err := session.NewSQLiteStore(dir)
 	if err != nil {
-		logger.WarnCF("memory", "init store failed; using json sessions",
-			map[string]any{"error": err.Error()})
-		return session.NewSessionManager(dir)
+		return nil, fmt.Errorf("open session store %s: %w", dir, err)
 	}
+	// Repeated fires of one scheduled job differ only by timestamp; the store
+	// counts them as noise by the cron collapse key.
+	store.SetNoiseKey(cronmsg.CollapseKey)
+	return store, nil
+}
 
-	if n, merr := memory.MigrateFromJSON(context.Background(), dir, store); merr != nil {
-		// Migration failure means the store could not write data.
-		// Fall back to SessionManager to avoid a split state where
-		// some sessions are in JSONL and others remain in JSON.
-		logger.WarnCF("memory", "migration failed; falling back to json sessions",
-			map[string]any{"error": merr.Error()})
-		store.Close()
-		return session.NewSessionManager(dir)
-	} else if n > 0 {
-		logger.InfoCF("memory", "migrated sessions to jsonl",
-			map[string]any{"count": n})
+// refuseUnmigratedSessions fails when dir still holds a JSONL-layout session
+// (a `<key>.meta.json` that has not been renamed to `.migrated`). Starting on
+// such a directory would be silently destructive: the first message (a cron
+// fire is enough) mints a fresh window at seq 1 in the archive DB, after which
+// `claw sessions migrate` sees a populated session, skips it, and the old
+// history is stranded. Failing loudly makes the ordering mistake visible.
+func refuseUnmigratedSessions(dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // a fresh workspace has nothing to migrate
+		}
+		return fmt.Errorf("read sessions directory %s: %w", dir, err)
 	}
-
-	return session.NewJSONLBackend(store)
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".meta.json") {
+			return fmt.Errorf("sessions directory %s still holds JSONL-layout sessions; "+
+				"stop the service and run \"claw sessions migrate\" first", dir)
+		}
+	}
+	return nil
 }
 
 func expandHome(path string) string {
@@ -444,7 +447,7 @@ func resolveAgentIntOpt(agentPtr *int, defaultsVal int) (int, bool) {
 // applyEvictionConfig overlays a ContextEvictionConfig block onto an
 // EvictionPolicy, leaving fields the block does not set untouched. Passing nil
 // is a no-op, so callers can chain defaults then per-agent without nil guards.
-func applyEvictionConfig(p *llmcontext.EvictionPolicy, c *config.ContextEvictionConfig) {
+func applyEvictionConfig(p *ctxengine.EvictionPolicy, c *config.ContextEvictionConfig) {
 	if c == nil {
 		return
 	}
@@ -471,51 +474,51 @@ func applyEvictionConfig(p *llmcontext.EvictionPolicy, c *config.ContextEviction
 // compressionOptions maps a merged CompressionConfig onto llmcontext options.
 // A nil field yields no option, so llmcontext's own default applies; an
 // explicitly-set 0 is passed through, which is how a trigger gets disabled.
-func compressionOptions(c *config.CompressionConfig) []llmcontext.Option {
+func compressionOptions(c *config.CompressionConfig) []ctxengine.Option {
 	if c == nil {
 		return nil
 	}
-	var opts []llmcontext.Option
+	var opts []ctxengine.Option
 	if c.TargetPercent != nil {
-		opts = append(opts, llmcontext.WithTargetPercent(*c.TargetPercent))
+		opts = append(opts, ctxengine.WithTargetPercent(*c.TargetPercent))
 	}
 	if t := c.Trigger; t != nil {
 		if t.MinPercent != nil {
-			opts = append(opts, llmcontext.WithMinPercent(*t.MinPercent))
+			opts = append(opts, ctxengine.WithMinPercent(*t.MinPercent))
 		}
 		if t.NormalPercent != nil {
-			opts = append(opts, llmcontext.WithNormalPercent(*t.NormalPercent))
+			opts = append(opts, ctxengine.WithNormalPercent(*t.NormalPercent))
 		}
 		if t.SafetyPercent != nil {
-			opts = append(opts, llmcontext.WithSafetyPercent(*t.SafetyPercent))
+			opts = append(opts, ctxengine.WithSafetyPercent(*t.SafetyPercent))
 		}
 		if t.MessageCount != nil {
-			opts = append(opts, llmcontext.WithMessageThreshold(*t.MessageCount))
+			opts = append(opts, ctxengine.WithMessageThreshold(*t.MessageCount))
 		}
 		if t.Days != nil {
-			opts = append(opts, llmcontext.WithTriggerDays(*t.Days))
+			opts = append(opts, ctxengine.WithTriggerDays(*t.Days))
 		}
 	}
 	if r := c.Retain; r != nil {
 		if r.TokenPercent != nil {
-			opts = append(opts, llmcontext.WithRetainTokenPercent(*r.TokenPercent))
+			opts = append(opts, ctxengine.WithRetainTokenPercent(*r.TokenPercent))
 		}
 		if r.MaxTokens != nil {
-			opts = append(opts, llmcontext.WithRetainMaxTokens(*r.MaxTokens))
+			opts = append(opts, ctxengine.WithRetainMaxTokens(*r.MaxTokens))
 		}
 		if r.MaxAgeDays != nil {
-			opts = append(opts, llmcontext.WithRetainMaxAgeDays(*r.MaxAgeDays))
+			opts = append(opts, ctxengine.WithRetainMaxAgeDays(*r.MaxAgeDays))
 		}
 		if r.MinMessages != nil {
-			opts = append(opts, llmcontext.WithRetainMinMessages(*r.MinMessages))
+			opts = append(opts, ctxengine.WithRetainMinMessages(*r.MinMessages))
 		}
 	}
 	if e := c.Estimate; e != nil {
 		if e.CharsPerToken != nil {
-			opts = append(opts, llmcontext.WithCharsPerToken(*e.CharsPerToken))
+			opts = append(opts, ctxengine.WithCharsPerToken(*e.CharsPerToken))
 		}
 		if e.TokenSafetyMargin != nil {
-			opts = append(opts, llmcontext.WithTokenSafetyMargin(*e.TokenSafetyMargin))
+			opts = append(opts, ctxengine.WithTokenSafetyMargin(*e.TokenSafetyMargin))
 		}
 	}
 	return opts

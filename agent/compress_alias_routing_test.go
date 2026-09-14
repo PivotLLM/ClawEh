@@ -64,11 +64,8 @@ func TestBuildCompressLLMClient_PerAliasRouting(t *testing.T) {
 		Model:    "sonnet-4-5",
 	}
 
-	client := al.buildCompressLLMClient(agent, "Grok-4.3-Medium", "sess-medium")
-	plc, ok := client.(*providerLLMClient)
-	if !ok {
-		t.Fatalf("expected *providerLLMClient, got %T", client)
-	}
+	client := al.resolveCompressClient(agent, "Grok-4.3-Medium", "sess-medium")
+	plc := client
 	hp, ok := plc.provider.(*providers.HTTPProvider)
 	if !ok {
 		t.Fatalf("compress provider type = %T, want *providers.HTTPProvider", plc.provider)

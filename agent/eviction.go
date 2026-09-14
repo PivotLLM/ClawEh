@@ -5,12 +5,16 @@ package agent
 
 import (
 	"context"
+	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/PivotLLM/ClawEh/llmcontext"
+	"github.com/PivotLLM/cogmem"
+	"github.com/PivotLLM/ctxengine"
+	"github.com/PivotLLM/ctxengine/session"
+
 	"github.com/PivotLLM/ClawEh/logger"
-	"github.com/PivotLLM/ClawEh/session"
 )
 
 const (
@@ -21,15 +25,63 @@ const (
 // cmEntry wraps a ContextManager with lifecycle metadata used by the eviction
 // goroutine. The sync.Map in AgentLoop stores *cmEntry values.
 type cmEntry struct {
-	cm           llmcontext.ContextManager
+	cm           ctxengine.ContextManager
 	sessionKey   string               // used by the eviction pass to revoke session tokens
 	store        session.SessionStore // used on eviction to drop per-session in-memory caches
 	lastAccessed time.Time
 	refcount     atomic.Int32
-	// cleanup, when non-nil, releases per-entry resources on eviction/drain
-	// (e.g. the cached cognitive-memory store handle). Nil for non-cognitive
-	// agents.
-	cleanup func()
+	// mem is the session's cognitive-memory view; nil for non-cognitive agents.
+	// Closed on eviction/drain to release the per-session store handle.
+	mem *cogmem.Session
+	// token is the per-session MCP token the loop renders into the system
+	// prompt on every dispatch (sessionTokenLayer). Reissued on a session
+	// reset; "" when no issuer is wired. Guarded by tokenMu.
+	tokenMu sync.RWMutex
+	token   string
+}
+
+// setToken records the current session token.
+func (e *cmEntry) setToken(tok string) {
+	e.tokenMu.Lock()
+	defer e.tokenMu.Unlock()
+	e.token = tok
+}
+
+// sessionToken returns the current session token, or "".
+func (e *cmEntry) sessionToken() string {
+	e.tokenMu.RLock()
+	defer e.tokenMu.RUnlock()
+	return e.token
+}
+
+// sessionToken returns the MCP token of a cached session, or "" when the
+// session has no entry (a stub injected by a test) or no token was issued.
+func (al *AgentLoop) sessionToken(agent *AgentInstance, sessionKey string) string {
+	if v, ok := al.contextManagers.Load(agent.ID + ":" + sessionKey); ok {
+		return v.(*cmEntry).sessionToken()
+	}
+	return ""
+}
+
+// reissueSessionToken revokes nothing itself (the issuer replaces the token
+// for the key) but issues a fresh token for the session and stores it on the
+// cached entry so the next dispatch renders the new one. No-op without an
+// issuer or a cached entry.
+func (al *AgentLoop) reissueSessionToken(agent *AgentInstance, sessionKey string) {
+	al.mu.RLock()
+	sti := al.sessionTokenIssuer
+	al.mu.RUnlock()
+	if sti == nil {
+		return
+	}
+	v, ok := al.contextManagers.Load(agent.ID + ":" + sessionKey)
+	if !ok {
+		return
+	}
+	archiveDir := filepath.Join(agent.Workspace, "sessions")
+	if tok := sti.Issue(agent.ID, sessionKey, archiveDir); tok != "" {
+		v.(*cmEntry).setToken(tok)
+	}
 }
 
 // forgetSessionState drops per-session in-memory caches in the session store
@@ -89,9 +141,7 @@ func (al *AgentLoop) dropContextManager(agent *AgentInstance, sessionKey string)
 			map[string]any{"key": key, "error": err.Error()})
 	}
 	forgetSessionState(entry.store, entry.sessionKey)
-	if entry.cleanup != nil {
-		entry.cleanup()
-	}
+	entry.mem.Close()
 }
 
 // runEvictionPass evicts entries that have refcount == 0 and have been idle
@@ -132,9 +182,7 @@ func (al *AgentLoop) runEvictionPass(ttl time.Duration) {
 			})
 		}
 		forgetSessionState(entry.store, entry.sessionKey)
-		if entry.cleanup != nil {
-			entry.cleanup()
-		}
+		entry.mem.Close()
 		logger.InfoCF("agent", "evicted idle context manager", map[string]any{
 			"key":      key,
 			"idle_min": now.Sub(entry.lastAccessed).Minutes(),
@@ -166,9 +214,7 @@ func (al *AgentLoop) drainContextManagers() {
 			})
 		}
 		forgetSessionState(entry.store, entry.sessionKey)
-		if entry.cleanup != nil {
-			entry.cleanup()
-		}
+		entry.mem.Close()
 		return true
 	})
 }

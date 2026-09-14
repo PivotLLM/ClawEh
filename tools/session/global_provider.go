@@ -3,22 +3,26 @@
 //
 // Copyright (c) 2026 Tenebris Technologies Inc.
 
-// This file exposes the session tools through the transport-neutral global
-// layer with BARE names ("messages", "search", ...). The aggregator mounts the
-// provider under the "session" namespace, so the published tool names are
-// "session_messages", "session_search", etc. It reuses the existing
-// SessionHistoryTool / SessionCompactTool / ... logic and converts the result at
-// the boundary via tools.ResultToGlobal, so behaviour is unchanged.
+// Package session mounts the session tools from the sessiontools package as a
+// ClawEh tool provider. The package defines the tools with BARE names
+// ("messages", "search", ...); the aggregator publishes them under the
+// "session" namespace as "session_messages" and so on.
 //
-// All session tools are session-scoped (they need ToolCall.Session populated),
-// so every definition sets SessionScoped: true.
-
+// This file is the only ClawEh-specific glue: it recovers the agent loop's
+// closures and workspace from tools.ToolDeps, builds a sessiontools.Host, and
+// routes the tools' diagnostics into ClawEh's logger.
 package session
 
 import (
+	"context"
 	"path/filepath"
+	"runtime"
 
+	sessiontools "github.com/PivotLLM/ctxengine/tools"
+
+	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/global"
+	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/tools"
 )
 
@@ -36,121 +40,45 @@ func (globalSessionProvider) Available(cfg any) (bool, string) { return true, ""
 
 func (globalSessionProvider) RegisterTools(deps global.Deps) []global.ToolDefinition {
 	// Recover Claw's rich, strongly-typed dependencies. A deps-free enumeration
-	// (Describe) passes a zero Deps, so cd is the zero ToolDeps and the closures
-	// are nil — handlers guard on a nil instance and never run during cataloguing.
+	// (Describe) passes a zero Deps, so cd is the zero ToolDeps: the sessions
+	// directory is empty and the closures are nil, and every handler reports
+	// itself unavailable instead of touching disk or the agent loop.
 	cd, _ := deps.Host.(tools.ToolDeps)
 
-	sessionsDir := filepath.Join(cd.Workspace, "sessions")
-
-	// Archive-based tools: always available (only need the sessions dir).
-	messages := NewSessionHistoryTool(sessionsDir)
-	search := NewSessionHistorySearchTool(sessionsDir)
-	summaryList := NewSessionSummaryListTool(sessionsDir)
-	summaryGet := NewSessionSummaryGetTool(sessionsDir)
-
-	// Closure-based tools: construct a real instance only when its closure is
-	// present; otherwise leave nil and let the handler return a not-available
-	// error. Static metadata (Description/Parameters) is read from a zero-value
-	// instance, whose methods touch no fields.
-	var compact *SessionCompactTool
-	if cd.CompactFn != nil {
-		compact = NewSessionCompactTool(cd.CompactFn)
+	host := sessiontools.Host{
+		Compact: cd.CompactFn,
+		Clear:   cd.ClearFn,
+		Log:     logToClaw,
 	}
-	var info *SessionInfoTool
+	if cd.Workspace != "" {
+		host.SessionsDir = filepath.Join(cd.Workspace, "sessions")
+	}
 	if cd.SessionInfoFn != nil {
-		info = NewSessionInfoTool(SessionInfoFunc(cd.SessionInfoFn))
+		host.SessionInfo = func(ctx context.Context, sessionKey string) (*sessiontools.SessionInfo, error) {
+			info, err := cd.SessionInfoFn(ctx, sessionKey)
+			if err != nil || info == nil {
+				return info, err
+			}
+			// Static server identity so "connection info" reports the running build.
+			info.Server = app.Name() + " " + app.Version()
+			info.OS = runtime.GOOS + "/" + runtime.GOARCH
+			return info, nil
+		}
 	}
-	var clear *SessionClearTool
-	if cd.ClearFn != nil {
-		clear = NewSessionClearTool(cd.ClearFn)
-	}
+	return sessiontools.Definitions(host)
+}
 
-	return []global.ToolDefinition{
-		{
-			Name:          "messages",
-			Description:   (&SessionHistoryTool{}).Description(),
-			RawSchema:     (&SessionHistoryTool{}).Parameters(),
-			SessionScoped: true,
-			DefaultAllow:  global.Allow(true),
-			Category:      "context",
-			Handler: func(call *global.ToolCall) (*global.Result, error) {
-				return tools.ResultToGlobal(messages.Execute(call.Ctx, call.Args)), nil
-			},
-		},
-		{
-			Name:          "search",
-			Description:   (&SessionHistorySearchTool{}).Description(),
-			RawSchema:     (&SessionHistorySearchTool{}).Parameters(),
-			SessionScoped: true,
-			DefaultAllow:  global.Allow(true),
-			Category:      "context",
-			Handler: func(call *global.ToolCall) (*global.Result, error) {
-				return tools.ResultToGlobal(search.Execute(call.Ctx, call.Args)), nil
-			},
-		},
-		{
-			Name:          "summary_list",
-			Description:   (&SessionSummaryListTool{}).Description(),
-			RawSchema:     (&SessionSummaryListTool{}).Parameters(),
-			SessionScoped: true,
-			DefaultAllow:  global.Allow(true),
-			Category:      "context",
-			Handler: func(call *global.ToolCall) (*global.Result, error) {
-				return tools.ResultToGlobal(summaryList.Execute(call.Ctx, call.Args)), nil
-			},
-		},
-		{
-			Name:          "summary_get",
-			Description:   (&SessionSummaryGetTool{}).Description(),
-			RawSchema:     (&SessionSummaryGetTool{}).Parameters(),
-			SessionScoped: true,
-			DefaultAllow:  global.Allow(true),
-			Category:      "context",
-			Handler: func(call *global.ToolCall) (*global.Result, error) {
-				return tools.ResultToGlobal(summaryGet.Execute(call.Ctx, call.Args)), nil
-			},
-		},
-		{
-			Name:          "compact",
-			Description:   (&SessionCompactTool{}).Description(),
-			RawSchema:     (&SessionCompactTool{}).Parameters(),
-			SessionScoped: true,
-			DefaultAllow:  global.Allow(true),
-			Category:      "context",
-			Handler: func(call *global.ToolCall) (*global.Result, error) {
-				if compact == nil {
-					return &global.Result{IsError: true, ForLLM: "tool not available"}, nil
-				}
-				return tools.ResultToGlobal(compact.Execute(call.Ctx, call.Args)), nil
-			},
-		},
-		{
-			Name:          "info",
-			Description:   (&SessionInfoTool{}).Description(),
-			RawSchema:     (&SessionInfoTool{}).Parameters(),
-			SessionScoped: true,
-			DefaultAllow:  global.Allow(true),
-			Category:      "context",
-			Handler: func(call *global.ToolCall) (*global.Result, error) {
-				if info == nil {
-					return &global.Result{IsError: true, ForLLM: "tool not available"}, nil
-				}
-				return tools.ResultToGlobal(info.Execute(call.Ctx, call.Args)), nil
-			},
-		},
-		{
-			Name:          "clear",
-			Description:   (&SessionClearTool{}).Description(),
-			RawSchema:     (&SessionClearTool{}).Parameters(),
-			SessionScoped: true,
-			DefaultAllow:  nil, // denied by default — opt-in only
-			Category:      "context",
-			Handler: func(call *global.ToolCall) (*global.Result, error) {
-				if clear == nil {
-					return &global.Result{IsError: true, ForLLM: "tool not available"}, nil
-				}
-				return tools.ResultToGlobal(clear.Execute(call.Ctx, call.Args)), nil
-			},
-		},
+// logToClaw routes sessiontools diagnostics into ClawEh's logger.
+func logToClaw(level, message string, fields map[string]any) {
+	const component = "session-tools"
+	switch level {
+	case "debug":
+		logger.DebugCF(component, message, fields)
+	case "warn":
+		logger.WarnCF(component, message, fields)
+	case "error":
+		logger.ErrorCF(component, message, fields)
+	default:
+		logger.InfoCF(component, message, fields)
 	}
 }

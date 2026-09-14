@@ -9,7 +9,9 @@ import (
 	"os"
 	"strings"
 
-	cogmemstore "github.com/PivotLLM/ClawEh/cogmem/store"
+	cogmemstore "github.com/PivotLLM/cogmem/store"
+
+	"github.com/PivotLLM/ClawEh/cogmemhost"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/routing"
 	toolsagents "github.com/PivotLLM/ClawEh/tools/agents"
@@ -51,14 +53,17 @@ func (al *AgentLoop) runSubagentTask(ctx context.Context, agentID, sessionKey, t
 		}
 	}
 
-	// Snapshot the agent's main-session memory into this sub-agent session's DB so
-	// the worker starts with the agent's background. Best-effort: a missing/empty
-	// primary DB just means the sub-agent starts with empty memory.
-	mainSession := routing.BuildAgentMainSessionKey(agentID)
-	src := cogmemstore.SessionDBPath(agent.Workspace, mainSession)
-	dst := cogmemstore.SessionDBPath(agent.Workspace, sessionKey)
+	// Snapshot the agent's memory into a throwaway directory for this sub-agent
+	// so the worker starts with the agent's background. Best-effort: a
+	// missing/empty primary DB just means the sub-agent starts with empty memory.
+	src := cogmemstore.DBPath(cogmemhost.Dir(agent.Workspace))
+	dstDir := cogmemhost.SubagentDir(agent.Workspace, sessionKey)
 	if _, statErr := os.Stat(src); statErr == nil {
-		if err := cogmemstore.Snapshot(ctx, src, dst); err != nil {
+		if err := os.MkdirAll(dstDir, 0o755); err != nil {
+			logger.WarnCF("agent", "subagent cogmem snapshot dir failed", map[string]any{
+				"agent": agentID, "error": err.Error(),
+			})
+		} else if err := cogmemstore.Snapshot(ctx, src, cogmemstore.DBPath(dstDir)); err != nil {
 			logger.WarnCF("agent", "subagent cogmem snapshot failed", map[string]any{
 				"agent": agentID, "error": err.Error(),
 			})
@@ -114,17 +119,14 @@ func (al *AgentLoop) runSubagentTask(ctx context.Context, agentID, sessionKey, t
 }
 
 // cleanupSubagentSession evicts the sub-agent session's context manager (closing
-// its DB handles) and removes the ephemeral session DB files. Best-effort.
+// its DB handles), removes the memory snapshot directory and the ephemeral
+// session's archive files. Best-effort.
 func (al *AgentLoop) cleanupSubagentSession(agent *AgentInstance, sessionKey string) {
 	al.dropContextManager(agent, sessionKey)
 	al.releaseSessionPins(sessionKey)
-	base := cogmemstore.SanitizeSessionKey(sessionKey)
-	dir := cogmemstore.SessionDBPath(agent.Workspace, sessionKey)
-	sessionsDir := dir[:len(dir)-len(base)-len(".cogmem.db")]
-	for _, suffix := range []string{
-		".cogmem.db", ".cogmem.db-wal", ".cogmem.db-shm",
-		".archive.db", ".archive.db-wal", ".archive.db-shm",
-	} {
-		_ = os.Remove(sessionsDir + base + suffix)
+	_ = os.RemoveAll(cogmemhost.SubagentDir(agent.Workspace, sessionKey))
+	archive := archiveDBPath(agent.Workspace, sessionKey)
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		_ = os.Remove(archive + suffix)
 	}
 }
