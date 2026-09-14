@@ -126,15 +126,15 @@ func (t *CronTool) Parameters() map[string]any {
 			},
 			"listen": map[string]any{
 				"type":        "boolean",
-				"description": "Optional. With watch_tool, makes the job a persistent callback instead of a scheduled probe: the tool is called continuously in the background and each call waits for it to return (an event, a dropped connection, or the timeout), then it is called again at once. Whenever the watched fields are present and carry a new value, 'message' is delivered followed by the tool's full result. Use it for long-poll event tools such as documents_event_wait. Takes no schedule: do not pass at_seconds, every_seconds or cron_expr.",
+				"description": "Optional. With watch_tool, makes the job a persistent callback instead of a scheduled probe: the tool is called continuously in the background and each call waits for it to return (an event, a dropped connection, or the timeout), then it is called again at once. Whenever the watched fields are present, 'message' is delivered followed by the tool's full result — every time, identical results included, unless suppress_repeats is set. Use it for long-poll event tools such as documents_event_wait. Takes no schedule: do not pass at_seconds, every_seconds or cron_expr.",
 			},
 			"watch_timeout_seconds": map[string]any{
 				"type":        "integer",
 				"description": "Optional, for listen jobs: how long one call may wait for an event before it is dropped and made again (default 300).",
 			},
-			"deliver_repeats": map[string]any{
+			"suppress_repeats": map[string]any{
 				"type":        "boolean",
-				"description": "Optional, for listen jobs. By default a result identical to the last delivered event (same watched fields) is not delivered again, so a source that replays its latest event on reconnect wakes you once. Set true when every occurrence matters even if identical — for example a document edited several times in a row — and each result with the watched fields present will be delivered.",
+				"description": "Optional, for listen jobs. By default every result with the watched fields present is delivered, even one identical to the last — each occurrence may matter, e.g. a document edited several times in a row. Set true for a source that replays its latest event on every reconnect, so an identical result is delivered once.",
 			},
 			"job_id": map[string]any{
 				"type":        "string",
@@ -293,8 +293,8 @@ func (t *CronTool) addJob(args map[string]any, agentID string) *tools.ToolResult
 		if secs, ok := args["watch_timeout_seconds"].(float64); ok && secs > 0 {
 			watch.TimeoutSec = int(secs)
 		}
-		if repeats, ok := args["deliver_repeats"].(bool); ok && repeats {
-			watch.DeliverRepeats = true
+		if suppress, ok := args["suppress_repeats"].(bool); ok && suppress {
+			watch.SuppressRepeats = true
 		}
 	}
 
@@ -320,9 +320,9 @@ func (t *CronTool) addJob(args map[string]any, agentID string) *tools.ToolResult
 	t.kickListeners()
 
 	if listen {
-		when := fmt.Sprintf("each time %s carry a new value", describeFields(watch.Fields))
-		if watch.DeliverRepeats {
-			when = fmt.Sprintf("every time it returns with %s present, repeats included", describeFields(watch.Fields))
+		when := fmt.Sprintf("every time it returns with %s present, repeats included", describeFields(watch.Fields))
+		if watch.SuppressRepeats {
+			when = fmt.Sprintf("each time %s carry a new value", describeFields(watch.Fields))
 		}
 		return tools.SilentResult(fmt.Sprintf(
 			"Listener added for %s: %s (id: %s). It keeps %q running in the background and messages you with the full result %s.",

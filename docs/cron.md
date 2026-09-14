@@ -260,21 +260,19 @@ Tell me whenever a document event arrives.
 Each call runs in the background with a timeout of `watch_timeout_seconds`.
 When it returns:
 
-- **An event.** If every watched field is present and their values differ from
-  the last delivered event, `message` is delivered followed by the tool's full
-  result, introduced as `documents_event_wait returned the following:`. The
-  agent gets the whole payload, not just the fields, so it need not call the
-  tool again to learn what happened. With `deliver_repeats`, an identical
-  result is delivered too: use it when every occurrence matters, such as a
-  document edited several times in a row, and accept that a source which
-  replays its latest event on reconnect will then repeat it. The envelope
-  says where it came from,
+- **An event.** If every watched field is present, `message` is delivered
+  followed by the tool's full result, introduced as `documents_event_wait
+  returned the following:`. The agent gets the whole payload, not just the
+  fields, so it need not call the tool again to learn what happened. A result
+  identical to the last one is delivered too: each occurrence may matter, such
+  as a document edited several times in a row. For a source that replays its
+  latest event on every reconnect, set `suppress_repeats` and an identical
+  result is delivered once; the last delivered fingerprint survives a restart.
+  The envelope says where it came from,
   `The following event was received by a continuous monitor at <time>:`, not
   "a cron job that fired", and it is not treated as a cron message: repeated
   fires of one scheduled job are deduplicated and collapsed, but each event a
-  monitor delivers is distinct and is kept like any other message. A result that repeats the last event (a
-  tool that replays its most recent event on reconnect) is not delivered twice,
-  and the last delivered fingerprint survives a restart.
+  monitor delivers is distinct and is kept like any other message.
 - **No data.** If a watched field is absent, nothing is delivered. This is the
   opposite of a scheduled watch, where a vanished field counts as a change: a
   long-poll that returns empty-handed must not wake the agent. With no

@@ -138,11 +138,12 @@ func TestListen_AddValidation(t *testing.T) {
 	}
 }
 
-// TestListen_DeliversNewEventsOnce is the core behaviour: the full result is
-// delivered with a note saying where it came from, a repeated event is not
-// delivered twice, a result without the watched field is not delivered, and a
-// timed-out wait is neither delivered nor counted as a failure.
-func TestListen_DeliversNewEventsOnce(t *testing.T) {
+// TestListen_DeliversEvents is the core behaviour: the full result is
+// delivered with a note saying where it came from, a result without the
+// watched field is not delivered, a timed-out wait is neither delivered nor
+// counted as a failure, and — by default — a repeated event is delivered
+// again, because each occurrence may matter.
+func TestListen_DeliversEvents(t *testing.T) {
 	tool := &scriptedTool{replies: []scriptedReply{
 		{text: `{"event":{"id":"e1","title":"first"}}`},
 		{text: `{"event":{"id":"e1","title":"first"}}`}, // replayed on reconnect
@@ -172,14 +173,19 @@ func TestListen_DeliversNewEventsOnce(t *testing.T) {
 		t.Fatalf("delivered to %s/%s as %s, want amber's default channel", first.Channel, first.ChatID, first.SenderID)
 	}
 
-	second, ok := nextInbound(t, msgBus, 5*time.Second)
+	// The replay of e1 is delivered again: repeats are on by default.
+	replay, ok := nextInbound(t, msgBus, 3*time.Second)
+	if !ok || !strings.Contains(replay.Content, `"id":"e1"`) {
+		t.Fatalf("repeated e1 not delivered by default: ok=%v\n%s", ok, replay.Content)
+	}
+	third, ok := nextInbound(t, msgBus, 5*time.Second)
 	if !ok {
-		t.Fatal("second event not delivered")
+		t.Fatal("e2 not delivered")
 	}
-	if !strings.Contains(second.Content, `"id":"e2"`) {
-		t.Fatalf("second delivery is not e2:\n%s", second.Content)
+	if !strings.Contains(third.Content, `"id":"e2"`) {
+		t.Fatalf("third delivery is not e2:\n%s", third.Content)
 	}
-	// e1's replay, the no-data result and the timeout produced nothing.
+	// The no-data result and the timeout produced nothing.
 	if extra, ok := nextInbound(t, msgBus, 200*time.Millisecond); ok {
 		t.Fatalf("unexpected extra delivery:\n%s", extra.Content)
 	}
@@ -348,14 +354,14 @@ func TestListen_DistinctEventsAllDelivered(t *testing.T) {
 	}
 }
 
-// TestListen_DeliverRepeats: with deliver_repeats the same event delivered
-// three times in a row reaches the agent three times.
-func TestListen_DeliverRepeats(t *testing.T) {
+// TestListen_RepeatsDeliveredByDefault: the same event three times in a row
+// reaches the agent three times, with no option set.
+func TestListen_RepeatsDeliveredByDefault(t *testing.T) {
 	same := scriptedReply{text: `{"event":{"id":"doc-7","action":"edited"}}`}
 	ct, msgBus := newListenEnv(t, &scriptedTool{replies: []scriptedReply{same, same, same}})
-	job := addListenJob(t, ct, map[string]any{"deliver_repeats": true})
-	if !job.Payload.Watch.DeliverRepeats {
-		t.Fatal("deliver_repeats not recorded on the job")
+	job := addListenJob(t, ct, nil)
+	if job.Payload.Watch.SuppressRepeats {
+		t.Fatal("suppression is on without being asked for")
 	}
 	ct.StartListeners(context.Background())
 	defer ct.StopListeners()
@@ -370,6 +376,25 @@ func TestListen_DeliverRepeats(t *testing.T) {
 	}
 	if extra, ok := nextInbound(t, msgBus, 200*time.Millisecond); ok {
 		t.Fatalf("delivered more than the three events:\n%s", extra.Content)
+	}
+}
+
+// TestListen_SuppressRepeatsOptIn: with suppress_repeats the same event three
+// times in a row reaches the agent once.
+func TestListen_SuppressRepeatsOptIn(t *testing.T) {
+	same := scriptedReply{text: `{"event":{"id":"doc-7","action":"edited"}}`}
+	ct, msgBus := newListenEnv(t, &scriptedTool{replies: []scriptedReply{same, same, same}})
+	job := addListenJob(t, ct, map[string]any{"suppress_repeats": true})
+	if !job.Payload.Watch.SuppressRepeats {
+		t.Fatal("suppress_repeats not recorded on the job")
+	}
+	ct.StartListeners(context.Background())
+	defer ct.StopListeners()
+	if _, ok := nextInbound(t, msgBus, 3*time.Second); !ok {
+		t.Fatal("first event not delivered")
+	}
+	if extra, ok := nextInbound(t, msgBus, 300*time.Millisecond); ok {
+		t.Fatalf("repeat delivered despite suppress_repeats:\n%s", extra.Content)
 	}
 }
 

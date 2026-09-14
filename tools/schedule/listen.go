@@ -184,10 +184,11 @@ func (t *CronTool) runListener(ctx context.Context, job *cron.CronJob) {
 	logger.InfoCF("cron", "listen: started", fields)
 	defer logger.InfoCF("cron", "listen: stopped", fields)
 
-	// The last delivered digest survives a restart through the job state, so
-	// a tool that replays its most recent event on reconnect does not deliver
-	// it twice — unless the job asked for repeats, where every result with the
-	// watched fields present is an event in its own right.
+	// Every result with the watched fields present is an event in its own
+	// right and is delivered. A job that opted into suppression compares the
+	// fingerprint with the last delivered one, which survives a restart
+	// through the job state, so a tool that replays its most recent event on
+	// reconnect does not deliver it twice.
 	lastDigest := job.State.WatchDigest
 	failures := job.State.WatchFailures
 
@@ -232,7 +233,7 @@ func (t *CronTool) runListener(ctx context.Context, job *cron.CronJob) {
 				failures = 0
 				t.persistListenState(job, lastDigest, failures)
 			}
-			if digest, ok := listenEvent(result, w.Fields); ok && (w.DeliverRepeats || digest != lastDigest) {
+			if digest, ok := listenEvent(result, w.Fields); ok && (!w.SuppressRepeats || digest != lastDigest) {
 				// Advance the fingerprint only once the event is on the bus. A
 				// delivery that fails (bus closed, or full for five seconds) is
 				// logged and the event stays undelivered, so a source that
@@ -260,10 +261,10 @@ func (t *CronTool) runListener(ctx context.Context, job *cron.CronJob) {
 	}
 }
 
-// listenEvent decides whether a result carries an event worth delivering and
-// fingerprints it. Unlike a scheduled watch, an absent watched field is "no
-// data" rather than a change: a long-poll that returns empty-handed must not
-// wake the agent. With no fields configured, any non-empty result is an event.
+// listenEvent decides whether a result carries an event and fingerprints it.
+// Unlike a scheduled watch, an absent watched field is "no data" rather than a
+// change: a long-poll that returns empty-handed must not wake the agent. With
+// no fields configured, any non-empty result is an event.
 func listenEvent(result string, fields []string) (string, bool) {
 	if result == "" {
 		return "", false

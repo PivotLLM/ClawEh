@@ -22,17 +22,17 @@ behalf, and an assistant is only told about memory when it actually has it.
   add` with `listen: true` and a `watch_tool` keeps the tool running in the
   background: call it, wait for it to return (an event, a dropped connection,
   or `watch_timeout_seconds`, default 300), and call it again at once. Whenever
-  the `watch_fields` are present and carry a new value, `message` is delivered
-  to the agent followed by the tool's full result, in an envelope that names
-  the source (`The following event was received by a continuous monitor at
-  <time>:` then `<tool> returned the following:`), distinct from the cron-fire
-  envelope so events are never deduplicated as repeated fires.
-  `deliver_repeats: true` delivers identical consecutive events too, for
-  sources where every occurrence matters. An absent field is "no data", not a
-  change; a repeated event is not delivered twice, across restarts; failures
-  retry with backoff and are reported after five in a row. Jobs of schedule
-  kind `listen` have no next run and show as `listen (continuous)`. See
-  docs/cron.md, "Listen jobs".
+  the `watch_fields` are present, `message` is delivered to the agent followed
+  by the tool's full result, in an envelope that names the source (`The
+  following event was received by a continuous monitor at <time>:` then
+  `<tool> returned the following:`), distinct from the cron-fire envelope so
+  events are never deduplicated as repeated fires. Every result with the
+  fields present is delivered, identical or not; `suppress_repeats: true`
+  withholds a result identical to the last delivered event, for a source that
+  replays it on every reconnect. An absent field is "no data", not a change;
+  failures retry with backoff and are reported after five in a row. Jobs of
+  schedule kind `listen` have no next run and show as `listen (continuous)`.
+  See docs/cron.md, "Listen jobs".
 
 ### Changed
 
