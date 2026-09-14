@@ -79,6 +79,25 @@ func Parse(content string) (fingerprint, payload string, ok bool) {
 	return fingerprint, payload, true
 }
 
+// eventPrefix is the header of a message delivered by a continuous monitor (a
+// listen job). It is deliberately a different literal from prefix, and Parse
+// does not recognise it: repeated fires of one scheduled job are deduplicated
+// and collapsed as noise, but each event a monitor delivers is distinct data
+// and must be stored and kept like any other message.
+const eventPrefix = "The following event was received by a continuous monitor at "
+
+// BuildEvent wraps an event delivered by a listen job: the operator's note,
+// then the source tool's full result introduced by name. With an empty result
+// (an operational notice from the monitor itself) only the note is included.
+// The output is not a cron-wrapper message; see eventPrefix.
+func BuildEvent(at time.Time, message, source, result string) string {
+	body := fmt.Sprintf("%s%s:\n\n%s", eventPrefix, at.Format(timeFormat), message)
+	if result == "" {
+		return body
+	}
+	return fmt.Sprintf("%s\n\n%s returned the following:\n%s", body, source, result)
+}
+
 // CollapseKey returns the dedup/collapse key for a cron-wrapper message: the
 // fingerprint when present, otherwise the payload (legacy fallback). The bool is
 // false for non-cron content. Two messages with the same key represent repeated

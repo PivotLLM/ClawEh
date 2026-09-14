@@ -23,8 +23,10 @@ behalf, and an assistant is only told about memory when it actually has it.
   background: call it, wait for it to return (an event, a dropped connection,
   or `watch_timeout_seconds`, default 300), and call it again at once. Whenever
   the `watch_fields` are present and carry a new value, `message` is delivered
-  to the agent followed by the tool's full result, introduced as
-  `<tool> returned the following:`. An absent field is "no data", not a
+  to the agent followed by the tool's full result, in an envelope that names
+  the source (`The following event was received by a continuous monitor at
+  <time>:` then `<tool> returned the following:`), distinct from the cron-fire
+  envelope so events are never deduplicated as repeated fires. An absent field is "no data", not a
   change; a repeated event is not delivered twice, across restarts; failures
   retry with backoff and are reported after five in a row. Jobs of schedule
   kind `listen` have no next run and show as `listen (continuous)`. See

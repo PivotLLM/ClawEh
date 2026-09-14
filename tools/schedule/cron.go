@@ -471,14 +471,14 @@ func (t *CronTool) ExecuteJob(ctx context.Context, job *cron.CronJob) string {
 		}
 		message = outcome.Message
 	}
-	return t.deliver(ctx, job, message)
+	return t.deliver(ctx, job, cronmsg.Build(job.Fingerprint, time.Now(), message))
 }
 
-// deliver injects message inbound to the job's destination — the same routing
-// a live user message gets — so the agent processes it and replies there.
-func (t *CronTool) deliver(_ context.Context, job *cron.CronJob, message string) string {
-	fireTime := time.Now()
-
+// deliver injects content inbound to the job's destination — the same routing
+// a live user message gets — so the agent processes it and replies there. The
+// caller chooses the envelope: a cron fire (cronmsg.Build) or a monitor event
+// (cronmsg.BuildEvent).
+func (t *CronTool) deliver(_ context.Context, job *cron.CronJob, content string) string {
 	// Resolve the destination. Agent-addressed jobs (created via the tool) deliver
 	// to the target agent's default channel, resolved live so a changed default
 	// redirects the job; the resolved (channel, chat, peer) are the binding's own
@@ -512,7 +512,7 @@ func (t *CronTool) deliver(_ context.Context, job *cron.CronJob, message string)
 		Channel:  channel,
 		SenderID: "cron",
 		ChatID:   chatID,
-		Content:  cronmsg.Build(job.Fingerprint, fireTime, message),
+		Content:  content,
 		Peer:     bus.Peer{Kind: peerKind, ID: chatID},
 	}
 	pubCtx, pubCancel := context.WithTimeout(context.Background(), 5*time.Second)

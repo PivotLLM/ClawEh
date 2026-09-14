@@ -263,7 +263,11 @@ When it returns:
   the last delivered event, `message` is delivered followed by the tool's full
   result, introduced as `documents_event_wait returned the following:`. The
   agent gets the whole payload, not just the fields, so it need not call the
-  tool again to learn what happened. A result that repeats the last event (a
+  tool again to learn what happened. The envelope says where it came from,
+  `The following event was received by a continuous monitor at <time>:`, not
+  "a cron job that fired", and it is not treated as a cron message: repeated
+  fires of one scheduled job are deduplicated and collapsed, but each event a
+  monitor delivers is distinct and is kept like any other message. A result that repeats the last event (a
   tool that replays its most recent event on reconnect) is not delivered twice,
   and the last delivered fingerprint survives a restart.
 - **No data.** If a watched field is absent, nothing is delivered. This is the

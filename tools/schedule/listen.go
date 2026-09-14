@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/PivotLLM/ClawEh/cron"
+	"github.com/PivotLLM/ClawEh/cronmsg"
 	"github.com/PivotLLM/ClawEh/logger"
 )
 
@@ -217,9 +218,9 @@ func (t *CronTool) runListener(ctx context.Context, job *cron.CronJob) {
 				"id": job.ID, "tool": w.Tool, "failures": failures, "error": err.Error(),
 			})
 			if failures == watchFailureNotifyThreshold {
-				t.deliver(ctx, job, fmt.Sprintf(
+				t.deliver(ctx, job, cronmsg.BuildEvent(time.Now(), fmt.Sprintf(
 					"Listener %q has failed %d times in a row calling %q and is not receiving events. Last error: %v",
-					job.Name, failures, w.Tool, err))
+					job.Name, failures, w.Tool, err), w.Tool, ""))
 			}
 			if !sleepCtx(ctx, listenBackoff(failures)) {
 				return
@@ -234,8 +235,7 @@ func (t *CronTool) runListener(ctx context.Context, job *cron.CronJob) {
 				lastDigest = digest
 				t.persistListenState(job, lastDigest, 0)
 				logger.InfoCF("cron", "listen: event delivered", fields)
-				t.deliver(ctx, job, fmt.Sprintf("%s\n\n%s returned the following:\n%s",
-					job.Payload.Message, w.Tool, result))
+				t.deliver(ctx, job, cronmsg.BuildEvent(time.Now(), job.Payload.Message, w.Tool, result))
 			} else {
 				logger.DebugCF("cron", "listen: no new event", fields)
 			}

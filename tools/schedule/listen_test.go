@@ -159,10 +159,13 @@ func TestListen_DeliversNewEventsOnce(t *testing.T) {
 	if !ok {
 		t.Fatal("first event not delivered")
 	}
-	for _, want := range []string{"A document event arrived.", "documents_event_wait returned the following:", `"title":"first"`} {
+	for _, want := range []string{"continuous monitor at", "A document event arrived.", "documents_event_wait returned the following:", `"title":"first"`} {
 		if !strings.Contains(first.Content, want) {
 			t.Fatalf("delivered message missing %q:\n%s", want, first.Content)
 		}
+	}
+	if strings.Contains(first.Content, "cron job that fired") {
+		t.Fatalf("monitor event was wrapped as a cron fire:\n%s", first.Content)
 	}
 	if first.Channel != "telegram-Amber" || first.ChatID != "chat-amber" || first.SenderID != "cron" {
 		t.Fatalf("delivered to %s/%s as %s, want amber's default channel", first.Channel, first.ChatID, first.SenderID)
