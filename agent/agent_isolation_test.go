@@ -192,3 +192,36 @@ func TestAgentIsolation_MentionRoutingSessionScoping(t *testing.T) {
 		t.Fatalf("expected scopeKey agent:bob:main, got %q (leak to %s!)", scopeKey, scopeKey)
 	}
 }
+
+// TestAgentIsolation_ExtractMentionIsIdempotent guards the two-stage dispatch:
+// processSessionMessage extracts the mention to pick the dispatch mutex, then
+// processMessage extracts again on the same message. A second pass must not
+// re-route a message whose stripped content starts with another mention.
+func TestAgentIsolation_ExtractMentionIsIdempotent(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := &config.Config{
+		AgentMentions: config.AgentMentionConfig{Triggers: []string{"@"}},
+		Bindings: []config.AgentBinding{
+			{AgentID: "alice", Match: config.BindingMatch{Channel: "slack"}, AgentMentions: []string{"*"}},
+		},
+		Agents: config.AgentsConfig{
+			BaseDir:  tmpDir,
+			Defaults: config.AgentDefaults{Models: []string{"test-model"}, MaxTokens: 4096, MaxToolIterations: 10},
+			List: []config.AgentConfig{
+				{ID: "alice", Name: "Alice", Default: true},
+				{ID: "bob", Name: "Bob"},
+			},
+		},
+	}
+	al := mustNewAgentLoop(t, cfg, bus.NewMessageBus(), &mockProvider{}, nil)
+
+	msg := bus.InboundMessage{Channel: "slack", ChatID: "C123", Content: "@alice @bob compare notes"}
+	al.extractMention(&msg)
+	al.extractMention(&msg)
+	if got := msg.Metadata["mentioned_agent"]; got != "alice" {
+		t.Fatalf("mentioned_agent = %q after two extractions, want alice", got)
+	}
+	if msg.Content != "@bob compare notes" {
+		t.Fatalf("content = %q, want the first mention stripped only once", msg.Content)
+	}
+}

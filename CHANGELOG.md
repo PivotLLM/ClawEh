@@ -119,6 +119,27 @@ behalf, and an assistant is only told about memory when it actually has it.
 
 ### Fixed
 
+- **Per-session settings survive compaction.** `/model`, `/reasoning` and
+  `/tools` choices are stored in the same record as the compaction counters,
+  and every compaction, clean shutdown and `/clear` used to overwrite that
+  record wholesale, so a restart after a compaction forgot them. The context
+  engine now rewrites only the fields it owns.
+- **Repeated scheduled fires no longer count towards compaction after a
+  restart.** The store counted a repeated cron fire as noise, but the engine
+  kept its own count of every message and wrote it over the store's on
+  compaction and shutdown. The store's count is now the only one.
+- **Context-window recovery keeps message numbers and no longer strands
+  results.** When a provider rejected a request as too large, the recovery path
+  renumbered the retained messages past the archive, so `session_messages`
+  could not fetch what the live window showed and the next summary's
+  references were dropped as out of range. It also removed a tool-call turn
+  while leaving its results behind. Recovery now drops whole turn groups,
+  keeps their numbers, and truncates an oversized tool result in the current
+  turn instead of giving up, so the retry can succeed.
+- **A failed summarisation no longer duplicates the previous summary in the
+  archive's checkpoint log.** When every summarisation model fails, the engine
+  keeps the existing summary and trims the window; it used to record that
+  summary as a new checkpoint each time.
 - **Cross-agent session scoping and isolation fixes.** When mentioning an agent
   on a channel bound to another agent, mention extraction now runs before route
   resolution, preventing session key inheritance or cross-agent tool access.

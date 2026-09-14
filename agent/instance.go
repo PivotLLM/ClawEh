@@ -120,7 +120,7 @@ func NewAgentInstance(
 	// The registry starts empty. Tools are registered exactly once — after
 	// construction by AgentLoop.registerRuntimeTools, and again on config reload —
 	// so the full runtime deps (session closures, the sub-agent spawner, and the
-	// shared message tool) are present. Registering here too would double-build
+	// per-agent message tool) are present. Registering here too would double-build
 	// every tool and overwrite it, so we intentionally don't.
 
 	// Progressive discovery is a single global switch; AgentLoop also sets it during

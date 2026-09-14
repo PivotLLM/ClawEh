@@ -6,7 +6,7 @@ require (
 	github.com/PivotLLM/MCPFusion v0.4.3
 	github.com/PivotLLM/Maestro v0.4.1
 	github.com/PivotLLM/cogmem v0.0.4
-	github.com/PivotLLM/ctxengine v0.0.2
+	github.com/PivotLLM/ctxengine v0.0.4
 	github.com/a3tai/openclaw-go v1.20260325.0
 	github.com/adhocore/gronx v1.20.3
 	github.com/bwmarrin/discordgo v0.29.0

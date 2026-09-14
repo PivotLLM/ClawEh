@@ -25,7 +25,7 @@ import (
 
 // registerRuntimeTools is the single tool-registration entry point: for every
 // agent in the registry it builds the full ToolDeps (session closures, the
-// sub-agent spawner, the shared message tool, dispatcher/fallback) and registers
+// sub-agent spawner, the per-agent message tool, dispatcher/fallback) and registers
 // every allowed provider tool exactly once. It runs after the AgentLoop exists so
 // the closures can capture al — at initial construction (NewAgentLoop) and again
 // on config reload (ReloadProviderAndConfig). NewAgentInstance deliberately

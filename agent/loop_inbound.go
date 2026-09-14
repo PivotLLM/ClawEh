@@ -437,9 +437,12 @@ func resolveScopeKey(route routing.ResolvedRoute, msgSessionKey string) string {
 }
 
 // extractMention checks for and strips an agent mention trigger from msg.Content,
-// recording the target agent in msg.Metadata["mentioned_agent"].
+// recording the target agent in msg.Metadata["mentioned_agent"]. Idempotent: a
+// message that already carries a mention is left alone, so the route chosen
+// for the dispatch mutex in processSessionMessage is the route processMessage
+// dispatches on, even when the stripped content starts with another mention.
 func (al *AgentLoop) extractMention(msg *bus.InboundMessage) {
-	if msg == nil {
+	if msg == nil || msg.Metadata["mentioned_agent"] != "" {
 		return
 	}
 	cfg := al.GetConfig()
