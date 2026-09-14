@@ -5,6 +5,7 @@ package schedule
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -295,6 +296,56 @@ func TestListen_ToolActionsReconcileImmediately(t *testing.T) {
 		t.Fatalf("remove: %s", res.ForLLM)
 	}
 	waitFor(func() bool { return running() == 0 }, "listener did not stop on remove")
+}
+
+// TestListen_FailedDeliveryDoesNotAdvance: an event that could not be put on
+// the bus is not marked delivered, so a source that replays it is not silenced.
+func TestListen_FailedDeliveryDoesNotAdvance(t *testing.T) {
+	tool := &scriptedTool{replies: []scriptedReply{{text: `{"event":{"id":"e1"}}`}}}
+	ct, msgBus := newListenEnv(t, tool)
+	job := addListenJob(t, ct, nil)
+	msgBus.Close() // every publish now fails at once
+
+	ct.StartListeners(context.Background())
+	deadline := time.Now().Add(3 * time.Second)
+	for tool.callCount() < 2 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	ct.StopListeners()
+	if tool.callCount() < 2 {
+		t.Fatal("listener did not get past the failed delivery")
+	}
+	jobs := ct.cronService.ListJobs(true)
+	if jobs[0].State.WatchDigest != "" {
+		t.Fatalf("fingerprint advanced to %q after a failed delivery", jobs[0].State.WatchDigest)
+	}
+	_ = job
+}
+
+// TestListen_DistinctEventsAllDelivered: a burst of different events is
+// delivered one by one, in order, none dropped.
+func TestListen_DistinctEventsAllDelivered(t *testing.T) {
+	var replies []scriptedReply
+	for i := 0; i < 10; i++ {
+		replies = append(replies, scriptedReply{text: fmt.Sprintf(`{"event":{"id":"e%d"}}`, i)})
+	}
+	ct, msgBus := newListenEnv(t, &scriptedTool{replies: replies})
+	addListenJob(t, ct, nil)
+	ct.StartListeners(context.Background())
+	defer ct.StopListeners()
+
+	for i := 0; i < 10; i++ {
+		msg, ok := nextInbound(t, msgBus, 3*time.Second)
+		if !ok {
+			t.Fatalf("event %d not delivered", i)
+		}
+		if want := fmt.Sprintf(`"id":"e%d"`, i); !strings.Contains(msg.Content, want) {
+			t.Fatalf("event %d out of order or wrong:\n%s", i, msg.Content)
+		}
+		if msg.Channel != "telegram-Amber" || msg.ChatID != "chat-amber" {
+			t.Fatalf("event %d delivered to %s/%s", i, msg.Channel, msg.ChatID)
+		}
+	}
 }
 
 // TestListen_ExecuteJobIsANoOp: the scheduler never fires a listen job, and

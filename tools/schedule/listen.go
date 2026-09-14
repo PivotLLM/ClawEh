@@ -232,10 +232,19 @@ func (t *CronTool) runListener(ctx context.Context, job *cron.CronJob) {
 				t.persistListenState(job, lastDigest, failures)
 			}
 			if digest, ok := listenEvent(result, w.Fields); ok && digest != lastDigest {
-				lastDigest = digest
-				t.persistListenState(job, lastDigest, 0)
-				logger.InfoCF("cron", "listen: event delivered", fields)
-				t.deliver(ctx, job, cronmsg.BuildEvent(time.Now(), job.Payload.Message, w.Tool, result))
+				// Advance the fingerprint only once the event is on the bus. A
+				// delivery that fails (bus closed, or full for five seconds) is
+				// logged and the event stays undelivered, so a source that
+				// replays it on the next call gets it through.
+				if out := t.deliver(ctx, job, cronmsg.BuildEvent(time.Now(), job.Payload.Message, w.Tool, result)); out != "ok" {
+					logger.WarnCF("cron", "listen: event not delivered", map[string]any{
+						"id": job.ID, "tool": w.Tool, "reason": out,
+					})
+				} else {
+					lastDigest = digest
+					t.persistListenState(job, lastDigest, 0)
+					logger.InfoCF("cron", "listen: event delivered", fields)
+				}
 			} else {
 				logger.DebugCF("cron", "listen: no new event", fields)
 			}
