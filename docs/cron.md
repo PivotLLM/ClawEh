@@ -245,7 +245,7 @@ and `cron_expr` are rejected.
 | `watch_args` | object | Its parameters, passed verbatim |
 | `watch_fields` | list of strings | Dot-paths that must be present, and whose values decide "new" |
 | `watch_timeout_seconds` | int | How long one call may wait for an event before it is dropped and made again (default 300) |
-| `deliver_repeats` | bool | Deliver every result with the watched fields present, even one identical to the last delivered event (default false) |
+| `suppress_repeats` | bool | Withhold a result identical to the last delivered event (default false: every result with the fields present is delivered) |
 
 ```
 Tell me whenever a document event arrives.
