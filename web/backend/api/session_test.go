@@ -9,10 +9,11 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/PivotLLM/ctxengine/memory"
+	"github.com/PivotLLM/ctxengine/session"
+
 	"github.com/PivotLLM/ClawEh/config"
-	"github.com/PivotLLM/ClawEh/memory"
 	"github.com/PivotLLM/ClawEh/providers"
-	"github.com/PivotLLM/ClawEh/session"
 )
 
 func sessionsTestDir(t *testing.T, configPath string) string {

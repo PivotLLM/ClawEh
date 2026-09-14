@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PivotLLM/ctxengine"
+	llmlogger "github.com/PivotLLM/ctxengine/logger"
 	"github.com/PivotLLM/spawnllm/openai_compat"
 
-	"github.com/PivotLLM/ClawEh/llmcontext"
-	llmlogger "github.com/PivotLLM/ClawEh/llmcontext/logger"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/providers"
 )
@@ -65,12 +65,12 @@ func TestCompressModelCaller_WalksChainAndSkipsExcluded(t *testing.T) {
 		compressClient(second, "p2", "model-b"),
 	}}
 
-	reply, err := c.Complete(context.Background(), llmcontext.ModelRequest{System: "s", User: "u", JSONObject: true})
+	reply, err := c.Complete(context.Background(), ctxengine.ModelRequest{System: "s", User: "u", JSONObject: true})
 	if err != nil || reply.Content != "from-first" || reply.Model != "model-a" {
 		t.Fatalf("Complete = %+v, %v; want model-a's reply", reply, err)
 	}
 
-	reply, err = c.Complete(context.Background(), llmcontext.ModelRequest{System: "s", User: "u", Exclude: []string{"model-a"}})
+	reply, err = c.Complete(context.Background(), ctxengine.ModelRequest{System: "s", User: "u", Exclude: []string{"model-a"}})
 	if err != nil || reply.Content != "from-second" || reply.Model != "model-b" {
 		t.Fatalf("Complete with model-a excluded = %+v, %v; want model-b's reply", reply, err)
 	}
@@ -78,8 +78,8 @@ func TestCompressModelCaller_WalksChainAndSkipsExcluded(t *testing.T) {
 		t.Fatalf("excluded model was called: %d calls", first.callCount())
 	}
 
-	_, err = c.Complete(context.Background(), llmcontext.ModelRequest{Exclude: []string{"model-a", "model-b"}})
-	if !errors.Is(err, llmcontext.ErrNoModel) || !strings.Contains(err.Error(), "2 excluded") {
+	_, err = c.Complete(context.Background(), ctxengine.ModelRequest{Exclude: []string{"model-a", "model-b"}})
+	if !errors.Is(err, ctxengine.ErrNoModel) || !strings.Contains(err.Error(), "2 excluded") {
 		t.Fatalf("every model excluded should yield ErrNoModel with the count, got %v", err)
 	}
 }
@@ -94,13 +94,13 @@ func TestCompressModelCaller_ErrorMovesOnAndNamesLastModel(t *testing.T) {
 		compressClient(broken, "p1", "model-a"),
 		compressClient(good, "p2", "model-b"),
 	}}
-	reply, err := c.Complete(context.Background(), llmcontext.ModelRequest{})
+	reply, err := c.Complete(context.Background(), ctxengine.ModelRequest{})
 	if err != nil || reply.Model != "model-b" {
 		t.Fatalf("expected the chain to move past the failing model: %+v, %v", reply, err)
 	}
 
 	onlyBroken := &compressModelCaller{clients: []*providerLLMClient{compressClient(broken, "p1", "model-a")}}
-	reply, err = onlyBroken.Complete(context.Background(), llmcontext.ModelRequest{})
+	reply, err = onlyBroken.Complete(context.Background(), ctxengine.ModelRequest{})
 	if err == nil || reply.Model != "model-a" {
 		t.Fatalf("expected the last error with the model named: %+v, %v", reply, err)
 	}
@@ -111,10 +111,10 @@ func TestCompressModelCaller_ErrorMovesOnAndNamesLastModel(t *testing.T) {
 func TestCompressModelCaller_JSONObjectForwarded(t *testing.T) {
 	p := &scriptedProvider{content: "{}"}
 	c := &compressModelCaller{clients: []*providerLLMClient{compressClient(p, "p1", "m")}}
-	if _, err := c.Complete(context.Background(), llmcontext.ModelRequest{JSONObject: true}); err != nil {
+	if _, err := c.Complete(context.Background(), ctxengine.ModelRequest{JSONObject: true}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.Complete(context.Background(), llmcontext.ModelRequest{}); err != nil {
+	if _, err := c.Complete(context.Background(), ctxengine.ModelRequest{}); err != nil {
 		t.Fatal(err)
 	}
 	if v, _ := p.calls[0].opts[openai_compat.ResponseFormatJSONObjectOption].(bool); !v {
@@ -137,8 +137,8 @@ func TestCompressModelCaller_SharedCooldownSkipsModel(t *testing.T) {
 		clients:  []*providerLLMClient{compressClient(p, "Abliteration", "abliterated-model")},
 		cooldown: tracker,
 	}
-	_, err := c.Complete(context.Background(), llmcontext.ModelRequest{})
-	if !errors.Is(err, llmcontext.ErrNoModel) || !strings.Contains(err.Error(), "1 in cooldown") {
+	_, err := c.Complete(context.Background(), ctxengine.ModelRequest{})
+	if !errors.Is(err, ctxengine.ErrNoModel) || !strings.Contains(err.Error(), "1 in cooldown") {
 		t.Fatalf("cooled model should be skipped with ErrNoModel naming the cooldown, got %v", err)
 	}
 	if p.callCount() != 0 {
@@ -157,7 +157,7 @@ func TestCompressModelCaller_BillingFailurePutsModelInCooldown(t *testing.T) {
 		cooldown: tracker,
 	}
 
-	reply, err := c.Complete(context.Background(), llmcontext.ModelRequest{})
+	reply, err := c.Complete(context.Background(), ctxengine.ModelRequest{})
 	if err == nil || reply.Model != "abliterated-model" || p.callCount() != 1 {
 		t.Fatalf("first call: reply=%+v err=%v calls=%d", reply, err, p.callCount())
 	}
@@ -165,8 +165,8 @@ func TestCompressModelCaller_BillingFailurePutsModelInCooldown(t *testing.T) {
 		t.Fatal("402 should have parked the model in the shared cooldown")
 	}
 
-	_, err = c.Complete(context.Background(), llmcontext.ModelRequest{})
-	if !errors.Is(err, llmcontext.ErrNoModel) || p.callCount() != 1 {
+	_, err = c.Complete(context.Background(), ctxengine.ModelRequest{})
+	if !errors.Is(err, ctxengine.ErrNoModel) || p.callCount() != 1 {
 		t.Fatalf("second call should skip the cooled model without dispatching: err=%v calls=%d", err, p.callCount())
 	}
 }

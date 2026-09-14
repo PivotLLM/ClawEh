@@ -11,10 +11,10 @@ import (
 	"time"
 
 	"github.com/PivotLLM/cogmem"
+	"github.com/PivotLLM/ctxengine"
+	"github.com/PivotLLM/ctxengine/session"
 
-	"github.com/PivotLLM/ClawEh/llmcontext"
 	"github.com/PivotLLM/ClawEh/logger"
-	"github.com/PivotLLM/ClawEh/session"
 )
 
 const (
@@ -25,7 +25,7 @@ const (
 // cmEntry wraps a ContextManager with lifecycle metadata used by the eviction
 // goroutine. The sync.Map in AgentLoop stores *cmEntry values.
 type cmEntry struct {
-	cm           llmcontext.ContextManager
+	cm           ctxengine.ContextManager
 	sessionKey   string               // used by the eviction pass to revoke session tokens
 	store        session.SessionStore // used on eviction to drop per-session in-memory caches
 	lastAccessed time.Time

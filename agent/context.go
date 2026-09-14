@@ -12,9 +12,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/PivotLLM/ctxengine"
+
 	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/config"
-	"github.com/PivotLLM/ClawEh/llmcontext"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/providers"
 	"github.com/PivotLLM/ClawEh/skills"
@@ -630,7 +631,7 @@ func sanitizeChannelName(s string) string {
 // the Anthropic adapter maps messages[0] (Role=="system") to the top-level
 // "system" parameter, Codex maps only the first system message to its
 // instructions field, and OpenAI-compat passes messages through as-is.
-func (cb *ContextBuilder) PromptLayers(channel, chatID string) []llmcontext.Layer {
+func (cb *ContextBuilder) PromptLayers(channel, chatID string) []ctxengine.Layer {
 	// The static part (identity, bootstrap, skills, memory) is cached locally to
 	// avoid repeated file I/O and string building on every call (fixes issue #607).
 	staticPrompt := cb.BuildSystemPromptWithCache()
@@ -646,7 +647,7 @@ func (cb *ContextBuilder) PromptLayers(channel, chatID string) []llmcontext.Laye
 			"cached":        isCached,
 		})
 
-	return []llmcontext.Layer{
+	return []ctxengine.Layer{
 		{Name: "static", Text: staticPrompt},
 		{Name: "dynamic", Text: dynamicCtx},
 	}
@@ -657,8 +658,8 @@ func (cb *ContextBuilder) PromptLayers(channel, chatID string) []llmcontext.Laye
 // after the static and dynamic prompt and the summary so it is always present
 // regardless of caching. An empty token yields an empty layer, which the
 // engine skips.
-func sessionTokenLayer(token string) llmcontext.Layer {
-	l := llmcontext.Layer{Name: "session_token", AfterSummary: true}
+func sessionTokenLayer(token string) ctxengine.Layer {
+	l := ctxengine.Layer{Name: "session_token", AfterSummary: true}
 	if token == "" {
 		return l
 	}

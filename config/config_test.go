@@ -439,7 +439,7 @@ func TestLoadConfig_WebToolsProxy(t *testing.T) {
 }
 
 // TestDefaultConfig_SummarizationThresholds verifies the compaction block is
-// left entirely unset by default, so every threshold comes from llmcontext.
+// left entirely unset by default, so every threshold comes from ctxengine.
 func TestDefaultConfig_SummarizationThresholds(t *testing.T) {
 	cfg := DefaultConfig()
 	if cfg.Agents.Defaults.Compression != nil {

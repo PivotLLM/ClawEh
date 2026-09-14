@@ -9,11 +9,11 @@ import (
 	"github.com/PivotLLM/cogmem"
 	"github.com/PivotLLM/cogmem/consolidate"
 	"github.com/PivotLLM/cogmem/store"
+	"github.com/PivotLLM/ctxengine"
+	"github.com/PivotLLM/ctxengine/memory"
 
 	"github.com/PivotLLM/ClawEh/cogmemhost"
-	"github.com/PivotLLM/ClawEh/llmcontext"
 	"github.com/PivotLLM/ClawEh/logger"
-	"github.com/PivotLLM/ClawEh/memory"
 	"github.com/PivotLLM/ClawEh/routing"
 )
 
@@ -101,18 +101,18 @@ func backfillInbox(ctx context.Context, st *store.Store, agentID, workspace, ses
 
 // recallInjections asks memory for this dispatch's blocks and maps them onto
 // the context manager's placements. Nil for agents without memory.
-func recallInjections(ctx context.Context, mem *cogmem.Session, routeText string) []llmcontext.Injection {
+func recallInjections(ctx context.Context, mem *cogmem.Session, routeText string) []ctxengine.Injection {
 	rec := mem.Recall(ctx, routeText)
 	if len(rec) == 0 {
 		return nil
 	}
-	out := make([]llmcontext.Injection, 0, len(rec))
+	out := make([]ctxengine.Injection, 0, len(rec))
 	for _, r := range rec {
-		p := llmcontext.PlaceSystemStable
+		p := ctxengine.PlaceSystemStable
 		if r.Placement == cogmem.PlaceCurrentUser {
-			p = llmcontext.PlaceCurrentUser
+			p = ctxengine.PlaceCurrentUser
 		}
-		out = append(out, llmcontext.Injection{Placement: p, Text: r.Text})
+		out = append(out, ctxengine.Injection{Placement: p, Text: r.Text})
 	}
 	return out
 }

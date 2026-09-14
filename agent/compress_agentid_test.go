@@ -11,7 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/PivotLLM/ClawEh/llmcontext"
+	"github.com/PivotLLM/ctxengine"
+
 	"github.com/PivotLLM/ClawEh/providers"
 )
 
@@ -26,7 +27,7 @@ type capturingContextManager struct {
 	assembleAgentID            string
 	addAssistantMessageAgentID string
 	toolDefTokens              int
-	layers                     []llmcontext.Layer
+	layers                     []ctxengine.Layer
 	channel, chatID            string
 }
 
@@ -56,22 +57,22 @@ func (c *capturingContextManager) AddToolResult(_ context.Context, _ providers.M
 	return 4, nil
 }
 
-func (c *capturingContextManager) Assemble(ctx context.Context, req llmcontext.AssembleRequest) (llmcontext.Assembly, error) {
+func (c *capturingContextManager) Assemble(ctx context.Context, req ctxengine.AssembleRequest) (ctxengine.Assembly, error) {
 	c.capture(&c.assembleAgentID, ctx)
 	c.mu.Lock()
 	c.toolDefTokens = req.ToolDefinitionTokens
 	c.layers = req.Layers
 	c.channel, c.chatID = req.Channel, req.ChatID
 	c.mu.Unlock()
-	return llmcontext.Assembly{Messages: []providers.Message{{Role: "user", Content: "hi"}}}, nil
+	return ctxengine.Assembly{Messages: []providers.Message{{Role: "user", Content: "hi"}}}, nil
 }
-func (c *capturingContextManager) Compact(_ context.Context) error                    { return nil }
-func (c *capturingContextManager) LastCompactionReport() *llmcontext.CompactionReport { return nil }
-func (c *capturingContextManager) RenderedSummary() string                            { return "" }
-func (c *capturingContextManager) ForceCompress(_ context.Context) error              { return nil }
-func (c *capturingContextManager) Stats() llmcontext.ContextStats                     { return llmcontext.ContextStats{} }
-func (c *capturingContextManager) Reset(_ context.Context) error                      { return nil }
-func (c *capturingContextManager) Close(_ context.Context) error                      { return nil }
+func (c *capturingContextManager) Compact(_ context.Context) error                   { return nil }
+func (c *capturingContextManager) LastCompactionReport() *ctxengine.CompactionReport { return nil }
+func (c *capturingContextManager) RenderedSummary() string                           { return "" }
+func (c *capturingContextManager) ForceCompress(_ context.Context) error             { return nil }
+func (c *capturingContextManager) Stats() ctxengine.ContextStats                     { return ctxengine.ContextStats{} }
+func (c *capturingContextManager) Reset(_ context.Context) error                     { return nil }
+func (c *capturingContextManager) Close(_ context.Context) error                     { return nil }
 
 // finalLLMProvider is a provider that returns a normal terminal response so
 // runLLMIteration exits its loop cleanly without invoking tools.
@@ -117,7 +118,7 @@ func TestRunAgentLoop_PropagatesAgentIDForCompression(t *testing.T) {
 
 	// Inject a capturing context manager directly into the cache. The fast
 	// path in getContextManager picks this up instead of constructing a real
-	// llmcontext.ContextManager, so we can observe ctx at each entry point
+	// ctxengine.ContextManager, so we can observe ctx at each entry point
 	// without depending on real compression heuristics firing.
 	stub := &capturingContextManager{}
 	entry := &cmEntry{

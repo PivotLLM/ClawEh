@@ -8,18 +8,18 @@ import (
 	"strings"
 
 	"github.com/PivotLLM/cogmem"
+	"github.com/PivotLLM/ctxengine"
+	"github.com/PivotLLM/ctxengine/memory"
+	"github.com/PivotLLM/ctxengine/session"
 
 	"github.com/PivotLLM/ClawEh/cogmemhost"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/cronmsg"
 	"github.com/PivotLLM/ClawEh/global"
 	agentws "github.com/PivotLLM/ClawEh/internal/workspace"
-	"github.com/PivotLLM/ClawEh/llmcontext"
 	"github.com/PivotLLM/ClawEh/logger"
-	"github.com/PivotLLM/ClawEh/memory"
 	"github.com/PivotLLM/ClawEh/providers"
 	"github.com/PivotLLM/ClawEh/routing"
-	"github.com/PivotLLM/ClawEh/session"
 	"github.com/PivotLLM/ClawEh/tools"
 )
 
@@ -37,7 +37,7 @@ type AgentInstance struct {
 	ThinkingLevel  ThinkingLevel
 	NoTools        bool
 	ContextWindow  int
-	CompressOpts   []llmcontext.Option
+	CompressOpts   []ctxengine.Option
 	Provider       providers.LLMProvider
 	Sessions       session.SessionStore
 	ContextBuilder *ContextBuilder
@@ -196,7 +196,7 @@ func NewAgentInstance(
 	// For count fields: 0 = explicitly disabled (valid to pass).
 	resolveIntOpt := resolveAgentIntOpt
 
-	var compressOpts []llmcontext.Option
+	var compressOpts []ctxengine.Option
 
 	// Compaction policy: defaults block overlaid by the per-agent block, then
 	// mapped to llmcontext options. Only fields the merged config actually sets
@@ -210,7 +210,7 @@ func NewAgentInstance(
 		}
 		return nil
 	}(), defaults.ArchiveMessageCount); ok {
-		compressOpts = append(compressOpts, llmcontext.WithArchiveMessageCount(v))
+		compressOpts = append(compressOpts, ctxengine.WithArchiveMessageCount(v))
 	}
 	if v, ok := resolveIntOpt(func() *int {
 		if agentCfg != nil {
@@ -218,7 +218,7 @@ func NewAgentInstance(
 		}
 		return nil
 	}(), defaults.ArchiveDays); ok {
-		compressOpts = append(compressOpts, llmcontext.WithArchiveDays(v))
+		compressOpts = append(compressOpts, ctxengine.WithArchiveDays(v))
 	}
 	if v, ok := resolveIntOpt(func() *int {
 		if agentCfg != nil {
@@ -226,7 +226,7 @@ func NewAgentInstance(
 		}
 		return nil
 	}(), defaults.SummaryMaxCount); ok {
-		compressOpts = append(compressOpts, llmcontext.WithSummaryMaxCount(v))
+		compressOpts = append(compressOpts, ctxengine.WithSummaryMaxCount(v))
 	}
 	if v, ok := resolveIntOpt(func() *int {
 		if agentCfg != nil {
@@ -234,7 +234,7 @@ func NewAgentInstance(
 		}
 		return nil
 	}(), defaults.SummaryRetentionDays); ok {
-		compressOpts = append(compressOpts, llmcontext.WithSummaryRetentionDays(v))
+		compressOpts = append(compressOpts, ctxengine.WithSummaryRetentionDays(v))
 	}
 	if v, ok := resolveIntOpt(func() *int {
 		if agentCfg != nil {
@@ -242,17 +242,17 @@ func NewAgentInstance(
 		}
 		return nil
 	}(), defaults.ArchiveContentMaxBytes); ok {
-		compressOpts = append(compressOpts, llmcontext.WithArchiveContentMaxBytes(v))
+		compressOpts = append(compressOpts, ctxengine.WithArchiveContentMaxBytes(v))
 	}
 
 	// Resolve the per-turn eviction policy: built-in defaults, overlaid by the
 	// defaults config block, overlaid by the per-agent block (field by field).
-	evPolicy := llmcontext.DefaultEvictionPolicy()
+	evPolicy := ctxengine.DefaultEvictionPolicy()
 	applyEvictionConfig(&evPolicy, defaults.ContextEviction)
 	if agentCfg != nil {
 		applyEvictionConfig(&evPolicy, agentCfg.ContextEviction)
 	}
-	compressOpts = append(compressOpts, llmcontext.WithEvictionPolicy(evPolicy))
+	compressOpts = append(compressOpts, ctxengine.WithEvictionPolicy(evPolicy))
 
 	// Resolve fallback candidates
 	modelCfg := providers.ModelConfig{Models: models}
@@ -435,7 +435,7 @@ func resolveAgentIntOpt(agentPtr *int, defaultsVal int) (int, bool) {
 // applyEvictionConfig overlays a ContextEvictionConfig block onto an
 // EvictionPolicy, leaving fields the block does not set untouched. Passing nil
 // is a no-op, so callers can chain defaults then per-agent without nil guards.
-func applyEvictionConfig(p *llmcontext.EvictionPolicy, c *config.ContextEvictionConfig) {
+func applyEvictionConfig(p *ctxengine.EvictionPolicy, c *config.ContextEvictionConfig) {
 	if c == nil {
 		return
 	}
@@ -462,51 +462,51 @@ func applyEvictionConfig(p *llmcontext.EvictionPolicy, c *config.ContextEviction
 // compressionOptions maps a merged CompressionConfig onto llmcontext options.
 // A nil field yields no option, so llmcontext's own default applies; an
 // explicitly-set 0 is passed through, which is how a trigger gets disabled.
-func compressionOptions(c *config.CompressionConfig) []llmcontext.Option {
+func compressionOptions(c *config.CompressionConfig) []ctxengine.Option {
 	if c == nil {
 		return nil
 	}
-	var opts []llmcontext.Option
+	var opts []ctxengine.Option
 	if c.TargetPercent != nil {
-		opts = append(opts, llmcontext.WithTargetPercent(*c.TargetPercent))
+		opts = append(opts, ctxengine.WithTargetPercent(*c.TargetPercent))
 	}
 	if t := c.Trigger; t != nil {
 		if t.MinPercent != nil {
-			opts = append(opts, llmcontext.WithMinPercent(*t.MinPercent))
+			opts = append(opts, ctxengine.WithMinPercent(*t.MinPercent))
 		}
 		if t.NormalPercent != nil {
-			opts = append(opts, llmcontext.WithNormalPercent(*t.NormalPercent))
+			opts = append(opts, ctxengine.WithNormalPercent(*t.NormalPercent))
 		}
 		if t.SafetyPercent != nil {
-			opts = append(opts, llmcontext.WithSafetyPercent(*t.SafetyPercent))
+			opts = append(opts, ctxengine.WithSafetyPercent(*t.SafetyPercent))
 		}
 		if t.MessageCount != nil {
-			opts = append(opts, llmcontext.WithMessageThreshold(*t.MessageCount))
+			opts = append(opts, ctxengine.WithMessageThreshold(*t.MessageCount))
 		}
 		if t.Days != nil {
-			opts = append(opts, llmcontext.WithTriggerDays(*t.Days))
+			opts = append(opts, ctxengine.WithTriggerDays(*t.Days))
 		}
 	}
 	if r := c.Retain; r != nil {
 		if r.TokenPercent != nil {
-			opts = append(opts, llmcontext.WithRetainTokenPercent(*r.TokenPercent))
+			opts = append(opts, ctxengine.WithRetainTokenPercent(*r.TokenPercent))
 		}
 		if r.MaxTokens != nil {
-			opts = append(opts, llmcontext.WithRetainMaxTokens(*r.MaxTokens))
+			opts = append(opts, ctxengine.WithRetainMaxTokens(*r.MaxTokens))
 		}
 		if r.MaxAgeDays != nil {
-			opts = append(opts, llmcontext.WithRetainMaxAgeDays(*r.MaxAgeDays))
+			opts = append(opts, ctxengine.WithRetainMaxAgeDays(*r.MaxAgeDays))
 		}
 		if r.MinMessages != nil {
-			opts = append(opts, llmcontext.WithRetainMinMessages(*r.MinMessages))
+			opts = append(opts, ctxengine.WithRetainMinMessages(*r.MinMessages))
 		}
 	}
 	if e := c.Estimate; e != nil {
 		if e.CharsPerToken != nil {
-			opts = append(opts, llmcontext.WithCharsPerToken(*e.CharsPerToken))
+			opts = append(opts, ctxengine.WithCharsPerToken(*e.CharsPerToken))
 		}
 		if e.TokenSafetyMargin != nil {
-			opts = append(opts, llmcontext.WithTokenSafetyMargin(*e.TokenSafetyMargin))
+			opts = append(opts, ctxengine.WithTokenSafetyMargin(*e.TokenSafetyMargin))
 		}
 	}
 	return opts

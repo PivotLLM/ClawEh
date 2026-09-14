@@ -66,6 +66,13 @@ behalf, and an assistant is only told about memory when it actually has it.
   memory files, if any, hold separate memories that cannot be merged
   automatically; import them through the memory page if you want them. The
   memory page's store ids are now agent names rather than session file names.
+- **The context engine now lives in its own module, `github.com/PivotLLM/ctxengine`.**
+  Transcript, archive, assembly, eviction, compaction and the `session_*`
+  tools moved out of ClawEh unchanged; the assembled prompt is byte-identical
+  (held by a golden test) and nothing changes on disk, in tool names or in
+  the HTTP API. Compaction and cognitive-memory consolidation now share one
+  model caller, so the summarization chain, its fallbacks and cooldowns
+  behave the same for both.
 - **Cognitive memory now lives in its own module, `github.com/PivotLLM/cogmem`.**
   ClawEh embeds it; nothing changes on disk, in the tools or in the API. The
   `cogmem_consolidate` tool's reply when no background worker is running now

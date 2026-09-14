@@ -13,11 +13,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/PivotLLM/ctxengine/memory"
+
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/commands"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/logger"
-	"github.com/PivotLLM/ClawEh/memory"
 	"github.com/PivotLLM/ClawEh/routing"
 )
 

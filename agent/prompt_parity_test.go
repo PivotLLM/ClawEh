@@ -13,11 +13,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PivotLLM/ctxengine"
+	"github.com/PivotLLM/ctxengine/session"
+
 	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/config"
-	"github.com/PivotLLM/ClawEh/llmcontext"
 	"github.com/PivotLLM/ClawEh/providers"
-	"github.com/PivotLLM/ClawEh/session"
 )
 
 // promptParityGolden is the parity oracle for the prompt-layer refactor: the
@@ -95,10 +96,10 @@ const paritySummary = `{"version":2,"state":{"goals":[{"text":"Finish the outlin
 
 // parityInjections are the memory blocks a cognitive agent places: one in the
 // stable system prefix, one on the current turn.
-func parityInjections() []llmcontext.Injection {
-	return []llmcontext.Injection{
-		{Placement: llmcontext.PlaceSystemStable, Text: "# Memory Domains\n\n- writing (active)"},
-		{Placement: llmcontext.PlaceCurrentUser, Text: "Recalled: the outline lives in files/outline.md"},
+func parityInjections() []ctxengine.Injection {
+	return []ctxengine.Injection{
+		{Placement: ctxengine.PlaceSystemStable, Text: "# Memory Domains\n\n- writing (active)"},
+		{Placement: ctxengine.PlaceCurrentUser, Text: "Recalled: the outline lives in files/outline.md"},
 	}
 }
 
@@ -120,12 +121,12 @@ func parityStore(t *testing.T, key, summary string) session.SessionStore {
 func parityAssemble(t *testing.T, cb *ContextBuilder, store session.SessionStore, key, archiveDir string) []providers.Message {
 	t.Helper()
 	const token = "SST-parity-token"
-	cm := llmcontext.New(key, store,
-		llmcontext.WithContextWindow(200_000),
-		llmcontext.WithArchiveDir(archiveDir),
+	cm := ctxengine.New(key, store,
+		ctxengine.WithContextWindow(200_000),
+		ctxengine.WithArchiveDir(archiveDir),
 	)
 	defer cm.Close(context.Background())
-	asm, err := cm.Assemble(context.Background(), llmcontext.AssembleRequest{
+	asm, err := cm.Assemble(context.Background(), ctxengine.AssembleRequest{
 		ToolDefinitionTokens: 10,
 		Layers:               append(cb.PromptLayers("webui", "chat-1"), sessionTokenLayer(token)),
 		Injections:           parityInjections(),
@@ -152,7 +153,7 @@ func parityCases(t *testing.T) ([]parityCase, *ContextBuilder) {
 	store := parityStore(t, archiveKey, "")
 	// Route one message through a manager with an archive so the archive holds
 	// rows and the assembled prompt carries the bounds note instead of a summary.
-	seed := llmcontext.New(archiveKey, store, llmcontext.WithArchiveDir(archiveDir))
+	seed := ctxengine.New(archiveKey, store, ctxengine.WithArchiveDir(archiveDir))
 	if _, err := seed.AddUserMessage(context.Background(), providers.Message{Role: "user", Content: "archived turn"}); err != nil {
 		t.Fatal(err)
 	}

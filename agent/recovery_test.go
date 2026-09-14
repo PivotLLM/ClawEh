@@ -5,8 +5,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PivotLLM/ctxengine/memory"
+
 	"github.com/PivotLLM/ClawEh/bus"
-	"github.com/PivotLLM/ClawEh/memory"
 	"github.com/PivotLLM/ClawEh/providers"
 )
 

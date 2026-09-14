@@ -6,8 +6,9 @@ package agent
 import (
 	"testing"
 
+	"github.com/PivotLLM/ctxengine"
+
 	"github.com/PivotLLM/ClawEh/config"
-	"github.com/PivotLLM/ClawEh/llmcontext"
 )
 
 func ip(v int) *int         { return &v }
@@ -15,12 +16,12 @@ func fp(v float64) *float64 { return &v }
 
 // applyOpts is the only way to observe the mapper's effect: options are opaque
 // closures, so build a config from them and read the result back.
-func applyOpts(opts []llmcontext.Option) llmcontext.CompressionSettings {
-	return llmcontext.SettingsFromOptions(opts...)
+func applyOpts(opts []ctxengine.Option) ctxengine.CompressionSettings {
+	return ctxengine.SettingsFromOptions(opts...)
 }
 
 // TestCompressionOptions_MapsEveryField guards against a field being added to
-// CompressionConfig and silently never reaching llmcontext.
+// CompressionConfig and silently never reaching ctxengine.
 func TestCompressionOptions_MapsEveryField(t *testing.T) {
 	got := applyOpts(compressionOptions(&config.CompressionConfig{
 		TargetPercent: ip(25),

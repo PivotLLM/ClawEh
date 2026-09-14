@@ -11,9 +11,9 @@ import (
 
 	"github.com/PivotLLM/cogmem"
 	"github.com/PivotLLM/cogmem/store"
+	"github.com/PivotLLM/ctxengine/memory"
 
 	"github.com/PivotLLM/ClawEh/cogmemhost"
-	"github.com/PivotLLM/ClawEh/memory"
 	"github.com/PivotLLM/ClawEh/providers"
 )
 

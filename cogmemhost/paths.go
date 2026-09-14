@@ -8,9 +8,9 @@ import (
 	"path/filepath"
 
 	"github.com/PivotLLM/cogmem/store"
+	"github.com/PivotLLM/ctxengine/memory"
 
 	"github.com/PivotLLM/ClawEh/logger"
-	"github.com/PivotLLM/ClawEh/memory"
 )
 
 // DirName is the directory inside an agent workspace that cogmem owns.

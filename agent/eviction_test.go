@@ -10,7 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/PivotLLM/ClawEh/llmcontext"
+	"github.com/PivotLLM/ctxengine"
+
 	"github.com/PivotLLM/ClawEh/providers"
 )
 
@@ -36,22 +37,22 @@ func (m *trackingContextManager) AddToolResult(_ context.Context, _ providers.Me
 	return 0, nil
 }
 
-func (m *trackingContextManager) Assemble(_ context.Context, _ llmcontext.AssembleRequest) (llmcontext.Assembly, error) {
-	return llmcontext.Assembly{}, nil
+func (m *trackingContextManager) Assemble(_ context.Context, _ ctxengine.AssembleRequest) (ctxengine.Assembly, error) {
+	return ctxengine.Assembly{}, nil
 }
-func (m *trackingContextManager) Compact(_ context.Context) error                    { return nil }
-func (m *trackingContextManager) LastCompactionReport() *llmcontext.CompactionReport { return nil }
-func (m *trackingContextManager) RenderedSummary() string                            { return "" }
-func (m *trackingContextManager) ForceCompress(_ context.Context) error              { return nil }
-func (m *trackingContextManager) Stats() llmcontext.ContextStats                     { return llmcontext.ContextStats{} }
-func (m *trackingContextManager) Reset(_ context.Context) error                      { return nil }
+func (m *trackingContextManager) Compact(_ context.Context) error                   { return nil }
+func (m *trackingContextManager) LastCompactionReport() *ctxengine.CompactionReport { return nil }
+func (m *trackingContextManager) RenderedSummary() string                           { return "" }
+func (m *trackingContextManager) ForceCompress(_ context.Context) error             { return nil }
+func (m *trackingContextManager) Stats() ctxengine.ContextStats                     { return ctxengine.ContextStats{} }
+func (m *trackingContextManager) Reset(_ context.Context) error                     { return nil }
 func (m *trackingContextManager) Close(_ context.Context) error {
 	m.closed.Store(true)
 	return nil
 }
 
 // makeEntry is a test helper that inserts a cmEntry directly into the sync.Map.
-func makeEntry(al *AgentLoop, key string, cm llmcontext.ContextManager, lastAccessed time.Time, refcount int32) *cmEntry {
+func makeEntry(al *AgentLoop, key string, cm ctxengine.ContextManager, lastAccessed time.Time, refcount int32) *cmEntry {
 	entry := &cmEntry{
 		cm:           cm,
 		lastAccessed: lastAccessed,

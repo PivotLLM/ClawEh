@@ -610,7 +610,7 @@ func (c *CompressionConfig) overlay(src *CompressionConfig) {
 // window to a placeholder so long sessions rarely trigger summarization
 // compaction. All fields are pointers so a per-agent block overrides the
 // defaults block field by field; an unset field falls back to the built-in
-// default (see llmcontext.DefaultEvictionPolicy).
+// default (see ctxengine.DefaultEvictionPolicy).
 type ContextEvictionConfig struct {
 	Enabled      *bool `json:"enabled,omitempty"`       // nil => enabled
 	ProtectTurns *int  `json:"protect_turns,omitempty"` // nil => 3

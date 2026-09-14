@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/PivotLLM/cogmem"
+	"github.com/PivotLLM/ctxengine"
 	"github.com/PivotLLM/spawnllm/openai_compat"
 
 	"github.com/PivotLLM/ClawEh/bus"
@@ -20,7 +21,6 @@ import (
 	"github.com/PivotLLM/ClawEh/constants"
 	"github.com/PivotLLM/ClawEh/cronmsg"
 	"github.com/PivotLLM/ClawEh/dump"
-	"github.com/PivotLLM/ClawEh/llmcontext"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/providers"
 )
@@ -60,7 +60,7 @@ func (c *providerLLMClient) chat(ctx context.Context, messages []providers.Messa
 	return c.provider.Chat(ctx, messages, nil, c.model, opts)
 }
 
-// compressModelCaller is the host's llmcontext.ModelCaller: it walks the
+// compressModelCaller is the host's ctxengine.ModelCaller: it walks the
 // agent's summarization chain in order (agent summarization_models → global
 // summarization.models → the agent's primary model), skipping models the
 // engine excluded and models the shared cooldown tracker has parked, and
@@ -75,10 +75,10 @@ type compressModelCaller struct {
 	agentID, sessionKey string
 }
 
-// Complete implements llmcontext.ModelCaller.
-func (c *compressModelCaller) Complete(ctx context.Context, req llmcontext.ModelRequest) (llmcontext.ModelReply, error) {
+// Complete implements ctxengine.ModelCaller.
+func (c *compressModelCaller) Complete(ctx context.Context, req ctxengine.ModelRequest) (ctxengine.ModelReply, error) {
 	content, finishReason, model, err := c.complete(ctx, req.System, req.User, req.JSONObject, req.Exclude)
-	return llmcontext.ModelReply{Content: content, FinishReason: finishReason, Model: model}, err
+	return ctxengine.ModelReply{Content: content, FinishReason: finishReason, Model: model}, err
 }
 
 // complete is the chain walk itself, in plain types so another caller shape
@@ -132,7 +132,7 @@ func (c *compressModelCaller) complete(ctx context.Context, system, user string,
 	if lastErr != nil {
 		return "", "", lastModel, lastErr
 	}
-	return "", "", "", fmt.Errorf("%w: %d excluded, %d in cooldown", llmcontext.ErrNoModel, excluded, cooling)
+	return "", "", "", fmt.Errorf("%w: %d excluded, %d in cooldown", ctxengine.ErrNoModel, excluded, cooling)
 }
 
 // resolveCompressModelTarget resolves a configured compress_model reference into
@@ -335,7 +335,7 @@ func (al *AgentLoop) newCompressModelCaller(agent *AgentInstance, sessionKey str
 // getContextManager returns the ContextManager for the given agent+session
 // pair. See getSessionContext; this is the form for callers that do not touch
 // memory (compact, clear, session info).
-func (al *AgentLoop) getContextManager(agent *AgentInstance, sessionKey string) (llmcontext.ContextManager, func()) {
+func (al *AgentLoop) getContextManager(agent *AgentInstance, sessionKey string) (ctxengine.ContextManager, func()) {
 	cm, _, release := al.getSessionContext(agent, sessionKey)
 	return cm, release
 }
@@ -347,7 +347,7 @@ func (al *AgentLoop) getContextManager(agent *AgentInstance, sessionKey string) 
 //
 // The returned release function must be deferred by the caller to decrement the
 // reference count. The eviction goroutine skips entries with refcount > 0.
-func (al *AgentLoop) getSessionContext(agent *AgentInstance, sessionKey string) (llmcontext.ContextManager, *cogmem.Session, func()) {
+func (al *AgentLoop) getSessionContext(agent *AgentInstance, sessionKey string) (ctxengine.ContextManager, *cogmem.Session, func()) {
 	key := agent.ID + ":" + sessionKey
 
 	// Fast path: entry already exists.
@@ -370,7 +370,7 @@ func (al *AgentLoop) getSessionContext(agent *AgentInstance, sessionKey string) 
 	// request/response of each summarization call to <workspace>/compact.jsonl.
 	// Failed summarization attempts are dumped to logs/dumps when enabled.
 	debugCapture := false
-	var failureDump llmcontext.FailureDumpFunc
+	var failureDump ctxengine.FailureDumpFunc
 	if cfg := al.GetConfig(); cfg != nil {
 		debugCapture = cfg.Summarization.DebugCapture
 		if cfg.Logging.DumpFailedCompressions && al.dumpsDir != "" {
@@ -399,20 +399,20 @@ func (al *AgentLoop) getSessionContext(agent *AgentInstance, sessionKey string) 
 	// The archive directory is the sessions directory within the agent workspace.
 	// We derive it from the workspace the same way initSessionStore does.
 	archiveDir := filepath.Join(agent.Workspace, "sessions")
-	opts := append([]llmcontext.Option{
-		llmcontext.WithContextWindow(agent.ContextWindow),
-		llmcontext.WithArchiveDir(archiveDir),
-		llmcontext.WithModelCaller(caller),
-		llmcontext.WithCompressModel(llmcontext.ModelChain{Primary: effectiveCompressModel}),
-		llmcontext.WithCompressionProfileDir(agent.Workspace),
-		llmcontext.WithCompactDebug(debugCapture),
-		llmcontext.WithFailureDump(failureDump),
-		llmcontext.WithCompactionReporter(reporter),
+	opts := append([]ctxengine.Option{
+		ctxengine.WithContextWindow(agent.ContextWindow),
+		ctxengine.WithArchiveDir(archiveDir),
+		ctxengine.WithModelCaller(caller),
+		ctxengine.WithCompressModel(ctxengine.ModelChain{Primary: effectiveCompressModel}),
+		ctxengine.WithCompressionProfileDir(agent.Workspace),
+		ctxengine.WithCompactDebug(debugCapture),
+		ctxengine.WithFailureDump(failureDump),
+		ctxengine.WithCompactionReporter(reporter),
 		// Repeated fires of one scheduled job differ only by timestamp; the
 		// engine collapses them by the cron collapse key.
-		llmcontext.WithNoiseKey(cronmsg.CollapseKey),
+		ctxengine.WithNoiseKey(cronmsg.CollapseKey),
 	}, agent.CompressOpts...)
-	cm := llmcontext.New(sessionKey, agent.Sessions, opts...)
+	cm := ctxengine.New(sessionKey, agent.Sessions, opts...)
 
 	// Issue a session token so session-scoped MCP tools can identify this session.
 	// The loop renders it into the system prompt (sessionTokenLayer) on every

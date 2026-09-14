@@ -13,10 +13,10 @@ import (
 	"strings"
 
 	cogmemstore "github.com/PivotLLM/cogmem/store"
+	"github.com/PivotLLM/ctxengine/memory"
 
 	"github.com/PivotLLM/ClawEh/cogmemhost"
 	"github.com/PivotLLM/ClawEh/logger"
-	"github.com/PivotLLM/ClawEh/memory"
 )
 
 // compactionStateStore is the subset of the session store used to persist the

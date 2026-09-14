@@ -12,9 +12,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/PivotLLM/ClawEh/llmcontext"
+	"github.com/PivotLLM/ctxengine"
+	"github.com/PivotLLM/ctxengine/session"
+
 	"github.com/PivotLLM/ClawEh/providers"
-	"github.com/PivotLLM/ClawEh/session"
 )
 
 // TestCompress_E2E_ClaudeCLIReceivesFortification locks in the full compression
@@ -58,11 +59,11 @@ EOFMOCK
 			fmt.Sprintf("msg %d payload %s", i, strings.Repeat("token ", 200)))
 	}
 
-	cm := llmcontext.New(
+	cm := ctxengine.New(
 		sessionKey,
 		store,
-		llmcontext.WithContextWindow(1000),
-		llmcontext.WithModelCaller(&compressModelCaller{clients: []*providerLLMClient{client}}),
+		ctxengine.WithContextWindow(1000),
+		ctxengine.WithModelCaller(&compressModelCaller{clients: []*providerLLMClient{client}}),
 	)
 	if err := cm.Compact(context.Background()); err != nil {
 		t.Fatalf("Compact: %v", err)

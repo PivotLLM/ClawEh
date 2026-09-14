@@ -688,7 +688,7 @@ parity test:
 
 ---
 
-### 12.2 Engine extraction (in progress on the same branch)
+### 12.2 Engine extraction (done on the same branch; the window fold is next)
 
 The engine (`llmcontext`), its store (`memory`, `session`) and the session
 tools move to `github.com/PivotLLM/ctxengine`, using the same pattern as
@@ -736,9 +736,12 @@ identical by a golden test:
 - **Session tools over a `Host` struct** (`SessionsDir`, `Compact`, `Clear`,
   `SessionInfo`, `Log`), no ClawEh types, so they move with the engine.
 
-Then the packages move, and inside the module the JSONL live window folds
-into the archive as a seq range plus a summary: one store, one seq space, one
-place recovery reads.
+The packages moved to `github.com/PivotLLM/ctxengine` v0.0.1: the root
+package is the engine, `memory` and `session` are its store, `tools` the
+session tools, `logger` the seam. ClawEh pins it with no local replace, as it
+does cogmem. Still to do inside the module: fold the JSONL live window into
+the archive as a seq range plus a summary, so there is one store, one seq
+space, and one place recovery reads.
 
 The slash commands that touch the engine, `/compact`, `/clear`, `/status`
 and `/memory`, keep working through the closures the loop hands the command

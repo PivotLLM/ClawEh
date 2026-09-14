@@ -22,12 +22,12 @@ import (
 	"unicode/utf8"
 
 	"github.com/PivotLLM/cogmem"
+	"github.com/PivotLLM/ctxengine"
 
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/constants"
 	"github.com/PivotLLM/ClawEh/dump"
-	"github.com/PivotLLM/ClawEh/llmcontext"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/providers"
 	"github.com/PivotLLM/ClawEh/tools"
@@ -435,7 +435,7 @@ func toolCallSignature(calls []providers.ToolCall) string {
 // evictions: total count, total bytes freed, and a per-resource breakdown (top
 // few by count). Keeps the chat to a single line even when an agent re-reads the
 // same file every iteration; per-eviction detail lives in the DEBUG log.
-func summarizeEvictions(events []llmcontext.EvictionEvent) string {
+func summarizeEvictions(events []ctxengine.EvictionEvent) string {
 	totalBytes := 0
 	counts := map[string]int{}
 	var order []string
@@ -485,7 +485,7 @@ func capEvictResource(s string) string {
 // the sweep.
 func (al *AgentLoop) evictionNotifyUser(agent *AgentInstance) bool {
 	cfg := al.GetConfig()
-	p := llmcontext.DefaultEvictionPolicy()
+	p := ctxengine.DefaultEvictionPolicy()
 	applyEvictionConfig(&p, cfg.Agents.Defaults.ContextEviction)
 	if agent != nil && agent.Config != nil {
 		applyEvictionConfig(&p, agent.Config.ContextEviction)
@@ -498,7 +498,7 @@ func (al *AgentLoop) evictionNotifyUser(agent *AgentInstance) bool {
 // this dispatch will send, the memory blocks recalled for the user's message
 // this turn, and the channel the compaction reporter should answer on. mem
 // may be nil.
-func (al *AgentLoop) assembleRequest(ctx context.Context, agent *AgentInstance, mem *cogmem.Session, opts processOptions) llmcontext.AssembleRequest {
+func (al *AgentLoop) assembleRequest(ctx context.Context, agent *AgentInstance, mem *cogmem.Session, opts processOptions) ctxengine.AssembleRequest {
 	defs := agent.Tools.ToProviderDefs()
 	if agent.NoTools {
 		defs = nil
@@ -508,9 +508,9 @@ func (al *AgentLoop) assembleRequest(ctx context.Context, agent *AgentInstance, 
 
 // assembleRequestWithDefs is assembleRequest for a caller that already holds
 // this dispatch's tool definitions.
-func (al *AgentLoop) assembleRequestWithDefs(ctx context.Context, agent *AgentInstance, mem *cogmem.Session, opts processOptions, defs []providers.ToolDefinition) llmcontext.AssembleRequest {
-	return llmcontext.AssembleRequest{
-		ToolDefinitionTokens: llmcontext.EstimateToolDefinitionTokens(defs),
+func (al *AgentLoop) assembleRequestWithDefs(ctx context.Context, agent *AgentInstance, mem *cogmem.Session, opts processOptions, defs []providers.ToolDefinition) ctxengine.AssembleRequest {
+	return ctxengine.AssembleRequest{
+		ToolDefinitionTokens: ctxengine.EstimateToolDefinitionTokens(defs),
 		Layers:               al.promptLayers(agent, opts),
 		Injections:           recallInjections(ctx, mem, opts.UserMessage),
 		Channel:              opts.Channel,
@@ -522,8 +522,8 @@ func (al *AgentLoop) assembleRequestWithDefs(ctx context.Context, agent *AgentIn
 // dynamic prompt for this channel/chat, then the session token behind the
 // summary. A test that injects a bare instance without a ContextBuilder gets
 // only the token layer.
-func (al *AgentLoop) promptLayers(agent *AgentInstance, opts processOptions) []llmcontext.Layer {
-	var layers []llmcontext.Layer
+func (al *AgentLoop) promptLayers(agent *AgentInstance, opts processOptions) []ctxengine.Layer {
+	var layers []ctxengine.Layer
 	if agent.ContextBuilder != nil {
 		layers = agent.ContextBuilder.PromptLayers(opts.Channel, opts.ChatID)
 	}
@@ -535,7 +535,7 @@ func (al *AgentLoop) runLLMIteration(
 	agent *AgentInstance,
 	messages []providers.Message,
 	opts processOptions,
-	cm llmcontext.ContextManager,
+	cm ctxengine.ContextManager,
 	mem *cogmem.Session,
 ) (string, bool, bool, string, int, error) {
 	iteration := 0
@@ -556,7 +556,7 @@ func (al *AgentLoop) runLLMIteration(
 	// policy has notify_user on). An agent that re-reads the same file every
 	// iteration otherwise floods the chat with one notice per eviction; the
 	// per-eviction detail is always in the DEBUG log regardless.
-	var evictedThisTurn []llmcontext.EvictionEvent
+	var evictedThisTurn []ctxengine.EvictionEvent
 	defer func() {
 		if len(evictedThisTurn) == 0 || opts.Channel == "" || !al.evictionNotifyUser(agent) {
 			return

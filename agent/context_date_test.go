@@ -9,13 +9,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/PivotLLM/ClawEh/llmcontext"
+	"github.com/PivotLLM/ctxengine"
 )
 
 // atDate returns a ContextBuilder whose date line is pinned to a fixed clock.
 // layersText joins the layer texts the way the engine composes the system
 // message, so a comparison sees every byte the model would.
-func layersText(layers []llmcontext.Layer) string {
+func layersText(layers []ctxengine.Layer) string {
 	parts := make([]string, 0, len(layers))
 	for _, l := range layers {
 		parts = append(parts, l.Text)

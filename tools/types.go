@@ -3,7 +3,7 @@ package tools
 import (
 	"context"
 
-	"github.com/PivotLLM/ClawEh/tools/session/sessiontools"
+	sessiontools "github.com/PivotLLM/ctxengine/tools"
 )
 
 type Message struct {

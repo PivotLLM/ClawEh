@@ -11,11 +11,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PivotLLM/ctxengine"
+
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/channels"
 	"github.com/PivotLLM/ClawEh/commands"
 	"github.com/PivotLLM/ClawEh/config"
-	"github.com/PivotLLM/ClawEh/llmcontext"
 	"github.com/PivotLLM/ClawEh/media"
 	"github.com/PivotLLM/ClawEh/providers"
 	"github.com/PivotLLM/ClawEh/routing"
@@ -1390,9 +1391,9 @@ func TestForceCompression_WithSystemPrompt(t *testing.T) {
 	}
 	agent.Sessions.SetHistory(sessionKey, history)
 
-	mgr := llmcontext.New(sessionKey, agent.Sessions,
-		llmcontext.WithContextWindow(400),
-		llmcontext.WithSafetyPercent(80),
+	mgr := ctxengine.New(sessionKey, agent.Sessions,
+		ctxengine.WithContextWindow(400),
+		ctxengine.WithSafetyPercent(80),
 	)
 	if err := mgr.ForceCompress(context.Background()); err != nil {
 		t.Fatalf("ForceCompress returned unexpected error: %v", err)
@@ -1438,9 +1439,9 @@ func TestForceCompression_NoSystemPrompt(t *testing.T) {
 	}
 	agent.Sessions.SetHistory(sessionKey, history)
 
-	mgr := llmcontext.New(sessionKey, agent.Sessions,
-		llmcontext.WithContextWindow(400),
-		llmcontext.WithSafetyPercent(80),
+	mgr := ctxengine.New(sessionKey, agent.Sessions,
+		ctxengine.WithContextWindow(400),
+		ctxengine.WithSafetyPercent(80),
 	)
 	if err := mgr.ForceCompress(context.Background()); err != nil {
 		t.Fatalf("ForceCompress returned unexpected error: %v", err)

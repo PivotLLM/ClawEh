@@ -9,9 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/PivotLLM/ClawEh/llmcontext"
+	"github.com/PivotLLM/ctxengine"
+	"github.com/PivotLLM/ctxengine/session"
+
 	"github.com/PivotLLM/ClawEh/providers"
-	"github.com/PivotLLM/ClawEh/session"
 )
 
 // assembleWithLayers runs the builder's prompt layers through the engine over
@@ -28,8 +29,8 @@ func assembleWithLayers(t *testing.T, cb *ContextBuilder, history []providers.Me
 	if summary != "" {
 		store.SetSummary(key, summary)
 	}
-	cm := llmcontext.New(key, store, llmcontext.WithContextWindow(200_000))
-	asm, err := cm.Assemble(context.Background(), llmcontext.AssembleRequest{Layers: cb.PromptLayers(channel, chatID)})
+	cm := ctxengine.New(key, store, ctxengine.WithContextWindow(200_000))
+	asm, err := cm.Assemble(context.Background(), ctxengine.AssembleRequest{Layers: cb.PromptLayers(channel, chatID)})
 	if err != nil {
 		t.Fatalf("Assemble: %v", err)
 	}

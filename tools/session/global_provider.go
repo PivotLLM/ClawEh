@@ -18,11 +18,12 @@ import (
 	"path/filepath"
 	"runtime"
 
+	sessiontools "github.com/PivotLLM/ctxengine/tools"
+
 	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/tools"
-	"github.com/PivotLLM/ClawEh/tools/session/sessiontools"
 )
 
 // GlobalProvider exposes the session tools through the global layer.
