@@ -26,7 +26,9 @@ behalf, and an assistant is only told about memory when it actually has it.
   to the agent followed by the tool's full result, in an envelope that names
   the source (`The following event was received by a continuous monitor at
   <time>:` then `<tool> returned the following:`), distinct from the cron-fire
-  envelope so events are never deduplicated as repeated fires. An absent field is "no data", not a
+  envelope so events are never deduplicated as repeated fires.
+  `deliver_repeats: true` delivers identical consecutive events too, for
+  sources where every occurrence matters. An absent field is "no data", not a
   change; a repeated event is not delivered twice, across restarts; failures
   retry with backoff and are reported after five in a row. Jobs of schedule
   kind `listen` have no next run and show as `listen (continuous)`. See

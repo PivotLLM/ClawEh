@@ -16,7 +16,7 @@ func TestBuildEvent_IsNotACronWrapper(t *testing.T) {
 	at := time.Date(2026, 9, 13, 17, 30, 0, 0, time.UTC)
 	got := BuildEvent(at, "A document event arrived.", "documents_event_wait", `{"event":{"id":"e1"}}`)
 	for _, want := range []string{
-		"continuous monitor at 2026-09-13 17:30 UTC:",
+		"continuous monitor at 2026-09-13 17:30:00 UTC:",
 		"A document event arrived.",
 		"documents_event_wait returned the following:\n{\"event\":{\"id\":\"e1\"}}",
 	} {
@@ -32,6 +32,17 @@ func TestBuildEvent_IsNotACronWrapper(t *testing.T) {
 	}
 	if _, ok := CollapseKey(got); ok {
 		t.Fatal("CollapseKey produced a key for a monitor event; events must never collapse")
+	}
+}
+
+// Two identical events a second apart must not be byte-identical, or the
+// store's consecutive-duplicate filter would drop the second.
+func TestBuildEvent_RepeatsDifferBySecond(t *testing.T) {
+	at := time.Date(2026, 9, 13, 17, 30, 0, 0, time.UTC)
+	a := BuildEvent(at, "m", "t", "same")
+	b := BuildEvent(at.Add(2*time.Second), "m", "t", "same")
+	if a == b {
+		t.Fatal("two events two seconds apart rendered identically")
 	}
 }
 

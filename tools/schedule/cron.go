@@ -132,6 +132,10 @@ func (t *CronTool) Parameters() map[string]any {
 				"type":        "integer",
 				"description": "Optional, for listen jobs: how long one call may wait for an event before it is dropped and made again (default 300).",
 			},
+			"deliver_repeats": map[string]any{
+				"type":        "boolean",
+				"description": "Optional, for listen jobs. By default a result identical to the last delivered event (same watched fields) is not delivered again, so a source that replays its latest event on reconnect wakes you once. Set true when every occurrence matters even if identical — for example a document edited several times in a row — and each result with the watched fields present will be delivered.",
+			},
 			"job_id": map[string]any{
 				"type":        "string",
 				"description": "Job ID (for 'get', 'remove', 'enable', 'disable').",
@@ -289,6 +293,9 @@ func (t *CronTool) addJob(args map[string]any, agentID string) *tools.ToolResult
 		if secs, ok := args["watch_timeout_seconds"].(float64); ok && secs > 0 {
 			watch.TimeoutSec = int(secs)
 		}
+		if repeats, ok := args["deliver_repeats"].(bool); ok && repeats {
+			watch.DeliverRepeats = true
+		}
 	}
 
 	// Destination (channel/chat) is left empty: ExecuteJob resolves the target
@@ -313,9 +320,13 @@ func (t *CronTool) addJob(args map[string]any, agentID string) *tools.ToolResult
 	t.kickListeners()
 
 	if listen {
+		when := fmt.Sprintf("each time %s carry a new value", describeFields(watch.Fields))
+		if watch.DeliverRepeats {
+			when = fmt.Sprintf("every time it returns with %s present, repeats included", describeFields(watch.Fields))
+		}
 		return tools.SilentResult(fmt.Sprintf(
-			"Listener added for %s: %s (id: %s). It keeps %q running in the background and messages you with the full result each time %s carry a new value.",
-			agentID, job.Name, job.ID, watch.Tool, describeFields(watch.Fields)))
+			"Listener added for %s: %s (id: %s). It keeps %q running in the background and messages you with the full result %s.",
+			agentID, job.Name, job.ID, watch.Tool, when))
 	}
 	if watch != nil {
 		return tools.SilentResult(fmt.Sprintf(

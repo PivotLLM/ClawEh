@@ -86,12 +86,19 @@ func Parse(content string) (fingerprint, payload string, ok bool) {
 // and must be stored and kept like any other message.
 const eventPrefix = "The following event was received by a continuous monitor at "
 
+// eventTimeFormat carries seconds, unlike the cron fire time. The store drops
+// a user message identical to the previous one as noise; a listener may
+// deliver the same event twice in a row on purpose, and a listener never
+// delivers more than once every two seconds, so second granularity keeps two
+// identical events distinct.
+const eventTimeFormat = "2006-01-02 15:04:05 MST"
+
 // BuildEvent wraps an event delivered by a listen job: the operator's note,
 // then the source tool's full result introduced by name. With an empty result
 // (an operational notice from the monitor itself) only the note is included.
 // The output is not a cron-wrapper message; see eventPrefix.
 func BuildEvent(at time.Time, message, source, result string) string {
-	body := fmt.Sprintf("%s%s:\n\n%s", eventPrefix, at.Format(timeFormat), message)
+	body := fmt.Sprintf("%s%s:\n\n%s", eventPrefix, at.Format(eventTimeFormat), message)
 	if result == "" {
 		return body
 	}

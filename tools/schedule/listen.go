@@ -186,7 +186,8 @@ func (t *CronTool) runListener(ctx context.Context, job *cron.CronJob) {
 
 	// The last delivered digest survives a restart through the job state, so
 	// a tool that replays its most recent event on reconnect does not deliver
-	// it twice.
+	// it twice — unless the job asked for repeats, where every result with the
+	// watched fields present is an event in its own right.
 	lastDigest := job.State.WatchDigest
 	failures := job.State.WatchFailures
 
@@ -231,7 +232,7 @@ func (t *CronTool) runListener(ctx context.Context, job *cron.CronJob) {
 				failures = 0
 				t.persistListenState(job, lastDigest, failures)
 			}
-			if digest, ok := listenEvent(result, w.Fields); ok && digest != lastDigest {
+			if digest, ok := listenEvent(result, w.Fields); ok && (w.DeliverRepeats || digest != lastDigest) {
 				// Advance the fingerprint only once the event is on the bus. A
 				// delivery that fails (bus closed, or full for five seconds) is
 				// logged and the event stays undelivered, so a source that

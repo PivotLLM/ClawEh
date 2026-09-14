@@ -245,6 +245,7 @@ and `cron_expr` are rejected.
 | `watch_args` | object | Its parameters, passed verbatim |
 | `watch_fields` | list of strings | Dot-paths that must be present, and whose values decide "new" |
 | `watch_timeout_seconds` | int | How long one call may wait for an event before it is dropped and made again (default 300) |
+| `deliver_repeats` | bool | Deliver every result with the watched fields present, even one identical to the last delivered event (default false) |
 
 ```
 Tell me whenever a document event arrives.
@@ -263,7 +264,11 @@ When it returns:
   the last delivered event, `message` is delivered followed by the tool's full
   result, introduced as `documents_event_wait returned the following:`. The
   agent gets the whole payload, not just the fields, so it need not call the
-  tool again to learn what happened. The envelope says where it came from,
+  tool again to learn what happened. With `deliver_repeats`, an identical
+  result is delivered too: use it when every occurrence matters, such as a
+  document edited several times in a row, and accept that a source which
+  replays its latest event on reconnect will then repeat it. The envelope
+  says where it came from,
   `The following event was received by a continuous monitor at <time>:`, not
   "a cron job that fired", and it is not treated as a cron message: repeated
   fires of one scheduled job are deduplicated and collapsed, but each event a

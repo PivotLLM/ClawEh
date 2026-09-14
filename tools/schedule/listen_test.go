@@ -348,6 +348,31 @@ func TestListen_DistinctEventsAllDelivered(t *testing.T) {
 	}
 }
 
+// TestListen_DeliverRepeats: with deliver_repeats the same event delivered
+// three times in a row reaches the agent three times.
+func TestListen_DeliverRepeats(t *testing.T) {
+	same := scriptedReply{text: `{"event":{"id":"doc-7","action":"edited"}}`}
+	ct, msgBus := newListenEnv(t, &scriptedTool{replies: []scriptedReply{same, same, same}})
+	job := addListenJob(t, ct, map[string]any{"deliver_repeats": true})
+	if !job.Payload.Watch.DeliverRepeats {
+		t.Fatal("deliver_repeats not recorded on the job")
+	}
+	ct.StartListeners(context.Background())
+	defer ct.StopListeners()
+	for i := 0; i < 3; i++ {
+		msg, ok := nextInbound(t, msgBus, 3*time.Second)
+		if !ok {
+			t.Fatalf("repeat %d not delivered", i+1)
+		}
+		if !strings.Contains(msg.Content, `"id":"doc-7"`) {
+			t.Fatalf("repeat %d wrong:\n%s", i+1, msg.Content)
+		}
+	}
+	if extra, ok := nextInbound(t, msgBus, 200*time.Millisecond); ok {
+		t.Fatalf("delivered more than the three events:\n%s", extra.Content)
+	}
+}
+
 // TestListen_ExecuteJobIsANoOp: the scheduler never fires a listen job, and
 // if asked to it does nothing.
 func TestListen_ExecuteJobIsANoOp(t *testing.T) {

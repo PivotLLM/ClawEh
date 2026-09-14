@@ -57,6 +57,12 @@ type CronWatch struct {
 	// again. 0 means the default (5 minutes). Scheduled watches ignore it and
 	// use their fixed 60-second probe timeout.
 	TimeoutSec int `json:"timeoutSec,omitempty"`
+	// DeliverRepeats, for a listen job, delivers every result whose watched
+	// fields are present, even when they match the last delivered event. Off
+	// by default so a source that replays its latest event on every reconnect
+	// wakes the agent once; on for sources where each occurrence matters (a
+	// document edited several times in a row).
+	DeliverRepeats bool `json:"deliverRepeats,omitempty"`
 }
 
 type CronPayload struct {
