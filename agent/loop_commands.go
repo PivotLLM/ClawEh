@@ -255,6 +255,7 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 				SessionKey: opts.SessionKey,
 				Content:    wrapClearNotice(""),
 				Peer:       msg.Peer,
+				Metadata:   map[string]string{metadataKeyPreresolvedAgentID: agent.ID},
 			}
 			go func() {
 				pubCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

@@ -10,7 +10,7 @@ Entries describe what changed for someone **running or integrating with** ClawEh
 internal refactors behind them. A change nobody outside the repository can
 observe does not need an entry.
 
-## [0.5.1]
+## [0.5.2]
 
 Cognitive memory stands on its own. It keeps its own copy of the conversation
 until it has learned from it, so nothing else has to hold messages on its
@@ -119,6 +119,13 @@ behalf, and an assistant is only told about memory when it actually has it.
 
 ### Fixed
 
+- **Cross-agent session scoping and isolation fixes.** When mentioning an agent
+  on a channel bound to another agent, mention extraction now runs before route
+  resolution, preventing session key inheritance or cross-agent tool access.
+  Session key resolution rejects foreign-scoped agent keys. Supervised background
+  task restarts now preserve the originating owner agent ID and session key so
+  task results are not routed to the default agent. `msg_send_file` verifies
+  symlink resolution against the workspace to prevent sandbox escape.
 - **Session files for keys containing `/` or `\` now resolve in the WebUI.** A
   Telegram forum thread or a Slack thread produces such a key. Every session
   file is named by one shared rule; the WebUI session view carried its own copy
@@ -743,6 +750,6 @@ on, and breaking one is a deliberate decision rather than a free move.
   entered, and the entry had to be worked around rather than typed. Affects the
   Telegram, Slack and generic channel forms.
 
-[0.5.1]: https://github.com/PivotLLM/ClawEh/compare/0.5.0...0.5.1
+[0.5.2]: https://github.com/PivotLLM/ClawEh/compare/0.5.0...0.5.2
 [0.5.0]: https://github.com/PivotLLM/ClawEh/compare/0.4.72...0.5.0
 [0.4.72]: https://github.com/PivotLLM/ClawEh/compare/0.4.70...0.4.72

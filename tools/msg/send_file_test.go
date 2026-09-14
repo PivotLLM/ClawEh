@@ -174,3 +174,37 @@ func TestDetectMediaType_UnknownFallsToOctetStream(t *testing.T) {
 		t.Errorf("expected application/octet-stream, got %q", got)
 	}
 }
+
+func TestSendFileTool_SymlinkOutsideWorkspace(t *testing.T) {
+	tempDir := t.TempDir()
+	aliceDir := filepath.Join(tempDir, "alice_workspace")
+	bobDir := filepath.Join(tempDir, "bob_workspace")
+	if err := os.MkdirAll(aliceDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(bobDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	aliceFile := filepath.Join(aliceDir, "confidential.png")
+	if err := os.WriteFile(aliceFile, []byte("confidential data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	bobSymlink := filepath.Join(bobDir, "stolen.png")
+	if err := os.Symlink(aliceFile, bobSymlink); err != nil {
+		t.Fatal(err)
+	}
+
+	store := media.NewFileMediaStore()
+	tool := NewSendFileTool(bobDir, true /* restrict */, 0, store)
+	tool.SetContext("telegram", "chat123")
+
+	result := tool.Execute(context.Background(), map[string]any{"path": bobSymlink})
+	if !result.IsError {
+		t.Fatalf("expected error for symlink resolving outside workspace, got success")
+	}
+	if !strings.Contains(result.ForLLM, "symlink resolves outside workspace") {
+		t.Fatalf("expected symlink error message, got: %s", result.ForLLM)
+	}
+}

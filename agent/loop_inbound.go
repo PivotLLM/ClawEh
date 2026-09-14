@@ -65,6 +65,11 @@ func (al *AgentLoop) isCancelCommand(content string) bool {
 func (al *AgentLoop) processSessionMessage(ctx context.Context, msg bus.InboundMessage) {
 	defer al.activeRequests.Done()
 
+	// Strip agent mention trigger if present and record the target agent in metadata
+	// before resolving the route, so that mention routing is reflected in dispatchKey
+	// and session key scoping.
+	al.extractMention(&msg)
+
 	// Resolve the route before acquiring the mutex so that all channel:chatID
 	// pairs that share the same agent session use the same mutex key. This
 	// prevents concurrent LLM history reads/writes across unified sessions.
@@ -295,22 +300,7 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 	}
 
 	// Extract agent mention from trigger prefix (e.g. "@alice do X" → routes to alice with "do X")
-	{
-		cfg := al.GetConfig()
-		triggers := cfg.AgentMentions.Triggers
-		if len(triggers) == 0 {
-			triggers = []string{"@", "/", "."}
-		}
-		registry := al.GetRegistry()
-		agentIDs := registry.ListAgentIDs()
-		if mentionedAgent, stripped := channels.ExtractAgentMention(msg.Content, triggers, agentIDs); mentionedAgent != "" {
-			msg.Content = stripped
-			if msg.Metadata == nil {
-				msg.Metadata = make(map[string]string)
-			}
-			msg.Metadata["mentioned_agent"] = mentionedAgent
-		}
-	}
+	al.extractMention(&msg)
 
 	route, agent, routeErr := al.resolveMessageRoute(msg)
 	if routeErr != nil {
@@ -439,9 +429,39 @@ func (al *AgentLoop) resolveMessageRoute(msg bus.InboundMessage) (routing.Resolv
 
 func resolveScopeKey(route routing.ResolvedRoute, msgSessionKey string) string {
 	if msgSessionKey != "" && strings.HasPrefix(msgSessionKey, sessionKeyAgentPrefix) {
-		return msgSessionKey
+		if pk := routing.ParseAgentSessionKey(msgSessionKey); pk != nil && pk.AgentID == route.AgentID {
+			return msgSessionKey
+		}
 	}
 	return route.SessionKey
+}
+
+// extractMention checks for and strips an agent mention trigger from msg.Content,
+// recording the target agent in msg.Metadata["mentioned_agent"].
+func (al *AgentLoop) extractMention(msg *bus.InboundMessage) {
+	if msg == nil {
+		return
+	}
+	cfg := al.GetConfig()
+	var triggers []string
+	if cfg != nil {
+		triggers = cfg.AgentMentions.Triggers
+	}
+	if len(triggers) == 0 {
+		triggers = []string{"@", "/", "."}
+	}
+	registry := al.GetRegistry()
+	if registry == nil {
+		return
+	}
+	agentIDs := registry.ListAgentIDs()
+	if mentionedAgent, stripped := channels.ExtractAgentMention(msg.Content, triggers, agentIDs); mentionedAgent != "" {
+		msg.Content = stripped
+		if msg.Metadata == nil {
+			msg.Metadata = make(map[string]string)
+		}
+		msg.Metadata["mentioned_agent"] = mentionedAgent
+	}
 }
 
 func (al *AgentLoop) processSystemMessage(
@@ -529,6 +549,8 @@ func (al *AgentLoop) resolveSystemMessageTarget(msg bus.InboundMessage) (*AgentI
 	// that spawned the work); otherwise the agent's main session.
 	sessionKey := strings.TrimSpace(msg.SessionKey)
 	if sessionKey == "" || !strings.HasPrefix(sessionKey, sessionKeyAgentPrefix) {
+		sessionKey = routing.BuildAgentMainSessionKey(agent.ID)
+	} else if pk := routing.ParseAgentSessionKey(sessionKey); pk == nil || pk.AgentID != agent.ID {
 		sessionKey = routing.BuildAgentMainSessionKey(agent.ID)
 	}
 	return agent, sessionKey

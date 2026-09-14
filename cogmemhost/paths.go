@@ -35,7 +35,7 @@ func SubagentDir(workspace, sessionKey string) string {
 
 // Migrate opens the agent's memory once at load so any pending schema
 // migration runs now rather than mid-conversation, and logs what changed.
-// The layout itself is not migrated here: moving a pre-0.5.1 per-session file
+// The layout itself is not migrated here: moving a pre-0.5.2 per-session file
 // into the cogmem directory is a one-time operator step (see the changelog).
 func Migrate(agentID, workspace string) {
 	dir := Dir(workspace)

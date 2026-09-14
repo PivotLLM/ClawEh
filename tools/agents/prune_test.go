@@ -24,7 +24,7 @@ func TestPruneOrphanSubagentSessions(t *testing.T) {
 	oldSubArch := write("agent_penny_subagent_abc.archive.db-wal")
 	recentSub := write("agent_penny_subagent_def.archive.db")
 	mainSession := write("agent_penny_main.archive.db")      // must never be touched
-	legacyMem := write("agent_penny_subagent_abc.cogmem.db") // not ours: memory never lived here after 0.5.1
+	legacyMem := write("agent_penny_subagent_abc.cogmem.db") // not ours: memory never lived here after 0.5.2
 
 	now := time.Now()
 	// Age the two "old" sub-agent files past 24h; leave the recent one fresh.

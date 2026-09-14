@@ -17,6 +17,7 @@ import (
 	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/providers"
+	"github.com/PivotLLM/ClawEh/routing"
 	"github.com/PivotLLM/ClawEh/tools"
 	toolsagents "github.com/PivotLLM/ClawEh/tools/agents"
 	toolsmsg "github.com/PivotLLM/ClawEh/tools/msg"
@@ -40,22 +41,6 @@ func (al *AgentLoop) registerRuntimeTools(
 	// ReloadProviderAndConfig registers tools BEFORE swapping al.cfg, so
 	// al.GetConfig() would return the stale pre-reload config here.
 
-	// Build shared message tool for all agents.
-	var sharedMessageTool tools.Tool
-	if cfg.Tools.IsToolEnabled("msg_send") {
-		mt := toolsmsg.NewMessageTool()
-		mt.SetSendCallback(func(channel, chatID, content string) error {
-			pubCtx, pubCancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer pubCancel()
-			return al.bus.PublishOutbound(pubCtx, bus.OutboundMessage{
-				Channel: channel,
-				ChatID:  chatID,
-				Content: content,
-			})
-		})
-		sharedMessageTool = mt
-	}
-
 	// Collect the per-agent spawn managers built below so the task supervisor can
 	// scan/relaunch interrupted tasks against the current config.
 	managers := make(map[string]*toolsagents.SubagentManager)
@@ -67,6 +52,22 @@ func (al *AgentLoop) registerRuntimeTools(
 		}
 		currentAgent := agentInst
 		agentCfg := currentAgent.Config
+
+		// Build message tool for this agent instance.
+		var messageTool tools.Tool
+		if cfg.Tools.IsToolEnabled("msg_send") {
+			mt := toolsmsg.NewMessageTool()
+			mt.SetSendCallback(func(channel, chatID, content string) error {
+				pubCtx, pubCancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer pubCancel()
+				return al.bus.PublishOutbound(pubCtx, bus.OutboundMessage{
+					Channel: channel,
+					ChatID:  chatID,
+					Content: content,
+				})
+			})
+			messageTool = mt
+		}
 
 		// Wire the vision-describe side-model chain onto the instance (no-op when
 		// no vision model is configured). cfg is passed explicitly because on
@@ -106,13 +107,17 @@ func (al *AgentLoop) registerRuntimeTools(
 			if !al.allowSelfClear(sessionKey) {
 				return fmt.Errorf("session_clear is rate-limited; wait a few seconds before clearing again")
 			}
+			meta := map[string]string{
+				metaSessionReset:              "true",
+				metadataKeyPreresolvedAgentID: currentAgent.ID,
+			}
 			inbound := bus.InboundMessage{
 				Channel:    tools.ToolChannel(ctx),
 				ChatID:     tools.ToolChatID(ctx),
 				SenderID:   "system",
 				SessionKey: sessionKey,
 				Content:    wrapClearNotice(message),
-				Metadata:   map[string]string{metaSessionReset: "true"},
+				Metadata:   meta,
 			}
 			if inbound.ChatID != "" && inbound.ChatID != "direct" {
 				inbound.Peer = bus.Peer{Kind: "channel", ID: inbound.ChatID}
@@ -168,7 +173,7 @@ func (al *AgentLoop) registerRuntimeTools(
 			CompactFn:         compactFn,
 			SessionInfoFn:     infoFn,
 			ClearFn:           clearFn,
-			MessageTool:       sharedMessageTool,
+			MessageTool:       messageTool,
 		}
 
 		// Progressive discovery is a single global switch (default off). When on,
@@ -352,7 +357,7 @@ func (al *AgentLoop) runTaskSupervision() {
 	now := time.Now().Unix()
 	for _, m := range managers {
 		m.SuperviseOnce(now, func(rec *toolsagents.TaskRecord) tools.AsyncCallback {
-			return al.taskPointerCallback(rec.Channel, rec.ChatID)
+			return al.taskPointerCallback(rec.Channel, rec.ChatID, rec.OwnerAgentID)
 		})
 	}
 }
@@ -361,7 +366,7 @@ func (al *AgentLoop) runTaskSupervision() {
 // publishes the compact completion pointer to the task's origin channel (the
 // agent reads the referenced result file). Mirrors the inline async-tool callback
 // used for the initial in-turn spawn.
-func (al *AgentLoop) taskPointerCallback(channel, chatID string) tools.AsyncCallback {
+func (al *AgentLoop) taskPointerCallback(channel, chatID, ownerAgentID string) tools.AsyncCallback {
 	return func(_ context.Context, result *tools.ToolResult) {
 		if result == nil {
 			return
@@ -383,12 +388,17 @@ func (al *AgentLoop) taskPointerCallback(channel, chatID string) tools.AsyncCall
 			return
 		}
 		pubCtx, pubCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		_ = al.bus.PublishInbound(pubCtx, bus.InboundMessage{
+		msg := bus.InboundMessage{
 			Channel:  "system",
 			SenderID: "async:agent_spawn",
 			ChatID:   fmt.Sprintf("%s:%s", channel, chatID),
 			Content:  content,
-		})
+		}
+		if ownerAgentID != "" {
+			msg.Metadata = map[string]string{metadataKeyPreresolvedAgentID: ownerAgentID}
+			msg.SessionKey = routing.BuildAgentMainSessionKey(ownerAgentID)
+		}
+		_ = al.bus.PublishInbound(pubCtx, msg)
 		pubCancel()
 	}
 }
