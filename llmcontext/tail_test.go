@@ -11,6 +11,7 @@ import (
 
 	"github.com/PivotLLM/spawnllm/protocoltypes"
 
+	"github.com/PivotLLM/ClawEh/cronmsg"
 	"github.com/PivotLLM/ClawEh/memory"
 	"github.com/PivotLLM/ClawEh/providers"
 )
@@ -42,7 +43,7 @@ func storedAt(msgs []providers.Message, agesDays ...int) []memory.StoredMessage 
 // current, returning just the retained messages. Most tail behaviour is
 // age-independent, so this keeps those tests focused on budget and floor.
 func selectTailMsgs(history []providers.Message, budget, minMessages int) []providers.Message {
-	tail, _ := selectTail(storedAt(history), budget, minMessages, 0, testNow, estimateTokens)
+	tail, _ := selectTail(storedAt(history), budget, minMessages, 0, testNow, estimateTokens, cronmsg.CollapseKey)
 	if len(tail) == 0 {
 		return nil
 	}

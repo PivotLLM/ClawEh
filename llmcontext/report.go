@@ -11,8 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/PivotLLM/ClawEh/dump"
-	"github.com/PivotLLM/ClawEh/logger"
+	"github.com/PivotLLM/ClawEh/llmcontext/logger"
 	"github.com/PivotLLM/ClawEh/memory"
 	"github.com/PivotLLM/ClawEh/providers"
 )
@@ -21,7 +20,7 @@ import (
 // invocation during a compaction pass.
 type CompactionAttempt struct {
 	Model      string `json:"model"`
-	Status     string `json:"status"` // "ok" | "rejected" | "error" | "refused"
+	Status     string `json:"status"` // "ok" | "rejected" | "error" | "refused" | "skipped"
 	Detail     string `json:"detail,omitempty"`
 	DurationMs int64  `json:"duration_ms"`
 }
@@ -103,10 +102,11 @@ func (r *CompactionReport) hasRefusal() bool {
 }
 
 // hasCooldown reports whether any attempt was skipped for, or failed into, a
-// cooldown (billing/auth/rate-limit/overload).
+// cooldown (billing/auth/rate-limit/overload). The host's ModelCaller names
+// the cooldown in its error when it skipped every model for one.
 func (r *CompactionReport) hasCooldown() bool {
 	for _, a := range r.Attempts {
-		if a.Status == "skipped" && strings.Contains(a.Detail, "cooldown") {
+		if strings.Contains(a.Detail, "cooldown") {
 			return true
 		}
 		if a.Status == "error" && (strings.Contains(a.Detail, "out of credits") ||
@@ -148,10 +148,10 @@ func formatDateRange(from, to time.Time) string {
 type compactionRecorder struct {
 	sessionKey string
 	debugPath  string // "" disables verbatim capture
-	// failureDumpDir, when non-empty, is the logs/dumps directory to which the
-	// request + raw response of each FAILED attempt (status != "ok") is written.
-	failureDumpDir string
-	attempts       []CompactionAttempt
+	// failureDump, when set, receives the request + raw response of each FAILED
+	// attempt (status != "ok").
+	failureDump FailureDumpFunc
+	attempts    []CompactionAttempt
 }
 
 // record logs one LLM invocation. req/resp are only persisted when debug
@@ -183,7 +183,7 @@ func (r *compactionRecorder) record(model, status, detail string, dur time.Durat
 			"duration_ms": dur.Milliseconds(),
 		})
 	}
-	if r.failureDumpDir != "" && status != "ok" {
+	if r.failureDump != nil && status != "ok" {
 		r.dumpFailure(model, status, detail, dur, req, resp)
 	}
 	if r.debugPath == "" {
@@ -222,10 +222,10 @@ func (r *compactionRecorder) record(model, status, detail string, dur time.Durat
 	}
 }
 
-// dumpFailure writes a diagnostic snapshot of one failed summarization attempt
-// (request + raw response) to logs/dumps via the shared dump package. The raw
-// response is JSON-encoded as a string so the dump file stays valid JSON even
-// when the model returned non-JSON (the common failure mode).
+// dumpFailure hands a diagnostic snapshot of one failed summarization attempt
+// (request + raw response) to the host's failure-dump sink. The raw response
+// is JSON-encoded as a string so the dump stays valid JSON even when the model
+// returned non-JSON (the common failure mode).
 func (r *compactionRecorder) dumpFailure(model, status, detail string, dur time.Duration, req []providers.Message, resp string) {
 	input, _ := json.Marshal(req)
 	output, _ := json.Marshal(resp)
@@ -236,7 +236,7 @@ func (r *compactionRecorder) dumpFailure(model, status, detail string, dur time.
 		"detail":      detail,
 		"duration_ms": dur.Milliseconds(),
 	}
-	if _, err := dump.Write(r.failureDumpDir, "compress_fail", meta, input, output); err != nil {
+	if err := r.failureDump("compress_fail", meta, string(input), string(output)); err != nil {
 		logger.WarnCF("llmcontext", "failed-compression dump: write failed", map[string]any{
 			"session_key": r.sessionKey,
 			"error":       err.Error(),
@@ -274,25 +274,6 @@ func (m *Manager) buildReport(rec *compactionRecorder, beforeMsgs, beforeBytes i
 		AfterBytes:  storedBytes(afterStored),
 		Outcome:     outcome,
 	}
-}
-
-// clientModel returns the model name of an LLMClient when it exposes one.
-func clientModel(c LLMClient) string {
-	if m, ok := c.(interface{ Model() string }); ok {
-		return m.Model()
-	}
-	return ""
-}
-
-// clientCooldownProvider returns the provider NAME an LLMClient reaches through,
-// when it exposes one. Combined with clientModel it forms the same
-// provider+model cooldown key the main fallback chain uses, so a cooldown shared
-// between the two paths applies consistently.
-func clientCooldownProvider(c LLMClient) string {
-	if p, ok := c.(interface{ CooldownProvider() string }); ok {
-		return p.CooldownProvider()
-	}
-	return ""
 }
 
 // shortErr returns a single-line, length-bounded form of an error for display.

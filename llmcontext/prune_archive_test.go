@@ -50,7 +50,7 @@ func TestPruneArchive_TriggeredByCompaction(t *testing.T) {
 	// compaction actually persists — only then does the wired prune run.
 	const summaryInWindow = `{"version":2,"state":{"goals":[{"text":"g","refs":[{"seq_start":6,"seq_end":6}]}]},"covered_seq_start":0,"covered_seq_end":0}`
 	llm := &mockLLM{responses: []string{summaryInWindow}}
-	mgr := newCompressManager(store, []LLMClient{llm}, WithArchiveDir(dir), WithArchiveMessageCount(3))
+	mgr := newCompressManager(store, []*mockLLM{llm}, WithArchiveDir(dir), WithArchiveMessageCount(3))
 	mgr.msgCount = len(store.history)
 
 	for i := int64(1); i <= 6; i++ {

@@ -1,4 +1,7 @@
-package agent
+// ClawEh
+// License: MIT
+
+package llmcontext
 
 import (
 	"testing"
@@ -6,11 +9,7 @@ import (
 	"github.com/PivotLLM/ClawEh/providers"
 )
 
-func msg(role, content string) providers.Message {
-	return providers.Message{Role: role, Content: content}
-}
-
-func assistantWithTools(toolIDs ...string) providers.Message {
+func sanAssistantWithTools(toolIDs ...string) providers.Message {
 	calls := make([]providers.ToolCall, len(toolIDs))
 	for i, id := range toolIDs {
 		calls[i] = providers.ToolCall{ID: id, Type: "function"}
@@ -18,7 +17,7 @@ func assistantWithTools(toolIDs ...string) providers.Message {
 	return providers.Message{Role: "assistant", ToolCalls: calls}
 }
 
-func toolResult(id string) providers.Message {
+func sanToolResult(id string) providers.Message {
 	return providers.Message{Role: "tool", Content: "result", ToolCallID: id}
 }
 
@@ -37,8 +36,8 @@ func TestSanitizeHistoryForProvider_EmptyHistory(t *testing.T) {
 func TestSanitizeHistoryForProvider_SingleToolCall(t *testing.T) {
 	history := []providers.Message{
 		msg("user", "hello"),
-		assistantWithTools("A"),
-		toolResult("A"),
+		sanAssistantWithTools("A"),
+		sanToolResult("A"),
 		msg("assistant", "done"),
 	}
 
@@ -52,9 +51,9 @@ func TestSanitizeHistoryForProvider_SingleToolCall(t *testing.T) {
 func TestSanitizeHistoryForProvider_MultiToolCalls(t *testing.T) {
 	history := []providers.Message{
 		msg("user", "do two things"),
-		assistantWithTools("A", "B"),
-		toolResult("A"),
-		toolResult("B"),
+		sanAssistantWithTools("A", "B"),
+		sanToolResult("A"),
+		sanToolResult("B"),
 		msg("assistant", "both done"),
 	}
 
@@ -69,8 +68,8 @@ func TestSanitizeHistoryForProvider_AssistantToolCallAfterPlainAssistant(t *test
 	history := []providers.Message{
 		msg("user", "hi"),
 		msg("assistant", "thinking"),
-		assistantWithTools("A"),
-		toolResult("A"),
+		sanAssistantWithTools("A"),
+		sanToolResult("A"),
 	}
 
 	result := sanitizeHistoryForProvider(history)
@@ -82,7 +81,7 @@ func TestSanitizeHistoryForProvider_AssistantToolCallAfterPlainAssistant(t *test
 
 func TestSanitizeHistoryForProvider_OrphanedLeadingTool(t *testing.T) {
 	history := []providers.Message{
-		toolResult("A"),
+		sanToolResult("A"),
 		msg("user", "hello"),
 	}
 
@@ -96,7 +95,7 @@ func TestSanitizeHistoryForProvider_OrphanedLeadingTool(t *testing.T) {
 func TestSanitizeHistoryForProvider_ToolAfterUserDropped(t *testing.T) {
 	history := []providers.Message{
 		msg("user", "hello"),
-		toolResult("A"),
+		sanToolResult("A"),
 	}
 
 	result := sanitizeHistoryForProvider(history)
@@ -110,7 +109,7 @@ func TestSanitizeHistoryForProvider_ToolAfterAssistantNoToolCalls(t *testing.T) 
 	history := []providers.Message{
 		msg("user", "hello"),
 		msg("assistant", "hi"),
-		toolResult("A"),
+		sanToolResult("A"),
 	}
 
 	result := sanitizeHistoryForProvider(history)
@@ -122,8 +121,8 @@ func TestSanitizeHistoryForProvider_ToolAfterAssistantNoToolCalls(t *testing.T) 
 
 func TestSanitizeHistoryForProvider_AssistantToolCallAtStart(t *testing.T) {
 	history := []providers.Message{
-		assistantWithTools("A"),
-		toolResult("A"),
+		sanAssistantWithTools("A"),
+		sanToolResult("A"),
 		msg("user", "hello"),
 	}
 
@@ -137,13 +136,13 @@ func TestSanitizeHistoryForProvider_AssistantToolCallAtStart(t *testing.T) {
 func TestSanitizeHistoryForProvider_MultiToolCallsThenNewRound(t *testing.T) {
 	history := []providers.Message{
 		msg("user", "do two things"),
-		assistantWithTools("A", "B"),
-		toolResult("A"),
-		toolResult("B"),
+		sanAssistantWithTools("A", "B"),
+		sanToolResult("A"),
+		sanToolResult("B"),
 		msg("assistant", "done"),
 		msg("user", "hi"),
-		assistantWithTools("C"),
-		toolResult("C"),
+		sanAssistantWithTools("C"),
+		sanToolResult("C"),
 		msg("assistant", "done again"),
 	}
 
@@ -157,12 +156,12 @@ func TestSanitizeHistoryForProvider_MultiToolCallsThenNewRound(t *testing.T) {
 func TestSanitizeHistoryForProvider_ConsecutiveMultiToolRounds(t *testing.T) {
 	history := []providers.Message{
 		msg("user", "start"),
-		assistantWithTools("A", "B"),
-		toolResult("A"),
-		toolResult("B"),
-		assistantWithTools("C", "D"),
-		toolResult("C"),
-		toolResult("D"),
+		sanAssistantWithTools("A", "B"),
+		sanToolResult("A"),
+		sanToolResult("B"),
+		sanAssistantWithTools("C", "D"),
+		sanToolResult("C"),
+		sanToolResult("D"),
 		msg("assistant", "all done"),
 	}
 
@@ -216,9 +215,9 @@ func TestSanitizeHistoryForProvider_IncompleteToolResults(t *testing.T) {
 	// Assistant expects tool results for both A and B, but only A is present
 	history := []providers.Message{
 		msg("user", "do two things"),
-		assistantWithTools("A", "B"),
-		toolResult("A"),
-		// toolResult("B") is missing - this would cause DeepSeek to fail
+		sanAssistantWithTools("A", "B"),
+		sanToolResult("A"),
+		// sanToolResult("B") is missing - this would cause DeepSeek to fail
 		msg("user", "next question"),
 		msg("assistant", "answer"),
 	}
@@ -238,7 +237,7 @@ func TestSanitizeHistoryForProvider_IncompleteToolResults(t *testing.T) {
 func TestSanitizeHistoryForProvider_MissingAllToolResults(t *testing.T) {
 	history := []providers.Message{
 		msg("user", "do something"),
-		assistantWithTools("A"),
+		sanAssistantWithTools("A"),
 		// No tool results at all
 		msg("user", "hello"),
 		msg("assistant", "hi"),
@@ -258,16 +257,16 @@ func TestSanitizeHistoryForProvider_MissingAllToolResults(t *testing.T) {
 func TestSanitizeHistoryForProvider_PartialToolResultsInMiddle(t *testing.T) {
 	history := []providers.Message{
 		msg("user", "first"),
-		assistantWithTools("A"),
-		toolResult("A"),
+		sanAssistantWithTools("A"),
+		sanToolResult("A"),
 		msg("assistant", "done"),
 		msg("user", "second"),
-		assistantWithTools("B", "C"),
-		toolResult("B"),
-		// toolResult("C") is missing
+		sanAssistantWithTools("B", "C"),
+		sanToolResult("B"),
+		// sanToolResult("C") is missing
 		msg("user", "third"),
-		assistantWithTools("D"),
-		toolResult("D"),
+		sanAssistantWithTools("D"),
+		sanToolResult("D"),
 		msg("assistant", "all done"),
 	}
 

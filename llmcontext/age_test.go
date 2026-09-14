@@ -169,7 +169,7 @@ func TestSelectTail_AgeCapDropsOldGroups(t *testing.T) {
 		msg("assistant", "recent reply"),
 	}
 	stored := storedAt(history, 30, 30, 1, 1) // days old
-	tail, start := selectTail(stored, 0, 0, 5*24*time.Hour, testNow, estimateTokens)
+	tail, start := selectTail(stored, 0, 0, 5*24*time.Hour, testNow, estimateTokens, nil)
 
 	if len(tail) != 2 {
 		t.Fatalf("want the 2 recent messages retained, got %d", len(tail))
@@ -192,7 +192,7 @@ func TestSelectTail_AgeCapRespectsMinFloor(t *testing.T) {
 		msg("user", "three"),
 	}
 	stored := storedAt(history, 90, 90, 90) // everything far past the cap
-	tail, _ := selectTail(stored, 0, 2, 5*24*time.Hour, testNow, estimateTokens)
+	tail, _ := selectTail(stored, 0, 2, 5*24*time.Hour, testNow, estimateTokens, nil)
 	if len(tail) < 2 {
 		t.Fatalf("min-messages floor must override the age cap; got %d messages", len(tail))
 	}
@@ -202,7 +202,7 @@ func TestSelectTail_AgeCapRespectsMinFloor(t *testing.T) {
 func TestSelectTail_AgeCapDisabled(t *testing.T) {
 	history := []providers.Message{msg("user", "old"), msg("assistant", "older")}
 	stored := storedAt(history, 900, 900)
-	tail, start := selectTail(stored, 0, 0, 0, testNow, estimateTokens)
+	tail, start := selectTail(stored, 0, 0, 0, testNow, estimateTokens, nil)
 	if len(tail) != 2 || start != 0 {
 		t.Errorf("maxAge=0 must disable the age cap; got %d messages, start %d", len(tail), start)
 	}
@@ -215,7 +215,7 @@ func TestSelectTail_ZeroTimestampNotAged(t *testing.T) {
 		{Seq: 1, Message: msg("user", "no timestamp")},
 		{Seq: 2, Message: msg("assistant", "also none")},
 	}
-	tail, _ := selectTail(stored, 0, 0, time.Hour, testNow, estimateTokens)
+	tail, _ := selectTail(stored, 0, 0, time.Hour, testNow, estimateTokens, nil)
 	if len(tail) != 2 {
 		t.Errorf("zero timestamps must never be treated as old; got %d messages", len(tail))
 	}

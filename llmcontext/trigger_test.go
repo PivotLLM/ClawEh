@@ -87,7 +87,7 @@ func newTestManager(store session.SessionStore, opts ...Option) *Manager {
 	// and the real 4000-token reserve would dominate every one of them. Tests
 	// that care about the reserve pass WithOverheadTokens explicitly — options
 	// are applied in order, so a later one wins.
-	cm := New("test-session", store, nil, nil, append([]Option{WithOverheadTokens(0)}, opts...)...)
+	cm := New("test-session", store, append([]Option{WithOverheadTokens(0)}, opts...)...)
 	return cm.(*Manager)
 }
 

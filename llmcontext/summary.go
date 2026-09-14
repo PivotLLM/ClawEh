@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/PivotLLM/ClawEh/logger"
+	"github.com/PivotLLM/ClawEh/llmcontext/logger"
 )
 
 const summaryVersion = 2

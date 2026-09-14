@@ -6,7 +6,6 @@ package llmcontext
 import (
 	"time"
 
-	"github.com/PivotLLM/ClawEh/cronmsg"
 	"github.com/PivotLLM/ClawEh/memory"
 	"github.com/PivotLLM/ClawEh/providers"
 )
@@ -35,19 +34,24 @@ import (
 // A budget <= 0 disables the budget check and a maxAge <= 0 disables the age
 // check; the floor always applies. estimate converts a message slice into an
 // estimated token count; pass the Manager's estTokens so the configured divisor
-// and safety margin apply.
+// and safety margin apply. noise identifies repeated fires of one source (nil
+// means none are recognised).
 func selectTail(
 	stored []memory.StoredMessage,
 	budget, minMessages int,
 	maxAge time.Duration,
 	now time.Time,
 	estimate func([]providers.Message) int,
+	noise NoiseKeyFunc,
 ) ([]memory.StoredMessage, int) {
 	if len(stored) == 0 {
 		return nil, 0
 	}
 	if estimate == nil {
 		estimate = estimateTokens
+	}
+	if noise == nil {
+		noise = noNoiseKey
 	}
 
 	plain := storedToPlain(stored)
@@ -60,7 +64,7 @@ func selectTail(
 	for i >= 0 {
 		g := resolveGroup(plain, i)
 		cost := estimate(plain[g.start : g.end+1])
-		meaningful := countMeaningfulMessages(plain[g.start : g.end+1])
+		meaningful := countMeaningfulMessages(plain[g.start:g.end+1], noise)
 
 		fits := budget <= 0 || totalTokens+cost <= budget
 		// A group is judged by its OLDEST message: turn groups span seconds, so
@@ -87,7 +91,7 @@ func selectTail(
 	if start >= len(stored) {
 		return nil, len(stored)
 	}
-	tail := collapseStoredNoise(stored[start:])
+	tail := collapseStoredNoise(stored[start:], noise)
 	return tail, len(stored) - len(tail)
 }
 
@@ -144,18 +148,18 @@ func resolveGroup(history []providers.Message, end int) groupBounds {
 
 // countMeaningfulMessages counts non-noise messages in a slice using the same
 // stateful noise definition as the storage layer: identical content for the same
-// role, or identical cron key (fingerprint-or-payload) for cron-wrapper messages.
-func countMeaningfulMessages(msgs []providers.Message) int {
+// role, or an identical noise key for repeated-source messages.
+func countMeaningfulMessages(msgs []providers.Message, noise NoiseKeyFunc) int {
 	lastByRole := make(map[string]string)
-	lastCron := ""
+	lastKey := ""
 	n := 0
 	for _, m := range msgs {
-		if isTailNoise(m, lastByRole, lastCron) {
+		if isTailNoise(m, lastByRole, lastKey, noise) {
 			continue
 		}
 		n++
-		if key, ok := cronmsg.CollapseKey(m.Content); ok {
-			lastCron = key
+		if key, ok := noise(m.Content); ok {
+			lastKey = key
 		}
 		lastByRole[m.Role] = m.Content
 	}
@@ -164,19 +168,19 @@ func countMeaningfulMessages(msgs []providers.Message) int {
 
 // collapseStoredNoise removes redundant consecutive noise messages, keeping at
 // most one instance from each run of identical same-role messages.
-func collapseStoredNoise(msgs []memory.StoredMessage) []memory.StoredMessage {
+func collapseStoredNoise(msgs []memory.StoredMessage, noise NoiseKeyFunc) []memory.StoredMessage {
 	if len(msgs) == 0 {
 		return msgs
 	}
 	out := make([]memory.StoredMessage, 0, len(msgs))
 	lastByRole := make(map[string]string)
-	lastCron := ""
+	lastKey := ""
 	for _, m := range msgs {
-		if isTailNoise(m.Message, lastByRole, lastCron) {
+		if isTailNoise(m.Message, lastByRole, lastKey, noise) {
 			continue
 		}
-		if key, ok := cronmsg.CollapseKey(m.Content); ok {
-			lastCron = key
+		if key, ok := noise(m.Content); ok {
+			lastKey = key
 		}
 		lastByRole[m.Role] = m.Content
 		out = append(out, m)
@@ -195,14 +199,14 @@ func collapseStoredNoise(msgs []memory.StoredMessage) []memory.StoredMessage {
 // mirror reason: two calls to one tool can legitimately return the same text,
 // and dropping the second breaks the assistant message that expects it.
 //
-// Noise collapse exists for repeated conversational text — cron wrappers, a user
-// sending the same thing twice — not for structural messages.
-func isTailNoise(m providers.Message, lastByRole map[string]string, lastCron string) bool {
+// Noise collapse exists for repeated conversational text — scheduled-job
+// wrappers, a user sending the same thing twice — not for structural messages.
+func isTailNoise(m providers.Message, lastByRole map[string]string, lastKey string, noise NoiseKeyFunc) bool {
 	if len(m.ToolCalls) > 0 || m.ToolCallID != "" {
 		return false
 	}
-	if key, ok := cronmsg.CollapseKey(m.Content); ok {
-		return key != "" && key == lastCron
+	if key, ok := noise(m.Content); ok {
+		return key != "" && key == lastKey
 	}
 	prev, ok := lastByRole[m.Role]
 	return ok && m.Content == prev

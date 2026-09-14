@@ -50,13 +50,13 @@ func TestCompactionState_PersistedAndRestoredOnRestart(t *testing.T) {
 	llm := &mockLLM{
 		responses: []string{validSummaryJSON("persistent goal")},
 	}
-	mgr1 := New(sessionKey, store, nil, nil,
+	mgr1 := New(sessionKey, store,
 		WithContextWindow(2000),
 		WithNormalPercent(50),
 		WithSafetyPercent(80),
 		WithRetainTokenPercent(20),
 		WithRetainMinMessages(2),
-		WithCompressLLM(llm),
+		WithModelCaller(llm),
 	).(*Manager)
 	mgr1.msgCount = len(history)
 
@@ -72,7 +72,7 @@ func TestCompactionState_PersistedAndRestoredOnRestart(t *testing.T) {
 	}
 
 	// Simulate restart: create a second Manager on the same store.
-	mgr2 := New(sessionKey, store, nil, nil,
+	mgr2 := New(sessionKey, store,
 		WithContextWindow(2000),
 		WithNormalPercent(50),
 		WithSafetyPercent(80),
@@ -107,7 +107,7 @@ func TestCompactionState_CoolingRestoredOnRestart(t *testing.T) {
 		t.Fatalf("SetCompactionState: %v", err)
 	}
 
-	mgr := New(sessionKey, store, nil, nil).(*Manager)
+	mgr := New(sessionKey, store).(*Manager)
 
 	if mgr.msgCount != wantState.MeaningfulCount {
 		t.Errorf("msgCount: got %d, want %d", mgr.msgCount, wantState.MeaningfulCount)
@@ -130,7 +130,7 @@ func TestCompactionState_InMemoryStoreWorksWithZeroState(t *testing.T) {
 		{Role: "user", Content: "hello"},
 	}
 
-	mgr := New("zero-session", store, nil, nil).(*Manager)
+	mgr := New("zero-session", store).(*Manager)
 
 	if mgr.msgCount != 0 {
 		t.Errorf("expected msgCount=0 for in-memory store; got %d", mgr.msgCount)
@@ -146,7 +146,7 @@ func TestStats_ReturnsMsgCount(t *testing.T) {
 	store := newMockStore()
 	store.history["stats-session"] = makeConversation(3, 50)
 
-	mgr := New("stats-session", store, nil, nil).(*Manager)
+	mgr := New("stats-session", store).(*Manager)
 	mgr.msgCount = 7
 
 	stats := mgr.Stats()
@@ -165,13 +165,13 @@ func TestCompactionState_WrittenAfterPersistResult(t *testing.T) {
 	store.SetHistory(sessionKey, history)
 
 	llm := &mockLLM{responses: []string{validSummaryJSON("write-back goal")}}
-	mgr := New(sessionKey, store, nil, nil,
+	mgr := New(sessionKey, store,
 		WithContextWindow(2000),
 		WithNormalPercent(50),
 		WithSafetyPercent(80),
 		WithRetainTokenPercent(20),
 		WithRetainMinMessages(2),
-		WithCompressLLM(llm),
+		WithModelCaller(llm),
 	).(*Manager)
 	mgr.msgCount = len(history)
 

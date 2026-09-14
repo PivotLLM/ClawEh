@@ -12,17 +12,17 @@ import (
 )
 
 // newCheckCompressManager builds a Manager for CheckAndCompress tests.
-func newCheckCompressManager(store *mockStore, clients []LLMClient, opts ...Option) *Manager {
+func newCheckCompressManager(store *mockStore, clients []*mockLLM, opts ...Option) *Manager {
 	baseOpts := []Option{
 		WithContextWindow(10000),
 		WithNormalPercent(50),
 		WithSafetyPercent(80),
 		WithRetainTokenPercent(20),
 		WithRetainMinMessages(2),
-		WithCompressLLM(clients...),
+		WithModelCaller(chainOf(clients)),
 	}
 	baseOpts = append(baseOpts, opts...)
-	cm := New("sess", store, nil, nil, baseOpts...)
+	cm := New("sess", store, baseOpts...)
 	return cm.(*Manager)
 }
 
@@ -167,7 +167,7 @@ func TestCheckAndCompress_CompressionFiredReturnsFreshSlice(t *testing.T) {
 		responses: []string{validSummaryJSON("fresh slice goal")},
 	}
 
-	mgr := newCheckCompressManager(store, []LLMClient{llm},
+	mgr := newCheckCompressManager(store, []*mockLLM{llm},
 		WithContextWindow(1000),
 		WithNormalPercent(50),
 		WithSafetyPercent(80),

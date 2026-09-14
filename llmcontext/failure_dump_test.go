@@ -1,47 +1,48 @@
 package llmcontext
 
 import (
-	"bytes"
-	"os"
-	"path/filepath"
+	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/PivotLLM/ClawEh/logger"
+	"github.com/PivotLLM/ClawEh/llmcontext/logger"
 	"github.com/PivotLLM/ClawEh/providers"
 )
 
-type syncBuf struct {
-	mu  sync.Mutex
-	buf bytes.Buffer
+// captureBackend collects the engine's log events for assertions.
+type captureBackend struct {
+	mu     sync.Mutex
+	events []string
 }
 
-func (s *syncBuf) Write(p []byte) (int, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.buf.Write(p)
+func (c *captureBackend) Log(level, component, message string, fields map[string]any) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.events = append(c.events, fmt.Sprintf("%s %s %s %v", level, component, message, fields))
 }
 
-func (s *syncBuf) String() string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.buf.String()
+func (c *captureBackend) String() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return strings.Join(c.events, "\n")
 }
 
 // TestCompactionRecorder_LogsOutcome verifies every attempt logs a per-model
-// success/failure line (independent of debug capture), naming the model.
+// success/failure line (independent of debug capture), naming the model,
+// through the injectable logging seam.
 func TestCompactionRecorder_LogsOutcome(t *testing.T) {
-	var buf syncBuf
-	restore := logger.RedirectForTest(&buf)
-	defer restore()
+	capture := &captureBackend{}
+	logger.SetBackend(capture)
+	defer logger.SetBackend(nil)
 
 	rec := &compactionRecorder{sessionKey: "sess"}
 	rec.record("openai/gpt-5.4", "error", "invalid JSON response", time.Second, nil, "")
 	rec.record("deepseek/deepseek-v4-pro", "ok", "", time.Second, nil, "{}")
 
-	out := buf.String()
+	out := capture.String()
 	if !strings.Contains(out, "compression model failed") || !strings.Contains(out, "openai/gpt-5.4") {
 		t.Errorf("missing failure outcome log for gpt-5.4:\n%s", out)
 	}
@@ -50,60 +51,61 @@ func TestCompactionRecorder_LogsOutcome(t *testing.T) {
 	}
 }
 
-func jsonDumps(t *testing.T, dir string) []string {
-	t.Helper()
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil
-	}
-	var out []string
-	for _, e := range entries {
-		if strings.HasSuffix(e.Name(), ".json") {
-			out = append(out, e.Name())
-		}
-	}
-	return out
+// dumpSink is a FailureDumpFunc that records what it was handed.
+type dumpSink struct {
+	kinds   []string
+	metas   []map[string]any
+	inputs  []string
+	outputs []string
 }
 
-// TestCompactionRecorder_DumpsFailuresOnly verifies that with failureDumpDir set,
-// a failed attempt writes a compress_fail dump (request + raw response) to
-// logs/dumps, while a successful attempt writes nothing.
+func (d *dumpSink) write(kind string, meta map[string]any, input, output string) error {
+	d.kinds = append(d.kinds, kind)
+	d.metas = append(d.metas, meta)
+	d.inputs = append(d.inputs, input)
+	d.outputs = append(d.outputs, output)
+	return nil
+}
+
+// TestCompactionRecorder_DumpsFailuresOnly verifies that with a failure-dump
+// sink set, a failed attempt hands over a compress_fail dump (request + raw
+// response as JSON) while a successful attempt hands over nothing.
 func TestCompactionRecorder_DumpsFailuresOnly(t *testing.T) {
-	dir := t.TempDir()
-	rec := &compactionRecorder{sessionKey: "sess-1", failureDumpDir: dir}
+	sink := &dumpSink{}
+	rec := &compactionRecorder{sessionKey: "sess-1", failureDump: sink.write}
 
 	req := []providers.Message{{Role: "user", Content: "summarize the conversation"}}
 	rec.record("gpt-5.4", "error", "invalid JSON response", time.Second, req, "Sorry, I can't comply.")
 
-	dumps := jsonDumps(t, dir)
-	if len(dumps) != 1 {
-		t.Fatalf("expected 1 failure dump, got %d (%v)", len(dumps), dumps)
+	if len(sink.kinds) != 1 || sink.kinds[0] != "compress_fail" {
+		t.Fatalf("expected 1 compress_fail dump, got %v", sink.kinds)
 	}
-	data, err := os.ReadFile(filepath.Join(dir, dumps[0]))
-	if err != nil {
-		t.Fatal(err)
+	meta := sink.metas[0]
+	if meta["model"] != "gpt-5.4" || meta["status"] != "error" || meta["detail"] != "invalid JSON response" || meta["session"] != "sess-1" {
+		t.Errorf("dump meta = %v", meta)
 	}
-	body := string(data)
-	for _, want := range []string{"compress_fail", "gpt-5.4", "invalid JSON response", "Sorry, I can't comply."} {
-		if !strings.Contains(body, want) {
-			t.Errorf("dump missing %q:\n%s", want, body)
-		}
+	var gotReq []providers.Message
+	if err := json.Unmarshal([]byte(sink.inputs[0]), &gotReq); err != nil || len(gotReq) != 1 || gotReq[0].Content != req[0].Content {
+		t.Errorf("dump input is not the JSON request: %q (%v)", sink.inputs[0], err)
+	}
+	var gotResp string
+	if err := json.Unmarshal([]byte(sink.outputs[0]), &gotResp); err != nil || gotResp != "Sorry, I can't comply." {
+		t.Errorf("dump output is not the JSON-encoded raw response: %q (%v)", sink.outputs[0], err)
 	}
 
 	// A successful attempt must not add a dump.
 	rec.record("gpt-5.4", "ok", "", time.Second, req, `{"version":2}`)
-	if got := len(jsonDumps(t, dir)); got != 1 {
+	if got := len(sink.kinds); got != 1 {
 		t.Errorf("ok attempt should not dump; dump count = %d, want 1", got)
 	}
 }
 
-// TestCompactionRecorder_NoDumpWhenDisabled verifies that with no failureDumpDir,
-// failures are not dumped.
+// TestCompactionRecorder_NoDumpWhenDisabled verifies that with no sink set,
+// failures are recorded without any dump attempt.
 func TestCompactionRecorder_NoDumpWhenDisabled(t *testing.T) {
-	dir := t.TempDir()
-	rec := &compactionRecorder{sessionKey: "sess-2"} // failureDumpDir empty
+	rec := &compactionRecorder{sessionKey: "sess-2"} // failureDump nil
 	rec.record("m", "error", "boom", time.Second, nil, "x")
-	if got := len(jsonDumps(t, dir)); got != 0 {
-		t.Errorf("expected no dumps when disabled, got %d", got)
+	if len(rec.attempts) != 1 {
+		t.Fatalf("attempt not recorded: %+v", rec.attempts)
 	}
 }

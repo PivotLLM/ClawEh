@@ -3,10 +3,28 @@
 
 package llmcontext
 
-import "github.com/PivotLLM/ClawEh/providers"
-
 // Option is a functional option for configuring a Manager.
 type Option func(*managerConfig)
+
+// FailureDumpFunc writes a diagnostic snapshot of one failed summarization
+// attempt. kind is the dump reason ("compress_fail"), meta carries the
+// session, model, status and detail, and input/output are the JSON-encoded
+// request and raw response.
+type FailureDumpFunc func(kind string, meta map[string]any, input, output string) error
+
+// RefusalClassifier decides whether a model reply that did not yield a valid
+// summary was a content-policy refusal rather than a malformed answer, and
+// returns a short human-readable detail when it was.
+type RefusalClassifier func(finishReason, content string) (refused bool, detail string)
+
+// NoiseKeyFunc identifies messages that are repeated fires of one source (a
+// scheduled job, for instance) by a key: two messages with the same key are
+// duplicates whatever their timestamps say, and runs of them collapse. ok is
+// false for content that is not such a message.
+type NoiseKeyFunc func(content string) (key string, ok bool)
+
+// noNoiseKey is the default NoiseKeyFunc: nothing collapses.
+func noNoiseKey(string) (string, bool) { return "", false }
 
 const (
 	defaultMinPercent       = 20
@@ -98,9 +116,10 @@ type managerConfig struct {
 	retainMaxAgeDays int
 	// triggerDays fires compaction when the oldest live message exceeds this
 	// age, bypassing minPercent. 0 disables the trigger.
-	triggerDays         int
-	compressModel       ModelChain
-	compressClients     []LLMClient
+	triggerDays   int
+	compressModel ModelChain
+	// caller is the host's summarization model; nil disables compaction.
+	caller              ModelCaller
 	archiveMessageCount int
 	archiveDays         int
 	// summaryMaxCount caps the number of stored summaries (keep newest N).
@@ -137,16 +156,15 @@ type managerConfig struct {
 	// a file named "COMPRESSION.md" (or legacy "compression.md") exists there, its content is appended to the
 	// summarization prompt so agents can declare role-specific compression rules.
 	compressionProfileDir string
-	// compressFailureDumpDir, when non-empty, is the logs/dumps directory to
-	// which the request + raw response of each FAILED summarization attempt is
-	// written for diagnosis.
-	compressFailureDumpDir string
-	// cooldownPolicy, when non-nil, sets the summarization-model cooldown policy.
-	// Nil resolves to providers.DefaultCooldownPolicy() in New().
-	cooldownPolicy *providers.CooldownPolicy
-	// cooldownTracker, when non-nil, is shared with the compaction path instead
-	// of building a private tracker (so cooldowns are unified with the main chain).
-	cooldownTracker *providers.CooldownTracker
+	// failureDump, when set, receives the request + raw response of each FAILED
+	// summarization attempt for diagnosis.
+	failureDump FailureDumpFunc
+	// refusalClassifier recognises content refusals in unusable replies. Nil
+	// resolves to the built-in classifier.
+	refusalClassifier RefusalClassifier
+	// noiseKey identifies repeated fires of one source so runs collapse. Nil
+	// resolves to noNoiseKey (no collapsing).
+	noiseKey NoiseKeyFunc
 	// eviction is the per-turn tool-result eviction policy. Defaults to
 	// DefaultEvictionPolicy() (enabled); override via WithEvictionPolicy.
 	eviction EvictionPolicy
@@ -235,26 +253,30 @@ func WithCompressModel(model ModelChain) Option {
 	return func(c *managerConfig) { c.compressModel = model }
 }
 
-// WithCompressLLM sets the callable clients used by compress(). The agent layer
-// resolves ModelChain → []LLMClient and passes them here. If not set, the llm
-// passed to New() is used for compression.
-func WithCompressLLM(clients ...LLMClient) Option {
-	return func(c *managerConfig) { c.compressClients = clients }
+// WithModelCaller sets the host's summarization model. The host walks its own
+// chain (fallbacks, cooldowns) inside Complete; the engine re-calls with a
+// longer Exclude list when a reply is unusable. Without a caller, compaction
+// reports "nothing" and never summarizes.
+func WithModelCaller(c ModelCaller) Option {
+	return func(cfg *managerConfig) { cfg.caller = c }
 }
 
-// WithCooldownPolicy sets the cooldown policy applied to summarization models so
-// the compaction path matches the main fallback chain. When unset, the built-in
-// default policy is used. Ignored when WithCooldownTracker is also set.
-func WithCooldownPolicy(p providers.CooldownPolicy) Option {
-	return func(c *managerConfig) { c.cooldownPolicy = &p }
+// WithFailureDump sets the sink for diagnostic snapshots of failed
+// summarization attempts. Nil (the default) disables the dumps.
+func WithFailureDump(fn FailureDumpFunc) Option {
+	return func(c *managerConfig) { c.failureDump = fn }
 }
 
-// WithCooldownTracker shares an existing cooldown tracker with the compaction
-// path — pass the main fallback chain's tracker so a model parked by either path
-// (e.g. an out-of-credits 402) is skipped by both. Takes precedence over
-// WithCooldownPolicy.
-func WithCooldownTracker(t *providers.CooldownTracker) Option {
-	return func(c *managerConfig) { c.cooldownTracker = t }
+// WithRefusalClassifier replaces the built-in content-refusal classifier.
+func WithRefusalClassifier(fn RefusalClassifier) Option {
+	return func(c *managerConfig) { c.refusalClassifier = fn }
+}
+
+// WithNoiseKey sets the function that recognises repeated fires of one source
+// (the host's scheduled-job wrapper, say) so the tail and the summarizer input
+// collapse runs of them. Without it no message is treated as a repeat.
+func WithNoiseKey(fn NoiseKeyFunc) Option {
+	return func(c *managerConfig) { c.noiseKey = fn }
 }
 
 func WithArchiveMessageCount(n int) Option {
@@ -361,13 +383,6 @@ func WithArchiveContentMaxBytes(n int) Option {
 // prompt, letting agents declare role-specific compression rules and structure.
 func WithCompressionProfileDir(dir string) Option {
 	return func(c *managerConfig) { c.compressionProfileDir = dir }
-}
-
-// WithCompressFailureDumpDir sets the logs/dumps directory to which the request
-// and raw model response of each failed summarization attempt are written.
-// Empty (the default) disables the dumps.
-func WithCompressFailureDumpDir(dir string) Option {
-	return func(c *managerConfig) { c.compressFailureDumpDir = dir }
 }
 
 // CompressionSettings is a read-only snapshot of the compaction knobs an Option

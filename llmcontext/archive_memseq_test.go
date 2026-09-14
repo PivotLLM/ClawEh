@@ -66,7 +66,7 @@ func TestArchiveKeyedByMemorySeq_HighSeqRefsSurviveStrip(t *testing.T) {
 	)
 
 	store := newMockStore()
-	mgr := New("longlived", store, nil, nil,
+	mgr := New("longlived", store,
 		WithContextWindow(100000),
 		WithArchiveDir(t.TempDir()),
 	).(*Manager)

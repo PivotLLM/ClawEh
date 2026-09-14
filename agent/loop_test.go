@@ -1390,7 +1390,7 @@ func TestForceCompression_WithSystemPrompt(t *testing.T) {
 	}
 	agent.Sessions.SetHistory(sessionKey, history)
 
-	mgr := llmcontext.New(sessionKey, agent.Sessions, agent.ContextBuilder, nil,
+	mgr := llmcontext.New(sessionKey, agent.Sessions,
 		llmcontext.WithContextWindow(400),
 		llmcontext.WithSafetyPercent(80),
 	)
@@ -1438,7 +1438,7 @@ func TestForceCompression_NoSystemPrompt(t *testing.T) {
 	}
 	agent.Sessions.SetHistory(sessionKey, history)
 
-	mgr := llmcontext.New(sessionKey, agent.Sessions, agent.ContextBuilder, nil,
+	mgr := llmcontext.New(sessionKey, agent.Sessions,
 		llmcontext.WithContextWindow(400),
 		llmcontext.WithSafetyPercent(80),
 	)

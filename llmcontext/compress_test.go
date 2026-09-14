@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -51,22 +52,21 @@ func (s *compressTestStore) GetHistoryWithSeqs(_ string) []memory.StoredMessage 
 	return stored
 }
 
-// mockLLM is a sequence-based LLM client for testing.
+// mockLLM is a sequence-based summarization model for testing. It plays one
+// model of a host chain: see testChain.
 type mockLLM struct {
-	model         string // reported via Model(); "" leaves attempts labelled "model"
+	model         string // reported on every reply; "" leaves attempts labelled "model"
 	responses     []string
 	errors        []error
 	finishReasons []string // optional, parallel to responses
 	callCount     int
 }
 
-func (m *mockLLM) Model() string { return m.model }
-
-func (m *mockLLM) Complete(_ context.Context, _ []providers.Message) (LLMReply, error) {
+func (m *mockLLM) Complete(_ context.Context, _ ModelRequest) (ModelReply, error) {
 	i := m.callCount
 	m.callCount++
 	if i < len(m.errors) && m.errors[i] != nil {
-		return LLMReply{}, m.errors[i]
+		return ModelReply{Model: m.model}, m.errors[i]
 	}
 	resp := ""
 	if i < len(m.responses) {
@@ -76,7 +76,44 @@ func (m *mockLLM) Complete(_ context.Context, _ []providers.Message) (LLMReply, 
 	if i < len(m.finishReasons) {
 		fr = m.finishReasons[i]
 	}
-	return LLMReply{Content: resp, FinishReason: fr}, nil
+	return ModelReply{Content: resp, FinishReason: fr, Model: m.model}, nil
+}
+
+// testChain walks a list of models the way the host's ModelCaller does: a
+// model named in Exclude is skipped, a transport error moves on to the next
+// model, the first reply wins, and ErrNoModel is returned when nothing is left.
+type testChain struct {
+	models []*mockLLM
+}
+
+func (c *testChain) Complete(ctx context.Context, req ModelRequest) (ModelReply, error) {
+	var lastErr error
+	lastModel := ""
+	for _, m := range c.models {
+		if m.model != "" && slices.Contains(req.Exclude, m.model) {
+			continue
+		}
+		reply, err := m.Complete(ctx, req)
+		if err != nil {
+			lastErr = err
+			lastModel = m.model
+			continue
+		}
+		return reply, nil
+	}
+	if lastErr != nil {
+		return ModelReply{Model: lastModel}, lastErr
+	}
+	return ModelReply{}, ErrNoModel
+}
+
+// chainOf wraps models as one ModelCaller; no models means no caller (the
+// manager then reports "nothing" without summarizing).
+func chainOf(models []*mockLLM) ModelCaller {
+	if len(models) == 0 {
+		return nil
+	}
+	return &testChain{models: models}
 }
 
 // validSummaryJSON produces minimal valid Summary JSON.
@@ -98,7 +135,7 @@ func makeConversation(pairs int, charsPerMessage int) []providers.Message {
 }
 
 // newCompressManager builds a Manager wired for compress tests (no compressHook).
-func newCompressManager(store *compressTestStore, clients []LLMClient, opts ...Option) *Manager {
+func newCompressManager(store *compressTestStore, clients []*mockLLM, opts ...Option) *Manager {
 	baseOpts := []Option{
 		WithContextWindow(10000),
 		// Tests below reason in exact token terms against a small window; the
@@ -109,10 +146,10 @@ func newCompressManager(store *compressTestStore, clients []LLMClient, opts ...O
 		WithSafetyPercent(80),
 		WithRetainTokenPercent(20),
 		WithRetainMinMessages(2),
-		WithCompressLLM(clients...),
+		WithModelCaller(chainOf(clients)),
 	}
 	baseOpts = append(baseOpts, opts...)
-	cm := New("sess", store, nil, nil, baseOpts...)
+	cm := New("sess", store, baseOpts...)
 	return cm.(*Manager)
 }
 
@@ -127,7 +164,7 @@ func TestCompress_PrimarySuccess(t *testing.T) {
 		responses: []string{validSummaryJSON("test goal")},
 	}
 
-	mgr := newCompressManager(store, []LLMClient{llm})
+	mgr := newCompressManager(store, []*mockLLM{llm})
 	mgr.msgCount = len(store.history)
 
 	err := mgr.doCompress(context.Background(), false)
@@ -167,7 +204,7 @@ func TestCompress_RefusalDetectedAndModelSkipped(t *testing.T) {
 		responses: []string{validSummaryJSON("g1"), validSummaryJSON("g2")},
 	}
 
-	mgr := newCompressManager(store, []LLMClient{refuser, worker})
+	mgr := newCompressManager(store, []*mockLLM{refuser, worker})
 	mgr.msgCount = len(store.history)
 
 	if err := mgr.doCompress(context.Background(), false); err != nil {
@@ -203,15 +240,6 @@ func TestCompress_RefusalDetectedAndModelSkipped(t *testing.T) {
 	}
 }
 
-// cooldownMockLLM reports a provider name so it keys cooldown by provider+model
-// like the main fallback chain.
-type cooldownMockLLM struct {
-	mockLLM
-	provider string
-}
-
-func (m *cooldownMockLLM) CooldownProvider() string { return m.provider }
-
 // TestCompress_NeverEmptiesLiveWindow reproduces the "Compacted to 0 messages"
 // bug: a long in-flight tool-call sequence (all assistant tool_calls + tool
 // results, no user/clean anchor) must NOT be compacted away to a system-only
@@ -230,7 +258,7 @@ func TestCompress_NeverEmptiesLiveWindow(t *testing.T) {
 	llm := &mockLLM{responses: []string{
 		validSummaryJSON("a"), validSummaryJSON("b"), validSummaryJSON("c"),
 	}}
-	mgr := newCompressManager(store, []LLMClient{llm})
+	mgr := newCompressManager(store, []*mockLLM{llm})
 	mgr.msgCount = len(history)
 
 	_ = mgr.doCompress(context.Background(), false)
@@ -246,28 +274,6 @@ func TestCompress_NeverEmptiesLiveWindow(t *testing.T) {
 	}
 }
 
-// TestCompress_SharedCooldownSkipsModel verifies that a model parked in the
-// shared cooldown tracker (e.g. an out-of-credits 402 hit by the main chain) is
-// skipped by the compaction path — not retried.
-func TestCompress_SharedCooldownSkipsModel(t *testing.T) {
-	tracker := providers.NewCooldownTrackerWithPolicy(providers.DefaultCooldownPolicy())
-	// Simulate the main chain having parked the model on a 402.
-	tracker.MarkFailure("Abliteration", "abliterated-model", providers.FailoverBilling, 402, 0)
-
-	store := &compressTestStore{history: makeConversation(10, 200)}
-	client := &cooldownMockLLM{
-		provider: "Abliteration",
-		mockLLM:  mockLLM{model: "abliterated-model", responses: []string{validSummaryJSON("x")}},
-	}
-	mgr := newCompressManager(store, []LLMClient{client}, WithCooldownTracker(tracker))
-	mgr.msgCount = len(store.history)
-
-	_ = mgr.doCompress(context.Background(), false)
-	if client.callCount != 0 {
-		t.Fatalf("model cooled in the shared tracker must be skipped by compaction; calls=%d", client.callCount)
-	}
-}
-
 // TestCompress_RetainsLastUserMessage verifies compaction never archives the
 // most recent user turn. A long tool/assistant tail after the last user message
 // would otherwise push it out of the retained window, leaving a payload with no
@@ -280,7 +286,7 @@ func TestCompress_RetainsLastUserMessage(t *testing.T) {
 	}
 	store := &compressTestStore{history: history}
 	llm := &mockLLM{responses: []string{validSummaryJSON("goal")}}
-	mgr := newCompressManager(store, []LLMClient{llm})
+	mgr := newCompressManager(store, []*mockLLM{llm})
 	mgr.msgCount = len(history)
 
 	_ = mgr.doCompress(context.Background(), false)
@@ -297,42 +303,119 @@ func TestCompress_RetainsLastUserMessage(t *testing.T) {
 	}
 }
 
-// TestCompress_BillingFailurePutsModelInCooldown verifies that a summarization
-// model returning a billing (402) error is put in cooldown and not retried on
-// the next compaction — so an out-of-credits compression model is not hammered.
-func TestCompress_BillingFailureCooldown(t *testing.T) {
+// TestCompress_HostErrorNeatened verifies a host transport error is recorded
+// once, attributed to the model the host named, and neatened into the
+// "HTTP 402 (out of credits)" form instead of a raw body dump. Cooling the
+// model is the host's job now; the engine simply stops the call.
+func TestCompress_HostErrorNeatened(t *testing.T) {
 	store := &compressTestStore{history: makeConversation(10, 200)}
-	failing := &modelMockLLM{
-		mockLLM: mockLLM{errors: []error{
-			errors.New("API request failed:   Status: 402   Body: {\"error\":{\"billing_url\":\"x\"}}"),
-			errors.New("API request failed:   Status: 402   Body: {\"error\":{\"billing_url\":\"x\"}}"),
-		}},
+	failing := &mockLLM{
 		model: "abliterated-model",
+		errors: []error{
+			errors.New("API request failed:   Status: 402   Body: {\"error\":{\"billing_url\":\"x\"}}"),
+		},
 	}
-	mgr := newCompressManager(store, []LLMClient{failing})
+	mgr := newCompressManager(store, []*mockLLM{failing},
+		WithMinPercent(1), WithRetainTokenPercent(0), WithRetainMaxTokens(400))
 	mgr.msgCount = len(store.history)
 
-	// First pass: the model is called once, fails with 402, gets cooled.
+	// A hard error ends the call: the loop runs one iteration per prompt type
+	// and each makes exactly one call before giving up.
 	_ = mgr.doCompress(context.Background(), false)
-	if failing.callCount != 1 {
-		t.Fatalf("first pass: callCount = %d, want 1", failing.callCount)
+	rep := mgr.LastCompactionReport()
+	if rep == nil || len(rep.Attempts) == 0 {
+		t.Fatalf("expected attempts in the report: %+v", rep)
+	}
+	if rep.Attempts[0].Model != "abliterated-model" || rep.Attempts[0].Status != "error" ||
+		rep.Attempts[0].Detail != "HTTP 402 (out of credits)" {
+		t.Fatalf("first attempt not neatened: %+v", rep.Attempts[0])
+	}
+	if !rep.hasCooldown() {
+		t.Fatalf("a billing error should read as a cooldown condition: %+v", rep)
+	}
+}
+
+// noModelCaller is a host whose whole chain is unavailable (every model in
+// cooldown or excluded): it answers ErrNoModel without dispatching.
+type noModelCaller struct {
+	err   error
+	calls int
+}
+
+func (c *noModelCaller) Complete(_ context.Context, _ ModelRequest) (ModelReply, error) {
+	c.calls++
+	return ModelReply{}, c.err
+}
+
+// TestCompress_HostNoModelReportsSkipped verifies that when the host has no
+// model to offer (all in cooldown), the pass fails without retrying, and the
+// report carries a single "skipped" line naming the cooldown so the user sees
+// why nothing ran.
+func TestCompress_HostNoModelReportsSkipped(t *testing.T) {
+	store := &compressTestStore{history: makeConversation(10, 200)}
+	host := &noModelCaller{err: fmt.Errorf("%w: 1 in cooldown", ErrNoModel)}
+	mgr := newCompressManager(store, nil, WithModelCaller(host))
+	mgr.msgCount = len(store.history)
+
+	err := mgr.doCompress(context.Background(), false)
+	if !errors.Is(err, ErrCompressionFailed) {
+		t.Fatalf("expected ErrCompressionFailed; got %v", err)
 	}
 	rep := mgr.LastCompactionReport()
-	if rep == nil || len(rep.Attempts) == 0 || rep.Attempts[0].Detail != "HTTP 402 (out of credits)" {
-		t.Fatalf("first pass detail not neatened: %+v", rep)
+	if rep == nil || len(rep.Attempts) == 0 {
+		t.Fatalf("expected a skipped attempt in the report: %+v", rep)
 	}
+	if rep.Attempts[0].Status != "skipped" || !strings.Contains(rep.Attempts[0].Detail, "cooldown") {
+		t.Fatalf("attempt[0] = %+v; want skipped (cooldown)", rep.Attempts[0])
+	}
+	if !rep.hasCooldown() || !strings.Contains(rep.String(), "cooldown") {
+		t.Fatalf("report should explain the cooldown:\n%s", rep.String())
+	}
+	// One call per loop iteration, never more: the engine does not re-ask a
+	// host that has nothing to offer.
+	if host.calls > 2*defaultMaxCompressIterations {
+		t.Fatalf("host asked %d times for a chain with nothing available", host.calls)
+	}
+}
 
-	// Second pass: the cooled model must be skipped entirely (no new call).
-	store.history = makeConversation(10, 200)
+// TestCompress_ExcludeGrowsWithinOneCall verifies the retry contract: an
+// unusable reply adds its model to Exclude and the host is asked again, so the
+// second request names the first model; a host that ignores Exclude is bounded
+// by maxCompressAttempts.
+func TestCompress_ExcludeGrowsWithinOneCall(t *testing.T) {
+	store := &compressTestStore{history: makeConversation(10, 200)}
+	var seen [][]string
+	stubborn := &recordingCaller{reply: func(req ModelRequest) ModelReply {
+		seen = append(seen, append([]string(nil), req.Exclude...))
+		return ModelReply{Content: invalidSummaryJSON("uncited"), Model: "stubborn"}
+	}}
+	mgr := newCompressManager(store, nil, WithModelCaller(stubborn))
 	mgr.msgCount = len(store.history)
+
 	_ = mgr.doCompress(context.Background(), false)
-	if failing.callCount != 1 {
-		t.Fatalf("second pass: cooled model was retried (callCount = %d, want 1)", failing.callCount)
+
+	if len(seen) < maxCompressAttempts {
+		t.Fatalf("expected at least %d calls in the first iteration, got %d", maxCompressAttempts, len(seen))
 	}
-	rep = mgr.LastCompactionReport()
-	if rep == nil || !rep.hasCooldown() {
-		t.Fatalf("second pass report should reflect cooldown: %+v", rep)
+	if len(seen[0]) != 0 {
+		t.Errorf("first request should exclude nothing, got %v", seen[0])
 	}
+	if !slices.Contains(seen[1], "stubborn") {
+		t.Errorf("second request should exclude the rejected model, got %v", seen[1])
+	}
+	// Per summarization call the cap holds even though the host ignores Exclude.
+	if n := len(seen); n > maxCompressAttempts*2*defaultMaxCompressIterations {
+		t.Errorf("host called %d times; exclusion retry is not bounded", n)
+	}
+}
+
+// recordingCaller is a ModelCaller driven by a function of the request.
+type recordingCaller struct {
+	reply func(ModelRequest) ModelReply
+}
+
+func (c *recordingCaller) Complete(_ context.Context, req ModelRequest) (ModelReply, error) {
+	return c.reply(req), nil
 }
 
 // TestCompress_FallbackSuccess verifies that when the first client fails the
@@ -349,7 +432,7 @@ func TestCompress_FallbackSuccess(t *testing.T) {
 		responses: []string{validSummaryJSON("fallback goal")},
 	}
 
-	mgr := newCompressManager(store, []LLMClient{primary, fallback})
+	mgr := newCompressManager(store, []*mockLLM{primary, fallback})
 	mgr.msgCount = len(store.history)
 
 	err := mgr.doCompress(context.Background(), false)
@@ -385,7 +468,7 @@ func TestCompress_AllFail_Normal(t *testing.T) {
 		},
 	}
 
-	mgr := newCompressManager(store, []LLMClient{llm})
+	mgr := newCompressManager(store, []*mockLLM{llm})
 	mgr.msgCount = len(store.history)
 
 	err := mgr.doCompress(context.Background(), false)
@@ -414,7 +497,7 @@ func TestCompress_AllFail_Safety_Drop(t *testing.T) {
 	}
 	llm := &mockLLM{errors: errList}
 
-	mgr := newCompressManager(store, []LLMClient{llm},
+	mgr := newCompressManager(store, []*mockLLM{llm},
 		WithContextWindow(10000),
 		WithSafetyPercent(80),
 		WithRetainMinMessages(2),
@@ -447,7 +530,7 @@ func TestCompress_StaleSummary(t *testing.T) {
 	}
 	llm := &mockLLM{errors: errList}
 
-	mgr := newCompressManager(store, []LLMClient{llm},
+	mgr := newCompressManager(store, []*mockLLM{llm},
 		WithContextWindow(10000),
 		WithSafetyPercent(80),
 		WithRetainMinMessages(2),
@@ -483,7 +566,7 @@ func TestCompress_NotifyCallback(t *testing.T) {
 	}
 
 	var notifications []string
-	mgr := newCompressManager(store, []LLMClient{llm},
+	mgr := newCompressManager(store, []*mockLLM{llm},
 		WithNotifyCallback(func(msg string) {
 			notifications = append(notifications, msg)
 		}),
@@ -542,7 +625,7 @@ func TestCompress_CoolingSetOnLowGain(t *testing.T) {
 		},
 	}
 
-	mgr := newCompressManager(store, []LLMClient{llm},
+	mgr := newCompressManager(store, []*mockLLM{llm},
 		WithContextWindow(2000),
 		WithNormalPercent(50),
 		WithSafetyPercent(90),

@@ -90,7 +90,6 @@ func (al *AgentLoop) runAgentLoop(
 	// for agents without it) for this session.
 	cm, mem, releaseCtxMgr := al.getSessionContext(agent, opts.SessionKey)
 	defer releaseCtxMgr()
-	cm.SetCallContext(opts.Channel, opts.ChatID)
 
 	// Record the inbound source on the session token record so MCP-routed tool
 	// calls (which bypass the agent loop) can publish their ForUser payloads
@@ -124,15 +123,7 @@ func (al *AgentLoop) runAgentLoop(
 		}
 		// The cleared history no longer references any media; let its files age out.
 		al.releaseSessionPins(opts.SessionKey)
-		al.mu.RLock()
-		sti := al.sessionTokenIssuer
-		al.mu.RUnlock()
-		if sti != nil {
-			archiveDir := filepath.Join(agent.Workspace, "sessions")
-			if tok := sti.Issue(agent.ID, opts.SessionKey, archiveDir); tok != "" {
-				cm.SetSessionToken(tok)
-			}
-		}
+		al.reissueSessionToken(agent, opts.SessionKey)
 	}
 
 	// 2. Save user message and trigger compression check (skip on retry — already in history).
@@ -175,7 +166,7 @@ func (al *AgentLoop) runAgentLoop(
 	// 3. Assemble the request: eviction sweep, safety-net compaction on both
 	// stored history and the built request, and memory placement. Routed
 	// memory is selected from the message the user just sent.
-	asm, buildErr := cm.Assemble(ctx, al.assembleRequest(ctx, agent, mem, opts.UserMessage))
+	asm, buildErr := cm.Assemble(ctx, al.assembleRequest(ctx, agent, mem, opts))
 	if buildErr != nil {
 		return "", fmt.Errorf("context manager assemble: %w", buildErr)
 	}
@@ -503,23 +494,40 @@ func (al *AgentLoop) evictionNotifyUser(agent *AgentInstance) bool {
 }
 
 // assembleRequest builds the per-dispatch request for the context manager:
-// the cost of the tool schemas this dispatch will send, and the memory blocks
-// recalled for routeText (the user's message for this turn). mem may be nil.
-func (al *AgentLoop) assembleRequest(ctx context.Context, agent *AgentInstance, mem *cogmem.Session, routeText string) llmcontext.AssembleRequest {
+// the system-prompt layers for this conversation, the cost of the tool schemas
+// this dispatch will send, the memory blocks recalled for the user's message
+// this turn, and the channel the compaction reporter should answer on. mem
+// may be nil.
+func (al *AgentLoop) assembleRequest(ctx context.Context, agent *AgentInstance, mem *cogmem.Session, opts processOptions) llmcontext.AssembleRequest {
 	defs := agent.Tools.ToProviderDefs()
 	if agent.NoTools {
 		defs = nil
 	}
-	return al.assembleRequestWithDefs(ctx, agent, mem, routeText, defs)
+	return al.assembleRequestWithDefs(ctx, agent, mem, opts, defs)
 }
 
 // assembleRequestWithDefs is assembleRequest for a caller that already holds
 // this dispatch's tool definitions.
-func (al *AgentLoop) assembleRequestWithDefs(ctx context.Context, _ *AgentInstance, mem *cogmem.Session, routeText string, defs []providers.ToolDefinition) llmcontext.AssembleRequest {
+func (al *AgentLoop) assembleRequestWithDefs(ctx context.Context, agent *AgentInstance, mem *cogmem.Session, opts processOptions, defs []providers.ToolDefinition) llmcontext.AssembleRequest {
 	return llmcontext.AssembleRequest{
 		ToolDefinitionTokens: llmcontext.EstimateToolDefinitionTokens(defs),
-		Injections:           recallInjections(ctx, mem, routeText),
+		Layers:               al.promptLayers(agent, opts),
+		Injections:           recallInjections(ctx, mem, opts.UserMessage),
+		Channel:              opts.Channel,
+		ChatID:               opts.ChatID,
 	}
+}
+
+// promptLayers is the system prompt for one dispatch: the agent's static and
+// dynamic prompt for this channel/chat, then the session token behind the
+// summary. A test that injects a bare instance without a ContextBuilder gets
+// only the token layer.
+func (al *AgentLoop) promptLayers(agent *AgentInstance, opts processOptions) []llmcontext.Layer {
+	var layers []llmcontext.Layer
+	if agent.ContextBuilder != nil {
+		layers = agent.ContextBuilder.PromptLayers(opts.Channel, opts.ChatID)
+	}
+	return append(layers, sessionTokenLayer(al.sessionToken(agent, opts.SessionKey)))
 }
 
 func (al *AgentLoop) runLLMIteration(
@@ -646,7 +654,7 @@ func (al *AgentLoop) runLLMIteration(
 		// steering messages and already-resolved media — so only a changed
 		// assembly replaces it. Tool-schema cost rides on the request so every
 		// trigger measures the real request and not stored history alone.
-		if asm, aerr := cm.Assemble(ctx, al.assembleRequestWithDefs(ctx, agent, mem, opts.UserMessage, providerToolDefs)); aerr != nil {
+		if asm, aerr := cm.Assemble(ctx, al.assembleRequestWithDefs(ctx, agent, mem, opts, providerToolDefs)); aerr != nil {
 			logger.WarnCF("agent", "assemble failed (continuing with current slice)", map[string]any{
 				"agent_id": agent.ID,
 				"error":    aerr.Error(),
@@ -905,8 +913,7 @@ func (al *AgentLoop) runLLMIteration(
 					logger.WarnCF("agent", "force compression failed",
 						map[string]any{"error": ferr.Error(), "session": opts.SessionKey})
 				}
-				comprMgr.SetCallContext(opts.Channel, opts.ChatID)
-				if asm, berr := comprMgr.Assemble(ctx, al.assembleRequestWithDefs(ctx, agent, mem, opts.UserMessage, providerToolDefs)); berr == nil {
+				if asm, berr := comprMgr.Assemble(ctx, al.assembleRequestWithDefs(ctx, agent, mem, opts, providerToolDefs)); berr == nil {
 					messages = asm.Messages
 				}
 
@@ -1483,7 +1490,7 @@ func (al *AgentLoop) runLLMIteration(
 // serve this turn's primary chat dispatch. When activeCandidates has at least
 // one entry the first candidate's (protocol, model) pair is resolved through
 // the per-model dispatcher; otherwise the agent's primary model is resolved
-// through the dispatcher in the same way buildDefaultCompressLLMClient does.
+// through the dispatcher in the same way resolveDefaultCompressClient does.
 //
 // Falls back to (agent.Provider, activeModel) only when the dispatcher cannot
 // satisfy the request — mirroring the compress-empty-fallback safety net in

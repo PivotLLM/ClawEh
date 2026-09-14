@@ -1,7 +1,7 @@
 // ClawEh
 // License: MIT
 
-package agent
+package llmcontext
 
 import (
 	"testing"

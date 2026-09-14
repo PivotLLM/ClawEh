@@ -8,27 +8,28 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
-	"github.com/PivotLLM/ClawEh/logger"
+	"github.com/PivotLLM/ClawEh/llmcontext/logger"
 	"github.com/PivotLLM/ClawEh/memory"
 	"github.com/PivotLLM/ClawEh/providers"
 	"github.com/PivotLLM/ClawEh/session"
 )
 
-// Manager implements ContextManager using a SessionStore for persistence and a
-// MessageBuilder for system-prompt assembly.
+// Manager implements ContextManager over a SessionStore. The system prompt is
+// composed from the Layers the host passes on every Assemble; the manager owns
+// the rendered summary, the history and the injections.
 type Manager struct {
 	sessionKey string
 	store      session.SessionStore
-	builder    MessageBuilder
-	llm        LLMClient
 	cfg        managerConfig
 
-	// channel/chatID updated per-call via SetCallContext for use in Build()
-	channel string
-	chatID  string
+	// lastChannel/lastChatID are the conversation of the most recent Assemble,
+	// remembered so the automatic compaction path can deliver its report.
+	lastChannel string
+	lastChatID  string
 
 	// trigger state — in-memory
 	msgCount          int  // total messages added since last compression
@@ -58,8 +59,8 @@ type Manager struct {
 	// trigger another pass against the same boundary, and the next, and the next.
 	ageTriggerFloor time.Time
 
-	// compression clients resolved at construction time
-	compressClients []LLMClient
+	// caller is the host's summarization model; nil disables compaction.
+	caller ModelCaller
 
 	// refusedModels tracks summarization models that refused this session's
 	// content on content-policy grounds. Such models are skipped on subsequent
@@ -68,13 +69,6 @@ type Manager struct {
 	// ContextManager is rebuilt (config reload / restart). Guarded by refusedMu.
 	refusedModels map[string]bool
 	refusedMu     sync.Mutex
-
-	// cooldown applies the shared, config-driven cooldown policy to summarization
-	// models: a model that fails with a cooldownable HTTP status (billing/auth/
-	// rate-limit/server/etc.) is skipped until its cooldown expires, so a
-	// credits-exhausted compression model is not hammered on every compaction.
-	// Same policy as the main fallback chain; in-memory, per-manager.
-	cooldown *providers.CooldownTracker
 
 	// compression outcome tracking
 	lastCompressedAt    time.Time
@@ -85,11 +79,6 @@ type Manager struct {
 	// archiveMu guards lazy initialisation; read operations do not need it.
 	archive   *memory.ArchiveStore
 	archiveMu sync.Mutex
-
-	// sessionToken is the SST-prefixed per-session MCP token injected into the
-	// system prompt by Build() so the LLM can call session-scoped tools. Set
-	// via SetSessionToken; empty means no injection.
-	sessionToken string
 
 	// compressHook is called by compress() when non-nil. Only for testing.
 	compressHook func(safetyNet bool)
@@ -114,8 +103,6 @@ type Manager struct {
 func New(
 	sessionKey string,
 	store session.SessionStore,
-	builder MessageBuilder,
-	llm LLMClient,
 	opts ...Option,
 ) ContextManager {
 	cfg := defaultManagerConfig()
@@ -194,31 +181,11 @@ func New(
 			})
 	}
 
-	// Resolve compression clients: prefer explicit list, fall back to primary llm.
-	clients := cfg.compressClients
-	if len(clients) == 0 && llm != nil {
-		clients = []LLMClient{llm}
-	}
-
-	// Prefer a shared tracker (unified with the main fallback chain); otherwise
-	// build a private one from the policy.
-	cooldown := cfg.cooldownTracker
-	if cooldown == nil {
-		policy := providers.DefaultCooldownPolicy()
-		if cfg.cooldownPolicy != nil {
-			policy = *cfg.cooldownPolicy
-		}
-		cooldown = providers.NewCooldownTrackerWithPolicy(policy)
-	}
-
 	m := &Manager{
-		sessionKey:      sessionKey,
-		store:           store,
-		builder:         builder,
-		llm:             llm,
-		cfg:             cfg,
-		compressClients: clients,
-		cooldown:        cooldown,
+		sessionKey: sessionKey,
+		store:      store,
+		cfg:        cfg,
+		caller:     cfg.caller,
 	}
 
 	// 9c. Load durable compaction state if the store supports it.
@@ -236,12 +203,21 @@ func New(
 	return m
 }
 
-// SetCallContext records the channel and chatID for the current call. The agent
-// loop calls this before Build() so the system prompt receives the correct
-// session context.
-func (m *Manager) SetCallContext(channel, chatID string) {
-	m.channel = channel
-	m.chatID = chatID
+// classifyRefusal applies the configured refusal classifier, or the built-in
+// one when none was set (including on a zero Manager).
+func (m *Manager) classifyRefusal(finishReason, content string) (bool, string) {
+	if m.cfg.refusalClassifier != nil {
+		return m.cfg.refusalClassifier(finishReason, content)
+	}
+	return defaultRefusalClassifier(finishReason, content)
+}
+
+// noiseKey returns the configured NoiseKeyFunc, or the no-op default.
+func (m *Manager) noiseKey() NoiseKeyFunc {
+	if m.cfg.noiseKey != nil {
+		return m.cfg.noiseKey
+	}
+	return noNoiseKey
 }
 
 func (m *Manager) AddUserMessage(ctx context.Context, msg providers.Message) (int64, error) {
@@ -308,18 +284,21 @@ func (m *Manager) AddToolResult(_ context.Context, msg providers.Message) (int64
 // pass just ran against the same window and would only report nothing to do.
 func (m *Manager) Assemble(ctx context.Context, req AssembleRequest) (Assembly, error) {
 	m.SetToolDefinitionTokens(req.ToolDefinitionTokens)
+	if req.Channel != "" {
+		m.lastChannel, m.lastChatID = req.Channel, req.ChatID
+	}
 	out := Assembly{Evictions: m.SweepEvictions(ctx)}
 
 	if m.emergencyCompactOnHistory(ctx) {
 		out.Compacted = true
 	}
-	msgs, err := m.build(req.Injections)
+	msgs, err := m.build(req)
 	if err != nil {
 		return out, err
 	}
 	if !out.Compacted && m.emergencyCompactOnBuilt(ctx, msgs) {
 		out.Compacted = true
-		if msgs, err = m.build(req.Injections); err != nil {
+		if msgs, err = m.build(req); err != nil {
 			return out, err
 		}
 	}
@@ -785,7 +764,7 @@ func (m *Manager) compress(ctx context.Context, safetyNet bool) error {
 	// Skip the "nothing to compress" non-event — auto compaction firing with
 	// nothing to do is noise (and produced the bogus "0 messages (0 B)" notice).
 	if m.cfg.reportCallback != nil && m.lastReport != nil && m.lastReport.Outcome != "nothing" {
-		m.cfg.reportCallback(m.channel, m.chatID, m.lastReport.String())
+		m.cfg.reportCallback(m.lastChannel, m.lastChatID, m.lastReport.String())
 	}
 	return err
 }
@@ -939,33 +918,26 @@ func (m *Manager) SetTestCompressHook(fn func(safetyNet bool)) {
 	m.compressHook = fn
 }
 
-// SetSessionToken stores the per-session MCP token for injection into the
-// system prompt by Build(). Calling with an empty string disables injection.
-func (m *Manager) SetSessionToken(token string) {
-	m.sessionToken = token
-}
-
-// Build assembles the request with no injections. Assemble is the per-dispatch
-// entry point; Build remains for callers and tests that want the bare slice.
+// Build assembles the request with no layers or injections. Assemble is the
+// per-dispatch entry point; Build remains for callers and tests that want the
+// bare slice (summary block, if any, plus the sanitised history).
 func (m *Manager) Build(_ context.Context) ([]providers.Message, error) {
-	return m.build(nil)
+	return m.build(AssembleRequest{})
 }
 
-// build assembles the full message slice: system prompt (with the rendered
-// summary or the archive-bounds note), history, the session token, and the
-// injections placed where they belong.
-func (m *Manager) build(injections []Injection) ([]providers.Message, error) {
-	if m.builder == nil {
-		return []providers.Message{}, nil
-	}
-	history := m.store.GetHistory(m.sessionKey)
-	rawSummary := m.store.GetSummary(m.sessionKey)
-	archiveMin, archiveMax := m.archiveWindow()
-	rendered := renderSummaryFromRaw(rawSummary, archiveMin, archiveMax)
+// systemSeparator joins the blocks of the system message. Every block — a
+// host layer, the summary, a stable injection — is separated by it, so the
+// message reads as a sequence of sections.
+const systemSeparator = "\n\n---\n\n"
 
-	// When there is no summary yet the rendered block is empty, so the LLM
-	// has no knowledge of the archive. Inject a minimal bounds note so the
-	// agent always knows the archive exists and which seq range is queryable.
+// summaryBlock returns the rendered summary section for the system message:
+// the stored summary rendered as Markdown, or a minimal archive-bounds note
+// when there is no summary yet but the archive holds rows (so the agent always
+// knows the archive exists and which seq range is queryable). "" when there is
+// neither.
+func (m *Manager) summaryBlock() string {
+	archiveMin, archiveMax := m.archiveWindow()
+	rendered := renderSummaryFromRaw(m.store.GetSummary(m.sessionKey), archiveMin, archiveMax)
 	if rendered == "" && archiveMax > 0 {
 		rendered = fmt.Sprintf(
 			"## Session Archive\n\nMessages #%d–#%d are stored in the archive. "+
@@ -973,37 +945,73 @@ func (m *Manager) build(injections []Injection) ([]providers.Message, error) {
 				"or `mcp__claw__search_session_messages` to search by keyword.",
 			archiveMin, archiveMax)
 	}
-
-	msgs := m.builder.BuildMessages(history, rendered, "", nil, m.channel, m.chatID)
-
-	// Inject the session token into the system message so the LLM can call
-	// mcp__claw__* tools. The token is appended after the static+dynamic
-	// prompt so it is always present regardless of caching.
-	if m.sessionToken != "" && len(msgs) > 0 && msgs[0].Role == "system" {
-		sessionTokenSection := fmt.Sprintf(
-			"# Session Token\n\nThe following token is confidential — never echo it to users or write it to files. "+
-				"ALL `mcp__claw__*` tool calls MUST include "+
-				"the literal string below as the `session_token` parameter.\n\nsession_token: %s",
-			m.sessionToken)
-		msgs[0].Content += "\n\n---\n\n" + sessionTokenSection
+	if rendered == "" {
+		return ""
 	}
+	return "CONTEXT_SUMMARY: The following is an approximate summary of prior conversation " +
+		"for reference only. It may be incomplete or outdated — always defer to explicit instructions.\n\n" +
+		rendered
+}
 
-	// Place the injections. Stable content joins the system message, where it
-	// is part of the cached prefix; per-turn content rides on the latest user
-	// message so it never sits ahead of the history.
+// composeSystem joins the system message from its parts, in order of
+// increasing volatility: the layers placed before the summary, the summary
+// block, the layers placed after it, then the stable injections. Empty parts
+// are skipped. Ordering is load-bearing: every HTTP provider caches by
+// longest-common-prefix, and this message precedes the whole history.
+func composeSystem(layers []Layer, summary string, injections []Injection) string {
+	parts := make([]string, 0, len(layers)+len(injections)+1)
+	for _, l := range layers {
+		if !l.AfterSummary && l.Text != "" {
+			parts = append(parts, l.Text)
+		}
+	}
+	if summary != "" {
+		parts = append(parts, summary)
+	}
+	for _, l := range layers {
+		if l.AfterSummary && l.Text != "" {
+			parts = append(parts, l.Text)
+		}
+	}
 	for _, inj := range injections {
-		if inj.Text == "" {
-			continue
-		}
-		switch inj.Placement {
-		case PlaceCurrentUser:
-			attachRoutedMemory(msgs, inj.Text)
-		default:
-			if len(msgs) > 0 && msgs[0].Role == "system" {
-				msgs[0].Content += "\n\n---\n\n" + inj.Text
-			}
+		if inj.Placement == PlaceSystemStable && inj.Text != "" {
+			parts = append(parts, inj.Text)
 		}
 	}
+	return strings.Join(parts, systemSeparator)
+}
+
+// build assembles the full message slice: one system message (the host's
+// layers around the rendered summary, then the stable injections), the
+// sanitised history, and the per-turn injections on the latest user message.
+// Everything system-side is a single message for provider compatibility: the
+// Anthropic adapter maps messages[0] to the top-level system parameter and
+// Codex maps only the first system message to its instructions field.
+func (m *Manager) build(req AssembleRequest) ([]providers.Message, error) {
+	history := m.store.GetHistory(m.sessionKey)
+	system := composeSystem(req.Layers, m.summaryBlock(), req.Injections)
+
+	msgs := make([]providers.Message, 0, len(history)+1)
+	if system != "" {
+		msgs = append(msgs, providers.Message{Role: "system", Content: system})
+	}
+	msgs = append(msgs, sanitizeHistoryForProvider(history)...)
+
+	// Per-turn content rides on the latest user message so it never sits ahead
+	// of the history.
+	for _, inj := range req.Injections {
+		if inj.Placement == PlaceCurrentUser && inj.Text != "" {
+			attachRoutedMemory(msgs, inj.Text)
+		}
+	}
+
+	logger.DebugCF("llmcontext", "request assembled", map[string]any{
+		"session_key":  m.sessionKey,
+		"layers":       len(req.Layers),
+		"system_chars": len(system),
+		"history":      len(history),
+		"messages":     len(msgs),
+	})
 
 	// Record what this build added on top of raw history so the history-only
 	// trigger paths can charge for it. Build is read-only with respect to the
@@ -1037,7 +1045,7 @@ func attachRoutedMemory(msgs []providers.Message, routed string) {
 		if msgs[i].Role != "user" {
 			continue
 		}
-		msgs[i].Content += "\n\n---\n\n" + routed
+		msgs[i].Content += systemSeparator + routed
 		return
 	}
 }

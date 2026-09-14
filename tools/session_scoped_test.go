@@ -6,35 +6,24 @@ package tools_test
 import (
 	"testing"
 
+	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/tools"
 	toolsfiles "github.com/PivotLLM/ClawEh/tools/files"
 	toolssession "github.com/PivotLLM/ClawEh/tools/session"
 )
 
-// TestSessionScopedInterface verifies that all four session tools implement
-// the SessionScoped interface and return true from IsSessionScoped.
-// This ensures the MCP dispatcher automatically injects the session key
-// for every tool that calls ToolSessionKey(ctx), without a hardcoded list.
+// TestSessionScopedInterface verifies that every session tool the provider
+// publishes declares SessionScoped, so the MCP dispatcher injects the session
+// key for each of them without a hardcoded list.
 func TestSessionScopedInterface(t *testing.T) {
-	testCases := []struct {
-		name string
-		tool tools.Tool
-	}{
-		{"session_history", toolssession.NewSessionHistoryTool("")},
-		{"session_history_search", toolssession.NewSessionHistorySearchTool("")},
-		{"session_compact", toolssession.NewSessionCompactTool(nil)},
-		{"session_info", toolssession.NewSessionInfoTool(nil)},
+	defs := toolssession.GlobalProvider.RegisterTools(global.Deps{})
+	if len(defs) == 0 {
+		t.Fatal("session provider published no tools")
 	}
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			ss, ok := tc.tool.(tools.SessionScoped)
-			if !ok {
-				t.Fatalf("%s does not implement SessionScoped", tc.name)
-			}
-			if !ss.IsSessionScoped() {
-				t.Errorf("%s.IsSessionScoped() = false, want true", tc.name)
-			}
-		})
+	for _, def := range defs {
+		if !def.SessionScoped {
+			t.Errorf("session tool %q is not SessionScoped", def.Name)
+		}
 	}
 }
 

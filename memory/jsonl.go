@@ -15,9 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/PivotLLM/ClawEh/cronmsg"
-	"github.com/PivotLLM/ClawEh/fileutil"
-	"github.com/PivotLLM/ClawEh/logger"
+	"github.com/PivotLLM/ClawEh/llmcontext/logger"
 	"github.com/PivotLLM/ClawEh/providers"
 )
 
@@ -80,11 +78,17 @@ type SummaryCheckpoint struct {
 	Summary         string    `json:"summary"`
 }
 
-// noiseCache tracks the last written message per role and the last cron
-// collapse key so that duplicate messages can be classified as noise.
+// NoiseKeyFunc identifies messages that are repeated fires of one source (a
+// scheduled job, for instance) by a key: two consecutive messages with the
+// same key are duplicates whatever their timestamps say. ok is false for
+// content that is not such a message. See JSONLStore.SetNoiseKey.
+type NoiseKeyFunc func(content string) (key string, ok bool)
+
+// noiseCache tracks the last written message per role and the last noise key
+// so that duplicate messages can be classified as noise.
 type noiseCache struct {
-	lastByRole  map[string]string // role -> last written Content
-	lastCronKey string
+	lastByRole map[string]string // role -> last written Content
+	lastKey    string
 }
 
 func newNoiseCache() *noiseCache {
@@ -92,28 +96,32 @@ func newNoiseCache() *noiseCache {
 }
 
 // isNoise returns true if msg is a duplicate that contributes no new information.
-// Cron-wrapper messages dedup on their collapse key (the job fingerprint when
-// present, else the payload) so that repeated fires of the same job — which embed
-// differing timestamps — collapse to one. All other messages dedup on identical
-// same-role content.
-func isNoise(msg StoredMessage, cache *noiseCache) bool {
+// Messages the noise key recognises dedup on that key (for a scheduled job, the
+// job fingerprint when present, else the payload) so that repeated fires of the
+// same job — which embed differing timestamps — collapse to one. All other
+// messages dedup on identical same-role content. A nil noise recognises nothing.
+func isNoise(msg StoredMessage, cache *noiseCache, noise NoiseKeyFunc) bool {
 	if cache == nil {
 		return false
 	}
-	if key, ok := cronmsg.CollapseKey(msg.Content); ok {
-		return cache.lastCronKey == key
+	if noise != nil {
+		if key, ok := noise(msg.Content); ok {
+			return cache.lastKey == key
+		}
 	}
 	return cache.lastByRole[msg.Role] == msg.Content && msg.Content != ""
 }
 
 // updateNoiseCache records msg in the cache for future noise checks.
-func updateNoiseCache(msg StoredMessage, cache *noiseCache) {
+func updateNoiseCache(msg StoredMessage, cache *noiseCache, noise NoiseKeyFunc) {
 	if cache == nil {
 		return
 	}
-	if key, ok := cronmsg.CollapseKey(msg.Content); ok {
-		cache.lastCronKey = key
-		return
+	if noise != nil {
+		if key, ok := noise(msg.Content); ok {
+			cache.lastKey = key
+			return
+		}
 	}
 	cache.lastByRole[msg.Role] = msg.Content
 }
@@ -136,8 +144,11 @@ func updateNoiseCache(msg StoredMessage, cache *noiseCache) {
 type JSONLStore struct {
 	dir         string
 	locks       [numLockShards]sync.Mutex
-	noiseMu     sync.Mutex // protects noiseCaches map
+	noiseMu     sync.Mutex // protects noiseCaches map and noiseKey
 	noiseCaches map[string]*noiseCache
+	// noiseKey recognises repeated-source messages for the noise classifier.
+	// Nil (the default) means only identical same-role content is noise.
+	noiseKey NoiseKeyFunc
 }
 
 // NewJSONLStore creates a new JSONL-backed store rooted at dir.
@@ -196,18 +207,29 @@ func ArchivePath(dir, sessionKey string) string {
 	return filepath.Join(dir, sanitizeKey(sessionKey)+".archive.db")
 }
 
+// SetNoiseKey installs the function that recognises repeated fires of one
+// source (the host's scheduled-job wrapper, say) so they count as noise even
+// though each carries a different timestamp. Without it only identical
+// same-role content is noise.
+func (s *JSONLStore) SetNoiseKey(fn NoiseKeyFunc) {
+	s.noiseMu.Lock()
+	defer s.noiseMu.Unlock()
+	s.noiseKey = fn
+}
+
 // getNoiseCache returns the noise cache for the given session key, creating
-// one if it does not exist. The noise cache contents are only accessed while
-// holding the per-session lock; noiseMu protects the map itself.
-func (s *JSONLStore) getNoiseCache(key string) *noiseCache {
+// one if it does not exist, together with the installed noise key. The cache
+// contents are only accessed while holding the per-session lock; noiseMu
+// protects the map itself.
+func (s *JSONLStore) getNoiseCache(key string) (*noiseCache, NoiseKeyFunc) {
 	s.noiseMu.Lock()
 	defer s.noiseMu.Unlock()
 	if c, ok := s.noiseCaches[key]; ok {
-		return c
+		return c, s.noiseKey
 	}
 	c := newNoiseCache()
 	s.noiseCaches[key] = c
-	return c
+	return c, s.noiseKey
 }
 
 // ForgetSession drops in-memory per-session state (the noise cache) for key.
@@ -238,14 +260,13 @@ func (s *JSONLStore) readMeta(key string) (sessionMeta, error) {
 	return meta, nil
 }
 
-// writeMeta atomically writes the metadata file using the project's
-// standard WriteFileAtomic (temp + fsync + rename).
+// writeMeta atomically writes the metadata file (temp + fsync + rename).
 func (s *JSONLStore) writeMeta(key string, meta sessionMeta) error {
 	data, err := json.MarshalIndent(meta, "", "  ")
 	if err != nil {
 		return fmt.Errorf("memory: encode meta: %w", err)
 	}
-	return fileutil.WriteFileAtomic(s.metaPath(key), data, 0o644)
+	return writeFileAtomic(s.metaPath(key), data, 0o644)
 }
 
 // readStoredMessages reads valid JSON lines from a .jsonl file, skipping
@@ -410,8 +431,8 @@ func (s *JSONLStore) addMsg(sessionKey string, msg providers.Message) (int64, er
 	}
 
 	// Determine if this message is noise (no new information).
-	cache := s.getNoiseCache(sessionKey)
-	isNoisy := isNoise(stored, cache)
+	cache, noise := s.getNoiseCache(sessionKey)
+	isNoisy := isNoise(stored, cache, noise)
 
 	// Update metadata.
 	now := time.Now()
@@ -426,7 +447,7 @@ func (s *JSONLStore) addMsg(sessionKey string, msg providers.Message) (int64, er
 	meta.UpdatedAt = now
 
 	// Update noise cache after computing isNoisy.
-	updateNoiseCache(stored, cache)
+	updateNoiseCache(stored, cache, noise)
 
 	logger.DebugCF("memory", "message_stored",
 		map[string]any{
@@ -819,7 +840,7 @@ func (s *JSONLStore) rewriteStoredJSONL(
 		buf.Write(line)
 		buf.WriteByte('\n')
 	}
-	return fileutil.WriteFileAtomic(s.jsonlPath(sessionKey), buf.Bytes(), 0o644)
+	return writeFileAtomic(s.jsonlPath(sessionKey), buf.Bytes(), 0o644)
 }
 
 func (s *JSONLStore) SetPendingTurn(ctx context.Context, sessionKey string) error {

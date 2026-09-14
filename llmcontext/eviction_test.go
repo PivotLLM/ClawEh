@@ -71,7 +71,7 @@ func markToolError(h []memory.StoredMessage, id string) {
 func newEvictMgr(store *seqStore, p EvictionPolicy) *Manager {
 	// WithContextWindow(0) disables the derived budget so non-budget tests are
 	// deterministic; budget tests set BudgetBytes explicitly.
-	return New("sess", store, nil, nil, WithContextWindow(0), WithEvictionPolicy(p)).(*Manager)
+	return New("sess", store, WithContextWindow(0), WithEvictionPolicy(p)).(*Manager)
 }
 
 // findToolResult returns the content of the tool result for the given call id.

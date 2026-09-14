@@ -14,10 +14,10 @@ import (
 
 	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/llmcontext"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/providers"
 	"github.com/PivotLLM/ClawEh/skills"
-	"github.com/PivotLLM/ClawEh/utils"
 )
 
 type ContextBuilder struct {
@@ -619,234 +619,55 @@ func sanitizeChannelName(s string) string {
 	return b.String()
 }
 
-func (cb *ContextBuilder) BuildMessages(
-	history []providers.Message,
-	summary string,
-	currentMessage string,
-	media []string,
-	channel, chatID string,
-) []providers.Message {
-	messages := []providers.Message{}
-
+// PromptLayers returns the host's system-prompt layers for one dispatch, in
+// increasing order of volatility: the cached static prompt (identity,
+// bootstrap files, skills, memory, date) and the short per-conversation
+// dynamic context (runtime, channel/chat, channel guidance). The engine places
+// the rendered session summary after these and the after-summary layers
+// (the session token) behind it.
+//
+// Everything is sent as a single system message for provider compatibility:
+// the Anthropic adapter maps messages[0] (Role=="system") to the top-level
+// "system" parameter, Codex maps only the first system message to its
+// instructions field, and OpenAI-compat passes messages through as-is.
+func (cb *ContextBuilder) PromptLayers(channel, chatID string) []llmcontext.Layer {
 	// The static part (identity, bootstrap, skills, memory) is cached locally to
 	// avoid repeated file I/O and string building on every call (fixes issue #607).
-	// Dynamic parts (time, session, summary) are appended per request.
-	// Everything is sent as a single system message for provider compatibility:
-	// - Anthropic adapter extracts messages[0] (Role=="system") and maps its content
-	//   to the top-level "system" parameter in the Messages API request. A single
-	//   contiguous system block makes this extraction straightforward.
-	// - Codex maps only the first system message to its instructions field.
-	// - OpenAI-compat passes messages through as-is.
 	staticPrompt := cb.BuildSystemPromptWithCache()
-
-	// Build short dynamic context (time, runtime, session) — changes per request
 	dynamicCtx := cb.buildDynamicContext(channel, chatID)
 
-	// Compose a single system message: static + dynamic + optional summary.
-	// Keeping all system content in one message ensures every provider adapter can
-	// extract it correctly (Anthropic adapter -> top-level system param,
-	// Codex -> instructions field).
-	//
-	// Ordering is load-bearing: content must appear in increasing order of
-	// volatility, because prefix caching ends at the first byte that differs
-	// between two requests.
-	stringParts := []string{staticPrompt, dynamicCtx}
-
-	if summary != "" {
-		summaryText := fmt.Sprintf(
-			"CONTEXT_SUMMARY: The following is an approximate summary of prior conversation "+
-				"for reference only. It may be incomplete or outdated — always defer to explicit instructions.\n\n%s",
-			summary)
-		stringParts = append(stringParts, summaryText)
-	}
-
-	fullSystemPrompt := strings.Join(stringParts, "\n\n---\n\n")
-
-	// Log system prompt summary for debugging (debug mode only).
-	// Read cachedSystemPrompt under lock to avoid a data race with
-	// concurrent InvalidateCache / BuildSystemPromptWithCache writes.
 	cb.systemPromptMutex.RLock()
 	isCached := cb.cachedSystemPrompt != ""
 	cb.systemPromptMutex.RUnlock()
-
-	logger.DebugCF("agent", "System prompt built",
+	logger.DebugCF("agent", "System prompt layers built",
 		map[string]any{
 			"static_chars":  len(staticPrompt),
 			"dynamic_chars": len(dynamicCtx),
-			"total_chars":   len(fullSystemPrompt),
-			"has_summary":   summary != "",
 			"cached":        isCached,
 		})
 
-	// Log preview of system prompt — gated behind log_message_content for privacy
-	if logger.GetLogMessageContent() {
-		preview := utils.Truncate(fullSystemPrompt, 500)
-		logger.DebugCF("agent", "System prompt preview",
-			map[string]any{
-				"preview": preview,
-			})
+	return []llmcontext.Layer{
+		{Name: "static", Text: staticPrompt},
+		{Name: "dynamic", Text: dynamicCtx},
 	}
-
-	history = sanitizeHistoryForProvider(history)
-
-	// Single system message containing all context — compatible with all providers.
-	messages = append(messages, providers.Message{
-		Role:    "system",
-		Content: fullSystemPrompt,
-	})
-
-	// Add conversation history
-	messages = append(messages, history...)
-
-	// Add current user message
-	if strings.TrimSpace(currentMessage) != "" {
-		msg := providers.Message{
-			Role:    "user",
-			Content: currentMessage,
-		}
-		if len(media) > 0 {
-			msg.Media = media
-		}
-		messages = append(messages, msg)
-	}
-
-	return messages
 }
 
-func sanitizeHistoryForProvider(history []providers.Message) []providers.Message {
-	if len(history) == 0 {
-		return history
+// sessionTokenLayer renders the per-session MCP token as the after-summary
+// layer of the system prompt so the LLM can call mcp__claw__* tools. It sits
+// after the static and dynamic prompt and the summary so it is always present
+// regardless of caching. An empty token yields an empty layer, which the
+// engine skips.
+func sessionTokenLayer(token string) llmcontext.Layer {
+	l := llmcontext.Layer{Name: "session_token", AfterSummary: true}
+	if token == "" {
+		return l
 	}
-
-	// Drop reasons are counted and logged once at the end rather than per message,
-	// because a single post-compaction boundary can orphan several leading
-	// tool-call turns and would otherwise spam one DBG line each, every dispatch.
-	var dropSystem, dropLeadingTool, dropOrphanTool, dropAsstStart, dropAsstBadPred, dropIncompleteGroup int
-
-	sanitized := make([]providers.Message, 0, len(history))
-	for _, msg := range history {
-		switch msg.Role {
-		case "system":
-			// Drop system messages from history. BuildMessages always
-			// constructs its own single system message (static + dynamic +
-			// summary); extra system messages would break providers that
-			// only accept one (Anthropic, Codex).
-			dropSystem++
-			continue
-
-		case "tool":
-			if len(sanitized) == 0 {
-				dropLeadingTool++
-				continue
-			}
-			// Walk backwards to the nearest assistant message, skipping over any
-			// preceding tool results (the parallel-tool-call case), and require
-			// that THIS result answers one of the calls that assistant actually
-			// declared.
-			//
-			// Matching the id matters, not merely finding an assistant that made
-			// some call: a result whose id belongs to a dropped assistant turn
-			// would otherwise be accepted on the strength of an unrelated
-			// neighbour, and strict providers reject it — DeepSeek answers 400
-			// with "Messages with role 'tool' must be a response to a preceding
-			// message with 'tool_calls'", which kills every turn until the
-			// message ages out of the window.
-			open := map[string]bool{}
-			for i := len(sanitized) - 1; i >= 0; i-- {
-				if sanitized[i].Role == "tool" {
-					continue
-				}
-				if sanitized[i].Role == "assistant" {
-					for _, tc := range sanitized[i].ToolCalls {
-						open[tc.ID] = true
-					}
-				}
-				break
-			}
-			if !open[msg.ToolCallID] {
-				dropOrphanTool++
-				continue
-			}
-			sanitized = append(sanitized, msg)
-
-		case "assistant":
-			if len(msg.ToolCalls) > 0 {
-				if len(sanitized) == 0 {
-					dropAsstStart++
-					continue
-				}
-				prev := sanitized[len(sanitized)-1]
-				if prev.Role != "user" && prev.Role != "tool" {
-					dropAsstBadPred++
-					continue
-				}
-			}
-			sanitized = append(sanitized, msg)
-
-		default:
-			sanitized = append(sanitized, msg)
-		}
-	}
-
-	// Second pass: ensure every assistant message with tool_calls has matching
-	// tool result messages following it. This is required by strict providers
-	// like DeepSeek that enforce: "An assistant message with 'tool_calls' must
-	// be followed by tool messages responding to each 'tool_call_id'."
-	final := make([]providers.Message, 0, len(sanitized))
-	for i := 0; i < len(sanitized); i++ {
-		msg := sanitized[i]
-		if msg.Role == "assistant" && len(msg.ToolCalls) > 0 {
-			// Collect expected tool_call IDs
-			expected := make(map[string]bool, len(msg.ToolCalls))
-			for _, tc := range msg.ToolCalls {
-				expected[tc.ID] = false
-			}
-
-			// Check following messages for matching tool results
-			toolMsgCount := 0
-			for j := i + 1; j < len(sanitized); j++ {
-				if sanitized[j].Role != "tool" {
-					break
-				}
-				toolMsgCount++
-				if _, exists := expected[sanitized[j].ToolCallID]; exists {
-					expected[sanitized[j].ToolCallID] = true
-				}
-			}
-
-			// If any tool_call_id is missing, drop this assistant message and its partial tool messages
-			allFound := true
-			for _, found := range expected {
-				if !found {
-					allFound = false
-					dropIncompleteGroup++
-					break
-				}
-			}
-
-			if !allFound {
-				// Skip this assistant message and its tool messages
-				i += toolMsgCount
-				continue
-			}
-		}
-		final = append(final, msg)
-	}
-
-	if n := dropSystem + dropLeadingTool + dropOrphanTool + dropAsstStart + dropAsstBadPred + dropIncompleteGroup; n > 0 {
-		logger.DebugCF("agent", "Sanitized history for provider", map[string]any{
-			"dropped_total":         n,
-			"system":                dropSystem,
-			"leading_tool_orphans":  dropLeadingTool,
-			"orphan_tool":           dropOrphanTool,
-			"assistant_at_start":    dropAsstStart,
-			"assistant_bad_pred":    dropAsstBadPred,
-			"incomplete_tool_group": dropIncompleteGroup,
-			"kept":                  len(final),
-		})
-	}
-
-	return final
+	l.Text = fmt.Sprintf(
+		"# Session Token\n\nThe following token is confidential — never echo it to users or write it to files. "+
+			"ALL `mcp__claw__*` tool calls MUST include "+
+			"the literal string below as the `session_token` parameter.\n\nsession_token: %s",
+		token)
+	return l
 }
 
 func (cb *ContextBuilder) AddToolResult(

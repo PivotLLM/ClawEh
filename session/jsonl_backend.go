@@ -3,7 +3,7 @@ package session
 import (
 	"context"
 
-	"github.com/PivotLLM/ClawEh/logger"
+	"github.com/PivotLLM/ClawEh/llmcontext/logger"
 	"github.com/PivotLLM/ClawEh/memory"
 	"github.com/PivotLLM/ClawEh/providers"
 )

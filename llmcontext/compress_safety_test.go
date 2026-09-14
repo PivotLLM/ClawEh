@@ -65,7 +65,7 @@ func TestItem1_LargeMsgRemovedBeforePersist(t *testing.T) {
 	}
 	llm := &mockLLM{errors: errList}
 
-	mgr := newCompressManager(store, []LLMClient{llm},
+	mgr := newCompressManager(store, []*mockLLM{llm},
 		WithContextWindow(1000),
 		WithSafetyPercent(80),
 		WithRetainMinMessages(0),
@@ -95,7 +95,7 @@ func TestItem1_PersistResultReturnsErrorOnSaveFailure(t *testing.T) {
 		responses: []string{validSummaryJSON("goal")},
 	}
 
-	mgr := newCompressManager(&store.compressTestStore, []LLMClient{llm},
+	mgr := newCompressManager(&store.compressTestStore, []*mockLLM{llm},
 		WithContextWindow(10000),
 		WithNormalPercent(50),
 		WithSafetyPercent(80),

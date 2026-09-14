@@ -1,42 +1,22 @@
 // ClawEh
 // License: MIT
 
-package session
+package sessiontools
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"time"
 
-	"github.com/PivotLLM/ClawEh/memory"
-	"github.com/PivotLLM/ClawEh/tools"
+	"github.com/PivotLLM/toolspec"
 )
 
-// SessionHistoryTool implements the session_messages MCP tool.
-// It reads messages from the session archive by sequence number.
-// Session scoping uses the key injected via WithSessionKey (see base.go).
-type SessionHistoryTool struct {
-	sessionsDir string
-}
+const messagesDescription = "Retrieve historical messages from the current session archive by sequence number. " +
+	"Returns messages in the requested seq range, capped to the most recent 5000. " +
+	"Request smaller ranges for efficiency. " +
+	"Use when the context summary references a seq number and you need the full message content."
 
-// NewSessionHistoryTool creates a SessionHistoryTool for the given sessions directory.
-func NewSessionHistoryTool(sessionsDir string) *SessionHistoryTool {
-	return &SessionHistoryTool{sessionsDir: sessionsDir}
-}
-
-func (t *SessionHistoryTool) Name() string          { return "session_messages" }
-func (t *SessionHistoryTool) IsSessionScoped() bool { return true }
-
-func (t *SessionHistoryTool) Description() string {
-	return "Retrieve historical messages from the current session archive by sequence number. " +
-		"Returns messages in the requested seq range, capped to the most recent 5000. " +
-		"Request smaller ranges for efficiency. " +
-		"Use when the context summary references a seq number and you need the full message content."
-}
-
-func (t *SessionHistoryTool) Parameters() map[string]any {
+func messagesSchema() map[string]any {
 	return map[string]any{
 		"type": "object",
 		"properties": map[string]any{
@@ -56,38 +36,28 @@ func (t *SessionHistoryTool) Parameters() map[string]any {
 	}
 }
 
-func (t *SessionHistoryTool) Execute(ctx context.Context, args map[string]any) *tools.ToolResult {
-	sessionKey := tools.ToolSessionKey(ctx)
-	if sessionKey == "" {
-		return tools.ErrorResult("session key not available")
-	}
-
-	seqStart, seqEnd, err := parseSeqArgs(args)
+// messages implements the session_messages tool: it reads messages from the
+// session archive by sequence number.
+func (h Host) messages(call *toolspec.ToolCall) (*toolspec.Result, error) {
+	seqStart, seqEnd, err := parseSeqArgs(call.Args)
 	if err != nil {
-		return tools.ErrorResult(err.Error())
+		return errResult(err.Error()), nil
 	}
 
-	archivePath := memory.ArchivePath(t.sessionsDir, sessionKey)
-	a, openErr := memory.OpenReadOnly(archivePath)
-	if openErr != nil {
-		if errors.Is(openErr, memory.ErrArchiveUnavailable) {
-			return &tools.ToolResult{ForLLM: "archive unavailable — see server logs"}
-		}
-		return tools.ErrorResult(fmt.Sprintf("archive open error: %v", openErr))
+	a, key, r := h.openArchive(call)
+	if r != nil {
+		return r, nil
 	}
 	defer a.Close()
 
 	const windowSize = 5000
 	_, maxSeq, boundsErr := a.Bounds()
 	if boundsErr != nil {
-		if errors.Is(boundsErr, memory.ErrArchiveUnavailable) {
-			return &tools.ToolResult{ForLLM: "archive unavailable — see server logs"}
-		}
-		return tools.ErrorResult(fmt.Sprintf("archive bounds error: %v", boundsErr))
+		return h.archiveError("archive bounds error", key, boundsErr), nil
 	}
 
 	if maxSeq == 0 {
-		return &tools.ToolResult{ForLLM: "not available in the current archive window"}
+		return textResult("not available in the current archive window"), nil
 	}
 
 	effectiveMin := seqStart
@@ -101,14 +71,11 @@ func (t *SessionHistoryTool) Execute(ctx context.Context, args map[string]any) *
 
 	msgs, readErr := a.QueryRange(effectiveMin, effectiveMax)
 	if readErr != nil {
-		if errors.Is(readErr, memory.ErrArchiveUnavailable) {
-			return &tools.ToolResult{ForLLM: "archive unavailable — see server logs"}
-		}
-		return tools.ErrorResult(fmt.Sprintf("archive read error: %v", readErr))
+		return h.archiveError("archive read error", key, readErr), nil
 	}
 
 	if len(msgs) == 0 {
-		return &tools.ToolResult{ForLLM: "not available in the current archive window"}
+		return textResult("not available in the current archive window"), nil
 	}
 
 	type toolResultEntry struct {
@@ -170,7 +137,7 @@ func (t *SessionHistoryTool) Execute(ctx context.Context, args map[string]any) *
 		entries[i] = e
 	}
 	out, _ := json.Marshal(entries)
-	return &tools.ToolResult{ForLLM: string(out)}
+	return textResult(string(out)), nil
 }
 
 // parseSeqArgs returns the seq range from args.
@@ -187,23 +154,4 @@ func parseSeqArgs(args map[string]any) (seqStart, seqEnd int64, err error) {
 		return 0, 0, fmt.Errorf("seq_start (%d) > seq_end (%d)", start, end)
 	}
 	return start, end, nil
-}
-
-func intArg(args map[string]any, key string) (int64, bool) {
-	v, ok := args[key]
-	if !ok || v == nil {
-		return 0, false
-	}
-	switch n := v.(type) {
-	case int:
-		return int64(n), true
-	case int64:
-		return n, true
-	case float64:
-		return int64(n), true
-	case json.Number:
-		i, e := n.Int64()
-		return i, e == nil
-	}
-	return 0, false
 }

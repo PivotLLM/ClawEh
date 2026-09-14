@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PivotLLM/ClawEh/cronmsg"
 	"github.com/PivotLLM/ClawEh/providers"
 )
 
@@ -1011,23 +1012,23 @@ func TestNoiseClassifier_CronNoise(t *testing.T) {
 	payload := "check disk space: 42% used"
 	content1 := testCronPrefix + "2026-01-01T00:00:00Z:\n\n" + payload
 	msg1 := StoredMessage{Seq: 1, Message: providers.Message{Role: "user", Content: content1}}
-	if isNoise(msg1, cache) {
+	if isNoise(msg1, cache, cronmsg.CollapseKey) {
 		t.Error("first cron message should not be noise")
 	}
-	updateNoiseCache(msg1, cache)
+	updateNoiseCache(msg1, cache, cronmsg.CollapseKey)
 
 	// Same payload at a different timestamp — noise.
 	content2 := testCronPrefix + "2026-01-01T01:00:00Z:\n\n" + payload
 	msg2 := StoredMessage{Seq: 2, Message: providers.Message{Role: "user", Content: content2}}
-	if !isNoise(msg2, cache) {
+	if !isNoise(msg2, cache, cronmsg.CollapseKey) {
 		t.Error("duplicate cron payload should be noise")
 	}
-	updateNoiseCache(msg2, cache)
+	updateNoiseCache(msg2, cache, cronmsg.CollapseKey)
 
 	// Different payload — not noise.
 	content3 := testCronPrefix + "2026-01-01T02:00:00Z:\n\n" + "check disk space: 80% used"
 	msg3 := StoredMessage{Seq: 3, Message: providers.Message{Role: "user", Content: content3}}
-	if isNoise(msg3, cache) {
+	if isNoise(msg3, cache, cronmsg.CollapseKey) {
 		t.Error("different cron payload should not be noise")
 	}
 }
@@ -1036,14 +1037,14 @@ func TestNoiseClassifier_SameRole(t *testing.T) {
 	cache := newNoiseCache()
 
 	msg1 := StoredMessage{Seq: 1, Message: providers.Message{Role: "user", Content: "hello"}}
-	if isNoise(msg1, cache) {
+	if isNoise(msg1, cache, cronmsg.CollapseKey) {
 		t.Error("first message should not be noise")
 	}
-	updateNoiseCache(msg1, cache)
+	updateNoiseCache(msg1, cache, cronmsg.CollapseKey)
 
 	// Same role and content — noise.
 	msg2 := StoredMessage{Seq: 2, Message: providers.Message{Role: "user", Content: "hello"}}
-	if !isNoise(msg2, cache) {
+	if !isNoise(msg2, cache, cronmsg.CollapseKey) {
 		t.Error("duplicate same-role content should be noise")
 	}
 }
@@ -1052,10 +1053,10 @@ func TestNoiseClassifier_DifferentContent(t *testing.T) {
 	cache := newNoiseCache()
 
 	msg1 := StoredMessage{Seq: 1, Message: providers.Message{Role: "user", Content: "hello"}}
-	updateNoiseCache(msg1, cache)
+	updateNoiseCache(msg1, cache, cronmsg.CollapseKey)
 
 	msg2 := StoredMessage{Seq: 2, Message: providers.Message{Role: "user", Content: "world"}}
-	if isNoise(msg2, cache) {
+	if isNoise(msg2, cache, cronmsg.CollapseKey) {
 		t.Error("different content should not be noise")
 	}
 }
@@ -1266,5 +1267,34 @@ func TestCompactionState_PersistsToggles(t *testing.T) {
 	}
 	if !got.ExposeReasoning {
 		t.Error("ExposeReasoning did not persist across restart")
+	}
+}
+
+// TestSetNoiseKey_StoreLevel covers the store-level switch: with no noise key
+// two fires of one job (different timestamps) are both meaningful; with the
+// host's key installed the second is noise.
+func TestSetNoiseKey_StoreLevel(t *testing.T) {
+	ctx := context.Background()
+	fire := func(ts string) string { return testCronPrefix + ts + ":\n\ncheck disk" }
+
+	off := newTestStore(t)
+	for _, ts := range []string{"2026-01-01 00:00 UTC", "2026-01-01 01:00 UTC"} {
+		if err := off.AddMessage(ctx, "k", "user", fire(ts)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if meta, _ := off.readMeta("k"); meta.MeaningfulCount != 2 {
+		t.Errorf("without a noise key MeaningfulCount = %d, want 2", meta.MeaningfulCount)
+	}
+
+	on := newTestStore(t)
+	on.SetNoiseKey(cronmsg.CollapseKey)
+	for _, ts := range []string{"2026-01-01 00:00 UTC", "2026-01-01 01:00 UTC"} {
+		if err := on.AddMessage(ctx, "k", "user", fire(ts)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if meta, _ := on.readMeta("k"); meta.MeaningfulCount != 1 {
+		t.Errorf("with the noise key MeaningfulCount = %d, want 1", meta.MeaningfulCount)
 	}
 }

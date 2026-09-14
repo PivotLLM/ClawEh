@@ -83,8 +83,8 @@ func TestCompress_AgeCapRemovesOldMessages(t *testing.T) {
 	}
 	store := &agedCompressStore{compressTestStore: &compressTestStore{history: history}, ageDays: ages}
 
-	mgr := newCompressManager(store.compressTestStore, []LLMClient{
-		&mockLLM{responses: []string{validSummaryJSON("age test")}},
+	mgr := newCompressManager(store.compressTestStore, []*mockLLM{
+		{responses: []string{validSummaryJSON("age test")}},
 	},
 		WithContextWindow(1_000_000), // budget is enormous: only age can cut here
 		WithMinPercent(20),
@@ -125,8 +125,8 @@ func TestCompress_NoAgeCapRetainsEverything(t *testing.T) {
 		ageDays:           ageAll(history, 30),
 	}
 
-	mgr := newCompressManager(store.compressTestStore, []LLMClient{
-		&mockLLM{responses: []string{validSummaryJSON("no age cap")}},
+	mgr := newCompressManager(store.compressTestStore, []*mockLLM{
+		{responses: []string{validSummaryJSON("no age cap")}},
 	},
 		WithContextWindow(1_000_000),
 		WithMinPercent(20),
@@ -159,8 +159,8 @@ func TestCompress_AgeCapKeepsLatestUserMessage(t *testing.T) {
 		ageDays:           ageAll(history, 90),
 	}
 
-	mgr := newCompressManager(store.compressTestStore, []LLMClient{
-		&mockLLM{responses: []string{validSummaryJSON("clamp")}},
+	mgr := newCompressManager(store.compressTestStore, []*mockLLM{
+		{responses: []string{validSummaryJSON("clamp")}},
 	},
 		WithContextWindow(1_000_000),
 		WithMinPercent(20),

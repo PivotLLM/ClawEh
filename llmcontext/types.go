@@ -6,22 +6,41 @@ package llmcontext
 import (
 	"context"
 	"time"
-
-	"github.com/PivotLLM/ClawEh/providers"
 )
 
-// LLMClient calls an LLM and returns a single response.
-type LLMClient interface {
-	Complete(ctx context.Context, messages []providers.Message) (LLMReply, error)
+// ModelRequest is one summarization call the engine asks the host to make.
+// The host owns model selection, fallback and cooldowns; the engine only says
+// what to send and which models it will not accept a reply from.
+type ModelRequest struct {
+	// System and User are the two messages of the call.
+	System, User string
+	// JSONObject asks for a JSON-object response format where the provider
+	// supports it.
+	JSONObject bool
+	// Exclude lists model names (as reported in ModelReply.Model) that must
+	// not serve this request: models that refused this session's content, or
+	// returned an unacceptable summary earlier in the same pass.
+	Exclude []string
 }
 
-// LLMReply is the result of one LLMClient.Complete call. FinishReason carries the
-// provider's stop reason (e.g. "stop", "length", "refusal", "content_filter")
-// when available, so the summarizer can distinguish a content refusal from a
-// transient error. It is "" when the provider does not report one.
-type LLMReply struct {
+// ModelReply is the host's answer to one ModelRequest. Model names the model
+// that produced it — the engine keys its per-session refusal memory and the
+// compaction report on it. FinishReason carries the provider's stop reason
+// (e.g. "stop", "length", "refusal", "content_filter") when available, so the
+// summarizer can distinguish a content refusal from a transient error. On an
+// error the host may still set Model to the last model it tried so the report
+// can name it.
+type ModelReply struct {
 	Content      string
 	FinishReason string
+	Model        string
+}
+
+// ModelCaller is the host's summarization model. One implementation walks the
+// host's whole chain (fallbacks, cooldowns, exclusions); the engine calls it
+// again with a longer Exclude list when a reply is unacceptable.
+type ModelCaller interface {
+	Complete(ctx context.Context, req ModelRequest) (ModelReply, error)
 }
 
 // ModelChain records which LLM chain is configured for compression (for stats and logging).
@@ -43,16 +62,4 @@ type ContextStats struct {
 	// SummaryTokens is the estimated token count of the stored summary (runes/4).
 	// Zero when no summary has been generated.
 	SummaryTokens int
-}
-
-// MessageBuilder builds the full message slice sent to an LLM, including the
-// system prompt, history, optional summary, and current message.
-// agent.ContextBuilder satisfies this interface via structural typing.
-type MessageBuilder interface {
-	BuildMessages(
-		history []providers.Message,
-		summary, currentMessage string,
-		media []string,
-		channel, chatID string,
-	) []providers.Message
 }

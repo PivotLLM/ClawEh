@@ -39,8 +39,6 @@ func (m *trackingContextManager) AddToolResult(_ context.Context, _ providers.Me
 func (m *trackingContextManager) Assemble(_ context.Context, _ llmcontext.AssembleRequest) (llmcontext.Assembly, error) {
 	return llmcontext.Assembly{}, nil
 }
-func (m *trackingContextManager) SetCallContext(_, _ string)                         {}
-func (m *trackingContextManager) SetSessionToken(_ string)                           {}
 func (m *trackingContextManager) Compact(_ context.Context) error                    { return nil }
 func (m *trackingContextManager) LastCompactionReport() *llmcontext.CompactionReport { return nil }
 func (m *trackingContextManager) RenderedSummary() string                            { return "" }

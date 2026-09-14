@@ -26,7 +26,7 @@ func TestCompact_PersistsSummaryToArchive(t *testing.T) {
 
 	store := &compressTestStore{history: makeConversation(10, 200)}
 	llm := &mockLLM{responses: []string{validSummaryJSON("active goal")}}
-	mgr := newCompressManager(store, []LLMClient{llm},
+	mgr := newCompressManager(store, []*mockLLM{llm},
 		WithCompressionProfileDir(profDir),
 		WithCompressModel(ModelChain{Primary: "test-model"}),
 		WithArchiveDir(archiveDir),

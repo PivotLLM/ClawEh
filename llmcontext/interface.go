@@ -32,6 +32,21 @@ type Injection struct {
 	Text      string
 }
 
+// Layer is one block of the system prompt, supplied by the host per dispatch.
+// The engine composes the system message from the layers, the rendered
+// session summary and the stable injections; it never reads prompt sources
+// itself. Layers are joined in the order given, non-empty ones only.
+type Layer struct {
+	// Name identifies the layer in logs and diagnostics ("static", "dynamic",
+	// "session_token", …). It is never rendered.
+	Name string
+	// Text is the block itself. An empty Text is skipped.
+	Text string
+	// AfterSummary places the layer after the rendered summary block instead
+	// of before it.
+	AfterSummary bool
+}
+
 // AssembleRequest carries what the manager cannot see for itself when it
 // builds the request for one model call.
 type AssembleRequest struct {
@@ -39,8 +54,16 @@ type AssembleRequest struct {
 	// will send with the request. Counted by every compaction trigger so they
 	// measure the real request rather than stored history alone.
 	ToolDefinitionTokens int
+	// Layers are the host's system-prompt blocks for this dispatch, in order.
+	// Layers with AfterSummary unset precede the rendered summary; the rest
+	// follow it.
+	Layers []Layer
 	// Injections are placed into the built slice in order.
 	Injections []Injection
+	// Channel and ChatID identify the conversation this dispatch serves. The
+	// manager remembers the most recent pair so the automatic compaction path
+	// can deliver its report to the right place.
+	Channel, ChatID string
 }
 
 // Assembly is the result of one Assemble call.
@@ -84,13 +107,6 @@ type ContextManager interface {
 	// stored history, after it on the built request), and places the
 	// injections. It is safe to call once per iteration of a tool-using turn.
 	Assemble(ctx context.Context, req AssembleRequest) (Assembly, error)
-
-	// SetCallContext records the channel and chatID for the current call so
-	// the system prompt receives the correct session context.
-	SetCallContext(channel, chatID string)
-	// SetSessionToken sets the per-session MCP session token injected into the
-	// system prompt. An empty token disables injection.
-	SetSessionToken(token string)
 
 	// Compact triggers a normal LLM-based compression pass on demand.
 	Compact(ctx context.Context) error

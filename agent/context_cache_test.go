@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,8 +9,32 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PivotLLM/ClawEh/llmcontext"
 	"github.com/PivotLLM/ClawEh/providers"
+	"github.com/PivotLLM/ClawEh/session"
 )
+
+// assembleWithLayers runs the builder's prompt layers through the engine over
+// a session holding history plus the current user message, with an optional
+// stored summary — the request the agent loop sends for one dispatch.
+func assembleWithLayers(t *testing.T, cb *ContextBuilder, history []providers.Message, summary, message, channel, chatID string) []providers.Message {
+	t.Helper()
+	const key = "layers-test"
+	store := session.NewSessionManager("")
+	for _, m := range history {
+		store.AddFullMessage(key, m)
+	}
+	store.AddFullMessage(key, providers.Message{Role: "user", Content: message})
+	if summary != "" {
+		store.SetSummary(key, summary)
+	}
+	cm := llmcontext.New(key, store, llmcontext.WithContextWindow(200_000))
+	asm, err := cm.Assemble(context.Background(), llmcontext.AssembleRequest{Layers: cb.PromptLayers(channel, chatID)})
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+	return asm.Messages
+}
 
 // setupWorkspace creates a temporary workspace with standard directories and optional files.
 // Returns the tmpDir path; caller should defer os.RemoveAll(tmpDir).
@@ -31,8 +56,8 @@ func setupWorkspace(t *testing.T, files map[string]string) string {
 	return tmpDir
 }
 
-// TestSingleSystemMessage verifies that BuildMessages always produces exactly one
-// system message regardless of summary/history variations.
+// TestSingleSystemMessage verifies that the assembled request always carries
+// exactly one system message regardless of summary/history variations.
 // Fix: multiple system messages break Anthropic (top-level system param) and
 // Codex (only reads last system message as instructions).
 func TestSingleSystemMessage(t *testing.T) {
@@ -82,7 +107,7 @@ func TestSingleSystemMessage(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			msgs := cb.BuildMessages(tt.history, tt.summary, tt.message, nil, "test", "chat1")
+			msgs := assembleWithLayers(t, cb, tt.history, tt.summary, tt.message, "test", "chat1")
 
 			systemCount := 0
 			for _, m := range msgs {
@@ -587,14 +612,14 @@ func TestConcurrentBuildSystemPromptWithCache(t *testing.T) {
 					return
 				}
 
-				// Also exercise BuildMessages concurrently
-				msgs := cb.BuildMessages(nil, "", "hello", nil, "test", "chat")
-				if len(msgs) < 2 {
-					errs <- "BuildMessages returned fewer than 2 messages"
+				// Also exercise PromptLayers concurrently
+				layers := cb.PromptLayers("test", "chat")
+				if len(layers) != 2 {
+					errs <- "PromptLayers returned the wrong number of layers"
 					return
 				}
-				if msgs[0].Role != "system" {
-					errs <- "first message not system"
+				if layers[0].Name != "static" || layers[0].Text == "" {
+					errs <- "first layer not the static prompt"
 					return
 				}
 
@@ -657,8 +682,8 @@ func TestEmptyWorkspaceBaselineDetectsNewFiles(t *testing.T) {
 	}
 }
 
-// BenchmarkBuildMessagesWithCache measures caching performance.
-func BenchmarkBuildMessagesWithCache(b *testing.B) {
+// BenchmarkPromptLayersWithCache measures caching performance.
+func BenchmarkPromptLayersWithCache(b *testing.B) {
 	tmpDir, _ := os.MkdirTemp("", "claw-bench-*")
 	defer os.RemoveAll(tmpDir)
 
@@ -669,13 +694,9 @@ func BenchmarkBuildMessagesWithCache(b *testing.B) {
 	}
 
 	cb := NewContextBuilder(tmpDir)
-	history := []providers.Message{
-		{Role: "user", Content: "previous message"},
-		{Role: "assistant", Content: "previous response"},
-	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = cb.BuildMessages(history, "summary", "new message", nil, "cli", "test")
+		_ = cb.PromptLayers("cli", "test")
 	}
 }

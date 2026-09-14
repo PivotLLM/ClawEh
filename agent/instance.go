@@ -11,6 +11,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/cogmemhost"
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/cronmsg"
 	"github.com/PivotLLM/ClawEh/global"
 	agentws "github.com/PivotLLM/ClawEh/internal/workspace"
 	"github.com/PivotLLM/ClawEh/llmcontext"
@@ -50,7 +51,7 @@ type AgentInstance struct {
 	// text-only and images are encountered, they are dispatched to these clients
 	// (first success wins) for a one-shot text description instead of being
 	// dropped. Empty = feature off. Wired by AgentLoop.registerRuntimeTools.
-	VisionClients []llmcontext.LLMClient
+	VisionClients []visionClient
 	// EffectiveVisionModel is the first (primary) vision-describe model name, for
 	// logging. Empty when no vision model is configured.
 	EffectiveVisionModel string
@@ -381,6 +382,9 @@ func initSessionStore(dir string) session.SessionStore {
 			map[string]any{"error": err.Error()})
 		return session.NewSessionManager(dir)
 	}
+	// Repeated fires of one scheduled job differ only by timestamp; the store
+	// counts them as noise by the cron collapse key.
+	store.SetNoiseKey(cronmsg.CollapseKey)
 
 	if n, merr := memory.MigrateFromJSON(context.Background(), dir, store); merr != nil {
 		// Migration failure means the store could not write data.

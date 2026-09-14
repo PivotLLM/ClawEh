@@ -8,23 +8,35 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/PivotLLM/ClawEh/cronmsg"
-	"github.com/PivotLLM/ClawEh/global"
-	"github.com/PivotLLM/ClawEh/logger"
+	"github.com/PivotLLM/ClawEh/llmcontext/logger"
 	"github.com/PivotLLM/ClawEh/memory"
 	"github.com/PivotLLM/ClawEh/providers"
 )
 
+// maxCompressAttempts bounds the number of ModelCaller.Complete calls one
+// summarization call may make. Each unusable reply (refusal, invalid JSON, a
+// summary that fails validation) adds its model to the exclusion list and the
+// host is asked again; this cap keeps a host that ignores Exclude, or a long
+// chain of unusable models, from burning calls without limit.
+const maxCompressAttempts = 4
+
+// ErrNoModel is the error a ModelCaller returns when nothing in its chain can
+// serve the request — every model is excluded, in cooldown, or unconfigured.
+// The engine records it once per summarization call rather than as one failed
+// attempt per model.
+var ErrNoModel = errors.New("no summarization model available")
+
 // doCompress performs LLM-based compression of the conversation history.
 // It summarizes the oldest messages into a structured Summary, retains a tail
 // of recent messages, and persists the result. safetyNet=true enables fallback
-// behavior (drop oldest groups) when all LLM clients fail.
+// behavior (drop oldest groups) when the model produces no usable summary.
 func (m *Manager) doCompress(ctx context.Context, safetyNet bool) error {
 	if m.cfg.notifyCallback != nil {
 		m.cfg.notifyCallback("compression started")
@@ -36,42 +48,9 @@ func (m *Manager) doCompress(ctx context.Context, safetyNet bool) error {
 		}
 	}()
 
-	// Resolve clients: prefer explicit compressClients, fall back to primary llm.
-	clients := m.compressClients
-	if len(clients) == 0 {
+	if m.caller == nil {
 		m.lastReport = &CompactionReport{SessionKey: m.sessionKey, Outcome: "nothing"}
-		return nil // no client configured
-	}
-
-	// Drop models that already refused this session's content. This is what
-	// prevents us from burning a call on a refusing model on every compaction —
-	// the refusal is remembered for the session's lifetime.
-	clients = m.filterRefusedClients(clients)
-	if len(clients) == 0 {
-		logger.WarnCF("llmcontext", "compression: every summarization model has refused this session's content", map[string]any{
-			"session_key": m.sessionKey,
-		})
-		m.lastReport = &CompactionReport{
-			SessionKey: m.sessionKey,
-			Attempts:   m.refusedAttempts(),
-			Outcome:    "failed",
-		}
-		return ErrCompressionFailed
-	}
-
-	// Drop models still in cooldown from an earlier billing/auth/rate-limit
-	// failure. If that leaves nothing, fail fast WITHOUT dispatching — this is
-	// what stops an out-of-credits model from being hammered on every compaction.
-	if len(m.filterCooledClients(clients)) == 0 {
-		logger.WarnCF("llmcontext", "compression: every summarization model is in cooldown (billing/auth/rate-limit)", map[string]any{
-			"session_key": m.sessionKey,
-		})
-		m.lastReport = &CompactionReport{
-			SessionKey: m.sessionKey,
-			Attempts:   m.cooledAttempts(clients),
-			Outcome:    "failed",
-		}
-		return ErrCompressionFailed
+		return nil // no summarization model configured
 	}
 
 	// Separate system message from conversation.
@@ -98,9 +77,9 @@ func (m *Manager) doCompress(ctx context.Context, safetyNet bool) error {
 		debugPath = filepath.Join(m.cfg.compressionProfileDir, "compact.jsonl")
 	}
 	rec := &compactionRecorder{
-		sessionKey:     m.sessionKey,
-		debugPath:      debugPath,
-		failureDumpDir: m.cfg.compressFailureDumpDir,
+		sessionKey:  m.sessionKey,
+		debugPath:   debugPath,
+		failureDump: m.cfg.failureDump,
 	}
 	beforeMsgs := len(storedConversation)
 	beforeBytes := storedBytes(storedConversation)
@@ -122,8 +101,8 @@ func (m *Manager) doCompress(ctx context.Context, safetyNet bool) error {
 	// Compression loop: iteratively summarize the oldest portion of the
 	// conversation until we reach the target percentage or exhaust iterations.
 	// Item 13: enforce the max summary token budget. Computed once and passed to
-	// callLLMChain so an oversized summary is rejected within the client chain
-	// (advancing to the next model) rather than after it.
+	// callModel so an oversized summary is rejected within the model call
+	// (excluding that model and asking again) rather than after it.
 	summaryTokenLimit := m.cfg.maxSummaryTokens
 	if summaryTokenLimit <= 0 && m.cfg.contextWindow > 0 {
 		summaryTokenLimit = m.cfg.contextWindow * 20 / 100
@@ -149,7 +128,7 @@ func (m *Manager) doCompress(ctx context.Context, safetyNet bool) error {
 			break // exhausted both standard and aggressive prompt types
 		}
 
-		storedTail, tailStart := selectTail(currentStored, budget, m.cfg.retainMinMessages, maxAge, now, m.estTokens)
+		storedTail, tailStart := selectTail(currentStored, budget, m.cfg.retainMinMessages, maxAge, now, m.estTokens, m.noiseKey())
 		// Never archive past the most recent user message: the live window must
 		// always retain the latest user turn. Otherwise the next dispatch sends a
 		// payload of only system+assistant+tool messages, which strict providers
@@ -181,7 +160,7 @@ func (m *Manager) doCompress(ctx context.Context, safetyNet bool) error {
 		}
 
 		attemptedLLM = true
-		newSummary, ok := m.callLLMChain(ctx, clients, latestSummary, toSummarize, archiveMin, archiveMax, aggressive, compressionProfile, summaryTokenLimit, rec)
+		newSummary, ok := m.callModel(ctx, latestSummary, toSummarize, archiveMin, archiveMax, aggressive, compressionProfile, summaryTokenLimit, rec)
 		if !ok {
 			iterCount++
 			continue
@@ -221,9 +200,6 @@ func (m *Manager) doCompress(ctx context.Context, safetyNet bool) error {
 
 		iterCount++
 	}
-
-	// Remember any models that refused this pass so they are skipped next time.
-	m.noteRefusedModels(rec)
 
 	var err error
 	if !safetyNet {
@@ -275,102 +251,42 @@ func (m *Manager) retainMaxAge() time.Duration {
 	return time.Duration(m.cfg.retainMaxAgeDays) * 24 * time.Hour
 }
 
-// filterRefusedClients returns the subset of clients whose model has not refused
-// this session's content. Clients without a reportable model name are always
-// kept (we cannot match them against the refusal set).
-func (m *Manager) filterRefusedClients(clients []LLMClient) []LLMClient {
+// refusedModelList returns the models that refused this session's content, as
+// the Exclude list for the next request. Nil when none has.
+func (m *Manager) refusedModelList() []string {
 	m.refusedMu.Lock()
 	defer m.refusedMu.Unlock()
 	if len(m.refusedModels) == 0 {
-		return clients
+		return nil
 	}
-	out := make([]LLMClient, 0, len(clients))
-	for _, c := range clients {
-		model := clientModel(c)
-		if model != "" && m.refusedModels[model] {
-			continue
-		}
-		out = append(out, c)
+	out := make([]string, 0, len(m.refusedModels))
+	for model := range m.refusedModels {
+		out = append(out, model)
 	}
 	return out
 }
 
-// noteRefusedModels records, from a completed pass, every model that refused so
-// later compactions for this session skip it.
-func (m *Manager) noteRefusedModels(rec *compactionRecorder) {
-	if rec == nil {
+// noteRefusedModel records a model that refused this session's content so
+// later compactions for this session exclude it. Unnamed models cannot be
+// excluded and are not recorded.
+func (m *Manager) noteRefusedModel(model, detail string) {
+	if model == "" {
 		return
 	}
 	m.refusedMu.Lock()
 	defer m.refusedMu.Unlock()
-	for _, a := range rec.attempts {
-		if a.Status != "refused" || a.Model == "" || a.Model == "model" {
-			continue
-		}
-		if m.refusedModels == nil {
-			m.refusedModels = make(map[string]bool)
-		}
-		if !m.refusedModels[a.Model] {
-			m.refusedModels[a.Model] = true
-			logger.WarnCF("llmcontext", "summarization model refused this session's content; skipping it for future compactions", map[string]any{
-				"session_key": m.sessionKey,
-				"model":       a.Model,
-				"detail":      a.Detail,
-			})
-		}
+	if m.refusedModels == nil {
+		m.refusedModels = make(map[string]bool)
 	}
-}
-
-// refusedAttempts synthesises report attempt entries for the models already known
-// to have refused this session, used when every model has been filtered out.
-func (m *Manager) refusedAttempts() []CompactionAttempt {
-	m.refusedMu.Lock()
-	defer m.refusedMu.Unlock()
-	out := make([]CompactionAttempt, 0, len(m.refusedModels))
-	for model := range m.refusedModels {
-		out = append(out, CompactionAttempt{Model: model, Status: "refused", Detail: "content policy (skipped)"})
+	if m.refusedModels[model] {
+		return
 	}
-	return out
-}
-
-// filterCooledClients drops clients whose model is currently in cooldown (per
-// the shared cooldown tracker). Clients with no reportable model name are kept.
-func (m *Manager) filterCooledClients(clients []LLMClient) []LLMClient {
-	if m.cooldown == nil {
-		return clients
-	}
-	out := make([]LLMClient, 0, len(clients))
-	for _, c := range clients {
-		model := clientModel(c)
-		if model != "" && !m.cooldown.IsAvailable(clientCooldownProvider(c), model) {
-			continue // still cooling — skip
-		}
-		out = append(out, c)
-	}
-	return out
-}
-
-// cooledAttempts synthesises report entries for the given clients' models that
-// are in cooldown, so the user sees why nothing was tried.
-func (m *Manager) cooledAttempts(clients []LLMClient) []CompactionAttempt {
-	if m.cooldown == nil {
-		return nil
-	}
-	out := make([]CompactionAttempt, 0, len(clients))
-	for _, c := range clients {
-		model := clientModel(c)
-		if model == "" {
-			continue
-		}
-		if rem := m.cooldown.CooldownRemaining(clientCooldownProvider(c), model); rem > 0 {
-			out = append(out, CompactionAttempt{
-				Model:  model,
-				Status: "skipped",
-				Detail: fmt.Sprintf("in cooldown (%s remaining)", rem.Round(time.Second)),
-			})
-		}
-	}
-	return out
+	m.refusedModels[model] = true
+	logger.WarnCF("llmcontext", "summarization model refused this session's content; skipping it for future compactions", map[string]any{
+		"session_key": m.sessionKey,
+		"model":       model,
+		"detail":      detail,
+	})
 }
 
 // lastUserStoredIndex returns the index of the most recent user-role message in
@@ -503,19 +419,21 @@ func (m *Manager) handleSafetyNetPostLoop(
 	return ErrCompressionPartial
 }
 
-// callLLMChain calls each client in order, returning the first Summary that
-// passes validation. A client whose summary fails to parse, lacks cited material,
-// or cannot be trimmed within summaryTokenLimit is skipped and the next client is
-// tried — so a fully-configured summarization chain (global models + agent
-// primary) actually falls through on a model that returns an unacceptable summary,
-// not just on a hard transport error. Returns (nil, false) if every client fails.
+// callModel asks the host's ModelCaller for a summary and returns the first
+// one that passes validation. A reply whose summary fails to parse, lacks cited
+// material, or cannot be trimmed within summaryTokenLimit is recorded, its
+// model is added to the request's Exclude list, and the host is asked again —
+// so a fully-configured summarization chain actually falls through on a model
+// that returns an unacceptable summary, not just on a hard transport error. A
+// content refusal is remembered for the session so later compactions exclude
+// that model from the start. A host error ends the call. Returns (nil, false)
+// when no attempt produced an acceptable summary.
 //
 // toSummarize is a []memory.StoredMessage so the prompt can include [#N] seq
 // prefixes for each message. CoveredSeqStart and CoveredSeqEnd are set from the
 // actual min/max seq of the slice, not from any LLM-emitted values.
-func (m *Manager) callLLMChain(
+func (m *Manager) callModel(
 	ctx context.Context,
-	clients []LLMClient,
 	existing *Summary,
 	toSummarize []memory.StoredMessage,
 	archiveMin, archiveMax int64,
@@ -524,13 +442,10 @@ func (m *Manager) callLLMChain(
 	summaryTokenLimit int,
 	rec *compactionRecorder,
 ) (*Summary, bool) {
-	if len(toSummarize) == 0 {
+	if len(toSummarize) == 0 || m.caller == nil {
 		return nil, false
 	}
 	sessionKey := m.sessionKey
-	// Skip models still in cooldown from an earlier billing/auth/rate-limit
-	// failure so we don't hammer an unusable model on every compaction.
-	clients = m.filterCooledClients(clients)
 
 	// Compute the actual seq range from the slice (do not trust LLM output).
 	coveredStart := toSummarize[0].Seq
@@ -544,24 +459,47 @@ func (m *Manager) callLLMChain(
 		}
 	}
 
-	prompt := buildSummarizationPrompt(existing, archiveMin, archiveMax, aggressive, compressionProfile)
-	formatted := formatStoredMessagesForSummary(toSummarize)
-
+	req := ModelRequest{
+		System:     buildSummarizationPrompt(existing, archiveMin, archiveMax, aggressive, compressionProfile),
+		User:       "Messages to summarize:\n\n" + formatStoredMessagesForSummary(toSummarize, m.noiseKey()),
+		JSONObject: true,
+		Exclude:    m.refusedModelList(),
+	}
+	// The recorder captures the call as the two-message exchange the host
+	// sends, so debug capture and failure dumps keep their historical shape.
 	messages := []providers.Message{
-		{Role: "system", Content: prompt},
-		{Role: "user", Content: "Messages to summarize:\n\n" + formatted},
+		{Role: "system", Content: req.System},
+		{Role: "user", Content: req.User},
 	}
 
-	for _, client := range clients {
-		model := clientModel(client)
+	// exclude adds model to the request's exclusion list for the rest of this
+	// call. An unnamed model cannot be excluded: asking again would hit the
+	// same model, so the call stops instead.
+	exclude := func(model string) bool {
+		if model == "" {
+			return false
+		}
+		req.Exclude = append(req.Exclude, model)
+		return true
+	}
+
+	for attempt := 0; attempt < maxCompressAttempts; attempt++ {
 		start := time.Now()
-		response, err := client.Complete(ctx, messages)
+		reply, err := m.caller.Complete(ctx, req)
 		dur := time.Since(start)
+		model := reply.Model
 		if err != nil {
+			if errors.Is(err, ErrNoModel) {
+				// Nothing left to try. Report it once when it is the whole
+				// story (every model excluded or cooling before any call);
+				// after a recorded attempt it only says the chain ran out.
+				if len(rec.attempts) == 0 {
+					rec.record(model, "skipped", shortErr(err), dur, messages, "")
+				}
+				return nil, false
+			}
 			// Classify so the report shows a clean "HTTP 402 (out of credits)"
-			// instead of a raw body dump, and so a model that is unusable for a
-			// while (billing/auth/rate-limit/overload) is put in cooldown rather
-			// than retried on every compaction.
+			// instead of a raw body dump. Cooling the model is the host's job.
 			detail := shortErr(err)
 			if fe := providers.ClassifyError(err, "", model); fe != nil {
 				if fe.Status > 0 {
@@ -569,27 +507,26 @@ func (m *Manager) callLLMChain(
 				} else {
 					detail = providers.ReasonText(fe.Reason)
 				}
-				// Record the failure against the shared cooldown policy; statuses
-				// that never cool (413, no HTTP status) are ignored internally.
-				if m.cooldown != nil {
-					m.cooldown.MarkFailure(clientCooldownProvider(client), model, fe.Reason, fe.Status, fe.RetryAfter)
-				}
 			}
 			rec.record(model, "error", detail, dur, messages, "")
-			continue
+			return nil, false
 		}
 
-		summary, perr := validateAndUnmarshalLLMResponse(response.Content)
+		summary, perr := validateAndUnmarshalLLMResponse(reply.Content)
 		if perr != nil {
 			// A response that did not yield a valid summary AND carries refusal
 			// signals (finish_reason or a decline phrase) is a content refusal, not
-			// a flaky model. Record it distinctly so the user is alerted and the
-			// caller can stop sending this session's content to this model.
-			if global.IsRefusal(response.FinishReason, response.Content) {
-				rec.record(model, "refused", global.RefusalDetail(response.FinishReason), dur, messages, response.Content)
-				continue
+			// a flaky model. Record it distinctly so the user is alerted, and stop
+			// sending this session's content to this model.
+			if refused, detail := m.classifyRefusal(reply.FinishReason, reply.Content); refused {
+				rec.record(model, "refused", detail, dur, messages, reply.Content)
+				m.noteRefusedModel(model, detail)
+			} else {
+				rec.record(model, "error", "invalid JSON response: "+shortErr(perr), dur, messages, reply.Content)
 			}
-			rec.record(model, "error", "invalid JSON response: "+shortErr(perr), dur, messages, response.Content)
+			if !exclude(model) {
+				return nil, false
+			}
 			continue
 		}
 
@@ -601,15 +538,18 @@ func (m *Manager) callLLMChain(
 
 		// Strip seq references outside the valid range, then require the summary
 		// to carry cited material. A model that returns an un-cited summary is
-		// skipped so the chain advances to the next model.
+		// excluded so the next call reaches the next model in the host's chain.
 		summary.StripOutOfRangeSeqRefs(archiveMin, archiveMax)
 		if !summary.HasMaterial() || !summary.HasEvidence() {
-			rec.record(model, "rejected", "missing citations", dur, messages, response.Content)
+			rec.record(model, "rejected", "missing citations", dur, messages, reply.Content)
+			if !exclude(model) {
+				return nil, false
+			}
 			continue
 		}
 
 		// Item 13: enforce the max summary token budget. Truncate, then discard
-		// (advancing to the next client) if it still does not fit.
+		// (excluding the model) if it still does not fit.
 		if summaryTokenLimit > 0 {
 			if summary.TruncateToFit(summaryTokenLimit) {
 				logger.WarnCF("llmcontext", "summary truncated to fit token budget", map[string]any{
@@ -624,15 +564,18 @@ func (m *Manager) callLLMChain(
 						"tokens":      len([]rune(string(data))) / 4,
 						"limit":       summaryTokenLimit,
 					})
-					rec.record(model, "rejected", "summary too large", dur, messages, response.Content)
+					rec.record(model, "rejected", "summary too large", dur, messages, reply.Content)
+					if !exclude(model) {
+						return nil, false
+					}
 					continue
 				}
 			}
 		}
 
-		rec.record(model, "ok", "", dur, messages, response.Content)
-		if m.cooldown != nil {
-			m.cooldown.MarkSuccess(clientCooldownProvider(client), model) // reset any prior cooldown/escalation
+		rec.record(model, "ok", "", dur, messages, reply.Content)
+		if model != "" && summary.Model == "" {
+			summary.Model = model
 		}
 		return summary, true
 	}
@@ -727,14 +670,17 @@ const cronNoOpReplyMaxLen = 200
 //     them. Seq of the first message is preserved.
 //  2. Byte-identical same-role runs: the original behavior, applied to anything
 //     not consumed by cron collapse.
-func collapseRepetitiveRuns(stored []memory.StoredMessage) []memory.StoredMessage {
+func collapseRepetitiveRuns(stored []memory.StoredMessage, noise NoiseKeyFunc) []memory.StoredMessage {
 	if len(stored) < repetitiveRunThreshold {
 		return stored
+	}
+	if noise == nil {
+		noise = noNoiseKey
 	}
 	result := make([]memory.StoredMessage, 0, len(stored))
 	i := 0
 	for i < len(stored) {
-		if anchor, next, ok := collapseCronRun(stored, i); ok {
+		if anchor, next, ok := collapseCronRun(stored, i, noise); ok {
 			result = append(result, anchor)
 			i = next
 			continue
@@ -765,20 +711,19 @@ func collapseRepetitiveRuns(stored []memory.StoredMessage) []memory.StoredMessag
 	return result
 }
 
-// collapseCronRun attempts to detect a cron no-op run starting at index start.
-// A qualifying run is a maximal sequence of consecutive [cron-marker user
-// message with the SAME collapse key] → [assistant reply] pairs where all the
+// collapseCronRun attempts to detect a scheduled-job no-op run starting at
+// index start. A qualifying run is a maximal sequence of consecutive [user
+// message with the SAME noise key] → [assistant reply] pairs where all the
 // assistant replies are mutually trimmed-equal and short (<= cronNoOpReplyMaxLen).
 // It returns the synthetic counted anchor, the index immediately after the run,
 // and true. If no qualifying run of >= repetitiveRunThreshold fires begins at
 // start, ok is false.
-func collapseCronRun(stored []memory.StoredMessage, start int) (memory.StoredMessage, int, bool) {
-	fp, _, isCron := cronmsg.Parse(stored[start].Content)
+func collapseCronRun(stored []memory.StoredMessage, start int, noise NoiseKeyFunc) (memory.StoredMessage, int, bool) {
+	key, isCron := noise(stored[start].Content)
 	if stored[start].Role != "user" || !isCron {
 		return memory.StoredMessage{}, start, false
 	}
 
-	key, _ := cronmsg.CollapseKey(stored[start].Content)
 	var reply string
 	haveReply := false
 	count := 0
@@ -791,7 +736,7 @@ func collapseCronRun(stored []memory.StoredMessage, start int) (memory.StoredMes
 		if userMsg.Role != "user" {
 			break
 		}
-		k, ok := cronmsg.CollapseKey(userMsg.Content)
+		k, ok := noise(userMsg.Content)
 		if !ok || k != key {
 			break
 		}
@@ -842,21 +787,28 @@ func collapseCronRun(stored []memory.StoredMessage, start int) (memory.StoredMes
 
 	anchor := stored[start] // carry the seq of the first message in the run.
 	anchor.Role = "user"
-	anchor.Content = cronRunAnchor(fp, count, firstSeq, lastSeq, reply)
+	anchor.Content = cronRunAnchor(key, count, firstSeq, lastSeq, reply)
 	anchor.ToolCalls = nil
 	anchor.ToolCallID = ""
 	return anchor, i, true
 }
 
-// cronRunAnchor renders the counted anchor string for a collapsed cron no-op run.
-// It states the count and the [firstSeq-lastSeq] range so a reader knows exactly
-// which archived messages were elided and can retrieve them via get_session_messages.
-func cronRunAnchor(fingerprint string, count int, firstSeq, lastSeq int64, reply string) string {
+// cronRunAnchorKeyMaxLen bounds the noise key rendered in a run anchor. A key
+// is usually a short job fingerprint; a legacy key is the whole payload, which
+// is clipped so the anchor stays one line.
+const cronRunAnchorKeyMaxLen = 40
+
+// cronRunAnchor renders the counted anchor string for a collapsed no-op run of
+// a scheduled job identified by key. It states the count and the
+// [firstSeq-lastSeq] range so a reader knows exactly which archived messages
+// were elided and can retrieve them via get_session_messages.
+func cronRunAnchor(key string, count int, firstSeq, lastSeq int64, reply string) string {
 	shortReply := truncateRunes(reply, 60)
-	if fingerprint != "" {
+	label := truncateRunes(strings.Join(strings.Fields(key), " "), cronRunAnchorKeyMaxLen)
+	if label != "" {
 		return fmt.Sprintf(
 			"[scheduled job %s fired ×%d (#%d-#%d); routine, replies identical: %q]",
-			fingerprint, count, firstSeq, lastSeq, shortReply,
+			label, count, firstSeq, lastSeq, shortReply,
 		)
 	}
 	return fmt.Sprintf(
@@ -873,14 +825,17 @@ func cronRunAnchor(fingerprint string, count int, firstSeq, lastSeq int64, reply
 // message in the run; the elided originals remain in the archive (retrievable via
 // get_session_messages), so this elides them only from the live tail, never from
 // the durable record.
-func collapseRetainedCronRuns(stored []memory.StoredMessage) []memory.StoredMessage {
+func collapseRetainedCronRuns(stored []memory.StoredMessage, noise NoiseKeyFunc) []memory.StoredMessage {
 	if len(stored) < repetitiveRunThreshold {
 		return stored
+	}
+	if noise == nil {
+		noise = noNoiseKey
 	}
 	result := make([]memory.StoredMessage, 0, len(stored))
 	i := 0
 	for i < len(stored) {
-		if anchor, next, ok := collapseCronRun(stored, i); ok {
+		if anchor, next, ok := collapseCronRun(stored, i, noise); ok {
 			result = append(result, anchor)
 			i = next
 			continue
@@ -901,8 +856,8 @@ func truncateRunes(s string, max int) string {
 	return string(r[:max]) + "…"
 }
 
-func formatStoredMessagesForSummary(stored []memory.StoredMessage) string {
-	stored = collapseRepetitiveRuns(stored)
+func formatStoredMessagesForSummary(stored []memory.StoredMessage, noise NoiseKeyFunc) string {
+	stored = collapseRepetitiveRuns(stored, noise)
 	var sb strings.Builder
 	for _, sm := range stored {
 		fmt.Fprintf(&sb, "[#%d] [%s]\n", sm.Seq, sm.Role)
@@ -1019,7 +974,7 @@ func (m *Manager) persistStoredResult(sysMsg *memory.StoredMessage, conv []memor
 	// archive (retrievable by seq); only the live tail elides them. Idempotent:
 	// an already-collapsed anchor is not a cron-marker message, so re-running it
 	// leaves anchors untouched.
-	conv = collapseRetainedCronRuns(conv)
+	conv = collapseRetainedCronRuns(conv, m.noiseKey())
 
 	newStored := make([]memory.StoredMessage, 0, len(conv)+1)
 	if sysMsg != nil {

@@ -155,6 +155,10 @@ func NewAgentLoop(
 	provider providers.LLMProvider,
 	dispatcher *providers.ProviderDispatcher,
 ) *AgentLoop {
+	// Route the context engine's logs into ours before anything constructs a
+	// session store or context manager.
+	InstallLogging()
+
 	registry := NewAgentRegistry(cfg, provider)
 
 	// Set up shared fallback chain with the config-driven cooldown policy.

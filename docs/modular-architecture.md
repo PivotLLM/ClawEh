@@ -688,6 +688,62 @@ parity test:
 
 ---
 
+### 12.2 Engine extraction (in progress on the same branch)
+
+The engine (`llmcontext`), its store (`memory`, `session`) and the session
+tools move to `github.com/PivotLLM/ctxengine`, using the same pattern as
+cogmem: a thin `ctxenginehost/` package in ClawEh supplies what the module
+must not know about, and the module ships its own logger seam and its tools
+as toolspec definitions over a `Host` struct.
+
+Four couplings are cut first, in place, with the assembled prompt bytes held
+identical by a golden test:
+
+- **Prompt layers replace `MessageBuilder`.** The host builds every layer
+  (identity, bootstrap files, skills, date, runtime, session token) and passes
+  them on `AssembleRequest`; the engine inserts its summary block between the
+  layers marked before and after it, then the injections. The engine no longer
+  calls into `agent/context.go` and no longer knows the session token exists.
+  History sanitisation moves into the engine, where it belongs.
+- **Four injected services**, each with a safe default: a logging backend
+  (`llmcontext/logger.SetBackend`), a failure-dump sink, a refusal classifier,
+  and a noise-key function. The last one is how the engine collapses repeated
+  cron fires without knowing what cron is: the host passes
+  `cronmsg.CollapseKey`; an embedding host passes nothing.
+- **One model caller.** Compaction and consolidation get the same duck-typed
+  shape, so one host client serves both modules and one fake serves both test
+  suites:
+
+  ```go
+  type ModelRequest struct {
+      System, User string
+      JSONObject   bool     // ask for a JSON-object response where supported
+      Exclude      []string // models this caller has learned to avoid
+  }
+  type ModelReply struct{ Content, FinishReason, Model string }
+  type ModelCaller interface {
+      Complete(ctx context.Context, req ModelRequest) (ModelReply, error)
+  }
+  ```
+
+  The host owns the chain, credentials, cooldowns and transport, and reports
+  which model answered. Each module owns its output: the engine keeps its
+  per-session refusal memory and passes refused models in `Exclude`; cogmem
+  parses and validates its consolidation JSON itself and retries through
+  `Exclude`. The host stops knowing what either module's output looks like.
+  Replaces the engine's list of `LLMClient`s and cogmem's parse-or-fail
+  `Consolidate` contract.
+- **Session tools over a `Host` struct** (`SessionsDir`, `Compact`, `Clear`,
+  `SessionInfo`, `Log`), no ClawEh types, so they move with the engine.
+
+Then the packages move, and inside the module the JSONL live window folds
+into the archive as a seq range plus a summary: one store, one seq space, one
+place recovery reads.
+
+The slash commands that touch the engine, `/compact`, `/clear`, `/status`
+and `/memory`, keep working through the closures the loop hands the command
+runtime; only the engine calls behind them change.
+
 ## 13. Sequencing and open questions
 
 Phases, in order, each gated by `make check` plus the parity oracle. No

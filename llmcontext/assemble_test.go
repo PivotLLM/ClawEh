@@ -16,9 +16,9 @@ import (
 func TestAssemble_NoChangeLeavesFlagsClear(t *testing.T) {
 	store := newMockStore()
 	store.SetHistory("test-session", []providers.Message{{Role: "user", Content: "hi"}})
-	m := New("test-session", store, stubBuilder{}, nil, WithContextWindow(100_000), WithOverheadTokens(0)).(*Manager)
+	m := New("test-session", store, WithContextWindow(100_000), WithOverheadTokens(0)).(*Manager)
 
-	asm, err := m.Assemble(context.Background(), AssembleRequest{ToolDefinitionTokens: 123})
+	asm, err := m.Assemble(context.Background(), AssembleRequest{ToolDefinitionTokens: 123, Layers: systemLayers})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +40,7 @@ func TestAssemble_HistoryPastSafetyCompacts(t *testing.T) {
 	store := newMockStore()
 	// 10000-token window, safety at 80% → 8000 tokens; 40000 chars ≈ 10000 tokens.
 	store.SetHistory("test-session", []providers.Message{{Role: "user", Content: strings.Repeat("a", 40_000)}})
-	m := New("test-session", store, stubBuilder{}, nil,
+	m := New("test-session", store,
 		WithContextWindow(10_000), WithSafetyPercent(80), WithOverheadTokens(0)).(*Manager)
 	fired := 0
 	m.SetTestCompressHook(func(safetyNet bool) {
@@ -69,7 +69,7 @@ func TestAssemble_BuiltRequestPastSafetyCompacts(t *testing.T) {
 	store := newMockStore()
 	// ≈2500 tokens of history in a 10000 window: well under 80% on its own.
 	store.SetHistory("test-session", []providers.Message{{Role: "user", Content: strings.Repeat("a", 10_000)}})
-	m := New("test-session", store, stubBuilder{}, nil,
+	m := New("test-session", store,
 		WithContextWindow(10_000), WithSafetyPercent(80), WithOverheadTokens(0)).(*Manager)
 	fired := 0
 	m.SetTestCompressHook(func(bool) { fired++ })
@@ -93,7 +93,7 @@ func TestAssemble_InjectionsPlacedAndNeverPersisted(t *testing.T) {
 		{Role: "assistant", Content: "reply"},
 		{Role: "user", Content: "current"},
 	})
-	m := New("test-session", store, stubBuilder{}, nil, WithContextWindow(100_000)).(*Manager)
+	m := New("test-session", store, WithContextWindow(100_000)).(*Manager)
 	asm, err := m.Assemble(context.Background(), AssembleRequest{Injections: []Injection{
 		{Placement: PlaceSystemStable, Text: "STABLE"},
 		{Placement: PlaceCurrentUser, Text: "ROUTED"},
@@ -120,7 +120,7 @@ func TestAssemble_InjectionsPlacedAndNeverPersisted(t *testing.T) {
 // assigned, in order, which is what memory evidence and session tools cite.
 func TestAdd_ReturnsTranscriptSeq(t *testing.T) {
 	store := newMockStore()
-	m := New("test-session", store, nil, nil, WithContextWindow(100_000)).(*Manager)
+	m := New("test-session", store, WithContextWindow(100_000)).(*Manager)
 	ctx := context.Background()
 	s1, _ := m.AddUserMessage(ctx, msgWithContent("a"))
 	s2, _ := m.AddToolCallMessage(ctx, providers.Message{Role: "assistant"})

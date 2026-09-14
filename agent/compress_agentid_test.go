@@ -5,6 +5,7 @@ package agent
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -25,6 +26,8 @@ type capturingContextManager struct {
 	assembleAgentID            string
 	addAssistantMessageAgentID string
 	toolDefTokens              int
+	layers                     []llmcontext.Layer
+	channel, chatID            string
 }
 
 func (c *capturingContextManager) capture(field *string, ctx context.Context) {
@@ -57,11 +60,11 @@ func (c *capturingContextManager) Assemble(ctx context.Context, req llmcontext.A
 	c.capture(&c.assembleAgentID, ctx)
 	c.mu.Lock()
 	c.toolDefTokens = req.ToolDefinitionTokens
+	c.layers = req.Layers
+	c.channel, c.chatID = req.Channel, req.ChatID
 	c.mu.Unlock()
 	return llmcontext.Assembly{Messages: []providers.Message{{Role: "user", Content: "hi"}}}, nil
 }
-func (c *capturingContextManager) SetCallContext(_, _ string)                         {}
-func (c *capturingContextManager) SetSessionToken(_ string)                           {}
 func (c *capturingContextManager) Compact(_ context.Context) error                    { return nil }
 func (c *capturingContextManager) LastCompactionReport() *llmcontext.CompactionReport { return nil }
 func (c *capturingContextManager) RenderedSummary() string                            { return "" }
@@ -148,6 +151,26 @@ func TestRunAgentLoop_PropagatesAgentIDForCompression(t *testing.T) {
 		if c.got != agent.ID {
 			t.Errorf("%s observed agent_id=%q, want %q", c.name, c.got, agent.ID)
 		}
+	}
+
+	// The dispatch carries the system-prompt layers (static, dynamic, then the
+	// session token behind the summary) and the conversation the compaction
+	// reporter should answer on.
+	if stub.channel != "cli" || stub.chatID != "direct" {
+		t.Errorf("Assemble saw channel %q/%q, want cli/direct", stub.channel, stub.chatID)
+	}
+	names := make([]string, 0, len(stub.layers))
+	for _, l := range stub.layers {
+		names = append(names, l.Name)
+	}
+	if strings.Join(names, ",") != "static,dynamic,session_token" {
+		t.Errorf("Assemble saw layers %v, want static,dynamic,session_token", names)
+	}
+	if !stub.layers[2].AfterSummary || stub.layers[2].Text != "" {
+		t.Errorf("token layer = %+v; want AfterSummary with no text (no issuer wired)", stub.layers[2])
+	}
+	if !strings.Contains(stub.layers[0].Text, "# claw") || !strings.Contains(stub.layers[1].Text, "Channel: cli") {
+		t.Errorf("layers carry the wrong prompt: static=%.40q dynamic=%.60q", stub.layers[0].Text, stub.layers[1].Text)
 	}
 
 	// The LLM call itself should also see the agent ID — this is the original

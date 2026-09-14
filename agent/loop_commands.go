@@ -241,18 +241,9 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 				})
 				return err
 			}
-			// Revoke the old session token and issue a fresh one. The LLM will
-			// receive the new token in the next Build() call.
-			al.mu.RLock()
-			sti := al.sessionTokenIssuer
-			al.mu.RUnlock()
-			if sti != nil {
-				archiveDir := filepath.Join(agent.Workspace, "sessions")
-				tok := sti.Issue(agent.ID, opts.SessionKey, archiveDir)
-				if tok != "" {
-					cm.SetSessionToken(tok)
-				}
-			}
+			// Issue a fresh session token; the LLM receives it in the next
+			// dispatch's system prompt.
+			al.reissueSessionToken(agent, opts.SessionKey)
 			// Notify the agent that its context was cleared, so it can re-orient
 			// (the same notice an agent-initiated clear delivers, minus a handoff).
 			// The reset already happened above, so no reset metadata is set.
@@ -281,7 +272,6 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 			}
 			cm, releaseCM := al.getContextManager(agent, opts.SessionKey)
 			defer releaseCM()
-			cm.SetCallContext(opts.Channel, opts.ChatID)
 			err := cm.Compact(ctx)
 			report := ""
 			if r := cm.LastCompactionReport(); r != nil {

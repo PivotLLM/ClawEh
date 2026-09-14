@@ -11,18 +11,9 @@ import (
 	"github.com/PivotLLM/ClawEh/providers"
 )
 
-// stubBuilder is a MessageBuilder that emits a system message plus the history
-// verbatim, which is all these tests need to see where blocks land.
-type stubBuilder struct{}
-
-func (stubBuilder) BuildMessages(history []providers.Message, summary, current string, _ []string, _, _ string) []providers.Message {
-	out := []providers.Message{{Role: "system", Content: "SYSTEM" + summary}}
-	out = append(out, history...)
-	if current != "" {
-		out = append(out, providers.Message{Role: "user", Content: current})
-	}
-	return out
-}
+// systemLayers is the one-layer system prompt these tests assemble around,
+// which is all they need to see where blocks land.
+var systemLayers = []Layer{{Name: "static", Text: "SYSTEM"}}
 
 // memMgr builds a Manager over a store; assemble places the two memory blocks
 // the way the agent loop does, stable in the system message and routed on the
@@ -34,12 +25,12 @@ type memMgr struct {
 
 func newMemMgr(t *testing.T, store *mockStore, stable, routed string) memMgr {
 	t.Helper()
-	m := New("test-session", store, stubBuilder{}, nil, WithContextWindow(100_000)).(*Manager)
+	m := New("test-session", store, WithContextWindow(100_000)).(*Manager)
 	return memMgr{Manager: m, stable: stable, routed: routed}
 }
 
 func (m memMgr) Build(ctx context.Context) ([]providers.Message, error) {
-	asm, err := m.Assemble(ctx, AssembleRequest{Injections: []Injection{
+	asm, err := m.Assemble(ctx, AssembleRequest{Layers: systemLayers, Injections: []Injection{
 		{Placement: PlaceSystemStable, Text: m.stable},
 		{Placement: PlaceCurrentUser, Text: m.routed},
 	}})

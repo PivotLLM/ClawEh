@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/PivotLLM/ClawEh/cronmsg"
 	"github.com/PivotLLM/ClawEh/memory"
 	"github.com/PivotLLM/ClawEh/providers"
 )
@@ -44,7 +45,7 @@ func TestCollapseRepetitiveRuns_CronNoOpCollapses(t *testing.T) {
 		cronFire(16, "3f9a1c0d", "12:00", "self-check"),
 		storedMsg(17, "assistant", " No changes. "), // trimmed-equal
 	}
-	got := collapseRepetitiveRuns(stored)
+	got := collapseRepetitiveRuns(stored, cronmsg.CollapseKey)
 	if len(got) != 1 {
 		t.Fatalf("expected 1 collapsed message, got %d: %+v", len(got), got)
 	}
@@ -61,7 +62,7 @@ func TestCollapseRepetitiveRuns_CronNoOpCollapses(t *testing.T) {
 }
 
 // TestCollapseRepetitiveRuns_LegacyNoFingerprint verifies legacy fires (no marker)
-// collapse using the payload key and omit the id in the anchor.
+// collapse using the payload key, which the anchor then names.
 func TestCollapseRepetitiveRuns_LegacyNoFingerprint(t *testing.T) {
 	stored := []memory.StoredMessage{
 		cronFire(1, "", "09:00", "self-check"),
@@ -71,16 +72,50 @@ func TestCollapseRepetitiveRuns_LegacyNoFingerprint(t *testing.T) {
 		cronFire(5, "", "11:00", "self-check"),
 		storedMsg(6, "assistant", "No changes."),
 	}
-	got := collapseRepetitiveRuns(stored)
+	got := collapseRepetitiveRuns(stored, cronmsg.CollapseKey)
 	if len(got) != 1 {
 		t.Fatalf("expected 1 collapsed message, got %d", len(got))
 	}
-	want := `[scheduled job fired ×3 (#1-#6); routine, replies identical: "No changes."]`
+	want := `[scheduled job self-check fired ×3 (#1-#6); routine, replies identical: "No changes."]`
 	if got[0].Content != want {
 		t.Errorf("anchor content = %q, want %q", got[0].Content, want)
 	}
-	if strings.Contains(got[0].Content, "scheduled job  fired") {
-		t.Error("legacy anchor should not contain an empty id slot")
+}
+
+// TestCronRunAnchor_LongKeyClipped keeps a legacy (payload) key to one clipped
+// line in the anchor, and renders no key slot at all for an empty key.
+func TestCronRunAnchor_LongKeyClipped(t *testing.T) {
+	long := strings.Repeat("payload words ", 10)
+	got := cronRunAnchor(long, 3, 1, 6, "ok")
+	if strings.Contains(got, "\n") || len([]rune(got)) > 120 {
+		t.Errorf("anchor not clipped to one short line: %q", got)
+	}
+	if !strings.HasPrefix(got, "[scheduled job payload words") {
+		t.Errorf("anchor should name the clipped key: %q", got)
+	}
+	if got := cronRunAnchor("", 3, 1, 6, "ok"); strings.Contains(got, "scheduled job  fired") {
+		t.Errorf("empty key rendered an empty slot: %q", got)
+	}
+}
+
+// TestCollapseRepetitiveRuns_NoNoiseKeyLeavesCronAlone is the off path: without
+// an injected noise key the engine recognises no scheduled-job fires, so a run
+// of them is left verbatim (only byte-identical runs collapse, and these differ
+// by timestamp).
+func TestCollapseRepetitiveRuns_NoNoiseKeyLeavesCronAlone(t *testing.T) {
+	stored := []memory.StoredMessage{
+		cronFire(1, "3f9a1c0d", "09:00", "self-check"),
+		storedMsg(2, "assistant", "No changes."),
+		cronFire(3, "3f9a1c0d", "10:00", "self-check"),
+		storedMsg(4, "assistant", "No changes."),
+		cronFire(5, "3f9a1c0d", "11:00", "self-check"),
+		storedMsg(6, "assistant", "No changes."),
+	}
+	if got := collapseRepetitiveRuns(stored, nil); len(got) != len(stored) {
+		t.Fatalf("without a noise key nothing should collapse; got %d of %d", len(got), len(stored))
+	}
+	if got := collapseRetainedCronRuns(stored, nil); len(got) != len(stored) {
+		t.Fatalf("without a noise key the retained tail should be untouched; got %d of %d", len(got), len(stored))
 	}
 }
 
@@ -97,7 +132,7 @@ func TestCollapseRepetitiveRuns_DifferingReplyBreaksRun(t *testing.T) {
 		cronFire(7, "aa11bb22", "12:00", "self-check"),
 		storedMsg(8, "assistant", "Disk is full! Took action."), // differs → breaks
 	}
-	got := collapseRepetitiveRuns(stored)
+	got := collapseRepetitiveRuns(stored, cronmsg.CollapseKey)
 	// Expect: 1 anchor (3 uniform fires) + the differing pair preserved (2 msgs).
 	if len(got) != 3 {
 		t.Fatalf("expected 3 messages (anchor + differing pair), got %d: %+v", len(got), got)
@@ -123,7 +158,7 @@ func TestCollapseRepetitiveRuns_SubThresholdLeftAlone(t *testing.T) {
 		cronFire(3, "cc33dd44", "10:00", "self-check"),
 		storedMsg(4, "assistant", "No changes."),
 	}
-	got := collapseRepetitiveRuns(stored)
+	got := collapseRepetitiveRuns(stored, cronmsg.CollapseKey)
 	if len(got) != 4 {
 		t.Fatalf("sub-threshold run should be left alone, got %d messages", len(got))
 	}
@@ -146,7 +181,7 @@ func TestCollapseRepetitiveRuns_LongReplyNotCollapsed(t *testing.T) {
 		cronFire(5, "ee55ff66", "11:00", "self-check"),
 		storedMsg(6, "assistant", long),
 	}
-	got := collapseRepetitiveRuns(stored)
+	got := collapseRepetitiveRuns(stored, cronmsg.CollapseKey)
 	if len(got) != 6 {
 		t.Fatalf("long replies should not collapse, got %d messages", len(got))
 	}
@@ -160,7 +195,7 @@ func TestCollapseRepetitiveRuns_NonCronByteIdentical(t *testing.T) {
 		storedMsg(2, "user", "ping"),
 		storedMsg(3, "user", "ping"),
 	}
-	got := collapseRepetitiveRuns(stored)
+	got := collapseRepetitiveRuns(stored, cronmsg.CollapseKey)
 	if len(got) != 1 {
 		t.Fatalf("expected 1 collapsed entry, got %d", len(got))
 	}
@@ -210,7 +245,7 @@ func TestCollapseRepetitiveRuns_ToolCallReplyBreaksRun(t *testing.T) {
 		storedMsg(9, "tool", "service restarted"),
 		storedMsg(10, "assistant", "Restarted nginx."),
 	}
-	got := collapseRepetitiveRuns(stored)
+	got := collapseRepetitiveRuns(stored, cronmsg.CollapseKey)
 	// Expect: anchor for the 3 no-op fires (#1-#6) + the acting fire's 4 messages
 	// preserved verbatim (cron7, assistant+toolcall 8, tool 9, assistant 10).
 	if len(got) != 5 {
@@ -243,7 +278,7 @@ func TestCollapseRetainedCronRuns(t *testing.T) {
 		storedMsg(8, "assistant", "No changes."),
 		cronFire(9, "ab12cd34", "12:00", "self-check"), // trailing, unreplied → preserved
 	}
-	got := collapseRetainedCronRuns(stored)
+	got := collapseRetainedCronRuns(stored, cronmsg.CollapseKey)
 	// Expect: msg1, msg2, anchor(#3-#8), trailing cron fire #9 = 4 messages.
 	if len(got) != 4 {
 		t.Fatalf("expected 4 messages, got %d: %+v", len(got), got)
@@ -269,7 +304,7 @@ func TestCollapseRetainedCronRuns_NoByteIdenticalCollapse(t *testing.T) {
 		storedMsg(2, "user", "ping"),
 		storedMsg(3, "user", "ping"),
 	}
-	got := collapseRetainedCronRuns(stored)
+	got := collapseRetainedCronRuns(stored, cronmsg.CollapseKey)
 	if len(got) != 3 {
 		t.Fatalf("non-cron repeats must be preserved in the retained tail, got %d", len(got))
 	}

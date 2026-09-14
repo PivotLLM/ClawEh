@@ -18,10 +18,10 @@ import (
 )
 
 // TestCompress_E2E_ClaudeCLIReceivesFortification locks in the full compression
-// dispatch chain: Manager.doCompress → providerLLMClient.Complete →
-// ClaudeCliProvider.Chat. The provider's stdin must carry the JSON-object
-// fortification because providerLLMClient passes ResponseFormatJSONObjectOption
-// through the options map. Without that wiring this test fails — see the
+// dispatch chain: Manager.doCompress → compressModelCaller.Complete →
+// providerLLMClient.chat → ClaudeCliProvider.Chat. The provider's stdin must
+// carry the JSON-object fortification because the caller passes the engine's
+// JSONObject request through as ResponseFormatJSONObjectOption. Without that wiring this test fails — see the
 // mutation evidence captured in the worker report.
 func TestCompress_E2E_ClaudeCLIReceivesFortification(t *testing.T) {
 	if runtime.GOOS == "windows" {
@@ -61,10 +61,8 @@ EOFMOCK
 	cm := llmcontext.New(
 		sessionKey,
 		store,
-		nil,
-		nil,
 		llmcontext.WithContextWindow(1000),
-		llmcontext.WithCompressLLM(client),
+		llmcontext.WithModelCaller(&compressModelCaller{clients: []*providerLLMClient{client}}),
 	)
 	if err := cm.Compact(context.Background()); err != nil {
 		t.Fatalf("Compact: %v", err)

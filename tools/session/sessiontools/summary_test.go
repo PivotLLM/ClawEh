@@ -1,10 +1,10 @@
 // ClawEh
 // License: MIT
 
-package session
+package sessiontools
 
 import (
-	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -31,7 +31,7 @@ func writeArchiveSummaries(t *testing.T, sessionKey string, recs []memory.Summar
 }
 
 // TestSessionSummaryList_ResolvesAndLists verifies the list tool resolves the
-// session via the injected key and returns a readable listing.
+// session via the call's key and returns a readable listing.
 func TestSessionSummaryList_ResolvesAndLists(t *testing.T) {
 	const key = "agent:main"
 	dir := writeArchiveSummaries(t, key, []memory.SummaryRecord{
@@ -39,19 +39,18 @@ func TestSessionSummaryList_ResolvesAndLists(t *testing.T) {
 		{GeneratedAt: time.Now(), Model: "m2", Profile: "abc12345", CoveredSeqStart: 1, CoveredSeqEnd: 20, Summary: `{"v":2}`},
 	})
 
-	tool := NewSessionSummaryListTool(dir)
-	res := tool.Execute(ctxWithSession(t, key), map[string]any{})
+	res := run(t, archiveHost(dir), "summary_list", key, map[string]any{})
 	if res.IsError {
 		t.Fatalf("unexpected error: %s", res.ForLLM)
 	}
 	// Newest first: id 2 (model m2) should appear before id 1.
-	if !containsStr(res.ForLLM, "id 2") || !containsStr(res.ForLLM, "id 1") {
+	if !strings.Contains(res.ForLLM, "id 2") || !strings.Contains(res.ForLLM, "id 1") {
 		t.Errorf("expected both ids listed, got: %s", res.ForLLM)
 	}
-	if !containsStr(res.ForLLM, "#1-#20") {
+	if !strings.Contains(res.ForLLM, "#1-#20") {
 		t.Errorf("expected covered range for id 2, got: %s", res.ForLLM)
 	}
-	if !containsStr(res.ForLLM, "profile abc12345") {
+	if !strings.Contains(res.ForLLM, "profile abc12345") {
 		t.Errorf("expected profile shown, got: %s", res.ForLLM)
 	}
 }
@@ -60,30 +59,28 @@ func TestSessionSummaryList_ResolvesAndLists(t *testing.T) {
 func TestSessionSummaryList_Empty(t *testing.T) {
 	const key = "empty"
 	dir := writeArchiveSummaries(t, key, nil)
-	tool := NewSessionSummaryListTool(dir)
-	res := tool.Execute(ctxWithSession(t, key), map[string]any{})
+	res := run(t, archiveHost(dir), "summary_list", key, map[string]any{})
 	if res.IsError {
 		t.Fatalf("unexpected error: %s", res.ForLLM)
 	}
-	if !containsStr(res.ForLLM, "no context summaries") {
+	if !strings.Contains(res.ForLLM, "no context summaries") {
 		t.Errorf("expected empty message, got: %s", res.ForLLM)
 	}
 }
 
 // TestSessionSummaryList_NoArchive returns unavailable when the file is missing.
 func TestSessionSummaryList_NoArchive(t *testing.T) {
-	tool := NewSessionSummaryListTool(t.TempDir())
-	res := tool.Execute(ctxWithSession(t, "nope"), map[string]any{})
+	res := run(t, archiveHost(t.TempDir()), "summary_list", "nope", map[string]any{})
 	if res.IsError {
 		t.Fatalf("unexpected error: %s", res.ForLLM)
 	}
-	if !containsStr(res.ForLLM, "unavailable") {
+	if !strings.Contains(res.ForLLM, "unavailable") {
 		t.Errorf("expected unavailable, got: %s", res.ForLLM)
 	}
 }
 
 // TestSessionSummaryGet_ResolvesAndRenders verifies the get tool returns the
-// rendered body of a checkpoint resolved via the injected session key.
+// rendered body of a checkpoint resolved via the call's session key.
 func TestSessionSummaryGet_ResolvesAndRenders(t *testing.T) {
 	const key = "getsess"
 	body := `{"version":2,"state":{"goals":[{"text":"ship the feature","refs":[{"seq_start":1,"seq_end":3}]}]},"covered_seq_start":1,"covered_seq_end":10}`
@@ -91,16 +88,15 @@ func TestSessionSummaryGet_ResolvesAndRenders(t *testing.T) {
 		{GeneratedAt: time.Now(), Model: "m1", CoveredSeqStart: 1, CoveredSeqEnd: 10, Summary: body},
 	})
 
-	tool := NewSessionSummaryGetTool(dir)
-	res := tool.Execute(ctxWithSession(t, key), map[string]any{"id": 1})
+	res := run(t, archiveHost(dir), "summary_get", key, map[string]any{"id": 1})
 	if res.IsError {
 		t.Fatalf("unexpected error: %s", res.ForLLM)
 	}
-	if !containsStr(res.ForLLM, "checkpoint id 1") {
+	if !strings.Contains(res.ForLLM, "checkpoint id 1") {
 		t.Errorf("expected header, got: %s", res.ForLLM)
 	}
 	// The rendered Markdown should surface the goal text.
-	if !containsStr(res.ForLLM, "ship the feature") {
+	if !strings.Contains(res.ForLLM, "ship the feature") {
 		t.Errorf("expected rendered goal text, got: %s", res.ForLLM)
 	}
 }
@@ -111,12 +107,11 @@ func TestSessionSummaryGet_NotFound(t *testing.T) {
 	dir := writeArchiveSummaries(t, key, []memory.SummaryRecord{
 		{GeneratedAt: time.Now(), Summary: `{"v":2}`},
 	})
-	tool := NewSessionSummaryGetTool(dir)
-	res := tool.Execute(ctxWithSession(t, key), map[string]any{"id": 999})
+	res := run(t, archiveHost(dir), "summary_get", key, map[string]any{"id": 999})
 	if res.IsError {
 		t.Fatalf("unexpected error: %s", res.ForLLM)
 	}
-	if !containsStr(res.ForLLM, "no context summary with id 999") {
+	if !strings.Contains(res.ForLLM, "no context summary with id 999") {
 		t.Errorf("expected not-found message, got: %s", res.ForLLM)
 	}
 }
@@ -127,22 +122,19 @@ func TestSessionSummaryGet_MissingID(t *testing.T) {
 	dir := writeArchiveSummaries(t, key, []memory.SummaryRecord{
 		{GeneratedAt: time.Now(), Summary: `{"v":2}`},
 	})
-	tool := NewSessionSummaryGetTool(dir)
-	res := tool.Execute(ctxWithSession(t, key), map[string]any{})
+	res := run(t, archiveHost(dir), "summary_get", key, map[string]any{})
 	if !res.IsError {
 		t.Errorf("expected error for missing id, got: %s", res.ForLLM)
 	}
 }
 
-// TestSessionSummary_MissingSessionKey errors when no session key in context.
+// TestSessionSummary_MissingSessionKey errors when the call carries no session key.
 func TestSessionSummary_MissingSessionKey(t *testing.T) {
-	dir := t.TempDir()
-	listRes := NewSessionSummaryListTool(dir).Execute(context.Background(), map[string]any{})
-	if !listRes.IsError {
+	h := archiveHost(t.TempDir())
+	if listRes := run(t, h, "summary_list", "", map[string]any{}); !listRes.IsError {
 		t.Errorf("list: expected error for missing session key")
 	}
-	getRes := NewSessionSummaryGetTool(dir).Execute(context.Background(), map[string]any{"id": 1})
-	if !getRes.IsError {
+	if getRes := run(t, h, "summary_get", "", map[string]any{"id": 1}); !getRes.IsError {
 		t.Errorf("get: expected error for missing session key")
 	}
 }

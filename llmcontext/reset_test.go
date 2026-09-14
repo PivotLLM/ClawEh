@@ -36,7 +36,7 @@ func newResetManager(store *mockStore, sessionKey string, opts ...Option) *Manag
 		WithMessageThreshold(100),
 	}
 	baseOpts = append(baseOpts, opts...)
-	cm := New(sessionKey, store, nil, nil, baseOpts...)
+	cm := New(sessionKey, store, baseOpts...)
 	return cm.(*Manager)
 }
 
@@ -253,6 +253,6 @@ func newResetManagerWithStore(store interface {
 		WithMessageThreshold(100),
 	}
 	baseOpts = append(baseOpts, opts...)
-	cm := New(sessionKey, store, nil, nil, baseOpts...)
+	cm := New(sessionKey, store, baseOpts...)
 	return cm.(*Manager)
 }

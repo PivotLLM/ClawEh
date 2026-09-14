@@ -14,7 +14,7 @@ import (
 // newToolTurnsManager builds a Manager suitable for tool-turn tests.
 // It uses the mockStore from trigger_test.go and the mockLLM + helpers from
 // compress_test.go (all in the same package).
-func newToolTurnsManager(store *mockStore, clients []LLMClient, opts ...Option) *Manager {
+func newToolTurnsManager(store *mockStore, clients []*mockLLM, opts ...Option) *Manager {
 	baseOpts := []Option{
 		WithContextWindow(10000),
 		// Tests below reason in exact token terms against a small window; the
@@ -25,10 +25,10 @@ func newToolTurnsManager(store *mockStore, clients []LLMClient, opts ...Option) 
 		WithSafetyPercent(80),
 		WithRetainTokenPercent(20),
 		WithRetainMinMessages(2),
-		WithCompressLLM(clients...),
+		WithModelCaller(chainOf(clients)),
 	}
 	baseOpts = append(baseOpts, opts...)
-	cm := New("sess", store, nil, nil, baseOpts...)
+	cm := New("sess", store, baseOpts...)
 	return cm.(*Manager)
 }
 
@@ -178,7 +178,7 @@ func TestPreDispatchCheck_TriggersCompressionAndRebuilds(t *testing.T) {
 	llm := &mockLLM{
 		responses: []string{validSummaryJSON("compressed goals")},
 	}
-	mgr := newToolTurnsManager(store, []LLMClient{llm})
+	mgr := newToolTurnsManager(store, []*mockLLM{llm})
 	mgr.msgCount = len(history)
 
 	// Use a larger input slice to contrast with the rebuilt (compressed) slice.
@@ -270,7 +270,7 @@ func TestPreDispatchCheck_ReturnsFreshBuiltSlice(t *testing.T) {
 	llm := &mockLLM{
 		responses: []string{validSummaryJSON("goals after compression")},
 	}
-	mgr := newToolTurnsManager(store, []LLMClient{llm})
+	mgr := newToolTurnsManager(store, []*mockLLM{llm})
 	mgr.msgCount = len(history)
 
 	input := make([]providers.Message, len(history))

@@ -14,19 +14,21 @@ import (
 	"github.com/PivotLLM/ClawEh/providers"
 )
 
-// seqTrackingLLM captures the messages sent to the LLM for inspection.
+// seqTrackingLLM captures the request sent to the model for inspection.
 type seqTrackingLLM struct {
-	capturedMessages []providers.Message
-	response         string
-	err              error
+	captured ModelRequest
+	called   bool
+	response string
+	err      error
 }
 
-func (l *seqTrackingLLM) Complete(_ context.Context, messages []providers.Message) (LLMReply, error) {
-	l.capturedMessages = messages
+func (l *seqTrackingLLM) Complete(_ context.Context, req ModelRequest) (ModelReply, error) {
+	l.captured = req
+	l.called = true
 	if l.err != nil {
-		return LLMReply{}, l.err
+		return ModelReply{}, l.err
 	}
-	return LLMReply{Content: l.response}, nil
+	return ModelReply{Content: l.response}, nil
 }
 
 // seqStore is a SessionStore that returns StoredMessages with explicit seq numbers.
@@ -110,18 +112,18 @@ func TestSeqAware_CoveredRangeSetFromActualSeqs(t *testing.T) {
 	store := newSeqStore(stored)
 
 	// The LLM emits a summary that claims to cover seq 1–5 (wrong — the actual
-	// range is 11–18 for the summarized portion). callLLMChain must override these
+	// range is 11–18 for the summarized portion). callModel must override these
 	// with the actual min/max seq from the passed slice.
 	fakeSummary := buildSeqSummaryJSON("fake goal", 1, 5)
 	llm := &seqTrackingLLM{response: fakeSummary}
 
-	mgr := New("sess", store, nil, nil,
+	mgr := New("sess", store,
 		WithContextWindow(2000),
 		WithNormalPercent(50),
 		WithSafetyPercent(80),
 		WithRetainTokenPercent(20),
 		WithRetainMinMessages(2),
-		WithCompressLLM(llm),
+		WithModelCaller(llm),
 	).(*Manager)
 	mgr.msgCount = len(stored)
 
@@ -170,13 +172,13 @@ func TestSeqAware_PromptContainsSeqPrefixes(t *testing.T) {
 		response: buildSeqSummaryJSON("prompt test", 42, 44),
 	}
 
-	mgr := New("sess", store, nil, nil,
+	mgr := New("sess", store,
 		WithContextWindow(1000),
 		WithNormalPercent(50),
 		WithSafetyPercent(80),
 		WithRetainTokenPercent(20),
 		WithRetainMinMessages(2),
-		WithCompressLLM(llm),
+		WithModelCaller(llm),
 	).(*Manager)
 	mgr.msgCount = len(stored)
 
@@ -184,23 +186,16 @@ func TestSeqAware_PromptContainsSeqPrefixes(t *testing.T) {
 		t.Fatalf("doCompress returned error: %v", err)
 	}
 
-	if len(llm.capturedMessages) == 0 {
-		t.Fatal("no messages captured by LLM — compression may not have fired")
+	if !llm.called {
+		t.Fatal("no request captured by LLM — compression may not have fired")
 	}
 
-	// The user message sent to the LLM contains the formatted conversation.
-	// At least one message must contain a [#N] prefix.
-	found := false
-	for _, msg := range llm.capturedMessages {
-		if strings.Contains(msg.Content, "[#42]") || strings.Contains(msg.Content, "[#43]") ||
-			strings.Contains(msg.Content, "[#44]") {
-			found = true
-			break
-		}
-	}
-	if !found {
+	// The user message sent to the LLM contains the formatted conversation and
+	// must carry the [#N] prefixes.
+	user := llm.captured.User
+	if !strings.Contains(user, "[#42]") && !strings.Contains(user, "[#43]") && !strings.Contains(user, "[#44]") {
 		t.Errorf("expected LLM prompt to contain [#N] seq prefixes; prompt: %q",
-			llm.capturedMessages[0].Content[:min(200, len(llm.capturedMessages[0].Content))])
+			user[:min(200, len(user))])
 	}
 }
 
@@ -235,14 +230,14 @@ func TestSeqAware_PromptContainsToolMetadata(t *testing.T) {
 		response: buildSeqSummaryJSON("tool metadata", 50, 51),
 	}
 
-	mgr := &Manager{sessionKey: "test"}
-	if _, ok := mgr.callLLMChain(context.Background(), []LLMClient{llm}, nil, stored, 1, 100, false, "", 0, &compactionRecorder{sessionKey: "test"}); !ok {
-		t.Fatal("expected callLLMChain to accept fake summary")
+	mgr := &Manager{sessionKey: "test", caller: llm}
+	if _, ok := mgr.callModel(context.Background(), nil, stored, 1, 100, false, "", 0, &compactionRecorder{sessionKey: "test"}); !ok {
+		t.Fatal("expected callModel to accept fake summary")
 	}
-	if len(llm.capturedMessages) != 2 {
-		t.Fatalf("capturedMessages len = %d, want 2", len(llm.capturedMessages))
+	if !llm.called {
+		t.Fatal("model was not called")
 	}
-	userPrompt := llm.capturedMessages[1].Content
+	userPrompt := llm.captured.User
 	for _, want := range []string{
 		"[#50] [assistant]",
 		"tool_calls:",
@@ -373,13 +368,13 @@ func TestSeqAware_ExistingSummaryCoverageAndRefsSurviveNextCompaction(t *testing
 		]
 	}`
 	llm := &seqTrackingLLM{response: response}
-	mgr := New("sess", store, nil, nil,
+	mgr := New("sess", store,
 		WithContextWindow(1000),
 		WithNormalPercent(50),
 		WithSafetyPercent(80),
 		WithRetainTokenPercent(20),
 		WithRetainMinMessages(2),
-		WithCompressLLM(llm),
+		WithModelCaller(llm),
 	).(*Manager)
 	mgr.msgCount = len(stored)
 

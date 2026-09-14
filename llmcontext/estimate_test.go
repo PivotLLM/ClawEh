@@ -57,7 +57,7 @@ func TestEstimateTokensWith_NonPositiveFallback(t *testing.T) {
 // TestManagerEstTokens_UsesConfig verifies the Manager's estTokens applies the
 // configured divisor and margin.
 func TestManagerEstTokens_UsesConfig(t *testing.T) {
-	cm := New("sess", newMockStore(), nil, nil,
+	cm := New("sess", newMockStore(),
 		WithContextWindow(1000),
 		WithCharsPerToken(2.0),
 		WithTokenSafetyMargin(1.5),

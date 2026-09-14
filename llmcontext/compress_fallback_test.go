@@ -35,30 +35,15 @@ func TestLoadCompressionProfile_StripsComments(t *testing.T) {
 	}
 }
 
-// modelMockLLM is a mockLLM that also reports a model name, used to verify the
-// per-invocation labels in the compaction report.
-type modelMockLLM struct {
-	mockLLM
-	model string
-}
-
-func (m *modelMockLLM) Model() string { return m.model }
-
 // TestCompactionReport_Content verifies the report records one entry per
 // invocation with the right model labels and a success final line.
 func TestCompactionReport_Content(t *testing.T) {
 	store := &compressTestStore{history: makeConversation(10, 200)}
 
-	rejecting := &modelMockLLM{
-		mockLLM: mockLLM{responses: []string{invalidSummaryJSON("uncited")}},
-		model:   "grok-4.3",
-	}
-	valid := &modelMockLLM{
-		mockLLM: mockLLM{responses: []string{validSummaryJSON("goal")}},
-		model:   "claude-haiku-4-5",
-	}
+	rejecting := &mockLLM{model: "grok-4.3", responses: []string{invalidSummaryJSON("uncited")}}
+	valid := &mockLLM{model: "claude-haiku-4-5", responses: []string{validSummaryJSON("goal")}}
 
-	mgr := newCompressManager(store, []LLMClient{rejecting, valid})
+	mgr := newCompressManager(store, []*mockLLM{rejecting, valid})
 	mgr.msgCount = len(store.history)
 
 	if err := mgr.doCompress(context.Background(), false); err != nil {
@@ -93,12 +78,9 @@ func TestCompactionReport_Content(t *testing.T) {
 func TestCompactionReport_DebugCapture(t *testing.T) {
 	dir := t.TempDir()
 	store := &compressTestStore{history: makeConversation(10, 200)}
-	llm := &modelMockLLM{
-		mockLLM: mockLLM{responses: []string{validSummaryJSON("goal")}},
-		model:   "claude-haiku-4-5",
-	}
+	llm := &mockLLM{model: "claude-haiku-4-5", responses: []string{validSummaryJSON("goal")}}
 
-	mgr := newCompressManager(store, []LLMClient{llm},
+	mgr := newCompressManager(store, []*mockLLM{llm},
 		WithCompressionProfileDir(dir),
 		WithCompactDebug(true),
 	)
@@ -141,7 +123,7 @@ func TestCompactionReport_DebugCapture(t *testing.T) {
 
 // invalidSummaryJSON produces a Summary that carries material (a goal) but no
 // cited evidence (the goal has no refs), so it fails HasEvidence() and must be
-// rejected by callLLMChain.
+// rejected by callModel.
 func invalidSummaryJSON(goals string) string {
 	return `{"version":2,"state":{"goals":[{"text":"` + goals + `"}]},"covered_seq_start":0,"covered_seq_end":0}`
 }
@@ -149,18 +131,20 @@ func invalidSummaryJSON(goals string) string {
 // TestCompress_ValidationFallback verifies that when the first client returns a
 // summary that fails validation (no cited material), the chain advances to the
 // next client instead of re-trying the same one. This is the Mode-2 fix: before,
-// validation ran outside callLLMChain and a rejected summary never fell through.
+// validation ran outside the model call and a rejected summary never fell through.
 func TestCompress_ValidationFallback(t *testing.T) {
 	store := &compressTestStore{history: makeConversation(10, 200)}
 
-	rejecting := &mockLLM{responses: []string{
+	// Named models: the engine falls through by excluding the rejected model
+	// on its next request, which needs a name to exclude.
+	rejecting := &mockLLM{model: "rejecting", responses: []string{
 		invalidSummaryJSON("uncited"),
 		invalidSummaryJSON("uncited"),
 		invalidSummaryJSON("uncited"),
 	}}
-	valid := &mockLLM{responses: []string{validSummaryJSON("fallback goal")}}
+	valid := &mockLLM{model: "valid", responses: []string{validSummaryJSON("fallback goal")}}
 
-	mgr := newCompressManager(store, []LLMClient{rejecting, valid})
+	mgr := newCompressManager(store, []*mockLLM{rejecting, valid})
 	mgr.msgCount = len(store.history)
 
 	err := mgr.doCompress(context.Background(), false)
@@ -185,7 +169,7 @@ func TestCompress_NothingToCompress(t *testing.T) {
 	store := &compressTestStore{history: makeConversation(1, 20)} // 2 short messages
 	llm := &mockLLM{responses: []string{validSummaryJSON("unused")}}
 
-	mgr := newCompressManager(store, []LLMClient{llm})
+	mgr := newCompressManager(store, []*mockLLM{llm})
 	mgr.msgCount = len(store.history)
 
 	err := mgr.doCompress(context.Background(), false)
@@ -213,7 +197,7 @@ func TestCompress_AllRejected_Failed(t *testing.T) {
 		invalidSummaryJSON("uncited"),
 	}}
 
-	mgr := newCompressManager(store, []LLMClient{rejecting})
+	mgr := newCompressManager(store, []*mockLLM{rejecting})
 	mgr.msgCount = len(store.history)
 
 	err := mgr.doCompress(context.Background(), false)
@@ -231,7 +215,7 @@ func TestCompress_AllRejected_Failed(t *testing.T) {
 // TestBreaker_RecordOutcome unit-tests the failure circuit breaker accounting.
 func TestBreaker_RecordOutcome(t *testing.T) {
 	store := &compressTestStore{}
-	mgr := newCompressManager(store, []LLMClient{&mockLLM{}})
+	mgr := newCompressManager(store, []*mockLLM{{}})
 
 	// Failures accumulate and trip the breaker at the threshold.
 	for i := 0; i < defaultMaxConsecutiveCompactFailures; i++ {
@@ -283,7 +267,7 @@ func TestBreaker_SuppressesAutoPath(t *testing.T) {
 		errors.New("f16"), errors.New("f17"), errors.New("f18"),
 	}}
 
-	mgr := newCompressManager(store, []LLMClient{failing})
+	mgr := newCompressManager(store, []*mockLLM{failing})
 	mgr.msgCount = len(store.history)
 
 	// Trip the breaker with consecutive automatic-compaction failures.
@@ -306,7 +290,7 @@ func TestBreaker_SuppressesAutoPath(t *testing.T) {
 	good := &mockLLM{responses: []string{validSummaryJSON("manual goal")}}
 	// Reuse the tripped manager's state by pointing it at a fresh store+client.
 	mgr.store = store2
-	mgr.compressClients = []LLMClient{good}
+	mgr.caller = chainOf([]*mockLLM{good})
 	if err := mgr.Compact(context.Background()); err != nil {
 		t.Fatalf("manual Compact returned error: %v", err)
 	}

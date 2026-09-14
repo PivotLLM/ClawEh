@@ -5,6 +5,8 @@ package agent
 
 import (
 	"context"
+	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -31,6 +33,55 @@ type cmEntry struct {
 	// mem is the session's cognitive-memory view; nil for non-cognitive agents.
 	// Closed on eviction/drain to release the per-session store handle.
 	mem *cogmem.Session
+	// token is the per-session MCP token the loop renders into the system
+	// prompt on every dispatch (sessionTokenLayer). Reissued on a session
+	// reset; "" when no issuer is wired. Guarded by tokenMu.
+	tokenMu sync.RWMutex
+	token   string
+}
+
+// setToken records the current session token.
+func (e *cmEntry) setToken(tok string) {
+	e.tokenMu.Lock()
+	defer e.tokenMu.Unlock()
+	e.token = tok
+}
+
+// sessionToken returns the current session token, or "".
+func (e *cmEntry) sessionToken() string {
+	e.tokenMu.RLock()
+	defer e.tokenMu.RUnlock()
+	return e.token
+}
+
+// sessionToken returns the MCP token of a cached session, or "" when the
+// session has no entry (a stub injected by a test) or no token was issued.
+func (al *AgentLoop) sessionToken(agent *AgentInstance, sessionKey string) string {
+	if v, ok := al.contextManagers.Load(agent.ID + ":" + sessionKey); ok {
+		return v.(*cmEntry).sessionToken()
+	}
+	return ""
+}
+
+// reissueSessionToken revokes nothing itself (the issuer replaces the token
+// for the key) but issues a fresh token for the session and stores it on the
+// cached entry so the next dispatch renders the new one. No-op without an
+// issuer or a cached entry.
+func (al *AgentLoop) reissueSessionToken(agent *AgentInstance, sessionKey string) {
+	al.mu.RLock()
+	sti := al.sessionTokenIssuer
+	al.mu.RUnlock()
+	if sti == nil {
+		return
+	}
+	v, ok := al.contextManagers.Load(agent.ID + ":" + sessionKey)
+	if !ok {
+		return
+	}
+	archiveDir := filepath.Join(agent.Workspace, "sessions")
+	if tok := sti.Issue(agent.ID, sessionKey, archiveDir); tok != "" {
+		v.(*cmEntry).setToken(tok)
+	}
 }
 
 // forgetSessionState drops per-session in-memory caches in the session store

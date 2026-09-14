@@ -14,7 +14,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"github.com/PivotLLM/ClawEh/logger"
+	"github.com/PivotLLM/ClawEh/llmcontext/logger"
 	"github.com/PivotLLM/ClawEh/providers"
 )
 
