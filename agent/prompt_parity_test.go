@@ -106,7 +106,11 @@ func parityInjections() []ctxengine.Injection {
 // parityStore seeds a session store with parityHistory and the given summary.
 func parityStore(t *testing.T, key, summary string) session.SessionStore {
 	t.Helper()
-	store := session.NewSessionManager("")
+	store, err := session.NewSQLiteStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewSQLiteStore: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
 	for _, m := range parityHistory() {
 		store.AddFullMessage(key, m)
 	}

@@ -46,7 +46,11 @@ EOFMOCK
 	client := &providerLLMClient{provider: cli, model: "claude-cli", requestJSONObject: true}
 
 	sessionKey := "e2e-compress"
-	store := session.NewSessionManager("")
+	store, err := session.NewSQLiteStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewSQLiteStore: %v", err)
+	}
+	defer store.Close()
 	// Six distinct messages large enough that selectTail cannot retain them all
 	// at the default 20% retain budget against a 1000-token context window;
 	// the older half is handed to the compression LLM (i.e. the mock CLI).

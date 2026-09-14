@@ -24,7 +24,7 @@ in a few joins.
 | Context | `llmcontext.ContextManager` already exists and nothing outside `agent/` constructs one. It has 20 methods, three more setters reached by type assertion for cogmem, and two overlapping emergency triggers. | `llmcontext/interface.go:13`, `llmcontext/manager.go:1005-1022` |
 | Prompt | System prompt assembly is split: identity, bootstrap files, skills, `MEMORY.md` and the date are built in `agent/context.go`; the session token block and the cogmem blocks are appended inside the engine's `Build`. | `agent/context.go:199`, `llmcontext/manager.go:1090-1142` |
 | Cogmem | `cogmem/store`, `cogmem`, `cogmem/portable` and `cogmem/consolidate` import nothing from the loop, session or providers. Glue is one file plus one gateway adapter. The operating instructions are hard-coded in the identity prompt and emitted even when cogmem is off. | `agent/memory_wiring.go`, `internal/gateway/cogmem.go`, `agent/context.go:181` |
-| Transcript | Two message stores per session: a JSONL live window and a SQLite archive with FTS, summary checkpoints and a consolidated flag. Session tools open the archive by file path. | `memory/jsonl.go`, `memory/archive.go`, `tools/session/global_provider.go:43` |
+| Transcript | One store per session: the live window and the session state live in the per-session SQLite archive DB alongside the archived messages, FTS and summary checkpoints. Session tools open the archive by file path. | ctxengine `memory/archive.go`, `session/sqlite_store.go`, `tools/session/global_provider.go:43` |
 | Loop | One struct owns bus consumption, routing, mentions, commands, session tokens, dispatch and fallback, tool execution with media and vision fan-out, streaming, eviction notices, recovery and heartbeats. spawnllm's `Worker` is not used. Three tool loops exist. | `agent/loop.go` (4,399 lines), `tools/toolloop.go`, spawnllm `Run` |
 | Tools | `toolspec.ToolDefinition` plus `ToolHandler` is a clean portable contract shared with MCPFusion. ClawEh wraps it into the legacy `tools.Tool` interface and a `ToolDeps` struct carrying closures. `ToolCall.AgentID` is never populated; the session key travels by context value. | `tools/namespaced.go:77`, `tools/provider.go:296` |
 | Agents | No tool can create or edit an agent. Only the WebUI's whole-config PATCH does. An agent cannot read or edit its own prompt files. Default summarization and consolidation prompts are code-owned with append-only markdown overrides. | `web/backend/api/config.go`, `templates/AGENTS.md:98-103`, `llmcontext/summary.go:578`, `cogmem/consolidate/prompt.go:70` |
@@ -257,7 +257,7 @@ func ListSessions(dir string) ([]string, error)
 ```
 
 The typed API the WebUI session view and the device gateway's `chat.history`
-call, instead of reading JSONL files by path as they do today.
+call, instead of opening the archive DB by path as they do today.
 
 ### 5.3 `context`
 
@@ -642,7 +642,7 @@ and the engine no longer knows the file exists.
 | Today | Becomes |
 |---|---|
 | `memory/archive.go` | `context/archive` |
-| `memory/jsonl.go`, `session/` | engine-private window state; folds into the archive as a seq range plus summary |
+| `session/` | engine-private window state; the window and the session state are tables in the per-session archive DB (done: the window fold) |
 | `llmcontext/*` | built-in `context` engine |
 | `agent/context.go` `ContextBuilder` | `prompt.Composer` in `agent` |
 | `agent/context_manager.go` chain resolution | host `Summarizer` in `agent` model policy |
@@ -688,7 +688,7 @@ parity test:
 
 ---
 
-### 12.2 Engine extraction (done on the same branch; the window fold is next)
+### 12.2 Engine extraction and the window fold (done on the same branch)
 
 The engine (`llmcontext`), its store (`memory`, `session`) and the session
 tools move to `github.com/PivotLLM/ctxengine`, using the same pattern as
@@ -739,9 +739,13 @@ identical by a golden test:
 The packages moved to `github.com/PivotLLM/ctxengine` v0.0.1: the root
 package is the engine, `memory` and `session` are its store, `tools` the
 session tools, `logger` the seam. ClawEh pins it with no local replace, as it
-does cogmem. Still to do inside the module: fold the JSONL live window into
-the archive as a seq range plus a summary, so there is one store, one seq
-space, and one place recovery reads.
+does cogmem. The window fold followed in v0.0.2: the JSONL live window and
+the `.meta.json` session state moved into the per-session archive DB as the
+`window` and `session_state` tables, so there is one store, one seq space,
+and one place recovery reads. `session.NewSQLiteStore` is the only session
+store; the JSONL and legacy JSON stores and their migration code are gone.
+Existing installs run `claw sessions migrate` once, with the service
+stopped, to fold their `.jsonl`/`.meta.json` pairs in.
 
 The slash commands that touch the engine, `/compact`, `/clear`, `/status`
 and `/memory`, keep working through the closures the loop hands the command
@@ -787,7 +791,7 @@ Open questions:
   either way and needs a changelog entry.
 - **13.3** Does recovery today double-append the replayed user message? The
   idempotent inbox append (`INSERT OR IGNORE` on seq) already tolerates it;
-  the archive's `INSERT OR REPLACE` does too. Verify the JSONL window before
+  the archive's `INSERT OR REPLACE` does too. Verify the window table before
   relying on it.
 - **13.4** Should sub-agent spawn use fork or isolated engine context by
   default? Today a sub-agent gets a cogmem snapshot and a fresh session.

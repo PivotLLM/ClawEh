@@ -1,7 +1,6 @@
 package api
 
 import (
-	"bufio"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -25,13 +24,14 @@ func (h *Handler) registerSessionRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/sessions/{id}", h.handleDeleteSession)
 }
 
-// sessionFile mirrors the on-disk session JSON structure from session.
+// sessionFile is the view of one session the handlers build from its archive
+// DB: the live window plus the session state.
 type sessionFile struct {
-	Key      string              `json:"key"`
-	Messages []providers.Message `json:"messages"`
-	Summary  string              `json:"summary,omitempty"`
-	Created  time.Time           `json:"created"`
-	Updated  time.Time           `json:"updated"`
+	Key      string
+	Messages []providers.Message
+	Summary  string
+	Created  time.Time
+	Updated  time.Time
 }
 
 // sessionListItem is a lightweight summary returned by GET /api/sessions.
@@ -44,27 +44,19 @@ type sessionListItem struct {
 	Updated      string `json:"updated"`
 }
 
-type sessionMetaFile struct {
-	Key       string    `json:"key"`
-	Summary   string    `json:"summary"`
-	Skip      int       `json:"skip"`
-	Count     int       `json:"count"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-}
-
 // webuiSessionPrefix is the key prefix used by the gateway's routing for WebUI
 // channel sessions. The full key format is:
 //
 //	agent:main:webui:direct:webui:<session-uuid>
 //
-// The sanitized filename replaces ':' with '_', so on disk it becomes:
+// The sanitized filename replaces ':' with '_', so on disk the session's store
+// becomes:
 //
-//	agent_main_webui_direct_webui_<session-uuid>.json
+//	agent_main_webui_direct_webui_<session-uuid>.archive.db
 const (
 	webuiSessionPrefix          = "agent:main:webui:direct:webui:"
 	sanitizedWebuiSessionPrefix = "agent_main_webui_direct_webui_"
-	maxSessionJSONLLineSize     = 10 * 1024 * 1024 // 10 MB
+	sessionDBSuffix             = ".archive.db"
 	maxSessionTitleRunes        = 60
 )
 
@@ -91,110 +83,54 @@ func sanitizeSessionKey(key string) string {
 	return memory.SanitizeSessionKey(key)
 }
 
-func (h *Handler) readLegacySession(dir, sessionID string) (sessionFile, error) {
-	path := filepath.Join(dir, sanitizeSessionKey(webuiSessionPrefix+sessionID)+".json")
-	data, err := os.ReadFile(path)
+// readSessionDB opens one session's archive DB read-only and returns its
+// window and state. A missing DB is reported as os.ErrNotExist.
+func readSessionDB(path string) (sessionFile, error) {
+	info, err := os.Stat(path)
 	if err != nil {
 		return sessionFile{}, err
 	}
 
-	var sess sessionFile
-	if err := json.Unmarshal(data, &sess); err != nil {
+	db, err := memory.OpenReadOnly(path)
+	if err != nil {
 		return sessionFile{}, err
 	}
-	return sess, nil
-}
+	defer db.Close()
 
-func (h *Handler) readSessionMeta(path, sessionKey string) (sessionMetaFile, error) {
-	data, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return sessionMetaFile{Key: sessionKey}, nil
-	}
+	window, err := db.Window()
 	if err != nil {
-		return sessionMetaFile{}, err
+		return sessionFile{}, err
 	}
-
-	var meta sessionMetaFile
-	if err := json.Unmarshal(data, &meta); err != nil {
-		return sessionMetaFile{}, err
-	}
-	if meta.Key == "" {
-		meta.Key = sessionKey
-	}
-	return meta, nil
-}
-
-func (h *Handler) readSessionMessages(path string, skip int) ([]providers.Message, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-
-	msgs := make([]providers.Message, 0)
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 0, 64*1024), maxSessionJSONLLineSize)
-
-	seen := 0
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		if len(line) == 0 {
-			continue
-		}
-
-		seen++
-		if seen <= skip {
-			continue
-		}
-
-		var msg providers.Message
-		if err := json.Unmarshal(line, &msg); err != nil {
-			continue
-		}
-		msgs = append(msgs, msg)
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, err
-	}
-	return msgs, nil
-}
-
-func (h *Handler) readJSONLSession(dir, sessionID string) (sessionFile, error) {
-	sessionKey := webuiSessionPrefix + sessionID
-	base := filepath.Join(dir, sanitizeSessionKey(sessionKey))
-	jsonlPath := base + ".jsonl"
-	metaPath := base + ".meta.json"
-
-	meta, err := h.readSessionMeta(metaPath, sessionKey)
+	state, err := db.State()
 	if err != nil {
 		return sessionFile{}, err
 	}
 
-	messages, err := h.readSessionMessages(jsonlPath, meta.Skip)
-	if err != nil {
-		return sessionFile{}, err
+	messages := make([]providers.Message, 0, len(window))
+	for _, stored := range window {
+		messages = append(messages, stored.Message)
 	}
 
-	updated := meta.UpdatedAt
-	created := meta.CreatedAt
-	if created.IsZero() || updated.IsZero() {
-		if info, statErr := os.Stat(jsonlPath); statErr == nil {
-			if created.IsZero() {
-				created = info.ModTime()
-			}
-			if updated.IsZero() {
-				updated = info.ModTime()
-			}
-		}
+	created, updated := state.CreatedAt, state.UpdatedAt
+	if created.IsZero() {
+		created = info.ModTime()
+	}
+	if updated.IsZero() {
+		updated = info.ModTime()
 	}
 
 	return sessionFile{
-		Key:      meta.Key,
+		Key:      state.Key,
 		Messages: messages,
-		Summary:  meta.Summary,
+		Summary:  state.Summary,
 		Created:  created,
 		Updated:  updated,
 	}, nil
+}
+
+// readSession loads the WebUI session with the given id from dir.
+func readSession(dir, sessionID string) (sessionFile, error) {
+	return readSessionDB(memory.ArchivePath(dir, webuiSessionPrefix+sessionID))
 }
 
 func buildSessionListItem(sessionID string, sess sessionFile) sessionListItem {
@@ -289,67 +225,19 @@ func (h *Handler) handleListSessions(w http.ResponseWriter, r *http.Request) {
 			}
 
 			name := entry.Name()
-			var (
-				sessionID string
-				sess      sessionFile
-				loadErr   error
-				ok        bool
-			)
-
-			switch {
-			case strings.HasSuffix(name, ".archive.jsonl"):
-				continue
-			case strings.HasSuffix(name, ".archive.db"):
-				continue
-			case strings.HasSuffix(name, ".jsonl"):
-				sessionID, ok = extractWebUISessionIDFromSanitizedKey(strings.TrimSuffix(name, ".jsonl"))
-				if !ok {
-					continue
-				}
-				sess, loadErr = h.readJSONLSession(dir, sessionID)
-				if loadErr == nil && isEmptySession(sess) {
-					continue
-				}
-			case strings.HasSuffix(name, ".meta.json"):
-				continue
-			case filepath.Ext(name) == ".json":
-				base := strings.TrimSuffix(name, ".json")
-				if _, statErr := os.Stat(filepath.Join(dir, base+".jsonl")); statErr == nil {
-					if jsonlSessionID, found := extractWebUISessionIDFromSanitizedKey(base); found {
-						if jsonlSess, jsonlErr := h.readJSONLSession(
-							dir,
-							jsonlSessionID,
-						); jsonlErr == nil &&
-							!isEmptySession(jsonlSess) {
-							continue
-						}
-					}
-				}
-				data, err := os.ReadFile(filepath.Join(dir, name))
-				if err != nil {
-					continue
-				}
-				if err := json.Unmarshal(data, &sess); err != nil {
-					continue
-				}
-				if isEmptySession(sess) {
-					continue
-				}
-				sessionID, ok = extractWebUISessionID(sess.Key)
-				if !ok {
-					continue
-				}
-				if _, exists := seen[sessionID]; exists {
-					continue
-				}
-			default:
-				continue
+			if !strings.HasSuffix(name, sessionDBSuffix) {
+				continue // -wal/-shm sidecars and anything else
 			}
-
-			if loadErr != nil {
+			sessionID, ok := extractWebUISessionIDFromSanitizedKey(strings.TrimSuffix(name, sessionDBSuffix))
+			if !ok {
 				continue
 			}
 			if _, exists := seen[sessionID]; exists {
+				continue
+			}
+
+			sess, loadErr := readSessionDB(filepath.Join(dir, name))
+			if loadErr != nil || isEmptySession(sess) {
 				continue
 			}
 
@@ -412,17 +300,10 @@ func (h *Handler) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	var sess sessionFile
 	var found bool
 	for _, dir := range dirs {
-		s, e := h.readJSONLSession(dir, sessionID)
+		s, e := readSession(dir, sessionID)
 		if e == nil && !isEmptySession(s) {
 			sess, found = s, true
 			break
-		}
-		if e == nil || errors.Is(e, os.ErrNotExist) {
-			s, e = h.readLegacySession(dir, sessionID)
-			if e == nil && !isEmptySession(s) {
-				sess, found = s, true
-				break
-			}
 		}
 	}
 	if !found {
@@ -457,7 +338,8 @@ func (h *Handler) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleDeleteSession deletes a specific session.
+// handleDeleteSession deletes a specific session: its whole store, archive
+// included.
 //
 //	DELETE /api/sessions/{id}
 func (h *Handler) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
@@ -473,19 +355,21 @@ func (h *Handler) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	key := webuiSessionPrefix + sessionID
 	removed := false
 	for _, dir := range dirs {
-		base := filepath.Join(dir, sanitizeSessionKey(webuiSessionPrefix+sessionID))
-		for _, path := range []string{base + ".jsonl", base + ".meta.json", base + ".json"} {
-			if err := os.Remove(path); err != nil {
-				if os.IsNotExist(err) {
-					continue
-				}
-				http.Error(w, "failed to delete session", http.StatusInternalServerError)
-				return
+		if _, err := os.Stat(memory.ArchivePath(dir, key)); err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
 			}
-			removed = true
+			http.Error(w, "failed to delete session", http.StatusInternalServerError)
+			return
 		}
+		if err := memory.DeleteSession(dir, key); err != nil {
+			http.Error(w, "failed to delete session", http.StatusInternalServerError)
+			return
+		}
+		removed = true
 	}
 
 	if !removed {

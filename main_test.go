@@ -43,6 +43,7 @@ func TestNewClawCommand(t *testing.T) {
 		"test",
 		"model",
 		"network",
+		"sessions",
 		"skills",
 		"status",
 		"token",

@@ -20,6 +20,7 @@ test.out
 .claw/
 config.json
 sessions/
+!/internal/sessions/
 
 # Coverage
 

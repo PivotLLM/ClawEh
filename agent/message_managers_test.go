@@ -25,7 +25,7 @@ func TestBuildMessageManagers_TracksConfig(t *testing.T) {
 		{ID: "amber", Default: true, Message: &config.MessageConfig{WindowMinutes: 5, WindowCount: 3}},
 		{ID: "karen"}, // no message config → disabled
 	})
-	reg := NewAgentRegistry(cfg, &mockRegistryProvider{})
+	reg := mustNewAgentRegistry(t, cfg, &mockRegistryProvider{})
 	m := buildMessageManagers(reg, cfg)
 	if _, ok := m["amber"]; !ok {
 		t.Error("amber (window>0) should have a message-token manager")
@@ -39,7 +39,7 @@ func TestBuildMessageManagers_TracksConfig(t *testing.T) {
 		{ID: "amber", Default: true},
 		{ID: "karen", Message: &config.MessageConfig{WindowMinutes: 5, WindowCount: 3}},
 	})
-	reg2 := NewAgentRegistry(cfg2, &mockRegistryProvider{})
+	reg2 := mustNewAgentRegistry(t, cfg2, &mockRegistryProvider{})
 	m2 := buildMessageManagers(reg2, cfg2)
 	if _, ok := m2["amber"]; ok {
 		t.Error("amber must lose its manager after the message endpoint is disabled")

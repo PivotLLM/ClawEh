@@ -21,7 +21,11 @@ import (
 func assembleWithLayers(t *testing.T, cb *ContextBuilder, history []providers.Message, summary, message, channel, chatID string) []providers.Message {
 	t.Helper()
 	const key = "layers-test"
-	store := session.NewSessionManager("")
+	store, err := session.NewSQLiteStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewSQLiteStore: %v", err)
+	}
+	defer store.Close()
 	for _, m := range history {
 		store.AddFullMessage(key, m)
 	}

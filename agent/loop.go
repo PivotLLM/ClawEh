@@ -154,12 +154,15 @@ func NewAgentLoop(
 	msgBus *bus.MessageBus,
 	provider providers.LLMProvider,
 	dispatcher *providers.ProviderDispatcher,
-) *AgentLoop {
+) (*AgentLoop, error) {
 	// Route the context engine's logs into ours before anything constructs a
 	// session store or context manager.
 	InstallLogging()
 
-	registry := NewAgentRegistry(cfg, provider)
+	registry, err := NewAgentRegistry(cfg, provider)
+	if err != nil {
+		return nil, err
+	}
 
 	// Set up shared fallback chain with the config-driven cooldown policy.
 	cooldown := providers.NewCooldownTrackerWithPolicy(cooldownPolicy(cfg))
@@ -228,7 +231,7 @@ func NewAgentLoop(
 	// spawn/subagent, msg with shared MessageTool).
 	al.registerRuntimeTools(registry, provider, dispatcher, fallbackChain, cfg)
 
-	return al
+	return al, nil
 }
 
 func (al *AgentLoop) Run(ctx context.Context) error {
@@ -371,7 +374,7 @@ func (al *AgentLoop) ReloadProviderAndConfig(
 			}
 			done <- res
 		}()
-		res.registry = NewAgentRegistry(cfg, provider)
+		res.registry, res.err = NewAgentRegistry(cfg, provider)
 	}()
 
 	var registry *AgentRegistry

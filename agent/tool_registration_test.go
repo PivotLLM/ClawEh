@@ -62,7 +62,7 @@ func TestRegisterTools_NoDuplicateRegistration(t *testing.T) {
 
 	var buf bytes.Buffer
 	restore := logger.RedirectForTest(&buf)
-	al := NewAgentLoop(cfg, bus.NewMessageBus(), &mockProvider{}, nil)
+	al := mustNewAgentLoop(t, cfg, bus.NewMessageBus(), &mockProvider{}, nil)
 	restore()
 
 	if strings.Contains(buf.String(), "overwrites existing tool") {
@@ -87,7 +87,7 @@ func TestRegisterTools_NoDuplicateRegistration(t *testing.T) {
 // runtime registration, leaving reloaded agents with degraded/missing tools).
 func TestReloadProviderAndConfig_RegistersRuntimeTools(t *testing.T) {
 	cfg := toolRegTestConfig(t)
-	al := NewAgentLoop(cfg, bus.NewMessageBus(), &mockProvider{}, nil)
+	al := mustNewAgentLoop(t, cfg, bus.NewMessageBus(), &mockProvider{}, nil)
 	before := agentToolNames(t, al)
 	if len(before) == 0 {
 		t.Fatal("no tools registered at construction")
@@ -110,7 +110,7 @@ func TestReloadProviderAndConfig_RegistersRuntimeTools(t *testing.T) {
 // reports the session's selected model, not always the first candidate.
 func TestGetModelInfo_ReflectsActiveSelection(t *testing.T) {
 	cfg := toolRegTestConfig(t)
-	al := NewAgentLoop(cfg, bus.NewMessageBus(), &mockProvider{}, nil)
+	al := mustNewAgentLoop(t, cfg, bus.NewMessageBus(), &mockProvider{}, nil)
 	ag, ok := al.GetRegistry().GetAgent("main")
 	if !ok {
 		t.Fatal("agent 'main' not found")

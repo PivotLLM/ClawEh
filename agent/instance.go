@@ -1,7 +1,7 @@
 package agent
 
 import (
-	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -9,7 +9,6 @@ import (
 
 	"github.com/PivotLLM/cogmem"
 	"github.com/PivotLLM/ctxengine"
-	"github.com/PivotLLM/ctxengine/memory"
 	"github.com/PivotLLM/ctxengine/session"
 
 	"github.com/PivotLLM/ClawEh/cogmemhost"
@@ -81,7 +80,7 @@ func NewAgentInstance(
 	defaults *config.AgentDefaults,
 	cfg *config.Config,
 	provider providers.LLMProvider,
-) *AgentInstance {
+) (*AgentInstance, error) {
 	workspace := resolveAgentWorkspace(agentCfg, cfg.BaseDir())
 
 	agentws.Populate(workspace)
@@ -113,7 +112,10 @@ func NewAgentInstance(
 	}
 	cogmemhost.Migrate(migrateID, workspace)
 
-	sessions := initSessionStore(sessionsDir)
+	sessions, err := initSessionStore(sessionsDir)
+	if err != nil {
+		return nil, err
+	}
 
 	// The registry starts empty. Tools are registered exactly once — after
 	// construction by AgentLoop.registerRuntimeTools, and again on config reload —
@@ -316,7 +318,7 @@ func NewAgentInstance(
 		SkillsFilter:   skillsFilter,
 		Candidates:     candidates,
 		Config:         agentCfg,
-	}
+	}, nil
 }
 
 // resolveAgentWorkspace determines the workspace directory for an agent:
@@ -371,35 +373,45 @@ func (a *AgentInstance) Close() error {
 	return nil
 }
 
-// initSessionStore creates the session persistence backend.
-// It uses the JSONL store by default and auto-migrates legacy JSON sessions.
-// Falls back to SessionManager if the JSONL store cannot be initialized or
-// if migration fails (which indicates the store cannot write reliably).
-func initSessionStore(dir string) session.SessionStore {
-	store, err := memory.NewJSONLStore(dir)
+// initSessionStore opens the per-session SQLite store under dir. The live
+// window and the session state live in each session's archive DB alongside
+// the archived messages, so there is one store, one seq space, and one place
+// recovery reads.
+func initSessionStore(dir string) (session.SessionStore, error) {
+	if err := refuseUnmigratedSessions(dir); err != nil {
+		return nil, err
+	}
+	store, err := session.NewSQLiteStore(dir)
 	if err != nil {
-		logger.WarnCF("memory", "init store failed; using json sessions",
-			map[string]any{"error": err.Error()})
-		return session.NewSessionManager(dir)
+		return nil, fmt.Errorf("open session store %s: %w", dir, err)
 	}
 	// Repeated fires of one scheduled job differ only by timestamp; the store
 	// counts them as noise by the cron collapse key.
 	store.SetNoiseKey(cronmsg.CollapseKey)
+	return store, nil
+}
 
-	if n, merr := memory.MigrateFromJSON(context.Background(), dir, store); merr != nil {
-		// Migration failure means the store could not write data.
-		// Fall back to SessionManager to avoid a split state where
-		// some sessions are in JSONL and others remain in JSON.
-		logger.WarnCF("memory", "migration failed; falling back to json sessions",
-			map[string]any{"error": merr.Error()})
-		store.Close()
-		return session.NewSessionManager(dir)
-	} else if n > 0 {
-		logger.InfoCF("memory", "migrated sessions to jsonl",
-			map[string]any{"count": n})
+// refuseUnmigratedSessions fails when dir still holds a JSONL-layout session
+// (a `<key>.meta.json` that has not been renamed to `.migrated`). Starting on
+// such a directory would be silently destructive: the first message (a cron
+// fire is enough) mints a fresh window at seq 1 in the archive DB, after which
+// `claw sessions migrate` sees a populated session, skips it, and the old
+// history is stranded. Failing loudly makes the ordering mistake visible.
+func refuseUnmigratedSessions(dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // a fresh workspace has nothing to migrate
+		}
+		return fmt.Errorf("read sessions directory %s: %w", dir, err)
 	}
-
-	return session.NewJSONLBackend(store)
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".meta.json") {
+			return fmt.Errorf("sessions directory %s still holds JSONL-layout sessions; "+
+				"stop the service and run \"claw sessions migrate\" first", dir)
+		}
+	}
+	return nil
 }
 
 func expandHome(path string) string {

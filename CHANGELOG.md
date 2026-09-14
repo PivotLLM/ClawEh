@@ -66,6 +66,26 @@ behalf, and an assistant is only told about memory when it actually has it.
   memory files, if any, hold separate memories that cannot be merged
   automatically; import them through the memory page if you want them. The
   memory page's store ids are now agent names rather than session file names.
+- **BREAKING: each session's live window and state now live inside its
+  `<key>.archive.db`.** The `<key>.jsonl` window and `<key>.meta.json` state
+  files are no longer read or written; the archive DB a session already had
+  now holds them too, so there is one file per session under `sessions/`.
+  Migration is a one-time step, with the service stopped:
+
+  ```
+  claw sessions migrate
+  ```
+
+  It folds every `.jsonl` + `.meta.json` pair in each assistant's sessions
+  directory into that session's archive DB, prints one line per session, and
+  renames the sources to `*.migrated`; delete those once you have verified
+  the conversations. It refuses to run while the gateway is up and is safe
+  to re-run (already-migrated sessions are skipped). The gateway refuses to
+  start while unmigrated `.meta.json` files remain in any assistant's
+  sessions directory, naming the directory and this command, so a start
+  before the migration cannot strand the old history. Deleting a
+  conversation from the WebUI now removes the whole session store, archive
+  included, rather than only the live window.
 - **The context engine now lives in its own module, `github.com/PivotLLM/ctxengine`.**
   Transcript, archive, assembly, eviction, compaction and the `session_*`
   tools moved out of ClawEh unchanged; the assembled prompt is byte-identical
@@ -86,6 +106,10 @@ behalf, and an assistant is only told about memory when it actually has it.
 
 ### Removed
 
+- **Legacy `.json` session files are no longer read or migrated.** Sessions
+  from before the JSONL store (a single `<key>.json` per session) were being
+  converted on startup and read by the WebUI history as a fallback; both
+  paths are gone. Any such file still on disk is ignored.
 - **BREAKING: the config key `memory.retention.protect_unconsolidated` is
   gone.** It guarded the session archive from retention pruning until memory
   had consolidated a message. Memory now keeps its own copy of what it has not

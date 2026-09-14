@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"fmt"
 	"sync"
 
 	"github.com/PivotLLM/ClawEh/config"
@@ -22,7 +23,7 @@ type AgentRegistry struct {
 func NewAgentRegistry(
 	cfg *config.Config,
 	provider providers.LLMProvider,
-) *AgentRegistry {
+) (*AgentRegistry, error) {
 	registry := &AgentRegistry{
 		agents:   make(map[string]*AgentInstance),
 		resolver: routing.NewRouteResolver(cfg),
@@ -36,7 +37,10 @@ func NewAgentRegistry(
 			continue
 		}
 		id := routing.NormalizeAgentID(ac.ID)
-		instance := NewAgentInstance(ac, &cfg.Agents.Defaults, cfg, provider)
+		instance, err := NewAgentInstance(ac, &cfg.Agents.Defaults, cfg, provider)
+		if err != nil {
+			return nil, fmt.Errorf("agent %q: %w", id, err)
+		}
 		registry.agents[id] = instance
 		logger.InfoCF("agent", "Registered agent",
 			map[string]any{
@@ -55,7 +59,7 @@ func NewAgentRegistry(
 		}
 	}
 
-	return registry
+	return registry, nil
 }
 
 // GetAgent returns the agent instance for a given ID.
