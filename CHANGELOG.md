@@ -10,6 +10,40 @@ Entries describe what changed for someone **running or integrating with** ClawEh
 internal refactors behind them. A change nobody outside the repository can
 observe does not need an entry.
 
+## [0.5.3]
+
+### Changed
+
+- **Third-party dependencies updated** (Anthropic SDK 1.72, `golang.org/x`
+  libraries, fasthttp, gomarkdown and others). No behaviour change intended.
+
+### Fixed
+
+- **Cognitive-memory tools reject wrong-typed arguments instead of guessing.**
+  A string `"true"` for `set_sticky` used to clear stickiness; a non-integer
+  `limit` was silently rounded. Each `cogmem_*` tool now returns an error that
+  names the argument and the type it expects. `cogmem_domain_migrate` names the
+  destination when it is unknown, `cogmem_domain_list` rejects a status other
+  than `active` or `archived`, `cogmem_memory_forget` rejects an unknown domain
+  and retires every match rather than the first hundred, `cogmem_domain_update`
+  clears the summary on an empty `set_summary` and rejects an empty `set_name`,
+  and `cogmem_status` reports the domain and memory counts its description
+  promised.
+- **Memory import is idempotent and reaches archived domains.** Importing a
+  portable memory document a second time no longer re-creates domains that were
+  archived in the meantime; a matched domain takes the document's fields, and a
+  memory the document marks retired is retired in the store. The import result
+  gains `domains_updated` and `memories_retired` counts.
+- **Memory store connections all carry their settings.** Only the first pooled
+  SQLite connection used to receive the busy timeout and foreign-key setting,
+  so a contended write on another connection could fail at once with
+  `SQLITE_BUSY`. Every connection now gets them.
+- **A failed consolidation records no applied changes.** The run's transaction
+  rolled back, but the run record still claimed the operations it had tried.
+  Archiving a domain is logged as an `archive` audit event rather than
+  `update`, and an archived domain's `archived_at` follows a status change made
+  through `cogmem_domain_update`.
+
 ## [0.5.2]
 
 Cognitive memory stands on its own. It keeps its own copy of the conversation
@@ -771,6 +805,7 @@ on, and breaking one is a deliberate decision rather than a free move.
   entered, and the entry had to be worked around rather than typed. Affects the
   Telegram, Slack and generic channel forms.
 
+[0.5.3]: https://github.com/PivotLLM/ClawEh/compare/0.5.2...0.5.3
 [0.5.2]: https://github.com/PivotLLM/ClawEh/compare/0.5.0...0.5.2
 [0.5.0]: https://github.com/PivotLLM/ClawEh/compare/0.4.72...0.5.0
 [0.4.72]: https://github.com/PivotLLM/ClawEh/compare/0.4.70...0.4.72
