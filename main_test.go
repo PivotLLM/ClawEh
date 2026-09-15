@@ -62,3 +62,11 @@ func TestNewClawCommand(t *testing.T) {
 		assert.False(t, subcmd.Hidden)
 	}
 }
+
+func TestUpdateAlias(t *testing.T) {
+	cmd := NewClawCommand("claw")
+	subcmd, _, err := cmd.Find([]string{"update"})
+	require.NoError(t, err)
+	require.NotNil(t, subcmd)
+	assert.Equal(t, "upgrade", subcmd.Name())
+}

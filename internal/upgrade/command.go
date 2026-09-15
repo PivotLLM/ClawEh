@@ -59,8 +59,9 @@ func NewUpgradeCommand() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "upgrade",
-		Short: "Download the latest release binary from GitHub and install it",
+		Use:     "upgrade",
+		Aliases: []string{"update"},
+		Short:   "Download the latest release binary from GitHub and install it",
 		Long: "Checks for the latest release on GitHub (" + repoOwner + "/" + repoName + "),\n" +
 			"verifies the SHA256 checksum of the archive, atomically replaces the currently\n" +
 			"running binary, and restarts the background service if one is active.",
