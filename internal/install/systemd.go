@@ -101,9 +101,14 @@ func installSystemd(tu *TargetUser, targetBin, binDir, clawHome string) error {
 			return fmt.Errorf("systemctl daemon-reload: %s (%w)", string(out), err)
 		}
 
-		cmdEnable := exec.Command("systemctl", "enable", "--now", serviceName)
+		cmdEnable := exec.Command("systemctl", "enable", serviceName)
 		if out, err := cmdEnable.CombinedOutput(); err != nil {
-			return fmt.Errorf("systemctl enable --now %s: %s (%w)", serviceName, string(out), err)
+			return fmt.Errorf("systemctl enable %s: %s (%w)", serviceName, string(out), err)
+		}
+
+		cmdRestart := exec.Command("systemctl", "restart", serviceName)
+		if out, err := cmdRestart.CombinedOutput(); err != nil {
+			return fmt.Errorf("systemctl restart %s: %s (%w)", serviceName, string(out), err)
 		}
 	} else {
 		// User Mode: writes to ~/.config/systemd/user/claw.service
@@ -122,9 +127,14 @@ func installSystemd(tu *TargetUser, targetBin, binDir, clawHome string) error {
 			return fmt.Errorf("systemctl --user daemon-reload: %s (%w)", string(out), err)
 		}
 
-		cmdEnable := exec.Command("systemctl", "--user", "enable", "--now", serviceName)
+		cmdEnable := exec.Command("systemctl", "--user", "enable", serviceName)
 		if out, err := cmdEnable.CombinedOutput(); err != nil {
-			return fmt.Errorf("systemctl --user enable --now %s: %s (%w)", serviceName, string(out), err)
+			return fmt.Errorf("systemctl --user enable %s: %s (%w)", serviceName, string(out), err)
+		}
+
+		cmdRestart := exec.Command("systemctl", "--user", "restart", serviceName)
+		if out, err := cmdRestart.CombinedOutput(); err != nil {
+			return fmt.Errorf("systemctl --user restart %s: %s (%w)", serviceName, string(out), err)
 		}
 
 		// Try enabling lingering so user service continues running without active session
