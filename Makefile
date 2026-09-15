@@ -211,6 +211,8 @@ uninstall-all:
 ## generate: Run go generate (refreshes embedded onboard workspace)
 generate:
 	@echo "Run generate..."
+	@mkdir -p $(EMBED_DIR)
+	@touch $(EMBED_DIR)/.gitkeep
 	@rm -r ./internal/onboard/workspace 2>/dev/null || true
 	@$(GO) generate ./...
 	@echo "Run generate complete"
@@ -264,6 +266,8 @@ clean:
 	@echo "Cleaning build artifacts..."
 	@rm -rf $(BUILD_DIR)
 	@rm -rf $(EMBED_DIR)
+	@mkdir -p $(EMBED_DIR)
+	@touch $(EMBED_DIR)/.gitkeep
 	@rm -rf $(FRONTEND_DIR)/dist
 	@echo "Clean complete (node_modules left in place)"
 
