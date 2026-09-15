@@ -62,32 +62,51 @@ func TestCount_MatchesWc(t *testing.T) {
 			tool, rel, full := countFixture(t, tc.content)
 			got := runCount(t, tool, rel)
 
-			// wc -l -w -m -c prints the counts in that order.
-			out, err := exec.Command(wcPath, "-l", "-w", "-m", "-c", full).Output()
+			// On POSIX and BSD/macOS, `wc` treats -c and -m as mutually exclusive;
+			// passing both causes -c to override -m, emitting only 3 counts plus the filename.
+			// We invoke `wc -l -w -c` and `wc -m` separately for full cross-platform compatibility.
+			outLWC, err := exec.Command(wcPath, "-l", "-w", "-c", full).Output()
 			if err != nil {
-				t.Fatalf("wc failed: %v", err)
+				t.Fatalf("wc -l -w -c failed: %v", err)
 			}
-			nums := strings.Fields(string(out))
-			if len(nums) < 4 {
-				t.Fatalf("unexpected wc output: %q", out)
+			numsLWC := strings.Fields(string(outLWC))
+			if len(numsLWC) < 3 {
+				t.Fatalf("unexpected wc -l -w -c output: %q", outLWC)
 			}
-			want := make([]int64, 4)
-			for i := range want {
-				v, perr := strconv.ParseInt(nums[i], 10, 64)
-				if perr != nil {
-					t.Fatalf("parsing wc output %q: %v", nums[i], perr)
-				}
-				want[i] = v
+			wantLines, err := strconv.ParseInt(numsLWC[0], 10, 64)
+			if err != nil {
+				t.Fatalf("parsing wc lines output %q: %v", numsLWC[0], err)
+			}
+			wantWords, err := strconv.ParseInt(numsLWC[1], 10, 64)
+			if err != nil {
+				t.Fatalf("parsing wc words output %q: %v", numsLWC[1], err)
+			}
+			wantBytes, err := strconv.ParseInt(numsLWC[2], 10, 64)
+			if err != nil {
+				t.Fatalf("parsing wc bytes output %q: %v", numsLWC[2], err)
+			}
+
+			outM, err := exec.Command(wcPath, "-m", full).Output()
+			if err != nil {
+				t.Fatalf("wc -m failed: %v", err)
+			}
+			numsM := strings.Fields(string(outM))
+			if len(numsM) < 1 {
+				t.Fatalf("unexpected wc -m output: %q", outM)
+			}
+			wantChars, err := strconv.ParseInt(numsM[0], 10, 64)
+			if err != nil {
+				t.Fatalf("parsing wc chars output %q: %v", numsM[0], err)
 			}
 
 			for _, cmp := range []struct {
 				label     string
 				got, want int64
 			}{
-				{"lines", got.Lines, want[0]},
-				{"words", got.Words, want[1]},
-				{"characters", got.Characters, want[2]},
-				{"bytes", got.Bytes, want[3]},
+				{"lines", got.Lines, wantLines},
+				{"words", got.Words, wantWords},
+				{"characters", got.Characters, wantChars},
+				{"bytes", got.Bytes, wantBytes},
 			} {
 				if cmp.got != cmp.want {
 					t.Errorf("%s = %d, wc says %d (content %q)", cmp.label, cmp.got, cmp.want, tc.content)
