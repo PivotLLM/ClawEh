@@ -17,9 +17,9 @@ const (
 )
 
 // buildSystemUnit renders the systemd system unit for running at machine boot.
-// It explicitly sets User, Group, WorkingDirectory, and environment variables so that
-// ClawEh executes strictly as the target user with access to that user's ~/.claw.
-func buildSystemUnit(username, group, execPath, homeDir, binDir string) string {
+// It explicitly sets User, Group, WorkingDirectory, TimeoutStopSec=60, PATH, and
+// CLAW_HOME so that ClawEh executes strictly as the target user.
+func buildSystemUnit(username, group, execPath, homeDir, binDir, clawHome string) string {
 	var b strings.Builder
 	b.WriteString("[Unit]\n")
 	b.WriteString("Description=" + app.Name() + " — " + app.TagLine() + "\n")
@@ -37,13 +37,13 @@ func buildSystemUnit(username, group, execPath, homeDir, binDir string) string {
 	b.WriteString("Restart=on-failure\n")
 	b.WriteString("RestartSec=5\n")
 	b.WriteString("KillMode=control-group\n")
-	b.WriteString("TimeoutStopSec=30\n")
+	b.WriteString("TimeoutStopSec=60\n")
 	if homeDir != "" {
 		b.WriteString("Environment=HOME=" + homeDir + "\n")
 	}
-	b.WriteString("Environment=PATH=" + servicePATH(binDir) + "\n")
-	if home := os.Getenv(global.EnvVarHome); home != "" {
-		b.WriteString("Environment=" + global.EnvVarHome + "=" + home + "\n")
+	b.WriteString("Environment=PATH=" + servicePATH(homeDir, binDir) + "\n")
+	if clawHome != "" {
+		b.WriteString("Environment=" + global.EnvVarHome + "=" + clawHome + "\n")
 	}
 	b.WriteString("\n[Install]\n")
 	b.WriteString("WantedBy=multi-user.target\n")
@@ -52,7 +52,7 @@ func buildSystemUnit(username, group, execPath, homeDir, binDir string) string {
 
 // buildUserUnit renders the systemd user unit for running in user space (~/.config/systemd/user/).
 // In user units, User= and Group= directives are not permitted by systemd.
-func buildUserUnit(execPath, homeDir, binDir string) string {
+func buildUserUnit(execPath, homeDir, binDir, clawHome string) string {
 	var b strings.Builder
 	b.WriteString("[Unit]\n")
 	b.WriteString("Description=" + app.Name() + " — " + app.TagLine() + "\n")
@@ -68,13 +68,13 @@ func buildUserUnit(execPath, homeDir, binDir string) string {
 	b.WriteString("Restart=on-failure\n")
 	b.WriteString("RestartSec=5\n")
 	b.WriteString("KillMode=control-group\n")
-	b.WriteString("TimeoutStopSec=30\n")
+	b.WriteString("TimeoutStopSec=60\n")
 	if homeDir != "" {
 		b.WriteString("Environment=HOME=" + homeDir + "\n")
 	}
-	b.WriteString("Environment=PATH=" + servicePATH(binDir) + "\n")
-	if home := os.Getenv(global.EnvVarHome); home != "" {
-		b.WriteString("Environment=" + global.EnvVarHome + "=" + home + "\n")
+	b.WriteString("Environment=PATH=" + servicePATH(homeDir, binDir) + "\n")
+	if clawHome != "" {
+		b.WriteString("Environment=" + global.EnvVarHome + "=" + clawHome + "\n")
 	}
 	b.WriteString("\n[Install]\n")
 	b.WriteString("WantedBy=default.target\n")
@@ -87,10 +87,10 @@ func userUnitPath(homeDir string) string {
 }
 
 // installSystemd writes the systemd unit file and enables/starts the service.
-func installSystemd(tu *TargetUser, targetBin, binDir string) error {
+func installSystemd(tu *TargetUser, targetBin, binDir, clawHome string) error {
 	if tu.IsRoot {
 		// System Mode: writes to /etc/systemd/system/claw.service
-		unit := buildSystemUnit(tu.Username, tu.GroupName, targetBin, tu.HomeDir, binDir)
+		unit := buildSystemUnit(tu.Username, tu.GroupName, targetBin, tu.HomeDir, binDir, clawHome)
 		if err := os.WriteFile(systemUnitPath, []byte(unit), 0o644); err != nil {
 			return fmt.Errorf("writing systemd unit %s: %w", systemUnitPath, err)
 		}
@@ -107,7 +107,7 @@ func installSystemd(tu *TargetUser, targetBin, binDir string) error {
 		}
 	} else {
 		// User Mode: writes to ~/.config/systemd/user/claw.service
-		unit := buildUserUnit(targetBin, tu.HomeDir, binDir)
+		unit := buildUserUnit(targetBin, tu.HomeDir, binDir, clawHome)
 		destPath := userUnitPath(tu.HomeDir)
 		if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
 			return fmt.Errorf("creating directory %s: %w", filepath.Dir(destPath), err)

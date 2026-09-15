@@ -259,6 +259,8 @@ func runInstall(host string, port int, allowedCIDRs, targetUser, customBinDir st
 		}
 	}
 
+	clawHome := resolveClawHome(tu, binDir, existing)
+
 	// 1. Present installation summary and prompt for confirmation
 	fmt.Printf("\n%s Installation Summary:\n", app.Name())
 	if existing != nil {
@@ -273,7 +275,7 @@ func runInstall(host string, port int, allowedCIDRs, targetUser, customBinDir st
 	fmt.Printf("  Mode:            %s\n", modeName)
 	fmt.Printf("  Run As User:     %s (UID: %s, GID: %s)\n", tu.Username, tu.UID, tu.GID)
 	fmt.Printf("  Home Directory:  %s\n", tu.HomeDir)
-	fmt.Printf("  Data Directory:  %s\n", dataDir(tu.HomeDir))
+	fmt.Printf("  Data Directory:  %s\n", clawHome)
 	fmt.Printf("  Target Binary:   %s\n", targetBin)
 	fmt.Printf("  Alias Symlink:   %s -> %s\n", filepath.Join(binDir, openClawAlias), serviceName)
 	fmt.Printf("  Service File:    %s\n", serviceFilePath)
@@ -316,7 +318,7 @@ func runInstall(host string, port int, allowedCIDRs, targetUser, customBinDir st
 
 	// 3c. Apply IP allowlist if provided
 	if allowedCIDRs == "" && isNetworkBind(host) {
-		if existing, err := network.CurrentAllowlist(); err == nil && len(existing) == 0 {
+		if existingNet, err := network.CurrentAllowlist(); err == nil && len(existingNet) == 0 {
 			return fmt.Errorf(
 				"--host %s makes %s listen on the network, but the allowlist is empty, "+
 					"so every off-box connection would still be refused.\n"+
@@ -336,11 +338,11 @@ func runInstall(host string, port int, allowedCIDRs, targetUser, customBinDir st
 
 	// 4. Register and start background service
 	if runtime.GOOS == "linux" {
-		if err := installSystemd(tu, targetBin, binDir); err != nil {
+		if err := installSystemd(tu, targetBin, binDir, clawHome); err != nil {
 			return fmt.Errorf("installing systemd service: %w", err)
 		}
 	} else if runtime.GOOS == "darwin" {
-		if err := installLaunchd(tu, targetBin, binDir); err != nil {
+		if err := installLaunchd(tu, targetBin, binDir, clawHome); err != nil {
 			return fmt.Errorf("installing launchd service: %w", err)
 		}
 	}
@@ -350,13 +352,13 @@ func runInstall(host string, port int, allowedCIDRs, targetUser, customBinDir st
 	if runtime.GOOS == "linux" {
 		if tu.IsRoot {
 			fmt.Printf("  Status: systemctl status %s\n", serviceName)
-			fmt.Printf("  Logs:   journalctl -u %s -f   (or %s/logs/claw.log)\n", serviceName, dataDir(tu.HomeDir))
+			fmt.Printf("  Logs:   journalctl -u %s -f   (or %s/logs/claw.log)\n", serviceName, clawHome)
 		} else {
 			fmt.Printf("  Status: systemctl --user status %s\n", serviceName)
-			fmt.Printf("  Logs:   journalctl --user -u %s -f   (or %s/logs/claw.log)\n", serviceName, dataDir(tu.HomeDir))
+			fmt.Printf("  Logs:   journalctl --user -u %s -f   (or %s/logs/claw.log)\n", serviceName, clawHome)
 		}
 	} else {
-		fmt.Printf("  Logs:   %s/logs/claw.log (or launchd log: %s/logs/claw-launchd.log)\n", dataDir(tu.HomeDir), dataDir(tu.HomeDir))
+		fmt.Printf("  Logs:   %s/logs/claw.log (or launchd log: %s/logs/claw-launchd.log)\n", clawHome, clawHome)
 	}
 	fmt.Printf("  Stop/remove: %s uninstall\n", internal.BinaryName)
 	return nil
@@ -420,9 +422,30 @@ func serviceManagerName() string {
 	return "launchd"
 }
 
+// resolveClawHome determines the directory for CLAW_HOME.
+// It prioritizes explicit environment variables, detected existing installations,
+// /opt/claw if installed there, or the user's ~/.claw directory.
+func resolveClawHome(tu *TargetUser, binDir string, existing *ExistingInstall) string {
+	if envHome := os.Getenv(global.EnvVarHome); envHome != "" {
+		return envHome
+	}
+	if existing != nil && existing.ClawHome != "" {
+		return existing.ClawHome
+	}
+	if binDir == "/opt/claw" || (existing != nil && strings.HasPrefix(existing.BinaryPath, "/opt/claw")) {
+		return "/opt/claw"
+	}
+	return filepath.Join(tu.HomeDir, global.DefaultDataDir)
+}
+
 // buildUnit is preserved for backwards compatibility with tests and callers.
 func buildUnit(username, group, execPath, binDir string) string {
-	return buildSystemUnit(username, group, execPath, "", binDir)
+	homeDir := filepath.Join("/home", username)
+	clawHome := filepath.Join(homeDir, global.DefaultDataDir)
+	if envHome := os.Getenv(global.EnvVarHome); envHome != "" {
+		clawHome = envHome
+	}
+	return buildSystemUnit(username, group, execPath, homeDir, binDir, clawHome)
 }
 
 // accessURL returns the web UI URL to print after install, derived from the
@@ -542,28 +565,64 @@ func isPublicBind(host string) bool {
 	}
 }
 
-// servicePATH builds the PATH baked into the systemd unit or launchd plist: binDir first, then the
-// user's current interactive PATH (captured at install time — this is what makes
-// CLI agents in ~/.local/bin or an nvm node bin reachable by the service, for both
-// detection and execution), with the standard system dirs appended as a backstop.
-// Note: an nvm path is tied to the active node version; switch versions and you'll
-// need to re-run `claw install` to refresh it.
-func servicePATH(binDir string) string {
-	parts := []string{binDir}
-	seen := map[string]bool{binDir: true}
+// servicePATH builds the PATH baked into the systemd unit or launchd plist.
+// It prioritizes the target user's local bin directories (~/.local/bin, ~/bin)
+// so dev tools (claude code, agy, codex, cursor, etc.) are reachable, the binary
+// directory itself (e.g. /opt/claw), any home-relative tool paths (e.g. cargo, nvm),
+// and standard clean system directories (/usr/local/bin, /usr/bin, /bin).
+// Unneeded sbin and vendor-specific paths (e.g. thinlinc, snap) are excluded.
+func servicePATH(homeDir, binDir string) string {
+	parts := []string{}
+	seen := make(map[string]bool)
+
 	add := func(p string) {
 		if p != "" && !seen[p] {
 			parts = append(parts, p)
 			seen[p] = true
 		}
 	}
-	for _, p := range filepath.SplitList(os.Getenv("PATH")) {
-		add(p)
+
+	// 1. Target user's local binary directories if they exist (dev tools: claude, agy, etc.)
+	if homeDir != "" {
+		localBin := filepath.Join(homeDir, ".local", "bin")
+		if dirExists(localBin) {
+			add(localBin)
+		}
+		userBin := filepath.Join(homeDir, "bin")
+		if dirExists(userBin) {
+			add(userBin)
+		}
 	}
+
+	// 2. Target binary directory (e.g. /opt/claw)
+	if binDir != "" {
+		add(binDir)
+	}
+
+	// 3. User-specific tool directories from current PATH (e.g. ~/.nvm, ~/.cargo/bin)
+	for _, p := range filepath.SplitList(os.Getenv("PATH")) {
+		if homeDir != "" && strings.HasPrefix(p, homeDir) {
+			add(p)
+		} else if homeDir == "" && !isSystemOrSnapPath(p) {
+			add(p)
+		}
+	}
+
+	// 4. Standard clean system binary directories
 	for _, p := range []string{"/usr/local/bin", "/usr/bin", "/bin"} {
 		add(p)
 	}
+
 	return strings.Join(parts, ":")
+}
+
+func isSystemOrSnapPath(p string) bool {
+	switch p {
+	case "/usr/local/sbin", "/usr/sbin", "/sbin", "/snap/bin":
+		return true
+	default:
+		return strings.HasPrefix(p, "/opt/thinl")
+	}
 }
 
 // ensurePath appends binDir to the user's shell rc if it isn't already on PATH.
