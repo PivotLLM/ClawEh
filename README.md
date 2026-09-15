@@ -2,7 +2,7 @@
 
 **ClawEh is a small, fast, self-hosted runtime for personal AI assistants.** 
 
-Written in Go, it can run one or more agents, each with its own workspace, tools, and persistent memory. Agents can be connected to Telegram, Slack, Discord, Signal (through a secure-messaging daemon), the built-in web interface, and external devices such as the Rabbit R1 and compatible voice apps.
+Written in Go, it can run one or more agents, each with its own workspace, tools, and persistent memory. Agents can be connected to Telegram, Slack, Discord, Signal (through an additional daemon), the built-in web interface, and external devices such as the Rabbit R1 and compatible voice apps.
 
 Although the conversation context can be reset at any time, ClawEh is designed primarily for long-running assistants that maintain continuity over time. Its development emphasizes efficient context management, practical persistent memory, security, and a stable, dependable core.
 
