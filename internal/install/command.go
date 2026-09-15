@@ -360,20 +360,30 @@ func runInstall(host string, port int, allowedCIDRs, targetUser, customBinDir st
 	}
 	fixOwnership(filepath.Join(clawHome, "logs"), tu)
 
-	fmt.Printf("\n%s is installed and running.\n", app.Name())
-	fmt.Printf("  Open:   %s\n", accessURL(clawHome))
+	fmt.Println("\nInstalled and running.")
+	fmt.Printf("Web interface is at: %s\n\n", accessURL(clawHome))
+	fmt.Println("Hints:")
 	if runtime.GOOS == "linux" {
 		if tu.IsRoot {
-			fmt.Printf("  Status: systemctl status %s\n", serviceName)
-			fmt.Printf("  Logs:   journalctl -u %s -f   (or %s/logs/claw.log)\n", serviceName, clawHome)
+			fmt.Printf("  Check status: systemctl status %s\n", serviceName)
 		} else {
-			fmt.Printf("  Status: systemctl --user status %s\n", serviceName)
-			fmt.Printf("  Logs:   journalctl --user -u %s -f   (or %s/logs/claw.log)\n", serviceName, clawHome)
+			fmt.Printf("  Check status: systemctl --user status %s\n", serviceName)
+		}
+	} else if runtime.GOOS == "darwin" {
+		if tu.IsRoot {
+			fmt.Printf("  Check status: sudo launchctl list | grep %s\n", launchdLabel)
+		} else {
+			fmt.Printf("  Check status: launchctl list | grep %s\n", launchdLabel)
 		}
 	} else {
-		fmt.Printf("  Logs:   %s/logs/claw.log (or launchd log: %s/logs/claw-launchd.log)\n", clawHome, clawHome)
+		fmt.Printf("  Check status: %s status\n", targetBin)
 	}
-	fmt.Printf("  Stop/remove: %s uninstall\n", internal.BinaryName)
+	fmt.Printf("  View logs:    tail -f %s\n", filepath.Join(clawHome, "logs", "claw.log"))
+	if tu.IsRoot {
+		fmt.Printf("  Uninstall:    sudo %s uninstall\n", targetBin)
+	} else {
+		fmt.Printf("  Uninstall:    %s uninstall\n", targetBin)
+	}
 	return nil
 }
 
