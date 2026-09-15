@@ -296,3 +296,36 @@ func TestResolveBinDir(t *testing.T) {
 	}
 }
 
+func TestResolveClawHome(t *testing.T) {
+	tempHome := t.TempDir()
+	tu := &TargetUser{HomeDir: tempHome}
+
+	// 1. Explicit CLAW_HOME in env
+	t.Setenv(global.EnvVarHome, "/custom/claw/home")
+	got := resolveClawHome(tu, "/usr/local/bin", nil)
+	if got != "/custom/claw/home" {
+		t.Errorf("resolveClawHome with env = %q, want /custom/claw/home", got)
+	}
+	t.Setenv(global.EnvVarHome, "")
+
+	// 2. Existing install with ClawHome
+	existing := &ExistingInstall{ClawHome: "/opt/claw"}
+	got = resolveClawHome(tu, "/usr/local/bin", existing)
+	if got != "/opt/claw" {
+		t.Errorf("resolveClawHome with existing.ClawHome = %q, want /opt/claw", got)
+	}
+
+	// 3. Existing install with BinaryPath in /opt/claw
+	existing = &ExistingInstall{BinaryPath: "/opt/claw/claw"}
+	got = resolveClawHome(tu, "/usr/local/bin", existing)
+	if got != "/opt/claw" {
+		t.Errorf("resolveClawHome with existing.BinaryPath in /opt/claw = %q, want /opt/claw", got)
+	}
+
+	// 4. binDir == /opt/claw
+	got = resolveClawHome(tu, "/opt/claw", nil)
+	if got != "/opt/claw" {
+		t.Errorf("resolveClawHome with binDir = /opt/claw = %q, want /opt/claw", got)
+	}
+}
+

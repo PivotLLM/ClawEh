@@ -19,11 +19,13 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/PivotLLM/ClawEh/app"
+	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/internal"
 	"github.com/PivotLLM/ClawEh/internal/install"
 )
@@ -145,6 +147,15 @@ func runUpgrade(checkOnly, force bool, targetVersion string, autoYes bool) error
 		exePath = existing.BinaryPath
 	}
 
+	// Set CLAW_HOME if custom install path is detected
+	if existing != nil && existing.ClawHome != "" {
+		_ = os.Setenv(global.EnvVarHome, existing.ClawHome)
+		_ = os.Setenv("CLAW_HOME", existing.ClawHome)
+	} else if strings.HasPrefix(exePath, "/opt/claw") {
+		_ = os.Setenv(global.EnvVarHome, "/opt/claw")
+		_ = os.Setenv("CLAW_HOME", "/opt/claw")
+	}
+
 	// Verify write permission on target executable directory
 	binDir := filepath.Dir(exePath)
 	if err := checkDirWritable(binDir); err != nil {
@@ -157,6 +168,11 @@ func runUpgrade(checkOnly, force bool, targetVersion string, autoYes bool) error
 	fmt.Printf("  Target Version:  v%s (tag: %s)\n", latestVer, release.TagName)
 	fmt.Printf("  Release Asset:   %s\n", archiveAsset.Name)
 	fmt.Printf("  Target Binary:   %s\n", exePath)
+	if existing != nil && existing.ClawHome != "" {
+		fmt.Printf("  Data Directory:  %s\n", existing.ClawHome)
+	} else if strings.HasPrefix(exePath, "/opt/claw") {
+		fmt.Printf("  Data Directory:  %s\n", "/opt/claw")
+	}
 	if existing != nil && existing.ServicePath != "" {
 		activeStr := "inactive"
 		if existing.IsActive {
@@ -417,6 +433,12 @@ func atomicReplace(srcPath, dstPath string) error {
 	}
 	if err := os.WriteFile(tmpDst, data, 0o755); err != nil {
 		return err
+	}
+	// Preserve existing file ownership if dstPath exists
+	if origInfo, statErr := os.Stat(dstPath); statErr == nil {
+		if stat, ok := origInfo.Sys().(*syscall.Stat_t); ok {
+			_ = os.Chown(tmpDst, int(stat.Uid), int(stat.Gid))
+		}
 	}
 	return os.Rename(tmpDst, dstPath)
 }

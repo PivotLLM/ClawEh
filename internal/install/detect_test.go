@@ -42,6 +42,44 @@ WantedBy=multi-user.target
 	}
 }
 
+func TestParseSystemdUnit_QuotedAndInferred(t *testing.T) {
+	dir := t.TempDir()
+
+	// 1. Quoted Environment="CLAW_HOME=/opt/claw"
+	unit1 := filepath.Join(dir, "quoted.service")
+	content1 := `[Unit]
+Description=ClawEh
+
+[Service]
+ExecStart=/opt/claw/claw
+Environment="CLAW_HOME=/opt/claw"
+`
+	if err := os.WriteFile(unit1, []byte(content1), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	inst1 := parseSystemdUnit(unit1, "systemd-system")
+	if inst1.ClawHome != "/opt/claw" {
+		t.Errorf("quoted CLAW_HOME: got %q, want /opt/claw", inst1.ClawHome)
+	}
+
+	// 2. No CLAW_HOME env var, but ExecStart=/opt/claw/claw
+	unit2 := filepath.Join(dir, "inferred.service")
+	content2 := `[Unit]
+Description=ClawEh
+
+[Service]
+ExecStart=/opt/claw/claw
+Environment=PATH=/opt/claw:/usr/bin
+`
+	if err := os.WriteFile(unit2, []byte(content2), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	inst2 := parseSystemdUnit(unit2, "systemd-system")
+	if inst2.ClawHome != "/opt/claw" {
+		t.Errorf("inferred CLAW_HOME: got %q, want /opt/claw", inst2.ClawHome)
+	}
+}
+
 func TestParseLaunchdPlist(t *testing.T) {
 	dir := t.TempDir()
 	plistFile := filepath.Join(dir, "com.pivotllm.claweh.plist")
@@ -101,5 +139,25 @@ func TestIsBuildOrTempPath(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("isBuildOrTempPath(%q) = %v, want %v", tc.path, got, tc.want)
 		}
+	}
+}
+
+func TestDetectExistingInstall_OptClaw(t *testing.T) {
+	if _, err := os.Stat("/opt/claw"); err != nil {
+		t.Skip("/opt/claw does not exist on this host; skipping")
+	}
+
+	inst := DetectExistingInstall("/home/ai")
+	if inst == nil {
+		t.Fatal("expected DetectExistingInstall to find /opt/claw installation, got nil")
+	}
+	if inst.ClawHome != "/opt/claw" {
+		t.Errorf("ClawHome = %q, want /opt/claw", inst.ClawHome)
+	}
+	if inst.BinaryPath != "/opt/claw/claw" {
+		t.Errorf("BinaryPath = %q, want /opt/claw/claw", inst.BinaryPath)
+	}
+	if inst.User != "ai" {
+		t.Errorf("User = %q, want ai", inst.User)
 	}
 }

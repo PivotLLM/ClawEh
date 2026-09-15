@@ -11,6 +11,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -173,6 +174,11 @@ func resolveBinDir(tu *TargetUser, customDir string, existing *ExistingInstall) 
 		}
 	}
 
+	// If /opt/claw was configured as ClawHome in existing installation, preserve /opt/claw
+	if existing != nil && existing.ClawHome == "/opt/claw" {
+		return "/opt/claw", nil
+	}
+
 	if tu.IsRoot {
 		// System Mode: standard system binary path
 		binDir := "/usr/local/bin"
@@ -261,6 +267,10 @@ func runInstall(host string, port int, allowedCIDRs, targetUser, customBinDir st
 
 	clawHome := resolveClawHome(tu, binDir, existing)
 
+	// Explicitly set CLAW_HOME in process environment so any config access or helper uses clawHome
+	_ = os.Setenv(global.EnvVarHome, clawHome)
+	_ = os.Setenv("CLAW_HOME", clawHome)
+
 	// 1. Present installation summary and prompt for confirmation
 	fmt.Printf("\n%s Installation Summary:\n", app.Name())
 	if existing != nil {
@@ -291,6 +301,7 @@ func runInstall(host string, port int, allowedCIDRs, targetUser, customBinDir st
 	if err := copyBinary(exePath, targetBin); err != nil {
 		return fmt.Errorf("copying binary to %s: %w", targetBin, err)
 	}
+	fixOwnership(targetBin, tu)
 	fmt.Printf("Installed binary: %s\n", targetBin)
 
 	// 2b. Symlink openclaw -> claw (for Rabbit R1 ACP connection)
@@ -298,22 +309,22 @@ func runInstall(host string, port int, allowedCIDRs, targetUser, customBinDir st
 		fmt.Printf("Warning: could not create the openclaw alias (%v).\n"+
 			"  The Rabbit R1 spawns `openclaw acp`; without this link it cannot connect.\n", err)
 	} else {
+		fixOwnership(filepath.Join(binDir, openClawAlias), tu)
 		fmt.Printf("Installed alias:  %s -> %s (for the Rabbit R1's `openclaw acp`)\n",
 			filepath.Join(binDir, openClawAlias), serviceName)
 	}
 
-	// 3. Ensure binDir is on PATH if in user space
-	if !tu.IsRoot {
-		if note := ensurePath(binDir); note != "" {
-			fmt.Println(note)
-		}
+	// 3. Ensure binDir is on PATH and CLAW_HOME is exported in shell rc
+	if note := ensureUserEnv(tu, binDir, clawHome); note != "" {
+		fmt.Println(note)
 	}
 
 	// 3b. Apply bind settings if provided
 	if host != "" || port != 0 {
-		if err := applyServerSettings(host, port); err != nil {
+		if err := applyServerSettings(host, port, clawHome); err != nil {
 			return fmt.Errorf("applying server settings: %w", err)
 		}
+		fixOwnership(filepath.Join(clawHome, "config.json"), tu)
 	}
 
 	// 3c. Apply IP allowlist if provided
@@ -334,6 +345,7 @@ func runInstall(host string, port int, allowedCIDRs, targetUser, customBinDir st
 		if err := applyAllowlist(allowedCIDRs); err != nil {
 			return fmt.Errorf("applying allowlist: %w", err)
 		}
+		fixOwnership(filepath.Join(clawHome, "config.json"), tu)
 	}
 
 	// 4. Register and start background service
@@ -346,9 +358,10 @@ func runInstall(host string, port int, allowedCIDRs, targetUser, customBinDir st
 			return fmt.Errorf("installing launchd service: %w", err)
 		}
 	}
+	fixOwnership(filepath.Join(clawHome, "logs"), tu)
 
 	fmt.Printf("\n%s is installed and running.\n", app.Name())
-	fmt.Printf("  Open:   %s\n", accessURL())
+	fmt.Printf("  Open:   %s\n", accessURL(clawHome))
 	if runtime.GOOS == "linux" {
 		if tu.IsRoot {
 			fmt.Printf("  Status: systemctl status %s\n", serviceName)
@@ -374,6 +387,20 @@ func runUninstall(targetUser string, autoYes bool) error {
 		return err
 	}
 
+	existing := DetectExistingInstall(tu.HomeDir)
+	if existing != nil && existing.User != "" && targetUser == "" && tu.IsRoot {
+		if preservedUser, pErr := resolveTargetUser(existing.User); pErr == nil {
+			tu = preservedUser
+		}
+	}
+
+	dataDirectory := dataDir(tu.HomeDir)
+	if existing != nil && existing.ClawHome != "" {
+		dataDirectory = existing.ClawHome
+	} else if dirExists("/opt/claw") && (tu.IsRoot || tu.Username == "ai") {
+		dataDirectory = "/opt/claw"
+	}
+
 	var serviceDesc string
 	if runtime.GOOS == "linux" {
 		if tu.IsRoot {
@@ -393,7 +420,7 @@ func runUninstall(targetUser string, autoYes bool) error {
 	fmt.Printf("  Platform:     %s (%s)\n", runtime.GOOS, serviceManagerName())
 	fmt.Printf("  Target:       %s\n", serviceDesc)
 	fmt.Printf("  Action:       Stop service, disable autostart, and remove service file.\n")
-	fmt.Printf("  Note:         Installed binary and data in %s will NOT be deleted.\n\n", dataDir(tu.HomeDir))
+	fmt.Printf("  Note:         Installed binary and data in %s will NOT be deleted.\n\n", dataDirectory)
 
 	confirmed, err := confirmPrompt("Do you want to proceed with removal?", autoYes)
 	if err != nil || !confirmed {
@@ -411,7 +438,7 @@ func runUninstall(targetUser string, autoYes bool) error {
 		}
 	}
 
-	fmt.Printf("\nService removed successfully.\nInstalled binaries and data directory (%s) were left in place.\n", dataDir(tu.HomeDir))
+	fmt.Printf("\nService removed successfully.\nInstalled binaries and data directory (%s) were left in place.\n", dataDirectory)
 	return nil
 }
 
@@ -424,7 +451,7 @@ func serviceManagerName() string {
 
 // resolveClawHome determines the directory for CLAW_HOME.
 // It prioritizes explicit environment variables, detected existing installations,
-// /opt/claw if installed there, or the user's ~/.claw directory.
+// /opt/claw if installed there or existing, or the user's ~/.claw directory.
 func resolveClawHome(tu *TargetUser, binDir string, existing *ExistingInstall) string {
 	if envHome := os.Getenv(global.EnvVarHome); envHome != "" {
 		return envHome
@@ -433,6 +460,9 @@ func resolveClawHome(tu *TargetUser, binDir string, existing *ExistingInstall) s
 		return existing.ClawHome
 	}
 	if binDir == "/opt/claw" || (existing != nil && strings.HasPrefix(existing.BinaryPath, "/opt/claw")) {
+		return "/opt/claw"
+	}
+	if dirExists("/opt/claw") {
 		return "/opt/claw"
 	}
 	return filepath.Join(tu.HomeDir, global.DefaultDataDir)
@@ -451,9 +481,13 @@ func buildUnit(username, group, execPath, binDir string) string {
 // accessURL returns the web UI URL to print after install, derived from the
 // active bind host/port. For an all-interfaces bind it uses the host's primary
 // private IP so a headless user gets a reachable address, not "0.0.0.0".
-func accessURL() string {
+func accessURL(optionalClawHome ...string) string {
 	host, port := "127.0.0.1", config.DefaultGatewayPort
-	if cfg, err := config.LoadConfig(internal.GetConfigPath()); err == nil {
+	cfgPath := internal.GetConfigPath()
+	if len(optionalClawHome) > 0 && optionalClawHome[0] != "" {
+		cfgPath = filepath.Join(optionalClawHome[0], "config.json")
+	}
+	if cfg, err := config.LoadConfig(cfgPath); err == nil {
 		if cfg.Gateway.Host != "" {
 			host = cfg.Gateway.Host
 		}
@@ -496,8 +530,11 @@ func primaryLANIP() string {
 // blank/zero value leaves the existing one untouched), creating the config from
 // defaults if it doesn't exist yet. It warns when binding a non-loopback address
 // because the WebUI has no authentication.
-func applyServerSettings(host string, port int) error {
+func applyServerSettings(host string, port int, optionalClawHome ...string) error {
 	path := internal.GetConfigPath()
+	if len(optionalClawHome) > 0 && optionalClawHome[0] != "" {
+		path = filepath.Join(optionalClawHome[0], "config.json")
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
@@ -662,6 +699,98 @@ func shellRC() string {
 		return filepath.Join(home, ".bashrc")
 	default:
 		return filepath.Join(home, ".profile")
+	}
+}
+
+// ensureUserEnv ensures binDir is on PATH and CLAW_HOME is exported in the target user's shell rc.
+func ensureUserEnv(tu *TargetUser, binDir, clawHome string) string {
+	rc := userShellRC(tu.HomeDir)
+	if rc == "" {
+		return ""
+	}
+
+	data, _ := os.ReadFile(rc)
+	content := string(data)
+
+	// Check if binDir needs to be added to PATH
+	needPath := true
+	if binDir == "/usr/local/bin" || binDir == "/usr/bin" || binDir == "/bin" {
+		needPath = false
+	} else {
+		for _, p := range filepath.SplitList(os.Getenv("PATH")) {
+			if p == binDir {
+				needPath = false
+				break
+			}
+		}
+		if strings.Contains(content, binDir) {
+			needPath = false
+		}
+	}
+
+	// Check if CLAW_HOME needs to be exported
+	needClawHome := false
+	defaultHome := filepath.Join(tu.HomeDir, global.DefaultDataDir)
+	if clawHome != defaultHome {
+		if !strings.Contains(content, global.EnvVarHome) {
+			needClawHome = true
+		}
+	}
+
+	if !needPath && !needClawHome {
+		return ""
+	}
+
+	const marker = "# Added by claw install"
+	var lines []string
+	var notes []string
+
+	lines = append(lines, "\n"+marker)
+	if needPath {
+		lines = append(lines, fmt.Sprintf("export PATH=%q", binDir+":$PATH"))
+		notes = append(notes, fmt.Sprintf("Added %s to PATH in %s", binDir, rc))
+	}
+	if needClawHome {
+		lines = append(lines, fmt.Sprintf("export %s=%q", global.EnvVarHome, clawHome))
+		notes = append(notes, fmt.Sprintf("Exported %s=%s in %s", global.EnvVarHome, clawHome, rc))
+	}
+
+	f, err := os.OpenFile(rc, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return fmt.Sprintf("Could not update %s (%v). Set environment manually.", rc, err)
+	}
+	defer func() { _ = f.Close() }()
+
+	if _, err := f.WriteString(strings.Join(lines, "\n") + "\n"); err != nil {
+		return fmt.Sprintf("Could not update %s (%v). Set environment manually.", rc, err)
+	}
+	fixOwnership(rc, tu)
+
+	return strings.Join(notes, "\n") + " — run `source " + rc + "` or open a new terminal."
+}
+
+func userShellRC(homeDir string) string {
+	if homeDir == "" {
+		homeDir, _ = os.UserHomeDir()
+	}
+	switch filepath.Base(os.Getenv("SHELL")) {
+	case "zsh":
+		return filepath.Join(homeDir, ".zshrc")
+	case "bash":
+		return filepath.Join(homeDir, ".bashrc")
+	default:
+		return filepath.Join(homeDir, ".profile")
+	}
+}
+
+func fixOwnership(path string, tu *TargetUser) {
+	if tu == nil || !tu.IsRoot || path == "" {
+		return
+	}
+	uid, err1 := strconv.Atoi(tu.UID)
+	gid, err2 := strconv.Atoi(tu.GID)
+	if err1 == nil && err2 == nil {
+		_ = os.Chown(path, uid, gid)
 	}
 }
 
