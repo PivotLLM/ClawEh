@@ -248,30 +248,41 @@ func TestResolveBinDir(t *testing.T) {
 
 	// 1. Explicit custom dir
 	customDir := filepath.Join(tempHome, "custom", "bin")
-	dir, err := resolveBinDir(&TargetUser{HomeDir: tempHome, IsRoot: false}, customDir)
+	dir, err := resolveBinDir(&TargetUser{HomeDir: tempHome, IsRoot: false}, customDir, nil)
 	if err != nil || dir != customDir {
 		t.Fatalf("resolveBinDir custom: got %v, %v, want %s", dir, err, customDir)
 	}
 
-	// 2. System Mode (IsRoot = true)
-	dir, err = resolveBinDir(&TargetUser{HomeDir: tempHome, IsRoot: true}, "")
+	// 2. Existing installation binary directory preservation
+	optClawDir := filepath.Join(tempHome, "opt", "claw")
+	if err := os.MkdirAll(optClawDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	existing := &ExistingInstall{BinaryPath: filepath.Join(optClawDir, "claw")}
+	dir, err = resolveBinDir(&TargetUser{HomeDir: tempHome, IsRoot: false}, "", existing)
+	if err != nil || dir != optClawDir {
+		t.Fatalf("resolveBinDir existing: got %v, want %s", dir, optClawDir)
+	}
+
+	// 3. System Mode (IsRoot = true)
+	dir, err = resolveBinDir(&TargetUser{HomeDir: tempHome, IsRoot: true}, "", nil)
 	if err != nil || dir != "/usr/local/bin" {
 		t.Fatalf("resolveBinDir system: got %v, %v, want /usr/local/bin", dir, err)
 	}
 
-	// 3. User Mode without ~/bin -> ~/.local/bin
-	dir, err = resolveBinDir(&TargetUser{HomeDir: tempHome, IsRoot: false}, "")
+	// 4. User Mode without ~/bin -> ~/.local/bin
+	dir, err = resolveBinDir(&TargetUser{HomeDir: tempHome, IsRoot: false}, "", nil)
 	expectedLocal := filepath.Join(tempHome, ".local", "bin")
 	if err != nil || dir != expectedLocal {
 		t.Fatalf("resolveBinDir user without ~/bin: got %v, want %s", dir, expectedLocal)
 	}
 
-	// 4. User Mode with existing ~/bin -> ~/bin
+	// 5. User Mode with existing ~/bin -> ~/bin
 	expectedBin := filepath.Join(tempHome, "bin")
 	if err := os.MkdirAll(expectedBin, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	dir, err = resolveBinDir(&TargetUser{HomeDir: tempHome, IsRoot: false}, "")
+	dir, err = resolveBinDir(&TargetUser{HomeDir: tempHome, IsRoot: false}, "", nil)
 	if err != nil || dir != expectedBin {
 		t.Fatalf("resolveBinDir user with ~/bin: got %v, want %s", dir, expectedBin)
 	}

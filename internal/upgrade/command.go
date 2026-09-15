@@ -25,6 +25,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/internal"
+	"github.com/PivotLLM/ClawEh/internal/install"
 )
 
 const (
@@ -135,6 +136,14 @@ func runUpgrade(checkOnly, force bool, targetVersion string, autoYes bool) error
 		exePath = resolved
 	}
 
+	// Check if an existing installation exists on the system
+	homeDir, _ := os.UserHomeDir()
+	existing := install.DetectExistingInstall(homeDir)
+	if existing != nil && existing.BinaryPath != "" && (isBuildOrTempDir(exePath) || !fileExists(exePath)) {
+		fmt.Printf("Detected installed %s at: %s\n", app.Name(), existing.BinaryPath)
+		exePath = existing.BinaryPath
+	}
+
 	// Verify write permission on target executable directory
 	binDir := filepath.Dir(exePath)
 	if err := checkDirWritable(binDir); err != nil {
@@ -147,6 +156,13 @@ func runUpgrade(checkOnly, force bool, targetVersion string, autoYes bool) error
 	fmt.Printf("  Target Version:  v%s (tag: %s)\n", latestVer, release.TagName)
 	fmt.Printf("  Release Asset:   %s\n", archiveAsset.Name)
 	fmt.Printf("  Target Binary:   %s\n", exePath)
+	if existing != nil && existing.ServicePath != "" {
+		activeStr := "inactive"
+		if existing.IsActive {
+			activeStr = "active"
+		}
+		fmt.Printf("  Existing Service: %s (%s, %s)\n", existing.ServicePath, existing.ServiceType, activeStr)
+	}
 	fmt.Println()
 
 	if !autoYes {
@@ -418,6 +434,17 @@ func checkDirWritable(dir string) error {
 func fileExists(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && !info.IsDir()
+}
+
+func isBuildOrTempDir(path string) bool {
+	clean := filepath.Clean(path)
+	parts := strings.Split(clean, string(filepath.Separator))
+	for _, p := range parts {
+		if p == "build" || p == "tmp" || p == "temp" || strings.HasPrefix(p, "claw-upgrade-") {
+			return true
+		}
+	}
+	return false
 }
 
 func confirmPrompt(prompt string) (bool, error) {

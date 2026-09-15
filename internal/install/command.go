@@ -157,12 +157,20 @@ func resolveTargetUser(explicitUser string) (*TargetUser, error) {
 }
 
 // resolveBinDir selects the destination directory for the installed binary.
-func resolveBinDir(tu *TargetUser, customDir string) (string, error) {
+func resolveBinDir(tu *TargetUser, customDir string, existing *ExistingInstall) (string, error) {
 	if customDir != "" {
 		if err := os.MkdirAll(customDir, 0o755); err != nil {
 			return "", fmt.Errorf("creating bin dir %s: %w", customDir, err)
 		}
 		return customDir, nil
+	}
+
+	// If an existing installation binary was detected, preserve that exact directory
+	if existing != nil && existing.BinaryPath != "" {
+		existingDir := filepath.Dir(existing.BinaryPath)
+		if dirExists(existingDir) {
+			return existingDir, nil
+		}
 	}
 
 	if tu.IsRoot {
@@ -210,6 +218,15 @@ func runInstall(host string, port int, allowedCIDRs, targetUser, customBinDir st
 		return err
 	}
 
+	// Detect any pre-existing installation or service
+	existing := DetectExistingInstall(tu.HomeDir)
+	if existing != nil && existing.User != "" && targetUser == "" && tu.IsRoot {
+		// Preserve user from existing service
+		if preservedUser, pErr := resolveTargetUser(existing.User); pErr == nil {
+			tu = preservedUser
+		}
+	}
+
 	exePath, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("cannot locate running binary: %w", err)
@@ -218,7 +235,7 @@ func runInstall(host string, port int, allowedCIDRs, targetUser, customBinDir st
 		exePath = resolved
 	}
 
-	binDir, err := resolveBinDir(tu, customBinDir)
+	binDir, err := resolveBinDir(tu, customBinDir, existing)
 	if err != nil {
 		return err
 	}
@@ -244,6 +261,14 @@ func runInstall(host string, port int, allowedCIDRs, targetUser, customBinDir st
 
 	// 1. Present installation summary and prompt for confirmation
 	fmt.Printf("\n%s Installation Summary:\n", app.Name())
+	if existing != nil {
+		if existing.ServicePath != "" {
+			fmt.Printf("  Existing Service: %s (%s)\n", existing.ServicePath, existing.ServiceType)
+		}
+		if existing.BinaryPath != "" {
+			fmt.Printf("  Existing Binary:  %s\n", existing.BinaryPath)
+		}
+	}
 	fmt.Printf("  Platform:        %s (%s)\n", runtime.GOOS, serviceManagerName())
 	fmt.Printf("  Mode:            %s\n", modeName)
 	fmt.Printf("  Run As User:     %s (UID: %s, GID: %s)\n", tu.Username, tu.UID, tu.GID)
@@ -582,6 +607,9 @@ func shellRC() string {
 }
 
 func copyBinary(src, dst string) error {
+	if src == dst {
+		return nil
+	}
 	data, err := os.ReadFile(src)
 	if err != nil {
 		return err
