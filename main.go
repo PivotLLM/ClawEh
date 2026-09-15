@@ -27,6 +27,7 @@ import (
 	"github.com/PivotLLM/ClawEh/internal/status"
 	"github.com/PivotLLM/ClawEh/internal/test"
 	"github.com/PivotLLM/ClawEh/internal/token"
+	"github.com/PivotLLM/ClawEh/internal/upgrade"
 	"github.com/PivotLLM/ClawEh/internal/version"
 )
 
@@ -62,6 +63,7 @@ func NewClawCommand(binaryName string) *cobra.Command {
 		test.NewTestCommand(),
 		token.NewTokenCommand(),
 		devicegw.NewDevicesCommand(),
+		upgrade.NewUpgradeCommand(),
 		version.NewVersionCommand(),
 	)
 

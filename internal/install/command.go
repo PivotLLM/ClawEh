@@ -1,16 +1,17 @@
 // Package install provides the `claw install` / `claw uninstall` subcommands,
-// which deploy the running binary and register a systemd system service that
-// runs ClawEh as the invoking user at boot.
+// which deploy the running binary and register a system boot or user session service
+// on Linux (systemd) and macOS (launchd).
 package install
 
 import (
+	"bufio"
 	"fmt"
 	"net"
 	"os"
-	"os/exec"
 	"os/user"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -24,33 +25,50 @@ import (
 )
 
 const (
-	serviceName = "claw"
-	unitPath    = "/etc/systemd/system/claw.service"
+	serviceName   = "claw"
+	openClawAlias = "openclaw"
 )
+
+// TargetUser holds the account details under which ClawEh will execute.
+type TargetUser struct {
+	Username  string
+	UID       string
+	GID       string
+	GroupName string
+	HomeDir   string
+	IsRoot    bool
+}
 
 // NewInstallCommand returns the `claw install` subcommand.
 func NewInstallCommand() *cobra.Command {
-	var host string
-	var port int
-	var allowedCIDRs string
+	var (
+		host         string
+		port         int
+		allowedCIDRs string
+		targetUser   string
+		customBinDir string
+		yes          bool
+	)
 	cmd := &cobra.Command{
 		Use:   "install",
-		Short: "Install the binary and register a systemd service that starts " + app.Name() + " at boot",
-		Long: "Copies the running binary to ~/bin (or ~/.local/bin), ensures that directory is on\n" +
-			"your PATH, and writes a systemd system service that runs " + app.Name() + " as your user\n" +
-			"account at boot. Writing the service unit requires sudo; you'll be prompted for your\n" +
-			"password. Run this as your normal user, not with sudo.\n\n" +
+		Short: "Install the binary and register a background service that starts " + app.Name() + " at boot or login",
+		Long: "Copies the running binary, ensures it is on your PATH, and sets up a background\n" +
+			"service to run " + app.Name() + " automatically:\n\n" +
+			"  - Run as regular user: Installs in User Mode (user space, no sudo required).\n" +
+			"    • Linux: registers a systemd user service (~/.config/systemd/user/claw.service)\n" +
+			"    • macOS: registers a launchd LaunchAgent (~/Library/LaunchAgents/com.pivotllm.claweh.plist)\n" +
+			"    • Binary copied to ~/bin (if exists) or ~/.local/bin\n\n" +
+			"  - Run with sudo: Installs in System Mode (system boot service).\n" +
+			"    • Detects invoking user ($SUDO_USER) so " + app.Name() + " never executes as root\n" +
+			"    • Linux: registers a systemd system service (/etc/systemd/system/claw.service)\n" +
+			"    • macOS: registers a launchd LaunchDaemon (/Library/LaunchDaemons/com.pivotllm.claweh.plist)\n" +
+			"    • Binary copied to /usr/local/bin\n\n" +
 			"On a headless host, pass --host 0.0.0.0 so the WebUI listens on the network, AND\n" +
-			"--allowed-cidrs to say who may reach it — binding alone is not enough. The WebUI has\n" +
-			"no authentication, so access defaults to loopback only; without an allowlist a\n" +
-			"network client is refused even when the port is open. Example:\n" +
-			"  --host 0.0.0.0 --allowed-cidrs 192.168.1.0/24\n" +
-			"Use '*' to allow any address (understand what that exposes first). Note 0.0.0.0/0\n" +
-			"is an IPv4 prefix and still refuses IPv6 clients; '*' covers both families.",
+			"--allowed-cidrs to define allowed network clients (e.g. --allowed-cidrs 192.168.1.0/24).",
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return runInstall(host, port, allowedCIDRs)
+			return runInstall(host, port, allowedCIDRs, targetUser, customBinDir, yes)
 		},
 	}
 	cmd.Flags().StringVar(&host, "host", "", "Bind address for the web/gateway server (e.g. 0.0.0.0 for all interfaces). Empty keeps the current/seeded value.")
@@ -60,97 +78,258 @@ func NewInstallCommand() *cobra.Command {
 			"Empty means loopback only. Give explicit CIDRs (192.168.1.0/24), or a shorthand: "+
 			"'private' for the RFC1918 ranges, 'any' for any address. "+
 			"Required when --host is not loopback.")
+	cmd.Flags().StringVar(&targetUser, "user", "", "Target user account for service execution when running with sudo (defaults to $SUDO_USER).")
+	cmd.Flags().StringVar(&customBinDir, "bin-dir", "", "Custom directory to install the binary to (defaults to ~/bin or ~/.local/bin in user mode, /usr/local/bin in system mode).")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Skip interactive confirmation prompt.")
 	return cmd
 }
 
 // NewUninstallCommand returns the `claw uninstall` subcommand.
 func NewUninstallCommand() *cobra.Command {
-	return &cobra.Command{
+	var (
+		targetUser string
+		yes        bool
+	)
+	cmd := &cobra.Command{
 		Use:          "uninstall",
-		Short:        "Stop and remove the systemd service installed by `claw install`",
+		Short:        "Stop, disable, and remove the background service installed by `claw install`",
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return runUninstall()
+			return runUninstall(targetUser, yes)
 		},
 	}
+	cmd.Flags().StringVar(&targetUser, "user", "", "Target user account when running with sudo (defaults to $SUDO_USER).")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Skip interactive confirmation prompt.")
+	return cmd
 }
 
-func runInstall(host string, port int, allowedCIDRs string) error {
-	if runtime.GOOS != "linux" {
-		return fmt.Errorf("`%s install` is only supported on Linux (systemd); this is %s", serviceName, runtime.GOOS)
-	}
-	if os.Geteuid() == 0 {
-		return fmt.Errorf("run `%s install` as your normal user, not with sudo — it will prompt for sudo only when writing the systemd unit", serviceName)
+// resolveTargetUser identifies the user account that will own and execute ClawEh.
+// When running with sudo/root, it reads $SUDO_USER or explicitUser to guarantee
+// that the service never runs as root.
+func resolveTargetUser(explicitUser string) (*TargetUser, error) {
+	isRoot := os.Geteuid() == 0
+
+	var u *user.User
+	var err error
+
+	if isRoot {
+		username := explicitUser
+		if username == "" {
+			username = os.Getenv("SUDO_USER")
+		}
+		if username == "" || username == "root" {
+			return nil, fmt.Errorf(
+				"%s must run as a regular user, not root.\n"+
+					"When running with sudo, invoke from your normal user account (e.g. `sudo %s install`)\n"+
+					"or pass --user <username> to specify the target user explicitly.",
+				app.Name(), internal.BinaryName)
+		}
+		u, err = user.Lookup(username)
+		if err != nil {
+			return nil, fmt.Errorf("lookup user %q: %w", username, err)
+		}
+	} else {
+		if explicitUser != "" {
+			cur, errCur := user.Current()
+			if errCur == nil && cur.Username != explicitUser {
+				return nil, fmt.Errorf("cannot install for user %q without root privileges", explicitUser)
+			}
+		}
+		u, err = user.Current()
+		if err != nil {
+			return nil, fmt.Errorf("cannot determine current user: %w", err)
+		}
 	}
 
-	u, err := user.Current()
-	if err != nil {
-		return fmt.Errorf("cannot determine current user: %w", err)
-	}
 	groupName := u.Gid
 	if g, gerr := user.LookupGroupId(u.Gid); gerr == nil {
 		groupName = g.Name
 	}
 
+	return &TargetUser{
+		Username:  u.Username,
+		UID:       u.Uid,
+		GID:       u.Gid,
+		GroupName: groupName,
+		HomeDir:   u.HomeDir,
+		IsRoot:    isRoot,
+	}, nil
+}
+
+// resolveBinDir selects the destination directory for the installed binary.
+func resolveBinDir(tu *TargetUser, customDir string, existing *ExistingInstall) (string, error) {
+	if customDir != "" {
+		if err := os.MkdirAll(customDir, 0o755); err != nil {
+			return "", fmt.Errorf("creating bin dir %s: %w", customDir, err)
+		}
+		return customDir, nil
+	}
+
+	// If an existing installation binary was detected, preserve that exact directory
+	if existing != nil && existing.BinaryPath != "" {
+		existingDir := filepath.Dir(existing.BinaryPath)
+		if dirExists(existingDir) {
+			return existingDir, nil
+		}
+	}
+
+	// If /opt/claw was configured as ClawHome in existing installation, preserve /opt/claw
+	if existing != nil && existing.ClawHome == "/opt/claw" {
+		return "/opt/claw", nil
+	}
+
+	if tu.IsRoot {
+		// System Mode: standard system binary path
+		binDir := "/usr/local/bin"
+		if err := os.MkdirAll(binDir, 0o755); err != nil {
+			return "", fmt.Errorf("creating %s: %w", binDir, err)
+		}
+		return binDir, nil
+	}
+
+	// User Mode: ~/bin if it exists, else ~/.local/bin
+	binDir := filepath.Join(tu.HomeDir, "bin")
+	if !dirExists(binDir) {
+		binDir = filepath.Join(tu.HomeDir, ".local", "bin")
+		if err := os.MkdirAll(binDir, 0o755); err != nil {
+			return "", fmt.Errorf("creating %s: %w", binDir, err)
+		}
+	}
+	return binDir, nil
+}
+
+// confirmPrompt asks the user for confirmation on stdin.
+func confirmPrompt(prompt string, autoYes bool) (bool, error) {
+	if autoYes {
+		return true, nil
+	}
+	fmt.Printf("%s [y/N]: ", prompt)
+	reader := bufio.NewReader(os.Stdin)
+	response, err := reader.ReadString('\n')
+	if err != nil {
+		return false, nil
+	}
+	response = strings.TrimSpace(strings.ToLower(response))
+	return response == "y" || response == "yes", nil
+}
+
+func runInstall(host string, port int, allowedCIDRs, targetUser, customBinDir string, autoYes bool) error {
+	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
+		return fmt.Errorf("`%s install` is only supported on Linux and macOS; this is %s", internal.BinaryName, runtime.GOOS)
+	}
+
+	tu, err := resolveTargetUser(targetUser)
+	if err != nil {
+		return err
+	}
+
+	// Detect any pre-existing installation or service
+	existing := DetectExistingInstall(tu.HomeDir)
+	if existing != nil && existing.User != "" && targetUser == "" && tu.IsRoot {
+		// Preserve user from existing service
+		if preservedUser, pErr := resolveTargetUser(existing.User); pErr == nil {
+			tu = preservedUser
+		}
+	}
+
 	exePath, err := os.Executable()
 	if err != nil {
-		return fmt.Errorf("cannot locate the running binary: %w", err)
+		return fmt.Errorf("cannot locate running binary: %w", err)
 	}
 	if resolved, rerr := filepath.EvalSymlinks(exePath); rerr == nil {
 		exePath = resolved
 	}
 
-	// 1. Choose target bin dir: ~/bin if it exists, else ~/.local/bin (created).
-	binDir := filepath.Join(u.HomeDir, "bin")
-	if !dirExists(binDir) {
-		binDir = filepath.Join(u.HomeDir, ".local", "bin")
-		if mkErr := os.MkdirAll(binDir, 0o755); mkErr != nil {
-			return fmt.Errorf("creating %s: %w", binDir, mkErr)
-		}
+	binDir, err := resolveBinDir(tu, customBinDir, existing)
+	if err != nil {
+		return err
 	}
 	targetBin := filepath.Join(binDir, serviceName)
 
-	// 2. Copy the binary into place (atomic rename avoids "text file busy" when
-	// reinstalling over a running copy).
+	// Determine service file path for summary
+	var modeName, serviceFilePath string
+	if tu.IsRoot {
+		modeName = "System Mode (starts at system boot)"
+		if runtime.GOOS == "linux" {
+			serviceFilePath = systemUnitPath
+		} else {
+			serviceFilePath = systemLaunchdPath
+		}
+	} else {
+		modeName = "User Mode (user space, no sudo required)"
+		if runtime.GOOS == "linux" {
+			serviceFilePath = userUnitPath(tu.HomeDir)
+		} else {
+			serviceFilePath = userLaunchdPath(tu.HomeDir)
+		}
+	}
+
+	clawHome := resolveClawHome(tu, binDir, existing)
+
+	// Explicitly set CLAW_HOME in process environment so any config access or helper uses clawHome
+	_ = os.Setenv(global.EnvVarHome, clawHome)
+	_ = os.Setenv("CLAW_HOME", clawHome)
+
+	// 1. Present installation summary and prompt for confirmation
+	fmt.Printf("\n%s Installation Summary:\n", app.Name())
+	if existing != nil {
+		if existing.ServicePath != "" {
+			fmt.Printf("  Existing Service: %s (%s)\n", existing.ServicePath, existing.ServiceType)
+		}
+		if existing.BinaryPath != "" {
+			fmt.Printf("  Existing Binary:  %s\n", existing.BinaryPath)
+		}
+	}
+	fmt.Printf("  Platform:        %s (%s)\n", runtime.GOOS, serviceManagerName())
+	fmt.Printf("  Mode:            %s\n", modeName)
+	fmt.Printf("  Run As User:     %s (UID: %s, GID: %s)\n", tu.Username, tu.UID, tu.GID)
+	fmt.Printf("  Home Directory:  %s\n", tu.HomeDir)
+	fmt.Printf("  Data Directory:  %s\n", clawHome)
+	fmt.Printf("  Target Binary:   %s\n", targetBin)
+	fmt.Printf("  Alias Symlink:   %s -> %s\n", filepath.Join(binDir, openClawAlias), serviceName)
+	fmt.Printf("  Service File:    %s\n", serviceFilePath)
+	fmt.Println()
+
+	confirmed, err := confirmPrompt("Do you want to proceed with installation?", autoYes)
+	if err != nil || !confirmed {
+		fmt.Println("Installation cancelled.")
+		return nil
+	}
+
+	// 2. Copy binary into target location (atomic write prevents "text file busy")
 	if err := copyBinary(exePath, targetBin); err != nil {
 		return fmt.Errorf("copying binary to %s: %w", targetBin, err)
 	}
+	fixOwnership(targetBin, tu)
 	fmt.Printf("Installed binary: %s\n", targetBin)
 
-	// 2b. Symlink openclaw -> claw. rabbit-agent on the Rabbit R1 spawns
-	// `openclaw acp`, so the binary has to be reachable under that name for the
-	// R1 to connect. `make install` does this too; without it here, an install
-	// from a release binary silently lacks the R1 path.
+	// 2b. Symlink openclaw -> claw (for Rabbit R1 ACP connection)
 	if err := linkOpenClawAlias(binDir, serviceName); err != nil {
-		// Not fatal: everything except the R1's ACP bridge works without it.
 		fmt.Printf("Warning: could not create the openclaw alias (%v).\n"+
 			"  The Rabbit R1 spawns `openclaw acp`; without this link it cannot connect.\n", err)
 	} else {
+		fixOwnership(filepath.Join(binDir, openClawAlias), tu)
 		fmt.Printf("Installed alias:  %s -> %s (for the Rabbit R1's `openclaw acp`)\n",
 			filepath.Join(binDir, openClawAlias), serviceName)
 	}
 
-	// 3. Ensure the bin dir is on PATH for interactive shells.
-	if note := ensurePath(binDir); note != "" {
+	// 3. Ensure binDir is on PATH and CLAW_HOME is exported in shell rc
+	if note := ensureUserEnv(tu, binDir, clawHome); note != "" {
 		fmt.Println(note)
 	}
 
-	// 3b. Apply requested bind host/port to the config before the service starts,
-	// so a headless host is reachable on first boot without a manual config edit.
+	// 3b. Apply bind settings if provided
 	if host != "" || port != 0 {
-		if err := applyServerSettings(host, port); err != nil {
+		if err := applyServerSettings(host, port, clawHome); err != nil {
 			return fmt.Errorf("applying server settings: %w", err)
 		}
+		fixOwnership(filepath.Join(clawHome, "config.json"), tu)
 	}
 
-	// 3c. Apply the IP allowlist. Binding off-box without one produces an install
-	// that listens on the network and then refuses every connection from it, which
-	// looks like a firewall problem rather than a configuration choice. Fail here,
-	// where the operator is standing right next to it and can fix it in one flag,
-	// rather than at 3am on a headless box.
+	// 3c. Apply IP allowlist if provided
 	if allowedCIDRs == "" && isNetworkBind(host) {
-		if existing, err := network.CurrentAllowlist(); err == nil && len(existing) == 0 {
+		if existingNet, err := network.CurrentAllowlist(); err == nil && len(existingNet) == 0 {
 			return fmt.Errorf(
 				"--host %s makes %s listen on the network, but the allowlist is empty, "+
 					"so every off-box connection would still be refused.\n"+
@@ -166,48 +345,159 @@ func runInstall(host string, port int, allowedCIDRs string) error {
 		if err := applyAllowlist(allowedCIDRs); err != nil {
 			return fmt.Errorf("applying allowlist: %w", err)
 		}
+		fixOwnership(filepath.Join(clawHome, "config.json"), tu)
 	}
 
-	// 4. Write the systemd unit to a temp file, then install it with one sudo call.
-	unit := buildUnit(u.Username, groupName, targetBin, binDir)
-	tmp, err := os.CreateTemp("", "claw-service-*.tmp")
-	if err != nil {
-		return fmt.Errorf("creating temp unit file: %w", err)
+	// 4. Register and start background service
+	if runtime.GOOS == "linux" {
+		if err := installSystemd(tu, targetBin, binDir, clawHome); err != nil {
+			return fmt.Errorf("installing systemd service: %w", err)
+		}
+	} else if runtime.GOOS == "darwin" {
+		if err := installLaunchd(tu, targetBin, binDir, clawHome); err != nil {
+			return fmt.Errorf("installing launchd service: %w", err)
+		}
 	}
-	tmpPath := tmp.Name()
-	defer func() { _ = os.Remove(tmpPath) }()
-	if _, werr := tmp.WriteString(unit); werr != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("writing temp unit file: %w", werr)
-	}
-	_ = tmp.Close()
+	fixOwnership(filepath.Join(clawHome, "logs"), tu)
 
-	fmt.Printf("Registering systemd service %q as user %s:%s (sudo password may be required)…\n",
-		serviceName, u.Username, groupName)
-	script := strings.Join([]string{
-		fmt.Sprintf("cp %s %s", shellQuote(tmpPath), shellQuote(unitPath)),
-		fmt.Sprintf("chmod 0644 %s", shellQuote(unitPath)),
-		"systemctl daemon-reload",
-		fmt.Sprintf("systemctl enable --now %s", shellQuote(serviceName)),
-	}, " && ")
-	if err := runSudo(script); err != nil {
-		return fmt.Errorf("installing systemd service: %w", err)
+	fmt.Println("\nInstalled and running.")
+	fmt.Printf("Web interface is at: %s\n\n", accessURL(clawHome))
+	fmt.Println("Hints:")
+	if runtime.GOOS == "linux" {
+		if tu.IsRoot {
+			fmt.Printf("  Check status: systemctl status %s\n", serviceName)
+		} else {
+			fmt.Printf("  Check status: systemctl --user status %s\n", serviceName)
+		}
+	} else if runtime.GOOS == "darwin" {
+		if tu.IsRoot {
+			fmt.Printf("  Check status: sudo launchctl list | grep %s\n", launchdLabel)
+		} else {
+			fmt.Printf("  Check status: launchctl list | grep %s\n", launchdLabel)
+		}
+	} else {
+		fmt.Printf("  Check status: %s status\n", targetBin)
 	}
-
-	fmt.Printf("\n%s is installed and running.\n", app.Name())
-	fmt.Printf("  Open:   %s\n", accessURL())
-	fmt.Printf("  Status: systemctl status %s\n", serviceName)
-	fmt.Printf("  Logs:   journalctl -u %s -f   (or %s/logs/claw.log)\n", serviceName, dataDir(u.HomeDir))
-	fmt.Printf("  Stop/remove: %s uninstall\n", serviceName)
+	fmt.Printf("  View logs:    tail -f %s\n", filepath.Join(clawHome, "logs", "claw.log"))
+	if tu.IsRoot {
+		fmt.Printf("  Uninstall:    sudo %s uninstall\n", targetBin)
+	} else {
+		fmt.Printf("  Uninstall:    %s uninstall\n", targetBin)
+	}
 	return nil
+}
+
+func runUninstall(targetUser string, autoYes bool) error {
+	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
+		return fmt.Errorf("`%s uninstall` is only supported on Linux and macOS; this is %s", internal.BinaryName, runtime.GOOS)
+	}
+
+	tu, err := resolveTargetUser(targetUser)
+	if err != nil {
+		return err
+	}
+
+	existing := DetectExistingInstall(tu.HomeDir)
+	if existing != nil && existing.User != "" && targetUser == "" && tu.IsRoot {
+		if preservedUser, pErr := resolveTargetUser(existing.User); pErr == nil {
+			tu = preservedUser
+		}
+	}
+
+	dataDirectory := dataDir(tu.HomeDir)
+	if existing != nil && existing.ClawHome != "" {
+		dataDirectory = existing.ClawHome
+	} else if dirExists("/opt/claw") && (tu.IsRoot || tu.Username == "ai") {
+		dataDirectory = "/opt/claw"
+	}
+
+	var serviceDesc string
+	if runtime.GOOS == "linux" {
+		if tu.IsRoot {
+			serviceDesc = fmt.Sprintf("systemd system service (%s)", systemUnitPath)
+		} else {
+			serviceDesc = fmt.Sprintf("systemd user service (%s)", userUnitPath(tu.HomeDir))
+		}
+	} else {
+		if tu.IsRoot {
+			serviceDesc = fmt.Sprintf("launchd daemon (%s)", systemLaunchdPath)
+		} else {
+			serviceDesc = fmt.Sprintf("launchd agent (%s)", userLaunchdPath(tu.HomeDir))
+		}
+	}
+
+	fmt.Printf("\n%s Uninstallation Summary:\n", app.Name())
+	fmt.Printf("  Platform:     %s (%s)\n", runtime.GOOS, serviceManagerName())
+	fmt.Printf("  Target:       %s\n", serviceDesc)
+	fmt.Printf("  Action:       Stop service, disable autostart, and remove service file.\n")
+	fmt.Printf("  Note:         Installed binary and data in %s will NOT be deleted.\n\n", dataDirectory)
+
+	confirmed, err := confirmPrompt("Do you want to proceed with removal?", autoYes)
+	if err != nil || !confirmed {
+		fmt.Println("Uninstallation cancelled.")
+		return nil
+	}
+
+	if runtime.GOOS == "linux" {
+		if err := uninstallSystemd(tu); err != nil {
+			return fmt.Errorf("uninstalling systemd service: %w", err)
+		}
+	} else if runtime.GOOS == "darwin" {
+		if err := uninstallLaunchd(tu); err != nil {
+			return fmt.Errorf("uninstalling launchd service: %w", err)
+		}
+	}
+
+	fmt.Printf("\nService removed successfully.\nInstalled binaries and data directory (%s) were left in place.\n", dataDirectory)
+	return nil
+}
+
+func serviceManagerName() string {
+	if runtime.GOOS == "linux" {
+		return "systemd"
+	}
+	return "launchd"
+}
+
+// resolveClawHome determines the directory for CLAW_HOME.
+// It prioritizes explicit environment variables, detected existing installations,
+// /opt/claw if installed there or existing, or the user's ~/.claw directory.
+func resolveClawHome(tu *TargetUser, binDir string, existing *ExistingInstall) string {
+	if envHome := os.Getenv(global.EnvVarHome); envHome != "" {
+		return envHome
+	}
+	if existing != nil && existing.ClawHome != "" {
+		return existing.ClawHome
+	}
+	if binDir == "/opt/claw" || (existing != nil && strings.HasPrefix(existing.BinaryPath, "/opt/claw")) {
+		return "/opt/claw"
+	}
+	if dirExists("/opt/claw") {
+		return "/opt/claw"
+	}
+	return filepath.Join(tu.HomeDir, global.DefaultDataDir)
+}
+
+// buildUnit is preserved for backwards compatibility with tests and callers.
+func buildUnit(username, group, execPath, binDir string) string {
+	homeDir := filepath.Join("/home", username)
+	clawHome := filepath.Join(homeDir, global.DefaultDataDir)
+	if envHome := os.Getenv(global.EnvVarHome); envHome != "" {
+		clawHome = envHome
+	}
+	return buildSystemUnit(username, group, execPath, homeDir, binDir, clawHome)
 }
 
 // accessURL returns the web UI URL to print after install, derived from the
 // active bind host/port. For an all-interfaces bind it uses the host's primary
 // private IP so a headless user gets a reachable address, not "0.0.0.0".
-func accessURL() string {
+func accessURL(optionalClawHome ...string) string {
 	host, port := "127.0.0.1", config.DefaultGatewayPort
-	if cfg, err := config.LoadConfig(internal.GetConfigPath()); err == nil {
+	cfgPath := internal.GetConfigPath()
+	if len(optionalClawHome) > 0 && optionalClawHome[0] != "" {
+		cfgPath = filepath.Join(optionalClawHome[0], "config.json")
+	}
+	if cfg, err := config.LoadConfig(cfgPath); err == nil {
 		if cfg.Gateway.Host != "" {
 			host = cfg.Gateway.Host
 		}
@@ -246,61 +536,15 @@ func primaryLANIP() string {
 	return ""
 }
 
-func runUninstall() error {
-	if runtime.GOOS != "linux" {
-		return fmt.Errorf("`%s uninstall` is only supported on Linux (systemd); this is %s", serviceName, runtime.GOOS)
-	}
-	if os.Geteuid() == 0 {
-		return fmt.Errorf("run `%s uninstall` as your normal user, not with sudo", serviceName)
-	}
-
-	fmt.Printf("Removing systemd service %q (sudo password may be required)…\n", serviceName)
-	// `;` (not `&&`) so a missing/already-stopped service doesn't abort cleanup.
-	script := strings.Join([]string{
-		fmt.Sprintf("systemctl disable --now %s", shellQuote(serviceName)),
-		fmt.Sprintf("rm -f %s", shellQuote(unitPath)),
-		"systemctl daemon-reload",
-	}, "; ")
-	if err := runSudo(script); err != nil {
-		return fmt.Errorf("removing systemd service: %w", err)
-	}
-
-	fmt.Printf("\nService removed. The installed binary and PATH entry were left in place.\n")
-	return nil
-}
-
-// buildUnit renders the systemd system unit. The service runs as the invoking
-// user/group so it has access to that user's ~/.claw data directory. CLAW_HOME is
-// only set when a non-default data dir is in effect at install time.
-func buildUnit(username, group, execPath, binDir string) string {
-	var b strings.Builder
-	b.WriteString("[Unit]\n")
-	b.WriteString("Description=" + app.Name() + " — " + app.TagLine() + "\n")
-	b.WriteString("After=network-online.target\n")
-	b.WriteString("Wants=network-online.target\n\n")
-
-	b.WriteString("[Service]\n")
-	b.WriteString("Type=simple\n")
-	b.WriteString("User=" + username + "\n")
-	b.WriteString("Group=" + group + "\n")
-	b.WriteString("ExecStart=" + execPath + "\n")
-	b.WriteString("Restart=on-failure\n")
-	b.WriteString("RestartSec=5\n")
-	b.WriteString("Environment=PATH=" + servicePATH(binDir) + "\n")
-	if home := os.Getenv(global.EnvVarHome); home != "" {
-		b.WriteString("Environment=" + global.EnvVarHome + "=" + home + "\n")
-	}
-	b.WriteString("\n[Install]\n")
-	b.WriteString("WantedBy=multi-user.target\n")
-	return b.String()
-}
-
 // applyServerSettings writes the requested bind host/port into the config (a
 // blank/zero value leaves the existing one untouched), creating the config from
 // defaults if it doesn't exist yet. It warns when binding a non-loopback address
 // because the WebUI has no authentication.
-func applyServerSettings(host string, port int) error {
+func applyServerSettings(host string, port int, optionalClawHome ...string) error {
 	path := internal.GetConfigPath()
+	if len(optionalClawHome) > 0 && optionalClawHome[0] != "" {
+		path = filepath.Join(optionalClawHome[0], "config.json")
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
@@ -326,12 +570,6 @@ func applyServerSettings(host string, port int) error {
 	return nil
 }
 
-// applyAllowlist writes a custom IP allowlist (comma-separated CIDRs) into
-// gateway.allowed_cidrs in config.json. Each CIDR is validated before saving.
-// openClawAlias is the name rabbit-agent spawns (`openclaw acp`). ClawEh serves
-// ACP from the same binary, so the alias is a symlink rather than a second build.
-const openClawAlias = "openclaw"
-
 // linkOpenClawAlias points <binDir>/openclaw at the installed binary. The link is
 // relative so it survives the directory being moved, and is replaced if present.
 func linkOpenClawAlias(binDir, target string) error {
@@ -352,6 +590,8 @@ func isNetworkBind(host string) bool {
 	}
 }
 
+// applyAllowlist writes a custom IP allowlist (comma-separated CIDRs) into
+// gateway.allowed_cidrs in config.json. Each CIDR is validated before saving.
 func applyAllowlist(csv string) error {
 	cidrs := network.ParseAllowlist(csv)
 	path, err := network.ApplyAllowlist(cidrs)
@@ -372,28 +612,64 @@ func isPublicBind(host string) bool {
 	}
 }
 
-// servicePATH builds the PATH baked into the systemd unit: binDir first, then the
-// user's current interactive PATH (captured at install time — this is what makes
-// CLI agents in ~/.local/bin or an nvm node bin reachable by the service, for both
-// detection and execution), with the standard system dirs appended as a backstop.
-// Note: an nvm path is tied to the active node version; switch versions and you'll
-// need to re-run `claw install` to refresh it.
-func servicePATH(binDir string) string {
-	parts := []string{binDir}
-	seen := map[string]bool{binDir: true}
+// servicePATH builds the PATH baked into the systemd unit or launchd plist.
+// It prioritizes the target user's local bin directories (~/.local/bin, ~/bin)
+// so dev tools (claude code, agy, codex, cursor, etc.) are reachable, the binary
+// directory itself (e.g. /opt/claw), any home-relative tool paths (e.g. cargo, nvm),
+// and standard clean system directories (/usr/local/bin, /usr/bin, /bin).
+// Unneeded sbin and vendor-specific paths (e.g. thinlinc, snap) are excluded.
+func servicePATH(homeDir, binDir string) string {
+	parts := []string{}
+	seen := make(map[string]bool)
+
 	add := func(p string) {
 		if p != "" && !seen[p] {
 			parts = append(parts, p)
 			seen[p] = true
 		}
 	}
-	for _, p := range filepath.SplitList(os.Getenv("PATH")) {
-		add(p)
+
+	// 1. Target user's local binary directories if they exist (dev tools: claude, agy, etc.)
+	if homeDir != "" {
+		localBin := filepath.Join(homeDir, ".local", "bin")
+		if dirExists(localBin) {
+			add(localBin)
+		}
+		userBin := filepath.Join(homeDir, "bin")
+		if dirExists(userBin) {
+			add(userBin)
+		}
 	}
+
+	// 2. Target binary directory (e.g. /opt/claw)
+	if binDir != "" {
+		add(binDir)
+	}
+
+	// 3. User-specific tool directories from current PATH (e.g. ~/.nvm, ~/.cargo/bin)
+	for _, p := range filepath.SplitList(os.Getenv("PATH")) {
+		if homeDir != "" && strings.HasPrefix(p, homeDir) {
+			add(p)
+		} else if homeDir == "" && !isSystemOrSnapPath(p) {
+			add(p)
+		}
+	}
+
+	// 4. Standard clean system binary directories
 	for _, p := range []string{"/usr/local/bin", "/usr/bin", "/bin"} {
 		add(p)
 	}
+
 	return strings.Join(parts, ":")
+}
+
+func isSystemOrSnapPath(p string) bool {
+	switch p {
+	case "/usr/local/sbin", "/usr/sbin", "/sbin", "/snap/bin":
+		return true
+	default:
+		return strings.HasPrefix(p, "/opt/thinl")
+	}
 }
 
 // ensurePath appends binDir to the user's shell rc if it isn't already on PATH.
@@ -408,7 +684,7 @@ func ensurePath(binDir string) string {
 	rc := shellRC()
 	const marker = "# Added by claw install"
 	if data, err := os.ReadFile(rc); err == nil && strings.Contains(string(data), marker) {
-		return fmt.Sprintf("PATH already configured in %s (restart your shell if `%s` isn't found).", rc, serviceName)
+		return fmt.Sprintf("PATH already configured in %s (restart your shell if `%s` isn't found).", rc, internal.BinaryName)
 	}
 
 	line := fmt.Sprintf("\n%s\nexport PATH=%q\n", marker, binDir+":$PATH")
@@ -436,20 +712,107 @@ func shellRC() string {
 	}
 }
 
+// ensureUserEnv ensures binDir is on PATH and CLAW_HOME is exported in the target user's shell rc.
+func ensureUserEnv(tu *TargetUser, binDir, clawHome string) string {
+	rc := userShellRC(tu.HomeDir)
+	if rc == "" {
+		return ""
+	}
+
+	data, _ := os.ReadFile(rc)
+	content := string(data)
+
+	// Check if binDir needs to be added to PATH
+	needPath := true
+	if binDir == "/usr/local/bin" || binDir == "/usr/bin" || binDir == "/bin" {
+		needPath = false
+	} else {
+		for _, p := range filepath.SplitList(os.Getenv("PATH")) {
+			if p == binDir {
+				needPath = false
+				break
+			}
+		}
+		if strings.Contains(content, binDir) {
+			needPath = false
+		}
+	}
+
+	// Check if CLAW_HOME needs to be exported
+	needClawHome := false
+	defaultHome := filepath.Join(tu.HomeDir, global.DefaultDataDir)
+	if clawHome != defaultHome {
+		if !strings.Contains(content, global.EnvVarHome) {
+			needClawHome = true
+		}
+	}
+
+	if !needPath && !needClawHome {
+		return ""
+	}
+
+	const marker = "# Added by claw install"
+	var lines []string
+	var notes []string
+
+	lines = append(lines, "\n"+marker)
+	if needPath {
+		lines = append(lines, fmt.Sprintf("export PATH=%q", binDir+":$PATH"))
+		notes = append(notes, fmt.Sprintf("Added %s to PATH in %s", binDir, rc))
+	}
+	if needClawHome {
+		lines = append(lines, fmt.Sprintf("export %s=%q", global.EnvVarHome, clawHome))
+		notes = append(notes, fmt.Sprintf("Exported %s=%s in %s", global.EnvVarHome, clawHome, rc))
+	}
+
+	f, err := os.OpenFile(rc, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return fmt.Sprintf("Could not update %s (%v). Set environment manually.", rc, err)
+	}
+	defer func() { _ = f.Close() }()
+
+	if _, err := f.WriteString(strings.Join(lines, "\n") + "\n"); err != nil {
+		return fmt.Sprintf("Could not update %s (%v). Set environment manually.", rc, err)
+	}
+	fixOwnership(rc, tu)
+
+	return strings.Join(notes, "\n") + " — run `source " + rc + "` or open a new terminal."
+}
+
+func userShellRC(homeDir string) string {
+	if homeDir == "" {
+		homeDir, _ = os.UserHomeDir()
+	}
+	switch filepath.Base(os.Getenv("SHELL")) {
+	case "zsh":
+		return filepath.Join(homeDir, ".zshrc")
+	case "bash":
+		return filepath.Join(homeDir, ".bashrc")
+	default:
+		return filepath.Join(homeDir, ".profile")
+	}
+}
+
+func fixOwnership(path string, tu *TargetUser) {
+	if tu == nil || !tu.IsRoot || path == "" {
+		return
+	}
+	uid, err1 := strconv.Atoi(tu.UID)
+	gid, err2 := strconv.Atoi(tu.GID)
+	if err1 == nil && err2 == nil {
+		_ = os.Chown(path, uid, gid)
+	}
+}
+
 func copyBinary(src, dst string) error {
+	if src == dst {
+		return nil
+	}
 	data, err := os.ReadFile(src)
 	if err != nil {
 		return err
 	}
 	return fileutil.WriteFileAtomic(dst, data, 0o755)
-}
-
-func runSudo(script string) error {
-	cmd := exec.Command("sudo", "bash", "-c", script)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
 }
 
 func dirExists(path string) bool {
@@ -464,7 +827,7 @@ func dataDir(home string) string {
 	return filepath.Join(home, global.DefaultDataDir)
 }
 
-// shellQuote single-quotes s for safe inclusion in the sudo bash script.
+// shellQuote single-quotes s for safe inclusion in shell commands.
 func shellQuote(s string) string {
 	if s == "" {
 		return "''"

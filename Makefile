@@ -180,24 +180,23 @@ $(EMBED_INDEX): $(FRONTEND_SOURCES) | $(FRONTEND_NODE_MODULES)
 	@echo "Building frontend SPA into $(EMBED_DIR)..."
 	@cd $(FRONTEND_DIR) && pnpm run build:backend
 
-## install: Build and install claw to $(INSTALL_BIN_DIR)
+## install: Build and install claw (runs 'claw install -y')
 install: build
-	@echo "Installing $(BINARY_NAME)..."
-	@mkdir -p $(INSTALL_BIN_DIR)
-	@cp $(BINARY_PATH) $(INSTALL_BIN_DIR)/$(BINARY_NAME)$(INSTALL_TMP_SUFFIX)
-	@chmod +x $(INSTALL_BIN_DIR)/$(BINARY_NAME)$(INSTALL_TMP_SUFFIX)
-	@mv -f $(INSTALL_BIN_DIR)/$(BINARY_NAME)$(INSTALL_TMP_SUFFIX) $(INSTALL_BIN_DIR)/$(BINARY_NAME)
-	@echo "Installed: $(INSTALL_BIN_DIR)/$(BINARY_NAME)"
-	@# Symlink so `openclaw acp` resolves to claw (rabbit-agent spawns `openclaw acp`).
-	@ln -sf $(BINARY_NAME) $(INSTALL_BIN_DIR)/openclaw
-	@echo "Symlinked: $(INSTALL_BIN_DIR)/openclaw -> $(BINARY_NAME)"
+	@$(BUILD_DIR)/$(BINARY_NAME) install -y
 
-## uninstall: Remove claw from system
+## uninstall: Remove claw service and binary from system
 uninstall:
+	@if [ -x $(INSTALL_BIN_DIR)/$(BINARY_NAME) ]; then \
+		$(INSTALL_BIN_DIR)/$(BINARY_NAME) uninstall -y || true; \
+	elif [ -x $(HOME)/bin/$(BINARY_NAME) ]; then \
+		$(HOME)/bin/$(BINARY_NAME) uninstall -y || true; \
+	elif [ -x $(BUILD_DIR)/$(BINARY_NAME) ]; then \
+		$(BUILD_DIR)/$(BINARY_NAME) uninstall -y || true; \
+	fi
 	@echo "Uninstalling $(BINARY_NAME)..."
-	@rm -f $(INSTALL_BIN_DIR)/$(BINARY_NAME)
-	@rm -f $(INSTALL_BIN_DIR)/openclaw
-	@echo "Removed binaries from $(INSTALL_BIN_DIR)"
+	@rm -f $(INSTALL_BIN_DIR)/$(BINARY_NAME) $(HOME)/bin/$(BINARY_NAME)
+	@rm -f $(INSTALL_BIN_DIR)/openclaw $(HOME)/bin/openclaw
+	@echo "Removed binaries"
 	@echo "Note: Data directory $(CLAW_HOME) was not removed. Run 'make uninstall-all' to remove everything."
 
 ## uninstall-all: Remove claw and all data

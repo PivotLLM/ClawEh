@@ -2,7 +2,7 @@
 
 **ClawEh is a small, fast, self-hosted runtime for personal AI assistants.** 
 
-Written in Go, it can run one or more agents, each with its own workspace, tools, and persistent memory. Agents can be connected to Telegram, Slack, Discord, Signal (through a secure-messaging daemon), the built-in web interface, and external devices such as the Rabbit R1 and compatible voice apps.
+Written in Go, it can run one or more agents, each with its own workspace, tools, and persistent memory. Agents can be connected to Telegram, Slack, Discord, Signal (through an additional daemon), the built-in web interface, and external devices such as the Rabbit R1 and compatible voice apps.
 
 Although the conversation context can be reset at any time, ClawEh is designed primarily for long-running assistants that maintain continuity over time. Its development emphasizes efficient context management, practical persistent memory, security, and a stable, dependable core.
 
@@ -12,14 +12,65 @@ https://github.com/PivotLLM/Tutorials/blob/main/docs/claweh-quickstart.md
 
 ---
 
+## Installation
+
+ClawEh provides three installation approaches (in order of convenience):
+
+### 1. One-Line Install (Recommended)
+
+A one-line install that installs ClawEh as a background service and tries to open a web browser to trigger the install wizard (and if it cannot open a browser, displays the URL):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/PivotLLM/ClawEh/main/claw-online-install.sh | bash
+```
+
+> **Headless or remote host?** You can pass network bind and access control options through to the installer:
+> ```bash
+> curl -fsSL https://raw.githubusercontent.com/PivotLLM/ClawEh/main/claw-online-install.sh | bash -s -- --host 0.0.0.0 --allowed-cidrs 192.168.1.0/24
+> ```
+
+### 2. Pre-Compiled Binary (GitHub Releases)
+
+Download the binary archive from GitHub Releases, uncompress it, run `./claw install` to set up the background service, and point your web browser to the install wizard:
+
+```bash
+# Example for Linux amd64 (choose the asset matching your OS/arch from Releases)
+curl -fsSL -O https://github.com/PivotLLM/ClawEh/releases/latest/download/claw-linux-amd64.tar.gz
+tar -xzf claw-linux-amd64.tar.gz
+./claw install
+```
+Then point your web browser to **http://localhost:18790** to complete the setup wizard.
+
+**Note:** If you wish the software to start at boot, without a user logging in, run claw install as root:
+
+```bash
+sudo ./claw install
+```
+
+### 3. Compile from Source and Install
+
+Compile from source using Go and pnpm, then install:
+
+```bash
+git clone https://github.com/PivotLLM/ClawEh.git
+cd ClawEh
+make build
+./build/claw install
+```
+Then point your web browser to **http://localhost:18790** to complete the setup wizard.
+
+---
+
 **Latest Changes:**
 
+- Refactored the context engine and memory (cogmem) into separate packages for a cleaner architecture.
+- Added command-line install, uninstall, and update commands.
 - **Rabbit R1 via the Agent Client Protocol (ACP).** The current **Rabbit Agent**  launches `openclaw` locally, which speaks the **Agent Client Protocol** (JSON-RPC 2.0 over stdin/stdout) and bridges each turn to the running ClawEh gateway. ClawEh provides this as `claw acp` (installed as an `openclaw` symlink), so the R1 pairs automatically. Text, voice, and images are supported. (Images are handled by a vision-capable model if required). **Note:** updating ClawEh restarts the gateway, which drops the bridge — so `openclaw` must be restarted (or the host rebooted) afterward to reconnect.
 - Added **image / vision support**. A new `file_view_image` tool lets a vision-capable model view an image from the workspace (large images are auto-downscaled). For text-only models, an optional **global vision model** can be configured to describe inbound images, screenshots, and viewed image files automatically.
 - **Sub-agents can now delegate further work.** The old blanket "primary-only" restriction has been retired: a sub-agent inherits the parent's full toolset (including memory, scheduled jobs, spawning, and Maestro) and may itself spawn or re-enter Maestro, bounded by a configurable `max_subagent_depth` (default 3) so runaway recursion cannot occur.
 - ClawEh's built-in **device gateway** is tested and working with the **Rabbit R1** (through the Rabbit agent) and the **ClawToTalk app on Android**. Pair with a QR code or a typed token, choose which assistant each device talks to, and get replies **streamed live** as they are received from the LLM. See the [device gateway protocol](docs/device-gateway-protocol.md) for technical details.
-- Added long-lived tokens to support inbound webhooks for integration
-- Integrated Maestro orchestration directly into ClawEh
+- Added long-lived tokens to support inbound webhooks for integration.
+- Integrated Maestro orchestration directly into ClawEh.
 
 ---
 
@@ -54,43 +105,15 @@ https://github.com/PivotLLM/Tutorials/blob/main/docs/claweh-quickstart.md
 
 ---
 
-## Quickstart
+## Service and Remote Configuration
 
-**This is a new feature. Please let me know if you encounter any issues.**
+When installed as a service (via `claw install` or the one-line installer):
+- **Linux**: registers a `systemd` user service (`~/.config/systemd/user/claw.service`) or system service (`/etc/systemd/system/claw.service` when run as root), starts it, and enables it at boot.
+- **macOS**: registers a `launchd` LaunchAgent (`~/Library/LaunchAgents/com.pivotllm.claweh.plist`) or LaunchDaemon.
+- Symlinks `openclaw` alongside `claw` (for the Rabbit R1 — see [External devices](#external-devices)).
+- Check status, view logs, or uninstall cleanly anytime: `claw uninstall`.
 
-You can find a [brief tutorial here](https://github.com/PivotLLM/Tutorials/blob/main/docs/claweh-quickstart.md).
-
-Pre-built binaries are published on the [GitHub Releases page](https://github.com/PivotLLM/ClawEh/releases); you can also build from source.
-
-### 1. Get the binary
-
-**From a release** — download the binary for your platform from [Releases](https://github.com/PivotLLM/ClawEh/releases) and make it executable:
-
-```bash
-chmod +x claw-linux-amd64
-mv claw-linux-amd64 claw
-```
-
-**From source** (requires Go and pnpm):
-
-```bash
-git clone https://github.com/PivotLLM/ClawEh.git
-cd ClawEh
-make build          # builds ./build/claw with the web UI embedded
-```
-
-### 2. Install as a service (Linux / systemd)
-
-Run as your normal user — it prompts for sudo only to write the unit file:
-
-```bash
-./claw install                  # local machine
-./claw install --host 0.0.0.0   # headless: reachable on your LAN
-```
-
-This copies the binary to `~/bin` (or `~/.local/bin`), adds it to your `PATH`, symlinks `openclaw` alongside it (for the Rabbit R1 — see [External devices](#external-devices)), and registers a systemd service that runs ClawEh as your user at boot. Remove everything with `claw uninstall`.
-
-**Headless or remote host?** The web UI has no authentication yet, so it is **loopback-only by default** and two things are needed to reach it from elsewhere: a bind address *and* an allowlist saying who may connect. `claw install` refuses `--host` without `--allowed-cidrs` rather than leaving you with a port that listens and then rejects everything:
+### Headless or Remote Host Configuration
 
 ```bash
 claw install --host 0.0.0.0 --allowed-cidrs 192.168.1.0/24   # your LAN subnet — recommended
@@ -121,7 +144,7 @@ Browse to **http://localhost:18790** (or `http://<host>:18790` if you set `--hos
 
 ### Maestro task orchestration
 
-Maestro lets an assistant plan, coordinate, and execute complex work rather than handling every step sequentially in a single conversation. It can break large or repeatable jobs into **projects**, reusable **playbooks**, and resumable **task lists**, then delegate individual tasks to fresh sub-agents running with the parent agent's models, tools, permissions, and workspace. Independent tasks can run in parallel, failed tasks can be retried, and completed work can be passed through automated QA and review steps before the results are combined into a final report. This makes it practical to automate multi-stage workflows such as repository analysis, research, testing, pre-audits, document generation, and recurring operational procedures. Maestro is enabled per agent with a single toggle, and all of its data remains within that agent's workspace under `maestro/`. When enabled, that directory is also auto-mounted read/write for the native file tools (as a peer of `files/`), so the assistant can move reports and inputs between Maestro and `files/` with `file_move` / `file_copy`. The upstream project is also available as a stand-alone stdio MCP service: https://github.com/PivotLLM/Maestro
+Maestro lets an assistant plan, coordinate, and execute complex work rather than handling every step sequentially in a single conversation. It can break large or repeatable jobs into **projects**, reusable **playbooks**, and resumable **task lists**, then delegate individual tasks to fresh sub-agents running with the parent agent's models, tools, permissions, and workspace. Independent tasks can run in parallel, failed tasks can be retried, and completed work can be passed through automated QA and review steps before the results are combined into a final report. This makes it practical to automate multi-stage workflows such as repository analysis, research, testing, pre-audits, document generation, and recurring operational procedures. You can enable Maestro per agent with a single toggle, and all its data stays within that agent's workspace under `maestro/`. When enabled, that directory is also auto-mounted read/write for the native file tools (as a peer of `files/`), so the assistant can move reports and inputs between Maestro and `files/` with `file_move` / `file_copy`. The upstream project is also available as a stand-alone stdio MCP service: https://github.com/PivotLLM/Maestro
 
 ### MCP servers
 ClawEh is both an MCP **server** — exposing its tools to CLI-based agents — and an MCP **client** that connects to upstream servers over **stdio** or **HTTP**, providing their tools to your agents. Add/edit external servers in the WebUI. Access is **granular per agent**: each agent is granted upstream tools individually (by server or tool-name prefix), and a coarse per-endpoint visibility filter controls what the host advertises.
@@ -132,7 +155,7 @@ Two mechanisms keep long sessions inside the model's window. **Eviction** is a p
 ### Cognitive memory
 Long-running agents need to get smarter over time instead of relying on hand-edited prompt files. Each session has a small SQLite memory database. Memory is organized as **domains** — named containers that are either **sticky** (always in the prompt) or routed topics — holding **memories**, each a `fact`, `preference`, `rule`, `operational` (the assistant's own housekeeping) or `event`. Events are things that happened at a point in time; they are never loaded into the prompt, are reached by search, and are deleted after 30 days, so a scheduled job cannot bury an assistant in its own status reports. A background "sleep cycle" reviews new conversation and distills it into structured, de-duplicated, contradiction-resolved memories, and the relevant pieces are composed into the prompt each turn. Consolidation reuses your configured **Memory models**; its rules and output format are built in, and a per-agent `COGMEM.md` in the workspace adds instructions for that assistant. 
 
-The seeded **`General`** sticky domain holds global rules and standing facts; memory domains are auto-load by relevance using **recency**, **lexical match** (salient words in the latest message), **tool triggers** (a domain loads when the agent uses a matching tool — e.g. an "email" domain on `google_gmail`), and **keyword triggers** (phrases in the incoming message. This significantly improves agent performance without relying on external embedding services or vector databases.
+The seeded **`General`** sticky domain holds global rules and standing facts; memory domains are auto-loaded by relevance using **recency**, **lexical match** (salient words in the latest message), **tool triggers** (a domain loads when the agent uses a matching tool — e.g. an "email" domain on `google_gmail`), and **keyword triggers** (phrases in the incoming message. This significantly improves agent performance without relying on external embedding services or vector databases.
 
 The **memory page in the Web UI** is where you correct what an assistant filed:
 change a memory's type, retire and restore, select a whole domain and retype or
@@ -150,7 +173,7 @@ claw memory purge --confirm   # delete + vacuum
 ```
 
 ### Agents, workspaces, and files
-By default an agent's file tools see two directories: **`<workspace>/files`** (read
+By default, an agent's file tools see two directories: **`<workspace>/files`** (read
 **and** write — its working area, created automatically) and **`<workspace>/skills`**
 (read-only). Everything else is invisible to the agent, including the human-authored
 prompt files — `AGENTS.md`, `SOUL.md`, `IDENTITY.md`, `USER.md`, `MEMORY.md` — which
@@ -241,7 +264,15 @@ ClawEh began as a fork of [PicoClaw](https://github.com/sipeed/picoclaw), chosen
 
 For users who are not interested in compiling it themselves, prebuilt (and, on
 macOS, signed) builds are published to [GitHub Releases](https://github.com/PivotLLM/ClawEh/releases)
-for Linux and macOS on amd64 and arm64. Install with:
+for Linux and macOS on amd64 and arm64.
+
+To install ClawEh as a background service and launch the setup wizard in one step:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/PivotLLM/ClawEh/main/claw-online-install.sh | bash
+```
+
+Alternatively, to install **only the bare binary** without registering a background service:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/PivotLLM/ClawEh/main/claweh.sh | sh

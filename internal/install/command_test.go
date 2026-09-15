@@ -12,9 +12,7 @@ import (
 )
 
 func TestBuildUnit_RunsAsUserAndStartsAtBoot(t *testing.T) {
-	t.Setenv(global.EnvVarHome, "") // ensure default data dir → no CLAW_HOME line
-	// The unit must bake the user's interactive PATH (so CLI agents in ~/.local/bin
-	// and an nvm node bin are reachable) with binDir first and system dirs appended.
+	t.Setenv(global.EnvVarHome, "") // defaults to user's .claw
 	t.Setenv("PATH", "/home/alice/.local/bin:/home/alice/.nvm/versions/node/v24/bin:/usr/bin")
 	unit := buildUnit("alice", "alice", "/home/alice/bin/claw", "/home/alice/bin")
 
@@ -23,15 +21,14 @@ func TestBuildUnit_RunsAsUserAndStartsAtBoot(t *testing.T) {
 		"Group=alice",
 		"ExecStart=/home/alice/bin/claw",
 		"WantedBy=multi-user.target",
-		"Environment=PATH=/home/alice/bin:/home/alice/.local/bin:/home/alice/.nvm/versions/node/v24/bin:/usr/bin:/usr/local/bin:/bin",
+		"TimeoutStopSec=60",
+		"Environment=CLAW_HOME=/home/alice/.claw",
+		"Environment=PATH=/home/alice/bin:/home/alice/.local/bin:/home/alice/.nvm/versions/node/v24/bin:/usr/local/bin:/usr/bin:/bin",
 	}
 	for _, w := range wants {
 		if !strings.Contains(unit, w) {
 			t.Errorf("unit missing %q:\n%s", w, unit)
 		}
-	}
-	if strings.Contains(unit, global.EnvVarHome+"=") {
-		t.Errorf("unit should omit %s when default data dir is used:\n%s", global.EnvVarHome, unit)
 	}
 }
 
@@ -45,10 +42,9 @@ func TestBuildUnit_IncludesClawHomeWhenSet(t *testing.T) {
 }
 
 func TestServicePATH_PrependsBinDirAndDedups(t *testing.T) {
-	// binDir already present in PATH must not be duplicated; system dirs appended once.
 	t.Setenv("PATH", "/home/bob/bin:/usr/bin:/home/bob/.local/bin")
-	got := servicePATH("/home/bob/bin")
-	want := "/home/bob/bin:/usr/bin:/home/bob/.local/bin:/usr/local/bin:/bin"
+	got := servicePATH("/home/bob", "/home/bob/bin")
+	want := "/home/bob/bin:/home/bob/.local/bin:/usr/local/bin:/usr/bin:/bin"
 	if got != want {
 		t.Errorf("servicePATH = %q, want %q", got, want)
 	}
@@ -191,3 +187,145 @@ func TestLinkOpenClawAlias(t *testing.T) {
 		t.Fatalf("second linkOpenClawAlias() error = %v, want it to replace the existing link", err)
 	}
 }
+
+func TestBuildUserUnit(t *testing.T) {
+	unit := buildUserUnit("/home/alice/.local/bin/claw", "/home/alice", "/home/alice/.local/bin", "/home/alice/.claw")
+	if strings.Contains(unit, "User=") {
+		t.Errorf("user unit must NOT contain User= directive:\n%s", unit)
+	}
+	if strings.Contains(unit, "Group=") {
+		t.Errorf("user unit must NOT contain Group= directive:\n%s", unit)
+	}
+	if !strings.Contains(unit, "WantedBy=default.target") {
+		t.Errorf("user unit must specify WantedBy=default.target:\n%s", unit)
+	}
+	if !strings.Contains(unit, "ExecStart=/home/alice/.local/bin/claw") {
+		t.Errorf("user unit missing ExecStart:\n%s", unit)
+	}
+	if !strings.Contains(unit, "WorkingDirectory=/home/alice") {
+		t.Errorf("user unit missing WorkingDirectory:\n%s", unit)
+	}
+	if !strings.Contains(unit, "TimeoutStopSec=60") {
+		t.Errorf("user unit missing TimeoutStopSec=60:\n%s", unit)
+	}
+	if !strings.Contains(unit, "Environment=CLAW_HOME=/home/alice/.claw") {
+		t.Errorf("user unit missing Environment=CLAW_HOME:\n%s", unit)
+	}
+}
+
+func TestBuildLaunchdPlist_UserMode(t *testing.T) {
+	plist := buildLaunchdPlist("com.pivotllm.claweh", "alice", "staff", "/Users/alice/.local/bin/claw", "/Users/alice", "/Users/alice/.local/bin", "/Users/alice/.claw", false)
+	if strings.Contains(plist, "<key>UserName</key>") {
+		t.Errorf("LaunchAgent plist in user mode must NOT contain UserName:\n%s", plist)
+	}
+	if strings.Contains(plist, "<key>GroupName</key>") {
+		t.Errorf("LaunchAgent plist in user mode must NOT contain GroupName:\n%s", plist)
+	}
+	if !strings.Contains(plist, "<string>/Users/alice/.local/bin/claw</string>") {
+		t.Errorf("LaunchAgent missing binary path:\n%s", plist)
+	}
+	if !strings.Contains(plist, "<key>RunAtLoad</key>\n\t<true/>") {
+		t.Errorf("LaunchAgent missing RunAtLoad:\n%s", plist)
+	}
+	if !strings.Contains(plist, "<string>/Users/alice</string>") {
+		t.Errorf("LaunchAgent missing WorkingDirectory:\n%s", plist)
+	}
+	if !strings.Contains(plist, "<string>/Users/alice/.claw</string>") {
+		t.Errorf("LaunchAgent missing CLAW_HOME:\n%s", plist)
+	}
+}
+
+func TestBuildLaunchdPlist_SystemMode(t *testing.T) {
+	plist := buildLaunchdPlist("com.pivotllm.claweh", "alice", "staff", "/usr/local/bin/claw", "/Users/alice", "/usr/local/bin", "/opt/claw", true)
+	if !strings.Contains(plist, "<key>UserName</key>\n\t<string>alice</string>") {
+		t.Errorf("LaunchDaemon plist in system mode missing UserName:\n%s", plist)
+	}
+	if !strings.Contains(plist, "<key>GroupName</key>\n\t<string>staff</string>") {
+		t.Errorf("LaunchDaemon plist in system mode missing GroupName:\n%s", plist)
+	}
+	if !strings.Contains(plist, "<string>/usr/local/bin/claw</string>") {
+		t.Errorf("LaunchDaemon missing binary path:\n%s", plist)
+	}
+	if !strings.Contains(plist, "<string>/opt/claw</string>") {
+		t.Errorf("LaunchDaemon missing CLAW_HOME:\n%s", plist)
+	}
+}
+
+func TestResolveBinDir(t *testing.T) {
+	tempHome := t.TempDir()
+
+	// 1. Explicit custom dir
+	customDir := filepath.Join(tempHome, "custom", "bin")
+	dir, err := resolveBinDir(&TargetUser{HomeDir: tempHome, IsRoot: false}, customDir, nil)
+	if err != nil || dir != customDir {
+		t.Fatalf("resolveBinDir custom: got %v, %v, want %s", dir, err, customDir)
+	}
+
+	// 2. Existing installation binary directory preservation
+	optClawDir := filepath.Join(tempHome, "opt", "claw")
+	if err := os.MkdirAll(optClawDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	existing := &ExistingInstall{BinaryPath: filepath.Join(optClawDir, "claw")}
+	dir, err = resolveBinDir(&TargetUser{HomeDir: tempHome, IsRoot: false}, "", existing)
+	if err != nil || dir != optClawDir {
+		t.Fatalf("resolveBinDir existing: got %v, want %s", dir, optClawDir)
+	}
+
+	// 3. System Mode (IsRoot = true)
+	dir, err = resolveBinDir(&TargetUser{HomeDir: tempHome, IsRoot: true}, "", nil)
+	if err != nil || dir != "/usr/local/bin" {
+		t.Fatalf("resolveBinDir system: got %v, %v, want /usr/local/bin", dir, err)
+	}
+
+	// 4. User Mode without ~/bin -> ~/.local/bin
+	dir, err = resolveBinDir(&TargetUser{HomeDir: tempHome, IsRoot: false}, "", nil)
+	expectedLocal := filepath.Join(tempHome, ".local", "bin")
+	if err != nil || dir != expectedLocal {
+		t.Fatalf("resolveBinDir user without ~/bin: got %v, want %s", dir, expectedLocal)
+	}
+
+	// 5. User Mode with existing ~/bin -> ~/bin
+	expectedBin := filepath.Join(tempHome, "bin")
+	if err := os.MkdirAll(expectedBin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dir, err = resolveBinDir(&TargetUser{HomeDir: tempHome, IsRoot: false}, "", nil)
+	if err != nil || dir != expectedBin {
+		t.Fatalf("resolveBinDir user with ~/bin: got %v, want %s", dir, expectedBin)
+	}
+}
+
+func TestResolveClawHome(t *testing.T) {
+	tempHome := t.TempDir()
+	tu := &TargetUser{HomeDir: tempHome}
+
+	// 1. Explicit CLAW_HOME in env
+	t.Setenv(global.EnvVarHome, "/custom/claw/home")
+	got := resolveClawHome(tu, "/usr/local/bin", nil)
+	if got != "/custom/claw/home" {
+		t.Errorf("resolveClawHome with env = %q, want /custom/claw/home", got)
+	}
+	t.Setenv(global.EnvVarHome, "")
+
+	// 2. Existing install with ClawHome
+	existing := &ExistingInstall{ClawHome: "/opt/claw"}
+	got = resolveClawHome(tu, "/usr/local/bin", existing)
+	if got != "/opt/claw" {
+		t.Errorf("resolveClawHome with existing.ClawHome = %q, want /opt/claw", got)
+	}
+
+	// 3. Existing install with BinaryPath in /opt/claw
+	existing = &ExistingInstall{BinaryPath: "/opt/claw/claw"}
+	got = resolveClawHome(tu, "/usr/local/bin", existing)
+	if got != "/opt/claw" {
+		t.Errorf("resolveClawHome with existing.BinaryPath in /opt/claw = %q, want /opt/claw", got)
+	}
+
+	// 4. binDir == /opt/claw
+	got = resolveClawHome(tu, "/opt/claw", nil)
+	if got != "/opt/claw" {
+		t.Errorf("resolveClawHome with binDir = /opt/claw = %q, want /opt/claw", got)
+	}
+}
+
