@@ -48,6 +48,7 @@ func TestNewClawCommand(t *testing.T) {
 		"status",
 		"token",
 		"uninstall",
+		"upgrade",
 		"version",
 	}
 

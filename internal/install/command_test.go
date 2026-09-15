@@ -191,3 +191,89 @@ func TestLinkOpenClawAlias(t *testing.T) {
 		t.Fatalf("second linkOpenClawAlias() error = %v, want it to replace the existing link", err)
 	}
 }
+
+func TestBuildUserUnit(t *testing.T) {
+	unit := buildUserUnit("/home/alice/.local/bin/claw", "/home/alice", "/home/alice/.local/bin")
+	if strings.Contains(unit, "User=") {
+		t.Errorf("user unit must NOT contain User= directive:\n%s", unit)
+	}
+	if strings.Contains(unit, "Group=") {
+		t.Errorf("user unit must NOT contain Group= directive:\n%s", unit)
+	}
+	if !strings.Contains(unit, "WantedBy=default.target") {
+		t.Errorf("user unit must specify WantedBy=default.target:\n%s", unit)
+	}
+	if !strings.Contains(unit, "ExecStart=/home/alice/.local/bin/claw") {
+		t.Errorf("user unit missing ExecStart:\n%s", unit)
+	}
+	if !strings.Contains(unit, "WorkingDirectory=/home/alice") {
+		t.Errorf("user unit missing WorkingDirectory:\n%s", unit)
+	}
+}
+
+func TestBuildLaunchdPlist_UserMode(t *testing.T) {
+	plist := buildLaunchdPlist("com.pivotllm.claweh", "alice", "staff", "/Users/alice/.local/bin/claw", "/Users/alice", "/Users/alice/.local/bin", false)
+	if strings.Contains(plist, "<key>UserName</key>") {
+		t.Errorf("LaunchAgent plist in user mode must NOT contain UserName:\n%s", plist)
+	}
+	if strings.Contains(plist, "<key>GroupName</key>") {
+		t.Errorf("LaunchAgent plist in user mode must NOT contain GroupName:\n%s", plist)
+	}
+	if !strings.Contains(plist, "<string>/Users/alice/.local/bin/claw</string>") {
+		t.Errorf("LaunchAgent missing binary path:\n%s", plist)
+	}
+	if !strings.Contains(plist, "<key>RunAtLoad</key>\n\t<true/>") {
+		t.Errorf("LaunchAgent missing RunAtLoad:\n%s", plist)
+	}
+	if !strings.Contains(plist, "<string>/Users/alice</string>") {
+		t.Errorf("LaunchAgent missing WorkingDirectory:\n%s", plist)
+	}
+}
+
+func TestBuildLaunchdPlist_SystemMode(t *testing.T) {
+	plist := buildLaunchdPlist("com.pivotllm.claweh", "alice", "staff", "/usr/local/bin/claw", "/Users/alice", "/usr/local/bin", true)
+	if !strings.Contains(plist, "<key>UserName</key>\n\t<string>alice</string>") {
+		t.Errorf("LaunchDaemon plist in system mode missing UserName:\n%s", plist)
+	}
+	if !strings.Contains(plist, "<key>GroupName</key>\n\t<string>staff</string>") {
+		t.Errorf("LaunchDaemon plist in system mode missing GroupName:\n%s", plist)
+	}
+	if !strings.Contains(plist, "<string>/usr/local/bin/claw</string>") {
+		t.Errorf("LaunchDaemon missing binary path:\n%s", plist)
+	}
+}
+
+func TestResolveBinDir(t *testing.T) {
+	tempHome := t.TempDir()
+
+	// 1. Explicit custom dir
+	customDir := filepath.Join(tempHome, "custom", "bin")
+	dir, err := resolveBinDir(&TargetUser{HomeDir: tempHome, IsRoot: false}, customDir)
+	if err != nil || dir != customDir {
+		t.Fatalf("resolveBinDir custom: got %v, %v, want %s", dir, err, customDir)
+	}
+
+	// 2. System Mode (IsRoot = true)
+	dir, err = resolveBinDir(&TargetUser{HomeDir: tempHome, IsRoot: true}, "")
+	if err != nil || dir != "/usr/local/bin" {
+		t.Fatalf("resolveBinDir system: got %v, %v, want /usr/local/bin", dir, err)
+	}
+
+	// 3. User Mode without ~/bin -> ~/.local/bin
+	dir, err = resolveBinDir(&TargetUser{HomeDir: tempHome, IsRoot: false}, "")
+	expectedLocal := filepath.Join(tempHome, ".local", "bin")
+	if err != nil || dir != expectedLocal {
+		t.Fatalf("resolveBinDir user without ~/bin: got %v, want %s", dir, expectedLocal)
+	}
+
+	// 4. User Mode with existing ~/bin -> ~/bin
+	expectedBin := filepath.Join(tempHome, "bin")
+	if err := os.MkdirAll(expectedBin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dir, err = resolveBinDir(&TargetUser{HomeDir: tempHome, IsRoot: false}, "")
+	if err != nil || dir != expectedBin {
+		t.Fatalf("resolveBinDir user with ~/bin: got %v, want %s", dir, expectedBin)
+	}
+}
+
