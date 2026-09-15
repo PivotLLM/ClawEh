@@ -12,6 +12,49 @@ https://github.com/PivotLLM/Tutorials/blob/main/docs/claweh-quickstart.md
 
 ---
 
+## Installation
+
+ClawEh provides three installation approaches (in order of convenience):
+
+### 1. One-Line Install (Recommended)
+
+A one-line install that installs ClawEh as a background service and tries to open a web browser to trigger the install wizard (and if it cannot open a browser, displays the URL):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/PivotLLM/ClawEh/main/claw-online-install.sh | bash
+```
+
+> **Headless or remote host?** Pass network bind options directly through to the installer:
+> ```bash
+> curl -fsSL https://raw.githubusercontent.com/PivotLLM/ClawEh/main/claw-online-install.sh | bash -s -- --host 0.0.0.0 --allowed-cidrs 192.168.1.0/24
+> ```
+
+### 2. Pre-Compiled Binary (GitHub Releases)
+
+Download the binary archive from GitHub Releases, unpackage it, run `./claw install` to set up the background service, and point your web browser to the install wizard:
+
+```bash
+# Example for Linux amd64 (choose the asset matching your OS/arch from Releases)
+curl -fsSL -O https://github.com/PivotLLM/ClawEh/releases/latest/download/claw-linux-amd64.tar.gz
+tar -xzf claw-linux-amd64.tar.gz
+./claw install
+```
+Then point your web browser to **http://localhost:18790** to complete the setup wizard.
+
+### 3. Compile from Source and Install
+
+Compile from source using Go and pnpm, then install:
+
+```bash
+git clone https://github.com/PivotLLM/ClawEh.git
+cd ClawEh
+make build
+./build/claw install
+```
+Then point your web browser to **http://localhost:18790** to complete the setup wizard.
+
+---
+
 **Latest Changes:**
 
 - **Rabbit R1 via the Agent Client Protocol (ACP).** The current **Rabbit Agent**  launches `openclaw` locally, which speaks the **Agent Client Protocol** (JSON-RPC 2.0 over stdin/stdout) and bridges each turn to the running ClawEh gateway. ClawEh provides this as `claw acp` (installed as an `openclaw` symlink), so the R1 pairs automatically. Text, voice, and images are supported. (Images are handled by a vision-capable model if required). **Note:** updating ClawEh restarts the gateway, which drops the bridge — so `openclaw` must be restarted (or the host rebooted) afterward to reconnect.
@@ -54,43 +97,15 @@ https://github.com/PivotLLM/Tutorials/blob/main/docs/claweh-quickstart.md
 
 ---
 
-## Quickstart
+## Service and Remote Configuration
 
-**This is a new feature. Please let me know if you encounter any issues.**
+When installed as a service (via `claw install` or the one-line installer):
+- **Linux**: registers a `systemd` user service (`~/.config/systemd/user/claw.service`) or system service (`/etc/systemd/system/claw.service` when run as root), starts it, and enables it at boot.
+- **macOS**: registers a `launchd` LaunchAgent (`~/Library/LaunchAgents/com.pivotllm.claweh.plist`) or LaunchDaemon.
+- Symlinks `openclaw` alongside `claw` (for the Rabbit R1 — see [External devices](#external-devices)).
+- Check status, view logs, or uninstall cleanly anytime: `claw uninstall`.
 
-You can find a [brief tutorial here](https://github.com/PivotLLM/Tutorials/blob/main/docs/claweh-quickstart.md).
-
-Pre-built binaries are published on the [GitHub Releases page](https://github.com/PivotLLM/ClawEh/releases); you can also build from source.
-
-### 1. Get the binary
-
-**From a release** — download the binary for your platform from [Releases](https://github.com/PivotLLM/ClawEh/releases) and make it executable:
-
-```bash
-chmod +x claw-linux-amd64
-mv claw-linux-amd64 claw
-```
-
-**From source** (requires Go and pnpm):
-
-```bash
-git clone https://github.com/PivotLLM/ClawEh.git
-cd ClawEh
-make build          # builds ./build/claw with the web UI embedded
-```
-
-### 2. Install as a service (Linux / systemd)
-
-Run as your normal user — it prompts for sudo only to write the unit file:
-
-```bash
-./claw install                  # local machine
-./claw install --host 0.0.0.0   # headless: reachable on your LAN
-```
-
-This copies the binary to `~/bin` (or `~/.local/bin`), adds it to your `PATH`, symlinks `openclaw` alongside it (for the Rabbit R1 — see [External devices](#external-devices)), and registers a systemd service that runs ClawEh as your user at boot. Remove everything with `claw uninstall`.
-
-**Headless or remote host?** The web UI has no authentication yet, so it is **loopback-only by default** and two things are needed to reach it from elsewhere: a bind address *and* an allowlist saying who may connect. `claw install` refuses `--host` without `--allowed-cidrs` rather than leaving you with a port that listens and then rejects everything:
+### Headless or Remote Host Configuration
 
 ```bash
 claw install --host 0.0.0.0 --allowed-cidrs 192.168.1.0/24   # your LAN subnet — recommended
@@ -241,7 +256,15 @@ ClawEh began as a fork of [PicoClaw](https://github.com/sipeed/picoclaw), chosen
 
 For users who are not interested in compiling it themselves, prebuilt (and, on
 macOS, signed) builds are published to [GitHub Releases](https://github.com/PivotLLM/ClawEh/releases)
-for Linux and macOS on amd64 and arm64. Install with:
+for Linux and macOS on amd64 and arm64.
+
+To install ClawEh as a background service and launch the setup wizard in one step:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/PivotLLM/ClawEh/main/claw-online-install.sh | bash
+```
+
+Alternatively, to install **only the bare binary** without registering a background service:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/PivotLLM/ClawEh/main/claweh.sh | sh
