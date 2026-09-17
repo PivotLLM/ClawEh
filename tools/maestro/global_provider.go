@@ -6,9 +6,9 @@ package maestro
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 
 	mconfig "github.com/PivotLLM/Maestro/config"
-	mllm "github.com/PivotLLM/Maestro/llm"
 	mlogging "github.com/PivotLLM/Maestro/logging"
 	mmaestro "github.com/PivotLLM/Maestro/pkg/maestro"
 
@@ -49,6 +49,17 @@ func (globalMaestroProvider) RegisterTools(deps global.Deps) []global.ToolDefini
 		return nil
 	}
 
+	// Dispatch Maestro tasks as ClawEh sub-agents (host owns model selection).
+	// Without a sub-agent runner Maestro would fall back to its own (empty) LLM
+	// config and fail every task, so refuse to expose the suite instead. Checked
+	// before any directory or log file is created for the agent.
+	sr, ok := deps.Spawn.(global.SyncRunner)
+	if !ok || isNilRunner(sr) {
+		logger.WarnCF("maestro", "no sub-agent runner for agent; maestro tools disabled",
+			map[string]any{"agent": deps.AgentID})
+		return nil
+	}
+
 	workspace := cd.Workspace
 	if workspace == "" {
 		logger.WarnCF("maestro", "no workspace for agent; maestro tools disabled",
@@ -82,11 +93,8 @@ func (globalMaestroProvider) RegisterTools(deps global.Deps) []global.ToolDefini
 			map[string]any{"agent": deps.AgentID, "error": err.Error()})
 	}
 
-	// Dispatch Maestro tasks as ClawEh sub-agents (host owns model selection).
-	var disp mllm.Dispatcher
-	if sr, ok := deps.Spawn.(global.SyncRunner); ok {
-		disp = &dispatcher{run: sr}
-	}
+	// Each dispatched prompt is one sub-agent run, bounded like a user turn.
+	disp := &dispatcher{run: sr, timeout: c.Agents.Defaults.GetTurnTimeout()}
 
 	p := &mmaestro.Provider{}
 	defs := p.RegisterTools(global.Deps{
@@ -100,6 +108,16 @@ func (globalMaestroProvider) RegisterTools(deps global.Deps) []global.ToolDefini
 	// unbounded re-entry is prevented by MaxSpawnDepth in the Spawner, not by
 	// withholding the tools.
 	logger.InfoCF("maestro", "maestro tools enabled for agent",
-		map[string]any{"agent": deps.AgentID, "tools": len(defs), "base": base, "host_dispatch": disp != nil})
+		map[string]any{"agent": deps.AgentID, "tools": len(defs), "base": base, "timeout": disp.timeout.String()})
 	return defs
+}
+
+// isNilRunner reports whether sr is nil, including a typed nil pointer stored
+// in the interface (which a plain == nil comparison would miss).
+func isNilRunner(sr global.SyncRunner) bool {
+	if sr == nil {
+		return true
+	}
+	v := reflect.ValueOf(sr)
+	return v.Kind() == reflect.Ptr && v.IsNil()
 }

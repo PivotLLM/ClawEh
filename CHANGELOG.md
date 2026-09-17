@@ -10,6 +10,34 @@ Entries describe what changed for someone **running or integrating with** ClawEh
 internal refactors behind them. A change nobody outside the repository can
 observe does not need an entry.
 
+## [0.5.5]
+
+### Changed
+
+- **Maestro tasks can name a host model.** `llm_model_id` and `qa_llm_model_id`
+  on Maestro task tools are now passed to ClawEh as one of the agent's model
+  aliases (the same names the spawn tool accepts). Leave them empty for the
+  agent's default model. An alias the agent is not configured for fails the
+  task immediately instead of retrying. The `maestro_start_here` guide now
+  describes this instead of the standalone `llm_*` tools.
+- **Maestro workers are bounded by `turn_timeout`.** Each Maestro worker, QA
+  and revision prompt runs as a sub-agent with the agent's turn timeout; a run
+  that exceeds it fails and is retried within the task set's limits. Previously
+  a stuck worker was bounded only by the iteration cap.
+- **Maestro task results record usage.** Task result files and run logs now
+  carry input/output/cache tokens, cost, the model that answered and the number
+  of LLM iterations for each worker, QA and revision call. They were zero
+  before.
+- **Maestro tools are withheld when no sub-agent runner is available** for the
+  agent (logged as a warning) instead of registering and failing every task.
+
+### Fixed
+
+- **Maestro workers now respect `max_subagent_depth`.** A Maestro worker that
+  dispatched further Maestro tasks restarted the depth count at zero, so the
+  recursion bound did not apply. Depth is now carried through `task_run` and
+  `task_dispatch`; a worker at the bound fails the task without retry.
+
 ## [0.5.3]
 
 ### Changed

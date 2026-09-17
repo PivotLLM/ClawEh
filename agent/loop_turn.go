@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/PivotLLM/ClawEh/global"
 	"path/filepath"
 	"runtime/debug"
 	"slices"
@@ -36,19 +37,20 @@ import (
 
 // processOptions configures how a message is processed
 type processOptions struct {
-	SessionKey      string   // Session identifier for history/context
-	Channel         string   // Target channel for tool execution
-	ChatID          string   // Target chat ID for tool execution
-	UserMessage     string   // User message content (may include prefix)
-	Media           []string // media:// refs from inbound message
-	DefaultResponse string   // Response when LLM returns empty
-	SendResponse    bool     // Whether to send response via bus
-	IsRetry         bool     // True when message is a /retry retrigger (skip AddMessage)
-	ResetSession    bool     // True when this message is a session_clear handoff: reset before handling
-	SenderID        string   // Originating sender identifier for source attribution
-	SenderName      string   // Human-readable sender label (display name + canonical ID)
-	IsGroup         bool     // True when the inbound message came from a group/multi-listener chat
-	IterationsOut   *int     // optional: runAgentLoop writes the LLM iteration count here
+	SessionKey      string            // Session identifier for history/context
+	Channel         string            // Target channel for tool execution
+	ChatID          string            // Target chat ID for tool execution
+	UserMessage     string            // User message content (may include prefix)
+	Media           []string          // media:// refs from inbound message
+	DefaultResponse string            // Response when LLM returns empty
+	SendResponse    bool              // Whether to send response via bus
+	IsRetry         bool              // True when message is a /retry retrigger (skip AddMessage)
+	ResetSession    bool              // True when this message is a session_clear handoff: reset before handling
+	SenderID        string            // Originating sender identifier for source attribution
+	SenderName      string            // Human-readable sender label (display name + canonical ID)
+	IsGroup         bool              // True when the inbound message came from a group/multi-listener chat
+	IterationsOut   *int              // optional: runAgentLoop writes the LLM iteration count here
+	UsageOut        *global.TurnUsage // optional: every successful LLM call's accounting is added here
 }
 
 // runAgentLoop is the core message processing logic.
@@ -845,6 +847,7 @@ func (al *AgentLoop) runLLMIteration(
 			response, err = callLLM()
 			emitLLMFinishEvent(agent.ID, iteration, activeProvider, activeModel, dispatchStart, response, err)
 			if err == nil {
+				addTurnUsage(opts.UsageOut, response, activeProvider, activeModel)
 				break
 			}
 

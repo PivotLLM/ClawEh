@@ -150,14 +150,23 @@ func (s *Spawner) TaskList() ([]global.TaskBrief, error) {
 // RunSync runs a task as a self-spawned sub-agent and returns the worker's raw
 // content. Implements global.SyncRunner for embedded orchestrators (e.g. Maestro)
 // that dispatch task workers and consume the text directly.
-func (s *Spawner) RunSync(ctx context.Context, task, model string) (string, error) {
+func (s *Spawner) RunSync(ctx context.Context, task, model string) (*global.SyncResult, error) {
 	if s == nil || s.mgr == nil {
-		return "", fmt.Errorf("spawn is not available")
+		return nil, global.ErrSpawnUnavailable
 	}
 	// Bound recursion: a Maestro worker that is itself already at the depth bound
 	// may not dispatch a further layer of workers.
 	if max := s.maxSpawnDepth(); SpawnDepth(ctx) >= max {
-		return "", fmt.Errorf("maximum sub-agent depth (%d) reached; cannot dispatch further sub-agents", max)
+		return nil, fmt.Errorf("%w: maximum sub-agent depth (%d) reached; cannot dispatch further sub-agents", global.ErrSpawnDepthExceeded, max)
+	}
+	// Same security boundary as Spawn: a self-spawn may only run a model the
+	// calling agent is already configured to use.
+	if strings.TrimSpace(model) != "" {
+		cands := s.mgr.CandidatesFor("")
+		if _, ok := MatchCandidate(cands, model); !ok {
+			return nil, fmt.Errorf("%w: model %q is not available for this agent; choose one of: %s",
+				global.ErrModelNotAvailable, model, candidateNames(cands))
+		}
 	}
 	return s.mgr.RunSync(ctx, task, "", model)
 }

@@ -4,7 +4,7 @@ go 1.26.7
 
 require (
 	github.com/PivotLLM/MCPFusion v0.4.3
-	github.com/PivotLLM/Maestro v0.4.1
+	github.com/PivotLLM/Maestro v0.4.2-0.20260917024258-55d97291a291
 	github.com/PivotLLM/cogmem v0.0.5
 	github.com/PivotLLM/ctxengine v0.0.4
 	github.com/a3tai/openclaw-go v1.20260325.0

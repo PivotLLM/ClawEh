@@ -3,7 +3,10 @@
 
 package global
 
-import "context"
+import (
+	"context"
+	"errors"
+)
 
 // SpawnMode selects how a sub-agent worker is launched.
 type SpawnMode int
@@ -94,11 +97,63 @@ type TaskInspector interface {
 	TaskList() ([]TaskBrief, error)
 }
 
+// TurnUsage is the resource accounting for one agent turn (all LLM iterations
+// of a sub-agent run), as reported by the provider dispatch status.
+type TurnUsage struct {
+	Model               string  // model that produced the final response
+	Provider            string  // protocol/provider that served it
+	InputTokens         int     //
+	OutputTokens        int     //
+	CacheReadTokens     int     //
+	CacheCreationTokens int     //
+	CostUSD             float64 //
+}
+
+// Add accumulates one LLM call's accounting into the turn. model/provider are
+// taken from the most recent call so the turn records what actually served it.
+func (u *TurnUsage) Add(model, provider string, in, out, cacheRead, cacheCreate int, cost float64) {
+	if u == nil {
+		return
+	}
+	if model != "" {
+		u.Model = model
+	}
+	if provider != "" {
+		u.Provider = provider
+	}
+	u.InputTokens += in
+	u.OutputTokens += out
+	u.CacheReadTokens += cacheRead
+	u.CacheCreationTokens += cacheCreate
+	u.CostUSD += cost
+}
+
+// SyncResult is what a SyncRunner returns: the worker's raw content, how many
+// LLM iterations it took, and the turn's resource accounting.
+type SyncResult struct {
+	Content    string
+	Iterations int
+	TurnUsage
+}
+
+// Errors a SyncRunner returns for failures that no retry can fix. Programmatic
+// hosts (e.g. an embedded orchestrator) test them with errors.Is to fail the
+// work immediately instead of retrying.
+var (
+	// ErrSpawnUnavailable: no sub-agent runner is configured for this agent.
+	ErrSpawnUnavailable = errors.New("spawn is not available")
+	// ErrSpawnDepthExceeded: the caller is already at the sub-agent depth bound.
+	ErrSpawnDepthExceeded = errors.New("maximum sub-agent depth reached")
+	// ErrModelNotAvailable: the requested model is not one of the agent's candidates.
+	ErrModelNotAvailable = errors.New("model not available for this agent")
+)
+
 // SyncRunner runs a task as a sub-agent (a copy of the agent with full tools) and
-// returns the worker's RAW content. Distinct from Spawner.Spawn's wait mode,
-// which returns a file pointer for the LLM; SyncRunner is for programmatic hosts
-// (e.g. an embedded orchestrator) that need the text. The same value injected as
-// Deps.Spawn satisfies both interfaces.
+// returns the worker's RAW content plus usage. Distinct from Spawner.Spawn's wait
+// mode, which returns a file pointer for the LLM; SyncRunner is for programmatic
+// hosts (e.g. an embedded orchestrator) that need the text. The same value
+// injected as Deps.Spawn satisfies both interfaces. model is an optional model
+// alias/name from the agent's candidates; "" runs the agent's default model.
 type SyncRunner interface {
-	RunSync(ctx context.Context, task, model string) (string, error)
+	RunSync(ctx context.Context, task, model string) (*SyncResult, error)
 }

@@ -60,7 +60,7 @@ type SubagentManager struct {
 	// MCP, snapshotted memory) on the task in an isolated sub-agent session, and
 	// returns the final response. Injected by the host (the agent loop). When set,
 	// it is used instead of the lightweight standalone tool loop.
-	runFull func(ctx context.Context, agentID, sessionKey, task, model string, media []string) (string, int, error)
+	runFull func(ctx context.Context, agentID, sessionKey, task, model string, media []string) (*global.SyncResult, error)
 }
 
 // SubagentManagerConfig holds all configuration for constructing a SubagentManager.
@@ -89,7 +89,7 @@ type SubagentManagerConfig struct {
 	// RunFull runs the target agent's full pipeline on the task in an isolated
 	// sub-agent session (see SubagentManager.runFull). Required for spawning to
 	// behave as "a copy of the agent with fresh context."
-	RunFull func(ctx context.Context, agentID, sessionKey, task, model string, media []string) (string, int, error)
+	RunFull func(ctx context.Context, agentID, sessionKey, task, model string, media []string) (*global.SyncResult, error)
 }
 
 func NewSubagentManager(cfg SubagentManagerConfig) *SubagentManager {
@@ -361,12 +361,12 @@ func (sm *SubagentManager) runRecord(rec *TaskRecord, cb tools.AsyncCallback, re
 		// Restore the spawning agent's depth onto the detached context so the
 		// worker (and any layer it spawns) stays within MaxSpawnDepth.
 		runCtx := WithSpawnDepth(context.Background(), rec.SpawnDepth)
-		content, iterations, err := sm.runFull(runCtx, target, subagentSessionKey(target, rec.UUID), taskText, rec.Model, rec.Media)
+		fr, err := sm.runFull(runCtx, target, subagentSessionKey(target, rec.UUID), taskText, rec.Model, rec.Media)
 		if err != nil {
 			sm.finalize(rec, "", 0, err, cb)
 			return
 		}
-		sm.finalize(rec, content, iterations, nil, cb)
+		sm.finalize(rec, fr.Content, fr.Iterations, nil, cb)
 		return
 	}
 
@@ -599,32 +599,33 @@ func (sm *SubagentManager) TaskList() ([]global.TaskBrief, error) {
 // returns only a pointer, to keep sub-agent output out of the LLM's chat), this
 // hands the text back directly — for programmatic consumers such as an embedded
 // orchestrator dispatching task workers. agentID == "" is a self-spawn.
-func (sm *SubagentManager) RunSync(ctx context.Context, task, agentID, model string) (string, error) {
+func (sm *SubagentManager) RunSync(ctx context.Context, task, agentID, model string) (*global.SyncResult, error) {
 	if sm == nil {
-		return "", fmt.Errorf("subagent manager not configured")
+		return nil, fmt.Errorf("%w: subagent manager not configured", global.ErrSpawnUnavailable)
 	}
 	if strings.TrimSpace(task) == "" {
-		return "", fmt.Errorf("task is required")
+		return nil, fmt.Errorf("task is required")
 	}
 	if sm.runFull == nil {
-		return "", fmt.Errorf("full-pipeline runner not configured")
+		return nil, fmt.Errorf("%w: full-pipeline runner not configured", global.ErrSpawnUnavailable)
 	}
 	target := sm.targetAgent(agentID)
 	id := uuid.NewString()
 	logger.InfoCF("subagent", "subagent.runsync.launched", map[string]any{
 		"uuid": id, "agent": target, "owner": sm.ownerAgentID, "model": model, "task_len": len(task),
 	})
-	content, iterations, err := sm.runFull(ctx, target, subagentSessionKey(target, id), task, model, nil)
+	fr, err := sm.runFull(ctx, target, subagentSessionKey(target, id), task, model, nil)
 	if err != nil {
 		logger.WarnCF("subagent", "subagent.runsync.failed", map[string]any{
 			"uuid": id, "agent": target, "error": err.Error(),
 		})
-		return "", err
+		return nil, err
 	}
 	logger.InfoCF("subagent", "subagent.runsync.finished", map[string]any{
-		"uuid": id, "agent": target, "iterations": iterations, "content_len": len(content),
+		"uuid": id, "agent": target, "iterations": fr.Iterations, "content_len": len(fr.Content),
+		"model": fr.Model, "input_tokens": fr.InputTokens, "output_tokens": fr.OutputTokens,
 	})
-	return content, nil
+	return fr, nil
 }
 
 func (sm *SubagentManager) Run(
@@ -668,12 +669,15 @@ func (sm *SubagentManager) Run(
 			"uuid": id, "label": labelStr, "agent": target,
 			"owner": sm.ownerAgentID, "mode": "wait", "model": model, "channel": channel,
 		})
-		content, iterations, err := sm.runFull(ctx, target, subagentSessionKey(target, id), task, model, media)
+		fr, err := sm.runFull(ctx, target, subagentSessionKey(target, id), task, model, media)
+		var content string
+		var iterations int
 		if err != nil {
 			logger.WarnCF("subagent", "subagent.run.failed", map[string]any{
 				"uuid": id, "label": labelStr, "agent": target, "mode": "wait", "error": err.Error(),
 			})
 		} else {
+			content, iterations = fr.Content, fr.Iterations
 			logger.InfoCF("subagent", "subagent.run.finished", map[string]any{
 				"uuid": id, "label": labelStr, "agent": target, "mode": "wait",
 				"iterations": iterations, "content_len": len(content),
