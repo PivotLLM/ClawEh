@@ -55,7 +55,6 @@ func TestResolveCompressModelTarget(t *testing.T) {
 		{"empty_string_returns_not_found", "", "", "", false},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			a, m, ok := resolveCompressModelTarget(cfg, tc.raw)
 			if ok != tc.wantOK || a != tc.wantAlias || m != tc.wantModel {

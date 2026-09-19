@@ -29,8 +29,8 @@ func TestLoadConfig_DeletingAProviderDoesNotAlterTheOthers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		t.Fatal(err)
+	if writeErr := os.WriteFile(path, data, 0o600); writeErr != nil {
+		t.Fatal(writeErr)
 	}
 
 	back, err := LoadConfig(path)

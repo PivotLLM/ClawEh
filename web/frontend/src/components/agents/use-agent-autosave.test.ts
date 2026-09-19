@@ -43,6 +43,12 @@ describe("editsFromAgent", () => {
       shareCommon: true,
       mounts: [],
       mcpTools: [],
+      maestro: {
+        maxConcurrent: undefined,
+        rateLimitRequests: undefined,
+        rateLimitPeriod: undefined,
+        allowParallel: true,
+      },
     })
   })
 

@@ -28,6 +28,7 @@ import (
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/constants"
 	"github.com/PivotLLM/ClawEh/dump"
+	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/providers"
 	"github.com/PivotLLM/ClawEh/tools"
@@ -36,19 +37,20 @@ import (
 
 // processOptions configures how a message is processed
 type processOptions struct {
-	SessionKey      string   // Session identifier for history/context
-	Channel         string   // Target channel for tool execution
-	ChatID          string   // Target chat ID for tool execution
-	UserMessage     string   // User message content (may include prefix)
-	Media           []string // media:// refs from inbound message
-	DefaultResponse string   // Response when LLM returns empty
-	SendResponse    bool     // Whether to send response via bus
-	IsRetry         bool     // True when message is a /retry retrigger (skip AddMessage)
-	ResetSession    bool     // True when this message is a session_clear handoff: reset before handling
-	SenderID        string   // Originating sender identifier for source attribution
-	SenderName      string   // Human-readable sender label (display name + canonical ID)
-	IsGroup         bool     // True when the inbound message came from a group/multi-listener chat
-	IterationsOut   *int     // optional: runAgentLoop writes the LLM iteration count here
+	SessionKey      string            // Session identifier for history/context
+	Channel         string            // Target channel for tool execution
+	ChatID          string            // Target chat ID for tool execution
+	UserMessage     string            // User message content (may include prefix)
+	Media           []string          // media:// refs from inbound message
+	DefaultResponse string            // Response when LLM returns empty
+	SendResponse    bool              // Whether to send response via bus
+	IsRetry         bool              // True when message is a /retry retrigger (skip AddMessage)
+	ResetSession    bool              // True when this message is a session_clear handoff: reset before handling
+	SenderID        string            // Originating sender identifier for source attribution
+	SenderName      string            // Human-readable sender label (display name + canonical ID)
+	IsGroup         bool              // True when the inbound message came from a group/multi-listener chat
+	IterationsOut   *int              // optional: runAgentLoop writes the LLM iteration count here
+	UsageOut        *global.TurnUsage // optional: every successful LLM call's accounting is added here
 }
 
 // runAgentLoop is the core message processing logic.
@@ -472,9 +474,9 @@ func humanBytes(n int) string {
 // (paths are noise in a one-line notice), capped for a very long name.
 func capEvictResource(s string) string {
 	base := filepath.Base(s)
-	const max = 48
-	if len(base) > max {
-		return base[:max-1] + "…"
+	const maxLen = 48
+	if len(base) > maxLen {
+		return base[:maxLen-1] + "…"
 	}
 	return base
 }
@@ -740,7 +742,7 @@ func (al *AgentLoop) runLLMIteration(
 		// don't support it (CLI, Anthropic) ignore the option; the coalescer forwards
 		// batched deltas to the streaming-capable channel.
 		if streamCoalescer != nil {
-			llmOpts[providers.TextDeltaOption] = providers.TextDeltaFunc(streamCoalescer.Add)
+			llmOpts[providers.TextDeltaOption] = streamCoalescer.Add
 		}
 
 		// activeProvider tracks the protocol name surfaced in the finish event.
@@ -772,7 +774,7 @@ func (al *AgentLoop) runLLMIteration(
 							if key == "" {
 								key = c.Provider + "/" + c.Model
 							}
-							if p, err := al.dispatcher.Get(key); err == nil {
+							if p, getErr := al.dispatcher.Get(key); getErr == nil {
 								return p.Chat(ctx, msgs, providerToolDefs, c.Model, llmOpts)
 							}
 						}
@@ -845,6 +847,7 @@ func (al *AgentLoop) runLLMIteration(
 			response, err = callLLM()
 			emitLLMFinishEvent(agent.ID, iteration, activeProvider, activeModel, dispatchStart, response, err)
 			if err == nil {
+				addTurnUsage(opts.UsageOut, response, activeProvider, activeModel)
 				break
 			}
 

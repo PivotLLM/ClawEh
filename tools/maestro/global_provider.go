@@ -6,9 +6,9 @@ package maestro
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 
 	mconfig "github.com/PivotLLM/Maestro/config"
-	mllm "github.com/PivotLLM/Maestro/llm"
 	mlogging "github.com/PivotLLM/Maestro/logging"
 	mmaestro "github.com/PivotLLM/Maestro/pkg/maestro"
 
@@ -49,6 +49,17 @@ func (globalMaestroProvider) RegisterTools(deps global.Deps) []global.ToolDefini
 		return nil
 	}
 
+	// Dispatch Maestro tasks as ClawEh sub-agents (host owns model selection).
+	// Without a sub-agent runner Maestro would fall back to its own (empty) LLM
+	// config and fail every task, so refuse to expose the suite instead. Checked
+	// before any directory or log file is created for the agent.
+	sr, ok := deps.Spawn.(global.SyncRunner)
+	if !ok || isNilRunner(sr) {
+		logger.WarnCF("maestro", "no sub-agent runner for agent; maestro tools disabled",
+			map[string]any{"agent": deps.AgentID})
+		return nil
+	}
+
 	workspace := cd.Workspace
 	if workspace == "" {
 		logger.WarnCF("maestro", "no workspace for agent; maestro tools disabled",
@@ -65,41 +76,62 @@ func (globalMaestroProvider) RegisterTools(deps global.Deps) []global.ToolDefini
 		return nil
 	}
 
+	agentCfg := cd.AgentCfg
+	if agentCfg == nil {
+		agentCfg = c.AgentByID(deps.AgentID)
+	}
+	refDirs := referenceDirsFromMounts(agentCfg, workspace)
 	mcfg := mconfig.New(
 		mconfig.WithBaseDir(base),
 		mconfig.WithEmbeddedFS(mmaestro.EmbeddedReference),
+		mconfig.WithRunner(runnerConfig(c.AgentMaestro(deps.AgentID))),
+		mconfig.WithReferenceDirs(refDirs),
 	)
 	if err := mcfg.Prepare(); err != nil {
 		logger.WarnCF("maestro", "failed to prepare maestro config; tools disabled",
 			map[string]any{"agent": deps.AgentID, "base": base, "error": err.Error()})
 		return nil
 	}
-
-	// Maestro logs to its own per-agent file (it always logged separately).
-	mlog, err := mlogging.New(filepath.Join(base, "maestro.log"))
-	if err != nil {
-		logger.WarnCF("maestro", "failed to open maestro log",
-			map[string]any{"agent": deps.AgentID, "error": err.Error()})
+	for _, rd := range refDirs {
+		logger.InfoCF("maestro", "mount available in maestro reference domain",
+			map[string]any{"agent": deps.AgentID, "mount": rd.Mount, "path": rd.Path})
 	}
 
-	// Dispatch Maestro tasks as ClawEh sub-agents (host owns model selection).
-	var disp mllm.Dispatcher
-	if sr, ok := deps.Spawn.(global.SyncRunner); ok {
-		disp = &dispatcher{run: sr}
-	}
+	// Maestro's operational log goes to the central logger (component "maestro",
+	// tagged with the agent) so it shows in the Web UI and rotates with claw.log.
+	// Maestro's per-project logs are audit records and stay in the project.
+	mlog := mlogging.NewWithWriter(&logWriter{agent: deps.AgentID})
+
+	// Each dispatched prompt is one sub-agent run, bounded like a user turn.
+	disp := &dispatcher{run: sr, timeout: c.Agents.Defaults.GetTurnTimeout()}
 
 	p := &mmaestro.Provider{}
 	defs := p.RegisterTools(global.Deps{
 		Cfg:       mcfg,
 		AgentID:   deps.AgentID,
 		Workspace: workspace,
-		Host:      mmaestro.HostDeps{Logger: mlog, Dispatcher: disp},
+		Host: mmaestro.HostDeps{
+			Logger:     mlog,
+			Dispatcher: disp,
+			// file_import may only read what the agent's own file tools can.
+			ImportAllowed: importAllowed(c, agentCfg, workspace),
+		},
 	})
 
 	// Maestro is available to sub-agents too (a worker may run its own taskset);
 	// unbounded re-entry is prevented by MaxSpawnDepth in the Spawner, not by
 	// withholding the tools.
 	logger.InfoCF("maestro", "maestro tools enabled for agent",
-		map[string]any{"agent": deps.AgentID, "tools": len(defs), "base": base, "host_dispatch": disp != nil})
+		map[string]any{"agent": deps.AgentID, "tools": len(defs), "base": base, "timeout": disp.timeout.String()})
 	return defs
+}
+
+// isNilRunner reports whether sr is nil, including a typed nil pointer stored
+// in the interface (which a plain == nil comparison would miss).
+func isNilRunner(sr global.SyncRunner) bool {
+	if sr == nil {
+		return true
+	}
+	v := reflect.ValueOf(sr)
+	return v.Kind() == reflect.Pointer && v.IsNil()
 }

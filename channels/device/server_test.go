@@ -48,7 +48,10 @@ type connectResp struct {
 // request, returning the LIVE connection plus the parsed response. Caller closes.
 func (e *emulator) open(t *testing.T, wsURL, sharedToken string) (*websocket.Conn, connectResp) {
 	t.Helper()
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	conn, httpResp, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if httpResp != nil && httpResp.Body != nil {
+		_ = httpResp.Body.Close()
+	}
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}

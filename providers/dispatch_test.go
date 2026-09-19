@@ -180,7 +180,6 @@ func TestProviderDispatcher_SingleCreationUnderConcurrentLoad(t *testing.T) {
 	wg.Add(goroutines)
 
 	for i := 0; i < goroutines; i++ {
-		i := i
 		go func() {
 			defer wg.Done()
 			p, err := d.Get("load-alias")

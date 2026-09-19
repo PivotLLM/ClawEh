@@ -96,8 +96,8 @@ func acpCmd(debug bool, wsURL string, autoPair bool) error {
 	// Persisted Ed25519 device identity + issued device token (survives across the
 	// short-lived spawns rabbit-agent makes, so pairing happens only once).
 	idDir := filepath.Join(cfg.DataDir(), "state", "acp-bridge")
-	if err := os.MkdirAll(idDir, 0o700); err != nil {
-		return fmt.Errorf("acp: create identity dir: %w", err)
+	if mkErr := os.MkdirAll(idDir, 0o700); mkErr != nil {
+		return fmt.Errorf("acp: create identity dir: %w", mkErr)
 	}
 	idStore, err := identity.NewStore(idDir)
 	if err != nil {

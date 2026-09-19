@@ -28,7 +28,7 @@ export interface AgentEntry {
   summarization_models?: string[]
   share_common?: boolean
   global_cron?: boolean
-  maestro?: boolean
+  maestro?: MaestroSettings
   fusion?: boolean
   cogmem?: boolean
   mounts?: MountEntry[]
@@ -128,7 +128,7 @@ export function parseAgent(value: unknown): AgentEntry {
       .filter(Boolean),
     share_common: r.share_common === false ? false : true,
     global_cron: r.global_cron === true,
-    maestro: r.maestro === true,
+    maestro: maestroFromRaw(r.maestro),
     fusion: r.fusion === true,
     cogmem: r.cogmem !== false,
     mounts: asArray(r.mounts).map((m) => {
@@ -220,4 +220,89 @@ export async function fetchSkills(): Promise<SkillInfo[]> {
   if (!res.ok) return []
   const data = (await res.json()) as { skills?: SkillInfo[] }
   return data.skills ?? []
+}
+
+/** The per-agent `maestro` config block. Absent means Maestro is off. */
+export interface MaestroSettings {
+  enabled: boolean
+  /** Parallel task-set concurrency cap; undefined = Maestro's default (5). */
+  max_concurrent?: number
+  /** Dispatch rate limit: requests per period; undefined = defaults (10 / 60 s). */
+  rate_limit_requests?: number
+  rate_limit_period?: number
+  /** Whether a parallel run may be honoured when the LLM asks; undefined = allowed. */
+  allow_parallel?: boolean
+}
+
+/** The editable runner settings inside the block (the enabled switch is
+ *  saved immediately like the other suite toggles, these are debounced). */
+export interface MaestroRunnerEdits {
+  maxConcurrent: number | undefined
+  rateLimitRequests: number | undefined
+  rateLimitPeriod: number | undefined
+  allowParallel: boolean
+}
+
+function asPositiveInt(v: unknown): number | undefined {
+  return typeof v === "number" && Number.isInteger(v) && v > 0 ? v : undefined
+}
+
+/** maestroFromRaw parses the saved block. The retired boolean form
+ *  (`"maestro": true`) is not honoured by the backend, so it reads as a
+ *  disabled block here too; null/undefined means no block. */
+export function maestroFromRaw(v: unknown): MaestroSettings | undefined {
+  if (v === null || v === undefined) return undefined
+  if (typeof v !== "object" || Array.isArray(v)) return { enabled: false }
+  const r = v as Record<string, unknown>
+  return {
+    enabled: r.enabled === true,
+    max_concurrent: asPositiveInt(r.max_concurrent),
+    rate_limit_requests: asPositiveInt(r.rate_limit_requests),
+    rate_limit_period: asPositiveInt(r.rate_limit_period),
+    allow_parallel: r.allow_parallel === false ? false : undefined,
+  }
+}
+
+/** maestroPayload is the block as sent to the backend: `enabled` always, the
+ *  other keys only when set, and `allow_parallel` only when false (true is
+ *  the default and is left implicit). */
+export function maestroPayload(m: MaestroSettings): Record<string, unknown> {
+  return {
+    enabled: m.enabled === true,
+    ...(m.max_concurrent !== undefined
+      ? { max_concurrent: m.max_concurrent }
+      : {}),
+    ...(m.rate_limit_requests !== undefined
+      ? { rate_limit_requests: m.rate_limit_requests }
+      : {}),
+    ...(m.rate_limit_period !== undefined
+      ? { rate_limit_period: m.rate_limit_period }
+      : {}),
+    ...(m.allow_parallel === false ? { allow_parallel: false } : {}),
+  }
+}
+
+export function maestroEditsFromAgent(a: AgentEntry): MaestroRunnerEdits {
+  return {
+    maxConcurrent: a.maestro?.max_concurrent,
+    rateLimitRequests: a.maestro?.rate_limit_requests,
+    rateLimitPeriod: a.maestro?.rate_limit_period,
+    allowParallel: a.maestro?.allow_parallel !== false,
+  }
+}
+
+/** applyMaestroEdits folds the debounced runner edits back into the saved
+ *  block; an agent without a block stays without one. */
+export function applyMaestroEdits(
+  m: MaestroSettings | undefined,
+  e: MaestroRunnerEdits,
+): MaestroSettings | undefined {
+  if (!m) return undefined
+  return {
+    enabled: m.enabled,
+    max_concurrent: e.maxConcurrent,
+    rate_limit_requests: e.rateLimitRequests,
+    rate_limit_period: e.rateLimitPeriod,
+    allow_parallel: e.allowParallel ? undefined : false,
+  }
 }

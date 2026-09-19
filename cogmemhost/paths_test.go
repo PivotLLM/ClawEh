@@ -22,10 +22,10 @@ func TestMigrate_UpgradesSchemaInPlace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.CreateDomain(context.Background(), s.DB(), store.CreateDomainParams{
+	if _, domErr := s.CreateDomain(context.Background(), s.DB(), store.CreateDomainParams{
 		Name: "Probe", Status: store.StatusActive,
-	}); err != nil {
-		t.Fatal(err)
+	}); domErr != nil {
+		t.Fatal(domErr)
 	}
 	_ = s.Close()
 

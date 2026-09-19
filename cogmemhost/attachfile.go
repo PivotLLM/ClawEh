@@ -1,7 +1,7 @@
 // ClawEh - Cognitive Memory
 // License: MIT
 
-// Package attachfile resolves the markdown files that cognitive memories point
+// attachfile.go resolves the markdown files that cognitive memories point
 // at. It is the seam between cogmem (which never touches the filesystem) and the
 // file tools' permission stack: every read goes through files.Reader, so a
 // memory can only attach a document the agent is already allowed to read —
@@ -9,6 +9,7 @@
 //
 // It is imported by the agent wiring (per-turn loading) and by the cogmem tools
 // (create-time validation) so both apply one identical rule.
+
 package cogmemhost
 
 import (

@@ -47,7 +47,7 @@ func TestTestProviderConnectivity_OpenAICompat(t *testing.T) {
 
 func TestTestProviderConnectivity_Anthropic(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("x-api-key") == "good" && r.Header.Get("anthropic-version") != "" {
+		if r.Header.Get("X-Api-Key") == "good" && r.Header.Get("Anthropic-Version") != "" {
 			w.WriteHeader(http.StatusOK)
 			return
 		}

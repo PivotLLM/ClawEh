@@ -1,5 +1,6 @@
 // Tests for Name(), Description(), Parameters() methods across tool types.
 // These trivial 1-liners collectively affect coverage significantly.
+
 package tools_test
 
 import (

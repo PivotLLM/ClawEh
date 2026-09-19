@@ -122,7 +122,7 @@ func resolveTargetUser(explicitUser string) (*TargetUser, error) {
 			return nil, fmt.Errorf(
 				"%s must run as a regular user, not root.\n"+
 					"When running with sudo, invoke from your normal user account (e.g. `sudo %s install`)\n"+
-					"or pass --user <username> to specify the target user explicitly.",
+					"or pass --user <username> to specify the target user explicitly",
 				app.Name(), internal.BinaryName)
 		}
 		u, err = user.Lookup(username)
@@ -208,7 +208,7 @@ func confirmPrompt(prompt string, autoYes bool) (bool, error) {
 	reader := bufio.NewReader(os.Stdin)
 	response, err := reader.ReadString('\n')
 	if err != nil {
-		return false, nil
+		return false, nil //nolint:nilerr // an unreadable answer means "no"
 	}
 	response = strings.TrimSpace(strings.ToLower(response))
 	return response == "y" || response == "yes", nil
@@ -294,7 +294,7 @@ func runInstall(host string, port int, allowedCIDRs, targetUser, customBinDir st
 	confirmed, err := confirmPrompt("Do you want to proceed with installation?", autoYes)
 	if err != nil || !confirmed {
 		fmt.Println("Installation cancelled.")
-		return nil
+		return nil //nolint:nilerr // a declined or unreadable prompt cancels, which is not an error
 	}
 
 	// 2. Copy binary into target location (atomic write prevents "text file busy")
@@ -349,11 +349,12 @@ func runInstall(host string, port int, allowedCIDRs, targetUser, customBinDir st
 	}
 
 	// 4. Register and start background service
-	if runtime.GOOS == "linux" {
+	switch runtime.GOOS {
+	case "linux":
 		if err := installSystemd(tu, targetBin, binDir, clawHome); err != nil {
 			return fmt.Errorf("installing systemd service: %w", err)
 		}
-	} else if runtime.GOOS == "darwin" {
+	case "darwin":
 		if err := installLaunchd(tu, targetBin, binDir, clawHome); err != nil {
 			return fmt.Errorf("installing launchd service: %w", err)
 		}
@@ -363,19 +364,20 @@ func runInstall(host string, port int, allowedCIDRs, targetUser, customBinDir st
 	fmt.Println("\nInstalled and running.")
 	fmt.Printf("Web interface is at: %s\n\n", accessURL(clawHome))
 	fmt.Println("Hints:")
-	if runtime.GOOS == "linux" {
+	switch runtime.GOOS {
+	case "linux":
 		if tu.IsRoot {
 			fmt.Printf("  Check status: systemctl status %s\n", serviceName)
 		} else {
 			fmt.Printf("  Check status: systemctl --user status %s\n", serviceName)
 		}
-	} else if runtime.GOOS == "darwin" {
+	case "darwin":
 		if tu.IsRoot {
 			fmt.Printf("  Check status: sudo launchctl list | grep %s\n", launchdLabel)
 		} else {
 			fmt.Printf("  Check status: launchctl list | grep %s\n", launchdLabel)
 		}
-	} else {
+	default:
 		fmt.Printf("  Check status: %s status\n", targetBin)
 	}
 	fmt.Printf("  View logs:    tail -f %s\n", filepath.Join(clawHome, "logs", "claw.log"))
@@ -435,14 +437,15 @@ func runUninstall(targetUser string, autoYes bool) error {
 	confirmed, err := confirmPrompt("Do you want to proceed with removal?", autoYes)
 	if err != nil || !confirmed {
 		fmt.Println("Uninstallation cancelled.")
-		return nil
+		return nil //nolint:nilerr // a declined or unreadable prompt cancels, which is not an error
 	}
 
-	if runtime.GOOS == "linux" {
+	switch runtime.GOOS {
+	case "linux":
 		if err := uninstallSystemd(tu); err != nil {
 			return fmt.Errorf("uninstalling systemd service: %w", err)
 		}
-	} else if runtime.GOOS == "darwin" {
+	case "darwin":
 		if err := uninstallLaunchd(tu); err != nil {
 			return fmt.Errorf("uninstalling launchd service: %w", err)
 		}
@@ -508,13 +511,13 @@ func accessURL(optionalClawHome ...string) string {
 	switch strings.TrimSpace(host) {
 	case "0.0.0.0", "::", "":
 		if ip := primaryLANIP(); ip != "" {
-			return fmt.Sprintf("http://%s:%d", ip, port)
+			return "http://" + net.JoinHostPort(ip, strconv.Itoa(port))
 		}
 		return fmt.Sprintf("http://<server-ip>:%d", port)
 	case "127.0.0.1", "localhost", "::1":
 		return fmt.Sprintf("http://localhost:%d", port)
 	default:
-		return fmt.Sprintf("http://%s:%d", host, port)
+		return "http://" + net.JoinHostPort(host, strconv.Itoa(port))
 	}
 }
 
@@ -669,46 +672,6 @@ func isSystemOrSnapPath(p string) bool {
 		return true
 	default:
 		return strings.HasPrefix(p, "/opt/thinl")
-	}
-}
-
-// ensurePath appends binDir to the user's shell rc if it isn't already on PATH.
-// Returns a human-readable note, or "" if PATH already contained binDir.
-func ensurePath(binDir string) string {
-	for _, p := range filepath.SplitList(os.Getenv("PATH")) {
-		if p == binDir {
-			return ""
-		}
-	}
-
-	rc := shellRC()
-	const marker = "# Added by claw install"
-	if data, err := os.ReadFile(rc); err == nil && strings.Contains(string(data), marker) {
-		return fmt.Sprintf("PATH already configured in %s (restart your shell if `%s` isn't found).", rc, internal.BinaryName)
-	}
-
-	line := fmt.Sprintf("\n%s\nexport PATH=%q\n", marker, binDir+":$PATH")
-	f, err := os.OpenFile(rc, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return fmt.Sprintf("Could not update %s (%v). Add %s to your PATH manually.", rc, err, binDir)
-	}
-	defer func() { _ = f.Close() }()
-	if _, err := f.WriteString(line); err != nil {
-		return fmt.Sprintf("Could not update %s (%v). Add %s to your PATH manually.", rc, err, binDir)
-	}
-	return fmt.Sprintf("Added %s to PATH in %s — run `source %s` or open a new terminal.", binDir, rc, rc)
-}
-
-// shellRC picks the rc file to update based on the login shell.
-func shellRC() string {
-	home, _ := os.UserHomeDir()
-	switch filepath.Base(os.Getenv("SHELL")) {
-	case "zsh":
-		return filepath.Join(home, ".zshrc")
-	case "bash":
-		return filepath.Join(home, ".bashrc")
-	default:
-		return filepath.Join(home, ".profile")
 	}
 }
 

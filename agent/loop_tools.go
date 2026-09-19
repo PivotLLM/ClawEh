@@ -181,7 +181,7 @@ func (al *AgentLoop) registerRuntimeTools(
 		// (and MCP tools, in loop_mcp) are hidden behind search_tools.
 		discovery := cfg.Tools.Discovery.Enabled
 		currentAgent.DiscoveryActive = discovery
-		currentAgent.AlwaysShownNamespaces = cfg.AlwaysShownNamespaces()
+		currentAgent.AlwaysShownNamespaces = discoveryPins(cfg, agentCfg)
 		if currentAgent.ContextBuilder != nil {
 			currentAgent.ContextBuilder.WithToolDiscovery(discovery)
 		}
@@ -241,6 +241,20 @@ const suiteCogmem = "cogmem"
 // via always_shown_namespaces. A pinned namespace keeps the tool always visible.
 func discoveryHidesTool(active bool, alwaysShown []string, toolName string) bool {
 	return active && !config.MatchVisibility(alwaysShown, toolName)
+}
+
+// discoveryPins returns the visibility pins for an agent's in-loop tool list:
+// the configured always_shown_namespaces plus, when the agent has Maestro and
+// discovery is on, Maestro's entry-point tool, so the model can always reach the
+// orientation guide and search for the rest. MatchVisibility matches by prefix,
+// so a full tool name pins exactly that tool. This affects only the in-loop
+// model; the MCP host always serves the full tool list.
+func discoveryPins(cfg *config.Config, agentCfg *config.AgentConfig) []string {
+	pins := append([]string(nil), cfg.AlwaysShownNamespaces()...)
+	if cfg.Tools.Discovery.Enabled && agentCfg.MaestroEnabled() {
+		pins = append(pins, global.MaestroEntryTool)
+	}
+	return pins
 }
 
 // registerDiscoveryMetaTools registers the search_tools / get_tool_details entry

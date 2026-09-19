@@ -3,10 +3,12 @@ package gateway
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -153,8 +155,8 @@ func gatewayCmd(debug bool) error {
 
 	// Re-apply logging config (debug flag overrides level).
 	if cfg.Logging.File {
-		if err := logger.EnableFileLogging(logPath, cfg.Logging.JSON); err != nil {
-			logger.WarnCF("gateway", "Failed to enable file logging", map[string]any{"path": logPath, "error": err.Error()})
+		if logErr := logger.EnableFileLogging(logPath, cfg.Logging.JSON); logErr != nil {
+			logger.WarnCF("gateway", "Failed to enable file logging", map[string]any{"path": logPath, "error": logErr.Error()})
 		}
 	} else {
 		logger.DisableFileLogging()
@@ -487,7 +489,7 @@ func setupAndStartServices(
 	// for the entire life of the process.
 	markReady(services, true)
 
-	logger.InfoF("Health endpoints available", map[string]any{"health": fmt.Sprintf("http://%s:%d/health", cfg.Gateway.Host, cfg.Gateway.Port), "ready": fmt.Sprintf("http://%s:%d/ready", cfg.Gateway.Host, cfg.Gateway.Port)})
+	logger.InfoF("Health endpoints available", map[string]any{"health": "http://" + net.JoinHostPort(cfg.Gateway.Host, strconv.Itoa(cfg.Gateway.Port)) + "/health", "ready": "http://" + net.JoinHostPort(cfg.Gateway.Host, strconv.Itoa(cfg.Gateway.Port)) + "/ready"})
 
 	// Setup state manager and device service
 	stateManager := state.NewManager(cfg.WorkspacePath())
@@ -895,7 +897,7 @@ func restartServices(
 	// rebuildSharedHTTPServer creates a fresh health.Server, which starts
 	// not-ready, so readiness is re-asserted after every reload.
 	markReady(services, true)
-	logger.InfoCF("channels", "Channels restarted", map[string]any{"health": fmt.Sprintf("http://%s:%d/health", cfg.Gateway.Host, cfg.Gateway.Port)})
+	logger.InfoCF("channels", "Channels restarted", map[string]any{"health": "http://" + net.JoinHostPort(cfg.Gateway.Host, strconv.Itoa(cfg.Gateway.Port)) + "/health"})
 
 	// Re-create device service with new config
 	stateManager := state.NewManager(cfg.WorkspacePath())

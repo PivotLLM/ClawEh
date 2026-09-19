@@ -352,16 +352,6 @@ func (r *ToolRegistry) GetForHost(name string) (Tool, bool) {
 	return entry.Tool, true
 }
 
-// resolve maps a model-facing tool name to its registry entry. It first tries the
-// internal registry key; on a miss it matches an MCP tool by its ExternalName —
-// the bare "<server>_<tool>" form advertised to models (see ToProviderDefs) — so a
-// model that calls the tool without claw's internal "mcp_" prefix still dispatches
-// and gates correctly. Returns the entry, the internal (canonical) name to use for
-// allow-list gating, and whether it resolved. Expired hidden tools do not resolve.
-func (r *ToolRegistry) resolve(name string) (*ToolEntry, string, bool) {
-	return r.resolveWith(name, false)
-}
-
 // resolveWith is resolve with an ignoreTTL switch. The host path passes true so a
 // discovery-hidden (TTL-expired) tool still resolves for execution — progressive
 // discovery never gates the MCP host; authorization there is the ACL policy.

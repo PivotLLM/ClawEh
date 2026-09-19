@@ -78,12 +78,12 @@ func TestApplyAllowlistRejectsInvalidWithoutWriting(t *testing.T) {
 	}
 
 	for _, bad := range []string{"192.168.1.0", "not-a-cidr", "192.168.1.0/33", "10.0.0.0/8,garbage"} {
-		if _, err := ApplyAllowlist(ParseAllowlist(bad)); err == nil {
+		if _, applyErr := ApplyAllowlist(ParseAllowlist(bad)); applyErr == nil {
 			t.Fatalf("ApplyAllowlist(%q) accepted an invalid list", bad)
 		}
-		after, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
+		after, readErr := os.ReadFile(path)
+		if readErr != nil {
+			t.Fatal(readErr)
 		}
 		if string(after) != string(before) {
 			t.Fatalf("ApplyAllowlist(%q) rewrote the config after rejecting it", bad)
@@ -114,12 +114,12 @@ func TestApplyAllowlistPreservesTheRestOfTheConfig(t *testing.T) {
 	cfg.Gateway.Port = 18999
 	cfg.Channels.WebUI.Enabled = true
 	cfg.Channels.WebUI.Token = "sentinel-token-value"
-	if err := config.SaveConfig(path, cfg); err != nil {
-		t.Fatal(err)
+	if saveErr := config.SaveConfig(path, cfg); saveErr != nil {
+		t.Fatal(saveErr)
 	}
 
-	if _, err := ApplyAllowlist(ParseAllowlist("private")); err != nil {
-		t.Fatalf("ApplyAllowlist() error = %v", err)
+	if _, applyErr := ApplyAllowlist(ParseAllowlist("private")); applyErr != nil {
+		t.Fatalf("ApplyAllowlist() error = %v", applyErr)
 	}
 
 	after, err := config.LoadConfig(path)

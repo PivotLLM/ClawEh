@@ -299,7 +299,7 @@ func executeOAuthFlow(ctx context.Context, cfg *config.Config, flags *cliFlags, 
 		Scopes:       strings.Join(provider.GetRequiredScopes(), " "),
 	}
 	if err := provider.ValidateConfiguration(serviceConfig); err != nil {
-		return fmt.Errorf("configuration validation failed: %w\n\nThe server may not have OAuth credentials configured.\nCheck GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET environment variables on the server.", err)
+		return fmt.Errorf("configuration validation failed: %w\n\nThe server may not have OAuth credentials configured.\nCheck GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET environment variables on the server", err)
 	}
 
 	if flags.verbose {
@@ -475,9 +475,9 @@ func (e *OAuthFlowExecutor) ExecuteAuthCodeFlow(ctx context.Context) error {
 	select {
 	case result := <-resultChan:
 		// Shutdown server
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_ = server.Shutdown(ctx)
+		_ = server.Shutdown(shutdownCtx)
 
 		if result.Error != nil {
 			return result.Error
@@ -490,7 +490,7 @@ func (e *OAuthFlowExecutor) ExecuteAuthCodeFlow(ctx context.Context) error {
 		}
 
 		// Verify tokens by getting user info
-		userInfo, err := e.Provider.GetUserInfo(ctx, tokenInfo)
+		userInfo, err := e.Provider.GetUserInfo(shutdownCtx, tokenInfo)
 		if err != nil {
 			return fmt.Errorf("failed to get user info: %w", err)
 		}
@@ -500,13 +500,13 @@ func (e *OAuthFlowExecutor) ExecuteAuthCodeFlow(ctx context.Context) error {
 		}
 
 		// Store tokens in MCPFusion
-		_, err = e.MCPClient.StoreTokens(ctx, e.Config.Service, tokenInfo.AccessToken, tokenInfo.RefreshToken, tokenInfo.ExpiresIn, nil)
+		_, err = e.MCPClient.StoreTokens(shutdownCtx, e.Config.Service, tokenInfo.AccessToken, tokenInfo.RefreshToken, tokenInfo.ExpiresIn, nil)
 		if err != nil {
 			return fmt.Errorf("failed to store tokens in MCPFusion: %w", err)
 		}
 
 		// Send success notification
-		if err := e.MCPClient.NotifySuccess(ctx, e.Config.Service, userInfo); err != nil {
+		if err := e.MCPClient.NotifySuccess(shutdownCtx, e.Config.Service, userInfo); err != nil {
 			if e.Verbose {
 				log.Printf("Warning: failed to send success notification: %v", err)
 			}
@@ -699,9 +699,7 @@ func (e *OAuthFlowExecutor) exchangeCodeForTokens(code, redirectURI, codeVerifie
 	if err != nil {
 		return nil, fmt.Errorf("token request failed: %w", err)
 	}
-	defer func(Body io.ReadCloser) {
-		_ = Body.Close()
-	}(resp.Body)
+	defer func() { _ = resp.Body.Close() }()
 
 	// Log the response if debug is enabled
 	debug.LogHTTPResponse(resp)
@@ -717,8 +715,8 @@ func (e *OAuthFlowExecutor) exchangeCodeForTokens(code, redirectURI, codeVerifie
 
 	// Parse token response
 	var tokenResponse map[string]any
-	if err := json.Unmarshal(body, &tokenResponse); err != nil {
-		return nil, fmt.Errorf("failed to parse token response: %w", err)
+	if parseErr := json.Unmarshal(body, &tokenResponse); parseErr != nil {
+		return nil, fmt.Errorf("failed to parse token response: %w", parseErr)
 	}
 
 	// Let provider process the response

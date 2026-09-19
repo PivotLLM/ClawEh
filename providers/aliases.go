@@ -38,9 +38,10 @@ type (
 	ModelConfig            = spawnllm.ModelConfig
 )
 
-// Token streaming: a caller sets TextDeltaFunc under the TextDeltaOption key in
-// the options map passed to provider.Chat to opt into per-delta assistant text
-// streaming (honored by openai_compat/openai_responses; ignored elsewhere).
+// TextDeltaFunc is the token-streaming callback: a caller sets it under the
+// TextDeltaOption key in the options map passed to provider.Chat to opt into
+// per-delta assistant text streaming (honored by openai_compat/openai_responses;
+// ignored elsewhere).
 type TextDeltaFunc = spawnllm.TextDeltaFunc
 
 // Protocol DTOs.

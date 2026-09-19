@@ -9,7 +9,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -182,9 +181,7 @@ func (p *Provider) GetUserInfo(ctx context.Context, token *providers.TokenInfo) 
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user info: %w", err)
 	}
-	defer func(Body io.ReadCloser) {
-		_ = Body.Close()
-	}(resp.Body)
+	defer func() { _ = resp.Body.Close() }()
 
 	// Log the response if debug is enabled
 	debug.LogHTTPResponse(resp)
@@ -266,9 +263,7 @@ func (p *Provider) ValidateToken(ctx context.Context, token *providers.TokenInfo
 	if err != nil {
 		return fmt.Errorf("failed to validate token: %w", err)
 	}
-	defer func(Body io.ReadCloser) {
-		_ = Body.Close()
-	}(resp.Body)
+	defer func() { _ = resp.Body.Close() }()
 
 	// Log the response if debug is enabled
 	debug.LogHTTPResponse(resp)

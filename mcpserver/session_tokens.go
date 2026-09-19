@@ -21,15 +21,6 @@ const sessionTokenPrefix = "SST"
 // schemas. The MCP server strips it before dispatching to the tool implementation.
 const sessionTokenParam = "session_token"
 
-// invalidSessionTokenMessage is returned when the session_token is missing,
-// malformed, or unknown. The wording mirrors invalidTokenMessage so a confused
-// LLM can self-correct.
-const invalidSessionTokenMessage = "invalid or missing session_token; supply your assigned token (format: SST<64 hex>)"
-
-// sessionTokenCrossAgentMessage is returned when the session_token resolves to a
-// different agent than the caller's agent_token.
-const sessionTokenCrossAgentMessage = "session_token does not belong to the calling agent"
-
 // sessionRecord holds the mapping from a session token to its session.
 //
 // channel/chatID are the "most recent inbound source for this session" used by

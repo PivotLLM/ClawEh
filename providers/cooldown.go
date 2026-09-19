@@ -357,10 +357,10 @@ func (ct *CooldownTracker) Snapshot() []CooldownStatus {
 
 func dominantReason(counts map[FailoverReason]int) FailoverReason {
 	var top FailoverReason
-	max := 0
+	best := 0
 	for r, n := range counts {
-		if n > max {
-			max = n
+		if n > best {
+			best = n
 			top = r
 		}
 	}

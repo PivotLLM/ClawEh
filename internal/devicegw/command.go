@@ -42,8 +42,8 @@ func openStore() (*device.Store, *config.Config, error) {
 		return nil, nil, err
 	}
 	stateDir := filepath.Join(cfg.DataDir(), "state")
-	if err := os.MkdirAll(stateDir, 0o700); err != nil {
-		return nil, nil, err
+	if mkErr := os.MkdirAll(stateDir, 0o700); mkErr != nil {
+		return nil, nil, mkErr
 	}
 	store, err := device.OpenStore(filepath.Join(stateDir, "gateway.db"))
 	if err != nil {

@@ -297,9 +297,9 @@ func (al *AgentLoop) newCompressModelCaller(agent *AgentInstance, sessionKey str
 		globalModels = cfg.Summarization.Models
 	}
 
-	var clients []*providerLLMClient
 	effective := ""
 	chainNames := resolveCompressModelChain(agentModels, globalModels)
+	clients := make([]*providerLLMClient, 0, len(chainNames)+1)
 	for _, name := range chainNames {
 		if effective == "" {
 			effective = name

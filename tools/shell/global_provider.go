@@ -26,13 +26,13 @@ func (globalShellProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 	// (Describe) passes a zero Deps; handlers are never called then, so leaving
 	// the instance nil is safe. On construction error we leave it nil and
 	// continue (the legacy Build path log.Fatalf's; here we degrade gracefully).
-	var real *ExecTool
+	var execTool *ExecTool
 	c, _ := deps.Cfg.(*config.Config)
 	cd, _ := deps.Host.(tools.ToolDeps)
 	if c != nil {
 		t, err := NewExecToolWithConfig(cd.Workspace, c.Agents.Defaults.RestrictToWorkspace, c)
 		if err == nil {
-			real = t
+			execTool = t
 		}
 	}
 
@@ -50,7 +50,7 @@ func (globalShellProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 			// DefaultAllow unset.
 			DefaultAllow: nil,
 			Handler: func(call *global.ToolCall) (*global.Result, error) {
-				return tools.ResultToGlobal(real.Execute(call.Ctx, call.Args)), nil
+				return tools.ResultToGlobal(execTool.Execute(call.Ctx, call.Args)), nil
 			},
 		},
 	}

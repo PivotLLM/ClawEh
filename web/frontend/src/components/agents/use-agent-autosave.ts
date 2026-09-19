@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState } from "react"
 
-import type { AgentEntry, MountEntry } from "@/components/agents/agent-model"
+import {
+  type AgentEntry,
+  type MaestroRunnerEdits,
+  type MountEntry,
+  maestroEditsFromAgent,
+} from "@/components/agents/agent-model"
 
 // AgentEdits is one agent's in-progress edit buffer.
 //
@@ -24,6 +29,7 @@ export interface AgentEdits {
   shareCommon: boolean
   mounts: MountEntry[]
   mcpTools: string[]
+  maestro: MaestroRunnerEdits
 }
 
 // editsFromAgent seeds an edit buffer from the saved agent. The defaults here
@@ -45,6 +51,7 @@ export function editsFromAgent(a: AgentEntry): AgentEdits {
     shareCommon: a.share_common !== false,
     mounts: a.mounts ?? [],
     mcpTools: a.mcp_tools ?? [],
+    maestro: maestroEditsFromAgent(a),
   }
 }
 

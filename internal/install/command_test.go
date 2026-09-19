@@ -263,8 +263,8 @@ func TestResolveBinDir(t *testing.T) {
 
 	// 2. Existing installation binary directory preservation
 	optClawDir := filepath.Join(tempHome, "opt", "claw")
-	if err := os.MkdirAll(optClawDir, 0o755); err != nil {
-		t.Fatal(err)
+	if mkErr := os.MkdirAll(optClawDir, 0o755); mkErr != nil {
+		t.Fatal(mkErr)
 	}
 	existing := &ExistingInstall{BinaryPath: filepath.Join(optClawDir, "claw")}
 	dir, err = resolveBinDir(&TargetUser{HomeDir: tempHome, IsRoot: false}, "", existing)
@@ -287,8 +287,8 @@ func TestResolveBinDir(t *testing.T) {
 
 	// 5. User Mode with existing ~/bin -> ~/bin
 	expectedBin := filepath.Join(tempHome, "bin")
-	if err := os.MkdirAll(expectedBin, 0o755); err != nil {
-		t.Fatal(err)
+	if mkErr := os.MkdirAll(expectedBin, 0o755); mkErr != nil {
+		t.Fatal(mkErr)
 	}
 	dir, err = resolveBinDir(&TargetUser{HomeDir: tempHome, IsRoot: false}, "", nil)
 	if err != nil || dir != expectedBin {
@@ -328,4 +328,3 @@ func TestResolveClawHome(t *testing.T) {
 		t.Errorf("resolveClawHome with binDir = /opt/claw = %q, want /opt/claw", got)
 	}
 }
-

@@ -92,7 +92,7 @@ func forgetSessionState(store session.SessionStore, sessionKey string) {
 	if store == nil || sessionKey == "" {
 		return
 	}
-	if f, ok := store.(interface{ ForgetSession(string) }); ok {
+	if f, ok := store.(interface{ ForgetSession(sessionKey string) }); ok {
 		f.ForgetSession(sessionKey)
 	}
 }

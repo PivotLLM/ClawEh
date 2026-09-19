@@ -132,7 +132,7 @@ func detectNewFiles(mountName, mountPath string) []string {
 	current := make([]string, 0, len(seen))
 	_ = filepath.WalkDir(mountPath, func(p string, d os.DirEntry, werr error) error {
 		if werr != nil {
-			return nil
+			return nil //nolint:nilerr // skip unreadable entries and keep walking
 		}
 		name := d.Name()
 		if d.IsDir() {

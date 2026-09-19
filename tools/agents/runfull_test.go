@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/routing"
 )
 
@@ -20,8 +21,8 @@ func TestRun_RoutesContentToFileWithCallbackBlock(t *testing.T) {
 		Workspace:     ws,
 		Live:          NewLiveSet(),
 		CallerAgentID: "penny",
-		RunFull: func(_ context.Context, _, _, _, _ string, _ []string) (string, int, error) {
-			return "SENSITIVE WORKER OUTPUT", 2, nil
+		RunFull: func(_ context.Context, _, _, _, _ string, _ []string) (*global.SyncResult, error) {
+			return &global.SyncResult{Content: "SENSITIVE WORKER OUTPUT", Iterations: 2}, nil
 		},
 	})
 
@@ -71,12 +72,12 @@ func TestRun_UsesRunFullWithSubagentSession(t *testing.T) {
 		Workspace:     t.TempDir(),
 		Live:          NewLiveSet(),
 		CallerAgentID: "penny",
-		RunFull: func(_ context.Context, agentID, sessionKey, task, model string, _ []string) (string, int, error) {
+		RunFull: func(_ context.Context, agentID, sessionKey, task, model string, _ []string) (*global.SyncResult, error) {
 			mu.Lock()
 			defer mu.Unlock()
 			callCount++
 			gotAgent, gotKey, gotTask, gotModel = agentID, sessionKey, task, model
-			return "chapter drafted", 3, nil
+			return &global.SyncResult{Content: "chapter drafted", Iterations: 3}, nil
 		},
 	})
 
@@ -127,11 +128,11 @@ func TestRun_PassesMediaToRunFull(t *testing.T) {
 		Workspace:     t.TempDir(),
 		Live:          NewLiveSet(),
 		CallerAgentID: "penny",
-		RunFull: func(_ context.Context, _, _, _, _ string, media []string) (string, int, error) {
+		RunFull: func(_ context.Context, _, _, _, _ string, media []string) (*global.SyncResult, error) {
 			mu.Lock()
 			defer mu.Unlock()
 			gotMedia = media
-			return "looked at it", 1, nil
+			return &global.SyncResult{Content: "looked at it", Iterations: 1}, nil
 		},
 	})
 

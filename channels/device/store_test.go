@@ -154,12 +154,12 @@ func TestOpenStoreUnderContention(t *testing.T) {
 	defer func() { _ = raw.Close() }()
 	ctx := context.Background()
 	for _, p := range []string{"PRAGMA journal_mode=DELETE", "PRAGMA busy_timeout=5000"} {
-		if _, err := raw.ExecContext(ctx, p); err != nil {
-			t.Fatalf("%s: %v", p, err)
+		if _, pragmaErr := raw.ExecContext(ctx, p); pragmaErr != nil {
+			t.Fatalf("%s: %v", p, pragmaErr)
 		}
 	}
-	if _, err := raw.ExecContext(ctx, `CREATE TABLE seed (id INTEGER PRIMARY KEY)`); err != nil {
-		t.Fatalf("seed table: %v", err)
+	if _, seedErr := raw.ExecContext(ctx, `CREATE TABLE seed (id INTEGER PRIMARY KEY)`); seedErr != nil {
+		t.Fatalf("seed table: %v", seedErr)
 	}
 
 	// Hold a write lock, so the racing open must wait for it.
@@ -167,8 +167,8 @@ func TestOpenStoreUnderContention(t *testing.T) {
 	if err != nil {
 		t.Fatalf("begin: %v", err)
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO seed (id) VALUES (1)`); err != nil {
-		t.Fatalf("write inside tx: %v", err)
+	if _, insErr := tx.ExecContext(ctx, `INSERT INTO seed (id) VALUES (1)`); insErr != nil {
+		t.Fatalf("write inside tx: %v", insErr)
 	}
 
 	released := make(chan struct{})

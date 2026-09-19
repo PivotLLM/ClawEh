@@ -122,8 +122,8 @@ func tailLines(path string, n int) ([]string, error) {
 	if start < 0 {
 		start = 0
 	}
-	if _, err := f.Seek(start, io.SeekStart); err != nil {
-		return nil, err
+	if _, seekErr := f.Seek(start, io.SeekStart); seekErr != nil {
+		return nil, seekErr
 	}
 	data, err := io.ReadAll(f)
 	if err != nil {

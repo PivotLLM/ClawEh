@@ -55,7 +55,7 @@ func TestCount_MatchesWc(t *testing.T) {
 		{"leading and trailing blanks", "\n\n  word  \n\n"},
 		{"single word no newline", "word"},
 		{"multibyte text", "héllo wörld\nnaïve café\n"},
-		{"cjk", "世界 こんにちは\n"},
+		{"cjk", "世界 こんにちは\n"}, //nolint:gosmopolitan // CJK test data
 		{"tabs as separators", "a\tb\tc\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

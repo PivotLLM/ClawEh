@@ -65,8 +65,8 @@ func copyFile(src, dst string) error {
 	}
 	defer in.Close()
 
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		return err
+	if mkErr := os.MkdirAll(filepath.Dir(dst), 0o755); mkErr != nil {
+		return mkErr
 	}
 	out, err := os.Create(dst)
 	if err != nil {

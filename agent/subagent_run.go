@@ -12,6 +12,7 @@ import (
 	cogmemstore "github.com/PivotLLM/cogmem/store"
 
 	"github.com/PivotLLM/ClawEh/cogmemhost"
+	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/routing"
 	toolsagents "github.com/PivotLLM/ClawEh/tools/agents"
@@ -33,23 +34,23 @@ import (
 //
 // Output is captured (SendResponse:false) and returned to the caller (the
 // SubagentManager stores it to a result file / fires the callback).
-func (al *AgentLoop) runSubagentTask(ctx context.Context, agentID, sessionKey, task, model string, media []string) (string, int, error) {
+func (al *AgentLoop) runSubagentTask(ctx context.Context, agentID, sessionKey, task, model string, media []string) (*global.SyncResult, error) {
 	agent, ok := al.GetRegistry().GetAgent(agentID)
 	if !ok || agent == nil {
-		return "", 0, fmt.Errorf("subagent: agent %q not found", agentID)
+		return nil, fmt.Errorf("subagent: agent %q not found", agentID)
 	}
 	if !routing.IsSubagentSessionKey(sessionKey) {
-		return "", 0, fmt.Errorf("subagent: %q is not a sub-agent session key", sessionKey)
+		return nil, fmt.Errorf("subagent: %q is not a sub-agent session key", sessionKey)
 	}
 
 	// Validate attached media refs up front so a typo'd or expired ref fails the
 	// spawn loudly instead of the worker silently seeing nothing.
 	for _, ref := range media {
 		if al.mediaStore == nil {
-			return "", 0, fmt.Errorf("subagent: media refs passed but no media store is configured")
+			return nil, fmt.Errorf("subagent: media refs passed but no media store is configured")
 		}
 		if _, err := al.mediaStore.Resolve(ref); err != nil {
-			return "", 0, fmt.Errorf("subagent: media ref %s not found (expired or invalid) — it cannot be attached", ref)
+			return nil, fmt.Errorf("subagent: media ref %s not found (expired or invalid) — it cannot be attached", ref)
 		}
 	}
 
@@ -74,14 +75,17 @@ func (al *AgentLoop) runSubagentTask(ctx context.Context, agentID, sessionKey, t
 	defer al.cleanupSubagentSession(agent, sessionKey)
 
 	// Optional model override (already validated against the agent's candidates by
-	// the Spawner): point this session at the chosen model.
+	// the Spawner): point this session at the chosen model. A model that does not
+	// match is an error rather than a silent run on the default model.
 	if strings.TrimSpace(model) != "" {
-		if matched, found := toolsagents.MatchCandidate(agent.Candidates, model); found {
-			for i, c := range agent.Candidates {
-				if c.Alias == matched.Alias && c.Model == matched.Model {
-					_ = al.setActiveModelIndex(agent, sessionKey, i)
-					break
-				}
+		matched, found := toolsagents.MatchCandidate(agent.Candidates, model)
+		if !found {
+			return nil, fmt.Errorf("%w: model %q is not configured for agent %q", global.ErrModelNotAvailable, model, agentID)
+		}
+		for i, c := range agent.Candidates {
+			if c.Alias == matched.Alias && c.Model == matched.Model {
+				_ = al.setActiveModelIndex(agent, sessionKey, i)
+				break
 			}
 		}
 	}
@@ -96,7 +100,7 @@ func (al *AgentLoop) runSubagentTask(ctx context.Context, agentID, sessionKey, t
 		"task_len": len(task), "media": len(media), "depth": toolsagents.SpawnDepth(ctx),
 	})
 
-	var iterations int
+	res := &global.SyncResult{}
 	content, err := al.runAgentLoop(ctx, agent, processOptions{
 		SessionKey:    sessionKey,
 		Channel:       "subagent",
@@ -104,18 +108,21 @@ func (al *AgentLoop) runSubagentTask(ctx context.Context, agentID, sessionKey, t
 		UserMessage:   task,
 		Media:         media,
 		SendResponse:  false,
-		IterationsOut: &iterations,
+		IterationsOut: &res.Iterations,
+		UsageOut:      &res.TurnUsage,
 	})
 	if err != nil {
 		logger.WarnCF("agent", "subagent.run.end", map[string]any{
-			"agent": agentID, "session_key": sessionKey, "iterations": iterations, "error": err.Error(),
+			"agent": agentID, "session_key": sessionKey, "iterations": res.Iterations, "error": err.Error(),
 		})
-	} else {
-		logger.InfoCF("agent", "subagent.run.end", map[string]any{
-			"agent": agentID, "session_key": sessionKey, "iterations": iterations, "content_len": len(content),
-		})
+		return nil, err
 	}
-	return content, iterations, err
+	res.Content = content
+	logger.InfoCF("agent", "subagent.run.end", map[string]any{
+		"agent": agentID, "session_key": sessionKey, "iterations": res.Iterations, "content_len": len(content),
+		"model": res.Model, "input_tokens": res.InputTokens, "output_tokens": res.OutputTokens,
+	})
+	return res, nil
 }
 
 // cleanupSubagentSession evicts the sub-agent session's context manager (closing

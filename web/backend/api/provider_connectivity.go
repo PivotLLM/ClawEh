@@ -91,8 +91,8 @@ func probeAnthropicAuth(base, key string) providerTestResponse {
 	if err != nil {
 		return providerTestResponse{Message: "The base URL is not a valid URL."}
 	}
-	req.Header.Set("x-api-key", key)
-	req.Header.Set("anthropic-version", "2023-06-01")
+	req.Header.Set("X-Api-Key", key)
+	req.Header.Set("Anthropic-Version", "2023-06-01")
 	return doProbe(req, base)
 }
 

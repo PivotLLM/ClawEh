@@ -294,12 +294,14 @@ type AgentConfig struct {
 	// itself. Typically exactly one orchestrator agent has this.
 	GlobalCron bool `json:"global_cron,omitempty"`
 
-	// Maestro is an all-or-nothing toggle for the Maestro task-orchestration tool
-	// suite (projects, playbooks, tasks). Off by default. When on, the agent gets
-	// the entire Maestro toolset, with per-agent data under <workspace>/maestro,
-	// and that directory is auto-mounted read/write for native file_* tools as
-	// maestro/ (unless the agent already defines a mount named "maestro").
-	Maestro bool `json:"maestro,omitempty"`
+	// Maestro configures the Maestro task-orchestration tool suite (projects,
+	// playbooks, tasks) for this agent. Absent or disabled means no Maestro
+	// tools. When enabled, the agent gets the entire Maestro toolset, with
+	// per-agent data under <workspace>/maestro, and that directory is
+	// auto-mounted read/write for native file_* tools as maestro/ (unless the
+	// agent already defines a mount named "maestro"). The runner settings inside
+	// the block are passed to Maestro; unset ones take Maestro's defaults.
+	Maestro *MaestroConfig `json:"maestro,omitempty"`
 
 	// Fusion is an all-or-nothing toggle for the MCPFusion config-driven REST-API
 	// tool suite. Off by default. When on, the agent gets every tool defined by the
@@ -426,6 +428,76 @@ func MaestroDataDir(workspace string) string {
 	return filepath.Join(workspace, MaestroMountName)
 }
 
+// MaestroConfig is the per-agent Maestro block. It replaced the earlier boolean
+// `"maestro": true`; that form is not honoured (see UnmarshalJSON).
+type MaestroConfig struct {
+	// Enabled turns the Maestro tool suite on for the agent.
+	Enabled bool `json:"enabled"`
+	// MaxConcurrent caps how many tasks a parallel task-set run executes at
+	// once. 0 = Maestro's default (5).
+	MaxConcurrent int `json:"max_concurrent,omitempty"`
+	// RateLimitRequests and RateLimitPeriod bound task dispatches to at most
+	// RateLimitRequests per RateLimitPeriod seconds. 0 = Maestro's defaults
+	// (10 per 60 s).
+	RateLimitRequests int `json:"rate_limit_requests,omitempty"`
+	RateLimitPeriod   int `json:"rate_limit_period,omitempty"`
+	// AllowParallel controls whether a parallel run may be honoured when the
+	// LLM asks for one. Parallel execution is never the default: it must be
+	// requested per run. nil or true allows it; false forces sequential runs.
+	AllowParallel *bool `json:"allow_parallel,omitempty"`
+
+	// legacyBool records that the config carried the retired boolean form.
+	legacyBool bool
+}
+
+// UnmarshalJSON accepts the object form. The retired boolean form is parsed
+// without error but not honoured: Maestro stays disabled for that agent and
+// LoadConfig logs a warning, so a stale config does not stop the gateway.
+func (m *MaestroConfig) UnmarshalJSON(data []byte) error {
+	trimmed := strings.TrimSpace(string(data))
+	if trimmed == "" || trimmed == "null" {
+		*m = MaestroConfig{}
+		return nil
+	}
+	if trimmed[0] != '{' {
+		*m = MaestroConfig{legacyBool: true}
+		return nil
+	}
+	type plain MaestroConfig
+	var p plain
+	if err := json.Unmarshal(data, &p); err != nil {
+		return err
+	}
+	*m = MaestroConfig(p)
+	return nil
+}
+
+// LegacyBoolean reports whether the config carried the retired boolean form.
+func (m *MaestroConfig) LegacyBoolean() bool { return m != nil && m.legacyBool }
+
+// ParallelAllowed reports whether a requested parallel run may be honoured.
+func (m *MaestroConfig) ParallelAllowed() bool {
+	return m == nil || m.AllowParallel == nil || *m.AllowParallel
+}
+
+// MaestroEnabled reports whether the Maestro suite is on for this agent.
+func (a *AgentConfig) MaestroEnabled() bool {
+	return a != nil && a.Maestro != nil && a.Maestro.Enabled
+}
+
+// warnLegacyMaestroBool logs one warning per agent whose config still uses the
+// retired `"maestro": true|false` form. Such agents run without Maestro until
+// the block is set (for example from the WebUI).
+func warnLegacyMaestroBool(cfg *Config) {
+	for i := range cfg.Agents.List {
+		a := &cfg.Agents.List[i]
+		if a.Maestro.LegacyBoolean() {
+			logger.WarnCF("config", "agent uses the retired boolean \"maestro\" setting; Maestro is disabled for it until re-enabled as {\"enabled\": true}",
+				map[string]any{"agent": a.ID})
+		}
+	}
+}
+
 // EffectiveMounts returns the agent's configured mounts, plus an auto-injected
 // read/write mount of <workspace>/maestro when Maestro is enabled and the agent
 // has not already defined a mount named "maestro". The returned Path for the
@@ -436,7 +508,7 @@ func (a *AgentConfig) EffectiveMounts(workspace string) []MountConfig {
 		return nil
 	}
 	out := append([]MountConfig(nil), a.Mounts...)
-	if !a.Maestro || strings.TrimSpace(workspace) == "" {
+	if !a.MaestroEnabled() || strings.TrimSpace(workspace) == "" {
 		return out
 	}
 	for _, m := range out {
@@ -838,10 +910,33 @@ func (c *Config) AgentHasMaestro(agentID string) bool {
 	id := strings.TrimSpace(agentID)
 	for i := range c.Agents.List {
 		if strings.EqualFold(c.Agents.List[i].ID, id) {
-			return c.Agents.List[i].Maestro
+			return c.Agents.List[i].MaestroEnabled()
 		}
 	}
 	return false
+}
+
+// AgentMaestro returns the agent's Maestro block, or nil when the agent is
+// unknown or has no block.
+func (c *Config) AgentMaestro(agentID string) *MaestroConfig {
+	id := strings.TrimSpace(agentID)
+	for i := range c.Agents.List {
+		if strings.EqualFold(c.Agents.List[i].ID, id) {
+			return c.Agents.List[i].Maestro
+		}
+	}
+	return nil
+}
+
+// AgentByID returns the agent's config, or nil when unknown.
+func (c *Config) AgentByID(agentID string) *AgentConfig {
+	id := strings.TrimSpace(agentID)
+	for i := range c.Agents.List {
+		if strings.EqualFold(c.Agents.List[i].ID, id) {
+			return &c.Agents.List[i]
+		}
+	}
+	return nil
 }
 
 // AgentHasFusion reports whether the agent has the Fusion tool suite enabled.
@@ -884,7 +979,7 @@ func (c *Config) AgentSuiteEnabled(agentID, suite string) bool {
 			a := &c.Agents.List[i]
 			switch suite {
 			case "maestro":
-				return a.Maestro
+				return a.MaestroEnabled()
 			case "fusion":
 				return a.Fusion
 			case "cogmem":
@@ -1166,9 +1261,10 @@ type CooldownConfig struct {
 const (
 	DefaultCooldownBillingAuthMinutes = 30
 	DefaultCooldownRateLimitMinutes   = 10
-	// 400 defaults to never-cool: a bad-request is a request-shape rejection, so
-	// the fallback should try the next candidate (including a sibling config of the
-	// same provider+model, e.g. thinking-off) instead of parking the model.
+	// DefaultCooldownBadRequestMinutes is 0 (never cool): a bad request is a
+	// request-shape rejection, so the fallback should try the next candidate
+	// (including a sibling config of the same provider+model, e.g. thinking-off)
+	// instead of parking the model.
 	DefaultCooldownBadRequestMinutes  = 0
 	DefaultCooldownClientErrorMinutes = 10
 	DefaultCooldownServerErrorMinutes = 10
@@ -1816,7 +1912,7 @@ func (g GatewayConfig) EffectiveExternalURL() string {
 		}
 	}
 
-	return fmt.Sprintf("http://%s:%d", host, g.Port)
+	return "http://" + net.JoinHostPort(host, strconv.Itoa(g.Port))
 }
 
 // NetworkAccess reports whether the gateway binds to all interfaces (0.0.0.0),
@@ -2173,6 +2269,7 @@ func LoadConfig(path string) (*Config, error) {
 	}
 
 	warnLegacyCompressModel(data)
+	warnLegacyMaestroBool(cfg)
 
 	if err := env.Parse(cfg); err != nil {
 		return nil, err

@@ -23,7 +23,7 @@ func TestCopyFileTool_Metadata(t *testing.T) {
 		t.Fatal("Parameters().properties should be a map")
 	}
 	for _, key := range []string{"source_path", "destination_path", "overwrite", "display"} {
-		if _, ok := props[key]; !ok {
+		if _, has := props[key]; !has {
 			t.Errorf("Parameters() missing %q", key)
 		}
 	}

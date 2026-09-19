@@ -11,7 +11,7 @@ func TestDisplayWidth(t *testing.T) {
 		{"", 0},
 		{"☀️", 2},     // U+2600 + U+FE0F (2 runes) → width 2
 		{"🌙", 2},      // U+1F319 (1 rune) → width 2
-		{"世界", 4},     // CJK wide
+		{"世界", 4},     //nolint:gosmopolitan // CJK wide test data
 		{"\ufe0f", 0}, // VARIATION SELECTOR-16
 		{"\u200d", 0}, // ZERO WIDTH JOINER
 		// The reported bug: mixed-emoji cells must measure equal so columns align.

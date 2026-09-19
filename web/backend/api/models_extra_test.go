@@ -199,8 +199,8 @@ func TestHandleUpdateModel_DropParamsRoundTrip(t *testing.T) {
 	var listResp struct {
 		Models []map[string]any `json:"models"`
 	}
-	if err := json.Unmarshal(recGet.Body.Bytes(), &listResp); err != nil {
-		t.Fatalf("Unmarshal list: %v", err)
+	if decErr := json.Unmarshal(recGet.Body.Bytes(), &listResp); decErr != nil {
+		t.Fatalf("Unmarshal list: %v", decErr)
 	}
 	dp, ok := listResp.Models[0]["drop_params"].([]any)
 	if !ok || len(dp) != 2 {
@@ -561,8 +561,8 @@ func TestHandleUpdateModel_VisionRoundTrip(t *testing.T) {
 	var listResp struct {
 		Models []map[string]any `json:"models"`
 	}
-	if err := json.Unmarshal(recGet.Body.Bytes(), &listResp); err != nil {
-		t.Fatalf("Unmarshal list: %v", err)
+	if decErr := json.Unmarshal(recGet.Body.Bytes(), &listResp); decErr != nil {
+		t.Fatalf("Unmarshal list: %v", decErr)
 	}
 	if listResp.Models[0]["vision"] != "user_message" {
 		t.Fatalf("GET vision = %v, want user_message", listResp.Models[0]["vision"])

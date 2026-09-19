@@ -5,6 +5,7 @@ package maestro
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/tools"
+	toolsagents "github.com/PivotLLM/ClawEh/tools/agents"
 )
 
 type fakeRunner struct {
@@ -20,15 +22,38 @@ type fakeRunner struct {
 	gotTask string
 }
 
-func (f *fakeRunner) RunSync(_ context.Context, task, _ string) (string, error) {
+func (f *fakeRunner) RunSync(_ context.Context, task, _ string) (*global.SyncResult, error) {
 	f.gotTask = task
-	return f.out, nil
+	return &global.SyncResult{Content: f.out}, nil
+}
+
+// TestProvider_NoSyncRunner_DisablesTools: without a sub-agent runner the suite
+// is withheld rather than registered against Maestro's empty LLM config.
+func TestProvider_NoSyncRunner_DisablesTools(t *testing.T) {
+	tmp := t.TempDir()
+	cfg := &config.Config{Agents: config.AgentsConfig{List: []config.AgentConfig{{ID: "alice", Maestro: &config.MaestroConfig{Enabled: true}}}}}
+	var typedNil *toolsagents.Spawner
+	for name, spawn := range map[string]any{"nil": nil, "not-a-runner": struct{}{}, "typed-nil": typedNil} {
+		defs := GlobalProvider.RegisterTools(global.Deps{
+			Cfg:     cfg,
+			AgentID: "alice",
+			Host:    tools.ToolDeps{Workspace: filepath.Join(tmp, name)},
+			Spawn:   spawn,
+		})
+		if defs != nil {
+			t.Errorf("Spawn=%s: got %d tools, want none (no SyncRunner)", name, len(defs))
+		}
+		// Refusing early means nothing was created for the agent.
+		if _, err := os.Stat(filepath.Join(tmp, name, "maestro")); !os.IsNotExist(err) {
+			t.Errorf("Spawn=%s: maestro dir was created for a refused registration", name)
+		}
+	}
 }
 
 func TestProvider_GatingAndDispatch(t *testing.T) {
 	tmp := t.TempDir()
 	cfg := &config.Config{Agents: config.AgentsConfig{List: []config.AgentConfig{
-		{ID: "alice", Maestro: true},
+		{ID: "alice", Maestro: &config.MaestroConfig{Enabled: true}},
 		{ID: "bob"}, // maestro off
 	}}}
 	fr := &fakeRunner{out: "the answer"}

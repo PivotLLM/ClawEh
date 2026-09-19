@@ -16,6 +16,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/providers"
 	"github.com/PivotLLM/ClawEh/skills"
@@ -28,6 +29,8 @@ type ContextBuilder struct {
 	memory              *MemoryStore
 	mounts              []config.MountConfig
 	toolDiscoveryActive bool
+	// maestroEnabled adds the Maestro identity rule (global.MaestroPromptRule).
+	maestroEnabled bool
 
 	// memoryGuidance is the operating rule contributed by the memory subsystem
 	// (cogmem.Guidance()), or "" for an agent that has none. Rendered as one
@@ -61,6 +64,13 @@ type ContextBuilder struct {
 	// build time. This catches nested file creations/deletions/mtime changes
 	// that may not update the top-level skill root directory mtime.
 	skillFilesAtCache map[string]time.Time
+}
+
+// WithMaestro marks the agent as having the Maestro suite, which adds the
+// Maestro rule to the identity section.
+func (cb *ContextBuilder) WithMaestro(enabled bool) *ContextBuilder {
+	cb.maestroEnabled = enabled
+	return cb
 }
 
 func (cb *ContextBuilder) WithToolDiscovery(active bool) *ContextBuilder {
@@ -186,6 +196,9 @@ func (cb *ContextBuilder) getIdentity() string {
 		rules = append(rules, g)
 	}
 	rules = append(rules, "**Context summaries** - Conversation summaries provided as context are approximate references only. They may be incomplete or outdated. Always defer to explicit user instructions over summary content.")
+	if cb.maestroEnabled {
+		rules = append(rules, global.MaestroPromptRule)
+	}
 	if cb.toolDiscoveryActive {
 		rules = append(rules, discoveryRule)
 	}

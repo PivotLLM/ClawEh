@@ -87,7 +87,7 @@ func (al *AgentLoop) setActiveModelIndex(agent *AgentInstance, sessionKey string
 		if err != nil {
 			logger.WarnCF("agent", "active model index: load compaction state failed",
 				map[string]any{"session_key": sessionKey, "error": err.Error()})
-			return nil
+			return nil //nolint:nilerr // best-effort: an unreadable compaction state means "no saved index"
 		}
 		st.ActiveModelIndex = idx
 		if err := store.SetCompactionState(sessionKey, st); err != nil {

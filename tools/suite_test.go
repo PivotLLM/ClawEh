@@ -29,12 +29,12 @@ func TestNamespacedProvider_SuiteGating(t *testing.T) {
 
 	// Suite off (maestro default off) → no tools, even though they're default-deny
 	// the gate is the flag, not ToolEnabled.
-	off := cfgWithAgent(config.AgentConfig{ID: "amber", Maestro: false})
+	off := cfgWithAgent(config.AgentConfig{ID: "amber", Maestro: &config.MaestroConfig{Enabled: false}})
 	if got := p.Build(ToolDeps{Cfg: off, AgentID: "amber"}); len(got) != 0 {
 		t.Errorf("disabled suite should yield no tools, got %d", len(got))
 	}
 	// Suite on → ALL tools (bypassing the per-tool default-deny filter).
-	on := cfgWithAgent(config.AgentConfig{ID: "amber", Maestro: true})
+	on := cfgWithAgent(config.AgentConfig{ID: "amber", Maestro: &config.MaestroConfig{Enabled: true}})
 	if got := p.Build(ToolDeps{Cfg: on, AgentID: "amber"}); len(got) != 2 {
 		t.Errorf("enabled suite should register all tools, got %d", len(got))
 	}

@@ -327,7 +327,7 @@ func TestRegister_PrespecifiedToken(t *testing.T) {
 	token2 := sessionTokenPrefix + strings.Repeat("b", 64)
 	s.Register(token2, "agent1", "sess1", "/tmp/archive")
 
-	if _, ok := s.Resolve(token); ok {
+	if _, still := s.Resolve(token); still {
 		t.Error("old token should not resolve after re-registration for same session key")
 	}
 
