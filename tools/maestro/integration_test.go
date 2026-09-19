@@ -17,6 +17,7 @@ import (
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/tools"
+	toolsagents "github.com/PivotLLM/ClawEh/tools/agents"
 )
 
 // scriptedRunner stands in for the sub-agent runner: a known model alias (or
@@ -26,12 +27,14 @@ type scriptedRunner struct {
 	mu      sync.Mutex
 	prompts []string
 	models  []string
+	depths  []int
 }
 
-func (r *scriptedRunner) RunSync(_ context.Context, task, model string) (*global.SyncResult, error) {
+func (r *scriptedRunner) RunSync(ctx context.Context, task, model string) (*global.SyncResult, error) {
 	r.mu.Lock()
 	r.prompts = append(r.prompts, task)
 	r.models = append(r.models, model)
+	r.depths = append(r.depths, toolsagents.SpawnDepth(ctx))
 	r.mu.Unlock()
 	if model != "" && !strings.EqualFold(model, "Pro") {
 		return nil, fmt.Errorf("%w: model %q is not available for this agent", global.ErrModelNotAvailable, model)
@@ -56,6 +59,12 @@ type maestroHarness struct {
 
 func newMaestroHarness(t *testing.T) *maestroHarness {
 	t.Helper()
+	return newMaestroHarnessWith(t, &config.MaestroConfig{Enabled: true})
+}
+
+// newMaestroHarnessWith is newMaestroHarness with a caller-chosen maestro block.
+func newMaestroHarnessWith(t *testing.T, mc *config.MaestroConfig) *maestroHarness {
+	t.Helper()
 	ws := t.TempDir()
 	mount := t.TempDir()
 	if err := os.WriteFile(filepath.Join(mount, "standard.md"), []byte("# Standard\nrule one"), 0o644); err != nil {
@@ -63,7 +72,7 @@ func newMaestroHarness(t *testing.T) *maestroHarness {
 	}
 	agent := config.AgentConfig{
 		ID:      "alice",
-		Maestro: &config.MaestroConfig{Enabled: true},
+		Maestro: mc,
 		Mounts:  []config.MountConfig{{Name: "standards", Path: mount}},
 	}
 	cfg := &config.Config{Agents: config.AgentsConfig{List: []config.AgentConfig{agent}}}
@@ -118,6 +127,20 @@ func (h *maestroHarness) call(name string, args map[string]any, wantErr bool) st
 	}
 	if res.IsError != wantErr {
 		h.t.Fatalf("%s: IsError=%v (want %v): %s", name, res.IsError, wantErr, res.ForLLM)
+	}
+	return res.ForLLM
+}
+
+// callCtx is call with a caller-supplied context (e.g. carrying sub-agent depth).
+func (h *maestroHarness) callCtx(ctx context.Context, name string, args map[string]any) string {
+	h.t.Helper()
+	tl, ok := h.tools[name]
+	if !ok {
+		h.t.Fatalf("tool %s not built", name)
+	}
+	res := tl.Execute(ctx, args)
+	if res == nil || res.IsError {
+		h.t.Fatalf("%s: %+v", name, res)
 	}
 	return res.ForLLM
 }

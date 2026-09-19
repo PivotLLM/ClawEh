@@ -131,3 +131,26 @@ func TestLoadConfig_LegacyMaestroBoolean_WarnsAndStarts(t *testing.T) {
 		t.Errorf("warning not logged for alice only:\n%s", out)
 	}
 }
+
+// TestMaestroConfig_WrongTypesAreErrors: numeric and boolean fields do not
+// accept strings; negative numbers parse (Maestro applies its defaults).
+func TestMaestroConfig_WrongTypesAreErrors(t *testing.T) {
+	for _, raw := range []string{
+		`{"enabled":true,"max_concurrent":"5"}`,
+		`{"enabled":true,"allow_parallel":"false"}`,
+		`{"enabled":"true"}`,
+		`{"enabled":true,"rate_limit_period":1.5}`,
+	} {
+		var a AgentConfig
+		if err := json.Unmarshal([]byte(`{"id":"x","maestro":`+raw+`}`), &a); err == nil {
+			t.Errorf("maestro=%s must be a parse error", raw)
+		}
+	}
+	var a AgentConfig
+	if err := json.Unmarshal([]byte(`{"id":"x","maestro":{"enabled":true,"max_concurrent":-1,"rate_limit_requests":-5}}`), &a); err != nil {
+		t.Fatalf("negative numbers must parse: %v", err)
+	}
+	if !a.MaestroEnabled() || a.Maestro.MaxConcurrent != -1 {
+		t.Errorf("negative values kept for Maestro to default: %+v", a.Maestro)
+	}
+}

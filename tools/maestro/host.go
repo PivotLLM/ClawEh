@@ -45,6 +45,11 @@ func referenceDirsFromMounts(agentCfg *config.AgentConfig, workspace string) []m
 		if strings.EqualFold(name, config.MaestroMountName) {
 			continue
 		}
+		// The files provider skips an invalid mount with a warning; do the same
+		// here so one bad entry cannot fail Maestro's Prepare for the agent.
+		if err := config.ValidateMountName(name); err != nil {
+			continue
+		}
 		abs, err := filepath.Abs(strings.TrimSpace(m.Path))
 		if err != nil {
 			continue
