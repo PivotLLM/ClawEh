@@ -73,13 +73,15 @@ EXPECTED_NAMESPACES="file_ web_ session_ msg_ shell_ skill_ cron_ cogmem_ common
 SCRATCH_REL="files/claw_mcp_test_$$.txt"
 
 # Colors
+# ANSI-C quoting ($'..') puts the escape byte in the variable so plain echo
+# renders it in any bash; a '\033' string would be printed literally.
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
-    RED='\033[0;31m'
-    GREEN='\033[0;32m'
-    YELLOW='\033[1;33m'
-    BLUE='\033[0;34m'
-    BOLD='\033[1m'
-    NC='\033[0m'
+    RED=$'\033[0;31m'
+    GREEN=$'\033[0;32m'
+    YELLOW=$'\033[1;33m'
+    BLUE=$'\033[0;34m'
+    BOLD=$'\033[1m'
+    NC=$'\033[0m'
 else
     RED='' GREEN='' YELLOW='' BLUE='' BOLD='' NC=''
 fi

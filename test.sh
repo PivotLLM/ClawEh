@@ -47,7 +47,7 @@ TIMEOUT="300s"
 
 FAST_MODE=false
 COVERAGE_ONLY=false
-NO_COLOR=false
+COLOR_OFF=false
 PRESERVE_ARTIFACTS=false
 SKIP_INTEGRATION=false
 
@@ -57,7 +57,7 @@ while getopts "fcsinxh" opt; do
         c) COVERAGE_ONLY=true ;;
         s) SKIP_INTEGRATION=true ;;
         i) ;;  # kept for backward compat — integration now runs by default
-        n) NO_COLOR=true ;;
+        n) COLOR_OFF=true ;;
         x) PRESERVE_ARTIFACTS=true ;;
         h)
             echo "Usage: $0 [-f] [-c] [-s] [-n] [-x] [-h]"
@@ -80,18 +80,22 @@ done
 # Colors
 #===============================================================================
 
-# Disable colours if -n flag given, NO_COLOR env var is set, or stdout is not a terminal
-if $NO_COLOR || [ "${NO_COLOR+x}" = "x" ] || [ ! -t 1 ]; then
+# Disable colours if -n flag given, NO_COLOR env var is set, or stdout is not a
+# terminal. The escape byte is put in the variable with ANSI-C quoting ($'..')
+# so plain echo prints it correctly in any bash (3.2 on macOS included); a
+# '\033' string would be printed literally.
+if $COLOR_OFF || [ -n "${NO_COLOR+x}" ] || [ ! -t 1 ]; then
     RED='' GREEN='' YELLOW='' BLUE='' CYAN='' BOLD='' DIM='' NC=''
+    export NO_COLOR=1   # child scripts (tests/test_mcpserver.sh) follow suit
 else
-    RED='\033[0;31m'
-    GREEN='\033[0;32m'
-    YELLOW='\033[1;33m'
-    BLUE='\033[0;34m'
-    CYAN='\033[0;36m'
-    BOLD='\033[1m'
-    DIM='\033[2m'
-    NC='\033[0m'
+    RED=$'\033[0;31m'
+    GREEN=$'\033[0;32m'
+    YELLOW=$'\033[1;33m'
+    BLUE=$'\033[0;34m'
+    CYAN=$'\033[0;36m'
+    BOLD=$'\033[1m'
+    DIM=$'\033[2m'
+    NC=$'\033[0m'
 fi
 
 #===============================================================================
