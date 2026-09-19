@@ -17,6 +17,11 @@
 # found, the integration section is skipped with a warning (not a failure).
 # Set PROBE_PATH to override the binary location.
 #
+# When Go tests fail, the failing tests' output is re-printed in a FAILURE
+# DETAILS section after the package results, and written to .test-failures.log
+# in the repo root for review after a long run. The final summary lists each
+# failed test with a ready-to-paste rerun command.
+#
 # Exit codes:
 #   0  All tests passed and coverage gate met
 #   1  One or more tests failed or coverage below minimum
@@ -33,6 +38,7 @@ cd "$SCRIPT_DIR"
 
 COVERAGE_MIN=50          # Minimum overall coverage % required to pass
 COVERAGE_FILE="coverage.out"
+FAILURE_LOG=".test-failures.log"   # Go test failure details, rewritten on every run
 TIMEOUT="300s"
 
 #===============================================================================
@@ -223,6 +229,70 @@ if [ ${#FAILED_PKGS[@]} -gt 0 ]; then
 fi
 
 echo "${GREEN}${BOLD}Passed: ${PASS_COUNT}${NC}  ${RED}${BOLD}Failed: ${FAIL_COUNT}${NC}  ${DIM}No tests: ${SKIP_COUNT}${NC}"
+
+#===============================================================================
+# Failure Details
+#
+# go test (without -v) prints output only for failing tests and buffers it per
+# package, so each failed package's block in $TMPOUT is exactly its failures:
+# "--- FAIL:" lines, t.Error messages with file:line, panics, data races and
+# compiler errors. Re-print those blocks here, save them to $FAILURE_LOG, and
+# build an index of failed tests for the final summary.
+#===============================================================================
+
+rm -f "$FAILURE_LOG"
+declare -a FAILED_TESTS=()   # "pkg<TAB>TestName<TAB>file:line" per top-level failed test
+MODULE_PATH=$(go list -m 2>/dev/null || echo "")
+
+if [ ${#FAILED_PKGS[@]} -gt 0 ]; then
+    # Extract every failed package's output block, in order, into the log.
+    awk '
+        /^(ok|FAIL|\?)[[:space:]]/ {
+            if ($1 == "FAIL") { printf "%s%s\n", buf, $0 }
+            buf = ""; next
+        }
+        /^FAIL$/ { next }
+        { buf = buf $0 "\n" }
+    ' "$TMPOUT" > "$FAILURE_LOG"
+
+    # Index: top-level "--- FAIL: Name" lines with the first file:line that
+    # follows (subtest failures report under their parent's name). The
+    # package's FAIL line comes after its block, so entries are held until it
+    # is seen.
+    while IFS=$'\t' read -r pkg name loc; do
+        FAILED_TESTS+=("${pkg}"$'\t'"${name}"$'\t'"${loc}")
+    done < <(awk '
+        BEGIN { n = 0 }
+        function flush() { if (name != "") { names[n] = name; locs[n] = loc; n++ }; name = ""; loc = "" }
+        /^FAIL[[:space:]]/ {
+            flush()
+            if ($0 ~ /\[build failed\]/) { names[n] = "(build failed)"; locs[n] = ""; n++ }
+            if (n == 0) { names[n] = "(see details)"; locs[n] = ""; n++ }
+            for (i = 0; i < n; i++) printf "%s\t%s\t%s\n", $2, names[i], locs[i]
+            n = 0; next
+        }
+        /^--- FAIL: / { flush(); name = $3; next }
+        /^panic: / && name == "" { name = "(panic)"; next }
+        loc == "" && name != "" && match($0, /[A-Za-z0-9_.-]+\.go:[0-9]+:/) { loc = substr($0, RSTART, RLENGTH - 1) }
+    ' "$FAILURE_LOG")
+
+    echo ""
+    echo "${RED}${BOLD}============================================${NC}"
+    echo "${RED}${BOLD}   FAILURE DETAILS${NC}"
+    echo "${RED}${BOLD}============================================${NC}"
+    echo ""
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^FAIL[[:space:]] ]]; then
+            echo "${RED}${BOLD}${line}${NC}"
+            echo ""
+        elif [[ "$line" =~ ^[[:space:]]*---\ FAIL: ]]; then
+            echo "${RED}${line}${NC}"
+        else
+            echo "$line"
+        fi
+    done < "$FAILURE_LOG"
+    echo "${DIM}(saved to ${FAILURE_LOG})${NC}"
+fi
 
 #===============================================================================
 # Coverage Summary
@@ -779,15 +849,35 @@ echo "${BOLD}============================================${NC}"
 echo ""
 
 TOTAL_PKGS=$((PASS_COUNT + FAIL_COUNT))
-echo "Total Tests: ${BOLD}${TOTAL_PKGS}${NC}"
+echo "Go packages: ${BOLD}${TOTAL_PKGS}${NC}"
 echo "Passed:      ${GREEN}${BOLD}${PASS_COUNT}${NC}"
 echo "Failed:      ${RED}${BOLD}${FAIL_COUNT}${NC}"
-echo "Skipped:     ${DIM}${SKIP_COUNT}${NC}"
+echo "No tests:    ${DIM}${SKIP_COUNT}${NC}"
 
 OVERALL_PASS=true
 
 if [ $FAIL_COUNT -gt 0 ]; then
     OVERALL_PASS=false
+    echo ""
+    echo "${RED}${BOLD}Failed Go tests:${NC}"
+    RERUN_FLAGS="-count=1"
+    if $RUN_RACE; then RERUN_FLAGS="-race ${RERUN_FLAGS}"; fi
+    for entry in "${FAILED_TESTS[@]}"; do
+        IFS=$'\t' read -r pkg name loc <<< "$entry"
+        dir="$pkg"
+        if [ -n "$MODULE_PATH" ]; then
+            dir=".${pkg#"$MODULE_PATH"}"   # module root -> ".", subpackages -> "./x/y"
+        fi
+        echo "  ${RED}✗${NC} ${pkg}  ${BOLD}${name}${NC}  ${loc}"
+        case "$name" in
+            "(build failed)"|"(panic)")
+                echo "      ${DIM}go test ${RERUN_FLAGS} ${dir}${NC}" ;;
+            *)
+                echo "      ${DIM}go test ${RERUN_FLAGS} -run '^${name%%/*}\$' ${dir}${NC}" ;;
+        esac
+    done
+    echo ""
+    echo "Details:     see FAILURE DETAILS above, or ${BOLD}${FAILURE_LOG}${NC}"
 fi
 
 if $RUN_COVERAGE && [ -f "$COVERAGE_FILE" ]; then

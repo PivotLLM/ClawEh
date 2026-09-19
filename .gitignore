@@ -70,3 +70,4 @@ web/backend/dist/*
 
 # Scratch audit output (pnpm audit > audit.txt); not source.
 audit.txt
+.test-failures.log
