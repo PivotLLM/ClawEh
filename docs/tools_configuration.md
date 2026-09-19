@@ -141,7 +141,7 @@ configured server has `enabled: true`. There is no separate global on/off flag.
 | `ttl_max`            | int  | 50      | Longest a revealed tool stays visible without being used, in turns (each use resets it). Idle beyond this and it is hidden again. Legacy key `ttl` is still accepted and normalized to `ttl_max` |
 | `visible_budget`     | int  | 100     | Max revealed tools visible at once. Under the cap every tool lives to `ttl_max`; a new reveal over it hides the lowest-remaining-TTL tools back to the cap |
 | `max_search_results` | int  | 5       | Maximum number of tools returned per `search_tools` query                                                                         |
-| `always_shown_namespaces` | []string | `[]` | Pins discovery-eligible namespaces so they stay in the model's tool list even when discovery is on. Matched by namespace: `"file"`, `"maestro"`, `"fusion"`, an upstream MCP `"<server>"`, or `"*"`. Native tools and cogmem are always shown by rule and need not be listed. Only consulted when `enabled` is true |
+| `always_shown_namespaces` | []string | `[]` | Pins discovery-eligible tools so they stay in the model's tool list even when discovery is on. Entries are name prefixes: a namespace (`"file"`, `"maestro"`, `"fusion"`, an upstream MCP `"<server>"`), a full tool name to pin exactly that tool (`"maestro_start_here"`), or `"*"`. Native tools and cogmem are always shown by rule and need not be listed. Agents with Maestro enabled get `maestro_start_here` pinned automatically. Only consulted when `enabled` is true. The MCP host never applies discovery and always serves the full list |
 
 > **Note:** Discovery hides only *discovery-eligible* tools — the fusion and maestro suites
 > and all upstream MCP tools. Native tools and the cogmem suite stay always-on. The MCP host
@@ -353,6 +353,63 @@ In this example, Alice can use any globally-enabled tool, while Bob is restricte
 > **Note:** This applies only to agents defined in `agents.list`. When no agents are configured, a single default agent is created implicitly, and it also receives no tools unless explicitly configured.
 
 ---
+
+## Maestro Tool Suite
+
+Maestro is the embedded task-orchestration suite (projects, playbooks, task
+sets, tasks, reports). It is enabled per agent with the `maestro` block; there
+is no global switch and no per-tool allowlist for it.
+
+```json
+"agents": {
+  "list": [
+    {
+      "id": "auditor",
+      "maestro": {
+        "enabled": true,
+        "max_concurrent": 5,
+        "rate_limit_requests": 10,
+        "rate_limit_period": 60,
+        "allow_parallel": true
+      }
+    }
+  ]
+}
+```
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `false` | Gives the agent the whole Maestro toolset. Data lives under `<workspace>/maestro`, auto-mounted as `maestro/` for the native file tools |
+| `max_concurrent` | int | `5` | Tasks executed at once in a parallel task-set run |
+| `rate_limit_requests` / `rate_limit_period` | int | `10` / `60` | At most this many task dispatches per period (seconds) |
+| `allow_parallel` | bool | `true` | Whether a parallel run may be honoured when the LLM asks for one. Runs are sequential unless requested; `false` refuses requests and runs sequentially |
+
+The retired boolean form `"maestro": true` is not honoured: the gateway logs a
+warning for the agent and runs it without Maestro until the block is set. The
+WebUI agent page edits the block.
+
+How the suite behaves inside ClawEh:
+
+- **Workers are sub-agents.** Every Maestro worker, QA and revision prompt
+  runs as a sub-agent of the agent, on its default model, with its full
+  toolset, bounded by `turn_timeout` and `max_subagent_depth`. A task's
+  `llm_model_id` may name one of the agent's model aliases; an unknown alias
+  fails the task without retry.
+- **Mounts are reference material.** Every configured mount is visible in
+  Maestro's read-only reference domain (`maestro_file_*` with
+  `source=reference`, `instructions_file_source: "reference"`) under the
+  mount's name.
+- **`maestro_file_import` obeys the agent's read sandbox.** It imports only
+  what the agent's file tools can read: the workspace, the mounts and
+  `tools.allow_read_paths`. Add a mount to import from elsewhere.
+- **Logs.** Maestro's operational log goes to the central logger with
+  component `maestro` (visible in the WebUI log viewer). Per-project logs and
+  results stay in the project and are never pruned.
+- **Discovery.** With progressive discovery on, `maestro_start_here` stays
+  visible so the model can read the guide and search for the rest; pin
+  `"maestro"` in `always_shown_namespaces` to keep the whole suite visible.
+- **Testing.** `make test-maestro-host` runs Maestro's MCP regression suite
+  against a live gateway with a stub model (needs `probe`, `jq`, `zip`).
 
 ## Environment Variables
 

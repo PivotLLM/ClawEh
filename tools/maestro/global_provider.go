@@ -76,22 +76,31 @@ func (globalMaestroProvider) RegisterTools(deps global.Deps) []global.ToolDefini
 		return nil
 	}
 
+	agentCfg := cd.AgentCfg
+	if agentCfg == nil {
+		agentCfg = c.AgentByID(deps.AgentID)
+	}
+	refDirs := referenceDirsFromMounts(agentCfg, workspace)
 	mcfg := mconfig.New(
 		mconfig.WithBaseDir(base),
 		mconfig.WithEmbeddedFS(mmaestro.EmbeddedReference),
+		mconfig.WithRunner(runnerConfig(c.AgentMaestro(deps.AgentID))),
+		mconfig.WithReferenceDirs(refDirs),
 	)
 	if err := mcfg.Prepare(); err != nil {
 		logger.WarnCF("maestro", "failed to prepare maestro config; tools disabled",
 			map[string]any{"agent": deps.AgentID, "base": base, "error": err.Error()})
 		return nil
 	}
-
-	// Maestro logs to its own per-agent file (it always logged separately).
-	mlog, err := mlogging.New(filepath.Join(base, "maestro.log"))
-	if err != nil {
-		logger.WarnCF("maestro", "failed to open maestro log",
-			map[string]any{"agent": deps.AgentID, "error": err.Error()})
+	for _, rd := range refDirs {
+		logger.InfoCF("maestro", "mount available in maestro reference domain",
+			map[string]any{"agent": deps.AgentID, "mount": rd.Mount, "path": rd.Path})
 	}
+
+	// Maestro's operational log goes to the central logger (component "maestro",
+	// tagged with the agent) so it shows in the Web UI and rotates with claw.log.
+	// Maestro's per-project logs are audit records and stay in the project.
+	mlog := mlogging.NewWithWriter(&logWriter{agent: deps.AgentID})
 
 	// Each dispatched prompt is one sub-agent run, bounded like a user turn.
 	disp := &dispatcher{run: sr, timeout: c.Agents.Defaults.GetTurnTimeout()}
@@ -101,7 +110,12 @@ func (globalMaestroProvider) RegisterTools(deps global.Deps) []global.ToolDefini
 		Cfg:       mcfg,
 		AgentID:   deps.AgentID,
 		Workspace: workspace,
-		Host:      mmaestro.HostDeps{Logger: mlog, Dispatcher: disp},
+		Host: mmaestro.HostDeps{
+			Logger:     mlog,
+			Dispatcher: disp,
+			// file_import may only read what the agent's own file tools can.
+			ImportAllowed: importAllowed(c, agentCfg, workspace),
+		},
 	})
 
 	// Maestro is available to sub-agents too (a worker may run its own taskset);

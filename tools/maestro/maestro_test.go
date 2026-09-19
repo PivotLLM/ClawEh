@@ -31,7 +31,7 @@ func (f *fakeRunner) RunSync(_ context.Context, task, _ string) (*global.SyncRes
 // is withheld rather than registered against Maestro's empty LLM config.
 func TestProvider_NoSyncRunner_DisablesTools(t *testing.T) {
 	tmp := t.TempDir()
-	cfg := &config.Config{Agents: config.AgentsConfig{List: []config.AgentConfig{{ID: "alice", Maestro: true}}}}
+	cfg := &config.Config{Agents: config.AgentsConfig{List: []config.AgentConfig{{ID: "alice", Maestro: &config.MaestroConfig{Enabled: true}}}}}
 	var typedNil *toolsagents.Spawner
 	for name, spawn := range map[string]any{"nil": nil, "not-a-runner": struct{}{}, "typed-nil": typedNil} {
 		defs := GlobalProvider.RegisterTools(global.Deps{
@@ -53,7 +53,7 @@ func TestProvider_NoSyncRunner_DisablesTools(t *testing.T) {
 func TestProvider_GatingAndDispatch(t *testing.T) {
 	tmp := t.TempDir()
 	cfg := &config.Config{Agents: config.AgentsConfig{List: []config.AgentConfig{
-		{ID: "alice", Maestro: true},
+		{ID: "alice", Maestro: &config.MaestroConfig{Enabled: true}},
 		{ID: "bob"}, // maestro off
 	}}}
 	fr := &fakeRunner{out: "the answer"}

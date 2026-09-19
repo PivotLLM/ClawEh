@@ -12,24 +12,59 @@ observe does not need an entry.
 
 ## [0.5.5]
 
+### Security
+
+- **Maestro `file_import` now obeys the agent's read sandbox.** It used to
+  import any absolute path the claw process could read, regardless of
+  `tools.allow_read_paths`. It now accepts only what the agent's own file tools
+  can read: the workspace, every configured mount (read-only or read/write) and
+  `allow_read_paths`. Anything else is refused with an error naming the path.
+  Widen an agent's reach by adding a mount in the WebUI, not by configuring
+  Maestro.
+
 ### Changed
 
+- **BREAKING: the per-agent `maestro` setting is now an object.** Replace
+  `"maestro": true` with `"maestro": {"enabled": true}`. The old boolean is not
+  honoured: the gateway still starts, logs a warning naming the agent, and runs
+  that agent without Maestro until it is re-enabled (the WebUI agent page has
+  the switch). The block also carries runner settings, editable in the WebUI:
+  `max_concurrent` (default 5), `rate_limit_requests` / `rate_limit_period`
+  (default 10 per 60 s) and `allow_parallel` (default true). Runs stay
+  sequential unless the LLM asks for a parallel run; `allow_parallel: false`
+  refuses such requests and runs sequentially, with a note in the project log.
 - **Maestro tasks can name a host model.** `llm_model_id` and `qa_llm_model_id`
-  on Maestro task tools are now passed to ClawEh as one of the agent's model
+  on Maestro task tools are passed to ClawEh as one of the agent's model
   aliases (the same names the spawn tool accepts). Leave them empty for the
   agent's default model. An alias the agent is not configured for fails the
   task immediately instead of retrying. The `maestro_start_here` guide now
   describes this instead of the standalone `llm_*` tools.
+- **Agent mounts appear in Maestro's reference domain.** Every mount is
+  available to `maestro_file_*` with `source=reference` and to playbooks via
+  `instructions_file_source: "reference"`, under the mount's name, read-only.
+  The automatic `maestro` mount is not mapped.
+- **Maestro's operational log goes to the central logger** (component
+  `maestro`, tagged with the agent), so it appears in the WebUI log viewer and
+  rotates with `claw.log`. `<workspace>/maestro/maestro.log` is no longer
+  written. Maestro's per-project logs are unchanged.
+- **Maestro-enabled agents get a short system-prompt rule** saying what Maestro
+  is for and to call `maestro_start_here` first.
+- **Progressive discovery keeps `maestro_start_here` visible** for
+  Maestro-enabled agents, so the model can always reach the guide and search
+  for the rest. `always_shown_namespaces` entries are prefixes, so a full tool
+  name pins that one tool. The MCP host is unaffected and still serves the full
+  tool list to CLI providers.
 - **Maestro workers are bounded by `turn_timeout`.** Each Maestro worker, QA
   and revision prompt runs as a sub-agent with the agent's turn timeout; a run
-  that exceeds it fails and is retried within the task set's limits. Previously
-  a stuck worker was bounded only by the iteration cap.
-- **Maestro task results record usage.** Task result files and run logs now
-  carry input/output/cache tokens, cost, the model that answered and the number
-  of LLM iterations for each worker, QA and revision call. They were zero
-  before.
+  that exceeds it fails and is retried within the task set's limits.
+- **Maestro task results record usage.** Result files carry input/output/cache
+  tokens, cost, the model that answered and the number of LLM iterations for
+  each worker, QA and revision call.
 - **Maestro tools are withheld when no sub-agent runner is available** for the
   agent (logged as a warning) instead of registering and failing every task.
+- **New `make test-maestro-host`** runs Maestro's full MCP regression suite
+  against a live gateway with a stub model. It needs `probe`, `jq` and `zip`
+  and binds local ports, so it is a separate target.
 
 ### Fixed
 

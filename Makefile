@@ -1,4 +1,4 @@
-.PHONY: all build claw-auth install uninstall uninstall-all clean help test test-race test-coverage test-cover-html test-regression generate vet fmt lint fix deps update-deps check run frontend frontend-deps frontend-typecheck frontend-lint frontend-test build-linux-arm build-linux-arm64 build-linux-mipsle build-pi-zero build-all
+.PHONY: all build claw-auth install uninstall uninstall-all clean help test test-race test-coverage test-cover-html test-regression test-maestro-host generate vet fmt lint fix deps update-deps check run frontend frontend-deps frontend-typecheck frontend-lint frontend-test build-linux-arm build-linux-arm64 build-linux-mipsle build-pi-zero build-all
 
 # Binary names
 BINARY_NAME=claw
@@ -310,6 +310,10 @@ frontend-lint:
 frontend-test: $(FRONTEND_NODE_MODULES)
 	@echo "Testing frontend..."
 	@cd $(FRONTEND_DIR) && pnpm run test
+
+## test-maestro-host: Run Maestro's MCP regression suite against a live gateway (needs probe, jq, zip; own target because it binds ports and needs external tools).
+test-maestro-host: generate
+	@./test-maestro-host.sh
 
 ## test-race: Run full test suite with race detector
 test-race: generate

@@ -142,7 +142,7 @@ func TestResolveAgentMounts_AutoMaestro(t *testing.T) {
 	ws := t.TempDir()
 	_ = os.MkdirAll(filepath.Join(ws, "files"), 0o755)
 
-	agent := &config.AgentConfig{ID: "alice", Maestro: true}
+	agent := &config.AgentConfig{ID: "alice", Maestro: &config.MaestroConfig{Enabled: true}}
 	specs := resolveAgentMounts(agent, ws)
 	if len(specs) != 1 || specs[0].Name != "maestro" || !specs[0].Writable {
 		t.Fatalf("expected writable maestro mount, got %+v", specs)

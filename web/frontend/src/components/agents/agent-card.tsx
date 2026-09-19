@@ -7,11 +7,13 @@ import { type AgentToolCatalogResponse } from "@/api/channels"
 import { type ModelInfo } from "@/api/models"
 import {
   type AgentBindingView,
+  type MaestroRunnerEdits,
   type MountEntry,
   type SkillInfo,
   settingsCardClass,
   splitCsv,
 } from "@/components/agents/agent-model"
+import { MaestroSettingsSection } from "@/components/agents/maestro-settings"
 import { MessageTokensSection } from "@/components/agents/message-tokens-section"
 import { FallbacksSelect } from "@/components/agents/model-selects"
 import { SkillsSelect } from "@/components/agents/skills-select"
@@ -39,6 +41,8 @@ export interface AgentCardProps {
   shareCommon?: boolean
   globalCron?: boolean
   maestro?: boolean
+  maestroSettings?: MaestroRunnerEdits
+  onMaestroSettingsChange?: (v: MaestroRunnerEdits) => void
   fusion?: boolean
   cogmem?: boolean
   mounts?: MountEntry[]
@@ -84,6 +88,8 @@ export function AgentCard({
   shareCommon = true,
   globalCron = false,
   maestro = false,
+  maestroSettings = undefined,
+  onMaestroSettingsChange = undefined,
   fusion = false,
   cogmem = true,
   mounts = [],
@@ -539,6 +545,12 @@ export function AgentCard({
             <p className="text-muted-foreground text-xs">
               {t("agents.maestroHint")}
             </p>
+            {maestro && maestroSettings && onMaestroSettingsChange && (
+              <MaestroSettingsSection
+                value={maestroSettings}
+                onChange={onMaestroSettingsChange}
+              />
+            )}
           </div>
         )}
 

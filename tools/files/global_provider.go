@@ -346,7 +346,7 @@ func resolveAgentMounts(agentCfg *config.AgentConfig, workspace string) []MountS
 		return nil
 	}
 	// Ensure the auto Maestro tree exists before Stat validation.
-	if agentCfg.Maestro && strings.TrimSpace(workspace) != "" {
+	if agentCfg.MaestroEnabled() && strings.TrimSpace(workspace) != "" {
 		base := config.MaestroDataDir(workspace)
 		if err := os.MkdirAll(base, 0o755); err != nil {
 			logger.WarnCF("tools", "failed to create maestro data dir for mount", map[string]any{

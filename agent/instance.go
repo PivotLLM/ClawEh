@@ -140,6 +140,7 @@ func NewAgentInstance(
 		if mounts := agentCfg.EffectiveMounts(workspace); len(mounts) > 0 {
 			contextBuilder = contextBuilder.WithMounts(mounts)
 		}
+		contextBuilder = contextBuilder.WithMaestro(agentCfg.MaestroEnabled())
 	}
 
 	agentID := routing.DefaultAgentID

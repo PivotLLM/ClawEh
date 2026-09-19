@@ -15,9 +15,11 @@ import { AgentCard } from "@/components/agents/agent-card"
 import {
   type AgentsConfig,
   type SkillInfo,
+  applyMaestroEdits,
   asString,
   bindingViewsForAgent,
   fetchSkills,
+  maestroPayload,
   parseAgentBindings,
   parseAgentsConfig,
   sortAgentList,
@@ -144,7 +146,7 @@ export function AgentsPage() {
           : {}),
         ...(a.share_common === false ? { share_common: false } : {}),
         ...(a.global_cron ? { global_cron: true } : {}),
-        ...(a.maestro ? { maestro: true } : {}),
+        ...(a.maestro ? { maestro: maestroPayload(a.maestro) } : {}),
         ...(a.fusion ? { fusion: true } : {}),
         ...(a.cogmem === false ? { cogmem: false } : {}),
         // Always sent (like tools/mounts) so clearing the box persists; the
@@ -188,6 +190,7 @@ export function AgentsPage() {
       share_common: edits.shareCommon,
       mounts: edits.mounts,
       mcp_tools: edits.mcpTools,
+      maestro: applyMaestroEdits(list[index].maestro, edits.maestro),
     }
     const next: AgentsConfig = { ...agentsCfg, list }
     try {
@@ -268,7 +271,13 @@ export function AgentsPage() {
   // Independent toggle: flip the agent's Maestro tool suite on/off.
   const handleToggleMaestro = async (index: number) => {
     const list = [...(agentsCfg.list ?? [])]
-    list[index] = { ...list[index], maestro: !list[index].maestro }
+    list[index] = {
+      ...list[index],
+      maestro: {
+        ...(list[index].maestro ?? { enabled: false }),
+        enabled: list[index].maestro?.enabled !== true,
+      },
+    }
     const next: AgentsConfig = { ...agentsCfg, list }
     setSaving(`maestro-${index}`)
     try {
@@ -518,8 +527,10 @@ export function AgentsPage() {
                       onShareCommonChange={(sc) => edit(i, { shareCommon: sc })}
                       globalCron={agent.global_cron === true}
                       onGlobalCronChange={() => handleToggleGlobalCron(i)}
-                      maestro={agent.maestro === true}
+                      maestro={agent.maestro?.enabled === true}
                       onMaestroChange={() => handleToggleMaestro(i)}
+                      maestroSettings={e.maestro}
+                      onMaestroSettingsChange={(ms) => edit(i, { maestro: ms })}
                       fusion={agent.fusion === true}
                       onFusionChange={() => handleToggleFusion(i)}
                       cogmem={agent.cogmem !== false}

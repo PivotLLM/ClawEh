@@ -626,7 +626,7 @@ func TestValidateMountName(t *testing.T) {
 
 func TestAgentConfig_EffectiveMounts_Maestro(t *testing.T) {
 	ws := t.TempDir()
-	a := &AgentConfig{ID: "alice", Maestro: true}
+	a := &AgentConfig{ID: "alice", Maestro: &MaestroConfig{Enabled: true}}
 	got := a.EffectiveMounts(ws)
 	if len(got) != 1 || got[0].Name != MaestroMountName || !got[0].Writable {
 		t.Fatalf("expected auto writable maestro mount, got %+v", got)
@@ -637,13 +637,13 @@ func TestAgentConfig_EffectiveMounts_Maestro(t *testing.T) {
 	}
 
 	// Maestro off → no auto mount.
-	a.Maestro = false
+	a.Maestro = &MaestroConfig{Enabled: false}
 	if got := a.EffectiveMounts(ws); len(got) != 0 {
 		t.Fatalf("maestro off: expected no mounts, got %+v", got)
 	}
 
 	// Explicit maestro mount wins (not duplicated, keeps operator Writable=false).
-	a.Maestro = true
+	a.Maestro = &MaestroConfig{Enabled: true}
 	a.Mounts = []MountConfig{{Name: "maestro", Path: "/tmp/custom", Writable: false}}
 	got = a.EffectiveMounts(ws)
 	if len(got) != 1 || got[0].Path != "/tmp/custom" || got[0].Writable {
