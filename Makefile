@@ -1,4 +1,4 @@
-.PHONY: all build claw-auth install uninstall uninstall-all clean help test test-race test-coverage test-cover-html test-regression test-maestro-host generate vet fmt lint fix deps update-deps check run frontend frontend-deps frontend-typecheck frontend-lint frontend-test build-linux-arm build-linux-arm64 build-linux-mipsle build-pi-zero build-all
+.PHONY: all build claw-auth install uninstall uninstall-all clean help require-golangci-lint test test-race test-coverage test-cover-html test-regression test-maestro-host generate vet fmt lint fix deps update-deps check run frontend frontend-deps frontend-typecheck frontend-lint frontend-test build-linux-arm build-linux-arm64 build-linux-mipsle build-pi-zero build-all
 
 # Binary names
 BINARY_NAME=claw
@@ -55,7 +55,9 @@ define PATCH_MIPS_FLAGS
 endef
 
 # Golangci-lint
-GOLANGCI_LINT?=golangci-lint
+# golangci-lint: on PATH if present, otherwise the Go bin directory (go install
+# puts it there, which is not on everyone's PATH). Override with GOLANGCI_LINT=.
+GOLANGCI_LINT?=$(shell command -v golangci-lint 2>/dev/null || echo "$$(go env GOPATH)/bin/golangci-lint")
 
 # Installation
 INSTALL_PREFIX?=$(HOME)/.local
@@ -143,7 +145,8 @@ FRONTEND_SOURCES=$(shell find $(FRONTEND_DIR)/src $(FRONTEND_DIR)/public 2>/dev/
 	$(FRONTEND_DIR)/tsconfig.node.json
 
 # Default target
-all: build
+## all: the default — run the full test gate, then build (binaries only if tests pass).
+all: test build
 
 ## build: Build the claw and claw-auth binaries (frontend SPA embedded) for current platform.
 build: $(EMBED_INDEX) generate
@@ -275,9 +278,18 @@ clean:
 vet: generate
 	@$(GO) vet ./...
 
-## test: Test Go code
-test: generate
-	@$(GO) test ./...
+## test: The one gate. Format check and vet (lint temporarily excluded, see below), then test.sh: Go tests with the
+## race detector and coverage, frontend typecheck and unit tests, and the
+## probe-driven MCP integration suite. Exits non-zero on any failure and ends
+## with a pass/fail summary. Needs probe on PATH (test.sh names it if missing).
+## test-maestro-host and check-webui stay separate: they bind ports or need a
+## running instance.
+# TEMPORARY: lint is not part of the gate until the remaining non-critical
+# golangci-lint findings (dogsled, dupl, recvcheck, musttag, interfacebloat and
+# one deprecated call, 60 in total) are addressed. Restore it by changing the
+# prerequisites back to: test: generate fmt-check vet lint
+test: generate fmt-check vet
+	@./test.sh
 
 ## frontend-typecheck: Typecheck the SPA (tsc)
 frontend-typecheck: $(FRONTEND_NODE_MODULES)
@@ -357,8 +369,15 @@ fmt:
 	@$(GOLANGCI_LINT) fmt
 
 ## lint: Run linters
-lint:
+lint: require-golangci-lint
 	@$(GOLANGCI_LINT) run
+
+## require-golangci-lint: fail with a clear message when the linter is missing.
+require-golangci-lint:
+	@test -x "$(GOLANGCI_LINT)" || { \
+	  echo "ERROR: golangci-lint not found (looked for $(GOLANGCI_LINT))."; \
+	  echo "Install it with: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest"; \
+	  echo "or set GOLANGCI_LINT=/path/to/golangci-lint"; exit 1; }
 
 ## fix: Fix linting issues
 fix:
@@ -375,7 +394,7 @@ update-deps:
 	@$(GO) mod tidy
 
 ## fmt-check: Verify formatting without rewriting anything (`make fmt` fixes)
-fmt-check:
+fmt-check: require-golangci-lint
 	@echo "Checking formatting..."
 	@$(GOLANGCI_LINT) fmt --diff
 
@@ -396,8 +415,7 @@ fmt-check:
 #
 # The one thing it cannot cover is the browser suite, which needs a running
 # instance to drive: see `make check-webui`.
-check: fmt-check vet
-	@./test.sh
+check: test
 
 ## check-webui: Browser regression suite (requires a running dev instance)
 check-webui:
