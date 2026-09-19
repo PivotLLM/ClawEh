@@ -172,9 +172,9 @@ func TestWriteFile_Backup_ExistingTarget_Creates0001PreservingMode(t *testing.T)
 		t.Errorf("backup content = %q, want %q", got, "original")
 	}
 	if runtime.GOOS != "windows" {
-		info, err := os.Stat(backup)
-		if err != nil {
-			t.Fatal(err)
+		info, statErr := os.Stat(backup)
+		if statErr != nil {
+			t.Fatal(statErr)
 		}
 		if info.Mode().Perm() != 0o640 {
 			t.Errorf("backup mode = %o, want 0640", info.Mode().Perm())

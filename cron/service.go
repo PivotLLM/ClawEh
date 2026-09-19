@@ -116,8 +116,8 @@ type CronJob struct {
 // the marshaled definition.
 func cronFingerprint(schedule CronSchedule, payload CronPayload) string {
 	data, err := json.Marshal(struct {
-		S CronSchedule
-		P CronPayload
+		S CronSchedule `json:"S"`
+		P CronPayload  `json:"P"`
 	}{schedule, payload})
 	if err != nil {
 		return ""
@@ -354,8 +354,8 @@ func (cs *CronService) executeJobByID(jobID string) {
 	var nextRunStr string
 	if job.Schedule.Kind == "at" {
 		if job.DeleteAfterRun {
-			if _, err := cs.removeJobUnsafe(job.ID); err != nil {
-				logger.WarnCF("cron", "failed to remove job after run", map[string]any{"error": err.Error()})
+			if _, rmErr := cs.removeJobUnsafe(job.ID); rmErr != nil {
+				logger.WarnCF("cron", "failed to remove job after run", map[string]any{"error": rmErr.Error()})
 			}
 			nextRunStr = "(deleted)"
 		} else {

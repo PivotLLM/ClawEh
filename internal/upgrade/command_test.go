@@ -91,11 +91,11 @@ func TestExtractBinariesFromTarGz(t *testing.T) {
 		Size:     int64(len(clawContent)),
 		Typeflag: tar.TypeReg,
 	}
-	if err := tw.WriteHeader(hdr); err != nil {
-		t.Fatal(err)
+	if hdrErr := tw.WriteHeader(hdr); hdrErr != nil {
+		t.Fatal(hdrErr)
 	}
-	if _, err := tw.Write(clawContent); err != nil {
-		t.Fatal(err)
+	if _, wErr := tw.Write(clawContent); wErr != nil {
+		t.Fatal(wErr)
 	}
 
 	authContent := []byte("#!/bin/sh\necho auth\n")
@@ -105,11 +105,11 @@ func TestExtractBinariesFromTarGz(t *testing.T) {
 		Size:     int64(len(authContent)),
 		Typeflag: tar.TypeReg,
 	}
-	if err := tw.WriteHeader(hdrAuth); err != nil {
-		t.Fatal(err)
+	if hdrErr := tw.WriteHeader(hdrAuth); hdrErr != nil {
+		t.Fatal(hdrErr)
 	}
-	if _, err := tw.Write(authContent); err != nil {
-		t.Fatal(err)
+	if _, wErr := tw.Write(authContent); wErr != nil {
+		t.Fatal(wErr)
 	}
 
 	_ = tw.Close()

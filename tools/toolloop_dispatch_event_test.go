@@ -49,7 +49,7 @@ func collectLLMEvents(t *testing.T, buf *bytes.Buffer) (dispatches, finishes int
 			finish = rec
 		}
 	}
-	return
+	return dispatches, finishes, finish
 }
 
 func TestRunToolLoop_EmitsDispatchAndFinishOnSuccess(t *testing.T) {

@@ -28,9 +28,6 @@ const (
 	// so the device reconnects instead of black-holing its sends.
 	devicePingInterval = 30 * time.Second
 	deviceReadTimeout  = 90 * time.Second
-	// sessionKeyAgentPrefix marks an agent-scoped session key the agent loop honors
-	// verbatim (mirrors agent's prefix).
-	sessionKeyAgentPrefix = "agent:"
 )
 
 // ServerOptions configures a gateway protocol Server.
@@ -181,7 +178,7 @@ func (s *Server) HandleWS(w http.ResponseWriter, r *http.Request) {
 	// Send the pre-auth challenge before any client frame.
 	challenge := gatewayproto.NewEvent(gatewayproto.EventConnectChallenge,
 		gatewayproto.ChallengePayload{Nonce: nonce, Ts: time.Now().UnixMilli()}, nil)
-	if err := cw.writeJSON(challenge); err != nil {
+	if writeErr := cw.writeJSON(challenge); writeErr != nil {
 		_ = conn.Close()
 		return
 	}

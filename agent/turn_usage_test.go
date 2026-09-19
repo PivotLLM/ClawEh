@@ -29,8 +29,10 @@ func TestAddTurnUsage_AccumulatesAcrossIterations(t *testing.T) {
 		Model: "claude-a", InputTokens: 200, OutputTokens: 20, CacheReadTokens: 1, CacheCreationTokens: 0, CostUSD: 0.02,
 	}}, "anthropic", "requested")
 
-	want := global.TurnUsage{Model: "claude-a", Provider: "anthropic",
-		InputTokens: 300, OutputTokens: 30, CacheReadTokens: 6, CacheCreationTokens: 2, CostUSD: 0.03}
+	want := global.TurnUsage{
+		Model: "claude-a", Provider: "anthropic",
+		InputTokens: 300, OutputTokens: 30, CacheReadTokens: 6, CacheCreationTokens: 2, CostUSD: 0.03,
+	}
 	if u.Model != want.Model || u.Provider != want.Provider || u.InputTokens != want.InputTokens ||
 		u.OutputTokens != want.OutputTokens || u.CacheReadTokens != want.CacheReadTokens ||
 		u.CacheCreationTokens != want.CacheCreationTokens || u.CostUSD < 0.0299 || u.CostUSD > 0.0301 {

@@ -84,9 +84,7 @@ func (c *Client) Ping(ctx context.Context) (*PingResponse, error) {
 	if err != nil {
 		return nil, fmt.Errorf("ping request failed: %w", err)
 	}
-	defer func(Body io.ReadCloser) {
-		_ = Body.Close()
-	}(resp.Body)
+	defer func() { _ = resp.Body.Close() }()
 
 	// Log the response if debug is enabled
 	debug.LogHTTPResponse(resp)
@@ -145,9 +143,7 @@ func (c *Client) StoreTokens(ctx context.Context, service, accessToken, refreshT
 	if err != nil {
 		return nil, fmt.Errorf("failed to send token request: %w", err)
 	}
-	defer func(Body io.ReadCloser) {
-		_ = Body.Close()
-	}(resp.Body)
+	defer func() { _ = resp.Body.Close() }()
 
 	// Log the response if debug is enabled
 	debug.LogHTTPResponse(resp)
@@ -188,9 +184,7 @@ func (c *Client) HealthCheck(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("health check failed: %w", err)
 	}
-	defer func(Body io.ReadCloser) {
-		_ = Body.Close()
-	}(resp.Body)
+	defer func() { _ = resp.Body.Close() }()
 
 	// Log the response if debug is enabled
 	debug.LogHTTPResponse(resp)
@@ -221,9 +215,7 @@ func (c *Client) AuthCheck(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("auth check failed: %w", err)
 	}
-	defer func(Body io.ReadCloser) {
-		_ = Body.Close()
-	}(resp.Body)
+	defer func() { _ = resp.Body.Close() }()
 
 	// Log the response if debug is enabled
 	debug.LogHTTPResponse(resp)
@@ -258,9 +250,7 @@ func (c *Client) GetServiceConfig(ctx context.Context, serviceName string) (*Ser
 	if err != nil {
 		return nil, fmt.Errorf("service config request failed: %w", err)
 	}
-	defer func(Body io.ReadCloser) {
-		_ = Body.Close()
-	}(resp.Body)
+	defer func() { _ = resp.Body.Close() }()
 
 	// Log the response if debug is enabled
 	debug.LogHTTPResponse(resp)
@@ -351,9 +341,7 @@ func (c *Client) NotifySuccess(ctx context.Context, serviceName string, userInfo
 	if err != nil {
 		return fmt.Errorf("success notification failed: %w", err)
 	}
-	defer func(Body io.ReadCloser) {
-		_ = Body.Close()
-	}(resp.Body)
+	defer func() { _ = resp.Body.Close() }()
 
 	// Log the response if debug is enabled
 	debug.LogHTTPResponse(resp)
@@ -400,9 +388,7 @@ func (c *Client) NotifyError(ctx context.Context, serviceName string, errorMsg s
 	if err != nil {
 		return fmt.Errorf("error notification failed: %w", err)
 	}
-	defer func(Body io.ReadCloser) {
-		_ = Body.Close()
-	}(resp.Body)
+	defer func() { _ = resp.Body.Close() }()
 
 	// Log the response if debug is enabled
 	debug.LogHTTPResponse(resp)

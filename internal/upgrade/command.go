@@ -119,9 +119,10 @@ func runUpgrade(checkOnly, force bool, targetVersion string, autoYes bool) error
 	var archiveAsset, checksumAsset *GitHubAsset
 	for i := range release.Assets {
 		asset := &release.Assets[i]
-		if asset.Name == archiveName {
+		switch asset.Name {
+		case archiveName:
 			archiveAsset = asset
-		} else if asset.Name == checksumName {
+		case checksumName:
 			checksumAsset = asset
 		}
 	}
@@ -158,7 +159,7 @@ func runUpgrade(checkOnly, force bool, targetVersion string, autoYes bool) error
 
 	// Verify write permission on target executable directory
 	binDir := filepath.Dir(exePath)
-	if err := checkDirWritable(binDir); err != nil {
+	if wErr := checkDirWritable(binDir); wErr != nil {
 		return fmt.Errorf("permission denied writing to %s.\nPlease run with sudo: sudo %s upgrade", binDir, internal.BinaryName)
 	}
 
@@ -183,8 +184,8 @@ func runUpgrade(checkOnly, force bool, targetVersion string, autoYes bool) error
 	fmt.Println()
 
 	if !autoYes {
-		confirmed, err := confirmPrompt("Do you want to proceed with the upgrade?")
-		if err != nil || !confirmed {
+		confirmed, promptErr := confirmPrompt("Do you want to proceed with the upgrade?")
+		if promptErr != nil || !confirmed {
 			fmt.Println("Upgrade cancelled.")
 			return nil
 		}
@@ -200,30 +201,30 @@ func runUpgrade(checkOnly, force bool, targetVersion string, autoYes bool) error
 	// Download archive
 	archivePath := filepath.Join(tmpDir, archiveName)
 	fmt.Printf("Downloading %s...\n", archiveAsset.Name)
-	if err := downloadFile(archiveAsset.BrowserDownloadURL, archivePath); err != nil {
-		return fmt.Errorf("downloading %s: %w", archiveAsset.Name, err)
+	if dlErr := downloadFile(archiveAsset.BrowserDownloadURL, archivePath); dlErr != nil {
+		return fmt.Errorf("downloading %s: %w", archiveAsset.Name, dlErr)
 	}
 
 	// Verify checksum if sha256 asset is available
 	if checksumAsset != nil {
 		fmt.Printf("Verifying SHA256 checksum...\n")
 		checksumPath := filepath.Join(tmpDir, checksumName)
-		if err := downloadFile(checksumAsset.BrowserDownloadURL, checksumPath); err != nil {
-			return fmt.Errorf("downloading checksum: %w", err)
+		if dlErr := downloadFile(checksumAsset.BrowserDownloadURL, checksumPath); dlErr != nil {
+			return fmt.Errorf("downloading checksum: %w", dlErr)
 		}
 
-		expectedHash, err := readExpectedChecksum(checksumPath)
-		if err != nil {
-			return fmt.Errorf("reading checksum file: %w", err)
+		expectedHash, csErr := readExpectedChecksum(checksumPath)
+		if csErr != nil {
+			return fmt.Errorf("reading checksum file: %w", csErr)
 		}
 
-		actualHash, err := computeSHA256(archivePath)
-		if err != nil {
-			return fmt.Errorf("calculating archive checksum: %w", err)
+		actualHash, csErr := computeSHA256(archivePath)
+		if csErr != nil {
+			return fmt.Errorf("calculating archive checksum: %w", csErr)
 		}
 
 		if !strings.EqualFold(expectedHash, actualHash) {
-			return fmt.Errorf("SHA256 checksum mismatch!\n  Expected: %s\n  Actual:   %s\nThe download may be corrupted or incomplete.", expectedHash, actualHash)
+			return fmt.Errorf("SHA256 checksum mismatch!\n  Expected: %s\n  Actual:   %s\nThe download may be corrupted or incomplete", expectedHash, actualHash)
 		}
 		fmt.Println("Checksum verified.")
 	} else {
@@ -394,7 +395,7 @@ func extractBinariesFromTarGz(archivePath, clawDst, clawAuthDst string) (hasAuth
 		}
 
 		cleanName := filepath.Base(hdr.Name)
-		if cleanName == "claw" && (hdr.Typeflag == tar.TypeReg || hdr.Typeflag == tar.TypeRegA) {
+		if cleanName == "claw" && (hdr.Typeflag == tar.TypeReg) {
 			out, err := os.OpenFile(clawDst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
 			if err != nil {
 				return false, err
@@ -405,7 +406,7 @@ func extractBinariesFromTarGz(archivePath, clawDst, clawAuthDst string) (hasAuth
 			}
 			_ = out.Close()
 			foundClaw = true
-		} else if cleanName == "claw-auth" && (hdr.Typeflag == tar.TypeReg || hdr.Typeflag == tar.TypeRegA) {
+		} else if cleanName == "claw-auth" && (hdr.Typeflag == tar.TypeReg) {
 			out, err := os.OpenFile(clawAuthDst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
 			if err != nil {
 				return false, err
@@ -475,7 +476,7 @@ func confirmPrompt(prompt string) (bool, error) {
 	reader := bufio.NewReader(os.Stdin)
 	response, err := reader.ReadString('\n')
 	if err != nil {
-		return false, nil
+		return false, nil //nolint:nilerr // an unreadable answer means "no"
 	}
 	response = strings.TrimSpace(strings.ToLower(response))
 	return response == "y" || response == "yes", nil
@@ -514,7 +515,8 @@ func compareSemVer(v1, v2 string) int {
 }
 
 func restartActiveService() {
-	if runtime.GOOS == "linux" {
+	switch runtime.GOOS {
+	case "linux":
 		// Check user service
 		if err := exec.Command("systemctl", "--user", "is-active", "--quiet", "claw").Run(); err == nil {
 			fmt.Println("Restarting systemd user service claw...")
@@ -535,7 +537,7 @@ func restartActiveService() {
 				fmt.Println("Note: System service claw is active. Run `sudo systemctl restart claw` to apply the update.")
 			}
 		}
-	} else if runtime.GOOS == "darwin" {
+	case "darwin":
 		label := "com.pivotllm.claweh"
 		out, err := exec.Command("launchctl", "list").Output()
 		if err == nil && strings.Contains(string(out), label) {

@@ -13,8 +13,8 @@ import (
 // blank command the seeded config ships with — the case that actually works.
 func TestProviderReady_ResolvesTheBinaryRatherThanTrustingTheString(t *testing.T) {
 	dir := t.TempDir()
-	real := filepath.Join(dir, "agy")
-	if err := os.WriteFile(real, []byte("#!/bin/sh\n"), 0o755); err != nil {
+	binPath := filepath.Join(dir, "agy")
+	if err := os.WriteFile(binPath, []byte("#!/bin/sh\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir)
@@ -36,7 +36,7 @@ func TestProviderReady_ResolvesTheBinaryRatherThanTrustingTheString(t *testing.T
 		},
 		{
 			name:     "an explicit path that exists is ready",
-			provider: config.Provider{Protocol: "antigravity-cli", Command: real},
+			provider: config.Provider{Protocol: "antigravity-cli", Command: binPath},
 			want:     true,
 		},
 		{
@@ -73,14 +73,14 @@ func TestProviderReady_ResolvesTheBinaryRatherThanTrustingTheString(t *testing.T
 // card shows a green dot next to nothing.
 func TestResolvedCLICommand_NamesTheBinaryABlankCommandWillRun(t *testing.T) {
 	dir := t.TempDir()
-	real := filepath.Join(dir, "claude")
-	if err := os.WriteFile(real, []byte("#!/bin/sh\n"), 0o755); err != nil {
+	binPath := filepath.Join(dir, "claude")
+	if err := os.WriteFile(binPath, []byte("#!/bin/sh\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir)
 
-	if got := resolvedCLICommand(&config.Provider{Protocol: "claude-cli"}); got != real {
-		t.Errorf("resolved command = %q, want %q", got, real)
+	if got := resolvedCLICommand(&config.Provider{Protocol: "claude-cli"}); got != binPath {
+		t.Errorf("resolved command = %q, want %q", got, binPath)
 	}
 	// HTTP providers have no binary, and an unresolvable CLI must not invent one.
 	if got := resolvedCLICommand(&config.Provider{Protocol: "openai-chat", APIKey: "k"}); got != "" {

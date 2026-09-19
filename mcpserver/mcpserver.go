@@ -1,6 +1,6 @@
 // ClawEh
 // License: MIT
-//
+
 // Package mcpserver exposes claw host-side tools to MCP-compatible clients
 // over a Streamable HTTP transport. It lets CLI providers (claude-cli,
 // codex-cli, antigravity-cli, cursor-cli) natively call claw tools via MCP — the correct

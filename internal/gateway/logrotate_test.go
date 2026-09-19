@@ -9,7 +9,7 @@ import (
 
 func TestPruneOldLogs(t *testing.T) {
 	dir := t.TempDir()
-	now := time.Date(2026, 6, 16, 12, 0, 0, 0, time.Local)
+	now := time.Date(2026, 6, 16, 12, 0, 0, 0, time.Local) //nolint:gosmopolitan // logs roll on the local calendar day by design
 
 	mk := func(name string) {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o644); err != nil {
@@ -49,7 +49,7 @@ func TestPruneOldLogs(t *testing.T) {
 
 func TestPruneOldLogs_ZeroKeepsForever(t *testing.T) {
 	dir := t.TempDir()
-	now := time.Date(2026, 6, 16, 12, 0, 0, 0, time.Local)
+	now := time.Date(2026, 6, 16, 12, 0, 0, 0, time.Local) //nolint:gosmopolitan // logs roll on the local calendar day by design
 	old := "20200101-claw.log"
 	if err := os.WriteFile(filepath.Join(dir, old), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
@@ -61,9 +61,9 @@ func TestPruneOldLogs_ZeroKeepsForever(t *testing.T) {
 }
 
 func TestNextMidnight(t *testing.T) {
-	now := time.Date(2026, 6, 16, 23, 59, 30, 0, time.Local)
+	now := time.Date(2026, 6, 16, 23, 59, 30, 0, time.Local) //nolint:gosmopolitan // logs roll on the local calendar day by design
 	got := nextMidnight(now)
-	want := time.Date(2026, 6, 17, 0, 0, 0, 0, time.Local)
+	want := time.Date(2026, 6, 17, 0, 0, 0, 0, time.Local) //nolint:gosmopolitan // logs roll on the local calendar day by design
 	if !got.Equal(want) {
 		t.Fatalf("nextMidnight = %v, want %v", got, want)
 	}

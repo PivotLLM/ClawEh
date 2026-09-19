@@ -64,10 +64,10 @@ func (s *Spawner) Spawn(ctx context.Context, req global.SpawnRequest) (*global.R
 	}
 
 	// Bound recursion: a sub-agent already at the depth bound may not spawn deeper.
-	if max := s.maxSpawnDepth(); SpawnDepth(ctx) >= max {
+	if limit := s.maxSpawnDepth(); SpawnDepth(ctx) >= limit {
 		return &global.Result{IsError: true, ForLLM: fmt.Sprintf(
 			"maximum sub-agent depth (%d) reached; this task is already nested %d level(s) deep and cannot spawn further sub-agents",
-			max, SpawnDepth(ctx))}, nil
+			limit, SpawnDepth(ctx))}, nil
 	}
 
 	// Authorize targeted spawns. Self-spawns are authorized by the caller already
@@ -156,8 +156,8 @@ func (s *Spawner) RunSync(ctx context.Context, task, model string) (*global.Sync
 	}
 	// Bound recursion: a Maestro worker that is itself already at the depth bound
 	// may not dispatch a further layer of workers.
-	if max := s.maxSpawnDepth(); SpawnDepth(ctx) >= max {
-		return nil, fmt.Errorf("%w: maximum sub-agent depth (%d) reached; cannot dispatch further sub-agents", global.ErrSpawnDepthExceeded, max)
+	if limit := s.maxSpawnDepth(); SpawnDepth(ctx) >= limit {
+		return nil, fmt.Errorf("%w: maximum sub-agent depth (%d) reached; cannot dispatch further sub-agents", global.ErrSpawnDepthExceeded, limit)
 	}
 	// Same security boundary as Spawn: a self-spawn may only run a model the
 	// calling agent is already configured to use.

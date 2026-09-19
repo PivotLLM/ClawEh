@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/PivotLLM/cogmem"
@@ -347,23 +346,6 @@ func resolveAgentModels(agentCfg *config.AgentConfig, defaults *config.AgentDefa
 		return agentCfg.Models
 	}
 	return defaults.Models
-}
-
-func compilePatterns(patterns []string) []*regexp.Regexp {
-	compiled := make([]*regexp.Regexp, 0, len(patterns))
-	for _, p := range patterns {
-		re, err := regexp.Compile(p)
-		if err != nil {
-			logger.WarnCF("agent", "invalid path pattern",
-				map[string]any{
-					"pattern": p,
-					"error":   err.Error(),
-				})
-			continue
-		}
-		compiled = append(compiled, re)
-	}
-	return compiled
 }
 
 // Close releases resources held by the agent's session store.

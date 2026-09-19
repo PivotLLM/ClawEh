@@ -72,7 +72,7 @@ func pruneOldLogs(dir string, retentionDays int, now time.Time) {
 		if e.IsDir() || !datedLogRe.MatchString(e.Name()) {
 			continue
 		}
-		d, err := time.ParseInLocation("20060102", e.Name()[:8], time.Local)
+		d, err := time.ParseInLocation("20060102", e.Name()[:8], time.Local) //nolint:gosmopolitan // logs roll on the local calendar day by design
 		if err != nil {
 			continue
 		}

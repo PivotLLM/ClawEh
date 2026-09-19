@@ -46,8 +46,8 @@ func TestDataStore_RoundTrip(t *testing.T) {
 
 	// Set overwrites the prior value under the same (collection,key).
 	next := []byte(`{"token":"xyz"}`)
-	if err := s.Set(ctx, "oauth", "alice/graph", next); err != nil {
-		t.Fatalf("Set overwrite: %v", err)
+	if setErr := s.Set(ctx, "oauth", "alice/graph", next); setErr != nil {
+		t.Fatalf("Set overwrite: %v", setErr)
 	}
 	got, _, err = s.Get(ctx, "oauth", "alice/graph")
 	if err != nil {

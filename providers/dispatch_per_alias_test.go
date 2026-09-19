@@ -71,7 +71,6 @@ func TestProviderDispatcher_PerAliasState(t *testing.T) {
 
 	providersByAlias := make(map[string]providers.LLMProvider, len(cases))
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.alias, func(t *testing.T) {
 			p, err := d.Get(tc.alias)
 			if err != nil {

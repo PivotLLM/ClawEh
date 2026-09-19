@@ -150,17 +150,6 @@ func ResolveCandidatesWithLookup(
 	return candidates
 }
 
-// Execute runs the fallback chain for text/chat requests.
-// It tries each candidate in order, respecting cooldowns and error classification.
-//
-// Behavior:
-//   - Candidates in cooldown are skipped (logged as skipped attempt).
-//   - context.Canceled aborts immediately (user abort, no fallback).
-//   - Non-retriable errors (format) abort immediately.
-//   - Retriable errors trigger fallback to next candidate.
-//   - Success marks provider as good (resets cooldown).
-//   - If all fail, returns aggregate error with all attempts.
-//
 // FallbackNotify is an optional callback invoked when the chain moves past one
 // or more candidates. `passed` holds the attempts just moved past — either a
 // single failed attempt, or a run of consecutive cooldown skips coalesced into
@@ -171,6 +160,16 @@ func ResolveCandidatesWithLookup(
 // for a trailing run of skips (likewise carried by the returned error).
 type FallbackNotify func(passed []FallbackAttempt, next FallbackCandidate)
 
+// Execute runs the fallback chain for text/chat requests.
+// It tries each candidate in order, respecting cooldowns and error classification.
+//
+// Behavior:
+//   - Candidates in cooldown are skipped (logged as skipped attempt).
+//   - context.Canceled aborts immediately (user abort, no fallback).
+//   - Non-retriable errors (format) abort immediately.
+//   - Retriable errors trigger fallback to next candidate.
+//   - Success marks provider as good (resets cooldown).
+//   - If all fail, returns aggregate error with all attempts.
 func (fc *FallbackChain) Execute(
 	ctx context.Context,
 	candidates []FallbackCandidate,

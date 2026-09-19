@@ -2,13 +2,13 @@ package agents
 
 import (
 	"context"
-	"github.com/PivotLLM/ClawEh/global"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/routing"
 )
 

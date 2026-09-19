@@ -25,9 +25,10 @@ type ExistingInstall struct {
 // DetectExistingInstall searches for an existing ClawEh installation on the system.
 // It inspects systemd unit files, launchd plists, running process paths, and PATH.
 func DetectExistingInstall(homeDir string) *ExistingInstall {
-	if runtime.GOOS == "linux" {
+	switch runtime.GOOS {
+	case "linux":
 		return detectLinuxInstall(homeDir)
-	} else if runtime.GOOS == "darwin" {
+	case "darwin":
 		return detectDarwinInstall(homeDir)
 	}
 	return nil

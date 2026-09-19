@@ -60,27 +60,11 @@ const (
 	maxSessionTitleRunes        = 60
 )
 
-// extractWebUISessionID extracts the session UUID from a full session key.
-// Returns the UUID and true if the key matches the WebUI session pattern.
-func extractWebUISessionID(key string) (string, bool) {
-	if strings.HasPrefix(key, webuiSessionPrefix) {
-		return strings.TrimPrefix(key, webuiSessionPrefix), true
-	}
-	return "", false
-}
-
 func extractWebUISessionIDFromSanitizedKey(key string) (string, bool) {
 	if strings.HasPrefix(key, sanitizedWebuiSessionPrefix) {
 		return strings.TrimPrefix(key, sanitizedWebuiSessionPrefix), true
 	}
 	return "", false
-}
-
-// sanitizeSessionKey names a session's files the way the store writes them.
-// It delegates to memory.SanitizeSessionKey so a key containing '/' (a Telegram
-// forum thread, a Slack thread) resolves to the file that actually exists.
-func sanitizeSessionKey(key string) string {
-	return memory.SanitizeSessionKey(key)
 }
 
 // readSessionDB opens one session's archive DB read-only and returns its

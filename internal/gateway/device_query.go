@@ -91,7 +91,7 @@ func injectDeviceAgentQuerier(cm *channels.Manager, al *agent.AgentLoop) {
 	if !ok {
 		return
 	}
-	if setter, ok := ch.(interface{ SetAgentQuerier(device.AgentQuerier) }); ok {
+	if setter, ok := ch.(interface{ SetAgentQuerier(q device.AgentQuerier) }); ok {
 		setter.SetAgentQuerier(deviceAgentQuerier{al: al})
 	}
 }

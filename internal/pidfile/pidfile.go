@@ -88,7 +88,7 @@ func isClaw(pid int) bool {
 	if err != nil {
 		return false
 	}
-	if err := proc.Signal(syscall.Signal(0)); err != nil {
+	if sigErr := proc.Signal(syscall.Signal(0)); sigErr != nil {
 		return false
 	}
 	comm, err := os.ReadFile(fmt.Sprintf("/proc/%d/comm", pid))

@@ -11,7 +11,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/PivotLLM/ClawEh/global"
 	"path/filepath"
 	"runtime/debug"
 	"slices"
@@ -29,6 +28,7 @@ import (
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/constants"
 	"github.com/PivotLLM/ClawEh/dump"
+	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/providers"
 	"github.com/PivotLLM/ClawEh/tools"
@@ -474,9 +474,9 @@ func humanBytes(n int) string {
 // (paths are noise in a one-line notice), capped for a very long name.
 func capEvictResource(s string) string {
 	base := filepath.Base(s)
-	const max = 48
-	if len(base) > max {
-		return base[:max-1] + "…"
+	const maxLen = 48
+	if len(base) > maxLen {
+		return base[:maxLen-1] + "…"
 	}
 	return base
 }
@@ -742,7 +742,7 @@ func (al *AgentLoop) runLLMIteration(
 		// don't support it (CLI, Anthropic) ignore the option; the coalescer forwards
 		// batched deltas to the streaming-capable channel.
 		if streamCoalescer != nil {
-			llmOpts[providers.TextDeltaOption] = providers.TextDeltaFunc(streamCoalescer.Add)
+			llmOpts[providers.TextDeltaOption] = streamCoalescer.Add
 		}
 
 		// activeProvider tracks the protocol name surfaced in the finish event.
@@ -774,7 +774,7 @@ func (al *AgentLoop) runLLMIteration(
 							if key == "" {
 								key = c.Provider + "/" + c.Model
 							}
-							if p, err := al.dispatcher.Get(key); err == nil {
+							if p, getErr := al.dispatcher.Get(key); getErr == nil {
 								return p.Chat(ctx, msgs, providerToolDefs, c.Model, llmOpts)
 							}
 						}

@@ -276,8 +276,8 @@ func (s *Store) CreatePending(ctx context.Context, p PendingPairing) (string, er
 		p.RequestID = id
 	}
 
-	if _, err := tx.ExecContext(ctx, `DELETE FROM pending_pairings WHERE device_id=?`, p.DeviceID); err != nil {
-		return "", err
+	if _, execErr := tx.ExecContext(ctx, `DELETE FROM pending_pairings WHERE device_id=?`, p.DeviceID); execErr != nil {
+		return "", execErr
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO pending_pairings
 		(request_id, device_id, public_key, display_name, platform, device_family, client_id, client_mode, role, scopes, remote_ip, created_at_ms)

@@ -69,8 +69,8 @@ EOFMOCK
 		ctxengine.WithContextWindow(1000),
 		ctxengine.WithModelCaller(&compressModelCaller{clients: []*providerLLMClient{client}}),
 	)
-	if err := cm.Compact(context.Background()); err != nil {
-		t.Fatalf("Compact: %v", err)
+	if compactErr := cm.Compact(context.Background()); compactErr != nil {
+		t.Fatalf("Compact: %v", compactErr)
 	}
 
 	raw, err := os.ReadFile(stdinFile)

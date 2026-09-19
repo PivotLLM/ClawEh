@@ -24,25 +24,25 @@ func TestAutoApproveLocalDevice(t *testing.T) {
 	ctx := context.Background()
 
 	const deviceID = "dev-abc"
-	if _, err := store.CreatePending(ctx, device.PendingPairing{
+	if _, pendErr := store.CreatePending(ctx, device.PendingPairing{
 		DeviceID:  deviceID,
 		PublicKey: "pubkey-abc",
 		Role:      "node",
-	}); err != nil {
-		t.Fatalf("CreatePending: %v", err)
+	}); pendErr != nil {
+		t.Fatalf("CreatePending: %v", pendErr)
 	}
 	// Also enqueue an unrelated device to prove we only approve our own.
-	if _, err := store.CreatePending(ctx, device.PendingPairing{
+	if _, pendErr := store.CreatePending(ctx, device.PendingPairing{
 		DeviceID:  "other-device",
 		PublicKey: "pubkey-other",
 		Role:      "node",
-	}); err != nil {
-		t.Fatalf("CreatePending other: %v", err)
+	}); pendErr != nil {
+		t.Fatalf("CreatePending other: %v", pendErr)
 	}
 	_ = store.Close() // the helper opens its own handle
 
-	if _, err := autoApproveLocalDevice(ctx, dataDir, deviceID); err != nil {
-		t.Fatalf("autoApproveLocalDevice: %v", err)
+	if _, approveErr := autoApproveLocalDevice(ctx, dataDir, deviceID); approveErr != nil {
+		t.Fatalf("autoApproveLocalDevice: %v", approveErr)
 	}
 
 	verify, err := device.OpenStore(filepath.Join(stateDir, "gateway.db"))

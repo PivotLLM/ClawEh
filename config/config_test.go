@@ -638,8 +638,8 @@ func TestAgentConfig_EffectiveMounts_Maestro(t *testing.T) {
 
 	// Maestro off → no auto mount.
 	a.Maestro = &MaestroConfig{Enabled: false}
-	if got := a.EffectiveMounts(ws); len(got) != 0 {
-		t.Fatalf("maestro off: expected no mounts, got %+v", got)
+	if mounts := a.EffectiveMounts(ws); len(mounts) != 0 {
+		t.Fatalf("maestro off: expected no mounts, mounts %+v", mounts)
 	}
 
 	// Explicit maestro mount wins (not duplicated, keeps operator Writable=false).

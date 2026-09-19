@@ -9,6 +9,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"regexp"
@@ -118,7 +119,7 @@ func countReader(r io.RuneReader) (fileCounts, error) {
 
 	for {
 		ch, size, err := r.ReadRune()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {

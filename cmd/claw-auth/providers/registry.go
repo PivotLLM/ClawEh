@@ -135,7 +135,7 @@ func (r *ProviderRegistry) GetProvider(serviceName string) (OAuthProvider, error
 
 // ListProviders returns all registered provider names
 func (r *ProviderRegistry) ListProviders() []string {
-	var names []string
+	names := make([]string, 0, len(r.providers))
 	for name := range r.providers {
 		names = append(names, name)
 	}

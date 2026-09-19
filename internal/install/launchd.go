@@ -12,9 +12,9 @@ import (
 )
 
 const (
-	launchdLabel       = "com.pivotllm.claweh"
-	launchdPlistName   = "com.pivotllm.claweh.plist"
-	systemLaunchdPath  = "/Library/LaunchDaemons/" + launchdPlistName
+	launchdLabel      = "com.pivotllm.claweh"
+	launchdPlistName  = "com.pivotllm.claweh.plist"
+	systemLaunchdPath = "/Library/LaunchDaemons/" + launchdPlistName
 )
 
 // userLaunchdPath returns the path to the LaunchAgent plist for the given user.
@@ -31,21 +31,21 @@ func buildLaunchdPlist(label, username, groupname, execPath, homeDir, binDir, cl
 	b.WriteString(`<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">` + "\n")
 	b.WriteString(`<plist version="1.0">` + "\n")
 	b.WriteString("<dict>\n")
-	b.WriteString(fmt.Sprintf("\t<key>Label</key>\n\t<string>%s</string>\n", label))
+	fmt.Fprintf(&b, "\t<key>Label</key>\n\t<string>%s</string>\n", label)
 
 	if isSystem && username != "" {
-		b.WriteString(fmt.Sprintf("\t<key>UserName</key>\n\t<string>%s</string>\n", username))
+		fmt.Fprintf(&b, "\t<key>UserName</key>\n\t<string>%s</string>\n", username)
 		if groupname != "" {
-			b.WriteString(fmt.Sprintf("\t<key>GroupName</key>\n\t<string>%s</string>\n", groupname))
+			fmt.Fprintf(&b, "\t<key>GroupName</key>\n\t<string>%s</string>\n", groupname)
 		}
 	}
 
 	if homeDir != "" {
-		b.WriteString(fmt.Sprintf("\t<key>WorkingDirectory</key>\n\t<string>%s</string>\n", homeDir))
+		fmt.Fprintf(&b, "\t<key>WorkingDirectory</key>\n\t<string>%s</string>\n", homeDir)
 	}
 
 	b.WriteString("\t<key>ProgramArguments</key>\n\t<array>\n")
-	b.WriteString(fmt.Sprintf("\t\t<string>%s</string>\n", execPath))
+	fmt.Fprintf(&b, "\t\t<string>%s</string>\n", execPath)
 	b.WriteString("\t</array>\n")
 
 	b.WriteString("\t<key>RunAtLoad</key>\n\t<true/>\n")
@@ -54,11 +54,11 @@ func buildLaunchdPlist(label, username, groupname, execPath, homeDir, binDir, cl
 	// Environment variables
 	b.WriteString("\t<key>EnvironmentVariables</key>\n\t<dict>\n")
 	if homeDir != "" {
-		b.WriteString(fmt.Sprintf("\t\t<key>HOME</key>\n\t\t<string>%s</string>\n", homeDir))
+		fmt.Fprintf(&b, "\t\t<key>HOME</key>\n\t\t<string>%s</string>\n", homeDir)
 	}
-	b.WriteString(fmt.Sprintf("\t\t<key>PATH</key>\n\t\t<string>%s</string>\n", servicePATH(homeDir, binDir)))
+	fmt.Fprintf(&b, "\t\t<key>PATH</key>\n\t\t<string>%s</string>\n", servicePATH(homeDir, binDir))
 	if clawHome != "" {
-		b.WriteString(fmt.Sprintf("\t\t<key>%s</key>\n\t\t<string>%s</string>\n", global.EnvVarHome, clawHome))
+		fmt.Fprintf(&b, "\t\t<key>%s</key>\n\t\t<string>%s</string>\n", global.EnvVarHome, clawHome)
 	}
 	b.WriteString("\t</dict>\n")
 
@@ -69,8 +69,8 @@ func buildLaunchdPlist(label, username, groupname, execPath, homeDir, binDir, cl
 	} else if homeDir != "" {
 		logFile = filepath.Join(homeDir, ".claw", "logs", "claw-launchd.log")
 	}
-	b.WriteString(fmt.Sprintf("\t<key>StandardOutPath</key>\n\t<string>%s</string>\n", logFile))
-	b.WriteString(fmt.Sprintf("\t<key>StandardErrorPath</key>\n\t<string>%s</string>\n", logFile))
+	fmt.Fprintf(&b, "\t<key>StandardOutPath</key>\n\t<string>%s</string>\n", logFile)
+	fmt.Fprintf(&b, "\t<key>StandardErrorPath</key>\n\t<string>%s</string>\n", logFile)
 
 	b.WriteString("</dict>\n</plist>\n")
 	return b.String()
@@ -170,20 +170,4 @@ func isLaunchdServiceActive(label string) bool {
 		return false
 	}
 	return bytes.Contains(out, []byte(label))
-}
-
-// restartLaunchd kicks or restarts the launchd service.
-func restartLaunchd(tu *TargetUser) error {
-	if !isLaunchdServiceActive(launchdLabel) {
-		return nil
-	}
-	fmt.Printf("Restarting launchd service %s...\n", launchdLabel)
-	if tu.IsRoot {
-		_ = exec.Command("launchctl", "kickstart", "-k", "system/"+launchdLabel).Run()
-	} else {
-		guiTarget := fmt.Sprintf("gui/%s/%s", tu.UID, launchdLabel)
-		_ = exec.Command("launchctl", "kickstart", "-k", guiTarget).Run()
-	}
-	fmt.Println("Launchd service restarted.")
-	return nil
 }

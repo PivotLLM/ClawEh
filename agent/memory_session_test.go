@@ -68,8 +68,8 @@ func TestMemorySession_BackfillsInboxFromArchiveOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := pre.SetWatermark(ctx, pre.DB(), store.InboxStateKey, 1, 1); err != nil {
-		t.Fatal(err)
+	if wmErr := pre.SetWatermark(ctx, pre.DB(), store.InboxStateKey, 1, 1); wmErr != nil {
+		t.Fatal(wmErr)
 	}
 	_ = pre.Close()
 

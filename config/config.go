@@ -1261,9 +1261,10 @@ type CooldownConfig struct {
 const (
 	DefaultCooldownBillingAuthMinutes = 30
 	DefaultCooldownRateLimitMinutes   = 10
-	// 400 defaults to never-cool: a bad-request is a request-shape rejection, so
-	// the fallback should try the next candidate (including a sibling config of the
-	// same provider+model, e.g. thinking-off) instead of parking the model.
+	// DefaultCooldownBadRequestMinutes is 0 (never cool): a bad request is a
+	// request-shape rejection, so the fallback should try the next candidate
+	// (including a sibling config of the same provider+model, e.g. thinking-off)
+	// instead of parking the model.
 	DefaultCooldownBadRequestMinutes  = 0
 	DefaultCooldownClientErrorMinutes = 10
 	DefaultCooldownServerErrorMinutes = 10
@@ -1911,7 +1912,7 @@ func (g GatewayConfig) EffectiveExternalURL() string {
 		}
 	}
 
-	return fmt.Sprintf("http://%s:%d", host, g.Port)
+	return "http://" + net.JoinHostPort(host, strconv.Itoa(g.Port))
 }
 
 // NetworkAccess reports whether the gateway binds to all interfaces (0.0.0.0),

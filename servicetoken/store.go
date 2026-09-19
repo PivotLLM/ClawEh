@@ -1,6 +1,6 @@
 // ClawEh
 // License: MIT
-//
+
 // Package servicetoken owns the on-disk state for long-lived, per-agent MCP
 // service tokens (see docs/service-tokens.md). It is intentionally free of any
 // MCP-server dependency so both the gateway (which loads tokens at boot) and the

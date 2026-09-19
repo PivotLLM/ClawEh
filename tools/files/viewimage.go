@@ -9,12 +9,9 @@ import (
 	"encoding/base64"
 	"fmt"
 	"image"
-	// Register image decoders. png/jpeg/gif are stdlib; webp comes from x/image.
-	_ "image/gif"
+	_ "image/gif" // gif decoder; jpeg and png register via the imports below, webp via x/image
 	"image/jpeg"
-	_ "image/jpeg"
 	"image/png"
-	_ "image/png"
 	"path/filepath"
 	"regexp"
 	"strings"

@@ -23,7 +23,7 @@ func TestRollLogFile(t *testing.T) {
 	WarnCF("test", "a warning line", nil)
 
 	// Force a known mtime so the archive name is deterministic.
-	ts := time.Date(2026, 1, 2, 10, 0, 0, 0, time.Local)
+	ts := time.Date(2026, 1, 2, 10, 0, 0, 0, time.Local) //nolint:gosmopolitan // logs roll on the local calendar day by design
 	_ = os.Chtimes(logPath, ts, ts)
 	_ = os.Chtimes(filepath.Join(dir, "error.log"), ts, ts)
 

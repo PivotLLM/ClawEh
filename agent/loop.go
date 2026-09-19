@@ -507,7 +507,7 @@ func (al *AgentLoop) SetMediaStore(s media.MediaStore) {
 	// Propagate store to send_file / msg_send_file tools in all agents.
 	registry := al.GetRegistry()
 	type mediaStoreSetter interface {
-		SetMediaStore(media.MediaStore)
+		SetMediaStore(store media.MediaStore)
 	}
 	for _, toolName := range []string{"send_file", "msg_send_file"} {
 		registry.ForEachTool(toolName, func(t tools.Tool) {

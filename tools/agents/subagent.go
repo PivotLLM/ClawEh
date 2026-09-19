@@ -563,7 +563,7 @@ func (sm *SubagentManager) SuperviseOnce(now int64, cbFor func(rec *TaskRecord) 
 func (sm *SubagentManager) TaskStatus(id string) (*global.TaskStatus, error) {
 	rec, err := readStatus(sm.tasksDir(), id)
 	if err != nil {
-		return &global.TaskStatus{UUID: id, Status: StatusUnknown}, nil
+		return &global.TaskStatus{UUID: id, Status: StatusUnknown}, nil //nolint:nilerr // a missing status file means "unknown", not an error
 	}
 	return &global.TaskStatus{
 		UUID:       rec.UUID,
@@ -587,12 +587,6 @@ func (sm *SubagentManager) TaskList() ([]global.TaskBrief, error) {
 	return out, nil
 }
 
-// Run executes a sub-agent task synchronously and returns its completion
-// notification. Like SpawnCallback, the worker's output is written to a results
-// file and the returned result is a pointer (CALLBACK block + security framing),
-// never the raw content — so a synchronous spawn never leaks sub-agent output
-// inline. agentID == "" is a self-spawn. channel/chatID are used for attribution
-// and tool context.
 // RunSync runs a task as a sub-agent (a copy of the agent through the full
 // pipeline — curated prompt, full tools, MCP, fresh context) and returns the
 // worker's RAW content. Unlike Run (which writes the output to a results file and
@@ -628,6 +622,12 @@ func (sm *SubagentManager) RunSync(ctx context.Context, task, agentID, model str
 	return fr, nil
 }
 
+// Run executes a sub-agent task synchronously and returns its completion
+// notification. Like SpawnCallback, the worker's output is written to a results
+// file and the returned result is a pointer (CALLBACK block + security framing),
+// never the raw content — so a synchronous spawn never leaks sub-agent output
+// inline. agentID == "" is a self-spawn. channel/chatID are used for attribution
+// and tool context.
 func (sm *SubagentManager) Run(
 	ctx context.Context,
 	task, label, agentID, channel, chatID, model string,

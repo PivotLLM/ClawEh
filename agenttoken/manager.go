@@ -1,6 +1,6 @@
 // ClawEh
 // License: MIT
-//
+
 // Package agenttoken defines the token formats used by the claw MCP layer and
 // the helpers that operate on them: the reserved sub-agent sentinel (used to
 // deny sub-agents MCP access) and token redaction (see redact.go).

@@ -202,11 +202,11 @@ func TestPromptParity_Golden(t *testing.T) {
 	got := parityNormalize(t, raw, cb)
 
 	if os.Getenv("PROMPT_PARITY_UPDATE") == "1" {
-		if err := os.MkdirAll(filepath.Dir(promptParityGolden), 0o755); err != nil {
-			t.Fatal(err)
+		if mkErr := os.MkdirAll(filepath.Dir(promptParityGolden), 0o755); mkErr != nil {
+			t.Fatal(mkErr)
 		}
-		if err := os.WriteFile(promptParityGolden, []byte(got), 0o644); err != nil {
-			t.Fatal(err)
+		if writeErr := os.WriteFile(promptParityGolden, []byte(got), 0o644); writeErr != nil {
+			t.Fatal(writeErr)
 		}
 		t.Logf("updated %s", promptParityGolden)
 		return
