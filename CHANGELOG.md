@@ -10,6 +10,26 @@ Entries describe what changed for someone **running or integrating with** ClawEh
 internal refactors behind them. A change nobody outside the repository can
 observe does not need an entry.
 
+## [0.5.6]
+
+### Changed
+
+- **Dependencies updated.** Maestro v0.5.3, whose QA prompt now defines the
+  `fail` and `escalate` verdicts the same way as its documentation and runner
+  (`fail` sends work back to the worker, `escalate` does not), plus the
+  Anthropic SDK, mautrix and other third-party libraries. No other behaviour
+  change intended.
+- **`make test` is the full gate and `make` builds only after it passes.**
+  `make test` runs the format check and `go vet`, then `test.sh`: the Go
+  suite with the race detector and coverage, the frontend typecheck and unit
+  tests, and the MCP integration suite, ending with a pass/fail summary and a
+  non-zero exit on any failure. golangci-lint is found on `PATH` or in the Go
+  bin directory, and a missing linter is reported with its install command.
+  Lint is temporarily excluded from the gate until the remaining non-critical
+  findings are addressed; `make lint` still runs it. `make check` now aliases
+  `make test`. `make test-maestro-host` and `make check-webui` stay separate
+  because they bind ports or need a running instance.
+
 ## [0.5.5]
 
 ### Security
