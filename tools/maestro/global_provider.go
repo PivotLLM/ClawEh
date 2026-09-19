@@ -133,5 +133,5 @@ func isNilRunner(sr global.SyncRunner) bool {
 		return true
 	}
 	v := reflect.ValueOf(sr)
-	return v.Kind() == reflect.Ptr && v.IsNil()
+	return v.Kind() == reflect.Pointer && v.IsNil()
 }

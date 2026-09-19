@@ -22,7 +22,11 @@ func TestIdentity_MaestroRuleOnlyWhenEnabled(t *testing.T) {
 		t.Fatal("Maestro rule missing for an agent with Maestro")
 	}
 	// It is a numbered rule inside the Important Rules block.
-	rules := id[strings.Index(id, "## Important Rules"):]
+	start := strings.Index(id, "## Important Rules")
+	if start < 0 {
+		t.Fatal("identity lacks the Important Rules block")
+	}
+	rules := id[start:]
 	if !strings.Contains(rules, ". "+global.MaestroPromptRule) {
 		t.Errorf("Maestro rule is not numbered with the others:\n%s", rules)
 	}

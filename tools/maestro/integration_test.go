@@ -96,10 +96,14 @@ func newMaestroHarnessWith(t *testing.T, mc *config.MaestroConfig) *maestroHarne
 	// Task sets need response/report templates, held in a playbook as in
 	// Maestro's own suite.
 	h.call("maestro_playbook_create", map[string]any{"name": "pb"}, false)
-	h.call("maestro_file_put", map[string]any{"source": "playbook", "playbook": "pb", "path": "templates/worker-response.json",
-		"content": `{"type": "object", "additionalProperties": true}`}, false)
-	h.call("maestro_file_put", map[string]any{"source": "playbook", "playbook": "pb", "path": "templates/worker-report.md",
-		"content": "## Worker Report\n\n{{.WorkResult}}"}, false)
+	h.call("maestro_file_put", map[string]any{
+		"source": "playbook", "playbook": "pb", "path": "templates/worker-response.json",
+		"content": `{"type": "object", "additionalProperties": true}`,
+	}, false)
+	h.call("maestro_file_put", map[string]any{
+		"source": "playbook", "playbook": "pb", "path": "templates/worker-report.md",
+		"content": "## Worker Report\n\n{{.WorkResult}}",
+	}, false)
 	return h
 }
 

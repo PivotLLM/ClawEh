@@ -26,14 +26,14 @@ func TestRunnerConfig_Mapping(t *testing.T) {
 
 func TestReferenceDirsFromMounts(t *testing.T) {
 	ws := t.TempDir()
-	real := t.TempDir()
+	docs := t.TempDir()
 	a := &config.AgentConfig{ID: "a", Maestro: &config.MaestroConfig{Enabled: true}, Mounts: []config.MountConfig{
-		{Name: "docs", Path: real, Writable: true},
+		{Name: "docs", Path: docs, Writable: true},
 		{Name: "gone", Path: filepath.Join(t.TempDir(), "missing")},
 	}}
 	dirs := referenceDirsFromMounts(a, ws)
-	if len(dirs) != 1 || dirs[0].Mount != "docs" || dirs[0].Path != real {
-		t.Fatalf("dirs = %+v, want only docs→%s (missing dir skipped, auto maestro mount skipped)", dirs, real)
+	if len(dirs) != 1 || dirs[0].Mount != "docs" || dirs[0].Path != docs {
+		t.Fatalf("dirs = %+v, want only docs→%s (missing dir skipped, auto maestro mount skipped)", dirs, docs)
 	}
 	if _, err := os.Stat(filepath.Join(t.TempDir(), "missing")); !os.IsNotExist(err) {
 		t.Error("a missing mount directory must not be created")

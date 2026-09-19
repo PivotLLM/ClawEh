@@ -79,8 +79,8 @@ func importAllowed(cfg *config.Config, agentCfg *config.AgentConfig, workspace s
 		if abs, err := filepath.Abs(p); err == nil {
 			p = abs
 		}
-		if real, err := filepath.EvalSymlinks(p); err == nil {
-			p = real
+		if resolved, err := filepath.EvalSymlinks(p); err == nil {
+			p = resolved
 		}
 		roots = append(roots, p)
 	}
