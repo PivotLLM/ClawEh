@@ -10,6 +10,12 @@ Entries describe what changed for someone **running or integrating with** ClawEh
 internal refactors behind them. A change nobody outside the repository can
 observe does not need an entry.
 
+## [0.5.7]
+
+### Changed
+
+- **Fix for MacOS.** Fixed two tools/maestro tests that failed on macOS because they compared raw t.TempDir() paths against symlink-resolved roots (/var vs /private/var); the import gate itself was correct. test.sh now re-prints failing Go test output, lists each failed Go test and MCP integration check by name in the final summary with rerun commands, and saves details to .test-failures.log; a startup-template check that could not fail the run now does.
+
 ## [0.5.6]
 
 ### Changed

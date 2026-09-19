@@ -43,10 +43,23 @@ func TestReferenceDirsFromMounts(t *testing.T) {
 	}
 }
 
+// realTempDir is t.TempDir() with symlinks resolved. importAllowed compares
+// resolved paths (Maestro hands it the real path of every candidate), and on
+// macOS the temp root is a symlink (/var -> /private/var), so paths built from
+// a raw t.TempDir() would never match the resolved roots.
+func realTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("resolve temp dir: %v", err)
+	}
+	return dir
+}
+
 func TestImportAllowed_RestrictedAgent(t *testing.T) {
-	ws := t.TempDir()
-	mount := t.TempDir()
-	allowed := t.TempDir()
+	ws := realTempDir(t)
+	mount := realTempDir(t)
+	allowed := realTempDir(t)
 	cfg := &config.Config{}
 	cfg.Agents.Defaults.RestrictToWorkspace = true
 	cfg.Tools.AllowReadPaths = []string{"^" + allowed + "/"}
@@ -85,7 +98,7 @@ func TestImportAllowed_UnrestrictedAgentReadsAnywhere(t *testing.T) {
 }
 
 func TestImportAllowed_ResolvesSymlinkedRoots(t *testing.T) {
-	realWS := t.TempDir()
+	realWS := realTempDir(t)
 	link := filepath.Join(t.TempDir(), "ws-link")
 	if err := os.Symlink(realWS, link); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)

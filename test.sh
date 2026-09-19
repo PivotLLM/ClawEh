@@ -362,6 +362,15 @@ INTEGRATION_RAN=false
 INTEGRATION_PASSED=true
 INTEGRATION_PASS_COUNT=0
 INTEGRATION_FAIL_COUNT=0
+declare -a INTEGRATION_FAILS=()   # one reason per failed check, repeated in the final summary
+
+# integ_fail: report a failed integration check and remember it for the summary.
+integ_fail() {
+    echo "  ${RED}FAIL${NC}: $1"
+    INTEGRATION_FAILS+=("$1")
+    INTEGRATION_FAIL_COUNT=$((INTEGRATION_FAIL_COUNT + 1))
+    INTEGRATION_PASSED=false
+}
 
 # Frontend gates. The SPA is compiled into the Go binary, so a broken typecheck
 # or a failing SPA test ships in the release just as surely as a Go failure does
@@ -498,7 +507,7 @@ PY
             echo "${DIM}Building claw binary...${NC}"
             if ! go build -o "$INTEG_BIN" . 2>&1; then
                 echo "${RED}ERROR: failed to build claw${NC}"
-                INTEGRATION_PASSED=false
+                integ_fail "claw binary failed to build"
             else
                 # Generate a random session token for Tier 2 integration tests.
                 # Passed only via environment — never written to a config file.
@@ -676,7 +685,7 @@ EOF
                     echo "${RED}ERROR: MCP server did not start on 127.0.0.1:$MCP_PORT within 10s${NC}"
                     echo "${DIM}--- gateway log (tail) ---${NC}"
                     tail -n 40 "$INTEG_LOG" | sed 's/^/    /'
-                    INTEGRATION_PASSED=false
+                    integ_fail "MCP server did not start within 10s (see gateway log tail above)"
                 else
                     echo "${GREEN}Gateway ready on 127.0.0.1:$MCP_PORT/mcp${NC}"
                     echo ""
@@ -694,21 +703,16 @@ EOF
                             echo "  ${GREEN}PASS${NC}: claw.pid written at startup (pid $PIDFILE_CONTENT)"
                             INTEGRATION_PASS_COUNT=$((INTEGRATION_PASS_COUNT + 1))
                         else
-                            echo "  ${RED}FAIL${NC}: claw.pid says '$PIDFILE_CONTENT', process is $INTEG_PID"
-                            INTEGRATION_FAIL_COUNT=$((INTEGRATION_FAIL_COUNT + 1))
-                            INTEGRATION_PASSED=false
+                            integ_fail "claw.pid says '$PIDFILE_CONTENT', process is $INTEG_PID"
                         fi
                     else
-                        echo "  ${RED}FAIL${NC}: claw.pid not written at startup"
-                        INTEGRATION_FAIL_COUNT=$((INTEGRATION_FAIL_COUNT + 1))
-                        INTEGRATION_PASSED=false
+                        integ_fail "claw.pid not written at startup"
                     fi
                     echo ""
 
                     # ---- Workspace population: initial startup ----
                     echo "${BOLD}--- Workspace population (initial startup) ---${NC}"
                     echo ""
-                    WORKSPACE_PASS=true
                     WORKSPACE_TEMPLATES="AGENTS.md SOUL.md USER.md IDENTITY.md MEMORY.md"
                     # The default agent (id=main) uses agents/default; named agents use agents/{id}
                     for agent_ws in "main:$INTEG_HOME/agents/default" "alice:$INTEG_HOME/agents/alice"; do
@@ -719,9 +723,7 @@ EOF
                                 echo "  ${GREEN}PASS${NC}: $agent/$tpl populated at startup"
                                 INTEGRATION_PASS_COUNT=$((INTEGRATION_PASS_COUNT + 1))
                             else
-                                echo "  ${RED}FAIL${NC}: $agent/$tpl missing after startup"
-                                INTEGRATION_FAIL_COUNT=$((INTEGRATION_FAIL_COUNT + 1))
-                                WORKSPACE_PASS=false
+                                integ_fail "$agent/$tpl missing after startup"
                             fi
                         done
                     done
@@ -749,7 +751,7 @@ EOF
                         echo "${RED}MCP server integration tests failed.${NC}"
                         echo "${DIM}--- gateway log (tail) ---${NC}"
                         tail -n 40 "$INTEG_LOG" | sed 's/^/    /'
-                        INTEGRATION_PASSED=false
+                        integ_fail "probe suite (tests/test_mcpserver.sh) reported failures; see its output above"
                     fi
 
                     # ---- Workspace re-population: delete alice's dir and restart ----
@@ -779,13 +781,9 @@ EOF
                     # it is removed by a deferred cleanup that a hard kill never
                     # reaches.
                     if ! $TERM_CLEAN; then
-                        echo "  ${RED}FAIL${NC}: ClawEh did not exit within 5s of SIGTERM"
-                        INTEGRATION_FAIL_COUNT=$((INTEGRATION_FAIL_COUNT + 1))
-                        INTEGRATION_PASSED=false
+                        integ_fail "ClawEh did not exit within 5s of SIGTERM"
                     elif [ -f "$INTEG_HOME/claw.pid" ]; then
-                        echo "  ${RED}FAIL${NC}: claw.pid survived SIGTERM — shutdown did not run"
-                        INTEGRATION_FAIL_COUNT=$((INTEGRATION_FAIL_COUNT + 1))
-                        INTEGRATION_PASSED=false
+                        integ_fail "claw.pid survived SIGTERM — shutdown did not run"
                     else
                         echo "  ${GREEN}PASS${NC}: SIGTERM ran graceful shutdown (claw.pid removed)"
                         INTEGRATION_PASS_COUNT=$((INTEGRATION_PASS_COUNT + 1))
@@ -817,18 +815,14 @@ EOF
 
                     ALICE_WS="$INTEG_HOME/agents/alice"
                     if ! $RESTART_READY; then
-                        echo "  ${RED}FAIL${NC}: gateway did not restart within 10s"
-                        INTEGRATION_FAIL_COUNT=$((INTEGRATION_FAIL_COUNT + 1))
-                        INTEGRATION_PASSED=false
+                        integ_fail "gateway did not restart within 10s"
                     else
                         for tpl in $WORKSPACE_TEMPLATES; do
                             if [ -f "$ALICE_WS/$tpl" ]; then
                                 echo "  ${GREEN}PASS${NC}: alice/$tpl re-populated after restart"
                                 INTEGRATION_PASS_COUNT=$((INTEGRATION_PASS_COUNT + 1))
                             else
-                                echo "  ${RED}FAIL${NC}: alice/$tpl missing after restart"
-                                INTEGRATION_FAIL_COUNT=$((INTEGRATION_FAIL_COUNT + 1))
-                                INTEGRATION_PASSED=false
+                                integ_fail "alice/$tpl missing after restart"
                             fi
                         done
                     fi
@@ -912,8 +906,16 @@ elif $INTEGRATION_RAN; then
     if $INTEGRATION_PASSED; then
         echo "MCP integ:   ${GREEN}passed${NC} (workspace: ${INTEGRATION_PASS_COUNT}/${INTEGRATION_PASS_COUNT} checks)"
     else
-        echo "MCP integ:   ${RED}failed${NC} (workspace: ${INTEGRATION_FAIL_COUNT} failure(s))"
+        echo "MCP integ:   ${RED}failed${NC} (${INTEGRATION_FAIL_COUNT} failure(s), ${INTEGRATION_PASS_COUNT} check(s) passed)"
         OVERALL_PASS=false
+        if [ ${#INTEGRATION_FAILS[@]} -gt 0 ]; then
+            echo ""
+            echo "${RED}${BOLD}Failed MCP integration checks:${NC}"
+            for reason in "${INTEGRATION_FAILS[@]}"; do
+                echo "  ${RED}✗${NC} ${reason}"
+            done
+            echo "      ${DIM}details: MCP SERVER INTEGRATION section above; rerun with -x to keep the gateway log${NC}"
+        fi
     fi
 else
     # probe was not found — counts as a failure per test suite contract

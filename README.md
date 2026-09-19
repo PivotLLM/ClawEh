@@ -866,6 +866,8 @@ For clients limited to stdio MCP transport (e.g., Claude Desktop), bridge to cla
 
 ### Testing
 
+`make test` runs the whole suite. See [docs/test.md](docs/test.md) for how it is organised and where failure details are reported.
+
 The MCP server integration tests are fully self-contained. `./test.sh -i` builds a fresh claw binary, starts an ephemeral gateway in a temporary `CLAW_HOME`, runs the probe-driven test suite, then tears everything down.
 
 ```bash
