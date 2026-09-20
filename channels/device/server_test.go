@@ -87,7 +87,10 @@ func (e *emulator) open(t *testing.T, wsURL, sharedToken string) (*websocket.Con
 	if sharedToken != "" {
 		params.Auth = &gatewayproto.ConnectAuth{Token: sharedToken}
 	}
-	rawParams, _ := json.Marshal(params)
+	rawParams, marshalErr := json.Marshal(params)
+	if marshalErr != nil {
+		t.Fatalf("marshal connect params: %v", marshalErr)
+	}
 	if err := conn.WriteJSON(gatewayproto.RequestFrame{Type: gatewayproto.FrameReq, ID: "c1", Method: "connect", Params: rawParams}); err != nil {
 		t.Fatalf("write connect: %v", err)
 	}
@@ -118,7 +121,10 @@ func (e *emulator) connect(t *testing.T, wsURL, sharedToken string) connectResp 
 // writeReq sends a request frame on an open connection.
 func (e *emulator) writeReq(t *testing.T, conn *websocket.Conn, id, method string, params any) {
 	t.Helper()
-	raw, _ := json.Marshal(params)
+	raw, err := json.Marshal(params)
+	if err != nil {
+		t.Fatalf("marshal %s params: %v", method, err)
+	}
 	if err := conn.WriteJSON(gatewayproto.RequestFrame{Type: gatewayproto.FrameReq, ID: id, Method: method, Params: raw}); err != nil {
 		t.Fatalf("write %s: %v", method, err)
 	}

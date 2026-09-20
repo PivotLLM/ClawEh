@@ -166,8 +166,14 @@ func TestToolRegistry_ToolRegistration(t *testing.T) {
 
 	// Verify tool is registered; it appears because the agent allowlist includes "mock_custom"
 	info := al.GetStartupInfo()
-	toolsInfo := info["tools"].(map[string]any)
-	toolsList := toolsInfo["names"].([]string)
+	toolsInfo, ok := info["tools"].(map[string]any)
+	if !ok {
+		t.Fatalf("tools info is %T, want map[string]any", info["tools"])
+	}
+	toolsList, ok := toolsInfo["names"].([]string)
+	if !ok {
+		t.Fatalf("tools names is %T, want []string", toolsInfo["names"])
+	}
 
 	// Check that our custom tool name is in the list
 	found := slices.Contains(toolsList, "mock_custom")
@@ -207,8 +213,14 @@ func TestToolRegistry_GetDefinitions(t *testing.T) {
 	al.RegisterTool(testTool)
 
 	info := al.GetStartupInfo()
-	toolsInfo := info["tools"].(map[string]any)
-	toolsList := toolsInfo["names"].([]string)
+	toolsInfo, ok := info["tools"].(map[string]any)
+	if !ok {
+		t.Fatalf("tools info is %T, want map[string]any", info["tools"])
+	}
+	toolsList, ok := toolsInfo["names"].([]string)
+	if !ok {
+		t.Fatalf("tools names is %T, want []string", toolsInfo["names"])
+	}
 
 	// Check that our custom tool name is in the list; it appears because the agent allowlist includes "mock_custom"
 	found := slices.Contains(toolsList, "mock_custom")
@@ -255,7 +267,11 @@ func TestAgentLoop_GetStartupInfo(t *testing.T) {
 	}
 
 	// Agent has wildcard allowlist, so all enabled tools should be registered
-	if count.(int) == 0 {
+	n, ok := count.(int)
+	if !ok {
+		t.Fatalf("count is %T, want int", count)
+	}
+	if n == 0 {
 		t.Error("Expected at least some tools to be registered")
 	}
 }

@@ -9,7 +9,6 @@
 package api
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -52,7 +51,7 @@ func (h *Handler) handleGatewayReload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{"status": "reloaded"})
+	encodeJSON(w, map[string]string{"status": "reloaded"})
 }
 
 // handleGatewayLogs returns the last N lines of the unified claw.log, newest
@@ -76,7 +75,7 @@ func (h *Handler) handleGatewayLogs(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	path := logger.GetLogFilePath()
 	if path == "" {
-		json.NewEncoder(w).Encode(map[string]any{
+		encodeJSON(w, map[string]any{
 			"logs":  []string{},
 			"count": 0,
 			"error": "file logging is disabled",
@@ -86,14 +85,14 @@ func (h *Handler) handleGatewayLogs(w http.ResponseWriter, r *http.Request) {
 
 	lines, err := tailLines(path, n)
 	if err != nil {
-		json.NewEncoder(w).Encode(map[string]any{
+		encodeJSON(w, map[string]any{
 			"logs":  []string{},
 			"count": 0,
 			"error": err.Error(),
 		})
 		return
 	}
-	json.NewEncoder(w).Encode(map[string]any{
+	encodeJSON(w, map[string]any{
 		"logs":  lines,
 		"count": len(lines),
 	})

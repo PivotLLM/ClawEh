@@ -45,7 +45,10 @@ func TestRequestFrame_ParamsRaw(t *testing.T) {
 
 func TestResponseAndEventEncoding(t *testing.T) {
 	// Success response carries payload, no error key.
-	b, _ := json.Marshal(NewOKResponse("c1", HelloOk{Type: "hello-ok", Protocol: 4}))
+	b, err := json.Marshal(NewOKResponse("c1", HelloOk{Type: "hello-ok", Protocol: 4}))
+	if err != nil {
+		t.Fatalf("marshal response: %v", err)
+	}
 	if got := string(b); got == "" || !json.Valid(b) {
 		t.Fatalf("invalid response json: %s", got)
 	}
@@ -56,7 +59,10 @@ func TestResponseAndEventEncoding(t *testing.T) {
 	}
 
 	// Error response: ok=false, error set, payload omitted.
-	eb, _ := json.Marshal(NewErrorResponse("c1", NewError(CodeInvalidRequest, "bad", nil)))
+	eb, err := json.Marshal(NewErrorResponse("c1", NewError(CodeInvalidRequest, "bad", nil)))
+	if err != nil {
+		t.Fatalf("marshal error response: %v", err)
+	}
 	var ef ResponseFrame
 	_ = json.Unmarshal(eb, &ef)
 	if ef.OK || ef.Error == nil || ef.Error.Code != CodeInvalidRequest {
@@ -65,7 +71,10 @@ func TestResponseAndEventEncoding(t *testing.T) {
 
 	// Event with seq.
 	seq := uint64(7)
-	evb, _ := json.Marshal(NewEvent("chat", map[string]any{"x": 1}, &seq))
+	evb, err := json.Marshal(NewEvent("chat", map[string]any{"x": 1}, &seq))
+	if err != nil {
+		t.Fatalf("marshal event: %v", err)
+	}
 	var evf EventFrame
 	_ = json.Unmarshal(evb, &evf)
 	if evf.Type != FrameEvent || evf.Event != "chat" || evf.Seq == nil || *evf.Seq != 7 {

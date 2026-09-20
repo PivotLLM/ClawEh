@@ -24,7 +24,10 @@ func writeConfig(t *testing.T, cfg *config.Config) (*Handler, string) {
 
 func setCLI(t *testing.T, h *Handler, protocol string, enabled bool) *httptest.ResponseRecorder {
 	t.Helper()
-	body, _ := json.Marshal(map[string]bool{"enabled": enabled})
+	body, err := json.Marshal(map[string]bool{"enabled": enabled})
+	if err != nil {
+		t.Fatalf("marshal body: %v", err)
+	}
 	req := httptest.NewRequest(http.MethodPut, "/api/system/clis/"+protocol, bytes.NewReader(body))
 	req.SetPathValue("protocol", protocol)
 	rec := httptest.NewRecorder()

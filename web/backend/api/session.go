@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 	"os"
@@ -262,7 +261,7 @@ func (h *Handler) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(items)
+	encodeJSON(w, items)
 }
 
 // handleGetSession returns the full message history for a specific session.
@@ -313,7 +312,7 @@ func (h *Handler) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	encodeJSON(w, map[string]any{
 		"id":       sessionID,
 		"messages": messages,
 		"summary":  sess.Summary,

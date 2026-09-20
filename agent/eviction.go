@@ -57,8 +57,9 @@ func (e *cmEntry) sessionToken() string {
 // sessionToken returns the MCP token of a cached session, or "" when the
 // session has no entry (a stub injected by a test) or no token was issued.
 func (al *AgentLoop) sessionToken(agent *AgentInstance, sessionKey string) string {
-	if v, ok := al.contextManagers.Load(agent.ID + ":" + sessionKey); ok {
-		return v.(*cmEntry).sessionToken()
+	v, _ := al.contextManagers.Load(agent.ID + ":" + sessionKey)
+	if entry, ok := v.(*cmEntry); ok {
+		return entry.sessionToken()
 	}
 	return ""
 }
@@ -74,13 +75,14 @@ func (al *AgentLoop) reissueSessionToken(agent *AgentInstance, sessionKey string
 	if sti == nil {
 		return
 	}
-	v, ok := al.contextManagers.Load(agent.ID + ":" + sessionKey)
+	v, _ := al.contextManagers.Load(agent.ID + ":" + sessionKey)
+	entry, ok := v.(*cmEntry)
 	if !ok {
 		return
 	}
 	archiveDir := filepath.Join(agent.Workspace, "sessions")
 	if tok := sti.Issue(agent.ID, sessionKey, archiveDir); tok != "" {
-		v.(*cmEntry).setToken(tok)
+		entry.setToken(tok)
 	}
 }
 

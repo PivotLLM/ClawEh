@@ -435,7 +435,11 @@ func (e *OAuthFlowExecutor) ExecuteAuthCodeFlow(ctx context.Context) error {
 		_ = listener.Close()
 	}(listener)
 
-	port := listener.Addr().(*net.TCPAddr).Port
+	tcpAddr, ok := listener.Addr().(*net.TCPAddr)
+	if !ok {
+		return fmt.Errorf("unexpected listener address type %T", listener.Addr())
+	}
+	port := tcpAddr.Port
 	redirectURI := fmt.Sprintf("http://127.0.0.1:%d/callback", port)
 
 	if e.Verbose {

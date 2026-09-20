@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -246,6 +247,5 @@ func firstDiff(want, got string) string {
 }
 
 func itoa(i int) string {
-	b, _ := json.Marshal(i)
-	return string(b)
+	return strconv.Itoa(i)
 }

@@ -1748,8 +1748,18 @@ func (al *AgentLoop) dumpRefusal(
 	model string,
 	iteration int,
 ) {
-	inputBytes, _ := json.Marshal(messages)
-	outputBytes, _ := json.Marshal(response)
+	inputBytes, err := json.Marshal(messages)
+	if err != nil {
+		logger.WarnCF("agent", "Failed to marshal refusal dump input",
+			map[string]any{"agent_id": agent.ID, "error": err.Error()})
+		return
+	}
+	outputBytes, err := json.Marshal(response)
+	if err != nil {
+		logger.WarnCF("agent", "Failed to marshal refusal dump output",
+			map[string]any{"agent_id": agent.ID, "error": err.Error()})
+		return
+	}
 
 	meta := map[string]any{
 		"agent":     agent.ID,
@@ -1787,8 +1797,18 @@ func (al *AgentLoop) dumpAll(
 	model string,
 	iteration int,
 ) {
-	inputBytes, _ := json.Marshal(messages)
-	outputBytes, _ := json.Marshal(response)
+	inputBytes, err := json.Marshal(messages)
+	if err != nil {
+		logger.WarnCF("agent", "Failed to marshal dump_all input",
+			map[string]any{"agent_id": agent.ID, "error": err.Error()})
+		return
+	}
+	outputBytes, err := json.Marshal(response)
+	if err != nil {
+		logger.WarnCF("agent", "Failed to marshal dump_all output",
+			map[string]any{"agent_id": agent.ID, "error": err.Error()})
+		return
+	}
 
 	meta := map[string]any{
 		"agent":         agent.ID,

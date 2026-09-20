@@ -920,7 +920,10 @@ func (t *WebFetchTool) Execute(ctx context.Context, args map[string]any) *tools.
 	if strings.Contains(contentType, "application/json") {
 		var jsonData any
 		if err := json.Unmarshal(body, &jsonData); err == nil {
-			formatted, _ := json.MarshalIndent(jsonData, "", "  ")
+			formatted, formatErr := json.MarshalIndent(jsonData, "", "  ")
+			if formatErr != nil {
+				return tools.ErrorResult(fmt.Sprintf("failed to format JSON response: %v", formatErr))
+			}
 			text = string(formatted)
 			extractor = "json"
 		} else {
@@ -955,7 +958,10 @@ func (t *WebFetchTool) Execute(ctx context.Context, args map[string]any) *tools.
 		result["note"] = note
 	}
 
-	resultJSON, _ := json.MarshalIndent(result, "", "  ")
+	resultJSON, marshalErr := json.MarshalIndent(result, "", "  ")
+	if marshalErr != nil {
+		return tools.ErrorResult(fmt.Sprintf("failed to encode result: %v", marshalErr))
+	}
 
 	// Silent: the "Fetched N bytes…" status is telemetry, not user content.
 	// The model's final answer carries the fetched information.

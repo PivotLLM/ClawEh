@@ -107,8 +107,9 @@ func (c *SlackChannel) Start(ctx context.Context) error {
 // ID, with an in-memory cache so each user is resolved at most once per
 // process lifetime. Falls back through DisplayName → RealName → Name.
 func (c *SlackChannel) resolveDisplayName(userID string) string {
-	if v, ok := c.userNameCache.Load(userID); ok {
-		return v.(string)
+	v, _ := c.userNameCache.Load(userID)
+	if cached, ok := v.(string); ok {
+		return cached
 	}
 	user, err := c.api.GetUserInfo(userID)
 	if err != nil {
@@ -169,8 +170,8 @@ func (c *SlackChannel) Send(ctx context.Context, msg bus.OutboundMessage) error 
 		return fmt.Errorf("slack send: %w", channels.ErrTemporary)
 	}
 
-	if ref, ok := c.pendingAcks.LoadAndDelete(msg.OriginalMessageID); ok {
-		msgRef := ref.(slackMessageRef)
+	ref, _ := c.pendingAcks.LoadAndDelete(msg.OriginalMessageID)
+	if msgRef, ok := ref.(slackMessageRef); ok {
 		go c.api.AddReaction("white_check_mark", slack.ItemRef{
 			Channel:   msgRef.ChannelID,
 			Timestamp: msgRef.Timestamp,

@@ -351,8 +351,8 @@ func (al *AgentLoop) getSessionContext(agent *AgentInstance, sessionKey string) 
 	key := agent.ID + ":" + sessionKey
 
 	// Fast path: entry already exists.
-	if v, ok := al.contextManagers.Load(key); ok {
-		entry := v.(*cmEntry)
+	v, _ := al.contextManagers.Load(key)
+	if entry, ok := v.(*cmEntry); ok {
 		entry.refcount.Add(1)
 		entry.lastAccessed = time.Now()
 		release := func() { entry.refcount.Add(-1) }
@@ -440,7 +440,7 @@ func (al *AgentLoop) getSessionContext(agent *AgentInstance, sessionKey string) 
 	newEntry.refcount.Store(1)
 
 	actual, loaded := al.contextManagers.LoadOrStore(key, newEntry)
-	if loaded {
+	if entry, ok := actual.(*cmEntry); loaded && ok {
 		// Another goroutine beat us; use theirs and discard ours.
 		// The one we created (cm) is not stored and will be GC'd.
 		// Revoke the token we just issued since we won't use this CM.
@@ -449,7 +449,6 @@ func (al *AgentLoop) getSessionContext(agent *AgentInstance, sessionKey string) 
 		}
 		// Release the cogmem store handle we may have opened for the discarded CM.
 		mem.Close()
-		entry := actual.(*cmEntry)
 		entry.refcount.Add(1)
 		entry.lastAccessed = time.Now()
 		release := func() { entry.refcount.Add(-1) }

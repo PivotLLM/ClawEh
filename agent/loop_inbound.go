@@ -40,7 +40,10 @@ type sessionCancelState struct {
 func (al *AgentLoop) getOrCreateSessionMu(key string) *sync.Mutex {
 	mu := &sync.Mutex{}
 	actual, _ := al.sessionMus.LoadOrStore(key, mu)
-	return actual.(*sync.Mutex)
+	if existing, ok := actual.(*sync.Mutex); ok {
+		return existing
+	}
+	return mu // only *sync.Mutex values are ever stored
 }
 
 // getOrCreateCancelState returns the per-session cancel state for the given key,
@@ -48,7 +51,10 @@ func (al *AgentLoop) getOrCreateSessionMu(key string) *sync.Mutex {
 func (al *AgentLoop) getOrCreateCancelState(key string) *sessionCancelState {
 	cs := &sessionCancelState{}
 	actual, _ := al.sessionCancelStates.LoadOrStore(key, cs)
-	return actual.(*sessionCancelState)
+	if existing, ok := actual.(*sessionCancelState); ok {
+		return existing
+	}
+	return cs // only *sessionCancelState values are ever stored
 }
 
 // isCancelCommand returns true if the message content is a /cancel command.

@@ -72,7 +72,10 @@ func TestLoopProtection_BreaksOnRepeatedToolCall(t *testing.T) {
 	}
 	// Before aborting, the model is steered: a later dispatch must carry the
 	// generic "exact same tool call N times" guidance so it can self-correct.
-	sp := agentInstance.Provider.(*sequenceProvider)
+	sp, ok := agentInstance.Provider.(*sequenceProvider)
+	if !ok {
+		t.Fatalf("provider is %T, want *sequenceProvider", agentInstance.Provider)
+	}
 	var steer string
 	for _, m := range sp.lastMessages {
 		if strings.Contains(m.Content, "exact same tool call") {

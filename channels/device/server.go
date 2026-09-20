@@ -882,11 +882,11 @@ func (s *Server) StreamDelta(chatID, delta string) bool {
 	if delta == "" {
 		return false
 	}
-	v, ok := s.conns.Load(chatID)
+	v, _ := s.conns.Load(chatID)
+	lc, ok := v.(*liveConn)
 	if !ok {
 		return false
 	}
-	lc := v.(*liveConn)
 
 	lc.mu.Lock()
 	runID := lc.currentRun
@@ -954,11 +954,11 @@ func (s *Server) StreamDelta(chatID, delta string) bool {
 // DeliverReply emits a terminal "chat" final event to the device for the given
 // chatID, carrying the in-flight runId. Returns false if no connection matches.
 func (s *Server) DeliverReply(chatID, content string) bool {
-	v, ok := s.conns.Load(chatID)
+	v, _ := s.conns.Load(chatID)
+	lc, ok := v.(*liveConn)
 	if !ok {
 		return false
 	}
-	lc := v.(*liveConn)
 	lc.mu.Lock()
 	runID := lc.currentRun
 	sessionKey := lc.sessionKey

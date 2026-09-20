@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/PivotLLM/ClawEh/logger"
 )
 
 type Server struct {
@@ -127,7 +129,7 @@ func (s *Server) healthHandler(w http.ResponseWriter, r *http.Request) {
 		Uptime: uptime.String(),
 	}
 
-	json.NewEncoder(w).Encode(resp)
+	writeJSON(w, resp)
 }
 
 func (s *Server) readyHandler(w http.ResponseWriter, r *http.Request) {
@@ -141,7 +143,7 @@ func (s *Server) readyHandler(w http.ResponseWriter, r *http.Request) {
 
 	if !ready {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		json.NewEncoder(w).Encode(StatusResponse{
+		writeJSON(w, StatusResponse{
 			Status: "not ready",
 			Checks: checks,
 		})
@@ -151,7 +153,7 @@ func (s *Server) readyHandler(w http.ResponseWriter, r *http.Request) {
 	for _, check := range checks {
 		if check.Status == "fail" {
 			w.WriteHeader(http.StatusServiceUnavailable)
-			json.NewEncoder(w).Encode(StatusResponse{
+			writeJSON(w, StatusResponse{
 				Status: "not ready",
 				Checks: checks,
 			})
@@ -161,7 +163,7 @@ func (s *Server) readyHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusOK)
 	uptime := time.Since(s.startTime)
-	json.NewEncoder(w).Encode(StatusResponse{
+	writeJSON(w, StatusResponse{
 		Status: "ready",
 		Uptime: uptime.String(),
 		Checks: checks,
@@ -182,4 +184,13 @@ func statusString(ok bool) string {
 		return "ok"
 	}
 	return "fail"
+}
+
+// writeJSON writes v as the response body. A failure means the client went
+// away or the value is unencodable; the status is already sent, so all that is
+// left to do is record it.
+func writeJSON(w http.ResponseWriter, v any) {
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		logger.WarnCF("health", "response write failed", map[string]any{"error": err.Error()})
+	}
 }

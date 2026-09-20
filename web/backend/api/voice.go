@@ -34,7 +34,7 @@ func (h *Handler) handleGetVoiceSTT(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{
+	encodeJSON(w, map[string]any{
 		"stt":     out,
 		"presets": voice.STTPresets(),
 	})
@@ -87,5 +87,5 @@ func (h *Handler) handleUpdateVoiceSTT(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	encodeJSON(w, map[string]string{"status": "ok"})
 }

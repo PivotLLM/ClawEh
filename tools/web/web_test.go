@@ -60,7 +60,10 @@ func TestWebTool_WebFetch_JSON(t *testing.T) {
 	withPrivateWebFetchHostsAllowed(t)
 
 	testData := map[string]string{"key": "value", "number": "123"}
-	expectedJSON, _ := json.MarshalIndent(testData, "", "  ")
+	expectedJSON, err := json.MarshalIndent(testData, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal test data: %v", err)
+	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -855,7 +858,10 @@ func TestWebTool_TavilySearch_Failover(t *testing.T) {
 			t.Fatalf("failed to decode payload: %v", err)
 		}
 
-		apiKey := payload["api_key"].(string)
+		apiKey, ok := payload["api_key"].(string)
+		if !ok {
+			t.Fatalf("api_key is %T, want string", payload["api_key"])
+		}
 
 		if apiKey == "key1" {
 			w.WriteHeader(http.StatusTooManyRequests)

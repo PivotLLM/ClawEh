@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"net/http"
 	"sort"
 
@@ -74,7 +73,7 @@ func (h *Handler) handleListAgentTools(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(agentToolCatalogResponse{
+	encodeJSON(w, agentToolCatalogResponse{
 		Tools:        builtinTools,
 		MCPServers:   mcpServers,
 		DefaultTools: effectiveDefaults,

@@ -199,7 +199,10 @@ func TestFlowA_InjectsDescriptionForNonVisionModel(t *testing.T) {
 		t.Fatalf("vision model did not receive the tool image: %v", stub.gotMedia)
 	}
 	// The 2nd model dispatch must have seen the injected description.
-	sp := agent.Provider.(*sequenceProvider)
+	sp, ok := agent.Provider.(*sequenceProvider)
+	if !ok {
+		t.Fatalf("provider is %T, want *sequenceProvider", agent.Provider)
+	}
 	found := false
 	for _, m := range sp.lastMessages {
 		if strings.Contains(m.Content, "two cats") && strings.Contains(m.Content, "cannot view images") {

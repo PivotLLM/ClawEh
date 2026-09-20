@@ -22,6 +22,11 @@ func CreateHTTPClient(proxyURL string, timeout time.Duration) (*http.Client, err
 		},
 	}
 
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok {
+		return nil, fmt.Errorf("unexpected transport type %T", client.Transport)
+	}
+
 	if proxyURL != "" {
 		proxy, err := url.Parse(proxyURL)
 		if err != nil {
@@ -39,9 +44,9 @@ func CreateHTTPClient(proxyURL string, timeout time.Duration) (*http.Client, err
 		if proxy.Host == "" {
 			return nil, fmt.Errorf("invalid proxy URL: missing host")
 		}
-		client.Transport.(*http.Transport).Proxy = http.ProxyURL(proxy)
+		transport.Proxy = http.ProxyURL(proxy)
 	} else {
-		client.Transport.(*http.Transport).Proxy = http.ProxyFromEnvironment
+		transport.Proxy = http.ProxyFromEnvironment
 	}
 
 	return client, nil

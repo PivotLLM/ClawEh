@@ -38,7 +38,7 @@ func (h *Handler) handleTestProvider(w http.ResponseWriter, r *http.Request) {
 
 func writeProviderTest(w http.ResponseWriter, resp providerTestResponse) {
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(resp)
+	encodeJSON(w, resp)
 }
 
 // testProviderConnectivity routes a provider to the right live probe by protocol.

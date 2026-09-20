@@ -73,11 +73,17 @@ func TestMaestroConfig_LegacyBooleanNotHonoured(t *testing.T) {
 }
 
 func TestMaestroConfig_MarshalOmitsAbsentBlock(t *testing.T) {
-	b, _ := json.Marshal(AgentConfig{ID: "x"})
+	b, err := json.Marshal(AgentConfig{ID: "x"})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
 	if strings.Contains(string(b), "maestro") {
 		t.Errorf("absent block serialised: %s", b)
 	}
-	b, _ = json.Marshal(AgentConfig{ID: "x", Maestro: &MaestroConfig{Enabled: true, MaxConcurrent: 3}})
+	b, err = json.Marshal(AgentConfig{ID: "x", Maestro: &MaestroConfig{Enabled: true, MaxConcurrent: 3}})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
 	if !strings.Contains(string(b), `"maestro":{"enabled":true,"max_concurrent":3}`) {
 		t.Errorf("block serialised as %s", b)
 	}

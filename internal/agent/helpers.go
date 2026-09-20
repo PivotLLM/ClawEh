@@ -59,11 +59,14 @@ func agentCmd(message, sessionKey, model string, debug bool) error {
 
 	// Print agent startup info (only for interactive mode)
 	startupInfo := agentLoop.GetStartupInfo()
+	// Both sections are always maps; a nil map on mismatch just logs nil fields.
+	toolsInfo, _ := startupInfo["tools"].(map[string]any)
+	skillsInfo, _ := startupInfo["skills"].(map[string]any)
 	logger.InfoCF("agent", "Agent initialized",
 		map[string]any{
-			"tools_count":      startupInfo["tools"].(map[string]any)["count"],
-			"skills_total":     startupInfo["skills"].(map[string]any)["total"],
-			"skills_available": startupInfo["skills"].(map[string]any)["available"],
+			"tools_count":      toolsInfo["count"],
+			"skills_total":     skillsInfo["total"],
+			"skills_available": skillsInfo["available"],
 		})
 
 	if message != "" {

@@ -232,7 +232,10 @@ func marshalStrings(ss []string) string {
 	if len(ss) == 0 {
 		return "[]"
 	}
-	b, _ := json.Marshal(ss)
+	b, err := json.Marshal(ss)
+	if err != nil {
+		return "" // unreachable: a []string always marshals
+	}
 	return string(b)
 }
 

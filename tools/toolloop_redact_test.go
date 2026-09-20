@@ -34,10 +34,13 @@ func runToolLoopWriteFileOnce(t *testing.T, secret string) string {
 	restore := logger.RedirectForTest(&buf)
 	defer restore()
 
-	argsJSON, _ := json.Marshal(map[string]any{
+	argsJSON, err := json.Marshal(map[string]any{
 		"path":    "/tmp/diary.txt",
 		"content": secret,
 	})
+	if err != nil {
+		t.Fatalf("marshal args: %v", err)
+	}
 
 	provider := &mockLLMProvider{
 		responses: []*providers.LLMResponse{

@@ -32,7 +32,10 @@ func TestRedactArgs_WriteFile_RecordsContentBytes(t *testing.T) {
 		t.Error("raw content must not appear in redacted args")
 	}
 
-	encoded, _ := json.Marshal(m)
+	encoded, err := json.Marshal(m)
+	if err != nil {
+		t.Fatalf("marshal redacted args: %v", err)
+	}
 	if strings.Contains(string(encoded), content) {
 		t.Error("redacted JSON must not contain the raw content body")
 	}
@@ -43,7 +46,10 @@ func TestRedactArgs_AppendFile_RecordsContentBytes(t *testing.T) {
 		"path":    "log.txt",
 		"content": "hello",
 	})
-	m := got.(map[string]any)
+	m, ok := got.(map[string]any)
+	if !ok {
+		t.Fatalf("redactArgs returned %T, want map[string]any", got)
+	}
 	if m["content_bytes"] != 5 {
 		t.Errorf("expected content_bytes=5, got %v", m["content_bytes"])
 	}
@@ -55,7 +61,10 @@ func TestRedactArgs_ReadFile_Shape(t *testing.T) {
 		"offset": 100,
 		"length": 4096,
 	})
-	m := got.(map[string]any)
+	m, ok := got.(map[string]any)
+	if !ok {
+		t.Fatalf("redactArgs returned %T, want map[string]any", got)
+	}
 	if m["path"] != "/etc/passwd" {
 		t.Errorf("path: %v", m["path"])
 	}
@@ -71,7 +80,10 @@ func TestRedactArgs_ReadFile_OmitsNilFields(t *testing.T) {
 	got := redactArgs("file_read_bytes", map[string]any{
 		"path": "/etc/passwd",
 	})
-	m := got.(map[string]any)
+	m, ok := got.(map[string]any)
+	if !ok {
+		t.Fatalf("redactArgs returned %T, want map[string]any", got)
+	}
 	if _, present := m["offset"]; present {
 		t.Error("offset should be omitted when nil")
 	}
@@ -86,7 +98,10 @@ func TestRedactArgs_EditFile_RecordsByteLengths(t *testing.T) {
 		"old_text": "foo",
 		"new_text": "barbaz",
 	})
-	m := got.(map[string]any)
+	m, ok := got.(map[string]any)
+	if !ok {
+		t.Fatalf("redactArgs returned %T, want map[string]any", got)
+	}
 	if m["old_text_bytes"] != 3 {
 		t.Errorf("old_text_bytes: %v", m["old_text_bytes"])
 	}
@@ -108,7 +123,10 @@ func TestRedactArgs_WebFetch_PreservesURLDropsBody(t *testing.T) {
 		"headers":  map[string]any{"Authorization": "Bearer xyz"},
 		"maxChars": 5000,
 	})
-	m := got.(map[string]any)
+	m, ok := got.(map[string]any)
+	if !ok {
+		t.Fatalf("redactArgs returned %T, want map[string]any", got)
+	}
 	if m["url"] != "https://example.com/api" {
 		t.Errorf("url: %v", m["url"])
 	}
@@ -127,7 +145,10 @@ func TestRedactArgs_HTTPPrefix_PreservesMethodURL(t *testing.T) {
 		"body":    "password=hunter2",
 		"headers": map[string]any{"Cookie": "session=abc"},
 	})
-	m := got.(map[string]any)
+	m, ok := got.(map[string]any)
+	if !ok {
+		t.Fatalf("redactArgs returned %T, want map[string]any", got)
+	}
 	if m["url"] != "https://api.example.com/v1/users" {
 		t.Errorf("url: %v", m["url"])
 	}

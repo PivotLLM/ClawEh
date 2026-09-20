@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 
@@ -53,5 +52,5 @@ func (h *Handler) handleSetupStatus(w http.ResponseWriter, r *http.Request) {
 	resp.NeedsSetup = !resp.HasUsableModel
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(resp)
+	encodeJSON(w, resp)
 }

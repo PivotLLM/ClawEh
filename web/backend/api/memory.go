@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"os"
@@ -157,7 +156,7 @@ func (h *Handler) handleListMemoryStores(w http.ResponseWriter, r *http.Request)
 	sortMemoryStores(items)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"sessions": items})
+	encodeJSON(w, map[string]any{"sessions": items})
 }
 
 // findMemoryDB locates the memory database for a store id (an agent's
@@ -286,7 +285,7 @@ func (h *Handler) handleGetMemoryStore(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	encodeJSON(w, resp)
 }
 
 // openMemoryForWrite validates the {id} path value, locates the agent's

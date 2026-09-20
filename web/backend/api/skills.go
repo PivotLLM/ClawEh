@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -49,7 +48,7 @@ func (h *Handler) handleListSkills(w http.ResponseWriter, r *http.Request) {
 	loader := newSkillsLoader(cfg.WorkspacePath())
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(skillSupportResponse{
+	encodeJSON(w, skillSupportResponse{
 		Skills: loader.ListSkills(),
 	})
 }
@@ -77,7 +76,7 @@ func (h *Handler) handleGetSkill(w http.ResponseWriter, r *http.Request) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(skillDetailResponse{
+		encodeJSON(w, skillDetailResponse{
 			Name:        skill.Name,
 			Path:        skill.Path,
 			Source:      skill.Source,
@@ -147,13 +146,13 @@ func (h *Handler) handleImportSkill(w http.ResponseWriter, r *http.Request) {
 	for _, skill := range loader.ListSkills() {
 		if skill.Path == skillFile || (skill.Name == skillName && skill.Source == "workspace") {
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(skill)
+			encodeJSON(w, skill)
 			return
 		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
+	encodeJSON(w, map[string]string{
 		"name": skillName,
 		"path": skillFile,
 	})
@@ -181,7 +180,7 @@ func (h *Handler) handleDeleteSkill(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		encodeJSON(w, map[string]string{"status": "ok"})
 		return
 	}
 

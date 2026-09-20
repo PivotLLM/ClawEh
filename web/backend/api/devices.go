@@ -87,7 +87,7 @@ func deviceStoreUnavailable(w http.ResponseWriter, err error) {
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
+	encodeJSON(w, v)
 }
 
 // handleDevicePair provisions the device gateway (generates+persists a shared token

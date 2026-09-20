@@ -37,7 +37,7 @@ func (h *Handler) handleRunBackup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"folder": day, "files": copied})
+	encodeJSON(w, map[string]any{"folder": day, "files": copied})
 }
 
 // handleGetConfig returns the complete system configuration.
@@ -96,7 +96,7 @@ func (h *Handler) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 	if errs := validateConfig(&cfg); len(errs) > 0 {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]any{
+		encodeJSON(w, map[string]any{
 			"status": "validation_error",
 			"errors": errs,
 		})
@@ -109,7 +109,7 @@ func (h *Handler) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	encodeJSON(w, map[string]string{"status": "ok"})
 }
 
 func execAllowRemoteOmitted(body []byte) bool {
@@ -186,7 +186,7 @@ func (h *Handler) handlePatchConfig(w http.ResponseWriter, r *http.Request) {
 	if errs := validateConfig(&newCfg); len(errs) > 0 {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]any{
+		encodeJSON(w, map[string]any{
 			"status": "validation_error",
 			"errors": errs,
 		})
@@ -199,7 +199,7 @@ func (h *Handler) handlePatchConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	encodeJSON(w, map[string]string{"status": "ok"})
 }
 
 // validateConfig checks the config for common errors before saving.

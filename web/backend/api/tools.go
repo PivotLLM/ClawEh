@@ -42,7 +42,7 @@ func (h *Handler) handleListTools(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(toolSupportResponse{Tools: buildToolSupport(cfg)})
+	encodeJSON(w, toolSupportResponse{Tools: buildToolSupport(cfg)})
 }
 
 func (h *Handler) handleUpdateToolState(w http.ResponseWriter, r *http.Request) {
@@ -65,7 +65,7 @@ func (h *Handler) handleUpdateToolState(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	encodeJSON(w, map[string]string{"status": "ok"})
 }
 
 func buildToolSupport(cfg *config.Config) []toolSupportItem {

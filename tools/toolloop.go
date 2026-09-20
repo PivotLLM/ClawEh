@@ -197,7 +197,15 @@ func RunToolLoop(
 			Content: response.Content,
 		}
 		for _, tc := range normalizedToolCalls {
-			argumentsJSON, _ := json.Marshal(tc.Arguments)
+			argumentsJSON, marshalErr := json.Marshal(tc.Arguments)
+			if marshalErr != nil {
+				logger.ErrorCF("toolloop", "Failed to marshal tool call arguments",
+					map[string]any{
+						"tool":  tc.Name,
+						"error": marshalErr.Error(),
+					})
+				argumentsJSON = []byte("{}")
+			}
 			assistantMsg.ToolCalls = append(assistantMsg.ToolCalls, providers.ToolCall{
 				ID:        tc.ID,
 				Type:      "function",

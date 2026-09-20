@@ -81,7 +81,7 @@ func (h *Handler) handleListProviders(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"providers": out, "total": len(out)})
+	encodeJSON(w, map[string]any{"providers": out, "total": len(out)})
 }
 
 func (h *Handler) handleAddProvider(w http.ResponseWriter, r *http.Request) {
@@ -111,7 +111,7 @@ func (h *Handler) handleAddProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"status": "ok", "index": len(cfg.Providers) - 1})
+	encodeJSON(w, map[string]any{"status": "ok", "index": len(cfg.Providers) - 1})
 }
 
 func (h *Handler) handleUpdateProvider(w http.ResponseWriter, r *http.Request) {
@@ -166,7 +166,7 @@ func (h *Handler) handleUpdateProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	encodeJSON(w, map[string]string{"status": "ok"})
 }
 
 func (h *Handler) handleDeleteProvider(w http.ResponseWriter, r *http.Request) {
@@ -200,5 +200,5 @@ func (h *Handler) handleDeleteProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	encodeJSON(w, map[string]string{"status": "ok"})
 }

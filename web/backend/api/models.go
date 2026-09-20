@@ -105,7 +105,7 @@ func (h *Handler) handleListModels(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	encodeJSON(w, map[string]any{
 		"models":        models,
 		"total":         len(models),
 		"default_model": defaultModel,
@@ -153,7 +153,7 @@ func (h *Handler) handleAddModel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	encodeJSON(w, map[string]any{
 		"status": "ok",
 		"index":  len(cfg.Models) - 1,
 	})
@@ -231,7 +231,7 @@ func (h *Handler) handleUpdateModel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	encodeJSON(w, map[string]string{"status": "ok"})
 }
 
 // handleDeleteModel removes a model configuration entry at the given index.
@@ -270,7 +270,7 @@ func (h *Handler) handleDeleteModel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	encodeJSON(w, map[string]string{"status": "ok"})
 }
 
 // handleSetDefaultModel sets the default model for all agents.
@@ -332,7 +332,7 @@ func (h *Handler) handleSetDefaultModel(w http.ResponseWriter, r *http.Request) 
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
+	encodeJSON(w, map[string]string{
 		"status":        "ok",
 		"default_model": req.ModelName,
 	})

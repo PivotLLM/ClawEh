@@ -69,10 +69,13 @@ func runWriteFileToolCallOnce(t *testing.T, secret string) string {
 		agentInstance.Config.Tools = []string{"*"}
 	}
 
-	argsJSON, _ := json.Marshal(map[string]any{
+	argsJSON, err := json.Marshal(map[string]any{
 		"path":    "/tmp/diary.txt",
 		"content": secret,
 	})
+	if err != nil {
+		t.Fatalf("marshal args: %v", err)
+	}
 	agentInstance.Provider = &sequenceProvider{
 		responses: []*providers.LLMResponse{
 			{
