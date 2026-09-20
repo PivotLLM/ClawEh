@@ -359,10 +359,19 @@ if (useGroup("F", "Agents — autosave and list realignment")) {
     const { ctx, page } = await open("/agents")
     await page.getByRole("button", { name: PROBE, exact: true }).click()
     await page.waitForTimeout(400)
-    await page
-      .locator('input[placeholder="e.g. fusion, fusion_trello"]')
+    // MCP access is one checkbox per configured server plus an "Additional
+    // prefixes" field. Tick the fusion box when that server is configured;
+    // otherwise both names go through the prefixes field.
+    const fusionBox = page.getByLabel("fusion", { exact: true })
+    const extras = page
+      .locator('input[placeholder="e.g. fusion_trello"]')
       .first()
-      .fill("fusion, trello")
+    if ((await fusionBox.count()) > 0) {
+      await fusionBox.first().check()
+      await extras.fill("trello")
+    } else {
+      await extras.fill("fusion, trello")
+    }
     await page.waitForTimeout(2000)
     await ctx.close()
     const c = await config()

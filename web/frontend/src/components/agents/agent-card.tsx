@@ -11,9 +11,9 @@ import {
   type MountEntry,
   type SkillInfo,
   settingsCardClass,
-  splitCsv,
 } from "@/components/agents/agent-model"
 import { MaestroSettingsSection } from "@/components/agents/maestro-settings"
+import { MCPAccessSelect } from "@/components/agents/mcp-access-select"
 import { MessageTokensSection } from "@/components/agents/message-tokens-section"
 import { FallbacksSelect } from "@/components/agents/model-selects"
 import { SkillsSelect } from "@/components/agents/skills-select"
@@ -121,10 +121,6 @@ export function AgentCard({
   const [deliverEdits, setDeliverEdits] = useState<Record<number, string>>({})
   const deliverValue = (b: AgentBindingView) =>
     deliverEdits[b.index] ?? b.deliverTo
-  // Raw text for the comma-delimited MCP-allow field, kept locally so typing
-  // commas/spaces isn't fought by a parse-on-every-keystroke round-trip. Resets
-  // per agent because AgentCard is keyed by agent id.
-  const [mcpToolsRaw, setMcpToolsRaw] = useState(mcpTools.join(", "))
   const mcpServers = availableTools.mcp_servers ?? []
 
   return (
@@ -249,23 +245,11 @@ export function AgentCard({
         {onMCPToolsChange !== undefined && (
           <div className="space-y-1.5">
             <p className="text-foreground text-sm font-semibold">MCP access</p>
-            <Input
-              value={mcpToolsRaw}
-              onChange={(e) => {
-                setMcpToolsRaw(e.target.value)
-                onMCPToolsChange(splitCsv(e.target.value))
-              }}
-              placeholder="e.g. fusion, fusion_trello"
-              className="h-7 font-mono text-xs"
+            <MCPAccessSelect
+              serverNames={mcpServers.map((s) => s.name)}
+              value={mcpTools}
+              onChange={onMCPToolsChange}
             />
-            <p className="text-muted-foreground text-xs">
-              Comma-separated. Each entry grants MCP tools whose name equals or
-              starts with it (case-insensitive); no mcp_ prefix or wildcard
-              needed. Blank = no MCP tools.
-              {mcpServers.length > 0
-                ? ` Servers: ${mcpServers.map((s) => s.name).join(", ")}.`
-                : ""}
-            </p>
           </div>
         )}
 

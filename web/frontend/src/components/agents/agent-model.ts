@@ -83,6 +83,62 @@ export function splitCsv(s: string): string[] {
     .filter(Boolean)
 }
 
+// MCPAccessServer is one row of the MCP access checkbox list.
+export interface MCPAccessServer {
+  name: string
+  checked: boolean
+  // configured is false for an entry that names a server no longer in the MCP
+  // config; it is shown checked and flagged so it can be removed.
+  configured: boolean
+}
+
+export interface MCPAccessView {
+  servers: MCPAccessServer[]
+  // extras are the entries that are not a server name: prefixes such as
+  // fusion_trello that grant a subset of a server's tools.
+  extras: string[]
+}
+
+// mcpAccessView splits an agent's mcp_tools entries against the configured
+// server names (case-insensitively): a plain server name becomes a checked
+// row, an entry that names no configured server but starts with one plus "_"
+// is a prefix and goes to extras, and anything else is an unknown server shown
+// checked and flagged.
+export function mcpAccessView(
+  entries: string[],
+  serverNames: string[],
+): MCPAccessView {
+  const norm = (s: string) => s.trim().toLowerCase()
+  const isServer = (e: string) => serverNames.some((n) => norm(n) === norm(e))
+  const isPrefix = (e: string) =>
+    serverNames.some((n) => norm(e).startsWith(norm(n) + "_"))
+  const servers: MCPAccessServer[] = serverNames.map((name) => ({
+    name,
+    checked: entries.some((e) => norm(e) === norm(name)),
+    configured: true,
+  }))
+  const extras: string[] = []
+  for (const raw of entries) {
+    const e = raw.trim()
+    if (!e || isServer(e)) continue
+    if (isPrefix(e)) {
+      extras.push(e)
+    } else {
+      servers.push({ name: e, checked: true, configured: false })
+    }
+  }
+  return { servers, extras }
+}
+
+// mcpAccessEntries is the inverse of mcpAccessView: the mcp_tools list for a
+// view, checked servers first, then the extra prefixes.
+export function mcpAccessEntries(view: MCPAccessView): string[] {
+  return [
+    ...view.servers.filter((s) => s.checked).map((s) => s.name),
+    ...view.extras,
+  ]
+}
+
 // settingsCardClass groups a set of agent settings into one bordered card.
 export const settingsCardClass =
   "border-border/60 bg-card rounded-xl border p-4 space-y-5"

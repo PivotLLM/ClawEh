@@ -54,6 +54,13 @@ observe does not need an entry.
   copyright lines and the README's history section are consolidated there
   and in `docs/HISTORY.md`.
 
+- **MCP access is a checkbox list.** The agent card shows one checkbox per
+  configured MCP server instead of a comma-separated text field. Prefix
+  entries that grant part of a server (for example `fusion_trello`) live in an
+  "Additional prefixes" field beneath the checkboxes, and an entry naming a
+  server that is no longer configured stays visible, checked and flagged, so
+  it can be removed. The saved `mcp_tools` list is unchanged in shape.
+
 ### Removed
 
 - **`launcher-config.json` is no longer read.** The retired launcher's

@@ -5,6 +5,8 @@ import {
   maestroEditsFromAgent,
   maestroFromRaw,
   maestroPayload,
+  mcpAccessEntries,
+  mcpAccessView,
 } from "./agent-model"
 
 describe("maestro block", () => {
@@ -83,5 +85,50 @@ describe("maestro block", () => {
     })
     // No block: edits never create one (the enabled switch does).
     expect(applyMaestroEdits(undefined, edits)).toBeUndefined()
+  })
+})
+
+describe("mcp access", () => {
+  const servers = ["fusion", "GitHub"]
+
+  it("checks configured servers case-insensitively", () => {
+    const v = mcpAccessView(["Fusion"], servers)
+    expect(v.servers).toEqual([
+      { name: "fusion", checked: true, configured: true },
+      { name: "GitHub", checked: false, configured: true },
+    ])
+    expect(v.extras).toEqual([])
+  })
+
+  it("keeps prefixes of a configured server as extras", () => {
+    const v = mcpAccessView(["fusion_trello", "github"], servers)
+    expect(v.servers.map((s) => s.checked)).toEqual([false, true])
+    expect(v.extras).toEqual(["fusion_trello"])
+  })
+
+  it("shows an entry for an unconfigured server checked and flagged", () => {
+    const v = mcpAccessView(["oldserver"], servers)
+    expect(v.servers[2]).toEqual({
+      name: "oldserver",
+      checked: true,
+      configured: false,
+    })
+    expect(v.extras).toEqual([])
+  })
+
+  it("drops blank entries and round-trips the rest", () => {
+    const v = mcpAccessView([" ", "fusion", "fusion_trello", "old"], servers)
+    expect(mcpAccessEntries(v)).toEqual(["fusion", "old", "fusion_trello"])
+  })
+
+  it("unchecking removes the entry and extras survive", () => {
+    const v = mcpAccessView(["fusion", "fusion_trello"], servers)
+    const off = {
+      ...v,
+      servers: v.servers.map((s) =>
+        s.name === "fusion" ? { ...s, checked: false } : s,
+      ),
+    }
+    expect(mcpAccessEntries(off)).toEqual(["fusion_trello"])
   })
 })
