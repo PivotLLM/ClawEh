@@ -1,4 +1,5 @@
-// this file is for compatible with 3rd party loggers, should not be called in this project
+// logger_type.go holds the Logger type: the component logger that NewLogger
+// returns and the package-level helpers wrap.
 
 package logger
 
