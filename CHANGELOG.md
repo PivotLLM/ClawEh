@@ -10,7 +10,7 @@ Entries describe what changed for someone **running or integrating with** ClawEh
 internal refactors behind them. A change nobody outside the repository can
 observe does not need an entry.
 
-## [0.5.7]
+## [0.6.0]
 
 ### Changed
 
@@ -49,10 +49,13 @@ observe does not need an entry.
   client disconnects. Work that must outlive its trigger (sub-agent callbacks,
   idle eviction, reload, graceful shutdown) is explicitly detached.
 
-- **`--version` names only Tenebris Technologies.** The MIT notice for the
-  PicoClaw code the project started from stays in `LICENSE`; the per-file
-  copyright lines and the README's history section are consolidated there
-  and in `docs/HISTORY.md`.
+- **Legacy code inherited from the original fork is replaced or removed.**
+  The standalone sub-agent tool loop, the retired launcher's config shim, the
+  unreferenced upstream assets and the per-file upstream copyright headers
+  are gone; the default-model provider constructor and the core logger file
+  are renamed to say what they do; `--version` names only Tenebris
+  Technologies. The original MIT notice stays in `LICENSE`, and the project's
+  origins are recorded in `docs/HISTORY.md`.
 
 - **MCP access is a checkbox list.** The agent card shows one checkbox per
   configured MCP server instead of a comma-separated text field. Prefix
