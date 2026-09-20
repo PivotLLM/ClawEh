@@ -40,7 +40,7 @@ func NewManager(workspace string) *Manager {
 	oldStateFile := filepath.Join(workspace, "state.json")
 
 	// Create state directory if it doesn't exist
-	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+	if err := os.MkdirAll(stateDir, 0o700); err != nil { //nolint:gosec // workspace path from agent config
 		logger.WarnCF("state", "failed to create state directory",
 			map[string]any{"path": stateDir, "error": err.Error()})
 	}
@@ -52,9 +52,9 @@ func NewManager(workspace string) *Manager {
 	}
 
 	// Try to load from new location first
-	if _, err := os.Stat(stateFile); os.IsNotExist(err) {
+	if _, err := os.Stat(stateFile); os.IsNotExist(err) { //nolint:gosec // workspace path from agent config
 		// New file doesn't exist, try migrating from old location
-		if data, err := os.ReadFile(oldStateFile); err == nil {
+		if data, err := os.ReadFile(oldStateFile); err == nil { //nolint:gosec // legacy state file under the agent workspace
 			if err := json.Unmarshal(data, sm.state); err == nil {
 				// Migrate to new location
 				if err := sm.saveAtomic(); err != nil {

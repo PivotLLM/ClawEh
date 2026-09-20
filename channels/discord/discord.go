@@ -177,7 +177,7 @@ func (c *DiscordChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMes
 			continue
 		}
 
-		file, err := os.Open(localPath)
+		file, err := os.Open(localPath) //nolint:gosec // path comes from the media store's own ref map (FileMediaStore.Resolve)
 		if err != nil {
 			logger.ErrorCF("discord", "Failed to open media file", map[string]any{
 				"path":  localPath,

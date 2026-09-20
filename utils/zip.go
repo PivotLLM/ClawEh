@@ -91,7 +91,7 @@ func extractSingleFile(f *zip.File, destPath string) error {
 	}
 	defer rc.Close()
 
-	outFile, err := os.Create(destPath)
+	outFile, err := os.Create(destPath) //nolint:gosec // destPath passed the zip-slip check in ExtractZip
 	if err != nil {
 		return fmt.Errorf("failed to create file %q: %w", destPath, err)
 	}

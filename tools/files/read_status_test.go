@@ -17,7 +17,7 @@ import (
 func TestReadStatusBlock(t *testing.T) {
 	tmpDir := t.TempDir()
 	f := filepath.Join(tmpDir, "doc.txt")
-	if err := os.WriteFile(f, []byte("abcdefghijklmnopqrstuvwxyz"), 0o644); err != nil { // 26 bytes
+	if err := os.WriteFile(f, []byte("abcdefghijklmnopqrstuvwxyz"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	tool := NewReadFileTool(tmpDir, false, MaxReadFileSize)

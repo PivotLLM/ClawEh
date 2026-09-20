@@ -2229,7 +2229,7 @@ func (c *Config) AlwaysShownNamespaces() []string {
 func LoadConfig(path string) (*Config, error) {
 	cfg := DefaultConfig()
 
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) //nolint:gosec // config path chosen by the operator (CLI flag or env)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return cfg, nil
@@ -2337,7 +2337,7 @@ func migrateLauncherConfig(configPath string, cfg *Config) {
 		return
 	}
 	lcPath := filepath.Join(filepath.Dir(configPath), "launcher-config.json")
-	data, err := os.ReadFile(lcPath)
+	data, err := os.ReadFile(lcPath) //nolint:gosec // derived from the operator's config path
 	if err != nil {
 		// No legacy file (the common case) — nothing to migrate.
 		return

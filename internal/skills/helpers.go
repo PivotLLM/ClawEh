@@ -195,7 +195,7 @@ func skillsListBuiltinCmd() {
 
 			description := "No description"
 			if _, err := os.Stat(skillFile); err == nil {
-				data, err := os.ReadFile(skillFile)
+				data, err := os.ReadFile(skillFile) //nolint:gosec // SKILL.md under the builtin skills dir; name from ReadDir
 				if err == nil {
 					content := string(data)
 					if idx := strings.Index(content, "\n"); idx > 0 {
@@ -289,13 +289,13 @@ func copyDirectory(src, dst string) error {
 			return os.MkdirAll(dstPath, info.Mode())
 		}
 
-		srcFile, err := os.Open(path)
+		srcFile, err := os.Open(path) //nolint:gosec // walk of the CLI-supplied source skill directory
 		if err != nil {
 			return err
 		}
 		defer srcFile.Close()
 
-		dstFile, err := os.OpenFile(dstPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, info.Mode())
+		dstFile, err := os.OpenFile(dstPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, info.Mode()) //nolint:gosec // destination under the skills dir with the walk's relative path
 		if err != nil {
 			return err
 		}

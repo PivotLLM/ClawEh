@@ -286,7 +286,7 @@ func New(opts ...Option) (*MCPServer, error) {
 	mux := http.NewServeMux()
 	mux.Handle(m.internalPath, internalStreamable)
 	mux.Handle(m.endpointPath, bearerAuthMiddleware(m.sessionTokens, bearerStreamable))
-	m.httpServer = &http.Server{Handler: mux}
+	m.httpServer = &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 
 	return m, nil
 }

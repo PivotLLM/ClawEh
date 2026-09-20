@@ -208,7 +208,7 @@ func DownloadFile(urlStr, filename string, opts DownloadOptions) string {
 		return ""
 	}
 
-	out, err := os.Create(localPath)
+	out, err := os.Create(localPath) //nolint:gosec // path is MediaTempDir plus a UUID and SanitizeFilename output
 	if err != nil {
 		logger.ErrorCF(opts.LoggerPrefix, "Failed to create local file", map[string]any{
 			"error": err.Error(),

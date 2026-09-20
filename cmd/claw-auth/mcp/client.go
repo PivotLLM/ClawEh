@@ -123,7 +123,7 @@ func (c *Client) StoreTokens(ctx context.Context, service, accessToken, refreshT
 
 	endpoint := c.baseURL + "/api/v1/oauth/tokens"
 
-	payload, err := json.Marshal(req)
+	payload, err := json.Marshal(req) //nolint:gosec // delivering the token to the store is this request's purpose
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal token request: %w", err)
 	}

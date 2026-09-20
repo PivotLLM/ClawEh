@@ -69,7 +69,7 @@ func extractWebUISessionIDFromSanitizedKey(key string) (string, bool) {
 // readSessionDB opens one session's archive DB read-only and returns its
 // window and state. A missing DB is reported as os.ErrNotExist.
 func readSessionDB(path string) (sessionFile, error) {
-	info, err := os.Stat(path)
+	info, err := os.Stat(path) //nolint:gosec // callers pass memory.ArchivePath output (sanitized key) or a ReadDir entry
 	if err != nil {
 		return sessionFile{}, err
 	}
@@ -341,7 +341,7 @@ func (h *Handler) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 	key := webuiSessionPrefix + sessionID
 	removed := false
 	for _, dir := range dirs {
-		if _, err := os.Stat(memory.ArchivePath(dir, key)); err != nil {
+		if _, err := os.Stat(memory.ArchivePath(dir, key)); err != nil { //nolint:gosec // memory.ArchivePath strips path separators from the key, which also carries a fixed prefix
 			if errors.Is(err, os.ErrNotExist) {
 				continue
 			}

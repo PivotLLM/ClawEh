@@ -508,7 +508,7 @@ func (c *TelegramChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMe
 			continue
 		}
 
-		file, err := os.Open(localPath)
+		file, err := os.Open(localPath) //nolint:gosec // path comes from the media store's own ref map (FileMediaStore.Resolve)
 		if err != nil {
 			logger.ErrorCF("telegram", "Failed to open media file", map[string]any{
 				"path":  localPath,

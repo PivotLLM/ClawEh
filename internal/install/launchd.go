@@ -118,14 +118,14 @@ func installLaunchd(tu *TargetUser, targetBin, binDir, clawHome string) error {
 
 		// Unload previous instance if present
 		guiTarget := "gui/" + tu.UID
-		_ = exec.Command("launchctl", "bootout", guiTarget+"/"+launchdLabel).Run()
-		_ = exec.Command("launchctl", "unload", "-w", destPath).Run()
+		_ = exec.Command("launchctl", "bootout", guiTarget+"/"+launchdLabel).Run() //nolint:gosec // fixed launchctl binary; args are the installer's own label and plist path
+		_ = exec.Command("launchctl", "unload", "-w", destPath).Run()              //nolint:gosec // fixed launchctl binary; args are the installer's own label and plist path
 
 		// Bootstrap service (modern launchctl fallback to load -w)
-		cmdBootstrap := exec.Command("launchctl", "bootstrap", guiTarget, destPath)
+		cmdBootstrap := exec.Command("launchctl", "bootstrap", guiTarget, destPath) //nolint:gosec // fixed launchctl binary; args are the installer's own label and plist path
 		if out, err := cmdBootstrap.CombinedOutput(); err != nil {
 			// Fallback to legacy launchctl load
-			cmdLoad := exec.Command("launchctl", "load", "-w", destPath)
+			cmdLoad := exec.Command("launchctl", "load", "-w", destPath) //nolint:gosec // fixed launchctl binary; args are the installer's own label and plist path
 			if loadOut, loadErr := cmdLoad.CombinedOutput(); loadErr != nil {
 				return fmt.Errorf("launchctl bootstrap %s: %s / %s (%w)", guiTarget, string(out), string(loadOut), loadErr)
 			}
@@ -148,8 +148,8 @@ func uninstallLaunchd(tu *TargetUser) error {
 	} else {
 		guiTarget := "gui/" + tu.UID
 		destPath := userLaunchdPath(tu.HomeDir)
-		_ = exec.Command("launchctl", "bootout", guiTarget+"/"+launchdLabel).Run()
-		_ = exec.Command("launchctl", "unload", "-w", destPath).Run()
+		_ = exec.Command("launchctl", "bootout", guiTarget+"/"+launchdLabel).Run() //nolint:gosec // fixed launchctl binary; args are the installer's own label and plist path
+		_ = exec.Command("launchctl", "unload", "-w", destPath).Run()              //nolint:gosec // fixed launchctl binary; args are the installer's own label and plist path
 		if err := os.Remove(destPath); err != nil && !os.IsNotExist(err) {
 			errs = append(errs, fmt.Sprintf("removing %s: %v", destPath, err))
 		}

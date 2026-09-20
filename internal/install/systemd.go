@@ -138,7 +138,7 @@ func installSystemd(tu *TargetUser, targetBin, binDir, clawHome string) error {
 		}
 
 		// Try enabling lingering so user service continues running without active session
-		cmdLinger := exec.Command("loginctl", "enable-linger", tu.Username)
+		cmdLinger := exec.Command("loginctl", "enable-linger", tu.Username) //nolint:gosec // fixed loginctl binary; username from the resolved target user
 		if err := cmdLinger.Run(); err == nil {
 			fmt.Printf("Enabled systemd user lingering for %s (service will start at boot).\n", tu.Username)
 		} else {

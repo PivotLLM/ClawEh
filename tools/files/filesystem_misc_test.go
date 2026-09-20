@@ -64,7 +64,7 @@ func TestHostFs_Open_PermissionDenied(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "noperm.txt")
 	os.WriteFile(path, []byte("content"), 0o000)
-	defer os.Chmod(path, 0o644) // cleanup
+	defer os.Chmod(path, 0o644)
 
 	fs := &hostFs{}
 	_, err := fs.Open(path)

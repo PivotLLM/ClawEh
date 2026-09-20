@@ -169,7 +169,7 @@ func enableFileLoggingLocked(filePath string, jsonFormat bool) error {
 		return fmt.Errorf("failed to create log directory: %w", err)
 	}
 
-	newFile, err := os.OpenFile(filePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	newFile, err := os.OpenFile(filePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644) //nolint:gosec // log path from config
 	if err != nil {
 		return fmt.Errorf("failed to open log file: %w", err)
 	}
@@ -183,7 +183,7 @@ func enableFileLoggingLocked(filePath string, jsonFormat bool) error {
 
 	// error.log lives beside claw.log and captures errorLogLevel and above.
 	errorPath := filepath.Join(filepath.Dir(filePath), errorLogName)
-	ef, err := os.OpenFile(errorPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	ef, err := os.OpenFile(errorPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644) //nolint:gosec // error.log beside the configured log file
 	if err != nil {
 		return fmt.Errorf("failed to open error log file: %w", err)
 	}
@@ -282,12 +282,12 @@ func archiveLogByMtime(path string) error {
 
 // appendAndRemove appends src to dst then removes src.
 func appendAndRemove(src, dst string) error {
-	in, err := os.Open(src)
+	in, err := os.Open(src) //nolint:gosec // rotation of the configured log file within its own dir
 	if err != nil {
 		return err
 	}
 	defer in.Close()
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_APPEND, 0o644)
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_APPEND, 0o644) //nolint:gosec // rotation of the configured log file within its own dir
 	if err != nil {
 		return err
 	}

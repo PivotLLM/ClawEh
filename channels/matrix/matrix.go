@@ -354,7 +354,7 @@ func (c *MatrixChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMess
 			continue
 		}
 
-		file, err := os.Open(localPath)
+		file, err := os.Open(localPath) //nolint:gosec // path comes from the media store's own ref map (FileMediaStore.Resolve)
 		if err != nil {
 			logger.ErrorCF("matrix", "Failed to open media file", map[string]any{
 				"path":  localPath,

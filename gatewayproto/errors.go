@@ -22,7 +22,7 @@ const (
 	DetailProtocolMismatch     = "PROTOCOL_MISMATCH"
 	DetailAuthRequired         = "AUTH_REQUIRED"
 	DetailAuthUnauthorized     = "AUTH_UNAUTHORIZED"
-	DetailAuthTokenMismatch    = "AUTH_TOKEN_MISMATCH"
+	DetailAuthTokenMismatch    = "AUTH_TOKEN_MISMATCH" //nolint:gosec // error detail code, not a credential
 	DetailAuthRateLimited      = "AUTH_RATE_LIMITED"
 	DetailDeviceIdentityNeeded = "DEVICE_IDENTITY_REQUIRED"
 	DetailDeviceAuthFailed     = "DEVICE_AUTH_FAILED"

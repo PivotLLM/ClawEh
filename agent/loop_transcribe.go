@@ -169,12 +169,12 @@ func receivedFileName(ref, filename string) string {
 
 // copyFileContents streams src to dst, creating/truncating dst.
 func copyFileContents(src, dst string) error {
-	in, err := os.Open(src)
+	in, err := os.Open(src) //nolint:gosec // src is a media store path (ResolveWithMeta)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = in.Close() }()
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600) //nolint:gosec // dst is <workspace>/tmp plus a name sanitized by receivedFileName
 	if err != nil {
 		return err
 	}

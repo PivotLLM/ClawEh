@@ -110,7 +110,7 @@ func (b *Logger) Fatalf(format string, v ...any) {
 //
 //nolint:goprintffuncname
 func (b *Logger) Log(msgL, caller int, format string, a ...any) {
-	level := LogLevel(msgL)
+	level := LogLevel(msgL) //nolint:gosec // msgL is discordgo's log level enum (LogError..LogDebug, 0-3)
 	if b.levels != nil {
 		if lvl, ok := b.levels[msgL]; ok {
 			level = lvl

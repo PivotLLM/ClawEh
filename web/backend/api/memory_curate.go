@@ -324,7 +324,7 @@ func (h *Handler) handleExportMemory(w http.ResponseWriter, r *http.Request) {
 	name := fmt.Sprintf("%s-memory-%s.yaml", id, time.Now().UTC().Format("20060102"))
 	w.Header().Set("Content-Type", "application/yaml; charset=utf-8")
 	w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
-	_, _ = w.Write(out)
+	_, _ = w.Write(out) //nolint:gosec // YAML attachment with explicit Content-Type, not HTML
 }
 
 // handleImportMemory loads a YAML document into a store.

@@ -21,7 +21,7 @@ func acquireLock(baseDir string) (*os.File, error) {
 		return nil, fmt.Errorf("cannot create base directory %q: %w", baseDir, err)
 	}
 
-	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_WRONLY, 0o644) //nolint:gosec // lock file under the configured data directory
 	if err != nil {
 		return nil, fmt.Errorf("cannot open lock file %q: %w", lockPath, err)
 	}

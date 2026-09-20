@@ -68,7 +68,7 @@ func NewManager(agentID, storePath string, windowMinutes, windowCount int) (*Man
 	}
 
 	// Load existing store if present.
-	if data, err := os.ReadFile(storePath); err == nil {
+	if data, err := os.ReadFile(storePath); err == nil { //nolint:gosec // token store under the configured data dir
 		if err := json.Unmarshal(data, &m.store); err != nil {
 			logger.WarnCF("message", "Failed to parse message-token store, starting fresh",
 				map[string]any{"agent": agentID, "error": err.Error()})

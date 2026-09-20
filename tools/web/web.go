@@ -73,7 +73,7 @@ func (p *APIKeyPool) NewIterator() *APIKeyIterator {
 }
 
 func (it *APIKeyIterator) Next() (string, bool) {
-	length := uint32(len(it.pool.keys))
+	length := uint32(len(it.pool.keys)) //nolint:gosec // key pool is a config list, far below MaxUint32
 	if length == 0 || it.attempt >= length {
 		return "", false
 	}

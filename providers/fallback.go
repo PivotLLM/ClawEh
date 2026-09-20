@@ -334,7 +334,7 @@ func (fc *FallbackChain) ExecuteWithNotify(
 
 		// Heads-up to the caller: this model failed and we're moving to the next.
 		if notify != nil {
-			notify(result.Attempts[len(result.Attempts)-1:], candidates[i+1])
+			notify(result.Attempts[len(result.Attempts)-1:], candidates[i+1]) //nolint:gosec // i < len(candidates)-1 is guaranteed by the return above
 		}
 	}
 

@@ -153,7 +153,7 @@ func encodeImageToDataURL(localPath, mime string, info os.FileInfo, maxSize int)
 		return ""
 	}
 
-	f, err := os.Open(localPath)
+	f, err := os.Open(localPath) //nolint:gosec // path comes from the media store's own ref map (FileMediaStore.Resolve)
 	if err != nil {
 		logger.WarnCF("agent", "Failed to open media file", map[string]any{
 			"path":  localPath,
@@ -206,7 +206,7 @@ func buildAttachment(filename, localPath string, info os.FileInfo) providers.Mes
 		att.Filename = filepath.Base(localPath)
 	}
 	// Compute SHA256 of file content.
-	if f, err := os.Open(localPath); err == nil {
+	if f, err := os.Open(localPath); err == nil { //nolint:gosec // path comes from the media store's own ref map (FileMediaStore.Resolve)
 		defer f.Close()
 		h := sha256.New()
 		if _, err := io.Copy(h, f); err == nil {

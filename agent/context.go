@@ -564,7 +564,7 @@ func (cb *ContextBuilder) LoadBootstrapFiles() string {
 	var sb strings.Builder
 	for _, filename := range bootstrapFiles {
 		filePath := filepath.Join(cb.workspace, filename)
-		if data, err := os.ReadFile(filePath); err == nil {
+		if data, err := os.ReadFile(filePath); err == nil { //nolint:gosec // fixed bootstrap filename under the agent workspace
 			fmt.Fprintf(&sb, "## %s\n\n%s\n\n", filename, data)
 		}
 	}
@@ -608,7 +608,7 @@ func (cb *ContextBuilder) loadChannelPrompt(channel string) string {
 	if safe == "" {
 		return ""
 	}
-	data, err := os.ReadFile(filepath.Join(cb.workspace, "channel-"+safe+".md"))
+	data, err := os.ReadFile(filepath.Join(cb.workspace, "channel-"+safe+".md")) //nolint:gosec // channel name sanitized by sanitizeChannelName; fixed workspace dir
 	if err != nil {
 		return ""
 	}

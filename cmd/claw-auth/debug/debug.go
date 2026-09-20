@@ -24,8 +24,8 @@ func LogHTTPRequest(req *http.Request) {
 	}
 
 	log.Println("=== HTTP REQUEST ===")
-	log.Printf("Method: %s", req.Method)
-	log.Printf("URL: %s", req.URL.String())
+	log.Printf("Method: %s", req.Method)    //nolint:gosec // debug tracing enabled only by --debug
+	log.Printf("URL: %s", req.URL.String()) //nolint:gosec // debug tracing enabled only by --debug
 
 	// Log headers
 	log.Println("Headers:")

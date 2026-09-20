@@ -57,7 +57,7 @@ func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
 
 	// Create temp file in the same directory (ensures atomic rename works)
 	// Using a hidden prefix (.tmp-) to avoid issues with some tools
-	tmpFile, err := os.OpenFile(
+	tmpFile, err := os.OpenFile( //nolint:gosec // atomic-write helper; the temp name is generated here in the caller's dir
 		filepath.Join(dir, fmt.Sprintf(".tmp-%d-%d", os.Getpid(), time.Now().UnixNano())),
 		os.O_WRONLY|os.O_CREATE|os.O_EXCL,
 		perm,
@@ -108,7 +108,7 @@ func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
 
 	// Sync directory to ensure rename is durable
 	// This prevents the renamed file from disappearing after a crash
-	if dirFile, err := os.Open(dir); err == nil {
+	if dirFile, err := os.Open(dir); err == nil { //nolint:gosec // fsync of the caller-supplied path's directory
 		_ = dirFile.Sync()
 		dirFile.Close()
 	}

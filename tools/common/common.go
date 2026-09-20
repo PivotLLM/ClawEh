@@ -60,7 +60,7 @@ func strArg(args map[string]any, key string) (string, bool) {
 
 // copyFile copies src to dst, creating intermediate directories for dst.
 func copyFile(src, dst string) error {
-	in, err := os.Open(src)
+	in, err := os.Open(src) //nolint:gosec // src confined to the common dir by confine()
 	if err != nil {
 		return err
 	}
@@ -69,7 +69,7 @@ func copyFile(src, dst string) error {
 	if mkErr := os.MkdirAll(filepath.Dir(dst), 0o755); mkErr != nil {
 		return mkErr
 	}
-	out, err := os.Create(dst)
+	out, err := os.Create(dst) //nolint:gosec // dst confined to the common dir by confine()
 	if err != nil {
 		return err
 	}

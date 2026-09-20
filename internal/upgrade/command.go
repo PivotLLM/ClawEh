@@ -333,7 +333,7 @@ func downloadFile(url, dstPath string) error {
 		return fmt.Errorf("HTTP %d downloading %s", resp.StatusCode, url)
 	}
 
-	out, err := os.Create(dstPath)
+	out, err := os.Create(dstPath) //nolint:gosec // file inside the upgrader's own temp dir
 	if err != nil {
 		return err
 	}
@@ -344,7 +344,7 @@ func downloadFile(url, dstPath string) error {
 }
 
 func computeSHA256(filePath string) (string, error) {
-	f, err := os.Open(filePath)
+	f, err := os.Open(filePath) //nolint:gosec // file inside the upgrader's own temp dir
 	if err != nil {
 		return "", err
 	}
@@ -358,7 +358,7 @@ func computeSHA256(filePath string) (string, error) {
 }
 
 func readExpectedChecksum(checksumFilePath string) (string, error) {
-	data, err := os.ReadFile(checksumFilePath)
+	data, err := os.ReadFile(checksumFilePath) //nolint:gosec // file inside the upgrader's own temp dir
 	if err != nil {
 		return "", err
 	}
@@ -370,7 +370,7 @@ func readExpectedChecksum(checksumFilePath string) (string, error) {
 }
 
 func extractBinariesFromTarGz(archivePath, clawDst, clawAuthDst string) (hasAuth bool, err error) {
-	f, err := os.Open(archivePath)
+	f, err := os.Open(archivePath) //nolint:gosec // file inside the upgrader's own temp dir
 	if err != nil {
 		return false, err
 	}
@@ -396,22 +396,22 @@ func extractBinariesFromTarGz(archivePath, clawDst, clawAuthDst string) (hasAuth
 
 		cleanName := filepath.Base(hdr.Name)
 		if cleanName == "claw" && (hdr.Typeflag == tar.TypeReg) {
-			out, err := os.OpenFile(clawDst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
+			out, err := os.OpenFile(clawDst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755) //nolint:gosec // installed binary must be executable
 			if err != nil {
 				return false, err
 			}
-			if _, err := io.Copy(out, tr); err != nil {
+			if _, err := io.Copy(out, tr); err != nil { //nolint:gosec // release tarball from the project's own GitHub release over HTTPS, SHA-256 verified when the release ships one
 				_ = out.Close()
 				return false, err
 			}
 			_ = out.Close()
 			foundClaw = true
 		} else if cleanName == "claw-auth" && (hdr.Typeflag == tar.TypeReg) {
-			out, err := os.OpenFile(clawAuthDst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
+			out, err := os.OpenFile(clawAuthDst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755) //nolint:gosec // installed binary must be executable
 			if err != nil {
 				return false, err
 			}
-			if _, err := io.Copy(out, tr); err != nil {
+			if _, err := io.Copy(out, tr); err != nil { //nolint:gosec // release tarball from the project's own GitHub release over HTTPS, SHA-256 verified when the release ships one
 				_ = out.Close()
 				return false, err
 			}
@@ -428,11 +428,11 @@ func extractBinariesFromTarGz(archivePath, clawDst, clawAuthDst string) (hasAuth
 
 func atomicReplace(srcPath, dstPath string) error {
 	tmpDst := dstPath + ".new." + strconv.Itoa(os.Getpid())
-	data, err := os.ReadFile(srcPath)
+	data, err := os.ReadFile(srcPath) //nolint:gosec // srcPath is the binary extracted into the upgrader's temp dir
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(tmpDst, data, 0o755); err != nil {
+	if err := os.WriteFile(tmpDst, data, 0o755); err != nil { //nolint:gosec // installed binary must be executable
 		return err
 	}
 	// Preserve existing file ownership if dstPath exists
@@ -446,7 +446,7 @@ func atomicReplace(srcPath, dstPath string) error {
 
 func checkDirWritable(dir string) error {
 	testFile := filepath.Join(dir, fmt.Sprintf(".claw-perm-test-%d", os.Getpid()))
-	f, err := os.OpenFile(testFile, os.O_CREATE|os.O_WRONLY, 0o600)
+	f, err := os.OpenFile(testFile, os.O_CREATE|os.O_WRONLY, 0o600) //nolint:gosec // probe file with a generated name in the install dir
 	if err != nil {
 		return err
 	}
@@ -540,7 +540,7 @@ func restartActiveService() {
 		if err == nil && strings.Contains(string(out), label) {
 			fmt.Printf("Restarting launchd service %s...\n", label)
 			uid := strconv.Itoa(os.Getuid())
-			if kErr := exec.Command("launchctl", "kickstart", "-k", "gui/"+uid+"/"+label).Run(); kErr == nil {
+			if kErr := exec.Command("launchctl", "kickstart", "-k", "gui/"+uid+"/"+label).Run(); kErr == nil { //nolint:gosec // fixed launchctl binary; label and uid computed by the upgrader
 				fmt.Println("Launchd service restarted successfully.")
 			} else {
 				_ = exec.Command("launchctl", "kickstart", "-k", "system/"+label).Run()

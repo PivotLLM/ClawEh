@@ -32,7 +32,7 @@ func DownloadToFile(ctx context.Context, client *http.Client, req *http.Request,
 		"max_bytes": maxBytes,
 	})
 
-	resp, err := client.Do(req)
+	resp, err := client.Do(req) //nolint:gosec // URL is built from the ClawHub registry / GitHub raw path by skills.installer
 	if err != nil {
 		return "", fmt.Errorf("request failed: %w", err)
 	}

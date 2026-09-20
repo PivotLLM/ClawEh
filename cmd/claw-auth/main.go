@@ -455,7 +455,8 @@ func (e *OAuthFlowExecutor) ExecuteAuthCodeFlow(ctx context.Context) error {
 	// Start HTTP server in background
 	resultChan := make(chan authResult, 1)
 	server := &http.Server{
-		Handler: e.createCallbackHandler(state, codeVerifier, providerConfig, resultChan),
+		Handler:           e.createCallbackHandler(state, codeVerifier, providerConfig, resultChan),
+		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	go func() {
@@ -814,5 +815,5 @@ func openBrowser(url string) error {
 		return errors.New("unsupported platform")
 	}
 
-	return exec.Command(cmd, args...).Start()
+	return exec.Command(cmd, args...).Start() //nolint:gosec // fixed platform opener; url is built by buildAuthorizationURL
 }

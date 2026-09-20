@@ -519,7 +519,7 @@ func TestHostRW_Read_PermissionDenied(t *testing.T) {
 	protected := filepath.Join(tmpDir, "protected.txt")
 	err := os.WriteFile(protected, []byte("secret"), 0o000)
 	assert.NoError(t, err)
-	defer os.Chmod(protected, 0o644) // ensure cleanup
+	defer os.Chmod(protected, 0o644)
 
 	_, err = (&hostFs{}).ReadFile(protected)
 	assert.Error(t, err)

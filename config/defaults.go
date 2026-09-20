@@ -390,6 +390,6 @@ func DefaultConfig() *Config {
 	}
 	cfg.dataDir = homePath
 	// Ensure agents/default directory exists on startup
-	os.MkdirAll(filepath.Join(homePath, "agents", "default"), 0o755)
+	os.MkdirAll(filepath.Join(homePath, "agents", "default"), 0o755) //nolint:gosec // default agent workspace the user browses; existing mode kept
 	return cfg
 }

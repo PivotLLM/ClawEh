@@ -28,7 +28,7 @@ import (
 // Lines starting with # are comments
 // Empty lines are ignored
 func loadEnvFile(path string) (map[string]string, error) {
-	file, err := os.Open(path)
+	file, err := os.Open(path) //nolint:gosec // env_file path from the MCP server config
 	if err != nil {
 		return nil, fmt.Errorf("failed to open env file: %w", err)
 	}
@@ -397,7 +397,7 @@ func (m *Manager) ConnectServer(
 		// only signals the direct child, which would orphan chromium and hold the
 		// profile lock.
 		cmdFunc := func(ctx context.Context, command string, env []string, args []string) (*exec.Cmd, error) {
-			cmd := exec.CommandContext(ctx, command, args...)
+			cmd := exec.CommandContext(ctx, command, args...) //nolint:gosec // stdio MCP server command comes from the operator's config
 			cmd.Env = env
 			prepareStdioCommand(cmd)
 			stdioCmd = cmd

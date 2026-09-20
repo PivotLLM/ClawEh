@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gorilla/websocket"
 
@@ -224,7 +225,7 @@ func (c *DeviceChannel) Start(ctx context.Context) error {
 	}
 	// No Read/WriteTimeout: long-lived WebSocket connections manage their own
 	// deadlines after the gorilla upgrade hijacks the conn.
-	c.httpSrv = &http.Server{Addr: addr, Handler: wrapped}
+	c.httpSrv = &http.Server{Addr: addr, Handler: wrapped, ReadHeaderTimeout: 10 * time.Second}
 	c.SetRunning(true)
 	go func() {
 		if serveErr := c.httpSrv.Serve(ln); serveErr != nil && serveErr != http.ErrServerClosed {

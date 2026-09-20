@@ -246,7 +246,7 @@ func (p *Provider) GetExtendedScopes() map[string][]string {
 // ValidateToken validates a Google OAuth token by making a test API call
 func (p *Provider) ValidateToken(ctx context.Context, token *providers.TokenInfo) error {
 	// Use the tokeninfo endpoint to validate the token
-	tokenInfoURL := "https://oauth2.googleapis.com/tokeninfo"
+	tokenInfoURL := "https://oauth2.googleapis.com/tokeninfo" //nolint:gosec // public tokeninfo endpoint URL, not a credential
 	values := url.Values{}
 	values.Set("access_token", token.AccessToken)
 

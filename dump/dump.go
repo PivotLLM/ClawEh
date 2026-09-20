@@ -136,7 +136,7 @@ func randID(n int) string {
 	const chars = "abcdefghijklmnopqrstuvwxyz0123456789"
 	b := make([]byte, n)
 	for i := range b {
-		b[i] = chars[rand.Intn(len(chars))]
+		b[i] = chars[rand.Intn(len(chars))] //nolint:gosec // uniqueness suffix for a diagnostic dump filename, not security-relevant
 	}
 	return string(b)
 }

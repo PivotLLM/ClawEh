@@ -34,8 +34,8 @@ linters:
     # gocyclo: 36 functions exceed the threshold, topped by
     #   (*AgentLoop).runLLMIteration at complexity 135. Refactoring those is a
     #   behavioural change to the agent loop, not a lint fix.
-    # errcheck (1197) / gosec (420): both worth doing, both large enough to
-    #   need their own branch and review.
+    # errcheck (1197): worth doing, but large enough to need its own branch
+    #   and review.
     # revive: configured enable-all-rules below, which yields ~1970 hits. Needs
     #   a curated rule set before it is useful.
     # goconst (1497) / mnd (340) / lll (198) / paralleltest (2460): high-volume
@@ -60,7 +60,6 @@ linters:
     - goconst
     - gocyclo
     - godox
-    - gosec
     - lll
     - maintidx
     - mnd
@@ -89,6 +88,19 @@ linters:
         - elseif
     gocyclo:
       min-complexity: 20
+    gosec:
+      excludes:
+        # G104 (unhandled errors) is the same check as errcheck; one linter
+        # is enough for it.
+        - G104
+        # G301/G302/G306 want 0750/0600 on every directory and file. ClawEh's
+        # modes are deliberate: workspaces, config, logs and media are read by
+        # the user, editors and other tools, and the pid file by `claw status`
+        # possibly under another account. Private material (tokens, secrets)
+        # is already written 0600. Decision, not a deferral.
+        - G301
+        - G302
+        - G306
     govet:
       enable-all: true
       disable:
@@ -166,6 +178,11 @@ linters:
           - maintidx
           - gocognit
           - gocyclo
+        path: _test\.go$
+      # Tests read their own fixtures, run fixed commands and use fake keys;
+      # gosec on them is noise that would need a directive per line.
+      - linters:
+          - gosec
         path: _test\.go$
 
 issues:

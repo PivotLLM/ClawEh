@@ -46,7 +46,7 @@ func Generate() (string, error) {
 // Load reads the agentID→token map from path. A missing file is not an error —
 // it returns an empty map so callers can treat "no service tokens" uniformly.
 func Load(path string) (map[string]string, error) {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) //nolint:gosec // token store under the configured data dir
 	if err != nil {
 		if os.IsNotExist(err) {
 			return map[string]string{}, nil

@@ -101,7 +101,7 @@ func (h *Handler) handleGatewayLogs(w http.ResponseWriter, r *http.Request) {
 // tailLines returns the last n lines of the file at path, reading only a bounded
 // window from the end so a large log never forces a full read.
 func tailLines(path string, n int) ([]string, error) {
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:gosec // path is logger.GetLogFilePath(), the configured log file
 	if err != nil {
 		return nil, err
 	}

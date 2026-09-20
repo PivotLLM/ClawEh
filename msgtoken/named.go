@@ -121,7 +121,7 @@ func NewNamedStore(path string) (*NamedStore, error) {
 	if path == "" {
 		return s, nil
 	}
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) //nolint:gosec // token store under the configured data dir
 	if err != nil {
 		if os.IsNotExist(err) {
 			return s, nil

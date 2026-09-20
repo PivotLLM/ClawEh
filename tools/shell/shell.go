@@ -261,9 +261,9 @@ func (t *ExecTool) Execute(ctx context.Context, args map[string]any) *tools.Tool
 
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
-		cmd = exec.CommandContext(cmdCtx, "powershell", "-NoProfile", "-NonInteractive", "-Command", command)
+		cmd = exec.CommandContext(cmdCtx, "powershell", "-NoProfile", "-NonInteractive", "-Command", command) //nolint:gosec // user command by design; screened by denyPatterns (tools.exec.enable_deny_patterns) and allowPatterns
 	} else {
-		cmd = exec.CommandContext(cmdCtx, "sh", "-c", command)
+		cmd = exec.CommandContext(cmdCtx, "sh", "-c", command) //nolint:gosec // user command by design; screened by denyPatterns (tools.exec.enable_deny_patterns) and allowPatterns
 	}
 	if cwd != "" {
 		cmd.Dir = cwd

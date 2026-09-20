@@ -102,7 +102,7 @@ func NewWhisperTranscriber(name, apiKey, baseURL, model string) *whisperTranscri
 func (t *whisperTranscriber) Transcribe(ctx context.Context, audioFilePath string) (*TranscriptionResponse, error) {
 	logger.InfoCF("voice", "Starting transcription", map[string]any{"audio_file": audioFilePath})
 
-	audioFile, err := os.Open(audioFilePath)
+	audioFile, err := os.Open(audioFilePath) //nolint:gosec // audio path comes from the media store (loop_transcribe)
 	if err != nil {
 		logger.ErrorCF("voice", "Failed to open audio file", map[string]any{"path": audioFilePath, "error": err})
 		return nil, fmt.Errorf("failed to open audio file: %w", err)
@@ -252,7 +252,7 @@ func (t *openRouterTranscriber) Name() string { return "openrouter" }
 func (t *openRouterTranscriber) Transcribe(ctx context.Context, audioFilePath string) (*TranscriptionResponse, error) {
 	logger.InfoCF("voice", "Starting transcription", map[string]any{"audio_file": audioFilePath, "provider": "openrouter"})
 
-	raw, err := os.ReadFile(audioFilePath)
+	raw, err := os.ReadFile(audioFilePath) //nolint:gosec // audio path comes from the media store (loop_transcribe)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read audio file: %w", err)
 	}

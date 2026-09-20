@@ -683,7 +683,7 @@ func ensureUserEnv(tu *TargetUser, binDir, clawHome string) string {
 		return ""
 	}
 
-	data, _ := os.ReadFile(rc)
+	data, _ := os.ReadFile(rc) //nolint:gosec // target user's shell rc chosen by the installer (userShellRC)
 	content := string(data)
 
 	// Check if binDir needs to be added to PATH
@@ -726,7 +726,7 @@ func ensureUserEnv(tu *TargetUser, binDir, clawHome string) string {
 		notes = append(notes, fmt.Sprintf("Exported %s=%s in %s", global.EnvVarHome, clawHome, rc))
 	}
 
-	f, err := os.OpenFile(rc, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(rc, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644) //nolint:gosec // user's shell rc file; conventional mode kept
 	if err != nil {
 		return fmt.Sprintf("Could not update %s (%v). Set environment manually.", rc, err)
 	}
@@ -769,7 +769,7 @@ func copyBinary(src, dst string) error {
 	if src == dst {
 		return nil
 	}
-	data, err := os.ReadFile(src)
+	data, err := os.ReadFile(src) //nolint:gosec // installer copies the running binary to the CLI-chosen destination
 	if err != nil {
 		return err
 	}
@@ -777,7 +777,7 @@ func copyBinary(src, dst string) error {
 }
 
 func dirExists(path string) bool {
-	info, err := os.Stat(path)
+	info, err := os.Stat(path) // #nosec G703 -- install path chosen by the operator on the CLI
 	return err == nil && info.IsDir()
 }
 

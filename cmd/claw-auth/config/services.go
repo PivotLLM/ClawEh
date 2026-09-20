@@ -12,7 +12,7 @@ func GetServiceConfigs() map[string]*ServiceConfig {
 	return map[string]*ServiceConfig{
 		"google": {
 			DisplayName: "Google",
-			Endpoints: &EndpointConfig{
+			Endpoints: &EndpointConfig{ //nolint:gosec // OAuth endpoint URLs, not credentials
 				AuthorizationURL: "https://accounts.google.com/o/oauth2/v2/auth",
 				TokenURL:         "https://oauth2.googleapis.com/token",
 			},
@@ -28,7 +28,7 @@ func GetServiceConfigs() map[string]*ServiceConfig {
 		},
 		"microsoft365": {
 			DisplayName: "Microsoft 365",
-			Endpoints: &EndpointConfig{
+			Endpoints: &EndpointConfig{ //nolint:gosec // OAuth endpoint URLs, not credentials
 				AuthorizationURL: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
 				TokenURL:         "https://login.microsoftonline.com/common/oauth2/v2.0/token",
 				DeviceCodeURL:    "https://login.microsoftonline.com/common/oauth2/v2.0/devicecode",

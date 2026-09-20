@@ -25,7 +25,7 @@ func DoRequestWithRetry(client *http.Client, req *http.Request) (*http.Response,
 			resp.Body.Close()
 		}
 
-		resp, err = client.Do(req)
+		resp, err = client.Do(req) //nolint:gosec // URL is built from the ClawHub registry / GitHub raw path by skills.installer
 		if err == nil {
 			if resp.StatusCode == http.StatusOK {
 				break

@@ -363,7 +363,7 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 				Peer:     msg.Peer,
 				IsRetry:  true,
 			}
-			go func() {
+			go func() { //nolint:gosec // detached publish must outlive the command's request context
 				pubCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 				if err := al.bus.PublishInbound(pubCtx, retrigger); err != nil {

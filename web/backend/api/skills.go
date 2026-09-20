@@ -97,7 +97,7 @@ func (h *Handler) handleImportSkill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = r.ParseMultipartForm(2 << 20)
+	err = r.ParseMultipartForm(2 << 20) //nolint:gosec // file part is capped at 1MB by the LimitReader below; maxMemory only bounds buffering
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Invalid multipart form: %v", err), http.StatusBadRequest)
 		return
@@ -129,16 +129,16 @@ func (h *Handler) handleImportSkill(w http.ResponseWriter, r *http.Request) {
 
 	skillDir := filepath.Join(cfg.SkillsPath(), skillName)
 	skillFile := filepath.Join(skillDir, "SKILL.md")
-	if _, err := os.Stat(skillDir); err == nil {
+	if _, err := os.Stat(skillDir); err == nil { //nolint:gosec // skillName validated by normalizeImportedSkillName (^[a-z0-9]+(-[a-z0-9]+)*$)
 		http.Error(w, "skill already exists", http.StatusConflict)
 		return
 	}
 
-	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+	if err := os.MkdirAll(skillDir, 0o755); err != nil { //nolint:gosec // skills directory browsed by the user; existing mode kept
 		http.Error(w, fmt.Sprintf("Failed to create skill directory: %v", err), http.StatusInternalServerError)
 		return
 	}
-	if err := os.WriteFile(skillFile, content, 0o644); err != nil {
+	if err := os.WriteFile(skillFile, content, 0o644); err != nil { //nolint:gosec // SKILL.md is user-editable skill content; existing mode kept
 		http.Error(w, fmt.Sprintf("Failed to save skill: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -300,7 +300,7 @@ func inferImportedSkillDescription(body string) string {
 }
 
 func loadSkillContent(path string) (string, error) {
-	content, err := os.ReadFile(path)
+	content, err := os.ReadFile(path) //nolint:gosec // skill.Path comes from the loader's directory walk (ListSkills)
 	if err != nil {
 		return "", err
 	}

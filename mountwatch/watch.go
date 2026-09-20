@@ -172,7 +172,7 @@ func detectNewFiles(mountName, mountPath string) []string {
 // readSeen loads the recorded set of mount-relative file paths from the marker.
 // The bool is false when the marker does not exist yet (baseline needed).
 func readSeen(marker string) (map[string]bool, bool) {
-	data, err := os.ReadFile(marker)
+	data, err := os.ReadFile(marker) //nolint:gosec // marker file under the configured mount path
 	if err != nil {
 		return nil, false
 	}

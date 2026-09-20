@@ -163,7 +163,7 @@ func parseSystemdUnit(path, serviceType string) *ExistingInstall {
 		ServiceType: serviceType,
 	}
 
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:gosec // fixed candidate service-file paths (systemUnitPath / userPath)
 	if err != nil {
 		return inst
 	}
@@ -249,7 +249,7 @@ func parseLaunchdPlist(path, serviceType string) *ExistingInstall {
 		ServiceType: serviceType,
 	}
 
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) //nolint:gosec // fixed candidate service-file paths (systemLaunchdPath / userPath)
 	if err != nil {
 		return inst
 	}

@@ -733,7 +733,7 @@ type fileSystem interface {
 type hostFs struct{}
 
 func (h *hostFs) ReadFile(path string) ([]byte, error) {
-	content, err := os.ReadFile(path)
+	content, err := os.ReadFile(path) //nolint:gosec // hostFs is the unrestricted backend, selected by buildBaseFs only when restrict is false
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, fmt.Errorf("failed to read file: file not found: %w", err)
@@ -775,7 +775,7 @@ func (h *hostFs) WriteFileExclMode(path string, data []byte, mode os.FileMode) e
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode) //nolint:gosec // hostFs is the unrestricted backend, selected by buildBaseFs only when restrict is false
 	if err != nil {
 		return err
 	}
@@ -805,7 +805,7 @@ func (h *hostFs) Stat(path string) (os.FileInfo, error) {
 }
 
 func (h *hostFs) Open(path string) (fs.File, error) {
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:gosec // hostFs is the unrestricted backend, selected by buildBaseFs only when restrict is false
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, fmt.Errorf("failed to open file: file not found: %w", err)
