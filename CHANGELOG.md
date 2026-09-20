@@ -63,6 +63,12 @@ observe does not need an entry.
 - **Upstream assets removed.** The `assets/` directory (upstream demo GIFs,
   logos and community images, 11 MB, referenced by nothing) and the retired
   `claw-web` screenshot are gone from the repository.
+- **The standalone sub-agent tool loop is gone.** Sub-agents only ever ran
+  through the agent's full pipeline; the lightweight fallback loop inherited
+  from the upstream project was unreachable in a running gateway. Spawning
+  without the full-pipeline runner now fails with the same error the
+  synchronous path already returned. No behaviour change for a running
+  gateway, which always has the runner.
 
 ### Fixed
 

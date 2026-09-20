@@ -7,7 +7,7 @@ import (
 )
 
 // RedactArgs is the exported entry point for log-redacting tool arguments
-// from callers outside this package (agent loop, tools toolloop).
+// from callers outside this package (the agent loop).
 // It delegates to the package-internal redactArgs implementation so that
 // the registry.go INF redaction (locked in by QA d18c6da6) and external
 // log sites share a single source of truth.

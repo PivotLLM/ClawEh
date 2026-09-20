@@ -40,24 +40,14 @@ func TestMatchAndPromoteCandidate(t *testing.T) {
 	if _, ok := MatchCandidate(c, "   "); ok {
 		t.Fatal("blank model should not match")
 	}
-	// Promote moves the chosen model to the front, keeps the rest.
-	got := promoteCandidate(c, "Pro")
-	if got[0].Alias != "Pro" || got[1].Alias != "Flash" || len(got) != 2 {
-		t.Fatalf("promote order wrong: %+v", got)
-	}
-	// Unknown model leaves order unchanged.
-	if same := promoteCandidate(c, "nope"); same[0].Alias != "Flash" {
-		t.Fatalf("unknown model should not reorder: %+v", same)
-	}
 }
 
 func TestSpawner_InvalidModel_IsError(t *testing.T) {
 	mgr := NewSubagentManager(SubagentManagerConfig{
-		Provider:       &MockLLMProvider{},
-		DefaultModel:   "flash-wire",
 		Workspace:      t.TempDir(),
 		Live:           NewLiveSet(),
 		SelfCandidates: candList(),
+		RunFull:        echoRunFull,
 	})
 	sp := NewSpawner(mgr)
 
@@ -78,11 +68,10 @@ func TestSpawner_InvalidModel_IsError(t *testing.T) {
 
 func TestSpawner_ValidModel_Runs(t *testing.T) {
 	mgr := NewSubagentManager(SubagentManagerConfig{
-		Provider:       &MockLLMProvider{},
-		DefaultModel:   "flash-wire",
 		Workspace:      t.TempDir(),
 		Live:           NewLiveSet(),
 		SelfCandidates: candList(),
+		RunFull:        echoRunFull,
 	})
 	sp := NewSpawner(mgr)
 

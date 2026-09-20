@@ -25,7 +25,7 @@ in a few joins.
 | Prompt | System prompt assembly is split: identity, bootstrap files, skills, `MEMORY.md` and the date are built in `agent/context.go`; the session token block and the cogmem blocks are appended inside the engine's `Build`. | `agent/context.go:199`, `llmcontext/manager.go:1090-1142` |
 | Cogmem | `cogmem/store`, `cogmem`, `cogmem/portable` and `cogmem/consolidate` import nothing from the loop, session or providers. Glue is one file plus one gateway adapter. The operating instructions are hard-coded in the identity prompt and emitted even when cogmem is off. | `agent/memory_wiring.go`, `internal/gateway/cogmem.go`, `agent/context.go:181` |
 | Transcript | One store per session: the live window and the session state live in the per-session SQLite archive DB alongside the archived messages, FTS and summary checkpoints. Session tools open the archive by file path. | ctxengine `memory/archive.go`, `session/sqlite_store.go`, `tools/session/global_provider.go:43` |
-| Loop | One struct owns bus consumption, routing, mentions, commands, session tokens, dispatch and fallback, tool execution with media and vision fan-out, streaming, eviction notices, recovery and heartbeats. spawnllm's `Worker` is not used. Three tool loops exist. | `agent/loop.go` (4,399 lines), `tools/toolloop.go`, spawnllm `Run` |
+| Loop | One struct owns bus consumption, routing, mentions, commands, session tokens, dispatch and fallback, tool execution with media and vision fan-out, streaming, eviction notices, recovery and heartbeats. spawnllm's `Worker` is not used. Two tool loops exist. | `agent/loop.go` (4,399 lines), spawnllm `Run` |
 | Tools | `toolspec.ToolDefinition` plus `ToolHandler` is a clean portable contract shared with MCPFusion. ClawEh wraps it into the legacy `tools.Tool` interface and a `ToolDeps` struct carrying closures. `ToolCall.AgentID` is never populated; the session key travels by context value. | `tools/namespaced.go:77`, `tools/provider.go:296` |
 | Agents | No tool can create or edit an agent. Only the WebUI's whole-config PATCH does. An agent cannot read or edit its own prompt files. Default summarization and consolidation prompts are code-owned with append-only markdown overrides. | `web/backend/api/config.go`, `templates/AGENTS.md:98-103`, `llmcontext/summary.go:578`, `cogmem/consolidate/prompt.go:70` |
 
@@ -653,7 +653,7 @@ and the engine no longer knows the file exists.
 | `agent/loop.go` `runAgentLoop`, `runLLMIteration` | `agent.Runner` |
 | `agent/loop.go` bus, routing, mentions, commands, session tokens | stay in ClawEh, call `Runner.Turn` |
 | `agent/eviction.go` | session lifecycle inside `Runner` |
-| `tools/registry.go`, `tools/namespaced.go`, `tools/toolloop.go` | one `ToolSet` with a discovery decorator; one tool loop |
+| `tools/registry.go`, `tools/namespaced.go` | one `ToolSet` with a discovery decorator; one tool loop |
 | `providers/fallback.go`, `cooldown.go`, `dispatch.go` | `ModelPolicy` in `agent` |
 | `channels/device`, `internal/gateway/device_query.go` | a `Sink` implementation |
 

@@ -5,6 +5,22 @@ import (
 	"testing"
 )
 
+// mockTool is a simple tool for registry tests.
+type mockTool struct {
+	name   string
+	result *ToolResult
+}
+
+func (t *mockTool) Name() string               { return t.name }
+func (t *mockTool) Description() string        { return "mock tool " + t.name }
+func (t *mockTool) Parameters() map[string]any { return map[string]any{"type": "object"} }
+func (t *mockTool) Execute(ctx context.Context, args map[string]any) *ToolResult {
+	if t.result != nil {
+		return t.result
+	}
+	return NewToolResult("tool executed: " + t.name)
+}
+
 func TestToolRegistry_GetDefinitions_Empty(t *testing.T) {
 	r := NewToolRegistry()
 	defs := r.GetDefinitions()
