@@ -1,7 +1,5 @@
-// ClawEh - Personal AI Assistant
+// ClawEh
 // License: MIT
-//
-// Copyright (c) 2026 PicoClaw contributors
 
 package providers
 
@@ -12,10 +10,9 @@ import (
 	"github.com/PivotLLM/ClawEh/config"
 )
 
-// CreateProvider creates a provider based on the configuration.
-// It uses the models configuration (new format) to create providers.
-// The old providers config is automatically converted to models during config loading.
-// Returns the provider, the model ID to use, and any error.
+// CreateProvider builds the provider for the agent defaults' model from the
+// models configuration. Returns the provider, the model ID to use, and any
+// error.
 func CreateProvider(cfg *config.Config) (LLMProvider, string, error) {
 	model := cfg.Agents.Defaults.DefaultModelName()
 

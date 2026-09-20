@@ -1,7 +1,6 @@
-// ClawEh - Personal AI Assistant
+// ClawEh
 // License: MIT
 //
-// Copyright (c) 2026 PicoClaw contributors
 // Copyright (c) 2026 Tenebris Technologies Inc.
 
 package main
