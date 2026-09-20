@@ -933,7 +933,7 @@ func TestResolveMediaRefs_SkipsOversizedFile(t *testing.T) {
 	if err := os.WriteFile(bigPath, data, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	ref, _ := store.Store(bigPath, media.MediaMeta{}, "test")
+	ref := mustStore(t, store, bigPath, media.MediaMeta{})
 
 	messages := []providers.Message{
 		{Role: "user", Content: "hi", Media: []string{ref}},
@@ -954,7 +954,7 @@ func TestResolveMediaRefs_UnknownTypeInjectsPath(t *testing.T) {
 	if err := os.WriteFile(txtPath, []byte("hello world"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	ref, _ := store.Store(txtPath, media.MediaMeta{}, "test")
+	ref := mustStore(t, store, txtPath, media.MediaMeta{})
 
 	messages := []providers.Message{
 		{Role: "user", Content: "hi", Media: []string{ref}},
@@ -991,8 +991,10 @@ func TestResolveMediaRefs_DoesNotMutateOriginal(t *testing.T) {
 		0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02,
 		0x00, 0x00, 0x00, 0x90, 0x77, 0x53, 0xDE,
 	}
-	os.WriteFile(pngPath, pngHeader, 0o644)
-	ref, _ := store.Store(pngPath, media.MediaMeta{}, "test")
+	if err := os.WriteFile(pngPath, pngHeader, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ref := mustStore(t, store, pngPath, media.MediaMeta{})
 
 	original := []providers.Message{
 		{Role: "user", Content: "hi", Media: []string{ref}},
@@ -1013,8 +1015,10 @@ func TestResolveMediaRefs_UsesMetaContentType(t *testing.T) {
 	// File with JPEG content but stored with explicit content type
 	jpegPath := filepath.Join(dir, "photo")
 	jpegHeader := []byte{0xFF, 0xD8, 0xFF, 0xE0} // JPEG magic bytes
-	os.WriteFile(jpegPath, jpegHeader, 0o644)
-	ref, _ := store.Store(jpegPath, media.MediaMeta{ContentType: "image/jpeg"}, "test")
+	if err := os.WriteFile(jpegPath, jpegHeader, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ref := mustStore(t, store, jpegPath, media.MediaMeta{ContentType: "image/jpeg"})
 
 	messages := []providers.Message{
 		{Role: "user", Content: "hi", Media: []string{ref}},
@@ -1035,8 +1039,10 @@ func TestResolveMediaRefs_PDFInjectsFilePath(t *testing.T) {
 
 	pdfPath := filepath.Join(dir, "report.pdf")
 	// PDF magic bytes
-	os.WriteFile(pdfPath, []byte("%PDF-1.4 test content"), 0o644)
-	ref, _ := store.Store(pdfPath, media.MediaMeta{ContentType: "application/pdf"}, "test")
+	if err := os.WriteFile(pdfPath, []byte("%PDF-1.4 test content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ref := mustStore(t, store, pdfPath, media.MediaMeta{ContentType: "application/pdf"})
 
 	messages := []providers.Message{
 		{Role: "user", Content: "report.pdf [file]", Media: []string{ref}},
@@ -1057,8 +1063,10 @@ func TestResolveMediaRefs_AudioInjectsAudioPath(t *testing.T) {
 	dir := t.TempDir()
 
 	oggPath := filepath.Join(dir, "voice.ogg")
-	os.WriteFile(oggPath, []byte("fake audio"), 0o644)
-	ref, _ := store.Store(oggPath, media.MediaMeta{ContentType: "audio/ogg"}, "test")
+	if err := os.WriteFile(oggPath, []byte("fake audio"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ref := mustStore(t, store, oggPath, media.MediaMeta{ContentType: "audio/ogg"})
 
 	messages := []providers.Message{
 		{Role: "user", Content: "voice.ogg [audio]", Media: []string{ref}},
@@ -1079,8 +1087,10 @@ func TestResolveMediaRefs_VideoInjectsVideoPath(t *testing.T) {
 	dir := t.TempDir()
 
 	mp4Path := filepath.Join(dir, "clip.mp4")
-	os.WriteFile(mp4Path, []byte("fake video"), 0o644)
-	ref, _ := store.Store(mp4Path, media.MediaMeta{ContentType: "video/mp4"}, "test")
+	if err := os.WriteFile(mp4Path, []byte("fake video"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ref := mustStore(t, store, mp4Path, media.MediaMeta{ContentType: "video/mp4"})
 
 	messages := []providers.Message{
 		{Role: "user", Content: "clip.mp4 [video]", Media: []string{ref}},
@@ -1101,8 +1111,10 @@ func TestResolveMediaRefs_NoGenericTagAppendsPath(t *testing.T) {
 	dir := t.TempDir()
 
 	csvPath := filepath.Join(dir, "data.csv")
-	os.WriteFile(csvPath, []byte("a,b,c"), 0o644)
-	ref, _ := store.Store(csvPath, media.MediaMeta{ContentType: "text/csv"}, "test")
+	if err := os.WriteFile(csvPath, []byte("a,b,c"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ref := mustStore(t, store, csvPath, media.MediaMeta{ContentType: "text/csv"})
 
 	messages := []providers.Message{
 		{Role: "user", Content: "here is my data", Media: []string{ref}},
@@ -1120,9 +1132,11 @@ func TestResolveMediaRefs_EmptyContentGetsPathTag(t *testing.T) {
 	dir := t.TempDir()
 
 	docPath := filepath.Join(dir, "doc.docx")
-	os.WriteFile(docPath, []byte("fake docx"), 0o644)
+	if err := os.WriteFile(docPath, []byte("fake docx"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	docxMIME := "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-	ref, _ := store.Store(docPath, media.MediaMeta{ContentType: docxMIME}, "test")
+	ref := mustStore(t, store, docPath, media.MediaMeta{ContentType: docxMIME})
 
 	messages := []providers.Message{
 		{Role: "user", Content: "", Media: []string{ref}},
@@ -1146,12 +1160,16 @@ func TestResolveMediaRefs_MixedImageAndFile(t *testing.T) {
 		0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02,
 		0x00, 0x00, 0x00, 0x90, 0x77, 0x53, 0xDE,
 	}
-	os.WriteFile(pngPath, pngHeader, 0o644)
-	imgRef, _ := store.Store(pngPath, media.MediaMeta{}, "test")
+	if err := os.WriteFile(pngPath, pngHeader, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	imgRef := mustStore(t, store, pngPath, media.MediaMeta{})
 
 	pdfPath := filepath.Join(dir, "report.pdf")
-	os.WriteFile(pdfPath, []byte("%PDF-1.4 test"), 0o644)
-	fileRef, _ := store.Store(pdfPath, media.MediaMeta{ContentType: "application/pdf"}, "test")
+	if err := os.WriteFile(pdfPath, []byte("%PDF-1.4 test"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fileRef := mustStore(t, store, pdfPath, media.MediaMeta{ContentType: "application/pdf"})
 
 	messages := []providers.Message{
 		{Role: "user", Content: "check these [file]", Media: []string{imgRef, fileRef}},
@@ -1381,8 +1399,8 @@ func (m *mockEchoTool) Parameters() map[string]any {
 }
 
 func (m *mockEchoTool) Execute(_ context.Context, args map[string]any) *tools.ToolResult {
-	text, _ := args["text"].(string)
-	if text == "" {
+	text, ok := args["text"].(string)
+	if !ok || text == "" {
 		text = "echo"
 	}
 	return tools.SilentResult(text)

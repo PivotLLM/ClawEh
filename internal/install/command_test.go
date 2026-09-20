@@ -69,7 +69,10 @@ func TestApplyServerSettings_WritesHostAndPort(t *testing.T) {
 	if err := applyServerSettings("", 0); err != nil {
 		t.Fatalf("applyServerSettings (no-op): %v", err)
 	}
-	cfg, _ = config.LoadConfig(internal.GetConfigPath())
+	cfg, loadErr := config.LoadConfig(internal.GetConfigPath())
+	if loadErr != nil {
+		t.Fatalf("LoadConfig: %v", loadErr)
+	}
 	if cfg.Gateway.Host != "0.0.0.0" || cfg.Gateway.Port != 12345 {
 		t.Fatalf("blank args changed bind: got %s:%d", cfg.Gateway.Host, cfg.Gateway.Port)
 	}

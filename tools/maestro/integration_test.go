@@ -164,7 +164,7 @@ func (h *maestroHarness) waitTerminal(project, path string) map[string]any {
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		out := h.callJSON("maestro_task_list", map[string]any{"project": project, "path": path})
-		if ts, _ := out["tasks"].([]any); len(ts) == 1 {
+		if ts, ok := out["tasks"].([]any); ok && len(ts) == 1 {
 			task, ok := ts[0].(map[string]any)
 			if !ok {
 				h.t.Fatalf("task is %T, want map[string]any", ts[0])
@@ -195,7 +195,7 @@ func TestIntegration_TaskRunThroughClawEhWrappers(t *testing.T) {
 		if !strings.HasPrefix(name, "maestro_") {
 			t.Errorf("tool %q is not namespaced", name)
 		}
-		if props, _ := tl.Parameters()["properties"].(map[string]any); props != nil {
+		if props, ok := tl.Parameters()["properties"].(map[string]any); ok && props != nil {
 			if _, has := props["callback_url"]; has {
 				t.Errorf("%s still exposes callback_url", name)
 			}
@@ -245,12 +245,12 @@ func TestIntegration_TaskRunThroughClawEhWrappers(t *testing.T) {
 	// Task set, task, run.
 	h.createTaskSet(project, "main")
 	created := h.callJSON("maestro_task_create", map[string]any{"project": project, "path": "main", "title": "Worker", "type": "test", "prompt": "Summarise the notes."})
-	uuid, _ := created["uuid"].(string)
-	if uuid == "" {
+	uuid, ok := created["uuid"].(string)
+	if !ok || uuid == "" {
 		t.Fatalf("task_create returned no uuid: %+v", created)
 	}
 	run := h.callJSON("maestro_task_run", map[string]any{"project": project, "path": "main"})
-	if tf, _ := run["tasks_found"].(float64); tf != 1 {
+	if tf, tfOK := run["tasks_found"].(float64); !tfOK || tf != 1 {
 		t.Fatalf("task_run tasks_found = %v, want 1: %+v", run["tasks_found"], run)
 	}
 	task := h.waitTerminal(project, "main")
@@ -370,7 +370,7 @@ func TestIntegration_ModelHintAndPermanentFailure(t *testing.T) {
 	if work["status"] != "failed" || !strings.Contains(fmt.Sprint(work["error"]), "permanent") {
 		t.Errorf("unknown alias task = %+v", work)
 	}
-	if inv, _ := work["invocations"].(float64); inv != 1 {
+	if inv, invOK := work["invocations"].(float64); !invOK || inv != 1 {
 		t.Errorf("invocations = %v, want 1 (no retry)", work["invocations"])
 	}
 	uuid, ok := disp["uuid"].(string)

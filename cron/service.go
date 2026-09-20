@@ -172,7 +172,9 @@ func NewCronService(storePath string, onJob JobHandler) *CronService {
 		gronx:     gronx.New(),
 	}
 	// Initialize and load store on creation
-	cs.loadStore()
+	if err := cs.loadStore(); err != nil {
+		logger.WarnCF("cron", "Failed to load cron store", map[string]any{"path": storePath, "error": err.Error()})
+	}
 	return cs
 }
 

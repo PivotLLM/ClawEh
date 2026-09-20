@@ -33,7 +33,9 @@ func TestSearXNGSearchProvider_Search_Success(t *testing.T) {
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			t.Errorf("encode response: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -53,7 +55,9 @@ func TestSearXNGSearchProvider_Search_Success(t *testing.T) {
 func TestSearXNGSearchProvider_Search_NoResults(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"results":[]}`))
+		if _, err := w.Write([]byte(`{"results":[]}`)); err != nil {
+			t.Errorf("write response: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -75,7 +79,9 @@ func TestSearXNGSearchProvider_Search_LimitResults(t *testing.T) {
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"results": results})
+		if err := json.NewEncoder(w).Encode(map[string]any{"results": results}); err != nil {
+			t.Errorf("encode response: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -117,7 +123,9 @@ func TestSearXNGSearchProvider_Search_NonOKStatus(t *testing.T) {
 func TestSearXNGSearchProvider_Search_InvalidJSON(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("not valid json"))
+		if _, err := w.Write([]byte("not valid json")); err != nil {
+			t.Errorf("write response: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -131,7 +139,9 @@ func TestSearXNGSearchProvider_Search_InvalidJSON(t *testing.T) {
 func TestSearXNGSearchProvider_Search_ResultWithEmptyContent(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"results":[{"title":"Title","url":"https://example.com","content":""}]}`))
+		if _, err := w.Write([]byte(`{"results":[{"title":"Title","url":"https://example.com","content":""}]}`)); err != nil {
+			t.Errorf("write response: %v", err)
+		}
 	}))
 	defer server.Close()
 

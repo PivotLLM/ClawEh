@@ -431,7 +431,11 @@ func TestCallTool_ReconnectsOnConnectionError(t *testing.T) {
 
 	ctx := context.Background()
 	mgr := NewManager()
-	defer func() { _ = mgr.Close() }()
+	defer func() {
+		if err := mgr.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	}()
 
 	if err := mgr.ConnectServer(ctx, "svc", config.MCPServerConfig{
 		Enabled: true, Type: "http", URL: bad.URL,
@@ -466,7 +470,11 @@ func TestCallTool_ReconnectsOnConnectionError(t *testing.T) {
 func TestReconnect_RespectsCooldown(t *testing.T) {
 	ctx := context.Background()
 	mgr := NewManager()
-	defer func() { _ = mgr.Close() }()
+	defer func() {
+		if err := mgr.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	}()
 
 	badCfg := config.MCPServerConfig{Enabled: true, Type: "http", URL: "http://127.0.0.1:1/mcp"}
 
@@ -507,7 +515,11 @@ func TestProbeOnce_ReconnectsUnresponsiveServer(t *testing.T) {
 	ctx := context.Background()
 	mgr := NewManager()
 	mgr.probeInterval = time.Second
-	defer func() { _ = mgr.Close() }()
+	defer func() {
+		if err := mgr.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	}()
 
 	if err := mgr.ConnectServer(ctx, "svc", config.MCPServerConfig{
 		Enabled: true, Type: "http", URL: bad.URL,
@@ -535,7 +547,11 @@ func TestStatus_ReportsConnectedAndCooldown(t *testing.T) {
 	good := newTestMCPServer(t)
 	ctx := context.Background()
 	mgr := NewManager()
-	defer func() { _ = mgr.Close() }()
+	defer func() {
+		if err := mgr.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	}()
 
 	if err := mgr.ConnectServer(ctx, "live", config.MCPServerConfig{
 		Enabled: true, Type: "http", URL: good.URL,
@@ -578,7 +594,11 @@ func TestSync_ReusesUnchangedReconnectsChanged(t *testing.T) {
 	ts := newTestMCPServer(t)
 	ctx := context.Background()
 	mgr := NewManager()
-	defer func() { _ = mgr.Close() }()
+	defer func() {
+		if err := mgr.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	}()
 
 	base := config.MCPConfig{Servers: map[string]config.MCPServerConfig{
 		"svc": {Enabled: true, Type: "http", URL: ts.URL},
@@ -633,7 +653,11 @@ func TestRetryDisconnected_ConnectsDesiredServer(t *testing.T) {
 	ts := newTestMCPServer(t)
 	ctx := context.Background()
 	mgr := NewManager()
-	defer func() { _ = mgr.Close() }()
+	defer func() {
+		if err := mgr.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	}()
 
 	mgr.setDesired(map[string]config.MCPServerConfig{
 		"svc": {Enabled: true, Type: "http", URL: ts.URL},
@@ -658,7 +682,11 @@ func TestRetryDisconnected_SkipsConnectedAndCoolsDownFailures(t *testing.T) {
 	ctx := context.Background()
 	mgr := NewManager()
 	mgr.reconnectCooldown = time.Minute
-	defer func() { _ = mgr.Close() }()
+	defer func() {
+		if err := mgr.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	}()
 
 	up := newTestMCPServer(t)
 	// A server whose port is closed → connection refused on connect.

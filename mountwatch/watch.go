@@ -130,7 +130,7 @@ func detectNewFiles(mountName, mountPath string) []string {
 	seen, hadMarker := readSeen(marker)
 
 	current := make([]string, 0, len(seen))
-	_ = filepath.WalkDir(mountPath, func(p string, d os.DirEntry, werr error) error {
+	walkErr := filepath.WalkDir(mountPath, func(p string, d os.DirEntry, werr error) error {
 		if werr != nil {
 			return nil //nolint:nilerr // skip unreadable entries and keep walking
 		}
@@ -149,6 +149,9 @@ func detectNewFiles(mountName, mountPath string) []string {
 		}
 		return nil
 	})
+	if walkErr != nil {
+		logger.WarnCF("mountwatch", "Mount scan aborted", map[string]any{"path": mountPath, "error": walkErr.Error()})
+	}
 
 	if !hadMarker {
 		// Baseline: record what's already there, fire nothing.
@@ -188,7 +191,9 @@ func readSeen(marker string) (map[string]bool, bool) {
 // writeSeen persists the set of mount-relative file paths to the marker.
 func writeSeen(marker string, paths []string) {
 	sort.Strings(paths)
-	_ = os.WriteFile(marker, []byte(strings.Join(paths, "\n")+"\n"), 0o600)
+	if err := os.WriteFile(marker, []byte(strings.Join(paths, "\n")+"\n"), 0o600); err != nil {
+		logger.WarnCF("mountwatch", "Failed to write seen-files marker", map[string]any{"path": marker, "error": err.Error()})
+	}
 }
 
 // notify delivers a single new-file notice to the agent's default channel, the

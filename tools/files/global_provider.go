@@ -32,8 +32,16 @@ func (globalFilesProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 	// Construct the real tool instances only when real config is present.
 	// Enumeration (Describe) passes a zero Deps; handlers are never called then,
 	// so leaving the instances nil is safe.
-	c, _ := deps.Cfg.(*config.Config)
-	cd, _ := deps.Host.(tools.ToolDeps)
+	var (
+		c  *config.Config
+		cd tools.ToolDeps
+	)
+	if v, ok := deps.Cfg.(*config.Config); ok {
+		c = v
+	}
+	if v, ok := deps.Host.(tools.ToolDeps); ok {
+		cd = v
+	}
 
 	var (
 		readBytes   *ReadFileTool
@@ -70,7 +78,12 @@ func (globalFilesProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 		// so the agent has somewhere to write.
 		writeSubdir := c.Agents.Defaults.WorkspaceWriteSubdir
 		if restrict && writeSubdir != "" && workspace != "" {
-			_ = os.MkdirAll(filepath.Join(workspace, writeSubdir), 0o755)
+			if err := os.MkdirAll(filepath.Join(workspace, writeSubdir), 0o755); err != nil {
+				logger.WarnCF("tools", "failed to create workspace write subdir", map[string]any{
+					"path":  filepath.Join(workspace, writeSubdir),
+					"error": err.Error(),
+				})
+			}
 		}
 
 		// Confine agent reads to the configured workspace subdirs (default

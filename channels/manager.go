@@ -216,7 +216,11 @@ func (m *Manager) StreamDelta(channel, chatID, delta string) {
 	if !ok {
 		return
 	}
-	_ = sc.StreamDelta(context.Background(), chatID, delta)
+	if err := sc.StreamDelta(context.Background(), chatID, delta); err != nil {
+		logger.DebugCF("channels", "Stream delta failed", map[string]any{
+			"channel": channel, "chat_id": chatID, "error": err.Error(),
+		})
+	}
 }
 
 // RecordReactionUndo registers a reaction undo function for later invocation.

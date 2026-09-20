@@ -107,8 +107,13 @@ func TestFormatOffset(t *testing.T) {
 // callable with no arguments, since that is how it will nearly always be used.
 func TestNow_SchemaHasNoRequiredArgs(t *testing.T) {
 	params := NewNowTool().Parameters()
-	required, _ := params["required"].([]string)
-	if len(required) != 0 {
-		t.Errorf("time_now must be callable with no arguments, required = %v", required)
+	if raw, present := params["required"]; present {
+		required, ok := raw.([]string)
+		if !ok {
+			t.Fatalf("required has unexpected type %T", raw)
+		}
+		if len(required) != 0 {
+			t.Errorf("time_now must be callable with no arguments, required = %v", required)
+		}
 	}
 }

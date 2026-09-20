@@ -20,6 +20,7 @@ import (
 	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/tools"
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 const MaxReadFileSize = 32 * 1024 // 32KB (~8K tokens) per-read cap to avoid context overflow
@@ -270,7 +271,7 @@ func (t *ReadFileTool) Execute(ctx context.Context, args map[string]any) *tools.
 	if err != nil {
 		return tools.ErrorResult(err.Error())
 	}
-	defer file.Close()
+	defer utils.CloseQuietly(file)
 
 	// measure total size
 	totalSize := int64(-1) // -1 means unknown
@@ -281,7 +282,10 @@ func (t *ReadFileTool) Execute(ctx context.Context, args map[string]any) *tools.
 	// sniff the first 512 bytes to detect binary content before loading
 	// it into the LLM context. Seeking back to 0 afterwards restores state.
 	sniff := make([]byte, 512)
-	sniffN, _ := file.Read(sniff)
+	sniffN, err := file.Read(sniff)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return tools.ErrorResult(fmt.Sprintf("failed to read %q: %v", path, err))
+	}
 
 	// Reset read position to beginning before applying the caller's offset.
 	if seeker, ok := file.(io.Seeker); ok {
@@ -780,24 +784,36 @@ func (h *hostFs) WriteFileExclMode(path string, data []byte, mode os.FileMode) e
 		return err
 	}
 	if _, err := f.Write(data); err != nil {
-		f.Close()
-		os.Remove(path)
+		discardPartial(f, os.Remove, path)
 		return err
 	}
 	if err := f.Sync(); err != nil {
-		f.Close()
-		os.Remove(path)
+		discardPartial(f, os.Remove, path)
 		return err
 	}
 	if err := f.Close(); err != nil {
-		os.Remove(path)
+		discardPartial(nil, os.Remove, path)
 		return err
 	}
 	if err := os.Chmod(path, mode); err != nil {
-		os.Remove(path)
+		discardPartial(nil, os.Remove, path)
 		return err
 	}
 	return nil
+}
+
+// discardPartial closes f (when non-nil) and removes path after a failed
+// write. The write error is what the caller returns; a cleanup failure is
+// only logged because there is nothing further the caller can do about it.
+func discardPartial(f *os.File, remove func(string) error, path string) {
+	if f != nil {
+		if closeErr := f.Close(); closeErr != nil {
+			logger.WarnCF("tool", "failed to close partial file", map[string]any{"path": path, "error": closeErr.Error()})
+		}
+	}
+	if rmErr := remove(path); rmErr != nil && !errors.Is(rmErr, fs.ErrNotExist) {
+		logger.WarnCF("tool", "failed to remove partial file", map[string]any{"path": path, "error": rmErr.Error()})
+	}
 }
 
 func (h *hostFs) Stat(path string) (os.FileInfo, error) {
@@ -832,7 +848,7 @@ func (r *sandboxFs) execute(path string, fn func(root *os.Root, relPath string) 
 	if err != nil {
 		return fmt.Errorf("failed to open workspace: %w", err)
 	}
-	defer root.Close()
+	defer utils.CloseQuietly(root)
 
 	relPath, err := getSafeRelPath(r.workspace, path)
 	if err != nil {
@@ -886,40 +902,40 @@ func (r *sandboxFs) WriteFileMode(path string, data []byte, mode os.FileMode) er
 
 		tmpFile, err := root.OpenFile(tmpRelPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
 		if err != nil {
-			root.Remove(tmpRelPath)
+			discardPartial(nil, root.Remove, tmpRelPath)
 			return fmt.Errorf("failed to open temp file: %w", err)
 		}
 
 		if _, err := tmpFile.Write(data); err != nil {
-			tmpFile.Close()
-			root.Remove(tmpRelPath)
+			discardPartial(tmpFile, root.Remove, tmpRelPath)
 			return fmt.Errorf("failed to write temp file: %w", err)
 		}
 
 		if err := tmpFile.Sync(); err != nil {
-			tmpFile.Close()
-			root.Remove(tmpRelPath)
+			discardPartial(tmpFile, root.Remove, tmpRelPath)
 			return fmt.Errorf("failed to sync temp file: %w", err)
 		}
 
 		if err := tmpFile.Close(); err != nil {
-			root.Remove(tmpRelPath)
+			discardPartial(nil, root.Remove, tmpRelPath)
 			return fmt.Errorf("failed to close temp file: %w", err)
 		}
 
 		if err := root.Chmod(tmpRelPath, mode); err != nil {
-			root.Remove(tmpRelPath)
+			discardPartial(nil, root.Remove, tmpRelPath)
 			return fmt.Errorf("failed to set file mode: %w", err)
 		}
 
 		if err := root.Rename(tmpRelPath, relPath); err != nil {
-			root.Remove(tmpRelPath)
+			discardPartial(nil, root.Remove, tmpRelPath)
 			return fmt.Errorf("failed to rename temp file over target: %w", err)
 		}
 
 		if dirFile, err := root.Open("."); err == nil {
-			_ = dirFile.Sync()
-			dirFile.Close()
+			if syncErr := dirFile.Sync(); syncErr != nil {
+				logger.WarnCF("tool", "failed to sync directory after write", map[string]any{"path": relPath, "error": syncErr.Error()})
+			}
+			utils.CloseQuietly(dirFile)
 		}
 
 		return nil
@@ -939,21 +955,19 @@ func (r *sandboxFs) WriteFileExclMode(path string, data []byte, mode os.FileMode
 			return err
 		}
 		if _, err := f.Write(data); err != nil {
-			f.Close()
-			root.Remove(relPath)
+			discardPartial(f, root.Remove, relPath)
 			return err
 		}
 		if err := f.Sync(); err != nil {
-			f.Close()
-			root.Remove(relPath)
+			discardPartial(f, root.Remove, relPath)
 			return err
 		}
 		if err := f.Close(); err != nil {
-			root.Remove(relPath)
+			discardPartial(nil, root.Remove, relPath)
 			return err
 		}
 		if err := root.Chmod(relPath, mode); err != nil {
-			root.Remove(relPath)
+			discardPartial(nil, root.Remove, relPath)
 			return err
 		}
 		return nil

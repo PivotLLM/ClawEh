@@ -65,7 +65,7 @@ func (t *NowTool) clock() time.Time {
 func (t *NowTool) Execute(_ context.Context, args map[string]any) *tools.ToolResult {
 	now := t.clock()
 
-	if tz, _ := args["timezone"].(string); strings.TrimSpace(tz) != "" {
+	if tz, ok := args["timezone"].(string); ok && strings.TrimSpace(tz) != "" {
 		loc, err := time.LoadLocation(strings.TrimSpace(tz))
 		if err != nil {
 			// Naming an unknown zone is a recoverable mistake: report it and give

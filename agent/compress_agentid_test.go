@@ -176,7 +176,7 @@ func TestRunAgentLoop_PropagatesAgentIDForCompression(t *testing.T) {
 	// The LLM call itself should also see the agent ID — this is the original
 	// runLLMIteration wrap, kept for safety. It should agree with the
 	// runAgentLoop-level wrap.
-	if got, _ := agent.Provider.(*finalLLMProvider).seenAgentID.Load().(string); got != agent.ID {
+	if got, ok := agent.Provider.(*finalLLMProvider).seenAgentID.Load().(string); !ok || got != agent.ID {
 		t.Errorf("Chat observed agent_id=%q, want %q", got, agent.ID)
 	}
 }

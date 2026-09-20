@@ -198,7 +198,9 @@ func (t *ExecTool) Execute(ctx context.Context, args map[string]any) *tools.Tool
 	if !t.allowRemote {
 		channel := tools.ToolChannel(ctx)
 		if channel == "" {
-			channel, _ = args["__channel"].(string)
+			if v, ok := args["__channel"].(string); ok {
+				channel = v
+			}
 		}
 		channel = strings.TrimSpace(channel)
 		if channel == "" || !constants.IsInternalChannel(channel) {
@@ -237,9 +239,12 @@ func (t *ExecTool) Execute(ctx context.Context, args map[string]any) *tools.Tool
 		if err != nil {
 			return tools.ErrorResult(fmt.Sprintf("Command blocked by safety guard (path resolution failed: %v)", err))
 		}
-		absWorkspace, _ := filepath.Abs(t.workingDir)
-		wsResolved, _ := filepath.EvalSymlinks(absWorkspace)
-		if wsResolved == "" {
+		absWorkspace, err := filepath.Abs(t.workingDir)
+		if err != nil {
+			return tools.ErrorResult(fmt.Sprintf("Command blocked by safety guard (path resolution failed: %v)", err))
+		}
+		wsResolved, err := filepath.EvalSymlinks(absWorkspace)
+		if err != nil || wsResolved == "" {
 			wsResolved = absWorkspace
 		}
 		rel, err := filepath.Rel(wsResolved, resolved)
@@ -288,12 +293,16 @@ func (t *ExecTool) Execute(ctx context.Context, args map[string]any) *tools.Tool
 	select {
 	case err = <-done:
 	case <-cmdCtx.Done():
-		_ = terminateProcessTree(cmd)
+		if termErr := terminateProcessTree(cmd); termErr != nil {
+			logger.DebugCF("shell", "process tree termination reported an error", map[string]any{"error": termErr.Error()})
+		}
 		select {
 		case err = <-done:
 		case <-time.After(2 * time.Second):
 			if cmd.Process != nil {
-				_ = cmd.Process.Kill()
+				if killErr := cmd.Process.Kill(); killErr != nil {
+					logger.DebugCF("shell", "process kill reported an error", map[string]any{"error": killErr.Error()})
+				}
 			}
 			err = <-done
 		}

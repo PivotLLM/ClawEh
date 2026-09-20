@@ -12,6 +12,9 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/PivotLLM/ClawEh/logger"
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 // WriteFileAtomic atomically writes data to a file using a temp file + rename pattern.
@@ -71,8 +74,12 @@ func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
 
 	defer func() {
 		if cleanup {
-			tmpFile.Close()
-			_ = os.Remove(tmpPath)
+			// The file may already be closed on this path, so its Close error
+			// carries nothing; a leftover temp file is worth a warning.
+			utils.CloseQuietly(tmpFile)
+			if rmErr := os.Remove(tmpPath); rmErr != nil {
+				logger.WarnCF("fileutil", "failed to remove temp file", map[string]any{"path": tmpPath, "error": rmErr.Error()})
+			}
 		}
 	}()
 
@@ -109,8 +116,10 @@ func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
 	// Sync directory to ensure rename is durable
 	// This prevents the renamed file from disappearing after a crash
 	if dirFile, err := os.Open(dir); err == nil { //nolint:gosec // fsync of the caller-supplied path's directory
-		_ = dirFile.Sync()
-		dirFile.Close()
+		if syncErr := dirFile.Sync(); syncErr != nil {
+			logger.DebugCF("fileutil", "directory sync failed", map[string]any{"dir": dir, "error": syncErr.Error()})
+		}
+		utils.CloseQuietly(dirFile)
 	}
 
 	// Success: skip cleanup (file was renamed, no temp to remove)

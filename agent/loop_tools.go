@@ -388,11 +388,16 @@ func (al *AgentLoop) taskPointerCallback(channel, chatID, ownerAgentID string) t
 		}
 		if !result.Silent && result.ForUser != "" {
 			outCtx, outCancel := context.WithTimeout(context.Background(), 5*time.Second)
-			_ = al.bus.PublishOutbound(outCtx, bus.OutboundMessage{
+			if err := al.bus.PublishOutbound(outCtx, bus.OutboundMessage{
 				Channel: channel,
 				ChatID:  chatID,
 				Content: result.ForUser,
-			})
+			}); err != nil {
+				logger.WarnCF("agent", "Failed to publish async task result to user", map[string]any{
+					"channel": channel,
+					"error":   err.Error(),
+				})
+			}
 			outCancel()
 		}
 		content := result.ForLLM
@@ -413,7 +418,12 @@ func (al *AgentLoop) taskPointerCallback(channel, chatID, ownerAgentID string) t
 			msg.Metadata = map[string]string{metadataKeyPreresolvedAgentID: ownerAgentID}
 			msg.SessionKey = routing.BuildAgentMainSessionKey(ownerAgentID)
 		}
-		_ = al.bus.PublishInbound(pubCtx, msg)
+		if err := al.bus.PublishInbound(pubCtx, msg); err != nil {
+			logger.WarnCF("agent", "Failed to publish async task result to agent", map[string]any{
+				"channel": channel,
+				"error":   err.Error(),
+			})
+		}
 		pubCancel()
 	}
 }

@@ -353,7 +353,9 @@ func (m *MCPServer) Shutdown(ctx context.Context) error {
 
 	if m.httpServer != nil {
 		// Stop accepting new connections immediately.
-		_ = m.httpServer.Close()
+		if err := m.httpServer.Close(); err != nil {
+			logger.WarnCF("mcpserver", "Failed to close MCP HTTP server", map[string]any{"error": err.Error()})
+		}
 	}
 
 	// Wait up to 3 s for in-flight tool dispatches to finish.

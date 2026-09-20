@@ -291,7 +291,10 @@ func dispatchToolCall(
 	msgBus *bus.MessageBus,
 	toolActivity ToolActivityNotifier,
 ) (string, bool) {
-	rawSessTok, _ := args[sessionTokenParam].(string)
+	var rawSessTok string
+	if v, ok := args[sessionTokenParam].(string); ok {
+		rawSessTok = v
+	}
 	delete(args, sessionTokenParam)
 
 	if agenttoken.IsSubagentSentinel(rawSessTok) {
@@ -553,8 +556,8 @@ func injectSessionTokenParam(params map[string]any) map[string]any {
 		clone["type"] = "object"
 	}
 
-	props, _ := clone["properties"].(map[string]any)
-	if props == nil {
+	props, ok := clone["properties"].(map[string]any)
+	if !ok || props == nil {
 		props = map[string]any{}
 	} else {
 		props = cloneMap(props)

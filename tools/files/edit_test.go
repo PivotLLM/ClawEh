@@ -14,7 +14,9 @@ import (
 func TestEditTool_EditFile_Success(t *testing.T) {
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "test.txt")
-	os.WriteFile(testFile, []byte("Hello World\nThis is a test"), 0o644)
+	if err := os.WriteFile(testFile, []byte("Hello World\nThis is a test"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	tool := NewEditFileTool(tmpDir, true)
 	ctx := context.Background()
@@ -85,7 +87,9 @@ func TestEditTool_EditFile_NotFound(t *testing.T) {
 func TestEditTool_EditFile_OldTextNotFound(t *testing.T) {
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "test.txt")
-	os.WriteFile(testFile, []byte("Hello World"), 0o644)
+	if err := os.WriteFile(testFile, []byte("Hello World"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	tool := NewEditFileTool(tmpDir, true)
 	ctx := context.Background()
@@ -112,7 +116,9 @@ func TestEditTool_EditFile_OldTextNotFound(t *testing.T) {
 func TestEditTool_EditFile_MultipleMatches(t *testing.T) {
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "test.txt")
-	os.WriteFile(testFile, []byte("test test test"), 0o644)
+	if err := os.WriteFile(testFile, []byte("test test test"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	tool := NewEditFileTool(tmpDir, true)
 	ctx := context.Background()
@@ -140,7 +146,9 @@ func TestEditTool_EditFile_OutsideAllowedDir(t *testing.T) {
 	tmpDir := t.TempDir()
 	otherDir := t.TempDir()
 	testFile := filepath.Join(otherDir, "test.txt")
-	os.WriteFile(testFile, []byte("content"), 0o644)
+	if err := os.WriteFile(testFile, []byte("content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	tool := NewEditFileTool(tmpDir, true) // Restrict to tmpDir
 	ctx := context.Background()
@@ -222,7 +230,9 @@ func TestEditTool_EditFile_MissingNewText(t *testing.T) {
 func TestEditTool_AppendFile_Success(t *testing.T) {
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "test.txt")
-	os.WriteFile(testFile, []byte("Initial content"), 0o644)
+	if err := os.WriteFile(testFile, []byte("Initial content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	tool := NewAppendFileTool("", false)
 	ctx := context.Background()

@@ -17,7 +17,11 @@ func newAuthTestServer(t *testing.T, shared, word string) *Server {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = store.Close() })
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	})
 	return NewServer(store, ServerOptions{SharedToken: shared, WordToken: word})
 }
 

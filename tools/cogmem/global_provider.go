@@ -56,11 +56,17 @@ func (globalCogmemProvider) RegisterTools(deps global.Deps) []global.ToolDefinit
 	// (Describe) passes a zero Deps, so cd is the zero ToolDeps and workspace is
 	// empty — handlers guard on an empty session/workspace and never touch disk
 	// during cataloguing.
-	cd, _ := deps.Host.(tools.ToolDeps)
+	var cd tools.ToolDeps
+	if v, ok := deps.Host.(tools.ToolDeps); ok {
+		cd = v
+	}
 	workspace := cd.Workspace
 	// Config is needed to validate a memory's file attachment against the agent's
 	// read permissions; nil during deps-free enumeration, where no handler runs.
-	cfg, _ := deps.Cfg.(*config.Config)
+	var cfg *config.Config
+	if v, ok := deps.Cfg.(*config.Config); ok {
+		cfg = v
+	}
 
 	host := cogmemtools.Host{
 		Dir:       cogmemhost.Dir(workspace),

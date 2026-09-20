@@ -24,8 +24,14 @@ func (globalMsgProvider) Available(cfg any) (bool, string) { return true, "" }
 func (globalMsgProvider) RegisterTools(deps global.Deps) []global.ToolDefinition {
 	// Recover the real config and Claw host deps. Enumeration (Describe) passes a
 	// zero Deps; handlers are never called then, so nil recovery is safe.
-	c, _ := deps.Cfg.(*config.Config)
-	cd, _ := deps.Host.(tools.ToolDeps)
+	var c *config.Config
+	if v, ok := deps.Cfg.(*config.Config); ok {
+		c = v
+	}
+	var cd tools.ToolDeps
+	if v, ok := deps.Host.(tools.ToolDeps); ok {
+		cd = v
+	}
 
 	// Metadata is derived from zero-value instances; neither Description() nor
 	// Parameters() dereference any fields, so this is safe.

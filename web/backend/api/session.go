@@ -14,6 +14,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/providers"
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 // registerSessionRoutes binds session list and detail endpoints to the ServeMux.
@@ -78,7 +79,7 @@ func readSessionDB(path string) (sessionFile, error) {
 	if err != nil {
 		return sessionFile{}, err
 	}
-	defer db.Close()
+	defer utils.CloseQuietly(db)
 
 	window, err := db.Window()
 	if err != nil {

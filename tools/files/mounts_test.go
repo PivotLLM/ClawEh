@@ -33,7 +33,11 @@ func TestMounts_ReadWriteDeleteWithinMount(t *testing.T) {
 	if res := write.Execute(ctx, map[string]any{"path": "notes/new.md", "content": "world"}); res.IsError {
 		t.Fatalf("write notes/new.md should be allowed: %s", res.ForLLM)
 	}
-	if b, _ := os.ReadFile(filepath.Join(mountDir, "new.md")); string(b) != "world" {
+	b, readErr := os.ReadFile(filepath.Join(mountDir, "new.md"))
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(b) != "world" {
 		t.Fatalf("mount write did not land on disk: %q", string(b))
 	}
 
@@ -105,7 +109,9 @@ func TestMounts_RejectsParentEscape(t *testing.T) {
 func TestMounts_ListMountRoot(t *testing.T) {
 	ws := t.TempDir()
 	mountDir := t.TempDir()
-	os.WriteFile(filepath.Join(mountDir, "a.md"), []byte("x"), 0o644)
+	if err := os.WriteFile(filepath.Join(mountDir, "a.md"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	SetMountsForWorkspace(ws, []MountSpec{{Name: "notes", Path: mountDir}})
 	defer SetMountsForWorkspace(ws, nil)
 
@@ -119,8 +125,12 @@ func TestMounts_ListMountRoot(t *testing.T) {
 func TestMounts_HidesClawMarkerFromList(t *testing.T) {
 	ws := t.TempDir()
 	mountDir := t.TempDir()
-	os.WriteFile(filepath.Join(mountDir, "a.md"), []byte("x"), 0o644)
-	os.WriteFile(filepath.Join(mountDir, ".claw"), []byte(""), 0o600) // watermark marker
+	if err := os.WriteFile(filepath.Join(mountDir, "a.md"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mountDir, ".claw"), []byte(""), 0o600); err != nil { // watermark marker
+		t.Fatal(err)
+	}
 	SetMountsForWorkspace(ws, []MountSpec{{Name: "notes", Path: mountDir}})
 	defer SetMountsForWorkspace(ws, nil)
 
@@ -140,7 +150,9 @@ func TestMounts_HidesClawMarkerFromList(t *testing.T) {
 // and exposes it as a writable maestro/ mount so file_* can shuttle content.
 func TestResolveAgentMounts_AutoMaestro(t *testing.T) {
 	ws := t.TempDir()
-	_ = os.MkdirAll(filepath.Join(ws, "files"), 0o755)
+	if err := os.MkdirAll(filepath.Join(ws, "files"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	agent := &config.AgentConfig{ID: "alice", Maestro: &config.MaestroConfig{Enabled: true}}
 	specs := resolveAgentMounts(agent, ws)

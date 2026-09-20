@@ -1171,12 +1171,16 @@ func TestSendMessage_PreservesOrdering(t *testing.T) {
 	m.workers["test"] = w
 
 	// Send two messages sequentially — they must arrive in order
-	_ = m.SendMessage(context.Background(), bus.OutboundMessage{
+	if err := m.SendMessage(context.Background(), bus.OutboundMessage{
 		Channel: "test", ChatID: "1", Content: "first",
-	})
-	_ = m.SendMessage(context.Background(), bus.OutboundMessage{
+	}); err != nil {
+		t.Fatalf("SendMessage first: %v", err)
+	}
+	if err := m.SendMessage(context.Background(), bus.OutboundMessage{
 		Channel: "test", ChatID: "1", Content: "second",
-	})
+	}); err != nil {
+		t.Fatalf("SendMessage second: %v", err)
+	}
 
 	if len(order) != 2 {
 		t.Fatalf("expected 2 messages, got %d", len(order))

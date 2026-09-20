@@ -19,6 +19,7 @@ import (
 	"github.com/PivotLLM/ClawEh/gatewayproto"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/routing"
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 const (
@@ -148,12 +149,30 @@ func (w *connWriter) writeJSON(v any) error {
 	return w.conn.WriteJSON(v)
 }
 
+// send writes v and logs at debug when the write fails: the peer is gone or
+// going, and the read loop observes that on its own.
+func (w *connWriter) send(v any) {
+	if err := w.writeJSON(v); err != nil {
+		logger.DebugCF("device", "websocket write failed", map[string]any{"error": err.Error()})
+	}
+}
+
 func (w *connWriter) closeWith(code int, reason string) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	_ = w.conn.WriteControl(websocket.CloseMessage,
-		websocket.FormatCloseMessage(code, reason), time.Now().Add(2*time.Second))
-	_ = w.conn.Close()
+	if err := w.conn.WriteControl(websocket.CloseMessage,
+		websocket.FormatCloseMessage(code, reason), time.Now().Add(2*time.Second)); err != nil {
+		logger.DebugCF("device", "close frame write failed", map[string]any{"error": err.Error()})
+	}
+	utils.CloseQuietly(w.conn)
+}
+
+// setReadDeadline applies a read deadline and logs at debug when the conn
+// refuses it; the next read fails in that case, which ends the loop anyway.
+func setReadDeadline(conn *websocket.Conn, t time.Time) {
+	if err := conn.SetReadDeadline(t); err != nil {
+		logger.DebugCF("device", "set read deadline failed", map[string]any{"error": err.Error()})
+	}
 }
 
 func (w *connWriter) ping() error {
@@ -180,14 +199,14 @@ func (s *Server) HandleWS(w http.ResponseWriter, r *http.Request) {
 	challenge := gatewayproto.NewEvent(gatewayproto.EventConnectChallenge,
 		gatewayproto.ChallengePayload{Nonce: nonce, Ts: time.Now().UnixMilli()}, nil)
 	if writeErr := cw.writeJSON(challenge); writeErr != nil {
-		_ = conn.Close()
+		utils.CloseQuietly(conn)
 		return
 	}
 
-	_ = conn.SetReadDeadline(time.Now().Add(handshakeTimeout))
+	setReadDeadline(conn, time.Now().Add(handshakeTimeout))
 	_, raw, err := conn.ReadMessage()
 	if err != nil {
-		_ = conn.Close()
+		utils.CloseQuietly(conn)
 		return
 	}
 
@@ -196,7 +215,7 @@ func (s *Server) HandleWS(w http.ResponseWriter, r *http.Request) {
 		logger.WarnCF("device", "connect rejected", map[string]any{
 			"reason": fail.reason, "code": fail.err.Code, "message": fail.err.Message,
 		})
-		_ = cw.writeJSON(gatewayproto.NewErrorResponse(fail.id, fail.err))
+		cw.send(gatewayproto.NewErrorResponse(fail.id, fail.err))
 		cw.closeWith(fail.code, fail.reason)
 		return
 	}
@@ -205,7 +224,7 @@ func (s *Server) HandleWS(w http.ResponseWriter, r *http.Request) {
 	})
 
 	if err := cw.writeJSON(gatewayproto.NewOKResponse(hello.id, hello.payload)); err != nil {
-		_ = conn.Close()
+		utils.CloseQuietly(conn)
 		return
 	}
 
@@ -217,7 +236,7 @@ func (s *Server) HandleWS(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	_ = conn.SetReadDeadline(time.Time{})
+	setReadDeadline(conn, time.Time{})
 	s.serveLoop(r.Context(), lc)
 }
 
@@ -327,7 +346,11 @@ func (s *Server) handshake(r *http.Request, connID, nonce string, raw []byte) (*
 		}
 	}
 
-	_ = s.store.UpdateLastSeen(ctx, paired.DeviceID, time.Now().UnixMilli())
+	if err := s.store.UpdateLastSeen(ctx, paired.DeviceID, time.Now().UnixMilli()); err != nil {
+		logger.WarnCF("device", "failed to update last seen", map[string]any{
+			"deviceId": paired.DeviceID, "error": err.Error(),
+		})
+	}
 
 	hello := s.buildHelloOk(ctx, connID, paired, negotiatedProtocol)
 	return &handshakeOK{id: req.ID, payload: hello, deviceID: paired.DeviceID, chatID: "device:" + paired.DeviceID, role: role, scopes: paired.Scopes}, nil
@@ -461,9 +484,9 @@ func (s *Server) buildHelloOk(ctx context.Context, connID string, paired *Paired
 // RPC surface (health, chat.send, node.event/chat.subscribe).
 func (s *Server) serveLoop(ctx context.Context, lc *liveConn) {
 	conn := lc.cw.conn
-	_ = conn.SetReadDeadline(time.Now().Add(deviceReadTimeout))
+	setReadDeadline(conn, time.Now().Add(deviceReadTimeout))
 	conn.SetPongHandler(func(string) error {
-		_ = conn.SetReadDeadline(time.Now().Add(deviceReadTimeout))
+		setReadDeadline(conn, time.Now().Add(deviceReadTimeout))
 		return nil
 	})
 
@@ -480,7 +503,7 @@ func (s *Server) serveLoop(ctx context.Context, lc *liveConn) {
 			if err != nil {
 				return
 			}
-			_ = conn.SetReadDeadline(time.Now().Add(deviceReadTimeout))
+			setReadDeadline(conn, time.Now().Add(deviceReadTimeout))
 			var req gatewayproto.RequestFrame
 			if json.Unmarshal(raw, &req) != nil || req.Type != gatewayproto.FrameReq {
 				continue
@@ -511,7 +534,7 @@ func (s *Server) serveLoop(ctx context.Context, lc *liveConn) {
 func (s *Server) dispatch(lc *liveConn, req gatewayproto.RequestFrame) {
 	switch req.Method {
 	case "health":
-		_ = lc.cw.writeJSON(gatewayproto.NewOKResponse(req.ID, map[string]any{"status": "ok"}))
+		lc.cw.send(gatewayproto.NewOKResponse(req.ID, map[string]any{"status": "ok"}))
 	case "chat.send":
 		s.handleChatSend(lc, req)
 	case "node.event":
@@ -521,7 +544,7 @@ func (s *Server) dispatch(lc *liveConn, req gatewayproto.RequestFrame) {
 	case "chat.history":
 		s.handleChatHistory(lc, req)
 	default:
-		_ = lc.cw.writeJSON(gatewayproto.NewErrorResponse(req.ID,
+		lc.cw.send(gatewayproto.NewErrorResponse(req.ID,
 			gatewayproto.NewError(gatewayproto.CodeInvalidRequest, "method not supported: "+req.Method, nil)))
 	}
 }
@@ -541,7 +564,7 @@ func (s *Server) handleChatSend(lc *liveConn, req gatewayproto.RequestFrame) {
 		} `json:"attachments"`
 	}
 	if json.Unmarshal(req.Params, &p) != nil {
-		_ = lc.cw.writeJSON(gatewayproto.NewErrorResponse(req.ID,
+		lc.cw.send(gatewayproto.NewErrorResponse(req.ID,
 			gatewayproto.NewError(gatewayproto.CodeInvalidRequest, "invalid chat.send params", nil)))
 		return
 	}
@@ -575,7 +598,7 @@ func (s *Server) handleChatSend(lc *liveConn, req gatewayproto.RequestFrame) {
 	// The assistant reply is delivered asynchronously via "agent"/"chat" events from
 	// DeliverReply; the res must NOT carry the result or block on the run, or a strict
 	// client's transport times out waiting for this frame.
-	_ = lc.cw.writeJSON(gatewayproto.NewOKResponse(req.ID, map[string]any{"runId": runID, "status": "started"}))
+	lc.cw.send(gatewayproto.NewOKResponse(req.ID, map[string]any{"runId": runID, "status": "started"}))
 
 	// Device text commands (e.g. "/agent bob") are handled here and answered as a
 	// reply event, without running the agent loop.
@@ -778,7 +801,7 @@ func (s *Server) handleNodeEvent(lc *liveConn, req gatewayproto.RequestFrame) {
 		} `json:"payload"`
 	}
 	if json.Unmarshal(req.Params, &p) != nil {
-		_ = lc.cw.writeJSON(gatewayproto.NewErrorResponse(req.ID,
+		lc.cw.send(gatewayproto.NewErrorResponse(req.ID,
 			gatewayproto.NewError(gatewayproto.CodeInvalidRequest, "invalid node.event params", nil)))
 		return
 	}
@@ -787,7 +810,7 @@ func (s *Server) handleNodeEvent(lc *liveConn, req gatewayproto.RequestFrame) {
 		lc.sessionKey = p.Payload.SessionKey
 		lc.mu.Unlock()
 	}
-	_ = lc.cw.writeJSON(gatewayproto.NewOKResponse(req.ID, map[string]any{"ok": true}))
+	lc.cw.send(gatewayproto.NewOKResponse(req.ID, map[string]any{"ok": true}))
 }
 
 // handleAgentsList answers an operator client's agents.list with the configured
@@ -795,7 +818,7 @@ func (s *Server) handleNodeEvent(lc *liveConn, req gatewayproto.RequestFrame) {
 // as the chat.history/chat.send sessionKey).
 func (s *Server) handleAgentsList(lc *liveConn, req gatewayproto.RequestFrame) {
 	if s.querier == nil {
-		_ = lc.cw.writeJSON(gatewayproto.NewErrorResponse(req.ID,
+		lc.cw.send(gatewayproto.NewErrorResponse(req.ID,
 			gatewayproto.NewError(gatewayproto.CodeInvalidRequest, "method not supported: agents.list", nil)))
 		return
 	}
@@ -816,7 +839,7 @@ func (s *Server) handleAgentsList(lc *liveConn, req gatewayproto.RequestFrame) {
 		lc.sessionKey = mainKey
 	}
 	lc.mu.Unlock()
-	_ = lc.cw.writeJSON(gatewayproto.NewOKResponse(req.ID, map[string]any{
+	lc.cw.send(gatewayproto.NewOKResponse(req.ID, map[string]any{
 		"defaultId": defaultID,
 		"mainKey":   mainKey,
 		"scope":     "global",
@@ -829,7 +852,7 @@ func (s *Server) handleAgentsList(lc *liveConn, req gatewayproto.RequestFrame) {
 // same way it renders incoming replies.
 func (s *Server) handleChatHistory(lc *liveConn, req gatewayproto.RequestFrame) {
 	if s.querier == nil {
-		_ = lc.cw.writeJSON(gatewayproto.NewErrorResponse(req.ID,
+		lc.cw.send(gatewayproto.NewErrorResponse(req.ID,
 			gatewayproto.NewError(gatewayproto.CodeInvalidRequest, "method not supported: chat.history", nil)))
 		return
 	}
@@ -837,7 +860,7 @@ func (s *Server) handleChatHistory(lc *liveConn, req gatewayproto.RequestFrame) 
 		SessionKey string `json:"sessionKey"`
 	}
 	if json.Unmarshal(req.Params, &p) != nil {
-		_ = lc.cw.writeJSON(gatewayproto.NewErrorResponse(req.ID,
+		lc.cw.send(gatewayproto.NewErrorResponse(req.ID,
 			gatewayproto.NewError(gatewayproto.CodeInvalidRequest, "invalid chat.history params", nil)))
 		return
 	}
@@ -859,7 +882,7 @@ func (s *Server) handleChatHistory(lc *liveConn, req gatewayproto.RequestFrame) 
 			"content": []map[string]any{{"type": "text", "text": m.Content}},
 		})
 	}
-	_ = lc.cw.writeJSON(gatewayproto.NewOKResponse(req.ID, map[string]any{
+	lc.cw.send(gatewayproto.NewOKResponse(req.ID, map[string]any{
 		"sessionKey": sessionKey,
 		"messages":   messages,
 	}))

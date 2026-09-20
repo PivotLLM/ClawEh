@@ -35,7 +35,9 @@ func TestReadFileTool_Execute_WithOffset(t *testing.T) {
 func TestReadFileTool_Execute_NegativeOffset(t *testing.T) {
 	tmpDir := t.TempDir()
 	f := filepath.Join(tmpDir, "data.txt")
-	os.WriteFile(f, []byte("hello"), 0o644)
+	if err := os.WriteFile(f, []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	tool := NewReadFileTool("", false, MaxReadFileSize)
 	result := tool.Execute(context.Background(), map[string]any{
@@ -54,7 +56,9 @@ func TestReadFileTool_Execute_NegativeOffset(t *testing.T) {
 func TestReadFileTool_Execute_ZeroLength(t *testing.T) {
 	tmpDir := t.TempDir()
 	f := filepath.Join(tmpDir, "data.txt")
-	os.WriteFile(f, []byte("hello"), 0o644)
+	if err := os.WriteFile(f, []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	tool := NewReadFileTool("", false, MaxReadFileSize)
 	result := tool.Execute(context.Background(), map[string]any{
@@ -73,7 +77,9 @@ func TestReadFileTool_Execute_ZeroLength(t *testing.T) {
 func TestReadFileTool_Execute_InvalidOffset(t *testing.T) {
 	tmpDir := t.TempDir()
 	f := filepath.Join(tmpDir, "data.txt")
-	os.WriteFile(f, []byte("hello"), 0o644)
+	if err := os.WriteFile(f, []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	tool := NewReadFileTool("", false, MaxReadFileSize)
 	result := tool.Execute(context.Background(), map[string]any{
@@ -89,7 +95,9 @@ func TestReadFileTool_Execute_InvalidOffset(t *testing.T) {
 func TestReadFileTool_Execute_InvalidLength(t *testing.T) {
 	tmpDir := t.TempDir()
 	f := filepath.Join(tmpDir, "data.txt")
-	os.WriteFile(f, []byte("hello"), 0o644)
+	if err := os.WriteFile(f, []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	tool := NewReadFileTool("", false, MaxReadFileSize)
 	result := tool.Execute(context.Background(), map[string]any{
@@ -105,7 +113,9 @@ func TestReadFileTool_Execute_InvalidLength(t *testing.T) {
 func TestReadFileTool_Execute_LengthExceedsMaxCapped(t *testing.T) {
 	tmpDir := t.TempDir()
 	f := filepath.Join(tmpDir, "data.txt")
-	os.WriteFile(f, []byte("hello world"), 0o644)
+	if err := os.WriteFile(f, []byte("hello world"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	tool := NewReadFileTool("", false, 5) // maxSize = 5
 	result := tool.Execute(context.Background(), map[string]any{
@@ -125,7 +135,9 @@ func TestReadFileTool_Execute_LengthExceedsMaxCapped(t *testing.T) {
 func TestReadFileTool_Execute_OffsetBeyondEnd(t *testing.T) {
 	tmpDir := t.TempDir()
 	f := filepath.Join(tmpDir, "data.txt")
-	os.WriteFile(f, []byte("hi"), 0o644)
+	if err := os.WriteFile(f, []byte("hi"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	tool := NewReadFileTool("", false, MaxReadFileSize)
 	result := tool.Execute(context.Background(), map[string]any{
@@ -270,8 +282,12 @@ func TestValidatePath_UnrestrictedAllowsAnyPath(t *testing.T) {
 
 func TestListDirTool_Success(t *testing.T) {
 	workspace := t.TempDir()
-	os.WriteFile(filepath.Join(workspace, "a.txt"), []byte("a"), 0o644)
-	os.Mkdir(filepath.Join(workspace, "subdir"), 0o755)
+	if err := os.WriteFile(filepath.Join(workspace, "a.txt"), []byte("a"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(workspace, "subdir"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	tool := NewListDirTool("", false)
 	result := tool.Execute(context.Background(), map[string]any{

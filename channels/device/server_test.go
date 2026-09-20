@@ -17,6 +17,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/gatewayproto"
 	"github.com/PivotLLM/ClawEh/routing"
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 // emulator is a minimal OpenClaw-protocol device client used to exercise the
@@ -50,7 +51,9 @@ func (e *emulator) open(t *testing.T, wsURL, sharedToken string) (*websocket.Con
 	t.Helper()
 	conn, httpResp, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	if httpResp != nil && httpResp.Body != nil {
-		_ = httpResp.Body.Close()
+		if closeErr := httpResp.Body.Close(); closeErr != nil {
+			t.Errorf("close dial response body: %v", closeErr)
+		}
 	}
 	if err != nil {
 		t.Fatalf("dial: %v", err)
@@ -115,7 +118,9 @@ func (e *emulator) open(t *testing.T, wsURL, sharedToken string) (*websocket.Con
 func (e *emulator) connect(t *testing.T, wsURL, sharedToken string) connectResp {
 	t.Helper()
 	conn, resp := e.open(t, wsURL, sharedToken)
-	_ = conn.Close()
+	if err := conn.Close(); err != nil {
+		t.Errorf("close: %v", err)
+	}
 	return resp
 }
 
@@ -137,7 +142,11 @@ func newTestServer(t *testing.T, opts ServerOptions) (*Server, *Store, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = store.Close() })
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	})
 	srv := NewServer(store, opts)
 	hs := httptest.NewServer(http.HandlerFunc(srv.HandleWS))
 	t.Cleanup(hs.Close)
@@ -151,8 +160,8 @@ func detailRequestID(t *testing.T, err *gatewayproto.ErrorShape) string {
 	if !ok {
 		t.Fatalf("error details not an object: %#v", err.Details)
 	}
-	id, _ := m["requestId"].(string)
-	if id == "" {
+	id, ok := m["requestId"].(string)
+	if !ok || id == "" {
 		t.Fatalf("no requestId in details: %#v", m)
 	}
 	return id
@@ -173,7 +182,10 @@ func TestHandshakePairingFlow(t *testing.T) {
 	reqID := detailRequestID(t, r1.Error)
 
 	// The pending request is recorded with the device id.
-	pend, _ := store.ListPending(ctx)
+	pend, err := store.ListPending(ctx)
+	if err != nil {
+		t.Fatalf("ListPending: %v", err)
+	}
 	if len(pend) != 1 || pend[0].DeviceID != em.deviceID() {
 		t.Fatalf("pending not recorded: %+v", pend)
 	}
@@ -239,7 +251,7 @@ func TestConversationEcho(t *testing.T) {
 
 	em := newEmulator(t)
 	conn, resp := em.open(t, wsURL, "")
-	defer func() { _ = conn.Close() }()
+	defer utils.CloseQuietly(conn)
 	if !resp.OK {
 		t.Fatalf("handshake failed: %+v", resp.Error)
 	}
@@ -247,7 +259,9 @@ func TestConversationEcho(t *testing.T) {
 	em.writeReq(t, conn, "s1", "node.event", map[string]any{"event": "chat.subscribe", "payload": map[string]any{"sessionKey": "sess-1"}})
 	em.writeReq(t, conn, "m1", "chat.send", map[string]any{"message": "hi there", "sessionKey": "sess-1", "idempotencyKey": "run-1"})
 
-	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	if err := conn.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		t.Fatalf("set read deadline: %v", err)
+	}
 	var sawAck, sawFinal bool
 	for i := 0; i < 10 && !sawFinal; i++ {
 		var f struct {
@@ -267,7 +281,9 @@ func TestConversationEcho(t *testing.T) {
 					RunID  string `json:"runId"`
 					Status string `json:"status"`
 				}
-				_ = json.Unmarshal(f.Payload, &ack)
+				if err := json.Unmarshal(f.Payload, &ack); err != nil {
+					t.Fatalf("decode ack: %v", err)
+				}
 				if ack.Status == "started" && ack.RunID == "run-1" {
 					sawAck = true
 				}
@@ -284,7 +300,9 @@ func TestConversationEcho(t *testing.T) {
 						} `json:"content"`
 					} `json:"message"`
 				}
-				_ = json.Unmarshal(f.Payload, &ce)
+				if err := json.Unmarshal(f.Payload, &ce); err != nil {
+					t.Fatalf("decode chat event: %v", err)
+				}
 				if ce.State != "final" {
 					continue
 				}
@@ -319,7 +337,9 @@ type collectedFrame struct {
 // state:"final" (or the deadline elapses), returning every frame read.
 func readFramesUntilFinal(t *testing.T, conn *websocket.Conn) []collectedFrame {
 	t.Helper()
-	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	if err := conn.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		t.Fatalf("set read deadline: %v", err)
+	}
 	var frames []collectedFrame
 	for range 30 {
 		var f collectedFrame
@@ -331,7 +351,9 @@ func readFramesUntilFinal(t *testing.T, conn *websocket.Conn) []collectedFrame {
 			var ce struct {
 				State string `json:"state"`
 			}
-			_ = json.Unmarshal(f.Payload, &ce)
+			if err := json.Unmarshal(f.Payload, &ce); err != nil {
+				t.Fatalf("decode chat event: %v", err)
+			}
 			if ce.State == "final" {
 				return frames
 			}
@@ -355,7 +377,9 @@ func agentAssistantTexts(frames []collectedFrame) []string {
 				Text string `json:"text"`
 			} `json:"data"`
 		}
-		_ = json.Unmarshal(f.Payload, &ae)
+		if json.Unmarshal(f.Payload, &ae) != nil {
+			continue
+		}
 		if ae.Stream == "assistant" {
 			texts = append(texts, ae.Data.Text)
 		}
@@ -376,7 +400,9 @@ func agentAssistantSeqs(frames []collectedFrame) []uint64 {
 			Stream string `json:"stream"`
 			Seq    uint64 `json:"seq"`
 		}
-		_ = json.Unmarshal(f.Payload, &ae)
+		if json.Unmarshal(f.Payload, &ae) != nil {
+			continue
+		}
 		if ae.Stream == "assistant" {
 			seqs = append(seqs, ae.Seq)
 		}
@@ -395,7 +421,9 @@ func chatDeltaTexts(frames []collectedFrame) []string {
 			State     string `json:"state"`
 			DeltaText string `json:"deltaText"`
 		}
-		_ = json.Unmarshal(f.Payload, &ce)
+		if json.Unmarshal(f.Payload, &ce) != nil {
+			continue
+		}
 		if ce.State == "delta" {
 			deltas = append(deltas, ce.DeltaText)
 		}
@@ -417,7 +445,7 @@ func TestStreamThenFinal(t *testing.T) {
 
 	em := newEmulator(t)
 	conn, resp := em.open(t, wsURL, "")
-	defer func() { _ = conn.Close() }()
+	defer utils.CloseQuietly(conn)
 	if !resp.OK {
 		t.Fatalf("handshake failed: %+v", resp.Error)
 	}
@@ -464,7 +492,9 @@ func TestStreamThenFinal(t *testing.T) {
 					} `json:"content"`
 				} `json:"message"`
 			}
-			_ = json.Unmarshal(f.Payload, &ce)
+			if err := json.Unmarshal(f.Payload, &ce); err != nil {
+				t.Fatalf("decode chat event: %v", err)
+			}
 			if ce.State == "final" && len(ce.Message.Content) > 0 && ce.Message.Content[0].Text == "Hello world." {
 				sawFinalText = true
 			}
@@ -486,7 +516,7 @@ func TestNonStreamedRunUnchanged(t *testing.T) {
 
 	em := newEmulator(t)
 	conn, resp := em.open(t, wsURL, "")
-	defer func() { _ = conn.Close() }()
+	defer utils.CloseQuietly(conn)
 	if !resp.OK {
 		t.Fatalf("handshake failed: %+v", resp.Error)
 	}

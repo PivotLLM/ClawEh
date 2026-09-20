@@ -111,7 +111,7 @@ func parityStore(t *testing.T, key, summary string) session.SessionStore {
 	if err != nil {
 		t.Fatalf("NewSQLiteStore: %v", err)
 	}
-	t.Cleanup(func() { _ = store.Close() })
+	t.Cleanup(func() { closeT(t, store) })
 	for _, m := range parityHistory() {
 		store.AddFullMessage(key, m)
 	}
@@ -130,7 +130,11 @@ func parityAssemble(t *testing.T, cb *ContextBuilder, store session.SessionStore
 		ctxengine.WithContextWindow(200_000),
 		ctxengine.WithArchiveDir(archiveDir),
 	)
-	defer cm.Close(context.Background())
+	defer func() {
+		if err := cm.Close(context.Background()); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	}()
 	asm, err := cm.Assemble(context.Background(), ctxengine.AssembleRequest{
 		ToolDefinitionTokens: 10,
 		Layers:               append(cb.PromptLayers("webui", "chat-1"), sessionTokenLayer(token)),

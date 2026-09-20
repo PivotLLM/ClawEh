@@ -29,7 +29,9 @@ func runCommand(t *testing.T, args ...string) (string, error) {
 	}
 	os.Stdout = w
 	execErr := cmd.Execute()
-	_ = w.Close()
+	if closeErr := w.Close(); closeErr != nil {
+		t.Fatal(closeErr)
+	}
 	os.Stdout = orig
 	var stdout bytes.Buffer
 	if _, err := stdout.ReadFrom(r); err != nil {

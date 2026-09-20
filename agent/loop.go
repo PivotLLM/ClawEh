@@ -200,7 +200,11 @@ func NewAgentLoop(
 	if err != nil {
 		logger.WarnCF("message", "Failed to load named message-token store, starting empty",
 			map[string]any{"error": err.Error()})
-		namedTokens, _ = msgtoken.NewNamedStore("")
+		namedTokens, err = msgtoken.NewNamedStore("")
+		if err != nil {
+			logger.ErrorCF("message", "Failed to create empty named message-token store",
+				map[string]any{"error": err.Error()})
+		}
 	}
 
 	al := &AgentLoop{

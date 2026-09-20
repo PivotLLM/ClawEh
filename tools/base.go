@@ -47,14 +47,18 @@ func WithToolContext(ctx context.Context, channel, chatID string) context.Contex
 
 // ToolChannel extracts the channel from ctx, or "" if unset.
 func ToolChannel(ctx context.Context) string {
-	v, _ := ctx.Value(ctxKeyChannel).(string)
-	return v
+	if v, ok := ctx.Value(ctxKeyChannel).(string); ok {
+		return v
+	}
+	return ""
 }
 
 // ToolChatID extracts the chatID from ctx, or "" if unset.
 func ToolChatID(ctx context.Context) string {
-	v, _ := ctx.Value(ctxKeyChatID).(string)
-	return v
+	if v, ok := ctx.Value(ctxKeyChatID).(string); ok {
+		return v
+	}
+	return ""
 }
 
 // WithToolAllowChecker returns a child context carrying an allow checker.
@@ -65,8 +69,10 @@ func WithToolAllowChecker(ctx context.Context, checker ToolAllowChecker) context
 
 // ToolAllowCheckerFromCtx extracts the ToolAllowChecker from ctx, or nil if unset.
 func ToolAllowCheckerFromCtx(ctx context.Context) ToolAllowChecker {
-	v, _ := ctx.Value(ctxKeyAllowChecker).(ToolAllowChecker)
-	return v
+	if v, ok := ctx.Value(ctxKeyAllowChecker).(ToolAllowChecker); ok {
+		return v
+	}
+	return nil
 }
 
 // WithRoundSentFlag returns a child context carrying a per-round sent flag.
@@ -77,8 +83,10 @@ func WithRoundSentFlag(ctx context.Context, flag *atomic.Bool) context.Context {
 
 // roundSentFlagFromCtx extracts the per-round sent flag, or nil if not set.
 func roundSentFlagFromCtx(ctx context.Context) *atomic.Bool {
-	v, _ := ctx.Value(ctxKeyRoundSent).(*atomic.Bool)
-	return v
+	if v, ok := ctx.Value(ctxKeyRoundSent).(*atomic.Bool); ok {
+		return v
+	}
+	return nil
 }
 
 // RoundSentFlagFromCtx is the exported form of roundSentFlagFromCtx,
@@ -101,8 +109,10 @@ func WithSessionKey(ctx context.Context, key string) context.Context {
 
 // ToolSessionKey extracts the session key from ctx, or "" if unset.
 func ToolSessionKey(ctx context.Context) string {
-	v, _ := ctx.Value(ctxKeySessionKey).(string)
-	return v
+	if v, ok := ctx.Value(ctxKeySessionKey).(string); ok {
+		return v
+	}
+	return ""
 }
 
 // AsyncCallback is a function type that async tools use to notify completion.

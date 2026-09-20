@@ -23,7 +23,9 @@ func TestWebTool_WebFetch_Success(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("<html><body><h1>Test Page</h1><p>Content here</p></body></html>"))
+		if _, err := w.Write([]byte("<html><body><h1>Test Page</h1><p>Content here</p></body></html>")); err != nil {
+			t.Errorf("write response: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -68,7 +70,9 @@ func TestWebTool_WebFetch_JSON(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write(expectedJSON)
+		if _, writeErr := w.Write(expectedJSON); writeErr != nil {
+			t.Errorf("write response: %v", writeErr)
+		}
 	}))
 	defer server.Close()
 
@@ -177,7 +181,9 @@ func TestWebTool_WebFetch_Truncation(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(longContent))
+		if _, err := w.Write([]byte(longContent)); err != nil {
+			t.Errorf("write response: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -200,7 +206,9 @@ func TestWebTool_WebFetch_Truncation(t *testing.T) {
 
 	// ForLLM should contain truncated content (not the full 20000 chars)
 	resultMap := make(map[string]any)
-	json.Unmarshal([]byte(result.ForLLM), &resultMap)
+	if err := json.Unmarshal([]byte(result.ForLLM), &resultMap); err != nil {
+		t.Fatalf("ForLLM is not JSON: %v", err)
+	}
 	if text, ok := resultMap["text"].(string); ok {
 		if len(text) > 1100 { // Allow some margin
 			t.Errorf("Expected content to be truncated to ~1000 chars, got: %d", len(text))
@@ -225,7 +233,9 @@ func TestWebFetchTool_PayloadTooLarge(t *testing.T) {
 		// Limit: 10 * 1024 * 1024 (10MB). We generate 10MB + 100 bytes of the letter 'A'.
 		largeData := bytes.Repeat([]byte("A"), int(testFetchLimit)+100)
 
-		w.Write(largeData)
+		if _, err := w.Write(largeData); err != nil {
+			t.Logf("write cut short (expected once the client hits its limit): %v", err)
+		}
 	}))
 	// Ensure the server is shut down at the end of the test
 	defer ts.Close()
@@ -306,11 +316,13 @@ func TestWebTool_WebFetch_HTMLExtraction(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
 		w.WriteHeader(http.StatusOK)
-		w.Write(
+		if _, err := w.Write(
 			[]byte(
 				`<html><body><script>alert('test');</script><style>body{color:red;}</style><h1>Title</h1><p>Content</p></body></html>`,
 			),
-		)
+		); err != nil {
+			t.Errorf("write response: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -455,7 +467,9 @@ func TestWebTool_WebFetch_PrivateHostAllowedForTests(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok"))
+		if _, err := w.Write([]byte("ok")); err != nil {
+			t.Errorf("write response: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -738,7 +752,9 @@ func TestWebTool_TavilySearch_Success(t *testing.T) {
 
 		// Verify payload
 		var payload map[string]any
-		json.NewDecoder(r.Body).Decode(&payload)
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Errorf("decode payload: %v", err)
+		}
 		if payload["api_key"] != "test-key" {
 			t.Errorf("Expected api_key test-key, got %v", payload["api_key"])
 		}
@@ -763,7 +779,9 @@ func TestWebTool_TavilySearch_Success(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(response)
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			t.Errorf("encode response: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -870,7 +888,9 @@ func TestWebTool_TavilySearch_Failover(t *testing.T) {
 
 		if apiKey == "key1" {
 			w.WriteHeader(http.StatusTooManyRequests)
-			w.Write([]byte("Rate limited"))
+			if _, err := w.Write([]byte("Rate limited")); err != nil {
+				t.Errorf("write response: %v", err)
+			}
 			return
 		}
 
@@ -887,7 +907,9 @@ func TestWebTool_TavilySearch_Failover(t *testing.T) {
 			}
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(response)
+			if err := json.NewEncoder(w).Encode(response); err != nil {
+				t.Errorf("encode response: %v", err)
+			}
 			return
 		}
 
@@ -933,7 +955,9 @@ func TestWebTool_GLMSearch_Success(t *testing.T) {
 		}
 
 		var payload map[string]any
-		json.NewDecoder(r.Body).Decode(&payload)
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Errorf("decode payload: %v", err)
+		}
 		if payload["search_query"] != "test query" {
 			t.Errorf("Expected search_query 'test query', got %v", payload["search_query"])
 		}
@@ -956,7 +980,9 @@ func TestWebTool_GLMSearch_Success(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(response)
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			t.Errorf("encode response: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -991,7 +1017,9 @@ func TestWebTool_GLMSearch_Success(t *testing.T) {
 func TestWebTool_GLMSearch_APIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"error":"invalid api key"}`))
+		if _, err := w.Write([]byte(`{"error":"invalid api key"}`)); err != nil {
+			t.Errorf("write response: %v", err)
+		}
 	}))
 	defer server.Close()
 

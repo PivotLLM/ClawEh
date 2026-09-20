@@ -112,9 +112,15 @@ func TestExtractBinariesFromTarGz(t *testing.T) {
 		t.Fatal(wErr)
 	}
 
-	_ = tw.Close()
-	_ = gz.Close()
-	_ = f.Close()
+	if closeErr := tw.Close(); closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	if closeErr := gz.Close(); closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	if closeErr := f.Close(); closeErr != nil {
+		t.Fatal(closeErr)
+	}
 
 	destClaw := filepath.Join(dir, "extracted-claw")
 	destAuth := filepath.Join(dir, "extracted-auth")

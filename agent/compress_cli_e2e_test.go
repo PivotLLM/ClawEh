@@ -50,7 +50,7 @@ EOFMOCK
 	if err != nil {
 		t.Fatalf("NewSQLiteStore: %v", err)
 	}
-	defer store.Close()
+	defer closeT(t, store)
 	// Six distinct messages large enough that selectTail cannot retain them all
 	// at the default 20% retain budget against a 1000-token context window;
 	// the older half is handed to the compression LLM (i.e. the mock CLI).

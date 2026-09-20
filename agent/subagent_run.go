@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"strings"
 
@@ -85,7 +86,13 @@ func (al *AgentLoop) runSubagentTask(ctx context.Context, agentID, sessionKey, t
 		}
 		for i, c := range agent.Candidates {
 			if c.Alias == matched.Alias && c.Model == matched.Model {
-				_ = al.setActiveModelIndex(agent, sessionKey, i)
+				if err := al.setActiveModelIndex(agent, sessionKey, i); err != nil {
+					logger.WarnCF("agent", "Failed to persist sub-agent model selection", map[string]any{
+						"session": sessionKey,
+						"model":   model,
+						"error":   err.Error(),
+					})
+				}
 				break
 			}
 		}
@@ -132,9 +139,22 @@ func (al *AgentLoop) runSubagentTask(ctx context.Context, agentID, sessionKey, t
 func (al *AgentLoop) cleanupSubagentSession(agent *AgentInstance, sessionKey string) {
 	al.dropContextManager(agent, sessionKey)
 	al.releaseSessionPins(sessionKey)
-	_ = os.RemoveAll(cogmemhost.SubagentDir(agent.Workspace, sessionKey))
+	snapshotDir := cogmemhost.SubagentDir(agent.Workspace, sessionKey)
+	if err := os.RemoveAll(snapshotDir); err != nil {
+		logger.WarnCF("agent", "Failed to remove sub-agent memory snapshot", map[string]any{
+			"session": sessionKey,
+			"path":    snapshotDir,
+			"error":   err.Error(),
+		})
+	}
 	archive := archiveDBPath(agent.Workspace, sessionKey)
 	for _, suffix := range []string{"", "-wal", "-shm"} {
-		_ = os.Remove(archive + suffix)
+		if err := os.Remove(archive + suffix); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			logger.WarnCF("agent", "Failed to remove sub-agent archive file", map[string]any{
+				"session": sessionKey,
+				"path":    archive + suffix,
+				"error":   err.Error(),
+			})
+		}
 	}
 }

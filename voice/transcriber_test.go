@@ -207,11 +207,13 @@ func TestTranscribe(t *testing.T) {
 				t.Errorf("unexpected Authorization header: %s", r.Header.Get("Authorization"))
 			}
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(TranscriptionResponse{
+			if err := json.NewEncoder(w).Encode(TranscriptionResponse{
 				Text:     "hello world",
 				Language: "en",
 				Duration: 1.5,
-			})
+			}); err != nil {
+				t.Errorf("encode response: %v", err)
+			}
 		}))
 		defer srv.Close()
 

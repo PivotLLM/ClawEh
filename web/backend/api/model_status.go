@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 const modelProbeTimeout = 800 * time.Millisecond
@@ -116,7 +117,7 @@ func probeTCPService(raw string) bool {
 	if err != nil {
 		return false
 	}
-	_ = conn.Close()
+	utils.CloseQuietly(conn)
 	return true
 }
 
@@ -177,7 +178,7 @@ func getJSON(rawURL string, out any) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { utils.CloseQuietly(resp.Body) }()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("unexpected status %d", resp.StatusCode)

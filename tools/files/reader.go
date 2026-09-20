@@ -7,6 +7,7 @@ import (
 	"regexp"
 
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 // ReadPolicy derives the agent read policy from config: whether reads are
@@ -81,7 +82,7 @@ func (r *Reader) ReadFileLimit(path string, limit int) (data []byte, more bool, 
 	if err != nil {
 		return nil, false, err
 	}
-	defer func() { _ = f.Close() }()
+	defer utils.CloseQuietly(f)
 	// Read one byte past the limit: its presence is what proves the file is
 	// longer than the cap, without reading the remainder.
 	data, err = io.ReadAll(io.LimitReader(f, int64(limit)+1))

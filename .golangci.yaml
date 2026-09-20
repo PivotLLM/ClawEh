@@ -34,8 +34,6 @@ linters:
     # gocyclo: 36 functions exceed the threshold, topped by
     #   (*AgentLoop).runLLMIteration at complexity 135. Refactoring those is a
     #   behavioural change to the agent loop, not a lint fix.
-    # errcheck (1197): worth doing, but large enough to need its own branch
-    #   and review.
     # revive: configured enable-all-rules below, which yields ~1970 hits. Needs
     #   a curated rule set before it is useful.
     # goconst (1497) / mnd (340) / lll (198) / paralleltest (2460): high-volume
@@ -53,7 +51,6 @@ linters:
     - unparam
     - contextcheck
     - embeddedstructfieldcheck
-    - errcheck
     - forbidigo
     - funlen
     - gocognit

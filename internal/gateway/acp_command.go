@@ -21,6 +21,7 @@ import (
 	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/internal"
 	"github.com/PivotLLM/ClawEh/logger"
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 // NewACPCommand builds the `claw acp` subcommand: an Agent Client Protocol (ACP)
@@ -145,7 +146,7 @@ func acpCmd(debug bool, wsURL string, autoPair bool) error {
 	tryConnect := func(tok string) (*gateway.Client, error) {
 		c := makeClient(tok)
 		if err := c.Connect(ctx, wsURL); err != nil {
-			c.Close()
+			utils.CloseQuietly(c)
 			return nil, err
 		}
 		return c, nil
@@ -166,7 +167,9 @@ func acpCmd(debug bool, wsURL string, autoPair bool) error {
 		if connErr != nil {
 			logger.WarnCF("acp", "connect with cached device token failed; clearing it and retrying with the shared token",
 				map[string]any{"deviceId": id.DeviceID, "error": connErr.Error()})
-			_ = idStore.ClearDeviceToken()
+			if clearErr := idStore.ClearDeviceToken(); clearErr != nil {
+				logger.WarnCF("acp", "failed to clear cached device token", map[string]any{"error": clearErr.Error()})
+			}
 			deviceToken = ""
 		}
 	}
@@ -197,7 +200,7 @@ func acpCmd(debug bool, wsURL string, autoPair bool) error {
 		}
 		return fmt.Errorf("acp: connect to gateway %s: %w", wsURL, connErr)
 	}
-	defer client.Close()
+	defer utils.CloseQuietly(client)
 
 	// Persist a freshly issued device token so future spawns skip the shared secret.
 	if hello := client.Hello(); hello != nil && hello.Auth != nil && hello.Auth.DeviceToken != "" && hello.Auth.DeviceToken != deviceToken {
@@ -255,7 +258,7 @@ func autoApproveLocalDevice(ctx context.Context, dataDir, deviceID string) (stri
 	if err != nil {
 		return "", fmt.Errorf("open device store: %w", err)
 	}
-	defer func() { _ = store.Close() }()
+	defer utils.CloseQuietly(store)
 
 	pending, err := store.ListPending(ctx)
 	if err != nil {

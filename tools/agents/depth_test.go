@@ -56,15 +56,22 @@ func TestSpawner_ConfiguredMaxDepth_OverridesDefault(t *testing.T) {
 	sp.SetMaxDepth(1) // tighter than the default of 3
 
 	// depth 0 is allowed (0 < 1)...
-	if res, _ := sp.Spawn(WithSpawnDepth(context.Background(), 0), global.SpawnRequest{
+	res, err := sp.Spawn(WithSpawnDepth(context.Background(), 0), global.SpawnRequest{
 		Mode: global.SpawnAndWait, Task: "ok",
-	}); res == nil || res.IsError {
+	})
+	if err != nil {
+		t.Fatalf("Spawn at depth 0: %v", err)
+	}
+	if res == nil || res.IsError {
 		t.Fatalf("depth 0 must be allowed under max=1, got %+v", res)
 	}
 	// ...but depth 1 is refused, proving the configured bound (not the default) applies.
-	res, _ := sp.Spawn(WithSpawnDepth(context.Background(), 1), global.SpawnRequest{
+	res, err = sp.Spawn(WithSpawnDepth(context.Background(), 1), global.SpawnRequest{
 		Mode: global.SpawnAndWait, Task: "nope",
 	})
+	if err != nil {
+		t.Fatalf("Spawn at depth 1: %v", err)
+	}
 	if res == nil || !res.IsError || !strings.Contains(res.ForLLM, "maximum sub-agent depth (1)") {
 		t.Fatalf("depth 1 must be refused under configured max=1, got %+v", res)
 	}

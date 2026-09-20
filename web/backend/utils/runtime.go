@@ -15,7 +15,10 @@ func GetClawHome() string {
 	if home := os.Getenv("CLAW_HOME"); home != "" {
 		return home
 	}
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ".claw"
+	}
 	return filepath.Join(home, ".claw")
 }
 
@@ -43,7 +46,7 @@ func FindClawBinary() string {
 	}
 
 	if p := os.Getenv("CLAW_BINARY"); p != "" {
-		if info, _ := os.Stat(p); info != nil && !info.IsDir() { //nolint:gosec // CLAW_BINARY is the operator's own environment
+		if info, err := os.Stat(p); err == nil && !info.IsDir() { //nolint:gosec // CLAW_BINARY is the operator's own environment
 			return p
 		}
 	}

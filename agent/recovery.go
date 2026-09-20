@@ -49,7 +49,10 @@ func (al *AgentLoop) recoverSession(ctx context.Context, agentID, sessionKey str
 	if content == "" {
 		logger.InfoCF("agent", "No user message found for pending session; clearing flag",
 			map[string]any{"session": sessionKey})
-		_ = store.ClearPendingTurn(sessionKey)
+		if err := store.ClearPendingTurn(sessionKey); err != nil {
+			logger.WarnCF("agent", "Failed to clear pending-turn flag",
+				map[string]any{"session": sessionKey, "error": err.Error()})
+		}
 		return
 	}
 

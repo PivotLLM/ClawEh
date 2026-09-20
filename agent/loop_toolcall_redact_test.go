@@ -125,8 +125,11 @@ func findToolDispatchLines(t *testing.T, out string) (infLine, dbgLine string) {
 		if err := json.Unmarshal([]byte(line), &ev); err != nil {
 			continue
 		}
-		msg, _ := ev["message"].(string)
-		level, _ := ev["level"].(string)
+		msg, msgOK := ev["message"].(string)
+		level, levelOK := ev["level"].(string)
+		if !msgOK || !levelOK {
+			continue
+		}
 		switch {
 		case msg == "Tool call dispatched" && level == "info":
 			infLine = line

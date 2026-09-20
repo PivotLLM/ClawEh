@@ -70,7 +70,10 @@ func TestListProviders_CarriesReadinessOnTheWire(t *testing.T) {
 
 	byName := map[string]map[string]any{}
 	for _, p := range body.Providers {
-		name, _ := p["name"].(string)
+		name, ok := p["name"].(string)
+		if !ok {
+			t.Fatalf("provider has no string name: %v", p)
+		}
 		byName[name] = p
 		if _, present := p["ready"]; !present {
 			t.Errorf("provider %q has no ready field in the JSON", name)
@@ -88,14 +91,14 @@ func TestListProviders_CarriesReadinessOnTheWire(t *testing.T) {
 		{"Keyless", false, "an HTTP provider without one"},
 	}
 	for _, tc := range tests {
-		if got, _ := byName[tc.name]["ready"].(bool); got != tc.ready {
+		if got, ok := byName[tc.name]["ready"].(bool); !ok || got != tc.ready {
 			t.Errorf("%s: ready = %v, want %v (%s)", tc.name, got, tc.ready, tc.why)
 		}
 	}
 
 	// A blank command still has to name the binary it resolved, or the card
 	// shows a green dot next to nothing.
-	if got, _ := byName["Antigravity CLI"]["resolved_command"].(string); got == "" {
+	if got, ok := byName["Antigravity CLI"]["resolved_command"].(string); !ok || got == "" {
 		t.Error("a resolvable CLI provider reports no resolved_command")
 	}
 	if _, present := byName["Claude CLI"]["resolved_command"]; present {

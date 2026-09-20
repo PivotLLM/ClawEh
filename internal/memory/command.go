@@ -83,9 +83,13 @@ func runPurge(confirm bool) error {
 		}
 		st, perr := s.PurgeNonActive(ctx, confirm)
 		if perr == nil && confirm && (st.Memories > 0 || st.Domains > 0) {
-			_ = s.Vacuum(ctx)
+			if verr := s.Vacuum(ctx); verr != nil {
+				fmt.Printf("  %s: vacuum error: %v\n", path, verr)
+			}
 		}
-		_ = s.Close()
+		if cerr := s.Close(); cerr != nil {
+			fmt.Printf("  %s: close error: %v\n", path, cerr)
+		}
 		if perr != nil {
 			fmt.Printf("  %s: error: %v\n", path, perr)
 			continue

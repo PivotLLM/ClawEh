@@ -269,16 +269,22 @@ func (al *AgentLoop) runAgentLoop(
 			logger.WarnCF("agent", "Failed to add assistant message to context manager",
 				map[string]any{"error": err.Error(), "session": opts.SessionKey})
 		}
-		agent.Sessions.Save(opts.SessionKey)
+		if err := agent.Sessions.Save(opts.SessionKey); err != nil {
+			logger.WarnCF("agent", "Failed to save session",
+				map[string]any{"error": err.Error(), "session": opts.SessionKey})
+		}
 	}
 
 	// 7. Optional: send response via bus
 	if opts.SendResponse {
-		al.bus.PublishOutbound(ctx, bus.OutboundMessage{
+		if err := al.bus.PublishOutbound(ctx, bus.OutboundMessage{
 			Channel: opts.Channel,
 			ChatID:  opts.ChatID,
 			Content: finalContent,
-		})
+		}); err != nil {
+			logger.WarnCF("agent", "Failed to publish response",
+				map[string]any{"error": err.Error(), "channel": opts.Channel, "session": opts.SessionKey})
+		}
 	}
 
 	// 8. Log response — content gated behind log_message_content for privacy
@@ -563,11 +569,14 @@ func (al *AgentLoop) runLLMIteration(
 		if len(evictedThisTurn) == 0 || opts.Channel == "" || !al.evictionNotifyUser(agent) {
 			return
 		}
-		_ = al.bus.PublishOutbound(ctx, bus.OutboundMessage{
+		if err := al.bus.PublishOutbound(ctx, bus.OutboundMessage{
 			Channel: opts.Channel,
 			ChatID:  opts.ChatID,
 			Content: summarizeEvictions(evictedThisTurn),
-		})
+		}); err != nil {
+			logger.WarnCF("agent", "Failed to publish eviction notice",
+				map[string]any{"error": err.Error(), "channel": opts.Channel})
+		}
 	}()
 
 	// Loop protection: if the model requests the exact same tool call(s) on
@@ -902,11 +911,14 @@ func (al *AgentLoop) runLLMIteration(
 				)
 
 				if retry == 0 && !constants.IsInternalChannel(opts.Channel) {
-					al.bus.PublishOutbound(ctx, bus.OutboundMessage{
+					if pubErr := al.bus.PublishOutbound(ctx, bus.OutboundMessage{
 						Channel: opts.Channel,
 						ChatID:  opts.ChatID,
 						Content: "Context window exceeded. Compressing history and retrying...",
-					})
+					}); pubErr != nil {
+						logger.WarnCF("agent", "Failed to publish compression notice",
+							map[string]any{"error": pubErr.Error(), "channel": opts.Channel})
+					}
 				}
 
 				prevMsgCount := len(messages)
@@ -1094,11 +1106,14 @@ func (al *AgentLoop) runLLMIteration(
 		// model's "let me also check…" play-by-play.
 		if response.Content != "" && opts.Channel != "" && al.GetConfig().Agents.Defaults.StreamToolActivity {
 			pubCtx, pubCancel := context.WithTimeout(ctx, 5*time.Second)
-			_ = al.bus.PublishOutbound(pubCtx, bus.OutboundMessage{
+			if err := al.bus.PublishOutbound(pubCtx, bus.OutboundMessage{
 				Channel: opts.Channel,
 				ChatID:  opts.ChatID,
 				Content: response.Content,
-			})
+			}); err != nil {
+				logger.WarnCF("agent", "Failed to publish inter-tool narration",
+					map[string]any{"error": err.Error(), "channel": opts.Channel})
+			}
 			pubCancel()
 		}
 
@@ -1179,11 +1194,14 @@ func (al *AgentLoop) runLLMIteration(
 			if showToolActivity {
 				if line := toolCallBreadcrumb(tc); line != "" {
 					bcCtx, bcCancel := context.WithTimeout(context.Background(), 5*time.Second)
-					_ = al.bus.PublishOutbound(bcCtx, bus.OutboundMessage{
+					if err := al.bus.PublishOutbound(bcCtx, bus.OutboundMessage{
 						Channel: opts.Channel,
 						ChatID:  opts.ChatID,
 						Content: line,
-					})
+					}); err != nil {
+						logger.WarnCF("agent", "Failed to publish tool breadcrumb",
+							map[string]any{"error": err.Error(), "channel": opts.Channel})
+					}
 					bcCancel()
 				}
 			}
@@ -1234,11 +1252,14 @@ func (al *AgentLoop) runLLMIteration(
 								"chat_id":     opts.ChatID,
 								"content_len": len(result.ForUser),
 							})
-						_ = al.bus.PublishOutbound(outCtx, bus.OutboundMessage{
+						if err := al.bus.PublishOutbound(outCtx, bus.OutboundMessage{
 							Channel: opts.Channel,
 							ChatID:  opts.ChatID,
 							Content: result.ForUser,
-						})
+						}); err != nil {
+							logger.WarnCF("agent", "Failed to deliver async tool result to user",
+								map[string]any{"error": err.Error(), "tool": tc.Name, "channel": opts.Channel})
+						}
 					}
 
 					// Determine content for the agent loop (ForLLM or error).
@@ -1259,14 +1280,17 @@ func (al *AgentLoop) runLLMIteration(
 
 					pubCtx, pubCancel := context.WithTimeout(context.Background(), 5*time.Second)
 					defer pubCancel()
-					_ = al.bus.PublishInbound(pubCtx, bus.InboundMessage{
+					if err := al.bus.PublishInbound(pubCtx, bus.InboundMessage{
 						Channel:    "system",
 						SenderID:   "async:" + tc.Name,
 						ChatID:     fmt.Sprintf("%s:%s", opts.Channel, opts.ChatID),
 						Content:    content,
 						SessionKey: opts.SessionKey,
 						Metadata:   map[string]string{metadataKeyPreresolvedAgentID: agent.ID},
-					})
+					}); err != nil {
+						logger.WarnCF("agent", "Failed to deliver async tool result to agent",
+							map[string]any{"error": err.Error(), "tool": tc.Name, "session": opts.SessionKey})
+					}
 				}
 
 				// Inject agent config as allow checker so ExecuteWithContext can

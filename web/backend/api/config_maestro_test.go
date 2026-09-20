@@ -47,7 +47,10 @@ func TestHandlePatchConfig_MaestroBlockRoundTrips(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
 	}
-	cfg, _ = config.LoadConfig(configPath)
+	cfg, err = config.LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
 	if m := cfg.AgentMaestro("alice"); m == nil || m.Enabled || m.MaxConcurrent != 2 {
 		t.Fatalf("after disable = %+v", m)
 	}

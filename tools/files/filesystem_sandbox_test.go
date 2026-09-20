@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 // Tests for sandboxFs.WriteFile, sandboxFs.ReadDir, hostFs.Open,
@@ -70,8 +72,12 @@ func TestSandboxFs_WriteFile_OutsideWorkspace(t *testing.T) {
 
 func TestSandboxFs_ReadDir_Success(t *testing.T) {
 	workspace := t.TempDir()
-	os.WriteFile(filepath.Join(workspace, "a.txt"), []byte("a"), 0o644)
-	os.WriteFile(filepath.Join(workspace, "b.txt"), []byte("b"), 0o644)
+	if err := os.WriteFile(filepath.Join(workspace, "a.txt"), []byte("a"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "b.txt"), []byte("b"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	fs := &sandboxFs{workspace: workspace}
 	entries, err := fs.ReadDir(workspace)
@@ -104,14 +110,16 @@ func TestSandboxFs_ReadDir_EmptyWorkspace(t *testing.T) {
 func TestHostFs_Open_ExistingFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.txt")
-	os.WriteFile(path, []byte("content"), 0o644)
+	if err := os.WriteFile(path, []byte("content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	fs := &hostFs{}
 	f, err := fs.Open(path)
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
-	defer f.Close()
+	defer utils.CloseQuietly(f)
 }
 
 func TestHostFs_Open_NonExistent(t *testing.T) {
@@ -169,7 +177,9 @@ func TestWriteFileTool_Execute_MissingContent(t *testing.T) {
 func TestEditFileTool_Execute_Success(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "edit.txt")
-	os.WriteFile(path, []byte("hello world"), 0o644)
+	if err := os.WriteFile(path, []byte("hello world"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	tool := NewEditFileTool(dir, true)
 	result := tool.Execute(t.Context(), map[string]any{

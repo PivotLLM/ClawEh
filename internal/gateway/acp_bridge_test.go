@@ -200,9 +200,13 @@ func TestACPBridgePromptChatFinal(t *testing.T) {
 
 	done := make(chan *acplib.PromptResponse, 1)
 	go func() {
-		resp, _ := br.Prompt(context.Background(), acplib.PromptRequest{
+		resp, err := br.Prompt(context.Background(), acplib.PromptRequest{
 			SessionID: "acp-2", Prompt: []acplib.ContentBlock{{Type: "text", Text: "q"}},
 		})
+		if err != nil {
+			t.Errorf("Prompt: %v", err)
+			return
+		}
 		done <- resp
 	}()
 
@@ -241,12 +245,16 @@ func TestACPBridgePromptWithImage(t *testing.T) {
 
 	done := make(chan *acplib.PromptResponse, 1)
 	go func() {
-		resp, _ := br.Prompt(context.Background(), acplib.PromptRequest{
+		resp, err := br.Prompt(context.Background(), acplib.PromptRequest{
 			SessionID: "acp-img",
 			Prompt: []acplib.ContentBlock{
 				{Type: "image", MimeType: "image/jpeg", Data: "aGVsbG8="}, // no text block
 			},
 		})
+		if err != nil {
+			t.Errorf("Prompt: %v", err)
+			return
+		}
 		done <- resp
 	}()
 	runID := fg.lastRunID(t)

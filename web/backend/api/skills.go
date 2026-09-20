@@ -12,6 +12,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/skills"
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 type skillSupportResponse struct {
@@ -108,7 +109,7 @@ func (h *Handler) handleImportSkill(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "file is required", http.StatusBadRequest)
 		return
 	}
-	defer uploadedFile.Close()
+	defer utils.CloseQuietly(uploadedFile)
 
 	content, err := io.ReadAll(io.LimitReader(uploadedFile, (1<<20)+1))
 	if err != nil {

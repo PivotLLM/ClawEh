@@ -171,7 +171,7 @@ func DownloadFile(urlStr, filename string, opts DownloadOptions) string {
 		})
 		return ""
 	}
-	defer resp.Body.Close()
+	defer func() { CloseQuietly(resp.Body) }()
 
 	if resp.StatusCode != http.StatusOK {
 		logger.ErrorCF(opts.LoggerPrefix, "File download returned non-200 status", map[string]any{
@@ -184,7 +184,10 @@ func DownloadFile(urlStr, filename string, opts DownloadOptions) string {
 	// Reject HTML responses — these are error/auth pages, not the actual file.
 	if ct := resp.Header.Get("Content-Type"); strings.HasPrefix(ct, "text/html") {
 		// Read a snippet of the body so logs reveal exactly what page was returned.
-		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		snippet, readErr := io.ReadAll(io.LimitReader(resp.Body, 512))
+		if readErr != nil {
+			logger.DebugCF(opts.LoggerPrefix, "failed to read HTML response snippet", map[string]any{"error": readErr.Error()})
+		}
 		// Detect Slack's web login redirect: files.slack.com → workspace.slack.com/?redir=...
 		// This happens when the bot token lacks the files:read OAuth scope.
 		finalURL := resp.Request.URL.String()
@@ -215,11 +218,17 @@ func DownloadFile(urlStr, filename string, opts DownloadOptions) string {
 		})
 		return ""
 	}
-	defer out.Close()
-
-	if _, err := io.Copy(out, resp.Body); err != nil {
-		out.Close()
-		os.Remove(localPath)
+	_, err = io.Copy(out, resp.Body)
+	if closeErr := out.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		if rmErr := os.Remove(localPath); rmErr != nil {
+			logger.WarnCF(opts.LoggerPrefix, "Failed to remove partial file", map[string]any{
+				"path":  localPath,
+				"error": rmErr.Error(),
+			})
+		}
 		logger.ErrorCF(opts.LoggerPrefix, "Failed to write file", map[string]any{
 			"error": err.Error(),
 		})

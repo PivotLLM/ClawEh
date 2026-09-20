@@ -268,7 +268,11 @@ func (c *TelegramChannel) Stop(ctx context.Context) error {
 			c.commandRegCancel()
 		}
 		if c.bh != nil {
-			_ = c.bh.StopWithContext(ctx)
+			if err := c.bh.StopWithContext(ctx); err != nil {
+				logger.DebugCF("telegram", "Bot handler stop returned error", map[string]any{
+					"error": err.Error(),
+				})
+			}
 		}
 
 		// Block until telego's long-poll goroutine has actually exited.
@@ -415,7 +419,11 @@ func (c *TelegramChannel) StartTyping(ctx context.Context, chatID string) (func(
 	action.MessageThreadID = threadID
 
 	// Send the first typing action immediately
-	_ = c.bot.SendChatAction(ctx, action)
+	if err := c.bot.SendChatAction(ctx, action); err != nil {
+		logger.DebugCF("telegram", "Failed to send typing action", map[string]any{
+			"chat_id": cid, "error": err.Error(),
+		})
+	}
 
 	typingCtx, cancel := context.WithCancel(ctx)
 	go func() {
@@ -428,7 +436,11 @@ func (c *TelegramChannel) StartTyping(ctx context.Context, chatID string) (func(
 			case <-ticker.C:
 				a := tu.ChatAction(tu.ID(cid), telego.ChatActionTyping)
 				a.MessageThreadID = threadID
-				_ = c.bot.SendChatAction(typingCtx, a)
+				if err := c.bot.SendChatAction(typingCtx, a); err != nil {
+					logger.DebugCF("telegram", "Failed to send typing action", map[string]any{
+						"chat_id": cid, "error": err.Error(),
+					})
+				}
 			}
 		}
 	}()
@@ -552,7 +564,7 @@ func (c *TelegramChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMe
 			_, err = c.bot.SendDocument(ctx, params)
 		}
 
-		file.Close()
+		utils.CloseQuietly(file)
 
 		if err != nil {
 			logger.ErrorCF("telegram", "Failed to send media", map[string]any{

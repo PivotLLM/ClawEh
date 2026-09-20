@@ -70,7 +70,11 @@ func TestMigrateDirs_FoldsJSONLIntoArchiveDB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenReadOnly: %v", err)
 	}
-	defer db.Close()
+	defer func() {
+		if closeErr := db.Close(); closeErr != nil {
+			t.Errorf("close archive: %v", closeErr)
+		}
+	}()
 
 	window, err := db.Window()
 	if err != nil {

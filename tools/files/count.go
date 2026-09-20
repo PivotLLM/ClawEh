@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/PivotLLM/ClawEh/tools"
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 // CountFileTool reports a file's line, word and character counts — the same
@@ -89,7 +90,7 @@ func (t *CountFileTool) Execute(_ context.Context, args map[string]any) *tools.T
 	if err != nil {
 		return tools.ErrorResult(fmt.Sprintf("failed to open %q: %v", path, err))
 	}
-	defer f.Close()
+	defer utils.CloseQuietly(f)
 
 	counts, err := countReader(bufio.NewReaderSize(f, 64*1024))
 	if err != nil {

@@ -5,6 +5,8 @@ import (
 	"net"
 	"net/http"
 	"strings"
+
+	"github.com/PivotLLM/ClawEh/logger"
 )
 
 // AllowAnyAddress is the allowlist entry meaning "any client address, IPv4 or
@@ -103,7 +105,9 @@ func rejectByPolicy(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(r.URL.Path, "/api/") {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusForbidden)
-		_, _ = w.Write([]byte(`{"error":"access denied by network policy"}`))
+		if _, err := w.Write([]byte(`{"error":"access denied by network policy"}`)); err != nil {
+			logger.DebugCF("http", "response write failed", map[string]any{"error": err.Error()})
+		}
 		return
 	}
 	http.Error(w, "Forbidden", http.StatusForbidden)

@@ -21,6 +21,7 @@ import (
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/identity"
 	"github.com/PivotLLM/ClawEh/logger"
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 // webuiConn represents a single WebSocket connection.
@@ -42,10 +43,32 @@ func (pc *webuiConn) writeJSON(v any) error {
 	return pc.conn.WriteJSON(v)
 }
 
+// send writes v and logs at debug when the write fails: the peer is gone or
+// going, and the read loop observes that on its own.
+func (pc *webuiConn) send(v any) {
+	if err := pc.writeJSON(v); err != nil {
+		logger.DebugCF("webui", "Write to connection failed", map[string]any{
+			"conn_id": pc.id,
+			"error":   err.Error(),
+		})
+	}
+}
+
+// setReadDeadline applies a read deadline and logs at debug when the conn
+// refuses it; the next read fails in that case, which ends the loop anyway.
+func (pc *webuiConn) setReadDeadline(t time.Time) {
+	if err := pc.conn.SetReadDeadline(t); err != nil {
+		logger.DebugCF("webui", "Set read deadline failed", map[string]any{
+			"conn_id": pc.id,
+			"error":   err.Error(),
+		})
+	}
+}
+
 // close closes the connection.
 func (pc *webuiConn) close() {
 	if pc.closed.CompareAndSwap(false, true) {
-		pc.conn.Close()
+		utils.CloseQuietly(pc.conn)
 	}
 }
 
@@ -210,7 +233,12 @@ func (c *WebUIChannel) StartTyping(ctx context.Context, chatID string) (func(), 
 	}
 	return func() {
 		stopMsg := newMessage(TypeTypingStop, nil)
-		c.broadcastToSession(chatID, stopMsg)
+		if err := c.broadcastToSession(chatID, stopMsg); err != nil {
+			logger.DebugCF("webui", "Typing stop broadcast failed", map[string]any{
+				"chat_id": chatID,
+				"error":   err.Error(),
+			})
+		}
 	}, nil
 }
 
@@ -379,9 +407,9 @@ func (c *WebUIChannel) readLoop(pc *webuiConn) {
 		readTimeout = 60 * time.Second
 	}
 
-	_ = pc.conn.SetReadDeadline(time.Now().Add(readTimeout))
+	pc.setReadDeadline(time.Now().Add(readTimeout))
 	pc.conn.SetPongHandler(func(appData string) error {
-		_ = pc.conn.SetReadDeadline(time.Now().Add(readTimeout))
+		pc.setReadDeadline(time.Now().Add(readTimeout))
 		return nil
 	})
 
@@ -410,12 +438,12 @@ func (c *WebUIChannel) readLoop(pc *webuiConn) {
 			return
 		}
 
-		_ = pc.conn.SetReadDeadline(time.Now().Add(readTimeout))
+		pc.setReadDeadline(time.Now().Add(readTimeout))
 
 		var msg WebUIMessage
 		if err := json.Unmarshal(rawMsg, &msg); err != nil {
 			errMsg := newError("invalid_message", "failed to parse message")
-			pc.writeJSON(errMsg)
+			pc.send(errMsg)
 			continue
 		}
 
@@ -452,23 +480,23 @@ func (c *WebUIChannel) handleMessage(pc *webuiConn, msg WebUIMessage) {
 	case TypePing:
 		pong := newMessage(TypePong, nil)
 		pong.ID = msg.ID
-		pc.writeJSON(pong)
+		pc.send(pong)
 
 	case TypeMessageSend:
 		c.handleMessageSend(pc, msg)
 
 	default:
 		errMsg := newError("unknown_type", "unknown message type: "+msg.Type)
-		pc.writeJSON(errMsg)
+		pc.send(errMsg)
 	}
 }
 
 // handleMessageSend processes an inbound message.send from a client.
 func (c *WebUIChannel) handleMessageSend(pc *webuiConn, msg WebUIMessage) {
-	content, _ := msg.Payload["content"].(string)
-	if strings.TrimSpace(content) == "" {
+	content, ok := msg.Payload["content"].(string)
+	if !ok || strings.TrimSpace(content) == "" {
 		errMsg := newError("empty_content", "message content is empty")
-		pc.writeJSON(errMsg)
+		pc.send(errMsg)
 		return
 	}
 

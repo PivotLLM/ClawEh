@@ -12,6 +12,7 @@ import (
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/routing"
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 // registerDeviceRoutes wires the external-device gateway onboarding/management API.
@@ -62,7 +63,7 @@ func (h *Handler) openDeviceStore() (*device.Store, *config.Config, error) {
 		return h.deviceStore, cfg, nil
 	}
 	if h.deviceStore != nil {
-		_ = h.deviceStore.Close()
+		utils.CloseQuietly(h.deviceStore)
 		h.deviceStore = nil
 		h.deviceStorePath = ""
 	}
@@ -104,7 +105,9 @@ func (h *Handler) handleDevicePair(w http.ResponseWriter, _ *http.Request) {
 	// listener — that caused intermittent failures and dropped the device.
 	if changed {
 		if reload := h.reloadFunc(); reload != nil {
-			_ = reload()
+			if reloadErr := reload(); reloadErr != nil {
+				logger.WarnCF("api", "gateway reload failed", map[string]any{"error": reloadErr.Error()})
+			}
 		}
 	}
 	writeJSON(w, http.StatusOK, h.buildPairResponse(cfg, true))
@@ -158,7 +161,9 @@ func (h *Handler) handleDeviceSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if reload := h.reloadFunc(); reload != nil {
-			_ = reload()
+			if reloadErr := reload(); reloadErr != nil {
+				logger.WarnCF("api", "gateway reload failed", map[string]any{"error": reloadErr.Error()})
+			}
 		}
 	}
 	writeJSON(w, http.StatusOK, h.buildPairResponse(cfg, false))
@@ -184,7 +189,9 @@ func (h *Handler) handleDeviceWordTokenRegenerate(w http.ResponseWriter, _ *http
 		return
 	}
 	if reload := h.reloadFunc(); reload != nil {
-		_ = reload()
+		if reloadErr := reload(); reloadErr != nil {
+			logger.WarnCF("api", "gateway reload failed", map[string]any{"error": reloadErr.Error()})
+		}
 	}
 	writeJSON(w, http.StatusOK, h.buildPairResponse(cfg, false))
 }
@@ -218,7 +225,7 @@ func (h *Handler) buildPairResponse(cfg *config.Config, render bool) map[string]
 	payload, perr := device.BuildSetupPayload(dev.ExternalURL, device.LANIPv4s(), devicePort, token)
 	encoded := ""
 	if perr == nil {
-		encoded, _ = payload.Encode()
+		encoded, perr = payload.Encode()
 	}
 
 	warnings := []string{}

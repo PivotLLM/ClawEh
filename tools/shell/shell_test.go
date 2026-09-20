@@ -104,7 +104,9 @@ func TestShellTool_WorkingDir(t *testing.T) {
 	// Create temp directory
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "test.txt")
-	os.WriteFile(testFile, []byte("test content"), 0o644)
+	if err := os.WriteFile(testFile, []byte("test content"), 0o644); err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
 
 	tool, err := NewExecTool("", false)
 	if err != nil {
@@ -276,7 +278,9 @@ func TestShellTool_WorkingDir_SymlinkEscape(t *testing.T) {
 	if err := os.MkdirAll(secretDir, 0o755); err != nil {
 		t.Fatalf("failed to create secret dir: %v", err)
 	}
-	os.WriteFile(filepath.Join(secretDir, "secret.txt"), []byte("top secret"), 0o644)
+	if err := os.WriteFile(filepath.Join(secretDir, "secret.txt"), []byte("top secret"), 0o644); err != nil {
+		t.Fatalf("failed to write secret file: %v", err)
+	}
 
 	// symlink lives inside the workspace but resolves to secretDir outside it
 	link := filepath.Join(workspace, "escape")

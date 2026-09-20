@@ -161,7 +161,10 @@ func TestMessageTokens_CreateThenList(t *testing.T) {
 
 func TestMessageTokens_Delete(t *testing.T) {
 	_, mux, loop := newMessageTokenTestHandler(t)
-	tok, _ := loop.CreateMessageToken("main", "x")
+	tok, err := loop.CreateMessageToken("main", "x")
+	if err != nil {
+		t.Fatalf("CreateMessageToken: %v", err)
+	}
 
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete,
@@ -200,7 +203,10 @@ func TestMessageTokens_DeleteUnknownToken404(t *testing.T) {
 // hits-in-window is carried through.
 func TestMessageTokens_ListIncludesQuotaStatus(t *testing.T) {
 	_, mux, loop := newMessageTokenTestHandler(t)
-	tok, _ := loop.CreateMessageToken("main", "gps")
+	tok, err := loop.CreateMessageToken("main", "gps")
+	if err != nil {
+		t.Fatalf("CreateMessageToken: %v", err)
+	}
 	loop.hits[tok.ID] = 4
 
 	rec := httptest.NewRecorder()
@@ -225,7 +231,10 @@ func TestMessageTokens_ListIncludesQuotaStatus(t *testing.T) {
 
 func TestMessageTokens_UpdateConfig(t *testing.T) {
 	_, mux, loop := newMessageTokenTestHandler(t)
-	tok, _ := loop.CreateMessageToken("main", "gps")
+	tok, err := loop.CreateMessageToken("main", "gps")
+	if err != nil {
+		t.Fatalf("CreateMessageToken: %v", err)
+	}
 
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPatch,

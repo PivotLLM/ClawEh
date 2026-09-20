@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/PivotLLM/ClawEh/fileutil"
+	"github.com/PivotLLM/ClawEh/logger"
 )
 
 // namedFileName is the state file under the data dir's state/ directory that
@@ -215,7 +216,9 @@ func (s *NamedStore) Delete(agentID, id string) bool {
 	// Persist; on write failure the in-memory removal still stands but the next
 	// successful write reconciles disk. A failed revoke that keeps validating is
 	// the unsafe direction, so we log-and-continue rather than resurrect it.
-	_ = s.saveLocked()
+	if err := s.saveLocked(); err != nil {
+		logger.WarnCF("msgtoken", "Failed to persist token deletion", map[string]any{"agent": agentID, "error": err.Error()})
+	}
 	return true
 }
 
@@ -359,7 +362,9 @@ func (s *NamedStore) Update(agentID, id string, ratePerMin, blockMinutes int) bo
 		if list[i].ID == id {
 			list[i].RatePerMin = ratePerMin
 			list[i].BlockMinutes = blockMinutes
-			_ = s.saveLocked()
+			if err := s.saveLocked(); err != nil {
+				logger.WarnCF("msgtoken", "Failed to persist token update", map[string]any{"agent": agentID, "error": err.Error()})
+			}
 			return true
 		}
 	}

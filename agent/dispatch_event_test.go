@@ -77,19 +77,19 @@ func TestEmitLLMFinishEvent_SuccessPath_UsesProviderStatus(t *testing.T) {
 	if finish["model"] != "claude-haiku-4-5-20251001" {
 		t.Errorf("model = %v, want claude-haiku-4-5-20251001", finish["model"])
 	}
-	if v, _ := finish["success"].(bool); !v {
+	if v, ok := finish["success"].(bool); !ok || !v {
 		t.Errorf("success = %v, want true", finish["success"])
 	}
-	if v, _ := finish["input_tokens"].(float64); v != 12 {
+	if v, ok := finish["input_tokens"].(float64); !ok || v != 12 {
 		t.Errorf("input_tokens = %v, want 12", finish["input_tokens"])
 	}
-	if v, _ := finish["cache_creation_tokens"].(float64); v != 100 {
+	if v, ok := finish["cache_creation_tokens"].(float64); !ok || v != 100 {
 		t.Errorf("cache_creation_tokens = %v, want 100", finish["cache_creation_tokens"])
 	}
-	if v, _ := finish["bytes_sent"].(float64); v != 512 {
+	if v, ok := finish["bytes_sent"].(float64); !ok || v != 512 {
 		t.Errorf("bytes_sent = %v, want 512", finish["bytes_sent"])
 	}
-	if v, _ := finish["bytes_received"].(float64); v != 1024 {
+	if v, ok := finish["bytes_received"].(float64); !ok || v != 1024 {
 		t.Errorf("bytes_received = %v, want 1024", finish["bytes_received"])
 	}
 	if _, has := finish["error"]; has {
@@ -110,7 +110,7 @@ func TestEmitLLMFinishEvent_ErrorPathWithoutStatus_SynthesizesFallback(t *testin
 	if finish == nil {
 		t.Fatalf("expected LLM finish record, got %v", records)
 	}
-	if v, _ := finish["success"].(bool); v {
+	if v, ok := finish["success"].(bool); !ok || v {
 		t.Errorf("expected success=false, got %v", finish["success"])
 	}
 	if finish["model"] != "gpt-4o" {
@@ -148,10 +148,10 @@ func TestEmitLLMFinishEvent_ErrorPathWithPartialStatus_BytesPreserved(t *testing
 	if finish == nil {
 		t.Fatalf("expected LLM finish record, got %v", records)
 	}
-	if v, _ := finish["bytes_sent"].(float64); v != 200 {
+	if v, ok := finish["bytes_sent"].(float64); !ok || v != 200 {
 		t.Errorf("bytes_sent = %v, want 200 (best-effort byte counts preserved on error)", finish["bytes_sent"])
 	}
-	if v, _ := finish["bytes_received"].(float64); v != 0 {
+	if v, ok := finish["bytes_received"].(float64); !ok || v != 0 {
 		t.Errorf("bytes_received = %v, want 0", finish["bytes_received"])
 	}
 }

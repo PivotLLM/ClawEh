@@ -136,7 +136,10 @@ func TestWriteFile_Backup_NonExistentTarget_NoSibling(t *testing.T) {
 	if string(got) != "hello" {
 		t.Errorf("content = %q", got)
 	}
-	matches, _ := filepath.Glob(filepath.Join(ws, "new.txt.*"))
+	matches, globErr := filepath.Glob(filepath.Join(ws, "new.txt.*"))
+	if globErr != nil {
+		t.Fatal(globErr)
+	}
 	if len(matches) != 0 {
 		t.Errorf("expected no backup sibling, got: %v", matches)
 	}
@@ -270,7 +273,10 @@ func TestWriteFile_Backup_False_Default_NoSibling(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("write failed: %s", res.ForLLM)
 	}
-	matches, _ := filepath.Glob(filepath.Join(ws, "x.txt.*"))
+	matches, globErr := filepath.Glob(filepath.Join(ws, "x.txt.*"))
+	if globErr != nil {
+		t.Fatal(globErr)
+	}
 	if len(matches) != 0 {
 		t.Errorf("expected no backup sibling when backup=false; got: %v", matches)
 	}
@@ -291,7 +297,10 @@ func TestEditFile_Backup_NonExistentTarget(t *testing.T) {
 	if !res.IsError {
 		t.Fatal("expected edit to fail when target missing")
 	}
-	matches, _ := filepath.Glob(filepath.Join(ws, "missing.txt.*"))
+	matches, globErr := filepath.Glob(filepath.Join(ws, "missing.txt.*"))
+	if globErr != nil {
+		t.Fatal(globErr)
+	}
 	if len(matches) != 0 {
 		t.Errorf("no backup expected: %v", matches)
 	}
@@ -369,11 +378,17 @@ func TestAppendFile_Backup_NonExistentTarget(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("append failed: %s", res.ForLLM)
 	}
-	matches, _ := filepath.Glob(filepath.Join(ws, "new.txt.*"))
+	matches, globErr := filepath.Glob(filepath.Join(ws, "new.txt.*"))
+	if globErr != nil {
+		t.Fatal(globErr)
+	}
 	if len(matches) != 0 {
 		t.Errorf("expected no backup for non-existent target; got: %v", matches)
 	}
-	got, _ := os.ReadFile(filepath.Join(ws, "new.txt"))
+	got, readErr := os.ReadFile(filepath.Join(ws, "new.txt"))
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
 	if string(got) != "hi" {
 		t.Errorf("target = %q", got)
 	}
@@ -454,7 +469,11 @@ func TestWriteFile_Backup_FailureAbortsModification(t *testing.T) {
 	if err := os.Chmod(subdir, 0o500); err != nil {
 		t.Fatal(err)
 	}
-	defer os.Chmod(subdir, 0o755)
+	defer func() {
+		if err := os.Chmod(subdir, 0o755); err != nil {
+			t.Error(err)
+		}
+	}()
 
 	tool := NewWriteFileTool(ws, true)
 	res := tool.Execute(context.Background(), map[string]any{
@@ -507,7 +526,10 @@ func TestEditFile_Backup_ValidationFailure_NoBackup(t *testing.T) {
 			if !res.IsError {
 				t.Fatalf("expected edit to fail when %s", tc.reason)
 			}
-			matches, _ := filepath.Glob(filepath.Join(ws, "e.txt.*"))
+			matches, globErr := filepath.Glob(filepath.Join(ws, "e.txt.*"))
+			if globErr != nil {
+				t.Fatal(globErr)
+			}
 			if len(matches) != 0 {
 				t.Errorf("expected no orphan backup when validation fails; got: %v", matches)
 			}
@@ -633,7 +655,10 @@ func TestWriteFile_Backup_OutsideWorkspace(t *testing.T) {
 	if _, err := os.Stat(target + ".0001"); !os.IsNotExist(err) {
 		t.Errorf("backup must not escape scope; got: %v", err)
 	}
-	got, _ := os.ReadFile(target)
+	got, readErr := os.ReadFile(target)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
 	if string(got) != "orig" {
 		t.Errorf("target should be unchanged; got %q", got)
 	}

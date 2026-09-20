@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	cogmemstore "github.com/PivotLLM/cogmem/store"
+
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 // seedCogmemDB creates the agent's memory store (cogmem/cogmem.db) with one active
@@ -31,7 +33,7 @@ func seedCogmemDB(t *testing.T, configPath string) string {
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
-	defer s.Close()
+	defer utils.CloseQuietly(s)
 
 	ctx := context.Background()
 	d, err := s.CreateDomain(ctx, s.DB(), cogmemstore.CreateDomainParams{

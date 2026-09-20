@@ -53,7 +53,9 @@ func TestResponseAndEventEncoding(t *testing.T) {
 		t.Fatalf("invalid response json: %s", got)
 	}
 	var rf ResponseFrame
-	_ = json.Unmarshal(b, &rf)
+	if unmarshalErr := json.Unmarshal(b, &rf); unmarshalErr != nil {
+		t.Fatalf("unmarshal response: %v", unmarshalErr)
+	}
 	if rf.Type != FrameRes || !rf.OK || rf.Error != nil {
 		t.Fatalf("unexpected response: %+v", rf)
 	}
@@ -64,7 +66,9 @@ func TestResponseAndEventEncoding(t *testing.T) {
 		t.Fatalf("marshal error response: %v", err)
 	}
 	var ef ResponseFrame
-	_ = json.Unmarshal(eb, &ef)
+	if unmarshalErr := json.Unmarshal(eb, &ef); unmarshalErr != nil {
+		t.Fatalf("unmarshal error response: %v", unmarshalErr)
+	}
 	if ef.OK || ef.Error == nil || ef.Error.Code != CodeInvalidRequest {
 		t.Fatalf("unexpected error response: %s", eb)
 	}
@@ -76,7 +80,9 @@ func TestResponseAndEventEncoding(t *testing.T) {
 		t.Fatalf("marshal event: %v", err)
 	}
 	var evf EventFrame
-	_ = json.Unmarshal(evb, &evf)
+	if unmarshalErr := json.Unmarshal(evb, &evf); unmarshalErr != nil {
+		t.Fatalf("unmarshal event: %v", unmarshalErr)
+	}
 	if evf.Type != FrameEvent || evf.Event != "chat" || evf.Seq == nil || *evf.Seq != 7 {
 		t.Fatalf("unexpected event: %s", evb)
 	}

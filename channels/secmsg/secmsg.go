@@ -25,6 +25,7 @@ import (
 	"github.com/PivotLLM/ClawEh/identity"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/media"
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 // groupChatPrefix marks an outbound ChatID as a group target. The bus carries
@@ -62,7 +63,7 @@ func DiscoverAccounts(ctx context.Context, address string) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("dial: %w", err)
 	}
-	defer cl.Close()
+	defer utils.CloseQuietly(cl)
 
 	all, err := cl.StatusAll(ctx)
 	if err != nil {
@@ -133,7 +134,7 @@ func (c *SecMsgChannel) Stop(_ context.Context) error {
 	c.wg.Wait()
 	c.mu.Lock()
 	if c.client != nil {
-		c.client.Close()
+		utils.CloseQuietly(c.client)
 		c.client = nil
 	}
 	c.mu.Unlock()
@@ -186,7 +187,7 @@ func (c *SecMsgChannel) connectAndConsume() (connected bool, err error) {
 	if err != nil {
 		return false, fmt.Errorf("dial: %w", err)
 	}
-	defer cl.Close()
+	defer utils.CloseQuietly(cl)
 
 	service := cl.Service()
 	account, err := c.resolveAccount(cl, service)
@@ -430,7 +431,7 @@ func (c *SecMsgChannel) RequestLink(ctx context.Context) (*schema.LinkReply, err
 	if err != nil {
 		return nil, fmt.Errorf("dial: %w", err)
 	}
-	defer cl.Close()
+	defer utils.CloseQuietly(cl)
 	return cl.LinkRequest(ctx, c.linkAccount(), linkDeviceName)
 }
 
@@ -440,7 +441,7 @@ func (c *SecMsgChannel) LinkState(ctx context.Context) (*schema.LinkReply, error
 	if err != nil {
 		return nil, fmt.Errorf("dial: %w", err)
 	}
-	defer cl.Close()
+	defer utils.CloseQuietly(cl)
 	return cl.LinkStatus(ctx, c.linkAccount())
 }
 

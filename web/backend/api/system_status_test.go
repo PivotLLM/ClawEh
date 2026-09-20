@@ -100,7 +100,9 @@ func TestCountChannels(t *testing.T) {
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/system/status", nil))
 	var got statusResponse
-	_ = json.Unmarshal(rec.Body.Bytes(), &got)
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode status: %v", err)
+	}
 	if got.Channels < 0 {
 		t.Errorf("channels = %d", got.Channels)
 	}

@@ -431,9 +431,7 @@ func (e *OAuthFlowExecutor) ExecuteAuthCodeFlow(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to start local server: %w", err)
 	}
-	defer func(listener net.Listener) {
-		_ = listener.Close()
-	}(listener)
+	defer debug.CloseQuietly(listener)
 
 	tcpAddr, ok := listener.Addr().(*net.TCPAddr)
 	if !ok {
@@ -482,7 +480,9 @@ func (e *OAuthFlowExecutor) ExecuteAuthCodeFlow(ctx context.Context) error {
 		// Shutdown server
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_ = server.Shutdown(shutdownCtx)
+		if shutdownErr := server.Shutdown(shutdownCtx); shutdownErr != nil {
+			log.Printf("Warning: failed to shut down callback server: %v", shutdownErr)
+		}
 
 		if result.Error != nil {
 			return result.Error
@@ -527,7 +527,9 @@ func (e *OAuthFlowExecutor) ExecuteAuthCodeFlow(ctx context.Context) error {
 		// Shutdown server
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_ = server.Shutdown(shutdownCtx)
+		if shutdownErr := server.Shutdown(shutdownCtx); shutdownErr != nil {
+			log.Printf("Warning: failed to shut down callback server: %v", shutdownErr)
+		}
 
 		return errors.New("OAuth flow timed out")
 	}
@@ -704,7 +706,11 @@ func (e *OAuthFlowExecutor) exchangeCodeForTokens(code, redirectURI, codeVerifie
 	if err != nil {
 		return nil, fmt.Errorf("token request failed: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil && debug.Debug {
+			log.Printf("close failed: %v", closeErr)
+		}
+	}()
 
 	// Log the response if debug is enabled
 	debug.LogHTTPResponse(resp)
@@ -766,7 +772,9 @@ func (e *OAuthFlowExecutor) writeSuccessResponse(w http.ResponseWriter) {
 </body>
 </html>`
 
-	_, _ = w.Write([]byte(htmlDoc))
+	if _, err := w.Write([]byte(htmlDoc)); err != nil {
+		log.Printf("Warning: failed to write callback response: %v", err)
+	}
 }
 
 // writeErrorResponse writes an error HTML response
@@ -793,7 +801,9 @@ func (e *OAuthFlowExecutor) writeErrorResponse(w http.ResponseWriter, errorMsg s
 </body>
 </html>`, html.EscapeString(errorMsg))
 
-	_, _ = w.Write([]byte(htmlDoc))
+	if _, err := w.Write([]byte(htmlDoc)); err != nil {
+		log.Printf("Warning: failed to write callback response: %v", err)
+	}
 }
 
 // openBrowser opens the default browser to the given URL

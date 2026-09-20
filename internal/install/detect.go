@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 // ExistingInstall holds details of a previously installed ClawEh service or binary.
@@ -167,7 +169,7 @@ func parseSystemdUnit(path, serviceType string) *ExistingInstall {
 	if err != nil {
 		return inst
 	}
-	defer func() { _ = f.Close() }()
+	defer utils.CloseQuietly(f)
 
 	var workingDir, pathEnv string
 	scanner := bufio.NewScanner(f)

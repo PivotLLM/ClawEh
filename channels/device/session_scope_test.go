@@ -26,7 +26,11 @@ func newScopeServer(t *testing.T, mode string) *Server {
 	if err != nil {
 		t.Fatalf("OpenStore: %v", err)
 	}
-	t.Cleanup(func() { _ = st.Close() })
+	t.Cleanup(func() {
+		if err := st.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	})
 	return &Server{store: st, querier: stubQuerier{defaultAgent: "amber", mode: mode}}
 }
 
@@ -125,7 +129,11 @@ func TestSessionScopeKeyWithoutQuerier(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenStore: %v", err)
 	}
-	defer func() { _ = st.Close() }()
+	defer func() {
+		if err := st.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	}()
 	s := &Server{store: st}
 
 	if got := s.sessionScopeKey(&liveConn{deviceID: "dev1", sessionKey: "main"}); got != "agent:main:main" {

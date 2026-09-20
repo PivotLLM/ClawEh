@@ -35,7 +35,7 @@ func TestClawHubRegistrySearch(t *testing.T) {
 		summary := "Interact with GitHub repos"
 		version := "1.0.0"
 
-		json.NewEncoder(w).Encode(clawhubSearchResponse{
+		encodeBody(t, w, clawhubSearchResponse{
 			Results: []clawhubSearchResult{
 				{Score: 0.95, Slug: &slug, DisplayName: &name, Summary: &summary, Version: &version},
 			},
@@ -61,7 +61,7 @@ func TestClawHubRegistrySearchRetries429(t *testing.T) {
 		if attempts == 1 {
 			w.Header().Set("Retry-After", "0")
 			w.WriteHeader(http.StatusTooManyRequests)
-			w.Write([]byte("rate limited"))
+			writeBody(t, w, []byte("rate limited"))
 			return
 		}
 
@@ -70,7 +70,7 @@ func TestClawHubRegistrySearchRetries429(t *testing.T) {
 		summary := "Interact with GitHub repos"
 		version := "1.0.0"
 
-		json.NewEncoder(w).Encode(clawhubSearchResponse{
+		encodeBody(t, w, clawhubSearchResponse{
 			Results: []clawhubSearchResult{
 				{Score: 0.95, Slug: &slug, DisplayName: &name, Summary: &summary, Version: &version},
 			},
@@ -91,7 +91,7 @@ func TestClawHubRegistryGetSkillMeta(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/api/v1/skills/github", r.URL.Path)
 
-		json.NewEncoder(w).Encode(clawhubSkillResponse{
+		encodeBody(t, w, clawhubSkillResponse{
 			Slug:        "github",
 			DisplayName: "GitHub Integration",
 			Summary:     "Full GitHub API integration",
@@ -134,7 +134,7 @@ func TestClawHubRegistryDownloadAndInstall(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/v1/skills/test-skill":
 			// Metadata endpoint.
-			json.NewEncoder(w).Encode(clawhubSkillResponse{
+			encodeBody(t, w, clawhubSkillResponse{
 				Slug:          "test-skill",
 				DisplayName:   "Test Skill",
 				Summary:       "A test skill",
@@ -143,7 +143,7 @@ func TestClawHubRegistryDownloadAndInstall(t *testing.T) {
 		case "/api/v1/download":
 			assert.Equal(t, "test-skill", r.URL.Query().Get("slug"))
 			w.Header().Set("Content-Type", "application/zip")
-			w.Write(zipBuf)
+			writeBody(t, w, zipBuf)
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -179,7 +179,7 @@ func TestClawHubRegistryDownloadAndInstallRetries429(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/v1/skills/retry-skill":
-			json.NewEncoder(w).Encode(clawhubSkillResponse{
+			encodeBody(t, w, clawhubSkillResponse{
 				Slug:          "retry-skill",
 				DisplayName:   "Retry Skill",
 				Summary:       "A retry test skill",
@@ -190,12 +190,12 @@ func TestClawHubRegistryDownloadAndInstallRetries429(t *testing.T) {
 			if downloadAttempts == 1 {
 				w.Header().Set("Retry-After", "0")
 				w.WriteHeader(http.StatusTooManyRequests)
-				w.Write([]byte("rate limited"))
+				writeBody(t, w, []byte("rate limited"))
 				return
 			}
 			assert.Equal(t, "retry-skill", r.URL.Query().Get("slug"))
 			w.Header().Set("Content-Type", "application/zip")
-			w.Write(zipBuf)
+			writeBody(t, w, zipBuf)
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -222,12 +222,13 @@ func TestClawHubRegistryAuthToken(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authHeader := r.Header.Get("Authorization")
 		assert.Equal(t, "Bearer test-token-123", authHeader)
-		json.NewEncoder(w).Encode(clawhubSearchResponse{Results: nil})
+		encodeBody(t, w, clawhubSearchResponse{Results: nil})
 	}))
 	defer srv.Close()
 
 	reg := newTestRegistry(srv.URL, "test-token-123")
-	_, _ = reg.Search(context.Background(), "test", 5)
+	_, err := reg.Search(context.Background(), "test", 5)
+	require.NoError(t, err)
 }
 
 func TestExtractZipPathTraversal(t *testing.T) {
@@ -238,9 +239,10 @@ func TestExtractZipPathTraversal(t *testing.T) {
 	// Malicious entry trying to escape directory.
 	w, err := zw.Create("../../etc/passwd")
 	require.NoError(t, err)
-	w.Write([]byte("malicious"))
+	_, err = w.Write([]byte("malicious"))
+	require.NoError(t, err)
 
-	zw.Close()
+	require.NoError(t, zw.Close())
 
 	// Write to temp file for extractZipFile.
 	tmpZip := filepath.Join(t.TempDir(), "bad.zip")
@@ -278,7 +280,7 @@ func TestExtractZipWithSubdirectories(t *testing.T) {
 func TestClawHubRegistrySearchHTTPError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte("Internal Server Error"))
+		writeBody(t, w, []byte("Internal Server Error"))
 	}))
 	defer srv.Close()
 
@@ -294,7 +296,7 @@ func TestClawHubRegistrySearchNullableFields(t *testing.T) {
 		validSummary := "valid summary"
 
 		// Return results with various null/empty fields
-		json.NewEncoder(w).Encode(clawhubSearchResponse{
+		encodeBody(t, w, clawhubSearchResponse{
 			Results: []clawhubSearchResult{
 				// Case 1: Null Slug -> Skip
 				{Score: 0.1, Slug: nil, DisplayName: nil, Summary: nil, Version: nil},
@@ -335,4 +337,20 @@ func createTestZip(t *testing.T, files map[string]string) []byte {
 
 	require.NoError(t, zw.Close())
 	return buf.Bytes()
+}
+
+// writeBody writes body to w from a test handler, reporting a failure on t.
+func writeBody(t *testing.T, w http.ResponseWriter, body []byte) {
+	t.Helper()
+	if _, err := w.Write(body); err != nil {
+		t.Errorf("write response: %v", err)
+	}
+}
+
+// encodeBody writes v to w as JSON from a test handler, reporting a failure on t.
+func encodeBody(t *testing.T, w http.ResponseWriter, v any) {
+	t.Helper()
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		t.Errorf("encode response: %v", err)
+	}
 }

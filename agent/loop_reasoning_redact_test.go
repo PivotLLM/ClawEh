@@ -59,7 +59,7 @@ func findLLMResponseLine(out string) string {
 		if err := json.Unmarshal([]byte(line), &ev); err != nil {
 			continue
 		}
-		if msg, _ := ev["message"].(string); msg == "LLM response" {
+		if msg, ok := ev["message"].(string); ok && msg == "LLM response" {
 			return line
 		}
 	}

@@ -18,6 +18,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/cogmemhost"
 	"github.com/PivotLLM/ClawEh/logger"
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 // compactionStateStore is the subset of the session store used to persist the
@@ -227,22 +228,31 @@ func (al *AgentLoop) cogmemSessionStatus(agent *AgentInstance, sessionKey string
 	if err != nil {
 		return "Cognitive memory unavailable: " + err.Error()
 	}
-	defer s.Close()
+	defer utils.CloseQuietly(s)
 
 	ctx := context.Background()
 	db := s.DB()
 	var b strings.Builder
 
-	active, _ := s.ListDomains(ctx, db, cogmemstore.StatusActive)
+	active, err := s.ListDomains(ctx, db, cogmemstore.StatusActive)
+	if err != nil {
+		return "Cognitive memory unavailable: " + err.Error()
+	}
 	memCount := 0
 	for _, d := range active {
-		ms, _ := s.ListMemories(ctx, db, d.ID, cogmemstore.StatusActive)
+		ms, listErr := s.ListMemories(ctx, db, d.ID, cogmemstore.StatusActive)
+		if listErr != nil {
+			return "Cognitive memory unavailable: " + listErr.Error()
+		}
 		memCount += len(ms)
 	}
 	fmt.Fprintf(&b, "Active domains: %d\n", len(active))
 	fmt.Fprintf(&b, "Active memories: %d\n", memCount)
 
-	run, ok, _ := s.LastRun(ctx, db)
+	run, ok, err := s.LastRun(ctx, db)
+	if err != nil {
+		return "Cognitive memory unavailable: " + err.Error()
+	}
 	if !ok {
 		b.WriteString("Last consolidation: none yet")
 	} else {

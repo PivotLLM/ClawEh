@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/PivotLLM/ClawEh/logger"
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 // Log-tail bounds for the WebUI logs endpoint.
@@ -105,7 +106,7 @@ func tailLines(path string, n int) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer utils.CloseQuietly(f)
 
 	fi, err := f.Stat()
 	if err != nil {

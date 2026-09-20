@@ -10,13 +10,17 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 // TestFilesystemTool_ReadFile_Success verifies successful file reading
 func TestFilesystemTool_ReadFile_Success(t *testing.T) {
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "test.txt")
-	os.WriteFile(testFile, []byte("test content"), 0o644)
+	if err := os.WriteFile(testFile, []byte("test content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	tool := NewReadFileTool("", false, MaxReadFileSize)
 	ctx := context.Background()
@@ -340,9 +344,15 @@ func TestFilesystemTool_WriteFile_ExistingOverwriteTrue_WithBackup(t *testing.T)
 // TestFilesystemTool_ListDir_Success verifies successful directory listing
 func TestFilesystemTool_ListDir_Success(t *testing.T) {
 	tmpDir := t.TempDir()
-	os.WriteFile(filepath.Join(tmpDir, "file1.txt"), []byte("content"), 0o644)
-	os.WriteFile(filepath.Join(tmpDir, "file2.txt"), []byte("content"), 0o644)
-	os.Mkdir(filepath.Join(tmpDir, "subdir"), 0o755)
+	if err := os.WriteFile(filepath.Join(tmpDir, "file1.txt"), []byte("content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "file2.txt"), []byte("content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(tmpDir, "subdir"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	tool := NewListDirTool("", false)
 	ctx := context.Background()
@@ -442,7 +452,9 @@ func TestFilesystemTool_EmptyWorkspace_AccessDenied(t *testing.T) {
 	// Try to read a sensitive file (simulated by a temp file outside workspace)
 	tmpDir := t.TempDir()
 	secretFile := filepath.Join(tmpDir, "shadow")
-	os.WriteFile(secretFile, []byte("secret data"), 0o600)
+	if err := os.WriteFile(secretFile, []byte("secret data"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	result := tool.Execute(context.Background(), map[string]any{
 		"path": secretFile,
@@ -463,7 +475,7 @@ func TestRootMkdirAll(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open root: %v", err)
 	}
-	defer root.Close()
+	defer utils.CloseQuietly(root)
 
 	// Case 1: Single directory
 	err = root.MkdirAll("dir1", 0o755)
@@ -519,7 +531,11 @@ func TestHostRW_Read_PermissionDenied(t *testing.T) {
 	protected := filepath.Join(tmpDir, "protected.txt")
 	err := os.WriteFile(protected, []byte("secret"), 0o000)
 	assert.NoError(t, err)
-	defer os.Chmod(protected, 0o644)
+	defer func() {
+		if chmodErr := os.Chmod(protected, 0o644); chmodErr != nil { // ensure cleanup
+			t.Error(chmodErr)
+		}
+	}()
 
 	_, err = (&hostFs{}).ReadFile(protected)
 	assert.Error(t, err)
@@ -539,7 +555,7 @@ func TestRootRW_Read_Directory(t *testing.T) {
 	workspace := t.TempDir()
 	root, err := os.OpenRoot(workspace)
 	assert.NoError(t, err)
-	defer root.Close()
+	defer utils.CloseQuietly(root)
 
 	// Create a subdirectory
 	err = root.Mkdir("subdir", 0o755)
@@ -612,11 +628,11 @@ func TestRootRW_Write(t *testing.T) {
 
 	root, err := os.OpenRoot(tmpDir)
 	assert.NoError(t, err)
-	defer root.Close()
+	defer utils.CloseQuietly(root)
 
 	f, err := root.Open(relPath)
 	assert.NoError(t, err)
-	defer f.Close()
+	defer utils.CloseQuietly(f)
 
 	content, err := io.ReadAll(f)
 	assert.NoError(t, err)
@@ -629,7 +645,7 @@ func TestRootRW_Write(t *testing.T) {
 
 	f2, err := root.Open(relPath)
 	assert.NoError(t, err)
-	defer f2.Close()
+	defer utils.CloseQuietly(f2)
 
 	content, err = io.ReadAll(f2)
 	assert.NoError(t, err)
@@ -642,7 +658,9 @@ func TestWhitelistFs_AllowsMatchingPaths(t *testing.T) {
 	workspace := t.TempDir()
 	outsideDir := t.TempDir()
 	outsideFile := filepath.Join(outsideDir, "allowed.txt")
-	os.WriteFile(outsideFile, []byte("outside content"), 0o644)
+	if err := os.WriteFile(outsideFile, []byte("outside content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	// Pattern allows access to the outsideDir.
 	patterns := []*regexp.Regexp{regexp.MustCompile(`^` + regexp.QuoteMeta(outsideDir))}
@@ -661,7 +679,9 @@ func TestWhitelistFs_AllowsMatchingPaths(t *testing.T) {
 	// Read from non-whitelisted path outside workspace should fail.
 	otherDir := t.TempDir()
 	otherFile := filepath.Join(otherDir, "blocked.txt")
-	os.WriteFile(otherFile, []byte("blocked"), 0o644)
+	if err := os.WriteFile(otherFile, []byte("blocked"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	result = tool.Execute(context.Background(), map[string]any{"path": otherFile})
 	if !result.IsError {

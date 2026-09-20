@@ -28,8 +28,8 @@ func TestSetupPayloadEncode(t *testing.T) {
 	if p, ok := got["port"].(float64); !ok || p != 18790 {
 		t.Fatalf("port=%v", got["port"])
 	}
-	ips, _ := got["ips"].([]any)
-	if len(ips) != 2 {
+	ips, ok := got["ips"].([]any)
+	if !ok || len(ips) != 2 {
 		t.Fatalf("ips=%v", got["ips"])
 	}
 }

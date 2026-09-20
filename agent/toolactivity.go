@@ -161,7 +161,9 @@ func toolCallBreadcrumb(tc providers.ToolCall) string {
 	}
 	args := tc.Arguments
 	if args == nil && tc.Function != nil && strings.TrimSpace(tc.Function.Arguments) != "" {
-		_ = json.Unmarshal([]byte(tc.Function.Arguments), &args)
+		if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
+			args = nil // unparseable arguments: summarise by tool name alone
+		}
 	}
 	return toolActivitySummary(name, args)
 }
@@ -179,8 +181,10 @@ func toolArgStr(args map[string]any, key string) string {
 	if args == nil {
 		return ""
 	}
-	s, _ := args[key].(string)
-	return strings.TrimSpace(s)
+	if s, ok := args[key].(string); ok {
+		return strings.TrimSpace(s)
+	}
+	return ""
 }
 
 // toolArgBase returns the basename of a path-valued arg, or "" when absent.

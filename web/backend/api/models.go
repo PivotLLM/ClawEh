@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 // registerModelRoutes binds model list management endpoints to the ServeMux.
@@ -121,7 +122,7 @@ func (h *Handler) handleAddModel(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to read request body", http.StatusBadRequest)
 		return
 	}
-	defer r.Body.Close()
+	defer utils.CloseQuietly(r.Body)
 
 	var mc config.ModelConfig
 	if err = json.Unmarshal(body, &mc); err != nil {
@@ -177,7 +178,7 @@ func (h *Handler) handleUpdateModel(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to read request body", http.StatusBadRequest)
 		return
 	}
-	defer r.Body.Close()
+	defer utils.CloseQuietly(r.Body)
 
 	cfg, err := config.LoadConfig(h.configPath)
 	if err != nil {
@@ -282,7 +283,7 @@ func (h *Handler) handleSetDefaultModel(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "Failed to read request body", http.StatusBadRequest)
 		return
 	}
-	defer r.Body.Close()
+	defer utils.CloseQuietly(r.Body)
 
 	var req struct {
 		ModelName string `json:"model_name"`

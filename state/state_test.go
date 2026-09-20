@@ -99,7 +99,9 @@ func TestAtomicity_NoCorruptionOnInterrupt(t *testing.T) {
 	}
 
 	// Clean up the temp file manually
-	os.Remove(tempFile)
+	if rmErr := os.Remove(tempFile); rmErr != nil {
+		t.Fatalf("Failed to remove temp file: %v", rmErr)
+	}
 
 	// Now do a proper save
 	err = sm.SetLastChannel("new-channel")
@@ -123,7 +125,9 @@ func TestConcurrentAccess(t *testing.T) {
 	for i := range 10 {
 		go func(idx int) {
 			channel := fmt.Sprintf("channel-%d", idx)
-			sm.SetLastChannel(channel)
+			if setErr := sm.SetLastChannel(channel); setErr != nil {
+				t.Errorf("SetLastChannel(%s): %v", channel, setErr)
+			}
 			done <- true
 		}(i)
 	}
@@ -157,8 +161,12 @@ func TestNewManager_ExistingState(t *testing.T) {
 
 	// Create initial state
 	sm1 := NewManager(tmpDir)
-	sm1.SetLastChannel("existing-channel")
-	sm1.SetLastChatID("existing-chat-id")
+	if err := sm1.SetLastChannel("existing-channel"); err != nil {
+		t.Fatalf("SetLastChannel failed: %v", err)
+	}
+	if err := sm1.SetLastChatID("existing-chat-id"); err != nil {
+		t.Fatalf("SetLastChatID failed: %v", err)
+	}
 
 	// Create new manager with same workspace
 	sm2 := NewManager(tmpDir)

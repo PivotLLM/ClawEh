@@ -117,7 +117,7 @@ func TestCompressModelCaller_JSONObjectForwarded(t *testing.T) {
 	if _, err := c.Complete(context.Background(), ctxengine.ModelRequest{}); err != nil {
 		t.Fatal(err)
 	}
-	if v, _ := p.calls[0].opts[openai_compat.ResponseFormatJSONObjectOption].(bool); !v {
+	if v, ok := p.calls[0].opts[openai_compat.ResponseFormatJSONObjectOption].(bool); !ok || !v {
 		t.Errorf("JSONObject request did not set the response-format option: %v", p.calls[0].opts)
 	}
 	if p.calls[1].opts != nil {

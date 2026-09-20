@@ -62,7 +62,10 @@ func TestHandleAddModel_ContextWindowRoundTrips(t *testing.T) {
 	}
 
 	// Persisted to config.
-	cfg, _ := config.LoadConfig(configPath)
+	cfg, err := config.LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
 	var cw int
 	for _, m := range cfg.Models {
 		if m.ModelName == "cw-model" {
@@ -79,7 +82,9 @@ func TestHandleAddModel_ContextWindowRoundTrips(t *testing.T) {
 	var resp struct {
 		Models []modelResponse `json:"models"`
 	}
-	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
 	found := false
 	for _, m := range resp.Models {
 		if m.ModelName == "cw-model" {

@@ -31,7 +31,10 @@ func TestIssueListRevoke(t *testing.T) {
 	if err := issue("amber"); err != nil {
 		t.Fatalf("issue amber: %v", err)
 	}
-	toks, _ := servicetoken.Load(path)
+	toks, loadErr := servicetoken.Load(path)
+	if loadErr != nil {
+		t.Fatalf("Load: %v", loadErr)
+	}
 	first := toks["amber"]
 	if first == "" {
 		t.Fatal("issue did not persist a token for amber")
@@ -41,7 +44,10 @@ func TestIssueListRevoke(t *testing.T) {
 	if err := issue("amber"); err != nil {
 		t.Fatalf("re-issue amber: %v", err)
 	}
-	toks, _ = servicetoken.Load(path)
+	toks, loadErr = servicetoken.Load(path)
+	if loadErr != nil {
+		t.Fatalf("Load: %v", loadErr)
+	}
 	if toks["amber"] == "" || toks["amber"] == first {
 		t.Errorf("re-issue should replace the token, got %q (was %q)", toks["amber"], first)
 	}
@@ -53,7 +59,10 @@ func TestIssueListRevoke(t *testing.T) {
 	if err := revoke("amber"); err != nil {
 		t.Fatalf("revoke amber: %v", err)
 	}
-	toks, _ = servicetoken.Load(path)
+	toks, loadErr = servicetoken.Load(path)
+	if loadErr != nil {
+		t.Fatalf("Load: %v", loadErr)
+	}
 	if _, ok := toks["amber"]; ok {
 		t.Error("revoke did not remove the token")
 	}

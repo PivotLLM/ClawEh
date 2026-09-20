@@ -181,7 +181,10 @@ func (t *rangeEditTool) applyLines(content []byte, args map[string]any) (out []b
 		if !ok || text == "" {
 			return nil, "", "", errors.New("text is required (non-empty)")
 		}
-		after, _ := getInt64Arg(args, "after_line", 0)
+		after, argErr := getInt64Arg(args, "after_line", 0)
+		if argErr != nil {
+			return nil, "", "", argErr
+		}
 		if after < 0 || after > n {
 			return nil, "", "", fmt.Errorf("after_line %d out of range (file has %d line(s); use 0..%d)", after, n, n)
 		}
@@ -193,7 +196,10 @@ func (t *rangeEditTool) applyLines(content []byte, args map[string]any) (out []b
 	if n == 0 {
 		return nil, "", "", errors.New("file has no lines")
 	}
-	start, _ := getInt64Arg(args, "start", 1)
+	start, err := getInt64Arg(args, "start", 1)
+	if err != nil {
+		return nil, "", "", err
+	}
 	if start <= 0 {
 		start = 1
 	}
@@ -215,8 +221,8 @@ func (t *rangeEditTool) applyLines(content []byte, args map[string]any) (out []b
 		return joinLines(merged, trailingNL), fmt.Sprintf("Deleted lines %d-%d (%d line(s))", start, end, nRemoved), removed, nil
 	}
 	// edit
-	replace, _ := args["replace"].(string)
-	if replace == "" {
+	replace, ok := args["replace"].(string)
+	if !ok || replace == "" {
 		return nil, "", "", errors.New("replace must be non-empty; to remove lines use file_delete_lines")
 	}
 	ins, _ := splitLines([]byte(replace))
@@ -232,7 +238,10 @@ func (t *rangeEditTool) applyBytes(content []byte, args map[string]any) (out []b
 		if !ok || text == "" {
 			return nil, "", "", errors.New("text is required (non-empty)")
 		}
-		at, _ := getInt64Arg(args, "at_offset", 0)
+		at, argErr := getInt64Arg(args, "at_offset", 0)
+		if argErr != nil {
+			return nil, "", "", argErr
+		}
 		if at < 0 || at > n {
 			return nil, "", "", fmt.Errorf("at_offset %d out of range (file is %d bytes; use 0..%d)", at, n, n)
 		}
@@ -243,7 +252,10 @@ func (t *rangeEditTool) applyBytes(content []byte, args map[string]any) (out []b
 	if n == 0 {
 		return nil, "", "", errors.New("file is empty")
 	}
-	start, _ := getInt64Arg(args, "start", 0)
+	start, err := getInt64Arg(args, "start", 0)
+	if err != nil {
+		return nil, "", "", err
+	}
 	if start < 0 {
 		return nil, "", "", errors.New("start must be >= 0")
 	}
@@ -265,8 +277,8 @@ func (t *rangeEditTool) applyBytes(content []byte, args map[string]any) (out []b
 		return merged, fmt.Sprintf("Deleted bytes %d-%d (%d byte(s))", start, end, nRemoved), removed, nil
 	}
 	// edit
-	replace, _ := args["replace"].(string)
-	if replace == "" {
+	replace, ok := args["replace"].(string)
+	if !ok || replace == "" {
 		return nil, "", "", errors.New("replace must be non-empty; to remove bytes use file_delete_bytes")
 	}
 	merged := append(append(append([]byte{}, content[:start]...), []byte(replace)...), content[end+1:]...)

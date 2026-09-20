@@ -13,7 +13,10 @@ func TestGenerateSharedToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, _ := GenerateSharedToken()
+	b, err := GenerateSharedToken()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(a) != 64 || a == b {
 		t.Fatalf("token not 64-hex/unique: len=%d eq=%v", len(a), a == b)
 	}

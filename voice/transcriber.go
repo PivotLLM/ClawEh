@@ -17,6 +17,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/logger"
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 type Transcriber interface {
@@ -107,7 +108,7 @@ func (t *whisperTranscriber) Transcribe(ctx context.Context, audioFilePath strin
 		logger.ErrorCF("voice", "Failed to open audio file", map[string]any{"path": audioFilePath, "error": err})
 		return nil, fmt.Errorf("failed to open audio file: %w", err)
 	}
-	defer audioFile.Close()
+	defer utils.CloseQuietly(audioFile)
 
 	fileInfo, err := audioFile.Stat()
 	if err != nil {
@@ -174,7 +175,11 @@ func (t *whisperTranscriber) Transcribe(ctx context.Context, audioFilePath strin
 		logger.ErrorCF("voice", "Failed to send request", map[string]any{"error": err})
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			logger.DebugCF("voice", "Response body close failed", map[string]any{"error": closeErr.Error()})
+		}
+	}()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -285,7 +290,11 @@ func (t *openRouterTranscriber) Transcribe(ctx context.Context, audioFilePath st
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			logger.DebugCF("voice", "Response body close failed", map[string]any{"error": closeErr.Error()})
+		}
+	}()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {

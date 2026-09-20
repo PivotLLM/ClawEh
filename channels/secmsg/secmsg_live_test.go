@@ -11,6 +11,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/channels"
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 // TestLive exercises the real connect/handshake/subscribe path against a running
@@ -29,7 +30,7 @@ func TestLive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dial %s: %v", addr, err)
 	}
-	defer cl.Close()
+	defer utils.CloseQuietly(cl)
 
 	info := cl.Info()
 	t.Logf("handshake: service=%q daemon=%q version=%q link=%q accounts=%d caps=%v",

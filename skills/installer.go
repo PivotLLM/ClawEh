@@ -155,7 +155,7 @@ func (si *SkillInstaller) getGithubDirAllFiles(ctx context.Context, apiURL, loca
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { utils.CloseQuietly(resp.Body) }()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("HTTP %d", resp.StatusCode)
@@ -207,7 +207,7 @@ func (si *SkillInstaller) downloadRaw(ctx context.Context, owner, repo, ref, sub
 	if err != nil {
 		return fmt.Errorf("failed to fetch skill: %w", err)
 	}
-	defer os.Remove(tmpPath)
+	defer removeTempFile(tmpPath)
 
 	if err := os.MkdirAll(localDir, 0o755); err != nil {
 		return fmt.Errorf("failed to create skill directory: %w", err)
@@ -234,7 +234,7 @@ func (si *SkillInstaller) downloadFile(ctx context.Context, url, localPath strin
 	if err != nil {
 		return err
 	}
-	defer os.Remove(tmpPath)
+	defer removeTempFile(tmpPath)
 
 	if err := os.MkdirAll(filepath.Dir(localPath), 0o755); err != nil {
 		return err

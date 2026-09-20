@@ -21,7 +21,7 @@ func TestInitSessionStore_RefusesUnmigratedSessions(t *testing.T) {
 
 	store, err := initSessionStore(dir)
 	if err == nil {
-		_ = store.Close()
+		closeT(t, store)
 		t.Fatal("expected an error for an unmigrated sessions directory")
 	}
 	if !strings.Contains(err.Error(), "claw sessions migrate") {
@@ -42,7 +42,7 @@ func TestInitSessionStore_IgnoresMigratedSources(t *testing.T) {
 	if err != nil {
 		t.Fatalf("initSessionStore: %v", err)
 	}
-	_ = store.Close()
+	closeT(t, store)
 }
 
 // A workspace with no sessions directory yet is the normal first start.
@@ -51,5 +51,5 @@ func TestInitSessionStore_MissingDirIsFine(t *testing.T) {
 	if err != nil {
 		t.Fatalf("initSessionStore: %v", err)
 	}
-	_ = store.Close()
+	closeT(t, store)
 }

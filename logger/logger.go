@@ -174,7 +174,7 @@ func enableFileLoggingLocked(filePath string, jsonFormat bool) error {
 		return fmt.Errorf("failed to open log file: %w", err)
 	}
 	if logFile != nil {
-		logFile.Close()
+		closeLogFile(logFile)
 	}
 	logFile = newFile
 	logFilePath = filePath
@@ -188,7 +188,7 @@ func enableFileLoggingLocked(filePath string, jsonFormat bool) error {
 		return fmt.Errorf("failed to open error log file: %w", err)
 	}
 	if errorFile != nil {
-		errorFile.Close()
+		closeLogFile(errorFile)
 	}
 	errorFile = ef
 	errorLogPath = errorPath
@@ -231,12 +231,12 @@ func RollLogFile() error {
 
 	// Close handles so the files can be renamed, then archive each by its mtime.
 	if logFile != nil {
-		logFile.Close()
+		closeLogFile(logFile)
 		logFile = nil
 		fileLogger = zerolog.Logger{}
 	}
 	if errorFile != nil {
-		errorFile.Close()
+		closeLogFile(errorFile)
 		errorFile = nil
 		errorLogger = zerolog.Logger{}
 	}
@@ -286,16 +286,27 @@ func appendAndRemove(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer in.Close()
+	defer closeLogFile(in)
 	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_APPEND, 0o644) //nolint:gosec // rotation of the configured log file within its own dir
 	if err != nil {
 		return err
 	}
-	defer out.Close()
 	if _, err := io.Copy(out, in); err != nil {
+		closeLogFile(out)
+		return err
+	}
+	if err := out.Close(); err != nil {
 		return err
 	}
 	return os.Remove(src)
+}
+
+// closeLogFile closes f and reports a failure on the console, because the file
+// sinks may be the very thing being closed.
+func closeLogFile(f *os.File) {
+	if err := f.Close(); err != nil {
+		logger.Warn().Str("file", f.Name()).Err(err).Msg("failed to close log file")
+	}
 }
 
 // DisableConsole replaces the console logger with a no-op logger.
@@ -347,12 +358,12 @@ func DisableFileLogging() {
 	defer mu.Unlock()
 
 	if logFile != nil {
-		logFile.Close()
+		closeLogFile(logFile)
 		logFile = nil
 	}
 	fileLogger = zerolog.Logger{}
 	if errorFile != nil {
-		errorFile.Close()
+		closeLogFile(errorFile)
 		errorFile = nil
 	}
 	errorLogger = zerolog.Logger{}

@@ -67,29 +67,39 @@ func migrateDirs(w io.Writer, dirs []string) error {
 		}
 		report, err := session.MigrateJSONL(dir)
 		if err != nil {
-			fmt.Fprintf(w, "%s: error: %v\n", dir, err)
+			if _, werr := fmt.Fprintf(w, "%s: error: %v\n", dir, err); werr != nil {
+				return werr
+			}
 			failed++
 			continue
 		}
 		for _, key := range sorted(report.Migrated) {
-			fmt.Fprintf(w, "%s: migrated\n", key)
+			if _, werr := fmt.Fprintf(w, "%s: migrated\n", key); werr != nil {
+				return werr
+			}
 		}
 		for _, key := range sorted(report.Skipped) {
-			fmt.Fprintf(w, "%s: skipped (already migrated)\n", key)
+			if _, werr := fmt.Fprintf(w, "%s: skipped (already migrated)\n", key); werr != nil {
+				return werr
+			}
 		}
 		errKeys := make([]string, 0, len(report.Errors))
 		for key := range report.Errors {
 			errKeys = append(errKeys, key)
 		}
 		for _, key := range sorted(errKeys) {
-			fmt.Fprintf(w, "%s: error: %v\n", key, report.Errors[key])
+			if _, werr := fmt.Fprintf(w, "%s: error: %v\n", key, report.Errors[key]); werr != nil {
+				return werr
+			}
 		}
 		migrated += len(report.Migrated)
 		skipped += len(report.Skipped)
 		failed += len(report.Errors)
 	}
 
-	fmt.Fprintf(w, "Migrated %d, skipped %d, errors %d.\n", migrated, skipped, failed)
+	if _, werr := fmt.Fprintf(w, "Migrated %d, skipped %d, errors %d.\n", migrated, skipped, failed); werr != nil {
+		return werr
+	}
 	if failed > 0 {
 		return fmt.Errorf("%d session(s) failed to migrate", failed)
 	}

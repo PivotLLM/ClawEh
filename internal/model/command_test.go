@@ -43,18 +43,26 @@ func anthropicProvider() config.Provider {
 }
 
 // captureStdout captures stdout during the execution of fn and returns the captured output
-func captureStdout(fn func()) string {
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
 	oldStdout := os.Stdout
-	r, w, _ := os.Pipe()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("Pipe: %v", err)
+	}
 	os.Stdout = w
 
 	fn()
 
-	w.Close()
+	if closeErr := w.Close(); closeErr != nil {
+		t.Fatalf("close pipe: %v", closeErr)
+	}
 	os.Stdout = oldStdout
 
 	var buf bytes.Buffer
-	io.Copy(&buf, r)
+	if _, copyErr := io.Copy(&buf, r); copyErr != nil {
+		t.Fatalf("read pipe: %v", copyErr)
+	}
 	return buf.String()
 }
 
@@ -92,7 +100,7 @@ func TestShowCurrentModel_WithDefaultModel(t *testing.T) {
 		},
 	}
 
-	output := captureStdout(func() {
+	output := captureStdout(t, func() {
 		showCurrentModel(cfg)
 	})
 
@@ -113,7 +121,7 @@ func TestShowCurrentModel_NoDefaultModel(t *testing.T) {
 		},
 	}
 
-	output := captureStdout(func() {
+	output := captureStdout(t, func() {
 		showCurrentModel(cfg)
 	})
 
@@ -131,7 +139,7 @@ func TestShowCurrentModel_WithModelConfig(t *testing.T) {
 		Models: []config.ModelConfig{},
 	}
 
-	output := captureStdout(func() {
+	output := captureStdout(t, func() {
 		showCurrentModel(cfg)
 	})
 
@@ -143,7 +151,7 @@ func TestListAvailableModels_Empty(t *testing.T) {
 		Models: []config.ModelConfig{},
 	}
 
-	output := captureStdout(func() {
+	output := captureStdout(t, func() {
 		listAvailableModels(cfg)
 	})
 
@@ -170,7 +178,7 @@ func TestListAvailableModels_WithModels(t *testing.T) {
 		},
 	}
 
-	output := captureStdout(func() {
+	output := captureStdout(t, func() {
 		listAvailableModels(cfg)
 	})
 
@@ -196,7 +204,7 @@ func TestSetDefaultModel_ValidModel(t *testing.T) {
 		},
 	}
 
-	output := captureStdout(func() {
+	output := captureStdout(t, func() {
 		err := setDefaultModel(configPath, cfg, "new-model")
 		assert.NoError(t, err)
 	})
@@ -309,7 +317,7 @@ func TestModelCommandExecution_Show(t *testing.T) {
 
 	cmd := NewModelCommand()
 
-	output := captureStdout(func() {
+	output := captureStdout(t, func() {
 		err = cmd.RunE(cmd, []string{})
 		assert.NoError(t, err)
 	})
@@ -338,7 +346,7 @@ func TestModelCommandExecution_Set(t *testing.T) {
 
 	cmd := NewModelCommand()
 
-	output := captureStdout(func() {
+	output := captureStdout(t, func() {
 		err = cmd.RunE(cmd, []string{"new-model"})
 		assert.NoError(t, err)
 	})
@@ -369,7 +377,7 @@ func TestListAvailableModels_MarkerLogic(t *testing.T) {
 		},
 	}
 
-	output := captureStdout(func() {
+	output := captureStdout(t, func() {
 		listAvailableModels(cfg)
 	})
 

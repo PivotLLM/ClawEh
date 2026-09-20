@@ -224,7 +224,7 @@ func (c *DiscordChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMes
 		// Close all file readers
 		for _, f := range files {
 			if closer, ok := f.Reader.(*os.File); ok {
-				closer.Close()
+				utils.CloseQuietly(closer)
 			}
 		}
 		if err != nil {
@@ -235,7 +235,7 @@ func (c *DiscordChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMes
 		// Close all file readers
 		for _, f := range files {
 			if closer, ok := f.Reader.(*os.File); ok {
-				closer.Close()
+				utils.CloseQuietly(closer)
 			}
 		}
 		return sendCtx.Err()

@@ -17,11 +17,14 @@ package pidfile
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
+
+	"github.com/PivotLLM/ClawEh/logger"
 )
 
 // Name is the file written into the data directory.
@@ -53,7 +56,10 @@ func Remove(dataDir string) {
 	if dataDir == "" {
 		return
 	}
-	_ = os.Remove(Path(dataDir))
+	p := Path(dataDir)
+	if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		logger.WarnCF("gateway", "failed to remove PID file", map[string]any{"path": p, "error": err.Error()})
+	}
 }
 
 // Read returns the pid recorded for a data directory and whether that process

@@ -21,6 +21,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/logger"
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 // loadEnvFile loads environment variables from a file in .env format
@@ -32,7 +33,7 @@ func loadEnvFile(path string) (map[string]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to open env file: %w", err)
 	}
-	defer file.Close()
+	defer utils.CloseQuietly(file)
 
 	envVars := make(map[string]string)
 	scanner := bufio.NewScanner(file)
@@ -416,7 +417,7 @@ func (m *Manager) ConnectServer(
 	// then run the MCP initialize handshake. On any failure, close the client and
 	// reap any stdio child so a failed connect leaves nothing running.
 	if err = c.Start(ctx); err != nil {
-		_ = c.Close()
+		utils.CloseQuietly(c)
 		terminateStdioProcessTree(stdioCmd)
 		return fmt.Errorf("failed to start transport: %w", err)
 	}
@@ -428,7 +429,7 @@ func (m *Manager) ConnectServer(
 
 	initResult, err := c.Initialize(ctx, initReq)
 	if err != nil {
-		_ = c.Close()
+		utils.CloseQuietly(c)
 		terminateStdioProcessTree(stdioCmd)
 		return fmt.Errorf("failed to connect: %w", err)
 	}
@@ -458,7 +459,7 @@ func (m *Manager) ConnectServer(
 	m.mu.Lock()
 	if m.closed.Load() {
 		m.mu.Unlock()
-		_ = c.Close()
+		utils.CloseQuietly(c)
 		terminateStdioProcessTree(stdioCmd)
 		return errors.New("manager is closed")
 	}

@@ -12,6 +12,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/internal/backup"
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 // registerConfigRoutes binds configuration management endpoints to the ServeMux.
@@ -74,7 +75,7 @@ func (h *Handler) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to read request body", http.StatusBadRequest)
 		return
 	}
-	defer r.Body.Close()
+	defer utils.CloseQuietly(r.Body)
 
 	// A client that read the masked config and is writing it back sends "****"
 	// in place of each credential; swap those for the stored values so the round
@@ -137,7 +138,7 @@ func (h *Handler) handlePatchConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to read request body", http.StatusBadRequest)
 		return
 	}
-	defer r.Body.Close()
+	defer utils.CloseQuietly(r.Body)
 
 	// Validate the patch is valid JSON
 	var patch map[string]any

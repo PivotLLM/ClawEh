@@ -86,10 +86,16 @@ func findToolloopDispatchLines(t *testing.T, out string) (infLine, dbgLine strin
 		if err := json.Unmarshal([]byte(line), &ev); err != nil {
 			continue
 		}
-		msg, _ := ev["message"].(string)
-		level, _ := ev["level"].(string)
-		caller, _ := ev["caller"].(string)
-		if !strings.HasPrefix(caller, "toolloop") {
+		caller, ok := ev["caller"].(string)
+		if !ok || !strings.HasPrefix(caller, "toolloop") {
+			continue
+		}
+		msg, ok := ev["message"].(string)
+		if !ok {
+			continue
+		}
+		level, ok := ev["level"].(string)
+		if !ok {
 			continue
 		}
 		switch {

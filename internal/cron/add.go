@@ -59,8 +59,13 @@ func newAddCommand(storePath func() string) *cobra.Command {
 	cmd.Flags().StringVar(&to, "to", "", "Recipient chat/channel ID")
 	cmd.Flags().StringVar(&channel, "channel", "", "Channel platform (e.g. slack, telegram)")
 
-	_ = cmd.MarkFlagRequired("name")
-	_ = cmd.MarkFlagRequired("message")
+	// MarkFlagRequired only fails when the flag does not exist, which is a
+	// programming error in the lines above, so it is fatal at construction.
+	for _, name := range []string{"name", "message"} {
+		if err := cmd.MarkFlagRequired(name); err != nil {
+			panic(fmt.Sprintf("cron add: mark flag %q required: %v", name, err))
+		}
+	}
 	cmd.MarkFlagsMutuallyExclusive("every", "cron")
 
 	return cmd

@@ -51,7 +51,9 @@ func TestDoRequestWithRetry(t *testing.T) {
 					return
 				}
 				w.WriteHeader(http.StatusOK)
-				w.Write([]byte("success"))
+				if _, err := w.Write([]byte("success")); err != nil {
+					t.Errorf("write response: %v", err)
+				}
 			}))
 
 			t.Cleanup(func() {
@@ -68,11 +70,11 @@ func TestDoRequestWithRetry(t *testing.T) {
 				require.NoError(t, err)
 				require.NotNil(t, resp)
 				assert.Equal(t, http.StatusOK, resp.StatusCode)
-				resp.Body.Close()
+				require.NoError(t, resp.Body.Close())
 			} else {
 				require.NotNil(t, resp)
 				assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
-				resp.Body.Close()
+				require.NoError(t, resp.Body.Close())
 			}
 
 			assert.Equal(t, tc.wantAttempts, attempts)
@@ -90,7 +92,9 @@ func TestDoRequestWithRetry_ContextCancel(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte("error"))
+		if _, err := w.Write([]byte("error")); err != nil {
+			t.Errorf("write response: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -125,7 +129,7 @@ func TestDoRequestWithRetry_ContextCancel(t *testing.T) {
 
 	resp, err := DoRequestWithRetry(client, req)
 	if resp != nil {
-		resp.Body.Close()
+		require.NoError(t, resp.Body.Close())
 	}
 	require.Error(t, err, "expected error from context cancellation")
 	assert.Nil(t, resp, "expected nil response when context is canceled")
@@ -187,7 +191,9 @@ func TestDoRequestWithRetry_Delay(t *testing.T) {
 			elapsed := time.Since(start)
 			delays = append(delays, elapsed)
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("success"))
+			if _, err := w.Write([]byte("success")); err != nil {
+				t.Errorf("write response: %v", err)
+			}
 		}
 	}))
 	defer server.Close()
@@ -200,7 +206,7 @@ func TestDoRequestWithRetry_Delay(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	resp.Body.Close()
+	require.NoError(t, resp.Body.Close())
 
 	assert.GreaterOrEqual(t, delays[2], time.Millisecond)
 }

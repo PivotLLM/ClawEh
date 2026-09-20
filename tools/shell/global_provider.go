@@ -27,8 +27,14 @@ func (globalShellProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 	// the instance nil is safe. On construction error we leave it nil and
 	// continue (the legacy Build path log.Fatalf's; here we degrade gracefully).
 	var execTool *ExecTool
-	c, _ := deps.Cfg.(*config.Config)
-	cd, _ := deps.Host.(tools.ToolDeps)
+	var c *config.Config
+	if v, ok := deps.Cfg.(*config.Config); ok {
+		c = v
+	}
+	var cd tools.ToolDeps
+	if v, ok := deps.Host.(tools.ToolDeps); ok {
+		cd = v
+	}
 	if c != nil {
 		t, err := NewExecToolWithConfig(cd.Workspace, c.Agents.Defaults.RestrictToWorkspace, c)
 		if err == nil {

@@ -5,7 +5,9 @@ package sources
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -116,7 +118,11 @@ func (m *USBMonitor) Start(ctx context.Context) (<-chan *events.DeviceEvent, err
 		if err := scanner.Err(); err != nil {
 			logger.ErrorCF("devices", "udevadm scan error", map[string]any{"error": err.Error()})
 		}
-		cmd.Wait()
+		if err := cmd.Wait(); err != nil {
+			// Stop kills the process, so a non-zero exit here is the normal
+			// shutdown path; keep it out of the warning stream.
+			logger.DebugCF("devices", "udevadm monitor exited", map[string]any{"error": err.Error()})
+		}
 	}()
 
 	return eventCh, nil
@@ -126,8 +132,11 @@ func (m *USBMonitor) Stop() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.cmd != nil && m.cmd.Process != nil {
-		m.cmd.Process.Kill()
+		err := m.cmd.Process.Kill()
 		m.cmd = nil
+		if err != nil && !errors.Is(err, os.ErrProcessDone) {
+			return fmt.Errorf("kill udevadm: %w", err)
+		}
 	}
 	return nil
 }

@@ -118,7 +118,11 @@ func (c *LINEChannel) fetchBotInfo() error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			logger.DebugCF("line", "Response body close failed", map[string]any{"error": closeErr.Error()})
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("bot info API returned status %d", resp.StatusCode)
@@ -504,7 +508,9 @@ func (c *LINEChannel) Send(ctx context.Context, msg bus.OutboundMessage) error {
 	// Load and consume quote token for this chat
 	var quoteToken string
 	if qt, ok := c.quoteTokens.LoadAndDelete(msg.ChatID); ok {
-		quoteToken, _ = qt.(string) // only strings are stored; anything else means no quote
+		if s, isString := qt.(string); isString { // only strings are stored; anything else means no quote
+			quoteToken = s
+		}
 	}
 
 	// Try reply token first (free, valid for ~25 seconds)
@@ -661,7 +667,11 @@ func (c *LINEChannel) callAPI(ctx context.Context, endpoint string, payload any)
 	if err != nil {
 		return channels.ClassifyNetError(err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			logger.DebugCF("line", "Response body close failed", map[string]any{"error": closeErr.Error()})
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, err := io.ReadAll(resp.Body)

@@ -36,9 +36,12 @@ func (globalMaestroProvider) Available(cfg any) (bool, string) { return true, ""
 func (globalMaestroProvider) Suite() string { return "maestro" }
 
 func (globalMaestroProvider) RegisterTools(deps global.Deps) []global.ToolDefinition {
-	c, _ := deps.Cfg.(*config.Config)
-	cd, _ := deps.Host.(tools.ToolDeps)
-	if c == nil {
+	c, ok := deps.Cfg.(*config.Config)
+	var cd tools.ToolDeps
+	if v, hostOK := deps.Host.(tools.ToolDeps); hostOK {
+		cd = v
+	}
+	if !ok || c == nil {
 		// Enumeration pass (no live config): Maestro is per-agent + all-or-nothing,
 		// surfaced via a single agent toggle, so it is not listed in the catalog.
 		return nil

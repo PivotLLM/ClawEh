@@ -68,7 +68,10 @@ func TestNamespacedProvider_ExecuteAndSchema(t *testing.T) {
 	}
 	// Schema generated from []Parameter.
 	schema := readTool.Parameters()
-	props, _ := schema["properties"].(map[string]any)
+	props, ok := schema["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected properties map in schema, got %v", schema)
+	}
 	if _, ok := props["path"]; !ok {
 		t.Fatalf("expected 'path' property in schema, got %v", schema)
 	}

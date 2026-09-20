@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/PivotLLM/cogmem/store"
+
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 // TestMigrate_UpgradesSchemaInPlace: an existing memory is opened once so its
@@ -27,7 +29,9 @@ func TestMigrate_UpgradesSchemaInPlace(t *testing.T) {
 	}); domErr != nil {
 		t.Fatal(domErr)
 	}
-	_ = s.Close()
+	if closeErr := s.Close(); closeErr != nil {
+		t.Fatal(closeErr)
+	}
 
 	Migrate("alice", ws)
 
@@ -35,7 +39,7 @@ func TestMigrate_UpgradesSchemaInPlace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = again.Close() }()
+	defer utils.CloseQuietly(again)
 	if _, err := again.DomainByName(context.Background(), again.DB(), "Probe"); err != nil {
 		t.Fatalf("store lost its data: %v", err)
 	}

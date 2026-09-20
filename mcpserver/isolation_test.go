@@ -255,7 +255,10 @@ func TestInjectSessionTokenParam_AddsRequiredField(t *testing.T) {
 	}
 	out := injectSessionTokenParam(in)
 
-	props, _ := out["properties"].(map[string]any)
+	props, isMap := out["properties"].(map[string]any)
+	if !isMap {
+		t.Fatalf("properties is %T, want map", out["properties"])
+	}
 	if _, ok := props["session_token"]; !ok {
 		t.Error("session_token not added to properties")
 	}
@@ -276,7 +279,10 @@ func TestInjectSessionTokenParam_AddsRequiredField(t *testing.T) {
 	if containsString(origReq, "session_token") {
 		t.Error("injectSessionTokenParam mutated input schema's required slice")
 	}
-	origProps, _ := in["properties"].(map[string]any)
+	origProps, isMap := in["properties"].(map[string]any)
+	if !isMap {
+		t.Fatalf("input properties is %T, want map", in["properties"])
+	}
 	if _, ok := origProps["session_token"]; ok {
 		t.Error("injectSessionTokenParam mutated input schema's properties")
 	}
@@ -287,7 +293,10 @@ func TestInjectSessionTokenParam_HandlesNilSchema(t *testing.T) {
 	if out["type"] != "object" {
 		t.Errorf("expected synthetic type=object, got %v", out["type"])
 	}
-	props, _ := out["properties"].(map[string]any)
+	props, isMap := out["properties"].(map[string]any)
+	if !isMap {
+		t.Fatalf("properties is %T, want map", out["properties"])
+	}
 	if _, ok := props["session_token"]; !ok {
 		t.Error("session_token not added in nil-input case")
 	}

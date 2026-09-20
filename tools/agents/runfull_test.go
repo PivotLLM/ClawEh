@@ -42,10 +42,16 @@ func TestRun_RoutesContentToFileWithCallbackBlock(t *testing.T) {
 	}
 	// The content is persisted to the results file for retrieval on demand.
 	var found bool
-	entries, _ := os.ReadDir(filepath.Join(ws, "tasks"))
+	entries, err := os.ReadDir(filepath.Join(ws, "tasks"))
+	if err != nil {
+		t.Fatalf("read tasks dir: %v", err)
+	}
 	for _, e := range entries {
 		if strings.HasSuffix(e.Name(), "-results.json") {
-			b, _ := os.ReadFile(filepath.Join(ws, "tasks", e.Name()))
+			b, readErr := os.ReadFile(filepath.Join(ws, "tasks", e.Name()))
+			if readErr != nil {
+				t.Fatalf("read %s: %v", e.Name(), readErr)
+			}
 			if strings.Contains(string(b), "SENSITIVE WORKER OUTPUT") {
 				found = true
 			}

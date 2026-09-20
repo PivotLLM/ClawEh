@@ -54,7 +54,9 @@ func TestDetectNewFiles_OnlyNewPathsFire(t *testing.T) {
 	if got := detectNewFiles("notes", dir); len(got) != 0 {
 		t.Fatalf("after advancing, expected nothing, got %v", got)
 	}
-	os.WriteFile(newFile, []byte("y2"), 0o644)
+	if err := os.WriteFile(newFile, []byte("y2"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if got := detectNewFiles("notes", dir); len(got) != 0 {
 		t.Fatalf("editing a now-known file must not fire, got %v", got)
 	}
@@ -65,7 +67,9 @@ func TestDetectNewFiles_IgnoresMarkerAndHidden(t *testing.T) {
 	detectNewFiles("notes", dir) // baseline, creates .claw
 
 	// A hidden file and the marker itself must never be reported.
-	os.WriteFile(filepath.Join(dir, ".secret"), []byte("h"), 0o644)
+	if err := os.WriteFile(filepath.Join(dir, ".secret"), []byte("h"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if got := detectNewFiles("notes", dir); len(got) != 0 {
 		t.Fatalf("hidden files and the marker must be ignored, got %v", got)
 	}

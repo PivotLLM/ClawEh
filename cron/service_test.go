@@ -75,7 +75,9 @@ func TestListJobs_ConcurrentModification(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for range 10 {
-			_, _ = cs.AddJob("job", CronSchedule{Kind: "every", EveryMS: new(int64(60000))}, "msg", "agent", "cli", "direct", "channel")
+			if _, err := cs.AddJob("job", CronSchedule{Kind: "every", EveryMS: new(int64(60000))}, "msg", "agent", "cli", "direct", "channel"); err != nil {
+				t.Errorf("AddJob: %v", err)
+			}
 		}
 	}()
 
@@ -108,7 +110,9 @@ func TestRemoveJob_SaveFailure_ReturnsError(t *testing.T) {
 		t.Fatalf("chmod failed: %v", err)
 	}
 	defer func() {
-		_ = os.Chmod(storeDir, 0o755)
+		if err := os.Chmod(storeDir, 0o755); err != nil {
+			t.Errorf("restore chmod: %v", err)
+		}
 	}()
 
 	_, removeErr := cs.RemoveJob(job.ID)
@@ -136,7 +140,9 @@ func TestEnableJob_SaveFailure_ReturnsError(t *testing.T) {
 		t.Fatalf("chmod failed: %v", err)
 	}
 	defer func() {
-		_ = os.Chmod(storeDir, 0o755)
+		if err := os.Chmod(storeDir, 0o755); err != nil {
+			t.Errorf("restore chmod: %v", err)
+		}
 	}()
 
 	_, enableErr := cs.EnableJob(job.ID, false)

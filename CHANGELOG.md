@@ -29,6 +29,19 @@ observe does not need an entry.
   MCP manager test proves liveness with a real request instead of the retired
   `ping` RPC.
 
+- **Errors that used to be swallowed are now reported.** With errcheck in
+  the gate, every ignored error return is handled. Most of that is invisible
+  (debug-level logs on closing read-only handles), but a few tool and API
+  results change: a malformed `after_line`, `at_offset` or `start` in the
+  file range-edit tools is an error instead of silently 0; the cron add tool
+  reports a failed job update; the memory list API returns 500 when the
+  store fails instead of an empty list; device-store failures surface as
+  errors rather than "not found"; `claw status` shows "Cognitive memory
+  unavailable: <error>" instead of zero counts. gosec also runs, with the
+  intentional file modes and test files excluded by config, and adds a
+  read-header timeout to the device gateway, MCP host and OAuth callback
+  servers.
+
 ### Fixed
 
 - **`claw.pid` is written before the gateway starts serving.** It was written

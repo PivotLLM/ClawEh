@@ -101,15 +101,15 @@ func (t *SearchFilesTool) Parameters() map[string]any {
 }
 
 func (t *SearchFilesTool) Execute(_ context.Context, args map[string]any) *tools.ToolResult {
-	query, _ := args["query"].(string)
-	if strings.TrimSpace(query) == "" {
+	query, ok := args["query"].(string)
+	if !ok || strings.TrimSpace(query) == "" {
 		return tools.ErrorResult("query is required")
 	}
-	root, _ := args["path"].(string)
-	if strings.TrimSpace(root) == "" {
+	root, ok := args["path"].(string)
+	if !ok || strings.TrimSpace(root) == "" {
 		root = "."
 	}
-	useRegex, _ := args["regex"].(bool)
+	useRegex := getBoolArg(args, "regex", false)
 	maxResults, err := getInt64Arg(args, "max_results", defaultSearchMaxResults)
 	if err != nil {
 		return tools.ErrorResult(err.Error())

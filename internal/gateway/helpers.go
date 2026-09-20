@@ -205,8 +205,13 @@ func gatewayCmd(debug bool) error {
 	if len(startupInfo) == 0 {
 		return errors.New("no default agent configured — add at least one entry to agents.list in your config")
 	}
-	toolsInfo, _ := startupInfo["tools"].(map[string]any)
-	skillsInfo, _ := startupInfo["skills"].(map[string]any)
+	var toolsInfo, skillsInfo map[string]any
+	if v, ok := startupInfo["tools"].(map[string]any); ok {
+		toolsInfo = v
+	}
+	if v, ok := startupInfo["skills"].(map[string]any); ok {
+		skillsInfo = v
+	}
 	logger.InfoCF("agent", "Agent initialized",
 		map[string]any{
 			"tools_count":      toolsInfo["count"],
@@ -242,7 +247,11 @@ func gatewayCmd(debug bool) error {
 	// startup if claw.log predates today), pruning archives past retention.
 	startLogRotation(ctx, logPath, cfg.Logging.RetentionDays)
 
-	go agentLoop.Run(ctx)
+	go func() {
+		if runErr := agentLoop.Run(ctx); runErr != nil {
+			logger.ErrorCF("agent", "Agent loop exited with error", map[string]any{"error": runErr.Error()})
+		}
+	}()
 
 	// Setup config file watcher for hot reload
 	reloadInterval := cfg.ConfigReloadInterval()
@@ -675,7 +684,9 @@ func stopAndCleanupServices(
 	}
 	markReady(services, false)
 	if services.ChannelManager != nil {
-		services.ChannelManager.StopAll(shutdownCtx)
+		if stopErr := services.ChannelManager.StopAll(shutdownCtx); stopErr != nil {
+			logger.WarnCF("channels", "Channel manager shutdown error", map[string]any{"error": stopErr.Error()})
+		}
 	}
 	if services.DeviceService != nil {
 		services.DeviceService.Stop()

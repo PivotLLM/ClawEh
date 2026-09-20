@@ -12,6 +12,8 @@ import (
 
 	"github.com/PivotLLM/toolspec"
 	_ "modernc.org/sqlite"
+
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 // sqliteDataStore implements toolspec.DataStore over a single shared SQLite file.
@@ -41,7 +43,7 @@ func NewSQLiteDataStore(path string) (toolspec.DataStore, error) {
 	}
 	for _, p := range pragmas {
 		if _, err := db.ExecContext(context.Background(), p); err != nil {
-			_ = db.Close()
+			utils.CloseQuietly(db)
 			return nil, fmt.Errorf("fusion datastore: %q: %w", p, err)
 		}
 	}
@@ -52,7 +54,7 @@ func NewSQLiteDataStore(path string) (toolspec.DataStore, error) {
 			value      BLOB NOT NULL,
 			PRIMARY KEY (collection, key)
 		)`); err != nil {
-		_ = db.Close()
+		utils.CloseQuietly(db)
 		return nil, fmt.Errorf("fusion datastore: schema: %w", err)
 	}
 	return &sqliteDataStore{db: db}, nil

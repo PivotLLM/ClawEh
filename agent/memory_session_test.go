@@ -23,7 +23,7 @@ func openSessionStore(t *testing.T, agent *AgentInstance, key string) *store.Sto
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = s.Close() })
+	t.Cleanup(func() { closeT(t, s) })
 	return s
 }
 
@@ -69,7 +69,7 @@ func TestMemorySession_BackfillsInboxFromArchiveOnce(t *testing.T) {
 	if wmErr := pre.SetWatermark(ctx, pre.DB(), store.InboxStateKey, 1, 1); wmErr != nil {
 		t.Fatal(wmErr)
 	}
-	_ = pre.Close()
+	closeT(t, pre)
 
 	// An archive holding seqs 1..4.
 	a, err := memory.Open(archiveDBPath(agent.Workspace, key))
@@ -86,14 +86,17 @@ func TestMemorySession_BackfillsInboxFromArchiveOnce(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	_ = a.Close()
+	closeT(t, a)
 
 	mem := al.wireCognitiveMemory(agent, key)
 	if mem.Store() == nil {
 		t.Fatal("store did not open")
 	}
 	s := openSessionStore(t, agent, key)
-	rows, _ := s.InboxRange(ctx, s.DB(), 0, 100)
+	rows, rangeErr := s.InboxRange(ctx, s.DB(), 0, 100)
+	if rangeErr != nil {
+		t.Fatal(rangeErr)
+	}
 	if len(rows) != 2 || rows[0].Seq != 2 || rows[1].Seq != 4 {
 		t.Fatalf("backfilled inbox = %+v, want seqs 2 and 4 (past watermark 1, meaningful only)", rows)
 	}
@@ -106,7 +109,11 @@ func TestMemorySession_BackfillsInboxFromArchiveOnce(t *testing.T) {
 	again := al.wireCognitiveMemory(agent, key)
 	again.Store()
 	defer again.Close()
-	if n, _ := s.InboxCount(ctx, s.DB()); n != 0 {
+	n, countErr := s.InboxCount(ctx, s.DB())
+	if countErr != nil {
+		t.Fatal(countErr)
+	}
+	if n != 0 {
 		t.Fatalf("backfill ran twice: %d rows", n)
 	}
 }

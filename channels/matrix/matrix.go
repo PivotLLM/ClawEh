@@ -29,6 +29,7 @@ import (
 	"github.com/PivotLLM/ClawEh/identity"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/media"
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 const (
@@ -391,7 +392,7 @@ func (c *MatrixChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMess
 			ContentType:   contentType,
 			FileName:      filename,
 		})
-		file.Close()
+		utils.CloseQuietly(file)
 		if err != nil {
 			logger.ErrorCF("matrix", "Failed to upload media", map[string]any{
 				"path":  localPath,
@@ -456,7 +457,11 @@ func (c *MatrixChannel) StartTyping(ctx context.Context, chatID string) (func(),
 				delete(c.typingSessions, chatID)
 			}
 			c.typingMu.Unlock()
-			_, _ = c.client.UserTyping(context.Background(), roomID, false, 0)
+			if _, typingErr := c.client.UserTyping(context.Background(), roomID, false, 0); typingErr != nil {
+				logger.DebugCF("matrix", "Failed to clear typing indicator", map[string]any{
+					"room_id": roomID, "error": typingErr.Error(),
+				})
+			}
 		})
 	}
 
@@ -733,7 +738,11 @@ func (c *MatrixChannel) downloadMedia(
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			logger.DebugCF("matrix", "Response body close failed", map[string]any{"error": closeErr.Error()})
+		}
+	}()
 
 	reader := resp.Body
 	readerClose := func() error { return nil }
@@ -761,9 +770,14 @@ func (c *MatrixChannel) downloadMedia(
 	tmpPath := tmp.Name()
 	cleanup := true
 	defer func() {
-		_ = tmp.Close()
-		if cleanup {
-			_ = os.Remove(tmpPath)
+		if !cleanup {
+			return
+		}
+		utils.CloseQuietly(tmp)
+		if rmErr := os.Remove(tmpPath); rmErr != nil {
+			logger.WarnCF("matrix", "Failed to remove temp media file", map[string]any{
+				"path": tmpPath, "error": rmErr.Error(),
+			})
 		}
 	}()
 
@@ -1077,7 +1091,11 @@ func (c *MatrixChannel) stopTypingSessions(ctx context.Context) {
 	}
 	for roomID, session := range sessions {
 		session.stop()
-		_, _ = c.client.UserTyping(stopCtx, id.RoomID(roomID), false, 0)
+		if _, typingErr := c.client.UserTyping(stopCtx, id.RoomID(roomID), false, 0); typingErr != nil {
+			logger.DebugCF("matrix", "Failed to clear typing indicator", map[string]any{
+				"room_id": roomID, "error": typingErr.Error(),
+			})
+		}
 	}
 }
 

@@ -157,9 +157,13 @@ func (c *DeviceChannel) storeInboundAttachments(chatID, messageID string, atts [
 			continue
 		}
 		_, werr := f.Write(a.Data)
-		_ = f.Close()
+		if closeErr := f.Close(); closeErr != nil && werr == nil {
+			werr = closeErr
+		}
 		if werr != nil {
-			_ = os.Remove(f.Name())
+			if rmErr := os.Remove(f.Name()); rmErr != nil {
+				logger.WarnCF("device", "attachment temp file remove failed", map[string]any{"path": f.Name(), "error": rmErr.Error()})
+			}
 			logger.WarnCF("device", "attachment write failed", map[string]any{"error": werr.Error()})
 			continue
 		}
@@ -246,10 +250,10 @@ func (c *DeviceChannel) Stop(_ context.Context) error {
 		// Close immediately rather than graceful Shutdown: a live device WebSocket
 		// would otherwise block the shutdown (and a config reload) for seconds. The
 		// device reconnects after the listener re-binds.
-		_ = c.httpSrv.Close()
+		utils.CloseQuietly(c.httpSrv)
 	}
 	if c.store != nil {
-		_ = c.store.Close()
+		utils.CloseQuietly(c.store)
 	}
 	logger.InfoC("device", "Device gateway stopped")
 	return nil

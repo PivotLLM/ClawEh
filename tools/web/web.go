@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/tools"
 	"github.com/PivotLLM/ClawEh/utils"
 )
@@ -120,7 +121,9 @@ func (p *BraveSearchProvider) Search(ctx context.Context, query string, count in
 		}
 
 		body, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			logger.DebugCF("web", "failed to close response body", map[string]any{"error": closeErr.Error()})
+		}
 
 		if err != nil {
 			lastErr = fmt.Errorf("failed to read response: %w", err)
@@ -228,7 +231,9 @@ func (p *TavilySearchProvider) Search(ctx context.Context, query string, count i
 		}
 
 		body, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			logger.DebugCF("web", "failed to close response body", map[string]any{"error": closeErr.Error()})
+		}
 
 		if err != nil {
 			lastErr = fmt.Errorf("failed to read response: %w", err)
@@ -300,7 +305,11 @@ func (p *DuckDuckGoSearchProvider) Search(ctx context.Context, query string, cou
 	if err != nil {
 		return "", fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			logger.DebugCF("web", "failed to close response body", map[string]any{"error": closeErr.Error()})
+		}
+	}()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -426,7 +435,9 @@ func (p *PerplexitySearchProvider) Search(ctx context.Context, query string, cou
 		}
 
 		body, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			logger.DebugCF("web", "failed to close response body", map[string]any{"error": closeErr.Error()})
+		}
 
 		if err != nil {
 			lastErr = fmt.Errorf("failed to read response: %w", err)
@@ -485,7 +496,11 @@ func (p *SearXNGSearchProvider) Search(ctx context.Context, query string, count 
 	if err != nil {
 		return "", fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			logger.DebugCF("web", "failed to close response body", map[string]any{"error": closeErr.Error()})
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("SearXNG returned status %d", resp.StatusCode)
@@ -567,7 +582,11 @@ func (p *GLMSearchProvider) Search(ctx context.Context, query string, count int)
 	if err != nil {
 		return "", fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			logger.DebugCF("web", "failed to close response body", map[string]any{"error": closeErr.Error()})
+		}
+	}()
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
@@ -902,12 +921,16 @@ func (t *WebFetchTool) Execute(ctx context.Context, args map[string]any) *tools.
 
 	resp.Body = http.MaxBytesReader(nil, resp.Body, t.fetchLimitBytes)
 
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			logger.DebugCF("web", "failed to close response body", map[string]any{"error": closeErr.Error()})
+		}
+	}()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
-			return tools.ErrorResult(fmt.Sprintf("failed to read response: size exceeded %d bytes limit", t.fetchLimitBytes))
+		if mbe, ok := errors.AsType[*http.MaxBytesError](err); ok {
+			return tools.ErrorResult(fmt.Sprintf("failed to read response: size exceeded %d bytes limit", mbe.Limit))
 		}
 		return tools.ErrorResult(fmt.Sprintf("failed to read response: %v", err))
 	}

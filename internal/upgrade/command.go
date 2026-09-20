@@ -28,6 +28,8 @@ import (
 	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/internal"
 	"github.com/PivotLLM/ClawEh/internal/install"
+	"github.com/PivotLLM/ClawEh/logger"
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 const (
@@ -141,7 +143,10 @@ func runUpgrade(checkOnly, force bool, targetVersion string, autoYes bool) error
 	}
 
 	// Check if an existing installation exists on the system
-	homeDir, _ := os.UserHomeDir()
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("determining home directory: %w", err)
+	}
 	existing := install.DetectExistingInstall(homeDir)
 	if existing != nil && existing.BinaryPath != "" && (isBuildOrTempDir(exePath) || !fileExists(exePath)) {
 		fmt.Printf("Detected installed %s at: %s\n", app.Name(), existing.BinaryPath)
@@ -150,11 +155,13 @@ func runUpgrade(checkOnly, force bool, targetVersion string, autoYes bool) error
 
 	// Set CLAW_HOME if custom install path is detected
 	if existing != nil && existing.ClawHome != "" {
-		_ = os.Setenv(global.EnvVarHome, existing.ClawHome)
-		_ = os.Setenv("CLAW_HOME", existing.ClawHome)
+		if envErr := setClawHome(existing.ClawHome); envErr != nil {
+			return envErr
+		}
 	} else if strings.HasPrefix(exePath, "/opt/claw") {
-		_ = os.Setenv(global.EnvVarHome, "/opt/claw")
-		_ = os.Setenv("CLAW_HOME", "/opt/claw")
+		if envErr := setClawHome("/opt/claw"); envErr != nil {
+			return envErr
+		}
 	}
 
 	// Verify write permission on target executable directory
@@ -196,7 +203,11 @@ func runUpgrade(checkOnly, force bool, targetVersion string, autoYes bool) error
 	if err != nil {
 		return fmt.Errorf("creating temp directory: %w", err)
 	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
+	defer func() {
+		if rmErr := os.RemoveAll(tmpDir); rmErr != nil {
+			fmt.Printf("Warning: could not remove temp directory %s (%v).\n", tmpDir, rmErr)
+		}
+	}()
 
 	// Download archive
 	archivePath := filepath.Join(tmpDir, archiveName)
@@ -285,7 +296,7 @@ func fetchRelease(version string) (*GitHubRelease, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer closeBody(resp)
 
 	// Fallback without "v" prefix if 404 when querying specific version
 	if resp.StatusCode == http.StatusNotFound && version != "" && strings.HasPrefix(url, apiBaseURL+"/releases/tags/v") {
@@ -294,7 +305,7 @@ func fetchRelease(version string) (*GitHubRelease, error) {
 			bareReq.Header.Set("Accept", "application/vnd.github.v3+json")
 			bareReq.Header.Set("User-Agent", req.Header.Get("User-Agent"))
 			if bareResp, brErr := client.Do(bareReq); brErr == nil && bareResp.StatusCode == http.StatusOK {
-				defer func() { _ = bareResp.Body.Close() }()
+				defer closeBody(bareResp)
 				var rel GitHubRelease
 				if decErr := json.NewDecoder(bareResp.Body).Decode(&rel); decErr == nil {
 					return &rel, nil
@@ -304,7 +315,10 @@ func fetchRelease(version string) (*GitHubRelease, error) {
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return nil, fmt.Errorf("GitHub API returned HTTP %d (reading body: %w)", resp.StatusCode, readErr)
+		}
 		return nil, fmt.Errorf("GitHub API returned HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
@@ -327,7 +341,7 @@ func downloadFile(url, dstPath string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer closeBody(resp)
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("HTTP %d downloading %s", resp.StatusCode, url)
@@ -337,10 +351,12 @@ func downloadFile(url, dstPath string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = out.Close() }()
 
-	_, err = io.Copy(out, resp.Body)
-	return err
+	if _, err = io.Copy(out, resp.Body); err != nil {
+		utils.CloseQuietly(out)
+		return err
+	}
+	return out.Close()
 }
 
 func computeSHA256(filePath string) (string, error) {
@@ -348,7 +364,7 @@ func computeSHA256(filePath string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer func() { _ = f.Close() }()
+	defer utils.CloseQuietly(f)
 
 	h := sha256.New()
 	if _, err := io.Copy(h, f); err != nil {
@@ -374,13 +390,13 @@ func extractBinariesFromTarGz(archivePath, clawDst, clawAuthDst string) (hasAuth
 	if err != nil {
 		return false, err
 	}
-	defer func() { _ = f.Close() }()
+	defer utils.CloseQuietly(f)
 
 	gz, err := gzip.NewReader(f)
 	if err != nil {
 		return false, err
 	}
-	defer func() { _ = gz.Close() }()
+	defer utils.CloseQuietly(gz)
 
 	tr := tar.NewReader(gz)
 	foundClaw := false
@@ -401,10 +417,12 @@ func extractBinariesFromTarGz(archivePath, clawDst, clawAuthDst string) (hasAuth
 				return false, err
 			}
 			if _, err := io.Copy(out, tr); err != nil { //nolint:gosec // release tarball from the project's own GitHub release over HTTPS, SHA-256 verified when the release ships one
-				_ = out.Close()
+				utils.CloseQuietly(out)
 				return false, err
 			}
-			_ = out.Close()
+			if closeErr := out.Close(); closeErr != nil {
+				return false, closeErr
+			}
 			foundClaw = true
 		} else if cleanName == "claw-auth" && (hdr.Typeflag == tar.TypeReg) {
 			out, err := os.OpenFile(clawAuthDst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755) //nolint:gosec // installed binary must be executable
@@ -412,10 +430,12 @@ func extractBinariesFromTarGz(archivePath, clawDst, clawAuthDst string) (hasAuth
 				return false, err
 			}
 			if _, err := io.Copy(out, tr); err != nil { //nolint:gosec // release tarball from the project's own GitHub release over HTTPS, SHA-256 verified when the release ships one
-				_ = out.Close()
+				utils.CloseQuietly(out)
 				return false, err
 			}
-			_ = out.Close()
+			if closeErr := out.Close(); closeErr != nil {
+				return false, closeErr
+			}
 			hasAuth = true
 		}
 	}
@@ -438,7 +458,9 @@ func atomicReplace(srcPath, dstPath string) error {
 	// Preserve existing file ownership if dstPath exists
 	if origInfo, statErr := os.Stat(dstPath); statErr == nil {
 		if stat, ok := origInfo.Sys().(*syscall.Stat_t); ok {
-			_ = os.Chown(tmpDst, int(stat.Uid), int(stat.Gid))
+			if chownErr := os.Chown(tmpDst, int(stat.Uid), int(stat.Gid)); chownErr != nil {
+				fmt.Printf("Warning: could not preserve ownership of %s (%v).\n", dstPath, chownErr)
+			}
 		}
 	}
 	return os.Rename(tmpDst, dstPath)
@@ -450,9 +472,30 @@ func checkDirWritable(dir string) error {
 	if err != nil {
 		return err
 	}
-	_ = f.Close()
-	_ = os.Remove(testFile)
+	utils.CloseQuietly(f)
+	if rmErr := os.Remove(testFile); rmErr != nil {
+		fmt.Printf("Warning: could not remove %s (%v).\n", testFile, rmErr)
+	}
 	return nil
+}
+
+// setClawHome exports dir as the data directory under both env var names.
+func setClawHome(dir string) error {
+	if err := os.Setenv(global.EnvVarHome, dir); err != nil {
+		return fmt.Errorf("setting %s: %w", global.EnvVarHome, err)
+	}
+	if err := os.Setenv("CLAW_HOME", dir); err != nil {
+		return fmt.Errorf("setting CLAW_HOME: %w", err)
+	}
+	return nil
+}
+
+// closeBody closes an HTTP response body, logging a failure at debug level
+// since nothing the caller does depends on it.
+func closeBody(resp *http.Response) {
+	if err := resp.Body.Close(); err != nil {
+		logger.DebugCF("upgrade", "response body close failed", map[string]any{"error": err.Error()})
+	}
 }
 
 func fileExists(path string) bool {
@@ -496,10 +539,14 @@ func compareSemVer(v1, v2 string) int {
 	for i := range maxParts {
 		var n1, n2 int
 		if i < len(parts1) {
-			n1, _ = strconv.Atoi(parts1[i])
+			if n, convErr := strconv.Atoi(parts1[i]); convErr == nil {
+				n1 = n
+			}
 		}
 		if i < len(parts2) {
-			n2, _ = strconv.Atoi(parts2[i])
+			if n, convErr := strconv.Atoi(parts2[i]); convErr == nil {
+				n2 = n
+			}
 		}
 		if n1 < n2 {
 			return -1
@@ -543,7 +590,9 @@ func restartActiveService() {
 			if kErr := exec.Command("launchctl", "kickstart", "-k", "gui/"+uid+"/"+label).Run(); kErr == nil { //nolint:gosec // fixed launchctl binary; label and uid computed by the upgrader
 				fmt.Println("Launchd service restarted successfully.")
 			} else {
-				_ = exec.Command("launchctl", "kickstart", "-k", "system/"+label).Run()
+				if sysErr := exec.Command("launchctl", "kickstart", "-k", "system/"+label).Run(); sysErr != nil {
+					fmt.Printf("Warning: could not restart launchd service %s (%v). Restart it manually.\n", label, sysErr)
+				}
 			}
 		}
 	}

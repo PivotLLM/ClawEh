@@ -17,6 +17,15 @@ import (
 // Debug is a global flag to enable debug logging
 var Debug bool
 
+// CloseQuietly closes c and logs the error when Debug is true. It is for
+// handles whose close error carries nothing the caller can act on, such as
+// HTTP response bodies.
+func CloseQuietly(c io.Closer) {
+	if err := c.Close(); err != nil && Debug {
+		log.Printf("close failed: %v", err)
+	}
+}
+
 // LogHTTPRequest logs the details of an HTTP request when Debug is true
 func LogHTTPRequest(req *http.Request) {
 	if !Debug {

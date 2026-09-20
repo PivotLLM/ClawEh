@@ -637,8 +637,14 @@ func (r *ToolRegistry) ToProviderDefs() []providers.ToolDefinition {
 			continue
 		}
 
-		desc, _ := fn["description"].(string)
-		params, _ := fn["parameters"].(map[string]any)
+		var desc string
+		if v, ok := fn["description"].(string); ok {
+			desc = v
+		}
+		var params map[string]any
+		if v, ok := fn["parameters"].(map[string]any); ok {
+			params = v
+		}
 
 		pubName := name
 		if en, ok := entry.Tool.(ExternalNamer); ok {

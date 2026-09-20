@@ -11,7 +11,9 @@ import (
 func TestReadFile_LineMode(t *testing.T) {
 	dir := t.TempDir()
 	f := filepath.Join(dir, "outline.md")
-	os.WriteFile(f, []byte("L1\nL2\nL3\nL4\nL5\n"), 0o644)
+	if err := os.WriteFile(f, []byte("L1\nL2\nL3\nL4\nL5\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	tool := NewReadLinesTool("", false, MaxReadFileSize)
 	res := tool.Execute(context.Background(), map[string]any{
@@ -37,10 +39,18 @@ func TestReadFile_LineMode(t *testing.T) {
 
 func TestSearchFiles_FindsMatches(t *testing.T) {
 	dir := t.TempDir()
-	os.MkdirAll(filepath.Join(dir, "sub"), 0o755)
-	os.WriteFile(filepath.Join(dir, "a.md"), []byte("alpha\nChapter One\nbeta\n"), 0o644)
-	os.WriteFile(filepath.Join(dir, "sub", "b.md"), []byte("gamma\nchapter one again\n"), 0o644)
-	os.WriteFile(filepath.Join(dir, "bin"), []byte{0, 1, 2, 'C', 'h', 'a', 'p', 't', 'e', 'r'}, 0o644)
+	if err := os.MkdirAll(filepath.Join(dir, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "a.md"), []byte("alpha\nChapter One\nbeta\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "sub", "b.md"), []byte("gamma\nchapter one again\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "bin"), []byte{0, 1, 2, 'C', 'h', 'a', 'p', 't', 'e', 'r'}, 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	tool := NewSearchLinesTool("", false)
 

@@ -69,7 +69,9 @@ func TestHTTPHostAllowlistOverRealListener(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET error = %v", err)
 	}
-	_ = resp.Body.Close()
+	if closeErr := resp.Body.Close(); closeErr != nil {
+		t.Fatalf("close body: %v", closeErr)
+	}
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("loopback status = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
@@ -80,7 +82,9 @@ func TestHTTPHostAllowlistOverRealListener(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET error = %v", err)
 	}
-	_ = resp.Body.Close()
+	if closeErr := resp.Body.Close(); closeErr != nil {
+		t.Fatalf("close body: %v", closeErr)
+	}
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("unknown route status = %d, want %d", resp.StatusCode, http.StatusNotFound)
 	}

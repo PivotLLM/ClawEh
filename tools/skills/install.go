@@ -76,19 +76,31 @@ func (t *InstallSkillTool) Execute(ctx context.Context, args map[string]any) *to
 	defer t.mu.Unlock()
 
 	// Validate slug
-	slug, _ := args["slug"].(string)
+	var slug string
+	if v, ok := args["slug"].(string); ok {
+		slug = v
+	}
 	if err := utils.ValidateSkillIdentifier(slug); err != nil {
 		return tools.ErrorResult(fmt.Sprintf("invalid slug %q: error: %s", slug, err.Error()))
 	}
 
 	// Validate registry
-	registryName, _ := args["registry"].(string)
+	var registryName string
+	if v, ok := args["registry"].(string); ok {
+		registryName = v
+	}
 	if err := utils.ValidateSkillIdentifier(registryName); err != nil {
 		return tools.ErrorResult(fmt.Sprintf("invalid registry %q: error: %s", registryName, err.Error()))
 	}
 
-	version, _ := args["version"].(string)
-	force, _ := args["force"].(bool)
+	var version string
+	if v, ok := args["version"].(string); ok {
+		version = v
+	}
+	var force bool
+	if v, ok := args["force"].(bool); ok {
+		force = v
+	}
 
 	// Check if already installed.
 	skillsDir := filepath.Join(t.workspace, "skills")
@@ -102,7 +114,9 @@ func (t *InstallSkillTool) Execute(ctx context.Context, args map[string]any) *to
 		}
 	} else {
 		// Force: remove existing if present.
-		os.RemoveAll(targetDir)
+		if err := os.RemoveAll(targetDir); err != nil {
+			return tools.ErrorResult(fmt.Sprintf("failed to remove existing skill %q: %v", slug, err))
+		}
 	}
 
 	// Resolve which registry to use.

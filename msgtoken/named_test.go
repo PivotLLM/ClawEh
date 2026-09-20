@@ -86,8 +86,8 @@ func TestNamedStore_MultiplePerAgent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewNamedStore: %v", err)
 	}
-	a, _ := s.Create("amber", "one")
-	b, _ := s.Create("amber", "two")
+	a := mustCreate(t, s, "amber", "one")
+	b := mustCreate(t, s, "amber", "two")
 
 	if len(s.List("amber")) != 2 {
 		t.Fatalf("List(amber) len = %d, want 2", len(s.List("amber")))
@@ -117,6 +117,26 @@ func TestNamedStore_MultiplePerAgent(t *testing.T) {
 
 // clockedStore returns an in-memory store whose clock is driven by *now, so
 // tests can advance time deterministically.
+// mustCreate creates a named token or fails the test.
+func mustCreate(t *testing.T, s *NamedStore, agentID, name string) NamedToken {
+	t.Helper()
+	tok, err := s.Create(agentID, name)
+	if err != nil {
+		t.Fatalf("Create(%s, %s): %v", agentID, name, err)
+	}
+	return tok
+}
+
+// mustOpen opens a named store at path or fails the test.
+func mustOpen(t *testing.T, path string) *NamedStore {
+	t.Helper()
+	s, err := NewNamedStore(path)
+	if err != nil {
+		t.Fatalf("NewNamedStore: %v", err)
+	}
+	return s
+}
+
 func clockedStore(t *testing.T, now *time.Time) *NamedStore {
 	t.Helper()
 	s, err := NewNamedStore("")
@@ -143,7 +163,7 @@ func TestNamedStore_EffectiveDefaults(t *testing.T) {
 func TestNamedStore_Allow_TripsAndBlocks(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	s := clockedStore(t, &now)
-	tok, _ := s.Create("amber", "gps")
+	tok := mustCreate(t, s, "amber", "gps")
 	if !s.Update("amber", tok.ID, 3, 15) {
 		t.Fatal("Update returned false")
 	}
@@ -184,7 +204,7 @@ func TestNamedStore_Allow_TripsAndBlocks(t *testing.T) {
 func TestNamedStore_Allow_WindowSlides(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	s := clockedStore(t, &now)
-	tok, _ := s.Create("amber", "gps")
+	tok := mustCreate(t, s, "amber", "gps")
 	s.Update("amber", tok.ID, 2, 15)
 
 	if allowed, _ := s.Allow("amber", tok.ID); !allowed {
@@ -203,8 +223,8 @@ func TestNamedStore_Allow_WindowSlides(t *testing.T) {
 func TestNamedStore_ResetBlocks(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	s := clockedStore(t, &now)
-	a, _ := s.Create("amber", "gps")
-	b, _ := s.Create("amber", "alarm")
+	a := mustCreate(t, s, "amber", "gps")
+	b := mustCreate(t, s, "amber", "alarm")
 	s.Update("amber", a.ID, 1, 15)
 	s.Update("amber", b.ID, 1, 15)
 
@@ -230,7 +250,7 @@ func TestNamedStore_ResetBlocks(t *testing.T) {
 func TestNamedStore_Quota(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	s := clockedStore(t, &now)
-	tok, _ := s.Create("amber", "gps")
+	tok := mustCreate(t, s, "amber", "gps")
 	s.Update("amber", tok.ID, 3, 15)
 
 	s.Allow("amber", tok.ID)
@@ -255,13 +275,13 @@ func TestNamedStore_Quota(t *testing.T) {
 
 func TestNamedStore_UpdatePersists(t *testing.T) {
 	path := NamedTokenPath(t.TempDir())
-	s1, _ := NewNamedStore(path)
-	tok, _ := s1.Create("amber", "gps")
+	s1 := mustOpen(t, path)
+	tok := mustCreate(t, s1, "amber", "gps")
 	if !s1.Update("amber", tok.ID, 12, 7) {
 		t.Fatal("Update returned false")
 	}
 	// A reload sees the persisted config.
-	s2, _ := NewNamedStore(path)
+	s2 := mustOpen(t, path)
 	got := s2.List("amber")
 	if len(got) != 1 || got[0].RatePerMin != 12 || got[0].BlockMinutes != 7 {
 		t.Fatalf("reloaded config = %+v, want rate=12 block=7", got)

@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/PivotLLM/ClawEh/global"
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 // errResult builds an error Result carrying err both as the LLM-facing text and
@@ -53,7 +54,10 @@ func strArg(args map[string]any, key string) (string, bool) {
 	if !present {
 		return "", false
 	}
-	s, _ := v.(string)
+	s, ok := v.(string)
+	if !ok {
+		return "", false
+	}
 	s = strings.TrimSpace(s)
 	return s, s != ""
 }
@@ -64,7 +68,7 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer in.Close()
+	defer utils.CloseQuietly(in)
 
 	if mkErr := os.MkdirAll(filepath.Dir(dst), 0o755); mkErr != nil {
 		return mkErr
@@ -73,9 +77,8 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer out.Close()
-
 	if _, err := io.Copy(out, in); err != nil {
+		utils.CloseQuietly(out)
 		return err
 	}
 	return out.Close()
@@ -152,7 +155,10 @@ func getCommon(commonDir, workspace string, args map[string]any) *global.Result 
 	if err := copyFile(srcAbs, dstAbs); err != nil {
 		return errResult("common_get: copy failed: %v", err)
 	}
-	rel, _ := filepath.Rel(workspace, dstAbs)
+	rel, relErr := filepath.Rel(workspace, dstAbs)
+	if relErr != nil {
+		rel = dstAbs
+	}
 	return &global.Result{ForLLM: fmt.Sprintf("Copied %q to workspace %s", name, rel)}
 }
 

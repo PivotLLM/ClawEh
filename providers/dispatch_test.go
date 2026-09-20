@@ -129,7 +129,9 @@ func TestProviderDispatcher_Get_FlushRace(t *testing.T) {
 	// Half goroutines call Get, half call Flush.
 	for range 10 {
 		wg.Go(func() {
-			_, _ = d.Get("race-alias")
+			if _, err := d.Get("race-alias"); err != nil {
+				t.Errorf("concurrent Get: %v", err)
+			}
 		})
 		wg.Go(func() {
 			d.Flush(cfg)
@@ -141,10 +143,13 @@ func TestProviderDispatcher_Get_FlushRace(t *testing.T) {
 
 // Compile-time check: claude-cli provider satisfies LLMProvider.
 var _ providers.LLMProvider = func() providers.LLMProvider {
-	p, _, _ := providers.CreateProviderFromConfig(
+	p, _, err := providers.CreateProviderFromConfig(
 		&config.ModelConfig{Model: "x", Provider: "claude-cli"},
 		&config.Provider{Name: "claude-cli", Protocol: "claude-cli"},
 	)
+	if err != nil {
+		panic(err)
+	}
 	return p
 }()
 

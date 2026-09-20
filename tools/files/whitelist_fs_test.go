@@ -68,7 +68,9 @@ func TestWhitelistFs_ReadDirViaWhitelist(t *testing.T) {
 	outsideDir := t.TempDir()
 
 	// Create a file inside the outside dir.
-	os.WriteFile(filepath.Join(outsideDir, "listed.txt"), []byte("x"), 0o644)
+	if err := os.WriteFile(filepath.Join(outsideDir, "listed.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	pattern := regexp.MustCompile(regexp.QuoteMeta(outsideDir))
 	tool := NewListDirTool(workspace, true, []*regexp.Regexp{pattern})
@@ -89,7 +91,9 @@ func TestWhitelistFs_NonMatchingPathGoesToSandbox(t *testing.T) {
 	workspace := t.TempDir()
 	// Write a file inside workspace to read it successfully.
 	inFile := filepath.Join(workspace, "inside.txt")
-	os.WriteFile(inFile, []byte("inside content"), 0o644)
+	if err := os.WriteFile(inFile, []byte("inside content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	// Whitelist matches nothing related to our test files.
 	pattern := regexp.MustCompile(`^/no/match/here$`)

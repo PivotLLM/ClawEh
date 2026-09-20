@@ -17,6 +17,9 @@ import (
 
 	"github.com/PivotLLM/cogmem/portable"
 	cogmemstore "github.com/PivotLLM/cogmem/store"
+
+	"github.com/PivotLLM/ClawEh/logger"
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 // maxImportBytes caps an uploaded memory document. A real export of the largest
@@ -59,7 +62,7 @@ func (h *Handler) handlePatchMemory(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	defer s.Close()
+	defer utils.CloseQuietly(s)
 
 	var req patchMemoryRequest
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
@@ -128,7 +131,7 @@ func (h *Handler) handleCreateDomain(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	defer s.Close()
+	defer utils.CloseQuietly(s)
 
 	var req createDomainRequest
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
@@ -181,7 +184,7 @@ func (h *Handler) handleCreateMemory(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	defer s.Close()
+	defer utils.CloseQuietly(s)
 
 	var req createMemoryRequest
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
@@ -240,7 +243,7 @@ func (h *Handler) handleBulkMemories(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	defer s.Close()
+	defer utils.CloseQuietly(s)
 
 	var req bulkRequest
 	if err := json.NewDecoder(io.LimitReader(r.Body, 8<<20)).Decode(&req); err != nil {
@@ -309,7 +312,7 @@ func (h *Handler) handleExportMemory(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to open memory store", http.StatusInternalServerError)
 		return
 	}
-	defer s.Close()
+	defer utils.CloseQuietly(s)
 
 	doc, err := portable.Export(context.Background(), s)
 	if err != nil {
@@ -324,7 +327,9 @@ func (h *Handler) handleExportMemory(w http.ResponseWriter, r *http.Request) {
 	name := fmt.Sprintf("%s-memory-%s.yaml", id, time.Now().UTC().Format("20060102"))
 	w.Header().Set("Content-Type", "application/yaml; charset=utf-8")
 	w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
-	_, _ = w.Write(out) //nolint:gosec // YAML attachment with explicit Content-Type, not HTML
+	if _, err := w.Write(out); err != nil { //nolint:gosec // YAML attachment with explicit Content-Type, not HTML
+		logger.DebugCF("api", "response write failed", map[string]any{"error": err.Error()})
+	}
 }
 
 // handleImportMemory loads a YAML document into a store.
@@ -339,7 +344,7 @@ func (h *Handler) handleImportMemory(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	defer s.Close()
+	defer utils.CloseQuietly(s)
 
 	mode := portable.ImportMode(r.URL.Query().Get("mode"))
 	if mode == "" {

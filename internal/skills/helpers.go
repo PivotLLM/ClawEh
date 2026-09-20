@@ -293,15 +293,17 @@ func copyDirectory(src, dst string) error {
 		if err != nil {
 			return err
 		}
-		defer srcFile.Close()
+		defer utils.CloseQuietly(srcFile)
 
 		dstFile, err := os.OpenFile(dstPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, info.Mode()) //nolint:gosec // destination under the skills dir with the walk's relative path
 		if err != nil {
 			return err
 		}
-		defer dstFile.Close()
 
-		_, err = io.Copy(dstFile, srcFile)
-		return err
+		if _, err = io.Copy(dstFile, srcFile); err != nil {
+			utils.CloseQuietly(dstFile)
+			return err
+		}
+		return dstFile.Close()
 	})
 }

@@ -197,7 +197,9 @@ func (br *acpBridge) Cancel(ctx context.Context, req acplib.CancelNotification) 
 	}
 	br.mu.Unlock()
 	for _, id := range runs {
-		_ = br.client.ChatAbort(ctx, protocol.ChatAbortParams{RunID: id})
+		if err := br.client.ChatAbort(ctx, protocol.ChatAbortParams{RunID: id}); err != nil {
+			logger.WarnCF("acp", "chat abort failed", map[string]any{"runId": id, "error": err.Error()})
+		}
 		if r, ok := br.runByID(id); ok {
 			r.finish(acplib.StopReasonCancelled)
 		}
@@ -263,13 +265,15 @@ func (br *acpBridge) handleAgentEvent(payload json.RawMessage) {
 		}
 		logger.DebugCF("acp", "agent assistant delta", map[string]any{"runId": p.RunID, "chars": len(text)})
 		if text != "" && br.notifier != nil {
-			_ = br.notifier.SessionUpdate(acplib.SessionNotification{
+			if err := br.notifier.SessionUpdate(acplib.SessionNotification{
 				SessionID: run.sessionID,
 				Update: acplib.SessionUpdate{
 					SessionUpdate: "agent_message_chunk",
 					Content:       &acplib.ContentBlock{Type: "text", Text: text},
 				},
-			})
+			}); err != nil {
+				logger.WarnCF("acp", "session update failed", map[string]any{"runId": p.RunID, "error": err.Error()})
+			}
 		}
 	case "lifecycle":
 		if p.Data.Phase == "end" {

@@ -244,7 +244,10 @@ func (t *CronTool) addJob(args map[string]any, agentID string) *tools.ToolResult
 	atSeconds, hasAt := args["at_seconds"].(float64)
 	everySeconds, hasEvery := args["every_seconds"].(float64)
 	cronExpr, hasCron := args["cron_expr"].(string)
-	listen, _ := args["listen"].(bool)
+	var listen bool
+	if v, ok := args["listen"].(bool); ok {
+		listen = v
+	}
 
 	// Fix: type assertions return true for zero values, need additional validity checks
 	// This prevents LLMs that fill unused optional parameters with defaults (0) from triggering wrong type
@@ -316,7 +319,9 @@ func (t *CronTool) addJob(args map[string]any, agentID string) *tools.ToolResult
 	// destination and it (or an authorized agent) manages the job.
 	job.AgentID = agentID
 	job.Payload.Watch = watch
-	t.cronService.UpdateJob(job)
+	if err := t.cronService.UpdateJob(job); err != nil {
+		return tools.ErrorResult(fmt.Sprintf("Error updating job: %v", err))
+	}
 	t.kickListeners()
 
 	if listen {

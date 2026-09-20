@@ -224,9 +224,9 @@ func TestRegistry_ExecuteWithContext_OmitsArgsAtInfo(t *testing.T) {
 		if err := json.Unmarshal([]byte(line), &ev); err != nil {
 			continue
 		}
-		msg, _ := ev["message"].(string)
-		level, _ := ev["level"].(string)
-		if msg == "Tool execution started" && level == "info" {
+		msg, msgOK := ev["message"].(string)
+		level, levelOK := ev["level"].(string)
+		if msgOK && levelOK && msg == "Tool execution started" && level == "info" {
 			infLine = line
 		}
 	}
@@ -274,8 +274,10 @@ func TestRegistry_ExecuteWithContext_TruncatesErrorForLLM(t *testing.T) {
 		if err := json.Unmarshal([]byte(line), &ev); err != nil {
 			continue
 		}
-		if msg, _ := ev["message"].(string); msg == "Tool execution failed" {
-			errField, _ = ev["error"].(string)
+		if msg, ok := ev["message"].(string); ok && msg == "Tool execution failed" {
+			if field, fieldOK := ev["error"].(string); fieldOK {
+				errField = field
+			}
 			break
 		}
 	}

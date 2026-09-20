@@ -114,10 +114,13 @@ func TestSpawner_CallbackMode_DeliversPointer(t *testing.T) {
 
 func TestSpawner_CallbackMode_RequiresName(t *testing.T) {
 	sp := newTestSpawner(t)
-	res, _ := sp.Spawn(context.Background(), global.SpawnRequest{
+	res, err := sp.Spawn(context.Background(), global.SpawnRequest{
 		Mode: global.SpawnCallback,
 		Task: "no name given",
 	})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
 	if res == nil || !res.IsError {
 		t.Fatalf("expected error result when name is missing for callback, got %+v", res)
 	}
@@ -125,7 +128,10 @@ func TestSpawner_CallbackMode_RequiresName(t *testing.T) {
 
 func TestSpawner_EmptyTask_IsError(t *testing.T) {
 	sp := newTestSpawner(t)
-	res, _ := sp.Spawn(context.Background(), global.SpawnRequest{Mode: global.SpawnAndWait, Task: "  "})
+	res, err := sp.Spawn(context.Background(), global.SpawnRequest{Mode: global.SpawnAndWait, Task: "  "})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
 	if res == nil || !res.IsError {
 		t.Fatalf("expected error result for empty task, got %+v", res)
 	}
@@ -134,11 +140,14 @@ func TestSpawner_EmptyTask_IsError(t *testing.T) {
 func TestSpawner_TargetedSpawn_AllowlistDeny(t *testing.T) {
 	sp := newTestSpawner(t)
 	sp.SetAllowlistChecker(func(string) bool { return false })
-	res, _ := sp.Spawn(context.Background(), global.SpawnRequest{
+	res, err := sp.Spawn(context.Background(), global.SpawnRequest{
 		Mode:          global.SpawnAndWait,
 		Task:          "x",
 		TargetAgentID: "bob",
 	})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
 	if res == nil || !res.IsError {
 		t.Fatalf("expected allowlist denial to be an error result, got %+v", res)
 	}
@@ -149,7 +158,10 @@ func TestSpawner_TargetedSpawn_AllowlistDeny(t *testing.T) {
 
 func TestSpawner_NilManager_IsError(t *testing.T) {
 	sp := NewSpawner(nil)
-	res, _ := sp.Spawn(context.Background(), global.SpawnRequest{Mode: global.SpawnAndWait, Task: "x"})
+	res, err := sp.Spawn(context.Background(), global.SpawnRequest{Mode: global.SpawnAndWait, Task: "x"})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
 	if res == nil || !res.IsError {
 		t.Fatalf("expected error result when manager is nil, got %+v", res)
 	}

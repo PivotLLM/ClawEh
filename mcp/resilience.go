@@ -279,6 +279,11 @@ func (m *Manager) probeOnce(name string) {
 		map[string]any{"server": name, "error": err.Error()})
 
 	rctx, rcancel := context.WithTimeout(context.Background(), m.callTimeout)
-	_ = m.reconnect(rctx, name, conn.cfg)
+	if rerr := m.reconnect(rctx, name, conn.cfg); rerr != nil {
+		// A connect failure is already logged (with cooldown) by reconnect
+		// itself; what reaches here unlogged is a skip (closed / in cooldown).
+		logger.DebugCF("mcp", "MCP reconnect not attempted",
+			map[string]any{"server": name, "error": rerr.Error()})
+	}
 	rcancel()
 }

@@ -173,10 +173,16 @@ func (c *SlackChannel) Send(ctx context.Context, msg bus.OutboundMessage) error 
 
 	ref, _ := c.pendingAcks.LoadAndDelete(msg.OriginalMessageID)
 	if msgRef, ok := ref.(slackMessageRef); ok {
-		go c.api.AddReaction("white_check_mark", slack.ItemRef{
-			Channel:   msgRef.ChannelID,
-			Timestamp: msgRef.Timestamp,
-		})
+		go func() {
+			if err := c.api.AddReaction("white_check_mark", slack.ItemRef{
+				Channel:   msgRef.ChannelID,
+				Timestamp: msgRef.Timestamp,
+			}); err != nil {
+				logger.DebugCF("slack", "Failed to add reaction", map[string]any{
+					"channel_id": msgRef.ChannelID, "error": err.Error(),
+				})
+			}
+		}()
 	}
 
 	logger.DebugCF("slack", "Message sent", map[string]any{
@@ -293,10 +299,16 @@ func (c *SlackChannel) ReactToMessage(ctx context.Context, chatID, messageID str
 	}
 
 	return func() {
-		go c.api.RemoveReaction("eyes", slack.ItemRef{
-			Channel:   channelID,
-			Timestamp: messageID,
-		})
+		go func() {
+			if err := c.api.RemoveReaction("eyes", slack.ItemRef{
+				Channel:   channelID,
+				Timestamp: messageID,
+			}); err != nil {
+				logger.DebugCF("slack", "Failed to remove reaction", map[string]any{
+					"channel_id": channelID, "error": err.Error(),
+				})
+			}
+		}()
 	}, nil
 }
 
@@ -316,16 +328,26 @@ func (c *SlackChannel) eventLoop() {
 				c.handleSlashCommand(event)
 			case socketmode.EventTypeInteractive:
 				if event.Request != nil {
-					c.socketClient.Ack(*event.Request)
+					c.ack(*event.Request)
 				}
 			}
 		}
 	}
 }
 
+// ack acknowledges a Socket Mode request; Slack redelivers unacknowledged
+// requests, so a failure is worth a warning but nothing more.
+func (c *SlackChannel) ack(req socketmode.Request) {
+	if err := c.socketClient.Ack(req); err != nil {
+		logger.WarnCF("slack", "Failed to ack Socket Mode request", map[string]any{
+			"error": err.Error(),
+		})
+	}
+}
+
 func (c *SlackChannel) handleEventsAPI(event socketmode.Event) {
 	if event.Request != nil {
-		c.socketClient.Ack(*event.Request)
+		c.ack(*event.Request)
 	}
 
 	eventsAPIEvent, ok := event.Data.(slackevents.EventsAPIEvent)
@@ -529,7 +551,7 @@ func (c *SlackChannel) handleSlashCommand(event socketmode.Event) {
 	}
 
 	if event.Request != nil {
-		c.socketClient.Ack(*event.Request)
+		c.ack(*event.Request)
 	}
 
 	cmdSender := bus.SenderInfo{

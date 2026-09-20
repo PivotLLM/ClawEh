@@ -31,8 +31,10 @@ func (globalWebProvider) RegisterTools(deps global.Deps) []global.ToolDefinition
 	var search *WebSearchTool
 	var fetch *WebFetchTool
 
-	c, _ := deps.Cfg.(*config.Config)
-	_, _ = deps.Host.(tools.ToolDeps)
+	var c *config.Config
+	if v, ok := deps.Cfg.(*config.Config); ok {
+		c = v
+	}
 
 	if c != nil {
 		if s, err := NewWebSearchTool(WebSearchToolOptions{

@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -182,7 +183,7 @@ func (p *Provider) GetUserInfo(ctx context.Context, token *providers.TokenInfo) 
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user info: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer closeBody(resp)
 
 	// Log the response if debug is enabled
 	debug.LogHTTPResponse(resp)
@@ -264,7 +265,7 @@ func (p *Provider) ValidateToken(ctx context.Context, token *providers.TokenInfo
 	if err != nil {
 		return fmt.Errorf("failed to validate token: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer closeBody(resp)
 
 	// Log the response if debug is enabled
 	debug.LogHTTPResponse(resp)
@@ -286,4 +287,11 @@ func (p *Provider) ValidateToken(ctx context.Context, token *providers.TokenInfo
 
 	// Additional validation could be performed here
 	return nil
+}
+
+// closeBody closes the response body and logs the error when debug is on.
+func closeBody(resp *http.Response) {
+	if err := resp.Body.Close(); err != nil && debug.Debug {
+		log.Printf("close failed: %v", err)
+	}
 }

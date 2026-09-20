@@ -89,13 +89,13 @@ func TestRunToolLoop_EmitsDispatchAndFinishOnSuccess(t *testing.T) {
 	if finish == nil {
 		t.Fatal("missing finish record")
 	}
-	if v, _ := finish["success"].(bool); !v {
+	if v, ok := finish["success"].(bool); !ok || !v {
 		t.Errorf("success = %v, want true", finish["success"])
 	}
-	if v, _ := finish["bytes_sent"].(float64); v != 128 {
+	if v, ok := finish["bytes_sent"].(float64); !ok || v != 128 {
 		t.Errorf("bytes_sent = %v, want 128", finish["bytes_sent"])
 	}
-	if v, _ := finish["bytes_received"].(float64); v != 256 {
+	if v, ok := finish["bytes_received"].(float64); !ok || v != 256 {
 		t.Errorf("bytes_received = %v, want 256", finish["bytes_received"])
 	}
 	if finish["model"] != "gpt-4o-2024-11-20" {
@@ -122,7 +122,7 @@ func TestRunToolLoop_EmitsDispatchAndFinishOnError(t *testing.T) {
 	if dispatches != 1 || finishes != 1 {
 		t.Errorf("dispatch=%d finish=%d, want 1/1", dispatches, finishes)
 	}
-	if v, _ := finish["success"].(bool); v {
+	if v, ok := finish["success"].(bool); !ok || v {
 		t.Errorf("success = %v, want false", finish["success"])
 	}
 	if finish["model"] != "gpt-4o" {

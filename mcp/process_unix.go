@@ -3,8 +3,11 @@
 package mcp
 
 import (
+	"errors"
 	"os/exec"
 	"syscall"
+
+	"github.com/PivotLLM/ClawEh/logger"
 )
 
 // prepareStdioCommand makes the child its own process-group leader so the whole
@@ -29,5 +32,8 @@ func terminateStdioProcessTree(cmd *exec.Cmd) {
 	if pid <= 0 {
 		return
 	}
-	_ = syscall.Kill(-pid, syscall.SIGKILL)
+	if err := syscall.Kill(-pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+		logger.WarnCF("mcp", "Failed to kill MCP server process group",
+			map[string]any{"pid": pid, "error": err.Error()})
+	}
 }

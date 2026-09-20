@@ -214,7 +214,9 @@ func (t *CronTool) runWatch(ctx context.Context, job *cron.CronJob) watchOutcome
 	if digest == state.WatchDigest {
 		// The whole point: no model was involved in learning this.
 		if state.WatchFailures != 0 {
-			_ = t.cronService.UpdateWatchState(job.ID, digest, 0)
+			if serr := t.cronService.UpdateWatchState(job.ID, digest, 0); serr != nil {
+				logger.WarnCF("cron", "watch: failed to reset failure count", map[string]any{"id": job.ID, "error": serr.Error()})
+			}
 		}
 		logger.DebugCF("cron", "watch: no change", map[string]any{"id": job.ID, "tool": w.Tool})
 		return watchOutcome{}
@@ -279,8 +281,10 @@ const watchProbeTimeout = 60 * time.Second
 // watch is rejected while the model can still fix it — rather than failing
 // silently every run at 3am.
 func parseWatchArgs(args map[string]any) (*cron.CronWatch, error) {
-	toolName, _ := args["watch_tool"].(string)
-	toolName = strings.TrimSpace(toolName)
+	var toolName string
+	if v, ok := args["watch_tool"].(string); ok {
+		toolName = strings.TrimSpace(v)
+	}
 	if toolName == "" {
 		// watch_args or watch_fields without watch_tool is a half-written watch;
 		// silently creating a plain reminder would not be what was asked for.

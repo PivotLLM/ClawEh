@@ -68,8 +68,10 @@ func collectMediaRefs(messages []providers.Message) []string {
 // refPinner returns the media store's optional pin capability, nil when the
 // store is absent or does not support pinning.
 func (al *AgentLoop) refPinner() media.RefPinner {
-	p, _ := al.mediaStore.(media.RefPinner)
-	return p
+	if p, ok := al.mediaStore.(media.RefPinner); ok {
+		return p
+	}
+	return nil
 }
 
 // pinSessionMediaRefs pins refs for the session so TTL cleanup keeps the

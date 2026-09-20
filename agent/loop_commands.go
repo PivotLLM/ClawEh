@@ -22,6 +22,7 @@ import (
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/routing"
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 func (al *AgentLoop) handleCommand(
@@ -102,8 +103,11 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 			if err != nil {
 				return 0, time.Time{}, time.Time{}
 			}
-			defer store.Close()
-			count, first, last, _ := store.Stats()
+			defer utils.CloseQuietly(store)
+			count, first, last, statsErr := store.Stats()
+			if statsErr != nil {
+				logger.WarnCF("agent", "Failed to read archive stats", map[string]any{"path": path, "error": statsErr.Error()})
+			}
 			return count, first, last
 		},
 		GetMemoryStatus: func() string {

@@ -143,7 +143,12 @@ func sweepReceivedMedia(dir string, now time.Time) {
 			continue
 		}
 		if now.Sub(info.ModTime()) > receivedMediaTTL {
-			_ = os.Remove(filepath.Join(dir, e.Name()))
+			if rmErr := os.Remove(filepath.Join(dir, e.Name())); rmErr != nil {
+				logger.WarnCF("agent", "Failed to remove expired received media file", map[string]any{
+					"path":  filepath.Join(dir, e.Name()),
+					"error": rmErr.Error(),
+				})
+			}
 		}
 	}
 }
@@ -173,13 +178,13 @@ func copyFileContents(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = in.Close() }()
+	defer utils.CloseQuietly(in)
 	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600) //nolint:gosec // dst is <workspace>/tmp plus a name sanitized by receivedFileName
 	if err != nil {
 		return err
 	}
 	if _, err := io.Copy(out, in); err != nil {
-		_ = out.Close()
+		utils.CloseQuietly(out)
 		return err
 	}
 	return out.Close()

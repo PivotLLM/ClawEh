@@ -348,7 +348,7 @@ func (sm *SubagentManager) runRecord(rec *TaskRecord, cb tools.AsyncCallback, re
 	}()
 
 	rec.StartedAt = nowRFC()
-	_ = writeStatus(sm.tasksDir(), rec)
+	persistStatus(sm.tasksDir(), rec)
 
 	taskText := rec.Task
 	if resumed {
@@ -509,9 +509,24 @@ func (sm *SubagentManager) recordResults(rec *TaskRecord, content string, iterat
 			Content:    content,
 		}
 	}
-	_ = writeResults(dir, results)
-	_ = writeStatus(dir, rec)
+	persistResults(dir, results)
+	persistStatus(dir, rec)
 	return sm.completionResult(rec)
+}
+
+// persistStatus writes the task's status record. A failed write is logged
+// rather than failing the run: the task itself has already happened.
+func persistStatus(dir string, rec *TaskRecord) {
+	if err := writeStatus(dir, rec); err != nil {
+		logger.WarnCF("subagent", "failed to write task status", map[string]any{"uuid": rec.UUID, "error": err.Error()})
+	}
+}
+
+// persistResults writes the task's results file; see persistStatus.
+func persistResults(dir string, res *TaskResults) {
+	if err := writeResults(dir, res); err != nil {
+		logger.WarnCF("subagent", "failed to write task results", map[string]any{"uuid": res.UUID, "error": err.Error()})
+	}
 }
 
 // SuperviseOnce scans the workspace for interrupted callback tasks (.run markers
@@ -538,8 +553,8 @@ func (sm *SubagentManager) SuperviseOnce(now int64, cbFor func(rec *TaskRecord) 
 			rec.Status = StatusError
 			rec.Error = fmt.Sprintf("gave up after %d interrupted restarts", rec.Restarts)
 			rec.FinishedAt = nowRFC()
-			_ = writeResults(dir, errResults(rec, rec.Error))
-			_ = writeStatus(dir, rec)
+			persistResults(dir, errResults(rec, rec.Error))
+			persistStatus(dir, rec)
 			clearRun(dir, id)
 			continue
 		}
@@ -550,7 +565,7 @@ func (sm *SubagentManager) SuperviseOnce(now int64, cbFor func(rec *TaskRecord) 
 		rec.Restarts++
 		rec.RetryAfter = now + retryDelaySecs()
 		rec.Status = StatusRunning
-		_ = writeStatus(dir, rec)
+		persistStatus(dir, rec)
 		sm.live.Add(id)
 		var cb tools.AsyncCallback
 		if cbFor != nil {

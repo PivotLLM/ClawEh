@@ -43,7 +43,10 @@ func (globalSessionProvider) RegisterTools(deps global.Deps) []global.ToolDefini
 	// (Describe) passes a zero Deps, so cd is the zero ToolDeps: the sessions
 	// directory is empty and the closures are nil, and every handler reports
 	// itself unavailable instead of touching disk or the agent loop.
-	cd, _ := deps.Host.(tools.ToolDeps)
+	var cd tools.ToolDeps
+	if v, ok := deps.Host.(tools.ToolDeps); ok {
+		cd = v
+	}
 
 	host := sessiontools.Host{
 		Compact: cd.CompactFn,

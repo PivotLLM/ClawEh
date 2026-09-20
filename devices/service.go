@@ -90,7 +90,9 @@ func (s *Service) Stop() {
 	}
 
 	for _, src := range s.sources {
-		src.Stop()
+		if err := src.Stop(); err != nil {
+			logger.WarnCF("devices", "Failed to stop device source", map[string]any{"error": err.Error()})
+		}
 	}
 
 	logger.InfoC("devices", "Device event service stopped")
@@ -130,11 +132,19 @@ func (s *Service) sendNotification(ev *events.DeviceEvent) {
 	msg := ev.FormatMessage()
 	pubCtx, pubCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer pubCancel()
-	msgBus.PublishOutbound(pubCtx, bus.OutboundMessage{
+	if err := msgBus.PublishOutbound(pubCtx, bus.OutboundMessage{
 		Channel: platform,
 		ChatID:  userID,
 		Content: msg,
-	})
+	}); err != nil {
+		logger.WarnCF("devices", "Failed to publish device notification", map[string]any{
+			"kind":   ev.Kind,
+			"action": ev.Action,
+			"to":     platform,
+			"error":  err.Error(),
+		})
+		return
+	}
 
 	logger.InfoCF("devices", "Device notification sent", map[string]any{
 		"kind":   ev.Kind,

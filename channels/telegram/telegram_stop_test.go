@@ -28,7 +28,9 @@ func TestStopBlocksUntilLongPollExits(t *testing.T) {
 
 	returned := make(chan struct{})
 	go func() {
-		_ = c.Stop(context.Background())
+		if err := c.Stop(context.Background()); err != nil {
+			t.Errorf("Stop: %v", err)
+		}
 		close(returned)
 	}()
 
@@ -65,7 +67,9 @@ func TestStopHonoursTimeout(t *testing.T) {
 	}
 
 	start := time.Now()
-	_ = c.Stop(context.Background())
+	if err := c.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
 	elapsed := time.Since(start)
 
 	if elapsed < pollExitTimeout {
@@ -94,7 +98,9 @@ func TestStopIsIdempotent(t *testing.T) {
 	for i := range 3 {
 		done := make(chan struct{})
 		go func() {
-			_ = c.Stop(context.Background())
+			if err := c.Stop(context.Background()); err != nil {
+				t.Errorf("Stop: %v", err)
+			}
 			close(done)
 		}()
 		select {

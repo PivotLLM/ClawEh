@@ -389,11 +389,16 @@ func (al *AgentLoop) getSessionContext(agent *AgentInstance, sessionKey string) 
 		if text == "" || channel == "" || al.bus == nil || constants.IsInternalChannel(channel) {
 			return
 		}
-		_ = al.bus.PublishOutbound(context.Background(), bus.OutboundMessage{
+		if err := al.bus.PublishOutbound(context.Background(), bus.OutboundMessage{
 			Channel: channel,
 			ChatID:  chatID,
 			Content: text,
-		})
+		}); err != nil {
+			logger.WarnCF("llmcontext", "Failed to deliver compaction report", map[string]any{
+				"channel": channel,
+				"error":   err.Error(),
+			})
+		}
 	}
 
 	// The archive directory is the sessions directory within the agent workspace.

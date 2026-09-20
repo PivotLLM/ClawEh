@@ -50,7 +50,10 @@ func TestSpawnCallback_Lifecycle(t *testing.T) {
 		t.Fatalf("expected success pointer, got %+v", res)
 	}
 
-	st, _ := mgr.TaskStatus(id)
+	st, statusErr := mgr.TaskStatus(id)
+	if statusErr != nil {
+		t.Fatalf("TaskStatus: %v", statusErr)
+	}
 	if st.Status != StatusDone {
 		t.Errorf("status = %q, want done", st.Status)
 	}
@@ -123,7 +126,10 @@ func TestSupervise_RelaunchesInterruptedTask(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("interrupted task was not relaunched/completed")
 	}
-	st, _ := mgr.TaskStatus("uuid-relaunch")
+	st, err := mgr.TaskStatus("uuid-relaunch")
+	if err != nil {
+		t.Fatalf("TaskStatus: %v", err)
+	}
 	if st.Status != StatusDone {
 		t.Errorf("status = %q, want done", st.Status)
 	}
@@ -139,7 +145,10 @@ func TestSupervise_GivesUpAfterMaxRestarts(t *testing.T) {
 
 	mgr.SuperviseOnce(nowEpoch(), func(*TaskRecord) tools.AsyncCallback { return nil })
 
-	st, _ := mgr.TaskStatus("uuid-giveup")
+	st, err := mgr.TaskStatus("uuid-giveup")
+	if err != nil {
+		t.Fatalf("TaskStatus: %v", err)
+	}
 	if st.Status != StatusError {
 		t.Errorf("status = %q, want error", st.Status)
 	}
@@ -158,7 +167,10 @@ func TestSupervise_RespectsCooldown(t *testing.T) {
 		return nil
 	})
 
-	st, _ := mgr.TaskStatus("uuid-cooldown")
+	st, err := mgr.TaskStatus("uuid-cooldown")
+	if err != nil {
+		t.Fatalf("TaskStatus: %v", err)
+	}
 	if st.Status != StatusRunning {
 		t.Errorf("status = %q, want running (untouched)", st.Status)
 	}
