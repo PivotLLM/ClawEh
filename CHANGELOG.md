@@ -882,9 +882,7 @@ on, and breaking one is a deliberate decision rather than a free move.
 ### Removed
 
 - **The `hw_i2c` and `hw_spi` tools.** Inherited from the picoclaw fork, where
-  they drove sensors over the Linux I2C/SPI buses on the original SBC. They were
-  off by default and unused. Remove `tools.i2c` / `tools.spi` from your config if
-  present; unknown keys are ignored, so this is not a breaking change.
+  they drove sensors over the Linux I2C/SPI buses on the original SBC.
 - **`docs/config.example.json` and `docs/env-example`.** The example config had
   drifted so far it no longer loaded, and described picoclaw's model shape rather
   than ClawEh's. ClawEh writes a complete `~/.claw/config.json` on first run,

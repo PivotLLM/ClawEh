@@ -258,13 +258,15 @@ Full details, including the turn lifecycle and the JSON-RPC wire format, are in
 
 ## Why ClawEh exists
 
-ClawEh began as a fork of [PicoClaw](https://github.com/sipeed/picoclaw), chosen for its small, easy to deploy Go foundation, and has since become a separate project with different priorities: a smaller, focused codebase that puts core stability, reliability, security and maintainability first. The upstream contributions that preceded the fork are listed in [docs/HISTORY.md](docs/HISTORY.md).
+ClawEh began as a fork of [PicoClaw](https://github.com/sipeed/picoclaw), whose small, easy-to-deploy Go foundation provided the inspiration and starting point for the project.
+
+It has since evolved into a separate project with different priorities: a smaller, focused codebase that puts core stability, reliability, security, and maintainability first. Over time, the implementation was progressively rewritten, and the original PicoClaw code has now been completely replaced.
+
+ClawEh remains grateful to PicoClaw for the original idea and inspiration.
 
 ## Binary distribution
 
-For users who are not interested in compiling it themselves, prebuilt (and, on
-macOS, signed) builds are published to [GitHub Releases](https://github.com/PivotLLM/ClawEh/releases)
-for Linux and macOS on amd64 and arm64.
+For users who are not interested in compiling it themselves, prebuilt (and, on macOS, signed) builds are published to [GitHub Releases](https://github.com/PivotLLM/ClawEh/releases) for Linux and macOS on amd64 and arm64.
 
 To install ClawEh as a background service and launch the setup wizard in one step:
 
@@ -278,10 +280,7 @@ Alternatively, to install **only the bare binary** without registering a backgro
 curl -fsSL https://raw.githubusercontent.com/PivotLLM/ClawEh/main/claweh.sh | sh
 ```
 
-This downloads the `claw` binary for your platform and installs it to
-`/usr/local/bin` (falling back to `~/.local/bin`), together with the license and
-third-party notices. It installs **only the binary** — it never touches your data
-directory (`~/.claw`), so it is safe to re-run to upgrade.
+This downloads the `claw` binary for your platform and installs it to `/usr/local/bin` (falling back to `~/.local/bin`), together with the license and third-party notices. It installs **only the binary** — it never touches your data directory (`~/.claw`), so it is safe to re-run to upgrade.
 
 Environment overrides:
 
@@ -890,15 +889,13 @@ SESSION_TOKEN=SST... ./tests/test_mcpserver.sh
 
 ## Third-party integrations
 
-ClawEh takes a deliberately narrow approach to third-party integrations. In keeping with its focus on security, privacy, and maintainability, a number of integrations present in the upstream project have been removed or disabled by default. This includes messaging platforms, external registries, and service integrations that were not aligned with the project's goals or present unjustifiable security risks. The integrations that remain are ones we consider broadly useful and consistent with the project's goals of a small footprint, reliability, and long-term maintainability.
-
-Rather than directly integrating tools into the software, ClawEh focuses on solid MCP (Model Context Protocol) support, allowing users to connect the specific tools they want and trust. Direct tool integrations will only be added when there is a compelling reason that MCP cannot address.
+ClawEh takes a deliberately narrow approach to third-party integrations, incorporating those that add practical value. It includes the MPCFusion library, enabling configuration-defined tools, and provides solid MCP (Model Context Protocol) support, allowing users to connect the specific tools they want and trust. 
 
 ## Copyright and license
 
 Copyright (c) 2026 Tenebris Technologies Inc.
 
-This software is licensed under the MIT License; portions derive from PicoClaw, also MIT. Please see `LICENSE` for details.
+This software is licensed under the MIT License. Please see `LICENSE` for details.
 
 ## Trademarks
 
