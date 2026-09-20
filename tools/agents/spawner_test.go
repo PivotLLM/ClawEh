@@ -8,40 +8,14 @@ import (
 	"time"
 
 	"github.com/PivotLLM/ClawEh/global"
-	"github.com/PivotLLM/ClawEh/providers"
 )
-
-// MockLLMProvider echoes the last user message back as the assistant response so
-// wait-mode results reference the task text.
-type MockLLMProvider struct{}
-
-func (m *MockLLMProvider) Chat(
-	_ context.Context,
-	messages []providers.Message,
-	_ []providers.ToolDefinition,
-	_ string,
-	_ map[string]any,
-) (*providers.LLMResponse, error) {
-	content := ""
-	for _, msg := range messages {
-		if msg.Role == "user" {
-			content = msg.Content
-		}
-	}
-	return &providers.LLMResponse{Content: content}, nil
-}
-
-func (m *MockLLMProvider) GetDefaultModel() string { return "test-model" }
-func (m *MockLLMProvider) SupportsTools() bool     { return false }
-func (m *MockLLMProvider) GetContextWindow() int   { return 4096 }
 
 func newTestSpawner(t *testing.T) *Spawner {
 	t.Helper()
 	mgr := NewSubagentManager(SubagentManagerConfig{
-		Provider:     &MockLLMProvider{},
-		DefaultModel: "test-model",
-		Workspace:    t.TempDir(),
-		Live:         NewLiveSet(),
+		Workspace: t.TempDir(),
+		Live:      NewLiveSet(),
+		RunFull:   echoRunFull,
 	})
 	return NewSpawner(mgr)
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,16 +12,65 @@ import (
 	"github.com/PivotLLM/ClawEh/tools"
 )
 
+// echoRunFull is a fake full-pipeline runner that returns the task text as the
+// worker's output, so results reference the task.
+func echoRunFull(_ context.Context, _, _, task, _ string, _ []string) (*global.SyncResult, error) {
+	return &global.SyncResult{Content: task, Iterations: 1}, nil
+}
+
 func newTestManager(t *testing.T) (*SubagentManager, string) {
 	t.Helper()
 	ws := t.TempDir()
 	mgr := NewSubagentManager(SubagentManagerConfig{
-		Provider:     &MockLLMProvider{},
-		DefaultModel: "test-model",
-		Workspace:    ws,
-		Live:         NewLiveSet(),
+		Workspace: ws,
+		Live:      NewLiveSet(),
+		RunFull:   echoRunFull,
 	})
 	return mgr, ws
+}
+
+// TestSpawn_NoRunnerIsUnavailable verifies that a manager built without the
+// full-pipeline runner fails both spawn paths with ErrSpawnUnavailable (the
+// error RunSync already returned) instead of running the task some other way:
+// the wait path returns an error result and the callback path records the
+// error on the task and still fires the callback.
+func TestSpawn_NoRunnerIsUnavailable(t *testing.T) {
+	ws := t.TempDir()
+	mgr := NewSubagentManager(SubagentManagerConfig{Workspace: ws, Live: NewLiveSet()})
+	wantErr := global.ErrSpawnUnavailable.Error()
+
+	res, err := mgr.Run(context.Background(), "work", "job", "", "cli", "direct", "", nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res == nil || !res.IsError || !strings.Contains(res.ForLLM, wantErr) {
+		t.Fatalf("wait spawn without runner: want error result wrapping %q, got %+v", wantErr, res)
+	}
+
+	done := make(chan *tools.ToolResult, 1)
+	id, err := mgr.SpawnCallback("work", "job", "", "cli", "direct", "", nil,
+		func(_ context.Context, r *tools.ToolResult) { done <- r }, 0)
+	if err != nil {
+		t.Fatalf("SpawnCallback: %v", err)
+	}
+	select {
+	case res = <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("callback not invoked")
+	}
+	if res == nil || !res.IsError || !strings.Contains(res.ForLLM, wantErr) {
+		t.Fatalf("callback spawn without runner: want error result wrapping %q, got %+v", wantErr, res)
+	}
+	st, err := mgr.TaskStatus(id)
+	if err != nil {
+		t.Fatalf("TaskStatus: %v", err)
+	}
+	if st.Status != StatusError || !strings.Contains(st.Error, wantErr) {
+		t.Errorf("task status = %q / %q, want error wrapping %q", st.Status, st.Error, wantErr)
+	}
+	if _, err := os.Stat(runPath(filepath.Join(ws, "tasks"), id)); !os.IsNotExist(err) {
+		t.Errorf("run marker should be removed after the failed spawn")
+	}
 }
 
 func TestSpawnCallback_Lifecycle(t *testing.T) {

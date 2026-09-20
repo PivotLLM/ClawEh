@@ -259,10 +259,9 @@ populates what it can and leaves cache fields zero.
 Both events use the `agent` log facility at INFO level via
 `logger.InfoCF("agent", ..., fields)`. They are emitted by the **agent loop
 call-site wrapper** that wraps the `callLLM` closure in
-`agent/loop.go` (around line 1451), and by the equivalent loop in
-`tools/toolloop.go`. Providers themselves do **not** emit dispatch /
-finish events — they only populate `DispatchStatus`. This keeps the
-single-source-of-truth at the call site and avoids double-logging when
+`agent/loop.go` (around line 1451). Providers themselves do **not** emit
+dispatch / finish events — they only populate `DispatchStatus`. This keeps
+the single-source-of-truth at the call site and avoids double-logging when
 fallback retries through multiple providers.
 
 ### Dispatch event (before call)
@@ -375,7 +374,6 @@ End-to-end:
   `claude_provider.go` — minor — pass through.
 - `agent/loop.go` — emit `"LLM dispatch"` and `"LLM finish"` events;
   remove "LLM call succeeded".
-- `tools/toolloop.go` — same logging change.
 - Provider tests for every file above.
 
 ## Non-goals

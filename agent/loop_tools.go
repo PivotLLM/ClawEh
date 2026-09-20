@@ -142,11 +142,8 @@ func (al *AgentLoop) registerRuntimeTools(
 		// Robust sub-agent launcher, injected via Deps.Spawn so the internal spawn
 		// tool and any external/MCP tool launch workers through the same path.
 		spawnMgr := toolsagents.NewSubagentManager(toolsagents.SubagentManagerConfig{
-			Provider:          provider,
 			Workspace:         currentAgent.Workspace,
 			Live:              al.taskLive,
-			Dispatcher:        dispatcher,
-			Fallback:          fallbackChain,
 			SelfCandidates:    currentAgent.Candidates,
 			CallerAgentID:     agentID,
 			CandidateResolver: candidateResolver,

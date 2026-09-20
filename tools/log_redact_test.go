@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/PivotLLM/ClawEh/logger"
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 func TestRedactArgs_WriteFile_RecordsContentBytes(t *testing.T) {
@@ -177,6 +178,29 @@ func TestRedactArgs_Default_TruncatesUnknownTool(t *testing.T) {
 	}
 	if len([]rune(s)) > 200+32 {
 		t.Errorf("truncated string longer than expected: %d runes", len([]rune(s)))
+	}
+}
+
+// TestRedactArgs_NoTruncateCannotUncap is a direct unit test on the
+// exported RedactArgs entry point: even with utils.SetDisableTruncation(true)
+// the redaction fallback for unknown tools still bounds the result.
+func TestRedactArgs_NoTruncateCannotUncap(t *testing.T) {
+	utils.SetDisableTruncation(true)
+	defer utils.SetDisableTruncation(false)
+
+	args := map[string]any{
+		"blob": strings.Repeat("X", 8192),
+	}
+	got := RedactArgs("unknown_tool_for_truncation_check", args)
+	s, ok := got.(string)
+	if !ok {
+		t.Fatalf("expected string redaction for unknown tool, got %T", got)
+	}
+	if len([]rune(s)) > 200+32 {
+		t.Errorf("redaction unbounded under --no-truncate: %d runes", len([]rune(s)))
+	}
+	if !strings.Contains(s, "more)") {
+		t.Errorf("expected truncation suffix '...(N more)', got %q", s[:min(120, len(s))])
 	}
 }
 

@@ -155,3 +155,83 @@ func TestEmitLLMFinishEvent_ErrorPathWithPartialStatus_BytesPreserved(t *testing
 		t.Errorf("bytes_received = %v, want 0", finish["bytes_received"])
 	}
 }
+
+// TestRunLLMIteration_EmitsDispatchAndFinishPerCall drives the real loop
+// through one LLM call and verifies it logs exactly one "LLM dispatch" and one
+// "LLM finish" event, with the finish carrying the provider's DispatchStatus.
+func TestRunLLMIteration_EmitsDispatchAndFinishPerCall(t *testing.T) {
+	al := newTestAgentLoop(t).al
+
+	agent := al.registry.GetDefaultAgent()
+	if agent == nil {
+		t.Fatal("no default agent")
+	}
+	agent.Provider = &sequenceProvider{
+		responses: []*providers.LLMResponse{{
+			Content: "hi from Alice",
+			Status: &providers.DispatchStatus{
+				Success:       true,
+				Model:         "gpt-4o-2024-11-20",
+				InputTokens:   3,
+				OutputTokens:  2,
+				StopReason:    "stop",
+				BytesSent:     128,
+				BytesReceived: 256,
+			},
+		}},
+		errors: []error{nil},
+	}
+
+	messages := []providers.Message{{Role: "user", Content: "hi"}}
+	opts := processOptions{
+		SessionKey:   "dispatch-events",
+		Channel:      "cli",
+		ChatID:       "direct",
+		UserMessage:  "hi",
+		SendResponse: false,
+	}
+	cm, releaseTestCM := al.getContextManager(agent, opts.SessionKey)
+	defer releaseTestCM()
+
+	buf := &bytes.Buffer{}
+	restore := logger.RedirectForTest(buf)
+	defer restore()
+
+	it := runIteration(t, al, agent, messages, opts, cm)
+	if it.content != "hi from Alice" {
+		t.Errorf("content = %q, want the provider's answer", it.content)
+	}
+
+	var dispatches, finishes int
+	var finish map[string]any
+	for _, rec := range readLogRecords(t, buf) {
+		switch rec["message"] {
+		case "LLM dispatch":
+			dispatches++
+		case "LLM finish":
+			finishes++
+			finish = rec
+		}
+	}
+	if dispatches != 1 {
+		t.Errorf("dispatch count = %d, want 1", dispatches)
+	}
+	if finishes != 1 {
+		t.Errorf("finish count = %d, want 1", finishes)
+	}
+	if finish == nil {
+		t.Fatal("missing finish record")
+	}
+	if v, ok := finish["success"].(bool); !ok || !v {
+		t.Errorf("success = %v, want true", finish["success"])
+	}
+	if v, ok := finish["bytes_sent"].(float64); !ok || v != 128 {
+		t.Errorf("bytes_sent = %v, want 128", finish["bytes_sent"])
+	}
+	if v, ok := finish["bytes_received"].(float64); !ok || v != 256 {
+		t.Errorf("bytes_received = %v, want 256", finish["bytes_received"])
+	}
+	if finish["model"] != "gpt-4o-2024-11-20" {
+		t.Errorf("model = %v, want gpt-4o-2024-11-20", finish["model"])
+	}
+}

@@ -49,6 +49,13 @@ observe does not need an entry.
   client disconnects. Work that must outlive its trigger (sub-agent callbacks,
   idle eviction, reload, graceful shutdown) is explicitly detached.
 
+- **The standalone sub-agent tool loop is gone.** Sub-agents only ever ran
+  through the agent's full pipeline; the lightweight fallback loop inherited
+  from the upstream project was unreachable in a running gateway. Spawning
+  without the full-pipeline runner now fails with the same error the
+  synchronous path already returned. No behaviour change for a running
+  gateway, which always has the runner.
+
 ### Fixed
 
 - **`claw.pid` is written before the gateway starts serving.** It was written
