@@ -258,7 +258,7 @@ Full details, including the turn lifecycle and the JSON-RPC wire format, are in
 
 ## Why ClawEh exists
 
-ClawEh began as a fork of [PicoClaw](https://github.com/sipeed/picoclaw), chosen for its performant, easy to deploy, and maintainable Go foundation. I loved the PicoClaw concept and originally focused on fixing issues and contributing to the project. However, a growing PR backlog, and the apparent prioritization of new features over core stability make it clear that PicoClaw was unlikely to meet my needs in the foreseeable future. This is not a criticism of the PicoClaw authors, it simply reflects different priorities: a smaller, focused codebase emphasizing core stability, reliability, security, and maintainability.
+ClawEh began as a fork of [PicoClaw](https://github.com/sipeed/picoclaw), chosen for its small, easy to deploy Go foundation, and has since become a separate project with different priorities: a smaller, focused codebase that puts core stability, reliability, security and maintainability first. The upstream contributions that preceded the fork are listed in [docs/HISTORY.md](docs/HISTORY.md).
 
 ## Binary distribution
 
@@ -894,42 +894,11 @@ ClawEh takes a deliberately narrow approach to third-party integrations. In keep
 
 Rather than directly integrating tools into the software, ClawEh focuses on solid MCP (Model Context Protocol) support, allowing users to connect the specific tools they want and trust. Direct tool integrations will only be added when there is a compelling reason that MCP cannot address.
 
-## Relationship to PicoClaw
-
-ClawEh began as a fork of PicoClaw and has evolved into a separate, independently maintained project.
-
-Original code remains under the MIT License, and ClawEh continues under the MIT License as well. This project preserves the original copyright and license notices and includes additional copyright for new modifications in this fork.
-
-Nothing about this project is intended to hold work back from the community. On the contrary, if others find parts of ClawEh useful, they are welcome to reuse, adapt, and build on them under the same MIT terms.
-
-## Project history
-
-Before starting this project, I contributed a number of fixes and improvements upstream. The list below is retained for historical context and to help explain some of the technical and maintenance goals behind ClawEh.
-
-| PR                                                    | Change                                                       |
-| ----------------------------------------------------- | ------------------------------------------------------------ |
-| [#1460](https://github.com/sipeed/picoclaw/pull/1460) | fix(openai_compat): fix tool call serialization for strict OpenAI-compatible providers |
-| [#1479](https://github.com/sipeed/picoclaw/pull/1479) | fix(claude_cli): surface stdout in error when CLI exits non-zero |
-| [#1480](https://github.com/sipeed/picoclaw/pull/1480) | docs: document claude-cli and codex-cli providers in README  |
-| [#1625](https://github.com/sipeed/picoclaw/pull/1625) | feat(channels): support multiple named Telegram bots         |
-| [#1633](https://github.com/sipeed/picoclaw/pull/1633) | feat(providers): add gemini-cli provider                     |
-| [#1637](https://github.com/sipeed/picoclaw/pull/1637) | fix(agent): dispatch per-candidate provider in fallback chain |
-| [#1810](https://github.com/sipeed/picoclaw/pull/1810) | fix(launcher): recognise gemini-cli as a credential-free CLI provider |
-| [#1811](https://github.com/sipeed/picoclaw/pull/1811) | fix(launcher): detect and display externally-managed gateway as running |
-| [#1812](https://github.com/sipeed/picoclaw/pull/1812) | fix(claude-cli): pass system prompt via stdin instead of CLI argument |
-| [#1813](https://github.com/sipeed/picoclaw/pull/1813) | fix(providers): robust CLI tool call extraction and mixed response handling |
-| [#1814](https://github.com/sipeed/picoclaw/pull/1814) | fix(subagent): dispatch subagents through per-agent provider; enforce allowlist on self-spawn; attribute responses |
-| [#1816](https://github.com/sipeed/picoclaw/pull/1816) | fix(cron): show all payload fields in cron list output       |
-| [#1839](https://github.com/sipeed/picoclaw/pull/1839) | fix(cron): route cron jobs to correct agent and publish response to channel |
-| [#1842](https://github.com/sipeed/picoclaw/pull/1842) | fix(cron): reload store on external file change; only save when state changes |
-| [#1847](https://github.com/sipeed/picoclaw/pull/1847) | fix(providers): honour request_timeout for CLI providers with clear timeout errors and fallback |
-
 ## Copyright and license
 
 Copyright (c) 2026 Tenebris Technologies Inc.
-Some code Copyright (c) 2026 PicoClaw contributors
 
-This software is licensed under the MIT License. Please see `LICENSE` for details.
+This software is licensed under the MIT License; portions derive from PicoClaw, also MIT. Please see `LICENSE` for details.
 
 ## Trademarks
 

@@ -54,7 +54,7 @@ the wire format — i.e. after the request is marshalled and before the
 response is unmarshalled. They are never derived from token counts.
 
 - HTTP providers (`anthropic`, `anthropic_messages`, `openai_compat`, `azure`,
-  `http_provider`, `legacy_provider`): `BytesSent = len(requestBodyBytes)`
+  `http_provider`): `BytesSent = len(requestBodyBytes)`
   written to the HTTP request; `BytesReceived = len(responseBodyBytes)`
   read off the response, summed across all chunks for streaming.
 - CLI providers (`claude_cli`, `codex_cli`, `gemini_cli`): `BytesSent` is the
@@ -248,11 +248,10 @@ Mapping:
 to the returned `LLMResponse`. The wall-clock and `Success` fields are filled
 by the calling provider (which knows the HTTP outcome).
 
-### claude_provider.go / legacy_provider.go
+### claude_provider.go
 
 `claude_provider.go` is a small wrapper around `anthropic_messages` — it
-inherits the mapping above. `legacy_provider.go` (older completion-style API)
-populates what it can and leaves cache fields zero.
+inherits the mapping above.
 
 ## Logging events
 

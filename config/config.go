@@ -1873,8 +1873,7 @@ func (g GatewayConfig) EffectiveAllowedCIDRs() []string {
 	return append([]string(nil), g.AllowedCIDRs...)
 }
 
-// ValidateAllowedCIDRs rejects any entry that is not a valid CIDR (matching the
-// validation the retired launcher-config save path enforced).
+// ValidateAllowedCIDRs rejects any entry that is not a valid CIDR.
 func ValidateAllowedCIDRs(cidrs []string) error {
 	for _, c := range cidrs {
 		// "*" means any address, in either family — see middleware.AllowAnyAddress.
@@ -2282,9 +2281,12 @@ func LoadConfig(path string) (*Config, error) {
 	// Fold legacy flat compress_* keys into the nested compression block.
 	cfg.migrateCompressionConfigs()
 
-	// Adopt a stale launcher-config.json (the retired separate allowlist file)
-	// into gateway.allowed_cidrs on each load (see migrateLauncherConfig).
-	migrateLauncherConfig(path, cfg)
+	// launcher-config.json was the retired launcher's separate allowlist file.
+	// It is no longer read; the allowlist lives in gateway.allowed_cidrs.
+	if lc := filepath.Join(filepath.Dir(path), "launcher-config.json"); fileExists(lc) {
+		logger.WarnCF("config", "launcher-config.json is no longer read; move its allowed_cidrs into gateway.allowed_cidrs in config.json and delete it",
+			map[string]any{"path": lc})
+	}
 
 	// Note: provider/model validation is intentionally NOT fatal here. LoadConfig
 	// returns the full parsed config so the WebUI can display and repair invalid
@@ -2319,39 +2321,6 @@ func warnLegacyCompressModel(data []byte) {
 		if len(a.CompressModel) > 0 {
 			logger.WarnCF("config", "ignoring removed field compress_model on agent; configure summarization models globally via summarization.models", map[string]any{"agent_id": a.ID})
 		}
-	}
-}
-
-// migrateLauncherConfig folds the retired launcher-config.json (which held the
-// IP allowlist in a separate file next to config.json) into gateway.allowed_cidrs.
-// It adopts the value into the in-memory config on every load and does NOT persist
-// or delete the stale file: LoadConfig has already overlaid CLAW_* env vars by this
-// point, so writing config.json here would bake env-derived values into the file.
-// Re-adopting each load keeps a custom allowlist alive across restarts; the first
-// WebUI config save persists gateway.allowed_cidrs canonically, after which this
-// no-ops (the gateway block already has an allowlist) and the leftover file is
-// inert. Only runs when the gateway block has no explicit allowlist, so a value
-// already in config.json wins and is not clobbered.
-func migrateLauncherConfig(configPath string, cfg *Config) {
-	if len(cfg.Gateway.AllowedCIDRs) > 0 {
-		return
-	}
-	lcPath := filepath.Join(filepath.Dir(configPath), "launcher-config.json")
-	data, err := os.ReadFile(lcPath) //nolint:gosec // derived from the operator's config path
-	if err != nil {
-		// No legacy file (the common case) — nothing to migrate.
-		return
-	}
-	var legacy struct {
-		AllowedCIDRs []string `json:"allowed_cidrs"`
-	}
-	if err := json.Unmarshal(data, &legacy); err != nil {
-		logger.WarnCF("config", "ignoring unreadable launcher-config.json during migration", map[string]any{"path": lcPath, "error": err.Error()})
-		return
-	}
-	if len(legacy.AllowedCIDRs) > 0 {
-		cfg.Gateway.AllowedCIDRs = legacy.AllowedCIDRs
-		logger.InfoCF("config", "adopted launcher-config.json allowed_cidrs into gateway.allowed_cidrs", map[string]any{"allowed_cidrs": legacy.AllowedCIDRs})
 	}
 }
 
@@ -3013,4 +2982,10 @@ func (t *ToolsConfig) ToolEnabled(name string, defaultAllow bool) bool {
 		return v
 	}
 	return defaultAllow
+}
+
+// fileExists reports whether path names an existing file.
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }

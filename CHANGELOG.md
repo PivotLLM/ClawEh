@@ -49,6 +49,17 @@ observe does not need an entry.
   client disconnects. Work that must outlive its trigger (sub-agent callbacks,
   idle eviction, reload, graceful shutdown) is explicitly detached.
 
+- **`--version` names only Tenebris Technologies.** The MIT notice for the
+  PicoClaw code the project started from stays in `LICENSE`; the per-file
+  copyright lines and the README's history section are consolidated there
+  and in `docs/HISTORY.md`.
+
+### Removed
+
+- **`launcher-config.json` is no longer read.** The retired launcher's
+  separate IP allowlist file was folded into `gateway.allowed_cidrs` on every
+  load. Nothing writes that file any more; if one is still present, startup
+  logs a warning naming it and the allowlist in `config.json` is what applies.
 - **Upstream assets removed.** The `assets/` directory (upstream demo GIFs,
   logos and community images, 11 MB, referenced by nothing) and the retired
   `claw-web` screenshot are gone from the repository.
