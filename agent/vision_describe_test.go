@@ -159,8 +159,7 @@ func (flowAImageTool) Execute(_ context.Context, _ map[string]any) *tools.ToolRe
 // side-model is configured — the description is injected as a follow-up user
 // turn the next dispatch sees.
 func TestFlowA_InjectsDescriptionForNonVisionModel(t *testing.T) {
-	al, _, _, _, cleanup := newTestAgentLoop(t)
-	defer cleanup()
+	al := newTestAgentLoop(t).al
 
 	agent := al.registry.GetDefaultAgent()
 	if agent == nil {
@@ -193,13 +192,7 @@ func TestFlowA_InjectsDescriptionForNonVisionModel(t *testing.T) {
 	cm, release := al.getContextManager(agent, opts.SessionKey)
 	defer release()
 
-	_, _, _, _, _, err := al.runLLMIteration(
-		context.Background(), agent,
-		[]providers.Message{{Role: "user", Content: "how many cats?"}}, opts, cm, nil,
-	)
-	if err != nil {
-		t.Fatalf("runLLMIteration: %v", err)
-	}
+	runIteration(t, al, agent, []providers.Message{{Role: "user", Content: "how many cats?"}}, opts, cm)
 
 	// The vision side-model must have received the tool's image.
 	if len(stub.gotMedia) != 1 {

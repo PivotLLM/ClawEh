@@ -481,61 +481,44 @@ func TestWriteFile_Backup_FailureAbortsModification(t *testing.T) {
 
 // --- F3: backup must not be created when edit validation fails --------------
 
-func TestEditFile_Backup_OldTextMissing_NoBackup(t *testing.T) {
-	ws := t.TempDir()
-	target := filepath.Join(ws, "e.txt")
-	if err := os.WriteFile(target, []byte("hello world"), 0o644); err != nil {
-		t.Fatal(err)
+// TestEditFile_Backup_ValidationFailure_NoBackup: an edit that fails
+// validation must leave neither a backup nor a changed target.
+func TestEditFile_Backup_ValidationFailure_NoBackup(t *testing.T) {
+	cases := []struct {
+		name, content, oldText, reason string
+	}{
+		{"old_text missing", "hello world", "absent", "old_text is missing"},
+		{"old_text ambiguous", "ab ab", "ab", "old_text is ambiguous"},
 	}
-	tool := NewEditFileTool(ws, true)
-	res := tool.Execute(context.Background(), map[string]any{
-		"path":     "e.txt",
-		"old_text": "absent",
-		"new_text": "x",
-		"backup":   true,
-	})
-	if !res.IsError {
-		t.Fatal("expected edit to fail when old_text is missing")
-	}
-	matches, _ := filepath.Glob(filepath.Join(ws, "e.txt.*"))
-	if len(matches) != 0 {
-		t.Errorf("expected no orphan backup when validation fails; got: %v", matches)
-	}
-	got, err := os.ReadFile(target)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got) != "hello world" {
-		t.Errorf("target should be unchanged; got %q", got)
-	}
-}
-
-func TestEditFile_Backup_OldTextDuplicate_NoBackup(t *testing.T) {
-	ws := t.TempDir()
-	target := filepath.Join(ws, "e.txt")
-	if err := os.WriteFile(target, []byte("ab ab"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	tool := NewEditFileTool(ws, true)
-	res := tool.Execute(context.Background(), map[string]any{
-		"path":     "e.txt",
-		"old_text": "ab",
-		"new_text": "z",
-		"backup":   true,
-	})
-	if !res.IsError {
-		t.Fatal("expected edit to fail when old_text is ambiguous")
-	}
-	matches, _ := filepath.Glob(filepath.Join(ws, "e.txt.*"))
-	if len(matches) != 0 {
-		t.Errorf("expected no orphan backup when validation fails; got: %v", matches)
-	}
-	got, err := os.ReadFile(target)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got) != "ab ab" {
-		t.Errorf("target should be unchanged; got %q", got)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ws := t.TempDir()
+			target := filepath.Join(ws, "e.txt")
+			if err := os.WriteFile(target, []byte(tc.content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			tool := NewEditFileTool(ws, true)
+			res := tool.Execute(context.Background(), map[string]any{
+				"path":     "e.txt",
+				"old_text": tc.oldText,
+				"new_text": "x",
+				"backup":   true,
+			})
+			if !res.IsError {
+				t.Fatalf("expected edit to fail when %s", tc.reason)
+			}
+			matches, _ := filepath.Glob(filepath.Join(ws, "e.txt.*"))
+			if len(matches) != 0 {
+				t.Errorf("expected no orphan backup when validation fails; got: %v", matches)
+			}
+			got, err := os.ReadFile(target)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != tc.content {
+				t.Errorf("target should be unchanged; got %q", got)
+			}
+		})
 	}
 }
 

@@ -39,8 +39,8 @@ func (m *mockDisplayTool) Execute(_ context.Context, _ map[string]any) *tools.To
 // which is false for inbound user messages, silently dropping the ForUser block
 // for write_file/edit_file/append_file with display:true.
 func TestRunLLMIteration_ToolForUser_PublishedOnInboundUserMessage(t *testing.T) {
-	al, cfg, msgBus, _, cleanup := newTestAgentLoop(t)
-	defer cleanup()
+	tl := newTestAgentLoop(t)
+	al, cfg, msgBus := tl.al, tl.cfg, tl.msgBus
 	// ForUser is only streamed to the user when tool-activity streaming is on.
 	cfg.Agents.Defaults.StreamToolActivity = true
 
@@ -141,8 +141,8 @@ loop:
 // StreamToolActivity off (the default), a tool's ForUser content is NOT streamed
 // to the user — the same setup as above but with the flag off.
 func TestRunLLMIteration_ToolForUser_SuppressedWhenStreamingOff(t *testing.T) {
-	al, cfg, msgBus, _, cleanup := newTestAgentLoop(t)
-	defer cleanup()
+	tl := newTestAgentLoop(t)
+	al, cfg, msgBus := tl.al, tl.cfg, tl.msgBus
 	cfg.Agents.Defaults.StreamToolActivity = false // explicit: the default
 
 	agentInstance := al.registry.GetDefaultAgent()

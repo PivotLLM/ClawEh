@@ -30,8 +30,7 @@ func openSessionStore(t *testing.T, agent *AgentInstance, key string) *store.Sto
 // TestWireCognitiveMemory_GatesOnAgentFlag: only agents with cogmem on get a
 // session; sub-agent sessions are ephemeral.
 func TestWireCognitiveMemory_GatesOnAgentFlag(t *testing.T) {
-	al, _, _, _, cleanup := newTestAgentLoop(t)
-	defer cleanup()
+	al := newTestAgentLoop(t).al
 	agent := al.registry.GetDefaultAgent()
 	mem := al.wireCognitiveMemory(agent, "agent:main:main")
 	if mem == nil {
@@ -54,8 +53,7 @@ func TestWireCognitiveMemory_GatesOnAgentFlag(t *testing.T) {
 // upgrade, archived messages past the watermark are copied into the inbox so
 // nothing already spoken is lost to memory; a second open does not repeat it.
 func TestMemorySession_BackfillsInboxFromArchiveOnce(t *testing.T) {
-	al, _, _, _, cleanup := newTestAgentLoop(t)
-	defer cleanup()
+	al := newTestAgentLoop(t).al
 	agent := al.registry.GetDefaultAgent()
 	const key = "agent:main:main"
 	ctx := context.Background()

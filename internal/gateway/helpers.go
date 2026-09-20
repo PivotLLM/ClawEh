@@ -220,9 +220,9 @@ func gatewayCmd(debug bool) error {
 	// visible through the file (the usual daemon order); the deferred removal
 	// still cleans up if startup fails below. Non-fatal: a gateway that cannot
 	// write the file should still serve.
-	if err := pidfile.Write(cfg.DataDir()); err != nil {
+	if werr := pidfile.Write(cfg.DataDir()); werr != nil {
 		logger.WarnCF("gateway", "could not write the pid file; `claw status` will not see this instance",
-			map[string]any{"error": err.Error()})
+			map[string]any{"error": werr.Error()})
 	}
 	defer pidfile.Remove(cfg.DataDir())
 

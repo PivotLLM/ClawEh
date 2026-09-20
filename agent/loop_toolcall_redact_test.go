@@ -58,8 +58,7 @@ func runWriteFileToolCallOnce(t *testing.T, secret string) string {
 	restore := logger.RedirectForTest(&buf)
 	defer restore()
 
-	al, _, _, _, cleanup := newTestAgentLoop(t)
-	defer cleanup()
+	al := newTestAgentLoop(t).al
 
 	agentInstance := al.registry.GetDefaultAgent()
 	if agentInstance == nil {

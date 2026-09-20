@@ -11,7 +11,9 @@ import (
 	"time"
 )
 
-// OAuthProvider defines the interface that all OAuth service providers must implement
+// OAuthProvider defines the interface that all OAuth service providers must implement.
+//
+//nolint:interfacebloat // plugin contract: every provider supplies all of these; splitting it would only add indirection
 type OAuthProvider interface {
 	// GetServiceName returns the unique name identifier for this service
 	GetServiceName() string

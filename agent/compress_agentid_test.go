@@ -105,8 +105,7 @@ func (p *finalLLMProvider) GetDefaultModel() string { return "test-final" }
 // path) must both see agent_id when the loop runs, otherwise compression error
 // logs lose the agent attribution Eric saw.
 func TestRunAgentLoop_PropagatesAgentIDForCompression(t *testing.T) {
-	al, _, _, _, cleanup := newTestAgentLoop(t)
-	defer cleanup()
+	al := newTestAgentLoop(t).al
 
 	agent := al.registry.GetDefaultAgent()
 	if agent == nil {

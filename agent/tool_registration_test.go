@@ -126,7 +126,9 @@ func TestGetModelInfo_ReflectsActiveSelection(t *testing.T) {
 	}
 
 	rt := al.buildCommandsRuntime(ag, &processOptions{SessionKey: sk}, bus.InboundMessage{})
-	name, _, _, _ := rt.GetModelInfo()
+	// Only the name is under test; provider, protocol and API base come from
+	// model config this fixture does not populate.
+	name, _, _, _ := rt.GetModelInfo() //nolint:dogsled // see above
 	if name != "m2" {
 		t.Errorf("GetModelInfo name = %q, want m2 (the active selection)", name)
 	}

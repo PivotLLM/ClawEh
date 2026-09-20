@@ -201,8 +201,7 @@ func (s *issuingSTI) Issue(_, _, _ string) string {
 // context manager is created lands in the dispatch layers, and a reissue
 // (session clear) replaces it in place.
 func TestSessionToken_IssuedAndReissuedOnEntry(t *testing.T) {
-	al, _, _, _, cleanup := newTestAgentLoop(t)
-	defer cleanup()
+	al := newTestAgentLoop(t).al
 	agent := al.registry.GetDefaultAgent()
 	if agent == nil {
 		t.Fatal("no default agent")

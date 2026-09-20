@@ -14,8 +14,8 @@ import (
 func TestToolActivity_BreadcrumbGating(t *testing.T) {
 	run := func(t *testing.T, on bool) []string {
 		t.Helper()
-		al, cfg, msgBus, _, cleanup := newTestAgentLoop(t)
-		defer cleanup()
+		tl := newTestAgentLoop(t)
+		al, cfg, msgBus := tl.al, tl.cfg, tl.msgBus
 		// Keep the model's ForUser streaming off so only the breadcrumb reaches the bus.
 		cfg.Agents.Defaults.StreamToolActivity = false
 

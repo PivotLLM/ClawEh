@@ -12,8 +12,7 @@ import (
 // the model requests the identical tool-call batch on consecutive iterations
 // (the degenerate memory-rewrite loop that hit Wendy).
 func TestLoopProtection_BreaksOnRepeatedToolCall(t *testing.T) {
-	al, _, _, _, cleanup := newTestAgentLoop(t)
-	defer cleanup()
+	al := newTestAgentLoop(t).al
 
 	agentInstance := al.registry.GetDefaultAgent()
 	if agentInstance == nil {

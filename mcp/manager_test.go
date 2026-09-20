@@ -526,8 +526,10 @@ func TestProbeOnce_ReconnectsUnresponsiveServer(t *testing.T) {
 	if !ok || conn2 == conn {
 		t.Fatalf("probe should reconnect a dead server: ok=%v same=%v", ok, conn2 == conn)
 	}
-	if err := conn2.Client.Ping(ctx); err != nil {
-		t.Fatalf("reconnected server should answer ping: %v", err)
+	// Ping is a no-op on modern connections (the RPC was removed from the
+	// protocol), so prove liveness with a real round trip.
+	if _, err := conn2.Client.ListTools(ctx, mcp.ListToolsRequest{}); err != nil {
+		t.Fatalf("reconnected server should answer a request: %v", err)
 	}
 }
 

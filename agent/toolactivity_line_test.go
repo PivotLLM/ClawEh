@@ -6,8 +6,7 @@ import "testing"
 // session, and returns "" for an unknown agent. This is the callback wired into
 // the MCP server so CLI-provider tool calls surface like loop-dispatched ones.
 func TestToolActivityLine(t *testing.T) {
-	al, _, _, _, cleanup := newTestAgentLoop(t)
-	defer cleanup()
+	al := newTestAgentLoop(t).al
 
 	agentInstance := al.registry.GetDefaultAgent()
 	if agentInstance == nil {

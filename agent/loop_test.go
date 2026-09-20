@@ -34,17 +34,13 @@ func (f *fakeChannel) IsAllowed(string) bool                                   {
 func (f *fakeChannel) IsAllowedSender(sender bus.SenderInfo) bool              { return true }
 func (f *fakeChannel) ReasoningChannelID() string                              { return f.id }
 
-func newTestAgentLoop(
-	t *testing.T,
-) (al *AgentLoop, cfg *config.Config, msgBus *bus.MessageBus, provider *mockProvider, cleanup func()) {
+// newTestConfig returns the config the agent tests start from: one default
+// agent "main" under a temp base dir that t removes.
+func newTestConfig(t *testing.T) *config.Config {
 	t.Helper()
-	tmpDir, err := os.MkdirTemp("", "agent-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	cfg = &config.Config{
+	return &config.Config{
 		Agents: config.AgentsConfig{
-			BaseDir: tmpDir,
+			BaseDir: t.TempDir(),
 			Defaults: config.AgentDefaults{
 				Models:            []string{"test-model"},
 				MaxTokens:         4096,
@@ -55,15 +51,53 @@ func newTestAgentLoop(
 			},
 		},
 	}
-	msgBus = bus.NewMessageBus()
-	provider = &mockProvider{}
-	al = mustNewAgentLoop(t, cfg, msgBus, provider, nil)
-	return al, cfg, msgBus, provider, func() { os.RemoveAll(tmpDir) }
+}
+
+// iteration is runLLMIteration's result unpacked by name, so a test reads the
+// parts it cares about instead of discarding positional returns.
+type iteration struct {
+	content      string
+	normal       bool
+	degenerate   bool
+	finishReason string
+	iterations   int
+}
+
+// runIteration runs one runLLMIteration for the test and fails it on error.
+func runIteration(t testing.TB, al *AgentLoop, agent *AgentInstance, messages []providers.Message, opts processOptions, cm ctxengine.ContextManager) iteration {
+	t.Helper()
+	content, normal, degenerate, finish, n, err := al.runLLMIteration(context.Background(), agent, messages, opts, cm, nil)
+	if err != nil {
+		t.Fatalf("runLLMIteration: %v", err)
+	}
+	return iteration{content: content, normal: normal, degenerate: degenerate, finishReason: finish, iterations: n}
+}
+
+// testLoop bundles an agent loop with the config, bus and provider it was
+// built from, so tests can reach whichever piece they need.
+type testLoop struct {
+	al       *AgentLoop
+	cfg      *config.Config
+	msgBus   *bus.MessageBus
+	provider *mockProvider
+}
+
+func newTestAgentLoop(t *testing.T) *testLoop {
+	t.Helper()
+	cfg := newTestConfig(t)
+	msgBus := bus.NewMessageBus()
+	provider := &mockProvider{}
+	return &testLoop{
+		al:       mustNewAgentLoop(t, cfg, msgBus, provider, nil),
+		cfg:      cfg,
+		msgBus:   msgBus,
+		provider: provider,
+	}
 }
 
 func TestRecordLastChannel(t *testing.T) {
-	al, cfg, msgBus, provider, cleanup := newTestAgentLoop(t)
-	defer cleanup()
+	tl := newTestAgentLoop(t)
+	al, cfg, msgBus, provider := tl.al, tl.cfg, tl.msgBus, tl.provider
 
 	testChannel := "test-channel"
 	if err := al.RecordLastChannel(testChannel); err != nil {
@@ -79,8 +113,8 @@ func TestRecordLastChannel(t *testing.T) {
 }
 
 func TestRecordLastChatID(t *testing.T) {
-	al, cfg, msgBus, provider, cleanup := newTestAgentLoop(t)
-	defer cleanup()
+	tl := newTestAgentLoop(t)
+	al, cfg, msgBus, provider := tl.al, tl.cfg, tl.msgBus, tl.provider
 
 	testChatID := "test-chat-id-123"
 	if err := al.RecordLastChatID(testChatID); err != nil {
@@ -97,26 +131,7 @@ func TestRecordLastChatID(t *testing.T) {
 
 func TestNewAgentLoop_StateInitialized(t *testing.T) {
 	// Create temp workspace
-	tmpDir, err := os.MkdirTemp("", "agent-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	// Create test config
-	cfg := &config.Config{
-		Agents: config.AgentsConfig{
-			BaseDir: tmpDir,
-			Defaults: config.AgentDefaults{
-				Models:            []string{"test-model"},
-				MaxTokens:         4096,
-				MaxToolIterations: 10,
-			},
-			List: []config.AgentConfig{
-				{ID: "main", Name: "Main", Default: true},
-			},
-		},
-	}
+	cfg := newTestConfig(t)
 
 	// Create agent loop
 	msgBus := bus.NewMessageBus()
@@ -130,7 +145,7 @@ func TestNewAgentLoop_StateInitialized(t *testing.T) {
 
 	// Verify state directory was created. The default agent resolves to
 	// <base_dir>/default, so its state lives under tmpDir/default/state.
-	stateDir := filepath.Join(tmpDir, "default", "state")
+	stateDir := filepath.Join(cfg.Agents.BaseDir, "default", "state")
 	if _, err := os.Stat(stateDir); os.IsNotExist(err) {
 		t.Error("Expected state directory to exist")
 	}
@@ -138,29 +153,8 @@ func TestNewAgentLoop_StateInitialized(t *testing.T) {
 
 // TestToolRegistry_ToolRegistration verifies tools can be registered and retrieved
 func TestToolRegistry_ToolRegistration(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "agent-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	cfg := &config.Config{
-		Agents: config.AgentsConfig{
-			List: []config.AgentConfig{
-				{
-					ID:      "main",
-					Default: true,
-					Tools:   []string{"mock_custom"},
-				},
-			},
-			BaseDir: tmpDir,
-			Defaults: config.AgentDefaults{
-				Models:            []string{"test-model"},
-				MaxTokens:         4096,
-				MaxToolIterations: 10,
-			},
-		},
-	}
+	cfg := newTestConfig(t)
+	cfg.Agents.List[0].Tools = []string{"mock_custom"}
 
 	msgBus := bus.NewMessageBus()
 	provider := &mockProvider{}
@@ -201,29 +195,8 @@ func TestToolContext_Updates(t *testing.T) {
 
 // TestToolRegistry_GetDefinitions verifies tool definitions can be retrieved
 func TestToolRegistry_GetDefinitions(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "agent-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	cfg := &config.Config{
-		Agents: config.AgentsConfig{
-			List: []config.AgentConfig{
-				{
-					ID:      "main",
-					Default: true,
-					Tools:   []string{"mock_custom"},
-				},
-			},
-			BaseDir: tmpDir,
-			Defaults: config.AgentDefaults{
-				Models:            []string{"test-model"},
-				MaxTokens:         4096,
-				MaxToolIterations: 10,
-			},
-		},
-	}
+	cfg := newTestConfig(t)
+	cfg.Agents.List[0].Tools = []string{"mock_custom"}
 
 	msgBus := bus.NewMessageBus()
 	provider := &mockProvider{}
@@ -246,14 +219,8 @@ func TestToolRegistry_GetDefinitions(t *testing.T) {
 
 // TestAgentLoop_GetStartupInfo verifies startup info contains tools
 func TestAgentLoop_GetStartupInfo(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "agent-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
 	cfg := config.DefaultConfig()
-	cfg.Agents.BaseDir = tmpDir
+	cfg.Agents.BaseDir = t.TempDir()
 	cfg.Agents.Defaults.SetDefaultModel("test-model")
 	cfg.Agents.Defaults.MaxTokens = 4096
 	cfg.Agents.Defaults.MaxToolIterations = 10
@@ -295,22 +262,7 @@ func TestAgentLoop_GetStartupInfo(t *testing.T) {
 
 // TestAgentLoop_Stop verifies Stop() sets running to false
 func TestAgentLoop_Stop(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "agent-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	cfg := &config.Config{
-		Agents: config.AgentsConfig{
-			BaseDir: tmpDir,
-			Defaults: config.AgentDefaults{
-				Models:            []string{"test-model"},
-				MaxTokens:         4096,
-				MaxToolIterations: 10,
-			},
-		},
-	}
+	cfg := newTestConfig(t)
 
 	msgBus := bus.NewMessageBus()
 	provider := &mockProvider{}
@@ -415,25 +367,7 @@ func (h testHelper) executeAndGetResponse(tb testing.TB, ctx context.Context, ms
 const responseTimeout = 3 * time.Second
 
 func TestProcessMessage_UsesRouteSessionKey(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "agent-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	cfg := &config.Config{
-		Agents: config.AgentsConfig{
-			BaseDir: tmpDir,
-			Defaults: config.AgentDefaults{
-				Models:            []string{"test-model"},
-				MaxTokens:         4096,
-				MaxToolIterations: 10,
-			},
-			List: []config.AgentConfig{
-				{ID: "main", Name: "Main", Default: true},
-			},
-		},
-	}
+	cfg := newTestConfig(t)
 
 	msgBus := bus.NewMessageBus()
 	provider := &simpleMockProvider{response: "ok"}
@@ -474,28 +408,8 @@ func TestProcessMessage_UsesRouteSessionKey(t *testing.T) {
 }
 
 func TestProcessMessage_CommandOutcomes(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "agent-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	cfg := &config.Config{
-		Agents: config.AgentsConfig{
-			BaseDir: tmpDir,
-			Defaults: config.AgentDefaults{
-				Models:            []string{"test-model"},
-				MaxTokens:         4096,
-				MaxToolIterations: 10,
-			},
-			List: []config.AgentConfig{
-				{ID: "main", Name: "Main", Default: true},
-			},
-		},
-		Session: config.SessionConfig{
-			Mode: "per-platform",
-		},
-	}
+	cfg := newTestConfig(t)
+	cfg.Session.Mode = "per-platform"
 
 	msgBus := bus.NewMessageBus()
 	provider := &countingMockProvider{response: "LLM reply"}
@@ -557,31 +471,14 @@ func TestProcessMessage_CommandOutcomes(t *testing.T) {
 }
 
 func TestProcessMessage_ModelSelectListConsistency(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "agent-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
+	cfg := newTestConfig(t)
+	cfg.Agents.Defaults.Models = []string{"primary", "secondary"}
+	cfg.Providers = []config.Provider{
+		{Name: "openai", Protocol: "openai-chat", BaseURL: "https://api.openai.com/v1", APIKey: "k"},
 	}
-	defer os.RemoveAll(tmpDir)
-
-	cfg := &config.Config{
-		Agents: config.AgentsConfig{
-			BaseDir: tmpDir,
-			Defaults: config.AgentDefaults{
-				Models:            []string{"primary", "secondary"},
-				MaxTokens:         4096,
-				MaxToolIterations: 10,
-			},
-			List: []config.AgentConfig{
-				{ID: "main", Name: "Main", Default: true},
-			},
-		},
-		Providers: []config.Provider{
-			{Name: "openai", Protocol: "openai-chat", BaseURL: "https://api.openai.com/v1", APIKey: "k"},
-		},
-		Models: []config.ModelConfig{
-			{ModelName: "primary", Model: "primary", Provider: "openai", Enabled: true},
-			{ModelName: "secondary", Model: "secondary", Provider: "openai", Enabled: true},
-		},
+	cfg.Models = []config.ModelConfig{
+		{ModelName: "primary", Model: "primary", Provider: "openai", Enabled: true},
+		{ModelName: "secondary", Model: "secondary", Provider: "openai", Enabled: true},
 	}
 
 	msgBus := bus.NewMessageBus()
@@ -624,25 +521,7 @@ func TestProcessMessage_ModelSelectListConsistency(t *testing.T) {
 
 // TestToolResult_SilentToolDoesNotSendUserMessage verifies silent tools don't trigger outbound
 func TestToolResult_SilentToolDoesNotSendUserMessage(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "agent-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	cfg := &config.Config{
-		Agents: config.AgentsConfig{
-			BaseDir: tmpDir,
-			Defaults: config.AgentDefaults{
-				Models:            []string{"test-model"},
-				MaxTokens:         4096,
-				MaxToolIterations: 10,
-			},
-			List: []config.AgentConfig{
-				{ID: "main", Name: "Main", Default: true},
-			},
-		},
-	}
+	cfg := newTestConfig(t)
 
 	msgBus := bus.NewMessageBus()
 	provider := &simpleMockProvider{response: "File operation complete"}
@@ -669,25 +548,7 @@ func TestToolResult_SilentToolDoesNotSendUserMessage(t *testing.T) {
 
 // TestToolResult_UserFacingToolDoesSendMessage verifies user-facing tools trigger outbound
 func TestToolResult_UserFacingToolDoesSendMessage(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "agent-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	cfg := &config.Config{
-		Agents: config.AgentsConfig{
-			BaseDir: tmpDir,
-			Defaults: config.AgentDefaults{
-				Models:            []string{"test-model"},
-				MaxTokens:         4096,
-				MaxToolIterations: 10,
-			},
-			List: []config.AgentConfig{
-				{ID: "main", Name: "Main", Default: true},
-			},
-		},
-	}
+	cfg := newTestConfig(t)
 
 	msgBus := bus.NewMessageBus()
 	provider := &simpleMockProvider{response: "Command output: hello world"}
@@ -743,25 +604,7 @@ func (m *failFirstMockProvider) GetDefaultModel() string {
 
 // TestAgentLoop_ContextExhaustionRetry verify that the agent retries on context errors
 func TestAgentLoop_ContextExhaustionRetry(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "agent-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	cfg := &config.Config{
-		Agents: config.AgentsConfig{
-			BaseDir: tmpDir,
-			Defaults: config.AgentDefaults{
-				Models:            []string{"test-model"},
-				MaxTokens:         4096,
-				MaxToolIterations: 10,
-			},
-			List: []config.AgentConfig{
-				{ID: "main", Name: "Main", Default: true},
-			},
-		},
-	}
+	cfg := newTestConfig(t)
 
 	msgBus := bus.NewMessageBus()
 
@@ -832,31 +675,8 @@ func TestAgentLoop_ContextExhaustionRetry(t *testing.T) {
 // Note: Manager is only initialized when at least one MCP server is configured
 // and successfully connected.
 func TestProcessDirectWithChannel_TriggersMCPInitialization(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "agent-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	// Test with MCP enabled but no servers - should not initialize manager
-	cfg := &config.Config{
-		Agents: config.AgentsConfig{
-			BaseDir: tmpDir,
-			Defaults: config.AgentDefaults{
-				Models:            []string{"test-model"},
-				MaxTokens:         4096,
-				MaxToolIterations: 10,
-			},
-			List: []config.AgentConfig{
-				{ID: "main", Name: "Main", Default: true},
-			},
-		},
-		Tools: config.ToolsConfig{
-			MCP: config.MCPConfig{
-				// No servers configured - manager should not be initialized
-			},
-		},
-	}
+	// No MCP servers configured - manager should not be initialized
+	cfg := newTestConfig(t)
 
 	msgBus := bus.NewMessageBus()
 	provider := &mockProvider{}
@@ -867,7 +687,7 @@ func TestProcessDirectWithChannel_TriggersMCPInitialization(t *testing.T) {
 		t.Fatal("expected MCP manager to be nil before first direct processing")
 	}
 
-	_, err = al.ProcessDirectWithChannel(
+	_, err := al.ProcessDirectWithChannel(
 		context.Background(),
 		"hello",
 		"session-1",
@@ -886,22 +706,7 @@ func TestProcessDirectWithChannel_TriggersMCPInitialization(t *testing.T) {
 }
 
 func TestTargetReasoningChannelID_AllChannels(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "agent-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	cfg := &config.Config{
-		Agents: config.AgentsConfig{
-			BaseDir: tmpDir,
-			Defaults: config.AgentDefaults{
-				Models:            []string{"test-model"},
-				MaxTokens:         4096,
-				MaxToolIterations: 10,
-			},
-		},
-	}
+	cfg := newTestConfig(t)
 
 	al := mustNewAgentLoop(t, cfg, bus.NewMessageBus(), &mockProvider{}, nil)
 	chManager, err := channels.NewManager(&config.Config{}, bus.NewMessageBus(), nil)
@@ -941,21 +746,7 @@ func TestTargetReasoningChannelID_AllChannels(t *testing.T) {
 func TestHandleReasoning(t *testing.T) {
 	newLoop := func(t *testing.T) (*AgentLoop, *bus.MessageBus) {
 		t.Helper()
-		tmpDir, err := os.MkdirTemp("", "agent-test-*")
-		if err != nil {
-			t.Fatalf("Failed to create temp dir: %v", err)
-		}
-		t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
-		cfg := &config.Config{
-			Agents: config.AgentsConfig{
-				BaseDir: tmpDir,
-				Defaults: config.AgentDefaults{
-					Models:            []string{"test-model"},
-					MaxTokens:         4096,
-					MaxToolIterations: 10,
-				},
-			},
-		}
+		cfg := newTestConfig(t)
 		msgBus := bus.NewMessageBus()
 		return mustNewAgentLoop(t, cfg, msgBus, &mockProvider{}, nil), msgBus
 	}
@@ -1366,8 +1157,7 @@ func TestResolveMediaRefs_MixedImageAndFile(t *testing.T) {
 // recent turn group (last user message). Messages are padded so that two or
 // more conversation groups exceed the safety threshold, forcing a drop.
 func TestForceCompression_WithSystemPrompt(t *testing.T) {
-	al, _, _, _, cleanup := newTestAgentLoop(t)
-	defer cleanup()
+	al := newTestAgentLoop(t).al
 
 	agent := al.registry.GetDefaultAgent()
 	if agent == nil {
@@ -1419,8 +1209,7 @@ func TestForceCompression_WithSystemPrompt(t *testing.T) {
 // TestForceCompression_NoSystemPrompt verifies that ForceCompress handles
 // histories without a system prompt: no system message is injected in the result.
 func TestForceCompression_NoSystemPrompt(t *testing.T) {
-	al, _, _, _, cleanup := newTestAgentLoop(t)
-	defer cleanup()
+	al := newTestAgentLoop(t).al
 
 	agent := al.registry.GetDefaultAgent()
 	if agent == nil {
@@ -1483,8 +1272,7 @@ func (e *errorProvider) GetDefaultModel() string {
 // context during a retry backoff causes runLLMIteration to return promptly
 // (well within the backoff duration of 5s or 10s).
 func TestRunLLMIteration_ContextCancelDuringBackoff(t *testing.T) {
-	al, _, _, _, cleanup := newTestAgentLoop(t)
-	defer cleanup()
+	al := newTestAgentLoop(t).al
 
 	// Replace the default agent's provider with one that always returns a timeout error.
 	agent := al.registry.GetDefaultAgent()
@@ -1586,8 +1374,7 @@ func (m *mockEchoTool) Execute(_ context.Context, args map[string]any) *tools.To
 // returns a non-normal empty response on the first iteration, runAgentLoop returns
 // a message describing the abnormal finish reason.
 func TestRunAgentLoop_EmptyResponse_FirstIteration(t *testing.T) {
-	al, _, _, _, cleanup := newTestAgentLoop(t)
-	defer cleanup()
+	al := newTestAgentLoop(t).al
 
 	agent := al.registry.GetDefaultAgent()
 	if agent == nil {
@@ -1627,8 +1414,7 @@ func TestRunAgentLoop_EmptyResponse_FirstIteration(t *testing.T) {
 // returns tool calls first and then a non-normal empty response, runAgentLoop
 // returns a message describing the abnormal finish reason.
 func TestRunAgentLoop_EmptyResponse_AfterToolCalls(t *testing.T) {
-	al, _, _, _, cleanup := newTestAgentLoop(t)
-	defer cleanup()
+	al := newTestAgentLoop(t).al
 
 	agent := al.registry.GetDefaultAgent()
 	if agent == nil {
@@ -1682,8 +1468,7 @@ func TestRunAgentLoop_EmptyResponse_AfterToolCalls(t *testing.T) {
 // provider first returns tool calls and then returns text content, the final
 // content from runLLMIteration is that text and the iteration count is 2.
 func TestRunLLMIteration_ToolCalls_ThenFinalResponse(t *testing.T) {
-	al, _, _, _, cleanup := newTestAgentLoop(t)
-	defer cleanup()
+	al := newTestAgentLoop(t).al
 
 	agent := al.registry.GetDefaultAgent()
 	if agent == nil {
@@ -1725,10 +1510,8 @@ func TestRunLLMIteration_ToolCalls_ThenFinalResponse(t *testing.T) {
 
 	cm, releaseTestCM := al.getContextManager(agent, opts.SessionKey)
 	defer releaseTestCM()
-	content, _, _, _, iterations, err := al.runLLMIteration(context.Background(), agent, messages, opts, cm, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	it := runIteration(t, al, agent, messages, opts, cm)
+	content, iterations := it.content, it.iterations
 	if content != finalText {
 		t.Errorf("expected final content %q, got %q", finalText, content)
 	}
@@ -1740,8 +1523,7 @@ func TestRunLLMIteration_ToolCalls_ThenFinalResponse(t *testing.T) {
 // TestRunLLMIteration_MaxIterations verifies that the LLM loop exits after
 // MaxIterations when the provider never stops returning tool calls.
 func TestRunLLMIteration_MaxIterations(t *testing.T) {
-	al, _, _, _, cleanup := newTestAgentLoop(t)
-	defer cleanup()
+	al := newTestAgentLoop(t).al
 
 	agent := al.registry.GetDefaultAgent()
 	if agent == nil {
@@ -1787,10 +1569,8 @@ func TestRunLLMIteration_MaxIterations(t *testing.T) {
 
 	cm, releaseTestCM := al.getContextManager(agent, opts.SessionKey)
 	defer releaseTestCM()
-	content, _, _, _, iterations, err := al.runLLMIteration(context.Background(), agent, messages, opts, cm, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	it := runIteration(t, al, agent, messages, opts, cm)
+	content, iterations := it.content, it.iterations
 	// Loop exhausted — content should be empty (caller converts to defaultResponse).
 	if content != "" {
 		t.Errorf("expected empty content after max iterations, got %q", content)
@@ -1813,8 +1593,7 @@ func fourCandidates() []providers.FallbackCandidate {
 // TestSelectCandidates_DefaultOrder verifies that with the default active index
 // (0) selectCandidates returns the candidate list in its original order.
 func TestSelectCandidates_DefaultOrder(t *testing.T) {
-	al, _, _, _, cleanup := newTestAgentLoop(t)
-	defer cleanup()
+	al := newTestAgentLoop(t).al
 
 	agent := al.registry.GetDefaultAgent()
 	if agent == nil {
@@ -1838,8 +1617,7 @@ func TestSelectCandidates_DefaultOrder(t *testing.T) {
 // TestSelectCandidates_Reorder verifies move-to-front semantics: selecting index
 // 2 returns [2,0,1,3] and never mutates agent.Candidates.
 func TestSelectCandidates_Reorder(t *testing.T) {
-	al, _, _, _, cleanup := newTestAgentLoop(t)
-	defer cleanup()
+	al := newTestAgentLoop(t).al
 
 	agent := al.registry.GetDefaultAgent()
 	if agent == nil {
@@ -1879,8 +1657,7 @@ func TestSelectCandidates_Reorder(t *testing.T) {
 
 // TestSetActiveModelIndex_OutOfRange verifies range/empty validation.
 func TestSetActiveModelIndex_OutOfRange(t *testing.T) {
-	al, _, _, _, cleanup := newTestAgentLoop(t)
-	defer cleanup()
+	al := newTestAgentLoop(t).al
 
 	agent := al.registry.GetDefaultAgent()
 	if agent == nil {
@@ -1904,8 +1681,7 @@ func TestSetActiveModelIndex_OutOfRange(t *testing.T) {
 // TestActiveModelIndex_Persists verifies the active index survives a cache clear
 // by reloading through the session store's CompactionState.
 func TestActiveModelIndex_Persists(t *testing.T) {
-	al, _, _, _, cleanup := newTestAgentLoop(t)
-	defer cleanup()
+	al := newTestAgentLoop(t).al
 
 	agent := al.registry.GetDefaultAgent()
 	if agent == nil {
@@ -1932,8 +1708,7 @@ func TestActiveModelIndex_Persists(t *testing.T) {
 // returns empty string and nil error for internal-channel system messages
 // (e.g. when the origin channel in ChatID is "cli" or "subagent").
 func TestProcessSystemMessage_InternalChannel(t *testing.T) {
-	al, _, _, _, cleanup := newTestAgentLoop(t)
-	defer cleanup()
+	al := newTestAgentLoop(t).al
 
 	// ChatID format is "originChannel:originChatID".
 	// "cli" is an internal channel so no response should be sent.
@@ -1956,8 +1731,7 @@ func TestProcessSystemMessage_InternalChannel(t *testing.T) {
 // TestProcessSystemMessage_WrongChannel verifies that processSystemMessage
 // returns an error when called with a non-system channel.
 func TestProcessSystemMessage_WrongChannel(t *testing.T) {
-	al, _, _, _, cleanup := newTestAgentLoop(t)
-	defer cleanup()
+	al := newTestAgentLoop(t).al
 
 	msg := bus.InboundMessage{
 		Channel: "telegram",
@@ -2055,8 +1829,7 @@ func TestResolveSystemMessageTarget(t *testing.T) {
 // returns a context_length_exceeded error on the first call and succeeds on the
 // second, runLLMIteration retries and returns the successful response.
 func TestRunLLMIteration_ContextWindowError_Retry(t *testing.T) {
-	al, _, _, _, cleanup := newTestAgentLoop(t)
-	defer cleanup()
+	al := newTestAgentLoop(t).al
 
 	agent := al.registry.GetDefaultAgent()
 	if agent == nil {
@@ -2093,10 +1866,7 @@ func TestRunLLMIteration_ContextWindowError_Retry(t *testing.T) {
 
 	cm, releaseTestCM := al.getContextManager(agent, opts.SessionKey)
 	defer releaseTestCM()
-	content, _, _, _, _, err := al.runLLMIteration(context.Background(), agent, messages, opts, cm, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	content := runIteration(t, al, agent, messages, opts, cm).content
 	if content != successContent {
 		t.Errorf("expected %q, got %q", successContent, content)
 	}
@@ -2251,8 +2021,7 @@ func TestExtractParentPeer(t *testing.T) {
 
 // TestProcessDirect_ReturnsResponse verifies ProcessDirect calls through to the LLM.
 func TestProcessDirect_ReturnsResponse(t *testing.T) {
-	al, _, _, _, cleanup := newTestAgentLoop(t)
-	defer cleanup()
+	al := newTestAgentLoop(t).al
 
 	agent := al.registry.GetDefaultAgent()
 	if agent == nil {
@@ -2272,8 +2041,7 @@ func TestProcessDirect_ReturnsResponse(t *testing.T) {
 // TestSetMediaStore_PropagatesStore verifies that SetMediaStore propagates to
 // agent tools (specifically send_file if registered).
 func TestSetMediaStore_PropagatesStore(t *testing.T) {
-	al, _, _, _, cleanup := newTestAgentLoop(t)
-	defer cleanup()
+	al := newTestAgentLoop(t).al
 
 	// SetMediaStore should not panic even with a nil store.
 	al.SetMediaStore(nil)
@@ -2281,8 +2049,7 @@ func TestSetMediaStore_PropagatesStore(t *testing.T) {
 
 // TestSetTranscriber_StoresTranscriber verifies SetTranscriber stores the value.
 func TestSetTranscriber_StoresTranscriber(t *testing.T) {
-	al, _, _, _, cleanup := newTestAgentLoop(t)
-	defer cleanup()
+	al := newTestAgentLoop(t).al
 
 	// SetTranscriber with nil should not panic.
 	al.SetTranscriber(nil)
@@ -2294,8 +2061,8 @@ func TestSetTranscriber_StoresTranscriber(t *testing.T) {
 // TestReloadProviderAndConfig_NilProvider verifies ReloadProviderAndConfig
 // returns an error when provider is nil.
 func TestReloadProviderAndConfig_NilProvider(t *testing.T) {
-	al, cfg, _, _, cleanup := newTestAgentLoop(t)
-	defer cleanup()
+	tl := newTestAgentLoop(t)
+	al, cfg := tl.al, tl.cfg
 
 	err := al.ReloadProviderAndConfig(context.Background(), nil, cfg)
 	if err == nil {
@@ -2306,8 +2073,8 @@ func TestReloadProviderAndConfig_NilProvider(t *testing.T) {
 // TestReloadProviderAndConfig_NilConfig verifies ReloadProviderAndConfig
 // returns an error when config is nil.
 func TestReloadProviderAndConfig_NilConfig(t *testing.T) {
-	al, _, _, provider, cleanup := newTestAgentLoop(t)
-	defer cleanup()
+	tl := newTestAgentLoop(t)
+	al, provider := tl.al, tl.provider
 
 	err := al.ReloadProviderAndConfig(context.Background(), provider, nil)
 	if err == nil {
@@ -2318,8 +2085,8 @@ func TestReloadProviderAndConfig_NilConfig(t *testing.T) {
 // TestReloadProviderAndConfig_Success verifies that a valid reload swaps the
 // config and registry without error.
 func TestReloadProviderAndConfig_Success(t *testing.T) {
-	al, cfg, _, provider, cleanup := newTestAgentLoop(t)
-	defer cleanup()
+	tl := newTestAgentLoop(t)
+	al, cfg, provider := tl.al, tl.cfg, tl.provider
 
 	newCfg := &config.Config{
 		Agents: config.AgentsConfig{

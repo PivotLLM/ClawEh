@@ -132,13 +132,13 @@ type Config struct {
 
 // MarshalJSON implements custom JSON marshaling for Config to omit the session
 // section when empty. The providers list omits naturally via its slice tag.
-func (c Config) MarshalJSON() ([]byte, error) {
+func (c *Config) MarshalJSON() ([]byte, error) {
 	type Alias Config
 	aux := &struct {
 		Session *SessionConfig `json:"session,omitempty"`
 		*Alias
 	}{
-		Alias: (*Alias)(&c),
+		Alias: (*Alias)(c),
 	}
 
 	// Only include session if not empty
@@ -1153,7 +1153,7 @@ type AgentDefaults struct {
 
 // EffectiveMemory returns the memory config for an agent: the per-agent block
 // if present, otherwise the defaults.
-func (d AgentDefaults) EffectiveMemory(a *AgentConfig) MemoryConfig {
+func (d *AgentDefaults) EffectiveMemory(a *AgentConfig) MemoryConfig {
 	mem := d.Memory
 	if a != nil && a.Memory != nil {
 		mem = *a.Memory
@@ -1741,13 +1741,13 @@ type ModelConfig struct {
 	// "low", "medium", "high", or empty. Empty omits the field entirely; "none"
 	// is sent explicitly (e.g. to disable reasoning on models that support it).
 	// Providers that don't understand the field will silently ignore it.
-	ReasoningEffort string `json:"reasoning_effort,omitempty" yaml:"reasoning_effort,omitempty"`
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 
 	// ExtraBody is a free-form passthrough map merged into the JSON request
 	// body for OpenAI-compatible providers. Use it for per-provider knobs that
 	// claw does not model natively. Keys colliding with claw-managed fields
 	// (see reservedRequestBodyKeys) are rejected at config load.
-	ExtraBody map[string]any `json:"extra_body,omitempty" yaml:"extra_body,omitempty"`
+	ExtraBody map[string]any `json:"extra_body,omitempty"`
 
 	// DropParams lists top-level request-body fields to strip before sending to
 	// OpenAI-compatible providers. Use it to suppress a parameter a model or
@@ -1756,7 +1756,7 @@ type ModelConfig struct {
 	// Stripping is applied last (after extra_body), so it always wins. It is a
 	// literal filter: listing structural fields like "messages" or "model" will
 	// break the request. Ignored by providers other than openai_compat.
-	DropParams []string `json:"drop_params,omitempty" yaml:"drop_params,omitempty"`
+	DropParams []string `json:"drop_params,omitempty"`
 
 	// StrictAlternation rewrites the outbound message list for chat-only models
 	// that require strict user/assistant alternation and reject system/tool roles

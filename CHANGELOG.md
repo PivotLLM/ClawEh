@@ -21,6 +21,14 @@ observe does not need an entry.
   not a terminal or `NO_COLOR` is set, and `./test.sh -n` also silences the
   integration sub-script.
 
+- **golangci-lint is back in the `make test` gate.** The remaining findings
+  are fixed: the agent test fixture returns a struct instead of five values,
+  duplicated tests are table-driven, the unused YAML round-trip test and the
+  three stray `yaml` struct tags on `ModelConfig` are gone (config is JSON
+  only), `Config` and `AgentDefaults` use pointer receivers throughout, and the
+  MCP manager test proves liveness with a real request instead of the retired
+  `ping` RPC.
+
 ### Fixed
 
 - **`claw.pid` is written before the gateway starts serving.** It was written

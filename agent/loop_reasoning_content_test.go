@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"context"
 	"strings"
 	"testing"
 
@@ -13,8 +12,8 @@ import (
 // Wendy), and returns the user-facing finalContent.
 func runReasoningOnlyTurn(t *testing.T, showAsContent bool) string {
 	t.Helper()
-	al, cfg, _, _, cleanup := newTestAgentLoop(t)
-	defer cleanup()
+	tl := newTestAgentLoop(t)
+	al, cfg := tl.al, tl.cfg
 	cfg.Agents.Defaults.ShowReasoningAsContent = showAsContent
 
 	agentInstance := al.registry.GetDefaultAgent()
@@ -38,14 +37,7 @@ func runReasoningOnlyTurn(t *testing.T, showAsContent bool) string {
 	cm, release := al.getContextManager(agentInstance, opts.SessionKey)
 	defer release()
 
-	finalContent, _, _, _, _, err := al.runLLMIteration(
-		context.Background(), agentInstance,
-		[]providers.Message{{Role: "user", Content: "go"}}, opts, cm, nil,
-	)
-	if err != nil {
-		t.Fatalf("runLLMIteration: %v", err)
-	}
-	return finalContent
+	return runIteration(t, al, agentInstance, []providers.Message{{Role: "user", Content: "go"}}, opts, cm).content
 }
 
 // Default (flag off): reasoning_content must never reach the user-facing reply.

@@ -284,11 +284,7 @@ vet: generate
 ## with a pass/fail summary. Needs probe on PATH (test.sh names it if missing).
 ## test-maestro-host and check-webui stay separate: they bind ports or need a
 ## running instance.
-# TEMPORARY: lint is not part of the gate until the remaining non-critical
-# golangci-lint findings (dogsled, dupl, recvcheck, musttag, interfacebloat and
-# one deprecated call, 60 in total) are addressed. Restore it by changing the
-# prerequisites back to: test: generate fmt-check vet lint
-test: generate fmt-check vet
+test: generate fmt-check vet lint
 	@./test.sh
 
 ## frontend-typecheck: Typecheck the SPA (tsc)

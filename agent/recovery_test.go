@@ -58,8 +58,8 @@ func (s *recoveryTestStore) Close() error        { return nil }
 const testSessionKey = "agent:main:webui:direct:webui:test-session"
 
 func TestRecoverSession_WithUserMessage(t *testing.T) {
-	al, _, msgBus, _, cleanup := newTestAgentLoop(t)
-	defer cleanup()
+	tl := newTestAgentLoop(t)
+	al, msgBus := tl.al, tl.msgBus
 
 	store := &recoveryTestStore{
 		history: []providers.Message{
@@ -117,8 +117,7 @@ func TestRecoverSession_WithUserMessage(t *testing.T) {
 }
 
 func TestRecoverSession_NoUserMessage(t *testing.T) {
-	al, _, _, _, cleanup := newTestAgentLoop(t)
-	defer cleanup()
+	al := newTestAgentLoop(t).al
 
 	store := &recoveryTestStore{
 		history: []providers.Message{
@@ -138,8 +137,7 @@ func TestRecoverSession_NoUserMessage(t *testing.T) {
 }
 
 func TestRecoverSession_EmptyHistory(t *testing.T) {
-	al, _, _, _, cleanup := newTestAgentLoop(t)
-	defer cleanup()
+	al := newTestAgentLoop(t).al
 
 	store := &recoveryTestStore{
 		history: []providers.Message{},
