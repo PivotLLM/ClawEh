@@ -93,7 +93,7 @@ func (h *Handler) handleListCLIs(w http.ResponseWriter, r *http.Request) {
 		if p, err := exec.LookPath(c.Binary); err == nil {
 			info.Installed = true
 			info.Path = p
-			info.Version = cliVersion(c.Binary)
+			info.Version = cliVersion(r.Context(), c.Binary)
 		}
 		// Seeded with the required arguments: a model that lists a flag the
 		// protocol already supplies is not adding anything, and reporting it
@@ -317,8 +317,8 @@ func uniqueName(base string, taken map[string]struct{}) string {
 
 // cliVersion runs "<bin> --version" with a short timeout and returns the first
 // line, best-effort (empty string on any error/timeout).
-func cliVersion(bin string) string {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+func cliVersion(ctx context.Context, bin string) string {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, bin, "--version").Output()
 	if err != nil {

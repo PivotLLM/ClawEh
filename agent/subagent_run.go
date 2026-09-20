@@ -74,7 +74,7 @@ func (al *AgentLoop) runSubagentTask(ctx context.Context, agentID, sessionKey, t
 	}
 	// Clean up the ephemeral session's DB files when the run is done (after the
 	// context manager is released).
-	defer al.cleanupSubagentSession(agent, sessionKey)
+	defer al.cleanupSubagentSession(ctx, agent, sessionKey)
 
 	// Optional model override (already validated against the agent's candidates by
 	// the Spawner): point this session at the chosen model. A model that does not
@@ -136,8 +136,8 @@ func (al *AgentLoop) runSubagentTask(ctx context.Context, agentID, sessionKey, t
 // cleanupSubagentSession evicts the sub-agent session's context manager (closing
 // its DB handles), removes the memory snapshot directory and the ephemeral
 // session's archive files. Best-effort.
-func (al *AgentLoop) cleanupSubagentSession(agent *AgentInstance, sessionKey string) {
-	al.dropContextManager(agent, sessionKey)
+func (al *AgentLoop) cleanupSubagentSession(ctx context.Context, agent *AgentInstance, sessionKey string) {
+	al.dropContextManager(ctx, agent, sessionKey)
 	al.releaseSessionPins(sessionKey)
 	snapshotDir := cogmemhost.SubagentDir(agent.Workspace, sessionKey)
 	if err := os.RemoveAll(snapshotDir); err != nil {

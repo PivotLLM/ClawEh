@@ -164,7 +164,7 @@ func (al *AgentLoop) processSessionMessage(ctx context.Context, msg bus.InboundM
 // input with caution) but the raw text is preserved intact. Delivery mirrors cron
 // exactly: same CronTarget resolution and a fixed SenderID so downstream routing
 // and dedupe treat it as a system-originated event.
-func (al *AgentLoop) HandleExternalMessage(_ context.Context, agentID, body string) error {
+func (al *AgentLoop) HandleExternalMessage(ctx context.Context, agentID, body string) error {
 	cfg := al.GetConfig()
 	if cfg == nil {
 		return errors.New("configuration not loaded")
@@ -189,7 +189,7 @@ func (al *AgentLoop) HandleExternalMessage(_ context.Context, agentID, body stri
 
 	// Publish on a fresh bounded context (not the request context) so a client
 	// that hangs up right after POSTing does not abort delivery — matching cron.
-	pubCtx, pubCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	pubCtx, pubCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer pubCancel()
 	return al.bus.PublishInbound(pubCtx, msg)
 }

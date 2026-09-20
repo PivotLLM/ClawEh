@@ -247,7 +247,7 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 	}
 
 	// Start the background context-manager eviction goroutine.
-	go al.evictContextManagers()
+	go al.evictContextManagers() //nolint:contextcheck // idle eviction closes managers on a fresh context so the archive flush completes regardless of the run context
 
 	// Start the background MCP reconnect loop, which recovers desired servers whose
 	// initial connect failed (so a transiently-down upstream needs no restart).

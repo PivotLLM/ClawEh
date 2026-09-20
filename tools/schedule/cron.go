@@ -494,7 +494,7 @@ func (t *CronTool) ExecuteJob(ctx context.Context, job *cron.CronJob) string {
 // a live user message gets — so the agent processes it and replies there. The
 // caller chooses the envelope: a cron fire (cronmsg.Build) or a monitor event
 // (cronmsg.BuildEvent).
-func (t *CronTool) deliver(_ context.Context, job *cron.CronJob, content string) string {
+func (t *CronTool) deliver(ctx context.Context, job *cron.CronJob, content string) string {
 	// Resolve the destination. Agent-addressed jobs (created via the tool) deliver
 	// to the target agent's default channel, resolved live so a changed default
 	// redirects the job; the resolved (channel, chat, peer) are the binding's own
@@ -531,7 +531,7 @@ func (t *CronTool) deliver(_ context.Context, job *cron.CronJob, content string)
 		Content:  content,
 		Peer:     bus.Peer{Kind: peerKind, ID: chatID},
 	}
-	pubCtx, pubCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	pubCtx, pubCancel := context.WithTimeout(ctx, 5*time.Second)
 	defer pubCancel()
 	if err := t.msgBus.PublishInbound(pubCtx, msg); err != nil {
 		return fmt.Sprintf("Error queuing cron job: %v", err)

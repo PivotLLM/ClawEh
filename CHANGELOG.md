@@ -42,6 +42,13 @@ observe does not need an entry.
   read-header timeout to the device gateway, MCP host and OAuth callback
   servers.
 
+- **Contexts are threaded through instead of started fresh.** Progress
+  placeholder edits, stream deltas, tool breadcrumbs and fallback notices are
+  now bound to the turn they belong to, so a cancelled or timed-out turn no
+  longer keeps publishing after it ends. WebUI memory handlers stop when the
+  client disconnects. Work that must outlive its trigger (sub-agent callbacks,
+  idle eviction, reload, graceful shutdown) is explicitly detached.
+
 ### Fixed
 
 - **`claw.pid` is written before the gateway starts serving.** It was written

@@ -58,8 +58,8 @@ func (al *AgentLoop) registerRuntimeTools(
 		var messageTool tools.Tool
 		if cfg.Tools.IsToolEnabled("msg_send") {
 			mt := toolsmsg.NewMessageTool()
-			mt.SetSendCallback(func(channel, chatID, content string) error {
-				pubCtx, pubCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			mt.SetSendCallback(func(ctx context.Context, channel, chatID, content string) error {
+				pubCtx, pubCancel := context.WithTimeout(ctx, 5*time.Second)
 				defer pubCancel()
 				return al.bus.PublishOutbound(pubCtx, bus.OutboundMessage{
 					Channel: channel,
@@ -91,7 +91,7 @@ func (al *AgentLoop) registerRuntimeTools(
 		// rendered summary alongside the error.
 		compactFn := func(ctx context.Context, sessionKey string) (string, string, error) {
 			ctx = providers.WithAgentID(ctx, currentAgent.ID)
-			cm, release := al.getContextManager(currentAgent, sessionKey)
+			cm, release := al.getContextManager(currentAgent, sessionKey) //nolint:contextcheck // compaction reporter: ctxengine's callback has no context, so it publishes on its own
 			defer release()
 			err := cm.Compact(ctx)
 			report := ""
@@ -123,14 +123,14 @@ func (al *AgentLoop) registerRuntimeTools(
 			if inbound.ChatID != "" && inbound.ChatID != "direct" {
 				inbound.Peer = bus.Peer{Kind: "channel", ID: inbound.ChatID}
 			}
-			pubCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			pubCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 			defer cancel()
 			return al.bus.PublishInbound(pubCtx, inbound)
 		}
 
 		// Build session info closure.
 		infoFn := func(ctx context.Context, sessionKey string) (*tools.SessionInfo, error) {
-			return buildSessionInfo(al, currentAgent, sessionKey)
+			return buildSessionInfo(al, currentAgent, sessionKey) //nolint:contextcheck // compaction reporter: ctxengine's callback has no context, so it publishes on its own
 		}
 
 		// Determine spawn allowlist.
@@ -307,7 +307,9 @@ func (al *AgentLoop) stopTyping(channel, chatID string) {
 // returned function stops the updater and must be deferred. It is a no-op (and
 // returns a no-op stopper) for non-user turns or when progress is disabled.
 // completed is the live count of finished tool calls, shared with the LLM loop.
-func (al *AgentLoop) startProgressUpdates(channel, chatID string, interval time.Duration, completed *atomic.Int64) func() {
+func (al *AgentLoop) startProgressUpdates(
+	ctx context.Context, channel, chatID string, interval time.Duration, completed *atomic.Int64,
+) func() {
 	if interval <= 0 || al.channelManager == nil || channel == "" || channel == "system" || chatID == "" {
 		return func() {}
 	}
@@ -329,8 +331,8 @@ func (al *AgentLoop) startProgressUpdates(channel, chatID string, interval time.
 				} else {
 					text = fmt.Sprintf("⏳ Still working… %d tool call(s) completed so far.", n)
 				}
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				al.channelManager.UpdatePlaceholder(ctx, channel, chatID, text)
+				editCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+				al.channelManager.UpdatePlaceholder(editCtx, channel, chatID, text)
 				cancel()
 			}
 		}
@@ -355,7 +357,7 @@ func (al *AgentLoop) superviseTasks(ctx context.Context) {
 		case <-al.superStop:
 			return
 		case <-ticker.C:
-			al.runTaskSupervision()
+			al.runTaskSupervision() //nolint:contextcheck // relaunched callback tasks run detached from the supervisor, like fresh spawns
 		}
 	}
 }
@@ -382,12 +384,12 @@ func (al *AgentLoop) runTaskSupervision() {
 // agent reads the referenced result file). Mirrors the inline async-tool callback
 // used for the initial in-turn spawn.
 func (al *AgentLoop) taskPointerCallback(channel, chatID, ownerAgentID string) tools.AsyncCallback {
-	return func(_ context.Context, result *tools.ToolResult) {
+	return func(cbCtx context.Context, result *tools.ToolResult) {
 		if result == nil {
 			return
 		}
 		if !result.Silent && result.ForUser != "" {
-			outCtx, outCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			outCtx, outCancel := context.WithTimeout(context.WithoutCancel(cbCtx), 5*time.Second)
 			if err := al.bus.PublishOutbound(outCtx, bus.OutboundMessage{
 				Channel: channel,
 				ChatID:  chatID,
@@ -407,7 +409,7 @@ func (al *AgentLoop) taskPointerCallback(channel, chatID, ownerAgentID string) t
 		if content == "" {
 			return
 		}
-		pubCtx, pubCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		pubCtx, pubCancel := context.WithTimeout(context.WithoutCancel(cbCtx), 5*time.Second)
 		msg := bus.InboundMessage{
 			Channel:  "system",
 			SenderID: "async:agent_spawn",

@@ -285,7 +285,7 @@ func (c *SlackChannel) ReactToMessage(ctx context.Context, chatID, messageID str
 		return func() {}, nil
 	}
 
-	reactionCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	reactionCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	if err := c.api.AddReactionContext(reactionCtx, "eyes", slack.ItemRef{
 		Channel:   channelID,

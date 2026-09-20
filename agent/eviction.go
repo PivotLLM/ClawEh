@@ -120,7 +120,7 @@ func (al *AgentLoop) evictContextManagers() {
 // is not in use. Used to tear down an ephemeral sub-agent session right after its
 // run so its snapshot DB can be deleted. No-op if absent or still referenced (the
 // idle sweep will reclaim it later).
-func (al *AgentLoop) dropContextManager(agent *AgentInstance, sessionKey string) {
+func (al *AgentLoop) dropContextManager(ctx context.Context, agent *AgentInstance, sessionKey string) {
 	key := agent.ID + ":" + sessionKey
 	v, ok := al.contextManagers.Load(key)
 	if !ok {
@@ -138,7 +138,7 @@ func (al *AgentLoop) dropContextManager(agent *AgentInstance, sessionKey string)
 	if sti != nil && entry.sessionKey != "" {
 		sti.Revoke(entry.sessionKey)
 	}
-	if err := entry.cm.Close(context.Background()); err != nil {
+	if err := entry.cm.Close(context.WithoutCancel(ctx)); err != nil {
 		logger.WarnCF("agent", "subagent: context manager close failed",
 			map[string]any{"key": key, "error": err.Error()})
 	}

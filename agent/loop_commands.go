@@ -43,7 +43,7 @@ func (al *AgentLoop) handleCommand(
 		return "Unknown command.", true
 	}
 
-	rt := al.buildCommandsRuntime(agent, opts, msg)
+	rt := al.buildCommandsRuntime(ctx, agent, opts, msg)
 	executor := commands.NewExecutor(al.cmdRegistry, rt)
 
 	var commandReply string
@@ -75,7 +75,9 @@ func (al *AgentLoop) handleCommand(
 	}
 }
 
-func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOptions, msg bus.InboundMessage) *commands.Runtime {
+func (al *AgentLoop) buildCommandsRuntime(
+	ctx context.Context, agent *AgentInstance, opts *processOptions, msg bus.InboundMessage,
+) *commands.Runtime {
 	registry := al.GetRegistry()
 	cfg := al.GetConfig()
 	rt := &commands.Runtime{
@@ -114,7 +116,7 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 			if agent == nil || opts == nil {
 				return ""
 			}
-			return al.cogmemSessionStatus(agent, opts.SessionKey)
+			return al.cogmemSessionStatus(ctx, agent, opts.SessionKey)
 		},
 		SwitchChannel: func(value string) error {
 			if al.channelManager == nil {
@@ -232,7 +234,7 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 			al.setShowToolActivity(agent, opts.SessionKey, on)
 		}
 
-		rt.ClearHistory = func() error {
+		rt.ClearHistory = func() error { //nolint:contextcheck // compaction reporter: ctxengine's callback has no context, so it publishes on its own
 			if opts == nil {
 				return errors.New("process options not available")
 			}
@@ -278,7 +280,7 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 			if opts == nil {
 				return "", errors.New("process options not available")
 			}
-			cm, releaseCM := al.getContextManager(agent, opts.SessionKey)
+			cm, releaseCM := al.getContextManager(agent, opts.SessionKey) //nolint:contextcheck // compaction reporter: ctxengine's callback has no context, so it publishes on its own
 			defer releaseCM()
 			err := cm.Compact(ctx)
 			report := ""
@@ -367,8 +369,8 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 				Peer:     msg.Peer,
 				IsRetry:  true,
 			}
-			go func() { //nolint:gosec // detached publish must outlive the command's request context
-				pubCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			go func() {
+				pubCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 				defer cancel()
 				if err := al.bus.PublishInbound(pubCtx, retrigger); err != nil {
 					logger.WarnCF("agent", "Failed to retrigger message after /retry",

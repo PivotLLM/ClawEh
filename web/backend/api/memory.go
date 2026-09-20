@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"errors"
 	"net/http"
 	"os"
@@ -226,7 +225,7 @@ func (h *Handler) handleGetMemoryStore(w http.ResponseWriter, r *http.Request) {
 	}
 	defer utils.CloseQuietly(s)
 
-	ctx := context.Background()
+	ctx := r.Context()
 	db := s.DB()
 
 	includeRetired := r.URL.Query().Get("include_retired") != ""
@@ -323,7 +322,7 @@ func (h *Handler) handleDeleteDomain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer utils.CloseQuietly(s)
-	if err := s.DeleteDomain(context.Background(), s.DB(), r.PathValue("domainID")); err != nil {
+	if err := s.DeleteDomain(r.Context(), s.DB(), r.PathValue("domainID")); err != nil {
 		if errors.Is(err, cogmemstore.ErrNotFound) {
 			http.Error(w, "domain not found", http.StatusNotFound)
 			return
@@ -342,7 +341,7 @@ func (h *Handler) handleDeleteMemory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer utils.CloseQuietly(s)
-	if err := s.DeleteMemory(context.Background(), s.DB(), r.PathValue("memoryID")); err != nil {
+	if err := s.DeleteMemory(r.Context(), s.DB(), r.PathValue("memoryID")); err != nil {
 		if errors.Is(err, cogmemstore.ErrNotFound) {
 			http.Error(w, "memory not found", http.StatusNotFound)
 			return

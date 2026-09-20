@@ -54,7 +54,7 @@ func NewDeviceChannel(cfg config.DeviceChannelConfig, dataDir string, logMessage
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		return nil, fmt.Errorf("device: create state dir: %w", err)
 	}
-	store, err := OpenStore(filepath.Join(stateDir, "gateway.db"))
+	store, err := OpenStore(context.Background(), filepath.Join(stateDir, "gateway.db"))
 	if err != nil {
 		return nil, err
 	}

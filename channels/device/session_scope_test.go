@@ -22,7 +22,7 @@ func (q stubQuerier) History(string) []DeviceHistoryMessage { return nil }
 
 func newScopeServer(t *testing.T, mode string) *Server {
 	t.Helper()
-	st, err := OpenStore(filepath.Join(t.TempDir(), "gateway.db"))
+	st, err := OpenStore(context.Background(), filepath.Join(t.TempDir(), "gateway.db"))
 	if err != nil {
 		t.Fatalf("OpenStore: %v", err)
 	}
@@ -40,7 +40,7 @@ func TestSessionScopeKeyUnifiedNodeClient(t *testing.T) {
 	s := newScopeServer(t, "unified")
 	lc := &liveConn{deviceID: "dev1", sessionKey: "main"}
 
-	if got := s.sessionScopeKey(lc); got != "agent:amber:main" {
+	if got := s.sessionScopeKey(context.Background(), lc); got != "agent:amber:main" {
 		t.Fatalf("session key = %q, want agent:amber:main", got)
 	}
 }
@@ -49,8 +49,8 @@ func TestSessionScopeKeyUnifiedNodeClient(t *testing.T) {
 // history, same memory.
 func TestSessionScopeKeyUnifiedDevicesShareSession(t *testing.T) {
 	s := newScopeServer(t, "unified")
-	a := s.sessionScopeKey(&liveConn{deviceID: "dev1", sessionKey: "main"})
-	b := s.sessionScopeKey(&liveConn{deviceID: "dev2", sessionKey: "main"})
+	a := s.sessionScopeKey(context.Background(), &liveConn{deviceID: "dev1", sessionKey: "main"})
+	b := s.sessionScopeKey(context.Background(), &liveConn{deviceID: "dev2", sessionKey: "main"})
 
 	if a != b {
 		t.Fatalf("devices must share a session under unified: %q != %q", a, b)
@@ -63,7 +63,7 @@ func TestSessionScopeKeyUnifiedOperatorClient(t *testing.T) {
 	s := newScopeServer(t, "unified")
 	lc := &liveConn{deviceID: "dev1", sessionKey: "agent:wendy:slack:work"}
 
-	if got := s.sessionScopeKey(lc); got != "agent:wendy:main" {
+	if got := s.sessionScopeKey(context.Background(), lc); got != "agent:wendy:main" {
 		t.Fatalf("session key = %q, want agent:wendy:main", got)
 	}
 }
@@ -87,7 +87,7 @@ func TestSessionScopeKeyUnifiedHonorsDeviceAssignment(t *testing.T) {
 	}
 	lc := &liveConn{deviceID: "dev1", sessionKey: "main"}
 
-	if got := s.sessionScopeKey(lc); got != "agent:wendy:main" {
+	if got := s.sessionScopeKey(context.Background(), lc); got != "agent:wendy:main" {
 		t.Fatalf("session key = %q, want agent:wendy:main", got)
 	}
 }
@@ -97,11 +97,11 @@ func TestSessionScopeKeyUnifiedHonorsDeviceAssignment(t *testing.T) {
 func TestSessionScopeKeyIsolatingMode(t *testing.T) {
 	s := newScopeServer(t, "per-user")
 
-	node := s.sessionScopeKey(&liveConn{deviceID: "dev1", sessionKey: "main"})
+	node := s.sessionScopeKey(context.Background(), &liveConn{deviceID: "dev1", sessionKey: "main"})
 	if node != "agent:amber:device:dev1" {
 		t.Errorf("node key = %q, want agent:amber:device:dev1", node)
 	}
-	op := s.sessionScopeKey(&liveConn{deviceID: "dev1", sessionKey: "agent:wendy:slack:work"})
+	op := s.sessionScopeKey(context.Background(), &liveConn{deviceID: "dev1", sessionKey: "agent:wendy:slack:work"})
 	if op != "agent:wendy:slack:work" {
 		t.Errorf("operator key = %q, want it honored verbatim", op)
 	}
@@ -113,10 +113,10 @@ func TestHistoryKeyMatchesSendKey(t *testing.T) {
 	s := newScopeServer(t, "unified")
 	lc := &liveConn{deviceID: "dev1", sessionKey: "agent:wendy:slack:work"}
 
-	send := s.sessionScopeKey(lc)
+	send := s.sessionScopeKey(context.Background(), lc)
 	// The operator client asks for its own key; resolution must land on the same
 	// session the turn was written to.
-	history := s.sessionScopeKeyFor(lc, "agent:wendy:slack:work")
+	history := s.sessionScopeKeyFor(context.Background(), lc, "agent:wendy:slack:work")
 	if send != history {
 		t.Fatalf("history key %q != send key %q", history, send)
 	}
@@ -125,7 +125,7 @@ func TestHistoryKeyMatchesSendKey(t *testing.T) {
 // A server without a querier (no agent loop attached) must not panic and must
 // fall back to the unified default.
 func TestSessionScopeKeyWithoutQuerier(t *testing.T) {
-	st, err := OpenStore(filepath.Join(t.TempDir(), "gateway.db"))
+	st, err := OpenStore(context.Background(), filepath.Join(t.TempDir(), "gateway.db"))
 	if err != nil {
 		t.Fatalf("OpenStore: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestSessionScopeKeyWithoutQuerier(t *testing.T) {
 	}()
 	s := &Server{store: st}
 
-	if got := s.sessionScopeKey(&liveConn{deviceID: "dev1", sessionKey: "main"}); got != "agent:main:main" {
+	if got := s.sessionScopeKey(context.Background(), &liveConn{deviceID: "dev1", sessionKey: "main"}); got != "agent:main:main" {
 		t.Fatalf("session key = %q, want agent:main:main", got)
 	}
 }

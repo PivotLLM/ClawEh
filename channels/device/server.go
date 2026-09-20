@@ -508,7 +508,7 @@ func (s *Server) serveLoop(ctx context.Context, lc *liveConn) {
 			if json.Unmarshal(raw, &req) != nil || req.Type != gatewayproto.FrameReq {
 				continue
 			}
-			s.dispatch(lc, req)
+			s.dispatch(ctx, lc, req)
 		}
 	}()
 	for {
@@ -531,18 +531,18 @@ func (s *Server) serveLoop(ctx context.Context, lc *liveConn) {
 }
 
 // dispatch routes a post-handshake request frame.
-func (s *Server) dispatch(lc *liveConn, req gatewayproto.RequestFrame) {
+func (s *Server) dispatch(ctx context.Context, lc *liveConn, req gatewayproto.RequestFrame) {
 	switch req.Method {
 	case "health":
 		lc.cw.send(gatewayproto.NewOKResponse(req.ID, map[string]any{"status": "ok"}))
 	case "chat.send":
-		s.handleChatSend(lc, req)
+		s.handleChatSend(ctx, lc, req)
 	case "node.event":
 		s.handleNodeEvent(lc, req)
 	case "agents.list":
 		s.handleAgentsList(lc, req)
 	case "chat.history":
-		s.handleChatHistory(lc, req)
+		s.handleChatHistory(ctx, lc, req)
 	default:
 		lc.cw.send(gatewayproto.NewErrorResponse(req.ID,
 			gatewayproto.NewError(gatewayproto.CodeInvalidRequest, "method not supported: "+req.Method, nil)))
@@ -552,7 +552,7 @@ func (s *Server) dispatch(lc *liveConn, req gatewayproto.RequestFrame) {
 // handleChatSend acks the turn and bridges the transcript into the agent layer.
 // Partial assistant text may arrive via StreamDelta as the model generates; the
 // terminal reply always arrives via DeliverReply.
-func (s *Server) handleChatSend(lc *liveConn, req gatewayproto.RequestFrame) {
+func (s *Server) handleChatSend(ctx context.Context, lc *liveConn, req gatewayproto.RequestFrame) {
 	var p struct {
 		Message        string `json:"message"`
 		SessionKey     string `json:"sessionKey"`
@@ -605,10 +605,10 @@ func (s *Server) handleChatSend(lc *liveConn, req gatewayproto.RequestFrame) {
 	if cmd, arg, ok := parseSlashCommand(p.Message); ok {
 		switch cmd {
 		case "agent":
-			go s.handleAgentCommand(lc, runID, arg)
+			go s.handleAgentCommand(ctx, lc, runID, arg)
 			return
 		case "help":
-			go s.emitChatReply(lc, runID, s.sessionScopeKey(lc), deviceHelpText)
+			go s.emitChatReply(lc, runID, s.sessionScopeKey(ctx, lc), deviceHelpText)
 			return
 		}
 	}
@@ -632,7 +632,7 @@ func (s *Server) handleChatSend(lc *liveConn, req gatewayproto.RequestFrame) {
 	}
 
 	if s.inbound != nil {
-		go s.inbound(lc.deviceID, lc.chatID, p.Message, runID, s.sessionScopeKey(lc), attachments)
+		go s.inbound(lc.deviceID, lc.chatID, p.Message, runID, s.sessionScopeKey(ctx, lc), attachments)
 	}
 }
 
@@ -668,9 +668,7 @@ func parseSlashCommand(message string) (cmd, arg string, ok bool) {
 // turns route there (sessionScopeKey reads the assignment). "default"/"reset"
 // clears the assignment back to the gateway default. The device is a dedicated
 // channel, so it may target any configured agent.
-func (s *Server) handleAgentCommand(lc *liveConn, runID, arg string) {
-	ctx := context.Background()
-
+func (s *Server) handleAgentCommand(ctx context.Context, lc *liveConn, runID, arg string) {
 	var agents []DeviceAgentInfo
 	defaultID := ""
 	if s.querier != nil {
@@ -682,34 +680,34 @@ func (s *Server) handleAgentCommand(lc *liveConn, runID, arg string) {
 	}
 
 	if len(agents) == 0 {
-		s.emitChatReply(lc, runID, s.sessionScopeKey(lc), "No assistants are configured.")
+		s.emitChatReply(lc, runID, s.sessionScopeKey(ctx, lc), "No assistants are configured.")
 		return
 	}
 	if arg == "" || strings.EqualFold(arg, "list") {
-		s.emitChatReply(lc, runID, s.sessionScopeKey(lc), formatAgentList(agents, current))
+		s.emitChatReply(lc, runID, s.sessionScopeKey(ctx, lc), formatAgentList(agents, current))
 		return
 	}
 	if strings.EqualFold(arg, "default") || strings.EqualFold(arg, "reset") {
 		if err := s.store.SetDeviceAgent(ctx, lc.deviceID, ""); err != nil {
-			s.emitChatReply(lc, runID, s.sessionScopeKey(lc), "Couldn't reset assistant: "+err.Error())
+			s.emitChatReply(lc, runID, s.sessionScopeKey(ctx, lc), "Couldn't reset assistant: "+err.Error())
 			return
 		}
-		s.emitChatReply(lc, runID, s.sessionScopeKey(lc), "Switched to the default assistant.")
+		s.emitChatReply(lc, runID, s.sessionScopeKey(ctx, lc), "Switched to the default assistant.")
 		return
 	}
 
 	targetID, targetName := resolveDeviceAgent(agents, arg)
 	if targetID == "" {
-		s.emitChatReply(lc, runID, s.sessionScopeKey(lc),
+		s.emitChatReply(lc, runID, s.sessionScopeKey(ctx, lc),
 			"No assistant matches \""+arg+"\".\n\n"+formatAgentList(agents, current))
 		return
 	}
 	if err := s.store.SetDeviceAgent(ctx, lc.deviceID, targetID); err != nil {
-		s.emitChatReply(lc, runID, s.sessionScopeKey(lc), "Couldn't switch assistant: "+err.Error())
+		s.emitChatReply(lc, runID, s.sessionScopeKey(ctx, lc), "Couldn't switch assistant: "+err.Error())
 		return
 	}
 	// Recompute the scope so the confirmation is tagged with the new assistant.
-	s.emitChatReply(lc, runID, s.sessionScopeKey(lc),
+	s.emitChatReply(lc, runID, s.sessionScopeKey(ctx, lc),
 		"Switched to "+targetName+". New messages will go to this assistant.")
 }
 
@@ -749,11 +747,11 @@ func agentDisplayName(a DeviceAgentInfo) string {
 
 // sessionScopeKey resolves the conversation session a turn runs in, from the key
 // the client declared on this connection. See sessionScopeKeyFor.
-func (s *Server) sessionScopeKey(lc *liveConn) string {
+func (s *Server) sessionScopeKey(ctx context.Context, lc *liveConn) string {
 	lc.mu.Lock()
 	key := lc.sessionKey
 	lc.mu.Unlock()
-	return s.sessionScopeKeyFor(lc, key)
+	return s.sessionScopeKeyFor(ctx, lc, key)
 }
 
 // sessionScopeKeyFor resolves the conversation session for a client-supplied key.
@@ -776,7 +774,7 @@ func (s *Server) sessionScopeKey(lc *liveConn) string {
 // falls back to its per-device assignment (WebUI Devices page / "/agent") and
 // then to the gateway default. The choice reaches the loop as
 // preresolved_agent_id.
-func (s *Server) sessionScopeKeyFor(lc *liveConn, requested string) string {
+func (s *Server) sessionScopeKeyFor(ctx context.Context, lc *liveConn, requested string) string {
 	fallback := "main"
 	mode := ""
 	if s.querier != nil {
@@ -786,7 +784,7 @@ func (s *Server) sessionScopeKeyFor(lc *liveConn, requested string) string {
 		mode = s.querier.SessionMode()
 	}
 	// Per-device assignment overrides the gateway default for node clients.
-	if dev, ok, err := s.store.GetPaired(context.Background(), lc.deviceID); err == nil && ok && dev.AgentID != "" {
+	if dev, ok, err := s.store.GetPaired(ctx, lc.deviceID); err == nil && ok && dev.AgentID != "" {
 		fallback = dev.AgentID
 	}
 	return routing.ResolveDeviceSessionKey(routing.SessionScope(mode), requested, fallback, lc.deviceID)
@@ -850,7 +848,7 @@ func (s *Server) handleAgentsList(lc *liveConn, req gatewayproto.RequestFrame) {
 // handleChatHistory returns the stored transcript for the requested session key,
 // shaped like the live "chat" event message so the client renders past turns the
 // same way it renders incoming replies.
-func (s *Server) handleChatHistory(lc *liveConn, req gatewayproto.RequestFrame) {
+func (s *Server) handleChatHistory(ctx context.Context, lc *liveConn, req gatewayproto.RequestFrame) {
 	if s.querier == nil {
 		lc.cw.send(gatewayproto.NewErrorResponse(req.ID,
 			gatewayproto.NewError(gatewayproto.CodeInvalidRequest, "method not supported: chat.history", nil)))
@@ -873,7 +871,7 @@ func (s *Server) handleChatHistory(lc *liveConn, req gatewayproto.RequestFrame) 
 	// Resolve through the same rule chat.send uses, so a client reads the
 	// transcript its turns are written to — under unified that is the agent's
 	// main conversation, not the key the client happens to have asked for.
-	sessionKey = s.sessionScopeKeyFor(lc, sessionKey)
+	sessionKey = s.sessionScopeKeyFor(ctx, lc, sessionKey)
 	history := s.querier.History(sessionKey)
 	messages := make([]map[string]any, 0, len(history))
 	for _, m := range history {

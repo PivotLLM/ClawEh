@@ -49,7 +49,6 @@ linters:
     - gochecknoinits
     - nilnil
     - unparam
-    - contextcheck
     - embeddedstructfieldcheck
     - forbidigo
     - funlen

@@ -17,7 +17,7 @@ func TestAutoApproveLocalDevice(t *testing.T) {
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	store, err := device.OpenStore(filepath.Join(stateDir, "gateway.db"))
+	store, err := device.OpenStore(context.Background(), filepath.Join(stateDir, "gateway.db"))
 	if err != nil {
 		t.Fatalf("OpenStore: %v", err)
 	}
@@ -47,7 +47,7 @@ func TestAutoApproveLocalDevice(t *testing.T) {
 		t.Fatalf("autoApproveLocalDevice: %v", approveErr)
 	}
 
-	verify, err := device.OpenStore(filepath.Join(stateDir, "gateway.db"))
+	verify, err := device.OpenStore(context.Background(), filepath.Join(stateDir, "gateway.db"))
 	if err != nil {
 		t.Fatalf("reopen store: %v", err)
 	}
@@ -72,7 +72,7 @@ func TestAutoApproveLocalDeviceNoPending(t *testing.T) {
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	store, err := device.OpenStore(filepath.Join(stateDir, "gateway.db"))
+	store, err := device.OpenStore(context.Background(), filepath.Join(stateDir, "gateway.db"))
 	if err != nil {
 		t.Fatalf("OpenStore: %v", err)
 	}

@@ -478,7 +478,7 @@ func (e *OAuthFlowExecutor) ExecuteAuthCodeFlow(ctx context.Context) error {
 	select {
 	case result := <-resultChan:
 		// Shutdown server
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
 		if shutdownErr := server.Shutdown(shutdownCtx); shutdownErr != nil {
 			log.Printf("Warning: failed to shut down callback server: %v", shutdownErr)
@@ -525,7 +525,7 @@ func (e *OAuthFlowExecutor) ExecuteAuthCodeFlow(ctx context.Context) error {
 
 	case <-ctx.Done():
 		// Shutdown server
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 		if shutdownErr := server.Shutdown(shutdownCtx); shutdownErr != nil {
 			log.Printf("Warning: failed to shut down callback server: %v", shutdownErr)

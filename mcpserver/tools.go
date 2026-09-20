@@ -385,9 +385,12 @@ func dispatchToolCall(
 	// message into the agent's session — so the primary LLM is notified without
 	// polling, for CLI and non-CLI providers alike. (The immediate/sync result is
 	// handled below.)
-	asyncCb := func(_ context.Context, r *tools.ToolResult) {
-		publishMCPForUser(context.Background(), msgBus, rec, toolName, r)
-		publishMCPAsyncToLLM(msgBus, rec, toolName, r)
+	asyncCb := func(cbCtx context.Context, r *tools.ToolResult) {
+		// The originating request may be long gone when a background tool
+		// finishes; deliver on its values but not its cancellation.
+		deliverCtx := context.WithoutCancel(cbCtx)
+		publishMCPForUser(deliverCtx, msgBus, rec, toolName, r)
+		publishMCPAsyncToLLM(deliverCtx, msgBus, rec, toolName, r)
 	}
 	// ExecuteForHost: resolve/execute regardless of discovery TTL — the host never
 	// applies progressive discovery; authorization was enforced by the ACL policy above.
@@ -414,7 +417,7 @@ func dispatchToolCall(
 // (agent/loop.go). No-op when there is nothing to inject; when there is no
 // recorded channel source to route to, it logs the drop rather than failing
 // silently.
-func publishMCPAsyncToLLM(msgBus *bus.MessageBus, rec sessionRecord, toolName string, r *tools.ToolResult) {
+func publishMCPAsyncToLLM(ctx context.Context, msgBus *bus.MessageBus, rec sessionRecord, toolName string, r *tools.ToolResult) {
 	if r == nil || msgBus == nil {
 		return
 	}
@@ -438,7 +441,7 @@ func publishMCPAsyncToLLM(msgBus *bus.MessageBus, rec sessionRecord, toolName st
 			})
 		return
 	}
-	pubCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	pubCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	if err := msgBus.PublishInbound(pubCtx, bus.InboundMessage{
 		Channel:    "system",

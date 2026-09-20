@@ -74,7 +74,8 @@ func (h *Handler) handlePatchMemory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	memoryID := r.PathValue("memoryID")
-	ctx := context.Background()
+	// Two writes: finish both even if the client hangs up between them.
+	ctx := context.WithoutCancel(r.Context())
 
 	if req.Type != nil {
 		t := cogmemstore.MemoryType(*req.Type)
@@ -142,7 +143,7 @@ func (h *Handler) handleCreateDomain(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "name is required", http.StatusBadRequest)
 		return
 	}
-	d, err := s.CreateDomain(context.Background(), s.DB(), cogmemstore.CreateDomainParams{
+	d, err := s.CreateDomain(r.Context(), s.DB(), cogmemstore.CreateDomainParams{
 		Sticky:  req.Sticky,
 		Name:    strings.TrimSpace(req.Name),
 		Status:  cogmemstore.StatusActive,
@@ -200,7 +201,7 @@ func (h *Handler) handleCreateMemory(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unknown memory type", http.StatusBadRequest)
 		return
 	}
-	m, err := s.AddMemory(context.Background(), s.DB(), cogmemstore.AddMemoryParams{
+	m, err := s.AddMemory(r.Context(), s.DB(), cogmemstore.AddMemoryParams{
 		DomainID:   r.PathValue("domainID"),
 		Type:       t,
 		Text:       strings.TrimSpace(req.Text),
@@ -263,7 +264,8 @@ func (h *Handler) handleBulkMemories(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	ctx := context.Background()
+	// A bulk action runs to completion; a client hang-up must not stop it part way.
+	ctx := context.WithoutCancel(r.Context())
 	resp := bulkResponse{Failed: map[string]string{}}
 	for _, id := range req.IDs {
 		var err error
@@ -314,7 +316,7 @@ func (h *Handler) handleExportMemory(w http.ResponseWriter, r *http.Request) {
 	}
 	defer utils.CloseQuietly(s)
 
-	doc, err := portable.Export(context.Background(), s)
+	doc, err := portable.Export(r.Context(), s)
 	if err != nil {
 		http.Error(w, "failed to export memory", http.StatusInternalServerError)
 		return
@@ -365,7 +367,9 @@ func (h *Handler) handleImportMemory(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	res, err := portable.Import(context.Background(), s, doc, mode)
+	// Import is not transactional (replace mode clears the store first); a
+	// client hang-up must not leave it half applied.
+	res, err := portable.Import(context.WithoutCancel(r.Context()), s, doc, mode)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

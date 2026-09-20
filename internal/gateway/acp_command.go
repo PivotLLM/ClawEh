@@ -254,7 +254,7 @@ func (c *abortSessionKeyClient) ChatAbort(ctx context.Context, params protocol.C
 // bridge is a local same-user process that already owns the data dir; it only
 // approves its OWN device id, never another device's pending request.
 func autoApproveLocalDevice(ctx context.Context, dataDir, deviceID string) (string, error) {
-	store, err := device.OpenStore(filepath.Join(dataDir, "state", "gateway.db"))
+	store, err := device.OpenStore(ctx, filepath.Join(dataDir, "state", "gateway.db"))
 	if err != nil {
 		return "", fmt.Errorf("open device store: %w", err)
 	}

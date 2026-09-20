@@ -89,7 +89,7 @@ func (s *Server) StartContext(ctx context.Context) error {
 	case err := <-errCh:
 		return err
 	case <-ctx.Done():
-		return s.server.Shutdown(context.Background())
+		return s.server.Shutdown(context.WithoutCancel(ctx))
 	}
 }
 

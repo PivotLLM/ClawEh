@@ -124,7 +124,7 @@ func TestGetModelInfo_ReflectsActiveSelection(t *testing.T) {
 		t.Fatalf("setActiveModelIndex: %v", err)
 	}
 
-	rt := al.buildCommandsRuntime(ag, &processOptions{SessionKey: sk}, bus.InboundMessage{})
+	rt := al.buildCommandsRuntime(context.Background(), ag, &processOptions{SessionKey: sk}, bus.InboundMessage{})
 	// Only the name is under test; provider, protocol and API base come from
 	// model config this fixture does not populate.
 	name, _, _, _ := rt.GetModelInfo() //nolint:dogsled // see above

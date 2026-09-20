@@ -138,7 +138,7 @@ func (e *emulator) writeReq(t *testing.T, conn *websocket.Conn, id, method strin
 
 func newTestServer(t *testing.T, opts ServerOptions) (*Server, *Store, string) {
 	t.Helper()
-	store, err := OpenStore(filepath.Join(t.TempDir(), "gateway.db"))
+	store, err := OpenStore(context.Background(), filepath.Join(t.TempDir(), "gateway.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -216,7 +216,7 @@ func (al *AgentLoop) setShowToolActivity(agent *AgentInstance, sessionKey string
 // active domain/memory counts, the pending-review count, and the last
 // consolidation run. Returns "" when the agent is not cognitive. Opening the
 // store runs the normal idempotent migrations, matching the cogmem_status tool.
-func (al *AgentLoop) cogmemSessionStatus(agent *AgentInstance, sessionKey string) string {
+func (al *AgentLoop) cogmemSessionStatus(ctx context.Context, agent *AgentInstance, sessionKey string) string {
 	if agent == nil || agent.Config == nil || !agent.Config.CognitiveMemoryEnabled() {
 		return ""
 	}
@@ -230,7 +230,6 @@ func (al *AgentLoop) cogmemSessionStatus(agent *AgentInstance, sessionKey string
 	}
 	defer utils.CloseQuietly(s)
 
-	ctx := context.Background()
 	db := s.DB()
 	var b strings.Builder
 

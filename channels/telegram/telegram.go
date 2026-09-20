@@ -200,7 +200,8 @@ func NewTelegramChannelFromConfig(botCfg config.TelegramBotConfig, b *bus.Messag
 func (c *TelegramChannel) Start(ctx context.Context) error {
 	logger.InfoC("telegram", "Starting Telegram bot (polling mode)...")
 
-	c.ctx, c.cancel = context.WithCancel(ctx)
+	pollCtx, cancel := context.WithCancel(ctx)
+	c.ctx, c.cancel = pollCtx, cancel
 	c.stopOnce = sync.Once{}
 
 	if c.coalesceCfg.IsEnabled() {
@@ -209,7 +210,7 @@ func (c *TelegramChannel) Start(ctx context.Context) error {
 		c.coalescer = nil
 	}
 
-	rawUpdates, err := c.bot.UpdatesViaLongPolling(c.ctx, &telego.GetUpdatesParams{
+	rawUpdates, err := c.bot.UpdatesViaLongPolling(pollCtx, &telego.GetUpdatesParams{
 		Timeout: 30,
 	}, telego.WithLongPollingRetryTimeout(longPollRetryTimeout))
 	if err != nil {
@@ -217,7 +218,7 @@ func (c *TelegramChannel) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to start long polling: %w", err)
 	}
 
-	updates, pollDone := watchLongPoll(c.ctx, rawUpdates)
+	updates, pollDone := watchLongPoll(pollCtx, rawUpdates)
 	c.pollDone = pollDone
 
 	bh, err := th.NewBotHandler(c.bot, updates)
@@ -227,7 +228,7 @@ func (c *TelegramChannel) Start(ctx context.Context) error {
 	}
 	c.bh = bh
 
-	bh.HandleMessage(func(ctx *th.Context, message telego.Message) error {
+	bh.HandleMessage(func(ctx *th.Context, message telego.Message) error { //nolint:contextcheck // th.Context is telego's handler context (it embeds context.Context); the linter does not recognise it
 		return c.handleMessage(ctx, &message)
 	}, th.AnyMessage())
 
@@ -236,7 +237,7 @@ func (c *TelegramChannel) Start(ctx context.Context) error {
 		"username": c.bot.Username(),
 	})
 
-	c.startCommandRegistration(c.ctx, commands.BuiltinDefinitions())
+	c.startCommandRegistration(pollCtx, commands.BuiltinDefinitions())
 
 	go func() {
 		if err = bh.Start(); err != nil {

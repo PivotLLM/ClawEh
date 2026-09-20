@@ -753,7 +753,7 @@ func handleConfigReload(
 
 	// Stop all services before reloading
 	logger.Info("  Stopping all services...")
-	stopAndCleanupServices(services, serviceShutdownTimeout)
+	stopAndCleanupServices(services, serviceShutdownTimeout) //nolint:contextcheck // the old services stop on a fresh bounded context so their shutdown completes even if the run context ends mid-reload; shutdownGateway shares the helper with no context
 
 	// Create new provider from updated config first to ensure validity
 	// This will use the correct API key and settings from newCfg.Models
@@ -771,7 +771,7 @@ func handleConfigReload(
 	// Use the atomic reload method on AgentLoop to safely swap provider and config.
 	// This handles locking internally to prevent races with in-flight LLM calls
 	// and concurrent reads of registry/config while the swap occurs.
-	reloadCtx, reloadCancel := context.WithTimeout(context.Background(), providerReloadTimeout)
+	reloadCtx, reloadCancel := context.WithTimeout(context.WithoutCancel(ctx), providerReloadTimeout)
 	defer reloadCancel()
 
 	if err := al.ReloadProviderAndConfig(reloadCtx, newProvider, newCfg); err != nil {
@@ -817,7 +817,7 @@ func restartServices(
 	// cron tool with all agents so it is available after the registry is rebuilt.
 	execTimeout := time.Duration(cfg.Tools.Cron.ExecTimeoutMinutes) * time.Minute
 	var cronTool *toolschedule.CronTool
-	services.CronService, cronTool = setupCronTool(
+	services.CronService, cronTool = setupCronTool( //nolint:contextcheck // cron jobs are fired by the scheduler, not by the reload; ExecuteJob runs on a detached context by design, as on the initial setup path
 		al,
 		msgBus,
 		cfg.WorkspacePath(),
@@ -834,14 +834,14 @@ func restartServices(
 	logger.InfoC("cron", "Cron service restarted")
 	services.CronTool = cronTool
 	if cronTool != nil {
-		cronTool.StartListeners(context.Background())
+		cronTool.StartListeners(runCtx)
 	}
 
 	// Re-create the mount watcher. stopAndCleanupServices stopped the old one, so
 	// without this a reload would silently end mount notifications for the rest of
 	// the process's life — and every service around it is rebuilt the same way.
 	services.MountWatcher = mountwatch.New(al.GetConfig, msgBus, 0)
-	services.MountWatcher.Start()
+	services.MountWatcher.Start() //nolint:contextcheck // background poller whose lifetime is Stop(), not the run context
 	logger.InfoC("mountwatch", "Mount watcher restarted")
 
 	// Stop the old media store before creating a new one
@@ -863,7 +863,7 @@ func restartServices(
 
 	// Re-create channel manager with new config
 	var err error
-	services.ChannelManager, err = channels.NewManager(cfg, msgBus, services.MediaStore)
+	services.ChannelManager, err = channels.NewManager(cfg, msgBus, services.MediaStore) //nolint:contextcheck // manager construction runs SecMsg account discovery on its own context; the initial setup path builds it the same way with no context in scope
 	if err != nil {
 		// Stop the media store if it's a FileMediaStore with cleanup
 		if fms, ok := services.MediaStore.(*media.FileMediaStore); ok {
@@ -890,7 +890,7 @@ func restartServices(
 	// and swap it into the long-lived httpHost. The listener is NOT recreated
 	// — keeping it alive is what lets WebUI WebSocket connections survive a
 	// config reload (investigation 7a5377d9, option #1).
-	rebuildSharedHTTPServer(services, cfg.Gateway.Host, cfg.Gateway.Port, services.ChannelManager, services.HTTPHost, al)
+	rebuildSharedHTTPServer(services, cfg.Gateway.Host, cfg.Gateway.Port, services.ChannelManager, services.HTTPHost, al) //nolint:contextcheck // the fusion engine is a process-wide singleton built once; its token store opens on a detached context
 
 	// Re-apply the IP allowlist on the live listener. This is what makes
 	// `claw network` a recovery path: an operator locked out by an empty

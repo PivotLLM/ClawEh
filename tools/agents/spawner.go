@@ -121,7 +121,7 @@ func (s *Spawner) Spawn(ctx context.Context, req global.SpawnRequest) (*global.R
 				onResult(tools.ResultToGlobal(r))
 			}
 		}
-		id, err := s.mgr.SpawnCallback(req.Task, name, req.TargetAgentID, channel, chatID, req.Model, req.Media, cb, SpawnDepth(ctx))
+		id, err := s.mgr.SpawnCallback(req.Task, name, req.TargetAgentID, channel, chatID, req.Model, req.Media, cb, SpawnDepth(ctx)) //nolint:contextcheck // callback-mode sub-agents run detached from the spawning turn by design; their lifetime is the task record
 		if err != nil {
 			return &global.Result{IsError: true, ForLLM: fmt.Sprintf("failed to spawn subagent: %v", err)}, nil
 		}

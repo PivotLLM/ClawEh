@@ -11,7 +11,7 @@ import (
 
 func openTestStore(t *testing.T) *Store {
 	t.Helper()
-	s, err := OpenStore(filepath.Join(t.TempDir(), "gateway.db"))
+	s, err := OpenStore(context.Background(), filepath.Join(t.TempDir(), "gateway.db"))
 	if err != nil {
 		t.Fatalf("OpenStore: %v", err)
 	}
@@ -192,7 +192,7 @@ func TestOpenStoreUnderContention(t *testing.T) {
 	}()
 
 	start := time.Now()
-	racer, err := OpenStore(path)
+	racer, err := OpenStore(context.Background(), path)
 	elapsed := time.Since(start)
 	<-released
 	if err != nil {
@@ -208,7 +208,7 @@ func TestOpenStoreUnderContention(t *testing.T) {
 // TestOpenStoreSetsBusyTimeoutFirst pins the ordering directly, so the reason
 // survives even if the contention test above is ever weakened or made lenient.
 func TestOpenStoreSetsBusyTimeoutFirst(t *testing.T) {
-	store, err := OpenStore(filepath.Join(t.TempDir(), "gateway.db"))
+	store, err := OpenStore(context.Background(), filepath.Join(t.TempDir(), "gateway.db"))
 	if err != nil {
 		t.Fatalf("OpenStore: %v", err)
 	}

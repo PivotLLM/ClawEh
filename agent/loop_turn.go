@@ -90,7 +90,7 @@ func (al *AgentLoop) runAgentLoop(
 
 	// 1. Get or create the ContextManager (and the cognitive-memory session, nil
 	// for agents without it) for this session.
-	cm, mem, releaseCtxMgr := al.getSessionContext(agent, opts.SessionKey)
+	cm, mem, releaseCtxMgr := al.getSessionContext(agent, opts.SessionKey) //nolint:contextcheck // compaction reporter: ctxengine's callback has no context, so it publishes on its own
 	defer releaseCtxMgr()
 
 	// Record the inbound source on the session token record so MCP-routed tool
@@ -555,7 +555,7 @@ func (al *AgentLoop) runLLMIteration(
 	// placeholder every progress_interval with a running tool-call count. Stops
 	// when the turn returns (defer). completedTools is bumped after each batch.
 	var completedTools atomic.Int64
-	stopProgress := al.startProgressUpdates(opts.Channel, opts.ChatID,
+	stopProgress := al.startProgressUpdates(ctx, opts.Channel, opts.ChatID,
 		al.GetConfig().Agents.Defaults.GetProgressInterval(), &completedTools)
 	defer stopProgress()
 
@@ -599,7 +599,7 @@ func (al *AgentLoop) runLLMIteration(
 	if streamToolNarration && al.channelManager != nil && al.channelManager.SupportsStreaming(opts.Channel) {
 		channel, chatID := opts.Channel, opts.ChatID
 		streamCoalescer = newStreamCoalescer(func(batch string) {
-			al.channelManager.StreamDelta(channel, chatID, batch)
+			al.channelManager.StreamDelta(ctx, channel, chatID, batch)
 		})
 		// Flush any buffered remainder that never hit a boundary before the turn's
 		// terminal reply is published, so no trailing partial text is lost.
@@ -634,7 +634,7 @@ func (al *AgentLoop) runLLMIteration(
 	// One notifier for the whole turn so its de-dup memory spans all tool
 	// iterations: a primary that fails over on every iteration (e.g. a model that
 	// 400s each call) posts its heads-up once, not once per iteration.
-	turnNotifier := al.fallbackNotifier(opts)
+	turnNotifier := al.fallbackNotifier(ctx, opts)
 
 	// Follow-along breadcrumbs (/tools on): post a one-line note per tool call.
 	// Resolved once per turn — a user chat, not the internal "system" channel.
@@ -922,7 +922,7 @@ func (al *AgentLoop) runLLMIteration(
 				}
 
 				prevMsgCount := len(messages)
-				comprMgr, releaseComprMgr := al.getContextManager(agent, opts.SessionKey)
+				comprMgr, releaseComprMgr := al.getContextManager(agent, opts.SessionKey) //nolint:contextcheck // compaction reporter: ctxengine's callback has no context, so it publishes on its own
 				defer releaseComprMgr()
 				if ferr := comprMgr.ForceCompress(ctx); ferr != nil {
 					logger.WarnCF("agent", "force compression failed",
@@ -1193,7 +1193,7 @@ func (al *AgentLoop) runLLMIteration(
 			// tool call, published in dispatch order before the tool runs.
 			if showToolActivity {
 				if line := toolCallBreadcrumb(tc); line != "" {
-					bcCtx, bcCancel := context.WithTimeout(context.Background(), 5*time.Second)
+					bcCtx, bcCancel := context.WithTimeout(ctx, 5*time.Second)
 					if err := al.bus.PublishOutbound(bcCtx, bus.OutboundMessage{
 						Channel: opts.Channel,
 						ChatID:  opts.ChatID,
@@ -1239,11 +1239,11 @@ func (al *AgentLoop) runLLMIteration(
 				// When the background work completes, this publishes the result
 				// as an inbound system message so processSystemMessage routes it
 				// back to the user via the normal agent loop.
-				asyncCallback := func(_ context.Context, result *tools.ToolResult) {
+				asyncCallback := func(cbCtx context.Context, result *tools.ToolResult) {
 					// Send ForUser content directly to the user (immediate feedback),
 					// mirroring the synchronous tool execution path.
 					if !result.Silent && result.ForUser != "" {
-						outCtx, outCancel := context.WithTimeout(context.Background(), 5*time.Second)
+						outCtx, outCancel := context.WithTimeout(context.WithoutCancel(cbCtx), 5*time.Second)
 						defer outCancel()
 						logger.InfoCF("agent", "Async tool completed, delivering to user",
 							map[string]any{
@@ -1278,7 +1278,7 @@ func (al *AgentLoop) runLLMIteration(
 							"channel":     opts.Channel,
 						})
 
-					pubCtx, pubCancel := context.WithTimeout(context.Background(), 5*time.Second)
+					pubCtx, pubCancel := context.WithTimeout(context.WithoutCancel(cbCtx), 5*time.Second)
 					defer pubCancel()
 					if err := al.bus.PublishInbound(pubCtx, bus.InboundMessage{
 						Channel:    "system",

@@ -471,7 +471,7 @@ func (m *Manager) ConnectServer(
 		cmd:    stdioCmd,
 	}
 	if m.probeInterval > 0 {
-		conn.probeStop = m.startProbe(name)
+		conn.probeStop = m.startProbe(name) //nolint:contextcheck // liveness probe is a background goroutine whose lifetime is probeStop/Close, not the connect context
 	}
 	m.servers[name] = conn
 	m.mu.Unlock()

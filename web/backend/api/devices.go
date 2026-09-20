@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -45,7 +46,7 @@ func (h *Handler) registerDeviceRoutes(mux *http.ServeMux) {
 // The config is still loaded per call, because callers use it for live values
 // and it is cheap. A data dir change (config reload) reopens against the new
 // path rather than serving the old database.
-func (h *Handler) openDeviceStore() (*device.Store, *config.Config, error) {
+func (h *Handler) openDeviceStore(ctx context.Context) (*device.Store, *config.Config, error) {
 	cfg, err := config.LoadConfig(h.configPath)
 	if err != nil {
 		return nil, nil, err
@@ -67,7 +68,7 @@ func (h *Handler) openDeviceStore() (*device.Store, *config.Config, error) {
 		h.deviceStore = nil
 		h.deviceStorePath = ""
 	}
-	store, err := device.OpenStore(path)
+	store, err := device.OpenStore(ctx, path)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -276,7 +277,7 @@ type pendingDeviceView struct {
 }
 
 func (h *Handler) handleDevicePending(w http.ResponseWriter, r *http.Request) {
-	store, _, err := h.openDeviceStore()
+	store, _, err := h.openDeviceStore(r.Context())
 	if err != nil {
 		deviceStoreUnavailable(w, err)
 		return
@@ -306,7 +307,7 @@ func (h *Handler) handleDeviceReject(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) resolvePending(w http.ResponseWriter, r *http.Request, approve bool) {
 	requestID := r.PathValue("id")
-	store, _, err := h.openDeviceStore()
+	store, _, err := h.openDeviceStore(r.Context())
 	if err != nil {
 		deviceStoreUnavailable(w, err)
 		return
@@ -370,7 +371,7 @@ func configuredAgents(cfg *config.Config) []agentOption {
 }
 
 func (h *Handler) handleDeviceList(w http.ResponseWriter, r *http.Request) {
-	store, cfg, err := h.openDeviceStore()
+	store, cfg, err := h.openDeviceStore(r.Context())
 	if err != nil {
 		deviceStoreUnavailable(w, err)
 		return
@@ -403,7 +404,7 @@ func (h *Handler) handleDeviceAgent(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
 		return
 	}
-	store, _, err := h.openDeviceStore()
+	store, _, err := h.openDeviceStore(r.Context())
 	if err != nil {
 		deviceStoreUnavailable(w, err)
 		return
@@ -421,7 +422,7 @@ func (h *Handler) handleDeviceAgent(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) handleDeviceRemove(w http.ResponseWriter, r *http.Request) {
 	deviceID := r.PathValue("id")
-	store, _, err := h.openDeviceStore()
+	store, _, err := h.openDeviceStore(r.Context())
 	if err != nil {
 		deviceStoreUnavailable(w, err)
 		return

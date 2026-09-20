@@ -59,10 +59,11 @@ func (s *Service) Start(ctx context.Context) error {
 		return nil
 	}
 
-	s.ctx, s.cancel = context.WithCancel(ctx)
+	svcCtx, cancel := context.WithCancel(ctx)
+	s.ctx, s.cancel = svcCtx, cancel
 
 	for _, src := range s.sources {
-		eventCh, err := src.Start(s.ctx)
+		eventCh, err := src.Start(svcCtx)
 		if err != nil {
 			logger.ErrorCF("devices", "Failed to start source", map[string]any{
 				"kind":  src.Kind(),
@@ -70,7 +71,7 @@ func (s *Service) Start(ctx context.Context) error {
 			})
 			continue
 		}
-		go s.handleEvents(src.Kind(), eventCh)
+		go s.handleEvents(svcCtx, src.Kind(), eventCh)
 		logger.InfoCF("devices", "Device source started", map[string]any{
 			"kind": src.Kind(),
 		})
@@ -98,16 +99,16 @@ func (s *Service) Stop() {
 	logger.InfoC("devices", "Device event service stopped")
 }
 
-func (s *Service) handleEvents(kind events.Kind, eventCh <-chan *events.DeviceEvent) {
+func (s *Service) handleEvents(ctx context.Context, kind events.Kind, eventCh <-chan *events.DeviceEvent) {
 	for ev := range eventCh {
 		if ev == nil {
 			continue
 		}
-		s.sendNotification(ev)
+		s.sendNotification(ctx, ev)
 	}
 }
 
-func (s *Service) sendNotification(ev *events.DeviceEvent) {
+func (s *Service) sendNotification(ctx context.Context, ev *events.DeviceEvent) {
 	s.mu.RLock()
 	msgBus := s.bus
 	s.mu.RUnlock()
@@ -130,7 +131,7 @@ func (s *Service) sendNotification(ev *events.DeviceEvent) {
 	}
 
 	msg := ev.FormatMessage()
-	pubCtx, pubCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	pubCtx, pubCancel := context.WithTimeout(ctx, 5*time.Second)
 	defer pubCancel()
 	if err := msgBus.PublishOutbound(pubCtx, bus.OutboundMessage{
 		Channel: platform,

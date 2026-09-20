@@ -241,14 +241,15 @@ func NewMatrixChannel(cfg config.MatrixConfig, messageBus *bus.MessageBus) (*Mat
 func (c *MatrixChannel) Start(ctx context.Context) error {
 	logger.InfoC("matrix", "Starting Matrix channel")
 
-	c.ctx, c.cancel = context.WithCancel(ctx)
+	runCtx, cancel := context.WithCancel(ctx)
+	c.ctx, c.cancel = runCtx, cancel
 	c.startTime = time.Now()
 
 	c.syncer.OnEventType(event.EventMessage, c.handleMessageEvent)
 	c.syncer.OnEventType(event.StateMember, c.handleMemberEvent)
 
 	c.SetRunning(true)
-	go c.runRoomKindCacheJanitor(c.ctx)
+	go c.runRoomKindCacheJanitor(runCtx)
 
 	go func() {
 		if err := c.client.SyncWithContext(c.ctx); err != nil && c.ctx.Err() == nil {
@@ -317,11 +318,6 @@ func (c *MatrixChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMess
 	if !c.IsRunning() {
 		return channels.ErrNotRunning
 	}
-	sendCtx := ctx
-	if sendCtx == nil {
-		sendCtx = context.Background()
-	}
-
 	roomID := id.RoomID(strings.TrimSpace(msg.ChatID))
 	if roomID == "" {
 		return fmt.Errorf("matrix room ID is empty: %w", channels.ErrSendFailed)
@@ -333,7 +329,7 @@ func (c *MatrixChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMess
 	}
 
 	for _, part := range msg.Parts {
-		if err := sendCtx.Err(); err != nil {
+		if err := ctx.Err(); err != nil {
 			return err
 		}
 
@@ -386,7 +382,7 @@ func (c *MatrixChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMess
 			contentType = "application/octet-stream"
 		}
 
-		uploadResp, err := c.client.UploadMedia(sendCtx, mautrix.ReqUploadMedia{
+		uploadResp, err := c.client.UploadMedia(ctx, mautrix.ReqUploadMedia{
 			Content:       file,
 			ContentLength: fileInfo.Size(),
 			ContentType:   contentType,
@@ -412,7 +408,7 @@ func (c *MatrixChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMess
 			uploadResp.ContentURI.CUString(),
 		)
 
-		if _, err := c.client.SendMessageEvent(sendCtx, roomID, event.EventMessage, content); err != nil {
+		if _, err := c.client.SendMessageEvent(ctx, roomID, event.EventMessage, content); err != nil {
 			logger.ErrorCF("matrix", "Failed to send media message", map[string]any{
 				"room_id": roomID.String(),
 				"type":    msgType,
@@ -445,8 +441,7 @@ func (c *MatrixChannel) StartTyping(ctx context.Context, chatID string) (func(),
 	c.typingSessions[chatID] = session
 	c.typingMu.Unlock()
 
-	parent := c.baseContext()
-	go c.typingLoop(parent, roomID, session)
+	go c.typingLoop(ctx, roomID, session)
 
 	var once sync.Once
 	stop := func() {
@@ -457,7 +452,7 @@ func (c *MatrixChannel) StartTyping(ctx context.Context, chatID string) (func(),
 				delete(c.typingSessions, chatID)
 			}
 			c.typingMu.Unlock()
-			if _, typingErr := c.client.UserTyping(context.Background(), roomID, false, 0); typingErr != nil {
+			if _, typingErr := c.client.UserTyping(context.WithoutCancel(ctx), roomID, false, 0); typingErr != nil {
 				logger.DebugCF("matrix", "Failed to clear typing indicator", map[string]any{
 					"room_id": roomID, "error": typingErr.Error(),
 				})
@@ -528,7 +523,7 @@ func (c *MatrixChannel) handleMemberEvent(ctx context.Context, evt *event.Event)
 		return
 	}
 
-	_, err := c.client.JoinRoomByID(c.baseContext(), evt.RoomID)
+	_, err := c.client.JoinRoomByID(ctx, evt.RoomID)
 	if err != nil {
 		logger.WarnCF("matrix", "Failed to auto-join invited room", map[string]any{
 			"room_id": evt.RoomID.String(),
@@ -639,7 +634,7 @@ func (c *MatrixChannel) handleMessageEvent(ctx context.Context, evt *event.Event
 	}
 
 	c.HandleMessage(
-		c.baseContext(),
+		ctx,
 		bus.Peer{Kind: peerKind, ID: peerID},
 		evt.ID.String(),
 		senderID,
@@ -727,11 +722,7 @@ func (c *MatrixChannel) downloadMedia(
 		return "", fmt.Errorf("invalid matrix media URL: %s", uri)
 	}
 
-	dlCtx := c.baseContext()
-	if ctx != nil {
-		dlCtx = ctx
-	}
-	reqCtx, cancel := context.WithTimeout(dlCtx, 20*time.Second)
+	reqCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 
 	resp, err := c.client.Download(reqCtx, parsed)
@@ -944,11 +935,7 @@ func (c *MatrixChannel) isGroupRoom(ctx context.Context, roomID id.RoomID) bool 
 		return isGroup
 	}
 
-	qctx := c.baseContext()
-	if ctx != nil {
-		qctx = ctx
-	}
-	reqCtx, cancel := context.WithTimeout(qctx, 5*time.Second)
+	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	resp, err := c.client.JoinedMembers(reqCtx, roomID)
@@ -1085,25 +1072,14 @@ func (c *MatrixChannel) stopTypingSessions(ctx context.Context) {
 	c.typingSessions = make(map[string]*typingSession)
 	c.typingMu.Unlock()
 
-	stopCtx := ctx
-	if stopCtx == nil {
-		stopCtx = context.Background()
-	}
 	for roomID, session := range sessions {
 		session.stop()
-		if _, typingErr := c.client.UserTyping(stopCtx, id.RoomID(roomID), false, 0); typingErr != nil {
+		if _, typingErr := c.client.UserTyping(ctx, id.RoomID(roomID), false, 0); typingErr != nil {
 			logger.DebugCF("matrix", "Failed to clear typing indicator", map[string]any{
 				"room_id": roomID, "error": typingErr.Error(),
 			})
 		}
 	}
-}
-
-func (c *MatrixChannel) baseContext() context.Context {
-	if c.ctx != nil {
-		return c.ctx
-	}
-	return context.Background()
 }
 
 func (c *MatrixChannel) runRoomKindCacheJanitor(ctx context.Context) {

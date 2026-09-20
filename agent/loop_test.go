@@ -1333,7 +1333,7 @@ func TestRunLLMIteration_ContextCancelDuringBackoff(t *testing.T) {
 	done := make(chan result, 1)
 
 	go func() {
-		cm, releaseTestCM := al.getContextManager(agent, opts.SessionKey)
+		cm, releaseTestCM := al.getContextManager(agent, opts.SessionKey) //nolint:contextcheck // compaction reporter: ctxengine's callback has no context, so it publishes on its own
 		defer releaseTestCM()
 		_, _, _, _, _, err := al.runLLMIteration(ctx, agent, messages, opts, cm, nil)
 		done <- result{err: err}

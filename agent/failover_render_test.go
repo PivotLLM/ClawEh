@@ -82,7 +82,7 @@ func TestFallbackNotifier_DedupsAcrossTurn(t *testing.T) {
 	tl := newTestAgentLoop(t)
 	al, msgBus := tl.al, tl.msgBus
 
-	notifier := al.fallbackNotifier(processOptions{Channel: "test", ChatID: "chat"})
+	notifier := al.fallbackNotifier(context.Background(), processOptions{Channel: "test", ChatID: "chat"})
 	if notifier == nil {
 		t.Fatal("expected a notifier")
 	}
