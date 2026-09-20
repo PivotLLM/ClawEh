@@ -42,13 +42,10 @@ func assembleWithLayers(t *testing.T, cb *ContextBuilder, history []providers.Me
 }
 
 // setupWorkspace creates a temporary workspace with standard directories and optional files.
-// Returns the tmpDir path; caller should defer os.RemoveAll(tmpDir).
+// Returns the tmpDir path, which is removed when the test ends.
 func setupWorkspace(t *testing.T, files map[string]string) string {
 	t.Helper()
-	tmpDir, err := os.MkdirTemp("", "claw-test-*")
-	if err != nil {
-		t.Fatal(err)
-	}
+	tmpDir := t.TempDir()
 	os.MkdirAll(filepath.Join(tmpDir, "memory"), 0o755)
 	os.MkdirAll(filepath.Join(tmpDir, "skills"), 0o755)
 	for name, content := range files {
@@ -689,8 +686,7 @@ func TestEmptyWorkspaceBaselineDetectsNewFiles(t *testing.T) {
 
 // BenchmarkPromptLayersWithCache measures caching performance.
 func BenchmarkPromptLayersWithCache(b *testing.B) {
-	tmpDir, _ := os.MkdirTemp("", "claw-bench-*")
-	defer os.RemoveAll(tmpDir)
+	tmpDir := b.TempDir()
 
 	os.MkdirAll(filepath.Join(tmpDir, "memory"), 0o755)
 	os.MkdirAll(filepath.Join(tmpDir, "skills"), 0o755)

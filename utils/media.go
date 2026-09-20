@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"os"
@@ -112,7 +113,7 @@ func DownloadFile(urlStr, filename string, opts DownloadOptions) string {
 	localPath := filepath.Join(mediaDir, uuid.New().String()[:8]+"_"+safeName)
 
 	// Create HTTP request
-	req, err := http.NewRequest("GET", urlStr, nil)
+	req, err := http.NewRequest(http.MethodGet, urlStr, nil)
 	if err != nil {
 		logger.ErrorCF(opts.LoggerPrefix, "Failed to create download request", map[string]any{
 			"error": err.Error(),
@@ -140,9 +141,7 @@ func DownloadFile(urlStr, filename string, opts DownloadOptions) string {
 		}
 		redirects = append(redirects, fmt.Sprintf("%s → %s", via[len(via)-1].URL.String(), r.URL.String()))
 		if registeredDomain(r.URL.Hostname()) == registeredDomain(origReq.URL.Hostname()) {
-			for key, vals := range origReq.Header {
-				r.Header[key] = vals
-			}
+			maps.Copy(r.Header, origReq.Header)
 		}
 		return nil
 	}

@@ -31,7 +31,7 @@ func TestRequestFrame_ParamsRaw(t *testing.T) {
 	if err := json.Unmarshal([]byte(raw), &f); err != nil {
 		t.Fatal(err)
 	}
-	if f.Method != "connect" {
+	if f.Method != "connect" { //nolint:usestdlibvars // gateway protocol method name, not the HTTP verb
 		t.Fatalf("method=%q", f.Method)
 	}
 	var p ConnectParams

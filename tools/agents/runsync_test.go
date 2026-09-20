@@ -31,7 +31,7 @@ func newRunSyncSpawner(t *testing.T) (*Spawner, *sync.Mutex, *[]string) {
 			mu.Unlock()
 			return &global.SyncResult{
 				Content: "done", Iterations: 3,
-				TurnUsage: global.TurnUsage{Model: "claude-x", Provider: "anthropic", InputTokens: 10, OutputTokens: 5, CostUSD: 0.5},
+				Model: "claude-x", Provider: "anthropic", InputTokens: 10, OutputTokens: 5, CostUSD: 0.5,
 			}, nil
 		},
 	})

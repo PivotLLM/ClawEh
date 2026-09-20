@@ -321,7 +321,7 @@ func downloadFile(url, dstPath string) error {
 	if err != nil {
 		return err
 	}
-	req.Header.Set("User-Agent", fmt.Sprintf("ClawEh/%s", app.SemVer()))
+	req.Header.Set("User-Agent", "ClawEh/"+app.SemVer())
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -462,8 +462,8 @@ func fileExists(path string) bool {
 
 func isBuildOrTempDir(path string) bool {
 	clean := filepath.Clean(path)
-	parts := strings.Split(clean, string(filepath.Separator))
-	for _, p := range parts {
+	parts := strings.SplitSeq(clean, string(filepath.Separator))
+	for p := range parts {
 		if p == "build" || p == "tmp" || p == "temp" || strings.HasPrefix(p, "claw-upgrade-") {
 			return true
 		}
@@ -491,12 +491,9 @@ func compareSemVer(v1, v2 string) int {
 	parts1 := strings.Split(clean1, ".")
 	parts2 := strings.Split(clean2, ".")
 
-	maxParts := len(parts1)
-	if len(parts2) > maxParts {
-		maxParts = len(parts2)
-	}
+	maxParts := max(len(parts2), len(parts1))
 
-	for i := 0; i < maxParts; i++ {
+	for i := range maxParts {
 		var n1, n2 int
 		if i < len(parts1) {
 			n1, _ = strconv.Atoi(parts1[i])

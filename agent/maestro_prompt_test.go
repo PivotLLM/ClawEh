@@ -4,6 +4,7 @@
 package agent
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -41,24 +42,16 @@ func TestDiscoveryPins_MaestroEntryTool(t *testing.T) {
 	withMaestro := &config.AgentConfig{ID: "a", Maestro: &config.MaestroConfig{Enabled: true}}
 	without := &config.AgentConfig{ID: "b"}
 
-	has := func(pins []string, name string) bool {
-		for _, p := range pins {
-			if p == name {
-				return true
-			}
-		}
-		return false
-	}
-	if pins := discoveryPins(on, withMaestro); !has(pins, global.MaestroEntryTool) || !has(pins, "fusion") {
+	if pins := discoveryPins(on, withMaestro); !slices.Contains(pins, global.MaestroEntryTool) || !slices.Contains(pins, "fusion") {
 		t.Errorf("discovery on + maestro: pins = %v", pins)
 	}
-	if pins := discoveryPins(on, without); has(pins, global.MaestroEntryTool) {
+	if pins := discoveryPins(on, without); slices.Contains(pins, global.MaestroEntryTool) {
 		t.Errorf("discovery on, no maestro: pins = %v", pins)
 	}
-	if pins := discoveryPins(off, withMaestro); has(pins, global.MaestroEntryTool) {
+	if pins := discoveryPins(off, withMaestro); slices.Contains(pins, global.MaestroEntryTool) {
 		t.Errorf("discovery off: pins = %v", pins)
 	}
-	if pins := discoveryPins(on, nil); has(pins, global.MaestroEntryTool) {
+	if pins := discoveryPins(on, nil); slices.Contains(pins, global.MaestroEntryTool) {
 		t.Errorf("nil agent: pins = %v", pins)
 	}
 	// The configured list is not mutated by the per-agent pin.

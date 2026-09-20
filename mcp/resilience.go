@@ -219,9 +219,7 @@ func (m *Manager) clearReconnectCooldown(name string) {
 func (m *Manager) startProbe(name string) chan struct{} {
 	stop := make(chan struct{})
 	interval := m.probeInterval
-	m.probeWg.Add(1)
-	go func() {
-		defer m.probeWg.Done()
+	m.probeWg.Go(func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {
@@ -235,7 +233,7 @@ func (m *Manager) startProbe(name string) chan struct{} {
 				m.probeOnce(name)
 			}
 		}
-	}()
+	})
 	return stop
 }
 

@@ -39,8 +39,7 @@ func patchConfig(t *testing.T, configPath, body string) *config.Config {
 // TestPatchCompression_SetsNestedValues is the plain path: the WebUI writes the
 // nested compaction block and it survives the merge-patch round trip.
 func TestPatchCompression_SetsNestedValues(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 
 	cfg := patchConfig(t, configPath, `{
 	  "agents": {"defaults": {"compression": {
@@ -65,8 +64,7 @@ func TestPatchCompression_SetsNestedValues(t *testing.T) {
 // expressible once these fields were pointers: 0 turns a trigger off, and must
 // survive as a real 0 rather than being read back as "unset".
 func TestPatchCompression_ExplicitZeroDisables(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 
 	patchConfig(t, configPath, `{"agents":{"defaults":{"compression":{"trigger":{"days":7}}}}}`)
 	cfg := patchConfig(t, configPath, `{"agents":{"defaults":{"compression":{"trigger":{"days":0}}}}}`)
@@ -86,8 +84,7 @@ func TestPatchCompression_ExplicitZeroDisables(t *testing.T) {
 // silently keep the old value. Null deletes the key, and the backend default
 // applies again.
 func TestPatchCompression_NullClearsBackToDefault(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 
 	patchConfig(t, configPath, `{"agents":{"defaults":{"compression":{
 	  "trigger": {"days": 7, "message_count": 100}
@@ -115,8 +112,7 @@ func TestPatchCompression_NullClearsBackToDefault(t *testing.T) {
 // policy exactly as it was — NOT write explicit zeroes that disable the count
 // trigger, the age trigger and the tail budget.
 func TestPatchCompression_UntouchedSaveKeepsDefaults(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 
 	// Exactly what the form emits when every compaction box is blank.
 	cfg := patchConfig(t, configPath, `{"agents":{"defaults":{"compression":{
@@ -150,8 +146,7 @@ func TestPatchCompression_UntouchedSaveKeepsDefaults(t *testing.T) {
 // which the legacy fields have already been cleared by migration, so the first
 // save rewrites config.json in the nested form.
 func TestPatchCompression_SaveRewritesLegacyKeys(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 
 	// Seed a pre-split config, then save something unrelated.
 	patchConfig(t, configPath, `{"agents":{"defaults":{"compress_min_percent":25}}}`)
@@ -172,8 +167,7 @@ func TestPatchCompression_SaveRewritesLegacyKeys(t *testing.T) {
 // is a separate DTO, so a field missing there would silently reset the checkbox
 // every time an operator opened the edit sheet.
 func TestProviderRequireReasoningContent_RoundTrips(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 
 	h := NewHandler(configPath)
 	mux := http.NewServeMux()

@@ -5,6 +5,7 @@ package agents
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -134,7 +135,7 @@ func (s *Spawner) Spawn(ctx context.Context, req global.SpawnRequest) (*global.R
 // TaskStatus implements global.TaskInspector.
 func (s *Spawner) TaskStatus(uuid string) (*global.TaskStatus, error) {
 	if s == nil || s.mgr == nil {
-		return nil, fmt.Errorf("spawn is not available")
+		return nil, errors.New("spawn is not available")
 	}
 	return s.mgr.TaskStatus(uuid)
 }
@@ -142,7 +143,7 @@ func (s *Spawner) TaskStatus(uuid string) (*global.TaskStatus, error) {
 // TaskList implements global.TaskInspector.
 func (s *Spawner) TaskList() ([]global.TaskBrief, error) {
 	if s == nil || s.mgr == nil {
-		return nil, fmt.Errorf("spawn is not available")
+		return nil, errors.New("spawn is not available")
 	}
 	return s.mgr.TaskList()
 }

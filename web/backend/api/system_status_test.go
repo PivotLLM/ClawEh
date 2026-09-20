@@ -10,8 +10,7 @@ import (
 // The status endpoint reports the running process, so the figures must be the
 // process's own and plausible.
 func TestSystemStatus(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 
 	h := NewHandler(configPath)
 	mux := http.NewServeMux()
@@ -93,8 +92,7 @@ func TestSystemStatusSurvivesAnUnreadableConfig(t *testing.T) {
 }
 
 func TestCountChannels(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 	h := NewHandler(configPath)
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)

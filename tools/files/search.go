@@ -264,10 +264,7 @@ func searchFileBytes(p string, data []byte, re *regexp.Regexp, limit int) []stri
 	hits := make([]string, 0, len(locs))
 	for _, loc := range locs {
 		start, end := loc[0], loc[1]
-		snipEnd := end + byteSnippetTrailing
-		if snipEnd > len(data) {
-			snipEnd = len(data)
-		}
+		snipEnd := min(end+byteSnippetTrailing, len(data))
 		snippet := strings.TrimSpace(strings.ReplaceAll(string(data[start:snipEnd]), "\n", " "))
 		if len(snippet) > maxSearchLineWidth {
 			snippet = snippet[:maxSearchLineWidth] + "…"

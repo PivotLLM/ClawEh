@@ -25,8 +25,7 @@ func resetModelProbeHooks(t *testing.T) {
 }
 
 func TestHandleListModels_ConfiguredStatusUsesRuntimeProbesForLocalModels(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 	resetModelProbeHooks(t)
 
 	// Only providers with a local base_url get runtime-probed; that probe always
@@ -101,8 +100,7 @@ func TestHandleListModels_ConfiguredStatusUsesRuntimeProbesForLocalModels(t *tes
 }
 
 func TestHandleListModels_ProbesLocalModelsConcurrently(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 	resetModelProbeHooks(t)
 
 	started := make(chan string, 2)
@@ -142,7 +140,7 @@ func TestHandleListModels_ProbesLocalModelsConcurrently(t *testing.T) {
 		recCh <- rec
 	}()
 
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		select {
 		case <-started:
 		case <-time.After(200 * time.Millisecond):
@@ -158,8 +156,7 @@ func TestHandleListModels_ProbesLocalModelsConcurrently(t *testing.T) {
 }
 
 func TestHandleListModels_NormalizesWildcardLocalAPIBaseForProbe(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 	resetModelProbeHooks(t)
 
 	var gotProbe string

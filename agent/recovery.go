@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"slices"
 
 	"github.com/PivotLLM/ctxengine/session"
 
@@ -38,9 +39,9 @@ func (al *AgentLoop) recoverSession(ctx context.Context, agentID, sessionKey str
 
 	// Find last user message (walk backwards for efficiency).
 	content := ""
-	for i := len(history) - 1; i >= 0; i-- {
-		if history[i].Role == "user" {
-			content = history[i].Content
+	for _, h := range slices.Backward(history) {
+		if h.Role == "user" {
+			content = h.Content
 			break
 		}
 	}

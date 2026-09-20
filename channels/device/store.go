@@ -200,7 +200,7 @@ func ensureWAL(db *sql.DB) error {
 		return nil
 	}
 
-	for attempt := 0; attempt < walConvertAttempts; attempt++ {
+	for range walConvertAttempts {
 		if _, err := db.ExecContext(ctx, "PRAGMA journal_mode=WAL"); err == nil {
 			return nil
 		}

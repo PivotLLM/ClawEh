@@ -196,8 +196,7 @@ func renderFailoverError(err error) string {
 	if err == nil {
 		return ""
 	}
-	var exhausted *providers.FallbackExhaustedError
-	if errors.As(err, &exhausted) {
+	if exhausted, ok := errors.AsType[*providers.FallbackExhaustedError](err); ok {
 		var attempts []string
 		for _, a := range exhausted.Attempts {
 			if a.Skipped {
@@ -213,8 +212,7 @@ func renderFailoverError(err error) string {
 		}
 		return "All models failed:\n  • " + strings.Join(attempts, "\n  • ")
 	}
-	var fe *providers.FailoverError
-	if errors.As(err, &fe) {
+	if fe, ok := errors.AsType[*providers.FailoverError](err); ok {
 		return attemptDescription(fe.Model, fe.Status, fe.Reason) + "."
 	}
 	return ""
@@ -223,8 +221,7 @@ func renderFailoverError(err error) string {
 // failoverStatus extracts the HTTP status code carried by a classified
 // FailoverError, or 0 when the error has none (timeout, network, …).
 func failoverStatus(err error) int {
-	var fe *providers.FailoverError
-	if errors.As(err, &fe) {
+	if fe, ok := errors.AsType[*providers.FailoverError](err); ok {
 		return fe.Status
 	}
 	return 0

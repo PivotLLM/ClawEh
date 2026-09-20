@@ -55,8 +55,7 @@ func seedCogmemDB(t *testing.T, configPath string) string {
 }
 
 func TestHandleListMemoryStores(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 
 	id := seedCogmemDB(t, configPath)
 
@@ -113,8 +112,7 @@ func TestSortMemoryStores(t *testing.T) {
 }
 
 func TestHandleGetMemoryStore(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 
 	id := seedCogmemDB(t, configPath)
 
@@ -160,8 +158,7 @@ func TestHandleGetMemoryStore(t *testing.T) {
 }
 
 func TestHandleGetMemoryStore_NotFound(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 
 	h := NewHandler(configPath)
 	mux := http.NewServeMux()
@@ -177,8 +174,7 @@ func TestHandleGetMemoryStore_NotFound(t *testing.T) {
 }
 
 func TestHandleDeleteMemoryAndDomain(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 
 	id := seedCogmemDB(t, configPath)
 	h := NewHandler(configPath)

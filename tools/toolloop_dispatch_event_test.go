@@ -32,7 +32,7 @@ func (s *stubProvider) GetDefaultModel() string { return "stub" }
 
 func collectLLMEvents(t *testing.T, buf *bytes.Buffer) (dispatches, finishes int, finish map[string]any) {
 	t.Helper()
-	for _, line := range strings.Split(buf.String(), "\n") {
+	for line := range strings.SplitSeq(buf.String(), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue

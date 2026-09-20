@@ -2,6 +2,7 @@ package matrix
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"html"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -190,13 +192,13 @@ func NewMatrixChannel(cfg config.MatrixConfig, messageBus *bus.MessageBus) (*Mat
 	userID := strings.TrimSpace(cfg.UserID)
 	accessToken := strings.TrimSpace(cfg.AccessToken)
 	if homeserver == "" {
-		return nil, fmt.Errorf("matrix homeserver is required")
+		return nil, errors.New("matrix homeserver is required")
 	}
 	if userID == "" {
-		return nil, fmt.Errorf("matrix user_id is required")
+		return nil, errors.New("matrix user_id is required")
 	}
 	if accessToken == "" {
-		return nil, fmt.Errorf("matrix access_token is required")
+		return nil, errors.New("matrix access_token is required")
 	}
 
 	client, err := mautrix.NewClient(homeserver, id.UserID(userID), accessToken)
@@ -209,7 +211,7 @@ func NewMatrixChannel(cfg config.MatrixConfig, messageBus *bus.MessageBus) (*Mat
 
 	syncer, ok := client.Syncer.(*mautrix.DefaultSyncer)
 	if !ok {
-		return nil, fmt.Errorf("matrix syncer is not *mautrix.DefaultSyncer")
+		return nil, errors.New("matrix syncer is not *mautrix.DefaultSyncer")
 	}
 
 	base := channels.NewBaseChannel(
@@ -430,7 +432,7 @@ func (c *MatrixChannel) StartTyping(ctx context.Context, chatID string) (func(),
 
 	roomID := id.RoomID(strings.TrimSpace(chatID))
 	if roomID == "" {
-		return func() {}, fmt.Errorf("matrix room ID is empty")
+		return func() {}, errors.New("matrix room ID is empty")
 	}
 
 	session := newTypingSession()
@@ -469,7 +471,7 @@ func (c *MatrixChannel) SendPlaceholder(ctx context.Context, chatID string) (str
 
 	roomID := id.RoomID(strings.TrimSpace(chatID))
 	if roomID == "" {
-		return "", fmt.Errorf("matrix room ID is empty")
+		return "", errors.New("matrix room ID is empty")
 	}
 
 	text := strings.TrimSpace(c.config.Placeholder.Text)
@@ -492,10 +494,10 @@ func (c *MatrixChannel) SendPlaceholder(ctx context.Context, chatID string) (str
 func (c *MatrixChannel) EditMessage(ctx context.Context, chatID string, messageID string, content string) error {
 	roomID := id.RoomID(strings.TrimSpace(chatID))
 	if roomID == "" {
-		return fmt.Errorf("matrix room ID is empty")
+		return errors.New("matrix room ID is empty")
 	}
 	if strings.TrimSpace(messageID) == "" {
-		return fmt.Errorf("matrix message ID is empty")
+		return errors.New("matrix message ID is empty")
 	}
 
 	editContent := c.messageContent(content)
@@ -623,8 +625,8 @@ func (c *MatrixChannel) handleMessageEvent(ctx context.Context, evt *event.Event
 
 	metadata := map[string]string{
 		"room_id":    roomID,
-		"timestamp":  fmt.Sprintf("%d", evt.Timestamp),
-		"is_group":   fmt.Sprintf("%t", isGroup),
+		"timestamp":  strconv.FormatInt(evt.Timestamp, 10),
+		"is_group":   strconv.FormatBool(isGroup),
 		"sender_raw": senderID,
 	}
 	if replyTo := msgEvt.GetRelatesTo().GetReplyTo(); replyTo != "" {
@@ -713,7 +715,7 @@ func (c *MatrixChannel) downloadMedia(
 ) (string, error) {
 	uri := matrixMediaURI(msgEvt)
 	if uri == "" {
-		return "", fmt.Errorf("empty matrix media URL")
+		return "", errors.New("empty matrix media URL")
 	}
 	parsed := uri.ParseOrIgnore()
 	if parsed.IsEmpty() {
@@ -1026,7 +1028,7 @@ func decodeMatrixMentionHref(v string) string {
 		return ""
 	}
 
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		next, err := url.QueryUnescape(decoded)
 		if err != nil || next == decoded {
 			break

@@ -88,8 +88,7 @@ func TestFallbackNotifier_DedupsAcrossTurn(t *testing.T) {
 	}
 
 	collected := make(chan bus.OutboundMessage, 16)
-	subCtx, subCancel := context.WithCancel(context.Background())
-	defer subCancel()
+	subCtx := t.Context()
 	go func() {
 		for {
 			msg, ok := msgBus.SubscribeOutbound(subCtx)

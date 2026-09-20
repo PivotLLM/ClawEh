@@ -91,8 +91,8 @@ func readOnlyMountErr(name string) error {
 func (m *mountFs) resolve(path string) (*mountEntry, string, bool) {
 	p := strings.TrimPrefix(filepath.ToSlash(path), "./")
 	name, rest := p, "."
-	if i := strings.IndexByte(p, '/'); i >= 0 {
-		name, rest = p[:i], p[i+1:]
+	if before, after, ok := strings.Cut(p, "/"); ok {
+		name, rest = before, after
 		if rest == "" {
 			rest = "."
 		}

@@ -6,6 +6,7 @@ package schedule
 import (
 	"context"
 	"fmt"
+	"maps"
 	"strings"
 	"sync"
 	"testing"
@@ -92,9 +93,7 @@ func addListenJob(t *testing.T, ct *CronTool, args map[string]any) *cron.CronJob
 		"watch_tool": "documents_event_wait", "watch_fields": []any{"event.id"},
 		"watch_timeout_seconds": float64(1),
 	}
-	for k, v := range args {
-		base[k] = v
-	}
+	maps.Copy(base, args)
 	res := ct.Execute(agentCtx("amber"), base)
 	if res.IsError {
 		t.Fatalf("add listen job: %s", res.ForLLM)
@@ -201,8 +200,8 @@ func TestListen_DeliversEvents(t *testing.T) {
 // TestListen_FailuresBackOffAndNotifyOnce: errors retry with backoff and the
 // agent hears about it exactly once, at the threshold.
 func TestListen_FailuresBackOffAndNotifyOnce(t *testing.T) {
-	var replies []scriptedReply
-	for i := 0; i < watchFailureNotifyThreshold+2; i++ {
+	replies := make([]scriptedReply, 0, watchFailureNotifyThreshold+2)
+	for range watchFailureNotifyThreshold + 2 {
 		replies = append(replies, scriptedReply{text: "connection dropped", err: true})
 	}
 	tool := &scriptedTool{replies: replies}
@@ -331,8 +330,8 @@ func TestListen_FailedDeliveryDoesNotAdvance(t *testing.T) {
 // TestListen_DistinctEventsAllDelivered: a burst of different events is
 // delivered one by one, in order, none dropped.
 func TestListen_DistinctEventsAllDelivered(t *testing.T) {
-	var replies []scriptedReply
-	for i := 0; i < 10; i++ {
+	replies := make([]scriptedReply, 0, 10)
+	for i := range 10 {
 		replies = append(replies, scriptedReply{text: fmt.Sprintf(`{"event":{"id":"e%d"}}`, i)})
 	}
 	ct, msgBus := newListenEnv(t, &scriptedTool{replies: replies})
@@ -340,7 +339,7 @@ func TestListen_DistinctEventsAllDelivered(t *testing.T) {
 	ct.StartListeners(context.Background())
 	defer ct.StopListeners()
 
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		msg, ok := nextInbound(t, msgBus, 3*time.Second)
 		if !ok {
 			t.Fatalf("event %d not delivered", i)
@@ -365,7 +364,7 @@ func TestListen_RepeatsDeliveredByDefault(t *testing.T) {
 	}
 	ct.StartListeners(context.Background())
 	defer ct.StopListeners()
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		msg, ok := nextInbound(t, msgBus, 3*time.Second)
 		if !ok {
 			t.Fatalf("repeat %d not delivered", i+1)

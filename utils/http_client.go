@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -42,7 +43,7 @@ func CreateHTTPClient(proxyURL string, timeout time.Duration) (*http.Client, err
 			)
 		}
 		if proxy.Host == "" {
-			return nil, fmt.Errorf("invalid proxy URL: missing host")
+			return nil, errors.New("invalid proxy URL: missing host")
 		}
 		transport.Proxy = http.ProxyURL(proxy)
 	} else {

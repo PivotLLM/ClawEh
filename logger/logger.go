@@ -106,7 +106,7 @@ func formatFieldValue(i any) string {
 	}
 
 	if strings.Contains(s, "\n") {
-		return fmt.Sprintf("\n%s", s)
+		return "\n" + s
 	}
 
 	if strings.Contains(s, " ") {

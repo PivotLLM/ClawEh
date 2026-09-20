@@ -8,6 +8,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -71,7 +72,7 @@ func (al *AgentLoop) getActiveModelIndex(agent *AgentInstance, sessionKey string
 func (al *AgentLoop) setActiveModelIndex(agent *AgentInstance, sessionKey string, idx int) error {
 	n := len(agent.Candidates)
 	if n == 0 {
-		return fmt.Errorf("this agent has no selectable models")
+		return errors.New("this agent has no selectable models")
 	}
 	if idx < 0 || idx >= n {
 		return fmt.Errorf("model index out of range (0-%d)", n-1)

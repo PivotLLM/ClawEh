@@ -130,10 +130,7 @@ func imageToDataURL(data []byte, mime string) (url string, width, height int, no
 	b := src.Bounds()
 	w, h := b.Dx(), b.Dy()
 
-	longest := w
-	if h > w {
-		longest = h
-	}
+	longest := max(h, w)
 	if longest <= global.ImageDownscaleMaxEdgePx {
 		// No downscale needed — send the original bytes untouched.
 		return "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data), w, h, ""

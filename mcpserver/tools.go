@@ -7,6 +7,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -75,9 +77,7 @@ type firstCallTracker struct {
 
 func newFirstCallTracker(workspaces map[string]string) *firstCallTracker {
 	known := make(map[string]string, len(workspaces))
-	for k, v := range workspaces {
-		known[k] = v
-	}
+	maps.Copy(known, workspaces)
 	return &firstCallTracker{
 		seen:  make(map[string]bool),
 		known: known,
@@ -439,7 +439,7 @@ func publishMCPAsyncToLLM(msgBus *bus.MessageBus, rec sessionRecord, toolName st
 	defer cancel()
 	if err := msgBus.PublishInbound(pubCtx, bus.InboundMessage{
 		Channel:    "system",
-		SenderID:   fmt.Sprintf("async:%s", toolName),
+		SenderID:   "async:" + toolName,
 		ChatID:     fmt.Sprintf("%s:%s", rec.channel, rec.chatID),
 		Content:    content,
 		SessionKey: rec.sessionKey,
@@ -579,9 +579,7 @@ func cloneMap(m map[string]any) map[string]any {
 		return nil
 	}
 	out := make(map[string]any, len(m))
-	for k, v := range m {
-		out[k] = v
-	}
+	maps.Copy(out, m)
 	return out
 }
 
@@ -602,10 +600,5 @@ func stringSliceFromAny(v any) []string {
 }
 
 func containsString(haystack []string, needle string) bool {
-	for _, s := range haystack {
-		if s == needle {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(haystack, needle)
 }

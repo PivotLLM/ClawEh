@@ -54,7 +54,7 @@ EOFMOCK
 	// Six distinct messages large enough that selectTail cannot retain them all
 	// at the default 20% retain budget against a 1000-token context window;
 	// the older half is handed to the compression LLM (i.e. the mock CLI).
-	for i := 0; i < 6; i++ {
+	for i := range 6 {
 		role := "user"
 		if i%2 == 1 {
 			role = "assistant"

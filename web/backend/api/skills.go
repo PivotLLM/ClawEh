@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -212,14 +213,14 @@ func normalizeImportedSkillName(filename string, content []byte) (string, error)
 	raw = strings.Join(strings.FieldsFunc(raw, func(r rune) bool { return r == '-' }), "-")
 
 	if raw == "" {
-		return "", fmt.Errorf("skill name is required in frontmatter or filename")
+		return "", errors.New("skill name is required in frontmatter or filename")
 	}
 	if len(raw) > 64 {
-		return "", fmt.Errorf("skill name exceeds 64 characters")
+		return "", errors.New("skill name exceeds 64 characters")
 	}
 	matched, err := regexp.MatchString(`^[a-z0-9]+(-[a-z0-9]+)*$`, raw)
 	if err != nil || !matched {
-		return "", fmt.Errorf("skill name must be alphanumeric with hyphens")
+		return "", errors.New("skill name must be alphanumeric with hyphens")
 	}
 	return raw, nil
 }
@@ -269,7 +270,7 @@ func extractImportedSkillMetadata(raw string) (map[string]string, string) {
 
 func parseImportedSkillYAML(frontmatter string) map[string]string {
 	result := make(map[string]string)
-	for _, line := range strings.Split(frontmatter, "\n") {
+	for line := range strings.SplitSeq(frontmatter, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
@@ -284,7 +285,7 @@ func parseImportedSkillYAML(frontmatter string) map[string]string {
 }
 
 func inferImportedSkillDescription(body string) string {
-	for _, line := range strings.Split(body, "\n") {
+	for line := range strings.SplitSeq(body, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue

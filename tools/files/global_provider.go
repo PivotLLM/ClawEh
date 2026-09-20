@@ -3,6 +3,7 @@ package files
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/PivotLLM/ClawEh/config"
@@ -390,10 +391,8 @@ func resolveAgentMounts(agentCfg *config.AgentConfig, workspace string) []MountS
 
 // appendIfMissing returns subdirs with name appended if not already present.
 func appendIfMissing(subdirs []string, name string) []string {
-	for _, s := range subdirs {
-		if s == name {
-			return subdirs
-		}
+	if slices.Contains(subdirs, name) {
+		return subdirs
 	}
 	return append(append([]string(nil), subdirs...), name)
 }

@@ -25,7 +25,7 @@ func showCommand() Definition {
 				Name:        "channel",
 				Description: "Current channel",
 				Handler: func(_ context.Context, req Request, _ *Runtime) error {
-					return req.Reply(fmt.Sprintf("Current Channel: %s", req.Channel))
+					return req.Reply("Current Channel: " + req.Channel)
 				},
 			},
 			{

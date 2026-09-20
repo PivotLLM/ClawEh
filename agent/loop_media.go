@@ -10,7 +10,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/base64"
-	"fmt"
+	"encoding/hex"
 	"io"
 	"os"
 	"path/filepath"
@@ -210,7 +210,7 @@ func buildAttachment(filename, localPath string, info os.FileInfo) providers.Mes
 		defer f.Close()
 		h := sha256.New()
 		if _, err := io.Copy(h, f); err == nil {
-			att.SHA256 = fmt.Sprintf("%x", h.Sum(nil))
+			att.SHA256 = hex.EncodeToString(h.Sum(nil))
 		}
 	}
 	return att

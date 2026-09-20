@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -213,7 +214,7 @@ func hostPortFromAPIBase(raw string) (string, error) {
 func parseAPIBase(raw string) (*url.URL, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return nil, fmt.Errorf("empty api base")
+		return nil, errors.New("empty api base")
 	}
 
 	u, err := url.Parse(raw)

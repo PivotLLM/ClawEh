@@ -284,7 +284,7 @@ func (al *AgentLoop) runAgentLoop(
 	// 8. Log response — content gated behind log_message_content for privacy
 	logMsg := "Response"
 	if logger.GetLogMessageContent() {
-		logMsg = fmt.Sprintf("Response: %s", utils.Truncate(finalContent, 120))
+		logMsg = "Response: " + utils.Truncate(finalContent, 120)
 	}
 	logger.InfoCF("agent", logMsg,
 		map[string]any{
@@ -1261,7 +1261,7 @@ func (al *AgentLoop) runLLMIteration(
 					defer pubCancel()
 					_ = al.bus.PublishInbound(pubCtx, bus.InboundMessage{
 						Channel:    "system",
-						SenderID:   fmt.Sprintf("async:%s", tc.Name),
+						SenderID:   "async:" + tc.Name,
 						ChatID:     fmt.Sprintf("%s:%s", opts.Channel, opts.ChatID),
 						Content:    content,
 						SessionKey: opts.SessionKey,

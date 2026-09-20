@@ -16,8 +16,7 @@ type fakeMCPStatusLoop struct {
 func (f *fakeMCPStatusLoop) MCPStatus() []mcp.ServerStatus { return f.servers }
 
 func TestMCPStatus_ReportsLiveServers(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 
 	h := NewHandler(configPath)
 	h.SetMCPStatusLoop(&fakeMCPStatusLoop{servers: []mcp.ServerStatus{
@@ -48,8 +47,7 @@ func TestMCPStatus_ReportsLiveServers(t *testing.T) {
 // TestMCPStatus_EmptyWhenLoopUnset returns an empty (non-null) list so the WebUI
 // can treat every configured server as disconnected without special-casing null.
 func TestMCPStatus_EmptyWhenLoopUnset(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 
 	h := NewHandler(configPath)
 	mux := http.NewServeMux()

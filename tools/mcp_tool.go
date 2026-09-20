@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"strings"
@@ -207,14 +208,14 @@ func (t *MCPTool) Execute(ctx context.Context, args map[string]any) *ToolResult 
 	}
 
 	if result == nil {
-		nilErr := fmt.Errorf("MCP tool returned nil result without error")
+		nilErr := errors.New("MCP tool returned nil result without error")
 		return ErrorResult("MCP tool execution failed: nil result").WithError(nilErr)
 	}
 
 	// Handle error result from server
 	if result.IsError {
 		errMsg, _ := extractContent(result.Content)
-		return ErrorResult(fmt.Sprintf("MCP tool returned error: %s", errMsg)).
+		return ErrorResult("MCP tool returned error: " + errMsg).
 			WithError(fmt.Errorf("MCP tool error: %s", errMsg))
 	}
 

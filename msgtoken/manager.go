@@ -97,10 +97,7 @@ func NewManager(agentID, storePath string, windowMinutes, windowCount int) (*Man
 			sleepUntil := time.Unix(m.store.NextRotationAt, 0)
 			m.mu.Unlock()
 
-			delay := time.Until(sleepUntil)
-			if delay < 0 {
-				delay = 0
-			}
+			delay := max(time.Until(sleepUntil), 0)
 
 			select {
 			case <-m.stopCh:

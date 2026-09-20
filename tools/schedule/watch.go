@@ -10,6 +10,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -245,7 +246,7 @@ func (t *CronTool) probe(ctx context.Context, agentID string, w *cron.CronWatch)
 // the call. Listen jobs use it with their own, longer wait.
 func (t *CronTool) probeWithContext(ctx context.Context, agentID string, w *cron.CronWatch) (string, error) {
 	if t.agentTools == nil {
-		return "", fmt.Errorf("watch jobs are not available: no tool registry wired")
+		return "", errors.New("watch jobs are not available: no tool registry wired")
 	}
 	registry := t.agentTools(agentID)
 	if registry == nil {
@@ -284,10 +285,10 @@ func parseWatchArgs(args map[string]any) (*cron.CronWatch, error) {
 		// watch_args or watch_fields without watch_tool is a half-written watch;
 		// silently creating a plain reminder would not be what was asked for.
 		if _, has := args["watch_args"]; has {
-			return nil, fmt.Errorf("watch_args was given without watch_tool")
+			return nil, errors.New("watch_args was given without watch_tool")
 		}
 		if _, has := args["watch_fields"]; has {
-			return nil, fmt.Errorf("watch_fields was given without watch_tool")
+			return nil, errors.New("watch_fields was given without watch_tool")
 		}
 		return nil, nil
 	}
@@ -297,7 +298,7 @@ func parseWatchArgs(args map[string]any) (*cron.CronWatch, error) {
 	if raw, has := args["watch_args"]; has && raw != nil {
 		m, ok := raw.(map[string]any)
 		if !ok {
-			return nil, fmt.Errorf("watch_args must be an object of tool parameters")
+			return nil, errors.New("watch_args must be an object of tool parameters")
 		}
 		w.Args = m
 	}
@@ -305,7 +306,7 @@ func parseWatchArgs(args map[string]any) (*cron.CronWatch, error) {
 	if raw, has := args["watch_fields"]; has && raw != nil {
 		list, ok := raw.([]any)
 		if !ok {
-			return nil, fmt.Errorf("watch_fields must be a list of dot-path strings")
+			return nil, errors.New("watch_fields must be a list of dot-path strings")
 		}
 		for _, item := range list {
 			f, isStr := item.(string)

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -64,11 +65,11 @@ type iteration struct {
 }
 
 // runIteration runs one runLLMIteration for the test and fails it on error.
-func runIteration(t testing.TB, al *AgentLoop, agent *AgentInstance, messages []providers.Message, opts processOptions, cm ctxengine.ContextManager) iteration {
-	t.Helper()
+func runIteration(tb testing.TB, al *AgentLoop, agent *AgentInstance, messages []providers.Message, opts processOptions, cm ctxengine.ContextManager) iteration {
+	tb.Helper()
 	content, normal, degenerate, finish, n, err := al.runLLMIteration(context.Background(), agent, messages, opts, cm, nil)
 	if err != nil {
-		t.Fatalf("runLLMIteration: %v", err)
+		tb.Fatalf("runLLMIteration: %v", err)
 	}
 	return iteration{content: content, normal: normal, degenerate: degenerate, finishReason: finish, iterations: n}
 }
@@ -369,6 +370,7 @@ type testHelper struct {
 }
 
 func (h testHelper) executeAndGetResponse(tb testing.TB, ctx context.Context, msg bus.InboundMessage) string {
+	tb.Helper()
 	// Use a short timeout to avoid hanging
 	timeoutCtx, cancel := context.WithTimeout(ctx, responseTimeout)
 	defer cancel()
@@ -625,7 +627,7 @@ func TestAgentLoop_ContextExhaustionRetry(t *testing.T) {
 	msgBus := bus.NewMessageBus()
 
 	// Create a provider that fails once with a context error
-	contextErr := fmt.Errorf("InvalidParameter: Total tokens of image and text exceed max message tokens")
+	contextErr := errors.New("InvalidParameter: Total tokens of image and text exceed max message tokens")
 	provider := &failFirstMockProvider{
 		failures:    1,
 		failError:   contextErr,
@@ -1295,7 +1297,7 @@ func TestRunLLMIteration_ContextCancelDuringBackoff(t *testing.T) {
 	if agent == nil {
 		t.Fatal("no default agent")
 	}
-	agent.Provider = &errorProvider{err: fmt.Errorf("deadline exceeded")}
+	agent.Provider = &errorProvider{err: errors.New("deadline exceeded")}
 
 	messages := []providers.Message{
 		{Role: "user", Content: "trigger backoff"},
@@ -1764,11 +1766,7 @@ func TestProcessSystemMessage_WrongChannel(t *testing.T) {
 // the SPAWNING agent and its originating session, falling back to the default
 // agent's main session when no originator is supplied.
 func TestResolveSystemMessageTarget(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "agent-systarget-*")
-	if err != nil {
-		t.Fatalf("mkdir temp: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
+	tmpDir := t.TempDir()
 
 	cfg := &config.Config{
 		Agents: config.AgentsConfig{
@@ -1854,7 +1852,7 @@ func TestRunLLMIteration_ContextWindowError_Retry(t *testing.T) {
 
 	// Populate a session with enough messages to survive forceCompression.
 	const sessionKey = "ctx-window-retry"
-	for i := 0; i < 6; i++ {
+	for range 6 {
 		agent.Sessions.AddMessage(sessionKey, "user", "old user msg")
 		agent.Sessions.AddMessage(sessionKey, "assistant", "old assistant reply")
 	}
@@ -1866,7 +1864,7 @@ func TestRunLLMIteration_ContextWindowError_Retry(t *testing.T) {
 			{Content: successContent, ToolCalls: []providers.ToolCall{}},
 		},
 		errors: []error{
-			fmt.Errorf("context_length_exceeded: request too long"),
+			errors.New("context_length_exceeded: request too long"),
 			nil,
 		},
 	}
@@ -2131,7 +2129,7 @@ func TestReloadProviderAndConfig_Success(t *testing.T) {
 func TestMapCommandError_WithCommandName(t *testing.T) {
 	result := commands.ExecuteResult{
 		Command: "help",
-		Err:     fmt.Errorf("not found"),
+		Err:     errors.New("not found"),
 	}
 	got := mapCommandError(result)
 	if !strings.Contains(got, "/help") {
@@ -2144,7 +2142,7 @@ func TestMapCommandError_WithCommandName(t *testing.T) {
 func TestMapCommandError_WithoutCommandName(t *testing.T) {
 	result := commands.ExecuteResult{
 		Command: "",
-		Err:     fmt.Errorf("parse error"),
+		Err:     errors.New("parse error"),
 	}
 	got := mapCommandError(result)
 	if !strings.Contains(got, "Failed to execute command:") {
@@ -2157,11 +2155,7 @@ func TestMapCommandError_WithoutCommandName(t *testing.T) {
 // binding cascade. Regression test for FIX-2: callbacks intended for one agent
 // were being routed to a different agent that owned a Slack catch-all binding.
 func TestResolveMessageRoute_PreresolvedAgentID(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "agent-preresolve-*")
-	if err != nil {
-		t.Fatalf("mkdir temp: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
+	tmpDir := t.TempDir()
 
 	cfg := &config.Config{
 		Agents: config.AgentsConfig{

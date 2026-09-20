@@ -36,7 +36,7 @@ func TestConfigWatcher_DebouncesBurstIntoSingleReload(t *testing.T) {
 
 	// Burst of three writes, each spaced under the debounce window so each resets
 	// the timer. No reload should fire during the burst.
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		writeConfig(t, path, time.Duration(i).String()+"-burst")
 		time.Sleep(50 * time.Millisecond) // < debounce
 	}

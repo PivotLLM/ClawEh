@@ -224,18 +224,12 @@ func TestPromptParity_Golden(t *testing.T) {
 
 // firstDiff renders the region around the first differing byte.
 func firstDiff(want, got string) string {
-	n := len(want)
-	if len(got) < n {
-		n = len(got)
-	}
+	n := min(len(got), len(want))
 	i := 0
 	for i < n && want[i] == got[i] {
 		i++
 	}
-	lo := i - 200
-	if lo < 0 {
-		lo = 0
-	}
+	lo := max(i-200, 0)
 	hiW, hiG := i+200, i+200
 	if hiW > len(want) {
 		hiW = len(want)

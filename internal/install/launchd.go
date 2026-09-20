@@ -117,7 +117,7 @@ func installLaunchd(tu *TargetUser, targetBin, binDir, clawHome string) error {
 		fmt.Printf("Registered launchd user agent: %s\n", destPath)
 
 		// Unload previous instance if present
-		guiTarget := fmt.Sprintf("gui/%s", tu.UID)
+		guiTarget := "gui/" + tu.UID
 		_ = exec.Command("launchctl", "bootout", guiTarget+"/"+launchdLabel).Run()
 		_ = exec.Command("launchctl", "unload", "-w", destPath).Run()
 
@@ -146,7 +146,7 @@ func uninstallLaunchd(tu *TargetUser) error {
 		}
 		fmt.Printf("Removed launchd daemon: %s\n", systemLaunchdPath)
 	} else {
-		guiTarget := fmt.Sprintf("gui/%s", tu.UID)
+		guiTarget := "gui/" + tu.UID
 		destPath := userLaunchdPath(tu.HomeDir)
 		_ = exec.Command("launchctl", "bootout", guiTarget+"/"+launchdLabel).Run()
 		_ = exec.Command("launchctl", "unload", "-w", destPath).Run()

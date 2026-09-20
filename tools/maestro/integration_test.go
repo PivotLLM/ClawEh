@@ -42,7 +42,7 @@ func (r *scriptedRunner) RunSync(ctx context.Context, task, model string) (*glob
 	return &global.SyncResult{
 		Content:    `{"answer": "the worker answer"}`,
 		Iterations: 2,
-		TurnUsage:  global.TurnUsage{Model: "claude-x", Provider: "anthropic", InputTokens: 12, OutputTokens: 3, CostUSD: 0.01},
+		Model:      "claude-x", Provider: "anthropic", InputTokens: 12, OutputTokens: 3, CostUSD: 0.01,
 	}, nil
 }
 

@@ -79,9 +79,7 @@ func (t *CronTool) StartListeners(ctx context.Context) {
 	if t.listenKick == nil {
 		t.listenKick = make(chan struct{}, 1)
 	}
-	t.listenWG.Add(1)
-	go func() {
-		defer t.listenWG.Done()
+	t.listenWG.Go(func() {
 		t.reconcileListeners(supCtx)
 		ticker := time.NewTicker(listenReconcileInterval)
 		defer ticker.Stop()
@@ -95,7 +93,7 @@ func (t *CronTool) StartListeners(ctx context.Context) {
 				t.reconcileListeners(supCtx)
 			}
 		}
-	}()
+	})
 }
 
 // kickListeners asks the supervisor to reconcile now rather than at the next

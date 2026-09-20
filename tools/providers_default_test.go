@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/PivotLLM/ClawEh/config"
@@ -27,12 +28,7 @@ func TestDefaultEnabledToolNames(t *testing.T) {
 
 	names := DefaultEnabledToolNames()
 	has := func(n string) bool {
-		for _, x := range names {
-			if x == n {
-				return true
-			}
-		}
-		return false
+		return slices.Contains(names, n)
 	}
 
 	if !has("ztest_on") {

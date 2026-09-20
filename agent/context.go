@@ -250,11 +250,7 @@ func (cb *ContextBuilder) BuildSystemPrompt() string {
 	// Skills - show summary, AI can read full content with read_file tool
 	skillsSummary := cb.skillsLoader.BuildSkillsSummaryForSkills(cb.filteredSkills())
 	if skillsSummary != "" {
-		parts = append(parts, fmt.Sprintf(`# Skills
-
-The following skills extend your capabilities. To use a skill, read its SKILL.md file using the read_file tool.
-
-%s`, skillsSummary))
+		parts = append(parts, "# Skills\n\nThe following skills extend your capabilities. To use a skill, read its SKILL.md file using the read_file tool.\n\n"+skillsSummary)
 	}
 
 	// Memory context
@@ -457,10 +453,8 @@ func (cb *ContextBuilder) sourceFilesChangedLocked() bool {
 	// For each root:
 	// 1. Creation/deletion and root directory mtime changes are tracked by fileChangedSince.
 	// 2. Nested file create/delete/mtime changes are tracked by the skill file snapshot.
-	for _, root := range cb.skillRoots() {
-		if cb.fileChangedSince(root) {
-			return true
-		}
+	if slices.ContainsFunc(cb.skillRoots(), cb.fileChangedSince) {
+		return true
 	}
 	return skillFilesChangedSince(cb.skillRoots(), cb.skillFilesAtCache)
 }

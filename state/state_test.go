@@ -11,16 +11,12 @@ import (
 
 func TestAtomicSave(t *testing.T) {
 	// Create temp workspace
-	tmpDir, err := os.MkdirTemp("", "state-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
+	tmpDir := t.TempDir()
 
 	sm := NewManager(tmpDir)
 
 	// Test SetLastChannel
-	err = sm.SetLastChannel("test-channel")
+	err := sm.SetLastChannel("test-channel")
 	if err != nil {
 		t.Fatalf("SetLastChannel failed: %v", err)
 	}
@@ -50,16 +46,12 @@ func TestAtomicSave(t *testing.T) {
 }
 
 func TestSetLastChatID(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "state-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
+	tmpDir := t.TempDir()
 
 	sm := NewManager(tmpDir)
 
 	// Test SetLastChatID
-	err = sm.SetLastChatID("test-chat-id")
+	err := sm.SetLastChatID("test-chat-id")
 	if err != nil {
 		t.Fatalf("SetLastChatID failed: %v", err)
 	}
@@ -83,16 +75,12 @@ func TestSetLastChatID(t *testing.T) {
 }
 
 func TestAtomicity_NoCorruptionOnInterrupt(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "state-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
+	tmpDir := t.TempDir()
 
 	sm := NewManager(tmpDir)
 
 	// Write initial state
-	err = sm.SetLastChannel("initial-channel")
+	err := sm.SetLastChannel("initial-channel")
 	if err != nil {
 		t.Fatalf("SetLastChannel failed: %v", err)
 	}
@@ -126,11 +114,7 @@ func TestAtomicity_NoCorruptionOnInterrupt(t *testing.T) {
 }
 
 func TestConcurrentAccess(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "state-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
+	tmpDir := t.TempDir()
 
 	sm := NewManager(tmpDir)
 
@@ -169,11 +153,7 @@ func TestConcurrentAccess(t *testing.T) {
 }
 
 func TestNewManager_ExistingState(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "state-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
+	tmpDir := t.TempDir()
 
 	// Create initial state
 	sm1 := NewManager(tmpDir)
@@ -194,11 +174,7 @@ func TestNewManager_ExistingState(t *testing.T) {
 }
 
 func TestNewManager_EmptyWorkspace(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "state-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
+	tmpDir := t.TempDir()
 
 	sm := NewManager(tmpDir)
 
@@ -230,16 +206,12 @@ func TestNewManager_MkdirFailureDoesNotCrash(t *testing.T) {
 		os.Exit(0)
 	}
 
-	tmpDir, err := os.MkdirTemp("", "state-crash-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
+	tmpDir := t.TempDir()
 
 	cmd := exec.Command(os.Args[0], "-test.run=TestNewManager_MkdirFailureDoesNotCrash")
 	cmd.Env = append(os.Environ(), "BE_CRASHER=1", "CRASH_DIR="+tmpDir)
 
-	err = cmd.Run()
+	err := cmd.Run()
 	if err != nil {
 		t.Fatalf("NewManager should not crash when state dir creation fails, got: %v", err)
 	}

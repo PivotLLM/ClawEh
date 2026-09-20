@@ -204,12 +204,10 @@ func TestRegistry_ExecuteWithContext_OmitsArgsAtInfo(t *testing.T) {
 
 	r := NewToolRegistry()
 	r.Register(&leakyTool{
-		mockRegistryTool: mockRegistryTool{
-			name:   "file_write",
-			desc:   "writes",
-			params: map[string]any{},
-			result: SilentResult("ok"),
-		},
+		name:   "file_write",
+		desc:   "writes",
+		params: map[string]any{},
+		result: SilentResult("ok"),
 	})
 
 	secret := strings.Repeat("S", 10240)
@@ -221,7 +219,7 @@ func TestRegistry_ExecuteWithContext_OmitsArgsAtInfo(t *testing.T) {
 	out := buf.String()
 
 	var infLine string
-	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(out), "\n") {
 		var ev map[string]any
 		if err := json.Unmarshal([]byte(line), &ev); err != nil {
 			continue
@@ -271,7 +269,7 @@ func TestRegistry_ExecuteWithContext_TruncatesErrorForLLM(t *testing.T) {
 	}
 	// Locate the error log line and inspect the captured "error" field.
 	var errField string
-	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(out), "\n") {
 		var ev map[string]any
 		if err := json.Unmarshal([]byte(line), &ev); err != nil {
 			continue

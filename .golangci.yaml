@@ -64,16 +64,11 @@ linters:
     - lll
     - maintidx
     - mnd
-    - modernize
     - nestif
     - paralleltest
-    - perfsprint
     - revive
     - tagalign
     - testifylint
-    - thelper
-    - usestdlibvars
-    - usetesting
   settings:
     errcheck:
       check-type-assertions: true
@@ -101,6 +96,12 @@ linters:
     lll:
       line-length: 120
       tab-width: 4
+    modernize:
+      # omitzero on nested struct fields would start omitting zero-valued
+      # sections from saved config.json and the status API; omitempty is a
+      # no-op there today and that output is a contract.
+      disable:
+        - omitzero
     misspell:
       # No locale. Canadian English takes British -our/-re ("behaviour",
       # "centre") but American -ize ("synthesized"), so neither US nor UK fits:

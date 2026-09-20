@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -44,9 +45,7 @@ func Write(dumpsDir, reason string, metadata map[string]any, input, output json.
 	// Merge reason into metadata for the JSON doc.
 	meta := make(map[string]any, len(metadata)+1)
 	meta["reason"] = reason
-	for k, v := range metadata {
-		meta[k] = v
-	}
+	maps.Copy(meta, metadata)
 
 	doc := dumpDoc{
 		Metadata: meta,

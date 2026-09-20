@@ -75,9 +75,11 @@ func (al *AgentLoop) transcribeAudioInMessage(ctx context.Context, msg bus.Inbou
 	})
 
 	// Append any remaining transcriptions not matched by an annotation.
+	var newContentSb78 strings.Builder
 	for ; idx < len(transcriptions); idx++ {
-		newContent += "\n[voice: " + transcriptions[idx] + "]"
+		newContentSb78.WriteString("\n[voice: " + transcriptions[idx] + "]")
 	}
+	newContent += newContentSb78.String()
 
 	msg.Content = newContent
 	return msg, true

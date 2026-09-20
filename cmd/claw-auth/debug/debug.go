@@ -126,7 +126,7 @@ func maskJSONField(data, field string) string {
 // maskFormField masks sensitive form fields
 func maskFormField(data, field string) string {
 	// Pattern: field=value (ending with & or end of string)
-	pattern := fmt.Sprintf(`%s=([^&\s]*)`, field)
+	pattern := field + "=([^&\\s]*)"
 	return replacePattern(data, pattern)
 }
 

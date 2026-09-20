@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -142,7 +143,7 @@ type TelegramChannel struct {
 // The channel name is derived from botCfg.ChannelName().
 func NewTelegramChannelFromConfig(botCfg config.TelegramBotConfig, b *bus.MessageBus) (*TelegramChannel, error) {
 	if botCfg.Token == "" {
-		return nil, fmt.Errorf("telegram bot token is required")
+		return nil, errors.New("telegram bot token is required")
 	}
 	var opts []telego.BotOption
 
@@ -350,10 +351,9 @@ func (c *TelegramChannel) Send(ctx context.Context, msg bus.OutboundMessage) err
 
 		if len([]rune(htmlContent)) > 4096 {
 			ratio := float64(len([]rune(chunk))) / float64(len([]rune(htmlContent)))
-			smallerLen := int(float64(4096) * ratio * 0.95) // 5% safety margin
-			if smallerLen < 100 {
-				smallerLen = 100
-			}
+			smallerLen := max(
+				// 5% safety margin
+				int(float64(4096)*ratio*0.95), 100)
 			// Push sub-chunks back to the front of the queue for
 			// re-validation instead of sending them blindly.
 			subChunks := channels.SplitMessage(chunk, smallerLen)
@@ -479,7 +479,7 @@ func (c *TelegramChannel) SendPlaceholder(ctx context.Context, chatID string) (s
 		return "", err
 	}
 
-	return fmt.Sprintf("%d", pMsg.MessageID), nil
+	return strconv.Itoa(pMsg.MessageID), nil
 }
 
 // SendMedia implements the channels.MediaSender interface.
@@ -568,15 +568,15 @@ func (c *TelegramChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMe
 
 func (c *TelegramChannel) handleMessage(ctx context.Context, message *telego.Message) error {
 	if message == nil {
-		return fmt.Errorf("message is nil")
+		return errors.New("message is nil")
 	}
 
 	user := message.From
 	if user == nil {
-		return fmt.Errorf("message sender (user) is nil")
+		return errors.New("message sender (user) is nil")
 	}
 
-	platformID := fmt.Sprintf("%d", user.ID)
+	platformID := strconv.FormatInt(user.ID, 10)
 	sender := bus.SenderInfo{
 		Platform:    "telegram",
 		PlatformID:  platformID,
@@ -599,8 +599,8 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, message *telego.Mes
 	content := ""
 	mediaPaths := []string{}
 
-	chatIDStr := fmt.Sprintf("%d", chatID)
-	messageIDStr := fmt.Sprintf("%d", message.MessageID)
+	chatIDStr := strconv.FormatInt(chatID, 10)
+	messageIDStr := strconv.Itoa(message.MessageID)
 	scope := channels.BuildMediaScope("telegram", chatIDStr, messageIDStr)
 
 	// Helper to register a local file with the media store
@@ -695,7 +695,7 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, message *telego.Mes
 	// route to the correct topic and each topic gets its own session.
 	// Only forum groups (IsForum) are handled; regular group reply threads
 	// must share one session per group.
-	compositeChatID := fmt.Sprintf("%d", chatID)
+	compositeChatID := strconv.FormatInt(chatID, 10)
 	threadID := message.MessageThreadID
 	if message.Chat.IsForum && threadID != 0 {
 		compositeChatID = fmt.Sprintf("%d/%d", chatID, threadID)
@@ -712,7 +712,7 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, message *telego.Mes
 	logger.DebugCF("telegram", "Received message", logFields)
 
 	peerKind := "direct"
-	peerID := fmt.Sprintf("%d", user.ID)
+	peerID := strconv.FormatInt(user.ID, 10)
 	if message.Chat.Type != "private" {
 		peerKind = "group"
 		peerID = compositeChatID
@@ -721,16 +721,16 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, message *telego.Mes
 	peer := bus.Peer{Kind: peerKind, ID: peerID}
 
 	metadata := map[string]string{
-		"user_id":    fmt.Sprintf("%d", user.ID),
+		"user_id":    strconv.FormatInt(user.ID, 10),
 		"username":   user.Username,
 		"first_name": user.FirstName,
-		"is_group":   fmt.Sprintf("%t", message.Chat.Type != "private"),
+		"is_group":   strconv.FormatBool(message.Chat.Type != "private"),
 	}
 
 	// Set parent_peer metadata for per-topic agent binding.
 	if message.Chat.IsForum && threadID != 0 {
 		metadata["parent_peer_kind"] = "topic"
-		metadata["parent_peer_id"] = fmt.Sprintf("%d", threadID)
+		metadata["parent_peer_id"] = strconv.Itoa(threadID)
 	}
 
 	c.enqueue(coalescedMessage{
@@ -821,16 +821,16 @@ func (c *TelegramChannel) downloadFile(ctx context.Context, fileID, ext string) 
 // parseTelegramChatID splits "chatID/threadID" into its components.
 // Returns threadID=0 when no "/" is present (non-forum messages).
 func parseTelegramChatID(chatID string) (int64, int, error) {
-	idx := strings.Index(chatID, "/")
-	if idx == -1 {
+	before, after, ok := strings.Cut(chatID, "/")
+	if !ok {
 		cid, err := strconv.ParseInt(chatID, 10, 64)
 		return cid, 0, err
 	}
-	cid, err := strconv.ParseInt(chatID[:idx], 10, 64)
+	cid, err := strconv.ParseInt(before, 10, 64)
 	if err != nil {
 		return 0, 0, err
 	}
-	tid, err := strconv.Atoi(chatID[idx+1:])
+	tid, err := strconv.Atoi(after)
 	if err != nil {
 		return 0, 0, fmt.Errorf("invalid thread ID in chat ID %q: %w", chatID, err)
 	}

@@ -2,7 +2,6 @@ package commands
 
 import (
 	"context"
-	"fmt"
 	"strings"
 )
 
@@ -16,6 +15,6 @@ func agentsHandler() Handler {
 		if len(ids) == 0 {
 			return req.Reply("No agents registered")
 		}
-		return req.Reply(fmt.Sprintf("Registered agents: %s", strings.Join(ids, ", ")))
+		return req.Reply("Registered agents: " + strings.Join(ids, ", "))
 	}
 }

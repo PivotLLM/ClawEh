@@ -8,6 +8,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync/atomic"
 	"time"
@@ -105,7 +106,7 @@ func (al *AgentLoop) registerRuntimeTools(
 		// the turn at a clean boundary (never wipes history mid-turn).
 		clearFn := func(ctx context.Context, sessionKey, message string) error {
 			if !al.allowSelfClear(sessionKey) {
-				return fmt.Errorf("session_clear is rate-limited; wait a few seconds before clearing again")
+				return errors.New("session_clear is rate-limited; wait a few seconds before clearing again")
 			}
 			meta := map[string]string{
 				metaSessionReset:              "true",

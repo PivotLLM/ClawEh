@@ -6,6 +6,7 @@ package agent
 import (
 	"bytes"
 	"context"
+	"slices"
 	"strings"
 	"testing"
 
@@ -44,10 +45,8 @@ func agentToolNames(t *testing.T, al *AgentLoop) []string {
 
 func assertHasTool(t *testing.T, names []string, want string) {
 	t.Helper()
-	for _, n := range names {
-		if n == want {
-			return
-		}
+	if slices.Contains(names, want) {
+		return
 	}
 	t.Errorf("expected tool %q to be registered; got %v", want, names)
 }

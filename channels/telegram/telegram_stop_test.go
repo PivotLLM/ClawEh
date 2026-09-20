@@ -91,7 +91,7 @@ func TestStopIsIdempotent(t *testing.T) {
 		chatIDs:     map[string]int64{},
 	}
 
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		done := make(chan struct{})
 		go func() {
 			_ = c.Stop(context.Background())
@@ -154,7 +154,7 @@ func TestWatchLongPollDrainsAfterCtxCancel(t *testing.T) {
 	pushed := make(chan struct{})
 	go func() {
 		defer close(pushed)
-		for i := 0; i < 5; i++ {
+		for i := range 5 {
 			select {
 			case src <- telego.Update{UpdateID: i}:
 			case <-time.After(500 * time.Millisecond):

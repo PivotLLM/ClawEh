@@ -149,7 +149,7 @@ func TestNamedStore_Allow_TripsAndBlocks(t *testing.T) {
 	}
 
 	// First 3 requests within the window are allowed.
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if allowed, _ := s.Allow("amber", tok.ID); !allowed {
 			t.Fatalf("request %d unexpectedly blocked", i+1)
 		}

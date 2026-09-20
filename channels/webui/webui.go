@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -34,7 +35,7 @@ type webuiConn struct {
 // writeJSON sends a JSON message to the connection with write locking.
 func (pc *webuiConn) writeJSON(v any) error {
 	if pc.closed.Load() {
-		return fmt.Errorf("connection closed")
+		return errors.New("connection closed")
 	}
 	pc.writeMu.Lock()
 	defer pc.writeMu.Unlock()
@@ -109,7 +110,7 @@ func originAllowed(r *http.Request, allowOrigins []string) bool {
 // NewWebUIChannel creates a new WebUI channel.
 func NewWebUIChannel(cfg config.WebUIConfig, messageBus *bus.MessageBus) (*WebUIChannel, error) {
 	if cfg.Token == "" {
-		return nil, fmt.Errorf("webui token is required")
+		return nil, errors.New("webui token is required")
 	}
 
 	base := channels.NewBaseChannel("webui", cfg, messageBus, cfg.AllowFrom)
@@ -457,7 +458,7 @@ func (c *WebUIChannel) handleMessage(pc *webuiConn, msg WebUIMessage) {
 		c.handleMessageSend(pc, msg)
 
 	default:
-		errMsg := newError("unknown_type", fmt.Sprintf("unknown message type: %s", msg.Type))
+		errMsg := newError("unknown_type", "unknown message type: "+msg.Type)
 		pc.writeJSON(errMsg)
 	}
 }

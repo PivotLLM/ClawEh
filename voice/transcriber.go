@@ -153,7 +153,7 @@ func (t *whisperTranscriber) Transcribe(ctx context.Context, audioFilePath strin
 	}
 
 	url := t.apiBase + "/audio/transcriptions"
-	req, err := http.NewRequestWithContext(ctx, "POST", url, &requestBody)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, &requestBody)
 	if err != nil {
 		logger.ErrorCF("voice", "Failed to create request", map[string]any{"error": err})
 		return nil, fmt.Errorf("failed to create request: %w", err)
@@ -274,7 +274,7 @@ func (t *openRouterTranscriber) Transcribe(ctx context.Context, audioFilePath st
 	}
 
 	reqURL := t.apiBase + "/audio/transcriptions"
-	req, err := http.NewRequestWithContext(ctx, "POST", reqURL, bytes.NewReader(reqBody))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, bytes.NewReader(reqBody))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}

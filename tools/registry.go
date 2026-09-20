@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -226,17 +227,16 @@ func (r *ToolRegistry) pruneLocked(visibleBudget int) int {
 	if alwaysOn+len(revealed) <= visibleBudget {
 		return 0
 	}
-	evict := alwaysOn + len(revealed) - visibleBudget
-	if evict > len(revealed) {
-		evict = len(revealed) // core can't be evicted; revealed floor is 0
-	}
+	evict := min(alwaysOn+len(revealed)-visibleBudget,
+		// core can't be evicted; revealed floor is 0
+		len(revealed))
 	sort.Slice(revealed, func(i, j int) bool {
 		if revealed[i].entry.TTL != revealed[j].entry.TTL {
 			return revealed[i].entry.TTL < revealed[j].entry.TTL
 		}
 		return revealed[i].name < revealed[j].name
 	})
-	for i := 0; i < evict; i++ {
+	for i := range evict {
 		revealed[i].entry.TTL = 0
 	}
 	return evict
@@ -490,7 +490,7 @@ func (r *ToolRegistry) executeWithContext(
 			map[string]any{
 				"tool": name,
 			})
-		return ErrorResult(fmt.Sprintf("tool %q not found", name)).WithError(fmt.Errorf("tool not found"))
+		return ErrorResult(fmt.Sprintf("tool %q not found", name)).WithError(errors.New("tool not found"))
 	}
 
 	// Defense-in-depth: check tool allowlist from context before execution.

@@ -31,7 +31,7 @@ const defaultReadLineCount = 250
 // validatePath ensures the given path is within the workspace if restrict is true.
 func validatePath(path, workspace string, restrict bool) (string, error) {
 	if workspace == "" {
-		return path, fmt.Errorf("workspace is not defined")
+		return path, errors.New("workspace is not defined")
 	}
 
 	absWorkspace, err := filepath.Abs(workspace)
@@ -51,7 +51,7 @@ func validatePath(path, workspace string, restrict bool) (string, error) {
 
 	if restrict {
 		if !isWithinWorkspace(absPath, absWorkspace) {
-			return "", fmt.Errorf("access denied: path is outside the workspace")
+			return "", errors.New("access denied: path is outside the workspace")
 		}
 
 		var resolved string
@@ -62,13 +62,13 @@ func validatePath(path, workspace string, restrict bool) (string, error) {
 
 		if resolved, err = filepath.EvalSymlinks(absPath); err == nil {
 			if !isWithinWorkspace(resolved, workspaceReal) {
-				return "", fmt.Errorf("access denied: symlink resolves outside workspace")
+				return "", errors.New("access denied: symlink resolves outside workspace")
 			}
 		} else if os.IsNotExist(err) {
 			var parentResolved string
 			if parentResolved, err = resolveExistingAncestor(filepath.Dir(absPath)); err == nil {
 				if !isWithinWorkspace(parentResolved, workspaceReal) {
-					return "", fmt.Errorf("access denied: symlink resolves outside workspace")
+					return "", errors.New("access denied: symlink resolves outside workspace")
 				}
 			} else if !os.IsNotExist(err) {
 				return "", fmt.Errorf("failed to resolve path: %w", err)
@@ -366,10 +366,7 @@ func byteReadStatus(path, displayPath string, offset, readEnd, length, totalSize
 		fmt.Fprintf(&b, "Total size: %d bytes\n", totalSize)
 	}
 	if totalSize >= 0 && length > 0 {
-		totalChunks := (totalSize + length - 1) / length
-		if totalChunks < 1 {
-			totalChunks = 1
-		}
+		totalChunks := max((totalSize+length-1)/length, 1)
 		fmt.Fprintf(&b, "Chunk returned: bytes %d-%d (chunk %d of %d)\n",
 			offset, readEnd-1, offset/length+1, totalChunks)
 	} else {
@@ -588,7 +585,7 @@ func (t *WriteFileTool) Execute(ctx context.Context, args map[string]any) *tools
 		return tools.ErrorResult(err.Error())
 	}
 
-	forLLM := fmt.Sprintf("File written: %s", path)
+	forLLM := "File written: " + path
 	if getBoolArg(args, "display", false) {
 		return &tools.ToolResult{
 			ForLLM:  forLLM,
@@ -828,7 +825,7 @@ type sandboxFs struct {
 
 func (r *sandboxFs) execute(path string, fn func(root *os.Root, relPath string) error) error {
 	if r.workspace == "" {
-		return fmt.Errorf("workspace is not defined")
+		return errors.New("workspace is not defined")
 	}
 
 	root, err := os.OpenRoot(r.workspace)
@@ -1334,7 +1331,7 @@ func (w *writeScopedFs) WriteFileExclMode(path string, data []byte, mode os.File
 // Helper to get a safe relative path for os.Root usage
 func getSafeRelPath(workspace, path string) (string, error) {
 	if workspace == "" {
-		return "", fmt.Errorf("workspace is not defined")
+		return "", errors.New("workspace is not defined")
 	}
 
 	rel := filepath.Clean(path)

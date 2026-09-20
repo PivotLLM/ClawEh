@@ -20,8 +20,7 @@ import (
 // able to correct.
 func curateEnv(t *testing.T) (string, *http.ServeMux, string) {
 	t.Helper()
-	configPath, cleanup := setupTestEnv(t)
-	t.Cleanup(cleanup)
+	configPath := setupTestEnv(t)
 
 	dir := sessionsTestDir(t, configPath)
 	// The memory is per agent: <workspace>/cogmem/cogmem.db, and the store id

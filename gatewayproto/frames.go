@@ -2,6 +2,7 @@ package gatewayproto
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 )
 
@@ -55,7 +56,7 @@ func FrameKind(raw []byte) (string, error) {
 		return "", fmt.Errorf("gatewayproto: parse frame type: %w", err)
 	}
 	if head.Type == "" {
-		return "", fmt.Errorf("gatewayproto: frame missing type")
+		return "", errors.New("gatewayproto: frame missing type")
 	}
 	return head.Type, nil
 }

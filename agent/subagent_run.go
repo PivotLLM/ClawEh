@@ -5,6 +5,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -47,7 +48,7 @@ func (al *AgentLoop) runSubagentTask(ctx context.Context, agentID, sessionKey, t
 	// spawn loudly instead of the worker silently seeing nothing.
 	for _, ref := range media {
 		if al.mediaStore == nil {
-			return nil, fmt.Errorf("subagent: media refs passed but no media store is configured")
+			return nil, errors.New("subagent: media refs passed but no media store is configured")
 		}
 		if _, err := al.mediaStore.Resolve(ref); err != nil {
 			return nil, fmt.Errorf("subagent: media ref %s not found (expired or invalid) — it cannot be attached", ref)

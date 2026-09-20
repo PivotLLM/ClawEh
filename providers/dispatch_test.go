@@ -102,7 +102,7 @@ func TestProviderDispatcher_Get_ThreadSafe(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(goroutines)
 
-	for i := 0; i < goroutines; i++ {
+	for range goroutines {
 		go func() {
 			defer wg.Done()
 			p, err := d.Get("concurrent-alias")
@@ -127,17 +127,13 @@ func TestProviderDispatcher_Get_FlushRace(t *testing.T) {
 	var wg sync.WaitGroup
 
 	// Half goroutines call Get, half call Flush.
-	for i := 0; i < 10; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 10 {
+		wg.Go(func() {
 			_, _ = d.Get("race-alias")
-		}()
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		})
+		wg.Go(func() {
 			d.Flush(cfg)
-		}()
+		})
 	}
 
 	wg.Wait()
@@ -179,7 +175,7 @@ func TestProviderDispatcher_SingleCreationUnderConcurrentLoad(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(goroutines)
 
-	for i := 0; i < goroutines; i++ {
+	for i := range goroutines {
 		go func() {
 			defer wg.Done()
 			p, err := d.Get("load-alias")

@@ -13,8 +13,7 @@ import (
 func TestStartCommandRegistration_DoesNotBlock(t *testing.T) {
 	ch := &TelegramChannel{}
 	started := make(chan struct{}, 1)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	ch.registerFunc = func(context.Context, []commands.Definition) error {
 		started <- struct{}{}
@@ -32,8 +31,7 @@ func TestStartCommandRegistration_DoesNotBlock(t *testing.T) {
 
 func TestStartCommandRegistration_RetriesUntilSuccessThenStops(t *testing.T) {
 	ch := &TelegramChannel{}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	origBackoff := commandRegistrationBackoff
 	commandRegistrationBackoff = []time.Duration{5 * time.Millisecond}

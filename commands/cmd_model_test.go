@@ -2,7 +2,7 @@ package commands
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -52,7 +52,7 @@ func TestModel_ValidInt(t *testing.T) {
 }
 
 func TestModel_OutOfRange(t *testing.T) {
-	rt := modelRuntime(0, fmt.Errorf("model index out of range (0-2)"))
+	rt := modelRuntime(0, errors.New("model index out of range (0-2)"))
 	reply := execModel(t, rt, "/model 9")
 	if reply != "model index out of range (0-2)" {
 		t.Fatalf("reply=%q, want range error", reply)

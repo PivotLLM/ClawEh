@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -294,7 +295,7 @@ func (sm *SubagentManager) SpawnCallback(
 	parentDepth int,
 ) (string, error) {
 	if strings.TrimSpace(task) == "" {
-		return "", fmt.Errorf("task is required")
+		return "", errors.New("task is required")
 	}
 	id := uuid.NewString()
 	now := nowEpoch()
@@ -598,7 +599,7 @@ func (sm *SubagentManager) RunSync(ctx context.Context, task, agentID, model str
 		return nil, fmt.Errorf("%w: subagent manager not configured", global.ErrSpawnUnavailable)
 	}
 	if strings.TrimSpace(task) == "" {
-		return nil, fmt.Errorf("task is required")
+		return nil, errors.New("task is required")
 	}
 	if sm.runFull == nil {
 		return nil, fmt.Errorf("%w: full-pipeline runner not configured", global.ErrSpawnUnavailable)
@@ -634,10 +635,10 @@ func (sm *SubagentManager) Run(
 	media []string,
 ) (*tools.ToolResult, error) {
 	if strings.TrimSpace(task) == "" {
-		return nil, fmt.Errorf("task is required")
+		return nil, errors.New("task is required")
 	}
 	if sm == nil {
-		return nil, fmt.Errorf("subagent manager not configured")
+		return nil, errors.New("subagent manager not configured")
 	}
 
 	labelStr := label

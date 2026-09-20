@@ -7,9 +7,11 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -63,7 +65,7 @@ type LINEChannel struct {
 // NewLINEChannel creates a new LINE channel instance.
 func NewLINEChannel(cfg config.LINEConfig, messageBus *bus.MessageBus) (*LINEChannel, error) {
 	if cfg.ChannelSecret == "" || cfg.ChannelAccessToken == "" {
-		return nil, fmt.Errorf("line channel_secret and channel_access_token are required")
+		return nil, errors.New("line channel_secret and channel_access_token are required")
 	}
 
 	base := channels.NewBaseChannel("line", cfg, messageBus, cfg.AllowFrom,
@@ -443,8 +445,7 @@ func (c *LINEChannel) stripBotMention(text string, msg lineMessage) string {
 	// Try to strip using mention metadata indices
 	if msg.Mention != nil {
 		runes := []rune(text)
-		for i := len(msg.Mention.Mentionees) - 1; i >= 0; i-- {
-			m := msg.Mention.Mentionees[i]
+		for _, m := range slices.Backward(msg.Mention.Mentionees) {
 			// Strip if userId matches OR if the mention text contains the bot display name
 			shouldStrip := false
 			if c.botUserID != "" && m.UserID == c.botUserID {

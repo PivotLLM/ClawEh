@@ -19,7 +19,7 @@ import (
 )
 
 var (
-	uniqueIDCounter uint64
+	uniqueIDCounter atomic.Uint64
 	uniqueIDPrefix  string
 )
 
@@ -40,7 +40,7 @@ var audioAnnotationRe = regexp.MustCompile(`\[(voice|audio)(?::[^\]]*)?\]`)
 // This ID is intended for internal correlation (e.g. media scope keys) and is NOT
 // cryptographically secure — it must not be used in contexts where unpredictability matters.
 func uniqueID() string {
-	n := atomic.AddUint64(&uniqueIDCounter, 1)
+	n := uniqueIDCounter.Add(1)
 	return uniqueIDPrefix + strconv.FormatUint(n, 16)
 }
 

@@ -28,6 +28,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net"
 	"net/http"
 	"sync/atomic"
@@ -112,9 +113,7 @@ func WithAgentRegistries(registries map[string]*tools.ToolRegistry) Option {
 			return
 		}
 		m.agentRegistries = make(map[string]*tools.ToolRegistry, len(registries))
-		for k, v := range registries {
-			m.agentRegistries[k] = v
-		}
+		maps.Copy(m.agentRegistries, registries)
 	}
 }
 
@@ -127,9 +126,7 @@ func WithAgentWorkspaces(ws map[string]string) Option {
 			return
 		}
 		m.workspaces = make(map[string]string, len(ws))
-		for k, v := range ws {
-			m.workspaces[k] = v
-		}
+		maps.Copy(m.workspaces, ws)
 	}
 }
 

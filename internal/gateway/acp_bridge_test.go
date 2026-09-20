@@ -78,7 +78,7 @@ func (c *captureNotifier) chunks(t *testing.T) []string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	var texts []string
-	for _, line := range strings.Split(strings.TrimSpace(c.buf.String()), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(c.buf.String()), "\n") {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}

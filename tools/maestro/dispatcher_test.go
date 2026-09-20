@@ -84,10 +84,8 @@ func TestDispatcher_ModelHintPassthrough(t *testing.T) {
 func TestDispatcher_MapsUsageAndModel(t *testing.T) {
 	runner := &stubRunner{res: &global.SyncResult{
 		Content: "the answer", Iterations: 4,
-		TurnUsage: global.TurnUsage{
-			Model: "claude-x", Provider: "anthropic",
-			InputTokens: 1200, OutputTokens: 300, CacheReadTokens: 50, CacheCreationTokens: 7, CostUSD: 0.42,
-		},
+		Model: "claude-x", Provider: "anthropic",
+		InputTokens: 1200, OutputTokens: 300, CacheReadTokens: 50, CacheCreationTokens: 7, CostUSD: 0.42,
 	}}
 	d := &dispatcher{run: runner}
 

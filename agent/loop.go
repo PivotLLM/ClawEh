@@ -8,6 +8,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -350,10 +351,10 @@ func (al *AgentLoop) ReloadProviderAndConfig(
 ) error {
 	// Validate inputs
 	if provider == nil {
-		return fmt.Errorf("provider cannot be nil")
+		return errors.New("provider cannot be nil")
 	}
 	if cfg == nil {
-		return fmt.Errorf("config cannot be nil")
+		return errors.New("config cannot be nil")
 	}
 
 	// Create new registry with updated config and provider
@@ -384,7 +385,7 @@ func (al *AgentLoop) ReloadProviderAndConfig(
 			return fmt.Errorf("registry creation failed: %w", res.err)
 		}
 		if res.registry == nil {
-			return fmt.Errorf("registry creation failed (nil result)")
+			return errors.New("registry creation failed (nil result)")
 		}
 		registry = res.registry
 	case <-ctx.Done():

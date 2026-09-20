@@ -15,8 +15,7 @@ import (
 )
 
 func TestHandleListSkills(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 
 	cfg, err := config.LoadConfig(configPath)
 	if err != nil {
@@ -55,17 +54,7 @@ func TestHandleListSkills(t *testing.T) {
 	}
 
 	builtinRoot := filepath.Join(t.TempDir(), "builtin-skills")
-	oldBuiltin := os.Getenv("CLAW_BUILTIN_SKILLS")
-	if err := os.Setenv("CLAW_BUILTIN_SKILLS", builtinRoot); err != nil {
-		t.Fatalf("Setenv(CLAW_BUILTIN_SKILLS) error = %v", err)
-	}
-	defer func() {
-		if oldBuiltin == "" {
-			_ = os.Unsetenv("CLAW_BUILTIN_SKILLS")
-		} else {
-			_ = os.Setenv("CLAW_BUILTIN_SKILLS", oldBuiltin)
-		}
-	}()
+	t.Setenv("CLAW_BUILTIN_SKILLS", builtinRoot)
 
 	builtinSkillDir := filepath.Join(builtinRoot, "builtin-skill")
 	if err := os.MkdirAll(builtinSkillDir, 0o755); err != nil {
@@ -115,8 +104,7 @@ func TestHandleListSkills(t *testing.T) {
 }
 
 func TestHandleGetSkill(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 
 	cfg, err := config.LoadConfig(configPath)
 	if err != nil {
@@ -170,8 +158,7 @@ func TestHandleGetSkill(t *testing.T) {
 }
 
 func TestHandleGetSkillUsesResolvedPath(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 
 	cfg, err := config.LoadConfig(configPath)
 	if err != nil {
@@ -223,8 +210,7 @@ func TestHandleGetSkillUsesResolvedPath(t *testing.T) {
 }
 
 func TestHandleImportSkill(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 
 	cfg, err := config.LoadConfig(configPath)
 	if err != nil {
@@ -297,8 +283,7 @@ func TestHandleImportSkill(t *testing.T) {
 }
 
 func TestHandleDeleteSkill(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 
 	cfg, err := config.LoadConfig(configPath)
 	if err != nil {

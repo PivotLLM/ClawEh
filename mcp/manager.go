@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -305,15 +306,11 @@ func buildStdioEnv(cfg config.MCPServerConfig) ([]string, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to load env file %s: %w", cfg.EnvFile, err)
 		}
-		for k, v := range envVars {
-			envMap[k] = v
-		}
+		maps.Copy(envMap, envVars)
 	}
 
 	// Environment variables from config override those from file
-	for k, v := range cfg.Env {
-		envMap[k] = v
-	}
+	maps.Copy(envMap, cfg.Env)
 
 	env := make([]string, 0, len(envMap))
 	for k, v := range envMap {
@@ -345,7 +342,7 @@ func (m *Manager) ConnectServer(
 		} else if cfg.Command != "" {
 			transportType = "stdio"
 		} else {
-			return fmt.Errorf("either URL or command must be provided")
+			return errors.New("either URL or command must be provided")
 		}
 	}
 
@@ -358,7 +355,7 @@ func (m *Manager) ConnectServer(
 	switch transportType {
 	case "http":
 		if cfg.URL == "" {
-			return fmt.Errorf("URL is required for http transport")
+			return errors.New("URL is required for http transport")
 		}
 		logger.DebugCF("mcp", "Using streamable HTTP transport",
 			map[string]any{"server": name, "url": cfg.URL})
@@ -372,7 +369,7 @@ func (m *Manager) ConnectServer(
 		}
 	case "sse":
 		if cfg.URL == "" {
-			return fmt.Errorf("URL is required for sse transport")
+			return errors.New("URL is required for sse transport")
 		}
 		logger.DebugCF("mcp", "Using SSE transport",
 			map[string]any{"server": name, "url": cfg.URL})
@@ -386,7 +383,7 @@ func (m *Manager) ConnectServer(
 		}
 	case "stdio":
 		if cfg.Command == "" {
-			return fmt.Errorf("command is required for stdio transport")
+			return errors.New("command is required for stdio transport")
 		}
 		logger.DebugCF("mcp", "Using stdio transport",
 			map[string]any{"server": name, "command": cfg.Command})
@@ -463,7 +460,7 @@ func (m *Manager) ConnectServer(
 		m.mu.Unlock()
 		_ = c.Close()
 		terminateStdioProcessTree(stdioCmd)
-		return fmt.Errorf("manager is closed")
+		return errors.New("manager is closed")
 	}
 	conn := &ServerConnection{
 		Name:   name,
@@ -491,9 +488,7 @@ func (m *Manager) GetServers() map[string]*ServerConnection {
 	defer m.mu.RUnlock()
 
 	result := make(map[string]*ServerConnection, len(m.servers))
-	for k, v := range m.servers {
-		result[k] = v
-	}
+	maps.Copy(result, m.servers)
 	return result
 }
 
@@ -569,9 +564,7 @@ func (m *Manager) RetryDisconnected(ctx context.Context) []string {
 	}
 	m.desiredMu.Lock()
 	desired := make(map[string]config.MCPServerConfig, len(m.desired))
-	for k, v := range m.desired {
-		desired[k] = v
-	}
+	maps.Copy(desired, m.desired)
 	m.desiredMu.Unlock()
 
 	var connected []string
@@ -664,14 +657,14 @@ func (m *Manager) CallTool(
 ) (*mcp.CallToolResult, error) {
 	// Check if closed before acquiring lock (fast path)
 	if m.closed.Load() {
-		return nil, fmt.Errorf("manager is closed")
+		return nil, errors.New("manager is closed")
 	}
 
 	m.mu.RLock()
 	// Double-check after acquiring lock to prevent TOCTOU race
 	if m.closed.Load() {
 		m.mu.RUnlock()
-		return nil, fmt.Errorf("manager is closed")
+		return nil, errors.New("manager is closed")
 	}
 	conn, ok := m.servers[serverName]
 	if ok {

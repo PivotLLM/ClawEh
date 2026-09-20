@@ -222,7 +222,7 @@ func TestRunner_AllowParallelFalse_EndToEnd(t *testing.T) {
 		"worker_response_template": "pb/templates/worker-response.json",
 		"worker_report_template":   "pb/templates/worker-report.md",
 	}, false)
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		h.callJSON("maestro_task_create", map[string]any{"project": project, "path": "main", "title": "W", "prompt": "go"})
 	}
 	h.callJSON("maestro_task_run", map[string]any{"project": project, "path": "main"})

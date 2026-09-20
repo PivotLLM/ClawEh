@@ -1,6 +1,10 @@
 package config
 
-import "github.com/PivotLLM/spawnllm"
+import (
+	"maps"
+
+	"github.com/PivotLLM/spawnllm"
+)
 
 // CLI agents — the local binaries ClawEh can drive as providers.
 //
@@ -143,11 +147,7 @@ func CLIEnv(protocol string, modelEnv map[string]string) map[string]string {
 		return modelEnv
 	}
 	out := make(map[string]string, len(agent.Env)+len(modelEnv))
-	for k, v := range agent.Env {
-		out[k] = v
-	}
-	for k, v := range modelEnv {
-		out[k] = v
-	}
+	maps.Copy(out, agent.Env)
+	maps.Copy(out, modelEnv)
 	return out
 }

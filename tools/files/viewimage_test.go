@@ -27,11 +27,11 @@ func makePNG(t *testing.T, w, h int) []byte {
 // decodeDataURL extracts and decodes the image carried by a data: URL.
 func decodeDataURL(t *testing.T, url string) image.Image {
 	t.Helper()
-	i := strings.Index(url, ";base64,")
-	if !strings.HasPrefix(url, "data:image/") || i < 0 {
+	_, after, ok := strings.Cut(url, ";base64,")
+	if !strings.HasPrefix(url, "data:image/") || !ok {
 		t.Fatalf("not an image data URL: %.40s", url)
 	}
-	raw, err := base64.StdEncoding.DecodeString(url[i+len(";base64,"):])
+	raw, err := base64.StdEncoding.DecodeString(after)
 	if err != nil {
 		t.Fatalf("base64 decode: %v", err)
 	}

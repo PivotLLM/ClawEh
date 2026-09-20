@@ -67,7 +67,7 @@ func (t *DeleteFileTool) Execute(_ context.Context, args map[string]any) *tools.
 	if err := t.sysFs.Remove(path); err != nil {
 		return tools.ErrorResult(err.Error())
 	}
-	return tools.SilentResult(fmt.Sprintf("File deleted: %s", path))
+	return tools.SilentResult("File deleted: " + path)
 }
 
 // MoveFileTool relocates a file so the agent can organize files without reading

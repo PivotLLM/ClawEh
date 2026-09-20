@@ -8,7 +8,6 @@ package agent
 
 import (
 	"errors"
-	"fmt"
 	"path/filepath"
 	"time"
 
@@ -103,7 +102,7 @@ func (al *AgentLoop) CreateMessageToken(agentID, name string) (msgtoken.NamedTok
 	named := al.namedTokens
 	al.mu.RUnlock()
 	if named == nil {
-		return msgtoken.NamedToken{}, fmt.Errorf("named message-token store unavailable")
+		return msgtoken.NamedToken{}, errors.New("named message-token store unavailable")
 	}
 	return named.Create(agentID, name)
 }

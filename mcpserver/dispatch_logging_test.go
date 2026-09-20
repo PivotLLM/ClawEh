@@ -34,7 +34,7 @@ func TestDispatch_SuccessEmitsAuthorizedInfoPerCall(t *testing.T) {
 	tok := st.Issue("alice", "test:alice:main", "/tmp/archive/alice")
 	tracker := newFirstCallTracker(map[string]string{"alice": "/ws/alice"})
 
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		out, isErr := dispatchToolCall(context.Background(), "read_file",
 			map[string]any{"session_token": tok, "path": "x"}, st, resolverFor(regs), tracker, nil, nil, nil)
 		if isErr {

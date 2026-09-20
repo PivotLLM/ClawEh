@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -266,7 +267,7 @@ func validateConfig(cfg *config.Config) []string {
 func validateListenAddr(s string) error {
 	lastColon := strings.LastIndex(s, ":")
 	if lastColon <= 0 || lastColon == len(s)-1 {
-		return fmt.Errorf("must be host:port (e.g. 127.0.0.1:5911)")
+		return errors.New("must be host:port (e.g. 127.0.0.1:5911)")
 	}
 	portStr := s[lastColon+1:]
 	port, err := strconv.Atoi(portStr)

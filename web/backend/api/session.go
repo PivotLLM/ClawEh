@@ -60,8 +60,8 @@ const (
 )
 
 func extractWebUISessionIDFromSanitizedKey(key string) (string, bool) {
-	if strings.HasPrefix(key, sanitizedWebuiSessionPrefix) {
-		return strings.TrimPrefix(key, sanitizedWebuiSessionPrefix), true
+	if after, ok := strings.CutPrefix(key, sanitizedWebuiSessionPrefix); ok {
+		return after, true
 	}
 	return "", false
 }

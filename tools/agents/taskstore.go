@@ -5,7 +5,6 @@ package agents
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -187,6 +186,6 @@ func errResults(rec *TaskRecord, msg string) *TaskResults {
 		Name:       rec.Name,
 		Status:     StatusError,
 		FinishedAt: rec.FinishedAt,
-		Content:    fmt.Sprintf("Error: %s", msg),
+		Content:    "Error: " + msg,
 	}
 }

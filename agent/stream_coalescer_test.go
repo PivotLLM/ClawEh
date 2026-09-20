@@ -153,23 +153,19 @@ func TestCoalescerConcurrentAddFlush(t *testing.T) {
 	var wg sync.WaitGroup
 	// Writers: each Adds a fixed-length token repeatedly.
 	tok := "xy" // 2 runes, no boundary → exercises length/Flush paths
-	for g := 0; g < goroutines; g++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for i := 0; i < perGoroutine; i++ {
+	for range goroutines {
+		wg.Go(func() {
+			for range perGoroutine {
 				c.Add(tok)
 			}
-		}()
+		})
 	}
 	// Concurrent flusher racing the writers.
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for i := 0; i < perGoroutine; i++ {
+	wg.Go(func() {
+		for range perGoroutine {
 			c.Flush()
 		}
-	}()
+	})
 	wg.Wait()
 	c.Flush() // drain any remainder after all writers finished
 

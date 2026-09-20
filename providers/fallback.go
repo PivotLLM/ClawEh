@@ -2,6 +2,7 @@ package providers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -186,7 +187,7 @@ func (fc *FallbackChain) ExecuteWithNotify(
 	notify FallbackNotify,
 ) (*FallbackResult, error) {
 	if len(candidates) == 0 {
-		return nil, fmt.Errorf("fallback: no candidates configured")
+		return nil, errors.New("fallback: no candidates configured")
 	}
 
 	result := &FallbackResult{
@@ -350,7 +351,7 @@ func (fc *FallbackChain) ExecuteImage(
 	run func(ctx context.Context, candidate FallbackCandidate) (*LLMResponse, error),
 ) (*FallbackResult, error) {
 	if len(candidates) == 0 {
-		return nil, fmt.Errorf("image fallback: no candidates configured")
+		return nil, errors.New("image fallback: no candidates configured")
 	}
 
 	result := &FallbackResult{

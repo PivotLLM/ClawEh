@@ -179,7 +179,7 @@ func (t *CronTool) Execute(ctx context.Context, args map[string]any) *tools.Tool
 	case "disable":
 		return t.enableJob(args, false, target)
 	default:
-		return tools.ErrorResult(fmt.Sprintf("unknown action: %s", action))
+		return tools.ErrorResult("unknown action: " + action)
 	}
 }
 
@@ -433,7 +433,7 @@ func (t *CronTool) removeJob(args map[string]any, agentID string) *tools.ToolRes
 	}
 	t.kickListeners()
 	if removed {
-		return tools.SilentResult(fmt.Sprintf("Cron job removed: %s", jobID))
+		return tools.SilentResult("Cron job removed: " + jobID)
 	}
 	return tools.ErrorResult(fmt.Sprintf("Job %s not found", jobID))
 }

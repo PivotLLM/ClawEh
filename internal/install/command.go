@@ -11,6 +11,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -690,11 +691,8 @@ func ensureUserEnv(tu *TargetUser, binDir, clawHome string) string {
 	if binDir == "/usr/local/bin" || binDir == "/usr/bin" || binDir == "/bin" {
 		needPath = false
 	} else {
-		for _, p := range filepath.SplitList(os.Getenv("PATH")) {
-			if p == binDir {
-				needPath = false
-				break
-			}
+		if slices.Contains(filepath.SplitList(os.Getenv("PATH")), binDir) {
+			needPath = false
 		}
 		if strings.Contains(content, binDir) {
 			needPath = false

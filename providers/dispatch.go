@@ -6,6 +6,7 @@
 package providers
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -46,7 +47,7 @@ func NewProviderDispatcher(cfg *config.Config) *ProviderDispatcher {
 func (d *ProviderDispatcher) Get(alias string) (LLMProvider, error) {
 	alias = strings.TrimSpace(alias)
 	if alias == "" {
-		return nil, fmt.Errorf("dispatcher: empty alias")
+		return nil, errors.New("dispatcher: empty alias")
 	}
 
 	// Fast path: read-lock to check cache.

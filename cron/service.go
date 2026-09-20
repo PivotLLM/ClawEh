@@ -5,8 +5,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -597,7 +599,7 @@ func (cs *CronService) UpdateJob(job *CronJob) error {
 			return cs.saveStoreUnsafe()
 		}
 	}
-	return fmt.Errorf("job not found")
+	return errors.New("job not found")
 }
 
 func (cs *CronService) RemoveJob(jobID string) (bool, error) {
@@ -696,7 +698,7 @@ func generateID() string {
 	b := make([]byte, 8)
 	if _, err := rand.Read(b); err != nil {
 		// Fallback to time-based if crypto/rand fails
-		return fmt.Sprintf("%d", time.Now().UnixNano())
+		return strconv.FormatInt(time.Now().UnixNano(), 10)
 	}
 	return hex.EncodeToString(b)
 }

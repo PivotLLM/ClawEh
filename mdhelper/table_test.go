@@ -184,7 +184,7 @@ func TestFormatTables_EmojiAligns(t *testing.T) {
 	out := FormatTables(input)
 
 	var widths []int
-	for _, line := range strings.Split(out, "\n") {
+	for line := range strings.SplitSeq(out, "\n") {
 		if line == "```" || strings.HasPrefix(line, "-") || line == "" {
 			continue
 		}
@@ -207,7 +207,7 @@ func TestFormatTables_DividerMatchesLongestRow(t *testing.T) {
 	out := FormatTables(input)
 
 	divider, widest := -1, 0
-	for _, line := range strings.Split(out, "\n") {
+	for line := range strings.SplitSeq(out, "\n") {
 		if line == "```" || line == "" {
 			continue
 		}
@@ -234,7 +234,7 @@ func TestFormatTables_RightAlignedColumnEndsFlush(t *testing.T) {
 		"| Watermelon | 100 |"
 	out := FormatTables(input)
 
-	for _, line := range strings.Split(out, "\n") {
+	for line := range strings.SplitSeq(out, "\n") {
 		if line == "```" || strings.HasPrefix(line, "-") || line == "" {
 			continue
 		}

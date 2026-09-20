@@ -427,11 +427,9 @@ func TestDispatch_SessionScopedToolValidToken(t *testing.T) {
 	sessTok := st.Issue("alice", "agent:alice:main", "/ws/alice/sessions")
 
 	sessionTool := &sessionToolMock{
-		mockTool: mockTool{
-			name:   "get_session_messages",
-			params: map[string]any{},
-			result: tools.NewToolResult("messages"),
-		},
+		name:   "get_session_messages",
+		params: map[string]any{},
+		result: tools.NewToolResult("messages"),
 	}
 	reg := newRegistryWith(sessionTool)
 	regs := map[string]*tools.ToolRegistry{"alice": reg}
@@ -464,11 +462,9 @@ func TestDispatch_SessionScopedToolMissingToken(t *testing.T) {
 	st := newSessionTokenStore()
 
 	sessionTool := &sessionToolMock{
-		mockTool: mockTool{
-			name:   "get_session_messages",
-			params: map[string]any{},
-			result: tools.NewToolResult("messages"),
-		},
+		name:   "get_session_messages",
+		params: map[string]any{},
+		result: tools.NewToolResult("messages"),
 	}
 	reg := newRegistryWith(sessionTool)
 	regs := map[string]*tools.ToolRegistry{"alice": reg}
@@ -492,11 +488,9 @@ func TestDispatch_SessionScopedToolInvalidToken(t *testing.T) {
 	st := newSessionTokenStore()
 
 	sessionTool := &sessionToolMock{
-		mockTool: mockTool{
-			name:   "get_session_messages",
-			params: map[string]any{},
-			result: tools.NewToolResult("messages"),
-		},
+		name:   "get_session_messages",
+		params: map[string]any{},
+		result: tools.NewToolResult("messages"),
 	}
 	reg := newRegistryWith(sessionTool)
 	regs := map[string]*tools.ToolRegistry{"alice": reg}
@@ -521,18 +515,14 @@ func TestDispatch_SessionTokenRoutesToCorrectAgent(t *testing.T) {
 	aliceSessTok := st.Issue("alice", "agent:alice:main", "/ws/alice/sessions")
 
 	aliceTool := &sessionToolMock{
-		mockTool: mockTool{
-			name:   "get_session_messages",
-			params: map[string]any{},
-			result: tools.NewToolResult("alice-messages"),
-		},
+		name:   "get_session_messages",
+		params: map[string]any{},
+		result: tools.NewToolResult("alice-messages"),
 	}
 	bobTool := &sessionToolMock{
-		mockTool: mockTool{
-			name:   "get_session_messages",
-			params: map[string]any{},
-			result: tools.NewToolResult("bob-messages"),
-		},
+		name:   "get_session_messages",
+		params: map[string]any{},
+		result: tools.NewToolResult("bob-messages"),
 	}
 	regs := map[string]*tools.ToolRegistry{
 		"alice": newRegistryWith(aliceTool),
@@ -583,11 +573,9 @@ func TestDispatch_SessionScopedInterfaceInjectsKey(t *testing.T) {
 	for _, name := range toolNames {
 		t.Run(name, func(t *testing.T) {
 			tool := &sessionToolMock{
-				mockTool: mockTool{
-					name:   name,
-					params: map[string]any{},
-					result: tools.NewToolResult("ok"),
-				},
+				name:   name,
+				params: map[string]any{},
+				result: tools.NewToolResult("ok"),
 			}
 			reg := newRegistryWith(tool)
 			regs := map[string]*tools.ToolRegistry{"alice": reg}
@@ -617,11 +605,9 @@ func TestDispatch_NonSessionScopedToolDoesNotGetSessionKey(t *testing.T) {
 
 	// nonScopedCaptureMock captures ctx but does NOT implement SessionScoped.
 	tool := &nonScopedCaptureMock{
-		mockTool: mockTool{
-			name:   "read_file",
-			params: map[string]any{},
-			result: tools.NewToolResult("content"),
-		},
+		name:   "read_file",
+		params: map[string]any{},
+		result: tools.NewToolResult("content"),
 	}
 	reg := newRegistryWith(tool)
 	regs := map[string]*tools.ToolRegistry{"alice": reg}

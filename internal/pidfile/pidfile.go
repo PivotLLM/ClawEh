@@ -15,6 +15,7 @@
 package pidfile
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -34,7 +35,7 @@ func Path(dataDir string) string { return filepath.Join(dataDir, Name) }
 // cannot write one should still start.
 func Write(dataDir string) error {
 	if dataDir == "" {
-		return fmt.Errorf("pidfile: no data directory")
+		return errors.New("pidfile: no data directory")
 	}
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return fmt.Errorf("pidfile: create %s: %w", dataDir, err)
@@ -109,7 +110,7 @@ func RSSBytes(pid int) (int64, bool) {
 	if err != nil {
 		return 0, false
 	}
-	for _, line := range strings.Split(string(b), "\n") {
+	for line := range strings.SplitSeq(string(b), "\n") {
 		if !strings.HasPrefix(line, "VmRSS:") {
 			continue
 		}

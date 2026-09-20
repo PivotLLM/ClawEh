@@ -1,6 +1,7 @@
 package api
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
@@ -27,7 +28,7 @@ func TestBuildWsURLUsesRequestHostWhenPublic(t *testing.T) {
 	cfg.Gateway.Host = "0.0.0.0"
 	cfg.Gateway.Port = 18790
 
-	req := httptest.NewRequest("GET", "http://claw.local/api/webui/token", nil)
+	req := httptest.NewRequest(http.MethodGet, "http://claw.local/api/webui/token", nil)
 	req.Host = "192.168.1.9:18800"
 
 	if got := h.buildWsURL(req, cfg); got != "ws://192.168.1.9:18790/webui/ws" {

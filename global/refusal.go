@@ -3,7 +3,10 @@
 
 package global
 
-import "strings"
+import (
+	"slices"
+	"strings"
+)
 
 // This file is the single place to find and update LLM content-refusal
 // patterns. It is transport-neutral (stdlib only), so it can be vendored or
@@ -57,10 +60,8 @@ var RefusalMarkers = []string{
 // appending "I'm sorry, but I cannot…", truncating the result.
 func IsRefusal(finishReason, content string) bool {
 	if fr := strings.ToLower(strings.TrimSpace(finishReason)); fr != "" {
-		for _, r := range RefusalFinishReasons {
-			if fr == r {
-				return true
-			}
+		if slices.Contains(RefusalFinishReasons, fr) {
+			return true
 		}
 	}
 	lc := strings.ToLower(content)
@@ -76,10 +77,8 @@ func IsRefusal(finishReason, content string) bool {
 // response was classified as a refusal.
 func RefusalDetail(finishReason string) string {
 	if fr := strings.ToLower(strings.TrimSpace(finishReason)); fr != "" {
-		for _, r := range RefusalFinishReasons {
-			if fr == r {
-				return "content policy (finish_reason=" + fr + ")"
-			}
+		if slices.Contains(RefusalFinishReasons, fr) {
+			return "content policy (finish_reason=" + fr + ")"
 		}
 	}
 	return "content policy"

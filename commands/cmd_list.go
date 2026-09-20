@@ -2,7 +2,6 @@ package commands
 
 import (
 	"context"
-	"fmt"
 	"strings"
 )
 
@@ -36,7 +35,7 @@ func listCommand() Definition {
 					if len(enabled) == 0 {
 						return req.Reply("No channels enabled")
 					}
-					return req.Reply(fmt.Sprintf("Enabled Channels:\n- %s", strings.Join(enabled, "\n- ")))
+					return req.Reply("Enabled Channels:\n- " + strings.Join(enabled, "\n- "))
 				},
 			},
 			{

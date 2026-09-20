@@ -8,6 +8,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"runtime/debug"
 	"strings"
@@ -166,7 +167,7 @@ func (al *AgentLoop) processSessionMessage(ctx context.Context, msg bus.InboundM
 func (al *AgentLoop) HandleExternalMessage(_ context.Context, agentID, body string) error {
 	cfg := al.GetConfig()
 	if cfg == nil {
-		return fmt.Errorf("configuration not loaded")
+		return errors.New("configuration not loaded")
 	}
 	channel, chatID, peerKind, ok := cfg.CronTarget(agentID)
 	if !ok {
@@ -520,7 +521,7 @@ func (al *AgentLoop) processSystemMessage(
 
 	agent, sessionKey := al.resolveSystemMessageTarget(msg)
 	if agent == nil {
-		return "", fmt.Errorf("no agent available for system message")
+		return "", errors.New("no agent available for system message")
 	}
 
 	return al.runAgentLoop(ctx, agent, processOptions{

@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -202,7 +203,7 @@ func gatewayCmd(debug bool) error {
 
 	startupInfo := agentLoop.GetStartupInfo()
 	if len(startupInfo) == 0 {
-		return fmt.Errorf("no default agent configured — add at least one entry to agents.list in your config")
+		return errors.New("no default agent configured — add at least one entry to agents.list in your config")
 	}
 	toolsInfo, _ := startupInfo["tools"].(map[string]any)
 	skillsInfo, _ := startupInfo["skills"].(map[string]any)
@@ -262,7 +263,7 @@ func gatewayCmd(debug bool) error {
 			case forceReload <- done:
 				return <-done
 			case <-time.After(5 * time.Second):
-				return fmt.Errorf("gateway busy; reload not accepted")
+				return errors.New("gateway busy; reload not accepted")
 			}
 		})
 	}
@@ -953,10 +954,7 @@ func setupConfigWatcherPolling(configPath string, interval, debounce time.Durati
 	markCh := make(chan struct{}, 1)
 	var wg sync.WaitGroup
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-
+	wg.Go(func() {
 		// appliedModTime/appliedSize track the last config we actually reloaded.
 		// observedModTime/observedSize track the most recent on-disk state.
 		appliedModTime := getFileModTime(configPath)
@@ -1050,7 +1048,7 @@ func setupConfigWatcherPolling(configPath string, interval, debounce time.Durati
 				return
 			}
 		}
-	}()
+	})
 
 	stopFunc := func() {
 		close(stop)

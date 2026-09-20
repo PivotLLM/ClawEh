@@ -6,6 +6,7 @@
 package providers
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/PivotLLM/ClawEh/config"
@@ -20,7 +21,7 @@ func CreateProvider(cfg *config.Config) (LLMProvider, string, error) {
 
 	// Must have models at this point
 	if len(cfg.Models) == 0 {
-		return nil, "", fmt.Errorf("no models configured. Please add entries to models in your config")
+		return nil, "", errors.New("no models configured. Please add entries to models in your config")
 	}
 
 	// Get model config from models

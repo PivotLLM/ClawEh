@@ -6,6 +6,7 @@
 package common
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -27,11 +28,11 @@ func errResult(format string, args ...any) *global.Result {
 // resolved path.
 func confine(base, rel string) (string, error) {
 	if base == "" {
-		return "", fmt.Errorf("directory is not configured")
+		return "", errors.New("directory is not configured")
 	}
 	rel = strings.TrimSpace(rel)
 	if rel == "" {
-		return "", fmt.Errorf("path is required")
+		return "", errors.New("path is required")
 	}
 	cleaned := filepath.Clean(rel)
 	if filepath.IsAbs(cleaned) {

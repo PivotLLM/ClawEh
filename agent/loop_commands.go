@@ -8,8 +8,10 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -35,7 +37,7 @@ func (al *AgentLoop) handleCommand(
 	if al.cmdRegistry == nil {
 		cmdName, _ := commands.ParseCommandName(msg.Content)
 		if cmdName != "" {
-			return fmt.Sprintf("Unknown command: /%s", cmdName), true
+			return "Unknown command: /" + cmdName, true
 		}
 		return "Unknown command.", true
 	}
@@ -112,7 +114,7 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 		},
 		SwitchChannel: func(value string) error {
 			if al.channelManager == nil {
-				return fmt.Errorf("channel manager not initialized")
+				return errors.New("channel manager not initialized")
 			}
 			if _, exists := al.channelManager.GetChannel(value); !exists && value != "cli" {
 				return fmt.Errorf("channel '%s' not found or not enabled", value)
@@ -188,7 +190,7 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 		}
 		rt.SetActiveModel = func(idx int) (string, error) {
 			if opts == nil {
-				return "", fmt.Errorf("process options not available")
+				return "", errors.New("process options not available")
 			}
 			if err := al.setActiveModelIndex(agent, opts.SessionKey, idx); err != nil {
 				return "", err
@@ -228,10 +230,10 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 
 		rt.ClearHistory = func() error {
 			if opts == nil {
-				return fmt.Errorf("process options not available")
+				return errors.New("process options not available")
 			}
 			if agent.Sessions == nil {
-				return fmt.Errorf("sessions not initialized for agent")
+				return errors.New("sessions not initialized for agent")
 			}
 			cm, releaseCM := al.getContextManager(agent, opts.SessionKey)
 			defer releaseCM()
@@ -270,7 +272,7 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 		}
 		rt.CompactHistory = func(ctx context.Context) (string, error) {
 			if opts == nil {
-				return "", fmt.Errorf("process options not available")
+				return "", errors.New("process options not available")
 			}
 			cm, releaseCM := al.getContextManager(agent, opts.SessionKey)
 			defer releaseCM()
@@ -340,18 +342,18 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 		}
 		rt.RetriggerLastMessage = func(ctx context.Context) error {
 			if agent == nil || agent.Sessions == nil || opts == nil {
-				return fmt.Errorf("session not available")
+				return errors.New("session not available")
 			}
 			history := agent.Sessions.GetHistory(opts.SessionKey)
 			lastUserMsg := ""
-			for i := len(history) - 1; i >= 0; i-- {
-				if history[i].Role == "user" && history[i].Content != "" {
-					lastUserMsg = history[i].Content
+			for _, h := range slices.Backward(history) {
+				if h.Role == "user" && h.Content != "" {
+					lastUserMsg = h.Content
 					break
 				}
 			}
 			if lastUserMsg == "" {
-				return fmt.Errorf("no previous message to retry")
+				return errors.New("no previous message to retry")
 			}
 			retrigger := bus.InboundMessage{
 				Channel:  msg.Channel,

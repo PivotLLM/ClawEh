@@ -113,6 +113,7 @@ func (e *emulator) open(t *testing.T, wsURL, sharedToken string) (*websocket.Con
 
 // connect runs a one-shot handshake and closes the connection.
 func (e *emulator) connect(t *testing.T, wsURL, sharedToken string) connectResp {
+	t.Helper()
 	conn, resp := e.open(t, wsURL, sharedToken)
 	_ = conn.Close()
 	return resp
@@ -320,7 +321,7 @@ func readFramesUntilFinal(t *testing.T, conn *websocket.Conn) []collectedFrame {
 	t.Helper()
 	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
 	var frames []collectedFrame
-	for i := 0; i < 30; i++ {
+	for range 30 {
 		var f collectedFrame
 		if err := conn.ReadJSON(&f); err != nil {
 			t.Fatalf("read frame: %v", err)

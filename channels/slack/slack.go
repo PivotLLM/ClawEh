@@ -2,6 +2,7 @@ package slack
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -42,7 +43,7 @@ type slackMessageRef struct {
 
 func NewSlackChannel(cfg config.SlackConfig, messageBus *bus.MessageBus) (*SlackChannel, error) {
 	if cfg.BotToken == "" || cfg.AppToken == "" {
-		return nil, fmt.Errorf("slack bot_token and app_token are required")
+		return nil, errors.New("slack bot_token and app_token are required")
 	}
 
 	api := slack.New(
@@ -411,14 +412,16 @@ func (c *SlackChannel) handleMessageEvent(ev *slackevents.MessageEvent) {
 	}
 
 	if ev.Message != nil && len(ev.Message.Files) > 0 {
+		var contentSb414 strings.Builder
 		for _, file := range ev.Message.Files {
 			localPath := c.downloadSlackFile(file)
 			if localPath == "" {
 				continue
 			}
 			mediaPaths = append(mediaPaths, storeMedia(localPath, file.Name))
-			content += fmt.Sprintf("\n[file: %s]", file.Name)
+			fmt.Fprintf(&contentSb414, "\n[file: %s]", file.Name)
 		}
+		content += contentSb414.String()
 	}
 
 	if strings.TrimSpace(content) == "" {

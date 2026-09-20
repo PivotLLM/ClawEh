@@ -2,6 +2,7 @@ package skills
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -134,7 +135,7 @@ func (rm *RegistryManager) SearchAll(ctx context.Context, query string, limit in
 	rm.mu.RUnlock()
 
 	if len(regs) == 0 {
-		return nil, fmt.Errorf("no registries configured")
+		return nil, errors.New("no registries configured")
 	}
 
 	type regResult struct {

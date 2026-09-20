@@ -113,14 +113,8 @@ func tailLines(path string, n int) ([]string, error) {
 	}
 	size := fi.Size()
 
-	budget := int64(n) * bytesPerLine
-	if budget > maxTailBytes {
-		budget = maxTailBytes
-	}
-	start := size - budget
-	if start < 0 {
-		start = 0
-	}
+	budget := min(int64(n)*bytesPerLine, maxTailBytes)
+	start := max(size-budget, 0)
 	if _, seekErr := f.Seek(start, io.SeekStart); seekErr != nil {
 		return nil, seekErr
 	}

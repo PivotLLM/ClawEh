@@ -54,7 +54,7 @@ func runReasoningIterationOnce(t *testing.T, reasoning string) string {
 // findLLMResponseLine pulls the DBG "LLM response" line out of a captured
 // zerolog stream.
 func findLLMResponseLine(out string) string {
-	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(out), "\n") {
 		var ev map[string]any
 		if err := json.Unmarshal([]byte(line), &ev); err != nil {
 			continue

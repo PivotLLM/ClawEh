@@ -11,8 +11,7 @@ import (
 )
 
 func TestHandleListTools(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 
 	cfg, err := config.LoadConfig(configPath)
 	if err != nil {
@@ -81,8 +80,7 @@ func TestHandleListTools(t *testing.T) {
 }
 
 func TestHandleUpdateToolState(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 
 	cfg, err := config.LoadConfig(configPath)
 	if err != nil {

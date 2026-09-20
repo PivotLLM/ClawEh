@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -720,8 +721,8 @@ func MatchToolPattern(patterns []string, name string) bool {
 		if entry == "*" {
 			return true
 		}
-		if strings.HasSuffix(entry, "*") {
-			prefix := strings.ToLower(strings.TrimSuffix(entry, "*"))
+		if stem, ok := strings.CutSuffix(entry, "*"); ok {
+			prefix := strings.ToLower(stem)
 			if strings.HasPrefix(lowerName, prefix) {
 				return true
 			}
@@ -1790,10 +1791,10 @@ var reservedRequestBodyKeys = map[string]struct{}{
 // Validate checks if the ModelConfig has all required fields.
 func (c *ModelConfig) Validate() error {
 	if c.ModelName == "" {
-		return fmt.Errorf("model_name is required")
+		return errors.New("model_name is required")
 	}
 	if c.Model == "" {
-		return fmt.Errorf("model is required")
+		return errors.New("model is required")
 	}
 	if c.Provider == "" {
 		return fmt.Errorf("model %q: provider is required", c.ModelName)
@@ -2881,7 +2882,7 @@ func (c *Config) ValidateProvider(idx int) error {
 	}
 	p := &c.Providers[idx]
 	if strings.TrimSpace(p.Name) == "" {
-		return fmt.Errorf("provider name is required")
+		return errors.New("provider name is required")
 	}
 	for i := range c.Providers {
 		if i != idx && c.Providers[i].Name == p.Name {

@@ -18,7 +18,7 @@ func TestSpawnllmImportsNoClawEh(t *testing.T) {
 	if err != nil {
 		t.Skipf("go list unavailable: %v\n%s", err, out)
 	}
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), "github.com/PivotLLM/ClawEh") {
 			t.Fatalf("spawnllm must not import a host, but depends on %q", line)
 		}

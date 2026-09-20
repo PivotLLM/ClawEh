@@ -197,7 +197,7 @@ func TestSearchBM25_ZeroMaxResults(t *testing.T) {
 
 func TestSearchRegex_DeterministicOrder(t *testing.T) {
 	reg := NewToolRegistry()
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		reg.RegisterHidden(&mockSearchableTool{
 			name: fmt.Sprintf("tool_%02d", i),
 			desc: "searchable tool",
@@ -206,7 +206,7 @@ func TestSearchRegex_DeterministicOrder(t *testing.T) {
 
 	// Run the same search multiple times and verify order is stable
 	var firstRun []string
-	for attempt := 0; attempt < 10; attempt++ {
+	for attempt := range 10 {
 		res, err := reg.SearchRegex("searchable", 20)
 		if err != nil {
 			t.Fatalf("SearchRegex failed: %v", err)
@@ -235,7 +235,7 @@ func TestToolRegistry_SearchLimitsAndCoreFiltering(t *testing.T) {
 
 	// Add 1 Core and 10 Hidden, all containing the word "match"
 	reg.Register(&mockSearchableTool{"core_match", "I am core with match"})
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		reg.RegisterHidden(&mockSearchableTool{
 			name: fmt.Sprintf("hidden_match_%d", i),
 			desc: "this has a match",
@@ -335,7 +335,7 @@ func TestBM25CacheInvalidation(t *testing.T) {
 
 func TestPromoteTools_ConcurrentWithTickTTL(t *testing.T) {
 	reg := NewToolRegistry()
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		reg.RegisterHidden(&mockSearchableTool{
 			name: fmt.Sprintf("concurrent_tool_%d", i),
 			desc: "concurrent test tool",
@@ -343,20 +343,20 @@ func TestPromoteTools_ConcurrentWithTickTTL(t *testing.T) {
 	}
 
 	names := make([]string, 20)
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		names[i] = fmt.Sprintf("concurrent_tool_%d", i)
 	}
 
 	// Hammer PromoteTools and TickTTL concurrently to detect races
 	done := make(chan struct{})
 	go func() {
-		for i := 0; i < 1000; i++ {
+		for range 1000 {
 			reg.PromoteTools(names, 5, 0)
 		}
 		close(done)
 	}()
 
-	for i := 0; i < 1000; i++ {
+	for range 1000 {
 		reg.TickTTL()
 	}
 	<-done

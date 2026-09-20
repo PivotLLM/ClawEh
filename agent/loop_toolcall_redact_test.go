@@ -120,7 +120,7 @@ func runWriteFileToolCallOnce(t *testing.T, secret string) string {
 // goroutine in loop.go out of a captured zerolog stream.
 func findToolDispatchLines(t *testing.T, out string) (infLine, dbgLine string) {
 	t.Helper()
-	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(out), "\n") {
 		var ev map[string]any
 		if err := json.Unmarshal([]byte(line), &ev); err != nil {
 			continue

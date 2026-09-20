@@ -3,6 +3,7 @@ package device
 import (
 	"crypto/rand"
 	_ "embed"
+	"errors"
 	"fmt"
 	"math/big"
 	"strings"
@@ -27,7 +28,7 @@ const wordTokenWordCount = 5
 // into a client's token field.
 func GenerateWordToken() (string, error) {
 	if len(bip39Words) == 0 {
-		return "", fmt.Errorf("device: empty word list")
+		return "", errors.New("device: empty word list")
 	}
 	n := big.NewInt(int64(len(bip39Words)))
 	words := make([]string, wordTokenWordCount)

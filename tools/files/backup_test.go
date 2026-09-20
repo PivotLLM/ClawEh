@@ -560,7 +560,7 @@ func TestWriteFile_Backup_Concurrent_DistinctSuffixes(t *testing.T) {
 	tool := NewWriteFileTool(ws, true)
 	var wg sync.WaitGroup
 	errs := make([]string, N)
-	for i := 0; i < N; i++ {
+	for i := range N {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()

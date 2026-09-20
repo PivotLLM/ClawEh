@@ -7,6 +7,7 @@ package providers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -115,7 +116,7 @@ func NewProviderRegistry() *ProviderRegistry {
 func (r *ProviderRegistry) Register(provider OAuthProvider) error {
 	serviceName := provider.GetServiceName()
 	if serviceName == "" {
-		return fmt.Errorf("provider service name cannot be empty")
+		return errors.New("provider service name cannot be empty")
 	}
 
 	if _, exists := r.providers[serviceName]; exists {

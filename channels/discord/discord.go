@@ -2,11 +2,13 @@ package discord
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -135,7 +137,7 @@ func (c *DiscordChannel) Send(ctx context.Context, msg bus.OutboundMessage) erro
 
 	channelID := msg.ChatID
 	if channelID == "" {
-		return fmt.Errorf("channel ID is empty")
+		return errors.New("channel ID is empty")
 	}
 
 	if len([]rune(msg.Content)) == 0 {
@@ -153,7 +155,7 @@ func (c *DiscordChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMes
 
 	channelID := msg.ChatID
 	if channelID == "" {
-		return fmt.Errorf("channel ID is empty")
+		return errors.New("channel ID is empty")
 	}
 
 	store := c.GetMediaStore()
@@ -457,7 +459,7 @@ func (c *DiscordChannel) handleMessage(s *discordgo.Session, m *discordgo.Messag
 		"display_name": sender.DisplayName,
 		"guild_id":     m.GuildID,
 		"channel_id":   m.ChannelID,
-		"is_dm":        fmt.Sprintf("%t", m.GuildID == ""),
+		"is_dm":        strconv.FormatBool(m.GuildID == ""),
 	}
 
 	c.HandleMessage(c.ctx, peer, m.ID, senderID, m.ChannelID, content, mediaPaths, metadata, sender)
@@ -578,6 +580,7 @@ func (c *DiscordChannel) resolveDiscordRefs(s *discordgo.Session, text string, g
 
 	// 2. Expand Discord message links (max 3, same guild only)
 	matches := msgLinkRe.FindAllStringSubmatch(text, 3)
+	var textSb581 strings.Builder
 	for _, m := range matches {
 		if len(m) < 4 {
 			continue
@@ -595,8 +598,9 @@ func (c *DiscordChannel) resolveDiscordRefs(s *discordgo.Session, text string, g
 		if msg.Author != nil {
 			author = msg.Author.Username
 		}
-		text += fmt.Sprintf("\n[linked message from %s]: %s", author, msg.Content)
+		fmt.Fprintf(&textSb581, "\n[linked message from %s]: %s", author, msg.Content)
 	}
+	text += textSb581.String()
 
 	return text
 }

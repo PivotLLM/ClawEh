@@ -1,6 +1,7 @@
 package msg
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,7 +11,7 @@ import (
 // Local copy used by SendFileTool.
 func validatePath(path, workspace string, restrict bool) (string, error) {
 	if workspace == "" {
-		return path, fmt.Errorf("workspace is not defined")
+		return path, errors.New("workspace is not defined")
 	}
 
 	absWorkspace, err := filepath.Abs(workspace)
@@ -30,7 +31,7 @@ func validatePath(path, workspace string, restrict bool) (string, error) {
 
 	if restrict {
 		if !isWithinWorkspace(absPath, absWorkspace) {
-			return "", fmt.Errorf("access denied: path is outside the workspace")
+			return "", errors.New("access denied: path is outside the workspace")
 		}
 
 		var resolved string
@@ -41,13 +42,13 @@ func validatePath(path, workspace string, restrict bool) (string, error) {
 
 		if resolved, err = filepath.EvalSymlinks(absPath); err == nil {
 			if !isWithinWorkspace(resolved, workspaceReal) {
-				return "", fmt.Errorf("access denied: symlink resolves outside workspace")
+				return "", errors.New("access denied: symlink resolves outside workspace")
 			}
 		} else if os.IsNotExist(err) {
 			var parentResolved string
 			if parentResolved, err = resolveExistingAncestor(filepath.Dir(absPath)); err == nil {
 				if !isWithinWorkspace(parentResolved, workspaceReal) {
-					return "", fmt.Errorf("access denied: symlink resolves outside workspace")
+					return "", errors.New("access denied: symlink resolves outside workspace")
 				}
 			} else if !os.IsNotExist(err) {
 				return "", fmt.Errorf("failed to resolve path: %w", err)

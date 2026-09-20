@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -244,7 +245,7 @@ func (s *Server) handshake(r *http.Request, connID, nonce string, raw []byte) (*
 	if err := json.Unmarshal(raw, &req); err != nil || req.Type != gatewayproto.FrameReq {
 		return nil, &handshakeFail{id: "", err: gatewayproto.NewError(gatewayproto.CodeInvalidRequest, "first frame must be a connect request", nil), code: websocket.ClosePolicyViolation, reason: "invalid handshake"}
 	}
-	if req.Method != "connect" {
+	if req.Method != "connect" { //nolint:usestdlibvars // gateway protocol method name, not the HTTP verb
 		return nil, &handshakeFail{id: req.ID, err: gatewayproto.NewError(gatewayproto.CodeInvalidRequest, "first request must be connect", nil), code: websocket.ClosePolicyViolation, reason: "invalid handshake"}
 	}
 	var p gatewayproto.ConnectParams
@@ -427,11 +428,8 @@ func (s *Server) buildHelloOk(ctx context.Context, connID string, paired *Paired
 	role := gatewayproto.RoleNode
 	if len(paired.Roles) > 0 {
 		role = paired.Roles[0]
-		for _, rl := range paired.Roles {
-			if rl == gatewayproto.RoleNode {
-				role = gatewayproto.RoleNode
-				break
-			}
+		if slices.Contains(paired.Roles, gatewayproto.RoleNode) {
+			role = gatewayproto.RoleNode
 		}
 	}
 	auth := gatewayproto.HelloAuth{Role: role, Scopes: paired.Scopes, IssuedAtMs: time.Now().UnixMilli()}
