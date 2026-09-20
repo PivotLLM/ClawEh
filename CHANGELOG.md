@@ -15,7 +15,19 @@ observe does not need an entry.
 ### Changed
 
 - **Fix for MacOS.** Fixed two tools/maestro tests that failed on macOS because they compared raw t.TempDir() paths against symlink-resolved roots (/var vs /private/var); the import gate itself was correct. test.sh now re-prints failing Go test output, lists each failed Go test and MCP integration check by name in the final summary with rerun commands, and saves details to .test-failures.log; a startup-template check that could not fail the run now does.
-- **Colour fix.** Fix colour on text produced by test.sh.
+- **Colour fix.** Fix colour on text produced by test.sh and
+  tests/test_mcpserver.sh: the scripts printed the escape codes literally
+  (`\033[...`), on macOS and Linux alike. Colours are now off when output is
+  not a terminal or `NO_COLOR` is set, and `./test.sh -n` also silences the
+  integration sub-script.
+
+### Fixed
+
+- **`claw.pid` is written before the gateway starts serving.** It was written
+  after all services were up, so for a brief window a gateway that was already
+  accepting connections was invisible to `claw status` and `claw sessions`.
+  The integration suite tripped over that window on macOS; it now also polls
+  for the file instead of checking once.
 
 ## [0.5.6]
 

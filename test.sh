@@ -701,6 +701,12 @@ EOF
                     # "not running" on a healthy system.
                     echo "${BOLD}--- PID file ---${NC}"
                     echo ""
+                    # The port probe above can win a race with the write, so
+                    # poll briefly rather than testing once.
+                    for _ in $(seq 1 20); do
+                        [ -f "$INTEG_HOME/claw.pid" ] && break
+                        sleep 0.25
+                    done
                     if [ -f "$INTEG_HOME/claw.pid" ]; then
                         PIDFILE_CONTENT=$(cat "$INTEG_HOME/claw.pid" 2>/dev/null | tr -d ' \n')
                         if [ "$PIDFILE_CONTENT" = "$INTEG_PID" ]; then

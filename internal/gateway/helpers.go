@@ -213,21 +213,24 @@ func gatewayCmd(debug bool) error {
 			"skills_available": skillsInfo["available"],
 		})
 
-	// Setup and start all services
-	services, err := setupAndStartServices(cfg, agentLoop, msgBus, configPath)
-	if err != nil {
-		return err
-	}
-
 	// Record the pid so `claw status` can find THIS instance. Scoped to the data
 	// directory because one binary runs several gateways on a host, and a CLI
-	// command already resolves CLAW_HOME to find the config. Non-fatal: a
-	// gateway that cannot write the file should still serve.
+	// command already resolves CLAW_HOME to find the config. Written before the
+	// services start, so an instance that is accepting connections is always
+	// visible through the file (the usual daemon order); the deferred removal
+	// still cleans up if startup fails below. Non-fatal: a gateway that cannot
+	// write the file should still serve.
 	if err := pidfile.Write(cfg.DataDir()); err != nil {
 		logger.WarnCF("gateway", "could not write the pid file; `claw status` will not see this instance",
 			map[string]any{"error": err.Error()})
 	}
 	defer pidfile.Remove(cfg.DataDir())
+
+	// Setup and start all services
+	services, err := setupAndStartServices(cfg, agentLoop, msgBus, configPath)
+	if err != nil {
+		return err
+	}
 
 	logger.InfoF("Gateway started", map[string]any{"addr": fmt.Sprintf("%s:%d", cfg.Gateway.Host, cfg.Gateway.Port)})
 
