@@ -14,6 +14,7 @@ require (
 	github.com/bwmarrin/discordgo v0.29.0
 	github.com/caarlos0/env/v11 v11.4.1
 	github.com/ergochat/readline v0.1.3
+	github.com/go-pdf/fpdf v0.9.0
 	github.com/gomarkdown/markdown v0.0.0-20260917010721-cc30ffac3c05
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
