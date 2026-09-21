@@ -15,7 +15,7 @@ import (
 
 func TestCollectDevices_NoStoreIsUnavailableNotCreated(t *testing.T) {
 	cfg, env := fixtureConfig(t)
-	s := collectDevices(cfg, env)
+	s := collectDevices(t.Context(), cfg, env)
 	paired := findTable(t, s, "Paired devices")
 	contains(t, paired.Rows[0][0], "unavailable: no device store at", "missing store")
 	if _, err := os.Stat(filepath.Join(env.DataDir, "state", "gateway.db")); !os.IsNotExist(err) {
@@ -61,7 +61,7 @@ func TestCollectDevices_ListsPairedAndPending(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s := collectDevices(cfg, env)
+	s := collectDevices(t.Context(), cfg, env)
 	pt := findTable(t, s, "Paired devices")
 	_, r := findRow(t, pt, "Rabbit (r1)")
 	if r[1] != "dev-1" || r[2] != "bob" || r[3] == unknown {

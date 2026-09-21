@@ -4,6 +4,7 @@
 package audit
 
 import (
+	"context"
 	"time"
 
 	"github.com/PivotLLM/ClawEh/app"
@@ -11,7 +12,7 @@ import (
 )
 
 // collector builds one section of the report from the config and environment.
-type collector func(cfg *config.Config, env Environment) Section
+type collector func(ctx context.Context, cfg *config.Config, env Environment) Section
 
 // collectors lists the report sections in order. The Summary is rendered
 // second but computed last, from the same inputs, so it is not in this list.
@@ -31,7 +32,7 @@ var collectors = []collector{
 
 // Collect builds the report. It never fails: a store that is missing or
 // unreadable becomes an "unavailable: <reason>" row in its section.
-func Collect(cfg *config.Config, env Environment) *Report {
+func Collect(ctx context.Context, cfg *config.Config, env Environment) *Report {
 	if cfg == nil {
 		cfg = &config.Config{}
 	}
@@ -48,9 +49,9 @@ func Collect(cfg *config.Config, env Environment) *Report {
 	}
 	sections := make([]Section, 0, len(collectors)+1)
 	for _, c := range collectors {
-		sections = append(sections, c(cfg, env))
+		sections = append(sections, c(ctx, cfg, env))
 	}
-	summary := collectSummary(cfg, env)
+	summary := collectSummary(ctx, cfg, env)
 	r.Sections = append(r.Sections, sections[0], summary)
 	r.Sections = append(r.Sections, sections[1:]...)
 	return r

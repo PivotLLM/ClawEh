@@ -10,7 +10,7 @@ import (
 
 func TestCollectSummary_Confined(t *testing.T) {
 	cfg, env := fixtureConfig(t)
-	s := collectSummary(cfg, env)
+	s := collectSummary(t.Context(), cfg, env)
 	if s.Notes[0] != "ClawEh runs as user eric, group staff, on testbox." {
 		t.Errorf("headline = %q", s.Notes[0])
 	}
@@ -44,7 +44,7 @@ func TestCollectSummary_Confined(t *testing.T) {
 func TestCollectSummary_Unconfined(t *testing.T) {
 	cfg, env := fixtureConfig(t)
 	cfg.Agents.Defaults.RestrictToWorkspace = false
-	_, files := findRow(t, collectSummary(cfg, env).Tables[0], "Files")
+	_, files := findRow(t, collectSummary(t.Context(), cfg, env).Tables[0], "Files")
 	want := "agent alice can read and write anything user eric can access; " +
 		"agent bob can read and write anything user eric can access (restrict_to_workspace is off)."
 	if files[1] != want {
@@ -53,7 +53,7 @@ func TestCollectSummary_Unconfined(t *testing.T) {
 
 	cfg.Agents.Defaults.RestrictToWorkspace = true
 	cfg.Agents.Defaults.AllowReadOutsideWorkspace = true
-	_, files = findRow(t, collectSummary(cfg, env).Tables[0], "Files")
+	_, files = findRow(t, collectSummary(t.Context(), cfg, env).Tables[0], "Files")
 	if !strings.HasPrefix(files[1], "agent alice can read anything user eric can read; agent bob can read anything user eric can read;") {
 		t.Errorf("Files = %q", files[1])
 	}
@@ -63,7 +63,7 @@ func TestCollectSummary_NoShell(t *testing.T) {
 	cfg, env := fixtureConfig(t)
 	cfg.Agents.List[0].Tools = []string{"file_read"}
 	cfg.Agents.List[1].Tools = []string{"file_read"}
-	_, shell := findRow(t, collectSummary(cfg, env).Tables[0], "Shell")
+	_, shell := findRow(t, collectSummary(t.Context(), cfg, env).Tables[0], "Shell")
 	if shell[1] != "No enabled agent has shell_exec (deny patterns on, remote commands off)." {
 		t.Errorf("Shell = %q", shell[1])
 	}

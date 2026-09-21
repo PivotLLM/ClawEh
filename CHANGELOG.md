@@ -12,6 +12,17 @@ observe does not need an entry.
 
 ## [0.6.0]
 
+### Added
+
+- **Audit report.** A new Audit page (after Services in the WebUI menu) opens
+  a PDF describing what this install can do: identity and the user it runs
+  as, a summary table of what Claw can access, every listener, providers and
+  models (CLI providers with the exact command line they are launched with),
+  credentials as set or not set, channels and who may use them, each agent's
+  tools, MCP access and every folder it can read or write, external services,
+  devices, data at rest and scheduled activity. Endpoint `GET /api/audit/pdf`.
+  Secret values never appear. See `docs/audit.md`.
+
 ### Changed
 
 - **Fix for MacOS.** Fixed two tools/maestro tests that failed on macOS because they compared raw t.TempDir() paths against symlink-resolved roots (/var vs /private/var); the import gate itself was correct. test.sh now re-prints failing Go test output, lists each failed Go test and MCP integration check by name in the final summary with rerun commands, and saves details to .test-failures.log; a startup-template check that could not fail the run now does.

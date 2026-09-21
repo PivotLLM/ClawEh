@@ -4,6 +4,7 @@
 package audit
 
 import (
+	"context"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -98,7 +99,7 @@ func channelCredentialRows(cfg *config.Config) [][]string {
 	return rows
 }
 
-func collectCredentials(cfg *config.Config, env Environment) Section {
+func collectCredentials(_ context.Context, cfg *config.Config, env Environment) Section {
 	dd := dataDir(cfg, env)
 	t := Table{Caption: "Tokens", Columns: []string{"Credential", "Status"}}
 	t.Rows = append(t.Rows, serviceTokenRows(dd)...)

@@ -12,7 +12,7 @@ import (
 
 func TestCollectExternal_MCPServers(t *testing.T) {
 	cfg, env := fixtureConfig(t)
-	s := collectExternal(cfg, env)
+	s := collectExternal(t.Context(), cfg, env)
 	tb := findTable(t, s, "MCP servers (tools.mcp.servers)")
 
 	_, fusion := findRow(t, tb, "fusion")
@@ -44,7 +44,7 @@ func TestCollectExternal_MCPServers(t *testing.T) {
 
 func TestCollectExternal_SkillsAndRegistries(t *testing.T) {
 	cfg, env := fixtureConfig(t)
-	s := collectExternal(cfg, env)
+	s := collectExternal(t.Context(), cfg, env)
 	skillsTable := s.Tables[1]
 	if skillsTable.Rows[0][0] != "(none installed)" {
 		t.Errorf("fresh install skills = %v", skillsTable.Rows)
@@ -58,7 +58,7 @@ func TestCollectExternal_SkillsAndRegistries(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(md), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	skillsTable = collectExternal(cfg, env).Tables[1]
+	skillsTable = collectExternal(t.Context(), cfg, env).Tables[1]
 	_, w := findRow(t, skillsTable, "weather")
 	if w[1] != "global" {
 		t.Errorf("skill source = %q", w[1])

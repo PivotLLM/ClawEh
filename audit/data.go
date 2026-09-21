@@ -4,6 +4,7 @@
 package audit
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 
@@ -17,7 +18,7 @@ func days(n int, zero string) string {
 	return itoa(n) + " days"
 }
 
-func collectData(cfg *config.Config, env Environment) Section {
+func collectData(_ context.Context, cfg *config.Config, env Environment) Section {
 	dd := dataDir(cfg, env)
 	lg := cfg.Logging
 	d := cfg.Agents.Defaults

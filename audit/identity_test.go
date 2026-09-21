@@ -7,7 +7,7 @@ import "testing"
 
 func TestCollectIdentity(t *testing.T) {
 	cfg, env := fixtureConfig(t)
-	s := collectIdentity(cfg, env)
+	s := collectIdentity(t.Context(), cfg, env)
 	tb := s.Tables[0]
 	_, r := findRow(t, tb, "Runs as")
 	if r[1] != "user eric, group staff" {

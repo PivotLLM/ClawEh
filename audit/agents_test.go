@@ -22,7 +22,7 @@ func agentSub(t *testing.T, s Section, id string) Section {
 
 func TestCollectAgents_FolderAccessResolved(t *testing.T) {
 	cfg, env := fixtureConfig(t)
-	s := collectAgents(cfg, env)
+	s := collectAgents(t.Context(), cfg, env)
 	alice := agentSub(t, s, "alice")
 	fa := findTable(t, alice, "Folder access")
 
@@ -76,7 +76,7 @@ func TestCollectAgents_FolderAccessResolved(t *testing.T) {
 func TestCollectAgents_UnrestrictedIsHighlighted(t *testing.T) {
 	cfg, env := fixtureConfig(t)
 	cfg.Agents.Defaults.RestrictToWorkspace = false
-	fa := findTable(t, agentSub(t, collectAgents(cfg, env), "alice"), "Folder access")
+	fa := findTable(t, agentSub(t, collectAgents(t.Context(), cfg, env), "alice"), "Folder access")
 	if len(fa.Rows) == 0 || fa.Rows[0][0] != "anything user eric can access" {
 		t.Fatalf("first row = %v", fa.Rows)
 	}
@@ -94,7 +94,7 @@ func TestCollectAgents_UnrestrictedIsHighlighted(t *testing.T) {
 func TestCollectAgents_ReadOutsideWorkspace(t *testing.T) {
 	cfg, env := fixtureConfig(t)
 	cfg.Agents.Defaults.AllowReadOutsideWorkspace = true
-	fa := findTable(t, agentSub(t, collectAgents(cfg, env), "alice"), "Folder access")
+	fa := findTable(t, agentSub(t, collectAgents(t.Context(), cfg, env), "alice"), "Folder access")
 	if fa.Rows[0][0] != "anything user eric can read" || fa.Rows[0][1] != "[read]" {
 		t.Errorf("first row = %v", fa.Rows[0])
 	}
@@ -105,7 +105,7 @@ func TestCollectAgents_ReadOutsideWorkspace(t *testing.T) {
 
 func TestCollectAgents_ToolsAndSensitivity(t *testing.T) {
 	cfg, env := fixtureConfig(t)
-	s := collectAgents(cfg, env)
+	s := collectAgents(t.Context(), cfg, env)
 
 	// alice has no tools key: the install defaults ("*") apply, and every
 	// sensitive tool is admitted by the pattern.
@@ -136,7 +136,7 @@ func TestCollectAgents_ToolsAndSensitivity(t *testing.T) {
 	// An empty tools list means no tools.
 	empty := []string{}
 	cfg.Agents.List[1].Tools = empty
-	bob = findTable(t, agentSub(t, collectAgents(cfg, env), "bob"), "Internal tools")
+	bob = findTable(t, agentSub(t, collectAgents(t.Context(), cfg, env), "bob"), "Internal tools")
 	if len(bob.Rows) != 1 || !strings.HasPrefix(bob.Rows[0][0], "(none") {
 		t.Errorf("empty tools rows = %v", bob.Rows)
 	}
@@ -144,7 +144,7 @@ func TestCollectAgents_ToolsAndSensitivity(t *testing.T) {
 
 func TestCollectAgents_MCPAccess(t *testing.T) {
 	cfg, env := fixtureConfig(t)
-	s := collectAgents(cfg, env)
+	s := collectAgents(t.Context(), cfg, env)
 	mcp := findTable(t, agentSub(t, s, "alice"), "MCP access")
 	_, fusion := findRow(t, mcp, "fusion")
 	if fusion[1] != "fusion (all tools)" {
@@ -156,7 +156,7 @@ func TestCollectAgents_MCPAccess(t *testing.T) {
 	}
 
 	cfg.Agents.List[0].MCPTools = []string{"fusion_gcwx"}
-	mcp = findTable(t, agentSub(t, collectAgents(cfg, env), "alice"), "MCP access")
+	mcp = findTable(t, agentSub(t, collectAgents(t.Context(), cfg, env), "alice"), "MCP access")
 	_, sub := findRow(t, mcp, "fusion_gcwx")
 	if sub[1] != "fusion (tools starting with gcwx)" {
 		t.Errorf("prefixed reach = %q", sub[1])
@@ -170,7 +170,7 @@ func TestCollectAgents_MCPAccess(t *testing.T) {
 
 func TestCollectAgents_Settings(t *testing.T) {
 	cfg, env := fixtureConfig(t)
-	s := collectAgents(cfg, env)
+	s := collectAgents(t.Context(), cfg, env)
 	st := findTable(t, agentSub(t, s, "bob"), "Settings")
 	_, ws := findRow(t, st, "Workspace")
 	if ws[1] != filepath.Join(cfg.BaseDir(), "bob") {

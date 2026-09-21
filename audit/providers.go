@@ -4,6 +4,7 @@
 package audit
 
 import (
+	"context"
 	"slices"
 	"strings"
 
@@ -96,7 +97,7 @@ func modelsFor(cfg *config.Config, provider string) []*config.ModelConfig {
 	return out
 }
 
-func collectProviders(cfg *config.Config, _ Environment) Section {
+func collectProviders(_ context.Context, cfg *config.Config, _ Environment) Section {
 	api := Table{Caption: "API providers", Columns: []string{"Provider", "Protocol", "Base URL", "API key", "Proxy"}}
 	cli := Table{Caption: "CLI providers", Columns: []string{"Model", "Launch command", "Working directory", "Env names"}}
 	var modelTables []Table

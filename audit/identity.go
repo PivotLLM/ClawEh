@@ -4,6 +4,8 @@
 package audit
 
 import (
+	"context"
+
 	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/config"
 )
@@ -11,7 +13,7 @@ import (
 // timeFormat is the local time, with zone, used everywhere in the report.
 const timeFormat = "2006-01-02 15:04:05 MST"
 
-func collectIdentity(_ *config.Config, env Environment) Section {
+func collectIdentity(_ context.Context, _ *config.Config, env Environment) Section {
 	return Section{
 		Title: "Identity",
 		Tables: []Table{pairs("",

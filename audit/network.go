@@ -4,6 +4,7 @@
 package audit
 
 import (
+	"context"
 	"slices"
 	"strings"
 
@@ -108,7 +109,7 @@ func gatewayAllow(cidrs []string) string {
 	return strings.Join(cidrs, ", ") + " (loopback always allowed)"
 }
 
-func collectNetwork(cfg *config.Config, _ Environment) Section {
+func collectNetwork(_ context.Context, cfg *config.Config, _ Environment) Section {
 	lt := Table{Caption: "Listeners", Columns: []string{"Listener", "Bind address", "Client allowlist", "Notes"}}
 	for _, l := range listeners(cfg) {
 		if !l.Enabled {

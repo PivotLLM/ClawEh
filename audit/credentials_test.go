@@ -15,7 +15,7 @@ import (
 
 func TestCollectCredentials_FreshInstall(t *testing.T) {
 	cfg, env := fixtureConfig(t)
-	tb := findTable(t, collectCredentials(cfg, env), "Tokens")
+	tb := findTable(t, collectCredentials(t.Context(), cfg, env), "Tokens")
 	_, svc := findRow(t, tb, "Service tokens")
 	if svc[1] != "none issued" {
 		t.Errorf("service tokens = %q", svc[1])
@@ -53,7 +53,7 @@ func TestCollectCredentials_StoresCountedNotShown(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s := collectCredentials(cfg, env)
+	s := collectCredentials(t.Context(), cfg, env)
 	tb := findTable(t, s, "Tokens")
 	_, svc := findRow(t, tb, "Service token: agent alice")
 	if svc[1] != "issued (1)" {
@@ -78,7 +78,7 @@ func TestCollectCredentials_UnreadableStoreIsARow(t *testing.T) {
 	if err := os.WriteFile(svcPath, []byte("{not json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	tb := findTable(t, collectCredentials(cfg, env), "Tokens")
+	tb := findTable(t, collectCredentials(t.Context(), cfg, env), "Tokens")
 	_, svc := findRow(t, tb, "Service tokens")
 	contains(t, svc[1], "unavailable:", "corrupt service-token store")
 }

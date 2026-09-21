@@ -4,6 +4,7 @@
 package audit
 
 import (
+	"context"
 	"strings"
 
 	"github.com/PivotLLM/ClawEh/config"
@@ -107,7 +108,7 @@ func voiceRows(cfg *config.Config) [][]string {
 	return rows
 }
 
-func collectExternal(cfg *config.Config, _ Environment) Section {
+func collectExternal(_ context.Context, cfg *config.Config, _ Environment) Section {
 	return Section{
 		Title: "External services",
 		Notes: []string{

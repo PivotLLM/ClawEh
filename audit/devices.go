@@ -28,7 +28,7 @@ func msTime(ms int64) string {
 // deviceRows reads the paired and pending devices from the gateway pairing
 // database. The database is opened only when it already exists, so a fresh
 // install is reported as unavailable rather than created by the audit.
-func deviceRows(dd string) (paired, pending [][]string) {
+func deviceRows(ctx context.Context, dd string) (paired, pending [][]string) {
 	path := filepath.Join(dd, "state", "gateway.db")
 	if _, err := os.Stat(path); err != nil {
 		msg := "unavailable: no device store at " + path
@@ -37,7 +37,7 @@ func deviceRows(dd string) (paired, pending [][]string) {
 		}
 		return [][]string{row(msg, "", "", "")}, [][]string{row(msg, "", "", "")}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), deviceStoreTimeout)
+	ctx, cancel := context.WithTimeout(ctx, deviceStoreTimeout)
 	defer cancel()
 	store, err := device.OpenStore(ctx, path)
 	if err != nil {
@@ -71,8 +71,8 @@ func deviceRows(dd string) (paired, pending [][]string) {
 	return paired, pending
 }
 
-func collectDevices(cfg *config.Config, env Environment) Section {
-	paired, pending := deviceRows(dataDir(cfg, env))
+func collectDevices(ctx context.Context, cfg *config.Config, env Environment) Section {
+	paired, pending := deviceRows(ctx, dataDir(cfg, env))
 	dev := cfg.Channels.Device
 	return Section{
 		Title: "Devices",

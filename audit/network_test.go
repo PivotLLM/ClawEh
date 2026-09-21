@@ -12,7 +12,7 @@ import (
 
 func TestCollectNetwork_Listeners(t *testing.T) {
 	cfg, env := fixtureConfig(t)
-	tb := findTable(t, collectNetwork(cfg, env), "Listeners")
+	tb := findTable(t, collectNetwork(t.Context(), cfg, env), "Listeners")
 
 	_, gw := findRow(t, tb, "Gateway")
 	if gw[1] != "0.0.0.0:18790" {
@@ -33,7 +33,7 @@ func TestCollectNetwork_Listeners(t *testing.T) {
 	}
 
 	// Proxy credentials never appear.
-	s := collectNetwork(cfg, env)
+	s := collectNetwork(t.Context(), cfg, env)
 	pt := findTable(t, s, "Origins and proxies")
 	txt := tableText(pt)
 	contains(t, txt, "proxy.local:3128 (credentials redacted)", "proxy row")
@@ -64,7 +64,7 @@ func TestCollectNetwork_LoopbackHasNoOffHostNote(t *testing.T) {
 	cfg.Gateway.AllowedCIDRs = nil
 	cfg.MCPHost.Enabled = false
 	cfg.MCPHost.AutoEnable = false
-	tb := findTable(t, collectNetwork(cfg, env), "Listeners")
+	tb := findTable(t, collectNetwork(t.Context(), cfg, env), "Listeners")
 	_, gw := findRow(t, tb, "Gateway")
 	if strings.Contains(gw[3], "reachable from other hosts") {
 		t.Errorf("loopback gateway must not carry the off-host note: %q", gw[3])

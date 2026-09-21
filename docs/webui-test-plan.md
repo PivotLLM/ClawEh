@@ -129,13 +129,15 @@ Creates an agent called `e2e-probe` and deletes it at the end.
 | J1 | Load `/devices` | Renders, no console errors |
 | J2 | Request `/api/devices`, `/api/devices/pending` and `/api/devices/pair` concurrently, 12 times | No `5xx`. These share one SQLite store; opening it per request used to lose a WAL-conversion race and return an intermittent 500 |
 
-## K. Logs, MCP, memory, voice
+## K. Logs, MCP, memory, voice, audit
 
 | ID | Process | Expected |
 |---|---|---|
 | K1 | Load `/logs` | Shows log lines |
 | K2 | Load `/mcp` and `/mcp/servers` | Both render, no console errors |
 | K3 | Load `/memory` and `/voice` | Both render, no console errors |
+| K4 | Click **Audit** in the sidebar (below the groups) | `/audit` renders with an **Open audit report (PDF)** button, no console errors |
+| K5 | `GET /api/audit/pdf` | 200, `Content-Type: application/pdf`, `Content-Disposition: inline; …`, body starts with `%PDF-` |
 
 ## L. Setup wizard
 

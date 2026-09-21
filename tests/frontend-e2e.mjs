@@ -735,7 +735,7 @@ if (useGroup("J", "Devices")) {
 }
 
 // K. Remaining pages with live data
-if (useGroup("K", "Logs, MCP, memory, voice")) {
+if (useGroup("K", "Logs, MCP, memory, voice, audit")) {
   await check(1, "logs page shows log lines", async () => {
     const { ctx, text } = await open("/logs")
     const body = await text()
@@ -759,6 +759,26 @@ if (useGroup("K", "Logs, MCP, memory, voice")) {
       assert(body.length > 80, `${p} nearly empty`)
       assert(problems.length === 0, `${p} console: ${problems[0]}`)
     }
+  })
+
+  await check(4, "the audit page renders and the sidebar links to it", async () => {
+    const { ctx, page, problems } = await open("/agents")
+    await page.getByTestId("nav-audit").click()
+    await page.waitForURL(/\/audit$/)
+    await page.getByRole("link", { name: /Open audit report/ }).waitFor()
+    await ctx.close()
+    assert(problems.length === 0, `/audit console: ${problems[0]}`)
+  })
+
+  await check(5, "the audit report is a PDF served inline", async () => {
+    const res = await fetch(BASE + "/api/audit/pdf")
+    assert(res.status === 200, `status = ${res.status}`)
+    const ct = res.headers.get("content-type") ?? ""
+    assert(ct.startsWith("application/pdf"), `content-type = ${ct}`)
+    const cd = res.headers.get("content-disposition") ?? ""
+    assert(cd.startsWith("inline;"), `content-disposition = ${cd}`)
+    const head = Buffer.from(await res.arrayBuffer()).subarray(0, 5).toString()
+    assert(head === "%PDF-", `body starts with ${JSON.stringify(head)}`)
   })
 }
 

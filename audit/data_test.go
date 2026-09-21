@@ -10,7 +10,7 @@ import (
 
 func TestCollectData_ContentLoggingCalledOut(t *testing.T) {
 	cfg, env := fixtureConfig(t)
-	tb := findTable(t, collectData(cfg, env), "Storage")
+	tb := findTable(t, collectData(t.Context(), cfg, env), "Storage")
 	i, content := findRow(t, tb, "Message content logging")
 	if content[2] != "off" || isHighlighted(tb, i) {
 		t.Errorf("content logging off: row=%v highlighted=%v", content, isHighlighted(tb, i))
@@ -22,7 +22,7 @@ func TestCollectData_ContentLoggingCalledOut(t *testing.T) {
 
 	cfg.Logging.LogMessageContent = true
 	cfg.Logging.DumpAll = true
-	tb = findTable(t, collectData(cfg, env), "Storage")
+	tb = findTable(t, collectData(t.Context(), cfg, env), "Storage")
 	i, content = findRow(t, tb, "Message content logging")
 	if !isHighlighted(tb, i) {
 		t.Error("content logging on must be highlighted")

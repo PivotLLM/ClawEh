@@ -9,7 +9,7 @@ import (
 
 func TestCollectChannels_AnySenderCalledOut(t *testing.T) {
 	cfg, env := fixtureConfig(t)
-	tb := findTable(t, collectChannels(cfg, env), "Enabled channels")
+	tb := findTable(t, collectChannels(t.Context(), cfg, env), "Enabled channels")
 
 	i, tg := findRow(t, tb, "telegram-bob")
 	contains(t, tg[2], "any sender (allow_from contains *)", "telegram senders")
@@ -47,7 +47,7 @@ func TestCollectChannels_NoneEnabled(t *testing.T) {
 	cfg.Channels.LINE.Enabled = false
 	cfg.Channels.WebUI.Enabled = false
 	cfg.Channels.Device.Enabled = false
-	tb := findTable(t, collectChannels(cfg, env), "Enabled channels")
+	tb := findTable(t, collectChannels(t.Context(), cfg, env), "Enabled channels")
 	if len(tb.Rows) != 1 || tb.Rows[0][0] != "(no channel enabled)" {
 		t.Errorf("rows = %v", tb.Rows)
 	}

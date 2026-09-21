@@ -17,7 +17,7 @@ var wantSectionOrder = []string{
 
 func TestCollect_SectionOrder(t *testing.T) {
 	cfg, env := fixtureConfig(t)
-	r := Collect(cfg, env)
+	r := Collect(t.Context(), cfg, env)
 	if r.Product != "ClawEh" || r.Version != env.Version || !r.GeneratedAt.Equal(env.Now) {
 		t.Errorf("report header = %q %q %v", r.Product, r.Version, r.GeneratedAt)
 	}
@@ -32,7 +32,7 @@ func TestCollect_SectionOrder(t *testing.T) {
 }
 
 func TestCollect_NilConfigDoesNotPanic(t *testing.T) {
-	r := Collect(nil, Environment{})
+	r := Collect(t.Context(), nil, Environment{})
 	if len(r.Sections) != len(wantSectionOrder) || r.GeneratedAt.IsZero() {
 		t.Errorf("nil config report: %d sections, generated %v", len(r.Sections), r.GeneratedAt)
 	}
@@ -40,7 +40,7 @@ func TestCollect_NilConfigDoesNotPanic(t *testing.T) {
 
 func TestRenderPDF(t *testing.T) {
 	cfg, env := fixtureConfig(t)
-	r := Collect(cfg, env)
+	r := Collect(t.Context(), cfg, env)
 	var buf bytes.Buffer
 	if err := RenderPDF(r, &buf); err != nil {
 		t.Fatalf("RenderPDF: %v", err)
@@ -68,7 +68,7 @@ func TestRenderPDF(t *testing.T) {
 
 func TestRenderText_NoSecrets(t *testing.T) {
 	cfg, env := fixtureConfig(t)
-	txt := RenderText(Collect(cfg, env))
+	txt := RenderText(Collect(t.Context(), cfg, env))
 	for _, s := range allSecrets {
 		if strings.Contains(txt, s) {
 			t.Errorf("secret %q appears in the rendered report", s)

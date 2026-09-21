@@ -9,6 +9,7 @@ import {
   IconMessageCircle,
   IconMicrophone,
   IconPlugConnected,
+  IconReport,
   IconRobot,
   IconRoute,
   IconSettings,
@@ -349,6 +350,25 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             </SidebarGroup>
           </Collapsible>
         ))}
+        {/* Audit sits after the groups rather than inside one: it reports on
+            the whole install, not on one section of the configuration. */}
+        <SidebarMenu className="px-2">
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              asChild
+              isActive={currentPath === "/audit"}
+              tooltip={t("navigation.audit")}
+              className={`h-9 px-3 ${currentPath === "/audit" ? "bg-accent/80 text-foreground font-medium" : "text-muted-foreground hover:bg-muted/60"}`}
+            >
+              <Link to="/audit" data-testid="nav-audit">
+                <IconReport
+                  className={`size-4 ${currentPath === "/audit" ? "opacity-100" : "opacity-60"}`}
+                />
+                <span>{t("navigation.audit")}</span>
+              </Link>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
       </SidebarContent>
       {/* Status sits below the collapsible groups rather than inside one: it
           describes the running process as a whole, not a section of the

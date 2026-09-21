@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AgentRouteImport } from './routes/agent'
 import { Route as AgentsRouteImport } from './routes/agents'
+import { Route as AuditRouteImport } from './routes/audit'
 import { Route as ChannelsRouteRouteImport } from './routes/channels/route'
 import { Route as ConfigRouteImport } from './routes/config'
 import { Route as DevicesRouteImport } from './routes/devices'
@@ -44,6 +45,11 @@ const AgentRoute = AgentRouteImport.update({
 const AgentsRoute = AgentsRouteImport.update({
   id: '/agents',
   path: '/agents',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AuditRoute = AuditRouteImport.update({
+  id: '/audit',
+  path: '/audit',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ChannelsRouteRoute = ChannelsRouteRouteImport.update({
@@ -142,6 +148,7 @@ export interface FileRoutesByFullPath {
   '/channels': typeof ChannelsRouteRouteWithChildren
   '/agent': typeof AgentRouteWithChildren
   '/agents': typeof AgentsRoute
+  '/audit': typeof AuditRoute
   '/config': typeof ConfigRouteWithChildren
   '/devices': typeof DevicesRoute
   '/logs': typeof LogsRoute
@@ -165,6 +172,7 @@ export interface FileRoutesByTo {
   '/channels': typeof ChannelsRouteRouteWithChildren
   '/agent': typeof AgentRouteWithChildren
   '/agents': typeof AgentsRoute
+  '/audit': typeof AuditRoute
   '/config': typeof ConfigRouteWithChildren
   '/devices': typeof DevicesRoute
   '/logs': typeof LogsRoute
@@ -189,6 +197,7 @@ export interface FileRoutesById {
   '/channels': typeof ChannelsRouteRouteWithChildren
   '/agent': typeof AgentRouteWithChildren
   '/agents': typeof AgentsRoute
+  '/audit': typeof AuditRoute
   '/config': typeof ConfigRouteWithChildren
   '/devices': typeof DevicesRoute
   '/logs': typeof LogsRoute
@@ -214,6 +223,7 @@ export interface FileRouteTypes {
     | '/channels'
     | '/agent'
     | '/agents'
+    | '/audit'
     | '/config'
     | '/devices'
     | '/logs'
@@ -237,6 +247,7 @@ export interface FileRouteTypes {
     | '/channels'
     | '/agent'
     | '/agents'
+    | '/audit'
     | '/config'
     | '/devices'
     | '/logs'
@@ -260,6 +271,7 @@ export interface FileRouteTypes {
     | '/channels'
     | '/agent'
     | '/agents'
+    | '/audit'
     | '/config'
     | '/devices'
     | '/logs'
@@ -284,6 +296,7 @@ export interface RootRouteChildren {
   ChannelsRouteRoute: typeof ChannelsRouteRouteWithChildren
   AgentRoute: typeof AgentRouteWithChildren
   AgentsRoute: typeof AgentsRoute
+  AuditRoute: typeof AuditRoute
   ConfigRoute: typeof ConfigRouteWithChildren
   DevicesRoute: typeof DevicesRoute
   LogsRoute: typeof LogsRoute
@@ -317,6 +330,13 @@ declare module '@tanstack/react-router' {
       path: '/agents'
       fullPath: '/agents'
       preLoaderRoute: typeof AgentsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/audit': {
+      id: '/audit'
+      path: '/audit'
+      fullPath: '/audit'
+      preLoaderRoute: typeof AuditRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/channels': {
@@ -502,6 +522,7 @@ const rootRouteChildren: RootRouteChildren = {
   ChannelsRouteRoute: ChannelsRouteRouteWithChildren,
   AgentRoute: AgentRouteWithChildren,
   AgentsRoute: AgentsRoute,
+  AuditRoute: AuditRoute,
   ConfigRoute: ConfigRouteWithChildren,
   DevicesRoute: DevicesRoute,
   LogsRoute: LogsRoute,

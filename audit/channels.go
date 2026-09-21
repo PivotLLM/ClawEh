@@ -4,6 +4,7 @@
 package audit
 
 import (
+	"context"
 	"slices"
 	"strings"
 
@@ -140,7 +141,7 @@ func bindingsFor(cfg *config.Config, channel string) string {
 	return strings.Join(parts, "; ")
 }
 
-func collectChannels(cfg *config.Config, _ Environment) Section {
+func collectChannels(_ context.Context, cfg *config.Config, _ Environment) Section {
 	t := Table{Caption: "Enabled channels", Columns: []string{"Channel", "Identity", "Allowed senders", "Group trigger", "Agents"}}
 	for i, c := range enabledChannels(cfg) {
 		t.Rows = append(t.Rows, row(c.Name, c.Identity, c.Senders, c.Trigger, bindingsFor(cfg, c.Name)))

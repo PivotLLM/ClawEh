@@ -50,7 +50,8 @@
     "mcp_servers": "Servers",
     "logs": "Logs",
     "memory": "Memory",
-    "status": "Status"
+    "status": "Status",
+    "audit": "Audit"
   },
   "chat": {
     "welcome": "How can I help you today?",

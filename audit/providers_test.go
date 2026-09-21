@@ -10,7 +10,7 @@ import (
 
 func TestCollectProviders_APIKeyNeverShown(t *testing.T) {
 	cfg, env := fixtureConfig(t)
-	s := collectProviders(cfg, env)
+	s := collectProviders(t.Context(), cfg, env)
 	api := findTable(t, s, "API providers")
 	_, r := findRow(t, api, "OpenAI")
 	if r[3] != "key: set" {
@@ -20,7 +20,7 @@ func TestCollectProviders_APIKeyNeverShown(t *testing.T) {
 		t.Error("API key value leaked")
 	}
 	cfg.Providers[0].APIKey = ""
-	api = findTable(t, collectProviders(cfg, env), "API providers")
+	api = findTable(t, collectProviders(t.Context(), cfg, env), "API providers")
 	_, r = findRow(t, api, "OpenAI")
 	if r[3] != "key: not set" {
 		t.Errorf("key column = %q, want %q", r[3], "key: not set")
@@ -29,7 +29,7 @@ func TestCollectProviders_APIKeyNeverShown(t *testing.T) {
 
 func TestCollectProviders_DisabledModelMarked(t *testing.T) {
 	cfg, env := fixtureConfig(t)
-	models := findTable(t, collectProviders(cfg, env), "Models via OpenAI")
+	models := findTable(t, collectProviders(t.Context(), cfg, env), "Models via OpenAI")
 	_, old := findRow(t, models, "GPT Old")
 	contains(t, old[2], "disabled", "disabled model settings")
 	contains(t, old[2], "no tools", "no_tools flag")
@@ -43,7 +43,7 @@ func TestCollectProviders_DisabledModelMarked(t *testing.T) {
 
 func TestCollectProviders_CLILaunchLine(t *testing.T) {
 	cfg, env := fixtureConfig(t)
-	s := collectProviders(cfg, env)
+	s := collectProviders(t.Context(), cfg, env)
 	var cli Table
 	for _, sub := range s.Subsections {
 		if sub.Title == "CLI providers" {
@@ -80,7 +80,7 @@ func TestCollectProviders_ModelRoles(t *testing.T) {
 	cfg, env := fixtureConfig(t)
 	cfg.Agents.Defaults.ImageModel = "GPT"
 	cfg.Summarization.Models = []string{"GPT Old"}
-	s := collectProviders(cfg, env)
+	s := collectProviders(t.Context(), cfg, env)
 	var roles Table
 	for _, sub := range s.Subsections {
 		if sub.Title == "Model roles" {

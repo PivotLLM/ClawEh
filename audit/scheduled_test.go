@@ -25,7 +25,7 @@ func writeCronStore(t *testing.T, dataDir, body string) string {
 
 func TestCollectScheduled_NoStore(t *testing.T) {
 	cfg, env := fixtureConfig(t)
-	tb := findTable(t, collectScheduled(cfg, env), "Cron jobs")
+	tb := findTable(t, collectScheduled(t.Context(), cfg, env), "Cron jobs")
 	contains(t, tb.Rows[0][0], "(none: no cron store at", "missing cron store")
 }
 
@@ -40,7 +40,7 @@ func TestCollectScheduled_JobsListed(t *testing.T) {
 		 "schedule":{"kind":"every","everyMs":300000},
 		 "payload":{"mode":"command","command":"echo hi"}}
 	]}`)
-	tb := findTable(t, collectScheduled(cfg, env), "Cron jobs")
+	tb := findTable(t, collectScheduled(t.Context(), cfg, env), "Cron jobs")
 	_, mail := findRow(t, tb, "Mail check")
 	if mail[1] != "0 9 * * * (America/Toronto)" || mail[2] != "bob" || mail[3] != "yes" {
 		t.Errorf("mail row = %v", mail)
@@ -63,13 +63,13 @@ func TestCollectScheduled_JobsListed(t *testing.T) {
 func TestCollectScheduled_CorruptStoreIsARow(t *testing.T) {
 	cfg, env := fixtureConfig(t)
 	writeCronStore(t, env.DataDir, "{oops")
-	tb := findTable(t, collectScheduled(cfg, env), "Cron jobs")
+	tb := findTable(t, collectScheduled(t.Context(), cfg, env), "Cron jobs")
 	contains(t, tb.Rows[0][0], "unavailable:", "corrupt cron store")
 }
 
 func TestCollectScheduled_Maestro(t *testing.T) {
 	cfg, env := fixtureConfig(t)
-	tb := findTable(t, collectScheduled(cfg, env), "Maestro task orchestration")
+	tb := findTable(t, collectScheduled(t.Context(), cfg, env), "Maestro task orchestration")
 	_, bob := findRow(t, tb, "bob")
 	if bob[1] != "yes" || bob[2] != "3" || bob[3] != "allowed when requested" {
 		t.Errorf("bob maestro row = %v", bob)

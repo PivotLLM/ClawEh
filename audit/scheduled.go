@@ -4,6 +4,7 @@
 package audit
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -88,7 +89,7 @@ func cronRows(path string) [][]string {
 	return rows
 }
 
-func collectScheduled(cfg *config.Config, env Environment) Section {
+func collectScheduled(_ context.Context, cfg *config.Config, env Environment) Section {
 	cronPath := filepath.Join(dataDir(cfg, env), "cron", "jobs.json")
 	jobs := Table{
 		Caption: "Cron jobs",

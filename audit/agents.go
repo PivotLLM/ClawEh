@@ -4,6 +4,7 @@
 package audit
 
 import (
+	"context"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -238,7 +239,7 @@ func agentSection(cfg *config.Config, env Environment, a *config.AgentConfig) Se
 	}
 }
 
-func collectAgents(cfg *config.Config, env Environment) Section {
+func collectAgents(_ context.Context, cfg *config.Config, env Environment) Section {
 	d := cfg.Agents.Defaults
 	readSubdirs := append([]string{}, d.WorkspaceReadSubdirs...)
 	if len(readSubdirs) > 0 {

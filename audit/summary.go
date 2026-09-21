@@ -4,6 +4,7 @@
 package audit
 
 import (
+	"context"
 	"net/url"
 	"strings"
 
@@ -117,11 +118,11 @@ func messagingSummary(cfg *config.Config) string {
 	return s + "."
 }
 
-func devicesSummary(cfg *config.Config, env Environment) string {
+func devicesSummary(ctx context.Context, cfg *config.Config, env Environment) string {
 	if !cfg.Channels.Device.Enabled {
 		return "Device gateway off; USB monitor " + onOff(cfg.Devices.Enabled) + "."
 	}
-	paired, _ := deviceRows(dataDir(cfg, env))
+	paired, _ := deviceRows(ctx, dataDir(cfg, env))
 	count := "unknown (store unavailable)"
 	if len(paired) > 0 && !strings.HasPrefix(paired[0][0], "unavailable") {
 		count = itoa(len(paired))
@@ -154,7 +155,7 @@ func externalExecSummary(cfg *config.Config) string {
 		"; skills installed: " + itoa(skillCount) + "."
 }
 
-func collectSummary(cfg *config.Config, env Environment) Section {
+func collectSummary(ctx context.Context, cfg *config.Config, env Environment) Section {
 	return Section{
 		Title: "Summary",
 		Notes: []string{
@@ -169,7 +170,7 @@ func collectSummary(cfg *config.Config, env Environment) Section {
 				row("Outbound network", outboundSummary(cfg)),
 				row("Inbound", inboundSummary(cfg)),
 				row("Messaging", messagingSummary(cfg)),
-				row("Devices", devicesSummary(cfg, env)),
+				row("Devices", devicesSummary(ctx, cfg, env)),
 				row("External execution", externalExecSummary(cfg)),
 			},
 		}},
