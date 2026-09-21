@@ -359,8 +359,8 @@ if (useGroup("F", "Agents — autosave and list realignment")) {
     const { ctx, page } = await open("/agents")
     await page.getByRole("button", { name: PROBE, exact: true }).click()
     await page.waitForTimeout(400)
-    // MCP access is one checkbox per configured server plus an "Additional
-    // prefixes" field. Tick the fusion box when that server is configured;
+    // MCP access is one checkbox per configured server plus a "Prefixes"
+    // field. Tick the fusion box when that server is configured;
     // otherwise both names go through the prefixes field.
     const fusionBox = page.getByLabel("fusion", { exact: true })
     const extras = page

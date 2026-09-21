@@ -73,21 +73,25 @@ export function MCPAccessSelect({
         </span>
       )}
       <div className="space-y-1">
-        <p className="text-muted-foreground text-xs">Additional prefixes</p>
-        <Input
-          value={extrasRaw}
-          onChange={(e) => {
-            setExtrasRaw(e.target.value)
-            commit(
-              mcpAccessEntries({ ...view, extras: splitCsv(e.target.value) }),
-            )
-          }}
-          placeholder="e.g. fusion_trello"
-          className="h-7 font-mono text-xs"
-        />
+        <label className="flex items-center gap-2">
+          <span className="text-muted-foreground shrink-0 text-xs">
+            Prefixes
+          </span>
+          <Input
+            value={extrasRaw}
+            onChange={(e) => {
+              setExtrasRaw(e.target.value)
+              commit(
+                mcpAccessEntries({ ...view, extras: splitCsv(e.target.value) }),
+              )
+            }}
+            placeholder="e.g. fusion_trello"
+            className="h-7 flex-1 font-mono text-xs"
+          />
+        </label>
         <p className="text-muted-foreground text-xs">
-          Comma-separated. A checked server grants all of its tools; a prefix
-          grants only the tools whose name starts with it (case-insensitive).
+          A checked server grants all of its tools. A prefix (comma-separated,
+          case-insensitive) grants only the tools whose name starts with it.
           Nothing checked and no prefixes = no MCP tools.
         </p>
       </div>

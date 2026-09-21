@@ -59,10 +59,12 @@ observe does not need an entry.
 
 - **MCP access is a checkbox list.** The agent card shows one checkbox per
   configured MCP server instead of a comma-separated text field. Prefix
-  entries that grant part of a server (for example `fusion_trello`) live in an
-  "Additional prefixes" field beneath the checkboxes, and an entry naming a
-  server that is no longer configured stays visible, checked and flagged, so
-  it can be removed. The saved `mcp_tools` list is unchanged in shape.
+  entries that grant part of a server (for example `fusion_trello`) live in a
+  "Prefixes" field beneath the checkboxes, and an entry naming a server that
+  is no longer configured stays visible, checked and flagged, so it can be
+  removed. The saved `mcp_tools` list is unchanged in shape. The card is
+  regrouped into Skills, Tools (MCP access first, then the native tool list,
+  now titled "Internal tools" rather than "Always-On Tools") and Mounts.
 
 ### Removed
 
