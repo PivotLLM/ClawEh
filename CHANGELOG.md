@@ -58,11 +58,12 @@ observe does not need an entry.
   origins are recorded in `docs/HISTORY.md`.
 
 - **MCP access is a checkbox list.** The agent card shows one checkbox per
-  configured MCP server instead of a comma-separated text field. Prefix
-  entries that grant part of a server (for example `fusion_trello`) live in a
-  "Prefixes" field beneath the checkboxes, and an entry naming a server that
-  is no longer configured stays visible, checked and flagged, so it can be
-  removed. The saved `mcp_tools` list is unchanged in shape. The card is
+  configured MCP server instead of a comma-separated text field: checked
+  grants every tool the server publishes. An entry that names no configured
+  server (a server since removed, or a hand-typed partial grant from before)
+  stays visible, checked and flagged, so it can be removed; the WebUI no
+  longer offers finer-than-server grants. The saved `mcp_tools` list is
+  unchanged in shape. The card is
   regrouped into Skills, Tools (MCP access first, then the native tool list,
   now titled "Internal tools" rather than "Always-On Tools") and Mounts.
 

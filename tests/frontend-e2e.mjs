@@ -359,27 +359,19 @@ if (useGroup("F", "Agents — autosave and list realignment")) {
     const { ctx, page } = await open("/agents")
     await page.getByRole("button", { name: PROBE, exact: true }).click()
     await page.waitForTimeout(400)
-    // MCP access is one checkbox per configured server plus a "Prefixes"
-    // field. Tick the fusion box when that server is configured;
-    // otherwise both names go through the prefixes field.
-    const fusionBox = page.getByLabel("fusion", { exact: true })
-    const extras = page
-      .locator('input[placeholder="e.g. fusion_trello"]')
-      .first()
-    if ((await fusionBox.count()) > 0) {
-      await fusionBox.first().check()
-      await extras.fill("trello")
-    } else {
-      await extras.fill("fusion, trello")
-    }
+    // A second, unrelated field on the same card: the time_now internal tool.
+    const box = page.getByLabel("time_now", { exact: true }).first()
+    const was = await box.isChecked()
+    await box.click()
     await page.waitForTimeout(2000)
     await ctx.close()
     const c = await config()
     const a = (c.agents.list ?? []).find((x) => x.id === PROBE)
-    assert(
-      JSON.stringify(a?.mcp_tools) === JSON.stringify(["fusion", "trello"]),
-      `mcp_tools = ${JSON.stringify(a?.mcp_tools)}`,
-    )
+    // The toggle must persist an explicit tools list (a default-only agent has
+    // none), and time_now must have flipped.
+    assert(Array.isArray(a?.tools), `tools = ${JSON.stringify(a?.tools)}; expected an explicit list after the toggle`)
+    const has = a.tools.includes("time_now")
+    assert(has === !was, `tools = ${JSON.stringify(a.tools)}; time_now should be ${was ? "removed" : "added"}`)
     assert(a?.temperature === 0.77, "the earlier edit was clobbered by the second save")
   })
 
