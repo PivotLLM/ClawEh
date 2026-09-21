@@ -82,6 +82,11 @@ observe does not need an entry.
 
 ### Fixed
 
+- **The WebUI picks up a new deploy on the next reload.** The embedded
+  frontend was served with no cache headers, so a browser could keep an old
+  `index.html`, and the old page chunks it names, after an upgrade. The SPA
+  entry and other unhashed files are now sent with `Cache-Control: no-cache`
+  and the content-hashed `/assets/` files as immutable.
 - **`claw.pid` is written before the gateway starts serving.** It was written
   after all services were up, so for a brief window a gateway that was already
   accepting connections was invisible to `claw status` and `claw sessions`.

@@ -54,6 +54,8 @@ func RegisterEmbedRoutes(mux *http.ServeMux) {
 				cleanPath = ""
 			}
 
+			w.Header().Set("Cache-Control", cacheControl(cleanPath))
+
 			if cleanPath != "" {
 				if _, statErr := fs.Stat(subFS, cleanPath); statErr == nil {
 					fileServer.ServeHTTP(w, r)
@@ -71,4 +73,17 @@ func RegisterEmbedRoutes(mux *http.ServeMux) {
 			fileServer.ServeHTTP(w, indexReq)
 		}),
 	)
+}
+
+// cacheControl picks the Cache-Control value for an embedded file. Embedded
+// files carry no modification time, so without an explicit header a browser
+// has nothing to revalidate against and can keep an old index.html (and the
+// old chunks it names) after a deploy. The SPA entry and other unhashed files
+// must always be revalidated; the Vite output under assets/ is content-hashed,
+// so it can be cached indefinitely.
+func cacheControl(cleanPath string) string {
+	if strings.HasPrefix(cleanPath, "assets/") {
+		return "public, max-age=31536000, immutable"
+	}
+	return "no-cache"
 }

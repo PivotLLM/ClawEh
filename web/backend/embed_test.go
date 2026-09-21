@@ -31,3 +31,20 @@ func TestMissingAssetStays404(t *testing.T) {
 		t.Fatalf("status = %d, want %d", rr.Code, http.StatusNotFound)
 	}
 }
+
+// TestCacheControl: the SPA entry and other unhashed files must always be
+// revalidated so a deploy is picked up; the content-hashed assets/ files may
+// be cached for good.
+func TestCacheControl(t *testing.T) {
+	cases := []struct{ path, want string }{
+		{"", "no-cache"},
+		{"agents", "no-cache"},
+		{"favicon.svg", "no-cache"},
+		{"assets/index-abc123.js", "public, max-age=31536000, immutable"},
+	}
+	for _, tc := range cases {
+		if got := cacheControl(tc.path); got != tc.want {
+			t.Errorf("cacheControl(%q) = %q, want %q", tc.path, got, tc.want)
+		}
+	}
+}
