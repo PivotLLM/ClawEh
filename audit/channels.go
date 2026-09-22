@@ -143,11 +143,8 @@ func bindingsFor(cfg *config.Config, channel string) string {
 
 func collectChannels(_ context.Context, cfg *config.Config, _ Environment) Section {
 	t := Table{Caption: "Enabled channels", Columns: []string{"Channel", "Identity", "Allowed senders", "Group trigger", "Agents"}}
-	for i, c := range enabledChannels(cfg) {
+	for _, c := range enabledChannels(cfg) {
 		t.Rows = append(t.Rows, row(c.Name, c.Identity, c.Senders, c.Trigger, bindingsFor(cfg, c.Name)))
-		if c.AnyOpen {
-			t.Highlight = append(t.Highlight, i)
-		}
 	}
 	if len(t.Rows) == 0 {
 		t.Rows = append(t.Rows, row("(no channel enabled)", "", "", "", ""))
@@ -156,7 +153,7 @@ func collectChannels(_ context.Context, cfg *config.Config, _ Environment) Secti
 		Title: "Channels",
 		Notes: []string{
 			"allow_from decides who may talk to an agent through a channel: an empty list refuses every sender, " +
-				"an entry of * accepts any sender (highlighted). Bindings route a channel, or part of one, to an agent; " +
+				"an entry of * accepts any sender. Bindings route a channel, or part of one, to an agent; " +
 				"anything no binding claims goes to the default agent.",
 		},
 		Tables: []Table{t},

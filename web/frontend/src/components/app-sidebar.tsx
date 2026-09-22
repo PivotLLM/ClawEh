@@ -4,14 +4,17 @@ import {
   IconArrowsTransferDown,
   IconAtom,
   IconBrain,
+  IconCpu,
   IconDeviceMobile,
   IconListDetails,
   IconMessageCircle,
+  IconMessages,
   IconMicrophone,
   IconPlugConnected,
   IconReport,
   IconRobot,
   IconRoute,
+  IconServer2,
   IconSettings,
   IconSparkles,
   IconTools,
@@ -59,6 +62,7 @@ interface NavItem {
 
 interface NavGroup {
   label: string
+  icon: React.ComponentType<{ className?: string }>
   defaultOpen: boolean
   items: NavItem[]
 }
@@ -66,18 +70,22 @@ interface NavGroup {
 const baseNavGroups: Omit<NavGroup, "items">[] = [
   {
     label: "navigation.chat",
+    icon: IconMessageCircle,
     defaultOpen: false,
   },
   {
     label: "navigation.model_group",
+    icon: IconCpu,
     defaultOpen: false,
   },
   {
     label: "navigation.agent_group",
+    icon: IconRobot,
     defaultOpen: false,
   },
   {
     label: "navigation.services",
+    icon: IconServer2,
     defaultOpen: false,
   },
 ]
@@ -164,6 +172,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       },
       {
         label: "navigation.channels_group",
+        icon: IconMessages,
         defaultOpen: false,
         items: channelItems
           .map((item) => ({
@@ -239,7 +248,10 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             <SidebarGroup className="px-2 py-0">
               <SidebarGroupLabel asChild>
                 <CollapsibleTrigger className="hover:bg-muted/60 flex w-full cursor-pointer items-center justify-between rounded-md px-2 py-1.5 transition-colors">
-                  <span className="text-sm">{t(group.label)}</span>
+                  <span className="flex items-center gap-2 text-sm">
+                    <group.icon className="size-4 opacity-60" />
+                    {t(group.label)}
+                  </span>
                   <IconChevronRight className="size-3.5 opacity-50 transition-transform duration-200 group-data-[state=open]/collapsible:rotate-90" />
                 </CollapsibleTrigger>
               </SidebarGroupLabel>

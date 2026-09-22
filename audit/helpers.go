@@ -76,6 +76,17 @@ func pairs(caption string, rows ...[]string) Table {
 
 func row(cells ...string) []string { return cells }
 
+// bullet prefixes one item of a list rendered one per line inside a cell.
+const bullet = "\u2022 "
+
+// joinLines joins items one per line, or returns fallback when there are none.
+func joinLines(items []string, fallback string) string {
+	if len(items) == 0 {
+		return fallback
+	}
+	return strings.Join(items, "\n")
+}
+
 // sortedKeys returns the keys of a string map in order, for stable output.
 func sortedKeys[V any](m map[string]V) []string {
 	keys := make([]string, 0, len(m))

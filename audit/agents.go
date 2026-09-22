@@ -146,28 +146,32 @@ func access(read, write bool) string {
 	}
 }
 
+// agentToolsTable lists the internal tools two per row, each with a yes/no
+// sensitive marker, so the table uses the page width.
 func agentToolsTable(a *config.AgentConfig) Table {
-	t := Table{Caption: "Internal tools", Columns: []string{"Tool", "Sensitive"}}
+	t := Table{Caption: "Internal tools", Columns: []string{"Tool", "Sensitive", "Tool", "Sensitive"}}
 	tools := effectiveTools(a)
 	if len(tools) == 0 {
-		t.Rows = append(t.Rows, row("(none: the tools list is empty)", ""))
+		t.Rows = append(t.Rows, row("(none: the tools list is empty)", "", "", ""))
 		return t
 	}
+	var cells [][]string
 	explicit := map[string]bool{}
 	for _, e := range tools {
 		explicit[strings.ToLower(e)] = true
-		marker := ""
-		if isSensitive(e) {
-			marker = "sensitive"
-			t.Highlight = append(t.Highlight, len(t.Rows))
-		}
-		t.Rows = append(t.Rows, row(e, marker))
+		cells = append(cells, row(e, yesNo(isSensitive(e))))
 	}
 	for _, s := range sensitiveTools {
 		if !explicit[s] && config.MatchToolPattern(tools, s) {
-			t.Highlight = append(t.Highlight, len(t.Rows))
-			t.Rows = append(t.Rows, row(s, "sensitive (admitted by a pattern)"))
+			cells = append(cells, row(s, "yes (by pattern)"))
 		}
+	}
+	for i := 0; i < len(cells); i += 2 {
+		r := row(cells[i][0], cells[i][1], "", "")
+		if i+1 < len(cells) {
+			r[2], r[3] = cells[i+1][0], cells[i+1][1]
+		}
+		t.Rows = append(t.Rows, r)
 	}
 	return t
 }
@@ -225,7 +229,7 @@ func agentSection(cfg *config.Config, env Environment, a *config.AgentConfig) Se
 		row("Enabled", yesNo(a.IsEnabled())),
 		row("Routing default", yesNo(strings.EqualFold(a.ID, defaultAgentID(cfg)))),
 		row("Workspace", resolveWorkspace(cfg, a)),
-		row("Models", joinOr(models, none)+modelsNote),
+		row("Models", strings.TrimSpace(joinLines(models, none)+"\n"+strings.TrimSpace(modelsNote))),
 		row("Summarization models", joinOr(a.SummarizationModels, "(global chain)")),
 		row("Cognitive memory", memory),
 		row("Sub-agents", sub),

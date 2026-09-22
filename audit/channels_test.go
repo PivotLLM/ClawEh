@@ -11,11 +11,8 @@ func TestCollectChannels_AnySenderCalledOut(t *testing.T) {
 	cfg, env := fixtureConfig(t)
 	tb := findTable(t, collectChannels(t.Context(), cfg, env), "Enabled channels")
 
-	i, tg := findRow(t, tb, "telegram-bob")
+	_, tg := findRow(t, tb, "telegram-bob")
 	contains(t, tg[2], "any sender (allow_from contains *)", "telegram senders")
-	if !isHighlighted(tb, i) {
-		t.Error("an any-sender channel must be highlighted")
-	}
 	contains(t, tg[4], "bob (whole channel) [default delivery]", "telegram binding")
 	contains(t, tg[4], "otherwise alice", "fallback agent")
 

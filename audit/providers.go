@@ -99,61 +99,72 @@ func modelsFor(cfg *config.Config, provider string) []*config.ModelConfig {
 
 func collectProviders(_ context.Context, cfg *config.Config, _ Environment) Section {
 	api := Table{Caption: "API providers", Columns: []string{"Provider", "Protocol", "Base URL", "API key", "Proxy"}}
+	models := Table{Caption: "Enabled models", Columns: []string{"Alias", "Provider", "Model id", "Settings"}}
 	cli := Table{Caption: "CLI providers", Columns: []string{"Model", "Launch command", "Working directory", "Env names"}}
-	var modelTables []Table
+	var idle []string
 	for i := range cfg.Providers {
 		p := &cfg.Providers[i]
+		var enabled []*config.ModelConfig
+		for _, m := range modelsFor(cfg, p.Name) {
+			if m.Enabled {
+				enabled = append(enabled, m)
+			}
+		}
+		if len(enabled) == 0 {
+			idle = append(idle, p.Name)
+			continue
+		}
+		for _, m := range enabled {
+			models.Rows = append(models.Rows, row(m.ModelName, p.Name, m.Model, modelSettings(m)))
+		}
 		if config.IsCLIProtocol(p.Protocol) {
-			for _, m := range modelsFor(cfg, p.Name) {
+			for _, m := range enabled {
 				cmd, wd, envNames := cliLaunch(p, m)
-				alias := m.ModelName + " (" + p.Name + ")"
-				if !m.Enabled {
-					alias += " (disabled)"
-				}
 				if wd == "." {
-					wd = ". (the ClawEh process working directory)"
+					wd = "process working directory"
 				}
-				cli.Rows = append(cli.Rows, row(alias, cmd, wd, joinOr(envNames, none)))
+				cli.Rows = append(cli.Rows, row(m.ModelName+" ("+p.Name+")", cmd, wd, joinOr(envNames, none)))
 			}
 			continue
 		}
-		api.Rows = append(api.Rows, row(p.Name, p.Protocol, p.BaseURL, "key: "+setOrNot(p.APIKey), orValue(redactURL(p.Proxy), "")))
-		mt := Table{Caption: "Models via " + p.Name, Columns: []string{"Alias", "Model id", "Settings"}}
-		for _, m := range modelsFor(cfg, p.Name) {
-			mt.Rows = append(mt.Rows, row(m.ModelName, m.Model, modelSettings(m)))
-		}
-		if len(mt.Rows) == 0 {
-			mt.Rows = append(mt.Rows, row("(no models configured)", "", ""))
-		}
-		modelTables = append(modelTables, mt)
+		api.Rows = append(api.Rows, row(p.Name, p.Protocol, p.BaseURL, yesNo(p.APIKey != ""), orValue(redactURL(p.Proxy), "")))
 	}
 	if len(api.Rows) == 0 {
 		api.Rows = append(api.Rows, row(none, "", "", "", ""))
 	}
+	if len(models.Rows) == 0 {
+		models.Rows = append(models.Rows, row(none, "", "", ""))
+	}
 	if len(cli.Rows) == 0 {
 		cli.Rows = append(cli.Rows, row(none, "", "", ""))
 	}
+	notes := []string{"Only providers with at least one enabled model are listed; a provider whose models are all disabled sends nothing."}
+	if len(idle) > 0 {
+		notes = append(notes, "Configured but unused (no enabled model): "+strings.Join(idle, ", ")+".")
+	}
 
 	d := cfg.Agents.Defaults
-	roles := pairs("Model roles",
+	chain := joinLines(cfg.Summarization.Models, "(none: each agent summarizes with its own model)") +
+		"\nthe agent's own model is always the last resort"
+	roles := Table{Columns: []string{"Purpose", "Model"}, Rows: [][]string{
 		row("Default model", orValue(d.DefaultModelName(), none)),
-		row("Fallback models", joinOr(tail(d.Models), none)),
-		row("Summarization and memory model chain",
-			joinOr(cfg.Summarization.Models, "(none: each agent summarizes with its own model)")+
-				"; the agent's own model is always the last resort"),
-		row("Image model", orValue(d.ImageModel, none)+fallbacks(d.ImageModelFallbacks)),
-		row("Vision model (describes images for text-only models)", orValue(d.VisionModel, none)+fallbacks(d.VisionModelFallbacks)),
-	)
+		row("Fallback models", joinLines(tail(d.Models), none)),
+		row("Summarization and memory model chain", chain),
+		row("Image model", joinLines(append([]string{orValue(d.ImageModel, none)}, d.ImageModelFallbacks...), none)),
+		row("Vision model (describes images for text-only models)",
+			joinLines(append([]string{orValue(d.VisionModel, none)}, d.VisionModelFallbacks...), none)),
+	}}
 
 	return Section{
 		Title:  "Providers and models",
-		Notes:  []string{"API keys are reported as set or not set only. A CLI provider is a separate program on this host that ClawEh runs per request."},
-		Tables: append([]Table{api}, modelTables...),
+		Notes:  notes,
+		Tables: []Table{api, models},
 		Subsections: []Section{
 			{
 				Title: "CLI providers",
 				Notes: []string{"A CLI provider runs as its own program with its own configuration on this host; " +
-					"ClawEh's file sandbox applies to ClawEh's tools, not to what the CLI does on its own behalf."},
+					"ClawEh's file sandbox applies to ClawEh's tools, not to what the CLI does on its own behalf. " +
+					"\"process working directory\" is where the ClawEh service was started, not the agent's workspace."},
 				Tables: []Table{cli},
 			},
 			{Title: "Model roles", Tables: []Table{roles}},
@@ -166,11 +177,4 @@ func tail(ss []string) []string {
 		return nil
 	}
 	return ss[1:]
-}
-
-func fallbacks(ss []string) string {
-	if len(ss) == 0 {
-		return ""
-	}
-	return " (fallbacks: " + strings.Join(ss, ", ") + ")"
 }

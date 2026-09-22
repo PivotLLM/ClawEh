@@ -46,7 +46,7 @@ func RenderPDF(r *Report, w io.Writer) error {
 	pageW, _ := pdf.GetPageSize()
 	d.width = pageW - marginLeft - marginRight
 
-	pdf.SetTitle(r.Product+" security audit", true)
+	pdf.SetTitle(r.Product+" Security Audit", true)
 	pdf.SetAuthor(r.Product, true)
 	pdf.SetCreator(r.Product+" "+r.Version, true)
 	pdf.SetCreationDate(r.GeneratedAt)
@@ -78,11 +78,10 @@ func RenderPDF(r *Report, w io.Writer) error {
 
 	pdf.AddPage()
 	pdf.SetFont("Helvetica", "B", fontTitle)
-	pdf.CellFormat(0, 9, d.tr(r.Product+" security audit"), "", 1, "L", false, 0, "")
+	pdf.CellFormat(0, 9, d.tr(r.Product+" Security Audit"), "", 1, "L", false, 0, "")
 	pdf.SetFont("Helvetica", "", fontNote)
 	pdf.MultiCell(0, 5, d.tr(r.TagLine), "", "L", false)
-	pdf.MultiCell(0, 5, d.tr("An inventory of what this instance can reach and do, derived from its configuration "+
-		"and state on "+r.GeneratedAt.Format(timeFormat)+". No secret values appear in this document."), "", "L", false)
+	pdf.MultiCell(0, 5, d.tr("Configuration as of "+r.GeneratedAt.Format(timeFormat)), "", "L", false)
 	pdf.Ln(3)
 
 	for _, s := range r.Sections {

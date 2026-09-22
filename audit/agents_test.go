@@ -109,36 +109,30 @@ func TestCollectAgents_ToolsAndSensitivity(t *testing.T) {
 
 	// alice has no tools key: the install defaults ("*") apply, and every
 	// sensitive tool is admitted by the pattern.
-	alice := findTable(t, agentSub(t, s, "alice"), "Internal tools")
-	_, star := findRow(t, alice, "*")
-	if star[1] != "" {
-		t.Errorf("* row marker = %q", star[1])
+	alice := toolMarkers(findTable(t, agentSub(t, s, "alice"), "Internal tools"))
+	if alice["*"] != "no" {
+		t.Errorf("* marker = %q", alice["*"])
 	}
-	i, sh := findRow(t, alice, "shell_exec")
-	if sh[1] != "sensitive (admitted by a pattern)" || !isHighlighted(alice, i) {
-		t.Errorf("shell_exec row = %v highlighted=%v", sh, isHighlighted(alice, i))
+	if alice["shell_exec"] != "yes (by pattern)" {
+		t.Errorf("shell_exec marker = %q", alice["shell_exec"])
 	}
 
-	// bob lists tools explicitly.
-	bob := findTable(t, agentSub(t, s, "bob"), "Internal tools")
-	_, fr := findRow(t, bob, "file_read")
-	if fr[1] != "" {
-		t.Errorf("file_read marked %q", fr[1])
+	// bob lists two tools explicitly: one row holding both pairs.
+	bobTable := findTable(t, agentSub(t, s, "bob"), "Internal tools")
+	bob := toolMarkers(bobTable)
+	if bob["file_read"] != "no" || bob["shell_exec"] != "yes" {
+		t.Errorf("bob markers = %v", bob)
 	}
-	i, sh = findRow(t, bob, "shell_exec")
-	if sh[1] != "sensitive" || !isHighlighted(bob, i) {
-		t.Errorf("bob shell_exec row = %v", sh)
-	}
-	if len(bob.Rows) != 2 {
-		t.Errorf("bob tools rows = %v", bob.Rows)
+	if len(bobTable.Rows) != 1 {
+		t.Errorf("bob tools rows = %v", bobTable.Rows)
 	}
 
 	// An empty tools list means no tools.
 	empty := []string{}
 	cfg.Agents.List[1].Tools = empty
-	bob = findTable(t, agentSub(t, collectAgents(t.Context(), cfg, env), "bob"), "Internal tools")
-	if len(bob.Rows) != 1 || !strings.HasPrefix(bob.Rows[0][0], "(none") {
-		t.Errorf("empty tools rows = %v", bob.Rows)
+	bobTable = findTable(t, agentSub(t, collectAgents(t.Context(), cfg, env), "bob"), "Internal tools")
+	if len(bobTable.Rows) != 1 || !strings.HasPrefix(bobTable.Rows[0][0], "(none") {
+		t.Errorf("empty tools rows = %v", bobTable.Rows)
 	}
 }
 
@@ -177,7 +171,7 @@ func TestCollectAgents_Settings(t *testing.T) {
 		t.Errorf("bob workspace = %q", ws[1])
 	}
 	_, models := findRow(t, st, "Models")
-	if models[1] != "GPT, Claude CLI (from defaults)" {
+	if models[1] != "GPT\nClaude CLI\n(from defaults)" {
 		t.Errorf("bob models = %q", models[1])
 	}
 	_, suites := findRow(t, st, "Suites")
@@ -196,4 +190,18 @@ func TestCollectAgents_Settings(t *testing.T) {
 	if def[1] != "yes" {
 		t.Errorf("alice routing default = %q", def[1])
 	}
+}
+
+// toolMarkers flattens the two-tools-per-row Internal tools table into
+// tool -> sensitive marker.
+func toolMarkers(tb Table) map[string]string {
+	out := map[string]string{}
+	for _, r := range tb.Rows {
+		for c := 0; c+1 < len(r); c += 2 {
+			if r[c] != "" {
+				out[r[c]] = r[c+1]
+			}
+		}
+	}
+	return out
 }

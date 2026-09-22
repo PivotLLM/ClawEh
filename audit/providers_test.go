@@ -13,8 +13,8 @@ func TestCollectProviders_APIKeyNeverShown(t *testing.T) {
 	s := collectProviders(t.Context(), cfg, env)
 	api := findTable(t, s, "API providers")
 	_, r := findRow(t, api, "OpenAI")
-	if r[3] != "key: set" {
-		t.Errorf("key column = %q, want %q", r[3], "key: set")
+	if r[3] != "yes" {
+		t.Errorf("key column = %q, want yes", r[3])
 	}
 	if strings.Contains(tableText(api), secretAPIKey) {
 		t.Error("API key value leaked")
@@ -22,23 +22,42 @@ func TestCollectProviders_APIKeyNeverShown(t *testing.T) {
 	cfg.Providers[0].APIKey = ""
 	api = findTable(t, collectProviders(t.Context(), cfg, env), "API providers")
 	_, r = findRow(t, api, "OpenAI")
-	if r[3] != "key: not set" {
-		t.Errorf("key column = %q, want %q", r[3], "key: not set")
+	if r[3] != "no" {
+		t.Errorf("key column = %q, want no", r[3])
 	}
 }
 
-func TestCollectProviders_DisabledModelMarked(t *testing.T) {
+func TestCollectProviders_DisabledModelOmitted(t *testing.T) {
 	cfg, env := fixtureConfig(t)
-	models := findTable(t, collectProviders(t.Context(), cfg, env), "Models via OpenAI")
-	_, old := findRow(t, models, "GPT Old")
-	contains(t, old[2], "disabled", "disabled model settings")
-	contains(t, old[2], "no tools", "no_tools flag")
-	_, gpt := findRow(t, models, "GPT")
-	if strings.Contains(gpt[2], "disabled") {
-		t.Errorf("enabled model marked disabled: %q", gpt[2])
+	s := collectProviders(t.Context(), cfg, env)
+	models := findTable(t, s, "Enabled models")
+	for _, r := range models.Rows {
+		if r[0] == "GPT Old" {
+			t.Errorf("disabled model listed: %v", r)
+		}
 	}
-	contains(t, gpt[2], "thinking high", "thinking level")
-	contains(t, gpt[2], "context 200000", "context window")
+	_, gpt := findRow(t, models, "GPT")
+	if gpt[1] != "OpenAI" || gpt[2] != "gpt-5.5" {
+		t.Errorf("GPT row = %v", gpt)
+	}
+	contains(t, gpt[3], "thinking high", "thinking level")
+	contains(t, gpt[3], "context 200000", "context window")
+
+	// A provider whose models are all disabled is not an endpoint; it is named
+	// in the note instead of the table.
+	for i := range cfg.Models {
+		if cfg.Models[i].Provider == "OpenAI" {
+			cfg.Models[i].Enabled = false
+		}
+	}
+	s = collectProviders(t.Context(), cfg, env)
+	api := findTable(t, s, "API providers")
+	for _, r := range api.Rows {
+		if r[0] == "OpenAI" {
+			t.Errorf("unused provider listed: %v", r)
+		}
+	}
+	contains(t, strings.Join(s.Notes, " "), "Configured but unused (no enabled model): OpenAI", "idle note")
 }
 
 func TestCollectProviders_CLILaunchLine(t *testing.T) {
@@ -58,7 +77,7 @@ func TestCollectProviders_CLILaunchLine(t *testing.T) {
 	if claude[1] != want {
 		t.Errorf("claude launch = %q\nwant %q", claude[1], want)
 	}
-	contains(t, claude[2], ". (the ClawEh process working directory)", "claude workdir")
+	contains(t, claude[2], "process working directory", "claude workdir")
 	contains(t, claude[3], "CLAUDE_CODE_DISABLE_AUTO_MEMORY", "env names")
 	contains(t, claude[3], "MY_SECRET_ENV", "env names")
 	if strings.Contains(tableText(cli), secretEnvValue) {

@@ -65,79 +65,104 @@ func hostOf(raw string) string {
 	return u.Host
 }
 
-func outboundSummary(cfg *config.Config) string {
-	var hosts []string
-	seen := map[string]bool{}
-	for _, p := range cfg.Providers {
+// usedAPIProviders are the API providers at least one enabled model goes
+// through; a configured provider with no enabled model sends nothing.
+func usedAPIProviders(cfg *config.Config) []*config.Provider {
+	var out []*config.Provider
+	for i := range cfg.Providers {
+		p := &cfg.Providers[i]
 		if config.IsCLIProtocol(p.Protocol) || p.BaseURL == "" {
 			continue
 		}
-		h := hostOf(p.BaseURL)
-		if !seen[h] {
-			seen[h] = true
-			hosts = append(hosts, h)
+		for _, m := range modelsFor(cfg, p.Name) {
+			if m.Enabled {
+				out = append(out, p)
+				break
+			}
 		}
 	}
-	var mcpURLs []string
+	return out
+}
+
+func outboundSummary(cfg *config.Config) string {
+	hosts := map[string]bool{}
+	for _, p := range usedAPIProviders(cfg) {
+		hosts[hostOf(p.BaseURL)] = true
+	}
+	var mcp []string
 	for _, name := range sortedKeys(cfg.Tools.MCP.Servers) {
 		if s := cfg.Tools.MCP.Servers[name]; s.Enabled && s.URL != "" {
-			mcpURLs = append(mcpURLs, name+" ("+hostOf(s.URL)+")")
+			mcp = append(mcp, bullet+name+" ("+hostOf(s.URL)+")")
 		}
 	}
-	return itoa(len(hosts)) + " API provider endpoints (" + joinOr(hosts, none) + "); web tools " +
-		onOff(cfg.Tools.Web.Enabled) + "; MCP servers over HTTP: " + joinOr(mcpURLs, none) + "."
+	if len(mcp) == 0 {
+		mcp = []string{bullet + none}
+	}
+	lines := make([]string, 0, 2+len(mcp))
+	lines = append(lines, itoa(len(hosts))+" API provider endpoints (details below)", "MCP servers:")
+	return strings.Join(append(lines, mcp...), "\n")
 }
 
 func inboundSummary(cfg *config.Config) string {
-	var parts []string
+	var lines []string
 	for _, l := range listeners(cfg) {
 		if l.Enabled {
-			parts = append(parts, l.Name+" on "+l.Addr)
+			lines = append(lines, bullet+l.Name+" on "+l.Addr)
 		}
 	}
-	return strings.Join(parts, "; ") + "."
+	return joinLines(lines, none)
 }
 
 func messagingSummary(cfg *config.Config) string {
 	channels := enabledChannels(cfg)
 	names := make([]string, 0, len(channels))
-	open := 0
 	for _, c := range channels {
-		names = append(names, c.Name)
-		if c.AnyOpen {
-			open++
-		}
+		names = append(names, displayChannel(c.Name))
 	}
-	if len(names) == 0 {
-		return "No messaging channel enabled."
+	return joinOr(names, "No messaging channel enabled")
+}
+
+// displayChannel renders a channel id for prose: "webui" reads as WebUI, the
+// rest with a capital first letter.
+func displayChannel(id string) string {
+	switch strings.ToLower(id) {
+	case "webui":
+		return "WebUI"
+	case "":
+		return id
 	}
-	s := "Enabled: " + strings.Join(names, ", ")
-	if open > 0 {
-		s += "; " + itoa(open) + " accept any sender"
-	}
-	return s + "."
+	return strings.ToUpper(id[:1]) + id[1:]
 }
 
 func devicesSummary(ctx context.Context, cfg *config.Config, env Environment) string {
 	if !cfg.Channels.Device.Enabled {
-		return "Device gateway off; USB monitor " + onOff(cfg.Devices.Enabled) + "."
+		return "Device gateway off"
 	}
 	paired, _ := deviceRows(ctx, dataDir(cfg, env))
-	count := "unknown (store unavailable)"
-	if len(paired) > 0 && !strings.HasPrefix(paired[0][0], "unavailable") {
-		count = itoa(len(paired))
-		if paired[0][0] == none {
-			count = "0"
-		}
+	count := "paired devices unknown (store unavailable)"
+	switch {
+	case len(paired) > 0 && strings.HasPrefix(paired[0][0], "unavailable"):
+	case len(paired) == 0 || paired[0][0] == none:
+		count = "0 devices paired"
+	case len(paired) == 1:
+		count = "1 device paired"
+	default:
+		count = itoa(len(paired)) + " devices paired"
 	}
-	return "Device gateway on; paired devices: " + count + "; USB monitor " + onOff(cfg.Devices.Enabled) + "."
+	return "Device gateway on\n" + count
 }
 
 func externalExecSummary(cfg *config.Config) string {
 	var clis []string
 	for _, p := range cfg.Providers {
-		if config.IsCLIProtocol(p.Protocol) && len(modelsFor(cfg, p.Name)) > 0 {
-			clis = append(clis, p.Name)
+		if !config.IsCLIProtocol(p.Protocol) {
+			continue
+		}
+		for _, m := range modelsFor(cfg, p.Name) {
+			if m.Enabled {
+				clis = append(clis, p.Name)
+				break
+			}
 		}
 	}
 	var stdio []string
@@ -146,13 +171,19 @@ func externalExecSummary(cfg *config.Config) string {
 			stdio = append(stdio, name+" ("+s.Command+")")
 		}
 	}
-	sk := skillRows(cfg)
-	skillCount := len(sk)
-	if skillCount == 1 && strings.HasPrefix(sk[0][0], "(none") {
-		skillCount = 0
+	return "CLI providers: " + joinOr(clis, none) + "\nMCP stdio commands: " + joinOr(stdio, none)
+}
+
+// skillsSummary names the installed skills; every agent without a skills
+// filter can use all of them.
+func skillsSummary(cfg *config.Config) string {
+	var names []string
+	for _, r := range skillRows(cfg) {
+		if !strings.HasPrefix(r[0], "(none") {
+			names = append(names, r[0])
+		}
 	}
-	return "CLI providers: " + joinOr(clis, none) + "; MCP stdio commands: " + joinOr(stdio, none) +
-		"; skills installed: " + itoa(skillCount) + "."
+	return joinOr(names, "(none installed)")
 }
 
 func collectSummary(ctx context.Context, cfg *config.Config, env Environment) Section {
@@ -160,7 +191,7 @@ func collectSummary(ctx context.Context, cfg *config.Config, env Environment) Se
 		Title: "Summary",
 		Notes: []string{
 			"ClawEh runs as user " + orValue(env.User, unknown) + ", group " + orValue(env.Group, unknown) +
-				", on " + orValue(env.Hostname, unknown) + ".",
+				" on " + orValue(env.Hostname, unknown) + ".",
 		},
 		Tables: []Table{{
 			Columns: []string{"Area", "Access"},
@@ -168,10 +199,11 @@ func collectSummary(ctx context.Context, cfg *config.Config, env Environment) Se
 				row("Files", filesSummary(cfg, env)),
 				row("Shell", shellSummary(cfg)),
 				row("Outbound network", outboundSummary(cfg)),
-				row("Inbound", inboundSummary(cfg)),
+				row("Inbound network", inboundSummary(cfg)),
 				row("Messaging", messagingSummary(cfg)),
 				row("Devices", devicesSummary(ctx, cfg, env)),
 				row("External execution", externalExecSummary(cfg)),
+				row("Skills", skillsSummary(cfg)),
 			},
 		}},
 	}

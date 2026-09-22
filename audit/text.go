@@ -18,7 +18,7 @@ func RenderText(r *Report) string {
 	if r.TagLine != "" {
 		b.WriteString(" - " + r.TagLine)
 	}
-	b.WriteString("\nVersion " + r.Version + "\nGenerated " + r.GeneratedAt.Format(timeFormat) + "\n")
+	b.WriteString("\nVersion " + r.Version + "\nConfiguration as of " + r.GeneratedAt.Format(timeFormat) + "\n")
 	for _, s := range r.Sections {
 		b.WriteString("\n== " + s.Title + " ==\n")
 		writeSectionText(&b, s, "")

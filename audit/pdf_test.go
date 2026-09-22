@@ -75,7 +75,7 @@ func TestRenderText_NoSecrets(t *testing.T) {
 		}
 	}
 	// Sanity: the things that must be named still are.
-	contains(t, txt, "key: set", "api key status")
+	contains(t, txt, "API providers", "providers table")
 	contains(t, txt, "Authorization", "header name")
 	contains(t, txt, "API_TOKEN", "mcp env name")
 	contains(t, txt, "MY_SECRET_ENV", "cli env name")

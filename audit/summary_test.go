@@ -11,7 +11,7 @@ import (
 func TestCollectSummary_Confined(t *testing.T) {
 	cfg, env := fixtureConfig(t)
 	s := collectSummary(t.Context(), cfg, env)
-	if s.Notes[0] != "ClawEh runs as user eric, group staff, on testbox." {
+	if s.Notes[0] != "ClawEh runs as user eric, group staff on testbox." {
 		t.Errorf("headline = %q", s.Notes[0])
 	}
 	tb := s.Tables[0]
@@ -25,19 +25,26 @@ func TestCollectSummary_Confined(t *testing.T) {
 		t.Errorf("Shell = %q", shell[1])
 	}
 	_, out := findRow(t, tb, "Outbound network")
-	contains(t, out[1], "1 API provider endpoints (api.openai.com)", "outbound providers")
-	contains(t, out[1], "MCP servers over HTTP: fusion (fusion.example.com)", "outbound mcp")
-	_, in := findRow(t, tb, "Inbound")
+	contains(t, out[1], "1 API provider endpoints (details below)", "outbound providers")
+	contains(t, out[1], "MCP servers:\n"+bullet+"fusion (fusion.example.com)", "outbound mcp")
+	_, in := findRow(t, tb, "Inbound network")
 	contains(t, in[1], "Gateway (WebUI and HTTP API) on 0.0.0.0:18790", "inbound gateway")
 	contains(t, in[1], "MCP host on 127.0.0.1:5911/mcp", "inbound mcp host (auto_enable with a CLI provider)")
 	_, msg := findRow(t, tb, "Messaging")
-	contains(t, msg[1], "telegram-bob, discord, slack, matrix, line, webui, device", "channels")
-	contains(t, msg[1], "2 accept any sender", "open channel count")
+	if msg[1] != "Telegram-bob, Discord, Slack, Matrix, Line, WebUI, Device" {
+		t.Errorf("Messaging = %q", msg[1])
+	}
 	_, dev := findRow(t, tb, "Devices")
-	contains(t, dev[1], "Device gateway on; paired devices: unknown (store unavailable)", "devices")
+	if dev[1] != "Device gateway on\npaired devices unknown (store unavailable)" {
+		t.Errorf("Devices = %q", dev[1])
+	}
 	_, ext := findRow(t, tb, "External execution")
-	if ext[1] != "CLI providers: Claude CLI, Codex CLI; MCP stdio commands: local (npx); skills installed: 0." {
+	if ext[1] != "CLI providers: Claude CLI, Codex CLI\nMCP stdio commands: local (npx)" {
 		t.Errorf("External execution = %q", ext[1])
+	}
+	_, sk := findRow(t, tb, "Skills")
+	if sk[1] != "(none installed)" {
+		t.Errorf("Skills = %q", sk[1])
 	}
 }
 
