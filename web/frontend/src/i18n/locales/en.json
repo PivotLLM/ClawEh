@@ -51,7 +51,7 @@
     "logs": "Logs",
     "memory": "Memory",
     "status": "Status",
-    "audit": "Audit"
+    "report": "Report"
   },
   "chat": {
     "welcome": "How can I help you today?",

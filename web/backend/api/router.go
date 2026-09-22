@@ -112,8 +112,8 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	// Running ClawEh build version (shown in the WebUI sidebar footer)
 	h.registerVersionRoutes(mux)
 
-	// Security audit report (PDF)
-	h.registerAuditRoutes(mux)
+	// Configuration report (PDF)
+	h.registerReportRoutes(mux)
 
 	// Agent tool catalog
 	h.registerAgentRoutes(mux)

@@ -12,7 +12,6 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AgentRouteImport } from './routes/agent'
 import { Route as AgentsRouteImport } from './routes/agents'
-import { Route as AuditRouteImport } from './routes/audit'
 import { Route as ChannelsRouteRouteImport } from './routes/channels/route'
 import { Route as ConfigRouteImport } from './routes/config'
 import { Route as DevicesRouteImport } from './routes/devices'
@@ -21,6 +20,7 @@ import { Route as McpRouteImport } from './routes/mcp'
 import { Route as MemoryRouteImport } from './routes/memory'
 import { Route as ModelsRouteImport } from './routes/models'
 import { Route as ProvidersRouteImport } from './routes/providers'
+import { Route as ReportRouteImport } from './routes/report'
 import { Route as SetupRouteImport } from './routes/setup'
 import { Route as StatusRouteImport } from './routes/status'
 import { Route as VoiceRouteImport } from './routes/voice'
@@ -45,11 +45,6 @@ const AgentRoute = AgentRouteImport.update({
 const AgentsRoute = AgentsRouteImport.update({
   id: '/agents',
   path: '/agents',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AuditRoute = AuditRouteImport.update({
-  id: '/audit',
-  path: '/audit',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ChannelsRouteRoute = ChannelsRouteRouteImport.update({
@@ -90,6 +85,11 @@ const ModelsRoute = ModelsRouteImport.update({
 const ProvidersRoute = ProvidersRouteImport.update({
   id: '/providers',
   path: '/providers',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ReportRoute = ReportRouteImport.update({
+  id: '/report',
+  path: '/report',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SetupRoute = SetupRouteImport.update({
@@ -148,7 +148,6 @@ export interface FileRoutesByFullPath {
   '/channels': typeof ChannelsRouteRouteWithChildren
   '/agent': typeof AgentRouteWithChildren
   '/agents': typeof AgentsRoute
-  '/audit': typeof AuditRoute
   '/config': typeof ConfigRouteWithChildren
   '/devices': typeof DevicesRoute
   '/logs': typeof LogsRoute
@@ -156,6 +155,7 @@ export interface FileRoutesByFullPath {
   '/memory': typeof MemoryRoute
   '/models': typeof ModelsRoute
   '/providers': typeof ProvidersRoute
+  '/report': typeof ReportRoute
   '/setup': typeof SetupRoute
   '/status': typeof StatusRoute
   '/voice': typeof VoiceRoute
@@ -172,7 +172,6 @@ export interface FileRoutesByTo {
   '/channels': typeof ChannelsRouteRouteWithChildren
   '/agent': typeof AgentRouteWithChildren
   '/agents': typeof AgentsRoute
-  '/audit': typeof AuditRoute
   '/config': typeof ConfigRouteWithChildren
   '/devices': typeof DevicesRoute
   '/logs': typeof LogsRoute
@@ -180,6 +179,7 @@ export interface FileRoutesByTo {
   '/memory': typeof MemoryRoute
   '/models': typeof ModelsRoute
   '/providers': typeof ProvidersRoute
+  '/report': typeof ReportRoute
   '/setup': typeof SetupRoute
   '/status': typeof StatusRoute
   '/voice': typeof VoiceRoute
@@ -197,7 +197,6 @@ export interface FileRoutesById {
   '/channels': typeof ChannelsRouteRouteWithChildren
   '/agent': typeof AgentRouteWithChildren
   '/agents': typeof AgentsRoute
-  '/audit': typeof AuditRoute
   '/config': typeof ConfigRouteWithChildren
   '/devices': typeof DevicesRoute
   '/logs': typeof LogsRoute
@@ -205,6 +204,7 @@ export interface FileRoutesById {
   '/memory': typeof MemoryRoute
   '/models': typeof ModelsRoute
   '/providers': typeof ProvidersRoute
+  '/report': typeof ReportRoute
   '/setup': typeof SetupRoute
   '/status': typeof StatusRoute
   '/voice': typeof VoiceRoute
@@ -223,7 +223,6 @@ export interface FileRouteTypes {
     | '/channels'
     | '/agent'
     | '/agents'
-    | '/audit'
     | '/config'
     | '/devices'
     | '/logs'
@@ -231,6 +230,7 @@ export interface FileRouteTypes {
     | '/memory'
     | '/models'
     | '/providers'
+    | '/report'
     | '/setup'
     | '/status'
     | '/voice'
@@ -247,7 +247,6 @@ export interface FileRouteTypes {
     | '/channels'
     | '/agent'
     | '/agents'
-    | '/audit'
     | '/config'
     | '/devices'
     | '/logs'
@@ -255,6 +254,7 @@ export interface FileRouteTypes {
     | '/memory'
     | '/models'
     | '/providers'
+    | '/report'
     | '/setup'
     | '/status'
     | '/voice'
@@ -271,7 +271,6 @@ export interface FileRouteTypes {
     | '/channels'
     | '/agent'
     | '/agents'
-    | '/audit'
     | '/config'
     | '/devices'
     | '/logs'
@@ -279,6 +278,7 @@ export interface FileRouteTypes {
     | '/memory'
     | '/models'
     | '/providers'
+    | '/report'
     | '/setup'
     | '/status'
     | '/voice'
@@ -296,7 +296,6 @@ export interface RootRouteChildren {
   ChannelsRouteRoute: typeof ChannelsRouteRouteWithChildren
   AgentRoute: typeof AgentRouteWithChildren
   AgentsRoute: typeof AgentsRoute
-  AuditRoute: typeof AuditRoute
   ConfigRoute: typeof ConfigRouteWithChildren
   DevicesRoute: typeof DevicesRoute
   LogsRoute: typeof LogsRoute
@@ -304,6 +303,7 @@ export interface RootRouteChildren {
   MemoryRoute: typeof MemoryRoute
   ModelsRoute: typeof ModelsRoute
   ProvidersRoute: typeof ProvidersRoute
+  ReportRoute: typeof ReportRoute
   SetupRoute: typeof SetupRoute
   StatusRoute: typeof StatusRoute
   VoiceRoute: typeof VoiceRoute
@@ -330,13 +330,6 @@ declare module '@tanstack/react-router' {
       path: '/agents'
       fullPath: '/agents'
       preLoaderRoute: typeof AgentsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/audit': {
-      id: '/audit'
-      path: '/audit'
-      fullPath: '/audit'
-      preLoaderRoute: typeof AuditRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/channels': {
@@ -393,6 +386,13 @@ declare module '@tanstack/react-router' {
       path: '/providers'
       fullPath: '/providers'
       preLoaderRoute: typeof ProvidersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/report': {
+      id: '/report'
+      path: '/report'
+      fullPath: '/report'
+      preLoaderRoute: typeof ReportRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/setup': {
@@ -522,7 +522,6 @@ const rootRouteChildren: RootRouteChildren = {
   ChannelsRouteRoute: ChannelsRouteRouteWithChildren,
   AgentRoute: AgentRouteWithChildren,
   AgentsRoute: AgentsRoute,
-  AuditRoute: AuditRoute,
   ConfigRoute: ConfigRouteWithChildren,
   DevicesRoute: DevicesRoute,
   LogsRoute: LogsRoute,
@@ -530,6 +529,7 @@ const rootRouteChildren: RootRouteChildren = {
   MemoryRoute: MemoryRoute,
   ModelsRoute: ModelsRoute,
   ProvidersRoute: ProvidersRoute,
+  ReportRoute: ReportRoute,
   SetupRoute: SetupRoute,
   StatusRoute: StatusRoute,
   VoiceRoute: VoiceRoute,

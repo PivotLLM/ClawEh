@@ -14,14 +14,18 @@ observe does not need an entry.
 
 ### Added
 
-- **Audit report.** A new Audit page (after Services in the WebUI menu) opens
-  a PDF describing what this install can do: identity and the user it runs
-  as, a summary table of what Claw can access, every listener, providers and
-  models (CLI providers with the exact command line they are launched with),
-  credentials as set or not set, channels and who may use them, each agent's
-  tools, MCP access and every folder it can read or write, external services,
-  devices, data at rest and scheduled activity. Endpoint `GET /api/audit/pdf`.
-  Secret values never appear. See `docs/audit.md`.
+- **Configuration report.** A new Report page (after Services in the WebUI
+  menu) opens a PDF, the ClawEh Configuration Report, describing what this
+  install can do: identity and the user it runs as, a security assessment
+  table with a mark on each item where action is recommended (HTTPS and
+  operator authentication are not implemented yet and are flagged when a
+  listener is reachable from other hosts), a summary of what Claw can access,
+  every listener, providers and models (CLI providers with the exact command
+  line they are launched with), credentials as set or not set, channels and
+  who may use them, each agent's tools, MCP access and every folder it can
+  read or write, external services, devices, data at rest and scheduled
+  activity. Endpoint `GET /api/report/pdf`. Secret values never appear. See
+  `docs/report.md`.
 
 ### Changed
 

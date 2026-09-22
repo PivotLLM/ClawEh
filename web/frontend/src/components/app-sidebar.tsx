@@ -362,21 +362,21 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             </SidebarGroup>
           </Collapsible>
         ))}
-        {/* Audit sits after the groups rather than inside one: it reports on
+        {/* Report sits after the groups rather than inside one: it reports on
             the whole install, not on one section of the configuration. */}
         <SidebarMenu className="px-2">
           <SidebarMenuItem>
             <SidebarMenuButton
               asChild
-              isActive={currentPath === "/audit"}
-              tooltip={t("navigation.audit")}
-              className={`h-9 px-3 ${currentPath === "/audit" ? "bg-accent/80 text-foreground font-medium" : "text-muted-foreground hover:bg-muted/60"}`}
+              isActive={currentPath === "/report"}
+              tooltip={t("navigation.report")}
+              className={`h-9 px-3 ${currentPath === "/report" ? "bg-accent/80 text-foreground font-medium" : "text-muted-foreground hover:bg-muted/60"}`}
             >
-              <Link to="/audit" data-testid="nav-audit">
+              <Link to="/report" data-testid="nav-report">
                 <IconReport
-                  className={`size-4 ${currentPath === "/audit" ? "opacity-100" : "opacity-60"}`}
+                  className={`size-4 ${currentPath === "/report" ? "opacity-100" : "opacity-60"}`}
                 />
-                <span>{t("navigation.audit")}</span>
+                <span>{t("navigation.report")}</span>
               </Link>
             </SidebarMenuButton>
           </SidebarMenuItem>
