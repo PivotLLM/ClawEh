@@ -2160,6 +2160,12 @@ type MCPServerConfig struct {
 	RevealTogether bool `json:"reveal_together,omitempty"`
 }
 
+// DefaultMCPLivenessProbeSeconds is the default interval of the per-server
+// tools/list probe. One small request a minute per server detects a dead
+// session and picks up a changed tool list within the interval, which matters
+// because a server built on mcp-go cannot push tools/list_changed to us.
+const DefaultMCPLivenessProbeSeconds = 60
+
 // MCPConfig defines configuration for all MCP servers
 type MCPConfig struct {
 	// Servers is a map of server name to server configuration
@@ -2172,10 +2178,13 @@ type MCPConfig struct {
 	// caller's context carries no deadline, so a hung server cannot block forever.
 	// 0 uses the default (300s).
 	CallTimeoutSeconds int `json:"call_timeout_seconds,omitempty"`
-	// LivenessProbeSeconds, when > 0, enables a periodic MCP ping per connected
-	// server at this interval; a failed ping proactively reconnects that server so
-	// the next real call finds a live session. 0 (default) disables probing.
-	LivenessProbeSeconds int `json:"liveness_probe_seconds,omitempty"`
+	// LivenessProbeSeconds is the interval of the periodic tools/list probe per
+	// connected server: a failed probe reconnects that server so the next real
+	// call finds a live session, and a changed answer refreshes the server's
+	// tools. Defaults to DefaultMCPLivenessProbeSeconds; 0 disables probing. Not
+	// omitempty, so an explicit 0 survives a save and is not read back as the
+	// default.
+	LivenessProbeSeconds int `json:"liveness_probe_seconds"`
 }
 
 // MCPClientEffectivelyEnabled reports whether claw should connect out to

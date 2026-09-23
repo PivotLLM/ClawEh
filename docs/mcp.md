@@ -117,12 +117,19 @@ host catalogue above. That list is refreshed, without a gateway restart, when:
 - the server sends `notifications/tools/list_changed` (on a streamable HTTP
   connection under protocol 2026-07-28 ClawEh opens a `subscriptions/listen`
   stream for it; stdio and SSE connections carry it on their own stream);
-- `liveness_probe_seconds` is set and a probe's `tools/list` answer differs
-  from the stored list;
+- the liveness probe (`liveness_probe_seconds`, 60 by default, 0 disables)
+  gets a `tools/list` answer that differs from the stored list;
 - the server is reconnected — after a dropped connection, or by the
   **Reconnect** action on the WebUI's MCP servers page, which calls
   `POST /api/mcp/servers/{name}/reconnect` and forces the reconnect even
   through a post-failure cooldown.
+
+The probe is the path to rely on. A server built on mcp-go (v1.1.0) cannot
+push `tools/list_changed` to a client on the current protocol, so its tool
+changes are seen only by the probe or a reconnect. ClawEh's own MCP host is
+built on the same library and has the same limit towards *its* clients: a
+client that listed ClawEh's tools at session start (Claude Code, for example)
+does not learn of a catalogue change until it reconnects.
 
 On a refresh the server's previous tools are removed from every agent and the
 current list registered in their place, so a renamed or removed tool disappears

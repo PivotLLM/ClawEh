@@ -57,6 +57,12 @@ observe does not need an entry.
   read-header timeout to the device gateway, MCP host and OAuth callback
   servers.
 
+- **MCP liveness probe on by default.** `tools.mcp.liveness_probe_seconds`
+  now defaults to 60 (was 0, off). Every connected external MCP server is
+  asked for its tool list once a minute; a failed probe reconnects it, and a
+  changed answer refreshes its tools within the interval. Set the key to `0`
+  in `config.json` to restore the old behaviour; an explicit `0` is kept on
+  save.
 - **Contexts are threaded through instead of started fresh.** Progress
   placeholder edits, stream deltas, tool breadcrumbs and fallback notices are
   now bound to the turn they belong to, so a cancelled or timed-out turn no

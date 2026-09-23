@@ -342,7 +342,8 @@ func DefaultConfig() *Config {
 				},
 			},
 			MCP: MCPConfig{
-				Servers: map[string]MCPServerConfig{},
+				Servers:              map[string]MCPServerConfig{},
+				LivenessProbeSeconds: DefaultMCPLivenessProbeSeconds,
 			},
 			// Progressive tool discovery: single global switch, default OFF.
 			Discovery: ToolDiscoveryConfig{
