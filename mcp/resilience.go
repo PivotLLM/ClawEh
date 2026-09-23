@@ -156,6 +156,14 @@ func (m *Manager) reconnect(ctx context.Context, name string, cfg config.MCPServ
 	m.setReconnecting(name, true)
 	defer m.setReconnecting(name, false)
 
+	// Remember what the agents were registered with, so a server that came back
+	// with a different tool list (renamed or removed tools after a restart) can
+	// be re-registered rather than called by its old names.
+	var oldTools []mcp.Tool
+	if old, ok := m.GetServer(name); ok {
+		oldTools = old.Tools
+	}
+
 	m.disconnect(name)
 	if err := m.ConnectServer(ctx, name, cfg); err != nil {
 		m.markReconnectFailed(name)
@@ -169,6 +177,12 @@ func (m *Manager) reconnect(ctx context.Context, name string, cfg config.MCPServ
 	}
 	m.clearReconnectCooldown(name)
 	logger.InfoCF("mcp", "MCP server reconnected", map[string]any{"server": name})
+
+	if fresh, ok := m.GetServer(name); ok && !toolsEqual(oldTools, fresh.Tools) {
+		logger.InfoCF("mcp", "MCP server tool list changed",
+			map[string]any{"server": name, "reason": "reconnect", "before": len(oldTools), "after": len(fresh.Tools)})
+		m.notifyToolsChanged(name)
+	}
 	return nil
 }
 
@@ -253,9 +267,10 @@ func (m *Manager) startProbe(name string) chan struct{} {
 // Against a modern server that made this probe unconditionally report health, so
 // a dead session was never detected and never reconnected — the failure stayed
 // invisible until a real tool call hit it. ListTools is a genuine round trip on
-// every protocol version, it is the same call ConnectServer already makes, and
-// its result is discarded here: this asks "does the session still answer?", not
-// "what changed?". Tool inventory is refreshed by reconnect.
+// every protocol version, and it is the same call ConnectServer already makes.
+// Since the answer is in hand anyway, it also refreshes the stored tool list
+// when it differs (a server that renamed or dropped tools without notifying),
+// which fires the tools-changed handler so the agents re-register.
 func (m *Manager) probeOnce(name string) {
 	m.mu.RLock()
 	conn, ok := m.servers[name]
@@ -269,9 +284,10 @@ func (m *Manager) probeOnce(name string) {
 		timeout = probeTimeoutCap
 	}
 	probeCtx, cancel := context.WithTimeout(context.Background(), timeout)
-	_, err := conn.Client.ListTools(probeCtx, mcp.ListToolsRequest{})
+	result, err := conn.Client.ListTools(probeCtx, mcp.ListToolsRequest{})
 	cancel()
 	if err == nil {
+		m.replaceToolsIfChanged(name, conn.Client, result.Tools, "probe")
 		return
 	}
 

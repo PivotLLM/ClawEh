@@ -108,6 +108,13 @@ func MCPServerPattern(serverName string) string {
 	return "mcp_" + sanitizeIdentifierComponent(serverName) + "_*"
 }
 
+// MCPServerPrefix returns the registry-name prefix shared by every tool from the
+// named MCP server ("mcp_<server>_", sanitized like Name), so a server's tools
+// can be removed from a registry as a set (ToolRegistry.RemoveByPrefix).
+func MCPServerPrefix(serverName string) string {
+	return "mcp_" + sanitizeIdentifierComponent(serverName) + "_"
+}
+
 // Name returns the tool name, prefixed with the server name.
 // The total length is capped at 64 characters (OpenAI-compatible API limit).
 // A short hash of the original (unsanitized) server and tool names is appended

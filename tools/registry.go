@@ -150,6 +150,28 @@ func (r *ToolRegistry) RegisterHiddenGroup(tool Tool, group string, revealTogeth
 	logger.DebugCF("tools", "Registered hidden tool", map[string]any{"name": name, "group": group})
 }
 
+// RemoveByPrefix removes every registered tool, visible or hidden, whose name
+// starts with prefix, and returns how many were removed. The version is bumped
+// when anything was removed so cached definitions and search indexes rebuild.
+// Used to drop an upstream MCP server's tools ("mcp_<server>_") as a set before
+// re-registering its current list, so a renamed or removed tool disappears.
+func (r *ToolRegistry) RemoveByPrefix(prefix string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	removed := 0
+	for name := range r.tools {
+		if strings.HasPrefix(name, prefix) {
+			delete(r.tools, name)
+			removed++
+		}
+	}
+	if removed > 0 {
+		r.version.Add(1)
+		logger.DebugCF("tools", "Removed tools by prefix", map[string]any{"prefix": prefix, "count": removed})
+	}
+	return removed
+}
+
 // PromoteTools atomically reveals the named non-core tools with the given TTL,
 // expands to whole reveal-together groups, then prunes the revealed set back to
 // visibleBudget by hiding the lowest-remaining-TTL tools. Holding the lock across

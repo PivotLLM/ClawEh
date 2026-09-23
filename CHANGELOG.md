@@ -110,6 +110,19 @@ observe does not need an entry.
   accepting connections was invisible to `claw status` and `claw sessions`.
   The integration suite tripped over that window on macOS; it now also polls
   for the file instead of checking once.
+- **Renamed or removed tools on an external MCP server are picked up without a
+  gateway restart.** The tool list of a server under `tools.mcp.servers` was
+  read once at connect time, so after the server was restarted with different
+  tools the agents kept calling the old names, and the MCP host kept publishing
+  them, until the gateway was restarted. The list is now refreshed when the
+  server sends `tools/list_changed`, when a liveness probe
+  (`liveness_probe_seconds`) sees a different list, on any reconnect, and on
+  the new **Reconnect** action on the MCP servers page
+  (`POST /api/mcp/servers/{name}/reconnect`), which also forces a server out of
+  its post-failure cooldown. On each refresh the server's previous tools are
+  removed from every agent before the current list is registered, and the MCP
+  host catalogue follows, so stale names no longer linger in either place. See
+  `docs/mcp.md`, "Tool list refresh".
 
 ## [0.5.6]
 

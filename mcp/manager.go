@@ -83,7 +83,11 @@ func loadEnvFile(path string) (map[string]string, error) {
 type ServerConnection struct {
 	Name   string
 	Client *client.Client
-	Tools  []mcp.Tool
+	// Tools is the server's tool list as of the last listing. It is never
+	// mutated in place: a refresh (probe, notification) installs a copy of the
+	// connection carrying the new list, so a holder of this pointer always sees
+	// a consistent snapshot.
+	Tools []mcp.Tool
 	// cfg is the resolved config this connection was established with. Sync
 	// compares it against the reloaded config to decide whether a server actually
 	// changed (reconnect) or was left untouched (keep the live process running).
@@ -94,6 +98,10 @@ type ServerConnection struct {
 	// probeStop closes to stop this connection's liveness-probe goroutine (nil when
 	// probing is disabled). Closed exactly once by disconnect or Close.
 	probeStop chan struct{}
+	// stopListen ends the subscriptions/listen stream that carries the server's
+	// tools/list_changed notifications (nil when none was opened). Called after
+	// the client is closed by disconnect or Close.
+	stopListen func()
 }
 
 // Manager manages multiple MCP server connections
@@ -122,6 +130,12 @@ type Manager struct {
 	// reconnect servers whose initial connect failed, without a restart.
 	desiredMu sync.Mutex
 	desired   map[string]config.MCPServerConfig
+
+	// toolsChanged is invoked (on its own goroutine) with the server name when a
+	// connection's tool list is replaced by a different one; see
+	// SetToolsChangedHandler. Guarded by toolsChangedMu.
+	toolsChangedMu sync.Mutex
+	toolsChanged   func(server string)
 }
 
 // Default resilience tuning, used when config leaves a value at 0.
@@ -454,21 +468,28 @@ func (m *Manager) ConnectServer(
 			map[string]any{"server": name, "toolCount": len(tools)})
 	}
 
+	// Hear about later changes to that list (see subscribeToolsChanged).
+	stopListen := m.subscribeToolsChanged(name, c, transportType) //nolint:contextcheck // the notification stream and its re-lists live as long as the connection, not the connect call; ended by disconnect/Close
+
 	// Store connection. Guard against a concurrent Close so a reconnect racing
 	// shutdown can't resurrect a server on a closed manager (and leak a probe).
 	m.mu.Lock()
 	if m.closed.Load() {
 		m.mu.Unlock()
 		utils.CloseQuietly(c)
+		if stopListen != nil {
+			stopListen()
+		}
 		terminateStdioProcessTree(stdioCmd)
 		return errors.New("manager is closed")
 	}
 	conn := &ServerConnection{
-		Name:   name,
-		Client: c,
-		Tools:  tools,
-		cfg:    cfg,
-		cmd:    stdioCmd,
+		Name:       name,
+		Client:     c,
+		Tools:      tools,
+		cfg:        cfg,
+		cmd:        stdioCmd,
+		stopListen: stopListen,
 	}
 	if m.probeInterval > 0 {
 		conn.probeStop = m.startProbe(name) //nolint:contextcheck // liveness probe is a background goroutine whose lifetime is probeStop/Close, not the connect context
@@ -521,6 +542,9 @@ func (m *Manager) disconnect(name string) {
 	if err := conn.Client.Close(); err != nil {
 		logger.WarnCF("mcp", "Failed to close MCP server connection",
 			map[string]any{"server": name, "error": err.Error()})
+	}
+	if conn.stopListen != nil {
+		conn.stopListen()
 	}
 	terminateStdioProcessTree(conn.cmd)
 }
@@ -766,6 +790,9 @@ func (m *Manager) Close() error {
 					"error":  err.Error(),
 				})
 			errs = append(errs, fmt.Errorf("server %s: %w", name, err))
+		}
+		if conn.stopListen != nil {
+			conn.stopListen()
 		}
 		// Safety net: kill any stdio grandchildren (e.g. chromium) the transport's
 		// direct-child shutdown leaves orphaned, so no profile lock survives.

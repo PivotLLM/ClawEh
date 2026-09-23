@@ -519,8 +519,8 @@ func setupAndStartServices(
 
 	// Connect external MCP servers and register their tools onto the agent
 	// registries BEFORE the host server enumerates its catalogue — otherwise
-	// CLI-based agents (and CLI fallbacks) never see the mcp_* tools, since the
-	// host catalogue is a one-shot snapshot taken at startMCPServer time.
+	// CLI-based agents (and CLI fallbacks) would not see the mcp_* tools until
+	// a later tool-list refresh brought the host catalogue back in step.
 	if err := agentLoop.EnsureMCPInitialized(context.Background()); err != nil {
 		logger.WarnCF("mcpserver", "MCP client initialization reported an error", map[string]any{"error": err.Error()})
 	}
@@ -608,6 +608,10 @@ func startMCPServer(cfg *config.Config, agentLoop *agent.AgentLoop, msgBus *bus.
 	}
 	services.MCPServer = srv
 	agentLoop.SetSessionTokenIssuer(srv.SessionTokens())
+	// The host catalogue follows the agent registries from here on: when an
+	// external MCP server's tools are re-registered, the loop asks the host to
+	// refresh, so a renamed tool reaches external clients without a restart.
+	agentLoop.SetMCPHost(srv)
 
 	if testTok := os.Getenv("CLAW_MCP_TEST_TOKEN"); testTok != "" {
 		defaultAgentID := agentLoop.GetRegistry().GetDefaultAgentID()
@@ -666,9 +670,12 @@ func syncServiceTokensFromDisk(cfg *config.Config, agentLoop *agent.AgentLoop, s
 	})
 }
 
-// stopAndCleanupServices stops all services and cleans up resources
+// stopAndCleanupServices stops all services and cleans up resources. The agent
+// loop (nil when there is none) is unhooked from the MCP host it stops, so a
+// tool refresh between here and the host's restart is a no-op.
 func stopAndCleanupServices(
 	services *gatewayServices,
+	agentLoop *agent.AgentLoop,
 	shutdownTimeout time.Duration,
 ) {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)
@@ -678,6 +685,9 @@ func stopAndCleanupServices(
 		services.CogmemManager.Stop()
 	}
 	if services.MCPServer != nil {
+		if agentLoop != nil {
+			agentLoop.SetMCPHost(nil)
+		}
 		if err := services.MCPServer.Shutdown(shutdownCtx); err != nil {
 			logger.WarnCF("mcpserver", "MCP server shutdown error", map[string]any{"error": err.Error()})
 		}
@@ -719,7 +729,7 @@ func shutdownGateway(
 		cp.Close()
 	}
 
-	stopAndCleanupServices(services, gracefulShutdownTimeout)
+	stopAndCleanupServices(services, agentLoop, gracefulShutdownTimeout)
 
 	if services.HTTPHost != nil {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), gracefulShutdownTimeout)
@@ -753,7 +763,7 @@ func handleConfigReload(
 
 	// Stop all services before reloading
 	logger.Info("  Stopping all services...")
-	stopAndCleanupServices(services, serviceShutdownTimeout) //nolint:contextcheck // the old services stop on a fresh bounded context so their shutdown completes even if the run context ends mid-reload; shutdownGateway shares the helper with no context
+	stopAndCleanupServices(services, al, serviceShutdownTimeout) //nolint:contextcheck // the old services stop on a fresh bounded context so their shutdown completes even if the run context ends mid-reload; shutdownGateway shares the helper with no context
 
 	// Create new provider from updated config first to ensure validity
 	// This will use the correct API key and settings from newCfg.Models

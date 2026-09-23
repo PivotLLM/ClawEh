@@ -31,6 +31,7 @@ import (
 	"maps"
 	"net"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -90,6 +91,12 @@ type MCPServer struct {
 
 	// srv is kept for test introspection.
 	srv *server.MCPServer
+
+	// endpoints are the two published catalogues (/internal and /mcp), kept so
+	// RefreshCatalogue can diff the live registries against what each has
+	// registered. catalogueMu serializes refreshes.
+	catalogueMu sync.Mutex
+	endpoints   []*endpointCatalogue
 }
 
 // ToolActivityNotifier renders the one-line "/tools on" breadcrumb for a tool
@@ -267,13 +274,28 @@ func New(opts ...Option) (*MCPServer, error) {
 		)
 	}
 
+	deps := dispatchDeps{
+		sessionTokens:    m.sessionTokens,
+		resolver:         resolver,
+		tracker:          tracker,
+		policy:           m.policy,
+		msgBus:           m.msgBus,
+		toolActivity:     m.toolActivity,
+		activeDispatches: &m.activeDispatches,
+	}
+
 	// /internal — session-token parameter on every tool (ClawEh's CLI providers).
 	internalSrv := newSrv()
-	addToolsToServer(internalSrv, internalAuthMode, m.agentRegistries, m.internalAllow, m.sessionTokens, resolver, tracker, m.policy, m.msgBus, m.toolActivity, &m.activeDispatches)
+	internal := newEndpointCatalogue(internalSrv, internalAuthMode, m.internalAllow, deps)
 
 	// /mcp — standard bearer endpoint, clean tool schemas (probe / external MCP).
 	bearerSrv := newSrv()
-	addToolsToServer(bearerSrv, bearerAuthMode, m.agentRegistries, m.externalAllow, m.sessionTokens, resolver, tracker, m.policy, m.msgBus, m.toolActivity, &m.activeDispatches)
+	bearer := newEndpointCatalogue(bearerSrv, bearerAuthMode, m.externalAllow, deps)
+
+	m.endpoints = []*endpointCatalogue{internal, bearer}
+	for _, ep := range m.endpoints {
+		ep.refresh(m.agentRegistries)
+	}
 
 	internalStreamable := newStreamable(internalSrv, m.internalPath, false)
 	bearerStreamable := newStreamable(bearerSrv, m.endpointPath, true)
@@ -301,6 +323,27 @@ func (m *MCPServer) EndpointPath() string { return m.endpointPath }
 // use it to issue tokens when a new session context manager is created and to
 // revoke tokens on session clear or eviction.
 func (m *MCPServer) SessionTokens() *sessionTokenStore { return m.sessionTokens }
+
+// RefreshCatalogue recomputes the union of the agent registries and brings each
+// endpoint's published tools in step with it: tools that appeared are added,
+// tools whose schema changed are replaced, tools that disappeared are deleted.
+// mcp-go sends tools/list_changed to connected clients for the adds and the
+// deletes, so an external client picks the change up without reconnecting. The
+// agent loop calls it after an external MCP server's tools are re-registered.
+func (m *MCPServer) RefreshCatalogue() {
+	m.catalogueMu.Lock()
+	defer m.catalogueMu.Unlock()
+	added, deleted := 0, 0
+	for _, ep := range m.endpoints {
+		a, d := ep.refresh(m.agentRegistries)
+		added += a
+		deleted += d
+	}
+	if added > 0 || deleted > 0 {
+		logger.InfoCF("mcpserver", "MCP host catalogue refreshed",
+			map[string]any{"added": added, "deleted": deleted})
+	}
+}
 
 // Start begins serving in a background goroutine. It returns after the
 // listener is bound (binding failures are returned immediately), so callers

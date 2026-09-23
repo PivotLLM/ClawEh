@@ -5,6 +5,8 @@ package agent
 
 import (
 	"context"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,6 +20,40 @@ type mcpRuntime struct {
 	mu       sync.Mutex
 	manager  *mcp.Manager
 	initErr  error
+	// host is the MCP host whose catalogue is refreshed after a server's tools
+	// are re-registered; nil while the host is not running.
+	host CatalogueRefresher
+	// refreshMu serializes per-server re-registration (the tools-changed handler
+	// and RefreshMCPServer), so two refreshes of one server cannot interleave
+	// their remove and register passes.
+	refreshMu sync.Mutex
+}
+
+// CatalogueRefresher is the MCP host as the agent loop sees it: something whose
+// published tool catalogue can be brought back in step with the agent registries.
+type CatalogueRefresher interface {
+	RefreshCatalogue()
+}
+
+// SetMCPHost wires (or, with nil, clears) the MCP host whose catalogue is
+// refreshed when an external server's tools are re-registered. The gateway sets
+// it when the host starts and clears it when the host is stopped on reload.
+func (al *AgentLoop) SetMCPHost(r CatalogueRefresher) {
+	al.mcp.mu.Lock()
+	al.mcp.host = r
+	al.mcp.mu.Unlock()
+}
+
+// refreshMCPHost asks the running MCP host, if any, to re-derive its catalogue
+// from the agent registries.
+func (al *AgentLoop) refreshMCPHost() {
+	al.mcp.mu.Lock()
+	host := al.mcp.host
+	al.mcp.mu.Unlock()
+	if host == nil {
+		return
+	}
+	host.RefreshCatalogue()
 }
 
 func (r *mcpRuntime) setManager(manager *mcp.Manager) {
@@ -87,8 +123,9 @@ func (al *AgentLoop) ensureMCPInitialized(ctx context.Context) error {
 
 // EnsureMCPInitialized is the exported entry point the gateway calls at startup
 // to connect external MCP servers and register their tools BEFORE the MCP host
-// server enumerates its catalogue — otherwise CLI-based agents never see the
-// mcp_* tools (the host catalogue is a one-shot snapshot of the registries).
+// server enumerates its catalogue — otherwise CLI-based agents would not see
+// the mcp_* tools until a tool-list refresh brought the host catalogue back in
+// step (see RefreshMCPServer and the tools-changed handler).
 func (al *AgentLoop) EnsureMCPInitialized(ctx context.Context) error {
 	return al.ensureMCPInitialized(ctx)
 }
@@ -167,6 +204,11 @@ func (al *AgentLoop) connectAndRegisterMCP(ctx context.Context) *mcp.Manager {
 	}
 
 	mcpManager := mcp.NewManager()
+	// A server whose tool list changed (notification, probe, reconnect) is
+	// re-registered onto every agent, and the host catalogue follows.
+	mcpManager.SetToolsChangedHandler(func(server string) {
+		al.refreshMCPServerTools(mcpManager, server)
+	})
 
 	if err := mcpManager.LoadFromMCPConfig(ctx, al.cfg.Tools.MCP, al.mcpWorkspacePath()); err != nil {
 		// A failed initial connect is NOT fatal: keep the manager alive so the
@@ -177,7 +219,12 @@ func (al *AgentLoop) connectAndRegisterMCP(ctx context.Context) *mcp.Manager {
 			map[string]any{"error": err.Error()})
 	}
 
+	// The manager is live from here: a tools-changed handler that fires during
+	// registration (a probe tick) must find it, or its refresh would be skipped.
+	al.mcp.setManager(mcpManager)
+
 	if err := al.registerMCPToolsFromManager(mcpManager); err != nil {
+		al.mcp.takeManager()
 		al.mcp.setInitErr(err)
 		if closeErr := mcpManager.Close(); closeErr != nil {
 			logger.ErrorCF("agent", "Failed to close MCP manager", map[string]any{"error": closeErr.Error()})
@@ -211,7 +258,8 @@ func (al *AgentLoop) registerMCPToolsFromManager(mgr *mcp.Manager) error {
 
 	for serverName, conn := range servers {
 		uniqueTools += len(conn.Tools)
-		totalRegistrations += al.registerMCPServerTools(mgr, serverName, conn)
+		_, added := al.registerMCPServerTools(mgr, serverName, conn)
+		totalRegistrations += added
 	}
 	logger.InfoCF("agent", "MCP tools registered successfully",
 		map[string]any{
@@ -224,12 +272,65 @@ func (al *AgentLoop) registerMCPToolsFromManager(mgr *mcp.Manager) error {
 	return nil
 }
 
-// registerMCPServerTools registers one server's tools onto every agent whose
-// mcp_tools allow-list admits them, returning the number of registrations. Split
-// out so the background retry loop can register just the servers it reconnects
-// (registering all servers would re-register — and log-warn over — live ones).
-func (al *AgentLoop) registerMCPServerTools(mgr *mcp.Manager, serverName string, conn *mcp.ServerConnection) int {
-	registrations := 0
+// registerMCPServerTools replaces one server's tools on every agent: the
+// server's previous registrations are removed first, then the current list is
+// registered onto each agent whose mcp_tools allow-list admits it, so a renamed
+// or removed tool disappears and an unchanged one carries a fresh definition.
+// Returns the registrations removed and added. Split out so the background
+// retry loop and the tools-changed handler can register just the server
+// concerned (registering all servers would re-register — and log-warn over —
+// live ones).
+//
+// Removal is by name prefix ("mcp_<server>_"), which a server whose sanitized
+// name extends this one's ("alice" and "alice_docs") shares, so such servers
+// are put back afterwards, shortest prefix first so a later pass never undoes
+// an earlier one.
+func (al *AgentLoop) registerMCPServerTools(
+	mgr *mcp.Manager,
+	serverName string,
+	conn *mcp.ServerConnection,
+) (removed, added int) {
+	removed, added = al.replaceMCPServerTools(mgr, serverName, conn)
+
+	prefix := tools.MCPServerPrefix(serverName)
+	servers := mgr.GetServers()
+	var siblings []string
+	for name := range servers {
+		if name != serverName && strings.HasPrefix(tools.MCPServerPrefix(name), prefix) {
+			siblings = append(siblings, name)
+		}
+	}
+	sort.Slice(siblings, func(i, j int) bool {
+		return len(tools.MCPServerPrefix(siblings[i])) < len(tools.MCPServerPrefix(siblings[j]))
+	})
+	for _, name := range siblings {
+		al.replaceMCPServerTools(mgr, name, servers[name])
+	}
+	return removed, added
+}
+
+// removeMCPServerTools drops one server's tools from every agent registry and
+// returns how many registrations went.
+func (al *AgentLoop) removeMCPServerTools(serverName string) int {
+	removed := 0
+	reg := al.GetRegistry()
+	prefix := tools.MCPServerPrefix(serverName)
+	for _, agentID := range reg.ListAgentIDs() {
+		if agent, ok := reg.GetAgent(agentID); ok && agent.Tools != nil {
+			removed += agent.Tools.RemoveByPrefix(prefix)
+		}
+	}
+	return removed
+}
+
+// replaceMCPServerTools is registerMCPServerTools for one server alone: remove
+// its previous registrations, then register its current list.
+func (al *AgentLoop) replaceMCPServerTools(
+	mgr *mcp.Manager,
+	serverName string,
+	conn *mcp.ServerConnection,
+) (removed, added int) {
+	removed = al.removeMCPServerTools(serverName)
 	reg := al.GetRegistry()
 	for _, tool := range conn.Tools {
 		for _, agentID := range reg.ListAgentIDs() {
@@ -259,7 +360,7 @@ func (al *AgentLoop) registerMCPServerTools(mgr *mcp.Manager, serverName string,
 				agent.Tools.Register(mcpTool)
 			}
 
-			registrations++
+			added++
 			logger.DebugCF("agent", "Registered MCP tool",
 				map[string]any{
 					"agent_id": agentID,
@@ -269,7 +370,52 @@ func (al *AgentLoop) registerMCPServerTools(mgr *mcp.Manager, serverName string,
 				})
 		}
 	}
-	return registrations
+	return removed, added
+}
+
+// refreshMCPServerTools is the manager's tools-changed handler: it re-registers
+// one server's current tools onto every agent (or removes them, when the server
+// is gone), then brings the MCP host catalogue in step. Refreshes are serialized
+// so two for one server cannot interleave their remove and register passes. A
+// manager that is no longer the live one (closed on reload or shutdown, or
+// superseded by a fresh one that registered everything afresh) is ignored.
+func (al *AgentLoop) refreshMCPServerTools(mgr *mcp.Manager, server string) {
+	al.mcp.refreshMu.Lock()
+	defer al.mcp.refreshMu.Unlock()
+	if al.mcp.peekManager() != mgr {
+		return
+	}
+
+	var removed, added, current int
+	if conn, ok := mgr.GetServer(server); ok {
+		current = len(conn.Tools)
+		removed, added = al.registerMCPServerTools(mgr, server, conn)
+	} else {
+		removed = al.removeMCPServerTools(server)
+	}
+	logger.InfoCF("agent", "MCP server tools re-registered",
+		map[string]any{
+			"server":               server,
+			"tools":                current,
+			"registrations_before": removed,
+			"registrations_after":  added,
+		})
+	al.refreshMCPHost()
+}
+
+// RefreshMCPServer disconnects and reconnects one external MCP server, then
+// re-registers its tools onto every agent and refreshes the MCP host catalogue.
+// Returns mcp.ErrUnknownServer when name is not a configured, enabled server.
+func (al *AgentLoop) RefreshMCPServer(ctx context.Context, name string) error {
+	mgr := al.mcp.peekManager()
+	if mgr == nil {
+		return mcp.ErrUnknownServer
+	}
+	if err := mgr.Reconnect(ctx, name); err != nil {
+		return err
+	}
+	al.refreshMCPServerTools(mgr, name)
+	return nil
 }
 
 // mcpRetryInterval is how often the background loop retries connecting desired MCP
@@ -296,10 +442,14 @@ func (al *AgentLoop) mcpRetryLoop(ctx context.Context) {
 			if mgr == nil {
 				continue
 			}
-			for _, name := range mgr.RetryDisconnected(ctx) {
+			connected := mgr.RetryDisconnected(ctx)
+			for _, name := range connected {
 				if conn, ok := mgr.GetServer(name); ok {
 					al.registerMCPServerTools(mgr, name, conn)
 				}
+			}
+			if len(connected) > 0 {
+				al.refreshMCPHost()
 			}
 		}
 	}
