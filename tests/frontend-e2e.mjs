@@ -780,6 +780,12 @@ if (useGroup("K", "Logs, MCP, memory, voice, report")) {
     const head = Buffer.from(await res.arrayBuffer()).subarray(0, 5).toString()
     assert(head === "%PDF-", `body starts with ${JSON.stringify(head)}`)
   })
+
+  await check(6, "reconnecting an unknown MCP server is a 404", async () => {
+    const { status, json } = await api("/api/mcp/servers/no-such-server/reconnect", { method: "POST" })
+    assert(status === 404, `status = ${status}`)
+    assert(typeof json?.error === "string", `body = ${JSON.stringify(json)}`)
+  })
 }
 
 // O. Status page
