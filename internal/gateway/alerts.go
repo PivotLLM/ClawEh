@@ -16,10 +16,10 @@ import (
 
 // alertsFileName is the alerts log inside the data directory's logs folder,
 // used unless ALERTER_LOG names another file.
-const alertsFileName = "alerts.txt"
+const alertsFileName = "alerts.log"
 
 // newAlerter builds the operator alerter for this gateway. Alerts go to
-// <baseDir>/logs/alerts.txt unless ALERTER_LOG is set, in which case the
+// <baseDir>/logs/alerts.log unless ALERTER_LOG is set, in which case the
 // module's own precedence applies. A log that cannot be opened disables
 // alerting (with a warning) rather than stopping the gateway. The path
 // returned is the one alerts are written to, for the WebUI to read.

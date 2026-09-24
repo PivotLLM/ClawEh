@@ -8,7 +8,7 @@ Alerts are produced by the `github.com/tenebris-tech/alerter` module.
 ## Where alerts go
 
 Version 0.0.x of the module writes a log. ClawEh writes it to
-`<CLAW_HOME>/logs/alerts.txt`; set `ALERTER_LOG` (full path and file name) in
+`<CLAW_HOME>/logs/alerts.log`; set `ALERTER_LOG` (full path and file name) in
 the service environment to write elsewhere. The WebUI Logs page shows the
 alerts log when its source selector is set to **Alerts**, and
 `GET /api/gateway/alerts?lines=N` returns the last N lines.

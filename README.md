@@ -557,7 +557,7 @@ that gave up starting, an MCP server that cannot be reconnected, a scheduled
 job or config reload that failed. Alerts are produced by the
 [tenebris-tech/alerter](https://github.com/tenebris-tech/alerter) module,
 which is currently a stub that writes them to a file:
-`$CLAW_HOME/logs/alerts.txt`, or the file named by the `ALERTER_LOG`
+`$CLAW_HOME/logs/alerts.log`, or the file named by the `ALERTER_LOG`
 environment variable. The web console's **Logs** page shows the alerts log
 when its source selector is set to **Alerts**, and `GET /api/gateway/alerts`
 returns it. Delivery methods (mail, push services) will be added to the

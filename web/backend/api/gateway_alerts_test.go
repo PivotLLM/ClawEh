@@ -36,7 +36,7 @@ func TestGatewayAlerts(t *testing.T) {
 		t.Errorf("no path: %v", out)
 	}
 
-	path := filepath.Join(t.TempDir(), "alerts.txt")
+	path := filepath.Join(t.TempDir(), "alerts.log")
 	h.SetAlertsPath(path)
 	if out := getAlerts(t, h); out["error"] != nil || out["count"] != float64(0) {
 		t.Errorf("missing file: %v", out)

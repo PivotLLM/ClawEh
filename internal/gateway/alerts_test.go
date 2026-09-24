@@ -19,7 +19,7 @@ func TestShortHostname(t *testing.T) {
 	}
 }
 
-// TestNewAlerter: alerts land in <base>/logs/alerts.txt by default; ALERTER_LOG
+// TestNewAlerter: alerts land in <base>/logs/alerts.log by default; ALERTER_LOG
 // takes over when set; an unwritable default disables alerting quietly.
 func TestNewAlerter(t *testing.T) {
 	t.Setenv(alerter.EnvLogFile, "")
@@ -40,7 +40,7 @@ func TestNewAlerter(t *testing.T) {
 		t.Errorf("alerts file = %q, err = %v", b, err)
 	}
 
-	envPath := filepath.Join(base, "env-alerts.txt")
+	envPath := filepath.Join(base, "env-alerts.log")
 	t.Setenv(alerter.EnvLogFile, envPath)
 	a, path = newAlerter(base)
 	if path != envPath {
