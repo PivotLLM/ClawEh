@@ -11,7 +11,9 @@ import (
 	mconfig "github.com/PivotLLM/Maestro/config"
 	mlogging "github.com/PivotLLM/Maestro/logging"
 	mmaestro "github.com/PivotLLM/Maestro/pkg/maestro"
+	"github.com/tenebris-tech/alerter"
 
+	"github.com/PivotLLM/ClawEh/alerts"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/logger"
@@ -76,6 +78,7 @@ func (globalMaestroProvider) RegisterTools(deps global.Deps) []global.ToolDefini
 	if err := os.MkdirAll(base, 0o755); err != nil {
 		logger.WarnCF("maestro", "failed to create maestro base dir; tools disabled",
 			map[string]any{"agent": deps.AgentID, "base": base, "error": err.Error()})
+		alertMaestroDisabled(deps.AgentID, base, err)
 		return nil
 	}
 
@@ -93,6 +96,7 @@ func (globalMaestroProvider) RegisterTools(deps global.Deps) []global.ToolDefini
 	if err := mcfg.Prepare(); err != nil {
 		logger.WarnCF("maestro", "failed to prepare maestro config; tools disabled",
 			map[string]any{"agent": deps.AgentID, "base": base, "error": err.Error()})
+		alertMaestroDisabled(deps.AgentID, base, err)
 		return nil
 	}
 	for _, rd := range refDirs {
@@ -137,4 +141,16 @@ func isNilRunner(sr global.SyncRunner) bool {
 	}
 	v := reflect.ValueOf(sr)
 	return v.Kind() == reflect.Pointer && v.IsNil()
+}
+
+// alertMaestroDisabled reports an agent whose Maestro tools could not be set
+// up; it has them enabled and gets none. Repeats per agent collapse.
+func alertMaestroDisabled(agentID, base string, err error) {
+	alerts.Send(alerter.Alert{
+		High:        true,
+		Title:       "Maestro tools disabled",
+		Description: "agent " + agentID + ": " + base + " could not be prepared, so the agent has no Maestro tools",
+		Details:     err.Error(),
+		EventID:     "maestro:" + agentID,
+	})
 }

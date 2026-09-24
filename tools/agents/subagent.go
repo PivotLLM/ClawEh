@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/google/uuid"
+	"github.com/tenebris-tech/alerter"
 
 	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/logger"
@@ -33,6 +34,10 @@ type SubagentManager struct {
 	// returns the final response. Injected by the host (the agent loop). Without
 	// it every spawn fails with ErrSpawnUnavailable.
 	runFull func(ctx context.Context, agentID, sessionKey, task, model string, media []string) (*global.SyncResult, error)
+
+	// alerter receives the alert raised when a task's status or results file
+	// cannot be written. Never nil.
+	alerter alerter.Alerter
 }
 
 // SubagentManagerConfig holds all configuration for constructing a SubagentManager.
@@ -54,10 +59,18 @@ type SubagentManagerConfig struct {
 	// sub-agent session (see SubagentManager.runFull). Required for spawning to
 	// behave as "a copy of the agent with fresh context."
 	RunFull func(ctx context.Context, agentID, sessionKey, task, model string, media []string) (*global.SyncResult, error)
+	// Alerter receives operator alerts for task records that cannot be
+	// written; nil means none.
+	Alerter alerter.Alerter
 }
 
 func NewSubagentManager(cfg SubagentManagerConfig) *SubagentManager {
+	a := cfg.Alerter
+	if a == nil {
+		a = alerter.Nop{}
+	}
 	return &SubagentManager{
+		alerter:           a,
 		workspace:         cfg.Workspace,
 		ownerAgentID:      cfg.CallerAgentID,
 		live:              cfg.Live,
@@ -219,7 +232,7 @@ func (sm *SubagentManager) runRecord(rec *TaskRecord, cb tools.AsyncCallback, re
 	}()
 
 	rec.StartedAt = nowRFC()
-	persistStatus(sm.tasksDir(), rec)
+	sm.persistStatus(sm.tasksDir(), rec)
 
 	taskText := rec.Task
 	if resumed {
@@ -367,24 +380,35 @@ func (sm *SubagentManager) recordResults(rec *TaskRecord, content string, iterat
 			Content:    content,
 		}
 	}
-	persistResults(dir, results)
-	persistStatus(dir, rec)
+	sm.persistResults(dir, results)
+	sm.persistStatus(dir, rec)
 	return sm.completionResult(rec)
 }
 
-// persistStatus writes the task's status record. A failed write is logged
-// rather than failing the run: the task itself has already happened.
-func persistStatus(dir string, rec *TaskRecord) {
+// persistStatus writes the task's status record. A failed write is logged and
+// alerted rather than failing the run: the task itself has already happened.
+func (sm *SubagentManager) persistStatus(dir string, rec *TaskRecord) {
 	if err := writeStatus(dir, rec); err != nil {
 		logger.WarnCF("subagent", "failed to write task status", map[string]any{"uuid": rec.UUID, "error": err.Error()})
+		sm.alertRecordNotWritten(rec.UUID, err)
 	}
 }
 
 // persistResults writes the task's results file; see persistStatus.
-func persistResults(dir string, res *TaskResults) {
+func (sm *SubagentManager) persistResults(dir string, res *TaskResults) {
 	if err := writeResults(dir, res); err != nil {
 		logger.WarnCF("subagent", "failed to write task results", map[string]any{"uuid": res.UUID, "error": err.Error()})
+		sm.alertRecordNotWritten(res.UUID, err)
 	}
+}
+
+func (sm *SubagentManager) alertRecordNotWritten(uuid string, err error) {
+	sm.alerter.Send(alerter.Alert{
+		Title:       "Sub-agent record not written",
+		Description: "task " + uuid + ": its status/results file could not be written, so it cannot be resumed or reported",
+		Details:     err.Error(),
+		EventID:     "subagent-store",
+	})
 }
 
 // SuperviseOnce scans the workspace for interrupted callback tasks (.run markers
@@ -411,8 +435,8 @@ func (sm *SubagentManager) SuperviseOnce(now int64, cbFor func(rec *TaskRecord) 
 			rec.Status = StatusError
 			rec.Error = fmt.Sprintf("gave up after %d interrupted restarts", rec.Restarts)
 			rec.FinishedAt = nowRFC()
-			persistResults(dir, errResults(rec, rec.Error))
-			persistStatus(dir, rec)
+			sm.persistResults(dir, errResults(rec, rec.Error))
+			sm.persistStatus(dir, rec)
 			clearRun(dir, id)
 			continue
 		}
@@ -423,7 +447,7 @@ func (sm *SubagentManager) SuperviseOnce(now int64, cbFor func(rec *TaskRecord) 
 		rec.Restarts++
 		rec.RetryAfter = now + retryDelaySecs()
 		rec.Status = StatusRunning
-		persistStatus(dir, rec)
+		sm.persistStatus(dir, rec)
 		sm.live.Add(id)
 		var cb tools.AsyncCallback
 		if cbFor != nil {

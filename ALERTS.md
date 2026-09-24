@@ -28,6 +28,19 @@ format, are described in `docs/alerts.md`.
 | `config` | Config file invalid | **High.** The config file on disk changed but could not be loaded or validated, so the edit was not applied. The running configuration is unchanged, but the next restart fails on this file. Source: `internal/gateway/helpers.go`. |
 | `config` | Config reload failed | **High.** A valid config was accepted but applying it failed part way. Services are stopped before a reload, so some may not be running; check the gateway log. Details carry the reload error. Source: `internal/gateway/helpers.go`. |
 | `backup` | Nightly backup failed | **High.** The configuration backup did not run and nothing retries before the next night; usually disk or permissions. Source: `internal/gateway/backup.go`. |
+| `fusion` | Fusion token store unavailable | **High.** The Fusion (Google, Microsoft) token database could not be opened when the first agent registered its tools, so every Fusion tool is disabled for the life of the process. Source: `tools/fusion/engine.go`. |
+| `maestro:<agent>` | Maestro tools disabled | **High.** The agent has Maestro enabled but its `maestro/` directory could not be created or prepared, so it has no Maestro tools. Raised on every registry build; repeats per agent collapse. Source: `tools/maestro/global_provider.go`. |
+| `cogmem:<agent>` | Cognitive memory migration failed | **High.** The agent's memory database could not be opened or migrated at load, so its memory is unavailable or stale. Source: `cogmemhost/paths.go`. |
+| `msgtoken:<agent>` | Message-token store unreadable | **High.** The agent's message-token file is corrupt: existing tokens are ignored and the next save overwrites it. Source: `msgtoken/manager.go`. |
+| `msgtoken:<agent>` | Message-token store not written | **High.** A token change could not be saved. A revocation that does not reach disk means the token comes back after a restart, which is why this is high. Source: `msgtoken/named.go`, `msgtoken/manager.go`. |
+| `msgtoken:named` | Named message-token store unreadable | **High.** The named-token file could not be loaded at startup; named tokens do not work and the next change overwrites the file. Source: `agent/loop.go`. |
+| `session-store` | Session state not persisted | **Low.** A per-session setting (active model, expose reasoning, show tool activity) could not be written and reverts on restart. Same id as "Session not saved" so a full disk stays one alert. Source: `agent/loop_session_state.go`. |
+| `subagent-store` | Sub-agent record not written | **Low.** A sub-agent task's status or results file could not be written, so it cannot be resumed or reported. Source: `tools/agents/subagent.go`. |
+| `mount:<path>` | Mount marker not written | **Low.** The seen-files marker for a watched mount could not be written, so the same files may be reported again. Source: `mountwatch/watch.go`. |
+| `voice:<provider>` | Voice transcription rejected | **High.** The transcription API answered 401, 402 or 403 (key or credit), which persists across requests; voice messages are not transcribed until it is fixed. Other statuses and I/O errors never alert. Source: `voice/transcriber.go`. |
+| `devices:<kind>` | Device source not started | **Low.** A device event source failed to start (for example `udevadm` missing); events from it are unavailable. Source: `devices/service.go`. |
+| `devices:usb` | USB device monitor stopped | **Low.** The `udevadm monitor` stream ended with an error and is not restarted. Source: `devices/sources/usb_linux.go`. |
+| `device-store` | Device store unavailable | **Low.** The paired-device database could not be opened for a WebUI request; device pages and pairing fail until it can be. Source: `web/backend/api/devices.go`. |
 | `logging` | Log rotation failed | **High.** The midnight log roll failed after closing the current files, so file logging may be stopped until a restart. Repeats daily. Source: `internal/gateway/logrotate.go`. |
 
 If the alerts log itself cannot be opened, ClawEh logs an error in the gateway
@@ -36,8 +49,20 @@ log and runs without alerting; it cannot alert about that.
 Known conditions that are **not** alerted yet, because they surface only
 inside shared modules that have no alert hook: session archive open/append
 failures in ctxengine, cognitive-memory consolidation failures in cogmem, and
-Google/Microsoft OAuth refresh failures in MCPFusion. Each needs an error
-callback in its module first.
+Google/Microsoft OAuth refresh failures in MCPFusion. The agreed design is a
+typed error-event hook per module (`WithArchiveErrorHook`, `WithRunErrorHook`,
+`WithAuthEventHook`), with ClawEh writing the alert in the hook body; see
+"Shared modules" in `docs/alerts.md`. That is a separate project.
+
+## Where the alerter comes from
+
+The gateway builds one alerter and hands it explicitly to what it constructs
+(agent loop, channels, cron, MCP manager and host server, listeners, backup,
+log rotation, mount watcher, devices, voice, the API handler). Code with no
+owner, such as package singletons, free functions and providers rebuilt per
+tool registry, raises through the process default in the `alerts` package,
+which the gateway sets once at startup. Tests capture the default with
+`internal/testalerts.Install`.
 
 Titles are fixed strings, so the alert log can be searched by them. The
 priority decides how a future delivery channel treats the alert: high is for

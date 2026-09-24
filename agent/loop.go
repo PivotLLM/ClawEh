@@ -14,6 +14,7 @@ import (
 	"github.com/PivotLLM/cogmem/consolidate"
 	"github.com/tenebris-tech/alerter"
 
+	"github.com/PivotLLM/ClawEh/alerts"
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/channels"
 	"github.com/PivotLLM/ClawEh/commands"
@@ -202,6 +203,13 @@ func NewAgentLoop(
 	if err != nil {
 		logger.WarnCF("message", "Failed to load named message-token store, starting empty",
 			map[string]any{"error": err.Error()})
+		alerts.Send(alerter.Alert{
+			High:        true,
+			Title:       "Named message-token store unreadable",
+			Description: namedTokenPath + ": named tokens do not work, and the next change overwrites the file",
+			Details:     err.Error(),
+			EventID:     "msgtoken:named",
+		})
 		namedTokens, err = msgtoken.NewNamedStore("")
 		if err != nil {
 			logger.ErrorCF("message", "Failed to create empty named message-token store",

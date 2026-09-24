@@ -17,7 +17,7 @@ import (
 var _ Transcriber = (*whisperTranscriber)(nil)
 
 func TestWhisperTranscriberName(t *testing.T) {
-	tr := NewWhisperTranscriber("groq", "sk-test", "", "")
+	tr := NewWhisperTranscriber("groq", "sk-test", "", "", nil)
 	if got := tr.Name(); got != "groq" {
 		t.Errorf("Name() = %q, want %q", got, "groq")
 	}
@@ -217,7 +217,7 @@ func TestTranscribe(t *testing.T) {
 		}))
 		defer srv.Close()
 
-		tr := NewWhisperTranscriber("groq", "sk-test", "", "")
+		tr := NewWhisperTranscriber("groq", "sk-test", "", "", nil)
 		tr.apiBase = srv.URL
 
 		resp, err := tr.Transcribe(context.Background(), audioPath)
@@ -238,7 +238,7 @@ func TestTranscribe(t *testing.T) {
 		}))
 		defer srv.Close()
 
-		tr := NewWhisperTranscriber("groq", "sk-bad", "", "")
+		tr := NewWhisperTranscriber("groq", "sk-bad", "", "", nil)
 		tr.apiBase = srv.URL
 
 		_, err := tr.Transcribe(context.Background(), audioPath)
@@ -248,7 +248,7 @@ func TestTranscribe(t *testing.T) {
 	})
 
 	t.Run("missing file", func(t *testing.T) {
-		tr := NewWhisperTranscriber("groq", "sk-test", "", "")
+		tr := NewWhisperTranscriber("groq", "sk-test", "", "", nil)
 		_, err := tr.Transcribe(context.Background(), filepath.Join(tmpDir, "nonexistent.ogg"))
 		if err == nil {
 			t.Fatal("expected error for missing file, got nil")

@@ -18,6 +18,7 @@ import (
 	"github.com/tenebris-tech/alerter"
 
 	"github.com/PivotLLM/ClawEh/agent"
+	"github.com/PivotLLM/ClawEh/alerts"
 	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/channels"
@@ -197,6 +198,7 @@ func gatewayCmd(debug bool) error {
 	// Operator alerts: parked models, unreachable MCP servers, channels that
 	// give up, failed jobs and reloads. Closed in shutdownGateway.
 	operatorAlerter, alertsPath := newAlerter(baseDir)
+	alerts.Set(operatorAlerter)
 	msgBus := bus.NewMessageBus()
 	agentLoop, err := agent.NewAgentLoop(cfg, msgBus, provider, dispatcher)
 	if err != nil {
@@ -245,6 +247,7 @@ func gatewayCmd(debug bool) error {
 	}
 	// The Logs page tails the alerts file the alerter writes.
 	services.WebServer.APIHandler().SetAlertsPath(alertsPath)
+	services.WebServer.APIHandler().SetAlerter(agentLoop.Alerter())
 
 	logger.InfoF("Gateway started", map[string]any{"addr": fmt.Sprintf("%s:%d", cfg.Gateway.Host, cfg.Gateway.Port)})
 
@@ -420,7 +423,7 @@ func setupAndStartServices(
 	}
 
 	// Watch notify-enabled external mounts for new files (cron-style notices).
-	services.MountWatcher = mountwatch.New(agentLoop.GetConfig, msgBus, 0)
+	services.MountWatcher = mountwatch.New(agentLoop.GetConfig, msgBus, 0, agentLoop.Alerter())
 	services.MountWatcher.Start()
 	logger.InfoC("mountwatch", "Mount watcher started")
 
@@ -460,7 +463,7 @@ func setupAndStartServices(
 	injectDeviceAgentQuerier(services.ChannelManager, agentLoop)
 
 	// Wire up voice transcription if a supported provider is configured.
-	if transcriber := voice.DetectTranscriber(cfg); transcriber != nil {
+	if transcriber := voice.DetectTranscriberWithAlerter(cfg, agentLoop.Alerter()); transcriber != nil {
 		agentLoop.SetTranscriber(transcriber)
 		logger.InfoCF("voice", "Transcription enabled (agent-level)", map[string]any{"provider": transcriber.Name()})
 	}
@@ -533,6 +536,7 @@ func setupAndStartServices(
 	services.DeviceService = devices.NewService(devices.Config{
 		Enabled:    cfg.Devices.Enabled,
 		MonitorUSB: cfg.Devices.MonitorUSB,
+		Alerter:    agentLoop.Alerter(),
 	}, stateManager)
 	services.DeviceService.SetBus(msgBus)
 	if err := services.DeviceService.Start(context.Background()); err != nil {
@@ -889,7 +893,7 @@ func restartServices(
 	// Re-create the mount watcher. stopAndCleanupServices stopped the old one, so
 	// without this a reload would silently end mount notifications for the rest of
 	// the process's life — and every service around it is rebuilt the same way.
-	services.MountWatcher = mountwatch.New(al.GetConfig, msgBus, 0)
+	services.MountWatcher = mountwatch.New(al.GetConfig, msgBus, 0, al.Alerter())
 	services.MountWatcher.Start() //nolint:contextcheck // background poller whose lifetime is Stop(), not the run context
 	logger.InfoC("mountwatch", "Mount watcher restarted")
 
@@ -969,6 +973,7 @@ func restartServices(
 	services.DeviceService = devices.NewService(devices.Config{
 		Enabled:    cfg.Devices.Enabled,
 		MonitorUSB: cfg.Devices.MonitorUSB,
+		Alerter:    al.Alerter(),
 	}, stateManager)
 	services.DeviceService.SetBus(msgBus)
 	if err := services.DeviceService.Start(runCtx); err != nil {
@@ -978,7 +983,7 @@ func restartServices(
 	}
 
 	// Wire up voice transcription with new config
-	transcriber := voice.DetectTranscriber(cfg)
+	transcriber := voice.DetectTranscriberWithAlerter(cfg, al.Alerter())
 	al.SetTranscriber(transcriber) // This will set it to nil if disabled
 	if transcriber != nil {
 		logger.InfoCF("voice", "Transcription re-enabled (agent-level)", map[string]any{"provider": transcriber.Name()})

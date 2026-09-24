@@ -14,6 +14,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tenebris-tech/alerter"
+
+	"github.com/PivotLLM/ClawEh/alerts"
 	"github.com/PivotLLM/ClawEh/fileutil"
 	"github.com/PivotLLM/ClawEh/logger"
 )
@@ -218,6 +221,7 @@ func (s *NamedStore) Delete(agentID, id string) bool {
 	// the unsafe direction, so we log-and-continue rather than resurrect it.
 	if err := s.saveLocked(); err != nil {
 		logger.WarnCF("msgtoken", "Failed to persist token deletion", map[string]any{"agent": agentID, "error": err.Error()})
+		alertTokenStoreNotWritten(s.path, agentID, "a revoked token comes back after a restart", err)
 	}
 	return true
 }
@@ -364,6 +368,7 @@ func (s *NamedStore) Update(agentID, id string, ratePerMin, blockMinutes int) bo
 			list[i].BlockMinutes = blockMinutes
 			if err := s.saveLocked(); err != nil {
 				logger.WarnCF("msgtoken", "Failed to persist token update", map[string]any{"agent": agentID, "error": err.Error()})
+				alertTokenStoreNotWritten(s.path, agentID, "the change is lost on restart", err)
 			}
 			return true
 		}
@@ -438,4 +443,16 @@ func (s *NamedStore) saveLocked() error {
 		return fmt.Errorf("msgtoken: write %s: %w", s.path, err)
 	}
 	return nil
+}
+
+// alertTokenStoreNotWritten reports a message-token store that could not be
+// saved. High: a revocation that does not reach disk is a security problem.
+func alertTokenStoreNotWritten(path, agentID, consequence string, err error) {
+	alerts.Send(alerter.Alert{
+		High:        true,
+		Title:       "Message-token store not written",
+		Description: path + " (agent " + agentID + "): " + consequence,
+		Details:     err.Error(),
+		EventID:     "msgtoken:" + agentID,
+	})
 }

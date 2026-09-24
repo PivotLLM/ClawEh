@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/tenebris-tech/alerter"
+
 	"github.com/PivotLLM/ClawEh/channels/device"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/logger"
@@ -76,13 +78,19 @@ func (h *Handler) openDeviceStore(ctx context.Context) (*device.Store, *config.C
 	return store, cfg, nil
 }
 
-// deviceStoreUnavailable reports a store-open failure. The error is LOGGED but
-// not returned to the client: /api/* carries no operator authentication and the
-// error text contains filesystem paths. It was previously discarded entirely,
-// which is why an intermittent SQLITE_BUSY on this endpoint left no trace
-// anywhere and needed a patched binary to identify.
-func deviceStoreUnavailable(w http.ResponseWriter, err error) {
+// deviceStoreUnavailable reports a store-open failure. The error is LOGGED and
+// ALERTED but not returned to the client: /api/* carries no operator
+// authentication and the error text contains filesystem paths. It was
+// previously discarded entirely, which is why an intermittent SQLITE_BUSY on
+// this endpoint left no trace anywhere and needed a patched binary to identify.
+func (h *Handler) deviceStoreUnavailable(w http.ResponseWriter, err error) {
 	logger.ErrorCF("api", "device store unavailable", map[string]any{"error": err.Error()})
+	h.alerterRef().Send(alerter.Alert{
+		Title:       "Device store unavailable",
+		Description: "the paired-device store could not be opened; device pages and pairing fail until it is",
+		Details:     err.Error(),
+		EventID:     "device-store",
+	})
 	writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store open failed"})
 }
 
@@ -279,7 +287,7 @@ type pendingDeviceView struct {
 func (h *Handler) handleDevicePending(w http.ResponseWriter, r *http.Request) {
 	store, _, err := h.openDeviceStore(r.Context())
 	if err != nil {
-		deviceStoreUnavailable(w, err)
+		h.deviceStoreUnavailable(w, err)
 		return
 	}
 	pending, err := store.ListPending(r.Context())
@@ -309,7 +317,7 @@ func (h *Handler) resolvePending(w http.ResponseWriter, r *http.Request, approve
 	requestID := r.PathValue("id")
 	store, _, err := h.openDeviceStore(r.Context())
 	if err != nil {
-		deviceStoreUnavailable(w, err)
+		h.deviceStoreUnavailable(w, err)
 		return
 	}
 
@@ -373,7 +381,7 @@ func configuredAgents(cfg *config.Config) []agentOption {
 func (h *Handler) handleDeviceList(w http.ResponseWriter, r *http.Request) {
 	store, cfg, err := h.openDeviceStore(r.Context())
 	if err != nil {
-		deviceStoreUnavailable(w, err)
+		h.deviceStoreUnavailable(w, err)
 		return
 	}
 	paired, err := store.ListPaired(r.Context())
@@ -406,7 +414,7 @@ func (h *Handler) handleDeviceAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	store, _, err := h.openDeviceStore(r.Context())
 	if err != nil {
-		deviceStoreUnavailable(w, err)
+		h.deviceStoreUnavailable(w, err)
 		return
 	}
 	if err := store.SetDeviceAgent(r.Context(), deviceID, strings.TrimSpace(body.AgentID)); err != nil {
@@ -424,7 +432,7 @@ func (h *Handler) handleDeviceRemove(w http.ResponseWriter, r *http.Request) {
 	deviceID := r.PathValue("id")
 	store, _, err := h.openDeviceStore(r.Context())
 	if err != nil {
-		deviceStoreUnavailable(w, err)
+		h.deviceStoreUnavailable(w, err)
 		return
 	}
 	if err := store.RemovePaired(r.Context(), deviceID); err != nil {

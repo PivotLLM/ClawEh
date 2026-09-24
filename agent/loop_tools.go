@@ -145,6 +145,7 @@ func (al *AgentLoop) registerRuntimeTools(
 			CallerAgentID:     agentID,
 			CandidateResolver: candidateResolver,
 			RunFull:           al.runSubagentTask,
+			Alerter:           al.Alerter(),
 		})
 		managers[agentID] = spawnMgr
 		spawner := toolsagents.NewSpawner(spawnMgr)

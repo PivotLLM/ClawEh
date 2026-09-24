@@ -12,6 +12,7 @@ import (
 
 	cogmemstore "github.com/PivotLLM/cogmem/store"
 	"github.com/PivotLLM/ctxengine/memory"
+	"github.com/tenebris-tech/alerter"
 
 	"github.com/PivotLLM/ClawEh/cogmemhost"
 	"github.com/PivotLLM/ClawEh/logger"
@@ -92,6 +93,7 @@ func (al *AgentLoop) setActiveModelIndex(agent *AgentInstance, sessionKey string
 		if err := store.SetCompactionState(sessionKey, st); err != nil {
 			logger.WarnCF("agent", "active model index: persist failed",
 				map[string]any{"session_key": sessionKey, "error": err.Error()})
+			al.alertSessionStateNotPersisted("active model index", err)
 		}
 	}
 	return nil
@@ -141,6 +143,7 @@ func (al *AgentLoop) setExposeReasoning(agent *AgentInstance, sessionKey string,
 		if err := store.SetCompactionState(sessionKey, st); err != nil {
 			logger.WarnCF("agent", "expose reasoning: persist failed",
 				map[string]any{"session_key": sessionKey, "error": err.Error()})
+			al.alertSessionStateNotPersisted("expose reasoning", err)
 		}
 	}
 }
@@ -205,8 +208,20 @@ func (al *AgentLoop) setShowToolActivity(agent *AgentInstance, sessionKey string
 		if err := store.SetCompactionState(sessionKey, st); err != nil {
 			logger.WarnCF("agent", "show tool activity: persist failed",
 				map[string]any{"session_key": sessionKey, "error": err.Error()})
+			al.alertSessionStateNotPersisted("show tool activity", err)
 		}
 	}
+}
+
+// alertSessionStateNotPersisted raises the low alert for a per-session
+// setting that stayed in memory only; what names the setting.
+func (al *AgentLoop) alertSessionStateNotPersisted(what string, err error) {
+	al.Alerter().Send(alerter.Alert{
+		Title:       "Session state not persisted",
+		Description: what + ": the setting reverts on restart",
+		Details:     err.Error(),
+		EventID:     "session-store",
+	})
 }
 
 // cogmemSessionStatus renders a short cognitive-memory summary for the session:

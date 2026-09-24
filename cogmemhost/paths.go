@@ -9,7 +9,9 @@ import (
 
 	"github.com/PivotLLM/cogmem/store"
 	"github.com/PivotLLM/ctxengine/memory"
+	"github.com/tenebris-tech/alerter"
 
+	"github.com/PivotLLM/ClawEh/alerts"
 	"github.com/PivotLLM/ClawEh/logger"
 )
 
@@ -47,6 +49,13 @@ func Migrate(agentID, workspace string) {
 	case r.Err != nil:
 		logger.ErrorCF("cogmem", "Failed to migrate cognitive-memory database",
 			map[string]any{"agent": agentID, "path": r.Path, "error": r.Err.Error()})
+		alerts.Send(alerter.Alert{
+			High:        true,
+			Title:       "Cognitive memory migration failed",
+			Description: "agent " + agentID + ": " + r.Path + " was not migrated, so this agent's memory is unavailable or stale",
+			Details:     r.Err.Error(),
+			EventID:     "cogmem:" + agentID,
+		})
 	case r.Migrated():
 		logger.InfoCF("cogmem", "Migrated cognitive-memory database", map[string]any{
 			"agent": agentID, "path": r.Path, "from": r.From, "to": r.To,

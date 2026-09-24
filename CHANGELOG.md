@@ -38,7 +38,10 @@ observe does not need an entry.
   unreadable or unwritable cron store, a session that could not be saved,
   service tokens that could not be loaded, an invalid config edit or a failed
   reload, a failed nightly backup or log rotation, and the WebUI/API listener,
-  MCP host server or agent loop stopping. Repeats of the same alert within
+  MCP host server or agent loop stopping; also the Fusion token store,
+  Maestro setup, cognitive-memory migration, message-token stores, session
+  state, sub-agent records, mount watching, voice transcription credentials
+  and device sources. Repeats of the same alert within
   ten minutes are counted, not repeated. The Logs page shows the alerts log
   through its new source selector, and `GET /api/gateway/alerts` returns it.
   Every alert is listed in `ALERTS.md`; the record format is in

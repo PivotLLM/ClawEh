@@ -14,6 +14,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tenebris-tech/alerter"
+
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/global"
@@ -33,17 +35,22 @@ type Watcher struct {
 	cfg      func() *config.Config
 	bus      *bus.MessageBus
 	interval time.Duration
+	alerter  alerter.Alerter
 	stop     chan struct{}
 	stopOnce sync.Once
 	wg       sync.WaitGroup
 }
 
 // New builds a Watcher. interval <= 0 uses global.MountNotifyIntervalSeconds.
-func New(cfgGetter func() *config.Config, b *bus.MessageBus, interval time.Duration) *Watcher {
+// a receives operator alerts for scan and marker failures; nil means none.
+func New(cfgGetter func() *config.Config, b *bus.MessageBus, interval time.Duration, a alerter.Alerter) *Watcher {
 	if interval <= 0 {
 		interval = time.Duration(global.MountNotifyIntervalSeconds) * time.Second
 	}
-	return &Watcher{cfg: cfgGetter, bus: b, interval: interval, stop: make(chan struct{})}
+	if a == nil {
+		a = alerter.Nop{}
+	}
+	return &Watcher{cfg: cfgGetter, bus: b, interval: interval, alerter: a, stop: make(chan struct{})}
 }
 
 func (w *Watcher) Start() {
@@ -106,7 +113,7 @@ func (w *Watcher) tick() {
 // scanMount detects new files in one mount via the .claw watermark and notifies
 // the owning agent for each.
 func (w *Watcher) scanMount(cfg *config.Config, agentID, mountName, mountPath string) {
-	for _, rel := range detectNewFiles(mountName, mountPath) {
+	for _, rel := range w.detectNewFiles(mountName, mountPath) {
 		logger.InfoCF("mountwatch", "new file detected in mount", map[string]any{
 			"agent_id": agentID,
 			"mount":    mountName,
@@ -125,7 +132,7 @@ func (w *Watcher) scanMount(cfg *config.Config, agentID, mountName, mountPath st
 // NOT fire — only a file whose path we haven't seen before. The seen-set lives in
 // .claw on disk, so detection survives restarts (a file added while claw was
 // stopped is new on the next scan; an edited one is not).
-func detectNewFiles(mountName, mountPath string) []string {
+func (w *Watcher) detectNewFiles(mountName, mountPath string) []string {
 	marker := filepath.Join(mountPath, markerFile)
 	seen, hadMarker := readSeen(marker)
 
@@ -155,7 +162,7 @@ func detectNewFiles(mountName, mountPath string) []string {
 
 	if !hadMarker {
 		// Baseline: record what's already there, fire nothing.
-		writeSeen(marker, current)
+		w.writeSeen(mountPath, marker, current)
 		return nil
 	}
 
@@ -167,7 +174,7 @@ func detectNewFiles(mountName, mountPath string) []string {
 	}
 	if len(newFiles) > 0 {
 		// Advance the recorded set to what's present now (also prunes deletions).
-		writeSeen(marker, current)
+		w.writeSeen(mountPath, marker, current)
 	}
 	return newFiles
 }
@@ -189,10 +196,16 @@ func readSeen(marker string) (map[string]bool, bool) {
 }
 
 // writeSeen persists the set of mount-relative file paths to the marker.
-func writeSeen(marker string, paths []string) {
+func (w *Watcher) writeSeen(mountPath, marker string, paths []string) {
 	sort.Strings(paths)
 	if err := os.WriteFile(marker, []byte(strings.Join(paths, "\n")+"\n"), 0o600); err != nil {
 		logger.WarnCF("mountwatch", "Failed to write seen-files marker", map[string]any{"path": marker, "error": err.Error()})
+		w.alerter.Send(alerter.Alert{
+			Title:       "Mount marker not written",
+			Description: marker + ": the same files may be reported again",
+			Details:     err.Error(),
+			EventID:     "mount:" + mountPath,
+		})
 	}
 }
 

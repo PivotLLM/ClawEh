@@ -6,6 +6,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tenebris-tech/alerter"
+
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/constants"
 	"github.com/PivotLLM/ClawEh/devices/events"
@@ -18,6 +20,7 @@ type Service struct {
 	bus     *bus.MessageBus
 	state   *state.Manager
 	sources []events.EventSource
+	alerter alerter.Alerter
 	enabled bool
 	ctx     context.Context
 	cancel  context.CancelFunc
@@ -27,14 +30,21 @@ type Service struct {
 type Config struct {
 	Enabled    bool
 	MonitorUSB bool // When true, monitor USB hotplug (Linux only)
+	// Alerter receives operator alerts for sources that fail to start; nil
+	// means none.
+	Alerter alerter.Alerter
 	// Future: MonitorBluetooth, MonitorPCI, etc.
 }
 
 func NewService(cfg Config, stateMgr *state.Manager) *Service {
 	s := &Service{
 		state:   stateMgr,
+		alerter: cfg.Alerter,
 		enabled: cfg.Enabled,
 		sources: make([]EventSource, 0),
+	}
+	if s.alerter == nil {
+		s.alerter = alerter.Nop{}
 	}
 
 	if cfg.Enabled && cfg.MonitorUSB {
@@ -68,6 +78,12 @@ func (s *Service) Start(ctx context.Context) error {
 			logger.ErrorCF("devices", "Failed to start source", map[string]any{
 				"kind":  src.Kind(),
 				"error": err.Error(),
+			})
+			s.alerter.Send(alerter.Alert{
+				Title:       "Device source not started",
+				Description: string(src.Kind()) + ": device events from this source are unavailable",
+				Details:     err.Error(),
+				EventID:     "devices:" + string(src.Kind()),
 			})
 			continue
 		}

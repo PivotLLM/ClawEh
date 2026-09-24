@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"sync"
 
+	"github.com/tenebris-tech/alerter"
+
 	"github.com/PivotLLM/ClawEh/channels/device"
 	"github.com/PivotLLM/ClawEh/config"
 )
@@ -22,6 +24,9 @@ type Handler struct {
 	// alertsPath is the alerts log the gateway writes (SetAlertsPath); empty
 	// when alerting is disabled. Guarded by reloadMu.
 	alertsPath string
+	// alerter raises operator alerts from handlers (SetAlerter); a no-op until
+	// the gateway sets it. Guarded by reloadMu.
+	alerter alerter.Alerter
 	// msgTokenLoop is the live AgentLoop the message-token endpoints operate on
 	// (injected via SetMessageTokenLoop). Guarded by reloadMu since it is set at
 	// startup on one goroutine and read on HTTP-handler goroutines.
@@ -56,6 +61,22 @@ func (h *Handler) reloadFunc() func() error {
 	h.reloadMu.Lock()
 	defer h.reloadMu.Unlock()
 	return h.reloadTrigger
+}
+
+// SetAlerter routes the handlers' operator alerts to a; nil restores the no-op.
+func (h *Handler) SetAlerter(a alerter.Alerter) {
+	h.reloadMu.Lock()
+	h.alerter = a
+	h.reloadMu.Unlock()
+}
+
+func (h *Handler) alerterRef() alerter.Alerter {
+	h.reloadMu.Lock()
+	defer h.reloadMu.Unlock()
+	if h.alerter == nil {
+		return alerter.Nop{}
+	}
+	return h.alerter
 }
 
 // NewHandler creates an instance of the API handler.

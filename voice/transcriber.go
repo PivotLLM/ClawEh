@@ -15,6 +15,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tenebris-tech/alerter"
+
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/utils"
@@ -34,6 +36,7 @@ type whisperTranscriber struct {
 	apiBase    string
 	model      string
 	httpClient *http.Client
+	alerter    alerter.Alerter
 }
 
 type TranscriptionResponse struct {
@@ -72,7 +75,9 @@ func presetFor(provider string) STTPreset {
 
 // NewWhisperTranscriber builds a transcriber for an OpenAI-compatible endpoint.
 // Blank baseURL/model fall back to the provider preset (else groq defaults).
-func NewWhisperTranscriber(name, apiKey, baseURL, model string) *whisperTranscriber {
+// a receives the alert raised when the API rejects the key or account; nil
+// means none.
+func NewWhisperTranscriber(name, apiKey, baseURL, model string, a alerter.Alerter) *whisperTranscriber {
 	preset := presetFor(name)
 	if baseURL == "" {
 		baseURL = preset.BaseURL
@@ -97,6 +102,7 @@ func NewWhisperTranscriber(name, apiKey, baseURL, model string) *whisperTranscri
 		httpClient: &http.Client{
 			Timeout: 60 * time.Second,
 		},
+		alerter: orNop(a),
 	}
 }
 
@@ -192,6 +198,7 @@ func (t *whisperTranscriber) Transcribe(ctx context.Context, audioFilePath strin
 			"status_code": resp.StatusCode,
 			"response":    string(body),
 		})
+		alertRejected(t.alerter, t.name, resp.StatusCode, body)
 		return nil, fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(body))
 	}
 
@@ -229,11 +236,13 @@ type openRouterTranscriber struct {
 	apiBase    string
 	model      string
 	httpClient *http.Client
+	alerter    alerter.Alerter
 }
 
 // NewOpenRouterTranscriber builds a transcriber for OpenRouter. Blank
-// baseURL/model fall back to the openrouter preset.
-func NewOpenRouterTranscriber(apiKey, baseURL, model string) *openRouterTranscriber {
+// baseURL/model fall back to the openrouter preset. a is as for
+// NewWhisperTranscriber.
+func NewOpenRouterTranscriber(apiKey, baseURL, model string, a alerter.Alerter) *openRouterTranscriber {
 	preset := presetFor("openrouter")
 	if baseURL == "" {
 		baseURL = preset.BaseURL
@@ -249,6 +258,7 @@ func NewOpenRouterTranscriber(apiKey, baseURL, model string) *openRouterTranscri
 		apiBase:    strings.TrimRight(baseURL, "/"),
 		model:      model,
 		httpClient: &http.Client{Timeout: 60 * time.Second},
+		alerter:    orNop(a),
 	}
 }
 
@@ -302,6 +312,7 @@ func (t *openRouterTranscriber) Transcribe(ctx context.Context, audioFilePath st
 	}
 	if resp.StatusCode != http.StatusOK {
 		logger.ErrorCF("voice", "API error", map[string]any{"provider": "openrouter", "status_code": resp.StatusCode, "response": string(body)})
+		alertRejected(t.alerter, "openrouter", resp.StatusCode, body)
 		return nil, fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(body))
 	}
 
@@ -328,11 +339,41 @@ func (t *openRouterTranscriber) Transcribe(ctx context.Context, audioFilePath st
 // NewTranscriber builds the right transcriber for a provider. OpenRouter uses a
 // JSON/base64 protocol; every other provider is treated as OpenAI-compatible
 // multipart (groq, openai, or a custom OpenAI-style host).
-func NewTranscriber(provider, apiKey, baseURL, model string) Transcriber {
+func NewTranscriber(provider, apiKey, baseURL, model string, a alerter.Alerter) Transcriber {
 	if provider == "openrouter" {
-		return NewOpenRouterTranscriber(apiKey, baseURL, model)
+		return NewOpenRouterTranscriber(apiKey, baseURL, model, a)
 	}
-	return NewWhisperTranscriber(provider, apiKey, baseURL, model)
+	return NewWhisperTranscriber(provider, apiKey, baseURL, model, a)
+}
+
+func orNop(a alerter.Alerter) alerter.Alerter {
+	if a == nil {
+		return alerter.Nop{}
+	}
+	return a
+}
+
+// alertRejected raises a high alert when the API turned the request away for
+// a reason that persists across requests: bad credentials (401/403) or an
+// exhausted account (402). Other statuses are per-request failures and stay
+// in the log only.
+func alertRejected(a alerter.Alerter, provider string, status int, body []byte) {
+	switch status {
+	case http.StatusUnauthorized, http.StatusPaymentRequired, http.StatusForbidden:
+	default:
+		return
+	}
+	details := []rune(strings.TrimSpace(string(body)))
+	if len(details) > 200 {
+		details = details[:200]
+	}
+	a.Send(alerter.Alert{
+		High:        true,
+		Title:       "Voice transcription rejected",
+		Description: fmt.Sprintf("%s: status %d; voice messages are not transcribed until the key or account is fixed", provider, status),
+		Details:     string(details),
+		EventID:     "voice:" + provider,
+	})
 }
 
 // urlHost returns the host of a URL, or "" if it can't be parsed.
@@ -418,8 +459,15 @@ func (f *fallbackTranscriber) Transcribe(ctx context.Context, audioFilePath stri
 // DetectTranscriber builds the transcription backend from the enabled voice.stt
 // entries (each usable when it has its own key or can borrow one from a matching
 // provider). Multiple enabled entries form an ordered fallback chain, tried in
-// listed order. No enabled entry means transcription is off.
+// listed order. No enabled entry means transcription is off. The result raises
+// no operator alerts; the gateway uses DetectTranscriberWithAlerter.
 func DetectTranscriber(cfg *config.Config) Transcriber {
+	return DetectTranscriberWithAlerter(cfg, nil)
+}
+
+// DetectTranscriberWithAlerter is DetectTranscriber with an alerter that
+// receives the alert raised when a provider rejects the key or account.
+func DetectTranscriberWithAlerter(cfg *config.Config, a alerter.Alerter) Transcriber {
 	var chain []Transcriber
 	for i := range cfg.Voice.STT {
 		s := &cfg.Voice.STT[i]
@@ -430,7 +478,7 @@ func DetectTranscriber(cfg *config.Config) Transcriber {
 		if apiKey == "" {
 			continue
 		}
-		chain = append(chain, NewTranscriber(s.Provider, apiKey, baseURL, model))
+		chain = append(chain, NewTranscriber(s.Provider, apiKey, baseURL, model, a))
 	}
 	switch len(chain) {
 	case 0:

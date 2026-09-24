@@ -8,7 +8,9 @@ import (
 	"sync"
 
 	mcpfusion "github.com/PivotLLM/MCPFusion/fusion"
+	"github.com/tenebris-tech/alerter"
 
+	"github.com/PivotLLM/ClawEh/alerts"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/logger"
 )
@@ -33,6 +35,13 @@ func sharedEngine(c *config.Config) *mcpfusion.Fusion {
 		if err != nil {
 			logger.ErrorCF("fusion", "failed to open fusion token store; fusion tools disabled",
 				map[string]any{"path": c.FusionTokensPath(), "error": err.Error()})
+			alerts.Send(alerter.Alert{
+				High:        true,
+				Title:       "Fusion token store unavailable",
+				Description: c.FusionTokensPath() + ": every Google and Microsoft tool is disabled until the gateway is restarted with a readable store",
+				Details:     err.Error(),
+				EventID:     "fusion",
+			})
 			return
 		}
 
