@@ -167,6 +167,7 @@ func (m *Manager) reconnect(ctx context.Context, name string, cfg config.MCPServ
 	m.disconnect(name)
 	if err := m.ConnectServer(ctx, name, cfg); err != nil {
 		m.markReconnectFailed(name)
+		m.alertUnreachable(name, err)
 		logger.ErrorCF("mcp", "MCP reconnect failed; server in cooldown",
 			map[string]any{
 				"server":         name,

@@ -19,6 +19,9 @@ type Handler struct {
 	// goroutine and read on HTTP-handler goroutines.
 	reloadMu      sync.Mutex
 	reloadTrigger func() error
+	// alertsPath is the alerts log the gateway writes (SetAlertsPath); empty
+	// when alerting is disabled. Guarded by reloadMu.
+	alertsPath string
 	// msgTokenLoop is the live AgentLoop the message-token endpoints operate on
 	// (injected via SetMessageTokenLoop). Guarded by reloadMu since it is set at
 	// startup on one goroutine and read on HTTP-handler goroutines.

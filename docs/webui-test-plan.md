@@ -139,6 +139,7 @@ Creates an agent called `e2e-probe` and deletes it at the end.
 | K4 | Click **Report** in the sidebar (below the groups) | `/report` renders with an **Open report (PDF)** button, no console errors |
 | K5 | `GET /api/report/pdf` | 200, `Content-Type: application/pdf`, `Content-Disposition: inline; …`, body starts with `%PDF-` |
 | K6 | `POST /api/mcp/servers/no-such-server/reconnect` | 404 with a JSON `error` (the Reconnect button on `/mcp/servers` calls this for the selected server) |
+| K7 | `GET /api/gateway/alerts` | 200 with a JSON `logs` array (the operator alerts log; the Logs page shows it when its source selector is set to Alerts) |
 
 ## L. Setup wizard
 

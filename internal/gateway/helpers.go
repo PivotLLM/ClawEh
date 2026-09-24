@@ -192,11 +192,16 @@ func gatewayCmd(debug bool) error {
 	config.SetDefaultAgentTools(tools.DefaultEnabledToolNames())
 
 	dispatcher := providers.NewProviderDispatcher(cfg)
+
+	// Operator alerts: parked models, unreachable MCP servers, channels that
+	// give up, failed jobs and reloads. Closed in shutdownGateway.
+	operatorAlerter, alertsPath := newAlerter(baseDir)
 	msgBus := bus.NewMessageBus()
 	agentLoop, err := agent.NewAgentLoop(cfg, msgBus, provider, dispatcher)
 	if err != nil {
 		return fmt.Errorf("error creating agent loop: %w", err)
 	}
+	agentLoop.SetAlerter(operatorAlerter)
 
 	dumpsDir := filepath.Join(internal.GetClawHome(), "logs", "dumps")
 	agentLoop.SetDumpsDir(dumpsDir)
@@ -237,6 +242,8 @@ func gatewayCmd(debug bool) error {
 	if err != nil {
 		return err
 	}
+	// The Logs page tails the alerts file the alerter writes.
+	services.WebServer.APIHandler().SetAlertsPath(alertsPath)
 
 	logger.InfoF("Gateway started", map[string]any{"addr": fmt.Sprintf("%s:%d", cfg.Gateway.Host, cfg.Gateway.Port)})
 
@@ -303,6 +310,7 @@ func gatewayCmd(debug bool) error {
 			err := handleConfigReload(ctx, agentLoop, newCfg, &provider, services, msgBus)
 			if err != nil {
 				logger.Errorf("Config reload failed: %v", err)
+				agentLoop.Alerter().High("Config reload failed", "the previous configuration stays in effect", err.Error())
 			}
 
 		case done := <-forceReload:
@@ -428,6 +436,7 @@ func setupAndStartServices(
 		}
 		return nil, fmt.Errorf("error creating channel manager: %w", err)
 	}
+	services.ChannelManager.SetAlerter(agentLoop.Alerter())
 
 	// Inject channel manager and media store into agent loop
 	agentLoop.SetChannelManager(services.ChannelManager)
@@ -743,6 +752,13 @@ func shutdownGateway(
 	agentLoop.Close()
 
 	logger.Info("✓ Gateway stopped")
+	if fullShutdown {
+		closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := agentLoop.Alerter().Close(closeCtx); err != nil {
+			logger.WarnCF("gateway", "alerts not fully flushed on shutdown", map[string]any{"error": err.Error()})
+		}
+		cancel()
+	}
 }
 
 // handleConfigReload handles config file reload by stopping all services,
@@ -881,6 +897,7 @@ func restartServices(
 		}
 		return fmt.Errorf("error recreating channel manager: %w", err)
 	}
+	services.ChannelManager.SetAlerter(al.Alerter())
 	al.SetChannelManager(services.ChannelManager)
 
 	// Re-inject the device agent querier: the channel manager (and thus the device
@@ -1120,6 +1137,7 @@ func setupCronTool(
 
 	// Create cron service
 	cronService := cron.NewCronService(cronStorePath, nil)
+	cronService.SetAlerter(agentLoop.Alerter())
 
 	// Create CronTool if enabled
 	var cronTool *toolschedule.CronTool

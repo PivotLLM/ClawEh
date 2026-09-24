@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/adhocore/gronx"
+	"github.com/tenebris-tech/alerter"
 
 	"github.com/PivotLLM/ClawEh/fileutil"
 	"github.com/PivotLLM/ClawEh/logger"
@@ -163,6 +164,14 @@ type CronService struct {
 	stopChan    chan struct{}
 	gronx       *gronx.Gronx
 	fileModTime time.Time // mtime of store file at last load or save
+	alerter     alerter.Alerter
+}
+
+// SetAlerter routes job failures to an alerter.
+func (cs *CronService) SetAlerter(a alerter.Alerter) {
+	cs.mu.Lock()
+	cs.alerter = a
+	cs.mu.Unlock()
 }
 
 func NewCronService(storePath string, onJob JobHandler) *CronService {
@@ -349,6 +358,14 @@ func (cs *CronService) executeJobByID(jobID string) {
 			"duration_ms": execDuration,
 			"error":       err.Error(),
 		})
+		if cs.alerter != nil {
+			cs.alerter.Send(alerter.Alert{
+				Title:       "Scheduled job failed",
+				Description: job.Name + " (" + job.ID + ")",
+				Details:     err.Error(),
+				EventID:     job.ID,
+			})
+		}
 	} else {
 		job.State.LastStatus = "ok"
 		job.State.LastError = ""

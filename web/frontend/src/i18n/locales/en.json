@@ -492,8 +492,12 @@
     },
     "logs": {
       "empty": "Waiting for logs...",
+      "empty_alerts": "No alerts",
       "lines": "Show",
-      "refresh": "Refresh"
+      "refresh": "Refresh",
+      "source": "Log",
+      "source_log": "Gateway log",
+      "source_alerts": "Alerts"
     },
     "mcp": {
       "load_error": "Failed to load configuration. Please refresh and try again.",

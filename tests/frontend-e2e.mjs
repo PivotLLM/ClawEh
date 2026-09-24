@@ -786,6 +786,12 @@ if (useGroup("K", "Logs, MCP, memory, voice, report")) {
     assert(status === 404, `status = ${status}`)
     assert(typeof json?.error === "string", `body = ${JSON.stringify(json)}`)
   })
+
+  await check(7, "the operator alerts log is served", async () => {
+    const { status, json } = await api("/api/gateway/alerts?lines=10")
+    assert(status === 200, `status = ${status}`)
+    assert(Array.isArray(json?.logs), `body = ${JSON.stringify(json)}`)
+  })
 }
 
 // O. Status page

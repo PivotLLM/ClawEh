@@ -1,18 +1,23 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 
-import { getGatewayLogs } from "@/api/gateway"
+import { getGatewayAlerts, getGatewayLogs } from "@/api/gateway"
 
 // The logs view is fetched on mount and on explicit refresh only (no polling),
 // so scrolling up to read history is never interrupted by a background update.
 // staleTime: Infinity is what enforces that — without it Query would refetch on
 // window focus and yank the view.
-export function useGatewayLogs(lines: number) {
+export type LogSource = "log" | "alerts"
+
+export function useGatewayLogs(lines: number, source: LogSource = "log") {
   const queryClient = useQueryClient()
 
   const { data, error, isFetching } = useQuery({
-    queryKey: ["gateway-logs", lines],
+    queryKey: ["gateway-logs", source, lines],
     queryFn: async () => {
-      const res = await getGatewayLogs(lines)
+      const res =
+        source === "alerts"
+          ? await getGatewayAlerts(lines)
+          : await getGatewayLogs(lines)
       return { logs: res.logs ?? [], error: res.error ?? "" }
     },
     staleTime: Infinity,
@@ -20,7 +25,7 @@ export function useGatewayLogs(lines: number) {
   })
 
   const refresh = async () => {
-    await queryClient.invalidateQueries({ queryKey: ["gateway-logs", lines] })
+    await queryClient.invalidateQueries({ queryKey: ["gateway-logs", source, lines] })
   }
 
   return {

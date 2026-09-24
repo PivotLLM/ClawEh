@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/PivotLLM/cogmem/consolidate"
+	"github.com/tenebris-tech/alerter"
 
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/channels"
@@ -47,7 +48,11 @@ type AgentLoop struct {
 	// cooldown is the shared per-model cooldown tracker used by BOTH the main
 	// fallback chain and the compaction path, so a model parked by either (e.g.
 	// an out-of-credits 402) is skipped by both. Swapped under mu on reload.
-	cooldown        *providers.CooldownTracker
+	cooldown *providers.CooldownTracker
+	// alerter receives operator alerts (parked models, dead MCP servers, …);
+	// nil until SetAlerter, in which case Alerter() hands out a Nop.
+	alerterMu       sync.RWMutex
+	alerter         alerter.Alerter
 	messageManagers map[string]*msgtoken.Manager // agentID -> manager (nil entry means disabled)
 	// namedTokens holds the long-lived, user-named message-API tokens (one store
 	// for all agents, persisted under state/message-api-tokens.json). It is
@@ -556,4 +561,26 @@ func (al *AgentLoop) GetStartupInfo() map[string]any {
 	}
 
 	return info
+}
+
+// SetAlerter installs the operator alerter: on the cooldown tracker, and on
+// anything created later that alerts (the MCP manager). Call once at startup.
+func (al *AgentLoop) SetAlerter(a alerter.Alerter) {
+	al.alerterMu.Lock()
+	al.alerter = a
+	al.alerterMu.Unlock()
+	if al.cooldown != nil {
+		al.cooldown.SetAlerter(a)
+	}
+}
+
+// Alerter returns the installed alerter, or a Nop when none was installed, so
+// callers never check for nil.
+func (al *AgentLoop) Alerter() alerter.Alerter {
+	al.alerterMu.RLock()
+	defer al.alerterMu.RUnlock()
+	if al.alerter == nil {
+		return alerter.Nop{}
+	}
+	return al.alerter
 }

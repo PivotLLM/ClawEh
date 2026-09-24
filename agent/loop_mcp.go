@@ -204,6 +204,7 @@ func (al *AgentLoop) connectAndRegisterMCP(ctx context.Context) *mcp.Manager {
 	}
 
 	mcpManager := mcp.NewManager()
+	mcpManager.SetAlerter(al.Alerter())
 	// A server whose tool list changed (notification, probe, reconnect) is
 	// re-registered onto every agent, and the host catalogue follows.
 	mcpManager.SetToolsChangedHandler(func(server string) {

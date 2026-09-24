@@ -9,10 +9,12 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/tenebris-tech/alerter"
 	"golang.org/x/time/rate"
 
 	"github.com/PivotLLM/ClawEh/bus"
@@ -88,6 +90,25 @@ type Manager struct {
 	placeholders  sync.Map // "channel:chatID" → placeholderID (string)
 	typingStops   sync.Map // "channel:chatID" → func()
 	reactionUndos sync.Map // "channel:chatID" → reactionEntry
+	// alerter, when set, hears about channels that give up (start or send).
+	alerterMu sync.RWMutex
+	alerter   alerter.Alerter
+}
+
+// SetAlerter routes channel failures to an alerter.
+func (m *Manager) SetAlerter(a alerter.Alerter) {
+	m.alerterMu.Lock()
+	m.alerter = a
+	m.alerterMu.Unlock()
+}
+
+func (m *Manager) alert(a alerter.Alert) {
+	m.alerterMu.RLock()
+	al := m.alerter
+	m.alerterMu.RUnlock()
+	if al != nil {
+		al.Send(a)
+	}
 }
 
 // stopAllTimeout bounds how long StopAll will wait for channels to stop.
@@ -625,6 +646,13 @@ func (m *Manager) retryChannelStart(dispatchCtx context.Context, name string, ch
 					"channel": name,
 					"retries": startRetryMaxCount,
 				})
+				m.alert(alerter.Alert{
+					High:        true,
+					Title:       "Channel failed to start",
+					Description: name + " gave up after " + strconv.Itoa(startRetryMaxCount) + " retries",
+					Details:     err.Error(),
+					EventID:     name,
+				})
 				return
 			}
 			backoff *= 2
@@ -851,6 +879,12 @@ func (m *Manager) sendWithRetry(ctx context.Context, name string, w *channelWork
 		"chat_id": msg.ChatID,
 		"error":   lastErr.Error(),
 		"retries": maxRetries,
+	})
+	m.alert(alerter.Alert{
+		Title:       "Channel send failed",
+		Description: name + ": a message could not be delivered after " + strconv.Itoa(maxRetries) + " retries",
+		Details:     lastErr.Error(),
+		EventID:     name,
 	})
 }
 

@@ -33,6 +33,7 @@ const (
 // registerGatewayRoutes binds gateway log endpoints to the ServeMux.
 func (h *Handler) registerGatewayRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/gateway/logs", h.handleGatewayLogs)
+	mux.HandleFunc("GET /api/gateway/alerts", h.handleGatewayAlerts)
 	mux.HandleFunc("POST /api/gateway/reload", h.handleGatewayReload)
 }
 
@@ -137,4 +138,52 @@ func tailLines(path string, n int) ([]string, error) {
 		lines = lines[len(lines)-n:]
 	}
 	return lines, nil
+}
+
+// SetAlertsPath tells the alerts endpoint where the gateway writes operator
+// alerts; empty disables the endpoint's data.
+func (h *Handler) SetAlertsPath(path string) {
+	h.reloadMu.Lock()
+	h.alertsPath = path
+	h.reloadMu.Unlock()
+}
+
+func (h *Handler) alertsPathRef() string {
+	h.reloadMu.Lock()
+	defer h.reloadMu.Unlock()
+	return h.alertsPath
+}
+
+// handleGatewayAlerts returns the last N lines of the operator alerts log,
+// newest last, in the same shape as the gateway log endpoint. A log that does
+// not exist yet is an empty list, not an error.
+//
+//	GET /api/gateway/alerts?lines=250
+func (h *Handler) handleGatewayAlerts(w http.ResponseWriter, r *http.Request) {
+	n := defaultLogLines
+	if raw := r.URL.Query().Get("lines"); raw != "" {
+		if v, err := strconv.Atoi(raw); err == nil && v > 0 {
+			n = v
+		}
+	}
+	if n > maxLogLines {
+		n = maxLogLines
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	path := h.alertsPathRef()
+	if path == "" {
+		encodeJSON(w, map[string]any{"logs": []string{}, "count": 0, "error": "alerting is disabled"})
+		return
+	}
+	if _, err := os.Stat(path); err != nil {
+		encodeJSON(w, map[string]any{"logs": []string{}, "count": 0})
+		return
+	}
+	lines, err := tailLines(path, n)
+	if err != nil {
+		encodeJSON(w, map[string]any{"logs": []string{}, "count": 0, "error": err.Error()})
+		return
+	}
+	encodeJSON(w, map[string]any{"logs": lines, "count": len(lines)})
 }

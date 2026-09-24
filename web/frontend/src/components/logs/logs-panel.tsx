@@ -6,9 +6,11 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 
 type LogsPanelProps = {
   logs: string[]
+  /** Shown when there is nothing to list; defaults to the log wording. */
+  emptyText?: string
 }
 
-export function LogsPanel({ logs }: LogsPanelProps) {
+export function LogsPanel({ logs, emptyText }: LogsPanelProps) {
   const { t } = useTranslation()
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -23,7 +25,9 @@ export function LogsPanel({ logs }: LogsPanelProps) {
       <ScrollArea className="h-full">
         <div className="relative p-4 font-mono text-sm leading-relaxed">
           {logs.length === 0 ? (
-            <div className="text-zinc-500 italic">{t("pages.logs.empty")}</div>
+            <div className="text-zinc-500 italic">
+              {emptyText ?? t("pages.logs.empty")}
+            </div>
           ) : (
             logs.map((log, index) => <AnsiLogLine key={index} line={log} />)
           )}

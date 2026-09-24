@@ -27,6 +27,17 @@ observe does not need an entry.
   activity. Endpoint `GET /api/report/pdf`. Secret values never appear. See
   `docs/report.md`.
 
+- **Operator alerts.** Conditions the operator should hear about are written
+  to `<CLAW_HOME>/logs/alerts.txt` (or the file named by `ALERTER_LOG`), one
+  record per alert with a HIGH/LOW priority: a model parked for an
+  authentication or billing failure (a CLI logged out, a key revoked), a
+  model parked after repeated failures, an unreachable MCP server, a channel
+  that failed to start or could not deliver a message, a failed scheduled
+  job, a failed config reload. Repeats of the same alert within ten minutes
+  are counted, not repeated. The Logs page shows the alerts log through its
+  new source selector, and `GET /api/gateway/alerts` returns it. See
+  `docs/alerts.md`.
+
 ### Changed
 
 - **Fix for MacOS.** Fixed two tools/maestro tests that failed on macOS because they compared raw t.TempDir() paths against symlink-resolved roots (/var vs /private/var); the import gate itself was correct. test.sh now re-prints failing Go test output, lists each failed Go test and MCP integration check by name in the final summary with rerun commands, and saves details to .test-failures.log; a startup-template check that could not fail the run now does.

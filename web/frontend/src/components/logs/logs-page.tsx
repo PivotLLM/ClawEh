@@ -12,19 +12,34 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { useGatewayLogs } from "@/hooks/use-gateway-logs"
+import { type LogSource, useGatewayLogs } from "@/hooks/use-gateway-logs"
 
 const LINE_OPTIONS = [100, 250, 500, 1000, 2000]
 
 export function LogsPage() {
   const { t } = useTranslation()
   const [lines, setLines] = useState(250)
-  const { logs, error, loading, refresh } = useGatewayLogs(lines)
+  const [source, setSource] = useState<LogSource>("log")
+  const { logs, error, loading, refresh } = useGatewayLogs(lines, source)
 
   return (
     <div className="flex h-full flex-col">
       <PageHeader title={t("navigation.logs")}>
         <div className="flex items-center gap-2">
+          <Select
+            value={source}
+            onValueChange={(v) => setSource(v as LogSource)}
+          >
+            <SelectTrigger className="w-36" aria-label={t("pages.logs.source")}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="log">{t("pages.logs.source_log")}</SelectItem>
+              <SelectItem value="alerts">
+                {t("pages.logs.source_alerts")}
+              </SelectItem>
+            </SelectContent>
+          </Select>
           <span className="text-muted-foreground text-sm">
             {t("pages.logs.lines")}
           </span>
@@ -63,7 +78,12 @@ export function LogsPage() {
             {error}
           </div>
         )}
-        <LogsPanel logs={logs} />
+        <LogsPanel
+          logs={logs}
+          emptyText={
+            source === "alerts" ? t("pages.logs.empty_alerts") : undefined
+          }
+        />
       </div>
     </div>
   )

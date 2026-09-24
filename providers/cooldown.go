@@ -1,9 +1,12 @@
 package providers
 
 import (
+	"fmt"
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/tenebris-tech/alerter"
 )
 
 const (
@@ -102,6 +105,9 @@ func (p CooldownPolicy) cooldownForFailure(errorCount, status int) time.Duration
 // important for OpenRouter, where each model has its own upstream quota.
 // Thread-safe via sync.RWMutex. In-memory only (resets on restart).
 type CooldownTracker struct {
+	// alerter, when set, is told when a model is parked (see alert).
+	alerter alerter.Alerter
+
 	mu            sync.RWMutex
 	entries       map[string]*cooldownEntry
 	failureWindow time.Duration
@@ -173,6 +179,36 @@ func (ct *CooldownTracker) MarkFailure(provider, model string, reason FailoverRe
 		cooldown = retryAfter
 	}
 	entry.CooldownEnd = now.Add(cooldown)
+	ct.alert(provider, model, reason, status, entry.ErrorCount, cooldown)
+}
+
+// SetAlerter routes cooldown events to an alerter. Safe to call once at
+// startup before the tracker is shared.
+func (ct *CooldownTracker) SetAlerter(a alerter.Alerter) {
+	ct.mu.Lock()
+	ct.alerter = a
+	ct.mu.Unlock()
+}
+
+// alert tells the operator when a model is parked. An authentication or
+// billing failure (a CLI logged out, a key revoked, credit exhausted) is
+// reported at once and high, because no retry fixes it. Anything else is
+// reported low, and only once the escalation has settled into the category
+// cooldown, so a single transient error pages nobody. Repeats for the same
+// model collapse in the alerter. Called with ct.mu held; Send does not block.
+func (ct *CooldownTracker) alert(provider, model string, reason FailoverReason, status, failures int, cooldown time.Duration) {
+	if ct.alerter == nil {
+		return
+	}
+	id := ModelKey(provider, model)
+	desc := fmt.Sprintf("%s parked for %s after %d consecutive failure(s): %s (status %d)",
+		id, cooldown.Round(time.Second), failures, reason, status)
+	switch {
+	case reason == FailoverAuth || reason == FailoverBilling:
+		ct.alerter.Send(alerter.Alert{High: true, Title: "Model authentication or billing failure", Description: desc, EventID: id})
+	case failures > len(cooldownEscalation):
+		ct.alerter.Send(alerter.Alert{Title: "Model parked after repeated failures", Description: desc, EventID: id})
+	}
 }
 
 // MarkSuccess resets all counters and cooldowns for a model.

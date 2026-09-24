@@ -18,6 +18,7 @@ import (
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/tenebris-tech/alerter"
 
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/logger"
@@ -136,6 +137,10 @@ type Manager struct {
 	// SetToolsChangedHandler. Guarded by toolsChangedMu.
 	toolsChangedMu sync.Mutex
 	toolsChanged   func(server string)
+
+	// alerter, when set, is told when a server cannot be reconnected. Guarded
+	// by mu like the connections.
+	alerter alerter.Alerter
 }
 
 // Default resilience tuning, used when config leaves a value at 0.
@@ -607,6 +612,7 @@ func (m *Manager) RetryDisconnected(ctx context.Context) []string {
 		m.setReconnecting(name, false)
 		if err != nil {
 			m.markReconnectFailed(name)
+			m.alertUnreachable(name, err)
 			logger.WarnCF("mcp", "MCP background connect failed; server in cooldown",
 				map[string]any{
 					"server":         name,
@@ -820,4 +826,29 @@ func (m *Manager) GetAllTools() map[string][]mcp.Tool {
 		}
 	}
 	return result
+}
+
+// SetAlerter routes reconnect failures to an alerter.
+func (m *Manager) SetAlerter(a alerter.Alerter) {
+	m.mu.Lock()
+	m.alerter = a
+	m.mu.Unlock()
+}
+
+// alertUnreachable reports a server that could not be (re)connected. Low
+// priority: the gateway keeps answering, that server's tools are missing.
+// Repeats per server collapse in the alerter.
+func (m *Manager) alertUnreachable(name string, err error) {
+	m.mu.RLock()
+	a := m.alerter
+	m.mu.RUnlock()
+	if a == nil {
+		return
+	}
+	a.Send(alerter.Alert{
+		Title:       "MCP server unreachable",
+		Description: name + ": " + err.Error(),
+		Details:     "Its tools are unavailable until it reconnects; reconnects are retried after the cooldown, or force one from the MCP servers page.",
+		EventID:     name,
+	})
 }
