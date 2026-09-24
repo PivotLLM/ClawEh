@@ -58,9 +58,17 @@ func TestResolveSecMsgAccounts_DiscoveryFailureBindsNothing(t *testing.T) {
 	})
 
 	m := &Manager{}
+	rec := &alertRecorder{}
+	m.SetAlerter(rec)
 	got := m.resolveSecMsgAccounts(config.SecMsgConfig{Name: "signal", Address: "127.0.0.1:9600"})
 	if got != nil {
 		t.Fatalf("discovery failure should bind no accounts, got %+v", got)
+	}
+	if len(rec.alerts) != 1 || !rec.alerts[0].High ||
+		rec.alerts[0].Title != "SecMsg account discovery failed" ||
+		rec.alerts[0].EventID != "SecMsg (signal)" ||
+		rec.alerts[0].Details != "dial: connection refused" {
+		t.Fatalf("discovery failure must raise one high alert, got %+v", rec.alerts)
 	}
 }
 
@@ -70,9 +78,16 @@ func TestResolveSecMsgAccounts_NoLinkedAccountsBindsNothing(t *testing.T) {
 	})
 
 	m := &Manager{}
+	rec := &alertRecorder{}
+	m.SetAlerter(rec)
 	got := m.resolveSecMsgAccounts(config.SecMsgConfig{Name: "signal", Address: "127.0.0.1:9600"})
 	if got != nil {
 		t.Fatalf("no linked accounts should bind nothing, got %+v", got)
+	}
+	if len(rec.alerts) != 1 || !rec.alerts[0].High ||
+		rec.alerts[0].Title != "SecMsg has no linked accounts" ||
+		rec.alerts[0].EventID != "SecMsg (signal)" {
+		t.Fatalf("no linked accounts must raise one high alert, got %+v", rec.alerts)
 	}
 }
 

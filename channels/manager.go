@@ -95,11 +95,21 @@ type Manager struct {
 	alerter   alerter.Alerter
 }
 
-// SetAlerter routes channel failures to an alerter.
+// SetAlerter routes channel failures to an alerter. It is also handed to every
+// channel already registered, since the alerter is set after NewManager has
+// created them.
 func (m *Manager) SetAlerter(a alerter.Alerter) {
 	m.alerterMu.Lock()
 	m.alerter = a
 	m.alerterMu.Unlock()
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, ch := range m.channels {
+		if setter, ok := ch.(interface{ SetAlerter(a alerter.Alerter) }); ok {
+			setter.SetAlerter(a)
+		}
+	}
 }
 
 func (m *Manager) alert(a alerter.Alert) {
@@ -313,6 +323,14 @@ func (m *Manager) injectChannelDependencies(ch Channel) {
 	if setter, ok := ch.(interface{ SetOwner(ch Channel) }); ok {
 		setter.SetOwner(ch)
 	}
+	m.alerterMu.RLock()
+	al := m.alerter
+	m.alerterMu.RUnlock()
+	if al != nil {
+		if setter, ok := ch.(interface{ SetAlerter(a alerter.Alerter) }); ok {
+			setter.SetAlerter(al)
+		}
+	}
 }
 
 // initChannel is a helper that looks up a factory by name and creates the channel.
@@ -458,12 +476,25 @@ func (m *Manager) resolveSecMsgAccounts(cfg config.SecMsgConfig) []config.SecMsg
 			"address": cfg.Address,
 			"error":   err.Error(),
 		})
+		m.alert(alerter.Alert{
+			High:        true,
+			Title:       "SecMsg account discovery failed",
+			Description: "SecMsg (" + cfg.Name + ") at " + cfg.Address + ": no accounts bound until the next config reload",
+			Details:     err.Error(),
+			EventID:     "SecMsg (" + cfg.Name + ")",
+		})
 		return nil
 	}
 	if len(ids) == 0 {
 		logger.WarnCF("channels", "SecMsg daemon has no linked accounts — link one via the WebUI", map[string]any{
 			"channel": "SecMsg (" + cfg.Name + ")",
 			"address": cfg.Address,
+		})
+		m.alert(alerter.Alert{
+			High:        true,
+			Title:       "SecMsg has no linked accounts",
+			Description: "SecMsg (" + cfg.Name + "): link an account in the WebUI",
+			EventID:     "SecMsg (" + cfg.Name + ")",
 		})
 		return nil
 	}

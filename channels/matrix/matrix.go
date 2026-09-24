@@ -19,6 +19,7 @@ import (
 	"github.com/gomarkdown/markdown"
 	mdhtml "github.com/gomarkdown/markdown/html"
 	"github.com/gomarkdown/markdown/parser"
+	"github.com/tenebris-tech/alerter"
 	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
@@ -255,6 +256,12 @@ func (c *MatrixChannel) Start(ctx context.Context) error {
 		if err := c.client.SyncWithContext(c.ctx); err != nil && c.ctx.Err() == nil {
 			logger.ErrorCF("matrix", "Matrix sync stopped unexpectedly", map[string]any{
 				"error": err.Error(),
+			})
+			c.Alert(alerter.Alert{
+				High:        true,
+				Title:       "Channel receive loop stopped",
+				Description: c.Name() + ": Matrix sync stopped (a revoked access token stops it for good); no messages are received until the gateway is restarted",
+				Details:     err.Error(),
 			})
 		}
 	}()

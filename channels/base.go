@@ -8,8 +8,11 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/tenebris-tech/alerter"
 
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/config"
@@ -102,6 +105,11 @@ type BaseChannel struct {
 	placeholderRecorder PlaceholderRecorder
 	owner               Channel // the concrete channel that embeds this BaseChannel
 	reasoningChannelID  string
+	// alerter, when set, hears about faults the channel cannot recover from.
+	// Guarded by alerterMu: it is injected after construction and read from
+	// the channel's receive goroutines.
+	alerterMu sync.RWMutex
+	alerter   alerter.Alerter
 }
 
 func NewBaseChannel(
@@ -355,6 +363,29 @@ func (c *BaseChannel) SetPlaceholderRecorder(r PlaceholderRecorder) {
 // GetPlaceholderRecorder returns the injected PlaceholderRecorder (may be nil).
 func (c *BaseChannel) GetPlaceholderRecorder() PlaceholderRecorder {
 	return c.placeholderRecorder
+}
+
+// SetAlerter routes the channel's operator alerts to a. The Manager injects it.
+func (c *BaseChannel) SetAlerter(a alerter.Alerter) {
+	c.alerterMu.Lock()
+	c.alerter = a
+	c.alerterMu.Unlock()
+}
+
+// Alert raises a through the injected alerter; it is a no-op until one is set.
+// An empty EventID is filled with the channel name so repeats of the same
+// fault from this channel are de-duplicated by the alerter.
+func (c *BaseChannel) Alert(a alerter.Alert) {
+	c.alerterMu.RLock()
+	al := c.alerter
+	c.alerterMu.RUnlock()
+	if al == nil {
+		return
+	}
+	if a.EventID == "" {
+		a.EventID = c.name
+	}
+	al.Send(a)
 }
 
 // SetOwner injects the concrete channel that embeds this BaseChannel.

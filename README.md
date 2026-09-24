@@ -549,6 +549,21 @@ gateway start). Only `YYYYMMDD-*.log` archives are pruned — the active
 Each option also has a `CLAW_LOGGING_*` environment override (e.g.
 `CLAW_LOGGING_LEVEL`, `CLAW_LOGGING_RETENTION_DAYS`).
 
+## Operator alerts
+
+ClawEh raises an **alert** when something needs a person rather than a retry:
+a model parked because its CLI logged out or its key was revoked, a channel
+that gave up starting, an MCP server that cannot be reconnected, a scheduled
+job or config reload that failed. Alerts are produced by the
+[tenebris-tech/alerter](https://github.com/tenebris-tech/alerter) module,
+which is currently a stub that writes them to a file:
+`$CLAW_HOME/logs/alerts.txt`, or the file named by the `ALERTER_LOG`
+environment variable. The web console's **Logs** page shows the alerts log
+when its source selector is set to **Alerts**, and `GET /api/gateway/alerts`
+returns it. Delivery methods (mail, push services) will be added to the
+module later; every alert ClawEh raises is listed in `ALERTS.md`, and the
+record format is in [docs/alerts.md](docs/alerts.md).
+
 ## Configuration backup
 
 ClawEh takes a nightly **configuration backup** — **on by default**. It snapshots `config.json` and the cron jobs file (`jobs.json`) into `$CLAW_HOME/backup/YYYYMMDD/`, with each file timestamped (e.g. `config.json.20260622-030000`) so repeated runs in a day don't overwrite. Day-folders older than the retention window are pruned.

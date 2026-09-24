@@ -16,6 +16,7 @@ import (
 	"github.com/mymmrac/telego"
 	th "github.com/mymmrac/telego/telegohandler"
 	tu "github.com/mymmrac/telego/telegoutil"
+	"github.com/tenebris-tech/alerter"
 
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/channels"
@@ -168,15 +169,6 @@ func NewTelegramChannelFromConfig(botCfg config.TelegramBotConfig, b *bus.Messag
 	if baseURL := strings.TrimRight(strings.TrimSpace(botCfg.BaseURL), "/"); baseURL != "" {
 		opts = append(opts, telego.WithAPIServer(baseURL))
 	}
-	opts = append(opts, telego.WithLogger(
-		logger.NewLogger("telego").WithContentSensitive().WithErrorDowngrade(isTransientPollError),
-	))
-
-	bot, err := telego.NewBot(botCfg.Token, opts...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create telegram bot: %w", err)
-	}
-
 	channelName := botCfg.ChannelName()
 	base := channels.NewBaseChannel(
 		channelName,
@@ -187,14 +179,46 @@ func NewTelegramChannelFromConfig(botCfg config.TelegramBotConfig, b *bus.Messag
 		channels.WithGroupTrigger(botCfg.GroupTrigger),
 		channels.WithReasoningChannelID(botCfg.ReasoningChannelID),
 	)
-
-	return &TelegramChannel{
+	ch := &TelegramChannel{
 		BaseChannel:    base,
-		bot:            bot,
 		placeholderCfg: botCfg.Placeholder,
 		coalesceCfg:    botCfg.Coalesce,
 		chatIDs:        make(map[string]int64),
-	}, nil
+	}
+
+	// The channel is built before the bot so telego's logger can alert through
+	// it: telego reports long-poll failures only via Errorf.
+	opts = append(opts, telego.WithLogger(
+		logger.NewLogger("telego").WithContentSensitive().
+			WithErrorDowngrade(isTransientPollError).
+			WithErrorHook(ch.alertPollFailure),
+	))
+
+	bot, err := telego.NewBot(botCfg.Token, opts...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create telegram bot: %w", err)
+	}
+	ch.bot = bot
+
+	return ch, nil
+}
+
+// pollAlertMsgLimit bounds the telego message carried in a polling alert.
+const pollAlertMsgLimit = 200
+
+// alertPollFailure raises a high alert for a telego error that is not a
+// transient long-poll blip — a revoked token (401) or a second poller on the
+// same token (409). telego repeats the error every retry; the alerter
+// de-duplicates on the channel name (EventID, filled in by Alert).
+func (c *TelegramChannel) alertPollFailure(msg string) {
+	if r := []rune(msg); len(r) > pollAlertMsgLimit {
+		msg = string(r[:pollAlertMsgLimit]) + "..."
+	}
+	c.Alert(alerter.Alert{
+		High:        true,
+		Title:       "Telegram polling failed",
+		Description: c.Name() + ": " + msg,
+	})
 }
 
 func (c *TelegramChannel) Start(ctx context.Context) error {

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/PivotLLM/cogmem/consolidate"
+	"github.com/tenebris-tech/alerter"
 
 	"github.com/PivotLLM/ClawEh/agent"
 	"github.com/PivotLLM/ClawEh/app"
@@ -252,11 +253,18 @@ func gatewayCmd(debug bool) error {
 
 	// Daily log rotation: roll claw.log/error.log at local midnight (and on
 	// startup if claw.log predates today), pruning archives past retention.
-	startLogRotation(ctx, logPath, cfg.Logging.RetentionDays)
+	startLogRotation(ctx, logPath, cfg.Logging.RetentionDays, agentLoop.Alerter())
 
 	go func() {
 		if runErr := agentLoop.Run(ctx); runErr != nil {
 			logger.ErrorCF("agent", "Agent loop exited with error", map[string]any{"error": runErr.Error()})
+			agentLoop.Alerter().Send(alerter.Alert{
+				High:        true,
+				Title:       "Agent loop stopped",
+				Description: "no inbound messages are processed until the gateway is restarted",
+				Details:     runErr.Error(),
+				EventID:     "agent-loop",
+			})
 		}
 	}()
 
@@ -264,7 +272,7 @@ func gatewayCmd(debug bool) error {
 	reloadInterval := cfg.ConfigReloadInterval()
 	logger.InfoF("Config reload watcher", map[string]any{"interval": reloadInterval.String()})
 	configReloadChan, stopWatch, markConfigApplied := setupConfigWatcherPolling(configPath, reloadInterval,
-		time.Duration(global.ConfigReloadDebounceSeconds)*time.Second, debug)
+		time.Duration(global.ConfigReloadDebounceSeconds)*time.Second, debug, agentLoop.Alerter())
 	defer stopWatch()
 
 	// Force-reload channel: lets POST /api/gateway/reload apply config changes
@@ -310,7 +318,13 @@ func gatewayCmd(debug bool) error {
 			err := handleConfigReload(ctx, agentLoop, newCfg, &provider, services, msgBus)
 			if err != nil {
 				logger.Errorf("Config reload failed: %v", err)
-				agentLoop.Alerter().High("Config reload failed", "the previous configuration stays in effect", err.Error())
+				agentLoop.Alerter().Send(alerter.Alert{
+					High:        true,
+					Title:       "Config reload failed",
+					Description: "the reload was aborted part way; check the gateway log, services may not all be running",
+					Details:     err.Error(),
+					EventID:     "config",
+				})
 			}
 
 		case done := <-forceReload:
@@ -497,6 +511,7 @@ func setupAndStartServices(
 	services.HTTPHost = httpHost
 	logAllowlist(allowedCIDRs, cfg.Gateway.Host)
 	rebuildSharedHTTPServer(services, cfg.Gateway.Host, cfg.Gateway.Port, services.ChannelManager, services.HTTPHost, agentLoop)
+	services.HTTPHost.alerter = agentLoop.Alerter()
 	services.HTTPHost.Start()
 
 	if err := services.ChannelManager.StartAll(context.Background()); err != nil {
@@ -547,7 +562,7 @@ func setupAndStartServices(
 	// Start the optional nightly backup scheduler. Boot-only: it reads live config
 	// each tick (via agentLoop.GetConfig), so toggling/retiming it on reload takes
 	// effect without restarting the loop. Inert until backup.enabled is set.
-	startBackupScheduler(agentLoop.GetConfig, configPath)
+	startBackupScheduler(agentLoop.GetConfig, configPath, agentLoop.Alerter())
 
 	// Boot-only: reclaim sub-agent session files left by a crash mid-run, but only
 	// those older than 24h, so a crashed worker's artefacts can be inspected first.
@@ -608,6 +623,7 @@ func startMCPServer(cfg *config.Config, agentLoop *agent.AgentLoop, msgBus *bus.
 		mcpserver.WithMessageBus(msgBus),
 		mcpserver.WithToolActivityNotifier(agentLoop.ToolActivityLine),
 		mcpserver.WithSessionMode(cfg.Session.Mode),
+		mcpserver.WithAlerter(agentLoop.Alerter()),
 	)
 	if err != nil {
 		return fmt.Errorf("error creating MCP server: %w", err)
@@ -666,6 +682,13 @@ func syncServiceTokensFromDisk(cfg *config.Config, agentLoop *agent.AgentLoop, s
 	if err != nil {
 		logger.WarnCF("mcpserver", "failed to load service tokens; skipping",
 			map[string]any{"path": path, "error": err.Error()})
+		agentLoop.Alerter().Send(alerter.Alert{
+			High:        true,
+			Title:       "Service tokens not loaded",
+			Description: path + ": external MCP clients using `claw token` credentials are rejected (or keep the previously loaded set) until the file is fixed",
+			Details:     err.Error(),
+			EventID:     "service-tokens",
+		})
 		return
 	}
 	srv.SessionTokens().SyncServiceTokens(tokens, func(agentID string) string {
@@ -983,7 +1006,7 @@ func restartServices(
 // cfg.ConfigReloadInterval() so the value honours the config override and
 // MinConfigReloadIntervalSeconds floor. Returns a channel for config updates
 // and a stop function.
-func setupConfigWatcherPolling(configPath string, interval, debounce time.Duration, debug bool) (chan *config.Config, func(), func()) {
+func setupConfigWatcherPolling(configPath string, interval, debounce time.Duration, debug bool, a alerter.Alerter) (chan *config.Config, func(), func()) {
 	configChan := make(chan *config.Config, 1)
 	stop := make(chan struct{})
 	// markCh lets an out-of-band reload (the force-reload API) tell the watcher
@@ -1043,16 +1066,19 @@ func setupConfigWatcherPolling(configPath string, interval, debounce time.Durati
 				if err != nil {
 					logger.Errorf("⚠ Error loading new config: %v", err)
 					logger.Warn("  Using previous valid config")
+					alertConfigFileInvalid(a, configPath, err)
 					continue
 				}
 				if err := newCfg.ValidateModels(); err != nil {
 					logger.Errorf("  ⚠ New config validation failed: %v", err)
 					logger.Warn("  Using previous valid config")
+					alertConfigFileInvalid(a, configPath, err)
 					continue
 				}
 				if err := newCfg.ValidateBindings(); err != nil {
 					logger.Errorf("  ⚠ New config binding validation failed: %v", err)
 					logger.Warn("  Using previous valid config")
+					alertConfigFileInvalid(a, configPath, err)
 					continue
 				}
 
@@ -1138,6 +1164,15 @@ func setupCronTool(
 	// Create cron service
 	cronService := cron.NewCronService(cronStorePath, nil)
 	cronService.SetAlerter(agentLoop.Alerter())
+	if err := cronService.LoadError(); err != nil {
+		agentLoop.Alerter().Send(alerter.Alert{
+			High:        true,
+			Title:       "Cron store unreadable",
+			Description: cronStorePath + ": no scheduled jobs run, and the next save overwrites the file",
+			Details:     err.Error(),
+			EventID:     "cron-store",
+		})
+	}
 
 	// Create CronTool if enabled
 	var cronTool *toolschedule.CronTool
@@ -1165,8 +1200,7 @@ func setupCronTool(
 	// Set onJob handler
 	if cronTool != nil {
 		cronService.SetOnJob(func(job *cron.CronJob) (string, error) {
-			result := cronTool.ExecuteJob(context.Background(), job)
-			return result, nil
+			return cronTool.ExecuteJob(context.Background(), job)
 		})
 	}
 
@@ -1210,4 +1244,17 @@ func logAllowlist(allowedCIDRs []string, host string) {
 		"`"+internal.BinaryName+" network any` for any address (note 0.0.0.0/0 covers IPv4 only; use \"*\"). "+
 		"A running gateway applies the change on its next config reload, about 15 seconds.",
 		map[string]any{"host": host})
+}
+
+// alertConfigFileInvalid reports a config file the watcher could not apply.
+// The running configuration is unchanged, but the next restart will fail on
+// this file, so it needs a person now.
+func alertConfigFileInvalid(a alerter.Alerter, configPath string, err error) {
+	a.Send(alerter.Alert{
+		High:        true,
+		Title:       "Config file invalid",
+		Description: configPath + " was not applied; the running configuration is unchanged, but a restart will fail on it",
+		Details:     err.Error(),
+		EventID:     "config",
+	})
 }

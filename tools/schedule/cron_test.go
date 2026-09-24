@@ -92,9 +92,9 @@ func TestCronTool_AddAddressesAgent(t *testing.T) {
 	}
 
 	// Fire it: delivery resolves amber's default channel.
-	out := tool.ExecuteJob(context.Background(), &jobs[0])
-	if out != "ok" {
-		t.Fatalf("ExecuteJob = %q, want ok", out)
+	out, err := tool.ExecuteJob(context.Background(), &jobs[0])
+	if err != nil || out != "ok" {
+		t.Fatalf("ExecuteJob = %q, %v, want ok", out, err)
 	}
 }
 
@@ -139,7 +139,7 @@ func TestCronTool_TelegramDeliverTo(t *testing.T) {
 	if len(jobs) != 1 || jobs[0].AgentID != "penny" {
 		t.Fatalf("expected one job addressed to penny, got %+v", jobs)
 	}
-	if out := tool.ExecuteJob(context.Background(), &jobs[0]); out != "ok" {
+	if out, err := tool.ExecuteJob(context.Background(), &jobs[0]); err != nil || out != "ok" {
 		t.Fatalf("penny job ExecuteJob = %q, want ok", out)
 	}
 }
@@ -152,14 +152,14 @@ func TestCronTool_ExecuteJobOperatorFallback(t *testing.T) {
 		ID:      "op1",
 		Payload: cron.CronPayload{Message: "operator job", Channel: "slack", To: "C9", PeerKind: "channel"},
 	}
-	if out := tool.ExecuteJob(context.Background(), job); out != "ok" {
-		t.Fatalf("operator job ExecuteJob = %q, want ok", out)
+	if out, err := tool.ExecuteJob(context.Background(), job); err != nil || out != "ok" {
+		t.Fatalf("operator job ExecuteJob = %q, %v, want ok", out, err)
 	}
 
 	// With neither agent id nor explicit channel/to → skipped.
 	bare := &cron.CronJob{ID: "op2", Payload: cron.CronPayload{Message: "x"}}
-	if out := tool.ExecuteJob(context.Background(), bare); out == "ok" {
-		t.Fatal("job with no agent and no channel/to should be skipped")
+	if _, err := tool.ExecuteJob(context.Background(), bare); err == nil {
+		t.Fatal("job with no agent and no channel/to must fail, so the scheduler records and alerts it")
 	}
 }
 

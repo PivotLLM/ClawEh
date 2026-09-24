@@ -4,6 +4,8 @@ import (
 	"context"
 	"time"
 
+	"github.com/tenebris-tech/alerter"
+
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/internal/backup"
 	"github.com/PivotLLM/ClawEh/logger"
@@ -14,7 +16,7 @@ import (
 // snapshots config.json + the cron jobs file (once per day). getConfig is read
 // live each tick so toggling the feature, the time, or retention takes effect
 // without a restart. Returns a stop function.
-func startBackupScheduler(getConfig func() *config.Config, configPath string) func() {
+func startBackupScheduler(getConfig func() *config.Config, configPath string, a alerter.Alerter) func() {
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
 		ticker := time.NewTicker(time.Minute)
@@ -41,6 +43,13 @@ func startBackupScheduler(getConfig func() *config.Config, configPath string) fu
 				dir, copied, err := backup.RunForConfig(cfg, configPath, now)
 				if err != nil {
 					logger.ErrorCF("backup", "nightly backup failed", map[string]any{"error": err.Error()})
+					a.Send(alerter.Alert{
+						High:        true,
+						Title:       "Nightly backup failed",
+						Description: "the configuration backup did not run; nothing retries before tomorrow",
+						Details:     err.Error(),
+						EventID:     "backup",
+					})
 					continue
 				}
 				logger.InfoCF("backup", "nightly backup complete", map[string]any{"folder": dir, "files": copied})

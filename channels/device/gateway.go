@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/tenebris-tech/alerter"
 
 	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/bus"
@@ -234,6 +235,12 @@ func (c *DeviceChannel) Start(ctx context.Context) error {
 	go func() {
 		if serveErr := c.httpSrv.Serve(ln); serveErr != nil && serveErr != http.ErrServerClosed {
 			logger.ErrorCF("device", "Device gateway listener error", map[string]any{"error": serveErr.Error()})
+			c.Alert(alerter.Alert{
+				High:        true,
+				Title:       "Channel receive loop stopped",
+				Description: c.Name() + ": device gateway listener error; devices cannot connect until the gateway is restarted",
+				Details:     serveErr.Error(),
+			})
 		}
 	}()
 	logger.InfoCF("device", "Device gateway listening", map[string]any{"addr": addr})

@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/tenebris-tech/alerter"
 )
 
 // validConfigJSON is the minimal config the watcher's LoadConfig+ValidateModels
@@ -31,7 +33,7 @@ func TestConfigWatcher_DebouncesBurstIntoSingleReload(t *testing.T) {
 
 	interval := 10 * time.Millisecond
 	debounce := 120 * time.Millisecond
-	ch, stop, _ := setupConfigWatcherPolling(path, interval, debounce, false)
+	ch, stop, _ := setupConfigWatcherPolling(path, interval, debounce, false, alerter.Nop{})
 	defer stop()
 
 	// Burst of three writes, each spaced under the debounce window so each resets
@@ -76,7 +78,7 @@ func TestConfigWatcher_MarkAppliedSuppressesReload(t *testing.T) {
 
 	interval := 10 * time.Millisecond
 	debounce := 80 * time.Millisecond
-	ch, stop, markApplied := setupConfigWatcherPolling(path, interval, debounce, false)
+	ch, stop, markApplied := setupConfigWatcherPolling(path, interval, debounce, false, alerter.Nop{})
 	defer stop()
 
 	time.Sleep(3 * interval) // let the watcher capture its baseline
@@ -116,7 +118,7 @@ func TestConfigWatcher_RetriesWhenConsumerBusy(t *testing.T) {
 
 	interval := 10 * time.Millisecond
 	debounce := 60 * time.Millisecond
-	ch, stop, _ := setupConfigWatcherPolling(path, interval, debounce, false)
+	ch, stop, _ := setupConfigWatcherPolling(path, interval, debounce, false, alerter.Nop{})
 	defer stop()
 
 	// Let the watcher capture its baseline against the seed file before the first

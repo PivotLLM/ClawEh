@@ -20,6 +20,7 @@ import (
 
 	"github.com/PivotLLM/cogmem"
 	"github.com/PivotLLM/ctxengine"
+	"github.com/tenebris-tech/alerter"
 
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/config"
@@ -269,6 +270,13 @@ func (al *AgentLoop) runAgentLoop(
 		if err := agent.Sessions.Save(opts.SessionKey); err != nil {
 			logger.WarnCF("agent", "Failed to save session",
 				map[string]any{"error": err.Error(), "session": opts.SessionKey})
+			al.Alerter().Send(alerter.Alert{
+				High:        true,
+				Title:       "Session not saved",
+				Description: "conversation history is being lost (disk full or unwritable?)",
+				Details:     err.Error(),
+				EventID:     "session-store",
+			})
 		}
 	}
 

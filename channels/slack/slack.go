@@ -12,6 +12,7 @@ import (
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
+	"github.com/tenebris-tech/alerter"
 
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/channels"
@@ -94,6 +95,12 @@ func (c *SlackChannel) Start(ctx context.Context) error {
 			if c.ctx.Err() == nil {
 				logger.ErrorCF("slack", "Socket Mode connection error", map[string]any{
 					"error": err.Error(),
+				})
+				c.Alert(alerter.Alert{
+					High:        true,
+					Title:       "Channel receive loop stopped",
+					Description: c.Name() + ": Socket Mode connection error; the channel no longer receives messages until the gateway is restarted",
+					Details:     err.Error(),
 				})
 			}
 		}

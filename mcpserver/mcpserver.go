@@ -36,6 +36,7 @@ import (
 	"time"
 
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/tenebris-tech/alerter"
 
 	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/bus"
@@ -64,6 +65,8 @@ const InternalEndpointPath = "/internal"
 // the token in the call body resolves to an agent identity, the per-agent
 // ACL gates the (agent, tool) pair, and the per-agent registry executes.
 type MCPServer struct {
+	// alerter hears when the listener dies after startup; nothing restarts it.
+	alerter         alerter.Alerter
 	agentRegistries map[string]*tools.ToolRegistry // agentID → registry (dispatch target + schema source)
 	internalAllow   []string                       // tools/list visibility filter for /internal
 	externalAllow   []string                       // tools/list visibility filter for /mcp (bearer)
@@ -208,6 +211,11 @@ func WithMessageBus(b *bus.MessageBus) Option {
 // the notifier returns "", nothing is published.
 func WithToolActivityNotifier(n ToolActivityNotifier) Option {
 	return func(m *MCPServer) { m.toolActivity = n }
+}
+
+// WithAlerter routes a listener death after startup to an alerter.
+func WithAlerter(a alerter.Alerter) Option {
+	return func(m *MCPServer) { m.alerter = a }
 }
 
 // WithSessionMode tells the server which session scope is configured. Under the
@@ -367,6 +375,15 @@ func (m *MCPServer) Start() error {
 		if err := m.httpServer.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.ErrorCF("mcpserver", "MCP server exited",
 				map[string]any{"error": err.Error()})
+			if m.alerter != nil {
+				m.alerter.Send(alerter.Alert{
+					High:        true,
+					Title:       "MCP host server stopped",
+					Description: m.listen + ": external MCP clients and CLI providers lose the host tools until the gateway is restarted",
+					Details:     err.Error(),
+					EventID:     "mcpserver",
+				})
+			}
 			errCh <- err
 			return
 		}

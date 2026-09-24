@@ -6,6 +6,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/tenebris-tech/alerter"
+
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/web/backend/middleware"
 )
@@ -20,6 +22,8 @@ type httpHost struct {
 	server *http.Server
 	mux    atomic.Pointer[http.ServeMux]
 	allow  atomic.Pointer[middleware.Allowlist]
+	// alerter hears when the listener dies; nothing restarts it.
+	alerter alerter.Alerter
 }
 
 func newHTTPHost(addr string, allowedCIDRs []string) (*httpHost, error) {
@@ -80,6 +84,15 @@ func (h *httpHost) Start() {
 			logger.ErrorCF("gateway", "Shared HTTP server error", map[string]any{
 				"error": err.Error(),
 			})
+			if h.alerter != nil {
+				h.alerter.Send(alerter.Alert{
+					High:        true,
+					Title:       "HTTP listener stopped",
+					Description: h.server.Addr + ": the WebUI, API, health endpoint and channel webhooks are down until the gateway is restarted",
+					Details:     err.Error(),
+					EventID:     "http",
+				})
+			}
 		}
 	}()
 }

@@ -35,7 +35,7 @@ func newAlerter(baseDir string) (alerter.Alerter, string) {
 	}
 	a, err := alerter.New(opts...)
 	if err != nil {
-		logger.WarnCF("gateway", "alerting disabled: could not open the alerts log",
+		logger.ErrorCF("gateway", "alerting disabled: could not open the alerts log",
 			map[string]any{"path": path, "error": err.Error()})
 		return alerter.Nop{}, ""
 	}

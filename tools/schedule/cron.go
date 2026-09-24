@@ -2,6 +2,7 @@ package schedule
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -470,10 +471,10 @@ func (t *CronTool) enableJob(args map[string]any, enable bool, agentID string) *
 }
 
 // ExecuteJob executes a cron job through the agent
-func (t *CronTool) ExecuteJob(ctx context.Context, job *cron.CronJob) string {
+func (t *CronTool) ExecuteJob(ctx context.Context, job *cron.CronJob) (string, error) {
 	// A listen job has no scheduled fire: its loop delivers on its own.
 	if job.Schedule.Kind == cron.KindListen {
-		return "listen job; delivered by its listener"
+		return "listen job; delivered by its listener", nil
 	}
 
 	// A watch job asks a tool whether anything changed and stays silent when
@@ -483,7 +484,7 @@ func (t *CronTool) ExecuteJob(ctx context.Context, job *cron.CronJob) string {
 	if job.Payload.Watch != nil {
 		outcome := t.runWatch(ctx, job)
 		if !outcome.Changed {
-			return "no change"
+			return "no change", nil
 		}
 		message = outcome.Message
 	}
@@ -494,7 +495,7 @@ func (t *CronTool) ExecuteJob(ctx context.Context, job *cron.CronJob) string {
 // a live user message gets — so the agent processes it and replies there. The
 // caller chooses the envelope: a cron fire (cronmsg.Build) or a monitor event
 // (cronmsg.BuildEvent).
-func (t *CronTool) deliver(ctx context.Context, job *cron.CronJob, content string) string {
+func (t *CronTool) deliver(ctx context.Context, job *cron.CronJob, content string) (string, error) {
 	// Resolve the destination. Agent-addressed jobs (created via the tool) deliver
 	// to the target agent's default channel, resolved live so a changed default
 	// redirects the job; the resolved (channel, chat, peer) are the binding's own
@@ -505,19 +506,19 @@ func (t *CronTool) deliver(ctx context.Context, job *cron.CronJob, content strin
 		cfg := t.config()
 		if cfg == nil {
 			logger.WarnCF("cron", "job skipped: configuration not loaded", map[string]any{"id": job.ID, "agent_id": job.AgentID})
-			return "configuration not loaded"
+			return "", errors.New("configuration not loaded")
 		}
 		var ok bool
 		channel, chatID, peerKind, ok = cfg.CronTarget(job.AgentID)
 		if !ok {
 			logger.WarnCF("cron", "job skipped: agent has no default channel", map[string]any{"id": job.ID, "agent_id": job.AgentID})
-			return fmt.Sprintf("agent %q has no default channel; job skipped", job.AgentID)
+			return "", fmt.Errorf("agent %q has no default channel; job skipped", job.AgentID)
 		}
 	} else {
 		channel, chatID, peerKind = job.Payload.Channel, job.Payload.To, job.Payload.PeerKind
 		if channel == "" || chatID == "" {
 			logger.WarnCF("cron", "job skipped: operator job missing channel/to", map[string]any{"id": job.ID})
-			return "operator job missing channel/to; skipped"
+			return "", errors.New("operator job missing channel/to; skipped")
 		}
 		if peerKind == "" {
 			peerKind = "channel"
@@ -534,7 +535,7 @@ func (t *CronTool) deliver(ctx context.Context, job *cron.CronJob, content strin
 	pubCtx, pubCancel := context.WithTimeout(ctx, 5*time.Second)
 	defer pubCancel()
 	if err := t.msgBus.PublishInbound(pubCtx, msg); err != nil {
-		return fmt.Sprintf("Error queuing cron job: %v", err)
+		return "", fmt.Errorf("queuing cron job: %w", err)
 	}
-	return "ok"
+	return "ok", nil
 }

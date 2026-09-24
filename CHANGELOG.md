@@ -32,11 +32,18 @@ observe does not need an entry.
   record per alert with a HIGH/LOW priority: a model parked for an
   authentication or billing failure (a CLI logged out, a key revoked), a
   model parked after repeated failures, an unreachable MCP server, a channel
-  that failed to start or could not deliver a message, a failed scheduled
-  job, a failed config reload. Repeats of the same alert within ten minutes
-  are counted, not repeated. The Logs page shows the alerts log through its
-  new source selector, and `GET /api/gateway/alerts` returns it. See
-  `docs/alerts.md`.
+  that failed to start, stopped receiving (Slack, Matrix, device gateway,
+  Telegram token revoked) or could not deliver a message, SecMsg with no
+  accounts, a scheduled job that failed or could not be delivered, an
+  unreadable or unwritable cron store, a session that could not be saved,
+  service tokens that could not be loaded, an invalid config edit or a failed
+  reload, a failed nightly backup or log rotation, and the WebUI/API listener,
+  MCP host server or agent loop stopping. Repeats of the same alert within
+  ten minutes are counted, not repeated. The Logs page shows the alerts log
+  through its new source selector, and `GET /api/gateway/alerts` returns it.
+  Every alert is listed in `ALERTS.md`; the record format is in
+  `docs/alerts.md`. The alerter module is a stub that only writes to a file;
+  delivery methods will be added to it later.
 
 ### Changed
 

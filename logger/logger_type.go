@@ -19,6 +19,11 @@ type Logger struct {
 	// auto-retried transient errors (e.g. telego long-poll getUpdates 5xx) so
 	// they don't read as fatal or trip alerts.
 	errorDowngrade func(msg string) bool
+	// errorHook, when non-nil, is called with the formatted message for every
+	// Error/Errorf that is NOT downgraded — the genuine faults. Used to raise an
+	// alert from a 3rd-party library that reports failures only through its
+	// logger.
+	errorHook func(msg string)
 }
 
 // WithContentSensitive marks the logger so that its debug-level output is
@@ -36,12 +41,29 @@ func (b *Logger) WithErrorDowngrade(fn func(msg string) bool) *Logger {
 	return b
 }
 
+// WithErrorHook installs fn, called with the formatted message for every
+// Error/Errorf that the downgrade predicate does not demote. Pass nil to clear.
+func (b *Logger) WithErrorHook(fn func(msg string)) *Logger {
+	b.errorHook = fn
+	return b
+}
+
 // errorLevel returns WARN when the downgrade predicate matches msg, else ERROR.
 func (b *Logger) errorLevel(msg string) LogLevel {
 	if b.errorDowngrade != nil && b.errorDowngrade(msg) {
 		return WARN
 	}
 	return ERROR
+}
+
+// logError logs msg at its downgraded-or-not level and, when it stays at
+// ERROR, hands it to the error hook.
+func (b *Logger) logError(msg string) {
+	level := b.errorLevel(msg)
+	logMessage(level, b.component, msg, nil)
+	if level == ERROR && b.errorHook != nil {
+		b.errorHook(msg)
+	}
 }
 
 // Debug logs debug messages
@@ -64,8 +86,7 @@ func (b *Logger) Warn(v ...any) {
 
 // Error logs error messages
 func (b *Logger) Error(v ...any) {
-	msg := fmt.Sprint(v...)
-	logMessage(b.errorLevel(msg), b.component, msg, nil)
+	b.logError(fmt.Sprint(v...))
 }
 
 // Debugf logs formatted debug messages
@@ -93,8 +114,7 @@ func (b *Logger) Warningf(format string, v ...any) {
 
 // Errorf logs formatted error messages
 func (b *Logger) Errorf(format string, v ...any) {
-	msg := fmt.Sprintf(format, v...)
-	logMessage(b.errorLevel(msg), b.component, msg, nil)
+	b.logError(fmt.Sprintf(format, v...))
 }
 
 // Fatalf logs formatted fatal messages and exits

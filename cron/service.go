@@ -165,6 +165,13 @@ type CronService struct {
 	gronx       *gronx.Gronx
 	fileModTime time.Time // mtime of store file at last load or save
 	alerter     alerter.Alerter
+	loadErr     error // store load failure at construction, see LoadError
+}
+
+// LoadError returns the error from loading the store when the service was
+// created, or nil. The service starts with an empty store in that case.
+func (cs *CronService) LoadError() error {
+	return cs.loadErr
 }
 
 // SetAlerter routes job failures to an alerter.
@@ -183,6 +190,7 @@ func NewCronService(storePath string, onJob JobHandler) *CronService {
 	// Initialize and load store on creation
 	if err := cs.loadStore(); err != nil {
 		logger.WarnCF("cron", "Failed to load cron store", map[string]any{"path": storePath, "error": err.Error()})
+		cs.loadErr = err
 	}
 	return cs
 }
@@ -284,6 +292,7 @@ func (cs *CronService) checkJobs() {
 
 		if err := cs.saveStoreUnsafe(); err != nil {
 			logger.WarnCF("cron", "failed to save store", map[string]any{"error": err.Error()})
+			cs.alertSaveFailed(err)
 		}
 	}
 
@@ -404,6 +413,7 @@ func (cs *CronService) executeJobByID(jobID string) {
 
 	if err := cs.saveStoreUnsafe(); err != nil {
 		logger.WarnCF("cron", "failed to save store", map[string]any{"error": err.Error()})
+		cs.alertSaveFailed(err)
 	}
 }
 
@@ -720,4 +730,18 @@ func generateID() string {
 		return strconv.FormatInt(time.Now().UnixNano(), 10)
 	}
 	return hex.EncodeToString(b)
+}
+
+// alertSaveFailed reports a store write failure: the in-memory jobs drift
+// from disk and are lost on restart. Repeats collapse in the alerter.
+func (cs *CronService) alertSaveFailed(err error) {
+	if cs.alerter == nil {
+		return
+	}
+	cs.alerter.Send(alerter.Alert{
+		Title:       "Cron store not saved",
+		Description: cs.storePath + ": job changes are held in memory only and are lost on restart",
+		Details:     err.Error(),
+		EventID:     "cron-store",
+	})
 }

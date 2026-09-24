@@ -402,8 +402,8 @@ func TestListen_SuppressRepeatsOptIn(t *testing.T) {
 func TestListen_ExecuteJobIsANoOp(t *testing.T) {
 	ct, msgBus := newListenEnv(t, &scriptedTool{})
 	job := addListenJob(t, ct, nil)
-	if out := ct.ExecuteJob(context.Background(), job); !strings.Contains(out, "listen") {
-		t.Fatalf("ExecuteJob = %q", out)
+	if out, err := ct.ExecuteJob(context.Background(), job); err != nil || !strings.Contains(out, "listen") {
+		t.Fatalf("ExecuteJob = %q, %v", out, err)
 	}
 	if _, ok := nextInbound(t, msgBus, 100*time.Millisecond); ok {
 		t.Fatal("ExecuteJob delivered for a listen job")
