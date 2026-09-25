@@ -29,7 +29,7 @@ observe does not need an entry.
 
 - **Operator alerts.** Conditions the operator should hear about are written
   to `<CLAW_HOME>/logs/alerts.log` (or the file named by `ALERTER_LOG`), one
-  record per alert with a HIGH/LOW priority: a model parked for an
+  record per alert with its priority: a model parked for an
   authentication or billing failure (a CLI logged out, a key revoked), a
   model parked after repeated failures, an unreachable MCP server, a channel
   that failed to start, stopped receiving (Slack, Matrix, device gateway,

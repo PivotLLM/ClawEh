@@ -26,9 +26,10 @@ func (r *alertRecorder) Send(a alerter.Alert) {
 	r.alerts = append(r.alerts, a)
 	r.mu.Unlock()
 }
-func (r *alertRecorder) High(string, string, ...string) {}
-func (r *alertRecorder) Low(string, string, ...string)  {}
-func (r *alertRecorder) Close(context.Context) error    { return nil }
+func (r *alertRecorder) Normal(string, string, ...string)    {}
+func (r *alertRecorder) Urgent(string, string, ...string)    {}
+func (r *alertRecorder) Emergency(string, string, ...string) {}
+func (r *alertRecorder) Close(context.Context) error         { return nil }
 
 // TestDetectNewFiles_AlertsWhenMarkerNotWritten: a mount whose marker cannot
 // be written raises one low alert keyed by the mount path; a writable mount
@@ -56,7 +57,7 @@ func TestDetectNewFiles_AlertsWhenMarkerNotWritten(t *testing.T) {
 		}
 	})
 	w.detectNewFiles("notes", ro)
-	if len(rec.alerts) != 1 || rec.alerts[0].High || rec.alerts[0].EventID != "mount:"+ro ||
+	if len(rec.alerts) != 1 || rec.alerts[0].Priority != alerter.Normal || rec.alerts[0].EventID != "mount:"+ro ||
 		rec.alerts[0].Title != "Mount marker not written" {
 		t.Fatalf("marker write failure must alert low once for the mount, got %+v", rec.alerts)
 	}

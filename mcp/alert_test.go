@@ -26,9 +26,10 @@ func (r *alertRecorder) Send(a alerter.Alert) {
 	r.alerts = append(r.alerts, a)
 	r.mu.Unlock()
 }
-func (r *alertRecorder) High(string, string, ...string) {}
-func (r *alertRecorder) Low(string, string, ...string)  {}
-func (r *alertRecorder) Close(context.Context) error    { return nil }
+func (r *alertRecorder) Normal(string, string, ...string)    {}
+func (r *alertRecorder) Urgent(string, string, ...string)    {}
+func (r *alertRecorder) Emergency(string, string, ...string) {}
+func (r *alertRecorder) Close(context.Context) error         { return nil }
 
 // TestRetryDisconnected_AlertsUnreachable: a desired server that cannot be
 // connected raises one low alert keyed by its name.
@@ -53,7 +54,7 @@ func TestRetryDisconnected_AlertsUnreachable(t *testing.T) {
 
 	rec.mu.Lock()
 	defer rec.mu.Unlock()
-	if len(rec.alerts) != 1 || rec.alerts[0].High || rec.alerts[0].EventID != "down" ||
+	if len(rec.alerts) != 1 || rec.alerts[0].Priority != alerter.Normal || rec.alerts[0].EventID != "down" ||
 		rec.alerts[0].Title != "MCP server unreachable" {
 		t.Fatalf("expected one low alert for 'down', got %+v", rec.alerts)
 	}

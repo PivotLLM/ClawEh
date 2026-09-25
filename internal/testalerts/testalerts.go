@@ -26,9 +26,10 @@ func (r *Recorder) Send(a alerter.Alert) {
 	r.alerts = append(r.alerts, a)
 	r.mu.Unlock()
 }
-func (r *Recorder) High(string, string, ...string) {}
-func (r *Recorder) Low(string, string, ...string)  {}
-func (r *Recorder) Close(context.Context) error    { return nil }
+func (r *Recorder) Normal(string, string, ...string)    {}
+func (r *Recorder) Urgent(string, string, ...string)    {}
+func (r *Recorder) Emergency(string, string, ...string) {}
+func (r *Recorder) Close(context.Context) error         { return nil }
 
 // Alerts returns a copy of what was recorded.
 func (r *Recorder) Alerts() []alerter.Alert {

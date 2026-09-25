@@ -24,9 +24,10 @@ func (r *alertRecorder) Send(a alerter.Alert) {
 	r.alerts = append(r.alerts, a)
 	r.mu.Unlock()
 }
-func (r *alertRecorder) High(string, string, ...string) {}
-func (r *alertRecorder) Low(string, string, ...string)  {}
-func (r *alertRecorder) Close(context.Context) error    { return nil }
+func (r *alertRecorder) Normal(string, string, ...string)    {}
+func (r *alertRecorder) Urgent(string, string, ...string)    {}
+func (r *alertRecorder) Emergency(string, string, ...string) {}
+func (r *alertRecorder) Close(context.Context) error         { return nil }
 
 // fakeSource is an event source whose Start fails when err is set.
 type fakeSource struct {
@@ -60,7 +61,7 @@ func TestStart_AlertsWhenSourceFails(t *testing.T) {
 	}
 	defer s.Stop()
 
-	if len(rec.alerts) != 1 || rec.alerts[0].High || rec.alerts[0].EventID != "devices:bluetooth" ||
+	if len(rec.alerts) != 1 || rec.alerts[0].Priority != alerter.Normal || rec.alerts[0].EventID != "devices:bluetooth" ||
 		rec.alerts[0].Title != "Device source not started" || rec.alerts[0].Details != "no adapter" {
 		t.Fatalf("failed source must alert low once keyed by kind, got %+v", rec.alerts)
 	}

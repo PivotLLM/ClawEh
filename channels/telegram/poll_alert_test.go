@@ -25,9 +25,10 @@ func (r *alertRecorder) Send(a alerter.Alert) {
 	r.alerts = append(r.alerts, a)
 	r.mu.Unlock()
 }
-func (r *alertRecorder) High(string, string, ...string) {}
-func (r *alertRecorder) Low(string, string, ...string)  {}
-func (r *alertRecorder) Close(context.Context) error    { return nil }
+func (r *alertRecorder) Normal(string, string, ...string)    {}
+func (r *alertRecorder) Urgent(string, string, ...string)    {}
+func (r *alertRecorder) Emergency(string, string, ...string) {}
+func (r *alertRecorder) Close(context.Context) error         { return nil }
 
 // TestPollFailureAlert drives telego's own logger, as wired by the factory, and
 // checks a genuine fault alerts while a transient blip does not.
@@ -49,7 +50,7 @@ func TestPollFailureAlert(t *testing.T) {
 	log.Errorf("Execution error getUpdates: request call: internal server error: 401")
 	require.Len(t, rec.alerts, 1)
 	a := rec.alerts[0]
-	require.False(t, a.High, "ClawEh alerts are normal priority")
+	require.False(t, a.Priority != alerter.Normal, "ClawEh alerts are normal priority")
 	require.Equal(t, "Telegram polling failed", a.Title)
 	require.Equal(t, "telegram-alice", a.EventID)
 	require.Equal(t, "telegram-alice: Execution error getUpdates: request call: internal server error: 401", a.Description)

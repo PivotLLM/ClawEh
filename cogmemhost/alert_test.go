@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/PivotLLM/cogmem/store"
+	"github.com/tenebris-tech/alerter"
 
 	"github.com/PivotLLM/ClawEh/internal/testalerts"
 )
@@ -22,7 +23,7 @@ func TestMigrate_AlertsOnFailure(t *testing.T) {
 	}
 	Migrate("alice", ws)
 	got := rec.Alerts()
-	if len(got) != 1 || got[0].High || got[0].EventID != "cogmem:alice" ||
+	if len(got) != 1 || got[0].Priority != alerter.Normal || got[0].EventID != "cogmem:alice" ||
 		got[0].Title != "Cognitive memory migration failed" {
 		t.Fatalf("got %+v", got)
 	}

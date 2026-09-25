@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/tenebris-tech/alerter"
+
 	"github.com/PivotLLM/ClawEh/internal/testalerts"
 )
 
@@ -23,7 +25,7 @@ func TestManager_UnreadableStoreAlerts(t *testing.T) {
 		t.Fatalf("NewManager: %v", err)
 	}
 	got := rec.Alerts()
-	if len(got) != 1 || got[0].High || got[0].EventID != "msgtoken:alice" ||
+	if len(got) != 1 || got[0].Priority != alerter.Normal || got[0].EventID != "msgtoken:alice" ||
 		got[0].Title != "Message-token store unreadable" {
 		t.Fatalf("got %+v", got)
 	}
@@ -50,7 +52,7 @@ func TestNamedStore_DeleteNotPersistedAlerts(t *testing.T) {
 		t.Fatal("Delete must still remove the token in memory")
 	}
 	got := rec.Alerts()
-	if len(got) != 1 || got[0].High || got[0].EventID != "msgtoken:alice" ||
+	if len(got) != 1 || got[0].Priority != alerter.Normal || got[0].EventID != "msgtoken:alice" ||
 		got[0].Title != "Message-token store not written" {
 		t.Fatalf("got %+v", got)
 	}

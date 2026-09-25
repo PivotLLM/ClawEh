@@ -26,9 +26,10 @@ func (r *alertRecorder) Send(a alerter.Alert) {
 	r.alerts = append(r.alerts, a)
 	r.mu.Unlock()
 }
-func (r *alertRecorder) High(string, string, ...string) {}
-func (r *alertRecorder) Low(string, string, ...string)  {}
-func (r *alertRecorder) Close(context.Context) error    { return nil }
+func (r *alertRecorder) Normal(string, string, ...string)    {}
+func (r *alertRecorder) Urgent(string, string, ...string)    {}
+func (r *alertRecorder) Emergency(string, string, ...string) {}
+func (r *alertRecorder) Close(context.Context) error         { return nil }
 
 // statusServer answers every request with the given status and body.
 func statusServer(t *testing.T, status int, body string) *httptest.Server {
@@ -87,7 +88,7 @@ func TestTranscribe_AlertsOnRejection(t *testing.T) {
 					t.Fatalf("status %d must alert once, got %+v", status, rec.alerts)
 				}
 				a := rec.alerts[0]
-				if a.High || a.Title != "Voice transcription rejected" || a.EventID != "voice:"+provider {
+				if a.Priority != alerter.Normal || a.Title != "Voice transcription rejected" || a.EventID != "voice:"+provider {
 					t.Fatalf("status %d: want high alert keyed by provider, got %+v", status, a)
 				}
 				if !strings.HasPrefix(a.Description, provider+": status ") {

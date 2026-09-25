@@ -24,9 +24,10 @@ func (r *alertRecorder) Send(a alerter.Alert) {
 	r.alerts = append(r.alerts, a)
 	r.mu.Unlock()
 }
-func (r *alertRecorder) High(string, string, ...string) {}
-func (r *alertRecorder) Low(string, string, ...string)  {}
-func (r *alertRecorder) Close(context.Context) error    { return nil }
+func (r *alertRecorder) Normal(string, string, ...string)    {}
+func (r *alertRecorder) Urgent(string, string, ...string)    {}
+func (r *alertRecorder) Emergency(string, string, ...string) {}
+func (r *alertRecorder) Close(context.Context) error         { return nil }
 
 // TestExecuteJobByID_AlertsOnFailure: a failing handler raises one low alert
 // keyed by the job id; a successful one raises none.
@@ -48,7 +49,7 @@ func TestExecuteJobByID_AlertsOnFailure(t *testing.T) {
 	}
 	fail = true
 	cs.executeJobByID(job.ID)
-	if len(rec.alerts) != 1 || rec.alerts[0].High || rec.alerts[0].EventID != job.ID ||
+	if len(rec.alerts) != 1 || rec.alerts[0].Priority != alerter.Normal || rec.alerts[0].EventID != job.ID ||
 		rec.alerts[0].Title != "Scheduled job failed" || rec.alerts[0].Details != "handler failure" {
 		t.Fatalf("failure must alert low once for the job, got %+v", rec.alerts)
 	}
@@ -75,7 +76,7 @@ func TestCronStore_LoadErrorAndSaveAlert(t *testing.T) {
 	job := addEnabledJob(t, cs, "every", new(int64(60_000)))
 	cs.storePath = filepath.Join(corrupt, "jobs.json")
 	cs.executeJobByID(job.ID)
-	if len(rec.alerts) != 1 || rec.alerts[0].High || rec.alerts[0].EventID != "cron-store" ||
+	if len(rec.alerts) != 1 || rec.alerts[0].Priority != alerter.Normal || rec.alerts[0].EventID != "cron-store" ||
 		rec.alerts[0].Title != "Cron store not saved" {
 		t.Fatalf("save failure must alert low once, got %+v", rec.alerts)
 	}

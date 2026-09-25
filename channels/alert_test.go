@@ -25,9 +25,10 @@ func (r *alertRecorder) Send(a alerter.Alert) {
 	r.alerts = append(r.alerts, a)
 	r.mu.Unlock()
 }
-func (r *alertRecorder) High(string, string, ...string) {}
-func (r *alertRecorder) Low(string, string, ...string)  {}
-func (r *alertRecorder) Close(context.Context) error    { return nil }
+func (r *alertRecorder) Normal(string, string, ...string)    {}
+func (r *alertRecorder) Urgent(string, string, ...string)    {}
+func (r *alertRecorder) Emergency(string, string, ...string) {}
+func (r *alertRecorder) Close(context.Context) error         { return nil }
 
 // TestSendWithRetry_AlertsOnGiveUp: a message dropped after its retries
 // raises one low alert keyed by the channel; a delivered one raises none.
@@ -53,7 +54,7 @@ func TestSendWithRetry_AlertsOnGiveUp(t *testing.T) {
 		limiter: rate.NewLimiter(rate.Inf, 1),
 	}
 	m.sendWithRetry(context.Background(), "test", bad, msg)
-	if len(rec.alerts) != 1 || rec.alerts[0].High || rec.alerts[0].EventID != "test" ||
+	if len(rec.alerts) != 1 || rec.alerts[0].Priority != alerter.Normal || rec.alerts[0].EventID != "test" ||
 		rec.alerts[0].Title != "Channel send failed" {
 		t.Fatalf("dropped message must alert low once for the channel, got %+v", rec.alerts)
 	}
@@ -67,12 +68,12 @@ func TestBaseChannelAlert(t *testing.T) {
 
 	rec := &alertRecorder{}
 	ch.SetAlerter(rec)
-	ch.Alert(alerter.Alert{High: true, Title: "t"})
+	ch.Alert(alerter.Alert{Priority: alerter.Urgent, Title: "t"})
 	ch.Alert(alerter.Alert{Title: "u", EventID: "explicit"})
 	if len(rec.alerts) != 2 {
 		t.Fatalf("expected 2 alerts, got %+v", rec.alerts)
 	}
-	if rec.alerts[0].EventID != "telegram-alice" || !rec.alerts[0].High || rec.alerts[0].Title != "t" {
+	if rec.alerts[0].EventID != "telegram-alice" || rec.alerts[0].Priority != alerter.Urgent || rec.alerts[0].Title != "t" {
 		t.Fatalf("empty EventID must become the channel name, got %+v", rec.alerts[0])
 	}
 	if rec.alerts[1].EventID != "explicit" {

@@ -6,12 +6,12 @@ the same id inside the suppression window (ten minutes) are counted, not
 re-sent, so the id names the thing that failed. Where alerts go, and the record
 format, are described in `docs/alerts.md`.
 
-**Priority.** Every alert is *normal* (the alerter's low priority): it is
-written to the log and delivered on the configured channels at their normal
-priority. A *priority* alert (the alerter's high priority) is reserved for
-something that must wake a person up, any hour of the day; none of ClawEh's
-alerts qualifies today. The Priority column is blank for a normal alert and
-carries `*` for a priority one.
+**Priority.** The alerter has three levels: Normal, Urgent and Emergency.
+Every ClawEh alert is Normal: written to the log and delivered on the
+configured channels at their normal priority. Urgent and Emergency are for
+something that must reach a person now, any hour of the day; none of
+ClawEh's alerts qualifies today. The Priority column is blank for Normal,
+`*` for Urgent and `**` for Emergency.
 
 | Alert id (`EventID`) | Priority | Alert | Comments |
 |---|---|---|---|

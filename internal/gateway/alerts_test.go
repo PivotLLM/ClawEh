@@ -39,12 +39,12 @@ func TestNewAlerter(t *testing.T) {
 	if path != filepath.Join(base, "logs", alertsFileName) {
 		t.Errorf("path = %q", path)
 	}
-	a.Low("test", "default path")
+	a.Normal("test", "default path")
 	if err := a.Close(t.Context()); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
 	b, err := os.ReadFile(path)
-	if err != nil || !strings.Contains(string(b), " LOW ") || !strings.Contains(string(b), "ClawEh@") {
+	if err != nil || !strings.Contains(string(b), " NORMAL ") || !strings.Contains(string(b), "ClawEh@") {
 		t.Errorf("alerts file = %q, err = %v", b, err)
 	}
 

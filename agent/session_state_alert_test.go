@@ -24,9 +24,10 @@ func (r *alertRecorder) Send(a alerter.Alert) {
 	r.alerts = append(r.alerts, a)
 	r.mu.Unlock()
 }
-func (r *alertRecorder) High(string, string, ...string) {}
-func (r *alertRecorder) Low(string, string, ...string)  {}
-func (r *alertRecorder) Close(context.Context) error    { return nil }
+func (r *alertRecorder) Normal(string, string, ...string)    {}
+func (r *alertRecorder) Urgent(string, string, ...string)    {}
+func (r *alertRecorder) Emergency(string, string, ...string) {}
+func (r *alertRecorder) Close(context.Context) error         { return nil }
 
 // failingCompactionStore is the agent's real session store with a compaction
 // state that can still be read but no longer written.
@@ -81,7 +82,7 @@ func TestSessionState_AlertsWhenPersistFails(t *testing.T) {
 		t.Fatalf("want %d alerts, got %+v", len(want), rec.alerts)
 	}
 	for i, a := range rec.alerts {
-		if a.High || a.EventID != "session-store" || a.Title != "Session state not persisted" ||
+		if a.Priority != alerter.Normal || a.EventID != "session-store" || a.Title != "Session state not persisted" ||
 			a.Description != want[i]+": the setting reverts on restart" || a.Details != "disk full" {
 			t.Fatalf("alert %d: want low alert for %q, got %+v", i, want[i], a)
 		}

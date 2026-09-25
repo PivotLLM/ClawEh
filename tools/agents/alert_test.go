@@ -23,9 +23,10 @@ func (r *alertRecorder) Send(a alerter.Alert) {
 	r.alerts = append(r.alerts, a)
 	r.mu.Unlock()
 }
-func (r *alertRecorder) High(string, string, ...string) {}
-func (r *alertRecorder) Low(string, string, ...string)  {}
-func (r *alertRecorder) Close(context.Context) error    { return nil }
+func (r *alertRecorder) Normal(string, string, ...string)    {}
+func (r *alertRecorder) Urgent(string, string, ...string)    {}
+func (r *alertRecorder) Emergency(string, string, ...string) {}
+func (r *alertRecorder) Close(context.Context) error         { return nil }
 
 // TestPersist_AlertsWhenUnwritable: a status or results file that cannot be
 // written raises one low alert each, keyed by the store; a writable workspace
@@ -58,7 +59,7 @@ func TestPersist_AlertsWhenUnwritable(t *testing.T) {
 		t.Fatalf("unwritable workspace must alert once per file, got %+v", rec.alerts)
 	}
 	for _, a := range rec.alerts {
-		if a.High || a.EventID != "subagent-store" || a.Title != "Sub-agent record not written" ||
+		if a.Priority != alerter.Normal || a.EventID != "subagent-store" || a.Title != "Sub-agent record not written" ||
 			a.Description != "task u2: its status/results file could not be written, so it cannot be resumed or reported" {
 			t.Fatalf("want low alert keyed by the store naming the task, got %+v", a)
 		}

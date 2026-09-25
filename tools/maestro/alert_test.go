@@ -7,6 +7,8 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/tenebris-tech/alerter"
+
 	"github.com/PivotLLM/ClawEh/internal/testalerts"
 )
 
@@ -16,7 +18,7 @@ func TestAlertMaestroDisabled(t *testing.T) {
 	rec := testalerts.Install(t)
 	alertMaestroDisabled("alice", "/ws/maestro", errors.New("permission denied"))
 	got := rec.Alerts()
-	if len(got) != 1 || got[0].High || got[0].EventID != "maestro:alice" ||
+	if len(got) != 1 || got[0].Priority != alerter.Normal || got[0].EventID != "maestro:alice" ||
 		got[0].Title != "Maestro tools disabled" || got[0].Details != "permission denied" {
 		t.Fatalf("got %+v", got)
 	}

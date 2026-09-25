@@ -23,12 +23,16 @@ func (r *recorder) Send(a alerter.Alert) {
 	r.mu.Unlock()
 }
 
-func (r *recorder) High(title, desc string, details ...string) {
-	r.Send(alerter.Alert{High: true, Title: title, Description: desc})
+func (r *recorder) Normal(title, desc string, details ...string) {
+	r.Send(alerter.Alert{Priority: alerter.Normal, Title: title, Description: desc})
 }
 
-func (r *recorder) Low(title, desc string, details ...string) {
-	r.Send(alerter.Alert{Title: title, Description: desc})
+func (r *recorder) Urgent(title, desc string, details ...string) {
+	r.Send(alerter.Alert{Priority: alerter.Urgent, Title: title, Description: desc})
+}
+
+func (r *recorder) Emergency(title, desc string, details ...string) {
+	r.Send(alerter.Alert{Priority: alerter.Emergency, Title: title, Description: desc})
 }
 func (r *recorder) Close(context.Context) error { return nil }
 
@@ -47,11 +51,11 @@ func TestCooldown_AlertsAuthAtOnce(t *testing.T) {
 
 	mark(ct, "claude-cli", testModel, FailoverAuth)
 	got := rec.got()
-	if len(got) != 1 || got[0].High || got[0].EventID != ModelKey("claude-cli", testModel) {
+	if len(got) != 1 || got[0].Priority != alerter.Normal || got[0].EventID != ModelKey("claude-cli", testModel) {
 		t.Fatalf("auth failure must alert once with the model as event id, got %+v", got)
 	}
 	mark(ct, "claude-cli", testModel, FailoverBilling)
-	if got := rec.got(); len(got) != 2 || got[1].High {
+	if got := rec.got(); len(got) != 2 || got[1].Priority != alerter.Normal {
 		t.Fatalf("billing failure must alert (normal priority), got %+v", got)
 	}
 }
@@ -71,7 +75,7 @@ func TestCooldown_AlertsTransientOnlyWhenSettled(t *testing.T) {
 	}
 	mark(ct, "openai", testModel, FailoverRateLimit)
 	got := rec.got()
-	if len(got) != 1 || got[0].High || got[0].EventID != ModelKey("openai", testModel) {
+	if len(got) != 1 || got[0].Priority != alerter.Normal || got[0].EventID != ModelKey("openai", testModel) {
 		t.Fatalf("settled cooldown must alert low once, got %+v", got)
 	}
 }

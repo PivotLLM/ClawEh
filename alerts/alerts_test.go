@@ -21,9 +21,10 @@ func (r *recorder) Send(a alerter.Alert) {
 	r.alerts = append(r.alerts, a)
 	r.mu.Unlock()
 }
-func (r *recorder) High(string, string, ...string) {}
-func (r *recorder) Low(string, string, ...string)  {}
-func (r *recorder) Close(context.Context) error    { return nil }
+func (r *recorder) Normal(string, string, ...string)    {}
+func (r *recorder) Urgent(string, string, ...string)    {}
+func (r *recorder) Emergency(string, string, ...string) {}
+func (r *recorder) Close(context.Context) error         { return nil }
 
 // TestSetAndSend: the default is a no-op, Set installs the alerter Send uses,
 // and Set(nil) restores the no-op.

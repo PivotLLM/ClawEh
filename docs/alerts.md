@@ -18,20 +18,23 @@ JSON webhook), read from the service environment or from `~/.alerter` in the
 home directory of the user running ClawEh. See the module's README for the
 variables; nothing in ClawEh changes when a channel is added or removed.
 
-One record per alert: time, `HIGH` or `LOW`, `ClawEh@<host>`, the event id in
-brackets when there is one, title, description, then details indented:
+One record per alert: time, the priority (`NORMAL`, `URGENT` or `EMERGENCY`),
+`ClawEh@<host>`, the event id in brackets when there is one, title,
+description, then details indented:
 
 ```
-2026-09-24T10:00:00-04:00 LOW  ClawEh@empire [claude-cli/claude] Model authentication or billing failure: claude-cli/claude parked for 1m0s after 1 consecutive failure(s): auth (status 401)
+2026-09-24T10:00:00-04:00 NORMAL    ClawEh@empire [claude-cli/claude] Model authentication or billing failure: claude-cli/claude parked for 1m0s after 1 consecutive failure(s): auth (status 401)
 ```
 
 ## Priority
 
-Every ClawEh alert is **normal** priority (`LOW` in the record; the channels'
-normal priority). The module's high priority is reserved for a **priority**
-alert: something that must wake a person up at any hour. No ClawEh alert
-qualifies today, so the Priority column in `ALERTS.md` is blank throughout;
-an alert promoted to priority gets a `*` there.
+The alerter has three levels: Normal, Urgent and Emergency. Every ClawEh
+alert is **Normal**. Urgent and Emergency are for something that must reach
+a person now, at any hour; how each level is delivered (for example the
+Pushover priority) is the operator's choice in the `ALERTER_*` variables.
+No ClawEh alert qualifies today, so the Priority column in `ALERTS.md` is
+blank throughout; an alert promoted later gets `*` (Urgent) or `**`
+(Emergency) there.
 
 ## What alerts
 

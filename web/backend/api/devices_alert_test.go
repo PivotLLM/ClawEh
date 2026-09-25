@@ -24,9 +24,10 @@ func (r *alertRecorder) Send(a alerter.Alert) {
 	r.alerts = append(r.alerts, a)
 	r.mu.Unlock()
 }
-func (r *alertRecorder) High(string, string, ...string) {}
-func (r *alertRecorder) Low(string, string, ...string)  {}
-func (r *alertRecorder) Close(context.Context) error    { return nil }
+func (r *alertRecorder) Normal(string, string, ...string)    {}
+func (r *alertRecorder) Urgent(string, string, ...string)    {}
+func (r *alertRecorder) Emergency(string, string, ...string) {}
+func (r *alertRecorder) Close(context.Context) error         { return nil }
 
 // TestDeviceStoreUnavailable_Alerts: a store-open failure answers 500 without
 // the error text and raises one low alert; with no alerter set it still
@@ -46,7 +47,7 @@ func TestDeviceStoreUnavailable_Alerts(t *testing.T) {
 	if w.Code != http.StatusInternalServerError || w.Body.String() != `{"error":"store open failed"}`+"\n" {
 		t.Fatalf("response must hide the error, got %d %q", w.Code, w.Body.String())
 	}
-	if len(rec.alerts) != 1 || rec.alerts[0].High || rec.alerts[0].EventID != "device-store" ||
+	if len(rec.alerts) != 1 || rec.alerts[0].Priority != alerter.Normal || rec.alerts[0].EventID != "device-store" ||
 		rec.alerts[0].Title != "Device store unavailable" ||
 		rec.alerts[0].Details != "open /data/state/gateway.db: locked" {
 		t.Fatalf("store failure must alert low once, got %+v", rec.alerts)
