@@ -2,6 +2,7 @@ package slack
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
+	"github.com/tenebris-tech/alerter"
 
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/channels"
@@ -42,7 +44,7 @@ type slackMessageRef struct {
 
 func NewSlackChannel(cfg config.SlackConfig, messageBus *bus.MessageBus) (*SlackChannel, error) {
 	if cfg.BotToken == "" || cfg.AppToken == "" {
-		return nil, fmt.Errorf("slack bot_token and app_token are required")
+		return nil, errors.New("slack bot_token and app_token are required")
 	}
 
 	api := slack.New(
@@ -94,6 +96,11 @@ func (c *SlackChannel) Start(ctx context.Context) error {
 				logger.ErrorCF("slack", "Socket Mode connection error", map[string]any{
 					"error": err.Error(),
 				})
+				c.Alert(alerter.Alert{
+					Title:       "Channel receive loop stopped",
+					Description: c.Name() + ": Socket Mode connection error; the channel no longer receives messages until the gateway is restarted",
+					Details:     err.Error(),
+				})
 			}
 		}
 	}()
@@ -107,8 +114,9 @@ func (c *SlackChannel) Start(ctx context.Context) error {
 // ID, with an in-memory cache so each user is resolved at most once per
 // process lifetime. Falls back through DisplayName → RealName → Name.
 func (c *SlackChannel) resolveDisplayName(userID string) string {
-	if v, ok := c.userNameCache.Load(userID); ok {
-		return v.(string)
+	v, _ := c.userNameCache.Load(userID)
+	if cached, ok := v.(string); ok {
+		return cached
 	}
 	user, err := c.api.GetUserInfo(userID)
 	if err != nil {
@@ -169,12 +177,18 @@ func (c *SlackChannel) Send(ctx context.Context, msg bus.OutboundMessage) error 
 		return fmt.Errorf("slack send: %w", channels.ErrTemporary)
 	}
 
-	if ref, ok := c.pendingAcks.LoadAndDelete(msg.OriginalMessageID); ok {
-		msgRef := ref.(slackMessageRef)
-		go c.api.AddReaction("white_check_mark", slack.ItemRef{
-			Channel:   msgRef.ChannelID,
-			Timestamp: msgRef.Timestamp,
-		})
+	ref, _ := c.pendingAcks.LoadAndDelete(msg.OriginalMessageID)
+	if msgRef, ok := ref.(slackMessageRef); ok {
+		go func() {
+			if err := c.api.AddReaction("white_check_mark", slack.ItemRef{
+				Channel:   msgRef.ChannelID,
+				Timestamp: msgRef.Timestamp,
+			}); err != nil {
+				logger.DebugCF("slack", "Failed to add reaction", map[string]any{
+					"channel_id": msgRef.ChannelID, "error": err.Error(),
+				})
+			}
+		}()
 	}
 
 	logger.DebugCF("slack", "Message sent", map[string]any{
@@ -277,7 +291,7 @@ func (c *SlackChannel) ReactToMessage(ctx context.Context, chatID, messageID str
 		return func() {}, nil
 	}
 
-	reactionCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	reactionCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	if err := c.api.AddReactionContext(reactionCtx, "eyes", slack.ItemRef{
 		Channel:   channelID,
@@ -291,10 +305,16 @@ func (c *SlackChannel) ReactToMessage(ctx context.Context, chatID, messageID str
 	}
 
 	return func() {
-		go c.api.RemoveReaction("eyes", slack.ItemRef{
-			Channel:   channelID,
-			Timestamp: messageID,
-		})
+		go func() {
+			if err := c.api.RemoveReaction("eyes", slack.ItemRef{
+				Channel:   channelID,
+				Timestamp: messageID,
+			}); err != nil {
+				logger.DebugCF("slack", "Failed to remove reaction", map[string]any{
+					"channel_id": channelID, "error": err.Error(),
+				})
+			}
+		}()
 	}, nil
 }
 
@@ -314,16 +334,26 @@ func (c *SlackChannel) eventLoop() {
 				c.handleSlashCommand(event)
 			case socketmode.EventTypeInteractive:
 				if event.Request != nil {
-					c.socketClient.Ack(*event.Request)
+					c.ack(*event.Request)
 				}
 			}
 		}
 	}
 }
 
+// ack acknowledges a Socket Mode request; Slack redelivers unacknowledged
+// requests, so a failure is worth a warning but nothing more.
+func (c *SlackChannel) ack(req socketmode.Request) {
+	if err := c.socketClient.Ack(req); err != nil {
+		logger.WarnCF("slack", "Failed to ack Socket Mode request", map[string]any{
+			"error": err.Error(),
+		})
+	}
+}
+
 func (c *SlackChannel) handleEventsAPI(event socketmode.Event) {
 	if event.Request != nil {
-		c.socketClient.Ack(*event.Request)
+		c.ack(*event.Request)
 	}
 
 	eventsAPIEvent, ok := event.Data.(slackevents.EventsAPIEvent)
@@ -410,14 +440,16 @@ func (c *SlackChannel) handleMessageEvent(ev *slackevents.MessageEvent) {
 	}
 
 	if ev.Message != nil && len(ev.Message.Files) > 0 {
+		var contentSb414 strings.Builder
 		for _, file := range ev.Message.Files {
 			localPath := c.downloadSlackFile(file)
 			if localPath == "" {
 				continue
 			}
 			mediaPaths = append(mediaPaths, storeMedia(localPath, file.Name))
-			content += fmt.Sprintf("\n[file: %s]", file.Name)
+			fmt.Fprintf(&contentSb414, "\n[file: %s]", file.Name)
 		}
+		content += contentSb414.String()
 	}
 
 	if strings.TrimSpace(content) == "" {
@@ -525,7 +557,7 @@ func (c *SlackChannel) handleSlashCommand(event socketmode.Event) {
 	}
 
 	if event.Request != nil {
-		c.socketClient.Ack(*event.Request)
+		c.ack(*event.Request)
 	}
 
 	cmdSender := bus.SenderInfo{

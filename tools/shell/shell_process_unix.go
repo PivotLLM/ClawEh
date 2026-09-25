@@ -3,6 +3,7 @@
 package shell
 
 import (
+	"errors"
 	"os/exec"
 	"syscall"
 )
@@ -25,8 +26,11 @@ func terminateProcessTree(cmd *exec.Cmd) error {
 	}
 
 	// Kill the entire process group spawned by the shell command.
-	_ = syscall.Kill(-pid, syscall.SIGKILL)
-	// Fallback kill on the shell process itself.
-	_ = cmd.Process.Kill()
+	groupErr := syscall.Kill(-pid, syscall.SIGKILL)
+	// Fallback kill on the shell process itself. Only report when both fail;
+	// either one succeeding means the tree is gone.
+	if killErr := cmd.Process.Kill(); killErr != nil && groupErr != nil {
+		return errors.Join(groupErr, killErr)
+	}
 	return nil
 }

@@ -31,8 +31,7 @@ func setDefaultBinding(cfg *config.Config, agentID, channel, peerKind, peerID st
 // agent AND that the rotating-token path is still consulted (both mechanisms live
 // side by side).
 func TestValidateMessageToken_NamedAndRotating(t *testing.T) {
-	al, _, _, _, cleanup := newTestAgentLoop(t)
-	defer cleanup()
+	al := newTestAgentLoop(t).al
 
 	tok, err := al.CreateMessageToken("main", "webhook")
 	if err != nil {
@@ -56,8 +55,8 @@ func TestValidateMessageToken_NamedAndRotating(t *testing.T) {
 }
 
 func TestHandleExternalMessage_DeliversToCronTarget(t *testing.T) {
-	al, cfg, msgBus, _, cleanup := newTestAgentLoop(t)
-	defer cleanup()
+	tl := newTestAgentLoop(t)
+	al, cfg, msgBus := tl.al, tl.cfg, tl.msgBus
 
 	setDefaultBinding(cfg, "main", "telegram", "direct", "chat-42")
 
@@ -93,8 +92,7 @@ func TestHandleExternalMessage_DeliversToCronTarget(t *testing.T) {
 }
 
 func TestHandleExternalMessage_NoDefaultChannel(t *testing.T) {
-	al, _, _, _, cleanup := newTestAgentLoop(t)
-	defer cleanup()
+	al := newTestAgentLoop(t).al
 
 	// No bindings configured → CronTarget !ok → error naming the agent.
 	err := al.HandleExternalMessage(context.Background(), "main", "hello")

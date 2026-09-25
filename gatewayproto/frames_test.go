@@ -31,7 +31,7 @@ func TestRequestFrame_ParamsRaw(t *testing.T) {
 	if err := json.Unmarshal([]byte(raw), &f); err != nil {
 		t.Fatal(err)
 	}
-	if f.Method != "connect" {
+	if f.Method != "connect" { //nolint:usestdlibvars // gateway protocol method name, not the HTTP verb
 		t.Fatalf("method=%q", f.Method)
 	}
 	var p ConnectParams
@@ -45,29 +45,44 @@ func TestRequestFrame_ParamsRaw(t *testing.T) {
 
 func TestResponseAndEventEncoding(t *testing.T) {
 	// Success response carries payload, no error key.
-	b, _ := json.Marshal(NewOKResponse("c1", HelloOk{Type: "hello-ok", Protocol: 4}))
+	b, err := json.Marshal(NewOKResponse("c1", HelloOk{Type: "hello-ok", Protocol: 4}))
+	if err != nil {
+		t.Fatalf("marshal response: %v", err)
+	}
 	if got := string(b); got == "" || !json.Valid(b) {
 		t.Fatalf("invalid response json: %s", got)
 	}
 	var rf ResponseFrame
-	_ = json.Unmarshal(b, &rf)
+	if unmarshalErr := json.Unmarshal(b, &rf); unmarshalErr != nil {
+		t.Fatalf("unmarshal response: %v", unmarshalErr)
+	}
 	if rf.Type != FrameRes || !rf.OK || rf.Error != nil {
 		t.Fatalf("unexpected response: %+v", rf)
 	}
 
 	// Error response: ok=false, error set, payload omitted.
-	eb, _ := json.Marshal(NewErrorResponse("c1", NewError(CodeInvalidRequest, "bad", nil)))
+	eb, err := json.Marshal(NewErrorResponse("c1", NewError(CodeInvalidRequest, "bad", nil)))
+	if err != nil {
+		t.Fatalf("marshal error response: %v", err)
+	}
 	var ef ResponseFrame
-	_ = json.Unmarshal(eb, &ef)
+	if unmarshalErr := json.Unmarshal(eb, &ef); unmarshalErr != nil {
+		t.Fatalf("unmarshal error response: %v", unmarshalErr)
+	}
 	if ef.OK || ef.Error == nil || ef.Error.Code != CodeInvalidRequest {
 		t.Fatalf("unexpected error response: %s", eb)
 	}
 
 	// Event with seq.
 	seq := uint64(7)
-	evb, _ := json.Marshal(NewEvent("chat", map[string]any{"x": 1}, &seq))
+	evb, err := json.Marshal(NewEvent("chat", map[string]any{"x": 1}, &seq))
+	if err != nil {
+		t.Fatalf("marshal event: %v", err)
+	}
 	var evf EventFrame
-	_ = json.Unmarshal(evb, &evf)
+	if unmarshalErr := json.Unmarshal(evb, &evf); unmarshalErr != nil {
+		t.Fatalf("unmarshal event: %v", unmarshalErr)
+	}
 	if evf.Type != FrameEvent || evf.Event != "chat" || evf.Seq == nil || *evf.Seq != 7 {
 		t.Fatalf("unexpected event: %s", evb)
 	}

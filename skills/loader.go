@@ -151,7 +151,7 @@ func (sl *SkillsLoader) LoadSkill(name string) (string, bool) {
 	// 1. load from workspace skills first (project-level)
 	if sl.workspaceSkills != "" {
 		skillFile := filepath.Join(sl.workspaceSkills, name, "SKILL.md")
-		if content, err := os.ReadFile(skillFile); err == nil {
+		if content, err := os.ReadFile(skillFile); err == nil { //nolint:gosec // skill name is the operator's CLI argument (claw skills show)
 			return sl.stripFrontmatter(string(content)), true
 		}
 	}
@@ -159,7 +159,7 @@ func (sl *SkillsLoader) LoadSkill(name string) (string, bool) {
 	// 2. then load from global skills (~/.claw/skills)
 	if sl.globalSkills != "" {
 		skillFile := filepath.Join(sl.globalSkills, name, "SKILL.md")
-		if content, err := os.ReadFile(skillFile); err == nil {
+		if content, err := os.ReadFile(skillFile); err == nil { //nolint:gosec // skill name is the operator's CLI argument (claw skills show)
 			return sl.stripFrontmatter(string(content)), true
 		}
 	}
@@ -167,7 +167,7 @@ func (sl *SkillsLoader) LoadSkill(name string) (string, bool) {
 	// 3. finally load from builtin skills
 	if sl.builtinSkills != "" {
 		skillFile := filepath.Join(sl.builtinSkills, name, "SKILL.md")
-		if content, err := os.ReadFile(skillFile); err == nil {
+		if content, err := os.ReadFile(skillFile); err == nil { //nolint:gosec // skill name is the operator's CLI argument (claw skills show)
 			return sl.stripFrontmatter(string(content)), true
 		}
 	}
@@ -220,7 +220,7 @@ func (sl *SkillsLoader) BuildSkillsSummaryForSkills(allSkills []SkillInfo) strin
 }
 
 func (sl *SkillsLoader) getSkillMetadata(skillPath string) *SkillMetadata {
-	content, err := os.ReadFile(skillPath)
+	content, err := os.ReadFile(skillPath) //nolint:gosec // skillPath comes from walking the skills directories
 	if err != nil {
 		logger.WarnCF("skills", "Failed to read skill metadata",
 			map[string]any{

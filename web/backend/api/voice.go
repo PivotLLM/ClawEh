@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/voice"
 )
 
@@ -34,7 +35,7 @@ func (h *Handler) handleGetVoiceSTT(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{
+	encodeJSON(w, map[string]any{
 		"stt":     out,
 		"presets": voice.STTPresets(),
 	})
@@ -83,9 +84,11 @@ func (h *Handler) handleUpdateVoiceSTT(w http.ResponseWriter, r *http.Request) {
 	}
 	// Reload so the running agent loop re-detects the active transcriber.
 	if reload := h.reloadFunc(); reload != nil {
-		_ = reload()
+		if reloadErr := reload(); reloadErr != nil {
+			logger.WarnCF("api", "gateway reload failed", map[string]any{"error": reloadErr.Error()})
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	encodeJSON(w, map[string]string{"status": "ok"})
 }

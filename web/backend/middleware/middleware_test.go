@@ -57,7 +57,9 @@ func TestLogger_LogsRequest(t *testing.T) {
 func TestLogger_DefaultsToStatus200(t *testing.T) {
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Does not call WriteHeader — should default to 200
-		_, _ = w.Write([]byte("ok"))
+		if _, err := w.Write([]byte("ok")); err != nil {
+			t.Errorf("write response: %v", err)
+		}
 	})
 	h := Logger(inner)
 

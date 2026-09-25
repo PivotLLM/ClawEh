@@ -4,7 +4,6 @@
 package agent
 
 import (
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -37,7 +36,7 @@ func atDate(t *testing.T, workspace string, clock *time.Time) *ContextBuilder {
 // is the exact failure the anchor exists to prevent.
 func TestDateAnchor_RollsOverAtMidnight(t *testing.T) {
 	dir := setupWorkspace(t, map[string]string{"IDENTITY.md": "# Identity"})
-	defer os.RemoveAll(dir)
+	defer removeAll(t, dir)
 
 	clock := time.Date(2026, 2, 12, 23, 59, 0, 0, time.UTC) // Thursday
 	cb := atDate(t, dir, &clock)
@@ -67,7 +66,7 @@ func TestDateAnchor_RollsOverAtMidnight(t *testing.T) {
 // history behind it.
 func TestDateAnchor_StableWithinTheDay(t *testing.T) {
 	dir := setupWorkspace(t, map[string]string{"IDENTITY.md": "# Identity"})
-	defer os.RemoveAll(dir)
+	defer removeAll(t, dir)
 
 	clock := time.Date(2026, 2, 12, 8, 0, 0, 0, time.UTC)
 	cb := atDate(t, dir, &clock)
@@ -87,7 +86,7 @@ func TestDateAnchor_StableWithinTheDay(t *testing.T) {
 // the cache the whole conversation history, not just itself.
 func TestPromptLayers_NoPerTurnVolatility(t *testing.T) {
 	dir := setupWorkspace(t, map[string]string{"IDENTITY.md": "# Identity"})
-	defer os.RemoveAll(dir)
+	defer removeAll(t, dir)
 
 	clock := time.Date(2026, 2, 12, 8, 0, 0, 0, time.UTC)
 	cb := atDate(t, dir, &clock)
@@ -106,7 +105,7 @@ func TestPromptLayers_NoPerTurnVolatility(t *testing.T) {
 // rebuild's date check.
 func TestInvalidateCache_ClearsDate(t *testing.T) {
 	dir := setupWorkspace(t, map[string]string{"IDENTITY.md": "# Identity"})
-	defer os.RemoveAll(dir)
+	defer removeAll(t, dir)
 
 	clock := time.Date(2026, 2, 12, 8, 0, 0, 0, time.UTC)
 	cb := atDate(t, dir, &clock)

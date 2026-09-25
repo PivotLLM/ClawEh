@@ -3,7 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
-	"fmt"
+	"errors"
 	"strings"
 	"testing"
 
@@ -267,7 +267,7 @@ func TestMCPTool_Execute_Success(t *testing.T) {
 func TestMCPTool_Execute_ManagerError(t *testing.T) {
 	manager := &MockMCPManager{
 		callToolFunc: func(ctx context.Context, serverName, toolName string, arguments map[string]any) (*mcp.CallToolResult, error) {
-			return nil, fmt.Errorf("connection failed")
+			return nil, errors.New("connection failed")
 		},
 	}
 

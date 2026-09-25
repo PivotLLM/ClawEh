@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -23,7 +24,7 @@ func NewGatewayCommand() *cobra.Command {
 		SilenceUsage: true,
 		PreRunE: func(_ *cobra.Command, _ []string) error {
 			if noTruncate && !debug {
-				return fmt.Errorf("the --no-truncate option can only be used in conjunction with --debug (-d)")
+				return errors.New("the --no-truncate option can only be used in conjunction with --debug (-d)")
 			}
 
 			if noTruncate {

@@ -1,8 +1,5 @@
-// ClawEh - Personal AI Assistant
-// Inspired by and based on nanobot: https://github.com/HKUDS/nanobot
+// ClawEh
 // License: MIT
-//
-// Copyright (c) 2026 PicoClaw contributors
 
 package agent
 
@@ -10,7 +7,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/base64"
-	"fmt"
+	"encoding/hex"
 	"io"
 	"os"
 	"path/filepath"
@@ -21,6 +18,7 @@ import (
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/media"
 	"github.com/PivotLLM/ClawEh/providers"
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 // resolveMediaRefs resolves media:// refs in messages.
@@ -153,7 +151,7 @@ func encodeImageToDataURL(localPath, mime string, info os.FileInfo, maxSize int)
 		return ""
 	}
 
-	f, err := os.Open(localPath)
+	f, err := os.Open(localPath) //nolint:gosec // path comes from the media store's own ref map (FileMediaStore.Resolve)
 	if err != nil {
 		logger.WarnCF("agent", "Failed to open media file", map[string]any{
 			"path":  localPath,
@@ -161,7 +159,7 @@ func encodeImageToDataURL(localPath, mime string, info os.FileInfo, maxSize int)
 		})
 		return ""
 	}
-	defer f.Close()
+	defer utils.CloseQuietly(f)
 
 	prefix := "data:" + mime + ";base64,"
 	encodedLen := base64.StdEncoding.EncodedLen(int(info.Size()))
@@ -177,7 +175,13 @@ func encodeImageToDataURL(localPath, mime string, info os.FileInfo, maxSize int)
 		})
 		return ""
 	}
-	encoder.Close()
+	if err := encoder.Close(); err != nil {
+		logger.WarnCF("agent", "Failed to flush media encoder", map[string]any{
+			"path":  localPath,
+			"error": err.Error(),
+		})
+		return ""
+	}
 
 	return buf.String()
 }
@@ -206,11 +210,11 @@ func buildAttachment(filename, localPath string, info os.FileInfo) providers.Mes
 		att.Filename = filepath.Base(localPath)
 	}
 	// Compute SHA256 of file content.
-	if f, err := os.Open(localPath); err == nil {
-		defer f.Close()
+	if f, err := os.Open(localPath); err == nil { //nolint:gosec // path comes from the media store's own ref map (FileMediaStore.Resolve)
+		defer utils.CloseQuietly(f)
 		h := sha256.New()
 		if _, err := io.Copy(h, f); err == nil {
-			att.SHA256 = fmt.Sprintf("%x", h.Sum(nil))
+			att.SHA256 = hex.EncodeToString(h.Sum(nil))
 		}
 	}
 	return att

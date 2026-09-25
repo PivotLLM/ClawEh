@@ -84,10 +84,8 @@ func TestDispatcher_ModelHintPassthrough(t *testing.T) {
 func TestDispatcher_MapsUsageAndModel(t *testing.T) {
 	runner := &stubRunner{res: &global.SyncResult{
 		Content: "the answer", Iterations: 4,
-		TurnUsage: global.TurnUsage{
-			Model: "claude-x", Provider: "anthropic",
-			InputTokens: 1200, OutputTokens: 300, CacheReadTokens: 50, CacheCreationTokens: 7, CostUSD: 0.42,
-		},
+		Model: "claude-x", Provider: "anthropic",
+		InputTokens: 1200, OutputTokens: 300, CacheReadTokens: 50, CacheCreationTokens: 7, CostUSD: 0.42,
 	}}
 	d := &dispatcher{run: runner}
 
@@ -110,7 +108,10 @@ func TestDispatcher_MapsUsageAndModel(t *testing.T) {
 
 	// A run that did not report its model falls back to the synthetic label.
 	runner.res.Model = ""
-	res, _ = d.Dispatch(context.Background(), &mllm.DispatchRequest{Prompt: "p"})
+	res, err = d.Dispatch(context.Background(), &mllm.DispatchRequest{Prompt: "p"})
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
 	if res.ProviderModel != hostProviderModel {
 		t.Errorf("unreported model → %q, want %q", res.ProviderModel, hostProviderModel)
 	}
@@ -189,7 +190,10 @@ func TestDispatcher_NoTimeoutWhenUnset(t *testing.T) {
 	d := &dispatcher{run: runner}
 	done := make(chan *mllm.DispatchResult, 1)
 	go func() {
-		res, _ := d.Dispatch(ctx, &mllm.DispatchRequest{Prompt: "p"})
+		res, err := d.Dispatch(ctx, &mllm.DispatchRequest{Prompt: "p"})
+		if err != nil {
+			t.Errorf("Dispatch: %v", err)
+		}
 		done <- res
 	}()
 	select {

@@ -1,7 +1,5 @@
-// ClawEh - Personal AI Assistant
+// ClawEh
 // License: MIT
-//
-// Copyright (c) 2026 PicoClaw contributors
 
 package providers
 
@@ -249,7 +247,9 @@ func TestCreateProviderFromConfig_RequestTimeoutPropagation(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(1500 * time.Millisecond)
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"},"finish_reason":"stop"}]}`))
+		if _, err := w.Write([]byte(`{"choices":[{"message":{"content":"ok"},"finish_reason":"stop"}]}`)); err != nil {
+			t.Errorf("write response: %v", err)
+		}
 	}))
 	defer server.Close()
 

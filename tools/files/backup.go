@@ -47,7 +47,7 @@ func backupExistingFile(fsys fileSystem, path string) (string, error) {
 	}
 
 	const maxAttempts = 100
-	for attempt := 0; attempt < maxAttempts; attempt++ {
+	for attempt := range maxAttempts {
 		suffix := next + attempt
 		if suffix > 9999 {
 			return "", fmt.Errorf("backup: suffix range exhausted for %q (max .9999 in use)", base)

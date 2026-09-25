@@ -26,7 +26,11 @@ func TestDeviceChannelEmptyAllowFromAllowsPairedDevice(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDeviceChannel: %v", err)
 	}
-	defer func() { _ = dc.Stop(context.Background()) }()
+	defer func() {
+		if stopErr := dc.Stop(context.Background()); stopErr != nil {
+			t.Errorf("Stop: %v", stopErr)
+		}
+	}()
 
 	if !dc.IsAllowedSender(deviceSender("dev1")) {
 		t.Fatal("empty allow_from should allow a paired device, but the sender was rejected")
@@ -43,7 +47,11 @@ func TestDeviceChannelExplicitAllowFromRestricts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDeviceChannel: %v", err)
 	}
-	defer func() { _ = dc.Stop(context.Background()) }()
+	defer func() {
+		if stopErr := dc.Stop(context.Background()); stopErr != nil {
+			t.Errorf("Stop: %v", stopErr)
+		}
+	}()
 
 	if dc.IsAllowedSender(deviceSender("someone-else")) {
 		t.Fatal("a device not in an explicit allow_from must be rejected")

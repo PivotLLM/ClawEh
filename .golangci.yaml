@@ -28,55 +28,47 @@ linters:
     - wsl
     - wsl_v5
 
-    # Deferred deliberately, with reasons. Re-enabling any of these is a
-    # project rather than a cleanup:
+    # Not adopted (decision, 2026-09-19). Counts are what each reported when
+    # measured; they are here so nobody re-measures to re-open the question.
     #
-    # gocyclo: 36 functions exceed the threshold, topped by
-    #   (*AgentLoop).runLLMIteration at complexity 135. Refactoring those is a
-    #   behavioural change to the agent loop, not a lint fix.
-    # errcheck (1197) / gosec (420): both worth doing, both large enough to
-    #   need their own branch and review.
-    # revive: configured enable-all-rules below, which yields ~1970 hits. Needs
-    #   a curated rule set before it is useful.
-    # goconst (1497) / mnd (340) / lll (198) / paralleltest (2460): high-volume
-    #   style opinions the project has not adopted.
-    # gochecknoinits: every hit is a channel's init.go self-registering with the
-    #   channel registry (plus logger). That is the plugin pattern the package
-    #   layout is built on; removing it means reworking channel registration.
-    # nilnil: the production hits would each need a new sentinel error, which is
-    #   an API change per call site, not a cleanup.
-    # unparam: mostly test helpers with deliberately uniform signatures, plus
-    #   always-nil error returns kept for interface symmetry. Worth a pass, but
-    #   it changes function signatures, so not alongside a config change.
-    - gochecknoinits
-    - nilnil
-    - unparam
-    - contextcheck
-    - embeddedstructfieldcheck
-    - errcheck
-    - errchkjson
+    # paralleltest (2272), goconst (1480), lll (489), mnd (316), tagalign (125):
+    #   volume style opinions the project does not hold.
+    # forbidigo (257): the CLI commands print by design.
+    # revive with enable-all-rules (~1970): needs a curated rule set to be
+    #   useful; enable-all is not a signal.
+    # gochecknoinits (10): every hit is a channel's init.go self-registering
+    #   with the channel registry (plus logger). That is the plugin pattern the
+    #   package layout is built on.
+    # godox (2): both hits are prose comments where line wrapping put the word
+    #   "bug" at the start of a line, not work items.
     - forbidigo
-    - forcetypeassert
-    - funlen
-    - gocognit
+    - gochecknoinits
     - goconst
-    - gocyclo
     - godox
-    - gosec
-    - ineffassign
     - lll
-    - maintidx
     - mnd
-    - modernize
-    - nestif
     - paralleltest
-    - perfsprint
     - revive
     - tagalign
+
+    # Still open. Each is its own branch, because each changes signatures or
+    # restructures functions rather than fixing a line:
+    #
+    # funlen (20), gocyclo (3), gocognit (54), nestif (49), maintidx (10):
+    #   complexity; the agent loop and installers dominate.
+    # unparam (25): unused parameters and always-nil returns kept for interface
+    #   symmetry; every fix is a signature change.
+    # nilnil (10): each production hit needs a sentinel error, an API change.
+    # embeddedstructfieldcheck (30), testifylint (98): mechanical, one pass each.
+    - embeddedstructfieldcheck
+    - funlen
+    - gocognit
+    - gocyclo
+    - maintidx
+    - nestif
+    - nilnil
     - testifylint
-    - thelper
-    - usestdlibvars
-    - usetesting
+    - unparam
   settings:
     errcheck:
       check-type-assertions: true
@@ -97,6 +89,19 @@ linters:
         - elseif
     gocyclo:
       min-complexity: 20
+    gosec:
+      excludes:
+        # G104 (unhandled errors) is the same check as errcheck; one linter
+        # is enough for it.
+        - G104
+        # G301/G302/G306 want 0750/0600 on every directory and file. ClawEh's
+        # modes are deliberate: workspaces, config, logs and media are read by
+        # the user, editors and other tools, and the pid file by `claw status`
+        # possibly under another account. Private material (tokens, secrets)
+        # is already written 0600. Decision, not a deferral.
+        - G301
+        - G302
+        - G306
     govet:
       enable-all: true
       disable:
@@ -104,6 +109,12 @@ linters:
     lll:
       line-length: 120
       tab-width: 4
+    modernize:
+      # omitzero on nested struct fields would start omitting zero-valued
+      # sections from saved config.json and the status API; omitempty is a
+      # no-op there today and that output is a contract.
+      disable:
+        - omitzero
     misspell:
       # No locale. Canadian English takes British -our/-re ("behaviour",
       # "centre") but American -ize ("synthesized"), so neither US nor UK fits:
@@ -168,6 +179,11 @@ linters:
           - maintidx
           - gocognit
           - gocyclo
+        path: _test\.go$
+      # Tests read their own fixtures, run fixed commands and use fake keys;
+      # gosec on them is noise that would need a directive per line.
+      - linters:
+          - gosec
         path: _test\.go$
 
 issues:

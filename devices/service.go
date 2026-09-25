@@ -6,6 +6,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tenebris-tech/alerter"
+
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/constants"
 	"github.com/PivotLLM/ClawEh/devices/events"
@@ -18,6 +20,7 @@ type Service struct {
 	bus     *bus.MessageBus
 	state   *state.Manager
 	sources []events.EventSource
+	alerter alerter.Alerter
 	enabled bool
 	ctx     context.Context
 	cancel  context.CancelFunc
@@ -27,14 +30,21 @@ type Service struct {
 type Config struct {
 	Enabled    bool
 	MonitorUSB bool // When true, monitor USB hotplug (Linux only)
+	// Alerter receives operator alerts for sources that fail to start; nil
+	// means none.
+	Alerter alerter.Alerter
 	// Future: MonitorBluetooth, MonitorPCI, etc.
 }
 
 func NewService(cfg Config, stateMgr *state.Manager) *Service {
 	s := &Service{
 		state:   stateMgr,
+		alerter: cfg.Alerter,
 		enabled: cfg.Enabled,
 		sources: make([]EventSource, 0),
+	}
+	if s.alerter == nil {
+		s.alerter = alerter.Nop{}
 	}
 
 	if cfg.Enabled && cfg.MonitorUSB {
@@ -59,18 +69,25 @@ func (s *Service) Start(ctx context.Context) error {
 		return nil
 	}
 
-	s.ctx, s.cancel = context.WithCancel(ctx)
+	svcCtx, cancel := context.WithCancel(ctx)
+	s.ctx, s.cancel = svcCtx, cancel
 
 	for _, src := range s.sources {
-		eventCh, err := src.Start(s.ctx)
+		eventCh, err := src.Start(svcCtx)
 		if err != nil {
 			logger.ErrorCF("devices", "Failed to start source", map[string]any{
 				"kind":  src.Kind(),
 				"error": err.Error(),
 			})
+			s.alerter.Send(alerter.Alert{
+				Title:       "Device source not started",
+				Description: string(src.Kind()) + ": device events from this source are unavailable",
+				Details:     err.Error(),
+				EventID:     "devices:" + string(src.Kind()),
+			})
 			continue
 		}
-		go s.handleEvents(src.Kind(), eventCh)
+		go s.handleEvents(svcCtx, src.Kind(), eventCh)
 		logger.InfoCF("devices", "Device source started", map[string]any{
 			"kind": src.Kind(),
 		})
@@ -90,22 +107,24 @@ func (s *Service) Stop() {
 	}
 
 	for _, src := range s.sources {
-		src.Stop()
+		if err := src.Stop(); err != nil {
+			logger.WarnCF("devices", "Failed to stop device source", map[string]any{"error": err.Error()})
+		}
 	}
 
 	logger.InfoC("devices", "Device event service stopped")
 }
 
-func (s *Service) handleEvents(kind events.Kind, eventCh <-chan *events.DeviceEvent) {
+func (s *Service) handleEvents(ctx context.Context, kind events.Kind, eventCh <-chan *events.DeviceEvent) {
 	for ev := range eventCh {
 		if ev == nil {
 			continue
 		}
-		s.sendNotification(ev)
+		s.sendNotification(ctx, ev)
 	}
 }
 
-func (s *Service) sendNotification(ev *events.DeviceEvent) {
+func (s *Service) sendNotification(ctx context.Context, ev *events.DeviceEvent) {
 	s.mu.RLock()
 	msgBus := s.bus
 	s.mu.RUnlock()
@@ -128,13 +147,21 @@ func (s *Service) sendNotification(ev *events.DeviceEvent) {
 	}
 
 	msg := ev.FormatMessage()
-	pubCtx, pubCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	pubCtx, pubCancel := context.WithTimeout(ctx, 5*time.Second)
 	defer pubCancel()
-	msgBus.PublishOutbound(pubCtx, bus.OutboundMessage{
+	if err := msgBus.PublishOutbound(pubCtx, bus.OutboundMessage{
 		Channel: platform,
 		ChatID:  userID,
 		Content: msg,
-	})
+	}); err != nil {
+		logger.WarnCF("devices", "Failed to publish device notification", map[string]any{
+			"kind":   ev.Kind,
+			"action": ev.Action,
+			"to":     platform,
+			"error":  err.Error(),
+		})
+		return
+	}
 
 	logger.InfoCF("devices", "Device notification sent", map[string]any{
 		"kind":   ev.Kind,

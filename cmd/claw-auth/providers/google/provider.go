@@ -8,7 +8,9 @@ package google
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -74,7 +76,7 @@ func (p *Provider) SupportsAuthorizationCode() bool {
 
 func (p *Provider) ValidateConfiguration(config *providers.ServiceConfig) error {
 	if config.ClientID == "" {
-		return fmt.Errorf("client_id is required for Google OAuth")
+		return errors.New("client_id is required for Google OAuth")
 	}
 
 	// ClientSecret is deliberately not required: the device flow does not use one.
@@ -82,10 +84,10 @@ func (p *Provider) ValidateConfiguration(config *providers.ServiceConfig) error 
 
 	// Validate scopes format
 	if config.Scopes != "" {
-		scopes := strings.Fields(config.Scopes)
-		for _, scope := range scopes {
+		scopes := strings.FieldsSeq(config.Scopes)
+		for scope := range scopes {
 			if scope == "" {
-				return fmt.Errorf("empty scope found in configuration")
+				return errors.New("empty scope found in configuration")
 			}
 			if !strings.HasPrefix(scope, "https://www.googleapis.com/auth/") {
 				return fmt.Errorf("invalid Google scope format: %s", scope)
@@ -131,7 +133,7 @@ func (p *Provider) ProcessTokenResponse(response map[string]any) (*providers.Tok
 	if accessToken, ok := response["access_token"].(string); ok {
 		tokenInfo.AccessToken = accessToken
 	} else {
-		return nil, fmt.Errorf("access_token not found in response")
+		return nil, errors.New("access_token not found in response")
 	}
 
 	// Extract token type (usually "Bearer")
@@ -167,7 +169,7 @@ func (p *Provider) ProcessTokenResponse(response map[string]any) (*providers.Tok
 }
 
 func (p *Provider) GetUserInfo(ctx context.Context, token *providers.TokenInfo) (*providers.UserInfo, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", "https://www.googleapis.com/oauth2/v2/userinfo", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://www.googleapis.com/oauth2/v2/userinfo", nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create user info request: %w", err)
 	}
@@ -181,7 +183,7 @@ func (p *Provider) GetUserInfo(ctx context.Context, token *providers.TokenInfo) 
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user info: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer closeBody(resp)
 
 	// Log the response if debug is enabled
 	debug.LogHTTPResponse(resp)
@@ -245,11 +247,11 @@ func (p *Provider) GetExtendedScopes() map[string][]string {
 // ValidateToken validates a Google OAuth token by making a test API call
 func (p *Provider) ValidateToken(ctx context.Context, token *providers.TokenInfo) error {
 	// Use the tokeninfo endpoint to validate the token
-	tokenInfoURL := "https://oauth2.googleapis.com/tokeninfo"
+	tokenInfoURL := "https://oauth2.googleapis.com/tokeninfo" //nolint:gosec // public tokeninfo endpoint URL, not a credential
 	values := url.Values{}
 	values.Set("access_token", token.AccessToken)
 
-	req, err := http.NewRequestWithContext(ctx, "POST", tokenInfoURL, strings.NewReader(values.Encode()))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenInfoURL, strings.NewReader(values.Encode()))
 	if err != nil {
 		return fmt.Errorf("failed to create token validation request: %w", err)
 	}
@@ -263,7 +265,7 @@ func (p *Provider) ValidateToken(ctx context.Context, token *providers.TokenInfo
 	if err != nil {
 		return fmt.Errorf("failed to validate token: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer closeBody(resp)
 
 	// Log the response if debug is enabled
 	debug.LogHTTPResponse(resp)
@@ -285,4 +287,11 @@ func (p *Provider) ValidateToken(ctx context.Context, token *providers.TokenInfo
 
 	// Additional validation could be performed here
 	return nil
+}
+
+// closeBody closes the response body and logs the error when debug is on.
+func closeBody(resp *http.Response) {
+	if err := resp.Body.Close(); err != nil && debug.Debug {
+		log.Printf("close failed: %v", err)
+	}
 }

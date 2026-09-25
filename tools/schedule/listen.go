@@ -79,9 +79,7 @@ func (t *CronTool) StartListeners(ctx context.Context) {
 	if t.listenKick == nil {
 		t.listenKick = make(chan struct{}, 1)
 	}
-	t.listenWG.Add(1)
-	go func() {
-		defer t.listenWG.Done()
+	t.listenWG.Go(func() {
 		t.reconcileListeners(supCtx)
 		ticker := time.NewTicker(listenReconcileInterval)
 		defer ticker.Stop()
@@ -95,7 +93,7 @@ func (t *CronTool) StartListeners(ctx context.Context) {
 				t.reconcileListeners(supCtx)
 			}
 		}
-	}()
+	})
 }
 
 // kickListeners asks the supervisor to reconcile now rather than at the next
@@ -220,9 +218,13 @@ func (t *CronTool) runListener(ctx context.Context, job *cron.CronJob) {
 				"id": job.ID, "tool": w.Tool, "failures": failures, "error": err.Error(),
 			})
 			if failures == watchFailureNotifyThreshold {
-				t.deliver(ctx, job, cronmsg.BuildEvent(time.Now(), fmt.Sprintf(
+				if _, derr := t.deliver(ctx, job, cronmsg.BuildEvent(time.Now(), fmt.Sprintf(
 					"Listener %q has failed %d times in a row calling %q and is not receiving events. Last error: %v",
-					job.Name, failures, w.Tool, err), w.Tool, ""))
+					job.Name, failures, w.Tool, err), w.Tool, "")); derr != nil {
+					logger.WarnCF("cron", "listen: failure notice not delivered", map[string]any{
+						"id": job.ID, "tool": w.Tool, "reason": derr.Error(),
+					})
+				}
 			}
 			if !sleepCtx(ctx, listenBackoff(failures)) {
 				return
@@ -238,9 +240,9 @@ func (t *CronTool) runListener(ctx context.Context, job *cron.CronJob) {
 				// delivery that fails (bus closed, or full for five seconds) is
 				// logged and the event stays undelivered, so a source that
 				// replays it on the next call gets it through.
-				if out := t.deliver(ctx, job, cronmsg.BuildEvent(time.Now(), job.Payload.Message, w.Tool, result)); out != "ok" {
+				if _, derr := t.deliver(ctx, job, cronmsg.BuildEvent(time.Now(), job.Payload.Message, w.Tool, result)); derr != nil {
 					logger.WarnCF("cron", "listen: event not delivered", map[string]any{
-						"id": job.ID, "tool": w.Tool, "reason": out,
+						"id": job.ID, "tool": w.Tool, "reason": derr.Error(),
 					})
 				} else {
 					lastDigest = digest

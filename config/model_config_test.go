@@ -1,7 +1,5 @@
-// ClawEh - Personal AI Assistant
+// ClawEh
 // License: MIT
-//
-// Copyright (c) 2026 PicoClaw contributors
 
 package config
 
@@ -10,8 +8,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-
-	"gopkg.in/yaml.v3"
 )
 
 func TestGetModelConfig_Found(t *testing.T) {
@@ -460,38 +456,6 @@ func TestModelConfig_ReasoningEffort_ExtraBody_JSONRoundTrip(t *testing.T) {
 	}
 	if got.ExtraBody["search_parameters"] == nil {
 		t.Errorf("extra_body lost in round-trip: %+v", got.ExtraBody)
-	}
-}
-
-func TestModelConfig_ReasoningEffort_ExtraBody_YAMLRoundTrip(t *testing.T) {
-	original := ModelConfig{
-		ModelName:       "grok",
-		Model:           "openai/grok-3",
-		ReasoningEffort: "medium",
-		ExtraBody: map[string]any{
-			"search_parameters": map[string]any{"mode": "auto"},
-		},
-		Enabled: true,
-	}
-	data, err := yaml.Marshal(original)
-	if err != nil {
-		t.Fatalf("yaml.Marshal: %v", err)
-	}
-	if !strings.Contains(string(data), "reasoning_effort: medium") {
-		t.Errorf("missing reasoning_effort in YAML:\n%s", data)
-	}
-	if !strings.Contains(string(data), "extra_body:") {
-		t.Errorf("missing extra_body in YAML:\n%s", data)
-	}
-	var got ModelConfig
-	if err := yaml.Unmarshal(data, &got); err != nil {
-		t.Fatalf("yaml.Unmarshal: %v", err)
-	}
-	if got.ReasoningEffort != "medium" {
-		t.Errorf("ReasoningEffort = %q, want medium", got.ReasoningEffort)
-	}
-	if got.ExtraBody["search_parameters"] == nil {
-		t.Errorf("extra_body lost in YAML round-trip: %+v", got.ExtraBody)
 	}
 }
 

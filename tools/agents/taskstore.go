@@ -5,7 +5,8 @@ package agents
 
 import (
 	"encoding/json"
-	"fmt"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/PivotLLM/ClawEh/global"
+	"github.com/PivotLLM/ClawEh/logger"
 )
 
 // Task statuses persisted in <uuid>-status.json.
@@ -140,12 +142,17 @@ func markRun(dir, uuid string) error {
 
 // clearRun deletes the <uuid>.run marker (idempotent).
 func clearRun(dir, uuid string) {
-	_ = os.Remove(runPath(dir, uuid))
+	if err := os.Remove(runPath(dir, uuid)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		logger.WarnCF("subagent", "failed to clear run marker", map[string]any{"uuid": uuid, "error": err.Error()})
+	}
 }
 
 // listRunUUIDs returns the uuids that currently have a .run marker.
 func listRunUUIDs(dir string) []string {
-	matches, _ := filepath.Glob(filepath.Join(dir, "*"+runSuf))
+	matches, err := filepath.Glob(filepath.Join(dir, "*"+runSuf))
+	if err != nil {
+		return nil
+	}
 	out := make([]string, 0, len(matches))
 	for _, m := range matches {
 		base := filepath.Base(m)
@@ -156,7 +163,10 @@ func listRunUUIDs(dir string) []string {
 
 // listStatusRecords returns every task record in the directory, newest first.
 func listStatusRecords(dir string) []*TaskRecord {
-	matches, _ := filepath.Glob(filepath.Join(dir, "*"+statusSuf))
+	matches, err := filepath.Glob(filepath.Join(dir, "*"+statusSuf))
+	if err != nil {
+		return nil
+	}
 	recs := make([]*TaskRecord, 0, len(matches))
 	for _, m := range matches {
 		base := filepath.Base(m)
@@ -187,6 +197,6 @@ func errResults(rec *TaskRecord, msg string) *TaskResults {
 		Name:       rec.Name,
 		Status:     StatusError,
 		FinishedAt: rec.FinishedAt,
-		Content:    fmt.Sprintf("Error: %s", msg),
+		Content:    "Error: " + msg,
 	}
 }

@@ -28,7 +28,9 @@ func TestBraveSearchProvider_Search_Success(t *testing.T) {
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			t.Errorf("encode response: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -54,7 +56,9 @@ func TestBraveSearchProvider_Search_Success(t *testing.T) {
 func TestBraveSearchProvider_Search_NoResults(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"web":{"results":[]}}`))
+		if _, err := w.Write([]byte(`{"web":{"results":[]}}`)); err != nil {
+			t.Errorf("write response: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -77,7 +81,9 @@ func TestBraveSearchProvider_Search_NoResults(t *testing.T) {
 func TestBraveSearchProvider_Search_NonRetryableError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte("bad request"))
+		if _, err := w.Write([]byte("bad request")); err != nil {
+			t.Errorf("write response: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -120,7 +126,9 @@ func TestTavilySearchProvider_Search_Success(t *testing.T) {
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			t.Errorf("encode response: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -142,7 +150,9 @@ func TestTavilySearchProvider_Search_Success(t *testing.T) {
 func TestTavilySearchProvider_Search_NoResults(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"results":[]}`))
+		if _, err := w.Write([]byte(`{"results":[]}`)); err != nil {
+			t.Errorf("write response: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -206,7 +216,9 @@ func TestGLMSearchProvider_Search_Success(t *testing.T) {
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			t.Errorf("encode response: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -228,7 +240,9 @@ func TestGLMSearchProvider_Search_Success(t *testing.T) {
 func TestGLMSearchProvider_Search_NoResults(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"search_result":[]}`))
+		if _, err := w.Write([]byte(`{"search_result":[]}`)); err != nil {
+			t.Errorf("write response: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -250,7 +264,9 @@ func TestGLMSearchProvider_Search_NoResults(t *testing.T) {
 func TestGLMSearchProvider_Search_HTTPError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte("unauthorized"))
+		if _, err := w.Write([]byte("unauthorized")); err != nil {
+			t.Errorf("write response: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -269,7 +285,9 @@ func TestGLMSearchProvider_Search_HTTPError(t *testing.T) {
 func TestGLMSearchProvider_Search_InvalidJSON(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("not json"))
+		if _, err := w.Write([]byte("not json")); err != nil {
+			t.Errorf("write response: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -296,7 +314,9 @@ func TestDuckDuckGoSearchProvider_Search_Success(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
-		w.Write([]byte(html))
+		if _, err := w.Write([]byte(html)); err != nil {
+			t.Errorf("write response: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -330,7 +350,9 @@ func TestDuckDuckGoSearchProvider_Search_HTTPError(t *testing.T) {
 
 	// The error here is from resp.Body read failure or the extractResults fallback.
 	// Either way it shouldn't panic.
-	_, _ = p.Search(context.Background(), "test", 5)
+	if _, err := p.Search(context.Background(), "test", 5); err != nil {
+		t.Logf("search returned error (acceptable, must not panic): %v", err)
+	}
 }
 
 // rewriteTransport rewrites all requests to the given base URL.

@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -149,6 +150,28 @@ func (r *ToolRegistry) RegisterHiddenGroup(tool Tool, group string, revealTogeth
 	logger.DebugCF("tools", "Registered hidden tool", map[string]any{"name": name, "group": group})
 }
 
+// RemoveByPrefix removes every registered tool, visible or hidden, whose name
+// starts with prefix, and returns how many were removed. The version is bumped
+// when anything was removed so cached definitions and search indexes rebuild.
+// Used to drop an upstream MCP server's tools ("mcp_<server>_") as a set before
+// re-registering its current list, so a renamed or removed tool disappears.
+func (r *ToolRegistry) RemoveByPrefix(prefix string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	removed := 0
+	for name := range r.tools {
+		if strings.HasPrefix(name, prefix) {
+			delete(r.tools, name)
+			removed++
+		}
+	}
+	if removed > 0 {
+		r.version.Add(1)
+		logger.DebugCF("tools", "Removed tools by prefix", map[string]any{"prefix": prefix, "count": removed})
+	}
+	return removed
+}
+
 // PromoteTools atomically reveals the named non-core tools with the given TTL,
 // expands to whole reveal-together groups, then prunes the revealed set back to
 // visibleBudget by hiding the lowest-remaining-TTL tools. Holding the lock across
@@ -226,17 +249,16 @@ func (r *ToolRegistry) pruneLocked(visibleBudget int) int {
 	if alwaysOn+len(revealed) <= visibleBudget {
 		return 0
 	}
-	evict := alwaysOn + len(revealed) - visibleBudget
-	if evict > len(revealed) {
-		evict = len(revealed) // core can't be evicted; revealed floor is 0
-	}
+	evict := min(alwaysOn+len(revealed)-visibleBudget,
+		// core can't be evicted; revealed floor is 0
+		len(revealed))
 	sort.Slice(revealed, func(i, j int) bool {
 		if revealed[i].entry.TTL != revealed[j].entry.TTL {
 			return revealed[i].entry.TTL < revealed[j].entry.TTL
 		}
 		return revealed[i].name < revealed[j].name
 	})
-	for i := 0; i < evict; i++ {
+	for i := range evict {
 		revealed[i].entry.TTL = 0
 	}
 	return evict
@@ -490,7 +512,7 @@ func (r *ToolRegistry) executeWithContext(
 			map[string]any{
 				"tool": name,
 			})
-		return ErrorResult(fmt.Sprintf("tool %q not found", name)).WithError(fmt.Errorf("tool not found"))
+		return ErrorResult(fmt.Sprintf("tool %q not found", name)).WithError(errors.New("tool not found"))
 	}
 
 	// Defense-in-depth: check tool allowlist from context before execution.
@@ -637,8 +659,14 @@ func (r *ToolRegistry) ToProviderDefs() []providers.ToolDefinition {
 			continue
 		}
 
-		desc, _ := fn["description"].(string)
-		params, _ := fn["parameters"].(map[string]any)
+		var desc string
+		if v, ok := fn["description"].(string); ok {
+			desc = v
+		}
+		var params map[string]any
+		if v, ok := fn["parameters"].(map[string]any); ok {
+			params = v
+		}
 
 		pubName := name
 		if en, ok := entry.Tool.(ExternalNamer); ok {

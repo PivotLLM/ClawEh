@@ -37,7 +37,9 @@ func TestWhitelistFs_WriteFile_NonMatchingPath_GoesToSandbox(t *testing.T) {
 
 func TestWhitelistFs_ReadDir_NonMatchingPath_GoesToSandbox(t *testing.T) {
 	workspace := t.TempDir()
-	os.WriteFile(filepath.Join(workspace, "indir.txt"), []byte("x"), 0o644)
+	if err := os.WriteFile(filepath.Join(workspace, "indir.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	pattern := regexp.MustCompile(`^/no/match/here$`)
 	tool := NewListDirTool(workspace, true, []*regexp.Regexp{pattern})

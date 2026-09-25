@@ -1,15 +1,14 @@
-// ClawEh - Personal AI Assistant
-// Inspired by and based on nanobot: https://github.com/HKUDS/nanobot
+// ClawEh
 // License: MIT
-//
-// Copyright (c) 2026 PicoClaw contributors
 
 package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -20,6 +19,7 @@ import (
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/routing"
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 func (al *AgentLoop) handleCommand(
@@ -35,12 +35,12 @@ func (al *AgentLoop) handleCommand(
 	if al.cmdRegistry == nil {
 		cmdName, _ := commands.ParseCommandName(msg.Content)
 		if cmdName != "" {
-			return fmt.Sprintf("Unknown command: /%s", cmdName), true
+			return "Unknown command: /" + cmdName, true
 		}
 		return "Unknown command.", true
 	}
 
-	rt := al.buildCommandsRuntime(agent, opts, msg)
+	rt := al.buildCommandsRuntime(ctx, agent, opts, msg)
 	executor := commands.NewExecutor(al.cmdRegistry, rt)
 
 	var commandReply string
@@ -72,7 +72,9 @@ func (al *AgentLoop) handleCommand(
 	}
 }
 
-func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOptions, msg bus.InboundMessage) *commands.Runtime {
+func (al *AgentLoop) buildCommandsRuntime(
+	ctx context.Context, agent *AgentInstance, opts *processOptions, msg bus.InboundMessage,
+) *commands.Runtime {
 	registry := al.GetRegistry()
 	cfg := al.GetConfig()
 	rt := &commands.Runtime{
@@ -100,19 +102,22 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 			if err != nil {
 				return 0, time.Time{}, time.Time{}
 			}
-			defer store.Close()
-			count, first, last, _ := store.Stats()
+			defer utils.CloseQuietly(store)
+			count, first, last, statsErr := store.Stats()
+			if statsErr != nil {
+				logger.WarnCF("agent", "Failed to read archive stats", map[string]any{"path": path, "error": statsErr.Error()})
+			}
 			return count, first, last
 		},
 		GetMemoryStatus: func() string {
 			if agent == nil || opts == nil {
 				return ""
 			}
-			return al.cogmemSessionStatus(agent, opts.SessionKey)
+			return al.cogmemSessionStatus(ctx, agent, opts.SessionKey)
 		},
 		SwitchChannel: func(value string) error {
 			if al.channelManager == nil {
-				return fmt.Errorf("channel manager not initialized")
+				return errors.New("channel manager not initialized")
 			}
 			if _, exists := al.channelManager.GetChannel(value); !exists && value != "cli" {
 				return fmt.Errorf("channel '%s' not found or not enabled", value)
@@ -188,7 +193,7 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 		}
 		rt.SetActiveModel = func(idx int) (string, error) {
 			if opts == nil {
-				return "", fmt.Errorf("process options not available")
+				return "", errors.New("process options not available")
 			}
 			if err := al.setActiveModelIndex(agent, opts.SessionKey, idx); err != nil {
 				return "", err
@@ -226,12 +231,12 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 			al.setShowToolActivity(agent, opts.SessionKey, on)
 		}
 
-		rt.ClearHistory = func() error {
+		rt.ClearHistory = func() error { //nolint:contextcheck // compaction reporter: ctxengine's callback has no context, so it publishes on its own
 			if opts == nil {
-				return fmt.Errorf("process options not available")
+				return errors.New("process options not available")
 			}
 			if agent.Sessions == nil {
-				return fmt.Errorf("sessions not initialized for agent")
+				return errors.New("sessions not initialized for agent")
 			}
 			cm, releaseCM := al.getContextManager(agent, opts.SessionKey)
 			defer releaseCM()
@@ -270,9 +275,9 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 		}
 		rt.CompactHistory = func(ctx context.Context) (string, error) {
 			if opts == nil {
-				return "", fmt.Errorf("process options not available")
+				return "", errors.New("process options not available")
 			}
-			cm, releaseCM := al.getContextManager(agent, opts.SessionKey)
+			cm, releaseCM := al.getContextManager(agent, opts.SessionKey) //nolint:contextcheck // compaction reporter: ctxengine's callback has no context, so it publishes on its own
 			defer releaseCM()
 			err := cm.Compact(ctx)
 			report := ""
@@ -340,18 +345,18 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 		}
 		rt.RetriggerLastMessage = func(ctx context.Context) error {
 			if agent == nil || agent.Sessions == nil || opts == nil {
-				return fmt.Errorf("session not available")
+				return errors.New("session not available")
 			}
 			history := agent.Sessions.GetHistory(opts.SessionKey)
 			lastUserMsg := ""
-			for i := len(history) - 1; i >= 0; i-- {
-				if history[i].Role == "user" && history[i].Content != "" {
-					lastUserMsg = history[i].Content
+			for _, h := range slices.Backward(history) {
+				if h.Role == "user" && h.Content != "" {
+					lastUserMsg = h.Content
 					break
 				}
 			}
 			if lastUserMsg == "" {
-				return fmt.Errorf("no previous message to retry")
+				return errors.New("no previous message to retry")
 			}
 			retrigger := bus.InboundMessage{
 				Channel:  msg.Channel,
@@ -362,7 +367,7 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 				IsRetry:  true,
 			}
 			go func() {
-				pubCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				pubCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 				defer cancel()
 				if err := al.bus.PublishInbound(pubCtx, retrigger); err != nil {
 					logger.WarnCF("agent", "Failed to retrigger message after /retry",

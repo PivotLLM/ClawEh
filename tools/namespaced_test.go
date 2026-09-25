@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/PivotLLM/ClawEh/global"
@@ -20,7 +21,11 @@ func (fakeGlobalProvider) RegisterTools(deps global.Deps) []global.ToolDefinitio
 			},
 			DefaultAllow: global.Allow(true),
 			Handler: func(call *global.ToolCall) (*global.Result, error) {
-				return &global.Result{ForLLM: "read:" + call.Args["path"].(string) + " sess=" + call.Session}, nil
+				path, ok := call.Args["path"].(string)
+				if !ok {
+					return nil, fmt.Errorf("path is %T, want string", call.Args["path"])
+				}
+				return &global.Result{ForLLM: "read:" + path + " sess=" + call.Session}, nil
 			},
 		},
 		{
@@ -63,7 +68,10 @@ func TestNamespacedProvider_ExecuteAndSchema(t *testing.T) {
 	}
 	// Schema generated from []Parameter.
 	schema := readTool.Parameters()
-	props, _ := schema["properties"].(map[string]any)
+	props, ok := schema["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected properties map in schema, got %v", schema)
+	}
 	if _, ok := props["path"]; !ok {
 		t.Fatalf("expected 'path' property in schema, got %v", schema)
 	}

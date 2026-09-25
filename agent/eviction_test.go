@@ -236,11 +236,9 @@ func TestEviction_ConcurrentAccess(t *testing.T) {
 
 	// Spawn goroutines that run eviction passes concurrently.
 	for range 5 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			al.runEvictionPass(time.Millisecond)
-		}()
+		})
 	}
 
 	wg.Wait()

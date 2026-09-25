@@ -208,7 +208,9 @@ func TestDownloadMedia_WritesResponseToTempFile(t *testing.T) {
 			t.Fatalf("unexpected download path: %s", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "image/png")
-		_, _ = w.Write([]byte(wantBody))
+		if _, err := w.Write([]byte(wantBody)); err != nil {
+			t.Errorf("write body: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -229,7 +231,11 @@ func TestDownloadMedia_WritesResponseToTempFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("downloadMedia: %v", err)
 	}
-	defer os.Remove(path)
+	defer func() {
+		if rmErr := os.Remove(path); rmErr != nil {
+			t.Errorf("remove %s: %v", path, rmErr)
+		}
+	}()
 
 	if ext := filepath.Ext(path); ext != ".png" {
 		t.Fatalf("temp file extension=%q want=.png", ext)

@@ -17,6 +17,9 @@ import (
 
 	"github.com/PivotLLM/cogmem/portable"
 	cogmemstore "github.com/PivotLLM/cogmem/store"
+
+	"github.com/PivotLLM/ClawEh/logger"
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 // maxImportBytes caps an uploaded memory document. A real export of the largest
@@ -59,7 +62,7 @@ func (h *Handler) handlePatchMemory(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	defer s.Close()
+	defer utils.CloseQuietly(s)
 
 	var req patchMemoryRequest
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
@@ -71,7 +74,8 @@ func (h *Handler) handlePatchMemory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	memoryID := r.PathValue("memoryID")
-	ctx := context.Background()
+	// Two writes: finish both even if the client hangs up between them.
+	ctx := context.WithoutCancel(r.Context())
 
 	if req.Type != nil {
 		t := cogmemstore.MemoryType(*req.Type)
@@ -128,7 +132,7 @@ func (h *Handler) handleCreateDomain(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	defer s.Close()
+	defer utils.CloseQuietly(s)
 
 	var req createDomainRequest
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
@@ -139,7 +143,7 @@ func (h *Handler) handleCreateDomain(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "name is required", http.StatusBadRequest)
 		return
 	}
-	d, err := s.CreateDomain(context.Background(), s.DB(), cogmemstore.CreateDomainParams{
+	d, err := s.CreateDomain(r.Context(), s.DB(), cogmemstore.CreateDomainParams{
 		Sticky:  req.Sticky,
 		Name:    strings.TrimSpace(req.Name),
 		Status:  cogmemstore.StatusActive,
@@ -181,7 +185,7 @@ func (h *Handler) handleCreateMemory(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	defer s.Close()
+	defer utils.CloseQuietly(s)
 
 	var req createMemoryRequest
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
@@ -197,7 +201,7 @@ func (h *Handler) handleCreateMemory(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unknown memory type", http.StatusBadRequest)
 		return
 	}
-	m, err := s.AddMemory(context.Background(), s.DB(), cogmemstore.AddMemoryParams{
+	m, err := s.AddMemory(r.Context(), s.DB(), cogmemstore.AddMemoryParams{
 		DomainID:   r.PathValue("domainID"),
 		Type:       t,
 		Text:       strings.TrimSpace(req.Text),
@@ -240,7 +244,7 @@ func (h *Handler) handleBulkMemories(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	defer s.Close()
+	defer utils.CloseQuietly(s)
 
 	var req bulkRequest
 	if err := json.NewDecoder(io.LimitReader(r.Body, 8<<20)).Decode(&req); err != nil {
@@ -260,7 +264,8 @@ func (h *Handler) handleBulkMemories(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	ctx := context.Background()
+	// A bulk action runs to completion; a client hang-up must not stop it part way.
+	ctx := context.WithoutCancel(r.Context())
 	resp := bulkResponse{Failed: map[string]string{}}
 	for _, id := range req.IDs {
 		var err error
@@ -309,9 +314,9 @@ func (h *Handler) handleExportMemory(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to open memory store", http.StatusInternalServerError)
 		return
 	}
-	defer s.Close()
+	defer utils.CloseQuietly(s)
 
-	doc, err := portable.Export(context.Background(), s)
+	doc, err := portable.Export(r.Context(), s)
 	if err != nil {
 		http.Error(w, "failed to export memory", http.StatusInternalServerError)
 		return
@@ -324,7 +329,9 @@ func (h *Handler) handleExportMemory(w http.ResponseWriter, r *http.Request) {
 	name := fmt.Sprintf("%s-memory-%s.yaml", id, time.Now().UTC().Format("20060102"))
 	w.Header().Set("Content-Type", "application/yaml; charset=utf-8")
 	w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
-	_, _ = w.Write(out)
+	if _, err := w.Write(out); err != nil { //nolint:gosec // YAML attachment with explicit Content-Type, not HTML
+		logger.DebugCF("api", "response write failed", map[string]any{"error": err.Error()})
+	}
 }
 
 // handleImportMemory loads a YAML document into a store.
@@ -339,7 +346,7 @@ func (h *Handler) handleImportMemory(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	defer s.Close()
+	defer utils.CloseQuietly(s)
 
 	mode := portable.ImportMode(r.URL.Query().Get("mode"))
 	if mode == "" {
@@ -360,7 +367,9 @@ func (h *Handler) handleImportMemory(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	res, err := portable.Import(context.Background(), s, doc, mode)
+	// Import is not transactional (replace mode clears the store first); a
+	// client hang-up must not leave it half applied.
+	res, err := portable.Import(context.WithoutCancel(r.Context()), s, doc, mode)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

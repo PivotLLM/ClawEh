@@ -9,6 +9,7 @@ package secmsg
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -24,6 +25,7 @@ import (
 	"github.com/PivotLLM/ClawEh/identity"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/media"
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 // groupChatPrefix marks an outbound ChatID as a group target. The bus carries
@@ -52,7 +54,7 @@ const discoveryTimeout = 5 * time.Second
 // one channel per account when no accounts are pinned in config.
 func DiscoverAccounts(ctx context.Context, address string) ([]string, error) {
 	if address == "" {
-		return nil, fmt.Errorf("secmsg: address is required")
+		return nil, errors.New("secmsg: address is required")
 	}
 	ctx, cancel := context.WithTimeout(ctx, discoveryTimeout)
 	defer cancel()
@@ -61,7 +63,7 @@ func DiscoverAccounts(ctx context.Context, address string) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("dial: %w", err)
 	}
-	defer cl.Close()
+	defer utils.CloseQuietly(cl)
 
 	all, err := cl.StatusAll(ctx)
 	if err != nil {
@@ -101,7 +103,7 @@ type SecMsgChannel struct {
 // dial; the connection is established (and retried) by Start.
 func NewFromConfig(daemon config.SecMsgConfig, account config.SecMsgAccountConfig, b *bus.MessageBus) (channels.Channel, error) {
 	if daemon.Address == "" {
-		return nil, fmt.Errorf("secmsg: address is required")
+		return nil, errors.New("secmsg: address is required")
 	}
 	base := channels.NewBaseChannel(
 		account.ChannelName(daemon),
@@ -132,7 +134,7 @@ func (c *SecMsgChannel) Stop(_ context.Context) error {
 	c.wg.Wait()
 	c.mu.Lock()
 	if c.client != nil {
-		c.client.Close()
+		utils.CloseQuietly(c.client)
 		c.client = nil
 	}
 	c.mu.Unlock()
@@ -185,7 +187,7 @@ func (c *SecMsgChannel) connectAndConsume() (connected bool, err error) {
 	if err != nil {
 		return false, fmt.Errorf("dial: %w", err)
 	}
-	defer cl.Close()
+	defer utils.CloseQuietly(cl)
 
 	service := cl.Service()
 	account, err := c.resolveAccount(cl, service)
@@ -223,7 +225,7 @@ func (c *SecMsgChannel) connectAndConsume() (connected bool, err error) {
 			return true, nil
 		case env, ok := <-ch:
 			if !ok {
-				return true, fmt.Errorf("subscription closed")
+				return true, errors.New("subscription closed")
 			}
 			c.handleEnvelope(env)
 		}
@@ -429,7 +431,7 @@ func (c *SecMsgChannel) RequestLink(ctx context.Context) (*schema.LinkReply, err
 	if err != nil {
 		return nil, fmt.Errorf("dial: %w", err)
 	}
-	defer cl.Close()
+	defer utils.CloseQuietly(cl)
 	return cl.LinkRequest(ctx, c.linkAccount(), linkDeviceName)
 }
 
@@ -439,7 +441,7 @@ func (c *SecMsgChannel) LinkState(ctx context.Context) (*schema.LinkReply, error
 	if err != nil {
 		return nil, fmt.Errorf("dial: %w", err)
 	}
-	defer cl.Close()
+	defer utils.CloseQuietly(cl)
 	return cl.LinkStatus(ctx, c.linkAccount())
 }
 

@@ -162,7 +162,10 @@ func TestConcurrentPublishClose(t *testing.T) {
 			publishCtx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
 			defer cancel()
 			// Errors are expected; we just must not panic or deadlock
-			_ = mb.PublishInbound(publishCtx, InboundMessage{Content: "concurrent"})
+			err := mb.PublishInbound(publishCtx, InboundMessage{Content: "concurrent"})
+			if err != nil && !errors.Is(err, ErrBusClosed) && !errors.Is(err, context.DeadlineExceeded) {
+				t.Errorf("unexpected publish error: %v", err)
+			}
 		}()
 	}
 

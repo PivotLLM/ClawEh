@@ -11,8 +11,7 @@ import (
 )
 
 func TestHandleGetConfig_ReturnsConfig(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 
 	h := NewHandler(configPath)
 	mux := http.NewServeMux()
@@ -49,8 +48,7 @@ func TestHandleGetConfig_UnreadableConfigReturns500(t *testing.T) {
 }
 
 func TestHandleUpdateConfig_InvalidJSONReturns400(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 
 	h := NewHandler(configPath)
 	mux := http.NewServeMux()
@@ -67,8 +65,7 @@ func TestHandleUpdateConfig_InvalidJSONReturns400(t *testing.T) {
 }
 
 func TestHandleUpdateConfig_ValidationErrorReturns400(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 
 	h := NewHandler(configPath)
 	mux := http.NewServeMux()
@@ -99,8 +96,7 @@ func TestHandleUpdateConfig_ValidationErrorReturns400(t *testing.T) {
 }
 
 func TestHandlePatchConfig_PartialUpdate(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 
 	h := NewHandler(configPath)
 	mux := http.NewServeMux()
@@ -127,8 +123,7 @@ func TestHandlePatchConfig_PartialUpdate(t *testing.T) {
 }
 
 func TestHandlePatchConfig_InvalidJSONReturns400(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 
 	h := NewHandler(configPath)
 	mux := http.NewServeMux()
@@ -145,8 +140,7 @@ func TestHandlePatchConfig_InvalidJSONReturns400(t *testing.T) {
 }
 
 func TestHandlePatchConfig_ValidationFailureReturns400(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 
 	h := NewHandler(configPath)
 	mux := http.NewServeMux()

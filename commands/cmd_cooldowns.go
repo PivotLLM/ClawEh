@@ -95,10 +95,7 @@ func formatCooldownLine(e CooldownEntry, now time.Time) string {
 		parts = append(parts, fmt.Sprintf("since %s (%s ago)", e.Since.Format("15:04:05"), formatShortDur(ago)))
 	}
 	if !e.Until.IsZero() {
-		remaining := e.Until.Sub(now).Round(time.Second)
-		if remaining < 0 {
-			remaining = 0
-		}
+		remaining := max(e.Until.Sub(now).Round(time.Second), 0)
 		parts = append(parts, fmt.Sprintf("until %s (%s)", e.Until.Format("15:04:05"), formatShortDur(remaining)))
 	}
 	return strings.Join(parts, " — ")

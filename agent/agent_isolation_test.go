@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
 
@@ -50,11 +49,7 @@ func TestAgentIsolation_ResolveScopeKeyRejectsMismatchedAgentID(t *testing.T) {
 // validates that the session key belongs to the target agent, falling back to agent's main
 // session key if a mismatch occurs.
 func TestAgentIsolation_ResolveSystemMessageTargetValidation(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "isolation-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
+	tmpDir := t.TempDir()
 
 	cfg := &config.Config{
 		Agents: config.AgentsConfig{
@@ -130,11 +125,7 @@ func TestAgentIsolation_TaskPointerCallbackCarriesOwnerAgent(t *testing.T) {
 // TestAgentIsolation_MentionRoutingSessionScoping tests that mentioning @bob in a message
 // on Alice's channel routes to Bob and correctly scopes to Bob's session key.
 func TestAgentIsolation_MentionRoutingSessionScoping(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "isolation-mention-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
+	tmpDir := t.TempDir()
 
 	cfg := &config.Config{
 		AgentMentions: config.AgentMentionConfig{

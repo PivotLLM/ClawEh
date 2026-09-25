@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 // ExistingInstall holds details of a previously installed ClawEh service or binary.
@@ -163,30 +165,30 @@ func parseSystemdUnit(path, serviceType string) *ExistingInstall {
 		ServiceType: serviceType,
 	}
 
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:gosec // fixed candidate service-file paths (systemUnitPath / userPath)
 	if err != nil {
 		return inst
 	}
-	defer func() { _ = f.Close() }()
+	defer utils.CloseQuietly(f)
 
 	var workingDir, pathEnv string
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
-		if strings.HasPrefix(line, "ExecStart=") {
-			val := strings.TrimPrefix(line, "ExecStart=")
+		if after, ok := strings.CutPrefix(line, "ExecStart="); ok {
+			val := after
 			parts := strings.Fields(val)
 			if len(parts) > 0 {
 				inst.BinaryPath = parts[0]
 			}
-		} else if strings.HasPrefix(line, "User=") {
-			inst.User = strings.TrimPrefix(line, "User=")
-		} else if strings.HasPrefix(line, "WorkingDirectory=") {
-			workingDir = strings.Trim(strings.TrimPrefix(line, "WorkingDirectory="), "\"' \t")
-		} else if strings.HasPrefix(line, "Environment=") {
-			envVal := strings.TrimPrefix(line, "Environment=")
-			if idx := strings.Index(envVal, "CLAW_HOME="); idx != -1 {
-				sub := envVal[idx+len("CLAW_HOME="):]
+		} else if after, ok := strings.CutPrefix(line, "User="); ok {
+			inst.User = after
+		} else if after, ok := strings.CutPrefix(line, "WorkingDirectory="); ok {
+			workingDir = strings.Trim(after, "\"' \t")
+		} else if after, ok := strings.CutPrefix(line, "Environment="); ok {
+			envVal := after
+			if _, after, ok := strings.Cut(envVal, "CLAW_HOME="); ok {
+				sub := after
 				if len(sub) > 0 && (sub[0] == '"' || sub[0] == '\'') {
 					q := sub[0]
 					if end := strings.IndexByte(sub[1:], q); end != -1 {
@@ -201,8 +203,8 @@ func parseSystemdUnit(path, serviceType string) *ExistingInstall {
 					}
 				}
 			}
-			if idx := strings.Index(envVal, "PATH="); idx != -1 {
-				pathEnv = envVal[idx+len("PATH="):]
+			if _, after, ok := strings.Cut(envVal, "PATH="); ok {
+				pathEnv = after
 			}
 		}
 	}
@@ -249,7 +251,7 @@ func parseLaunchdPlist(path, serviceType string) *ExistingInstall {
 		ServiceType: serviceType,
 	}
 
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) //nolint:gosec // fixed candidate service-file paths (systemLaunchdPath / userPath)
 	if err != nil {
 		return inst
 	}
@@ -300,8 +302,8 @@ func parseLaunchdPlist(path, serviceType string) *ExistingInstall {
 // isBuildOrTempPath returns true if the path appears to be a build artifact or temp file.
 func isBuildOrTempPath(p string) bool {
 	clean := filepath.Clean(p)
-	parts := strings.Split(clean, string(filepath.Separator))
-	for _, part := range parts {
+	parts := strings.SplitSeq(clean, string(filepath.Separator))
+	for part := range parts {
 		if part == "build" || part == "tmp" || part == "temp" || strings.HasPrefix(part, "claw-upgrade-") {
 			return true
 		}

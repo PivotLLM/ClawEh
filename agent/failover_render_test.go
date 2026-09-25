@@ -79,17 +79,16 @@ func TestFormatFallbackNotice(t *testing.T) {
 // A single notifier de-duplicates identical notices across a turn: a primary that
 // fails over the same way on every tool iteration posts its heads-up once.
 func TestFallbackNotifier_DedupsAcrossTurn(t *testing.T) {
-	al, _, msgBus, _, cleanup := newTestAgentLoop(t)
-	defer cleanup()
+	tl := newTestAgentLoop(t)
+	al, msgBus := tl.al, tl.msgBus
 
-	notifier := al.fallbackNotifier(processOptions{Channel: "test", ChatID: "chat"})
+	notifier := al.fallbackNotifier(context.Background(), processOptions{Channel: "test", ChatID: "chat"})
 	if notifier == nil {
 		t.Fatal("expected a notifier")
 	}
 
 	collected := make(chan bus.OutboundMessage, 16)
-	subCtx, subCancel := context.WithCancel(context.Background())
-	defer subCancel()
+	subCtx := t.Context()
 	go func() {
 		for {
 			msg, ok := msgBus.SubscribeOutbound(subCtx)

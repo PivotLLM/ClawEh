@@ -8,9 +8,11 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"os/user"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -22,6 +24,8 @@ import (
 	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/internal"
 	"github.com/PivotLLM/ClawEh/internal/network"
+	"github.com/PivotLLM/ClawEh/logger"
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 const (
@@ -268,8 +272,12 @@ func runInstall(host string, port int, allowedCIDRs, targetUser, customBinDir st
 	clawHome := resolveClawHome(tu, binDir, existing)
 
 	// Explicitly set CLAW_HOME in process environment so any config access or helper uses clawHome
-	_ = os.Setenv(global.EnvVarHome, clawHome)
-	_ = os.Setenv("CLAW_HOME", clawHome)
+	if envErr := os.Setenv(global.EnvVarHome, clawHome); envErr != nil {
+		return fmt.Errorf("setting %s: %w", global.EnvVarHome, envErr)
+	}
+	if envErr := os.Setenv("CLAW_HOME", clawHome); envErr != nil {
+		return fmt.Errorf("setting CLAW_HOME: %w", envErr)
+	}
 
 	// 1. Present installation summary and prompt for confirmation
 	fmt.Printf("\n%s Installation Summary:\n", app.Name())
@@ -682,7 +690,10 @@ func ensureUserEnv(tu *TargetUser, binDir, clawHome string) string {
 		return ""
 	}
 
-	data, _ := os.ReadFile(rc)
+	data, err := os.ReadFile(rc) //nolint:gosec // target user's shell rc chosen by the installer (userShellRC)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Sprintf("Could not read %s (%v). Set environment manually.", rc, err)
+	}
 	content := string(data)
 
 	// Check if binDir needs to be added to PATH
@@ -690,11 +701,8 @@ func ensureUserEnv(tu *TargetUser, binDir, clawHome string) string {
 	if binDir == "/usr/local/bin" || binDir == "/usr/bin" || binDir == "/bin" {
 		needPath = false
 	} else {
-		for _, p := range filepath.SplitList(os.Getenv("PATH")) {
-			if p == binDir {
-				needPath = false
-				break
-			}
+		if slices.Contains(filepath.SplitList(os.Getenv("PATH")), binDir) {
+			needPath = false
 		}
 		if strings.Contains(content, binDir) {
 			needPath = false
@@ -728,13 +736,15 @@ func ensureUserEnv(tu *TargetUser, binDir, clawHome string) string {
 		notes = append(notes, fmt.Sprintf("Exported %s=%s in %s", global.EnvVarHome, clawHome, rc))
 	}
 
-	f, err := os.OpenFile(rc, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(rc, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644) //nolint:gosec // user's shell rc file; conventional mode kept
 	if err != nil {
 		return fmt.Sprintf("Could not update %s (%v). Set environment manually.", rc, err)
 	}
-	defer func() { _ = f.Close() }()
-
 	if _, err := f.WriteString(strings.Join(lines, "\n") + "\n"); err != nil {
+		utils.CloseQuietly(f)
+		return fmt.Sprintf("Could not update %s (%v). Set environment manually.", rc, err)
+	}
+	if err := f.Close(); err != nil {
 		return fmt.Sprintf("Could not update %s (%v). Set environment manually.", rc, err)
 	}
 	fixOwnership(rc, tu)
@@ -744,7 +754,10 @@ func ensureUserEnv(tu *TargetUser, binDir, clawHome string) string {
 
 func userShellRC(homeDir string) string {
 	if homeDir == "" {
-		homeDir, _ = os.UserHomeDir()
+		var err error
+		if homeDir, err = os.UserHomeDir(); err != nil {
+			return ""
+		}
 	}
 	switch filepath.Base(os.Getenv("SHELL")) {
 	case "zsh":
@@ -763,7 +776,21 @@ func fixOwnership(path string, tu *TargetUser) {
 	uid, err1 := strconv.Atoi(tu.UID)
 	gid, err2 := strconv.Atoi(tu.GID)
 	if err1 == nil && err2 == nil {
-		_ = os.Chown(path, uid, gid)
+		if err := os.Chown(path, uid, gid); err != nil {
+			fmt.Printf("Warning: could not change ownership of %s (%v).\n", path, err)
+		}
+	}
+}
+
+// runBestEffort runs a command whose failure is expected and harmless, such
+// as unloading a service unit that may not be loaded, and records the failure
+// at debug level so it can be seen when diagnosing an install.
+func runBestEffort(name string, args ...string) {
+	if err := exec.Command(name, args...).Run(); err != nil { //nolint:gosec // fixed launchctl/systemctl binary; args are the installer's own label and unit paths
+		logger.DebugCF("install", "best-effort command failed", map[string]any{
+			"command": name + " " + strings.Join(args, " "),
+			"error":   err.Error(),
+		})
 	}
 }
 
@@ -771,7 +798,7 @@ func copyBinary(src, dst string) error {
 	if src == dst {
 		return nil
 	}
-	data, err := os.ReadFile(src)
+	data, err := os.ReadFile(src) //nolint:gosec // installer copies the running binary to the CLI-chosen destination
 	if err != nil {
 		return err
 	}
@@ -779,7 +806,7 @@ func copyBinary(src, dst string) error {
 }
 
 func dirExists(path string) bool {
-	info, err := os.Stat(path)
+	info, err := os.Stat(path) // #nosec G703 -- install path chosen by the operator on the CLI
 	return err == nil && info.IsDir()
 }
 

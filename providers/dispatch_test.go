@@ -1,7 +1,5 @@
-// ClawEh - Personal AI Assistant
+// ClawEh
 // License: MIT
-//
-// Copyright (c) 2026 PicoClaw contributors
 
 package providers_test
 
@@ -102,7 +100,7 @@ func TestProviderDispatcher_Get_ThreadSafe(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(goroutines)
 
-	for i := 0; i < goroutines; i++ {
+	for range goroutines {
 		go func() {
 			defer wg.Done()
 			p, err := d.Get("concurrent-alias")
@@ -127,17 +125,15 @@ func TestProviderDispatcher_Get_FlushRace(t *testing.T) {
 	var wg sync.WaitGroup
 
 	// Half goroutines call Get, half call Flush.
-	for i := 0; i < 10; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			_, _ = d.Get("race-alias")
-		}()
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 10 {
+		wg.Go(func() {
+			if _, err := d.Get("race-alias"); err != nil {
+				t.Errorf("concurrent Get: %v", err)
+			}
+		})
+		wg.Go(func() {
 			d.Flush(cfg)
-		}()
+		})
 	}
 
 	wg.Wait()
@@ -145,10 +141,13 @@ func TestProviderDispatcher_Get_FlushRace(t *testing.T) {
 
 // Compile-time check: claude-cli provider satisfies LLMProvider.
 var _ providers.LLMProvider = func() providers.LLMProvider {
-	p, _, _ := providers.CreateProviderFromConfig(
+	p, _, err := providers.CreateProviderFromConfig(
 		&config.ModelConfig{Model: "x", Provider: "claude-cli"},
 		&config.Provider{Name: "claude-cli", Protocol: "claude-cli"},
 	)
+	if err != nil {
+		panic(err)
+	}
 	return p
 }()
 
@@ -179,7 +178,7 @@ func TestProviderDispatcher_SingleCreationUnderConcurrentLoad(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(goroutines)
 
-	for i := 0; i < goroutines; i++ {
+	for i := range goroutines {
 		go func() {
 			defer wg.Done()
 			p, err := d.Get("load-alias")

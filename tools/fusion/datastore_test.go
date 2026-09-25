@@ -21,7 +21,11 @@ func newTestStore(t *testing.T) *sqliteDataStore {
 	if !ok {
 		t.Fatalf("NewSQLiteDataStore returned %T, want *sqliteDataStore", ds)
 	}
-	t.Cleanup(func() { _ = s.db.Close() })
+	t.Cleanup(func() {
+		if err := s.db.Close(); err != nil {
+			t.Errorf("close db: %v", err)
+		}
+	})
 	return s
 }
 
@@ -76,7 +80,10 @@ func TestDataStore_CollectionIsolation(t *testing.T) {
 	if string(got) != "oauth-val" {
 		t.Errorf("oauth/k = %q, want oauth-val (collection bleed)", got)
 	}
-	got, _, _ = s.Get(ctx, "creds", "k")
+	got, ok, err = s.Get(ctx, "creds", "k")
+	if err != nil || !ok {
+		t.Fatalf("Get creds: ok=%v err=%v", ok, err)
+	}
 	if string(got) != "creds-val" {
 		t.Errorf("creds/k = %q, want creds-val (collection bleed)", got)
 	}
@@ -108,7 +115,9 @@ func TestDataStore_DeleteIdempotent(t *testing.T) {
 	if err := s.Delete(ctx, "authcodes", "code1"); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	if _, ok, _ := s.Get(ctx, "authcodes", "code1"); ok {
+	if _, ok, err := s.Get(ctx, "authcodes", "code1"); err != nil {
+		t.Fatalf("Get after Delete: %v", err)
+	} else if ok {
 		t.Error("Get after Delete: ok=true, want false")
 	}
 	// Deleting an absent record is not an error.

@@ -1,6 +1,7 @@
 package skills
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 
@@ -52,14 +53,14 @@ func NewSkillsCommand() *cobra.Command {
 
 	installerFn := func() (*skills.SkillInstaller, error) {
 		if d.installer == nil {
-			return nil, fmt.Errorf("skills installer is not initialized")
+			return nil, errors.New("skills installer is not initialized")
 		}
 		return d.installer, nil
 	}
 
 	loaderFn := func() (*skills.SkillsLoader, error) {
 		if d.skillsLoader == nil {
-			return nil, fmt.Errorf("skills loader is not initialized")
+			return nil, errors.New("skills loader is not initialized")
 		}
 		return d.skillsLoader, nil
 	}

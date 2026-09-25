@@ -349,13 +349,11 @@ func TestRunWorker_MessageSplitting(t *testing.T) {
 	var received []string
 
 	ch := &mockChannelWithLength{
-		mockChannel: mockChannel{
-			sendFn: func(_ context.Context, msg bus.OutboundMessage) error {
-				mu.Lock()
-				received = append(received, msg.Content)
-				mu.Unlock()
-				return nil
-			},
+		sendFn: func(_ context.Context, msg bus.OutboundMessage) error {
+			mu.Lock()
+			received = append(received, msg.Content)
+			mu.Unlock()
+			return nil
 		},
 		maxLen: 5,
 	}
@@ -449,11 +447,9 @@ func TestPreSend_PlaceholderEditSuccess(t *testing.T) {
 	var editCalled bool
 
 	ch := &mockMessageEditor{
-		mockChannel: mockChannel{
-			sendFn: func(_ context.Context, _ bus.OutboundMessage) error {
-				sendCalled = true
-				return nil
-			},
+		sendFn: func(_ context.Context, _ bus.OutboundMessage) error {
+			sendCalled = true
+			return nil
 		},
 		editFn: func(_ context.Context, chatID, messageID, content string) error {
 			editCalled = true
@@ -491,13 +487,11 @@ func TestPreSend_PlaceholderEditFails_FallsThrough(t *testing.T) {
 	m := newTestManager()
 
 	ch := &mockMessageEditor{
-		mockChannel: mockChannel{
-			sendFn: func(_ context.Context, _ bus.OutboundMessage) error {
-				return nil
-			},
+		sendFn: func(_ context.Context, _ bus.OutboundMessage) error {
+			return nil
 		},
 		editFn: func(_ context.Context, _, _, _ string) error {
-			return fmt.Errorf("edit failed")
+			return errors.New("edit failed")
 		},
 	}
 
@@ -515,9 +509,7 @@ func TestUpdatePlaceholder_EditsInPlaceWithoutConsuming(t *testing.T) {
 	m := newTestManager()
 	var edits []string
 	ch := &mockMessageEditor{
-		mockChannel: mockChannel{
-			sendFn: func(_ context.Context, _ bus.OutboundMessage) error { return nil },
-		},
+		sendFn: func(_ context.Context, _ bus.OutboundMessage) error { return nil },
 		editFn: func(_ context.Context, _, messageID, content string) error {
 			if messageID != "456" {
 				t.Fatalf("expected placeholder id 456, got %s", messageID)
@@ -550,8 +542,8 @@ func TestUpdatePlaceholder_EditsInPlaceWithoutConsuming(t *testing.T) {
 func TestUpdatePlaceholder_NoPlaceholder(t *testing.T) {
 	m := newTestManager()
 	ch := &mockMessageEditor{
-		mockChannel: mockChannel{sendFn: func(_ context.Context, _ bus.OutboundMessage) error { return nil }},
-		editFn:      func(_ context.Context, _, _, _ string) error { return nil },
+		sendFn: func(_ context.Context, _ bus.OutboundMessage) error { return nil },
+		editFn: func(_ context.Context, _, _, _ string) error { return nil },
 	}
 	m.RegisterChannel("test", ch)
 	if m.UpdatePlaceholder(context.Background(), "test", "123", "x") {
@@ -604,10 +596,8 @@ func TestPreSend_TypingAndPlaceholder(t *testing.T) {
 	var editCalled bool
 
 	ch := &mockMessageEditor{
-		mockChannel: mockChannel{
-			sendFn: func(_ context.Context, _ bus.OutboundMessage) error {
-				return nil
-			},
+		sendFn: func(_ context.Context, _ bus.OutboundMessage) error {
+			return nil
 		},
 		editFn: func(_ context.Context, _, _, _ string) error {
 			editCalled = true
@@ -700,11 +690,9 @@ func TestSendWithRetry_PreSendEditsPlaceholder(t *testing.T) {
 	var sendCalled bool
 
 	ch := &mockMessageEditor{
-		mockChannel: mockChannel{
-			sendFn: func(_ context.Context, _ bus.OutboundMessage) error {
-				sendCalled = true
-				return nil
-			},
+		sendFn: func(_ context.Context, _ bus.OutboundMessage) error {
+			sendCalled = true
+			return nil
 		},
 		editFn: func(_ context.Context, _, _, _ string) error {
 			return nil // edit succeeds
@@ -861,10 +849,8 @@ func TestPreSendStillWorksWithWrappedTypes(t *testing.T) {
 	var editCalled bool
 
 	ch := &mockMessageEditor{
-		mockChannel: mockChannel{
-			sendFn: func(_ context.Context, _ bus.OutboundMessage) error {
-				return nil
-			},
+		sendFn: func(_ context.Context, _ bus.OutboundMessage) error {
+			return nil
 		},
 		editFn: func(_ context.Context, chatID, messageID, content string) error {
 			editCalled = true
@@ -1136,11 +1122,9 @@ func TestSendMessage_WithSplitting(t *testing.T) {
 
 	var received []string
 	ch := &mockChannelWithLength{
-		mockChannel: mockChannel{
-			sendFn: func(_ context.Context, msg bus.OutboundMessage) error {
-				received = append(received, msg.Content)
-				return nil
-			},
+		sendFn: func(_ context.Context, msg bus.OutboundMessage) error {
+			received = append(received, msg.Content)
+			return nil
 		},
 		maxLen: 5,
 	}
@@ -1187,12 +1171,16 @@ func TestSendMessage_PreservesOrdering(t *testing.T) {
 	m.workers["test"] = w
 
 	// Send two messages sequentially — they must arrive in order
-	_ = m.SendMessage(context.Background(), bus.OutboundMessage{
+	if err := m.SendMessage(context.Background(), bus.OutboundMessage{
 		Channel: "test", ChatID: "1", Content: "first",
-	})
-	_ = m.SendMessage(context.Background(), bus.OutboundMessage{
+	}); err != nil {
+		t.Fatalf("SendMessage first: %v", err)
+	}
+	if err := m.SendMessage(context.Background(), bus.OutboundMessage{
 		Channel: "test", ChatID: "1", Content: "second",
-	})
+	}); err != nil {
+		t.Fatalf("SendMessage second: %v", err)
+	}
 
 	if len(order) != 2 {
 		t.Fatalf("expected 2 messages, got %d", len(order))

@@ -33,8 +33,16 @@ func (globalCommonProvider) Description() string {
 func (globalCommonProvider) Available(cfg any) (bool, string) { return true, "" }
 
 func (globalCommonProvider) RegisterTools(deps global.Deps) []global.ToolDefinition {
-	cd, _ := deps.Host.(tools.ToolDeps)
-	c, _ := deps.Cfg.(*config.Config)
+	var (
+		cd tools.ToolDeps
+		c  *config.Config
+	)
+	if v, ok := deps.Host.(tools.ToolDeps); ok {
+		cd = v
+	}
+	if v, ok := deps.Cfg.(*config.Config); ok {
+		c = v
+	}
 
 	// Per-agent gate: an agent that does not share the common directory gets no
 	// common tools at all. cd.AgentCfg is nil for the default agent (shares).

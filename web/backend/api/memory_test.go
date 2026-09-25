@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	cogmemstore "github.com/PivotLLM/cogmem/store"
+
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 // seedCogmemDB creates the agent's memory store (cogmem/cogmem.db) with one active
@@ -31,7 +33,7 @@ func seedCogmemDB(t *testing.T, configPath string) string {
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
-	defer s.Close()
+	defer utils.CloseQuietly(s)
 
 	ctx := context.Background()
 	d, err := s.CreateDomain(ctx, s.DB(), cogmemstore.CreateDomainParams{
@@ -55,8 +57,7 @@ func seedCogmemDB(t *testing.T, configPath string) string {
 }
 
 func TestHandleListMemoryStores(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 
 	id := seedCogmemDB(t, configPath)
 
@@ -113,8 +114,7 @@ func TestSortMemoryStores(t *testing.T) {
 }
 
 func TestHandleGetMemoryStore(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 
 	id := seedCogmemDB(t, configPath)
 
@@ -160,8 +160,7 @@ func TestHandleGetMemoryStore(t *testing.T) {
 }
 
 func TestHandleGetMemoryStore_NotFound(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 
 	h := NewHandler(configPath)
 	mux := http.NewServeMux()
@@ -177,8 +176,7 @@ func TestHandleGetMemoryStore_NotFound(t *testing.T) {
 }
 
 func TestHandleDeleteMemoryAndDomain(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 
 	id := seedCogmemDB(t, configPath)
 	h := NewHandler(configPath)

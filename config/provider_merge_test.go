@@ -64,9 +64,12 @@ func TestLoadConfig_ProviderFlagsDoNotLeakToNeighbours(t *testing.T) {
 	cfg.Models = nil
 
 	path := filepath.Join(t.TempDir(), "config.json")
-	data, _ := json.MarshalIndent(cfg, "", "  ")
-	if err := os.WriteFile(path, data, 0o600); err != nil {
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
 		t.Fatal(err)
+	}
+	if writeErr := os.WriteFile(path, data, 0o600); writeErr != nil {
+		t.Fatal(writeErr)
 	}
 	back, err := LoadConfig(path)
 	if err != nil {

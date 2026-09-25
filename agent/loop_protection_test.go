@@ -12,8 +12,7 @@ import (
 // the model requests the identical tool-call batch on consecutive iterations
 // (the degenerate memory-rewrite loop that hit Wendy).
 func TestLoopProtection_BreaksOnRepeatedToolCall(t *testing.T) {
-	al, _, _, _, cleanup := newTestAgentLoop(t)
-	defer cleanup()
+	al := newTestAgentLoop(t).al
 
 	agentInstance := al.registry.GetDefaultAgent()
 	if agentInstance == nil {
@@ -73,7 +72,10 @@ func TestLoopProtection_BreaksOnRepeatedToolCall(t *testing.T) {
 	}
 	// Before aborting, the model is steered: a later dispatch must carry the
 	// generic "exact same tool call N times" guidance so it can self-correct.
-	sp := agentInstance.Provider.(*sequenceProvider)
+	sp, ok := agentInstance.Provider.(*sequenceProvider)
+	if !ok {
+		t.Fatalf("provider is %T, want *sequenceProvider", agentInstance.Provider)
+	}
 	var steer string
 	for _, m := range sp.lastMessages {
 		if strings.Contains(m.Content, "exact same tool call") {

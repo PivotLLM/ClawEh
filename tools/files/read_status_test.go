@@ -17,7 +17,7 @@ import (
 func TestReadStatusBlock(t *testing.T) {
 	tmpDir := t.TempDir()
 	f := filepath.Join(tmpDir, "doc.txt")
-	if err := os.WriteFile(f, []byte("abcdefghijklmnopqrstuvwxyz"), 0o644); err != nil { // 26 bytes
+	if err := os.WriteFile(f, []byte("abcdefghijklmnopqrstuvwxyz"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	tool := NewReadFileTool(tmpDir, false, MaxReadFileSize)
@@ -75,12 +75,24 @@ func TestReadStatusBlock(t *testing.T) {
 func TestListDir_Recursive(t *testing.T) {
 	ws := t.TempDir()
 	base := filepath.Join(ws, "files")
-	os.MkdirAll(filepath.Join(base, "sub", "deep"), 0o755)
-	os.WriteFile(filepath.Join(base, "top.md"), []byte("x"), 0o644)
-	os.WriteFile(filepath.Join(base, "sub", "a.md"), []byte("x"), 0o644)
-	os.WriteFile(filepath.Join(base, "sub", "deep", "b.md"), []byte("x"), 0o644)
-	os.MkdirAll(filepath.Join(base, ".git"), 0o755)
-	os.WriteFile(filepath.Join(base, ".git", "config"), []byte("x"), 0o644)
+	if err := os.MkdirAll(filepath.Join(base, "sub", "deep"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(base, "top.md"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(base, "sub", "a.md"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(base, "sub", "deep", "b.md"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(base, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(base, ".git", "config"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	tool := NewListDirTool(ws, true) // sandboxed at ws
 	out := tool.Execute(context.Background(), map[string]any{"path": "files", "recursive": true}).ForLLM

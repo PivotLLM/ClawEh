@@ -2,82 +2,51 @@ package agents
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
 
 	"github.com/google/uuid"
+	"github.com/tenebris-tech/alerter"
 
-	"github.com/PivotLLM/ClawEh/agenttoken"
 	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/providers"
 	"github.com/PivotLLM/ClawEh/tools"
 )
 
-// subagentSystemPrompt returns the system prompt installed in every
-// sub-agent. The agenttoken.SubagentSentinel is injected as the session_token
-// for defense-in-depth: if the sub-agent attempts to invoke any mcp__claw__*
-// tool, the MCP server recognizes the sentinel and refuses the call.
-func subagentSystemPrompt() string {
-	return fmt.Sprintf(`You are a subagent. Complete the given task independently and report the result.
-You have access to tools - use them as needed to complete your task.
-After completing the task, provide a clear summary of what was done.
-
----
-
-# Session Token
-
-The following token is the sub-agent sentinel. Every `+"`mcp__claw__*`"+` tool call MUST include the literal string below as the `+"`session_token`"+` parameter. The MCP server will refuse those calls — sub-agents are not granted claw MCP access; use the harness filesystem tools against your assigned working directory.
-
-session_token: %s`, agenttoken.SubagentSentinel)
-}
-
 type SubagentManager struct {
-	mu             sync.RWMutex
-	provider       providers.LLMProvider
-	defaultModel   string
-	workspace      string
-	ownerAgentID   string
-	live           *LiveSet
-	tools          *tools.ToolRegistry
-	maxIterations  int
-	maxTokens      int
-	temperature    float64
-	hasMaxTokens   bool
-	hasTemperature bool
+	mu           sync.RWMutex
+	workspace    string
+	ownerAgentID string
+	live         *LiveSet
 
-	// Per-agent dispatch fields. When dispatcher is set, subagent LLM calls
-	// are routed through the dispatcher using selfCandidates (for self-spawns)
-	// or the target agent's candidates (resolved via candidateResolver).
-	dispatcher        *providers.ProviderDispatcher
-	fallback          *providers.FallbackChain
+	// Model candidates: selfCandidates for self-spawns, or the target agent's
+	// candidates (resolved via candidateResolver). Used to validate a requested
+	// spawn model.
 	selfCandidates    []providers.FallbackCandidate
 	callerAgentID     string
 	candidateResolver func(agentID string) ([]providers.FallbackCandidate, bool)
 
 	// runFull runs the target agent's FULL pipeline (curated prompt, full tools,
 	// MCP, snapshotted memory) on the task in an isolated sub-agent session, and
-	// returns the final response. Injected by the host (the agent loop). When set,
-	// it is used instead of the lightweight standalone tool loop.
+	// returns the final response. Injected by the host (the agent loop). Without
+	// it every spawn fails with ErrSpawnUnavailable.
 	runFull func(ctx context.Context, agentID, sessionKey, task, model string, media []string) (*global.SyncResult, error)
+
+	// alerter receives the alert raised when a task's status or results file
+	// cannot be written. Never nil.
+	alerter alerter.Alerter
 }
 
 // SubagentManagerConfig holds all configuration for constructing a SubagentManager.
 type SubagentManagerConfig struct {
-	// Provider is the fallback LLM provider used when dispatcher lookup fails.
-	Provider providers.LLMProvider
-	// DefaultModel is the model name used when no candidates are resolved.
-	DefaultModel string
 	// Workspace is the agent's working directory (where task files are written).
 	Workspace string
 	// Live is the process-shared running-task set, shared across reloads so the
 	// supervisor never relaunches a task that is still running.
 	Live *LiveSet
-	// Dispatcher dispatches LLM calls per-candidate. Optional.
-	Dispatcher *providers.ProviderDispatcher
-	// Fallback is the chain used when multiple candidates are configured. Optional.
-	Fallback *providers.FallbackChain
 	// SelfCandidates are the calling agent's model candidates for self-spawns.
 	SelfCandidates []providers.FallbackCandidate
 	// CallerAgentID is the ID of the agent that owns this manager (for allowlist
@@ -90,19 +59,21 @@ type SubagentManagerConfig struct {
 	// sub-agent session (see SubagentManager.runFull). Required for spawning to
 	// behave as "a copy of the agent with fresh context."
 	RunFull func(ctx context.Context, agentID, sessionKey, task, model string, media []string) (*global.SyncResult, error)
+	// Alerter receives operator alerts for task records that cannot be
+	// written; nil means none.
+	Alerter alerter.Alerter
 }
 
 func NewSubagentManager(cfg SubagentManagerConfig) *SubagentManager {
+	a := cfg.Alerter
+	if a == nil {
+		a = alerter.Nop{}
+	}
 	return &SubagentManager{
-		provider:          cfg.Provider,
-		defaultModel:      cfg.DefaultModel,
+		alerter:           a,
 		workspace:         cfg.Workspace,
 		ownerAgentID:      cfg.CallerAgentID,
 		live:              cfg.Live,
-		tools:             tools.NewToolRegistry(),
-		maxIterations:     10,
-		dispatcher:        cfg.Dispatcher,
-		fallback:          cfg.Fallback,
 		selfCandidates:    cfg.SelfCandidates,
 		callerAgentID:     cfg.CallerAgentID,
 		candidateResolver: cfg.CandidateResolver,
@@ -127,54 +98,10 @@ func (sm *SubagentManager) targetAgent(agentID string) string {
 
 func (sm *SubagentManager) tasksDir() string { return tasksDirFor(sm.workspace) }
 
-// resolveLoopConfig builds a tools.ToolLoopConfig for the given target agent ID.
-// When agentID is empty it is treated as a self-spawn and uses selfCandidates.
-// When agentID is non-empty and a candidateResolver is set, it resolves the
-// target agent's candidates. Falls back to provider+defaultModel when no
-// dispatch metadata is available.
-func (sm *SubagentManager) resolveLoopConfig(agentID, model string) tools.ToolLoopConfig {
-	candidates := sm.selfCandidates
-	if agentID != "" && sm.candidateResolver != nil {
-		if resolved, ok := sm.candidateResolver(agentID); ok {
-			candidates = resolved
-		}
-	}
-
-	// An explicit (already-validated) model selection is promoted to the front so
-	// the sub-agent runs it first, with the remaining configured models as
-	// fallbacks. Invalid selections are rejected earlier (Spawner), so a no-match
-	// here simply leaves the default order.
-	if model != "" {
-		candidates = promoteCandidate(candidates, model)
-	}
-
-	cfg := tools.ToolLoopConfig{
-		Provider:      sm.provider,
-		Model:         sm.defaultModel,
-		MaxIterations: sm.maxIterations,
-		Tools:         sm.tools,
-		Dispatcher:    sm.dispatcher,
-		Fallback:      sm.fallback,
-		Candidates:    candidates,
-	}
-
-	// Override Model from first candidate when available.
-	if len(candidates) > 0 {
-		cfg.Model = candidates[0].Model
-	}
-
-	if sm.hasMaxTokens || sm.hasTemperature {
-		opts := map[string]any{}
-		if sm.hasMaxTokens {
-			opts["max_tokens"] = sm.maxTokens
-		}
-		if sm.hasTemperature {
-			opts["temperature"] = sm.temperature
-		}
-		cfg.LLMOptions = opts
-	}
-
-	return cfg
+// errRunnerNotConfigured is the failure for a manager built without RunFull:
+// there is no other way to run a sub-agent.
+func errRunnerNotConfigured() error {
+	return fmt.Errorf("%w: full-pipeline runner not configured", global.ErrSpawnUnavailable)
 }
 
 // CandidatesFor returns the model candidates for a target agent (or the caller's
@@ -240,48 +167,6 @@ func candidateNames(candidates []providers.FallbackCandidate) string {
 	return strings.Join(names, ", ")
 }
 
-// promoteCandidate moves the candidate matching model to the front, preserving
-// the order of the rest. If none matches, the slice is returned unchanged.
-func promoteCandidate(candidates []providers.FallbackCandidate, model string) []providers.FallbackCandidate {
-	matched, ok := MatchCandidate(candidates, model)
-	if !ok {
-		return candidates
-	}
-	out := make([]providers.FallbackCandidate, 0, len(candidates))
-	out = append(out, matched)
-	for _, c := range candidates {
-		if c.Alias == matched.Alias && c.Model == matched.Model {
-			continue
-		}
-		out = append(out, c)
-	}
-	return out
-}
-
-// SetLLMOptions sets max tokens and temperature for subagent LLM calls.
-func (sm *SubagentManager) SetLLMOptions(maxTokens int, temperature float64) {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-	sm.maxTokens = maxTokens
-	sm.hasMaxTokens = true
-	sm.temperature = temperature
-	sm.hasTemperature = true
-}
-
-// SetTools sets the tool registry for subagent execution.
-func (sm *SubagentManager) SetTools(registry *tools.ToolRegistry) {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-	sm.tools = registry
-}
-
-// RegisterTool registers a tool for subagent execution.
-func (sm *SubagentManager) RegisterTool(tool tools.Tool) {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-	sm.tools.Register(tool)
-}
-
 // SpawnCallback launches a tracked background worker. It mints a uuid, writes the
 // status record + .run marker to the launcher's workspace, registers the task as
 // live, and runs the worker on a detached context (so it outlives the launching
@@ -294,7 +179,7 @@ func (sm *SubagentManager) SpawnCallback(
 	parentDepth int,
 ) (string, error) {
 	if strings.TrimSpace(task) == "" {
-		return "", fmt.Errorf("task is required")
+		return "", errors.New("task is required")
 	}
 	id := uuid.NewString()
 	now := nowEpoch()
@@ -347,43 +232,30 @@ func (sm *SubagentManager) runRecord(rec *TaskRecord, cb tools.AsyncCallback, re
 	}()
 
 	rec.StartedAt = nowRFC()
-	_ = writeStatus(sm.tasksDir(), rec)
+	sm.persistStatus(sm.tasksDir(), rec)
 
 	taskText := rec.Task
 	if resumed {
 		taskText = interruptionNote + "\n\n" + rec.Task
 	}
 
-	// Full-pipeline path: run a copy of the agent in an isolated sub-agent session
-	// keyed by the task UUID (deterministic, so a relaunch reuses + recleans it).
-	if sm.runFull != nil {
-		target := sm.targetAgent(rec.AgentID)
-		// Restore the spawning agent's depth onto the detached context so the
-		// worker (and any layer it spawns) stays within MaxSpawnDepth.
-		runCtx := WithSpawnDepth(context.Background(), rec.SpawnDepth)
-		fr, err := sm.runFull(runCtx, target, subagentSessionKey(target, rec.UUID), taskText, rec.Model, rec.Media)
-		if err != nil {
-			sm.finalize(rec, "", 0, err, cb)
-			return
-		}
-		sm.finalize(rec, fr.Content, fr.Iterations, nil, cb)
+	if sm.runFull == nil {
+		sm.finalize(rec, "", 0, errRunnerNotConfigured(), cb)
 		return
 	}
 
-	// Legacy fallback: lightweight standalone loop.
-	messages := []providers.Message{
-		{Role: "system", Content: subagentSystemPrompt()},
-		{Role: "user", Content: taskText},
-	}
-	sm.mu.RLock()
-	loopCfg := sm.resolveLoopConfig(rec.AgentID, rec.Model)
-	sm.mu.RUnlock()
-	loopResult, err := tools.RunToolLoop(context.Background(), loopCfg, messages, rec.Channel, rec.ChatID)
+	// Run a copy of the agent in an isolated sub-agent session keyed by the task
+	// UUID (deterministic, so a relaunch reuses + recleans it).
+	target := sm.targetAgent(rec.AgentID)
+	// Restore the spawning agent's depth onto the detached context so the
+	// worker (and any layer it spawns) stays within MaxSpawnDepth.
+	runCtx := WithSpawnDepth(context.Background(), rec.SpawnDepth)
+	fr, err := sm.runFull(runCtx, target, subagentSessionKey(target, rec.UUID), taskText, rec.Model, rec.Media)
 	if err != nil {
 		sm.finalize(rec, "", 0, err, cb)
 		return
 	}
-	sm.finalize(rec, loopResult.Content, loopResult.Iterations, nil, cb)
+	sm.finalize(rec, fr.Content, fr.Iterations, nil, cb)
 }
 
 // finalize writes the results + status, clears the run marker, removes the task
@@ -508,9 +380,35 @@ func (sm *SubagentManager) recordResults(rec *TaskRecord, content string, iterat
 			Content:    content,
 		}
 	}
-	_ = writeResults(dir, results)
-	_ = writeStatus(dir, rec)
+	sm.persistResults(dir, results)
+	sm.persistStatus(dir, rec)
 	return sm.completionResult(rec)
+}
+
+// persistStatus writes the task's status record. A failed write is logged and
+// alerted rather than failing the run: the task itself has already happened.
+func (sm *SubagentManager) persistStatus(dir string, rec *TaskRecord) {
+	if err := writeStatus(dir, rec); err != nil {
+		logger.WarnCF("subagent", "failed to write task status", map[string]any{"uuid": rec.UUID, "error": err.Error()})
+		sm.alertRecordNotWritten(rec.UUID, err)
+	}
+}
+
+// persistResults writes the task's results file; see persistStatus.
+func (sm *SubagentManager) persistResults(dir string, res *TaskResults) {
+	if err := writeResults(dir, res); err != nil {
+		logger.WarnCF("subagent", "failed to write task results", map[string]any{"uuid": res.UUID, "error": err.Error()})
+		sm.alertRecordNotWritten(res.UUID, err)
+	}
+}
+
+func (sm *SubagentManager) alertRecordNotWritten(uuid string, err error) {
+	sm.alerter.Send(alerter.Alert{
+		Title:       "Sub-agent record not written",
+		Description: "task " + uuid + ": its status/results file could not be written, so it cannot be resumed or reported",
+		Details:     err.Error(),
+		EventID:     "subagent-store",
+	})
 }
 
 // SuperviseOnce scans the workspace for interrupted callback tasks (.run markers
@@ -537,8 +435,8 @@ func (sm *SubagentManager) SuperviseOnce(now int64, cbFor func(rec *TaskRecord) 
 			rec.Status = StatusError
 			rec.Error = fmt.Sprintf("gave up after %d interrupted restarts", rec.Restarts)
 			rec.FinishedAt = nowRFC()
-			_ = writeResults(dir, errResults(rec, rec.Error))
-			_ = writeStatus(dir, rec)
+			sm.persistResults(dir, errResults(rec, rec.Error))
+			sm.persistStatus(dir, rec)
 			clearRun(dir, id)
 			continue
 		}
@@ -549,7 +447,7 @@ func (sm *SubagentManager) SuperviseOnce(now int64, cbFor func(rec *TaskRecord) 
 		rec.Restarts++
 		rec.RetryAfter = now + retryDelaySecs()
 		rec.Status = StatusRunning
-		_ = writeStatus(dir, rec)
+		sm.persistStatus(dir, rec)
 		sm.live.Add(id)
 		var cb tools.AsyncCallback
 		if cbFor != nil {
@@ -598,10 +496,10 @@ func (sm *SubagentManager) RunSync(ctx context.Context, task, agentID, model str
 		return nil, fmt.Errorf("%w: subagent manager not configured", global.ErrSpawnUnavailable)
 	}
 	if strings.TrimSpace(task) == "" {
-		return nil, fmt.Errorf("task is required")
+		return nil, errors.New("task is required")
 	}
 	if sm.runFull == nil {
-		return nil, fmt.Errorf("%w: full-pipeline runner not configured", global.ErrSpawnUnavailable)
+		return nil, errRunnerNotConfigured()
 	}
 	target := sm.targetAgent(agentID)
 	id := uuid.NewString()
@@ -634,10 +532,10 @@ func (sm *SubagentManager) Run(
 	media []string,
 ) (*tools.ToolResult, error) {
 	if strings.TrimSpace(task) == "" {
-		return nil, fmt.Errorf("task is required")
+		return nil, errors.New("task is required")
 	}
 	if sm == nil {
-		return nil, fmt.Errorf("subagent manager not configured")
+		return nil, errors.New("subagent manager not configured")
 	}
 
 	labelStr := label
@@ -662,42 +560,29 @@ func (sm *SubagentManager) Run(
 		ResultsPath:  relResultsPath(id),
 	}
 
-	// Full-pipeline path: run a copy of the agent in an isolated sub-agent session.
-	if sm.runFull != nil {
-		target := sm.targetAgent(agentID)
-		logger.InfoCF("subagent", "subagent.spawn.launched", map[string]any{
-			"uuid": id, "label": labelStr, "agent": target,
-			"owner": sm.ownerAgentID, "mode": "wait", "model": model, "channel": channel,
-		})
-		fr, err := sm.runFull(ctx, target, subagentSessionKey(target, id), task, model, media)
-		var content string
-		var iterations int
-		if err != nil {
-			logger.WarnCF("subagent", "subagent.run.failed", map[string]any{
-				"uuid": id, "label": labelStr, "agent": target, "mode": "wait", "error": err.Error(),
-			})
-		} else {
-			content, iterations = fr.Content, fr.Iterations
-			logger.InfoCF("subagent", "subagent.run.finished", map[string]any{
-				"uuid": id, "label": labelStr, "agent": target, "mode": "wait",
-				"iterations": iterations, "content_len": len(content),
-			})
-		}
-		return sm.recordResults(rec, content, iterations, err), nil
+	if sm.runFull == nil {
+		return sm.recordResults(rec, "", 0, errRunnerNotConfigured()), nil
 	}
 
-	// Legacy fallback: lightweight standalone loop (used when no full-pipeline
-	// runner is injected — e.g. unit tests / embedding hosts).
-	messages := []providers.Message{
-		{Role: "system", Content: subagentSystemPrompt()},
-		{Role: "user", Content: task, Media: media},
-	}
-	sm.mu.RLock()
-	loopCfg := sm.resolveLoopConfig(agentID, model)
-	sm.mu.RUnlock()
-	loopResult, err := tools.RunToolLoop(ctx, loopCfg, messages, channel, chatID)
+	// Run a copy of the agent in an isolated sub-agent session.
+	target := sm.targetAgent(agentID)
+	logger.InfoCF("subagent", "subagent.spawn.launched", map[string]any{
+		"uuid": id, "label": labelStr, "agent": target,
+		"owner": sm.ownerAgentID, "mode": "wait", "model": model, "channel": channel,
+	})
+	fr, err := sm.runFull(ctx, target, subagentSessionKey(target, id), task, model, media)
+	var content string
+	var iterations int
 	if err != nil {
-		return sm.recordResults(rec, "", 0, err), nil
+		logger.WarnCF("subagent", "subagent.run.failed", map[string]any{
+			"uuid": id, "label": labelStr, "agent": target, "mode": "wait", "error": err.Error(),
+		})
+	} else {
+		content, iterations = fr.Content, fr.Iterations
+		logger.InfoCF("subagent", "subagent.run.finished", map[string]any{
+			"uuid": id, "label": labelStr, "agent": target, "mode": "wait",
+			"iterations": iterations, "content_len": len(content),
+		})
 	}
-	return sm.recordResults(rec, loopResult.Content, loopResult.Iterations, nil), nil
+	return sm.recordResults(rec, content, iterations, err), nil
 }

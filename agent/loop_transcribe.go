@@ -1,8 +1,5 @@
-// ClawEh - Personal AI Assistant
-// Inspired by and based on nanobot: https://github.com/HKUDS/nanobot
+// ClawEh
 // License: MIT
-//
-// Copyright (c) 2026 PicoClaw contributors
 
 package agent
 
@@ -75,9 +72,11 @@ func (al *AgentLoop) transcribeAudioInMessage(ctx context.Context, msg bus.Inbou
 	})
 
 	// Append any remaining transcriptions not matched by an annotation.
+	var newContentSb78 strings.Builder
 	for ; idx < len(transcriptions); idx++ {
-		newContent += "\n[voice: " + transcriptions[idx] + "]"
+		newContentSb78.WriteString("\n[voice: " + transcriptions[idx] + "]")
 	}
+	newContent += newContentSb78.String()
 
 	msg.Content = newContent
 	return msg, true
@@ -141,7 +140,12 @@ func sweepReceivedMedia(dir string, now time.Time) {
 			continue
 		}
 		if now.Sub(info.ModTime()) > receivedMediaTTL {
-			_ = os.Remove(filepath.Join(dir, e.Name()))
+			if rmErr := os.Remove(filepath.Join(dir, e.Name())); rmErr != nil {
+				logger.WarnCF("agent", "Failed to remove expired received media file", map[string]any{
+					"path":  filepath.Join(dir, e.Name()),
+					"error": rmErr.Error(),
+				})
+			}
 		}
 	}
 }
@@ -167,17 +171,17 @@ func receivedFileName(ref, filename string) string {
 
 // copyFileContents streams src to dst, creating/truncating dst.
 func copyFileContents(src, dst string) error {
-	in, err := os.Open(src)
+	in, err := os.Open(src) //nolint:gosec // src is a media store path (ResolveWithMeta)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = in.Close() }()
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	defer utils.CloseQuietly(in)
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600) //nolint:gosec // dst is <workspace>/tmp plus a name sanitized by receivedFileName
 	if err != nil {
 		return err
 	}
 	if _, err := io.Copy(out, in); err != nil {
-		_ = out.Close()
+		utils.CloseQuietly(out)
 		return err
 	}
 	return out.Close()

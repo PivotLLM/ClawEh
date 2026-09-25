@@ -10,7 +10,44 @@ Entries describe what changed for someone **running or integrating with** ClawEh
 internal refactors behind them. A change nobody outside the repository can
 observe does not need an entry.
 
-## [0.5.7]
+## [0.6.0]
+
+### Added
+
+- **Configuration report.** A new Report page (after Services in the WebUI
+  menu) opens a PDF, the ClawEh Configuration Report, describing what this
+  install can do: identity and the user it runs as, a security assessment
+  table with a mark on each item where action is recommended (HTTPS and
+  operator authentication are not implemented yet and are flagged when a
+  listener is reachable from other hosts), a summary of what Claw can access,
+  every listener, providers and models (CLI providers with the exact command
+  line they are launched with), credentials as set or not set, channels and
+  who may use them, each agent's tools, MCP access and every folder it can
+  read or write, external services, devices, data at rest and scheduled
+  activity. Endpoint `GET /api/report/pdf`. Secret values never appear. See
+  `docs/report.md`.
+
+- **Operator alerts.** Conditions the operator should hear about are written
+  to `<CLAW_HOME>/logs/alerts.log` (or the file named by `ALERTER_LOG`), one
+  record per alert with its priority: a model parked for an
+  authentication or billing failure (a CLI logged out, a key revoked), a
+  model parked after repeated failures, an unreachable MCP server, a channel
+  that failed to start, stopped receiving (Slack, Matrix, device gateway,
+  Telegram token revoked) or could not deliver a message, SecMsg with no
+  accounts, a scheduled job that failed or could not be delivered, an
+  unreadable or unwritable cron store, a session that could not be saved,
+  service tokens that could not be loaded, an invalid config edit or a failed
+  reload, a failed nightly backup or log rotation, and the WebUI/API listener,
+  MCP host server or agent loop stopping; also the Fusion token store,
+  Maestro setup, cognitive-memory migration, message-token stores, session
+  state, sub-agent records, mount watching, voice transcription credentials
+  and device sources. Repeats of the same alert within
+  ten minutes are counted, not repeated. The Logs page shows the alerts log
+  through its new source selector, and `GET /api/gateway/alerts` returns it.
+  Every alert is listed in `ALERTS.md`; the record format is in
+  `docs/alerts.md`. Alerts are also delivered to any channel configured
+  through `ALERTER_*` environment variables or `~/.alerter` (Pushover, SMS,
+  SMTP mail, webhook). All ClawEh alerts are normal priority.
 
 ### Changed
 
@@ -21,13 +58,99 @@ observe does not need an entry.
   not a terminal or `NO_COLOR` is set, and `./test.sh -n` also silences the
   integration sub-script.
 
+- **golangci-lint is back in the `make test` gate.** The remaining findings
+  are fixed: the agent test fixture returns a struct instead of five values,
+  duplicated tests are table-driven, the unused YAML round-trip test and the
+  three stray `yaml` struct tags on `ModelConfig` are gone (config is JSON
+  only), `Config` and `AgentDefaults` use pointer receivers throughout, and the
+  MCP manager test proves liveness with a real request instead of the retired
+  `ping` RPC.
+
+- **Errors that used to be swallowed are now reported.** With errcheck in
+  the gate, every ignored error return is handled. Most of that is invisible
+  (debug-level logs on closing read-only handles), but a few tool and API
+  results change: a malformed `after_line`, `at_offset` or `start` in the
+  file range-edit tools is an error instead of silently 0; the cron add tool
+  reports a failed job update; the memory list API returns 500 when the
+  store fails instead of an empty list; device-store failures surface as
+  errors rather than "not found"; `claw status` shows "Cognitive memory
+  unavailable: <error>" instead of zero counts. gosec also runs, with the
+  intentional file modes and test files excluded by config, and adds a
+  read-header timeout to the device gateway, MCP host and OAuth callback
+  servers.
+
+- **MCP liveness probe on by default.** `tools.mcp.liveness_probe_seconds`
+  now defaults to 60 (was 0, off). Every connected external MCP server is
+  asked for its tool list once a minute; a failed probe reconnects it, and a
+  changed answer refreshes its tools within the interval. Set the key to `0`
+  in `config.json` to restore the old behaviour; an explicit `0` is kept on
+  save.
+- **Contexts are threaded through instead of started fresh.** Progress
+  placeholder edits, stream deltas, tool breadcrumbs and fallback notices are
+  now bound to the turn they belong to, so a cancelled or timed-out turn no
+  longer keeps publishing after it ends. WebUI memory handlers stop when the
+  client disconnects. Work that must outlive its trigger (sub-agent callbacks,
+  idle eviction, reload, graceful shutdown) is explicitly detached.
+
+- **Legacy code inherited from the original fork is replaced or removed.**
+  The standalone sub-agent tool loop, the retired launcher's config shim, the
+  unreferenced upstream assets and the per-file upstream copyright headers
+  are gone; the default-model provider constructor and the core logger file
+  are renamed to say what they do; `--version` names only Tenebris
+  Technologies. The original MIT notice stays in `LICENSE`, and the project's
+  origins are recorded in `docs/HISTORY.md`.
+
+- **MCP access is a checkbox list.** The agent card shows one checkbox per
+  configured MCP server instead of a comma-separated text field: checked
+  grants every tool the server publishes. An entry that names no configured
+  server (a server since removed, or a hand-typed partial grant from before)
+  stays visible, checked and flagged, so it can be removed; the WebUI no
+  longer offers finer-than-server grants. The saved `mcp_tools` list is
+  unchanged in shape. The card is
+  regrouped into Skills, Tools (MCP access first, then the native tool list,
+  now titled "Internal tools" rather than "Always-On Tools") and Mounts.
+
+### Removed
+
+- **`launcher-config.json` is no longer read.** The retired launcher's
+  separate IP allowlist file was folded into `gateway.allowed_cidrs` on every
+  load. Nothing writes that file any more; if one is still present, startup
+  logs a warning naming it and the allowlist in `config.json` is what applies.
+- **Upstream assets removed.** The `assets/` directory (upstream demo GIFs,
+  logos and community images, 11 MB, referenced by nothing) and the retired
+  `claw-web` screenshot are gone from the repository.
+- **The standalone sub-agent tool loop is gone.** Sub-agents only ever ran
+  through the agent's full pipeline; the lightweight fallback loop inherited
+  from the upstream project was unreachable in a running gateway. Spawning
+  without the full-pipeline runner now fails with the same error the
+  synchronous path already returned. No behaviour change for a running
+  gateway, which always has the runner.
+
 ### Fixed
 
+- **The WebUI picks up a new deploy on the next reload.** The embedded
+  frontend was served with no cache headers, so a browser could keep an old
+  `index.html`, and the old page chunks it names, after an upgrade. The SPA
+  entry and other unhashed files are now sent with `Cache-Control: no-cache`
+  and the content-hashed `/assets/` files as immutable.
 - **`claw.pid` is written before the gateway starts serving.** It was written
   after all services were up, so for a brief window a gateway that was already
   accepting connections was invisible to `claw status` and `claw sessions`.
   The integration suite tripped over that window on macOS; it now also polls
   for the file instead of checking once.
+- **Renamed or removed tools on an external MCP server are picked up without a
+  gateway restart.** The tool list of a server under `tools.mcp.servers` was
+  read once at connect time, so after the server was restarted with different
+  tools the agents kept calling the old names, and the MCP host kept publishing
+  them, until the gateway was restarted. The list is now refreshed when the
+  server sends `tools/list_changed`, when a liveness probe
+  (`liveness_probe_seconds`) sees a different list, on any reconnect, and on
+  the new **Reconnect** action on the MCP servers page
+  (`POST /api/mcp/servers/{name}/reconnect`), which also forces a server out of
+  its post-failure cooldown. On each refresh the server's previous tools are
+  removed from every agent before the current list is registered, and the MCP
+  host catalogue follows, so stale names no longer linger in either place. See
+  `docs/mcp.md`, "Tool list refresh".
 
 ## [0.5.6]
 
@@ -823,9 +946,7 @@ on, and breaking one is a deliberate decision rather than a free move.
 ### Removed
 
 - **The `hw_i2c` and `hw_spi` tools.** Inherited from the picoclaw fork, where
-  they drove sensors over the Linux I2C/SPI buses on the original SBC. They were
-  off by default and unused. Remove `tools.i2c` / `tools.spi` from your config if
-  present; unknown keys are ignored, so this is not a breaking change.
+  they drove sensors over the Linux I2C/SPI buses on the original SBC.
 - **`docs/config.example.json` and `docs/env-example`.** The example config had
   drifted so far it no longer loaded, and described picoclaw's model shape rather
   than ClawEh's. ClawEh writes a complete `~/.claw/config.json` on first run,

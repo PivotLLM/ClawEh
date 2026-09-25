@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 )
@@ -9,7 +10,7 @@ import (
 // This is a local copy used by ExecTool for working_dir validation.
 func validatePath(path, workspace string, restrict bool) (string, error) {
 	if workspace == "" {
-		return path, fmt.Errorf("workspace is not defined")
+		return path, errors.New("workspace is not defined")
 	}
 
 	absWorkspace, err := filepath.Abs(workspace)
@@ -29,7 +30,7 @@ func validatePath(path, workspace string, restrict bool) (string, error) {
 
 	if restrict {
 		if !isWithinWorkspace(absPath, absWorkspace) {
-			return "", fmt.Errorf("access denied: path is outside the workspace")
+			return "", errors.New("access denied: path is outside the workspace")
 		}
 	}
 

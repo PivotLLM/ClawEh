@@ -7,6 +7,7 @@ import (
 	"syscall"
 
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/logger"
 )
 
 // BinaryName is set from main() to filepath.Base(os.Args[0]).
@@ -24,11 +25,16 @@ func GetClawHome() string {
 	}
 
 	if detected := detectInstalledClawHome(); detected != "" {
-		_ = os.Setenv("CLAW_HOME", detected)
+		if err := os.Setenv("CLAW_HOME", detected); err != nil {
+			logger.WarnCF("config", "failed to set CLAW_HOME", map[string]any{"path": detected, "error": err.Error()})
+		}
 		return detected
 	}
 
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		logger.WarnCF("config", "cannot determine home directory; using relative .claw", map[string]any{"error": err.Error()})
+	}
 	return filepath.Join(home, ".claw")
 }
 
@@ -44,8 +50,7 @@ func detectInstalledClawHome() string {
 	}
 
 	// 2. If the user already has ~/.claw/config.json, respect their user directory
-	userHome, _ := os.UserHomeDir()
-	if userHome != "" {
+	if userHome, err := os.UserHomeDir(); err == nil && userHome != "" {
 		userCfg := filepath.Join(userHome, ".claw", "config.json")
 		if fi, err := os.Stat(userCfg); err == nil && !fi.IsDir() {
 			return "" // User explicitly has ~/.claw configured
@@ -75,7 +80,10 @@ func LoadConfig() (*config.Config, error) {
 	if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
 		if mkdirErr := os.MkdirAll(filepath.Dir(path), 0o755); mkdirErr == nil {
 			defaultCfg := config.DefaultConfig()
-			_ = config.SeedDefaultConfig(path, defaultCfg) // best-effort; keeps default_config marker
+			// Best-effort; keeps default_config marker. LoadConfig below reports the real failure.
+			if seedErr := config.SeedDefaultConfig(path, defaultCfg); seedErr != nil {
+				logger.WarnCF("config", "failed to seed default config", map[string]any{"path": path, "error": seedErr.Error()})
+			}
 		}
 	}
 	return config.LoadConfig(path)

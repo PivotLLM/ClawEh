@@ -234,7 +234,7 @@ func TestAddTools_NilParametersStillRegisters(t *testing.T) {
 func TestAddTools_ExternalNaming(t *testing.T) {
 	builtin := &mockTool{name: "file_read", params: map[string]any{}, result: tools.SilentResult("ok")}
 	upstream := &externalNamedMock{
-		mockTool: mockTool{name: "mcp_fusion_trello_search", params: map[string]any{}, result: tools.SilentResult("ok")},
+		name: "mcp_fusion_trello_search", params: map[string]any{}, result: tools.SilentResult("ok"),
 		external: "fusion_trello_search",
 	}
 	r := newRegistryWith(builtin, upstream)

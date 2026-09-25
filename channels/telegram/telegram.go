@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -15,6 +16,7 @@ import (
 	"github.com/mymmrac/telego"
 	th "github.com/mymmrac/telego/telegohandler"
 	tu "github.com/mymmrac/telego/telegoutil"
+	"github.com/tenebris-tech/alerter"
 
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/channels"
@@ -142,7 +144,7 @@ type TelegramChannel struct {
 // The channel name is derived from botCfg.ChannelName().
 func NewTelegramChannelFromConfig(botCfg config.TelegramBotConfig, b *bus.MessageBus) (*TelegramChannel, error) {
 	if botCfg.Token == "" {
-		return nil, fmt.Errorf("telegram bot token is required")
+		return nil, errors.New("telegram bot token is required")
 	}
 	var opts []telego.BotOption
 
@@ -167,15 +169,6 @@ func NewTelegramChannelFromConfig(botCfg config.TelegramBotConfig, b *bus.Messag
 	if baseURL := strings.TrimRight(strings.TrimSpace(botCfg.BaseURL), "/"); baseURL != "" {
 		opts = append(opts, telego.WithAPIServer(baseURL))
 	}
-	opts = append(opts, telego.WithLogger(
-		logger.NewLogger("telego").WithContentSensitive().WithErrorDowngrade(isTransientPollError),
-	))
-
-	bot, err := telego.NewBot(botCfg.Token, opts...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create telegram bot: %w", err)
-	}
-
 	channelName := botCfg.ChannelName()
 	base := channels.NewBaseChannel(
 		channelName,
@@ -186,20 +179,52 @@ func NewTelegramChannelFromConfig(botCfg config.TelegramBotConfig, b *bus.Messag
 		channels.WithGroupTrigger(botCfg.GroupTrigger),
 		channels.WithReasoningChannelID(botCfg.ReasoningChannelID),
 	)
-
-	return &TelegramChannel{
+	ch := &TelegramChannel{
 		BaseChannel:    base,
-		bot:            bot,
 		placeholderCfg: botCfg.Placeholder,
 		coalesceCfg:    botCfg.Coalesce,
 		chatIDs:        make(map[string]int64),
-	}, nil
+	}
+
+	// The channel is built before the bot so telego's logger can alert through
+	// it: telego reports long-poll failures only via Errorf.
+	opts = append(opts, telego.WithLogger(
+		logger.NewLogger("telego").WithContentSensitive().
+			WithErrorDowngrade(isTransientPollError).
+			WithErrorHook(ch.alertPollFailure),
+	))
+
+	bot, err := telego.NewBot(botCfg.Token, opts...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create telegram bot: %w", err)
+	}
+	ch.bot = bot
+
+	return ch, nil
+}
+
+// pollAlertMsgLimit bounds the telego message carried in a polling alert.
+const pollAlertMsgLimit = 200
+
+// alertPollFailure raises a high alert for a telego error that is not a
+// transient long-poll blip — a revoked token (401) or a second poller on the
+// same token (409). telego repeats the error every retry; the alerter
+// de-duplicates on the channel name (EventID, filled in by Alert).
+func (c *TelegramChannel) alertPollFailure(msg string) {
+	if r := []rune(msg); len(r) > pollAlertMsgLimit {
+		msg = string(r[:pollAlertMsgLimit]) + "..."
+	}
+	c.Alert(alerter.Alert{
+		Title:       "Telegram polling failed",
+		Description: c.Name() + ": " + msg,
+	})
 }
 
 func (c *TelegramChannel) Start(ctx context.Context) error {
 	logger.InfoC("telegram", "Starting Telegram bot (polling mode)...")
 
-	c.ctx, c.cancel = context.WithCancel(ctx)
+	pollCtx, cancel := context.WithCancel(ctx)
+	c.ctx, c.cancel = pollCtx, cancel
 	c.stopOnce = sync.Once{}
 
 	if c.coalesceCfg.IsEnabled() {
@@ -208,7 +233,7 @@ func (c *TelegramChannel) Start(ctx context.Context) error {
 		c.coalescer = nil
 	}
 
-	rawUpdates, err := c.bot.UpdatesViaLongPolling(c.ctx, &telego.GetUpdatesParams{
+	rawUpdates, err := c.bot.UpdatesViaLongPolling(pollCtx, &telego.GetUpdatesParams{
 		Timeout: 30,
 	}, telego.WithLongPollingRetryTimeout(longPollRetryTimeout))
 	if err != nil {
@@ -216,7 +241,7 @@ func (c *TelegramChannel) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to start long polling: %w", err)
 	}
 
-	updates, pollDone := watchLongPoll(c.ctx, rawUpdates)
+	updates, pollDone := watchLongPoll(pollCtx, rawUpdates)
 	c.pollDone = pollDone
 
 	bh, err := th.NewBotHandler(c.bot, updates)
@@ -226,7 +251,7 @@ func (c *TelegramChannel) Start(ctx context.Context) error {
 	}
 	c.bh = bh
 
-	bh.HandleMessage(func(ctx *th.Context, message telego.Message) error {
+	bh.HandleMessage(func(ctx *th.Context, message telego.Message) error { //nolint:contextcheck // th.Context is telego's handler context (it embeds context.Context); the linter does not recognise it
 		return c.handleMessage(ctx, &message)
 	}, th.AnyMessage())
 
@@ -235,7 +260,7 @@ func (c *TelegramChannel) Start(ctx context.Context) error {
 		"username": c.bot.Username(),
 	})
 
-	c.startCommandRegistration(c.ctx, commands.BuiltinDefinitions())
+	c.startCommandRegistration(pollCtx, commands.BuiltinDefinitions())
 
 	go func() {
 		if err = bh.Start(); err != nil {
@@ -267,7 +292,11 @@ func (c *TelegramChannel) Stop(ctx context.Context) error {
 			c.commandRegCancel()
 		}
 		if c.bh != nil {
-			_ = c.bh.StopWithContext(ctx)
+			if err := c.bh.StopWithContext(ctx); err != nil {
+				logger.DebugCF("telegram", "Bot handler stop returned error", map[string]any{
+					"error": err.Error(),
+				})
+			}
 		}
 
 		// Block until telego's long-poll goroutine has actually exited.
@@ -350,10 +379,9 @@ func (c *TelegramChannel) Send(ctx context.Context, msg bus.OutboundMessage) err
 
 		if len([]rune(htmlContent)) > 4096 {
 			ratio := float64(len([]rune(chunk))) / float64(len([]rune(htmlContent)))
-			smallerLen := int(float64(4096) * ratio * 0.95) // 5% safety margin
-			if smallerLen < 100 {
-				smallerLen = 100
-			}
+			smallerLen := max(
+				// 5% safety margin
+				int(float64(4096)*ratio*0.95), 100)
 			// Push sub-chunks back to the front of the queue for
 			// re-validation instead of sending them blindly.
 			subChunks := channels.SplitMessage(chunk, smallerLen)
@@ -415,7 +443,11 @@ func (c *TelegramChannel) StartTyping(ctx context.Context, chatID string) (func(
 	action.MessageThreadID = threadID
 
 	// Send the first typing action immediately
-	_ = c.bot.SendChatAction(ctx, action)
+	if err := c.bot.SendChatAction(ctx, action); err != nil {
+		logger.DebugCF("telegram", "Failed to send typing action", map[string]any{
+			"chat_id": cid, "error": err.Error(),
+		})
+	}
 
 	typingCtx, cancel := context.WithCancel(ctx)
 	go func() {
@@ -428,7 +460,11 @@ func (c *TelegramChannel) StartTyping(ctx context.Context, chatID string) (func(
 			case <-ticker.C:
 				a := tu.ChatAction(tu.ID(cid), telego.ChatActionTyping)
 				a.MessageThreadID = threadID
-				_ = c.bot.SendChatAction(typingCtx, a)
+				if err := c.bot.SendChatAction(typingCtx, a); err != nil {
+					logger.DebugCF("telegram", "Failed to send typing action", map[string]any{
+						"chat_id": cid, "error": err.Error(),
+					})
+				}
 			}
 		}
 	}()
@@ -479,7 +515,7 @@ func (c *TelegramChannel) SendPlaceholder(ctx context.Context, chatID string) (s
 		return "", err
 	}
 
-	return fmt.Sprintf("%d", pMsg.MessageID), nil
+	return strconv.Itoa(pMsg.MessageID), nil
 }
 
 // SendMedia implements the channels.MediaSender interface.
@@ -508,7 +544,7 @@ func (c *TelegramChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMe
 			continue
 		}
 
-		file, err := os.Open(localPath)
+		file, err := os.Open(localPath) //nolint:gosec // path comes from the media store's own ref map (FileMediaStore.Resolve)
 		if err != nil {
 			logger.ErrorCF("telegram", "Failed to open media file", map[string]any{
 				"path":  localPath,
@@ -552,7 +588,7 @@ func (c *TelegramChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMe
 			_, err = c.bot.SendDocument(ctx, params)
 		}
 
-		file.Close()
+		utils.CloseQuietly(file)
 
 		if err != nil {
 			logger.ErrorCF("telegram", "Failed to send media", map[string]any{
@@ -568,15 +604,15 @@ func (c *TelegramChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMe
 
 func (c *TelegramChannel) handleMessage(ctx context.Context, message *telego.Message) error {
 	if message == nil {
-		return fmt.Errorf("message is nil")
+		return errors.New("message is nil")
 	}
 
 	user := message.From
 	if user == nil {
-		return fmt.Errorf("message sender (user) is nil")
+		return errors.New("message sender (user) is nil")
 	}
 
-	platformID := fmt.Sprintf("%d", user.ID)
+	platformID := strconv.FormatInt(user.ID, 10)
 	sender := bus.SenderInfo{
 		Platform:    "telegram",
 		PlatformID:  platformID,
@@ -599,8 +635,8 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, message *telego.Mes
 	content := ""
 	mediaPaths := []string{}
 
-	chatIDStr := fmt.Sprintf("%d", chatID)
-	messageIDStr := fmt.Sprintf("%d", message.MessageID)
+	chatIDStr := strconv.FormatInt(chatID, 10)
+	messageIDStr := strconv.Itoa(message.MessageID)
 	scope := channels.BuildMediaScope("telegram", chatIDStr, messageIDStr)
 
 	// Helper to register a local file with the media store
@@ -695,7 +731,7 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, message *telego.Mes
 	// route to the correct topic and each topic gets its own session.
 	// Only forum groups (IsForum) are handled; regular group reply threads
 	// must share one session per group.
-	compositeChatID := fmt.Sprintf("%d", chatID)
+	compositeChatID := strconv.FormatInt(chatID, 10)
 	threadID := message.MessageThreadID
 	if message.Chat.IsForum && threadID != 0 {
 		compositeChatID = fmt.Sprintf("%d/%d", chatID, threadID)
@@ -712,7 +748,7 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, message *telego.Mes
 	logger.DebugCF("telegram", "Received message", logFields)
 
 	peerKind := "direct"
-	peerID := fmt.Sprintf("%d", user.ID)
+	peerID := strconv.FormatInt(user.ID, 10)
 	if message.Chat.Type != "private" {
 		peerKind = "group"
 		peerID = compositeChatID
@@ -721,16 +757,16 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, message *telego.Mes
 	peer := bus.Peer{Kind: peerKind, ID: peerID}
 
 	metadata := map[string]string{
-		"user_id":    fmt.Sprintf("%d", user.ID),
+		"user_id":    strconv.FormatInt(user.ID, 10),
 		"username":   user.Username,
 		"first_name": user.FirstName,
-		"is_group":   fmt.Sprintf("%t", message.Chat.Type != "private"),
+		"is_group":   strconv.FormatBool(message.Chat.Type != "private"),
 	}
 
 	// Set parent_peer metadata for per-topic agent binding.
 	if message.Chat.IsForum && threadID != 0 {
 		metadata["parent_peer_kind"] = "topic"
-		metadata["parent_peer_id"] = fmt.Sprintf("%d", threadID)
+		metadata["parent_peer_id"] = strconv.Itoa(threadID)
 	}
 
 	c.enqueue(coalescedMessage{
@@ -821,16 +857,16 @@ func (c *TelegramChannel) downloadFile(ctx context.Context, fileID, ext string) 
 // parseTelegramChatID splits "chatID/threadID" into its components.
 // Returns threadID=0 when no "/" is present (non-forum messages).
 func parseTelegramChatID(chatID string) (int64, int, error) {
-	idx := strings.Index(chatID, "/")
-	if idx == -1 {
+	before, after, ok := strings.Cut(chatID, "/")
+	if !ok {
 		cid, err := strconv.ParseInt(chatID, 10, 64)
 		return cid, 0, err
 	}
-	cid, err := strconv.ParseInt(chatID[:idx], 10, 64)
+	cid, err := strconv.ParseInt(before, 10, 64)
 	if err != nil {
 		return 0, 0, err
 	}
-	tid, err := strconv.Atoi(chatID[idx+1:])
+	tid, err := strconv.Atoi(after)
 	if err != nil {
 		return 0, 0, fmt.Errorf("invalid thread ID in chat ID %q: %w", chatID, err)
 	}

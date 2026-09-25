@@ -1,13 +1,11 @@
-// ClawEh - Personal AI Assistant
-// Inspired by and based on nanobot: https://github.com/HKUDS/nanobot
+// ClawEh
 // License: MIT
-//
-// Copyright (c) 2026 PicoClaw contributors
 
 package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"runtime/debug"
 	"strings"
@@ -40,7 +38,10 @@ type sessionCancelState struct {
 func (al *AgentLoop) getOrCreateSessionMu(key string) *sync.Mutex {
 	mu := &sync.Mutex{}
 	actual, _ := al.sessionMus.LoadOrStore(key, mu)
-	return actual.(*sync.Mutex)
+	if existing, ok := actual.(*sync.Mutex); ok {
+		return existing
+	}
+	return mu // only *sync.Mutex values are ever stored
 }
 
 // getOrCreateCancelState returns the per-session cancel state for the given key,
@@ -48,7 +49,10 @@ func (al *AgentLoop) getOrCreateSessionMu(key string) *sync.Mutex {
 func (al *AgentLoop) getOrCreateCancelState(key string) *sessionCancelState {
 	cs := &sessionCancelState{}
 	actual, _ := al.sessionCancelStates.LoadOrStore(key, cs)
-	return actual.(*sessionCancelState)
+	if existing, ok := actual.(*sessionCancelState); ok {
+		return existing
+	}
+	return cs // only *sessionCancelState values are ever stored
 }
 
 // isCancelCommand returns true if the message content is a /cancel command.
@@ -157,10 +161,10 @@ func (al *AgentLoop) processSessionMessage(ctx context.Context, msg bus.InboundM
 // input with caution) but the raw text is preserved intact. Delivery mirrors cron
 // exactly: same CronTarget resolution and a fixed SenderID so downstream routing
 // and dedupe treat it as a system-originated event.
-func (al *AgentLoop) HandleExternalMessage(_ context.Context, agentID, body string) error {
+func (al *AgentLoop) HandleExternalMessage(ctx context.Context, agentID, body string) error {
 	cfg := al.GetConfig()
 	if cfg == nil {
-		return fmt.Errorf("configuration not loaded")
+		return errors.New("configuration not loaded")
 	}
 	channel, chatID, peerKind, ok := cfg.CronTarget(agentID)
 	if !ok {
@@ -182,7 +186,7 @@ func (al *AgentLoop) HandleExternalMessage(_ context.Context, agentID, body stri
 
 	// Publish on a fresh bounded context (not the request context) so a client
 	// that hangs up right after POSTing does not abort delivery — matching cron.
-	pubCtx, pubCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	pubCtx, pubCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer pubCancel()
 	return al.bus.PublishInbound(pubCtx, msg)
 }
@@ -514,7 +518,7 @@ func (al *AgentLoop) processSystemMessage(
 
 	agent, sessionKey := al.resolveSystemMessageTarget(msg)
 	if agent == nil {
-		return "", fmt.Errorf("no agent available for system message")
+		return "", errors.New("no agent available for system message")
 	}
 
 	return al.runAgentLoop(ctx, agent, processOptions{

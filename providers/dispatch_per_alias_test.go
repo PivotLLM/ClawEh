@@ -1,4 +1,4 @@
-// ClawEh - Personal AI Assistant
+// ClawEh
 // License: MIT
 
 package providers_test

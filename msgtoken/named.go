@@ -14,7 +14,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tenebris-tech/alerter"
+
+	"github.com/PivotLLM/ClawEh/alerts"
 	"github.com/PivotLLM/ClawEh/fileutil"
+	"github.com/PivotLLM/ClawEh/logger"
 )
 
 // namedFileName is the state file under the data dir's state/ directory that
@@ -121,7 +125,7 @@ func NewNamedStore(path string) (*NamedStore, error) {
 	if path == "" {
 		return s, nil
 	}
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) //nolint:gosec // token store under the configured data dir
 	if err != nil {
 		if os.IsNotExist(err) {
 			return s, nil
@@ -215,7 +219,10 @@ func (s *NamedStore) Delete(agentID, id string) bool {
 	// Persist; on write failure the in-memory removal still stands but the next
 	// successful write reconciles disk. A failed revoke that keeps validating is
 	// the unsafe direction, so we log-and-continue rather than resurrect it.
-	_ = s.saveLocked()
+	if err := s.saveLocked(); err != nil {
+		logger.WarnCF("msgtoken", "Failed to persist token deletion", map[string]any{"agent": agentID, "error": err.Error()})
+		alertTokenStoreNotWritten(s.path, agentID, "a revoked token comes back after a restart", err)
+	}
 	return true
 }
 
@@ -359,7 +366,10 @@ func (s *NamedStore) Update(agentID, id string, ratePerMin, blockMinutes int) bo
 		if list[i].ID == id {
 			list[i].RatePerMin = ratePerMin
 			list[i].BlockMinutes = blockMinutes
-			_ = s.saveLocked()
+			if err := s.saveLocked(); err != nil {
+				logger.WarnCF("msgtoken", "Failed to persist token update", map[string]any{"agent": agentID, "error": err.Error()})
+				alertTokenStoreNotWritten(s.path, agentID, "the change is lost on restart", err)
+			}
 			return true
 		}
 	}
@@ -433,4 +443,15 @@ func (s *NamedStore) saveLocked() error {
 		return fmt.Errorf("msgtoken: write %s: %w", s.path, err)
 	}
 	return nil
+}
+
+// alertTokenStoreNotWritten reports a message-token store that could not be
+// saved: a revocation that does not reach disk is a security problem.
+func alertTokenStoreNotWritten(path, agentID, consequence string, err error) {
+	alerts.Send(alerter.Alert{
+		Title:       "Message-token store not written",
+		Description: path + " (agent " + agentID + "): " + consequence,
+		Details:     err.Error(),
+		EventID:     "msgtoken:" + agentID,
+	})
 }

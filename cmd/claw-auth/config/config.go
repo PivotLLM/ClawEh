@@ -6,7 +6,7 @@
 package config
 
 import (
-	"fmt"
+	"errors"
 	"time"
 )
 
@@ -107,19 +107,19 @@ func (c *Config) MergeServiceConfig(serviceName string) *ServiceConfig {
 // Validate validates the configuration
 func (c *Config) Validate() error {
 	if c.Service == "" {
-		return fmt.Errorf("service is required")
+		return errors.New("service is required")
 	}
 
 	if c.FusionURL == "" {
-		return fmt.Errorf("fusion URL is required")
+		return errors.New("fusion URL is required")
 	}
 
 	if c.APIToken == "" {
-		return fmt.Errorf("API token is required")
+		return errors.New("API token is required")
 	}
 
 	if c.Timeout <= 0 {
-		return fmt.Errorf("timeout must be positive")
+		return errors.New("timeout must be positive")
 	}
 
 	return nil

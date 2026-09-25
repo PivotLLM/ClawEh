@@ -100,9 +100,7 @@ func TestIPAllowlist_ConcurrentSwap(t *testing.T) {
 
 	// Swapper: flip the allowlist back and forth for the duration. It is waited
 	// on separately from the readers — it only exits once they are done.
-	swapper.Add(1)
-	go func() {
-		defer swapper.Done()
+	swapper.Go(func() {
 		for i := 0; ; i++ {
 			select {
 			case <-stop:
@@ -115,15 +113,13 @@ func TestIPAllowlist_ConcurrentSwap(t *testing.T) {
 				current.Store(shut)
 			}
 		}
-	}()
+	})
 
 	// Readers: every response must be one of the two valid answers, never a
 	// panic, a torn read, or a loopback rejection.
-	for i := 0; i < 8; i++ {
-		readers.Add(1)
-		go func() {
-			defer readers.Done()
-			for n := 0; n < 500; n++ {
+	for range 8 {
+		readers.Go(func() {
+			for range 500 {
 				rec := httptest.NewRecorder()
 				req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
 				req.RemoteAddr = "192.168.1.50:5000"
@@ -143,7 +139,7 @@ func TestIPAllowlist_ConcurrentSwap(t *testing.T) {
 					return
 				}
 			}
-		}()
+		})
 	}
 
 	readers.Wait()

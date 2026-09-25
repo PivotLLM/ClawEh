@@ -9,6 +9,7 @@ import (
 	"github.com/PivotLLM/ctxengine/memory"
 
 	"github.com/PivotLLM/ClawEh/tools"
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 // buildSessionInfo constructs session info for the given agent and session key.
@@ -47,7 +48,7 @@ func buildSessionInfo(al *AgentLoop, agent *AgentInstance, sessionKey string) (*
 
 	archivePath := archiveDBPath(agent.Workspace, sessionKey)
 	if a, openErr := memory.OpenReadOnly(archivePath); openErr == nil {
-		defer a.Close()
+		defer utils.CloseQuietly(a)
 		minSeq, maxSeq, boundsErr := a.Bounds()
 		if boundsErr == nil {
 			info.ArchiveMinSeq = minSeq

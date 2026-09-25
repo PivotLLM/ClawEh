@@ -12,8 +12,7 @@ import (
 // the final content and the degenerate flag from runLLMIteration.
 func driveEmptyResponse(t *testing.T, responses []*providers.LLMResponse) (string, bool) {
 	t.Helper()
-	al, _, _, _, cleanup := newTestAgentLoop(t)
-	defer cleanup()
+	al := newTestAgentLoop(t).al
 
 	agentInstance := al.registry.GetDefaultAgent()
 	if agentInstance == nil {
@@ -32,14 +31,8 @@ func driveEmptyResponse(t *testing.T, responses []*providers.LLMResponse) (strin
 	cm, release := al.getContextManager(agentInstance, opts.SessionKey)
 	defer release()
 
-	finalContent, _, degenerate, _, _, err := al.runLLMIteration(
-		context.Background(), agentInstance,
-		[]providers.Message{{Role: "user", Content: "go"}}, opts, cm, nil,
-	)
-	if err != nil {
-		t.Fatalf("runLLMIteration: %v", err)
-	}
-	return finalContent, degenerate
+	it := runIteration(t, al, agentInstance, []providers.Message{{Role: "user", Content: "go"}}, opts, cm)
+	return it.content, it.degenerate
 }
 
 // A poke after an empty-but-reasoning turn recovers a real reply on retry.
@@ -75,8 +68,7 @@ func TestEmptyResponse_DegenerateAfterRetries(t *testing.T) {
 // The no-response sentinel is treated as intentional silence: nothing is sent
 // and the model is NOT poked (one provider call only).
 func TestNoResponseSentinel_SilentNoPoke(t *testing.T) {
-	al, _, _, _, cleanup := newTestAgentLoop(t)
-	defer cleanup()
+	al := newTestAgentLoop(t).al
 
 	agentInstance := al.registry.GetDefaultAgent()
 	if agentInstance == nil {
@@ -124,8 +116,7 @@ func TestEmptyResponse_ReasoningFieldAlsoTriggers(t *testing.T) {
 // normal response and returns the user-facing reply.
 func driveEmptyViaLoop(t *testing.T, isGroup bool) string {
 	t.Helper()
-	al, _, _, _, cleanup := newTestAgentLoop(t)
-	defer cleanup()
+	al := newTestAgentLoop(t).al
 
 	agentInstance := al.registry.GetDefaultAgent()
 	if agentInstance == nil {

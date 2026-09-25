@@ -222,7 +222,7 @@ func TestRunner_AllowParallelFalse_EndToEnd(t *testing.T) {
 		"worker_response_template": "pb/templates/worker-response.json",
 		"worker_report_template":   "pb/templates/worker-report.md",
 	}, false)
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		h.callJSON("maestro_task_create", map[string]any{"project": project, "path": "main", "title": "W", "prompt": "go"})
 	}
 	h.callJSON("maestro_task_run", map[string]any{"project": project, "path": "main"})
@@ -230,7 +230,7 @@ func TestRunner_AllowParallelFalse_EndToEnd(t *testing.T) {
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		st := h.callJSON("maestro_task_status", map[string]any{"project": project, "path": "main"})
-		if done, _ := st["done"].(float64); done == 2 {
+		if done, ok := st["done"].(float64); ok && done == 2 {
 			break
 		}
 		time.Sleep(100 * time.Millisecond)
@@ -318,7 +318,9 @@ func TestLogWriter_RealLoggerCarriesComponentAndAgent(t *testing.T) {
 	defer restore()
 
 	w := &logWriter{agent: "alice"}
-	_, _ = w.Write([]byte("2026-09-19 10:00:00 [WARN] [1] Task 3: retrying after error\n"))
+	if _, err := w.Write([]byte("2026-09-19 10:00:00 [WARN] [1] Task 3: retrying after error\n")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
 	out := buf.String()
 	for _, want := range []string{"maestro", "alice", "Task 3: retrying after error"} {
 		if !strings.Contains(out, want) {
@@ -332,7 +334,9 @@ func TestLogWriter_RealLoggerCarriesComponentAndAgent(t *testing.T) {
 func TestLogWriter_LevelFromPrefixOnly(t *testing.T) {
 	var got []string
 	w := &logWriter{agent: "a", emit: func(level, msg string, _ map[string]any) { got = append(got, level+"|"+msg) }}
-	_, _ = w.Write([]byte("2026-09-19 10:00:00 [INFO] [1] model said [ERROR] in its reply\n[FATAL] bare line\n"))
+	if _, err := w.Write([]byte("2026-09-19 10:00:00 [INFO] [1] model said [ERROR] in its reply\n[FATAL] bare line\n")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
 	if len(got) != 2 || got[0] != "INFO|model said [ERROR] in its reply" || got[1] != "INFO|[FATAL] bare line" {
 		t.Errorf("forwarded = %v", got)
 	}

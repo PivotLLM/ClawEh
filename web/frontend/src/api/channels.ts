@@ -148,4 +148,13 @@ export async function getMCPStatus(): Promise<MCPStatusResponse> {
   return request<MCPStatusResponse>("/api/mcp/status")
 }
 
+// reconnectMCPServer forces one outbound MCP server to reconnect and
+// re-register its tools, for a server restarted with a changed tool list.
+export async function reconnectMCPServer(name: string): Promise<void> {
+  await request<unknown>(
+    `/api/mcp/servers/${encodeURIComponent(name)}/reconnect`,
+    { method: "POST" },
+  )
+}
+
 export type { ChannelsCatalogResponse, ConfigActionResponse, MCPStatusResponse }

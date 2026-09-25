@@ -11,11 +11,15 @@ import (
 
 func openTestStore(t *testing.T) *Store {
 	t.Helper()
-	s, err := OpenStore(filepath.Join(t.TempDir(), "gateway.db"))
+	s, err := OpenStore(context.Background(), filepath.Join(t.TempDir(), "gateway.db"))
 	if err != nil {
 		t.Fatalf("OpenStore: %v", err)
 	}
-	t.Cleanup(func() { _ = s.Close() })
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	})
 	return s
 }
 
@@ -50,17 +54,20 @@ func TestPairingLifecycle(t *testing.T) {
 	if reqID2 != reqID {
 		t.Fatalf("request id churned across re-create: %s -> %s", reqID, reqID2)
 	}
-	if pend, _ := s.ListPending(ctx); len(pend) != 1 {
-		t.Fatalf("expected 1 pending after replace, got %d", len(pend))
+	if pend, listErr := s.ListPending(ctx); listErr != nil || len(pend) != 1 {
+		t.Fatalf("expected 1 pending after replace, got %d (err %v)", len(pend), listErr)
 	}
 
 	// Reject removes it.
-	cur, _ := s.ListPending(ctx)
+	cur, err := s.ListPending(ctx)
+	if err != nil {
+		t.Fatalf("ListPending: %v", err)
+	}
 	if err := s.Reject(ctx, cur[0].RequestID); err != nil {
 		t.Fatalf("Reject: %v", err)
 	}
-	if pend, _ := s.ListPending(ctx); len(pend) != 0 {
-		t.Fatalf("expected 0 pending after reject")
+	if pend, listErr := s.ListPending(ctx); listErr != nil || len(pend) != 0 {
+		t.Fatalf("expected 0 pending after reject, got %d (err %v)", len(pend), listErr)
 	}
 	if err := s.Reject(ctx, "nonexistent"); !errors.Is(err, ErrPendingNotFound) {
 		t.Fatalf("Reject unknown: want ErrPendingNotFound got %v", err)
@@ -90,8 +97,8 @@ func TestApproveMintsTokensAndPairs(t *testing.T) {
 	}
 
 	// Pending is consumed; device is now paired.
-	if pend, _ := s.ListPending(ctx); len(pend) != 0 {
-		t.Fatalf("pending should be consumed after approve")
+	if pend, listErr := s.ListPending(ctx); listErr != nil || len(pend) != 0 {
+		t.Fatalf("pending should be consumed after approve, got %d (err %v)", len(pend), listErr)
 	}
 	got, ok, err := s.GetPaired(ctx, "dev-2")
 	if err != nil || !ok || got.PublicKey != "pk2" {
@@ -110,11 +117,11 @@ func TestApproveMintsTokensAndPairs(t *testing.T) {
 	if err := s.RemovePaired(ctx, "dev-2"); err != nil {
 		t.Fatalf("RemovePaired: %v", err)
 	}
-	if _, ok, _ := s.GetPaired(ctx, "dev-2"); ok {
-		t.Fatalf("device should be gone after RemovePaired")
+	if _, ok, getErr := s.GetPaired(ctx, "dev-2"); getErr != nil || ok {
+		t.Fatalf("device should be gone after RemovePaired (ok=%v err=%v)", ok, getErr)
 	}
-	if _, ok, _ := s.TokenByValue(ctx, tokens[0].Token); ok {
-		t.Fatalf("token should be gone after RemovePaired")
+	if _, ok, tokErr := s.TokenByValue(ctx, tokens[0].Token); tokErr != nil || ok {
+		t.Fatalf("token should be gone after RemovePaired (ok=%v err=%v)", ok, tokErr)
 	}
 }
 
@@ -151,7 +158,11 @@ func TestOpenStoreUnderContention(t *testing.T) {
 	if err != nil {
 		t.Fatalf("raw open: %v", err)
 	}
-	defer func() { _ = raw.Close() }()
+	defer func() {
+		if closeErr := raw.Close(); closeErr != nil {
+			t.Errorf("Close: %v", closeErr)
+		}
+	}()
 	ctx := context.Background()
 	for _, p := range []string{"PRAGMA journal_mode=DELETE", "PRAGMA busy_timeout=5000"} {
 		if _, pragmaErr := raw.ExecContext(ctx, p); pragmaErr != nil {
@@ -174,12 +185,14 @@ func TestOpenStoreUnderContention(t *testing.T) {
 	released := make(chan struct{})
 	go func() {
 		time.Sleep(150 * time.Millisecond)
-		_ = tx.Commit()
+		if commitErr := tx.Commit(); commitErr != nil {
+			t.Errorf("commit: %v", commitErr)
+		}
 		close(released)
 	}()
 
 	start := time.Now()
-	racer, err := OpenStore(path)
+	racer, err := OpenStore(context.Background(), path)
 	elapsed := time.Since(start)
 	<-released
 	if err != nil {
@@ -187,17 +200,23 @@ func TestOpenStoreUnderContention(t *testing.T) {
 			"busy_timeout must be set BEFORE journal_mode, or converting to WAL fails instantly",
 			elapsed, err)
 	}
-	_ = racer.Close()
+	if err := racer.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
 }
 
 // TestOpenStoreSetsBusyTimeoutFirst pins the ordering directly, so the reason
 // survives even if the contention test above is ever weakened or made lenient.
 func TestOpenStoreSetsBusyTimeoutFirst(t *testing.T) {
-	store, err := OpenStore(filepath.Join(t.TempDir(), "gateway.db"))
+	store, err := OpenStore(context.Background(), filepath.Join(t.TempDir(), "gateway.db"))
 	if err != nil {
 		t.Fatalf("OpenStore: %v", err)
 	}
-	defer func() { _ = store.Close() }()
+	defer func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	}()
 
 	var timeout int
 	if err := store.db.QueryRow("PRAGMA busy_timeout").Scan(&timeout); err != nil {

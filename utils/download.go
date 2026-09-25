@@ -2,8 +2,10 @@ package utils
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 
@@ -32,16 +34,20 @@ func DownloadToFile(ctx context.Context, client *http.Client, req *http.Request,
 		"max_bytes": maxBytes,
 	})
 
-	resp, err := client.Do(req)
+	resp, err := client.Do(req) //nolint:gosec // URL is built from the ClawHub registry / GitHub raw path by skills.installer
 	if err != nil {
 		return "", fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { CloseQuietly(resp.Body) }()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		// Read a small amount for the error message.
+		// Read a small amount for the error message. A short or failed read
+		// just means less context.
 		errBody := make([]byte, 512)
-		n, _ := io.ReadFull(resp.Body, errBody)
+		n, readErr := io.ReadFull(resp.Body, errBody)
+		if readErr != nil && !errors.Is(readErr, io.ErrUnexpectedEOF) && !errors.Is(readErr, io.EOF) {
+			logger.DebugCF("download", "failed to read error response body", map[string]any{"error": readErr.Error()})
+		}
 		return "", fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(errBody[:n]))
 	}
 
@@ -58,8 +64,10 @@ func DownloadToFile(ctx context.Context, client *http.Client, req *http.Request,
 
 	// Cleanup helper — removes the temp file on any error.
 	cleanup := func() {
-		_ = tmpFile.Close()
-		_ = os.Remove(tmpPath)
+		// The copy error is what the caller sees; the close error is noise on
+		// top of it, but a leftover temp file is worth a warning.
+		CloseQuietly(tmpFile)
+		removeTempFile(tmpPath)
 	}
 
 	// Optionally limit the download size.
@@ -80,7 +88,7 @@ func DownloadToFile(ctx context.Context, client *http.Client, req *http.Request,
 	}
 
 	if err := tmpFile.Close(); err != nil {
-		_ = os.Remove(tmpPath)
+		removeTempFile(tmpPath)
 		return "", fmt.Errorf("failed to close temp file: %w", err)
 	}
 
@@ -90,4 +98,11 @@ func DownloadToFile(ctx context.Context, client *http.Client, req *http.Request,
 	})
 
 	return tmpPath, nil
+}
+
+// removeTempFile removes a temp download and warns if it is left behind.
+func removeTempFile(path string) {
+	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		logger.WarnCF("download", "failed to remove temp file", map[string]any{"path": path, "error": err.Error()})
+	}
 }

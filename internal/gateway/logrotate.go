@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/tenebris-tech/alerter"
+
 	"github.com/PivotLLM/ClawEh/logger"
 )
 
@@ -20,13 +22,13 @@ var datedLogRe = regexp.MustCompile(`^\d{8}-.+\.log$`)
 // case where the gateway was down at midnight), and prunes rolled archives older
 // than retentionDays. retentionDays <= 0 keeps archives forever. The goroutine
 // exits when ctx is cancelled.
-func startLogRotation(ctx context.Context, logPath string, retentionDays int) {
+func startLogRotation(ctx context.Context, logPath string, retentionDays int, a alerter.Alerter) {
 	dir := filepath.Dir(logPath)
 
 	// Startup roll: archive claw.log now if its last write predates today.
 	if fi, err := os.Stat(logPath); err == nil && fi.Size() > 0 {
 		if dateOf(fi.ModTime()).Before(dateOf(time.Now())) {
-			_ = logger.RollLogFile()
+			rollLogs(a)
 			pruneOldLogs(dir, retentionDays, time.Now())
 		}
 	}
@@ -39,11 +41,25 @@ func startLogRotation(ctx context.Context, logPath string, retentionDays int) {
 				timer.Stop()
 				return
 			case <-timer.C:
-				_ = logger.RollLogFile()
+				rollLogs(a)
 				pruneOldLogs(dir, retentionDays, time.Now())
 			}
 		}
 	}()
+}
+
+// rollLogs archives the active logs, logging a failure rather than aborting
+// the rotation loop.
+func rollLogs(a alerter.Alerter) {
+	if err := logger.RollLogFile(); err != nil {
+		logger.WarnCF("gateway", "log rotation failed", map[string]any{"error": err.Error()})
+		a.Send(alerter.Alert{
+			Title:       "Log rotation failed",
+			Description: "file logging may be stopped until the gateway is restarted",
+			Details:     err.Error(),
+			EventID:     "logging",
+		})
+	}
 }
 
 // dateOf returns t truncated to local midnight (date only).
@@ -77,7 +93,9 @@ func pruneOldLogs(dir string, retentionDays int, now time.Time) {
 			continue
 		}
 		if d.Before(cutoff) {
-			_ = os.Remove(filepath.Join(dir, e.Name()))
+			if rmErr := os.Remove(filepath.Join(dir, e.Name())); rmErr != nil {
+				logger.WarnCF("gateway", "failed to prune rolled log", map[string]any{"file": e.Name(), "error": rmErr.Error()})
+			}
 		}
 	}
 }

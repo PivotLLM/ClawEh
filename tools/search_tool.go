@@ -70,7 +70,10 @@ func (t *SearchTool) Execute(_ context.Context, args map[string]any) *ToolResult
 		// context and burning tokens.
 		return ErrorResult("Missing or invalid 'query' argument. Must be a non-empty string.")
 	}
-	useRegex, _ := args["regex"].(bool)
+	var useRegex bool
+	if v, ok := args["regex"].(bool); ok {
+		useRegex = v
+	}
 
 	var results []ToolSearchResult
 	if useRegex {

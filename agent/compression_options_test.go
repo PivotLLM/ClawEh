@@ -11,9 +11,6 @@ import (
 	"github.com/PivotLLM/ClawEh/config"
 )
 
-func ip(v int) *int         { return &v }
-func fp(v float64) *float64 { return &v }
-
 // applyOpts is the only way to observe the mapper's effect: options are opaque
 // closures, so build a config from them and read the result back.
 func applyOpts(opts []ctxengine.Option) ctxengine.CompressionSettings {
@@ -24,16 +21,16 @@ func applyOpts(opts []ctxengine.Option) ctxengine.CompressionSettings {
 // CompressionConfig and silently never reaching ctxengine.
 func TestCompressionOptions_MapsEveryField(t *testing.T) {
 	got := applyOpts(compressionOptions(&config.CompressionConfig{
-		TargetPercent: ip(25),
+		TargetPercent: new(25),
 		Trigger: &config.CompressionTriggerConfig{
-			MinPercent: ip(21), NormalPercent: ip(51), SafetyPercent: ip(81),
-			MessageCount: ip(101), Days: ip(7),
+			MinPercent: new(21), NormalPercent: new(51), SafetyPercent: new(81),
+			MessageCount: new(101), Days: new(7),
 		},
 		Retain: &config.CompressionRetainConfig{
-			TokenPercent: ip(9), MaxTokens: ip(60_000), MaxAgeDays: ip(5), MinMessages: ip(3),
+			TokenPercent: new(9), MaxTokens: new(60_000), MaxAgeDays: new(5), MinMessages: new(3),
 		},
 		Estimate: &config.CompressionEstimateConfig{
-			CharsPerToken: fp(3.5), TokenSafetyMargin: fp(1.2),
+			CharsPerToken: new(3.5), TokenSafetyMargin: new(1.2),
 		},
 	}))
 
@@ -80,7 +77,7 @@ func TestCompressionOptions_UnsetFieldsProduceNoOptions(t *testing.T) {
 // disabled: 0 must reach llmcontext rather than being treated as unset.
 func TestCompressionOptions_ExplicitZeroIsPassedThrough(t *testing.T) {
 	opts := compressionOptions(&config.CompressionConfig{
-		Trigger: &config.CompressionTriggerConfig{Days: ip(0), MessageCount: ip(0)},
+		Trigger: &config.CompressionTriggerConfig{Days: new(0), MessageCount: new(0)},
 	})
 	if len(opts) != 2 {
 		t.Fatalf("expected 2 options for two explicit zeroes, got %d", len(opts))

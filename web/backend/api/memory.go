@@ -1,8 +1,6 @@
 package api
 
 import (
-	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"os"
@@ -14,6 +12,7 @@ import (
 	cogmemstore "github.com/PivotLLM/cogmem/store"
 
 	"github.com/PivotLLM/ClawEh/cogmemhost"
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 // registerMemoryRoutes binds the cognitive-memory browsing and curation
@@ -157,7 +156,7 @@ func (h *Handler) handleListMemoryStores(w http.ResponseWriter, r *http.Request)
 	sortMemoryStores(items)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"sessions": items})
+	encodeJSON(w, map[string]any{"sessions": items})
 }
 
 // findMemoryDB locates the memory database for a store id (an agent's
@@ -224,9 +223,9 @@ func (h *Handler) handleGetMemoryStore(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to open memory store", http.StatusInternalServerError)
 		return
 	}
-	defer s.Close()
+	defer utils.CloseQuietly(s)
 
-	ctx := context.Background()
+	ctx := r.Context()
 	db := s.DB()
 
 	includeRetired := r.URL.Query().Get("include_retired") != ""
@@ -244,7 +243,11 @@ func (h *Handler) handleGetMemoryStore(w http.ResponseWriter, r *http.Request) {
 	}
 	resp.ActiveDomains = len(domains)
 	for _, d := range domains {
-		mems, _ := s.ListMemories(ctx, db, d.ID, statuses...)
+		mems, err := s.ListMemories(ctx, db, d.ID, statuses...)
+		if err != nil {
+			http.Error(w, "failed to read memories", http.StatusInternalServerError)
+			return
+		}
 		dm := memoryDomain{
 			ID:              d.ID,
 			Sticky:          d.Sticky(),
@@ -286,7 +289,7 @@ func (h *Handler) handleGetMemoryStore(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	encodeJSON(w, resp)
 }
 
 // openMemoryForWrite validates the {id} path value, locates the agent's
@@ -318,8 +321,8 @@ func (h *Handler) handleDeleteDomain(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	defer s.Close()
-	if err := s.DeleteDomain(context.Background(), s.DB(), r.PathValue("domainID")); err != nil {
+	defer utils.CloseQuietly(s)
+	if err := s.DeleteDomain(r.Context(), s.DB(), r.PathValue("domainID")); err != nil {
 		if errors.Is(err, cogmemstore.ErrNotFound) {
 			http.Error(w, "domain not found", http.StatusNotFound)
 			return
@@ -337,8 +340,8 @@ func (h *Handler) handleDeleteMemory(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	defer s.Close()
-	if err := s.DeleteMemory(context.Background(), s.DB(), r.PathValue("memoryID")); err != nil {
+	defer utils.CloseQuietly(s)
+	if err := s.DeleteMemory(r.Context(), s.DB(), r.PathValue("memoryID")); err != nil {
 		if errors.Is(err, cogmemstore.ErrNotFound) {
 			http.Error(w, "memory not found", http.StatusNotFound)
 			return

@@ -1,10 +1,9 @@
-// ClawEh - Personal AI Assistant
-// Inspired by and based on nanobot: https://github.com/HKUDS/nanobot
+// ClawEh
 // License: MIT
 //
-// Copyright (c) 2026 PicoClaw contributors
 
 // Package fileutil provides file manipulation utilities.
+
 package fileutil
 
 import (
@@ -12,6 +11,9 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/PivotLLM/ClawEh/logger"
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 // WriteFileAtomic atomically writes data to a file using a temp file + rename pattern.
@@ -57,7 +59,7 @@ func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
 
 	// Create temp file in the same directory (ensures atomic rename works)
 	// Using a hidden prefix (.tmp-) to avoid issues with some tools
-	tmpFile, err := os.OpenFile(
+	tmpFile, err := os.OpenFile( //nolint:gosec // atomic-write helper; the temp name is generated here in the caller's dir
 		filepath.Join(dir, fmt.Sprintf(".tmp-%d-%d", os.Getpid(), time.Now().UnixNano())),
 		os.O_WRONLY|os.O_CREATE|os.O_EXCL,
 		perm,
@@ -71,8 +73,12 @@ func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
 
 	defer func() {
 		if cleanup {
-			tmpFile.Close()
-			_ = os.Remove(tmpPath)
+			// The file may already be closed on this path, so its Close error
+			// carries nothing; a leftover temp file is worth a warning.
+			utils.CloseQuietly(tmpFile)
+			if rmErr := os.Remove(tmpPath); rmErr != nil {
+				logger.WarnCF("fileutil", "failed to remove temp file", map[string]any{"path": tmpPath, "error": rmErr.Error()})
+			}
 		}
 	}()
 
@@ -108,9 +114,11 @@ func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
 
 	// Sync directory to ensure rename is durable
 	// This prevents the renamed file from disappearing after a crash
-	if dirFile, err := os.Open(dir); err == nil {
-		_ = dirFile.Sync()
-		dirFile.Close()
+	if dirFile, err := os.Open(dir); err == nil { //nolint:gosec // fsync of the caller-supplied path's directory
+		if syncErr := dirFile.Sync(); syncErr != nil {
+			logger.DebugCF("fileutil", "directory sync failed", map[string]any{"dir": dir, "error": syncErr.Error()})
+		}
+		utils.CloseQuietly(dirFile)
 	}
 
 	// Success: skip cleanup (file was renamed, no temp to remove)

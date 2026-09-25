@@ -105,8 +105,7 @@ func (p *finalLLMProvider) GetDefaultModel() string { return "test-final" }
 // path) must both see agent_id when the loop runs, otherwise compression error
 // logs lose the agent attribution Eric saw.
 func TestRunAgentLoop_PropagatesAgentIDForCompression(t *testing.T) {
-	al, _, _, _, cleanup := newTestAgentLoop(t)
-	defer cleanup()
+	al := newTestAgentLoop(t).al
 
 	agent := al.registry.GetDefaultAgent()
 	if agent == nil {
@@ -177,7 +176,7 @@ func TestRunAgentLoop_PropagatesAgentIDForCompression(t *testing.T) {
 	// The LLM call itself should also see the agent ID — this is the original
 	// runLLMIteration wrap, kept for safety. It should agree with the
 	// runAgentLoop-level wrap.
-	if got, _ := agent.Provider.(*finalLLMProvider).seenAgentID.Load().(string); got != agent.ID {
+	if got, ok := agent.Provider.(*finalLLMProvider).seenAgentID.Load().(string); !ok || got != agent.ID {
 		t.Errorf("Chat observed agent_id=%q, want %q", got, agent.ID)
 	}
 }

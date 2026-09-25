@@ -10,8 +10,7 @@ import (
 // The status endpoint reports the running process, so the figures must be the
 // process's own and plausible.
 func TestSystemStatus(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 
 	h := NewHandler(configPath)
 	mux := http.NewServeMux()
@@ -93,8 +92,7 @@ func TestSystemStatusSurvivesAnUnreadableConfig(t *testing.T) {
 }
 
 func TestCountChannels(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 	h := NewHandler(configPath)
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
@@ -102,7 +100,9 @@ func TestCountChannels(t *testing.T) {
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/system/status", nil))
 	var got statusResponse
-	_ = json.Unmarshal(rec.Body.Bytes(), &got)
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode status: %v", err)
+	}
 	if got.Channels < 0 {
 		t.Errorf("channels = %d", got.Channels)
 	}

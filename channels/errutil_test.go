@@ -2,12 +2,11 @@ package channels
 
 import (
 	"errors"
-	"fmt"
 	"testing"
 )
 
 func TestClassifySendError(t *testing.T) {
-	raw := fmt.Errorf("some API error")
+	raw := errors.New("some API error")
 
 	tests := []struct {
 		name       string
@@ -47,7 +46,7 @@ func TestClassifySendError(t *testing.T) {
 }
 
 func TestClassifySendErrorNoFalsePositive(t *testing.T) {
-	raw := fmt.Errorf("some error")
+	raw := errors.New("some error")
 
 	// 429 should NOT match ErrTemporary or ErrSendFailed
 	err := ClassifySendError(429, raw)
@@ -85,7 +84,7 @@ func TestClassifyNetError(t *testing.T) {
 	})
 
 	t.Run("non-nil error wraps as ErrTemporary", func(t *testing.T) {
-		raw := fmt.Errorf("connection refused")
+		raw := errors.New("connection refused")
 		err := ClassifyNetError(raw)
 		if err == nil {
 			t.Fatal("expected non-nil error")

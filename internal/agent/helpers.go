@@ -17,6 +17,7 @@ import (
 	"github.com/PivotLLM/ClawEh/internal"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/providers"
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 func agentCmd(message, sessionKey, model string, debug bool) error {
@@ -59,11 +60,19 @@ func agentCmd(message, sessionKey, model string, debug bool) error {
 
 	// Print agent startup info (only for interactive mode)
 	startupInfo := agentLoop.GetStartupInfo()
+	// Both sections are always maps; a nil map on mismatch just logs nil fields.
+	var toolsInfo, skillsInfo map[string]any
+	if v, ok := startupInfo["tools"].(map[string]any); ok {
+		toolsInfo = v
+	}
+	if v, ok := startupInfo["skills"].(map[string]any); ok {
+		skillsInfo = v
+	}
 	logger.InfoCF("agent", "Agent initialized",
 		map[string]any{
-			"tools_count":      startupInfo["tools"].(map[string]any)["count"],
-			"skills_total":     startupInfo["skills"].(map[string]any)["total"],
-			"skills_available": startupInfo["skills"].(map[string]any)["available"],
+			"tools_count":      toolsInfo["count"],
+			"skills_total":     skillsInfo["total"],
+			"skills_available": skillsInfo["available"],
 		})
 
 	if message != "" {
@@ -97,7 +106,7 @@ func interactiveMode(agentLoop *agent.AgentLoop, sessionKey string) {
 		simpleInteractiveMode(agentLoop, sessionKey)
 		return
 	}
-	defer rl.Close()
+	defer utils.CloseQuietly(rl)
 
 	for {
 		line, err := rl.Readline()

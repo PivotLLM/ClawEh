@@ -58,7 +58,7 @@ func renderTurnError(turnCtx context.Context, budget time.Duration, err error) s
 // chain moves to the next one. Returns nil for non-user contexts (no channel, or
 // the internal "system" channel, or when SendResponse is off) so background work
 // stays silent. The notice ALWAYS includes the HTTP status code when present.
-func (al *AgentLoop) fallbackNotifier(opts processOptions) providers.FallbackNotify {
+func (al *AgentLoop) fallbackNotifier(ctx context.Context, opts processOptions) providers.FallbackNotify {
 	if opts.Channel == "" || opts.Channel == "system" || opts.ChatID == "" {
 		return nil
 	}
@@ -73,7 +73,7 @@ func (al *AgentLoop) fallbackNotifier(opts processOptions) providers.FallbackNot
 			return
 		}
 		seen[notice] = true
-		pubCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		pubCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
 		if err := al.bus.PublishOutbound(pubCtx, bus.OutboundMessage{
 			Channel: opts.Channel,
@@ -196,8 +196,7 @@ func renderFailoverError(err error) string {
 	if err == nil {
 		return ""
 	}
-	var exhausted *providers.FallbackExhaustedError
-	if errors.As(err, &exhausted) {
+	if exhausted, ok := errors.AsType[*providers.FallbackExhaustedError](err); ok {
 		var attempts []string
 		for _, a := range exhausted.Attempts {
 			if a.Skipped {
@@ -213,8 +212,7 @@ func renderFailoverError(err error) string {
 		}
 		return "All models failed:\n  • " + strings.Join(attempts, "\n  • ")
 	}
-	var fe *providers.FailoverError
-	if errors.As(err, &fe) {
+	if fe, ok := errors.AsType[*providers.FailoverError](err); ok {
 		return attemptDescription(fe.Model, fe.Status, fe.Reason) + "."
 	}
 	return ""
@@ -223,8 +221,7 @@ func renderFailoverError(err error) string {
 // failoverStatus extracts the HTTP status code carried by a classified
 // FailoverError, or 0 when the error has none (timeout, network, …).
 func failoverStatus(err error) int {
-	var fe *providers.FailoverError
-	if errors.As(err, &fe) {
+	if fe, ok := errors.AsType[*providers.FailoverError](err); ok {
 		return fe.Status
 	}
 	return 0

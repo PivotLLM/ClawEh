@@ -136,7 +136,10 @@ func TestWriteFile_Backup_NonExistentTarget_NoSibling(t *testing.T) {
 	if string(got) != "hello" {
 		t.Errorf("content = %q", got)
 	}
-	matches, _ := filepath.Glob(filepath.Join(ws, "new.txt.*"))
+	matches, globErr := filepath.Glob(filepath.Join(ws, "new.txt.*"))
+	if globErr != nil {
+		t.Fatal(globErr)
+	}
 	if len(matches) != 0 {
 		t.Errorf("expected no backup sibling, got: %v", matches)
 	}
@@ -270,7 +273,10 @@ func TestWriteFile_Backup_False_Default_NoSibling(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("write failed: %s", res.ForLLM)
 	}
-	matches, _ := filepath.Glob(filepath.Join(ws, "x.txt.*"))
+	matches, globErr := filepath.Glob(filepath.Join(ws, "x.txt.*"))
+	if globErr != nil {
+		t.Fatal(globErr)
+	}
 	if len(matches) != 0 {
 		t.Errorf("expected no backup sibling when backup=false; got: %v", matches)
 	}
@@ -291,7 +297,10 @@ func TestEditFile_Backup_NonExistentTarget(t *testing.T) {
 	if !res.IsError {
 		t.Fatal("expected edit to fail when target missing")
 	}
-	matches, _ := filepath.Glob(filepath.Join(ws, "missing.txt.*"))
+	matches, globErr := filepath.Glob(filepath.Join(ws, "missing.txt.*"))
+	if globErr != nil {
+		t.Fatal(globErr)
+	}
 	if len(matches) != 0 {
 		t.Errorf("no backup expected: %v", matches)
 	}
@@ -369,11 +378,17 @@ func TestAppendFile_Backup_NonExistentTarget(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("append failed: %s", res.ForLLM)
 	}
-	matches, _ := filepath.Glob(filepath.Join(ws, "new.txt.*"))
+	matches, globErr := filepath.Glob(filepath.Join(ws, "new.txt.*"))
+	if globErr != nil {
+		t.Fatal(globErr)
+	}
 	if len(matches) != 0 {
 		t.Errorf("expected no backup for non-existent target; got: %v", matches)
 	}
-	got, _ := os.ReadFile(filepath.Join(ws, "new.txt"))
+	got, readErr := os.ReadFile(filepath.Join(ws, "new.txt"))
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
 	if string(got) != "hi" {
 		t.Errorf("target = %q", got)
 	}
@@ -454,7 +469,11 @@ func TestWriteFile_Backup_FailureAbortsModification(t *testing.T) {
 	if err := os.Chmod(subdir, 0o500); err != nil {
 		t.Fatal(err)
 	}
-	defer os.Chmod(subdir, 0o755)
+	defer func() {
+		if err := os.Chmod(subdir, 0o755); err != nil {
+			t.Error(err)
+		}
+	}()
 
 	tool := NewWriteFileTool(ws, true)
 	res := tool.Execute(context.Background(), map[string]any{
@@ -481,61 +500,47 @@ func TestWriteFile_Backup_FailureAbortsModification(t *testing.T) {
 
 // --- F3: backup must not be created when edit validation fails --------------
 
-func TestEditFile_Backup_OldTextMissing_NoBackup(t *testing.T) {
-	ws := t.TempDir()
-	target := filepath.Join(ws, "e.txt")
-	if err := os.WriteFile(target, []byte("hello world"), 0o644); err != nil {
-		t.Fatal(err)
+// TestEditFile_Backup_ValidationFailure_NoBackup: an edit that fails
+// validation must leave neither a backup nor a changed target.
+func TestEditFile_Backup_ValidationFailure_NoBackup(t *testing.T) {
+	cases := []struct {
+		name, content, oldText, reason string
+	}{
+		{"old_text missing", "hello world", "absent", "old_text is missing"},
+		{"old_text ambiguous", "ab ab", "ab", "old_text is ambiguous"},
 	}
-	tool := NewEditFileTool(ws, true)
-	res := tool.Execute(context.Background(), map[string]any{
-		"path":     "e.txt",
-		"old_text": "absent",
-		"new_text": "x",
-		"backup":   true,
-	})
-	if !res.IsError {
-		t.Fatal("expected edit to fail when old_text is missing")
-	}
-	matches, _ := filepath.Glob(filepath.Join(ws, "e.txt.*"))
-	if len(matches) != 0 {
-		t.Errorf("expected no orphan backup when validation fails; got: %v", matches)
-	}
-	got, err := os.ReadFile(target)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got) != "hello world" {
-		t.Errorf("target should be unchanged; got %q", got)
-	}
-}
-
-func TestEditFile_Backup_OldTextDuplicate_NoBackup(t *testing.T) {
-	ws := t.TempDir()
-	target := filepath.Join(ws, "e.txt")
-	if err := os.WriteFile(target, []byte("ab ab"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	tool := NewEditFileTool(ws, true)
-	res := tool.Execute(context.Background(), map[string]any{
-		"path":     "e.txt",
-		"old_text": "ab",
-		"new_text": "z",
-		"backup":   true,
-	})
-	if !res.IsError {
-		t.Fatal("expected edit to fail when old_text is ambiguous")
-	}
-	matches, _ := filepath.Glob(filepath.Join(ws, "e.txt.*"))
-	if len(matches) != 0 {
-		t.Errorf("expected no orphan backup when validation fails; got: %v", matches)
-	}
-	got, err := os.ReadFile(target)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got) != "ab ab" {
-		t.Errorf("target should be unchanged; got %q", got)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ws := t.TempDir()
+			target := filepath.Join(ws, "e.txt")
+			if err := os.WriteFile(target, []byte(tc.content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			tool := NewEditFileTool(ws, true)
+			res := tool.Execute(context.Background(), map[string]any{
+				"path":     "e.txt",
+				"old_text": tc.oldText,
+				"new_text": "x",
+				"backup":   true,
+			})
+			if !res.IsError {
+				t.Fatalf("expected edit to fail when %s", tc.reason)
+			}
+			matches, globErr := filepath.Glob(filepath.Join(ws, "e.txt.*"))
+			if globErr != nil {
+				t.Fatal(globErr)
+			}
+			if len(matches) != 0 {
+				t.Errorf("expected no orphan backup when validation fails; got: %v", matches)
+			}
+			got, err := os.ReadFile(target)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != tc.content {
+				t.Errorf("target should be unchanged; got %q", got)
+			}
+		})
 	}
 }
 
@@ -577,7 +582,7 @@ func TestWriteFile_Backup_Concurrent_DistinctSuffixes(t *testing.T) {
 	tool := NewWriteFileTool(ws, true)
 	var wg sync.WaitGroup
 	errs := make([]string, N)
-	for i := 0; i < N; i++ {
+	for i := range N {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
@@ -650,7 +655,10 @@ func TestWriteFile_Backup_OutsideWorkspace(t *testing.T) {
 	if _, err := os.Stat(target + ".0001"); !os.IsNotExist(err) {
 		t.Errorf("backup must not escape scope; got: %v", err)
 	}
-	got, _ := os.ReadFile(target)
+	got, readErr := os.ReadFile(target)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
 	if string(got) != "orig" {
 		t.Errorf("target should be unchanged; got %q", got)
 	}

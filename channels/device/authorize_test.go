@@ -13,11 +13,15 @@ import (
 // listener — these tests exercise authorizeGateway directly.
 func newAuthTestServer(t *testing.T, shared, word string) *Server {
 	t.Helper()
-	store, err := OpenStore(filepath.Join(t.TempDir(), "gateway.db"))
+	store, err := OpenStore(context.Background(), filepath.Join(t.TempDir(), "gateway.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = store.Close() })
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	})
 	return NewServer(store, ServerOptions{SharedToken: shared, WordToken: word})
 }
 

@@ -9,8 +9,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"time"
 
@@ -67,9 +69,9 @@ type PingResponse struct {
 
 // Ping tests connectivity and authentication with the MCPFusion server
 func (c *Client) Ping(ctx context.Context) (*PingResponse, error) {
-	endpoint := fmt.Sprintf("%s/ping", c.baseURL)
+	endpoint := c.baseURL + "/ping"
 
-	req, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create ping request: %w", err)
 	}
@@ -84,7 +86,7 @@ func (c *Client) Ping(ctx context.Context) (*PingResponse, error) {
 	if err != nil {
 		return nil, fmt.Errorf("ping request failed: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer closeBody(resp)
 
 	// Log the response if debug is enabled
 	debug.LogHTTPResponse(resp)
@@ -95,7 +97,7 @@ func (c *Client) Ping(ctx context.Context) (*PingResponse, error) {
 	}
 
 	if resp.StatusCode == http.StatusUnauthorized {
-		return nil, fmt.Errorf("authentication failed: invalid API token")
+		return nil, errors.New("authentication failed: invalid API token")
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -120,14 +122,14 @@ func (c *Client) StoreTokens(ctx context.Context, service, accessToken, refreshT
 		Metadata:     metadata,
 	}
 
-	endpoint := fmt.Sprintf("%s/api/v1/oauth/tokens", c.baseURL)
+	endpoint := c.baseURL + "/api/v1/oauth/tokens"
 
-	payload, err := json.Marshal(req)
+	payload, err := json.Marshal(req) //nolint:gosec // delivering the token to the store is this request's purpose
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal token request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewBuffer(payload))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewBuffer(payload))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create HTTP request: %w", err)
 	}
@@ -143,7 +145,7 @@ func (c *Client) StoreTokens(ctx context.Context, service, accessToken, refreshT
 	if err != nil {
 		return nil, fmt.Errorf("failed to send token request: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer closeBody(resp)
 
 	// Log the response if debug is enabled
 	debug.LogHTTPResponse(resp)
@@ -168,9 +170,9 @@ func (c *Client) StoreTokens(ctx context.Context, service, accessToken, refreshT
 
 // HealthCheck checks if the MCPFusion server is accessible
 func (c *Client) HealthCheck(ctx context.Context) error {
-	endpoint := fmt.Sprintf("%s/health", c.baseURL)
+	endpoint := c.baseURL + "/health"
 
-	req, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create health check request: %w", err)
 	}
@@ -184,7 +186,7 @@ func (c *Client) HealthCheck(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("health check failed: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer closeBody(resp)
 
 	// Log the response if debug is enabled
 	debug.LogHTTPResponse(resp)
@@ -198,9 +200,9 @@ func (c *Client) HealthCheck(ctx context.Context) error {
 
 // AuthCheck verifies that the API token is valid
 func (c *Client) AuthCheck(ctx context.Context) error {
-	endpoint := fmt.Sprintf("%s/api/v1/auth/verify", c.baseURL)
+	endpoint := c.baseURL + "/api/v1/auth/verify"
 
-	req, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create auth check request: %w", err)
 	}
@@ -215,13 +217,13 @@ func (c *Client) AuthCheck(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("auth check failed: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer closeBody(resp)
 
 	// Log the response if debug is enabled
 	debug.LogHTTPResponse(resp)
 
 	if resp.StatusCode == http.StatusUnauthorized {
-		return fmt.Errorf("API token is invalid or expired")
+		return errors.New("API token is invalid or expired")
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -235,7 +237,7 @@ func (c *Client) AuthCheck(ctx context.Context) error {
 func (c *Client) GetServiceConfig(ctx context.Context, serviceName string) (*ServiceConfigResponse, error) {
 	endpoint := fmt.Sprintf("%s/api/v1/services/%s/config", c.baseURL, serviceName)
 
-	req, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create service config request: %w", err)
 	}
@@ -250,7 +252,7 @@ func (c *Client) GetServiceConfig(ctx context.Context, serviceName string) (*Ser
 	if err != nil {
 		return nil, fmt.Errorf("service config request failed: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer closeBody(resp)
 
 	// Log the response if debug is enabled
 	debug.LogHTTPResponse(resp)
@@ -308,7 +310,7 @@ func (s *ServiceConfigData) AuthType() (string, bool) {
 
 // NotifySuccess sends a success notification to MCPFusion
 func (c *Client) NotifySuccess(ctx context.Context, serviceName string, userInfo *providers.UserInfo) error {
-	endpoint := fmt.Sprintf("%s/api/v1/oauth/success", c.baseURL)
+	endpoint := c.baseURL + "/api/v1/oauth/success"
 
 	notification := struct {
 		Service   string              `json:"service"`
@@ -325,7 +327,7 @@ func (c *Client) NotifySuccess(ctx context.Context, serviceName string, userInfo
 		return fmt.Errorf("failed to marshal success notification: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewBuffer(payload))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewBuffer(payload))
 	if err != nil {
 		return fmt.Errorf("failed to create success notification request: %w", err)
 	}
@@ -341,7 +343,7 @@ func (c *Client) NotifySuccess(ctx context.Context, serviceName string, userInfo
 	if err != nil {
 		return fmt.Errorf("success notification failed: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer closeBody(resp)
 
 	// Log the response if debug is enabled
 	debug.LogHTTPResponse(resp)
@@ -355,7 +357,7 @@ func (c *Client) NotifySuccess(ctx context.Context, serviceName string, userInfo
 
 // NotifyError sends an error notification to MCPFusion
 func (c *Client) NotifyError(ctx context.Context, serviceName string, errorMsg string) error {
-	endpoint := fmt.Sprintf("%s/api/v1/oauth/error", c.baseURL)
+	endpoint := c.baseURL + "/api/v1/oauth/error"
 
 	notification := struct {
 		Service   string    `json:"service"`
@@ -372,7 +374,7 @@ func (c *Client) NotifyError(ctx context.Context, serviceName string, errorMsg s
 		return fmt.Errorf("failed to marshal error notification: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewBuffer(payload))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewBuffer(payload))
 	if err != nil {
 		return fmt.Errorf("failed to create error notification request: %w", err)
 	}
@@ -388,11 +390,18 @@ func (c *Client) NotifyError(ctx context.Context, serviceName string, errorMsg s
 	if err != nil {
 		return fmt.Errorf("error notification failed: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer closeBody(resp)
 
 	// Log the response if debug is enabled
 	debug.LogHTTPResponse(resp)
 
 	// Don't fail if error notification fails - it's not critical
 	return nil
+}
+
+// closeBody closes the response body and logs the error when debug is on.
+func closeBody(resp *http.Response) {
+	if err := resp.Body.Close(); err != nil && debug.Debug {
+		log.Printf("close failed: %v", err)
+	}
 }

@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 // providerTestRequest is the body of POST /api/providers/test: the (possibly
@@ -38,7 +40,7 @@ func (h *Handler) handleTestProvider(w http.ResponseWriter, r *http.Request) {
 
 func writeProviderTest(w http.ResponseWriter, resp providerTestResponse) {
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(resp)
+	encodeJSON(w, resp)
 }
 
 // testProviderConnectivity routes a provider to the right live probe by protocol.
@@ -102,7 +104,7 @@ func doProbe(req *http.Request, base string) providerTestResponse {
 	if err != nil {
 		return providerTestResponse{Message: fmt.Sprintf("Could not reach %s — check the base URL and your network. (%v)", base, err)}
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() { utils.CloseQuietly(resp.Body) }()
 	return classifyProbeStatus(resp.StatusCode, base)
 }
 

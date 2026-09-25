@@ -115,12 +115,24 @@ func TestImportAllowed_ResolvesSymlinkedRoots(t *testing.T) {
 func TestLogWriter_ForwardsLevelsAndBuffersPartialLines(t *testing.T) {
 	var got []string
 	w := &logWriter{agent: "alice", emit: func(level, msg string, fields map[string]any) {
-		got = append(got, level+"|"+msg+"|"+fields["agent"].(string))
+		agentField, ok := fields["agent"].(string)
+		if !ok {
+			t.Fatalf("agent field is %T, want string", fields["agent"])
+		}
+		got = append(got, level+"|"+msg+"|"+agentField)
 	}}
-	_, _ = w.Write([]byte("2026-09-19 10:00:00 [INFO] [123] Task 1: started\n2026-09-19 10:00:01 [WARN] [123] retrying\n"))
-	_, _ = w.Write([]byte("2026-09-19 10:00:02 [ERROR] [123] fai"))
-	_, _ = w.Write([]byte("led hard\n"))
-	_, _ = w.Write([]byte("2026-09-19 10:00:03 [DEBUG] [123] noisy\nunformatted line\n"))
+	if _, err := w.Write([]byte("2026-09-19 10:00:00 [INFO] [123] Task 1: started\n2026-09-19 10:00:01 [WARN] [123] retrying\n")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if _, err := w.Write([]byte("2026-09-19 10:00:02 [ERROR] [123] fai")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if _, err := w.Write([]byte("led hard\n")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if _, err := w.Write([]byte("2026-09-19 10:00:03 [DEBUG] [123] noisy\nunformatted line\n")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
 	want := []string{
 		"INFO|Task 1: started|alice",
 		"WARN|retrying|alice",

@@ -1,8 +1,5 @@
-// ClawEh - Personal AI Assistant
-// Inspired by and based on nanobot: https://github.com/HKUDS/nanobot
+// ClawEh
 // License: MIT
-//
-// Copyright (c) 2026 PicoClaw contributors
 
 package agent
 
@@ -23,6 +20,7 @@ import (
 
 	"github.com/PivotLLM/cogmem"
 	"github.com/PivotLLM/ctxengine"
+	"github.com/tenebris-tech/alerter"
 
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/config"
@@ -90,7 +88,7 @@ func (al *AgentLoop) runAgentLoop(
 
 	// 1. Get or create the ContextManager (and the cognitive-memory session, nil
 	// for agents without it) for this session.
-	cm, mem, releaseCtxMgr := al.getSessionContext(agent, opts.SessionKey)
+	cm, mem, releaseCtxMgr := al.getSessionContext(agent, opts.SessionKey) //nolint:contextcheck // compaction reporter: ctxengine's callback has no context, so it publishes on its own
 	defer releaseCtxMgr()
 
 	// Record the inbound source on the session token record so MCP-routed tool
@@ -269,22 +267,34 @@ func (al *AgentLoop) runAgentLoop(
 			logger.WarnCF("agent", "Failed to add assistant message to context manager",
 				map[string]any{"error": err.Error(), "session": opts.SessionKey})
 		}
-		agent.Sessions.Save(opts.SessionKey)
+		if err := agent.Sessions.Save(opts.SessionKey); err != nil {
+			logger.WarnCF("agent", "Failed to save session",
+				map[string]any{"error": err.Error(), "session": opts.SessionKey})
+			al.Alerter().Send(alerter.Alert{
+				Title:       "Session not saved",
+				Description: "conversation history is being lost (disk full or unwritable?)",
+				Details:     err.Error(),
+				EventID:     "session-store",
+			})
+		}
 	}
 
 	// 7. Optional: send response via bus
 	if opts.SendResponse {
-		al.bus.PublishOutbound(ctx, bus.OutboundMessage{
+		if err := al.bus.PublishOutbound(ctx, bus.OutboundMessage{
 			Channel: opts.Channel,
 			ChatID:  opts.ChatID,
 			Content: finalContent,
-		})
+		}); err != nil {
+			logger.WarnCF("agent", "Failed to publish response",
+				map[string]any{"error": err.Error(), "channel": opts.Channel, "session": opts.SessionKey})
+		}
 	}
 
 	// 8. Log response — content gated behind log_message_content for privacy
 	logMsg := "Response"
 	if logger.GetLogMessageContent() {
-		logMsg = fmt.Sprintf("Response: %s", utils.Truncate(finalContent, 120))
+		logMsg = "Response: " + utils.Truncate(finalContent, 120)
 	}
 	logger.InfoCF("agent", logMsg,
 		map[string]any{
@@ -549,7 +559,7 @@ func (al *AgentLoop) runLLMIteration(
 	// placeholder every progress_interval with a running tool-call count. Stops
 	// when the turn returns (defer). completedTools is bumped after each batch.
 	var completedTools atomic.Int64
-	stopProgress := al.startProgressUpdates(opts.Channel, opts.ChatID,
+	stopProgress := al.startProgressUpdates(ctx, opts.Channel, opts.ChatID,
 		al.GetConfig().Agents.Defaults.GetProgressInterval(), &completedTools)
 	defer stopProgress()
 
@@ -563,11 +573,14 @@ func (al *AgentLoop) runLLMIteration(
 		if len(evictedThisTurn) == 0 || opts.Channel == "" || !al.evictionNotifyUser(agent) {
 			return
 		}
-		_ = al.bus.PublishOutbound(ctx, bus.OutboundMessage{
+		if err := al.bus.PublishOutbound(ctx, bus.OutboundMessage{
 			Channel: opts.Channel,
 			ChatID:  opts.ChatID,
 			Content: summarizeEvictions(evictedThisTurn),
-		})
+		}); err != nil {
+			logger.WarnCF("agent", "Failed to publish eviction notice",
+				map[string]any{"error": err.Error(), "channel": opts.Channel})
+		}
 	}()
 
 	// Loop protection: if the model requests the exact same tool call(s) on
@@ -590,7 +603,7 @@ func (al *AgentLoop) runLLMIteration(
 	if streamToolNarration && al.channelManager != nil && al.channelManager.SupportsStreaming(opts.Channel) {
 		channel, chatID := opts.Channel, opts.ChatID
 		streamCoalescer = newStreamCoalescer(func(batch string) {
-			al.channelManager.StreamDelta(channel, chatID, batch)
+			al.channelManager.StreamDelta(ctx, channel, chatID, batch)
 		})
 		// Flush any buffered remainder that never hit a boundary before the turn's
 		// terminal reply is published, so no trailing partial text is lost.
@@ -625,7 +638,7 @@ func (al *AgentLoop) runLLMIteration(
 	// One notifier for the whole turn so its de-dup memory spans all tool
 	// iterations: a primary that fails over on every iteration (e.g. a model that
 	// 400s each call) posts its heads-up once, not once per iteration.
-	turnNotifier := al.fallbackNotifier(opts)
+	turnNotifier := al.fallbackNotifier(ctx, opts)
 
 	// Follow-along breadcrumbs (/tools on): post a one-line note per tool call.
 	// Resolved once per turn — a user chat, not the internal "system" channel.
@@ -902,15 +915,18 @@ func (al *AgentLoop) runLLMIteration(
 				)
 
 				if retry == 0 && !constants.IsInternalChannel(opts.Channel) {
-					al.bus.PublishOutbound(ctx, bus.OutboundMessage{
+					if pubErr := al.bus.PublishOutbound(ctx, bus.OutboundMessage{
 						Channel: opts.Channel,
 						ChatID:  opts.ChatID,
 						Content: "Context window exceeded. Compressing history and retrying...",
-					})
+					}); pubErr != nil {
+						logger.WarnCF("agent", "Failed to publish compression notice",
+							map[string]any{"error": pubErr.Error(), "channel": opts.Channel})
+					}
 				}
 
 				prevMsgCount := len(messages)
-				comprMgr, releaseComprMgr := al.getContextManager(agent, opts.SessionKey)
+				comprMgr, releaseComprMgr := al.getContextManager(agent, opts.SessionKey) //nolint:contextcheck // compaction reporter: ctxengine's callback has no context, so it publishes on its own
 				defer releaseComprMgr()
 				if ferr := comprMgr.ForceCompress(ctx); ferr != nil {
 					logger.WarnCF("agent", "force compression failed",
@@ -1094,11 +1110,14 @@ func (al *AgentLoop) runLLMIteration(
 		// model's "let me also check…" play-by-play.
 		if response.Content != "" && opts.Channel != "" && al.GetConfig().Agents.Defaults.StreamToolActivity {
 			pubCtx, pubCancel := context.WithTimeout(ctx, 5*time.Second)
-			_ = al.bus.PublishOutbound(pubCtx, bus.OutboundMessage{
+			if err := al.bus.PublishOutbound(pubCtx, bus.OutboundMessage{
 				Channel: opts.Channel,
 				ChatID:  opts.ChatID,
 				Content: response.Content,
-			})
+			}); err != nil {
+				logger.WarnCF("agent", "Failed to publish inter-tool narration",
+					map[string]any{"error": err.Error(), "channel": opts.Channel})
+			}
 			pubCancel()
 		}
 
@@ -1178,12 +1197,15 @@ func (al *AgentLoop) runLLMIteration(
 			// tool call, published in dispatch order before the tool runs.
 			if showToolActivity {
 				if line := toolCallBreadcrumb(tc); line != "" {
-					bcCtx, bcCancel := context.WithTimeout(context.Background(), 5*time.Second)
-					_ = al.bus.PublishOutbound(bcCtx, bus.OutboundMessage{
+					bcCtx, bcCancel := context.WithTimeout(ctx, 5*time.Second)
+					if err := al.bus.PublishOutbound(bcCtx, bus.OutboundMessage{
 						Channel: opts.Channel,
 						ChatID:  opts.ChatID,
 						Content: line,
-					})
+					}); err != nil {
+						logger.WarnCF("agent", "Failed to publish tool breadcrumb",
+							map[string]any{"error": err.Error(), "channel": opts.Channel})
+					}
 					bcCancel()
 				}
 			}
@@ -1221,11 +1243,11 @@ func (al *AgentLoop) runLLMIteration(
 				// When the background work completes, this publishes the result
 				// as an inbound system message so processSystemMessage routes it
 				// back to the user via the normal agent loop.
-				asyncCallback := func(_ context.Context, result *tools.ToolResult) {
+				asyncCallback := func(cbCtx context.Context, result *tools.ToolResult) {
 					// Send ForUser content directly to the user (immediate feedback),
 					// mirroring the synchronous tool execution path.
 					if !result.Silent && result.ForUser != "" {
-						outCtx, outCancel := context.WithTimeout(context.Background(), 5*time.Second)
+						outCtx, outCancel := context.WithTimeout(context.WithoutCancel(cbCtx), 5*time.Second)
 						defer outCancel()
 						logger.InfoCF("agent", "Async tool completed, delivering to user",
 							map[string]any{
@@ -1234,11 +1256,14 @@ func (al *AgentLoop) runLLMIteration(
 								"chat_id":     opts.ChatID,
 								"content_len": len(result.ForUser),
 							})
-						_ = al.bus.PublishOutbound(outCtx, bus.OutboundMessage{
+						if err := al.bus.PublishOutbound(outCtx, bus.OutboundMessage{
 							Channel: opts.Channel,
 							ChatID:  opts.ChatID,
 							Content: result.ForUser,
-						})
+						}); err != nil {
+							logger.WarnCF("agent", "Failed to deliver async tool result to user",
+								map[string]any{"error": err.Error(), "tool": tc.Name, "channel": opts.Channel})
+						}
 					}
 
 					// Determine content for the agent loop (ForLLM or error).
@@ -1257,16 +1282,19 @@ func (al *AgentLoop) runLLMIteration(
 							"channel":     opts.Channel,
 						})
 
-					pubCtx, pubCancel := context.WithTimeout(context.Background(), 5*time.Second)
+					pubCtx, pubCancel := context.WithTimeout(context.WithoutCancel(cbCtx), 5*time.Second)
 					defer pubCancel()
-					_ = al.bus.PublishInbound(pubCtx, bus.InboundMessage{
+					if err := al.bus.PublishInbound(pubCtx, bus.InboundMessage{
 						Channel:    "system",
-						SenderID:   fmt.Sprintf("async:%s", tc.Name),
+						SenderID:   "async:" + tc.Name,
 						ChatID:     fmt.Sprintf("%s:%s", opts.Channel, opts.ChatID),
 						Content:    content,
 						SessionKey: opts.SessionKey,
 						Metadata:   map[string]string{metadataKeyPreresolvedAgentID: agent.ID},
-					})
+					}); err != nil {
+						logger.WarnCF("agent", "Failed to deliver async tool result to agent",
+							map[string]any{"error": err.Error(), "tool": tc.Name, "session": opts.SessionKey})
+					}
 				}
 
 				// Inject agent config as allow checker so ExecuteWithContext can
@@ -1748,8 +1776,18 @@ func (al *AgentLoop) dumpRefusal(
 	model string,
 	iteration int,
 ) {
-	inputBytes, _ := json.Marshal(messages)
-	outputBytes, _ := json.Marshal(response)
+	inputBytes, err := json.Marshal(messages)
+	if err != nil {
+		logger.WarnCF("agent", "Failed to marshal refusal dump input",
+			map[string]any{"agent_id": agent.ID, "error": err.Error()})
+		return
+	}
+	outputBytes, err := json.Marshal(response)
+	if err != nil {
+		logger.WarnCF("agent", "Failed to marshal refusal dump output",
+			map[string]any{"agent_id": agent.ID, "error": err.Error()})
+		return
+	}
 
 	meta := map[string]any{
 		"agent":     agent.ID,
@@ -1787,8 +1825,18 @@ func (al *AgentLoop) dumpAll(
 	model string,
 	iteration int,
 ) {
-	inputBytes, _ := json.Marshal(messages)
-	outputBytes, _ := json.Marshal(response)
+	inputBytes, err := json.Marshal(messages)
+	if err != nil {
+		logger.WarnCF("agent", "Failed to marshal dump_all input",
+			map[string]any{"agent_id": agent.ID, "error": err.Error()})
+		return
+	}
+	outputBytes, err := json.Marshal(response)
+	if err != nil {
+		logger.WarnCF("agent", "Failed to marshal dump_all output",
+			map[string]any{"agent_id": agent.ID, "error": err.Error()})
+		return
+	}
 
 	meta := map[string]any{
 		"agent":         agent.ID,

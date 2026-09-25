@@ -141,7 +141,10 @@ func NewContextBuilder(workspace string) *ContextBuilder {
 	// Use the skills/ directory under the current working directory
 	builtinSkillsDir := strings.TrimSpace(os.Getenv("CLAW_BUILTIN_SKILLS"))
 	if builtinSkillsDir == "" {
-		wd, _ := os.Getwd()
+		wd, err := os.Getwd()
+		if err != nil {
+			logger.WarnCF("agent", "Failed to resolve working directory for builtin skills", map[string]any{"error": err.Error()})
+		}
 		builtinSkillsDir = filepath.Join(wd, "skills")
 	}
 	globalSkillsDir := filepath.Join(getGlobalConfigDir(), "skills")
@@ -178,7 +181,10 @@ func (cb *ContextBuilder) clock() time.Time {
 }
 
 func (cb *ContextBuilder) getIdentity() string {
-	workspacePath, _ := filepath.Abs(cb.workspace)
+	workspacePath, err := filepath.Abs(cb.workspace)
+	if err != nil {
+		workspacePath = cb.workspace
+	}
 	version := app.Version()
 
 	// The agent's file tools are scoped to files/ (read/write) and skills/ (read);
@@ -250,11 +256,7 @@ func (cb *ContextBuilder) BuildSystemPrompt() string {
 	// Skills - show summary, AI can read full content with read_file tool
 	skillsSummary := cb.skillsLoader.BuildSkillsSummaryForSkills(cb.filteredSkills())
 	if skillsSummary != "" {
-		parts = append(parts, fmt.Sprintf(`# Skills
-
-The following skills extend your capabilities. To use a skill, read its SKILL.md file using the read_file tool.
-
-%s`, skillsSummary))
+		parts = append(parts, "# Skills\n\nThe following skills extend your capabilities. To use a skill, read its SKILL.md file using the read_file tool.\n\n"+skillsSummary)
 	}
 
 	// Memory context
@@ -401,9 +403,9 @@ func (cb *ContextBuilder) buildCacheBaseline() cacheBaseline {
 	// Walk all skill roots recursively to snapshot skill files and mtimes.
 	// Use os.Stat (not d.Info) for consistency with sourceFilesChanged checks.
 	for _, root := range skillRoots {
-		_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
+		if err := filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
 			if walkErr == nil && !d.IsDir() {
-				if info, err := os.Stat(path); err == nil {
+				if info, statErr := os.Stat(path); statErr == nil {
 					skillFiles[path] = info.ModTime()
 					if info.ModTime().After(maxMtime) {
 						maxMtime = info.ModTime()
@@ -411,7 +413,9 @@ func (cb *ContextBuilder) buildCacheBaseline() cacheBaseline {
 				}
 			}
 			return nil
-		})
+		}); err != nil {
+			logger.WarnCF("agent", "Failed to walk skills directory", map[string]any{"path": root, "error": err.Error()})
+		}
 	}
 
 	// If no tracked files exist yet (empty workspace), maxMtime is zero.
@@ -457,10 +461,8 @@ func (cb *ContextBuilder) sourceFilesChangedLocked() bool {
 	// For each root:
 	// 1. Creation/deletion and root directory mtime changes are tracked by fileChangedSince.
 	// 2. Nested file create/delete/mtime changes are tracked by the skill file snapshot.
-	for _, root := range cb.skillRoots() {
-		if cb.fileChangedSince(root) {
-			return true
-		}
+	if slices.ContainsFunc(cb.skillRoots(), cb.fileChangedSince) {
+		return true
 	}
 	return skillFilesChangedSince(cb.skillRoots(), cb.skillFilesAtCache)
 }
@@ -570,7 +572,7 @@ func (cb *ContextBuilder) LoadBootstrapFiles() string {
 	var sb strings.Builder
 	for _, filename := range bootstrapFiles {
 		filePath := filepath.Join(cb.workspace, filename)
-		if data, err := os.ReadFile(filePath); err == nil {
+		if data, err := os.ReadFile(filePath); err == nil { //nolint:gosec // fixed bootstrap filename under the agent workspace
 			fmt.Fprintf(&sb, "## %s\n\n%s\n\n", filename, data)
 		}
 	}
@@ -614,7 +616,7 @@ func (cb *ContextBuilder) loadChannelPrompt(channel string) string {
 	if safe == "" {
 		return ""
 	}
-	data, err := os.ReadFile(filepath.Join(cb.workspace, "channel-"+safe+".md"))
+	data, err := os.ReadFile(filepath.Join(cb.workspace, "channel-"+safe+".md")) //nolint:gosec // channel name sanitized by sanitizeChannelName; fixed workspace dir
 	if err != nil {
 		return ""
 	}

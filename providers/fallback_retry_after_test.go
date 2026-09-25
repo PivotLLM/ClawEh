@@ -211,7 +211,9 @@ func TestOpenAICompat_RetryAfterPropagated(t *testing.T) {
 		w.Header().Set("Retry-After", "2")
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusTooManyRequests)
-		fmt.Fprintln(w, `{"error":"rate_limited"}`)
+		if _, err := fmt.Fprintln(w, `{"error":"rate_limited"}`); err != nil {
+			t.Errorf("write response: %v", err)
+		}
 	}))
 	defer server.Close()
 

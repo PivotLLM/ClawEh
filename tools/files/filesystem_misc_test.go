@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 // Tests for resolveExistingAncestor, NewReadFileTool default maxSize, and hostFs.Open permission error.
@@ -63,8 +65,14 @@ func TestHostFs_Open_PermissionDenied(t *testing.T) {
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "noperm.txt")
-	os.WriteFile(path, []byte("content"), 0o000)
-	defer os.Chmod(path, 0o644) // cleanup
+	if err := os.WriteFile(path, []byte("content"), 0o000); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.Chmod(path, 0o644); err != nil { // cleanup
+			t.Error(err)
+		}
+	}()
 
 	fs := &hostFs{}
 	_, err := fs.Open(path)
@@ -76,14 +84,16 @@ func TestHostFs_Open_PermissionDenied(t *testing.T) {
 func TestSandboxFs_Open_ExistingFile(t *testing.T) {
 	workspace := t.TempDir()
 	path := filepath.Join(workspace, "test.txt")
-	os.WriteFile(path, []byte("content"), 0o644)
+	if err := os.WriteFile(path, []byte("content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	fs := &sandboxFs{workspace: workspace}
 	f, err := fs.Open(path)
 	if err != nil {
 		t.Fatalf("sandboxFs.Open() error = %v", err)
 	}
-	defer f.Close()
+	defer utils.CloseQuietly(f)
 }
 
 func TestSandboxFs_Open_NonExistent(t *testing.T) {

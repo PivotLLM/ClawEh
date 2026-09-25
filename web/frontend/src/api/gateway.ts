@@ -28,4 +28,15 @@ export async function getGatewayLogs(
   )
 }
 
+// getGatewayAlerts returns the last N lines of the operator alerts log, in
+// the same shape as the gateway log.
+export async function getGatewayAlerts(
+  lines: number,
+): Promise<GatewayLogsResponse> {
+  return request<GatewayLogsResponse>(
+    `/api/gateway/alerts?lines=${encodeURIComponent(lines)}`,
+    { cache: "no-store" },
+  )
+}
+
 export type { GatewayLogsResponse }

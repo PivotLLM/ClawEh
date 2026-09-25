@@ -1,14 +1,10 @@
-// ClawEh - Personal AI Assistant
-// Inspired by and based on nanobot: https://github.com/HKUDS/nanobot
+// ClawEh
 // License: MIT
-//
-// Copyright (c) 2026 PicoClaw contributors
 
 package agent
 
 import (
 	"errors"
-	"fmt"
 	"path/filepath"
 	"time"
 
@@ -103,7 +99,7 @@ func (al *AgentLoop) CreateMessageToken(agentID, name string) (msgtoken.NamedTok
 	named := al.namedTokens
 	al.mu.RUnlock()
 	if named == nil {
-		return msgtoken.NamedToken{}, fmt.Errorf("named message-token store unavailable")
+		return msgtoken.NamedToken{}, errors.New("named message-token store unavailable")
 	}
 	return named.Create(agentID, name)
 }

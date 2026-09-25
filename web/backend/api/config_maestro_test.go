@@ -27,8 +27,7 @@ func patchMaestroConfig(t *testing.T, configPath, body string) *httptest.Respons
 // TestHandlePatchConfig_MaestroBlockRoundTrips: the WebUI's patch of the
 // maestro block is accepted and persisted as sent.
 func TestHandlePatchConfig_MaestroBlockRoundTrips(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 
 	rec := patchMaestroConfig(t, configPath, `{"agents":{"list":[{"id":"alice","maestro":{"enabled":true,"max_concurrent":2,"allow_parallel":false}}]}}`)
 	if rec.Code != http.StatusOK {
@@ -48,7 +47,10 @@ func TestHandlePatchConfig_MaestroBlockRoundTrips(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
 	}
-	cfg, _ = config.LoadConfig(configPath)
+	cfg, err = config.LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
 	if m := cfg.AgentMaestro("alice"); m == nil || m.Enabled || m.MaxConcurrent != 2 {
 		t.Fatalf("after disable = %+v", m)
 	}
@@ -57,8 +59,7 @@ func TestHandlePatchConfig_MaestroBlockRoundTrips(t *testing.T) {
 // TestHandlePatchConfig_MaestroLegacyBooleanNotHonoured: a client still
 // sending the boolean does not enable Maestro and does not break the config.
 func TestHandlePatchConfig_MaestroLegacyBooleanNotHonoured(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 
 	rec := patchMaestroConfig(t, configPath, `{"agents":{"list":[{"id":"alice","maestro":true}]}}`)
 	if rec.Code != http.StatusOK {
@@ -76,8 +77,7 @@ func TestHandlePatchConfig_MaestroLegacyBooleanNotHonoured(t *testing.T) {
 // TestHandlePatchConfig_MaestroMalformedRejected: a wrongly typed field is a
 // validation error, not a silent default.
 func TestHandlePatchConfig_MaestroMalformedRejected(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 
 	rec := patchMaestroConfig(t, configPath, `{"agents":{"list":[{"id":"alice","maestro":{"enabled":true,"max_concurrent":"lots"}}]}}`)
 	if rec.Code != http.StatusBadRequest {

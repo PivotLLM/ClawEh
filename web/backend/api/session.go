@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 	"os"
@@ -15,6 +14,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/providers"
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 // registerSessionRoutes binds session list and detail endpoints to the ServeMux.
@@ -61,8 +61,8 @@ const (
 )
 
 func extractWebUISessionIDFromSanitizedKey(key string) (string, bool) {
-	if strings.HasPrefix(key, sanitizedWebuiSessionPrefix) {
-		return strings.TrimPrefix(key, sanitizedWebuiSessionPrefix), true
+	if after, ok := strings.CutPrefix(key, sanitizedWebuiSessionPrefix); ok {
+		return after, true
 	}
 	return "", false
 }
@@ -70,7 +70,7 @@ func extractWebUISessionIDFromSanitizedKey(key string) (string, bool) {
 // readSessionDB opens one session's archive DB read-only and returns its
 // window and state. A missing DB is reported as os.ErrNotExist.
 func readSessionDB(path string) (sessionFile, error) {
-	info, err := os.Stat(path)
+	info, err := os.Stat(path) //nolint:gosec // callers pass memory.ArchivePath output (sanitized key) or a ReadDir entry
 	if err != nil {
 		return sessionFile{}, err
 	}
@@ -79,7 +79,7 @@ func readSessionDB(path string) (sessionFile, error) {
 	if err != nil {
 		return sessionFile{}, err
 	}
-	defer db.Close()
+	defer utils.CloseQuietly(db)
 
 	window, err := db.Window()
 	if err != nil {
@@ -262,7 +262,7 @@ func (h *Handler) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(items)
+	encodeJSON(w, items)
 }
 
 // handleGetSession returns the full message history for a specific session.
@@ -313,7 +313,7 @@ func (h *Handler) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	encodeJSON(w, map[string]any{
 		"id":       sessionID,
 		"messages": messages,
 		"summary":  sess.Summary,
@@ -342,7 +342,7 @@ func (h *Handler) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 	key := webuiSessionPrefix + sessionID
 	removed := false
 	for _, dir := range dirs {
-		if _, err := os.Stat(memory.ArchivePath(dir, key)); err != nil {
+		if _, err := os.Stat(memory.ArchivePath(dir, key)); err != nil { //nolint:gosec // memory.ArchivePath strips path separators from the key, which also carries a fixed prefix
 			if errors.Is(err, os.ErrNotExist) {
 				continue
 			}

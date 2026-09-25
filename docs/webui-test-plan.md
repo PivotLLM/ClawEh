@@ -86,7 +86,7 @@ Creates an agent called `e2e-probe` and deletes it at the end.
 |---|---|---|
 | F1 | `/agents` → **Add Agent** → ID `e2e-probe` → **Add** | The agent appears in `GET /api/config` |
 | F2 | Select it, set **Temperature** to `0.77`, wait ~2s | `temperature: 0.77` persisted. Saves are debounced ~600 ms; reading back immediately will race |
-| F3 | Set **MCP access** to `fusion, trello`, wait ~2s | `mcp_tools: ["fusion","trello"]` persisted **and** `temperature` is still `0.77`. The second save must not clobber the first |
+| F3 | Under **Internal tools**, toggle the `time_now` checkbox, wait ~2s | `tools` persisted with `time_now` added (or removed, if it was on) **and** `temperature` is still `0.77`. The second save must not clobber the first |
 | F4 | Select `e2e-probe`, note its temperature; select another agent, note its temperature | `e2e-probe` shows `0.77`; the other agent does not. Adding an agent re-sorts the list and shifts every index, so the edit buffers must follow. **Select agents by their displayed name** — the rail shows `name`, falling back to `id` |
 | F5 | With `e2e-probe` selected, click the trash button in the card header, accept the confirmation | The agent is gone from `GET /api/config` |
 
@@ -129,13 +129,17 @@ Creates an agent called `e2e-probe` and deletes it at the end.
 | J1 | Load `/devices` | Renders, no console errors |
 | J2 | Request `/api/devices`, `/api/devices/pending` and `/api/devices/pair` concurrently, 12 times | No `5xx`. These share one SQLite store; opening it per request used to lose a WAL-conversion race and return an intermittent 500 |
 
-## K. Logs, MCP, memory, voice
+## K. Logs, MCP, memory, voice, report
 
 | ID | Process | Expected |
 |---|---|---|
 | K1 | Load `/logs` | Shows log lines |
 | K2 | Load `/mcp` and `/mcp/servers` | Both render, no console errors |
 | K3 | Load `/memory` and `/voice` | Both render, no console errors |
+| K4 | Click **Report** in the sidebar (below the groups) | `/report` renders with an **Open report (PDF)** button, no console errors |
+| K5 | `GET /api/report/pdf` | 200, `Content-Type: application/pdf`, `Content-Disposition: inline; …`, body starts with `%PDF-` |
+| K6 | `POST /api/mcp/servers/no-such-server/reconnect` | 404 with a JSON `error` (the Reconnect button on `/mcp/servers` calls this for the selected server) |
+| K7 | `GET /api/gateway/alerts` | 200 with a JSON `logs` array (the operator alerts log; the Logs page shows it when its source selector is set to Alerts) |
 
 ## L. Setup wizard
 

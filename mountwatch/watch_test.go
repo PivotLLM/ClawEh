@@ -14,6 +14,7 @@ import (
 )
 
 func TestDetectNewFiles_OnlyNewPathsFire(t *testing.T) {
+	w := New(func() *config.Config { return nil }, nil, time.Hour, nil)
 	dir := t.TempDir()
 	old := filepath.Join(dir, "old.md")
 	if err := os.WriteFile(old, []byte("x"), 0o644); err != nil {
@@ -21,7 +22,7 @@ func TestDetectNewFiles_OnlyNewPathsFire(t *testing.T) {
 	}
 
 	// First scan with no marker → baseline: nothing fires, .claw created.
-	if got := detectNewFiles("notes", dir); len(got) != 0 {
+	if got := w.detectNewFiles("notes", dir); len(got) != 0 {
 		t.Fatalf("baseline should report no new files, got %v", got)
 	}
 	if _, err := os.Stat(filepath.Join(dir, markerFile)); err != nil {
@@ -32,7 +33,7 @@ func TestDetectNewFiles_OnlyNewPathsFire(t *testing.T) {
 	if err := os.WriteFile(old, []byte("x-appended"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if got := detectNewFiles("notes", dir); len(got) != 0 {
+	if got := w.detectNewFiles("notes", dir); len(got) != 0 {
 		t.Fatalf("editing an existing file must not fire, got %v", got)
 	}
 
@@ -44,29 +45,34 @@ func TestDetectNewFiles_OnlyNewPathsFire(t *testing.T) {
 	if err := os.WriteFile(newFile, []byte("y"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got := detectNewFiles("notes", dir)
+	got := w.detectNewFiles("notes", dir)
 	if len(got) != 1 || got[0] != "notes/sub/new.md" {
 		t.Fatalf("want [notes/sub/new.md], got %v", got)
 	}
 
 	// Recorded set advanced → a second scan reports nothing, and editing the
 	// now-known new file still does not fire.
-	if got := detectNewFiles("notes", dir); len(got) != 0 {
+	if got := w.detectNewFiles("notes", dir); len(got) != 0 {
 		t.Fatalf("after advancing, expected nothing, got %v", got)
 	}
-	os.WriteFile(newFile, []byte("y2"), 0o644)
-	if got := detectNewFiles("notes", dir); len(got) != 0 {
+	if err := os.WriteFile(newFile, []byte("y2"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := w.detectNewFiles("notes", dir); len(got) != 0 {
 		t.Fatalf("editing a now-known file must not fire, got %v", got)
 	}
 }
 
 func TestDetectNewFiles_IgnoresMarkerAndHidden(t *testing.T) {
+	w := New(func() *config.Config { return nil }, nil, time.Hour, nil)
 	dir := t.TempDir()
-	detectNewFiles("notes", dir) // baseline, creates .claw
+	w.detectNewFiles("notes", dir) // baseline, creates .claw
 
 	// A hidden file and the marker itself must never be reported.
-	os.WriteFile(filepath.Join(dir, ".secret"), []byte("h"), 0o644)
-	if got := detectNewFiles("notes", dir); len(got) != 0 {
+	if err := os.WriteFile(filepath.Join(dir, ".secret"), []byte("h"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := w.detectNewFiles("notes", dir); len(got) != 0 {
 		t.Fatalf("hidden files and the marker must be ignored, got %v", got)
 	}
 }
@@ -77,7 +83,7 @@ func TestDetectNewFiles_IgnoresMarkerAndHidden(t *testing.T) {
 // channel used to panic the whole process ("close of closed channel"), taking
 // the gateway down on the second config change of its life.
 func TestWatcherStopIsIdempotent(t *testing.T) {
-	w := New(func() *config.Config { return nil }, nil, time.Hour)
+	w := New(func() *config.Config { return nil }, nil, time.Hour, nil)
 	w.Start()
 	w.Stop()
 	w.Stop() // must not panic
@@ -86,7 +92,7 @@ func TestWatcherStopIsIdempotent(t *testing.T) {
 // TestWatcherStopBeforeStart covers the other order: a Watcher built but never
 // started is still stopped by the cleanup path.
 func TestWatcherStopBeforeStart(t *testing.T) {
-	w := New(func() *config.Config { return nil }, nil, time.Hour)
+	w := New(func() *config.Config { return nil }, nil, time.Hour, nil)
 	w.Stop()
 	w.Stop()
 }
@@ -103,16 +109,14 @@ func TestNilWatcherStop(t *testing.T) {
 // has to serialise them, and the wait must not return before the scan goroutine
 // has exited.
 func TestWatcherStopConcurrent(t *testing.T) {
-	w := New(func() *config.Config { return nil }, nil, time.Hour)
+	w := New(func() *config.Config { return nil }, nil, time.Hour, nil)
 	w.Start()
 
 	var wg sync.WaitGroup
-	for i := 0; i < 8; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 8 {
+		wg.Go(func() {
 			w.Stop()
-		}()
+		})
 	}
 	wg.Wait()
 
@@ -125,7 +129,7 @@ func TestWatcherStopConcurrent(t *testing.T) {
 // stopped one that kept scanning would double up notifications after every
 // config change.
 func TestWatcherStopStopsTheLoop(t *testing.T) {
-	w := New(func() *config.Config { return nil }, nil, time.Millisecond)
+	w := New(func() *config.Config { return nil }, nil, time.Millisecond, nil)
 	w.Start()
 	time.Sleep(10 * time.Millisecond)
 

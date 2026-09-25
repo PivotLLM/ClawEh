@@ -106,7 +106,7 @@ func formatFieldValue(i any) string {
 	}
 
 	if strings.Contains(s, "\n") {
-		return fmt.Sprintf("\n%s", s)
+		return "\n" + s
 	}
 
 	if strings.Contains(s, " ") {
@@ -169,12 +169,12 @@ func enableFileLoggingLocked(filePath string, jsonFormat bool) error {
 		return fmt.Errorf("failed to create log directory: %w", err)
 	}
 
-	newFile, err := os.OpenFile(filePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	newFile, err := os.OpenFile(filePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644) //nolint:gosec // log path from config
 	if err != nil {
 		return fmt.Errorf("failed to open log file: %w", err)
 	}
 	if logFile != nil {
-		logFile.Close()
+		closeLogFile(logFile)
 	}
 	logFile = newFile
 	logFilePath = filePath
@@ -183,12 +183,12 @@ func enableFileLoggingLocked(filePath string, jsonFormat bool) error {
 
 	// error.log lives beside claw.log and captures errorLogLevel and above.
 	errorPath := filepath.Join(filepath.Dir(filePath), errorLogName)
-	ef, err := os.OpenFile(errorPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	ef, err := os.OpenFile(errorPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644) //nolint:gosec // error.log beside the configured log file
 	if err != nil {
 		return fmt.Errorf("failed to open error log file: %w", err)
 	}
 	if errorFile != nil {
-		errorFile.Close()
+		closeLogFile(errorFile)
 	}
 	errorFile = ef
 	errorLogPath = errorPath
@@ -231,12 +231,12 @@ func RollLogFile() error {
 
 	// Close handles so the files can be renamed, then archive each by its mtime.
 	if logFile != nil {
-		logFile.Close()
+		closeLogFile(logFile)
 		logFile = nil
 		fileLogger = zerolog.Logger{}
 	}
 	if errorFile != nil {
-		errorFile.Close()
+		closeLogFile(errorFile)
 		errorFile = nil
 		errorLogger = zerolog.Logger{}
 	}
@@ -282,20 +282,31 @@ func archiveLogByMtime(path string) error {
 
 // appendAndRemove appends src to dst then removes src.
 func appendAndRemove(src, dst string) error {
-	in, err := os.Open(src)
+	in, err := os.Open(src) //nolint:gosec // rotation of the configured log file within its own dir
 	if err != nil {
 		return err
 	}
-	defer in.Close()
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_APPEND, 0o644)
+	defer closeLogFile(in)
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_APPEND, 0o644) //nolint:gosec // rotation of the configured log file within its own dir
 	if err != nil {
 		return err
 	}
-	defer out.Close()
 	if _, err := io.Copy(out, in); err != nil {
+		closeLogFile(out)
+		return err
+	}
+	if err := out.Close(); err != nil {
 		return err
 	}
 	return os.Remove(src)
+}
+
+// closeLogFile closes f and reports a failure on the console, because the file
+// sinks may be the very thing being closed.
+func closeLogFile(f *os.File) {
+	if err := f.Close(); err != nil {
+		logger.Warn().Str("file", f.Name()).Err(err).Msg("failed to close log file")
+	}
 }
 
 // DisableConsole replaces the console logger with a no-op logger.
@@ -347,12 +358,12 @@ func DisableFileLogging() {
 	defer mu.Unlock()
 
 	if logFile != nil {
-		logFile.Close()
+		closeLogFile(logFile)
 		logFile = nil
 	}
 	fileLogger = zerolog.Logger{}
 	if errorFile != nil {
-		errorFile.Close()
+		closeLogFile(errorFile)
 		errorFile = nil
 	}
 	errorLogger = zerolog.Logger{}
@@ -372,7 +383,7 @@ func getCallerInfo() (string, int, string) {
 
 		// bypass common loggers
 		if strings.HasSuffix(file, "/logger.go") ||
-			strings.HasSuffix(file, "/logger_3rd_party.go") ||
+			strings.HasSuffix(file, "/logger_type.go") ||
 			strings.HasSuffix(file, "/log.go") {
 			continue
 		}

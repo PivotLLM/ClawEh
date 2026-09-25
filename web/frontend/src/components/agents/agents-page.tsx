@@ -600,7 +600,7 @@ export function AgentsPage() {
                             <span
                               className={`text-sm font-semibold ${addingTools.length === 0 ? "text-amber-400" : "text-foreground"}`}
                             >
-                              Always-On Tools (
+                              Internal tools (
                               {addingTools.length === 0
                                 ? "none — no tool access"
                                 : `${addingTools.includes("*") ? "all" : addingTools.length} granted`}

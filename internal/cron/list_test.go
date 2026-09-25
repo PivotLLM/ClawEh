@@ -31,10 +31,11 @@ func captureStdout(t *testing.T, fn func()) string {
 	require.NoError(t, err)
 	os.Stdout = w
 	fn()
-	_ = w.Close()
+	require.NoError(t, w.Close())
 	os.Stdout = orig
 	var buf bytes.Buffer
-	_, _ = io.Copy(&buf, r)
+	_, err = io.Copy(&buf, r)
+	require.NoError(t, err)
 	return buf.String()
 }
 

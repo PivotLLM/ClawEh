@@ -40,8 +40,7 @@ func TestDispatch_ForUserPublishedToOriginatingChannel(t *testing.T) {
 	defer msgBus.Close()
 
 	collected := make(chan bus.OutboundMessage, 4)
-	subCtx, subCancel := context.WithCancel(context.Background())
-	defer subCancel()
+	subCtx := t.Context()
 	go func() {
 		for {
 			msg, ok := msgBus.SubscribeOutbound(subCtx)
@@ -103,8 +102,7 @@ func TestDispatch_SilentToolResultIsNotPublished(t *testing.T) {
 	defer msgBus.Close()
 
 	collected := make(chan bus.OutboundMessage, 4)
-	subCtx, subCancel := context.WithCancel(context.Background())
-	defer subCancel()
+	subCtx := t.Context()
 	go func() {
 		for {
 			msg, ok := msgBus.SubscribeOutbound(subCtx)
@@ -162,8 +160,7 @@ func TestDispatch_ForUserDroppedWhenNoActiveChannel(t *testing.T) {
 	defer msgBus.Close()
 
 	collected := make(chan bus.OutboundMessage, 4)
-	subCtx, subCancel := context.WithCancel(context.Background())
-	defer subCancel()
+	subCtx := t.Context()
 	go func() {
 		for {
 			msg, ok := msgBus.SubscribeOutbound(subCtx)
@@ -233,8 +230,7 @@ func TestDispatch_MCPResponseContainsOnlyForLLM(t *testing.T) {
 	defer msgBus.Close()
 
 	// Drain outbound so the publish does not stall the test.
-	subCtx, subCancel := context.WithCancel(context.Background())
-	defer subCancel()
+	subCtx := t.Context()
 	go func() {
 		for {
 			if _, ok := msgBus.SubscribeOutbound(subCtx); !ok {

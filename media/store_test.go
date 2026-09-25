@@ -84,8 +84,8 @@ func TestMultiScopeIsolation(t *testing.T) {
 	pathA := createTempFile(t, dir, "fileA.jpg")
 	pathB := createTempFile(t, dir, "fileB.jpg")
 
-	refA, _ := store.Store(pathA, MediaMeta{Source: "test"}, "scopeA")
-	refB, _ := store.Store(pathB, MediaMeta{Source: "test"}, "scopeB")
+	refA := mustStore(t, store, pathA, MediaMeta{Source: "test"}, "scopeA")
+	refB := mustStore(t, store, pathB, MediaMeta{Source: "test"}, "scopeB")
 
 	// Release only scopeA
 	if err := store.ReleaseAll("scopeA"); err != nil {
@@ -124,7 +124,7 @@ func TestReleaseAllIdempotent(t *testing.T) {
 	// Create and release, then release again
 	dir := t.TempDir()
 	path := createTempFile(t, dir, "file.jpg")
-	_, _ = store.Store(path, MediaMeta{Source: "test"}, "scope1")
+	mustStore(t, store, path, MediaMeta{Source: "test"}, "scope1")
 
 	if err := store.ReleaseAll("scope1"); err != nil {
 		t.Fatalf("first ReleaseAll failed: %v", err)
@@ -326,12 +326,12 @@ func TestCleanExpiredMixedAges(t *testing.T) {
 	// Store old entry
 	store.nowFunc = func() time.Time { return now.Add(-20 * time.Minute) }
 	oldPath := createTempFile(t, dir, "old.jpg")
-	oldRef, _ := store.Store(oldPath, MediaMeta{Source: "test"}, "scope1")
+	oldRef := mustStore(t, store, oldPath, MediaMeta{Source: "test"}, "scope1")
 
 	// Store fresh entry
 	store.nowFunc = func() time.Time { return now }
 	freshPath := createTempFile(t, dir, "fresh.jpg")
-	freshRef, _ := store.Store(freshPath, MediaMeta{Source: "test"}, "scope1")
+	freshRef := mustStore(t, store, freshPath, MediaMeta{Source: "test"}, "scope1")
 
 	removed := store.CleanExpired()
 	if removed != 1 {
@@ -354,7 +354,7 @@ func TestCleanExpiredCleansEmptyScopes(t *testing.T) {
 	// Store old entry as the only one in scope
 	store.nowFunc = func() time.Time { return now.Add(-20 * time.Minute) }
 	path := createTempFile(t, dir, "only.jpg")
-	store.Store(path, MediaMeta{Source: "test"}, "lonely_scope")
+	mustStore(t, store, path, MediaMeta{Source: "test"}, "lonely_scope")
 
 	store.nowFunc = func() time.Time { return now }
 	store.CleanExpired()
@@ -393,7 +393,7 @@ func TestCleanExpiredZeroMaxAge(t *testing.T) {
 
 	dir := t.TempDir()
 	path := createTempFile(t, dir, "file.jpg")
-	ref, _ := store.Store(path, MediaMeta{Source: "test"}, "scope1")
+	ref := mustStore(t, store, path, MediaMeta{Source: "test"}, "scope1")
 
 	// Zero MaxAge should be a no-op
 	removed := store.CleanExpired()
@@ -454,7 +454,7 @@ func TestConcurrentCleanupSafety(t *testing.T) {
 			scope := fmt.Sprintf("scope-%d", wIdx)
 			for i := range ops {
 				p := createTempFile(t, dir, fmt.Sprintf("w%d-f%d.tmp", wIdx, i))
-				store.Store(p, MediaMeta{Source: "test"}, scope)
+				mustStore(t, store, p, MediaMeta{Source: "test"}, scope)
 			}
 		}(w)
 	}
@@ -464,7 +464,9 @@ func TestConcurrentCleanupSafety(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for range ops {
-				store.Resolve("media://nonexistent")
+				if _, err := store.Resolve("media://nonexistent"); err == nil {
+					t.Errorf("Resolve of unknown ref should fail")
+				}
 			}
 		}()
 	}
@@ -474,7 +476,9 @@ func TestConcurrentCleanupSafety(t *testing.T) {
 		go func(wIdx int) {
 			defer wg.Done()
 			for range ops {
-				store.ReleaseAll(fmt.Sprintf("scope-%d", wIdx))
+				if err := store.ReleaseAll(fmt.Sprintf("scope-%d", wIdx)); err != nil {
+					t.Errorf("ReleaseAll failed: %v", err)
+				}
 			}
 		}(w)
 	}
@@ -497,9 +501,9 @@ func TestRefToScopeConsistency(t *testing.T) {
 	store := NewFileMediaStore()
 
 	// Store entries in two scopes
-	ref1, _ := store.Store(createTempFile(t, dir, "a.jpg"), MediaMeta{Source: "test"}, "s1")
-	ref2, _ := store.Store(createTempFile(t, dir, "b.jpg"), MediaMeta{Source: "test"}, "s1")
-	ref3, _ := store.Store(createTempFile(t, dir, "c.jpg"), MediaMeta{Source: "test"}, "s2")
+	ref1 := mustStore(t, store, createTempFile(t, dir, "a.jpg"), MediaMeta{Source: "test"}, "s1")
+	ref2 := mustStore(t, store, createTempFile(t, dir, "b.jpg"), MediaMeta{Source: "test"}, "s1")
+	ref3 := mustStore(t, store, createTempFile(t, dir, "c.jpg"), MediaMeta{Source: "test"}, "s2")
 
 	store.mu.RLock()
 	checkRef := func(ref, expectedScope string) {
@@ -514,7 +518,9 @@ func TestRefToScopeConsistency(t *testing.T) {
 	store.mu.RUnlock()
 
 	// Release s1 and verify refToScope is cleaned
-	store.ReleaseAll("s1")
+	if err := store.ReleaseAll("s1"); err != nil {
+		t.Fatalf("ReleaseAll failed: %v", err)
+	}
 
 	store.mu.RLock()
 	defer store.mu.RUnlock()
@@ -668,4 +674,14 @@ func TestReleaseAllClearsPins(t *testing.T) {
 	if len(store.pinOwners) != 0 || len(store.ownerPins) != 0 {
 		t.Errorf("pin bookkeeping should be empty after ReleaseAll; got %v / %v", store.pinOwners, store.ownerPins)
 	}
+}
+
+// mustStore stores path under scope, failing the test if the store rejects it.
+func mustStore(t *testing.T, store *FileMediaStore, path string, meta MediaMeta, scope string) string {
+	t.Helper()
+	ref, err := store.Store(path, meta, scope)
+	if err != nil {
+		t.Errorf("Store(%s) failed: %v", path, err)
+	}
+	return ref
 }

@@ -30,8 +30,8 @@ func (globalFusionProvider) Available(cfg any) (bool, string) { return true, "" 
 func (globalFusionProvider) Suite() string { return "fusion" }
 
 func (globalFusionProvider) RegisterTools(deps global.Deps) []global.ToolDefinition {
-	c, _ := deps.Cfg.(*config.Config)
-	if c == nil {
+	c, ok := deps.Cfg.(*config.Config)
+	if !ok || c == nil {
 		// Enumeration pass (no live config): Fusion is per-agent + all-or-nothing,
 		// surfaced via a single agent toggle, so it is not listed in the catalog.
 		return nil

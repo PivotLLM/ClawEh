@@ -62,7 +62,11 @@ func TestPruneRemovesOldKeepsRecent(t *testing.T) {
 		}
 	}
 	// retainDays <= 0 disables pruning.
-	if n, _ := Prune(root, 0, now); n != 0 {
+	n, pruneErr := Prune(root, 0, now)
+	if pruneErr != nil {
+		t.Fatalf("Prune(retainDays=0): %v", pruneErr)
+	}
+	if n != 0 {
 		t.Errorf("retainDays=0 should prune nothing, removed %d", n)
 	}
 }

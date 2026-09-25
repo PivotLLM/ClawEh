@@ -51,9 +51,7 @@ func TestStopAll_RunsChannelStopsConcurrently(t *testing.T) {
 	channels := make([]*slowStopChannel, n)
 	for i := range n {
 		ch := &slowStopChannel{
-			mockChannel: mockChannel{
-				sendFn: func(_ context.Context, _ bus.OutboundMessage) error { return nil },
-			},
+			sendFn:    func(_ context.Context, _ bus.OutboundMessage) error { return nil },
 			stopDelay: perStopDelay,
 		}
 		channels[i] = ch

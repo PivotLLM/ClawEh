@@ -8,7 +8,7 @@ import (
 	"github.com/PivotLLM/ClawEh/tools"
 )
 
-type SendCallback func(channel, chatID, content string) error
+type SendCallback func(ctx context.Context, channel, chatID, content string) error
 
 type MessageTool struct {
 	sendCallback SendCallback
@@ -76,7 +76,7 @@ func (t *MessageTool) Execute(ctx context.Context, args map[string]any) *tools.T
 		return &tools.ToolResult{ForLLM: "Message sending not configured", IsError: true}
 	}
 
-	if err := t.sendCallback(channel, chatID, content); err != nil {
+	if err := t.sendCallback(ctx, channel, chatID, content); err != nil {
 		return &tools.ToolResult{
 			ForLLM:  fmt.Sprintf("sending message: %v", err),
 			IsError: true,

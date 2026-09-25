@@ -5,6 +5,8 @@ import {
   maestroEditsFromAgent,
   maestroFromRaw,
   maestroPayload,
+  mcpAccessEntries,
+  mcpAccessView,
 } from "./agent-model"
 
 describe("maestro block", () => {
@@ -83,5 +85,36 @@ describe("maestro block", () => {
     })
     // No block: edits never create one (the enabled switch does).
     expect(applyMaestroEdits(undefined, edits)).toBeUndefined()
+  })
+})
+
+describe("mcp access", () => {
+  const servers = ["fusion", "GitHub"]
+
+  it("checks configured servers case-insensitively", () => {
+    expect(mcpAccessView(["Fusion"], servers)).toEqual([
+      { name: "fusion", checked: true, configured: true },
+      { name: "GitHub", checked: false, configured: true },
+    ])
+  })
+
+  it("shows an entry that names no configured server checked and flagged", () => {
+    const rows = mcpAccessView(["oldserver", "fusion_trello"], servers)
+    expect(rows.slice(2)).toEqual([
+      { name: "oldserver", checked: true, configured: false },
+      { name: "fusion_trello", checked: true, configured: false },
+    ])
+  })
+
+  it("drops blank entries and round-trips the rest", () => {
+    const rows = mcpAccessView([" ", "fusion", "old"], servers)
+    expect(mcpAccessEntries(rows)).toEqual(["fusion", "old"])
+  })
+
+  it("unchecking removes the entry", () => {
+    const rows = mcpAccessView(["fusion", "github"], servers).map((s) =>
+      s.name === "fusion" ? { ...s, checked: false } : s,
+    )
+    expect(mcpAccessEntries(rows)).toEqual(["GitHub"])
   })
 })

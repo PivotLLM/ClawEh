@@ -1,7 +1,7 @@
 package api
 
 import (
-	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,6 +12,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/skills"
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 type skillSupportResponse struct {
@@ -49,7 +50,7 @@ func (h *Handler) handleListSkills(w http.ResponseWriter, r *http.Request) {
 	loader := newSkillsLoader(cfg.WorkspacePath())
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(skillSupportResponse{
+	encodeJSON(w, skillSupportResponse{
 		Skills: loader.ListSkills(),
 	})
 }
@@ -77,7 +78,7 @@ func (h *Handler) handleGetSkill(w http.ResponseWriter, r *http.Request) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(skillDetailResponse{
+		encodeJSON(w, skillDetailResponse{
 			Name:        skill.Name,
 			Path:        skill.Path,
 			Source:      skill.Source,
@@ -97,7 +98,7 @@ func (h *Handler) handleImportSkill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = r.ParseMultipartForm(2 << 20)
+	err = r.ParseMultipartForm(2 << 20) //nolint:gosec // file part is capped at 1MB by the LimitReader below; maxMemory only bounds buffering
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Invalid multipart form: %v", err), http.StatusBadRequest)
 		return
@@ -108,7 +109,7 @@ func (h *Handler) handleImportSkill(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "file is required", http.StatusBadRequest)
 		return
 	}
-	defer uploadedFile.Close()
+	defer utils.CloseQuietly(uploadedFile)
 
 	content, err := io.ReadAll(io.LimitReader(uploadedFile, (1<<20)+1))
 	if err != nil {
@@ -129,16 +130,16 @@ func (h *Handler) handleImportSkill(w http.ResponseWriter, r *http.Request) {
 
 	skillDir := filepath.Join(cfg.SkillsPath(), skillName)
 	skillFile := filepath.Join(skillDir, "SKILL.md")
-	if _, err := os.Stat(skillDir); err == nil {
+	if _, err := os.Stat(skillDir); err == nil { //nolint:gosec // skillName validated by normalizeImportedSkillName (^[a-z0-9]+(-[a-z0-9]+)*$)
 		http.Error(w, "skill already exists", http.StatusConflict)
 		return
 	}
 
-	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+	if err := os.MkdirAll(skillDir, 0o755); err != nil { //nolint:gosec // skills directory browsed by the user; existing mode kept
 		http.Error(w, fmt.Sprintf("Failed to create skill directory: %v", err), http.StatusInternalServerError)
 		return
 	}
-	if err := os.WriteFile(skillFile, content, 0o644); err != nil {
+	if err := os.WriteFile(skillFile, content, 0o644); err != nil { //nolint:gosec // SKILL.md is user-editable skill content; existing mode kept
 		http.Error(w, fmt.Sprintf("Failed to save skill: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -147,13 +148,13 @@ func (h *Handler) handleImportSkill(w http.ResponseWriter, r *http.Request) {
 	for _, skill := range loader.ListSkills() {
 		if skill.Path == skillFile || (skill.Name == skillName && skill.Source == "workspace") {
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(skill)
+			encodeJSON(w, skill)
 			return
 		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
+	encodeJSON(w, map[string]string{
 		"name": skillName,
 		"path": skillFile,
 	})
@@ -181,7 +182,7 @@ func (h *Handler) handleDeleteSkill(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		encodeJSON(w, map[string]string{"status": "ok"})
 		return
 	}
 
@@ -213,14 +214,14 @@ func normalizeImportedSkillName(filename string, content []byte) (string, error)
 	raw = strings.Join(strings.FieldsFunc(raw, func(r rune) bool { return r == '-' }), "-")
 
 	if raw == "" {
-		return "", fmt.Errorf("skill name is required in frontmatter or filename")
+		return "", errors.New("skill name is required in frontmatter or filename")
 	}
 	if len(raw) > 64 {
-		return "", fmt.Errorf("skill name exceeds 64 characters")
+		return "", errors.New("skill name exceeds 64 characters")
 	}
 	matched, err := regexp.MatchString(`^[a-z0-9]+(-[a-z0-9]+)*$`, raw)
 	if err != nil || !matched {
-		return "", fmt.Errorf("skill name must be alphanumeric with hyphens")
+		return "", errors.New("skill name must be alphanumeric with hyphens")
 	}
 	return raw, nil
 }
@@ -270,7 +271,7 @@ func extractImportedSkillMetadata(raw string) (map[string]string, string) {
 
 func parseImportedSkillYAML(frontmatter string) map[string]string {
 	result := make(map[string]string)
-	for _, line := range strings.Split(frontmatter, "\n") {
+	for line := range strings.SplitSeq(frontmatter, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
@@ -285,7 +286,7 @@ func parseImportedSkillYAML(frontmatter string) map[string]string {
 }
 
 func inferImportedSkillDescription(body string) string {
-	for _, line := range strings.Split(body, "\n") {
+	for line := range strings.SplitSeq(body, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
@@ -300,7 +301,7 @@ func inferImportedSkillDescription(body string) string {
 }
 
 func loadSkillContent(path string) (string, error) {
-	content, err := os.ReadFile(path)
+	content, err := os.ReadFile(path) //nolint:gosec // skill.Path comes from the loader's directory walk (ListSkills)
 	if err != nil {
 		return "", err
 	}

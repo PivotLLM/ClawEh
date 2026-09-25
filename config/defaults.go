@@ -1,7 +1,5 @@
-// ClawEh - Personal AI Assistant
+// ClawEh
 // License: MIT
-//
-// Copyright (c) 2026 PicoClaw contributors
 
 package config
 
@@ -10,6 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/PivotLLM/ClawEh/global"
+	"github.com/PivotLLM/ClawEh/logger"
 )
 
 // DefaultAgentTools is the baseline tool allowlist used when an agent has no
@@ -34,7 +33,10 @@ func DefaultConfig() *Config {
 	if clawHome := os.Getenv(global.EnvVarHome); clawHome != "" {
 		homePath = clawHome
 	} else {
-		userHome, _ := os.UserHomeDir()
+		userHome, err := os.UserHomeDir()
+		if err != nil {
+			logger.WarnCF("config", "home directory unknown; using relative data dir", map[string]any{"error": err.Error()})
+		}
 		homePath = filepath.Join(userHome, global.DefaultDataDir)
 	}
 	agentsBaseDir := filepath.Join(homePath, "agents")
@@ -340,7 +342,8 @@ func DefaultConfig() *Config {
 				},
 			},
 			MCP: MCPConfig{
-				Servers: map[string]MCPServerConfig{},
+				Servers:              map[string]MCPServerConfig{},
+				LivenessProbeSeconds: DefaultMCPLivenessProbeSeconds,
 			},
 			// Progressive tool discovery: single global switch, default OFF.
 			Discovery: ToolDiscoveryConfig{
@@ -390,6 +393,8 @@ func DefaultConfig() *Config {
 	}
 	cfg.dataDir = homePath
 	// Ensure agents/default directory exists on startup
-	os.MkdirAll(filepath.Join(homePath, "agents", "default"), 0o755)
+	if err := os.MkdirAll(filepath.Join(homePath, "agents", "default"), 0o755); err != nil { //nolint:gosec // default agent workspace the user browses; existing mode kept
+		logger.WarnCF("config", "failed to create default agent workspace", map[string]any{"error": err.Error()})
+	}
 	return cfg
 }

@@ -8,40 +8,14 @@ import (
 	"time"
 
 	"github.com/PivotLLM/ClawEh/global"
-	"github.com/PivotLLM/ClawEh/providers"
 )
-
-// MockLLMProvider echoes the last user message back as the assistant response so
-// wait-mode results reference the task text.
-type MockLLMProvider struct{}
-
-func (m *MockLLMProvider) Chat(
-	_ context.Context,
-	messages []providers.Message,
-	_ []providers.ToolDefinition,
-	_ string,
-	_ map[string]any,
-) (*providers.LLMResponse, error) {
-	content := ""
-	for _, msg := range messages {
-		if msg.Role == "user" {
-			content = msg.Content
-		}
-	}
-	return &providers.LLMResponse{Content: content}, nil
-}
-
-func (m *MockLLMProvider) GetDefaultModel() string { return "test-model" }
-func (m *MockLLMProvider) SupportsTools() bool     { return false }
-func (m *MockLLMProvider) GetContextWindow() int   { return 4096 }
 
 func newTestSpawner(t *testing.T) *Spawner {
 	t.Helper()
 	mgr := NewSubagentManager(SubagentManagerConfig{
-		Provider:     &MockLLMProvider{},
-		DefaultModel: "test-model",
-		Workspace:    t.TempDir(),
-		Live:         NewLiveSet(),
+		Workspace: t.TempDir(),
+		Live:      NewLiveSet(),
+		RunFull:   echoRunFull,
 	})
 	return NewSpawner(mgr)
 }
@@ -114,10 +88,13 @@ func TestSpawner_CallbackMode_DeliversPointer(t *testing.T) {
 
 func TestSpawner_CallbackMode_RequiresName(t *testing.T) {
 	sp := newTestSpawner(t)
-	res, _ := sp.Spawn(context.Background(), global.SpawnRequest{
+	res, err := sp.Spawn(context.Background(), global.SpawnRequest{
 		Mode: global.SpawnCallback,
 		Task: "no name given",
 	})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
 	if res == nil || !res.IsError {
 		t.Fatalf("expected error result when name is missing for callback, got %+v", res)
 	}
@@ -125,7 +102,10 @@ func TestSpawner_CallbackMode_RequiresName(t *testing.T) {
 
 func TestSpawner_EmptyTask_IsError(t *testing.T) {
 	sp := newTestSpawner(t)
-	res, _ := sp.Spawn(context.Background(), global.SpawnRequest{Mode: global.SpawnAndWait, Task: "  "})
+	res, err := sp.Spawn(context.Background(), global.SpawnRequest{Mode: global.SpawnAndWait, Task: "  "})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
 	if res == nil || !res.IsError {
 		t.Fatalf("expected error result for empty task, got %+v", res)
 	}
@@ -134,11 +114,14 @@ func TestSpawner_EmptyTask_IsError(t *testing.T) {
 func TestSpawner_TargetedSpawn_AllowlistDeny(t *testing.T) {
 	sp := newTestSpawner(t)
 	sp.SetAllowlistChecker(func(string) bool { return false })
-	res, _ := sp.Spawn(context.Background(), global.SpawnRequest{
+	res, err := sp.Spawn(context.Background(), global.SpawnRequest{
 		Mode:          global.SpawnAndWait,
 		Task:          "x",
 		TargetAgentID: "bob",
 	})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
 	if res == nil || !res.IsError {
 		t.Fatalf("expected allowlist denial to be an error result, got %+v", res)
 	}
@@ -149,7 +132,10 @@ func TestSpawner_TargetedSpawn_AllowlistDeny(t *testing.T) {
 
 func TestSpawner_NilManager_IsError(t *testing.T) {
 	sp := NewSpawner(nil)
-	res, _ := sp.Spawn(context.Background(), global.SpawnRequest{Mode: global.SpawnAndWait, Task: "x"})
+	res, err := sp.Spawn(context.Background(), global.SpawnRequest{Mode: global.SpawnAndWait, Task: "x"})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
 	if res == nil || !res.IsError {
 		t.Fatalf("expected error result when manager is nil, got %+v", res)
 	}

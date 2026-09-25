@@ -21,7 +21,10 @@ func TestGenerate_Format(t *testing.T) {
 	if len(tok) != 3+64 {
 		t.Errorf("token length = %d, want %d", len(tok), 3+64)
 	}
-	other, _ := Generate()
+	other, err := Generate()
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
 	if tok == other {
 		t.Error("Generate returned identical tokens")
 	}

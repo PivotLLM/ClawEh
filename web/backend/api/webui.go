@@ -3,7 +3,6 @@ package api
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
@@ -31,7 +30,7 @@ func (h *Handler) handleGetWebUIToken(w http.ResponseWriter, r *http.Request) {
 	wsURL := h.buildWsURL(r, cfg)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	encodeJSON(w, map[string]any{
 		"token":   cfg.Channels.WebUI.Token,
 		"ws_url":  wsURL,
 		"enabled": cfg.Channels.WebUI.Enabled,
@@ -59,7 +58,7 @@ func (h *Handler) handleRegenWebUIToken(w http.ResponseWriter, r *http.Request) 
 	wsURL := h.buildWsURL(r, cfg)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	encodeJSON(w, map[string]any{
 		"token":  token,
 		"ws_url": wsURL,
 	})
@@ -129,7 +128,7 @@ func (h *Handler) handleWebUISetup(w http.ResponseWriter, r *http.Request) {
 	wsURL := h.buildWsURL(r, cfg)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	encodeJSON(w, map[string]any{
 		"token":   cfg.Channels.WebUI.Token,
 		"ws_url":  wsURL,
 		"enabled": true,

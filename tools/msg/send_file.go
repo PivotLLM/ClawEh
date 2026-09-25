@@ -71,8 +71,8 @@ func (t *SendFileTool) SetMediaStore(store media.MediaStore) {
 }
 
 func (t *SendFileTool) Execute(ctx context.Context, args map[string]any) *tools.ToolResult {
-	path, _ := args["path"].(string)
-	if strings.TrimSpace(path) == "" {
+	path, ok := args["path"].(string)
+	if !ok || strings.TrimSpace(path) == "" {
 		return tools.ErrorResult("path is required")
 	}
 
@@ -112,8 +112,8 @@ func (t *SendFileTool) Execute(ctx context.Context, args map[string]any) *tools.
 		))
 	}
 
-	filename, _ := args["filename"].(string)
-	if filename == "" {
+	filename, ok := args["filename"].(string)
+	if !ok || filename == "" {
 		filename = filepath.Base(resolved)
 	}
 

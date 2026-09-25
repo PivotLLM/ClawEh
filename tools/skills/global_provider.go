@@ -62,7 +62,7 @@ func (globalSkillProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 			Description: "Search for installable skills from skill registries. Returns skill slugs, descriptions, versions, and relevance scores. Use this to discover skills before installing them with skill_install.",
 			Parameters: []global.Parameter{
 				{Name: "query", Type: "string", Required: true, Description: "Search query describing the desired skill capability (e.g., 'github integration', 'database management')"},
-				{Name: "limit", Type: "integer", Description: "Maximum number of results to return (1-20, default 5)", Minimum: floatPtr(1), Maximum: floatPtr(20)},
+				{Name: "limit", Type: "integer", Description: "Maximum number of results to return (1-20, default 5)", Minimum: new(float64(1)), Maximum: new(float64(20))},
 			},
 			Category: "skills",
 			Handler: func(call *global.ToolCall) (*global.Result, error) {
@@ -85,5 +85,3 @@ func (globalSkillProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 		},
 	}
 }
-
-func floatPtr(v float64) *float64 { return &v }

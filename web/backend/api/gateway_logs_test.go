@@ -12,7 +12,7 @@ func writeLog(t *testing.T, lines int) string {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "claw.log")
 	var b strings.Builder
-	for i := 0; i < lines; i++ {
+	for range lines {
 		b.WriteString("line-")
 		b.WriteString(strings.Repeat("x", 200)) // long-ish lines exercise the byte budget
 		b.WriteByte('\n')

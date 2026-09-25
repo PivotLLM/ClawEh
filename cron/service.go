@@ -5,12 +5,15 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
 	"github.com/adhocore/gronx"
+	"github.com/tenebris-tech/alerter"
 
 	"github.com/PivotLLM/ClawEh/fileutil"
 	"github.com/PivotLLM/ClawEh/logger"
@@ -161,6 +164,21 @@ type CronService struct {
 	stopChan    chan struct{}
 	gronx       *gronx.Gronx
 	fileModTime time.Time // mtime of store file at last load or save
+	alerter     alerter.Alerter
+	loadErr     error // store load failure at construction, see LoadError
+}
+
+// LoadError returns the error from loading the store when the service was
+// created, or nil. The service starts with an empty store in that case.
+func (cs *CronService) LoadError() error {
+	return cs.loadErr
+}
+
+// SetAlerter routes job failures to an alerter.
+func (cs *CronService) SetAlerter(a alerter.Alerter) {
+	cs.mu.Lock()
+	cs.alerter = a
+	cs.mu.Unlock()
 }
 
 func NewCronService(storePath string, onJob JobHandler) *CronService {
@@ -170,7 +188,10 @@ func NewCronService(storePath string, onJob JobHandler) *CronService {
 		gronx:     gronx.New(),
 	}
 	// Initialize and load store on creation
-	cs.loadStore()
+	if err := cs.loadStore(); err != nil {
+		logger.WarnCF("cron", "Failed to load cron store", map[string]any{"path": storePath, "error": err.Error()})
+		cs.loadErr = err
+	}
 	return cs
 }
 
@@ -271,6 +292,7 @@ func (cs *CronService) checkJobs() {
 
 		if err := cs.saveStoreUnsafe(); err != nil {
 			logger.WarnCF("cron", "failed to save store", map[string]any{"error": err.Error()})
+			cs.alertSaveFailed(err)
 		}
 	}
 
@@ -345,6 +367,14 @@ func (cs *CronService) executeJobByID(jobID string) {
 			"duration_ms": execDuration,
 			"error":       err.Error(),
 		})
+		if cs.alerter != nil {
+			cs.alerter.Send(alerter.Alert{
+				Title:       "Scheduled job failed",
+				Description: job.Name + " (" + job.ID + ")",
+				Details:     err.Error(),
+				EventID:     job.ID,
+			})
+		}
 	} else {
 		job.State.LastStatus = "ok"
 		job.State.LastError = ""
@@ -383,6 +413,7 @@ func (cs *CronService) executeJobByID(jobID string) {
 
 	if err := cs.saveStoreUnsafe(); err != nil {
 		logger.WarnCF("cron", "failed to save store", map[string]any{"error": err.Error()})
+		cs.alertSaveFailed(err)
 	}
 }
 
@@ -597,7 +628,7 @@ func (cs *CronService) UpdateJob(job *CronJob) error {
 			return cs.saveStoreUnsafe()
 		}
 	}
-	return fmt.Errorf("job not found")
+	return errors.New("job not found")
 }
 
 func (cs *CronService) RemoveJob(jobID string) (bool, error) {
@@ -696,7 +727,21 @@ func generateID() string {
 	b := make([]byte, 8)
 	if _, err := rand.Read(b); err != nil {
 		// Fallback to time-based if crypto/rand fails
-		return fmt.Sprintf("%d", time.Now().UnixNano())
+		return strconv.FormatInt(time.Now().UnixNano(), 10)
 	}
 	return hex.EncodeToString(b)
+}
+
+// alertSaveFailed reports a store write failure: the in-memory jobs drift
+// from disk and are lost on restart. Repeats collapse in the alerter.
+func (cs *CronService) alertSaveFailed(err error) {
+	if cs.alerter == nil {
+		return
+	}
+	cs.alerter.Send(alerter.Alert{
+		Title:       "Cron store not saved",
+		Description: cs.storePath + ": job changes are held in memory only and are lost on restart",
+		Details:     err.Error(),
+		EventID:     "cron-store",
+	})
 }

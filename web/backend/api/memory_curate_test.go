@@ -13,6 +13,8 @@ import (
 
 	"github.com/PivotLLM/cogmem/portable"
 	cogmemstore "github.com/PivotLLM/cogmem/store"
+
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 // curateEnv seeds a store and returns its id plus a mux, for the curation
@@ -20,8 +22,7 @@ import (
 // able to correct.
 func curateEnv(t *testing.T) (string, *http.ServeMux, string) {
 	t.Helper()
-	configPath, cleanup := setupTestEnv(t)
-	t.Cleanup(cleanup)
+	configPath := setupTestEnv(t)
 
 	dir := sessionsTestDir(t, configPath)
 	// The memory is per agent: <workspace>/cogmem/cogmem.db, and the store id
@@ -36,7 +37,7 @@ func curateEnv(t *testing.T) (string, *http.ServeMux, string) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	defer s.Close()
+	defer utils.CloseQuietly(s)
 	ctx := context.Background()
 	d, err := s.CreateDomain(ctx, s.DB(), cogmemstore.CreateDomainParams{
 		Name: "Trips", Status: cogmemstore.StatusActive,

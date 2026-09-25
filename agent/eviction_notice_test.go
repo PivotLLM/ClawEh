@@ -12,8 +12,8 @@ import (
 
 func TestSummarizeEvictions(t *testing.T) {
 	t.Run("single resource collapses to one line with count", func(t *testing.T) {
-		var ev []ctxengine.EvictionEvent
-		for i := 0; i < 8; i++ {
+		ev := make([]ctxengine.EvictionEvent, 0, 8)
+		for range 8 {
 			ev = append(ev, ctxengine.EvictionEvent{Tool: "file_read_bytes", Resource: "files/novels/outline.md", Bytes: 65692, Reason: "superseded"})
 		}
 		got := summarizeEvictions(ev)

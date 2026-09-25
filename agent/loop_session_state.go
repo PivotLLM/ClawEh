@@ -1,22 +1,22 @@
-// ClawEh - Personal AI Assistant
-// Inspired by and based on nanobot: https://github.com/HKUDS/nanobot
+// ClawEh
 // License: MIT
-//
-// Copyright (c) 2026 PicoClaw contributors
 
 package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
 
 	cogmemstore "github.com/PivotLLM/cogmem/store"
 	"github.com/PivotLLM/ctxengine/memory"
+	"github.com/tenebris-tech/alerter"
 
 	"github.com/PivotLLM/ClawEh/cogmemhost"
 	"github.com/PivotLLM/ClawEh/logger"
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 // compactionStateStore is the subset of the session store used to persist the
@@ -71,7 +71,7 @@ func (al *AgentLoop) getActiveModelIndex(agent *AgentInstance, sessionKey string
 func (al *AgentLoop) setActiveModelIndex(agent *AgentInstance, sessionKey string, idx int) error {
 	n := len(agent.Candidates)
 	if n == 0 {
-		return fmt.Errorf("this agent has no selectable models")
+		return errors.New("this agent has no selectable models")
 	}
 	if idx < 0 || idx >= n {
 		return fmt.Errorf("model index out of range (0-%d)", n-1)
@@ -93,6 +93,7 @@ func (al *AgentLoop) setActiveModelIndex(agent *AgentInstance, sessionKey string
 		if err := store.SetCompactionState(sessionKey, st); err != nil {
 			logger.WarnCF("agent", "active model index: persist failed",
 				map[string]any{"session_key": sessionKey, "error": err.Error()})
+			al.alertSessionStateNotPersisted("active model index", err)
 		}
 	}
 	return nil
@@ -142,6 +143,7 @@ func (al *AgentLoop) setExposeReasoning(agent *AgentInstance, sessionKey string,
 		if err := store.SetCompactionState(sessionKey, st); err != nil {
 			logger.WarnCF("agent", "expose reasoning: persist failed",
 				map[string]any{"session_key": sessionKey, "error": err.Error()})
+			al.alertSessionStateNotPersisted("expose reasoning", err)
 		}
 	}
 }
@@ -206,15 +208,27 @@ func (al *AgentLoop) setShowToolActivity(agent *AgentInstance, sessionKey string
 		if err := store.SetCompactionState(sessionKey, st); err != nil {
 			logger.WarnCF("agent", "show tool activity: persist failed",
 				map[string]any{"session_key": sessionKey, "error": err.Error()})
+			al.alertSessionStateNotPersisted("show tool activity", err)
 		}
 	}
+}
+
+// alertSessionStateNotPersisted raises the low alert for a per-session
+// setting that stayed in memory only; what names the setting.
+func (al *AgentLoop) alertSessionStateNotPersisted(what string, err error) {
+	al.Alerter().Send(alerter.Alert{
+		Title:       "Session state not persisted",
+		Description: what + ": the setting reverts on restart",
+		Details:     err.Error(),
+		EventID:     "session-store",
+	})
 }
 
 // cogmemSessionStatus renders a short cognitive-memory summary for the session:
 // active domain/memory counts, the pending-review count, and the last
 // consolidation run. Returns "" when the agent is not cognitive. Opening the
 // store runs the normal idempotent migrations, matching the cogmem_status tool.
-func (al *AgentLoop) cogmemSessionStatus(agent *AgentInstance, sessionKey string) string {
+func (al *AgentLoop) cogmemSessionStatus(ctx context.Context, agent *AgentInstance, sessionKey string) string {
 	if agent == nil || agent.Config == nil || !agent.Config.CognitiveMemoryEnabled() {
 		return ""
 	}
@@ -226,22 +240,30 @@ func (al *AgentLoop) cogmemSessionStatus(agent *AgentInstance, sessionKey string
 	if err != nil {
 		return "Cognitive memory unavailable: " + err.Error()
 	}
-	defer s.Close()
+	defer utils.CloseQuietly(s)
 
-	ctx := context.Background()
 	db := s.DB()
 	var b strings.Builder
 
-	active, _ := s.ListDomains(ctx, db, cogmemstore.StatusActive)
+	active, err := s.ListDomains(ctx, db, cogmemstore.StatusActive)
+	if err != nil {
+		return "Cognitive memory unavailable: " + err.Error()
+	}
 	memCount := 0
 	for _, d := range active {
-		ms, _ := s.ListMemories(ctx, db, d.ID, cogmemstore.StatusActive)
+		ms, listErr := s.ListMemories(ctx, db, d.ID, cogmemstore.StatusActive)
+		if listErr != nil {
+			return "Cognitive memory unavailable: " + listErr.Error()
+		}
 		memCount += len(ms)
 	}
 	fmt.Fprintf(&b, "Active domains: %d\n", len(active))
 	fmt.Fprintf(&b, "Active memories: %d\n", memCount)
 
-	run, ok, _ := s.LastRun(ctx, db)
+	run, ok, err := s.LastRun(ctx, db)
+	if err != nil {
+		return "Cognitive memory unavailable: " + err.Error()
+	}
 	if !ok {
 		b.WriteString("Last consolidation: none yet")
 	} else {

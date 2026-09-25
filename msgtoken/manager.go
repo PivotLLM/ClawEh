@@ -9,6 +9,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tenebris-tech/alerter"
+
+	"github.com/PivotLLM/ClawEh/alerts"
 	"github.com/PivotLLM/ClawEh/fileutil"
 	"github.com/PivotLLM/ClawEh/logger"
 )
@@ -68,10 +71,16 @@ func NewManager(agentID, storePath string, windowMinutes, windowCount int) (*Man
 	}
 
 	// Load existing store if present.
-	if data, err := os.ReadFile(storePath); err == nil {
+	if data, err := os.ReadFile(storePath); err == nil { //nolint:gosec // token store under the configured data dir
 		if err := json.Unmarshal(data, &m.store); err != nil {
 			logger.WarnCF("message", "Failed to parse message-token store, starting fresh",
 				map[string]any{"agent": agentID, "error": err.Error()})
+			alerts.Send(alerter.Alert{
+				Title:       "Message-token store unreadable",
+				Description: storePath + " (agent " + agentID + "): existing tokens are ignored and the next save overwrites the file",
+				Details:     err.Error(),
+				EventID:     "msgtoken:" + agentID,
+			})
 			m.store = Store{}
 		}
 	}
@@ -97,10 +106,7 @@ func NewManager(agentID, storePath string, windowMinutes, windowCount int) (*Man
 			sleepUntil := time.Unix(m.store.NextRotationAt, 0)
 			m.mu.Unlock()
 
-			delay := time.Until(sleepUntil)
-			if delay < 0 {
-				delay = 0
-			}
+			delay := max(time.Until(sleepUntil), 0)
 
 			select {
 			case <-m.stopCh:
@@ -174,6 +180,7 @@ func (m *Manager) save() error {
 	if err := fileutil.WriteFileAtomic(m.storePath, data, 0o600); err != nil {
 		logger.WarnCF("message", "Failed to write message-token store",
 			map[string]any{"agent": m.agentID, "error": err.Error()})
+		alertTokenStoreNotWritten(m.storePath, m.agentID, "token changes are lost on restart", err)
 		return err
 	}
 	return nil

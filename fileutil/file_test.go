@@ -25,7 +25,11 @@ func TestWriteFileAtomic_WritesContentAndPerm(t *testing.T) {
 		t.Errorf("content = %q, want hello", got)
 	}
 	if runtime.GOOS != "windows" {
-		if fi, _ := os.Stat(path); fi.Mode().Perm() != 0o600 {
+		fi, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("stat: %v", err)
+		}
+		if fi.Mode().Perm() != 0o600 {
 			t.Errorf("perm = %v, want 0600", fi.Mode().Perm())
 		}
 	}
@@ -51,12 +55,18 @@ func TestWriteFileAtomic_OverwritesAtomically_NoTempLeft(t *testing.T) {
 	if err := WriteFileAtomic(path, []byte("new-content"), 0o644); err != nil {
 		t.Fatalf("overwrite: %v", err)
 	}
-	got, _ := os.ReadFile(path)
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
 	if string(got) != "new-content" {
 		t.Errorf("content = %q, want new-content", got)
 	}
 	// No .tmp-* artifacts should remain on success.
-	entries, _ := os.ReadDir(dir)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read dir: %v", err)
+	}
 	for _, e := range entries {
 		if len(e.Name()) >= 5 && e.Name()[:5] == ".tmp-" {
 			t.Errorf("temp file left behind: %s", e.Name())

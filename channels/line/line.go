@@ -7,9 +7,11 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -63,7 +65,7 @@ type LINEChannel struct {
 // NewLINEChannel creates a new LINE channel instance.
 func NewLINEChannel(cfg config.LINEConfig, messageBus *bus.MessageBus) (*LINEChannel, error) {
 	if cfg.ChannelSecret == "" || cfg.ChannelAccessToken == "" {
-		return nil, fmt.Errorf("line channel_secret and channel_access_token are required")
+		return nil, errors.New("line channel_secret and channel_access_token are required")
 	}
 
 	base := channels.NewBaseChannel("line", cfg, messageBus, cfg.AllowFrom,
@@ -116,7 +118,11 @@ func (c *LINEChannel) fetchBotInfo() error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			logger.DebugCF("line", "Response body close failed", map[string]any{"error": closeErr.Error()})
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("bot info API returned status %d", resp.StatusCode)
@@ -443,8 +449,7 @@ func (c *LINEChannel) stripBotMention(text string, msg lineMessage) string {
 	// Try to strip using mention metadata indices
 	if msg.Mention != nil {
 		runes := []rune(text)
-		for i := len(msg.Mention.Mentionees) - 1; i >= 0; i-- {
-			m := msg.Mention.Mentionees[i]
+		for _, m := range slices.Backward(msg.Mention.Mentionees) {
 			// Strip if userId matches OR if the mention text contains the bot display name
 			shouldStrip := false
 			if c.botUserID != "" && m.UserID == c.botUserID {
@@ -503,12 +508,14 @@ func (c *LINEChannel) Send(ctx context.Context, msg bus.OutboundMessage) error {
 	// Load and consume quote token for this chat
 	var quoteToken string
 	if qt, ok := c.quoteTokens.LoadAndDelete(msg.ChatID); ok {
-		quoteToken = qt.(string)
+		if s, isString := qt.(string); isString { // only strings are stored; anything else means no quote
+			quoteToken = s
+		}
 	}
 
 	// Try reply token first (free, valid for ~25 seconds)
-	if entry, ok := c.replyTokens.LoadAndDelete(msg.ChatID); ok {
-		tokenEntry := entry.(replyTokenEntry)
+	entry, _ := c.replyTokens.LoadAndDelete(msg.ChatID)
+	if tokenEntry, ok := entry.(replyTokenEntry); ok {
 		if time.Since(tokenEntry.timestamp) < lineReplyTokenMaxAge {
 			if err := c.sendReply(ctx, tokenEntry.token, msg.Content, quoteToken); err == nil {
 				logger.DebugCF("line", "Message sent via Reply API", map[string]any{
@@ -660,7 +667,11 @@ func (c *LINEChannel) callAPI(ctx context.Context, endpoint string, payload any)
 	if err != nil {
 		return channels.ClassifyNetError(err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			logger.DebugCF("line", "Response body close failed", map[string]any{"error": closeErr.Error()})
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, err := io.ReadAll(resp.Body)

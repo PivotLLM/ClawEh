@@ -28,12 +28,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/tenebris-tech/alerter"
 
 	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/bus"
@@ -62,6 +65,8 @@ const InternalEndpointPath = "/internal"
 // the token in the call body resolves to an agent identity, the per-agent
 // ACL gates the (agent, tool) pair, and the per-agent registry executes.
 type MCPServer struct {
+	// alerter hears when the listener dies after startup; nothing restarts it.
+	alerter         alerter.Alerter
 	agentRegistries map[string]*tools.ToolRegistry // agentID → registry (dispatch target + schema source)
 	internalAllow   []string                       // tools/list visibility filter for /internal
 	externalAllow   []string                       // tools/list visibility filter for /mcp (bearer)
@@ -89,6 +94,12 @@ type MCPServer struct {
 
 	// srv is kept for test introspection.
 	srv *server.MCPServer
+
+	// endpoints are the two published catalogues (/internal and /mcp), kept so
+	// RefreshCatalogue can diff the live registries against what each has
+	// registered. catalogueMu serializes refreshes.
+	catalogueMu sync.Mutex
+	endpoints   []*endpointCatalogue
 }
 
 // ToolActivityNotifier renders the one-line "/tools on" breadcrumb for a tool
@@ -112,9 +123,7 @@ func WithAgentRegistries(registries map[string]*tools.ToolRegistry) Option {
 			return
 		}
 		m.agentRegistries = make(map[string]*tools.ToolRegistry, len(registries))
-		for k, v := range registries {
-			m.agentRegistries[k] = v
-		}
+		maps.Copy(m.agentRegistries, registries)
 	}
 }
 
@@ -127,9 +136,7 @@ func WithAgentWorkspaces(ws map[string]string) Option {
 			return
 		}
 		m.workspaces = make(map[string]string, len(ws))
-		for k, v := range ws {
-			m.workspaces[k] = v
-		}
+		maps.Copy(m.workspaces, ws)
 	}
 }
 
@@ -206,6 +213,11 @@ func WithToolActivityNotifier(n ToolActivityNotifier) Option {
 	return func(m *MCPServer) { m.toolActivity = n }
 }
 
+// WithAlerter routes a listener death after startup to an alerter.
+func WithAlerter(a alerter.Alerter) Option {
+	return func(m *MCPServer) { m.alerter = a }
+}
+
 // WithSessionMode tells the server which session scope is configured. Under the
 // unified default a long-lived service token operates on the agent's MAIN
 // session — one agent, one conversation, one memory, whatever is driving it —
@@ -270,13 +282,28 @@ func New(opts ...Option) (*MCPServer, error) {
 		)
 	}
 
+	deps := dispatchDeps{
+		sessionTokens:    m.sessionTokens,
+		resolver:         resolver,
+		tracker:          tracker,
+		policy:           m.policy,
+		msgBus:           m.msgBus,
+		toolActivity:     m.toolActivity,
+		activeDispatches: &m.activeDispatches,
+	}
+
 	// /internal — session-token parameter on every tool (ClawEh's CLI providers).
 	internalSrv := newSrv()
-	addToolsToServer(internalSrv, internalAuthMode, m.agentRegistries, m.internalAllow, m.sessionTokens, resolver, tracker, m.policy, m.msgBus, m.toolActivity, &m.activeDispatches)
+	internal := newEndpointCatalogue(internalSrv, internalAuthMode, m.internalAllow, deps)
 
 	// /mcp — standard bearer endpoint, clean tool schemas (probe / external MCP).
 	bearerSrv := newSrv()
-	addToolsToServer(bearerSrv, bearerAuthMode, m.agentRegistries, m.externalAllow, m.sessionTokens, resolver, tracker, m.policy, m.msgBus, m.toolActivity, &m.activeDispatches)
+	bearer := newEndpointCatalogue(bearerSrv, bearerAuthMode, m.externalAllow, deps)
+
+	m.endpoints = []*endpointCatalogue{internal, bearer}
+	for _, ep := range m.endpoints {
+		ep.refresh(m.agentRegistries)
+	}
 
 	internalStreamable := newStreamable(internalSrv, m.internalPath, false)
 	bearerStreamable := newStreamable(bearerSrv, m.endpointPath, true)
@@ -289,7 +316,7 @@ func New(opts ...Option) (*MCPServer, error) {
 	mux := http.NewServeMux()
 	mux.Handle(m.internalPath, internalStreamable)
 	mux.Handle(m.endpointPath, bearerAuthMiddleware(m.sessionTokens, bearerStreamable))
-	m.httpServer = &http.Server{Handler: mux}
+	m.httpServer = &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 
 	return m, nil
 }
@@ -304,6 +331,27 @@ func (m *MCPServer) EndpointPath() string { return m.endpointPath }
 // use it to issue tokens when a new session context manager is created and to
 // revoke tokens on session clear or eviction.
 func (m *MCPServer) SessionTokens() *sessionTokenStore { return m.sessionTokens }
+
+// RefreshCatalogue recomputes the union of the agent registries and brings each
+// endpoint's published tools in step with it: tools that appeared are added,
+// tools whose schema changed are replaced, tools that disappeared are deleted.
+// mcp-go sends tools/list_changed to connected clients for the adds and the
+// deletes, so an external client picks the change up without reconnecting. The
+// agent loop calls it after an external MCP server's tools are re-registered.
+func (m *MCPServer) RefreshCatalogue() {
+	m.catalogueMu.Lock()
+	defer m.catalogueMu.Unlock()
+	added, deleted := 0, 0
+	for _, ep := range m.endpoints {
+		a, d := ep.refresh(m.agentRegistries)
+		added += a
+		deleted += d
+	}
+	if added > 0 || deleted > 0 {
+		logger.InfoCF("mcpserver", "MCP host catalogue refreshed",
+			map[string]any{"added": added, "deleted": deleted})
+	}
+}
 
 // Start begins serving in a background goroutine. It returns after the
 // listener is bound (binding failures are returned immediately), so callers
@@ -327,6 +375,14 @@ func (m *MCPServer) Start() error {
 		if err := m.httpServer.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.ErrorCF("mcpserver", "MCP server exited",
 				map[string]any{"error": err.Error()})
+			if m.alerter != nil {
+				m.alerter.Send(alerter.Alert{
+					Title:       "MCP host server stopped",
+					Description: m.listen + ": external MCP clients and CLI providers lose the host tools until the gateway is restarted",
+					Details:     err.Error(),
+					EventID:     "mcpserver",
+				})
+			}
 			errCh <- err
 			return
 		}
@@ -356,7 +412,9 @@ func (m *MCPServer) Shutdown(ctx context.Context) error {
 
 	if m.httpServer != nil {
 		// Stop accepting new connections immediately.
-		_ = m.httpServer.Close()
+		if err := m.httpServer.Close(); err != nil {
+			logger.WarnCF("mcpserver", "Failed to close MCP HTTP server", map[string]any{"error": err.Error()})
+		}
 	}
 
 	// Wait up to 3 s for in-flight tool dispatches to finish.

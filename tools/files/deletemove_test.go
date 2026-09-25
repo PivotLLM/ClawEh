@@ -32,7 +32,9 @@ func TestFileDelete_RequiresSure(t *testing.T) {
 func TestFileDelete_RefusesBackupFiles(t *testing.T) {
 	dir := t.TempDir()
 	bp := filepath.Join(dir, "notes.md.0001")
-	os.WriteFile(bp, []byte("backup"), 0o644)
+	if err := os.WriteFile(bp, []byte("backup"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	tool := NewDeleteFileToolScoped(dir, false, "")
 	res := tool.Execute(context.Background(), map[string]any{"path": bp, "sure": true})
 	if !res.IsError || !contains(res.ForLLM, "backup") {
@@ -47,7 +49,9 @@ func TestFileMove_CopyThenDelete(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "a.txt")
 	dst := filepath.Join(dir, "sub", "b.txt")
-	os.WriteFile(src, []byte("hello"), 0o644)
+	if err := os.WriteFile(src, []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	tool := NewMoveFileToolScoped(dir, false, "")
 	res := tool.Execute(context.Background(), map[string]any{"source_path": src, "destination_path": dst})
 	if res.IsError {
@@ -66,8 +70,12 @@ func TestFileMove_NoOverwriteByDefault(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "a.txt")
 	dst := filepath.Join(dir, "b.txt")
-	os.WriteFile(src, []byte("new"), 0o644)
-	os.WriteFile(dst, []byte("existing"), 0o644)
+	if err := os.WriteFile(src, []byte("new"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dst, []byte("existing"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	tool := NewMoveFileToolScoped(dir, false, "")
 	res := tool.Execute(context.Background(), map[string]any{"source_path": src, "destination_path": dst})
 	if !res.IsError {

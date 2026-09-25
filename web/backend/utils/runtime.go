@@ -1,7 +1,7 @@
 package utils
 
 import (
-	"fmt"
+	"errors"
 	"net"
 	"os"
 	"os/exec"
@@ -15,7 +15,10 @@ func GetClawHome() string {
 	if home := os.Getenv("CLAW_HOME"); home != "" {
 		return home
 	}
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ".claw"
+	}
 	return filepath.Join(home, ".claw")
 }
 
@@ -43,7 +46,7 @@ func FindClawBinary() string {
 	}
 
 	if p := os.Getenv("CLAW_BINARY"); p != "" {
-		if info, _ := os.Stat(p); info != nil && !info.IsDir() {
+		if info, err := os.Stat(p); err == nil && !info.IsDir() { //nolint:gosec // CLAW_BINARY is the operator's own environment
 			return p
 		}
 	}
@@ -76,12 +79,12 @@ func GetLocalIP() string {
 func OpenBrowser(url string) error {
 	switch runtime.GOOS {
 	case "linux":
-		return exec.Command("xdg-open", url).Start()
+		return exec.Command("xdg-open", url).Start() //nolint:gosec // fixed platform opener binary; url is a single argv entry, not a shell string
 	case "windows":
-		return exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
+		return exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start() //nolint:gosec // fixed platform opener binary; url is a single argv entry, not a shell string
 	case "darwin":
-		return exec.Command("open", url).Start()
+		return exec.Command("open", url).Start() //nolint:gosec // fixed platform opener binary; url is a single argv entry, not a shell string
 	default:
-		return fmt.Errorf("unsupported platform")
+		return errors.New("unsupported platform")
 	}
 }

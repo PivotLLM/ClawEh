@@ -69,7 +69,9 @@ func TestHTTPHostAllowlistOverRealListener(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET error = %v", err)
 	}
-	_ = resp.Body.Close()
+	if closeErr := resp.Body.Close(); closeErr != nil {
+		t.Fatalf("close body: %v", closeErr)
+	}
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("loopback status = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
@@ -80,7 +82,9 @@ func TestHTTPHostAllowlistOverRealListener(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET error = %v", err)
 	}
-	_ = resp.Body.Close()
+	if closeErr := resp.Body.Close(); closeErr != nil {
+		t.Fatalf("close body: %v", closeErr)
+	}
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("unknown route status = %d, want %d", resp.StatusCode, http.StatusNotFound)
 	}
@@ -101,9 +105,7 @@ func TestHTTPHostSetAllowlistConcurrent(t *testing.T) {
 	var readers, writer sync.WaitGroup
 	stop := make(chan struct{})
 
-	writer.Add(1)
-	go func() {
-		defer writer.Done()
+	writer.Go(func() {
 		lists := [][]string{nil, {"192.168.0.0/16"}, {"*"}, {"10.0.0.0/8"}}
 		for i := 0; ; i++ {
 			select {
@@ -116,13 +118,11 @@ func TestHTTPHostSetAllowlistConcurrent(t *testing.T) {
 				return
 			}
 		}
-	}()
+	})
 
-	for i := 0; i < 4; i++ {
-		readers.Add(1)
-		go func() {
-			defer readers.Done()
-			for n := 0; n < 500; n++ {
+	for range 4 {
+		readers.Go(func() {
+			for range 500 {
 				rec := httptest.NewRecorder()
 				req := httptest.NewRequest(http.MethodGet, "/", nil)
 				req.RemoteAddr = "192.168.1.50:5000"
@@ -132,7 +132,7 @@ func TestHTTPHostSetAllowlistConcurrent(t *testing.T) {
 					return
 				}
 			}
-		}()
+		})
 	}
 
 	readers.Wait()

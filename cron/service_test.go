@@ -20,7 +20,7 @@ func TestSaveStore_FilePermissions(t *testing.T) {
 
 	cs := NewCronService(storePath, nil)
 
-	_, err := cs.AddJob("test", CronSchedule{Kind: "every", EveryMS: int64Ptr(60000)}, "hello", "agent", "cli", "direct", "channel")
+	_, err := cs.AddJob("test", CronSchedule{Kind: "every", EveryMS: new(int64(60000))}, "hello", "agent", "cli", "direct", "channel")
 	if err != nil {
 		t.Fatalf("AddJob failed: %v", err)
 	}
@@ -36,20 +36,16 @@ func TestSaveStore_FilePermissions(t *testing.T) {
 	}
 }
 
-func int64Ptr(v int64) *int64 {
-	return &v
-}
-
 func TestListJobs_IncludeDisabled_ReturnsCopy(t *testing.T) {
 	tmpDir := t.TempDir()
 	storePath := filepath.Join(tmpDir, "cron", "jobs.json")
 	cs := NewCronService(storePath, nil)
 
-	_, err := cs.AddJob("job-one", CronSchedule{Kind: "every", EveryMS: int64Ptr(60000)}, "msg1", "agent", "cli", "direct", "channel")
+	_, err := cs.AddJob("job-one", CronSchedule{Kind: "every", EveryMS: new(int64(60000))}, "msg1", "agent", "cli", "direct", "channel")
 	if err != nil {
 		t.Fatalf("AddJob failed: %v", err)
 	}
-	_, err = cs.AddJob("job-two", CronSchedule{Kind: "every", EveryMS: int64Ptr(60000)}, "msg2", "agent", "cli", "direct", "channel")
+	_, err = cs.AddJob("job-two", CronSchedule{Kind: "every", EveryMS: new(int64(60000))}, "msg2", "agent", "cli", "direct", "channel")
 	if err != nil {
 		t.Fatalf("AddJob failed: %v", err)
 	}
@@ -78,14 +74,16 @@ func TestListJobs_ConcurrentModification(t *testing.T) {
 
 	go func() {
 		defer wg.Done()
-		for i := 0; i < 10; i++ {
-			_, _ = cs.AddJob("job", CronSchedule{Kind: "every", EveryMS: int64Ptr(60000)}, "msg", "agent", "cli", "direct", "channel")
+		for range 10 {
+			if _, err := cs.AddJob("job", CronSchedule{Kind: "every", EveryMS: new(int64(60000))}, "msg", "agent", "cli", "direct", "channel"); err != nil {
+				t.Errorf("AddJob: %v", err)
+			}
 		}
 	}()
 
 	go func() {
 		defer wg.Done()
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			_ = cs.ListJobs(true)
 		}
 	}()
@@ -102,7 +100,7 @@ func TestRemoveJob_SaveFailure_ReturnsError(t *testing.T) {
 	storePath := filepath.Join(tmpDir, "cron", "jobs.json")
 	cs := NewCronService(storePath, nil)
 
-	job, err := cs.AddJob("test-job", CronSchedule{Kind: "every", EveryMS: int64Ptr(60000)}, "msg", "agent", "cli", "direct", "channel")
+	job, err := cs.AddJob("test-job", CronSchedule{Kind: "every", EveryMS: new(int64(60000))}, "msg", "agent", "cli", "direct", "channel")
 	if err != nil {
 		t.Fatalf("AddJob failed: %v", err)
 	}
@@ -112,7 +110,9 @@ func TestRemoveJob_SaveFailure_ReturnsError(t *testing.T) {
 		t.Fatalf("chmod failed: %v", err)
 	}
 	defer func() {
-		_ = os.Chmod(storeDir, 0o755)
+		if err := os.Chmod(storeDir, 0o755); err != nil {
+			t.Errorf("restore chmod: %v", err)
+		}
 	}()
 
 	_, removeErr := cs.RemoveJob(job.ID)
@@ -130,7 +130,7 @@ func TestEnableJob_SaveFailure_ReturnsError(t *testing.T) {
 	storePath := filepath.Join(tmpDir, "cron", "jobs.json")
 	cs := NewCronService(storePath, nil)
 
-	job, err := cs.AddJob("test-job", CronSchedule{Kind: "every", EveryMS: int64Ptr(60000)}, "msg", "agent", "cli", "direct", "channel")
+	job, err := cs.AddJob("test-job", CronSchedule{Kind: "every", EveryMS: new(int64(60000))}, "msg", "agent", "cli", "direct", "channel")
 	if err != nil {
 		t.Fatalf("AddJob failed: %v", err)
 	}
@@ -140,7 +140,9 @@ func TestEnableJob_SaveFailure_ReturnsError(t *testing.T) {
 		t.Fatalf("chmod failed: %v", err)
 	}
 	defer func() {
-		_ = os.Chmod(storeDir, 0o755)
+		if err := os.Chmod(storeDir, 0o755); err != nil {
+			t.Errorf("restore chmod: %v", err)
+		}
 	}()
 
 	_, enableErr := cs.EnableJob(job.ID, false)
@@ -154,11 +156,11 @@ func TestCheckJobs_LoadStoreFailure_PreservesJobs(t *testing.T) {
 	storePath := filepath.Join(tmpDir, "cron", "jobs.json")
 	cs := NewCronService(storePath, nil)
 
-	_, err := cs.AddJob("job-one", CronSchedule{Kind: "every", EveryMS: int64Ptr(60000)}, "msg1", "agent", "cli", "direct", "channel")
+	_, err := cs.AddJob("job-one", CronSchedule{Kind: "every", EveryMS: new(int64(60000))}, "msg1", "agent", "cli", "direct", "channel")
 	if err != nil {
 		t.Fatalf("AddJob failed: %v", err)
 	}
-	_, err = cs.AddJob("job-two", CronSchedule{Kind: "every", EveryMS: int64Ptr(60000)}, "msg2", "agent", "cli", "direct", "channel")
+	_, err = cs.AddJob("job-two", CronSchedule{Kind: "every", EveryMS: new(int64(60000))}, "msg2", "agent", "cli", "direct", "channel")
 	if err != nil {
 		t.Fatalf("AddJob failed: %v", err)
 	}
@@ -310,7 +312,7 @@ func TestGetNextWakeMS_NoJobs(t *testing.T) {
 
 func TestGetNextWakeMS_AllDisabled(t *testing.T) {
 	cs := newTestService(t)
-	addEnabledJob(t, cs, "every", int64Ptr(60_000))
+	addEnabledJob(t, cs, "every", new(int64(60_000)))
 
 	// Disable the job.
 	jobs := cs.ListJobs(true)
@@ -362,7 +364,7 @@ func TestExecuteJobByID_Success(t *testing.T) {
 	}
 
 	cs := newTestServiceWithHandler(t, handler)
-	job := addEnabledJob(t, cs, "every", int64Ptr(60_000))
+	job := addEnabledJob(t, cs, "every", new(int64(60_000)))
 
 	cs.executeJobByID(job.ID)
 
@@ -393,7 +395,7 @@ func TestExecuteJobByID_HandlerError(t *testing.T) {
 	}
 
 	cs := newTestServiceWithHandler(t, handler)
-	job := addEnabledJob(t, cs, "every", int64Ptr(60_000))
+	job := addEnabledJob(t, cs, "every", new(int64(60_000)))
 
 	cs.executeJobByID(job.ID)
 
@@ -468,7 +470,7 @@ func TestCheckJobs_DueJobExecuted(t *testing.T) {
 	}
 
 	cs := newTestServiceWithHandler(t, handler)
-	job := addEnabledJob(t, cs, "every", int64Ptr(60_000))
+	job := addEnabledJob(t, cs, "every", new(int64(60_000)))
 
 	// Set NextRunAtMS to the past so the job is due.
 	cs.mu.Lock()
@@ -500,7 +502,7 @@ func TestCheckJobs_NotDueJobSkipped(t *testing.T) {
 	}
 
 	cs := newTestServiceWithHandler(t, handler)
-	addEnabledJob(t, cs, "every", int64Ptr(60_000))
+	addEnabledJob(t, cs, "every", new(int64(60_000)))
 
 	// NextRunAtMS is already set to future by AddJob (now + 60s).
 	cs.mu.Lock()
@@ -526,7 +528,7 @@ func TestCheckJobs_DisabledJobSkipped(t *testing.T) {
 	}
 
 	cs := newTestServiceWithHandler(t, handler)
-	job := addEnabledJob(t, cs, "every", int64Ptr(60_000))
+	job := addEnabledJob(t, cs, "every", new(int64(60_000)))
 
 	// Disable the job and set a past NextRunAtMS.
 	cs.mu.Lock()
@@ -559,7 +561,7 @@ func TestCheckJobs_NotRunningBailsEarly(t *testing.T) {
 	}
 
 	cs := newTestServiceWithHandler(t, handler)
-	job := addEnabledJob(t, cs, "every", int64Ptr(60_000))
+	job := addEnabledJob(t, cs, "every", new(int64(60_000)))
 
 	// Force past run time but leave running=false.
 	cs.mu.Lock()
@@ -584,7 +586,7 @@ func TestCheckJobs_NotRunningBailsEarly(t *testing.T) {
 
 func TestUpdateJob_Success(t *testing.T) {
 	cs := newTestService(t)
-	job := addEnabledJob(t, cs, "every", int64Ptr(60_000))
+	job := addEnabledJob(t, cs, "every", new(int64(60_000)))
 
 	job.Name = "updated-name"
 	if err := cs.UpdateJob(job); err != nil {
@@ -673,7 +675,7 @@ func TestStartStop_JobExecutedDuringRun(t *testing.T) {
 	}
 
 	cs := newTestServiceWithHandler(t, handler)
-	job := addEnabledJob(t, cs, "every", int64Ptr(60_000))
+	job := addEnabledJob(t, cs, "every", new(int64(60_000)))
 
 	// Start the service (recomputeNextRuns will set future NextRunAtMS).
 	if err := cs.Start(); err != nil {
@@ -709,7 +711,7 @@ func TestStartStop_JobExecutedDuringRun(t *testing.T) {
 
 func TestRecomputeNextRuns_SetsNextRunForEnabledJobs(t *testing.T) {
 	cs := newTestService(t)
-	addEnabledJob(t, cs, "every", int64Ptr(60_000))
+	addEnabledJob(t, cs, "every", new(int64(60_000)))
 
 	// Clear NextRunAtMS manually.
 	cs.mu.Lock()
@@ -727,7 +729,7 @@ func TestRecomputeNextRuns_SetsNextRunForEnabledJobs(t *testing.T) {
 
 func TestRecomputeNextRuns_SkipsDisabledJobs(t *testing.T) {
 	cs := newTestService(t)
-	addEnabledJob(t, cs, "every", int64Ptr(60_000))
+	addEnabledJob(t, cs, "every", new(int64(60_000)))
 
 	cs.mu.Lock()
 	for i := range cs.store.Jobs {
@@ -749,8 +751,8 @@ func TestRecomputeNextRuns_SkipsDisabledJobs(t *testing.T) {
 
 func TestListJobs_FilterDisabled(t *testing.T) {
 	cs := newTestService(t)
-	addEnabledJob(t, cs, "every", int64Ptr(60_000))
-	j2 := addEnabledJob(t, cs, "every", int64Ptr(60_000))
+	addEnabledJob(t, cs, "every", new(int64(60_000)))
+	j2 := addEnabledJob(t, cs, "every", new(int64(60_000)))
 
 	// Disable j2.
 	j2.Enabled = false
@@ -775,8 +777,8 @@ func TestListJobs_FilterDisabled(t *testing.T) {
 
 func TestStatus(t *testing.T) {
 	cs := newTestService(t)
-	addEnabledJob(t, cs, "every", int64Ptr(60_000))
-	addEnabledJob(t, cs, "every", int64Ptr(60_000))
+	addEnabledJob(t, cs, "every", new(int64(60_000)))
+	addEnabledJob(t, cs, "every", new(int64(60_000)))
 
 	status := cs.Status()
 
@@ -809,7 +811,7 @@ func TestStatus_NextWakeAtMS(t *testing.T) {
 		t.Errorf("expected nil *int64 nextWakeAtMS with no jobs, got %d", *v)
 	}
 
-	addEnabledJob(t, cs, "every", int64Ptr(60_000))
+	addEnabledJob(t, cs, "every", new(int64(60_000)))
 	status = cs.Status()
 	v, ok := status["nextWakeAtMS"].(*int64)
 	if !ok || v == nil {
@@ -857,7 +859,7 @@ func makeEnabledJobWithNextRun(id string, nextRunAtMS int64) CronJob {
 		Enabled: true,
 		Schedule: CronSchedule{
 			Kind:    "every",
-			EveryMS: int64Ptr(60_000),
+			EveryMS: new(int64(60_000)),
 		},
 		State: CronJobState{
 			NextRunAtMS: &nextRunAtMS,

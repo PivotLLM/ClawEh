@@ -62,7 +62,10 @@ type captureNotifier struct {
 }
 
 func (c *captureNotifier) SessionUpdate(n acplib.SessionNotification) error {
-	data, _ := json.Marshal(n)
+	data, err := json.Marshal(n)
+	if err != nil {
+		return err
+	}
 	c.mu.Lock()
 	c.buf.Write(data)
 	c.buf.WriteByte('\n')
@@ -75,7 +78,7 @@ func (c *captureNotifier) chunks(t *testing.T) []string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	var texts []string
-	for _, line := range strings.Split(strings.TrimSpace(c.buf.String()), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(c.buf.String()), "\n") {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
@@ -91,7 +94,8 @@ func (c *captureNotifier) chunks(t *testing.T) []string {
 }
 
 // agentEvent builds an "agent" gateway event payload.
-func agentEvent(runID, stream, text, phase string) protocol.Event {
+func agentEvent(t *testing.T, runID, stream, text, phase string) protocol.Event {
+	t.Helper()
 	data := map[string]any{}
 	if text != "" {
 		data["delta"] = text
@@ -100,12 +104,19 @@ func agentEvent(runID, stream, text, phase string) protocol.Event {
 	if phase != "" {
 		data["phase"] = phase
 	}
-	payload, _ := json.Marshal(map[string]any{"runId": runID, "stream": stream, "data": data})
+	payload, err := json.Marshal(map[string]any{"runId": runID, "stream": stream, "data": data})
+	if err != nil {
+		t.Fatalf("marshal agent event: %v", err)
+	}
 	return protocol.Event{EventName: protocol.EventAgent, Payload: payload}
 }
 
-func chatEvent(runID, state string) protocol.Event {
-	payload, _ := json.Marshal(map[string]any{"runId": runID, "state": state})
+func chatEvent(t *testing.T, runID, state string) protocol.Event {
+	t.Helper()
+	payload, err := json.Marshal(map[string]any{"runId": runID, "state": state})
+	if err != nil {
+		t.Fatalf("marshal chat event: %v", err)
+	}
 	return protocol.Event{EventName: protocol.EventChat, Payload: payload}
 }
 
@@ -162,9 +173,9 @@ func TestACPBridgePromptStreamed(t *testing.T) {
 	}()
 
 	runID := fg.lastRunID(t)
-	br.handleGatewayEvent(agentEvent(runID, "assistant", "Hello", ""))
-	br.handleGatewayEvent(agentEvent(runID, "assistant", " world", ""))
-	br.handleGatewayEvent(agentEvent(runID, "lifecycle", "", "end"))
+	br.handleGatewayEvent(agentEvent(t, runID, "assistant", "Hello", ""))
+	br.handleGatewayEvent(agentEvent(t, runID, "assistant", " world", ""))
+	br.handleGatewayEvent(agentEvent(t, runID, "lifecycle", "", "end"))
 
 	resp := waitResp(t, done)
 	if resp.StopReason != acplib.StopReasonEndTurn {
@@ -189,15 +200,19 @@ func TestACPBridgePromptChatFinal(t *testing.T) {
 
 	done := make(chan *acplib.PromptResponse, 1)
 	go func() {
-		resp, _ := br.Prompt(context.Background(), acplib.PromptRequest{
+		resp, err := br.Prompt(context.Background(), acplib.PromptRequest{
 			SessionID: "acp-2", Prompt: []acplib.ContentBlock{{Type: "text", Text: "q"}},
 		})
+		if err != nil {
+			t.Errorf("Prompt: %v", err)
+			return
+		}
 		done <- resp
 	}()
 
 	runID := fg.lastRunID(t)
-	br.handleGatewayEvent(agentEvent(runID, "assistant", "answer", ""))
-	br.handleGatewayEvent(chatEvent(runID, "final"))
+	br.handleGatewayEvent(agentEvent(t, runID, "assistant", "answer", ""))
+	br.handleGatewayEvent(chatEvent(t, runID, "final"))
 
 	resp := waitResp(t, done)
 	if resp.StopReason != acplib.StopReasonEndTurn {
@@ -214,7 +229,7 @@ func TestACPBridgeStrayEventIgnored(t *testing.T) {
 	br := newACPBridge(&fakeGateway{})
 	note := &captureNotifier{}
 	br.setNotifier(note)
-	br.handleGatewayEvent(agentEvent("nope", "assistant", "x", ""))
+	br.handleGatewayEvent(agentEvent(t, "nope", "assistant", "x", ""))
 	if got := note.chunks(t); len(got) != 0 {
 		t.Fatalf("expected no chunks for stray event, got %v", got)
 	}
@@ -230,16 +245,20 @@ func TestACPBridgePromptWithImage(t *testing.T) {
 
 	done := make(chan *acplib.PromptResponse, 1)
 	go func() {
-		resp, _ := br.Prompt(context.Background(), acplib.PromptRequest{
+		resp, err := br.Prompt(context.Background(), acplib.PromptRequest{
 			SessionID: "acp-img",
 			Prompt: []acplib.ContentBlock{
 				{Type: "image", MimeType: "image/jpeg", Data: "aGVsbG8="}, // no text block
 			},
 		})
+		if err != nil {
+			t.Errorf("Prompt: %v", err)
+			return
+		}
 		done <- resp
 	}()
 	runID := fg.lastRunID(t)
-	br.handleGatewayEvent(chatEvent(runID, "final"))
+	br.handleGatewayEvent(chatEvent(t, runID, "final"))
 	waitResp(t, done)
 
 	fg.mu.Lock()

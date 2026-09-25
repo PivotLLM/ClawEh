@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 // registerModelRoutes binds model list management endpoints to the ServeMux.
@@ -105,7 +106,7 @@ func (h *Handler) handleListModels(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	encodeJSON(w, map[string]any{
 		"models":        models,
 		"total":         len(models),
 		"default_model": defaultModel,
@@ -121,7 +122,7 @@ func (h *Handler) handleAddModel(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to read request body", http.StatusBadRequest)
 		return
 	}
-	defer r.Body.Close()
+	defer utils.CloseQuietly(r.Body)
 
 	var mc config.ModelConfig
 	if err = json.Unmarshal(body, &mc); err != nil {
@@ -153,7 +154,7 @@ func (h *Handler) handleAddModel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	encodeJSON(w, map[string]any{
 		"status": "ok",
 		"index":  len(cfg.Models) - 1,
 	})
@@ -177,7 +178,7 @@ func (h *Handler) handleUpdateModel(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to read request body", http.StatusBadRequest)
 		return
 	}
-	defer r.Body.Close()
+	defer utils.CloseQuietly(r.Body)
 
 	cfg, err := config.LoadConfig(h.configPath)
 	if err != nil {
@@ -231,7 +232,7 @@ func (h *Handler) handleUpdateModel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	encodeJSON(w, map[string]string{"status": "ok"})
 }
 
 // handleDeleteModel removes a model configuration entry at the given index.
@@ -270,7 +271,7 @@ func (h *Handler) handleDeleteModel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	encodeJSON(w, map[string]string{"status": "ok"})
 }
 
 // handleSetDefaultModel sets the default model for all agents.
@@ -282,7 +283,7 @@ func (h *Handler) handleSetDefaultModel(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "Failed to read request body", http.StatusBadRequest)
 		return
 	}
-	defer r.Body.Close()
+	defer utils.CloseQuietly(r.Body)
 
 	var req struct {
 		ModelName string `json:"model_name"`
@@ -332,7 +333,7 @@ func (h *Handler) handleSetDefaultModel(w http.ResponseWriter, r *http.Request) 
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
+	encodeJSON(w, map[string]string{
 		"status":        "ok",
 		"default_model": req.ModelName,
 	})

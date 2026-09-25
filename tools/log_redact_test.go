@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/PivotLLM/ClawEh/logger"
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 func TestRedactArgs_WriteFile_RecordsContentBytes(t *testing.T) {
@@ -32,7 +33,10 @@ func TestRedactArgs_WriteFile_RecordsContentBytes(t *testing.T) {
 		t.Error("raw content must not appear in redacted args")
 	}
 
-	encoded, _ := json.Marshal(m)
+	encoded, err := json.Marshal(m)
+	if err != nil {
+		t.Fatalf("marshal redacted args: %v", err)
+	}
 	if strings.Contains(string(encoded), content) {
 		t.Error("redacted JSON must not contain the raw content body")
 	}
@@ -43,7 +47,10 @@ func TestRedactArgs_AppendFile_RecordsContentBytes(t *testing.T) {
 		"path":    "log.txt",
 		"content": "hello",
 	})
-	m := got.(map[string]any)
+	m, ok := got.(map[string]any)
+	if !ok {
+		t.Fatalf("redactArgs returned %T, want map[string]any", got)
+	}
 	if m["content_bytes"] != 5 {
 		t.Errorf("expected content_bytes=5, got %v", m["content_bytes"])
 	}
@@ -55,7 +62,10 @@ func TestRedactArgs_ReadFile_Shape(t *testing.T) {
 		"offset": 100,
 		"length": 4096,
 	})
-	m := got.(map[string]any)
+	m, ok := got.(map[string]any)
+	if !ok {
+		t.Fatalf("redactArgs returned %T, want map[string]any", got)
+	}
 	if m["path"] != "/etc/passwd" {
 		t.Errorf("path: %v", m["path"])
 	}
@@ -71,7 +81,10 @@ func TestRedactArgs_ReadFile_OmitsNilFields(t *testing.T) {
 	got := redactArgs("file_read_bytes", map[string]any{
 		"path": "/etc/passwd",
 	})
-	m := got.(map[string]any)
+	m, ok := got.(map[string]any)
+	if !ok {
+		t.Fatalf("redactArgs returned %T, want map[string]any", got)
+	}
 	if _, present := m["offset"]; present {
 		t.Error("offset should be omitted when nil")
 	}
@@ -86,7 +99,10 @@ func TestRedactArgs_EditFile_RecordsByteLengths(t *testing.T) {
 		"old_text": "foo",
 		"new_text": "barbaz",
 	})
-	m := got.(map[string]any)
+	m, ok := got.(map[string]any)
+	if !ok {
+		t.Fatalf("redactArgs returned %T, want map[string]any", got)
+	}
 	if m["old_text_bytes"] != 3 {
 		t.Errorf("old_text_bytes: %v", m["old_text_bytes"])
 	}
@@ -108,7 +124,10 @@ func TestRedactArgs_WebFetch_PreservesURLDropsBody(t *testing.T) {
 		"headers":  map[string]any{"Authorization": "Bearer xyz"},
 		"maxChars": 5000,
 	})
-	m := got.(map[string]any)
+	m, ok := got.(map[string]any)
+	if !ok {
+		t.Fatalf("redactArgs returned %T, want map[string]any", got)
+	}
 	if m["url"] != "https://example.com/api" {
 		t.Errorf("url: %v", m["url"])
 	}
@@ -127,7 +146,10 @@ func TestRedactArgs_HTTPPrefix_PreservesMethodURL(t *testing.T) {
 		"body":    "password=hunter2",
 		"headers": map[string]any{"Cookie": "session=abc"},
 	})
-	m := got.(map[string]any)
+	m, ok := got.(map[string]any)
+	if !ok {
+		t.Fatalf("redactArgs returned %T, want map[string]any", got)
+	}
 	if m["url"] != "https://api.example.com/v1/users" {
 		t.Errorf("url: %v", m["url"])
 	}
@@ -159,6 +181,29 @@ func TestRedactArgs_Default_TruncatesUnknownTool(t *testing.T) {
 	}
 }
 
+// TestRedactArgs_NoTruncateCannotUncap is a direct unit test on the
+// exported RedactArgs entry point: even with utils.SetDisableTruncation(true)
+// the redaction fallback for unknown tools still bounds the result.
+func TestRedactArgs_NoTruncateCannotUncap(t *testing.T) {
+	utils.SetDisableTruncation(true)
+	defer utils.SetDisableTruncation(false)
+
+	args := map[string]any{
+		"blob": strings.Repeat("X", 8192),
+	}
+	got := RedactArgs("unknown_tool_for_truncation_check", args)
+	s, ok := got.(string)
+	if !ok {
+		t.Fatalf("expected string redaction for unknown tool, got %T", got)
+	}
+	if len([]rune(s)) > 200+32 {
+		t.Errorf("redaction unbounded under --no-truncate: %d runes", len([]rune(s)))
+	}
+	if !strings.Contains(s, "more)") {
+		t.Errorf("expected truncation suffix '...(N more)', got %q", s[:min(120, len(s))])
+	}
+}
+
 func TestRedactArgs_NilArgs(t *testing.T) {
 	got := redactArgs("anything", nil)
 	m, ok := got.(map[string]any)
@@ -183,12 +228,10 @@ func TestRegistry_ExecuteWithContext_OmitsArgsAtInfo(t *testing.T) {
 
 	r := NewToolRegistry()
 	r.Register(&leakyTool{
-		mockRegistryTool: mockRegistryTool{
-			name:   "file_write",
-			desc:   "writes",
-			params: map[string]any{},
-			result: SilentResult("ok"),
-		},
+		name:   "file_write",
+		desc:   "writes",
+		params: map[string]any{},
+		result: SilentResult("ok"),
 	})
 
 	secret := strings.Repeat("S", 10240)
@@ -200,14 +243,14 @@ func TestRegistry_ExecuteWithContext_OmitsArgsAtInfo(t *testing.T) {
 	out := buf.String()
 
 	var infLine string
-	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(out), "\n") {
 		var ev map[string]any
 		if err := json.Unmarshal([]byte(line), &ev); err != nil {
 			continue
 		}
-		msg, _ := ev["message"].(string)
-		level, _ := ev["level"].(string)
-		if msg == "Tool execution started" && level == "info" {
+		msg, msgOK := ev["message"].(string)
+		level, levelOK := ev["level"].(string)
+		if msgOK && levelOK && msg == "Tool execution started" && level == "info" {
 			infLine = line
 		}
 	}
@@ -250,13 +293,15 @@ func TestRegistry_ExecuteWithContext_TruncatesErrorForLLM(t *testing.T) {
 	}
 	// Locate the error log line and inspect the captured "error" field.
 	var errField string
-	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(out), "\n") {
 		var ev map[string]any
 		if err := json.Unmarshal([]byte(line), &ev); err != nil {
 			continue
 		}
-		if msg, _ := ev["message"].(string); msg == "Tool execution failed" {
-			errField, _ = ev["error"].(string)
+		if msg, ok := ev["message"].(string); ok && msg == "Tool execution failed" {
+			if field, fieldOK := ev["error"].(string); fieldOK {
+				errField = field
+			}
 			break
 		}
 	}

@@ -63,8 +63,7 @@ func newSessionsMux(t *testing.T, configPath string) *http.ServeMux {
 }
 
 func TestHandleListSessions_ArchiveDB(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 
 	dir := sessionsTestDir(t, configPath)
 	seedSession(t, dir, webuiSessionPrefix+"history-db", "DB-backed session",
@@ -107,8 +106,7 @@ func TestHandleListSessions_ArchiveDB(t *testing.T) {
 }
 
 func TestHandleListSessions_IgnoresNonWebUISessions(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 
 	dir := sessionsTestDir(t, configPath)
 	seedSession(t, dir, "agent:main:telegram:direct:12345", "telegram chat",
@@ -133,8 +131,7 @@ func TestHandleListSessions_IgnoresNonWebUISessions(t *testing.T) {
 }
 
 func TestHandleListSessions_TitleUsesTrimmedSummary(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 
 	dir := sessionsTestDir(t, configPath)
 	seedSession(t, dir, webuiSessionPrefix+"summary-title",
@@ -171,8 +168,7 @@ func TestHandleListSessions_TitleUsesTrimmedSummary(t *testing.T) {
 }
 
 func TestHandleGetSession_ArchiveDB(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 
 	dir := sessionsTestDir(t, configPath)
 	seedSession(t, dir, webuiSessionPrefix+"detail-db", "detail summary",
@@ -224,8 +220,7 @@ func TestHandleGetSession_ArchiveDB(t *testing.T) {
 }
 
 func TestHandleGetSession_NotFound(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 	sessionsTestDir(t, configPath)
 
 	mux := newSessionsMux(t, configPath)
@@ -239,8 +234,7 @@ func TestHandleGetSession_NotFound(t *testing.T) {
 }
 
 func TestHandleDeleteSession_RemovesWholeDB(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 
 	dir := sessionsTestDir(t, configPath)
 	sessionKey := webuiSessionPrefix + "delete-db"
@@ -279,8 +273,7 @@ func TestHandleDeleteSession_RemovesWholeDB(t *testing.T) {
 // A DB that holds a state row but no messages and no summary (a turn that
 // started and stored nothing) must be filtered from the list and 404 on get.
 func TestHandleSessions_FiltersEmptySessionDBs(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 
 	dir := sessionsTestDir(t, configPath)
 	sessionKey := webuiSessionPrefix + "empty-db"

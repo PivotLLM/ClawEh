@@ -402,7 +402,10 @@ func expandHome(path string) string {
 		return path
 	}
 	if path[0] == '~' {
-		home, _ := os.UserHomeDir()
+		home, err := os.UserHomeDir()
+		if err != nil {
+			logger.WarnCF("agent", "Failed to resolve home directory", map[string]any{"path": path, "error": err.Error()})
+		}
 		if len(path) > 1 && path[1] == '/' {
 			return home + path[1:]
 		}

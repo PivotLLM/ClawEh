@@ -1,11 +1,10 @@
-// ClawEh - Personal AI Assistant
+// ClawEh
 // License: MIT
-//
-// Copyright (c) 2026 PicoClaw contributors
 
 package providers
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
@@ -59,10 +58,10 @@ func responsesOpts(model *config.ModelConfig, prov *config.Provider) []openai_re
 // request-scoped knobs. Returns the provider, the raw model id, and any error.
 func CreateProviderFromConfig(model *config.ModelConfig, prov *config.Provider) (LLMProvider, string, error) {
 	if model == nil {
-		return nil, "", fmt.Errorf("model config is nil")
+		return nil, "", errors.New("model config is nil")
 	}
 	if model.Model == "" {
-		return nil, "", fmt.Errorf("model is required")
+		return nil, "", errors.New("model is required")
 	}
 	if prov == nil {
 		return nil, "", fmt.Errorf("provider is nil for model %q", model.ModelName)

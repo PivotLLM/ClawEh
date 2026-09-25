@@ -104,10 +104,7 @@ func RegisterMessageRoute(server *health.Server, agentLoop *agent.AgentLoop) {
 		case agent.MsgTokenRateLimited:
 			// Round the remaining block time UP to whole seconds so Retry-After
 			// never tells the caller to retry before the block actually clears.
-			secs := int(math.Ceil(retryAfter.Seconds()))
-			if secs < 1 {
-				secs = 1
-			}
+			secs := max(int(math.Ceil(retryAfter.Seconds())), 1)
 			w.Header().Set("Retry-After", strconv.Itoa(secs))
 			logger.WarnCF("message", "Rejected external message: token rate-limited",
 				map[string]any{"agent": agentID, "remote_addr": r.RemoteAddr, "retry_after_s": secs})

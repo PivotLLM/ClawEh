@@ -12,8 +12,7 @@ import (
 )
 
 func TestHandleAddModel_Success(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 
 	h := NewHandler(configPath)
 	mux := http.NewServeMux()
@@ -47,8 +46,7 @@ func TestHandleAddModel_Success(t *testing.T) {
 // TestHandleAddModel_ContextWindowRoundTrips verifies a per-model context_window
 // is persisted on add and surfaced in the list response (tokens).
 func TestHandleAddModel_ContextWindowRoundTrips(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 
 	h := NewHandler(configPath)
 	mux := http.NewServeMux()
@@ -64,7 +62,10 @@ func TestHandleAddModel_ContextWindowRoundTrips(t *testing.T) {
 	}
 
 	// Persisted to config.
-	cfg, _ := config.LoadConfig(configPath)
+	cfg, err := config.LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
 	var cw int
 	for _, m := range cfg.Models {
 		if m.ModelName == "cw-model" {
@@ -81,7 +82,9 @@ func TestHandleAddModel_ContextWindowRoundTrips(t *testing.T) {
 	var resp struct {
 		Models []modelResponse `json:"models"`
 	}
-	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
 	found := false
 	for _, m := range resp.Models {
 		if m.ModelName == "cw-model" {
@@ -97,8 +100,7 @@ func TestHandleAddModel_ContextWindowRoundTrips(t *testing.T) {
 }
 
 func TestHandleAddModel_InvalidJSONReturns400(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 
 	h := NewHandler(configPath)
 	mux := http.NewServeMux()
@@ -114,8 +116,7 @@ func TestHandleAddModel_InvalidJSONReturns400(t *testing.T) {
 }
 
 func TestHandleAddModel_ValidationErrorReturns400(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 
 	h := NewHandler(configPath)
 	mux := http.NewServeMux()
@@ -132,8 +133,7 @@ func TestHandleAddModel_ValidationErrorReturns400(t *testing.T) {
 }
 
 func TestHandleUpdateModel_Success(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 
 	h := NewHandler(configPath)
 	mux := http.NewServeMux()
@@ -165,8 +165,7 @@ func TestHandleUpdateModel_Success(t *testing.T) {
 // per-model drop_params filter: PUT persists the list, GET exposes it, and a
 // subsequent empty-array PUT clears it (omitempty drops it on save).
 func TestHandleUpdateModel_DropParamsRoundTrip(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 
 	h := NewHandler(configPath)
 	mux := http.NewServeMux()
@@ -229,8 +228,7 @@ func TestHandleUpdateModel_DropParamsRoundTrip(t *testing.T) {
 }
 
 func TestHandleUpdateModel_InvalidIndexReturns404(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 
 	h := NewHandler(configPath)
 	mux := http.NewServeMux()
@@ -250,8 +248,7 @@ func TestHandleUpdateModel_InvalidIndexReturns404(t *testing.T) {
 }
 
 func TestHandleUpdateModel_InvalidIndexStringReturns400(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 
 	h := NewHandler(configPath)
 	mux := http.NewServeMux()
@@ -271,8 +268,7 @@ func TestHandleUpdateModel_InvalidIndexStringReturns400(t *testing.T) {
 }
 
 func TestHandleDeleteModel_Success(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 
 	h := NewHandler(configPath)
 	mux := http.NewServeMux()
@@ -296,8 +292,7 @@ func TestHandleDeleteModel_Success(t *testing.T) {
 }
 
 func TestHandleDeleteModel_InvalidIndexReturns404(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 
 	h := NewHandler(configPath)
 	mux := http.NewServeMux()
@@ -313,8 +308,7 @@ func TestHandleDeleteModel_InvalidIndexReturns404(t *testing.T) {
 }
 
 func TestHandleDeleteModel_InvalidIndexStringReturns400(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 
 	h := NewHandler(configPath)
 	mux := http.NewServeMux()
@@ -330,8 +324,7 @@ func TestHandleDeleteModel_InvalidIndexStringReturns400(t *testing.T) {
 }
 
 func TestHandleDeleteModel_ClearsDefaultWhenDefaultDeleted(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 
 	// Confirm the default model is set to custom-default
 	cfg, err := config.LoadConfig(configPath)
@@ -364,8 +357,7 @@ func TestHandleDeleteModel_ClearsDefaultWhenDefaultDeleted(t *testing.T) {
 }
 
 func TestHandleSetDefaultModel_Success(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 
 	h := NewHandler(configPath)
 	mux := http.NewServeMux()
@@ -386,8 +378,7 @@ func TestHandleSetDefaultModel_Success(t *testing.T) {
 }
 
 func TestHandleSetDefaultModel_NotFoundReturns404(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 
 	h := NewHandler(configPath)
 	mux := http.NewServeMux()
@@ -408,8 +399,7 @@ func TestHandleSetDefaultModel_NotFoundReturns404(t *testing.T) {
 }
 
 func TestHandleSetDefaultModel_EmptyNameReturns400(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 
 	h := NewHandler(configPath)
 	mux := http.NewServeMux()
@@ -430,8 +420,7 @@ func TestHandleSetDefaultModel_EmptyNameReturns400(t *testing.T) {
 }
 
 func TestHandleSetDefaultModel_DisabledModelReturns400(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 
 	// Add a disabled model
 	cfg, err := config.LoadConfig(configPath)
@@ -487,8 +476,7 @@ func TestMaskAPIKey(t *testing.T) {
 }
 
 func TestHandleListModels_ReturnsModels(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 	resetModelProbeHooks(t)
 
 	h := NewHandler(configPath)
@@ -528,8 +516,7 @@ func TestHandleListModels_ReturnsModels(t *testing.T) {
 // sheet relies on — handleUpdateModel merge-unmarshals onto the existing entry,
 // so a body without "vision" must not silently clear a configured value.
 func TestHandleUpdateModel_VisionRoundTrip(t *testing.T) {
-	configPath, cleanup := setupTestEnv(t)
-	defer cleanup()
+	configPath := setupTestEnv(t)
 
 	h := NewHandler(configPath)
 	mux := http.NewServeMux()

@@ -9,7 +9,6 @@
 package api
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/PivotLLM/ClawEh/logger"
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 // Log-tail bounds for the WebUI logs endpoint.
@@ -33,6 +33,7 @@ const (
 // registerGatewayRoutes binds gateway log endpoints to the ServeMux.
 func (h *Handler) registerGatewayRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/gateway/logs", h.handleGatewayLogs)
+	mux.HandleFunc("GET /api/gateway/alerts", h.handleGatewayAlerts)
 	mux.HandleFunc("POST /api/gateway/reload", h.handleGatewayReload)
 }
 
@@ -52,7 +53,7 @@ func (h *Handler) handleGatewayReload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{"status": "reloaded"})
+	encodeJSON(w, map[string]string{"status": "reloaded"})
 }
 
 // handleGatewayLogs returns the last N lines of the unified claw.log, newest
@@ -76,7 +77,7 @@ func (h *Handler) handleGatewayLogs(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	path := logger.GetLogFilePath()
 	if path == "" {
-		json.NewEncoder(w).Encode(map[string]any{
+		encodeJSON(w, map[string]any{
 			"logs":  []string{},
 			"count": 0,
 			"error": "file logging is disabled",
@@ -86,14 +87,14 @@ func (h *Handler) handleGatewayLogs(w http.ResponseWriter, r *http.Request) {
 
 	lines, err := tailLines(path, n)
 	if err != nil {
-		json.NewEncoder(w).Encode(map[string]any{
+		encodeJSON(w, map[string]any{
 			"logs":  []string{},
 			"count": 0,
 			"error": err.Error(),
 		})
 		return
 	}
-	json.NewEncoder(w).Encode(map[string]any{
+	encodeJSON(w, map[string]any{
 		"logs":  lines,
 		"count": len(lines),
 	})
@@ -102,11 +103,11 @@ func (h *Handler) handleGatewayLogs(w http.ResponseWriter, r *http.Request) {
 // tailLines returns the last n lines of the file at path, reading only a bounded
 // window from the end so a large log never forces a full read.
 func tailLines(path string, n int) ([]string, error) {
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:gosec // path is logger.GetLogFilePath(), the configured log file
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer utils.CloseQuietly(f)
 
 	fi, err := f.Stat()
 	if err != nil {
@@ -114,14 +115,8 @@ func tailLines(path string, n int) ([]string, error) {
 	}
 	size := fi.Size()
 
-	budget := int64(n) * bytesPerLine
-	if budget > maxTailBytes {
-		budget = maxTailBytes
-	}
-	start := size - budget
-	if start < 0 {
-		start = 0
-	}
+	budget := min(int64(n)*bytesPerLine, maxTailBytes)
+	start := max(size-budget, 0)
 	if _, seekErr := f.Seek(start, io.SeekStart); seekErr != nil {
 		return nil, seekErr
 	}
@@ -143,4 +138,52 @@ func tailLines(path string, n int) ([]string, error) {
 		lines = lines[len(lines)-n:]
 	}
 	return lines, nil
+}
+
+// SetAlertsPath tells the alerts endpoint where the gateway writes operator
+// alerts; empty disables the endpoint's data.
+func (h *Handler) SetAlertsPath(path string) {
+	h.reloadMu.Lock()
+	h.alertsPath = path
+	h.reloadMu.Unlock()
+}
+
+func (h *Handler) alertsPathRef() string {
+	h.reloadMu.Lock()
+	defer h.reloadMu.Unlock()
+	return h.alertsPath
+}
+
+// handleGatewayAlerts returns the last N lines of the operator alerts log,
+// newest last, in the same shape as the gateway log endpoint. A log that does
+// not exist yet is an empty list, not an error.
+//
+//	GET /api/gateway/alerts?lines=250
+func (h *Handler) handleGatewayAlerts(w http.ResponseWriter, r *http.Request) {
+	n := defaultLogLines
+	if raw := r.URL.Query().Get("lines"); raw != "" {
+		if v, err := strconv.Atoi(raw); err == nil && v > 0 {
+			n = v
+		}
+	}
+	if n > maxLogLines {
+		n = maxLogLines
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	path := h.alertsPathRef()
+	if path == "" {
+		encodeJSON(w, map[string]any{"logs": []string{}, "count": 0, "error": "alerting is disabled"})
+		return
+	}
+	if _, err := os.Stat(path); err != nil {
+		encodeJSON(w, map[string]any{"logs": []string{}, "count": 0})
+		return
+	}
+	lines, err := tailLines(path, n)
+	if err != nil {
+		encodeJSON(w, map[string]any{"logs": []string{}, "count": 0, "error": err.Error()})
+		return
+	}
+	encodeJSON(w, map[string]any{"logs": lines, "count": len(lines)})
 }

@@ -22,10 +22,10 @@ func DoRequestWithRetry(client *http.Client, req *http.Request) (*http.Response,
 
 	for i := range maxRetries {
 		if i > 0 && resp != nil {
-			resp.Body.Close()
+			CloseQuietly(resp.Body)
 		}
 
-		resp, err = client.Do(req)
+		resp, err = client.Do(req) //nolint:gosec // URL is built from the ClawHub registry / GitHub raw path by skills.installer
 		if err == nil {
 			if resp.StatusCode == http.StatusOK {
 				break
@@ -38,7 +38,7 @@ func DoRequestWithRetry(client *http.Client, req *http.Request) (*http.Response,
 		if i < maxRetries-1 {
 			if err = sleepWithCtx(req.Context(), retryDelayUnit*time.Duration(i+1)); err != nil {
 				if resp != nil {
-					resp.Body.Close()
+					CloseQuietly(resp.Body)
 				}
 				return nil, fmt.Errorf("failed to sleep: %w", err)
 			}

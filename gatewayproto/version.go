@@ -20,10 +20,7 @@ func NegotiateProtocol(clientMin, clientMax int, probe bool) int {
 	if probe && MinProbeProtocolVersion < ourMin {
 		ourMin = MinProbeProtocolVersion
 	}
-	negotiated := clientMax
-	if negotiated > ProtocolVersion {
-		negotiated = ProtocolVersion
-	}
+	negotiated := min(clientMax, ProtocolVersion)
 	if negotiated < clientMin || negotiated < ourMin {
 		return 0
 	}

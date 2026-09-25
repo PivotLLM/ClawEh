@@ -1,5 +1,16 @@
 # ClawEh — Project Instructions for Claude Code
 
+## Keep this file current — that is your job
+
+This file is read at the start of every session and trusted. When a change you
+make alters anything it states — a make target or what it runs, a command
+sequence, a port, a path, a count (such as the number of browser checks), a
+package or its role, a workflow rule — update the relevant passage in the
+**same change**, the way tests and the changelog are updated. A stale
+instruction here costs more than a missing one, because the next session
+follows it. When you notice a passage that no longer matches the code, fix it
+or say so; do not work around it silently.
+
 ## Project Status
 **Released.** Config schemas, tool names, API shapes, and the device-gateway
 protocol are now things other people depend on.
@@ -76,11 +87,17 @@ Upstream picoclaw docs are not carried in this repo.
 ## Build & Install
 ```
 make build       # build the binary (embeds the frontend bundle)
-make check       # the full gate: fmt, vet, the Go suite with -race and a
-                 # coverage floor, the frontend checks, the MCP server tests and
-                 # the workspace integration checks. Rewrites nothing and exits
-                 # non-zero on any failure, so a pipeline can gate on it.
-make test        # just `go test ./...` — the fast loop while iterating
+make test        # the full gate: generate, format check, vet, golangci-lint,
+                 # then test.sh: the Go suite with -race and a coverage floor,
+                 # the frontend typecheck/lint/unit tests and the MCP server
+                 # integration checks. Rewrites nothing and exits non-zero on
+                 # any failure, so a pipeline can gate on it. `make check` is
+                 # an alias. Failures are re-printed at the end and saved to
+                 # .test-failures.log (see docs/test.md).
+go test ./...    # the fast Go-only loop while iterating
+make test-maestro-host   # Maestro's MCP suite against a live gateway (own
+                         # target: binds ports; needs probe, jq, zip)
+make check-webui         # the browser suite against a running dev instance
 ```
 To build and deploy **production**: run `update-claw.sh` (on PATH). It builds the binary, stops the service, installs, and restarts. Do not run build/install commands directly for prod.
 
@@ -89,6 +106,8 @@ Systemd units: `claw-ai.service` is **production** — never build to, install t
 ## Key Architecture Notes
 - **Shared modules**: the tool contract lives in `github.com/PivotLLM/toolspec`; the LLM-dispatch core (provider clients + the tool loop) lives in `github.com/PivotLLM/spawnllm`. `global` and `providers` are thin alias shims re-exporting them under the historical names, so call sites are unchanged. **Invariant: spawnllm imports only toolspec + stdlib (+ provider SDKs) — never ClawEh.** Tools (incl. the spawn tool) are *injected* as `toolspec.ToolDefinition`s, so the runtime re-entry (spawnllm runs a tool → `agent_spawn` → spawnllm) is not an import cycle; runaway recursion is bounded by `agents.defaults.max_subagent_depth` (default 3, shared by `agent_spawn` and Maestro dispatch — see `tools/agents/depth.go`), which replaced the old blanket `PrimaryOnly` restriction. Guard: `providers/cycle_guard_test.go`. Policy (model selection, fallback, cooldown, config, results handling) stays in ClawEh. spawnllm logs route into ClawEh's logger via `installSpawnllmLogging` (`spawnllm/logger.SetBackend`). Cognitive memory lives in `github.com/PivotLLM/cogmem` (store, composer, consolidation, portable export, toolspec tools, and the `Session` the loop drives with `Observe`/`Recall`). **Same invariant: cogmem imports only toolspec + stdlib (+ SQLite) — never ClawEh.** The host side is `cogmemhost/` (the attachment loader that enforces file-tool permissions, the logging bridge via `cogmem/logger.SetBackend`, and the `config.MemoryConfig` → `cogmem.Settings` mapping); `tools/cogmem` mounts the module's tools under the `cogmem` namespace. Cogmem keeps its own inbox of unconsolidated messages, so it never reads the session archive; the one-time inbox backfill from the archive on upgrade is host code in `agent/memory_wiring.go`. The context engine lives in `github.com/PivotLLM/ctxengine` (transcript, archive, assembly, eviction, compaction, and the `session_*` tools; ClawEh imports its `memory` and `session` packages for the store). **Same invariant: ctxengine imports only spawnllm + toolspec + stdlib (+ SQLite) — never ClawEh.** The host side is in `agent/`: `ContextBuilder.PromptLayers` builds the system prompt layers the engine assembles, `compressModelCaller` (`agent/context_manager.go`) is the one `ModelCaller` that walks the summarization chain for both the engine and cogmem, `agent/llmcontext_logging.go` bridges its logger, and `tools/session` mounts its tools. The engine and cogmem never see each other: the loop observes messages into cogmem after each engine `Add*` and hands cogmem's `Recall` blocks to `Assemble` as injections.
 - **Providers**: claude-cli, codex-cli, antigravity-cli (binary `agy`; `gemini-cli` is an accepted alias since Google deprecated it), cursor-cli use subprocess execution. Timeout via `request_timeout` per-model config → `WithTimeout` constructors in factory. The client implementations live in spawnllm; ClawEh's `factory_provider.go`/`dispatch.go`/`fallback.go`/`cooldown.go` map config → providers and own the policy.
+- **Configuration report**: the `report` package builds a config-derived inventory of what the install can do (a security assessment table, listeners, providers and models, tokens as set/not set, channels, per-agent tools and folder access, external services, devices, data, schedules) and renders it as PDF; `GET /api/report/pdf` serves it and the WebUI Report page opens it. It never emits a secret value (guarded by a test). See `docs/report.md`.
+- **Operator alerts**: `github.com/tenebris-tech/alerter` (queued, de-duplicated alerts; always logged, delivered on channels configured only by `ALERTER_*` variables or `~/.alerter`). The gateway builds one in `internal/gateway/alerts.go` (app name, short hostname, `<CLAW_HOME>/logs/alerts.log` unless `ALERTER_LOG` is set) and hands it to the agent loop, which passes it to the cooldown tracker and MCP manager; the channel manager and cron service get it too. Channels get it through `BaseChannel.SetAlerter`/`Alert` (injected by the manager). Code with no owner (package singletons, free functions, per-registry providers) raises through the process default in the `alerts` package (`alerts.Send`), set once by the gateway; tests capture it with `internal/testalerts.Install`. Prefer explicit injection wherever the constructor site has the alerter in hand. Every alert (title, event id, source) is listed in `ALERTS.md`; **add a row there when you add an alert.** Every alert is `alerter.Normal` priority; `Urgent` and `Emergency` mean "reach a person now, at any hour" and are not used by ClawEh. Never raise an alert above Normal without asking, and if one is agreed mark it `*` (Urgent) or `**` (Emergency) in the Priority column. `GET /api/gateway/alerts` tails the file; the Logs page shows it via its source selector. See `docs/alerts.md`.
 - **Cron**: mtime-based reload from disk; only saves when jobs are due. Prevents CLI/service race.
 - **Error classifier**: uses `errors.Is(err, context.DeadlineExceeded)` to trigger fallback chain.
 - **Multiple Telegram bots**: each `telegram_bots[].id` → channel `telegram-<id>`.
@@ -153,26 +172,29 @@ Hard-won learnings (don't relearn these):
   `{runId, seq, stream, ts, data}` with no top-level `status` (clients default it to "unknown").
 
 ## Testing — always keep tests in sync (do not skip this)
-- A change is not done until its tests are updated AND passing. Run `make check` before calling anything done — it is the whole suite and the thing a pipeline would gate on. `make test` is the fast Go-only loop for iterating.
+- A change is not done until its tests are updated AND passing. Run `make test` before calling anything done — it is the whole suite, lint included, and the thing a pipeline would gate on. `go test ./...` is the fast Go-only loop for iterating.
 - **Add tests for new behavior.** New config flags, gating, and branches need a test for both the on and off paths — not just a tweak that makes existing tests compile.
 - **Keep test fixtures in sync with renames/refactors.** When tool names, config keys, or APIs change, grep the whole repo (including `*_test.go`, `test.sh`, `tests/`) and update every reference. A rename that compiles can still break integration tests.
-- **MCP integration tests are part of the suite.** `make check` runs `test.sh`, which runs `tests/test_mcpserver.sh` via the external `probe` binary against an ephemeral gateway. Every provider tool must be exposed in the test config and probed: success for hermetic tools, graceful-error probes for network/LLM tools (web, skill, agent_spawn). Add a probe case when you add a tool.
+- **MCP integration tests are part of the suite.** `make test` runs `test.sh`, which runs `tests/test_mcpserver.sh` via the external `probe` binary against an ephemeral gateway. Every provider tool must be exposed in the test config and probed: success for hermetic tools, graceful-error probes for network/LLM tools (web, skill, agent_spawn). Add a probe case when you add a tool.
 - After implementing, do a final grep for the old name/symbol to confirm nothing stale remains in code, tests, scripts, or docs.
 
 ### WebUI regression suite — run it for any significant frontend change
 
-`make check` does not load a page. The browser suite is a separate target
+`make test` does not load a page. The browser suite is a separate target
 because it needs a live instance to drive, and it must be run for any
 significant change to `web/frontend`, to the `/api/*` handlers behind it, or to
 anything that alters gateway startup, readiness or config reload:
 
 ```
-make build && cp build/claw ~/bin/claw && sudo systemctl restart claw-dev
+make build && sudo systemctl stop claw-dev && cp build/claw ~/bin/claw && sudo systemctl start claw-dev
 until curl -sf http://127.0.0.1:8077/ready >/dev/null; do sleep 1; done
 make check-webui
 ```
 
-- **The plan is `docs/webui-test-plan.md`** — 93 numbered checks, each with a
+Stop the service before copying: the running binary makes the copy fail with
+"Text file busy", and a restart then silently brings the old build back.
+
+- **The plan is `docs/webui-test-plan.md`** — 97 numbered checks, each with a
   process and an expected result, followable by hand. `tests/frontend-e2e.mjs`
   executes it and prints the same step IDs. Keep the two in step: a step added
   to one belongs in the other.
@@ -191,7 +213,7 @@ make check-webui
 - **If you are unsure whether a change is significant enough to warrant a run,
   ask the user.** It takes a couple of minutes; a silent WebUI regression does
   not announce itself.
-- Ordinary Go-only changes do not need it. `make check` already runs the
+- Ordinary Go-only changes do not need it. `make test` already runs the
   frontend typecheck, oxlint and vitest, none of which load a page.
 
 ## Workflow Rules

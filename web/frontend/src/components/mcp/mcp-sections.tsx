@@ -376,7 +376,7 @@ export function ResilienceSection({
       </Field>
       <Field
         label="Liveness probe interval (seconds)"
-        hint="0 disables. When set, claw pings each connected server on this interval and reconnects proactively if it stops responding, so the next real call finds a live session."
+        hint="60 by default; 0 disables. Claw asks each connected server for its tool list on this interval: a failed probe reconnects the server so the next real call finds a live session, and a changed list refreshes the server's tools."
         layout="setting-row"
       >
         <Input

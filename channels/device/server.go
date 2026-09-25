@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/PivotLLM/ClawEh/gatewayproto"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/routing"
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 const (
@@ -147,12 +149,30 @@ func (w *connWriter) writeJSON(v any) error {
 	return w.conn.WriteJSON(v)
 }
 
+// send writes v and logs at debug when the write fails: the peer is gone or
+// going, and the read loop observes that on its own.
+func (w *connWriter) send(v any) {
+	if err := w.writeJSON(v); err != nil {
+		logger.DebugCF("device", "websocket write failed", map[string]any{"error": err.Error()})
+	}
+}
+
 func (w *connWriter) closeWith(code int, reason string) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	_ = w.conn.WriteControl(websocket.CloseMessage,
-		websocket.FormatCloseMessage(code, reason), time.Now().Add(2*time.Second))
-	_ = w.conn.Close()
+	if err := w.conn.WriteControl(websocket.CloseMessage,
+		websocket.FormatCloseMessage(code, reason), time.Now().Add(2*time.Second)); err != nil {
+		logger.DebugCF("device", "close frame write failed", map[string]any{"error": err.Error()})
+	}
+	utils.CloseQuietly(w.conn)
+}
+
+// setReadDeadline applies a read deadline and logs at debug when the conn
+// refuses it; the next read fails in that case, which ends the loop anyway.
+func setReadDeadline(conn *websocket.Conn, t time.Time) {
+	if err := conn.SetReadDeadline(t); err != nil {
+		logger.DebugCF("device", "set read deadline failed", map[string]any{"error": err.Error()})
+	}
 }
 
 func (w *connWriter) ping() error {
@@ -179,14 +199,14 @@ func (s *Server) HandleWS(w http.ResponseWriter, r *http.Request) {
 	challenge := gatewayproto.NewEvent(gatewayproto.EventConnectChallenge,
 		gatewayproto.ChallengePayload{Nonce: nonce, Ts: time.Now().UnixMilli()}, nil)
 	if writeErr := cw.writeJSON(challenge); writeErr != nil {
-		_ = conn.Close()
+		utils.CloseQuietly(conn)
 		return
 	}
 
-	_ = conn.SetReadDeadline(time.Now().Add(handshakeTimeout))
+	setReadDeadline(conn, time.Now().Add(handshakeTimeout))
 	_, raw, err := conn.ReadMessage()
 	if err != nil {
-		_ = conn.Close()
+		utils.CloseQuietly(conn)
 		return
 	}
 
@@ -195,7 +215,7 @@ func (s *Server) HandleWS(w http.ResponseWriter, r *http.Request) {
 		logger.WarnCF("device", "connect rejected", map[string]any{
 			"reason": fail.reason, "code": fail.err.Code, "message": fail.err.Message,
 		})
-		_ = cw.writeJSON(gatewayproto.NewErrorResponse(fail.id, fail.err))
+		cw.send(gatewayproto.NewErrorResponse(fail.id, fail.err))
 		cw.closeWith(fail.code, fail.reason)
 		return
 	}
@@ -204,7 +224,7 @@ func (s *Server) HandleWS(w http.ResponseWriter, r *http.Request) {
 	})
 
 	if err := cw.writeJSON(gatewayproto.NewOKResponse(hello.id, hello.payload)); err != nil {
-		_ = conn.Close()
+		utils.CloseQuietly(conn)
 		return
 	}
 
@@ -216,7 +236,7 @@ func (s *Server) HandleWS(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	_ = conn.SetReadDeadline(time.Time{})
+	setReadDeadline(conn, time.Time{})
 	s.serveLoop(r.Context(), lc)
 }
 
@@ -244,7 +264,7 @@ func (s *Server) handshake(r *http.Request, connID, nonce string, raw []byte) (*
 	if err := json.Unmarshal(raw, &req); err != nil || req.Type != gatewayproto.FrameReq {
 		return nil, &handshakeFail{id: "", err: gatewayproto.NewError(gatewayproto.CodeInvalidRequest, "first frame must be a connect request", nil), code: websocket.ClosePolicyViolation, reason: "invalid handshake"}
 	}
-	if req.Method != "connect" {
+	if req.Method != "connect" { //nolint:usestdlibvars // gateway protocol method name, not the HTTP verb
 		return nil, &handshakeFail{id: req.ID, err: gatewayproto.NewError(gatewayproto.CodeInvalidRequest, "first request must be connect", nil), code: websocket.ClosePolicyViolation, reason: "invalid handshake"}
 	}
 	var p gatewayproto.ConnectParams
@@ -326,7 +346,11 @@ func (s *Server) handshake(r *http.Request, connID, nonce string, raw []byte) (*
 		}
 	}
 
-	_ = s.store.UpdateLastSeen(ctx, paired.DeviceID, time.Now().UnixMilli())
+	if err := s.store.UpdateLastSeen(ctx, paired.DeviceID, time.Now().UnixMilli()); err != nil {
+		logger.WarnCF("device", "failed to update last seen", map[string]any{
+			"deviceId": paired.DeviceID, "error": err.Error(),
+		})
+	}
 
 	hello := s.buildHelloOk(ctx, connID, paired, negotiatedProtocol)
 	return &handshakeOK{id: req.ID, payload: hello, deviceID: paired.DeviceID, chatID: "device:" + paired.DeviceID, role: role, scopes: paired.Scopes}, nil
@@ -427,11 +451,8 @@ func (s *Server) buildHelloOk(ctx context.Context, connID string, paired *Paired
 	role := gatewayproto.RoleNode
 	if len(paired.Roles) > 0 {
 		role = paired.Roles[0]
-		for _, rl := range paired.Roles {
-			if rl == gatewayproto.RoleNode {
-				role = gatewayproto.RoleNode
-				break
-			}
+		if slices.Contains(paired.Roles, gatewayproto.RoleNode) {
+			role = gatewayproto.RoleNode
 		}
 	}
 	auth := gatewayproto.HelloAuth{Role: role, Scopes: paired.Scopes, IssuedAtMs: time.Now().UnixMilli()}
@@ -463,9 +484,9 @@ func (s *Server) buildHelloOk(ctx context.Context, connID string, paired *Paired
 // RPC surface (health, chat.send, node.event/chat.subscribe).
 func (s *Server) serveLoop(ctx context.Context, lc *liveConn) {
 	conn := lc.cw.conn
-	_ = conn.SetReadDeadline(time.Now().Add(deviceReadTimeout))
+	setReadDeadline(conn, time.Now().Add(deviceReadTimeout))
 	conn.SetPongHandler(func(string) error {
-		_ = conn.SetReadDeadline(time.Now().Add(deviceReadTimeout))
+		setReadDeadline(conn, time.Now().Add(deviceReadTimeout))
 		return nil
 	})
 
@@ -482,12 +503,12 @@ func (s *Server) serveLoop(ctx context.Context, lc *liveConn) {
 			if err != nil {
 				return
 			}
-			_ = conn.SetReadDeadline(time.Now().Add(deviceReadTimeout))
+			setReadDeadline(conn, time.Now().Add(deviceReadTimeout))
 			var req gatewayproto.RequestFrame
 			if json.Unmarshal(raw, &req) != nil || req.Type != gatewayproto.FrameReq {
 				continue
 			}
-			s.dispatch(lc, req)
+			s.dispatch(ctx, lc, req)
 		}
 	}()
 	for {
@@ -510,20 +531,20 @@ func (s *Server) serveLoop(ctx context.Context, lc *liveConn) {
 }
 
 // dispatch routes a post-handshake request frame.
-func (s *Server) dispatch(lc *liveConn, req gatewayproto.RequestFrame) {
+func (s *Server) dispatch(ctx context.Context, lc *liveConn, req gatewayproto.RequestFrame) {
 	switch req.Method {
 	case "health":
-		_ = lc.cw.writeJSON(gatewayproto.NewOKResponse(req.ID, map[string]any{"status": "ok"}))
+		lc.cw.send(gatewayproto.NewOKResponse(req.ID, map[string]any{"status": "ok"}))
 	case "chat.send":
-		s.handleChatSend(lc, req)
+		s.handleChatSend(ctx, lc, req)
 	case "node.event":
 		s.handleNodeEvent(lc, req)
 	case "agents.list":
 		s.handleAgentsList(lc, req)
 	case "chat.history":
-		s.handleChatHistory(lc, req)
+		s.handleChatHistory(ctx, lc, req)
 	default:
-		_ = lc.cw.writeJSON(gatewayproto.NewErrorResponse(req.ID,
+		lc.cw.send(gatewayproto.NewErrorResponse(req.ID,
 			gatewayproto.NewError(gatewayproto.CodeInvalidRequest, "method not supported: "+req.Method, nil)))
 	}
 }
@@ -531,7 +552,7 @@ func (s *Server) dispatch(lc *liveConn, req gatewayproto.RequestFrame) {
 // handleChatSend acks the turn and bridges the transcript into the agent layer.
 // Partial assistant text may arrive via StreamDelta as the model generates; the
 // terminal reply always arrives via DeliverReply.
-func (s *Server) handleChatSend(lc *liveConn, req gatewayproto.RequestFrame) {
+func (s *Server) handleChatSend(ctx context.Context, lc *liveConn, req gatewayproto.RequestFrame) {
 	var p struct {
 		Message        string `json:"message"`
 		SessionKey     string `json:"sessionKey"`
@@ -543,7 +564,7 @@ func (s *Server) handleChatSend(lc *liveConn, req gatewayproto.RequestFrame) {
 		} `json:"attachments"`
 	}
 	if json.Unmarshal(req.Params, &p) != nil {
-		_ = lc.cw.writeJSON(gatewayproto.NewErrorResponse(req.ID,
+		lc.cw.send(gatewayproto.NewErrorResponse(req.ID,
 			gatewayproto.NewError(gatewayproto.CodeInvalidRequest, "invalid chat.send params", nil)))
 		return
 	}
@@ -577,17 +598,17 @@ func (s *Server) handleChatSend(lc *liveConn, req gatewayproto.RequestFrame) {
 	// The assistant reply is delivered asynchronously via "agent"/"chat" events from
 	// DeliverReply; the res must NOT carry the result or block on the run, or a strict
 	// client's transport times out waiting for this frame.
-	_ = lc.cw.writeJSON(gatewayproto.NewOKResponse(req.ID, map[string]any{"runId": runID, "status": "started"}))
+	lc.cw.send(gatewayproto.NewOKResponse(req.ID, map[string]any{"runId": runID, "status": "started"}))
 
 	// Device text commands (e.g. "/agent bob") are handled here and answered as a
 	// reply event, without running the agent loop.
 	if cmd, arg, ok := parseSlashCommand(p.Message); ok {
 		switch cmd {
 		case "agent":
-			go s.handleAgentCommand(lc, runID, arg)
+			go s.handleAgentCommand(ctx, lc, runID, arg)
 			return
 		case "help":
-			go s.emitChatReply(lc, runID, s.sessionScopeKey(lc), deviceHelpText)
+			go s.emitChatReply(lc, runID, s.sessionScopeKey(ctx, lc), deviceHelpText)
 			return
 		}
 	}
@@ -611,7 +632,7 @@ func (s *Server) handleChatSend(lc *liveConn, req gatewayproto.RequestFrame) {
 	}
 
 	if s.inbound != nil {
-		go s.inbound(lc.deviceID, lc.chatID, p.Message, runID, s.sessionScopeKey(lc), attachments)
+		go s.inbound(lc.deviceID, lc.chatID, p.Message, runID, s.sessionScopeKey(ctx, lc), attachments)
 	}
 }
 
@@ -647,9 +668,7 @@ func parseSlashCommand(message string) (cmd, arg string, ok bool) {
 // turns route there (sessionScopeKey reads the assignment). "default"/"reset"
 // clears the assignment back to the gateway default. The device is a dedicated
 // channel, so it may target any configured agent.
-func (s *Server) handleAgentCommand(lc *liveConn, runID, arg string) {
-	ctx := context.Background()
-
+func (s *Server) handleAgentCommand(ctx context.Context, lc *liveConn, runID, arg string) {
 	var agents []DeviceAgentInfo
 	defaultID := ""
 	if s.querier != nil {
@@ -661,34 +680,34 @@ func (s *Server) handleAgentCommand(lc *liveConn, runID, arg string) {
 	}
 
 	if len(agents) == 0 {
-		s.emitChatReply(lc, runID, s.sessionScopeKey(lc), "No assistants are configured.")
+		s.emitChatReply(lc, runID, s.sessionScopeKey(ctx, lc), "No assistants are configured.")
 		return
 	}
 	if arg == "" || strings.EqualFold(arg, "list") {
-		s.emitChatReply(lc, runID, s.sessionScopeKey(lc), formatAgentList(agents, current))
+		s.emitChatReply(lc, runID, s.sessionScopeKey(ctx, lc), formatAgentList(agents, current))
 		return
 	}
 	if strings.EqualFold(arg, "default") || strings.EqualFold(arg, "reset") {
 		if err := s.store.SetDeviceAgent(ctx, lc.deviceID, ""); err != nil {
-			s.emitChatReply(lc, runID, s.sessionScopeKey(lc), "Couldn't reset assistant: "+err.Error())
+			s.emitChatReply(lc, runID, s.sessionScopeKey(ctx, lc), "Couldn't reset assistant: "+err.Error())
 			return
 		}
-		s.emitChatReply(lc, runID, s.sessionScopeKey(lc), "Switched to the default assistant.")
+		s.emitChatReply(lc, runID, s.sessionScopeKey(ctx, lc), "Switched to the default assistant.")
 		return
 	}
 
 	targetID, targetName := resolveDeviceAgent(agents, arg)
 	if targetID == "" {
-		s.emitChatReply(lc, runID, s.sessionScopeKey(lc),
+		s.emitChatReply(lc, runID, s.sessionScopeKey(ctx, lc),
 			"No assistant matches \""+arg+"\".\n\n"+formatAgentList(agents, current))
 		return
 	}
 	if err := s.store.SetDeviceAgent(ctx, lc.deviceID, targetID); err != nil {
-		s.emitChatReply(lc, runID, s.sessionScopeKey(lc), "Couldn't switch assistant: "+err.Error())
+		s.emitChatReply(lc, runID, s.sessionScopeKey(ctx, lc), "Couldn't switch assistant: "+err.Error())
 		return
 	}
 	// Recompute the scope so the confirmation is tagged with the new assistant.
-	s.emitChatReply(lc, runID, s.sessionScopeKey(lc),
+	s.emitChatReply(lc, runID, s.sessionScopeKey(ctx, lc),
 		"Switched to "+targetName+". New messages will go to this assistant.")
 }
 
@@ -728,11 +747,11 @@ func agentDisplayName(a DeviceAgentInfo) string {
 
 // sessionScopeKey resolves the conversation session a turn runs in, from the key
 // the client declared on this connection. See sessionScopeKeyFor.
-func (s *Server) sessionScopeKey(lc *liveConn) string {
+func (s *Server) sessionScopeKey(ctx context.Context, lc *liveConn) string {
 	lc.mu.Lock()
 	key := lc.sessionKey
 	lc.mu.Unlock()
-	return s.sessionScopeKeyFor(lc, key)
+	return s.sessionScopeKeyFor(ctx, lc, key)
 }
 
 // sessionScopeKeyFor resolves the conversation session for a client-supplied key.
@@ -755,7 +774,7 @@ func (s *Server) sessionScopeKey(lc *liveConn) string {
 // falls back to its per-device assignment (WebUI Devices page / "/agent") and
 // then to the gateway default. The choice reaches the loop as
 // preresolved_agent_id.
-func (s *Server) sessionScopeKeyFor(lc *liveConn, requested string) string {
+func (s *Server) sessionScopeKeyFor(ctx context.Context, lc *liveConn, requested string) string {
 	fallback := "main"
 	mode := ""
 	if s.querier != nil {
@@ -765,7 +784,7 @@ func (s *Server) sessionScopeKeyFor(lc *liveConn, requested string) string {
 		mode = s.querier.SessionMode()
 	}
 	// Per-device assignment overrides the gateway default for node clients.
-	if dev, ok, err := s.store.GetPaired(context.Background(), lc.deviceID); err == nil && ok && dev.AgentID != "" {
+	if dev, ok, err := s.store.GetPaired(ctx, lc.deviceID); err == nil && ok && dev.AgentID != "" {
 		fallback = dev.AgentID
 	}
 	return routing.ResolveDeviceSessionKey(routing.SessionScope(mode), requested, fallback, lc.deviceID)
@@ -780,7 +799,7 @@ func (s *Server) handleNodeEvent(lc *liveConn, req gatewayproto.RequestFrame) {
 		} `json:"payload"`
 	}
 	if json.Unmarshal(req.Params, &p) != nil {
-		_ = lc.cw.writeJSON(gatewayproto.NewErrorResponse(req.ID,
+		lc.cw.send(gatewayproto.NewErrorResponse(req.ID,
 			gatewayproto.NewError(gatewayproto.CodeInvalidRequest, "invalid node.event params", nil)))
 		return
 	}
@@ -789,7 +808,7 @@ func (s *Server) handleNodeEvent(lc *liveConn, req gatewayproto.RequestFrame) {
 		lc.sessionKey = p.Payload.SessionKey
 		lc.mu.Unlock()
 	}
-	_ = lc.cw.writeJSON(gatewayproto.NewOKResponse(req.ID, map[string]any{"ok": true}))
+	lc.cw.send(gatewayproto.NewOKResponse(req.ID, map[string]any{"ok": true}))
 }
 
 // handleAgentsList answers an operator client's agents.list with the configured
@@ -797,7 +816,7 @@ func (s *Server) handleNodeEvent(lc *liveConn, req gatewayproto.RequestFrame) {
 // as the chat.history/chat.send sessionKey).
 func (s *Server) handleAgentsList(lc *liveConn, req gatewayproto.RequestFrame) {
 	if s.querier == nil {
-		_ = lc.cw.writeJSON(gatewayproto.NewErrorResponse(req.ID,
+		lc.cw.send(gatewayproto.NewErrorResponse(req.ID,
 			gatewayproto.NewError(gatewayproto.CodeInvalidRequest, "method not supported: agents.list", nil)))
 		return
 	}
@@ -818,7 +837,7 @@ func (s *Server) handleAgentsList(lc *liveConn, req gatewayproto.RequestFrame) {
 		lc.sessionKey = mainKey
 	}
 	lc.mu.Unlock()
-	_ = lc.cw.writeJSON(gatewayproto.NewOKResponse(req.ID, map[string]any{
+	lc.cw.send(gatewayproto.NewOKResponse(req.ID, map[string]any{
 		"defaultId": defaultID,
 		"mainKey":   mainKey,
 		"scope":     "global",
@@ -829,9 +848,9 @@ func (s *Server) handleAgentsList(lc *liveConn, req gatewayproto.RequestFrame) {
 // handleChatHistory returns the stored transcript for the requested session key,
 // shaped like the live "chat" event message so the client renders past turns the
 // same way it renders incoming replies.
-func (s *Server) handleChatHistory(lc *liveConn, req gatewayproto.RequestFrame) {
+func (s *Server) handleChatHistory(ctx context.Context, lc *liveConn, req gatewayproto.RequestFrame) {
 	if s.querier == nil {
-		_ = lc.cw.writeJSON(gatewayproto.NewErrorResponse(req.ID,
+		lc.cw.send(gatewayproto.NewErrorResponse(req.ID,
 			gatewayproto.NewError(gatewayproto.CodeInvalidRequest, "method not supported: chat.history", nil)))
 		return
 	}
@@ -839,7 +858,7 @@ func (s *Server) handleChatHistory(lc *liveConn, req gatewayproto.RequestFrame) 
 		SessionKey string `json:"sessionKey"`
 	}
 	if json.Unmarshal(req.Params, &p) != nil {
-		_ = lc.cw.writeJSON(gatewayproto.NewErrorResponse(req.ID,
+		lc.cw.send(gatewayproto.NewErrorResponse(req.ID,
 			gatewayproto.NewError(gatewayproto.CodeInvalidRequest, "invalid chat.history params", nil)))
 		return
 	}
@@ -852,7 +871,7 @@ func (s *Server) handleChatHistory(lc *liveConn, req gatewayproto.RequestFrame) 
 	// Resolve through the same rule chat.send uses, so a client reads the
 	// transcript its turns are written to — under unified that is the agent's
 	// main conversation, not the key the client happens to have asked for.
-	sessionKey = s.sessionScopeKeyFor(lc, sessionKey)
+	sessionKey = s.sessionScopeKeyFor(ctx, lc, sessionKey)
 	history := s.querier.History(sessionKey)
 	messages := make([]map[string]any, 0, len(history))
 	for _, m := range history {
@@ -861,7 +880,7 @@ func (s *Server) handleChatHistory(lc *liveConn, req gatewayproto.RequestFrame) 
 			"content": []map[string]any{{"type": "text", "text": m.Content}},
 		})
 	}
-	_ = lc.cw.writeJSON(gatewayproto.NewOKResponse(req.ID, map[string]any{
+	lc.cw.send(gatewayproto.NewOKResponse(req.ID, map[string]any{
 		"sessionKey": sessionKey,
 		"messages":   messages,
 	}))
@@ -882,11 +901,11 @@ func (s *Server) StreamDelta(chatID, delta string) bool {
 	if delta == "" {
 		return false
 	}
-	v, ok := s.conns.Load(chatID)
+	v, _ := s.conns.Load(chatID)
+	lc, ok := v.(*liveConn)
 	if !ok {
 		return false
 	}
-	lc := v.(*liveConn)
 
 	lc.mu.Lock()
 	runID := lc.currentRun
@@ -954,11 +973,11 @@ func (s *Server) StreamDelta(chatID, delta string) bool {
 // DeliverReply emits a terminal "chat" final event to the device for the given
 // chatID, carrying the in-flight runId. Returns false if no connection matches.
 func (s *Server) DeliverReply(chatID, content string) bool {
-	v, ok := s.conns.Load(chatID)
+	v, _ := s.conns.Load(chatID)
+	lc, ok := v.(*liveConn)
 	if !ok {
 		return false
 	}
-	lc := v.(*liveConn)
 	lc.mu.Lock()
 	runID := lc.currentRun
 	sessionKey := lc.sessionKey

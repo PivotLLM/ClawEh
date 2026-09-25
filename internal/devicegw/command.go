@@ -18,6 +18,7 @@ import (
 	"github.com/PivotLLM/ClawEh/channels/device"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/internal"
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 // NewDevicesCommand returns the `claw devices` command group.
@@ -45,7 +46,7 @@ func openStore() (*device.Store, *config.Config, error) {
 	if mkErr := os.MkdirAll(stateDir, 0o700); mkErr != nil {
 		return nil, nil, mkErr
 	}
-	store, err := device.OpenStore(filepath.Join(stateDir, "gateway.db"))
+	store, err := device.OpenStore(context.Background(), filepath.Join(stateDir, "gateway.db"))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -124,7 +125,7 @@ func list() error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = store.Close() }()
+	defer utils.CloseQuietly(store)
 	ctx := context.Background()
 
 	pending, err := store.ListPending(ctx)
@@ -169,7 +170,7 @@ func approve(requestID string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = store.Close() }()
+	defer utils.CloseQuietly(store)
 	dev, _, err := store.Approve(context.Background(), requestID, nil, nil)
 	if err != nil {
 		return err
@@ -192,7 +193,7 @@ func reject(requestID string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = store.Close() }()
+	defer utils.CloseQuietly(store)
 	if err := store.Reject(context.Background(), requestID); err != nil {
 		return err
 	}
@@ -214,7 +215,7 @@ func remove(deviceID string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = store.Close() }()
+	defer utils.CloseQuietly(store)
 	if err := store.RemovePaired(context.Background(), deviceID); err != nil {
 		return err
 	}

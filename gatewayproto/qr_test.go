@@ -19,17 +19,17 @@ func TestSetupPayloadEncode(t *testing.T) {
 	if got["type"] != "clawdbot-gateway" {
 		t.Fatalf("type=%v want clawdbot-gateway", got["type"])
 	}
-	if got["version"].(float64) != 1 {
+	if v, ok := got["version"].(float64); !ok || v != 1 {
 		t.Fatalf("version=%v want 1", got["version"])
 	}
 	if got["protocol"] != "ws" {
 		t.Fatalf("protocol=%v want ws (default)", got["protocol"])
 	}
-	if got["port"].(float64) != 18790 {
+	if p, ok := got["port"].(float64); !ok || p != 18790 {
 		t.Fatalf("port=%v", got["port"])
 	}
-	ips, _ := got["ips"].([]any)
-	if len(ips) != 2 {
+	ips, ok := got["ips"].([]any)
+	if !ok || len(ips) != 2 {
 		t.Fatalf("ips=%v", got["ips"])
 	}
 }

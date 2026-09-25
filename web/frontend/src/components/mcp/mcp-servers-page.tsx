@@ -1,5 +1,10 @@
-import { IconPlus, IconRefresh, IconTrash } from "@tabler/icons-react"
-import { useQuery } from "@tanstack/react-query"
+import {
+  IconPlugConnected,
+  IconPlus,
+  IconRefresh,
+  IconTrash,
+} from "@tabler/icons-react"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useEffect, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
@@ -9,6 +14,7 @@ import {
   getAppConfig,
   getMCPStatus,
   patchAppConfig,
+  reconnectMCPServer,
 } from "@/api/channels"
 import { reloadGateway } from "@/api/system"
 import {
@@ -72,11 +78,29 @@ export function MCPServersPage() {
 
   // Live connection state, polled every 5s. Keyed by server name; a configured
   // server absent here is treated as disconnected.
+  const queryClient = useQueryClient()
   const { data: statusData } = useQuery({
     queryKey: ["mcp-status"],
     queryFn: getMCPStatus,
     refetchInterval: 5000,
   })
+  const [reconnecting, setReconnecting] = useState(false)
+  // Force a disconnect/reconnect of the selected server so a server restarted
+  // with a changed tool list is picked up without a gateway restart.
+  const reconnectSelected = async (name: string) => {
+    setReconnecting(true)
+    try {
+      await reconnectMCPServer(name)
+      toast.success(`Reconnected ${name}`)
+      await queryClient.invalidateQueries({ queryKey: ["mcp-status"] })
+    } catch (e) {
+      toast.error(
+        e instanceof Error ? e.message : `Reconnect of ${name} failed`,
+      )
+    } finally {
+      setReconnecting(false)
+    }
+  }
   const statusByName = new Map(
     (statusData?.servers ?? []).map((s) => [s.name, s]),
   )
@@ -276,15 +300,30 @@ export function MCPServersPage() {
                     live={statusByName.get(selected.name.trim())}
                     enabled={selected.enabled}
                   />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="icon"
-                    aria-label={t("common.remove")}
-                    onClick={removeSelected}
-                  >
-                    <IconTrash className="size-4" />
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={!selected.enabled || reconnecting}
+                      title="Disconnect and reconnect this server, refreshing its tool list"
+                      onClick={() =>
+                        void reconnectSelected(selected.name.trim())
+                      }
+                    >
+                      <IconPlugConnected className="size-4" />
+                      {reconnecting ? "Reconnecting…" : "Reconnect"}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      aria-label={t("common.remove")}
+                      onClick={removeSelected}
+                    >
+                      <IconTrash className="size-4" />
+                    </Button>
+                  </div>
                 </div>
 
                 <ServerFields server={selected} onChange={updateSelected} />

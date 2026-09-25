@@ -18,7 +18,10 @@ import (
 // memory rule moved into cogmem.Guidance(). It is the parity oracle: an agent
 // with cognitive memory on must receive byte-identical text.
 func legacyIdentity(cb *ContextBuilder) string {
-	workspacePath, _ := filepath.Abs(cb.workspace)
+	workspacePath, err := filepath.Abs(cb.workspace)
+	if err != nil {
+		workspacePath = cb.workspace
+	}
 	discovery := ""
 	if cb.toolDiscoveryActive {
 		discovery = "5. " + discoveryRule

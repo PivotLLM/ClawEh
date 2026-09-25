@@ -1,8 +1,5 @@
-// ClawEh - Personal AI Assistant
-// Inspired by and based on nanobot: https://github.com/HKUDS/nanobot
+// ClawEh
 // License: MIT
-//
-// Copyright (c) 2026 PicoClaw contributors
 
 package channels
 
@@ -12,10 +9,12 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/tenebris-tech/alerter"
 	"golang.org/x/time/rate"
 
 	"github.com/PivotLLM/ClawEh/bus"
@@ -91,6 +90,35 @@ type Manager struct {
 	placeholders  sync.Map // "channel:chatID" → placeholderID (string)
 	typingStops   sync.Map // "channel:chatID" → func()
 	reactionUndos sync.Map // "channel:chatID" → reactionEntry
+	// alerter, when set, hears about channels that give up (start or send).
+	alerterMu sync.RWMutex
+	alerter   alerter.Alerter
+}
+
+// SetAlerter routes channel failures to an alerter. It is also handed to every
+// channel already registered, since the alerter is set after NewManager has
+// created them.
+func (m *Manager) SetAlerter(a alerter.Alerter) {
+	m.alerterMu.Lock()
+	m.alerter = a
+	m.alerterMu.Unlock()
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, ch := range m.channels {
+		if setter, ok := ch.(interface{ SetAlerter(a alerter.Alerter) }); ok {
+			setter.SetAlerter(a)
+		}
+	}
+}
+
+func (m *Manager) alert(a alerter.Alert) {
+	m.alerterMu.RLock()
+	al := m.alerter
+	m.alerterMu.RUnlock()
+	if al != nil {
+		al.Send(a)
+	}
 }
 
 // stopAllTimeout bounds how long StopAll will wait for channels to stop.
@@ -205,7 +233,7 @@ func (m *Manager) SupportsStreaming(channel string) bool {
 // channel if its owner implements StreamCapable; a no-op otherwise. Errors are
 // swallowed: streaming is best-effort progress and the terminal reply (Send)
 // remains authoritative.
-func (m *Manager) StreamDelta(channel, chatID, delta string) {
+func (m *Manager) StreamDelta(ctx context.Context, channel, chatID, delta string) {
 	m.mu.RLock()
 	ch, ok := m.channels[channel]
 	m.mu.RUnlock()
@@ -216,7 +244,11 @@ func (m *Manager) StreamDelta(channel, chatID, delta string) {
 	if !ok {
 		return
 	}
-	_ = sc.StreamDelta(context.Background(), chatID, delta)
+	if err := sc.StreamDelta(ctx, chatID, delta); err != nil {
+		logger.DebugCF("channels", "Stream delta failed", map[string]any{
+			"channel": channel, "chat_id": chatID, "error": err.Error(),
+		})
+	}
 }
 
 // RecordReactionUndo registers a reaction undo function for later invocation.
@@ -290,6 +322,14 @@ func (m *Manager) injectChannelDependencies(ch Channel) {
 	}
 	if setter, ok := ch.(interface{ SetOwner(ch Channel) }); ok {
 		setter.SetOwner(ch)
+	}
+	m.alerterMu.RLock()
+	al := m.alerter
+	m.alerterMu.RUnlock()
+	if al != nil {
+		if setter, ok := ch.(interface{ SetAlerter(a alerter.Alerter) }); ok {
+			setter.SetAlerter(al)
+		}
 	}
 }
 
@@ -436,12 +476,23 @@ func (m *Manager) resolveSecMsgAccounts(cfg config.SecMsgConfig) []config.SecMsg
 			"address": cfg.Address,
 			"error":   err.Error(),
 		})
+		m.alert(alerter.Alert{
+			Title:       "SecMsg account discovery failed",
+			Description: "SecMsg (" + cfg.Name + ") at " + cfg.Address + ": no accounts bound until the next config reload",
+			Details:     err.Error(),
+			EventID:     "SecMsg (" + cfg.Name + ")",
+		})
 		return nil
 	}
 	if len(ids) == 0 {
 		logger.WarnCF("channels", "SecMsg daemon has no linked accounts — link one via the WebUI", map[string]any{
 			"channel": "SecMsg (" + cfg.Name + ")",
 			"address": cfg.Address,
+		})
+		m.alert(alerter.Alert{
+			Title:       "SecMsg has no linked accounts",
+			Description: "SecMsg (" + cfg.Name + "): link an account in the WebUI",
+			EventID:     "SecMsg (" + cfg.Name + ")",
 		})
 		return nil
 	}
@@ -623,6 +674,12 @@ func (m *Manager) retryChannelStart(dispatchCtx context.Context, name string, ch
 				logger.ErrorCF("channels", "Channel permanently failed to start after max retries", map[string]any{
 					"channel": name,
 					"retries": startRetryMaxCount,
+				})
+				m.alert(alerter.Alert{
+					Title:       "Channel failed to start",
+					Description: name + " gave up after " + strconv.Itoa(startRetryMaxCount) + " retries",
+					Details:     err.Error(),
+					EventID:     name,
 				})
 				return
 			}
@@ -850,6 +907,12 @@ func (m *Manager) sendWithRetry(ctx context.Context, name string, w *channelWork
 		"chat_id": msg.ChatID,
 		"error":   lastErr.Error(),
 		"retries": maxRetries,
+	})
+	m.alert(alerter.Alert{
+		Title:       "Channel send failed",
+		Description: name + ": a message could not be delivered after " + strconv.Itoa(maxRetries) + " retries",
+		Details:     lastErr.Error(),
+		EventID:     name,
 	})
 }
 

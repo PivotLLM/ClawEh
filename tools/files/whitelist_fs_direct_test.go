@@ -13,7 +13,9 @@ import (
 func TestWhitelistFsDirect_ReadFile_Matching(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "wl_read.txt")
-	os.WriteFile(path, []byte("whitelist read content"), 0o644)
+	if err := os.WriteFile(path, []byte("whitelist read content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	pattern := regexp.MustCompile(regexp.QuoteMeta(dir))
 	wl := &whitelistFs{
@@ -33,7 +35,9 @@ func TestWhitelistFsDirect_ReadFile_Matching(t *testing.T) {
 func TestWhitelistFsDirect_ReadFile_NonMatching(t *testing.T) {
 	workspace := t.TempDir()
 	path := filepath.Join(workspace, "sandbox_read.txt")
-	os.WriteFile(path, []byte("sandbox content"), 0o644)
+	if err := os.WriteFile(path, []byte("sandbox content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	pattern := regexp.MustCompile(`^/no/match$`)
 	wl := &whitelistFs{
@@ -65,7 +69,10 @@ func TestWhitelistFsDirect_WriteFile_Matching(t *testing.T) {
 		t.Fatalf("whitelistFs.WriteFile() error = %v", err)
 	}
 
-	data, _ := os.ReadFile(path)
+	data, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
 	if string(data) != "written by whitelist" {
 		t.Errorf("content = %q", string(data))
 	}
@@ -89,7 +96,9 @@ func TestWhitelistFsDirect_WriteFile_NonMatching(t *testing.T) {
 
 func TestWhitelistFsDirect_ReadDir_Matching(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "wl_file.txt"), []byte("x"), 0o644)
+	if err := os.WriteFile(filepath.Join(dir, "wl_file.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	pattern := regexp.MustCompile(regexp.QuoteMeta(dir))
 	wl := &whitelistFs{
@@ -114,7 +123,9 @@ func TestWhitelistFsDirect_ReadDir_Matching(t *testing.T) {
 
 func TestWhitelistFsDirect_ReadDir_NonMatching(t *testing.T) {
 	workspace := t.TempDir()
-	os.WriteFile(filepath.Join(workspace, "sandbox_dir.txt"), []byte("x"), 0o644)
+	if err := os.WriteFile(filepath.Join(workspace, "sandbox_dir.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	pattern := regexp.MustCompile(`^/no/match$`)
 	wl := &whitelistFs{
@@ -140,7 +151,9 @@ func TestWhitelistFsDirect_ReadDir_NonMatching(t *testing.T) {
 func TestWhitelistFsDirect_Open_Matching(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "wl_open.txt")
-	os.WriteFile(path, []byte("open content"), 0o644)
+	if err := os.WriteFile(path, []byte("open content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	pattern := regexp.MustCompile(regexp.QuoteMeta(dir))
 	wl := &whitelistFs{
@@ -152,13 +165,17 @@ func TestWhitelistFsDirect_Open_Matching(t *testing.T) {
 	if err != nil {
 		t.Fatalf("whitelistFs.Open() error = %v", err)
 	}
-	f.Close()
+	if closeErr := f.Close(); closeErr != nil {
+		t.Error(closeErr)
+	}
 }
 
 func TestWhitelistFsDirect_Open_NonMatching(t *testing.T) {
 	workspace := t.TempDir()
 	path := filepath.Join(workspace, "sandbox_open.txt")
-	os.WriteFile(path, []byte("open content"), 0o644)
+	if err := os.WriteFile(path, []byte("open content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	pattern := regexp.MustCompile(`^/no/match$`)
 	wl := &whitelistFs{
@@ -170,7 +187,9 @@ func TestWhitelistFsDirect_Open_NonMatching(t *testing.T) {
 	if err != nil {
 		t.Fatalf("whitelistFs.Open() error = %v", err)
 	}
-	f.Close()
+	if closeErr := f.Close(); closeErr != nil {
+		t.Error(closeErr)
+	}
 }
 
 func TestBuildFs_Unrestricted(t *testing.T) {

@@ -2,6 +2,7 @@ package skills
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -79,7 +80,7 @@ func TestRegistryManagerSearchAllOneFailsGracefully(t *testing.T) {
 	mgr := NewRegistryManager()
 	mgr.AddRegistry(&mockRegistry{
 		name:      "failing",
-		searchErr: fmt.Errorf("network error"),
+		searchErr: errors.New("network error"),
 	})
 	mgr.AddRegistry(&mockRegistry{
 		name: "working",
@@ -98,7 +99,7 @@ func TestRegistryManagerSearchAllAllFail(t *testing.T) {
 	mgr := NewRegistryManager()
 	mgr.AddRegistry(&mockRegistry{
 		name:      "fail-1",
-		searchErr: fmt.Errorf("error 1"),
+		searchErr: errors.New("error 1"),
 	})
 
 	_, err := mgr.SearchAll(context.Background(), "test query", 10)
@@ -151,7 +152,7 @@ func TestRegistryManagerSearchAllTimeout(t *testing.T) {
 	mgr := NewRegistryManager()
 	mgr.AddRegistry(&mockRegistry{
 		name:      "slow",
-		searchErr: fmt.Errorf("context deadline exceeded"),
+		searchErr: errors.New("context deadline exceeded"),
 	})
 
 	_, err := mgr.SearchAll(ctx, "test", 5)

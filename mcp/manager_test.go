@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"io"
+	"maps"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -174,12 +176,8 @@ SHARED_VAR=from_file`
 
 	// Merge: envFile first, then config overrides
 	merged := make(map[string]string)
-	for k, v := range envVars {
-		merged[k] = v
-	}
-	for k, v := range configEnv {
-		merged[k] = v
-	}
+	maps.Copy(merged, envVars)
+	maps.Copy(merged, configEnv)
 
 	// Verify priority: config.Env should override envFile
 	if merged["SHARED_VAR"] != "from_config" {
@@ -433,7 +431,11 @@ func TestCallTool_ReconnectsOnConnectionError(t *testing.T) {
 
 	ctx := context.Background()
 	mgr := NewManager()
-	defer func() { _ = mgr.Close() }()
+	defer func() {
+		if err := mgr.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	}()
 
 	if err := mgr.ConnectServer(ctx, "svc", config.MCPServerConfig{
 		Enabled: true, Type: "http", URL: bad.URL,
@@ -468,7 +470,11 @@ func TestCallTool_ReconnectsOnConnectionError(t *testing.T) {
 func TestReconnect_RespectsCooldown(t *testing.T) {
 	ctx := context.Background()
 	mgr := NewManager()
-	defer func() { _ = mgr.Close() }()
+	defer func() {
+		if err := mgr.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	}()
 
 	badCfg := config.MCPServerConfig{Enabled: true, Type: "http", URL: "http://127.0.0.1:1/mcp"}
 
@@ -509,7 +515,11 @@ func TestProbeOnce_ReconnectsUnresponsiveServer(t *testing.T) {
 	ctx := context.Background()
 	mgr := NewManager()
 	mgr.probeInterval = time.Second
-	defer func() { _ = mgr.Close() }()
+	defer func() {
+		if err := mgr.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	}()
 
 	if err := mgr.ConnectServer(ctx, "svc", config.MCPServerConfig{
 		Enabled: true, Type: "http", URL: bad.URL,
@@ -526,8 +536,10 @@ func TestProbeOnce_ReconnectsUnresponsiveServer(t *testing.T) {
 	if !ok || conn2 == conn {
 		t.Fatalf("probe should reconnect a dead server: ok=%v same=%v", ok, conn2 == conn)
 	}
-	if err := conn2.Client.Ping(ctx); err != nil {
-		t.Fatalf("reconnected server should answer ping: %v", err)
+	// Ping is a no-op on modern connections (the RPC was removed from the
+	// protocol), so prove liveness with a real round trip.
+	if _, err := conn2.Client.ListTools(ctx, mcp.ListToolsRequest{}); err != nil {
+		t.Fatalf("reconnected server should answer a request: %v", err)
 	}
 }
 
@@ -535,7 +547,11 @@ func TestStatus_ReportsConnectedAndCooldown(t *testing.T) {
 	good := newTestMCPServer(t)
 	ctx := context.Background()
 	mgr := NewManager()
-	defer func() { _ = mgr.Close() }()
+	defer func() {
+		if err := mgr.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	}()
 
 	if err := mgr.ConnectServer(ctx, "live", config.MCPServerConfig{
 		Enabled: true, Type: "http", URL: good.URL,
@@ -578,7 +594,11 @@ func TestSync_ReusesUnchangedReconnectsChanged(t *testing.T) {
 	ts := newTestMCPServer(t)
 	ctx := context.Background()
 	mgr := NewManager()
-	defer func() { _ = mgr.Close() }()
+	defer func() {
+		if err := mgr.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	}()
 
 	base := config.MCPConfig{Servers: map[string]config.MCPServerConfig{
 		"svc": {Enabled: true, Type: "http", URL: ts.URL},
@@ -633,7 +653,11 @@ func TestRetryDisconnected_ConnectsDesiredServer(t *testing.T) {
 	ts := newTestMCPServer(t)
 	ctx := context.Background()
 	mgr := NewManager()
-	defer func() { _ = mgr.Close() }()
+	defer func() {
+		if err := mgr.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	}()
 
 	mgr.setDesired(map[string]config.MCPServerConfig{
 		"svc": {Enabled: true, Type: "http", URL: ts.URL},
@@ -658,7 +682,11 @@ func TestRetryDisconnected_SkipsConnectedAndCoolsDownFailures(t *testing.T) {
 	ctx := context.Background()
 	mgr := NewManager()
 	mgr.reconnectCooldown = time.Minute
-	defer func() { _ = mgr.Close() }()
+	defer func() {
+		if err := mgr.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	}()
 
 	up := newTestMCPServer(t)
 	// A server whose port is closed → connection refused on connect.
@@ -689,10 +717,5 @@ func TestRetryDisconnected_SkipsConnectedAndCoolsDownFailures(t *testing.T) {
 }
 
 func containsStr(s []string, v string) bool {
-	for _, x := range s {
-		if x == v {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(s, v)
 }

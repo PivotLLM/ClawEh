@@ -45,7 +45,10 @@ func PruneOrphanSubagentSessions(workspace string, olderThan time.Duration, now 
 	cutoff := now.Add(-olderThan)
 	removed := 0
 	dir := filepath.Join(workspace, "sessions")
-	entries, _ := os.ReadDir(dir) // no sessions dir (or unreadable) → nothing there to prune
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0 // no sessions dir (or unreadable) → nothing there to prune
+	}
 	for _, e := range entries {
 		if e.IsDir() || !isSubagentSessionFile(e.Name()) {
 			continue

@@ -21,7 +21,7 @@ func ExtractZipFile(zipPath string, targetDir string) error {
 	if err != nil {
 		return fmt.Errorf("invalid ZIP: %w", err)
 	}
-	defer reader.Close()
+	defer CloseQuietly(reader)
 
 	logger.DebugCF("zip", "Extracting ZIP", map[string]any{
 		"zip_path":   zipPath,
@@ -89,9 +89,9 @@ func extractSingleFile(f *zip.File, destPath string) error {
 	if err != nil {
 		return fmt.Errorf("failed to open zip entry %q: %w", f.Name, err)
 	}
-	defer rc.Close()
+	defer CloseQuietly(rc)
 
-	outFile, err := os.Create(destPath)
+	outFile, err := os.Create(destPath) //nolint:gosec // destPath passed the zip-slip check in ExtractZip
 	if err != nil {
 		return fmt.Errorf("failed to create file %q: %w", destPath, err)
 	}
@@ -99,7 +99,7 @@ func extractSingleFile(f *zip.File, destPath string) error {
 	// Instead, we log to stderr and remove the partially written file as defensive cleanup.
 	defer func() {
 		if cerr := outFile.Close(); cerr != nil {
-			_ = os.Remove(destPath)
+			removePartial(destPath)
 			logger.ErrorCF("zip", "Failed to close file", map[string]any{
 				"dest_path": destPath,
 				"error":     cerr.Error(),
@@ -110,13 +110,24 @@ func extractSingleFile(f *zip.File, destPath string) error {
 	// Streamed size check: prevent overruns and malicious/corrupt headers.
 	written, err := io.CopyN(outFile, rc, maxFileSize+1)
 	if err != nil && !errors.Is(err, io.EOF) {
-		_ = os.Remove(destPath)
+		removePartial(destPath)
 		return fmt.Errorf("failed to extract %q: %w", f.Name, err)
 	}
 	if written > maxFileSize {
-		_ = os.Remove(destPath)
+		removePartial(destPath)
 		return fmt.Errorf("zip entry %q exceeds max size (%d bytes)", f.Name, written)
 	}
 
 	return nil
+}
+
+// removePartial removes a partially extracted file and warns if it is left
+// behind.
+func removePartial(path string) {
+	if err := os.Remove(path); err != nil {
+		logger.WarnCF("zip", "Failed to remove partial file", map[string]any{
+			"dest_path": path,
+			"error":     err.Error(),
+		})
+	}
 }

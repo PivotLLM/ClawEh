@@ -103,8 +103,14 @@ func listToolSchema() map[string]any {
 func (globalAgentProvider) RegisterTools(deps global.Deps) []global.ToolDefinition {
 	// Recover the injected robust spawner. nil during deps-free enumeration; the
 	// handlers guard that case.
-	sp, _ := deps.Spawn.(global.Spawner)
-	inspector, _ := deps.Spawn.(global.TaskInspector)
+	var sp global.Spawner
+	if v, ok := deps.Spawn.(global.Spawner); ok {
+		sp = v
+	}
+	var inspector global.TaskInspector
+	if v, ok := deps.Spawn.(global.TaskInspector); ok {
+		inspector = v
+	}
 
 	return []global.ToolDefinition{
 		{
@@ -119,11 +125,11 @@ func (globalAgentProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 				if sp == nil {
 					return &global.Result{IsError: true, ForLLM: "spawn tool not available"}, nil
 				}
-				task, _ := call.Args["task"].(string)
-				name, _ := call.Args["name"].(string)
-				agentID, _ := call.Args["agent_id"].(string)
-				modeStr, _ := call.Args["mode"].(string)
-				model, _ := call.Args["model"].(string)
+				task := strArg(call.Args, "task")
+				name := strArg(call.Args, "name")
+				agentID := strArg(call.Args, "agent_id")
+				modeStr := strArg(call.Args, "mode")
+				model := strArg(call.Args, "model")
 				media, badMedia := parseMediaArg(call.Args["media"])
 				if badMedia != "" {
 					return &global.Result{IsError: true, ForLLM: badMedia}, nil
@@ -153,15 +159,18 @@ func (globalAgentProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 				if inspector == nil {
 					return &global.Result{IsError: true, ForLLM: "task status not available"}, nil
 				}
-				id, _ := call.Args["uuid"].(string)
-				if strings.TrimSpace(id) == "" {
+				id, ok := call.Args["uuid"].(string)
+				if !ok || strings.TrimSpace(id) == "" {
 					return &global.Result{IsError: true, ForLLM: "uuid is required"}, nil
 				}
 				st, err := inspector.TaskStatus(id)
 				if err != nil {
 					return &global.Result{IsError: true, ForLLM: fmt.Sprintf("status lookup failed: %v", err)}, nil
 				}
-				b, _ := json.Marshal(st)
+				b, err := json.Marshal(st)
+				if err != nil {
+					return &global.Result{IsError: true, ForLLM: fmt.Sprintf("status encode failed: %v", err)}, nil
+				}
 				return &global.Result{ForLLM: string(b), Silent: true}, nil
 			},
 		},
@@ -178,11 +187,23 @@ func (globalAgentProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 				if err != nil {
 					return &global.Result{IsError: true, ForLLM: fmt.Sprintf("task list failed: %v", err)}, nil
 				}
-				b, _ := json.Marshal(map[string]any{"tasks": list})
+				b, err := json.Marshal(map[string]any{"tasks": list})
+				if err != nil {
+					return &global.Result{IsError: true, ForLLM: fmt.Sprintf("task list encode failed: %v", err)}, nil
+				}
 				return &global.Result{ForLLM: string(b), Silent: true}, nil
 			},
 		},
 	}
+}
+
+// strArg returns the string argument under key, or "" when it is absent or
+// not a string.
+func strArg(args map[string]any, key string) string {
+	if s, ok := args[key].(string); ok {
+		return s
+	}
+	return ""
 }
 
 // parseMediaArg converts the tool's "media" argument (a JSON array of strings)

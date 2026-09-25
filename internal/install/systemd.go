@@ -138,7 +138,7 @@ func installSystemd(tu *TargetUser, targetBin, binDir, clawHome string) error {
 		}
 
 		// Try enabling lingering so user service continues running without active session
-		cmdLinger := exec.Command("loginctl", "enable-linger", tu.Username)
+		cmdLinger := exec.Command("loginctl", "enable-linger", tu.Username) //nolint:gosec // fixed loginctl binary; username from the resolved target user
 		if err := cmdLinger.Run(); err == nil {
 			fmt.Printf("Enabled systemd user lingering for %s (service will start at boot).\n", tu.Username)
 		} else {
@@ -154,20 +154,20 @@ func uninstallSystemd(tu *TargetUser) error {
 
 	if tu.IsRoot {
 		// Stop and disable system service
-		_ = exec.Command("systemctl", "disable", "--now", serviceName).Run()
+		runBestEffort("systemctl", "disable", "--now", serviceName)
 		if err := os.Remove(systemUnitPath); err != nil && !os.IsNotExist(err) {
 			errs = append(errs, fmt.Sprintf("removing %s: %v", systemUnitPath, err))
 		}
-		_ = exec.Command("systemctl", "daemon-reload").Run()
+		runBestEffort("systemctl", "daemon-reload")
 		fmt.Printf("Removed systemd system service: %s\n", systemUnitPath)
 	} else {
 		// Stop and disable user service
-		_ = exec.Command("systemctl", "--user", "disable", "--now", serviceName).Run()
+		runBestEffort("systemctl", "--user", "disable", "--now", serviceName)
 		destPath := userUnitPath(tu.HomeDir)
 		if err := os.Remove(destPath); err != nil && !os.IsNotExist(err) {
 			errs = append(errs, fmt.Sprintf("removing %s: %v", destPath, err))
 		}
-		_ = exec.Command("systemctl", "--user", "daemon-reload").Run()
+		runBestEffort("systemctl", "--user", "daemon-reload")
 		fmt.Printf("Removed systemd user service: %s\n", destPath)
 	}
 

@@ -43,8 +43,8 @@ func ParseCommandName(input string) (string, bool) {
 
 func trimCommandPrefix(token string) (string, bool) {
 	for _, prefix := range commandPrefixes {
-		if strings.HasPrefix(token, prefix) {
-			return strings.TrimPrefix(token, prefix), true
+		if after, ok := strings.CutPrefix(token, prefix); ok {
+			return after, true
 		}
 	}
 	return "", false

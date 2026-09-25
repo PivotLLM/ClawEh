@@ -3,12 +3,14 @@ package skills
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -68,7 +70,7 @@ func parseGitHubRef(repo string) (GitHubRef, error) {
 		}
 		parts := strings.Split(strings.Trim(u.Path, "/"), "/")
 		if len(parts) < 2 {
-			return GitHubRef{}, fmt.Errorf("invalid GitHub URL")
+			return GitHubRef{}, errors.New("invalid GitHub URL")
 		}
 		ref := GitHubRef{
 			Owner:    parts[0],
@@ -133,7 +135,7 @@ func (si *SkillInstaller) InstallFromGitHub(ctx context.Context, repo string) er
 	}
 
 	if _, err := os.Stat(filepath.Join(skillDirectory, "SKILL.md")); err != nil {
-		return fmt.Errorf("SKILL.md not found in repository")
+		return errors.New("SKILL.md not found in repository")
 	}
 	return nil
 }
@@ -141,7 +143,7 @@ func (si *SkillInstaller) InstallFromGitHub(ctx context.Context, repo string) er
 // downloadDir recursively downloads a directory from GitHub API
 // isRoot: true if this is the skill root directory (only download SKILL.md at root)
 func (si *SkillInstaller) getGithubDirAllFiles(ctx context.Context, apiURL, localDir string, isRoot bool) error {
-	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
 	if err != nil {
 		return err
 	}
@@ -153,9 +155,9 @@ func (si *SkillInstaller) getGithubDirAllFiles(ctx context.Context, apiURL, loca
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { utils.CloseQuietly(resp.Body) }()
 
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 
@@ -195,7 +197,7 @@ func (si *SkillInstaller) downloadRaw(ctx context.Context, owner, repo, ref, sub
 	}
 	url := fmt.Sprintf("https://raw.githubusercontent.com/%s/SKILL.md", urlPath)
 
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
@@ -205,7 +207,7 @@ func (si *SkillInstaller) downloadRaw(ctx context.Context, owner, repo, ref, sub
 	if err != nil {
 		return fmt.Errorf("failed to fetch skill: %w", err)
 	}
-	defer os.Remove(tmpPath)
+	defer removeTempFile(tmpPath)
 
 	if err := os.MkdirAll(localDir, 0o755); err != nil {
 		return fmt.Errorf("failed to create skill directory: %w", err)
@@ -222,7 +224,7 @@ func (si *SkillInstaller) downloadRaw(ctx context.Context, owner, repo, ref, sub
 }
 
 func (si *SkillInstaller) downloadFile(ctx context.Context, url, localPath string) error {
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
 	}
@@ -232,7 +234,7 @@ func (si *SkillInstaller) downloadFile(ctx context.Context, url, localPath strin
 	if err != nil {
 		return err
 	}
-	defer os.Remove(tmpPath)
+	defer removeTempFile(tmpPath)
 
 	if err := os.MkdirAll(filepath.Dir(localPath), 0o755); err != nil {
 		return err
@@ -267,9 +269,9 @@ func isSkillDirectory(name string) bool {
 func (si *SkillInstaller) Uninstall(skillName string) error {
 	parts := strings.Split(skillName, "/")
 	var finalSkillName string
-	for i := len(parts) - 1; i >= 0; i-- {
-		if parts[i] != "" {
-			finalSkillName = parts[i]
+	for _, part := range slices.Backward(parts) {
+		if part != "" {
+			finalSkillName = part
 			break
 		}
 	}

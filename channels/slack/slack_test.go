@@ -151,7 +151,10 @@ func TestSlackChannelIsAllowed(t *testing.T) {
 			AppToken:  "xapp-test",
 			AllowFrom: []string{},
 		}
-		ch, _ := NewSlackChannel(cfg, msgBus)
+		ch, err := NewSlackChannel(cfg, msgBus)
+		if err != nil {
+			t.Fatalf("NewSlackChannel: %v", err)
+		}
 		if ch.IsAllowed("U_ANYONE") {
 			t.Error("empty allowlist should deny all users")
 		}
@@ -163,7 +166,10 @@ func TestSlackChannelIsAllowed(t *testing.T) {
 			AppToken:  "xapp-test",
 			AllowFrom: []string{"*"},
 		}
-		ch, _ := NewSlackChannel(cfg, msgBus)
+		ch, err := NewSlackChannel(cfg, msgBus)
+		if err != nil {
+			t.Fatalf("NewSlackChannel: %v", err)
+		}
 		if !ch.IsAllowed("U_ANYONE") {
 			t.Error("wildcard allowlist should allow all users")
 		}
@@ -175,7 +181,10 @@ func TestSlackChannelIsAllowed(t *testing.T) {
 			AppToken:  "xapp-test",
 			AllowFrom: []string{"U_ALLOWED"},
 		}
-		ch, _ := NewSlackChannel(cfg, msgBus)
+		ch, err := NewSlackChannel(cfg, msgBus)
+		if err != nil {
+			t.Fatalf("NewSlackChannel: %v", err)
+		}
 		if !ch.IsAllowed("U_ALLOWED") {
 			t.Error("allowed user should pass allowlist check")
 		}

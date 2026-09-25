@@ -13,6 +13,7 @@
 package cogmemhost
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -41,13 +42,13 @@ func errNotMarkdown(ref string) error {
 func Check(cfg *config.Config, workspace, ref string) (int64, error) {
 	ref = strings.TrimSpace(ref)
 	if ref == "" {
-		return 0, fmt.Errorf("file reference is empty")
+		return 0, errors.New("file reference is empty")
 	}
 	if !markdownExts[strings.ToLower(filepath.Ext(ref))] {
 		return 0, errNotMarkdown(ref)
 	}
 	if workspace == "" {
-		return 0, fmt.Errorf("no workspace configured")
+		return 0, errors.New("no workspace configured")
 	}
 	info, err := files.NewReader(cfg, workspace).Stat(ref)
 	if err != nil {

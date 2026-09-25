@@ -1,20 +1,20 @@
-// ClawEh - Personal AI Assistant
-// Inspired by and based on nanobot: https://github.com/HKUDS/nanobot
+// ClawEh
 // License: MIT
-//
-// Copyright (c) 2026 PicoClaw contributors
 
 package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/PivotLLM/cogmem/consolidate"
+	"github.com/tenebris-tech/alerter"
 
+	"github.com/PivotLLM/ClawEh/alerts"
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/channels"
 	"github.com/PivotLLM/ClawEh/commands"
@@ -49,7 +49,11 @@ type AgentLoop struct {
 	// cooldown is the shared per-model cooldown tracker used by BOTH the main
 	// fallback chain and the compaction path, so a model parked by either (e.g.
 	// an out-of-credits 402) is skipped by both. Swapped under mu on reload.
-	cooldown        *providers.CooldownTracker
+	cooldown *providers.CooldownTracker
+	// alerter receives operator alerts (parked models, dead MCP servers, …);
+	// nil until SetAlerter, in which case Alerter() hands out a Nop.
+	alerterMu       sync.RWMutex
+	alerter         alerter.Alerter
 	messageManagers map[string]*msgtoken.Manager // agentID -> manager (nil entry means disabled)
 	// namedTokens holds the long-lived, user-named message-API tokens (one store
 	// for all agents, persisted under state/message-api-tokens.json). It is
@@ -199,7 +203,17 @@ func NewAgentLoop(
 	if err != nil {
 		logger.WarnCF("message", "Failed to load named message-token store, starting empty",
 			map[string]any{"error": err.Error()})
-		namedTokens, _ = msgtoken.NewNamedStore("")
+		alerts.Send(alerter.Alert{
+			Title:       "Named message-token store unreadable",
+			Description: namedTokenPath + ": named tokens do not work, and the next change overwrites the file",
+			Details:     err.Error(),
+			EventID:     "msgtoken:named",
+		})
+		namedTokens, err = msgtoken.NewNamedStore("")
+		if err != nil {
+			logger.ErrorCF("message", "Failed to create empty named message-token store",
+				map[string]any{"error": err.Error()})
+		}
 	}
 
 	al := &AgentLoop{
@@ -242,7 +256,7 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 	}
 
 	// Start the background context-manager eviction goroutine.
-	go al.evictContextManagers()
+	go al.evictContextManagers() //nolint:contextcheck // idle eviction closes managers on a fresh context so the archive flush completes regardless of the run context
 
 	// Start the background MCP reconnect loop, which recovers desired servers whose
 	// initial connect failed (so a transiently-down upstream needs no restart).
@@ -350,10 +364,10 @@ func (al *AgentLoop) ReloadProviderAndConfig(
 ) error {
 	// Validate inputs
 	if provider == nil {
-		return fmt.Errorf("provider cannot be nil")
+		return errors.New("provider cannot be nil")
 	}
 	if cfg == nil {
-		return fmt.Errorf("config cannot be nil")
+		return errors.New("config cannot be nil")
 	}
 
 	// Create new registry with updated config and provider
@@ -384,7 +398,7 @@ func (al *AgentLoop) ReloadProviderAndConfig(
 			return fmt.Errorf("registry creation failed: %w", res.err)
 		}
 		if res.registry == nil {
-			return fmt.Errorf("registry creation failed (nil result)")
+			return errors.New("registry creation failed (nil result)")
 		}
 		registry = res.registry
 	case <-ctx.Done():
@@ -554,4 +568,26 @@ func (al *AgentLoop) GetStartupInfo() map[string]any {
 	}
 
 	return info
+}
+
+// SetAlerter installs the operator alerter: on the cooldown tracker, and on
+// anything created later that alerts (the MCP manager). Call once at startup.
+func (al *AgentLoop) SetAlerter(a alerter.Alerter) {
+	al.alerterMu.Lock()
+	al.alerter = a
+	al.alerterMu.Unlock()
+	if al.cooldown != nil {
+		al.cooldown.SetAlerter(a)
+	}
+}
+
+// Alerter returns the installed alerter, or a Nop when none was installed, so
+// callers never check for nil.
+func (al *AgentLoop) Alerter() alerter.Alerter {
+	al.alerterMu.RLock()
+	defer al.alerterMu.RUnlock()
+	if al.alerter == nil {
+		return alerter.Nop{}
+	}
+	return al.alerter
 }

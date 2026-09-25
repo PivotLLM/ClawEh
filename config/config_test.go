@@ -631,7 +631,10 @@ func TestAgentConfig_EffectiveMounts_Maestro(t *testing.T) {
 	if len(got) != 1 || got[0].Name != MaestroMountName || !got[0].Writable {
 		t.Fatalf("expected auto writable maestro mount, got %+v", got)
 	}
-	wantPath, _ := filepath.Abs(MaestroDataDir(ws))
+	wantPath, err := filepath.Abs(MaestroDataDir(ws))
+	if err != nil {
+		t.Fatalf("abs: %v", err)
+	}
 	if got[0].Path != wantPath {
 		t.Fatalf("path = %q, want %q", got[0].Path, wantPath)
 	}

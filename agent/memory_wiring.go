@@ -15,6 +15,7 @@ import (
 	"github.com/PivotLLM/ClawEh/cogmemhost"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/routing"
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 // wireCognitiveMemory builds the cogmem session for a cognitive agent, or
@@ -70,7 +71,7 @@ func backfillInbox(ctx context.Context, st *store.Store, agentID, workspace, ses
 	}
 	copied := 0
 	if a, err := memory.OpenReadOnly(archiveDBPath(workspace, sessionKey)); err == nil {
-		defer a.Close()
+		defer utils.CloseQuietly(a)
 		if _, maxSeq, err := a.Bounds(); err == nil && maxSeq > state.ConsolidatedSeq {
 			rows, err := a.QueryRange(state.ConsolidatedSeq+1, maxSeq)
 			if err == nil {

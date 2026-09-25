@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -110,7 +111,7 @@ func parityStore(t *testing.T, key, summary string) session.SessionStore {
 	if err != nil {
 		t.Fatalf("NewSQLiteStore: %v", err)
 	}
-	t.Cleanup(func() { _ = store.Close() })
+	t.Cleanup(func() { closeT(t, store) })
 	for _, m := range parityHistory() {
 		store.AddFullMessage(key, m)
 	}
@@ -129,7 +130,11 @@ func parityAssemble(t *testing.T, cb *ContextBuilder, store session.SessionStore
 		ctxengine.WithContextWindow(200_000),
 		ctxengine.WithArchiveDir(archiveDir),
 	)
-	defer cm.Close(context.Background())
+	defer func() {
+		if err := cm.Close(context.Background()); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	}()
 	asm, err := cm.Assemble(context.Background(), ctxengine.AssembleRequest{
 		ToolDefinitionTokens: 10,
 		Layers:               append(cb.PromptLayers("webui", "chat-1"), sessionTokenLayer(token)),
@@ -223,18 +228,12 @@ func TestPromptParity_Golden(t *testing.T) {
 
 // firstDiff renders the region around the first differing byte.
 func firstDiff(want, got string) string {
-	n := len(want)
-	if len(got) < n {
-		n = len(got)
-	}
+	n := min(len(got), len(want))
 	i := 0
 	for i < n && want[i] == got[i] {
 		i++
 	}
-	lo := i - 200
-	if lo < 0 {
-		lo = 0
-	}
+	lo := max(i-200, 0)
 	hiW, hiG := i+200, i+200
 	if hiW > len(want) {
 		hiW = len(want)
@@ -246,6 +245,5 @@ func firstDiff(want, got string) string {
 }
 
 func itoa(i int) string {
-	b, _ := json.Marshal(i)
-	return string(b)
+	return strconv.Itoa(i)
 }

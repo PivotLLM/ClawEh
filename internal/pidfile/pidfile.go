@@ -15,12 +15,16 @@
 package pidfile
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
+
+	"github.com/PivotLLM/ClawEh/logger"
 )
 
 // Name is the file written into the data directory.
@@ -34,7 +38,7 @@ func Path(dataDir string) string { return filepath.Join(dataDir, Name) }
 // cannot write one should still start.
 func Write(dataDir string) error {
 	if dataDir == "" {
-		return fmt.Errorf("pidfile: no data directory")
+		return errors.New("pidfile: no data directory")
 	}
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return fmt.Errorf("pidfile: create %s: %w", dataDir, err)
@@ -52,7 +56,10 @@ func Remove(dataDir string) {
 	if dataDir == "" {
 		return
 	}
-	_ = os.Remove(Path(dataDir))
+	p := Path(dataDir)
+	if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		logger.WarnCF("gateway", "failed to remove PID file", map[string]any{"path": p, "error": err.Error()})
+	}
 }
 
 // Read returns the pid recorded for a data directory and whether that process
@@ -109,7 +116,7 @@ func RSSBytes(pid int) (int64, bool) {
 	if err != nil {
 		return 0, false
 	}
-	for _, line := range strings.Split(string(b), "\n") {
+	for line := range strings.SplitSeq(string(b), "\n") {
 		if !strings.HasPrefix(line, "VmRSS:") {
 			continue
 		}

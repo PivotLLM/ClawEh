@@ -18,12 +18,16 @@ func TestApplyDiscordProxy_CustomProxy(t *testing.T) {
 		t.Fatalf("applyDiscordProxy() error: %v", err)
 	}
 
-	req, err := http.NewRequest("GET", "https://discord.com/api/v10/gateway", nil)
+	req, err := http.NewRequest(http.MethodGet, "https://discord.com/api/v10/gateway", nil)
 	if err != nil {
 		t.Fatalf("http.NewRequest() error: %v", err)
 	}
 
-	restProxy := session.Client.Transport.(*http.Transport).Proxy
+	transport, ok := session.Client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("REST transport is %T, want *http.Transport", session.Client.Transport)
+	}
+	restProxy := transport.Proxy
 	restProxyURL, err := restProxy(req)
 	if err != nil {
 		t.Fatalf("rest proxy func error: %v", err)
@@ -60,7 +64,7 @@ func TestApplyDiscordProxy_FromEnvironment(t *testing.T) {
 		t.Fatalf("applyDiscordProxy() error: %v", err)
 	}
 
-	req, err := http.NewRequest("GET", "https://discord.com/api/v10/gateway", nil)
+	req, err := http.NewRequest(http.MethodGet, "https://discord.com/api/v10/gateway", nil)
 	if err != nil {
 		t.Fatalf("http.NewRequest() error: %v", err)
 	}

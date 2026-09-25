@@ -101,15 +101,15 @@ func (t *SearchFilesTool) Parameters() map[string]any {
 }
 
 func (t *SearchFilesTool) Execute(_ context.Context, args map[string]any) *tools.ToolResult {
-	query, _ := args["query"].(string)
-	if strings.TrimSpace(query) == "" {
+	query, ok := args["query"].(string)
+	if !ok || strings.TrimSpace(query) == "" {
 		return tools.ErrorResult("query is required")
 	}
-	root, _ := args["path"].(string)
-	if strings.TrimSpace(root) == "" {
+	root, ok := args["path"].(string)
+	if !ok || strings.TrimSpace(root) == "" {
 		root = "."
 	}
-	useRegex, _ := args["regex"].(bool)
+	useRegex := getBoolArg(args, "regex", false)
 	maxResults, err := getInt64Arg(args, "max_results", defaultSearchMaxResults)
 	if err != nil {
 		return tools.ErrorResult(err.Error())
@@ -264,10 +264,7 @@ func searchFileBytes(p string, data []byte, re *regexp.Regexp, limit int) []stri
 	hits := make([]string, 0, len(locs))
 	for _, loc := range locs {
 		start, end := loc[0], loc[1]
-		snipEnd := end + byteSnippetTrailing
-		if snipEnd > len(data) {
-			snipEnd = len(data)
-		}
+		snipEnd := min(end+byteSnippetTrailing, len(data))
 		snippet := strings.TrimSpace(strings.ReplaceAll(string(data[start:snipEnd]), "\n", " "))
 		if len(snippet) > maxSearchLineWidth {
 			snippet = snippet[:maxSearchLineWidth] + "…"

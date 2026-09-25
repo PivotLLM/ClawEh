@@ -6,6 +6,7 @@
 package common
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/PivotLLM/ClawEh/global"
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 // errResult builds an error Result carrying err both as the LLM-facing text and
@@ -27,11 +29,11 @@ func errResult(format string, args ...any) *global.Result {
 // resolved path.
 func confine(base, rel string) (string, error) {
 	if base == "" {
-		return "", fmt.Errorf("directory is not configured")
+		return "", errors.New("directory is not configured")
 	}
 	rel = strings.TrimSpace(rel)
 	if rel == "" {
-		return "", fmt.Errorf("path is required")
+		return "", errors.New("path is required")
 	}
 	cleaned := filepath.Clean(rel)
 	if filepath.IsAbs(cleaned) {
@@ -52,29 +54,31 @@ func strArg(args map[string]any, key string) (string, bool) {
 	if !present {
 		return "", false
 	}
-	s, _ := v.(string)
+	s, ok := v.(string)
+	if !ok {
+		return "", false
+	}
 	s = strings.TrimSpace(s)
 	return s, s != ""
 }
 
 // copyFile copies src to dst, creating intermediate directories for dst.
 func copyFile(src, dst string) error {
-	in, err := os.Open(src)
+	in, err := os.Open(src) //nolint:gosec // src confined to the common dir by confine()
 	if err != nil {
 		return err
 	}
-	defer in.Close()
+	defer utils.CloseQuietly(in)
 
 	if mkErr := os.MkdirAll(filepath.Dir(dst), 0o755); mkErr != nil {
 		return mkErr
 	}
-	out, err := os.Create(dst)
+	out, err := os.Create(dst) //nolint:gosec // dst confined to the common dir by confine()
 	if err != nil {
 		return err
 	}
-	defer out.Close()
-
 	if _, err := io.Copy(out, in); err != nil {
+		utils.CloseQuietly(out)
 		return err
 	}
 	return out.Close()
@@ -151,7 +155,10 @@ func getCommon(commonDir, workspace string, args map[string]any) *global.Result 
 	if err := copyFile(srcAbs, dstAbs); err != nil {
 		return errResult("common_get: copy failed: %v", err)
 	}
-	rel, _ := filepath.Rel(workspace, dstAbs)
+	rel, relErr := filepath.Rel(workspace, dstAbs)
+	if relErr != nil {
+		rel = dstAbs
+	}
 	return &global.Result{ForLLM: fmt.Sprintf("Copied %q to workspace %s", name, rel)}
 }
 

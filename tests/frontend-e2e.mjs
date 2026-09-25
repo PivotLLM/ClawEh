@@ -359,18 +359,19 @@ if (useGroup("F", "Agents — autosave and list realignment")) {
     const { ctx, page } = await open("/agents")
     await page.getByRole("button", { name: PROBE, exact: true }).click()
     await page.waitForTimeout(400)
-    await page
-      .locator('input[placeholder="e.g. fusion, fusion_trello"]')
-      .first()
-      .fill("fusion, trello")
+    // A second, unrelated field on the same card: the time_now internal tool.
+    const box = page.getByLabel("time_now", { exact: true }).first()
+    const was = await box.isChecked()
+    await box.click()
     await page.waitForTimeout(2000)
     await ctx.close()
     const c = await config()
     const a = (c.agents.list ?? []).find((x) => x.id === PROBE)
-    assert(
-      JSON.stringify(a?.mcp_tools) === JSON.stringify(["fusion", "trello"]),
-      `mcp_tools = ${JSON.stringify(a?.mcp_tools)}`,
-    )
+    // The toggle must persist an explicit tools list (a default-only agent has
+    // none), and time_now must have flipped.
+    assert(Array.isArray(a?.tools), `tools = ${JSON.stringify(a?.tools)}; expected an explicit list after the toggle`)
+    const has = a.tools.includes("time_now")
+    assert(has === !was, `tools = ${JSON.stringify(a.tools)}; time_now should be ${was ? "removed" : "added"}`)
     assert(a?.temperature === 0.77, "the earlier edit was clobbered by the second save")
   })
 
@@ -734,7 +735,7 @@ if (useGroup("J", "Devices")) {
 }
 
 // K. Remaining pages with live data
-if (useGroup("K", "Logs, MCP, memory, voice")) {
+if (useGroup("K", "Logs, MCP, memory, voice, report")) {
   await check(1, "logs page shows log lines", async () => {
     const { ctx, text } = await open("/logs")
     const body = await text()
@@ -758,6 +759,38 @@ if (useGroup("K", "Logs, MCP, memory, voice")) {
       assert(body.length > 80, `${p} nearly empty`)
       assert(problems.length === 0, `${p} console: ${problems[0]}`)
     }
+  })
+
+  await check(4, "the report page renders and the sidebar links to it", async () => {
+    const { ctx, page, problems } = await open("/agents")
+    await page.getByTestId("nav-report").click()
+    await page.waitForURL(/\/report$/)
+    await page.getByRole("link", { name: /Open report/ }).waitFor()
+    await ctx.close()
+    assert(problems.length === 0, `/report console: ${problems[0]}`)
+  })
+
+  await check(5, "the configuration report is a PDF served inline", async () => {
+    const res = await fetch(BASE + "/api/report/pdf")
+    assert(res.status === 200, `status = ${res.status}`)
+    const ct = res.headers.get("content-type") ?? ""
+    assert(ct.startsWith("application/pdf"), `content-type = ${ct}`)
+    const cd = res.headers.get("content-disposition") ?? ""
+    assert(cd.startsWith("inline;"), `content-disposition = ${cd}`)
+    const head = Buffer.from(await res.arrayBuffer()).subarray(0, 5).toString()
+    assert(head === "%PDF-", `body starts with ${JSON.stringify(head)}`)
+  })
+
+  await check(6, "reconnecting an unknown MCP server is a 404", async () => {
+    const { status, json } = await api("/api/mcp/servers/no-such-server/reconnect", { method: "POST" })
+    assert(status === 404, `status = ${status}`)
+    assert(typeof json?.error === "string", `body = ${JSON.stringify(json)}`)
+  })
+
+  await check(7, "the operator alerts log is served", async () => {
+    const { status, json } = await api("/api/gateway/alerts?lines=10")
+    assert(status === 200, `status = ${status}`)
+    assert(Array.isArray(json?.logs), `body = ${JSON.stringify(json)}`)
   })
 }
 

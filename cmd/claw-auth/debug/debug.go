@@ -17,6 +17,15 @@ import (
 // Debug is a global flag to enable debug logging
 var Debug bool
 
+// CloseQuietly closes c and logs the error when Debug is true. It is for
+// handles whose close error carries nothing the caller can act on, such as
+// HTTP response bodies.
+func CloseQuietly(c io.Closer) {
+	if err := c.Close(); err != nil && Debug {
+		log.Printf("close failed: %v", err)
+	}
+}
+
 // LogHTTPRequest logs the details of an HTTP request when Debug is true
 func LogHTTPRequest(req *http.Request) {
 	if !Debug {
@@ -24,8 +33,8 @@ func LogHTTPRequest(req *http.Request) {
 	}
 
 	log.Println("=== HTTP REQUEST ===")
-	log.Printf("Method: %s", req.Method)
-	log.Printf("URL: %s", req.URL.String())
+	log.Printf("Method: %s", req.Method)    //nolint:gosec // debug tracing enabled only by --debug
+	log.Printf("URL: %s", req.URL.String()) //nolint:gosec // debug tracing enabled only by --debug
 
 	// Log headers
 	log.Println("Headers:")
@@ -126,7 +135,7 @@ func maskJSONField(data, field string) string {
 // maskFormField masks sensitive form fields
 func maskFormField(data, field string) string {
 	// Pattern: field=value (ending with & or end of string)
-	pattern := fmt.Sprintf(`%s=([^&\s]*)`, field)
+	pattern := field + "=([^&\\s]*)"
 	return replacePattern(data, pattern)
 }
 

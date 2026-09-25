@@ -7,11 +7,14 @@ package providers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 )
 
-// OAuthProvider defines the interface that all OAuth service providers must implement
+// OAuthProvider defines the interface that all OAuth service providers must implement.
+//
+//nolint:interfacebloat // plugin contract: every provider supplies all of these; splitting it would only add indirection
 type OAuthProvider interface {
 	// GetServiceName returns the unique name identifier for this service
 	GetServiceName() string
@@ -113,7 +116,7 @@ func NewProviderRegistry() *ProviderRegistry {
 func (r *ProviderRegistry) Register(provider OAuthProvider) error {
 	serviceName := provider.GetServiceName()
 	if serviceName == "" {
-		return fmt.Errorf("provider service name cannot be empty")
+		return errors.New("provider service name cannot be empty")
 	}
 
 	if _, exists := r.providers[serviceName]; exists {

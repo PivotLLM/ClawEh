@@ -92,7 +92,10 @@ func (t *ViewImageTool) Execute(_ context.Context, args map[string]any) *tools.T
 			float64(len(data))/(1024*1024), t.maxSize/(1024*1024)))
 	}
 
-	kind, _ := filetype.Match(data)
+	kind, err := filetype.Match(data)
+	if err != nil {
+		return tools.ErrorResult(fmt.Sprintf("failed to detect image type: %v", err))
+	}
 	if kind == filetype.Unknown || !strings.HasPrefix(kind.MIME.Value, "image/") {
 		detected := "unknown"
 		if kind != filetype.Unknown {
@@ -130,10 +133,7 @@ func imageToDataURL(data []byte, mime string) (url string, width, height int, no
 	b := src.Bounds()
 	w, h := b.Dx(), b.Dy()
 
-	longest := w
-	if h > w {
-		longest = h
-	}
+	longest := max(h, w)
 	if longest <= global.ImageDownscaleMaxEdgePx {
 		// No downscale needed — send the original bytes untouched.
 		return "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data), w, h, ""

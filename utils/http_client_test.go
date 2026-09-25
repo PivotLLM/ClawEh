@@ -24,7 +24,7 @@ func TestCreateHTTPClient_ProxyConfigured(t *testing.T) {
 		t.Fatal("transport.Proxy is nil, want non-nil")
 	}
 
-	req, err := http.NewRequest("GET", "https://example.com", nil)
+	req, err := http.NewRequest(http.MethodGet, "https://example.com", nil)
 	if err != nil {
 		t.Fatalf("http.NewRequest() error: %v", err)
 	}
@@ -54,7 +54,7 @@ func TestCreateHTTPClient_Socks5ProxyConfigured(t *testing.T) {
 	if !ok {
 		t.Fatalf("client.Transport type = %T, want *http.Transport", client.Transport)
 	}
-	req, err := http.NewRequest("GET", "https://example.com", nil)
+	req, err := http.NewRequest(http.MethodGet, "https://example.com", nil)
 	if err != nil {
 		t.Fatalf("http.NewRequest() error: %v", err)
 	}
@@ -100,7 +100,7 @@ func TestCreateHTTPClient_ProxyFromEnvironmentWhenConfigEmpty(t *testing.T) {
 		t.Fatal("transport.Proxy is nil, want proxy function from environment")
 	}
 
-	req, err := http.NewRequest("GET", "https://example.com", nil)
+	req, err := http.NewRequest(http.MethodGet, "https://example.com", nil)
 	if err != nil {
 		t.Fatalf("http.NewRequest() error: %v", err)
 	}

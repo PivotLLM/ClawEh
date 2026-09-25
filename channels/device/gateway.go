@@ -9,8 +9,10 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/tenebris-tech/alerter"
 
 	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/bus"
@@ -53,7 +55,7 @@ func NewDeviceChannel(cfg config.DeviceChannelConfig, dataDir string, logMessage
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		return nil, fmt.Errorf("device: create state dir: %w", err)
 	}
-	store, err := OpenStore(filepath.Join(stateDir, "gateway.db"))
+	store, err := OpenStore(context.Background(), filepath.Join(stateDir, "gateway.db"))
 	if err != nil {
 		return nil, err
 	}
@@ -156,9 +158,13 @@ func (c *DeviceChannel) storeInboundAttachments(chatID, messageID string, atts [
 			continue
 		}
 		_, werr := f.Write(a.Data)
-		_ = f.Close()
+		if closeErr := f.Close(); closeErr != nil && werr == nil {
+			werr = closeErr
+		}
 		if werr != nil {
-			_ = os.Remove(f.Name())
+			if rmErr := os.Remove(f.Name()); rmErr != nil {
+				logger.WarnCF("device", "attachment temp file remove failed", map[string]any{"path": f.Name(), "error": rmErr.Error()})
+			}
 			logger.WarnCF("device", "attachment write failed", map[string]any{"error": werr.Error()})
 			continue
 		}
@@ -224,11 +230,16 @@ func (c *DeviceChannel) Start(ctx context.Context) error {
 	}
 	// No Read/WriteTimeout: long-lived WebSocket connections manage their own
 	// deadlines after the gorilla upgrade hijacks the conn.
-	c.httpSrv = &http.Server{Addr: addr, Handler: wrapped}
+	c.httpSrv = &http.Server{Addr: addr, Handler: wrapped, ReadHeaderTimeout: 10 * time.Second}
 	c.SetRunning(true)
 	go func() {
 		if serveErr := c.httpSrv.Serve(ln); serveErr != nil && serveErr != http.ErrServerClosed {
 			logger.ErrorCF("device", "Device gateway listener error", map[string]any{"error": serveErr.Error()})
+			c.Alert(alerter.Alert{
+				Title:       "Channel receive loop stopped",
+				Description: c.Name() + ": device gateway listener error; devices cannot connect until the gateway is restarted",
+				Details:     serveErr.Error(),
+			})
 		}
 	}()
 	logger.InfoCF("device", "Device gateway listening", map[string]any{"addr": addr})
@@ -245,10 +256,10 @@ func (c *DeviceChannel) Stop(_ context.Context) error {
 		// Close immediately rather than graceful Shutdown: a live device WebSocket
 		// would otherwise block the shutdown (and a config reload) for seconds. The
 		// device reconnects after the listener re-binds.
-		_ = c.httpSrv.Close()
+		utils.CloseQuietly(c.httpSrv)
 	}
 	if c.store != nil {
-		_ = c.store.Close()
+		utils.CloseQuietly(c.store)
 	}
 	logger.InfoC("device", "Device gateway stopped")
 	return nil

@@ -6,6 +6,7 @@ package agent
 import (
 	"bytes"
 	"context"
+	"slices"
 	"strings"
 	"testing"
 
@@ -44,10 +45,8 @@ func agentToolNames(t *testing.T, al *AgentLoop) []string {
 
 func assertHasTool(t *testing.T, names []string, want string) {
 	t.Helper()
-	for _, n := range names {
-		if n == want {
-			return
-		}
+	if slices.Contains(names, want) {
+		return
 	}
 	t.Errorf("expected tool %q to be registered; got %v", want, names)
 }
@@ -125,8 +124,10 @@ func TestGetModelInfo_ReflectsActiveSelection(t *testing.T) {
 		t.Fatalf("setActiveModelIndex: %v", err)
 	}
 
-	rt := al.buildCommandsRuntime(ag, &processOptions{SessionKey: sk}, bus.InboundMessage{})
-	name, _, _, _ := rt.GetModelInfo()
+	rt := al.buildCommandsRuntime(context.Background(), ag, &processOptions{SessionKey: sk}, bus.InboundMessage{})
+	// Only the name is under test; provider, protocol and API base come from
+	// model config this fixture does not populate.
+	name, _, _, _ := rt.GetModelInfo() //nolint:dogsled // see above
 	if name != "m2" {
 		t.Errorf("GetModelInfo name = %q, want m2 (the active selection)", name)
 	}

@@ -4,9 +4,12 @@
 package mcpserver
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -75,9 +78,7 @@ type firstCallTracker struct {
 
 func newFirstCallTracker(workspaces map[string]string) *firstCallTracker {
 	known := make(map[string]string, len(workspaces))
-	for k, v := range workspaces {
-		known[k] = v
-	}
+	maps.Copy(known, workspaces)
 	return &firstCallTracker{
 		seen:  make(map[string]bool),
 		known: known,
@@ -108,6 +109,51 @@ func (t *firstCallTracker) workspace(agentName string) string {
 	return t.known[agentName]
 }
 
+// dispatchDeps are the collaborators every tool handler closes over at call time.
+type dispatchDeps struct {
+	sessionTokens    *sessionTokenStore
+	resolver         AgentResolver
+	tracker          *firstCallTracker
+	policy           acl.Policy
+	msgBus           *bus.MessageBus
+	toolActivity     ToolActivityNotifier
+	activeDispatches *atomic.Int32
+}
+
+// publishedTool records what was registered under an external name, so a
+// refresh can tell an unchanged tool from one whose description or schema moved.
+type publishedTool struct {
+	internal string
+	desc     string
+	schema   []byte
+}
+
+func (p publishedTool) equal(o publishedTool) bool {
+	return p.internal == o.internal && p.desc == o.desc && bytes.Equal(p.schema, o.schema)
+}
+
+// endpointCatalogue is one endpoint's published tool set: the mcp-go server the
+// tools are registered on, the endpoint's auth mode and visibility filter, the
+// dispatch dependencies, and what is currently published so a refresh can diff
+// the live registries against it. The two ClawEh endpoints differ only in mode
+// and filter.
+type endpointCatalogue struct {
+	srv   *server.MCPServer
+	mode  authMode
+	allow []string
+	deps  dispatchDeps
+	// published maps external name -> registered tool. Written only by refresh,
+	// which the owner serializes (MCPServer.catalogueMu).
+	published map[string]publishedTool
+}
+
+func newEndpointCatalogue(srv *server.MCPServer, mode authMode, allow []string, deps dispatchDeps) *endpointCatalogue {
+	if deps.policy == nil {
+		deps.policy = acl.Default
+	}
+	return &endpointCatalogue{srv: srv, mode: mode, allow: allow, deps: deps, published: map[string]publishedTool{}}
+}
+
 // addToolsToServer registers each allowed claw tool with the given MCP
 // server. Every registered tool has the required `session_token` parameter
 // added to its published schema. On every call:
@@ -121,6 +167,9 @@ func (t *firstCallTracker) workspace(agentName string) string {
 // is built from the union of every per-agent registry (deduped by name).
 // tools/list never inspects the session_token. Per-agent restrictions are
 // enforced at tools/call via the supplied acl.Policy.
+//
+// It is the one-shot form of an endpoint catalogue's refresh, kept for the
+// tests; the server itself keeps the catalogue so RefreshCatalogue can diff.
 func addToolsToServer(
 	srv *server.MCPServer,
 	mode authMode,
@@ -134,11 +183,26 @@ func addToolsToServer(
 	toolActivity ToolActivityNotifier,
 	activeDispatches *atomic.Int32,
 ) {
-	if policy == nil {
-		policy = acl.Default
-	}
+	newEndpointCatalogue(srv, mode, allowPatterns, dispatchDeps{
+		sessionTokens:    sessionTokens,
+		resolver:         resolver,
+		tracker:          tracker,
+		policy:           policy,
+		msgBus:           msgBus,
+		toolActivity:     toolActivity,
+		activeDispatches: activeDispatches,
+	}).refresh(agentRegistries)
+}
 
-	published := map[string]string{} // external name -> internal name (collision guard)
+// refresh brings the endpoint's published tools in step with the union of the
+// agent registries: a tool that appeared is added, one whose description or
+// schema changed is replaced, and one that disappeared is deleted. Adds and
+// deletes are batched so a connected client receives one tools/list_changed for
+// each rather than one per tool. Returns the counts added (or replaced) and
+// deleted.
+func (ep *endpointCatalogue) refresh(agentRegistries map[string]*tools.ToolRegistry) (added, deleted int) {
+	want := make(map[string]publishedTool, len(ep.published))
+	var add []server.ServerTool
 	for _, name := range catalogueToolNames(agentRegistries) {
 		// msg_send (the outbound-message tool) obeys the allowlist like any other
 		// tool: it is only reachable by an authenticated MCP client holding a valid
@@ -146,7 +210,7 @@ func addToolsToServer(
 		// is no hard exclusion — include it in the allowlist to expose it.
 		// Visibility is matched on the INTERNAL name (config semantics are unchanged
 		// by the external renaming below).
-		if !config.MatchVisibility(allowPatterns, name) {
+		if !config.MatchVisibility(ep.allow, name) {
 			continue
 		}
 
@@ -163,12 +227,11 @@ func addToolsToServer(
 		if en, ok := tool.(tools.ExternalNamer); ok {
 			pubName = en.ExternalName()
 		}
-		if prior, dup := published[pubName]; dup {
+		if prior, dup := want[pubName]; dup {
 			logger.WarnCF("mcpserver", "skipping tool: external name collision",
-				map[string]any{"external": pubName, "tool": name, "conflicts_with": prior})
+				map[string]any{"external": pubName, "tool": name, "conflicts_with": prior.internal})
 			continue
 		}
-		published[pubName] = name
 
 		// The MCP host advertises the FULL allowed catalogue — progressive discovery
 		// is never applied here. An external client (a CLI provider) receives every
@@ -182,7 +245,7 @@ func addToolsToServer(
 		// agent and session); on /mcp the token is the bearer header, so schemas stay
 		// clean.
 		schema := params
-		if mode.injectParam {
+		if ep.mode.injectParam {
 			schema = injectSessionTokenParam(params)
 		}
 
@@ -193,32 +256,63 @@ func addToolsToServer(
 			continue
 		}
 
+		entry := publishedTool{internal: name, desc: tool.Description(), schema: schemaBytes}
+		want[pubName] = entry
+		if prior, ok := ep.published[pubName]; ok && prior.equal(entry) {
+			continue // already published as-is
+		}
+
 		// NewToolWithRawSchema is required when supplying a raw JSON schema —
 		// NewTool initializes an empty InputSchema, and the marshaller refuses
 		// to serialize a Tool with both InputSchema and RawInputSchema set.
 		// Published under the external name; dispatch still resolves the internal one.
-		mcpTool := mcp.NewToolWithRawSchema(pubName, tool.Description(), schemaBytes)
-
-		toolName := name // capture the INTERNAL name for dispatch
-		srv.AddTool(mcpTool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			if activeDispatches != nil {
-				activeDispatches.Add(1)
-				defer activeDispatches.Add(-1)
-			}
-			args := req.GetArguments()
-			if args == nil {
-				args = map[string]any{}
-			}
-			mode.prepareArgs(ctx, args)
-			out, isErr := dispatchToolCall(ctx, toolName, args, sessionTokens, resolver, tracker, policy, msgBus, toolActivity)
-			if isErr {
-				return mcp.NewToolResultError(out), nil
-			}
-			return mcp.NewToolResultText(out), nil
+		add = append(add, server.ServerTool{
+			Tool:    mcp.NewToolWithRawSchema(pubName, entry.desc, schemaBytes),
+			Handler: ep.handler(name),
 		})
-
 		logger.DebugCF("mcpserver", "registered tool",
 			map[string]any{"tool": name})
+	}
+
+	var del []string
+	for pubName := range ep.published {
+		if _, ok := want[pubName]; !ok {
+			del = append(del, pubName)
+		}
+	}
+	sort.Strings(del)
+	if len(del) > 0 {
+		ep.srv.DeleteTools(del...)
+		logger.DebugCF("mcpserver", "removed tools", map[string]any{"tools": del})
+	}
+	if len(add) > 0 {
+		ep.srv.AddTools(add...)
+	}
+	ep.published = want
+	return len(add), len(del)
+}
+
+// handler builds the tools/call handler for the tool registered under the given
+// INTERNAL name: it puts the session token into the arguments the way the
+// endpoint's auth mode dictates, then dispatches to the calling agent's registry.
+func (ep *endpointCatalogue) handler(toolName string) server.ToolHandlerFunc {
+	deps := ep.deps
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if deps.activeDispatches != nil {
+			deps.activeDispatches.Add(1)
+			defer deps.activeDispatches.Add(-1)
+		}
+		args := req.GetArguments()
+		if args == nil {
+			args = map[string]any{}
+		}
+		ep.mode.prepareArgs(ctx, args)
+		out, isErr := dispatchToolCall(ctx, toolName, args,
+			deps.sessionTokens, deps.resolver, deps.tracker, deps.policy, deps.msgBus, deps.toolActivity)
+		if isErr {
+			return mcp.NewToolResultError(out), nil
+		}
+		return mcp.NewToolResultText(out), nil
 	}
 }
 
@@ -291,7 +385,10 @@ func dispatchToolCall(
 	msgBus *bus.MessageBus,
 	toolActivity ToolActivityNotifier,
 ) (string, bool) {
-	rawSessTok, _ := args[sessionTokenParam].(string)
+	var rawSessTok string
+	if v, ok := args[sessionTokenParam].(string); ok {
+		rawSessTok = v
+	}
 	delete(args, sessionTokenParam)
 
 	if agenttoken.IsSubagentSentinel(rawSessTok) {
@@ -382,9 +479,12 @@ func dispatchToolCall(
 	// message into the agent's session — so the primary LLM is notified without
 	// polling, for CLI and non-CLI providers alike. (The immediate/sync result is
 	// handled below.)
-	asyncCb := func(_ context.Context, r *tools.ToolResult) {
-		publishMCPForUser(context.Background(), msgBus, rec, toolName, r)
-		publishMCPAsyncToLLM(msgBus, rec, toolName, r)
+	asyncCb := func(cbCtx context.Context, r *tools.ToolResult) {
+		// The originating request may be long gone when a background tool
+		// finishes; deliver on its values but not its cancellation.
+		deliverCtx := context.WithoutCancel(cbCtx)
+		publishMCPForUser(deliverCtx, msgBus, rec, toolName, r)
+		publishMCPAsyncToLLM(deliverCtx, msgBus, rec, toolName, r)
 	}
 	// ExecuteForHost: resolve/execute regardless of discovery TTL — the host never
 	// applies progressive discovery; authorization was enforced by the ACL policy above.
@@ -411,7 +511,7 @@ func dispatchToolCall(
 // (agent/loop.go). No-op when there is nothing to inject; when there is no
 // recorded channel source to route to, it logs the drop rather than failing
 // silently.
-func publishMCPAsyncToLLM(msgBus *bus.MessageBus, rec sessionRecord, toolName string, r *tools.ToolResult) {
+func publishMCPAsyncToLLM(ctx context.Context, msgBus *bus.MessageBus, rec sessionRecord, toolName string, r *tools.ToolResult) {
 	if r == nil || msgBus == nil {
 		return
 	}
@@ -435,11 +535,11 @@ func publishMCPAsyncToLLM(msgBus *bus.MessageBus, rec sessionRecord, toolName st
 			})
 		return
 	}
-	pubCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	pubCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	if err := msgBus.PublishInbound(pubCtx, bus.InboundMessage{
 		Channel:    "system",
-		SenderID:   fmt.Sprintf("async:%s", toolName),
+		SenderID:   "async:" + toolName,
 		ChatID:     fmt.Sprintf("%s:%s", rec.channel, rec.chatID),
 		Content:    content,
 		SessionKey: rec.sessionKey,
@@ -553,8 +653,8 @@ func injectSessionTokenParam(params map[string]any) map[string]any {
 		clone["type"] = "object"
 	}
 
-	props, _ := clone["properties"].(map[string]any)
-	if props == nil {
+	props, ok := clone["properties"].(map[string]any)
+	if !ok || props == nil {
 		props = map[string]any{}
 	} else {
 		props = cloneMap(props)
@@ -579,9 +679,7 @@ func cloneMap(m map[string]any) map[string]any {
 		return nil
 	}
 	out := make(map[string]any, len(m))
-	for k, v := range m {
-		out[k] = v
-	}
+	maps.Copy(out, m)
 	return out
 }
 
@@ -602,10 +700,5 @@ func stringSliceFromAny(v any) []string {
 }
 
 func containsString(haystack []string, needle string) bool {
-	for _, s := range haystack {
-		if s == needle {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(haystack, needle)
 }

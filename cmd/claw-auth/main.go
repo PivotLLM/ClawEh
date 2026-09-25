@@ -158,7 +158,7 @@ func decodeAuthBlob(blob string) (*authCodeBlob, error) {
 	}
 
 	if decoded.URL == "" || decoded.Code == "" || decoded.Service == "" {
-		return nil, fmt.Errorf("blob missing required fields (u, c, s)")
+		return nil, errors.New("blob missing required fields (u, c, s)")
 	}
 
 	return &decoded, nil
@@ -195,15 +195,15 @@ func listProviders(registry *providers.ProviderRegistry) {
 
 func validateFlags(flags *cliFlags, _ *providers.ProviderRegistry) error {
 	if flags.service == "" {
-		return fmt.Errorf("service is required (use -list to see available services)")
+		return errors.New("service is required (use -list to see available services)")
 	}
 
 	if flags.fusionURL == "" {
-		return fmt.Errorf("fusion URL is required")
+		return errors.New("fusion URL is required")
 	}
 
 	if flags.token == "" {
-		return fmt.Errorf("MCPFusion API token is required")
+		return errors.New("MCPFusion API token is required")
 	}
 
 	// Service validation is deferred to the server because user_credentials services
@@ -394,7 +394,7 @@ func (e *OAuthFlowExecutor) ExecuteDeviceFlow(_ context.Context) error {
 
 	// This would implement the device flow logic
 	// For now, returning a placeholder
-	return fmt.Errorf("device flow implementation pending")
+	return errors.New("device flow implementation pending")
 }
 
 // ExecuteAuthCodeFlow implements the OAuth authorization code flow
@@ -431,11 +431,13 @@ func (e *OAuthFlowExecutor) ExecuteAuthCodeFlow(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to start local server: %w", err)
 	}
-	defer func(listener net.Listener) {
-		_ = listener.Close()
-	}(listener)
+	defer debug.CloseQuietly(listener)
 
-	port := listener.Addr().(*net.TCPAddr).Port
+	tcpAddr, ok := listener.Addr().(*net.TCPAddr)
+	if !ok {
+		return fmt.Errorf("unexpected listener address type %T", listener.Addr())
+	}
+	port := tcpAddr.Port
 	redirectURI := fmt.Sprintf("http://127.0.0.1:%d/callback", port)
 
 	if e.Verbose {
@@ -451,7 +453,8 @@ func (e *OAuthFlowExecutor) ExecuteAuthCodeFlow(ctx context.Context) error {
 	// Start HTTP server in background
 	resultChan := make(chan authResult, 1)
 	server := &http.Server{
-		Handler: e.createCallbackHandler(state, codeVerifier, providerConfig, resultChan),
+		Handler:           e.createCallbackHandler(state, codeVerifier, providerConfig, resultChan),
+		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	go func() {
@@ -475,9 +478,11 @@ func (e *OAuthFlowExecutor) ExecuteAuthCodeFlow(ctx context.Context) error {
 	select {
 	case result := <-resultChan:
 		// Shutdown server
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
-		_ = server.Shutdown(shutdownCtx)
+		if shutdownErr := server.Shutdown(shutdownCtx); shutdownErr != nil {
+			log.Printf("Warning: failed to shut down callback server: %v", shutdownErr)
+		}
 
 		if result.Error != nil {
 			return result.Error
@@ -520,11 +525,13 @@ func (e *OAuthFlowExecutor) ExecuteAuthCodeFlow(ctx context.Context) error {
 
 	case <-ctx.Done():
 		// Shutdown server
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
-		_ = server.Shutdown(shutdownCtx)
+		if shutdownErr := server.Shutdown(shutdownCtx); shutdownErr != nil {
+			log.Printf("Warning: failed to shut down callback server: %v", shutdownErr)
+		}
 
-		return fmt.Errorf("OAuth flow timed out")
+		return errors.New("OAuth flow timed out")
 	}
 }
 
@@ -613,9 +620,9 @@ func (e *OAuthFlowExecutor) createCallbackHandler(expectedState, _ string, _ *pr
 
 		// Handle OAuth errors
 		if errorParam != "" {
-			errorMsg := fmt.Sprintf("OAuth error: %s", errorParam)
+			errorMsg := "OAuth error: " + errorParam
 			if errorDesc != "" {
-				errorMsg += fmt.Sprintf(" - %s", errorDesc)
+				errorMsg += " - " + errorDesc
 			}
 			e.writeErrorResponse(w, errorMsg)
 			resultChan <- authResult{Error: fmt.Errorf("%s", errorMsg)}
@@ -685,7 +692,7 @@ func (e *OAuthFlowExecutor) exchangeCodeForTokens(code, redirectURI, codeVerifie
 	}
 
 	// Make token request
-	req, err := http.NewRequest("POST", tokenURL, strings.NewReader(params.Encode()))
+	req, err := http.NewRequest(http.MethodPost, tokenURL, strings.NewReader(params.Encode()))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create token request: %w", err)
 	}
@@ -699,7 +706,11 @@ func (e *OAuthFlowExecutor) exchangeCodeForTokens(code, redirectURI, codeVerifie
 	if err != nil {
 		return nil, fmt.Errorf("token request failed: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil && debug.Debug {
+			log.Printf("close failed: %v", closeErr)
+		}
+	}()
 
 	// Log the response if debug is enabled
 	debug.LogHTTPResponse(resp)
@@ -761,7 +772,9 @@ func (e *OAuthFlowExecutor) writeSuccessResponse(w http.ResponseWriter) {
 </body>
 </html>`
 
-	_, _ = w.Write([]byte(htmlDoc))
+	if _, err := w.Write([]byte(htmlDoc)); err != nil {
+		log.Printf("Warning: failed to write callback response: %v", err)
+	}
 }
 
 // writeErrorResponse writes an error HTML response
@@ -788,7 +801,9 @@ func (e *OAuthFlowExecutor) writeErrorResponse(w http.ResponseWriter, errorMsg s
 </body>
 </html>`, html.EscapeString(errorMsg))
 
-	_, _ = w.Write([]byte(htmlDoc))
+	if _, err := w.Write([]byte(htmlDoc)); err != nil {
+		log.Printf("Warning: failed to write callback response: %v", err)
+	}
 }
 
 // openBrowser opens the default browser to the given URL
@@ -807,8 +822,8 @@ func openBrowser(url string) error {
 		cmd = "rundll32"
 		args = []string{"url.dll,FileProtocolHandler", url}
 	default:
-		return fmt.Errorf("unsupported platform")
+		return errors.New("unsupported platform")
 	}
 
-	return exec.Command(cmd, args...).Start()
+	return exec.Command(cmd, args...).Start() //nolint:gosec // fixed platform opener; url is built by buildAuthorizationURL
 }

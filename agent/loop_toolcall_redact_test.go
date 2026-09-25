@@ -58,8 +58,7 @@ func runWriteFileToolCallOnce(t *testing.T, secret string) string {
 	restore := logger.RedirectForTest(&buf)
 	defer restore()
 
-	al, _, _, _, cleanup := newTestAgentLoop(t)
-	defer cleanup()
+	al := newTestAgentLoop(t).al
 
 	agentInstance := al.registry.GetDefaultAgent()
 	if agentInstance == nil {
@@ -70,10 +69,13 @@ func runWriteFileToolCallOnce(t *testing.T, secret string) string {
 		agentInstance.Config.Tools = []string{"*"}
 	}
 
-	argsJSON, _ := json.Marshal(map[string]any{
+	argsJSON, err := json.Marshal(map[string]any{
 		"path":    "/tmp/diary.txt",
 		"content": secret,
 	})
+	if err != nil {
+		t.Fatalf("marshal args: %v", err)
+	}
 	agentInstance.Provider = &sequenceProvider{
 		responses: []*providers.LLMResponse{
 			{
@@ -118,13 +120,16 @@ func runWriteFileToolCallOnce(t *testing.T, secret string) string {
 // goroutine in loop.go out of a captured zerolog stream.
 func findToolDispatchLines(t *testing.T, out string) (infLine, dbgLine string) {
 	t.Helper()
-	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(out), "\n") {
 		var ev map[string]any
 		if err := json.Unmarshal([]byte(line), &ev); err != nil {
 			continue
 		}
-		msg, _ := ev["message"].(string)
-		level, _ := ev["level"].(string)
+		msg, msgOK := ev["message"].(string)
+		level, levelOK := ev["level"].(string)
+		if !msgOK || !levelOK {
+			continue
+		}
 		switch {
 		case msg == "Tool call dispatched" && level == "info":
 			infLine = line

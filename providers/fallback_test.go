@@ -305,9 +305,14 @@ func TestFallback_AllInCooldown(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when all in cooldown")
 	}
-	var exhausted *FallbackExhaustedError
-	if !errors.As(err, &exhausted) {
+	exhausted, ok := errors.AsType[*FallbackExhaustedError](err)
+	if !ok {
 		t.Fatalf("expected FallbackExhaustedError, got %T", err)
+	}
+	for _, a := range exhausted.Attempts {
+		if !a.Skipped {
+			t.Errorf("expected every attempt to be skipped (cooldown), got %+v", a)
+		}
 	}
 }
 

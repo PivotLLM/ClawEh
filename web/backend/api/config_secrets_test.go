@@ -233,7 +233,15 @@ func maskedTelegramList(t *testing.T, mux *http.ServeMux) []any {
 	if err := json.Unmarshal([]byte(getConfigBody(t, mux)), &got); err != nil {
 		t.Fatal(err)
 	}
-	return got["channels"].(map[string]any)["telegram"].([]any)
+	channels, ok := got["channels"].(map[string]any)
+	if !ok {
+		t.Fatalf("channels is %T, want map[string]any", got["channels"])
+	}
+	list, ok := channels["telegram"].([]any)
+	if !ok {
+		t.Fatalf("telegram is %T, want []any", channels["telegram"])
+	}
+	return list
 }
 
 func patchTelegram(t *testing.T, mux *http.ServeMux, list []any) {
@@ -324,7 +332,11 @@ func TestUnmask_EditingOneFieldKeepsTheToken(t *testing.T) {
 	p, mux := telegramFixture(t)
 	list := maskedTelegramList(t, mux)
 
-	list[0].(map[string]any)["enabled"] = false
+	bot, ok := list[0].(map[string]any)
+	if !ok {
+		t.Fatalf("list[0] is %T, want map[string]any", list[0])
+	}
+	bot["enabled"] = false
 	patchTelegram(t, mux, list)
 
 	if got := tokenFor(t, p, "alpha"); got != "111:ALPHA-TOKEN-SECRET" {

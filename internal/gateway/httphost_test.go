@@ -29,7 +29,9 @@ func TestHTTPHostLifecycleIndependentOfChannelManager(t *testing.T) {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ping", func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte("pong"))
+		if _, writeErr := w.Write([]byte("pong")); writeErr != nil {
+			t.Errorf("write: %v", writeErr)
+		}
 	})
 	host.SetMux(mux)
 	host.Start()
@@ -37,7 +39,9 @@ func TestHTTPHostLifecycleIndependentOfChannelManager(t *testing.T) {
 	t.Cleanup(func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_ = host.Stop(shutdownCtx)
+		if stopErr := host.Stop(shutdownCtx); stopErr != nil {
+			t.Errorf("host.Stop: %v", stopErr)
+		}
 	})
 
 	waitForServer(t, addr, 2*time.Second)
@@ -71,14 +75,18 @@ func TestHTTPHostSwapMux(t *testing.T) {
 	}
 	first := http.NewServeMux()
 	first.HandleFunc("/v", func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte("first"))
+		if _, writeErr := w.Write([]byte("first")); writeErr != nil {
+			t.Errorf("write: %v", writeErr)
+		}
 	})
 	host.SetMux(first)
 	host.Start()
 	t.Cleanup(func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_ = host.Stop(shutdownCtx)
+		if stopErr := host.Stop(shutdownCtx); stopErr != nil {
+			t.Errorf("host.Stop: %v", stopErr)
+		}
 	})
 
 	waitForServer(t, addr, 2*time.Second)
@@ -89,7 +97,9 @@ func TestHTTPHostSwapMux(t *testing.T) {
 
 	second := http.NewServeMux()
 	second.HandleFunc("/v", func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte("second"))
+		if _, writeErr := w.Write([]byte("second")); writeErr != nil {
+			t.Errorf("write: %v", writeErr)
+		}
 	})
 	host.SetMux(second)
 
@@ -157,7 +167,9 @@ func waitForServer(t *testing.T, addr string, timeout time.Duration) {
 	for time.Now().Before(deadline) {
 		conn, err := net.DialTimeout("tcp", addr, 100*time.Millisecond)
 		if err == nil {
-			_ = conn.Close()
+			if closeErr := conn.Close(); closeErr != nil {
+				t.Errorf("close: %v", closeErr)
+			}
 			return
 		}
 		time.Sleep(20 * time.Millisecond)
@@ -171,7 +183,11 @@ func httpGetBody(t *testing.T, url string) string {
 	if err != nil {
 		t.Fatalf("GET %s: %v", url, err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			t.Errorf("close body: %v", closeErr)
+		}
+	}()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatalf("read body: %v", err)

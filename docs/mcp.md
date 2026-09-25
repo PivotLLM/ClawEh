@@ -108,6 +108,36 @@ every tool against clean schemas — no `session_token` threading. The existing
 A parity test should assert the two endpoints expose the **same tool set** and
 ACL behavior, differing only by the `session_token` parameter.
 
+## Tool list refresh
+
+The tools an external MCP server offers are listed when ClawEh connects to it,
+registered onto every agent whose `mcp_tools` admits them, and published by the
+host catalogue above. That list is refreshed, without a gateway restart, when:
+
+- the server sends `notifications/tools/list_changed` (on a streamable HTTP
+  connection under protocol 2026-07-28 ClawEh opens a `subscriptions/listen`
+  stream for it; stdio and SSE connections carry it on their own stream);
+- the liveness probe (`liveness_probe_seconds`, 60 by default, 0 disables)
+  gets a `tools/list` answer that differs from the stored list;
+- the server is reconnected — after a dropped connection, or by the
+  **Reconnect** action on the WebUI's MCP servers page, which calls
+  `POST /api/mcp/servers/{name}/reconnect` and forces the reconnect even
+  through a post-failure cooldown.
+
+The probe is the path to rely on. A server built on mcp-go (v1.1.0) cannot
+push `tools/list_changed` to a client on the current protocol, so its tool
+changes are seen only by the probe or a reconnect. ClawEh's own MCP host is
+built on the same library and has the same limit towards *its* clients: a
+client that listed ClawEh's tools at session start (Claude Code, for example)
+does not learn of a catalogue change until it reconnects.
+
+On a refresh the server's previous tools are removed from every agent and the
+current list registered in their place, so a renamed or removed tool disappears
+rather than lingering under its old name; the host catalogue is then brought in
+step, and connected clients receive `tools/list_changed` for what was added or
+deleted. A server that neither notifies nor is probed is refreshed only by a
+reconnect.
+
 ## Security
 
 - Both endpoints stay bound to `127.0.0.1` (same posture as today; see

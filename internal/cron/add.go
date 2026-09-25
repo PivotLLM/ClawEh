@@ -1,6 +1,7 @@
 package cron
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -25,7 +26,7 @@ func newAddCommand(storePath func() string) *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if every <= 0 && cronExp == "" {
-				return fmt.Errorf("either --every or --cron must be specified")
+				return errors.New("either --every or --cron must be specified")
 			}
 
 			var schedule cron.CronSchedule
@@ -58,8 +59,13 @@ func newAddCommand(storePath func() string) *cobra.Command {
 	cmd.Flags().StringVar(&to, "to", "", "Recipient chat/channel ID")
 	cmd.Flags().StringVar(&channel, "channel", "", "Channel platform (e.g. slack, telegram)")
 
-	_ = cmd.MarkFlagRequired("name")
-	_ = cmd.MarkFlagRequired("message")
+	// MarkFlagRequired only fails when the flag does not exist, which is a
+	// programming error in the lines above, so it is fatal at construction.
+	for _, name := range []string{"name", "message"} {
+		if err := cmd.MarkFlagRequired(name); err != nil {
+			panic(fmt.Sprintf("cron add: mark flag %q required: %v", name, err))
+		}
+	}
 	cmd.MarkFlagsMutuallyExclusive("every", "cron")
 
 	return cmd

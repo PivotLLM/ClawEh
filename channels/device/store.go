@@ -14,6 +14,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/PivotLLM/ClawEh/logger"
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 // ErrPendingNotFound is returned when an approve/reject references an unknown request.
@@ -120,7 +121,7 @@ const (
 	walConvertBackoff  = 40 * time.Millisecond
 )
 
-func OpenStore(path string) (*Store, error) {
+func OpenStore(ctx context.Context, path string) (*Store, error) {
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, fmt.Errorf("device: open %s: %w", path, err)
@@ -133,25 +134,25 @@ func OpenStore(path string) (*Store, error) {
 		"PRAGMA synchronous=NORMAL",
 	}
 	for _, p := range pragmas {
-		if _, err := db.ExecContext(context.Background(), p); err != nil {
-			_ = db.Close()
+		if _, err := db.ExecContext(ctx, p); err != nil {
+			utils.CloseQuietly(db)
 			return nil, fmt.Errorf("device: %q: %w", p, err)
 		}
 	}
-	if err := ensureWAL(db); err != nil {
-		_ = db.Close()
+	if err := ensureWAL(ctx, db); err != nil {
+		utils.CloseQuietly(db)
 		return nil, err
 	}
-	if _, err := db.ExecContext(context.Background(), deviceSchema); err != nil {
-		_ = db.Close()
+	if _, err := db.ExecContext(ctx, deviceSchema); err != nil {
+		utils.CloseQuietly(db)
 		return nil, fmt.Errorf("device: schema: %w", err)
 	}
 	// Migration for DBs created before agent_id existed. ADD COLUMN fails with a
 	// "duplicate column" error once applied, which is the steady state — ignore it.
-	if _, err := db.ExecContext(context.Background(),
+	if _, err := db.ExecContext(ctx,
 		`ALTER TABLE paired_devices ADD COLUMN agent_id TEXT NOT NULL DEFAULT ''`); err != nil &&
 		!strings.Contains(err.Error(), "duplicate column") {
-		_ = db.Close()
+		utils.CloseQuietly(db)
 		return nil, fmt.Errorf("device: migrate agent_id: %w", err)
 	}
 	return &Store{db: db}, nil
@@ -183,9 +184,7 @@ func OpenStore(path string) (*Store, error) {
 // the read confirms it. If it still cannot be established, the open proceeds
 // anyway: a rollback-journal database is slower under concurrency but entirely
 // correct, and failing the open outright is what produced the 500.
-func ensureWAL(db *sql.DB) error {
-	ctx := context.Background()
-
+func ensureWAL(ctx context.Context, db *sql.DB) error {
 	current := func() (string, error) {
 		var mode string
 		err := db.QueryRowContext(ctx, "PRAGMA journal_mode").Scan(&mode)
@@ -200,7 +199,7 @@ func ensureWAL(db *sql.DB) error {
 		return nil
 	}
 
-	for attempt := 0; attempt < walConvertAttempts; attempt++ {
+	for range walConvertAttempts {
 		if _, err := db.ExecContext(ctx, "PRAGMA journal_mode=WAL"); err == nil {
 			return nil
 		}
@@ -232,8 +231,19 @@ func marshalStrings(ss []string) string {
 	if len(ss) == 0 {
 		return "[]"
 	}
-	b, _ := json.Marshal(ss)
+	b, err := json.Marshal(ss)
+	if err != nil {
+		return "" // unreachable: a []string always marshals
+	}
 	return string(b)
+}
+
+// rollback discards tx after a failed transaction; ErrTxDone is the normal
+// outcome when Commit already ran and is not worth a log line.
+func rollback(tx *sql.Tx) {
+	if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+		logger.WarnCF("device", "transaction rollback failed", map[string]any{"error": err.Error()})
+	}
 }
 
 func unmarshalStrings(s string) []string {
@@ -241,7 +251,9 @@ func unmarshalStrings(s string) []string {
 		return nil
 	}
 	var ss []string
-	_ = json.Unmarshal([]byte(s), &ss)
+	if err := json.Unmarshal([]byte(s), &ss); err != nil {
+		logger.WarnCF("device", "stored string list is not valid JSON", map[string]any{"error": err.Error()})
+	}
 	return ss
 }
 
@@ -258,7 +270,7 @@ func (s *Store) CreatePending(ctx context.Context, p PendingPairing) (string, er
 	if err != nil {
 		return "", err
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer rollback(tx)
 
 	var existingID string
 	if qerr := tx.QueryRowContext(ctx,
@@ -301,7 +313,11 @@ func (s *Store) ListPending(ctx context.Context) ([]PendingPairing, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = rows.Close() }()
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			logger.DebugCF("device", "rows close failed", map[string]any{"error": closeErr.Error()})
+		}
+	}()
 	var out []PendingPairing
 	for rows.Next() {
 		var p PendingPairing
@@ -340,7 +356,11 @@ func (s *Store) Reject(ctx context.Context, requestID string) error {
 	if err != nil {
 		return err
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
 		return ErrPendingNotFound
 	}
 	return nil
@@ -374,7 +394,7 @@ func (s *Store) Approve(ctx context.Context, requestID string, roles, scopes []s
 	if err != nil {
 		return nil, nil, err
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer rollback(tx)
 
 	if _, err := tx.ExecContext(ctx, `INSERT INTO paired_devices
 		(device_id, public_key, display_name, platform, device_family, client_id, client_mode, roles, scopes, created_at_ms, approved_at_ms, last_seen_at_ms)
@@ -443,7 +463,11 @@ func (s *Store) ListPaired(ctx context.Context) ([]PairedDevice, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = rows.Close() }()
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			logger.DebugCF("device", "rows close failed", map[string]any{"error": closeErr.Error()})
+		}
+	}()
 	var out []PairedDevice
 	for rows.Next() {
 		var d PairedDevice
@@ -469,7 +493,10 @@ func (s *Store) SetDeviceAgent(ctx context.Context, deviceID, agentID string) er
 	if err != nil {
 		return err
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
 	if n == 0 {
 		return ErrPairedNotFound
 	}
@@ -506,7 +533,11 @@ func (s *Store) ListTokens(ctx context.Context, deviceID string) ([]DeviceToken,
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = rows.Close() }()
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			logger.DebugCF("device", "rows close failed", map[string]any{"error": closeErr.Error()})
+		}
+	}()
 	var out []DeviceToken
 	for rows.Next() {
 		var t DeviceToken
@@ -534,7 +565,7 @@ func (s *Store) RemovePaired(ctx context.Context, deviceID string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer rollback(tx)
 	if _, err := tx.ExecContext(ctx, `DELETE FROM device_tokens WHERE device_id=?`, deviceID); err != nil {
 		return err
 	}

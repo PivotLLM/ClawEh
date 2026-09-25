@@ -80,7 +80,9 @@ func buildLaunchdPlist(label, username, groupname, execPath, homeDir, binDir, cl
 func installLaunchd(tu *TargetUser, targetBin, binDir, clawHome string) error {
 	// Ensure user log directory exists
 	logsDir := filepath.Join(clawHome, "logs")
-	_ = os.MkdirAll(logsDir, 0o755)
+	if err := os.MkdirAll(logsDir, 0o755); err != nil {
+		return fmt.Errorf("creating logs directory %s: %w", logsDir, err)
+	}
 
 	if tu.IsRoot {
 		// System Mode: writes to /Library/LaunchDaemons/com.pivotllm.claweh.plist
@@ -91,8 +93,8 @@ func installLaunchd(tu *TargetUser, targetBin, binDir, clawHome string) error {
 		fmt.Printf("Registered launchd daemon: %s (running as %s:%s)\n", systemLaunchdPath, tu.Username, tu.GroupName)
 
 		// Unload previous instance if present
-		_ = exec.Command("launchctl", "bootout", "system/"+launchdLabel).Run()
-		_ = exec.Command("launchctl", "unload", "-w", systemLaunchdPath).Run()
+		runBestEffort("launchctl", "bootout", "system/"+launchdLabel)
+		runBestEffort("launchctl", "unload", "-w", systemLaunchdPath)
 
 		// Bootstrap service (modern launchctl fallback to load -w)
 		cmdBootstrap := exec.Command("launchctl", "bootstrap", "system", systemLaunchdPath)
@@ -117,15 +119,15 @@ func installLaunchd(tu *TargetUser, targetBin, binDir, clawHome string) error {
 		fmt.Printf("Registered launchd user agent: %s\n", destPath)
 
 		// Unload previous instance if present
-		guiTarget := fmt.Sprintf("gui/%s", tu.UID)
-		_ = exec.Command("launchctl", "bootout", guiTarget+"/"+launchdLabel).Run()
-		_ = exec.Command("launchctl", "unload", "-w", destPath).Run()
+		guiTarget := "gui/" + tu.UID
+		runBestEffort("launchctl", "bootout", guiTarget+"/"+launchdLabel)
+		runBestEffort("launchctl", "unload", "-w", destPath)
 
 		// Bootstrap service (modern launchctl fallback to load -w)
-		cmdBootstrap := exec.Command("launchctl", "bootstrap", guiTarget, destPath)
+		cmdBootstrap := exec.Command("launchctl", "bootstrap", guiTarget, destPath) //nolint:gosec // fixed launchctl binary; args are the installer's own label and plist path
 		if out, err := cmdBootstrap.CombinedOutput(); err != nil {
 			// Fallback to legacy launchctl load
-			cmdLoad := exec.Command("launchctl", "load", "-w", destPath)
+			cmdLoad := exec.Command("launchctl", "load", "-w", destPath) //nolint:gosec // fixed launchctl binary; args are the installer's own label and plist path
 			if loadOut, loadErr := cmdLoad.CombinedOutput(); loadErr != nil {
 				return fmt.Errorf("launchctl bootstrap %s: %s / %s (%w)", guiTarget, string(out), string(loadOut), loadErr)
 			}
@@ -139,17 +141,17 @@ func installLaunchd(tu *TargetUser, targetBin, binDir, clawHome string) error {
 func uninstallLaunchd(tu *TargetUser) error {
 	var errs []string
 	if tu.IsRoot {
-		_ = exec.Command("launchctl", "bootout", "system/"+launchdLabel).Run()
-		_ = exec.Command("launchctl", "unload", "-w", systemLaunchdPath).Run()
+		runBestEffort("launchctl", "bootout", "system/"+launchdLabel)
+		runBestEffort("launchctl", "unload", "-w", systemLaunchdPath)
 		if err := os.Remove(systemLaunchdPath); err != nil && !os.IsNotExist(err) {
 			errs = append(errs, fmt.Sprintf("removing %s: %v", systemLaunchdPath, err))
 		}
 		fmt.Printf("Removed launchd daemon: %s\n", systemLaunchdPath)
 	} else {
-		guiTarget := fmt.Sprintf("gui/%s", tu.UID)
+		guiTarget := "gui/" + tu.UID
 		destPath := userLaunchdPath(tu.HomeDir)
-		_ = exec.Command("launchctl", "bootout", guiTarget+"/"+launchdLabel).Run()
-		_ = exec.Command("launchctl", "unload", "-w", destPath).Run()
+		runBestEffort("launchctl", "bootout", guiTarget+"/"+launchdLabel)
+		runBestEffort("launchctl", "unload", "-w", destPath)
 		if err := os.Remove(destPath); err != nil && !os.IsNotExist(err) {
 			errs = append(errs, fmt.Sprintf("removing %s: %v", destPath, err))
 		}

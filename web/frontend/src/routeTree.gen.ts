@@ -20,6 +20,7 @@ import { Route as McpRouteImport } from './routes/mcp'
 import { Route as MemoryRouteImport } from './routes/memory'
 import { Route as ModelsRouteImport } from './routes/models'
 import { Route as ProvidersRouteImport } from './routes/providers'
+import { Route as ReportRouteImport } from './routes/report'
 import { Route as SetupRouteImport } from './routes/setup'
 import { Route as StatusRouteImport } from './routes/status'
 import { Route as VoiceRouteImport } from './routes/voice'
@@ -86,6 +87,11 @@ const ProvidersRoute = ProvidersRouteImport.update({
   path: '/providers',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ReportRoute = ReportRouteImport.update({
+  id: '/report',
+  path: '/report',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SetupRoute = SetupRouteImport.update({
   id: '/setup',
   path: '/setup',
@@ -149,6 +155,7 @@ export interface FileRoutesByFullPath {
   '/memory': typeof MemoryRoute
   '/models': typeof ModelsRoute
   '/providers': typeof ProvidersRoute
+  '/report': typeof ReportRoute
   '/setup': typeof SetupRoute
   '/status': typeof StatusRoute
   '/voice': typeof VoiceRoute
@@ -172,6 +179,7 @@ export interface FileRoutesByTo {
   '/memory': typeof MemoryRoute
   '/models': typeof ModelsRoute
   '/providers': typeof ProvidersRoute
+  '/report': typeof ReportRoute
   '/setup': typeof SetupRoute
   '/status': typeof StatusRoute
   '/voice': typeof VoiceRoute
@@ -196,6 +204,7 @@ export interface FileRoutesById {
   '/memory': typeof MemoryRoute
   '/models': typeof ModelsRoute
   '/providers': typeof ProvidersRoute
+  '/report': typeof ReportRoute
   '/setup': typeof SetupRoute
   '/status': typeof StatusRoute
   '/voice': typeof VoiceRoute
@@ -221,6 +230,7 @@ export interface FileRouteTypes {
     | '/memory'
     | '/models'
     | '/providers'
+    | '/report'
     | '/setup'
     | '/status'
     | '/voice'
@@ -244,6 +254,7 @@ export interface FileRouteTypes {
     | '/memory'
     | '/models'
     | '/providers'
+    | '/report'
     | '/setup'
     | '/status'
     | '/voice'
@@ -267,6 +278,7 @@ export interface FileRouteTypes {
     | '/memory'
     | '/models'
     | '/providers'
+    | '/report'
     | '/setup'
     | '/status'
     | '/voice'
@@ -291,6 +303,7 @@ export interface RootRouteChildren {
   MemoryRoute: typeof MemoryRoute
   ModelsRoute: typeof ModelsRoute
   ProvidersRoute: typeof ProvidersRoute
+  ReportRoute: typeof ReportRoute
   SetupRoute: typeof SetupRoute
   StatusRoute: typeof StatusRoute
   VoiceRoute: typeof VoiceRoute
@@ -373,6 +386,13 @@ declare module '@tanstack/react-router' {
       path: '/providers'
       fullPath: '/providers'
       preLoaderRoute: typeof ProvidersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/report': {
+      id: '/report'
+      path: '/report'
+      fullPath: '/report'
+      preLoaderRoute: typeof ReportRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/setup': {
@@ -509,6 +529,7 @@ const rootRouteChildren: RootRouteChildren = {
   MemoryRoute: MemoryRoute,
   ModelsRoute: ModelsRoute,
   ProvidersRoute: ProvidersRoute,
+  ReportRoute: ReportRoute,
   SetupRoute: SetupRoute,
   StatusRoute: StatusRoute,
   VoiceRoute: VoiceRoute,

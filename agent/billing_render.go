@@ -26,8 +26,7 @@ func renderBillingError(err error) string {
 
 	var summaries []billingSummary
 
-	var exhausted *providers.FallbackExhaustedError
-	if errors.As(err, &exhausted) {
+	if exhausted, ok := errors.AsType[*providers.FallbackExhaustedError](err); ok {
 		for _, a := range exhausted.Attempts {
 			if a.Skipped || a.Reason != providers.FailoverBilling {
 				continue
@@ -85,8 +84,7 @@ func formatBillingMessage(items []billingSummary) string {
 }
 
 func extractBodyPreview(err error) string {
-	var hse *common.HTTPStatusError
-	if errors.As(err, &hse) {
+	if hse, ok := errors.AsType[*common.HTTPStatusError](err); ok {
 		return hse.BodyPreview
 	}
 	return ""

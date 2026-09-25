@@ -11,7 +11,9 @@ import (
 	mconfig "github.com/PivotLLM/Maestro/config"
 	mlogging "github.com/PivotLLM/Maestro/logging"
 	mmaestro "github.com/PivotLLM/Maestro/pkg/maestro"
+	"github.com/tenebris-tech/alerter"
 
+	"github.com/PivotLLM/ClawEh/alerts"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/logger"
@@ -36,9 +38,12 @@ func (globalMaestroProvider) Available(cfg any) (bool, string) { return true, ""
 func (globalMaestroProvider) Suite() string { return "maestro" }
 
 func (globalMaestroProvider) RegisterTools(deps global.Deps) []global.ToolDefinition {
-	c, _ := deps.Cfg.(*config.Config)
-	cd, _ := deps.Host.(tools.ToolDeps)
-	if c == nil {
+	c, ok := deps.Cfg.(*config.Config)
+	var cd tools.ToolDeps
+	if v, hostOK := deps.Host.(tools.ToolDeps); hostOK {
+		cd = v
+	}
+	if !ok || c == nil {
 		// Enumeration pass (no live config): Maestro is per-agent + all-or-nothing,
 		// surfaced via a single agent toggle, so it is not listed in the catalog.
 		return nil
@@ -73,6 +78,7 @@ func (globalMaestroProvider) RegisterTools(deps global.Deps) []global.ToolDefini
 	if err := os.MkdirAll(base, 0o755); err != nil {
 		logger.WarnCF("maestro", "failed to create maestro base dir; tools disabled",
 			map[string]any{"agent": deps.AgentID, "base": base, "error": err.Error()})
+		alertMaestroDisabled(deps.AgentID, base, err)
 		return nil
 	}
 
@@ -90,6 +96,7 @@ func (globalMaestroProvider) RegisterTools(deps global.Deps) []global.ToolDefini
 	if err := mcfg.Prepare(); err != nil {
 		logger.WarnCF("maestro", "failed to prepare maestro config; tools disabled",
 			map[string]any{"agent": deps.AgentID, "base": base, "error": err.Error()})
+		alertMaestroDisabled(deps.AgentID, base, err)
 		return nil
 	}
 	for _, rd := range refDirs {
@@ -134,4 +141,15 @@ func isNilRunner(sr global.SyncRunner) bool {
 	}
 	v := reflect.ValueOf(sr)
 	return v.Kind() == reflect.Pointer && v.IsNil()
+}
+
+// alertMaestroDisabled reports an agent whose Maestro tools could not be set
+// up; it has them enabled and gets none. Repeats per agent collapse.
+func alertMaestroDisabled(agentID, base string, err error) {
+	alerts.Send(alerter.Alert{
+		Title:       "Maestro tools disabled",
+		Description: "agent " + agentID + ": " + base + " could not be prepared, so the agent has no Maestro tools",
+		Details:     err.Error(),
+		EventID:     "maestro:" + agentID,
+	})
 }

@@ -24,8 +24,10 @@ func withBearerToken(ctx context.Context, tok string) context.Context {
 // bearerTokenFromContext returns the bearer token placed in ctx by the /mcp
 // HTTPContextFunc, or "" when none is present.
 func bearerTokenFromContext(ctx context.Context) string {
-	s, _ := ctx.Value(bearerCtxKey{}).(string)
-	return s
+	if s, ok := ctx.Value(bearerCtxKey{}).(string); ok {
+		return s
+	}
+	return ""
 }
 
 // extractBearer pulls the token out of an "Authorization: Bearer <token>"

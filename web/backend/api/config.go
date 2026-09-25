@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/internal/backup"
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 // registerConfigRoutes binds configuration management endpoints to the ServeMux.
@@ -37,7 +39,7 @@ func (h *Handler) handleRunBackup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"folder": day, "files": copied})
+	encodeJSON(w, map[string]any{"folder": day, "files": copied})
 }
 
 // handleGetConfig returns the complete system configuration.
@@ -73,7 +75,7 @@ func (h *Handler) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to read request body", http.StatusBadRequest)
 		return
 	}
-	defer r.Body.Close()
+	defer utils.CloseQuietly(r.Body)
 
 	// A client that read the masked config and is writing it back sends "****"
 	// in place of each credential; swap those for the stored values so the round
@@ -96,7 +98,7 @@ func (h *Handler) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 	if errs := validateConfig(&cfg); len(errs) > 0 {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]any{
+		encodeJSON(w, map[string]any{
 			"status": "validation_error",
 			"errors": errs,
 		})
@@ -109,7 +111,7 @@ func (h *Handler) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	encodeJSON(w, map[string]string{"status": "ok"})
 }
 
 func execAllowRemoteOmitted(body []byte) bool {
@@ -136,7 +138,7 @@ func (h *Handler) handlePatchConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to read request body", http.StatusBadRequest)
 		return
 	}
-	defer r.Body.Close()
+	defer utils.CloseQuietly(r.Body)
 
 	// Validate the patch is valid JSON
 	var patch map[string]any
@@ -186,7 +188,7 @@ func (h *Handler) handlePatchConfig(w http.ResponseWriter, r *http.Request) {
 	if errs := validateConfig(&newCfg); len(errs) > 0 {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]any{
+		encodeJSON(w, map[string]any{
 			"status": "validation_error",
 			"errors": errs,
 		})
@@ -199,7 +201,7 @@ func (h *Handler) handlePatchConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	encodeJSON(w, map[string]string{"status": "ok"})
 }
 
 // validateConfig checks the config for common errors before saving.
@@ -266,7 +268,7 @@ func validateConfig(cfg *config.Config) []string {
 func validateListenAddr(s string) error {
 	lastColon := strings.LastIndex(s, ":")
 	if lastColon <= 0 || lastColon == len(s)-1 {
-		return fmt.Errorf("must be host:port (e.g. 127.0.0.1:5911)")
+		return errors.New("must be host:port (e.g. 127.0.0.1:5911)")
 	}
 	portStr := s[lastColon+1:]
 	port, err := strconv.Atoi(portStr)

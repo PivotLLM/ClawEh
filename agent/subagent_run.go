@@ -5,7 +5,9 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"strings"
 
@@ -47,7 +49,7 @@ func (al *AgentLoop) runSubagentTask(ctx context.Context, agentID, sessionKey, t
 	// spawn loudly instead of the worker silently seeing nothing.
 	for _, ref := range media {
 		if al.mediaStore == nil {
-			return nil, fmt.Errorf("subagent: media refs passed but no media store is configured")
+			return nil, errors.New("subagent: media refs passed but no media store is configured")
 		}
 		if _, err := al.mediaStore.Resolve(ref); err != nil {
 			return nil, fmt.Errorf("subagent: media ref %s not found (expired or invalid) — it cannot be attached", ref)
@@ -72,7 +74,7 @@ func (al *AgentLoop) runSubagentTask(ctx context.Context, agentID, sessionKey, t
 	}
 	// Clean up the ephemeral session's DB files when the run is done (after the
 	// context manager is released).
-	defer al.cleanupSubagentSession(agent, sessionKey)
+	defer al.cleanupSubagentSession(ctx, agent, sessionKey)
 
 	// Optional model override (already validated against the agent's candidates by
 	// the Spawner): point this session at the chosen model. A model that does not
@@ -84,7 +86,13 @@ func (al *AgentLoop) runSubagentTask(ctx context.Context, agentID, sessionKey, t
 		}
 		for i, c := range agent.Candidates {
 			if c.Alias == matched.Alias && c.Model == matched.Model {
-				_ = al.setActiveModelIndex(agent, sessionKey, i)
+				if err := al.setActiveModelIndex(agent, sessionKey, i); err != nil {
+					logger.WarnCF("agent", "Failed to persist sub-agent model selection", map[string]any{
+						"session": sessionKey,
+						"model":   model,
+						"error":   err.Error(),
+					})
+				}
 				break
 			}
 		}
@@ -128,12 +136,25 @@ func (al *AgentLoop) runSubagentTask(ctx context.Context, agentID, sessionKey, t
 // cleanupSubagentSession evicts the sub-agent session's context manager (closing
 // its DB handles), removes the memory snapshot directory and the ephemeral
 // session's archive files. Best-effort.
-func (al *AgentLoop) cleanupSubagentSession(agent *AgentInstance, sessionKey string) {
-	al.dropContextManager(agent, sessionKey)
+func (al *AgentLoop) cleanupSubagentSession(ctx context.Context, agent *AgentInstance, sessionKey string) {
+	al.dropContextManager(ctx, agent, sessionKey)
 	al.releaseSessionPins(sessionKey)
-	_ = os.RemoveAll(cogmemhost.SubagentDir(agent.Workspace, sessionKey))
+	snapshotDir := cogmemhost.SubagentDir(agent.Workspace, sessionKey)
+	if err := os.RemoveAll(snapshotDir); err != nil {
+		logger.WarnCF("agent", "Failed to remove sub-agent memory snapshot", map[string]any{
+			"session": sessionKey,
+			"path":    snapshotDir,
+			"error":   err.Error(),
+		})
+	}
 	archive := archiveDBPath(agent.Workspace, sessionKey)
 	for _, suffix := range []string{"", "-wal", "-shm"} {
-		_ = os.Remove(archive + suffix)
+		if err := os.Remove(archive + suffix); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			logger.WarnCF("agent", "Failed to remove sub-agent archive file", map[string]any{
+				"session": sessionKey,
+				"path":    archive + suffix,
+				"error":   err.Error(),
+			})
+		}
 	}
 }

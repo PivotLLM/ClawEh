@@ -26,7 +26,7 @@ func commandRegistrationDelay(backoff []time.Duration, attempt int) time.Duratio
 	}
 	base := backoff[min(attempt, len(backoff)-1)]
 	// Full jitter in [0.5, 1.0) to avoid synchronized retries across instances.
-	return time.Duration(float64(base) * (0.5 + rand.Float64()*0.5))
+	return time.Duration(float64(base) * (0.5 + rand.Float64()*0.5)) //nolint:gosec // retry jitter, not security-relevant
 }
 
 // RegisterCommands registers bot commands on Telegram platform.

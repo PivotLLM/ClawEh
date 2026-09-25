@@ -17,7 +17,7 @@ func TestAutoApproveLocalDevice(t *testing.T) {
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	store, err := device.OpenStore(filepath.Join(stateDir, "gateway.db"))
+	store, err := device.OpenStore(context.Background(), filepath.Join(stateDir, "gateway.db"))
 	if err != nil {
 		t.Fatalf("OpenStore: %v", err)
 	}
@@ -39,22 +39,28 @@ func TestAutoApproveLocalDevice(t *testing.T) {
 	}); pendErr != nil {
 		t.Fatalf("CreatePending other: %v", pendErr)
 	}
-	_ = store.Close() // the helper opens its own handle
+	if closeErr := store.Close(); closeErr != nil { // the helper opens its own handle
+		t.Fatalf("close store: %v", closeErr)
+	}
 
 	if _, approveErr := autoApproveLocalDevice(ctx, dataDir, deviceID); approveErr != nil {
 		t.Fatalf("autoApproveLocalDevice: %v", approveErr)
 	}
 
-	verify, err := device.OpenStore(filepath.Join(stateDir, "gateway.db"))
+	verify, err := device.OpenStore(context.Background(), filepath.Join(stateDir, "gateway.db"))
 	if err != nil {
 		t.Fatalf("reopen store: %v", err)
 	}
-	defer func() { _ = verify.Close() }()
+	defer func() {
+		if closeErr := verify.Close(); closeErr != nil {
+			t.Errorf("close verify store: %v", closeErr)
+		}
+	}()
 	if _, ok, err := verify.GetPaired(ctx, deviceID); err != nil || !ok {
 		t.Fatalf("device %s not paired after auto-approve (ok=%v err=%v)", deviceID, ok, err)
 	}
-	if _, ok, _ := verify.GetPaired(ctx, "other-device"); ok {
-		t.Fatalf("unrelated device was wrongly approved")
+	if _, ok, err := verify.GetPaired(ctx, "other-device"); err != nil || ok {
+		t.Fatalf("unrelated device was wrongly approved (ok=%v err=%v)", ok, err)
 	}
 }
 
@@ -66,11 +72,13 @@ func TestAutoApproveLocalDeviceNoPending(t *testing.T) {
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	store, err := device.OpenStore(filepath.Join(stateDir, "gateway.db"))
+	store, err := device.OpenStore(context.Background(), filepath.Join(stateDir, "gateway.db"))
 	if err != nil {
 		t.Fatalf("OpenStore: %v", err)
 	}
-	_ = store.Close()
+	if closeErr := store.Close(); closeErr != nil {
+		t.Fatalf("close store: %v", closeErr)
+	}
 
 	if _, err := autoApproveLocalDevice(context.Background(), dataDir, "missing"); err == nil {
 		t.Fatalf("expected error when no pending pairing exists")

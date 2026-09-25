@@ -3,13 +3,17 @@ package skills
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"time"
 
+	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/utils"
 )
 
@@ -111,7 +115,7 @@ func (c *ClawHubRegistry) Search(ctx context.Context, query string, limit int) (
 	q := u.Query()
 	q.Set("q", query)
 	if limit > 0 {
-		q.Set("limit", fmt.Sprintf("%d", limit))
+		q.Set("limit", strconv.Itoa(limit))
 	}
 	u.RawQuery = q.Encode()
 
@@ -263,7 +267,7 @@ func (c *ClawHubRegistry) DownloadAndInstall(
 	if err != nil {
 		return nil, fmt.Errorf("download failed: %w", err)
 	}
-	defer os.Remove(tmpPath)
+	defer removeTempFile(tmpPath)
 
 	// Step 4: Extract from file on disk.
 	if err := utils.ExtractZipFile(tmpPath, targetDir); err != nil {
@@ -285,7 +289,7 @@ func (c *ClawHubRegistry) doGet(ctx context.Context, urlStr string) ([]byte, err
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { utils.CloseQuietly(resp.Body) }()
 
 	// Limit response body read to prevent memory issues.
 	body, err := io.ReadAll(io.LimitReader(resp.Body, int64(c.maxResponseSize)))
@@ -322,11 +326,16 @@ func (c *ClawHubRegistry) downloadToTempFileWithRetry(ctx context.Context, urlSt
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { utils.CloseQuietly(resp.Body) }()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		// Whatever was read of the body is context for the error; a short or
+		// failed read just means less context.
 		errBody := make([]byte, 512)
-		n, _ := io.ReadFull(resp.Body, errBody)
+		n, readErr := io.ReadFull(resp.Body, errBody)
+		if readErr != nil && !errors.Is(readErr, io.ErrUnexpectedEOF) && !errors.Is(readErr, io.EOF) {
+			logger.DebugCF("skills", "failed to read error response body", map[string]any{"error": readErr.Error()})
+		}
 		return "", fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(errBody[:n]))
 	}
 
@@ -337,8 +346,10 @@ func (c *ClawHubRegistry) downloadToTempFileWithRetry(ctx context.Context, urlSt
 	tmpPath := tmpFile.Name()
 
 	cleanup := func() {
-		_ = tmpFile.Close()
-		_ = os.Remove(tmpPath)
+		// The copy error is what the caller sees; the close error is noise on
+		// top of it, but a leftover temp file is worth a warning.
+		utils.CloseQuietly(tmpFile)
+		removeTempFile(tmpPath)
 	}
 
 	src := io.LimitReader(resp.Body, int64(c.maxZipSize)+1)
@@ -354,9 +365,16 @@ func (c *ClawHubRegistry) downloadToTempFileWithRetry(ctx context.Context, urlSt
 	}
 
 	if err := tmpFile.Close(); err != nil {
-		_ = os.Remove(tmpPath)
+		removeTempFile(tmpPath)
 		return "", fmt.Errorf("failed to close temp file: %w", err)
 	}
 
 	return tmpPath, nil
+}
+
+// removeTempFile removes a temp download and warns if it is left behind.
+func removeTempFile(path string) {
+	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		logger.WarnCF("skills", "failed to remove temp file", map[string]any{"path": path, "error": err.Error()})
+	}
 }

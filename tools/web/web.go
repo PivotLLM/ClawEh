@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/tools"
 	"github.com/PivotLLM/ClawEh/utils"
 )
@@ -46,7 +47,7 @@ var (
 
 type APIKeyPool struct {
 	keys    []string
-	current uint32
+	current atomic.Uint32
 }
 
 func NewAPIKeyPool(keys []string) *APIKeyPool {
@@ -65,7 +66,7 @@ func (p *APIKeyPool) NewIterator() *APIKeyIterator {
 	if len(p.keys) == 0 {
 		return &APIKeyIterator{pool: p}
 	}
-	idx := atomic.AddUint32(&p.current, 1) - 1
+	idx := p.current.Add(1) - 1
 	return &APIKeyIterator{
 		pool:     p,
 		startIdx: idx,
@@ -73,7 +74,7 @@ func (p *APIKeyPool) NewIterator() *APIKeyIterator {
 }
 
 func (it *APIKeyIterator) Next() (string, bool) {
-	length := uint32(len(it.pool.keys))
+	length := uint32(len(it.pool.keys)) //nolint:gosec // key pool is a config list, far below MaxUint32
 	if length == 0 || it.attempt >= length {
 		return "", false
 	}
@@ -105,7 +106,7 @@ func (p *BraveSearchProvider) Search(ctx context.Context, query string, count in
 			break
 		}
 
-		req, err := http.NewRequestWithContext(ctx, "GET", searchURL, nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, searchURL, nil)
 		if err != nil {
 			return "", fmt.Errorf("failed to create request: %w", err)
 		}
@@ -120,7 +121,9 @@ func (p *BraveSearchProvider) Search(ctx context.Context, query string, count in
 		}
 
 		body, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			logger.DebugCF("web", "failed to close response body", map[string]any{"error": closeErr.Error()})
+		}
 
 		if err != nil {
 			lastErr = fmt.Errorf("failed to read response: %w", err)
@@ -155,18 +158,18 @@ func (p *BraveSearchProvider) Search(ctx context.Context, query string, count in
 
 		results := searchResp.Web.Results
 		if len(results) == 0 {
-			return fmt.Sprintf("No results for: %s", query), nil
+			return "No results for: " + query, nil
 		}
 
 		var lines []string
-		lines = append(lines, fmt.Sprintf("Results for: %s", query))
+		lines = append(lines, "Results for: "+query)
 		for i, item := range results {
 			if i >= count {
 				break
 			}
 			lines = append(lines, fmt.Sprintf("%d. %s\n   %s", i+1, item.Title, item.URL))
 			if item.Description != "" {
-				lines = append(lines, fmt.Sprintf("   %s", item.Description))
+				lines = append(lines, "   "+item.Description)
 			}
 		}
 
@@ -213,7 +216,7 @@ func (p *TavilySearchProvider) Search(ctx context.Context, query string, count i
 			return "", fmt.Errorf("failed to marshal payload: %w", err)
 		}
 
-		req, err := http.NewRequestWithContext(ctx, "POST", searchURL, bytes.NewBuffer(bodyBytes))
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, searchURL, bytes.NewBuffer(bodyBytes))
 		if err != nil {
 			return "", fmt.Errorf("failed to create request: %w", err)
 		}
@@ -228,7 +231,9 @@ func (p *TavilySearchProvider) Search(ctx context.Context, query string, count i
 		}
 
 		body, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			logger.DebugCF("web", "failed to close response body", map[string]any{"error": closeErr.Error()})
+		}
 
 		if err != nil {
 			lastErr = fmt.Errorf("failed to read response: %w", err)
@@ -260,7 +265,7 @@ func (p *TavilySearchProvider) Search(ctx context.Context, query string, count i
 
 		results := searchResp.Results
 		if len(results) == 0 {
-			return fmt.Sprintf("No results for: %s", query), nil
+			return "No results for: " + query, nil
 		}
 
 		var lines []string
@@ -271,7 +276,7 @@ func (p *TavilySearchProvider) Search(ctx context.Context, query string, count i
 			}
 			lines = append(lines, fmt.Sprintf("%d. %s\n   %s", i+1, item.Title, item.URL))
 			if item.Content != "" {
-				lines = append(lines, fmt.Sprintf("   %s", item.Content))
+				lines = append(lines, "   "+item.Content)
 			}
 		}
 
@@ -287,9 +292,9 @@ type DuckDuckGoSearchProvider struct {
 }
 
 func (p *DuckDuckGoSearchProvider) Search(ctx context.Context, query string, count int) (string, error) {
-	searchURL := fmt.Sprintf("https://html.duckduckgo.com/html/?q=%s", url.QueryEscape(query))
+	searchURL := "https://html.duckduckgo.com/html/?q=" + url.QueryEscape(query)
 
-	req, err := http.NewRequestWithContext(ctx, "GET", searchURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, searchURL, nil)
 	if err != nil {
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
@@ -300,7 +305,11 @@ func (p *DuckDuckGoSearchProvider) Search(ctx context.Context, query string, cou
 	if err != nil {
 		return "", fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			logger.DebugCF("web", "failed to close response body", map[string]any{"error": closeErr.Error()})
+		}
+	}()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -320,7 +329,7 @@ func (p *DuckDuckGoSearchProvider) extractResults(html string, count int, query 
 	matches := reDDGLink.FindAllStringSubmatch(html, count+5)
 
 	if len(matches) == 0 {
-		return fmt.Sprintf("No results found or extraction failed. Query: %s", query), nil
+		return "No results found or extraction failed. Query: " + query, nil
 	}
 
 	var lines []string
@@ -360,7 +369,7 @@ func (p *DuckDuckGoSearchProvider) extractResults(html string, count int, query 
 			snippet := stripTags(snippetMatches[i][1])
 			snippet = strings.TrimSpace(snippet)
 			if snippet != "" {
-				lines = append(lines, fmt.Sprintf("   %s", snippet))
+				lines = append(lines, "   "+snippet)
 			}
 		}
 	}
@@ -410,7 +419,7 @@ func (p *PerplexitySearchProvider) Search(ctx context.Context, query string, cou
 			return "", fmt.Errorf("failed to marshal request: %w", err)
 		}
 
-		req, err := http.NewRequestWithContext(ctx, "POST", searchURL, strings.NewReader(string(payloadBytes)))
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, searchURL, strings.NewReader(string(payloadBytes)))
 		if err != nil {
 			return "", fmt.Errorf("failed to create request: %w", err)
 		}
@@ -426,7 +435,9 @@ func (p *PerplexitySearchProvider) Search(ctx context.Context, query string, cou
 		}
 
 		body, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			logger.DebugCF("web", "failed to close response body", map[string]any{"error": closeErr.Error()})
+		}
 
 		if err != nil {
 			lastErr = fmt.Errorf("failed to read response: %w", err)
@@ -457,7 +468,7 @@ func (p *PerplexitySearchProvider) Search(ctx context.Context, query string, cou
 		}
 
 		if len(searchResp.Choices) == 0 {
-			return fmt.Sprintf("No results for: %s", query), nil
+			return "No results for: " + query, nil
 		}
 
 		return fmt.Sprintf("Results for: %s (via Perplexity)\n%s", query, searchResp.Choices[0].Message.Content), nil
@@ -475,7 +486,7 @@ func (p *SearXNGSearchProvider) Search(ctx context.Context, query string, count 
 		strings.TrimSuffix(p.baseURL, "/"),
 		url.QueryEscape(query))
 
-	req, err := http.NewRequestWithContext(ctx, "GET", searchURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, searchURL, nil)
 	if err != nil {
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
@@ -485,7 +496,11 @@ func (p *SearXNGSearchProvider) Search(ctx context.Context, query string, count 
 	if err != nil {
 		return "", fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			logger.DebugCF("web", "failed to close response body", map[string]any{"error": closeErr.Error()})
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("SearXNG returned status %d", resp.StatusCode)
@@ -506,7 +521,7 @@ func (p *SearXNGSearchProvider) Search(ctx context.Context, query string, count 
 	}
 
 	if len(result.Results) == 0 {
-		return fmt.Sprintf("No results for: %s", query), nil
+		return "No results for: " + query, nil
 	}
 
 	// Limit results to requested count
@@ -555,7 +570,7 @@ func (p *GLMSearchProvider) Search(ctx context.Context, query string, count int)
 		return "", fmt.Errorf("failed to marshal payload: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", searchURL, bytes.NewReader(bodyBytes))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, searchURL, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
@@ -567,7 +582,11 @@ func (p *GLMSearchProvider) Search(ctx context.Context, query string, count int)
 	if err != nil {
 		return "", fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			logger.DebugCF("web", "failed to close response body", map[string]any{"error": closeErr.Error()})
+		}
+	}()
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
@@ -592,7 +611,7 @@ func (p *GLMSearchProvider) Search(ctx context.Context, query string, count int)
 
 	results := searchResp.SearchResult
 	if len(results) == 0 {
-		return fmt.Sprintf("No results for: %s", query), nil
+		return "No results for: " + query, nil
 	}
 
 	var lines []string
@@ -603,7 +622,7 @@ func (p *GLMSearchProvider) Search(ctx context.Context, query string, count int)
 		}
 		lines = append(lines, fmt.Sprintf("%d. %s\n   %s", i+1, item.Title, item.Link))
 		if item.Content != "" {
-			lines = append(lines, fmt.Sprintf("   %s", item.Content))
+			lines = append(lines, "   "+item.Content)
 		}
 	}
 
@@ -811,7 +830,7 @@ func NewWebFetchToolWithProxy(maxChars int, proxy string, fetchLimitBytes int64)
 			return fmt.Errorf("stopped after %d redirects", maxRedirects)
 		}
 		if isObviousPrivateHost(req.URL.Hostname()) {
-			return fmt.Errorf("redirect target is private or local network host")
+			return errors.New("redirect target is private or local network host")
 		}
 		return nil
 	}
@@ -885,7 +904,7 @@ func (t *WebFetchTool) Execute(ctx context.Context, args map[string]any) *tools.
 		}
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "GET", urlStr, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, urlStr, nil)
 	if err != nil {
 		return tools.ErrorResult(fmt.Sprintf("failed to create request: %v", err))
 	}
@@ -902,13 +921,16 @@ func (t *WebFetchTool) Execute(ctx context.Context, args map[string]any) *tools.
 
 	resp.Body = http.MaxBytesReader(nil, resp.Body, t.fetchLimitBytes)
 
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			logger.DebugCF("web", "failed to close response body", map[string]any{"error": closeErr.Error()})
+		}
+	}()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		var maxBytesErr *http.MaxBytesError
-		if errors.As(err, &maxBytesErr) {
-			return tools.ErrorResult(fmt.Sprintf("failed to read response: size exceeded %d bytes limit", t.fetchLimitBytes))
+		if mbe, ok := errors.AsType[*http.MaxBytesError](err); ok {
+			return tools.ErrorResult(fmt.Sprintf("failed to read response: size exceeded %d bytes limit", mbe.Limit))
 		}
 		return tools.ErrorResult(fmt.Sprintf("failed to read response: %v", err))
 	}
@@ -920,7 +942,10 @@ func (t *WebFetchTool) Execute(ctx context.Context, args map[string]any) *tools.
 	if strings.Contains(contentType, "application/json") {
 		var jsonData any
 		if err := json.Unmarshal(body, &jsonData); err == nil {
-			formatted, _ := json.MarshalIndent(jsonData, "", "  ")
+			formatted, formatErr := json.MarshalIndent(jsonData, "", "  ")
+			if formatErr != nil {
+				return tools.ErrorResult(fmt.Sprintf("failed to format JSON response: %v", formatErr))
+			}
 			text = string(formatted)
 			extractor = "json"
 		} else {
@@ -955,7 +980,10 @@ func (t *WebFetchTool) Execute(ctx context.Context, args map[string]any) *tools.
 		result["note"] = note
 	}
 
-	resultJSON, _ := json.MarshalIndent(result, "", "  ")
+	resultJSON, marshalErr := json.MarshalIndent(result, "", "  ")
+	if marshalErr != nil {
+		return tools.ErrorResult(fmt.Sprintf("failed to encode result: %v", marshalErr))
+	}
 
 	// Silent: the "Fetched N bytes…" status is telemetry, not user content.
 	// The model's final answer carries the fetched information.
@@ -1011,7 +1039,7 @@ func newSafeDialContext(dialer *net.Dialer) func(context.Context, string, string
 			return nil, fmt.Errorf("invalid target address %q: %w", address, err)
 		}
 		if host == "" {
-			return nil, fmt.Errorf("empty target host")
+			return nil, errors.New("empty target host")
 		}
 
 		if ip := net.ParseIP(host); ip != nil {

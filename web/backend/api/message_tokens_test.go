@@ -91,20 +91,19 @@ func (f *fakeMessageTokenLoop) UpdateMessageToken(agentID, id string, ratePerMin
 	return false
 }
 
-func newMessageTokenTestHandler(t *testing.T) (*Handler, *http.ServeMux, *fakeMessageTokenLoop, func()) {
+func newMessageTokenTestHandler(t *testing.T) (*Handler, *http.ServeMux, *fakeMessageTokenLoop) {
 	t.Helper()
-	configPath, cleanup := setupTestEnv(t)
+	configPath := setupTestEnv(t)
 	h := NewHandler(configPath)
 	loop := newFakeMessageTokenLoop()
 	h.SetMessageTokenLoop(loop)
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
-	return h, mux, loop, cleanup
+	return h, mux, loop
 }
 
 func TestMessageTokens_ListEmptyIncludesEndpointBase(t *testing.T) {
-	_, mux, _, cleanup := newMessageTokenTestHandler(t)
-	defer cleanup()
+	_, mux, _ := newMessageTokenTestHandler(t)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/agents/main/message-tokens", nil)
@@ -130,8 +129,7 @@ func TestMessageTokens_ListEmptyIncludesEndpointBase(t *testing.T) {
 }
 
 func TestMessageTokens_CreateThenList(t *testing.T) {
-	_, mux, _, cleanup := newMessageTokenTestHandler(t)
-	defer cleanup()
+	_, mux, _ := newMessageTokenTestHandler(t)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/agents/main/message-tokens",
@@ -162,9 +160,11 @@ func TestMessageTokens_CreateThenList(t *testing.T) {
 }
 
 func TestMessageTokens_Delete(t *testing.T) {
-	_, mux, loop, cleanup := newMessageTokenTestHandler(t)
-	defer cleanup()
-	tok, _ := loop.CreateMessageToken("main", "x")
+	_, mux, loop := newMessageTokenTestHandler(t)
+	tok, err := loop.CreateMessageToken("main", "x")
+	if err != nil {
+		t.Fatalf("CreateMessageToken: %v", err)
+	}
 
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete,
@@ -178,8 +178,7 @@ func TestMessageTokens_Delete(t *testing.T) {
 }
 
 func TestMessageTokens_UnknownAgent404(t *testing.T) {
-	_, mux, _, cleanup := newMessageTokenTestHandler(t)
-	defer cleanup()
+	_, mux, _ := newMessageTokenTestHandler(t)
 
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/agents/ghost/message-tokens", nil))
@@ -189,8 +188,7 @@ func TestMessageTokens_UnknownAgent404(t *testing.T) {
 }
 
 func TestMessageTokens_DeleteUnknownToken404(t *testing.T) {
-	_, mux, _, cleanup := newMessageTokenTestHandler(t)
-	defer cleanup()
+	_, mux, _ := newMessageTokenTestHandler(t)
 
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete,
@@ -204,9 +202,11 @@ func TestMessageTokens_DeleteUnknownToken404(t *testing.T) {
 // config list with the quota snapshot: default rate is surfaced and the live
 // hits-in-window is carried through.
 func TestMessageTokens_ListIncludesQuotaStatus(t *testing.T) {
-	_, mux, loop, cleanup := newMessageTokenTestHandler(t)
-	defer cleanup()
-	tok, _ := loop.CreateMessageToken("main", "gps")
+	_, mux, loop := newMessageTokenTestHandler(t)
+	tok, err := loop.CreateMessageToken("main", "gps")
+	if err != nil {
+		t.Fatalf("CreateMessageToken: %v", err)
+	}
 	loop.hits[tok.ID] = 4
 
 	rec := httptest.NewRecorder()
@@ -230,9 +230,11 @@ func TestMessageTokens_ListIncludesQuotaStatus(t *testing.T) {
 }
 
 func TestMessageTokens_UpdateConfig(t *testing.T) {
-	_, mux, loop, cleanup := newMessageTokenTestHandler(t)
-	defer cleanup()
-	tok, _ := loop.CreateMessageToken("main", "gps")
+	_, mux, loop := newMessageTokenTestHandler(t)
+	tok, err := loop.CreateMessageToken("main", "gps")
+	if err != nil {
+		t.Fatalf("CreateMessageToken: %v", err)
+	}
 
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPatch,
@@ -248,8 +250,7 @@ func TestMessageTokens_UpdateConfig(t *testing.T) {
 }
 
 func TestMessageTokens_UpdateUnknownToken404(t *testing.T) {
-	_, mux, _, cleanup := newMessageTokenTestHandler(t)
-	defer cleanup()
+	_, mux, _ := newMessageTokenTestHandler(t)
 
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPatch,

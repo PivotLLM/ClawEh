@@ -55,8 +55,14 @@ func (r *recordingSTI) calls() []sourceCall {
 // per-session origin signal that the MCP-routed tool dispatch path reads
 // when publishing ForUser payloads back to the originating user.
 func TestRunAgentLoop_RecordsInboundSourceOnSession(t *testing.T) {
-	al, _, _, _, cleanup := newTestAgentLoop(t)
-	defer cleanup()
+	assertRecordsSource(t, "agent:main:test-source", "C123")
+}
+
+// assertRecordsSource runs one slack turn on a fresh loop and fails the test
+// unless SetSource was called with the session key, "slack" and chatID.
+func assertRecordsSource(t *testing.T, sessionKey, chatID string) {
+	t.Helper()
+	al := newTestAgentLoop(t).al
 
 	agentInstance := al.registry.GetDefaultAgent()
 	if agentInstance == nil {
@@ -73,9 +79,9 @@ func TestRunAgentLoop_RecordsInboundSourceOnSession(t *testing.T) {
 	}
 
 	opts := processOptions{
-		SessionKey:  "agent:main:test-source",
+		SessionKey:  sessionKey,
 		Channel:     "slack",
-		ChatID:      "C123",
+		ChatID:      chatID,
 		UserMessage: "hello",
 	}
 
@@ -84,25 +90,19 @@ func TestRunAgentLoop_RecordsInboundSourceOnSession(t *testing.T) {
 	}
 
 	calls := rec.calls()
-	var found bool
 	for _, c := range calls {
-		if c.sessionKey == opts.SessionKey && c.channel == "slack" && c.chatID == "C123" {
-			found = true
-			break
+		if c.sessionKey == sessionKey && c.channel == "slack" && c.chatID == chatID {
+			return
 		}
 	}
-	if !found {
-		t.Fatalf("expected SetSource(%q, slack, C123) to be called; got %+v",
-			opts.SessionKey, calls)
-	}
+	t.Fatalf("expected SetSource(%q, slack, %s) to be called; got %+v", sessionKey, chatID, calls)
 }
 
 // TestRunAgentLoop_SourceOverwritesAcrossTurns confirms that a second turn on
 // the same session updates source — modelling unified-mode where a single
 // session follows the user across channels (e.g. Slack → Telegram).
 func TestRunAgentLoop_SourceOverwritesAcrossTurns(t *testing.T) {
-	al, _, _, _, cleanup := newTestAgentLoop(t)
-	defer cleanup()
+	al := newTestAgentLoop(t).al
 
 	agentInstance := al.registry.GetDefaultAgent()
 	if agentInstance == nil {
@@ -169,8 +169,7 @@ func TestRunAgentLoop_SkipsSetSourceForInternalChannels(t *testing.T) {
 	internalChannels := []string{"cli", "subagent", "recovery"}
 	for _, channel := range internalChannels {
 		t.Run(channel, func(t *testing.T) {
-			al, _, _, _, cleanup := newTestAgentLoop(t)
-			defer cleanup()
+			al := newTestAgentLoop(t).al
 
 			agentInstance := al.registry.GetDefaultAgent()
 			if agentInstance == nil {
@@ -206,44 +205,6 @@ func TestRunAgentLoop_SkipsSetSourceForInternalChannels(t *testing.T) {
 
 	// Control: external channel must still record source.
 	t.Run("slack_control", func(t *testing.T) {
-		al, _, _, _, cleanup := newTestAgentLoop(t)
-		defer cleanup()
-
-		agentInstance := al.registry.GetDefaultAgent()
-		if agentInstance == nil {
-			t.Fatal("no default agent")
-		}
-
-		rec := &recordingSTI{}
-		al.SetSessionTokenIssuer(rec)
-
-		agentInstance.Provider = &sequenceProvider{
-			responses: []*providers.LLMResponse{{Content: "done"}},
-			errors:    []error{nil},
-		}
-
-		opts := processOptions{
-			SessionKey:  "agent:main:external-slack",
-			Channel:     "slack",
-			ChatID:      "C-external",
-			UserMessage: "hello",
-		}
-
-		if _, err := al.runAgentLoop(context.Background(), agentInstance, opts); err != nil {
-			t.Fatalf("runAgentLoop returned error: %v", err)
-		}
-
-		calls := rec.calls()
-		var found bool
-		for _, c := range calls {
-			if c.sessionKey == opts.SessionKey && c.channel == "slack" && c.chatID == "C-external" {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Fatalf("expected SetSource(%q, slack, C-external) to be called for control case; got %+v",
-				opts.SessionKey, calls)
-		}
+		assertRecordsSource(t, "agent:main:external-slack", "C-external")
 	})
 }

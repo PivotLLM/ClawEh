@@ -8,18 +8,15 @@ import (
 	"testing"
 )
 
-func intPtr(v int) *int           { return &v }
-func floatPtr(v float64) *float64 { return &v }
-
 // TestEffectiveCompression_PerAgentOverridesDefaults covers the field-by-field
 // overlay: an agent setting one value must not discard the rest of the defaults.
 func TestEffectiveCompression_PerAgentOverridesDefaults(t *testing.T) {
 	defaults := &CompressionConfig{
-		Trigger: &CompressionTriggerConfig{MinPercent: intPtr(20), Days: intPtr(7)},
-		Retain:  &CompressionRetainConfig{TokenPercent: intPtr(10), MaxAgeDays: intPtr(5)},
+		Trigger: &CompressionTriggerConfig{MinPercent: new(20), Days: new(7)},
+		Retain:  &CompressionRetainConfig{TokenPercent: new(10), MaxAgeDays: new(5)},
 	}
 	agent := &AgentConfig{Compression: &CompressionConfig{
-		Trigger: &CompressionTriggerConfig{Days: intPtr(3)},
+		Trigger: &CompressionTriggerConfig{Days: new(3)},
 	}}
 
 	got := agent.EffectiveCompression(defaults)
@@ -39,9 +36,9 @@ func TestEffectiveCompression_PerAgentOverridesDefaults(t *testing.T) {
 // pointer: the old plain-int form could not express "disable this trigger",
 // because 0 meant "fall back to the built-in default".
 func TestEffectiveCompression_ZeroIsNotUnset(t *testing.T) {
-	defaults := &CompressionConfig{Trigger: &CompressionTriggerConfig{Days: intPtr(7)}}
+	defaults := &CompressionConfig{Trigger: &CompressionTriggerConfig{Days: new(7)}}
 	agent := &AgentConfig{Compression: &CompressionConfig{
-		Trigger: &CompressionTriggerConfig{Days: intPtr(0)},
+		Trigger: &CompressionTriggerConfig{Days: new(0)},
 	}}
 
 	got := agent.EffectiveCompression(defaults)
@@ -67,10 +64,10 @@ func TestEffectiveCompression_NilInputs(t *testing.T) {
 // instance to built-in defaults on its next restart.
 func TestMigrateCompression_FoldsLegacyKeys(t *testing.T) {
 	cfg := &Config{}
-	cfg.Agents.Defaults.CompressMinPercent = intPtr(25)
-	cfg.Agents.Defaults.CompressRetainTokenPercent = intPtr(8)
-	cfg.Agents.Defaults.CompressCharsPerToken = floatPtr(3.5)
-	cfg.Agents.List = []AgentConfig{{ID: "alice", CompressMessageThreshold: intPtr(50)}}
+	cfg.Agents.Defaults.CompressMinPercent = new(25)
+	cfg.Agents.Defaults.CompressRetainTokenPercent = new(8)
+	cfg.Agents.Defaults.CompressCharsPerToken = new(3.5)
+	cfg.Agents.List = []AgentConfig{{ID: "alice", CompressMessageThreshold: new(50)}}
 
 	cfg.migrateCompressionConfigs()
 
@@ -101,9 +98,9 @@ func TestMigrateCompression_FoldsLegacyKeys(t *testing.T) {
 // a stale legacy key left in the file.
 func TestMigrateCompression_NestedValueWins(t *testing.T) {
 	cfg := &Config{}
-	cfg.Agents.Defaults.CompressMinPercent = intPtr(25)
+	cfg.Agents.Defaults.CompressMinPercent = new(25)
 	cfg.Agents.Defaults.Compression = &CompressionConfig{
-		Trigger: &CompressionTriggerConfig{MinPercent: intPtr(35)},
+		Trigger: &CompressionTriggerConfig{MinPercent: new(35)},
 	}
 
 	cfg.migrateCompressionConfigs()

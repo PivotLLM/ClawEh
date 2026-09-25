@@ -24,8 +24,12 @@ func TestRollLogFile(t *testing.T) {
 
 	// Force a known mtime so the archive name is deterministic.
 	ts := time.Date(2026, 1, 2, 10, 0, 0, 0, time.Local) //nolint:gosmopolitan // logs roll on the local calendar day by design
-	_ = os.Chtimes(logPath, ts, ts)
-	_ = os.Chtimes(filepath.Join(dir, "error.log"), ts, ts)
+	if err := os.Chtimes(logPath, ts, ts); err != nil {
+		t.Fatalf("chtimes claw.log: %v", err)
+	}
+	if err := os.Chtimes(filepath.Join(dir, "error.log"), ts, ts); err != nil {
+		t.Fatalf("chtimes error.log: %v", err)
+	}
 
 	if err := RollLogFile(); err != nil {
 		t.Fatalf("RollLogFile: %v", err)
@@ -42,8 +46,8 @@ func TestRollLogFile(t *testing.T) {
 	}
 
 	// The warning is in both claw and error archives; the info only in claw.
-	clawData, _ := os.ReadFile(clawArchive)
-	errData, _ := os.ReadFile(errArchive)
+	clawData := mustReadFile(t, clawArchive)
+	errData := mustReadFile(t, errArchive)
 	if !strings.Contains(string(clawData), "an info line") {
 		t.Fatalf("claw archive missing info line: %q", clawData)
 	}
@@ -56,7 +60,7 @@ func TestRollLogFile(t *testing.T) {
 
 	// Fresh active files are reopened and receive new writes.
 	WarnCF("test", "after the roll", nil)
-	freshErr, _ := os.ReadFile(filepath.Join(dir, "error.log"))
+	freshErr := mustReadFile(t, filepath.Join(dir, "error.log"))
 	if !strings.Contains(string(freshErr), "after the roll") {
 		t.Fatalf("reopened error.log missing post-roll line: %q", freshErr)
 	}
@@ -93,12 +97,22 @@ func TestFatalWritesToAllSinksBeforeExit(t *testing.T) {
 	if exitCode != 1 {
 		t.Fatalf("expected exit code 1, got %d", exitCode)
 	}
-	clawData, _ := os.ReadFile(logPath)
-	errData, _ := os.ReadFile(filepath.Join(dir, "error.log"))
+	clawData := mustReadFile(t, logPath)
+	errData := mustReadFile(t, filepath.Join(dir, "error.log"))
 	if !strings.Contains(string(clawData), "fatal boom") {
 		t.Fatalf("claw.log missing fatal line: %q", clawData)
 	}
 	if !strings.Contains(string(errData), "fatal boom") {
 		t.Fatalf("error.log missing fatal line: %q", errData)
 	}
+}
+
+// mustReadFile reads path or fails the test.
+func mustReadFile(t *testing.T, path string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return data
 }

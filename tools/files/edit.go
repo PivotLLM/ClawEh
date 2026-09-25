@@ -106,7 +106,7 @@ func (t *EditFileTool) Execute(ctx context.Context, args map[string]any) *tools.
 	if err := t.sysFs.WriteFile(path, newContent); err != nil {
 		return tools.ErrorResult(err.Error())
 	}
-	forLLM := fmt.Sprintf("File edited: %s", path)
+	forLLM := "File edited: " + path
 	if getBoolArg(args, "display", false) {
 		return &tools.ToolResult{
 			ForLLM:  forLLM,
@@ -190,7 +190,7 @@ func (t *AppendFileTool) Execute(ctx context.Context, args map[string]any) *tool
 	if err := appendFile(t.sysFs, path, content); err != nil {
 		return tools.ErrorResult(err.Error())
 	}
-	forLLM := fmt.Sprintf("Appended to %s", path)
+	forLLM := "Appended to " + path
 	if getBoolArg(args, "display", false) {
 		return &tools.ToolResult{
 			ForLLM:  forLLM,
@@ -216,7 +216,7 @@ func replaceEditContent(content []byte, oldText, newText string) ([]byte, error)
 	contentStr := string(content)
 
 	if !strings.Contains(contentStr, oldText) {
-		return nil, fmt.Errorf("old_text not found — it must match the file exactly, including whitespace and indentation. " +
+		return nil, errors.New("old_text not found — it must match the file exactly, including whitespace and indentation. " +
 			"If you have the line numbers from file_read_lines, use file_edit_lines(path, start[, end], replace) instead")
 	}
 

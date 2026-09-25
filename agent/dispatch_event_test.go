@@ -16,7 +16,7 @@ import (
 func readLogRecords(t *testing.T, buf *bytes.Buffer) []map[string]any {
 	t.Helper()
 	var out []map[string]any
-	for _, line := range strings.Split(buf.String(), "\n") {
+	for line := range strings.SplitSeq(buf.String(), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
@@ -77,19 +77,19 @@ func TestEmitLLMFinishEvent_SuccessPath_UsesProviderStatus(t *testing.T) {
 	if finish["model"] != "claude-haiku-4-5-20251001" {
 		t.Errorf("model = %v, want claude-haiku-4-5-20251001", finish["model"])
 	}
-	if v, _ := finish["success"].(bool); !v {
+	if v, ok := finish["success"].(bool); !ok || !v {
 		t.Errorf("success = %v, want true", finish["success"])
 	}
-	if v, _ := finish["input_tokens"].(float64); v != 12 {
+	if v, ok := finish["input_tokens"].(float64); !ok || v != 12 {
 		t.Errorf("input_tokens = %v, want 12", finish["input_tokens"])
 	}
-	if v, _ := finish["cache_creation_tokens"].(float64); v != 100 {
+	if v, ok := finish["cache_creation_tokens"].(float64); !ok || v != 100 {
 		t.Errorf("cache_creation_tokens = %v, want 100", finish["cache_creation_tokens"])
 	}
-	if v, _ := finish["bytes_sent"].(float64); v != 512 {
+	if v, ok := finish["bytes_sent"].(float64); !ok || v != 512 {
 		t.Errorf("bytes_sent = %v, want 512", finish["bytes_sent"])
 	}
-	if v, _ := finish["bytes_received"].(float64); v != 1024 {
+	if v, ok := finish["bytes_received"].(float64); !ok || v != 1024 {
 		t.Errorf("bytes_received = %v, want 1024", finish["bytes_received"])
 	}
 	if _, has := finish["error"]; has {
@@ -110,7 +110,7 @@ func TestEmitLLMFinishEvent_ErrorPathWithoutStatus_SynthesizesFallback(t *testin
 	if finish == nil {
 		t.Fatalf("expected LLM finish record, got %v", records)
 	}
-	if v, _ := finish["success"].(bool); v {
+	if v, ok := finish["success"].(bool); !ok || v {
 		t.Errorf("expected success=false, got %v", finish["success"])
 	}
 	if finish["model"] != "gpt-4o" {
@@ -148,10 +148,90 @@ func TestEmitLLMFinishEvent_ErrorPathWithPartialStatus_BytesPreserved(t *testing
 	if finish == nil {
 		t.Fatalf("expected LLM finish record, got %v", records)
 	}
-	if v, _ := finish["bytes_sent"].(float64); v != 200 {
+	if v, ok := finish["bytes_sent"].(float64); !ok || v != 200 {
 		t.Errorf("bytes_sent = %v, want 200 (best-effort byte counts preserved on error)", finish["bytes_sent"])
 	}
-	if v, _ := finish["bytes_received"].(float64); v != 0 {
+	if v, ok := finish["bytes_received"].(float64); !ok || v != 0 {
 		t.Errorf("bytes_received = %v, want 0", finish["bytes_received"])
+	}
+}
+
+// TestRunLLMIteration_EmitsDispatchAndFinishPerCall drives the real loop
+// through one LLM call and verifies it logs exactly one "LLM dispatch" and one
+// "LLM finish" event, with the finish carrying the provider's DispatchStatus.
+func TestRunLLMIteration_EmitsDispatchAndFinishPerCall(t *testing.T) {
+	al := newTestAgentLoop(t).al
+
+	agent := al.registry.GetDefaultAgent()
+	if agent == nil {
+		t.Fatal("no default agent")
+	}
+	agent.Provider = &sequenceProvider{
+		responses: []*providers.LLMResponse{{
+			Content: "hi from Alice",
+			Status: &providers.DispatchStatus{
+				Success:       true,
+				Model:         "gpt-4o-2024-11-20",
+				InputTokens:   3,
+				OutputTokens:  2,
+				StopReason:    "stop",
+				BytesSent:     128,
+				BytesReceived: 256,
+			},
+		}},
+		errors: []error{nil},
+	}
+
+	messages := []providers.Message{{Role: "user", Content: "hi"}}
+	opts := processOptions{
+		SessionKey:   "dispatch-events",
+		Channel:      "cli",
+		ChatID:       "direct",
+		UserMessage:  "hi",
+		SendResponse: false,
+	}
+	cm, releaseTestCM := al.getContextManager(agent, opts.SessionKey)
+	defer releaseTestCM()
+
+	buf := &bytes.Buffer{}
+	restore := logger.RedirectForTest(buf)
+	defer restore()
+
+	it := runIteration(t, al, agent, messages, opts, cm)
+	if it.content != "hi from Alice" {
+		t.Errorf("content = %q, want the provider's answer", it.content)
+	}
+
+	var dispatches, finishes int
+	var finish map[string]any
+	for _, rec := range readLogRecords(t, buf) {
+		switch rec["message"] {
+		case "LLM dispatch":
+			dispatches++
+		case "LLM finish":
+			finishes++
+			finish = rec
+		}
+	}
+	if dispatches != 1 {
+		t.Errorf("dispatch count = %d, want 1", dispatches)
+	}
+	if finishes != 1 {
+		t.Errorf("finish count = %d, want 1", finishes)
+	}
+	if finish == nil {
+		t.Fatal("missing finish record")
+	}
+	if v, ok := finish["success"].(bool); !ok || !v {
+		t.Errorf("success = %v, want true", finish["success"])
+	}
+	if v, ok := finish["bytes_sent"].(float64); !ok || v != 128 {
+		t.Errorf("bytes_sent = %v, want 128", finish["bytes_sent"])
+	}
+	if v, ok := finish["bytes_received"].(float64); !ok || v != 256 {
+		t.Errorf("bytes_received = %v, want 256", finish["bytes_received"])
+	}
+	if finish["model"] != "gpt-4o-2024-11-20" {
+		t.Errorf("model = %v, want gpt-4o-2024-11-20", finish["model"])
 	}
 }

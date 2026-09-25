@@ -83,6 +83,45 @@ export function splitCsv(s: string): string[] {
     .filter(Boolean)
 }
 
+// MCPAccessServer is one row of the MCP access checkbox list.
+export interface MCPAccessServer {
+  name: string
+  checked: boolean
+  // configured is false for an entry that names no configured server (a
+  // server since removed, or a hand-typed entry from before the checkbox
+  // list); it is shown checked and flagged so it can be removed.
+  configured: boolean
+}
+
+// mcpAccessView turns an agent's mcp_tools entries into checkbox rows: one
+// per configured server (checked when an entry matches it, case-insensitively)
+// followed by one flagged row per entry that matches no configured server.
+// Access is per server; there is no finer grant.
+export function mcpAccessView(
+  entries: string[],
+  serverNames: string[],
+): MCPAccessServer[] {
+  const norm = (s: string) => s.trim().toLowerCase()
+  const rows: MCPAccessServer[] = serverNames.map((name) => ({
+    name,
+    checked: entries.some((e) => norm(e) === norm(name)),
+    configured: true,
+  }))
+  for (const raw of entries) {
+    const e = raw.trim()
+    if (e && !serverNames.some((n) => norm(n) === norm(e))) {
+      rows.push({ name: e, checked: true, configured: false })
+    }
+  }
+  return rows
+}
+
+// mcpAccessEntries is the inverse of mcpAccessView: the mcp_tools list for
+// the checked rows.
+export function mcpAccessEntries(rows: MCPAccessServer[]): string[] {
+  return rows.filter((s) => s.checked).map((s) => s.name)
+}
+
 // settingsCardClass groups a set of agent settings into one bordered card.
 export const settingsCardClass =
   "border-border/60 bg-card rounded-xl border p-4 space-y-5"

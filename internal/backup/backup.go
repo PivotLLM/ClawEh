@@ -34,7 +34,7 @@ func Run(destRoot string, now time.Time, sources map[string]string) (string, int
 	stamp := now.Format(stampLayout)
 	copied := 0
 	for src, name := range sources {
-		data, err := os.ReadFile(src)
+		data, err := os.ReadFile(src) //nolint:gosec // sources are the config.json and jobs.json paths from config (RunForConfig)
 		if err != nil {
 			if os.IsNotExist(err) {
 				continue // nothing to back up for this file yet
@@ -42,7 +42,7 @@ func Run(destRoot string, now time.Time, sources map[string]string) (string, int
 			return day, copied, fmt.Errorf("backup: read %s: %w", src, err)
 		}
 		dest := filepath.Join(day, name+"."+stamp)
-		if err := os.WriteFile(dest, data, 0o600); err != nil {
+		if err := os.WriteFile(dest, data, 0o600); err != nil { //nolint:gosec // dest name is a fixed literal from RunForConfig
 			return day, copied, fmt.Errorf("backup: write %s: %w", dest, err)
 		}
 		copied++

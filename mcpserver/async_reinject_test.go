@@ -30,7 +30,7 @@ func TestPublishMCPAsyncToLLM_ReinjectsCompletion(t *testing.T) {
 	// give the consumer a moment to subscribe
 	time.Sleep(20 * time.Millisecond)
 
-	publishMCPAsyncToLLM(msgBus, rec, "agent_spawn",
+	publishMCPAsyncToLLM(context.Background(), msgBus, rec, "agent_spawn",
 		&tools.ToolResult{ForLLM: `{"event":"completed","uuid":"abc"}`})
 
 	select {
@@ -73,7 +73,7 @@ func TestPublishMCPAsyncToLLM_DropsWithoutChannel(t *testing.T) {
 	}()
 	time.Sleep(20 * time.Millisecond)
 
-	publishMCPAsyncToLLM(msgBus, rec, "agent_spawn", &tools.ToolResult{ForLLM: "x"})
+	publishMCPAsyncToLLM(context.Background(), msgBus, rec, "agent_spawn", &tools.ToolResult{ForLLM: "x"})
 
 	select {
 	case <-published:

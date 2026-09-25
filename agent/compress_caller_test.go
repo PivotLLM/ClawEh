@@ -117,7 +117,7 @@ func TestCompressModelCaller_JSONObjectForwarded(t *testing.T) {
 	if _, err := c.Complete(context.Background(), ctxengine.ModelRequest{}); err != nil {
 		t.Fatal(err)
 	}
-	if v, _ := p.calls[0].opts[openai_compat.ResponseFormatJSONObjectOption].(bool); !v {
+	if v, ok := p.calls[0].opts[openai_compat.ResponseFormatJSONObjectOption].(bool); !ok || !v {
 		t.Errorf("JSONObject request did not set the response-format option: %v", p.calls[0].opts)
 	}
 	if p.calls[1].opts != nil {
@@ -201,8 +201,7 @@ func (s *issuingSTI) Issue(_, _, _ string) string {
 // context manager is created lands in the dispatch layers, and a reissue
 // (session clear) replaces it in place.
 func TestSessionToken_IssuedAndReissuedOnEntry(t *testing.T) {
-	al, _, _, _, cleanup := newTestAgentLoop(t)
-	defer cleanup()
+	al := newTestAgentLoop(t).al
 	agent := al.registry.GetDefaultAgent()
 	if agent == nil {
 		t.Fatal("no default agent")

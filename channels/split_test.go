@@ -34,6 +34,7 @@ func TestSplitMessage(t *testing.T) {
 			maxLen:       2000,
 			expectChunks: 2,
 			checkContent: func(t *testing.T, chunks []string) {
+				t.Helper()
 				if len([]rune(chunks[0])) > 2000 {
 					t.Errorf("Chunk 0 too large: %d runes", len([]rune(chunks[0])))
 				}
@@ -57,6 +58,7 @@ func TestSplitMessage(t *testing.T) {
 			maxLen:       2000,
 			expectChunks: 2,
 			checkContent: func(t *testing.T, chunks []string) {
+				t.Helper()
 				if len([]rune(chunks[0])) != 1750 {
 					t.Errorf("Expected chunk 0 to be 1750 runes (split at newline), got %d", len([]rune(chunks[0])))
 				}
@@ -71,6 +73,7 @@ func TestSplitMessage(t *testing.T) {
 			maxLen:       2000,
 			expectChunks: 2,
 			checkContent: func(t *testing.T, chunks []string) {
+				t.Helper()
 				// Check that first chunk ends with closing fence
 				if !strings.HasSuffix(chunks[0], "\n```") {
 					t.Error("First chunk should end with injected closing fence")
@@ -87,6 +90,7 @@ func TestSplitMessage(t *testing.T) {
 			maxLen:       2000,
 			expectChunks: 2,
 			checkContent: func(t *testing.T, chunks []string) {
+				t.Helper()
 				// Verify chunks contain valid unicode and don't split mid-rune
 				for i, chunk := range chunks {
 					runeCount := len([]rune(chunk))
@@ -113,6 +117,7 @@ func TestSplitMessage(t *testing.T) {
 			maxLen:       0,
 			expectChunks: 1,
 			checkContent: func(t *testing.T, chunks []string) {
+				t.Helper()
 				if chunks[0] != "Hello world" {
 					t.Errorf("Expected original content, got %q", chunks[0])
 				}

@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 const modelProbeTimeout = 800 * time.Millisecond
@@ -115,7 +117,7 @@ func probeTCPService(raw string) bool {
 	if err != nil {
 		return false
 	}
-	_ = conn.Close()
+	utils.CloseQuietly(conn)
 	return true
 }
 
@@ -176,7 +178,7 @@ func getJSON(rawURL string, out any) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { utils.CloseQuietly(resp.Body) }()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("unexpected status %d", resp.StatusCode)
@@ -213,7 +215,7 @@ func hostPortFromAPIBase(raw string) (string, error) {
 func parseAPIBase(raw string) (*url.URL, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return nil, fmt.Errorf("empty api base")
+		return nil, errors.New("empty api base")
 	}
 
 	u, err := url.Parse(raw)

@@ -34,7 +34,7 @@ func osName() string {
 // prettyName reads PRETTY_NAME out of an os-release file. Values may be quoted;
 // anything unreadable or absent yields "".
 func prettyName(path string) string {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) //nolint:gosec // osReleasePath is a constant
 	if err != nil {
 		return ""
 	}
