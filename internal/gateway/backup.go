@@ -44,7 +44,6 @@ func startBackupScheduler(getConfig func() *config.Config, configPath string, a 
 				if err != nil {
 					logger.ErrorCF("backup", "nightly backup failed", map[string]any{"error": err.Error()})
 					a.Send(alerter.Alert{
-						High:        true,
 						Title:       "Nightly backup failed",
 						Description: "the configuration backup did not run; nothing retries before tomorrow",
 						Details:     err.Error(),

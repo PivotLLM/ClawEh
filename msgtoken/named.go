@@ -446,10 +446,9 @@ func (s *NamedStore) saveLocked() error {
 }
 
 // alertTokenStoreNotWritten reports a message-token store that could not be
-// saved. High: a revocation that does not reach disk is a security problem.
+// saved: a revocation that does not reach disk is a security problem.
 func alertTokenStoreNotWritten(path, agentID, consequence string, err error) {
 	alerts.Send(alerter.Alert{
-		High:        true,
 		Title:       "Message-token store not written",
 		Description: path + " (agent " + agentID + "): " + consequence,
 		Details:     err.Error(),

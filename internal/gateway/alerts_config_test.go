@@ -31,7 +31,7 @@ func (r *alertRecorder) Close(context.Context) error    { return nil }
 func TestAlertConfigFileInvalid(t *testing.T) {
 	rec := &alertRecorder{}
 	alertConfigFileInvalid(rec, "/tmp/config.json", errors.New("bad json"))
-	if len(rec.alerts) != 1 || !rec.alerts[0].High || rec.alerts[0].EventID != "config" ||
+	if len(rec.alerts) != 1 || rec.alerts[0].High || rec.alerts[0].EventID != "config" ||
 		rec.alerts[0].Title != "Config file invalid" || rec.alerts[0].Details != "bad json" {
 		t.Fatalf("got %+v", rec.alerts)
 	}

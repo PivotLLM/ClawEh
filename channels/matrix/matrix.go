@@ -258,7 +258,6 @@ func (c *MatrixChannel) Start(ctx context.Context) error {
 				"error": err.Error(),
 			})
 			c.Alert(alerter.Alert{
-				High:        true,
 				Title:       "Channel receive loop stopped",
 				Description: c.Name() + ": Matrix sync stopped (a revoked access token stops it for good); no messages are received until the gateway is restarted",
 				Details:     err.Error(),

@@ -271,7 +271,6 @@ func (al *AgentLoop) runAgentLoop(
 			logger.WarnCF("agent", "Failed to save session",
 				map[string]any{"error": err.Error(), "session": opts.SessionKey})
 			al.Alerter().Send(alerter.Alert{
-				High:        true,
 				Title:       "Session not saved",
 				Description: "conversation history is being lost (disk full or unwritable?)",
 				Details:     err.Error(),

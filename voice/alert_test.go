@@ -87,7 +87,7 @@ func TestTranscribe_AlertsOnRejection(t *testing.T) {
 					t.Fatalf("status %d must alert once, got %+v", status, rec.alerts)
 				}
 				a := rec.alerts[0]
-				if !a.High || a.Title != "Voice transcription rejected" || a.EventID != "voice:"+provider {
+				if a.High || a.Title != "Voice transcription rejected" || a.EventID != "voice:"+provider {
 					t.Fatalf("status %d: want high alert keyed by provider, got %+v", status, a)
 				}
 				if !strings.HasPrefix(a.Description, provider+": status ") {

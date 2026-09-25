@@ -147,7 +147,6 @@ func isNilRunner(sr global.SyncRunner) bool {
 // up; it has them enabled and gets none. Repeats per agent collapse.
 func alertMaestroDisabled(agentID, base string, err error) {
 	alerts.Send(alerter.Alert{
-		High:        true,
 		Title:       "Maestro tools disabled",
 		Description: "agent " + agentID + ": " + base + " could not be prepared, so the agent has no Maestro tools",
 		Details:     err.Error(),

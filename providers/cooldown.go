@@ -192,8 +192,8 @@ func (ct *CooldownTracker) SetAlerter(a alerter.Alerter) {
 
 // alert tells the operator when a model is parked. An authentication or
 // billing failure (a CLI logged out, a key revoked, credit exhausted) is
-// reported at once and high, because no retry fixes it. Anything else is
-// reported low, and only once the escalation has settled into the category
+// reported at once, because no retry fixes it. Anything else is reported
+// only once the escalation has settled into the category
 // cooldown, so a single transient error pages nobody. Repeats for the same
 // model collapse in the alerter. Called with ct.mu held; Send does not block.
 func (ct *CooldownTracker) alert(provider, model string, reason FailoverReason, status, failures int, cooldown time.Duration) {
@@ -205,7 +205,7 @@ func (ct *CooldownTracker) alert(provider, model string, reason FailoverReason, 
 		id, cooldown.Round(time.Second), failures, reason, status)
 	switch {
 	case reason == FailoverAuth || reason == FailoverBilling:
-		ct.alerter.Send(alerter.Alert{High: true, Title: "Model authentication or billing failure", Description: desc, EventID: id})
+		ct.alerter.Send(alerter.Alert{Title: "Model authentication or billing failure", Description: desc, EventID: id})
 	case failures > len(cooldownEscalation):
 		ct.alerter.Send(alerter.Alert{Title: "Model parked after repeated failures", Description: desc, EventID: id})
 	}

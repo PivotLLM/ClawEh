@@ -50,7 +50,6 @@ func Migrate(agentID, workspace string) {
 		logger.ErrorCF("cogmem", "Failed to migrate cognitive-memory database",
 			map[string]any{"agent": agentID, "path": r.Path, "error": r.Err.Error()})
 		alerts.Send(alerter.Alert{
-			High:        true,
 			Title:       "Cognitive memory migration failed",
 			Description: "agent " + agentID + ": " + r.Path + " was not migrated, so this agent's memory is unavailable or stale",
 			Details:     r.Err.Error(),

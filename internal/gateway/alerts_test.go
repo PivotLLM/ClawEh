@@ -22,6 +22,14 @@ func TestShortHostname(t *testing.T) {
 // TestNewAlerter: alerts land in <base>/logs/alerts.log by default; ALERTER_LOG
 // takes over when set; an unwritable default disables alerting quietly.
 func TestNewAlerter(t *testing.T) {
+	// Hermetic: no ~/.alerter from the developer's home, no ALERTER_* channel
+	// from the shell, so nothing is delivered anywhere but the log.
+	t.Setenv("HOME", t.TempDir())
+	for _, kv := range os.Environ() {
+		if k, _, ok := strings.Cut(kv, "="); ok && strings.HasPrefix(k, "ALERTER_") {
+			t.Setenv(k, "")
+		}
+	}
 	t.Setenv(alerter.EnvLogFile, "")
 	base := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(base, "logs"), 0o755); err != nil {
@@ -31,12 +39,12 @@ func TestNewAlerter(t *testing.T) {
 	if path != filepath.Join(base, "logs", alertsFileName) {
 		t.Errorf("path = %q", path)
 	}
-	a.High("test", "default path")
+	a.Low("test", "default path")
 	if err := a.Close(t.Context()); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
 	b, err := os.ReadFile(path)
-	if err != nil || !strings.Contains(string(b), "HIGH ClawEh") {
+	if err != nil || !strings.Contains(string(b), " LOW ") || !strings.Contains(string(b), "ClawEh@") {
 		t.Errorf("alerts file = %q, err = %v", b, err)
 	}
 

@@ -204,7 +204,6 @@ func NewAgentLoop(
 		logger.WarnCF("message", "Failed to load named message-token store, starting empty",
 			map[string]any{"error": err.Error()})
 		alerts.Send(alerter.Alert{
-			High:        true,
 			Title:       "Named message-token store unreadable",
 			Description: namedTokenPath + ": named tokens do not work, and the next change overwrites the file",
 			Details:     err.Error(),

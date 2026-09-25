@@ -262,7 +262,6 @@ func gatewayCmd(debug bool) error {
 		if runErr := agentLoop.Run(ctx); runErr != nil {
 			logger.ErrorCF("agent", "Agent loop exited with error", map[string]any{"error": runErr.Error()})
 			agentLoop.Alerter().Send(alerter.Alert{
-				High:        true,
 				Title:       "Agent loop stopped",
 				Description: "no inbound messages are processed until the gateway is restarted",
 				Details:     runErr.Error(),
@@ -322,7 +321,6 @@ func gatewayCmd(debug bool) error {
 			if err != nil {
 				logger.Errorf("Config reload failed: %v", err)
 				agentLoop.Alerter().Send(alerter.Alert{
-					High:        true,
 					Title:       "Config reload failed",
 					Description: "the reload was aborted part way; check the gateway log, services may not all be running",
 					Details:     err.Error(),
@@ -687,7 +685,6 @@ func syncServiceTokensFromDisk(cfg *config.Config, agentLoop *agent.AgentLoop, s
 		logger.WarnCF("mcpserver", "failed to load service tokens; skipping",
 			map[string]any{"path": path, "error": err.Error()})
 		agentLoop.Alerter().Send(alerter.Alert{
-			High:        true,
 			Title:       "Service tokens not loaded",
 			Description: path + ": external MCP clients using `claw token` credentials are rejected (or keep the previously loaded set) until the file is fixed",
 			Details:     err.Error(),
@@ -1171,7 +1168,6 @@ func setupCronTool(
 	cronService.SetAlerter(agentLoop.Alerter())
 	if err := cronService.LoadError(); err != nil {
 		agentLoop.Alerter().Send(alerter.Alert{
-			High:        true,
 			Title:       "Cron store unreadable",
 			Description: cronStorePath + ": no scheduled jobs run, and the next save overwrites the file",
 			Details:     err.Error(),
@@ -1256,7 +1252,6 @@ func logAllowlist(allowedCIDRs []string, host string) {
 // this file, so it needs a person now.
 func alertConfigFileInvalid(a alerter.Alerter, configPath string, err error) {
 	a.Send(alerter.Alert{
-		High:        true,
 		Title:       "Config file invalid",
 		Description: configPath + " was not applied; the running configuration is unchanged, but a restart will fail on it",
 		Details:     err.Error(),

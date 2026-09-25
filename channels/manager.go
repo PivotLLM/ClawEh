@@ -477,7 +477,6 @@ func (m *Manager) resolveSecMsgAccounts(cfg config.SecMsgConfig) []config.SecMsg
 			"error":   err.Error(),
 		})
 		m.alert(alerter.Alert{
-			High:        true,
 			Title:       "SecMsg account discovery failed",
 			Description: "SecMsg (" + cfg.Name + ") at " + cfg.Address + ": no accounts bound until the next config reload",
 			Details:     err.Error(),
@@ -491,7 +490,6 @@ func (m *Manager) resolveSecMsgAccounts(cfg config.SecMsgConfig) []config.SecMsg
 			"address": cfg.Address,
 		})
 		m.alert(alerter.Alert{
-			High:        true,
 			Title:       "SecMsg has no linked accounts",
 			Description: "SecMsg (" + cfg.Name + "): link an account in the WebUI",
 			EventID:     "SecMsg (" + cfg.Name + ")",
@@ -678,7 +676,6 @@ func (m *Manager) retryChannelStart(dispatchCtx context.Context, name string, ch
 					"retries": startRetryMaxCount,
 				})
 				m.alert(alerter.Alert{
-					High:        true,
 					Title:       "Channel failed to start",
 					Description: name + " gave up after " + strconv.Itoa(startRetryMaxCount) + " retries",
 					Details:     err.Error(),

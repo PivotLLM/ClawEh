@@ -49,7 +49,7 @@ func TestPollFailureAlert(t *testing.T) {
 	log.Errorf("Execution error getUpdates: request call: internal server error: 401")
 	require.Len(t, rec.alerts, 1)
 	a := rec.alerts[0]
-	require.True(t, a.High)
+	require.False(t, a.High, "ClawEh alerts are normal priority")
 	require.Equal(t, "Telegram polling failed", a.Title)
 	require.Equal(t, "telegram-alice", a.EventID)
 	require.Equal(t, "telegram-alice: Execution error getUpdates: request call: internal server error: 401", a.Description)

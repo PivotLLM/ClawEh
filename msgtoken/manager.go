@@ -76,7 +76,6 @@ func NewManager(agentID, storePath string, windowMinutes, windowCount int) (*Man
 			logger.WarnCF("message", "Failed to parse message-token store, starting fresh",
 				map[string]any{"agent": agentID, "error": err.Error()})
 			alerts.Send(alerter.Alert{
-				High:        true,
 				Title:       "Message-token store unreadable",
 				Description: storePath + " (agent " + agentID + "): existing tokens are ignored and the next save overwrites the file",
 				Details:     err.Error(),

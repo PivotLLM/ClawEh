@@ -555,14 +555,16 @@ ClawEh raises an **alert** when something needs a person rather than a retry:
 a model parked because its CLI logged out or its key was revoked, a channel
 that gave up starting, an MCP server that cannot be reconnected, a scheduled
 job or config reload that failed. Alerts are produced by the
-[tenebris-tech/alerter](https://github.com/tenebris-tech/alerter) module,
-which is currently a stub that writes them to a file:
-`$CLAW_HOME/logs/alerts.log`, or the file named by the `ALERTER_LOG`
-environment variable. The web console's **Logs** page shows the alerts log
-when its source selector is set to **Alerts**, and `GET /api/gateway/alerts`
-returns it. Delivery methods (mail, push services) will be added to the
-module later; every alert ClawEh raises is listed in `ALERTS.md`, and the
-record format is in [docs/alerts.md](docs/alerts.md).
+[tenebris-tech/alerter](https://github.com/tenebris-tech/alerter) module.
+Every alert is written to `$CLAW_HOME/logs/alerts.log` (or the file named by
+the `ALERTER_LOG` environment variable), and delivered to any channel
+configured through `ALERTER_*` environment variables (Pushover, SMS, SMTP
+mail, a JSON webhook), set in the service environment or in `~/.alerter` for
+the user running ClawEh; see the module's README for the variables. The web
+console's **Logs** page shows the alerts log when its source selector is set
+to **Alerts**, and `GET /api/gateway/alerts` returns it. All ClawEh alerts
+are normal priority. Every alert is listed in `ALERTS.md`, and the record
+format is in [docs/alerts.md](docs/alerts.md).
 
 ## Configuration backup
 

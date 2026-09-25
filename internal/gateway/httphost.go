@@ -86,7 +86,6 @@ func (h *httpHost) Start() {
 			})
 			if h.alerter != nil {
 				h.alerter.Send(alerter.Alert{
-					High:        true,
 					Title:       "HTTP listener stopped",
 					Description: h.server.Addr + ": the WebUI, API, health endpoint and channel webhooks are down until the gateway is restarted",
 					Details:     err.Error(),

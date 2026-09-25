@@ -215,7 +215,6 @@ func (c *TelegramChannel) alertPollFailure(msg string) {
 		msg = string(r[:pollAlertMsgLimit]) + "..."
 	}
 	c.Alert(alerter.Alert{
-		High:        true,
 		Title:       "Telegram polling failed",
 		Description: c.Name() + ": " + msg,
 	})

@@ -368,7 +368,6 @@ func alertRejected(a alerter.Alerter, provider string, status int, body []byte) 
 		details = details[:200]
 	}
 	a.Send(alerter.Alert{
-		High:        true,
 		Title:       "Voice transcription rejected",
 		Description: fmt.Sprintf("%s: status %d; voice messages are not transcribed until the key or account is fixed", provider, status),
 		Details:     string(details),

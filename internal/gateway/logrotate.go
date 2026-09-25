@@ -54,7 +54,6 @@ func rollLogs(a alerter.Alerter) {
 	if err := logger.RollLogFile(); err != nil {
 		logger.WarnCF("gateway", "log rotation failed", map[string]any{"error": err.Error()})
 		a.Send(alerter.Alert{
-			High:        true,
 			Title:       "Log rotation failed",
 			Description: "file logging may be stopped until the gateway is restarted",
 			Details:     err.Error(),

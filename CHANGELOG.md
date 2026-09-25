@@ -45,8 +45,9 @@ observe does not need an entry.
   ten minutes are counted, not repeated. The Logs page shows the alerts log
   through its new source selector, and `GET /api/gateway/alerts` returns it.
   Every alert is listed in `ALERTS.md`; the record format is in
-  `docs/alerts.md`. The alerter module is a stub that only writes to a file;
-  delivery methods will be added to it later.
+  `docs/alerts.md`. Alerts are also delivered to any channel configured
+  through `ALERTER_*` environment variables or `~/.alerter` (Pushover, SMS,
+  SMTP mail, webhook). All ClawEh alerts are normal priority.
 
 ### Changed
 

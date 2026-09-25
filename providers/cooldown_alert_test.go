@@ -38,7 +38,7 @@ func (r *recorder) got() []alerter.Alert {
 	return append([]alerter.Alert(nil), r.alerts...)
 }
 
-// TestCooldown_AlertsAuthAtOnce: an auth failure alerts high on the first
+// TestCooldown_AlertsAuthAtOnce: an auth failure alerts on the first
 // failure, keyed by the model, because no retry fixes a logged-out CLI.
 func TestCooldown_AlertsAuthAtOnce(t *testing.T) {
 	ct := NewCooldownTracker()
@@ -47,16 +47,16 @@ func TestCooldown_AlertsAuthAtOnce(t *testing.T) {
 
 	mark(ct, "claude-cli", testModel, FailoverAuth)
 	got := rec.got()
-	if len(got) != 1 || !got[0].High || got[0].EventID != ModelKey("claude-cli", testModel) {
-		t.Fatalf("auth failure must alert high once with the model as event id, got %+v", got)
+	if len(got) != 1 || got[0].High || got[0].EventID != ModelKey("claude-cli", testModel) {
+		t.Fatalf("auth failure must alert once with the model as event id, got %+v", got)
 	}
 	mark(ct, "claude-cli", testModel, FailoverBilling)
-	if got := rec.got(); len(got) != 2 || !got[1].High {
-		t.Fatalf("billing failure must alert high, got %+v", got)
+	if got := rec.got(); len(got) != 2 || got[1].High {
+		t.Fatalf("billing failure must alert (normal priority), got %+v", got)
 	}
 }
 
-// TestCooldown_AlertsTransientOnlyWhenSettled: transient failures alert low,
+// TestCooldown_AlertsTransientOnlyWhenSettled: transient failures alert,
 // and only once the escalation steps are used up.
 func TestCooldown_AlertsTransientOnlyWhenSettled(t *testing.T) {
 	ct := NewCooldownTracker()

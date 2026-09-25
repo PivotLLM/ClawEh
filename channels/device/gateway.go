@@ -236,7 +236,6 @@ func (c *DeviceChannel) Start(ctx context.Context) error {
 		if serveErr := c.httpSrv.Serve(ln); serveErr != nil && serveErr != http.ErrServerClosed {
 			logger.ErrorCF("device", "Device gateway listener error", map[string]any{"error": serveErr.Error()})
 			c.Alert(alerter.Alert{
-				High:        true,
 				Title:       "Channel receive loop stopped",
 				Description: c.Name() + ": device gateway listener error; devices cannot connect until the gateway is restarted",
 				Details:     serveErr.Error(),
