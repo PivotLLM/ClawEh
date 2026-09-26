@@ -5,8 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mymmrac/telego"
-
 	"github.com/PivotLLM/ClawEh/channels"
 )
 
@@ -108,78 +106,5 @@ func TestStopIsIdempotent(t *testing.T) {
 		case <-time.After(1 * time.Second):
 			t.Fatalf("Stop() call %d hung", i+1)
 		}
-	}
-}
-
-// TestWatchLongPollDoneClosesOnSrcClose verifies the wrapping primitive:
-// done must not close until src is closed, regardless of ctx state.
-func TestWatchLongPollDoneClosesOnSrcClose(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	src := make(chan telego.Update)
-	_, done := watchLongPoll(ctx, src)
-
-	// done must not close yet
-	select {
-	case <-done:
-		t.Fatal("done closed before src closed")
-	case <-time.After(50 * time.Millisecond):
-	}
-
-	// Cancelling ctx alone must NOT close done — the doLongPolling
-	// goroutine may still be mid-getUpdates.
-	cancel()
-	select {
-	case <-done:
-		t.Fatal("done closed on ctx cancel — must wait for src close")
-	case <-time.After(50 * time.Millisecond):
-	}
-
-	// Closing src (simulating doLongPolling's defer) must close done.
-	close(src)
-	select {
-	case <-done:
-	case <-time.After(1 * time.Second):
-		t.Fatal("done did not close after src closed")
-	}
-}
-
-// TestWatchLongPollDrainsAfterCtxCancel verifies that once ctx is cancelled
-// and the downstream consumer has stopped reading, the relay drains src so
-// telego's doLongPolling can finish sending and close.
-func TestWatchLongPollDrainsAfterCtxCancel(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-
-	src := make(chan telego.Update)
-	_, done := watchLongPoll(ctx, src)
-
-	cancel()
-
-	// Producer can still push and then close — relay must drain, not block.
-	pushed := make(chan struct{})
-	go func() {
-		defer close(pushed)
-		for i := range 5 {
-			select {
-			case src <- telego.Update{UpdateID: i}:
-			case <-time.After(500 * time.Millisecond):
-				t.Errorf("producer blocked on src send %d — relay did not drain", i)
-				return
-			}
-		}
-		close(src)
-	}()
-
-	select {
-	case <-pushed:
-	case <-time.After(2 * time.Second):
-		t.Fatal("producer never finished")
-	}
-
-	select {
-	case <-done:
-	case <-time.After(1 * time.Second):
-		t.Fatal("done did not close after src closed")
 	}
 }

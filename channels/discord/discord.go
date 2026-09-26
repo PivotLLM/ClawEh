@@ -33,6 +33,10 @@ var (
 	// Pre-compiled regexes for resolveDiscordRefs (avoid re-compiling per call)
 	channelRefRe = regexp.MustCompile(`<#(\d+)>`)
 	msgLinkRe    = regexp.MustCompile(`https://(?:discord\.com|discordapp\.com)/channels/(\d+)/(\d+)/(\d+)`)
+
+	// errDisconnected is the outage cause for a gateway disconnect, which
+	// discordgo reports without an error.
+	errDisconnected = errors.New("discord gateway disconnected; discordgo is reconnecting")
 )
 
 type DiscordChannel struct {
@@ -91,6 +95,10 @@ func (c *DiscordChannel) Start(ctx context.Context) error {
 	c.botUserID = botUser.ID
 
 	c.session.AddHandler(c.handleMessage)
+	// discordgo reconnects the gateway itself, forever; these feed the outage
+	// tracker so a reconnect that keeps failing is alerted.
+	c.session.AddHandler(c.onConnect)
+	c.session.AddHandler(c.onDisconnect)
 
 	if err := c.session.Open(); err != nil {
 		return fmt.Errorf("failed to open discord session: %w", err)
@@ -104,6 +112,12 @@ func (c *DiscordChannel) Start(ctx context.Context) error {
 	})
 
 	return nil
+}
+
+func (c *DiscordChannel) onConnect(*discordgo.Session, *discordgo.Connect) { c.ReportConnected() }
+
+func (c *DiscordChannel) onDisconnect(*discordgo.Session, *discordgo.Disconnect) {
+	c.ReportConnFailure(errDisconnected)
 }
 
 func (c *DiscordChannel) Stop(ctx context.Context) error {

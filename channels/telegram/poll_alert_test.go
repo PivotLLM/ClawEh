@@ -8,7 +8,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	ta "github.com/mymmrac/telego/telegoapi"
 	"github.com/stretchr/testify/require"
 	"github.com/tenebris-tech/alerter"
 
@@ -30,30 +32,23 @@ func (r *alertRecorder) Urgent(string, string, ...string)    {}
 func (r *alertRecorder) Emergency(string, string, ...string) {}
 func (r *alertRecorder) Close(context.Context) error         { return nil }
 
-// TestPollFailureAlert drives telego's own logger, as wired by the factory, and
-// checks a genuine fault alerts while a transient blip does not.
-func TestPollFailureAlert(t *testing.T) {
+// TestPollFailureAlert_ChannelName keys the rejected-token alert on the bot's
+// channel name, at normal priority, and is silent before an alerter is set.
+func TestPollFailureAlert_ChannelName(t *testing.T) {
 	ch, err := NewTelegramChannelFromConfig(config.TelegramBotConfig{ID: "alice", Token: testToken}, nil)
 	require.NoError(t, err)
-	log := ch.bot.Logger()
+	unauthorized := &ta.Error{ErrorCode: 401, Description: "Unauthorized"}
 
-	// Before an alerter is injected the hook must be a silent no-op.
-	log.Errorf("Execution error getUpdates: request call: internal server error: 401")
+	ch.pollFailed(unauthorized, time.Minute) // no alerter yet: a no-op
 
 	rec := &alertRecorder{}
 	ch.SetAlerter(rec)
-
-	log.Errorf("Execution error getUpdates: request call: internal server error: 502")
-	log.Errorf("Retrying getting updates in 2s...")
-	require.Empty(t, rec.alerts, "transient poll errors must not alert")
-
-	log.Errorf("Execution error getUpdates: request call: internal server error: 401")
+	ch.pollFailed(unauthorized, time.Minute)
 	require.Len(t, rec.alerts, 1)
 	a := rec.alerts[0]
-	require.False(t, a.Priority != alerter.Normal, "ClawEh alerts are normal priority")
-	require.Equal(t, "Telegram polling failed", a.Title)
+	require.Equal(t, alerter.Normal, a.Priority, "ClawEh alerts are normal priority")
 	require.Equal(t, "telegram-alice", a.EventID)
-	require.Equal(t, "telegram-alice: Execution error getUpdates: request call: internal server error: 401", a.Description)
+	require.Equal(t, `telegram-alice: 401 "Unauthorized"`, a.Description)
 }
 
 // TestAlertPollFailure_TrimsLongMessage keeps the description bounded.

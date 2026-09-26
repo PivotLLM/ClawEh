@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
 	"sync"
@@ -86,28 +87,65 @@ func (c *SlackChannel) Start(ctx context.Context) error {
 	})
 
 	go c.eventLoop()
-
-	go func() {
-		// RunContext loops until it fails, so it never returns nil; the guard is
-		// kept so this still reads correctly if that ever changes upstream.
-		//nolint:staticcheck // SA4023: comparison is always true today, by design
-		if err := c.socketClient.RunContext(c.ctx); err != nil {
-			if c.ctx.Err() == nil {
-				logger.ErrorCF("slack", "Socket Mode connection error", map[string]any{
-					"error": err.Error(),
-				})
-				c.Alert(alerter.Alert{
-					Title:       "Channel receive loop stopped",
-					Description: c.Name() + ": Socket Mode connection error; the channel no longer receives messages until the gateway is restarted",
-					Details:     err.Error(),
-				})
-			}
-		}
-	}()
+	go c.runSocket()
 
 	c.SetRunning(true)
 	logger.InfoC("slack", "Slack channel started (Socket Mode)")
 	return nil
+}
+
+// runSocket keeps Socket Mode connected until the channel stops. slack-go
+// retries a failing connect itself, but RunContext returns when an established
+// connection drops or the token is rejected and leaves retrying that to the
+// caller, so it is re-run here with backoff. A rejected token cannot be fixed
+// by retrying: it alerts at once, and the loop keeps retrying at its slowest
+// rate in case the token is restored.
+func (c *SlackChannel) runSocket() {
+	var backoff time.Duration
+	for {
+		// RunContext only ever returns an error.
+		err := c.socketClient.RunContext(c.ctx)
+		if c.ctx.Err() != nil {
+			return
+		}
+		if isSlackAuthError(err) {
+			backoff = channels.ConnRetryMax
+			logger.ErrorCF("slack", "Slack rejected the app token", map[string]any{
+				"error": err.Error(),
+			})
+			c.Alert(alerter.Alert{
+				Title:       "Channel credentials rejected",
+				Description: c.Name() + ": Slack rejected the app token; no messages are received until it is replaced",
+				Details:     err.Error(),
+			})
+		} else {
+			if c.ConnDownSince().IsZero() {
+				backoff = 0 // it was working until now: retry fast
+			}
+			backoff = channels.NextConnRetry(backoff)
+			c.ReportConnFailure(err)
+			logger.WarnCF("slack", "Socket Mode connection lost; reconnecting", map[string]any{
+				"error": err.Error(),
+				"retry": backoff.String(),
+			})
+		}
+		select {
+		case <-c.ctx.Done():
+			return
+		case <-time.After(backoff):
+		}
+	}
+}
+
+// isSlackAuthError reports whether a Socket Mode connect failed because Slack
+// rejected the token — the errors slack-go itself treats as fatal.
+func isSlackAuthError(err error) bool {
+	switch err.Error() {
+	case "invalid_auth", "account_inactive", "not_authed", "token_revoked":
+		return true
+	}
+	var status slack.StatusCodeError
+	return errors.As(err, &status) && status.Code == http.StatusNotFound
 }
 
 // resolveDisplayName fetches the human-readable display name for a Slack user
@@ -328,6 +366,14 @@ func (c *SlackChannel) eventLoop() {
 				return
 			}
 			switch event.Type { //nolint:exhaustive // only the event types this channel acts on
+			case socketmode.EventTypeConnected:
+				c.ReportConnected()
+			case socketmode.EventTypeConnectionError:
+				var err error
+				if ev, ok := event.Data.(*slack.ConnectionErrorEvent); ok {
+					err = ev.ErrorObj
+				}
+				c.ReportConnFailure(err)
 			case socketmode.EventTypeEventsAPI:
 				c.handleEventsAPI(event)
 			case socketmode.EventTypeSlashCommand:

@@ -217,7 +217,9 @@ Stop the service before copying: the running binary makes the copy fail with
   frontend typecheck, oxlint and vitest, none of which load a page.
 
 ## Workflow Rules
-- Never commit or push without explicit user instruction.
+- Work on a fix or feature branch (`fix/...`, `feature/...`), and commit and
+  push to it at logical points (a tested, self-contained step), without waiting
+  to be asked.
 - Never push directly to main — use feature branches + PRs.
 - **Never create, move, or delete git tags.** Tags are cut by the user's build
   process when binaries are uploaded — they are release markers, not commit

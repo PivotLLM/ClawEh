@@ -50,8 +50,10 @@ The full list, with comments, is in `ALERTS.md` at the repository root.
 | | Agent loop stopped | The agent loop returned an error | `agent-loop` |
 | | Channel failed to start | A channel exhausted its start retries | channel name |
 | | Channel send failed | An outbound message was dropped after its send retries | channel name |
-| | Channel receive loop stopped | Slack, Matrix or the device gateway stopped receiving while still reporting running | channel name |
-| | Telegram polling failed | The long poll fails with 401 (token revoked) or 409 (another poller) | channel name |
+| | Channel receive loop stopped | The device gateway listener failed while the channel still reports running | channel name |
+| | Channel connection down | A channel has had no working connection for ten minutes despite retrying (`ConnDownAlertAfter`, `channels/tuning.go`) | channel name |
+| | Channel credentials rejected | Slack or Matrix rejected the channel's token | channel name |
+| | Telegram polling failed | Telegram rejected the bot token (401) | channel name |
 | | SecMsg account discovery failed | The SecMsg daemon could not be queried; no accounts bound until the next reload | `SecMsg (<name>)` |
 | | SecMsg has no linked accounts | The daemon has no account to bind | `SecMsg (<name>)` |
 | | Scheduled job failed | A cron job's handler returned an error, or the job could not be delivered | job id |
