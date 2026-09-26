@@ -32,6 +32,11 @@ The alerter has three levels: Normal, Urgent and Emergency. Every ClawEh
 alert is **Normal**. Urgent and Emergency are for something that must reach
 a person now, at any hour; how each level is delivered (for example the
 Pushover priority) is the operator's choice in the `ALERTER_*` variables.
+Each channel can also be limited to a minimum level with
+`ALERTER_PUSHOVER_MIN_PRI`, `ALERTER_SMS_MIN_PRI`, `ALERTER_SMTP_MIN_PRI` and
+`ALERTER_WEBHOOK_MIN_PRI` (0 Normal, 1 Urgent, 2 Emergency): an SMS channel set
+to `1` receives nothing from ClawEh today, since every alert is Normal — the
+alerts log and any channel left at `0` still record them.
 No ClawEh alert qualifies today, so the Priority column in `ALERTS.md` is
 blank throughout; an alert promoted later gets `*` (Urgent) or `**`
 (Emergency) there.

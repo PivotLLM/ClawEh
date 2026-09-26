@@ -715,6 +715,13 @@ observe does not need an entry.
 - WebUI login page is headed "ClawEh" and no longer says "Use the admin
   account created on the server".
 
+- Per-channel alert priority filters were ignored: ClawEh shipped
+  `tenebris-tech/alerter` v0.1.4, which predates the `ALERTER_<CHANNEL>_MIN_PRI`
+  variables, so an SMS (or Pushover, SMTP, webhook) channel set to receive only
+  higher-priority alerts still received every Normal alert. The alerter is now
+  v0.1.5 and the filters are honoured. Every ClawEh alert remains Normal
+  priority.
+
 ## [0.5.6]
 
 ### Changed
