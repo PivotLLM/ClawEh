@@ -904,6 +904,63 @@ To run Tier 2 against an already-running claw instance, set `SESSION_TOKEN` to t
 SESSION_TOKEN=SST... ./tests/test_mcpserver.sh
 ```
 
+## OpenRouter
+
+OpenRouter is reached through a provider entry with protocol `openai-chat` (or
+`openai-responses`) and base URL `https://openrouter.ai/api/v1`. Two things
+trip people up:
+
+- **The `model` field must be the full OpenRouter model id**, for example
+  `x-ai/grok-4.7`. Anything else comes back as
+  `400 "... is not a valid model ID"`. See `docs/troubleshooting.md` for the
+  `openrouter/free` case.
+- **Choosing which upstream endpoint serves the model is not part of the model
+  id.** OpenRouter takes that in a `provider` object in the request body. The
+  only model-id shorthands OpenRouter supports are the `:nitro` (sort by
+  throughput) and `:floor` (sort by price) suffixes. A form such as
+  `xai/zdr/grok-4.7` is not a model id and is rejected.
+
+ClawEh sends any keys in a model's `extra_body` verbatim at the top level of
+the request for the `openai-chat` and `openai-responses` protocols, so the
+`provider` block goes there. The WebUI exposes it as the "extra body" JSON
+field on the add and edit model sheets. For example, to pin Grok to xAI's
+zero-data-retention endpoint and refuse any other:
+
+```json
+{
+  "model_name": "OR Grok ZDR",
+  "model": "x-ai/grok-4.7",
+  "provider": "OpenRouter Chat",
+  "enabled": true,
+  "extra_body": {
+    "provider": {
+      "only": ["xai/zdr"],
+      "allow_fallbacks": false
+    }
+  }
+}
+```
+
+The entries in `only`, `order` and `ignore` are OpenRouter endpoint tags. The
+base tag (`xai`) matches every endpoint of that provider; a variant is written
+as `provider/variant` (for grok-4.7 the tags are `xai`, `xai/zdr`,
+`xai/priority` and `xai/zdr/priority`). To list the tags for a model:
+
+```bash
+curl -s https://openrouter.ai/api/v1/models/x-ai/grok-4.7/endpoints | jq '.data.endpoints[].tag'
+```
+
+`"provider": {"zdr": true}` is the provider-agnostic form: it routes only to
+endpoints with a zero-data-retention policy, whichever provider they belong
+to. Other `provider` fields (`order`, `require_parameters`, `data_collection`,
+`quantizations`, `sort`, `max_price`) are passed through the same way.
+
+`extra_body` keys that collide with fields ClawEh builds itself (`model`,
+`messages`, `tools`, `temperature`, `max_tokens` and so on) are rejected when
+the config loads. If you set `require_parameters: true`, pair it with
+`drop_params` for any parameter the endpoint does not advertise, such as
+`temperature` on some reasoning models, or the request is refused.
+
 ## Third-party integrations
 
 ClawEh takes a deliberately narrow approach to third-party integrations, incorporating those that add practical value. It includes the MPCFusion library, enabling configuration-defined tools, and provides solid MCP (Model Context Protocol) support, allowing users to connect the specific tools they want and trust. 
