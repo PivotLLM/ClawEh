@@ -75,6 +75,14 @@ func (c *BaseChannel) ReportConnFailure(err error) {
 	w.timer = time.AfterFunc(after, func() { c.connDownExpired(start, after) })
 }
 
+// ConnDownSince returns when the current connection outage began, or the zero
+// time while the connection works.
+func (c *BaseChannel) ConnDownSince() time.Time {
+	c.conn.mu.Lock()
+	defer c.conn.mu.Unlock()
+	return c.conn.downSince
+}
+
 // connDownExpired runs when an outage that began at start has lasted after.
 func (c *BaseChannel) connDownExpired(start time.Time, after time.Duration) {
 	w := &c.conn

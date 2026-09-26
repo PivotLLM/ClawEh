@@ -157,6 +157,7 @@ func (c *SecMsgChannel) run() {
 			return
 		}
 		if err != nil {
+			c.ReportConnFailure(err)
 			logger.WarnCF("secmsg", "Connection lost — retrying", map[string]any{
 				"channel": c.Name(),
 				"address": c.addr,
@@ -218,6 +219,7 @@ func (c *SecMsgChannel) connectAndConsume() (connected bool, err error) {
 		return false, fmt.Errorf("subscribe: %w", err)
 	}
 	defer cancel()
+	c.ReportConnected()
 
 	for {
 		select {
