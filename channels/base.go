@@ -110,6 +110,8 @@ type BaseChannel struct {
 	// the channel's receive goroutines.
 	alerterMu sync.RWMutex
 	alerter   alerter.Alerter
+	// conn tracks connection outages; see ReportConnFailure.
+	conn connWatch
 }
 
 func NewBaseChannel(
