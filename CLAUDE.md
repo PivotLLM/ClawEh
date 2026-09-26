@@ -116,6 +116,7 @@ ClawEh is an independent Go project forked from sipeed/picoclaw on 2026-03-20.
 - Env override constant: `global.EnvVarHome` = `CLAW_HOME`
 - Version/name/tagline/copyright: `app/app.go` (all unexported — read them through
   `app.Version()` / `app.SemVer()` / `app.Name()` / `app.TagLine()` / `app.Copyright()`).
+  The two release-signing public keys are `app/keys.go` (`app.ReleasePublicKeys()`).
 
 This is **not** a picoclaw fork for upstream PR purposes — it is an independent project.
 Upstream picoclaw docs are not carried in this repo.
@@ -138,7 +139,7 @@ make check-webui         # the browser suite against a running dev instance
 ```
 To build and deploy **production**: run `update-claw.sh` (on PATH). It builds the binary, stops the service, installs, and restarts. Do not run build/install commands directly for prod.
 
-**Release artefacts (cut by the user on macOS):** `SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) make build-all`, `make sbom`, then `make release-sign` (runs `release-checksums` first; signs with `~/.minisign/minisign.key`, or `MINISIGN_KEY=<path>`). Upload every `*.tar.gz`, `*.tar.gz.sha256`, `checksums.txt`, `checksums.txt.minisig` and `sbom.json`. `claw upgrade` refuses a release without a valid `checksums.txt.minisig`, verified against `releasePublicKeys` in `internal/upgrade/pubkey.go` (two slots, current and next, so a key can be rolled; the rotation steps are in that file) — with both slots empty `claw upgrade` refuses everything, so a key must be set before the first release that ships this code.
+**Release artefacts (cut by the user on macOS):** `SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) make build-all`, `make sbom`, then `make release-sign` (runs `release-checksums` first; signs with `~/.minisign/minisign.key`, or `MINISIGN_KEY=<path>`). Upload every `*.tar.gz`, `*.tar.gz.sha256`, `checksums.txt`, `checksums.txt.minisig` and `sbom.json`. `claw upgrade` refuses a release without a valid `checksums.txt.minisig`, verified against the two minisign public keys in `app/keys.go` (`app.ReleasePublicKeys()`: a current and a next key, so a key can be rolled; the rotation steps are in that file). Both slots are filled; the secret keys live in `~/.minisign` on the release machine.
 
 Systemd units: `claw-ai.service` is **production** — never build to, install to, or restart it directly; production deploys go through `update-claw.sh` only. `claw-dev.service` is the local **dev** instance for iterating in a developer account; build the binary and restart `claw-dev.service` for local testing. Never touch production or `update-claw.sh` when testing.
 

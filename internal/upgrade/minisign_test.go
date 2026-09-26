@@ -13,6 +13,8 @@ import (
 	"testing"
 
 	"golang.org/x/crypto/blake2b"
+
+	"github.com/PivotLLM/ClawEh/app"
 )
 
 // testSigner is an in-test minisign keypair: it writes the public key line and
@@ -256,28 +258,23 @@ func TestVerifySignedArchive_TwoKeys(t *testing.T) {
 	}
 }
 
-// TestReleasePublicKeys pins the embedded keys' state: either all unset
-// (upgrades fail closed) or every filled slot a well-formed minisign public key.
+// TestReleasePublicKeys pins the embedded keys: two slots, both filled with a
+// distinct, well-formed minisign public key, so upgrades never fail closed on a
+// release build and a rotation always has a next key to move to.
 func TestReleasePublicKeys(t *testing.T) {
-	if len(releasePublicKeys) != 2 {
-		t.Fatalf("releasePublicKeys has %d slots, want 2 (current and next)", len(releasePublicKeys))
+	embedded := app.ReleasePublicKeys()
+	if len(embedded) != 2 {
+		t.Fatalf("app.ReleasePublicKeys has %d slots, want 2 (current and next)", len(embedded))
 	}
-	keys, err := parseReleaseKeys(releasePublicKeys)
-	allEmpty := true
-	for _, k := range releasePublicKeys {
-		if strings.TrimSpace(k) != "" {
-			allEmpty = false
-		}
+	keys, err := parseReleaseKeys(embedded)
+	if err != nil {
+		t.Fatalf("embedded release keys: %v", err)
 	}
-	switch {
-	case allEmpty:
-		if !errors.Is(err, errNoReleaseKey) {
-			t.Fatalf("unset keys: error = %v, want errNoReleaseKey", err)
-		}
-	case err != nil:
-		t.Fatalf("embedded release key does not parse: %v", err)
-	case len(keys) == 0:
-		t.Fatal("embedded release keys parsed to nothing")
+	if len(keys) != 2 {
+		t.Fatalf("%d embedded release keys parse, want 2", len(keys))
+	}
+	if keys[0].keyID == keys[1].keyID {
+		t.Error("both slots hold the same key; rotation needs two")
 	}
 }
 

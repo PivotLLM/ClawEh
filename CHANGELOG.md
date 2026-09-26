@@ -214,8 +214,8 @@ observe does not need an entry.
   are no longer consulted by `claw upgrade` (they are still produced for the
   install scripts). A build with no embedded key refuses to upgrade at all.
   Release maintainers: `make release-sign` (signs with
-  `~/.minisign/minisign.key`, or `MINISIGN_KEY=<path>`); the rotation steps
-  are in `internal/upgrade/pubkey.go`.
+  `~/.minisign/minisign.key`, or `MINISIGN_KEY=<path>`); the keys and the
+  rotation steps are in `app/keys.go`.
   `make test` now runs `govulncheck` and fails on a known vulnerability
   reachable from the code.
 

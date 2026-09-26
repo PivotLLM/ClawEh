@@ -1,6 +1,6 @@
 // Package upgrade provides the `claw upgrade` subcommand, which downloads
 // the latest release binary from GitHub, verifies it against the release's
-// minisign-signed checksum list (see pubkey.go), atomically updates the
+// minisign-signed checksum list (keys in app/keys.go), atomically updates the
 // running executable, and restarts any active background service.
 package upgrade
 
@@ -222,7 +222,7 @@ func runUpgrade(checkOnly, force bool, targetVersion string, autoYes bool) error
 	if err != nil {
 		return fmt.Errorf("downloading %s: %w", signatureAssetName, err)
 	}
-	if err = verifySignedArchive(releasePublicKeys, checksums, signature, archiveName, archivePath); err != nil {
+	if err = verifySignedArchive(app.ReleasePublicKeys(), checksums, signature, archiveName, archivePath); err != nil {
 		return fmt.Errorf("release verification failed: %w", err)
 	}
 	fmt.Println("Signature and checksum verified.")
