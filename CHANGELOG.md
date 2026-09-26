@@ -313,9 +313,8 @@ observe does not need an entry.
   `0` = off): the first time the day's (UTC) summed model cost, as reported by
   the providers, reaches this amount an operator alert is raised (once per
   day). Sub-agent worker turns and compaction calls are not counted.
-- CI workflow (`.github/workflows/ci.yml`: `make test` on Ubuntu, build and
-  test on macOS), `make sbom` (CycloneDX `build/sbom.json`),
-  `make release-checksums` and `make release-sign`.
+- `make sbom` (CycloneDX `build/sbom.json`), `make release-checksums` and
+  `make release-sign`.
 
 - **Secret references in `config.json`.** Any credential field (`api_key`,
   `*_token`, `*_secret`, `*password`, `api_keys` entries, MCP/CLI `env` and
